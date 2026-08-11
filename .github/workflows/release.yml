@@ -35,10 +35,11 @@ jobs:
         run: npm run test
 
       - name: Build Windows artifacts
-        run: npm run dist
+        run: npm run make-icon && npx electron-builder --win nsis portable --publish never
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
