@@ -34,16 +34,23 @@ jobs:
       - name: Typecheck
         run: npm run test
 
-      - name: Build and publish Windows release
-        run: npm run publish:github
+      - name: Build Windows artifacts
+        run: npm run dist
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: |
+            StreamingBrowserElectron/dist/*.exe
+            StreamingBrowserElectron/dist/*.blockmap
+            StreamingBrowserElectron/dist/latest.yml
+
   android:
     name: Android APK
-    needs: windows
     runs-on: windows-latest
 
     steps:
@@ -70,8 +77,28 @@ jobs:
         shell: pwsh
         run: Copy-Item -LiteralPath android\app\build\outputs\apk\debug\app-debug.apk -Destination Elflix-Android-debug.apk -Force
 
-      - name: Upload APK to release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-assets
+          path: Elflix-Android-debug.apk
+
+  release:
+    name: Publish GitHub release
+    needs:
+      - windows
+      - android
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: Elflix-Android-debug.apk
+          files: release-assets/*
