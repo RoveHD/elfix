@@ -1,6 +1,11 @@
 :root {
   color-scheme: dark;
   --page: #070a10;
+  --bg-app: #070a10;
+  --bg-surface: #111722;
+  --bg-card: #1a2230;
+  --bg-settings: #111722;
+  --bg-sidebar: #171d29;
   --panel: #111722;
   --panel-2: #1a2230;
   --panel-3: #242d3a;
@@ -34,7 +39,7 @@
 body {
   margin: 0;
   overflow: hidden;
-  background: var(--page);
+  background: var(--bg-app);
   color: var(--text);
   font-size: calc(15px * var(--font-scale));
 }
@@ -62,18 +67,22 @@ button {
   grid-template-rows: var(--topbar-height) var(--provider-strip-height) minmax(0, 1fr);
   background:
     radial-gradient(circle at 20% -20%, rgba(var(--accent-rgb), var(--accent-soft-alpha)), transparent 32rem),
-    linear-gradient(180deg, #0d1119 0%, var(--page) 22%);
+    linear-gradient(180deg, #0d1119 0%, var(--bg-app) 22%);
 }
 
 .app-shell.bg-plain {
-  background: linear-gradient(180deg, #0d1119 0%, var(--page) 28%);
+  background: linear-gradient(180deg, #0d1119 0%, var(--bg-app) 28%);
+}
+
+.app-shell.bg-color {
+  background: var(--bg-app);
 }
 
 .app-shell.bg-poster {
   background:
     radial-gradient(circle at 18% 8%, rgba(var(--accent-rgb), var(--accent-mid-alpha)), transparent 30rem),
     radial-gradient(circle at 84% 0%, rgba(67, 96, 160, 0.22), transparent 28rem),
-    linear-gradient(180deg, #111827 0%, var(--page) 38%);
+    linear-gradient(180deg, #111827 0%, var(--bg-app) 38%);
 }
 
 .app-shell.bg-black {
@@ -87,7 +96,7 @@ button {
 .app-shell.bg-glass {
   background:
     radial-gradient(circle at 26% 0%, rgba(var(--accent-rgb), var(--accent-mid-alpha)), transparent 34rem),
-    linear-gradient(180deg, color-mix(in srgb, var(--custom-bg), #172032 32%), var(--custom-bg));
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-app), #172032 32%), var(--bg-app));
 }
 
 .app-shell.theme-light {
@@ -397,7 +406,13 @@ button {
 .app-shell.bg-plain .home-view,
 .app-shell.bg-plain .global-search-view,
 .app-shell.bg-plain .favorites-view {
-  background: linear-gradient(180deg, #0b1018, #070a10);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-app), #152035 24%), var(--bg-app));
+}
+
+.app-shell.bg-color .home-view,
+.app-shell.bg-color .global-search-view,
+.app-shell.bg-color .favorites-view {
+  background: var(--bg-app);
 }
 
 .app-shell.bg-poster .home-view,
@@ -665,7 +680,15 @@ h1 {
 }
 
 .search-panel {
-  max-width: 980px;
+  max-width: min(1120px, 100%);
+}
+
+.search-panel h1 {
+  max-width: 100%;
+  font-size: clamp(38px, 6vw, 72px);
+  line-height: 1.02;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
 .global-search-grid {
@@ -737,13 +760,19 @@ h1 {
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 20px;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .history-chip {
+  max-width: min(240px, 100%);
   height: 34px;
   padding: 0 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-shell.density-compact {
@@ -926,34 +955,54 @@ h1 {
 }
 
 .settings-modal {
-  width: min(1060px, calc(100vw - 54px));
-  height: min(720px, calc(100vh - 54px));
+  width: clamp(390px, 34vw, 500px);
+  max-width: calc(100vw - 28px);
+  height: 100vh;
+  max-height: 100vh;
+  margin: 0 0 0 auto;
   padding: 0;
   border: 0;
-  border-radius: calc(var(--radius) + 4px);
+  border-radius: calc(var(--radius) + 4px) 0 0 calc(var(--radius) + 4px);
   color: var(--text);
   background: transparent;
+  overflow: visible;
 }
 
 .settings-modal::backdrop {
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(2px);
 }
 
 .settings-shell {
   position: relative;
   height: 100%;
   display: grid;
-  grid-template-columns: 245px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  border-radius: calc(var(--radius) + 4px);
-  background: linear-gradient(135deg, #121824, #090d14);
-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.62);
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-settings), #1d2635 34%), var(--bg-settings)),
+    #111722;
+  box-shadow: -24px 0 80px rgba(0, 0, 0, 0.56);
+  animation: settings-slide-in 190ms ease both;
+}
+
+@keyframes settings-slide-in {
+  from {
+    transform: translateX(28px);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .settings-tabs {
-  padding: 22px;
-  background: rgba(255, 255, 255, 0.035);
+  min-width: 0;
+  padding: 22px 52px 14px 22px;
+  background: color-mix(in srgb, var(--bg-sidebar), transparent 8%);
+  border-bottom: 1px solid var(--line);
 }
 
 .settings-search {
@@ -975,14 +1024,18 @@ h1 {
   letter-spacing: 0;
 }
 
+.settings-tabs h2 {
+  margin-bottom: 14px;
+}
+
 .tab {
-  width: 100%;
-  height: 42px;
-  margin-bottom: 8px;
-  padding: 0 14px;
+  width: auto;
+  height: 38px;
+  margin: 0 7px 8px 0;
+  padding: 0 13px;
   border-radius: calc(var(--radius) - 5px);
   text-align: left;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.055);
   font-weight: 750;
 }
 
@@ -993,8 +1046,9 @@ h1 {
 
 .settings-content {
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  padding: 26px;
+  padding: 0;
 }
 
 .settings-page {
@@ -1002,7 +1056,8 @@ h1 {
   height: 100%;
   min-width: 0;
   overflow: auto;
-  padding-right: 4px;
+  padding: 22px;
+  overscroll-behavior: contain;
 }
 
 .settings-page.is-active {
@@ -1010,11 +1065,16 @@ h1 {
 }
 
 .settings-head {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-items: start;
   margin-bottom: 18px;
+}
+
+.settings-head .soft-action {
+  justify-self: start;
+  max-width: 100%;
 }
 
 .settings-head p,
@@ -1025,7 +1085,7 @@ h1 {
 
 .settings-search-results:not(.is-empty) {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -1064,7 +1124,7 @@ label small {
 .settings-home-grid,
 .settings-section-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -1153,10 +1213,10 @@ label small {
 }
 
 .provider-settings-layout {
-  height: calc(100% - 78px);
+  height: auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -1377,7 +1437,7 @@ textarea {
 
 .custom-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px 14px;
   margin-bottom: 18px;
 }
@@ -1391,9 +1451,10 @@ textarea {
 }
 
 .range-row {
+  --range-fill: 50%;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(70px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(58px, auto);
   align-items: center;
   gap: 12px;
   min-height: 44px;
@@ -1415,7 +1476,11 @@ textarea {
   padding: 0;
   border-radius: 999px;
   appearance: none;
-  background: linear-gradient(90deg, rgba(var(--accent-rgb), var(--accent-strong-alpha)), rgba(255, 255, 255, 0.14));
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-rgb), var(--accent-strong-alpha)) 0 var(--range-fill),
+    rgba(255, 255, 255, 0.14) var(--range-fill) 100%
+  );
   outline: 0;
 }
 
@@ -1431,7 +1496,7 @@ textarea {
 
 .range-row span {
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 850;
   text-align: right;
   white-space: nowrap;
@@ -1452,13 +1517,30 @@ input[type="color"] {
 
 .modal-close {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 18px;
+  right: 16px;
+  z-index: 4;
   width: 36px;
   height: 36px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.12);
   font-size: 22px;
+}
+
+@media (max-width: 720px) {
+  .settings-modal {
+    width: min(100vw, 460px);
+    max-width: 100vw;
+    border-radius: 0;
+  }
+
+  .settings-tabs {
+    padding-left: 16px;
+  }
+
+  .settings-page {
+    padding: 18px 16px;
+  }
 }
 
 @media (max-width: 980px) {

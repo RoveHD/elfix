@@ -255,6 +255,9 @@ function bindEvents() {
   });
 
   document.querySelector("#closeSettingsButton").addEventListener("click", closeSettings);
+  settingsModal.addEventListener("click", (event) => {
+    if (event.target === settingsModal) closeSettings();
+  });
   settingsModal.addEventListener("close", () => {
     api.setSettingsOpen(false).then(() => {
       recoverVisibleContent();
@@ -335,9 +338,14 @@ function bindEvents() {
   accentHex.addEventListener("input", () => {
     const color = normalizeColor(accentHex.value, "");
     if (color) accentColor.value = color;
+    saveSettings();
   });
   accentColor.addEventListener("input", () => {
     accentHex.value = normalizeColor(accentColor.value);
+    saveSettings();
+  });
+  backgroundColor.addEventListener("input", () => {
+    saveSettings();
   });
   fontScale.addEventListener("input", () => {
     syncRangeLabels();
@@ -496,7 +504,7 @@ function showGlobalSearch(query) {
   globalSearchView.classList.remove("is-hidden");
   favoritesView.classList.add("is-hidden");
   window.setTimeout(syncBrowserBounds, 0);
-  searchTitle.textContent = query.trim() ? `"${query}" suchen` : "Suchen";
+  searchTitle.textContent = query.trim() ? `${query} suchen` : "Suchen";
   document.querySelector("#searchCopy").textContent = query.trim()
     ? "Elflix nutzt nur die Direktsuche deiner Anbieter."
     : "Wähle einen Anbieter aus, um dessen Direktsuche zu öffnen.";
@@ -844,6 +852,10 @@ async function openSettings() {
   if (!settingsModal.open) {
     await api.setSettingsOpen(true);
     settingsModal.showModal();
+    window.setTimeout(() => {
+      const focusTarget = settingsModal.querySelector("input, select, button, textarea");
+      focusTarget?.focus();
+    }, 0);
   }
 }
 
@@ -1306,10 +1318,22 @@ function getRangeChoice(key) {
 function syncRangeLabels() {
   if (accentStrengthValue) accentStrengthValue.textContent = `${Math.round(Number(accentStrength.value) || 70)}%`;
   if (fontScaleValue) fontScaleValue.textContent = `${Math.round(Number(fontScale.value) || 100)}%`;
+  updateRangeFill(accentStrength);
+  updateRangeFill(fontScale);
   for (const range of Object.values(rangeSettings)) {
     const index = Math.max(0, Math.min(range.labels.length - 1, Number(range.node.value) || 0));
     range.valueNode.textContent = range.labels[index];
+    updateRangeFill(range.node);
   }
+}
+
+function updateRangeFill(node) {
+  if (!node) return;
+  const min = Number(node.min || 0);
+  const max = Number(node.max || 100);
+  const value = Number(node.value || min);
+  const fill = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  node.closest(".range-row")?.style.setProperty("--range-fill", `${Math.max(0, Math.min(100, fill))}%`);
 }
 
 function applyAppearance() {
@@ -1329,7 +1353,12 @@ function applyAppearance() {
   document.documentElement.style.setProperty("--accent-mid-alpha", (0.18 + strength * 0.28).toFixed(3));
   document.documentElement.style.setProperty("--accent-strong-alpha", (0.36 + strength * 0.42).toFixed(3));
   document.documentElement.style.setProperty("--accent-glow-alpha", (0.1 + strength * 0.22).toFixed(3));
-  document.documentElement.style.setProperty("--custom-bg", normalizeColor(appearance.backgroundColor || "#070a10", "#070a10"));
+  const appBackground = normalizeColor(appearance.backgroundColor || "#070a10", "#070a10");
+  document.documentElement.style.setProperty("--custom-bg", appBackground);
+  document.documentElement.style.setProperty("--bg-app", appBackground);
+  document.documentElement.style.setProperty("--page", appBackground);
+  document.documentElement.style.setProperty("--bg-settings", colorMix(appBackground, "#111722", 0.82));
+  document.documentElement.style.setProperty("--bg-sidebar", colorMix(appBackground, "#1a2230", 0.78));
   document.documentElement.style.setProperty("--font-scale", String(Math.max(0.8, Math.min(1.4, Number(appearance.fontScale || 100) / 100))));
 
   shell.classList.toggle("is-compact-header", Boolean(appearance.compactHeader));
@@ -1343,7 +1372,7 @@ function applyAppearance() {
   setShellMode(shell, "favtext", appearance.favoriteTextSize || "medium", ["small", "medium", "large"]);
   setShellMode(shell, "favart", appearance.favoriteArtwork || "balanced", ["clear", "balanced", "artwork"]);
   setShellMode(shell, "corners", appearance.cornerStyle || "soft", ["sharp", "soft", "round"]);
-  setShellMode(shell, "bg", appearance.backgroundStyle || "cinema", ["plain", "cinema", "poster", "black", "gray", "glass"]);
+  setShellMode(shell, "bg", appearance.backgroundStyle || "cinema", ["plain", "cinema", "color", "poster", "black", "gray", "glass"]);
   setShellMode(shell, "theme", appearance.themeMode || "dark", ["system", "dark", "light", "oled"]);
   setShellMode(shell, "cardstyle", appearance.cardStyle || "standard", ["standard", "flat", "glass", "outline", "minimal"]);
   setShellMode(shell, "shadow", appearance.shadowStyle || "standard", ["none", "light", "standard", "strong"]);
@@ -1385,6 +1414,14 @@ function hexToRgb(hex) {
     g: parseInt(value.slice(2, 4), 16),
     b: parseInt(value.slice(4, 6), 16)
   };
+}
+
+function colorMix(base, overlay, overlayWeight = 0.5) {
+  const a = hexToRgb(base);
+  const b = hexToRgb(overlay);
+  const weight = Math.max(0, Math.min(1, overlayWeight));
+  const channel = (left, right) => Math.round(left * (1 - weight) + right * weight).toString(16).padStart(2, "0");
+  return `#${channel(a.r, b.r)}${channel(a.g, b.g)}${channel(a.b, b.b)}`;
 }
 
 function normalizeUrl(value) {

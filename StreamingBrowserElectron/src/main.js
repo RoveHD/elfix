@@ -104,7 +104,6 @@ function createMainWindow() {
     title: "Elflix",
     icon: path.join(app.getAppPath(), "build", "icon.ico"),
     autoHideMenuBar: true,
-    fullscreen: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -115,8 +114,8 @@ function createMainWindow() {
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.once("ready-to-show", () => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFullScreen()) {
-      mainWindow.setFullScreen(true);
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
+      mainWindow.maximize();
     }
   });
   mainWindow.on("resize", () => applyBrowserBounds());
