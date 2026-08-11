@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Search Hub</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #1f2530;
+      --muted: #667085;
+      --line: #d9e0ea;
+      --accent: #0f766e;
+      --accent-2: #b45309;
+      --danger: #b42318;
+      --shadow: 0 18px 50px rgba(31, 37, 48, 0.12);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 32rem),
+        linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+      color: var(--ink);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      cursor: pointer;
+      border-radius: 6px;
+      min-height: 42px;
+      padding: 0 14px;
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    button:hover {
+      border-color: #9fb0c4;
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 12px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    input:focus,
+    button:focus {
+      outline: 3px solid rgba(15, 118, 110, 0.18);
+      outline-offset: 1px;
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 4.5rem);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 0 12px;
+      border-radius: 999px;
+      color: #0f3f3b;
+      background: #d9f2ee;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(217, 224, 234, 0.95);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 1rem;
+      line-height: 1.2;
+    }
+
+    .provider-list {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      min-height: 180px;
+    }
+
+    .provider-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+
+    .provider-row.active {
+      border-color: rgba(15, 118, 110, 0.6);
+      background: #effaf8;
+    }
+
+    .provider-name {
+      min-width: 0;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+
+    .provider-url {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      overflow-wrap: anywhere;
+    }
+
+    .icon-btn {
+      width: 42px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      font-size: 1.02rem;
+      font-weight: 800;
+    }
+
+    .danger {
+      color: var(--danger);
+    }
+
+    .main {
+      display: grid;
+      gap: 18px;
+    }
+
+    .search-panel {
+      padding: 18px;
+    }
+
+    .search-line {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+    }
+
+    .secondary {
+      border-color: #c28532;
+      background: #fff7ed;
+      color: #7c2d12;
+      font-weight: 800;
+    }
+
+    .active-provider {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 180px 1fr auto;
+      gap: 10px;
+      padding: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .results {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .result-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 190px) 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .result-link {
+      color: var(--accent);
+      font-weight: 800;
+      overflow-wrap: anywhere;
+      text-decoration: none;
+    }
+
+    .result-link:hover {
+      text-decoration: underline;
+    }
+
+    .empty {
+      color: var(--muted);
+      padding: 20px;
+      text-align: center;
+    }
+
+    .tools {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tiny {
+      font-size: 0.84rem;
+      color: var(--muted);
+    }
+
+    @media (max-width: 860px) {
+      .topbar,
+      .layout,
+      .search-line,
+      .form-grid,
+      .result-row {
+        grid-template-columns: 1fr;
+      }
+
+      .badge {
+        width: fit-content;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <h1>Search Hub</h1>
+      <div class="badge" id="providerCount">0 Provider</div>
+    </div>
+
+    <section class="layout">
+      <aside class="panel" aria-label="Provider">
+        <div class="panel-head">
+          <h2 class="panel-title">Provider</h2>
+          <button class="icon-btn" id="resetBtn" type="button" title="Zuruecksetzen">↺</button>
+        </div>
+        <div class="provider-list" id="providerList"></div>
+        <form class="form-grid" id="providerForm">
+          <input id="providerName" type="text" placeholder="Name" autocomplete="off" required>
+          <input id="providerTemplate" type="url" placeholder="https://example.com/search?q={query}" autocomplete="off" required>
+          <button class="primary" type="submit">+</button>
+        </form>
+      </aside>
+
+      <section class="main">
+        <div class="panel search-panel">
+          <form class="search-line" id="searchForm">
+            <input id="queryInput" type="search" placeholder="Titel suchen" autocomplete="off" autofocus>
+            <button class="primary" type="submit">Aktiv suchen</button>
+            <button class="secondary" id="globalBtn" type="button">Global</button>
+          </form>
+          <div class="active-provider" id="activeProvider"></div>
+        </div>
+
+        <section class="panel" aria-label="Suchlinks">
+          <div class="panel-head">
+            <h2 class="panel-title">Suchlinks</h2>
+            <div class="tools">
+              <button id="copyBtn" type="button">Kopieren</button>
+              <button id="openAllBtn" type="button">Alle oeffnen</button>
+            </div>
+          </div>
+          <div class="results" id="results"></div>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const storageKey = "search-hub-providers-v1";
+    const defaultProviders = [
+      {
+        id: crypto.randomUUID(),
+        name: "IMDb",
+        template: "https://www.imdb.com/find/?q={query}"
+      },
+      {
+        id: crypto.randomUUID(),
+        name: "TMDb",
+        template: "https://www.themoviedb.org/search?query={query}"
+      },
+      {
+        id: crypto.randomUUID(),
+        name: "JustWatch",
+        template: "https://www.justwatch.com/de/Suche?q={query}"
+      }
+    ];
+
+    const state = {
+      providers: loadProviders(),
+      activeId: null,
+      query: ""
+    };
+
+    const providerList = document.querySelector("#providerList");
+    const providerCount = document.querySelector("#providerCount");
+    const providerForm = document.querySelector("#providerForm");
+    const providerName = document.querySelector("#providerName");
+    const providerTemplate = document.querySelector("#providerTemplate");
+    const searchForm = document.querySelector("#searchForm");
+    const queryInput = document.querySelector("#queryInput");
+    const activeProvider = document.querySelector("#activeProvider");
+    const results = document.querySelector("#results");
+    const globalBtn = document.querySelector("#globalBtn");
+    const openAllBtn = document.querySelector("#openAllBtn");
+    const copyBtn = document.querySelector("#copyBtn");
+    const resetBtn = document.querySelector("#resetBtn");
+
+    state.activeId = state.providers[0]?.id ?? null;
+    render();
+
+    providerForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = providerName.value.trim();
+      const template = providerTemplate.value.trim();
+
+      if (!name || !template.includes("{query}")) {
+        providerTemplate.setCustomValidity("Die URL braucht {query}.");
+        providerTemplate.reportValidity();
+        return;
+      }
+
+      providerTemplate.setCustomValidity("");
+      state.providers.push({
+        id: crypto.randomUUID(),
+        name,
+        template
+      });
+      state.activeId = state.providers[state.providers.length - 1].id;
+      saveProviders();
+      providerForm.reset();
+      render();
+    });
+
+    searchForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      state.query = queryInput.value.trim();
+      renderResults();
+      openActive();
+    });
+
+    queryInput.addEventListener("input", () => {
+      state.query = queryInput.value.trim();
+      renderResults();
+    });
+
+    globalBtn.addEventListener("click", () => {
+      state.query = queryInput.value.trim();
+      renderResults();
+      openAll();
+    });
+
+    openAllBtn.addEventListener("click", () => {
+      state.query = queryInput.value.trim();
+      renderResults();
+      openAll();
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      state.query = queryInput.value.trim();
+      const links = buildLinks();
+      if (!links.length) return;
+      await navigator.clipboard.writeText(links.map((item) => `${item.name}: ${item.url}`).join("\n"));
+      copyBtn.textContent = "Kopiert";
+      window.setTimeout(() => {
+        copyBtn.textContent = "Kopieren";
+      }, 1100);
+    });
+
+    resetBtn.addEventListener("click", () => {
+      state.providers = structuredClone(defaultProviders);
+      state.activeId = state.providers[0]?.id ?? null;
+      saveProviders();
+      render();
+    });
+
+    function loadProviders() {
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey) || "null");
+        if (Array.isArray(stored) && stored.every(isValidProvider)) {
+          return stored;
+        }
+      } catch {
+        return structuredClone(defaultProviders);
+      }
+      return structuredClone(defaultProviders);
+    }
+
+    function isValidProvider(provider) {
+      return provider
+        && typeof provider.id === "string"
+        && typeof provider.name === "string"
+        && typeof provider.template === "string"
+        && provider.template.includes("{query}");
+    }
+
+    function saveProviders() {
+      localStorage.setItem(storageKey, JSON.stringify(state.providers));
+    }
+
+    function render() {
+      providerCount.textContent = `${state.providers.length} Provider`;
+      renderProviders();
+      renderResults();
+      const active = currentProvider();
+      activeProvider.textContent = active
+        ? `Aktiv: ${active.name}`
+        : "Kein aktiver Provider";
+    }
+
+    function renderProviders() {
+      providerList.replaceChildren();
+
+      if (!state.providers.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Noch keine Provider.";
+        providerList.append(empty);
+        return;
+      }
+
+      for (const provider of state.providers) {
+        const row = document.createElement("div");
+        row.className = `provider-row${provider.id === state.activeId ? " active" : ""}`;
+
+        const text = document.createElement("div");
+        const name = document.createElement("div");
+        name.className = "provider-name";
+        name.textContent = provider.name;
+        const url = document.createElement("div");
+        url.className = "provider-url";
+        url.textContent = provider.template;
+        text.append(name, url);
+
+        const choose = document.createElement("button");
+        choose.type = "button";
+        choose.className = "icon-btn";
+        choose.title = "Aktiv setzen";
+        choose.textContent = "✓";
+        choose.addEventListener("click", () => {
+          state.activeId = provider.id;
+          render();
+        });
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "icon-btn danger";
+        remove.title = "Entfernen";
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          state.providers = state.providers.filter((item) => item.id !== provider.id);
+          if (state.activeId === provider.id) {
+            state.activeId = state.providers[0]?.id ?? null;
+          }
+          saveProviders();
+          render();
+        });
+
+        row.append(text, choose, remove);
+        providerList.append(row);
+      }
+    }
+
+    function renderResults() {
+      results.replaceChildren();
+      const links = buildLinks();
+
+      if (!state.query) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Suchbegriff eingeben.";
+        results.append(empty);
+        return;
+      }
+
+      if (!links.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Keine Provider vorhanden.";
+        results.append(empty);
+        return;
+      }
+
+      for (const link of links) {
+        const row = document.createElement("div");
+        row.className = "result-row";
+
+        const name = document.createElement("strong");
+        name.textContent = link.name;
+
+        const anchor = document.createElement("a");
+        anchor.className = "result-link";
+        anchor.href = link.url;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+        anchor.textContent = link.url;
+
+        const open = document.createElement("button");
+        open.type = "button";
+        open.textContent = "Oeffnen";
+        open.addEventListener("click", () => window.open(link.url, "_blank", "noopener,noreferrer"));
+
+        row.append(name, anchor, open);
+        results.append(row);
+      }
+    }
+
+    function currentProvider() {
+      return state.providers.find((provider) => provider.id === state.activeId) ?? null;
+    }
+
+    function buildLinks() {
+      if (!state.query) return [];
+      return state.providers.map((provider) => ({
+        name: provider.name,
+        url: provider.template.replaceAll("{query}", encodeURIComponent(state.query))
+      }));
+    }
+
+    function openActive() {
+      const provider = currentProvider();
+      if (!provider || !state.query) return;
+      const url = provider.template.replaceAll("{query}", encodeURIComponent(state.query));
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+
+    function openAll() {
+      const links = buildLinks();
+      for (const link of links) {
+        window.open(link.url, "_blank", "noopener,noreferrer");
+      }
+    }
+  </script>
+</body>
+</html>

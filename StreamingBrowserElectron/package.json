@@ -1,0 +1,71 @@
+{
+  "name": "elflix",
+  "version": "0.2.0",
+  "description": "Elflix, a compact Chromium-based streaming website browser.",
+  "author": "RoveHD",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RoveHD/elfix.git"
+  },
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "typecheck": "node --check shared/provider-model.js && node --check src/main.js && node --check src/preload.js && node --check src/renderer/renderer.js",
+    "lint": "node scripts/lint.js",
+    "test": "npm run typecheck",
+    "make-icon": "node scripts/make-icon.js",
+    "dist": "npm run make-icon && electron-builder --win nsis portable",
+    "dist:installer": "npm run make-icon && electron-builder --win nsis",
+    "publish:github": "npm run make-icon && electron-builder --win nsis portable --publish always"
+  },
+  "build": {
+    "appId": "com.rovehd.elflix",
+    "productName": "Elflix",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "shared/**/*",
+      "src/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "artifactName": "Elflix-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Elflix",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Elflix-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "RoveHD",
+        "repo": "elfix",
+        "releaseType": "release"
+      }
+    ],
+    "icon": "build/icon.ico"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

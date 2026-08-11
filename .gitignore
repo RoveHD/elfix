@@ -1,0 +1,31 @@
+node_modules/
+npm-debug.log*
+
+# Electron build outputs
+StreamingBrowserElectron/dist/
+StreamingBrowserElectron/dist-*/
+
+# Android/Gradle build outputs and local SDK cache
+android/.gradle/
+android/build/
+android/app/build/
+android-sdk/
+tools/
+local.properties
+android/local.properties
+
+# Local packaged artifacts copied to the workspace root
+*.exe
+*.apk
+*.blockmap
+latest.yml
+
+# Common compiled outputs
+**/bin/
+**/obj/
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

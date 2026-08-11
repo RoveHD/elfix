@@ -1,0 +1,32 @@
+[
+  {
+    "id": "aniworld",
+    "name": "Aniworld",
+    "startUrl": "https://aniworld.to/",
+    "searchUrl": "https://aniworld.to/search?q={query}",
+    "logo": "AN",
+    "enabled": true,
+    "adblockEnabled": true,
+    "sortOrder": 0
+  },
+  {
+    "id": "sto",
+    "name": "S.to",
+    "startUrl": "http://186.2.175.5/",
+    "searchUrl": "http://186.2.175.5/suche?term={query}",
+    "logo": "S.",
+    "enabled": true,
+    "adblockEnabled": true,
+    "sortOrder": 1
+  },
+  {
+    "id": "filmo",
+    "name": "Filmo",
+    "startUrl": "https://filmo.to/",
+    "searchUrl": "https://filmo.to/search?q={query}",
+    "logo": "FI",
+    "enabled": true,
+    "adblockEnabled": true,
+    "sortOrder": 2
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.elflix/provider.schema.json",
+  "title": "Elflix Provider",
+  "type": "object",
+  "required": ["id", "name", "startUrl", "searchUrl", "logo", "enabled", "adblockEnabled", "sortOrder"],
+  "properties": {
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "startUrl": { "type": "string", "format": "uri" },
+    "searchUrl": { "type": "string", "description": "URL template containing {query}" },
+    "logo": { "type": "string" },
+    "enabled": { "type": "boolean" },
+    "adblockEnabled": { "type": "boolean" },
+    "sortOrder": { "type": "integer" }
+  }
+}

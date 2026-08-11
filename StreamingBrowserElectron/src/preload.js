@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("streamingBrowser", {
+  init: () => ipcRenderer.invoke("app:init"),
+  showHome: () => ipcRenderer.invoke("app:show-home"),
+  setBrowserBounds: (bounds) => ipcRenderer.invoke("layout:set-browser-bounds", bounds),
+  setSettingsOpen: (isOpen) => ipcRenderer.invoke("settings:set-open", isOpen),
+  setShellOpen: (isOpen) => ipcRenderer.invoke("shell:set-open", isOpen),
+  openProvider: (id) => ipcRenderer.invoke("provider:open", id),
+  openProviderSearch: (id, query) => ipcRenderer.invoke("provider:search", id, query),
+  openProviderUrl: (id, url) => ipcRenderer.invoke("provider:navigate", id, url),
+  searchAll: (query) => ipcRenderer.invoke("search:all", query),
+  navigate: (input) => ipcRenderer.invoke("browser:navigate", input),
+  browserCommand: (command) => ipcRenderer.invoke("browser:command", command),
+  toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),
+  removeFavorite: (id) => ipcRenderer.invoke("favorites:remove", id),
+  openFavorite: (id) => ipcRenderer.invoke("favorites:open", id),
+  repairFavoriteThumbnail: (id, force = false) => ipcRenderer.invoke("favorites:repair-thumbnail", id, force),
+  saveProviders: (providers) => ipcRenderer.invoke("provider:save-all", providers),
+  saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  updateFilters: () => ipcRenderer.invoke("adblock:update-filters"),
+  getBlocked: () => ipcRenderer.invoke("adblock:blocked"),
+  clearCache: () => ipcRenderer.invoke("data:clear-cache"),
+  openDataFolder: () => ipcRenderer.invoke("data:open-folder"),
+  resetData: () => ipcRenderer.invoke("data:confirm-reset"),
+  onBrowserState: (callback) => ipcRenderer.on("browser:state", (_event, state) => callback(state)),
+  onBlocked: (callback) => ipcRenderer.on("adblock:blocked", (_event, items) => callback(items)),
+  onFullscreen: (callback) => ipcRenderer.on("browser:fullscreen", (_event, enabled) => callback(enabled)),
+  onUpdateState: (callback) => ipcRenderer.on("updates:state", (_event, state) => callback(state)),
+  onToast: (callback) => ipcRenderer.on("app:toast", (_event, message) => callback(message))
+});
