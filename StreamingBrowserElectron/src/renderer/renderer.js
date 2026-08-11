@@ -1137,7 +1137,7 @@ async function checkForUpdates() {
   }));
   updateState = state || updateState;
   renderUpdateInfo();
-  updateCheckButton.disabled = false;
+  updateCheckButton.disabled = isUpdateBusy();
 }
 
 function renderUpdateInfo() {
@@ -1151,8 +1151,12 @@ function renderUpdateInfo() {
   const progress = Math.max(0, Math.min(100, Math.round(Number(updateState.progress) || 0)));
   updateProgressBar.style.width = `${progress}%`;
   updateProgressValue.textContent = `${progress}%`;
-  updateCheckButton.disabled = updateState.status === "checking" || updateState.status === "downloading";
+  updateCheckButton.disabled = isUpdateBusy();
   updateReleaseLink.href = appInfo.repository ? `${appInfo.repository}/releases` : "https://github.com/RoveHD/elfix/releases";
+}
+
+function isUpdateBusy() {
+  return ["checking", "available", "downloading", "installing"].includes(updateState.status);
 }
 
 async function resetData() {

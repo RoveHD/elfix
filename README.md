@@ -54,7 +54,7 @@ Elflix-Setup-<version>-x64.exe.blockmap
 latest.yml
 ```
 
-Die installierte App prueft automatisch auf Updates. In den Einstellungen gibt es zusaetzlich den Bereich `Updates & Version` mit installierter Version, Update-Quelle, Status und Fortschritt.
+Die installierte App prueft beim Start automatisch auf Updates. Wenn ein Update gefunden wird, wird es automatisch heruntergeladen, installiert und Elflix danach neu gestartet. In den Einstellungen gibt es zusaetzlich den Bereich `Updates & Version` mit installierter Version, Update-Quelle, Status und Fortschritt.
 
 ## Windows Defender / SmartScreen
 

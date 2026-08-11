@@ -57,6 +57,7 @@ let updateState = {
   version: app.getVersion(),
   availableVersion: "",
   downloaded: false,
+  installing: false,
   error: ""
 };
 
@@ -147,13 +148,15 @@ function setupAutoUpdater() {
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
 
-  autoUpdater.on("checking-for-update", () => setUpdateState({ status: "checking", message: "Suche nach Elflix-Updates...", progress: 0, error: "" }));
+  autoUpdater.on("checking-for-update", () => setUpdateState({ status: "checking", message: "Suche beim Start nach Elflix-Updates...", progress: 0, downloaded: false, installing: false, error: "" }));
   autoUpdater.on("update-available", (info) => {
     setUpdateState({
       status: "available",
-      message: `Update ${info.version || ""} gefunden. Download startet.`,
+      message: `Update ${info.version || ""} gefunden. Download und Installation laufen automatisch.`,
       availableVersion: info.version || "",
       progress: 0,
+      downloaded: false,
+      installing: false,
       error: ""
     });
   });
@@ -163,15 +166,25 @@ function setupAutoUpdater() {
     setUpdateState({ status: "downloading", message: `Update wird geladen: ${percent}%`, progress: percent, error: "" }, [25, 50, 75, 100].includes(percent));
   });
   autoUpdater.on("update-downloaded", () => {
-    setUpdateState({ status: "downloaded", message: "Update geladen. Es wird beim nächsten Schließen installiert.", progress: 100, downloaded: true, error: "" });
+    setUpdateState({
+      status: "installing",
+      message: "Update geladen. Elflix installiert es jetzt automatisch und startet neu.",
+      progress: 100,
+      downloaded: true,
+      installing: true,
+      error: ""
+    });
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(false, true);
+    }, 1200);
   });
   autoUpdater.on("error", (error) => {
-    setUpdateState({ status: "error", message: "Update konnte nicht geprüft werden.", progress: 0, error: error?.message || "Unbekannt" });
+    setUpdateState({ status: "error", message: "Update konnte nicht automatisch installiert werden.", progress: 0, installing: false, error: error?.message || "Unbekannt" });
   });
 
   setTimeout(() => {
     autoUpdater.checkForUpdatesAndNotify().catch(() => {});
-  }, 10000);
+  }, 2500);
 }
 
 function setUpdateState(next, toast = true) {
@@ -331,9 +344,9 @@ ipcMain.handle("updates:check", async () => {
     setUpdateState({ status: "dev", message: "Updates funktionieren im installierten Release.", progress: 0, error: "" });
     return publicUpdateState();
   }
-  setUpdateState({ status: "checking", message: "Suche nach Elflix-Updates...", progress: 0, error: "" });
+  setUpdateState({ status: "checking", message: "Suche nach Elflix-Updates...", progress: 0, downloaded: false, installing: false, error: "" });
   await autoUpdater.checkForUpdatesAndNotify().catch((error) => {
-    setUpdateState({ status: "error", message: "Update konnte nicht geprüft werden.", progress: 0, error: error?.message || "Unbekannt" });
+    setUpdateState({ status: "error", message: "Update konnte nicht automatisch installiert werden.", progress: 0, installing: false, error: error?.message || "Unbekannt" });
   });
   return publicUpdateState();
 });
