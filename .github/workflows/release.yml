@@ -43,6 +43,7 @@ jobs:
 
   android:
     name: Android APK
+    needs: windows
     runs-on: windows-latest
 
     steps:
