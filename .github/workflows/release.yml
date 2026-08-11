@@ -40,3 +40,34 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+  android:
+    name: Android APK
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        working-directory: android
+        run: .\gradlew.bat :app:assembleDebug
+
+      - name: Prepare APK asset
+        shell: pwsh
+        run: Copy-Item -LiteralPath android\app\build\outputs\apk\debug\app-debug.apk -Destination Elflix-Android-debug.apk -Force
+
+      - name: Upload APK to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Elflix-Android-debug.apk
