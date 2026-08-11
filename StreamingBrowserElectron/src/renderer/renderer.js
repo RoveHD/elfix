@@ -742,8 +742,7 @@ function isValidAniWorldThumbnail(value) {
     const url = new URL(String(value || ""));
     return url.hostname.toLowerCase().includes("aniworld")
       && !/(?:logo|favicon|sprite|icon|avatar|flag|placeholder|blank|transparent|loading|spinner|play|button|rating|language|login|register|facebook|twitter|og-image|social|share|default|noimage|no-image)/i.test(url.href)
-      && (/\.(?:jpg|jpeg|png|webp)(?:\?|#|$)/i.test(url.pathname)
-        || /(?:cover|poster|thumbnail|thumb|anime|series?|stream|cache|image|img|bilder?|media|uploads?)/i.test(url.pathname));
+      && /\/public\/img\/cover\/[^/?#]+\.(?:jpg|jpeg|png|webp)$/i.test(url.pathname);
   } catch {
     return false;
   }
