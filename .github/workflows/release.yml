@@ -1,4 +1,4 @@
-name: Release Elflix
+name: Release ELFIX
 
 on:
   push:
@@ -76,13 +76,13 @@ jobs:
 
       - name: Prepare APK asset
         shell: pwsh
-        run: Copy-Item -LiteralPath android\app\build\outputs\apk\debug\app-debug.apk -Destination Elflix-Android-debug.apk -Force
+        run: Copy-Item -LiteralPath android\app\build\outputs\apk\debug\app-debug.apk -Destination ELFIX-Android-debug.apk -Force
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-release-assets
-          path: Elflix-Android-debug.apk
+          path: ELFIX-Android-debug.apk
 
   release:
     name: Publish GitHub release

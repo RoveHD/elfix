@@ -1,6 +1,6 @@
-# Elflix
+# ELFIX
 
-Elflix ist ein kompakter Streaming-Browser fuer Desktop und Android/Android TV. Die App buendelt konfigurierbare Anbieter, globale Direktsuche, Favoriten, Anbieter-Wechsel, Adblock-/Popup-Blocking und eine moderne Startseite.
+ELFIX ist ein kompakter Streaming-Browser fuer Desktop und Android/Android TV. Die App buendelt konfigurierbare Anbieter, globale Direktsuche, Favoriten, Anbieter-Wechsel, Adblock-/Popup-Blocking und eine moderne Startseite.
 
 ## Features
 
@@ -29,18 +29,18 @@ StreamingBrowserElectron/dist/
 Der Installer heisst nach aktuellem Schema:
 
 ```text
-Elflix-Setup-<version>-x64.exe
+ELFIX-Setup-<version>-x64.exe
 ```
 
 Die portable Variante heisst:
 
 ```text
-Elflix-Portable-<version>-x64.exe
+ELFIX-Portable-<version>-x64.exe
 ```
 
 ## Releases und Auto-Updates
 
-Elflix nutzt `electron-updater` mit GitHub Releases:
+ELFIX nutzt `electron-updater` mit GitHub Releases:
 
 ```text
 https://github.com/RoveHD/elfix/releases
@@ -49,12 +49,12 @@ https://github.com/RoveHD/elfix/releases
 Ein Release wird durch einen Tag wie `v0.2.0` oder manuell ueber den GitHub Actions Workflow gebaut. Fuer automatische Updates muessen die vom Workflow erzeugten Assets im GitHub Release liegen, besonders:
 
 ```text
-Elflix-Setup-<version>-x64.exe
-Elflix-Setup-<version>-x64.exe.blockmap
+ELFIX-Setup-<version>-x64.exe
+ELFIX-Setup-<version>-x64.exe.blockmap
 latest.yml
 ```
 
-Die installierte App prueft beim Start automatisch auf Updates. Wenn ein Update gefunden wird, wird es automatisch heruntergeladen, installiert und Elflix danach neu gestartet. In den Einstellungen gibt es zusaetzlich den Bereich `Updates & Version` mit installierter Version, Update-Quelle, Status und Fortschritt.
+Die installierte App prueft beim Start automatisch auf Updates. Wenn ein Update gefunden wird, wird es automatisch heruntergeladen, installiert und ELFIX danach neu gestartet. In den Einstellungen gibt es zusaetzlich den Bereich `Updates & Version` mit installierter Version, Update-Quelle, Status und Fortschritt.
 
 ## Windows Defender / SmartScreen
 

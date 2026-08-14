@@ -1,11 +1,46 @@
 package local.elflix.android;
 
+import android.content.Context;
 import android.net.Uri;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class Adblocker {
+    private static volatile Set<String> adGuardDomains = Collections.emptySet();
+    private static final AtomicBoolean adGuardLoading = new AtomicBoolean(false);
+
+    public static void loadAdGuardList(Context context) {
+        if (!adGuardDomains.isEmpty() || !adGuardLoading.compareAndSet(false, true)) {
+            return;
+        }
+        Context appContext = context.getApplicationContext();
+        new Thread(() -> {
+            Set<String> loaded = new HashSet<>(150_000);
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    appContext.getAssets().open("adguard_blocklist.txt"), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String domain = line.trim().toLowerCase();
+                    if (domain.isEmpty() || domain.startsWith("#")) continue;
+                    loaded.add(domain);
+                }
+            } catch (Exception ignored) {
+                // Keep the curated fallback lists below if the bundled filter list can't be read.
+            }
+            adGuardDomains = loaded;
+        }, "adguard-filter-loader").start();
+    }
+
+    public static int loadedAdGuardRuleCount() {
+        return adGuardDomains.size();
+    }
+
     private final Set<String> adDomains = new HashSet<>(Arrays.asList(
         "doubleclick.net",
         "googlesyndication.com",
@@ -66,25 +101,103 @@ public final class Adblocker {
         "pushengage.com"
     ));
 
+    /**
+     * Ad networks that inject full-screen overlays into a hoster's player frame -- the fake
+     * "confirm you are not a robot" captcha, the "clean your phone" panel and the gambling banner.
+     *
+     * These are separated from the ordinary lists for two reasons. They must be blocked even inside
+     * the hoster frame, where filtering is otherwise relaxed so the player keeps working, and they
+     * must be blocked even when the request looks like a harmless asset: measured on VOE, the
+     * overlay's stylesheet and tracking pixel arrive as CSS/GIF and were therefore waved through by
+     * the page-critical bypass. Identified from the request log rather than guessed:
+     *   cdn.show-sb.com   /sb/notifications/gambling/default/custom-banner/8-1/index.html
+     *   cdn.redgarto.com  /sb/notifications/.../js/script.js, /css/style.css
+     *   portalfluently.com/sfp.js, flushpersist.com/pxf.gif
+     */
+    private static final Set<String> overlayAdDomains = new HashSet<>(Arrays.asList(
+        "show-sb.com",
+        "redgarto.com",
+        "portalfluently.com",
+        "flushpersist.com"
+    ));
+
+    /**
+     * True for the intrusive overlay creatives above. Matched by host and additionally by the ad
+     * product's own path, so a rotated CDN domain is still caught.
+     */
+    public static boolean isIntrusiveOverlayRequest(String url) {
+        if (url == null || url.isEmpty()) return false;
+        String host = host(url);
+        if (!host.isEmpty() && matchesAny(host, overlayAdDomains)) return true;
+        String path = url.toLowerCase();
+        return path.contains("/sb/notifications/") || path.contains("/custom-banner/");
+    }
+
     public boolean shouldBlock(String url, Provider provider) {
+        return shouldBlock(url, provider, false);
+    }
+
+    /**
+     * When {@code hosterFrame} is true the request comes from the video hoster's own document
+     * rather than from the provider's page, and only the curated core lists apply. Hosters such
+     * as VOE verify that their own scripts loaded and refuse to play otherwise; the ~140k-domain
+     * AdGuard list is broad enough to catch one of those (it blocked FingerprintJS on
+     * openfpcdn.io), which the hoster then reports as "ad blockers are not allowed".
+     * The provider's own pages keep the full list, so browsing stays ad-filtered.
+     */
+    public boolean shouldBlock(String url, Provider provider, boolean hosterFrame) {
+        return blockReason(url, provider, hosterFrame) != null;
+    }
+
+    /**
+     * True when {@code referer} names a document that is not the provider's own site -- i.e. the
+     * request was issued from an embedded third-party frame, which on these providers is the
+     * video hoster's player. Deliberately not matched against hoster names: VOE serves its
+     * player from rotating throwaway domains (observed: nicolehappyoutside.com), so any
+     * name-based list would be wrong the next day.
+     */
+    public static boolean isEmbeddedThirdPartyFrame(String referer, Provider provider) {
+        if (referer == null || referer.trim().isEmpty() || provider == null) return false;
+        String refererHost = host(referer);
+        if (refererHost.isEmpty()) return false;
+        return !isFirstParty(refererHost, provider);
+    }
+
+    /**
+     * Same decision as {@link #shouldBlock}, but returns which rule matched (or null to allow).
+     * Having the reason available is what makes "why did this page break?" answerable from a log
+     * instead of by guesswork.
+     */
+    public String blockReason(String url, Provider provider, boolean hosterFrame) {
         if (provider == null || !provider.adblockEnabled) {
-            return false;
+            return null;
         }
 
         if (isChallengeOrVerificationUrl(url, provider)) {
-            return false;
+            return null;
         }
 
         String host = host(url);
         if (host.isEmpty() || isFirstParty(host, provider)) {
-            return false;
+            return null;
         }
 
         if (isLikelyVideoPlayerUrl(url, host)) {
-            return false;
+            return null;
         }
 
-        return matches(host, adDomains) || matches(host, trackers) || looksLikeAdOrTrackerUrl(url);
+        if (matchesAny(host, adDomains)) return "core-ads";
+        if (matchesAny(host, trackers)) return "core-trackers";
+        // Measured on VOE (2026-08-12): blocking any of its ad partners inside its own frame --
+        // imasdk.googleapis.com, cd.connatix.com, static.ads-twitter.com and its rotating ad
+        // domains -- makes it show "Ad blockers are not allowed" and refuse to play. Allowing only
+        // the FingerprintJS probe was not enough; the detector counts the ad requests themselves.
+        // Getting past that would mean defeating the hoster's detection, so inside the hoster frame
+        // only the curated core lists apply and its in-frame ad overlays are accepted as the cost
+        // of playback. The provider's own pages keep the full list.
+        if (!hosterFrame && matchesAny(host, adGuardDomains)) return "adguard-list";
+        if (looksLikeAdOrTrackerUrl(url)) return "url-pattern";
+        return null;
     }
 
     public static boolean isLikelyVideoPlayerUrl(String url) {
@@ -92,11 +205,27 @@ public final class Adblocker {
     }
 
     private static boolean isLikelyVideoPlayerUrl(String url, String host) {
-        String value = url == null ? "" : url.toLowerCase();
         String targetHost = host == null ? "" : host.toLowerCase();
-        return targetHost.matches(".*(voe|v[-.]?o[-.]?e|vid|video|player|stream|filemoon|filelions|dood|mixdrop|streamtape|vidmoly|vidoza|upstream|supervideo|streamsb|streamwish|lulustream|savefiles|mp4upload|vidsrc|embed).*")
-            || value.matches(".*(/embed|/player|/watch|/stream|/hoster|/video).*")
-            || value.matches(".*\\.(m3u8|mp4|webm)(\\?.*)?$");
+        if (targetHost.matches(".*(voe|v[-.]?o[-.]?e|vid|video|player|stream|filemoon|filelions|dood|mixdrop|streamtape|vidmoly|vidoza|upstream|supervideo|streamsb|streamwish|lulustream|savefiles|mp4upload|vidsrc|embed).*")) {
+            return true;
+        }
+        // The path markers must be matched against the path alone, never the whole URL. Matching the
+        // full URL meant "https://watchcolleague.com/..." satisfied the "/watch" marker, because
+        // "//watchcolleague" contains it -- so an ad domain was classified as a player and got
+        // forwarded into the main frame. Ad networks pick names like that on purpose.
+        String path = pathOf(url).toLowerCase();
+        return path.matches(".*(/embed|/player|/watch|/stream|/hoster|/video).*")
+            || path.matches(".*\\.(m3u8|mp4|webm)$");
+    }
+
+    private static String pathOf(String url) {
+        if (url == null || url.isEmpty()) return "";
+        try {
+            String path = Uri.parse(url).getPath();
+            return path == null ? "" : path;
+        } catch (Exception malformed) {
+            return "";
+        }
     }
 
     public static boolean isChallengeOrVerificationUrl(String url, Provider provider) {
@@ -152,13 +281,15 @@ public final class Adblocker {
             || value.contains("adformat=");
     }
 
-    private static boolean matches(String host, Set<String> rules) {
-        for (String rule : rules) {
-            if (host.equals(rule) || host.endsWith("." + rule)) {
-                return true;
-            }
+    private static boolean matchesAny(String host, Set<String> rules) {
+        if (rules.isEmpty()) return false;
+        String candidate = host;
+        while (true) {
+            if (rules.contains(candidate)) return true;
+            int dot = candidate.indexOf('.');
+            if (dot < 0) return false;
+            candidate = candidate.substring(dot + 1);
         }
-        return false;
     }
 
     private static boolean isFirstParty(String host, Provider provider) {

@@ -2,13 +2,19 @@ package local.elflix.android;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.UiModeManager;
+import android.content.Context;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -30,6 +36,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -57,18 +64,33 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
+    private static final String TAG = CrashReporter.TAG;
     private static final long CACHE_CLEANUP_INTERVAL_MS = 15L * 60L * 1000L;
+    private static final int ACCENT = Color.rgb(229, 9, 20);
+    private static final int SUBTLE_BORDER = Color.rgb(46, 56, 76);
     private final Map<String, WebView> webViews = new HashMap<>();
     private final Adblocker adblocker = new Adblocker();
     private List<Provider> providers;
     private List<Favorite> favorites;
     private Provider activeProvider;
+    private String currentScreen = "home";
     private String activeFavoriteId;
     private String favoriteProgressMode;
     private LinearLayout appChrome;
     private LinearLayout collapsedChrome;
+    private LinearLayout chromeHolder;
     private LinearLayout providerRail;
+    private View providerRailScroll;
+    private View providerRailDivider;
+    private LinearLayout bottomNavHolder;
+    private final Map<String, LinearLayout> bottomNavTabs = new java.util.LinkedHashMap<>();
+    private TextView browserTitle;
+    private ImageView browserFavoriteIcon;
     private FrameLayout content;
+    /** Which width bucket the currently built chrome was laid out for. */
+    private boolean chromeBuiltCompact;
+    private Boolean television;
+    private int orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
     private EditText searchInput;
     private Button favoriteButton;
     private final Map<String, Button> providerButtons = new HashMap<>();
@@ -79,9 +101,62 @@ public class MainActivity extends Activity {
     private float mouseY = -1;
     private final Map<String, Boolean> providerResumeState = new HashMap<>();
     private final Handler cacheCleanupHandler = new Handler(Looper.getMainLooper());
+    private int lastConfigOrientation = -1;
+    private int lastConfigWidthDp = -1;
+    private int lastConfigHeightDp = -1;
+    /** URL that ELFIX itself decided to load into the main frame; allowed exactly once. */
+    private String selfInitiatedNavigation;
+    /**
+     * Main-frame hops still allowed while a hoster gateway ELFIX opened itself is resolving.
+     *
+     * The gateway (AniWorld's /redirect/<id>, s.to's equivalent) does not land on the player in one
+     * step. It bounces to the hoster's own rotating domain, and that second jump is made client-side
+     * -- measured: voe.sx -> nicolehappyoutside.com arriving with isRedirect()=false. The old rule
+     * allowed server-side redirects only, blocked exactly this hop, and left the user on a blank
+     * page. A budget rather than a boolean is what keeps the allowance from becoming a free pass for
+     * an advert chain: it is handed out once per gateway click and spent per hop.
+     */
+    private int hosterChainHops;
+    private static final int HOSTER_CHAIN_HOPS = 4;
+    private View loadingOverlay;
+    private FrameLayout fullscreenContainer;
     private View fullscreenView;
     private WebView fullscreenHostWebView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
+    /** Page scroll offset in device pixels, taken the moment fullscreen starts. */
+    private int fullscreenScrollX;
+    private int fullscreenScrollY;
+    /** Set when a page should open its player and go fullscreen on its own once it has loaded. */
+    private boolean autoStartRequested;
+    private String autoStartUrl;
+    private long autoStartArmedAt;
+    /** How long an unfired autostart request stays valid, and how patient each step of it is. */
+    private static final long AUTOSTART_ARM_TTL_MS = 600_000L;
+    private static final long AUTOSTART_POLL_MS = 500L;
+    private static final long AUTOSTART_HOSTER_TIMEOUT_MS = 60_000L;
+    private static final long AUTOSTART_PLAYER_TIMEOUT_MS = 30_000L;
+    /** Breathing room between "the player element exists" and touching it. */
+    private static final long AUTOSTART_SETTLE_MS = 4_000L;
+    private static final long AUTOSTART_EMBEDDED_TIMEOUT_MS = 12_000L;
+    /**
+     * Finds the player: the largest iframe on the page, or -- when the hoster's own page became the
+     * page -- its video element. Returns an empty string while there is nothing yet, which is what
+     * awaitPage() polls on.
+     */
+    private static final String PLAYER_PROBE_JS =
+        "(function(){"
+            + "function big(el){var r=el.getBoundingClientRect();return r.width>200&&r.height>150;}"
+            + "function largest(sel){var out=Array.prototype.slice.call(document.querySelectorAll(sel))"
+                + ".filter(big).sort(function(a,b){var ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();"
+                + "return rb.width*rb.height-ra.width*ra.height;});return out[0]||null;}"
+            + "var target=largest('iframe')||largest('video');"
+            + "if(!target)return '';"
+            + "target.scrollIntoView({block:'center'});"
+            + "return 'ready';"
+        + "})();";
+    /** Last provider page that was an episode, kept because playing takes the frame off it. */
+    private String lastEpisodeUrl;
+    private boolean pendingNextEpisode;
     private final Runnable cacheCleanupTask = new Runnable() {
         @Override
         public void run() {
@@ -93,53 +168,214 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        CrashReporter.install(this);
+        Log.i(TAG, "Elflix start\n" + CrashReporter.environment(this));
+        String previousCrash = CrashReporter.readLastCrash(this);
+        if (previousCrash != null) {
+            Log.e(TAG, "Previous run crashed. Report:\n" + previousCrash);
+        }
         WebView.setWebContentsDebuggingEnabled(false);
+        Adblocker.loadAdGuardList(this);
         providers = ProviderStore.load(this);
         favorites = FavoriteStore.load(this);
         favoriteProgressMode = getSharedPreferences("elflix_settings", MODE_PRIVATE)
             .getString("favorite_progress_mode", "sequential");
         activeProvider = null;
-        buildUi();
+        buildRoot();
         clearBrowserCachesPreservingLogin();
         cacheCleanupHandler.postDelayed(cacheCleanupTask, CACHE_CLEANUP_INTERVAL_MS);
+        Configuration config = getResources().getConfiguration();
+        lastConfigOrientation = config.orientation;
+        lastConfigWidthDp = config.screenWidthDp;
+        lastConfigHeightDp = config.screenHeightDp;
         showHome();
     }
 
-    private void buildUi() {
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // Never touch the view tree while a video overlay is up: removing it would destroy the
+        // surface the video renders into. Entering fullscreen deliberately triggers a rotation, so
+        // this callback runs in the middle of that.
+        if (fullscreenView != null) {
+            return;
+        }
+        lastConfigOrientation = newConfig.orientation;
+        lastConfigWidthDp = newConfig.screenWidthDp;
+        lastConfigHeightDp = newConfig.screenHeightDp;
+        // Only the chrome depends on the width bucket, and only it gets rebuilt. `content` and the
+        // provider WebViews inside it are never detached, so rotating cannot reload a page, drop a
+        // session or interrupt playback.
+        if (isCompactWidth() != chromeBuiltCompact) {
+            buildChrome();
+            updateFavoriteButton();
+        }
+    }
+
+    /**
+     * Builds the parts that must survive for the lifetime of the Activity: the root, the window
+     * inset handling and the content frame that hosts the provider WebViews. Only the chrome above
+     * it is rebuilt on configuration changes, so rotating never detaches a WebView and therefore
+     * never reloads a page or interrupts playback.
+     */
+    private void buildRoot() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(7, 10, 16));
+        root.setBackgroundColor(Theme.BACKGROUND);
         setContentView(root);
 
-        collapsedChrome = new LinearLayout(this);
-        collapsedChrome.setGravity(Gravity.CENTER_VERTICAL);
-        collapsedChrome.setPadding(dp(10), dp(6), dp(10), dp(6));
-        collapsedChrome.setBackgroundColor(Color.rgb(12, 17, 26));
-        collapsedChrome.setVisibility(View.GONE);
-        Button expandButton = textButton("ELFLIX öffnen");
-        expandButton.setOnClickListener(view -> setChromeCollapsed(false, true));
-        collapsedChrome.addView(expandButton);
-        Button collapsedMouseButton = textButton("Maus");
-        collapsedMouseButton.setOnClickListener(view -> toggleMouseMode());
-        collapsedChrome.addView(collapsedMouseButton);
-        root.addView(collapsedChrome, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+        chromeHolder = new LinearLayout(this);
+        chromeHolder.setOrientation(LinearLayout.VERTICAL);
+        root.addView(chromeHolder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        content = new FrameLayout(this);
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        // Phone-only bottom navigation. Kept outside `content` so it never overlaps page content and
+        // so the navigation-bar inset can be absorbed by the bar itself rather than by the WebView.
+        bottomNavHolder = new LinearLayout(this);
+        bottomNavHolder.setOrientation(LinearLayout.VERTICAL);
+        root.addView(bottomNavHolder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // targetSdk 35 draws edge-to-edge, so the chrome would sit underneath the status bar and
+        // the content underneath the navigation bar unless the real inset sizes are applied here.
+        // Never hardcode bar heights -- cutouts and gesture navigation differ per device.
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int top;
+            int bottom;
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                top = bars.top;
+                bottom = bars.bottom;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            // Entering fullscreen hides the system bars, which collapses these insets to 0, and
+            // leaving it brings them back. Applying that would re-pad `content` twice per fullscreen
+            // cycle and resize the WebView with it -- and a scrolled WebView that gets resized comes
+            // back at a slightly different offset, which is the page creeping upwards with every
+            // open/close. The video does not need it: it renders in its own container on the window
+            // decor. So the page layout is frozen at the values it had before fullscreen started.
+            if (fullscreenView != null) {
+                Log.i(TAG, "FS/insets ignored while fullscreen top=" + top + " bottom=" + bottom);
+                return insets;
+            }
+            chromeHolder.setPadding(0, top, 0, 0);
+            if (isTelevision()) {
+                content.setPadding(0, 0, 0, bottom);
+            } else {
+                // The gesture bar sits under the bottom navigation, so the bar grows to cover it and
+                // its touch targets stay clear of the system gesture area.
+                content.setPadding(0, 0, 0, 0);
+                bottomNavHolder.setPadding(0, 0, 0, bottom);
+            }
+            return insets;
+        });
+
+        buildChrome();
+        buildBottomNav();
+    }
+
+    private void buildChrome() {
+        chromeHolder.removeAllViews();
+        chromeBuiltCompact = isCompactWidth();
+        if (isTelevision()) {
+            buildTvChrome();
+        } else {
+            buildMobileChrome();
+        }
+        setChromeCollapsed(chromeCollapsed, false);
+    }
+
+    /**
+     * Phone chrome: a fixed-height app bar for the tab screens and a compact browser bar for the
+     * provider view. Both are single rows that always fit -- nothing here scrolls horizontally.
+     * `appChrome`/`collapsedChrome` keep their existing roles so setChromeCollapsed() still drives
+     * which one is showing.
+     */
+    private void buildMobileChrome() {
+        int barHeight = 58;
 
         appChrome = new LinearLayout(this);
-        appChrome.setOrientation(LinearLayout.VERTICAL);
-        appChrome.setPadding(dp(14), dp(8), dp(14), dp(6));
-        root.addView(appChrome, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        appChrome.setOrientation(LinearLayout.HORIZONTAL);
+        appChrome.setGravity(Gravity.CENTER_VERTICAL);
+        appChrome.setBackgroundColor(Theme.BACKGROUND);
+        appChrome.setPadding(dp(MobileViews.SCREEN_PADDING), 0, dp(MobileViews.SCREEN_PADDING - 8), 0);
+        chromeHolder.addView(appChrome, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(barHeight)));
 
-        LinearLayout top = new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        HorizontalScrollView topScroll = new HorizontalScrollView(this);
-        topScroll.setHorizontalScrollBarEnabled(false);
-        topScroll.addView(top);
-        appChrome.addView(topScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        WebView logo = brandLogoView();
+        appChrome.addView(logo, new LinearLayout.LayoutParams(dp(96), dp(30)));
+        appChrome.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        appChrome.addView(MobileViews.iconButton(this, R.drawable.ic_nav_search,
+            () -> showGlobalSearch("")), new LinearLayout.LayoutParams(dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
 
-        LinearLayout brand = new LinearLayout(this);
-        brand.setGravity(Gravity.CENTER_VERTICAL);
-        brand.setOrientation(LinearLayout.HORIZONTAL);
+        collapsedChrome = new LinearLayout(this);
+        collapsedChrome.setOrientation(LinearLayout.HORIZONTAL);
+        collapsedChrome.setGravity(Gravity.CENTER_VERTICAL);
+        collapsedChrome.setBackgroundColor(Theme.SURFACE);
+        collapsedChrome.setPadding(dp(4), 0, dp(4), 0);
+        collapsedChrome.setVisibility(View.GONE);
+        chromeHolder.addView(collapsedChrome, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(barHeight)));
+
+        collapsedChrome.addView(MobileViews.iconButton(this, R.drawable.ic_arrow_back, this::goBackInProvider),
+            new LinearLayout.LayoutParams(dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
+
+        browserTitle = new TextView(this);
+        browserTitle.setTextColor(Theme.TEXT_PRIMARY);
+        browserTitle.setTextSize(16);
+        browserTitle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        browserTitle.setMaxLines(1);
+        browserTitle.setEllipsize(TextUtils.TruncateAt.END);
+        browserTitle.setPadding(dp(4), 0, dp(8), 0);
+        collapsedChrome.addView(browserTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        browserFavoriteIcon = MobileViews.iconButton(this, R.drawable.ic_nav_favorite, this::toggleFavorite);
+        collapsedChrome.addView(browserFavoriteIcon,
+            new LinearLayout.LayoutParams(dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
+        collapsedChrome.addView(MobileViews.iconButton(this, R.drawable.ic_more_vert, this::showProviderMenu),
+            new LinearLayout.LayoutParams(dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
+
+        // Not used on phones, but the rest of the code expects these to exist.
+        providerRail = new LinearLayout(this);
+        providerRailScroll = null;
+        providerRailDivider = null;
+        updateBrowserBar();
+    }
+
+    /** Overflow menu for the provider view -- keeps the browser bar down to four controls. */
+    private void showProviderMenu() {
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(this, browserTitle);
+        menu.getMenu().add("Neu laden");
+        menu.getMenu().add("Startseite des Anbieters");
+        menu.getMenu().add("Anbieter wechseln");
+        menu.getMenu().add("Alles neu laden");
+        menu.setOnMenuItemClickListener(item -> {
+            String label = String.valueOf(item.getTitle());
+            WebView webView = currentWebView();
+            if ("Neu laden".equals(label)) {
+                if (webView != null) webView.reload();
+            } else if ("Startseite des Anbieters".equals(label)) {
+                if (activeProvider != null) openProvider(activeProvider, activeProvider.startUrl);
+            } else if ("Anbieter wechseln".equals(label)) {
+                showHome();
+            } else if ("Alles neu laden".equals(label)) {
+                reloadAllWebViews();
+            }
+            return true;
+        });
+        menu.show();
+    }
+
+    private void updateBrowserBar() {
+        if (browserTitle == null) return;
+        browserTitle.setText(activeProvider == null ? "ELFIX" : activeProvider.name);
+    }
+
+    private WebView brandLogoView() {
         WebView logo = new WebView(this);
         logo.setFocusable(false);
         logo.setFocusableInTouchMode(false);
@@ -151,112 +387,155 @@ public class MainActivity extends Activity {
             "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>" +
                 "<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}" +
                 "body{display:flex;align-items:center}img{width:100%;height:100%;object-fit:contain;object-position:left center}</style>" +
-                "</head><body><img src='elfix_schriftzug.png' alt='Elflix'></body></html>",
+                "</head><body><img src='elfix_schriftzug.png' alt='ELFIX'></body></html>",
             "text/html",
             "UTF-8",
             null
         );
-        brand.addView(logo, new LinearLayout.LayoutParams(dp(220), dp(46)));
-        top.addView(brand, new LinearLayout.LayoutParams(dp(228), ViewGroup.LayoutParams.MATCH_PARENT));
+        return logo;
+    }
 
-        Button startButton = textButton("Start");
-        startButton.setOnClickListener(view -> showHome());
-        top.addView(startButton);
+    /**
+     * TV chrome: a slim header for the tab screens, and a compact browser bar for the provider view.
+     * The old ten-button toolbar plus inline search field is gone -- on a remote that was a long
+     * focus path and it pushed the content down. Everything is inside the overscan-safe margin.
+     */
+    private void buildTvChrome() {
+        int pad = dp(TvViews.SCREEN_PADDING);
 
-        Button searchButton = textButton("Suche");
-        searchButton.setOnClickListener(view -> showGlobalSearch(searchInput.getText().toString().trim()));
-        top.addView(searchButton);
+        appChrome = new LinearLayout(this);
+        appChrome.setOrientation(LinearLayout.HORIZONTAL);
+        appChrome.setGravity(Gravity.CENTER_VERTICAL);
+        appChrome.setBackgroundColor(Theme.BACKGROUND);
+        appChrome.setPadding(pad, dp(22), pad, dp(8));
+        chromeHolder.addView(appChrome, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        Button favoritesButton = textButton("Favoriten");
-        favoritesButton.setOnClickListener(view -> showFavorites());
-        top.addView(favoritesButton);
+        appChrome.addView(brandLogoView(), new LinearLayout.LayoutParams(dp(150), dp(42)));
+        appChrome.addView(new android.widget.Space(this), new LinearLayout.LayoutParams(0, 1, 1));
+        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_search, "Suche",
+            () -> showGlobalSearch("")), headerSlot());
+        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_favorite, "Favoriten",
+            this::showFavorites), headerSlot());
+        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_settings, "Einstellungen",
+            this::showSettings), headerSlot());
 
-        Button settingsButton = textButton("Settings");
-        settingsButton.setOnClickListener(view -> showSettings());
-        top.addView(settingsButton);
+        collapsedChrome = new LinearLayout(this);
+        collapsedChrome.setOrientation(LinearLayout.HORIZONTAL);
+        collapsedChrome.setGravity(Gravity.CENTER_VERTICAL);
+        collapsedChrome.setBackgroundColor(Theme.SURFACE);
+        collapsedChrome.setPadding(dp(TvViews.SCREEN_PADDING - 12), dp(6), dp(TvViews.SCREEN_PADDING - 12), dp(6));
+        collapsedChrome.setVisibility(View.GONE);
+        chromeHolder.addView(collapsedChrome, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        Button collapseButton = textButton("Einklappen");
-        collapseButton.setOnClickListener(view -> setChromeCollapsed(true, true));
-        top.addView(collapseButton);
+        collapsedChrome.addView(TvViews.iconButton(this, R.drawable.ic_arrow_back, this::goBackInProvider),
+            new LinearLayout.LayoutParams(dp(52), dp(52)));
 
-        LinearLayout searchRow = new LinearLayout(this);
-        searchRow.setGravity(Gravity.CENTER_VERTICAL);
-        searchRow.setOrientation(LinearLayout.HORIZONTAL);
-        appChrome.addView(searchRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-        Button backButton = chromeButton("‹");
-        backButton.setOnClickListener(view -> {
-            WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-            if (webView != null && webView.canGoBack()) webView.goBack();
-        });
-        searchRow.addView(backButton);
-        Button forwardButton = chromeButton("›");
-        forwardButton.setOnClickListener(view -> {
-            WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-            if (webView != null && webView.canGoForward()) webView.goForward();
-        });
-        searchRow.addView(forwardButton);
-        Button reloadButton = chromeButton("↻");
-        reloadButton.setOnClickListener(view -> {
-            WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
+        browserTitle = new TextView(this);
+        browserTitle.setTextColor(Theme.TEXT_PRIMARY);
+        browserTitle.setTextSize(19);
+        browserTitle.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        browserTitle.setMaxLines(1);
+        browserTitle.setEllipsize(TextUtils.TruncateAt.END);
+        browserTitle.setPadding(dp(14), 0, dp(14), 0);
+        collapsedChrome.addView(browserTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        browserFavoriteIcon = TvViews.iconButton(this, R.drawable.ic_nav_favorite, this::toggleFavorite);
+        collapsedChrome.addView(browserFavoriteIcon, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        collapsedChrome.addView(TvViews.iconButton(this, R.drawable.ic_reload, () -> {
+            WebView webView = currentWebView();
             if (webView != null) webView.reload();
-        });
-        searchRow.addView(reloadButton);
-        Button reloadAllButton = chromeButton("⟳");
-        reloadAllButton.setOnClickListener(view -> reloadAllWebViews());
-        searchRow.addView(reloadAllButton);
-        Button homeButton = chromeButton("⌂");
-        homeButton.setOnClickListener(view -> {
-            if (activeProvider != null) openProvider(activeProvider, activeProvider.startUrl);
-        });
-        searchRow.addView(homeButton);
-        searchInput = new EditText(this);
-        searchInput.setSingleLine(true);
-        searchInput.setHint("Film, Serie oder Anime suchen...");
-        searchInput.setTextColor(Color.WHITE);
-        searchInput.setHintTextColor(Color.rgb(160, 170, 185));
-        searchInput.setTextSize(20);
-        searchInput.setFocusable(true);
-        searchInput.setFocusableInTouchMode(true);
-        searchInput.setBackground(rounded(Color.rgb(5, 9, 15), 14));
-        searchInput.setOnEditorActionListener((view, actionId, event) -> {
-            showGlobalSearch(searchInput.getText().toString().trim());
-            return true;
-        });
-        searchRow.addView(searchInput, new LinearLayout.LayoutParams(0, dp(48), 1));
-        favoriteButton = chromeButton("♡");
-        favoriteButton.setOnClickListener(view -> toggleFavorite());
-        searchRow.addView(favoriteButton);
-        Button mouseButton = chromeButton("◎");
-        mouseButton.setOnClickListener(view -> toggleMouseMode());
-        searchRow.addView(mouseButton);
-        Button stopButton = chromeButton("×");
-        stopButton.setOnClickListener(view -> {
-            WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-            if (webView != null) webView.stopLoading();
-        });
-        searchRow.addView(stopButton);
-        Button fullscreenButton = chromeButton("⛶");
-        fullscreenButton.setOnClickListener(view -> {
-            if (fullscreenView == null) getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            );
-            else hideFullscreen();
-        });
-        searchRow.addView(fullscreenButton);
+        }), new LinearLayout.LayoutParams(dp(52), dp(52)));
 
-        HorizontalScrollView railScroll = new HorizontalScrollView(this);
-        railScroll.setHorizontalScrollBarEnabled(false);
+        // Kept for the shared code paths (provider cycling, focus helpers) but no longer rendered:
+        // on TV the provider cards on the home screen are the switching surface.
         providerRail = new LinearLayout(this);
-        providerRail.setOrientation(LinearLayout.HORIZONTAL);
-        railScroll.addView(providerRail);
-        appChrome.addView(railScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(82)));
-        renderProviderRail();
+        providerRailScroll = null;
+        providerRailDivider = null;
+        updateBrowserBar();
+    }
 
-        content = new FrameLayout(this);
-        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+    private LinearLayout.LayoutParams headerSlot() {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.leftMargin = dp(14);
+        return params;
+    }
+
+    /** Phone bottom navigation: the primary way around the app. Absent on TV. */
+    private void buildBottomNav() {
+        bottomNavHolder.removeAllViews();
+        bottomNavTabs.clear();
+        if (isTelevision()) {
+            bottomNavHolder.setVisibility(View.GONE);
+            return;
+        }
+        bottomNavHolder.setVisibility(View.VISIBLE);
+        bottomNavHolder.setBackgroundColor(Theme.SURFACE);
+
+        View hairline = new View(this);
+        hairline.setBackgroundColor(Theme.BORDER);
+        bottomNavHolder.addView(hairline, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bottomNavHolder.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)));
+
+        bar.addView(bottomNavTab("home", R.drawable.ic_nav_home, "Home", this::showHome));
+        bar.addView(bottomNavTab("search", R.drawable.ic_nav_search, "Suche", () -> showGlobalSearch("")));
+        bar.addView(bottomNavTab("favorites", R.drawable.ic_nav_favorite, "Favoriten", this::showFavorites));
+        bar.addView(bottomNavTab("settings", R.drawable.ic_nav_settings, "Einstellungen", this::showSettings));
+        updateBottomNav();
+    }
+
+    private LinearLayout bottomNavTab(String screen, int iconRes, String label, Runnable onClick) {
+        LinearLayout tab = new LinearLayout(this);
+        tab.setOrientation(LinearLayout.VERTICAL);
+        tab.setGravity(Gravity.CENTER);
+        tab.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        iconParams.gravity = Gravity.CENTER_HORIZONTAL;
+        tab.addView(icon, iconParams);
+
+        TextView text = new TextView(this);
+        text.setText(label);
+        text.setTextSize(11);
+        text.setMaxLines(1);
+        text.setEllipsize(TextUtils.TruncateAt.END);
+        text.setIncludeFontPadding(false);
+        // A vertical LinearLayout hands its children MATCH_PARENT width by default, so the label
+        // fills the tab and must centre its own text -- otherwise it sits left of the icon.
+        text.setGravity(Gravity.CENTER_HORIZONTAL);
+        text.setPadding(dp(2), dp(4), dp(2), 0);
+        tab.addView(text, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        tab.setOnClickListener(view -> onClick.run());
+        bottomNavTabs.put(screen, tab);
+        return tab;
+    }
+
+    /** Highlights the tab matching the current screen; the provider view keeps Home selected. */
+    private void updateBottomNav() {
+        if (bottomNavTabs.isEmpty()) return;
+        String active = "provider".equals(currentScreen) ? "home" : currentScreen;
+        for (Map.Entry<String, LinearLayout> entry : bottomNavTabs.entrySet()) {
+            boolean selected = entry.getKey().equals(active);
+            LinearLayout tab = entry.getValue();
+            int tint = selected ? Theme.PRIMARY : Theme.TEXT_DISABLED;
+            ((ImageView) tab.getChildAt(0)).setColorFilter(tint);
+            TextView label = (TextView) tab.getChildAt(1);
+            label.setTextColor(tint);
+            label.setTypeface(selected ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
+        }
     }
 
     private void renderProviderRail() {
+        updateProviderRailVisibility();
         providerRail.removeAllViews();
         providerButtons.clear();
         for (Provider provider : providers) {
@@ -291,17 +570,21 @@ public class MainActivity extends Activity {
     }
 
     private Button providerButton(Provider provider) {
+        boolean compact = isCompactWidth();
         Button button = new Button(this);
         button.setText(provider.logo + "\n" + provider.name);
         button.setAllCaps(false);
-        button.setTextSize(16);
+        button.setTextSize(compact ? 14 : 16);
         button.setTextColor(Color.WHITE);
         button.setFocusable(true);
         button.setSingleLine(false);
+        button.setLines(2);
+        button.setPadding(dp(8), dp(4), dp(8), dp(4));
         button.setEllipsize(TextUtils.TruncateAt.END);
-        applyTvFocus(button, provider == activeProvider ? Color.rgb(86, 32, 44) : Color.rgb(28, 36, 50), Color.rgb(112, 48, 62), 17);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(154), dp(56));
-        params.setMargins(0, dp(4), dp(10), dp(4));
+        applyProviderFocus(button, provider == activeProvider);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            dp(providerCardWidthDp()), dp(providerCardHeightDp()));
+        params.setMargins(0, dp(4), dp(compact ? 8 : 10), dp(4));
         button.setLayoutParams(params);
         return button;
     }
@@ -309,12 +592,13 @@ public class MainActivity extends Activity {
     private Button chromeButton(String text) {
         Button button = new Button(this);
         button.setText(text);
-        button.setTextSize(22);
+        button.setTextSize(isCompactWidth() ? 20 : 22);
         button.setTextColor(Color.WHITE);
+        button.setPadding(0, 0, 0, 0);
         button.setFocusable(true);
-        button.setBackground(rounded(Color.rgb(28, 36, 50), 14));
         applyTvFocus(button, Color.rgb(28, 36, 50), Color.rgb(58, 72, 96), 14);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(48), dp(48));
+        int size = dp(touchTargetDp());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(size, size);
         params.setMargins(0, 0, dp(8), 0);
         button.setLayoutParams(params);
         return button;
@@ -324,26 +608,38 @@ public class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(text);
         button.setAllCaps(false);
-        button.setTextSize(16);
+        boolean compact = isCompactWidth();
+        button.setTextSize(compact ? 14 : 16);
         button.setTextColor(Color.WHITE);
         button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        button.setSingleLine(true);
+        button.setEllipsize(TextUtils.TruncateAt.END);
+        // Width follows the label instead of a magic formula, so labels never get clipped and
+        // buttons of the same kind line up.
+        button.setPadding(dp(compact ? 12 : 16), 0, dp(compact ? 12 : 16), 0);
         button.setFocusable(true);
-        button.setBackground(rounded(Color.rgb(28, 36, 50), 14));
         applyTvFocus(button, Color.rgb(28, 36, 50), Color.rgb(58, 72, 96), 14);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(Math.max(112, 38 + text.length() * 9)), dp(48));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, dp(touchTargetDp()));
         params.setMargins(dp(8), 0, 0, 0);
         button.setLayoutParams(params);
         return button;
     }
 
     private GradientDrawable rounded(int color, int radiusDp) {
+        return rounded(color, radiusDp, SUBTLE_BORDER, 1);
+    }
+
+    private GradientDrawable rounded(int fillColor, int radiusDp, int strokeColor, int strokeWidthDp) {
         GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(color);
+        drawable.setColor(fillColor);
         drawable.setCornerRadius(dp(radiusDp));
+        if (strokeWidthDp > 0) drawable.setStroke(dp(strokeWidthDp), strokeColor);
         return drawable;
     }
 
     private void showHome() {
+        currentScreen = "home";
         if (activeProvider != null) {
             rememberAndPauseMedia(activeProvider.id, webViews.get(activeProvider.id));
         }
@@ -355,54 +651,538 @@ public class MainActivity extends Activity {
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
         content.removeAllViews();
+        updateBottomNav();
+        if (isTelevision()) renderTvHome();
+        else renderMobileHome();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Mobile screens. These replace the TV page layouts on phones; all app logic (providers,
+    // favourites, search, WebView) is shared and untouched -- only the presentation differs.
+    // ---------------------------------------------------------------------------------------------
+
+    // ---------------------------------------------------------------------------------------------
+    // Android TV screens. Own layouts (not the phone ones scaled up): larger type, D-pad focus,
+    // overscan-safe margins. All provider/favourite/search/WebView logic is shared.
+    // ---------------------------------------------------------------------------------------------
+
+    private LinearLayout tvPage() {
         ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(Theme.BACKGROUND);
+        // Focused cards scale up by 5%; without this the growth is clipped at the row/page bounds
+        // and the focus outline looks cut off.
+        scroll.setClipChildren(false);
+        scroll.setClipToPadding(false);
         LinearLayout page = new LinearLayout(this);
+        page.setClipChildren(false);
+        page.setClipToPadding(false);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(42), dp(34), dp(42), dp(34));
-        page.setBackgroundColor(Color.rgb(7, 10, 16));
-        scroll.addView(page, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        page.setPadding(dp(TvViews.SCREEN_PADDING), dp(8), dp(TvViews.SCREEN_PADDING), dp(TvViews.SCREEN_PADDING));
+        scroll.addView(page, new ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(scroll, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return page;
+    }
 
-        TextView eyebrow = smallLabel("Elflix");
-        page.addView(eyebrow);
-        TextView title = titleText("Alles an einem Ort");
-        page.addView(title);
-        TextView copy = copyText("Deine Streaming-Websites in einer Oberflaeche. Suche global, speichere Favoriten und wechsle Anbieter wie Tabs.");
-        page.addView(copy);
+    /**
+     * How many cards fit a TV row. Derived from the available dp width so 720p, 1080p and 4K panels
+     * all get a sensible count instead of a hardcoded number.
+     */
+    private int tvCardWidthDp(int desired, int minimum) {
+        int available = getResources().getConfiguration().screenWidthDp - 2 * TvViews.SCREEN_PADDING;
+        int perRow = Math.max(1, (available + TvViews.ITEM_GAP) / (desired + TvViews.ITEM_GAP));
+        int width = (available - (perRow - 1) * TvViews.ITEM_GAP) / perRow;
+        return Math.max(minimum, width);
+    }
 
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        Button open = textButton("Anbieter oeffnen");
-        open.setOnClickListener(view -> openActiveProvider());
-        actions.addView(open);
-        Button favs = textButton("Favoriten");
-        favs.setOnClickListener(view -> showFavorites());
-        actions.addView(favs);
-        page.addView(actions, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(62)));
+    private LinearLayout tvRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setClipChildren(false);
+        row.setClipToPadding(false);
+        return row;
+    }
 
-        TextView providersTitle = sectionTitle("Deine Anbieter");
-        page.addView(providersTitle);
-        HorizontalScrollView providerScroll = new HorizontalScrollView(this);
-        providerScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout providerRow = new LinearLayout(this);
-        providerRow.setOrientation(LinearLayout.HORIZONTAL);
-        for (Provider provider : providers) {
-            Button card = providerButton(provider);
-            bindProviderTabClick(card, provider);
-            providerRow.addView(card);
+    private void addTvRowItem(LinearLayout row, View item, boolean first) {
+        LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) item.getLayoutParams();
+        if (params == null) {
+            params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         }
-        providerScroll.addView(providerRow);
-        page.addView(providerScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(86)));
+        if (!first) params.leftMargin = dp(TvViews.ITEM_GAP);
+        row.addView(item, params);
+    }
+
+    private void renderTvHome() {
+        LinearLayout page = tvPage();
+        page.addView(TvViews.eyebrow(this, "ELFIX"));
+        page.addView(TvViews.heroTitle(this, "Was möchtest du ansehen?"));
+
+        addSpacing(page, TvViews.sectionTitle(this, "Deine Anbieter"), TvViews.SECTION_GAP);
+        int cardWidth = tvCardWidthDp(230, 180);
+        LinearLayout providerRow = tvRow();
+        View firstCard = null;
+        for (int i = 0; i < providers.size(); i += 1) {
+            Provider provider = providers.get(i);
+            View card = TvViews.providerCard(this, provider, providerTagline(provider), cardWidth,
+                () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
+                () -> openProvider(provider, provider.startUrl));
+            addTvRowItem(providerRow, card, i == 0);
+            providerButtons.remove(provider.id);
+            if (i == 0) firstCard = card;
+        }
+        addSpacing(page, providerRow, TvViews.ITEM_GAP);
 
         if (!favorites.isEmpty()) {
-            page.addView(sectionTitle("Meine Favoriten"));
-            for (int i = 0; i < Math.min(4, favorites.size()); i += 1) {
-                Favorite favorite = favorites.get(i);
-                Button button = favoriteListButton(favorite);
-                page.addView(button);
+            addSpacing(page, TvViews.sectionTitle(this, "Weiter ansehen"), TvViews.SECTION_GAP);
+            int favWidth = tvCardWidthDp(200, 160);
+            LinearLayout favRow = tvRow();
+            int shown = Math.min(5, favorites.size());
+            for (int i = 0; i < shown; i += 1) {
+                addTvRowItem(favRow, tvFavoriteCard(favorites.get(i), favWidth), i == 0);
+            }
+            addSpacing(page, favRow, TvViews.ITEM_GAP);
+        }
+
+        // Give the remote something focused to start from, so the first D-pad press is predictable.
+        if (firstCard != null) {
+            View target = firstCard;
+            target.post(target::requestFocus);
+        }
+    }
+
+    private View tvFavoriteCard(Favorite favorite, int widthDp) {
+        String title = cleanFavoriteTitle(favorite.title, favorite.url);
+        if (title.isEmpty()) title = "Favorit";
+        return TvViews.favoriteCard(this, providerForFavorite(favorite), title,
+            favoriteEpisodeLabel(favorite.url), favorite.providerName, widthDp,
+            () -> openFavorite(favorite),
+            () -> {
+                favorites.remove(favorite);
+                FavoriteStore.save(this, favorites);
+                showToast("Aus Favoriten entfernt");
+                if ("favorites".equals(currentScreen)) showFavorites();
+                else showHome();
+            });
+    }
+
+    private void renderTvFavorites() {
+        LinearLayout page = tvPage();
+        page.addView(TvViews.eyebrow(this, "Deine Liste"));
+        page.addView(TvViews.heroTitle(this, "Favoriten"));
+        if (favorites.isEmpty()) {
+            addSpacing(page, TvViews.infoCard(this, "Noch keine Favoriten",
+                "Öffne einen Anbieter und drücke in der Leiste oben auf das Herz. ELFIX merkt sich "
+                    + "die Folge und springt beim nächsten Mal automatisch weiter.", null, null), TvViews.SECTION_GAP);
+            return;
+        }
+        int width = tvCardWidthDp(200, 160);
+        int perRow = Math.max(1, (getResources().getConfiguration().screenWidthDp - 2 * TvViews.SCREEN_PADDING
+            + TvViews.ITEM_GAP) / (width + TvViews.ITEM_GAP));
+        LinearLayout row = null;
+        for (int i = 0; i < favorites.size(); i += 1) {
+            if (i % perRow == 0) {
+                row = tvRow();
+                addSpacing(page, row, i == 0 ? TvViews.SECTION_GAP : TvViews.ITEM_GAP);
+            }
+            addTvRowItem(row, tvFavoriteCard(favorites.get(i), width), i % perRow == 0);
+        }
+    }
+
+    private void renderTvSettings() {
+        LinearLayout page = tvPage();
+        page.addView(TvViews.eyebrow(this, "ELFIX"));
+        page.addView(TvViews.heroTitle(this, "Einstellungen"));
+
+        addSpacing(page, TvViews.infoCard(this, "Werbeblocker",
+            "AdGuard-Filterlisten (Basis, Mobile Ads, Tracking-Schutz) sind aktiv. Innerhalb des "
+                + "Video-Hosters wird bewusst zurückhaltender gefiltert, damit die Wiedergabe startet.",
+            null, null), TvViews.SECTION_GAP);
+
+        addSpacing(page, TvViews.infoCard(this, "Favoriten-Fortschritt",
+            isStaticFavoriteProgress()
+                ? "Favoriten bleiben statisch auf der gespeicherten Folge."
+                : "Favoriten springen automatisch zur direkt nächsten Folge.",
+            isStaticFavoriteProgress() ? "Auf nächste Folge umstellen" : "Statisch machen",
+            () -> {
+                favoriteProgressMode = isStaticFavoriteProgress() ? "sequential" : "static";
+                getSharedPreferences("elflix_settings", MODE_PRIVATE)
+                    .edit().putString("favorite_progress_mode", favoriteProgressMode).apply();
+                showToast("Gespeichert");
+                showSettings();
+            }), TvViews.ITEM_GAP);
+
+        addSpacing(page, TvViews.infoCard(this, "Zwischenspeicher",
+            "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
+            "Alles neu laden", this::reloadAllWebViews), TvViews.ITEM_GAP);
+    }
+
+    private void renderTvSearch(String query) {
+        LinearLayout page = tvPage();
+        page.addView(TvViews.eyebrow(this, "Alle Anbieter"));
+        page.addView(TvViews.heroTitle(this, "Suche"));
+
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("Serien, Anime und Filme suchen");
+        input.setText(query);
+        input.setTextColor(Theme.TEXT_PRIMARY);
+        input.setHintTextColor(Theme.TEXT_SECONDARY);
+        input.setTextSize(18);
+        input.setPadding(dp(18), 0, dp(18), 0);
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        input.setBackground(TvViews.shape(this, Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS, Theme.BORDER, 1));
+        input.setOnFocusChangeListener((view, focused) -> input.setBackground(TvViews.shape(this,
+            Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS, focused ? Theme.PRIMARY : Theme.BORDER, focused ? 3 : 1)));
+        input.setOnEditorActionListener((view, actionId, event) -> {
+            showGlobalSearch(input.getText().toString().trim());
+            return true;
+        });
+        searchInput = input;
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(60));
+        inputParams.topMargin = dp(TvViews.SECTION_GAP);
+        page.addView(input, inputParams);
+        input.post(input::requestFocus);
+
+        if (query.isEmpty()) {
+            addSpacing(page, TvViews.infoCard(this, "Was suchst du?",
+                "Gib einen Titel ein - ELFIX durchsucht alle Anbieter gleichzeitig.", null, null),
+                TvViews.SECTION_GAP);
+            return;
+        }
+
+        LinearLayout holder = new LinearLayout(this);
+        holder.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, holder, TvViews.SECTION_GAP);
+        holder.addView(TvViews.sectionTitle(this, "Ergebnisse"));
+        TextView loading = TvViews.body(this, "Suche bei allen Anbietern ...");
+        holder.addView(loading);
+        searchAllProvidersTv(query, holder, loading);
+    }
+
+    private void searchAllProvidersTv(String query, LinearLayout holder, View loading) {
+        new Thread(() -> {
+            ArrayList<SearchResult> found = new ArrayList<>();
+            for (Provider provider : providers) {
+                for (String variant : searchQueryVariants(query)) {
+                    ArrayList<SearchResult> results =
+                        fetchSearchResults(provider, provider.buildSearchUrl(variant), variant);
+                    if (!results.isEmpty()) {
+                        found.addAll(results);
+                        break;
+                    }
+                }
+            }
+            runOnUiThread(() -> {
+                holder.removeView(loading);
+                if (found.isEmpty()) {
+                    holder.addView(TvViews.body(this, "Keine direkten Treffer gefunden."));
+                    return;
+                }
+                int width = tvCardWidthDp(200, 160);
+                int perRow = Math.max(1, (getResources().getConfiguration().screenWidthDp
+                    - 2 * TvViews.SCREEN_PADDING + TvViews.ITEM_GAP) / (width + TvViews.ITEM_GAP));
+                LinearLayout row = null;
+                int shown = 0;
+                for (SearchResult result : found) {
+                    if (shown >= 24) break;
+                    if (shown % perRow == 0) {
+                        row = tvRow();
+                        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                        rowParams.topMargin = dp(TvViews.ITEM_GAP);
+                        holder.addView(row, rowParams);
+                    }
+                    String meta = result.genre == null || result.genre.isEmpty()
+                        ? result.provider.name : result.genre;
+                    addTvRowItem(row, TvViews.favoriteCard(this, result.provider, result.title, meta,
+                        result.provider.name, width, () -> openProvider(result.provider, result.url), null),
+                        shown % perRow == 0);
+                    shown += 1;
+                }
+            });
+        }).start();
+    }
+
+    /** Scrollable page shell with the shared mobile spacing already applied. */
+    private LinearLayout mobilePage() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Theme.BACKGROUND);
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(MobileViews.SCREEN_PADDING), dp(4), dp(MobileViews.SCREEN_PADDING), dp(24));
+        scroll.addView(page, new ScrollView.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(scroll, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return page;
+    }
+
+    private void addSpacing(LinearLayout page, View view, int topMarginDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(topMarginDp);
+        page.addView(view, params);
+    }
+
+    private void renderMobileHome() {
+        LinearLayout page = mobilePage();
+
+        page.addView(MobileViews.eyebrow(this, "ELFIX"));
+        page.addView(MobileViews.heroTitle(this, "Was möchtest du ansehen?"));
+        page.addView(MobileViews.subtitle(this, "Deine Anbieter an einem Ort."));
+
+        View search = MobileViews.searchEntry(this, "Serien, Anime und Filme suchen",
+            () -> showGlobalSearch(""));
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        searchParams.topMargin = dp(18);
+        page.addView(search, searchParams);
+
+        addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
+        addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
+
+        addSpacing(page, MobileViews.sectionHeader(this, "Weiter ansehen",
+            favorites.isEmpty() ? null : "Alle anzeigen",
+            favorites.isEmpty() ? null : this::showFavorites), MobileViews.SECTION_GAP);
+        if (favorites.isEmpty()) {
+            // Keeps the section present instead of leaving the lower half of the screen blank.
+            addSpacing(page, settingsCard("Noch nichts gespeichert",
+                "Tippe beim Ansehen oben auf das Herz. ELFIX merkt sich dann die Folge und "
+                    + "springt beim nächsten Mal automatisch weiter.", null, null), MobileViews.ITEM_GAP);
+        } else {
+            int shown = Math.min(3, favorites.size());
+            for (int i = 0; i < shown; i += 1) {
+                addSpacing(page, mobileFavoriteCard(favorites.get(i)), MobileViews.ITEM_GAP);
             }
         }
+    }
+
+    /**
+     * Responsive provider grid. Every cell carries weight 1, so cards share the row evenly and can
+     * never end up half off-screen regardless of how many providers or how wide the display is.
+     */
+    private int providerGridColumns() {
+        int width = getResources().getConfiguration().screenWidthDp;
+        if (width >= 600) return 3;
+        return width >= 360 ? 2 : 1;
+    }
+
+    private View providerGrid() {
+        int columns = providerGridColumns();
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        for (int start = 0; start < providers.size(); start += columns) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            for (int column = 0; column < columns; column += 1) {
+                int index = start + column;
+                LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+                if (column > 0) cell.leftMargin = dp(MobileViews.ITEM_GAP);
+                if (index < providers.size()) {
+                    Provider provider = providers.get(index);
+                    row.addView(MobileViews.providerCard(this, provider, providerTagline(provider),
+                        () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
+                        () -> openProvider(provider, provider.startUrl)), cell);
+                } else {
+                    // Filler keeps the last row's cards the same width as every other row.
+                    // Height must be 0, not WRAP_CONTENT: a bare View does not implement
+                    // wrap-content -- View.getDefaultSize() returns the full AT_MOST size, so the
+                    // filler would swallow the remaining page height and push later sections out.
+                    LinearLayout.LayoutParams fillerParams = new LinearLayout.LayoutParams(0, 0, 1);
+                    fillerParams.leftMargin = cell.leftMargin;
+                    row.addView(new android.widget.Space(this), fillerParams);
+                }
+            }
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (start > 0) rowParams.topMargin = dp(MobileViews.ITEM_GAP);
+            grid.addView(row, rowParams);
+        }
+        return grid;
+    }
+
+    private String providerTagline(Provider provider) {
+        String key = ((provider.id == null ? "" : provider.id) + " " + (provider.name == null ? "" : provider.name)).toLowerCase();
+        if (key.contains("aniworld")) return "Anime & Serien";
+        if (key.contains("sto") || key.contains("s.to")) return "Serien";
+        if (key.contains("filmo")) return "Filme";
+        return "Streaming";
+    }
+
+    private void renderMobileSearch(String query) {
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "Alle Anbieter"));
+        page.addView(MobileViews.heroTitle(this, "Suche"));
+
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("Serien, Anime und Filme suchen");
+        input.setText(query);
+        input.setTextColor(Theme.TEXT_PRIMARY);
+        input.setHintTextColor(Theme.TEXT_SECONDARY);
+        input.setTextSize(15);
+        input.setPadding(dp(14), 0, dp(14), 0);
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        input.setBackground(MobileViews.shape(this, Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS, Theme.BORDER, 1));
+        input.setOnFocusChangeListener((view, focused) -> input.setBackground(MobileViews.shape(this,
+            Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS, focused ? Theme.PRIMARY : Theme.BORDER, focused ? 2 : 1)));
+        input.setOnEditorActionListener((view, actionId, event) -> {
+            showGlobalSearch(input.getText().toString().trim());
+            return true;
+        });
+        searchInput = input;
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        inputParams.topMargin = dp(18);
+        page.addView(input, inputParams);
+
+        if (query.isEmpty()) {
+            addSpacing(page, MobileViews.emptyState(this, R.drawable.ic_nav_search,
+                "Was suchst du?",
+                "Gib einen Titel ein - ELFIX durchsucht alle Anbieter gleichzeitig."), 8);
+            return;
+        }
+
+        LinearLayout resultsHolder = new LinearLayout(this);
+        resultsHolder.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, resultsHolder, MobileViews.SECTION_GAP);
+
+        resultsHolder.addView(MobileViews.sectionHeader(this, "Ergebnisse", null, null));
+        TextView loading = MobileViews.subtitle(this, "Suche bei allen Anbietern ...");
+        resultsHolder.addView(loading);
+        searchAllProvidersMobile(query, resultsHolder, loading);
+
+        addSpacing(page, MobileViews.sectionHeader(this, "Direkt beim Anbieter", null, null), MobileViews.SECTION_GAP);
+        for (Provider provider : providers) {
+            addSpacing(page, MobileViews.providerCard(this, provider, "\"" + query + "\" dort suchen",
+                () -> openProvider(provider, provider.buildSearchUrl(query)), null), MobileViews.ITEM_GAP);
+        }
+    }
+
+    /** Same crawl as the TV search, rendered as mobile result cards. */
+    private void searchAllProvidersMobile(String query, LinearLayout holder, View loading) {
+        new Thread(() -> {
+            ArrayList<SearchResult> found = new ArrayList<>();
+            for (Provider provider : providers) {
+                for (String variant : searchQueryVariants(query)) {
+                    ArrayList<SearchResult> providerResults =
+                        fetchSearchResults(provider, provider.buildSearchUrl(variant), variant);
+                    if (!providerResults.isEmpty()) {
+                        found.addAll(providerResults);
+                        break;
+                    }
+                }
+            }
+            runOnUiThread(() -> {
+                holder.removeView(loading);
+                if (found.isEmpty()) {
+                    holder.addView(MobileViews.subtitle(this, "Keine direkten Treffer gefunden."));
+                    return;
+                }
+                int shown = 0;
+                for (SearchResult result : found) {
+                    if (shown >= 30) break;
+                    String meta = result.genre == null || result.genre.isEmpty()
+                        ? result.provider.name
+                        : result.genre + " · " + result.provider.name;
+                    View card = MobileViews.favoriteCard(this, result.provider, result.title, meta, null,
+                        () -> openProvider(result.provider, result.url), null);
+                    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    params.topMargin = dp(MobileViews.ITEM_GAP);
+                    holder.addView(card, params);
+                    shown += 1;
+                }
+            });
+        }).start();
+    }
+
+    /** Settings rows as grouped cards instead of stacked headline/paragraph pairs. */
+    private View settingsCard(String title, String body, String actionLabel, Runnable onAction) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        card.setBackground(MobileViews.shape(this, Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS, Theme.BORDER, 1));
+
+        TextView head = new TextView(this);
+        head.setText(title);
+        head.setTextColor(Theme.TEXT_PRIMARY);
+        head.setTextSize(16);
+        head.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        card.addView(head);
+
+        TextView text = new TextView(this);
+        text.setText(body);
+        text.setTextColor(Theme.TEXT_SECONDARY);
+        text.setTextSize(13.5f);
+        text.setLineSpacing(0, 1.15f);
+        text.setPadding(0, dp(6), 0, 0);
+        card.addView(text);
+
+        if (actionLabel != null && onAction != null) {
+            TextView action = MobileViews.secondaryButton(this, actionLabel, onAction);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(MobileViews.TOUCH_TARGET));
+            params.topMargin = dp(12);
+            card.addView(action, params);
+        }
+        return card;
+    }
+
+    private void renderMobileSettings() {
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "ELFIX"));
+        page.addView(MobileViews.heroTitle(this, "Einstellungen"));
+
+        addSpacing(page, settingsCard("Werbeblocker",
+            "AdGuard-Filterlisten (Basis, Mobile Ads, Tracking-Schutz) sind aktiv. Innerhalb des Video-Hosters "
+                + "wird bewusst zurückhaltender gefiltert, damit die Wiedergabe nicht blockiert wird.",
+            null, null), 18);
+
+        addSpacing(page, settingsCard("Favoriten-Fortschritt",
+            isStaticFavoriteProgress()
+                ? "Favoriten bleiben statisch auf der gespeicherten Folge."
+                : "Favoriten springen automatisch zur direkt nächsten Folge.",
+            isStaticFavoriteProgress() ? "Auf nächste Folge umstellen" : "Statisch machen",
+            () -> {
+                favoriteProgressMode = isStaticFavoriteProgress() ? "sequential" : "static";
+                getSharedPreferences("elflix_settings", MODE_PRIVATE)
+                    .edit()
+                    .putString("favorite_progress_mode", favoriteProgressMode)
+                    .apply();
+                showToast("Gespeichert");
+                showSettings();
+            }), MobileViews.ITEM_GAP);
+
+        addSpacing(page, settingsCard("Zwischenspeicher",
+            "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
+            "Alles neu laden", this::reloadAllWebViews), MobileViews.ITEM_GAP);
+    }
+
+    private Provider providerForFavorite(Favorite favorite) {
+        for (Provider provider : providers) {
+            if (provider.id.equals(favorite.providerId)) return provider;
+        }
+        return null;
+    }
+
+    private View mobileFavoriteCard(Favorite favorite) {
+        String title = cleanFavoriteTitle(favorite.title, favorite.url);
+        if (title.isEmpty()) title = "Favorit";
+        return MobileViews.favoriteCard(this, providerForFavorite(favorite), title,
+            favoriteEpisodeLabel(favorite.url), favorite.providerName,
+            () -> openFavorite(favorite),
+            () -> {
+                favorites.remove(favorite);
+                FavoriteStore.save(this, favorites);
+                showToast("Aus Favoriten entfernt");
+                if ("favorites".equals(currentScreen)) showFavorites();
+                else showHome();
+            });
     }
 
     private TextView smallLabel(String text) {
@@ -418,7 +1198,7 @@ public class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(text);
         view.setTextColor(Color.WHITE);
-        view.setTextSize(42);
+        view.setTextSize(heroTextSp());
         view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         view.setMaxLines(2);
         view.setEllipsize(TextUtils.TruncateAt.END);
@@ -452,7 +1232,6 @@ public class MainActivity extends Activity {
         button.setTextColor(Color.WHITE);
         button.setTextSize(17);
         button.setFocusable(true);
-        button.setBackground(rounded(Color.rgb(28, 36, 50), 18));
         applyTvFocus(button, Color.rgb(28, 36, 50), Color.rgb(58, 72, 96), 18);
         button.setOnClickListener(view -> openFavorite(favorite));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76));
@@ -467,16 +1246,58 @@ public class MainActivity extends Activity {
     }
 
     private void applyTvFocus(Button button, int normalColor, int focusedColor, int radiusDp) {
-        button.setOnFocusChangeListener((view, focused) -> {
-            view.animate().scaleX(focused ? 1.045f : 1f).scaleY(focused ? 1.045f : 1f).setDuration(120).start();
-            view.setBackground(rounded(focused ? focusedColor : normalColor, radiusDp));
+        applySurface(button, radiusDp,
+            rounded(normalColor, radiusDp, SUBTLE_BORDER, 1),
+            rounded(focusedColor, radiusDp, ACCENT, 3));
+    }
+
+    private void applyProviderFocus(Button button, boolean active) {
+        int normalFill = active ? Color.rgb(86, 32, 44) : Color.rgb(28, 36, 50);
+        applySurface(button, 16,
+            rounded(normalFill, 16, active ? ACCENT : SUBTLE_BORDER, active ? 2 : 1),
+            rounded(Color.rgb(112, 48, 62), 16, ACCENT, 3));
+    }
+
+    /**
+     * Applies the idle/highlight backgrounds for a button.
+     *
+     * On TV the highlight is driven by D-pad focus and is deliberately loud (accent border, scale,
+     * lift) because the selection has to be readable from the couch. On a touch device nothing is
+     * ever "focused" while you tap, so the same treatment would either never show or leave a
+     * stuck-looking highlight -- phones get a press state instead.
+     */
+    private void applySurface(Button button, int radiusDp, GradientDrawable idle, GradientDrawable highlight) {
+        button.setBackground(idle);
+        if (isTelevision()) {
+            button.setOnFocusChangeListener((view, focused) -> {
+                view.animate().scaleX(focused ? 1.06f : 1f).scaleY(focused ? 1.06f : 1f).setDuration(120).start();
+                view.setBackground(focused ? highlight : idle);
+                if (android.os.Build.VERSION.SDK_INT >= 21) view.setElevation(focused ? dp(6) : 0);
+            });
+            return;
+        }
+        button.setOnTouchListener((view, event) -> {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                view.setBackground(highlight);
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                view.setBackground(idle);
+            }
+            return false;
         });
     }
 
     private void setChromeCollapsed(boolean collapsed, boolean moveFocus) {
         chromeCollapsed = collapsed;
+        // On TV "collapsed" means gone, not a slimmer strip. Everything the small bar offered has a
+        // key on the remote -- 1 favourite, BACK back, MENU brings the chrome back -- so the strip
+        // only ever cost picture. Phones keep it: there is no remote to fall back on there.
+        boolean hideOnTv = collapsed && isTelevision();
         if (appChrome != null) appChrome.setVisibility(collapsed ? View.GONE : View.VISIBLE);
-        if (collapsedChrome != null) collapsedChrome.setVisibility(collapsed ? View.VISIBLE : View.GONE);
+        if (collapsedChrome != null) {
+            collapsedChrome.setVisibility(collapsed && !hideOnTv ? View.VISIBLE : View.GONE);
+        }
+        if (chromeHolder != null) chromeHolder.setVisibility(hideOnTv ? View.GONE : View.VISIBLE);
         if (!moveFocus) return;
         if (collapsed) {
             focusActiveWebView();
@@ -520,7 +1341,6 @@ public class MainActivity extends Activity {
                     button.setTextColor(Color.WHITE);
                     button.setTextSize(16);
                     button.setFocusable(true);
-                    button.setBackground(rounded(Color.rgb(28, 36, 50), 18));
                     applyTvFocus(button, Color.rgb(28, 36, 50), Color.rgb(58, 72, 96), 18);
                     button.setOnClickListener(view -> openProvider(result.provider, result.url));
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78));
@@ -1194,113 +2014,52 @@ public class MainActivity extends Activity {
     }
 
     private void showGlobalSearch(String query) {
+        currentScreen = "search";
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
         content.removeAllViews();
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout results = new LinearLayout(this);
-        results.setOrientation(LinearLayout.VERTICAL);
-        results.setPadding(dp(42), dp(32), dp(42), dp(32));
-        results.setBackgroundColor(Color.rgb(7, 10, 16));
-        scroll.addView(results, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        results.addView(smallLabel("Globale Suche"));
-        TextView title = new TextView(this);
-        title.setText(query.isEmpty() ? "Suchen" : "\"" + query + "\" suchen");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(28);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        results.addView(title);
-        if (query.isEmpty()) {
-            results.addView(copyText("Suchbegriff oben eingeben und Enter druecken."));
-        } else {
-            TextView loading = copyText("Suche alle Anbieter...");
-            results.addView(loading);
-            searchAllProviders(query, results, loading);
-        }
-
-        results.addView(sectionTitle("Direktsuche"));
-        for (Provider provider : providers) {
-            Button button = providerButton(provider);
-            button.setText(query.isEmpty() ? provider.name : provider.name + " Direktsuche");
-            button.setOnClickListener(view -> {
-                if (query.isEmpty()) openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl);
-                else openProvider(provider, provider.buildSearchUrl(query));
-            });
-            results.addView(button);
-        }
+        updateBottomNav();
+        if (isTelevision()) renderTvSearch(query);
+        else renderMobileSearch(query);
     }
 
     private void showFavorites() {
+        currentScreen = "favorites";
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
         content.removeAllViews();
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout results = new LinearLayout(this);
-        results.setOrientation(LinearLayout.VERTICAL);
-        results.setPadding(dp(42), dp(32), dp(42), dp(32));
-        results.setBackgroundColor(Color.rgb(7, 10, 16));
-        scroll.addView(results, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        results.addView(smallLabel("Elflix"));
-        results.addView(titleText("Favoriten"));
-
-        if (favorites.isEmpty()) {
-            TextView empty = new TextView(this);
-            empty.setText("♡\n\nNoch keine Favoriten\nSpeichere Seiten ueber das Herz im Browser.");
-            empty.setGravity(Gravity.CENTER);
-            empty.setTextColor(Color.WHITE);
-            empty.setTextSize(24);
-            results.addView(empty, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        updateBottomNav();
+        if (isTelevision()) {
+            renderTvFavorites();
             return;
         }
-
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "Deine Liste"));
+        page.addView(MobileViews.heroTitle(this, "Favoriten"));
+        if (favorites.isEmpty()) {
+            addSpacing(page, MobileViews.emptyState(this, R.drawable.ic_nav_favorite,
+                "Noch keine Favoriten",
+                "Tippe im Anbieter oben auf das Herz, um hier weiterzumachen."), 8);
+            return;
+        }
+        addSpacing(page, MobileViews.subtitle(this,
+            favorites.size() == 1 ? "1 Titel gespeichert" : favorites.size() + " Titel gespeichert"), 0);
         for (Favorite favorite : favorites) {
-            Button button = favoriteListButton(favorite);
-            button.setOnLongClickListener(view -> {
-                favorites.remove(favorite);
-                FavoriteStore.save(this, favorites);
-                showToast("Aus Favoriten entfernt");
-                showFavorites();
-                return true;
-            });
-            results.addView(button);
+            addSpacing(page, mobileFavoriteCard(favorite), MobileViews.ITEM_GAP);
         }
     }
 
     private void showSettings() {
+        currentScreen = "settings";
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
         content.removeAllViews();
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout results = new LinearLayout(this);
-        results.setOrientation(LinearLayout.VERTICAL);
-        results.setPadding(dp(42), dp(32), dp(42), dp(32));
-        results.setBackgroundColor(Color.rgb(7, 10, 16));
-        scroll.addView(results, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        results.addView(smallLabel("Elflix"));
-        results.addView(titleText("Settings"));
-        results.addView(sectionTitle("Wiedergabe"));
-        results.addView(copyText("Favoriten koennen automatisch nur zur direkt naechsten Folge springen oder komplett statisch bleiben."));
-
-        Button progressButton = textButton(favoriteProgressLabel());
-        progressButton.setOnClickListener(view -> {
-            favoriteProgressMode = isStaticFavoriteProgress() ? "sequential" : "static";
-            getSharedPreferences("elflix_settings", MODE_PRIVATE)
-                .edit()
-                .putString("favorite_progress_mode", favoriteProgressMode)
-                .apply();
-            progressButton.setText(favoriteProgressLabel());
-            showToast("Gespeichert");
-        });
-        results.addView(progressButton);
+        updateBottomNav();
+        if (isTelevision()) renderTvSettings();
+        else renderMobileSettings();
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1328,6 +2087,11 @@ public class MainActivity extends Activity {
         webView.setFocusableInTouchMode(true);
         webView.setWebViewClient(new GuardedWebViewClient(provider));
         webView.setWebChromeClient(new GuardedChromeClient());
+        // Ad frames on these sites try to push APKs and other files. ELFIX never downloads anything,
+        // so the hook exists purely to swallow the attempt instead of handing it to the system
+        // DownloadManager (which is what the absence of a listener effectively allowed).
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) ->
+            Log.i(TAG, "Download blocked host=" + safeHost(url) + " mime=" + mimeType));
         webViews.put(provider.id, webView);
         return webView;
     }
@@ -1337,6 +2101,12 @@ public class MainActivity extends Activity {
     }
 
     private void openProvider(Provider provider, String url, boolean preserveFavoriteProgress) {
+        currentScreen = "provider";
+        // A deliberate navigation ends any hoster chain that was still allowed to hop.
+        hosterChainHops = 0;
+        // Switching provider while a video is fullscreen would otherwise strand the overlay: the
+        // content frame gets cleared below while fullscreenView still pointed at the removed view.
+        hideFullscreen();
         if (!preserveFavoriteProgress) {
             activeFavoriteId = null;
         }
@@ -1352,8 +2122,13 @@ public class MainActivity extends Activity {
         if (shouldBlockProviderNavigation(provider, url)) {
             url = provider.startUrl;
         }
+        Log.i(TAG, "Provider opened id=" + provider.id + " host=" + safeHost(url)
+            + " reusedWebView=" + (webView.getUrl() != null));
+        // The website gets the whole panel on TV. The bar is one MENU press away when it is wanted.
+        if (isTelevision()) setChromeCollapsed(true, false);
         boolean sameUrl = webView.getUrl() != null && webView.getUrl().equals(url);
         if (!sameUrl) {
+            showProviderLoading(provider);
             webView.loadUrl(url);
         } else {
             resumeMediaIfNeeded(provider.id, webView);
@@ -1361,7 +2136,77 @@ public class MainActivity extends Activity {
         setChromeCollapsed(true, false);
         if (mouseMode) setMouseCursorVisible(true);
         webView.requestFocus();
+        updateBrowserBar();
+        updateBottomNav();
         updateFavoriteButton();
+    }
+
+    private void showProviderLoading(Provider provider) {
+        hideProviderLoading();
+        if (content == null) return;
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.rgb(7, 10, 16));
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER);
+        android.widget.ProgressBar spinner = new android.widget.ProgressBar(this);
+        spinner.getIndeterminateDrawable().setColorFilter(ACCENT, android.graphics.PorterDuff.Mode.SRC_IN);
+        box.addView(spinner, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        TextView label = copyText(provider.name + " wird geladen …");
+        label.setGravity(Gravity.CENTER);
+        label.setPadding(0, dp(14), 0, 0);
+        box.addView(label);
+        overlay.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        content.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        loadingOverlay = overlay;
+    }
+
+    private void hideProviderLoading() {
+        if (loadingOverlay != null && content != null) {
+            content.removeView(loadingOverlay);
+        }
+        loadingOverlay = null;
+    }
+
+    private void showProviderError(Provider provider, String message) {
+        if (provider == null || provider != activeProvider || content == null) return;
+        hideProviderLoading();
+        content.removeAllViews();
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setGravity(Gravity.CENTER);
+        page.setPadding(dp(pagePaddingHorizontalDp()), dp(pagePaddingVerticalDp()), dp(pagePaddingHorizontalDp()), dp(pagePaddingVerticalDp()));
+        page.setBackgroundColor(Color.rgb(7, 10, 16));
+
+        TextView icon = new TextView(this);
+        icon.setText("⚠");
+        icon.setTextSize(48);
+        icon.setTextColor(ACCENT);
+        icon.setGravity(Gravity.CENTER);
+        page.addView(icon);
+
+        TextView title = titleText(provider.name + " nicht erreichbar");
+        title.setTextSize(26);
+        title.setGravity(Gravity.CENTER);
+        page.addView(title);
+
+        TextView copy = copyText(message);
+        copy.setGravity(Gravity.CENTER);
+        page.addView(copy);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER);
+        Button retry = textButton("Erneut versuchen");
+        retry.setOnClickListener(view -> openProvider(provider, provider.startUrl));
+        actions.addView(retry);
+        Button home = textButton("Zur Startseite");
+        home.setOnClickListener(view -> showHome());
+        actions.addView(home);
+        page.addView(actions, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(62)));
+
+        content.addView(page, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        retry.requestFocus();
     }
 
     private void openFavorite(Favorite favorite) {
@@ -1375,6 +2220,9 @@ public class MainActivity extends Activity {
         if (provider == null && !providers.isEmpty()) provider = providers.get(0);
         if (provider != null) {
             activeFavoriteId = favorite.id;
+            // Picking a favourite means "watch this", so the page opens its player and goes
+            // fullscreen by itself instead of leaving three more button presses to do.
+            armAutoStart(favorite.url);
             openProvider(provider, favorite.url, true);
         }
     }
@@ -1415,17 +2263,15 @@ public class MainActivity extends Activity {
     }
 
     private void updateFavoriteButton() {
-        if (favoriteButton == null) return;
-        if (activeProvider == null || !webViews.containsKey(activeProvider.id)) {
-            favoriteButton.setText("♡");
-            return;
+        WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
+        boolean saved = webView != null && webView.getUrl() != null
+            && matchingFavoriteIndex(activeProvider, webView.getUrl()) >= 0;
+        if (browserFavoriteIcon != null) {
+            browserFavoriteIcon.setImageResource(saved
+                ? R.drawable.ic_nav_favorite_filled : R.drawable.ic_nav_favorite);
+            browserFavoriteIcon.setColorFilter(saved ? Theme.PRIMARY : Theme.TEXT_PRIMARY);
         }
-        WebView webView = webViews.get(activeProvider.id);
-        if (webView == null || webView.getUrl() == null) {
-            favoriteButton.setText("♡");
-            return;
-        }
-        favoriteButton.setText(matchingFavoriteIndex(activeProvider, webView.getUrl()) >= 0 ? "♥" : "♡");
+        if (favoriteButton != null) favoriteButton.setText(saved ? "♥" : "♡");
     }
 
     private int matchingFavoriteIndex(Provider provider, String url) {
@@ -1630,6 +2476,54 @@ public class MainActivity extends Activity {
         return Adblocker.isLikelyVideoPlayerUrl(url) && !adblocker.shouldBlock(url, provider);
     }
 
+    /**
+     * A main-frame navigation with no user gesture, going to a host that is neither the page
+     * currently loaded, first-party for the provider, nor a known video-hoster/player URL, is
+     * almost always a forced ad redirect (popunder-style "you've won"/YouTube/etc. pages) rather
+     * than something the user asked for.
+     */
+    private boolean isSuspiciousAutoRedirect(WebView view, Provider provider, String url) {
+        try {
+            URI target = new URI(url);
+            String targetHost = target.getHost();
+            if (targetHost == null) return false;
+            String currentPageUrl = view.getUrl();
+            String currentHost = currentPageUrl == null ? null : new URI(currentPageUrl).getHost();
+            if (currentHost != null) {
+                String t = targetHost.toLowerCase();
+                String c = currentHost.toLowerCase();
+                if (t.equals(c) || t.endsWith("." + c) || c.endsWith("." + t)) return false;
+            }
+            String baseHost = provider == null ? null : new URI(provider.startUrl).getHost();
+            if (baseHost != null && isProviderFirstPartyHost(provider, targetHost, baseHost)) return false;
+            if (Adblocker.isLikelyVideoPlayerUrl(url)) return false;
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean isPopupFirstParty(Provider provider, String url) {
+        try {
+            URI target = new URI(url);
+            URI base = new URI(provider.startUrl);
+            return target.getHost() != null && base.getHost() != null
+                && isProviderFirstPartyHost(provider, target.getHost(), base.getHost());
+        } catch (Exception malformed) {
+            return false;
+        }
+    }
+
+    /** Path only, for diagnosing which heuristic matched -- no query string, which can carry ids. */
+    private static String safePath(String url) {
+        try {
+            String path = android.net.Uri.parse(url).getPath();
+            return path == null || path.isEmpty() ? "/" : path;
+        } catch (Exception malformed) {
+            return "-";
+        }
+    }
+
     private boolean isProviderFirstPartyHost(Provider provider, String targetHost, String baseHost) {
         String target = stripWww(targetHost);
         String base = stripWww(baseHost);
@@ -1679,13 +2573,17 @@ public class MainActivity extends Activity {
             : currentUrl;
 
         content.removeAllViews();
-        for (WebView webView : webViews.values()) {
-            try {
-                webView.stopLoading();
-                webView.loadUrl("about:blank");
-                webView.destroy();
-            } catch (Exception ignored) {
+        for (Map.Entry<String, WebView> entry : webViews.entrySet()) {
+            WebView webView = entry.getValue();
+            if (webView == null) continue;
+            // Detach before destroy: a destroyed WebView must never stay attached to a parent,
+            // and must never be touched again afterwards.
+            if (webView.getParent() instanceof ViewGroup) {
+                ((ViewGroup) webView.getParent()).removeView(webView);
             }
+            webView.stopLoading();
+            webView.destroy();
+            Log.i(TAG, "WebView destroyed provider=" + entry.getKey());
         }
         webViews.clear();
         providerResumeState.clear();
@@ -1702,6 +2600,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
+        if (webView != null) webView.onPause();
     }
 
     @Override
@@ -1764,11 +2664,19 @@ public class MainActivity extends Activity {
             webView.goBack();
             return;
         }
+        if (!"home".equals(currentScreen)) {
+            showHome();
+            return;
+        }
         super.onBackPressed();
     }
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        logRemoteKey(event);
+        if (event.getAction() == KeyEvent.ACTION_DOWN && handleRemoteShortcut(event.getKeyCode())) {
+            return true;
+        }
         if (fullscreenView != null && handleFullscreenKey(event)) {
             return true;
         }
@@ -1777,7 +2685,7 @@ public class MainActivity extends Activity {
             if (mouseMode && handleMouseModeKey(keyCode)) {
                 return true;
             }
-            if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == KeyEvent.KEYCODE_SPACE) {
+            if (keyCode == KeyEvent.KEYCODE_SPACE) {
                 togglePlayback();
                 return true;
             }
@@ -1786,29 +2694,9 @@ public class MainActivity extends Activity {
                 focusSearch();
                 return true;
             }
-            if (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_SETTINGS) {
-                if (chromeCollapsed) {
-                    setChromeCollapsed(false, true);
-                    return true;
-                }
-                showSettings();
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_0 || keyCode == KeyEvent.KEYCODE_INFO || keyCode == KeyEvent.KEYCODE_PROG_RED) {
-                toggleMouseMode();
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_BOOKMARK) {
-                toggleFavorite();
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_PAGE_UP) {
-                cycleProvider(-1);
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN || keyCode == KeyEvent.KEYCODE_PAGE_DOWN) {
-                cycleProvider(1);
-                return true;
+            if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)
+                && isTelevision() && "provider".equals(currentScreen) && fullscreenView == null) {
+                tvActivateFocusedFrame();
             }
             if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) && searchInput != null && searchInput.hasFocus()) {
                 showGlobalSearch(searchInput.getText().toString().trim());
@@ -1822,31 +2710,497 @@ public class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
+    /**
+     * Every key the app sees, named. Remotes disagree about what their buttons send -- the long
+     * up/down rocker beside GUIDE is usually CHANNEL_UP/DOWN but some send PAGE_UP/DOWN or
+     * DPAD_UP/DOWN, and colour buttons are frequently swallowed by the launcher before an app ever
+     * sees them. Rather than assume from the printed symbol, this prints what actually arrives, so
+     * the table in handleRemoteShortcut() can be corrected against a real device:
+     *   adb logcat -s ELFIX | grep "KEY "
+     */
+    private void logRemoteKey(KeyEvent event) {
+        Log.i(TAG, "KEY " + KeyEvent.keyCodeToString(event.getKeyCode())
+            + " code=" + event.getKeyCode()
+            + " action=" + event.getAction()
+            + " repeat=" + event.getRepeatCount()
+            + " scan=" + event.getScanCode()
+            + " source=0x" + Integer.toHexString(event.getSource())
+            + " device=" + event.getDeviceId()
+            + " fullscreen=" + (fullscreenView != null)
+            + " screen=" + currentScreen);
+    }
+
+    /**
+     * The one place remote buttons are mapped to actions. Everything global lives here so a button
+     * never has to be looked for in three different handlers.
+     *
+     * The big D-pad and its OK button are deliberately absent: they stay with normal focus movement
+     * and clicking. Fullscreen-only behaviour (OK tapping the video, re-asserting the system UI)
+     * remains in handleFullscreenKey(), which runs after this.
+     */
+    private boolean handleRemoteShortcut(int keyCode) {
+        boolean fullscreen = fullscreenView != null;
+        boolean onWebsite = "provider".equals(currentScreen) && currentWebView() != null;
+        switch (keyCode) {
+            // The separate up/down rocker scrolls the page. Not the D-pad.
+            case KeyEvent.KEYCODE_CHANNEL_UP:
+            case KeyEvent.KEYCODE_PAGE_UP:
+                if (!onWebsite || fullscreen) return false;
+                scrollActiveWebView(-dp(360));
+                return true;
+            case KeyEvent.KEYCODE_CHANNEL_DOWN:
+            case KeyEvent.KEYCODE_PAGE_DOWN:
+                if (!onWebsite || fullscreen) return false;
+                scrollActiveWebView(dp(360));
+                return true;
+
+            // Media transport: the two skip keys change ELFIX tab, the middle one drives the video.
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                cycleProvider(-1);
+                return true;
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+            case KeyEvent.KEYCODE_MEDIA_NEXT:
+                cycleProvider(1);
+                return true;
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (fullscreen) tapFullscreenCentre();
+                else togglePlayback();
+                return true;
+
+            // Numbers, and the colour buttons alongside them for the same actions.
+            case KeyEvent.KEYCODE_1:
+            case KeyEvent.KEYCODE_PROG_RED:
+                if (!onWebsite) return false;
+                toggleFavorite();
+                return true;
+            case KeyEvent.KEYCODE_3:
+            case KeyEvent.KEYCODE_PROG_GREEN:
+                if (fullscreen) hideFullscreen();
+                showHome();
+                return true;
+            case KeyEvent.KEYCODE_5:
+                if (!onWebsite) return false;
+                if (fullscreen) hideFullscreen();
+                else enterPlayerFullscreen();
+                return true;
+            case KeyEvent.KEYCODE_7:
+            case KeyEvent.KEYCODE_PROG_BLUE:
+                if (!onWebsite || fullscreen) return false;
+                toggleChromeFocus();
+                return true;
+            case KeyEvent.KEYCODE_9:
+            case KeyEvent.KEYCODE_PROG_YELLOW:
+                if (!onWebsite) return false;
+                openNextEpisode();
+                return true;
+            case KeyEvent.KEYCODE_0:
+            case KeyEvent.KEYCODE_INFO:
+                toggleMouseMode();
+                return true;
+
+            case KeyEvent.KEYCODE_BOOKMARK:
+                if (!onWebsite) return false;
+                toggleFavorite();
+                return true;
+
+            // The bar is a toggle now, in both directions, instead of only ever coming back.
+            case KeyEvent.KEYCODE_MENU:
+            case KeyEvent.KEYCODE_SETTINGS:
+                if (fullscreen) return false;
+                if (!onWebsite) return false;
+                setChromeCollapsed(!chromeCollapsed, true);
+                return true;
+
+            // Leaving fullscreen must not also walk the browser history back a page.
+            case KeyEvent.KEYCODE_BACK:
+            case KeyEvent.KEYCODE_ESCAPE:
+                if (!fullscreen) return false;
+                hideFullscreen();
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Open the hoster, start playback and go fullscreen without further button presses.
+     *
+     * Three separate things have to happen in order and none of them is instant, so this is a chain
+     * of steps rather than one call: the hoster link has to be clicked to build the inline player,
+     * the player then needs a real tap to start (its play overlay does not answer synthetic DOM
+     * events), and only once something is playing does asking for fullscreen make sense.
+     *
+     * It is deliberately best-effort. These pages answer a click with a popunder attempt, and when
+     * the ad blocker eats that the click is spent on the blocked popup rather than on the player --
+     * hence "press it again" rather than retry loops that would keep hammering the page.
+     */
+    /**
+     * Ask the next load of this exact URL to start itself.
+     *
+     * Cleared when navigation goes somewhere else rather than after a timeout. A timeout was the
+     * first attempt and it was wrong: measured on a throttled connection, AniWorld had still not
+     * finished loading after 150 seconds, so any deadline short enough to be useful as a safety net
+     * also cancelled perfectly good slow loads. What actually makes a request stale is the user
+     * going somewhere else, and that is observable exactly. The long stop is only there so a request
+     * cannot survive indefinitely if no navigation ever happens again.
+     */
+    private void armAutoStart(String url) {
+        autoStartRequested = true;
+        autoStartUrl = url;
+        autoStartArmedAt = SystemClock.uptimeMillis();
+    }
+
+    private void disarmAutoStart(String reason) {
+        if (!autoStartRequested) return;
+        Log.i(TAG, "Autostart disarmed: " + reason);
+        autoStartRequested = false;
+        autoStartUrl = null;
+    }
+
+    private boolean autoStartArmedFor(String url) {
+        if (!autoStartRequested || !isSameUrl(url, autoStartUrl)) return false;
+        return SystemClock.uptimeMillis() - autoStartArmedAt <= AUTOSTART_ARM_TTL_MS;
+    }
+
+    /**
+     * Poll the page until a probe answers, instead of guessing how long a step takes.
+     *
+     * Every step of the chain waits on something the page produces at its own pace -- the hoster
+     * list, then the player frame that only exists once the hoster has been contacted. A fixed delay
+     * is right on exactly one connection speed: too short and the step is skipped on a slow line,
+     * too long and it feels broken on a fast one. The probe returns an empty string while it is not
+     * ready yet, and the answer itself once it is.
+     */
+    private void awaitPage(WebView webView, String url, String probeJs, long deadlineAt,
+            java.util.function.Consumer<String> onReady, Runnable onTimeout) {
+        // A null url means "wherever we end up is fine". Opening a hoster does not always build an
+        // inline player: AniWorld also answers the click by sending the main frame to /redirect/...,
+        // and then the player *is* the page. Insisting on the episode URL aborted exactly that case.
+        if (url != null && !isSameUrl(webView.getUrl(), url)) {
+            Log.i(TAG, "Autostart aborted, page changed to " + safePath(webView.getUrl()));
+            return;
+        }
+        webView.evaluateJavascript(probeJs, value -> {
+            String result = value == null ? "" : value.replace("\"", "").trim();
+            if (!result.isEmpty() && !"null".equals(result)) {
+                onReady.accept(result);
+                return;
+            }
+            if (SystemClock.uptimeMillis() >= deadlineAt) {
+                onTimeout.run();
+                return;
+            }
+            webView.postDelayed(
+                () -> awaitPage(webView, url, probeJs, deadlineAt, onReady, onTimeout),
+                AUTOSTART_POLL_MS);
+        });
+    }
+
+    /**
+     * The page usually brings its own player, so the first move is to wait rather than to click.
+     *
+     * Measured on a freshly loaded AniWorld episode page with nothing clicked at all: the
+     * /redirect/<id> iframe is already embedded at 710x480. Clicking a hoster on top of that is not
+     * just redundant -- it is the click these pages spend on a popunder, and it is what sends the
+     * main frame off to the hoster's own domain, which is how the page stops being an episode page
+     * and key 9 loses the episode list. So the click is the fallback for pages that really do not
+     * embed anything, not the opening move.
+     */
+    private void runAutoStart(WebView webView, String url) {
+        Log.i(TAG, "Autostart begin url=" + safePath(url));
+        showToast("Startet …");
+        awaitPage(webView, url, PLAYER_PROBE_JS,
+            SystemClock.uptimeMillis() + AUTOSTART_EMBEDDED_TIMEOUT_MS,
+            ready -> {
+                Log.i(TAG, "Autostart using the player the page already embeds");
+                autoStartPressFive(webView);
+            },
+            () -> {
+                Log.i(TAG, "Autostart: nothing embedded, falling back to the hoster list");
+                clickHoster(webView, url);
+            });
+    }
+
+    /** Fallback for pages that do not embed a player themselves. */
+    private void clickHoster(WebView webView, String url) {
+        awaitPage(webView, url,
+            "(function(){"
+                + "function visible(el){var r=el.getBoundingClientRect();return r.width>0&&r.height>0;}"
+                + "var links=Array.prototype.slice.call(document.querySelectorAll('a.watchEpisode'))"
+                    + ".filter(visible);"
+                + "if(!links.length)return '';"
+                // Prefer the hoster ELFIX is known to drive: VOE's player exposes the controls the
+                // rest of this chain relies on. Otherwise just take the first one offered.
+                + "var pick=links.filter(function(a){"
+                    + "return /voe/i.test(a.querySelector('h4')?a.querySelector('h4').textContent:'');"
+                + "})[0]||links[0];"
+                + "pick.scrollIntoView({block:'center'});"
+                + "pick.click();"
+                + "return 'clicked';"
+            + "})();",
+            SystemClock.uptimeMillis() + AUTOSTART_HOSTER_TIMEOUT_MS,
+            result -> {
+                Log.i(TAG, "Autostart hoster " + result);
+                autoStartFullscreen(webView, url);
+            },
+            () -> {
+                Log.w(TAG, "Autostart: no hoster link within timeout");
+                showToast("Kein Hoster gefunden");
+            });
+    }
+
+    /**
+     * Second step: once a player exists, go fullscreen -- and only then start it.
+     *
+     * The chain stops here, with the player up in fullscreen and paused. Starting it is left to the
+     * viewer: these pages spend the first click on a popunder often enough that an automatic tap was
+     * a coin toss, and a coin toss that sometimes pauses a video that had already started is worse
+     * than no tap at all -- whether playback is running cannot be read back from a cross-origin
+     * hoster frame. OK on the remote taps the middle of the full-screen video.
+     */
+    private void autoStartFullscreen(WebView webView, String url) {
+        awaitPage(webView, null, PLAYER_PROBE_JS,
+            SystemClock.uptimeMillis() + AUTOSTART_PLAYER_TIMEOUT_MS,
+            ready -> autoStartPressFive(webView),
+            () -> {
+                Log.w(TAG, "Autostart: player frame did not appear within timeout");
+                showToast("Player nicht bereit -- nochmal drücken");
+            });
+    }
+
+    private void autoStartPressFive(WebView webView) {
+        if (currentWebView() != webView) return;
+        // Let the player settle before touching it. Finding the frame only means the element exists;
+        // the hoster is still wiring up its own script behind it, and going fullscreen into that
+        // window behaved differently from a fullscreen the viewer triggers by hand seconds later.
+        webView.postDelayed(() -> {
+            if (currentWebView() != webView || fullscreenView != null) return;
+            Log.i(TAG, "Autostart pressing 5");
+            // Literally the key: same entry point, same guards, same everything the remote goes
+            // through. Calling enterPlayerFullscreen() directly would be one code path for the
+            // automatic case and another for the manual one, and those two drift.
+            handleRemoteShortcut(KeyEvent.KEYCODE_5);
+        }, AUTOSTART_SETTLE_MS);
+    }
+
+    /** AniWorld and s.to both address episodes as .../staffel-<n>/episode-<m>. */
+    private boolean isEpisodeUrl(String url) {
+        if (url == null) return false;
+        return url.matches("^https?://[^?#]*/staffel-\\d+/episode-\\d+/?(\\?.*)?$");
+    }
+
+    private boolean isSameUrl(String a, String b) {
+        return a != null && b != null && FavoriteStore.normalizeUrl(a).equals(FavoriteStore.normalizeUrl(b));
+    }
+
+    /** Hand the remote back and forth between the ELFIX bar and the page. */
+    private void toggleChromeFocus() {
+        if (chromeCollapsed || isChromeFocused()) {
+            // Bar hidden, or the bar has focus: give the page the remote and take the bar away.
+            boolean wantChrome = chromeCollapsed;
+            setChromeCollapsed(!wantChrome, true);
+            return;
+        }
+        setChromeCollapsed(true, false);
+        focusActiveWebView();
+    }
+
+    /**
+     * Jump to the next episode. AniWorld and s.to both address episodes as
+     * .../staffel-<n>/episode-<m>, so the next one is derived from the current URL -- but only after
+     * the page has confirmed that a link to it exists, otherwise the last episode of a season would
+     * navigate into a 404. When the season is exhausted the first episode of the next season is
+     * used, again only if the page offers that season at all.
+     */
+    private void openNextEpisode() {
+        WebView webView = currentWebView();
+        if (webView == null || activeProvider == null) return;
+        final Provider provider = activeProvider;
+        // Opening a hoster can take the main frame off the episode page entirely -- measured after an
+        // autostart, the WebView was sitting on nicolehappyoutside.com/e/<id>. The episode list only
+        // exists back on the provider's page, so go there first and pick up where we left off.
+        if (!isEpisodeUrl(webView.getUrl())) {
+            if (lastEpisodeUrl == null) {
+                showToast("Keine Folgenseite");
+                return;
+            }
+            Log.i(TAG, "Next episode: not on an episode page, returning to " + safePath(lastEpisodeUrl));
+            pendingNextEpisode = true;
+            openProvider(provider, lastEpisodeUrl, true);
+            return;
+        }
+        webView.evaluateJavascript(
+            "(function(){"
+                + "var m=location.pathname.match(/^(.*)\\/staffel-(\\d+)\\/episode-(\\d+)\\/?$/);"
+                + "if(!m)return 'no-episode-page';"
+                + "var base=m[1],season=parseInt(m[2],10),episode=parseInt(m[3],10);"
+                + "function linked(path){return !!document.querySelector('a[href$=\"'+path+'\"]');}"
+                + "var sameSeason='/staffel-'+season+'/episode-'+(episode+1);"
+                + "if(linked(sameSeason))return location.origin+base+sameSeason;"
+                // The season picker links the season itself, not its first episode -- measured on
+                // AniWorld: /anime/stream/one-piece/staffel-2 with no /episode-1 suffix. Checking for
+                // the episode URL here would always miss and end the series at every season break.
+                // ("ends with" is safe against staffel-1 matching staffel-11.)
+                + "if(linked('/staffel-'+(season+1)))"
+                    + "return location.origin+base+'/staffel-'+(season+1)+'/episode-1';"
+                + "return 'end-of-series';"
+            + "})();",
+            value -> {
+                String url = value == null ? "" : value.replace("\"", "").trim();
+                Log.i(TAG, "Next episode resolved to " + url);
+                if (url.startsWith("http")) {
+                    // preserveFavoriteProgress: the two-argument openProvider() clears
+                    // activeFavoriteId, and updateActiveFavoriteProgress() does nothing without it --
+                    // so jumping onwards with 9 would silently leave the favourite on the old
+                    // episode. The step this key makes is exactly what the progress rule accepts
+                    // (next episode, or episode 1 of the next season).
+                    armAutoStart(url);
+                    openProvider(provider, url, true);
+                } else if ("end-of-series".equals(url)) {
+                    showToast("Keine weitere Folge gefunden");
+                } else {
+                    showToast("Keine Folgenseite");
+                }
+            });
+    }
+
+    /**
+     * TV only: activate the focused player iframe.
+     *
+     * The hoster's player runs in a cross-origin iframe, so ELFIX cannot click inside it from
+     * JavaScript, and VOE's play overlay does not react to Enter. What we can do is ask the top
+     * document for the geometry of the element that currently has focus and deliver a real tap to
+     * that spot -- the same thing a TV browser does. The coordinates come from the focused
+     * element's own rect, never from a guess, and nothing happens unless an iframe is focused.
+     */
+    private void tvActivateFocusedFrame() {
+        WebView webView = currentWebView();
+        if (webView == null || !isTelevision()) return;
+        webView.evaluateJavascript(
+            "(function(){var a=document.activeElement;"
+                + "if(!a||a.tagName!=='IFRAME')return '';"
+                + "var r=a.getBoundingClientRect();"
+                + "if(r.width<40||r.height<40)return '';"
+                + "return Math.round(r.left+r.width/2)+','+Math.round(r.top+r.height/2);})()",
+            value -> {
+                String point = value == null ? "" : value.replace("\"", "").trim();
+                if (point.isEmpty() || point.equals("null") || !point.contains(",")) return;
+                String[] parts = point.split(",");
+                try {
+                    float density = getResources().getDisplayMetrics().density;
+                    float x = Float.parseFloat(parts[0]) * density;
+                    float y = Float.parseFloat(parts[1]) * density;
+                    Log.i(TAG, "TV activate frame at css=" + point + " px=" + Math.round(x) + "," + Math.round(y));
+                    dispatchTapOn(webView, x, y);
+                    // Measure the player geometry a moment after playback should have begun.
+                    webView.postDelayed(() -> logDomGeometry(webView, "tvActivate"), 6000);
+                } catch (NumberFormatException malformed) {
+                    Log.w(TAG, "TV activate frame: unusable rect " + point);
+                }
+            });
+    }
+
+    private void dispatchTapOn(WebView webView, float x, float y) {
+        long now = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0);
+        MotionEvent up = MotionEvent.obtain(now, now + 60, MotionEvent.ACTION_UP, x, y, 0);
+        webView.dispatchTouchEvent(down);
+        webView.dispatchTouchEvent(up);
+        down.recycle();
+        up.recycle();
+    }
+
+    /** Tap the middle of the fullscreen video -- the player's own play/pause and controls target. */
+    private void tapFullscreenCentre() {
+        View view = fullscreenView;
+        if (view == null) return;
+        if (view.getWidth() <= 0 || view.getHeight() <= 0) {
+            // Never tap an unmeasured view: the centre of a 0x0 view is the corner of the screen.
+            Log.w(TAG, "Fullscreen tap skipped, view not laid out yet");
+            return;
+        }
+        dispatchTapOnView(view, view.getWidth() / 2f, view.getHeight() / 2f);
+    }
+
+    private void dispatchTapOnView(View view, float x, float y) {
+        long now = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0);
+        MotionEvent up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, x, y, 0);
+        view.dispatchTouchEvent(down);
+        view.dispatchTouchEvent(up);
+        down.recycle();
+        up.recycle();
+    }
+
     private boolean handleFullscreenKey(KeyEvent event) {
         if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
         int keyCode = event.getKeyCode();
-        if (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_ESCAPE) {
-            hideFullscreen();
+        // OK reaches the player as a real tap on the middle of the video. Sending the key onwards
+        // does not: the hoster runs in a cross-origin iframe. In mouse mode OK belongs to the cursor
+        // instead, so it is left to handleMouseModeKey().
+        if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER
+            || keyCode == KeyEvent.KEYCODE_SPACE) && !mouseMode) {
+            tapFullscreenCentre();
             return true;
         }
-        if (keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || keyCode == KeyEvent.KEYCODE_SPACE) {
-            togglePlayback();
-            return true;
-        }
-        if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP
-            || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN
-            || keyCode == KeyEvent.KEYCODE_PAGE_UP
-            || keyCode == KeyEvent.KEYCODE_PAGE_DOWN
-            || keyCode == KeyEvent.KEYCODE_SEARCH
-            || keyCode == KeyEvent.KEYCODE_MENU
-            || keyCode == KeyEvent.KEYCODE_SETTINGS
-            || keyCode == KeyEvent.KEYCODE_INFO
-            || keyCode == KeyEvent.KEYCODE_PROG_RED
-            || keyCode == KeyEvent.KEYCODE_0) {
+        if (keyCode == KeyEvent.KEYCODE_SEARCH) {
             applyFullscreenSystemUi();
             return true;
         }
         return false;
+    }
+
+    /**
+     * Put the hoster player into fullscreen from the remote.
+     *
+     * requestFullscreen() demands a transient user activation, and evaluateJavascript() on its own
+     * does not carry one -- measured, the call comes back "Permissions check failed". The activation
+     * cannot come from the key the user actually pressed either: claiming KEYCODE_5 here means
+     * Chromium never sees it, and letting it through instead would have the player act on it (JW
+     * Player, which VOE uses, seeks to 50% on "5").
+     *
+     * What does work is that *any* real key event delivered to the WebView grants an activation
+     * inside the focused iframe, and that activation propagates up to the top document -- measured,
+     * navigator.userActivation.isActive flips to true there. So an F12 is dispatched first, purely
+     * to open that window: no player binds it (verified against VOE's JW Player, which ignored it
+     * without pausing or seeking), while Chromium still counts it as user input. The request then
+     * runs inside that window, retrying briefly because Chromium registers the key asynchronously.
+     */
+    private void enterPlayerFullscreen() {
+        WebView webView = currentWebView();
+        if (webView == null) return;
+        // Go to the top of the page first. Fullscreen is entered from a known scroll position rather
+        // than from wherever the page happened to be, so the state it comes back to is the same
+        // every time. The player does not need to stay in view for this -- requestFullscreen() works
+        // on an off-screen element, and the tap that starts playback lands on the full-screen video.
+        webView.scrollTo(0, 0);
+        long now = SystemClock.uptimeMillis();
+        webView.dispatchKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F12, 0));
+        webView.dispatchKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F12, 0));
+        webView.evaluateJavascript(
+            "(function(){"
+                + "function area(el){var r=el.getBoundingClientRect();return r.width*r.height;}"
+                + "function big(el){var r=el.getBoundingClientRect();return r.width>200&&r.height>150;}"
+                + "function pick(sel){var out=Array.prototype.slice.call(document.querySelectorAll(sel))"
+                    + ".filter(big).sort(function(a,b){return area(b)-area(a);});return out[0]||null;}"
+                // A hoster that embeds its <video> in the page directly is fullscreened on the video
+                // itself; the usual case is the player living in an iframe, which is what VOE does.
+                + "var target=pick('video')||pick('iframe');"
+                + "if(!target)return 'no-player';"
+                + "var tries=0;"
+                + "(function go(){"
+                    + "target.requestFullscreen().catch(function(){"
+                        + "if(++tries<10)setTimeout(go,100);"
+                    + "});"
+                + "})();"
+                + "return 'requested '+target.tagName;"
+            + "})();",
+            value -> Log.i(TAG, "FS/playerRequest " + value)
+        );
     }
 
     private boolean handleMouseModeKey(int keyCode) {
@@ -1871,11 +3225,11 @@ public class MainActivity extends Activity {
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_PAGE_UP) {
-            scrollMouseMode(-dp(360));
+            scrollActiveWebView(-dp(360));
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN || keyCode == KeyEvent.KEYCODE_PAGE_DOWN) {
-            scrollMouseMode(dp(360));
+            scrollActiveWebView(dp(360));
             return true;
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
@@ -1891,13 +3245,19 @@ public class MainActivity extends Activity {
 
     private void toggleMouseMode() {
         mouseMode = !mouseMode;
+        boolean inFullscreen = fullscreenView != null;
         WebView webView = currentWebView();
         if (webView != null) {
-            installTvWebNavigation(webView);
+            // Neither of these applies while a video is fullscreen: the page-side helpers address the
+            // host document, the chrome is already gone, and pulling focus off the custom view would
+            // take the remote away from the player.
+            if (!inFullscreen) {
+                installTvWebNavigation(webView);
+                webView.requestFocus();
+            }
             setMouseCursorVisible(mouseMode);
-            webView.requestFocus();
         }
-        if (mouseMode) setChromeCollapsed(true, false);
+        if (mouseMode && !inFullscreen) setChromeCollapsed(true, false);
         showToast(mouseMode ? "Mausmodus: D-Pad bewegen, OK klicken, 0/Info aus" : "Mausmodus aus");
     }
 
@@ -1905,8 +3265,18 @@ public class MainActivity extends Activity {
         return dp(12);
     }
 
+    /**
+     * Where the cursor lives. In fullscreen that has to be the fullscreen container: it sits on the
+     * window decor above everything else, so a cursor left in `content` would be hidden behind the
+     * video. Coordinates are relative to whichever of the two is current.
+     */
+    private FrameLayout mouseCursorHost() {
+        return fullscreenContainer != null ? fullscreenContainer : content;
+    }
+
     private void ensureMouseCursor() {
-        if (content == null) return;
+        FrameLayout host = mouseCursorHost();
+        if (host == null) return;
         if (mouseCursor == null) {
             mouseCursor = new View(this);
             GradientDrawable cursor = new GradientDrawable();
@@ -1918,20 +3288,30 @@ public class MainActivity extends Activity {
             mouseCursor.setClickable(false);
             if (android.os.Build.VERSION.SDK_INT >= 21) mouseCursor.setElevation(dp(18));
         }
-        if (mouseCursor.getParent() != content) {
-            content.addView(mouseCursor, new FrameLayout.LayoutParams(dp(26), dp(26)));
+        if (mouseCursor.getParent() != host) {
+            if (mouseCursor.getParent() instanceof ViewGroup) {
+                ((ViewGroup) mouseCursor.getParent()).removeView(mouseCursor);
+            }
+            host.addView(mouseCursor, new FrameLayout.LayoutParams(dp(26), dp(26)));
+            // Entering or leaving fullscreen changes the frame the cursor is measured in, so start
+            // it from the middle instead of keeping a position that referred to the old one.
+            mouseX = -1;
+            mouseY = -1;
         }
-        if (mouseX < 0 || mouseY < 0 || content.getWidth() <= 0 || content.getHeight() <= 0) {
-            mouseX = Math.max(dp(24), content.getWidth() / 2f);
-            mouseY = Math.max(dp(24), content.getHeight() / 2f);
+        if (mouseX < 0 || mouseY < 0) {
+            mouseX = Math.max(dp(24), host.getWidth() / 2f);
+            mouseY = Math.max(dp(24), host.getHeight() / 2f);
         }
+        mouseCursor.bringToFront();
         updateMouseCursor();
     }
 
     private void setMouseCursorVisible(boolean visible) {
         if (visible) {
-            if (content.getWidth() <= 0 || content.getHeight() <= 0) {
-                content.post(() -> setMouseCursorVisible(true));
+            FrameLayout host = mouseCursorHost();
+            if (host == null) return;
+            if (host.getWidth() <= 0 || host.getHeight() <= 0) {
+                host.post(() -> setMouseCursorVisible(true));
                 return;
             }
             ensureMouseCursor();
@@ -1942,7 +3322,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateMouseCursor() {
-        if (mouseCursor == null || content == null) return;
+        if (mouseCursor == null || mouseCursorHost() == null) return;
         FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) mouseCursor.getLayoutParams();
         params.leftMargin = Math.round(mouseX - dp(13));
         params.topMargin = Math.round(mouseY - dp(13));
@@ -1950,40 +3330,56 @@ public class MainActivity extends Activity {
     }
 
     private void moveMouseCursor(int dx, int dy) {
-        if (fullscreenView != null) return;
+        FrameLayout host = mouseCursorHost();
         WebView webView = currentWebView();
-        if (webView == null || content == null) return;
+        if (host == null || webView == null) return;
         ensureMouseCursor();
-        int width = Math.max(dp(32), content.getWidth());
-        int height = Math.max(dp(32), content.getHeight());
+        int width = Math.max(dp(32), host.getWidth());
+        int height = Math.max(dp(32), host.getHeight());
         mouseX = Math.max(dp(10), Math.min(width - dp(10), mouseX + dx));
         mouseY = Math.max(dp(10), Math.min(height - dp(10), mouseY + dy));
         updateMouseCursor();
-        if (dy < 0 && mouseY <= dp(26)) scrollMouseMode(-dp(80));
-        if (dy > 0 && mouseY >= height - dp(26)) scrollMouseMode(dp(80));
+        // Nudging the page at the edges only makes sense while the page is what is on screen; in
+        // fullscreen the video fills the panel and there is nothing to scroll to.
+        if (fullscreenView != null) return;
+        if (dy < 0 && mouseY <= dp(26)) scrollActiveWebView(-dp(80));
+        if (dy > 0 && mouseY >= height - dp(26)) scrollActiveWebView(dp(80));
         if (dx < 0 && mouseX <= dp(20)) webView.scrollBy(-dp(70), 0);
         if (dx > 0 && mouseX >= width - dp(20)) webView.scrollBy(dp(70), 0);
     }
 
-    private void scrollMouseMode(int dy) {
+    /**
+     * Page scrolling (mouse mode, and the 8/2 keys) goes through the WebView's own view scroll and
+     * nowhere else.
+     *
+     * It used to additionally ask the page to scroll itself, which was wrong twice over. The JS side
+     * takes CSS pixels while `dy` is device pixels, so on a 2x panel one page-down moved
+     * 360 + 720 = 1080 CSS px instead of the intended 360 -- measured on AniWorld, y=771 -> y=1851.
+     * Worse, app and page then drove the same scroll at the same time, one instantly and one
+     * animated: while the two offsets disagreed the compositor kept drawing the video and image
+     * layers at a position that no longer matched their boxes, which is what displaced the picture
+     * inside the player. The horizontal edge scroll in moveMouseCursor() already worked this way.
+     */
+    private void scrollActiveWebView(int dy) {
         if (fullscreenView != null) return;
         WebView webView = currentWebView();
         if (webView == null) return;
         webView.scrollBy(0, dy);
-        runTvMouseCommand("scroll", 0, dy);
     }
 
     private void tapMouseCursor() {
         WebView webView = currentWebView();
         if (webView == null) return;
         ensureMouseCursor();
-        long now = SystemClock.uptimeMillis();
-        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, mouseX, mouseY, 0);
-        MotionEvent up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, mouseX, mouseY, 0);
-        webView.dispatchTouchEvent(down);
-        webView.dispatchTouchEvent(up);
-        down.recycle();
-        up.recycle();
+        if (fullscreenView != null) {
+            // In fullscreen the video is rendered by the custom view on the window decor, not by the
+            // WebView underneath, so that is where the tap has to go -- Chromium routes it on into
+            // the hoster frame and the player's own controls answer it. The synthetic DOM click
+            // below is skipped: it runs in the host document, which cannot reach into that frame.
+            dispatchTapOnView(fullscreenView, mouseX, mouseY);
+            return;
+        }
+        dispatchTapOnView(webView, mouseX, mouseY);
         runTvMouseCommand("click", Math.round(mouseX), Math.round(mouseY));
     }
 
@@ -2059,29 +3455,258 @@ public class MainActivity extends Activity {
     }
 
     private void showFullscreen(View view, WebChromeClient.CustomViewCallback callback) {
+        // Idempotent: a second onShowCustomView() while already fullscreen must not stack views.
         if (fullscreenView != null) {
+            Log.w(TAG, "Fullscreen requested while already fullscreen, rejecting duplicate");
             if (callback != null) callback.onCustomViewHidden();
             return;
+        }
+        // Chromium hands us a fresh container, but if it ever arrives already attached, detaching
+        // it first is what prevents "The specified child already has a parent" from killing the app.
+        if (view.getParent() instanceof ViewGroup) {
+            ((ViewGroup) view.getParent()).removeView(view);
+        }
+        Log.i(TAG, "Fullscreen entered provider=" + (activeProvider == null ? "-" : activeProvider.id));
+        // Take the reading position here, synchronously, off the view itself. Asking the page for
+        // window.scrollY instead loses races: evaluateJavascript() only reaches the document a few
+        // milliseconds later, and Chromium resets the document scroll while it enters fullscreen --
+        // measured on AniWorld, Java read 1542 device px at this very point while the JS that ran
+        // moments later already saw 0, and the exit then "restored" the page to the top.
+        WebView scrollHost = currentWebView();
+        fullscreenScrollX = scrollHost == null ? 0 : scrollHost.getScrollX();
+        fullscreenScrollY = scrollHost == null ? 0 : scrollHost.getScrollY();
+        logLayoutState("beforeEnter");
+        // Remember what the app was allowed to do before, so exiting restores exactly that instead
+        // of leaving the phone stuck in a forced orientation.
+        orientationBeforeFullscreen = getRequestedOrientation();
+        if (!isTelevision()) {
+            // SENSOR_LANDSCAPE: rotate into landscape immediately and stay there, while still
+            // letting the user flip between the two landscape directions. Plain LANDSCAPE would
+            // ignore how the phone is actually being held.
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         }
         fullscreenView = view;
         fullscreenHostWebView = currentWebView();
         fullscreenCallback = callback;
-        if (mouseMode) {
-            mouseMode = false;
-            setMouseCursorVisible(false);
-        }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        appChrome.setVisibility(View.GONE);
-        if (collapsedChrome != null) collapsedChrome.setVisibility(View.GONE);
+        // Read and pin the reading position first. Hiding the chrome below grows the WebView by the
+        // toolbar height, and both of these run as evaluateJavascript(), i.e. a moment later on the
+        // page -- so capturing afterwards would read whatever that resize left behind, and near the
+        // end of a document the larger viewport clamps the offset down before it is ever recorded.
+        logDomGeometry(fullscreenHostWebView, "onShowCustomView");
         lockFullscreenScrolling(fullscreenHostWebView);
+        // The chrome and the bottom navigation deliberately stay where they are. They are completely
+        // covered by the opaque fullscreen container on the window decor, so hiding them buys no
+        // pixels -- but it resizes the WebView underneath, and resizing a scrolled WebView is what
+        // moves the page. Same reason the inset listener is frozen for the duration.
         view.setBackgroundColor(Color.BLACK);
         view.setFocusable(true);
         view.setFocusableInTouchMode(true);
         view.setClickable(true);
-        content.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
-        view.bringToFront();
-        view.requestFocus();
+
+        // The video must NOT go into `content`: that container sits inside the app's LinearLayout
+        // below the chrome and carries the window-inset padding, so the player inherited a reduced
+        // viewport and ended up rendering into only part of the screen. Attaching an own container
+        // directly to the window decor gives the player the raw display area, independent of any
+        // ELFIX toolbar, navigation or inset padding.
+        fullscreenContainer = new FrameLayout(this);
+        fullscreenContainer.setBackgroundColor(Color.BLACK);
+        fullscreenContainer.setFitsSystemWindows(false);
+        // Drop the system bars before the container is measured. Otherwise the decor still reports
+        // the inset content frame for the first layout pass and the player briefly lands below y=0.
         applyFullscreenSystemUi();
+        ((ViewGroup) getWindow().getDecorView()).addView(fullscreenContainer,
+            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        fullscreenContainer.addView(view, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        fullscreenContainer.bringToFront();
+        view.requestFocus();
+        // The cursor has to move up into the new container, otherwise it stays buried under the video.
+        if (mouseMode) setMouseCursorVisible(true);
+        view.post(() -> logLayoutState("afterEnter"));
+        logFullscreenDimensions(view);
+    }
+
+    /**
+     * Full fullscreen geometry dump, measured after layout. Written so the cause of a wrong video
+     * viewport can be read off the numbers instead of guessed: if decor/container/customView are all
+     * the panel size, the problem is inside the page, and the DOM section says which element it is.
+     */
+    private void logFullscreenDimensions(View customView) {
+        customView.post(() -> {
+            android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+            Configuration config = getResources().getConfiguration();
+            Log.i(TAG, "FS/display density=" + metrics.density + " densityDpi=" + metrics.densityDpi
+                + " px=" + metrics.widthPixels + "x" + metrics.heightPixels
+                + " dp=" + config.screenWidthDp + "x" + config.screenHeightDp
+                + " bounds=" + currentWindowBounds());
+
+            logViewGeometry("decor", getWindow().getDecorView());
+            logViewGeometry("container", fullscreenContainer);
+            logViewGeometry("customView", customView);
+            logViewGeometry("webview", fullscreenHostWebView);
+
+            int level = 0;
+            for (View v = customView; v != null; level += 1) {
+                logViewGeometry("parent[" + level + "]", v);
+                Object parent = v.getParent();
+                v = parent instanceof View ? (View) parent : null;
+            }
+            logVideoSurfaces(customView, 0);
+            checkFullscreenInvariant(customView);
+            logDomGeometry(fullscreenHostWebView, "fullscreen");
+        });
+    }
+
+    /**
+     * The one property fullscreen has to satisfy no matter how far the page was scrolled: the video
+     * covers the whole panel starting at the window origin. Checked against the real window bounds
+     * rather than a hard-coded resolution, so it also holds on a 720p panel or in a resized window.
+     */
+    private void checkFullscreenInvariant(View customView) {
+        View decor = getWindow().getDecorView();
+        for (View v = customView; v != null && v != decor; ) {
+            if (v.getX() != 0f || v.getY() != 0f
+                || v.getWidth() != decor.getWidth() || v.getHeight() != decor.getHeight()) {
+                Log.w(TAG, "FS/invariant VIOLATED at " + v.getClass().getSimpleName()
+                    + " xy=" + v.getX() + "," + v.getY()
+                    + " size=" + v.getWidth() + "x" + v.getHeight()
+                    + " decor=" + decor.getWidth() + "x" + decor.getHeight());
+                return;
+            }
+            Object parent = v.getParent();
+            v = parent instanceof View ? (View) parent : null;
+        }
+        Log.i(TAG, "FS/invariant ok: customView..decor all at 0,0 and "
+            + decor.getWidth() + "x" + decor.getHeight());
+    }
+
+    /**
+     * One line per fullscreen transition point, so the question "does fullscreen move the page?" can
+     * be answered from a logcat off any device instead of from the emulator alone. The emulator is
+     * not enough: an Android TV AVD reports app=1920x1080 against a 1920x1080 display, i.e. zero
+     * system-bar insets, so every inset-driven relayout below is dead code there.
+     */
+    private void logLayoutState(String phase) {
+        WebView webView = fullscreenHostWebView != null ? fullscreenHostWebView : currentWebView();
+        StringBuilder sb = new StringBuilder("FS/state ").append(phase);
+        if (webView == null) {
+            Log.i(TAG, sb.append(" webview=null").toString());
+            return;
+        }
+        sb.append(" scrollY=").append(webView.getScrollY())
+          .append(" scrollX=").append(webView.getScrollX())
+          .append(" webview=").append(webView.getWidth()).append("x").append(webView.getHeight())
+          .append(" contentPad=").append(content.getPaddingTop()).append("/").append(content.getPaddingBottom())
+          .append(" content=").append(content.getWidth()).append("x").append(content.getHeight())
+          .append(" chromeVis=").append(appChrome == null ? "-" : appChrome.getVisibility())
+          .append(" chromePad=").append(chromeHolder == null ? -1 : chromeHolder.getPaddingTop())
+          .append(" chrome=").append(chromeHolder == null ? "-" : chromeHolder.getHeight())
+          .append(" fitsSystemWindows=").append(content.getFitsSystemWindows())
+          .append(" container=").append(fullscreenContainer == null ? "-"
+              : fullscreenContainer.getWidth() + "x" + fullscreenContainer.getHeight()
+                + "@" + fullscreenContainer.getX() + "," + fullscreenContainer.getY());
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
+            if (insets != null) {
+                android.graphics.Insets bars = insets.getInsets(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                sb.append(" insets=").append(bars.left).append(",").append(bars.top)
+                  .append(",").append(bars.right).append(",").append(bars.bottom)
+                  .append(" statusBarVisible=").append(insets.isVisible(WindowInsets.Type.statusBars()))
+                  .append(" navBarVisible=").append(insets.isVisible(WindowInsets.Type.navigationBars()));
+            }
+            sb.append(" decorFits=").append(getWindow().getDecorView().getFitsSystemWindows());
+        }
+        sb.append(" orientation=").append(getResources().getConfiguration().orientation);
+        Log.i(TAG, sb.toString());
+        webView.evaluateJavascript(
+            "JSON.stringify({y:window.scrollY,inner:[innerWidth,innerHeight],"
+                + "doc:document.scrollingElement.scrollHeight,dpr:window.devicePixelRatio})",
+            value -> Log.i(TAG, "FS/state " + phase + " page=" + value));
+    }
+
+    private String currentWindowBounds() {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            return String.valueOf(getWindowManager().getCurrentWindowMetrics().getBounds());
+        }
+        return "n/a";
+    }
+
+    private void logViewGeometry(String label, View view) {
+        if (view == null) {
+            Log.i(TAG, "FS/" + label + " = null");
+            return;
+        }
+        android.graphics.Rect visible = new android.graphics.Rect();
+        boolean hasVisible = view.getGlobalVisibleRect(visible);
+        ViewGroup.LayoutParams lp = view.getLayoutParams();
+        StringBuilder sb = new StringBuilder("FS/").append(label)
+            .append(" cls=").append(view.getClass().getSimpleName())
+            .append(" size=").append(view.getWidth()).append("x").append(view.getHeight())
+            .append(" measured=").append(view.getMeasuredWidth()).append("x").append(view.getMeasuredHeight())
+            .append(" lp=").append(lp == null ? "-" : lp.width + "x" + lp.height)
+            .append(" xy=").append(view.getX()).append(",").append(view.getY())
+            .append(" scale=").append(view.getScaleX()).append(",").append(view.getScaleY())
+            .append(" trans=").append(view.getTranslationX()).append(",").append(view.getTranslationY())
+            .append(" scroll=").append(view.getScrollX()).append(",").append(view.getScrollY())
+            .append(" pad=").append(view.getPaddingLeft()).append(",").append(view.getPaddingTop())
+            .append(",").append(view.getPaddingRight()).append(",").append(view.getPaddingBottom())
+            .append(" visRect=").append(hasVisible ? visible.toShortString() : "none");
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            sb.append(" clipChildren=").append(group.getClipChildren())
+              .append(" clipToPadding=").append(group.getClipToPadding());
+        }
+        Log.i(TAG, sb.toString());
+    }
+
+    /** The actual video surface can be mis-sized even when every container is correct. */
+    private void logVideoSurfaces(View view, int depth) {
+        if (view instanceof android.view.SurfaceView || view instanceof android.view.TextureView) {
+            logViewGeometry("surface@depth" + depth, view);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i += 1) {
+                logVideoSurfaces(group.getChildAt(i), depth + 1);
+            }
+        }
+    }
+
+    /**
+     * Page-side geometry. Runs in the top document of the host WebView; a hoster inside a
+     * cross-origin iframe cannot be inspected from here, and the output says so explicitly rather
+     * than silently reporting nothing.
+     */
+    private void logDomGeometry(WebView host, String phase) {
+        if (host == null) return;
+        Log.i(TAG, "FS/scroll phase=" + phase
+            + " webViewScroll=" + host.getScrollX() + "," + host.getScrollY());
+        host.evaluateJavascript(
+            "(function(){"
+                + "function box(el){if(!el)return null;var r=el.getBoundingClientRect();"
+                + "return{tag:el.tagName,id:el.id||'',cls:(''+(el.className||'')).slice(0,60),"
+                + "rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)],"
+                + "client:[el.clientWidth,el.clientHeight],offset:[el.offsetWidth,el.offsetHeight]};}"
+                + "var fs=document.fullscreenElement||document.webkitFullscreenElement||null;"
+                + "var out={phase:'" + phase + "',url:location.href,inner:[innerWidth,innerHeight],"
+                + "scroll:[window.scrollX,window.scrollY],"
+                + "scrollingElement:[document.scrollingElement.scrollLeft,document.scrollingElement.scrollTop,"
+                + "document.scrollingElement.scrollHeight],"
+                + "client:[document.documentElement.clientWidth,document.documentElement.clientHeight],"
+                + "dpr:window.devicePixelRatio,fullscreenElement:box(fs),videos:[],iframes:[]};"
+                + "Array.prototype.slice.call(document.querySelectorAll('video')).forEach(function(v){"
+                + "var b=box(v);b.videoWH=[v.videoWidth,v.videoHeight];b.paused=v.paused;"
+                + "var cs=getComputedStyle(v);b.css=[cs.height,cs.maxHeight,cs.objectFit,cs.position,cs.transform];"
+                + "out.videos.push(b);});"
+                + "Array.prototype.slice.call(document.querySelectorAll('iframe')).forEach(function(f){"
+                + "var b=box(f);b.src=(f.src||'').slice(0,80);"
+                + "var cs=getComputedStyle(f);b.css=[cs.height,cs.maxHeight,cs.position,cs.transform];"
+                + "out.iframes.push(b);});"
+                + "return JSON.stringify(out);"
+            + "})();",
+            value -> Log.i(TAG, "FS/dom " + value));
     }
 
     private void applyFullscreenSystemUi() {
@@ -2103,19 +3728,63 @@ public class MainActivity extends Activity {
 
     private void hideFullscreen() {
         if (fullscreenView == null) return;
-        content.removeView(fullscreenView);
+        Log.i(TAG, "Fullscreen exited");
+        logLayoutState("beforeExit");
+        if (fullscreenContainer != null) {
+            fullscreenContainer.removeAllViews();
+            if (fullscreenContainer.getParent() instanceof ViewGroup) {
+                ((ViewGroup) fullscreenContainer.getParent()).removeView(fullscreenContainer);
+            }
+            fullscreenContainer = null;
+        } else {
+            content.removeView(fullscreenView);
+        }
         fullscreenView = null;
-        unlockFullscreenScrolling(fullscreenHostWebView);
+        final WebView host = fullscreenHostWebView;
         fullscreenHostWebView = null;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        setChromeCollapsed(chromeCollapsed, false);
+        // Nothing to un-hide: the chrome was never taken away, so there is no relayout here either.
+        // removeAllViews() above took the cursor down with the container; put it back over the page.
+        if (mouseMode) setMouseCursorVisible(true);
+        // onCustomViewHidden() is what actually takes the page out of fullscreen, and only after
+        // that does the fullscreen element leave its position:fixed layout. Unlocking before this
+        // call restored the scroll offset against the *fullscreen* layout -- measured on AniWorld:
+        // entering at y=734 came back as y=0 once and y=1210 (734 + one viewport) the next time.
         if (fullscreenCallback != null) fullscreenCallback.onCustomViewHidden();
         fullscreenCallback = null;
+        unlockFullscreenScrolling(host);
+        if (host != null) {
+            // After the restore window has closed: report where the page ended up, and what the
+            // restore had to correct along the way.
+            host.post(() -> logLayoutState("afterExit"));
+            // The drift watchdog: fullscreen must leave the view scroll exactly where it found it.
+            // Reported, never corrected -- if this ever fires, the layout cause is back and wants
+            // fixing at the source rather than papering over.
+            final int expected = fullscreenScrollY;
+            host.postDelayed(() -> {
+                int drift = host.getScrollY() - expected;
+                if (drift != 0) {
+                    Log.w(TAG, "FS/drift scrollY moved by " + drift + "px across fullscreen"
+                        + " (before=" + expected + " after=" + host.getScrollY() + ")");
+                } else {
+                    Log.i(TAG, "FS/drift none, scrollY held at " + expected);
+                }
+                logLayoutState("afterExitSettled");
+                logDomGeometry(host, "afterExit");
+            }, 900);
+        }
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(true);
             getWindow().getInsetsController().show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
         } else {
             getWindow().getDecorView().setSystemUiVisibility(0);
+        }
+        // Release the landscape lock last: the resulting configuration change must not find a
+        // half-torn-down fullscreen state. The WebView stays attached to `content` throughout, so
+        // the page is neither reloaded nor re-created by the rotation.
+        if (!isTelevision()) {
+            setRequestedOrientation(orientationBeforeFullscreen);
+            orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
         }
     }
 
@@ -2127,7 +3796,9 @@ public class MainActivity extends Activity {
         webView.evaluateJavascript(
             "(function(){"
                 + "if(window.__elflixFullscreenLock)return;"
-                + "window.__elflixFullscreenLock={x:scrollX,y:scrollY,html:document.documentElement.style.overflow||'',body:document.body.style.overflow||'',bodyTouch:document.body.style.touchAction||''};"
+                // Style state only -- the scroll offset is captured in showFullscreen(), because by
+                // the time this script runs the page may already have been scrolled to the top.
+                + "window.__elflixFullscreenLock={html:document.documentElement.style.overflow||'',body:document.body.style.overflow||'',bodyTouch:document.body.style.touchAction||''};"
                 + "document.documentElement.style.overflow='hidden';"
                 + "document.body.style.overflow='hidden';"
                 + "document.body.style.touchAction='none';"
@@ -2141,6 +3812,15 @@ public class MainActivity extends Activity {
         );
     }
 
+    /**
+     * Undo the lock. It deliberately does *not* scroll the page back.
+     *
+     * Forcing the offset back with a scrollTo() was the earlier fix, and it was the wrong one: it hid
+     * a drift instead of removing it, and on a page that reflows while the video is up it would fight
+     * the page's own layout. The offset is now simply never disturbed -- fullscreen no longer resizes
+     * the WebView -- so there is nothing to put back. What stays is a watchdog that reports drift
+     * without touching it, so a regression shows up as a number in the log on any device.
+     */
     private void unlockFullscreenScrolling(WebView webView) {
         if (webView == null) return;
         webView.setVerticalScrollBarEnabled(true);
@@ -2157,11 +3837,11 @@ public class MainActivity extends Activity {
                     + "removeEventListener('touchmove',window.__elflixFullscreenBlock,true);"
                     + "removeEventListener('keydown',window.__elflixFullscreenBlock,true);"
                 + "}"
-                + "scrollTo(s.x||0,s.y||0);"
                 + "delete window.__elflixFullscreenBlock;"
                 + "delete window.__elflixFullscreenLock;"
+                + "return 'unlocked at '+Math.round(window.scrollY);"
             + "})();",
-            null
+            value -> Log.i(TAG, "FS/unlock " + value)
         );
     }
 
@@ -2169,11 +3849,147 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private boolean isCompactWidth() {
+        return getResources().getConfiguration().screenWidthDp < 600;
+    }
+
+    /**
+     * Android TV / Leanback device. Used to keep remote-control affordances (focus scaling, mouse
+     * mode, large hit areas) on TV while phones get touch-sized, denser layouts -- without forking
+     * the screens themselves.
+     */
+    private boolean isTelevision() {
+        if (television == null) {
+            boolean tv = false;
+            UiModeManager uiMode = (UiModeManager) getSystemService(Context.UI_MODE_SERVICE);
+            if (uiMode != null && uiMode.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION) {
+                tv = true;
+            }
+            if (!tv && getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
+                tv = true;
+            }
+            television = tv;
+        }
+        return television;
+    }
+
+    /** Minimum comfortable hit area: 48dp is the Material touch target, TV sits a bit larger. */
+    private int touchTargetDp() {
+        return isTelevision() ? 48 : 46;
+    }
+
+    private int pagePaddingHorizontalDp() {
+        return isCompactWidth() ? 18 : 42;
+    }
+
+    private int pagePaddingVerticalDp() {
+        return isCompactWidth() ? 20 : 34;
+    }
+
+    /** Landscape phones have plenty of width but very little height to spend on a headline. */
+    private boolean isShortHeight() {
+        return getResources().getConfiguration().screenHeightDp < 480;
+    }
+
+    private int heroTextSp() {
+        if (isShortHeight()) return 24;
+        return isCompactWidth() ? 27 : 42;
+    }
+
+    private int providerCardWidthDp() {
+        return isCompactWidth() ? 128 : 154;
+    }
+
+    private int providerCardHeightDp() {
+        return isCompactWidth() ? 54 : 56;
+    }
+
+    /**
+     * On a phone the home screen already lists the providers as cards, so also showing the tab rail
+     * there would present the same three items twice on one screen. The rail is what you switch with
+     * once a provider is open, so it appears from then on. TV keeps it always: the rail is the
+     * primary D-pad target there.
+     */
+    private void updateProviderRailVisibility() {
+        if (providerRailScroll == null) return;
+        boolean show = isTelevision() || activeProvider != null;
+        providerRailScroll.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (providerRailDivider != null) providerRailDivider.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    private void goBackInProvider() {
+        WebView webView = currentWebView();
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else showHome();
+    }
+
+    private static String refererOf(WebResourceRequest request) {
+        Map<String, String> headers = request.getRequestHeaders();
+        if (headers == null) return null;
+        String referer = headers.get("Referer");
+        return referer != null ? referer : headers.get("referer");
+    }
+
+    /** Host only -- full URLs can carry session tokens that must not reach the log. */
+    private static String safeHost(String url) {
+        if (url == null || url.isEmpty()) return "-";
+        try {
+            String host = android.net.Uri.parse(url).getHost();
+            return host == null ? "-" : host;
+        } catch (Exception malformed) {
+            return "-";
+        }
+    }
+
     private final class GuardedWebViewClient extends WebViewClient {
         private final Provider provider;
+        /**
+         * Current main-frame URL, mirrored from the page callbacks (which do run on the UI thread).
+         *
+         * shouldInterceptRequest() is documented to run on a WebView *IO* thread, not the UI
+         * thread. Calling any WebView method there -- including getUrl() -- trips WebView's
+         * checkThread() guard, which throws a RuntimeException for every app with
+         * targetSdkVersion >= 18. That exception is raised on the IO thread, is uncaught, and
+         * therefore kills the whole process. The interceptor must read this field instead.
+         */
+        private volatile String mainFrameUrl = "";
 
         GuardedWebViewClient(Provider provider) {
             this.provider = provider;
+        }
+
+        /** Runs on the episode page we came back to, so the normal path can take over again. */
+        private void resumeNextEpisode() {
+            if (provider != activeProvider) return;
+            openNextEpisode();
+        }
+
+        @Override
+        public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+            mainFrameUrl = url == null ? "" : url;
+            // Navigating anywhere other than the armed page means the request no longer refers to
+            // what is about to appear, so it must not fire on whatever loads instead.
+            if (isEpisodeUrl(url)) {
+                lastEpisodeUrl = url;
+                if (pendingNextEpisode) {
+                    // Back on the episode page after a detour through the hoster: resume the jump.
+                    pendingNextEpisode = false;
+                    view.postDelayed(this::resumeNextEpisode, 1200);
+                }
+            }
+            if (autoStartRequested && !isSameUrl(url, autoStartUrl)) {
+                disarmAutoStart("navigated to " + safePath(url));
+            } else if (provider == activeProvider && autoStartArmedFor(url)) {
+                // Start here, not in onPageFinished. That callback waits for every last subresource,
+                // and these pages keep pulling adverts long after the part we need exists -- measured
+                // on a throttled connection, onPageFinished had still not fired after 150 seconds
+                // while the hoster list was long since in the DOM. The chain's own readiness probe is
+                // the better signal, so it is allowed to start looking straight away.
+                autoStartRequested = false;
+                autoStartUrl = null;
+                runAutoStart(view, url);
+            }
+            super.onPageStarted(view, url, favicon);
         }
 
         @Override
@@ -2182,6 +3998,22 @@ public class MainActivity extends Activity {
                 return false;
             }
             String url = request.getUrl().toString();
+            Log.i(TAG, "NAV main=" + request.isForMainFrame()
+                + " gesture=" + request.hasGesture()
+                + " redirect=" + request.isRedirect()
+                + " from=" + safeHost(mainFrameUrl)
+                + " to=" + safeHost(url)
+                + " scheme=" + request.getUrl().getScheme());
+            // Only http(s) is ever handed to the WebView. These sites push intent://, market://
+            // and similar app-store/deeplink schemes through ad frames; forwarding those to
+            // startActivity() is what produces ActivityNotFoundException, and letting the WebView
+            // attempt them just yields a dead error page. Refuse them explicitly instead.
+            String scheme = request.getUrl().getScheme();
+            if (scheme != null && !"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                Log.i(TAG, "External scheme requested provider=" + provider.id + " scheme=" + scheme);
+                showToast("Externer Link blockiert");
+                return true;
+            }
             if (Adblocker.isChallengeOrVerificationUrl(url, provider)) {
                 return false;
             }
@@ -2189,7 +4021,25 @@ public class MainActivity extends Activity {
                 showToast("Provider-Wechsel blockiert");
                 return true;
             }
-            return adblocker.shouldBlock(url, provider);
+            // The main frame must stay on the provider's own site. Measured on AniWorld: a card
+            // click carries a real user gesture and still navigated the main frame to
+            // watchcolleague.com -> omg10.com, leaving the provider unusable. So the gesture is not
+            // evidence of intent here. The hoster chain runs inside the player iframe and does not
+            // need the main frame; the one exception is a URL ELFIX itself chose to load.
+            if (url.equals(selfInitiatedNavigation)) {
+                selfInitiatedNavigation = null;
+            } else if (hosterChainHops > 0) {
+                // Hop of the hoster gateway we opened ourselves, server-side or client-side.
+                hosterChainHops -= 1;
+                Log.i(TAG, "Following hoster hop to " + safeHost(url)
+                    + " redirect=" + request.isRedirect() + " budgetLeft=" + hosterChainHops);
+            } else if (!isPopupFirstParty(provider, url)) {
+                Log.i(TAG, "Blocked main-frame navigation to " + safeHost(url)
+                    + " gesture=" + request.hasGesture() + " redirect=" + request.isRedirect());
+                showToast("Weiterleitung blockiert");
+                return true;
+            }
+            return adblocker.shouldBlock(url, provider, Adblocker.isLikelyVideoPlayerUrl(view.getUrl()));
         }
 
         @Override
@@ -2200,17 +4050,66 @@ public class MainActivity extends Activity {
             if (Adblocker.isChallengeOrVerificationUrl(request.getUrl().toString(), provider)) {
                 return null;
             }
+            // Sub-frame documents are how in-page ad creatives (fake captchas, "clean your
+            // phone" panels) get in. Log them with their referer so the ad frame can be told apart
+            // from the legitimate player embed instead of guessed at.
+            if (isSubFrameDocument(request)) {
+                Log.i(TAG, "SUBDOC host=" + safeHost(request.getUrl().toString())
+                    + " ref=" + safeHost(refererOf(request))
+                    + " thirdPartyFrame=" + Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider));
+            }
+            // Intrusive overlay creatives are blocked before the page-critical bypass, because
+            // parts of them arrive as CSS and images and would otherwise be waved through.
+            if (Adblocker.isIntrusiveOverlayRequest(request.getUrl().toString())) {
+                Log.i(TAG, "Blocked[overlay] host=" + safeHost(request.getUrl().toString())
+                    + " path=" + safePath(request.getUrl().toString()));
+                return blockedResourceResponse(request);
+            }
             if (isPageCriticalRequest(request)) {
                 return null;
             }
-            if (adblocker.shouldBlock(request.getUrl().toString(), provider)) {
+            // Deliberately NOT view.getUrl() -- see mainFrameUrl above. This runs off the UI thread.
+            String requestUrl = request.getUrl().toString();
+            boolean hosterFrame = isHosterFrameRequest(request);
+            String reason = adblocker.blockReason(requestUrl, provider, hosterFrame);
+            if (reason == null && hosterFrame
+                && Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider)) {
+                // Everything the hoster frame is still allowed to pull in. This is where the
+                // in-page ad overlays come from, so their source has to be nameable.
+                Log.i(TAG, "ALLOWED-IN-HOSTER host=" + safeHost(requestUrl)
+                    + " ref=" + safeHost(refererOf(request)) + " path=" + safePath(requestUrl));
+            }
+            if (reason != null) {
+                Log.d(TAG, "Blocked[" + reason + "] provider=" + provider.id + " host=" + safeHost(requestUrl)
+                    + " ref=" + safeHost(refererOf(request)));
                 return blockedResourceResponse(request);
             }
             return null;
         }
 
+        /**
+         * True when this sub-resource was issued by the hoster's player document rather than by
+         * the provider's own page.
+         *
+         * Looking only at the top-level URL was the defect: s.to and aniworld.to navigate to the
+         * hoster, so the main frame became the player and blocking relaxed correctly -- but
+         * filmo.to embeds the hoster in an iframe, so the main frame stayed on filmo.to and the
+         * player's own scripts were filtered as ordinary third-party traffic. The Referer names
+         * the document that actually issued the request, which is the frame that matters.
+         */
+        private boolean isHosterFrameRequest(WebResourceRequest request) {
+            return Adblocker.isLikelyVideoPlayerUrl(mainFrameUrl)
+                || Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider);
+        }
+
         @Override
         public void onPageFinished(WebView view, String url) {
+            mainFrameUrl = url == null ? "" : url;
+            // The budget is deliberately NOT cleared here. VOE's rotation jump happens after its
+            // gateway page has finished loading, so clearing on settle would take the allowance away
+            // one moment before the hop that needs it. It decays with use instead, and openProvider()
+            // resets it whenever ELFIX itself navigates somewhere.
+            if (provider == activeProvider) hideProviderLoading();
             if (shouldBlockProviderNavigation(provider, url)) return;
             installTvWebNavigation(view);
             installStoPlayerFix(view, provider);
@@ -2218,6 +4117,37 @@ public class MainActivity extends Activity {
             updateActiveFavoriteProgress(provider, url, view.getTitle());
             updateFavoriteButton();
             super.onPageFinished(view, url);
+        }
+
+        @Override
+        public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
+            super.onReceivedError(view, request, error);
+            if (!request.isForMainFrame() || provider != activeProvider) return;
+            showProviderError(provider, "Die Seite konnte nicht geladen werden. Prüfe deine Internetverbindung.");
+        }
+
+        /**
+         * Ad-heavy streaming pages can crash the WebView's *renderer* process (malformed video
+         * codecs, hostile ad iframes, OOM). Without this override Android tears down the whole
+         * app process when that happens. Returning true keeps ELFIX alive and discards only the
+         * affected WebView -- it must never be reused after its renderer died.
+         */
+        @Override
+        public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+            Log.w(TAG, "Renderer gone provider=" + provider.id
+                + " crashed=" + (detail != null && detail.didCrash())
+                + " url=" + safeHost(mainFrameUrl));
+            // If the dead WebView was the one presenting fullscreen, tear that down first so the
+            // overlay and the landscape lock cannot outlive it.
+            if (fullscreenHostWebView == view) hideFullscreen();
+            webViews.remove(provider.id);
+            if (content != null) content.removeView(view);
+            view.destroy();
+            if (provider == activeProvider) {
+                hideProviderLoading();
+                showProviderError(provider, "Die Seite ist abgestürzt.");
+            }
+            return true;
         }
     }
 
@@ -2236,23 +4166,70 @@ public class MainActivity extends Activity {
         if (webView == null) return;
         String script =
             "(function(){"
-                + "if(window.__elflixTvNavV3)return;window.__elflixTvNavV3=true;"
+                + "if(window.__elfixTvNavV8)return;window.__elfixTvNavV8=true;"
                 + "var style=document.createElement('style');"
-                + "style.textContent='a:focus,button:focus,input:focus,select:focus,textarea:focus,video:focus,[tabindex]:focus,[role=\"button\"]:focus{outline:3px solid #e50914!important;outline-offset:3px!important;border-radius:10px!important}#__elflixCursor{position:fixed;left:50vw;top:50vh;width:24px;height:24px;margin:-12px 0 0 -12px;border:3px solid #fff;border-radius:999px;background:#e50914;box-shadow:0 0 0 4px rgba(229,9,20,.35),0 8px 26px rgba(0,0,0,.55);z-index:2147483647;pointer-events:none;display:none}#__elflixCursor:after{content:\"\";position:absolute;left:7px;top:7px;width:4px;height:4px;border-radius:99px;background:#fff}';"
+                + "style.textContent='*{-webkit-user-select:none!important;user-select:none!important}a:focus,button:focus,input:focus,select:focus,textarea:focus,video:focus,iframe:focus,[tabindex]:focus,[role=\"button\"]:focus{outline:4px solid #3D92FF!important;outline-offset:3px!important;border-radius:10px!important;box-shadow:0 0 0 6px rgba(61,146,255,.30),0 0 30px rgba(61,146,255,.55)!important}#__elfixCursor{display:none}';"
+                // AniWorld renders seasons and episodes as 33x33 number links -- unreadable and hard
+                // to aim at from a sofa. Enlarged only on AniWorld, only the season/episode strip.
+                + "if(location.hostname.indexOf('aniworld')>=0){var tvStyle=document.createElement('style');"
+                + "tvStyle.textContent='#stream ul li a{min-width:46px!important;min-height:46px!important;line-height:46px!important;font-size:20px!important;padding:0 8px!important}"
+                + "a.watchEpisode{min-height:56px!important}';"
+                + "document.documentElement.appendChild(tvStyle);}"
                 + "document.documentElement.appendChild(style);"
+                + "var priority='#stream a, a.watchEpisode, a.alphabet-link, button.link-box, a.video-card, .provider-chip, button.provider-frame__play, iframe';"
                 + "var important='a[href],button,input,select,textarea,video,[role=\"button\"],[tabindex],.vjs-big-play-button,.jw-icon-playback,.plyr__control,[class*=\"play\"],[class*=\"Play\"],[class*=\"watch\"],[class*=\"Watch\"],[class*=\"stream\"],[class*=\"Stream\"]';"
-                + "function visible(el){var r=el.getBoundingClientRect();var s=getComputedStyle(el);return r.width>8&&r.height>8&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth&&s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0';}"
+                + "function visible(el){var r=el.getBoundingClientRect();var s=getComputedStyle(el);"
+                // Deliberately scroll-independent: an element counts as a target if it is rendered
+                // at all, not only if it happens to be on screen right now. Filtering by the current
+                // viewport made the candidate list change between key presses, which is what made
+                // the focus jump around and the page scroll unpredictably.
+                + "return r.width>8&&r.height>8&&s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0';}"
                 + "function noise(el){var t=((el.innerText||el.textContent||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();return /cookie|datenschutz|privacy|login|register|registrieren|sprache|language|newsletter|werbung|advert|discord|telegram/.test(t)&&!/play|watch|stream|start|episode|folge|staffel|film|movie|video/.test(t);}"
-                + "function meaningful(el){if(!visible(el)||noise(el))return false;var tag=el.tagName;var r=el.getBoundingClientRect();var cls=((el.className||'')+' '+(el.id||'')).toLowerCase();if(tag==='VIDEO')return true;if(tag==='A'||tag==='BUTTON'||tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return true;if(el.getAttribute('role')==='button'||el.hasAttribute('tabindex'))return true;if(/play|watch|stream|start|episode|folge|staffel|film|movie|video|player/.test(cls))return true;return r.width*r.height>5000&&el.onclick;}"
-                + "function items(){return Array.prototype.slice.call(document.querySelectorAll(important+', [onclick]')).filter(function(el){if(el.tabIndex<0)el.tabIndex=0;return meaningful(el);});}"
+                + "function overlay(el){var r=el.getBoundingClientRect();"
+                // A link the size of the viewport is a click-catcher, not a navigation target.
+                // AniWorld ships one (a#lkfhd, 960x476 at 0,0) that otherwise swallows the focus.
+                + "return r.width*r.height>innerWidth*innerHeight*0.7;}"
+                + "function contentful(el){"
+                // Skip anchors with neither text nor artwork: invisible click targets.
+                + "if(el.tagName!=='A')return true;"
+                + "if((el.innerText||el.textContent||'').trim().length>0)return true;"
+                + "return !!el.querySelector('img,svg,picture,video');}"
+                + "function meaningful(el){if(!visible(el)||noise(el)||overlay(el)||!contentful(el))return false;var tag=el.tagName;var r=el.getBoundingClientRect();var cls=((el.className||'')+' '+(el.id||'')).toLowerCase();if(tag==='VIDEO'||tag==='IFRAME')return true;if(tag==='A'||tag==='BUTTON'||tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return true;if(el.getAttribute('role')==='button'||el.hasAttribute('tabindex'))return true;if(/play|watch|stream|start|episode|folge|staffel|film|movie|video|player/.test(cls))return true;return r.width*r.height>5000&&el.onclick;}"
+                + "function priorityItems(){return Array.prototype.slice.call(document.querySelectorAll(priority)).filter(function(el){return visible(el)&&!overlay(el)&&contentful(el);});}"
+                + "function fallbackItems(){return Array.prototype.slice.call(document.querySelectorAll(important+', [onclick]')).filter(function(el){if(el.tabIndex<0)el.tabIndex=0;return meaningful(el);});}"
+                + "function items(){var p=priorityItems();return p.length?p:fallbackItems();}"
+                + "function docRect(el){var r=el.getBoundingClientRect();var sx=window.scrollX||window.pageXOffset||0;var sy=window.scrollY||window.pageYOffset||0;"
+                + "return{left:r.left+sx,top:r.top+sy,right:r.right+sx,bottom:r.bottom+sy,width:r.width,height:r.height};}"
                 + "function center(r){return{x:r.left+r.width/2,y:r.top+r.height/2};}"
-                + "function first(){var list=items();if(!list.length)return null;var cx=innerWidth/2,cy=innerHeight/2,b=null,bs=1/0;list.forEach(function(el){var c=center(el.getBoundingClientRect());var s=Math.abs(c.x-cx)+Math.abs(c.y-cy);if(s<bs){bs=s;b=el;}});return b;}"
-                + "function move(dir){var list=items();if(!list.length)return false;var active=document.activeElement;if(!active||list.indexOf(active)<0){active=first();if(active){active.focus();active.scrollIntoView({block:'center',inline:'center'});return true;}return false;}var ar=active.getBoundingClientRect();var ac=center(ar);var horizontal=dir==='right'||dir==='left';var best=null;var bestScore=1/0;list.forEach(function(el){if(el===active)return;var r=el.getBoundingClientRect();var c=center(r);var dx=c.x-ac.x;var dy=c.y-ac.y;var primary=dir==='right'?dx:dir==='left'?-dx:dir==='down'?dy:-dy;var orth=horizontal?Math.abs(dy):Math.abs(dx);var overlaps=horizontal?!(r.bottom<ar.top||r.top>ar.bottom):!(r.right<ar.left||r.left>ar.right);if(primary<=8)return;if(!overlaps&&orth>primary*1.15)return;var score=primary+(overlaps?orth*.25:orth*2.8);if(score<bestScore){bestScore=score;best=el;}});if(best){best.focus();best.scrollIntoView({block:'center',inline:'center'});return true;}return false;}"
+                + "function first(){var list=items();if(!list.length)return null;"
+                + "var sx=window.scrollX||0,sy=window.scrollY||0;var cx=sx+innerWidth/2,cy=sy+innerHeight/2,b=null,bs=1/0;"
+                + "list.forEach(function(el){var c=center(docRect(el));var s=Math.abs(c.x-cx)+Math.abs(c.y-cy);if(s<bs){bs=s;b=el;}});return b;}"
+                + "function move(dir){var list=items();if(!list.length)return false;var active=document.activeElement;if(!active||list.indexOf(active)<0){active=first();if(active){active.focus();active.scrollIntoView({block:'center',inline:'center'});return true;}return false;}var ar=docRect(active);var ac=center(ar);var horizontal=dir==='right'||dir==='left';var best=null;var bestScore=1/0;list.forEach(function(el){if(el===active)return;var r=docRect(el);var c=center(r);var dx=c.x-ac.x;var dy=c.y-ac.y;var primary=dir==='right'?dx:dir==='left'?-dx:dir==='down'?dy:-dy;var orth=horizontal?Math.abs(dy):Math.abs(dx);var overlaps=horizontal?!(r.bottom<ar.top||r.top>ar.bottom):!(r.right<ar.left||r.left>ar.right);if(primary<=8)return;if(!overlaps&&orth>primary*1.15)return;var score=primary+(overlaps?orth*.25:orth*2.8);if(score<bestScore){bestScore=score;best=el;}});if(best){best.focus();best.scrollIntoView({block:'center',inline:'center'});return true;}return false;}"
                 + "function fire(el,x,y){if(!el)return;var tag=el.tagName;if(tag==='VIDEO'){try{el.paused?el.play():el.pause();return;}catch(e){}}['pointerdown','mousedown','mouseup','click'].forEach(function(type){try{el.dispatchEvent(new MouseEvent(type,{view:window,bubbles:true,cancelable:true,clientX:x||center(el.getBoundingClientRect()).x,clientY:y||center(el.getBoundingClientRect()).y}));}catch(e){}});}"
-                + "function activate(el){if(!el||el===document.body)return false;var target=el.closest&&el.closest(important)||el;fire(target);return true;}"
+                + "function activate(el){if(!el||el===document.body)return false;"
+                + "if(el.tagName==='IFRAME'){try{el.focus();}catch(e){}return true;}"
+                // Re-validate before firing. AniWorld ships several hoster link sets (one per
+                // language) and swaps which of them is rendered, so the focused link can collapse
+                // to 0x0 between the focus move and the key press -- firing it then followed a
+                // completely different link. Re-pick a real target instead.
+                + "if(!visible(el)||overlay(el)||!contentful(el)){var again=first();"
+                + "if(again){again.focus();again.scrollIntoView({block:'center',inline:'center'});"
+                + "window.__elfixReport('revalidated');}return true;}"
+                + "var target=el.closest&&el.closest(priority+','+important)||el;fire(target);return true;}"
                 + "var cur={x:innerWidth/2,y:innerHeight/2};function cursor(){var el=document.getElementById('__elflixCursor');if(!el){el=document.createElement('div');el.id='__elflixCursor';document.documentElement.appendChild(el);}return el;}function paint(){var el=cursor();el.style.left=cur.x+'px';el.style.top=cur.y+'px';}"
-                + "window.__elflixTvMouse=function(action,dx,dy){var c=cursor();if(action==='show'){c.style.display='block';paint();return true;}if(action==='hide'){c.style.display='none';return true;}if(action==='scroll'){window.scrollBy({top:dy||0,left:dx||0,behavior:'smooth'});return true;}if(action==='move'){c.style.display='block';cur.x=Math.max(8,Math.min(innerWidth-8,cur.x+(dx||0)));cur.y=Math.max(8,Math.min(innerHeight-8,cur.y+(dy||0)));if(cur.y<34&&dy<0)window.scrollBy({top:-120,behavior:'smooth'});if(cur.y>innerHeight-34&&dy>0)window.scrollBy({top:120,behavior:'smooth'});if(cur.x<28&&dx<0)window.scrollBy({left:-120,behavior:'smooth'});if(cur.x>innerWidth-28&&dx>0)window.scrollBy({left:120,behavior:'smooth'});paint();return true;}if(action==='click'){if(dx>0)cur.x=Math.max(8,Math.min(innerWidth-8,dx));if(dy>0)cur.y=Math.max(8,Math.min(innerHeight-8,dy));c.style.display='block';paint();var old=c.style.display;c.style.display='none';var el=document.elementFromPoint(cur.x,cur.y);c.style.display=old;var target=el&&el.closest&&el.closest(important+', [onclick]')||el;if(target){try{target.focus();}catch(e){}fire(target,cur.x,cur.y);}return true;}return false;};"
-                + "document.addEventListener('keydown',function(e){var map={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'};if(map[e.key]&&move(map[e.key])){e.preventDefault();e.stopPropagation();return;}if((e.key==='Enter'||e.key===' ')&&activate(document.activeElement)){e.preventDefault();e.stopPropagation();}},true);"
+                + "window.__elflixTvMouse=function(action,dx,dy){var c=cursor();if(action==='show'){c.style.display='block';paint();return true;}if(action==='hide'){c.style.display='none';return true;}if(action==='move'){c.style.display='block';cur.x=Math.max(8,Math.min(innerWidth-8,cur.x+(dx||0)));cur.y=Math.max(8,Math.min(innerHeight-8,cur.y+(dy||0)));if(cur.y<34&&dy<0)window.scrollBy({top:-120,behavior:'smooth'});if(cur.y>innerHeight-34&&dy>0)window.scrollBy({top:120,behavior:'smooth'});if(cur.x<28&&dx<0)window.scrollBy({left:-120,behavior:'smooth'});if(cur.x>innerWidth-28&&dx>0)window.scrollBy({left:120,behavior:'smooth'});paint();return true;}if(action==='click'){if(dx>0)cur.x=Math.max(8,Math.min(innerWidth-8,dx));if(dy>0)cur.y=Math.max(8,Math.min(innerHeight-8,dy));c.style.display='block';paint();var old=c.style.display;c.style.display='none';var el=document.elementFromPoint(cur.x,cur.y);c.style.display=old;var target=el&&el.closest&&el.closest(important+', [onclick]')||el;if(target){try{target.focus();}catch(e){}fire(target,cur.x,cur.y);}return true;}return false;};"
+                + "function describe(el){if(!el)return 'null';var r=el.getBoundingClientRect();return el.tagName+'#'+(el.id||'')+'.'+((''+(el.className||'')).split(' ')[0])+' '+Math.round(r.width)+'x'+Math.round(r.height)+'@'+Math.round(r.left)+','+Math.round(r.top);}"
+                + "window.__elfixReport=function(tag){try{console.log('ELFIX:'+tag+' active='+describe(document.activeElement)+' items='+items().length);}catch(e){}};"
+                + "document.addEventListener('keydown',function(e){"
+                + "var ae=document.activeElement;"
+                // The hoster runs in a cross-origin iframe. Once it has focus we must NOT consume the
+                // key: Chromium routes it into the embedded document, which is the only way the
+                // player's own controls become reachable with a remote. Same-origin policy means we
+                // can never drive them from here ourselves.
+                + "if(ae&&ae.tagName==='IFRAME'){window.__elfixReport('handoff-iframe');return;}"
+                + "var map={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'};"
+                + "if(map[e.key]){var ok=move(map[e.key]);window.__elfixReport('move-'+map[e.key]+'-'+(ok?'ok':'fail'));if(ok){e.preventDefault();e.stopPropagation();return;}}"
+                + "if((e.key==='Enter'||e.key===' ')){var done=activate(document.activeElement);window.__elfixReport('enter-'+(done?'ok':'fail'));if(done){e.preventDefault();e.stopPropagation();}}},true);"
             + "})();";
         webView.evaluateJavascript(script, null);
     }
@@ -2293,6 +4270,15 @@ public class MainActivity extends Activity {
         return "text/plain";
     }
 
+    /** True for a navigable HTML document loaded into a frame other than the main one. */
+    private boolean isSubFrameDocument(WebResourceRequest request) {
+        if (request.isForMainFrame()) return false;
+        Map<String, String> headers = request.getRequestHeaders();
+        String accept = headers == null ? null : headers.get("Accept");
+        if (accept == null && headers != null) accept = headers.get("accept");
+        return accept != null && accept.toLowerCase().contains("text/html");
+    }
+
     private boolean isPageCriticalRequest(WebResourceRequest request) {
         String url = request.getUrl().toString().toLowerCase();
         String accept = request.getRequestHeaders().get("Accept");
@@ -2323,7 +4309,24 @@ public class MainActivity extends Activity {
 
     private final class GuardedChromeClient extends WebChromeClient {
         @Override
+        public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
+            // Only our own diagnostics, so provider pages cannot flood logcat.
+            String text = message.message() == null ? "" : message.message();
+            if (text.startsWith("ELFIX:")) Log.i(TAG, "page " + text);
+            return true;
+        }
+
+        @Override
         public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+            // resultMsg.obj is only guaranteed to be a WebViewTransport when the framework itself
+            // triggered this callback for a genuine window.open()/target=_blank. Guard against any
+            // other shape instead of crashing on a bad cast.
+            Object transportObj = resultMsg == null ? null : resultMsg.obj;
+            if (!(transportObj instanceof WebView.WebViewTransport)) {
+                Log.w(TAG, "Popup requested with unexpected transport, ignoring");
+                return false;
+            }
+            Log.i(TAG, "Popup requested userGesture=" + isUserGesture);
             WebView popup = new WebView(MainActivity.this);
             popup.getSettings().setJavaScriptEnabled(true);
             popup.setWebViewClient(new WebViewClient() {
@@ -2333,17 +4336,30 @@ public class MainActivity extends Activity {
                     if (url == null || url.trim().isEmpty() || url.startsWith("about:blank")) return false;
                     if (handled) return true;
                     handled = true;
-                    try {
-                        popup.stopLoading();
-                        popup.destroy();
-                    } catch (Exception ignored) {
-                    }
                     Provider provider = activeProvider;
-                    if (isAllowedPopupTarget(provider, url)) {
+                    boolean allowed = isAllowedPopupTarget(provider, url);
+                    Log.i(TAG, "POPUP target=" + safeHost(url)
+                        + " allowed=" + allowed
+                        + " playerUrlHeuristic=" + Adblocker.isLikelyVideoPlayerUrl(url)
+                        + " firstParty=" + isPopupFirstParty(provider, url)
+                        + " path=" + safePath(url));
+                    if (allowed) {
+                        selfInitiatedNavigation = url;
+                        hosterChainHops = HOSTER_CHAIN_HOPS;
                         view.post(() -> view.loadUrl(url));
                     } else {
                         view.post(() -> showToast("Popup blockiert"));
                     }
+                    // Never destroy a WebView synchronously from within its own WebViewClient
+                    // callback -- the Chromium engine is still unwinding this exact call frame,
+                    // and doing so can crash the whole app natively. Defer it to the next loop tick.
+                    popup.post(() -> {
+                        try {
+                            popup.stopLoading();
+                            popup.destroy();
+                        } catch (Exception ignored) {
+                        }
+                    });
                     return true;
                 }
 
@@ -2363,7 +4379,7 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {
                 }
             }, 5000);
-            WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+            WebView.WebViewTransport transport = (WebView.WebViewTransport) transportObj;
             transport.setWebView(popup);
             resultMsg.sendToTarget();
             return true;

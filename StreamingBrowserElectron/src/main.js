@@ -2,17 +2,22 @@ const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, dialog } =
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
+const { extractDiscoverItems, extractPosterFallbacks } = require("./discover");
 const providerModel = require("../shared/provider-model");
 
-const DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
+const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
+const DATA_DIR = path.join(app.getPath("appData"), "ELFIX");
 const PROVIDER_FILE = path.join(DATA_DIR, "providers.json");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const FILTER_CACHE_FILE = path.join(DATA_DIR, "filter-cache.json");
 const FAVORITES_FILE = path.join(DATA_DIR, "favorites.json");
 const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
+const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
 const CACHE_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+const MIN_WATCH_TIME_SECONDS = 2.5 * 60;
+const COMPLETED_PROGRESS_PERCENT = 90;
 const ADGUARD_FILTER_LISTS = [
   {
     name: "AdGuard Base Filter",
@@ -46,7 +51,21 @@ const providerViews = new Map();
 const webContentsProvider = new Map();
 const attachedProviderViews = new Set();
 const providerResumeState = new Map();
+const mediaProgressTimers = new Map();
+const providerAutoplayRequests = new Map();
 const blockedRequests = [];
+const mediaDiagnostics = [];
+const mediaConsoleLogState = new Map();
+const discoverCache = new Map();
+const DISCOVER_CACHE_MS = 30 * 60 * 1000;
+const autoplayConsoleLogState = new Map();
+const AUTOPLAY_POLL_MS = 700;
+const AUTOSTART_REVEAL_TIMEOUT_MS = 22000;
+const AUTOSTART_EXTRA_WAIT_MS = 8000;
+const CURTAIN_DIR = path.join(DATA_DIR, "curtain");
+const VIEW_BACKGROUND_COLOR = "#070a10";
+let pendingAutostart = null;
+let curtainView = null;
 const overlayReasons = new Set();
 let adblock;
 let cacheCleanupTimer;
@@ -61,7 +80,7 @@ let updateState = {
   error: ""
 };
 
-app.setName("Elflix");
+app.setName("ELFIX");
 
 app.whenReady().then(async () => {
   adblock = new FilterEngine();
@@ -101,7 +120,7 @@ function createMainWindow() {
     minWidth: 1100,
     minHeight: 720,
     backgroundColor: "#070a10",
-    title: "Elflix",
+    title: "ELFIX",
     icon: path.join(app.getAppPath(), "build", "icon.ico"),
     autoHideMenuBar: true,
     webPreferences: {
@@ -153,7 +172,7 @@ function setupAutoUpdater() {
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
 
-  autoUpdater.on("checking-for-update", () => setUpdateState({ status: "checking", message: "Suche beim Start nach Elflix-Updates...", progress: 0, downloaded: false, installing: false, error: "" }));
+  autoUpdater.on("checking-for-update", () => setUpdateState({ status: "checking", message: "Suche beim Start nach ELFIX-Updates...", progress: 0, downloaded: false, installing: false, error: "" }));
   autoUpdater.on("update-available", (info) => {
     setUpdateState({
       status: "available",
@@ -165,7 +184,7 @@ function setupAutoUpdater() {
       error: ""
     });
   });
-  autoUpdater.on("update-not-available", () => setUpdateState({ status: "current", message: "Elflix ist aktuell.", progress: 100, error: "" }));
+  autoUpdater.on("update-not-available", () => setUpdateState({ status: "current", message: "ELFIX ist aktuell.", progress: 100, error: "" }));
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.round(progress.percent || 0);
     setUpdateState({ status: "downloading", message: `Update wird geladen: ${percent}%`, progress: percent, error: "" }, [25, 50, 75, 100].includes(percent));
@@ -173,7 +192,7 @@ function setupAutoUpdater() {
   autoUpdater.on("update-downloaded", () => {
     setUpdateState({
       status: "installing",
-      message: "Update geladen. Elflix installiert es jetzt automatisch und startet neu.",
+      message: "Update geladen. ELFIX installiert es jetzt automatisch und startet neu.",
       progress: 100,
       downloaded: true,
       installing: true,
@@ -341,7 +360,8 @@ ipcMain.handle("app:init", () => ({
     packaged: app.isPackaged,
     repository: "https://github.com/RoveHD/elfix"
   },
-  updateState: publicUpdateState()
+  updateState: publicUpdateState(),
+  mediaDiagnostics: mediaDiagnostics.slice(-120).reverse()
 }));
 
 ipcMain.handle("updates:check", async () => {
@@ -349,7 +369,7 @@ ipcMain.handle("updates:check", async () => {
     setUpdateState({ status: "dev", message: "Updates funktionieren im installierten Release.", progress: 0, error: "" });
     return publicUpdateState();
   }
-  setUpdateState({ status: "checking", message: "Suche nach Elflix-Updates...", progress: 0, downloaded: false, installing: false, error: "" });
+  setUpdateState({ status: "checking", message: "Suche nach ELFIX-Updates...", progress: 0, downloaded: false, installing: false, error: "" });
   await autoUpdater.checkForUpdatesAndNotify().catch((error) => {
     setUpdateState({ status: "error", message: "Update konnte nicht automatisch installiert werden.", progress: 0, installing: false, error: error?.message || "Unbekannt" });
   });
@@ -372,6 +392,8 @@ ipcMain.handle("settings:set-open", (_event, isOpen) => {
 });
 
 ipcMain.handle("shell:set-open", (_event, isOpen) => {
+  // Der Nutzer geht selbst zurueck in die Oberflaeche: kein Autostart-Warten mehr.
+  if (isOpen) finishAutostart("oberflaeche");
   setOverlayOpen("shell", isOpen);
   return true;
 });
@@ -401,6 +423,11 @@ ipcMain.handle("provider:navigate", async (_event, providerId, url) => {
 });
 
 ipcMain.handle("search:all", async (_event, query) => searchAllProviders(query));
+
+ipcMain.handle("discover:recommendations", async (_event, options = {}) => {
+  const proAnbieter = Math.max(2, Math.min(12, Number(options?.perProvider) || 6));
+  return collectRecommendations(proAnbieter, Boolean(options?.refresh));
+});
 
 ipcMain.handle("browser:navigate", async (_event, input) => {
   const provider = activeProvider();
@@ -435,7 +462,14 @@ ipcMain.handle("browser:command", async (_event, command) => {
     shell.openExternal(view.webContents.getURL());
   }
   if (command === "fullscreen") {
-    enterContentFullscreen();
+    if (isContentFullscreen) {
+      leaveContentFullscreen();
+    } else {
+      enterContentFullscreen();
+    }
+  }
+  if (command === "leaveFullscreen") {
+    leaveContentFullscreen();
   }
 
   return activeState();
@@ -460,6 +494,22 @@ ipcMain.handle("favorites:toggle-current", async () => {
     favicon: meta.favicon || "",
     thumbnail: meta.thumbnail || "",
     logo: provider.logo || "",
+    favorite: true,
+    watched: false,
+    completed: false,
+    episodeCompleted: false,
+    hideFromContinueWatching: false,
+    progress: 0,
+    duration: 0,
+    position: 0,
+    currentTime: 0,
+    type: inferMediaType(url),
+    season: episodeIdentity(url)?.season || 0,
+    episode: episodeIdentity(url)?.episode || 0,
+    finalSeason: sanitizePositiveNumber(meta.finalSeason),
+    finalEpisode: sanitizePositiveNumber(meta.finalEpisode),
+    lastWatchedAt: "",
+    activity: [],
     createdAt: new Date().toISOString()
   };
 
@@ -472,6 +522,19 @@ ipcMain.handle("favorites:toggle-current", async () => {
       id: existing.id,
       createdAt: existing.createdAt || nextFavorite.createdAt,
       thumbnail: nextFavorite.thumbnail || (isFilmoProvider(provider) ? "" : existing.thumbnail || ""),
+      favorite: true,
+      watched: Boolean(existing.watched),
+      completed: false,
+      episodeCompleted: false,
+      hideFromContinueWatching: Boolean(existing.hideFromContinueWatching),
+      progress: sanitizeProgress(existing.progress),
+      duration: sanitizePositiveNumber(existing.duration),
+      position: sanitizePositiveNumber(existing.position),
+      currentTime: sanitizePositiveNumber(existing.currentTime || existing.position),
+      finalSeason: sanitizePositiveNumber(nextFavorite.finalSeason || existing.finalSeason),
+      finalEpisode: sanitizePositiveNumber(nextFavorite.finalEpisode || existing.finalEpisode),
+      lastWatchedAt: existing.lastWatchedAt || "",
+      activity: Array.isArray(existing.activity) ? existing.activity : [],
       updatedAt: new Date().toISOString()
     };
     favorites.splice(existingIndex, 1);
@@ -490,14 +553,37 @@ ipcMain.handle("favorites:toggle-current", async () => {
 });
 
 ipcMain.handle("favorites:remove", (_event, favoriteId) => {
-  const before = favorites.length;
-  favorites = favorites.filter((favorite) => favorite.id !== favoriteId);
+  const index = favorites.findIndex((favorite) => favorite.id === favoriteId);
+  if (index < 0) return favorites;
+  const favorite = favorites[index];
+  if (favorite.watched || favorite.lastWatchedAt || Number(favorite.progress) > 0 || Array.isArray(favorite.activity) && favorite.activity.length) {
+    favorite.favorite = false;
+    favorite.updatedAt = new Date().toISOString();
+  } else {
+    favorites.splice(index, 1);
+  }
   if (activeFavoriteId === favoriteId) activeFavoriteId = null;
-  if (favorites.length !== before) saveFavorites();
+  saveFavorites();
   return favorites;
 });
 
-ipcMain.handle("favorites:open", async (_event, favoriteId) => {
+ipcMain.handle("continue:hide", (_event, favoriteId) => {
+  const favorite = favorites.find((item) => item.id === favoriteId);
+  if (!favorite) return favorites;
+  resetContinueProgressToStart(favorite);
+  saveFavorites();
+  return favorites;
+});
+
+ipcMain.handle("history:clear", () => {
+  for (const favorite of favorites) {
+    favorite.activity = [];
+  }
+  saveFavorites();
+  return { favorites, cleared: true };
+});
+
+ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
   const favorite = favorites.find((item) => item.id === favoriteId);
   if (!favorite) return null;
 
@@ -508,8 +594,11 @@ ipcMain.handle("favorites:open", async (_event, favoriteId) => {
 
   activeFavoriteId = favorite.id;
   moveFavoriteToFront(favorite);
+  recordMediaActivity(provider, favorite.url, {}, { existing: favorite, label: "Geöffnet" });
   await repairFavoriteThumbnailIfNeeded(favorite, provider).catch(() => false);
+  if (options?.autoplay) await beginAutostart(provider.id, cleanTitle(favorite.title));
   await navigateProvider(provider, favorite.url);
+  if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
   return activeState();
 });
 
@@ -550,6 +639,7 @@ ipcMain.handle("adblock:update-filters", async () => {
 });
 
 ipcMain.handle("adblock:blocked", () => blockedRequests.slice(-120).reverse());
+ipcMain.handle("media:diagnostics", () => mediaDiagnostics.slice(-120).reverse());
 
 ipcMain.handle("data:clear-cache", async () => {
   await clearBrowserDataPreservingLogin();
@@ -583,6 +673,9 @@ ipcMain.handle("data:confirm-reset", async () => {
 });
 
 async function navigateProvider(provider, url) {
+  if (pendingAutostart && pendingAutostart.providerId !== provider.id) {
+    finishAutostart("anbieterwechsel");
+  }
   setOverlayOpen("shell", false);
   const previousView = activeView;
   const previousProviderId = activeProviderId;
@@ -595,7 +688,8 @@ async function navigateProvider(provider, url) {
   activeView = view;
   view.webContents.setAudioMuted(false);
 
-  if (!attachedProviderViews.has(provider.id)) {
+  // Bei offenem Overlay (Einstellungen, Oberflaeche) bleibt die View abgehaengt.
+  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0) {
     mainWindow.contentView.addChildView(view);
     attachedProviderViews.add(provider.id);
   }
@@ -608,6 +702,7 @@ async function navigateProvider(provider, url) {
   }
 
   applyBrowserBounds();
+  if (pendingAutostart) raiseAutostartCurtain();
   let target = providerModel.normalizeUrl(url || provider.startUrl);
   if (shouldBlockProviderNavigation(target, provider)) {
     logBlockedUrl(target, provider, "site-lock:programmatic", "navigation");
@@ -621,19 +716,27 @@ async function navigateProvider(provider, url) {
 }
 
 async function enterHomeMode() {
-  const previousView = activeView;
-  const previousProviderId = activeProviderId;
-  if (previousView && previousProviderId && settings.playback.pauseOnProviderSwitch) {
-    await pauseProviderForSwitch(previousProviderId, previousView, true);
-  }
   if (mainWindow) {
     for (const [providerId, view] of providerViews.entries()) {
+      const provider = providers.find((item) => item.id === providerId);
+      if (provider && isLiveView(view)) {
+        await syncViewMediaProgress(provider, view, "close").catch(() => {});
+        await pauseProviderForSwitch(providerId, view, true).catch(() => {});
+      }
+      stopMediaProgressPolling(providerId);
       if (attachedProviderViews.has(providerId)) {
         mainWindow.contentView.removeChildView(view);
         attachedProviderViews.delete(providerId);
       }
+      if (isLiveView(view)) {
+        view.webContents.close();
+      }
     }
   }
+  providerViews.clear();
+  webContentsProvider.clear();
+  attachedProviderViews.clear();
+  providerResumeState.clear();
   activeProviderId = null;
   activeFavoriteId = null;
   activeView = null;
@@ -652,9 +755,12 @@ function getProviderView(provider) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      autoplayPolicy: "no-user-gesture-required"
+      autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false
     }
   });
+  // Sonst blitzt beim Seitenwechsel das weisse Standard-Backing durch.
+  view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
 
   webContentsProvider.set(view.webContents.id, provider.id);
   view.webContents.setWindowOpenHandler(({ url }) => {
@@ -672,25 +778,33 @@ function getProviderView(provider) {
   });
 
   view.webContents.on("will-navigate", (event, url) => {
+    syncViewMediaProgress(provider, view, "leave");
     if (shouldCancelNavigation(url, provider)) {
       event.preventDefault();
     }
   });
   view.webContents.on("will-redirect", (event, url) => {
+    syncViewMediaProgress(provider, view, "leave");
     if (shouldCancelNavigation(url, provider)) {
       event.preventDefault();
     }
   });
-  view.webContents.on("enter-html-full-screen", () => enterContentFullscreen());
-  view.webContents.on("leave-html-full-screen", () => leaveContentFullscreen());
+  view.webContents.on("enter-html-full-screen", () => markContentFullscreen(true));
+  view.webContents.on("leave-html-full-screen", () => markContentFullscreen(false));
   view.webContents.on("before-input-event", (event, input) => {
     if (input.key === "Escape" && isContentFullscreen) {
       event.preventDefault();
       leaveContentFullscreen();
     }
   });
-  view.webContents.on("did-navigate", (_event, url) => rememberProviderUrl(provider.id, url));
-  view.webContents.on("did-navigate-in-page", (_event, url) => rememberProviderUrl(provider.id, url));
+  view.webContents.on("did-navigate", (_event, url) => {
+    rememberProviderUrl(provider.id, url);
+    resumePendingProviderAutoplay(provider, view);
+  });
+  view.webContents.on("did-navigate-in-page", (_event, url) => {
+    rememberProviderUrl(provider.id, url);
+    resumePendingProviderAutoplay(provider, view);
+  });
   view.webContents.on("page-title-updated", () => {
     updateActiveFavoriteTitle(provider.id, view);
     sendActiveState();
@@ -698,17 +812,188 @@ function getProviderView(provider) {
   view.webContents.on("did-finish-load", () => {
     installStoPlayerFix(provider, view);
     installAniWorldImageFix(provider, view);
+    syncViewMediaProgress(provider, view, "load");
     updateActiveFavoriteTitle(provider.id, view);
     scheduleFavoriteMetadataRefresh(provider.id, view);
+    resumePendingProviderAutoplay(provider, view);
     sendActiveState();
   });
   view.webContents.on("dom-ready", () => {
     installStoPlayerFix(provider, view);
     installAniWorldImageFix(provider, view);
+    resumePendingProviderAutoplay(provider, view);
   });
 
   providerViews.set(provider.id, view);
+  startMediaProgressPolling(provider, view);
   return view;
+}
+
+function startMediaProgressPolling(provider, view) {
+  stopMediaProgressPolling(provider.id);
+  const timer = setInterval(() => {
+    syncViewMediaProgress(provider, view, "poll");
+  }, 5000);
+  if (typeof timer.unref === "function") timer.unref();
+  mediaProgressTimers.set(provider.id, timer);
+}
+
+function stopMediaProgressPolling(providerId) {
+  const timer = mediaProgressTimers.get(providerId);
+  if (timer) clearInterval(timer);
+  mediaProgressTimers.delete(providerId);
+}
+
+async function syncViewMediaProgress(provider, view, reason = "poll") {
+  if (!provider || !isLiveView(view)) return;
+  const url = view.webContents.getURL();
+  if (!providerModel.isHttpUrl(url) || !isTrackableMediaUrl(url, provider)) return;
+
+  const progressScript = `(() => {
+    const finite = (value) => Number.isFinite(value) ? value : 0;
+    const abs = (value) => {
+      try { return value ? new URL(value, location.href).href : ""; } catch (_) { return ""; }
+    };
+    const nextEpisodeUrl = () => {
+      const anchors = Array.from(document.querySelectorAll("a[href]"));
+      const currentEpisodeMatch = location.pathname.match(/\\/(?:episode|folge)-(\\d+)(?:\\/?|$)/i);
+      const currentEpisode = currentEpisodeMatch ? Number(currentEpisodeMatch[1]) : 0;
+      const nextTextPattern = /\\b(next|weiter|naechste|nächste)\\b|[›»→]/i;
+      const semantic = anchors.find((anchor) => {
+        const label = [
+          anchor.rel,
+          anchor.textContent,
+          anchor.title,
+          anchor.getAttribute("aria-label"),
+          anchor.className
+        ].join(" ");
+        const href = abs(anchor.getAttribute("href"));
+        return href && nextTextPattern.test(label) && /\\/(?:episode|folge)-\\d+(?:[/?#]|$)/i.test(href);
+      });
+      if (semantic) return abs(semantic.getAttribute("href"));
+      if (!currentEpisode) return "";
+      const directPattern = new RegExp("\\\\/(?:episode|folge)-" + (currentEpisode + 1) + "(?:[/?#]|$)", "i");
+      const direct = anchors.find((anchor) => directPattern.test(abs(anchor.getAttribute("href"))));
+      return direct ? abs(direct.getAttribute("href")) : "";
+    };
+    const visibleArea = (node) => {
+      try {
+        const rect = node.getBoundingClientRect();
+        return Math.max(0, rect.width) * Math.max(0, rect.height);
+      } catch (_) {
+        return 0;
+      }
+    };
+    const now = Date.now();
+    window.__elfixMediaWatchTracker = window.__elfixMediaWatchTracker || new WeakMap();
+    const medias = Array.from(document.querySelectorAll("video, audio"))
+      .map((media) => {
+        const currentTime = finite(media.currentTime);
+        const duration = finite(media.duration);
+        const sourceKey = [location.href, media.currentSrc || media.src || media.getAttribute("src") || ""].join("|");
+        const paused = Boolean(media.paused);
+        const ended = Boolean(media.ended);
+        const stored = window.__elfixMediaWatchTracker.get(media);
+        const previous = stored && stored.sourceKey === sourceKey ? stored : {
+          currentTime,
+          sampledAt: now,
+          playedSeconds: 0,
+          sourceKey
+        };
+        const timeDelta = Math.max(0, (now - previous.sampledAt) / 1000);
+        const mediaDelta = currentTime - previous.currentTime;
+        const naturalPlaybackDelta = mediaDelta > 0 && mediaDelta <= timeDelta + 2
+          ? Math.min(mediaDelta, timeDelta + 2)
+          : 0;
+        const playedSeconds = Math.min(duration || Number.MAX_SAFE_INTEGER, previous.playedSeconds + naturalPlaybackDelta);
+        window.__elfixMediaWatchTracker.set(media, {
+          currentTime,
+          sampledAt: now,
+          playedSeconds,
+          sourceKey
+        });
+        return {
+          currentTime,
+          duration,
+          playedSeconds,
+          paused,
+          ended,
+          readyState: Number(media.readyState || 0),
+          area: visibleArea(media),
+          frameUrl: location.href,
+          nextUrl: nextEpisodeUrl()
+        };
+      })
+      .filter((item) => item.duration > 0 && item.currentTime >= 0 && item.currentTime <= item.duration + 3 && item.readyState > 0)
+      .sort((left, right) => {
+        if (left.ended !== right.ended) return left.ended ? -1 : 1;
+        if (left.paused !== right.paused) return left.paused ? 1 : -1;
+        return right.area - left.area;
+      });
+    return medias[0] || null;
+  })()`;
+  const progress = await readBestMediaProgress(view, progressScript);
+
+  if (!progress || !isValidMediaProgress(progress)) return;
+  const pageMeta = await readPageMetadata(view).catch(() => ({}));
+  const entry = recordMediaActivity(provider, url, {
+    currentTime: progress.currentTime,
+    position: progress.currentTime,
+    duration: progress.duration,
+    watchedSeconds: progress.playedSeconds,
+    progress: mediaProgressPercent(progress.currentTime, progress.duration),
+    completed: Boolean(progress.ended) || mediaProgressPercent(progress.currentTime, progress.duration) >= COMPLETED_PROGRESS_PERCENT,
+    title: pageMeta.title,
+    type: pageMeta.type,
+    thumbnail: pageMeta.thumbnail,
+    favicon: pageMeta.favicon,
+    nextUrl: progress.nextUrl || "",
+    finalSeason: pageMeta.finalSeason,
+    finalEpisode: pageMeta.finalEpisode
+  }, {
+    label: progress.ended ? "Abgeschlossen" : undefined,
+    updateFavoriteUrl: false
+  });
+  if (!entry) return;
+  if (reason !== "poll" || entry.completed) sendActiveState();
+}
+
+async function readBestMediaProgress(view, script) {
+  const samples = await executeJavaScriptInMediaFrames(view, script);
+  const valid = samples
+    .filter((item) => item && isValidMediaProgress(item))
+    .sort((left, right) => {
+      if (left.playedSeconds !== right.playedSeconds) return right.playedSeconds - left.playedSeconds;
+      if (left.ended !== right.ended) return left.ended ? -1 : 1;
+      if (left.paused !== right.paused) return left.paused ? 1 : -1;
+      return right.area - left.area;
+    });
+  return valid[0] || null;
+}
+
+async function executeJavaScriptInMediaFrames(view, script) {
+  if (!isLiveView(view)) return [];
+  const frames = [];
+  const collectFrames = (frame) => {
+    if (!frame || frames.includes(frame)) return;
+    frames.push(frame);
+    for (const child of frame.frames || []) collectFrames(child);
+  };
+  collectFrames(view.webContents.mainFrame);
+
+  if (!frames.length) {
+    const sample = await view.webContents.executeJavaScript(script, true).catch(() => null);
+    return sample ? [sample] : [];
+  }
+
+  // userGesture muss mit: play() ohne Stummschaltung und requestFullscreen() verlangen
+  // eine "transient user activation", die ein Script ohne dieses Flag nicht mitbringt.
+  const samples = await Promise.all(frames.map((frame) => (
+    typeof frame.executeJavaScript === "function"
+      ? frame.executeJavaScript(script, true).catch(() => null)
+      : Promise.resolve(null)
+  )));
+  return samples.filter(Boolean);
 }
 
 function installAniWorldImageFix(provider, view) {
@@ -892,6 +1177,14 @@ function installStoPlayerFix(provider, view) {
 
 function applyBrowserBounds() {
   if (!isLiveView(activeView) || !mainWindow) return;
+  if (pendingAutostart) {
+    // Waehrend des Autostarts laeuft die View ganz normal sichtbar - nur der
+    // Vorhang liegt davor. Versteckt (abgehaengt oder komplett verdeckt) wuerde
+    // Chromium sie drosseln und der Player kaeme nicht voran.
+    const [width, height] = mainWindow.getContentSize();
+    activeView.setBounds({ x: 0, y: 0, width, height });
+    return;
+  }
   if (isContentFullscreen) {
     const [width, height] = mainWindow.getContentSize();
     activeView.setBounds({ x: 0, y: 0, width, height });
@@ -925,6 +1218,140 @@ function restoreActiveViewAfterOverlay() {
   applyBrowserBounds();
 }
 
+// Der Player laeuft waehrend des Autostarts ganz normal sichtbar weiter - davor
+// liegt nur ein Vorhang mit einem Standbild der Oberflaeche. Alles andere
+// (abhaengen, verschieben, komplett verdecken) macht die Seite fuer Chromium
+// unsichtbar und drosselt sie auf ~1 Timer-Tick pro Sekunde ohne jedes Frame.
+async function beginAutostart(providerId, title) {
+  // Bewusst ohne finishAutostart(): ein zweiter Klick waehrend des Startens soll
+  // weder umschalten noch den Vorhang kurz aufziehen.
+  if (pendingAutostart) clearTimeout(pendingAutostart.timer);
+  pendingAutostart = {
+    providerId,
+    startedAt: Date.now(),
+    timer: setTimeout(() => handleAutostartTimeout(providerId), AUTOSTART_REVEAL_TIMEOUT_MS)
+  };
+  await showAutostartCurtain(title).catch(() => {});
+  applyBrowserBounds();
+}
+
+async function showAutostartCurtain(title) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  removeAutostartCurtain();
+
+  let snapshot = "";
+  try {
+    const image = await mainWindow.webContents.capturePage();
+    if (!image.isEmpty()) {
+      fs.mkdirSync(CURTAIN_DIR, { recursive: true });
+      fs.writeFileSync(path.join(CURTAIN_DIR, "shell.png"), image.toPNG());
+      snapshot = `<img src="shell.png" alt="">`;
+    }
+  } catch {
+    // Ohne Standbild bleibt der Vorhang einfach dunkel.
+  }
+
+  fs.mkdirSync(CURTAIN_DIR, { recursive: true });
+  fs.writeFileSync(path.join(CURTAIN_DIR, "curtain.html"), `<!doctype html>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #070a10; }
+  img { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .badge {
+    position: fixed; left: 50%; bottom: 54px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px; padding: 13px 22px; border-radius: 999px;
+    background: rgba(8, 12, 20, 0.88); color: #fff; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+    font: 800 15px/1 system-ui, sans-serif;
+  }
+  .dot {
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.25); border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+${snapshot}
+<div class="badge"><i class="dot"></i><span>${escapeHtmlText(title || "Wiedergabe")} wird gestartet …</span></div>`);
+
+  const view = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true } });
+  // Ohne das ist eine frische View bis zum ersten Paint weiss - das war der
+  // Blitzer beim Aufziehen des Vorhangs.
+  view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
+  curtainView = view;
+  try {
+    view.webContents.on("input-event", (_event, input) => {
+      if (input.type === "mouseDown" || (input.type === "keyDown" && input.key === "Escape")) {
+        finishAutostart("abgebrochen");
+      }
+    });
+  } catch {
+    // Aelteres Electron ohne input-event: dann bleibt nur das Zeitlimit.
+  }
+  // Erst laden, dann einhaengen: so ist der Inhalt beim ersten Frame schon da.
+  await view.webContents.loadFile(path.join(CURTAIN_DIR, "curtain.html")).catch(() => {});
+  if (curtainView !== view) return;
+  raiseAutostartCurtain();
+}
+
+// Der Vorhang muss nach der Provider-View eingehaengt werden, sonst liegt er
+// darunter. Ein zweites addChildView schiebt ihn wieder nach oben.
+function raiseAutostartCurtain() {
+  if (!curtainView || !mainWindow || mainWindow.isDestroyed()) return;
+  const [width, height] = mainWindow.getContentSize();
+  mainWindow.contentView.addChildView(curtainView);
+  // 1px oben frei lassen: bei vollstaendiger Ueberdeckung gilt die Player-View
+  // als unsichtbar und wird gedrosselt (gemessen: 2 statt 20 Timer-Ticks, 0 Frames).
+  curtainView.setBounds({ x: 0, y: 1, width, height: Math.max(1, height - 1) });
+}
+
+function escapeHtmlText(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function removeAutostartCurtain() {
+  if (!curtainView) return;
+  const view = curtainView;
+  curtainView = null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.contentView.removeChildView(view);
+  }
+  try {
+    view.webContents.close();
+  } catch {
+    // Bereits geschlossen.
+  }
+}
+
+function handleAutostartTimeout(providerId) {
+  if (!pendingAutostart || pendingAutostart.providerId !== providerId) return;
+  const request = providerAutoplayRequests.get(providerId);
+  if (request?.sawPlayback && !pendingAutostart.extended) {
+    // Der Player laeuft schon, nur das Vollbild fehlt noch: kurz nachfassen,
+    // statt mitten im Start umzuschalten.
+    pendingAutostart.extended = true;
+    pendingAutostart.timer = setTimeout(() => finishAutostart("zeitlimit"), AUTOSTART_EXTRA_WAIT_MS);
+    return;
+  }
+  finishAutostart("zeitlimit");
+}
+
+function finishAutostart(reason) {
+  if (!pendingAutostart) return;
+  clearTimeout(pendingAutostart.timer);
+  const seconds = ((Date.now() - pendingAutostart.startedAt) / 1000).toFixed(1);
+  console.log(`[ELFIX AUTOSTART] umgeschaltet nach ${seconds}s (${reason})`);
+  pendingAutostart = null;
+  removeAutostartCurtain();
+  applyBrowserBounds();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("app:autostart-done", { reason });
+  }
+}
+
 function setOverlayOpen(reason, isOpen) {
   if (isOpen) {
     overlayReasons.add(reason);
@@ -956,6 +1383,8 @@ function pauseViewPlayback(view, mute) {
 
 async function pauseProviderForSwitch(providerId, view, mute) {
   if (!providerId || !isLiveView(view)) return;
+  const provider = providers.find((item) => item.id === providerId);
+  if (provider) await syncViewMediaProgress(provider, view, "pause");
   const wasPlaying = await view.webContents.executeJavaScript(
     `(() => {
       let playing = false;
@@ -1004,6 +1433,7 @@ async function reloadAllProviderViews() {
     : provider?.lastUrl || provider?.startUrl || "";
 
   for (const [providerId, view] of providerViews.entries()) {
+    stopMediaProgressPolling(providerId);
     if (mainWindow && attachedProviderViews.has(providerId)) {
       mainWindow.contentView.removeChildView(view);
     }
@@ -1033,9 +1463,511 @@ async function reloadAllProviderViews() {
 function enterContentFullscreen() {
   if (!mainWindow || !activeView) return;
   isContentFullscreen = true;
+  installContentFullscreenExitOverlay(activeView);
   mainWindow.setFullScreen(true);
   sendFullscreenState();
   applyBrowserBounds();
+}
+
+function markContentFullscreen(enabled) {
+  isContentFullscreen = Boolean(enabled);
+  if (enabled && isLiveView(activeView)) installContentFullscreenExitOverlay(activeView);
+  sendFullscreenState();
+  applyBrowserBounds();
+}
+
+function installContentFullscreenExitOverlay(view) {
+  if (!isLiveView(view)) return;
+  view.webContents.executeJavaScript(`(() => {
+    const existing = document.querySelector("#__elfixFullscreenExit");
+    if (existing) return;
+    const button = document.createElement("button");
+    button.id = "__elfixFullscreenExit";
+    button.type = "button";
+    button.title = "Vollbild verlassen";
+    button.setAttribute("aria-label", "Vollbild verlassen");
+    button.textContent = "↙";
+    Object.assign(button.style, {
+      position: "fixed",
+      top: "16px",
+      right: "16px",
+      zIndex: "2147483647",
+      width: "46px",
+      height: "46px",
+      border: "0",
+      borderRadius: "16px",
+      background: "rgba(8, 12, 20, 0.82)",
+      color: "#fff",
+      fontSize: "22px",
+      fontWeight: "900",
+      boxShadow: "0 12px 38px rgba(0,0,0,.42)",
+      cursor: "pointer",
+      pointerEvents: "auto"
+    });
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }, true);
+    document.documentElement.appendChild(button);
+  })()`, true).catch(() => {});
+}
+
+function scheduleProviderAutoplay(provider, view, options = {}) {
+  if (!provider || !isLiveView(view)) return;
+  stopAutoplayRequest(provider.id);
+  const request = {
+    ...options,
+    startedAt: Date.now(),
+    until: Date.now() + sanitizePositiveNumber(options.durationMs || 26000)
+  };
+  providerAutoplayRequests.set(provider.id, request);
+  autoplayConsoleLogState.delete(provider.id);
+  // Gleichmaessig kurz statt wachsender Abstaende: mit dem alten Raster lagen am
+  // Ende 5s zwischen zwei Pruefungen - so lange lief das Video schon, bevor der
+  // Start erkannt wurde und das Vollbild ausgeloest hat.
+  request.timer = setInterval(() => {
+    // Ablauf zuerst pruefen: sonst laeuft der Timer weiter, wenn zwischendurch
+    // ein anderer Anbieter aktiv wird und resume...() frueh aussteigt.
+    const current = providerAutoplayRequests.get(provider.id);
+    if (!current || Date.now() > current.until) {
+      stopAutoplayRequest(provider.id);
+      return;
+    }
+    if (!isLiveView(view) || activeView !== view) return;
+    resumePendingProviderAutoplay(provider, view);
+  }, AUTOPLAY_POLL_MS);
+  setTimeout(() => {
+    if (isLiveView(view) && activeView === view) resumePendingProviderAutoplay(provider, view);
+  }, 250);
+}
+
+function stopAutoplayRequest(providerId) {
+  const request = providerAutoplayRequests.get(providerId);
+  if (request?.timer) clearInterval(request.timer);
+  providerAutoplayRequests.delete(providerId);
+}
+
+function resumePendingProviderAutoplay(provider, view) {
+  const request = providerAutoplayRequests.get(provider?.id);
+  if (!request || !provider || !isLiveView(view) || activeView !== view) return;
+  if (Date.now() > request.until) {
+    stopAutoplayRequest(provider.id);
+    finishAutostart("abgelaufen");
+    return;
+  }
+  if (request.busy) return;
+  request.busy = true;
+  startPlaybackInView(view, { mode: "play" }).then((results) => {
+    request.busy = false;
+    const values = Array.isArray(results) ? results : [];
+    logAutoplayAttempt(provider, request, values);
+    const isPlaying = values.some((value) => /(?:video-counting|video-playing|video-started)/i.test(String(value || "")));
+    if (!isPlaying) {
+      const warming = values.some((value) => /video-warming/i.test(String(value || "")));
+      const clickedOverlay = values.some((value) => /overlay-geklickt/i.test(String(value || "")));
+      if (clickedOverlay) request.lastClickAt = Date.now();
+      if (!warming && !clickedOverlay) clickPlayerCenterIfStalled(provider, request, view);
+      return;
+    }
+
+    request.sawPlayback = true;
+    if (request.fullscreen) {
+      // Nur einmal pro Anfrage: sonst zieht ein spaeterer Retry den Nutzer
+      // zurueck ins Vollbild, nachdem er es selbst verlassen hat.
+      request.fullscreen = false;
+      // Erst wenn Vollbild durch ist, wird zum Player umgeschaltet.
+      enterPlayerFullscreen(provider, request, view)
+        .catch(() => {})
+        .then(() => finishAutostart("bereit"));
+    } else {
+      finishAutostart("laeuft");
+    }
+    if (values.some((value) => /video-counting/i.test(String(value || "")))) {
+      stopAutoplayRequest(provider.id);
+    }
+  }).catch(() => {
+    request.busy = false;
+  });
+}
+
+// Bewusst ohne mainWindow.setFullScreen(): das Vollbild soll genau das sein, was
+// der Vollbild-Knopf im Player macht. Die Fenster-/Bounds-Anpassung uebernimmt
+// danach das "enter-html-full-screen"-Event ueber markContentFullscreen().
+async function enterPlayerFullscreen(provider, request, view) {
+  const buttonPass = await startPlaybackInView(view, { mode: "fullscreen" }).catch(() => []);
+  const marks = Array.isArray(buttonPass) ? buttonPass : [];
+  logAutoplayAttempt(provider, request, marks);
+  // Nur warten, wenn ueberhaupt etwas ausgeloest wurde - hat der Player keinen
+  // eigenen Knopf, waere die Wartezeit reine Verzoegerung.
+  const triggered = marks.some((value) => /vollbild-knopf-geklickt|vollbild-schon-aktiv|player-fullscreen/i.test(String(value || "")));
+  if (triggered && await waitForPageFullscreen(view, 900)) return;
+  if (!triggered && await isPageFullscreen(view)) return;
+
+  // Zweiter Weg: echter Doppelklick auf den Player - dieselbe Geste wie von Hand,
+  // also auch derselbe Vollbild-Zustand samt bedienbaren Controls.
+  const doubleClick = await doubleClickPlayerCenterInView(view).catch(() => "");
+  if (doubleClick) logAutoplayAttempt(provider, request, [doubleClick]);
+  const reachedFullscreen = await waitForPageFullscreen(view, 1200);
+  if (doubleClick) {
+    // Die zwei Einzelklicks darin koennen beim Player als Pause ankommen.
+    const resume = await startPlaybackInView(view, { mode: "play" }).catch(() => []);
+    logAutoplayAttempt(provider, request, Array.isArray(resume) ? resume : []);
+  }
+  if (reachedFullscreen) return;
+
+  const forcePass = await startPlaybackInView(view, { mode: "fullscreen-force" }).catch(() => []);
+  logAutoplayAttempt(provider, request, Array.isArray(forcePass) ? forcePass : []);
+}
+
+async function waitForPageFullscreen(view, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (!isLiveView(view) || activeView !== view) return true;
+    if (await isPageFullscreen(view)) return true;
+  }
+  return false;
+}
+
+function isPageFullscreen(view) {
+  if (!isLiveView(view)) return Promise.resolve(false);
+  return view.webContents
+    .executeJavaScript("Boolean(document.fullscreenElement)", true)
+    .catch(() => false);
+}
+
+// Synthetische Events auf ein <iframe> erreichen das eingebettete Dokument nie -
+// bei einem Player in einem fremden Origin hilft nur ein echter Mausklick.
+function clickPlayerCenterIfStalled(provider, request, view) {
+  if (request.sawPlayback || (request.clicks || 0) >= 3) return;
+  const now = Date.now();
+  if (now - request.startedAt < 1500) return;
+  if (now - (request.lastClickAt || 0) < 4000) return;
+  request.lastClickAt = now;
+  request.clicks = (request.clicks || 0) + 1;
+  clickPlayerCenterInView(view).then((marker) => {
+    if (marker) logAutoplayAttempt(provider, request, [marker]);
+  }).catch(() => {});
+}
+
+async function clickPlayerCenterInView(view) {
+  const spot = await playerCenterPoint(view);
+  if (!spot) return "";
+  sendMouseClick(view, spot, 1);
+  return `echter-klick:${spot.tag}`;
+}
+
+async function doubleClickPlayerCenterInView(view) {
+  const spot = await playerCenterPoint(view);
+  if (!spot) return "";
+  sendMouseClick(view, spot, 1);
+  sendMouseClick(view, spot, 2);
+  return `echter-doppelklick:${spot.tag}`;
+}
+
+function sendMouseClick(view, point, clickCount) {
+  if (!isLiveView(view)) return;
+  const base = { x: point.x, y: point.y, button: "left", clickCount };
+  if (clickCount === 1) view.webContents.sendInputEvent({ type: "mouseMove", x: point.x, y: point.y });
+  view.webContents.sendInputEvent({ type: "mouseDown", ...base });
+  view.webContents.sendInputEvent({ type: "mouseUp", ...base });
+}
+
+async function playerCenterPoint(view) {
+  if (!isLiveView(view)) return null;
+  const spot = await view.webContents.executeJavaScript(`(() => {
+    const visible = (node) => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number(style.opacity || 1) > 0.05
+        && rect.width >= 200
+        && rect.height >= 120;
+    };
+    const pick = Array.from(document.querySelectorAll("video, iframe, embed"))
+      .filter(visible)
+      .sort((left, right) => {
+        const l = left.getBoundingClientRect();
+        const r = right.getBoundingClientRect();
+        return (r.width * r.height) - (l.width * l.height);
+      })[0];
+    if (!pick) return null;
+    pick.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    const rect = pick.getBoundingClientRect();
+    if (rect.width < 200 || rect.height < 120) return null;
+    return {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2),
+      tag: pick.tagName.toLowerCase()
+    };
+  })()`, true).catch(() => null);
+  if (!spot || !Number.isFinite(spot.x) || !Number.isFinite(spot.y)) return null;
+  return spot;
+}
+
+function logAutoplayAttempt(provider, request, values) {
+  const providerId = provider?.id || "";
+  const summary = values.filter(Boolean).join(", ") || "keine Reaktion";
+  if (autoplayConsoleLogState.get(providerId) === summary) return;
+  autoplayConsoleLogState.set(providerId, summary);
+  const time = new Date().toLocaleTimeString("de-DE");
+  const remaining = Math.max(0, Math.round((request.until - Date.now()) / 1000));
+  console.log(`[ELFIX AUTOPLAY] ${time} | ${provider?.name || providerId || "Provider"} | vollbild=${request.fullscreen ? "ja" : "nein"} | rest=${remaining}s | ${summary}`);
+}
+
+async function startPlaybackInView(view, options = {}) {
+  const forcePass = options.mode === "fullscreen-force";
+  const fullscreenPass = forcePass || options.mode === "fullscreen";
+  const script = `(() => {
+    const wantFullscreen = ${fullscreenPass ? "true" : "false"};
+    const forceFullscreen = ${forcePass ? "true" : "false"};
+    const waitForPlayingMs = 900;
+    const badText = /close|schliessen|schließen|abbrechen|login|registr|teilen|share|trailer|info|beschreibung|kommentar|melden|verbesserung/i;
+    const visible = (node) => {
+      if (!node) return false;
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number(style.opacity || 1) > 0.05
+        && rect.width > 8
+        && rect.height > 8;
+    };
+    const textOf = (node) => String(node && (node.innerText || node.textContent || node.getAttribute("aria-label") || node.title || node.className || "") || "").replace(/\\s+/g, " ").trim();
+    const where = () => "@" + location.hostname;
+    const clickNode = (node) => {
+      try {
+        node.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+        const rect = node.getBoundingClientRect();
+        const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+        node.dispatchEvent(new PointerEvent("pointerdown", options));
+        node.dispatchEvent(new MouseEvent("mousedown", options));
+        node.dispatchEvent(new PointerEvent("pointerup", options));
+        node.dispatchEvent(new MouseEvent("mouseup", options));
+        node.dispatchEvent(new MouseEvent("click", options));
+        return true;
+      } catch (_) {
+        try { node.click(); return true; } catch (__) { return false; }
+      }
+    };
+    // closest() liefert den INNERSTEN Treffer - der enthaelt oft nur das Video,
+    // nicht die Bedienleiste. Stattdessen so weit hoch, wie der Container noch
+    // die Groesse des Players hat: das ist die Wurzel inklusive Controls.
+    const playerRootFor = (media) => {
+      const base = media.getBoundingClientRect();
+      const baseArea = Math.max(1, base.width * base.height);
+      let best = media;
+      let node = media.parentElement;
+      while (node && node !== document.body && node !== document.documentElement) {
+        const rect = node.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        if (area > baseArea * 1.6) break;
+        if (area >= baseArea * 0.9) best = node;
+        node = node.parentElement;
+      }
+      return best;
+    };
+    const requestPlayerFullscreen = (node) => {
+      if (!wantFullscreen || document.fullscreenElement) return "";
+      const isFrame = node.tagName === "IFRAME" || node.tagName === "EMBED";
+      const box = isFrame ? node : playerRootFor(node);
+      if (!box || !box.requestFullscreen) return "";
+      try {
+        const result = box.requestFullscreen();
+        if (result && typeof result.then === "function") {
+          return result
+            .then(() => "player-fullscreen")
+            .catch((error) => "vollbild-abgelehnt:" + String((error && error.message) || error).slice(0, 60));
+        }
+        return "player-fullscreen";
+      } catch (error) {
+        return "vollbild-abgelehnt:" + String((error && error.message) || error).slice(0, 60);
+      }
+    };
+    const playerFullscreenButton = () => {
+      const selectors = [
+        ".jw-icon-fullscreen",
+        ".vjs-fullscreen-control",
+        "[data-plyr='fullscreen']",
+        "[class*='icon-fullscreen']",
+        "[class*='fullscreen-control']",
+        "[class*='btn-fullscreen']",
+        "[aria-label*='fullscreen' i]",
+        "[aria-label*='vollbild' i]",
+        "[title*='fullscreen' i]",
+        "[title*='vollbild' i]"
+      ];
+      for (const selector of selectors) {
+        const node = Array.from(document.querySelectorAll(selector))
+          .filter(visible)
+          .filter((item) => {
+            // Nur knopfgrosse Elemente - ein Treffer auf den Player-Container
+            // wuerde sonst als Klick auf die Videoflaeche pausieren.
+            const rect = item.getBoundingClientRect();
+            return rect.width >= 14 && rect.width <= 200 && rect.height >= 14 && rect.height <= 200;
+          })[0];
+        if (node) return node;
+      }
+      return null;
+    };
+    const biggest = (selector) => Array.from(document.querySelectorAll(selector))
+      .filter(visible)
+      .sort((left, right) => {
+        const l = left.getBoundingClientRect();
+        const r = right.getBoundingClientRect();
+        return (r.width * r.height) - (l.width * l.height);
+      })[0];
+    if (wantFullscreen) {
+      if (document.fullscreenElement) return "vollbild-schon-aktiv" + where();
+      const isTopDocument = window.top === window.self;
+      if (!forceFullscreen) {
+        // Der Knopf des Players selbst ist das beste Ziel: nur so stimmt danach
+        // auch dessen interner Zustand (Controls, Seitenverhaeltnis).
+        const button = playerFullscreenButton();
+        if (button && clickNode(button)) {
+          const label = textOf(button).slice(0, 20) || String(button.className).slice(0, 20);
+          return "vollbild-knopf-geklickt:" + label + where();
+        }
+        return "kein-vollbild-knopf" + where();
+      }
+      // Notfall: nur das Hauptdokument handelt, damit nicht zwei Frames
+      // gleichzeitig unterschiedliche Elemente ins Vollbild ziehen.
+      if (!isTopDocument) return "";
+      const playerFrame = biggest("iframe, embed");
+      if (playerFrame) return requestPlayerFullscreen(playerFrame);
+      const video = biggest("video");
+      return video ? requestPlayerFullscreen(video) : "";
+    }
+    const isMediaReallyPlaying = (media) => {
+      if (!media) return false;
+      const current = Number(media.currentTime || 0);
+      const last = Number(media.dataset.elfixAutoplayLastTime || 0);
+      media.dataset.elfixAutoplayLastTime = String(current);
+      return !media.paused && !media.ended && media.readyState > 1 && (current > 0 || current > last);
+    };
+    const isMediaCounting = (media) => {
+      if (!media) return false;
+      const current = Number(media.currentTime || 0);
+      const last = Number(media.dataset.elfixAutoplayCountTime || 0);
+      media.dataset.elfixAutoplayCountTime = String(current);
+      return !media.paused && !media.ended && media.readyState > 1 && current > last + 0.25;
+    };
+    const playMedia = (media) => {
+      try {
+        media.muted = false;
+        media.autoplay = true;
+        const before = Number(media.currentTime || 0);
+        const playResult = media.play();
+        const afterPlay = () => {
+          setTimeout(() => {
+            if (!isMediaReallyPlaying(media)) return;
+            requestPlayerFullscreen(media);
+          }, waitForPlayingMs);
+        };
+        if (playResult && typeof playResult.then === "function") {
+          playResult.then(afterPlay).catch(() => {});
+        } else {
+          afterPlay();
+        }
+        return !media.paused && Number(media.currentTime || 0) > before ? "video-started" : "video-play-requested";
+      } catch (_) {
+        return "";
+      }
+    };
+    const playerOverlayButton = () => {
+      const selectors = [
+        ".jw-icon-display",
+        ".jw-display-icon-display",
+        ".jw-display-icon-container",
+        ".vjs-big-play-button",
+        ".plyr__control--overlaid",
+        "[class*='big-play']",
+        "[class*='play-button']",
+        "[class*='playButton']",
+        "[class*='display-icon']",
+        "[aria-label='Play']",
+        "[title='Play']"
+      ];
+      for (const selector of selectors) {
+        const node = Array.from(document.querySelectorAll(selector))
+          .filter(visible)
+          .filter((item) => !badText.test(textOf(item)))[0];
+        if (node) return node;
+      }
+      return null;
+    };
+    const media = biggest("video");
+    if (media) {
+      if (isMediaCounting(media)) {
+        requestPlayerFullscreen(media);
+        return "video-counting" + where();
+      }
+      if (isMediaReallyPlaying(media)) {
+        requestPlayerFullscreen(media);
+        return "video-playing" + where();
+      }
+      // Laeuft und hat Daten, zaehlt aber noch nicht: puffert gerade, nicht erneut
+      // anstossen - ein zweiter Klick wuerde den Player wieder pausieren.
+      if (!media.paused && !media.ended && media.readyState >= 2) return "video-warming" + where();
+      const result = playMedia(media);
+      // paused=false ohne Daten heisst: play() lief ins Leere, die Quelle haengt noch
+      // am Play-Overlay des Players. Im selben Dokument erreichen synthetische
+      // Klicks den Player - anders als von aussen auf das <iframe>.
+      const lastOverlayClick = Number(document.documentElement.dataset.elfixOverlayClickAt || 0);
+      if (media.readyState < 2 && Date.now() - lastOverlayClick > 2500) {
+        document.documentElement.dataset.elfixOverlayClickAt = String(Date.now());
+        const overlay = playerOverlayButton() || media;
+        if (clickNode(overlay)) {
+          const label = overlay === media ? "video" : (textOf(overlay).slice(0, 24) || String(overlay.className).slice(0, 24));
+          return "overlay-geklickt:" + label + ":ready" + media.readyState + where();
+        }
+      }
+      if (result) return result + ":ready" + media.readyState + where();
+    }
+    const frame = biggest("iframe, embed");
+    if (frame) {
+      return "iframe-gefunden" + where();
+    }
+    const candidates = Array.from(document.querySelectorAll([
+      "button",
+      "a[href]",
+      "[role='button']",
+      "[onclick]",
+      "li",
+      ".play",
+      "[class*='play']",
+      "[class*='hoster']",
+      "[class*='stream']",
+      "[class*='language']",
+      "[data-link]",
+      "[data-hoster]",
+      "[data-id]"
+    ].join(",")))
+      .filter(visible)
+      .map((node) => {
+        const text = textOf(node).toLowerCase();
+        const href = String(node.getAttribute && (node.getAttribute("href") || node.getAttribute("data-link") || node.getAttribute("data-hoster") || "") || "").toLowerCase();
+        const rect = node.getBoundingClientRect();
+        let score = Math.min(500, rect.width * rect.height / 100);
+        if (/\\b(play|spielen|stream|watch|ansehen|starten)\\b/i.test(text)) score += 1800;
+        if (/\\b(voe|vidmoly|vidoza|filemoon|filelions|dood|speedload|streamtape|streamsb|streamwish|upstream|supervideo|hoster)\\b/i.test(text + " " + href)) score += 1600;
+        if (/\\b(deutsch|german|ger|voe)\\b/i.test(text)) score += 420;
+        if (/\\/(?:staffel|season)-\\d+\\/(?:episode|folge)-\\d+/i.test(href)) score -= 900;
+        if (badText.test(text + " " + href)) score -= 2600;
+        if (rect.top >= 0 && rect.top < innerHeight) score += 120;
+        if (rect.width < 22 || rect.height < 16) score -= 500;
+        return { node, score };
+      })
+      .filter((item) => item.score > 500)
+      .sort((a, b) => b.score - a.score);
+    const target = candidates[0]?.node;
+    return target && clickNode(target) ? "clicked:" + textOf(target).slice(0, 40) : "";
+  })()`;
+  return executeJavaScriptInMediaFrames(view, script);
 }
 
 function leaveContentFullscreen() {
@@ -1173,7 +2105,7 @@ function rememberProviderUrl(providerId, url) {
   const provider = providers.find((item) => item.id === providerId);
   if (!provider || !providerModel.isHttpUrl(url)) return;
   provider.lastUrl = url;
-  updateActiveFavoriteProgress(providerId, url);
+  recordMediaActivity(provider, url);
   saveProviders();
   sendActiveState();
 }
@@ -1199,9 +2131,462 @@ function updateActiveFavoriteProgress(providerId, url) {
   favorite.normalizedUrl = normalized;
   favorite.providerName = provider.name;
   favorite.logo = provider.logo || favorite.logo || "";
+  favorite.watched = true;
+  favorite.completed = false;
+  favorite.progress = 0;
+  favorite.currentTime = 0;
+  favorite.position = 0;
+  favorite.duration = 0;
+  favorite.episodeCompleted = false;
+  favorite.hideFromContinueWatching = false;
+  favorite.lastWatchedAt = new Date().toISOString();
+  favorite.season = nextEpisode.season || favorite.season || 0;
+  favorite.episode = nextEpisode.episode || favorite.episode || 0;
   moveFavoriteToFront(favorite);
   saveFavorites();
   sendToast(`Favorit auf ${favoriteProgressTargetLabel(url)} geändert`);
+}
+
+function recordMediaActivity(provider, url, meta = {}, options = {}) {
+  if (!provider || !providerModel.isHttpUrl(url) || !isTrackableMediaUrl(url, provider)) return null;
+
+  const normalized = normalizeFavoriteUrl(url);
+  const now = new Date().toISOString();
+  const requestedType = mediaTypeForProgressUrl(url, meta.type);
+  const existing = options.existing || favorites.find((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized, requestedType));
+  const identity = episodeIdentity(url);
+  const hasMediaProgress = isValidMediaProgress({
+    currentTime: meta.currentTime || meta.position,
+    duration: meta.duration
+  });
+  if (!existing && !hasMediaProgress) {
+    logMediaDiagnostic(provider, url, "ignoriert", "keine Videodaten erkannt", meta);
+    return null;
+  }
+
+  const watchedSeconds = sanitizePositiveNumber(meta.watchedSeconds);
+  const progressPercent = hasMediaProgress
+    ? mediaProgressPercent(meta.currentTime || meta.position, meta.duration)
+    : sanitizeProgress(meta.progress);
+  const mediaEnded = Boolean(meta.completed) || isCompletedProgress(progressPercent);
+  const startsAtFirstEpisode = isFirstEpisodeIdentity(identity);
+  const isFilmProgress = requestedType === "film";
+  const qualifiesForPrimaryProgress = mediaEnded || isFilmProgress || startsAtFirstEpisode || watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+
+  const shouldPromotePrimary = shouldPromoteMediaProgress(existing, url, {
+    hasMediaProgress,
+    mediaEnded,
+    watchedSeconds,
+    isFilmProgress,
+    startsAtFirstEpisode,
+    finalSeason: meta.finalSeason,
+    finalEpisode: meta.finalEpisode
+  });
+  if (!existing && hasMediaProgress && !qualifiesForPrimaryProgress) {
+    logMediaDiagnostic(provider, url, "blockiert", mediaPromotionBlockReason(existing, url, {
+      mediaEnded,
+      watchedSeconds,
+      isFilmProgress,
+      startsAtFirstEpisode,
+      finalSeason: meta.finalSeason,
+      finalEpisode: meta.finalEpisode
+    }), {
+      ...meta,
+      progress: progressPercent,
+      favorite: false,
+      continueVisible: false
+    });
+    return null;
+  }
+  if (existing && hasMediaProgress && !shouldPromotePrimary) {
+    logMediaDiagnostic(provider, url, "blockiert", mediaPromotionBlockReason(existing, url, {
+      mediaEnded,
+      watchedSeconds,
+      isFilmProgress,
+      startsAtFirstEpisode
+    }), {
+      ...meta,
+      progress: progressPercent,
+      currentTitle: existing.title,
+      currentUrl: existing.url,
+      favorite: existing.favorite,
+      continueVisible: hasContinueProgressRecord(existing)
+    });
+    appendMediaActivity(existing, url, options.label || mediaActivityLabel(url, existing));
+    existing.updatedAt = now;
+    saveFavorites();
+    return existing;
+  }
+
+  const preserveActiveFavoriteTarget = Boolean(existing?.favorite && !options.updateFavoriteUrl && !hasMediaProgress);
+  const preserveProgressTarget = preserveActiveFavoriteTarget || Boolean(existing && !hasMediaProgress);
+  const entry = existing || {
+    id: crypto.randomUUID(),
+    providerId: provider.id,
+    providerName: provider.name,
+    title: cleanTitle(meta.title || titleFromPath(url) || provider.name),
+    url,
+    normalizedUrl: normalized,
+    favicon: meta.favicon || "",
+    thumbnail: meta.thumbnail || "",
+    logo: provider.logo || "",
+    favorite: false,
+    watched: false,
+    completed: false,
+    episodeCompleted: false,
+    continuePending: false,
+    completedEpisodes: [],
+    hideFromContinueWatching: false,
+    progress: 0,
+    duration: 0,
+    position: 0,
+    currentTime: 0,
+    type: inferMediaType(url),
+    season: 0,
+    episode: 0,
+    createdAt: now,
+    openedAt: "",
+    lastWatchedAt: "",
+    activity: []
+  };
+
+  entry.providerId = provider.id;
+  entry.providerName = provider.name;
+  if (!preserveProgressTarget) {
+    entry.url = url;
+    entry.normalizedUrl = normalized;
+  }
+  entry.logo = provider.logo || entry.logo || "";
+  entry.type = requestedType || entry.type || inferMediaType(url);
+  if (meta.title && (!existing || entry.type === "film")) {
+    entry.title = cleanTitle(meta.title);
+  }
+  entry.watched = true;
+  applyFavoriteSeriesBounds(entry, meta, url);
+  const wholeItemCompleted = isWholeMediaCompleted(entry, url, mediaEnded);
+  const shouldAdvanceEpisode = Boolean(mediaEnded && !wholeItemCompleted && identity && (entry.type === "serie" || inferMediaType(url) === "serie"));
+  const nextContinueUrl = shouldAdvanceEpisode ? nextEpisodeContinueUrl(url, meta.nextUrl, entry) : "";
+  let advancedToNextEpisode = false;
+  entry.completed = Boolean(entry.completed || wholeItemCompleted);
+  if (hasMediaProgress) {
+    entry.currentTime = sanitizePositiveNumber(meta.currentTime || meta.position);
+    entry.position = entry.currentTime;
+    entry.duration = sanitizePositiveNumber(meta.duration);
+    entry.progress = progressPercent;
+    if (shouldAdvanceEpisode) {
+      appendCompletedEpisode(entry, identity, url, now);
+      if (nextContinueUrl) {
+        const nextIdentity = episodeIdentity(nextContinueUrl);
+        entry.url = nextContinueUrl;
+        entry.normalizedUrl = normalizeFavoriteUrl(nextContinueUrl);
+        entry.season = nextIdentity?.season || identity.season || entry.season || 0;
+        entry.episode = nextIdentity?.episode || identity.episode + 1 || entry.episode || 0;
+        entry.title = cleanBaseMediaTitle(entry.title, nextContinueUrl);
+        entry.currentTime = 0;
+        entry.position = 0;
+        entry.duration = 0;
+        entry.progress = 0;
+        entry.episodeCompleted = false;
+        entry.continuePending = true;
+        entry.hideFromContinueWatching = false;
+        advancedToNextEpisode = true;
+      } else {
+        entry.episodeCompleted = true;
+        entry.continuePending = false;
+      }
+    } else {
+      entry.episodeCompleted = Boolean(mediaEnded && !entry.completed);
+      entry.continuePending = false;
+    }
+    if (!entry.completed && !entry.episodeCompleted) {
+      entry.hideFromContinueWatching = false;
+    }
+  } else if (entry.completed) {
+    entry.progress = 100;
+    entry.continuePending = false;
+  } else {
+    entry.progress = sanitizeProgress(entry.progress);
+  }
+  if (entry.completed) {
+    entry.favorite = false;
+    entry.hideFromContinueWatching = true;
+    entry.continuePending = false;
+    entry.completedAt = entry.completedAt || now;
+  }
+  if (hasMediaProgress || !existing) {
+    entry.lastWatchedAt = now;
+  } else {
+    entry.openedAt = now;
+  }
+  if (identity && !preserveProgressTarget && !advancedToNextEpisode) {
+    entry.season = identity.season || entry.season || 0;
+    entry.episode = identity.episode || entry.episode || 0;
+  }
+  appendMediaActivity(entry, url, options.label || mediaActivityLabel(url, entry));
+
+  if (!existing) {
+    favorites.unshift(entry);
+    favorites = favorites.slice(0, 600);
+  } else {
+    moveFavoriteToFront(entry);
+  }
+  saveFavorites();
+  logMediaDiagnostic(provider, url, entry.completed ? "abgeschlossen" : "aktualisiert", mediaDiagnosticDecisionText(entry, url, {
+    hasMediaProgress,
+    watchedSeconds,
+    mediaEnded,
+    progressPercent
+  }), {
+    ...meta,
+    progress: progressPercent,
+    favorite: entry.favorite,
+    continueVisible: hasContinueProgressRecord(entry)
+  });
+  return entry;
+}
+
+function hasContinueProgressRecord(entry) {
+  if (!entry || entry.completed || entry.episodeCompleted || entry.hideFromContinueWatching) return false;
+  if (entry.continuePending) return true;
+  const current = sanitizePositiveNumber(entry.currentTime || entry.position);
+  const duration = sanitizePositiveNumber(entry.duration);
+  if (duration > 0 && current > 0 && current <= duration + 3) {
+    return mediaProgressPercent(current, duration) < COMPLETED_PROGRESS_PERCENT;
+  }
+  const progress = sanitizeProgress(entry.progress);
+  return Boolean(entry.lastWatchedAt || entry.openedAt) && progress > 0 && progress < COMPLETED_PROGRESS_PERCENT;
+}
+
+function isWholeMediaCompleted(entry, url, mediaEnded) {
+  if (!mediaEnded) return false;
+  const type = entry?.type || inferMediaType(url);
+  if (type === "film") return true;
+  if (type !== "serie") return !episodeIdentity(url);
+
+  const identity = episodeIdentity(url);
+  const finalSeason = sanitizePositiveNumber(entry?.finalSeason);
+  const finalEpisode = sanitizePositiveNumber(entry?.finalEpisode);
+  if (!identity || !finalSeason || !finalEpisode) return false;
+  return identity.season === finalSeason && identity.episode === finalEpisode;
+}
+
+function shouldPromoteMediaProgress(existing, url, progressState) {
+  if (!progressState?.hasMediaProgress) return true;
+  if (progressState.isFilmProgress) return true;
+  if (progressState.startsAtFirstEpisode) return true;
+  if (!existing) return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+
+  const nextIdentity = episodeIdentity(url);
+  const currentIdentity = episodeIdentity(existing.url);
+  if (!nextIdentity || !currentIdentity || nextIdentity.key !== currentIdentity.key) {
+    if (normalizeFavoriteUrl(existing.url) === normalizeFavoriteUrl(url)) {
+      return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+    }
+    return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+  }
+
+  const comparison = compareEpisodeIdentity(nextIdentity, currentIdentity);
+  if (comparison < 0) {
+    const finalSeason = sanitizePositiveNumber(progressState.finalSeason);
+    const finalEpisode = sanitizePositiveNumber(progressState.finalEpisode);
+    const finalIdentity = finalSeason && finalEpisode
+      ? { key: nextIdentity.key, season: finalSeason, episode: finalEpisode }
+      : null;
+    const existingIsPastKnownFinal = finalIdentity
+      && currentIdentity.key === finalIdentity.key
+      && compareEpisodeIdentity(currentIdentity, finalIdentity) > 0;
+    const nextIsInsideKnownSeries = finalIdentity
+      && compareEpisodeIdentity(nextIdentity, finalIdentity) <= 0;
+    if (existingIsPastKnownFinal && nextIsInsideKnownSeries) {
+      return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+    }
+    return false;
+  }
+  if (comparison === 0) {
+    return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+  }
+  return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+}
+
+function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null) {
+  const currentIdentity = episodeIdentity(currentUrl);
+  const resolvedPreferred = absoluteHttpUrl(preferredUrl, currentUrl);
+  const preferredIdentity = episodeIdentity(resolvedPreferred);
+  if (resolvedPreferred
+    && preferredIdentity
+    && currentIdentity
+    && preferredIdentity.key === currentIdentity.key
+    && compareEpisodeIdentity(preferredIdentity, currentIdentity) > 0) {
+    return resolvedPreferred;
+  }
+  if (!currentIdentity) return "";
+  const finalSeason = sanitizePositiveNumber(entry?.finalSeason);
+  const finalEpisode = sanitizePositiveNumber(entry?.finalEpisode);
+  if (!finalSeason || !finalEpisode) return "";
+  if (currentIdentity.season !== finalSeason) return "";
+  if (currentIdentity.season === finalSeason && currentIdentity.episode >= finalEpisode) return "";
+  return incrementEpisodeUrl(currentUrl);
+}
+
+function incrementEpisodeUrl(value) {
+  try {
+    const url = new URL(value);
+    let changed = false;
+    url.pathname = url.pathname.replace(/\/(episode|folge)-(\d+)(?=\/?$)/i, (_match, label, episode) => {
+      changed = true;
+      return `/${label}-${Number(episode) + 1}`;
+    });
+    return changed ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function appendCompletedEpisode(entry, identity, url, completedAt) {
+  if (!entry || !identity) return;
+  const completedEpisodes = Array.isArray(entry.completedEpisodes) ? entry.completedEpisodes : [];
+  const key = `${identity.key}:s${identity.season}:e${identity.episode}`;
+  if (!completedEpisodes.some((item) => item?.key === key)) {
+    completedEpisodes.push({
+      key,
+      season: sanitizePositiveNumber(identity.season),
+      episode: sanitizePositiveNumber(identity.episode),
+      url,
+      completedAt
+    });
+  }
+  entry.completedEpisodes = completedEpisodes.slice(-500);
+}
+
+function compareEpisodeIdentity(left, right) {
+  const leftSeason = sanitizePositiveNumber(left?.season);
+  const rightSeason = sanitizePositiveNumber(right?.season);
+  if (leftSeason !== rightSeason) return leftSeason - rightSeason;
+  return sanitizePositiveNumber(left?.episode) - sanitizePositiveNumber(right?.episode);
+}
+
+function isFirstEpisodeIdentity(identity) {
+  return Boolean(identity && sanitizePositiveNumber(identity.episode) === 1 && sanitizePositiveNumber(identity.season) <= 1);
+}
+
+function normalizeMediaType(value) {
+  const type = String(value || "").toLowerCase();
+  if (type === "film" || type === "movie") return "film";
+  if (type === "serie" || type === "series" || type === "anime") return "serie";
+  return "";
+}
+
+function mediaTypeForProgressUrl(url, typeHint = "") {
+  const hinted = normalizeMediaType(typeHint);
+  const identity = episodeIdentity(url);
+  if (identity && hinted === "film" && !isExplicitFilmUrl(url)) return "serie";
+  return hinted || inferMediaType(url);
+}
+
+function isExplicitFilmUrl(value) {
+  try {
+    const parts = new URL(value).pathname.split("/").filter(Boolean).map((part) => part.toLowerCase());
+    return parts.some((part) => ["film", "filme", "movie", "movies"].includes(part) || /^(?:film|movie)-\d+$/.test(part));
+  } catch {
+    return false;
+  }
+}
+
+function mediaPromotionBlockReason(existing, url, state) {
+  const nextIdentity = episodeIdentity(url);
+  const currentIdentity = episodeIdentity(existing?.url);
+  if (nextIdentity && currentIdentity && nextIdentity.key === currentIdentity.key && compareEpisodeIdentity(nextIdentity, currentIdentity) < 0) {
+    const finalSeason = sanitizePositiveNumber(state.finalSeason);
+    const finalEpisode = sanitizePositiveNumber(state.finalEpisode);
+    const finalIdentity = finalSeason && finalEpisode
+      ? { key: nextIdentity.key, season: finalSeason, episode: finalEpisode }
+      : null;
+    if (finalIdentity
+      && compareEpisodeIdentity(currentIdentity, finalIdentity) > 0
+      && compareEpisodeIdentity(nextIdentity, finalIdentity) <= 0
+      && !state.mediaEnded
+      && state.watchedSeconds < MIN_WATCH_TIME_SECONDS) {
+      return `repariert Fake-Stand erst nach 2:30 Minuten Wiedergabe (${Math.round(state.watchedSeconds)}s / ${MIN_WATCH_TIME_SECONDS}s)`;
+    }
+    return `ältere Folge bleibt nur im Verlauf (${favoriteProgressTargetLabel(url)} < ${favoriteProgressTargetLabel(existing.url)})`;
+  }
+  if (!state.mediaEnded && state.watchedSeconds < MIN_WATCH_TIME_SECONDS) {
+    return `unter 2:30 Minuten Wiedergabe (${Math.round(state.watchedSeconds)}s / ${MIN_WATCH_TIME_SECONDS}s)`;
+  }
+  return "nicht als neuer Hauptstand übernommen";
+}
+
+function mediaDiagnosticDecisionText(entry, url, state) {
+  if (entry.completed) return "Medium abgeschlossen, aus Watchlist/Weiterschauen entfernt und in Mediathek sichtbar";
+  if (state.hasMediaProgress) {
+    const target = entry?.type === "film" ? "Film" : favoriteProgressTargetLabel(url);
+    const watched = Math.round(state.watchedSeconds || 0);
+    const progress = Number.isFinite(state.progressPercent) ? `${state.progressPercent}%` : "ohne Prozent";
+    return `${target} gespeichert - Wiedergabe ${watched}s - Fortschritt ${progress}`;
+  }
+  return "Verlauf gespeichert";
+}
+
+function appendMediaActivity(entry, url, label) {
+  if (!entry) return;
+  const activity = Array.isArray(entry.activity) ? entry.activity : [];
+  const identity = episodeIdentity(url);
+  activity.push({
+    at: new Date().toISOString(),
+    url,
+    label: label || mediaActivityLabel(url, entry),
+    season: identity?.season || entry.season || 0,
+    episode: identity?.episode || entry.episode || 0
+  });
+  entry.activity = activity.slice(-120);
+}
+
+function mediaActivityLabel(url, entry) {
+  const label = favoriteProgressTargetLabel(url);
+  if (label !== "neue Folge") return label;
+  return entry?.type === "film" ? "Film geöffnet" : "Geöffnet";
+}
+
+function cleanBaseMediaTitle(title, url) {
+  const fromUrl = titleFromPath(url);
+  const raw = cleanTitle(title || fromUrl);
+  const value = raw
+    .replace(/\s*[·|]\s*(?:staffel|season)\s*\d+\s*(?:folge|episode)\s*\d+.*$/i, "")
+    .replace(/\s*[·|]\s*(?:folge|episode)\s*\d+.*$/i, "")
+    .replace(/\s*[-–]\s*(?:staffel|season)\s*\d+\s*(?:folge|episode)\s*\d+.*$/i, "")
+    .replace(/\s*[-–]\s*(?:folge|episode)\s*\d+.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleanTitle(value || fromUrl || raw);
+}
+
+function isTrackableMediaUrl(url, provider) {
+  if (isFavoriteProgressUrl(url, provider)) return true;
+  const slug = mediaSlugFromUrl(url);
+  if (!slug) return false;
+  try {
+    const pathname = new URL(url).pathname;
+    return !/(\/|^)(search|suche|login|register|profile|account|settings|popular|beliebt)(\/|$)/i.test(pathname);
+  } catch {
+    return true;
+  }
+}
+
+function isValidMediaProgress(progress) {
+  const currentTime = Number(progress?.currentTime);
+  const duration = Number(progress?.duration);
+  return Number.isFinite(currentTime)
+    && Number.isFinite(duration)
+    && duration > 0
+    && currentTime >= 0
+    && currentTime <= duration + 3;
+}
+
+function mediaProgressPercent(currentTime, duration) {
+  const current = Number(currentTime);
+  const total = Number(duration);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((current / total) * 100)));
 }
 
 async function updateActiveFavoriteTitle(providerId, view) {
@@ -1224,10 +2609,152 @@ async function updateActiveFavoriteTitle(providerId, view) {
     favorite.thumbnail = meta.thumbnail;
     changed = true;
   }
+  if (applyFavoriteSeriesBounds(favorite, meta, url)) {
+    changed = true;
+  }
   if (changed) {
     saveFavorites();
     sendActiveState();
   }
+}
+
+function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.url || "") {
+  const mediaType = favorite?.type === "serie" ? "serie" : inferMediaType(currentUrl || favorite?.url || "");
+  if (!favorite || mediaType !== "serie") return false;
+  const nextFinalSeason = sanitizePositiveNumber(meta.finalSeason);
+  const nextFinalEpisode = sanitizePositiveNumber(meta.finalEpisode);
+  if (!nextFinalSeason || !nextFinalEpisode) return false;
+
+  const previousFinalSeason = sanitizePositiveNumber(favorite.finalSeason);
+  const previousFinalEpisode = sanitizePositiveNumber(favorite.finalEpisode);
+  const hadKnownFinal = Boolean(previousFinalSeason && previousFinalEpisode);
+  const nextBounds = { key: episodeIdentity(currentUrl)?.key || episodeIdentity(favorite.url)?.key || "", season: nextFinalSeason, episode: nextFinalEpisode };
+  const previousBounds = { key: nextBounds.key, season: previousFinalSeason, episode: previousFinalEpisode };
+  if (hadKnownFinal && compareEpisodeIdentity(nextBounds, previousBounds) < 0) return false;
+
+  let changed = false;
+  if (favorite.finalSeason !== nextFinalSeason) {
+    favorite.finalSeason = nextFinalSeason;
+    changed = true;
+  }
+  if (favorite.finalEpisode !== nextFinalEpisode) {
+    favorite.finalEpisode = nextFinalEpisode;
+    changed = true;
+  }
+
+  if (favorite.completed && hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds)) {
+    const nextUrl = nextEpisodeAfterFavoriteUrl(favorite, nextFinalSeason, nextFinalEpisode);
+    favorite.completed = false;
+    favorite.episodeCompleted = false;
+    favorite.favorite = true;
+    favorite.hideFromContinueWatching = false;
+    favorite.continuePending = true;
+    favorite.completedAt = "";
+    favorite.progress = 0;
+    favorite.currentTime = 0;
+    favorite.position = 0;
+    favorite.duration = 0;
+    if (nextUrl) {
+      favorite.url = nextUrl;
+      favorite.normalizedUrl = normalizeFavoriteUrl(nextUrl);
+      const nextIdentity = episodeIdentity(nextUrl);
+      favorite.season = nextIdentity?.season || favorite.season || 0;
+      favorite.episode = nextIdentity?.episode || favorite.episode || 0;
+    }
+    sendToast(`${cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "Serie"} ist wieder in der Watchlist: neue Folge erkannt`);
+    changed = true;
+  }
+  return changed;
+}
+
+function hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds) {
+  const completedIdentity = episodeIdentity(favorite?.url || "");
+  if (!completedIdentity || !nextBounds?.season || !nextBounds?.episode) return false;
+  if (nextBounds.key && completedIdentity.key && nextBounds.key !== completedIdentity.key) return false;
+  if (compareEpisodeIdentity(nextBounds, completedIdentity) > 0) return true;
+  return previousBounds?.season
+    && previousBounds?.episode
+    && compareEpisodeIdentity(nextBounds, previousBounds) > 0;
+}
+
+function nextEpisodeAfterFavoriteUrl(favorite, finalSeason, finalEpisode) {
+  const identity = episodeIdentity(favorite?.url || "");
+  if (!identity) return "";
+  if (identity.season < finalSeason) {
+    return replaceEpisodeUrl(favorite.url, identity.season + 1, 1);
+  }
+  if (identity.season === finalSeason && identity.episode < finalEpisode) {
+    return replaceEpisodeUrl(favorite.url, identity.season, identity.episode + 1);
+  }
+  return "";
+}
+
+function replaceEpisodeUrl(value, season, episode) {
+  try {
+    const url = new URL(value);
+    let hasSeason = false;
+    let hasEpisode = false;
+    url.pathname = url.pathname
+      .replace(/\/(staffel|season)-\d+(?=\/|$)/i, (_match, label) => {
+        hasSeason = true;
+        return `/${label}-${season}`;
+      })
+      .replace(/\/(episode|folge)-\d+(?=\/|$)/i, (_match, label) => {
+        hasEpisode = true;
+        return `/${label}-${episode}`;
+      });
+    return hasSeason && hasEpisode ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function firstEpisodeUrl(value) {
+  const fullEpisodeUrl = replaceEpisodeUrl(value, 1, 1);
+  if (fullEpisodeUrl) return fullEpisodeUrl;
+
+  try {
+    const url = new URL(value);
+    let changed = false;
+    url.pathname = url.pathname.replace(/\/(episode|folge)-\d+(?=\/|$)/i, (_match, label) => {
+      changed = true;
+      return `/${label}-1`;
+    });
+    return changed ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function resetContinueProgressToStart(favorite) {
+  if (!favorite) return favorite;
+  const identity = episodeIdentity(favorite.url || "");
+  const now = new Date().toISOString();
+
+  if (identity) {
+    const resetUrl = firstEpisodeUrl(favorite.url);
+    if (resetUrl) {
+      favorite.url = resetUrl;
+      favorite.normalizedUrl = normalizeFavoriteUrl(resetUrl);
+    }
+    favorite.season = 1;
+    favorite.episode = 1;
+    favorite.title = cleanBaseMediaTitle(favorite.title || "", favorite.url) || favorite.title;
+    favorite.completedEpisodes = [];
+    favorite.episodeCompleted = false;
+    favorite.continuePending = false;
+  }
+
+  favorite.completed = false;
+  favorite.hideFromContinueWatching = true;
+  favorite.progress = 0;
+  favorite.duration = 0;
+  favorite.position = 0;
+  favorite.currentTime = 0;
+  favorite.lastWatchedAt = "";
+  favorite.completedAt = "";
+  favorite.updatedAt = now;
+  return favorite;
 }
 
 function isSequentialFavoriteProgress(previous, next) {
@@ -1366,7 +2893,7 @@ async function searchProviderVariant(provider, query) {
     const response = await fetch(searchUrl, {
       headers: {
         "accept": "text/html,application/xhtml+xml",
-        "user-agent": "Mozilla/5.0 Elflix/0.2"
+        "user-agent": "Mozilla/5.0 ELFIX/0.2"
       },
       redirect: "follow"
     });
@@ -1393,7 +2920,7 @@ async function searchProviderAjax(provider, query, searchUrl) {
     headers: {
       "accept": "application/json,text/javascript,*/*",
       "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "user-agent": "Mozilla/5.0 Elflix/0.2",
+      "user-agent": "Mozilla/5.0 ELFIX/0.2",
       "x-requested-with": "XMLHttpRequest",
       "referer": searchUrl
     },
@@ -1417,6 +2944,52 @@ async function searchProviderAjax(provider, query, searchUrl) {
     if (results.length >= 16) break;
   }
   return results;
+}
+
+// Empfehlungen: von jeder aktiven Anbieterseite ein paar Titel von der
+// Startseite lesen und abwechselnd mischen, damit jede Seite vorkommt.
+async function collectRecommendations(proAnbieter, refresh) {
+  const anbieter = enabledProviders();
+  if (!anbieter.length) return [];
+  const listen = await Promise.all(anbieter.map((provider) => (
+    discoverForProvider(provider, refresh).catch(() => [])
+  )));
+
+  const gemischt = [];
+  for (let index = 0; index < proAnbieter; index += 1) {
+    for (const liste of listen) {
+      if (liste[index]) gemischt.push(liste[index]);
+    }
+  }
+  return gemischt;
+}
+
+async function discoverForProvider(provider, refresh) {
+  const cached = discoverCache.get(provider.id);
+  if (!refresh && cached && Date.now() - cached.at < DISCOVER_CACHE_MS) return cached.items;
+
+  const startUrl = providerModel.normalizeUrl(provider.startUrl || "");
+  if (!startUrl) return [];
+  const response = await fetch(startUrl, {
+    headers: {
+      "accept": "text/html,application/xhtml+xml",
+      "user-agent": "Mozilla/5.0 ELFIX/0.2"
+    },
+    redirect: "follow"
+  });
+  if (!response.ok) return cached?.items || [];
+
+  const html = await response.text();
+  const basis = response.url || startUrl;
+  // Seiten, die ihre Kacheln per JavaScript nachladen, liefern nur Poster mit
+  // Titel - dann wird der Titel spaeter ueber die Suche des Anbieters geoeffnet.
+  let items = extractDiscoverItems(html, basis, provider);
+  if (items.length < 4) {
+    const ersatz = extractPosterFallbacks(html, basis, provider);
+    if (ersatz.length > items.length) items = ersatz;
+  }
+  if (items.length) discoverCache.set(provider.id, { at: Date.now(), items });
+  return items;
 }
 
 function usesAniWorldAjaxSearch(provider) {
@@ -1849,12 +3422,72 @@ function loadFavorites() {
       favicon: String(favorite.favicon || ""),
       thumbnail: String(favorite.thumbnail || ""),
       logo: String(favorite.logo || ""),
+      favorite: favorite.favorite !== false,
+      watched: Boolean(favorite.watched),
+      completed: normalizeStoredCompletion(favorite),
+      episodeCompleted: normalizeStoredEpisodeCompletion(favorite),
+      continuePending: Boolean(favorite.continuePending),
+      completedEpisodes: normalizeCompletedEpisodes(favorite.completedEpisodes),
+      hideFromContinueWatching: Boolean(favorite.hideFromContinueWatching),
+      progress: sanitizeProgress(favorite.progress),
+      duration: sanitizePositiveNumber(favorite.duration),
+      position: sanitizePositiveNumber(favorite.position),
+      currentTime: sanitizePositiveNumber(favorite.currentTime || favorite.position),
+      type: String(favorite.type || inferMediaType(favorite.url || "")),
+      season: sanitizePositiveNumber(favorite.season),
+      episode: sanitizePositiveNumber(favorite.episode),
+      finalSeason: sanitizePositiveNumber(favorite.finalSeason),
+      finalEpisode: sanitizePositiveNumber(favorite.finalEpisode),
+      lastWatchedAt: String(favorite.lastWatchedAt || ""),
+      completedAt: String(favorite.completedAt || ""),
+      activity: normalizeActivity(favorite.activity),
       createdAt: String(favorite.createdAt || new Date().toISOString()),
-      openedAt: String(favorite.openedAt || "")
+      openedAt: String(favorite.openedAt || ""),
+      updatedAt: String(favorite.updatedAt || "")
     })).filter((favorite) => providerModel.isHttpUrl(favorite.url));
   } catch {
     return [];
   }
+}
+
+function normalizeActivity(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-120).map((item) => ({
+    at: String(item?.at || ""),
+    url: String(item?.url || ""),
+    label: String(item?.label || ""),
+    season: sanitizePositiveNumber(item?.season),
+    episode: sanitizePositiveNumber(item?.episode)
+  })).filter((item) => item.at || item.url || item.label);
+}
+
+function normalizeCompletedEpisodes(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-500).map((item) => ({
+    key: String(item?.key || ""),
+    season: sanitizePositiveNumber(item?.season),
+    episode: sanitizePositiveNumber(item?.episode),
+    url: String(item?.url || ""),
+    completedAt: String(item?.completedAt || "")
+  })).filter((item) => item.key || item.url || item.episode);
+}
+
+function normalizeStoredCompletion(favorite) {
+  if (!favorite?.completed && !isCompletedProgress(favorite?.progress)) return false;
+  const type = String(favorite?.type || inferMediaType(favorite?.url || ""));
+  if (type === "film") return true;
+  if (type !== "serie") return !episodeIdentity(favorite?.url || "");
+  return isWholeMediaCompleted({
+    type,
+    finalSeason: favorite?.finalSeason,
+    finalEpisode: favorite?.finalEpisode
+  }, favorite?.url || "", true);
+}
+
+function normalizeStoredEpisodeCompletion(favorite) {
+  if (normalizeStoredCompletion(favorite)) return false;
+  const type = String(favorite?.type || inferMediaType(favorite?.url || ""));
+  return type === "serie" && Boolean(favorite?.episodeCompleted || isCompletedProgress(favorite?.progress));
 }
 
 function normalizeLoadedFavorite(favorite) {
@@ -1940,7 +3573,7 @@ async function fetchStoArtwork(pageUrl, favorite) {
   const response = await fetch(pageUrl, {
     headers: {
       "accept": "text/html,application/xhtml+xml",
-      "user-agent": "Mozilla/5.0 Elflix/0.2"
+      "user-agent": "Mozilla/5.0 ELFIX/0.2"
     },
     redirect: "follow"
   });
@@ -1954,7 +3587,7 @@ async function fetchAniWorldArtwork(pageUrl, favorite) {
   const response = await fetch(pageUrl, {
     headers: {
       "accept": "text/html,application/xhtml+xml",
-      "user-agent": "Mozilla/5.0 Elflix/0.2",
+      "user-agent": "Mozilla/5.0 ELFIX/0.2",
       "referer": "https://aniworld.to/"
     },
     redirect: "follow"
@@ -2333,6 +3966,112 @@ async function readPageMetadata(view) {
       .split(" ")
       .filter((token) => token.length > 2 && !/^(serie|staffel|folge|episode|stream|kostenlos|ansehen|season)$/i.test(token));
     const expectedTokens = Array.from(new Set([...mediaTokens, ...titleTokens]));
+    const episodeIdentityFromHref = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        const parts = url.pathname.split("/").filter(Boolean);
+        let slug = "";
+        let season = 0;
+        let episode = 0;
+        for (let index = 0; index < parts.length; index += 1) {
+          const part = parts[index].toLowerCase();
+          if (part === "anime" && parts[index + 1]?.toLowerCase() === "stream" && parts[index + 2]) slug = parts[index + 2].toLowerCase();
+          if (part === "serie" && parts[index + 1]?.toLowerCase() === "stream" && parts[index + 2]) slug = parts[index + 2].toLowerCase();
+          if ((part === "serie" || part === "stream") && parts[index + 1] && !slug) slug = parts[index + 1].toLowerCase();
+          const seasonMatch = part.match(/^(?:staffel|season)-(\\d+)$/i);
+          if (seasonMatch) season = Number(seasonMatch[1]);
+          const episodeMatch = part.match(/^(?:episode|folge)-(\\d+)$/i);
+          if (episodeMatch) episode = Number(episodeMatch[1]);
+        }
+        if (!episode || !Number.isFinite(episode)) return null;
+        if (mediaSlug && slug && slug !== mediaSlug) return null;
+        return { season: season || 1, episode, href: url.href };
+      } catch (_) {
+        return null;
+      }
+    };
+    const seriesBounds = (() => {
+      const anchors = Array.from(document.querySelectorAll("a[href]"));
+      const links = anchors
+        .map((anchor) => episodeIdentityFromHref(anchor.getAttribute("href")))
+        .filter(Boolean);
+      const seasonNumbers = anchors
+        .map((anchor) => {
+          const href = abs(anchor.getAttribute("href"));
+          const hrefMatch = href.match(/\\/(?:staffel|season)-(\\d+)(?:[/?#]|$)/i);
+          return hrefMatch ? Number(hrefMatch[1]) : 0;
+        })
+        .filter((number) => Number.isFinite(number) && number > 0);
+      const finalSeason = Math.max(0, ...seasonNumbers, ...links.map((link) => link.season || 0));
+      const best = links
+        .filter((link) => !finalSeason || link.season === finalSeason)
+        .sort((left, right) => right.episode - left.episode)[0];
+      return {
+        finalSeason,
+        finalEpisode: best?.episode || 0
+      };
+    })();
+    const visibleTitle = () => {
+      const h1 = document.querySelector("h1");
+      const mainTitle = String(h1?.textContent || "").replace(/\\s+/g, " ").trim();
+      if (mainTitle) return mainTitle;
+      return String(document.title || "").replace(/\\s+/g, " ").trim();
+    };
+    const currentFilmTitle = () => {
+      const path = location.pathname.toLowerCase();
+      const match = path.match(/\\/(?:filme|film|movies|movie)\\/(?:film|movie)?-?(\\d+)(?:\\/|$)/i)
+        || path.match(/\\/(?:film|movie)-(\\d+)(?:\\/|$)/i);
+      if (!match) return "";
+      const number = Number(match[1]);
+      if (!Number.isFinite(number) || number <= 0) return "";
+      const targetHref = new RegExp("/(?:filme|film|movies|movie)/(?:film|movie)?-?" + number + "(?:/|$)|/(?:film|movie)-" + number + "(?:/|$)", "i");
+      const anchors = Array.from(document.querySelectorAll("a[href]"));
+      const matchingAnchor = anchors.find((anchor) => targetHref.test(abs(anchor.getAttribute("href"))));
+      const row = matchingAnchor?.closest("tr, li, .row, [class*='episode'], [class*='film'], [class*='movie']");
+      const raw = String(row?.textContent || matchingAnchor?.textContent || "")
+        .replace(/\\s+/g, " ")
+        .trim();
+      const cleaned = raw
+        .replace(new RegExp("^Film\\\\s*" + number + "\\\\s*", "i"), "")
+        .replace(/\\b(?:hoster|sprache|deutsch|english|voe|streamtape|doodstream|vidoza)\\b.*$/i, "")
+        .replace(/\\s+/g, " ")
+        .trim();
+      if (cleaned) return cleaned;
+
+      const seriesTitle = normalizeText(visibleTitle());
+      const lines = String(document.body?.innerText || "")
+        .split(/\\n+/)
+        .map((line) => line.replace(/\\s+/g, " ").trim())
+        .filter((line) => line.length >= 8 && line.length <= 180);
+      return lines.find((line) => {
+        const normalized = normalizeText(line);
+        if (!normalized || normalized === seriesTitle) return false;
+        if (/^(home|animes|staffeln?|filme|film\\s*\\d+|episoden?|hoster|sprache|kommentare)$/i.test(line)) return false;
+        return /\\[(?:movie|film|ova)[^\\]]*\\]|\\b(?:movie|ova|film)\\b/i.test(line);
+      }) || "";
+    };
+    const mediaTitle = () => currentFilmTitle() || visibleTitle();
+    const activeMediaType = () => {
+      const path = location.pathname.toLowerCase();
+      if (/\\/(?:staffel|season)-\\d+(?:\\/|$)/i.test(path) || /\\/(?:episode|folge)-\\d+(?:\\/|$)/i.test(path)) {
+        return "serie";
+      }
+      if (/\\/(?:filme|film|movie|movies)(?:\\/|$)/i.test(path) || /\\/(?:film|movie)-\\d+(?:\\/|$)/i.test(path)) {
+        return "film";
+      }
+      const pageText = [
+        ...Array.from(document.querySelectorAll(".breadcrumb, nav, [class*='breadcrumb'], [class*='season'], [class*='staffel']"))
+          .slice(0, 12)
+          .map((node) => node.textContent || "")
+      ].join(" ");
+      const activeTabText = Array.from(document.querySelectorAll(".active, .selected, [aria-current='page'], [class*='active']"))
+        .map((node) => node.textContent || "")
+        .join(" ");
+      if (isAniWorldPage && /(?:^|\\s|›|>)(filme|film)(?:\\s|$|›|>)/i.test(activeTabText || pageText)) return "film";
+      if (isFilmoPage) return "film";
+      if (isStoPage || isAniWorldPage) return "serie";
+      return "";
+    };
     const isRecommendationArea = (img) => {
       const text = nearbyText(img, 4).toLowerCase();
       if (/(?:das schauen andere|schauen andere|empfehlungen|aehnliche|ähnliche|kommentare|kommentar)/i.test(text)) return true;
@@ -2590,30 +4329,38 @@ async function readPageMetadata(view) {
       const infoPanelPoster = stoInfoPanelImage();
       if (infoPanelPoster) {
         return {
-          title: document.title || "",
+          title: mediaTitle(),
+          type: activeMediaType(),
           favicon: abs(icon && icon.getAttribute("href")),
-          thumbnail: infoPanelPoster
+          thumbnail: infoPanelPoster,
+          ...seriesBounds
         };
       }
 
       return {
-        title: document.title || "",
+        title: mediaTitle(),
+        type: activeMediaType(),
         favicon: abs(icon && icon.getAttribute("href")),
-        thumbnail: ""
+        thumbnail: "",
+        ...seriesBounds
       };
     }
     if (isFilmoPage) {
       return {
-        title: document.title || "",
+        title: mediaTitle(),
+        type: activeMediaType(),
         favicon: abs(icon && icon.getAttribute("href")),
-        thumbnail: filmoMainImage()
+        thumbnail: filmoMainImage(),
+        ...seriesBounds
       };
     }
     if (isAniWorldPage) {
       return {
-        title: document.title || "",
+        title: mediaTitle(),
+        type: activeMediaType(),
         favicon: abs(icon && icon.getAttribute("href")),
-        thumbnail: aniWorldMainImage()
+        thumbnail: aniWorldMainImage(),
+        ...seriesBounds
       };
     }
     pushCandidate(imageMeta && imageMeta.getAttribute("content"), 70);
@@ -2643,9 +4390,11 @@ async function readPageMetadata(view) {
     }
     candidates.sort((a, b) => b.score - a.score);
     return {
-      title: document.title || "",
+      title: mediaTitle(),
+      type: activeMediaType(),
       favicon: abs(icon && icon.getAttribute("href")),
-      thumbnail: candidates[0]?.href || ""
+      thumbnail: candidates[0]?.href || "",
+      ...seriesBounds
     };
   })()`, true);
 }
@@ -2655,20 +4404,49 @@ function cleanTitle(value) {
   return title || "Favorit";
 }
 
-function favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized = normalizeFavoriteUrl(url)) {
+function favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized = normalizeFavoriteUrl(url), requestedType = "") {
   if (!favorite || !provider) return false;
   const sameProvider = favorite.providerId === provider.id || favorite.providerName === provider.name;
   if (!sameProvider) return false;
+  const favoriteType = normalizeMediaType(favorite.type) || inferMediaType(favorite.url || "");
+  if (requestedType && favoriteType && favoriteType !== "unknown" && favoriteType !== requestedType) return false;
   if (favorite.normalizedUrl === normalized || normalizeFavoriteUrl(favorite.url) === normalized) return true;
-  return favoriteReplacementKey(favorite.url, provider) === favoriteReplacementKey(url, provider);
+  return favoriteReplacementKey(favorite.url, provider, favoriteType) === favoriteReplacementKey(url, provider, requestedType);
 }
 
-function favoriteReplacementKey(url, provider) {
+function favoriteReplacementKey(url, provider, type = "") {
   const providerKey = String(provider?.id || provider?.name || providerModel.hostFromUrl(provider?.startUrl || url) || "")
     .toLowerCase()
     .trim();
   const slug = mediaSlugFromUrl(url);
-  return `${providerKey}:${slug || normalizeFavoriteUrl(url)}`;
+  const mediaType = normalizeMediaType(type) || inferMediaType(url);
+  return `${providerKey}:${mediaType || "unknown"}:${slug || normalizeFavoriteUrl(url)}`;
+}
+
+function sanitizePositiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function sanitizeProgress(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, Math.round(number)));
+}
+
+function isCompletedProgress(value) {
+  return sanitizeProgress(value) >= COMPLETED_PROGRESS_PERCENT;
+}
+
+function inferMediaType(value) {
+  try {
+    const parts = new URL(value).pathname.split("/").map((part) => part.toLowerCase());
+    if (parts.some((part) => ["film", "filme", "movie", "movies"].includes(part))) return "film";
+    if (parts.some((part) => ["serie", "series", "anime"].includes(part))) return "serie";
+  } catch {
+    // Ignore malformed URLs.
+  }
+  return "unknown";
 }
 
 function mediaSlugFromUrl(value) {
@@ -2677,7 +4455,13 @@ function mediaSlugFromUrl(value) {
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index].toLowerCase();
       if (part === "anime" && parts[index + 1]?.toLowerCase() === "stream" && parts[index + 2]) {
-        return parts[index + 2].toLowerCase();
+        const slug = parts[index + 2].toLowerCase();
+        const filmIndex = parts.findIndex((item, itemIndex) => itemIndex > index + 2 && /^(?:film|filme|movie|movies)$/i.test(item));
+        if (filmIndex >= 0) {
+          return `${slug}:filme:${(parts[filmIndex + 1] || "index").toLowerCase()}`;
+        }
+        const filmPart = parts.find((item, itemIndex) => itemIndex > index + 2 && /^(?:film|movie)-\d+$/i.test(item));
+        return filmPart ? `${slug}:filme:${filmPart.toLowerCase()}` : slug;
       }
       if ((part === "serie" || part === "series") && parts[index + 1]?.toLowerCase() === "stream" && parts[index + 2]) {
         return parts[index + 2].toLowerCase();
@@ -2767,6 +4551,12 @@ function normalizeSettings(raw) {
       providerCardMeta: sanitizeChoice(raw?.home?.providerCardMeta, ["logoName", "logo", "name"], defaults.home.providerCardMeta)
     },
     appearance: {
+      settingsMode: sanitizeChoice(raw?.appearance?.settingsMode, ["simple", "advanced"], defaults.appearance.settingsMode),
+      designPreset: sanitizeChoice(raw?.appearance?.designPreset, ["elfix", "cinema", "oled", "minimal", "glass", "compact", "colorful", "custom"], defaults.appearance.designPreset),
+      autoDeriveColors: raw?.appearance?.autoDeriveColors ?? defaults.appearance.autoDeriveColors,
+      layoutStyle: sanitizeChoice(raw?.appearance?.layoutStyle, ["standard", "compact", "roomy", "netflix", "minimal", "custom"], defaults.appearance.layoutStyle),
+      navStyle: sanitizeChoice(raw?.appearance?.navStyle, ["sidebar", "sidebarRight", "compactSidebar", "top"], defaults.appearance.navStyle),
+      autoCollapseSidebar: raw?.appearance?.autoCollapseSidebar ?? defaults.appearance.autoCollapseSidebar,
       compactHeader: raw?.appearance?.compactHeader ?? defaults.appearance.compactHeader,
       themeMode: sanitizeChoice(raw?.appearance?.themeMode, ["system", "dark", "light", "oled"], defaults.appearance.themeMode),
       accentPreset: sanitizeChoice(raw?.appearance?.accentPreset, ["default", "red", "blue", "violet", "green", "orange", "pink", "turquoise", "yellow", "gold", "custom"], defaults.appearance.accentPreset),
@@ -2779,9 +4569,37 @@ function normalizeSettings(raw) {
       favoriteTextSize: sanitizeChoice(raw?.appearance?.favoriteTextSize, ["small", "medium", "large"], defaults.appearance.favoriteTextSize),
       favoriteArtwork: sanitizeChoice(raw?.appearance?.favoriteArtwork, ["clear", "balanced", "artwork"], defaults.appearance.favoriteArtwork),
       cornerStyle: sanitizeChoice(raw?.appearance?.cornerStyle, ["sharp", "soft", "round"], defaults.appearance.cornerStyle),
-      backgroundStyle: sanitizeChoice(raw?.appearance?.backgroundStyle, ["plain", "cinema", "poster", "black", "gray", "glass"], defaults.appearance.backgroundStyle),
+      backgroundStyle: sanitizeChoice(raw?.appearance?.backgroundStyle, ["plain", "cinema", "color", "poster", "black", "gray", "glass"], defaults.appearance.backgroundStyle),
       backgroundColor: sanitizeColor(raw?.appearance?.backgroundColor, defaults.appearance.backgroundColor),
+      surfaceColor: sanitizeColor(raw?.appearance?.surfaceColor, defaults.appearance.surfaceColor),
+      surfaceSecondaryColor: sanitizeColor(raw?.appearance?.surfaceSecondaryColor, defaults.appearance.surfaceSecondaryColor),
+      cardColor: sanitizeColor(raw?.appearance?.cardColor, defaults.appearance.cardColor),
+      navColor: sanitizeColor(raw?.appearance?.navColor, defaults.appearance.navColor),
+      inputColor: sanitizeColor(raw?.appearance?.inputColor, defaults.appearance.inputColor),
+      primaryTextColor: sanitizeColor(raw?.appearance?.primaryTextColor, defaults.appearance.primaryTextColor),
+      secondaryTextColor: sanitizeColor(raw?.appearance?.secondaryTextColor, defaults.appearance.secondaryTextColor),
+      mutedTextColor: sanitizeColor(raw?.appearance?.mutedTextColor, defaults.appearance.mutedTextColor),
+      borderColor: sanitizeColor(raw?.appearance?.borderColor, defaults.appearance.borderColor),
+      hoverColor: sanitizeColor(raw?.appearance?.hoverColor, defaults.appearance.hoverColor),
+      focusColor: sanitizeColor(raw?.appearance?.focusColor, defaults.appearance.focusColor),
+      selectionColor: sanitizeColor(raw?.appearance?.selectionColor, defaults.appearance.selectionColor),
+      successColor: sanitizeColor(raw?.appearance?.successColor, defaults.appearance.successColor),
+      warningColor: sanitizeColor(raw?.appearance?.warningColor, defaults.appearance.warningColor),
+      errorColor: sanitizeColor(raw?.appearance?.errorColor, defaults.appearance.errorColor),
+      progressColor: sanitizeColor(raw?.appearance?.progressColor, defaults.appearance.progressColor),
+      scrollbarColor: sanitizeColor(raw?.appearance?.scrollbarColor, defaults.appearance.scrollbarColor),
       fontScale: sanitizeNumber(raw?.appearance?.fontScale, 80, 140, defaults.appearance.fontScale),
+      uiScale: sanitizeNumber(raw?.appearance?.uiScale, 90, 118, defaults.appearance.uiScale),
+      spacingScale: sanitizeNumber(raw?.appearance?.spacingScale, 80, 130, defaults.appearance.spacingScale),
+      cardGap: sanitizeNumber(raw?.appearance?.cardGap, 8, 34, defaults.appearance.cardGap),
+      cardRadius: sanitizeNumber(raw?.appearance?.cardRadius, 4, 32, defaults.appearance.cardRadius),
+      buttonRadius: sanitizeNumber(raw?.appearance?.buttonRadius, 4, 28, defaults.appearance.buttonRadius),
+      buttonHeight: sanitizeNumber(raw?.appearance?.buttonHeight, 34, 58, defaults.appearance.buttonHeight),
+      inputRadius: sanitizeNumber(raw?.appearance?.inputRadius, 4, 26, defaults.appearance.inputRadius),
+      shadowStrength: sanitizeNumber(raw?.appearance?.shadowStrength, 0, 100, defaults.appearance.shadowStrength),
+      hoverZoom: sanitizeNumber(raw?.appearance?.hoverZoom, 100, 106, defaults.appearance.hoverZoom),
+      hoverBrightness: sanitizeNumber(raw?.appearance?.hoverBrightness, 95, 120, defaults.appearance.hoverBrightness),
+      animationSpeed: sanitizeNumber(raw?.appearance?.animationSpeed, 60, 160, defaults.appearance.animationSpeed),
       animationMode: sanitizeChoice(raw?.appearance?.animationMode, ["full", "reduced", "off"], defaults.appearance.animationMode),
       cardStyle: sanitizeChoice(raw?.appearance?.cardStyle, ["standard", "flat", "glass", "outline", "minimal"], defaults.appearance.cardStyle),
       shadowStyle: sanitizeChoice(raw?.appearance?.shadowStyle, ["none", "light", "standard", "strong"], defaults.appearance.shadowStyle),
@@ -2823,10 +4641,16 @@ function defaultSettings() {
       providerCardMeta: "logoName"
     },
     appearance: {
+      settingsMode: "advanced",
+      designPreset: "elfix",
+      autoDeriveColors: true,
+      layoutStyle: "standard",
+      navStyle: "sidebar",
+      autoCollapseSidebar: true,
       compactHeader: true,
       themeMode: "dark",
-      accentPreset: "blue",
-      accentColor: "#147eff",
+      accentPreset: "violet",
+      accentColor: "#7c3aed",
       accentStrength: 72,
       uiDensity: "comfortable",
       cardSize: "medium",
@@ -2837,7 +4661,35 @@ function defaultSettings() {
       cornerStyle: "soft",
       backgroundStyle: "cinema",
       backgroundColor: "#070a10",
+      surfaceColor: "#111722",
+      surfaceSecondaryColor: "#1a2230",
+      cardColor: "#1a2230",
+      navColor: "#131922",
+      inputColor: "#05090f",
+      primaryTextColor: "#f7f8fb",
+      secondaryTextColor: "#d9e2ef",
+      mutedTextColor: "#a8b2c3",
+      borderColor: "#243043",
+      hoverColor: "#263349",
+      focusColor: "#147eff",
+      selectionColor: "#235bbd",
+      successColor: "#22c55e",
+      warningColor: "#f5b84b",
+      errorColor: "#ff4d5e",
+      progressColor: "#147eff",
+      scrollbarColor: "#3b82f6",
       fontScale: 100,
+      uiScale: 100,
+      spacingScale: 100,
+      cardGap: 18,
+      cardRadius: 18,
+      buttonRadius: 16,
+      buttonHeight: 44,
+      inputRadius: 14,
+      shadowStrength: 45,
+      hoverZoom: 102,
+      hoverBrightness: 106,
+      animationSpeed: 100,
       animationMode: "full",
       cardStyle: "standard",
       shadowStyle: "standard",
@@ -2872,6 +4724,9 @@ function activeProvider() {
 }
 
 function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR) && fs.existsSync(LEGACY_DATA_DIR)) {
+    fs.cpSync(LEGACY_DATA_DIR, DATA_DIR, { recursive: true });
+  }
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
@@ -2906,6 +4761,88 @@ function logBlockedUrl(url, provider, rule, type) {
 function sendBlockedRequests() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("adblock:blocked", blockedRequests.slice(-120).reverse());
+  }
+}
+
+function logMediaDiagnostic(provider, url, status, message, meta = {}) {
+  const identity = episodeIdentity(url);
+  const type = mediaTypeForProgressUrl(url, meta.type);
+  const title = cleanTitle(meta.currentTitle || meta.title || titleFromPath(url) || "");
+  const row = {
+    time: new Date().toLocaleTimeString(),
+    provider: provider?.name || "Unbekannt",
+    status,
+    message,
+    title,
+    url,
+    mediaKey: identity?.key || mediaSlugFromUrl(url) || "",
+    target: type === "film" ? `Film: ${title}` : (identity ? favoriteProgressTargetLabel(url) : type),
+    watchedSeconds: Math.round(sanitizePositiveNumber(meta.watchedSeconds)),
+    currentTime: Math.round(sanitizePositiveNumber(meta.currentTime || meta.position)),
+    duration: Math.round(sanitizePositiveNumber(meta.duration)),
+    progress: sanitizeProgress(meta.progress),
+    favorite: Boolean(meta.favorite),
+    continueVisible: Boolean(meta.continueVisible)
+  };
+  mediaDiagnostics.push(row);
+  if (mediaDiagnostics.length > MAX_MEDIA_LOG) {
+    mediaDiagnostics.shift();
+  }
+  if (shouldPrintMediaDiagnostic(row)) {
+    console.log(formatMediaDiagnosticLog(row));
+  }
+  sendMediaDiagnostics();
+}
+
+function shouldPrintMediaDiagnostic(row) {
+  const key = [
+    row.provider,
+    row.mediaKey || row.title || row.url,
+    row.target
+  ].join("|");
+  const watchedBucket = Math.floor(row.watchedSeconds / 30);
+  const progressBucket = Math.floor(row.progress / 10);
+  const completedBucket = row.progress >= COMPLETED_PROGRESS_PERCENT ? "completed" : "open";
+  const state = {
+    status: row.status,
+    favorite: row.favorite,
+    continueVisible: row.continueVisible,
+    watchedBucket,
+    progressBucket,
+    completedBucket
+  };
+  const previous = mediaConsoleLogState.get(key);
+  mediaConsoleLogState.set(key, state);
+
+  if (!previous) return true;
+  return previous.status !== state.status
+    || previous.favorite !== state.favorite
+    || previous.continueVisible !== state.continueVisible
+    || previous.watchedBucket !== state.watchedBucket
+    || previous.progressBucket !== state.progressBucket
+    || previous.completedBucket !== state.completedBucket;
+}
+
+function formatMediaDiagnosticLog(row) {
+  const parts = [
+    `[ELFIX MEDIA] ${row.time}`,
+    row.provider,
+    row.status.toUpperCase(),
+    row.mediaKey ? `media=${row.mediaKey}` : "",
+    row.target === "unknown" ? "" : row.target,
+    row.message,
+    `played=${row.watchedSeconds}s`,
+    row.duration > 0 ? `time=${row.currentTime}s/${row.duration}s` : "time=unbekannt",
+    `progress=${row.progress}%`,
+    row.favorite ? "watchlist=ja" : "watchlist=nein",
+    row.continueVisible ? "weiterschauen=ja" : "weiterschauen=nein"
+  ];
+  return parts.filter(Boolean).join(" | ");
+}
+
+function sendMediaDiagnostics() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("media:diagnostics", mediaDiagnostics.slice(-120).reverse());
   }
 }
 

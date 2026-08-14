@@ -3,18 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Elflix</title>
+  <title>ELFIX</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <button class="fullscreen-exit-button" id="fullscreenExitButton" type="button" title="Vollbild verlassen" aria-label="Vollbild verlassen">↙</button>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><img src="./assets/elflix-logo.png" alt="Elflix"></div>
-      <nav class="nav">
-        <button class="nav-item is-active" id="startButton">Start</button>
-        <button class="nav-item" id="searchButton">Suche</button>
-        <button class="nav-item" id="favoritesButton">Favoriten</button>
-      </nav>
+      <div class="brand" id="brandHome" role="button" tabindex="0" title="Zur Startseite"><img src="./assets/elflix-logo.png" alt="ELFIX"></div>
       <div class="omnibox-wrap">
         <button class="chrome-btn" id="backButton" title="Zurück">‹</button>
         <button class="chrome-btn" id="forwardButton" title="Vor">›</button>
@@ -33,51 +29,173 @@
       <div class="provider-rail" id="providerRail"></div>
     </section>
 
+    <div class="app-area">
+      <aside class="home-sidebar app-sidebar" id="appSidebar" aria-label="ELFIX Navigation">
+        <div class="home-sidebar-brand">
+          <img class="sidebar-wordmark" id="sidebarHome" src="./assets/elflix-logo.png" alt="ELFIX" role="button" tabindex="0" title="Zur Startseite">
+          <span class="sidebar-mark" aria-hidden="true">E</span>
+          <button class="sidebar-collapse" id="sidebarToggle" type="button" title="Sidebar einklappen">‹</button>
+        </div>
+        <nav class="home-side-nav">
+          <button class="home-side-link is-active" type="button" data-home-action="start" title="Startseite"><span class="side-icon">⌂</span><span class="side-label">Startseite</span></button>
+          <button class="home-side-link" type="button" data-home-action="search" title="Suche"><span class="side-icon">⌕</span><span class="side-label">Suche</span></button>
+          <button class="home-side-link" type="button" data-home-action="favorites" title="Watchlist"><span class="side-icon">♡</span><span class="side-label">Watchlist</span></button>
+          <button class="home-side-link" type="button" data-home-action="history" title="Verlauf"><span class="side-icon">◴</span><span class="side-label">Verlauf</span></button>
+        </nav>
+        <div class="home-sidebar-section">
+          <p>Bibliothek</p>
+          <button class="home-side-link" type="button" data-home-action="library" title="Mediathek"><span class="side-icon">▣</span><span class="side-label">Mediathek</span></button>
+          <button class="home-side-link" type="button" data-home-action="continue" title="Weiterschauen"><span class="side-icon">◷</span><span class="side-label">Weiterschauen</span></button>
+        </div>
+        <div class="home-sidebar-section">
+          <p>Anbieter</p>
+          <div class="home-sidebar-providers" id="homeSidebarProviders"></div>
+          <button class="home-side-link" type="button" data-home-action="add-provider" title="Anbieter hinzufügen"><span class="side-icon">＋</span><span class="side-label">Anbieter hinzufügen</span></button>
+        </div>
+        <div class="home-sidebar-footer">
+          <button class="home-side-link" type="button" data-home-action="settings" title="Einstellungen"><span class="side-icon">⚙</span><span class="side-label">Einstellungen</span></button>
+          <button class="home-side-link" type="button" data-home-action="help" title="Hilfe & Support"><span class="side-icon">?</span><span class="side-label">Hilfe & Support</span></button>
+          <span id="homeSidebarVersion">ELFIX</span>
+        </div>
+      </aside>
+
     <main id="browserFrame" class="browser-frame">
       <section class="home-view" id="homeView">
-        <div class="empty-state is-hidden" id="noProvidersState">
-          <div class="empty-icon">＋</div>
-          <h1>Noch keine Anbieter</h1>
-          <p>Füge deine Streaming-Websites hinzu und wechsle danach direkt zwischen ihnen.</p>
-          <button class="primary-action" id="emptyAddProvider">+ Anbieter hinzufügen</button>
-        </div>
-        <div class="hero" id="homeHero">
-          <p class="eyebrow">Elflix</p>
-          <h1 id="heroTitle">Alles an einem Ort</h1>
-          <p id="heroCopy">Deine Streaming-Websites in einer Oberflaeche.</p>
-          <div class="hero-actions">
-            <button class="primary-action" id="heroWatch">Anbieter öffnen</button>
-            <button class="secondary-action" id="heroSettings">Einstellungen</button>
+        <div class="desktop-home-shell">
+          <div class="home-main">
+            <div class="home-topbar">
+              <button class="home-icon-button" type="button" id="homeSidebarToggle" title="Sidebar einklappen">☰</button>
+              <img class="home-mini-logo" id="homeMiniLogo" src="./assets/elflix-logo.png" alt="ELFIX" role="button" tabindex="0" title="Zur Startseite">
+              <div class="home-search-wrap">
+                <span>⌕</span>
+                <input id="homeQuickSearch" type="text" placeholder="Titel, Genre, Studio...">
+                <kbd>/</kbd>
+              </div>
+              <button class="home-profile" type="button" data-home-action="settings" title="Einstellungen">EL</button>
+            </div>
+
+            <div class="empty-state is-hidden" id="noProvidersState">
+              <div class="empty-icon">＋</div>
+              <h1>Noch keine Anbieter</h1>
+              <p>Füge deine Streaming-Websites hinzu und wechsle danach direkt zwischen ihnen.</p>
+              <button class="primary-action" id="emptyAddProvider">+ Anbieter hinzufügen</button>
+            </div>
+
+            <div class="hero home-dashboard-hero" id="homeHero">
+              <div class="home-hero-content">
+                <p class="eyebrow" id="heroEyebrow">Fortsetzen</p>
+                <h1 id="heroTitle">Alles an einem Ort</h1>
+                <p id="heroCopy">Deine Streaming-Websites in einer Oberfläche.</p>
+                <div class="hero-progress" id="heroProgress">
+                  <div><span id="heroProgressFill"></span></div>
+                  <strong id="heroProgressText"></strong>
+                </div>
+                <div class="hero-actions">
+                  <button class="primary-action" id="heroWatch">Weiter schauen</button>
+                  <button class="secondary-action" id="heroDetails">Details</button>
+                  <button class="secondary-action" id="heroSettings">Einstellungen</button>
+                </div>
+              </div>
+              <div class="hero-dots" id="heroDots" role="tablist" aria-label="Zuletzt geschaut"></div>
+            </div>
+
+            <section class="home-row favorites-row" id="favoritesHomeRow">
+              <div class="row-head">
+                <div class="row-title">Weiterschauen</div>
+                <button class="text-action" id="showAllFavorites">Alle anzeigen</button>
+              </div>
+              <div class="favorite-rail" id="homeFavorites"></div>
+            </section>
+
+            <section class="home-row providers-row" id="providersHomeRow">
+              <div class="row-head">
+                <div class="row-title">Beliebte Anbieter</div>
+              </div>
+              <div class="home-provider-grid" id="homeProviders"></div>
+            </section>
+
+            <section class="home-row recommended-row" id="recommendedHomeRow">
+              <div class="row-head">
+                <div class="row-title">Neu bei deinen Anbietern</div>
+              </div>
+              <div class="favorite-rail recommendation-rail" id="homeRecommendations"></div>
+            </section>
+
+            <nav class="home-bottom-nav" aria-label="Startseiten-Navigation unten">
+              <button class="is-active" type="button" data-home-action="start">⌂ <span>Startseite</span></button>
+              <button type="button" data-home-action="search">⌕ <span>Suche</span></button>
+              <button type="button" data-home-action="favorites">♡ <span>Watchlist</span></button>
+              <button type="button" data-home-action="settings">⚙ <span>Einstellungen</span></button>
+            </nav>
           </div>
         </div>
-        <section class="home-row providers-row" id="providersHomeRow">
-          <div class="row-head">
-            <div class="row-title">Deine Anbieter</div>
-          </div>
-          <div class="home-provider-grid" id="homeProviders"></div>
-        </section>
-        <section class="home-row favorites-row" id="favoritesHomeRow">
-          <div class="row-head">
-            <div class="row-title">Meine Favoriten</div>
-            <button class="text-action" id="showAllFavorites">Alle anzeigen</button>
-          </div>
-          <div class="favorite-rail" id="homeFavorites"></div>
-        </section>
       </section>
       <section class="favorites-view is-hidden" id="favoritesView">
         <div class="favorites-page">
           <div class="row-head">
             <div>
-              <p class="eyebrow">Elflix</p>
-              <h1>Favoriten</h1>
+              <p class="eyebrow">ELFIX</p>
+              <h1>Watchlist</h1>
             </div>
           </div>
           <div class="favorite-grid" id="favoritesGrid"></div>
           <div class="empty-state is-hidden" id="favoritesEmpty">
             <div class="empty-icon">♡</div>
-            <h1>Noch keine Favoriten</h1>
+            <h1>Noch nichts in der Watchlist</h1>
             <p>Speichere Filme, Serien oder Seiten ueber das Herz im Browser.</p>
             <button class="primary-action" id="favoritesOpenProvider">Anbieter öffnen</button>
+          </div>
+        </div>
+      </section>
+      <section class="favorites-view is-hidden" id="libraryView">
+        <div class="favorites-page">
+          <div class="row-head">
+            <div>
+              <p class="eyebrow">Bibliothek</p>
+              <h1 id="libraryTitle">Mediathek</h1>
+              <p id="libraryCopy">Vollständig abgeschlossene Filme und Serien.</p>
+            </div>
+          </div>
+          <div class="favorite-grid" id="libraryGrid"></div>
+          <div class="empty-state is-hidden" id="libraryEmpty">
+            <div class="empty-icon">▣</div>
+            <h1>Noch keine Mediathek</h1>
+            <p>Starte einen Inhalt, dann landet er automatisch hier.</p>
+          </div>
+        </div>
+      </section>
+      <section class="favorites-view is-hidden" id="continueView">
+        <div class="favorites-page">
+          <div class="row-head">
+            <div>
+              <p class="eyebrow">Fortsetzen</p>
+              <h1>Weiterschauen</h1>
+              <p>Nur offene Inhalte mit gespeichertem Fortschritt.</p>
+            </div>
+          </div>
+          <div class="favorite-grid" id="continueGrid"></div>
+          <div class="empty-state is-hidden" id="continueEmpty">
+            <div class="empty-icon">▶</div>
+            <h1>Nichts offen</h1>
+            <p>Offene Filme und Serienfolgen erscheinen automatisch hier.</p>
+          </div>
+        </div>
+      </section>
+      <section class="favorites-view is-hidden" id="historyView">
+        <div class="favorites-page">
+          <div class="row-head">
+            <div>
+              <p class="eyebrow">Chronologisch</p>
+              <h1>Verlauf</h1>
+              <p>Wann du etwas geöffnet oder angesehen hast.</p>
+            </div>
+            <button class="danger-action is-hidden" id="historyClear" type="button">Verlauf löschen</button>
+          </div>
+          <div class="history-list" id="historyList"></div>
+          <div class="empty-state is-hidden" id="historyEmpty">
+            <div class="empty-icon">◴</div>
+            <h1>Noch kein Verlauf</h1>
+            <p>Aktivität erscheint hier chronologisch.</p>
           </div>
         </div>
       </section>
@@ -91,28 +209,47 @@
         </div>
       </section>
     </main>
+    </div>
   </div>
   <div class="toast-stack" id="toastStack"></div>
 
   <dialog class="settings-modal" id="settingsModal">
     <div class="settings-shell">
       <aside class="settings-tabs">
-        <h2>Settings</h2>
-        <label class="settings-search">Suchen<input id="settingsSearch" type="search" placeholder="Theme, Cookies, TV..."></label>
-        <button class="tab is-active" data-tab="settingsHome">Übersicht</button>
-        <button class="tab" data-tab="providers">Streaming-Anbieter</button>
-        <button class="tab" data-tab="homeSettings">Startseite</button>
-        <button class="tab" data-tab="browser">Browser</button>
-        <button class="tab" data-tab="privacy">Datenschutz & Adblock</button>
-        <button class="tab" data-tab="playback">Wiedergabe</button>
-        <button class="tab" data-tab="favoritesSettings">Favoriten</button>
-        <button class="tab" data-tab="appearance">Darstellung</button>
-        <button class="tab" data-tab="updates">Updates & Version</button>
-        <button class="tab" data-tab="data">Daten</button>
+        <div class="settings-brand">
+          <img src="./assets/elflix-logo.png" alt="ELFIX">
+        </div>
+        <div class="settings-nav-label">Einstellungen</div>
+        <nav class="settings-nav">
+          <button class="tab" data-tab="settingsHome"><span>⌕</span>Übersicht<small>Alle Bereiche auf einen Blick</small></button>
+          <div class="settings-nav-section">Aussehen</div>
+          <button class="tab is-active" data-tab="appearance"><span>◈</span>Darstellung<small>Theme, Farben, Layout</small></button>
+          <button class="tab" data-tab="advancedAppearance"><span>◎</span>Feinschliff<small>Einzelne Farben & Maße</small></button>
+          <div class="settings-nav-section">Inhalte</div>
+          <button class="tab" data-tab="homeSettings"><span>⌂</span>Startseite<small>Startseite & Karten</small></button>
+          <button class="tab" data-tab="providers"><span>☰</span>Anbieter<small>Seiten verwalten</small></button>
+          <button class="tab" data-tab="playback"><span>▷</span>Wiedergabe<small>Player & Fortschritt</small></button>
+          <div class="settings-nav-section">System</div>
+          <button class="tab" data-tab="browser"><span>◉</span>Browser & Schutz<small>Werbung, Cache</small></button>
+          <button class="tab" data-tab="data"><span>▤</span>Daten & Updates<small>Version, Speicher</small></button>
+        </nav>
+        <div class="settings-sidebar-actions">
+          <button type="button" class="settings-side-action" id="sidebarExportAppearanceButton">⇧ Einstellungen exportieren</button>
+          <label class="settings-side-action import-side-action">⇩ Einstellungen importieren<input id="sidebarImportAppearanceInput" type="file" accept="application/json,.json"></label>
+          <button type="button" class="settings-side-action danger" id="sidebarResetSettingsButton">⌫ Alles zurücksetzen</button>
+        </div>
+        <div class="settings-sidebar-status">
+          <strong id="sidebarVersionLabel">ELFIX</strong>
+          <span><i></i>Alle Änderungen werden automatisch gespeichert</span>
+        </div>
       </aside>
 
       <section class="settings-content">
-        <div class="settings-page is-active" data-page="settingsHome">
+        <div class="settings-topbar">
+          <label class="settings-search"><span>⌕</span><input id="settingsSearch" type="search" placeholder="Einstellung suchen..."><kbd>/</kbd></label>
+        </div>
+
+        <div class="settings-page" data-page="settingsHome">
           <div class="settings-head">
             <div>
               <h3>Einstellungen</h3>
@@ -121,23 +258,21 @@
           </div>
           <div class="settings-search-results" id="settingsSearchResults"></div>
           <div class="settings-home-grid">
-            <button class="settings-home-card" data-jump-tab="appearance"><strong>Erscheinungsbild</strong><span>Theme, Farben, Schrift, Karten und Animationen</span></button>
-            <button class="settings-home-card" data-jump-tab="homeSettings"><strong>Startseite</strong><span>Hero, Anbieter, Favoriten und Layout</span></button>
-            <button class="settings-home-card" data-jump-tab="providers"><strong>Anbieter</strong><span>Websites verwalten, sortieren und schützen</span></button>
-            <button class="settings-home-card" data-jump-tab="browser"><strong>Browser</strong><span>Session, Cache und WebView-Verhalten</span></button>
-            <button class="settings-home-card" data-jump-tab="privacy"><strong>Schutz</strong><span>Adblock, Popups, Redirects und Whitelist</span></button>
-            <button class="settings-home-card" data-jump-tab="playback"><strong>Video & Wiedergabe</strong><span>Provider-Wechsel, Audio und Favoriten-Fortschritt</span></button>
-            <button class="settings-home-card" data-jump-tab="favoritesSettings"><strong>Favoriten</strong><span>Ansicht, Bilder, Text und Metadaten</span></button>
-            <button class="settings-home-card" data-jump-tab="updates"><strong>Updates & Version</strong><span>GitHub Releases, Update-Status und Fortschritt</span></button>
-            <button class="settings-home-card" data-jump-tab="data"><strong>Speicher & Daten</strong><span>Cache, Datenordner und Zurücksetzen</span></button>
+            <button class="settings-home-card" data-jump-tab="appearance"><strong>◈ Darstellung</strong><span>Hell oder dunkel, Akzentfarbe, Layout-Stil, Kartengröße und Animationen</span></button>
+            <button class="settings-home-card" data-jump-tab="advancedAppearance"><strong>◎ Feinschliff</strong><span>Jede einzelne Farbe, Abstände, Rundungen und Button-Maße — für Detailverliebte</span></button>
+            <button class="settings-home-card" data-jump-tab="homeSettings"><strong>⌂ Startseite & Karten</strong><span>Welche Bereiche die Startseite zeigt und wie Watchlist-Karten aussehen</span></button>
+            <button class="settings-home-card" data-jump-tab="providers"><strong>☰ Anbieter</strong><span>Streaming-Seiten anlegen, sortieren, ausblenden und Adblock pro Seite steuern</span></button>
+            <button class="settings-home-card" data-jump-tab="playback"><strong>▷ Wiedergabe</strong><span>Wann automatisch pausiert wird und wie der Fortschritt gezählt wird</span></button>
+            <button class="settings-home-card" data-jump-tab="browser"><strong>◉ Browser & Schutz</strong><span>Werbung, Pop-ups und Weiterleitungen blockieren, Cache-Verhalten</span></button>
+            <button class="settings-home-card" data-jump-tab="data"><strong>▤ Daten & Updates</strong><span>Version prüfen, Cache leeren, Datenordner öffnen und zurücksetzen</span></button>
           </div>
         </div>
 
-        <div class="settings-page" data-page="providers">
+<div class="settings-page" data-page="providers">
           <div class="settings-head">
             <div>
-              <h3>Streaming-Anbieter</h3>
-              <p>Provider verwalten, per Drag & Drop sortieren und pro Anbieter Adblock steuern.</p>
+              <h3>Anbieter</h3>
+              <p>Jeder Anbieter ist eine Website, die ELFIX als eigenen Tab öffnet. Links auswählen oder „+ Neu“ für einen weiteren, rechts bearbeiten.</p>
             </div>
           </div>
           <div class="provider-settings-layout">
@@ -150,12 +285,20 @@
               <div class="list-hint">Zum Sortieren ziehen</div>
             </div>
             <form class="provider-form" id="providerForm">
-              <label>Name<input id="providerName" required placeholder="IMDb"></label>
-              <label>Website / Start-URL<input id="providerHome" required placeholder="https://www.imdb.com"></label>
-              <label>Such-URL optional<input id="providerSearch" placeholder="https://www.imdb.com/find/?q={query}"></label>
-              <label>Logo optional<input id="providerLogo" maxlength="8" placeholder="IM"></label>
-              <label class="check"><input id="providerEnabled" type="checkbox" checked> Aktiv anzeigen</label>
-              <label class="check"><input id="providerAdblock" type="checkbox" checked> Adblock für diesen Anbieter</label>
+              <label>Name<input id="providerName" required placeholder="IMDb">
+                <small>Steht auf der Anbieter-Kachel und im Tab.</small>
+              </label>
+              <label>Website<input id="providerHome" required placeholder="https://www.imdb.com">
+                <small>Diese Seite wird geöffnet, wenn du den Anbieter anklickst.</small>
+              </label>
+              <label>Such-Adresse <em>optional</em><input id="providerSearch" placeholder="https://www.imdb.com/find/?q={query}">
+                <small>Nur nötig für die globale Suche. <code>{query}</code> wird durch deinen Suchbegriff ersetzt — ohne diese Angabe wird der Anbieter beim Suchen übersprungen.</small>
+              </label>
+              <label>Kürzel <em>optional</em><input id="providerLogo" maxlength="8" placeholder="IM">
+                <small>Bis zu 8 Zeichen, die als Logo auf der Kachel erscheinen.</small>
+              </label>
+              <label class="check setting-row"><input id="providerEnabled" type="checkbox" checked><span><strong>Anbieter anzeigen</strong><small>Ausgeschaltet bleibt er gespeichert, verschwindet aber aus Leiste und Suche.</small></span></label>
+              <label class="check setting-row"><input id="providerAdblock" type="checkbox" checked><span><strong>Werbung hier blockieren</strong><small>Einzeln abschaltbar, falls eine Seite mit aktivem Blocker nicht funktioniert.</small></span></label>
               <div class="form-actions">
                 <button type="button" class="soft-action" id="moveUpButton">Hoch</button>
                 <button type="button" class="soft-action" id="moveDownButton">Runter</button>
@@ -170,310 +313,634 @@
           <div class="settings-head">
             <div>
               <h3>Startseite</h3>
-              <p>Bestimme, welche Bereiche auf Home sichtbar sind und wie groß Anbieter-Karten wirken.</p>
+              <p>Welche Bereiche die Startseite zeigt. Ausgeblendete Bereiche bleiben über die Seitenleiste erreichbar.</p>
             </div>
             <button class="soft-action" data-reset-section="home">Bereich zurücksetzen</button>
           </div>
           <div class="settings-section-grid">
-            <label class="check setting-row"><input id="showHeroHome" type="checkbox"><span><strong>Startseiten-Hero anzeigen</strong><small>Großer Einstieg mit Schnellaktionen.</small></span></label>
-            <label class="check setting-row"><input id="showHomeProviders" type="checkbox"><span><strong>Anbieter auf Home anzeigen</strong><small>Schneller Zugriff auf deine Websites.</small></span></label>
-            <label class="check setting-row"><input id="showHomeFavorites" type="checkbox"><span><strong>Favoriten auf Home anzeigen</strong><small>Zeigt zuletzt gespeicherte Favoriten direkt auf der Startseite.</small></span></label>
-            <label>Logo-Anzeige
+            <label class="check setting-row"><input id="showHeroHome" type="checkbox"><span><strong>Großes Titelbild oben</strong><small>Zeigt den zuletzt gesehenen Titel mit „Weiter schauen“-Knopf.</small></span></label>
+            <label class="check setting-row"><input id="showHomeFavorites" type="checkbox"><span><strong>Reihe „Weiterschauen“</strong><small>Angefangene Filme und Folgen direkt auf der Startseite.</small></span></label>
+            <label class="check setting-row"><input id="showHomeProviders" type="checkbox"><span><strong>Reihe „Beliebte Anbieter“</strong><small>Deine Streaming-Seiten als Kacheln zum Direktstart.</small></span></label>
+            <label>Beschriftung der Anbieter-Kacheln
               <select id="providerCardMeta">
-                <option value="logoName">Logo + Name</option>
-                <option value="logo">Nur Logo</option>
+                <option value="logoName">Kürzel und Name</option>
+                <option value="logo">Nur Kürzel</option>
                 <option value="name">Nur Name</option>
               </select>
-              <small>Beeinflusst Anbieter-Karten in Topbar und Startseite.</small>
+              <small>Gilt für die Kacheln auf der Startseite und in der Leiste oben.</small>
             </label>
           </div>
+          <div class="setting-card">Wie die Karten selbst aussehen — Größe, Raster oder Liste, Bildanteil — stellst du unter <strong>Darstellung</strong> ein.</div>
         </div>
 
         <div class="settings-page" data-page="browser">
           <div class="settings-head">
             <div>
-              <h3>Browser</h3>
-              <p>Chromium-Websites laufen in einer gemeinsamen Session. Logins bleiben erhalten, Cache kann hart geleert werden.</p>
-            </div>
-          </div>
-          <div class="settings-section-grid">
-            <label>Cache-Verhalten
-              <select id="cacheMode">
-                <option value="normal">Normal</option>
-                <option value="clearOnStart">Beim App-Start löschen</option>
-                <option value="aggressive">Start + Reload-All löschen</option>
-              </select>
-              <small>Aktuell löscht Elflix Start/Reload-All browsernahe Daten ohne Cookies.</small>
-            </label>
-            <div class="setting-card">Reload-All baut alle WebViews neu auf und leert Cache/WebStorage. Cookies bleiben, damit Logins nicht unnötig verschwinden.</div>
-          </div>
-        </div>
-
-        <div class="settings-page" data-page="privacy">
-          <div class="settings-head">
-            <div>
-              <h3>Datenschutz & Adblock</h3>
-              <p>Request-Filtering direkt auf Electron-Session-Ebene.</p>
+              <h3>Browser & Schutz</h3>
+              <p>Was auf den Streaming-Seiten blockiert wird und wie ELFIX mit gespeicherten Browserdaten umgeht.</p>
             </div>
             <button class="soft-action" id="updateFiltersButton">Filterlisten aktualisieren</button>
           </div>
-          <label class="check"><input id="adblockEnabled" type="checkbox"> Adblock ein</label>
-          <label class="check"><input id="trackingEnabled" type="checkbox"> Tracking-Schutz ein</label>
-          <label class="check"><input id="popupBlockingEnabled" type="checkbox"> Popups und neue Tabs blockieren</label>
-          <label class="check"><input id="redirectBlockingEnabled" type="checkbox"> Werbe-Redirects blockieren</label>
-          <div class="filter-list-card">
-            <strong>Filterlisten</strong>
-            <div id="filterListNames"></div>
-          </div>
-          <label>Whitelist, eine Domain pro Zeile<textarea id="whitelistInput" rows="5" placeholder="example.com"></textarea></label>
-          <div class="blocked-head">
-            <strong>Aktuell blockierte Requests</strong>
-            <span id="filterStatus"></span>
-          </div>
-          <div class="blocked-list" id="blockedList"></div>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Blockieren</h4>
+              <p>Greift direkt beim Laden — die Seiten bekommen die Anfragen gar nicht erst zu sehen.</p>
+            </div>
+            <div class="settings-section-grid">
+              <label class="check setting-row"><input id="adblockEnabled" type="checkbox"><span><strong>Werbung blockieren</strong><small>Filtert bekannte Werbe-Domains und Banner heraus.</small></span></label>
+              <label class="check setting-row"><input id="trackingEnabled" type="checkbox"><span><strong>Tracking blockieren</strong><small>Blockiert Zähldienste, die dein Verhalten aufzeichnen.</small></span></label>
+              <label class="check setting-row"><input id="popupBlockingEnabled" type="checkbox"><span><strong>Pop-ups verhindern</strong><small>Unterdrückt neue Fenster und Tabs, die sich beim Klick auf den Player öffnen.</small></span></label>
+              <label class="check setting-row"><input id="redirectBlockingEnabled" type="checkbox"><span><strong>Weiterleitungen verhindern</strong><small>Stoppt das ungefragte Umleiten auf Werbeseiten. Bei Problemen mit einem Hoster testweise ausschalten.</small></span></label>
+            </div>
+            <div class="filter-list-card">
+              <strong>Aktive Filterlisten</strong>
+              <div id="filterListNames"></div>
+            </div>
+            <label>Ausnahmen — eine Domain pro Zeile
+              <textarea id="whitelistInput" rows="5" placeholder="example.com"></textarea>
+              <small>Auf diesen Domains wird nichts blockiert. Nützlich, wenn eine Seite mit Blocker nicht lädt.</small>
+            </label>
+            <div class="blocked-head">
+              <strong>Zuletzt blockiert</strong>
+              <span id="filterStatus"></span>
+            </div>
+            <div class="blocked-list" id="blockedList"></div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Browserdaten</h4>
+              <p>Alle Anbieter teilen sich eine Sitzung, damit Logins erhalten bleiben.</p>
+            </div>
+            <div class="settings-section-grid">
+              <label>Zwischenspeicher leeren
+                <select id="cacheMode">
+                  <option value="normal">Nie automatisch</option>
+                  <option value="clearOnStart">Bei jedem App-Start</option>
+                  <option value="aggressive">Bei App-Start und „Alles neu laden“</option>
+                </select>
+                <small>Betrifft Cache und lokale Website-Daten. Cookies bleiben in allen Varianten erhalten — du bleibst also eingeloggt.</small>
+              </label>
+              <div class="setting-card">„Alles neu laden“ in der Toolbar baut sämtliche Anbieter-Tabs komplett neu auf. Hilft, wenn eine Seite hängt.</div>
+            </div>
+          </section>
         </div>
 
         <div class="settings-page" data-page="playback">
-          <h3>Wiedergabe</h3>
-          <p>Elflix behandelt Anbieter wie Tabs. Inaktive Websites werden pausiert und stummgeschaltet.</p>
-          <label>Favoriten-Fortschritt
-            <select id="favoriteProgressMode">
-              <option value="sequential">Nur nächste Folge</option>
-              <option value="static">Statisch</option>
-            </select>
-          </label>
-          <label class="check"><input id="pauseOnProviderSwitch" type="checkbox"> Beim Provider-Wechsel pausieren</label>
-          <label class="check"><input id="pauseOnMinimize" type="checkbox"> Beim Minimieren pausieren</label>
-          <label class="check"><input id="pauseOnBlur" type="checkbox"> Bei Fokusverlust pausieren</label>
-          <div class="setting-card">Beim Wechsel pausiert der aktive Player. Wenn er vorher lief, setzt Elflix ihn beim Zurückwechseln automatisch fort.</div>
-        </div>
-
-        <div class="settings-page" data-page="appearance">
           <div class="settings-head">
             <div>
-              <h3>Erscheinungsbild</h3>
-              <p>Theme, Akzentfarbe, Schrift, Dichte und Kartenstil. Änderungen wirken sofort.</p>
+              <h3>Wiedergabe</h3>
+              <p>Wann ELFIX ein laufendes Video von selbst anhält und wie der Fortschritt in „Weiterschauen“ gezählt wird.</p>
+            </div>
+          </div>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Automatisch pausieren</h4>
+              <p>Verhindert, dass im Hintergrund weitergespielt wird. Was vorher lief, läuft beim Zurückkommen automatisch weiter.</p>
+            </div>
+            <div class="settings-section-grid">
+              <label class="check setting-row"><input id="pauseOnProviderSwitch" type="checkbox"><span><strong>Beim Anbieterwechsel</strong><small>Wechselst du auf einen anderen Anbieter, hält das Video im alten Tab an.</small></span></label>
+              <label class="check setting-row"><input id="pauseOnMinimize" type="checkbox"><span><strong>Beim Minimieren</strong><small>Legst du ELFIX in die Taskleiste, pausiert die Wiedergabe.</small></span></label>
+              <label class="check setting-row"><input id="pauseOnBlur" type="checkbox"><span><strong>Wenn ein anderes Fenster aktiv wird</strong><small>Strenger als „Minimieren“: pausiert schon, sobald du woanders hinklickst. Für Nebenbei-Schauen besser aus.</small></span></label>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Fortschritt in „Weiterschauen“</h4>
+              <p>Was passiert, wenn du eine Folge zu Ende geschaut hast.</p>
+            </div>
+            <div class="settings-section-grid">
+              <label>Nach dem Ende einer Folge
+                <select id="favoriteProgressMode">
+                  <option value="sequential">Auf die nächste Folge weiterrücken</option>
+                  <option value="static">Auf derselben Folge stehen bleiben</option>
+                </select>
+                <small>Beim Weiterrücken zeigt die Karte direkt die nächste Folge an — bei Filmen ändert sich nichts.</small>
+              </label>
+              <div class="setting-card">Ein Eintrag verschwindet erst aus „Weiterschauen“, wenn er zu 90 % gesehen wurde oder du ihn über das ⋯-Menü entfernst.</div>
+            </div>
+          </section>
+        </div>
+
+        <div class="settings-page is-active" data-page="appearance">
+          <div class="settings-head">
+            <div>
+              <h3>Darstellung</h3>
+              <p>Passe das Aussehen von ELFIX an</p>
             </div>
             <button class="soft-action" data-reset-section="appearance">Bereich zurücksetzen</button>
           </div>
+
+          <div class="settings-preview" id="settingsPreview">
+            <div class="preview-topline"></div>
+            <div>
+              <strong>Live-Vorschau</strong>
+              <span>Button, Karte, Text, Rahmen und Akzent reagieren sofort auf jede Änderung.</span>
+            </div>
+            <button type="button">Aktion</button>
+          </div>
+
+          <!-- Zustand fuer Automatik und Umfang. Sichtbar stuenden sie doppelt:
+               die Automatik hat oben ihren eigenen Schalter, einen einfachen
+               Modus gibt es nicht mehr. -->
+          <div hidden>
+            <input id="autoDeriveColors" type="checkbox">
+            <input id="backgroundColor" type="color" value="#070a10">
+            <select id="settingsMode"><option value="advanced">Erweitert</option></select>
+          </div>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>1. Theme</h4>
+              <p>Wähle den Grundstil für die gesamte Anwendung.</p>
+            </div>
+            <div class="choice-card-grid theme-choice-grid">
+              <button type="button" class="choice-card" data-theme-choice="system"><span>☀/☾</span><strong>System</strong><small>Folgt Windows</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-theme-choice="light"><span>☀</span><strong>Hell</strong><small>Helles Design</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-theme-choice="dark"><span>☾</span><strong>Dunkel</strong><small>Dunkles Design</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-theme-choice="oled"><span>●</span><strong>OLED</strong><small>Echtes Schwarz</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-theme-choice="custom"><span>◉</span><strong>Benutzerdef.</strong><small>Eigene Farben</small><i>✓</i></button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>2. Farben</h4>
+              <p>Wähle eine Akzentfarbe oder ein komplettes Preset.</p>
+            </div>
+            <div class="color-control-row">
+              <div>
+                <small>Akzentfarbe</small>
+                <div class="swatch-row">
+                  <button type="button" class="color-swatch" data-accent-choice="violet" style="--swatch:#7c3aed"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="blue" style="--swatch:#3b82f6"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="turquoise" style="--swatch:#06b6d4"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="green" style="--swatch:#22c55e"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="yellow" style="--swatch:#facc15"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="gold" style="--swatch:#f5b84b"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="orange" style="--swatch:#f97316"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="red" style="--swatch:#e50914"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="pink" style="--swatch:#ec4899"><span>✓</span></button>
+                </div>
+              </div>
+              <label class="auto-color-button" title="Berechnet Flächen, Rahmen, Hover und Fokus passend zu Hintergrund und Akzentfarbe"><input id="autoDeriveColorsInline" type="checkbox"> ✨ Passend berechnen</label>
+              <label>Presets
+                <select id="designPresetInline">
+                  <option value="elfix">ELFIX Standard — Violett, dunkel</option>
+                  <option value="cinema">Kino — Rot, Poster-Hintergrund</option>
+                  <option value="oled">OLED — Blau auf echtem Schwarz</option>
+                  <option value="glass">Glas — Türkis, transparente Karten</option>
+                  <option value="minimal">Minimal — Blau, flach, ohne Schnörkel</option>
+                  <option value="compact">Kompakt — Blau, alles enger</option>
+                  <option value="colorful">Bunt — Violett, kräftig, große Rundungen</option>
+                  <option value="custom">Benutzerdefiniert</option>
+                </select>
+              </label>
+            </div>
+            <div class="custom-grid">
+              <label>Eigene Akzentfarbe<input id="accentColor" type="color" value="#e50914">
+                <small>Wählst du hier etwas aus, schaltet ELFIX automatisch auf „eigene Farbe“ um.</small>
+              </label>
+              <label>… oder als Hex-Wert<input id="accentHex" type="text" inputmode="text" maxlength="7" placeholder="#147eff">
+                <small>Zum Übernehmen einer Farbe aus einem anderen Programm, z.B. <code>#7c3aed</code>.</small>
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>3. Layout-Stil</h4>
+              <p>Wie sollen Inhalte und Navigation angezeigt werden?</p>
+            </div>
+            <div class="choice-card-grid layout-choice-grid">
+              <button type="button" class="choice-card" data-layout-choice="standard"><span>▰</span><strong>Standard</strong><small>Ausgewogen</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-layout-choice="compact"><span>▤</span><strong>Kompakt</strong><small>Mehr Inhalte</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-layout-choice="roomy"><span>▢</span><strong>Geräumig</strong><small>Mehr Platz</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-layout-choice="netflix"><span>▣</span><strong>Netflix Style</strong><small>Große Poster</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-layout-choice="minimal"><span>▱</span><strong>Minimal</strong><small>Reduziert</small><i>✓</i></button>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>4. Navigation</h4>
+              <p>Position und Verhalten der Navigation.</p>
+            </div>
+            <div class="choice-card-grid nav-choice-grid">
+              <button type="button" class="choice-card" data-nav-choice="top"><span>┬</span><strong>Keine Leiste</strong><small>Nur die Leiste oben</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-nav-choice="sidebar"><span>▌</span><strong>Links</strong><small>Seitenleiste links</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-nav-choice="sidebarRight"><span>▐</span><strong>Rechts</strong><small>Seitenleiste rechts</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-nav-choice="compactSidebar"><span>◫</span><strong>Nur Symbole</strong><small>Schmale Leiste links</small><i>✓</i></button>
+            </div>
+            <label class="toggle-row"><span><strong>Sidebar automatisch einklappen</strong><small>Bei schmaler Breite oder Inaktivität einklappen</small></span><input id="autoCollapseSidebar" type="checkbox"></label>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>5. Dichte & Größe</h4>
+              <p>Bestimme, wie groß und luftig ELFIX wirken soll.</p>
+            </div>
+            <div class="density-buttons" role="group" aria-label="UI-Dichte">
+              <button type="button" data-density-choice="compact">Kompakt</button>
+              <button type="button" data-density-choice="comfortable">Normal</button>
+              <button type="button" data-density-choice="roomy">Groß</button>
+              <button type="button" data-density-choice="custom">Benutzerdef.</button>
+            </div>
+            <div class="settings-slider-grid">
+              <div class="setting-card">Die Dichte setzt Größen und Abstände gemeinsam. Einzelne Werte — Skalierung, Abstand, Rundung — findest du unter <strong>Feinschliff</strong>.</div>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>6. Karten & Watchlist</h4>
+              <p>Wie deine gespeicherten Titel und die Anbieter-Kacheln dargestellt werden.</p>
+            </div>
+            <div class="custom-grid">
+              <label class="range-setting">Größe der Anbieter-Kacheln
+                <div class="range-row">
+                  <input id="cardSize" type="range" min="0" max="2" step="1" value="1">
+                  <span id="cardSizeValue">Mittel</span>
+                </div>
+                <small>Betrifft die Kacheln in der Anbieter-Leiste und auf der Startseite.</small>
+              </label>
+              <label class="range-setting">Größe der Watchlist-Karten
+                <div class="range-row">
+                  <input id="favoriteSize" type="range" min="0" max="3" step="1" value="1">
+                  <span id="favoriteSizeValue">Mittel</span>
+                </div>
+                <small>Von klein bis Poster — größer zeigt mehr Bild, kleiner mehr Titel gleichzeitig.</small>
+              </label>
+              <label>Anordnung der Watchlist
+                <select id="favoriteLayout">
+                  <option value="grid">Raster — gleichmäßige Kacheln</option>
+                  <option value="wide">Breit — wenige, große Karten</option>
+                  <option value="list">Liste — eine Zeile pro Titel</option>
+                </select>
+                <small>Gilt für Watchlist, Weiterschauen und Mediathek.</small>
+              </label>
+              <label class="range-setting">Textgröße auf den Karten
+                <div class="range-row">
+                  <input id="favoriteTextSize" type="range" min="0" max="2" step="1" value="1">
+                  <span id="favoriteTextSizeValue">Normal</span>
+                </div>
+                <small>Nur die Beschriftung der Karten, nicht die restliche Oberfläche.</small>
+              </label>
+              <label>Bild oder Text betonen
+                <select id="favoriteArtwork">
+                  <option value="balanced">Ausgeglichen</option>
+                  <option value="clear">Text hervorheben — dunklerer Verlauf</option>
+                  <option value="artwork">Bild hervorheben — weniger Abdunklung</option>
+                </select>
+                <small>Regelt, wie stark das Cover hinter der Beschriftung abgedunkelt wird.</small>
+              </label>
+            </div>
+            <label class="check setting-row"><input id="showFavoriteMeta" type="checkbox"><span><strong>Herkunft auf den Karten zeigen</strong><small>Blendet unter jedem Titel ein, von welchem Anbieter er stammt.</small></span></label>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>7. Stil & Details</h4>
+              <p>Feinheiten, die überall in der App wirken.</p>
+            </div>
+            <div class="custom-grid">
+              <label>Kartenstil
+                <select id="cardStyle">
+                  <option value="standard">Standard — leicht erhaben</option>
+                  <option value="flat">Flach — ohne Tiefe</option>
+                  <option value="glass">Glas — durchscheinend</option>
+                  <option value="outline">Umrandet — nur Linie</option>
+                  <option value="minimal">Minimal — fast unsichtbar</option>
+                </select>
+                <small>Das Grundaussehen aller Kacheln.</small>
+              </label>
+              <label>Schatten
+                <select id="shadowStyle">
+                  <option value="none">Aus</option>
+                  <option value="light">Leicht</option>
+                  <option value="standard">Standard</option>
+                  <option value="strong">Stark</option>
+                </select>
+                <small>Wie deutlich sich Karten vom Hintergrund abheben.</small>
+              </label>
+              <label>Rundung
+                <select id="cornerStyle">
+                  <option value="soft">Weich</option>
+                  <option value="sharp">Kantig</option>
+                  <option value="round">Sehr rund</option>
+                </select>
+                <small>Gilt für Karten, Knöpfe und Eingabefelder gemeinsam.</small>
+              </label>
+              <label>Hintergrund-Stil
+                <select id="backgroundStyle">
+                  <option value="cinema">Kino — sanfter Verlauf</option>
+                  <option value="color">Einfarbig</option>
+                  <option value="plain">Schlicht</option>
+                  <option value="poster">Poster-Schein — farbiges Leuchten</option>
+                  <option value="black">Rein schwarz</option>
+                  <option value="gray">Dunkelgrau</option>
+                  <option value="glass">Glas-Look</option>
+                </select>
+                <small>Die Textur hinter der gesamten Oberfläche.</small>
+              </label>
+              <label>Umfang der Animationen
+                <select id="animationMode">
+                  <option value="full">Voll</option>
+                  <option value="reduced">Reduziert — nur das Nötigste</option>
+                  <option value="off">Aus</option>
+                </select>
+                <small>Das Tempo stellst du unter Feinschliff ein.</small>
+              </label>
+            </div>
+            <label class="check setting-row"><input id="animationsEnabled" type="checkbox"><span><strong>Bewegungen aktivieren</strong><small>Sanfte Übergänge beim Öffnen und Überfahren. Aus wirkt schneller und ruhiger.</small></span></label>
+            <label class="check setting-row"><input id="compactHeader" type="checkbox"><span><strong>Schmale Leiste oben</strong><small>Macht die obere Leiste flacher, damit mehr Inhalt auf den Bildschirm passt.</small></span></label>
+            <label class="check setting-row"><input id="showProviderStrip" type="checkbox"><span><strong>Anbieter-Leiste anzeigen</strong><small>Die Reihe mit deinen Streaming-Seiten direkt unter der Suchleiste.</small></span></label>
+          </section>
+
+          <!-- Zustand der Auswahlkarten oben. Bewusst unsichtbar: als sichtbare
+               Auswahlliste stuende dieselbe Einstellung zweimal auf der Seite. -->
+          <div hidden>
+            <select id="themeMode">
+              <option value="system">Systemstandard</option>
+              <option value="dark">Dunkel</option>
+              <option value="light">Hell</option>
+              <option value="oled">OLED Schwarz</option>
+            </select>
+            <select id="accentPreset">
+              <option value="default">ELFIX Standard</option>
+              <option value="blue">Blau</option>
+              <option value="violet">Violett</option>
+              <option value="red">Rot</option>
+              <option value="green">Grün</option>
+              <option value="orange">Orange</option>
+              <option value="pink">Pink</option>
+              <option value="turquoise">Türkis</option>
+              <option value="yellow">Gelb</option>
+              <option value="gold">Gold</option>
+              <option value="custom">Eigene Farbe</option>
+            </select>
+            <input id="uiDensity" type="range" min="0" max="2" step="1" value="1">
+            <span id="uiDensityValue">Normal</span>
+          </div>
+          <div class="setting-card">Die Darstellung wird sofort angewendet und bleibt beim Neustart gespeichert.</div>
+        </div>
+
+        <div class="settings-page" data-page="advancedAppearance">
+          <div class="settings-head">
+            <div>
+              <h3>Feinschliff</h3>
+              <p>Hier sitzt jede einzelne Farbe und jedes Maß. Wenn du nur schnell etwas ändern willst, bist du unter <strong>Darstellung</strong> besser aufgehoben — im einfachen Modus zeigt diese Seite nur die wichtigsten Felder.</p>
+            </div>
+            <button class="soft-action" data-reset-section="appearance">Bereich zurücksetzen</button>
+          </div>
+
+          <div class="setting-card auto-colors-note advanced-only is-hidden" id="autoColorsNote">
+            <div>
+              <strong>Die Einzelfarben werden gerade automatisch berechnet.</strong>
+              <span>ELFIX leitet Flächen, Text, Linien und Signalfarben aus Hintergrund und Akzentfarbe ab — die Felder unten sind deshalb ohne Wirkung. Der Hintergrund selbst wirkt weiterhin.</span>
+            </div>
+            <button class="soft-action" type="button" id="disableAutoColorsButton">Automatik ausschalten</button>
+          </div>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Flächen</h4>
+              <p>Von hinten nach vorn: Hintergrund, Panels, Karten.</p>
+            </div>
+            <div class="custom-grid">
+              <label>Hintergrund<input class="appearance-control" id="appBackgroundColor" type="color" value="#070a10"><small>Die Grundfläche hinter allem.</small></label>
+              <label class="advanced-only">Panels<input class="appearance-control" id="surfaceColor" type="color" value="#111722"><small>Große Flächen wie dieses Einstellungsfenster.</small></label>
+              <label class="advanced-only">Abgesetzte Flächen<input class="appearance-control" id="surfaceSecondaryColor" type="color" value="#1a2230"><small>Bereiche innerhalb eines Panels, die sich abheben sollen.</small></label>
+              <label class="advanced-only">Karten<input class="appearance-control" id="cardColor" type="color" value="#1a2230"><small>Kacheln in Watchlist, Weiterschauen und Mediathek.</small></label>
+              <label class="advanced-only">Navigation<input class="appearance-control" id="navColor" type="color" value="#131922"><small>Obere Leiste, Seitenleiste und Anbieter-Leiste.</small></label>
+              <label class="advanced-only">Eingabefelder<input class="appearance-control" id="inputColor" type="color" value="#05090f"><small>Suchfeld, Textfelder und Auswahllisten.</small></label>
+            </div>
+          </section>
+
+          <section class="settings-group advanced-only">
+            <div class="settings-group-head">
+              <h4>Text</h4>
+              <p>Drei Stufen — je blasser, desto nebensächlicher.</p>
+            </div>
+            <div class="custom-grid">
+              <label class="advanced-only">Überschriften<input class="appearance-control" id="primaryTextColor" type="color" value="#f7f8fb"><small>Titel und alles, was zuerst ins Auge fallen soll.</small></label>
+              <label class="advanced-only">Fließtext<input class="appearance-control" id="secondaryTextColor" type="color" value="#d9e2ef"><small>Normale Beschreibungen und Bedienelemente.</small></label>
+              <label class="advanced-only">Nebentext<input class="appearance-control" id="mutedTextColor" type="color" value="#a8b2c3"><small>Hinweise, Zeitangaben und Platzhalter.</small></label>
+            </div>
+          </section>
+
+          <section class="settings-group advanced-only">
+            <div class="settings-group-head">
+              <h4>Linien & Reaktionen</h4>
+              <p>Was passiert, wenn du etwas berührst oder auswählst.</p>
+            </div>
+            <div class="custom-grid">
+              <label class="advanced-only">Rahmen<input class="appearance-control" id="borderColor" type="color" value="#243043"><small>Trennlinien und Umrandungen.</small></label>
+              <label class="advanced-only">Unter dem Mauszeiger<input class="appearance-control" id="hoverColor" type="color" value="#263349"><small>Einfärbung, sobald du über ein Element fährst.</small></label>
+              <label class="advanced-only">Tastatur-Fokus<input class="appearance-control" id="focusColor" type="color" value="#147eff"><small>Rahmen um das Element, das gerade per Tab-Taste aktiv ist.</small></label>
+              <label class="advanced-only">Markierter Text<input class="appearance-control" id="selectionColor" type="color" value="#235bbd"><small>Hintergrund von Text, den du mit der Maus markierst.</small></label>
+            </div>
+          </section>
+
+          <section class="settings-group advanced-only">
+            <div class="settings-group-head">
+              <h4>Signalfarben</h4>
+              <p>Kurze Rückmeldungen der App.</p>
+            </div>
+            <div class="custom-grid">
+              <label class="advanced-only">Erfolg<input class="appearance-control" id="successColor" type="color" value="#22c55e"><small>Bestätigungen wie „gespeichert“.</small></label>
+              <label class="advanced-only">Warnung<input class="appearance-control" id="warningColor" type="color" value="#f5b84b"><small>Hinweise, die Aufmerksamkeit brauchen.</small></label>
+              <label class="advanced-only">Fehler<input class="appearance-control" id="errorColor" type="color" value="#ff4d5e"><small>Fehlermeldungen und Lösch-Buttons.</small></label>
+              <label class="advanced-only">Fortschritt<input class="appearance-control" id="progressColor" type="color" value="#147eff"><small>Der Balken auf den Weiterschauen-Karten.</small></label>
+              <label class="advanced-only">Scrollbalken<input class="appearance-control" id="scrollbarColor" type="color" value="#3b82f6"><small>Der Griff der Bildlaufleiste.</small></label>
+            </div>
+          </section>
+
+          <div class="settings-subhead">Größen & Abstände</div>
           <div class="custom-grid">
-            <label>Theme
-              <select id="themeMode">
-                <option value="system">Systemstandard</option>
-                <option value="dark">Dunkel</option>
-                <option value="light">Hell</option>
-                <option value="oled">OLED Schwarz</option>
-              </select>
-            </label>
-            <label>Akzent-Preset
-              <select id="accentPreset">
-                <option value="default">Elflix Standard</option>
-                <option value="blue">Blau</option>
-                <option value="violet">Violett</option>
-                <option value="red">Rot</option>
-                <option value="green">Grün</option>
-                <option value="orange">Orange</option>
-                <option value="pink">Pink</option>
-                <option value="turquoise">Türkis</option>
-                <option value="yellow">Gelb</option>
-                <option value="custom">Eigene Farbe</option>
-              </select>
-            </label>
-            <label>Eigene Akzentfarbe<input id="accentColor" type="color" value="#e50914"></label>
-            <label>Hex-Farbe<input id="accentHex" type="text" inputmode="text" maxlength="7" placeholder="#147eff"></label>
-            <label class="range-setting">Akzent-Stärke
-              <div class="range-row">
-                <input id="accentStrength" type="range" min="30" max="100" step="5" value="70">
-                <span id="accentStrengthValue">70%</span>
-              </div>
-            </label>
-            <label class="range-setting">UI-Dichte
-              <div class="range-row">
-                <input id="uiDensity" type="range" min="0" max="2" step="1" value="1">
-                <span id="uiDensityValue">Normal</span>
-              </div>
-            </label>
-            <label class="range-setting">Kartengröße
-              <div class="range-row">
-                <input id="cardSize" type="range" min="0" max="2" step="1" value="1">
-                <span id="cardSizeValue">Mittel</span>
-              </div>
-            </label>
-            <label class="range-setting">Favoriten-Größe
-              <div class="range-row">
-                <input id="favoriteSize" type="range" min="0" max="3" step="1" value="1">
-                <span id="favoriteSizeValue">Mittel</span>
-              </div>
-            </label>
-            <label>Favoriten-Layout
-              <select id="favoriteLayout">
-                <option value="grid">Raster</option>
-                <option value="wide">Breit</option>
-                <option value="list">Liste</option>
-              </select>
-            </label>
-            <label>Rundung
-              <select id="cornerStyle">
-                <option value="soft">Weich</option>
-                <option value="sharp">Eckiger</option>
-                <option value="round">Sehr rund</option>
-              </select>
-            </label>
-            <label>Hintergrund
-              <select id="backgroundStyle">
-                <option value="cinema">Cinema</option>
-                <option value="color">Farbe</option>
-                <option value="plain">Schlicht</option>
-                <option value="poster">Poster Glow</option>
-                <option value="black">Rein schwarz</option>
-                <option value="gray">Dunkelgrau</option>
-                <option value="glass">Glass-Look</option>
-              </select>
-            </label>
-            <label>Eigene Hintergrundfarbe<input id="backgroundColor" type="color" value="#070a10"></label>
             <label class="range-setting">Schriftgröße
               <div class="range-row">
                 <input id="fontScale" type="range" min="80" max="140" step="5" value="100">
                 <span id="fontScaleValue">100%</span>
               </div>
+              <small>Nur der Text — Kacheln und Knöpfe bleiben gleich groß.</small>
             </label>
-            <label>Animationsmodus
-              <select id="animationMode">
-                <option value="full">Voll</option>
-                <option value="reduced">Reduziert</option>
-                <option value="off">Aus</option>
-              </select>
-            </label>
-            <label>Kartenstil
-              <select id="cardStyle">
-                <option value="standard">Standard</option>
-                <option value="flat">Flach</option>
-                <option value="glass">Glass</option>
-                <option value="outline">Outline</option>
-                <option value="minimal">Minimal</option>
-              </select>
-            </label>
-            <label>Schatten
-              <select id="shadowStyle">
-                <option value="none">Aus</option>
-                <option value="light">Leicht</option>
-                <option value="standard">Standard</option>
-                <option value="strong">Stark</option>
-              </select>
-            </label>
-            <label class="range-setting">Favoriten-Text
+            <label class="range-setting">Kräftigkeit der Akzentfarbe
               <div class="range-row">
-                <input id="favoriteTextSize" type="range" min="0" max="2" step="1" value="1">
-                <span id="favoriteTextSizeValue">Normal</span>
+                <input id="accentStrength" type="range" min="30" max="100" step="5" value="70">
+                <span id="accentStrengthValue">70%</span>
               </div>
+              <small>Wie stark Akzentflächen, Leuchten und aktive Knöpfe eingefärbt werden.</small>
             </label>
-            <label>Favoriten-Bild
-              <select id="favoriteArtwork">
-                <option value="balanced">Ausgeglichen</option>
-                <option value="clear">Klarer Text</option>
-                <option value="artwork">Mehr Bild</option>
-              </select>
+            <label class="range-setting">Größe der Oberfläche
+              <div class="range-row"><input class="appearance-control" id="uiScale" type="range" min="90" max="118" step="1" value="100"><span id="uiScaleValue">100%</span></div>
+              <small>Skaliert Schrift und Bedienelemente gemeinsam. Hilft auf sehr großen oder sehr kleinen Bildschirmen.</small>
+            </label>
+            <label class="range-setting">Luft zwischen Elementen
+              <div class="range-row"><input class="appearance-control" id="spacingScale" type="range" min="80" max="130" step="5" value="100"><span id="spacingScaleValue">100%</span></div>
+              <small>Kleiner heißt: mehr passt auf den Bildschirm.</small>
+            </label>
+            <label class="range-setting">Abstand zwischen Karten
+              <div class="range-row"><input class="appearance-control" id="cardGap" type="range" min="8" max="34" step="1" value="18"><span id="cardGapValue">18px</span></div>
+              <small>Die Lücke im Kachelraster von Watchlist und Weiterschauen.</small>
+            </label>
+            <label class="range-setting advanced-only">Ecken der Karten
+              <div class="range-row"><input class="appearance-control" id="cardRadius" type="range" min="4" max="32" step="1" value="18"><span id="cardRadiusValue">18px</span></div>
+              <small>Niedrig = kantig, hoch = stark abgerundet.</small>
+            </label>
+            <label class="range-setting advanced-only">Ecken der Buttons
+              <div class="range-row"><input class="appearance-control" id="buttonRadius" type="range" min="4" max="28" step="1" value="16"><span id="buttonRadiusValue">16px</span></div>
+              <small>Ganz rechts werden Buttons zu Pillen.</small>
+            </label>
+            <label class="range-setting advanced-only">Höhe der Buttons
+              <div class="range-row"><input class="appearance-control" id="buttonHeight" type="range" min="34" max="58" step="1" value="44"><span id="buttonHeightValue">44px</span></div>
+              <small>Höher heißt leichter zu treffen — auch per Fernbedienung.</small>
+            </label>
+            <label class="range-setting advanced-only">Ecken der Eingabefelder
+              <div class="range-row"><input class="appearance-control" id="inputRadius" type="range" min="4" max="26" step="1" value="14"><span id="inputRadiusValue">14px</span></div>
+              <small>Betrifft Suchfeld, Textfelder und Auswahllisten.</small>
+            </label>
+            <label class="range-setting advanced-only">Schatten
+              <div class="range-row"><input class="appearance-control" id="shadowStrength" type="range" min="0" max="100" step="5" value="45"><span id="shadowStrengthValue">45%</span></div>
+              <small>Wie stark sich Karten vom Hintergrund abheben. 0 % wirkt flach und ruhig.</small>
+            </label>
+            <label class="range-setting advanced-only">Vergrößern beim Überfahren
+              <div class="range-row"><input class="appearance-control" id="hoverZoom" type="range" min="100" max="106" step="1" value="102"><span id="hoverZoomValue">102%</span></div>
+              <small>Wie stark eine Karte wächst, wenn der Mauszeiger darauf liegt. 100 % schaltet es ab.</small>
+            </label>
+            <label class="range-setting advanced-only">Aufhellen beim Überfahren
+              <div class="range-row"><input class="appearance-control" id="hoverBrightness" type="range" min="95" max="120" step="1" value="106"><span id="hoverBrightnessValue">106%</span></div>
+              <small>Wie viel heller ein Element unter dem Mauszeiger wird.</small>
+            </label>
+            <label class="range-setting advanced-only">Tempo der Animationen
+              <div class="range-row"><input class="appearance-control" id="animationSpeed" type="range" min="60" max="160" step="5" value="100"><span id="animationSpeedValue">100%</span></div>
+              <small>Kleinere Werte sind schneller. Ganz aus geht es unter Darstellung.</small>
             </label>
           </div>
-          <label class="check"><input id="compactHeader" type="checkbox"> Kompakte Topbar verwenden</label>
-          <label class="check"><input id="showProviderStrip" type="checkbox"> Anbieter-Leiste anzeigen</label>
-          <label class="check"><input id="showFavoriteMeta" type="checkbox"> Provider unter Favoriten anzeigen</label>
-          <label class="check"><input id="animationsEnabled" type="checkbox"> Animationen aktivieren</label>
-          <div class="setting-card">Die Darstellung wird sofort angewendet und bleibt beim Neustart gespeichert.</div>
+          <div class="setting-card">Akzentfarbe, Rahmen, Fokus, Hover, Buttons, Karten und Scrollbars nutzen diese Tokens direkt. Es sind keine Demo-Regler.</div>
         </div>
 
-        <div class="settings-page" data-page="favoritesSettings">
+<div class="settings-page" data-page="data">
           <div class="settings-head">
             <div>
-              <h3>Favoriten</h3>
-              <p>Steuere Darstellung, Bildgewichtung und Metadaten deiner gespeicherten Titel.</p>
+              <h3>Daten & Updates</h3>
+              <p>Version, gespeicherte Dateien und Aufräumaktionen. Jede Aktion sagt dir, was sie mitnimmt.</p>
             </div>
-            <button class="soft-action" data-reset-section="favorites">Bereich zurücksetzen</button>
+            <button class="soft-action" id="updateCheckButton">Nach Updates suchen</button>
           </div>
-          <div class="custom-grid">
-            <label>Favoriten-Layout
-              <select id="favoriteLayoutMirror">
-                <option value="grid">Raster</option>
-                <option value="wide">Breit</option>
-                <option value="list">Liste</option>
-              </select>
-            </label>
-            <label class="range-setting">Favoriten-Größe
-              <div class="range-row">
-                <input id="favoriteSizeMirror" type="range" min="0" max="3" step="1" value="1">
-                <span id="favoriteSizeMirrorValue">Mittel</span>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Version</h4>
+              <p>Ein geladenes Update wird automatisch installiert, sobald du ELFIX schließt.</p>
+            </div>
+            <div class="settings-section-grid">
+              <div class="setting-card version-card">
+                <strong>Installierte Version</strong>
+                <span id="appVersionLabel">ELFIX</span>
               </div>
-            </label>
-            <label class="range-setting">Favoriten-Text
-              <div class="range-row">
-                <input id="favoriteTextSizeMirror" type="range" min="0" max="2" step="1" value="1">
-                <span id="favoriteTextSizeMirrorValue">Normal</span>
+              <div class="setting-card version-card">
+                <strong>Update-Quelle</strong>
+                <span id="updateFeedLabel">GitHub Releases</span>
               </div>
-            </label>
-            <label>Favoriten-Bild
-              <select id="favoriteArtworkMirror">
-                <option value="balanced">Ausgeglichen</option>
-                <option value="clear">Klarer Text</option>
-                <option value="artwork">Mehr Bild</option>
-              </select>
-            </label>
+            </div>
+            <div class="setting-card update-card">
+              <div class="update-status-row">
+                <strong>Status</strong>
+                <span id="updateStatusLabel">Noch nicht geprüft.</span>
+              </div>
+              <div class="update-progress">
+                <div id="updateProgressBar"></div>
+              </div>
+              <div class="update-status-row">
+                <small id="updateProgressValue">0%</small>
+                <a id="updateReleaseLink" href="https://github.com/RoveHD/elfix/releases" target="_blank" rel="noreferrer">Releases öffnen</a>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Aufräumen</h4>
+              <p>Von harmlos nach endgültig sortiert.</p>
+            </div>
+            <div class="settings-section-grid">
+              <button class="soft-action settings-action-card" id="clearCacheButton">Zwischenspeicher leeren<span>Löscht Cache und Website-Daten. Logins bleiben, Watchlist und Anbieter auch.</span></button>
+              <button class="soft-action settings-action-card" id="openDataFolderButton">Datenordner öffnen<span>Zeigt im Explorer, wo ELFIX Einstellungen und Watchlist speichert.</span></button>
+              <button class="soft-action settings-action-card" id="resetSettingsButton">Einstellungen zurücksetzen<span>Setzt Aussehen und Optionen auf Standard. Anbieter und Watchlist bleiben erhalten.</span></button>
+              <button class="danger-action settings-action-card" id="resetDataButton">Alles löschen<span>Entfernt auch Anbieter, Watchlist und Verlauf. Nicht rückgängig zu machen.</span></button>
+            </div>
+          </section>
+
+          <div class="setting-card media-diagnostics-card">
+            <div class="settings-head compact-head">
+              <div>
+                <h3>Media-Diagnose</h3>
+                <p>Zeigt live, ob Wiedergabezeit gezählt, Weiterschauen gesetzt oder ein Stand blockiert wurde.</p>
+              </div>
+            </div>
+            <div class="blocked-list media-diagnostics-list" id="mediaDiagnosticsList"></div>
           </div>
-          <label class="check setting-row"><input id="showFavoriteMetaMirror" type="checkbox"><span><strong>Provider anzeigen</strong><small>Zeigt z.B. AniWorld, S.to oder Filmo unter Favoriten.</small></span></label>
-          <div class="setting-card">Defekte S.to-Bilder werden beim Öffnen/Reparieren neu aus der Serienseite ermittelt. Schwarze Platzhalter werden vermieden.</div>
         </div>
 
-        <div class="settings-page" data-page="data">
-          <div class="settings-head">
-            <div>
-              <h3>Speicher & Daten</h3>
-              <p>Cache, Datenordner und getrennte Reset-Aktionen. Favoriten werden nur beim Datenlöschen entfernt.</p>
-            </div>
-          </div>
-          <div class="settings-section-grid">
-            <button class="soft-action settings-action-card" id="clearCacheButton">Cache leeren<span>Browsercache/WebStorage löschen, Logins möglichst behalten.</span></button>
-            <button class="soft-action settings-action-card" id="openDataFolderButton">Datenordner öffnen<span>Lokale Elflix-Dateien im Explorer anzeigen.</span></button>
-            <button class="soft-action settings-action-card" id="resetSettingsButton">Alle Einstellungen zurücksetzen<span>Provider und Favoriten bleiben erhalten.</span></button>
-            <button class="danger-action settings-action-card" id="resetDataButton">Alle Elflix-Daten löschen<span>Provider, Favoriten und Einstellungen zurücksetzen.</span></button>
-          </div>
-        </div>
+</section>
 
-        <div class="settings-page" data-page="updates">
-          <div class="settings-head">
+      <aside class="settings-preview-pane">
+        <div class="preview-card">
+          <div class="preview-head">
             <div>
-              <h3>Updates & Version</h3>
-              <p>Elflix sucht im installierten Release automatisch nach Updates über GitHub Releases.</p>
-            </div>
-            <button class="soft-action" id="updateCheckButton">Updates suchen</button>
-          </div>
-          <div class="settings-section-grid">
-            <div class="setting-card version-card">
-              <strong>Installierte Version</strong>
-              <span id="appVersionLabel">Elflix</span>
-            </div>
-            <div class="setting-card version-card">
-              <strong>Update-Quelle</strong>
-              <span id="updateFeedLabel">GitHub Releases</span>
+              <h3>Live-Vorschau</h3>
+              <p>So sieht ELFIX mit deinen Einstellungen aus.</p>
             </div>
           </div>
-          <div class="setting-card update-card">
-            <div class="update-status-row">
-              <strong>Status</strong>
-              <span id="updateStatusLabel">Noch nicht geprüft.</span>
+          <div class="app-preview" id="appPreview">
+            <div class="preview-app-top">
+              <span>☰</span>
+              <strong>ELFIX</strong>
+              <nav><b>Startseite</b><span>Suche</span><span>Watchlist</span></nav>
+              <i></i>
             </div>
-            <div class="update-progress">
-              <div id="updateProgressBar"></div>
-            </div>
-            <div class="update-status-row">
-              <small id="updateProgressValue">0%</small>
-              <a id="updateReleaseLink" href="https://github.com/RoveHD/elfix/releases" target="_blank" rel="noreferrer">Releases öffnen</a>
-            </div>
+            <section class="preview-hero">
+              <small>Fortsetzen</small>
+              <h4>Attack on Titan</h4>
+              <p>S4 E21 · Von dir aus</p>
+              <button type="button">Weiter schauen</button>
+            </section>
+            <section class="preview-row">
+              <div class="preview-row-head"><strong>Weiterschauen</strong><span>Alle anzeigen</span></div>
+              <div class="preview-posters">
+                <article><div></div><strong>Attack on Titan</strong><span><i style="width:75%"></i></span></article>
+                <article><div></div><strong>Demon Slayer</strong><span><i style="width:40%"></i></span></article>
+                <article><div></div><strong>Jujutsu Kaisen</strong><span><i style="width:60%"></i></span></article>
+                <article><div></div><strong>One Piece</strong><span><i style="width:20%"></i></span></article>
+              </div>
+            </section>
+            <section class="preview-row">
+              <div class="preview-row-head"><strong>Beliebte Anbieter</strong><span>Alle anzeigen</span></div>
+              <div class="preview-providers"><b>ANIWORLD</b><b>S.to</b><b>FILMO</b><button type="button">+</button></div>
+            </section>
+            <div class="preview-bottom-nav"><b>⌂ Startseite</b><span>⌕ Suche</span><span>♥ Watchlist</span><span>⚙ Einstellungen</span></div>
           </div>
-          <div class="setting-card">Wenn ein Update geladen wurde, installiert Elflix es automatisch beim nächsten Schließen der App.</div>
         </div>
-      </section>
+      </aside>
 
       <button class="modal-close" id="closeSettingsButton">×</button>
     </div>
+  </dialog>
+
+  <dialog class="confirm-modal" id="confirmModal">
+    <form method="dialog" class="confirm-shell">
+      <p class="eyebrow" id="confirmEyebrow">ELFIX</p>
+      <h2 id="confirmTitle">Bist du sicher?</h2>
+      <p class="confirm-copy" id="confirmCopy"></p>
+      <div class="confirm-actions">
+        <button type="submit" value="cancel" class="soft-action" id="confirmCancel">Abbrechen</button>
+        <button type="submit" value="confirm" class="danger-action" id="confirmAccept">Löschen</button>
+      </div>
+    </form>
   </dialog>
 
   <script src="./renderer.js"></script>
