@@ -75,6 +75,7 @@ let watchpartyShared = [];
 let watchpartyLokal = { shared: [], joined: [] };
 let watchpartyWiederhergestellt = false;
 const watchpartySprung = new Map();
+const watchpartyBildNachgereicht = new Set();
 // Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
 const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
 const nextEpisodePromptState = new Map();
@@ -3994,10 +3995,40 @@ function createWatchpartyFavorite(key, eintrag, fortschritt, provider) {
 
 // Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.
 function watchpartyItems() {
-  return watchpartyShared.map((eintrag) => ({
-    ...eintrag,
-    openable: Boolean(providerForWatchpartyUrl(eintrag.url, eintrag.providerName))
-  }));
+  return watchpartyShared.map((eintrag) => {
+    // Hatte das einstellende Geraet kein Bild, ist im Raum keines hinterlegt.
+    // Kennt dieses Geraet den Titel, wird das eigene Bild genommen - und dem
+    // Raum gleich nachgereicht, damit auch die anderen es sehen.
+    const lokal = favorites.find((favorite) => watchpartyKey(favorite) === eintrag.key);
+    const bild = eintrag.thumbnail || lokal?.thumbnail || "";
+    // Nur nachreichen, wo dieses Geraet ohnehin Mitglied ist: "share" traegt
+    // den Absender sonst als Mitglied ein, und ein Bild ist kein Beitritt.
+    if (!eintrag.thumbnail && bild && eintrag.joined && watchparty.verbunden) {
+      nachreichenWatchpartyBild(eintrag, bild);
+    }
+    return {
+      ...eintrag,
+      thumbnail: bild,
+      openable: Boolean(providerForWatchpartyUrl(eintrag.url, eintrag.providerName))
+    };
+  });
+}
+
+// Ein fehlendes Bild nur einmal je Titel nachreichen, sonst laeuft bei jedem
+// Rendern eine Meldung durchs Netz.
+function nachreichenWatchpartyBild(eintrag, bild) {
+  if (watchpartyBildNachgereicht.has(eintrag.key)) return;
+  watchpartyBildNachgereicht.add(eintrag.key);
+  watchparty.teilen({
+    key: eintrag.key,
+    url: eintrag.url,
+    title: eintrag.title,
+    providerName: eintrag.providerName,
+    thumbnail: bild,
+    type: eintrag.type,
+    season: eintrag.season,
+    episode: eintrag.episode
+  });
 }
 
 function sendWatchpartyItems() {
@@ -4012,15 +4043,29 @@ function sendWatchpartyItems() {
   mainWindow.webContents.send("watchparty:items", items);
 }
 
+// Oeffnet wie eine Karte aus "Weiterschauen": Vorhang, Autostart, Vollbild -
+// zusaetzlich wird an die Stelle gesprungen, an der das andere Geraet steht.
 async function openWatchpartyItem(key) {
   const eintrag = watchpartyShared.find((item) => item.key === key);
   if (!eintrag) return activeState();
   const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
   if (!provider) return activeState();
-  // An die Stelle springen, an der das andere Geraet steht - sonst faengt die
-  // Anbieterseite bei ihrem eigenen Stand an.
+
+  const url = eintrag.progress?.url || eintrag.url;
   merkeWatchpartySprung(provider.id, eintrag.progress);
-  await navigateProvider(provider, eintrag.progress?.url || eintrag.url);
+
+  // Kennt dieses Geraet den Titel schon, wird derselbe Eintrag weitergefuehrt.
+  const favorite = favorites.find((item) => watchpartyKey(item) === key);
+  if (favorite) {
+    activeFavoriteId = favorite.id;
+    moveFavoriteToFront(favorite);
+    recordMediaActivity(provider, url, {}, { existing: favorite, label: "Geöffnet" });
+    await repairFavoriteThumbnailIfNeeded(favorite, provider).catch(() => false);
+  }
+
+  await beginAutostart(provider.id, cleanTitle(eintrag.title || favorite?.title || ""));
+  await navigateProvider(provider, url);
+  scheduleProviderAutoplay(provider, activeView, { fullscreen: true });
   return activeState();
 }
 
