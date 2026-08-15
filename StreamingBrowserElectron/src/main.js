@@ -2875,6 +2875,10 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
   if (!progressState?.hasMediaProgress) return true;
   if (progressState.isFilmProgress) return true;
   if (progressState.startsAtFirstEpisode) return true;
+  // Laeuft diese Folge gerade in der Watchparty, ist sie gewollt - egal ob
+  // vor oder zurueck. Sonst haengt der eigene Eintrag minutenlang hinter der
+  // Gruppe her, obwohl alle dieselbe Folge schauen.
+  if (watchpartyGibtFolgeVor(url)) return true;
   if (!existing) return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
 
   const nextIdentity = episodeIdentity(url);
@@ -2901,10 +2905,7 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
     if (existingIsPastKnownFinal && nextIsInsideKnownSeries) {
       return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
     }
-    // Gibt die Watchparty diese Folge vor, ist das Zurueckgehen gewollt - dann
-    // zaehlt sie sofort, sonst haengt der eigene Eintrag hinter der Gruppe.
-    if (watchpartyGibtFolgeVor(url)) return true;
-    // Sonst braucht es bewusstes Schauen. Frueher wurde eine aeltere Folge
+    // Ohne Watchparty braucht es bewusstes Schauen. Frueher wurde eine aeltere Folge
     // grundsaetzlich nie uebernommen: der Eintrag liess sich nur ueber Umwege
     // zurueckstellen.
     return progressState.mediaEnded || progressState.watchedSeconds >= BACKWARD_WATCH_TIME_SECONDS;
