@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, net, session, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, WebContentsView, ipcMain, net, session, shell, dialog } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
@@ -703,7 +703,7 @@ ipcMain.handle("watchparty:open", async (_event, key, room) => openWatchpartyIte
 
 ipcMain.handle("watchparty:rooms", () => watchpartyRaumUebersicht());
 
-ipcMain.handle("watchparty:share-current", async (_event, room) => {
+ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
   const provider = activeProvider();
   const url = activeView?.webContents?.getURL() || "";
   if (!provider || !providerModel.isHttpUrl(url)) {
@@ -729,7 +729,7 @@ ipcMain.handle("watchparty:share-current", async (_event, room) => {
       episode: identity?.episode || 0
     };
   }
-  return shareWatchpartyFavorite(favorite, room);
+  return shareWatchpartyFavorite(favorite, room, punkt);
 });
 
 ipcMain.handle("watchparty:enter", (_event, key, room) => {
@@ -3917,18 +3917,52 @@ function watchpartyKey(favorite) {
 // Gemeldet wird erst, wenn der Raum die Serie zurueckspiegelt: sonst hiesse es
 // "hinzugefuegt", obwohl die Nachricht ins Leere ging - etwa wenn das Relay
 // noch eine aeltere Fassung faehrt, die "share" gar nicht kennt.
-async function shareWatchpartyFavorite(favorite, room) {
+// Fragt ueber ein Fenstermenue, in welchen Raum der Titel soll. Kommt keine
+// Auswahl, bleibt alles, wie es war.
+function frageWatchpartyRaum(punkt) {
+  const uebersicht = watchpartyRaumUebersicht();
+  if (!mainWindow || mainWindow.isDestroyed() || !uebersicht.length) return Promise.resolve("");
+  return new Promise((fertig) => {
+    let gewaehlt = "";
+    const menue = Menu.buildFromTemplate([
+      { label: "In welchen Raum?", enabled: false },
+      { type: "separator" },
+      ...uebersicht.map((raum) => ({
+        label: raum.connected && !raum.error
+          ? `${raum.room}   (${raum.items === 1 ? "1 Titel" : `${raum.items} Titel`}, ${raum.peers} verbunden)`
+          : `${raum.room}   (${raum.error || "nicht verbunden"})`,
+        enabled: raum.connected && !raum.error,
+        click: () => {
+          gewaehlt = raum.room;
+        }
+      }))
+    ]);
+    const stelle = punkt && Number.isFinite(punkt.x) && Number.isFinite(punkt.y)
+      ? { x: Math.round(punkt.x), y: Math.round(punkt.y) }
+      : {};
+    menue.popup({
+      window: mainWindow,
+      ...stelle,
+      // Der Rueckruf kommt erst, nachdem der Klick verarbeitet wurde.
+      callback: () => fertig(gewaehlt)
+    });
+  });
+}
+
+async function shareWatchpartyFavorite(favorite, room, punkt) {
   if (!favorite?.url) return { shared: false, reason: "Kein Titel geöffnet" };
   if (!watchparty.aktiv) return { shared: false, reason: "Watchparty ist nicht eingerichtet" };
   if (!watchparty.verbunden) return { shared: false, reason: "Keine Verbindung zum Raum" };
   const key = watchpartyKey(favorite);
   if (!key) return { shared: false, reason: "Titel nicht erkannt" };
 
-  // Bei mehreren Raeumen muss die Oberflaeche sagen, welcher gemeint ist. Sie
-  // bekommt die Auswahl zurueck und fragt nach.
-  const ziel = String(room || "").trim();
+  // Bei mehreren Raeumen wird gefragt. Das muss ein echtes Menue sein: die
+  // Seite des Anbieters liegt als eigene Ansicht ueber der Oberflaeche, ein
+  // Kaestchen aus HTML waere dort abgeschnitten und nicht anklickbar.
+  let ziel = String(room || "").trim();
   if (!ziel && watchparty.codes.length > 1) {
-    return { shared: false, needsRoom: true, rooms: watchpartyRaumUebersicht(), key };
+    ziel = await frageWatchpartyRaum(punkt);
+    if (!ziel) return { shared: false, abgebrochen: true };
   }
   if (ziel && !watchparty.codes.includes(ziel)) {
     return { shared: false, reason: `Raum „${ziel}“ ist nicht eingerichtet` };

@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getWatchpartyItems: () => ipcRenderer.invoke("watchparty:items"),
   openWatchpartyItem: (key, room) => ipcRenderer.invoke("watchparty:open", key, room),
   getWatchpartyRooms: () => ipcRenderer.invoke("watchparty:rooms"),
-  shareCurrentToWatchparty: (room) => ipcRenderer.invoke("watchparty:share-current", room),
+  shareCurrentToWatchparty: (room, punkt) => ipcRenderer.invoke("watchparty:share-current", room, punkt),
   enterWatchparty: (key, room) => ipcRenderer.invoke("watchparty:enter", key, room),
   leaveWatchparty: (key, room) => ipcRenderer.invoke("watchparty:leave", key, room),
   removeFromWatchparty: (key, room) => ipcRenderer.invoke("watchparty:remove", key, room),

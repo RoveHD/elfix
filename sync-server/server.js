@@ -110,8 +110,16 @@ setInterval(aufraeumen, 60 * 60 * 1000).unref?.();
 
 // --- Hilfen -----------------------------------------------------------------
 
+// Raumcodes duerfen Buchstaben aller Sprachen enthalten - "Gummikaese" mit ae
+// als Umlaut ist ein voellig normaler Name und wurde vorher abgewiesen.
+// Zusammengesetzte Umlaute (a + Trema) werden vorher zusammengezogen, sonst
+// landen zwei Geraete je nach Tastatur in verschiedenen Raeumen.
+function codeNormalisieren(value) {
+  return typeof value === "string" ? value.normalize("NFC") : "";
+}
+
 function istGueltigerCode(value) {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{4,64}$/.test(value);
+  return /^[\p{L}\p{N}_-]{4,64}$/u.test(codeNormalisieren(value));
 }
 
 function text(value, laenge) {
@@ -330,7 +338,7 @@ wss.on("connection", (socket) => {
         senden({ type: "error", message: "Ungueltiger Raumcode" });
         return;
       }
-      socket.raum = nachricht.room;
+      socket.raum = codeNormalisieren(nachricht.room);
       socket.name = text(nachricht.name, 40) || "Gerät";
       socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
       const raum = raumHolen(socket.raum);

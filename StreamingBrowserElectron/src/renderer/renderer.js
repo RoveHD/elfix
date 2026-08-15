@@ -1425,7 +1425,10 @@ function renderWatchpartyItems() {
 // Bei mehreren Raeumen bekommt jeder seinen eigenen Abschnitt - sonst stuenden
 // die Titel zweier Runden wahllos durcheinander.
 function watchpartyKarten() {
-  const raeume = [];
+  // Gegliedert wird nach den eingerichteten Raeumen, nicht nach denen, in denen
+  // schon etwas steht: sonst sieht man bei zwei Raeumen nur eine Reihe Karten
+  // und weiss nicht, zu welchem Raum sie gehoert.
+  const raeume = (watchpartyState?.rooms || []).map((eintrag) => eintrag.room);
   for (const item of watchpartyItems) {
     const raum = item.room || "";
     if (!raeume.includes(raum)) raeume.push(raum);
@@ -1434,19 +1437,33 @@ function watchpartyKarten() {
 
   const kinder = [];
   for (const raum of raeume) {
+    const karten = watchpartyItems.filter((eintrag) => (eintrag.room || "") === raum);
+    const stand = watchpartyState?.rooms?.find((eintrag) => eintrag.room === raum);
+
     const ueberschrift = document.createElement("h2");
     ueberschrift.className = "watchparty-room-heading";
-    const stand = watchpartyState?.rooms?.find((eintrag) => eintrag.room === raum);
     ueberschrift.textContent = raum || "Ohne Raum";
+    const hinweis = document.createElement("small");
     if (stand && !stand.connected) {
-      const hinweis = document.createElement("small");
-      hinweis.textContent = "nicht verbunden";
-      ueberschrift.append(hinweis);
+      hinweis.textContent = stand.error || "nicht verbunden";
+      hinweis.className = "is-problem";
+    } else {
+      const andere = Math.max(0, (stand?.peers?.length || 1) - 1);
+      hinweis.textContent = andere === 0
+        ? "nur du"
+        : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
     }
+    ueberschrift.append(hinweis);
     kinder.push(ueberschrift);
-    for (const item of watchpartyItems.filter((eintrag) => (eintrag.room || "") === raum)) {
-      kinder.push(watchpartyCard(item));
+
+    if (!karten.length) {
+      const leer = document.createElement("p");
+      leer.className = "watchparty-room-empty";
+      leer.textContent = "Noch nichts eingestellt.";
+      kinder.push(leer);
+      continue;
     }
+    for (const item of karten) kinder.push(watchpartyCard(item));
   }
   return kinder;
 }
@@ -3511,13 +3528,12 @@ function escapeHtml(value) {
 // Den gerade geoeffneten Titel in den Raum stellen. Der Hauptprozess kennt die
 // Seite, deshalb reicht hier ein Anstoss.
 async function shareCurrentToWatchparty() {
-  let ergebnis = await api.shareCurrentToWatchparty?.().catch(() => null);
-  // Bei mehreren Raeumen fragt der Hauptprozess zurueck, welcher gemeint ist.
-  if (ergebnis?.needsRoom) {
-    const gewaehlt = await frageRaum(ergebnis.rooms || []);
-    if (!gewaehlt) return;
-    ergebnis = await api.shareCurrentToWatchparty?.(gewaehlt).catch(() => null);
-  }
+  // Bei mehreren Raeumen oeffnet der Hauptprozess unter dem Knopf ein
+  // Fenstermenue. Die Stelle dafuer kennt nur die Oberflaeche.
+  const anker = document.querySelector("#watchpartyShareButton")?.getBoundingClientRect();
+  const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
+  const ergebnis = await api.shareCurrentToWatchparty?.(undefined, punkt).catch(() => null);
+  if (ergebnis?.abgebrochen) return;
   if (!ergebnis?.shared) {
     showToast(ergebnis?.reason || "Konnte nicht geteilt werden");
     return;
@@ -3527,73 +3543,28 @@ async function shareCurrentToWatchparty() {
     : "Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
 }
 
-// Kleine Auswahl unter dem ⇄ Knopf: in welchen Raum soll der Titel?
-function frageRaum(raeume) {
-  return new Promise((fertig) => {
-    document.querySelector(".watchparty-room-picker")?.remove();
-    const box = document.createElement("div");
-    box.className = "watchparty-room-picker";
-    const titel = document.createElement("strong");
-    titel.textContent = "In welchen Raum?";
-    box.append(titel);
-
-    let beantwortet = false;
-    const schliessen = (wert) => {
-      if (beantwortet) return;
-      beantwortet = true;
-      box.remove();
-      document.removeEventListener("keydown", aufTaste, true);
-      document.removeEventListener("pointerdown", aufKlick, true);
-      fertig(wert);
-    };
-    const aufTaste = (event) => {
-      if (event.key === "Escape") schliessen("");
-    };
-    const aufKlick = (event) => {
-      if (!box.contains(event.target)) schliessen("");
-    };
-
-    for (const raum of raeume) {
-      const knopf = document.createElement("button");
-      knopf.type = "button";
-      knopf.className = "watchparty-room-option";
-      knopf.disabled = !raum.connected;
-      const anzahl = raum.items === 1 ? "1 Titel" : `${raum.items} Titel`;
-      knopf.innerHTML = `<span>${escapeHtml(raum.room)}</span><small>${raum.connected ? `${anzahl} · ${raum.peers} verbunden` : "nicht verbunden"}</small>`;
-      knopf.addEventListener("click", () => schliessen(raum.room));
-      box.append(knopf);
-    }
-
-    const abbrechen = document.createElement("button");
-    abbrechen.type = "button";
-    abbrechen.className = "text-action";
-    abbrechen.textContent = "Abbrechen";
-    abbrechen.addEventListener("click", () => schliessen(""));
-    box.append(abbrechen);
-
-    document.body.append(box);
-    const anker = document.querySelector("#watchpartyShareButton")?.getBoundingClientRect();
-    if (anker) {
-      box.style.top = `${Math.round(anker.bottom + 8)}px`;
-      box.style.right = `${Math.round(window.innerWidth - anker.right)}px`;
-    }
-    // Erst nach dem oeffnenden Klick lauschen, sonst schliesst er sich selbst.
-    window.setTimeout(() => {
-      document.addEventListener("keydown", aufTaste, true);
-      document.addEventListener("pointerdown", aufKlick, true);
-    }, 0);
-  });
-}
-
-// Raumcodes aus Eingaben: getrimmt, ohne Doppelte, Reihenfolge bleibt.
+// Raumcodes aus Eingaben: getrimmt, Umlaute zusammengezogen (sonst fuehrt das
+// Relay je nach Tastatur zwei Raeume), ohne Doppelte, Reihenfolge bleibt.
 function raumcodes(werte) {
   const sauber = [];
   for (const roh of werte || []) {
-    const code = String(roh || "").trim().slice(0, 64);
+    const code = String(roh || "").trim().normalize("NFC").slice(0, 64);
     if (!code || sauber.includes(code)) continue;
     sauber.push(code);
   }
   return sauber;
+}
+
+// Dieselbe Regel wie im Relay: Buchstaben aller Sprachen, Ziffern, Bindestrich
+// und Unterstrich, mindestens vier Zeichen.
+function watchpartyCodeBeanstandung(code) {
+  const sauber = String(code || "").trim().normalize("NFC");
+  if (sauber.length < 4) return "Ein Raumcode braucht mindestens vier Zeichen";
+  if (sauber.length > 64) return "Ein Raumcode darf höchstens 64 Zeichen haben";
+  if (!/^[\p{L}\p{N}_-]+$/u.test(sauber)) {
+    return "Erlaubt sind Buchstaben, Ziffern, Bindestrich und Unterstrich — keine Leerzeichen";
+  }
+  return "";
 }
 
 function renderWatchpartyRaeume() {
@@ -3630,9 +3601,21 @@ function renderWatchpartyRaeume() {
 
 function watchpartyRaumHinzufuegen() {
   if (!watchpartyRoom) return;
-  const codes = raumcodes([...watchpartyRaeume, watchpartyRoom.value]);
+  const eingabe = watchpartyRoom.value.trim();
+  if (!eingabe) {
+    showToast("Trage erst einen Raumcode ein");
+    return;
+  }
+  // Dieselbe Regel wie im Relay - sonst steht der Raum in der Liste und meldet
+  // erst beim Verbinden "Ungueltiger Raumcode".
+  const beanstandung = watchpartyCodeBeanstandung(eingabe);
+  if (beanstandung) {
+    showToast(beanstandung);
+    return;
+  }
+  const codes = raumcodes([...watchpartyRaeume, eingabe]);
   if (codes.length === watchpartyRaeume.length) {
-    if (watchpartyRoom.value.trim()) showToast("Diesen Raum gibt es schon");
+    showToast("Diesen Raum gibt es schon");
     return;
   }
   if (codes.length > 8) {

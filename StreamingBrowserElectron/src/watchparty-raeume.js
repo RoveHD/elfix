@@ -231,15 +231,29 @@ class WatchpartyRaeume {
 }
 
 // Codes koennen aus einem Textfeld kommen: Leerzeichen weg, Doppelte weg,
-// Reihenfolge bleibt.
+// Reihenfolge bleibt. Umlaute werden zusammengezogen (NFC) - je nach Tastatur
+// kommt "ä" als ein Zeichen oder als a mit Trema, und das Relay fuehrt sonst
+// zwei verschiedene Raeume.
 function raumcodesAufraeumen(codes) {
   const sauber = [];
   for (const roh of Array.isArray(codes) ? codes : [codes]) {
-    const code = String(roh || "").trim().slice(0, 64);
+    const code = String(roh || "").trim().normalize("NFC").slice(0, 64);
     if (!code || sauber.includes(code)) continue;
     sauber.push(code);
   }
   return sauber;
 }
 
-module.exports = { WatchpartyRaeume, raumcodesAufraeumen };
+// Dieselbe Regel wie im Relay. Wird sie hier schon geprueft, steht die
+// Begruendung beim Eintragen statt spaeter als "Ungueltiger Raumcode".
+function codeBeanstandung(code) {
+  const sauber = String(code || "").trim().normalize("NFC");
+  if (sauber.length < 4) return "Ein Raumcode braucht mindestens vier Zeichen";
+  if (sauber.length > 64) return "Ein Raumcode darf höchstens 64 Zeichen haben";
+  if (!/^[\p{L}\p{N}_-]+$/u.test(sauber)) {
+    return "Erlaubt sind Buchstaben, Ziffern, Bindestrich und Unterstrich — keine Leerzeichen";
+  }
+  return "";
+}
+
+module.exports = { WatchpartyRaeume, raumcodesAufraeumen, codeBeanstandung };
