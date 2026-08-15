@@ -401,6 +401,36 @@
   opacity: 0.55;
 }
 
+/* Karten der Watchparty tragen Knoepfe, brauchen also etwas mehr Luft. */
+.watchparty-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.watchparty-card .watchparty-members {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.watchparty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.watchparty-actions button {
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.watchparty-actions button[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Bei "Empfohlen fuer dich" steht in der zweiten Zeile die Begruendung. Sie
    darf zweizeilig werden, ohne die Karte zu sprengen. */
 .personal-rail .favorite-card span {

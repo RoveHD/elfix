@@ -19,6 +19,7 @@
         <button class="chrome-btn" id="homeButton" title="Startseite">⌂</button>
         <input id="omnibox" class="omnibox" type="text" placeholder="Film, Serie oder Anime suchen">
         <button class="chrome-btn favorite-toggle" id="favoriteButton" title="Favorit">♡</button>
+        <button class="chrome-btn watchparty-toggle" id="watchpartyShareButton" title="Zur Watchparty hinzufügen">⇄</button>
         <button class="chrome-btn" id="stopButton" title="Stop">×</button>
         <button class="chrome-btn" id="fullscreenButton" title="Cinema Fullscreen">⛶</button>
       </div>
@@ -217,7 +218,7 @@
             <div>
               <p class="eyebrow">Gemeinsam</p>
               <h1>Watchparty</h1>
-              <p id="watchpartyViewStatus">Was die anderen im Raum gerade schauen. Deine eigene Weiterschauen-Liste bleibt davon unberührt.</p>
+              <p id="watchpartyViewStatus">Serien, die jemand im Raum eingestellt hat. Wenn du beitrittst, läuft euer Fortschritt zusammen.</p>
             </div>
             <button class="text-action" id="watchpartySettingsLink">Einstellungen</button>
           </div>
@@ -225,7 +226,7 @@
           <div class="empty-state is-hidden" id="watchpartyEmpty">
             <div class="empty-icon">⇄</div>
             <h1 id="watchpartyEmptyTitle">Noch keine Watchparty</h1>
-            <p id="watchpartyEmptyCopy">Trage Server und Raumcode in den Einstellungen ein, dann erscheint hier, was die anderen schauen.</p>
+            <p id="watchpartyEmptyCopy">Trage Server und Raumcode in den Einstellungen ein. Danach stellst du eine Serie über den ⇄ Knopf oben rechts in den Raum.</p>
             <button class="primary-action" id="watchpartyOpenSettings">Watchparty einrichten</button>
           </div>
         </div>

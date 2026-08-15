@@ -370,6 +370,7 @@ function bindEvents() {
   document.querySelector("#favoritesButton")?.addEventListener("click", showFavorites);
   document.querySelector("#settingsButton").addEventListener("click", openSettings);
   startDiscoverRefresh();
+  document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
   api.onWatchpartyState?.(renderWatchpartyStatus);
   api.onWatchpartyItems?.((items) => {
     watchpartyItems = Array.isArray(items) ? items : [];
@@ -462,12 +463,8 @@ function bindEvents() {
     await api.showHome();
     activeProviderId = null;
     currentUrl = "";
+    hideContentViews();
     homeView.classList.remove("is-hidden");
-    globalSearchView.classList.add("is-hidden");
-    favoritesView.classList.add("is-hidden");
-    libraryView?.classList.add("is-hidden");
-    continueView?.classList.add("is-hidden");
-    historyView?.classList.add("is-hidden");
     renderFavoriteToggle();
     renderHome();
     renderProviders();
@@ -1207,12 +1204,7 @@ async function handleHomeAction(action) {
 async function openProviderFromHome(providerId) {
   const provider = providers.find((item) => item.id === providerId && item.enabled !== false);
   if (!provider) return;
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
-  libraryView?.classList.add("is-hidden");
-  continueView?.classList.add("is-hidden");
-  historyView?.classList.add("is-hidden");
+  hideContentViews();
   await api.setShellOpen(false);
   const state = await api.openProvider(provider.id);
   activeProviderId = state?.activeProviderId || provider.id;
@@ -1251,12 +1243,7 @@ function providerCard(provider, large) {
   `;
   let clickTimer = null;
   const openProviderTab = async (startUrl = false) => {
-    homeView.classList.add("is-hidden");
-    globalSearchView.classList.add("is-hidden");
-    favoritesView.classList.add("is-hidden");
-    libraryView?.classList.add("is-hidden");
-    continueView?.classList.add("is-hidden");
-    historyView?.classList.add("is-hidden");
+    hideContentViews();
     const state = startUrl
       ? await api.openProviderUrl(provider.id, provider.startUrl)
       : await api.openProvider(provider.id);
@@ -1303,12 +1290,8 @@ async function enterInternalMode() {
 async function showHome() {
   await enterInternalMode();
   setCurrentRoute("start");
+  hideContentViews();
   homeView.classList.remove("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
-  libraryView?.classList.add("is-hidden");
-  continueView?.classList.add("is-hidden");
-  historyView?.classList.add("is-hidden");
   renderProviders();
   renderFavoriteToggle();
   renderHome();
@@ -1318,12 +1301,8 @@ async function showHome() {
 async function showFavorites() {
   await enterInternalMode();
   setCurrentRoute("watchlist");
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
+  hideContentViews();
   favoritesView.classList.remove("is-hidden");
-  libraryView?.classList.add("is-hidden");
-  continueView?.classList.add("is-hidden");
-  historyView?.classList.add("is-hidden");
   renderFavorites();
   window.setTimeout(syncBrowserBounds, 0);
 }
@@ -1331,12 +1310,8 @@ async function showFavorites() {
 async function showLibrary() {
   await enterInternalMode();
   setCurrentRoute("library");
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
+  hideContentViews();
   libraryView?.classList.remove("is-hidden");
-  continueView?.classList.add("is-hidden");
-  historyView?.classList.add("is-hidden");
   renderLibraryViews();
   window.setTimeout(syncBrowserBounds, 0);
 }
@@ -1344,12 +1319,8 @@ async function showLibrary() {
 async function showContinue() {
   await enterInternalMode();
   setCurrentRoute("continue");
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
-  libraryView?.classList.add("is-hidden");
+  hideContentViews();
   continueView?.classList.remove("is-hidden");
-  historyView?.classList.add("is-hidden");
   renderLibraryViews();
   window.setTimeout(syncBrowserBounds, 0);
 }
@@ -1357,7 +1328,7 @@ async function showContinue() {
 // Die Kopfzeile der Ansicht sagt, ob ueberhaupt eine Verbindung steht.
 function renderWatchpartyViewStatus(state) {
   if (!watchpartyViewStatus) return;
-  const grund = "Deine eigene Weiterschauen-Liste bleibt davon unberührt.";
+  const grund = "Wenn du beitrittst, läuft euer Fortschritt zusammen.";
   if (!state?.enabled) {
     watchpartyViewStatus.textContent = `Watchparty ist ausgeschaltet. ${grund}`;
     return;
@@ -1404,12 +1375,12 @@ function renderWatchpartyItems() {
   if (!vorhanden) {
     const eingerichtet = watchpartyState?.enabled;
     if (watchpartyEmptyTitle) {
-      watchpartyEmptyTitle.textContent = eingerichtet ? "Noch nichts geteilt" : "Noch keine Watchparty";
+      watchpartyEmptyTitle.textContent = eingerichtet ? "Noch nichts eingestellt" : "Noch keine Watchparty";
     }
     if (watchpartyEmptyCopy) {
       watchpartyEmptyCopy.textContent = eingerichtet
-        ? "Sobald jemand anderes im Raum etwas schaut, erscheint es hier."
-        : "Trage Server und Raumcode in den Einstellungen ein, dann erscheint hier, was die anderen schauen.";
+        ? "Stelle eine Serie über den ⇄ Knopf oben rechts in den Raum — oder warte, bis jemand anderes eine einstellt."
+        : "Trage Server und Raumcode in den Einstellungen ein. Danach stellst du eine Serie über den ⇄ Knopf oben rechts in den Raum.";
     }
     return;
   }
@@ -1418,53 +1389,85 @@ function renderWatchpartyItems() {
 
 function watchpartyCard(item) {
   const card = document.createElement("div");
-  card.className = `favorite-card${item.image || item.thumbnail ? " has-thumb" : ""}`;
-  card.tabIndex = 0;
-  card.role = "button";
-
-  const bild = item.thumbnail || "";
-  if (bild) {
-    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(bild)}")`;
+  card.className = `favorite-card watchparty-card${item.thumbnail ? " has-thumb" : ""}`;
+  if (item.thumbnail) {
+    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(item.thumbnail)}")`;
   }
-  const folge = item.season && item.episode ? `Staffel ${item.season} Folge ${item.episode}` : "";
-  const wer = item.from ? `von ${item.from}` : "geteilt";
-  const zeile = [folge, wer, item.providerName].filter(Boolean).join(" · ");
-  card.title = item.openable ? `${item.title} öffnen` : `${item.title} – kein passender Anbieter eingerichtet`;
+
+  // Der Stand kommt aus der Watchparty, sobald jemand Beigetretenes weiterschaut.
+  const stand = item.progress;
+  const folge = stand?.season && stand?.episode
+    ? `Staffel ${stand.season} Folge ${stand.episode}`
+    : (item.season && item.episode ? `Staffel ${item.season} Folge ${item.episode}` : "");
+  const mitglieder = Array.isArray(item.members) ? item.members : [];
+  const dabei = mitglieder.length
+    ? `${mitglieder.length} dabei: ${mitglieder.join(", ")}`
+    : "noch niemand dabei";
+  const zeile = [folge, item.providerName].filter(Boolean).join(" · ");
+
   card.innerHTML = `
     <strong>${escapeHtml(item.title)}</strong>
     <span>${escapeHtml(zeile)}</span>
+    <span class="watchparty-members">${escapeHtml(dabei)}</span>
   `;
-  if (!item.openable) card.classList.add("is-muted");
 
-  const oeffnen = async () => {
-    if (!item.openable) {
-      showToast("Für diesen Titel ist kein passender Anbieter eingerichtet");
-      return;
+  const aktionen = document.createElement("div");
+  aktionen.className = "watchparty-actions";
+
+  const beitreten = document.createElement("button");
+  beitreten.type = "button";
+  beitreten.className = item.joined ? "secondary-action" : "primary-action";
+  beitreten.textContent = item.joined ? "Verlassen" : "Beitreten";
+  beitreten.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (item.joined) {
+      await api.leaveWatchparty(item.key);
+      showToast(`„${item.title}“ verlassen`);
+    } else {
+      await api.enterWatchparty(item.key);
+      showToast(`„${item.title}“ beigetreten — ab jetzt läuft der Fortschritt zusammen`);
     }
+  });
+  aktionen.append(beitreten);
+
+  const oeffnen = document.createElement("button");
+  oeffnen.type = "button";
+  oeffnen.className = "secondary-action";
+  oeffnen.textContent = "Öffnen";
+  oeffnen.disabled = !item.openable;
+  oeffnen.title = item.openable ? "" : "Kein passender Anbieter eingerichtet";
+  oeffnen.addEventListener("click", async (event) => {
+    event.stopPropagation();
     hideContentViews();
     const state = await api.openWatchpartyItem(item.key);
     activeProviderId = state?.activeProviderId || activeProviderId;
     setCurrentRoute(`provider:${activeProviderId}`);
     renderProviders();
     window.setTimeout(syncBrowserBounds, 0);
-  };
-  card.addEventListener("click", oeffnen);
-  card.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    oeffnen();
   });
+  aktionen.append(oeffnen);
+
+  // Wer eine Serie eingestellt hat, kann sie auch wieder herausnehmen.
+  if (item.addedBy && item.addedBy === (settings.watchparty?.deviceName || "")) {
+    const entfernen = document.createElement("button");
+    entfernen.type = "button";
+    entfernen.className = "text-action";
+    entfernen.textContent = "Entfernen";
+    entfernen.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await api.removeFromWatchparty(item.key);
+    });
+    aktionen.append(entfernen);
+  }
+
+  card.append(aktionen);
   return card;
 }
 
 async function showHistory() {
   await enterInternalMode();
   setCurrentRoute("history");
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
-  libraryView?.classList.add("is-hidden");
-  continueView?.classList.add("is-hidden");
+  hideContentViews();
   historyView?.classList.remove("is-hidden");
   renderLibraryViews();
   window.setTimeout(syncBrowserBounds, 0);
@@ -1475,12 +1478,8 @@ async function showGlobalSearch(query) {
   await enterInternalMode();
   setCurrentRoute("search");
   if (query.trim()) rememberSearch(query);
-  homeView.classList.add("is-hidden");
+  hideContentViews();
   globalSearchView.classList.remove("is-hidden");
-  favoritesView.classList.add("is-hidden");
-  libraryView?.classList.add("is-hidden");
-  continueView?.classList.add("is-hidden");
-  historyView?.classList.add("is-hidden");
   window.setTimeout(syncBrowserBounds, 0);
   searchTitle.textContent = query.trim() ? `${query} suchen` : "Suchen";
   document.querySelector("#searchCopy").textContent = query.trim()
@@ -1516,8 +1515,7 @@ async function showGlobalSearch(query) {
     card.type = "button";
     card.innerHTML = `<strong>${escapeHtml(provider.name)}</strong><span>Direktsuche öffnen</span>`;
     card.addEventListener("click", async () => {
-      homeView.classList.add("is-hidden");
-      globalSearchView.classList.add("is-hidden");
+      hideContentViews();
       const state = await api.openProviderSearch(provider.id, query);
       activeProviderId = state?.activeProviderId || provider.id;
       setCurrentRoute(`provider:${activeProviderId}`);
@@ -1555,9 +1553,7 @@ async function renderProviderResults(query, searchToken) {
         const meta = [result.genre, provider.providerName].filter(Boolean).join(" · ");
         card.innerHTML = `<strong>${escapeHtml(result.title)}</strong><span>${escapeHtml(meta)}</span>`;
         card.addEventListener("click", async () => {
-          homeView.classList.add("is-hidden");
-          globalSearchView.classList.add("is-hidden");
-          favoritesView.classList.add("is-hidden");
+          hideContentViews();
           await api.setShellOpen(false);
           const state = await api.openProviderUrl(provider.providerId, result.url);
           activeProviderId = state?.activeProviderId || provider.providerId;
@@ -1765,6 +1761,9 @@ async function openFavoriteEntry(favorite, options = {}) {
   setCurrentRoute(`provider:${activeProviderId}`);
 }
 
+// Eine einzige Stelle, an der alle internen Ansichten verschwinden. Frueher
+// zaehlte jede Ansicht die anderen selbst auf - eine neu hinzugekommene wurde
+// dabei zwangslaeufig vergessen und blieb sichtbar.
 function hideContentViews() {
   homeView.classList.add("is-hidden");
   globalSearchView.classList.add("is-hidden");
@@ -1997,9 +1996,7 @@ async function openActiveProvider() {
     openSettings();
     return;
   }
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
+  hideContentViews();
   await api.setShellOpen(false);
   await api.openProvider(active.id);
 }
@@ -2012,11 +2009,7 @@ async function openSearchView() {
     await showGlobalSearch(value);
     return;
   }
-  homeView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
-  libraryView?.classList.add("is-hidden");
-  continueView?.classList.add("is-hidden");
-  historyView?.classList.add("is-hidden");
+  hideContentViews();
   globalSearchView.classList.remove("is-hidden");
   searchTitle.textContent = "Suchen";
   renderSearchHistory();
@@ -2089,9 +2082,7 @@ async function navigateFromOmnibox() {
     return;
   }
 
-  homeView.classList.add("is-hidden");
-  globalSearchView.classList.add("is-hidden");
-  favoritesView.classList.add("is-hidden");
+  hideContentViews();
   await api.setShellOpen(false);
   const state = await api.navigate(value);
   omnibox.value = "";
@@ -3320,4 +3311,15 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+// Den gerade geoeffneten Titel in den Raum stellen. Der Hauptprozess kennt die
+// Seite, deshalb reicht hier ein Anstoss.
+async function shareCurrentToWatchparty() {
+  const ergebnis = await api.shareCurrentToWatchparty?.().catch(() => null);
+  if (!ergebnis?.shared) {
+    showToast(ergebnis?.reason || "Konnte nicht geteilt werden");
+    return;
+  }
+  showToast("Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
 }

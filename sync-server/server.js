@@ -1,17 +1,22 @@
 "use strict";
 
-// Relay fuer die Watchparty: verteilt Fortschritts-Meldungen zwischen den
-// Geraeten eines Raums. Der Server merkt sich nur den letzten Stand je Titel im
-// Arbeitsspeicher, damit ein spaeter beitretendes Geraet nicht bei null steht.
-// Keine Datenbank, keine Konten - wer den Raumcode hat, ist im Raum.
+// Relay fuer die Watchparty.
+//
+// Ablauf: Jemand stellt eine Serie in den Raum ("share"). Alle sehen sie als
+// Vorschlag. Wer mitmachen will, tritt bei ("enter") - erst dann fliesst der
+// Fortschritt dieser Serie zwischen den Beigetretenen. Nichts passiert von
+// selbst, nichts wird ungefragt geteilt.
+//
+// Der Server haelt alles nur im Arbeitsspeicher: keine Datenbank, keine Konten.
+// Wer den Raumcode kennt, ist im Raum.
 
 const http = require("http");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 
 const PORT = Number(process.env.PORT) || 8787;
-const MAX_RAUM_TITEL = 400;
-const RAUM_LEBENSDAUER_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_TITEL_JE_RAUM = 100;
+const RAUM_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_NACHRICHT = 256 * 1024;
 
 // raumcode -> { titel: Map<key, eintrag>, at: number }
@@ -28,7 +33,6 @@ function raumHolen(code) {
   return neu;
 }
 
-// Raeume, in denen lange nichts passiert ist, wieder freigeben.
 function aufraeumen() {
   const grenze = Date.now() - RAUM_LEBENSDAUER_MS;
   for (const [code, raum] of raeume) {
@@ -38,26 +42,44 @@ function aufraeumen() {
 setInterval(aufraeumen, 60 * 60 * 1000).unref?.();
 
 function istGueltigerCode(value) {
-  return typeof value === "string" && /^[A-Za-z0-9-]{4,64}$/.test(value);
+  return typeof value === "string" && /^[A-Za-z0-9_-]{4,64}$/.test(value);
 }
 
-// Nur die Felder weiterreichen, die zum Weiterschauen gebraucht werden.
-function eintragSaeubern(roh) {
-  if (!roh || typeof roh !== "object") return null;
-  const key = String(roh.key || "").slice(0, 300);
-  const url = String(roh.url || "").slice(0, 800);
-  if (!key || !/^https?:\/\//i.test(url)) return null;
+function text(value, laenge) {
+  return String(value == null ? "" : value).slice(0, laenge);
+}
 
-  const zahl = (wert, max) => {
-    const n = Number(wert);
-    return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : 0;
-  };
+function zahl(value, max) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : 0;
+}
+
+function httpAdresse(value) {
+  const wert = text(value, 800);
+  return /^https?:\/\//i.test(wert) ? wert : "";
+}
+
+// Eine geteilte Serie, wie sie im Raum steht.
+function titelSaeubern(roh) {
+  const key = text(roh?.key, 300);
+  const url = httpAdresse(roh?.url);
+  if (!key || !url) return null;
   return {
     key,
     url,
-    title: String(roh.title || "").slice(0, 300),
-    providerName: String(roh.providerName || "").slice(0, 80),
-    thumbnail: /^https?:\/\//i.test(String(roh.thumbnail || "")) ? String(roh.thumbnail).slice(0, 800) : "",
+    title: text(roh?.title, 300),
+    providerName: text(roh?.providerName, 80),
+    thumbnail: httpAdresse(roh?.thumbnail),
+    type: text(roh?.type, 20),
+    season: zahl(roh?.season, 999),
+    episode: zahl(roh?.episode, 9999)
+  };
+}
+
+function fortschrittSaeubern(roh) {
+  if (!roh || typeof roh !== "object") return null;
+  return {
+    url: httpAdresse(roh.url),
     season: zahl(roh.season, 999),
     episode: zahl(roh.episode, 9999),
     position: zahl(roh.position, 100000),
@@ -65,14 +87,28 @@ function eintragSaeubern(roh) {
     progress: zahl(roh.progress, 100),
     completed: Boolean(roh.completed),
     episodeCompleted: Boolean(roh.episodeCompleted),
-    hidden: Boolean(roh.hidden),
-    updatedAt: String(roh.updatedAt || new Date().toISOString()).slice(0, 40),
-    from: String(roh.from || "").slice(0, 60)
+    updatedAt: text(roh.updatedAt || new Date().toISOString(), 40),
+    from: text(roh.from, 60)
   };
 }
 
-function istNeuer(links, rechts) {
-  return Date.parse(links?.updatedAt || 0) > Date.parse(rechts?.updatedAt || 0);
+// Fuer die Uebertragung: Mitglieder als Namensliste statt als Map.
+function titelNachAussen(eintrag) {
+  return {
+    key: eintrag.key,
+    url: eintrag.url,
+    title: eintrag.title,
+    providerName: eintrag.providerName,
+    thumbnail: eintrag.thumbnail,
+    type: eintrag.type,
+    season: eintrag.season,
+    episode: eintrag.episode,
+    addedBy: eintrag.addedBy,
+    addedAt: eintrag.addedAt,
+    members: [...eintrag.members.values()],
+    memberIds: [...eintrag.members.keys()],
+    progress: eintrag.progress || null
+  };
 }
 
 const server = http.createServer((req, res) => {
@@ -87,9 +123,35 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, maxPayload: MAX_NACHRICHT });
 
+function anRaumSenden(raumcode, nachricht, ausser = null) {
+  const daten = JSON.stringify(nachricht);
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    if (ausser && client === ausser) continue;
+    client.send(daten);
+  }
+}
+
+function zustandSenden(raumcode) {
+  const raum = raeume.get(raumcode);
+  if (!raum) return;
+  anRaumSenden(raumcode, {
+    type: "state",
+    shared: [...raum.titel.values()].map(titelNachAussen),
+    peers: teilnehmer(raumcode)
+  });
+}
+
+function teilnehmer(raumcode) {
+  return [...wss.clients]
+    .filter((client) => client.raum === raumcode && client.readyState === client.OPEN)
+    .map((client) => client.name || "Gerät");
+}
+
 wss.on("connection", (socket) => {
   socket.raum = "";
-  socket.geraet = crypto.randomUUID().slice(0, 8);
+  socket.geraetId = "";
+  socket.name = "";
   socket.isAlive = true;
   socket.on("pong", () => { socket.isAlive = true; });
 
@@ -111,55 +173,88 @@ wss.on("connection", (socket) => {
         return;
       }
       socket.raum = nachricht.room;
-      socket.name = String(nachricht.name || "").slice(0, 40);
-      const raum = raumHolen(socket.raum);
-      // Beim Beitritt bekommt das Geraet den bekannten Stand des Raums.
-      senden({ type: "sync", items: [...raum.titel.values()], device: socket.geraet });
-      verteileTeilnehmer(socket.raum);
+      socket.name = text(nachricht.name, 40) || "Gerät";
+      // Die Geraete-ID kommt vom Client und ueberlebt Neustarts - sonst waere
+      // eine Mitgliedschaft nach jedem Neuverbinden verloren.
+      socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
+      raumHolen(socket.raum);
+      zustandSenden(socket.raum);
       return;
     }
 
-    if (nachricht?.type === "progress" && socket.raum) {
-      const raum = raumHolen(socket.raum);
-      const uebernommen = [];
-      for (const roh of Array.isArray(nachricht.items) ? nachricht.items.slice(0, 200) : []) {
-        const eintrag = eintragSaeubern(roh);
-        if (!eintrag) continue;
-        const bekannt = raum.titel.get(eintrag.key);
-        if (bekannt && !istNeuer(eintrag, bekannt)) continue;
-        raum.titel.set(eintrag.key, eintrag);
-        uebernommen.push(eintrag);
-      }
-      // Aeltere Titel verwerfen, damit ein Raum nicht unbegrenzt waechst.
-      if (raum.titel.size > MAX_RAUM_TITEL) {
-        const sortiert = [...raum.titel.entries()]
-          .sort((links, rechts) => Date.parse(rechts[1].updatedAt) - Date.parse(links[1].updatedAt));
-        raum.titel = new Map(sortiert.slice(0, MAX_RAUM_TITEL));
-      }
-      if (!uebernommen.length) return;
+    if (!socket.raum) return;
+    const raum = raumHolen(socket.raum);
 
+    // Eine Serie in den Raum stellen. Wer sie einstellt, ist automatisch dabei.
+    if (nachricht.type === "share") {
+      const eintrag = titelSaeubern(nachricht.item);
+      if (!eintrag) return;
+      if (raum.titel.size >= MAX_TITEL_JE_RAUM && !raum.titel.has(eintrag.key)) return;
+
+      const bekannt = raum.titel.get(eintrag.key);
+      const gespeichert = bekannt || {
+        ...eintrag,
+        addedBy: socket.name,
+        addedAt: new Date().toISOString(),
+        members: new Map(),
+        progress: null
+      };
+      if (bekannt) Object.assign(gespeichert, eintrag);
+      gespeichert.members.set(socket.geraetId, socket.name);
+      raum.titel.set(eintrag.key, gespeichert);
+      zustandSenden(socket.raum);
+      return;
+    }
+
+    if (nachricht.type === "enter" || nachricht.type === "leave") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag) return;
+      if (nachricht.type === "enter") {
+        eintrag.members.set(socket.geraetId, socket.name);
+      } else {
+        eintrag.members.delete(socket.geraetId);
+      }
+      zustandSenden(socket.raum);
+      return;
+    }
+
+    // Eine Serie ganz aus dem Raum nehmen darf, wer sie eingestellt hat.
+    if (nachricht.type === "unshare") {
+      const key = text(nachricht.key, 300);
+      const eintrag = raum.titel.get(key);
+      if (!eintrag || eintrag.addedBy !== socket.name) return;
+      raum.titel.delete(key);
+      zustandSenden(socket.raum);
+      return;
+    }
+
+    // Fortschritt zaehlt nur von Beigetretenen und geht nur an Beigetretene.
+    if (nachricht.type === "progress") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      const fortschritt = fortschrittSaeubern(nachricht.progress);
+      if (!fortschritt) return;
+      const bekannt = eintrag.progress;
+      if (bekannt && Date.parse(fortschritt.updatedAt) <= Date.parse(bekannt.updatedAt)) return;
+      eintrag.progress = fortschritt;
+      if (fortschritt.url) eintrag.url = fortschritt.url;
+      eintrag.season = fortschritt.season || eintrag.season;
+      eintrag.episode = fortschritt.episode || eintrag.episode;
+
+      const daten = JSON.stringify({ type: "progress", key: eintrag.key, progress: fortschritt });
       for (const client of wss.clients) {
         if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
-        client.send(JSON.stringify({ type: "progress", items: uebernommen }));
+        if (!eintrag.members.has(client.geraetId)) continue;
+        client.send(daten);
       }
     }
   });
 
-  socket.on("close", () => verteileTeilnehmer(socket.raum));
+  socket.on("close", () => {
+    if (socket.raum) anRaumSenden(socket.raum, { type: "peers", peers: teilnehmer(socket.raum) });
+  });
 });
 
-function verteileTeilnehmer(raum) {
-  if (!raum) return;
-  const namen = [...wss.clients]
-    .filter((client) => client.raum === raum && client.readyState === client.OPEN)
-    .map((client) => client.name || "Gerät");
-  for (const client of wss.clients) {
-    if (client.raum !== raum || client.readyState !== client.OPEN) continue;
-    client.send(JSON.stringify({ type: "peers", peers: namen }));
-  }
-}
-
-// Tote Verbindungen erkennen - Free-Tier-Hoster kappen Leitungen gern still.
 setInterval(() => {
   for (const socket of wss.clients) {
     if (!socket.isAlive) {

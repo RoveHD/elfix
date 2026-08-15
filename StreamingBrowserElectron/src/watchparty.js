@@ -1,20 +1,22 @@
 "use strict";
 
-// Watchparty: teilt den Weiterschauen-Fortschritt zwischen mehreren Geraeten.
-// Wer weiterschaut, schickt den Stand an das Relay (siehe sync-server/), die
-// anderen Geraete ziehen nach. Bewusst nur Fortschritt - die Wiedergabe selbst
-// laeuft auf jedem Geraet fuer sich.
+// Watchparty: gemeinsam an einer Serie dranbleiben.
+//
+// Nichts wird von selbst geteilt. Jemand stellt eine Serie in den Raum, alle
+// sehen sie als Vorschlag, und wer mitmachen will, tritt bei. Erst ab dann
+// fliesst der Fortschritt dieser Serie zwischen den Beigetretenen.
 //
 // Das Modul kennt weder Electron noch die Ablage der Favoriten: es bekommt beim
-// Start zwei Rueckrufe und ist dadurch ohne laufende App pruefbar.
+// Start Rueckrufe und ist dadurch ohne laufende App pruefbar.
 
 const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 60000;
-const SENDE_VERZOEGERUNG_MS = 1200;
+const SENDE_VERZOEGERUNG_MS = 1500;
 
 class Watchparty {
   constructor(optionen = {}) {
-    this.aufEintraege = optionen.onItems || (() => {});
+    this.aufZustand = optionen.onState || (() => {});
+    this.aufFortschritt = optionen.onProgress || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse || globalThis.WebSocket;
 
@@ -22,9 +24,11 @@ class Watchparty {
     this.serverUrl = "";
     this.raum = "";
     this.name = "";
+    this.geraetId = "";
     this.aktiv = false;
     this.verbunden = false;
     this.teilnehmer = [];
+    this.geteilt = [];
     this.letzterFehler = "";
     this.versuche = 0;
     this.reconnectTimer = 0;
@@ -42,9 +46,19 @@ class Watchparty {
     };
   }
 
-  // Einstellungen anwenden. Aendert sich nichts Wesentliches, bleibt die
-  // bestehende Verbindung stehen.
-  konfigurieren({ enabled, serverUrl, room, name }) {
+  // Alle geteilten Serien, jeweils mit der Angabe, ob dieses Geraet dabei ist.
+  eintraege() {
+    return this.geteilt.map((eintrag) => ({
+      ...eintrag,
+      joined: Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId)
+    }));
+  }
+
+  istBeigetreten(key) {
+    return this.eintraege().some((eintrag) => eintrag.key === key && eintrag.joined);
+  }
+
+  konfigurieren({ enabled, serverUrl, room, name, deviceId }) {
     const neuerServer = String(serverUrl || "").trim();
     const neuerRaum = String(room || "").trim();
     const gleich = this.serverUrl === neuerServer && this.raum === neuerRaum && this.name === name;
@@ -52,11 +66,14 @@ class Watchparty {
     this.serverUrl = neuerServer;
     this.raum = neuerRaum;
     this.name = String(name || "").slice(0, 40);
+    this.geraetId = String(deviceId || "").slice(0, 64);
     this.aktiv = Boolean(enabled) && Boolean(neuerServer) && Boolean(neuerRaum);
 
     if (!this.aktiv) {
       this.trennen();
+      this.geteilt = [];
       this.melde();
+      this.aufZustand(this.eintraege());
       return;
     }
     if (gleich && this.verbunden) {
@@ -85,7 +102,7 @@ class Watchparty {
     socket.onopen = () => {
       this.verbunden = true;
       this.versuche = 0;
-      this.senden({ type: "join", room: this.raum, name: this.name });
+      this.senden({ type: "join", room: this.raum, name: this.name, deviceId: this.geraetId });
       this.melde();
       this.warteschlangeSenden();
     };
@@ -132,8 +149,6 @@ class Watchparty {
     }
   }
 
-  // Abstand wachsen lassen, damit ein schlafender Server nicht im Sekundentakt
-  // angeklopft wird.
   spaeterNeuVerbinden() {
     if (!this.aktiv || this.reconnectTimer) return;
     this.versuche += 1;
@@ -152,39 +167,59 @@ class Watchparty {
     } catch {
       return;
     }
-    if (nachricht?.type === "peers") {
-      this.teilnehmer = Array.isArray(nachricht.peers) ? nachricht.peers : [];
-      this.melde();
-      return;
-    }
+
     if (nachricht?.type === "error") {
       this.letzterFehler = String(nachricht.message || "");
       this.melde();
       return;
     }
-    if (nachricht?.type === "sync" || nachricht?.type === "progress") {
-      const eintraege = Array.isArray(nachricht.items) ? nachricht.items : [];
-      if (!eintraege.length) return;
-      // Ein Fehler beim Einarbeiten wuerde im Ereignis-Handler still
-      // verschwinden - deshalb hier festhalten statt verlieren.
-      try {
-        this.aufEintraege(eintraege);
-      } catch (fehler) {
-        this.letzterFehler = String(fehler?.message || fehler);
-        console.error("[ELFIX WATCHPARTY] Empfang fehlgeschlagen:", fehler);
+    if (nachricht?.type === "peers") {
+      this.teilnehmer = Array.isArray(nachricht.peers) ? nachricht.peers : [];
+      this.melde();
+      return;
+    }
+    // Ein Fehler beim Einarbeiten wuerde im Ereignis-Handler still
+    // verschwinden - deshalb hier festhalten statt verlieren.
+    try {
+      if (nachricht?.type === "state") {
+        this.geteilt = Array.isArray(nachricht.shared) ? nachricht.shared : [];
+        if (Array.isArray(nachricht.peers)) this.teilnehmer = nachricht.peers;
         this.melde();
+        this.aufZustand(this.eintraege());
+        return;
       }
+      if (nachricht?.type === "progress" && nachricht.key && nachricht.progress) {
+        this.aufFortschritt(nachricht.key, nachricht.progress);
+      }
+    } catch (fehler) {
+      this.letzterFehler = String(fehler?.message || fehler);
+      console.error("[ELFIX WATCHPARTY] Empfang fehlgeschlagen:", fehler);
+      this.melde();
     }
   }
 
-  // Meldungen werden kurz gesammelt: waehrend des Schauens laeuft der
-  // Fortschritt im Sekundentakt und soll nicht jede Sekunde durchs Netz.
-  melden(eintraege) {
-    if (!this.aktiv) return;
-    for (const eintrag of eintraege || []) {
-      if (eintrag?.key) this.warteschlange.set(eintrag.key, eintrag);
-    }
-    if (!this.warteschlange.size || this.sendeTimer) return;
+  teilen(item) {
+    this.senden({ type: "share", item });
+  }
+
+  beitreten(key) {
+    this.senden({ type: "enter", key });
+  }
+
+  verlassen(key) {
+    this.senden({ type: "leave", key });
+  }
+
+  entfernen(key) {
+    this.senden({ type: "unshare", key });
+  }
+
+  // Fortschritt wird gesammelt: waehrend des Schauens laeuft er im Sekundentakt
+  // und soll nicht jede Sekunde durchs Netz.
+  fortschrittMelden(key, fortschritt) {
+    if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
+    this.warteschlange.set(key, fortschritt);
+    if (this.sendeTimer) return;
     this.sendeTimer = setTimeout(() => {
       this.sendeTimer = 0;
       this.warteschlangeSenden();
@@ -194,9 +229,10 @@ class Watchparty {
 
   warteschlangeSenden() {
     if (!this.verbunden || !this.warteschlange.size) return;
-    const items = [...this.warteschlange.values()];
+    for (const [key, fortschritt] of this.warteschlange) {
+      this.senden({ type: "progress", key, progress: fortschritt });
+    }
     this.warteschlange.clear();
-    this.senden({ type: "progress", items });
   }
 
   senden(nachricht) {

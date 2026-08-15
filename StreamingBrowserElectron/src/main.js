@@ -70,8 +70,7 @@ const mediaDiagnostics = [];
 const mediaConsoleLogState = new Map();
 const discoverCache = new Map();
 const seasonInfoCache = new Map();
-let watchpartyShared = new Map();
-const WATCHPARTY_MAX_ITEMS = 120;
+let watchpartyShared = [];
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
@@ -675,6 +674,50 @@ ipcMain.handle("watchparty:status", () => watchparty.status());
 ipcMain.handle("watchparty:items", () => watchpartyItems());
 
 ipcMain.handle("watchparty:open", async (_event, key) => openWatchpartyItem(key));
+
+ipcMain.handle("watchparty:share-current", async () => {
+  const provider = activeProvider();
+  const url = activeView?.webContents?.getURL() || "";
+  if (!provider || !providerModel.isHttpUrl(url)) {
+    return { shared: false, reason: "Kein Titel geöffnet" };
+  }
+
+  // Steht der Titel schon in der eigenen Liste, hat er Bild und Fortschritt -
+  // sonst wird beides aus der Seite gelesen.
+  const normalized = normalizeFavoriteUrl(url);
+  let favorite = favorites.find((item) => item.id === activeFavoriteId)
+    || favorites.find((item) => item.normalizedUrl === normalized);
+
+  if (!favorite) {
+    const meta = await readPageMetadata(activeView).catch(() => ({}));
+    const identity = episodeIdentity(url);
+    favorite = {
+      providerName: provider.name,
+      title: cleanTitle(meta.title || activeView.webContents.getTitle() || provider.name),
+      url,
+      thumbnail: meta.thumbnail || "",
+      type: normalizeMediaType(meta.type || inferMediaType(url)),
+      season: identity?.season || 0,
+      episode: identity?.episode || 0
+    };
+  }
+  return shareWatchpartyFavorite(favorite);
+});
+
+ipcMain.handle("watchparty:enter", (_event, key) => {
+  watchparty.beitreten(String(key || ""));
+  return true;
+});
+
+ipcMain.handle("watchparty:leave", (_event, key) => {
+  watchparty.verlassen(String(key || ""));
+  return true;
+});
+
+ipcMain.handle("watchparty:remove", (_event, key) => {
+  watchparty.entfernen(String(key || ""));
+  return true;
+});
 
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
@@ -3631,13 +3674,18 @@ async function discoverForProvider(provider, refresh) {
 }
 
 // --- Watchparty --------------------------------------------------------------
-// Mehrere Geraete teilen ihren Weiterschauen-Fortschritt ueber ein Relay. Wer
-// weiterschaut, meldet den Stand; die anderen ziehen nach. Verglichen wird ueber
-// den Titel, nicht ueber die Adresse - dieselbe Serie liegt bei jedem unter
-// einem anderen Anbieter oder sogar unter einer anderen Domain.
+// Gemeinsam an einer Serie dranbleiben. Nichts wird von selbst geteilt: jemand
+// stellt eine Serie in den Raum, alle sehen sie als Vorschlag, und wer mitmacht,
+// tritt bei. Erst ab dann fliesst der Fortschritt dieser Serie zwischen den
+// Beigetretenen - und zwar in beide Richtungen, also auch in die eigene
+// Weiterschauen-Liste.
 
 const watchparty = new Watchparty({
-  onItems: (eintraege) => applyWatchpartyItems(eintraege),
+  onState: (eintraege) => {
+    watchpartyShared = eintraege;
+    sendWatchpartyItems();
+  },
+  onProgress: (key, fortschritt) => applyWatchpartyProgress(key, fortschritt),
   onStatus: (status) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("watchparty:state", status);
@@ -3650,17 +3698,12 @@ function watchpartySettings() {
 
 function syncWatchparty() {
   const konfiguration = watchpartySettings();
-  const wechsel = watchparty.serverUrl !== String(konfiguration.serverUrl || "").trim()
-    || watchparty.raum !== String(konfiguration.room || "").trim();
-  if (wechsel && watchpartyShared.size) {
-    watchpartyShared = new Map();
-    sendWatchpartyItems();
-  }
   watchparty.konfigurieren({
     enabled: konfiguration.enabled === true,
     serverUrl: konfiguration.serverUrl || "",
     room: konfiguration.room || "",
-    name: konfiguration.deviceName || "ELFIX"
+    name: konfiguration.deviceName || "ELFIX",
+    deviceId: konfiguration.deviceId || ""
   });
 }
 
@@ -3674,15 +3717,34 @@ function watchpartyKey(favorite) {
   return `${favorite?.type || inferMediaType(favorite?.url) || "serie"}:${schluessel}`;
 }
 
-function watchpartyEintrag(favorite) {
+// Eine Serie in den Raum stellen - ausgeloest vom Knopf in der Kopfzeile.
+function shareWatchpartyFavorite(favorite) {
+  if (!favorite?.url) return { shared: false, reason: "Kein Titel geöffnet" };
+  if (!watchparty.aktiv) return { shared: false, reason: "Watchparty ist nicht eingerichtet" };
   const key = watchpartyKey(favorite);
-  if (!key || !favorite?.url) return null;
-  return {
+  if (!key) return { shared: false, reason: "Titel nicht erkannt" };
+
+  watchparty.teilen({
     key,
     url: favorite.url,
     title: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "",
     providerName: favorite.providerName || "",
     thumbnail: favorite.thumbnail || "",
+    type: favorite.type || inferMediaType(favorite.url) || "serie",
+    season: sanitizePositiveNumber(favorite.season),
+    episode: sanitizePositiveNumber(favorite.episode)
+  });
+  return { shared: true, key };
+}
+
+// Beim Schauen: nur melden, was auch geteilt und beigetreten ist.
+function reportWatchpartyProgress(favorite) {
+  if (!watchparty.aktiv) return;
+  const key = watchpartyKey(favorite);
+  if (!key || !watchparty.istBeigetreten(key)) return;
+
+  watchparty.fortschrittMelden(key, {
+    url: favorite.url,
     season: sanitizePositiveNumber(favorite.season),
     episode: sanitizePositiveNumber(favorite.episode),
     position: sanitizePositiveNumber(favorite.position || favorite.currentTime),
@@ -3690,16 +3752,9 @@ function watchpartyEintrag(favorite) {
     progress: sanitizeProgress(favorite.progress),
     completed: Boolean(favorite.completed),
     episodeCompleted: Boolean(favorite.episodeCompleted),
-    hidden: Boolean(favorite.hideFromContinueWatching),
-    updatedAt: favorite.lastWatchedAt || favorite.openedAt || new Date().toISOString(),
+    updatedAt: favorite.lastWatchedAt || new Date().toISOString(),
     from: watchpartySettings().deviceName || ""
-  };
-}
-
-function reportWatchpartyProgress(favorite) {
-  if (!watchparty.aktiv) return;
-  const eintrag = watchpartyEintrag(favorite);
-  if (eintrag) watchparty.melden([eintrag]);
+  });
 }
 
 function providerForWatchpartyUrl(url, providerName) {
@@ -3710,44 +3765,99 @@ function providerForWatchpartyUrl(url, providerName) {
     || null;
 }
 
-// Was die anderen schauen, bleibt bewusst getrennt: die eigene Weiterschauen-
-// Liste wird davon nicht angefasst. Die Meldungen liegen nur im Speicher - beim
-// naechsten Beitritt reicht das Relay den Stand des Raums ohnehin nach.
-function applyWatchpartyItems(eintraege) {
-  const eigenerName = String(watchpartySettings().deviceName || "").toLowerCase();
-  let geaendert = false;
+// Fortschritt eines Mitglieds einarbeiten. Das betrifft nur Serien, denen
+// dieses Geraet beigetreten ist - der Server schickt nichts anderes.
+function applyWatchpartyProgress(key, fortschritt) {
+  const eintrag = watchpartyShared.find((item) => item.key === key);
+  const lokal = favorites.find((favorite) => watchpartyKey(favorite) === key);
 
-  for (const remote of eintraege) {
-    if (!remote?.key || !remote?.url) continue;
-    // Der eigene Stand steht schon in der eigenen Liste.
-    if (eigenerName && String(remote.from || "").toLowerCase() === eigenerName) continue;
-
-    const bekannt = watchpartyShared.get(remote.key);
-    if (bekannt && (Date.parse(remote.updatedAt) || 0) <= (Date.parse(bekannt.updatedAt) || 0)) continue;
-    watchpartyShared.set(remote.key, remote);
-    geaendert = true;
+  if (!lokal) {
+    const provider = providerForWatchpartyUrl(fortschritt.url || eintrag?.url || "", eintrag?.providerName);
+    if (!provider) return;
+    const neu = createWatchpartyFavorite(key, eintrag, fortschritt, provider);
+    if (!neu) return;
+    favorites.unshift(neu);
+    console.log(`[ELFIX WATCHPARTY] ${neu.title} aus der Watchparty uebernommen`);
+    saveFavorites();
+    sendActiveState();
+    return;
   }
-  if (!geaendert) return;
 
-  // Nicht unbegrenzt wachsen lassen - aeltere Meldungen fallen hinten raus.
-  if (watchpartyShared.size > WATCHPARTY_MAX_ITEMS) {
-    const sortiert = [...watchpartyShared.entries()]
-      .sort((links, rechts) => Date.parse(rechts[1].updatedAt) - Date.parse(links[1].updatedAt));
-    watchpartyShared = new Map(sortiert.slice(0, WATCHPARTY_MAX_ITEMS));
+  const bekannt = Date.parse(lokal.lastWatchedAt || lokal.openedAt || 0) || 0;
+  if ((Date.parse(fortschritt.updatedAt) || 0) <= bekannt) return;
+
+  // Beim selben Anbieter passt die Adresse direkt, sonst wird nur die Folge
+  // auf den eigenen Anbieter umgeschrieben.
+  const gleicherAnbieter = providerModel.hostFromUrl(lokal.url).toLowerCase()
+    === providerModel.hostFromUrl(fortschritt.url || "").toLowerCase();
+  const ziel = gleicherAnbieter
+    ? fortschritt.url
+    : (fortschritt.season && fortschritt.episode ? replaceEpisodeUrl(lokal.url, fortschritt.season, fortschritt.episode) : "");
+
+  if (ziel && ziel !== lokal.url) {
+    lokal.url = ziel;
+    lokal.normalizedUrl = normalizeFavoriteUrl(ziel);
+    const identity = episodeIdentity(ziel);
+    lokal.season = identity?.season || fortschritt.season || lokal.season || 0;
+    lokal.episode = identity?.episode || fortschritt.episode || lokal.episode || 0;
   }
-  console.log(`[ELFIX WATCHPARTY] ${eintraege.length} Meldung(en) uebernommen`);
-  sendWatchpartyItems();
+  lokal.position = fortschritt.position;
+  lokal.currentTime = fortschritt.position;
+  lokal.duration = fortschritt.duration || lokal.duration;
+  lokal.progress = fortschritt.progress;
+  lokal.completed = fortschritt.completed;
+  lokal.episodeCompleted = fortschritt.episodeCompleted;
+  lokal.watched = true;
+  lokal.lastWatchedAt = fortschritt.updatedAt;
+  if (!lokal.completed && !lokal.episodeCompleted) {
+    lokal.continuePending = true;
+    lokal.hideFromContinueWatching = false;
+  }
+  console.log(`[ELFIX WATCHPARTY] ${lokal.title}: Stand von ${fortschritt.from || "einem Geraet"} uebernommen`);
+  saveFavorites();
+  sendActiveState();
 }
 
-// Fuer die Anzeige: neueste zuerst, dazu der eigene Anbieter, falls die Adresse
-// zu einer eingerichteten Seite passt.
+function createWatchpartyFavorite(key, eintrag, fortschritt, provider) {
+  const url = absoluteHttpUrl(fortschritt?.url || eintrag?.url || "", provider.startUrl || "");
+  if (!url) return null;
+  const identity = episodeIdentity(url);
+  return normalizeLoadedFavorite({
+    id: crypto.randomUUID(),
+    providerId: provider.id,
+    providerName: provider.name || eintrag?.providerName || "",
+    title: cleanTitle(eintrag?.title || url),
+    url,
+    normalizedUrl: normalizeFavoriteUrl(url),
+    favicon: "",
+    thumbnail: eintrag?.thumbnail || "",
+    logo: provider.logo || "",
+    favorite: false,
+    watched: true,
+    completed: Boolean(fortschritt?.completed),
+    episodeCompleted: Boolean(fortschritt?.episodeCompleted),
+    continuePending: !fortschritt?.completed && !fortschritt?.episodeCompleted,
+    completedEpisodes: [],
+    hideFromContinueWatching: false,
+    progress: sanitizeProgress(fortschritt?.progress),
+    duration: sanitizePositiveNumber(fortschritt?.duration),
+    position: sanitizePositiveNumber(fortschritt?.position),
+    currentTime: sanitizePositiveNumber(fortschritt?.position),
+    type: normalizeMediaType(eintrag?.type || inferMediaType(url)),
+    season: identity?.season || fortschritt?.season || 0,
+    episode: identity?.episode || fortschritt?.episode || 0,
+    createdAt: new Date().toISOString(),
+    lastWatchedAt: fortschritt?.updatedAt || new Date().toISOString(),
+    activity: []
+  });
+}
+
+// Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.
 function watchpartyItems() {
-  return [...watchpartyShared.values()]
-    .sort((links, rechts) => Date.parse(rechts.updatedAt || 0) - Date.parse(links.updatedAt || 0))
-    .map((eintrag) => ({
-      ...eintrag,
-      openable: Boolean(providerForWatchpartyUrl(eintrag.url, eintrag.providerName))
-    }));
+  return watchpartyShared.map((eintrag) => ({
+    ...eintrag,
+    openable: Boolean(providerForWatchpartyUrl(eintrag.url, eintrag.providerName))
+  }));
 }
 
 function sendWatchpartyItems() {
@@ -3755,14 +3865,12 @@ function sendWatchpartyItems() {
   mainWindow.webContents.send("watchparty:items", watchpartyItems());
 }
 
-// Einen geteilten Titel oeffnen: geht nur, wenn die Adresse zu einem der
-// eigenen Anbieter gehoert.
 async function openWatchpartyItem(key) {
-  const eintrag = watchpartyShared.get(String(key || ""));
+  const eintrag = watchpartyShared.find((item) => item.key === key);
   if (!eintrag) return activeState();
   const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
   if (!provider) return activeState();
-  await navigateProvider(provider, eintrag.url);
+  await navigateProvider(provider, eintrag.progress?.url || eintrag.url);
   return activeState();
 }
 
@@ -5759,7 +5867,8 @@ function normalizeSettings(raw) {
       enabled: raw?.watchparty?.enabled === true,
       serverUrl: String(raw?.watchparty?.serverUrl || defaults.watchparty.serverUrl).slice(0, 300).trim(),
       room: String(raw?.watchparty?.room || defaults.watchparty.room).slice(0, 64).trim(),
-      deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim()
+      deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
+      deviceId: String(raw?.watchparty?.deviceId || "").slice(0, 64) || crypto.randomUUID()
     },
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
@@ -5857,7 +5966,8 @@ function defaultSettings() {
       enabled: false,
       serverUrl: "",
       room: "",
-      deviceName: ""
+      deviceName: "",
+      deviceId: ""
     },
     home: {
       showHero: true,
