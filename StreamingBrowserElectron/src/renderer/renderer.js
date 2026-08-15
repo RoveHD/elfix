@@ -1387,6 +1387,52 @@ function renderWatchpartyItems() {
   watchpartyGrid.replaceChildren(...watchpartyItems.map(watchpartyCard));
 }
 
+// Wartet, bis der Raum die Aenderung zurueckgemeldet hat. Ohne das meldet die
+// Oberflaeche Erfolg, obwohl die Nachricht ins Leere gehen kann.
+function warteAufMitgliedschaft(key, sollDabeiSein, timeoutMs = 3000) {
+  const passt = () => Boolean(watchpartyItems.find((eintrag) => eintrag.key === key)?.joined) === sollDabeiSein;
+  return new Promise((fertig) => {
+    if (passt()) {
+      fertig(true);
+      return;
+    }
+    const start = Date.now();
+    const timer = window.setInterval(() => {
+      if (passt()) {
+        window.clearInterval(timer);
+        fertig(true);
+        return;
+      }
+      if (Date.now() - start >= timeoutMs) {
+        window.clearInterval(timer);
+        fertig(false);
+      }
+    }, 120);
+  });
+}
+
+function warteAufEntfernen(key, timeoutMs = 3000) {
+  return new Promise((fertig) => {
+    const weg = () => !watchpartyItems.some((eintrag) => eintrag.key === key);
+    if (weg()) {
+      fertig(true);
+      return;
+    }
+    const start = Date.now();
+    const timer = window.setInterval(() => {
+      if (weg()) {
+        window.clearInterval(timer);
+        fertig(true);
+        return;
+      }
+      if (Date.now() - start >= timeoutMs) {
+        window.clearInterval(timer);
+        fertig(false);
+      }
+    }, 120);
+  });
+}
+
 function watchpartyCard(item) {
   const card = document.createElement("div");
   card.className = `favorite-card watchparty-card${item.thumbnail ? " has-thumb" : ""}`;
@@ -1420,12 +1466,28 @@ function watchpartyCard(item) {
   beitreten.textContent = item.joined ? "Verlassen" : "Beitreten";
   beitreten.addEventListener("click", async (event) => {
     event.stopPropagation();
-    if (item.joined) {
-      await api.leaveWatchparty(item.key);
-      showToast(`„${item.title}“ verlassen`);
-    } else {
-      await api.enterWatchparty(item.key);
-      showToast(`„${item.title}“ beigetreten — ab jetzt läuft der Fortschritt zusammen`);
+    if (beitreten.disabled) return;
+    // Nicht der Stand vom Renderzeitpunkt zaehlt, sondern der aktuelle: sonst
+    // schickt ein zweiter Klick dieselbe Aktion noch einmal und schaltet
+    // zwischen beigetreten und verlassen hin und her.
+    const jetztDabei = Boolean(watchpartyItems.find((eintrag) => eintrag.key === item.key)?.joined);
+    beitreten.disabled = true;
+    try {
+      if (jetztDabei) {
+        await api.leaveWatchparty(item.key);
+      } else {
+        await api.enterWatchparty(item.key);
+      }
+      const bestaetigt = await warteAufMitgliedschaft(item.key, !jetztDabei);
+      if (!bestaetigt) {
+        showToast("Der Raum hat nicht geantwortet");
+      } else if (jetztDabei) {
+        showToast(`„${item.title}“ verlassen`);
+      } else {
+        showToast(`„${item.title}“ beigetreten — ab jetzt läuft der Fortschritt zusammen`);
+      }
+    } finally {
+      beitreten.disabled = false;
     }
   });
   aktionen.append(beitreten);
@@ -1455,7 +1517,15 @@ function watchpartyCard(item) {
     entfernen.textContent = "Entfernen";
     entfernen.addEventListener("click", async (event) => {
       event.stopPropagation();
-      await api.removeFromWatchparty(item.key);
+      if (entfernen.disabled) return;
+      entfernen.disabled = true;
+      try {
+        await api.removeFromWatchparty(item.key);
+        const weg = await warteAufEntfernen(item.key);
+        showToast(weg ? `„${item.title}“ aus der Watchparty genommen` : "Der Raum hat nicht geantwortet");
+      } finally {
+        entfernen.disabled = false;
+      }
     });
     aktionen.append(entfernen);
   }
