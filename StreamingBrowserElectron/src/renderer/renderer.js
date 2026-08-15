@@ -157,6 +157,9 @@ const watchpartyServer = document.querySelector("#watchpartyServer");
 const watchpartyRoom = document.querySelector("#watchpartyRoom");
 const watchpartyName = document.querySelector("#watchpartyName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
+const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
+const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
+let watchpartyLiveTimer = 0;
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
@@ -372,6 +375,7 @@ function bindEvents() {
   startDiscoverRefresh();
   document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
   api.onWatchpartyState?.(renderWatchpartyStatus);
+  api.onWatchpartyLive?.(showWatchpartyLive);
   api.onWatchpartyItems?.((items) => {
     watchpartyItems = Array.isArray(items) ? items : [];
     renderWatchpartyItems();
@@ -3438,4 +3442,19 @@ async function shareCurrentToWatchparty() {
     return;
   }
   showToast("Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
+}
+
+// Steuert gerade jemand anderes die Wiedergabe, sagt das ein Streifen ueber dem
+// Player. Er verschwindet von selbst, wenn eine Weile nichts mehr kommt.
+function showWatchpartyLive(info) {
+  if (!watchpartyLiveBanner || !info?.from) return;
+  const was = info.action === "pause" ? "hat pausiert"
+    : info.action === "play" ? "spielt weiter"
+    : "ist gesprungen";
+  if (watchpartyLiveText) watchpartyLiveText.textContent = `Live: ${info.from} ${was}`;
+  watchpartyLiveBanner.classList.remove("is-hidden");
+  window.clearTimeout(watchpartyLiveTimer);
+  watchpartyLiveTimer = window.setTimeout(() => {
+    watchpartyLiveBanner.classList.add("is-hidden");
+  }, 6000);
 }

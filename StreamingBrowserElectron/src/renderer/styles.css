@@ -413,6 +413,36 @@
   font-size: 12px;
 }
 
+/* Streifen ueber dem Player, wenn ein anderes Geraet die Wiedergabe steuert. */
+.watchparty-live-banner {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent, #4cc9f0) 22%, rgba(7, 10, 16, 0.92));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent, #4cc9f0) 45%, transparent);
+  color: #fff;
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  padding: 6px 14px;
+}
+
+.watchparty-live-banner.is-hidden {
+  display: none;
+}
+
+.watchparty-live-banner .live-dot {
+  background: var(--accent, #4cc9f0);
+  border-radius: 50%;
+  height: 8px;
+  width: 8px;
+  animation: elfix-live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes elfix-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
 /* Hinweis auf der Weiterschauen-Karte, wenn jemand aus der Watchparty gerade
    an diesem Titel dran ist. */
 .media-progress-live {

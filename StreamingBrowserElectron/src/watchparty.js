@@ -19,6 +19,7 @@ class Watchparty {
     this.aufFortschritt = optionen.onProgress || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
     this.aufKennung = optionen.onDeviceId || (() => {});
+    this.aufSteuerung = optionen.onControl || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse || globalThis.WebSocket;
 
     this.socket = null;
@@ -205,6 +206,10 @@ class Watchparty {
         this.aufZustand(this.eintraege());
         return;
       }
+      if (nachricht?.type === "control" && nachricht.key && nachricht.action) {
+        this.aufSteuerung(nachricht);
+        return;
+      }
       if (nachricht?.type === "progress" && nachricht.key && nachricht.progress) {
         // Der Fortschritt kommt getrennt vom Zustand. Ohne diese Uebernahme
         // zeigte die Karte weiter den Stand von vorhin - es wirkte, als
@@ -239,6 +244,12 @@ class Watchparty {
 
   entfernen(key) {
     this.senden({ type: "unshare", key });
+  }
+
+  // Pause, Weiter oder Springen an die anderen Beigetretenen schicken.
+  steuern(key, action, position) {
+    if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
+    this.senden({ type: "control", key, action, position });
   }
 
   // Ein Mitglied aus einer Serie werfen - nur fuer den, der sie eingestellt hat.

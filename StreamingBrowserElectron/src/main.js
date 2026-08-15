@@ -922,6 +922,13 @@ function getProviderView(provider) {
     const nachricht = typeof args[0] === "object" && args[0] !== null && "message" in args[0]
       ? args[0].message
       : args[1];
+    // Live zuschauen: Pause, Weiter und Springen sofort an die anderen melden.
+    const live = String(nachricht || "").match(/^__elfix:wp:(play|pause|seek):(\d+)$/);
+    if (live) {
+      const key = watchpartyLiveKeyForUrl(view.webContents.getURL());
+      if (key) watchparty.steuern(key, live[1], Number(live[2]));
+      return;
+    }
     const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
     if (!treffer) return;
     logNextEpisode(provider, "Knopf/Countdown ausgeloest");
@@ -1073,6 +1080,7 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // Steht ein Sprung aus der Watchparty an, wird er eingeloest, sobald das
   // Video wirklich laeuft.
   await applyWatchpartySeek(provider, view, progress).catch(() => {});
+  await installWatchpartyControls(provider, view, url).catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -3787,6 +3795,7 @@ const watchparty = new Watchparty({
     sendWatchpartyItems();
   },
   onProgress: (key, fortschritt) => applyWatchpartyProgress(key, fortschritt),
+  onControl: (nachricht) => applyWatchpartyControl(nachricht).catch(() => {}),
   onStatus: (status) => {
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt.
@@ -4067,6 +4076,101 @@ async function openWatchpartyItem(key) {
   await navigateProvider(provider, url);
   scheduleProviderAutoplay(provider, activeView, { fullscreen: true });
   return activeState();
+}
+
+// --- Live zuschauen ----------------------------------------------------------
+// Pause, Weiter und Springen gelten fuer alle Beigetretenen. Dafuer horcht ein
+// kleines Skript im Player-Frame auf die Ereignisse des Videos und meldet sie
+// ueber die Konsole zurueck - denselben Rueckkanal nutzt schon der
+// "Naechste Folge"-Knopf.
+function watchpartyControlScript() {
+  return `(() => {
+    if (window.__elfixWpInstalled) return "schon-da";
+    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
+    if (!medien.length) return "kein-video";
+    window.__elfixWpInstalled = true;
+    window.__elfixWpQuiet = 0;
+
+    const melden = (aktion, media) => {
+      // Waehrend eine fremde Anweisung ausgefuehrt wird, schweigt das Geraet -
+      // sonst schaukeln sich zwei Player gegenseitig auf.
+      if (Date.now() < Number(window.__elfixWpQuiet || 0)) return;
+      console.log("__elfix:wp:" + aktion + ":" + Math.round(Number(media.currentTime) || 0));
+    };
+    for (const media of medien) {
+      media.addEventListener("play", () => melden("play", media));
+      media.addEventListener("pause", () => melden("pause", media));
+      media.addEventListener("seeked", () => melden("seek", media));
+    }
+    return "installiert";
+  })()`;
+}
+
+// Ein Befehl von aussen. Waehrend er ausgefuehrt wird, meldet dieses Geraet
+// selbst nichts zurueck.
+function watchpartyApplyScript(action, position) {
+  return `(() => {
+    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
+    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return "kein-video";
+    window.__elfixWpQuiet = Date.now() + 2000;
+    try {
+      const ziel = ${Number(position) || 0};
+      if ("${action}" === "seek" || Math.abs(Number(media.currentTime) - ziel) > 4) {
+        if (ziel > 0 && ziel < media.duration - 2) media.currentTime = ziel;
+      }
+      if ("${action}" === "pause") {
+        media.pause();
+        return "pausiert";
+      }
+      if ("${action}" === "play") {
+        const p = media.play();
+        if (p && typeof p.then === "function") p.catch(() => {});
+        return "laeuft";
+      }
+      return "gesprungen";
+    } catch (_) {
+      return "fehlgeschlagen";
+    }
+  })()`;
+}
+
+// Nur solange der Anbieter eine beigetretene Folge zeigt, wird mitgesteuert.
+function watchpartyLiveKeyForUrl(url) {
+  const treffer = watchpartyShared.find((eintrag) => {
+    if (!eintrag.joined) return false;
+    return taste.urlSchluessel(eintrag.progress?.url || eintrag.url) === taste.urlSchluessel(url);
+  });
+  return treffer?.key || "";
+}
+
+async function installWatchpartyControls(provider, view, url) {
+  if (!watchparty.aktiv || !watchpartyLiveKeyForUrl(url)) return;
+  await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);
+}
+
+async function applyWatchpartyControl(nachricht) {
+  const eintrag = watchpartyShared.find((item) => item.key === nachricht.key);
+  if (!eintrag) return;
+
+  // Nur anwenden, wo die passende Folge auch wirklich offen ist.
+  for (const [providerId, view] of providerViews) {
+    if (!isLiveView(view)) continue;
+    const offen = view.webContents.getURL();
+    if (taste.urlSchluessel(offen) !== taste.urlSchluessel(eintrag.progress?.url || eintrag.url)) continue;
+    const provider = providers.find((item) => item.id === providerId);
+    await executeJavaScriptInMediaFrames(view, watchpartyApplyScript(nachricht.action, nachricht.position)).catch(() => []);
+    if (provider) {
+      logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
+    }
+    sendWatchpartyLive({ key: nachricht.key, from: nachricht.from, action: nachricht.action });
+  }
+}
+
+// Die Oberflaeche zeigt an, wer gerade steuert.
+function sendWatchpartyLive(info) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("watchparty:live", info);
 }
 
 // Ein offener Sprungwunsch je Anbieter. Er wird eingeloest, sobald tatsaechlich

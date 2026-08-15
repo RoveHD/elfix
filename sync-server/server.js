@@ -322,6 +322,31 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    // Live-Steuerung: Pause, Weiter und Springen werden sofort an die anderen
+    // Beigetretenen durchgereicht. Nichts davon wird gespeichert - es zaehlt
+    // nur der Moment.
+    if (nachricht.type === "control") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      const aktion = text(nachricht.action, 10);
+      if (!["play", "pause", "seek"].includes(aktion)) return;
+
+      const daten = JSON.stringify({
+        type: "control",
+        key: eintrag.key,
+        action: aktion,
+        position: zahl(nachricht.position, 100000),
+        from: socket.name,
+        at: Date.now()
+      });
+      for (const client of wss.clients) {
+        if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
+        if (!eintrag.members.has(client.geraetId)) continue;
+        client.send(daten);
+      }
+      return;
+    }
+
     if (nachricht.type === "unshare") {
       const key = text(nachricht.key, 300);
       const eintrag = raum.titel.get(key);
