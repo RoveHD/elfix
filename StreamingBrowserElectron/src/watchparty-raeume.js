@@ -13,6 +13,7 @@
 // geht an jeden Raum, in dem dieser Titel beigetreten ist - schaut man
 // dieselbe Serie in zwei Raeumen mit, laeuft beides mit.
 
+const crypto = require("crypto");
 const { Watchparty } = require("./watchparty");
 
 class WatchpartyRaeume {
@@ -48,8 +49,20 @@ class WatchpartyRaeume {
   konfigurieren({ enabled, serverUrl, rooms, room, name, deviceId }) {
     this.serverUrl = String(serverUrl || "").trim();
     this.name = String(name || "").slice(0, 40);
-    this.geraetId = String(deviceId || "").slice(0, 64);
     this.eingeschaltet = Boolean(enabled) && Boolean(this.serverUrl);
+
+    // Alle Raeume brauchen dieselbe Kennung. Ohne eigene holt sich jede
+    // Verbindung eine vom Relay - und zwar jede eine andere. Dann gilt man in
+    // einem Raum als dabei und im naechsten als fremdes Geraet: der Beitritt
+    // im einen Raum warf einen aus dem anderen. Also lieber hier eine
+    // erzeugen und einmal nach oben melden, damit sie erhalten bleibt.
+    const gewuenschteKennung = String(deviceId || "").slice(0, 64);
+    if (gewuenschteKennung) {
+      this.geraetId = gewuenschteKennung;
+    } else if (!this.geraetId) {
+      this.geraetId = crypto.randomUUID();
+      this.aufKennung(this.geraetId);
+    }
 
     const gewuenscht = raumcodesAufraeumen(rooms?.length ? rooms : [room]);
 

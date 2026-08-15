@@ -279,6 +279,29 @@ function hostSicherstellen(raumcode, eintrag) {
 // Ein Geraet, das neu installiert wurde, meldet sich mit derselben Bezeichnung,
 // aber neuer Kennung. Ohne diese Uebernahme stuende es doppelt in der Liste und
 // muesste ueberall neu beitreten.
+// Benennt jemand sein Geraet um, bleibt es dasselbe Geraet: die Kennung ist
+// dieselbe, also wird ueberall nur der Name nachgezogen. Ohne das stand in den
+// Mitgliederlisten weiter der alte Name, und niemand wusste, wer gemeint ist.
+function namenNachziehen(raum, geraetId, name) {
+  if (!geraetId || !name) return false;
+  let geaendert = false;
+  for (const eintrag of raum.titel.values()) {
+    if (eintrag.members.has(geraetId) && eintrag.members.get(geraetId) !== name) {
+      eintrag.members.set(geraetId, name);
+      geaendert = true;
+    }
+    if (eintrag.hostId === geraetId && eintrag.hostName !== name) {
+      eintrag.hostName = name;
+      geaendert = true;
+    }
+    if (eintrag.addedById === geraetId && eintrag.addedBy !== name) {
+      eintrag.addedBy = name;
+      geaendert = true;
+    }
+  }
+  return geaendert;
+}
+
 function kennungUebernehmen(raum, geraetId, name) {
   if (!name) return false;
   let geaendert = false;
@@ -343,6 +366,7 @@ wss.on("connection", (socket) => {
       socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
       const raum = raumHolen(socket.raum);
       kennungUebernehmen(raum, socket.geraetId, socket.name);
+      namenNachziehen(raum, socket.geraetId, socket.name);
       for (const eintrag of raum.titel.values()) hostSicherstellen(socket.raum, eintrag);
       zustandSenden(socket.raum);
       return;

@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   browserCommand: (command) => ipcRenderer.invoke("browser:command", command),
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),
   removeFavorite: (id) => ipcRenderer.invoke("favorites:remove", id),
+  removeFromLibrary: (id) => ipcRenderer.invoke("library:remove", id),
+  reorderLibrary: (ids) => ipcRenderer.invoke("library:reorder", ids),
   hideFromContinue: (id) => ipcRenderer.invoke("continue:hide", id),
   clearHistory: () => ipcRenderer.invoke("history:clear"),
   openFavorite: (id, options = {}) => ipcRenderer.invoke("favorites:open", id, options),

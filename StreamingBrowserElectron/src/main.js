@@ -635,6 +635,33 @@ ipcMain.handle("favorites:remove", (_event, favoriteId) => {
   return favorites;
 });
 
+// Aus der Mediathek loeschen heisst wirklich loeschen: "favorites:remove"
+// nimmt einen geschauten Titel nur aus der Watchlist, er stuende danach
+// weiterhin als abgeschlossen in der Mediathek.
+ipcMain.handle("library:remove", (_event, favoriteId) => {
+  const index = favorites.findIndex((favorite) => favorite.id === favoriteId);
+  if (index < 0) return { favorites, removed: false };
+  const [weg] = favorites.splice(index, 1);
+  if (activeFavoriteId === favoriteId) activeFavoriteId = null;
+  saveFavorites();
+  sendActiveState();
+  console.log(`[ELFIX] ${weg?.title || favoriteId} aus der Mediathek geloescht`);
+  return { favorites, removed: true };
+});
+
+// Die selbst gelegte Reihenfolge der Mediathek. Gespeichert wird sie am
+// Eintrag: so verschwindet sie mit ihm und ueberlebt jeden Neustart.
+ipcMain.handle("library:reorder", (_event, ids) => {
+  const liste = Array.isArray(ids) ? ids.map((wert) => String(wert || "")) : [];
+  if (!liste.length) return favorites;
+  liste.forEach((id, stelle) => {
+    const favorite = favorites.find((item) => item.id === id);
+    if (favorite) favorite.libraryOrder = stelle;
+  });
+  saveFavorites();
+  return favorites;
+});
+
 ipcMain.handle("continue:hide", (_event, favoriteId) => {
   const favorite = favorites.find((item) => item.id === favoriteId);
   if (!favorite) return favorites;
@@ -2965,7 +2992,11 @@ function isStalledSeriesFavorite(favorite) {
   const identity = episodeIdentity(favorite.url || "");
   const finalSeason = sanitizePositiveNumber(favorite.finalSeason);
   const finalEpisode = sanitizePositiveNumber(favorite.finalEpisode);
-  if (!identity || !finalSeason || !finalEpisode) return false;
+  if (!identity || !finalSeason) return false;
+  // Vor der letzten Staffel kommt sicher noch etwas - dafuer muss die
+  // Folgenzahl der letzten Staffel nicht bekannt sein.
+  if (identity.season < finalSeason) return true;
+  if (!finalEpisode) return false;
   return compareEpisodeIdentity(identity, { key: identity.key, season: finalSeason, episode: finalEpisode }) < 0;
 }
 
@@ -2979,6 +3010,20 @@ function seriesRepairCandidates() {
       Date.parse(rechts.lastWatchedAt || rechts.openedAt || 0) - Date.parse(links.lastWatchedAt || links.openedAt || 0)
     ))
     .slice(0, 8);
+}
+
+// Meldet die Watchparty eine zu Ende geschaute Folge, muss der eigene Eintrag
+// nachruecken - sonst faellt der Titel aus "Weiterschauen", bis die App das
+// naechste Mal startet. Gesammelt, weil dafuer Staffelseiten geladen werden.
+let watchpartyReparaturTimer = 0;
+
+function repariereFolgestaendeSpaeter() {
+  if (watchpartyReparaturTimer) return;
+  watchpartyReparaturTimer = setTimeout(() => {
+    watchpartyReparaturTimer = 0;
+    repairStalledSeriesFavorites().catch(() => {});
+  }, 4000);
+  watchpartyReparaturTimer.unref?.();
 }
 
 // Beim Start einsammeln, was schieflaufen konnte: Eintraege, die auf einer
@@ -3117,7 +3162,7 @@ function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null, met
   if (!currentIdentity) return "";
   const finalSeason = sanitizePositiveNumber(entry?.finalSeason);
   const finalEpisode = sanitizePositiveNumber(entry?.finalEpisode);
-  if (!finalSeason || !finalEpisode) return "";
+  if (!finalSeason) return "";
   if (currentIdentity.season > finalSeason) return "";
 
   // In der letzten Staffel endet die Serie mit der letzten Folge. In frueheren
@@ -3125,6 +3170,11 @@ function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null, met
   // weiter. Fehlt die Folgenzahl der laufenden Staffel noch, wird einfach
   // hochgezaehlt; die Staffeluebersicht liefert sie kurz darauf nach.
   const istLetzteStaffel = currentIdentity.season === finalSeason;
+  // Nur in der letzten Staffel entscheidet diese Zahl darueber, ob ueberhaupt
+  // noch etwas kommt. Vorher ist sie ohne Belang: wer in Staffel 1 von 25
+  // steht, hat sicher eine naechste Folge. Frueher blockierte sie jedes
+  // Nachruecken, solange die letzte Staffel nie geoeffnet worden war.
+  if (istLetzteStaffel && !finalEpisode) return "";
   const staffelEnde = istLetzteStaffel
     ? finalEpisode
     : sanitizePositiveNumber(meta?.seasonLastEpisode);
@@ -4056,6 +4106,7 @@ function applyWatchpartyProgress(key, fortschritt, room) {
     console.log(`[ELFIX WATCHPARTY] ${neu.title} aus der Watchparty uebernommen`);
     saveFavorites();
     sendActiveState();
+    if (neu.episodeCompleted) repariereFolgestaendeSpaeter();
     return;
   }
 
@@ -4097,6 +4148,9 @@ function applyWatchpartyProgress(key, fortschritt, room) {
   console.log(`[ELFIX WATCHPARTY] ${lokal.title}: Stand von ${fortschritt.from || "einem Geraet"} uebernommen`);
   saveFavorites();
   sendActiveState();
+  // Hat das andere Geraet die Folge zu Ende geschaut, gehoert der eigene
+  // Eintrag auf die naechste - sonst verschwindet er aus "Weiterschauen".
+  if (lokal.episodeCompleted && !lokal.completed) repariereFolgestaendeSpaeter();
 }
 
 function createWatchpartyFavorite(key, eintrag, fortschritt, provider) {
@@ -5331,6 +5385,11 @@ function loadFavorites() {
       finalEpisode: sanitizePositiveNumber(favorite.finalEpisode),
       lastWatchedAt: String(favorite.lastWatchedAt || ""),
       completedAt: String(favorite.completedAt || ""),
+      // Selbst gelegte Stelle in der Mediathek. Ohne diese Zeile faellt sie
+      // beim Laden weg, weil hier nur bekannte Felder uebernommen werden.
+      libraryOrder: Number.isFinite(Number(favorite.libraryOrder)) && Number(favorite.libraryOrder) >= 0
+        ? Number(favorite.libraryOrder)
+        : null,
       activity: normalizeActivity(favorite.activity),
       createdAt: String(favorite.createdAt || new Date().toISOString()),
       openedAt: String(favorite.openedAt || ""),
@@ -6556,7 +6615,12 @@ function normalizeSettings(raw) {
         ...defaults.watchparty.rooms
       ]).slice(0, WATCHPARTY_MAX_RAEUME),
       deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
-      deviceId: String(raw?.watchparty?.deviceId || "").slice(0, 64) || crypto.randomUUID()
+      // Erst die mitgeschickte Kennung, dann die bereits bekannte - eine neue
+      // nur, wenn dieses Geraet wirklich noch keine hat. Kaeme hier bei jedem
+      // Speichern eine frische heraus, waere das Geraet fuer die Raeume jedes
+      // Mal ein anderes und muesste ueberall neu beitreten.
+      deviceId: String(raw?.watchparty?.deviceId || settings?.watchparty?.deviceId || "").slice(0, 64)
+        || crypto.randomUUID()
     },
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,

@@ -1607,6 +1607,28 @@ h1 {
   color: #ffd9de;
 }
 
+/* Mehrere Eintraege im Menue brauchen Luft dazwischen. */
+.favorite-actions button + button {
+  margin-top: 6px;
+}
+
+.favorite-actions button.is-danger {
+  background: color-mix(in srgb, var(--error) 22%, transparent);
+  color: #ffe3e6;
+}
+
+/* Umsortieren in der Mediathek: die gezogene Karte bleibt sichtbar, liegt
+   aber blass unter dem Zeiger, damit die Luecke erkennbar ist. */
+.favorite-grid.is-sorting .favorite-card {
+  cursor: grabbing;
+}
+
+.favorite-card.is-dragging {
+  opacity: 0.45;
+  outline: 2px dashed var(--focus);
+  outline-offset: -4px;
+}
+
 .text-action {
   color: #dfe6f3;
 }

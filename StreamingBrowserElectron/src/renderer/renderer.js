@@ -1552,8 +1552,12 @@ function watchpartyCard(item) {
     mitgliederZeile.textContent = "noch niemand dabei";
   } else {
     // Der Host gibt beim Abgleichen den Takt vor - deshalb steht er dabei.
+    // Ueber die Kennung, nicht ueber den Namen: zwei Geraete koennen gleich
+    // heissen, und ein Namenstreffer verdeckt, dass man selbst gar nicht
+    // dabei ist. Nur wenn das Relay keine Kennung liefert, zaehlt der Name.
+    const binHost = item.hostId ? item.hostId === item.myId : Boolean(item.hostName) && item.hostName === item.myName;
     const hostHinweis = item.hostName
-      ? `${item.hostName === item.myName ? "du bist Host" : `Host: ${item.hostName}`} · `
+      ? `${binHost ? "du bist Host" : `Host: ${item.hostName}`} · `
       : "";
     mitgliederZeile.append(`${hostHinweis}${mitglieder.length} dabei: `);
     mitglieder.forEach((name, index) => {
@@ -1809,8 +1813,12 @@ function renderFavorites() {
 
 function renderLibraryViews() {
   const libraryItems = libraryEntries();
-  libraryGrid?.replaceChildren(...libraryItems.map((favorite) => favoriteCard(favorite, false)));
+  libraryGrid?.replaceChildren(...libraryItems.map((favorite) => favoriteCard(favorite, false, {
+    allowLibraryRemove: true,
+    sortable: true
+  })));
   libraryEmpty?.classList.toggle("is-hidden", libraryItems.length > 0);
+  macheMediathekSortierbar();
 
   const continueItems = continueEntries();
   continueGrid?.replaceChildren(...continueItems.map((favorite) => favoriteCard(favorite, false, {
@@ -1825,6 +1833,67 @@ function renderLibraryViews() {
   historyList?.replaceChildren(...historyItems.map(historyRow));
   historyEmpty?.classList.toggle("is-hidden", historyItems.length > 0);
   updateHistoryClearVisibility(historyItems.length);
+}
+
+// Karten der Mediathek lassen sich mit der Maus umsortieren. Die Vorschau
+// laeuft im DOM mit, damit man beim Ziehen sieht, wo die Karte landet;
+// gespeichert wird erst beim Loslassen.
+let mediathekZiehtId = "";
+let mediathekZuletztGezogen = 0;
+
+function macheMediathekSortierbar() {
+  if (!libraryGrid || libraryGrid.dataset.sortierbar === "ja") return;
+  libraryGrid.dataset.sortierbar = "ja";
+
+  libraryGrid.addEventListener("dragstart", (event) => {
+    const karte = event.target.closest(".favorite-card");
+    if (!karte?.dataset.favoriteId) return;
+    mediathekZiehtId = karte.dataset.favoriteId;
+    karte.classList.add("is-dragging");
+    libraryGrid.classList.add("is-sorting");
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      // Ohne Nutzlast bricht Firefox das Ziehen sofort ab.
+      event.dataTransfer.setData("text/plain", mediathekZiehtId);
+    }
+  });
+
+  libraryGrid.addEventListener("dragover", (event) => {
+    if (!mediathekZiehtId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    const gezogen = libraryGrid.querySelector(".favorite-card.is-dragging");
+    const ueber = event.target.closest(".favorite-card");
+    if (!gezogen || !ueber || ueber === gezogen) return;
+    // Vor oder hinter die Karte, je nachdem, auf welcher Haelfte man steht.
+    const kasten = ueber.getBoundingClientRect();
+    const dahinter = event.clientX > kasten.left + kasten.width / 2;
+    libraryGrid.insertBefore(gezogen, dahinter ? ueber.nextSibling : ueber);
+  });
+
+  libraryGrid.addEventListener("drop", (event) => {
+    if (mediathekZiehtId) event.preventDefault();
+  });
+
+  libraryGrid.addEventListener("dragend", () => {
+    const gezogen = libraryGrid.querySelector(".favorite-card.is-dragging");
+    gezogen?.classList.remove("is-dragging");
+    libraryGrid.classList.remove("is-sorting");
+    if (!mediathekZiehtId) return;
+    mediathekZiehtId = "";
+    // Der Klick nach dem Loslassen darf den Titel nicht oeffnen.
+    mediathekZuletztGezogen = Date.now();
+    mediathekReihenfolgeSpeichern();
+  });
+}
+
+async function mediathekReihenfolgeSpeichern() {
+  const ids = [...libraryGrid.querySelectorAll(".favorite-card")]
+    .map((karte) => karte.dataset.favoriteId)
+    .filter(Boolean);
+  if (!ids.length) return;
+  const gespeichert = await api.reorderLibrary?.(ids).catch(() => null);
+  if (Array.isArray(gespeichert)) favorites = gespeichert;
 }
 
 function confirmAction({ eyebrow = "ELFIX", title, copy = "", confirmLabel = "Löschen", cancelLabel = "Abbrechen" }) {
@@ -1874,7 +1943,14 @@ function favoriteEntries() {
 function libraryEntries() {
   return favorites
     .filter((item) => item.completed)
-    .sort((left, right) => favoriteTimestamp(right) - favoriteTimestamp(left));
+    // Selbst gelegte Reihenfolge zuerst. Frisch abgeschlossene haben noch
+    // keine Stelle und stehen oben, damit sie nicht unten untergehen.
+    .sort((left, right) => {
+      const links = Number.isFinite(Number(left.libraryOrder)) ? Number(left.libraryOrder) : -1;
+      const rechts = Number.isFinite(Number(right.libraryOrder)) ? Number(right.libraryOrder) : -1;
+      if (links !== rechts) return links - rechts;
+      return favoriteTimestamp(right) - favoriteTimestamp(left);
+    });
 }
 
 function continueEntries() {
@@ -2041,6 +2117,9 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     ${progressMarkup(favorite, options)}
   `;
   card.addEventListener("click", async () => {
+    // Nach dem Umsortieren kommt noch ein Klick hinterher - der soll den
+    // Titel nicht oeffnen.
+    if (options.sortable && Date.now() - mediathekZuletztGezogen < 400) return;
     await openFavoriteEntry(favorite, {
       autoplay: Boolean(options.autoplay),
       fullscreen: Boolean(options.fullscreen)
@@ -2053,7 +2132,13 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     }
   });
 
-  if (allowRemove || options.allowContinueRemove) {
+  if (options.sortable) {
+    card.draggable = true;
+    card.dataset.favoriteId = favorite.id;
+    card.title = "Zum Umsortieren ziehen";
+  }
+
+  if (allowRemove || options.allowContinueRemove || options.allowLibraryRemove) {
     const menu = document.createElement("button");
     menu.className = "favorite-menu";
     menu.type = "button";
@@ -2091,6 +2176,35 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         showToast("Weiterschauen auf Anfang zurueckgesetzt");
       });
       actions.append(hideContinue);
+    }
+    if (options.allowLibraryRemove) {
+      const loeschen = document.createElement("button");
+      loeschen.type = "button";
+      loeschen.className = "is-danger";
+      loeschen.textContent = "Aus Mediathek löschen";
+      loeschen.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        actions.classList.remove("is-open");
+        const titel = displayFavoriteTitle(favorite);
+        const bestaetigt = await confirmAction({
+          eyebrow: "Mediathek",
+          title: `„${titel}“ löschen?`,
+          copy: "Der Eintrag wird mitsamt Fortschritt und Verlauf entfernt. Der Titel selbst bleibt beim Anbieter natürlich bestehen."
+        });
+        if (!bestaetigt) return;
+        const ergebnis = await api.removeFromLibrary?.(favorite.id).catch(() => null);
+        if (!ergebnis?.removed) {
+          showToast("Konnte nicht gelöscht werden");
+          return;
+        }
+        favorites = ergebnis.favorites || favorites;
+        renderFavorites();
+        renderHome();
+        renderLibraryViews();
+        renderFavoriteToggle();
+        showToast(`„${titel}“ gelöscht`);
+      });
+      actions.append(loeschen);
     }
     card.append(menu, actions);
   }
@@ -2574,7 +2688,12 @@ async function saveSettings() {
     // Was noch im Eingabefeld steht, zaehlt mit: sonst geht ein eben getippter
     // Code verloren, nur weil "Raum hinzufügen" nicht gedrueckt wurde.
     rooms: raumcodes([...watchpartyRaeume, watchpartyRoom ? watchpartyRoom.value : ""]),
-    deviceName: watchpartyName ? watchpartyName.value.trim() : ""
+    deviceName: watchpartyName ? watchpartyName.value.trim() : "",
+    // Die Kennung gehoert nicht ins Formular, muss aber mit: ohne sie bekommt
+    // das Geraet beim Speichern eine neue und faellt in jedem Raum aus seinen
+    // Mitgliedschaften - es steht dann mit altem Namen, aber fremder Kennung
+    // in den Listen und muss ueberall neu beitreten.
+    deviceId: settings.watchparty?.deviceId || ""
   };
   settings.appearance = {
     settingsMode: "advanced",
@@ -2793,7 +2912,14 @@ async function resetSettingsSection(section) {
   } else if (section === "appearance") {
     settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };
   } else if (section === "watchparty") {
-    settings.watchparty = { enabled: false, serverUrl: "", rooms: [], deviceName: "" };
+    // Auch beim Zuruecksetzen bleibt die Kennung dieses Geraets bestehen.
+    settings.watchparty = {
+      enabled: false,
+      serverUrl: "",
+      rooms: [],
+      deviceName: "",
+      deviceId: settings.watchparty?.deviceId || ""
+    };
     watchpartyRaeume = [];
   }
   renderSettings();
