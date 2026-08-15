@@ -1,8 +1,18 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, session, shell, dialog } = require("electron");
+const { app, BrowserWindow, WebContentsView, ipcMain, net, session, shell, dialog } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
-const { extractDiscoverItems, extractPosterFallbacks } = require("./discover");
+const {
+  extractDiscoverItems,
+  extractPosterFallbacks,
+  extractNewReleaseItems,
+  extractHeroItem,
+  extractUnplayableEpisodes,
+  extractGenres,
+  extractCatalogItems,
+  extractRelatedItems
+} = require("./discover");
+const taste = require("./taste");
 const providerModel = require("../shared/provider-model");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -11,6 +21,7 @@ const PROVIDER_FILE = path.join(DATA_DIR, "providers.json");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const FILTER_CACHE_FILE = path.join(DATA_DIR, "filter-cache.json");
 const FAVORITES_FILE = path.join(DATA_DIR, "favorites.json");
+const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
 const MAX_MEDIA_LOG = 300;
@@ -57,10 +68,29 @@ const blockedRequests = [];
 const mediaDiagnostics = [];
 const mediaConsoleLogState = new Map();
 const discoverCache = new Map();
+const seasonInfoCache = new Map();
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
-const DISCOVER_CACHE_MS = 30 * 60 * 1000;
+const DISCOVER_CACHE_MS = 15 * 60 * 1000;
+const SEASON_INFO_CACHE_MS = 6 * 60 * 60 * 1000;
+// Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
+const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
+const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
+const TASTE_HISTORY_SIZE = 12;
+const TASTE_ENRICH_LIMIT = 18;
+// So viele Titel je Anbieter zeigt bereits die Reihe "Neu bei deinen Anbietern".
+const TASTE_NEW_OFFSET = 6;
+const TASTE_FETCH_PARALLEL = 4;
+let tasteCache = null;
+let tasteSaveTimer = 0;
+let personalPending = null;
+let personalCache = { at: 0, items: [] };
+const PERSONAL_CACHE_MS = 15 * 60 * 1000;
+const PERSONAL_POOL_SIZE = 150;
+// So viele Titel gehen an "Empfohlen fuer dich"; die Kategoriereihen bedienen
+// sich erst danach.
+const PERSONAL_MAIN_SIZE = 24;
 const autoplayConsoleLogState = new Map();
 const AUTOPLAY_POLL_MS = 700;
 const NEXT_EPISODE_PROMPT_PERCENT = 90;
@@ -105,6 +135,8 @@ app.whenReady().then(async () => {
   installAdblock();
   createMainWindow();
   setupAutoUpdater();
+  // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
+  repairStalledSeriesFavorites().catch(() => {});
 });
 
 app.on("window-all-closed", () => {
@@ -429,6 +461,12 @@ ipcMain.handle("provider:navigate", async (_event, providerId, url) => {
 });
 
 ipcMain.handle("search:all", async (_event, query) => searchAllProviders(query));
+
+ipcMain.handle("discover:personal", async (_event, options = {}) => {
+  const limit = sanitizeNumber(options?.limit, 6, 40, 24);
+  const type = sanitizeChoice(options?.type, ["anime", "serie", "film"], "");
+  return collectPersonalRecommendations(limit, Boolean(options?.refresh), type, options?.excludeMain !== false);
+});
 
 ipcMain.handle("discover:recommendations", async (_event, options = {}) => {
   const proAnbieter = Math.max(2, Math.min(12, Number(options?.perProvider) || 6));
@@ -957,6 +995,7 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
 
   if (!progress || !isValidMediaProgress(progress)) return;
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
+  applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
     currentTime: progress.currentTime,
     position: progress.currentTime,
@@ -970,7 +1009,10 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
     favicon: pageMeta.favicon,
     nextUrl: progress.nextUrl || "",
     finalSeason: pageMeta.finalSeason,
-    finalEpisode: pageMeta.finalEpisode
+    finalEpisode: pageMeta.finalEpisode,
+    finalEpisodeTrimmed: pageMeta.finalEpisodeTrimmed,
+    unplayableSeason: pageMeta.unplayableSeason,
+    unplayableEpisodes: pageMeta.unplayableEpisodes
   }, {
     label: progress.ended ? "Abgeschlossen" : undefined,
     updateFavoriteUrl: false
@@ -989,7 +1031,7 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   let naechste = "";
   if (fastFertig || amEnde) {
     const ausDerSeite = progress.nextUrl ? "" : await readNextEpisodeLink(view);
-    naechste = nextEpisodeContinueUrl(url, progress.nextUrl || ausDerSeite, entry);
+    naechste = nextEpisodeContinueUrl(url, progress.nextUrl || ausDerSeite, entry, pageMeta);
   }
 
   // Folge durchgelaufen: Countdown einblenden, der von selbst weiterschaltet.
@@ -2598,7 +2640,7 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   applyFavoriteSeriesBounds(entry, meta, url);
   const wholeItemCompleted = isWholeMediaCompleted(entry, url, mediaEnded);
   const shouldAdvanceEpisode = Boolean(mediaEnded && !wholeItemCompleted && identity && (entry.type === "serie" || inferMediaType(url) === "serie"));
-  const nextContinueUrl = shouldAdvanceEpisode ? nextEpisodeContinueUrl(url, meta.nextUrl, entry) : "";
+  const nextContinueUrl = shouldAdvanceEpisode ? nextEpisodeContinueUrl(url, meta.nextUrl, entry, meta) : "";
   let advancedToNextEpisode = false;
   entry.completed = Boolean(entry.completed || wholeItemCompleted);
   if (hasMediaProgress) {
@@ -2741,14 +2783,192 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
   return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
 }
 
-function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null) {
+// Auf der Episodenseite steht die Folgenliste nicht - dort ist nicht zu sehen,
+// dass die hinteren Nummern nur Hinweise auf eine zusammengefasste Folge sind.
+// Die Staffeluebersicht weiss es und wird einmal je Staffel nachgeladen. Der
+// Abruf laeuft nebenher: der Fortschritts-Takt soll nicht darauf warten.
+function seasonPageUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    url.hash = "";
+    url.search = "";
+    const pfad = url.pathname.replace(/\/(?:episode|folge)-\d+\/?$/i, "");
+    if (pfad === url.pathname || !/\/(?:staffel|season)-\d+$/i.test(pfad)) return "";
+    url.pathname = pfad;
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+// Wartende Fassung fuer Aufrufer, die nicht im Fortschritts-Takt haengen.
+async function seasonPlaybackInfoAsync(url) {
+  const seasonUrl = seasonPageUrl(url);
+  if (!seasonUrl) return null;
+  const gespeichert = seasonInfoCache.get(seasonUrl);
+  if (gespeichert?.info && Date.now() - gespeichert.at < SEASON_INFO_CACHE_MS) return gespeichert.info;
+
+  const seite = await fetchProviderHtml(seasonUrl).catch(() => null);
+  const info = seite ? extractUnplayableEpisodes(seite.html) : null;
+  seasonInfoCache.set(seasonUrl, { at: Date.now(), info });
+  return info;
+}
+
+// Eine Folge war zu Ende, eine naechste wurde aber nie gesetzt: der Eintrag
+// verschwindet dann aus "Weiterschauen", ohne in der Mediathek zu landen.
+// Solche Faelle stammen aus der Zeit, als am Ende einer Staffel nicht in die
+// naechste gewechselt wurde - beim Start werden sie eingesammelt.
+function isStalledSeriesFavorite(favorite) {
+  if (!favorite || favorite.completed || !favorite.episodeCompleted) return false;
+  const identity = episodeIdentity(favorite.url || "");
+  const finalSeason = sanitizePositiveNumber(favorite.finalSeason);
+  const finalEpisode = sanitizePositiveNumber(favorite.finalEpisode);
+  if (!identity || !finalSeason || !finalEpisode) return false;
+  return compareEpisodeIdentity(identity, { key: identity.key, season: finalSeason, episode: finalEpisode }) < 0;
+}
+
+// Die zuletzt geschauten Serien - mehr muss beim Start nicht geprueft werden,
+// und jede Staffel kostet einen Seitenaufruf.
+function seriesRepairCandidates() {
+  return favorites
+    .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
+    .filter((favorite) => !favorite.completed && episodeIdentity(favorite.url || ""))
+    .sort((links, rechts) => (
+      Date.parse(rechts.lastWatchedAt || rechts.openedAt || 0) - Date.parse(links.lastWatchedAt || links.openedAt || 0)
+    ))
+    .slice(0, 8);
+}
+
+// Beim Start einsammeln, was schieflaufen konnte: Eintraege, die auf einer
+// nicht abspielbaren Folge stehen, und solche, bei denen eine Folge zu Ende
+// war, ohne dass eine naechste gesetzt wurde. Ohne die Staffeluebersicht wird
+// nichts geraten - lieber bleibt der Eintrag, wie er ist.
+async function repairStalledSeriesFavorites() {
+  let geaendert = false;
+  for (const favorite of seriesRepairCandidates()) {
+    const identity = episodeIdentity(favorite.url || "");
+    const info = await seasonPlaybackInfoAsync(favorite.url).catch(() => null);
+    if (!info || !identity) continue;
+
+    // Die Staffelgrenze nachziehen, wenn hinten zusammengefasste Folgen stehen.
+    if (sanitizePositiveNumber(favorite.finalSeason) === identity.season
+      && info.lastPlayable
+      && sanitizePositiveNumber(favorite.finalEpisode) > info.lastPlayable) {
+      favorite.finalEpisode = info.lastPlayable;
+      geaendert = true;
+    }
+
+    const aufToterFolge = info.episodes.includes(identity.episode);
+    if (!aufToterFolge && !isStalledSeriesFavorite(favorite)) continue;
+
+    let ziel = nextEpisodeContinueUrl(favorite.url, "", favorite, {
+      unplayableSeason: identity.season,
+      unplayableEpisodes: info.episodes,
+      seasonLastEpisode: info.lastPlayable
+    });
+    // Auf einer toten Folge und nichts kommt mehr danach: dann gehoert der
+    // Eintrag auf die letzte Folge, die sich wirklich abspielen laesst.
+    if (!ziel && aufToterFolge && info.lastPlayable) {
+      ziel = replaceEpisodeUrl(favorite.url, identity.season, info.lastPlayable);
+    }
+    if (!ziel || ziel === favorite.url) continue;
+
+    const zielIdentity = episodeIdentity(ziel);
+    favorite.url = ziel;
+    favorite.normalizedUrl = normalizeFavoriteUrl(ziel);
+    favorite.season = zielIdentity?.season || favorite.season || 0;
+    favorite.episode = zielIdentity?.episode || favorite.episode || 0;
+    favorite.title = cleanBaseMediaTitle(favorite.title, ziel) || favorite.title;
+    favorite.episodeCompleted = false;
+    favorite.continuePending = true;
+    favorite.hideFromContinueWatching = false;
+    favorite.progress = 0;
+    favorite.currentTime = 0;
+    favorite.position = 0;
+    favorite.duration = 0;
+    geaendert = true;
+  }
+  if (geaendert) {
+    saveFavorites();
+    sendActiveState();
+  }
+  await refreshMissingThumbnails();
+}
+
+// Ein verworfenes Vorschaubild soll nicht bis zum naechsten Seitenbesuch fehlen.
+async function refreshMissingThumbnails() {
+  const ohneBild = favorites
+    .filter((favorite) => !favorite.thumbnail)
+    .sort((links, rechts) => (
+      Date.parse(rechts.lastWatchedAt || rechts.openedAt || 0) - Date.parse(links.lastWatchedAt || links.openedAt || 0)
+    ))
+    .slice(0, 12);
+  for (const favorite of ohneBild) {
+    const provider = enabledProviders().find((item) => item.id === favorite.providerId)
+      || enabledProviders().find((item) => item.name === favorite.providerName);
+    if (!provider) continue;
+    await repairFavoriteThumbnailIfNeeded(favorite, provider, true).catch(() => false);
+  }
+}
+
+function seasonPlaybackInfo(url) {
+  const seasonUrl = seasonPageUrl(url);
+  if (!seasonUrl) return null;
+  const gespeichert = seasonInfoCache.get(seasonUrl);
+  const frisch = gespeichert && Date.now() - gespeichert.at < SEASON_INFO_CACHE_MS;
+  if (frisch) return gespeichert.info || null;
+  if (gespeichert?.pending) return null;
+
+  seasonInfoCache.set(seasonUrl, { at: Date.now(), pending: true, info: gespeichert?.info || null });
+  fetchProviderHtml(seasonUrl)
+    .then((seite) => {
+      seasonInfoCache.set(seasonUrl, {
+        at: Date.now(),
+        info: seite ? extractUnplayableEpisodes(seite.html) : null
+      });
+    })
+    .catch(() => seasonInfoCache.set(seasonUrl, { at: Date.now(), info: null }));
+  return gespeichert?.info || null;
+}
+
+function applySeasonPlaybackInfo(pageMeta, url) {
+  if (!pageMeta) return;
+  const identity = episodeIdentity(url);
+  if (!identity?.season || !seasonPageUrl(url)) return;
+
+  const info = seasonPlaybackInfo(url);
+  if (!info) {
+    // Noch unbekannt, ob die hinteren Folgen ueberhaupt abspielbar sind. Dann
+    // lieber gar keine Staffelgrenze melden als eine zu hohe: der gespeicherte
+    // Wert bleibt stehen, bis die Uebersicht geladen ist.
+    if (sanitizePositiveNumber(pageMeta.finalSeason) === identity.season) pageMeta.finalEpisode = 0;
+    return;
+  }
+
+  pageMeta.unplayableSeason = identity.season;
+  pageMeta.unplayableEpisodes = info.episodes;
+  pageMeta.seasonLastEpisode = info.lastPlayable;
+
+  // Die letzte Folge nur dann kuerzen, wenn diese Staffel auch die letzte ist -
+  // sonst wuerde die Folgenzahl einer fruehen Staffel zur Serien-Grenze.
+  const finalSeason = sanitizePositiveNumber(pageMeta.finalSeason);
+  const finalEpisode = sanitizePositiveNumber(pageMeta.finalEpisode);
+  if (finalSeason === identity.season && info.lastPlayable && finalEpisode > info.lastPlayable) {
+    pageMeta.finalEpisode = info.lastPlayable;
+    pageMeta.finalEpisodeTrimmed = true;
+  }
+}
+
+function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null, meta = null) {
   const currentIdentity = episodeIdentity(currentUrl);
   const resolvedPreferred = absoluteHttpUrl(preferredUrl, currentUrl);
   const preferredIdentity = episodeIdentity(resolvedPreferred);
+  const gesperrt = unplayableEpisodeSet(meta, currentIdentity?.season);
   if (resolvedPreferred
     && preferredIdentity
     && currentIdentity
     && preferredIdentity.key === currentIdentity.key
+    && !gesperrt.has(preferredIdentity.episode)
     && compareEpisodeIdentity(preferredIdentity, currentIdentity) > 0) {
     return resolvedPreferred;
   }
@@ -2756,9 +2976,39 @@ function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null) {
   const finalSeason = sanitizePositiveNumber(entry?.finalSeason);
   const finalEpisode = sanitizePositiveNumber(entry?.finalEpisode);
   if (!finalSeason || !finalEpisode) return "";
-  if (currentIdentity.season !== finalSeason) return "";
-  if (currentIdentity.season === finalSeason && currentIdentity.episode >= finalEpisode) return "";
-  return incrementEpisodeUrl(currentUrl);
+  if (currentIdentity.season > finalSeason) return "";
+
+  // In der letzten Staffel endet die Serie mit der letzten Folge. In frueheren
+  // Staffeln endet nur die Staffel - danach geht es mit Folge 1 der naechsten
+  // weiter. Fehlt die Folgenzahl der laufenden Staffel noch, wird einfach
+  // hochgezaehlt; die Staffeluebersicht liefert sie kurz darauf nach.
+  const istLetzteStaffel = currentIdentity.season === finalSeason;
+  const staffelEnde = istLetzteStaffel
+    ? finalEpisode
+    : sanitizePositiveNumber(meta?.seasonLastEpisode);
+
+  // Zusammengefasste Folgen ueberspringen: steht die naechste Nummer nur als
+  // Hinweis in der Liste ("[In E10 enthalten]"), gibt es dort nichts
+  // abzuspielen - also weiter bis zur naechsten echten Folge.
+  let naechste = currentIdentity.episode + 1;
+  while (gesperrt.has(naechste) && (!staffelEnde || naechste <= staffelEnde)) naechste += 1;
+
+  if (!staffelEnde || naechste <= staffelEnde) {
+    return replaceEpisodeUrl(currentUrl, currentIdentity.season, naechste) || incrementEpisodeUrl(currentUrl);
+  }
+  if (currentIdentity.season < finalSeason) {
+    return replaceEpisodeUrl(currentUrl, currentIdentity.season + 1, 1);
+  }
+  return "";
+}
+
+// Die Seite meldet die nicht abspielbaren Folgen der gerade gezeigten Staffel.
+function unplayableEpisodeSet(meta, season) {
+  const nummern = Array.isArray(meta?.unplayableEpisodes) ? meta.unplayableEpisodes : [];
+  const gemeldeteStaffel = sanitizePositiveNumber(meta?.unplayableSeason);
+  if (!nummern.length) return new Set();
+  if (season && gemeldeteStaffel && season !== gemeldeteStaffel) return new Set();
+  return new Set(nummern.map((wert) => Number(wert)).filter((wert) => Number.isFinite(wert) && wert > 0));
 }
 
 function incrementEpisodeUrl(value) {
@@ -2963,7 +3213,11 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
   const hadKnownFinal = Boolean(previousFinalSeason && previousFinalEpisode);
   const nextBounds = { key: episodeIdentity(currentUrl)?.key || episodeIdentity(favorite.url)?.key || "", season: nextFinalSeason, episode: nextFinalEpisode };
   const previousBounds = { key: nextBounds.key, season: previousFinalSeason, episode: previousFinalEpisode };
-  if (hadKnownFinal && compareEpisodeIdentity(nextBounds, previousBounds) < 0) return false;
+  // Eine kleinere letzte Folge ist sonst verdaechtig (halb geladene Seite) und
+  // wird ignoriert. Hat die Seite dagegen selbst gemeldet, dass die hinteren
+  // Folgen nicht abspielbar sind, ist die Kuerzung gewollt.
+  const gekuerzt = Boolean(meta.finalEpisodeTrimmed);
+  if (hadKnownFinal && !gekuerzt && compareEpisodeIdentity(nextBounds, previousBounds) < 0) return false;
 
   let changed = false;
   if (favorite.finalSeason !== nextFinalSeason) {
@@ -2997,7 +3251,43 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
     sendToast(`${cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "Serie"} ist wieder in der Watchlist: neue Folge erkannt`);
     changed = true;
   }
+
+  if (gekuerzt && repairTrimmedSeriesTail(favorite, nextFinalSeason, nextFinalEpisode)) {
+    changed = true;
+  }
   return changed;
+}
+
+// Wird die letzte Folge nach unten korrigiert, steht der Eintrag womoeglich auf
+// einer Folge, die es zum Abspielen nie gab - die Serie war dann bis zur echten
+// letzten Folge durchgeschaut, galt aber nie als abgeschlossen. Das wird hier
+// nachgezogen.
+function repairTrimmedSeriesTail(favorite, finalSeason, finalEpisode) {
+  const identity = episodeIdentity(favorite?.url || "");
+  if (!identity || identity.season !== finalSeason || identity.episode <= finalEpisode) return false;
+
+  const schluessel = `${identity.key}:s${finalSeason}:e${finalEpisode}`;
+  const letzteGesehen = Array.isArray(favorite.completedEpisodes)
+    && favorite.completedEpisodes.some((eintrag) => eintrag?.key === schluessel);
+  if (!letzteGesehen) return false;
+
+  const letzteUrl = replaceEpisodeUrl(favorite.url, finalSeason, finalEpisode);
+  if (letzteUrl) {
+    favorite.url = letzteUrl;
+    favorite.normalizedUrl = normalizeFavoriteUrl(letzteUrl);
+    favorite.season = finalSeason;
+    favorite.episode = finalEpisode;
+    favorite.title = cleanBaseMediaTitle(favorite.title, letzteUrl) || favorite.title;
+  }
+  favorite.completed = true;
+  favorite.episodeCompleted = true;
+  favorite.continuePending = false;
+  favorite.favorite = false;
+  favorite.hideFromContinueWatching = true;
+  favorite.progress = 100;
+  favorite.completedAt = favorite.completedAt || new Date().toISOString();
+  sendToast(`${cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "Serie"} ist abgeschlossen: die restlichen Folgen sind in Folge ${finalEpisode} enthalten`);
+  return true;
 }
 
 function hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds) {
@@ -3303,26 +3593,356 @@ async function discoverForProvider(provider, refresh) {
 
   const startUrl = providerModel.normalizeUrl(provider.startUrl || "");
   if (!startUrl) return [];
-  const response = await fetch(startUrl, {
+  const seite = await fetchProviderHtml(startUrl);
+  if (!seite) return cached?.items || [];
+
+  const html = seite.html;
+  const basis = seite.url;
+  // Zuerst die Neuheiten-Reihe der Seite ("Neue Animes", "Neu auf
+  // SerienStream", "Neu veroeffentlichte Filme") - nur die gehoert in diese
+  // Reihe. Dazu das grosse Titelbild der Startseite, wo es eines gibt.
+  let items = extractNewReleaseItems(html, basis, provider, 30);
+  const hero = extractHeroItem(html, basis, provider);
+  if (hero && !items.some((item) => item.url === hero.url)) items.unshift(hero);
+
+  // Kennt eine Seite keine solche Reihe, bleibt es beim bisherigen Verhalten:
+  // alles von der Startseite, notfalls nur Poster mit Titel.
+  if (!items.length) {
+    items = extractDiscoverItems(html, basis, provider);
+    if (items.length < 4) {
+      const ersatz = extractPosterFallbacks(html, basis, provider);
+      if (ersatz.length > items.length) items = ersatz;
+    }
+  }
+  if (items.length) discoverCache.set(provider.id, { at: Date.now(), items });
+  return items;
+}
+
+// --- Empfohlen fuer dich -----------------------------------------------------
+// Baut aus dem Verlauf ein Geschmacksprofil (siehe taste.js) und sucht dazu
+// passende Titel: was die Anbieter selbst als aehnlich ausweisen, was in den
+// Lieblingsgenres liegt und was neu auf den Startseiten steht.
+
+function loadTasteCache() {
+  if (tasteCache) return tasteCache;
+  try {
+    const roh = JSON.parse(fs.readFileSync(TASTE_FILE, "utf8"));
+    tasteCache = {
+      pages: roh?.pages && typeof roh.pages === "object" ? roh.pages : {},
+      lists: roh?.lists && typeof roh.lists === "object" ? roh.lists : {}
+    };
+  } catch {
+    tasteCache = { pages: {}, lists: {} };
+  }
+  return tasteCache;
+}
+
+// Der Cache wird nur verzoegert geschrieben, damit ein Durchlauf mit vielen
+// Seiten nicht dutzende Male dieselbe Datei anfasst.
+function saveTasteCacheSoon() {
+  if (tasteSaveTimer) return;
+  tasteSaveTimer = setTimeout(() => {
+    tasteSaveTimer = 0;
+    try {
+      ensureDataDir();
+      fs.writeFileSync(TASTE_FILE, JSON.stringify(loadTasteCache()));
+    } catch {
+      // Ein fehlender Cache kostet nur Zeit, keine Funktion.
+    }
+  }, 1500);
+  tasteSaveTimer.unref?.();
+}
+
+// Nodes eingebautes fetch erreicht im Hauptprozess nicht jede Anbieterseite -
+// aniworld.to und filmo.to laufen dort in einen Timeout, waehrend dieselbe
+// Adresse in der Browser-Ansicht laedt. Chromiums Netzwerkschicht (net.fetch)
+// nimmt denselben Weg wie die Ansichten und kommt durch.
+async function fetchProviderHtml(url) {
+  const response = await net.fetch(url, {
     headers: {
       "accept": "text/html,application/xhtml+xml",
       "user-agent": "Mozilla/5.0 ELFIX/0.2"
     },
-    redirect: "follow"
+    redirect: "follow",
+    signal: AbortSignal.timeout(9000)
   });
-  if (!response.ok) return cached?.items || [];
+  if (!response.ok) return null;
+  return { html: await response.text(), url: response.url || url };
+}
 
-  const html = await response.text();
-  const basis = response.url || startUrl;
-  // Seiten, die ihre Kacheln per JavaScript nachladen, liefern nur Poster mit
-  // Titel - dann wird der Titel spaeter ueber die Suche des Anbieters geoeffnet.
-  let items = extractDiscoverItems(html, basis, provider);
-  if (items.length < 4) {
-    const ersatz = extractPosterFallbacks(html, basis, provider);
-    if (ersatz.length > items.length) items = ersatz;
+// Detailseite eines Titels: Genres und der "Das schauen andere"-Block.
+async function tastePage(url, provider, refresh = false) {
+  const cache = loadTasteCache();
+  const gespeichert = cache.pages[url];
+  if (!refresh && gespeichert && Date.now() - gespeichert.at < TASTE_PAGE_CACHE_MS) return gespeichert;
+
+  try {
+    const seite = await fetchProviderHtml(url);
+    if (!seite) return gespeichert || null;
+    const eintrag = {
+      at: Date.now(),
+      genres: extractGenres(seite.html, seite.url),
+      related: extractRelatedItems(seite.html, seite.url, provider, 10)
+    };
+    cache.pages[url] = eintrag;
+    saveTasteCacheSoon();
+    return eintrag;
+  } catch {
+    return gespeichert || null;
   }
-  if (items.length) discoverCache.set(provider.id, { at: Date.now(), items });
-  return items;
+}
+
+// Uebersichtsseite (Genre-Liste) mit den Titeln, die dort stehen.
+async function tasteList(url, provider, refresh = false) {
+  const cache = loadTasteCache();
+  const gespeichert = cache.lists[url];
+  if (!refresh && gespeichert && Date.now() - gespeichert.at < TASTE_LIST_CACHE_MS) return gespeichert.items;
+
+  try {
+    const seite = await fetchProviderHtml(url);
+    if (!seite) return gespeichert?.items || [];
+    const items = extractCatalogItems(seite.html, seite.url, provider, 40);
+    cache.lists[url] = { at: Date.now(), items };
+    saveTasteCacheSoon();
+    return items;
+  } catch {
+    return gespeichert?.items || [];
+  }
+}
+
+// Aus einer Episoden-Adresse die Seite der Serie machen - nur dort stehen
+// Genres und Aehnlichkeitsblock.
+function seriesPageUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname
+      .replace(/\/(?:episode|folge|film)-\d+\/?$/i, "")
+      .replace(/\/(?:staffel|season)-\d+\/?$/i, "")
+      .replace(/\/+$/, "");
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+// Kleiner, ueber den Tag stabiler Zufallswert. Genre-Listen sind alphabetisch
+// sortiert - ohne diesen Anstoss staenden dort immer dieselben Titel vorn.
+function dailyJitter(value) {
+  const text = `${value}#${Math.floor(Date.now() / (24 * 60 * 60 * 1000))}`;
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) | 0;
+  }
+  return (Math.abs(hash) % 1000) / 1000;
+}
+
+async function inBatches(items, size, worker) {
+  const ergebnisse = [];
+  for (let index = 0; index < items.length; index += size) {
+    const teil = items.slice(index, index + size);
+    ergebnisse.push(...await Promise.all(teil.map((item) => worker(item).catch(() => null))));
+  }
+  return ergebnisse;
+}
+
+// Der Verlauf, aus dem das Profil entsteht: zuletzt Geschautes zuerst, nur von
+// Anbietern, die noch eingeschaltet sind.
+function tasteHistoryEntries() {
+  const aktive = new Set(enabledProviders().map((provider) => provider.id));
+  return favorites
+    .filter((favorite) => aktive.has(favorite.providerId))
+    .filter((favorite) => favorite.watched || favorite.favorite || favorite.completed || Number(favorite.position) > 0)
+    .slice()
+    .sort((links, rechts) => (
+      Date.parse(rechts.lastWatchedAt || rechts.openedAt || rechts.createdAt || 0)
+      - Date.parse(links.lastWatchedAt || links.openedAt || links.createdAt || 0)
+    ))
+    .slice(0, TASTE_HISTORY_SIZE);
+}
+
+// Anime, Serie oder Film - abgelesen an der Adresse, nicht am Anbieter, damit
+// auch selbst angelegte Seiten in den Kategoriereihen landen. Anime-Filme
+// bleiben bewusst bei Anime.
+function candidateMediaType(value) {
+  try {
+    const pfad = new URL(String(value || "")).pathname.toLowerCase();
+    if (/\/anime(?:\/|$)/.test(pfad)) return "anime";
+    if (/\/(?:movies?|filme?)(?:\/|-)/.test(pfad)) return "film";
+    if (/\/(?:serie|series|show|tv)(?:\/|$)/.test(pfad)) return "serie";
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+// Alle vier Reihen der Startseite fragen gleichzeitig an. Sie teilen sich
+// deshalb einen Durchlauf: einmal bewerten, danach nur noch filtern.
+async function collectPersonalRecommendations(limit, refresh, type = "", excludeMain = true) {
+  const alle = await personalRecommendationPool(refresh);
+  // "Empfohlen fuer dich" bekommt den Anfang der Liste. Die Kategoriereihen
+  // fangen dahinter an, damit kein Titel zweimal auf der Startseite steht.
+  // Ist die Hauptreihe ausgeblendet, waeren diese Titel sonst gar nicht zu
+  // sehen - dann greifen die Kategorien auf die ganze Liste zu.
+  const haupt = excludeMain ? alle.slice(0, PERSONAL_MAIN_SIZE) : [];
+  if (!type) return alle.slice(0, limit);
+
+  const vergeben = new Set(haupt.map((item) => taste.urlSchluessel(item.url)));
+  return alle
+    .filter((item) => candidateMediaType(item.url) === type)
+    .filter((item) => !vergeben.has(taste.urlSchluessel(item.url)))
+    .slice(0, limit);
+}
+
+async function personalRecommendationPool(refresh) {
+  const frisch = personalCache.items.length && Date.now() - personalCache.at < PERSONAL_CACHE_MS;
+  if (!refresh && frisch) return personalCache.items;
+  if (personalPending) return personalPending;
+
+  const lauf = buildPersonalRecommendations(PERSONAL_POOL_SIZE, refresh)
+    .then((items) => {
+      personalCache = { at: Date.now(), items };
+      return items;
+    })
+    .catch(() => personalCache.items)
+    .finally(() => {
+      if (personalPending === lauf) personalPending = null;
+    });
+  personalPending = lauf;
+  return lauf;
+}
+
+async function buildPersonalRecommendations(limit, refresh) {
+  const anbieter = enabledProviders();
+  const verlauf = tasteHistoryEntries();
+  if (!anbieter.length || !verlauf.length) return [];
+  const anbieterNach = new Map(anbieter.map((provider) => [provider.id, provider]));
+  const jetzt = Date.now();
+
+  // 1. Geschmacksprofil aus den geschauten Titeln.
+  const saat = (await inBatches(verlauf, TASTE_FETCH_PARALLEL, async (favorite) => {
+    const provider = anbieterNach.get(favorite.providerId);
+    const url = seriesPageUrl(favorite.url || favorite.normalizedUrl);
+    if (!provider || !url) return null;
+    const seite = await tastePage(url, provider, refresh);
+    return {
+      title: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
+      providerId: provider.id,
+      weight: taste.watchWeight(favorite, jetzt),
+      genres: seite?.genres || [],
+      related: seite?.related || []
+    };
+  })).filter(Boolean);
+  if (!saat.length) return [];
+
+  const profil = taste.buildTasteProfile(saat, jetzt);
+
+  // 2. Was schon im Verlauf oder auf der Watchlist steht, faellt raus.
+  const ausschluss = new Set();
+  for (const favorite of favorites) {
+    for (const wert of [favorite.url, favorite.normalizedUrl, seriesPageUrl(favorite.url)]) {
+      if (wert) ausschluss.add(taste.urlSchluessel(wert));
+    }
+    const titel = cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title;
+    if (titel) ausschluss.add(taste.titelSchluessel(titel));
+  }
+
+  const kandidaten = [];
+
+  // 3a. Was der Anbieter selbst als aehnlich ausweist - das staerkste Signal.
+  const staerksteSaat = Math.max(...saat.map((eintrag) => eintrag.weight), 1e-9);
+  for (const eintrag of saat) {
+    for (const item of eintrag.related) {
+      kandidaten.push({
+        ...item,
+        via: "related",
+        seedTitle: eintrag.title,
+        seedWeight: eintrag.weight / staerksteSaat,
+        genres: []
+      });
+    }
+  }
+
+  // 3b. Titel aus den Lieblingsgenres.
+  const genreSeiten = [];
+  for (const genre of profil.genres.slice(0, 6)) {
+    for (const [providerId, url] of genre.urls) {
+      if (!anbieterNach.has(providerId)) continue;
+      genreSeiten.push({ genre, providerId, url });
+    }
+  }
+  const genreListen = await inBatches(genreSeiten, TASTE_FETCH_PARALLEL, async (seite) => {
+    const provider = anbieterNach.get(seite.providerId);
+    const items = await tasteList(seite.url, provider, refresh);
+    return { seite, items };
+  });
+  // Steht ein Titel in mehreren Lieblingsgenres, ist das der beste Hinweis, den
+  // die Listen hergeben - also die Genres pro Titel zusammenfuehren, statt ihn
+  // mehrfach mit je einem Genre zu fuehren.
+  const ausGenres = new Map();
+  for (const treffer of genreListen) {
+    if (!treffer?.items?.length) continue;
+    for (const item of treffer.items) {
+      const schluessel = taste.urlSchluessel(item.url);
+      const vorhanden = ausGenres.get(schluessel);
+      if (vorhanden) {
+        if (!vorhanden.genres.includes(treffer.seite.genre.key)) vorhanden.genres.push(treffer.seite.genre.key);
+        continue;
+      }
+      ausGenres.set(schluessel, {
+        ...item,
+        via: "genre",
+        genres: [treffer.seite.genre.key],
+        genreLabel: treffer.seite.genre.label,
+        bonus: dailyJitter(item.url) * 0.3
+      });
+    }
+  }
+  kandidaten.push(...ausGenres.values());
+
+  // 3c. Neues von den Startseiten - die Genres dazu werden gleich nachgeholt.
+  const startseiten = await Promise.all(anbieter.map((provider) => (
+    discoverForProvider(provider, false).catch(() => [])
+  )));
+
+  // Was die Reihe "Neu bei deinen Anbietern" bereits zeigt, gehoert nicht noch
+  // einmal in die Vorschlaege - auf der Startseite soll nichts doppelt stehen.
+  for (const liste of startseiten) {
+    for (const item of liste.slice(0, TASTE_NEW_OFFSET)) {
+      ausschluss.add(taste.urlSchluessel(item.url));
+      ausschluss.add(taste.titelSchluessel(item.title));
+    }
+  }
+  // Die vorderen Titel jeder Startseite stehen schon in der Reihe "Neu bei
+  // deinen Anbietern" - hier faengt es dahinter an, sonst steht derselbe Titel
+  // zweimal untereinander.
+  const neu = [];
+  for (let index = TASTE_NEW_OFFSET; index < TASTE_NEW_OFFSET + 8; index += 1) {
+    for (const liste of startseiten) {
+      if (liste[index]) neu.push({ ...liste[index], via: "new", genres: [] });
+    }
+  }
+
+  // 4. Fuer die neuen Titel die Genres nachladen, damit sie ueberhaupt zum
+  // Profil passen koennen. Streng begrenzt, der Rest bleibt ungenutzt.
+  const anzureichern = neu
+    .filter((item) => !item.viaSearch && !ausschluss.has(taste.urlSchluessel(item.url)) && !ausschluss.has(taste.titelSchluessel(item.title)))
+    .slice(0, TASTE_ENRICH_LIMIT);
+  await inBatches(anzureichern, TASTE_FETCH_PARALLEL, async (item) => {
+    const provider = anbieterNach.get(item.providerId);
+    const url = seriesPageUrl(item.url);
+    if (!provider || !url) return null;
+    const seite = await tastePage(url, provider, false);
+    item.genres = (seite?.genres || []).map((genre) => genre.key);
+    // Die Startseiten verlinken die neueste Folge. Als Empfehlung ist die
+    // Uebersichtsseite der Serie richtig.
+    item.url = url;
+    return null;
+  });
+  kandidaten.push(...anzureichern.filter((item) => item.genres.length));
+
+  return taste.scoreCandidates(kandidaten, profil, { limit, exclude: ausschluss, perSeed: 3 });
 }
 
 function usesAniWorldAjaxSearch(provider) {
@@ -3826,7 +4446,8 @@ function normalizeStoredEpisodeCompletion(favorite) {
 function normalizeLoadedFavorite(favorite) {
   if (isStoFavoriteRecord(favorite)) {
     const thumbnail = absoluteHttpUrl(favorite.thumbnail, favorite.url);
-    favorite.thumbnail = isStoChannelArtworkUrl(thumbnail) ? thumbnail : "";
+    const passend = isStoChannelArtworkUrl(thumbnail) && stoArtworkMatchesFavorite(thumbnail, favorite.url);
+    favorite.thumbnail = passend ? thumbnail : "";
     return favorite;
   }
   if (isAniWorldFavoriteRecord(favorite)) {
@@ -4018,11 +4639,12 @@ function nearbyHtmlText(html, index, radius) {
 
 function expectedAniWorldArtworkTokens(url, title) {
   const slug = aniWorldMediaSlugFromUrl(url);
-  const tokens = new Set([
+  const roh = [
     ...normalizeSearchText(slug).split(" "),
     ...normalizeSearchText(title).split(" ")
-  ].filter((token) => token.length > 2 && !/^(anime|stream|staffel|folge|episode|kostenlos|gratis|online|ansehen|aniworld|animes)$/i.test(token)));
-  return Array.from(tokens);
+  ].filter((token) => token.length > 2 && !/^(anime|stream|staffel|folge|episode|kostenlos|gratis|online|ansehen|aniworld|animes)$/i.test(token));
+  const ohneFuellwoerter = roh.filter((token) => !FUELLWOERTER.test(token));
+  return Array.from(new Set(ohneFuellwoerter.length ? ohneFuellwoerter : roh));
 }
 
 function aniWorldUrlLooksLikeSlug(imageUrl, favoriteUrl) {
@@ -4082,13 +4704,41 @@ function bestStoSrcsetImage(srcset, baseUrl) {
   return candidates[0]?.href || "";
 }
 
+// Fuellwoerter taugen nicht zum Abgleich: "Avatar - Der Herr der Elemente" und
+// "Die Avengers - Die maechtigsten Helden der Welt" teilen sich das Wort "der",
+// und schon galt das Vorschlagsbild einer fremden Serie als passend.
+const FUELLWOERTER = /^(?:der|die|das|dem|den|des|ein|eine|einen|einem|eines|und|oder|aber|mit|von|vom|zum|zur|fur|fuer|auf|aus|bei|ist|sind|wie|als|auch|nur|nicht|sich|ihre|sein|seine|dass|dann|the|and|for|with|from|that|this|you|are|was|were|his|her|its|has|had|have|not|but)$/i;
+const ARTWORK_MUELLWORT = /^(?:serie|staffel|folge|episode|stream|kostenlos|ansehen|season)$/i;
+
+// Ohne Fuellwoerter bleibt bei manchen Titeln nichts uebrig ("Die Welle") -
+// dann ist die ungefilterte Liste immer noch besser als gar kein Abgleich.
+function meaningfulTokens(values) {
+  const roh = values.filter((token) => token.length > 2 && !ARTWORK_MUELLWORT.test(token));
+  const ohneFuellwoerter = roh.filter((token) => !FUELLWOERTER.test(token));
+  return Array.from(new Set(ohneFuellwoerter.length ? ohneFuellwoerter : roh));
+}
+
 function expectedArtworkTokens(url, title) {
   const slug = stoMediaSlugFromUrl(url);
-  const tokens = new Set([
+  return meaningfulTokens([
     ...normalizeSearchText(slug).split(" "),
     ...normalizeSearchText(title).split(" ")
-  ].filter((token) => token.length > 2 && !/^(serie|staffel|folge|episode|stream|kostenlos|ansehen|season)$/i.test(token)));
-  return Array.from(tokens);
+  ]);
+}
+
+// Das Bild einer anderen Serie verraet sich im Pfad: S.to legt es unter
+// .../channel/desktop/<slug-der-serie>-<kennung> ab. Passt davon kein Wort zum
+// Serien-Slug, stammt es aus einem Vorschlagsblock der Seite.
+function stoArtworkMatchesFavorite(thumbnail, url) {
+  const tokens = meaningfulTokens(normalizeSearchText(stoMediaSlugFromUrl(url)).split(" "));
+  if (!tokens.length || !thumbnail) return true;
+  try {
+    const bildname = new URL(thumbnail).pathname.split("/").filter(Boolean).pop() || "";
+    const text = bildname.toLowerCase();
+    return tokens.some((token) => text.includes(token));
+  } catch {
+    return true;
+  }
 }
 
 function stoSeriesPageUrlFromFavoriteUrl(value) {
@@ -4194,7 +4844,28 @@ function isAniWorldArtworkUrl(value) {
 }
 
 function isRejectedAniWorldArtworkUrl(value) {
-  return /(?:logo|favicon|sprite|icon|avatar|flag|placeholder|blank|transparent|loading|spinner|play|button|rating|language|login|register|facebook|twitter|og-image|social|share|default|noimage|no-image)/i.test(String(value || ""));
+  return isJunkImageUrl(value) || /(?:\/default\/|-default\.)/i.test(String(value || ""));
+}
+
+// Platzhalter und Beiwerk von echten Titelbildern trennen. Der Dateiname
+// traegt den Namen der Serie - "avatar-OPQmI5KE", "black-torch-..." -, deshalb
+// duerfen titelfaehige Woerter wie avatar, black oder flag nur im Ordnerpfad
+// als Ausschluss zaehlen. Sonst bekommt ausgerechnet die Serie "Avatar" nie
+// ein Bild und die App greift auf das Poster eines Vorschlags daneben.
+const BILD_MUELL_IMMER = /(?:favicon|sprite|placeholder|blank|transparent|loading|spinner|no-?image|og-image)/i;
+const BILD_MUELL_ORDNER = /(?:logo|icon|avatar|flag|banner|button|rating|language|login|register|facebook|twitter|social|share|ads?)/i;
+
+function isJunkImageUrl(value) {
+  const href = String(value || "");
+  if (!href) return true;
+  if (BILD_MUELL_IMMER.test(href)) return true;
+  try {
+    const url = new URL(href);
+    const ordner = url.pathname.slice(0, url.pathname.lastIndexOf("/") + 1);
+    return BILD_MUELL_ORDNER.test(ordner);
+  } catch {
+    return BILD_MUELL_ORDNER.test(href.slice(0, Math.max(0, href.lastIndexOf("/"))));
+  }
 }
 
 function isStoChannelArtworkUrl(value) {
@@ -4202,7 +4873,7 @@ function isStoChannelArtworkUrl(value) {
     const url = new URL(value);
     return isStoHost(url.hostname.toLowerCase())
       && /\/media\/images\/channel\/(?:2x-)?desktop\/[^/?#]+/i.test(url.pathname)
-      && !/(?:logo|favicon|sprite|icon|avatar|flag|placeholder|blank|transparent|black)/i.test(url.href);
+      && !isJunkImageUrl(url.href);
   } catch {
     return false;
   }
@@ -4294,11 +4965,17 @@ async function readPageMetadata(view) {
       .replace(/[^a-z0-9]+/g, " ")
       .replace(/\\s+/g, " ")
       .trim();
+    // Fuellwoerter wie "der" oder "the" stehen in fast jedem Titel und wuerden
+    // das Bild einer fremden Serie als passend durchgehen lassen. Bleibt nach
+    // dem Aussortieren nichts uebrig, wird die ungefilterte Liste genommen.
+    const fuellwoerter = /^(?:der|die|das|dem|den|des|ein|eine|einen|einem|eines|und|oder|aber|mit|von|vom|zum|zur|fur|fuer|auf|aus|bei|ist|sind|wie|als|auch|nur|nicht|sich|ihre|sein|seine|dass|dann|the|and|for|with|from|that|this|you|are|was|were|his|her|its|has|had|have|not|but)$/i;
     const mediaTokens = mediaSlug.split(/[-_]+/).filter((token) => token.length > 2);
     const titleTokens = normalizeText((document.querySelector("h1")?.textContent || "") + " " + (document.title || ""))
       .split(" ")
       .filter((token) => token.length > 2 && !/^(serie|staffel|folge|episode|stream|kostenlos|ansehen|season)$/i.test(token));
-    const expectedTokens = Array.from(new Set([...mediaTokens, ...titleTokens]));
+    const alleTokens = Array.from(new Set([...mediaTokens, ...titleTokens]));
+    const ohneFuellwoerter = alleTokens.filter((token) => !fuellwoerter.test(token));
+    const expectedTokens = ohneFuellwoerter.length ? ohneFuellwoerter : alleTokens;
     const episodeIdentityFromHref = (href) => {
       try {
         const url = new URL(href, location.href);
@@ -4323,6 +5000,38 @@ async function readPageMetadata(view) {
         return null;
       }
     };
+    // Manche Folgen sind auf der Uebersicht gelistet, aber nicht abspielbar:
+    // S.to fasst z. B. Doppelfolgen zusammen und schreibt in die restlichen
+    // Zeilen "[In E18 enthalten]" - ohne Hoster und ohne Sprachfahne. Wuerde
+    // eine solche Folge als letzte gelten, liesse sich die Serie nie
+    // abschliessen, weil sie niemand abspielen kann.
+    const unplayableEpisodes = (() => {
+      const gesperrt = new Set();
+      const rows = Array.from(document.querySelectorAll("tr, li"));
+      for (const row of rows) {
+        const nummerZelle = row.querySelector("[class*='episode-number']");
+        const ausZelle = Number(String(nummerZelle?.textContent || "").trim());
+        const linkTreffer = String(row.getAttribute("onclick") || "")
+          .concat(" ", row.querySelector("a[href]")?.getAttribute("href") || "")
+          .match(/(?:episode|folge)-(\\d+)/i);
+        const nummer = Number.isFinite(ausZelle) && ausZelle > 0
+          ? ausZelle
+          : Number(linkTreffer?.[1] || 0);
+        if (!Number.isFinite(nummer) || nummer <= 0) continue;
+
+        const text = String(row.textContent || "");
+        const sammelfolge = /\\[\\s*in\\s+(?:e|ep|episode|folge)\\s*\\d+\\s+enthalten\\s*\\]/i.test(text);
+        const watchZelle = row.querySelector("[class*='watch-cell'], [class*='episode-watch']");
+        const ohneHoster = Boolean(watchZelle)
+          && !watchZelle.querySelector("img, svg, a, button, [class*='watch-link']");
+        if (sammelfolge || ohneHoster) gesperrt.add(nummer);
+      }
+      return gesperrt;
+    })();
+    const pageSeason = (() => {
+      const match = location.pathname.match(/\\/(?:staffel|season)-(\\d+)/i);
+      return match ? Number(match[1]) : 0;
+    })();
     const seriesBounds = (() => {
       const anchors = Array.from(document.querySelectorAll("a[href]"));
       const links = anchors
@@ -4336,12 +5045,24 @@ async function readPageMetadata(view) {
         })
         .filter((number) => Number.isFinite(number) && number > 0);
       const finalSeason = Math.max(0, ...seasonNumbers, ...links.map((link) => link.season || 0));
-      const best = links
+      const derStaffel = links
         .filter((link) => !finalSeason || link.season === finalSeason)
-        .sort((left, right) => right.episode - left.episode)[0];
+        .sort((left, right) => right.episode - left.episode);
+      const hoechste = derStaffel[0];
+
+      // Nur die Folgen der gerade angezeigten Staffel lassen sich beurteilen -
+      // fuer andere Staffeln steht keine Liste auf der Seite.
+      const beurteilbar = !pageSeason || !finalSeason || pageSeason === finalSeason;
+      const spielbar = beurteilbar
+        ? derStaffel.filter((link) => !unplayableEpisodes.has(link.episode))
+        : derStaffel;
+      const best = spielbar[0] || hoechste;
       return {
         finalSeason,
-        finalEpisode: best?.episode || 0
+        finalEpisode: best?.episode || 0,
+        finalEpisodeTrimmed: Boolean(best && hoechste && best.episode < hoechste.episode),
+        unplayableSeason: pageSeason,
+        unplayableEpisodes: beurteilbar || pageSeason ? Array.from(unplayableEpisodes) : []
       };
     })();
     const visibleTitle = () => {
@@ -4419,8 +5140,17 @@ async function readPageMetadata(view) {
       }
       return false;
     };
+    // Titelfaehige Woerter (avatar, black, flag) nur im Ordnerpfad als
+    // Ausschluss werten - im Dateinamen steht der Name der Serie.
+    const istMuellBild = (href) => {
+      const wert = String(href || "");
+      if (!wert || /(?:favicon|sprite|placeholder|blank|transparent|loading|spinner|no-?image|og-image)/i.test(wert)) return true;
+      const ohneQuery = wert.split(/[?#]/)[0];
+      const ordner = ohneQuery.slice(0, ohneQuery.lastIndexOf("/") + 1);
+      return /(?:logo|icon|avatar|flag|banner|button|rating|language|login|register|facebook|twitter|social|share|ads?)/i.test(ordner);
+    };
     const isStoChannelArtwork = (href) => /\\/media\\/images\\/channel\\/(?:2x-)?desktop\\/[^?#]+/i.test(href)
-      && !/(?:logo|favicon|sprite|icon|avatar|flag|placeholder|blank|transparent|black)/i.test(href);
+      && !istMuellBild(href);
     const bestSrcsetImage = (img) => {
       const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset") || "";
       const candidates = srcset.split(",")
@@ -4881,6 +5611,8 @@ function normalizeSettings(raw) {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
       showProviders: raw?.home?.showProviders ?? defaults.home.showProviders,
       showFavorites: raw?.home?.showFavorites ?? defaults.home.showFavorites,
+      showPersonal: raw?.home?.showPersonal ?? defaults.home.showPersonal,
+      showCategories: raw?.home?.showCategories ?? defaults.home.showCategories,
       providerCardMeta: sanitizeChoice(raw?.home?.providerCardMeta, ["logoName", "logo", "name"], defaults.home.providerCardMeta)
     },
     appearance: {
@@ -4971,6 +5703,8 @@ function defaultSettings() {
       showHero: true,
       showProviders: true,
       showFavorites: true,
+      showPersonal: true,
+      showCategories: true,
       providerCardMeta: "logoName"
     },
     appearance: {

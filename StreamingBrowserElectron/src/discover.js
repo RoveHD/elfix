@@ -48,12 +48,27 @@ function gleicheSeite(href, baseUrl) {
   }
 }
 
+// AniWorld beschriftet seine Poster mit "Cover <Titel>, Poster" bzw.
+// "<Titel>, Cover, HD, Anime Stream, ganze Folge". Nur wenn dieser Schwanz
+// wirklich dranhaengt, wird auch das vorangestellte "Cover" entfernt - sonst
+// wuerde aus einer Serie namens "Cover Story" faelschlich "Story".
+const BILDBESCHRIFTUNG = /,\s*(?:cover|poster|hd|anime stream|ganze folge|stream)\b[^]*$/i;
+
 function titelAufraeumen(value) {
-  return String(value || "")
+  let titel = String(value || "")
     .replace(/\s+/g, " ")
     .replace(/\s*[|·–-]\s*(?:aniworld|s\.to|serienstream|filmo)[^]*$/i, "")
     .replace(/^(?:jetzt\s+)?(?:ansehen|anschauen|streamen)\s+/i, "")
+    // AniWorld haengt an neue Folgen "St. 1 Ep. 6" an - fuer eine Kachel zaehlt
+    // der Serientitel, nicht die Folge.
+    .replace(/\s+(?:st\.?|staffel|season)\s*\d+\s*(?:(?:ep\.?|episode|folge)\s*\d+)?$/i, "")
     .trim();
+  if (BILDBESCHRIFTUNG.test(titel)) {
+    titel = titel.replace(BILDBESCHRIFTUNG, "").replace(/^(?:cover|poster)\s+/i, "").trim();
+  }
+  // AniWorld beschriftet Kacheln als "<Titel> Cover" bzw.
+  // "<Titel> Cover, <Titel> Stream".
+  return titel.replace(/\s+cover\b\s*(?:,[^]*)?$/i, "").trim() || titel;
 }
 
 function istBrauchbarerTitel(titel) {
@@ -143,6 +158,286 @@ function extractDiscoverItems(html, baseUrl, provider = {}, limit = 30) {
   return treffer;
 }
 
+// Genres stehen bei allen drei Anbietern als Link auf der Detailseite:
+// /genre/action (AniWorld, S.to) oder /genres/adventure (Filmo). Sprach- und
+// Formatmarken hängen in derselben Liste und sind keine Genres.
+const KEIN_GENRE = /^(?:ger|gersub|engsub|engdub|gerdub|dub|sub|omu|deutsch|german|english|englisch|alle|all|az|neu|new|beliebt|popular)$/i;
+
+// Verschiedene Anbieter benennen dasselbe Genre unterschiedlich. Ohne diese
+// Tabelle wuerde "Comedy" bei S.to nie zu "Komödie" bei AniWorld passen.
+const GENRE_SYNONYME = new Map(Object.entries({
+  comedy: "komoedie",
+  komodie: "komoedie",
+  komoedie: "komoedie",
+  adventure: "abenteuer",
+  abenteuer: "abenteuer",
+  "science-fiction": "scifi",
+  sciencefiction: "scifi",
+  "sci-fi": "scifi",
+  scifi: "scifi",
+  romance: "romanze",
+  romanze: "romanze",
+  liebesfilm: "romanze",
+  crime: "krimi",
+  krimi: "krimi",
+  documentary: "doku",
+  dokumentation: "doku",
+  doku: "doku",
+  family: "familie",
+  familie: "familie",
+  kinder: "familie",
+  kids: "familie",
+  animation: "animation",
+  anime: "animation",
+  war: "krieg",
+  kriegsfilm: "krieg",
+  krieg: "krieg",
+  history: "historie",
+  historisch: "historie",
+  historie: "historie",
+  music: "musik",
+  musik: "musik",
+  western: "western",
+  horror: "horror",
+  thriller: "thriller",
+  drama: "drama",
+  action: "action",
+  fantasy: "fantasy",
+  mystery: "mystery",
+  sport: "sport",
+  superhero: "superhelden",
+  superhelden: "superhelden",
+  supernatural: "uebernatuerlich",
+  uebernatuerlich: "uebernatuerlich",
+  reality: "reality",
+  "tv-movie": "tvfilm",
+  fernsehfilm: "tvfilm"
+}));
+
+function genreSchluessel(value) {
+  const roh = String(value || "")
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return GENRE_SYNONYME.get(roh) || GENRE_SYNONYME.get(roh.replace(/-/g, "")) || roh;
+}
+
+// Liefert die Genres einer Detailseite samt Link auf die Genre-Uebersicht,
+// damit spaeter passende Titel desselben Anbieters nachgeladen werden koennen.
+function extractGenres(html, baseUrl, limit = 12) {
+  const treffer = [];
+  const gesehen = new Set();
+  for (const match of String(html || "").matchAll(/<a\s([^>]*)>([\s\S]{0,120}?)<\/a>/gi)) {
+    if (treffer.length >= limit) break;
+    const href = absolut(attribut("<x " + match[1] + ">", "href"), baseUrl);
+    if (!href) continue;
+    const pfad = new URL(href).pathname;
+    const slug = (pfad.match(/\/genres?\/([^/?#]+)/i) || [])[1];
+    if (!slug || KEIN_GENRE.test(slug)) continue;
+
+    const label = ohneTags(match[2]) || slug.replace(/[-_]+/g, " ");
+    if (!label || label.length > 30 || KEIN_GENRE.test(label)) continue;
+    const key = genreSchluessel(slug);
+    if (gesehen.has(key)) continue;
+    gesehen.add(key);
+    treffer.push({ key, label, url: href });
+  }
+  return treffer;
+}
+
+// Poster aus <picture>/<source srcset="...">: Filmo und S.to legen ihre Bilder
+// nur dort ab, ein <img src> gibt es teils gar nicht.
+function bildAusSrcset(abschnitt, baseUrl) {
+  const match = String(abschnitt || "").match(/(?:data-)?srcset\s*=\s*"([^"]+)"/i);
+  if (!match) return "";
+  let bestes = "";
+  let breite = -1;
+  for (const eintrag of match[1].split(",")) {
+    const teile = eintrag.trim().split(/\s+/);
+    const href = absolut(teile[0] || "", baseUrl);
+    if (!href || MUELL_BILD.test(href)) continue;
+    const w = Number.parseInt(teile[1] || "", 10) || 0;
+    if (w > breite) {
+      breite = w;
+      bestes = href;
+    }
+  }
+  return bestes;
+}
+
+// Wie extractDiscoverItems, aber fuer Uebersichtsseiten (Genre-Listen,
+// "Das schauen andere"): dort steht das Poster oft ausserhalb des kurzen
+// Fensters, das die Startseiten-Extraktion abtastet.
+function extractCatalogItems(html, baseUrl, provider = {}, limit = 40) {
+  const quelltext = String(html || "");
+  const treffer = [];
+  const gesehen = new Set();
+
+  for (const match of quelltext.matchAll(/<a\s([^>]*)>/gi)) {
+    if (treffer.length >= limit) break;
+    const href = absolut(attribut("<x " + match[1] + ">", "href"), baseUrl);
+    if (!href || gesehen.has(href)) continue;
+    if (MUELL_URL.test(href) || !gleicheSeite(href, baseUrl) || !INHALT_MUSTER.test(new URL(href).pathname)) continue;
+
+    const ende = quelltext.indexOf("</a>", match.index);
+    const abschnitt = quelltext.slice(match.index, ende < 0 ? match.index + 8000 : Math.min(ende, match.index + 8000));
+    const bildTag = (abschnitt.match(/<img\s[^>]*>/i) || [""])[0];
+    const bild = bildAusTag(bildTag, baseUrl)
+      || bildAusSrcset(abschnitt, baseUrl)
+      || bildInDerNaehe(quelltext, match.index, baseUrl);
+    if (!bild) continue;
+
+    const ueberschrift = abschnitt.match(/<h[1-6][^>]*>([\s\S]{0,120}?)<\/h[1-6]>/i);
+    const titel = titelAufraeumen(
+      attribut(bildTag, "alt")
+      || attribut("<x " + match[1] + ">", "title")
+      || (ueberschrift ? ohneTags(ueberschrift[1]) : "")
+      || ohneTags(abschnitt)
+    ) || titelAusPfad(href);
+    if (!istBrauchbarerTitel(titel)) continue;
+
+    gesehen.add(href);
+    treffer.push({
+      title: titel,
+      url: href,
+      image: bild,
+      providerId: provider.id || "",
+      providerName: provider.name || ""
+    });
+  }
+  return treffer;
+}
+
+// S.to blendet unter einer Serie "Das schauen andere" ein, Filmo "Verwandte
+// Filme". Das ist die beste Aehnlichkeitsquelle, die die Seiten selbst liefern.
+const AEHNLICH_UEBERSCHRIFT = /(?:das schauen andere|schauen andere|verwandte\s+\w+|ähnliche[sr]?|aehnliche[sr]?|empfehlungen|könnte dir (?:auch )?gefallen)/i;
+
+function extractRelatedItems(html, baseUrl, provider = {}, limit = 12) {
+  const quelltext = String(html || "");
+  const start = quelltext.search(AEHNLICH_UEBERSCHRIFT);
+  if (start < 0) return [];
+  return extractCatalogItems(quelltext.slice(start, start + 60000), baseUrl, provider, limit);
+}
+
+// Die Startseiten der Anbieter zeigen viele Reihen. Fuer "Neu bei deinen
+// Anbietern" zaehlt nur die Reihe mit den Neuheiten - bei AniWorld "Neue
+// Animes", bei S.to "Neu auf SerienStream", bei Filmo "Neu veroeffentlichte
+// Filme". Die Muster werden gegen jede Ueberschrift geprueft, damit auch
+// selbst angelegte Anbieter davon profitieren.
+const NEUHEITEN_MUSTER = [
+  /neue?\s+animes?\b/i,
+  /neu\s+auf\s+\S/i,
+  /neu\s+ver(?:ö|oe)ffentlicht/i,
+  /neu\s+hinzugef(?:ü|ue)gt/i,
+  /(?:zuletzt|k(?:ü|ue)rzlich)\s+hinzugef(?:ü|ue)gt/i,
+  /neue?\s+(?:serien|filme|folgen|titel|ver(?:ö|oe)ffentlichungen)\b/i
+];
+
+// Ueberschriften der Seite samt Position, damit ein Abschnitt bis zur naechsten
+// gleichrangigen Ueberschrift abgegrenzt werden kann. Kachel-Titel stehen in
+// tieferen Rangstufen und beenden den Abschnitt deshalb nicht.
+function ueberschriften(html) {
+  const treffer = [];
+  // Grosszuegiges Fenster: Filmo packt Icons und Links mit in die Ueberschrift,
+  // die erste Fassung einer Reihe ist dadurch mehrere tausend Zeichen lang.
+  // Verglichen wird trotzdem nur der Anfang des Textes.
+  for (const match of String(html || "").matchAll(/<(h[1-6])\b[^>]*>([\s\S]{0,3000}?)<\/\1>/gi)) {
+    treffer.push({
+      rang: match[1].toLowerCase(),
+      text: ohneTags(match[2]).slice(0, 120),
+      start: match.index,
+      ende: match.index + match[0].length
+    });
+  }
+  return treffer;
+}
+
+// Filmo schreibt dieselbe Reihen-Ueberschrift mehrfach ins HTML (eine Fassung
+// je Bildschirmbreite). Der Abschnitt endet deshalb erst bei einer
+// Ueberschrift mit anderem Text, sonst waere er nach der ersten Kopie zu Ende.
+function abschnittNachUeberschrift(html, kopf, alle) {
+  const naechste = alle.find((eintrag) => (
+    eintrag.rang === kopf.rang && eintrag.start >= kopf.ende && eintrag.text !== kopf.text
+  ));
+  const ende = naechste ? naechste.start : kopf.ende + 60000;
+  return html.slice(kopf.ende, Math.min(ende, kopf.ende + 60000));
+}
+
+// Das grosse Titelbild ganz oben auf der Startseite - bei Filmo der Trending-
+// Titel. Erkennungsmerkmal ist ein Bild aus einem "hero"-Verzeichnis. Bewusst
+// eng gefasst: S.to legt sein Karussellbild unter backdrop/hero-mobile ab und
+// soll hier gerade nicht mitkommen.
+function extractHeroItem(html, baseUrl, provider = {}) {
+  const kopfbereich = String(html || "").slice(0, 120000);
+  for (const item of extractCatalogItems(kopfbereich, baseUrl, provider, 12)) {
+    if (/\/hero\//i.test(item.image)) return item;
+  }
+  return null;
+}
+
+// Alle Neuheiten-Abschnitte einer Startseite. Findet sich keiner, gibt die
+// Funktion nichts zurueck und der Aufrufer bleibt beim bisherigen Verhalten.
+function extractNewReleaseItems(html, baseUrl, provider = {}, limit = 30) {
+  const quelltext = String(html || "");
+  const koepfe = ueberschriften(quelltext);
+  const treffer = [];
+  const gesehen = new Set();
+
+  const erledigt = new Set();
+  for (const kopf of koepfe) {
+    if (treffer.length >= limit) break;
+    if (!kopf.text || erledigt.has(kopf.text)) continue;
+    if (!NEUHEITEN_MUSTER.some((muster) => muster.test(kopf.text))) continue;
+    erledigt.add(kopf.text);
+
+    const abschnitt = abschnittNachUeberschrift(quelltext, kopf, koepfe);
+    for (const item of extractCatalogItems(abschnitt, baseUrl, provider, limit)) {
+      if (gesehen.has(item.url)) continue;
+      gesehen.add(item.url);
+      treffer.push(item);
+      if (treffer.length >= limit) break;
+    }
+  }
+  return treffer;
+}
+
+// Zusammengefasste Folgen: S.to listet Doppelfolgen zwar in der Staffel-
+// uebersicht, laesst die aufgegangenen Nummern aber ohne Hoster und schreibt
+// "[In E18 enthalten]" in den Titel. Solche Folgen kann niemand abspielen -
+// sie duerfen weder das Ende einer Staffel markieren noch beim Weiterschauen
+// angesteuert werden.
+const SAMMELFOLGE = /\[\s*in\s+(?:e|ep|episode|folge)\s*\d+\s+enthalten\s*\]/i;
+
+function extractUnplayableEpisodes(html) {
+  const gesperrt = new Set();
+  let gelistet = 0;
+  let letzteSpielbare = 0;
+
+  for (const zeile of String(html || "").split(/<tr\b/i).slice(1)) {
+    const nummer = Number((zeile.match(/episode-number[^>]*>\s*(\d+)/i) || [])[1])
+      || Number((zeile.match(/(?:episode|folge)-(\d+)/i) || [])[1]);
+    if (!Number.isFinite(nummer) || nummer <= 0) continue;
+    gelistet = Math.max(gelistet, nummer);
+
+    const watchZelle = zeile.match(/(?:episode-watch|watch-cell)[^>]*>[\s\S]*?<\/td>/i);
+    const ohneHoster = Boolean(watchZelle) && !/<(?:img|svg|a|button)\b/i.test(watchZelle[0]);
+    if (SAMMELFOLGE.test(zeile) || ohneHoster) {
+      gesperrt.add(nummer);
+    } else {
+      letzteSpielbare = Math.max(letzteSpielbare, nummer);
+    }
+  }
+  return {
+    episodes: [...gesperrt].sort((links, rechts) => links - rechts),
+    listed: gelistet,
+    lastPlayable: letzteSpielbare
+  };
+}
+
 // Seiten, die ihre Kacheln erst per JavaScript aufbauen, liefern im HTML nur
 // die Bilder mit Titel im alt-Text. Daraus laesst sich zwar kein Direktlink
 // bilden, aber ein Aufruf der Suche des Anbieters.
@@ -180,4 +475,14 @@ function extractPosterFallbacks(html, baseUrl, provider = {}, limit = 30) {
   return treffer;
 }
 
-module.exports = { extractDiscoverItems, extractPosterFallbacks };
+module.exports = {
+  extractDiscoverItems,
+  extractPosterFallbacks,
+  extractGenres,
+  extractCatalogItems,
+  extractRelatedItems,
+  extractNewReleaseItems,
+  extractHeroItem,
+  extractUnplayableEpisodes,
+  genreSchluessel
+};

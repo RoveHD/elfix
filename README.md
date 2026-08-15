@@ -9,6 +9,7 @@ ELFIX ist ein kompakter Streaming-Browser fuer Desktop und Android/Android TV. D
 - Anbieter-Verwaltung fuer AniWorld, S.to, Filmo und eigene Provider
 - Globale Suche mit Anbieter-spezifischen Such-URLs und Schreibweisen wie `spiderman`/`spider-man`
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
+- Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
 - Automatische Updates ueber GitHub Releases fuer die installierte Windows-Version
 - Settings mit Version, Update-Status und Fortschrittsbalken
 

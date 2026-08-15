@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   openProviderUrl: (id, url) => ipcRenderer.invoke("provider:navigate", id, url),
   searchAll: (query) => ipcRenderer.invoke("search:all", query),
   getRecommendations: (options = {}) => ipcRenderer.invoke("discover:recommendations", options),
+  getPersonalRecommendations: (options = {}) => ipcRenderer.invoke("discover:personal", options),
   navigate: (input) => ipcRenderer.invoke("browser:navigate", input),
   browserCommand: (command) => ipcRenderer.invoke("browser:command", command),
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),

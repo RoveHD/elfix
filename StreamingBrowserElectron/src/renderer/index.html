@@ -121,6 +121,35 @@
               <div class="favorite-rail recommendation-rail" id="homeRecommendations"></div>
             </section>
 
+            <section class="home-row recommended-row is-hidden" id="personalHomeRow">
+              <div class="row-head">
+                <div class="row-title">Empfohlen für dich</div>
+                <button class="text-action" id="refreshPersonal">Neu berechnen</button>
+              </div>
+              <div class="favorite-rail recommendation-rail personal-rail" id="homePersonal"></div>
+            </section>
+
+            <section class="home-row recommended-row is-hidden" id="animeHomeRow">
+              <div class="row-head">
+                <div class="row-title">Anime für dich</div>
+              </div>
+              <div class="favorite-rail recommendation-rail personal-rail" id="homeAnime"></div>
+            </section>
+
+            <section class="home-row recommended-row is-hidden" id="serienHomeRow">
+              <div class="row-head">
+                <div class="row-title">Serien für dich</div>
+              </div>
+              <div class="favorite-rail recommendation-rail personal-rail" id="homeSerien"></div>
+            </section>
+
+            <section class="home-row recommended-row is-hidden" id="filmeHomeRow">
+              <div class="row-head">
+                <div class="row-title">Filme für dich</div>
+              </div>
+              <div class="favorite-rail recommendation-rail personal-rail" id="homeFilme"></div>
+            </section>
+
             <nav class="home-bottom-nav" aria-label="Startseiten-Navigation unten">
               <button class="is-active" type="button" data-home-action="start">⌂ <span>Startseite</span></button>
               <button type="button" data-home-action="search">⌕ <span>Suche</span></button>
@@ -321,6 +350,8 @@
             <label class="check setting-row"><input id="showHeroHome" type="checkbox"><span><strong>Großes Titelbild oben</strong><small>Zeigt den zuletzt gesehenen Titel mit „Weiter schauen“-Knopf.</small></span></label>
             <label class="check setting-row"><input id="showHomeFavorites" type="checkbox"><span><strong>Reihe „Weiterschauen“</strong><small>Angefangene Filme und Folgen direkt auf der Startseite.</small></span></label>
             <label class="check setting-row"><input id="showHomeProviders" type="checkbox"><span><strong>Reihe „Beliebte Anbieter“</strong><small>Deine Streaming-Seiten als Kacheln zum Direktstart.</small></span></label>
+            <label class="check setting-row"><input id="showHomePersonal" type="checkbox"><span><strong>Reihe „Empfohlen für dich“</strong><small>Vorschläge aus Genres und ähnlichen Titeln zu dem, was du geschaut hast.</small></span></label>
+            <label class="check setting-row"><input id="showHomeCategories" type="checkbox"><span><strong>Reihen nach Kategorie</strong><small>Je eine Reihe mit Vorschlägen für Anime, Serien und Filme.</small></span></label>
             <label>Beschriftung der Anbieter-Kacheln
               <select id="providerCardMeta">
                 <option value="logoName">Kürzel und Name</option>

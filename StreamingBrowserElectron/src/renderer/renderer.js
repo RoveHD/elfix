@@ -27,6 +27,13 @@ let heroPaused = false;
 let recommendations = [];
 let recommendationsLoaded = false;
 let recommendationsPending = false;
+let recommendationsAt = 0;
+let discoverRefreshTimer = 0;
+const DISCOVER_REFRESH_MS = 15 * 60 * 1000;
+let personalPicks = [];
+let personalLoaded = false;
+let personalPending = false;
+let personalSignature = "";
 const thumbnailRepairAttempts = new Set();
 
 const appShell = document.querySelector(".app-shell");
@@ -38,6 +45,15 @@ const homeProviders = document.querySelector("#homeProviders");
 const homeSidebarProviders = document.querySelector("#homeSidebarProviders");
 const homeRecommendations = document.querySelector("#homeRecommendations");
 const recommendedHomeRow = document.querySelector("#recommendedHomeRow");
+const homePersonal = document.querySelector("#homePersonal");
+const personalHomeRow = document.querySelector("#personalHomeRow");
+// Die drei Kategoriereihen unterscheiden sich nur im Medientyp - der Main
+// bewertet einmal und filtert danach, deshalb kostet jede Reihe nichts extra.
+const categoryRails = [
+  { type: "anime", rail: document.querySelector("#homeAnime"), row: document.querySelector("#animeHomeRow") },
+  { type: "serie", rail: document.querySelector("#homeSerien"), row: document.querySelector("#serienHomeRow") },
+  { type: "film", rail: document.querySelector("#homeFilme"), row: document.querySelector("#filmeHomeRow") }
+].map((eintrag) => ({ ...eintrag, items: [], loaded: false, pending: false }));
 const homeQuickSearch = document.querySelector("#homeQuickSearch");
 const heroEyebrow = document.querySelector("#heroEyebrow");
 const heroProgress = document.querySelector("#heroProgress");
@@ -126,6 +142,8 @@ const showProviderStrip = document.querySelector("#showProviderStrip");
 const showHeroHome = document.querySelector("#showHeroHome");
 const showHomeProviders = document.querySelector("#showHomeProviders");
 const showHomeFavorites = document.querySelector("#showHomeFavorites");
+const showHomePersonal = document.querySelector("#showHomePersonal");
+const showHomeCategories = document.querySelector("#showHomeCategories");
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
@@ -216,6 +234,8 @@ const DEFAULT_HOME_SETTINGS = {
   showHero: true,
   showProviders: true,
   showFavorites: true,
+  showPersonal: true,
+  showCategories: true,
   providerCardMeta: "logoName"
 };
 
@@ -336,6 +356,22 @@ function bindEvents() {
   document.querySelector("#searchButton")?.addEventListener("click", openSearchView);
   document.querySelector("#favoritesButton")?.addEventListener("click", showFavorites);
   document.querySelector("#settingsButton").addEventListener("click", openSettings);
+  startDiscoverRefresh();
+  document.querySelector("#refreshPersonal")?.addEventListener("click", () => {
+    if (personalPending) return;
+    personalPicks = [];
+    personalLoaded = false;
+    homePersonal?.replaceChildren(emptyText("Empfehlungen werden berechnet …"));
+    loadPersonalPicks(true);
+    // Die Kategoriereihen stammen aus demselben Durchlauf und werden daher
+    // gleich mit erneuert - der Main haelt den laufenden Aufruf zusammen.
+    for (const reihe of categoryRails) {
+      reihe.items = [];
+      reihe.loaded = false;
+      reihe.rail?.replaceChildren(emptyText("Vorschläge werden geladen …"));
+    }
+    renderCategoryRows();
+  });
   document.querySelector("#heroSettings").addEventListener("click", openSettings);
   // Ueber den waagerechten Reihen scrollt das Mausrad seitwaerts. Am Ende der
   // Reihe wird das Ereignis durchgelassen, damit die Seite normal weiterscrollt.
@@ -510,6 +546,8 @@ function bindEvents() {
     showHeroHome,
     showHomeProviders,
     showHomeFavorites,
+    showHomePersonal,
+    showHomeCategories,
     providerCardMeta,
     showFavoriteMeta,
     showFavoriteMetaMirror,
@@ -756,6 +794,9 @@ function renderHome() {
   })));
 
   renderRecommendations();
+  invalidatePicksIfWatchChanged();
+  renderPersonalPicks(homeSettings);
+  renderCategoryRows(homeSettings);
   if (homeSidebarVersion) {
     homeSidebarVersion.textContent = appInfo.version ? `ELFIX ${appInfo.version}` : "ELFIX";
   }
@@ -790,7 +831,112 @@ async function loadRecommendations(refresh = false) {
   }
   recommendationsLoaded = true;
   recommendationsPending = false;
+  recommendationsAt = Date.now();
   renderRecommendations();
+}
+
+// Die Neuheiten der Anbieter aendern sich ueber den Tag. Ist die Startseite
+// sichtbar, werden sie deshalb regelmaessig frisch geholt; im Hintergrund
+// laufende Abfragen waeren nur Last ohne Nutzen.
+function startDiscoverRefresh() {
+  if (discoverRefreshTimer) return;
+  discoverRefreshTimer = window.setInterval(() => {
+    if (currentRoute !== "start" || homeView?.classList.contains("is-hidden")) return;
+    if (Date.now() - recommendationsAt < DISCOVER_REFRESH_MS) return;
+    loadRecommendations(true);
+  }, 60000);
+}
+
+// "Empfohlen fuer dich" wird im Main-Prozess aus dem Verlauf berechnet: Genres
+// der geschauten Titel als Profil, dazu passende Titel von den Anbietern. Das
+// kostet beim ersten Mal ein paar Sekunden, danach liegt alles im Cache.
+// Neu berechnet wird nur, wenn tatsaechlich etwas anderes geschaut wurde -
+// nicht bei jedem Fortschritts-Tick.
+// Absichtlich ohne Zeitstempel: waehrend des Schauens wandert lastWatchedAt
+// im Sekundentakt weiter. Neu gerechnet wird erst, wenn ein anderer Titel im
+// Verlauf auftaucht.
+function watchSignature() {
+  return favorites
+    .filter((favorite) => favorite.watched || favorite.favorite)
+    .map((favorite) => favorite.id)
+    .sort()
+    .join("|");
+}
+
+// Aendert sich der Verlauf, sind alle Vorschlagsreihen veraltet - sie stammen
+// aus demselben Durchlauf.
+function invalidatePicksIfWatchChanged() {
+  const signatur = watchSignature();
+  if (signatur === personalSignature) return;
+  personalSignature = signatur;
+  personalLoaded = false;
+  for (const reihe of categoryRails) reihe.loaded = false;
+}
+
+function renderCategoryRows(homeSettings = settings.home || DEFAULT_HOME_SETTINGS) {
+  const erlaubt = homeSettings.showCategories !== false;
+  for (const reihe of categoryRails) {
+    if (!reihe.rail) continue;
+    const vorhanden = reihe.items.length > 0;
+    reihe.row?.classList.toggle("is-hidden", !erlaubt || (!vorhanden && reihe.loaded));
+    if (!erlaubt) continue;
+    if (vorhanden) {
+      reihe.rail.replaceChildren(...reihe.items.map(discoverCard));
+    } else if (!reihe.loaded) {
+      reihe.rail.replaceChildren(emptyText("Vorschläge werden geladen …"));
+    }
+    if (!reihe.loaded) loadCategoryRow(reihe);
+  }
+}
+
+async function loadCategoryRow(reihe, refresh = false) {
+  if (reihe.pending) return;
+  reihe.pending = true;
+  try {
+    const homeSettings = settings.home || DEFAULT_HOME_SETTINGS;
+    const items = await api.getPersonalRecommendations({
+      limit: 20,
+      type: reihe.type,
+      refresh,
+      // Nur was in "Empfohlen fuer dich" wirklich zu sehen ist, wird hier
+      // ausgelassen.
+      excludeMain: homeSettings.showPersonal !== false
+    });
+    reihe.items = Array.isArray(items) ? items : [];
+  } catch {
+    reihe.items = [];
+  }
+  reihe.loaded = true;
+  reihe.pending = false;
+  renderCategoryRows();
+}
+
+function renderPersonalPicks(homeSettings = settings.home || DEFAULT_HOME_SETTINGS) {
+  if (!homePersonal) return;
+  const erlaubt = homeSettings.showPersonal !== false;
+  const vorhanden = personalPicks.length > 0;
+  personalHomeRow?.classList.toggle("is-hidden", !erlaubt || (!vorhanden && personalLoaded));
+  if (!erlaubt) return;
+  if (vorhanden) {
+    homePersonal.replaceChildren(...personalPicks.map(discoverCard));
+  } else if (!personalLoaded) {
+    homePersonal.replaceChildren(emptyText("Empfehlungen werden berechnet …"));
+  }
+  if (!personalLoaded) loadPersonalPicks();
+}
+
+async function loadPersonalPicks(refresh = false) {
+  if (personalPending) return;
+  personalPending = true;
+  try {
+    const items = await api.getPersonalRecommendations({ limit: 24, refresh });
+    personalPicks = Array.isArray(items) ? items : [];
+  } catch {
+    personalPicks = [];
+  }
+  personalLoaded = true;
+  personalPending = false;
+  renderPersonalPicks();
 }
 
 function discoverCard(item) {
@@ -802,9 +948,13 @@ function discoverCard(item) {
   if (item.image) {
     card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(item.image)}")`;
   }
+  const untertitel = item.reason
+    ? `${item.reason} · ${item.providerName || ""}`
+    : item.providerName || "";
+  if (item.reason && !item.viaSearch) card.title = `${item.title} – ${item.reason}`;
   card.innerHTML = `
     <strong>${escapeHtml(item.title)}</strong>
-    <span>${escapeHtml(item.providerName || "")}</span>
+    <span>${escapeHtml(untertitel)}</span>
   `;
   const oeffnen = () => openDiscoverItem(item);
   card.addEventListener("click", oeffnen);
@@ -1869,6 +2019,8 @@ function renderSettings() {
   showHeroHome.checked = home.showHero !== false;
   showHomeProviders.checked = home.showProviders !== false;
   showHomeFavorites.checked = home.showFavorites !== false;
+  if (showHomePersonal) showHomePersonal.checked = home.showPersonal !== false;
+  if (showHomeCategories) showHomeCategories.checked = home.showCategories !== false;
   providerCardMeta.value = home.providerCardMeta || "logoName";
   showFavoriteMeta.checked = appearance.showFavoriteMeta !== false;
   animationsEnabled.checked = appearance.animations !== false && animationMode.value !== "off";
@@ -2047,6 +2199,8 @@ async function saveSettings() {
     showHero: showHeroHome.checked,
     showProviders: showHomeProviders.checked,
     showFavorites: showHomeFavorites.checked,
+    showPersonal: showHomePersonal ? showHomePersonal.checked : true,
+    showCategories: showHomeCategories ? showHomeCategories.checked : true,
     providerCardMeta: providerCardMeta.value
   };
   settings.appearance = {

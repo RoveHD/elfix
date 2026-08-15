@@ -1,6 +1,6 @@
 {
   "name": "elfix",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "ELFIX, a compact Chromium-based streaming website browser.",
   "author": "RoveHD",
   "repository": {
@@ -10,7 +10,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "typecheck": "node --check shared/provider-model.js && node --check src/main.js && node --check src/discover.js && node --check src/preload.js && node --check src/renderer/renderer.js",
+    "typecheck": "node --check shared/provider-model.js && node --check src/main.js && node --check src/discover.js && node --check src/taste.js && node --check src/preload.js && node --check src/renderer/renderer.js",
     "lint": "node scripts/lint.js",
     "test": "npm run typecheck",
     "make-icon": "node scripts/make-icon.js",
