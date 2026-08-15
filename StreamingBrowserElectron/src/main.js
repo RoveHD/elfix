@@ -57,9 +57,15 @@ const blockedRequests = [];
 const mediaDiagnostics = [];
 const mediaConsoleLogState = new Map();
 const discoverCache = new Map();
+const nextEpisodePromptState = new Map();
+const nextEpisodeAutostartState = new Map();
+let nextEpisodeLogState = "";
 const DISCOVER_CACHE_MS = 30 * 60 * 1000;
 const autoplayConsoleLogState = new Map();
 const AUTOPLAY_POLL_MS = 700;
+const NEXT_EPISODE_PROMPT_PERCENT = 90;
+const NEXT_EPISODE_COUNTDOWN_SECONDS = 5;
+const FRAME_SCRIPT_TIMEOUT_MS = 3000;
 const AUTOSTART_REVEAL_TIMEOUT_MS = 22000;
 const AUTOSTART_EXTRA_WAIT_MS = 8000;
 const CURTAIN_DIR = path.join(DATA_DIR, "curtain");
@@ -797,8 +803,23 @@ function getProviderView(provider) {
       leaveContentFullscreen();
     }
   });
+  // Rueckkanal des "Naechste Folge"-Knopfes aus der Anbieterseite.
+  view.webContents.on("console-message", (...args) => {
+    const nachricht = typeof args[0] === "object" && args[0] !== null && "message" in args[0]
+      ? args[0].message
+      : args[1];
+    const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
+    if (!treffer) return;
+    logNextEpisode(provider, "Knopf/Countdown ausgeloest");
+    playNextEpisode(provider, view, treffer[1]).catch((fehler) => {
+      logNextEpisode(provider, "FEHLER beim Wechsel: " + (fehler?.message || fehler));
+    });
+  });
   view.webContents.on("did-navigate", (_event, url) => {
     rememberProviderUrl(provider.id, url);
+    nextEpisodePromptState.delete(provider.id);
+    // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
+    nextEpisodeAutostartState.delete(provider.id);
     resumePendingProviderAutoplay(provider, view);
   });
   view.webContents.on("did-navigate-in-page", (_event, url) => {
@@ -955,7 +976,276 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
     updateFavoriteUrl: false
   });
   if (!entry) return;
+
+  const prozent = mediaProgressPercent(progress.currentTime, progress.duration);
+  // Bewusst nicht ueber entry.completed: das gilt schon ab 90 Prozent. Hier
+  // zaehlt nur das tatsaechliche Ende der Folge.
+  const amEnde = Boolean(progress.ended)
+    || (progress.duration > 0 && progress.currentTime >= progress.duration - 1.5);
+  // Ohne obere Grenze: sonst verschwindet der Knopf in den letzten Sekunden
+  // wieder, bevor der automatische Wechsel greift.
+  const fastFertig = !amEnde && prozent >= NEXT_EPISODE_PROMPT_PERCENT;
+
+  let naechste = "";
+  if (fastFertig || amEnde) {
+    const ausDerSeite = progress.nextUrl ? "" : await readNextEpisodeLink(view);
+    naechste = nextEpisodeContinueUrl(url, progress.nextUrl || ausDerSeite, entry);
+  }
+
+  // Folge durchgelaufen: Countdown einblenden, der von selbst weiterschaltet.
+  // Der Merker verhindert, dass der 5-Sekunden-Takt ihn neu startet.
+  if (amEnde && naechste) {
+    if (nextEpisodeAutostartState.get(provider.id) !== url) {
+      nextEpisodeAutostartState.set(provider.id, url);
+      nextEpisodePromptState.set(provider.id, "countdown");
+      installNextEpisodePrompt(view, naechste, { countdown: NEXT_EPISODE_COUNTDOWN_SECONDS });
+    }
+    if (reason !== "poll" || entry.completed) sendActiveState();
+    return;
+  }
+
+  // Davor nur der Knopf. Nur bei Aenderung einspielen, sonst liefe alle
+  // 5 Sekunden ein Script durch saemtliche Frames der Seite.
+  const gewuenscht = fastFertig && naechste ? naechste : "";
+  if (nextEpisodePromptState.get(provider.id) !== gewuenscht) {
+    nextEpisodePromptState.set(provider.id, gewuenscht);
+    installNextEpisodePrompt(view, gewuenscht);
+  }
+
   if (reason !== "poll" || entry.completed) sendActiveState();
+}
+
+// Der Knopf lebt in der Anbieterseite, weil deren View im Vollbild alles
+// ueberdeckt. Er meldet den Klick ueber eine Konsolenzeile zurueck - ohne
+// Preload gibt es in einer fremden Seite keinen anderen Kanal.
+function installNextEpisodePrompt(view, url, options = {}) {
+  if (!isLiveView(view)) return;
+  const script = `(() => {
+    const ziel = ${JSON.stringify(String(url || ""))};
+    const countdown = ${Number(options.countdown) || 0};
+    const id = "__elfixNextEpisode";
+    let karte = document.getElementById(id);
+    const obenDrauf = window.top === window.self;
+    const sichtbaresVideo = Array.from(document.querySelectorAll("video")).some((video) => {
+      const rect = video.getBoundingClientRect();
+      return rect.width > 120 && rect.height > 80;
+    });
+    const rahmen = Array.from(document.querySelectorAll("iframe, embed")).some((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 200 && rect.height > 120;
+    });
+
+    // Die Karte gehoert in den Frame mit dem Video: im Vollbild ist das
+    // Vollbild-Element oft das <iframe> selbst, und ein Kind davon wird nie
+    // gezeichnet. Das Hauptdokument uebernimmt nur, wenn dort auch der Player
+    // sitzt - sonst gaebe es die Karte doppelt.
+    const zustaendig = sichtbaresVideo || (obenDrauf && !rahmen);
+    const vollbild = document.fullscreenElement;
+    const buehne = zustaendig
+      ? (vollbild && vollbild.tagName !== "IFRAME" && vollbild.tagName !== "EMBED" ? vollbild : document.documentElement)
+      : null;
+
+    const beenden = () => {
+      if (!karte) return;
+      if (karte.__timer) clearInterval(karte.__timer);
+      karte.remove();
+      karte = null;
+    };
+
+    if (!ziel || !buehne) {
+      beenden();
+      return "entfernt@" + location.hostname;
+    }
+
+    if (!karte) {
+      karte = document.createElement("div");
+      karte.id = id;
+      Object.assign(karte.style, {
+        position: "fixed",
+        right: "34px",
+        bottom: "86px",
+        zIndex: "2147483647",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        opacity: "0",
+        transform: "translateY(8px)",
+        transition: "opacity 180ms ease, transform 180ms ease"
+      });
+
+      const haupt = document.createElement("button");
+      haupt.type = "button";
+      Object.assign(haupt.style, {
+        minHeight: "46px",
+        padding: "0 22px",
+        border: "0",
+        borderRadius: "10px",
+        background: "rgba(255, 255, 255, 0.94)",
+        color: "#0b0f16",
+        font: "800 15px/1 system-ui, sans-serif",
+        boxShadow: "0 12px 34px rgba(0, 0, 0, 0.45)",
+        cursor: "pointer",
+        transition: "background 140ms ease"
+      });
+      haupt.addEventListener("mouseenter", () => { haupt.style.background = "#ffffff"; });
+      haupt.addEventListener("mouseleave", () => { haupt.style.background = "rgba(255, 255, 255, 0.94)"; });
+      haupt.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (karte.__timer) clearInterval(karte.__timer);
+        karte.__timer = 0;
+        haupt.disabled = true;
+        haupt.textContent = "Wird geladen …";
+        abbrechen.style.display = "none";
+        console.log("__elfix:next-episode:" + karte.dataset.url);
+      }, true);
+
+      const abbrechen = document.createElement("button");
+      abbrechen.type = "button";
+      abbrechen.textContent = "Abbrechen";
+      Object.assign(abbrechen.style, {
+        display: "none",
+        minHeight: "46px",
+        padding: "0 16px",
+        border: "0",
+        borderRadius: "10px",
+        background: "rgba(12, 16, 24, 0.78)",
+        color: "#fff",
+        font: "750 14px/1 system-ui, sans-serif",
+        boxShadow: "0 12px 34px rgba(0, 0, 0, 0.45)",
+        cursor: "pointer"
+      });
+      // Abbrechen stoppt nur den Countdown - der Knopf bleibt, damit man
+      // trotzdem von Hand weiterspringen kann.
+      abbrechen.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (karte.__timer) clearInterval(karte.__timer);
+        karte.__timer = 0;
+        karte.dataset.abgebrochen = "ja";
+        haupt.textContent = "Nächste Folge  ›";
+        abbrechen.style.display = "none";
+      }, true);
+
+      karte.__haupt = haupt;
+      karte.__abbrechen = abbrechen;
+      karte.append(haupt, abbrechen);
+      buehne.appendChild(karte);
+      requestAnimationFrame(() => {
+        karte.style.opacity = "1";
+        karte.style.transform = "translateY(0)";
+      });
+    } else if (karte.parentElement !== buehne) {
+      buehne.appendChild(karte);
+    }
+
+    karte.dataset.url = ziel;
+
+    if (countdown > 0 && !karte.__timer && karte.dataset.abgebrochen !== "ja") {
+      // Feste Zielzeit statt Zaehlschritte: ein Intervall driftet, und der
+      // Wechsel kaeme sonst spuerbar spaeter als angekuendigt.
+      const ende = Date.now() + countdown * 1000;
+      karte.__abbrechen.style.display = "";
+      const tick = () => {
+        const rest = Math.ceil((ende - Date.now()) / 1000);
+        if (rest > 0) {
+          karte.__haupt.textContent = "Nächste Folge in " + rest + " …";
+          return;
+        }
+        clearInterval(karte.__timer);
+        karte.__timer = 0;
+        karte.__haupt.textContent = "Wird geladen …";
+        karte.__abbrechen.style.display = "none";
+        console.log("__elfix:next-episode:" + karte.dataset.url);
+      };
+      tick();
+      karte.__timer = setInterval(tick, 200);
+      return "countdown@" + location.hostname;
+    }
+
+    if (!countdown && !karte.__timer) {
+      karte.__haupt.textContent = "Nächste Folge  ›";
+      karte.__abbrechen.style.display = "none";
+    }
+    return "knopf@" + location.hostname;
+  })()`;
+  executeJavaScriptInMediaFrames(view, script)
+    .then((ergebnisse) => {
+      const zusammen = (ergebnisse || []).filter(Boolean).join(", ");
+      if (!zusammen || zusammen === nextEpisodeLogState) return;
+      nextEpisodeLogState = zusammen;
+      console.log(`[ELFIX FOLGE] ${new Date().toLocaleTimeString("de-DE")} | Einblendung: ${zusammen}`);
+    })
+    .catch(() => {});
+}
+
+// Bei AniWorld und S.to laeuft das Video im Frame des Hosters - dort gibt es
+// keine Folgenliste. Der Link zur naechsten Folge steht nur im Hauptdokument.
+async function readNextEpisodeLink(view) {
+  if (!isLiveView(view)) return "";
+  const link = await view.webContents.executeJavaScript(`(() => {
+    const abs = (value) => {
+      try { return value ? new URL(value, location.href).href : ""; } catch (_) { return ""; }
+    };
+    const anchors = Array.from(document.querySelectorAll("a[href]"));
+    const currentMatch = location.pathname.match(/\\/(?:episode|folge)-(\\d+)(?:\\/?|$)/i);
+    const current = currentMatch ? Number(currentMatch[1]) : 0;
+    if (!current) return "";
+    const muster = new RegExp("\\\\/(?:episode|folge)-" + (current + 1) + "(?:[/?#]|$)", "i");
+    const treffer = anchors.find((anchor) => muster.test(abs(anchor.getAttribute("href"))));
+    return treffer ? abs(treffer.getAttribute("href")) : "";
+  })()`).catch(() => "");
+  return typeof link === "string" ? link : "";
+}
+
+// Gilt fuer beide Wege gleich: Knopf gedrueckt oder Folge durchgelaufen. Die
+// naechste Folge wird geladen, gestartet und ins Vollbild gebracht - derselbe
+// Ablauf wie beim Start aus "Weiterschauen".
+async function playNextEpisode(provider, view, url) {
+  if (!provider || !isLiveView(view)) {
+    logNextEpisode(provider, "abgebrochen - keine lebende Ansicht");
+    return;
+  }
+  logNextEpisode(provider, `Wechsel angefordert -> ${kurzeUrl(url)}`);
+  nextEpisodePromptState.delete(provider.id);
+  // Vorhang wie beim Weiterschauen, damit man das Laden der Folge nicht sieht.
+  await beginAutostart(provider.id, naechsteFolgeLabel(provider, url), { snapshot: false });
+  await navigateProvider(provider, url);
+  logNextEpisode(provider, `Navigation angestossen, Seite zeigt gerade ${kurzeUrl(view.webContents.getURL())}`);
+  scheduleProviderAutoplay(provider, activeView, {
+    fullscreen: true,
+    // Erst auf der Zielseite loslegen, und laenger dranbleiben: das Laden der
+    // Folge frisst einen Teil des Zeitfensters.
+    expectUrl: url,
+    durationMs: 45000
+  });
+  logNextEpisode(provider, "Autoplay beauftragt (Vollbild an, 45s Fenster)");
+}
+
+function naechsteFolgeLabel(provider, url) {
+  const identity = episodeIdentity(url);
+  const eintrag = favorites.find((favorite) => (
+    favorite.providerId === provider?.id && episodeIdentity(favorite.url)?.key === identity?.key
+  ));
+  const titel = cleanBaseMediaTitle(eintrag?.title || "", url);
+  const folge = identity
+    ? (identity.season > 0 ? `Staffel ${identity.season} Folge ${identity.episode}` : `Folge ${identity.episode}`)
+    : "";
+  return [titel, folge].filter(Boolean).join(" · ") || "Nächste Folge";
+}
+
+function kurzeUrl(url) {
+  try {
+    const ziel = new URL(String(url || ""));
+    return ziel.host + ziel.pathname;
+  } catch {
+    return String(url || "(leer)");
+  }
+}
+
+function logNextEpisode(provider, text) {
+  const zeit = new Date().toLocaleTimeString("de-DE");
+  console.log(`[ELFIX FOLGE] ${zeit} | ${provider?.name || "?"} | ${text}`);
 }
 
 async function readBestMediaProgress(view, script) {
@@ -981,8 +1271,16 @@ async function executeJavaScriptInMediaFrames(view, script) {
   };
   collectFrames(view.webContents.mainFrame);
 
+  // Ein Frame, der waehrend der Ausfuehrung neu geladen oder verworfen wird,
+  // loest sein Versprechen nie ein. Ohne Zeitlimit haengt der ganze Durchlauf
+  // und damit auch der Autoplay nach einem Folgenwechsel.
+  const mitZeitlimit = (versprechen) => Promise.race([
+    versprechen,
+    new Promise((resolve) => { setTimeout(() => resolve(null), FRAME_SCRIPT_TIMEOUT_MS); })
+  ]);
+
   if (!frames.length) {
-    const sample = await view.webContents.executeJavaScript(script, true).catch(() => null);
+    const sample = await mitZeitlimit(view.webContents.executeJavaScript(script, true).catch(() => null));
     return sample ? [sample] : [];
   }
 
@@ -990,7 +1288,7 @@ async function executeJavaScriptInMediaFrames(view, script) {
   // eine "transient user activation", die ein Script ohne dieses Flag nicht mitbringt.
   const samples = await Promise.all(frames.map((frame) => (
     typeof frame.executeJavaScript === "function"
-      ? frame.executeJavaScript(script, true).catch(() => null)
+      ? mitZeitlimit(frame.executeJavaScript(script, true).catch(() => null))
       : Promise.resolve(null)
   )));
   return samples.filter(Boolean);
@@ -1222,7 +1520,7 @@ function restoreActiveViewAfterOverlay() {
 // liegt nur ein Vorhang mit einem Standbild der Oberflaeche. Alles andere
 // (abhaengen, verschieben, komplett verdecken) macht die Seite fuer Chromium
 // unsichtbar und drosselt sie auf ~1 Timer-Tick pro Sekunde ohne jedes Frame.
-async function beginAutostart(providerId, title) {
+async function beginAutostart(providerId, title, options = {}) {
   // Bewusst ohne finishAutostart(): ein zweiter Klick waehrend des Startens soll
   // weder umschalten noch den Vorhang kurz aufziehen.
   if (pendingAutostart) clearTimeout(pendingAutostart.timer);
@@ -1231,24 +1529,28 @@ async function beginAutostart(providerId, title) {
     startedAt: Date.now(),
     timer: setTimeout(() => handleAutostartTimeout(providerId), AUTOSTART_REVEAL_TIMEOUT_MS)
   };
-  await showAutostartCurtain(title).catch(() => {});
+  await showAutostartCurtain(title, options).catch(() => {});
   applyBrowserBounds();
 }
 
-async function showAutostartCurtain(title) {
+async function showAutostartCurtain(title, options = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   removeAutostartCurtain();
 
   let snapshot = "";
-  try {
-    const image = await mainWindow.webContents.capturePage();
-    if (!image.isEmpty()) {
-      fs.mkdirSync(CURTAIN_DIR, { recursive: true });
-      fs.writeFileSync(path.join(CURTAIN_DIR, "shell.png"), image.toPNG());
-      snapshot = `<img src="shell.png" alt="">`;
+  // Beim Folgenwechsel kein Standbild: die Oberflaeche dahinter zeigt die
+  // Startseite, waehrend man gerade im Player sitzt - das waere ein Bruch.
+  if (options.snapshot !== false) {
+    try {
+      const image = await mainWindow.webContents.capturePage();
+      if (!image.isEmpty()) {
+        fs.mkdirSync(CURTAIN_DIR, { recursive: true });
+        fs.writeFileSync(path.join(CURTAIN_DIR, "shell.png"), image.toPNG());
+        snapshot = `<img src="shell.png" alt="">`;
+      }
+    } catch {
+      // Ohne Standbild bleibt der Vorhang einfach dunkel.
     }
-  } catch {
-    // Ohne Standbild bleibt der Vorhang einfach dunkel.
   }
 
   fs.mkdirSync(CURTAIN_DIR, { recursive: true });
@@ -1558,8 +1860,31 @@ function resumePendingProviderAutoplay(provider, view) {
     finishAutostart("abgelaufen");
     return;
   }
-  if (request.busy) return;
+  // Nach einem Folgenwechsel steht kurz noch die alte Seite. Ohne diese Sperre
+  // startet der erste Versuch das gerade beendete Video neu, wertet das als
+  // Erfolg und verbraucht den Auftrag, bevor die neue Folge geladen ist.
+  if (request.expectUrl) {
+    const aktuell = view.webContents.getURL();
+    const angekommen = isExpectedEpisodePage(aktuell, request.expectUrl);
+    if (!angekommen && Date.now() - request.startedAt < 12000) {
+      // Eine Weiterleitung kann die Adresse veraendern - dann nach kurzer Zeit
+      // trotzdem starten, statt gar nichts mehr zu tun.
+      if (!request.warteGemeldet) {
+        request.warteGemeldet = true;
+        logNextEpisode(provider, `warte auf Zielseite ${kurzeUrl(request.expectUrl)} - offen ist noch ${kurzeUrl(aktuell)}`);
+      }
+      return;
+    }
+    logNextEpisode(provider, angekommen
+      ? `Zielseite erreicht (${kurzeUrl(aktuell)}) - Autoplay startet`
+      : `Zielseite nach 12s nicht erkannt (offen: ${kurzeUrl(aktuell)}) - Autoplay startet trotzdem`);
+    request.expectUrl = "";
+  }
+  // Zeitgebunden statt nur boolesch: bleibt ein Durchlauf haengen, war der
+  // Autoplay danach dauerhaft blockiert.
+  if (request.busy && Date.now() < (request.busyUntil || 0)) return;
   request.busy = true;
+  request.busyUntil = Date.now() + FRAME_SCRIPT_TIMEOUT_MS + 3000;
   startPlaybackInView(view, { mode: "play" }).then((results) => {
     request.busy = false;
     const values = Array.isArray(results) ? results : [];
@@ -1707,6 +2032,14 @@ async function playerCenterPoint(view) {
   })()`, true).catch(() => null);
   if (!spot || !Number.isFinite(spot.x) || !Number.isFinite(spot.y)) return null;
   return spot;
+}
+
+function isExpectedEpisodePage(aktuell, erwartet) {
+  if (!aktuell || !erwartet) return false;
+  if (normalizeFavoriteUrl(aktuell) === normalizeFavoriteUrl(erwartet)) return true;
+  const a = episodeIdentity(aktuell);
+  const b = episodeIdentity(erwartet);
+  return Boolean(a && b && a.key === b.key && a.season === b.season && a.episode === b.episode);
 }
 
 function logAutoplayAttempt(provider, request, values) {
