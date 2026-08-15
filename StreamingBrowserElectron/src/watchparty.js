@@ -52,6 +52,9 @@ class Watchparty {
   eintraege() {
     return this.geteilt.map((eintrag) => ({
       ...eintrag,
+      // Der Raum gehoert an den Eintrag: laufen mehrere nebeneinander, muss
+      // jede Aktion wissen, welcher gemeint ist.
+      room: this.raum,
       joined: Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId),
       // Die eigene Kennung braucht die Oberflaeche, um sich selbst in der
       // Mitgliederliste nicht zum Rauswerfen anzubieten.

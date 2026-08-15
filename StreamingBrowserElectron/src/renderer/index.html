@@ -378,9 +378,15 @@
             <label>Server-Adresse<input id="watchpartyServer" placeholder="wss://mein-relay.example.com">
               <small>Adresse deines Relays aus <code>sync-server/</code>. <code>https://</code> wird automatisch zu <code>wss://</code>.</small>
             </label>
-            <label>Raumcode<input id="watchpartyRoom" maxlength="64" placeholder="familie-abend">
-              <small>Alle Geräte mit demselben Code teilen ihren Fortschritt. Wer den Code kennt, ist dabei — wähle ihn nicht zu einfach.</small>
-            </label>
+            <div class="setting-block">
+              <strong>Raumcodes</strong>
+              <div class="room-add">
+                <input id="watchpartyRoom" maxlength="64" placeholder="familie-abend">
+                <button type="button" class="soft-action" id="watchpartyRoomAdd">Raum hinzufügen</button>
+              </div>
+              <div class="room-list" id="watchpartyRoomList"></div>
+              <small>Alle Geräte mit demselben Code teilen ihren Fortschritt. Mehrere Codes sind möglich — etwa einer für die Familie und einer für Freunde. Wer den Code kennt, ist dabei: wähle ihn nicht zu einfach.</small>
+            </div>
             <label>Name dieses Geräts <em>optional</em><input id="watchpartyName" maxlength="40" placeholder="Wohnzimmer">
               <small>Nur zur Anzeige, damit du siehst, wer verbunden ist.</small>
             </label>

@@ -254,7 +254,15 @@ function hostSicherstellen(raumcode, eintrag) {
   if (eintrag.hostId && verbundene.some((client) => client.geraetId === eintrag.hostId)) return false;
 
   const neuer = verbundene[0];
-  if (!neuer) return false;
+  if (!neuer) {
+    // Niemand da: der alte Name darf nicht stehen bleiben, sonst zeigt die
+    // Anzeige einen Host, der laengst weg ist. Der Naechste, der kommt,
+    // uebernimmt.
+    if (!eintrag.hostId && !eintrag.hostName) return false;
+    eintrag.hostId = "";
+    eintrag.hostName = "";
+    return true;
+  }
   eintrag.hostId = neuer.geraetId;
   eintrag.hostName = neuer.name;
   return true;
@@ -365,6 +373,9 @@ wss.on("connection", (socket) => {
         hostSicherstellen(socket.raum, eintrag);
       } else {
         eintrag.members.delete(socket.geraetId);
+        // Wer aussteigt, kann nicht Host bleiben - sonst gleichen sich alle
+        // weiter mit jemandem ab, der gar nicht mehr mitschaut.
+        hostSicherstellen(socket.raum, eintrag);
       }
       zustandSenden(socket.raum);
       return;
@@ -377,6 +388,7 @@ wss.on("connection", (socket) => {
       if (!eintrag || eintrag.addedById !== socket.geraetId || !wen) return;
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
+      hostSicherstellen(socket.raum, eintrag);
       zustandSenden(socket.raum);
       return;
     }
@@ -526,10 +538,9 @@ wss.on("connection", (socket) => {
     const raum = raeume.get(socket.raum);
     let gewechselt = false;
     for (const eintrag of raum?.titel.values() || []) {
-      if (eintrag.hostId === socket.geraetId) {
-        eintrag.hostId = "";
-        gewechselt = hostSicherstellen(socket.raum, eintrag) || gewechselt;
-      }
+      // hostSicherstellen sieht selbst, dass diese Verbindung weg ist, und
+      // gibt weiter, wenn dadurch jemand anderes den Takt uebernimmt.
+      gewechselt = hostSicherstellen(socket.raum, eintrag) || gewechselt;
     }
     if (gewechselt) zustandSenden(socket.raum);
     else anRaumSenden(socket.raum, { type: "peers", peers: teilnehmer(socket.raum) });

@@ -13,7 +13,7 @@ const {
   extractRelatedItems
 } = require("./discover");
 const taste = require("./taste");
-const { Watchparty } = require("./watchparty");
+const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const providerModel = require("../shared/provider-model");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -76,7 +76,7 @@ const discoverCache = new Map();
 const seasonInfoCache = new Map();
 let watchpartyShared = [];
 let watchpartyLokal = { shared: [], joined: [] };
-let watchpartyWiederhergestellt = false;
+const watchpartyWiederhergestellt = new Set();
 const watchpartySprung = new Map();
 const watchpartyBildNachgereicht = new Set();
 // Serien, fuer die dieses Geraet die Live-Steuerung abgeschaltet hat, und
@@ -93,6 +93,8 @@ const SEASON_INFO_CACHE_MS = 6 * 60 * 60 * 1000;
 // So lange wird auf die Bestaetigung des Raums gewartet, bevor das Teilen als
 // gescheitert gilt.
 const WATCHPARTY_BESTAETIGUNG_MS = 4000;
+// Jeder Raum ist eine eigene Verbindung - irgendwo muss Schluss sein.
+const WATCHPARTY_MAX_RAEUME = 8;
 // Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
 const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -697,9 +699,11 @@ ipcMain.handle("watchparty:status", () => watchparty.status());
 
 ipcMain.handle("watchparty:items", () => watchpartyItems());
 
-ipcMain.handle("watchparty:open", async (_event, key) => openWatchpartyItem(key));
+ipcMain.handle("watchparty:open", async (_event, key, room) => openWatchpartyItem(key, room));
 
-ipcMain.handle("watchparty:share-current", async () => {
+ipcMain.handle("watchparty:rooms", () => watchpartyRaumUebersicht());
+
+ipcMain.handle("watchparty:share-current", async (_event, room) => {
   const provider = activeProvider();
   const url = activeView?.webContents?.getURL() || "";
   if (!provider || !providerModel.isHttpUrl(url)) {
@@ -725,21 +729,21 @@ ipcMain.handle("watchparty:share-current", async () => {
       episode: identity?.episode || 0
     };
   }
-  return shareWatchpartyFavorite(favorite);
+  return shareWatchpartyFavorite(favorite, room);
 });
 
-ipcMain.handle("watchparty:enter", (_event, key) => {
-  watchparty.beitreten(String(key || ""));
+ipcMain.handle("watchparty:enter", (_event, key, room) => {
+  watchparty.beitreten(String(key || ""), String(room || ""));
   return true;
 });
 
-ipcMain.handle("watchparty:leave", (_event, key) => {
-  watchparty.verlassen(String(key || ""));
+ipcMain.handle("watchparty:leave", (_event, key, room) => {
+  watchparty.verlassen(String(key || ""), String(room || ""));
   return true;
 });
 
-ipcMain.handle("watchparty:remove", (_event, key) => {
-  watchparty.entfernen(String(key || ""));
+ipcMain.handle("watchparty:remove", (_event, key, room) => {
+  watchparty.entfernen(String(key || ""), String(room || ""));
   return true;
 });
 
@@ -756,8 +760,8 @@ ipcMain.handle("watchparty:live-toggle", (_event, key, an) => {
   return watchpartyLiveAktiv(schluessel);
 });
 
-ipcMain.handle("watchparty:resync", async (_event, key) => {
-  const eintrag = watchpartyShared.find((item) => item.key === String(key || ""));
+ipcMain.handle("watchparty:resync", async (_event, key, room) => {
+  const eintrag = watchpartyEintrag(key, room);
   if (!eintrag) return false;
   // Die eigene Stelle als Vorschlag mitgeben; der Server bevorzugt den Host.
   let position = 0;
@@ -767,12 +771,12 @@ ipcMain.handle("watchparty:resync", async (_event, key) => {
     const werte = await executeJavaScriptInMediaFrames(view, "(() => { const v = Array.from(document.querySelectorAll('video')).filter((m) => Number(m.duration) > 0).sort((a, b) => b.duration - a.duration)[0]; return v ? Math.round(v.currentTime) : 0; })()").catch(() => []);
     position = Math.max(position, ...(werte || []).map((e) => Number(e?.value ?? e) || 0));
   }
-  watchparty.gleichziehen(eintrag.key, position);
+  watchparty.gleichziehen(eintrag.key, position, eintrag.room);
   return true;
 });
 
-ipcMain.handle("watchparty:kick", (_event, key, memberId) => {
-  watchparty.rauswerfen(String(key || ""), String(memberId || ""));
+ipcMain.handle("watchparty:kick", (_event, key, memberId, room) => {
+  watchparty.rauswerfen(String(key || ""), String(memberId || ""), String(room || ""));
   return true;
 });
 
@@ -3773,9 +3777,19 @@ async function discoverForProvider(provider, refresh) {
 function loadWatchpartyLocal() {
   try {
     const roh = JSON.parse(fs.readFileSync(WATCHPARTY_FILE, "utf8"));
+    // Aus der Zeit mit nur einem Raum stehen in "joined" blosse Schluessel.
+    // Ohne Raum daran gehoert der Eintrag dem einzigen, den es damals gab.
+    const alterRaum = String(settings?.watchparty?.rooms?.[0] || "");
     return {
-      shared: Array.isArray(roh?.shared) ? roh.shared : [],
-      joined: Array.isArray(roh?.joined) ? roh.joined : []
+      shared: (Array.isArray(roh?.shared) ? roh.shared : []).map((eintrag) => ({
+        ...eintrag,
+        room: String(eintrag?.room || alterRaum)
+      })),
+      joined: (Array.isArray(roh?.joined) ? roh.joined : []).map((eintrag) => (
+        typeof eintrag === "string"
+          ? { key: eintrag, room: alterRaum }
+          : { key: String(eintrag?.key || ""), room: String(eintrag?.room || alterRaum) }
+      )).filter((eintrag) => eintrag.key)
     };
   } catch {
     return { shared: [], joined: [] };
@@ -3795,6 +3809,7 @@ function rememberWatchpartyState(eintraege) {
   watchpartyLokal = {
     shared: eintraege.filter((eintrag) => eintrag.mine).map((eintrag) => ({
       key: eintrag.key,
+      room: eintrag.room || "",
       url: eintrag.url,
       title: eintrag.title,
       providerName: eintrag.providerName,
@@ -3803,7 +3818,9 @@ function rememberWatchpartyState(eintraege) {
       season: eintrag.season,
       episode: eintrag.episode
     })),
-    joined: eintraege.filter((eintrag) => eintrag.joined).map((eintrag) => eintrag.key)
+    joined: eintraege
+      .filter((eintrag) => eintrag.joined)
+      .map((eintrag) => ({ key: eintrag.key, room: eintrag.room || "" }))
   };
   saveWatchpartyLocal();
 }
@@ -3811,28 +3828,31 @@ function rememberWatchpartyState(eintraege) {
 // Einmal je Verbindung: fehlende eigene Titel neu einstellen und
 // Mitgliedschaften wieder eintragen. Bewusst Verlassenes bleibt draussen, weil
 // es beim Verlassen aus der lokalen Liste fliegt.
-function restoreWatchparty(eintraege) {
-  if (watchpartyWiederhergestellt) return;
-  watchpartyWiederhergestellt = true;
+function restoreWatchparty(eintraege, raum) {
+  if (!raum || watchpartyWiederhergestellt.has(raum)) return;
+  watchpartyWiederhergestellt.add(raum);
+  const imRaum = eintraege.filter((eintrag) => eintrag.room === raum);
 
   let nachgetragen = 0;
   for (const eigen of watchpartyLokal.shared) {
-    if (eintraege.some((eintrag) => eintrag.key === eigen.key)) continue;
-    watchparty.teilen(eigen);
+    if (eigen.room !== raum) continue;
+    if (imRaum.some((eintrag) => eintrag.key === eigen.key)) continue;
+    watchparty.teilen(eigen, raum);
     nachgetragen += 1;
   }
-  for (const key of watchpartyLokal.joined) {
-    const eintrag = eintraege.find((item) => item.key === key);
+  for (const dabei of watchpartyLokal.joined) {
+    if (dabei.room !== raum) continue;
+    const eintrag = imRaum.find((item) => item.key === dabei.key);
     if (!eintrag || eintrag.joined) continue;
-    watchparty.beitreten(key);
+    watchparty.beitreten(dabei.key, raum);
     nachgetragen += 1;
   }
   if (nachgetragen) {
-    console.log(`[ELFIX WATCHPARTY] ${nachgetragen} Eintrag/Eintraege wiederhergestellt`);
+    console.log(`[ELFIX WATCHPARTY] ${nachgetragen} Eintrag/Eintraege in „${raum}“ wiederhergestellt`);
   }
 }
 
-const watchparty = new Watchparty({
+const watchparty = new WatchpartyRaeume({
   onDeviceId: (kennung) => {
     // Ohne eigene Kennung vergibt das Relay eine. Die wird uebernommen, sonst
     // erkennt sich das Geraet nach jedem Start neu und faellt aus seinen
@@ -3842,19 +3862,26 @@ const watchparty = new Watchparty({
     saveSettings();
     console.log(`[ELFIX WATCHPARTY] Kennung vom Raum uebernommen: ${kennung}`);
   },
-  onState: (eintraege) => {
+  onState: (eintraege, raum) => {
     watchpartyShared = eintraege;
     pushWatchpartyLiveState();
-    restoreWatchparty(eintraege);
-    rememberWatchpartyState(eintraege);
+    restoreWatchparty(eintraege, raum);
+    // Beim Ausschalten meldet jeder Raum leer - das darf die Ablage nicht
+    // loeschen, sonst ist nach dem Wiedereinschalten alles fort.
+    if (watchparty.aktiv) rememberWatchpartyState(eintraege);
     sendWatchpartyItems();
   },
-  onProgress: (key, fortschritt) => applyWatchpartyProgress(key, fortschritt),
+  onProgress: (key, fortschritt, raum) => applyWatchpartyProgress(key, fortschritt, raum),
   onControl: (nachricht) => applyWatchpartyControl(nachricht).catch(() => {}),
-  onStatus: (status) => {
+  onStatus: (status, raum) => {
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
-    // nachgetragen, was fehlt.
-    if (!status.connected) watchpartyWiederhergestellt = false;
+    // nachgetragen, was fehlt - je Raum getrennt.
+    for (const eintrag of status.rooms || []) {
+      if (!eintrag.connected) watchpartyWiederhergestellt.delete(eintrag.room);
+    }
+    if (raum && !status.rooms?.some((eintrag) => eintrag.room === raum)) {
+      watchpartyWiederhergestellt.delete(raum);
+    }
     pushWatchpartyLiveState();
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("watchparty:state", status);
@@ -3870,7 +3897,7 @@ function syncWatchparty() {
   watchparty.konfigurieren({
     enabled: konfiguration.enabled === true,
     serverUrl: konfiguration.serverUrl || "",
-    room: konfiguration.room || "",
+    rooms: Array.isArray(konfiguration.rooms) ? konfiguration.rooms : [],
     name: konfiguration.deviceName || "ELFIX",
     deviceId: konfiguration.deviceId || ""
   });
@@ -3890,14 +3917,24 @@ function watchpartyKey(favorite) {
 // Gemeldet wird erst, wenn der Raum die Serie zurueckspiegelt: sonst hiesse es
 // "hinzugefuegt", obwohl die Nachricht ins Leere ging - etwa wenn das Relay
 // noch eine aeltere Fassung faehrt, die "share" gar nicht kennt.
-async function shareWatchpartyFavorite(favorite) {
+async function shareWatchpartyFavorite(favorite, room) {
   if (!favorite?.url) return { shared: false, reason: "Kein Titel geöffnet" };
   if (!watchparty.aktiv) return { shared: false, reason: "Watchparty ist nicht eingerichtet" };
   if (!watchparty.verbunden) return { shared: false, reason: "Keine Verbindung zum Raum" };
   const key = watchpartyKey(favorite);
   if (!key) return { shared: false, reason: "Titel nicht erkannt" };
 
-  watchparty.teilen({
+  // Bei mehreren Raeumen muss die Oberflaeche sagen, welcher gemeint ist. Sie
+  // bekommt die Auswahl zurueck und fragt nach.
+  const ziel = String(room || "").trim();
+  if (!ziel && watchparty.codes.length > 1) {
+    return { shared: false, needsRoom: true, rooms: watchpartyRaumUebersicht(), key };
+  }
+  if (ziel && !watchparty.codes.includes(ziel)) {
+    return { shared: false, reason: `Raum „${ziel}“ ist nicht eingerichtet` };
+  }
+
+  const angenommen = watchparty.teilen({
     key,
     url: favorite.url,
     title: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "",
@@ -3906,25 +3943,29 @@ async function shareWatchpartyFavorite(favorite) {
     type: favorite.type || inferMediaType(favorite.url) || "serie",
     season: sanitizePositiveNumber(favorite.season),
     episode: sanitizePositiveNumber(favorite.episode)
-  });
+  }, ziel);
+  if (!angenommen) return { shared: false, reason: "Kein Raum eingerichtet" };
 
-  const bestaetigt = await waitForSharedTitle(key, WATCHPARTY_BESTAETIGUNG_MS);
-  if (bestaetigt) return { shared: true, key };
+  const bestaetigt = await waitForSharedTitle(key, WATCHPARTY_BESTAETIGUNG_MS, ziel);
+  if (bestaetigt) return { shared: true, key, room: ziel || watchparty.codes[0] || "" };
   return {
     shared: false,
     reason: "Der Raum hat die Serie nicht bestätigt - läuft das Relay schon auf dem neuen Stand?"
   };
 }
 
-function waitForSharedTitle(key, timeoutMs) {
+function waitForSharedTitle(key, timeoutMs, room) {
+  const da = () => watchpartyShared.some((eintrag) => (
+    eintrag.key === key && (!room || eintrag.room === room)
+  ));
   return new Promise((fertig) => {
-    if (watchpartyShared.some((eintrag) => eintrag.key === key)) {
+    if (da()) {
       fertig(true);
       return;
     }
     const start = Date.now();
     const timer = setInterval(() => {
-      if (watchpartyShared.some((eintrag) => eintrag.key === key)) {
+      if (da()) {
         clearInterval(timer);
         fertig(true);
         return;
@@ -3968,8 +4009,8 @@ function providerForWatchpartyUrl(url, providerName) {
 
 // Fortschritt eines Mitglieds einarbeiten. Das betrifft nur Serien, denen
 // dieses Geraet beigetreten ist - der Server schickt nichts anderes.
-function applyWatchpartyProgress(key, fortschritt) {
-  const eintrag = watchpartyShared.find((item) => item.key === key);
+function applyWatchpartyProgress(key, fortschritt, room) {
+  const eintrag = watchpartyEintrag(key, room);
   const lokal = favorites.find((favorite) => watchpartyKey(favorite) === key);
 
   if (!lokal) {
@@ -4082,8 +4123,9 @@ function watchpartyItems() {
 // Ein fehlendes Bild nur einmal je Titel nachreichen, sonst laeuft bei jedem
 // Rendern eine Meldung durchs Netz.
 function nachreichenWatchpartyBild(eintrag, bild) {
-  if (watchpartyBildNachgereicht.has(eintrag.key)) return;
-  watchpartyBildNachgereicht.add(eintrag.key);
+  const merker = `${eintrag.room || ""}|${eintrag.key}`;
+  if (watchpartyBildNachgereicht.has(merker)) return;
+  watchpartyBildNachgereicht.add(merker);
   watchparty.teilen({
     key: eintrag.key,
     url: eintrag.url,
@@ -4093,7 +4135,28 @@ function nachreichenWatchpartyBild(eintrag, bild) {
     type: eintrag.type,
     season: eintrag.season,
     episode: eintrag.episode
-  });
+  }, eintrag.room);
+}
+
+// Denselben Titel kann es in mehreren Raeumen geben. Ist keiner genannt, zaehlt
+// der, in dem dieses Geraet mitschaut - dort steht auch der Fortschritt.
+function watchpartyEintrag(key, room) {
+  const schluessel = String(key || "");
+  const code = String(room || "").trim();
+  const treffer = watchpartyShared.filter((eintrag) => eintrag.key === schluessel);
+  if (code) return treffer.find((eintrag) => eintrag.room === code) || null;
+  return treffer.find((eintrag) => eintrag.joined) || treffer[0] || null;
+}
+
+// Womit die Oberflaeche die Raeume benennen kann: Code, Verbindung, Anzahl.
+function watchpartyRaumUebersicht() {
+  return (watchparty.status().rooms || []).map((raum) => ({
+    room: raum.room,
+    connected: Boolean(raum.connected),
+    error: raum.error || "",
+    peers: (raum.peers || []).length,
+    items: watchpartyShared.filter((eintrag) => eintrag.room === raum.room).length
+  }));
 }
 
 function sendWatchpartyItems() {
@@ -4110,8 +4173,8 @@ function sendWatchpartyItems() {
 
 // Oeffnet wie eine Karte aus "Weiterschauen": Vorhang, Autostart, Vollbild -
 // zusaetzlich wird an die Stelle gesprungen, an der das andere Geraet steht.
-async function openWatchpartyItem(key) {
-  const eintrag = watchpartyShared.find((item) => item.key === key);
+async function openWatchpartyItem(key, room) {
+  const eintrag = watchpartyEintrag(key, room);
   if (!eintrag) return activeState();
   const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
   if (!provider) return activeState();
@@ -4219,7 +4282,7 @@ async function prepareWatchpartySync(eintrag, nachricht) {
   }
   // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten die
   // anderen unnoetig bis zum Zeitlimit.
-  watchparty.bereitZumStart(eintrag.key);
+  watchparty.bereitZumStart(eintrag.key, eintrag.room);
   if (!vorbereitet) {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
   }
@@ -4326,7 +4389,7 @@ function pushWatchpartyLiveState(url = "") {
   const adresse = url || activeView?.webContents?.getURL() || "";
   const serieKey = watchparty.aktiv ? watchpartySerieForUrl(adresse) : "";
   const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(adresse) : "";
-  const eintrag = watchpartyShared.find((item) => item.key === (serieKey || key));
+  const eintrag = watchpartyEintrag(serieKey || key);
 
   sendWatchpartyLive({
     active: Boolean(serieKey),
@@ -4334,6 +4397,7 @@ function pushWatchpartyLiveState(url = "") {
     connected: watchparty.verbunden,
     enabled: watchparty.aktiv,
     key: serieKey || key,
+    room: eintrag?.room || "",
     title: eintrag?.title || "",
     // Wer den Takt vorgibt, gehoert in die Anzeige - sonst weiss niemand, an
     // wem sich das Abgleichen orientiert.
@@ -4358,7 +4422,7 @@ async function installWatchpartyControls(provider, view, url) {
 }
 
 async function applyWatchpartyControl(nachricht) {
-  const eintrag = watchpartyShared.find((item) => item.key === nachricht.key);
+  const eintrag = watchpartyEintrag(nachricht.key, nachricht.room);
   if (!eintrag) return;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
@@ -6450,7 +6514,13 @@ function normalizeSettings(raw) {
     watchparty: {
       enabled: raw?.watchparty?.enabled === true,
       serverUrl: String(raw?.watchparty?.serverUrl || defaults.watchparty.serverUrl).slice(0, 300).trim(),
-      room: String(raw?.watchparty?.room || defaults.watchparty.room).slice(0, 64).trim(),
+      // Frueher gab es genau einen Raumcode. Der wandert in die Liste, damit
+      // eine bestehende Watchparty nach dem Update einfach weiterlaeuft.
+      rooms: raumcodesAufraeumen([
+        ...(Array.isArray(raw?.watchparty?.rooms) ? raw.watchparty.rooms : []),
+        raw?.watchparty?.room,
+        ...defaults.watchparty.rooms
+      ]).slice(0, WATCHPARTY_MAX_RAEUME),
       deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
       deviceId: String(raw?.watchparty?.deviceId || "").slice(0, 64) || crypto.randomUUID()
     },
@@ -6549,7 +6619,7 @@ function defaultSettings() {
     watchparty: {
       enabled: false,
       serverUrl: "",
-      room: "",
+      rooms: [],
       deviceName: "",
       deviceId: ""
     },

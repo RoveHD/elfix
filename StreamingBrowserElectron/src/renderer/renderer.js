@@ -36,6 +36,8 @@ let personalPending = false;
 let personalSignature = "";
 let watchpartyItems = [];
 let watchpartyState = null;
+// Die eingetragenen Raumcodes waehrend der Einstellungen offen sind.
+let watchpartyRaeume = [];
 const thumbnailRepairAttempts = new Set();
 
 const appShell = document.querySelector(".app-shell");
@@ -155,6 +157,8 @@ const showHomeCategories = document.querySelector("#showHomeCategories");
 const watchpartyEnabled = document.querySelector("#watchpartyEnabled");
 const watchpartyServer = document.querySelector("#watchpartyServer");
 const watchpartyRoom = document.querySelector("#watchpartyRoom");
+const watchpartyRoomAdd = document.querySelector("#watchpartyRoomAdd");
+const watchpartyRoomList = document.querySelector("#watchpartyRoomList");
 const watchpartyName = document.querySelector("#watchpartyName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
@@ -375,6 +379,13 @@ function bindEvents() {
   document.querySelector("#settingsButton").addEventListener("click", openSettings);
   startDiscoverRefresh();
   document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
+  watchpartyRoomAdd?.addEventListener("click", watchpartyRaumHinzufuegen);
+  watchpartyRoom?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    // Sonst schickt Enter das Einstellungsformular ab, statt den Raum zu setzen.
+    event.preventDefault();
+    watchpartyRaumHinzufuegen();
+  });
   api.onWatchpartyState?.(renderWatchpartyStatus);
   api.onWatchpartyLive?.(showWatchpartyLive);
   watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
@@ -982,24 +993,28 @@ async function loadPersonalPicks(refresh = false) {
 function renderWatchpartyStatus(state) {
   watchpartyState = state;
   renderWatchpartyViewStatus(state);
+  // Die Punkte an den Raumchips haengen am Verbindungszustand.
+  renderWatchpartyRaeume();
   if (!watchpartyStatus) return;
   if (!state?.enabled) {
     watchpartyStatus.textContent = "Ausgeschaltet.";
     return;
   }
-  if (state.error && !state.connected) {
-    watchpartyStatus.textContent = `Nicht verbunden: ${state.error}`;
+  const raeume = state.rooms || [];
+  if (!raeume.length) {
+    watchpartyStatus.textContent = "Kein Raum eingetragen.";
     return;
   }
-  if (!state.connected) {
-    watchpartyStatus.textContent = "Verbinde …";
-    return;
-  }
-  const andere = Math.max(0, (state.peers?.length || 1) - 1);
-  const geraete = andere === 0
-    ? "noch niemand sonst"
-    : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
-  watchpartyStatus.textContent = `Verbunden mit Raum „${state.room}“ — ${geraete}.`;
+  // Bei mehreren Raeumen zaehlt jeder fuer sich - einer kann stehen, waehrend
+  // ein anderer noch verbindet.
+  watchpartyStatus.textContent = raeume.map((raum) => {
+    if (!raum.connected) return `„${raum.room}“: ${raum.error ? raum.error : "verbinde …"}`;
+    const andere = Math.max(0, (raum.peers?.length || 1) - 1);
+    const geraete = andere === 0
+      ? "noch niemand sonst"
+      : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
+    return `„${raum.room}“: verbunden, ${geraete}`;
+  }).join(" · ");
 }
 
 function discoverCard(item) {
@@ -1354,9 +1369,14 @@ function renderWatchpartyViewStatus(state) {
       : "Verbinde mit dem Raum …";
     return;
   }
+  const raeume = state.rooms || [];
+  const stehen = raeume.filter((raum) => raum.connected);
   const andere = Math.max(0, (state.peers?.length || 1) - 1);
   const geraete = andere === 0 ? "noch niemand sonst" : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
-  watchpartyViewStatus.textContent = `Raum „${state.room}“ — ${geraete}. ${grund}`;
+  const wo = stehen.length > 1
+    ? `${stehen.length} Räume (${stehen.map((raum) => raum.room).join(", ")})`
+    : `Raum „${stehen[0]?.room || state.room}“`;
+  watchpartyViewStatus.textContent = `${wo} — ${geraete}. ${grund}`;
 }
 
 // Getrennt von der eigenen Weiterschauen-Liste: hier steht ausschliesslich,
@@ -1387,7 +1407,7 @@ function renderWatchpartyItems() {
   watchpartyEmpty?.classList.toggle("is-hidden", vorhanden);
   // Fuer ".favorite-grid" gibt es keine Ausblend-Regel im Stylesheet - die
   // Klasse "is-hidden" allein wuerde die Karten stehen lassen. Also leeren.
-  watchpartyGrid.replaceChildren(...(vorhanden ? watchpartyItems.map(watchpartyCard) : []));
+  watchpartyGrid.replaceChildren(...(vorhanden ? watchpartyKarten() : []));
 
   if (!vorhanden) {
     const eingerichtet = watchpartyState?.enabled;
@@ -1402,10 +1422,39 @@ function renderWatchpartyItems() {
   }
 }
 
+// Bei mehreren Raeumen bekommt jeder seinen eigenen Abschnitt - sonst stuenden
+// die Titel zweier Runden wahllos durcheinander.
+function watchpartyKarten() {
+  const raeume = [];
+  for (const item of watchpartyItems) {
+    const raum = item.room || "";
+    if (!raeume.includes(raum)) raeume.push(raum);
+  }
+  if (raeume.length < 2) return watchpartyItems.map(watchpartyCard);
+
+  const kinder = [];
+  for (const raum of raeume) {
+    const ueberschrift = document.createElement("h2");
+    ueberschrift.className = "watchparty-room-heading";
+    const stand = watchpartyState?.rooms?.find((eintrag) => eintrag.room === raum);
+    ueberschrift.textContent = raum || "Ohne Raum";
+    if (stand && !stand.connected) {
+      const hinweis = document.createElement("small");
+      hinweis.textContent = "nicht verbunden";
+      ueberschrift.append(hinweis);
+    }
+    kinder.push(ueberschrift);
+    for (const item of watchpartyItems.filter((eintrag) => (eintrag.room || "") === raum)) {
+      kinder.push(watchpartyCard(item));
+    }
+  }
+  return kinder;
+}
+
 // Wartet, bis der Raum die Aenderung zurueckgemeldet hat. Ohne das meldet die
 // Oberflaeche Erfolg, obwohl die Nachricht ins Leere gehen kann.
-function warteAufMitgliedschaft(key, sollDabeiSein, timeoutMs = 3000) {
-  const passt = () => Boolean(watchpartyItems.find((eintrag) => eintrag.key === key)?.joined) === sollDabeiSein;
+function warteAufMitgliedschaft(key, sollDabeiSein, room, timeoutMs = 3000) {
+  const passt = () => Boolean(watchpartyEintragImRaum(key, room)?.joined) === sollDabeiSein;
   return new Promise((fertig) => {
     if (passt()) {
       fertig(true);
@@ -1426,9 +1475,16 @@ function warteAufMitgliedschaft(key, sollDabeiSein, timeoutMs = 3000) {
   });
 }
 
-function warteAufEntfernen(key, timeoutMs = 3000) {
+// Ein Titel kann in mehreren Raeumen stehen - gemeint ist immer der eine.
+function watchpartyEintragImRaum(key, room) {
+  return watchpartyItems.find((eintrag) => (
+    eintrag.key === key && (!room || (eintrag.room || "") === room)
+  )) || null;
+}
+
+function warteAufEntfernen(key, room, timeoutMs = 3000) {
   return new Promise((fertig) => {
-    const weg = () => !watchpartyItems.some((eintrag) => eintrag.key === key);
+    const weg = () => !watchpartyEintragImRaum(key, room);
     if (weg()) {
       fertig(true);
       return;
@@ -1498,7 +1554,7 @@ function watchpartyCard(item) {
           event.stopPropagation();
           if (werfen.disabled) return;
           werfen.disabled = true;
-          await api.kickFromWatchparty(item.key, id);
+          await api.kickFromWatchparty(item.key, id, item.room);
           showToast(`${name} entfernt`);
         });
         mitgliederZeile.append(werfen);
@@ -1522,15 +1578,15 @@ function watchpartyCard(item) {
     // Nicht der Stand vom Renderzeitpunkt zaehlt, sondern der aktuelle: sonst
     // schickt ein zweiter Klick dieselbe Aktion noch einmal und schaltet
     // zwischen beigetreten und verlassen hin und her.
-    const jetztDabei = Boolean(watchpartyItems.find((eintrag) => eintrag.key === item.key)?.joined);
+    const jetztDabei = Boolean(watchpartyEintragImRaum(item.key, item.room)?.joined);
     beitreten.disabled = true;
     try {
       if (jetztDabei) {
-        await api.leaveWatchparty(item.key);
+        await api.leaveWatchparty(item.key, item.room);
       } else {
-        await api.enterWatchparty(item.key);
+        await api.enterWatchparty(item.key, item.room);
       }
-      const bestaetigt = await warteAufMitgliedschaft(item.key, !jetztDabei);
+      const bestaetigt = await warteAufMitgliedschaft(item.key, !jetztDabei, item.room);
       if (!bestaetigt) {
         showToast("Der Raum hat nicht geantwortet");
       } else if (jetztDabei) {
@@ -1553,7 +1609,7 @@ function watchpartyCard(item) {
   oeffnen.addEventListener("click", async (event) => {
     event.stopPropagation();
     hideContentViews();
-    const state = await api.openWatchpartyItem(item.key);
+    const state = await api.openWatchpartyItem(item.key, item.room);
     activeProviderId = state?.activeProviderId || activeProviderId;
     setCurrentRoute(`provider:${activeProviderId}`);
     renderProviders();
@@ -1572,8 +1628,8 @@ function watchpartyCard(item) {
       if (entfernen.disabled) return;
       entfernen.disabled = true;
       try {
-        await api.removeFromWatchparty(item.key);
-        const weg = await warteAufEntfernen(item.key);
+        await api.removeFromWatchparty(item.key, item.room);
+        const weg = await warteAufEntfernen(item.key, item.room);
         showToast(weg ? `„${item.title}“ aus der Watchparty genommen` : "Der Raum hat nicht geantwortet");
       } finally {
         entfernen.disabled = false;
@@ -2309,7 +2365,9 @@ function renderSettings() {
   const party = settings.watchparty || {};
   if (watchpartyEnabled) watchpartyEnabled.checked = party.enabled === true;
   if (watchpartyServer) watchpartyServer.value = party.serverUrl || "";
-  if (watchpartyRoom) watchpartyRoom.value = party.room || "";
+  watchpartyRaeume = raumcodes(party.rooms?.length ? party.rooms : [party.room]);
+  if (watchpartyRoom) watchpartyRoom.value = "";
+  renderWatchpartyRaeume();
   if (watchpartyName) watchpartyName.value = party.deviceName || "";
   providerCardMeta.value = home.providerCardMeta || "logoName";
   showFavoriteMeta.checked = appearance.showFavoriteMeta !== false;
@@ -2496,7 +2554,9 @@ async function saveSettings() {
   settings.watchparty = {
     enabled: watchpartyEnabled ? watchpartyEnabled.checked : false,
     serverUrl: watchpartyServer ? watchpartyServer.value.trim() : "",
-    room: watchpartyRoom ? watchpartyRoom.value.trim() : "",
+    // Was noch im Eingabefeld steht, zaehlt mit: sonst geht ein eben getippter
+    // Code verloren, nur weil "Raum hinzufügen" nicht gedrueckt wurde.
+    rooms: raumcodes([...watchpartyRaeume, watchpartyRoom ? watchpartyRoom.value : ""]),
     deviceName: watchpartyName ? watchpartyName.value.trim() : ""
   };
   settings.appearance = {
@@ -2716,7 +2776,8 @@ async function resetSettingsSection(section) {
   } else if (section === "appearance") {
     settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };
   } else if (section === "watchparty") {
-    settings.watchparty = { enabled: false, serverUrl: "", room: "", deviceName: "" };
+    settings.watchparty = { enabled: false, serverUrl: "", rooms: [], deviceName: "" };
+    watchpartyRaeume = [];
   }
   renderSettings();
   await saveSettings();
@@ -3450,12 +3511,138 @@ function escapeHtml(value) {
 // Den gerade geoeffneten Titel in den Raum stellen. Der Hauptprozess kennt die
 // Seite, deshalb reicht hier ein Anstoss.
 async function shareCurrentToWatchparty() {
-  const ergebnis = await api.shareCurrentToWatchparty?.().catch(() => null);
+  let ergebnis = await api.shareCurrentToWatchparty?.().catch(() => null);
+  // Bei mehreren Raeumen fragt der Hauptprozess zurueck, welcher gemeint ist.
+  if (ergebnis?.needsRoom) {
+    const gewaehlt = await frageRaum(ergebnis.rooms || []);
+    if (!gewaehlt) return;
+    ergebnis = await api.shareCurrentToWatchparty?.(gewaehlt).catch(() => null);
+  }
   if (!ergebnis?.shared) {
     showToast(ergebnis?.reason || "Konnte nicht geteilt werden");
     return;
   }
-  showToast("Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
+  showToast(ergebnis.room
+    ? `Zu „${ergebnis.room}“ hinzugefügt — die anderen können jetzt beitreten`
+    : "Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
+}
+
+// Kleine Auswahl unter dem ⇄ Knopf: in welchen Raum soll der Titel?
+function frageRaum(raeume) {
+  return new Promise((fertig) => {
+    document.querySelector(".watchparty-room-picker")?.remove();
+    const box = document.createElement("div");
+    box.className = "watchparty-room-picker";
+    const titel = document.createElement("strong");
+    titel.textContent = "In welchen Raum?";
+    box.append(titel);
+
+    let beantwortet = false;
+    const schliessen = (wert) => {
+      if (beantwortet) return;
+      beantwortet = true;
+      box.remove();
+      document.removeEventListener("keydown", aufTaste, true);
+      document.removeEventListener("pointerdown", aufKlick, true);
+      fertig(wert);
+    };
+    const aufTaste = (event) => {
+      if (event.key === "Escape") schliessen("");
+    };
+    const aufKlick = (event) => {
+      if (!box.contains(event.target)) schliessen("");
+    };
+
+    for (const raum of raeume) {
+      const knopf = document.createElement("button");
+      knopf.type = "button";
+      knopf.className = "watchparty-room-option";
+      knopf.disabled = !raum.connected;
+      const anzahl = raum.items === 1 ? "1 Titel" : `${raum.items} Titel`;
+      knopf.innerHTML = `<span>${escapeHtml(raum.room)}</span><small>${raum.connected ? `${anzahl} · ${raum.peers} verbunden` : "nicht verbunden"}</small>`;
+      knopf.addEventListener("click", () => schliessen(raum.room));
+      box.append(knopf);
+    }
+
+    const abbrechen = document.createElement("button");
+    abbrechen.type = "button";
+    abbrechen.className = "text-action";
+    abbrechen.textContent = "Abbrechen";
+    abbrechen.addEventListener("click", () => schliessen(""));
+    box.append(abbrechen);
+
+    document.body.append(box);
+    const anker = document.querySelector("#watchpartyShareButton")?.getBoundingClientRect();
+    if (anker) {
+      box.style.top = `${Math.round(anker.bottom + 8)}px`;
+      box.style.right = `${Math.round(window.innerWidth - anker.right)}px`;
+    }
+    // Erst nach dem oeffnenden Klick lauschen, sonst schliesst er sich selbst.
+    window.setTimeout(() => {
+      document.addEventListener("keydown", aufTaste, true);
+      document.addEventListener("pointerdown", aufKlick, true);
+    }, 0);
+  });
+}
+
+// Raumcodes aus Eingaben: getrimmt, ohne Doppelte, Reihenfolge bleibt.
+function raumcodes(werte) {
+  const sauber = [];
+  for (const roh of werte || []) {
+    const code = String(roh || "").trim().slice(0, 64);
+    if (!code || sauber.includes(code)) continue;
+    sauber.push(code);
+  }
+  return sauber;
+}
+
+function renderWatchpartyRaeume() {
+  if (!watchpartyRoomList) return;
+  if (!watchpartyRaeume.length) {
+    const leer = document.createElement("small");
+    leer.className = "room-empty";
+    leer.textContent = "Noch kein Raum eingetragen.";
+    watchpartyRoomList.replaceChildren(leer);
+    return;
+  }
+  watchpartyRoomList.replaceChildren(...watchpartyRaeume.map((code) => {
+    const chip = document.createElement("span");
+    chip.className = "room-chip";
+    // Der Verbindungspunkt zeigt je Raum, ob die Leitung wirklich steht.
+    const stand = watchpartyState?.rooms?.find((raum) => raum.room === code);
+    if (stand) chip.classList.add(stand.connected ? "is-online" : "is-offline");
+    chip.append(code);
+    const weg = document.createElement("button");
+    weg.type = "button";
+    weg.textContent = "✕";
+    weg.title = `Raum „${code}“ entfernen`;
+    weg.addEventListener("click", () => {
+      watchpartyRaeume = watchpartyRaeume.filter((eintrag) => eintrag !== code);
+      renderWatchpartyRaeume();
+      // Die Chips haengen an keinem Formularfeld - ohne das hier bliebe der
+      // Raum nach dem Schliessen der Einstellungen weiter verbunden.
+      saveSettings();
+    });
+    chip.append(weg);
+    return chip;
+  }));
+}
+
+function watchpartyRaumHinzufuegen() {
+  if (!watchpartyRoom) return;
+  const codes = raumcodes([...watchpartyRaeume, watchpartyRoom.value]);
+  if (codes.length === watchpartyRaeume.length) {
+    if (watchpartyRoom.value.trim()) showToast("Diesen Raum gibt es schon");
+    return;
+  }
+  if (codes.length > 8) {
+    showToast("Mehr als acht Räume gehen nicht");
+    return;
+  }
+  watchpartyRaeume = codes;
+  watchpartyRoom.value = "";
+  renderWatchpartyRaeume();
+  saveSettings();
 }
 
 // Oben rechts: ob diese Folge live mitlaeuft, wer zuletzt gesteuert hat und ein
@@ -3463,6 +3650,7 @@ async function shareCurrentToWatchparty() {
 // und der geteilte Fortschritt bleiben bestehen.
 let watchpartyLiveKey = "";
 let watchpartyLiveOn = false;
+let watchpartyLiveRoom = "";
 
 async function toggleWatchpartyLive() {
   if (!watchpartyLiveKey) return;
@@ -3480,7 +3668,7 @@ async function resyncWatchparty() {
   if (!watchpartyLiveKey) return;
   const knopf = document.querySelector("#watchpartyResync");
   knopf?.classList.add("is-busy");
-  await api.resyncWatchparty?.(watchpartyLiveKey);
+  await api.resyncWatchparty?.(watchpartyLiveKey, watchpartyLiveRoom);
   showToast("Alle werden abgeglichen …");
   // Der Ring bleibt, bis der Raum den Abgleich abschliesst - laenger als ein
   // paar Sekunden soll er aber nicht stehen.
@@ -3495,6 +3683,9 @@ function showWatchpartyLive(info) {
   const syncKnopf = document.querySelector("#watchpartyResync");
   watchpartyLiveKey = info?.key || "";
   watchpartyLiveOn = Boolean(info?.live);
+  // Der Raum kommt nur mit der vollen Meldung; die kurze Bestaetigung nach dem
+  // Umschalten fuehrt ihn nicht mit und darf ihn deshalb nicht loeschen.
+  if (info && "room" in info) watchpartyLiveRoom = info.room || "";
 
   const erkannt = Boolean(info?.active);
   const verbunden = info?.connected !== false;
@@ -3550,9 +3741,13 @@ function showWatchpartyLive(info) {
 
 // Wer den Takt vorgibt, steht in der Anzeige - daran orientiert sich "Sync".
 function watchpartyHostText(info) {
-  if (info?.host) return "Live · du bist Host";
-  if (info?.hostName) return `Live · Host: ${info.hostName}`;
-  return "Live";
+  // Bei mehreren Raeumen gehoert dazu, welcher gerade laeuft.
+  const raum = (watchpartyState?.rooms?.length || 0) > 1 && watchpartyLiveRoom
+    ? ` · ${watchpartyLiveRoom}`
+    : "";
+  if (info?.host) return `Live · du bist Host${raum}`;
+  if (info?.hostName) return `Live · Host: ${info.hostName}${raum}`;
+  return `Live${raum}`;
 }
 
 // Rueckmeldung an den Neu-laden-Knoepfen. Der Klick dreht sofort los, damit die
