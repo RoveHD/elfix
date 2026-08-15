@@ -1,0 +1,41 @@
+# systemd-Vorlage fuer das Watchparty-Relay.
+#
+#   sudo cp elfix-watchparty.service /etc/systemd/system/
+#   sudo nano /etc/systemd/system/elfix-watchparty.service   # User und Pfad anpassen
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now elfix-watchparty
+#
+# Der Dienst schreibt nichts auf die Platte, deshalb laeuft er mit stark
+# eingeschraenkten Rechten.
+
+[Unit]
+Description=ELFIX Watchparty-Relay
+Documentation=https://github.com/RoveHD/elfix
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# HIER ANPASSEN: eigener Benutzer und Ablageort des Ordners sync-server
+User=DEIN_BENUTZER
+WorkingDirectory=/opt/elfix-watchparty
+ExecStart=/usr/bin/node server.js
+Environment=NODE_ENV=production
+Environment=PORT=8787
+Restart=always
+RestartSec=5
+
+# Der Dienst braucht weder Schreibrechte noch zusaetzliche Privilegien.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+# AF_UNIX bleibt erlaubt, sonst laesst sich schwer nachvollziehen, was der
+# Dienst ins Journal schreiben wollte.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

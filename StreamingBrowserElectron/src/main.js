@@ -13,6 +13,7 @@ const {
   extractRelatedItems
 } = require("./discover");
 const taste = require("./taste");
+const { Watchparty } = require("./watchparty");
 const providerModel = require("../shared/provider-model");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -69,6 +70,8 @@ const mediaDiagnostics = [];
 const mediaConsoleLogState = new Map();
 const discoverCache = new Map();
 const seasonInfoCache = new Map();
+let watchpartyShared = new Map();
+const WATCHPARTY_MAX_ITEMS = 120;
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
@@ -135,6 +138,7 @@ app.whenReady().then(async () => {
   installAdblock();
   createMainWindow();
   setupAutoUpdater();
+  syncWatchparty();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
 });
@@ -666,10 +670,17 @@ ipcMain.handle("provider:save-all", (_event, nextProviders) => {
   return { providers, activeProviderId };
 });
 
+ipcMain.handle("watchparty:status", () => watchparty.status());
+
+ipcMain.handle("watchparty:items", () => watchpartyItems());
+
+ipcMain.handle("watchparty:open", async (_event, key) => openWatchpartyItem(key));
+
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();
   syncAutomaticCacheCleanup();
+  syncWatchparty();
   return publicSettings(settings);
 });
 
@@ -2717,6 +2728,7 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
     favorite: entry.favorite,
     continueVisible: hasContinueProgressRecord(entry)
   });
+  reportWatchpartyProgress(entry);
   return entry;
 }
 
@@ -3616,6 +3628,142 @@ async function discoverForProvider(provider, refresh) {
   }
   if (items.length) discoverCache.set(provider.id, { at: Date.now(), items });
   return items;
+}
+
+// --- Watchparty --------------------------------------------------------------
+// Mehrere Geraete teilen ihren Weiterschauen-Fortschritt ueber ein Relay. Wer
+// weiterschaut, meldet den Stand; die anderen ziehen nach. Verglichen wird ueber
+// den Titel, nicht ueber die Adresse - dieselbe Serie liegt bei jedem unter
+// einem anderen Anbieter oder sogar unter einer anderen Domain.
+
+const watchparty = new Watchparty({
+  onItems: (eintraege) => applyWatchpartyItems(eintraege),
+  onStatus: (status) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("watchparty:state", status);
+  }
+});
+
+function watchpartySettings() {
+  return settings.watchparty || {};
+}
+
+function syncWatchparty() {
+  const konfiguration = watchpartySettings();
+  const wechsel = watchparty.serverUrl !== String(konfiguration.serverUrl || "").trim()
+    || watchparty.raum !== String(konfiguration.room || "").trim();
+  if (wechsel && watchpartyShared.size) {
+    watchpartyShared = new Map();
+    sendWatchpartyItems();
+  }
+  watchparty.konfigurieren({
+    enabled: konfiguration.enabled === true,
+    serverUrl: konfiguration.serverUrl || "",
+    room: konfiguration.room || "",
+    name: konfiguration.deviceName || "ELFIX"
+  });
+}
+
+// Der Schluessel muss auf jedem Geraet gleich ausfallen. Die Adresse taugt
+// dafuer nicht: S.to laeuft hier ueber eine IP, beim naechsten ueber die
+// Domain. Titel und Medientyp sind dagegen ueberall dieselben.
+function watchpartyKey(favorite) {
+  const titel = cleanBaseMediaTitle(favorite?.title, favorite?.url) || favorite?.title || "";
+  const schluessel = taste.titelSchluessel(titel);
+  if (!schluessel) return "";
+  return `${favorite?.type || inferMediaType(favorite?.url) || "serie"}:${schluessel}`;
+}
+
+function watchpartyEintrag(favorite) {
+  const key = watchpartyKey(favorite);
+  if (!key || !favorite?.url) return null;
+  return {
+    key,
+    url: favorite.url,
+    title: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "",
+    providerName: favorite.providerName || "",
+    thumbnail: favorite.thumbnail || "",
+    season: sanitizePositiveNumber(favorite.season),
+    episode: sanitizePositiveNumber(favorite.episode),
+    position: sanitizePositiveNumber(favorite.position || favorite.currentTime),
+    duration: sanitizePositiveNumber(favorite.duration),
+    progress: sanitizeProgress(favorite.progress),
+    completed: Boolean(favorite.completed),
+    episodeCompleted: Boolean(favorite.episodeCompleted),
+    hidden: Boolean(favorite.hideFromContinueWatching),
+    updatedAt: favorite.lastWatchedAt || favorite.openedAt || new Date().toISOString(),
+    from: watchpartySettings().deviceName || ""
+  };
+}
+
+function reportWatchpartyProgress(favorite) {
+  if (!watchparty.aktiv) return;
+  const eintrag = watchpartyEintrag(favorite);
+  if (eintrag) watchparty.melden([eintrag]);
+}
+
+function providerForWatchpartyUrl(url, providerName) {
+  const host = providerModel.hostFromUrl(url).toLowerCase();
+  const aktive = enabledProviders();
+  return aktive.find((provider) => providerModel.hostFromUrl(provider.startUrl).toLowerCase() === host)
+    || aktive.find((provider) => String(provider.name || "").toLowerCase() === String(providerName || "").toLowerCase())
+    || null;
+}
+
+// Was die anderen schauen, bleibt bewusst getrennt: die eigene Weiterschauen-
+// Liste wird davon nicht angefasst. Die Meldungen liegen nur im Speicher - beim
+// naechsten Beitritt reicht das Relay den Stand des Raums ohnehin nach.
+function applyWatchpartyItems(eintraege) {
+  const eigenerName = String(watchpartySettings().deviceName || "").toLowerCase();
+  let geaendert = false;
+
+  for (const remote of eintraege) {
+    if (!remote?.key || !remote?.url) continue;
+    // Der eigene Stand steht schon in der eigenen Liste.
+    if (eigenerName && String(remote.from || "").toLowerCase() === eigenerName) continue;
+
+    const bekannt = watchpartyShared.get(remote.key);
+    if (bekannt && (Date.parse(remote.updatedAt) || 0) <= (Date.parse(bekannt.updatedAt) || 0)) continue;
+    watchpartyShared.set(remote.key, remote);
+    geaendert = true;
+  }
+  if (!geaendert) return;
+
+  // Nicht unbegrenzt wachsen lassen - aeltere Meldungen fallen hinten raus.
+  if (watchpartyShared.size > WATCHPARTY_MAX_ITEMS) {
+    const sortiert = [...watchpartyShared.entries()]
+      .sort((links, rechts) => Date.parse(rechts[1].updatedAt) - Date.parse(links[1].updatedAt));
+    watchpartyShared = new Map(sortiert.slice(0, WATCHPARTY_MAX_ITEMS));
+  }
+  console.log(`[ELFIX WATCHPARTY] ${eintraege.length} Meldung(en) uebernommen`);
+  sendWatchpartyItems();
+}
+
+// Fuer die Anzeige: neueste zuerst, dazu der eigene Anbieter, falls die Adresse
+// zu einer eingerichteten Seite passt.
+function watchpartyItems() {
+  return [...watchpartyShared.values()]
+    .sort((links, rechts) => Date.parse(rechts.updatedAt || 0) - Date.parse(links.updatedAt || 0))
+    .map((eintrag) => ({
+      ...eintrag,
+      openable: Boolean(providerForWatchpartyUrl(eintrag.url, eintrag.providerName))
+    }));
+}
+
+function sendWatchpartyItems() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("watchparty:items", watchpartyItems());
+}
+
+// Einen geteilten Titel oeffnen: geht nur, wenn die Adresse zu einem der
+// eigenen Anbieter gehoert.
+async function openWatchpartyItem(key) {
+  const eintrag = watchpartyShared.get(String(key || ""));
+  if (!eintrag) return activeState();
+  const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
+  if (!provider) return activeState();
+  await navigateProvider(provider, eintrag.url);
+  return activeState();
 }
 
 // --- Empfohlen fuer dich -----------------------------------------------------
@@ -5607,6 +5755,12 @@ function normalizeSettings(raw) {
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
     },
+    watchparty: {
+      enabled: raw?.watchparty?.enabled === true,
+      serverUrl: String(raw?.watchparty?.serverUrl || defaults.watchparty.serverUrl).slice(0, 300).trim(),
+      room: String(raw?.watchparty?.room || defaults.watchparty.room).slice(0, 64).trim(),
+      deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim()
+    },
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
       showProviders: raw?.home?.showProviders ?? defaults.home.showProviders,
@@ -5698,6 +5852,12 @@ function defaultSettings() {
     },
     browser: {
       cacheMode: "aggressive"
+    },
+    watchparty: {
+      enabled: false,
+      serverUrl: "",
+      room: "",
+      deviceName: ""
     },
     home: {
       showHero: true,

@@ -395,6 +395,12 @@
   flex-basis: max(190px, calc(var(--favorite-card-min) * 0.82));
 }
 
+/* Geteilte Titel ohne passenden eigenen Anbieter lassen sich nicht oeffnen -
+   das zeigt die Karte gedaempft an. */
+.favorite-card.is-muted {
+  opacity: 0.55;
+}
+
 /* Bei "Empfohlen fuer dich" steht in der zweiten Zeile die Begruendung. Sie
    darf zweizeilig werden, ohne die Karte zu sprengen. */
 .personal-rail .favorite-card span {

@@ -10,8 +10,81 @@ ELFIX ist ein kompakter Streaming-Browser fuer Desktop und Android/Android TV. D
 - Globale Suche mit Anbieter-spezifischen Such-URLs und Schreibweisen wie `spiderman`/`spider-man`
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
 - Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
+- Watchparty: mehrere Geraete teilen ihren Weiterschauen-Fortschritt ueber ein eigenes Relay
 - Automatische Updates ueber GitHub Releases fuer die installierte Windows-Version
 - Settings mit Version, Update-Status und Fortschrittsbalken
+
+## Watchparty
+
+Mehrere Geraete koennen ihren Weiterschauen-Fortschritt teilen: wer weiterschaut,
+aktualisiert die Liste bei allen anderen im selben Raum. Uebertragen wird nur der
+Fortschritt (Titel, Adresse, Folge, Position) - die Wiedergabe laeuft auf jedem
+Geraet fuer sich.
+
+Dafuer braucht es das Relay aus `sync-server/`. Es haelt keine Daten auf der
+Platte, kennt keine Konten und merkt sich nur den letzten Stand je Titel im
+Arbeitsspeicher:
+
+```bash
+cd sync-server
+npm ci
+npm start
+```
+
+Der Server hoert auf `PORT` (Standard 8787) und laeuft unveraendert auf den
+ueblichen Free-Tier-Hostern.
+
+### Dauerbetrieb unter Linux (z. B. Mint) mit Cloudflare Tunnel
+
+Node muss mindestens Version 18 sein - Mint 21 liefert noch 12.22 mit, das
+reicht nicht:
+
+```bash
+node -v || curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
+sudo mkdir -p /opt/elfix-watchparty
+sudo cp -r sync-server/* /opt/elfix-watchparty/
+cd /opt/elfix-watchparty && npm ci --omit=dev
+```
+
+Als Dienst einrichten (Benutzer und Pfad in der Datei anpassen):
+
+```bash
+sudo cp /opt/elfix-watchparty/elfix-watchparty.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now elfix-watchparty
+curl http://localhost:8787/health
+```
+
+Im Cloudflare Tunnel einen Public Hostname anlegen, der auf den lokalen Port
+zeigt - entweder im Dashboard (*Service: HTTP*, *URL: localhost:8787*) oder in
+der `config.yml`:
+
+```yaml
+ingress:
+  - hostname: watchparty.deine-domain.tld
+    service: http://localhost:8787
+  - service: http_status:404
+```
+
+WebSockets muessen in Cloudflare aktiv sein (*Network > WebSockets*, im
+Normalfall schon an). Cloudflare kappt stille Verbindungen nach etwa 100
+Sekunden; der Server sendet alle 30 Sekunden einen Ping und haelt sie damit
+offen. In der App wird dann `wss://watchparty.deine-domain.tld` eingetragen.
+
+Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
+setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login
+durchlaufen kann - also einen langen, nicht zu erratenden Code waehlen.
+
+Danach in der App unter *Einstellungen > Watchparty* eintragen:
+
+- **Server-Adresse**: `wss://dein-relay.example.com` (`https://` wird automatisch
+  zu `wss://`)
+- **Raumcode**: derselbe Code auf allen Geraeten. Wer den Code kennt, ist im
+  Raum - also nicht zu einfach waehlen
+- **Name dieses Geraets**: nur zur Anzeige
+
+Ein Geraet, das spaeter dazukommt, bekommt den bekannten Stand des Raums
+nachgereicht. Ein aelterer Stand ueberschreibt nie einen neueren.
 
 ## Windows Build
 

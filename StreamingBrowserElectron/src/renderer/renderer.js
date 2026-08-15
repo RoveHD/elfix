@@ -34,6 +34,8 @@ let personalPicks = [];
 let personalLoaded = false;
 let personalPending = false;
 let personalSignature = "";
+let watchpartyItems = [];
+let watchpartyState = null;
 const thumbnailRepairAttempts = new Set();
 
 const appShell = document.querySelector(".app-shell");
@@ -67,6 +69,12 @@ const globalSearchView = document.querySelector("#globalSearchView");
 const favoritesView = document.querySelector("#favoritesView");
 const libraryView = document.querySelector("#libraryView");
 const continueView = document.querySelector("#continueView");
+const watchpartyView = document.querySelector("#watchpartyView");
+const watchpartyGrid = document.querySelector("#watchpartyGrid");
+const watchpartyEmpty = document.querySelector("#watchpartyEmpty");
+const watchpartyEmptyTitle = document.querySelector("#watchpartyEmptyTitle");
+const watchpartyEmptyCopy = document.querySelector("#watchpartyEmptyCopy");
+const watchpartyViewStatus = document.querySelector("#watchpartyViewStatus");
 const historyView = document.querySelector("#historyView");
 const noProvidersState = document.querySelector("#noProvidersState");
 const homeHero = document.querySelector("#homeHero");
@@ -144,6 +152,11 @@ const showHomeProviders = document.querySelector("#showHomeProviders");
 const showHomeFavorites = document.querySelector("#showHomeFavorites");
 const showHomePersonal = document.querySelector("#showHomePersonal");
 const showHomeCategories = document.querySelector("#showHomeCategories");
+const watchpartyEnabled = document.querySelector("#watchpartyEnabled");
+const watchpartyServer = document.querySelector("#watchpartyServer");
+const watchpartyRoom = document.querySelector("#watchpartyRoom");
+const watchpartyName = document.querySelector("#watchpartyName");
+const watchpartyStatus = document.querySelector("#watchpartyStatus");
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
@@ -357,6 +370,15 @@ function bindEvents() {
   document.querySelector("#favoritesButton")?.addEventListener("click", showFavorites);
   document.querySelector("#settingsButton").addEventListener("click", openSettings);
   startDiscoverRefresh();
+  api.onWatchpartyState?.(renderWatchpartyStatus);
+  api.onWatchpartyItems?.((items) => {
+    watchpartyItems = Array.isArray(items) ? items : [];
+    renderWatchpartyItems();
+  });
+  api.getWatchpartyStatus?.().then(renderWatchpartyStatus).catch(() => {});
+  loadWatchpartyItems();
+  document.querySelector("#watchpartySettingsLink")?.addEventListener("click", () => openSettings());
+  document.querySelector("#watchpartyOpenSettings")?.addEventListener("click", () => openSettings());
   document.querySelector("#refreshPersonal")?.addEventListener("click", () => {
     if (personalPending) return;
     personalPicks = [];
@@ -548,6 +570,10 @@ function bindEvents() {
     showHomeFavorites,
     showHomePersonal,
     showHomeCategories,
+    watchpartyEnabled,
+    watchpartyServer,
+    watchpartyRoom,
+    watchpartyName,
     providerCardMeta,
     showFavoriteMeta,
     showFavoriteMetaMirror,
@@ -939,6 +965,31 @@ async function loadPersonalPicks(refresh = false) {
   renderPersonalPicks();
 }
 
+// Der Verbindungszustand der Watchparty kommt vom Hauptprozess, sobald sich
+// etwas aendert - Verbinden, Abbrechen, neue Teilnehmer.
+function renderWatchpartyStatus(state) {
+  watchpartyState = state;
+  renderWatchpartyViewStatus(state);
+  if (!watchpartyStatus) return;
+  if (!state?.enabled) {
+    watchpartyStatus.textContent = "Ausgeschaltet.";
+    return;
+  }
+  if (state.error && !state.connected) {
+    watchpartyStatus.textContent = `Nicht verbunden: ${state.error}`;
+    return;
+  }
+  if (!state.connected) {
+    watchpartyStatus.textContent = "Verbinde …";
+    return;
+  }
+  const andere = Math.max(0, (state.peers?.length || 1) - 1);
+  const geraete = andere === 0
+    ? "noch niemand sonst"
+    : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
+  watchpartyStatus.textContent = `Verbunden mit Raum „${state.room}“ — ${geraete}.`;
+}
+
 function discoverCard(item) {
   const card = document.createElement("div");
   card.className = `favorite-card${item.image ? " has-thumb" : ""}`;
@@ -1135,6 +1186,10 @@ async function handleHomeAction(action) {
     await showContinue();
     return;
   }
+  if (action === "watchparty") {
+    await showWatchparty();
+    return;
+  }
   if (action === "settings" || action === "add-provider") {
     await openSettings(action === "add-provider" ? "add-provider" : "settings");
     return;
@@ -1297,6 +1352,109 @@ async function showContinue() {
   historyView?.classList.add("is-hidden");
   renderLibraryViews();
   window.setTimeout(syncBrowserBounds, 0);
+}
+
+// Die Kopfzeile der Ansicht sagt, ob ueberhaupt eine Verbindung steht.
+function renderWatchpartyViewStatus(state) {
+  if (!watchpartyViewStatus) return;
+  const grund = "Deine eigene Weiterschauen-Liste bleibt davon unberührt.";
+  if (!state?.enabled) {
+    watchpartyViewStatus.textContent = `Watchparty ist ausgeschaltet. ${grund}`;
+    return;
+  }
+  if (!state.connected) {
+    watchpartyViewStatus.textContent = state.error
+      ? `Nicht verbunden: ${state.error}`
+      : "Verbinde mit dem Raum …";
+    return;
+  }
+  const andere = Math.max(0, (state.peers?.length || 1) - 1);
+  const geraete = andere === 0 ? "noch niemand sonst" : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
+  watchpartyViewStatus.textContent = `Raum „${state.room}“ — ${geraete}. ${grund}`;
+}
+
+// Getrennt von der eigenen Weiterschauen-Liste: hier steht ausschliesslich,
+// was die anderen Geraete im Raum gemeldet haben.
+async function showWatchparty() {
+  await enterInternalMode();
+  setCurrentRoute("watchparty");
+  hideContentViews();
+  watchpartyView?.classList.remove("is-hidden");
+  renderWatchpartyItems();
+  loadWatchpartyItems();
+  window.setTimeout(syncBrowserBounds, 0);
+}
+
+async function loadWatchpartyItems() {
+  try {
+    const items = await api.getWatchpartyItems?.();
+    watchpartyItems = Array.isArray(items) ? items : [];
+  } catch {
+    watchpartyItems = [];
+  }
+  renderWatchpartyItems();
+}
+
+function renderWatchpartyItems() {
+  if (!watchpartyGrid) return;
+  const vorhanden = watchpartyItems.length > 0;
+  watchpartyEmpty?.classList.toggle("is-hidden", vorhanden);
+  watchpartyGrid.classList.toggle("is-hidden", !vorhanden);
+
+  if (!vorhanden) {
+    const eingerichtet = watchpartyState?.enabled;
+    if (watchpartyEmptyTitle) {
+      watchpartyEmptyTitle.textContent = eingerichtet ? "Noch nichts geteilt" : "Noch keine Watchparty";
+    }
+    if (watchpartyEmptyCopy) {
+      watchpartyEmptyCopy.textContent = eingerichtet
+        ? "Sobald jemand anderes im Raum etwas schaut, erscheint es hier."
+        : "Trage Server und Raumcode in den Einstellungen ein, dann erscheint hier, was die anderen schauen.";
+    }
+    return;
+  }
+  watchpartyGrid.replaceChildren(...watchpartyItems.map(watchpartyCard));
+}
+
+function watchpartyCard(item) {
+  const card = document.createElement("div");
+  card.className = `favorite-card${item.image || item.thumbnail ? " has-thumb" : ""}`;
+  card.tabIndex = 0;
+  card.role = "button";
+
+  const bild = item.thumbnail || "";
+  if (bild) {
+    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(bild)}")`;
+  }
+  const folge = item.season && item.episode ? `Staffel ${item.season} Folge ${item.episode}` : "";
+  const wer = item.from ? `von ${item.from}` : "geteilt";
+  const zeile = [folge, wer, item.providerName].filter(Boolean).join(" · ");
+  card.title = item.openable ? `${item.title} öffnen` : `${item.title} – kein passender Anbieter eingerichtet`;
+  card.innerHTML = `
+    <strong>${escapeHtml(item.title)}</strong>
+    <span>${escapeHtml(zeile)}</span>
+  `;
+  if (!item.openable) card.classList.add("is-muted");
+
+  const oeffnen = async () => {
+    if (!item.openable) {
+      showToast("Für diesen Titel ist kein passender Anbieter eingerichtet");
+      return;
+    }
+    hideContentViews();
+    const state = await api.openWatchpartyItem(item.key);
+    activeProviderId = state?.activeProviderId || activeProviderId;
+    setCurrentRoute(`provider:${activeProviderId}`);
+    renderProviders();
+    window.setTimeout(syncBrowserBounds, 0);
+  };
+  card.addEventListener("click", oeffnen);
+  card.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    oeffnen();
+  });
+  return card;
 }
 
 async function showHistory() {
@@ -1614,6 +1772,7 @@ function hideContentViews() {
   libraryView?.classList.add("is-hidden");
   continueView?.classList.add("is-hidden");
   historyView?.classList.add("is-hidden");
+  watchpartyView?.classList.add("is-hidden");
 }
 
 function switchToPlayerView() {
@@ -1884,6 +2043,7 @@ function renderRouteActiveState() {
 function sidebarRouteForAction(action) {
   if (action === "favorites") return "watchlist";
   if (action === "continue") return "continue";
+  if (action === "watchparty") return "watchparty";
   if (action === "library") return "library";
   if (action === "history") return "history";
   if (action === "search") return "search";
@@ -2021,6 +2181,11 @@ function renderSettings() {
   showHomeFavorites.checked = home.showFavorites !== false;
   if (showHomePersonal) showHomePersonal.checked = home.showPersonal !== false;
   if (showHomeCategories) showHomeCategories.checked = home.showCategories !== false;
+  const party = settings.watchparty || {};
+  if (watchpartyEnabled) watchpartyEnabled.checked = party.enabled === true;
+  if (watchpartyServer) watchpartyServer.value = party.serverUrl || "";
+  if (watchpartyRoom) watchpartyRoom.value = party.room || "";
+  if (watchpartyName) watchpartyName.value = party.deviceName || "";
   providerCardMeta.value = home.providerCardMeta || "logoName";
   showFavoriteMeta.checked = appearance.showFavoriteMeta !== false;
   animationsEnabled.checked = appearance.animations !== false && animationMode.value !== "off";
@@ -2202,6 +2367,12 @@ async function saveSettings() {
     showPersonal: showHomePersonal ? showHomePersonal.checked : true,
     showCategories: showHomeCategories ? showHomeCategories.checked : true,
     providerCardMeta: providerCardMeta.value
+  };
+  settings.watchparty = {
+    enabled: watchpartyEnabled ? watchpartyEnabled.checked : false,
+    serverUrl: watchpartyServer ? watchpartyServer.value.trim() : "",
+    room: watchpartyRoom ? watchpartyRoom.value.trim() : "",
+    deviceName: watchpartyName ? watchpartyName.value.trim() : ""
   };
   settings.appearance = {
     settingsMode: "advanced",
@@ -2419,6 +2590,8 @@ async function resetSettingsSection(section) {
     };
   } else if (section === "appearance") {
     settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };
+  } else if (section === "watchparty") {
+    settings.watchparty = { enabled: false, serverUrl: "", room: "", deviceName: "" };
   }
   renderSettings();
   await saveSettings();

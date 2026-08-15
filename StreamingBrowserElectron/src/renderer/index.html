@@ -46,6 +46,7 @@
           <p>Bibliothek</p>
           <button class="home-side-link" type="button" data-home-action="library" title="Mediathek"><span class="side-icon">▣</span><span class="side-label">Mediathek</span></button>
           <button class="home-side-link" type="button" data-home-action="continue" title="Weiterschauen"><span class="side-icon">◷</span><span class="side-label">Weiterschauen</span></button>
+          <button class="home-side-link" type="button" data-home-action="watchparty" title="Watchparty"><span class="side-icon">⇄</span><span class="side-label">Watchparty</span></button>
         </div>
         <div class="home-sidebar-section">
           <p>Anbieter</p>
@@ -210,6 +211,25 @@
           </div>
         </div>
       </section>
+      <section class="favorites-view is-hidden" id="watchpartyView">
+        <div class="favorites-page">
+          <div class="row-head">
+            <div>
+              <p class="eyebrow">Gemeinsam</p>
+              <h1>Watchparty</h1>
+              <p id="watchpartyViewStatus">Was die anderen im Raum gerade schauen. Deine eigene Weiterschauen-Liste bleibt davon unberührt.</p>
+            </div>
+            <button class="text-action" id="watchpartySettingsLink">Einstellungen</button>
+          </div>
+          <div class="favorite-grid" id="watchpartyGrid"></div>
+          <div class="empty-state is-hidden" id="watchpartyEmpty">
+            <div class="empty-icon">⇄</div>
+            <h1 id="watchpartyEmptyTitle">Noch keine Watchparty</h1>
+            <p id="watchpartyEmptyCopy">Trage Server und Raumcode in den Einstellungen ein, dann erscheint hier, was die anderen schauen.</p>
+            <button class="primary-action" id="watchpartyOpenSettings">Watchparty einrichten</button>
+          </div>
+        </div>
+      </section>
       <section class="favorites-view is-hidden" id="historyView">
         <div class="favorites-page">
           <div class="row-head">
@@ -258,6 +278,7 @@
           <button class="tab" data-tab="homeSettings"><span>⌂</span>Startseite<small>Startseite & Karten</small></button>
           <button class="tab" data-tab="providers"><span>☰</span>Anbieter<small>Seiten verwalten</small></button>
           <button class="tab" data-tab="playback"><span>▷</span>Wiedergabe<small>Player & Fortschritt</small></button>
+          <button class="tab" data-tab="watchparty"><span>⇄</span>Watchparty<small>Fortschritt teilen</small></button>
           <div class="settings-nav-section">System</div>
           <button class="tab" data-tab="browser"><span>◉</span>Browser & Schutz<small>Werbung, Cache</small></button>
           <button class="tab" data-tab="data"><span>▤</span>Daten & Updates<small>Version, Speicher</small></button>
@@ -335,6 +356,31 @@
                 <button type="submit" class="primary-action">Speichern</button>
               </div>
             </form>
+          </div>
+        </div>
+
+        <div class="settings-page" data-page="watchparty">
+          <div class="settings-head">
+            <div>
+              <h3>Watchparty</h3>
+              <p>Teilt den Weiterschauen-Fortschritt zwischen mehreren Geräten. Wer weiterschaut, aktualisiert die Liste bei allen anderen im selben Raum.</p>
+            </div>
+            <button class="soft-action" data-reset-section="watchparty">Bereich zurücksetzen</button>
+          </div>
+          <div class="settings-section-grid">
+            <label class="check setting-row"><input id="watchpartyEnabled" type="checkbox"><span><strong>Watchparty aktivieren</strong><small>Verbindet sich mit dem Relay und gleicht den Fortschritt ab.</small></span></label>
+            <label>Server-Adresse<input id="watchpartyServer" placeholder="wss://mein-relay.example.com">
+              <small>Adresse deines Relays aus <code>sync-server/</code>. <code>https://</code> wird automatisch zu <code>wss://</code>.</small>
+            </label>
+            <label>Raumcode<input id="watchpartyRoom" maxlength="64" placeholder="familie-abend">
+              <small>Alle Geräte mit demselben Code teilen ihren Fortschritt. Wer den Code kennt, ist dabei — wähle ihn nicht zu einfach.</small>
+            </label>
+            <label>Name dieses Geräts <em>optional</em><input id="watchpartyName" maxlength="40" placeholder="Wohnzimmer">
+              <small>Nur zur Anzeige, damit du siehst, wer verbunden ist.</small>
+            </label>
+            <div class="setting-row">
+              <span><strong>Status</strong><small id="watchpartyStatus">Nicht verbunden.</small></span>
+            </div>
           </div>
         </div>
 
