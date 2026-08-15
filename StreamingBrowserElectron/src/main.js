@@ -4135,17 +4135,35 @@ function watchpartyApplyScript(action, position) {
   })()`;
 }
 
+// Gesteuert wird nur, wenn wirklich dieselbe Folge laeuft. taste.urlSchluessel
+// wirft Staffel und Folge weg - damit galten Folge 2 und Folge 3 als dasselbe,
+// und wer in Folge 2 war, wurde von Folge 3 mitpausiert.
+function istGleicheFolge(links, rechts) {
+  if (!links || !rechts) return false;
+  if (taste.urlSchluessel(links) !== taste.urlSchluessel(rechts)) return false;
+  const hier = episodeIdentity(links);
+  const dort = episodeIdentity(rechts);
+  // Filme und Seiten ohne Folgenangabe: die Serien-Adresse genuegt.
+  if (!hier && !dort) return true;
+  if (!hier || !dort) return false;
+  return hier.season === dort.season && hier.episode === dort.episode;
+}
+
 // Nur solange der Anbieter eine beigetretene Folge zeigt, wird mitgesteuert.
 function watchpartyLiveKeyForUrl(url) {
-  const treffer = watchpartyShared.find((eintrag) => {
-    if (!eintrag.joined) return false;
-    return taste.urlSchluessel(eintrag.progress?.url || eintrag.url) === taste.urlSchluessel(url);
-  });
+  const treffer = watchpartyShared.find((eintrag) => (
+    eintrag.joined && istGleicheFolge(eintrag.progress?.url || eintrag.url, url)
+  ));
   return treffer?.key || "";
 }
 
 async function installWatchpartyControls(provider, view, url) {
-  if (!watchparty.aktiv || !watchpartyLiveKeyForUrl(url)) return;
+  const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(url) : "";
+  // Die Oberflaeche erfaehrt bei jedem Takt, ob diese Folge gerade live
+  // mitlaeuft - davon haengt der Knopf "Live verlassen" ab.
+  const eintrag = watchpartyShared.find((item) => item.key === key);
+  sendWatchpartyLive({ active: Boolean(key), key, title: eintrag?.title || "" });
+  if (!key) return;
   await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);
 }
 
@@ -4153,17 +4171,24 @@ async function applyWatchpartyControl(nachricht) {
   const eintrag = watchpartyShared.find((item) => item.key === nachricht.key);
   if (!eintrag) return;
 
-  // Nur anwenden, wo die passende Folge auch wirklich offen ist.
+  // Nur anwenden, wo genau dieselbe Folge offen ist - nicht bloss dieselbe
+  // Serie. Wer eine Folge zurueckliegt, soll nicht mitpausiert werden.
   for (const [providerId, view] of providerViews) {
     if (!isLiveView(view)) continue;
     const offen = view.webContents.getURL();
-    if (taste.urlSchluessel(offen) !== taste.urlSchluessel(eintrag.progress?.url || eintrag.url)) continue;
+    if (!istGleicheFolge(eintrag.progress?.url || eintrag.url, offen)) continue;
     const provider = providers.find((item) => item.id === providerId);
     await executeJavaScriptInMediaFrames(view, watchpartyApplyScript(nachricht.action, nachricht.position)).catch(() => []);
     if (provider) {
       logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
     }
-    sendWatchpartyLive({ key: nachricht.key, from: nachricht.from, action: nachricht.action });
+    sendWatchpartyLive({
+      active: true,
+      key: nachricht.key,
+      title: eintrag.title,
+      from: nachricht.from,
+      action: nachricht.action
+    });
   }
 }
 

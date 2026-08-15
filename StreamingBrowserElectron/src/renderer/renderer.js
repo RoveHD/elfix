@@ -158,6 +158,7 @@ const watchpartyRoom = document.querySelector("#watchpartyRoom");
 const watchpartyName = document.querySelector("#watchpartyName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
+const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
 let watchpartyLiveTimer = 0;
 const providerCardMeta = document.querySelector("#providerCardMeta");
@@ -376,6 +377,7 @@ function bindEvents() {
   document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
   api.onWatchpartyState?.(renderWatchpartyStatus);
   api.onWatchpartyLive?.(showWatchpartyLive);
+  watchpartyLiveLeave?.addEventListener("click", leaveWatchpartyLive);
   api.onWatchpartyItems?.((items) => {
     watchpartyItems = Array.isArray(items) ? items : [];
     renderWatchpartyItems();
@@ -3444,17 +3446,37 @@ async function shareCurrentToWatchparty() {
   showToast("Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
 }
 
-// Steuert gerade jemand anderes die Wiedergabe, sagt das ein Streifen ueber dem
-// Player. Er verschwindet von selbst, wenn eine Weile nichts mehr kommt.
+// Zeigt oben rechts, ob diese Folge gerade live mitlaeuft und wer zuletzt
+// gesteuert hat. Der Knopf daneben loest die Live-Verbindung wieder.
+let watchpartyLiveKey = "";
+
 function showWatchpartyLive(info) {
-  if (!watchpartyLiveBanner || !info?.from) return;
-  const was = info.action === "pause" ? "hat pausiert"
-    : info.action === "play" ? "spielt weiter"
-    : "ist gesprungen";
-  if (watchpartyLiveText) watchpartyLiveText.textContent = `Live: ${info.from} ${was}`;
-  watchpartyLiveBanner.classList.remove("is-hidden");
-  window.clearTimeout(watchpartyLiveTimer);
-  watchpartyLiveTimer = window.setTimeout(() => {
-    watchpartyLiveBanner.classList.add("is-hidden");
-  }, 6000);
+  if (!watchpartyLiveBanner || !watchpartyLiveLeave) return;
+  watchpartyLiveKey = info?.active ? info.key || "" : "";
+
+  watchpartyLiveBanner.classList.toggle("is-hidden", !info?.active);
+  watchpartyLiveLeave.classList.toggle("is-hidden", !info?.active);
+  if (!info?.active) return;
+
+  if (!watchpartyLiveText) return;
+  if (info.from && info.action) {
+    const was = info.action === "pause" ? "hat pausiert"
+      : info.action === "play" ? "spielt weiter"
+      : "ist gesprungen";
+    watchpartyLiveText.textContent = `Live: ${info.from} ${was}`;
+    window.clearTimeout(watchpartyLiveTimer);
+    // Danach bleibt nur noch "Live" stehen - die Meldung war ein Moment.
+    watchpartyLiveTimer = window.setTimeout(() => {
+      if (watchpartyLiveText) watchpartyLiveText.textContent = "Live";
+    }, 6000);
+    return;
+  }
+  if (!watchpartyLiveText.textContent.startsWith("Live:")) watchpartyLiveText.textContent = "Live";
+}
+
+async function leaveWatchpartyLive() {
+  if (!watchpartyLiveKey) return;
+  await api.leaveWatchparty(watchpartyLiveKey);
+  showWatchpartyLive({ active: false });
+  showToast("Live verlassen — deine Wiedergabe läuft wieder für sich");
 }

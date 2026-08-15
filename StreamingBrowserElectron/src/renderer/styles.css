@@ -413,17 +413,30 @@
   font-size: 12px;
 }
 
-/* Streifen ueber dem Player, wenn ein anderes Geraet die Wiedergabe steuert. */
+/* Anzeige in der Kopfzeile, wenn diese Folge live mitlaeuft. Bewusst dort und
+   nicht ueber dem Player: der Player ist eine eigene Ansicht, die ueber der
+   Oberflaeche liegt - ein Streifen davor wuerde entweder verdeckt oder das
+   Layout verschieben. */
 .watchparty-live-banner {
   align-items: center;
-  background: color-mix(in srgb, var(--accent, #4cc9f0) 22%, rgba(7, 10, 16, 0.92));
-  border-bottom: 1px solid color-mix(in srgb, var(--accent, #4cc9f0) 45%, transparent);
-  color: #fff;
-  display: flex;
-  font-size: 13px;
+  background: color-mix(in srgb, var(--accent, #4cc9f0) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #4cc9f0) 45%, transparent);
+  border-radius: 999px;
+  color: var(--text, #fff);
+  display: inline-flex;
+  font-size: 12px;
   font-weight: 600;
-  gap: 8px;
-  padding: 6px 14px;
+  gap: 6px;
+  margin-left: 6px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.watchparty-leave {
+  border-radius: 999px !important;
+  font-size: 12px;
+  padding: 4px 10px !important;
+  width: auto !important;
 }
 
 .watchparty-live-banner.is-hidden {
