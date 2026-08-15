@@ -1370,7 +1370,9 @@ function renderWatchpartyItems() {
   if (!watchpartyGrid) return;
   const vorhanden = watchpartyItems.length > 0;
   watchpartyEmpty?.classList.toggle("is-hidden", vorhanden);
-  watchpartyGrid.classList.toggle("is-hidden", !vorhanden);
+  // Fuer ".favorite-grid" gibt es keine Ausblend-Regel im Stylesheet - die
+  // Klasse "is-hidden" allein wuerde die Karten stehen lassen. Also leeren.
+  watchpartyGrid.replaceChildren(...(vorhanden ? watchpartyItems.map(watchpartyCard) : []));
 
   if (!vorhanden) {
     const eingerichtet = watchpartyState?.enabled;
@@ -1382,9 +1384,7 @@ function renderWatchpartyItems() {
         ? "Stelle eine Serie über den ⇄ Knopf oben rechts in den Raum — oder warte, bis jemand anderes eine einstellt."
         : "Trage Server und Raumcode in den Einstellungen ein. Danach stellst du eine Serie über den ⇄ Knopf oben rechts in den Raum.";
     }
-    return;
   }
-  watchpartyGrid.replaceChildren(...watchpartyItems.map(watchpartyCard));
 }
 
 // Wartet, bis der Raum die Aenderung zurueckgemeldet hat. Ohne das meldet die
