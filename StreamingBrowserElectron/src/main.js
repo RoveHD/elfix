@@ -23,6 +23,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const FILTER_CACHE_FILE = path.join(DATA_DIR, "filter-cache.json");
 const FAVORITES_FILE = path.join(DATA_DIR, "favorites.json");
 const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
+const WATCHPARTY_FILE = path.join(DATA_DIR, "watchparty.json");
 const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
 const MAX_MEDIA_LOG = 300;
@@ -71,6 +72,8 @@ const mediaConsoleLogState = new Map();
 const discoverCache = new Map();
 const seasonInfoCache = new Map();
 let watchpartyShared = [];
+let watchpartyLokal = { shared: [], joined: [] };
+let watchpartyWiederhergestellt = false;
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
@@ -130,6 +133,7 @@ app.whenReady().then(async () => {
   favorites = loadFavorites();
   settings = loadSettings();
   saveSettings();
+  watchpartyLokal = loadWatchpartyLocal();
   loadFilterCache();
 
   browserSession = session.fromPartition(SESSION_PARTITION, { cache: true });
@@ -3689,13 +3693,83 @@ async function discoverForProvider(provider, refresh) {
 // Beigetretenen - und zwar in beide Richtungen, also auch in die eigene
 // Weiterschauen-Liste.
 
+// Was dieses Geraet eingestellt hat und wo es dabei ist, steht auch lokal.
+// Damit ueberlebt die Watchparty ein Update der App genauso wie einen Neustart
+// des Relays: fehlt beim Verbinden etwas, wird es wieder eingetragen.
+function loadWatchpartyLocal() {
+  try {
+    const roh = JSON.parse(fs.readFileSync(WATCHPARTY_FILE, "utf8"));
+    return {
+      shared: Array.isArray(roh?.shared) ? roh.shared : [],
+      joined: Array.isArray(roh?.joined) ? roh.joined : []
+    };
+  } catch {
+    return { shared: [], joined: [] };
+  }
+}
+
+function saveWatchpartyLocal() {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(WATCHPARTY_FILE, JSON.stringify(watchpartyLokal));
+  } catch {
+    // Ohne die Datei geht nur die Wiederherstellung verloren, sonst nichts.
+  }
+}
+
+function rememberWatchpartyState(eintraege) {
+  watchpartyLokal = {
+    shared: eintraege.filter((eintrag) => eintrag.mine).map((eintrag) => ({
+      key: eintrag.key,
+      url: eintrag.url,
+      title: eintrag.title,
+      providerName: eintrag.providerName,
+      thumbnail: eintrag.thumbnail,
+      type: eintrag.type,
+      season: eintrag.season,
+      episode: eintrag.episode
+    })),
+    joined: eintraege.filter((eintrag) => eintrag.joined).map((eintrag) => eintrag.key)
+  };
+  saveWatchpartyLocal();
+}
+
+// Einmal je Verbindung: fehlende eigene Titel neu einstellen und
+// Mitgliedschaften wieder eintragen. Bewusst Verlassenes bleibt draussen, weil
+// es beim Verlassen aus der lokalen Liste fliegt.
+function restoreWatchparty(eintraege) {
+  if (watchpartyWiederhergestellt) return;
+  watchpartyWiederhergestellt = true;
+
+  let nachgetragen = 0;
+  for (const eigen of watchpartyLokal.shared) {
+    if (eintraege.some((eintrag) => eintrag.key === eigen.key)) continue;
+    watchparty.teilen(eigen);
+    nachgetragen += 1;
+  }
+  for (const key of watchpartyLokal.joined) {
+    const eintrag = eintraege.find((item) => item.key === key);
+    if (!eintrag || eintrag.joined) continue;
+    watchparty.beitreten(key);
+    nachgetragen += 1;
+  }
+  if (nachgetragen) {
+    console.log(`[ELFIX WATCHPARTY] ${nachgetragen} Eintrag/Eintraege wiederhergestellt`);
+  }
+}
+
 const watchparty = new Watchparty({
   onState: (eintraege) => {
     watchpartyShared = eintraege;
+    restoreWatchparty(eintraege);
+    rememberWatchpartyState(eintraege);
     sendWatchpartyItems();
   },
   onProgress: (key, fortschritt) => applyWatchpartyProgress(key, fortschritt),
   onStatus: (status) => {
+    // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
+    // nachgetragen, was fehlt.
+    if (!status.connected) watchpartyWiederhergestellt = false;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("watchparty:state", status);
   }
