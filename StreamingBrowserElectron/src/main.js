@@ -76,6 +76,9 @@ const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
 const DISCOVER_CACHE_MS = 15 * 60 * 1000;
 const SEASON_INFO_CACHE_MS = 6 * 60 * 60 * 1000;
+// So lange wird auf die Bestaetigung des Raums gewartet, bevor das Teilen als
+// gescheitert gilt.
+const WATCHPARTY_BESTAETIGUNG_MS = 4000;
 // Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
 const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -3718,9 +3721,13 @@ function watchpartyKey(favorite) {
 }
 
 // Eine Serie in den Raum stellen - ausgeloest vom Knopf in der Kopfzeile.
-function shareWatchpartyFavorite(favorite) {
+// Gemeldet wird erst, wenn der Raum die Serie zurueckspiegelt: sonst hiesse es
+// "hinzugefuegt", obwohl die Nachricht ins Leere ging - etwa wenn das Relay
+// noch eine aeltere Fassung faehrt, die "share" gar nicht kennt.
+async function shareWatchpartyFavorite(favorite) {
   if (!favorite?.url) return { shared: false, reason: "Kein Titel geöffnet" };
   if (!watchparty.aktiv) return { shared: false, reason: "Watchparty ist nicht eingerichtet" };
+  if (!watchparty.verbunden) return { shared: false, reason: "Keine Verbindung zum Raum" };
   const key = watchpartyKey(favorite);
   if (!key) return { shared: false, reason: "Titel nicht erkannt" };
 
@@ -3734,7 +3741,35 @@ function shareWatchpartyFavorite(favorite) {
     season: sanitizePositiveNumber(favorite.season),
     episode: sanitizePositiveNumber(favorite.episode)
   });
-  return { shared: true, key };
+
+  const bestaetigt = await waitForSharedTitle(key, WATCHPARTY_BESTAETIGUNG_MS);
+  if (bestaetigt) return { shared: true, key };
+  return {
+    shared: false,
+    reason: "Der Raum hat die Serie nicht bestätigt - läuft das Relay schon auf dem neuen Stand?"
+  };
+}
+
+function waitForSharedTitle(key, timeoutMs) {
+  return new Promise((fertig) => {
+    if (watchpartyShared.some((eintrag) => eintrag.key === key)) {
+      fertig(true);
+      return;
+    }
+    const start = Date.now();
+    const timer = setInterval(() => {
+      if (watchpartyShared.some((eintrag) => eintrag.key === key)) {
+        clearInterval(timer);
+        fertig(true);
+        return;
+      }
+      if (Date.now() - start >= timeoutMs) {
+        clearInterval(timer);
+        fertig(false);
+      }
+    }, 150);
+    timer.unref?.();
+  });
 }
 
 // Beim Schauen: nur melden, was auch geteilt und beigetreten ist.
