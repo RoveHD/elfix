@@ -25,6 +25,10 @@ Environment=PORT=8787
 Restart=always
 RestartSec=5
 
+# Ablage der Raeume unter /var/lib/elfix-watchparty. Ohne sie muessten nach
+# jedem Neustart alle wieder beitreten.
+StateDirectory=elfix-watchparty
+
 # Der Dienst braucht weder Schreibrechte noch zusaetzliche Privilegien.
 NoNewPrivileges=true
 PrivateTmp=true

@@ -7,10 +7,16 @@
 // Fortschritt dieser Serie zwischen den Beigetretenen. Nichts passiert von
 // selbst, nichts wird ungefragt geteilt.
 //
-// Der Server haelt alles nur im Arbeitsspeicher: keine Datenbank, keine Konten.
-// Wer den Raumcode kennt, ist im Raum.
+// Wer eine Serie eingestellt hat, darf sie wieder herausnehmen und einzelne
+// Mitglieder entfernen ("kick").
+//
+// Raeume liegen auf der Platte, damit ein Neustart des Dienstes nicht alle
+// Mitgliedschaften vergisst. Konten gibt es keine: wer den Raumcode kennt, ist
+// im Raum.
 
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 
@@ -19,8 +25,15 @@ const MAX_TITEL_JE_RAUM = 100;
 const RAUM_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_NACHRICHT = 256 * 1024;
 
+// systemd legt das Verzeichnis an (StateDirectory); ohne systemd liegt die
+// Datei neben dem Server.
+const STATE_DIR = process.env.STATE_DIRECTORY || __dirname;
+const STATE_FILE = path.join(STATE_DIR, "raeume.json");
+const SPEICHER_VERZOEGERUNG_MS = 1000;
+
 // raumcode -> { titel: Map<key, eintrag>, at: number }
 const raeume = new Map();
+let speicherTimer = null;
 
 function raumHolen(code) {
   const vorhanden = raeume.get(code);
@@ -33,13 +46,66 @@ function raumHolen(code) {
   return neu;
 }
 
+// --- Ablage -----------------------------------------------------------------
+
+function zustandLaden() {
+  let roh;
+  try {
+    roh = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  } catch {
+    return;
+  }
+  for (const [code, raum] of Object.entries(roh?.raeume || {})) {
+    const titel = new Map();
+    for (const eintrag of raum?.titel || []) {
+      if (!eintrag?.key) continue;
+      titel.set(eintrag.key, {
+        ...eintrag,
+        members: new Map(Array.isArray(eintrag.members) ? eintrag.members : [])
+      });
+    }
+    raeume.set(code, { titel, at: Number(raum?.at) || Date.now() });
+  }
+  console.log(`Zustand geladen: ${raeume.size} Raum/Raeume`);
+}
+
+function zustandSpeichernSpaeter() {
+  if (speicherTimer) return;
+  speicherTimer = setTimeout(() => {
+    speicherTimer = null;
+    const roh = { raeume: {} };
+    for (const [code, raum] of raeume) {
+      roh.raeume[code] = {
+        at: raum.at,
+        titel: [...raum.titel.values()].map((eintrag) => ({
+          ...eintrag,
+          members: [...eintrag.members.entries()]
+        }))
+      };
+    }
+    try {
+      fs.writeFileSync(STATE_FILE, JSON.stringify(roh));
+    } catch (fehler) {
+      console.error("Zustand konnte nicht gespeichert werden:", fehler.message);
+    }
+  }, SPEICHER_VERZOEGERUNG_MS);
+  speicherTimer.unref?.();
+}
+
 function aufraeumen() {
   const grenze = Date.now() - RAUM_LEBENSDAUER_MS;
+  let entfernt = false;
   for (const [code, raum] of raeume) {
-    if (raum.at < grenze) raeume.delete(code);
+    if (raum.at < grenze) {
+      raeume.delete(code);
+      entfernt = true;
+    }
   }
+  if (entfernt) zustandSpeichernSpaeter();
 }
 setInterval(aufraeumen, 60 * 60 * 1000).unref?.();
+
+// --- Hilfen -----------------------------------------------------------------
 
 function istGueltigerCode(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{4,64}$/.test(value);
@@ -59,7 +125,6 @@ function httpAdresse(value) {
   return /^https?:\/\//i.test(wert) ? wert : "";
 }
 
-// Eine geteilte Serie, wie sie im Raum steht.
 function titelSaeubern(roh) {
   const key = text(roh?.key, 300);
   const url = httpAdresse(roh?.url);
@@ -92,7 +157,6 @@ function fortschrittSaeubern(roh) {
   };
 }
 
-// Fuer die Uebertragung: Mitglieder als Namensliste statt als Map.
 function titelNachAussen(eintrag) {
   return {
     key: eintrag.key,
@@ -112,10 +176,12 @@ function titelNachAussen(eintrag) {
   };
 }
 
+// --- Server -----------------------------------------------------------------
+
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, raeume: raeume.size }));
+    res.end(JSON.stringify({ ok: true, raeume: raeume.size, features: ["share", "enter", "kick", "persist"] }));
     return;
   }
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
@@ -124,13 +190,18 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, maxPayload: MAX_NACHRICHT });
 
-function anRaumSenden(raumcode, nachricht, ausser = null) {
+function anRaumSenden(raumcode, nachricht) {
   const daten = JSON.stringify(nachricht);
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
-    if (ausser && client === ausser) continue;
     client.send(daten);
   }
+}
+
+function teilnehmer(raumcode) {
+  return [...wss.clients]
+    .filter((client) => client.raum === raumcode && client.readyState === client.OPEN)
+    .map((client) => client.name || "Gerät");
 }
 
 function zustandSenden(raumcode) {
@@ -141,12 +212,28 @@ function zustandSenden(raumcode) {
     shared: [...raum.titel.values()].map(titelNachAussen),
     peers: teilnehmer(raumcode)
   });
+  zustandSpeichernSpaeter();
 }
 
-function teilnehmer(raumcode) {
-  return [...wss.clients]
-    .filter((client) => client.raum === raumcode && client.readyState === client.OPEN)
-    .map((client) => client.name || "Gerät");
+// Ein Geraet, das neu installiert wurde, meldet sich mit derselben Bezeichnung,
+// aber neuer Kennung. Ohne diese Uebernahme stuende es doppelt in der Liste und
+// muesste ueberall neu beitreten.
+function kennungUebernehmen(raum, geraetId, name) {
+  if (!name) return false;
+  let geaendert = false;
+  for (const eintrag of raum.titel.values()) {
+    for (const [alteId, alterName] of [...eintrag.members]) {
+      if (alteId === geraetId || alterName !== name) continue;
+      eintrag.members.delete(alteId);
+      eintrag.members.set(geraetId, name);
+      geaendert = true;
+    }
+    if (eintrag.addedBy === name && eintrag.addedById !== geraetId) {
+      eintrag.addedById = geraetId;
+      geaendert = true;
+    }
+  }
+  return geaendert;
 }
 
 wss.on("connection", (socket) => {
@@ -175,10 +262,9 @@ wss.on("connection", (socket) => {
       }
       socket.raum = nachricht.room;
       socket.name = text(nachricht.name, 40) || "Gerät";
-      // Die Geraete-ID kommt vom Client und ueberlebt Neustarts - sonst waere
-      // eine Mitgliedschaft nach jedem Neuverbinden verloren.
       socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
-      raumHolen(socket.raum);
+      const raum = raumHolen(socket.raum);
+      kennungUebernehmen(raum, socket.geraetId, socket.name);
       zustandSenden(socket.raum);
       return;
     }
@@ -220,7 +306,17 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    // Eine Serie ganz aus dem Raum nehmen darf, wer sie eingestellt hat.
+    // Einzelne Mitglieder entfernen darf, wer die Serie eingestellt hat.
+    if (nachricht.type === "kick") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      const wen = text(nachricht.memberId, 64);
+      if (!eintrag || eintrag.addedById !== socket.geraetId || !wen) return;
+      if (wen === socket.geraetId) return;
+      if (!eintrag.members.delete(wen)) return;
+      zustandSenden(socket.raum);
+      return;
+    }
+
     if (nachricht.type === "unshare") {
       const key = text(nachricht.key, 300);
       const eintrag = raum.titel.get(key);
@@ -242,6 +338,7 @@ wss.on("connection", (socket) => {
       if (fortschritt.url) eintrag.url = fortschritt.url;
       eintrag.season = fortschritt.season || eintrag.season;
       eintrag.episode = fortschritt.episode || eintrag.episode;
+      zustandSpeichernSpaeter();
 
       const daten = JSON.stringify({ type: "progress", key: eintrag.key, progress: fortschritt });
       for (const client of wss.clients) {
@@ -268,6 +365,7 @@ setInterval(() => {
   }
 }, 30000).unref?.();
 
+zustandLaden();
 server.listen(PORT, () => {
-  console.log(`ELFIX Watchparty-Relay auf Port ${PORT}`);
+  console.log(`ELFIX Watchparty-Relay auf Port ${PORT} (Ablage: ${STATE_FILE})`);
 });

@@ -1446,16 +1446,49 @@ function watchpartyCard(item) {
     ? `Staffel ${stand.season} Folge ${stand.episode}`
     : (item.season && item.episode ? `Staffel ${item.season} Folge ${item.episode}` : "");
   const mitglieder = Array.isArray(item.members) ? item.members : [];
-  const dabei = mitglieder.length
-    ? `${mitglieder.length} dabei: ${mitglieder.join(", ")}`
-    : "noch niemand dabei";
   const zeile = [folge, item.providerName].filter(Boolean).join(" · ");
+  // Laeuft gerade jemand, steht der Stand direkt auf der Karte.
+  const laufend = stand?.duration
+    ? `${formatClock(stand.position)} / ${formatClock(stand.duration)}${stand.from ? ` · ${stand.from}` : ""}`
+    : "";
 
   card.innerHTML = `
     <strong>${escapeHtml(item.title)}</strong>
     <span>${escapeHtml(zeile)}</span>
-    <span class="watchparty-members">${escapeHtml(dabei)}</span>
+    ${laufend ? `<span class="watchparty-progress">${escapeHtml(laufend)}</span>` : ""}
   `;
+
+  const mitgliederZeile = document.createElement("div");
+  mitgliederZeile.className = "watchparty-members";
+  if (!mitglieder.length) {
+    mitgliederZeile.textContent = "noch niemand dabei";
+  } else {
+    mitgliederZeile.append(`${mitglieder.length} dabei: `);
+    mitglieder.forEach((name, index) => {
+      const id = item.memberIds?.[index];
+      const eigenes = id && id === item.myId;
+      mitgliederZeile.append(index ? ", " : "");
+      // Wer die Serie eingestellt hat, kann andere wieder herauswerfen.
+      if (item.mine && id && !eigenes) {
+        const werfen = document.createElement("button");
+        werfen.type = "button";
+        werfen.className = "watchparty-kick";
+        werfen.textContent = `${name} ✕`;
+        werfen.title = `${name} aus dieser Serie entfernen`;
+        werfen.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          if (werfen.disabled) return;
+          werfen.disabled = true;
+          await api.kickFromWatchparty(item.key, id);
+          showToast(`${name} entfernt`);
+        });
+        mitgliederZeile.append(werfen);
+      } else {
+        mitgliederZeile.append(name);
+      }
+    });
+  }
+  card.append(mitgliederZeile);
 
   const aktionen = document.createElement("div");
   aktionen.className = "watchparty-actions";

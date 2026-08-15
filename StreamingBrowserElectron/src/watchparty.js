@@ -51,6 +51,9 @@ class Watchparty {
     return this.geteilt.map((eintrag) => ({
       ...eintrag,
       joined: Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId),
+      // Die eigene Kennung braucht die Oberflaeche, um sich selbst in der
+      // Mitgliederliste nicht zum Rauswerfen anzubieten.
+      myId: this.geraetId,
       // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen. Ein
       // aelteres Relay kennt die Geraete-Kennung noch nicht - dann muss der
       // Name herhalten, sonst verschwindet der Knopf ganz.
@@ -195,6 +198,16 @@ class Watchparty {
         return;
       }
       if (nachricht?.type === "progress" && nachricht.key && nachricht.progress) {
+        // Der Fortschritt kommt getrennt vom Zustand. Ohne diese Uebernahme
+        // zeigte die Karte weiter den Stand von vorhin - es wirkte, als
+        // aktualisiere sich nur alle paar Minuten etwas.
+        const eintrag = this.geteilt.find((item) => item.key === nachricht.key);
+        if (eintrag) {
+          eintrag.progress = nachricht.progress;
+          if (nachricht.progress.season) eintrag.season = nachricht.progress.season;
+          if (nachricht.progress.episode) eintrag.episode = nachricht.progress.episode;
+          this.aufZustand(this.eintraege());
+        }
         this.aufFortschritt(nachricht.key, nachricht.progress);
       }
     } catch (fehler) {
@@ -218,6 +231,11 @@ class Watchparty {
 
   entfernen(key) {
     this.senden({ type: "unshare", key });
+  }
+
+  // Ein Mitglied aus einer Serie werfen - nur fuer den, der sie eingestellt hat.
+  rauswerfen(key, memberId) {
+    this.senden({ type: "kick", key, memberId });
   }
 
   // Fortschritt wird gesammelt: waehrend des Schauens laeuft er im Sekundentakt

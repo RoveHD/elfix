@@ -723,6 +723,11 @@ ipcMain.handle("watchparty:remove", (_event, key) => {
   return true;
 });
 
+ipcMain.handle("watchparty:kick", (_event, key, memberId) => {
+  watchparty.rauswerfen(String(key || ""), String(memberId || ""));
+  return true;
+});
+
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();

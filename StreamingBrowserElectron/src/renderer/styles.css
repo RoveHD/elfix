@@ -413,6 +413,34 @@
   font-size: 12px;
 }
 
+/* Der laufende Stand eines Mitglieds, direkt auf der Karte. */
+.watchparty-card .watchparty-progress {
+  color: var(--accent, #4cc9f0);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Namen, die sich herauswerfen lassen, sehen wie anklickbare Marken aus. */
+.watchparty-kick {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 1px 8px;
+}
+
+.watchparty-kick:hover {
+  border-color: currentColor;
+  color: var(--danger, #ff6b6b);
+}
+
+.watchparty-kick[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .watchparty-actions {
   display: flex;
   flex-wrap: wrap;
