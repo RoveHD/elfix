@@ -51,8 +51,12 @@ class Watchparty {
     return this.geteilt.map((eintrag) => ({
       ...eintrag,
       joined: Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId),
-      // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen.
-      mine: Boolean(eintrag.addedById) && eintrag.addedById === this.geraetId
+      // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen. Ein
+      // aelteres Relay kennt die Geraete-Kennung noch nicht - dann muss der
+      // Name herhalten, sonst verschwindet der Knopf ganz.
+      mine: eintrag.addedById
+        ? eintrag.addedById === this.geraetId
+        : Boolean(eintrag.addedBy) && eintrag.addedBy === this.name
     }));
   }
 
