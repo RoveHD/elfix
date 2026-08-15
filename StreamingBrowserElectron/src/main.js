@@ -74,6 +74,9 @@ const seasonInfoCache = new Map();
 let watchpartyShared = [];
 let watchpartyLokal = { shared: [], joined: [] };
 let watchpartyWiederhergestellt = false;
+const watchpartySprung = new Map();
+// Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
+const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
@@ -649,6 +652,11 @@ ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
 
   activeFavoriteId = favorite.id;
   moveFavoriteToFront(favorite);
+  // Kommt der Stand aus der Watchparty, wird nach dem Start genau dorthin
+  // gesprungen - die Anbieterseite kennt nur ihren eigenen Stand.
+  if (favorite.watchpartyFrom) {
+    merkeWatchpartySprung(provider.id, { position: favorite.position || favorite.currentTime });
+  }
   recordMediaActivity(provider, favorite.url, {}, { existing: favorite, label: "Geöffnet" });
   await repairFavoriteThumbnailIfNeeded(favorite, provider).catch(() => false);
   if (options?.autoplay) await beginAutostart(provider.id, cleanTitle(favorite.title));
@@ -1061,6 +1069,9 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   const progress = await readBestMediaProgress(view, progressScript);
 
   if (!progress || !isValidMediaProgress(progress)) return;
+  // Steht ein Sprung aus der Watchparty an, wird er eingeloest, sobald das
+  // Video wirklich laeuft.
+  await applyWatchpartySeek(provider, view, progress).catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -3935,6 +3946,9 @@ function applyWatchpartyProgress(key, fortschritt) {
   lokal.episodeCompleted = fortschritt.episodeCompleted;
   lokal.watched = true;
   lokal.lastWatchedAt = fortschritt.updatedAt;
+  // Fuer die Karte: wer gerade schaut und wann zuletzt gemeldet wurde.
+  lokal.watchpartyFrom = fortschritt.from || "";
+  lokal.watchpartyAt = fortschritt.updatedAt;
   if (!lokal.completed && !lokal.episodeCompleted) {
     lokal.continuePending = true;
     lokal.hideFromContinueWatching = false;
@@ -4003,8 +4017,56 @@ async function openWatchpartyItem(key) {
   if (!eintrag) return activeState();
   const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
   if (!provider) return activeState();
+  // An die Stelle springen, an der das andere Geraet steht - sonst faengt die
+  // Anbieterseite bei ihrem eigenen Stand an.
+  merkeWatchpartySprung(provider.id, eintrag.progress);
   await navigateProvider(provider, eintrag.progress?.url || eintrag.url);
   return activeState();
+}
+
+// Ein offener Sprungwunsch je Anbieter. Er wird eingeloest, sobald tatsaechlich
+// ein Video laeuft - vorher laesst sich die Stelle nicht setzen.
+function merkeWatchpartySprung(providerId, fortschritt) {
+  const ziel = sanitizePositiveNumber(fortschritt?.position);
+  if (!providerId || ziel < 5) return;
+  watchpartySprung.set(providerId, { position: ziel, at: Date.now() });
+}
+
+// Wurde eine Watchparty-Folge geoeffnet, wird einmal an die geteilte Stelle
+// gesprungen. Groessere Abweichungen kommen vor, weil der Hoster selbst einen
+// Stand speichert; kleine ignorieren wir, sonst ruckelt es nur.
+async function applyWatchpartySeek(provider, view, progress) {
+  const wunsch = watchpartySprung.get(provider.id);
+  if (!wunsch) return;
+  if (Date.now() - wunsch.at > WATCHPARTY_SPRUNG_GUELTIG_MS) {
+    watchpartySprung.delete(provider.id);
+    return;
+  }
+  if (!progress?.duration || progress.duration <= 0) return;
+  if (Math.abs(Number(progress.currentTime || 0) - wunsch.position) <= 8) {
+    watchpartySprung.delete(provider.id);
+    return;
+  }
+
+  const script = `(() => {
+    const ziel = ${wunsch.position};
+    const videos = Array.from(document.querySelectorAll("video"))
+      .filter((media) => Number(media.duration) > 0 && media.readyState > 1);
+    const media = videos.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return "kein-video";
+    if (ziel >= media.duration - 5) return "ausserhalb";
+    try {
+      media.currentTime = ziel;
+      return "gesprungen";
+    } catch (_) {
+      return "fehlgeschlagen";
+    }
+  })()`;
+  const ergebnisse = await executeJavaScriptInMediaFrames(view, script).catch(() => []);
+  const gesprungen = (ergebnisse || []).some((eintrag) => String(eintrag?.value || eintrag) === "gesprungen");
+  if (!gesprungen) return;
+  watchpartySprung.delete(provider.id);
+  logMediaDiagnostic(provider, view.webContents.getURL(), "watchparty", `an ${Math.round(wunsch.position)}s gesprungen`, {});
 }
 
 // --- Empfohlen fuer dich -----------------------------------------------------

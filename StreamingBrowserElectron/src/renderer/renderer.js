@@ -812,6 +812,7 @@ function renderHome() {
   const recentFavorites = continueItems.slice(0, 8);
   favoritesHomeRow?.classList.toggle("is-hidden", recentFavorites.length === 0 || homeSettings.showFavorites === false);
   homeFavorites.replaceChildren(...recentFavorites.map((favorite) => favoriteCard(favorite, false, {
+    showProgress: true,
     autoplay: true,
     fullscreen: true
   })));
@@ -1892,9 +1893,21 @@ function formatActivityTime(value) {
   return date.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+// Schaut gerade jemand aus der Watchparty diesen Titel, steht das auf der
+// Karte - und der Balken zeigt dessen Stand, nicht den eigenen von vorhin.
+function watchpartyHint(favorite) {
+  const wer = favorite?.watchpartyFrom;
+  const wann = Date.parse(favorite?.watchpartyAt || 0) || 0;
+  if (!wer || !wann) return "";
+  // Nach zwei Minuten ohne neue Meldung gilt niemand mehr als "gerade dabei".
+  if (Date.now() - wann > 120000) return "";
+  return `<small class="media-progress-live">▶ ${escapeHtml(wer)} schaut gerade</small>`;
+}
+
 function progressMarkup(favorite, options = {}) {
   if (!options.showProgress) return "";
-  if (favorite?.continuePending) {
+  const live = watchpartyHint(favorite);
+  if (favorite?.continuePending && !live) {
     return `<i class="media-progress" title="Nächste Folge bereit"><b style="width:0%"></b></i><small class="media-progress-detail">Nächste Folge</small>`;
   }
   const percent = favoriteProgressPercent(favorite);
@@ -1904,7 +1917,7 @@ function progressMarkup(favorite, options = {}) {
   if (!Number.isFinite(percent) || (percent <= 0 && !hasStartedPlayback)) return "";
   const width = percent > 0 ? percent : 1;
   const detail = formatMediaTime(current, duration);
-  return `<i class="media-progress" title="${escapeHtml(detail)}"><b style="width:${width}%"></b></i>${detail ? `<small class="media-progress-detail">${escapeHtml(detail)}</small>` : ""}`;
+  return `<i class="media-progress" title="${escapeHtml(detail)}"><b style="width:${width}%"></b></i>${detail ? `<small class="media-progress-detail">${escapeHtml(detail)}</small>` : ""}${live}`;
 }
 
 function formatMediaTime(currentTime, duration) {
