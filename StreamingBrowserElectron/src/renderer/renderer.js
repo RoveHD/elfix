@@ -3461,7 +3461,19 @@ function showWatchpartyLive(info) {
 
   watchpartyLiveBanner.classList.toggle("is-hidden", !erkannt);
   watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
+  document.querySelector("#watchpartyResync")?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn);
   if (!erkannt) return;
+
+  // Waehrend des Gleichziehens steht dran, worauf gewartet wird.
+  if (info.syncing) {
+    watchpartyLiveBanner.classList.remove("is-paused");
+    if (watchpartyLiveText) {
+      const stelle = Number(info.position || 0);
+      const zeit = stelle ? ` auf ${formatClock(stelle)}` : "";
+      watchpartyLiveText.textContent = `Wird abgeglichen${zeit} …`;
+    }
+    return;
+  }
 
   watchpartyLiveLeave.textContent = watchpartyLiveOn ? "Live verlassen" : "Live beitreten";
   watchpartyLiveLeave.title = watchpartyLiveOn
@@ -3499,9 +3511,10 @@ async function toggleWatchpartyLive() {
     : "Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
 }
 
-// Holt Folge und Stelle des Hosts.
+// Bringt alle gemeinsam auf dieselbe Stelle: erst halten alle an und springen
+// dorthin, dann startet der Raum sie zusammen.
 async function resyncWatchparty() {
   if (!watchpartyLiveKey) return;
   await api.resyncWatchparty?.(watchpartyLiveKey);
-  showToast("Wird mit dem Host abgeglichen …");
+  showToast("Alle werden abgeglichen …");
 }

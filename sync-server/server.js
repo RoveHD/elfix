@@ -79,6 +79,9 @@ function zustandSpeichernSpaeter() {
         at: raum.at,
         titel: [...raum.titel.values()].map((eintrag) => ({
           ...eintrag,
+          // Laufender Abgleich und sein Zeitgeber sind fluechtig.
+          sync: undefined,
+          syncTimer: undefined,
           members: [...eintrag.members.entries()]
         }))
       };
@@ -244,6 +247,23 @@ function kennungUebernehmen(raum, geraetId, name) {
   return geaendert;
 }
 
+// Alle zusammen anlaufen lassen. Wer sich nicht gemeldet hat, bekommt den
+// Startbefehl trotzdem - besser leicht versetzt als gar nicht.
+function syncStarten(raumcode, eintrag) {
+  if (!eintrag?.sync) return;
+  const ziel = eintrag.sync.ziel;
+  clearTimeout(eintrag.syncTimer);
+  eintrag.sync = null;
+  eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: Date.now() };
+
+  const daten = JSON.stringify({ type: "syncstart", key: eintrag.key, position: ziel, at: Date.now() });
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    if (!eintrag.members.has(client.geraetId)) continue;
+    client.send(daten);
+  }
+}
+
 wss.on("connection", (socket) => {
   socket.raum = "";
   socket.geraetId = "";
@@ -368,6 +388,43 @@ wss.on("connection", (socket) => {
         client.send(daten);
       }
       zustandSpeichernSpaeter();
+      return;
+    }
+
+    // Gemeinsam gleichziehen: erst halten alle an und springen auf dieselbe
+    // Stelle, dann startet der Server sie zusammen. Ohne diesen Umweg laufen
+    // die Geraete sofort wieder auseinander, weil jedes anders puffert.
+    if (nachricht.type === "syncall") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+
+      // Die Stelle kommt vom Host, sonst vom Ausloeser.
+      const hostStand = eintrag.live && eintrag.hostId
+        ? eintrag.live.position + (eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0)
+        : 0;
+      const ziel = zahl(nachricht.position, 100000) || hostStand;
+      const url = eintrag.live?.url || eintrag.url;
+
+      const mitglieder = [...wss.clients].filter((client) => (
+        client.raum === socket.raum && client.readyState === client.OPEN && eintrag.members.has(client.geraetId)
+      ));
+      eintrag.sync = { ziel, wartetAuf: new Set(mitglieder.map((c) => c.geraetId)), at: Date.now() };
+
+      const vorbereiten = JSON.stringify({ type: "syncprepare", key: eintrag.key, position: ziel, url, from: socket.name });
+      for (const client of mitglieder) client.send(vorbereiten);
+
+      // Auch wenn jemand nicht meldet, geht es nach kurzer Zeit los.
+      clearTimeout(eintrag.syncTimer);
+      eintrag.syncTimer = setTimeout(() => syncStarten(socket.raum, eintrag), 4000);
+      eintrag.syncTimer.unref?.();
+      return;
+    }
+
+    if (nachricht.type === "syncready") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag?.sync) return;
+      eintrag.sync.wartetAuf.delete(socket.geraetId);
+      if (!eintrag.sync.wartetAuf.size) syncStarten(socket.raum, eintrag);
       return;
     }
 

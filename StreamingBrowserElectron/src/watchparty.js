@@ -206,6 +206,10 @@ class Watchparty {
         this.aufZustand(this.eintraege());
         return;
       }
+      if ((nachricht?.type === "syncprepare" || nachricht?.type === "syncstart") && nachricht.key) {
+        this.aufSteuerung({ ...nachricht, action: nachricht.type });
+        return;
+      }
       if (nachricht?.type === "control" && nachricht.key && nachricht.action) {
         this.aufSteuerung(nachricht);
         return;
@@ -261,6 +265,16 @@ class Watchparty {
   abgleichen(key) {
     if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
     this.senden({ type: "resync", key });
+  }
+
+  // Alle gemeinsam auf dieselbe Stelle bringen und zusammen starten.
+  gleichziehen(key, position) {
+    if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
+    this.senden({ type: "syncall", key, position });
+  }
+
+  bereitZumStart(key) {
+    this.senden({ type: "syncready", key });
   }
 
   // Ein Mitglied aus einer Serie werfen - nur fuer den, der sie eingestellt hat.

@@ -746,8 +746,18 @@ ipcMain.handle("watchparty:live-toggle", (_event, key, an) => {
   return watchpartyLiveAktiv(String(key || ""));
 });
 
-ipcMain.handle("watchparty:resync", (_event, key) => {
-  watchparty.abgleichen(String(key || ""));
+ipcMain.handle("watchparty:resync", async (_event, key) => {
+  const eintrag = watchpartyShared.find((item) => item.key === String(key || ""));
+  if (!eintrag) return false;
+  // Die eigene Stelle als Vorschlag mitgeben; der Server bevorzugt den Host.
+  let position = 0;
+  for (const [, view] of providerViews) {
+    if (!isLiveView(view)) continue;
+    if (!istGleicheFolge(eintrag.url, view.webContents.getURL())) continue;
+    const werte = await executeJavaScriptInMediaFrames(view, "(() => { const v = Array.from(document.querySelectorAll('video')).filter((m) => Number(m.duration) > 0).sort((a, b) => b.duration - a.duration)[0]; return v ? Math.round(v.currentTime) : 0; })()").catch(() => []);
+    position = Math.max(position, ...(werte || []).map((e) => Number(e?.value ?? e) || 0));
+  }
+  watchparty.gleichziehen(eintrag.key, position);
   return true;
 });
 
@@ -4151,6 +4161,40 @@ function watchpartyApplyScript(action, position) {
   })()`;
 }
 
+// Erster Teil des gemeinsamen Gleichziehens: anhalten und auf die Zielstelle
+// springen. Erst wenn alle so weit sind, gibt der Server das Startsignal -
+// sonst laufen die Geraete sofort wieder auseinander.
+async function prepareWatchpartySync(eintrag, nachricht) {
+  sendWatchpartyLive({
+    active: true,
+    live: true,
+    key: eintrag.key,
+    title: eintrag.title,
+    syncing: true,
+    from: nachricht.from,
+    position: nachricht.position
+  });
+
+  // Steht die falsche Folge offen, erst dorthin wechseln.
+  if (nachricht.url) {
+    await followWatchpartyEpisode(eintrag, { ...nachricht, action: "navigate" });
+  }
+
+  let vorbereitet = false;
+  for (const [providerId, view] of providerViews) {
+    if (!isLiveView(view)) continue;
+    if (!istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
+    await executeJavaScriptInMediaFrames(view, watchpartyApplyScript("pause", nachricht.position)).catch(() => []);
+    vorbereitet = true;
+  }
+  // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten die
+  // anderen unnoetig bis zum Zeitlimit.
+  watchparty.bereitZumStart(eintrag.key);
+  if (!vorbereitet) {
+    sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
+  }
+}
+
 // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
 // derselben Serie. Wer bei einem anderen Titel steht, bleibt, wo er ist.
 async function followWatchpartyEpisode(eintrag, nachricht) {
@@ -4228,15 +4272,13 @@ function watchpartySerieForUrl(url) {
   return treffer?.key || "";
 }
 
-// Nur solange dieselbe Folge laeuft und Live nicht abgeschaltet ist, wird
-// mitgesteuert.
+// Live gilt fuer die Serie, nicht fuer eine bestimmte Folge: wer Mitglied ist,
+// Live anhat und irgendeine Folge dieser Serie offen hat, ist live - auch bei
+// pausiertem Player. Frueher haing das an der Folge des Raum-Eintrags, weshalb
+// "Live aus" stand, sobald man weiter war als der gespeicherte Stand.
 function watchpartyLiveKeyForUrl(url) {
-  const treffer = watchpartyShared.find((eintrag) => (
-    eintrag.joined
-    && watchpartyLiveAktiv(eintrag.key)
-    && istGleicheFolge(eintrag.progress?.url || eintrag.url, url)
-  ));
-  return treffer?.key || "";
+  const key = watchpartySerieForUrl(url);
+  return key && watchpartyLiveAktiv(key) ? key : "";
 }
 
 async function installWatchpartyControls(provider, view, url) {
@@ -4273,6 +4315,15 @@ async function applyWatchpartyControl(nachricht) {
   if (nachricht.action === "navigate" && nachricht.url) {
     await followWatchpartyEpisode(eintrag, nachricht);
     return;
+  }
+
+  // Gemeinsam gleichziehen: anhalten, auf dieselbe Stelle, Bereitmeldung.
+  if (nachricht.action === "syncprepare") {
+    await prepareWatchpartySync(eintrag, nachricht);
+    return;
+  }
+  if (nachricht.action === "syncstart") {
+    sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
   }
 
   // Die Zeit auf dem Weg zaehlt mit: bei laufender Wiedergabe ist der andere
