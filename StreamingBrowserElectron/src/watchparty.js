@@ -50,7 +50,9 @@ class Watchparty {
   eintraege() {
     return this.geteilt.map((eintrag) => ({
       ...eintrag,
-      joined: Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId)
+      joined: Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId),
+      // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen.
+      mine: Boolean(eintrag.addedById) && eintrag.addedById === this.geraetId
     }));
   }
 

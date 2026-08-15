@@ -1448,7 +1448,7 @@ function watchpartyCard(item) {
   aktionen.append(oeffnen);
 
   // Wer eine Serie eingestellt hat, kann sie auch wieder herausnehmen.
-  if (item.addedBy && item.addedBy === (settings.watchparty?.deviceName || "")) {
+  if (item.mine) {
     const entfernen = document.createElement("button");
     entfernen.type = "button";
     entfernen.className = "text-action";

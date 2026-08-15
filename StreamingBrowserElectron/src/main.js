@@ -129,6 +129,7 @@ app.whenReady().then(async () => {
   providers = loadProviders();
   favorites = loadFavorites();
   settings = loadSettings();
+  saveSettings();
   loadFilterCache();
 
   browserSession = session.fromPartition(SESSION_PARTITION, { cache: true });
@@ -3897,7 +3898,14 @@ function watchpartyItems() {
 
 function sendWatchpartyItems() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("watchparty:items", watchpartyItems());
+  const items = watchpartyItems();
+  if (items.length) {
+    const uebersicht = items
+      .map((item) => `${item.title} [${(item.members || []).length} dabei${item.joined ? ", ich auch" : ""}]`)
+      .join(" | ");
+    console.log(`[ELFIX WATCHPARTY] ${items.length} Titel im Raum: ${uebersicht}`);
+  }
+  mainWindow.webContents.send("watchparty:items", items);
 }
 
 async function openWatchpartyItem(key) {

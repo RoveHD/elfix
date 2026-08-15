@@ -104,6 +104,7 @@ function titelNachAussen(eintrag) {
     season: eintrag.season,
     episode: eintrag.episode,
     addedBy: eintrag.addedBy,
+    addedById: eintrag.addedById,
     addedAt: eintrag.addedAt,
     members: [...eintrag.members.values()],
     memberIds: [...eintrag.members.keys()],
@@ -195,6 +196,7 @@ wss.on("connection", (socket) => {
       const gespeichert = bekannt || {
         ...eintrag,
         addedBy: socket.name,
+        addedById: socket.geraetId,
         addedAt: new Date().toISOString(),
         members: new Map(),
         progress: null
@@ -222,7 +224,7 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "unshare") {
       const key = text(nachricht.key, 300);
       const eintrag = raum.titel.get(key);
-      if (!eintrag || eintrag.addedBy !== socket.name) return;
+      if (!eintrag || eintrag.addedById !== socket.geraetId) return;
       raum.titel.delete(key);
       zustandSenden(socket.raum);
       return;
