@@ -30,6 +30,9 @@ const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
 const CACHE_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const MIN_WATCH_TIME_SECONDS = 2.5 * 60;
+// Zurueck auf eine aeltere Folge: kurzes Reinschauen soll den Stand nicht
+// zerstoeren, eine Minute bewusstes Schauen aber schon.
+const BACKWARD_WATCH_TIME_SECONDS = 60;
 const COMPLETED_PROGRESS_PERCENT = 90;
 const ADGUARD_FILTER_LISTS = [
   {
@@ -741,9 +744,16 @@ ipcMain.handle("watchparty:remove", (_event, key) => {
 });
 
 ipcMain.handle("watchparty:live-toggle", (_event, key, an) => {
-  setWatchpartyLive(String(key || ""), Boolean(an));
-  if (an) watchparty.abgleichen(String(key || ""));
-  return watchpartyLiveAktiv(String(key || ""));
+  const schluessel = String(key || "");
+  setWatchpartyLive(schluessel, Boolean(an));
+  // Sofort melden statt auf den naechsten Takt zu warten - sonst springt der
+  // Knopf erst Sekunden spaeter um.
+  pushWatchpartyLiveState();
+  if (an) {
+    watchpartyAngeklinkt.clear();
+    watchparty.abgleichen(schluessel);
+  }
+  return watchpartyLiveAktiv(schluessel);
 });
 
 ipcMain.handle("watchparty:resync", async (_event, key) => {
@@ -964,6 +974,7 @@ function getProviderView(provider) {
   view.webContents.on("did-navigate", (_event, url) => {
     rememberProviderUrl(provider.id, url);
     meldeWatchpartyFolgenwechsel(url);
+    pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
     // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
     nextEpisodeAutostartState.delete(provider.id);
@@ -971,6 +982,7 @@ function getProviderView(provider) {
   });
   view.webContents.on("did-navigate-in-page", (_event, url) => {
     rememberProviderUrl(provider.id, url);
+    pushWatchpartyLiveState(url);
     resumePendingProviderAutoplay(provider, view);
   });
   view.webContents.on("page-title-updated", () => {
@@ -2889,7 +2901,13 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
     if (existingIsPastKnownFinal && nextIsInsideKnownSeries) {
       return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
     }
-    return false;
+    // Gibt die Watchparty diese Folge vor, ist das Zurueckgehen gewollt - dann
+    // zaehlt sie sofort, sonst haengt der eigene Eintrag hinter der Gruppe.
+    if (watchpartyGibtFolgeVor(url)) return true;
+    // Sonst braucht es bewusstes Schauen. Frueher wurde eine aeltere Folge
+    // grundsaetzlich nie uebernommen: der Eintrag liess sich nur ueber Umwege
+    // zurueckstellen.
+    return progressState.mediaEnded || progressState.watchedSeconds >= BACKWARD_WATCH_TIME_SECONDS;
   }
   if (comparison === 0) {
     return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
@@ -3558,6 +3576,8 @@ function isFavoriteProgressUrl(url, provider) {
 }
 
 function sendActiveState() {
+  // Der Live-Zustand haengt an der offenen Seite - bei jedem Wechsel neu melden.
+  pushWatchpartyLiveState();
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("browser:state", activeState());
   }
@@ -3816,6 +3836,7 @@ const watchparty = new Watchparty({
   },
   onState: (eintraege) => {
     watchpartyShared = eintraege;
+    pushWatchpartyLiveState();
     restoreWatchparty(eintraege);
     rememberWatchpartyState(eintraege);
     sendWatchpartyItems();
@@ -3826,6 +3847,7 @@ const watchparty = new Watchparty({
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt.
     if (!status.connected) watchpartyWiederhergestellt = false;
+    pushWatchpartyLiveState();
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("watchparty:state", status);
   }
@@ -4249,6 +4271,14 @@ function setWatchpartyLive(key, an) {
   else watchpartyLiveAus.add(key);
 }
 
+// Fuehrt die Watchparty gerade genau diese Folge? Dann ist ein Ruecksprung
+// gewollt und der eigene Eintrag zieht sofort mit.
+function watchpartyGibtFolgeVor(url) {
+  return watchpartyShared.some((eintrag) => (
+    eintrag.joined && istGleicheFolge(eintrag.progress?.url || eintrag.url, url)
+  ));
+}
+
 // Gesteuert wird nur, wenn wirklich dieselbe Folge laeuft. taste.urlSchluessel
 // wirft Staffel und Folge weg - damit galten Folge 2 und Folge 3 als dasselbe,
 // und wer in Folge 2 war, wurde von Folge 3 mitpausiert.
@@ -4281,20 +4311,29 @@ function watchpartyLiveKeyForUrl(url) {
   return key && watchpartyLiveAktiv(key) ? key : "";
 }
 
-async function installWatchpartyControls(provider, view, url) {
-  // Erkannt wird die Serie, nicht nur die Folge: dann laesst sich auch
-  // anzeigen, dass Live moeglich waere, wenn es gerade aus ist.
-  const serieKey = watchparty.aktiv ? watchpartySerieForUrl(url) : "";
-  const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(url) : "";
-  const eintrag = watchpartyShared.find((item) => item.key === (key || serieKey));
+// Eine einzige Stelle, die den Live-Zustand meldet. Sie wird bei jedem Anlass
+// aufgerufen - Takt, Umschalten, Seitenwechsel, Raumaenderung, Verbindung -,
+// damit die Anzeige nie hinterherhinkt.
+function pushWatchpartyLiveState(url = "") {
+  const adresse = url || activeView?.webContents?.getURL() || "";
+  const serieKey = watchparty.aktiv ? watchpartySerieForUrl(adresse) : "";
+  const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(adresse) : "";
+  const eintrag = watchpartyShared.find((item) => item.key === (serieKey || key));
 
   sendWatchpartyLive({
     active: Boolean(serieKey),
     live: Boolean(key),
+    connected: watchparty.verbunden,
+    enabled: watchparty.aktiv,
     key: serieKey || key,
     title: eintrag?.title || "",
     host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId
   });
+  return key;
+}
+
+async function installWatchpartyControls(provider, view, url) {
+  const key = pushWatchpartyLiveState(url);
   if (!key) return;
 
   await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);

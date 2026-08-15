@@ -3453,35 +3453,63 @@ async function shareCurrentToWatchparty() {
 let watchpartyLiveKey = "";
 let watchpartyLiveOn = false;
 
+async function toggleWatchpartyLive() {
+  if (!watchpartyLiveKey) return;
+  const an = !watchpartyLiveOn;
+  await api.toggleWatchpartyLive?.(watchpartyLiveKey, an);
+  showWatchpartyLive({ active: true, live: an, key: watchpartyLiveKey });
+  showToast(an
+    ? "Live beigetreten — ihr steuert wieder gemeinsam"
+    : "Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
+}
+
+// Bringt alle gemeinsam auf dieselbe Stelle: erst halten alle an und springen
+// dorthin, dann startet der Raum sie zusammen.
+async function resyncWatchparty() {
+  if (!watchpartyLiveKey) return;
+  await api.resyncWatchparty?.(watchpartyLiveKey);
+  showToast("Alle werden abgeglichen …");
+}
+
+// Zeigt oben rechts den Live-Zustand. Die Meldung kommt bei jedem Anlass sofort
+// aus dem Hauptprozess - Umschalten, Seitenwechsel, Raumaenderung und
+// Verbindungswechsel -, deshalb hinkt hier nichts mehr hinterher.
 function showWatchpartyLive(info) {
   if (!watchpartyLiveBanner || !watchpartyLiveLeave) return;
+  const syncKnopf = document.querySelector("#watchpartyResync");
   watchpartyLiveKey = info?.key || "";
   watchpartyLiveOn = Boolean(info?.live);
+
   const erkannt = Boolean(info?.active);
+  const verbunden = info?.connected !== false;
 
   watchpartyLiveBanner.classList.toggle("is-hidden", !erkannt);
   watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
-  document.querySelector("#watchpartyResync")?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn);
+  // Abgleichen ergibt nur Sinn, wenn man live dabei und verbunden ist.
+  syncKnopf?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn || !verbunden);
   if (!erkannt) return;
 
-  // Waehrend des Gleichziehens steht dran, worauf gewartet wird.
-  if (info.syncing) {
-    watchpartyLiveBanner.classList.remove("is-paused");
-    if (watchpartyLiveText) {
-      const stelle = Number(info.position || 0);
-      const zeit = stelle ? ` auf ${formatClock(stelle)}` : "";
-      watchpartyLiveText.textContent = `Wird abgeglichen${zeit} …`;
-    }
-    return;
-  }
+  // Ohne Verbindung laesst sich weder steuern noch abgleichen.
+  watchpartyLiveLeave.disabled = !verbunden;
+  if (syncKnopf) syncKnopf.disabled = !verbunden;
+  watchpartyLiveBanner.classList.toggle("is-offline", !verbunden);
+  watchpartyLiveBanner.classList.toggle("is-paused", verbunden && !watchpartyLiveOn);
 
   watchpartyLiveLeave.textContent = watchpartyLiveOn ? "Live verlassen" : "Live beitreten";
   watchpartyLiveLeave.title = watchpartyLiveOn
     ? "Nur die gemeinsame Steuerung beenden - du bleibst in der Watchparty"
     : "Wiedergabe wieder gemeinsam steuern";
-  watchpartyLiveBanner.classList.toggle("is-paused", !watchpartyLiveOn);
 
   if (!watchpartyLiveText) return;
+  if (!verbunden) {
+    watchpartyLiveText.textContent = "Verbindung weg …";
+    return;
+  }
+  if (info.syncing) {
+    const stelle = Number(info.position || 0);
+    watchpartyLiveText.textContent = `Wird abgeglichen${stelle ? ` auf ${formatClock(stelle)}` : ""} …`;
+    return;
+  }
   if (!watchpartyLiveOn) {
     watchpartyLiveText.textContent = "Live aus";
     return;
@@ -3499,22 +3527,4 @@ function showWatchpartyLive(info) {
     return;
   }
   if (!watchpartyLiveText.textContent.startsWith("Live:")) watchpartyLiveText.textContent = "Live";
-}
-
-async function toggleWatchpartyLive() {
-  if (!watchpartyLiveKey) return;
-  const an = !watchpartyLiveOn;
-  await api.toggleWatchpartyLive?.(watchpartyLiveKey, an);
-  showWatchpartyLive({ active: true, live: an, key: watchpartyLiveKey });
-  showToast(an
-    ? "Live beigetreten — ihr steuert wieder gemeinsam"
-    : "Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
-}
-
-// Bringt alle gemeinsam auf dieselbe Stelle: erst halten alle an und springen
-// dorthin, dann startet der Raum sie zusammen.
-async function resyncWatchparty() {
-  if (!watchpartyLiveKey) return;
-  await api.resyncWatchparty?.(watchpartyLiveKey);
-  showToast("Alle werden abgeglichen …");
 }

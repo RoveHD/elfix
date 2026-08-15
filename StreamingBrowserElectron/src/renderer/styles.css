@@ -432,6 +432,18 @@
   white-space: nowrap;
 }
 
+/* Ohne Verbindung zum Raum laesst sich nichts steuern - das sagt die Anzeige. */
+.watchparty-live-banner.is-offline {
+  background: color-mix(in srgb, var(--danger, #ff6b6b) 18%, transparent);
+  border-color: color-mix(in srgb, var(--danger, #ff6b6b) 45%, transparent);
+  color: var(--danger, #ff6b6b);
+}
+
+.watchparty-live-banner.is-offline .live-dot {
+  animation: none;
+  background: var(--danger, #ff6b6b);
+}
+
 /* Ist Live aus, bleibt die Anzeige da - aber ohne Puls. */
 .watchparty-live-banner.is-paused {
   background: transparent;
