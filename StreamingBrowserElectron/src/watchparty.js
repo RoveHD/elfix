@@ -18,6 +18,7 @@ class Watchparty {
     this.aufZustand = optionen.onState || (() => {});
     this.aufFortschritt = optionen.onProgress || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
+    this.aufKennung = optionen.onDeviceId || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse || globalThis.WebSocket;
 
     this.socket = null;
@@ -191,6 +192,13 @@ class Watchparty {
     // verschwinden - deshalb hier festhalten statt verlieren.
     try {
       if (nachricht?.type === "state") {
+        // Der Server sagt, unter welcher Kennung dieses Geraet gefuehrt wird.
+        // Hatte die App noch keine, ist das ab jetzt ihre - sonst erkennt sie
+        // sich in der Mitgliederliste nicht wieder.
+        if (nachricht.you && nachricht.you !== this.geraetId) {
+          this.geraetId = nachricht.you;
+          this.aufKennung(this.geraetId);
+        }
         this.geteilt = Array.isArray(nachricht.shared) ? nachricht.shared : [];
         if (Array.isArray(nachricht.peers)) this.teilnehmer = nachricht.peers;
         this.melde();

@@ -3759,6 +3759,15 @@ function restoreWatchparty(eintraege) {
 }
 
 const watchparty = new Watchparty({
+  onDeviceId: (kennung) => {
+    // Ohne eigene Kennung vergibt das Relay eine. Die wird uebernommen, sonst
+    // erkennt sich das Geraet nach jedem Start neu und faellt aus seinen
+    // Mitgliedschaften.
+    if (!kennung || settings.watchparty?.deviceId === kennung) return;
+    settings.watchparty = { ...(settings.watchparty || {}), deviceId: kennung };
+    saveSettings();
+    console.log(`[ELFIX WATCHPARTY] Kennung vom Raum uebernommen: ${kennung}`);
+  },
   onState: (eintraege) => {
     watchpartyShared = eintraege;
     restoreWatchparty(eintraege);
@@ -3898,8 +3907,10 @@ function applyWatchpartyProgress(key, fortschritt) {
     return;
   }
 
-  const bekannt = Date.parse(lokal.lastWatchedAt || lokal.openedAt || 0) || 0;
-  if ((Date.parse(fortschritt.updatedAt) || 0) <= bekannt) return;
+  // Kein Vergleich mit der eigenen Uhr: das Relay laesst ohnehin nur den
+  // neuesten Stand durch, und Uhren auf verschiedenen Geraeten gehen
+  // auseinander. Frueher fiel dadurch der Stand eines Mitglieds dauerhaft weg.
+  if (!fortschritt?.updatedAt) return;
 
   // Beim selben Anbieter passt die Adresse direkt, sonst wird nur die Folge
   // auf den eigenen Anbieter umgeschrieben.

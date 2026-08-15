@@ -204,14 +204,19 @@ function teilnehmer(raumcode) {
     .map((client) => client.name || "Gerät");
 }
 
+// Jeder Client erfaehrt zusaetzlich, unter welcher Kennung er hier gefuehrt
+// wird ("you"). Ohne das erkennt sich ein Geraet ohne eigene Kennung nicht in
+// der Mitgliederliste wieder - der Beitritt sieht dann aus, als haette er nicht
+// geklappt, und Fortschritt wird nie gemeldet.
 function zustandSenden(raumcode) {
   const raum = raeume.get(raumcode);
   if (!raum) return;
-  anRaumSenden(raumcode, {
-    type: "state",
-    shared: [...raum.titel.values()].map(titelNachAussen),
-    peers: teilnehmer(raumcode)
-  });
+  const shared = [...raum.titel.values()].map(titelNachAussen);
+  const peers = teilnehmer(raumcode);
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    client.send(JSON.stringify({ type: "state", shared, peers, you: client.geraetId }));
+  }
   zustandSpeichernSpaeter();
 }
 
@@ -332,8 +337,11 @@ wss.on("connection", (socket) => {
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const fortschritt = fortschrittSaeubern(nachricht.progress);
       if (!fortschritt) return;
-      const bekannt = eintrag.progress;
-      if (bekannt && Date.parse(fortschritt.updatedAt) <= Date.parse(bekannt.updatedAt)) return;
+      // Der Zeitpunkt kommt vom Server, nicht vom Geraet: gehen die Uhren
+      // auseinander, wuerden die Meldungen des einen dauerhaft als "aelter"
+      // verworfen und sein Stand kaeme nie an.
+      fortschritt.updatedAt = new Date().toISOString();
+      fortschritt.from = fortschritt.from || socket.name;
       eintrag.progress = fortschritt;
       if (fortschritt.url) eintrag.url = fortschritt.url;
       eintrag.season = fortschritt.season || eintrag.season;
