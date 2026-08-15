@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   enterWatchparty: (key) => ipcRenderer.invoke("watchparty:enter", key),
   leaveWatchparty: (key) => ipcRenderer.invoke("watchparty:leave", key),
   removeFromWatchparty: (key) => ipcRenderer.invoke("watchparty:remove", key),
+  toggleWatchpartyLive: (key, an) => ipcRenderer.invoke("watchparty:live-toggle", key, an),
+  resyncWatchparty: (key) => ipcRenderer.invoke("watchparty:resync", key),
   kickFromWatchparty: (key, memberId) => ipcRenderer.invoke("watchparty:kick", key, memberId),
   onWatchpartyState: (callback) => ipcRenderer.on("watchparty:state", (_event, state) => callback(state)),
   onWatchpartyItems: (callback) => ipcRenderer.on("watchparty:items", (_event, items) => callback(items)),

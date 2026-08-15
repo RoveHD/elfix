@@ -377,7 +377,8 @@ function bindEvents() {
   document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
   api.onWatchpartyState?.(renderWatchpartyStatus);
   api.onWatchpartyLive?.(showWatchpartyLive);
-  watchpartyLiveLeave?.addEventListener("click", leaveWatchpartyLive);
+  watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
+  document.querySelector("#watchpartyResync")?.addEventListener("click", resyncWatchparty);
   api.onWatchpartyItems?.((items) => {
     watchpartyItems = Array.isArray(items) ? items : [];
     renderWatchpartyItems();
@@ -3446,37 +3447,61 @@ async function shareCurrentToWatchparty() {
   showToast("Zur Watchparty hinzugefügt — die anderen können jetzt beitreten");
 }
 
-// Zeigt oben rechts, ob diese Folge gerade live mitlaeuft und wer zuletzt
-// gesteuert hat. Der Knopf daneben loest die Live-Verbindung wieder.
+// Oben rechts: ob diese Folge live mitlaeuft, wer zuletzt gesteuert hat und ein
+// Schalter dafuer. Der Schalter trennt nur die Live-Steuerung - die Watchparty
+// und der geteilte Fortschritt bleiben bestehen.
 let watchpartyLiveKey = "";
+let watchpartyLiveOn = false;
 
 function showWatchpartyLive(info) {
   if (!watchpartyLiveBanner || !watchpartyLiveLeave) return;
-  watchpartyLiveKey = info?.active ? info.key || "" : "";
+  watchpartyLiveKey = info?.key || "";
+  watchpartyLiveOn = Boolean(info?.live);
+  const erkannt = Boolean(info?.active);
 
-  watchpartyLiveBanner.classList.toggle("is-hidden", !info?.active);
-  watchpartyLiveLeave.classList.toggle("is-hidden", !info?.active);
-  if (!info?.active) return;
+  watchpartyLiveBanner.classList.toggle("is-hidden", !erkannt);
+  watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
+  if (!erkannt) return;
+
+  watchpartyLiveLeave.textContent = watchpartyLiveOn ? "Live verlassen" : "Live beitreten";
+  watchpartyLiveLeave.title = watchpartyLiveOn
+    ? "Nur die gemeinsame Steuerung beenden - du bleibst in der Watchparty"
+    : "Wiedergabe wieder gemeinsam steuern";
+  watchpartyLiveBanner.classList.toggle("is-paused", !watchpartyLiveOn);
 
   if (!watchpartyLiveText) return;
+  if (!watchpartyLiveOn) {
+    watchpartyLiveText.textContent = "Live aus";
+    return;
+  }
   if (info.from && info.action) {
     const was = info.action === "pause" ? "hat pausiert"
       : info.action === "play" ? "spielt weiter"
+      : info.action === "navigate" ? "hat die Folge gewechselt"
       : "ist gesprungen";
     watchpartyLiveText.textContent = `Live: ${info.from} ${was}`;
     window.clearTimeout(watchpartyLiveTimer);
-    // Danach bleibt nur noch "Live" stehen - die Meldung war ein Moment.
     watchpartyLiveTimer = window.setTimeout(() => {
-      if (watchpartyLiveText) watchpartyLiveText.textContent = "Live";
+      if (watchpartyLiveText && watchpartyLiveOn) watchpartyLiveText.textContent = "Live";
     }, 6000);
     return;
   }
   if (!watchpartyLiveText.textContent.startsWith("Live:")) watchpartyLiveText.textContent = "Live";
 }
 
-async function leaveWatchpartyLive() {
+async function toggleWatchpartyLive() {
   if (!watchpartyLiveKey) return;
-  await api.leaveWatchparty(watchpartyLiveKey);
-  showWatchpartyLive({ active: false });
-  showToast("Live verlassen — deine Wiedergabe läuft wieder für sich");
+  const an = !watchpartyLiveOn;
+  await api.toggleWatchpartyLive?.(watchpartyLiveKey, an);
+  showWatchpartyLive({ active: true, live: an, key: watchpartyLiveKey });
+  showToast(an
+    ? "Live beigetreten — ihr steuert wieder gemeinsam"
+    : "Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
+}
+
+// Holt Folge und Stelle des Hosts.
+async function resyncWatchparty() {
+  if (!watchpartyLiveKey) return;
+  await api.resyncWatchparty?.(watchpartyLiveKey);
+  showToast("Wird mit dem Host abgeglichen …");
 }

@@ -76,6 +76,10 @@ let watchpartyLokal = { shared: [], joined: [] };
 let watchpartyWiederhergestellt = false;
 const watchpartySprung = new Map();
 const watchpartyBildNachgereicht = new Set();
+// Serien, fuer die dieses Geraet die Live-Steuerung abgeschaltet hat, und
+// Folgen, an die es sich schon einmal angehaengt hat.
+const watchpartyLiveAus = new Set();
+const watchpartyAngeklinkt = new Set();
 // Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
 const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
 const nextEpisodePromptState = new Map();
@@ -736,6 +740,17 @@ ipcMain.handle("watchparty:remove", (_event, key) => {
   return true;
 });
 
+ipcMain.handle("watchparty:live-toggle", (_event, key, an) => {
+  setWatchpartyLive(String(key || ""), Boolean(an));
+  if (an) watchparty.abgleichen(String(key || ""));
+  return watchpartyLiveAktiv(String(key || ""));
+});
+
+ipcMain.handle("watchparty:resync", (_event, key) => {
+  watchparty.abgleichen(String(key || ""));
+  return true;
+});
+
 ipcMain.handle("watchparty:kick", (_event, key, memberId) => {
   watchparty.rauswerfen(String(key || ""), String(memberId || ""));
   return true;
@@ -938,6 +953,7 @@ function getProviderView(provider) {
   });
   view.webContents.on("did-navigate", (_event, url) => {
     rememberProviderUrl(provider.id, url);
+    meldeWatchpartyFolgenwechsel(url);
     nextEpisodePromptState.delete(provider.id);
     // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
     nextEpisodeAutostartState.delete(provider.id);
@@ -4135,6 +4151,60 @@ function watchpartyApplyScript(action, position) {
   })()`;
 }
 
+// Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
+// derselben Serie. Wer bei einem anderen Titel steht, bleibt, wo er ist.
+async function followWatchpartyEpisode(eintrag, nachricht) {
+  const ziel = nachricht.url;
+  if (!ziel || !watchpartyLiveAktiv(eintrag.key)) return;
+  if (taste.urlSchluessel(ziel) !== taste.urlSchluessel(eintrag.url)) return;
+
+  for (const [providerId, view] of providerViews) {
+    if (!isLiveView(view)) continue;
+    const offen = view.webContents.getURL();
+    // Nur Geraete mitnehmen, die bei derselben Serie stehen.
+    if (taste.urlSchluessel(offen) !== taste.urlSchluessel(ziel)) continue;
+    if (istGleicheFolge(offen, ziel)) continue;
+
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider) continue;
+    merkeWatchpartySprung(provider.id, { position: nachricht.position });
+    await navigateProvider(provider, ziel);
+    scheduleProviderAutoplay(provider, view, { fullscreen: isContentFullscreen });
+    logMediaDiagnostic(provider, ziel, "watchparty", `${nachricht.from || "Host"}: Folge gewechselt`, {});
+    sendWatchpartyLive({
+      active: true,
+      key: eintrag.key,
+      title: eintrag.title,
+      from: nachricht.from,
+      action: "navigate"
+    });
+  }
+}
+
+// Wechselt dieses Geraet die Folge, erfahren es die anderen - sie ziehen nach,
+// solange sie bei derselben Serie stehen und Live an ist.
+function meldeWatchpartyFolgenwechsel(url) {
+  if (!watchparty.aktiv) return;
+  const key = watchpartySerieForUrl(url);
+  if (!key || !watchpartyLiveAktiv(key)) return;
+  // Neue Folge, neues Anhaengen: sonst wuerde der alte Merker den Abgleich
+  // verhindern.
+  watchpartyAngeklinkt.clear();
+  watchparty.steuernMitAdresse(key, "navigate", 0, url);
+}
+
+// Live laesst sich je Serie abschalten, ohne die Watchparty zu verlassen: die
+// Mitgliedschaft (und damit der geteilte Fortschritt) bleibt bestehen.
+function watchpartyLiveAktiv(key) {
+  return Boolean(key) && !watchpartyLiveAus.has(key);
+}
+
+function setWatchpartyLive(key, an) {
+  if (!key) return;
+  if (an) watchpartyLiveAus.delete(key);
+  else watchpartyLiveAus.add(key);
+}
+
 // Gesteuert wird nur, wenn wirklich dieselbe Folge laeuft. taste.urlSchluessel
 // wirft Staffel und Folge weg - damit galten Folge 2 und Folge 3 als dasselbe,
 // und wer in Folge 2 war, wurde von Folge 3 mitpausiert.
@@ -4149,34 +4219,73 @@ function istGleicheFolge(links, rechts) {
   return hier.season === dort.season && hier.episode === dort.episode;
 }
 
-// Nur solange der Anbieter eine beigetretene Folge zeigt, wird mitgesteuert.
+// Die Serie, zu der die offene Seite gehoert - unabhaengig von der Folge.
+// Danach richtet sich, ob ein Folgenwechsel uebernommen wird.
+function watchpartySerieForUrl(url) {
+  const treffer = watchpartyShared.find((eintrag) => (
+    eintrag.joined && taste.urlSchluessel(eintrag.url) === taste.urlSchluessel(url)
+  ));
+  return treffer?.key || "";
+}
+
+// Nur solange dieselbe Folge laeuft und Live nicht abgeschaltet ist, wird
+// mitgesteuert.
 function watchpartyLiveKeyForUrl(url) {
   const treffer = watchpartyShared.find((eintrag) => (
-    eintrag.joined && istGleicheFolge(eintrag.progress?.url || eintrag.url, url)
+    eintrag.joined
+    && watchpartyLiveAktiv(eintrag.key)
+    && istGleicheFolge(eintrag.progress?.url || eintrag.url, url)
   ));
   return treffer?.key || "";
 }
 
 async function installWatchpartyControls(provider, view, url) {
+  // Erkannt wird die Serie, nicht nur die Folge: dann laesst sich auch
+  // anzeigen, dass Live moeglich waere, wenn es gerade aus ist.
+  const serieKey = watchparty.aktiv ? watchpartySerieForUrl(url) : "";
   const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(url) : "";
-  // Die Oberflaeche erfaehrt bei jedem Takt, ob diese Folge gerade live
-  // mitlaeuft - davon haengt der Knopf "Live verlassen" ab.
-  const eintrag = watchpartyShared.find((item) => item.key === key);
-  sendWatchpartyLive({ active: Boolean(key), key, title: eintrag?.title || "" });
+  const eintrag = watchpartyShared.find((item) => item.key === (key || serieKey));
+
+  sendWatchpartyLive({
+    active: Boolean(serieKey),
+    live: Boolean(key),
+    key: serieKey || key,
+    title: eintrag?.title || "",
+    host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId
+  });
   if (!key) return;
+
   await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);
+  // Beim ersten Mal auf dieser Folge den Stand des Hosts holen, damit man
+  // sofort mitlaeuft statt von vorne.
+  if (!watchpartyAngeklinkt.has(key + url)) {
+    watchpartyAngeklinkt.add(key + url);
+    watchparty.abgleichen(key);
+  }
 }
 
 async function applyWatchpartyControl(nachricht) {
   const eintrag = watchpartyShared.find((item) => item.key === nachricht.key);
   if (!eintrag) return;
 
+  // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
+  // derselben Serie, damit niemand ungefragt woanders landet.
+  if (nachricht.action === "navigate" && nachricht.url) {
+    await followWatchpartyEpisode(eintrag, nachricht);
+    return;
+  }
+
+  // Die Zeit auf dem Weg zaehlt mit: bei laufender Wiedergabe ist der andere
+  // inzwischen weiter, sonst landet man immer ein Stueck hinter ihm.
+  const unterwegs = nachricht.at ? Math.max(0, Date.now() - Number(nachricht.at)) / 1000 : 0;
+  const position = Number(nachricht.position || 0) + (nachricht.action === "pause" ? 0 : unterwegs);
+
   // Nur anwenden, wo genau dieselbe Folge offen ist - nicht bloss dieselbe
   // Serie. Wer eine Folge zurueckliegt, soll nicht mitpausiert werden.
   for (const [providerId, view] of providerViews) {
     if (!isLiveView(view)) continue;
     const offen = view.webContents.getURL();
-    if (!istGleicheFolge(eintrag.progress?.url || eintrag.url, offen)) continue;
+    if (!istGleicheFolge(nachricht.url || eintrag.progress?.url || eintrag.url, offen)) continue;
     const provider = providers.find((item) => item.id === providerId);
     await executeJavaScriptInMediaFrames(view, watchpartyApplyScript(nachricht.action, nachricht.position)).catch(() => []);
     if (provider) {

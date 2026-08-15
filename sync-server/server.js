@@ -167,6 +167,9 @@ function titelNachAussen(eintrag) {
     type: eintrag.type,
     season: eintrag.season,
     episode: eintrag.episode,
+    hostId: eintrag.hostId || "",
+    hostName: eintrag.hostName || "",
+    live: eintrag.live || null,
     addedBy: eintrag.addedBy,
     addedById: eintrag.addedById,
     addedAt: eintrag.addedAt,
@@ -322,21 +325,41 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    // Live-Steuerung: Pause, Weiter und Springen werden sofort an die anderen
-    // Beigetretenen durchgereicht. Nichts davon wird gespeichert - es zaehlt
-    // nur der Moment.
+    // Live-Steuerung: Pause, Weiter, Springen und Folgenwechsel gehen sofort an
+    // die anderen Beigetretenen. Wer als Erster spielt, gibt den Takt vor - er
+    // ist der Host, an dem sich "Synchronisieren" orientiert.
     if (nachricht.type === "control") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const aktion = text(nachricht.action, 10);
-      if (!["play", "pause", "seek"].includes(aktion)) return;
+      if (!["play", "pause", "seek", "navigate"].includes(aktion)) return;
+
+      if (!eintrag.hostId || !eintrag.members.has(eintrag.hostId)) {
+        eintrag.hostId = socket.geraetId;
+        eintrag.hostName = socket.name;
+      }
+      const ziel = httpAdresse(nachricht.url);
+      if (aktion === "navigate" && ziel) eintrag.url = ziel;
+
+      // Der Stand des Hosts ist die Referenz - daran richtet sich aus, wer
+      // spaeter dazukommt oder auf "Synchronisieren" drueckt.
+      if (socket.geraetId === eintrag.hostId) {
+        eintrag.live = {
+          action: aktion,
+          position: zahl(nachricht.position, 100000),
+          url: ziel || eintrag.live?.url || eintrag.url,
+          at: Date.now()
+        };
+      }
 
       const daten = JSON.stringify({
         type: "control",
         key: eintrag.key,
         action: aktion,
         position: zahl(nachricht.position, 100000),
+        url: ziel,
         from: socket.name,
+        host: socket.geraetId === eintrag.hostId,
         at: Date.now()
       });
       for (const client of wss.clients) {
@@ -344,6 +367,29 @@ wss.on("connection", (socket) => {
         if (!eintrag.members.has(client.geraetId)) continue;
         client.send(daten);
       }
+      zustandSpeichernSpaeter();
+      return;
+    }
+
+    // Auf Wunsch den Stand des Hosts nachliefern ("Synchronisieren").
+    if (nachricht.type === "resync") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      if (!eintrag.live) return;
+      // Die verstrichene Zeit seit der Meldung wird mitgerechnet, sonst
+      // landet man immer dort, wo der Host vor ein paar Sekunden war.
+      const vergangen = eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0;
+      senden({
+        type: "control",
+        key: eintrag.key,
+        action: eintrag.live.action === "pause" ? "pause" : "play",
+        position: eintrag.live.position + vergangen,
+        url: eintrag.live.url || eintrag.url,
+        from: eintrag.hostName || "Host",
+        host: true,
+        resync: true,
+        at: Date.now()
+      });
       return;
     }
 

@@ -248,8 +248,19 @@ class Watchparty {
 
   // Pause, Weiter oder Springen an die anderen Beigetretenen schicken.
   steuern(key, action, position) {
+    this.steuernMitAdresse(key, action, position, "");
+  }
+
+  // Beim Folgenwechsel gehoert die neue Adresse dazu.
+  steuernMitAdresse(key, action, position, url) {
     if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
-    this.senden({ type: "control", key, action, position });
+    this.senden({ type: "control", key, action, position, url });
+  }
+
+  // Den Stand des Hosts anfordern.
+  abgleichen(key) {
+    if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
+    this.senden({ type: "resync", key });
   }
 
   // Ein Mitglied aus einer Serie werfen - nur fuer den, der sie eingestellt hat.
