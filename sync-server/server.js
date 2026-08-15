@@ -226,6 +226,40 @@ function zustandSenden(raumcode) {
   zustandSpeichernSpaeter();
 }
 
+// Wo steht der Host jetzt? Bevorzugt aus seiner letzten Steuerung, sonst aus
+// seinem laufenden Fortschritt - er meldet den ohnehin als Mitglied. Bei
+// laufender Wiedergabe zaehlt die seither vergangene Zeit mit, sonst zieht man
+// immer auf die Stelle von vorhin.
+function hostStandJetzt(eintrag) {
+  if (eintrag.live && eintrag.hostId) {
+    const vergangen = eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0;
+    return eintrag.live.position + vergangen;
+  }
+  const fortschritt = eintrag.progress;
+  if (fortschritt && eintrag.hostName && fortschritt.from === eintrag.hostName) {
+    const gemeldet = Date.parse(fortschritt.updatedAt) || 0;
+    const vergangen = gemeldet ? Math.max(0, Date.now() - gemeldet) / 1000 : 0;
+    return fortschritt.position + Math.min(vergangen, 600);
+  }
+  return 0;
+}
+
+// Es muss immer jemanden geben, an dem sich die anderen ausrichten koennen.
+// Host ist, wer zuerst da war - faellt er weg, uebernimmt der naechste
+// verbundene Teilnehmer, sonst haette niemand mehr eine Referenz.
+function hostSicherstellen(raumcode, eintrag) {
+  const verbundene = [...wss.clients].filter((client) => (
+    client.raum === raumcode && client.readyState === client.OPEN && eintrag.members.has(client.geraetId)
+  ));
+  if (eintrag.hostId && verbundene.some((client) => client.geraetId === eintrag.hostId)) return false;
+
+  const neuer = verbundene[0];
+  if (!neuer) return false;
+  eintrag.hostId = neuer.geraetId;
+  eintrag.hostName = neuer.name;
+  return true;
+}
+
 // Ein Geraet, das neu installiert wurde, meldet sich mit derselben Bezeichnung,
 // aber neuer Kennung. Ohne diese Uebernahme stuende es doppelt in der Liste und
 // muesste ueberall neu beitreten.
@@ -293,6 +327,7 @@ wss.on("connection", (socket) => {
       socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
       const raum = raumHolen(socket.raum);
       kennungUebernehmen(raum, socket.geraetId, socket.name);
+      for (const eintrag of raum.titel.values()) hostSicherstellen(socket.raum, eintrag);
       zustandSenden(socket.raum);
       return;
     }
@@ -327,6 +362,7 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (nachricht.type === "enter") {
         eintrag.members.set(socket.geraetId, socket.name);
+        hostSicherstellen(socket.raum, eintrag);
       } else {
         eintrag.members.delete(socket.geraetId);
       }
@@ -354,7 +390,8 @@ wss.on("connection", (socket) => {
       const aktion = text(nachricht.action, 10);
       if (!["play", "pause", "seek", "navigate"].includes(aktion)) return;
 
-      if (!eintrag.hostId || !eintrag.members.has(eintrag.hostId)) {
+      hostSicherstellen(socket.raum, eintrag);
+      if (!eintrag.hostId) {
         eintrag.hostId = socket.geraetId;
         eintrag.hostName = socket.name;
       }
@@ -398,11 +435,11 @@ wss.on("connection", (socket) => {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
 
-      // Die Stelle kommt vom Host, sonst vom Ausloeser.
-      const hostStand = eintrag.live && eintrag.hostId
-        ? eintrag.live.position + (eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0)
-        : 0;
-      const ziel = zahl(nachricht.position, 100000) || hostStand;
+      // Massgeblich ist die Zeit des Hosts. Die Stelle des Ausloesers zaehlt
+      // nur, wenn vom Host noch nichts bekannt ist - sonst wuerde ein
+      // Nachzuegler alle anderen zu sich zurueckziehen.
+      hostSicherstellen(socket.raum, eintrag);
+      const ziel = hostStandJetzt(eintrag) || zahl(nachricht.position, 100000);
       const url = eintrag.live?.url || eintrag.url;
 
       const mitglieder = [...wss.clients].filter((client) => (
@@ -432,15 +469,14 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "resync") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
-      if (!eintrag.live) return;
-      // Die verstrichene Zeit seit der Meldung wird mitgerechnet, sonst
-      // landet man immer dort, wo der Host vor ein paar Sekunden war.
-      const vergangen = eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0;
+      hostSicherstellen(socket.raum, eintrag);
+      const stand = hostStandJetzt(eintrag);
+      if (!stand) return;
       senden({
         type: "control",
         key: eintrag.key,
-        action: eintrag.live.action === "pause" ? "pause" : "play",
-        position: eintrag.live.position + vergangen,
+        action: eintrag.live?.action === "pause" ? "pause" : "play",
+        position: stand,
         url: eintrag.live.url || eintrag.url,
         from: eintrag.hostName || "Host",
         host: true,
@@ -486,7 +522,17 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("close", () => {
-    if (socket.raum) anRaumSenden(socket.raum, { type: "peers", peers: teilnehmer(socket.raum) });
+    if (!socket.raum) return;
+    const raum = raeume.get(socket.raum);
+    let gewechselt = false;
+    for (const eintrag of raum?.titel.values() || []) {
+      if (eintrag.hostId === socket.geraetId) {
+        eintrag.hostId = "";
+        gewechselt = hostSicherstellen(socket.raum, eintrag) || gewechselt;
+      }
+    }
+    if (gewechselt) zustandSenden(socket.raum);
+    else anRaumSenden(socket.raum, { type: "peers", peers: teilnehmer(socket.raum) });
   });
 });
 

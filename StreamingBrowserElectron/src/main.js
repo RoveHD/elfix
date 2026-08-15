@@ -971,8 +971,13 @@ function getProviderView(provider) {
       logNextEpisode(provider, "FEHLER beim Wechsel: " + (fehler?.message || fehler));
     });
   });
+  view.webContents.on("did-start-loading", () => sendActiveState());
+  view.webContents.on("did-stop-loading", () => sendActiveState());
   view.webContents.on("did-navigate", (_event, url) => {
     rememberProviderUrl(provider.id, url);
+    // Neue Seite: der Merker fuers Anhaengen gilt nicht mehr - wer die Folge
+    // erneut betritt, gleicht wieder mit dem Host ab.
+    watchpartyAngeklinkt.clear();
     meldeWatchpartyFolgenwechsel(url);
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
@@ -3596,6 +3601,8 @@ function activeState() {
     activeProviderId,
     url: view?.webContents.getURL() || "",
     title: view?.webContents.getTitle() || "",
+    // Fuer die Rueckmeldung am Neu-laden-Knopf: laeuft gerade ein Ladevorgang?
+    loading: Boolean(view?.webContents?.isLoading?.()),
     canGoBack: Boolean(view?.webContents.canGoBack()),
     canGoForward: Boolean(view?.webContents.canGoForward()),
     favorites
@@ -4328,6 +4335,9 @@ function pushWatchpartyLiveState(url = "") {
     enabled: watchparty.aktiv,
     key: serieKey || key,
     title: eintrag?.title || "",
+    // Wer den Takt vorgibt, gehoert in die Anzeige - sonst weiss niemand, an
+    // wem sich das Abgleichen orientiert.
+    hostName: eintrag?.hostName || "",
     host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId
   });
   return key;
@@ -4338,8 +4348,9 @@ async function installWatchpartyControls(provider, view, url) {
   if (!key) return;
 
   await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);
-  // Beim ersten Mal auf dieser Folge den Stand des Hosts holen, damit man
-  // sofort mitlaeuft statt von vorne.
+  // Bei jedem Betreten dieser Folge den Stand des Hosts holen - auch wenn man
+  // schon einmal drin war. Der Merker gilt nur fuer den laufenden Aufenthalt
+  // und wird beim Verlassen der Seite geloescht.
   if (!watchpartyAngeklinkt.has(key + url)) {
     watchpartyAngeklinkt.add(key + url);
     watchparty.abgleichen(key);
@@ -4384,8 +4395,12 @@ async function applyWatchpartyControl(nachricht) {
     }
     sendWatchpartyLive({
       active: true,
+      live: true,
+      connected: watchparty.verbunden,
       key: nachricht.key,
       title: eintrag.title,
+      hostName: eintrag.hostName || "",
+      host: Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId,
       from: nachricht.from,
       action: nachricht.action
     });

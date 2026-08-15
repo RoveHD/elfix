@@ -462,9 +462,15 @@ function bindEvents() {
 
   document.querySelector("#backButton").addEventListener("click", () => api.browserCommand("back"));
   document.querySelector("#forwardButton").addEventListener("click", () => api.browserCommand("forward"));
-  document.querySelector("#reloadButton").addEventListener("click", () => api.browserCommand("reload"));
+  document.querySelector("#reloadButton").addEventListener("click", () => {
+    markiereNeuladen("#reloadButton");
+    api.browserCommand("reload");
+  });
   document.querySelector("#reloadAllButton").addEventListener("click", async () => {
+    markiereNeuladen("#reloadAllButton", 1200);
+    const anzahl = providers.filter((provider) => provider.enabled !== false).length;
     const state = await api.browserCommand("reloadAll");
+    showToast(anzahl === 1 ? "Anbieter neu geladen" : anzahl + " Anbieter neu geladen");
     activeProviderId = state?.activeProviderId || null;
     currentUrl = state?.url || "";
     await api.showHome();
@@ -718,6 +724,7 @@ function bindEvents() {
   pauseOnBlur.addEventListener("change", saveSettings);
 
   api.onBrowserState((state) => {
+    zeigeLadezustand(Boolean(state.loading));
     activeProviderId = state.activeProviderId;
     currentUrl = state.url || "";
     if (Array.isArray(state.favorites)) {
@@ -1471,7 +1478,11 @@ function watchpartyCard(item) {
   if (!mitglieder.length) {
     mitgliederZeile.textContent = "noch niemand dabei";
   } else {
-    mitgliederZeile.append(`${mitglieder.length} dabei: `);
+    // Der Host gibt beim Abgleichen den Takt vor - deshalb steht er dabei.
+    const hostHinweis = item.hostName
+      ? `${item.hostName === item.myName ? "du bist Host" : `Host: ${item.hostName}`} · `
+      : "";
+    mitgliederZeile.append(`${hostHinweis}${mitglieder.length} dabei: `);
     mitglieder.forEach((name, index) => {
       const id = item.memberIds?.[index];
       const eigenes = id && id === item.myId;
@@ -3467,8 +3478,13 @@ async function toggleWatchpartyLive() {
 // dorthin, dann startet der Raum sie zusammen.
 async function resyncWatchparty() {
   if (!watchpartyLiveKey) return;
+  const knopf = document.querySelector("#watchpartyResync");
+  knopf?.classList.add("is-busy");
   await api.resyncWatchparty?.(watchpartyLiveKey);
   showToast("Alle werden abgeglichen …");
+  // Der Ring bleibt, bis der Raum den Abgleich abschliesst - laenger als ein
+  // paar Sekunden soll er aber nicht stehen.
+  window.setTimeout(() => knopf?.classList.remove("is-busy"), 5000);
 }
 
 // Zeigt oben rechts den Live-Zustand. Die Meldung kommt bei jedem Anlass sofort
@@ -3505,6 +3521,7 @@ function showWatchpartyLive(info) {
     watchpartyLiveText.textContent = "Verbindung weg …";
     return;
   }
+  document.querySelector("#watchpartyResync")?.classList.toggle("is-busy", Boolean(info.syncing));
   if (info.syncing) {
     const stelle = Number(info.position || 0);
     watchpartyLiveText.textContent = `Wird abgeglichen${stelle ? ` auf ${formatClock(stelle)}` : ""} …`;
@@ -3522,9 +3539,50 @@ function showWatchpartyLive(info) {
     watchpartyLiveText.textContent = `Live: ${info.from} ${was}`;
     window.clearTimeout(watchpartyLiveTimer);
     watchpartyLiveTimer = window.setTimeout(() => {
-      if (watchpartyLiveText && watchpartyLiveOn) watchpartyLiveText.textContent = "Live";
+      if (watchpartyLiveText && watchpartyLiveOn) watchpartyLiveText.textContent = watchpartyHostText(info);
     }, 6000);
     return;
   }
-  if (!watchpartyLiveText.textContent.startsWith("Live:")) watchpartyLiveText.textContent = "Live";
+  if (!watchpartyLiveText.textContent.startsWith("Live:")) {
+    watchpartyLiveText.textContent = watchpartyHostText(info);
+  }
+}
+
+// Wer den Takt vorgibt, steht in der Anzeige - daran orientiert sich "Sync".
+function watchpartyHostText(info) {
+  if (info?.host) return "Live · du bist Host";
+  if (info?.hostName) return `Live · Host: ${info.hostName}`;
+  return "Live";
+}
+
+// Rueckmeldung an den Neu-laden-Knoepfen. Der Klick dreht sofort los, damit die
+// Aktion spuerbar ist; danach uebernimmt der echte Ladezustand aus dem
+// Hauptprozess - so dreht es genau so lange, wie wirklich geladen wird.
+let ladeMindestzeit = 0;
+
+function markiereNeuladen(auswahl, dauer = 600) {
+  const knopf = document.querySelector(auswahl);
+  if (!knopf) return;
+  knopf.classList.add("is-reloading");
+  ladeMindestzeit = Date.now() + dauer;
+  window.setTimeout(() => {
+    if (Date.now() >= ladeMindestzeit) knopf.classList.remove("is-reloading");
+  }, dauer);
+}
+
+function zeigeLadezustand(laeuft) {
+  const knopf = document.querySelector("#reloadButton");
+  if (!knopf) return;
+  if (laeuft) {
+    knopf.classList.add("is-reloading");
+    return;
+  }
+  // Nicht mitten in der angestossenen Drehung abbrechen - sonst blitzt es nur
+  // kurz auf und wirkt wie nichts passiert.
+  const rest = ladeMindestzeit - Date.now();
+  if (rest > 0) {
+    window.setTimeout(() => knopf.classList.remove("is-reloading"), rest);
+    return;
+  }
+  knopf.classList.remove("is-reloading");
 }

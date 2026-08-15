@@ -56,6 +56,7 @@ class Watchparty {
       // Die eigene Kennung braucht die Oberflaeche, um sich selbst in der
       // Mitgliederliste nicht zum Rauswerfen anzubieten.
       myId: this.geraetId,
+      myName: this.name,
       // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen. Ein
       // aelteres Relay kennt die Geraete-Kennung noch nicht - dann muss der
       // Name herhalten, sonst verschwindet der Knopf ganz.

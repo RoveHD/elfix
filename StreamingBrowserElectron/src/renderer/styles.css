@@ -108,6 +108,14 @@
 .home-sidebar-brand img {
   max-width: min(148px, 100%);
   max-height: 34px;
+  /* In einer Flex-Zeile wird ein Bild sonst gestaucht, statt zu skalieren -
+     dann steht es angeschnitten in der Leiste. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.home-sidebar-brand .sidebar-collapse {
+  flex: 0 0 auto;
 }
 
 .home-mini-logo {
@@ -432,6 +440,41 @@
   white-space: nowrap;
 }
 
+/* Laderueckmeldung: an die Stelle des Symbols tritt ein laufender Ring.
+   Wird an den Neu-laden-Knoepfen und beim Abgleichen benutzt. */
+.chrome-btn.is-reloading,
+.chrome-btn.is-busy {
+  color: transparent !important;
+  position: relative;
+}
+
+.chrome-btn.is-reloading::after,
+.chrome-btn.is-busy::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 15px;
+  height: 15px;
+  margin: -8px 0 0 -8px;
+  border: 2px solid color-mix(in srgb, var(--text, #fff) 22%, transparent);
+  border-top-color: var(--accent, #4cc9f0);
+  border-radius: 50%;
+  animation: elfix-reload-spin 650ms linear infinite;
+}
+
+@keyframes elfix-reload-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chrome-btn.is-reloading::after,
+  .chrome-btn.is-busy::after {
+    animation-duration: 1600ms;
+  }
+}
+
 /* Ohne Verbindung zum Raum laesst sich nichts steuern - das sagt die Anzeige. */
 .watchparty-live-banner.is-offline {
   background: color-mix(in srgb, var(--danger, #ff6b6b) 18%, transparent);
@@ -585,6 +628,17 @@
   .home-side-link span:not(.side-provider-badge),
   .home-sidebar-footer > span {
     display: none;
+  }
+
+  /* Faellt die Wortmarke weg, muss das Zeichen einspringen. Sonst blieb
+     zwischen diesem und dem naechsten Umbruchpunkt ein angeschnittenes Logo
+     stehen. */
+  .sidebar-mark {
+    display: grid;
+  }
+
+  .home-sidebar-brand {
+    justify-content: center;
   }
 
   .home-side-link {
