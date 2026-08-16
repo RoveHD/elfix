@@ -261,7 +261,11 @@ function setupAutoUpdater() {
       error: ""
     });
     setTimeout(() => {
-      autoUpdater.quitAndInstall(false, true);
+      // Still installieren: ohne das erste Argument zeigt der Installer seine
+      // Seiten ("Fuer wen soll installiert werden?") und wartet auf einen
+      // Klick. Das Update soll im Hintergrund durchlaufen und ELFIX danach
+      // von selbst wieder starten.
+      autoUpdater.quitAndInstall(true, true);
     }, 1200);
   });
   autoUpdater.on("error", (error) => {
@@ -1251,6 +1255,8 @@ function installNextEpisodePrompt(view, url, options = {}) {
     const beenden = () => {
       if (!karte) return;
       if (karte.__timer) clearInterval(karte.__timer);
+      if (karte.__ruhe) clearTimeout(karte.__ruhe);
+      if (karte.__wach) document.removeEventListener("mousemove", karte.__wach, true);
       karte.remove();
       karte = null;
     };
@@ -1334,9 +1340,38 @@ function installNextEpisodePrompt(view, url, options = {}) {
       karte.__abbrechen = abbrechen;
       karte.append(haupt, abbrechen);
       buehne.appendChild(karte);
+
+      // Der Knopf liegt ueber dem Bild und soll beim Schauen nicht stoeren:
+      // liegt die Maus fuenf Sekunden still, wird er fast durchsichtig. Jede
+      // Bewegung holt ihn sofort zurueck. Steht der Zeiger auf dem Knopf,
+      // bleibt er sichtbar - sonst verblasste er unter der eigenen Hand.
+      karte.__wach = () => {
+        if (!karte) return;
+        karte.style.transition = "opacity 140ms ease, transform 180ms ease";
+        karte.style.opacity = "1";
+        if (karte.__ruhe) clearTimeout(karte.__ruhe);
+        karte.__ruhe = setTimeout(() => {
+          if (!karte || karte.__ueber) return;
+          karte.style.transition = "opacity 600ms ease, transform 180ms ease";
+          karte.style.opacity = "0.12";
+        }, 5000);
+      };
+      karte.addEventListener("mouseenter", () => {
+        if (!karte) return;
+        karte.__ueber = true;
+        karte.__wach();
+      });
+      karte.addEventListener("mouseleave", () => {
+        if (!karte) return;
+        karte.__ueber = false;
+        karte.__wach();
+      });
+      document.addEventListener("mousemove", karte.__wach, true);
+
       requestAnimationFrame(() => {
         karte.style.opacity = "1";
         karte.style.transform = "translateY(0)";
+        karte.__wach();
       });
     } else if (karte.parentElement !== buehne) {
       buehne.appendChild(karte);
@@ -1349,6 +1384,9 @@ function installNextEpisodePrompt(view, url, options = {}) {
       // Wechsel kaeme sonst spuerbar spaeter als angekuendigt.
       const ende = Date.now() + countdown * 1000;
       karte.__abbrechen.style.display = "";
+      // Der Countdown ist eine Ansage - der Knopf gehoert dafuer sichtbar,
+      // auch wenn er gerade verblasst war.
+      if (karte.__wach) karte.__wach();
       const tick = () => {
         const rest = Math.ceil((ende - Date.now()) / 1000);
         if (rest > 0) {
@@ -2704,7 +2742,12 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   const progressPercent = hasMediaProgress
     ? mediaProgressPercent(meta.currentTime || meta.position, meta.duration)
     : sanitizeProgress(meta.progress);
-  const mediaEnded = Boolean(meta.completed) || isCompletedProgress(progressPercent);
+  // Ueber 90 Prozent allein macht eine Folge nicht zur gesehenen: es muss auch
+  // wirklich geschaut worden sein. Wer hineinspringt und den Regler ans Ende
+  // zieht, kommt sonst in einer Sekunde ans Serienende. Beides muss zusammen
+  // erfuellt sein - dieselbe Wartezeit wie fuer jeden anderen Stand.
+  const mediaEnded = (Boolean(meta.completed) || isCompletedProgress(progressPercent))
+    && watchedSeconds >= endeSchwelle(meta.duration);
   const startsAtFirstEpisode = isFirstEpisodeIdentity(identity);
   const isFilmProgress = requestedType === "film";
   const qualifiesForPrimaryProgress = mediaEnded || isFilmProgress || startsAtFirstEpisode || watchedSeconds >= MIN_WATCH_TIME_SECONDS;
@@ -3265,6 +3308,15 @@ function isExplicitFilmUrl(value) {
   } catch {
     return false;
   }
+}
+
+// Wie lange gesehen werden muss, damit eine Folge ueber 90 Prozent als
+// geschaut gilt: 2:30 Minuten - bei kuerzeren Folgen entsprechend weniger,
+// sonst liesse sich ein Zehnminueter nie abschliessen.
+function endeSchwelle(duration) {
+  const laufzeit = sanitizePositiveNumber(duration);
+  if (!laufzeit) return MIN_WATCH_TIME_SECONDS;
+  return Math.min(MIN_WATCH_TIME_SECONDS, laufzeit * 0.9);
 }
 
 function mediaPromotionBlockReason(existing, url, state) {
@@ -4478,10 +4530,15 @@ function pushWatchpartyLiveState(url = "") {
   const serieKey = watchparty.aktiv ? watchpartySerieForUrl(adresse) : "";
   const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(adresse) : "";
   const eintrag = watchpartyEintrag(serieKey || key);
+  // Die Knoepfe gehoeren zur offenen Anbieterseite. Liegt eine eigene Ansicht
+  // darueber - Startseite, Mediathek, Watchparty, Einstellungen -, ist keine
+  // Seite offen und es gibt nichts zu steuern. Der Rueckgabewert bleibt davon
+  // unberuehrt: die Live-Steuerung wird trotzdem eingehaengt.
+  const seiteOffen = Boolean(activeView) && overlayReasons.size === 0;
 
   sendWatchpartyLive({
-    active: Boolean(serieKey),
-    live: Boolean(key),
+    active: seiteOffen && Boolean(serieKey),
+    live: seiteOffen && Boolean(key),
     connected: watchparty.verbunden,
     enabled: watchparty.aktiv,
     key: serieKey || key,

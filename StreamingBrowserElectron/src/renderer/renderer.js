@@ -1307,6 +1307,9 @@ function emptyText(text) {
 }
 
 async function enterInternalMode() {
+  // Sofort ausblenden statt auf die Meldung aus dem Hauptprozess zu warten -
+  // in einer eigenen Ansicht gibt es keine Folge zum Steuern.
+  showWatchpartyLive({ active: false, live: false, key: "", room: "" });
   const state = await api.showHome();
   activeProviderId = state?.activeProviderId || null;
   currentUrl = state?.url || "";
