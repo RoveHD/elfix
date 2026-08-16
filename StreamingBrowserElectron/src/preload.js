@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   onWatchpartyState: (callback) => ipcRenderer.on("watchparty:state", (_event, state) => callback(state)),
   onWatchpartyItems: (callback) => ipcRenderer.on("watchparty:items", (_event, items) => callback(items)),
   onWatchpartyLive: (callback) => ipcRenderer.on("watchparty:live", (_event, info) => callback(info)),
+  onWatchpartyWatchstate: (callback) => ipcRenderer.on("watchparty:watchstate", (_event, info) => callback(info)),
   navigate: (input) => ipcRenderer.invoke("browser:navigate", input),
   browserCommand: (command) => ipcRenderer.invoke("browser:command", command),
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),

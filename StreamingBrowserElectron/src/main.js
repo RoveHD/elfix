@@ -163,6 +163,9 @@ app.whenReady().then(async () => {
   ensureDataDir();
   providers = loadProviders();
   favorites = loadFavorites();
+  // Einmalig: eigene Bilder aus der Zeit nachziehen, als sie nur an einer
+  // einzelnen Kachel hingen.
+  if (verteileEigeneBilder(favorites)) saveFavorites();
   settings = loadSettings();
   saveSettings();
   watchpartyLokal = loadWatchpartyLocal();
@@ -779,12 +782,36 @@ ipcMain.handle("favorites:set-image", (_event, favoriteId, dataUrl) => {
     return { favorites, saved: false, reason: "Bild ist zu groß" };
   }
 
-  favorite.customThumbnail = bild;
+  // Ein Bild gehoert zum Titel, nicht zu der Kachel, auf der es gesetzt wurde.
+  // Denselben Titel gibt es mehrfach in der Ablage - den eigenen Eintrag und je
+  // einen pro Watchparty-Runde. Vorher trug nur die angeklickte Kachel das
+  // Bild, und in "Gemeinsam weiterschauen" stand weiter das des Anbieters.
+  const betroffen = favorites.filter((item) => istGleicherTitel(item, favorite));
+  for (const eintrag of betroffen) eintrag.customThumbnail = bild;
   saveFavorites();
   sendActiveState();
-  console.log(`[ELFIX] ${favorite.title}: eigenes Bild ${bild ? "gesetzt" : "entfernt"}`);
-  return { favorites, saved: true, hasImage: Boolean(bild) };
+  console.log(`[ELFIX] ${favorite.title}: eigenes Bild ${bild ? "gesetzt" : "entfernt"} (${betroffen.length} Eintraege)`);
+  return { favorites, saved: true, hasImage: Boolean(bild), entries: betroffen.length };
 });
+
+// Zeigen zwei Eintraege denselben Titel? Die Adresse entscheidet zuerst - sie
+// zeigt verlaesslich auf dieselbe Serie. Der Titel-Schluessel kommt dazu, damit
+// es auch ueber Anbieter hinweg derselbe Titel bleibt; der Rueckfalltitel
+// "Favorit" zaehlt dabei nicht, sonst waeren alle namenlosen Eintraege gleich.
+function istGleicherTitel(links, rechts) {
+  if (!links || !rechts) return false;
+  if (links.id === rechts.id) return true;
+  if (istGleicheSerie(links.url, rechts.url)) return true;
+  const hier = watchpartyKey(links);
+  const dort = watchpartyKey(rechts);
+  return Boolean(hier) && hier === dort && !/:favorit$/.test(hier);
+}
+
+// Ein eigenes Bild, das fuer diese Serie schon irgendwo hinterlegt ist.
+function bekanntesEigenesBild(url) {
+  const treffer = favorites.find((item) => item.customThumbnail && istGleicheSerie(item.url, url));
+  return treffer?.customThumbnail || "";
+}
 
 // Von Hand als gesehen abhaken: die Serie wandert in die Mediathek, ohne dass
 // sie dafuer durchlaufen werden muss. Der gespeicherte Stand bleibt liegen -
@@ -4458,6 +4485,7 @@ const watchparty = new WatchpartyRaeume({
   },
   onProgress: (key, fortschritt, raum) => applyWatchpartyProgress(key, fortschritt, raum),
   onControl: (nachricht) => applyWatchpartyControl(nachricht).catch(() => {}),
+  onWatchstate: (nachricht) => sendWatchpartyWatchstate(nachricht),
   onStatus: (status, raum) => {
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt - je Raum getrennt.
@@ -4737,6 +4765,9 @@ function createWatchpartyFavorite(key, eintrag, fortschritt, provider) {
     normalizedUrl: normalizeFavoriteUrl(url),
     favicon: "",
     thumbnail: eintrag?.thumbnail || "",
+    // Ein eigenes Bild gehoert zum Titel: ein neu entstehender Raum-Eintrag
+    // uebernimmt es, statt wieder mit dem Bild des Anbieters anzufangen.
+    customThumbnail: bekanntesEigenesBild(url),
     logo: provider.logo || "",
     favorite: false,
     watched: true,
@@ -4950,12 +4981,20 @@ function watchpartyControlScript() {
     const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
     if (!medien.length) return "kein-video";
     window.__elfixWpInstalled = true;
-    window.__elfixWpQuiet = 0;
+    window.__elfixWpErwartet = null;
 
     const melden = (aktion, media) => {
-      // Waehrend eine fremde Anweisung ausgefuehrt wird, schweigt das Geraet -
-      // sonst schaukeln sich zwei Player gegenseitig auf.
-      if (Date.now() < Number(window.__elfixWpQuiet || 0)) return;
+      // Der eigene Player meldet eine eben ausgefuehrte fremde Anweisung als
+      // eigenes Ereignis zurueck - sonst schaukeln sich zwei Player auf. Genau
+      // dieses Echo wird verschluckt, aber auch nur das: drueckt jemand Pause,
+      // waehrend gerade ein Play hereinkam, ist das eine echte Tat und muss
+      // durch. Vorher schwieg das Geraet pauschal ein paar Sekunden lang, und
+      // genau in dieser Zeit ging Pausieren nach einem Sync ins Leere.
+      const erwartet = window.__elfixWpErwartet;
+      if (erwartet && Date.now() < erwartet.bis) {
+        if (aktion === erwartet.aktion) return;
+        if (aktion === "seek" && Math.abs(Number(media.currentTime) - erwartet.ziel) < 2) return;
+      }
       // Auf zwei Nachkommastellen: gerundete Sekunden reichen nicht, wenn alle
       // exakt auf derselben Stelle stehen sollen.
       console.log("__elfix:wp:" + aktion + ":" + (Number(media.currentTime) || 0).toFixed(2));
@@ -4993,9 +5032,14 @@ function watchpartyApplyScript(action, position, optionen = {}) {
     const warten = ${warten};
     const anhalten = aktion === "pause" || aktion === "syncprepare";
     const laufen = aktion === "play" || aktion === "syncstart";
-    // Solange gesprungen und gewartet wird, schweigt dieses Geraet - sonst
-    // meldet der eigene Player die fremde Anweisung als eigene Tat zurueck.
-    window.__elfixWpQuiet = Date.now() + (warten ? 4000 : 2500);
+    // Was der eigene Player gleich von sich aus melden wird, ist nur das Echo
+    // dieser Anweisung. Nur genau das wird verschluckt - eine Gegenrichtung
+    // kommt weiter durch, damit Pausieren auch direkt nach einem Sync wirkt.
+    window.__elfixWpErwartet = {
+      aktion: anhalten ? "pause" : (laufen ? "play" : "seek"),
+      ziel,
+      bis: Date.now() + (warten ? 4000 : 1500)
+    };
 
     try {
       const toleranz = genau ? 0.3 : 1.5;
@@ -5378,6 +5422,33 @@ async function applyWatchpartyControl(nachricht) {
 function sendWatchpartyLive(info) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("watchparty:live", info);
+}
+
+// Der Stand je Geraet fuer die Leiste in der Kopfzeile: nur weiterreichen, was
+// zu der Runde gehoert, in der hier gerade geschaut wird. Sonst zeigte die
+// Leiste die Sekunden einer Watchparty, die man gar nicht offen hat.
+function sendWatchpartyWatchstate(nachricht) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const adresse = activeView?.webContents?.getURL() || "";
+  const raum = watchpartyRaumForUrl(adresse);
+  if (!raum || (nachricht.room && nachricht.room !== raum)) return;
+  if (watchpartySerieForUrl(adresse) !== nachricht.key) return;
+
+  mainWindow.webContents.send("watchparty:watchstate", {
+    key: nachricht.key,
+    room: nachricht.room || raum,
+    members: (nachricht.members || []).map((mitglied) => ({
+      id: String(mitglied.id || ""),
+      name: String(mitglied.name || "Gerät"),
+      position: sanitizePositiveNumber(mitglied.position),
+      paused: Boolean(mitglied.paused),
+      host: Boolean(mitglied.host),
+      // Wie alt die Meldung ist - laufende Geraete zaehlen in der Anzeige
+      // zwischen zwei Meldungen selbst weiter.
+      age: Math.max(0, Date.now() - (Number(mitglied.at) || Date.now())) / 1000,
+      me: String(mitglied.id || "") === watchparty.geraetId
+    }))
+  });
 }
 
 // Ein offener Sprungwunsch je Anbieter. Er wird eingeloest, sobald tatsaechlich
@@ -6222,6 +6293,23 @@ function loadFavorites() {
   } catch {
     return [];
   }
+}
+
+// Bis 1.15.0 klebte ein eigenes Bild an genau der Kachel, auf der es gesetzt
+// wurde. Wer es damals gewaehlt hat, soll es nicht noch einmal tun muessen:
+// beim Laden wandert es einmal an alle Eintraege desselben Titels. Wer irgendwo
+// schon ein eigenes Bild hat, behaelt es - ueberschrieben wird nichts.
+function verteileEigeneBilder(liste) {
+  let nachgezogen = 0;
+  for (const eintrag of liste) {
+    if (eintrag.customThumbnail) continue;
+    const vorbild = liste.find((item) => item.customThumbnail && istGleicherTitel(item, eintrag));
+    if (!vorbild) continue;
+    eintrag.customThumbnail = vorbild.customThumbnail;
+    nachgezogen += 1;
+  }
+  if (nachgezogen) console.log(`[ELFIX] eigenes Bild auf ${nachgezogen} weitere Eintraege uebernommen`);
+  return nachgezogen > 0;
 }
 
 function normalizeActivity(value) {

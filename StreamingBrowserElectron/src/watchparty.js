@@ -20,6 +20,8 @@ class Watchparty {
     this.aufStatus = optionen.onStatus || (() => {});
     this.aufKennung = optionen.onDeviceId || (() => {});
     this.aufSteuerung = optionen.onControl || (() => {});
+    // Wer steht wo: fuer die Leiste, die zeigt, ob alle beieinander sind.
+    this.aufStand = optionen.onWatchstate || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse || globalThis.WebSocket;
 
     this.socket = null;
@@ -216,6 +218,12 @@ class Watchparty {
       }
       if (nachricht?.type === "control" && nachricht.key && nachricht.action) {
         this.aufSteuerung(nachricht);
+        return;
+      }
+      // Der Stand je Geraet. Ein aelteres Relay schickt das nicht - dann bleibt
+      // die Leiste eben leer, alles andere laeuft unveraendert weiter.
+      if (nachricht?.type === "watchstate" && nachricht.key) {
+        this.aufStand({ key: nachricht.key, members: Array.isArray(nachricht.members) ? nachricht.members : [] });
         return;
       }
       if (nachricht?.type === "progress" && nachricht.key && nachricht.progress) {

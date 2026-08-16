@@ -3,6 +3,53 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.16.0 — 16. August 2026
+
+Eine Leiste zeigt, wo die anderen stehen:
+- In der Kopfzeile steht je Geraet ein Feld mit Name, Sekunde und einem Punkt
+  fuer laeuft oder pausiert. Der Host steht fett, das eigene Geraet heisst
+  "Du". Wer mehr als zwei Sekunden vom Host abweicht, wird gelb - dann lohnt
+  ein Sync
+- Zwischen zwei Meldungen laufen die Uhren in der Anzeige weiter, sonst
+  haengt sie sichtbar hinter dem Bild her
+- Sie sitzt in der Kopfzeile, weil die Anbieterseite ueber der Oberflaeche
+  liegt: ein Streifen darunter waere ausgerechnet beim Schauen verdeckt
+- Das Relay fuehrt dafuer je Geraet Stelle und Pausenzustand. Beides ist
+  fluechtig - nach einem Neustart des Dienstes melden es die Geraete binnen
+  Sekunden von selbst. Ein aelteres Relay schickt es nicht, dann bleibt die
+  Leiste leer und alles andere laeuft unveraendert
+
+Pausieren ging nach einem Sync manchmal ins Leere:
+- Nach einer fremden Anweisung schwieg das Geraet ein paar Sekunden lang
+  ganz, damit sich zwei Player nicht gegenseitig aufschaukeln. In 1.15.0 war
+  dieses Fenster fuer das Puffer-Warten auf vier Sekunden gewachsen - wer
+  darin Pause drueckte, pausierte nur bei sich
+- Jetzt wird gezielt nur das Echo verschluckt: kam ein Play herein, gilt ein
+  Play vom eigenen Player als Echo. Ein Pause ist die Gegenrichtung, also
+  eine echte Tat, und geht sofort an alle
+
+Der Abgleich sprang zu weit:
+- Der Host meldet seine Stelle nur, wenn er drueckt. Laeuft er lange durch,
+  ist dieser Wert Minuten alt, und das Relay rechnet von dort hoch, als waere
+  lueckenlos abgespielt worden - jedes Puffern schob das Ziel nach vorn
+- Der Fortschritt kommt alle paar Sekunden frisch aus dem Player. Massgeblich
+  ist jetzt die juengere der beiden Meldungen
+
+Eigene Bilder gelten ueberall:
+- Denselben Titel gibt es mehrfach in der Ablage: den eigenen Eintrag und je
+  einen pro Watchparty-Runde. Ein eigenes Bild klebte bisher an genau der
+  Kachel, auf der es gesetzt wurde - in "Gemeinsam weiterschauen" stand
+  weiter das Bild des Anbieters
+- Setzen und Entfernen gelten jetzt fuer alle Eintraege desselben Titels, und
+  ein neu entstehender Raum-Eintrag uebernimmt ein vorhandenes Bild
+- Schon gesetzte Bilder werden beim ersten Start einmalig nachgezogen; von
+  Hand noch einmal auswaehlen muss man nichts
+
+Startseite:
+- Aus "Weiterschauen" liess sich ein Titel nur im Weiterschauen-Tab
+  entfernen. Die Kacheln auf der Startseite koennen es jetzt auch - in beiden
+  Reihen, der eigenen und der gemeinsamen
+
 ## 1.15.0 — 16. August 2026
 
 Popups bleiben weg, auch ohne eigenen Adblocker:

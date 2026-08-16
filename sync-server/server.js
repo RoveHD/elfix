@@ -61,7 +61,10 @@ function zustandLaden() {
       if (!eintrag?.key) continue;
       titel.set(eintrag.key, {
         ...eintrag,
-        members: new Map(Array.isArray(eintrag.members) ? eintrag.members : [])
+        members: new Map(Array.isArray(eintrag.members) ? eintrag.members : []),
+        // Nie aus der Datei uebernehmen: als einfaches Objekt waere es keine
+        // Map und der erste Eintrag wuerde den Dienst abraeumen.
+        stand: new Map()
       });
     }
     raeume.set(code, { titel, at: Number(raum?.at) || Date.now() });
@@ -79,9 +82,11 @@ function zustandSpeichernSpaeter() {
         at: raum.at,
         titel: [...raum.titel.values()].map((eintrag) => ({
           ...eintrag,
-          // Laufender Abgleich und sein Zeitgeber sind fluechtig.
+          // Laufender Abgleich, sein Zeitgeber und der Stand je Geraet sind
+          // fluechtig - die Geraete melden ihn nach einem Neustart selbst.
           sync: undefined,
           syncTimer: undefined,
+          stand: undefined,
           members: [...eintrag.members.entries()]
         }))
       };
@@ -200,7 +205,7 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate"]
     }));
     return;
   }
@@ -250,17 +255,35 @@ function zustandSenden(raumcode) {
 // unterscheiden: direkt nach einem Folgenwechsel steht der Host bei 0, und der
 // Abgleich lieferte deshalb gar keine Antwort mehr.
 function hostStandJetzt(eintrag) {
+  const kandidaten = [];
   if (eintrag.live && eintrag.hostId) {
-    const vergangen = eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0;
-    return eintrag.live.position + vergangen;
+    kandidaten.push({
+      at: Number(eintrag.live.at) || 0,
+      position: eintrag.live.position,
+      laeuft: eintrag.live.action === "play"
+    });
   }
   const fortschritt = eintrag.progress;
   if (fortschritt && eintrag.hostName && fortschritt.from === eintrag.hostName) {
     const gemeldet = Date.parse(fortschritt.updatedAt) || 0;
-    const vergangen = gemeldet ? Math.max(0, Date.now() - gemeldet) / 1000 : 0;
-    return fortschritt.position + Math.min(vergangen, 600);
+    if (gemeldet) {
+      kandidaten.push({
+        at: gemeldet,
+        position: fortschritt.position,
+        laeuft: eintrag.live?.action !== "pause"
+      });
+    }
   }
-  return null;
+  if (!kandidaten.length) return null;
+
+  // Die juengste Meldung zaehlt. Der Host meldet `live` nur, wenn er drueckt -
+  // laeuft er lange durch, ist diese Stelle Minuten alt, und die Hochrechnung
+  // unterstellt lueckenloses Abspielen. Jedes Puffern schiebt sie nach vorn,
+  // und der Abgleich sprang dadurch immer ein Stueck zu weit. Der Fortschritt
+  // kommt alle paar Sekunden frisch aus dem Player und korrigiert das.
+  const neueste = kandidaten.sort((links, rechts) => rechts.at - links.at)[0];
+  const vergangen = neueste.laeuft ? Math.max(0, Date.now() - neueste.at) / 1000 : 0;
+  return neueste.position + Math.min(vergangen, 600);
 }
 
 // Es muss immer jemanden geben, an dem sich die anderen ausrichten koennen.
@@ -331,6 +354,54 @@ function kennungUebernehmen(raum, geraetId, name) {
   return geaendert;
 }
 
+// Wer steht wo? Je Mitglied die zuletzt bekannte Stelle und ob dort gerade
+// angehalten ist. Damit zeigt die App eine Leiste, auf der man sieht, ob alle
+// beieinander sind - vorher war das reine Vermutung.
+//
+// Der Stand ist fluechtig wie `sync`: nach einem Neustart des Dienstes melden
+// ihn die Geraete binnen Sekunden von selbst wieder.
+function standSetzen(eintrag, geraetId, name, werte) {
+  if (!geraetId || !eintrag.members.has(geraetId)) return;
+  if (!eintrag.stand) eintrag.stand = new Map();
+  const vorher = eintrag.stand.get(geraetId) || {};
+  eintrag.stand.set(geraetId, {
+    name: name || vorher.name || eintrag.members.get(geraetId) || "Gerät",
+    position: werte.position == null ? (vorher.position || 0) : werte.position,
+    paused: werte.paused == null ? Boolean(vorher.paused) : Boolean(werte.paused),
+    at: Date.now()
+  });
+}
+
+// Ein Befehl gilt fuer alle Beigetretenen - also stehen danach auch alle dort.
+function standFuerAlle(eintrag, position, paused) {
+  for (const geraetId of eintrag.members.keys()) {
+    standSetzen(eintrag, geraetId, eintrag.members.get(geraetId), { position, paused });
+  }
+}
+
+function standNachAussen(eintrag) {
+  if (!eintrag.stand) return [];
+  return [...eintrag.stand.entries()]
+    .filter(([geraetId]) => eintrag.members.has(geraetId))
+    .map(([geraetId, wert]) => ({
+      id: geraetId,
+      name: wert.name,
+      position: wert.position,
+      paused: wert.paused,
+      at: wert.at,
+      host: geraetId === eintrag.hostId
+    }));
+}
+
+function standSenden(raumcode, eintrag) {
+  const daten = JSON.stringify({ type: "watchstate", key: eintrag.key, members: standNachAussen(eintrag) });
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    if (!eintrag.members.has(client.geraetId)) continue;
+    client.send(daten);
+  }
+}
+
 // Alle zusammen anlaufen lassen. Wer sich nicht gemeldet hat, bekommt den
 // Startbefehl trotzdem - besser leicht versetzt als gar nicht.
 function syncStarten(raumcode, eintrag) {
@@ -346,6 +417,8 @@ function syncStarten(raumcode, eintrag) {
     if (!eintrag.members.has(client.geraetId)) continue;
     client.send(daten);
   }
+  standFuerAlle(eintrag, ziel, false);
+  standSenden(raumcode, eintrag);
 }
 
 wss.on("connection", (socket) => {
@@ -416,11 +489,13 @@ wss.on("connection", (socket) => {
         hostSicherstellen(socket.raum, eintrag);
       } else {
         eintrag.members.delete(socket.geraetId);
+        eintrag.stand?.delete(socket.geraetId);
         // Wer aussteigt, kann nicht Host bleiben - sonst gleichen sich alle
         // weiter mit jemandem ab, der gar nicht mehr mitschaut.
         hostSicherstellen(socket.raum, eintrag);
       }
       zustandSenden(socket.raum);
+      standSenden(socket.raum, eintrag);
       return;
     }
 
@@ -431,8 +506,10 @@ wss.on("connection", (socket) => {
       if (!eintrag || eintrag.addedById !== socket.geraetId || !wen) return;
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
+      eintrag.stand?.delete(wen);
       hostSicherstellen(socket.raum, eintrag);
       zustandSenden(socket.raum);
+      standSenden(socket.raum, eintrag);
       return;
     }
 
@@ -506,6 +583,14 @@ wss.on("connection", (socket) => {
         if (client === socket && !(aktion === "pause" && !istHost)) continue;
         client.send(daten);
       }
+
+      // Fuer die Leiste: nach einem Befehl stehen alle Beigetretenen dort.
+      if (aktion === "pause") standFuerAlle(eintrag, gemeinsam, true);
+      else if (aktion === "play") standFuerAlle(eintrag, gemeinsam, false);
+      else if (aktion === "seek") standFuerAlle(eintrag, gemeinsam, null);
+      else if (aktion === "navigate") standFuerAlle(eintrag, 0, true);
+      standSenden(socket.raum, eintrag);
+
       zustandSpeichernSpaeter();
       return;
     }
@@ -595,6 +680,11 @@ wss.on("connection", (socket) => {
       if (fortschritt.url) eintrag.url = fortschritt.url;
       eintrag.season = fortschritt.season || eintrag.season;
       eintrag.episode = fortschritt.episode || eintrag.episode;
+      // Die Stelle fuer die Leiste kommt hier laufend herein. Ob angehalten
+      // ist, sagt der Fortschritt nicht - das bleibt, wie der letzte Befehl es
+      // hinterlassen hat.
+      standSetzen(eintrag, socket.geraetId, socket.name, { position: fortschritt.position });
+      standSenden(socket.raum, eintrag);
       zustandSpeichernSpaeter();
 
       const daten = JSON.stringify({ type: "progress", key: eintrag.key, progress: fortschritt });
@@ -611,6 +701,9 @@ wss.on("connection", (socket) => {
     const raum = raeume.get(socket.raum);
     let gewechselt = false;
     for (const eintrag of raum?.titel.values() || []) {
+      // Wer weg ist, steht auch nirgends mehr - sonst zeigt die Leiste eine
+      // Sekunde von jemandem, der gar nicht mehr zuschaut.
+      if (eintrag.stand?.delete(socket.geraetId)) standSenden(socket.raum, eintrag);
       // hostSicherstellen sieht selbst, dass diese Verbindung weg ist, und
       // gibt weiter, wenn dadurch jemand anderes den Takt uebernimmt.
       gewechselt = hostSicherstellen(socket.raum, eintrag) || gewechselt;

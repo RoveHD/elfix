@@ -23,6 +23,7 @@ class WatchpartyRaeume {
     this.aufStatus = optionen.onStatus || (() => {});
     this.aufKennung = optionen.onDeviceId || (() => {});
     this.aufSteuerung = optionen.onControl || (() => {});
+    this.aufStand = optionen.onWatchstate || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse;
 
     this.raeume = new Map();
@@ -98,6 +99,7 @@ class WatchpartyRaeume {
       },
       onProgress: (key, fortschritt) => this.aufFortschritt(key, fortschritt, code),
       onControl: (nachricht) => this.aufSteuerung({ ...nachricht, room: code }),
+      onWatchstate: (nachricht) => this.aufStand({ ...nachricht, room: code }),
       onStatus: () => this.melde(code),
       onDeviceId: (kennung) => this.kennungUebernehmen(kennung, code)
     };

@@ -176,7 +176,12 @@ const watchpartyStatus = document.querySelector("#watchpartyStatus");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
 const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
+const watchpartyStand = document.querySelector("#watchpartyStand");
 let watchpartyLiveTimer = 0;
+// Der zuletzt gemeldete Stand je Geraet und der Zeitgeber, der die Uhren
+// zwischen zwei Meldungen weiterlaufen laesst.
+let watchpartyStandDaten = null;
+let watchpartyStandTimer = 0;
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
@@ -400,6 +405,7 @@ function bindEvents() {
   });
   api.onWatchpartyState?.(renderWatchpartyStatus);
   api.onWatchpartyLive?.(showWatchpartyLive);
+  api.onWatchpartyWatchstate?.(showWatchpartyStand);
   watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
   watchpartyLiveBanner?.addEventListener("click", switchWatchpartyContext);
   document.querySelector("#watchpartyResync")?.addEventListener("click", resyncWatchparty);
@@ -870,7 +876,15 @@ function renderHome() {
   renderNewEpisodes();
 
   // Getrennt: was nur fuer dich zaehlt und was in einer Watchparty laeuft.
-  const kartenOptionen = { showProgress: true, autoplay: true, fullscreen: true, allowImage: true };
+  // Dieselben Moeglichkeiten wie im Weiterschauen-Tab: eine Kachel, die hier
+  // steht, muss man auch hier wieder loswerden koennen.
+  const kartenOptionen = {
+    showProgress: true,
+    autoplay: true,
+    fullscreen: true,
+    allowImage: true,
+    allowContinueRemove: true
+  };
   const privateItems = continueItems.filter((favorite) => !favorite.watchpartyRoom).slice(0, 8);
   const partyItems = continueItems.filter((favorite) => favorite.watchpartyRoom).slice(0, 8);
 
@@ -4004,7 +4018,11 @@ async function eigenesBildSetzen(favorite) {
   renderFavorites();
   renderHome();
   renderLibraryViews();
-  showToast("Eigenes Bild gesetzt");
+  // Das Bild haengt am Titel, nicht an der Kachel - steht der Titel auch in
+  // einer Watchparty, gilt es dort genauso.
+  showToast(Number(ergebnis.entries) > 1
+    ? "Eigenes Bild gesetzt — gilt überall für diesen Titel"
+    : "Eigenes Bild gesetzt");
 }
 
 async function eigenesBildEntfernen(favorite) {
@@ -4350,6 +4368,8 @@ function showWatchpartyLive(info) {
   watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
   // Abgleichen ergibt nur Sinn, wenn man live dabei und verbunden ist.
   syncKnopf?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn || !verbunden);
+  // Die Leiste haengt am selben Zustand: privat gibt es nichts zu vergleichen.
+  renderWatchpartyStand();
   if (!erkannt) return;
 
   watchpartyLiveLeave.disabled = watchpartyLiveOn && !verbunden;
@@ -4402,6 +4422,72 @@ function showWatchpartyLive(info) {
   if (!watchpartyLiveText.textContent.startsWith("Live:")) {
     watchpartyLiveText.textContent = watchpartyHostText(info);
   }
+}
+
+// Die Leiste in der Kopfzeile: wer steht wo, und wer haengt hinterher. Sie
+// gehoert in die Kopfzeile, weil die Anbieterseite ueber der Oberflaeche liegt -
+// ein Streifen darunter waere ausgerechnet beim Schauen unsichtbar.
+function showWatchpartyStand(info) {
+  const mitglieder = Array.isArray(info?.members) ? info.members : [];
+  watchpartyStandDaten = mitglieder.length
+    ? { key: info.key || "", room: info.room || "", members: mitglieder, empfangen: Date.now() }
+    : null;
+  renderWatchpartyStand();
+  if (watchpartyStandTimer) return;
+  // Zwischen zwei Meldungen laufen die Uhren hier weiter, sonst haengt die
+  // Anzeige sichtbar hinter dem Bild her.
+  watchpartyStandTimer = window.setInterval(renderWatchpartyStand, 1000);
+}
+
+// Die Sekunde, bei der ein Geraet jetzt stehen duerfte: die gemeldete Stelle
+// plus die Zeit, die seither vergangen ist - aber nur, wenn dort nicht
+// angehalten ist.
+function standSekunde(mitglied, seit) {
+  const gelaufen = mitglied.paused ? 0 : seit + Number(mitglied.age || 0);
+  return Math.max(0, Number(mitglied.position || 0) + gelaufen);
+}
+
+function renderWatchpartyStand() {
+  if (!watchpartyStand) return;
+  const daten = watchpartyStandDaten;
+  // Allein in der Runde gibt es nichts zu vergleichen.
+  const zeigen = Boolean(daten) && watchpartyLiveOn && daten.members.length > 1;
+  watchpartyStand.classList.toggle("is-hidden", !zeigen);
+  if (!zeigen) {
+    watchpartyStand.replaceChildren();
+    return;
+  }
+
+  const seit = Math.max(0, (Date.now() - daten.empfangen) / 1000);
+  const host = daten.members.find((mitglied) => mitglied.host);
+  const bezug = standSekunde(host || daten.members[0], seit);
+
+  watchpartyStand.replaceChildren(...daten.members.map((mitglied) => {
+    const sekunde = standSekunde(mitglied, seit);
+    const abstand = Math.abs(sekunde - bezug);
+    const chip = document.createElement("span");
+    chip.className = "stand-chip";
+    chip.classList.toggle("is-paused", Boolean(mitglied.paused));
+    chip.classList.toggle("is-me", Boolean(mitglied.me));
+    chip.classList.toggle("is-host", Boolean(mitglied.host));
+    // Mehr als zwei Sekunden auseinander faellt beim gemeinsamen Schauen auf.
+    chip.classList.toggle("is-drift", !mitglied.paused && abstand > 2);
+
+    const punkt = document.createElement("span");
+    punkt.className = "stand-dot";
+    const name = document.createElement("span");
+    name.className = "stand-name";
+    name.textContent = mitglied.me ? "Du" : mitglied.name;
+    const uhr = document.createElement("span");
+    uhr.className = "stand-uhr";
+    uhr.textContent = formatClock(sekunde);
+
+    chip.append(punkt, name, uhr);
+    chip.title = `${mitglied.host ? "Host — " : ""}${mitglied.name}: `
+      + `${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`
+      + (!mitglied.paused && abstand > 2 ? ` — ${Math.round(abstand)} s Unterschied` : "");
+    return chip;
+  }));
 }
 
 // Wer den Takt vorgibt, steht in der Anzeige - daran orientiert sich "Sync".

@@ -511,6 +511,80 @@
   background: var(--error);
 }
 
+/* Wer steht wo: je Geraet ein Chip mit Zustand und Sekunde. Steht in der
+   Kopfzeile, weil die Anbieterseite ueber der Oberflaeche liegt - ein Streifen
+   darunter waere beim Schauen verdeckt. */
+.watchparty-stand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stand-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.stand-chip .stand-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 8ch;
+}
+
+.stand-chip .stand-uhr {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.stand-chip .stand-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--success);
+}
+
+/* Das eigene Geraet und der Host stechen leicht hervor. */
+.stand-chip.is-me {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, currentColor 34%, transparent);
+}
+
+.stand-chip.is-host .stand-name {
+  font-weight: 600;
+}
+
+.stand-chip.is-paused .stand-dot {
+  background: var(--muted);
+}
+
+.stand-chip.is-paused {
+  opacity: 0.75;
+}
+
+/* Mehr als zwei Sekunden Unterschied - das sieht man beim Schauen. */
+.stand-chip.is-drift {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+
+.stand-chip.is-drift .stand-dot {
+  background: var(--warning);
+}
+
 .watchparty-leave {
   border-radius: 999px !important;
   font-size: 12px;
