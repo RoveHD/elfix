@@ -8,6 +8,7 @@ const {
   extractNewReleaseItems,
   extractHeroItem,
   extractUnplayableEpisodes,
+  extractSeriesBounds,
   extractGenres,
   extractCatalogItems,
   extractRelatedItems
@@ -101,6 +102,15 @@ const PRIVAT = "__privat";
 // So lange muss der Raum-Zustand ruhen, bevor daraus Schluesse gezogen werden:
 // Beitritte nach dem Verbinden brauchen eine Rundreise zum Relay.
 const WATCHPARTY_RUHE_MS = 6000;
+// So lange gilt dieselbe Folge als derselbe Vorgang im Verlauf.
+const AKTIVITAET_ZUSAMMEN_MS = 60 * 60 * 1000;
+// Ein eigenes Bild liegt als Data-URL in der Ablage. Die Oberflaeche
+// verkleinert vorher; diese Grenze faengt ab, was trotzdem zu gross ankommt.
+const CUSTOM_BILD_MAX_ZEICHEN = 3 * 1024 * 1024;
+// Abgeschlossene Serien auf Nachschub pruefen: wie viele je Durchgang und wie
+// oft. Jede kostet zwei Seitenaufrufe, deshalb in kleinen Portionen.
+const NEUE_FOLGEN_PRO_LAUF = 6;
+const NEUE_FOLGEN_INTERVALL_MS = 6 * 60 * 60 * 1000;
 // Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
 const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -167,6 +177,10 @@ app.whenReady().then(async () => {
   syncWatchparty();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
+  // Abgeschlossene Serien auf neue Folgen pruefen - erst nach dem Start, damit
+  // das Fenster nicht darauf wartet, danach in ruhigem Takt.
+  setTimeout(() => pruefeNeueFolgen().catch(() => {}), 20000).unref?.();
+  setInterval(() => pruefeNeueFolgen().catch(() => {}), NEUE_FOLGEN_INTERVALL_MS).unref?.();
 });
 
 app.on("before-quit", () => {
@@ -679,6 +693,67 @@ ipcMain.handle("library:reorder", (_event, ids) => {
   return favorites;
 });
 
+// Eigenes Bild fuer einen Titel. Es liegt als Data-URL am Eintrag: die
+// Oberflaeche hat es vorher auf eine vernuenftige Groesse gebracht, damit die
+// Ablage nicht mit Megabytes vollaeuft.
+ipcMain.handle("favorites:set-image", (_event, favoriteId, dataUrl) => {
+  const favorite = favorites.find((item) => item.id === String(favoriteId || ""));
+  if (!favorite) return { favorites, saved: false };
+
+  const bild = String(dataUrl || "");
+  if (bild && !/^data:image\/(png|jpeg|webp|gif);base64,/i.test(bild)) {
+    return { favorites, saved: false, reason: "Kein Bild erkannt" };
+  }
+  if (bild.length > CUSTOM_BILD_MAX_ZEICHEN) {
+    return { favorites, saved: false, reason: "Bild ist zu groß" };
+  }
+
+  favorite.customThumbnail = bild;
+  saveFavorites();
+  sendActiveState();
+  console.log(`[ELFIX] ${favorite.title}: eigenes Bild ${bild ? "gesetzt" : "entfernt"}`);
+  return { favorites, saved: true, hasImage: Boolean(bild) };
+});
+
+// Von Hand als gesehen abhaken: die Serie wandert in die Mediathek, ohne dass
+// sie dafuer durchlaufen werden muss. Der gespeicherte Stand bleibt liegen -
+// wer spaeter neu anfaengt, findet die Folge wieder, an der er war.
+ipcMain.handle("favorites:mark-completed", (_event, favoriteId) => {
+  const favorite = favorites.find((item) => item.id === String(favoriteId || ""));
+  if (!favorite) return { favorites, completed: false };
+
+  favorite.completed = true;
+  favorite.completedAt = new Date().toISOString();
+  // Von Hand abgehakt zaehlt anders als durchgeschaut: ein spaeteres
+  // Wiederansehen soll den Eintrag nicht aus der Mediathek zurueckholen.
+  favorite.completedManually = true;
+  favorite.episodeCompleted = false;
+  favorite.continuePending = false;
+  favorite.hideFromContinueWatching = true;
+  favorite.favorite = false;
+  favorite.newEpisodeAt = "";
+  favorite.newEpisodeLabel = "";
+  saveFavorites();
+  sendActiveState();
+  console.log(`[ELFIX] ${favorite.title} von Hand als abgeschlossen abgehakt`);
+  return { favorites, completed: true };
+});
+
+// Der Hinweis auf neue Folgen verschwindet, sobald der Titel geoeffnet oder
+// weggeklickt wurde. Ohne Angabe gilt es fuer alle.
+ipcMain.handle("favorites:clear-new", (_event, favoriteId) => {
+  const id = String(favoriteId || "");
+  let geaendert = false;
+  for (const favorite of favorites) {
+    if (!favorite.newEpisodeAt || (id && favorite.id !== id)) continue;
+    favorite.newEpisodeAt = "";
+    favorite.newEpisodeLabel = "";
+    geaendert = true;
+  }
+  if (geaendert) saveFavorites();
+  return favorites;
+});
+
 ipcMain.handle("continue:hide", (_event, favoriteId) => {
   const favorite = favorites.find((item) => item.id === favoriteId);
   if (!favorite) return favorites;
@@ -697,6 +772,11 @@ ipcMain.handle("history:clear", () => {
 
 ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
   const favorite = favorites.find((item) => item.id === favoriteId);
+  // Wer die Serie oeffnet, hat den Hinweis gesehen.
+  if (favorite?.newEpisodeAt) {
+    favorite.newEpisodeAt = "";
+    favorite.newEpisodeLabel = "";
+  }
   if (!favorite) return null;
 
   const provider = enabledProviders().find((item) => item.id === favorite.providerId)
@@ -2775,7 +2855,9 @@ function updateActiveFavoriteProgress(providerId, url) {
   favorite.providerName = provider.name;
   favorite.logo = provider.logo || favorite.logo || "";
   favorite.watched = true;
-  favorite.completed = false;
+  // Von Hand abgehakte Serien bleiben in der Mediathek, auch wenn man sie
+  // noch einmal ansieht. Zurueck holt sie nur, was wirklich neu ist.
+  if (!favorite.completedManually) favorite.completed = false;
   favorite.progress = 0;
   favorite.currentTime = 0;
   favorite.position = 0;
@@ -3087,6 +3169,114 @@ function seasonPageUrl(value) {
   } catch {
     return "";
   }
+}
+
+// --- Neue Folgen zu abgeschlossenen Serien -----------------------------------
+// Eine Serie in der Mediathek ist nicht fuer immer zu Ende: es kommen neue
+// Staffeln und einzelne Folgen nach. Geprueft wird von Zeit zu Zeit im
+// Hintergrund, und zwar nur, was auch wirklich abgeschlossen ist.
+
+// Die Serienseite ohne Staffel und Folge - dort stehen alle Staffeln.
+function serienSeiteUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    url.hash = "";
+    url.search = "";
+    const pfad = url.pathname
+      .replace(/\/(?:episode|folge)-\d+\/?$/i, "")
+      .replace(/\/(?:staffel|season)-\d+\/?$/i, "");
+    if (pfad === url.pathname) return "";
+    url.pathname = pfad;
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+// Was die Anbieterseite ueber den Umfang der Serie sagt: wie viele Staffeln,
+// und wie viele Folgen die letzte hat.
+async function serienUmfangLaden(favorite) {
+  const serienUrl = serienSeiteUrl(favorite.url);
+  if (!serienUrl) return null;
+  const seite = await fetchProviderHtml(serienUrl).catch(() => null);
+  if (!seite?.html) return null;
+
+  const grenzen = extractSeriesBounds(seite.html);
+  const staffeln = sanitizePositiveNumber(grenzen.seasons);
+  if (!staffeln) return null;
+
+  // Die Folgenzahl der letzten Staffel steht erst auf deren eigener Seite.
+  const letzteUrl = replaceEpisodeUrl(favorite.url, staffeln, 1);
+  const staffelSeite = letzteUrl ? await fetchProviderHtml(seasonPageUrl(letzteUrl) || letzteUrl).catch(() => null) : null;
+  const inStaffel = staffelSeite?.html ? extractSeriesBounds(staffelSeite.html, staffeln) : null;
+  const gelistet = staffelSeite?.html ? extractUnplayableEpisodes(staffelSeite.html) : null;
+  const folgen = sanitizePositiveNumber(gelistet?.lastPlayable)
+    || sanitizePositiveNumber(gelistet?.listed)
+    || sanitizePositiveNumber(inStaffel?.episodes);
+  return { seasons: staffeln, episodes: folgen };
+}
+
+// Kommt zu einer abgeschlossenen Serie etwas Neues, wird sie wieder geoeffnet:
+// zurueck in die Watchlist, auf die erste neue Folge gesetzt und mit einem
+// Merker versehen, damit die Oberflaeche darauf hinweisen kann.
+async function pruefeNeueFolgen() {
+  const kandidaten = favorites
+    .filter((favorite) => favorite.completed)
+    .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
+    .filter((favorite) => sanitizePositiveNumber(favorite.finalSeason) && episodeIdentity(favorite.url || ""))
+    .sort((links, rechts) => Date.parse(rechts.completedAt || 0) - Date.parse(links.completedAt || 0))
+    .slice(0, NEUE_FOLGEN_PRO_LAUF);
+  if (!kandidaten.length) return;
+
+  let geaendert = false;
+  for (const favorite of kandidaten) {
+    const umfang = await serienUmfangLaden(favorite).catch(() => null);
+    if (!umfang) continue;
+
+    const bekannteStaffel = sanitizePositiveNumber(favorite.finalSeason);
+    const bekannteFolge = sanitizePositiveNumber(favorite.finalEpisode);
+    const neueStaffel = umfang.seasons > bekannteStaffel;
+    const neueFolge = umfang.seasons === bekannteStaffel
+      && umfang.episodes > bekannteFolge
+      && bekannteFolge > 0;
+    if (!neueStaffel && !neueFolge) continue;
+
+    // Auf die erste Folge, die noch nicht gesehen wurde.
+    const ziel = neueStaffel
+      ? replaceEpisodeUrl(favorite.url, bekannteStaffel + 1, 1)
+      : replaceEpisodeUrl(favorite.url, bekannteStaffel, bekannteFolge + 1);
+    if (!ziel) continue;
+
+    const identity = episodeIdentity(ziel);
+    favorite.url = ziel;
+    favorite.normalizedUrl = normalizeFavoriteUrl(ziel);
+    favorite.season = identity?.season || favorite.season || 0;
+    favorite.episode = identity?.episode || favorite.episode || 0;
+    favorite.finalSeason = umfang.seasons;
+    favorite.finalEpisode = umfang.episodes;
+    favorite.completed = false;
+    favorite.completedAt = "";
+    favorite.completedManually = false;
+    favorite.episodeCompleted = false;
+    favorite.continuePending = true;
+    favorite.hideFromContinueWatching = false;
+    favorite.progress = 0;
+    favorite.position = 0;
+    favorite.currentTime = 0;
+    favorite.duration = 0;
+    // Zurueck in die Watchlist, damit die Serie auffaellt.
+    favorite.favorite = true;
+    favorite.newEpisodeAt = new Date().toISOString();
+    favorite.newEpisodeLabel = neueStaffel
+      ? `Staffel ${bekannteStaffel + 1} ist da`
+      : `Folge ${bekannteFolge + 1} ist da`;
+    geaendert = true;
+    console.log(`[ELFIX NEU] ${favorite.title}: ${favorite.newEpisodeLabel}`);
+  }
+
+  if (!geaendert) return;
+  saveFavorites();
+  sendActiveState();
 }
 
 // Wartende Fassung fuer Aufrufer, die nicht im Fortschritts-Takt haengen.
@@ -3434,10 +3624,25 @@ function appendMediaActivity(entry, url, label) {
   if (!entry) return;
   const activity = Array.isArray(entry.activity) ? entry.activity : [];
   const identity = episodeIdentity(url);
+  const text = label || mediaActivityLabel(url, entry);
+  const letzter = activity[activity.length - 1];
+
+  // Derselbe Vorgang in kurzer Folge ist kein neuer Eintrag. Der Fortschritt
+  // meldet sich im Sekundentakt, und der Verlauf lief mit Dutzenden gleichen
+  // Zeilen voll - dieselbe Folge, dieselbe Minute. Stattdessen wird der
+  // vorhandene Eintrag weitergeschrieben.
+  if (letzter
+    && letzter.url === url
+    && letzter.label === text
+    && Date.now() - (Date.parse(letzter.at) || 0) < AKTIVITAET_ZUSAMMEN_MS) {
+    letzter.at = new Date().toISOString();
+    return;
+  }
+
   activity.push({
     at: new Date().toISOString(),
     url,
-    label: label || mediaActivityLabel(url, entry),
+    label: text,
     season: identity?.season || entry.season || 0,
     episode: identity?.episode || entry.episode || 0
   });
@@ -3552,6 +3757,7 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
   if (favorite.completed && hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds)) {
     const nextUrl = nextEpisodeAfterFavoriteUrl(favorite, nextFinalSeason, nextFinalEpisode);
     favorite.completed = false;
+    favorite.completedManually = false;
     favorite.episodeCompleted = false;
     favorite.favorite = true;
     favorite.hideFromContinueWatching = false;
@@ -5731,6 +5937,13 @@ function loadFavorites() {
         : null,
       // Zu welcher Watchparty dieser Eintrag gehoert. Leer heisst: der eigene.
       watchpartyRoom: String(favorite.watchpartyRoom || ""),
+      // Selbst gewaehltes Bild - hat Vorrang vor dem der Anbieterseite.
+      customThumbnail: String(favorite.customThumbnail || ""),
+      // Von Hand abgehakt: bleibt auch beim Wiederansehen in der Mediathek.
+      completedManually: Boolean(favorite.completedManually),
+      // Hinweis auf Nachschub zu einer Serie, die schon abgeschlossen war.
+      newEpisodeAt: String(favorite.newEpisodeAt || ""),
+      newEpisodeLabel: String(favorite.newEpisodeLabel || ""),
       activity: normalizeActivity(favorite.activity),
       createdAt: String(favorite.createdAt || new Date().toISOString()),
       openedAt: String(favorite.openedAt || ""),

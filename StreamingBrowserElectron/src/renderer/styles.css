@@ -592,6 +592,58 @@
   opacity: 0.5;
 }
 
+/* Zahl an der Watchlist, wenn zu abgeschlossenen Serien Nachschub kam. */
+.side-badge {
+  background: var(--error);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  margin-left: auto;
+  padding: 3px 7px;
+}
+
+.side-badge.is-hidden {
+  display: none;
+}
+
+/* Schmale Leiste: fuer die Zahl ist kein Platz, ein Punkt genuegt. */
+.app-shell.sidebar-collapsed .side-badge,
+.app-shell.navstyle-compactSidebar .app-sidebar .side-badge {
+  color: transparent;
+  margin-left: 0;
+  min-width: 8px;
+  padding: 4px;
+}
+
+@media (max-width: 980px) {
+  .side-badge {
+    color: transparent;
+    margin-left: 0;
+    min-width: 8px;
+    padding: 4px;
+  }
+}
+
+/* Die Reihe "Neue Folgen" auf der Startseite. */
+.new-episode-row.is-hidden {
+  display: none;
+}
+
+.new-episode-flag {
+  background: var(--error);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  left: 12px;
+  padding: 3px 9px;
+  position: absolute;
+  top: 12px;
+  z-index: 2;
+}
+
 /* Getrennt weiterschauen: unten abgesetzt, was in einer Watchparty laeuft. */
 .continue-group.is-hidden {
   display: none;
@@ -822,8 +874,13 @@
 
 @media (max-width: 760px) {
   .history-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 5px;
+  }
+
+  .history-row strong,
+  .history-row span:first-child {
+    grid-column: 1 / -1;
   }
 
   .history-row em {
@@ -1582,11 +1639,109 @@ h1 {
   max-width: 980px;
 }
 
+/* Suchfeld und Filtermarken ueber dem Verlauf. */
+.history-tools {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 20px;
+  max-width: 980px;
+}
+
+.history-search {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  color: var(--text-primary);
+  font: inherit;
+  min-height: 42px;
+  padding: 0 14px;
+  width: 100%;
+}
+
+.history-search:focus-visible {
+  border-color: var(--focus);
+  outline: 0;
+}
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-group:empty {
+  display: none;
+}
+
+.filter-chip {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 5px 12px;
+}
+
+.filter-chip:hover {
+  border-color: color-mix(in srgb, var(--focus) 60%, transparent);
+}
+
+.filter-chip.is-active {
+  background: color-mix(in srgb, var(--focus) 26%, transparent);
+  border-color: color-mix(in srgb, var(--focus) 60%, transparent);
+  color: var(--text-primary);
+}
+
+.history-summary {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Tagesueberschrift zwischen den Zeilen. */
+.history-day {
+  align-items: baseline;
+  display: flex;
+  font-size: 1.05rem;
+  gap: 10px;
+  margin: 18px 0 2px;
+}
+
+.history-day:first-child {
+  margin-top: 0;
+}
+
+.history-day small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Wie oft derselbe Vorgang an dem Tag vorkam. */
+.history-count {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+}
+
 .history-row {
   width: 100%;
   min-height: 70px;
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) minmax(150px, 240px);
+  /* Letzte Spalte fuer die Anzahl - sie bleibt leer, wenn es nur einmal war. */
+  grid-template-columns: 118px minmax(0, 1fr) minmax(150px, 240px) auto;
   align-items: center;
   gap: 18px;
   border-radius: var(--card-radius);
@@ -4031,5 +4186,23 @@ input[type="color"] {
 
   .home-profile {
     display: none;
+  }
+}
+
+/* Seitenleiste bei schmalem Fenster: entweder die Wortmarke oder das Zeichen -
+   nie beides. Der Umbruchpunkt weiter oben blendet nur ".home-sidebar-brand
+   img" aus; ".app-sidebar .sidebar-wordmark" ist genauer und holte das Bild
+   zurueck. So standen Zeichen und Wortmarke nebeneinander, und in der schmalen
+   Leiste blieb vom Logo nur ein angeschnittener Rest stehen - sichtbar beim
+   Wechsel auf einen kleineren Bildschirm. Steht am Ende der Datei, damit die
+   Regel bei gleicher Genauigkeit gewinnt. */
+@media (max-width: 1180px) {
+  .app-shell .app-sidebar .sidebar-wordmark {
+    display: none;
+  }
+
+  /* Eingeklappt bleibt das Zeichen weg - dort steht der Pfeil an seiner Stelle. */
+  .app-shell:not(.sidebar-collapsed) .app-sidebar .sidebar-mark {
+    display: grid;
   }
 }

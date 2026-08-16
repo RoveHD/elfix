@@ -45,7 +45,7 @@
         <nav class="home-side-nav">
           <button class="home-side-link is-active" type="button" data-home-action="start" title="Startseite"><span class="side-icon">⌂</span><span class="side-label">Startseite</span></button>
           <button class="home-side-link" type="button" data-home-action="search" title="Suche"><span class="side-icon">⌕</span><span class="side-label">Suche</span></button>
-          <button class="home-side-link" type="button" data-home-action="favorites" title="Watchlist"><span class="side-icon">♡</span><span class="side-label">Watchlist</span></button>
+          <button class="home-side-link" type="button" data-home-action="favorites" title="Watchlist"><span class="side-icon">♡</span><span class="side-label">Watchlist</span><span class="side-badge is-hidden" id="watchlistBadge"></span></button>
           <button class="home-side-link" type="button" data-home-action="history" title="Verlauf"><span class="side-icon">◴</span><span class="side-label">Verlauf</span></button>
         </nav>
         <div class="home-sidebar-section">
@@ -105,6 +105,14 @@
               </div>
               <div class="hero-dots" id="heroDots" role="tablist" aria-label="Zuletzt geschaut"></div>
             </div>
+
+            <section class="home-row new-episode-row is-hidden" id="newEpisodeRow">
+              <div class="row-head">
+                <div class="row-title">Neue Folgen</div>
+                <button class="text-action" id="dismissNewEpisodes">Gesehen</button>
+              </div>
+              <div class="favorite-rail" id="homeNewEpisodes"></div>
+            </section>
 
             <section class="home-row favorites-row" id="favoritesHomeRow">
               <div class="row-head">
@@ -262,6 +270,22 @@
             </div>
             <button class="danger-action is-hidden" id="historyClear" type="button">Verlauf löschen</button>
           </div>
+
+          <div class="history-tools">
+            <input id="historySearch" class="history-search" type="search" placeholder="Im Verlauf suchen — Titel, Folge oder Anbieter">
+            <div class="history-filters">
+              <div class="filter-group" id="historyRangeFilter" role="group" aria-label="Zeitraum">
+                <button type="button" class="filter-chip is-active" data-range="all">Alles</button>
+                <button type="button" class="filter-chip" data-range="today">Heute</button>
+                <button type="button" class="filter-chip" data-range="week">7 Tage</button>
+                <button type="button" class="filter-chip" data-range="month">30 Tage</button>
+              </div>
+              <div class="filter-group" id="historyTypeFilter" role="group" aria-label="Art"></div>
+              <div class="filter-group" id="historyProviderFilter" role="group" aria-label="Anbieter"></div>
+            </div>
+            <p class="history-summary" id="historySummary"></p>
+          </div>
+
           <div class="history-list" id="historyList"></div>
           <div class="empty-state is-hidden" id="historyEmpty">
             <div class="empty-icon">◴</div>

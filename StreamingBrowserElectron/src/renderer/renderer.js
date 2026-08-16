@@ -90,6 +90,9 @@ const searchHistoryNode = document.querySelector("#searchHistory");
 const globalSearchGrid = document.querySelector("#globalSearchGrid");
 const homeFavorites = document.querySelector("#homeFavorites");
 const homeWatchpartyContinue = document.querySelector("#homeWatchpartyContinue");
+const homeNewEpisodes = document.querySelector("#homeNewEpisodes");
+const newEpisodeRow = document.querySelector("#newEpisodeRow");
+const watchlistBadge = document.querySelector("#watchlistBadge");
 const watchpartyHomeRow = document.querySelector("#watchpartyHomeRow");
 const favoritesGrid = document.querySelector("#favoritesGrid");
 const favoritesEmpty = document.querySelector("#favoritesEmpty");
@@ -100,6 +103,11 @@ const continueEmpty = document.querySelector("#continueEmpty");
 const continuePartyGrid = document.querySelector("#continuePartyGrid");
 const continuePartyGroup = document.querySelector("#continuePartyGroup");
 const historyList = document.querySelector("#historyList");
+const historySearch = document.querySelector("#historySearch");
+const historySummary = document.querySelector("#historySummary");
+const historyRangeFilter = document.querySelector("#historyRangeFilter");
+const historyTypeFilter = document.querySelector("#historyTypeFilter");
+const historyProviderFilter = document.querySelector("#historyProviderFilter");
 const historyEmpty = document.querySelector("#historyEmpty");
 const historyClear = document.querySelector("#historyClear");
 const toastStack = document.querySelector("#toastStack");
@@ -401,8 +409,13 @@ function bindEvents() {
   });
   api.getWatchpartyStatus?.().then(renderWatchpartyStatus).catch(() => {});
   loadWatchpartyItems();
-  document.querySelector("#watchpartySettingsLink")?.addEventListener("click", () => openSettings());
-  document.querySelector("#watchpartyOpenSettings")?.addEventListener("click", () => openSettings());
+  // Aus der Watchparty heraus direkt deren Bereich in den Einstellungen.
+  const watchpartyEinstellungen = async () => {
+    await openSettings();
+    activateTab("watchparty");
+  };
+  document.querySelector("#watchpartySettingsLink")?.addEventListener("click", watchpartyEinstellungen);
+  document.querySelector("#watchpartyOpenSettings")?.addEventListener("click", watchpartyEinstellungen);
   document.querySelector("#refreshPersonal")?.addEventListener("click", () => {
     if (personalPending) return;
     personalPicks = [];
@@ -458,6 +471,17 @@ function bindEvents() {
   // Watchlist, also an einen anderen Ort als die Karten darunter.
   document.querySelector("#showAllFavorites").addEventListener("click", showContinue);
   document.querySelector("#showAllWatchpartyContinue")?.addEventListener("click", showContinue);
+  document.querySelector("#dismissNewEpisodes")?.addEventListener("click", dismissNewEpisodes);
+  historySearch?.addEventListener("input", () => {
+    historyFilter.suche = historySearch.value;
+    renderLibraryViews();
+  });
+  for (const knopf of historyRangeFilter?.querySelectorAll("[data-range]") || []) {
+    knopf.addEventListener("click", () => {
+      historyFilter.zeitraum = knopf.dataset.range || "all";
+      renderLibraryViews();
+    });
+  }
   document.querySelector("#favoritesOpenProvider").addEventListener("click", openActiveProvider);
   historyClear?.addEventListener("click", clearHistory);
   document.querySelectorAll("[data-home-action]").forEach((button) => {
@@ -518,11 +542,14 @@ function bindEvents() {
     if (event.target === settingsModal) closeSettings();
   });
   settingsModal.addEventListener("close", () => {
+    // Zurueck dorthin, wo man die Einstellungen geoeffnet hat - wer aus der
+    // Watchparty kommt, landet wieder dort. Nur eine gemerkte Ansicht zaehlt;
+    // sonst geht es zur Startseite, damit man nicht auf einer halb sichtbaren
+    // Zwischenansicht herauskommt.
+    const zurueck = routeBeforeSettings;
     routeBeforeSettings = null;
     api.setSettingsOpen(false).then(() => {
-      // Nach dem Schliessen immer auf der Startseite landen - vorher konnte man
-      // auf einer halb sichtbaren Zwischenansicht herauskommen.
-      showHome();
+      zeigeAnsicht(zurueck);
     });
   });
   document.querySelector("#newProviderButton").addEventListener("click", clearProviderForm);
@@ -840,8 +867,10 @@ function renderHome() {
   }
   renderSidebarProviders(enabled);
 
+  renderNewEpisodes();
+
   // Getrennt: was nur fuer dich zaehlt und was in einer Watchparty laeuft.
-  const kartenOptionen = { showProgress: true, autoplay: true, fullscreen: true };
+  const kartenOptionen = { showProgress: true, autoplay: true, fullscreen: true, allowImage: true };
   const privateItems = continueItems.filter((favorite) => !favorite.watchpartyRoom).slice(0, 8);
   const partyItems = continueItems.filter((favorite) => favorite.watchpartyRoom).slice(0, 8);
 
@@ -1123,7 +1152,7 @@ function renderHomeHero(favorite, provider, hasProviders) {
     const watchButton = document.querySelector("#heroWatch");
     if (watchButton) watchButton.textContent = "Weiter schauen";
     heroDetails?.classList.remove("is-hidden");
-    setHeroArtwork(favorite.thumbnail);
+    setHeroArtwork(favoriteBild(favorite));
     return;
   }
 
@@ -1819,7 +1848,10 @@ function updateHistoryClearVisibility(historyCount = historyEntries().length) {
 
 function renderFavorites() {
   const items = favoriteEntries();
-  favoritesGrid.replaceChildren(...items.map((favorite) => favoriteCard(favorite, true, { showProgress: hasContinueActivity(favorite) })));
+  favoritesGrid.replaceChildren(...items.map((favorite) => favoriteCard(favorite, true, {
+    showProgress: hasContinueActivity(favorite),
+    allowComplete: true
+  })));
   favoritesEmpty.classList.toggle("is-hidden", items.length > 0);
 }
 
@@ -1833,7 +1865,7 @@ function renderLibraryViews() {
   macheMediathekSortierbar();
 
   const continueItems = continueEntries();
-  const weiterOptionen = { showProgress: true, allowContinueRemove: true, autoplay: true, fullscreen: true };
+  const weiterOptionen = { showProgress: true, allowContinueRemove: true, allowComplete: true, autoplay: true, fullscreen: true };
   // Oben der eigene Stand, darunter abgesetzt die Watchparty-Runden.
   const privatOffen = continueItems.filter((favorite) => !favorite.watchpartyRoom);
   const partyOffen = continueItems.filter((favorite) => favorite.watchpartyRoom);
@@ -1843,9 +1875,27 @@ function renderLibraryViews() {
   continueEmpty?.classList.toggle("is-hidden", continueItems.length > 0);
 
   const historyItems = historyEntries();
-  historyList?.replaceChildren(...historyItems.map(historyRow));
+  const gezeigt = historyVerdichten(historyGefiltert(historyItems));
+  renderHistoryFilters(historyItems);
+  historyList?.replaceChildren(...historyKinder(gezeigt));
   historyEmpty?.classList.toggle("is-hidden", historyItems.length > 0);
   updateHistoryClearVisibility(historyItems.length);
+
+  if (historySummary) {
+    const eingegrenzt = gezeigt.length !== historyItems.length;
+    const titelZahl = new Set(gezeigt.map((eintrag) => eintrag.favorite.id)).size;
+    if (!historyItems.length) {
+      historySummary.textContent = "";
+    } else if (!gezeigt.length) {
+      historySummary.textContent = "Nichts gefunden — andere Suche oder Filter versuchen.";
+    } else {
+      const eintraege = gezeigt.length === 1 ? "1 Eintrag" : `${gezeigt.length} Einträge`;
+      const titel = titelZahl === 1 ? "1 Titel" : `${titelZahl} Titeln`;
+      historySummary.textContent = eingegrenzt
+        ? `${eintraege} zu ${titel} — eingegrenzt`
+        : `${eintraege} zu ${titel}`;
+    }
+  }
 }
 
 // Karten der Mediathek lassen sich mit der Maus umsortieren. Die Vorschau
@@ -2010,17 +2060,179 @@ function historyEntries() {
   return rows.sort((left, right) => Date.parse(right.event.at || "") - Date.parse(left.event.at || ""));
 }
 
+// --- Verlauf: suchen, eingrenzen, nach Tagen sortiert ------------------------
+const historyFilter = { suche: "", zeitraum: "all", art: "", anbieter: "" };
+
+function historyZeitgrenze(zeitraum) {
+  const jetzt = new Date();
+  if (zeitraum === "today") {
+    const start = new Date(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate());
+    return start.getTime();
+  }
+  if (zeitraum === "week") return jetzt.getTime() - 7 * 24 * 60 * 60 * 1000;
+  if (zeitraum === "month") return jetzt.getTime() - 30 * 24 * 60 * 60 * 1000;
+  return 0;
+}
+
+function historyGefiltert(rows) {
+  const suche = historyFilter.suche.trim().toLowerCase();
+  const grenze = historyZeitgrenze(historyFilter.zeitraum);
+  return rows.filter((eintrag) => {
+    const zeit = Date.parse(eintrag.event.at || "") || 0;
+    if (grenze && zeit < grenze) return false;
+    if (historyFilter.anbieter && (eintrag.favorite.providerName || "") !== historyFilter.anbieter) return false;
+    if (historyFilter.art && favoriteArt(eintrag.favorite) !== historyFilter.art) return false;
+    if (!suche) return true;
+    const heuhaufen = [
+      eintrag.favorite.title,
+      eintrag.favorite.providerName,
+      eintrag.event.label,
+      favoriteEpisodeLabel(eintrag.event.url || eintrag.favorite.url)
+    ].filter(Boolean).join(" ").toLowerCase();
+    return heuhaufen.includes(suche);
+  });
+}
+
+function favoriteArt(favorite) {
+  const typ = String(favorite?.type || "").toLowerCase();
+  if (typ === "film") return "film";
+  // Anime und Serie liegen beide als "serie" in der Ablage - die Adresse sagt,
+  // was es ist.
+  return /\/anime\//i.test(String(favorite?.url || "")) ? "anime" : "serie";
+}
+
+// Ueberschrift fuer den Tag, zu dem ein Eintrag gehoert.
+function historyTagesTitel(zeit) {
+  if (!zeit) return "Ohne Datum";
+  const tag = new Date(zeit);
+  const heute = new Date();
+  const gestern = new Date(heute.getFullYear(), heute.getMonth(), heute.getDate() - 1);
+  const gleicherTag = (links, rechts) => links.getFullYear() === rechts.getFullYear()
+    && links.getMonth() === rechts.getMonth()
+    && links.getDate() === rechts.getDate();
+  if (gleicherTag(tag, heute)) return "Heute";
+  if (gleicherTag(tag, gestern)) return "Gestern";
+  const tageHer = Math.floor((heute - tag) / (24 * 60 * 60 * 1000));
+  if (tageHer < 7) return tag.toLocaleDateString("de-DE", { weekday: "long" });
+  return tag.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
+}
+
+// Die Auswahlmarken fuer Art und Anbieter entstehen aus dem, was wirklich im
+// Verlauf steht - eine leere Auswahl waere nur im Weg.
+function renderHistoryFilters(alleRows) {
+  const arten = [
+    ["anime", "Anime"],
+    ["serie", "Serien"],
+    ["film", "Filme"]
+  ].filter(([wert]) => alleRows.some((eintrag) => favoriteArt(eintrag.favorite) === wert));
+  const anbieter = [...new Set(alleRows.map((eintrag) => eintrag.favorite.providerName).filter(Boolean))];
+
+  const marke = (beschriftung, aktiv, beiKlick) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = `filter-chip${aktiv ? " is-active" : ""}`;
+    knopf.textContent = beschriftung;
+    knopf.addEventListener("click", beiKlick);
+    return knopf;
+  };
+
+  historyTypeFilter?.replaceChildren(...(arten.length > 1 ? [
+    marke("Alle Arten", !historyFilter.art, () => {
+      historyFilter.art = "";
+      renderLibraryViews();
+    }),
+    ...arten.map(([wert, text]) => marke(text, historyFilter.art === wert, () => {
+      historyFilter.art = historyFilter.art === wert ? "" : wert;
+      renderLibraryViews();
+    }))
+  ] : []));
+
+  historyProviderFilter?.replaceChildren(...(anbieter.length > 1 ? [
+    marke("Alle Anbieter", !historyFilter.anbieter, () => {
+      historyFilter.anbieter = "";
+      renderLibraryViews();
+    }),
+    ...anbieter.map((name) => marke(name, historyFilter.anbieter === name, () => {
+      historyFilter.anbieter = historyFilter.anbieter === name ? "" : name;
+      renderLibraryViews();
+    }))
+  ] : []));
+
+  for (const knopf of historyRangeFilter?.querySelectorAll("[data-range]") || []) {
+    knopf.classList.toggle("is-active", knopf.dataset.range === historyFilter.zeitraum);
+  }
+}
+
+// Dieselbe Folge am selben Tag ist ein Vorgang, keine zwanzig. Frueher schrieb
+// jeder Fortschritts-Takt eine eigene Zeile - der Verlauf war eine Wand aus
+// derselben Angabe. Zusammengefasst steht dort die Zeitspanne und wie oft.
+function historyVerdichten(rows) {
+  const verdichtet = [];
+  for (const eintrag of rows) {
+    const zeit = Date.parse(eintrag.event.at || "") || 0;
+    const label = eintrag.event.label || favoriteEpisodeLabel(eintrag.event.url || eintrag.favorite.url) || "";
+    const letzter = verdichtet[verdichtet.length - 1];
+    if (letzter
+      && letzter.favorite.id === eintrag.favorite.id
+      && letzter.label === label
+      && historyTagesTitel(letzter.bis) === historyTagesTitel(zeit)) {
+      // Die Liste laeuft von neu nach alt: der spaetere Zeitpunkt steht schon.
+      letzter.von = Math.min(letzter.von || zeit, zeit);
+      letzter.anzahl += 1;
+      continue;
+    }
+    verdichtet.push({ favorite: eintrag.favorite, event: eintrag.event, label, von: zeit, bis: zeit, anzahl: 1 });
+  }
+  return verdichtet;
+}
+
+// Der Verlauf mit Tagesueberschriften. Ohne sie war es eine endlose Liste, in
+// der man nicht sah, wo ein Tag aufhoert.
+function historyKinder(rows) {
+  const kinder = [];
+  let letzterTitel = "";
+  for (const eintrag of rows) {
+    const titel = historyTagesTitel(eintrag.bis);
+    if (titel !== letzterTitel) {
+      letzterTitel = titel;
+      const kopf = document.createElement("h2");
+      kopf.className = "history-day";
+      kopf.textContent = titel;
+      const anzahl = document.createElement("small");
+      const wieViele = rows.filter((item) => historyTagesTitel(item.bis) === titel).length;
+      anzahl.textContent = wieViele === 1 ? "1 Eintrag" : `${wieViele} Einträge`;
+      kopf.append(anzahl);
+      kinder.push(kopf);
+    }
+    kinder.push(historyRow(eintrag));
+  }
+  return kinder;
+}
+
 function historyRow(item) {
   const row = document.createElement("button");
   row.className = "history-row";
   row.type = "button";
-  const at = formatActivityTime(item.event.at);
-  const label = item.event.label || favoriteEpisodeLabel(item.event.url || item.favorite.url);
+  const uhrzeit = (zeit) => new Date(zeit).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  // Innerhalb eines Tages genuegt die Uhrzeit - das Datum steht schon in der
+  // Ueberschrift. Zog sich der Vorgang hin, steht die Spanne da.
+  const zeitText = item.von && item.bis && item.bis - item.von >= 60000
+    ? `${uhrzeit(item.von)} – ${uhrzeit(item.bis)}`
+    : uhrzeit(item.bis || Date.parse(item.event.at || "") || Date.now());
+  const label = item.label || item.event.label || favoriteEpisodeLabel(item.event.url || item.favorite.url);
+
   row.innerHTML = `
-    <span>${escapeHtml(at)}</span>
+    <span>${escapeHtml(zeitText)}</span>
     <strong>${escapeHtml(cleanFavoriteTitle(item.favorite.title, item.favorite.url) || "Inhalt")}</strong>
     <em>${escapeHtml(label || item.favorite.providerName || "")}</em>
   `;
+  if (item.anzahl > 1) {
+    const wieOft = document.createElement("span");
+    wieOft.className = "history-count";
+    wieOft.textContent = `${item.anzahl}×`;
+    wieOft.title = `${item.anzahl} Aufrufe an diesem Tag`;
+    row.append(wieOft);
+  }
   row.addEventListener("click", () => openFavoriteEntry(item.favorite));
   return row;
 }
@@ -2120,11 +2332,12 @@ function formatClock(seconds) {
 
 function favoriteCard(favorite, allowRemove, options = {}) {
   const card = document.createElement("div");
-  card.className = `favorite-card${favorite.thumbnail ? " has-thumb" : ""}`;
+  const kartenBild = favoriteBild(favorite);
+  card.className = `favorite-card${kartenBild ? " has-thumb" : ""}`;
   card.tabIndex = 0;
   card.role = "button";
-  if (favorite.thumbnail) {
-    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(favorite.thumbnail)}")`;
+  if (kartenBild) {
+    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(kartenBild)}")`;
   }
   card.innerHTML = `
     <strong>${escapeHtml(displayFavoriteTitle(favorite))}</strong>
@@ -2153,7 +2366,7 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     card.title = "Zum Umsortieren ziehen";
   }
 
-  if (allowRemove || options.allowContinueRemove || options.allowLibraryRemove) {
+  if (allowRemove || options.allowContinueRemove || options.allowLibraryRemove || options.allowComplete || options.allowImage === true) {
     const menu = document.createElement("button");
     menu.className = "favorite-menu";
     menu.type = "button";
@@ -2191,6 +2404,63 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         showToast("Weiterschauen auf Anfang zurueckgesetzt");
       });
       actions.append(hideContinue);
+    }
+    // Eigenes Bild: taugt das Bild der Anbieterseite nichts, nimmt man ein
+    // anderes. Ohne eigenes bleibt alles wie bisher.
+    if (options.allowImage !== false) {
+      const bildWaehlen = document.createElement("button");
+      bildWaehlen.type = "button";
+      bildWaehlen.textContent = favorite.customThumbnail ? "Anderes Bild wählen" : "Eigenes Bild wählen";
+      bildWaehlen.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        actions.classList.remove("is-open");
+        await eigenesBildSetzen(favorite);
+      });
+      actions.append(bildWaehlen);
+
+      if (favorite.customThumbnail) {
+        const bildWeg = document.createElement("button");
+        bildWeg.type = "button";
+        bildWeg.textContent = "Eigenes Bild entfernen";
+        bildWeg.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          actions.classList.remove("is-open");
+          await eigenesBildEntfernen(favorite);
+        });
+        actions.append(bildWeg);
+      }
+    }
+
+    // In der Watchlist: eine Serie, die man laengst gesehen hat, direkt
+    // abhaken - sie wandert in die Mediathek, der Stand bleibt liegen.
+    if (options.allowComplete && !favorite.completed) {
+      const abhaken = document.createElement("button");
+      abhaken.type = "button";
+      abhaken.textContent = "Als gesehen abhaken";
+      abhaken.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        actions.classList.remove("is-open");
+        const titel = displayFavoriteTitle(favorite);
+        const bestaetigt = await confirmAction({
+          eyebrow: "Mediathek",
+          title: `„${titel}“ als gesehen abhaken?`,
+          copy: "Der Titel wandert in die Mediathek und verschwindet aus Watchlist und Weiterschauen. Der gespeicherte Stand bleibt erhalten, und auch ein erneutes Ansehen holt ihn nicht zurück — nur neue Folgen tun das.",
+          confirmLabel: "Abhaken"
+        });
+        if (!bestaetigt) return;
+        const ergebnis = await api.markFavoriteCompleted?.(favorite.id).catch(() => null);
+        if (!ergebnis?.completed) {
+          showToast("Konnte nicht abgehakt werden");
+          return;
+        }
+        favorites = ergebnis.favorites || favorites;
+        renderFavorites();
+        renderHome();
+        renderLibraryViews();
+        renderFavoriteToggle();
+        showToast(`„${titel}“ ist jetzt in der Mediathek`);
+      });
+      actions.append(abhaken);
     }
     if (options.allowLibraryRemove) {
       const loeschen = document.createElement("button");
@@ -2269,6 +2539,8 @@ function isAniWorldFavorite(favorite) {
 }
 
 function favoriteNeedsProviderThumbnailRepair(favorite) {
+  // Ein selbst gewaehltes Bild wird nie ersetzt.
+  if (favorite?.customThumbnail) return false;
   return isStoFavorite(favorite) || isAniWorldFavorite(favorite);
 }
 
@@ -2369,6 +2641,42 @@ function renderRouteActiveState() {
   });
 }
 
+// Serien, zu denen seit dem Abschliessen etwas Neues erschienen ist.
+function neueFolgenEintraege() {
+  return favorites
+    .filter((favorite) => favorite.newEpisodeAt)
+    .sort((links, rechts) => Date.parse(rechts.newEpisodeAt || 0) - Date.parse(links.newEpisodeAt || 0));
+}
+
+// Auf der Startseite eine eigene Reihe, in der Seitenleiste eine Zahl an der
+// Watchlist - dort landen die Serien wieder, wenn Nachschub kommt.
+function renderNewEpisodes() {
+  const neue = neueFolgenEintraege();
+  newEpisodeRow?.classList.toggle("is-hidden", neue.length === 0);
+  homeNewEpisodes?.replaceChildren(...neue.slice(0, 8).map((favorite) => {
+    const karte = favoriteCard(favorite, false, { autoplay: true, fullscreen: true });
+    const fahne = document.createElement("span");
+    fahne.className = "new-episode-flag";
+    fahne.textContent = favorite.newEpisodeLabel || "Neue Folge";
+    karte.append(fahne);
+    return karte;
+  }));
+
+  if (watchlistBadge) {
+    watchlistBadge.textContent = neue.length > 9 ? "9+" : String(neue.length);
+    watchlistBadge.classList.toggle("is-hidden", neue.length === 0);
+    watchlistBadge.title = neue.length === 1
+      ? "Zu einer Serie gibt es neue Folgen"
+      : `Zu ${neue.length} Serien gibt es neue Folgen`;
+  }
+}
+
+async function dismissNewEpisodes() {
+  favorites = await api.clearNewEpisodeHint?.().catch(() => favorites) || favorites;
+  renderHome();
+  renderFavorites();
+}
+
 function sidebarRouteForAction(action) {
   if (action === "favorites") return "watchlist";
   if (action === "continue") return "continue";
@@ -2436,6 +2744,19 @@ function syncBrowserBounds() {
     width: rect.width,
     height: rect.height
   });
+}
+
+// Eine gemerkte Ansicht wieder aufbauen. Anbieterseiten zaehlen nicht dazu:
+// beim Wechsel in die Einstellungen werden ihre Ansichten geschlossen.
+function zeigeAnsicht(route) {
+  switch (route) {
+    case "watchparty": return showWatchparty();
+    case "library": return showLibrary();
+    case "continue": return showContinue();
+    case "history": return showHistory();
+    case "watchlist": return showFavorites();
+    default: return showHome();
+  }
 }
 
 async function openSettings(route = "settings") {
@@ -3531,6 +3852,77 @@ function normalizeFavoriteUrl(value) {
   } catch {
     return String(value || "").replace(/#.*$/, "").replace(/\/+$/, "");
   }
+}
+
+// Das Bild einer Karte: ein selbst gewaehltes hat Vorrang, sonst bleibt es
+// beim Bild der Anbieterseite wie bisher.
+function favoriteBild(favorite) {
+  return favorite?.customThumbnail || favorite?.thumbnail || "";
+}
+
+// Ein Bild von der Platte waehlen, auf Kachelgroesse bringen und am Titel
+// ablegen. Verkleinert wird hier, damit die Ablage nicht mit Megabytes
+// vollaeuft - eine Kachel ist keine 4000 Pixel breit.
+function bildAuswaehlen() {
+  return new Promise((fertig) => {
+    const feld = document.createElement("input");
+    feld.type = "file";
+    feld.accept = "image/png,image/jpeg,image/webp,image/gif";
+    feld.addEventListener("change", () => {
+      const datei = feld.files?.[0];
+      if (!datei) {
+        fertig("");
+        return;
+      }
+      const leser = new FileReader();
+      leser.onerror = () => fertig("");
+      leser.onload = () => {
+        const bild = new Image();
+        bild.onerror = () => fertig("");
+        bild.onload = () => {
+          const breite = Math.min(bild.naturalWidth || 640, 640);
+          const hoehe = Math.round((bild.naturalHeight || 360) * (breite / (bild.naturalWidth || 640)));
+          const flaeche = document.createElement("canvas");
+          flaeche.width = breite;
+          flaeche.height = hoehe;
+          flaeche.getContext("2d")?.drawImage(bild, 0, 0, breite, hoehe);
+          try {
+            fertig(flaeche.toDataURL("image/jpeg", 0.82));
+          } catch {
+            fertig("");
+          }
+        };
+        bild.src = String(leser.result || "");
+      };
+      leser.readAsDataURL(datei);
+    });
+    feld.click();
+  });
+}
+
+async function eigenesBildSetzen(favorite) {
+  const bild = await bildAuswaehlen();
+  if (!bild) return;
+  const ergebnis = await api.setFavoriteImage?.(favorite.id, bild).catch(() => null);
+  if (!ergebnis?.saved) {
+    showToast(ergebnis?.reason || "Bild konnte nicht gesetzt werden");
+    return;
+  }
+  favorites = ergebnis.favorites || favorites;
+  renderFavorites();
+  renderHome();
+  renderLibraryViews();
+  showToast("Eigenes Bild gesetzt");
+}
+
+async function eigenesBildEntfernen(favorite) {
+  const ergebnis = await api.setFavoriteImage?.(favorite.id, "").catch(() => null);
+  if (!ergebnis?.saved) return;
+  favorites = ergebnis.favorites || favorites;
+  renderFavorites();
+  renderHome();
+  renderLibraryViews();
+  showToast("Eigenes Bild entfernt — es gilt wieder das vom Anbieter");
 }
 
 // Unter dem Titel steht der Anbieter - und, wenn der Eintrag zu einer

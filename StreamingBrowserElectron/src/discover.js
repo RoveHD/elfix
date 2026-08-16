@@ -475,7 +475,33 @@ function extractPosterFallbacks(html, baseUrl, provider = {}, limit = 30) {
   return treffer;
 }
 
+// Wie weit reicht diese Serie? Aus den Staffel- und Folgenlinks einer Seite
+// laesst sich das ablesen, ohne die Seite im Browser zu oeffnen - so faellt
+// auf, wenn zu einer abgeschlossenen Serie neue Folgen erschienen sind.
+function extractSeriesBounds(html, season = 0) {
+  const text = String(html || "");
+  let staffeln = 0;
+  for (const treffer of text.matchAll(/\/(?:staffel|season)-(\d+)/gi)) {
+    const nummer = Number(treffer[1]);
+    // Filme liegen bei manchen Anbietern unter "staffel-0" - das ist keine.
+    if (Number.isFinite(nummer) && nummer > staffeln) staffeln = nummer;
+  }
+
+  // Folgen zaehlen nur, wenn sie zur gefragten Staffel gehoeren: die Seite
+  // listet in der Auswahl auch Nummern anderer Staffeln.
+  let folgen = 0;
+  const muster = season > 0
+    ? new RegExp(`/(?:staffel|season)-${season}/(?:episode|folge)-(\\d+)`, "gi")
+    : /\/(?:episode|folge)-(\d+)/gi;
+  for (const treffer of text.matchAll(muster)) {
+    const nummer = Number(treffer[1]);
+    if (Number.isFinite(nummer) && nummer > folgen) folgen = nummer;
+  }
+  return { seasons: staffeln, episodes: folgen };
+}
+
 module.exports = {
+  extractSeriesBounds,
   extractDiscoverItems,
   extractPosterFallbacks,
   extractGenres,
