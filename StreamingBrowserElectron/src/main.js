@@ -4033,6 +4033,8 @@ const watchparty = new WatchpartyRaeume({
     watchpartyShared = eintraege;
     pushWatchpartyLiveState();
     restoreWatchparty(eintraege, raum);
+    // Erst nachtragen, was fehlt - dann aufraeumen, was nicht mehr gilt.
+    raeumeWatchpartyEintraegeAuf();
     // Beim Ausschalten meldet jeder Raum leer - das darf die Ablage nicht
     // loeschen, sonst ist nach dem Wiedereinschalten alles fort.
     if (watchparty.aktiv) rememberWatchpartyState(eintraege);
@@ -4365,6 +4367,44 @@ function nachreichenWatchpartyBild(eintrag, bild) {
   }, eintrag.room);
 }
 
+// Verlaesst man eine Runde, wird sie aufgeloest oder fliegt man heraus, gehoert
+// auch ihr Weiterschauen-Eintrag nicht mehr in die Liste - er ist der Stand
+// dieser Runde, nicht der eigene. Der private Eintrag bleibt unberuehrt.
+//
+// Aufgeraeumt wird nur fuer Raeume, deren Verbindung steht: bei einem Aussetzer
+// meldet das Relay nichts, und ein Abbruch duerfte keine Staende loeschen.
+function raeumeWatchpartyEintraegeAuf() {
+  // Ausgeschaltete Watchparty heisst nicht aufgeloest: dann bleibt alles
+  // stehen, bis sie wieder laeuft.
+  if (!watchparty.aktiv) return;
+  const raeume = watchparty.status().rooms || [];
+  const verbunden = new Set(raeume.filter((raum) => raum.connected).map((raum) => raum.room));
+  const eingerichtet = new Set(watchparty.codes);
+  const dabei = new Set(watchpartyShared
+    .filter((eintrag) => eintrag.joined)
+    .map((eintrag) => `${eintrag.room}|${eintrag.key}`));
+
+  const behalten = [];
+  const entfernt = [];
+  for (const favorite of favorites) {
+    const raum = String(favorite.watchpartyRoom || "");
+    if (!raum
+      || (eingerichtet.has(raum) && !verbunden.has(raum))
+      || dabei.has(`${raum}|${watchpartyKey(favorite)}`)) {
+      behalten.push(favorite);
+      continue;
+    }
+    entfernt.push(`${favorite.title} (${raum})`);
+    if (activeFavoriteId === favorite.id) activeFavoriteId = null;
+  }
+  if (!entfernt.length) return;
+
+  favorites = behalten;
+  saveFavorites();
+  sendActiveState();
+  console.log(`[ELFIX WATCHPARTY] Stand verworfen, nicht mehr dabei: ${entfernt.join(", ")}`);
+}
+
 // Jeder Raum fuehrt seinen eigenen Weiterschauen-Eintrag. Wer denselben Anime
 // in zwei Raeumen mitschaut, hat ihn zweimal in der Liste - jeweils mit dem
 // Stand dieser Runde. Der Eintrag ohne Raum ist der eigene, private.
@@ -4421,11 +4461,15 @@ async function openWatchpartyItem(key, room) {
 
   // Aus diesem Raum geoeffnet: ab jetzt laeuft der Fortschritt in den Eintrag
   // dieses Raums. Gibt es ihn noch nicht, entsteht er hier - der eigene und
-  // die anderen Runden bleiben davon unberuehrt.
-  let favorite = lokalerWatchpartyEintrag(key, eintrag.room);
-  if (!favorite) {
+  // die anderen Runden bleiben davon unberuehrt. Ohne Beitritt gibt es keinen
+  // gemeinsamen Stand: dann bleibt es beim eigenen Eintrag.
+  let favorite = eintrag.joined ? lokalerWatchpartyEintrag(key, eintrag.room) : null;
+  if (!favorite && eintrag.joined) {
     favorite = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
     if (favorite) favorites.unshift(favorite);
+  }
+  if (!eintrag.joined) {
+    favorite = lokalerWatchpartyEintrag(key, "");
   }
   if (favorite) {
     activeFavoriteId = favorite.id;

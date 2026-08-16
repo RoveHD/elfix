@@ -89,12 +89,16 @@ const searchTitle = document.querySelector("#searchTitle");
 const searchHistoryNode = document.querySelector("#searchHistory");
 const globalSearchGrid = document.querySelector("#globalSearchGrid");
 const homeFavorites = document.querySelector("#homeFavorites");
+const homeWatchpartyContinue = document.querySelector("#homeWatchpartyContinue");
+const watchpartyHomeRow = document.querySelector("#watchpartyHomeRow");
 const favoritesGrid = document.querySelector("#favoritesGrid");
 const favoritesEmpty = document.querySelector("#favoritesEmpty");
 const libraryGrid = document.querySelector("#libraryGrid");
 const libraryEmpty = document.querySelector("#libraryEmpty");
 const continueGrid = document.querySelector("#continueGrid");
 const continueEmpty = document.querySelector("#continueEmpty");
+const continuePartyGrid = document.querySelector("#continuePartyGrid");
+const continuePartyGroup = document.querySelector("#continuePartyGroup");
 const historyList = document.querySelector("#historyList");
 const historyEmpty = document.querySelector("#historyEmpty");
 const historyClear = document.querySelector("#historyClear");
@@ -453,6 +457,7 @@ function bindEvents() {
   // Die Reihe zeigt Weiterschauen-Eintraege - der Knopf fuehrte bisher in die
   // Watchlist, also an einen anderen Ort als die Karten darunter.
   document.querySelector("#showAllFavorites").addEventListener("click", showContinue);
+  document.querySelector("#showAllWatchpartyContinue")?.addEventListener("click", showContinue);
   document.querySelector("#favoritesOpenProvider").addEventListener("click", openActiveProvider);
   historyClear?.addEventListener("click", clearHistory);
   document.querySelectorAll("[data-home-action]").forEach((button) => {
@@ -835,13 +840,16 @@ function renderHome() {
   }
   renderSidebarProviders(enabled);
 
-  const recentFavorites = continueItems.slice(0, 8);
-  favoritesHomeRow?.classList.toggle("is-hidden", recentFavorites.length === 0 || homeSettings.showFavorites === false);
-  homeFavorites.replaceChildren(...recentFavorites.map((favorite) => favoriteCard(favorite, false, {
-    showProgress: true,
-    autoplay: true,
-    fullscreen: true
-  })));
+  // Getrennt: was nur fuer dich zaehlt und was in einer Watchparty laeuft.
+  const kartenOptionen = { showProgress: true, autoplay: true, fullscreen: true };
+  const privateItems = continueItems.filter((favorite) => !favorite.watchpartyRoom).slice(0, 8);
+  const partyItems = continueItems.filter((favorite) => favorite.watchpartyRoom).slice(0, 8);
+
+  favoritesHomeRow?.classList.toggle("is-hidden", privateItems.length === 0 || homeSettings.showFavorites === false);
+  homeFavorites.replaceChildren(...privateItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
+
+  watchpartyHomeRow?.classList.toggle("is-hidden", partyItems.length === 0 || homeSettings.showFavorites === false);
+  homeWatchpartyContinue?.replaceChildren(...partyItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
 
   renderRecommendations();
   invalidatePicksIfWatchChanged();
@@ -1825,12 +1833,13 @@ function renderLibraryViews() {
   macheMediathekSortierbar();
 
   const continueItems = continueEntries();
-  continueGrid?.replaceChildren(...continueItems.map((favorite) => favoriteCard(favorite, false, {
-    showProgress: true,
-    allowContinueRemove: true,
-    autoplay: true,
-    fullscreen: true
-  })));
+  const weiterOptionen = { showProgress: true, allowContinueRemove: true, autoplay: true, fullscreen: true };
+  // Oben der eigene Stand, darunter abgesetzt die Watchparty-Runden.
+  const privatOffen = continueItems.filter((favorite) => !favorite.watchpartyRoom);
+  const partyOffen = continueItems.filter((favorite) => favorite.watchpartyRoom);
+  continueGrid?.replaceChildren(...privatOffen.map((favorite) => favoriteCard(favorite, false, weiterOptionen)));
+  continuePartyGrid?.replaceChildren(...partyOffen.map((favorite) => favoriteCard(favorite, false, weiterOptionen)));
+  continuePartyGroup?.classList.toggle("is-hidden", partyOffen.length === 0);
   continueEmpty?.classList.toggle("is-hidden", continueItems.length > 0);
 
   const historyItems = historyEntries();

@@ -592,6 +592,33 @@
   opacity: 0.5;
 }
 
+/* Getrennt weiterschauen: unten abgesetzt, was in einer Watchparty laeuft. */
+.continue-group.is-hidden {
+  display: none;
+}
+
+.continue-group .group-line {
+  background: linear-gradient(90deg, var(--accent, #4cc9f0), transparent);
+  border-radius: 2px;
+  height: 2px;
+  margin: 34px 0 18px;
+  opacity: 0.5;
+}
+
+.continue-group .group-head {
+  margin-bottom: 16px;
+}
+
+.continue-group .group-head h2 {
+  font-size: 1.3rem;
+  margin: 0 0 4px;
+}
+
+.continue-group .group-head p {
+  margin: 0;
+  opacity: 0.6;
+}
+
 /* Mehrere Raeume: jeder bekommt in der Uebersicht seinen eigenen Abschnitt. */
 .watchparty-room-heading {
   align-items: baseline;
