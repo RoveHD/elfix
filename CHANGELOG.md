@@ -3,6 +3,53 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.16.4 — 16. August 2026
+
+Die Leiste sagt jetzt auf einen Blick, was los ist:
+- Statt zweier Grautoene ein Zeichen samt Farbe - gruen fuer laeuft, gelb fuer
+  angehalten. Beides zusammen, damit es auch dann eindeutig bleibt, wenn eine
+  Schrift das Zeichen nicht kennt
+- Wer den Takt vorgibt, traegt eine eigene Marke "Host". Vorher war er nur
+  etwas fetter als die anderen und kaum zu erkennen
+- Es steht nur noch da, wer diese Serie gerade wirklich offen hat. Jedes
+  Geraet meldet sich alle paar Sekunden, auch pausiert; bleibt das aus,
+  schaut dort jemand etwas anderes oder ist auf privat umgestellt
+
+Der Fortschritt im Raum gehoerte noch zur Folge davor:
+- Die Karte zeigte "Staffel 1 Folge 2" und daneben acht Minuten, die es in
+  dieser Folge nie gab - der gebuchte Stand stammte aus Folge 1
+- Beim Folgenwechsel faengt der Stand jetzt bei der neuen Folge an, egal ob
+  der Wechsel ueber die Adresse oder ueber die Meldung des Hosts hereinkommt.
+  Vorher wirkte das nur auf einem der beiden Wege
+
+Vollbild ging bei allen verloren, die nichts gedrueckt hatten:
+- Der Merker fuers Vollbild wurde erst nach der Navigation gelesen - und die
+  verlaesst das Vollbild und setzt ihn vorher zurueck. Wer selbst
+  weiterschaltete, blieb drin; wer nur mitgezogen wurde, fiel heraus
+- Jetzt wird vor dem Wechsel gemerkt, was war
+
+Filme bei Filmo starteten nicht:
+- Vor dem Player steht dort "Tippe auf Play, um die Wiedergabe zu starten" -
+  erst dieser Klick holt den Hoster herein. Der Autostart brach aber ab,
+  sobald irgendein Rahmen im Dokument lag, und die Seite bringt einen mit.
+  Der Klick-Teil wurde nie erreicht, also blieben Wiedergabe und Vollbild aus
+- Die Suche nach dem Startknopf steht jetzt vor dieser Pruefung. Sie nimmt
+  auch einen Knopf ohne Beschriftung, wie den runden Play-Knopf, und laesst
+  Trailer, Anmeldung, Hoster-Auswahl und Beschreibung in Ruhe
+
+Ausserdem:
+- Sind die Anbieterseiten zu, wird aufgeraeumt: Cache, Service Worker und die
+  lokalen Ablagen der Werbenetze. Anmeldungen bleiben, Cookies fasst das
+  nicht an
+- "X schaut gerade" stand zwei Minuten nach der letzten Meldung noch da.
+  Jetzt sind es 25 Sekunden, und die Karte zeichnet sich genau zum Ablauf
+  neu - vorher blieb der Hinweis stehen, bis zufaellig etwas anderes die
+  Ansicht erneuerte, und genau das passiert nicht mehr, sobald der andere
+  aufhoert
+- Ein selbst gewaehltes Bild hat auch im Watchparty-Tab Vorrang. Dort gewann
+  bisher das Bild aus dem Raum. Ans Relay weitergereicht wird weiterhin nur
+  ein echtes Anbieterbild
+
 ## 1.16.3 — 16. August 2026
 
 Nach einem Folgenwechsel riss die Watchparty ab. Dahinter stand kein toter

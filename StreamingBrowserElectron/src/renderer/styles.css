@@ -549,30 +549,47 @@
   opacity: 0.85;
 }
 
-.stand-chip .stand-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+/* Laeuft oder haelt an: Zeichen und Farbe zusammen, damit es auch dann
+   eindeutig bleibt, wenn eine Schrift das Zeichen nicht kennt. */
+.stand-chip .stand-zeichen {
   flex: 0 0 auto;
-  background: var(--success);
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: -1px;
+  color: var(--success);
 }
 
-/* Das eigene Geraet und der Host stechen leicht hervor. */
-.stand-chip.is-me {
+.stand-chip.is-paused .stand-zeichen {
+  color: var(--warning);
+}
+
+.stand-chip.is-paused {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+}
+
+/* Wer den Takt vorgibt, steht ausdruecklich dran. */
+.stand-chip .stand-marke {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--focus) 30%, transparent);
   color: var(--text-primary);
-  border-color: color-mix(in srgb, currentColor 34%, transparent);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.stand-chip.is-host {
+  border-color: color-mix(in srgb, var(--focus) 50%, transparent);
 }
 
 .stand-chip.is-host .stand-name {
   font-weight: 600;
 }
 
-.stand-chip.is-paused .stand-dot {
-  background: var(--muted);
-}
-
-.stand-chip.is-paused {
-  opacity: 0.75;
+/* Das eigene Geraet steht etwas kraeftiger da. */
+.stand-chip.is-me {
+  color: var(--text-primary);
 }
 
 /* Mehr als zwei Sekunden Unterschied - das sieht man beim Schauen. */
@@ -581,8 +598,8 @@
   border-color: color-mix(in srgb, var(--warning) 45%, transparent);
 }
 
-.stand-chip.is-drift .stand-dot {
-  background: var(--warning);
+.stand-chip.is-drift .stand-zeichen {
+  color: var(--warning);
 }
 
 /* Wer bei einer ganz anderen Folge steht - da sagt ein Sekundenvergleich nichts. */
@@ -591,9 +608,8 @@
   border-style: dashed;
 }
 
-.stand-chip.is-elsewhere .stand-dot {
-  background: transparent;
-  border: 1px solid currentColor;
+.stand-chip.is-elsewhere .stand-zeichen {
+  color: var(--muted);
 }
 
 .watchparty-leave {

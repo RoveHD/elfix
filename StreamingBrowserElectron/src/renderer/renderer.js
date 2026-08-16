@@ -2364,13 +2364,36 @@ function formatActivityTime(value) {
 
 // Schaut gerade jemand aus der Watchparty diesen Titel, steht das auf der
 // Karte - und der Balken zeigt dessen Stand, nicht den eigenen von vorhin.
+// Wer schaut, meldet seinen Stand alle paar Sekunden. Bleibt das aus, ist er
+// weg - zwei Minuten waren dafuer viel zu lang: der Hinweis stand noch da,
+// als laengst niemand mehr dran war.
+const WATCHPARTY_HINWEIS_MS = 25000;
+let watchpartyHinweisTimer = 0;
+let watchpartyHinweisBis = 0;
+
 function watchpartyHint(favorite) {
   const wer = favorite?.watchpartyFrom;
   const wann = Date.parse(favorite?.watchpartyAt || 0) || 0;
   if (!wer || !wann) return "";
-  // Nach zwei Minuten ohne neue Meldung gilt niemand mehr als "gerade dabei".
-  if (Date.now() - wann > 120000) return "";
+  const laeuftAb = wann + WATCHPARTY_HINWEIS_MS;
+  if (Date.now() >= laeuftAb) return "";
+  merkeHinweisAblauf(laeuftAb);
   return `<small class="media-progress-live">▶ ${escapeHtml(wer)} schaut gerade</small>`;
+}
+
+// Genau dann neu zeichnen, wenn der Hinweis ablaeuft. Ohne das bliebe er
+// stehen, bis zufaellig etwas anderes die Ansicht erneuert - und genau das
+// passiert nicht mehr, sobald der andere aufgehoert hat.
+function merkeHinweisAblauf(bis) {
+  if (watchpartyHinweisTimer && watchpartyHinweisBis <= bis) return;
+  window.clearTimeout(watchpartyHinweisTimer);
+  watchpartyHinweisBis = bis;
+  watchpartyHinweisTimer = window.setTimeout(() => {
+    watchpartyHinweisTimer = 0;
+    watchpartyHinweisBis = 0;
+    renderHome();
+    renderLibraryViews();
+  }, Math.max(250, bis - Date.now()));
 }
 
 function progressMarkup(favorite, options = {}) {
@@ -4475,10 +4498,20 @@ function renderWatchpartyStand() {
   }
 
   const seit = Math.max(0, (Date.now() - daten.empfangen) / 1000);
-  const host = daten.members.find((mitglied) => mitglied.host);
-  const bezug = standSekunde(host || daten.members[0], seit);
+  // Bleiben Meldungen ganz aus, ist dort niemand mehr an dieser Serie. Das
+  // Relay filtert das schon; hier steht der Schutz fuer den Fall, dass gar
+  // keine neue Meldung mehr kommt und der letzte Stand stehenbliebe.
+  const dabei = daten.members.filter((mitglied) => Number(mitglied.age || 0) + seit <= 20);
+  if (dabei.length < 2) {
+    watchpartyStand.classList.add("is-hidden");
+    watchpartyStand.replaceChildren();
+    return;
+  }
 
-  watchpartyStand.replaceChildren(...daten.members.map((mitglied) => {
+  const host = dabei.find((mitglied) => mitglied.host);
+  const bezug = standSekunde(host || dabei[0], seit);
+
+  watchpartyStand.replaceChildren(...dabei.map((mitglied) => {
     const sekunde = standSekunde(mitglied, seit);
     const abstand = Math.abs(sekunde - bezug);
     // Steht jemand bei einer anderen Folge, sagt der Sekundenvergleich nichts.
@@ -4494,16 +4527,31 @@ function renderWatchpartyStand() {
     // Mehr als zwei Sekunden auseinander faellt beim gemeinsamen Schauen auf.
     chip.classList.toggle("is-drift", !andereFolge && !mitglied.paused && abstand > 2);
 
-    const punkt = document.createElement("span");
-    punkt.className = "stand-dot";
+    // Ein Zeichen statt eines Punktes: laeuft oder haelt an, das muss man
+    // sehen, ohne zwei Grautoene zu vergleichen. Die Farbe kommt dazu, damit
+    // es auch dann eindeutig bleibt, wenn eine Schrift das Zeichen nicht hat.
+    const zeichen = document.createElement("span");
+    zeichen.className = "stand-zeichen";
+    zeichen.textContent = mitglied.paused ? "❚❚" : "▶";
+
     const name = document.createElement("span");
     name.className = "stand-name";
     name.textContent = mitglied.me ? "Du" : mitglied.name;
+
     const uhr = document.createElement("span");
     uhr.className = "stand-uhr";
     uhr.textContent = andereFolge ? folgeKurz(mitglied) : formatClock(sekunde);
 
-    chip.append(punkt, name, uhr);
+    chip.append(zeichen, name);
+    // Wer den Takt vorgibt, steht ausdruecklich dran - vorher war er nur
+    // etwas fetter als die anderen und damit kaum zu erkennen.
+    if (mitglied.host) {
+      const marke = document.createElement("span");
+      marke.className = "stand-marke";
+      marke.textContent = "Host";
+      chip.append(marke);
+    }
+    chip.append(uhr);
     chip.title = `${mitglied.host ? "Host — " : ""}${mitglied.name}: `
       + (andereFolge
         ? `bei Staffel ${mitglied.season || "?"} Folge ${mitglied.episode} — ${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`

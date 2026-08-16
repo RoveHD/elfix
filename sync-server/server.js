@@ -35,6 +35,10 @@ const STAND_TAKT_MS = 1000;
 // So lange wird gewartet, bevor einem stehengebliebenen Geraet noch einmal ein
 // Play nachgereicht wird - sonst haemmert es im Sekundentakt dagegen.
 const NACHREICHEN_MS = 3000;
+// So alt darf die letzte Meldung eines Geraets hoechstens sein, damit es in der
+// Leiste steht. Gemeldet wird jede Sekunde, im Notfall alle fuenf - wer hier
+// herausfaellt, schaut gerade nicht mit.
+const STAND_FRISCH_MS = 15000;
 
 // raumcode -> { titel: Map<key, eintrag>, at: number }
 const raeume = new Map();
@@ -438,10 +442,17 @@ function standFuerAlle(eintrag, position, paused) {
   }
 }
 
+// In die Leiste gehoert nur, wer diese Serie gerade wirklich offen hat. Jedes
+// Geraet meldet sich dabei mindestens alle paar Sekunden - auch pausiert.
+// Bleibt eine Meldung aus, schaut dort jemand etwas anderes, ist auf privat
+// umgestellt oder hat die Seite verlassen: dann hat er in der Leiste nichts
+// verloren, sonst stuende dort eine Sekunde, die es nicht mehr gibt.
 function standNachAussen(eintrag) {
   if (!eintrag.stand) return [];
+  const jetzt = Date.now();
   return [...eintrag.stand.entries()]
     .filter(([geraetId]) => eintrag.members.has(geraetId))
+    .filter(([, wert]) => jetzt - wert.at <= STAND_FRISCH_MS)
     .map(([geraetId, wert]) => ({
       id: geraetId,
       name: wert.name,
@@ -484,6 +495,24 @@ function standSendenGedrosselt(raumcode, eintrag) {
     standSenden(raumcode, eintrag);
   }, STAND_TAKT_MS - seit);
   eintrag.standTimer.unref?.();
+}
+
+// Eine neue Folge faengt bei ihrer eigenen Stelle an. Der gebuchte Fortschritt
+// gehoert sonst noch zur Folge davor, und die Karte zeigt die neue Folge mit
+// einer Stelle, die es dort nie gab.
+function fortschrittAufFolge(eintrag, position, von) {
+  eintrag.progress = {
+    url: eintrag.url,
+    season: eintrag.season || 0,
+    episode: eintrag.episode || 0,
+    position: Number(position) || 0,
+    duration: 0,
+    progress: 0,
+    completed: false,
+    episodeCompleted: false,
+    updatedAt: new Date().toISOString(),
+    from: von || ""
+  };
 }
 
 // Aus der Adresse lesen, welche Folge das ist. Ein Folgenwechsel meldet nur die
@@ -658,6 +687,7 @@ wss.on("connection", (socket) => {
           if (folge.episode && folge.episode !== eintrag.episode) {
             eintrag.season = folge.season || eintrag.season;
             eintrag.episode = folge.episode;
+            fortschrittAufFolge(eintrag, 0, socket.name);
             neueFolge = true;
           }
         }
@@ -794,6 +824,7 @@ wss.on("connection", (socket) => {
           eintrag.live = { action: "navigate", position: 0, url: adresse, at: Date.now() };
         }
         eintrag.pauseAusgerichtet = false;
+        fortschrittAufFolge(eintrag, zahl(nachricht.position, 100000), socket.name);
         zustandSenden(socket.raum);
       }
 

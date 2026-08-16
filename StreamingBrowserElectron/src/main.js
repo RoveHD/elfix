@@ -1202,6 +1202,11 @@ async function enterHomeMode() {
   activeView = null;
   overlayReasons.add("shell");
   sendActiveState();
+  // Sind die Anbieterseiten zu, bleibt sonst alles liegen, was sie angelegt
+  // haben - Cache, Service Worker, lokale Ablagen der Werbenetze. Beim
+  // naechsten Oeffnen faengt der Browser jetzt sauber an. Anmeldungen bleiben:
+  // Cookies fasst diese Reinigung nicht an.
+  clearBrowserDataPreservingLogin().catch(() => {});
 }
 
 function getProviderView(provider) {
@@ -2790,6 +2795,42 @@ async function startPlaybackInView(view, options = {}) {
       }
       if (result) return result + ":ready" + media.readyState + where();
     }
+    // Manche Anbieter legen vor den Player eine Aufforderung - bei Filmo etwa
+    // "Tippe auf Play, um die Wiedergabe zu starten". Erst dieser Klick holt
+    // den Hoster herein. Das muss vor der Rahmen-Pruefung stehen: die Seite
+    // bringt schon einen Rahmen mit, und mit dem Abbruch darunter kam der
+    // Autostart nie an den Knopf - Wiedergabe und Vollbild blieben aus.
+    const startknopf = () => {
+      const auswahl = "button,[role='button'],a,[class*='play'],[class*='Play'],[class*='start'],[class*='poster']";
+      const treffer = Array.from(document.querySelectorAll(auswahl))
+        .filter(visible)
+        .map((node) => {
+          const text = textOf(node).toLowerCase();
+          const klasse = String(node.className || "").toLowerCase();
+          const rect = node.getBoundingClientRect();
+          // Weder Briefmarke noch halbe Seite: der Knopf liegt dazwischen.
+          if (rect.width < 32 || rect.height < 32) return { node, score: 0 };
+          if (rect.width > innerWidth * 0.7 && rect.height > innerHeight * 0.7) return { node, score: 0 };
+          let score = 0;
+          if (/tippe auf play|auf play|wiedergabe zu starten|zum abspielen|jetzt abspielen|start playback/i.test(text)) score += 2000;
+          if (/(^|[^a-z])play([^a-z]|$)/i.test(text)) score += 900;
+          // Der runde Knopf traegt oft gar keinen Text, nur eine Klasse wie
+          // "vjs-big-play-button" - der muss allein schon reichen. Nur "play"
+          // als ganzes Wort: "start" waere zu weit, das steckt bei Bootstrap
+          // in jedem "justify-content-start".
+          if (/(^|[^a-z])play([^a-z]|$)/i.test(klasse)) score += 900;
+          if (badText.test(text)) score -= 2600;
+          return { node, score };
+        })
+        .filter((item) => item.score > 800)
+        .sort((a, b) => b.score - a.score);
+      return treffer[0]?.node || null;
+    };
+    const start = startknopf();
+    if (start && clickNode(start)) {
+      return "startknopf-geklickt:" + (textOf(start).slice(0, 30) || String(start.className).slice(0, 30)) + where();
+    }
+
     const frame = biggest("iframe, embed");
     if (frame) {
       return "iframe-gefunden" + where();
@@ -4828,12 +4869,21 @@ function watchpartyItems() {
     // Hatte das einstellende Geraet kein Bild, ist im Raum keines hinterlegt.
     // Kennt dieses Geraet den Titel, wird das eigene Bild genommen - und dem
     // Raum gleich nachgereicht, damit auch die anderen es sehen.
-    const lokal = favorites.find((favorite) => watchpartyKey(favorite) === eintrag.key);
-    const bild = eintrag.thumbnail || lokal?.thumbnail || "";
+    const lokal = favorites.find((favorite) => watchpartyKey(favorite) === eintrag.key)
+      || favorites.find((favorite) => istGleicheSerie(favorite.url, eintrag.url));
+    // Ein selbst gewaehltes Bild hat immer Vorrang - es ist eine ausdrueckliche
+    // Entscheidung und gilt fuer diesen Titel ueberall, auch hier. Vorher
+    // gewann das Bild aus dem Raum, und in der Watchparty stand weiter das des
+    // Anbieters, obwohl in "Weiterschauen" laengst ein eigenes hing.
+    const eigenes = lokal?.customThumbnail || bekanntesEigenesBild(eintrag.url);
+    const geteilt = eintrag.thumbnail || lokal?.thumbnail || "";
+    const bild = eigenes || geteilt;
     // Nur nachreichen, wo dieses Geraet ohnehin Mitglied ist: "share" traegt
     // den Absender sonst als Mitglied ein, und ein Bild ist kein Beitritt.
-    if (!eintrag.thumbnail && bild && eintrag.joined && watchparty.verbunden) {
-      nachreichenWatchpartyBild(eintrag, bild);
+    // Nachgereicht wird nur ein echtes Anbieterbild - ein eigenes liegt als
+    // Data-URL vor und gehoert niemandem sonst.
+    if (!eintrag.thumbnail && geteilt && eintrag.joined && watchparty.verbunden) {
+      nachreichenWatchpartyBild(eintrag, geteilt);
     }
     return {
       ...eintrag,
@@ -5209,9 +5259,14 @@ async function followWatchpartyEpisode(eintrag, nachricht) {
 
     const provider = providers.find((item) => item.id === providerId);
     if (!provider) continue;
+    // Vor dem Wechsel merken: die Navigation verlaesst das Vollbild und setzt
+    // den Merker zurueck. Danach gelesen war er immer falsch - wer selbst
+    // weiterschaltete, blieb im Vollbild, wer nur mitgezogen wurde, fiel
+    // heraus.
+    const warVollbild = isContentFullscreen;
     merkeWatchpartySprung(provider.id, { position: nachricht.position });
     await navigateProvider(provider, ziel);
-    scheduleProviderAutoplay(provider, view, { fullscreen: isContentFullscreen });
+    scheduleProviderAutoplay(provider, view, { fullscreen: warVollbild });
     logMediaDiagnostic(provider, ziel, "watchparty", `${nachricht.from || "Host"}: Folge gewechselt`, {});
     sendWatchpartyLive({
       active: true,
