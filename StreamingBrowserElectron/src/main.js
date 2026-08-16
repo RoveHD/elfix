@@ -99,6 +99,9 @@ const WATCHPARTY_MAX_RAEUME = 8;
 // Kennzeichen fuer "kein Raum, nur fuer mich". Eine leere Antwort aus dem
 // Auswahlmenue heisst dagegen abgebrochen.
 const PRIVAT = "__privat";
+// Wie alt die Filterlisten hoechstens sein duerfen, bevor sie beim Start neu
+// geholt werden.
+const FILTER_MAX_ALTER_MS = 7 * 24 * 60 * 60 * 1000;
 // So lange muss der Raum-Zustand ruhen, bevor daraus Schluesse gezogen werden:
 // Beitritte nach dem Verbinden brauchen eine Rundreise zum Relay.
 const WATCHPARTY_RUHE_MS = 6000;
@@ -177,6 +180,10 @@ app.whenReady().then(async () => {
   syncWatchparty();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
+  // Werbefilter: fehlende oder alte Listen nachladen, ohne den Start zu bremsen.
+  setTimeout(() => ensureFilterLists().catch((fehler) => {
+    console.log(`[ELFIX ADBLOCK] Listen konnten nicht geholt werden: ${fehler?.message || fehler}`);
+  }), 4000).unref?.();
   // Abgeschlossene Serien auf neue Folgen pruefen - erst nach dem Start, damit
   // das Fenster nicht darauf wartet, danach in ruhigem Takt.
   setTimeout(() => pruefeNeueFolgen().catch(() => {}), 20000).unref?.();
@@ -406,7 +413,11 @@ function installAdblock() {
       return;
     }
 
-    if (details.resourceType !== "popup" && isLikelyVideoPlayerUrl(details.url)) {
+    // Die Wiedergabe darf der Filter nicht zerlegen - aber nur, was wirklich
+    // dazugehoert. Frueher genuegte "video", "stream" oder "player" irgendwo
+    // in der Adresse; damit lief jedes Werbenetz mit passendem Pfad ungeprueft
+    // durch, egal welche Liste geladen war.
+    if (details.resourceType !== "popup" && istWiedergabeAnfrage(details.url, provider)) {
       callback({});
       return;
     }
@@ -922,8 +933,13 @@ ipcMain.handle("watchparty:switch-context", async (_event, punkt) => {
     return { switched: true, room: "" };
   }
 
+  // In eine Runde wechseln heisst live dabei sein - etwas dazwischen gibt es
+  // nicht mehr. Also gleich den Stand des Hosts nachfragen.
   uebernehmeWatchpartyRaum(key, wahl);
+  setWatchpartyLive(key, true, wahl);
   pushWatchpartyLiveState();
+  watchpartyAngeklinkt.clear();
+  watchparty.abgleichen(key, wahl);
   return { switched: true, room: wahl };
 });
 
@@ -971,31 +987,42 @@ ipcMain.handle("watchparty:remove", (_event, key, room) => {
   return true;
 });
 
+// Zwei Zustaende, mehr nicht: privat oder live in genau einer Runde. Den
+// Zwischenschritt "in der Watchparty, aber Live aus" gibt es nicht mehr - er
+// sah aus wie ein Fehler und niemand konnte sagen, was gerade wohin zaehlt.
 ipcMain.handle("watchparty:live-toggle", (_event, key, an, room) => {
   const schluessel = String(key || "");
   const adresse = activeView?.webContents?.getURL() || "";
+  const beitreten = Boolean(an);
   let raum = String(room || "") || watchpartyRaumForUrl(adresse);
 
   // Steht derselbe Anime in mehreren Runden und ist noch keine gewaehlt, muss
   // erst feststehen, welcher man live folgt.
-  if (an && !raum) {
+  if (beitreten && !raum) {
     const moeglich = watchpartyRaeumeForUrl(adresse);
     if (moeglich.length > 1) return { needsRoom: true, rooms: moeglich.map((item) => item.room), key: schluessel };
     raum = moeglich[0]?.room || "";
   }
-  if (!raum) return { live: false };
+  if (!raum) return { live: false, room: "" };
 
-  // Live beitreten heisst zugleich: ab jetzt zaehlt der Eintrag dieser Runde.
-  if (an) uebernehmeWatchpartyRaum(schluessel, raum);
-  setWatchpartyLive(schluessel, Boolean(an), raum);
-  // Sofort melden statt auf den naechsten Takt zu warten - sonst springt der
-  // Knopf erst Sekunden spaeter um.
-  pushWatchpartyLiveState();
-  if (an) {
+  if (beitreten) {
+    // Live beitreten heisst zugleich: ab jetzt zaehlt der Eintrag dieser Runde.
+    uebernehmeWatchpartyRaum(schluessel, raum);
+    setWatchpartyLive(schluessel, true, raum);
+    // Sofort melden statt auf den naechsten Takt zu warten - sonst springt der
+    // Knopf erst Sekunden spaeter um.
+    pushWatchpartyLiveState();
     watchpartyAngeklinkt.clear();
     watchparty.abgleichen(schluessel, raum);
+    return { live: watchpartyLiveAktiv(schluessel, raum), room: raum };
   }
-  return { live: watchpartyLiveAktiv(schluessel, raum), room: raum };
+
+  // Live verlassen heisst zurueck auf privat: der Stand zaehlt ab jetzt wieder
+  // nur fuer dieses Geraet. Die Mitgliedschaft in der Watchparty bleibt.
+  setWatchpartyLive(schluessel, false, raum);
+  setzePrivatenKontext(schluessel, adresse);
+  pushWatchpartyLiveState();
+  return { live: false, room: "" };
 });
 
 ipcMain.handle("watchparty:resync", async (_event, key, room) => {
@@ -1006,7 +1033,7 @@ ipcMain.handle("watchparty:resync", async (_event, key, room) => {
   for (const [, view] of providerViews) {
     if (!isLiveView(view)) continue;
     if (!istGleicheFolge(eintrag.url, view.webContents.getURL())) continue;
-    const werte = await executeJavaScriptInMediaFrames(view, "(() => { const v = Array.from(document.querySelectorAll('video')).filter((m) => Number(m.duration) > 0).sort((a, b) => b.duration - a.duration)[0]; return v ? Math.round(v.currentTime) : 0; })()").catch(() => []);
+    const werte = await executeJavaScriptInMediaFrames(view, "(() => { const v = Array.from(document.querySelectorAll('video')).filter((m) => Number(m.duration) > 0).sort((a, b) => b.duration - a.duration)[0]; return v ? Number(v.currentTime.toFixed(2)) : 0; })()").catch(() => []);
     position = Math.max(position, ...(werte || []).map((e) => Number(e?.value ?? e) || 0));
   }
   watchparty.gleichziehen(eintrag.key, position, eintrag.room);
@@ -1174,15 +1201,16 @@ function getProviderView(provider) {
     return { action: "deny" };
   });
 
+  // Aus der Seite heraus: streng pruefen, hier kommen die Werbe-Umleitungen.
   view.webContents.on("will-navigate", (event, url) => {
     syncViewMediaProgress(provider, view, "leave");
-    if (shouldCancelNavigation(url, provider)) {
+    if (shouldCancelNavigation(url, provider, true)) {
       event.preventDefault();
     }
   });
   view.webContents.on("will-redirect", (event, url) => {
     syncViewMediaProgress(provider, view, "leave");
-    if (shouldCancelNavigation(url, provider)) {
+    if (shouldCancelNavigation(url, provider, false)) {
       event.preventDefault();
     }
   });
@@ -1200,7 +1228,7 @@ function getProviderView(provider) {
       ? args[0].message
       : args[1];
     // Live zuschauen: Pause, Weiter und Springen sofort an die anderen melden.
-    const live = String(nachricht || "").match(/^__elfix:wp:(play|pause|seek):(\d+)$/);
+    const live = String(nachricht || "").match(/^__elfix:wp:(play|pause|seek):(\d+(?:\.\d+)?)$/);
     if (live) {
       const adresse = view.webContents.getURL();
       const key = watchpartyLiveKeyForUrl(adresse);
@@ -2773,9 +2801,17 @@ function sendFullscreenState() {
   }
 }
 
-function shouldCancelNavigation(url, provider) {
+// `streng` gilt fuer Navigationen, die aus der Seite kommen - ein Klick oder
+// ein Skript. Serverseitige Weiterleitungen einer bereits erlaubten Navigation
+// werden bewusst milder geprueft, sonst bricht der Domainwechsel eines
+// Anbieters (aniworld.to -> aniworld.sx) die App.
+function shouldCancelNavigation(url, provider, streng = false) {
   if (shouldBlockProviderNavigation(url, provider)) {
     logBlockedUrl(url, provider, "site-lock", "navigation");
+    return true;
+  }
+  if (streng && istPopupNavigation(url, provider)) {
+    logBlockedUrl(url, provider, "popup:navigation", "popup");
     return true;
   }
   if (!settings.adblock.blockRedirects) return false;
@@ -2785,20 +2821,78 @@ function shouldCancelNavigation(url, provider) {
   return true;
 }
 
+// Der haeufigste "Popup" auf diesen Seiten ist gar kein zweites Fenster: ein
+// Skript im Werberahmen schiebt die ganze Ansicht auf eine Werbeseite, und
+// mitten im Schauen ist die Folge weg. Das haengt an keiner Filterliste -
+// ohne geladene Listen kam es frueher immer durch. Deshalb zaehlt hier nicht,
+// ob die Adresse bekannt boese ist, sondern ob sie ueberhaupt hierher gehoert.
+function istPopupNavigation(url, provider) {
+  if (!provider || !settings.adblock.enabled || provider.adblockEnabled === false) return false;
+  if (!settings.adblock.blockPopups) return false;
+  return !istErlaubtesHauptziel(url, provider);
+}
+
+// Wohin darf die ganze Ansicht wechseln? Zum Anbieter, zu einem bekannten
+// Hoster, zur Verifizierung, zu einer Anmeldung - und zu allem, was von Hand
+// auf der Ausnahmeliste steht. Sonst nirgendwohin.
+function istErlaubtesHauptziel(url, provider) {
+  const adresse = String(url || "");
+  if (!adresse || adresse === "about:blank") return true;
+  // Fremde Schemata (intent:, market:, ...) sind hier immer eine Weiterleitung
+  // in einen App-Store, nie Teil der Seite.
+  if (!providerModel.isHttpUrl(adresse)) return false;
+
+  let host;
+  try {
+    host = new URL(adresse).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  if (isProviderFirstParty(host, provider)) return true;
+  if (isAllowedProviderHost(host, provider)) return true;
+  if (isKnownVideoHosterUrl(adresse)) return true;
+  if (isChallengeOrVerificationUrl(adresse, provider)) return true;
+  if (isKnownAuthHost(adresse)) return true;
+  if (isWhitelisted(host, settings.adblock.whitelist)) return true;
+  return false;
+}
+
+// Auf diesen Seiten ist ein neues Fenster praktisch immer Werbung. Aufgehen
+// darf deshalb nur die Verifizierung - bei S.to die Cloudflare-Abfrage "Bist
+// du ein Mensch?", dazu die ueblichen Captchas.
+//
+// Vorher stand hier eine lange Liste von Ausnahmen: alles auf der
+// Anbieter-Domain, alle bekannten Hoster und alles, was irgendwo "video",
+// "stream" oder "player" in der Adresse hatte. Genau darueber kamen die
+// Popups - und weil ein erlaubtes Fenster in der laufenden Ansicht geoeffnet
+// wird, landete man mitten im Schauen auf einer Werbeseite.
 function isAllowedNewWindowTarget(url, provider) {
   if (shouldBlockProviderNavigation(url, provider)) return false;
   if (!settings.adblock.blockPopups) return true;
-  if (isChallengeOrVerificationUrl(url, provider)) return true;
-  if (isProviderFirstParty(providerModel.hostFromUrl(url), provider)) return true;
-  if (isKnownAuthHost(url)) return true;
-  if (isKnownVideoHosterUrl(url)) return true;
-  if (isLikelyVideoPlayerUrl(url)) {
-    const decision = shouldBlockTarget(url, provider, "popup");
-    return !decision.block;
+  return istVerifizierungsFenster(url, provider);
+}
+
+// Streng gefasst: nur echte Abfragen, keine Wiedergabe-Adressen. Der Player
+// braucht kein eigenes Fenster - er laeuft im Rahmen der Seite. Anders als
+// isChallengeOrVerificationUrl gilt hier auf der Anbieter-Domain also nicht
+// "/video", "/stream" oder "hoster" als Grund, ein Fenster aufgehen zu lassen.
+function istVerifizierungsFenster(url, provider) {
+  if (!providerModel.isHttpUrl(url)) return false;
+  if (istCaptchaHost(url)) return true;
+
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
   }
 
-  const decision = shouldBlockTarget(url, provider, "popup");
-  return !decision.block && false;
+  // Auf der Seite des Anbieters selbst nur die Abfrage - nicht die Wiedergabe.
+  if (!isProviderFirstParty(parsed.hostname, provider)) return false;
+  const pfad = parsed.pathname.toLowerCase();
+  return /\/(?:cdn-cgi|captcha|check|verify|verification|challenge|turnstile)(?:\/|$)/i.test(pfad)
+    || /(?:turnstile|cf_chl|captcha|verify|verification|challenge)/i.test(parsed.search);
 }
 
 function shouldBlockProviderNavigation(url, provider) {
@@ -2820,23 +2914,45 @@ function isAllowedProviderHost(hostname, provider) {
   return isAllowedResultHost(hostname, providerModel.hostFromUrl(provider.startUrl), provider);
 }
 
-function isLikelyVideoPlayerUrl(url) {
-  const host = providerModel.hostFromUrl(url).toLowerCase();
-  const pathName = (() => {
-    try {
-      return new URL(url).pathname.toLowerCase();
-    } catch {
-      return "";
-    }
-  })();
-  return /(voe|v[-.]?o[-.]?e|vid|video|player|stream|filemoon|filelions|dood|mixdrop|streamtape|vidmoly|vidoza|upstream|supervideo|streamsb|streamwish|lulustream|savefiles|mp4upload|vidsrc|embed|hoster)/i.test(host)
-    || /(embed|player|watch|stream|hoster|video)/i.test(pathName)
-    || /\.(m3u8|mp4|webm)(\?|$)/i.test(pathName);
+// Gehoert diese Anfrage zum Abspielen? Nur der Anbieter selbst, die bekannten
+// Hoster und die Videodateien - sonst nichts. Das haelt den Player am Laufen,
+// ohne den Filter fuer alles andere auszuhebeln.
+function istWiedergabeAnfrage(url, provider) {
+  if (!providerModel.isHttpUrl(url)) return false;
+  if (isKnownVideoHosterUrl(url)) return true;
+  if (isProviderFirstParty(providerModel.hostFromUrl(url), provider)) return true;
+  return /\.(m3u8|mpd|mp4|webm|ts)(\?|$)/i.test(url);
 }
+
 
 function isKnownVideoHosterUrl(url) {
   const host = providerModel.hostFromUrl(url).toLowerCase();
   return /(voe|v[-.]?o[-.]?e|filemoon|filelions|dood|mixdrop|streamtape|vidmoly|vidoza|upstream|supervideo|streamsb|streamwish|lulustream|savefiles|mp4upload|vidsrc|vidguard|streamcloud|cloudflarestream)/i.test(host);
+}
+
+// Die Verifizierungs-Dienste selbst - Cloudflare Turnstile, hCaptcha,
+// reCAPTCHA. Ohne die kommt man bei S.to nicht an "Bist du ein Mensch?"
+// vorbei, deshalb steht diese Pruefung ueberall vor dem Blocken.
+function istCaptchaHost(url) {
+  if (!providerModel.isHttpUrl(url)) return false;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  const host = stripWww(parsed.hostname);
+  const href = parsed.href.toLowerCase();
+
+  if (host === "challenges.cloudflare.com" || host.endsWith(".challenges.cloudflare.com")) return true;
+  if ((host === "cloudflare.com" || host.endsWith(".cloudflare.com")) && /turnstile|challenge|cf_chl|cdn-cgi/.test(href)) return true;
+  if (host === "static.cloudflareinsights.com" && /turnstile|challenge|cf_chl|cdn-cgi|beacon/.test(href)) return true;
+  if (host === "hcaptcha.com" || host.endsWith(".hcaptcha.com")) return true;
+  if ((host === "recaptcha.net" || host.endsWith(".recaptcha.net") || host === "gstatic.com" || host.endsWith(".gstatic.com") || host === "google.com" || host.endsWith(".google.com"))
+    && /recaptcha|captcha/.test(href)) return true;
+
+  return false;
 }
 
 function isChallengeOrVerificationUrl(url, provider) {
@@ -2848,16 +2964,9 @@ function isChallengeOrVerificationUrl(url, provider) {
     return false;
   }
 
-  const host = stripWww(parsed.hostname);
-  const href = parsed.href.toLowerCase();
   const pathName = parsed.pathname.toLowerCase();
 
-  if (host === "challenges.cloudflare.com" || host.endsWith(".challenges.cloudflare.com")) return true;
-  if ((host === "cloudflare.com" || host.endsWith(".cloudflare.com")) && /turnstile|challenge|cf_chl|cdn-cgi/.test(href)) return true;
-  if (host === "static.cloudflareinsights.com" && /turnstile|challenge|cf_chl|cdn-cgi|beacon/.test(href)) return true;
-  if (host === "hcaptcha.com" || host.endsWith(".hcaptcha.com")) return true;
-  if ((host === "recaptcha.net" || host.endsWith(".recaptcha.net") || host === "gstatic.com" || host.endsWith(".gstatic.com") || host === "google.com" || host.endsWith(".google.com"))
-    && /recaptcha|captcha/.test(href)) return true;
+  if (istCaptchaHost(url)) return true;
 
   if (!provider) return false;
   const isProviderAlias = isProviderFirstParty(parsed.hostname, provider);
@@ -3715,17 +3824,49 @@ function mediaActivityLabel(url, entry) {
   return entry?.type === "film" ? "Film geöffnet" : "Geöffnet";
 }
 
+// Der Serientitel ohne Folgenangabe. Daran haengt der Schluessel, unter dem
+// ein Titel in einer Watchparty gefuehrt wird - er muss ueber alle Folgen
+// hinweg derselbe bleiben.
+//
+// Frueher wurde "Staffel 1 Folge 2" nur weggeschnitten, wenn ein Trennzeichen
+// davorstand. S.to schreibt es ohne ("Titel Staffel 1 Folge 2"), also bekam
+// dort jede Folge einen eigenen Schluessel: der Fortschritt passte zu keinem
+// Raum-Eintrag mehr und nach einem Folgenwechsel war die Runde still.
 function cleanBaseMediaTitle(title, url) {
-  const fromUrl = titleFromPath(url);
-  const raw = cleanTitle(title || fromUrl);
+  const raw = cleanTitle(title || titleFromPath(url));
   const value = raw
-    .replace(/\s*[·|]\s*(?:staffel|season)\s*\d+\s*(?:folge|episode)\s*\d+.*$/i, "")
-    .replace(/\s*[·|]\s*(?:folge|episode)\s*\d+.*$/i, "")
-    .replace(/\s*[-–]\s*(?:staffel|season)\s*\d+\s*(?:folge|episode)\s*\d+.*$/i, "")
-    .replace(/\s*[-–]\s*(?:folge|episode)\s*\d+.*$/i, "")
+    // Zuerst den Seitennamen hinter dem letzten senkrechten Strich: sonst
+    // bleibt "| S.to" stehen und zaehlt spaeter als Teil des Titels.
+    .replace(/\s*\|\s*[^|]{1,40}$/, "")
+    // Die Angabe kann auch vorn stehen: "Staffel 1 Folge 2 von Titel".
+    .replace(/^(?:staffel|season)\s*\d+\s*[-–·|:]?\s*(?:folge|episode|ep\.?)\s*\d+\s*(?:von|of)?\s*[-–·|:]?\s*/i, "")
+    .replace(/^s\s*\d{1,3}\s*[.\- ]?\s*e\s*\d{1,4}\s*(?:von|of)?\s*[-–·|:]?\s*/i, "")
+    // Und alles ab der Folgenangabe am Ende - mit oder ohne Trennzeichen.
+    .replace(/\s*[-–·|:]?\s*(?:staffel|season)\s*\d+\s*[-–·|:]?\s*(?:folge|episode|ep\.?)\s*\d+.*$/i, "")
+    .replace(/\s*[-–·|:]?\s*(?:folge|episode|ep\.?)\s*\d+.*$/i, "")
+    .replace(/\s*[-–·|:]?\s*(?:staffel|season)\s*\d+\s*$/i, "")
+    // Kurzformen: "S1E2", "S01 E02", "1x02".
+    .replace(/\s*[-–·|:]?\s*\bs\s*\d{1,3}\s*[.\- ]?\s*e\s*\d{1,4}\b.*$/i, "")
+    .replace(/\s*[-–·|:]?\s*\b\d{1,3}x\d{1,4}\b.*$/i, "")
     .replace(/\s+/g, " ")
+    .replace(/[\s\-–·|:]+$/, "")
     .trim();
-  return cleanTitle(value || fromUrl || raw);
+  // Bleibt nichts uebrig, taugt der letzte Pfadteil nicht als Ersatz: bei
+  // "/staffel-1/episode-2" waere das "Episode 2" - fuer jede Serie dasselbe.
+  // Der Serien-Slug aus der Adresse ist die verlaessliche Rueckfallebene.
+  return cleanTitle(value || titelAusSlug(mediaSlugFromUrl(url)) || raw);
+}
+
+// "the-office" -> "The Office". Nur fuer den Notfall, wenn der Seitentitel
+// nichts hergibt.
+function titelAusSlug(slug) {
+  return String(slug || "")
+    .split(":")[0]
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((teil) => teil.charAt(0).toUpperCase() + teil.slice(1))
+    .join(" ")
+    .trim();
 }
 
 function isTrackableMediaUrl(url, provider) {
@@ -4471,16 +4612,33 @@ function waitForSharedTitle(key, timeoutMs, room) {
   });
 }
 
+// Der Schluessel, unter dem dieser Titel in seiner Runde gefuehrt wird. Er
+// kommt aus dem Titel - und genau das ging schief, wenn der Anbieter den
+// Seitentitel je Folge anders schreibt: der Fortschritt meldete unter einem
+// Schluessel, den der Raum nicht kennt, und in der Runde kam nichts an.
+// Passt der Titel-Schluessel zu keiner beigetretenen Serie, entscheidet die
+// Adresse - sie zeigt verlaesslich auf dieselbe Serie.
+function watchpartySchluesselFuerFavorit(favorite, raum) {
+  const key = watchpartyKey(favorite);
+  if (key && watchparty.istBeigetreten(key)) return key;
+  const treffer = watchpartyShared.find((eintrag) => (
+    eintrag.joined
+    && String(eintrag.room || "") === String(raum || "")
+    && istGleicheSerie(eintrag.url, favorite?.url)
+  ));
+  return treffer?.key || "";
+}
+
 // Beim Schauen: nur melden, was auch geteilt und beigetreten ist.
 function reportWatchpartyProgress(favorite) {
   if (!watchparty.aktiv) return;
-  const key = watchpartyKey(favorite);
-  if (!key || !watchparty.istBeigetreten(key)) return;
   // Jeder Eintrag gehoert zu genau einer Runde und meldet nur dorthin. Der
   // eigene Eintrag ohne Raum bleibt privat - sonst liefe der Stand aus dem
   // stillen Schauen in jede Watchparty, in der der Titel zufaellig steht.
   const raum = String(favorite.watchpartyRoom || "");
   if (!raum) return;
+  const key = watchpartySchluesselFuerFavorit(favorite, raum);
+  if (!key) return;
 
   watchparty.fortschrittMelden(key, {
     url: favorite.url,
@@ -4798,7 +4956,9 @@ function watchpartyControlScript() {
       // Waehrend eine fremde Anweisung ausgefuehrt wird, schweigt das Geraet -
       // sonst schaukeln sich zwei Player gegenseitig auf.
       if (Date.now() < Number(window.__elfixWpQuiet || 0)) return;
-      console.log("__elfix:wp:" + aktion + ":" + Math.round(Number(media.currentTime) || 0));
+      // Auf zwei Nachkommastellen: gerundete Sekunden reichen nicht, wenn alle
+      // exakt auf derselben Stelle stehen sollen.
+      console.log("__elfix:wp:" + aktion + ":" + (Number(media.currentTime) || 0).toFixed(2));
     };
     for (const media of medien) {
       media.addEventListener("play", () => melden("play", media));
@@ -4811,27 +4971,64 @@ function watchpartyControlScript() {
 
 // Ein Befehl von aussen. Waehrend er ausgefuehrt wird, meldet dieses Geraet
 // selbst nichts zurueck.
-function watchpartyApplyScript(action, position) {
+//
+// `genau` heisst: auf die Stelle des Hosts springen, auch wenn es nur eine
+// Sekunde ist. Das gilt fuer jede Pause und fuers gemeinsame Gleichziehen -
+// dort ist "ungefaehr" zu wenig. Beim blossen Mitlaufen bleibt es bei einer
+// groben Toleranz, sonst puffert der Hoster bei jedem Takt neu.
+// `warten` haelt das Versprechen offen, bis der Sprung wirklich vollzogen und
+// genug gepuffert ist - erst dann darf gemeldet werden, dass dieses Geraet
+// startbereit ist.
+function watchpartyApplyScript(action, position, optionen = {}) {
+  const genau = optionen.genau ? "true" : "false";
+  const warten = optionen.warten ? "true" : "false";
   return `(() => {
     const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
     const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
     if (!media) return "kein-video";
-    window.__elfixWpQuiet = Date.now() + 2000;
+
+    const aktion = "${action}";
+    const ziel = ${Number(position) || 0};
+    const genau = ${genau};
+    const warten = ${warten};
+    const anhalten = aktion === "pause" || aktion === "syncprepare";
+    const laufen = aktion === "play" || aktion === "syncstart";
+    // Solange gesprungen und gewartet wird, schweigt dieses Geraet - sonst
+    // meldet der eigene Player die fremde Anweisung als eigene Tat zurueck.
+    window.__elfixWpQuiet = Date.now() + (warten ? 4000 : 2500);
+
     try {
-      const ziel = ${Number(position) || 0};
-      if ("${action}" === "seek" || Math.abs(Number(media.currentTime) - ziel) > 4) {
-        if (ziel > 0 && ziel < media.duration - 2) media.currentTime = ziel;
+      const toleranz = genau ? 0.3 : 1.5;
+      const springbar = ziel >= 0 && ziel < media.duration - 1 && (genau || ziel > 0);
+      if (springbar && Math.abs(Number(media.currentTime) - ziel) > toleranz) {
+        media.currentTime = ziel;
       }
-      if ("${action}" === "pause") {
-        media.pause();
-        return "pausiert";
-      }
-      if ("${action}" === "play") {
+      if (anhalten) media.pause();
+      if (laufen) {
         const p = media.play();
         if (p && typeof p.then === "function") p.catch(() => {});
-        return "laeuft";
       }
-      return "gesprungen";
+      if (!warten) return anhalten ? "pausiert" : (laufen ? "laeuft" : "gesprungen");
+
+      // media.currentTime = x ist nicht sofort erledigt. Wer hier zu frueh
+      // "bereit" meldet, startet gleich darauf mitten im Nachladen und liegt
+      // sofort wieder hinter den anderen.
+      return new Promise((resolve) => {
+        const frist = Date.now() + 2200;
+        const pruefen = () => {
+          const nah = Math.abs(Number(media.currentTime) - ziel) <= 0.5;
+          if (nah && media.readyState >= 3) {
+            resolve("bereit");
+            return;
+          }
+          if (Date.now() > frist) {
+            resolve(nah ? "bereit" : "ungenau");
+            return;
+          }
+          setTimeout(pruefen, 80);
+        };
+        pruefen();
+      });
     } catch (_) {
       return "fehlgeschlagen";
     }
@@ -4858,10 +5055,15 @@ async function prepareWatchpartySync(eintrag, nachricht) {
   }
 
   let vorbereitet = false;
-  for (const [providerId, view] of providerViews) {
+  for (const [, view] of providerViews) {
     if (!isLiveView(view)) continue;
     if (!istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
-    await executeJavaScriptInMediaFrames(view, watchpartyApplyScript("pause", nachricht.position)).catch(() => []);
+    // Anhalten, exakt auf die Stelle des Hosts, und erst zurueckmelden, wenn
+    // der Sprung wirklich sitzt und genug gepuffert ist.
+    await executeJavaScriptInMediaFrames(
+      view,
+      watchpartyApplyScript("syncprepare", nachricht.position, { genau: true, warten: true })
+    ).catch(() => []);
     vorbereitet = true;
   }
   // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten die
@@ -4894,6 +5096,7 @@ async function followWatchpartyEpisode(eintrag, nachricht) {
     logMediaDiagnostic(provider, ziel, "watchparty", `${nachricht.from || "Host"}: Folge gewechselt`, {});
     sendWatchpartyLive({
       active: true,
+      live: true,
       key: eintrag.key,
       title: eintrag.title,
       from: nachricht.from,
@@ -5135,9 +5338,14 @@ async function applyWatchpartyControl(nachricht) {
   }
 
   // Die Zeit auf dem Weg zaehlt mit: bei laufender Wiedergabe ist der andere
-  // inzwischen weiter, sonst landet man immer ein Stueck hinter ihm.
+  // inzwischen weiter, sonst landet man immer ein Stueck hinter ihm. Bei einer
+  // Pause steht sein Bild still - da waere jeder Zuschlag falsch.
+  const laeuft = nachricht.action === "play" || nachricht.action === "syncstart";
   const unterwegs = nachricht.at ? Math.max(0, Date.now() - Number(nachricht.at)) / 1000 : 0;
-  const position = Number(nachricht.position || 0) + (nachricht.action === "pause" ? 0 : unterwegs);
+  const position = Number(nachricht.position || 0) + (laeuft ? unterwegs : 0);
+  // Pause, gezielter Sprung, Abgleich und gemeinsamer Start muessen sitzen.
+  // Nur beim beilaeufigen "der andere spielt weiter" darf es ungefaehr sein.
+  const genau = nachricht.action !== "play" || Boolean(nachricht.resync);
 
   // Nur anwenden, wo genau dieselbe Folge offen ist - nicht bloss dieselbe
   // Serie. Wer eine Folge zurueckliegt, soll nicht mitpausiert werden.
@@ -5146,7 +5354,9 @@ async function applyWatchpartyControl(nachricht) {
     const offen = view.webContents.getURL();
     if (!istGleicheFolge(nachricht.url || eintrag.progress?.url || eintrag.url, offen)) continue;
     const provider = providers.find((item) => item.id === providerId);
-    await executeJavaScriptInMediaFrames(view, watchpartyApplyScript(nachricht.action, nachricht.position)).catch(() => []);
+    // Frueher stand hier nachricht.position: die eben berechnete Stelle samt
+    // Laufzeit wurde verworfen, und alle lagen dauerhaft hinter dem Host.
+    await executeJavaScriptInMediaFrames(view, watchpartyApplyScript(nachricht.action, position, { genau })).catch(() => []);
     if (provider) {
       logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
     }
@@ -7177,21 +7387,50 @@ function saveFilterCache() {
   fs.writeFileSync(FILTER_CACHE_FILE, JSON.stringify(adblock.serialize(), null, 2));
 }
 
+// Ohne geladene Listen blockt nur die eingebaute Heuristik - und genau dann
+// kommen Popups und Werbung durch. Beim Start wird deshalb nachgeholt, was
+// fehlt oder zu alt ist; laeuft nebenher, damit das Fenster nicht wartet.
+async function ensureFilterLists() {
+  if (!settings.adblock?.enabled) return;
+  const zuletzt = Date.parse(settings.adblock.lastUpdated || "") || 0;
+  const veraltet = !zuletzt || Date.now() - zuletzt > FILTER_MAX_ALTER_MS;
+  const vorhanden = adblock.hatGeladeneListen();
+  if (vorhanden && !veraltet) return;
+
+  console.log(`[ELFIX ADBLOCK] ${vorhanden ? "Listen sind veraltet" : "nur die eingebauten Regeln aktiv"} - werden geholt`);
+  const ergebnis = await updateFilterLists();
+  if (ergebnis.fehlend?.length) {
+    console.log(`[ELFIX ADBLOCK] nicht erreichbar: ${ergebnis.fehlend.join(", ")}`);
+  }
+  console.log(`[ELFIX ADBLOCK] ${ergebnis.ruleCount} Regeln aktiv`);
+}
+
 async function updateFilterLists() {
   const texts = [];
+  const fehlend = [];
   for (const list of ADGUARD_FILTER_LISTS) {
-    const response = await fetch(list.url);
-    if (!response.ok) {
-      throw new Error(`Filterliste konnte nicht geladen werden: ${list.name}`);
+    try {
+      // net.fetch nutzt den Netzwerk-Stack von Chromium samt Proxy-Einstellungen
+      // des Systems - das globale fetch scheitert hier je nach Umgebung.
+      const response = await net.fetch(list.url, { signal: AbortSignal.timeout(25000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      texts.push(await response.text());
+    } catch (fehler) {
+      // Eine hakende Liste darf die anderen drei nicht mitreissen - lieber
+      // etwas weniger Regeln als gar keine.
+      fehlend.push(`${list.name} (${fehler?.message || fehler})`);
     }
-    texts.push(await response.text());
+  }
+
+  if (!texts.length) {
+    throw new Error(`Keine Filterliste erreichbar: ${fehlend.join(", ")}`);
   }
 
   adblock.parseLists(texts);
   settings.adblock.lastUpdated = new Date().toISOString();
   saveFilterCache();
   saveSettings();
-  return { ruleCount: adblock.ruleCount(), lastUpdated: settings.adblock.lastUpdated };
+  return { ruleCount: adblock.ruleCount(), lastUpdated: settings.adblock.lastUpdated, fehlend };
 }
 
 function normalizeSettings(raw) {
@@ -7553,13 +7792,18 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+// Diese Liste gilt immer, auch wenn keine einzige AdGuard-Liste geladen werden
+// konnte. Sie deckt die Netze ab, die auf Streaming-Seiten die Popups und
+// Popunder ausliefern - ohne sie haengt der Schutz an einem Download.
 function defaultAdDomains() {
   return [
+    // Anzeigen-Vermarkter
     "doubleclick.net",
     "googlesyndication.com",
     "googleadservices.com",
     "adservice.google.com",
     "adsystem.com",
+    "amazon-adsystem.com",
     "taboola.com",
     "outbrain.com",
     "scorecardresearch.com",
@@ -7568,16 +7812,48 @@ function defaultAdDomains() {
     "rubiconproject.com",
     "criteo.com",
     "zedo.com",
+    "smartadserver.com",
+    "adform.net",
+    "openx.net",
+    "casalemedia.com",
+    "moatads.com",
+    "media.net",
+    "mgid.com",
+    "adskeeper.com",
+    "revcontent.com",
+    // Popup- und Popunder-Netze
     "popads.net",
     "popcash.net",
+    "popunder.net",
+    "popmyads.com",
+    "poptm.com",
     "onclickads.net",
+    "onclickalgo.com",
+    "clickadu.com",
+    "adcash.com",
     "propellerads.com",
     "propeller-tracking.com",
+    "propu.sh",
     "adsterra.com",
+    "adsterra.net",
+    "highperformanceformat.com",
+    "profitableratecpm.com",
+    "effectiveratecpm.com",
+    "displaycontentnetwork.com",
     "exoclick.com",
+    "exosrv.com",
+    "exdynsrv.com",
+    "realsrv.com",
     "trafficjunky.net",
+    "trafficstars.com",
+    "tsyndicate.com",
     "juicyads.com",
-    "hilltopads.net"
+    "hilltopads.net",
+    "hilltopads.com",
+    "adspyglass.com",
+    "bidgear.com",
+    "adnium.com",
+    "adsupply.com"
   ];
 }
 
@@ -7652,6 +7928,13 @@ class FilterEngine {
 
   ruleCount() {
     return this.domains.size + this.trackers.size + this.substringRules.length;
+  }
+
+  // Steht hier mehr als das eingebaute Grundgeruest? ruleCount() ist nie null,
+  // weil die Standarddomains immer dabei sind - fuer "sind Listen da?" taugt
+  // die Zahl deshalb nicht.
+  hatGeladeneListen() {
+    return this.substringRules.length > 0 || this.domains.size > defaultAdDomains().length;
   }
 
   shouldBlock(details, activeSettings, provider) {

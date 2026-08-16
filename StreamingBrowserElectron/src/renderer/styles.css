@@ -511,18 +511,6 @@
   background: var(--error);
 }
 
-/* Ist Live aus, bleibt die Anzeige da - aber ohne Puls. */
-.watchparty-live-banner.is-paused {
-  background: transparent;
-  border-color: color-mix(in srgb, currentColor 25%, transparent);
-  color: var(--muted);
-}
-
-.watchparty-live-banner.is-paused .live-dot {
-  animation: none;
-  background: var(--muted);
-}
-
 .watchparty-leave {
   border-radius: 999px !important;
   font-size: 12px;

@@ -195,7 +195,13 @@ function titelNachAussen(eintrag) {
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, raeume: raeume.size, features: ["share", "enter", "kick", "persist"] }));
+    res.end(JSON.stringify({
+      ok: true,
+      raeume: raeume.size,
+      // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
+      // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause"]
+    }));
     return;
   }
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
@@ -238,6 +244,11 @@ function zustandSenden(raumcode) {
 // seinem laufenden Fortschritt - er meldet den ohnehin als Mitglied. Bei
 // laufender Wiedergabe zaehlt die seither vergangene Zeit mit, sonst zieht man
 // immer auf die Stelle von vorhin.
+//
+// Rueckgabe null heisst "vom Host ist nichts bekannt". Frueher stand dafuer 0,
+// und damit war der Anfang einer Folge nicht von "keine Ahnung" zu
+// unterscheiden: direkt nach einem Folgenwechsel steht der Host bei 0, und der
+// Abgleich lieferte deshalb gar keine Antwort mehr.
 function hostStandJetzt(eintrag) {
   if (eintrag.live && eintrag.hostId) {
     const vergangen = eintrag.live.action === "play" ? (Date.now() - eintrag.live.at) / 1000 : 0;
@@ -249,7 +260,7 @@ function hostStandJetzt(eintrag) {
     const vergangen = gemeldet ? Math.max(0, Date.now() - gemeldet) / 1000 : 0;
     return fortschritt.position + Math.min(vergangen, 600);
   }
-  return 0;
+  return null;
 }
 
 // Es muss immer jemanden geben, an dem sich die anderen ausrichten koennen.
@@ -440,14 +451,37 @@ wss.on("connection", (socket) => {
         eintrag.hostName = socket.name;
       }
       const ziel = httpAdresse(nachricht.url);
-      if (aktion === "navigate" && ziel) eintrag.url = ziel;
+      const istHost = socket.geraetId === eintrag.hostId;
+      const eigen = zahl(nachricht.position, 100000);
 
-      // Der Stand des Hosts ist die Referenz - daran richtet sich aus, wer
-      // spaeter dazukommt oder auf "Synchronisieren" drueckt.
-      if (socket.geraetId === eintrag.hostId) {
+      // Neue Folge: der alte Stand gilt nicht mehr. Bliebe er stehen, zoege
+      // der naechste Abgleich alle auf eine Stelle aus der Folge davor.
+      if (aktion === "navigate") {
+        // Wer dem Wechsel nur nachzieht, meldet dieselbe Adresse zurueck. Das
+        // ist keine neue Folge - sonst faellt der Stand bei jedem Nachzuegler
+        // wieder auf null und die Runde faengt dreimal von vorn an.
+        const schonDort = Boolean(ziel) && eintrag.live?.url === ziel;
+        if (ziel) eintrag.url = ziel;
+        if (!schonDort) {
+          eintrag.live = { action: "pause", position: 0, url: ziel || eintrag.url, at: Date.now() };
+          eintrag.sync = null;
+          clearTimeout(eintrag.syncTimer);
+        }
+      }
+
+      // Bei einer Pause zaehlt die Zeit des Hosts: danach stehen alle exakt
+      // dort, auch wer selbst gedrueckt hat. Pausiert der Host, ist seine
+      // gemeldete Stelle genauer als jede Hochrechnung.
+      const hostStand = hostStandJetzt(eintrag);
+      const gemeinsam = aktion === "pause" && !istHost && hostStand != null ? hostStand : eigen;
+
+      // Der zuletzt an alle geschickte Befehl ist der Stand der Runde - egal,
+      // von wem er kam. Nur so passt das, woran sich ein Abgleich orientiert,
+      // zu dem, was auf den Geraeten wirklich laeuft.
+      if (aktion !== "navigate" && (istHost || aktion === "pause")) {
         eintrag.live = {
           action: aktion,
-          position: zahl(nachricht.position, 100000),
+          position: gemeinsam,
           url: ziel || eintrag.live?.url || eintrag.url,
           at: Date.now()
         };
@@ -457,15 +491,19 @@ wss.on("connection", (socket) => {
         type: "control",
         key: eintrag.key,
         action: aktion,
-        position: zahl(nachricht.position, 100000),
+        position: gemeinsam,
         url: ziel,
         from: socket.name,
-        host: socket.geraetId === eintrag.hostId,
+        host: istHost,
         at: Date.now()
       });
       for (const client of wss.clients) {
-        if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
+        if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
         if (!eintrag.members.has(client.geraetId)) continue;
+        // Eine Pause geht auch an den, der sie ausgeloest hat: er soll auf
+        // dieselbe Sekunde ruecken wie alle anderen. Bei allem anderen waere
+        // das nur ein Echo der eigenen Tat.
+        if (client === socket && !(aktion === "pause" && !istHost)) continue;
         client.send(daten);
       }
       zustandSpeichernSpaeter();
@@ -483,7 +521,8 @@ wss.on("connection", (socket) => {
       // nur, wenn vom Host noch nichts bekannt ist - sonst wuerde ein
       // Nachzuegler alle anderen zu sich zurueckziehen.
       hostSicherstellen(socket.raum, eintrag);
-      const ziel = hostStandJetzt(eintrag) || zahl(nachricht.position, 100000);
+      const hostStand = hostStandJetzt(eintrag);
+      const ziel = hostStand == null ? zahl(nachricht.position, 100000) : hostStand;
       const url = eintrag.live?.url || eintrag.url;
 
       const mitglieder = [...wss.clients].filter((client) => (
@@ -515,13 +554,15 @@ wss.on("connection", (socket) => {
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       hostSicherstellen(socket.raum, eintrag);
       const stand = hostStandJetzt(eintrag);
-      if (!stand) return;
+      // Nur wenn vom Host wirklich nichts bekannt ist, bleibt die Antwort aus.
+      // Steht er am Anfang der Folge, ist 0 die richtige Auskunft.
+      if (stand == null) return;
       senden({
         type: "control",
         key: eintrag.key,
         action: eintrag.live?.action === "pause" ? "pause" : "play",
         position: stand,
-        url: eintrag.live.url || eintrag.url,
+        url: eintrag.live?.url || eintrag.url,
         from: eintrag.hostName || "Host",
         host: true,
         resync: true,

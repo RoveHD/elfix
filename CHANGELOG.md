@@ -3,6 +3,102 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.15.0 — 16. August 2026
+
+Popups bleiben weg, auch ohne eigenen Adblocker:
+- Der haeufigste "Popup" auf diesen Seiten ist gar kein zweites Fenster: ein
+  Werbeskript schiebt die ganze Ansicht auf eine Werbeseite, und mitten im
+  Schauen ist die Folge weg. Das hing bisher an den Filterlisten - ohne
+  geladene Listen kam es immer durch. Jetzt zaehlt nicht mehr, ob eine
+  Adresse bekannt boese ist, sondern ob sie ueberhaupt hierher gehoert:
+  Anbieter, bekannte Hoster, Verifizierung, Anmeldung, Ausnahmeliste - sonst
+  nichts
+- Ein neues Fenster geht nur noch fuer eine echte Abfrage auf. Vorher genuegte
+  "video", "stream" oder "player" irgendwo in der Adresse, und weil ein
+  erlaubtes Fenster in der laufenden Ansicht geoeffnet wird, landete man
+  mitten im Schauen auf einer Werbeseite
+- Die eingebaute Liste deckt jetzt 57 statt 23 Domains ab, vor allem die
+  Popunder-Netze. Sie gilt immer, auch wenn kein Download klappt
+- Fehlende oder ueber eine Woche alte Filterlisten werden beim Start
+  nachgeholt, ueber den Netzwerk-Stack von Chromium. Eine hakende Liste
+  reisst die anderen drei nicht mehr mit
+- Serverseitige Weiterleitungen werden bewusst milder geprueft: ein
+  Domainwechsel des Anbieters (aniworld.to zu aniworld.sx) muss durchgehen
+
+Die Cloudflare-Abfrage von S.to ("Bist du ein Mensch?") geht unveraendert auf -
+Turnstile, hCaptcha und reCAPTCHA stehen jetzt an einer Stelle und werden vor
+jeder Blockade geprueft.
+
+Watchparty bei S.to:
+- Fortschritt kam in der Runde nicht an, und nach einem Folgenwechsel war es
+  still. Beides hatte dieselbe Ursache: der Schluessel, unter dem ein Titel in
+  der Runde laeuft, kommt aus dem Seitentitel, und "Staffel 1 Folge 2" wurde
+  nur weggeschnitten, wenn ein Trennzeichen davorstand. S.to schreibt es ohne,
+  also bekam jede Folge einen eigenen Schluessel, der zu keinem Raum-Eintrag
+  passte. Zusaetzlich entscheidet jetzt die Adresse, falls ein Anbieter den
+  Titel doch einmal anders schreibt
+- Bestehende S.to-Eintraege in einer Runde bekommen dadurch einen neuen
+  Schluessel und muessen einmal neu eingestellt werden
+
+Der Sync-Knopf tut endlich das, was draufsteht:
+- Er hat nie wieder gestartet - das Startsignal kannte die Wiedergabe nicht,
+  also blieben alle pausiert stehen. Jetzt: alle anhalten, exakt auf die Zeit
+  des Hosts springen, warten bis der Sprung wirklich sitzt und genug gepuffert
+  ist, dann gemeinsam weiter
+- Jede Pause zieht alle auf die Sekunde des Hosts, auch den, der gedrueckt hat
+- Die mitgerechnete Laufzeit wurde bisher ermittelt und dann verworfen: alle
+  lagen dauerhaft ein Stueck hinter dem Host
+- Stellen laufen mit zwei Nachkommastellen statt gerundeter Sekunden
+
+Am Relay (`sync-server/server.js` muss dafuer nachgezogen werden):
+- "Der Host steht bei 0" war nicht von "vom Host ist nichts bekannt" zu
+  unterscheiden. Direkt nach einem Folgenwechsel steht er bei 0 - der Abgleich
+  lieferte deshalb gar keine Antwort mehr
+- Eine neue Folge setzt den Stand der Runde zurueck. Wer dem Wechsel nur
+  nachzieht, meldet dieselbe Adresse und faengt die Runde nicht noch einmal
+  von vorn an
+- Der zuletzt an alle geschickte Befehl ist der Stand der Runde, egal von wem
+  er kam - sonst passt das, woran sich ein Abgleich orientiert, nicht zu dem,
+  was auf den Geraeten laeuft
+- `/health` nennt unter `features` jetzt `syncall` und `hostpause`
+
+Kopfzeile:
+- "Live aus" gibt es nicht mehr. Es bleiben zwei Zustaende: privat oder live
+  in einer Runde. "Live beitreten" fragt bei mehreren Watchpartys, welche
+  gemeint ist; "Live verlassen" stellt zurueck auf privat. Die Mitgliedschaft
+  bleibt beides Mal bestehen
+- Der Knopf steht jetzt in beiden Zustaenden da, nicht nur in der Runde
+
+## 1.14.0 — 16. August 2026
+
+Aus der Suche direkt auf die Watchlist:
+- Jeder Treffer hat oben rechts ein Herz. Ein Klick nimmt den Titel auf die
+  Watchlist, ohne ihn zu oeffnen; was schon drauf steht, ist beim Aufbau der
+  Liste schon gefuellt
+- Die Trefferkarte ist dafuer kein Knopf mehr, sondern ein anklickbarer
+  Bereich - ein Knopf im Knopf waere kein gueltiges HTML. Klick und Enter
+  oeffnen den Treffer weiter wie bisher
+- Ein Treffer ohne eigene Adresse waere als Startseite des Anbieters auf der
+  Watchlist gelandet: die leere Adresse loeste sich gegen die Basis auf. Wird
+  jetzt abgelehnt
+
+Live-Vorschau zeigt endlich alles:
+- Der Einstellungsdialog liegt ausserhalb der App-Huelle. Farben und Radien
+  kamen ueber die Variablen an, aber alles, was als Klasse auf der Huelle
+  sitzt, wirkte dort gar nicht - Kartenstil, Ecken, Schatten, Navigationsstil,
+  Anbieter-Kacheln und Dichte blieben unsichtbar. Die Modi werden jetzt auf
+  die Vorschau gespiegelt, mit passenden Regeln dafuer
+- Die Vorschau zeigt zusaetzlich, was es inzwischen gibt: Seitenleiste mit der
+  Zahl an der Watchlist, die Reihe "Neue Folgen" mit Marken, "Gemeinsam
+  weiterschauen" mit Raumangabe, Fortschrittsbalken in der eigenen Farbe und
+  Anbieterkacheln mit Logo und Name. Statt vier grauer Flaechen stehen dort
+  vier verschiedene Poster - sonst fielen Kartenstil und Ecken nicht auf
+
+Kopfzeile:
+- Favorit, Watchparty, Stop und Vollbild erscheinen nur noch auf einer
+  Anbieterseite. Auf Startseite, Suche, Watchlist, Mediathek, Verlauf und
+  Watchparty gibt es nichts, worauf sie sich beziehen koennten
+
 ## 1.13.0 — 16. August 2026
 
 Neue Folgen zu abgeschlossenen Serien:

@@ -4263,18 +4263,17 @@ function watchpartyRaumHinzufuegen() {
 }
 
 // Oben rechts: ob diese Folge live mitlaeuft, wer zuletzt gesteuert hat und ein
-// Schalter dafuer. Der Schalter trennt nur die Live-Steuerung - die Watchparty
-// und der geteilte Fortschritt bleiben bestehen.
+// Schalter dafuer. Es gibt genau zwei Zustaende - privat oder live in einer
+// Runde. "Live beitreten" fragt, welche Watchparty gemeint ist; "Live
+// verlassen" stellt zurueck auf privat. Die Mitgliedschaft bleibt beides Mal.
 let watchpartyLiveKey = "";
 let watchpartyLiveOn = false;
 let watchpartyLiveRoom = "";
-// Zaehlt das Geschaute gerade fuer eine Runde oder nur fuer dich?
-let watchpartyInParty = false;
 
 async function toggleWatchpartyLive() {
   if (!watchpartyLiveKey) return;
   const an = !watchpartyLiveOn;
-  let ergebnis = await api.toggleWatchpartyLive?.(watchpartyLiveKey, an, watchpartyLiveRoom);
+  let ergebnis = await api.toggleWatchpartyLive?.(watchpartyLiveKey, an, an ? "" : watchpartyLiveRoom);
   // Laeuft derselbe Anime in mehreren Runden, fragt der Hauptprozess zurueck,
   // welcher man live folgen will.
   if (ergebnis?.needsRoom) {
@@ -4282,15 +4281,11 @@ async function toggleWatchpartyLive() {
     if (!gewaehlt) return;
     ergebnis = await api.toggleWatchpartyLive?.(watchpartyLiveKey, an, gewaehlt);
   }
-  const raum = ergebnis?.room || watchpartyLiveRoom;
-  showWatchpartyLive({ active: true, live: an, key: watchpartyLiveKey, room: raum });
-  if (an) {
-    showToast(raum
-      ? `Live in „${raum}“ — ihr steuert wieder gemeinsam`
-      : "Live beigetreten — ihr steuert wieder gemeinsam");
-  } else {
-    showToast("Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
-  }
+  const raum = an ? (ergebnis?.room || watchpartyLiveRoom) : "";
+  showWatchpartyLive({ active: true, live: an, inParty: an, key: watchpartyLiveKey, room: raum });
+  showToast(an
+    ? (raum ? `Live in „${raum}“ — ihr schaut gemeinsam` : "Live beigetreten — ihr schaut gemeinsam")
+    : "Zählt jetzt nur für dich — der Stand bleibt privat");
 }
 
 // Umschalten, fuer wen das gerade Geschaute zaehlt: privat oder eine bestimmte
@@ -4334,32 +4329,40 @@ function showWatchpartyLive(info) {
   if (!watchpartyLiveBanner || !watchpartyLiveLeave) return;
   const syncKnopf = document.querySelector("#watchpartyResync");
   watchpartyLiveKey = info?.key || "";
-  watchpartyLiveOn = Boolean(info?.live);
-  // Der Raum kommt nur mit der vollen Meldung; die kurze Bestaetigung nach dem
-  // Umschalten fuehrt ihn nicht mit und darf ihn deshalb nicht loeschen.
+  // Raum und Live-Zustand kommen nur mit der vollen Meldung. Kurze Zwischenrufe
+  // ("X hat pausiert") fuehren sie nicht mit und duerfen sie nicht loeschen -
+  // sonst faellt die Anzeige mitten im gemeinsamen Schauen auf "Privat".
+  if (info && "live" in info) watchpartyLiveOn = Boolean(info.live);
   if (info && "room" in info) watchpartyLiveRoom = info.room || "";
 
   const erkannt = Boolean(info?.active);
   const verbunden = info?.connected !== false;
-  // Zaehlt das Geschaute fuer eine Runde? Aeltere Meldungen kennen das Feld
-  // nicht - dann entscheidet der Raum.
-  const inParty = "inParty" in (info || {}) ? Boolean(info.inParty) : Boolean(watchpartyLiveRoom);
-  watchpartyInParty = inParty;
-
-  // Die Anzeige steht, sobald dieser Titel in einer Runde laeuft: sie sagt,
-  // ob gerade privat oder fuer eine Watchparty geschaut wird, und laesst sich
-  // anklicken, um genau das umzustellen.
+  // Nur zwei Zustaende: live in einer Runde oder privat. Ein "in der
+  // Watchparty, aber nicht live" gibt es nicht mehr - also entscheidet allein
+  // watchpartyLiveOn, was hier steht.
+  //
+  // Die Anzeige selbst steht, sobald dieser Titel in einer Runde laeuft: sie
+  // sagt, ob gerade privat oder fuer eine Watchparty geschaut wird, und laesst
+  // sich anklicken, um genau das umzustellen.
   watchpartyLiveBanner.classList.toggle("is-hidden", !erkannt);
-  watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt || !inParty);
+  // Der Knopf gehoert in beide Zustaende: privat heisst er "Live beitreten",
+  // live heisst er "Live verlassen".
+  watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
   // Abgleichen ergibt nur Sinn, wenn man live dabei und verbunden ist.
-  syncKnopf?.classList.toggle("is-hidden", !erkannt || !inParty || !watchpartyLiveOn || !verbunden);
+  syncKnopf?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn || !verbunden);
   if (!erkannt) return;
 
-  watchpartyLiveBanner.classList.toggle("is-private", !inParty);
-  if (!inParty) {
+  watchpartyLiveLeave.disabled = watchpartyLiveOn && !verbunden;
+  watchpartyLiveLeave.textContent = watchpartyLiveOn ? "Live verlassen" : "Live beitreten";
+  watchpartyLiveLeave.title = watchpartyLiveOn
+    ? "Zurück auf privat — du bleibst in der Watchparty, der Stand zählt wieder nur für dich"
+    : "Einer Watchparty live folgen — gemeinsam schauen und steuern";
+
+  watchpartyLiveBanner.classList.toggle("is-private", !watchpartyLiveOn);
+  if (!watchpartyLiveOn) {
     // Privat: kein Live-Zustand, keine Verbindungsfarbe - nur der Hinweis,
     // dass dieser Stand niemandem sonst gemeldet wird.
-    watchpartyLiveBanner.classList.remove("is-offline", "is-paused");
+    watchpartyLiveBanner.classList.remove("is-offline");
     if (watchpartyLiveText) watchpartyLiveText.textContent = "Privat";
     watchpartyLiveBanner.title = "Zählt nur für dich — klicken, um in eine Watchparty zu wechseln";
     return;
@@ -4370,15 +4373,8 @@ function showWatchpartyLive(info) {
     : "Watchparty — klicken, um zu wechseln";
 
   // Ohne Verbindung laesst sich weder steuern noch abgleichen.
-  watchpartyLiveLeave.disabled = !verbunden;
   if (syncKnopf) syncKnopf.disabled = !verbunden;
   watchpartyLiveBanner.classList.toggle("is-offline", !verbunden);
-  watchpartyLiveBanner.classList.toggle("is-paused", verbunden && !watchpartyLiveOn);
-
-  watchpartyLiveLeave.textContent = watchpartyLiveOn ? "Live verlassen" : "Live beitreten";
-  watchpartyLiveLeave.title = watchpartyLiveOn
-    ? "Nur die gemeinsame Steuerung beenden - du bleibst in der Watchparty"
-    : "Wiedergabe wieder gemeinsam steuern";
 
   if (!watchpartyLiveText) return;
   if (!verbunden) {
@@ -4389,10 +4385,6 @@ function showWatchpartyLive(info) {
   if (info.syncing) {
     const stelle = Number(info.position || 0);
     watchpartyLiveText.textContent = `Wird abgeglichen${stelle ? ` auf ${formatClock(stelle)}` : ""} …`;
-    return;
-  }
-  if (!watchpartyLiveOn) {
-    watchpartyLiveText.textContent = "Live aus";
     return;
   }
   if (info.from && info.action) {
