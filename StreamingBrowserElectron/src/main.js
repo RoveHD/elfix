@@ -98,6 +98,9 @@ const WATCHPARTY_MAX_RAEUME = 8;
 // Kennzeichen fuer "kein Raum, nur fuer mich". Eine leere Antwort aus dem
 // Auswahlmenue heisst dagegen abgebrochen.
 const PRIVAT = "__privat";
+// So lange muss der Raum-Zustand ruhen, bevor daraus Schluesse gezogen werden:
+// Beitritte nach dem Verbinden brauchen eine Rundreise zum Relay.
+const WATCHPARTY_RUHE_MS = 6000;
 // Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
 const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -164,6 +167,13 @@ app.whenReady().then(async () => {
   syncWatchparty();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
+});
+
+app.on("before-quit", () => {
+  // Was in der Watchparty offen ist, gehoert vor dem Schliessen in die Ablage:
+  // sonst geht eine Aenderung der letzten Sekunden verloren und nach dem
+  // naechsten Start fehlen die gemeinsamen Staende.
+  if (watchparty?.aktiv) rememberWatchpartyState(watchpartyShared);
 });
 
 app.on("window-all-closed", () => {
@@ -4034,11 +4044,9 @@ const watchparty = new WatchpartyRaeume({
     watchpartyShared = eintraege;
     pushWatchpartyLiveState();
     restoreWatchparty(eintraege, raum);
-    // Erst nachtragen, was fehlt - dann aufraeumen, was nicht mehr gilt.
-    raeumeWatchpartyEintraegeAuf();
-    // Beim Ausschalten meldet jeder Raum leer - das darf die Ablage nicht
-    // loeschen, sonst ist nach dem Wiedereinschalten alles fort.
-    if (watchparty.aktiv) rememberWatchpartyState(eintraege);
+    // Aufraeumen und Merken erst, wenn der Zustand steht: die eben
+    // verschickten Beitritte kommen erst mit dem naechsten Zustand zurueck.
+    watchpartyZustandSichernSpaeter();
     sendWatchpartyItems();
   },
   onProgress: (key, fortschritt, raum) => applyWatchpartyProgress(key, fortschritt, raum),
@@ -4368,6 +4376,25 @@ function nachreichenWatchpartyBild(eintrag, bild) {
   }, eintrag.room);
 }
 
+// Nach dem Verbinden traegt restoreWatchparty die Mitgliedschaften nach - die
+// Antwort darauf kommt erst mit dem naechsten Zustand. Wer sofort aufraeumt,
+// loescht genau in diesem Moment alles, was noch nicht bestaetigt ist: nach
+// jedem Start waren die gemeinsamen Staende weg. Also erst, wenn Ruhe ist.
+let watchpartyRuheTimer = 0;
+
+function watchpartyZustandSichernSpaeter() {
+  if (watchpartyRuheTimer) clearTimeout(watchpartyRuheTimer);
+  watchpartyRuheTimer = setTimeout(() => {
+    watchpartyRuheTimer = 0;
+    if (!watchparty.aktiv) return;
+    raeumeWatchpartyEintraegeAuf();
+    // Beim Ausschalten meldet jeder Raum leer - das darf die Ablage nicht
+    // loeschen, sonst ist nach dem Wiedereinschalten alles fort.
+    rememberWatchpartyState(watchpartyShared);
+  }, WATCHPARTY_RUHE_MS);
+  watchpartyRuheTimer.unref?.();
+}
+
 // Verlaesst man eine Runde, wird sie aufgeloest oder fliegt man heraus, gehoert
 // auch ihr Weiterschauen-Eintrag nicht mehr in die Liste - er ist der Stand
 // dieser Runde, nicht der eigene. Der private Eintrag bleibt unberuehrt.
@@ -4389,8 +4416,11 @@ function raeumeWatchpartyEintraegeAuf() {
   const entfernt = [];
   for (const favorite of favorites) {
     const raum = String(favorite.watchpartyRoom || "");
+    // Ein eingerichteter Raum wird nur angefasst, wenn seine Verbindung steht
+    // und seine Mitgliedschaften nachgetragen wurden. Fuer entfernte Raeume
+    // gilt das nicht - deren Staende sollen weg.
     if (!raum
-      || (eingerichtet.has(raum) && !verbunden.has(raum))
+      || (eingerichtet.has(raum) && (!verbunden.has(raum) || !watchpartyWiederhergestellt.has(raum)))
       || dabei.has(`${raum}|${watchpartyKey(favorite)}`)) {
       behalten.push(favorite);
       continue;
