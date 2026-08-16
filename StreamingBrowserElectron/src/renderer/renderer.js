@@ -1773,6 +1773,80 @@ async function showGlobalSearch(query) {
   }
 }
 
+// Ein Suchtreffer: klicken oeffnet ihn, das Herz nimmt ihn ohne Umweg auf die
+// Watchlist. Die Karte ist deshalb kein Knopf mehr - ein Knopf im Knopf waere
+// kein gueltiges HTML und liesse sich nicht getrennt anklicken.
+function searchResultCard(result, provider) {
+  const card = document.createElement("div");
+  card.className = "search-result-card provider-result";
+  card.tabIndex = 0;
+  card.role = "button";
+  const meta = [result.genre, provider.providerName].filter(Boolean).join(" · ");
+  card.innerHTML = `<strong>${escapeHtml(result.title)}</strong><span>${escapeHtml(meta)}</span>`;
+
+  const oeffnen = async () => {
+    hideContentViews();
+    await api.setShellOpen(false);
+    const state = await api.openProviderUrl(provider.providerId, result.url);
+    activeProviderId = state?.activeProviderId || provider.providerId;
+    setCurrentRoute(`provider:${activeProviderId}`);
+    renderProviders();
+  };
+  card.addEventListener("click", oeffnen);
+  card.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    oeffnen();
+  });
+
+  const herz = document.createElement("button");
+  herz.type = "button";
+  herz.className = "result-fav";
+  const schonDrin = stehtInWatchlist(result.url);
+  herz.textContent = schonDrin ? "♥" : "♡";
+  herz.classList.toggle("is-active", schonDrin);
+  herz.title = schonDrin ? "Steht schon auf der Watchlist" : "Zur Watchlist hinzufügen";
+  herz.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (herz.disabled) return;
+    herz.disabled = true;
+    try {
+      const ergebnis = await api.addSearchResultToWatchlist?.({
+        providerId: provider.providerId,
+        providerName: provider.providerName,
+        url: result.url,
+        title: result.title,
+        thumbnail: result.image || result.thumbnail || ""
+      }).catch(() => null);
+      if (!ergebnis?.added) {
+        showToast(ergebnis?.reason || "Konnte nicht hinzugefügt werden");
+        return;
+      }
+      favorites = ergebnis.favorites || favorites;
+      herz.textContent = "♥";
+      herz.classList.add("is-active");
+      herz.title = "Steht auf der Watchlist";
+      renderFavorites();
+      renderHome();
+      showToast(ergebnis.already
+        ? `„${ergebnis.title || result.title}“ steht schon auf der Watchlist`
+        : `„${ergebnis.title || result.title}“ zur Watchlist hinzugefügt`);
+    } finally {
+      herz.disabled = false;
+    }
+  });
+  card.append(herz);
+  return card;
+}
+
+// Grober Abgleich ueber die Adresse - fuer die Anzeige des Herzens genuegt das.
+function stehtInWatchlist(url) {
+  const schluessel = String(url || "").replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+  if (!schluessel) return false;
+  return favorites.some((favorite) => favorite.favorite !== false
+    && String(favorite.url || "").replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase() === schluessel);
+}
+
 async function renderProviderResults(query, searchToken) {
   const response = await api.searchAll(query);
   if (searchToken !== activeSearchToken) return;
@@ -1787,20 +1861,7 @@ async function renderProviderResults(query, searchToken) {
       resultNodes.push(heading);
       for (const result of provider.results) {
         total += 1;
-        const card = document.createElement("button");
-        card.className = "search-result-card provider-result";
-        card.type = "button";
-        const meta = [result.genre, provider.providerName].filter(Boolean).join(" · ");
-        card.innerHTML = `<strong>${escapeHtml(result.title)}</strong><span>${escapeHtml(meta)}</span>`;
-        card.addEventListener("click", async () => {
-          hideContentViews();
-          await api.setShellOpen(false);
-          const state = await api.openProviderUrl(provider.providerId, result.url);
-          activeProviderId = state?.activeProviderId || provider.providerId;
-          setCurrentRoute(`provider:${activeProviderId}`);
-          renderProviders();
-        });
-        resultNodes.push(card);
+        resultNodes.push(searchResultCard(result, provider));
       }
     }
   }
@@ -2631,7 +2692,18 @@ function setCurrentRoute(route) {
   renderRouteActiveState();
 }
 
+// Favorit, Watchparty, Stop und Vollbild gehoeren zur offenen Anbieterseite.
+// Auf Startseite, Suche oder in der Mediathek gibt es nichts, worauf sie sich
+// beziehen koennten - dort sind sie weg.
+function renderChromeButtons() {
+  const aufSeite = String(currentRoute || "").startsWith("provider:");
+  for (const auswahl of ["#favoriteButton", "#watchpartyShareButton", "#stopButton", "#fullscreenButton"]) {
+    document.querySelector(auswahl)?.classList.toggle("is-hidden", !aufSeite);
+  }
+}
+
 function renderRouteActiveState() {
+  renderChromeButtons();
   document.querySelectorAll("[data-home-action]").forEach((button) => {
     const route = sidebarRouteForAction(button.dataset.homeAction);
     button.classList.toggle("is-active", route === currentRoute);
@@ -3711,8 +3783,28 @@ function applyAppearance() {
   setShellMode(shell, "navstyle", appearance.navStyle || "sidebar", ["sidebar", "sidebarRight", "compactSidebar", "top"]);
   shell.classList.toggle("auto-collapse-sidebar", appearance.autoCollapseSidebar !== false);
   shell.classList.toggle("hide-favorite-meta", appearance.showFavoriteMeta === false);
+  spiegeleModiInVorschau(shell);
   // Nach einem Seitenwechsel muss der Pfeil neu ausgerichtet werden.
   applySidebarState();
+}
+
+// Die Live-Vorschau steht im Einstellungsdialog und liegt damit ausserhalb der
+// App-Huelle. Farben und Radien erreichen sie ueber die Variablen, die Modi
+// aber haengen an Klassen auf der Huelle - ohne diese Kopie zeigte die
+// Vorschau Kartenstil, Ecken, Schatten, Navigationsstil und Anbieter-Kacheln
+// gar nicht an.
+function spiegeleModiInVorschau(shell) {
+  const vorschau = document.querySelector("#appPreview");
+  if (!vorschau) return;
+  const uebernehmen = [
+    "layout-", "cardstyle-", "shadow-", "corners-", "navstyle-", "providermeta-",
+    "density-", "cards-", "favart-", "theme-", "bg-"
+  ];
+  const eigene = [...vorschau.classList].filter((name) => !uebernehmen.some((teil) => name.startsWith(teil))
+    && name !== "hide-provider-strip" && name !== "hide-favorite-meta" && name !== "animations-off");
+  const vonHuelle = [...shell.classList].filter((name) => uebernehmen.some((teil) => name.startsWith(teil))
+    || name === "hide-provider-strip" || name === "hide-favorite-meta" || name === "animations-off");
+  vorschau.className = [...eigene, ...vonHuelle].join(" ");
 }
 
 function setShellMode(shell, prefix, value, allowed) {

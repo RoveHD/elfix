@@ -693,6 +693,66 @@ ipcMain.handle("library:reorder", (_event, ids) => {
   return favorites;
 });
 
+// Einen Suchtreffer direkt auf die Watchlist nehmen, ohne ihn zu oeffnen.
+// Kennt die App den Titel schon, wird der vorhandene Eintrag markiert statt
+// ein zweiter angelegt.
+ipcMain.handle("favorites:add-result", (_event, treffer) => {
+  const provider = enabledProviders().find((item) => item.id === treffer?.providerId)
+    || enabledProviders().find((item) => item.name === treffer?.providerName);
+  if (!provider) return { favorites, added: false, reason: "Anbieter nicht gefunden" };
+
+  // Ohne eigene Adresse bliebe von der Aufloesung die Startseite des Anbieters
+  // uebrig - die gehoert nicht auf die Watchlist.
+  const roh = String(treffer?.url || "").trim();
+  const url = roh ? absoluteHttpUrl(roh, provider.startUrl || "") : "";
+  if (!providerModel.isHttpUrl(url)) return { favorites, added: false, reason: "Adresse nicht erkannt" };
+
+  const normalized = normalizeFavoriteUrl(url);
+  const vorhanden = favorites.find((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized));
+  if (vorhanden) {
+    const schonDabei = vorhanden.favorite !== false && !vorhanden.completed;
+    vorhanden.favorite = true;
+    vorhanden.updatedAt = new Date().toISOString();
+    moveFavoriteToFront(vorhanden);
+    saveFavorites();
+    sendActiveState();
+    return { favorites, added: true, already: schonDabei, title: vorhanden.title };
+  }
+
+  const identity = episodeIdentity(url);
+  const favorite = normalizeLoadedFavorite({
+    id: crypto.randomUUID(),
+    providerId: provider.id,
+    providerName: provider.name,
+    title: cleanTitle(treffer?.title || titleFromPath(url) || provider.name),
+    url,
+    normalizedUrl: normalized,
+    favicon: "",
+    thumbnail: String(treffer?.thumbnail || ""),
+    logo: provider.logo || "",
+    favorite: true,
+    watched: false,
+    completed: false,
+    episodeCompleted: false,
+    hideFromContinueWatching: false,
+    progress: 0,
+    duration: 0,
+    position: 0,
+    currentTime: 0,
+    type: normalizeMediaType(treffer?.type || inferMediaType(url)),
+    season: identity?.season || 0,
+    episode: identity?.episode || 0,
+    lastWatchedAt: "",
+    activity: [],
+    createdAt: new Date().toISOString()
+  });
+  favorites.unshift(favorite);
+  saveFavorites();
+  sendActiveState();
+  console.log(`[ELFIX] ${favorite.title} aus der Suche auf die Watchlist genommen`);
+  return { favorites, added: true, already: false, title: favorite.title };
+});
+
 // Eigenes Bild fuer einen Titel. Es liegt als Data-URL am Eintrag: die
 // Oberflaeche hat es vorher auf eine vernuenftige Groesse gebracht, damit die
 // Ablage nicht mit Megabytes vollaeuft.

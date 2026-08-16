@@ -1913,6 +1913,10 @@ h1 {
   min-height: 86px;
   border-radius: var(--card-radius);
   padding: 16px;
+  cursor: pointer;
+  /* Platz fuer das Herz oben rechts, damit lange Titel nicht darunter laufen. */
+  padding-right: 46px;
+  position: relative;
   background: linear-gradient(135deg, color-mix(in srgb, var(--bg-card-strong), transparent 5%), color-mix(in srgb, var(--bg-card), #000 18%));
   box-shadow: var(--shadow);
   transition: transform calc(170ms * var(--animation-speed)) ease, background calc(170ms * var(--animation-speed)) ease, filter calc(170ms * var(--animation-speed)) ease;
@@ -4205,4 +4209,339 @@ input[type="color"] {
   .app-shell:not(.sidebar-collapsed) .app-sidebar .sidebar-mark {
     display: grid;
   }
+}
+
+/* --- Live-Vorschau in den Einstellungen -------------------------------------
+   Der Einstellungsdialog liegt ausserhalb von ".app-shell". Die Modus-Klassen
+   (Kartenstil, Ecken, Schatten, Navigationsstil, Anbieter-Kacheln, Dichte)
+   greifen dort also nicht - sie werden vom Renderer zusaetzlich auf die
+   Vorschau gelegt, und die folgenden Regeln machen sie sichtbar. Farben,
+   Radien und Abstaende kommen ohnehin ueber die Variablen an. */
+
+.preview-frame {
+  display: flex;
+  min-height: 0;
+}
+
+.preview-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Seitenleiste - Auftritt je nach Navigationsstil. */
+.preview-side {
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  display: none;
+  flex: 0 0 132px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+}
+
+.preview-side-brand {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 6px;
+}
+
+.preview-side-brand i {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent), #05090f 38%));
+  border-radius: 8px;
+  height: 20px;
+  width: 20px;
+}
+
+.preview-side-brand span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.preview-side b,
+.preview-side em {
+  align-items: center;
+  border-radius: max(6px, calc(var(--button-radius) * 0.5));
+  color: var(--text-secondary);
+  display: flex;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  gap: 8px;
+  min-height: 26px;
+  padding: 0 8px;
+}
+
+.preview-side b {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text-primary);
+}
+
+.preview-side i {
+  font-style: normal;
+  opacity: 0.8;
+  width: 14px;
+}
+
+/* Die Zahl an der Watchlist, wenn neue Folgen da sind. */
+.preview-side u {
+  background: var(--error);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  margin-left: auto;
+  padding: 1px 5px;
+  text-decoration: none;
+}
+
+.app-preview.navstyle-sidebar .preview-side,
+.app-preview.navstyle-sidebarRight .preview-side,
+.app-preview.navstyle-compactSidebar .preview-side {
+  display: flex;
+}
+
+.app-preview.navstyle-sidebarRight .preview-frame {
+  flex-direction: row-reverse;
+}
+
+.app-preview.navstyle-sidebarRight .preview-side {
+  border-left: 1px solid var(--border-color);
+  border-right: 0;
+}
+
+.app-preview.navstyle-compactSidebar .preview-side {
+  align-items: center;
+  flex-basis: 46px;
+}
+
+.app-preview.navstyle-compactSidebar .preview-side span,
+.app-preview.navstyle-compactSidebar .preview-side-brand span {
+  display: none;
+}
+
+.app-preview.navstyle-compactSidebar .preview-side u {
+  margin-left: 0;
+  padding: 1px 4px;
+}
+
+/* Nur beim Stil "oben" traegt die Kopfzeile die Navigation. */
+.app-preview.navstyle-sidebar .preview-app-top nav,
+.app-preview.navstyle-sidebarRight .preview-app-top nav,
+.app-preview.navstyle-compactSidebar .preview-app-top nav {
+  visibility: hidden;
+}
+
+/* Kartenstil - dieselben Spielarten wie bei den echten Kacheln. */
+.app-preview.cardstyle-flat .preview-posters article div,
+.app-preview.cardstyle-flat .preview-providers b,
+.app-preview.cardstyle-flat .preview-providers button {
+  box-shadow: none;
+  filter: saturate(0.85);
+}
+
+.app-preview.cardstyle-glass .preview-posters article div,
+.app-preview.cardstyle-glass .preview-providers b {
+  border: 1px solid color-mix(in srgb, #fff 16%, transparent);
+  opacity: 0.86;
+}
+
+.app-preview.cardstyle-outline .preview-posters article div,
+.app-preview.cardstyle-outline .preview-providers b {
+  background: transparent;
+  border: 1px solid var(--border-color);
+}
+
+.app-preview.cardstyle-minimal .preview-posters article div,
+.app-preview.cardstyle-minimal .preview-providers b {
+  background: color-mix(in srgb, var(--bg-card), transparent 45%);
+  border-radius: 4px;
+}
+
+/* Ecken. */
+.app-preview.corners-sharp .preview-posters article div,
+.app-preview.corners-sharp .preview-providers b,
+.app-preview.corners-sharp .preview-providers button,
+.app-preview.corners-sharp .preview-hero button {
+  border-radius: 3px;
+}
+
+.app-preview.corners-round .preview-posters article div,
+.app-preview.corners-round .preview-providers b,
+.app-preview.corners-round .preview-providers button {
+  border-radius: 18px;
+}
+
+.app-preview.corners-round .preview-hero button {
+  border-radius: 999px;
+}
+
+/* Schatten. */
+.app-preview.shadow-none .preview-posters article div,
+.app-preview.shadow-none .preview-providers b {
+  box-shadow: none;
+}
+
+.app-preview.shadow-light .preview-posters article div,
+.app-preview.shadow-light .preview-providers b {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.app-preview.shadow-standard .preview-posters article div,
+.app-preview.shadow-standard .preview-providers b {
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
+}
+
+.app-preview.shadow-strong .preview-posters article div,
+.app-preview.shadow-strong .preview-providers b {
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+}
+
+/* Anbieter-Kacheln: Logo, Name oder beides. */
+.app-preview .preview-providers b {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-preview .preview-providers b i {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 7px;
+  color: var(--text-primary);
+  display: grid;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  height: 22px;
+  place-items: center;
+  width: 22px;
+}
+
+.app-preview.providermeta-logo .preview-providers b span {
+  display: none;
+}
+
+.app-preview.providermeta-name .preview-providers b i {
+  display: none;
+}
+
+/* Reihen und Angaben, die sich abschalten lassen. */
+.app-preview.hide-provider-strip .preview-row-providers,
+.app-preview.hide-favorite-meta .preview-posters small {
+  display: none;
+}
+
+.preview-posters small {
+  color: var(--muted);
+  display: block;
+  font-size: 10px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Die Marke auf einer Karte mit neuen Folgen. */
+.preview-posters article div {
+  position: relative;
+}
+
+.preview-posters article div u {
+  background: var(--error);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  left: 6px;
+  padding: 2px 6px;
+  position: absolute;
+  text-decoration: none;
+  top: 6px;
+}
+
+/* Damit Kartenstil und Ecken ueberhaupt auffallen, brauchen die Platzhalter
+   verschiedene Bilder statt einer grauen Flaeche. */
+.preview-posters article.art-1 div {
+  background: linear-gradient(140deg, #1f3b8c, rgba(var(--accent-rgb), 0.78) 55%, #10151f);
+}
+
+.preview-posters article.art-2 div {
+  background: linear-gradient(140deg, #8c1f36, #f97316 60%, #10151f);
+}
+
+.preview-posters article.art-3 div {
+  background: linear-gradient(140deg, #145c4a, #22c55e 58%, #10151f);
+}
+
+.preview-posters article.art-4 div {
+  background: linear-gradient(140deg, #4b2a7a, #a855f7 58%, #10151f);
+}
+
+/* Dichte und Layout wirken auf die Hoehe der Kacheln. */
+.app-preview.layout-compact .preview-posters article div,
+.app-preview.density-compact .preview-posters article div {
+  height: 66px;
+}
+
+.app-preview.layout-roomy .preview-posters article div,
+.app-preview.density-roomy .preview-posters article div {
+  height: 104px;
+}
+
+.app-preview.layout-minimal .preview-hero {
+  min-height: 130px;
+  padding-top: 24px;
+}
+
+.app-preview.layout-netflix .preview-posters {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.preview-hero-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-hero button.is-soft {
+  background: color-mix(in srgb, #fff 16%, transparent);
+  color: var(--text-primary);
+}
+
+/* Zeilen, die es nur mit Watchparty gibt, bleiben dezent abgesetzt. */
+.preview-row-party .preview-row-head strong::before {
+  color: var(--accent);
+  content: "⇄ ";
+}
+
+/* Herz auf einem Suchtreffer: nimmt den Titel ohne Umweg auf die Watchlist. */
+.result-fav {
+  background: color-mix(in srgb, var(--bg-app) 55%, transparent);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 5px 8px;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 2;
+}
+
+.result-fav:hover {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: var(--text-primary);
+}
+
+.result-fav.is-active {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--text-primary);
+}
+
+.result-fav[disabled] {
+  cursor: progress;
+  opacity: 0.6;
 }

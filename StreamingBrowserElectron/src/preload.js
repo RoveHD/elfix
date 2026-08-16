@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   clearNewEpisodeHint: (id) => ipcRenderer.invoke("favorites:clear-new", id),
   markFavoriteCompleted: (id) => ipcRenderer.invoke("favorites:mark-completed", id),
   setFavoriteImage: (id, dataUrl) => ipcRenderer.invoke("favorites:set-image", id, dataUrl),
+  addSearchResultToWatchlist: (treffer) => ipcRenderer.invoke("favorites:add-result", treffer),
   reorderLibrary: (ids) => ipcRenderer.invoke("library:reorder", ids),
   hideFromContinue: (id) => ipcRenderer.invoke("continue:hide", id),
   clearHistory: () => ipcRenderer.invoke("history:clear"),

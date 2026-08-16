@@ -1026,31 +1026,74 @@
             </div>
           </div>
           <div class="app-preview" id="appPreview">
-            <div class="preview-app-top">
-              <span>☰</span>
-              <strong>ELFIX</strong>
-              <nav><b>Startseite</b><span>Suche</span><span>Watchlist</span></nav>
-              <i></i>
-            </div>
-            <section class="preview-hero">
-              <small>Fortsetzen</small>
-              <h4>Attack on Titan</h4>
-              <p>S4 E21 · Von dir aus</p>
-              <button type="button">Weiter schauen</button>
-            </section>
-            <section class="preview-row">
-              <div class="preview-row-head"><strong>Weiterschauen</strong><span>Alle anzeigen</span></div>
-              <div class="preview-posters">
-                <article><div></div><strong>Attack on Titan</strong><span><i style="width:75%"></i></span></article>
-                <article><div></div><strong>Demon Slayer</strong><span><i style="width:40%"></i></span></article>
-                <article><div></div><strong>Jujutsu Kaisen</strong><span><i style="width:60%"></i></span></article>
-                <article><div></div><strong>One Piece</strong><span><i style="width:20%"></i></span></article>
+            <div class="preview-frame">
+              <!-- Die Seitenleiste folgt dem gewaehlten Navigationsstil:
+                   links, rechts, schmal oder ganz weg. -->
+              <aside class="preview-side">
+                <div class="preview-side-brand"><i></i><span>ELFIX</span></div>
+                <b><i>⌂</i><span>Startseite</span></b>
+                <em><i>⌕</i><span>Suche</span></em>
+                <em><i>♡</i><span>Watchlist</span><u>2</u></em>
+                <em><i>◷</i><span>Weiterschauen</span></em>
+                <em><i>▣</i><span>Mediathek</span></em>
+                <em><i>⇄</i><span>Watchparty</span></em>
+              </aside>
+
+              <div class="preview-main">
+                <div class="preview-app-top">
+                  <span>☰</span>
+                  <strong>ELFIX</strong>
+                  <nav><b>Startseite</b><span>Suche</span><span>Watchlist</span></nav>
+                  <i></i>
+                </div>
+
+                <section class="preview-hero">
+                  <small>Fortsetzen</small>
+                  <h4>Attack on Titan</h4>
+                  <p>S4 E21 · Von dir aus</p>
+                  <div class="preview-hero-actions">
+                    <button type="button">Weiter schauen</button>
+                    <button type="button" class="is-soft">Watchlist</button>
+                  </div>
+                </section>
+
+                <section class="preview-row preview-row-new">
+                  <div class="preview-row-head"><strong>Neue Folgen</strong><span>Gesehen</span></div>
+                  <div class="preview-posters">
+                    <article class="art-1"><div><u>Staffel 4 ist da</u></div><strong>Bleach</strong><small>Aniworld</small></article>
+                    <article class="art-2"><div><u>Folge 15 ist da</u></div><strong>Solo Leveling</strong><small>Aniworld</small></article>
+                  </div>
+                </section>
+
+                <section class="preview-row">
+                  <div class="preview-row-head"><strong>Weiterschauen</strong><span>Alle anzeigen</span></div>
+                  <div class="preview-posters">
+                    <article class="art-1"><div></div><strong>Attack on Titan</strong><small>Aniworld</small><span><i style="width:75%"></i></span></article>
+                    <article class="art-2"><div></div><strong>Demon Slayer</strong><small>Aniworld</small><span><i style="width:40%"></i></span></article>
+                    <article class="art-3"><div></div><strong>Jujutsu Kaisen</strong><small>S.to</small><span><i style="width:60%"></i></span></article>
+                    <article class="art-4"><div></div><strong>One Piece</strong><small>Filmo</small><span><i style="width:20%"></i></span></article>
+                  </div>
+                </section>
+
+                <section class="preview-row preview-row-party">
+                  <div class="preview-row-head"><strong>Gemeinsam weiterschauen</strong><span>Alle anzeigen</span></div>
+                  <div class="preview-posters">
+                    <article class="art-3"><div></div><strong>Pokémon</strong><small>Aniworld · ⇄ Bangus</small><span><i style="width:55%"></i></span></article>
+                    <article class="art-4"><div></div><strong>Die Legende von Korra</strong><small>S.to · ⇄ Familie</small><span><i style="width:30%"></i></span></article>
+                  </div>
+                </section>
+
+                <section class="preview-row preview-row-providers">
+                  <div class="preview-row-head"><strong>Beliebte Anbieter</strong><span>Alle anzeigen</span></div>
+                  <div class="preview-providers">
+                    <b><i>AN</i><span>Aniworld</span></b>
+                    <b><i>S.</i><span>S.to</span></b>
+                    <b><i>FI</i><span>Filmo</span></b>
+                    <button type="button">+</button>
+                  </div>
+                </section>
               </div>
-            </section>
-            <section class="preview-row">
-              <div class="preview-row-head"><strong>Beliebte Anbieter</strong><span>Alle anzeigen</span></div>
-              <div class="preview-providers"><b>ANIWORLD</b><b>S.to</b><b>FILMO</b><button type="button">+</button></div>
-            </section>
+            </div>
             <div class="preview-bottom-nav"><b>⌂ Startseite</b><span>⌕ Suche</span><span>♥ Watchlist</span><span>⚙ Einstellungen</span></div>
           </div>
         </div>
