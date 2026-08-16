@@ -273,6 +273,15 @@ class Watchparty {
     this.senden({ type: "control", key, action, position, url });
   }
 
+  // Wo dieses Geraet gerade steht. Geht im Sekundentakt heraus und ist die
+  // Grundlage fuer die Leiste bei den anderen - bewusst getrennt vom
+  // Fortschritt, der an der Buchhaltung der Favoriten haengt und nach einem
+  // Folgenwechsel schon einmal aussetzt.
+  meldeStand(key, stand) {
+    if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
+    this.senden({ type: "here", key, ...stand });
+  }
+
   // Den Stand des Hosts anfordern.
   abgleichen(key) {
     if (!this.aktiv || !key || !this.istBeigetreten(key)) return;

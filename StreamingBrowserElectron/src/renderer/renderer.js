@@ -4430,7 +4430,16 @@ function showWatchpartyLive(info) {
 function showWatchpartyStand(info) {
   const mitglieder = Array.isArray(info?.members) ? info.members : [];
   watchpartyStandDaten = mitglieder.length
-    ? { key: info.key || "", room: info.room || "", members: mitglieder, empfangen: Date.now() }
+    ? {
+      key: info.key || "",
+      room: info.room || "",
+      // Die Folge, die hier offen ist - daran erkennt die Leiste, wer woanders
+      // steht.
+      season: Number(info.season || 0),
+      episode: Number(info.episode || 0),
+      members: mitglieder,
+      empfangen: Date.now()
+    }
     : null;
   renderWatchpartyStand();
   if (watchpartyStandTimer) return;
@@ -4445,6 +4454,13 @@ function showWatchpartyStand(info) {
 function standSekunde(mitglied, seit) {
   const gelaufen = mitglied.paused ? 0 : seit + Number(mitglied.age || 0);
   return Math.max(0, Number(mitglied.position || 0) + gelaufen);
+}
+
+// "S1E4" statt einer Sekunde, wenn jemand ganz woanders ist.
+function folgeKurz(mitglied) {
+  const staffel = Number(mitglied.season || 0);
+  const folge = Number(mitglied.episode || 0);
+  return staffel ? `S${staffel}E${folge}` : `F${folge}`;
 }
 
 function renderWatchpartyStand() {
@@ -4465,13 +4481,18 @@ function renderWatchpartyStand() {
   watchpartyStand.replaceChildren(...daten.members.map((mitglied) => {
     const sekunde = standSekunde(mitglied, seit);
     const abstand = Math.abs(sekunde - bezug);
+    // Steht jemand bei einer anderen Folge, sagt der Sekundenvergleich nichts.
+    const andereFolge = Boolean(daten.episode) && Boolean(mitglied.episode)
+      && (mitglied.episode !== daten.episode || (mitglied.season || 0) !== (daten.season || 0));
+
     const chip = document.createElement("span");
     chip.className = "stand-chip";
     chip.classList.toggle("is-paused", Boolean(mitglied.paused));
     chip.classList.toggle("is-me", Boolean(mitglied.me));
     chip.classList.toggle("is-host", Boolean(mitglied.host));
+    chip.classList.toggle("is-elsewhere", andereFolge);
     // Mehr als zwei Sekunden auseinander faellt beim gemeinsamen Schauen auf.
-    chip.classList.toggle("is-drift", !mitglied.paused && abstand > 2);
+    chip.classList.toggle("is-drift", !andereFolge && !mitglied.paused && abstand > 2);
 
     const punkt = document.createElement("span");
     punkt.className = "stand-dot";
@@ -4480,12 +4501,14 @@ function renderWatchpartyStand() {
     name.textContent = mitglied.me ? "Du" : mitglied.name;
     const uhr = document.createElement("span");
     uhr.className = "stand-uhr";
-    uhr.textContent = formatClock(sekunde);
+    uhr.textContent = andereFolge ? folgeKurz(mitglied) : formatClock(sekunde);
 
     chip.append(punkt, name, uhr);
     chip.title = `${mitglied.host ? "Host — " : ""}${mitglied.name}: `
-      + `${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`
-      + (!mitglied.paused && abstand > 2 ? ` — ${Math.round(abstand)} s Unterschied` : "");
+      + (andereFolge
+        ? `bei Staffel ${mitglied.season || "?"} Folge ${mitglied.episode} — ${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`
+        : `${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`
+          + (!mitglied.paused && abstand > 2 ? ` — ${Math.round(abstand)} s Unterschied` : ""));
     return chip;
   }));
 }

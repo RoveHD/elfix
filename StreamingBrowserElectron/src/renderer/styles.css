@@ -585,6 +585,17 @@
   background: var(--warning);
 }
 
+/* Wer bei einer ganz anderen Folge steht - da sagt ein Sekundenvergleich nichts. */
+.stand-chip.is-elsewhere {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.stand-chip.is-elsewhere .stand-dot {
+  background: transparent;
+  border: 1px solid currentColor;
+}
+
 .watchparty-leave {
   border-radius: 999px !important;
   font-size: 12px;

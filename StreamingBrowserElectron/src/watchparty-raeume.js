@@ -220,6 +220,10 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.steuernMitAdresse(key, action, position, url);
   }
 
+  meldeStand(key, stand, room) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.meldeStand(key, stand);
+  }
+
   abgleichen(key, room) {
     for (const raum of this.raeumeMitTitel(key, room)) raum.abgleichen(key);
   }

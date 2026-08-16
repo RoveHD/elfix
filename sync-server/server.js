@@ -30,6 +30,8 @@ const MAX_NACHRICHT = 256 * 1024;
 const STATE_DIR = process.env.STATE_DIRECTORY || __dirname;
 const STATE_FILE = path.join(STATE_DIR, "raeume.json");
 const SPEICHER_VERZOEGERUNG_MS = 1000;
+// Hoechstens so oft geht der Stand aller Geraete an die Runde.
+const STAND_TAKT_MS = 1000;
 
 // raumcode -> { titel: Map<key, eintrag>, at: number }
 const raeume = new Map();
@@ -87,6 +89,8 @@ function zustandSpeichernSpaeter() {
           sync: undefined,
           syncTimer: undefined,
           stand: undefined,
+          standTimer: undefined,
+          standGesendet: undefined,
           members: [...eintrag.members.entries()]
         }))
       };
@@ -205,7 +209,7 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here"]
     }));
     return;
   }
@@ -368,6 +372,8 @@ function standSetzen(eintrag, geraetId, name, werte) {
     name: name || vorher.name || eintrag.members.get(geraetId) || "Gerät",
     position: werte.position == null ? (vorher.position || 0) : werte.position,
     paused: werte.paused == null ? Boolean(vorher.paused) : Boolean(werte.paused),
+    season: werte.season == null ? (vorher.season || 0) : werte.season,
+    episode: werte.episode == null ? (vorher.episode || 0) : werte.episode,
     at: Date.now()
   });
 }
@@ -388,18 +394,52 @@ function standNachAussen(eintrag) {
       name: wert.name,
       position: wert.position,
       paused: wert.paused,
+      season: wert.season || 0,
+      episode: wert.episode || 0,
       at: wert.at,
       host: geraetId === eintrag.hostId
     }));
 }
 
 function standSenden(raumcode, eintrag) {
+  clearTimeout(eintrag.standTimer);
+  eintrag.standTimer = null;
+  eintrag.standGesendet = Date.now();
   const daten = JSON.stringify({ type: "watchstate", key: eintrag.key, members: standNachAussen(eintrag) });
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!eintrag.members.has(client.geraetId)) continue;
     client.send(daten);
   }
+}
+
+// Jedes Geraet meldet im Sekundentakt - daraus muessen nicht ebenso viele
+// Rundsendungen werden. Einmal pro Sekunde reicht, der Rest wird zusammengefasst.
+function standSendenGedrosselt(raumcode, eintrag) {
+  const seit = Date.now() - (eintrag.standGesendet || 0);
+  if (seit >= STAND_TAKT_MS) {
+    standSenden(raumcode, eintrag);
+    return;
+  }
+  if (eintrag.standTimer) return;
+  eintrag.standTimer = setTimeout(() => {
+    eintrag.standTimer = null;
+    standSenden(raumcode, eintrag);
+  }, STAND_TAKT_MS - seit);
+  eintrag.standTimer.unref?.();
+}
+
+// Aus der Adresse lesen, welche Folge das ist. Ein Folgenwechsel meldet nur die
+// neue Adresse - ohne das blieb in der Runde "Staffel 1 Folge 1" stehen,
+// obwohl laengst Folge 2 lief.
+function folgeAusAdresse(url) {
+  const pfad = String(url || "");
+  const staffel = pfad.match(/\/(?:staffel|season)-(\d+)/i);
+  const folge = pfad.match(/\/(?:episode|folge)-(\d+)/i);
+  return {
+    season: staffel ? Number(staffel[1]) || 0 : 0,
+    episode: folge ? Number(folge[1]) || 0 : 0
+  };
 }
 
 // Alle zusammen anlaufen lassen. Wer sich nicht gemeldet hat, bekommt den
@@ -530,6 +570,7 @@ wss.on("connection", (socket) => {
       const ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === eintrag.hostId;
       const eigen = zahl(nachricht.position, 100000);
+      let neueFolge = false;
 
       // Neue Folge: der alte Stand gilt nicht mehr. Bliebe er stehen, zoege
       // der naechste Abgleich alle auf eine Stelle aus der Folge davor.
@@ -538,7 +579,17 @@ wss.on("connection", (socket) => {
         // ist keine neue Folge - sonst faellt der Stand bei jedem Nachzuegler
         // wieder auf null und die Runde faengt dreimal von vorn an.
         const schonDort = Boolean(ziel) && eintrag.live?.url === ziel;
-        if (ziel) eintrag.url = ziel;
+        if (ziel) {
+          eintrag.url = ziel;
+          // Auch die Folgenangabe: sie steckt in der Adresse, wurde hier aber
+          // nie ausgelesen - nur der Fortschritt hat sie je nachgezogen.
+          const folge = folgeAusAdresse(ziel);
+          if (folge.episode && folge.episode !== eintrag.episode) {
+            eintrag.season = folge.season || eintrag.season;
+            eintrag.episode = folge.episode;
+            neueFolge = true;
+          }
+        }
         if (!schonDort) {
           eintrag.live = { action: "pause", position: 0, url: ziel || eintrag.url, at: Date.now() };
           eintrag.sync = null;
@@ -591,7 +642,10 @@ wss.on("connection", (socket) => {
       else if (aktion === "navigate") standFuerAlle(eintrag, 0, true);
       standSenden(socket.raum, eintrag);
 
-      zustandSpeichernSpaeter();
+      // Steht die Runde jetzt auf einer anderen Folge, muessen es alle sehen -
+      // sonst zeigt die Karte weiter die Folge von vorhin.
+      if (neueFolge) zustandSenden(socket.raum);
+      else zustandSpeichernSpaeter();
       return;
     }
 
@@ -622,6 +676,21 @@ wss.on("connection", (socket) => {
       clearTimeout(eintrag.syncTimer);
       eintrag.syncTimer = setTimeout(() => syncStarten(socket.raum, eintrag), 4000);
       eintrag.syncTimer.unref?.();
+      return;
+    }
+
+    // Ein Geraet sagt, wo es steht. Kommt im Sekundentakt und traegt die
+    // Leiste - unabhaengig davon, ob gerade ein Fortschritt gebucht wurde.
+    if (nachricht.type === "here") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      standSetzen(eintrag, socket.geraetId, socket.name, {
+        position: zahl(nachricht.position, 100000),
+        paused: Boolean(nachricht.paused),
+        season: zahl(nachricht.season, 999),
+        episode: zahl(nachricht.episode, 9999)
+      });
+      standSendenGedrosselt(socket.raum, eintrag);
       return;
     }
 

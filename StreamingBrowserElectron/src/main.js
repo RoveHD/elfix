@@ -86,6 +86,9 @@ const watchpartyLiveAus = new Set();
 const watchpartyAngeklinkt = new Set();
 // Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
 const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
+// So oft meldet dieses Geraet, wo es steht. Haeufiger waere Zappeln, seltener
+// sieht man in der Leiste eine Sekunde, die es nicht mehr gibt.
+const WATCHPARTY_STAND_INTERVALL_MS = 2000;
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
@@ -183,6 +186,8 @@ app.whenReady().then(async () => {
   syncWatchparty();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
+  // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
+  setInterval(() => { meldeWatchpartyStand().catch(() => {}); }, WATCHPARTY_STAND_INTERVALL_MS).unref?.();
   // Werbefilter: fehlende oder alte Listen nachladen, ohne den Start zu bremsen.
   setTimeout(() => ensureFilterLists().catch((fehler) => {
     console.log(`[ELFIX ADBLOCK] Listen konnten nicht geholt werden: ${fehler?.message || fehler}`);
@@ -5434,21 +5439,62 @@ function sendWatchpartyWatchstate(nachricht) {
   if (!raum || (nachricht.room && nachricht.room !== raum)) return;
   if (watchpartySerieForUrl(adresse) !== nachricht.key) return;
 
+  const hier = episodeIdentity(adresse);
   mainWindow.webContents.send("watchparty:watchstate", {
     key: nachricht.key,
     room: nachricht.room || raum,
+    season: hier?.season || 0,
+    episode: hier?.episode || 0,
     members: (nachricht.members || []).map((mitglied) => ({
       id: String(mitglied.id || ""),
       name: String(mitglied.name || "Gerät"),
       position: sanitizePositiveNumber(mitglied.position),
       paused: Boolean(mitglied.paused),
       host: Boolean(mitglied.host),
+      season: sanitizePositiveNumber(mitglied.season),
+      episode: sanitizePositiveNumber(mitglied.episode),
       // Wie alt die Meldung ist - laufende Geraete zaehlen in der Anzeige
       // zwischen zwei Meldungen selbst weiter.
       age: Math.max(0, Date.now() - (Number(mitglied.at) || Date.now())) / 1000,
       me: String(mitglied.id || "") === watchparty.geraetId
     }))
   });
+}
+
+// Wo stehe ich gerade? Das geht regelmaessig und unabhaengig von der
+// Fortschritts-Buchhaltung ans Relay. Die Leiste hing vorher am gebuchten
+// Fortschritt, und der setzt nach einem Folgenwechsel aus: dann stand bei
+// allen dieselbe Sekunde und lief nur noch oertlich weiter, obwohl hier
+// laengst pausiert war.
+async function meldeWatchpartyStand() {
+  if (!watchparty.aktiv || !watchparty.verbunden) return;
+  const view = activeView;
+  if (!isLiveView(view)) return;
+  const adresse = view.webContents.getURL();
+  const key = watchpartyLiveKeyForUrl(adresse);
+  const raum = watchpartyRaumForUrl(adresse);
+  if (!key || !raum) return;
+
+  const proben = await executeJavaScriptInMediaFrames(view, `(() => {
+    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
+    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return null;
+    return { position: Number(media.currentTime) || 0, paused: Boolean(media.paused) };
+  })()`).catch(() => []);
+
+  const stand = (proben || [])
+    .map((probe) => (probe && typeof probe === "object" && "value" in probe ? probe.value : probe))
+    .find((probe) => probe && typeof probe === "object" && Number.isFinite(Number(probe.position)));
+  if (!stand) return;
+
+  const identity = episodeIdentity(adresse);
+  watchparty.meldeStand(key, {
+    position: Number(stand.position) || 0,
+    paused: Boolean(stand.paused),
+    url: adresse,
+    season: identity?.season || 0,
+    episode: identity?.episode || 0
+  }, raum);
 }
 
 // Ein offener Sprungwunsch je Anbieter. Er wird eingeloest, sobald tatsaechlich

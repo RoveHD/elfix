@@ -3,6 +3,28 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.16.1 — 16. August 2026
+
+Die Zeit in der Leiste stimmt jetzt:
+- Die Leiste hing an der Fortschritts-Buchhaltung - alle fuenf Sekunden, und
+  nur wenn der aktive Eintrag zur Runde gehoert. Nach einem Folgenwechsel
+  greift die nicht mehr: dann stand bei allen Geraeten dieselbe Sekunde aus
+  der letzten Rundsendung und lief nur noch oertlich weiter. Dass hier
+  pausiert war, wusste das Relay gar nicht
+- Jedes Geraet meldet jetzt alle zwei Sekunden unmittelbar aus dem Player, wo
+  es steht und ob es angehalten ist. Das Relay verteilt es an die Runde,
+  hoechstens einmal pro Sekunde gebuendelt
+- Wer bei einer anderen Folge steht, zeigt "S1E4" statt einer Sekunde. Ein
+  Sekundenvergleich ueber Folgen hinweg sagt nichts, und vorher galt so
+  jemand faelschlich als jemand, der hinterherhaengt
+
+Nach einem Folgenwechsel blieb die Watchparty auf der alten Folge:
+- Beim Wechsel wurde im Raum nur die Adresse gesetzt. Staffel und Folge zog
+  allein der Fortschritt nach - und der kam nach dem Wechsel nicht mehr an.
+  In der Karte stand deshalb weiter "Folge 1", obwohl laengst Folge 2 lief
+- Das Relay liest die Folge jetzt aus der Adresse und meldet den neuen Stand
+  sofort an alle
+
 ## 1.16.0 — 16. August 2026
 
 Eine Leiste zeigt, wo die anderen stehen:
