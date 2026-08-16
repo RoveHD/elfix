@@ -438,6 +438,30 @@
   margin-left: 6px;
   padding: 4px 10px;
   white-space: nowrap;
+  /* Zugleich der Schalter zwischen privat und den einzelnen Runden. */
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.watchparty-live-banner:hover {
+  border-color: color-mix(in srgb, var(--accent, #4cc9f0) 80%, transparent);
+}
+
+.watchparty-live-banner .banner-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* Privat: derselbe Platz, aber zurueckhaltend und ohne Live-Punkt - so ist
+   auf einen Blick klar, dass dieser Stand niemandem gemeldet wird. */
+.watchparty-live-banner.is-private {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.watchparty-live-banner.is-private .live-dot {
+  display: none;
 }
 
 /* Laderueckmeldung: an die Stelle des Symbols tritt ein laufender Ring.
@@ -507,6 +531,14 @@
 }
 
 .watchparty-live-banner.is-hidden {
+  display: none;
+}
+
+/* Knoepfe in der Kopfzeile ausblenden. Ohne diese Regel blieben "Sync" und
+   "Live verlassen" immer stehen: der Code setzte zwar "is-hidden", nur gab es
+   dafuer kein Stylesheet - und so standen sie auch ausserhalb jeder
+   Watchparty in der Leiste. */
+.chrome-btn.is-hidden {
   display: none;
 }
 

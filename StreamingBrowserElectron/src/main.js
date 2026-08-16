@@ -95,6 +95,9 @@ const SEASON_INFO_CACHE_MS = 6 * 60 * 60 * 1000;
 const WATCHPARTY_BESTAETIGUNG_MS = 4000;
 // Jeder Raum ist eine eigene Verbindung - irgendwo muss Schluss sein.
 const WATCHPARTY_MAX_RAEUME = 8;
+// Kennzeichen fuer "kein Raum, nur fuer mich". Eine leere Antwort aus dem
+// Auswahlmenue heisst dagegen abgebrochen.
+const PRIVAT = "__privat";
 // Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
 const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -740,6 +743,38 @@ ipcMain.handle("watchparty:choose-room", async (_event, rooms, punkt) => {
   const erlaubt = Array.isArray(rooms) ? rooms.map((wert) => String(wert || "")).filter(Boolean) : [];
   if (erlaubt.length < 2) return erlaubt[0] || "";
   return frageWatchpartyRaum(punkt, erlaubt);
+});
+
+// Umschalten, fuer wen das gerade Geschaute zaehlt: fuer dich allein oder fuer
+// eine bestimmte Runde. Das entscheidet, wohin der Fortschritt laeuft und wer
+// mitsteuern darf.
+ipcMain.handle("watchparty:switch-context", async (_event, punkt) => {
+  const adresse = activeView?.webContents?.getURL() || "";
+  const moeglich = watchpartyRaeumeForUrl(adresse);
+  if (!moeglich.length) return { switched: false };
+
+  const aktuell = watchpartyRaumForUrl(adresse) || PRIVAT;
+  const wahl = await frageWatchpartyRaum(punkt, moeglich.map((item) => item.room), {
+    withPrivate: true,
+    aktuell,
+    titel: "Wofür zählt das hier?"
+  });
+  if (!wahl) return { switched: false };
+
+  const key = moeglich[0].key;
+  if (wahl === PRIVAT) {
+    // Zurueck auf den eigenen Stand: die Live-Steuerung der Runde endet hier,
+    // die Mitgliedschaft bleibt bestehen.
+    const raum = watchpartyRaumForUrl(adresse);
+    if (raum) setWatchpartyLive(key, false, raum);
+    setzePrivatenKontext(key, adresse);
+    pushWatchpartyLiveState();
+    return { switched: true, room: "" };
+  }
+
+  uebernehmeWatchpartyRaum(key, wahl);
+  pushWatchpartyLiveState();
+  return { switched: true, room: wahl };
 });
 
 ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
@@ -4051,7 +4086,7 @@ function watchpartyKey(favorite) {
 // noch eine aeltere Fassung faehrt, die "share" gar nicht kennt.
 // Fragt ueber ein Fenstermenue, in welchen Raum der Titel soll. Kommt keine
 // Auswahl, bleibt alles, wie es war.
-function frageWatchpartyRaum(punkt, nurDiese = null) {
+function frageWatchpartyRaum(punkt, nurDiese = null, optionen = {}) {
   const alle = watchpartyRaumUebersicht();
   const uebersicht = Array.isArray(nurDiese) && nurDiese.length
     ? alle.filter((raum) => nurDiese.includes(raum.room))
@@ -4059,9 +4094,20 @@ function frageWatchpartyRaum(punkt, nurDiese = null) {
   if (!mainWindow || mainWindow.isDestroyed() || !uebersicht.length) return Promise.resolve("");
   return new Promise((fertig) => {
     let gewaehlt = "";
+    // "Privat" ist eine eigene Wahl und braucht ein Kennzeichen: eine leere
+    // Antwort heisst abgebrochen.
+    const privatEintrag = optionen.withPrivate
+      ? [{
+        label: optionen.aktuell === PRIVAT ? "✓ Privat (nur fuer dich)" : "Privat (nur fuer dich)",
+        click: () => {
+          gewaehlt = PRIVAT;
+        }
+      }, { type: "separator" }]
+      : [];
     const menue = Menu.buildFromTemplate([
-      { label: "In welchen Raum?", enabled: false },
+      { label: optionen.titel || "In welchen Raum?", enabled: false },
       { type: "separator" },
+      ...privatEintrag,
       ...uebersicht.map((raum) => ({
         label: raum.connected && !raum.error
           ? `${raum.room}   (${raum.items === 1 ? "1 Titel" : `${raum.items} Titel`}, ${raum.peers} verbunden)`
@@ -4579,6 +4625,22 @@ function istGleicheSerie(links, rechts) {
   return Boolean(links) && Boolean(rechts) && taste.urlSchluessel(links) === taste.urlSchluessel(rechts);
 }
 
+// Zurueck auf den eigenen Stand: der Eintrag ohne Raum wird der aktive. Gibt
+// es ihn noch nicht, wird keiner erfunden - beim Weiterschauen entsteht er
+// von selbst, und zwar ohne Raum, also privat.
+function setzePrivatenKontext(key, adresse) {
+  const privat = lokalerWatchpartyEintrag(key, "");
+  if (privat) {
+    activeFavoriteId = privat.id;
+  } else {
+    const passend = favorites.find((favorite) => (
+      !favorite.watchpartyRoom && istGleicheSerie(favorite.url, adresse)
+    ));
+    activeFavoriteId = passend ? passend.id : null;
+  }
+  sendActiveState();
+}
+
 // In welcher Runde laeuft das gerade Geoeffnete? Der aktive Eintrag sagt es -
 // er wurde beim Oeffnen aus der Watchparty gesetzt. Ohne Raum ist es der
 // eigene, private Stand.
@@ -4595,14 +4657,15 @@ function watchpartyRaeumeForUrl(url) {
     .map((eintrag) => ({ room: eintrag.room || "", key: eintrag.key, title: eintrag.title || "" }));
 }
 
-// Die Runde, die fuer die offene Seite gilt: die geoeffnete, sonst die
-// einzige. Bei mehreren ohne Vorgabe bleibt es offen - dann wird gefragt.
+// Die Runde, die fuer die offene Seite gilt - und zwar nur die, die auch
+// wirklich geoeffnet wurde. Ueber Suche oder Adresszeile hereingekommen zaehlt
+// nichts automatisch als Watchparty: dort setzt jeder Einstieg den Eintrag
+// zurueck, also gilt privat, bis man oben umschaltet oder live beitritt.
 function watchpartyRaumForUrl(url) {
   const moeglich = watchpartyRaeumeForUrl(url);
   if (!moeglich.length) return "";
   const aktiv = aktiverWatchpartyRaum();
-  if (aktiv && moeglich.some((eintrag) => eintrag.room === aktiv)) return aktiv;
-  return moeglich.length === 1 ? moeglich[0].room : "";
+  return aktiv && moeglich.some((eintrag) => eintrag.room === aktiv) ? aktiv : "";
 }
 
 // Fuehrt die Watchparty gerade genau diese Folge? Dann ist ein Ruecksprung
@@ -4667,11 +4730,15 @@ function pushWatchpartyLiveState(url = "") {
   const seiteOffen = Boolean(activeView) && overlayReasons.size === 0;
 
   sendWatchpartyLive({
-    active: seiteOffen && Boolean(serieKey),
+    // Sichtbar, sobald dieser Titel ueberhaupt in einer Runde laeuft - dann
+    // gibt es etwas zu unterscheiden und die Anzeige sagt, was gerade gilt.
+    active: seiteOffen && moeglich.length > 0,
+    // Zaehlt das Geschaute gerade fuer eine Runde oder nur fuer dich?
+    inParty: seiteOffen && Boolean(raum),
     live: seiteOffen && Boolean(key),
     connected: watchparty.verbunden,
     enabled: watchparty.aktiv,
-    key: serieKey || key,
+    key: serieKey || key || moeglich[0]?.key || "",
     room: raum,
     // Steht derselbe Anime in mehreren Runden, muss beim Live-Beitreten
     // gefragt werden, welche gemeint ist.

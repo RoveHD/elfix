@@ -389,6 +389,7 @@ function bindEvents() {
   api.onWatchpartyState?.(renderWatchpartyStatus);
   api.onWatchpartyLive?.(showWatchpartyLive);
   watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
+  watchpartyLiveBanner?.addEventListener("click", switchWatchpartyContext);
   document.querySelector("#watchpartyResync")?.addEventListener("click", resyncWatchparty);
   api.onWatchpartyItems?.((items) => {
     watchpartyItems = Array.isArray(items) ? items : [];
@@ -3772,6 +3773,8 @@ function watchpartyRaumHinzufuegen() {
 let watchpartyLiveKey = "";
 let watchpartyLiveOn = false;
 let watchpartyLiveRoom = "";
+// Zaehlt das Geschaute gerade fuer eine Runde oder nur fuer dich?
+let watchpartyInParty = false;
 
 async function toggleWatchpartyLive() {
   if (!watchpartyLiveKey) return;
@@ -3793,6 +3796,19 @@ async function toggleWatchpartyLive() {
   } else {
     showToast("Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
   }
+}
+
+// Umschalten, fuer wen das gerade Geschaute zaehlt: privat oder eine bestimmte
+// Runde. Die Anzeige oben ist zugleich der Schalter.
+async function switchWatchpartyContext() {
+  if (watchpartyLiveBanner?.classList.contains("is-hidden")) return;
+  const anker = watchpartyLiveBanner?.getBoundingClientRect();
+  const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
+  const ergebnis = await api.switchWatchpartyContext?.(punkt).catch(() => null);
+  if (!ergebnis?.switched) return;
+  showToast(ergebnis.room
+    ? `Zählt jetzt für „${ergebnis.room}“ — Fortschritt läuft dorthin`
+    : "Zählt jetzt nur für dich — der Stand bleibt privat");
 }
 
 // Auswahl, welcher Runde man live folgt. Wie beim Teilen ein Fenstermenue:
@@ -3830,12 +3846,33 @@ function showWatchpartyLive(info) {
 
   const erkannt = Boolean(info?.active);
   const verbunden = info?.connected !== false;
+  // Zaehlt das Geschaute fuer eine Runde? Aeltere Meldungen kennen das Feld
+  // nicht - dann entscheidet der Raum.
+  const inParty = "inParty" in (info || {}) ? Boolean(info.inParty) : Boolean(watchpartyLiveRoom);
+  watchpartyInParty = inParty;
 
+  // Die Anzeige steht, sobald dieser Titel in einer Runde laeuft: sie sagt,
+  // ob gerade privat oder fuer eine Watchparty geschaut wird, und laesst sich
+  // anklicken, um genau das umzustellen.
   watchpartyLiveBanner.classList.toggle("is-hidden", !erkannt);
-  watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
+  watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt || !inParty);
   // Abgleichen ergibt nur Sinn, wenn man live dabei und verbunden ist.
-  syncKnopf?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn || !verbunden);
+  syncKnopf?.classList.toggle("is-hidden", !erkannt || !inParty || !watchpartyLiveOn || !verbunden);
   if (!erkannt) return;
+
+  watchpartyLiveBanner.classList.toggle("is-private", !inParty);
+  if (!inParty) {
+    // Privat: kein Live-Zustand, keine Verbindungsfarbe - nur der Hinweis,
+    // dass dieser Stand niemandem sonst gemeldet wird.
+    watchpartyLiveBanner.classList.remove("is-offline", "is-paused");
+    if (watchpartyLiveText) watchpartyLiveText.textContent = "Privat";
+    watchpartyLiveBanner.title = "Zählt nur für dich — klicken, um in eine Watchparty zu wechseln";
+    return;
+  }
+
+  watchpartyLiveBanner.title = watchpartyLiveRoom
+    ? `Watchparty „${watchpartyLiveRoom}“ — klicken, um zu wechseln`
+    : "Watchparty — klicken, um zu wechseln";
 
   // Ohne Verbindung laesst sich weder steuern noch abgleichen.
   watchpartyLiveLeave.disabled = !verbunden;
