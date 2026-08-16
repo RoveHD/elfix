@@ -67,6 +67,7 @@ function zustandLaden() {
       titel.set(eintrag.key, {
         ...eintrag,
         members: new Map(Array.isArray(eintrag.members) ? eintrag.members : []),
+        reihenfolge: new Map(Array.isArray(eintrag.reihenfolge) ? eintrag.reihenfolge : []),
         // Nie aus der Datei uebernehmen: als einfaches Objekt waere es keine
         // Map und der erste Eintrag wuerde den Dienst abraeumen.
         stand: new Map()
@@ -95,7 +96,8 @@ function zustandSpeichernSpaeter() {
           standTimer: undefined,
           standGesendet: undefined,
           pauseAusgerichtet: undefined,
-          members: [...eintrag.members.entries()]
+          members: [...eintrag.members.entries()],
+          reihenfolge: [...(eintrag.reihenfolge || new Map()).entries()]
         }))
       };
     }
@@ -304,12 +306,41 @@ function hostStandJetzt(eintrag) {
 // Es muss immer jemanden geben, an dem sich die anderen ausrichten koennen.
 // Host ist, wer zuerst da war - faellt er weg, uebernimmt der naechste
 // verbundene Teilnehmer, sonst haette niemand mehr eine Referenz.
+// Die Beitritts-Reihenfolge wird hier gefuehrt, nicht beim Client: Uhren der
+// Geraete taugen dafuer nicht, und die Reihenfolge der Socket-Verbindungen sagt
+// nur, wer zuletzt verbunden hat - nach einem Reconnect steht der Erste dann
+// ploetzlich hinten.
+function reihenfolgeSetzen(eintrag, geraetId) {
+  if (!geraetId) return;
+  if (!eintrag.reihenfolge) eintrag.reihenfolge = new Map();
+  if (eintrag.reihenfolge.has(geraetId)) return;
+  // Nach einem Neustart des Dienstes steht die Reihenfolge in der Datei, der
+  // Zaehler womoeglich nicht. Dann hinter dem hoechsten Platz weitermachen -
+  // sonst bekaemen zwei Geraete denselben.
+  if (!Number.isFinite(eintrag.naechsteReihe)) {
+    eintrag.naechsteReihe = eintrag.reihenfolge.size
+      ? Math.max(...eintrag.reihenfolge.values()) + 1
+      : 0;
+  }
+  eintrag.reihenfolge.set(geraetId, eintrag.naechsteReihe);
+  eintrag.naechsteReihe += 1;
+}
+
+function reihenfolgeVon(eintrag, geraetId) {
+  const wert = eintrag.reihenfolge?.get(geraetId);
+  return Number.isFinite(wert) ? wert : Number.MAX_SAFE_INTEGER;
+}
+
 function hostSicherstellen(raumcode, eintrag) {
   const verbundene = [...wss.clients].filter((client) => (
     client.raum === raumcode && client.readyState === client.OPEN && eintrag.members.has(client.geraetId)
   ));
+  // Solange der Host verbunden ist, bleibt er Host - auch wenn andere neu
+  // verbinden oder die Verbindung kurz weg war.
   if (eintrag.hostId && verbundene.some((client) => client.geraetId === eintrag.hostId)) return false;
 
+  // Faellt er weg, uebernimmt der, der am fruehesten beigetreten ist.
+  verbundene.sort((links, rechts) => reihenfolgeVon(eintrag, links.geraetId) - reihenfolgeVon(eintrag, rechts.geraetId));
   const neuer = verbundene[0];
   if (!neuer) {
     // Niemand da: der alte Name darf nicht stehen bleiben, sonst zeigt die
@@ -357,8 +388,16 @@ function kennungUebernehmen(raum, geraetId, name) {
   for (const eintrag of raum.titel.values()) {
     for (const [alteId, alterName] of [...eintrag.members]) {
       if (alteId === geraetId || alterName !== name) continue;
+      const platz = eintrag.reihenfolge?.get(alteId);
       eintrag.members.delete(alteId);
       eintrag.members.set(geraetId, name);
+      // Dasselbe Geraet mit neuer Kennung behaelt seinen Platz - sonst rutscht
+      // es nach einer Neuinstallation ans Ende und verliert den Host.
+      if (eintrag.reihenfolge) {
+        eintrag.reihenfolge.delete(alteId);
+        if (Number.isFinite(platz)) eintrag.reihenfolge.set(geraetId, platz);
+      }
+      if (eintrag.hostId === alteId) eintrag.hostId = geraetId;
       geaendert = true;
     }
     if (eintrag.addedBy === name && eintrag.addedById !== geraetId) {
@@ -535,6 +574,7 @@ wss.on("connection", (socket) => {
       };
       if (bekannt) Object.assign(gespeichert, eintrag);
       gespeichert.members.set(socket.geraetId, socket.name);
+      reihenfolgeSetzen(gespeichert, socket.geraetId);
       raum.titel.set(eintrag.key, gespeichert);
       zustandSenden(socket.raum);
       return;
@@ -545,10 +585,17 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (nachricht.type === "enter") {
         eintrag.members.set(socket.geraetId, socket.name);
+        reihenfolgeSetzen(eintrag, socket.geraetId);
         hostSicherstellen(socket.raum, eintrag);
       } else {
         eintrag.members.delete(socket.geraetId);
         eintrag.stand?.delete(socket.geraetId);
+        // Wer die Runde verlaesst, gibt seinen Platz in der Reihenfolge auf.
+        eintrag.reihenfolge?.delete(socket.geraetId);
+        if (eintrag.hostId === socket.geraetId) {
+          eintrag.hostId = "";
+          eintrag.hostName = "";
+        }
         // Wer aussteigt, kann nicht Host bleiben - sonst gleichen sich alle
         // weiter mit jemandem ab, der gar nicht mehr mitschaut.
         hostSicherstellen(socket.raum, eintrag);
@@ -566,6 +613,11 @@ wss.on("connection", (socket) => {
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
       eintrag.stand?.delete(wen);
+      eintrag.reihenfolge?.delete(wen);
+      if (eintrag.hostId === wen) {
+        eintrag.hostId = "";
+        eintrag.hostName = "";
+      }
       hostSicherstellen(socket.raum, eintrag);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
@@ -729,6 +781,22 @@ wss.on("connection", (socket) => {
       const geaendert = !vorher
         || Boolean(vorher.paused) !== pausiert
         || (folge && (vorher.episode || 0) !== folge);
+      // Die Folge des Hosts ist die Folge der Runde - und zwar sofort, sobald
+      // sein Player sie meldet. Vorher erfuhr der Raum davon nur ueber den
+      // gebuchten Fortschritt, und der rueckte erst nach Minuten nach: bis
+      // dahin behauptete die Runde, es laufe noch die Folge davor.
+      if (socket.geraetId === eintrag.hostId && folge && folge !== eintrag.episode) {
+        eintrag.episode = folge;
+        eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
+        const adresse = httpAdresse(nachricht.url);
+        if (adresse) {
+          eintrag.url = adresse;
+          eintrag.live = { action: "navigate", position: 0, url: adresse, at: Date.now() };
+        }
+        eintrag.pauseAusgerichtet = false;
+        zustandSenden(socket.raum);
+      }
+
       // Bei jeder Pause ruecken alle exakt auf die Stelle des Hosts. Sein
       // eigener Player meldet sie beim Anhalten sofort und auf die
       // Millisekunde - genauer als jede Hochrechnung aus der letzten

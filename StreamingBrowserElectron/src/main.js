@@ -31,6 +31,10 @@ const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
 const CACHE_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const MIN_WATCH_TIME_SECONDS = 2.5 * 60;
+// In einer Watchparty gilt eine kuerzere Schwelle: dort schauen mehrere
+// dieselbe Folge, und die Runde soll nicht minutenlang die vorige anzeigen.
+// Nach einer halben Minute steht fest, dass diese Folge wirklich laeuft.
+const WATCHPARTY_MIN_WATCH_SECONDS = 30;
 // Zurueck auf eine aeltere Folge: kurzes Reinschauen soll den Stand nicht
 // zerstoeren, eine Minute bewusstes Schauen aber schon.
 const BACKWARD_WATCH_TIME_SECONDS = 60;
@@ -1271,8 +1275,12 @@ function getProviderView(provider) {
     if (live) {
       const adresse = view.webContents.getURL();
       const key = watchpartyLiveKeyForUrl(adresse);
-      // Nur an die Runde, in der gerade geschaut wird.
-      if (key) watchparty.steuern(key, live[1], Number(live[2]), watchpartyRaumForUrl(adresse));
+      // Nur an die Runde, in der gerade geschaut wird - und immer mit der
+      // eigenen Adresse. Der Empfaenger prueft damit, ob es dieselbe Folge
+      // ist. Frueher ging der Befehl ohne Adresse hinaus und der Empfaenger
+      // musste den Raumzustand befragen; hinkte der einer Folge hinterher,
+      // verwarf er jede Pause als "andere Folge".
+      if (key) watchparty.steuernMitAdresse(key, live[1], Number(live[2]), adresse, watchpartyRaumForUrl(adresse));
       return;
     }
     const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
@@ -3119,7 +3127,7 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
     && watchedSeconds >= endeSchwelle(meta.duration);
   const startsAtFirstEpisode = isFirstEpisodeIdentity(identity);
   const isFilmProgress = requestedType === "film";
-  const qualifiesForPrimaryProgress = mediaEnded || isFilmProgress || startsAtFirstEpisode || watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+  const qualifiesForPrimaryProgress = mediaEnded || isFilmProgress || startsAtFirstEpisode || watchedSeconds >= uebernahmeSchwelle(existing);
 
   const shouldPromotePrimary = shouldPromoteMediaProgress(existing, url, {
     hasMediaProgress,
@@ -3320,6 +3328,12 @@ function isWholeMediaCompleted(entry, url, mediaEnded) {
   return identity.season === finalSeason && identity.episode === finalEpisode;
 }
 
+// Wie lange muss geschaut sein, bevor ein Eintrag auf eine neue Folge rueckt?
+// In einer Runde reicht eine halbe Minute, sonst bleiben es zweieinhalb.
+function uebernahmeSchwelle(existing) {
+  return existing?.watchpartyRoom ? WATCHPARTY_MIN_WATCH_SECONDS : MIN_WATCH_TIME_SECONDS;
+}
+
 function shouldPromoteMediaProgress(existing, url, progressState) {
   if (!progressState?.hasMediaProgress) return true;
   if (progressState.isFilmProgress) return true;
@@ -3328,15 +3342,15 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
   // vor oder zurueck. Sonst haengt der eigene Eintrag minutenlang hinter der
   // Gruppe her, obwohl alle dieselbe Folge schauen.
   if (watchpartyGibtFolgeVor(url)) return true;
-  if (!existing) return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+  if (!existing) return progressState.mediaEnded || progressState.watchedSeconds >= uebernahmeSchwelle(existing);
 
   const nextIdentity = episodeIdentity(url);
   const currentIdentity = episodeIdentity(existing.url);
   if (!nextIdentity || !currentIdentity || nextIdentity.key !== currentIdentity.key) {
     if (normalizeFavoriteUrl(existing.url) === normalizeFavoriteUrl(url)) {
-      return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+      return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= uebernahmeSchwelle(existing);
     }
-    return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+    return progressState.mediaEnded || progressState.watchedSeconds >= uebernahmeSchwelle(existing);
   }
 
   const comparison = compareEpisodeIdentity(nextIdentity, currentIdentity);
@@ -3352,7 +3366,7 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
     const nextIsInsideKnownSeries = finalIdentity
       && compareEpisodeIdentity(nextIdentity, finalIdentity) <= 0;
     if (existingIsPastKnownFinal && nextIsInsideKnownSeries) {
-      return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+      return progressState.mediaEnded || progressState.watchedSeconds >= uebernahmeSchwelle(existing);
     }
     // Ohne Watchparty braucht es bewusstes Schauen. Frueher wurde eine aeltere Folge
     // grundsaetzlich nie uebernommen: der Eintrag liess sich nur ueber Umwege
@@ -3360,9 +3374,9 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
     return progressState.mediaEnded || progressState.watchedSeconds >= BACKWARD_WATCH_TIME_SECONDS;
   }
   if (comparison === 0) {
-    return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+    return hasContinueProgressRecord(existing) || progressState.mediaEnded || progressState.watchedSeconds >= uebernahmeSchwelle(existing);
   }
-  return progressState.mediaEnded || progressState.watchedSeconds >= MIN_WATCH_TIME_SECONDS;
+  return progressState.mediaEnded || progressState.watchedSeconds >= uebernahmeSchwelle(existing);
 }
 
 // Auf der Episodenseite steht die Folgenliste nicht - dort ist nicht zu sehen,
@@ -5464,7 +5478,12 @@ async function applyWatchpartyControl(nachricht) {
   for (const [providerId, view] of providerViews) {
     if (!isLiveView(view)) continue;
     const offen = view.webContents.getURL();
-    if (!istGleicheFolge(nachricht.url || eintrag.progress?.url || eintrag.url, offen)) continue;
+    // Die Adresse des Absenders zaehlt. Danach kommt der laufende Stand der
+    // Runde - beides folgt der aktuellen Folge. Der gebuchte Fortschritt stand
+    // frueher an zweiter Stelle und war die aelteste Angabe von allen: nach
+    // einem Folgenwechsel zeigte er noch minutenlang auf die Folge davor, und
+    // damit fiel jede Pause durch diese Pruefung.
+    if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, offen)) continue;
     const provider = providers.find((item) => item.id === providerId);
     // Frueher stand hier nachricht.position: die eben berechnete Stelle samt
     // Laufzeit wurde verworfen, und alle lagen dauerhaft hinter dem Host.

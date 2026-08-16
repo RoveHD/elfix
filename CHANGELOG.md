@@ -3,6 +3,46 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.16.3 — 16. August 2026
+
+Nach einem Folgenwechsel riss die Watchparty ab. Dahinter stand kein toter
+Player, sondern ein Kreis, aus dem niemand herauskam:
+
+    Raum kennt neue Folge <- Fortschritt gemeldet <- Eintrag auf neuer Folge
+                          <- Raum kennt neue Folge
+
+Der eigene Eintrag rueckte erst nach zweieinhalb Minuten auf die neue Folge -
+es sei denn, die Runde fuehrte sie schon. Und die Runde erfuhr davon nur aus
+dem gemeldeten Fortschritt, der genau an diesem Eintrag haengt. Also blieb
+alles auf der Folge davor stehen:
+- Die Karte zeigte weiter "Staffel 1 Folge 1", obwohl laengst Folge 2 lief
+- Pause und Weiter kamen beim anderen nicht mehr an: die Befehle trugen keine
+  Adresse, also entschied der Raumzustand, ob es dieselbe Folge ist - und der
+  stand auf der alten. Jede Pause fiel durch diese Pruefung
+
+Behoben an den Ursachen, nicht an den Symptomen:
+- Jeder Steuerbefehl traegt jetzt die Adresse seines Absenders. Der Empfaenger
+  prueft damit gegen dessen Folge statt gegen den Raumzustand
+- Die Runde folgt der Folge des Hosts, sobald sein Player sie meldet. Das ging
+  ohnehin schon jede Sekunde hinaus - jetzt zieht der Raum daran nach, ohne
+  Umweg ueber den gebuchten Fortschritt
+- In einer Watchparty rueckt ein Eintrag nach 30 Sekunden auf die neue Folge
+  statt nach zweieinhalb Minuten. Ausserhalb einer Runde bleibt es bei den
+  bisherigen 2:30
+- Die alte Abhaengigkeit vom gebuchten Fortschritt ist aus dem Steuerpfad
+  entfernt, nicht ergaenzt
+
+Host-Wahl nach Beitritts-Reihenfolge:
+- Wer zuerst dabei war, ist Host, und solange er verbunden ist, aendert sich
+  daran nichts. Faellt er weg, uebernimmt der naechste nach Beitritt
+- Diese Reihenfolge fuehrt jetzt das Relay. Vorher entschied die Reihenfolge
+  der Socket-Verbindungen - also wer zuletzt verbunden hat. Nach einem
+  Reconnect stand der Erste damit ploetzlich hinten
+- Dasselbe Geraet mit neuer Kennung behaelt seinen Platz, statt ans Ende zu
+  rutschen
+- Kommt ein abgemeldeter Host zurueck, bleibt der neue Host Host. Sonst
+  spraenge die Rolle bei jeder wackligen Leitung hin und her
+
 ## 1.16.2 — 16. August 2026
 
 Zwei Uhren, ein Fehler - an zwei Stellen:
