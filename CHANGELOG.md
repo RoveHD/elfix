@@ -3,6 +3,65 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.16.2 — 16. August 2026
+
+Zwei Uhren, ein Fehler - an zwei Stellen:
+- Die App rechnete `Date.now()` des eigenen Rechners gegen den Zeitstempel des
+  Relays. Jede Abweichung zwischen beiden Uhren ging unbesehen ins Ergebnis:
+  in der Leiste stand "2:25", waehrend der Player bei 1:48 lief, und beim
+  Eintreffen einer Meldung sprang die Anzeige
+- Dieselbe Rechnung steckte im Abgleich - dort landete die Differenz direkt in
+  der Sprungstelle. Das war der Versatz nach vorn
+- Das Relay rechnet das Alter jetzt selbst und schickt eine fertige
+  Sekundenzahl; sein roher Zeitstempel geht gar nicht mehr hinaus. Beim
+  Abgleich faellt der Zuschlag ersatzlos weg: das Relay verschickt sofort,
+  nachdem es die Stelle bestimmt hat, uebrig bleibt reine Leitungszeit
+
+Pause und Weiter wirken jetzt jedes Mal:
+- Die Horcher hingen an den Video-Elementen, die beim Einhaengen zufaellig da
+  waren. Tauscht die Seite den Player aus - anderer Hoster, andere Qualitaet,
+  neu geladener Rahmen -, sassen sie an einem Element, das niemand mehr sieht.
+  Der Merker stand auf "schon eingehaengt", also wurde nie nachgebessert, und
+  das Geraet meldete Pause und Weiter ueberhaupt nicht mehr
+- Sie haengen jetzt am Dokument in der Abfangphase und gelten damit auch fuer
+  ein Video, das die Seite spaeter einsetzt
+- Ausserdem stehen sie schon beim Laden der Seite statt erst im
+  Fortschritts-Takt: das erste Play einer frischen Folge ging vorher unter
+
+Bei jeder Pause stehen alle auf der Stelle des Hosts:
+- Zuerst haelt jeder sofort an, egal wer gedrueckt hat - ohne das liefe man
+  waehrend der Rueckfrage weiter. Danach meldet der Player des Hosts seine
+  echte Stelle, und alle anderen ruecken exakt dorthin
+- Die Toleranz liegt dafuer bei 50 statt 300 Millisekunden. Beim blossen
+  Mitlaufen bleibt sie grob, sonst puffert der Hoster staendig neu
+- Ausgerichtet wird einmal je Pause, nicht bei jedem Herzschlag
+
+Der Host springt nie:
+- Er bekommt Pause und Weiter weiter mit, damit er waehrend eines Abgleichs
+  nicht davonlaeuft - aber keinen Sprungbefehl mehr. Alle richten sich nach
+  ihm, nicht umgekehrt
+- Damit das stimmt, nimmt das Relay als Ziel die Meldung aus seinem Player
+  statt einer Hochrechnung aus der letzten Steuerung
+
+Folgenwechsel lief in eine Pause:
+- Beim Wechsel stand der Raum auf "pausiert bei 0". Jedes Geraet, das die neue
+  Folge oeffnet, fragt den Stand ab - und bekam prompt eine Pause zurueck. Die
+  Folge startete, lud und blieb stehen
+- Eine neue Folge ist jetzt weder angehalten noch laufend: der Autostart
+  laeuft durch, und das erste echte Play gibt den Takt vor
+
+Ausserdem:
+- Bleibt ein Geraet stehen, waehrend die Runde laeuft, reicht das Relay ihm
+  gezielt ein Play nach - nur ihm, nur bei derselben Folge, hoechstens alle
+  drei Sekunden
+- Der Stand kommt nicht mehr aus einem Zeitgeber, der die ganze Seite
+  abfragt, sondern die Seite meldet von selbst: sofort bei Pause, Weiter,
+  Sprung und Puffern, waehrend der Wiedergabe nebenher im Sekundentakt. Der
+  Zeitgeber bleibt als Rueckfallebene fuer Seiten, auf denen sich das Skript
+  nicht einhaengen konnte
+- Im Relay gehen Zustandswechsel ungedrosselt hinaus; nur reine
+  Stellenmeldungen werden gebuendelt
+
 ## 1.16.1 — 16. August 2026
 
 Die Zeit in der Leiste stimmt jetzt:

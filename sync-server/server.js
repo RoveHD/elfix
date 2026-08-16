@@ -32,6 +32,9 @@ const STATE_FILE = path.join(STATE_DIR, "raeume.json");
 const SPEICHER_VERZOEGERUNG_MS = 1000;
 // Hoechstens so oft geht der Stand aller Geraete an die Runde.
 const STAND_TAKT_MS = 1000;
+// So lange wird gewartet, bevor einem stehengebliebenen Geraet noch einmal ein
+// Play nachgereicht wird - sonst haemmert es im Sekundentakt dagegen.
+const NACHREICHEN_MS = 3000;
 
 // raumcode -> { titel: Map<key, eintrag>, at: number }
 const raeume = new Map();
@@ -91,6 +94,7 @@ function zustandSpeichernSpaeter() {
           stand: undefined,
           standTimer: undefined,
           standGesendet: undefined,
+          pauseAusgerichtet: undefined,
           members: [...eintrag.members.entries()]
         }))
       };
@@ -260,6 +264,13 @@ function zustandSenden(raumcode) {
 // Abgleich lieferte deshalb gar keine Antwort mehr.
 function hostStandJetzt(eintrag) {
   const kandidaten = [];
+  // Am genauesten ist, was der Host selbst zuletzt aus seinem Player gemeldet
+  // hat: hoechstens eine Sekunde alt, mit echtem Pausenzustand. Weil der Host
+  // nie springt, muessen sich die anderen genau darauf ausrichten.
+  const eigen = eintrag.hostId && eintrag.stand?.get(eintrag.hostId);
+  if (eigen) {
+    kandidaten.push({ at: eigen.at, position: eigen.position, laeuft: !eigen.paused });
+  }
   if (eintrag.live && eintrag.hostId) {
     kandidaten.push({
       at: Number(eintrag.live.at) || 0,
@@ -369,6 +380,9 @@ function standSetzen(eintrag, geraetId, name, werte) {
   if (!eintrag.stand) eintrag.stand = new Map();
   const vorher = eintrag.stand.get(geraetId) || {};
   eintrag.stand.set(geraetId, {
+    // Wann diesem Geraet zuletzt etwas nachgereicht wurde, muss den Wechsel
+    // ueberleben - sonst greift die Bremse nie und es haemmert im Sekundentakt.
+    geholt: vorher.geholt || 0,
     name: name || vorher.name || eintrag.members.get(geraetId) || "Gerät",
     position: werte.position == null ? (vorher.position || 0) : werte.position,
     paused: werte.paused == null ? Boolean(vorher.paused) : Boolean(werte.paused),
@@ -396,7 +410,11 @@ function standNachAussen(eintrag) {
       paused: wert.paused,
       season: wert.season || 0,
       episode: wert.episode || 0,
-      at: wert.at,
+      // Wie alt die Meldung ist, in Sekunden - und zwar hier gerechnet, mit
+      // einer einzigen Uhr. Frueher ging der Zeitstempel des Relays hinaus und
+      // die App zog ihre eigene Uhr davon ab: jede Abweichung zwischen den
+      // beiden Rechnern landete unbesehen in der angezeigten Sekunde.
+      age: Math.max(0, (Date.now() - wert.at) / 1000),
       host: geraetId === eintrag.hostId
     }));
 }
@@ -450,6 +468,7 @@ function syncStarten(raumcode, eintrag) {
   clearTimeout(eintrag.syncTimer);
   eintrag.sync = null;
   eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: Date.now() };
+  eintrag.pauseAusgerichtet = false;
 
   const daten = JSON.stringify({ type: "syncstart", key: eintrag.key, position: ziel, at: Date.now() });
   for (const client of wss.clients) {
@@ -591,7 +610,12 @@ wss.on("connection", (socket) => {
           }
         }
         if (!schonDort) {
-          eintrag.live = { action: "pause", position: 0, url: ziel || eintrag.url, at: Date.now() };
+          // Nicht "pause": eine neue Folge ist noch gar nichts: weder angehalten
+          // noch laufend. Stand hier "pause", bekam jedes Geraet, das die neue
+          // Folge oeffnet und den Stand abfragt, prompt eine Pause zurueck - die
+          // Folge startete, lud und blieb dann stehen. Jetzt laeuft der Autostart
+          // durch, und das erste echte Play gibt den Takt vor.
+          eintrag.live = { action: "navigate", position: 0, url: ziel || eintrag.url, at: Date.now() };
           eintrag.sync = null;
           clearTimeout(eintrag.syncTimer);
         }
@@ -606,6 +630,9 @@ wss.on("connection", (socket) => {
       // Der zuletzt an alle geschickte Befehl ist der Stand der Runde - egal,
       // von wem er kam. Nur so passt das, woran sich ein Abgleich orientiert,
       // zu dem, was auf den Geraeten wirklich laeuft.
+      // Neue Pause, neue Ausrichtung - und beim Weiterlaufen faellt sie weg.
+      if (aktion !== "pause") eintrag.pauseAusgerichtet = false;
+
       if (aktion !== "navigate" && (istHost || aktion === "pause")) {
         eintrag.live = {
           action: aktion,
@@ -684,13 +711,82 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "here") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      const vorher = eintrag.stand?.get(socket.geraetId);
+      const pausiert = Boolean(nachricht.paused);
+      const folge = zahl(nachricht.episode, 9999);
       standSetzen(eintrag, socket.geraetId, socket.name, {
         position: zahl(nachricht.position, 100000),
-        paused: Boolean(nachricht.paused),
+        paused: pausiert,
         season: zahl(nachricht.season, 999),
-        episode: zahl(nachricht.episode, 9999)
+        episode: folge
       });
-      standSendenGedrosselt(socket.raum, eintrag);
+
+      // Anhalten, Weiterlaufen und ein Folgenwechsel muessen die anderen sofort
+      // sehen - darauf zu warten, bis das Buendel voll ist, waere genau die
+      // Verzoegerung, die eine Watchparty nicht haben darf. Nur eine reine
+      // Stellenmeldung wird zusammengefasst, und die tickt drueben ohnehin
+      // von selbst weiter.
+      const geaendert = !vorher
+        || Boolean(vorher.paused) !== pausiert
+        || (folge && (vorher.episode || 0) !== folge);
+      // Bei jeder Pause ruecken alle exakt auf die Stelle des Hosts. Sein
+      // eigener Player meldet sie beim Anhalten sofort und auf die
+      // Millisekunde - genauer als jede Hochrechnung aus der letzten
+      // Steuerung. Erst haelt jeder an, damit nichts wegdriftet, dann kommt
+      // die genaue Stelle hinterher. Einmal je Pause, nicht bei jedem
+      // Herzschlag.
+      if (socket.geraetId === eintrag.hostId && pausiert
+        && eintrag.live?.action === "pause" && !eintrag.pauseAusgerichtet) {
+        eintrag.pauseAusgerichtet = true;
+        const genau = zahl(nachricht.position, 100000);
+        eintrag.live.position = genau;
+        eintrag.live.at = Date.now();
+        standFuerAlle(eintrag, genau, true);
+        const daten = JSON.stringify({
+          type: "control",
+          key: eintrag.key,
+          action: "seek",
+          position: genau,
+          url: eintrag.live?.url || eintrag.url,
+          from: eintrag.hostName || "Host",
+          host: true,
+          resync: true,
+          at: Date.now()
+        });
+        for (const client of wss.clients) {
+          if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
+          if (!eintrag.members.has(client.geraetId)) continue;
+          client.send(daten);
+        }
+      }
+
+      // Die Runde laeuft, dieses Geraet steht: dann ist sein Play unterwegs
+      // verloren gegangen oder es hat nach einem Neuladen nie eines bekommen.
+      // Statt es stehen zu lassen, wird ihm der fehlende Befehl nachgereicht -
+      // nur ihm, und nur wenn es bei derselben Folge steht.
+      const zustand = eintrag.stand.get(socket.geraetId);
+      const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
+      const faellig = !zustand.geholt || Date.now() - zustand.geholt > NACHREICHEN_MS;
+      if (pausiert && gleicheFolge && faellig && !eintrag.sync && eintrag.live?.action === "play") {
+        const ziel = hostStandJetzt(eintrag);
+        if (ziel != null) {
+          zustand.geholt = Date.now();
+          senden({
+            type: "control",
+            key: eintrag.key,
+            action: "play",
+            position: ziel,
+            url: eintrag.live?.url || eintrag.url,
+            from: eintrag.hostName || "Host",
+            host: false,
+            resync: true,
+            at: Date.now()
+          });
+        }
+      }
+
+      if (geaendert) standSenden(socket.raum, eintrag);
+      else standSendenGedrosselt(socket.raum, eintrag);
       return;
     }
 

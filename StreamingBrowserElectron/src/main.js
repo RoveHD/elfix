@@ -86,9 +86,9 @@ const watchpartyLiveAus = new Set();
 const watchpartyAngeklinkt = new Set();
 // Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
 const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
-// So oft meldet dieses Geraet, wo es steht. Haeufiger waere Zappeln, seltener
-// sieht man in der Leiste eine Sekunde, die es nicht mehr gibt.
-const WATCHPARTY_STAND_INTERVALL_MS = 2000;
+// Im Normalfall meldet die Seite selbst, sobald sich etwas tut. Dieser Takt ist
+// nur die Rueckfallebene, falls sich das Melde-Skript nicht einhaengen konnte.
+const WATCHPARTY_STAND_INTERVALL_MS = 5000;
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
 let nextEpisodeLogState = "";
@@ -1259,6 +1259,13 @@ function getProviderView(provider) {
     const nachricht = typeof args[0] === "object" && args[0] !== null && "message" in args[0]
       ? args[0].message
       : args[1];
+    // Wo dieses Geraet steht. Kommt aus der Seite, sobald sich etwas aendert -
+    // deshalb sehen die anderen eine Pause ohne Umweg ueber einen Zeitgeber.
+    const stand = String(nachricht || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
+    if (stand) {
+      meldeWatchpartyStandAusSeite(view, Number(stand[1]), stand[2] === "1");
+      return;
+    }
     // Live zuschauen: Pause, Weiter und Springen sofort an die anderen melden.
     const live = String(nachricht || "").match(/^__elfix:wp:(play|pause|seek):(\d+(?:\.\d+)?)$/);
     if (live) {
@@ -1310,6 +1317,10 @@ function getProviderView(provider) {
   view.webContents.on("dom-ready", () => {
     installStoPlayerFix(provider, view);
     installAniWorldImageFix(provider, view);
+    // Die Horcher fuer Pause und Weiter gehoeren hierhin, nicht erst in den
+    // Fortschritts-Takt: sonst blieb das erste Play einer frisch geladenen
+    // Folge unbemerkt, weil bis zum ersten Takt noch Sekunden vergehen.
+    installWatchpartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -4983,8 +4994,6 @@ async function openWatchpartyItem(key, room) {
 function watchpartyControlScript() {
   return `(() => {
     if (window.__elfixWpInstalled) return "schon-da";
-    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
-    if (!medien.length) return "kein-video";
     window.__elfixWpInstalled = true;
     window.__elfixWpErwartet = null;
 
@@ -5004,11 +5013,43 @@ function watchpartyControlScript() {
       // exakt auf derselben Stelle stehen sollen.
       console.log("__elfix:wp:" + aktion + ":" + (Number(media.currentTime) || 0).toFixed(2));
     };
-    for (const media of medien) {
-      media.addEventListener("play", () => melden("play", media));
-      media.addEventListener("pause", () => melden("pause", media));
-      media.addEventListener("seeked", () => melden("seek", media));
-    }
+
+    // Wo dieses Geraet steht - fuer die Leiste der anderen. Das haengt nicht am
+    // Echo-Schutz: eine Standmeldung ist kein Befehl, sie schaukelt nichts auf.
+    // Sie geht sofort raus, sobald sich etwas aendert, und waehrend der
+    // Wiedergabe nebenher im Sekundentakt. Vorher hat der Hauptprozess dafuer
+    // alle Frames der Seite abgefragt - langsam und teuer zugleich.
+    let letzteMeldung = 0;
+    const standMelden = (media, sofort) => {
+      const jetzt = Date.now();
+      if (!sofort && jetzt - letzteMeldung < 1000) return;
+      letzteMeldung = jetzt;
+      console.log("__elfix:wp:stand:"
+        + (Number(media.currentTime) || 0).toFixed(2) + ":" + (media.paused ? 1 : 0));
+    };
+
+    // Am Dokument in der Abfangphase, nicht an einzelnen Videos: Medien-
+    // Ereignisse steigen nicht auf, lassen sich aber abfangen. Damit gilt das
+    // auch fuer ein Video, das die Seite spaeter einsetzt.
+    //
+    // Vorher hingen die Horcher an den Elementen, die beim Einhaengen zufaellig
+    // schon da waren. Tauscht der Anbieter den Player aus - anderer Hoster,
+    // andere Qualitaet, neu geladener Rahmen -, waren sie an einem Element, das
+    // niemand mehr sieht, und das Geraet meldete Pause und Weiter gar nicht
+    // mehr. Der Merker stand ja auf "schon eingehaengt".
+    const passt = (ziel) => ziel instanceof HTMLMediaElement && Number(ziel.duration) > 0;
+    const horchen = (name, tun) => document.addEventListener(name, (ereignis) => {
+      if (passt(ereignis.target)) tun(ereignis.target);
+    }, true);
+
+    horchen("play", (media) => { melden("play", media); standMelden(media, true); });
+    horchen("pause", (media) => { melden("pause", media); standMelden(media, true); });
+    horchen("seeked", (media) => { melden("seek", media); standMelden(media, true); });
+    // Puffern ist keine Pause, sieht fuer die anderen aber genauso aus:
+    // die Stelle bleibt stehen. Also sofort melden, wenn es stockt.
+    horchen("waiting", (media) => standMelden(media, true));
+    horchen("playing", (media) => standMelden(media, true));
+    horchen("timeupdate", (media) => standMelden(media, false));
     return "installiert";
   })()`;
 }
@@ -5026,6 +5067,10 @@ function watchpartyControlScript() {
 function watchpartyApplyScript(action, position, optionen = {}) {
   const genau = optionen.genau ? "true" : "false";
   const warten = optionen.warten ? "true" : "false";
+  // Der Host springt nie. Er gibt den Takt vor - alle anderen richten sich nach
+  // ihm, nicht umgekehrt. Anhalten und Weiterlaufen gelten fuer ihn trotzdem,
+  // sonst liefe er waehrend eines Abgleichs davon.
+  const nichtSpringen = optionen.nichtSpringen ? "true" : "false";
   return `(() => {
     const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
     const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
@@ -5035,6 +5080,7 @@ function watchpartyApplyScript(action, position, optionen = {}) {
     const ziel = ${Number(position) || 0};
     const genau = ${genau};
     const warten = ${warten};
+    const nichtSpringen = ${nichtSpringen};
     const anhalten = aktion === "pause" || aktion === "syncprepare";
     const laufen = aktion === "play" || aktion === "syncstart";
     // Was der eigene Player gleich von sich aus melden wird, ist nur das Echo
@@ -5047,8 +5093,11 @@ function watchpartyApplyScript(action, position, optionen = {}) {
     };
 
     try {
-      const toleranz = genau ? 0.3 : 1.5;
-      const springbar = ziel >= 0 && ziel < media.duration - 1 && (genau || ziel > 0);
+      // Bei einer Pause und beim Gleichziehen sitzt jeder auf derselben Stelle
+      // wie der Host - da zaehlt der Bruchteil. Nur beim beilaeufigen
+      // Mitlaufen darf es ungefaehr sein, sonst puffert der Hoster staendig neu.
+      const toleranz = genau ? 0.05 : 1.5;
+      const springbar = !nichtSpringen && ziel >= 0 && ziel < media.duration - 1 && (genau || ziel > 0);
       if (springbar && Math.abs(Number(media.currentTime) - ziel) > toleranz) {
         media.currentTime = ziel;
       }
@@ -5065,7 +5114,9 @@ function watchpartyApplyScript(action, position, optionen = {}) {
       return new Promise((resolve) => {
         const frist = Date.now() + 2200;
         const pruefen = () => {
-          const nah = Math.abs(Number(media.currentTime) - ziel) <= 0.5;
+          // Wer nicht springt, ist schon dort, wo er sein soll - fuer ihn
+          // zaehlt nur, ob genug geladen ist.
+          const nah = nichtSpringen || Math.abs(Number(media.currentTime) - ziel) <= 0.5;
           if (nah && media.readyState >= 3) {
             resolve("bereit");
             return;
@@ -5108,10 +5159,15 @@ async function prepareWatchpartySync(eintrag, nachricht) {
     if (!isLiveView(view)) continue;
     if (!istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
     // Anhalten, exakt auf die Stelle des Hosts, und erst zurueckmelden, wenn
-    // der Sprung wirklich sitzt und genug gepuffert ist.
+    // der Sprung wirklich sitzt und genug gepuffert ist. Der Host haelt nur an,
+    // wo er ohnehin steht - seine Stelle ist ja das Ziel.
     await executeJavaScriptInMediaFrames(
       view,
-      watchpartyApplyScript("syncprepare", nachricht.position, { genau: true, warten: true })
+      watchpartyApplyScript("syncprepare", nachricht.position, {
+        genau: true,
+        warten: true,
+        nichtSpringen: Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId
+      })
     ).catch(() => []);
     vorbereitet = true;
   }
@@ -5386,15 +5442,22 @@ async function applyWatchpartyControl(nachricht) {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
   }
 
-  // Die Zeit auf dem Weg zaehlt mit: bei laufender Wiedergabe ist der andere
-  // inzwischen weiter, sonst landet man immer ein Stueck hinter ihm. Bei einer
-  // Pause steht sein Bild still - da waere jeder Zuschlag falsch.
-  const laeuft = nachricht.action === "play" || nachricht.action === "syncstart";
-  const unterwegs = nachricht.at ? Math.max(0, Date.now() - Number(nachricht.at)) / 1000 : 0;
-  const position = Number(nachricht.position || 0) + (laeuft ? unterwegs : 0);
+  // Die Stelle wird genommen, wie sie kommt. Frueher stand hier ein Zuschlag
+  // fuer die Zeit "unterwegs", berechnet als Date.now() minus dem Zeitstempel
+  // des Relays - also aus zwei verschiedenen Uhren. Geht die eigene Uhr vor,
+  // landete jeder Sprung genau um diese Differenz zu weit vorn.
+  //
+  // Das Relay verschickt sofort, nachdem es die Stelle bestimmt hat; zu
+  // begradigen bleibt nur die reine Leitungszeit, und die laesst sich ohne
+  // abgeglichene Uhren nicht messen. Sie liegt bei Millisekunden - deutlich
+  // weniger als der Fehler, den die Rechnerei verursacht hat.
+  const position = Number(nachricht.position || 0);
   // Pause, gezielter Sprung, Abgleich und gemeinsamer Start muessen sitzen.
   // Nur beim beilaeufigen "der andere spielt weiter" darf es ungefaehr sein.
   const genau = nachricht.action !== "play" || Boolean(nachricht.resync);
+  // Bin ich der Host, gilt meine Stelle - ich ruecke nicht, die anderen kommen
+  // zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
+  const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 
   // Nur anwenden, wo genau dieselbe Folge offen ist - nicht bloss dieselbe
   // Serie. Wer eine Folge zurueckliegt, soll nicht mitpausiert werden.
@@ -5405,7 +5468,10 @@ async function applyWatchpartyControl(nachricht) {
     const provider = providers.find((item) => item.id === providerId);
     // Frueher stand hier nachricht.position: die eben berechnete Stelle samt
     // Laufzeit wurde verworfen, und alle lagen dauerhaft hinter dem Host.
-    await executeJavaScriptInMediaFrames(view, watchpartyApplyScript(nachricht.action, position, { genau })).catch(() => []);
+    await executeJavaScriptInMediaFrames(
+      view,
+      watchpartyApplyScript(nachricht.action, position, { genau, nichtSpringen: binHost })
+    ).catch(() => []);
     if (provider) {
       logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
     }
@@ -5453,19 +5519,38 @@ function sendWatchpartyWatchstate(nachricht) {
       host: Boolean(mitglied.host),
       season: sanitizePositiveNumber(mitglied.season),
       episode: sanitizePositiveNumber(mitglied.episode),
-      // Wie alt die Meldung ist - laufende Geraete zaehlen in der Anzeige
-      // zwischen zwei Meldungen selbst weiter.
-      age: Math.max(0, Date.now() - (Number(mitglied.at) || Date.now())) / 1000,
+      // Wie alt die Meldung ist, in Sekunden. Die Zahl kommt fertig vom Relay
+      // und wird hier nicht nachgerechnet: sonst mischten sich zwei Uhren, und
+      // jede Abweichung zwischen Rechner und Relay stuende in der Anzeige.
+      age: Math.max(0, Number(mitglied.age) || 0),
       me: String(mitglied.id || "") === watchparty.geraetId
     }))
   });
 }
 
-// Wo stehe ich gerade? Das geht regelmaessig und unabhaengig von der
-// Fortschritts-Buchhaltung ans Relay. Die Leiste hing vorher am gebuchten
-// Fortschritt, und der setzt nach einem Folgenwechsel aus: dann stand bei
-// allen dieselbe Sekunde und lief nur noch oertlich weiter, obwohl hier
-// laengst pausiert war.
+// Der Weg, den es im Normalfall geht: die Seite meldet von selbst, sobald sich
+// etwas tut. Kein Zeitgeber, kein Abfragen aller Frames - und damit ohne die
+// Verzoegerung, die eine Umfrage zwangslaeufig hat.
+function meldeWatchpartyStandAusSeite(view, position, pausiert) {
+  if (!watchparty.aktiv || !isLiveView(view) || view !== activeView) return;
+  const adresse = view.webContents.getURL();
+  const key = watchpartyLiveKeyForUrl(adresse);
+  const raum = watchpartyRaumForUrl(adresse);
+  if (!key || !raum) return;
+
+  const identity = episodeIdentity(adresse);
+  watchparty.meldeStand(key, {
+    position: Number(position) || 0,
+    paused: Boolean(pausiert),
+    url: adresse,
+    season: identity?.season || 0,
+    episode: identity?.episode || 0
+  }, raum);
+}
+
+// Rueckfallebene fuer Seiten, auf denen sich das Melde-Skript nicht einhaengen
+// konnte - etwa weil der Player erst spaeter erscheint. Laeuft in grossem
+// Abstand; im Normalfall hat die Seite laengst selbst gemeldet.
 async function meldeWatchpartyStand() {
   if (!watchparty.aktiv || !watchparty.verbunden) return;
   const view = activeView;
