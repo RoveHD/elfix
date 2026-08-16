@@ -210,12 +210,12 @@ class WatchpartyRaeume {
     this.raumFuer(key, room)?.rauswerfen(key, memberId);
   }
 
-  steuern(key, action, position) {
-    for (const raum of this.raeumeMitTitel(key)) raum.steuern(key, action, position);
+  steuern(key, action, position, room) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.steuern(key, action, position);
   }
 
-  steuernMitAdresse(key, action, position, url) {
-    for (const raum of this.raeumeMitTitel(key)) raum.steuernMitAdresse(key, action, position, url);
+  steuernMitAdresse(key, action, position, url, room) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.steuernMitAdresse(key, action, position, url);
   }
 
   abgleichen(key, room) {
@@ -230,8 +230,8 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.bereitZumStart(key);
   }
 
-  fortschrittMelden(key, fortschritt) {
-    for (const raum of this.raeumeMitTitel(key)) raum.fortschrittMelden(key, fortschritt);
+  fortschrittMelden(key, fortschritt, room) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.fortschrittMelden(key, fortschritt);
   }
 
   trennen() {

@@ -734,6 +734,14 @@ ipcMain.handle("watchparty:open", async (_event, key, room) => openWatchpartyIte
 
 ipcMain.handle("watchparty:rooms", () => watchpartyRaumUebersicht());
 
+// Auswahl aus einer Liste von Raeumen - fuer das Live-Beitreten, wenn derselbe
+// Titel in mehreren Runden steht.
+ipcMain.handle("watchparty:choose-room", async (_event, rooms, punkt) => {
+  const erlaubt = Array.isArray(rooms) ? rooms.map((wert) => String(wert || "")).filter(Boolean) : [];
+  if (erlaubt.length < 2) return erlaubt[0] || "";
+  return frageWatchpartyRaum(punkt, erlaubt);
+});
+
 ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
   const provider = activeProvider();
   const url = activeView?.webContents?.getURL() || "";
@@ -778,17 +786,31 @@ ipcMain.handle("watchparty:remove", (_event, key, room) => {
   return true;
 });
 
-ipcMain.handle("watchparty:live-toggle", (_event, key, an) => {
+ipcMain.handle("watchparty:live-toggle", (_event, key, an, room) => {
   const schluessel = String(key || "");
-  setWatchpartyLive(schluessel, Boolean(an));
+  const adresse = activeView?.webContents?.getURL() || "";
+  let raum = String(room || "") || watchpartyRaumForUrl(adresse);
+
+  // Steht derselbe Anime in mehreren Runden und ist noch keine gewaehlt, muss
+  // erst feststehen, welcher man live folgt.
+  if (an && !raum) {
+    const moeglich = watchpartyRaeumeForUrl(adresse);
+    if (moeglich.length > 1) return { needsRoom: true, rooms: moeglich.map((item) => item.room), key: schluessel };
+    raum = moeglich[0]?.room || "";
+  }
+  if (!raum) return { live: false };
+
+  // Live beitreten heisst zugleich: ab jetzt zaehlt der Eintrag dieser Runde.
+  if (an) uebernehmeWatchpartyRaum(schluessel, raum);
+  setWatchpartyLive(schluessel, Boolean(an), raum);
   // Sofort melden statt auf den naechsten Takt zu warten - sonst springt der
   // Knopf erst Sekunden spaeter um.
   pushWatchpartyLiveState();
   if (an) {
     watchpartyAngeklinkt.clear();
-    watchparty.abgleichen(schluessel);
+    watchparty.abgleichen(schluessel, raum);
   }
-  return watchpartyLiveAktiv(schluessel);
+  return { live: watchpartyLiveAktiv(schluessel, raum), room: raum };
 });
 
 ipcMain.handle("watchparty:resync", async (_event, key, room) => {
@@ -995,8 +1017,10 @@ function getProviderView(provider) {
     // Live zuschauen: Pause, Weiter und Springen sofort an die anderen melden.
     const live = String(nachricht || "").match(/^__elfix:wp:(play|pause|seek):(\d+)$/);
     if (live) {
-      const key = watchpartyLiveKeyForUrl(view.webContents.getURL());
-      if (key) watchparty.steuern(key, live[1], Number(live[2]));
+      const adresse = view.webContents.getURL();
+      const key = watchpartyLiveKeyForUrl(adresse);
+      // Nur an die Runde, in der gerade geschaut wird.
+      if (key) watchparty.steuern(key, live[1], Number(live[2]), watchpartyRaumForUrl(adresse));
       return;
     }
     const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
@@ -2727,7 +2751,13 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   const normalized = normalizeFavoriteUrl(url);
   const now = new Date().toISOString();
   const requestedType = mediaTypeForProgressUrl(url, meta.type);
-  const existing = options.existing || favorites.find((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized, requestedType));
+  // Denselben Titel kann es mehrfach geben - einmal privat und je Watchparty
+  // einmal. Dann entscheidet der gerade geoeffnete Eintrag, wohin der
+  // Fortschritt laeuft; ohne das traefe es immer den erstbesten.
+  const geoeffnet = activeFavoriteId ? favorites.find((favorite) => favorite.id === activeFavoriteId) : null;
+  const existing = options.existing
+    || (geoeffnet && favoriteMatchesCurrentProviderTitle(geoeffnet, provider, url, normalized, requestedType) ? geoeffnet : null)
+    || favorites.find((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized, requestedType));
   const identity = episodeIdentity(url);
   const hasMediaProgress = isValidMediaProgress({
     currentTime: meta.currentTime || meta.position,
@@ -4021,8 +4051,11 @@ function watchpartyKey(favorite) {
 // noch eine aeltere Fassung faehrt, die "share" gar nicht kennt.
 // Fragt ueber ein Fenstermenue, in welchen Raum der Titel soll. Kommt keine
 // Auswahl, bleibt alles, wie es war.
-function frageWatchpartyRaum(punkt) {
-  const uebersicht = watchpartyRaumUebersicht();
+function frageWatchpartyRaum(punkt, nurDiese = null) {
+  const alle = watchpartyRaumUebersicht();
+  const uebersicht = Array.isArray(nurDiese) && nurDiese.length
+    ? alle.filter((raum) => nurDiese.includes(raum.room))
+    : alle;
   if (!mainWindow || mainWindow.isDestroyed() || !uebersicht.length) return Promise.resolve("");
   return new Promise((fertig) => {
     let gewaehlt = "";
@@ -4120,6 +4153,11 @@ function reportWatchpartyProgress(favorite) {
   if (!watchparty.aktiv) return;
   const key = watchpartyKey(favorite);
   if (!key || !watchparty.istBeigetreten(key)) return;
+  // Jeder Eintrag gehoert zu genau einer Runde und meldet nur dorthin. Der
+  // eigene Eintrag ohne Raum bleibt privat - sonst liefe der Stand aus dem
+  // stillen Schauen in jede Watchparty, in der der Titel zufaellig steht.
+  const raum = String(favorite.watchpartyRoom || "");
+  if (!raum) return;
 
   watchparty.fortschrittMelden(key, {
     url: favorite.url,
@@ -4132,7 +4170,7 @@ function reportWatchpartyProgress(favorite) {
     episodeCompleted: Boolean(favorite.episodeCompleted),
     updatedAt: favorite.lastWatchedAt || new Date().toISOString(),
     from: watchpartySettings().deviceName || ""
-  });
+  }, raum);
 }
 
 function providerForWatchpartyUrl(url, providerName) {
@@ -4147,7 +4185,7 @@ function providerForWatchpartyUrl(url, providerName) {
 // dieses Geraet beigetreten ist - der Server schickt nichts anderes.
 function applyWatchpartyProgress(key, fortschritt, room) {
   const eintrag = watchpartyEintrag(key, room);
-  const lokal = favorites.find((favorite) => watchpartyKey(favorite) === key);
+  const lokal = lokalerWatchpartyEintrag(key, eintrag?.room || room);
 
   if (!lokal) {
     const provider = providerForWatchpartyUrl(fortschritt.url || eintrag?.url || "", eintrag?.providerName);
@@ -4233,6 +4271,9 @@ function createWatchpartyFavorite(key, eintrag, fortschritt, provider) {
     type: normalizeMediaType(eintrag?.type || inferMediaType(url)),
     season: identity?.season || fortschritt?.season || 0,
     episode: identity?.episode || fortschritt?.episode || 0,
+    // Dieser Eintrag gehoert zu genau einer Runde. Derselbe Anime in einem
+    // zweiten Raum bekommt seinen eigenen.
+    watchpartyRoom: String(eintrag?.room || ""),
     createdAt: new Date().toISOString(),
     lastWatchedAt: fortschritt?.updatedAt || new Date().toISOString(),
     activity: []
@@ -4276,6 +4317,16 @@ function nachreichenWatchpartyBild(eintrag, bild) {
     season: eintrag.season,
     episode: eintrag.episode
   }, eintrag.room);
+}
+
+// Jeder Raum fuehrt seinen eigenen Weiterschauen-Eintrag. Wer denselben Anime
+// in zwei Raeumen mitschaut, hat ihn zweimal in der Liste - jeweils mit dem
+// Stand dieser Runde. Der Eintrag ohne Raum ist der eigene, private.
+function lokalerWatchpartyEintrag(key, room) {
+  const raum = String(room || "");
+  return favorites.find((favorite) => (
+    watchpartyKey(favorite) === key && String(favorite.watchpartyRoom || "") === raum
+  )) || null;
 }
 
 // Denselben Titel kann es in mehreren Raeumen geben. Ist keiner genannt, zaehlt
@@ -4322,8 +4373,14 @@ async function openWatchpartyItem(key, room) {
   const url = eintrag.progress?.url || eintrag.url;
   merkeWatchpartySprung(provider.id, eintrag.progress);
 
-  // Kennt dieses Geraet den Titel schon, wird derselbe Eintrag weitergefuehrt.
-  const favorite = favorites.find((item) => watchpartyKey(item) === key);
+  // Aus diesem Raum geoeffnet: ab jetzt laeuft der Fortschritt in den Eintrag
+  // dieses Raums. Gibt es ihn noch nicht, entsteht er hier - der eigene und
+  // die anderen Runden bleiben davon unberuehrt.
+  let favorite = lokalerWatchpartyEintrag(key, eintrag.room);
+  if (!favorite) {
+    favorite = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
+    if (favorite) favorites.unshift(favorite);
+  }
   if (favorite) {
     activeFavoriteId = favorite.id;
     moveFavoriteToFront(favorite);
@@ -4432,7 +4489,7 @@ async function prepareWatchpartySync(eintrag, nachricht) {
 // derselben Serie. Wer bei einem anderen Titel steht, bleibt, wo er ist.
 async function followWatchpartyEpisode(eintrag, nachricht) {
   const ziel = nachricht.url;
-  if (!ziel || !watchpartyLiveAktiv(eintrag.key)) return;
+  if (!ziel || !watchpartyLiveAktiv(eintrag.key, eintrag.room)) return;
   if (taste.urlSchluessel(ziel) !== taste.urlSchluessel(eintrag.url)) return;
 
   for (const [providerId, view] of providerViews) {
@@ -4463,23 +4520,89 @@ async function followWatchpartyEpisode(eintrag, nachricht) {
 function meldeWatchpartyFolgenwechsel(url) {
   if (!watchparty.aktiv) return;
   const key = watchpartySerieForUrl(url);
-  if (!key || !watchpartyLiveAktiv(key)) return;
+  const raum = watchpartyRaumForUrl(url);
+  if (!key || !raum || !watchpartyLiveAktiv(key, raum)) return;
   // Neue Folge, neues Anhaengen: sonst wuerde der alte Merker den Abgleich
   // verhindern.
   watchpartyAngeklinkt.clear();
-  watchparty.steuernMitAdresse(key, "navigate", 0, url);
+  watchparty.steuernMitAdresse(key, "navigate", 0, url, raum);
 }
 
-// Live laesst sich je Serie abschalten, ohne die Watchparty zu verlassen: die
-// Mitgliedschaft (und damit der geteilte Fortschritt) bleibt bestehen.
-function watchpartyLiveAktiv(key) {
-  return Boolean(key) && !watchpartyLiveAus.has(key);
+// Live laesst sich je Runde abschalten, ohne die Watchparty zu verlassen: die
+// Mitgliedschaft (und damit der geteilte Fortschritt) bleibt bestehen. Der
+// Merker haengt am Raum, damit man in einer Runde live sein kann und in der
+// anderen nicht - auch beim selben Anime.
+function liveMerker(key, room) {
+  return `${String(room || "")}|${String(key || "")}`;
 }
 
-function setWatchpartyLive(key, an) {
+function watchpartyLiveAktiv(key, room) {
+  return Boolean(key) && !watchpartyLiveAus.has(liveMerker(key, room));
+}
+
+function setWatchpartyLive(key, an, room) {
   if (!key) return;
-  if (an) watchpartyLiveAus.delete(key);
-  else watchpartyLiveAus.add(key);
+  if (an) watchpartyLiveAus.delete(liveMerker(key, room));
+  else watchpartyLiveAus.add(liveMerker(key, room));
+}
+
+// Tritt man hier live bei, gehoert das Geschaute ab jetzt zu dieser Runde:
+// der Eintrag dieses Raums wird der aktive. Gibt es ihn noch nicht, entsteht
+// er - der eigene, private Stand bleibt davon unberuehrt.
+function uebernehmeWatchpartyRaum(key, raum) {
+  const eintrag = watchpartyEintrag(key, raum);
+  if (!eintrag) return;
+  let favorite = lokalerWatchpartyEintrag(key, raum);
+  if (!favorite) {
+    const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
+    if (!provider) return;
+    favorite = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
+    if (!favorite) return;
+    // Die offene Folge zaehlt, nicht der Stand aus dem Raum: man schaut ja
+    // gerade hier.
+    const offen = activeView?.webContents?.getURL() || "";
+    if (offen && istGleicheSerie(offen, favorite.url)) {
+      favorite.url = offen;
+      favorite.normalizedUrl = normalizeFavoriteUrl(offen);
+      const identity = episodeIdentity(offen);
+      favorite.season = identity?.season || favorite.season || 0;
+      favorite.episode = identity?.episode || favorite.episode || 0;
+    }
+    favorites.unshift(favorite);
+    saveFavorites();
+  }
+  activeFavoriteId = favorite.id;
+  sendActiveState();
+}
+
+function istGleicheSerie(links, rechts) {
+  return Boolean(links) && Boolean(rechts) && taste.urlSchluessel(links) === taste.urlSchluessel(rechts);
+}
+
+// In welcher Runde laeuft das gerade Geoeffnete? Der aktive Eintrag sagt es -
+// er wurde beim Oeffnen aus der Watchparty gesetzt. Ohne Raum ist es der
+// eigene, private Stand.
+function aktiverWatchpartyRaum() {
+  const favorite = activeFavoriteId ? favorites.find((item) => item.id === activeFavoriteId) : null;
+  return String(favorite?.watchpartyRoom || "");
+}
+
+// Alle Runden, in denen diese Seite mitlaeuft - fuer die Auswahl bei
+// "Live beitreten", wenn derselbe Anime in mehreren Raeumen steht.
+function watchpartyRaeumeForUrl(url) {
+  return watchpartyShared
+    .filter((eintrag) => eintrag.joined && taste.urlSchluessel(eintrag.url) === taste.urlSchluessel(url))
+    .map((eintrag) => ({ room: eintrag.room || "", key: eintrag.key, title: eintrag.title || "" }));
+}
+
+// Die Runde, die fuer die offene Seite gilt: die geoeffnete, sonst die
+// einzige. Bei mehreren ohne Vorgabe bleibt es offen - dann wird gefragt.
+function watchpartyRaumForUrl(url) {
+  const moeglich = watchpartyRaeumeForUrl(url);
+  if (!moeglich.length) return "";
+  const aktiv = aktiverWatchpartyRaum();
+  if (aktiv && moeglich.some((eintrag) => eintrag.room === aktiv)) return aktiv;
+  return moeglich.length === 1 ? moeglich[0].room : "";
 }
 
 // Fuehrt die Watchparty gerade genau diese Folge? Dann ist ein Ruecksprung
@@ -4519,7 +4642,11 @@ function watchpartySerieForUrl(url) {
 // "Live aus" stand, sobald man weiter war als der gespeicherte Stand.
 function watchpartyLiveKeyForUrl(url) {
   const key = watchpartySerieForUrl(url);
-  return key && watchpartyLiveAktiv(key) ? key : "";
+  const raum = watchpartyRaumForUrl(url);
+  // Ohne eindeutige Runde gibt es nichts zu steuern - erst muss klar sein,
+  // welcher Watchparty man hier folgt.
+  if (!raum) return "";
+  return key && watchpartyLiveAktiv(key, raum) ? key : "";
 }
 
 // Eine einzige Stelle, die den Live-Zustand meldet. Sie wird bei jedem Anlass
@@ -4529,7 +4656,10 @@ function pushWatchpartyLiveState(url = "") {
   const adresse = url || activeView?.webContents?.getURL() || "";
   const serieKey = watchparty.aktiv ? watchpartySerieForUrl(adresse) : "";
   const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(adresse) : "";
-  const eintrag = watchpartyEintrag(serieKey || key);
+  // Welche Runden kommen fuer diese Seite in Frage, und welche gilt gerade?
+  const moeglich = watchparty.aktiv ? watchpartyRaeumeForUrl(adresse) : [];
+  const raum = watchparty.aktiv ? watchpartyRaumForUrl(adresse) : "";
+  const eintrag = watchpartyEintrag(serieKey || key, raum);
   // Die Knoepfe gehoeren zur offenen Anbieterseite. Liegt eine eigene Ansicht
   // darueber - Startseite, Mediathek, Watchparty, Einstellungen -, ist keine
   // Seite offen und es gibt nichts zu steuern. Der Rueckgabewert bleibt davon
@@ -4542,7 +4672,10 @@ function pushWatchpartyLiveState(url = "") {
     connected: watchparty.verbunden,
     enabled: watchparty.aktiv,
     key: serieKey || key,
-    room: eintrag?.room || "",
+    room: raum,
+    // Steht derselbe Anime in mehreren Runden, muss beim Live-Beitreten
+    // gefragt werden, welche gemeint ist.
+    rooms: moeglich.map((item) => item.room),
     title: eintrag?.title || "",
     // Wer den Takt vorgibt, gehoert in die Anzeige - sonst weiss niemand, an
     // wem sich das Abgleichen orientiert.
@@ -4555,19 +4688,26 @@ function pushWatchpartyLiveState(url = "") {
 async function installWatchpartyControls(provider, view, url) {
   const key = pushWatchpartyLiveState(url);
   if (!key) return;
+  const raum = watchpartyRaumForUrl(url);
+  if (!raum) return;
 
   await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);
   // Bei jedem Betreten dieser Folge den Stand des Hosts holen - auch wenn man
   // schon einmal drin war. Der Merker gilt nur fuer den laufenden Aufenthalt
   // und wird beim Verlassen der Seite geloescht.
-  if (!watchpartyAngeklinkt.has(key + url)) {
-    watchpartyAngeklinkt.add(key + url);
-    watchparty.abgleichen(key);
+  if (!watchpartyAngeklinkt.has(raum + key + url)) {
+    watchpartyAngeklinkt.add(raum + key + url);
+    watchparty.abgleichen(key, raum);
   }
 }
 
 async function applyWatchpartyControl(nachricht) {
-  const eintrag = watchpartyEintrag(nachricht.key, nachricht.room);
+  // Nur die Runde steuert, in der dieses Geraet gerade schaut. Sonst wuerde
+  // eine Pause aus der einen Watchparty die andere mit anhalten, obwohl dort
+  // derselbe Anime nur zufaellig auch laeuft.
+  const aktiv = aktiverWatchpartyRaum();
+  if (!aktiv || (nachricht.room && nachricht.room !== aktiv)) return;
+  const eintrag = watchpartyEintrag(nachricht.key, nachricht.room || aktiv);
   if (!eintrag) return;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
@@ -5447,6 +5587,8 @@ function loadFavorites() {
       libraryOrder: Number.isFinite(Number(favorite.libraryOrder)) && Number(favorite.libraryOrder) >= 0
         ? Number(favorite.libraryOrder)
         : null,
+      // Zu welcher Watchparty dieser Eintrag gehoert. Leer heisst: der eigene.
+      watchpartyRoom: String(favorite.watchpartyRoom || ""),
       activity: normalizeActivity(favorite.activity),
       createdAt: String(favorite.createdAt || new Date().toISOString()),
       openedAt: String(favorite.openedAt || ""),

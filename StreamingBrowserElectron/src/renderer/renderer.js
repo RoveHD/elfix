@@ -2116,7 +2116,7 @@ function favoriteCard(favorite, allowRemove, options = {}) {
   }
   card.innerHTML = `
     <strong>${escapeHtml(displayFavoriteTitle(favorite))}</strong>
-    <span>${escapeHtml(favorite.providerName || "Provider")}</span>
+    <span>${escapeHtml(favoriteHerkunft(favorite))}</span>
     ${progressMarkup(favorite, options)}
   `;
   card.addEventListener("click", async () => {
@@ -3521,6 +3521,15 @@ function normalizeFavoriteUrl(value) {
   }
 }
 
+// Unter dem Titel steht der Anbieter - und, wenn der Eintrag zu einer
+// Watchparty gehoert, aus welcher Runde er stammt. Denselben Anime kann es
+// mehrfach geben: einmal fuer dich und einmal je Raum.
+function favoriteHerkunft(favorite) {
+  const anbieter = favorite?.providerName || "Provider";
+  const raum = String(favorite?.watchpartyRoom || "");
+  return raum ? `${anbieter} · ⇄ ${raum}` : anbieter;
+}
+
 function displayFavoriteTitle(favorite) {
   const title = cleanFavoriteTitle(favorite?.title, favorite?.url) || "Favorit";
   const progress = favoriteEpisodeLabel(favorite?.url) || favoriteFilmLabel(favorite?.url);
@@ -3767,11 +3776,31 @@ let watchpartyLiveRoom = "";
 async function toggleWatchpartyLive() {
   if (!watchpartyLiveKey) return;
   const an = !watchpartyLiveOn;
-  await api.toggleWatchpartyLive?.(watchpartyLiveKey, an);
-  showWatchpartyLive({ active: true, live: an, key: watchpartyLiveKey });
-  showToast(an
-    ? "Live beigetreten — ihr steuert wieder gemeinsam"
-    : "Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
+  let ergebnis = await api.toggleWatchpartyLive?.(watchpartyLiveKey, an, watchpartyLiveRoom);
+  // Laeuft derselbe Anime in mehreren Runden, fragt der Hauptprozess zurueck,
+  // welcher man live folgen will.
+  if (ergebnis?.needsRoom) {
+    const gewaehlt = await frageLiveRaum(ergebnis.rooms || []);
+    if (!gewaehlt) return;
+    ergebnis = await api.toggleWatchpartyLive?.(watchpartyLiveKey, an, gewaehlt);
+  }
+  const raum = ergebnis?.room || watchpartyLiveRoom;
+  showWatchpartyLive({ active: true, live: an, key: watchpartyLiveKey, room: raum });
+  if (an) {
+    showToast(raum
+      ? `Live in „${raum}“ — ihr steuert wieder gemeinsam`
+      : "Live beigetreten — ihr steuert wieder gemeinsam");
+  } else {
+    showToast("Live getrennt — du bleibst in der Watchparty, steuerst aber für dich");
+  }
+}
+
+// Auswahl, welcher Runde man live folgt. Wie beim Teilen ein Fenstermenue:
+// ueber der Anbieterseite waere ein Kaestchen aus HTML nicht anklickbar.
+async function frageLiveRaum(raeume) {
+  const anker = document.querySelector("#watchpartyLiveLeave")?.getBoundingClientRect();
+  const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
+  return api.chooseWatchpartyRoom?.(raeume, punkt).catch(() => "");
 }
 
 // Bringt alle gemeinsam auf dieselbe Stelle: erst halten alle an und springen
