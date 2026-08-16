@@ -35,6 +35,13 @@ const STAND_TAKT_MS = 1000;
 // So lange wird gewartet, bevor einem stehengebliebenen Geraet noch einmal ein
 // Play nachgereicht wird - sonst haemmert es im Sekundentakt dagegen.
 const NACHREICHEN_MS = 3000;
+// Ab dieser Abweichung vom Host gilt ein Geraet als auseinandergelaufen und
+// wird zurueckgeholt. Enger waere Zappeln: jeder Sprung laesst den Hoster neu
+// puffern, und Puffern erzeugt genau die Abweichung, die man beheben wollte.
+const DRIFT_GRENZE_S = 1.2;
+// Und so lange bleibt es danach in Ruhe. Wer dauerhaft hinterherhaengt - lahme
+// Leitung, langsamer Hoster -, soll nicht im Sekundentakt neu ansetzen.
+const DRIFT_RUHE_MS = 6000;
 // So alt darf die letzte Meldung eines Geraets hoechstens sein, damit es in der
 // Leiste steht. Gemeldet wird jede Sekunde, im Notfall alle fuenf - wer hier
 // herausfaellt, schaut gerade nicht mit.
@@ -71,7 +78,6 @@ function zustandLaden() {
       titel.set(eintrag.key, {
         ...eintrag,
         members: new Map(Array.isArray(eintrag.members) ? eintrag.members : []),
-        reihenfolge: new Map(Array.isArray(eintrag.reihenfolge) ? eintrag.reihenfolge : []),
         // Nie aus der Datei uebernehmen: als einfaches Objekt waere es keine
         // Map und der erste Eintrag wuerde den Dienst abraeumen.
         stand: new Map()
@@ -100,8 +106,12 @@ function zustandSpeichernSpaeter() {
           standTimer: undefined,
           standGesendet: undefined,
           pauseAusgerichtet: undefined,
-          members: [...eintrag.members.entries()],
-          reihenfolge: [...(eintrag.reihenfolge || new Map()).entries()]
+          // Host und letzte Aktion ergeben sich aus den lebenden Meldungen -
+          // gespeichert waeren sie beim naechsten Start sofort falsch.
+          hostId: undefined,
+          hostName: undefined,
+          letzteAktion: undefined,
+          members: [...eintrag.members.entries()]
         }))
       };
     }
@@ -187,7 +197,11 @@ function fortschrittSaeubern(roh) {
   };
 }
 
-function titelNachAussen(eintrag) {
+function titelNachAussen(raumcode, eintrag, fuerGeraet) {
+  // Kein aktiver Teilnehmer in dieser Folge, kein Host. Dann bleibt nur der
+  // zuletzt bekannte Stand - und die Karte behauptet nicht laenger, jemand
+  // fuehre die Runde, der gar nicht mehr dabei ist.
+  const host = hostFuerGeraet(raumcode, eintrag, fuerGeraet);
   return {
     key: eintrag.key,
     url: eintrag.url,
@@ -197,8 +211,12 @@ function titelNachAussen(eintrag) {
     type: eintrag.type,
     season: eintrag.season,
     episode: eintrag.episode,
-    hostId: eintrag.hostId || "",
-    hostName: eintrag.hostName || "",
+    hostId: host?.geraetId || "",
+    hostName: host?.name || "",
+    // Wer zuletzt gedrueckt hat - nicht zu verwechseln damit, wer gerade
+    // angehalten ist. Ein mitgezogenes Pause macht niemanden zum Ausloeser.
+    pausedBy: eintrag.letzteAktion?.type === "pause" ? eintrag.letzteAktion.name : "",
+    lastAction: eintrag.letzteAktion || null,
     live: eintrag.live || null,
     addedBy: eintrag.addedBy,
     addedById: eintrag.addedById,
@@ -219,7 +237,7 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "episodehost"]
     }));
     return;
   }
@@ -250,10 +268,12 @@ function teilnehmer(raumcode) {
 function zustandSenden(raumcode) {
   const raum = raeume.get(raumcode);
   if (!raum) return;
-  const shared = [...raum.titel.values()].map(titelNachAussen);
   const peers = teilnehmer(raumcode);
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    // Der Host haengt an der Folge, die dieses Geraet offen hat - also wird
+    // die Liste je Empfaenger gebaut.
+    const shared = [...raum.titel.values()].map((eintrag) => titelNachAussen(raumcode, eintrag, client.geraetId));
     client.send(JSON.stringify({ type: "state", shared, peers, you: client.geraetId }));
   }
   zustandSpeichernSpaeter();
@@ -268,16 +288,16 @@ function zustandSenden(raumcode) {
 // und damit war der Anfang einer Folge nicht von "keine Ahnung" zu
 // unterscheiden: direkt nach einem Folgenwechsel steht der Host bei 0, und der
 // Abgleich lieferte deshalb gar keine Antwort mehr.
-function hostStandJetzt(eintrag) {
+function hostStandJetzt(raumcode, eintrag) {
   const kandidaten = [];
   // Am genauesten ist, was der Host selbst zuletzt aus seinem Player gemeldet
   // hat: hoechstens eine Sekunde alt, mit echtem Pausenzustand. Weil der Host
   // nie springt, muessen sich die anderen genau darauf ausrichten.
-  const eigen = eintrag.hostId && eintrag.stand?.get(eintrag.hostId);
+  const eigen = aktuellerHost(raumcode, eintrag);
   if (eigen) {
     kandidaten.push({ at: eigen.at, position: eigen.position, laeuft: !eigen.paused });
   }
-  if (eintrag.live && eintrag.hostId) {
+  if (eintrag.live) {
     kandidaten.push({
       at: Number(eintrag.live.at) || 0,
       position: eintrag.live.position,
@@ -285,7 +305,7 @@ function hostStandJetzt(eintrag) {
     });
   }
   const fortschritt = eintrag.progress;
-  if (fortschritt && eintrag.hostName && fortschritt.from === eintrag.hostName) {
+  if (fortschritt && eigen?.name && fortschritt.from === eigen.name) {
     const gemeldet = Date.parse(fortschritt.updatedAt) || 0;
     if (gemeldet) {
       kandidaten.push({
@@ -310,54 +330,65 @@ function hostStandJetzt(eintrag) {
 // Es muss immer jemanden geben, an dem sich die anderen ausrichten koennen.
 // Host ist, wer zuerst da war - faellt er weg, uebernimmt der naechste
 // verbundene Teilnehmer, sonst haette niemand mehr eine Referenz.
-// Die Beitritts-Reihenfolge wird hier gefuehrt, nicht beim Client: Uhren der
-// Geraete taugen dafuer nicht, und die Reihenfolge der Socket-Verbindungen sagt
-// nur, wer zuletzt verbunden hat - nach einem Reconnect steht der Erste dann
-// ploetzlich hinten.
-function reihenfolgeSetzen(eintrag, geraetId) {
-  if (!geraetId) return;
-  if (!eintrag.reihenfolge) eintrag.reihenfolge = new Map();
-  if (eintrag.reihenfolge.has(geraetId)) return;
-  // Nach einem Neustart des Dienstes steht die Reihenfolge in der Datei, der
-  // Zaehler womoeglich nicht. Dann hinter dem hoechsten Platz weitermachen -
-  // sonst bekaemen zwei Geraete denselben.
-  if (!Number.isFinite(eintrag.naechsteReihe)) {
-    eintrag.naechsteReihe = eintrag.reihenfolge.size
-      ? Math.max(...eintrag.reihenfolge.values()) + 1
-      : 0;
+// --- Wer ist Host? -----------------------------------------------------------
+//
+// Host ist keine Eigenschaft des Raums, sondern der Folge: unter allen, die
+// gerade dieselbe Folge offen haben, fuehrt der, der sie zuerst betreten hat.
+//
+// Vorher haftete der Host am Raum und an der Beitritts-Reihenfolge. Damit
+// stand oben weiter "Host: Jakob", obwohl Jakob laengst eine Folge weiter oder
+// gar nicht mehr am Player war - und niemand konnte sich mehr an ihm
+// ausrichten.
+//
+// Aktiv ist, wer verbunden ist, Mitglied ist, eine laufende Player-Sitzung
+// gemeldet hat und dessen Herzschlag nicht abgelaufen ist.
+function istVerbunden(raumcode, geraetId) {
+  for (const client of wss.clients) {
+    if (client.raum === raumcode && client.readyState === client.OPEN && client.geraetId === geraetId) return true;
   }
-  eintrag.reihenfolge.set(geraetId, eintrag.naechsteReihe);
-  eintrag.naechsteReihe += 1;
+  return false;
 }
 
-function reihenfolgeVon(eintrag, geraetId) {
-  const wert = eintrag.reihenfolge?.get(geraetId);
-  return Number.isFinite(wert) ? wert : Number.MAX_SAFE_INTEGER;
+function istAktiv(raumcode, eintrag, geraetId, wert) {
+  if (!wert || !wert.sitzung) return false;
+  if (!eintrag.members.has(geraetId)) return false;
+  if (Date.now() - wert.at > STAND_FRISCH_MS) return false;
+  return istVerbunden(raumcode, geraetId);
 }
 
-function hostSicherstellen(raumcode, eintrag) {
-  const verbundene = [...wss.clients].filter((client) => (
-    client.raum === raumcode && client.readyState === client.OPEN && eintrag.members.has(client.geraetId)
-  ));
-  // Solange der Host verbunden ist, bleibt er Host - auch wenn andere neu
-  // verbinden oder die Verbindung kurz weg war.
-  if (eintrag.hostId && verbundene.some((client) => client.geraetId === eintrag.hostId)) return false;
-
-  // Faellt er weg, uebernimmt der, der am fruehesten beigetreten ist.
-  verbundene.sort((links, rechts) => reihenfolgeVon(eintrag, links.geraetId) - reihenfolgeVon(eintrag, rechts.geraetId));
-  const neuer = verbundene[0];
-  if (!neuer) {
-    // Niemand da: der alte Name darf nicht stehen bleiben, sonst zeigt die
-    // Anzeige einen Host, der laengst weg ist. Der Naechste, der kommt,
-    // uebernimmt.
-    if (!eintrag.hostId && !eintrag.hostName) return false;
-    eintrag.hostId = "";
-    eintrag.hostName = "";
-    return true;
+// Alle, die genau diese Folge offen haben - der frueheste zuerst.
+function aktiveTeilnehmer(raumcode, eintrag, season, episode) {
+  const treffer = [];
+  for (const [geraetId, wert] of eintrag.stand || new Map()) {
+    if (!istAktiv(raumcode, eintrag, geraetId, wert)) continue;
+    if (Number(wert.episode || 0) !== Number(episode || 0)) continue;
+    if (Number(wert.season || 0) !== Number(season || 0)) continue;
+    treffer.push({ geraetId, ...wert });
   }
-  eintrag.hostId = neuer.geraetId;
-  eintrag.hostName = neuer.name;
-  return true;
+  return treffer.sort((links, rechts) => (links.seitFolge || 0) - (rechts.seitFolge || 0));
+}
+
+function hostFuerFolge(raumcode, eintrag, season, episode) {
+  return aktiveTeilnehmer(raumcode, eintrag, season, episode)[0] || null;
+}
+
+// Der Host der Folge, auf der die Runde gerade steht. Daran richtet sich alles
+// aus, was den Raum als Ganzes betrifft - Abgleich, Pause, Nachreichen.
+function aktuellerHost(raumcode, eintrag) {
+  return hostFuerFolge(raumcode, eintrag, eintrag.season, eintrag.episode);
+}
+
+function aktuelleHostId(raumcode, eintrag) {
+  return aktuellerHost(raumcode, eintrag)?.geraetId || "";
+}
+
+// Und der Host, der fuer genau dieses Geraet gilt: es zaehlt die Folge, die es
+// selbst offen hat. Wer eine Folge weiter ist, sieht dort seinen eigenen Host.
+function hostFuerGeraet(raumcode, eintrag, geraetId) {
+  const eigen = eintrag.stand?.get(geraetId);
+  const season = eigen ? eigen.season : eintrag.season;
+  const episode = eigen ? eigen.episode : eintrag.episode;
+  return hostFuerFolge(raumcode, eintrag, season, episode);
 }
 
 // Ein Geraet, das neu installiert wurde, meldet sich mit derselben Bezeichnung,
@@ -374,10 +405,6 @@ function namenNachziehen(raum, geraetId, name) {
       eintrag.members.set(geraetId, name);
       geaendert = true;
     }
-    if (eintrag.hostId === geraetId && eintrag.hostName !== name) {
-      eintrag.hostName = name;
-      geaendert = true;
-    }
     if (eintrag.addedById === geraetId && eintrag.addedBy !== name) {
       eintrag.addedBy = name;
       geaendert = true;
@@ -392,16 +419,15 @@ function kennungUebernehmen(raum, geraetId, name) {
   for (const eintrag of raum.titel.values()) {
     for (const [alteId, alterName] of [...eintrag.members]) {
       if (alteId === geraetId || alterName !== name) continue;
-      const platz = eintrag.reihenfolge?.get(alteId);
+      const stand = eintrag.stand?.get(alteId);
       eintrag.members.delete(alteId);
       eintrag.members.set(geraetId, name);
-      // Dasselbe Geraet mit neuer Kennung behaelt seinen Platz - sonst rutscht
-      // es nach einer Neuinstallation ans Ende und verliert den Host.
-      if (eintrag.reihenfolge) {
-        eintrag.reihenfolge.delete(alteId);
-        if (Number.isFinite(platz)) eintrag.reihenfolge.set(geraetId, platz);
+      // Dasselbe Geraet mit neuer Kennung behaelt seinen Stand samt Sitzung -
+      // sonst gaelte es als frisch dazugekommen.
+      if (stand && eintrag.stand) {
+        eintrag.stand.delete(alteId);
+        eintrag.stand.set(geraetId, stand);
       }
-      if (eintrag.hostId === alteId) eintrag.hostId = geraetId;
       geaendert = true;
     }
     if (eintrag.addedBy === name && eintrag.addedById !== geraetId) {
@@ -422,10 +448,29 @@ function standSetzen(eintrag, geraetId, name, werte) {
   if (!geraetId || !eintrag.members.has(geraetId)) return;
   if (!eintrag.stand) eintrag.stand = new Map();
   const vorher = eintrag.stand.get(geraetId) || {};
+
+  // Eine neue Player-Sitzung oder eine andere Folge heisst: hier faengt der
+  // Aufenthalt in dieser Folge neu an. Danach richtet sich, wer Host ist -
+  // wer zuerst da war, fuehrt. Ein alter Player kann so nicht weiter als
+  // aktiv gelten, nur weil dasselbe Geraet frueher einmal hier war.
+  const sitzung = werte.sitzung || vorher.sitzung || "";
+  const folge = werte.episode == null ? (vorher.episode || 0) : werte.episode;
+  const staffel = werte.season == null ? (vorher.season || 0) : werte.season;
+  const neueSitzung = sitzung !== vorher.sitzung
+    || folge !== (vorher.episode || 0)
+    || staffel !== (vorher.season || 0);
+  // Wer neu in einer Folge ist oder gerade erst wieder auftaucht, kann die
+  // Host-Wahl umwerfen - dann muss der Raumzustand neu hinaus.
+  const wachAuf = neueSitzung || !vorher.at || Date.now() - vorher.at > STAND_FRISCH_MS;
+
   eintrag.stand.set(geraetId, {
-    // Wann diesem Geraet zuletzt etwas nachgereicht wurde, muss den Wechsel
-    // ueberleben - sonst greift die Bremse nie und es haemmert im Sekundentakt.
+    sitzung,
+    seitFolge: neueSitzung ? Date.now() : (vorher.seitFolge || Date.now()),
+    // Wann diesem Geraet zuletzt etwas nachgereicht oder es zurueckgeholt
+    // wurde, muss den Wechsel ueberleben - sonst greift die Bremse nie und es
+    // haemmert im Sekundentakt.
     geholt: vorher.geholt || 0,
+    gerueckt: vorher.gerueckt || 0,
     name: name || vorher.name || eintrag.members.get(geraetId) || "Gerät",
     position: werte.position == null ? (vorher.position || 0) : werte.position,
     paused: werte.paused == null ? Boolean(vorher.paused) : Boolean(werte.paused),
@@ -433,6 +478,7 @@ function standSetzen(eintrag, geraetId, name, werte) {
     episode: werte.episode == null ? (vorher.episode || 0) : werte.episode,
     at: Date.now()
   });
+  return wachAuf;
 }
 
 // Ein Befehl gilt fuer alle Beigetretenen - also stehen danach auch alle dort.
@@ -447,12 +493,11 @@ function standFuerAlle(eintrag, position, paused) {
 // Bleibt eine Meldung aus, schaut dort jemand etwas anderes, ist auf privat
 // umgestellt oder hat die Seite verlassen: dann hat er in der Leiste nichts
 // verloren, sonst stuende dort eine Sekunde, die es nicht mehr gibt.
-function standNachAussen(eintrag) {
+function standNachAussen(raumcode, eintrag, fuerGeraet) {
   if (!eintrag.stand) return [];
-  const jetzt = Date.now();
+  const host = hostFuerGeraet(raumcode, eintrag, fuerGeraet);
   return [...eintrag.stand.entries()]
-    .filter(([geraetId]) => eintrag.members.has(geraetId))
-    .filter(([, wert]) => jetzt - wert.at <= STAND_FRISCH_MS)
+    .filter(([geraetId, wert]) => istAktiv(raumcode, eintrag, geraetId, wert))
     .map(([geraetId, wert]) => ({
       id: geraetId,
       name: wert.name,
@@ -465,7 +510,7 @@ function standNachAussen(eintrag) {
       // die App zog ihre eigene Uhr davon ab: jede Abweichung zwischen den
       // beiden Rechnern landete unbesehen in der angezeigten Sekunde.
       age: Math.max(0, (Date.now() - wert.at) / 1000),
-      host: geraetId === eintrag.hostId
+      host: geraetId === host?.geraetId
     }));
 }
 
@@ -473,11 +518,18 @@ function standSenden(raumcode, eintrag) {
   clearTimeout(eintrag.standTimer);
   eintrag.standTimer = null;
   eintrag.standGesendet = Date.now();
-  const daten = JSON.stringify({ type: "watchstate", key: eintrag.key, members: standNachAussen(eintrag) });
+  // Je Empfaenger gebaut: welcher Host gilt, haengt an der Folge, die dieses
+  // Geraet gerade offen hat.
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!eintrag.members.has(client.geraetId)) continue;
-    client.send(daten);
+    client.send(JSON.stringify({
+      type: "watchstate",
+      key: eintrag.key,
+      members: standNachAussen(raumcode, eintrag, client.geraetId),
+      pausedBy: eintrag.letzteAktion?.type === "pause" ? eintrag.letzteAktion.name : "",
+      lastAction: eintrag.letzteAktion || null
+    }));
   }
 }
 
@@ -578,7 +630,6 @@ wss.on("connection", (socket) => {
       const raum = raumHolen(socket.raum);
       kennungUebernehmen(raum, socket.geraetId, socket.name);
       namenNachziehen(raum, socket.geraetId, socket.name);
-      for (const eintrag of raum.titel.values()) hostSicherstellen(socket.raum, eintrag);
       zustandSenden(socket.raum);
       return;
     }
@@ -603,7 +654,6 @@ wss.on("connection", (socket) => {
       };
       if (bekannt) Object.assign(gespeichert, eintrag);
       gespeichert.members.set(socket.geraetId, socket.name);
-      reihenfolgeSetzen(gespeichert, socket.geraetId);
       raum.titel.set(eintrag.key, gespeichert);
       zustandSenden(socket.raum);
       return;
@@ -614,20 +664,11 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (nachricht.type === "enter") {
         eintrag.members.set(socket.geraetId, socket.name);
-        reihenfolgeSetzen(eintrag, socket.geraetId);
-        hostSicherstellen(socket.raum, eintrag);
       } else {
         eintrag.members.delete(socket.geraetId);
+        // Der Stand geht mit: wer draussen ist, zaehlt nicht mehr als aktiv
+        // und kann damit auch nicht mehr Host sein.
         eintrag.stand?.delete(socket.geraetId);
-        // Wer die Runde verlaesst, gibt seinen Platz in der Reihenfolge auf.
-        eintrag.reihenfolge?.delete(socket.geraetId);
-        if (eintrag.hostId === socket.geraetId) {
-          eintrag.hostId = "";
-          eintrag.hostName = "";
-        }
-        // Wer aussteigt, kann nicht Host bleiben - sonst gleichen sich alle
-        // weiter mit jemandem ab, der gar nicht mehr mitschaut.
-        hostSicherstellen(socket.raum, eintrag);
       }
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
@@ -642,12 +683,7 @@ wss.on("connection", (socket) => {
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
       eintrag.stand?.delete(wen);
-      eintrag.reihenfolge?.delete(wen);
-      if (eintrag.hostId === wen) {
-        eintrag.hostId = "";
-        eintrag.hostName = "";
-      }
-      hostSicherstellen(socket.raum, eintrag);
+      eintrag.stand?.delete(wen);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
       return;
@@ -662,15 +698,19 @@ wss.on("connection", (socket) => {
       const aktion = text(nachricht.action, 10);
       if (!["play", "pause", "seek", "navigate"].includes(aktion)) return;
 
-      hostSicherstellen(socket.raum, eintrag);
-      if (!eintrag.hostId) {
-        eintrag.hostId = socket.geraetId;
-        eintrag.hostName = socket.name;
-      }
       const ziel = httpAdresse(nachricht.url);
-      const istHost = socket.geraetId === eintrag.hostId;
+      const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
       let neueFolge = false;
+      // Ein Steuerbefehl gilt nur unter denen, die dieselbe Folge offen haben.
+      // Der Folgenwechsel ist die Ausnahme - der muss gerade die erreichen,
+      // die noch bei der alten Folge stehen.
+      const absenderFolge = eintrag.stand?.get(socket.geraetId)?.episode || 0;
+      const nurGleicheFolge = aktion !== "navigate" && absenderFolge > 0;
+      // Und nur wer bei der Folge der Runde steht, bewegt deren Zustand.
+      // Sonst haette eine Pause aus einer anderen Folge die ganze Runde
+      // formal angehalten, obwohl hier weiterlief.
+      const amRaumstand = !absenderFolge || !eintrag.episode || absenderFolge === eintrag.episode;
 
       // Neue Folge: der alte Stand gilt nicht mehr. Bliebe er stehen, zoege
       // der naechste Abgleich alle auf eine Stelle aus der Folge davor.
@@ -687,7 +727,8 @@ wss.on("connection", (socket) => {
           if (folge.episode && folge.episode !== eintrag.episode) {
             eintrag.season = folge.season || eintrag.season;
             eintrag.episode = folge.episode;
-            fortschrittAufFolge(eintrag, 0, socket.name);
+              fortschrittAufFolge(eintrag, 0, socket.name);
+            eintrag.letzteAktion = null;
             neueFolge = true;
           }
         }
@@ -706,7 +747,7 @@ wss.on("connection", (socket) => {
       // Bei einer Pause zaehlt die Zeit des Hosts: danach stehen alle exakt
       // dort, auch wer selbst gedrueckt hat. Pausiert der Host, ist seine
       // gemeldete Stelle genauer als jede Hochrechnung.
-      const hostStand = hostStandJetzt(eintrag);
+      const hostStand = hostStandJetzt(socket.raum, eintrag);
       const gemeinsam = aktion === "pause" && !istHost && hostStand != null ? hostStand : eigen;
 
       // Der zuletzt an alle geschickte Befehl ist der Stand der Runde - egal,
@@ -715,7 +756,27 @@ wss.on("connection", (socket) => {
       // Neue Pause, neue Ausrichtung - und beim Weiterlaufen faellt sie weg.
       if (aktion !== "pause") eintrag.pauseAusgerichtet = false;
 
-      if (aktion !== "navigate" && (istHost || aktion === "pause")) {
+      // Nach einem Sprung darf der Ausgleich sofort greifen: dort laufen die
+      // Geraete am ehesten auseinander, weil jeder Hoster anders puffert.
+      if (aktion === "seek") {
+        for (const wert of (eintrag.stand || new Map()).values()) wert.gerueckt = 0;
+      }
+
+      // Wer gedrueckt hat. Das ist etwas anderes als "wer ist gerade
+      // angehalten": zieht ein zweites Geraet die Pause nur mit, bleibt der
+      // Ausloeser derselbe. Nur ein Befehl, der hier ankommt, zaehlt - und
+      // hereinkommende Befehle wendet der Empfaenger an, ohne sie erneut zu
+      // melden.
+      if (amRaumstand && ["play", "pause", "seek"].includes(aktion)) {
+        eintrag.letzteAktion = {
+          type: aktion,
+          userId: socket.geraetId,
+          name: socket.name,
+          timestamp: Date.now()
+        };
+      }
+
+      if (aktion !== "navigate" && amRaumstand && (istHost || aktion === "pause")) {
         eintrag.live = {
           action: aktion,
           position: gemeinsam,
@@ -741,6 +802,10 @@ wss.on("connection", (socket) => {
         // dieselbe Sekunde ruecken wie alle anderen. Bei allem anderen waere
         // das nur ein Echo der eigenen Tat.
         if (client === socket && !(aktion === "pause" && !istHost)) continue;
+        if (nurGleicheFolge) {
+          const seins = eintrag.stand?.get(client.geraetId)?.episode || 0;
+          if (seins && seins !== absenderFolge) continue;
+        }
         client.send(daten);
       }
 
@@ -752,8 +817,9 @@ wss.on("connection", (socket) => {
       standSenden(socket.raum, eintrag);
 
       // Steht die Runde jetzt auf einer anderen Folge, muessen es alle sehen -
-      // sonst zeigt die Karte weiter die Folge von vorhin.
-      if (neueFolge) zustandSenden(socket.raum);
+      // sonst zeigt die Karte weiter die Folge von vorhin. Und wer gedrueckt
+      // hat, gehoert ebenfalls in die Karten.
+      if (neueFolge || ["play", "pause", "seek"].includes(aktion)) zustandSenden(socket.raum);
       else zustandSpeichernSpaeter();
       return;
     }
@@ -768,8 +834,7 @@ wss.on("connection", (socket) => {
       // Massgeblich ist die Zeit des Hosts. Die Stelle des Ausloesers zaehlt
       // nur, wenn vom Host noch nichts bekannt ist - sonst wuerde ein
       // Nachzuegler alle anderen zu sich zurueckziehen.
-      hostSicherstellen(socket.raum, eintrag);
-      const hostStand = hostStandJetzt(eintrag);
+      const hostStand = hostStandJetzt(socket.raum, eintrag);
       const ziel = hostStand == null ? zahl(nachricht.position, 100000) : hostStand;
       const url = eintrag.live?.url || eintrag.url;
 
@@ -796,11 +861,16 @@ wss.on("connection", (socket) => {
       const vorher = eintrag.stand?.get(socket.geraetId);
       const pausiert = Boolean(nachricht.paused);
       const folge = zahl(nachricht.episode, 9999);
-      standSetzen(eintrag, socket.geraetId, socket.name, {
+      const hostVorher = aktuelleHostId(socket.raum, eintrag);
+      const wachAuf = standSetzen(eintrag, socket.geraetId, socket.name, {
         position: zahl(nachricht.position, 100000),
         paused: pausiert,
         season: zahl(nachricht.season, 999),
-        episode: folge
+        episode: folge,
+        // Die Kennung des Players. Sie wechselt bei jeder neuen Folge und
+        // jedem neu geladenen Player - daran erkennt das Relay, dass hier ein
+        // Aufenthalt neu beginnt und nicht der alte weiterlaeuft.
+        sitzung: text(nachricht.playerSessionId, 64)
       });
 
       // Anhalten, Weiterlaufen und ein Folgenwechsel muessen die anderen sofort
@@ -815,7 +885,13 @@ wss.on("connection", (socket) => {
       // sein Player sie meldet. Vorher erfuhr der Raum davon nur ueber den
       // gebuchten Fortschritt, und der rueckte erst nach Minuten nach: bis
       // dahin behauptete die Runde, es laufe noch die Folge davor.
-      if (socket.geraetId === eintrag.hostId && folge && folge !== eintrag.episode) {
+      //
+      // Massgeblich ist, wer die Runde *vor* dieser Meldung gefuehrt hat.
+      // Danach zu fragen ist sinnlos: dieses Geraet steht dann schon auf der
+      // neuen Folge und zaehlt fuer die alte nicht mehr mit - die Bedingung
+      // war nie wahr, und der Raum folgte der Folge nur ueber den
+      // Wechsel-Befehl. Blieb der aus, hing die Runde fest.
+      if (socket.geraetId === hostVorher && folge && folge !== eintrag.episode) {
         eintrag.episode = folge;
         eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
         const adresse = httpAdresse(nachricht.url);
@@ -824,6 +900,7 @@ wss.on("connection", (socket) => {
           eintrag.live = { action: "navigate", position: 0, url: adresse, at: Date.now() };
         }
         eintrag.pauseAusgerichtet = false;
+        eintrag.letzteAktion = null;
         fortschrittAufFolge(eintrag, zahl(nachricht.position, 100000), socket.name);
         zustandSenden(socket.raum);
       }
@@ -834,7 +911,7 @@ wss.on("connection", (socket) => {
       // Steuerung. Erst haelt jeder an, damit nichts wegdriftet, dann kommt
       // die genaue Stelle hinterher. Einmal je Pause, nicht bei jedem
       // Herzschlag.
-      if (socket.geraetId === eintrag.hostId && pausiert
+      if (socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
         && eintrag.live?.action === "pause" && !eintrag.pauseAusgerichtet) {
         eintrag.pauseAusgerichtet = true;
         const genau = zahl(nachricht.position, 100000);
@@ -847,7 +924,7 @@ wss.on("connection", (socket) => {
           action: "seek",
           position: genau,
           url: eintrag.live?.url || eintrag.url,
-          from: eintrag.hostName || "Host",
+          from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
           host: true,
           resync: true,
           at: Date.now()
@@ -855,7 +932,43 @@ wss.on("connection", (socket) => {
         for (const client of wss.clients) {
           if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
           if (!eintrag.members.has(client.geraetId)) continue;
+          // Nur wer bei derselben Folge steht - alle anderen geht die Stelle
+          // des Hosts nichts an.
+          const seins = eintrag.stand?.get(client.geraetId)?.episode || 0;
+          if (seins && seins !== eintrag.episode) continue;
           client.send(daten);
+        }
+      }
+
+      // Auseinandergelaufen? Wer beim Schauen zu weit vom Host abweicht, wird
+      // zurueckgeholt - nur er, nur bei derselben Folge, und nur wenn beide
+      // wirklich laufen. Der Host selbst wird nie gerueckt, die anderen kommen
+      // zu ihm. Das faengt auch das ab, was nach einem Sprung uebrig bleibt:
+      // ein Hoster landet auf dem naechsten Schluesselbild, und das liegt bei
+      // jedem woanders.
+      // Gemeinsame Grundlage fuer beide Korrekturen darunter.
+      const zustand = eintrag.stand.get(socket.geraetId);
+      const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
+      const hostJetzt = aktuellerHost(socket.raum, eintrag);
+
+      if (hostJetzt && hostJetzt.geraetId !== socket.geraetId
+        && !pausiert && !hostJetzt.paused && !eintrag.sync
+        && gleicheFolge
+        && Date.now() - (zustand.gerueckt || 0) > DRIFT_RUHE_MS) {
+        const ziel = hostStandJetzt(socket.raum, eintrag);
+        if (ziel != null && Math.abs(zahl(nachricht.position, 100000) - ziel) > DRIFT_GRENZE_S) {
+          zustand.gerueckt = Date.now();
+          senden({
+            type: "control",
+            key: eintrag.key,
+            action: "seek",
+            position: ziel,
+            url: eintrag.live?.url || eintrag.url,
+            from: hostJetzt.name || "Host",
+            host: false,
+            resync: true,
+            at: Date.now()
+          });
         }
       }
 
@@ -863,11 +976,9 @@ wss.on("connection", (socket) => {
       // verloren gegangen oder es hat nach einem Neuladen nie eines bekommen.
       // Statt es stehen zu lassen, wird ihm der fehlende Befehl nachgereicht -
       // nur ihm, und nur wenn es bei derselben Folge steht.
-      const zustand = eintrag.stand.get(socket.geraetId);
-      const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
       const faellig = !zustand.geholt || Date.now() - zustand.geholt > NACHREICHEN_MS;
       if (pausiert && gleicheFolge && faellig && !eintrag.sync && eintrag.live?.action === "play") {
-        const ziel = hostStandJetzt(eintrag);
+        const ziel = hostStandJetzt(socket.raum, eintrag);
         if (ziel != null) {
           zustand.geholt = Date.now();
           senden({
@@ -876,12 +987,19 @@ wss.on("connection", (socket) => {
             action: "play",
             position: ziel,
             url: eintrag.live?.url || eintrag.url,
-            from: eintrag.hostName || "Host",
+            from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
             host: false,
             resync: true,
             at: Date.now()
           });
         }
+      }
+
+      // Der Host haengt an den lebenden Meldungen: wechselt jemand die Folge
+      // oder taucht neu auf, kann er sich verschieben. Dann muss der volle
+      // Zustand hinaus - die Leiste allein traegt ihn nicht in die Karten.
+      if (wachAuf || hostVorher !== aktuelleHostId(socket.raum, eintrag)) {
+        zustandSenden(socket.raum);
       }
 
       if (geaendert) standSenden(socket.raum, eintrag);
@@ -901,8 +1019,7 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "resync") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
-      hostSicherstellen(socket.raum, eintrag);
-      const stand = hostStandJetzt(eintrag);
+      const stand = hostStandJetzt(socket.raum, eintrag);
       // Nur wenn vom Host wirklich nichts bekannt ist, bleibt die Antwort aus.
       // Steht er am Anfang der Folge, ist 0 die richtige Auskunft.
       if (stand == null) return;
@@ -912,7 +1029,7 @@ wss.on("connection", (socket) => {
         action: eintrag.live?.action === "pause" ? "pause" : "play",
         position: stand,
         url: eintrag.live?.url || eintrag.url,
-        from: eintrag.hostName || "Host",
+        from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
         host: true,
         resync: true,
         at: Date.now()
@@ -968,9 +1085,9 @@ wss.on("connection", (socket) => {
       // Wer weg ist, steht auch nirgends mehr - sonst zeigt die Leiste eine
       // Sekunde von jemandem, der gar nicht mehr zuschaut.
       if (eintrag.stand?.delete(socket.geraetId)) standSenden(socket.raum, eintrag);
-      // hostSicherstellen sieht selbst, dass diese Verbindung weg ist, und
-      // gibt weiter, wenn dadurch jemand anderes den Takt uebernimmt.
-      gewechselt = hostSicherstellen(socket.raum, eintrag) || gewechselt;
+      // Wer die Verbindung verliert, ist nicht mehr aktiv - damit faellt er
+      // aus der Host-Wahl und der naechste in dieser Folge rueckt nach.
+      gewechselt = true;
     }
     if (gewechselt) zustandSenden(socket.raum);
     else anRaumSenden(socket.raum, { type: "peers", peers: teilnehmer(socket.raum) });

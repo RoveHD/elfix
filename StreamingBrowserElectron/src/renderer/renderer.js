@@ -182,6 +182,13 @@ let watchpartyLiveTimer = 0;
 // zwischen zwei Meldungen weiterlaufen laesst.
 let watchpartyStandDaten = null;
 let watchpartyStandTimer = 0;
+// Wer zuletzt Pause gedrueckt hat. Das ist nicht dasselbe wie "wer ist gerade
+// angehalten": zieht ein zweites Geraet die Pause nur mit, bleibt der
+// Ausloeser derselbe.
+let watchpartyPausedBy = "";
+// Die letzte vollstaendige Meldung. Die Anzeige greift immer darauf zurueck,
+// nie auf einen zwischengespeicherten Hostnamen aus einem alten Zwischenruf.
+let watchpartyLetzteMeldung = null;
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
@@ -4375,6 +4382,10 @@ function showWatchpartyLive(info) {
   // sonst faellt die Anzeige mitten im gemeinsamen Schauen auf "Privat".
   if (info && "live" in info) watchpartyLiveOn = Boolean(info.live);
   if (info && "room" in info) watchpartyLiveRoom = info.room || "";
+  // Nur die volle Meldung fuehrt den Host mit. Sie wird gemerkt, damit die
+  // Anzeige nach einem Zwischenruf wieder auf den bestaetigten Stand
+  // zurueckfaellt statt auf einen alten Namen.
+  if (info && "hostName" in info) watchpartyLetzteMeldung = info;
 
   const erkannt = Boolean(info?.active);
   const verbunden = info?.connected !== false;
@@ -4438,12 +4449,14 @@ function showWatchpartyLive(info) {
     watchpartyLiveText.textContent = `Live: ${info.from} ${was}`;
     window.clearTimeout(watchpartyLiveTimer);
     watchpartyLiveTimer = window.setTimeout(() => {
-      if (watchpartyLiveText && watchpartyLiveOn) watchpartyLiveText.textContent = watchpartyHostText(info);
+      if (watchpartyLiveText && watchpartyLiveOn) {
+        watchpartyLiveText.textContent = watchpartyHostText(watchpartyLetzteMeldung || info);
+      }
     }, 6000);
     return;
   }
   if (!watchpartyLiveText.textContent.startsWith("Live:")) {
-    watchpartyLiveText.textContent = watchpartyHostText(info);
+    watchpartyLiveText.textContent = watchpartyHostText(watchpartyLetzteMeldung || info);
   }
 }
 
@@ -4452,6 +4465,7 @@ function showWatchpartyLive(info) {
 // ein Streifen darunter waere ausgerechnet beim Schauen unsichtbar.
 function showWatchpartyStand(info) {
   const mitglieder = Array.isArray(info?.members) ? info.members : [];
+  watchpartyPausedBy = String(info?.pausedBy || "");
   watchpartyStandDaten = mitglieder.length
     ? {
       key: info.key || "",
@@ -4465,6 +4479,11 @@ function showWatchpartyStand(info) {
     }
     : null;
   renderWatchpartyStand();
+  // Pausiert-von und Host gehoeren auch in die Kopfzeile - sofort, nicht erst
+  // beim naechsten Anlass.
+  if (watchpartyLiveText && watchpartyLiveOn) {
+    watchpartyLiveText.textContent = watchpartyHostText(watchpartyLetzteMeldung || {});
+  }
   if (watchpartyStandTimer) return;
   // Zwischen zwei Meldungen laufen die Uhren hier weiter, sonst haengt die
   // Anzeige sichtbar hinter dem Bild her.
@@ -4567,9 +4586,23 @@ function watchpartyHostText(info) {
   const raum = (watchpartyState?.rooms?.length || 0) > 1 && watchpartyLiveRoom
     ? ` · ${watchpartyLiveRoom}`
     : "";
+  // Steht die Runde, ist die wichtigste Auskunft, wer sie angehalten hat.
+  if (watchpartyPausedBy && watchpartyStehtStill()) {
+    return `Live · Pausiert von ${watchpartyPausedBy}${raum}`;
+  }
   if (info?.host) return `Live · du bist Host${raum}`;
+  // Kein Host heisst: in dieser Folge ist gerade niemand sonst am Player. Dann
+  // wird auch keiner genannt - vorher stand dort ein Name aus der Vergangenheit.
   if (info?.hostName) return `Live · Host: ${info.hostName}${raum}`;
   return `Live${raum}`;
+}
+
+// Steht die Runde? Massgeblich ist der vom Relay bestaetigte Zustand der
+// Teilnehmer, nicht ein oertliches Ereignis von vorhin.
+function watchpartyStehtStill() {
+  const mitglieder = watchpartyStandDaten?.members || [];
+  if (!mitglieder.length) return false;
+  return mitglieder.every((mitglied) => mitglied.paused);
 }
 
 // Rueckmeldung an den Neu-laden-Knoepfen. Der Klick dreht sofort los, damit die

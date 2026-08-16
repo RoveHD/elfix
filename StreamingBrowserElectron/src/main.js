@@ -88,6 +88,11 @@ const watchpartyBildNachgereicht = new Set();
 // Folgen, an die es sich schon einmal angehaengt hat.
 const watchpartyLiveAus = new Set();
 const watchpartyAngeklinkt = new Set();
+// Kennung des laufenden Players je Anbieter. Sie wechselt bei jeder Navigation
+// und damit bei jeder Folge: daran erkennt das Relay, dass hier ein neuer
+// Aufenthalt beginnt. Ohne das gaelte ein alter Player weiter als aktiv - und
+// jemand, der laengst woanders ist, bliebe Host.
+const watchpartySitzung = new Map();
 // Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
 const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
 // Im Normalfall meldet die Seite selbst, sobald sich etwas tut. Dieser Takt ist
@@ -1302,6 +1307,8 @@ function getProviderView(provider) {
     // Neue Seite: der Merker fuers Anhaengen gilt nicht mehr - wer die Folge
     // erneut betritt, gleicht wieder mit dem Host ab.
     watchpartyAngeklinkt.clear();
+    // Neue Seite, neuer Player, neue Sitzung.
+    watchpartySitzung.set(provider.id, crypto.randomUUID());
     meldeWatchpartyFolgenwechsel(url);
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
@@ -5070,8 +5077,15 @@ function watchpartyControlScript() {
       // genau in dieser Zeit ging Pausieren nach einem Sync ins Leere.
       const erwartet = window.__elfixWpErwartet;
       if (erwartet && Date.now() < erwartet.bis) {
-        if (aktion === erwartet.aktion) return;
-        if (aktion === "seek" && Math.abs(Number(media.currentTime) - erwartet.ziel) < 2) return;
+        // Beim Sprung entscheidet die Stelle: nur der Sprung auf genau das
+        // erwartete Ziel ist das Echo. Wer waehrenddessen selbst woandershin
+        // spult, meint das ernst - vorher verschluckte diese Pruefung jeden
+        // zweiten Sprung, weil sie nur auf die Art schaute.
+        if (aktion === "seek") {
+          if (Math.abs(Number(media.currentTime) - erwartet.ziel) < 2) return;
+        } else if (aktion === erwartet.aktion) {
+          return;
+        }
       }
       // Auf zwei Nachkommastellen: gerundete Sekunden reichen nicht, wenn alle
       // exakt auf derselben Stelle stehen sollen.
@@ -5583,6 +5597,9 @@ function sendWatchpartyWatchstate(nachricht) {
   mainWindow.webContents.send("watchparty:watchstate", {
     key: nachricht.key,
     room: nachricht.room || raum,
+    // Wer zuletzt gedrueckt hat - getrennt davon, wer gerade angehalten ist.
+    pausedBy: String(nachricht.pausedBy || ""),
+    lastAction: nachricht.lastAction || null,
     season: hier?.season || 0,
     episode: hier?.episode || 0,
     members: (nachricht.members || []).map((mitglied) => ({
@@ -5602,6 +5619,12 @@ function sendWatchpartyWatchstate(nachricht) {
   });
 }
 
+// Die Sitzung des gerade laufenden Players. Fehlt sie noch, entsteht sie hier.
+function watchpartySitzungFuer(providerId) {
+  if (!watchpartySitzung.has(providerId)) watchpartySitzung.set(providerId, crypto.randomUUID());
+  return watchpartySitzung.get(providerId);
+}
+
 // Der Weg, den es im Normalfall geht: die Seite meldet von selbst, sobald sich
 // etwas tut. Kein Zeitgeber, kein Abfragen aller Frames - und damit ohne die
 // Verzoegerung, die eine Umfrage zwangslaeufig hat.
@@ -5618,7 +5641,8 @@ function meldeWatchpartyStandAusSeite(view, position, pausiert) {
     paused: Boolean(pausiert),
     url: adresse,
     season: identity?.season || 0,
-    episode: identity?.episode || 0
+    episode: identity?.episode || 0,
+    playerSessionId: watchpartySitzungFuer(webContentsProvider.get(view.webContents.id) || "")
   }, raum);
 }
 
@@ -5652,7 +5676,8 @@ async function meldeWatchpartyStand() {
     paused: Boolean(stand.paused),
     url: adresse,
     season: identity?.season || 0,
-    episode: identity?.episode || 0
+    episode: identity?.episode || 0,
+    playerSessionId: watchpartySitzungFuer(webContentsProvider.get(view.webContents.id) || "")
   }, raum);
 }
 

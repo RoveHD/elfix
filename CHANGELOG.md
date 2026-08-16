@@ -3,6 +3,68 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.0 — 16. August 2026
+
+Der Host gehoert jetzt zur Folge, nicht zum Raum. Das war die Ursache dafuer,
+dass oben "Host: Jakob" stehen blieb, obwohl Jakob laengst eine Folge weiter
+oder gar nicht mehr am Player war - und niemand konnte sich an ihm ausrichten.
+
+Die alte Logik ist entfernt, nicht ueberlagert: raumweite Beitritts-
+Reihenfolge, gespeicherter Host, hostSicherstellen. An ihrer Stelle steht eine
+Ableitung aus lebenden Meldungen:
+- Aktiv ist, wer verbunden ist, Mitglied ist, dieselbe Staffel und Folge offen
+  hat, eine laufende Player-Sitzung meldet und dessen Herzschlag keine 15
+  Sekunden alt ist
+- Host ist unter diesen der, der die Folge zuerst betreten hat
+- Die Player-Sitzung wechselt bei jeder Navigation. Ein alter Player kann
+  damit nicht weiter als aktiv gelten
+- Weil der Host je Folge gilt, werden Raumzustand und Leiste je Empfaenger
+  gebaut: jeder sieht den Host seiner eigenen Folge
+- Wechselt der Host die Folge, verliert er den Host der alten. Kommt er
+  spaeter zurueck, wird er dort nur Teilnehmer
+
+Kein Host, wenn niemand mehr am Player ist:
+- In der Uebersicht stand an jeder Karte ein Host, auch wenn dort seit Stunden
+  niemand schaute. Jetzt bleibt in dem Fall nur der zuletzt bekannte Stand,
+  und die Leiste ist leer statt voller Karteileichen
+
+Wer pausiert hat, getrennt davon, wer pausiert ist:
+- Das Relay fuehrt die letzte Aktion samt Ausloeser. Zieht ein zweites Geraet
+  die Pause nur mit, bleibt der Ausloeser derselbe - vorher haette dort
+  ploetzlich der Mitzieher gestanden
+- Die Kopfzeile zeigt "Pausiert von Elias", solange die Runde steht
+- Die Anzeige greift nur noch auf den bestaetigten Stand zurueck. Ein
+  Zwischenruf ("X hat pausiert") ueberschreibt den Hostnamen nicht mehr
+
+Spulen und Auseinanderlaufen:
+- Der Echo-Schutz sah beim Sprung nur auf die Art des Ereignisses. Wer zweimal
+  schnell hintereinander spulte, dessen zweiter Sprung kam bei niemandem an -
+  er galt als Echo des ersten. Jetzt entscheidet die Stelle
+- Hoster springen auf das naechste Schluesselbild, und das liegt bei jedem
+  woanders. Weicht ein Geraet beim Schauen um mehr als 1,2 Sekunden vom Host
+  ab, bekommt genau es einen Sprung auf dessen Stelle. Danach bleibt es sechs
+  Sekunden ruhig: enger waere Zappeln, weil jeder Sprung den Hoster neu
+  puffern laesst
+- Der Host wird dabei nie gerueckt, und pausierte Geraete bleiben unangetastet
+
+Befehle bleiben in ihrer Folge:
+- Pause, Weiter und Sprung gingen an alle Mitglieder des Raums, auch an die
+  mit einer ganz anderen Folge. Nur der Client filterte das weg - der
+  Raumzustand war trotzdem verfaelscht. Jetzt filtert das Relay, und nur wer
+  bei der Folge der Runde steht, bewegt deren Zustand
+- Ein Folgenwechsel ist ausgenommen: der muss gerade die erreichen, die noch
+  bei der alten Folge stehen
+
+Der Raum folgte der Folge des Hosts nur ueber den Wechsel-Befehl:
+- Die Pruefung dafuer fragte, wer *jetzt* Host ist - da stand das Geraet aber
+  schon auf der neuen Folge und zaehlte fuer die alte nicht mehr mit. Die
+  Bedingung konnte nie wahr werden. Blieb der Wechsel-Befehl aus, hing die
+  Runde fest
+- Massgeblich ist jetzt, wer die Runde vor dieser Meldung gefuehrt hat
+
+Geprueft mit 78 Pruefungen gegen das laufende Relay: Host je Folge, die zwoelf
+Ablaeufe einer Watchparty, Abgleich und Steuerung, Spulen und Ausgleich.
+
 ## 1.16.4 — 16. August 2026
 
 Die Leiste sagt jetzt auf einen Blick, was los ist:
