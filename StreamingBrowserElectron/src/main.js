@@ -2990,16 +2990,17 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   return entry;
 }
 
+// Steht dieser Eintrag in "Weiterschauen"? Nur "gesehen" und "ausgeblendet"
+// nehmen ihn heraus - nicht die Prozentzahl. Eine Folge, die weit vorne steht,
+// aber mangels Wiedergabezeit nicht als gesehen zaehlt, ist weiter offen.
 function hasContinueProgressRecord(entry) {
   if (!entry || entry.completed || entry.episodeCompleted || entry.hideFromContinueWatching) return false;
   if (entry.continuePending) return true;
   const current = sanitizePositiveNumber(entry.currentTime || entry.position);
   const duration = sanitizePositiveNumber(entry.duration);
-  if (duration > 0 && current > 0 && current <= duration + 3) {
-    return mediaProgressPercent(current, duration) < COMPLETED_PROGRESS_PERCENT;
-  }
+  if (duration > 0 && current > 0 && current <= duration + 3) return true;
   const progress = sanitizeProgress(entry.progress);
-  return Boolean(entry.lastWatchedAt || entry.openedAt) && progress > 0 && progress < COMPLETED_PROGRESS_PERCENT;
+  return Boolean(entry.lastWatchedAt || entry.openedAt) && progress > 0;
 }
 
 function isWholeMediaCompleted(entry, url, mediaEnded) {

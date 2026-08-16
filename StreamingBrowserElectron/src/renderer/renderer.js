@@ -1977,22 +1977,24 @@ function hasContinueActivity(item) {
   if (item.continuePending) return true;
   if (hasKnownMediaProgress(item)) return true;
   const progress = Number(item.progress || 0);
-  const hasStoredProgress = Number.isFinite(progress) && progress > 0 && progress < 90;
+  const hasStoredProgress = Number.isFinite(progress) && progress > 0;
   const hasStartedHistory = Boolean(item.lastWatchedAt || item.openedAt);
   return hasStartedHistory && hasStoredProgress;
 }
 
+// Ob ueberhaupt ein brauchbarer Stand gespeichert ist. Die Prozentzahl
+// entscheidet hier nicht mehr mit: ob eine Folge als gesehen gilt, steht in
+// "completed"/"episodeCompleted", und danach wird in continueEntries ohnehin
+// gefiltert. Mit einer Grenze bei 90 fiel ein Eintrag, der weit vorne steht
+// aber nicht als gesehen zaehlt, aus der Liste - er war schlicht verschwunden.
 function hasKnownMediaProgress(item) {
   const current = Number(item?.currentTime || item?.position || 0);
   const duration = Number(item?.duration || 0);
-  const progress = favoriteProgressPercent(item);
   return Number.isFinite(current)
     && Number.isFinite(duration)
-    && Number.isFinite(progress)
     && duration > 0
     && current > 0
-    && current <= duration + 3
-    && progress < 90;
+    && current <= duration + 3;
 }
 
 function historyEntries() {
