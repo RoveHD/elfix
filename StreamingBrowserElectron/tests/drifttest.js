@@ -69,6 +69,22 @@ function puls(c) {
   B.stelle = 100; puls(B);
   await schlaf(400);
 
+  // --- 0. Uhrabgleich ----------------------------------------------------
+  // Ohne den kann der smarte Start nicht rechnen: er muesste sonst die
+  // Systemuhr des anderen Rechners fuer bare Muenze nehmen.
+  A.leeren();
+  const losgeschickt = Date.now();
+  A.send({ type: "time", t0: losgeschickt });
+  const antwort = await A.erwarte((m) => m.type === "timeack", 2000);
+  const umlauf = Date.now() - losgeschickt;
+  pruefe("0. Das Relay beantwortet eine Uhrprobe", Boolean(antwort),
+    antwort ? `nach ${umlauf} ms` : "keine Antwort");
+  pruefe("0b. Und reicht die eigene Marke unveraendert zurueck",
+    antwort && antwort.t0 === losgeschickt, antwort ? `t0=${antwort.t0}` : "-");
+  pruefe("0c. Die Serverzeit liegt zwischen Absenden und Empfang",
+    antwort && antwort.t1 >= losgeschickt - 1 && antwort.t1 <= Date.now() + 1,
+    antwort ? `t1=${antwort.t1}` : "-");
+
   // --- 1. Spulen erreicht den anderen exakt ------------------------------
   A.leeren(); B.leeren();
   A.stelle = 400;
@@ -76,33 +92,34 @@ function puls(c) {
   const sprung = await B.erwarte((m) => m.type === "control" && m.action === "seek");
   pruefe("1. Ein Sprung erreicht den anderen mit genauer Stelle",
     sprung && Math.abs(sprung.position - 400) < 0.001, sprung ? `position=${sprung.position}` : "kam nicht");
+  // Ein Sprung waehrend der Wiedergabe: der Empfaenger muss die Laufzeit der
+  // Nachricht aufschlagen, also braucht er "playing".
+  pruefe("1b. Ein Sprung im Lauf ist als laufend gekennzeichnet",
+    sprung && sprung.playing === true && Math.abs(sprung.videoTime - 400) < 0.001,
+    sprung ? `playing=${sprung.playing} videoTime=${sprung.videoTime}` : "-");
   // B folgt dem Sprung, wie es die App auch taete.
   B.stelle = 400;
 
-  // --- 2. Kleiner Versatz bleibt stehen ----------------------------------
-  // Das ist der Kern dieser Fassung: der Zeitversatz, der im Lauf von allein
-  // entsteht, wird nicht mehr ausgeglichen. B landet nach dem Sprung auf einem
-  // anderen Schluesselbild - drei Sekunden daneben - und wird in Ruhe gelassen.
-  //
-  // Vorher die Ruhezeit einer moeglichen Meldung aus dem Sprung eben abwarten,
-  // sonst koennte deren Sperre das Ergebnis vortaeuschen.
-  B.stelle = 400;
-  await schlaf(5500);
+  // --- 2. Das Relay misst, es korrigiert nicht ---------------------------
+  // Es meldet auch den kleinen Versatz - der Player braucht gerade diese
+  // Meldungen, um seine Zaehlung zurueckzusetzen. Ob daraus etwas folgt,
+  // entscheidet allein er (siehe synclogiktest).
   B.stelle = A.stelle - 3;
   B.leeren();
-  const kleiner = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 3000);
-  pruefe("2. Drei Sekunden Versatz werden in Ruhe gelassen", !kleiner,
-    kleiner ? `wurde auf ${kleiner.position.toFixed(2)} gerueckt` : "bleibt stehen");
-
-  // --- 2b. Weiter Versatz wird dagegen gemeldet --------------------------
-  B.stelle = A.stelle - 20;
-  B.leeren();
   const ausgleich = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 3000);
-  pruefe("2b. Zwanzig Sekunden Versatz bekommen die Host-Zeit gemeldet",
-    Boolean(ausgleich), ausgleich ? `auf ${ausgleich.position.toFixed(2)}` : "kein Ausgleich");
-  pruefe("2c. Gemeldet wird die Stelle des Hosts",
+  pruefe("2. Auch kleiner Versatz wird gemeldet", Boolean(ausgleich),
+    ausgleich ? `auf ${ausgleich.position.toFixed(2)}` : "kam nicht");
+  pruefe("2b. Gemeldet wird die Stelle des Hosts",
     ausgleich && Math.abs(ausgleich.position - A.stelle) < 2.5,
     ausgleich ? `Ziel ${ausgleich.position.toFixed(2)}, Host ${A.stelle.toFixed(2)}` : "-");
+  // Ohne diese Felder kann der Player nicht rechnen.
+  pruefe("2c. Und zwar mit allem, was der smarte Start braucht",
+    ausgleich && Number.isFinite(ausgleich.videoTime) && Number.isFinite(ausgleich.timestamp)
+      && ausgleich.playing === true && Number.isFinite(ausgleich.sequenceId)
+      && ausgleich.episodeId === "s1e1" && typeof ausgleich.hostId === "string" && ausgleich.hostId,
+    ausgleich
+      ? `videoTime=${ausgleich.videoTime.toFixed(2)} playing=${ausgleich.playing} seq=${ausgleich.sequenceId} folge=${ausgleich.episodeId}`
+      : "-");
 
   // --- 3. Der Host selbst wird nie gerueckt ------------------------------
   A.leeren();
@@ -111,21 +128,23 @@ function puls(c) {
   pruefe("3. Der Host bekommt nie eine Korrektur", !anHost, anHost ? "er wurde gerueckt" : "bleibt stehen");
 
   // --- 4./5. Takt der Meldungen ------------------------------------------
-  // Ob aus der gemeldeten Host-Zeit ein Sprung wird, entscheidet der Player -
-  // das laesst sich von hier nicht pruefen. Das Relay meldet sie hoechstens
-  // alle fuenf Sekunden; genau das wird hier gemessen.
+  // Der Player verlangt drei Messungen ueber fuenf Sekunden hintereinander,
+  // bevor er springt. Damit das in brauchbarer Zeit zusammenkommt, meldet das
+  // Relay alle zwei Sekunden - haeufiger nicht.
   B.stelle = 300;
   B.leeren();
-  // Grosszuegig warten: aus 2b kann noch eine Ruhezeit laufen.
-  const ersteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 7000);
+  const ersteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 4000);
   const seitdem = Date.now();
   B.leeren();
-  const zweiteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 7000);
-  pruefe("4. Die Host-Zeit kommt bei weitem Versatz an", Boolean(ersteMeldung),
+  const zweiteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 4000);
+  pruefe("4. Die Host-Zeit kommt beim Abweichen an", Boolean(ersteMeldung),
     ersteMeldung ? `position=${ersteMeldung.position.toFixed(2)}` : "kam nicht");
-  pruefe("5. Und hoechstens alle fuenf Sekunden",
-    !zweiteMeldung || Date.now() - seitdem >= 4500,
+  pruefe("5. Und hoechstens alle zwei Sekunden",
+    zweiteMeldung && Date.now() - seitdem >= 1800,
     zweiteMeldung ? `${Date.now() - seitdem} ms Abstand` : "keine zweite");
+  pruefe("5b. Die laufende Nummer waechst dabei",
+    ersteMeldung && zweiteMeldung && zweiteMeldung.sequenceId > ersteMeldung.sequenceId,
+    ersteMeldung && zweiteMeldung ? `${ersteMeldung.sequenceId} -> ${zweiteMeldung.sequenceId}` : "-");
 
   // --- 6. Pausierte werden nicht gerueckt --------------------------------
   B.pausiert = true; B.stelle = 200;
@@ -173,6 +192,31 @@ function puls(c) {
   pruefe("8c. Die Leiste zeigt danach nur noch die Verbliebenen",
     (ohneB?.members || []).every((m) => m.id !== "geraet-b"),
     (ohneB?.members || []).map((m) => m.name).join(", ") || "leer");
+
+  // --- 9. Pause und Play tragen den richtigen Laufzustand ----------------
+  // Bei einer Pause ist die Stelle endgueltig - da darf nichts hochgerechnet
+  // werden. Bei einem Play schon, sonst startet der andere zu frueh.
+  B.folge = 1; B.pausiert = false; B.stelle = A.stelle;
+  await schlaf(800);
+  B.leeren();
+  A.pausiert = true;
+  A.send({ type: "control", key: KEY, action: "pause", position: A.stelle, url: URL1 });
+  const pause = await B.erwarte((m) => m.type === "control" && m.action === "pause", 2000);
+  pruefe("9. Eine Pause ist als stehend gekennzeichnet",
+    pause && pause.playing === false, pause ? `playing=${pause.playing}` : "kam nicht");
+
+  B.leeren();
+  A.pausiert = false;
+  A.send({ type: "control", key: KEY, action: "play", position: A.stelle, url: URL1 });
+  const weiter = await B.erwarte((m) => m.type === "control" && m.action === "play", 2000);
+  pruefe("9b. Ein Play ist als laufend gekennzeichnet",
+    weiter && weiter.playing === true, weiter ? `playing=${weiter.playing}` : "kam nicht");
+  pruefe("9c. Die Nummern der Ereignisse steigen streng",
+    pause && weiter && weiter.sequenceId > pause.sequenceId,
+    pause && weiter ? `${pause.sequenceId} -> ${weiter.sequenceId}` : "-");
+  pruefe("9d. Zeitstempel und Stelle gehoeren zusammen",
+    weiter && weiter.timestamp === weiter.at && Math.abs(weiter.videoTime - weiter.position) < 0.001,
+    weiter ? `timestamp=${weiter.timestamp} videoTime=${weiter.videoTime.toFixed(2)}` : "-");
 
   for (const t of pulse) clearInterval(t);
   A.zu(); B.zu();

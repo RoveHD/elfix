@@ -18,6 +18,7 @@ const {
 } = require("./discover");
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
+const watchpartySync = require("./watchparty-sync");
 const providerModel = require("../shared/provider-model");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -93,6 +94,10 @@ const watchpartyBildNachgereicht = new Set();
 // Folgen, an die es sich schon einmal angehaengt hat.
 const watchpartyLiveAus = new Set();
 const watchpartyAngeklinkt = new Set();
+// Das zuletzt angewendete Ereignis je Runde und Titel: laufende Nummer,
+// Zeitstempel und Folge. Daran werden Nachzuegler erkannt, die sich unterwegs
+// ueberholt haben - ein verspaetetes Play nach einem neueren Pause etwa.
+const watchpartyLetztesEreignis = new Map();
 // Kennung des laufenden Players je Anbieter. Sie wechselt bei jeder Navigation
 // und damit bei jeder Folge: daran erkennt das Relay, dass hier ein neuer
 // Aufenthalt beginnt. Ohne das gaelte ein alter Player weiter als aktiv - und
@@ -5394,178 +5399,19 @@ function watchpartyControlScript() {
   })()`;
 }
 
-// Abgleich im Player-Frame - und zwar so wenig wie moeglich.
-//
-// Abgeglichen wird nur noch, was jemand tut: Play, Pause, Folgenwechsel,
-// absichtliches Spulen. Der Zeitversatz, der im Lauf von allein entsteht, wird
-// nicht mehr angefasst. Beides, was frueher hier stand, hat bei VOE mehr
-// kaputtgemacht als geradegerueckt:
-//
-// - am Tempo drehen: der Hoster wechselt dabei hoerbar die Tonhoehe, und
-//   manche Player setzen die Rate von sich aus wieder zurueck, worauf sofort
-//   die naechste Korrektur ansetzt
-// - currentTime setzen: jedes Setzen laesst den Hoster neu puffern, und das
-//   Puffern erzeugt genau den Versatz, den der Sprung beheben sollte
-//
-// Uebrig bleibt eine Notbremse. Ein paar Sekunden Unterschied faellt beim
-// gemeinsamen Schauen nicht auf - fuenf schon, denn dann redet der eine ueber
-// etwas, das der andere noch nicht gesehen hat. Nur dann wird gesprungen.
-//
-// Der Zustand liegt in dem Frame, in dem das Video wirklich haengt - bei VOE
-// ist das der Rahmen des Hosters, nicht das Dokument von AniWorld. Deshalb geht
-// dieses Skript in alle Frames und tut nur dort etwas, wo ein Video mit
-// Laufzeit liegt.
-function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
-  const ziel = Number(hostZeit) || 0;
-  const laeuft = hostLaeuft ? "true" : "false";
-  return `(() => {
-    const medien = Array.from(document.querySelectorAll("video"))
-      .filter((m) => m instanceof HTMLVideoElement && Number(m.duration) > 0);
-    const media = medien.sort((a, b) => b.duration - a.duration)[0];
-    if (!media) return "kein-video";
-
-    const S = (window.__elfixWpSync = window.__elfixWpSync || { seitSprung: 0, gemeldet: 0 });
-    const ziel = ${ziel};
-    const laeuft = ${laeuft};
-    const jetzt = Number(media.currentTime) || 0;
-    const drift = ziel - jetzt;
-    const betrag = Math.abs(drift);
-
-    // Ein Tempo aus einer aelteren Fassung koennte noch stehen - dieses Skript
-    // stellt keins mehr ein, raeumt ein fremdes aber weg.
-    if (typeof media.playbackRate === "number" && media.playbackRate !== 1) {
-      try { media.playbackRate = 1; } catch (_) {}
-    }
-
-    // Waehrend gepuffert oder gesprungen wird, gar nichts tun.
-    if (media.readyState < 3 || media.seeking) return "puffert";
-    // Steht der Host oder steht man selbst, entscheidet nicht der Versatz:
-    // Pause und Play kommen als eigene Befehle und setzen die Stelle exakt.
-    if (!laeuft || media.paused) return "steht";
-
-    let tat = "none";
-
-    // Unter fuenf Sekunden passiert nichts. Kein Tempo, kein Sprung, keine
-    // Zwischenstufe - das ist der ganze Punkt dieser Fassung.
-    if (betrag > 5) {
-      // Aber hoechstens alle fuenfzehn Sekunden, sonst puffert es sich zu
-      // Tode: wer dauerhaft hinterherhaengt, wird sonst genau dadurch
-      // langsamer, dass man ihn staendig nach vorn zieht.
-      if (Date.now() - S.seitSprung > 15000) {
-        try { media.currentTime = ziel; } catch (_) {}
-        S.seitSprung = Date.now();
-        tat = "hard-seek";
-      } else {
-        tat = "seek-cooldown";
-      }
-    }
-
-    // Hoechstens alle fuenf Sekunden schreiben, und nur wenn etwas geschah.
-    if (tat !== "none" && Date.now() - S.gemeldet > 5000) {
-      S.gemeldet = Date.now();
-      console.log("__elfix:wp:sync:" + JSON.stringify({
-        expectedHostTime: Number(ziel.toFixed(2)),
-        clientTime: Number(jetzt.toFixed(2)),
-        drift: Number(drift.toFixed(2)),
-        action: tat
-      }));
-    }
-    return tat;
-  })()`;
+// Die Skripte, die im Player-Rahmen laufen, stehen in watchparty-sync.js -
+// zusammen mit den Entscheidungen, die sie tragen, und dort gegen ein
+// nachgebautes Video geprueft.
+function watchpartyDriftScript(ereignis) {
+  return watchpartySync.driftScript(ereignis);
 }
 
-// Beim Folgenwechsel faengt alles von vorn an - Merker und Sperren gehoeren zur
-// Folge davor. Das Tempo wird mit zurueckgesetzt: der Abgleich stellt zwar
-// keins mehr ein, eine aeltere Fassung oder die Seite selbst aber schon.
 function watchpartySyncZuruecksetzenScript() {
-  return `(() => {
-    window.__elfixWpSync = { seitSprung: 0, gemeldet: 0 };
-    for (const media of document.querySelectorAll("video")) {
-      try { if (typeof media.playbackRate === "number") media.playbackRate = 1; } catch (_) {}
-    }
-    return "zurueckgesetzt";
-  })()`;
+  return watchpartySync.zuruecksetzenScript();
 }
 
-// Ein Befehl von aussen. Waehrend er ausgefuehrt wird, meldet dieses Geraet
-// selbst nichts zurueck.
-//
-// `genau` heisst: auf die Stelle des Hosts springen, auch wenn es nur eine
-// Sekunde ist. Das gilt fuer jede Pause und fuers gemeinsame Gleichziehen -
-// dort ist "ungefaehr" zu wenig. Beim blossen Mitlaufen bleibt es bei einer
-// groben Toleranz, sonst puffert der Hoster bei jedem Takt neu.
-// `warten` haelt das Versprechen offen, bis der Sprung wirklich vollzogen und
-// genug gepuffert ist - erst dann darf gemeldet werden, dass dieses Geraet
-// startbereit ist.
-function watchpartyApplyScript(action, position, optionen = {}) {
-  const genau = optionen.genau ? "true" : "false";
-  const warten = optionen.warten ? "true" : "false";
-  // Der Host springt nie. Er gibt den Takt vor - alle anderen richten sich nach
-  // ihm, nicht umgekehrt. Anhalten und Weiterlaufen gelten fuer ihn trotzdem,
-  // sonst liefe er waehrend eines Abgleichs davon.
-  const nichtSpringen = optionen.nichtSpringen ? "true" : "false";
-  return `(() => {
-    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
-    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
-    if (!media) return "kein-video";
-
-    const aktion = "${action}";
-    const ziel = ${Number(position) || 0};
-    const genau = ${genau};
-    const warten = ${warten};
-    const nichtSpringen = ${nichtSpringen};
-    const anhalten = aktion === "pause" || aktion === "syncprepare";
-    const laufen = aktion === "play" || aktion === "syncstart";
-    // Was der eigene Player gleich von sich aus melden wird, ist nur das Echo
-    // dieser Anweisung. Nur genau das wird verschluckt - eine Gegenrichtung
-    // kommt weiter durch, damit Pausieren auch direkt nach einem Sync wirkt.
-    window.__elfixWpErwartet = {
-      aktion: anhalten ? "pause" : (laufen ? "play" : "seek"),
-      ziel,
-      bis: Date.now() + (warten ? 4000 : 1500)
-    };
-
-    try {
-      // Bei einer Pause und beim Gleichziehen sitzt jeder auf derselben Stelle
-      // wie der Host - da zaehlt der Bruchteil. Nur beim beilaeufigen
-      // Mitlaufen darf es ungefaehr sein, sonst puffert der Hoster staendig neu.
-      const toleranz = genau ? 0.05 : 1.5;
-      const springbar = !nichtSpringen && ziel >= 0 && ziel < media.duration - 1 && (genau || ziel > 0);
-      if (springbar && Math.abs(Number(media.currentTime) - ziel) > toleranz) {
-        media.currentTime = ziel;
-      }
-      if (anhalten) media.pause();
-      if (laufen) {
-        const p = media.play();
-        if (p && typeof p.then === "function") p.catch(() => {});
-      }
-      if (!warten) return anhalten ? "pausiert" : (laufen ? "laeuft" : "gesprungen");
-
-      // media.currentTime = x ist nicht sofort erledigt. Wer hier zu frueh
-      // "bereit" meldet, startet gleich darauf mitten im Nachladen und liegt
-      // sofort wieder hinter den anderen.
-      return new Promise((resolve) => {
-        const frist = Date.now() + 2200;
-        const pruefen = () => {
-          // Wer nicht springt, ist schon dort, wo er sein soll - fuer ihn
-          // zaehlt nur, ob genug geladen ist.
-          const nah = nichtSpringen || Math.abs(Number(media.currentTime) - ziel) <= 0.5;
-          if (nah && media.readyState >= 3) {
-            resolve("bereit");
-            return;
-          }
-          if (Date.now() > frist) {
-            resolve(nah ? "bereit" : "ungenau");
-            return;
-          }
-          setTimeout(pruefen, 80);
-        };
-        pruefen();
-      });
-    } catch (_) {
-      return "fehlgeschlagen";
-    }
-  })()`;
+function watchpartyApplyScript(action, ereignis, optionen) {
+  return watchpartySync.applyScript(action, ereignis, optionen);
 }
 
 // Erster Teil des gemeinsamen Gleichziehens: anhalten und auf die Zielstelle
@@ -5596,7 +5442,7 @@ async function prepareWatchpartySync(eintrag, nachricht) {
     // wo er ohnehin steht - seine Stelle ist ja das Ziel.
     await executeJavaScriptInMediaFrames(
       view,
-      watchpartyApplyScript("syncprepare", nachricht.position, {
+      watchpartyApplyScript("syncprepare", watchpartyEreignis(nachricht, false), {
         genau: true,
         warten: true,
         nichtSpringen: Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId
@@ -5868,6 +5714,48 @@ async function installWatchpartyControls(provider, view, url) {
   }
 }
 
+// Aus einer Steuernachricht wird ein Ereignis, mit dem der Player rechnen kann:
+// Stelle, Zeitpunkt, Laufzustand - und der gemessene Uhrversatz zu dem Relay,
+// aus dem die Nachricht kam.
+//
+// `hatUhr` ist die Notbremse. Ohne belastbare Messung wird nicht hochgerechnet,
+// sondern die Stelle genommen, wie sie kommt. Genau das war frueher der Fehler:
+// gerechnet wurde mit Date.now() minus dem Zeitstempel des Relays, also aus
+// zwei verschiedenen Uhren, und ging die eigene vor, landete jeder Sprung um
+// diese Differenz zu weit vorn.
+function watchpartyEreignis(nachricht, laeuft) {
+  const raum = nachricht.room || aktiverWatchpartyRaum();
+  const serverJetzt = watchparty.serverJetzt(raum);
+  const stand = watchparty.uhrStand(raum);
+  return {
+    videoTime: Number(nachricht.videoTime ?? nachricht.position) || 0,
+    timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
+    playing: Boolean(laeuft),
+    hatUhr: serverJetzt != null,
+    versatz: stand ? stand.versatz : 0
+  };
+}
+
+// Meint diese Nachricht die Folge, die hier offen ist? Ein aelteres Relay
+// schickt die Angabe nicht mit - dann bleibt es bei der Pruefung ueber die
+// Adresse, die es schon immer gab.
+function watchpartyPasstZurFolge(episodeId, url) {
+  const gemeint = String(episodeId || "");
+  if (!gemeint) return true;
+  const hier = episodeIdentity(url);
+  if (!hier) return true;
+  return gemeint === `s${Number(hier.season) || 0}e${Number(hier.episode) || 0}`;
+}
+
+// Laeuft das Video an der Quelle nach diesem Ereignis weiter? Nur dann wird die
+// Laufzeit der Nachricht auf die Stelle aufgeschlagen. Ein aelteres Relay
+// schickt das Feld nicht mit - dann entscheidet die Aktion.
+function watchpartyLaeuftDanach(nachricht) {
+  if (typeof nachricht.playing === "boolean") return nachricht.playing;
+  if (nachricht.action === "hostzeit") return nachricht.hostPlaying !== false;
+  return nachricht.action === "play" || nachricht.action === "syncstart";
+}
+
 async function applyWatchpartyControl(nachricht) {
   // Nur die Runde steuert, in der dieses Geraet gerade schaut. Sonst wuerde
   // eine Pause aus der einen Watchparty die andere mit anhalten, obwohl dort
@@ -5876,6 +5764,24 @@ async function applyWatchpartyControl(nachricht) {
   if (!aktiv || (nachricht.room && nachricht.room !== aktiv)) return;
   const eintrag = watchpartyEintrag(nachricht.key, nachricht.room || aktiv);
   if (!eintrag) return;
+
+  // Nachrichten koennen sich unterwegs ueberholen. Ein verspaetetes Play darf
+  // nicht nach einem neueren Pause angewendet werden - sonst laeuft ein Geraet
+  // weiter, das alle anderen laengst angehalten haben.
+  const merker = `${nachricht.room || aktiv}|${nachricht.key}`;
+  if (watchpartySync.istVeraltet(watchpartyLetztesEreignis.get(merker), nachricht)) {
+    console.log(`[watchparty-sync] {"action":"stale","ignored":"${nachricht.action}"}`);
+    return;
+  }
+  watchpartyLetztesEreignis.set(merker, {
+    sequenceId: Number(nachricht.sequenceId) || 0,
+    timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
+    episodeId: String(nachricht.episodeId || "")
+  });
+
+  // Bin ich der Host, gilt meine Stelle - ich ruecke nicht, die anderen kommen
+  // zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
+  const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
   // derselben Serie, damit niemand ungefragt woanders landet.
@@ -5893,35 +5799,27 @@ async function applyWatchpartyControl(nachricht) {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
   }
 
-  // Die Stelle wird genommen, wie sie kommt. Frueher stand hier ein Zuschlag
-  // fuer die Zeit "unterwegs", berechnet als Date.now() minus dem Zeitstempel
-  // des Relays - also aus zwei verschiedenen Uhren. Geht die eigene Uhr vor,
-  // landete jeder Sprung genau um diese Differenz zu weit vorn.
-  //
-  // Das Relay verschickt sofort, nachdem es die Stelle bestimmt hat; zu
-  // begradigen bleibt nur die reine Leitungszeit, und die laesst sich ohne
-  // abgeglichene Uhren nicht messen. Sie liegt bei Millisekunden - deutlich
-  // weniger als der Fehler, den die Rechnerei verursacht hat.
-  const position = Number(nachricht.position || 0);
+  const ereignis = watchpartyEreignis(nachricht, watchpartyLaeuftDanach(nachricht));
   // Pause, gezielter Sprung, Abgleich und gemeinsamer Start muessen sitzen.
   // Nur beim beilaeufigen "der andere spielt weiter" darf es ungefaehr sein.
   const genau = nachricht.action !== "play" || Boolean(nachricht.resync);
-  // Bin ich der Host, gilt meine Stelle - ich ruecke nicht, die anderen kommen
-  // zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
-  const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 
-  // Der Abgleich im Lauf geht durch die sanfte Regelung: sie entscheidet im
-  // Player, ob nichts, ein leicht anderes Tempo oder doch ein Sprung noetig
-  // ist. Frueher wurde hier stumpf currentTime gesetzt - jedes Mal ein Ruckler.
+  // Die laufende Messung. Sie ist keine Korrektur - der Player entscheidet
+  // selbst, ob daraus etwas folgt, und meistens folgt nichts.
   if (nachricht.action === "hostzeit") {
     // Der Host ist die Zeitquelle und wird nie nachgeregelt.
     if (binHost) return;
+    // Und eine Messung von einem Host, der es nicht mehr ist, geht ins Leere:
+    // sie beschreibt eine Runde, die es so nicht mehr gibt.
+    if (nachricht.hostId && eintrag.hostId && nachricht.hostId !== eintrag.hostId) return;
     for (const [, view] of providerViews) {
       if (!isLiveView(view)) continue;
-      if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, view.webContents.getURL())) continue;
+      const offen = view.webContents.getURL();
+      if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, offen)) continue;
+      if (!watchpartyPasstZurFolge(nachricht.episodeId, offen)) continue;
       await executeJavaScriptInMediaFrames(
         view,
-        watchpartySoftSyncScript(position, nachricht.hostPlaying !== false)
+        watchpartyDriftScript(ereignis)
       ).catch(() => []);
     }
     return;
@@ -5938,12 +5836,18 @@ async function applyWatchpartyControl(nachricht) {
     // einem Folgenwechsel zeigte er noch minutenlang auf die Folge davor, und
     // damit fiel jede Pause durch diese Pruefung.
     if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, offen)) continue;
+    // Und derselbe Riegel noch einmal ueber die Folgenangabe der Nachricht.
+    // Die Adresse allein reicht nicht: ein Ereignis der vorigen Folge kann
+    // dieselbe Serien-Adresse tragen, wenn der Absender inzwischen gewechselt
+    // hat und das Relay die alte Runden-Adresse mitschickt.
+    if (!watchpartyPasstZurFolge(nachricht.episodeId, offen)) continue;
     const provider = providers.find((item) => item.id === providerId);
-    // Frueher stand hier nachricht.position: die eben berechnete Stelle samt
-    // Laufzeit wurde verworfen, und alle lagen dauerhaft hinter dem Host.
+    // Das Ereignis geht als Ganzes in den Player: dort wird die Zielzeit
+    // ausgerechnet, und zwar noch einmal unmittelbar vor dem Start. Nur so
+    // zaehlt auch die Zeit mit, die das Puffern gekostet hat.
     await executeJavaScriptInMediaFrames(
       view,
-      watchpartyApplyScript(nachricht.action, position, { genau, nichtSpringen: binHost })
+      watchpartyApplyScript(nachricht.action, ereignis, { genau, nichtSpringen: binHost })
     ).catch(() => []);
     if (provider) {
       logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});

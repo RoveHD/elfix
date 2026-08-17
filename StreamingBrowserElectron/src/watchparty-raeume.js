@@ -248,6 +248,25 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.fortschrittMelden(key, fortschritt);
   }
 
+  // Die Serverzeit des Raums, aus dem eine Nachricht kam. Jeder Raum ist eine
+  // eigene Verbindung und misst seinen Uhrversatz selbst - auch wenn dahinter
+  // dasselbe Relay steht, ist das die ehrlichere Angabe.
+  serverJetzt(room) {
+    const raum = this.raeume.get(String(room || "").trim());
+    if (raum) return raum.serverJetzt();
+    // Ohne Raumangabe zaehlt die beste vorhandene Messung.
+    let beste = null;
+    for (const kandidat of this.raeume.values()) {
+      const stand = kandidat.uhrStand();
+      if (stand && (!beste || stand.umlauf < beste.umlauf)) beste = { ...stand, raum: kandidat };
+    }
+    return beste ? beste.raum.serverJetzt() : null;
+  }
+
+  uhrStand(room) {
+    return this.raeume.get(String(room || "").trim())?.uhrStand() || null;
+  }
+
   trennen() {
     for (const raum of this.raeume.values()) raum.trennen();
   }

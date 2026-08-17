@@ -35,21 +35,21 @@ const STAND_TAKT_MS = 1000;
 // So lange wird gewartet, bevor einem stehengebliebenen Geraet noch einmal ein
 // Play nachgereicht wird - sonst haemmert es im Sekundentakt dagegen.
 const NACHREICHEN_MS = 3000;
-// Der laufende Zeitversatz wird nicht mehr ausgeglichen - abgeglichen wird nur
-// noch, was jemand tut: Play, Pause, Folgenwechsel, absichtliches Spulen. Jede
-// Korrektur im Lauf war entweder hoerbar oder liess den Hoster neu puffern, und
-// das Puffern erzeugte genau die Abweichung, die man beheben wollte.
+// Das Relay gleicht nichts mehr aus. Es misst nur noch und meldet, wo der Host
+// steht - ob daraus etwas folgt, entscheidet allein der Player: nur er kennt
+// seine tatsaechliche Stelle in dem Moment, in dem er handeln wuerde, und nur
+// er sieht, ob gerade gepuffert wird.
 //
-// Was bleibt, ist eine Notbremse fuer den Fall, dass zwei Geraete wirklich weit
-// auseinanderliegen. Ab hier lohnt es, dem Client die Host-Zeit zu schicken -
-// ob er springt, entscheidet er selbst: nur er kennt seine tatsaechliche Stelle
-// in dem Moment, in dem er handelt, und er springt erst ab fuenf Sekunden.
-// Diese Grenze liegt bewusst etwas darunter, damit die Meldung schon da ist,
-// wenn es soweit ist.
-const DRIFT_GRENZE_S = 4.0;
-// Und so lange bleibt es danach in Ruhe. Wer dauerhaft hinterherhaengt - lahme
-// Leitung, langsamer Hoster -, soll nicht im Sekundentakt neu ansetzen.
-const DRIFT_RUHE_MS = 5000;
+// Deshalb liegt die Grenze hier so niedrig. Sie sagt nicht "jetzt ist es zu
+// viel", sondern nur "hier lohnt sich eine Meldung". Der Player braucht auch
+// die kleinen Werte: an ihnen erkennt er, dass der Versatz wieder im Rahmen
+// ist, und setzt seine Zaehlung zurueck. Ohne diese Meldungen muesste er
+// raten. Nur bei praktisch deckungsgleichen Staenden bleibt es still.
+const DRIFT_GRENZE_S = 0.5;
+// Und in diesem Abstand. Der Player verlangt drei Messungen ueber fuenf
+// Sekunden hintereinander, bevor er springt - bei zwei Sekunden Abstand sind
+// das gut sechs Sekunden anhaltender Versatz.
+const DRIFT_RUHE_MS = 2000;
 // So alt darf die letzte Meldung eines Geraets hoechstens sein, damit es in der
 // Leiste steht. Gemeldet wird jede Sekunde, im Notfall alle fuenf - wer hier
 // herausfaellt, schaut gerade nicht mit.
@@ -245,7 +245,10 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit"]
+      // "clock" heisst: dieses Relay beantwortet Uhrproben, der smarte Start
+      // kann also rechnen. "seq" heisst: jede Steuernachricht traegt eine
+      // laufende Nummer, verspaetete Ereignisse lassen sich abweisen.
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq"]
     }));
     return;
   }
@@ -296,7 +299,7 @@ function zustandSenden(raumcode) {
 // und damit war der Anfang einer Folge nicht von "keine Ahnung" zu
 // unterscheiden: direkt nach einem Folgenwechsel steht der Host bei 0, und der
 // Abgleich lieferte deshalb gar keine Antwort mehr.
-function hostStandJetzt(raumcode, eintrag) {
+function hostZustandJetzt(raumcode, eintrag) {
   const kandidaten = [];
   // Am genauesten ist, was der Host selbst zuletzt aus seinem Player gemeldet
   // hat: hoechstens eine Sekunde alt, mit echtem Pausenzustand. Weil der Host
@@ -332,7 +335,33 @@ function hostStandJetzt(raumcode, eintrag) {
   // kommt alle paar Sekunden frisch aus dem Player und korrigiert das.
   const neueste = kandidaten.sort((links, rechts) => rechts.at - links.at)[0];
   const vergangen = neueste.laeuft ? Math.max(0, Date.now() - neueste.at) / 1000 : 0;
-  return neueste.position + Math.min(vergangen, 600);
+  return { position: neueste.position + Math.min(vergangen, 600), laeuft: Boolean(neueste.laeuft) };
+}
+
+// Nur die Stelle - fuer alles, was den Pausenzustand nicht braucht.
+function hostStandJetzt(raumcode, eintrag) {
+  const zustand = hostZustandJetzt(raumcode, eintrag);
+  return zustand ? zustand.position : null;
+}
+
+// Die laufende Nummer je Titel. Sie ordnet alles, was das Relay an die Runde
+// schickt - der Player weist damit Nachzuegler ab, die sich unterwegs
+// ueberholt haben. Sie zaehlt im Arbeitsspeicher und faengt nach einem
+// Neustart wieder bei eins an; der mitgeschickte Zeitstempel sorgt dafuer,
+// dass die Player deswegen nicht dauerhaft dichtmachen.
+function naechsteNummer(eintrag) {
+  eintrag.nummer = (Number(eintrag.nummer) || 0) + 1;
+  return eintrag.nummer;
+}
+
+// Welche Folge ist gemeint? Steht in jeder Nachricht, damit ein spaeter
+// eintreffendes Ereignis der vorigen Folge den laufenden Player nicht mehr
+// anfassen kann.
+function folgenKennung(season, episode) {
+  const staffel = Number(season) || 0;
+  const folge = Number(episode) || 0;
+  if (!staffel && !folge) return "";
+  return `s${staffel}e${folge}`;
 }
 
 // Es muss immer jemanden geben, an dem sich die anderen ausrichten koennen.
@@ -598,7 +627,23 @@ function syncStarten(raumcode, eintrag) {
   eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: Date.now() };
   eintrag.pauseAusgerichtet = false;
 
-  const daten = JSON.stringify({ type: "syncstart", key: eintrag.key, position: ziel, at: Date.now() });
+  // Auch hier gilt die eine Regel: die Nachricht ist unterschiedlich lange
+  // unterwegs, und wer spaeter einsteigt, muss weiter vorn einsteigen. Sonst
+  // waeren nach dem gemeinsamen Start genau die Millisekunden Unterschied
+  // drin, die dieses Verfahren beseitigen soll.
+  const jetzt = Date.now();
+  const daten = JSON.stringify({
+    type: "syncstart",
+    key: eintrag.key,
+    position: ziel,
+    at: jetzt,
+    videoTime: ziel,
+    timestamp: jetzt,
+    playing: true,
+    sequenceId: naechsteNummer(eintrag),
+    episodeId: folgenKennung(eintrag.season, eintrag.episode),
+    hostId: aktuelleHostId(raumcode, eintrag)
+  });
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!eintrag.members.has(client.geraetId)) continue;
@@ -624,6 +669,16 @@ wss.on("connection", (socket) => {
     try {
       nachricht = JSON.parse(String(rohdaten));
     } catch {
+      return;
+    }
+
+    // Uhrabgleich. Bewusst ganz vorn und ohne Raumbindung: die Antwort haengt
+    // an nichts, darf nichts blockieren und soll so schnell wie moeglich
+    // zurueckgehen - jede Millisekunde Bearbeitung hier landet als Fehler im
+    // gemessenen Versatz. `t0` wird nur durchgereicht, damit der Client seine
+    // Proben zuordnen kann.
+    if (nachricht?.type === "time") {
+      senden({ type: "timeack", t0: nachricht.t0, t1: Date.now() });
       return;
     }
 
@@ -793,6 +848,13 @@ wss.on("connection", (socket) => {
         };
       }
 
+      // Laeuft das Video an der Quelle nach diesem Ereignis? Davon haengt ab,
+      // ob der Empfaenger die Laufzeit der Nachricht auf die Stelle
+      // aufschlaegt. Bei einem Sprung zaehlt, ob der Absender selbst gerade
+      // laeuft - spult er im Stehen, ist seine Stelle exakt und endgueltig.
+      const laeuftDanach = aktion === "play"
+        || (aktion === "seek" && !(eintrag.stand?.get(socket.geraetId)?.paused ?? true));
+      const jetzt = Date.now();
       const daten = JSON.stringify({
         type: "control",
         key: eintrag.key,
@@ -801,7 +863,19 @@ wss.on("connection", (socket) => {
         url: ziel,
         from: socket.name,
         host: istHost,
-        at: Date.now()
+        at: jetzt,
+        // Der smarte Start: Stelle, Zeitpunkt und Laufzustand gehoeren
+        // zusammen. Aus ihnen rechnet der Empfaenger aus, wo die Quelle in
+        // dem Augenblick steht, in dem er wirklich einsteigt.
+        videoTime: gemeinsam,
+        timestamp: jetzt,
+        playing: laeuftDanach,
+        sequenceId: naechsteNummer(eintrag),
+        episodeId: folgenKennung(
+          aktion === "navigate" ? eintrag.season : (eintrag.stand?.get(socket.geraetId)?.season || eintrag.season),
+          aktion === "navigate" ? eintrag.episode : (absenderFolge || eintrag.episode)
+        ),
+        hostId: aktuelleHostId(socket.raum, eintrag)
       });
       for (const client of wss.clients) {
         if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
@@ -851,7 +925,24 @@ wss.on("connection", (socket) => {
       ));
       eintrag.sync = { ziel, wartetAuf: new Set(mitglieder.map((c) => c.geraetId)), at: Date.now() };
 
-      const vorbereiten = JSON.stringify({ type: "syncprepare", key: eintrag.key, position: ziel, url, from: socket.name });
+      // Beim Vorbereiten halten alle an und stellen sich auf dieselbe Stelle.
+      // Es wird also nichts hochgerechnet - `playing` ist falsch, und die
+      // Stelle gilt auf die Hundertstelsekunde.
+      const angesetzt = Date.now();
+      const vorbereiten = JSON.stringify({
+        type: "syncprepare",
+        key: eintrag.key,
+        position: ziel,
+        url,
+        from: socket.name,
+        at: angesetzt,
+        videoTime: ziel,
+        timestamp: angesetzt,
+        playing: false,
+        sequenceId: naechsteNummer(eintrag),
+        episodeId: folgenKennung(eintrag.season, eintrag.episode),
+        hostId: aktuelleHostId(socket.raum, eintrag)
+      });
       for (const client of mitglieder) client.send(vorbereiten);
 
       // Auch wenn jemand nicht meldet, geht es nach kurzer Zeit los.
@@ -926,6 +1017,7 @@ wss.on("connection", (socket) => {
         eintrag.live.position = genau;
         eintrag.live.at = Date.now();
         standFuerAlle(eintrag, genau, true);
+        const jetzt = Date.now();
         const daten = JSON.stringify({
           type: "control",
           key: eintrag.key,
@@ -935,7 +1027,15 @@ wss.on("connection", (socket) => {
           from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
           host: true,
           resync: true,
-          at: Date.now()
+          at: jetzt,
+          videoTime: genau,
+          timestamp: jetzt,
+          // Der Host steht - also ist seine Stelle exakt und wird nicht
+          // hochgerechnet. Genau dafuer gibt es diese Ausrichtung.
+          playing: false,
+          sequenceId: naechsteNummer(eintrag),
+          episodeId: folgenKennung(eintrag.season, eintrag.episode),
+          hostId: socket.geraetId
         });
         for (const client of wss.clients) {
           if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
@@ -948,11 +1048,14 @@ wss.on("connection", (socket) => {
         }
       }
 
-      // Weit auseinandergelaufen? Kleiner Versatz bleibt jetzt stehen - erst
-      // wer wirklich weit vom Host abweicht, bekommt dessen Stelle gemeldet.
-      // Nur er, nur bei derselben Folge, und nur wenn beide wirklich laufen.
-      // Der Host selbst wird nie gerueckt, die anderen kommen zu ihm.
-      // Gemeinsame Grundlage fuer beide Korrekturen darunter.
+      // Die laufende Messung. Sie ist keine Korrektur: das Relay meldet nur,
+      // wo der Host steht, und zwar auch bei kleinem Versatz. Der Player
+      // braucht gerade die kleinen Werte - an ihnen sieht er, dass wieder
+      // alles im Rahmen ist, und setzt seine Zaehlung zurueck. Ob am Ende
+      // gesprungen wird, entscheidet er allein.
+      //
+      // Gemessen wird nur bei derselben Folge, nur wenn beide wirklich laufen,
+      // und nie fuer den Host selbst: er ist die Zeitquelle.
       const zustand = eintrag.stand.get(socket.geraetId);
       const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
       const hostJetzt = aktuellerHost(socket.raum, eintrag);
@@ -960,24 +1063,29 @@ wss.on("connection", (socket) => {
       if (hostJetzt && hostJetzt.geraetId !== socket.geraetId
         && !pausiert && !hostJetzt.paused && !eintrag.sync
         && gleicheFolge) {
-        const ziel = hostStandJetzt(socket.raum, eintrag);
+        const stand = hostZustandJetzt(socket.raum, eintrag);
+        const ziel = stand ? stand.position : null;
         const abstand = ziel == null ? 0 : Math.abs(zahl(nachricht.position, 100000) - ziel);
-        // Nur melden, wie spaet es beim Host ist. Ob daraus nichts oder ein
-        // Sprung wird, entscheidet der Client - er kennt seine Stelle im
-        // Augenblick des Handelns, das Relay nur die von vorhin.
         if (ziel != null && abstand > DRIFT_GRENZE_S && Date.now() - (zustand.gerueckt || 0) > DRIFT_RUHE_MS) {
           zustand.gerueckt = Date.now();
+          const jetzt = Date.now();
           senden({
             type: "control",
             key: eintrag.key,
             action: "hostzeit",
-            hostPlaying: !hostJetzt.paused,
+            hostPlaying: stand.laeuft,
             position: ziel,
             url: eintrag.live?.url || eintrag.url,
             from: hostJetzt.name || "Host",
             host: false,
             resync: true,
-            at: Date.now()
+            at: jetzt,
+            videoTime: ziel,
+            timestamp: jetzt,
+            playing: stand.laeuft,
+            sequenceId: naechsteNummer(eintrag),
+            episodeId: folgenKennung(eintrag.season, eintrag.episode),
+            hostId: hostJetzt.geraetId
           });
         }
       }
@@ -988,19 +1096,26 @@ wss.on("connection", (socket) => {
       // nur ihm, und nur wenn es bei derselben Folge steht.
       const faellig = !zustand.geholt || Date.now() - zustand.geholt > NACHREICHEN_MS;
       if (pausiert && gleicheFolge && faellig && !eintrag.sync && eintrag.live?.action === "play") {
-        const ziel = hostStandJetzt(socket.raum, eintrag);
-        if (ziel != null) {
+        const stand = hostZustandJetzt(socket.raum, eintrag);
+        if (stand) {
           zustand.geholt = Date.now();
+          const jetzt = Date.now();
           senden({
             type: "control",
             key: eintrag.key,
             action: "play",
-            position: ziel,
+            position: stand.position,
             url: eintrag.live?.url || eintrag.url,
             from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
             host: false,
             resync: true,
-            at: Date.now()
+            at: jetzt,
+            videoTime: stand.position,
+            timestamp: jetzt,
+            playing: stand.laeuft,
+            sequenceId: naechsteNummer(eintrag),
+            episodeId: folgenKennung(eintrag.season, eintrag.episode),
+            hostId: aktuelleHostId(socket.raum, eintrag)
           });
         }
       }
@@ -1061,20 +1176,32 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "resync") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
-      const stand = hostStandJetzt(socket.raum, eintrag);
+      const stand = hostZustandJetzt(socket.raum, eintrag);
       // Nur wenn vom Host wirklich nichts bekannt ist, bleibt die Antwort aus.
       // Steht er am Anfang der Folge, ist 0 die richtige Auskunft.
-      if (stand == null) return;
+      if (!stand) return;
+      const angehalten = eintrag.live?.action === "pause";
+      const jetzt = Date.now();
       senden({
         type: "control",
         key: eintrag.key,
-        action: eintrag.live?.action === "pause" ? "pause" : "play",
-        position: stand,
+        action: angehalten ? "pause" : "play",
+        position: stand.position,
         url: eintrag.live?.url || eintrag.url,
         from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
         host: true,
         resync: true,
-        at: Date.now()
+        at: jetzt,
+        // Beitreten und Wiederverbinden laufen ueber genau diese Antwort. Sie
+        // traegt deshalb dieselben Angaben wie ein echtes Ereignis: wer jetzt
+        // einsteigt, soll dort landen, wo der Host beim Einsteigen steht - und
+        // nicht dort, wo er beim Absenden stand.
+        videoTime: stand.position,
+        timestamp: jetzt,
+        playing: !angehalten && stand.laeuft,
+        sequenceId: naechsteNummer(eintrag),
+        episodeId: folgenKennung(eintrag.season, eintrag.episode),
+        hostId: aktuelleHostId(socket.raum, eintrag)
       });
       return;
     }

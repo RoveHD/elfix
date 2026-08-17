@@ -9,9 +9,23 @@
 // Das Modul kennt weder Electron noch die Ablage der Favoriten: es bekommt beim
 // Start Rueckrufe und ist dadurch ohne laufende App pruefbar.
 
+const { versatzAusProben } = require("./watchparty-sync");
+
 const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 60000;
 const SENDE_VERZOEGERUNG_MS = 1500;
+
+// Uhrabgleich mit dem Relay. Ohne den waere jede Hochrechnung "wo steht der
+// Host jetzt?" um die Differenz zweier Systemuhren daneben - und die betraegt
+// auf ungepflegten Rechnern gern Minuten.
+const UHR_PROBEN = 5;
+const UHR_ABSTAND_MS = 120;
+// Uhren laufen auseinander, und zwar langsam. Alle halbe Minute nachmessen
+// kostet fuenf winzige Nachrichten und haelt den Versatz aktuell.
+const UHR_AUFFRISCHEN_MS = 30000;
+// Aelter als das, und der Versatz gilt als nicht mehr belastbar: dann wird
+// lieber gar nicht hochgerechnet.
+const UHR_HALTBAR_MS = 180000;
 
 class Watchparty {
   constructor(optionen = {}) {
@@ -38,6 +52,12 @@ class Watchparty {
     this.reconnectTimer = 0;
     this.sendeTimer = 0;
     this.warteschlange = new Map();
+    // Der gemessene Uhrversatz zum Relay: { versatz, umlauf, at }. Solange er
+    // fehlt, wird nirgends hochgerechnet.
+    this.uhr = null;
+    this.uhrProben = [];
+    this.uhrTimer = 0;
+    this.uhrAuffrischen = 0;
   }
 
   status() {
@@ -122,6 +142,9 @@ class Watchparty {
       this.senden({ type: "join", room: this.raum, name: this.name, deviceId: this.geraetId });
       this.melde();
       this.warteschlangeSenden();
+      // Sofort messen: das erste Ereignis kann Millisekunden spaeter kommen,
+      // und ohne Versatz steigt der smarte Start auf die alte Stelle ein.
+      this.uhrMessen();
     };
     socket.onmessage = (ereignis) => this.nachrichtVerarbeiten(ereignis?.data);
     socket.onerror = (ereignis) => {
@@ -131,9 +154,78 @@ class Watchparty {
       this.verbunden = false;
       this.socket = null;
       this.teilnehmer = [];
+      this.uhrAnhalten();
+      this.uhr = null;
+      this.uhrProben = [];
       this.melde();
       this.spaeterNeuVerbinden();
     };
+  }
+
+  // --- Uhrabgleich ----------------------------------------------------------
+  //
+  // Eine Handvoll Proben kurz hintereinander, dann gilt die mit dem kuerzesten
+  // Umlauf. Danach alle halbe Minute nachmessen.
+  uhrMessen() {
+    this.uhrAnhalten();
+    this.uhrProben = [];
+    let offen = UHR_PROBEN;
+    const probe = () => {
+      if (!this.verbunden || !this.socket) {
+        this.uhrAnhalten();
+        return;
+      }
+      this.senden({ type: "time", t0: Date.now() });
+      offen -= 1;
+      if (offen <= 0) {
+        this.uhrTimer = 0;
+        this.uhrNachmessenPlanen();
+        return;
+      }
+      this.uhrTimer = setTimeout(probe, UHR_ABSTAND_MS);
+      this.uhrTimer.unref?.();
+    };
+    probe();
+  }
+
+  uhrNachmessenPlanen() {
+    if (this.uhrAuffrischen) return;
+    this.uhrAuffrischen = setTimeout(() => {
+      this.uhrAuffrischen = 0;
+      if (this.verbunden) this.uhrMessen();
+    }, UHR_AUFFRISCHEN_MS);
+    this.uhrAuffrischen.unref?.();
+  }
+
+  uhrAnhalten() {
+    if (this.uhrTimer) clearTimeout(this.uhrTimer);
+    if (this.uhrAuffrischen) clearTimeout(this.uhrAuffrischen);
+    this.uhrTimer = 0;
+    this.uhrAuffrischen = 0;
+  }
+
+  uhrAntwort(nachricht) {
+    const t0 = Number(nachricht.t0);
+    const t1 = Number(nachricht.t1);
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return;
+    this.uhrProben.push({ t0, t1, t2: Date.now() });
+    if (this.uhrProben.length > UHR_PROBEN) this.uhrProben.shift();
+    const beste = versatzAusProben(this.uhrProben);
+    // Eine einzige brauchbare Probe reicht zum Anfangen; die naechsten
+    // verbessern sie nur, wenn sie schneller zurueckkamen.
+    if (beste) this.uhr = { ...beste, at: Date.now() };
+  }
+
+  // Wie spaet ist es auf dem Relay? Fehlt eine belastbare Messung, kommt null
+  // zurueck - dann wird bewusst nicht hochgerechnet.
+  serverJetzt() {
+    if (!this.uhr || Date.now() - this.uhr.at > UHR_HALTBAR_MS) return null;
+    return Date.now() + this.uhr.versatz;
+  }
+
+  uhrStand() {
+    if (!this.uhr || Date.now() - this.uhr.at > UHR_HALTBAR_MS) return null;
+    return { versatz: this.uhr.versatz, umlauf: this.uhr.umlauf, alter: Date.now() - this.uhr.at };
   }
 
   // http(s)-Adressen bequem eintippen koennen - verbunden wird ueber ws(s).
@@ -150,6 +242,11 @@ class Watchparty {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = 0;
     }
+    this.uhrAnhalten();
+    // Der Versatz gehoert zur Verbindung. Nach einem Wiederaufbau kann es ein
+    // anderes Relay sein - oder dieselbe Maschine mit gestellter Uhr.
+    this.uhr = null;
+    this.uhrProben = [];
     const socket = this.socket;
     this.socket = null;
     this.verbunden = false;
@@ -193,6 +290,12 @@ class Watchparty {
     if (nachricht?.type === "peers") {
       this.teilnehmer = Array.isArray(nachricht.peers) ? nachricht.peers : [];
       this.melde();
+      return;
+    }
+    // Die Antwort auf eine Uhrprobe. Sie geht bewusst nicht durch den Block
+    // darunter: sie aendert nichts am Zustand und darf nie einen Fehler melden.
+    if (nachricht?.type === "timeack") {
+      this.uhrAntwort(nachricht);
       return;
     }
     // Ein Fehler beim Einarbeiten wuerde im Ereignis-Handler still

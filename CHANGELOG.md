@@ -3,6 +3,58 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.20.0 — 17. August 2026
+
+Der Abgleich startet jetzt klug und laesst danach in Ruhe.
+
+Mit 1.19.0 war der laufende Ausgleich weg - dafuer stieg jeder Client an der
+Stelle ein, an der der Host beim Absenden stand, und lag damit von Anfang an
+zurueck. Beides ist jetzt zusammengefuehrt.
+
+**Der Start rechnet mit**
+
+- Jedes Ereignis traegt Stelle, Zeitpunkt, Laufzustand, eine laufende Nummer
+  und die Folge. Der Empfaenger rechnet daraus aus, wo die Quelle in dem
+  Augenblick steht, in dem er wirklich einsteigt - nicht, wo sie beim
+  Absenden stand
+- Unmittelbar vor dem Start wird noch einmal nachgerechnet. Der Host hat
+  waehrend des Puffems ja weitergeschaut; bei einer halben Sekunde Puffern
+  wird entsprechend weiter vorn eingestiegen
+- Der Host wartet dabei auf niemanden. Er drueckt und laeuft los
+- Gerechnet wird in Serverzeit. Die App misst den Uhrversatz zum Relay nach
+  dem Muster von NTP - fuenf Proben beim Verbinden, danach alle halbe Minute,
+  und es zaehlt die schnellste. Ohne belastbare Messung wird bewusst gar
+  nicht hochgerechnet: lieber eine halbe Sekunde zu frueh als die Differenz
+  zweier Systemuhren als Videozeit verrechnet
+
+**Danach passiert nichts mehr**
+
+- Kein Tempo, keine kleinen Korrekturen, kein Nachregeln. Bis fuenf Sekunden
+  Versatz wird der Player nicht angefasst, und das steht so auch im Log
+- Gesprungen wird erst, wenn drei Messungen hintereinander darueber lagen -
+  eine einzelne faellt schon dann aus dem Rahmen, wenn der Host gerade
+  puffert. Danach fuenfzehn Sekunden Ruhe
+- Waehrend gepuffert, gespult oder gestockt wird, gar nicht: da steht die
+  Stelle, waehrend die Zeit laeuft. Danach wird neu bewertet
+
+**Verspaetete Ereignisse kommen nicht mehr durch**
+
+- Ein Play, das sich unterwegs mit einem neueren Pause ueberholt hat, wird
+  abgewiesen - ebenso alles aus einer Folge, die nicht mehr laeuft, und
+  Messungen von einem Host, der keiner mehr ist
+
+**Aufgeraeumt**
+
+- Die gesamte Sync-Logik liegt jetzt in einer Datei und gibt es nur einmal:
+  die Skripte im Player werden aus demselben Quelltext gebaut, der geprueft
+  wird. Zwei Fassungen, die auseinanderlaufen koennen, gibt es nicht mehr
+- Nirgends im Player wird noch playbackRate gesetzt - ausser auf 1, wenn eine
+  aeltere Fassung etwas stehengelassen hat. Eine Pruefung haelt das fest
+- 64 neue Pruefungen in zwei Suiten, darunter das Zusammenspiel mit einem
+  nachgebauten Video: gemeinsamer Start, Pause und Play, manueller Sprung,
+  Puffern, ein bis vier Sekunden Drift, kuenstlich mehr als fuenf, und zehn
+  Minuten Wiedergabe am Stueck
+
 ## 1.19.0 — 17. August 2026
 
 Der Abgleich fasst die laufende Wiedergabe nicht mehr an.
