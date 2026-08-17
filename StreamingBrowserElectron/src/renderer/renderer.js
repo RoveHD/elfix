@@ -501,6 +501,7 @@ function bindEvents() {
     });
   }
   document.querySelector("#favoritesOpenProvider").addEventListener("click", openActiveProvider);
+  document.querySelector("#calendarReload")?.addEventListener("click", () => ladeKalender(true));
   historyClear?.addEventListener("click", clearHistory);
   document.querySelectorAll("[data-home-action]").forEach((button) => {
     button.addEventListener("click", () => handleHomeAction(button.dataset.homeAction));
@@ -1081,6 +1082,22 @@ function renderWatchpartyStatus(state) {
   }).join(" · ");
 }
 
+// "2026-07-29" -> "29. Juli 2026". Liegt es in der Zukunft, ist es ein
+// angekuendigter Start und wird auch so benannt.
+function erscheinungsdatum(wert) {
+  const teile = String(wert || "").split("-");
+  if (teile.length !== 3) return "";
+  const monate = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  const jahr = Number(teile[0]);
+  const monat = Number(teile[1]);
+  const tag = Number(teile[2]);
+  if (!monate[monat - 1]) return "";
+  const lesbar = `${tag}. ${monate[monat - 1]} ${jahr}`;
+  const zeitpunkt = Date.parse(`${wert}T00:00:00`);
+  return Number.isFinite(zeitpunkt) && zeitpunkt > Date.now() ? `Ab ${lesbar}` : lesbar;
+}
+
 function discoverCard(item) {
   const card = document.createElement("div");
   card.className = `favorite-card${item.image ? " has-thumb" : ""}`;
@@ -1097,6 +1114,7 @@ function discoverCard(item) {
   card.innerHTML = `
     <strong>${escapeHtml(item.title)}</strong>
     <span>${escapeHtml(untertitel)}</span>
+    ${item.releasedAt ? `<small class="media-progress-detail">${escapeHtml(erscheinungsdatum(item.releasedAt))}</small>` : ""}
   `;
   const oeffnen = () => openDiscoverItem(item);
   card.addEventListener("click", oeffnen);
@@ -1272,6 +1290,10 @@ async function handleHomeAction(action) {
     await openSearchView();
     return;
   }
+  if (action === "calendar") {
+    await showCalendar();
+    return;
+  }
   if (action === "favorites") {
     await showFavorites();
     return;
@@ -1400,6 +1422,108 @@ async function showHome() {
   renderFavoriteToggle();
   renderHome();
   window.setTimeout(syncBrowserBounds, 0);
+}
+
+// Der Kalender der Anbieter, nach Wochentagen. Geladen wird beim ersten
+// Oeffnen und danach aus dem Zwischenspeicher - die Seiten aendern sich
+// hoechstens taeglich.
+let kalenderDaten = null;
+let kalenderTag = "";
+
+async function showCalendar() {
+  await enterInternalMode();
+  setCurrentRoute("calendar");
+  hideContentViews();
+  document.querySelector("#calendarView")?.classList.remove("is-hidden");
+  window.setTimeout(syncBrowserBounds, 0);
+  if (!kalenderDaten) await ladeKalender();
+  else renderKalender();
+}
+
+async function ladeKalender(refresh = false) {
+  const gitter = document.querySelector("#calendarGrid");
+  if (gitter && !kalenderDaten) gitter.replaceChildren(emptyText("Kalender wird geladen …"));
+  kalenderDaten = await api.loadCalendar?.(refresh).catch(() => null);
+  // Beim ersten Mal auf den heutigen Tag stellen.
+  if (!kalenderTag) {
+    const heute = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"][new Date().getDay()];
+    kalenderTag = heute;
+  }
+  renderKalender();
+}
+
+function renderKalender() {
+  const tage = document.querySelector("#calendarDays");
+  const gitter = document.querySelector("#calendarGrid");
+  const leer = document.querySelector("#calendarEmpty");
+  if (!tage || !gitter) return;
+
+  const eintraege = kalenderDaten?.entries || [];
+  leer?.classList.toggle("is-hidden", eintraege.length > 0);
+  if (!eintraege.length) {
+    tage.replaceChildren();
+    gitter.replaceChildren();
+    return;
+  }
+
+  tage.replaceChildren(...(kalenderDaten.days || []).map((tag) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = `calendar-day${tag === kalenderTag ? " is-active" : ""}`;
+    const anzahl = eintraege.filter((eintrag) => eintrag.day === tag).length;
+    knopf.textContent = anzahl ? `${tag} (${anzahl})` : tag;
+    knopf.disabled = !anzahl;
+    knopf.addEventListener("click", () => {
+      kalenderTag = tag;
+      renderKalender();
+    });
+    return knopf;
+  }));
+
+  const desTages = eintraege.filter((eintrag) => eintrag.day === kalenderTag);
+  gitter.replaceChildren(...(desTages.length
+    ? desTages.map(kalenderKarte)
+    : [emptyText("An diesem Tag erscheint nichts.")]));
+}
+
+// "2026-08-17" -> "17.08." - das Jahr steht ohnehin in der Gegenwart.
+function kalenderDatum(wert) {
+  const teile = String(wert || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return teile ? `${teile[3]}.${teile[2]}.` : "";
+}
+
+function kalenderKarte(eintrag) {
+  const karte = document.createElement("div");
+  karte.className = `favorite-card${eintrag.image ? " has-thumb" : ""}`;
+  if (eintrag.image) {
+    karte.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(eintrag.image)}")`;
+  }
+  karte.tabIndex = 0;
+  karte.role = "button";
+  karte.title = `${eintrag.title} bei ${eintrag.providerName} öffnen`;
+  const folge = eintrag.episode
+    ? `S${eintrag.season || 1}E${eintrag.episode}`
+    : "";
+  // Auf eine Zeile passt das nicht - die Fassung wird sonst abgeschnitten.
+  // Also Herkunft und Folge oben, Zeitpunkt und Fassung darunter.
+  const herkunft = [eintrag.providerName, folge].filter(Boolean).join(" · ");
+  const wann = [kalenderDatum(eintrag.date), eintrag.time ? `${eintrag.time} Uhr` : ""]
+    .filter(Boolean).join(" · ");
+  karte.innerHTML = `
+    <strong>${escapeHtml(eintrag.title)}</strong>
+    <span>${escapeHtml(herkunft)}</span>
+    ${wann ? `<small class="media-progress-detail">${escapeHtml(wann)}</small>` : ""}
+    ${eintrag.language ? `<small class="calendar-language">${escapeHtml(eintrag.language)}</small>` : ""}
+  `;
+  const oeffnen = () => api.openProviderUrl?.(eintrag.providerId, eintrag.url);
+  karte.addEventListener("click", oeffnen);
+  karte.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      oeffnen();
+    }
+  });
+  return karte;
 }
 
 async function showFavorites() {
@@ -2435,6 +2559,7 @@ function hideContentViews() {
   continueView?.classList.add("is-hidden");
   historyView?.classList.add("is-hidden");
   watchpartyView?.classList.add("is-hidden");
+  document.querySelector("#calendarView")?.classList.add("is-hidden");
 }
 
 function switchToPlayerView() {
@@ -2958,6 +3083,9 @@ function sidebarRouteForAction(action) {
   if (action === "library") return "library";
   if (action === "history") return "history";
   if (action === "search") return "search";
+  // Ohne diese Zeile faellt "calendar" auf "start" zurueck - dann leuchteten
+  // Startseite und Kalender gleichzeitig.
+  if (action === "calendar") return "calendar";
   if (action === "settings") return "settings";
   if (action === "add-provider") return "add-provider";
   if (action === "help") return "help";
@@ -3029,6 +3157,7 @@ function zeigeAnsicht(route) {
     case "continue": return showContinue();
     case "history": return showHistory();
     case "watchlist": return showFavorites();
+    case "calendar": return showCalendar();
     default: return showHome();
   }
 }

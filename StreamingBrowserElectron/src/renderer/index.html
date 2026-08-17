@@ -47,6 +47,7 @@
         <nav class="home-side-nav">
           <button class="home-side-link is-active" type="button" data-home-action="start" title="Startseite"><span class="side-icon">⌂</span><span class="side-label">Startseite</span></button>
           <button class="home-side-link" type="button" data-home-action="search" title="Suche"><span class="side-icon">⌕</span><span class="side-label">Suche</span></button>
+          <button class="home-side-link" type="button" data-home-action="calendar" title="Kalender"><span class="side-icon">🗓</span><span class="side-label">Kalender</span></button>
           <button class="home-side-link" type="button" data-home-action="favorites" title="Watchlist"><span class="side-icon">♡</span><span class="side-label">Watchlist</span><span class="side-badge is-hidden" id="watchlistBadge"></span></button>
           <button class="home-side-link" type="button" data-home-action="history" title="Verlauf"><span class="side-icon">◴</span><span class="side-label">Verlauf</span></button>
         </nav>
@@ -178,9 +179,29 @@
             <nav class="home-bottom-nav" aria-label="Startseiten-Navigation unten">
               <button class="is-active" type="button" data-home-action="start">⌂ <span>Startseite</span></button>
               <button type="button" data-home-action="search">⌕ <span>Suche</span></button>
+              <button type="button" data-home-action="calendar">🗓 <span>Kalender</span></button>
               <button type="button" data-home-action="favorites">♡ <span>Watchlist</span></button>
               <button type="button" data-home-action="settings">⚙ <span>Einstellungen</span></button>
             </nav>
+          </div>
+        </div>
+      </section>
+      <section class="favorites-view is-hidden" id="calendarView">
+        <div class="favorites-page">
+          <div class="row-head">
+            <div>
+              <p class="eyebrow">ELFIX</p>
+              <h1>Kalender</h1>
+              <p class="row-note">Wann die naechsten Folgen bei deinen Anbietern erscheinen.</p>
+            </div>
+            <button class="chrome-btn" type="button" id="calendarReload" title="Neu laden">↻</button>
+          </div>
+          <div class="calendar-days" id="calendarDays"></div>
+          <div class="favorite-grid" id="calendarGrid"></div>
+          <div class="empty-state is-hidden" id="calendarEmpty">
+            <div class="empty-icon">🗓</div>
+            <h1>Kein Kalender gefunden</h1>
+            <p>Deine Anbieter geben hier nichts her - AniWorld und S.to fuehren einen.</p>
           </div>
         </div>
       </section>

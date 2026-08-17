@@ -500,7 +500,223 @@ function extractSeriesBounds(html, season = 0) {
   return { seasons: staffeln, episodes: folgen };
 }
 
+// Wann ist das erschienen? Die Anbieter schreiben das an drei Stellen und in
+// drei Formaten: als "Erscheinungsdatum" der Serie, als "Veroeffentlicht am"
+// der Folge und als "Veroeffentlicht bei uns" im Fuss. Genommen wird das
+// frueheste Datum der Serie beziehungsweise Staffel - das ist der Start, nicht
+// der Zeitpunkt, an dem die Seite es hochgeladen hat.
+//
+// Eine leere Angabe kommt dabei als "November 30, -0001" daher; solche Werte
+// muessen raus, sonst stuende auf der Kachel ein Datum aus dem Jahr null.
+const MONATE = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7,
+  august: 8, september: 9, october: 10, november: 11, december: 12,
+  januar: 1, februar: 2, maerz: 3, mai: 5, juni: 6, juli: 7, oktober: 10, dezember: 12
+};
+
+function datumAusText(text) {
+  const wert = String(text || "").replace(/\s+/g, " ").trim();
+  if (!wert) return "";
+
+  // 2026-07-29
+  const iso = wert.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return pruefeDatum(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  // 01.06.2026
+  const deutsch = wert.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (deutsch) return pruefeDatum(Number(deutsch[3]), Number(deutsch[2]), Number(deutsch[1]));
+
+  // March 5, 2026 - auch "November 30, -0001"
+  const englisch = wert.match(/([A-Za-zäöüÄÖÜ]+)\s+(\d{1,2}),?\s+(-?\d{1,4})/);
+  if (englisch) {
+    const monat = MONATE[englisch[1].toLowerCase().replace("ä", "ae")];
+    if (monat) return pruefeDatum(Number(englisch[3]), monat, Number(englisch[2]));
+  }
+  return "";
+}
+
+// Nur Daten, die es geben kann. Alles vor 1900 ist eine leere Angabe der
+// Seite, kein Erscheinungsdatum.
+function pruefeDatum(jahr, monat, tag) {
+  if (!Number.isFinite(jahr) || jahr < 1900 || jahr > 2200) return "";
+  if (!(monat >= 1 && monat <= 12) || !(tag >= 1 && tag <= 31)) return "";
+  return `${jahr}-${String(monat).padStart(2, "0")}-${String(tag).padStart(2, "0")}`;
+}
+
+// Aus einer Seite das Erscheinungsdatum ziehen. Zuerst die ausdrueckliche
+// Angabe der Serie, dann die der Folge - "bei uns veroeffentlicht" bleibt
+// aussen vor, das ist das Datum des Uploads.
+function extractReleaseDate(html) {
+  const text = String(html || "");
+  const muster = [
+    // Zwischen Beschriftung und Wert koennen mehrere Tags stehen -
+    // "</h3><span>" etwa. Also alles ueberspringen, was Auszeichnung ist.
+    /Erscheinungsdatum(?:\s|<[^>]*>|[:"'>])*([^<]{4,40})/i,
+    /datePublished["'\s:]+["']([^"']{4,40})/i,
+    /Ver(?:ö|oe)ffentlicht am[\s:]*([^<|]{4,40})/i
+  ];
+  for (const regel of muster) {
+    const treffer = text.match(regel);
+    if (!treffer) continue;
+    const datum = datumAusText(treffer[1]);
+    if (datum) return datum;
+  }
+  return "";
+}
+
+// Der Kalender der Anbieter.
+//
+// Zwei Bauarten: AniWorld liefert fertiges HTML, in dem jeder Wochentag eine
+// eigene Sektion mit der Kennung des Tages ist. S.to laedt seinen Kalender
+// per JavaScript nach und stellt die Daten unter /api/calendar bereit, nach
+// Datum geordnet. Beides wird hier auf dieselbe Form gebracht.
+const WOCHENTAGE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+
+// Aus "2026-08-10" den Wochentag. Ohne Zeitzone gerechnet, sonst kippt das
+// Datum je nach Uhrzeit auf den Vortag.
+function wochentagAusDatum(datum) {
+  const teile = String(datum || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!teile) return "";
+  const tag = new Date(Number(teile[1]), Number(teile[2]) - 1, Number(teile[3])).getDay();
+  return WOCHENTAGE[(tag + 6) % 7];
+}
+
+// AniWorld: je Wochentag eine Sektion, darin die Serien.
+function extractCalendarEntries(html) {
+  const text = String(html || "");
+  const eintraege = [];
+  // Die Sektionen tragen den Tag als Kennung - das ist der verlaessliche
+  // Anker. Die Reiter oben nennen die Tage ebenfalls, gehoeren aber nicht
+  // zu den Eintraegen.
+  const sektionen = /<section[^>]*class="[^"]*calendarList[^"]*"[^>]*id="([a-zäöü]+)"[^>]*>([\s\S]*?)(?=<section[^>]*class="[^"]*calendarList|<\/div>\s*<\/div>\s*<footer|$)/gi;
+  let sektion;
+  while ((sektion = sektionen.exec(text))) {
+    const tag = WOCHENTAGE.find((wert) => wert.toLowerCase() === sektion[1].toLowerCase());
+    if (!tag) continue;
+    const inhalt = sektion[2];
+    const datum = (inhalt.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/) || []);
+    const iso = datum.length
+      ? `${datum[3]}-${String(datum[2]).padStart(2, "0")}-${String(datum[1]).padStart(2, "0")}`
+      : "";
+
+    // Je Eintrag: der Link auf die Serie, danach Titel und Folge.
+    const teile = inhalt.split(/<a\s+href="/i).slice(1);
+    for (const teil of teile) {
+      const adresse = (teil.match(/^([^"]+)"/) || [])[1] || "";
+      if (!/\/(?:anime|serie)\/stream\//i.test(adresse)) continue;
+      const titel = entschaerfe((teil.match(/class="seriesTitle"[^>]*>([\s\S]*?)<\/h3>/i) || [])[1] || "");
+      if (!titel) continue;
+      const folge = (teil.match(/<small>\s*S(\d{1,3})E(\d{1,4})/i) || []);
+      // Das Bild steht als data-src am Platzhalter - src traegt nur ein
+      // durchsichtiges Pixel, bis die Seite selbst nachlaedt.
+      const bild = (teil.match(/data-src="([^"]+\/cover\/[^"]+)"/i) || [])[1] || "";
+      // Dieselbe Folge steht mehrfach da - einmal je Fassung. Welche es ist,
+      // sagt die Flagge daneben. Das sind keine Doppelten, sondern die
+      // Synchronfassungen, und sie gehoeren einzeln in den Kalender.
+      const flagge = (teil.match(/class="flag"[^>]*data-src="[^"]*\/([a-z-]+)\.svg"/i)
+        || teil.match(/data-src="[^"]*\/([a-z-]+)\.svg"[^>]*class="flag"/i) || [])[1] || "";
+      const uhr = (teil.match(/<small>\s*~?\s*([01]?\d|2[0-3]):([0-5]\d)\s*Uhr/i) || []);
+      eintraege.push({
+        day: tag,
+        date: iso,
+        time: uhr.length ? `${String(uhr[1]).padStart(2, "0")}:${uhr[2]}` : "",
+        title: titel,
+        url: adresse,
+        image: bild,
+        language: spracheAusFlagge(flagge),
+        season: folge.length ? Number(folge[1]) : 0,
+        episode: folge.length ? Number(folge[2]) : 0
+      });
+    }
+  }
+  return ohneDoppelte(eintraege);
+}
+
+// Die Flaggen der Anbieter in Worte. "japanese-german" heisst: japanischer Ton
+// mit deutschem Untertitel - nicht etwa zwei Sprachen.
+function spracheAusFlagge(name) {
+  const wert = String(name || "").toLowerCase();
+  if (!wert) return "";
+  if (wert === "german" || wert === "deutsch") return "Deutsch";
+  if (wert === "japanese-german") return "Japanisch, dt. Untertitel";
+  if (wert === "japanese-english") return "Japanisch, engl. Untertitel";
+  if (wert === "japanese") return "Japanisch";
+  if (wert === "english") return "Englisch";
+  if (wert === "english-german") return "Englisch, dt. Untertitel";
+  return wert.replace(/-/g, ", ");
+}
+
+// Wirklich Doppeltes zusammenfassen: gleiche Folge *und* gleiche Fassung. Die
+// Synchronfassungen bleiben getrennt - sie sind der Grund, warum ein Titel
+// mehrfach im Kalender steht.
+function ohneDoppelte(eintraege) {
+  const nach = new Map();
+  for (const eintrag of eintraege) {
+    const schluessel = `${eintrag.day}|${eintrag.url}|${eintrag.season}|${eintrag.episode}|${eintrag.language || ""}`;
+    const vorhanden = nach.get(schluessel);
+    if (!vorhanden) {
+      nach.set(schluessel, { ...eintrag });
+      continue;
+    }
+    if (!vorhanden.image && eintrag.image) vorhanden.image = eintrag.image;
+    if (!vorhanden.time && eintrag.time) vorhanden.time = eintrag.time;
+  }
+  return [...nach.values()];
+}
+
+// S.to: die Schnittstelle liefert je Datum eine Liste.
+function extractCalendarJson(rohdaten) {
+  let daten;
+  try {
+    daten = typeof rohdaten === "string" ? JSON.parse(rohdaten) : rohdaten;
+  } catch {
+    return [];
+  }
+  if (!daten || typeof daten !== "object") return [];
+
+  const eintraege = [];
+  for (const [datum, liste] of Object.entries(daten)) {
+    const tag = wochentagAusDatum(datum);
+    if (!tag || !Array.isArray(liste)) continue;
+    for (const roh of liste) {
+      const titel = entschaerfe(String(roh?.title || ""));
+      const adresse = String(roh?.url || "");
+      if (!titel || !adresse) continue;
+      eintraege.push({
+        day: tag,
+        date: String(roh?.date || datum),
+        time: String(roh?.time || "").slice(0, 5),
+        title: titel,
+        url: adresse,
+        image: String(roh?.cover_url || ""),
+        season: Number(roh?.season) || 0,
+        episode: Number(roh?.episode) || 0,
+        language: String(roh?.language || "")
+      });
+    }
+  }
+  return ohneDoppelte(eintraege);
+}
+
+function entschaerfe(roh) {
+  return String(roh || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, "\"")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 module.exports = {
+  extractCalendarEntries,
+  spracheAusFlagge,
+  extractCalendarJson,
+  wochentagAusDatum,
+  WOCHENTAGE,
+  extractReleaseDate,
+  datumAusText,
   extractSeriesBounds,
   extractDiscoverItems,
   extractPosterFallbacks,

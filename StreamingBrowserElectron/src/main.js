@@ -11,7 +11,10 @@ const {
   extractSeriesBounds,
   extractGenres,
   extractCatalogItems,
-  extractRelatedItems
+  extractRelatedItems,
+  extractReleaseDate,
+  extractCalendarEntries,
+  extractCalendarJson
 } = require("./discover");
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
@@ -78,6 +81,8 @@ const blockedRequests = [];
 const mediaDiagnostics = [];
 const mediaConsoleLogState = new Map();
 const discoverCache = new Map();
+// Erscheinungsdaten je Adresse - einmal geholt, dann gemerkt.
+const erscheinungsdaten = new Map();
 const seasonInfoCache = new Map();
 let watchpartyShared = [];
 let watchpartyLokal = { shared: [], joined: [] };
@@ -549,6 +554,8 @@ ipcMain.handle("provider:navigate", async (_event, providerId, url) => {
 });
 
 ipcMain.handle("search:all", async (_event, query) => searchAllProviders(query));
+
+ipcMain.handle("calendar:load", async (_event, refresh = false) => ladeKalender(Boolean(refresh)));
 
 ipcMain.handle("discover:personal", async (_event, options = {}) => {
   const limit = sanitizeNumber(options?.limit, 6, 40, 24);
@@ -4421,6 +4428,65 @@ async function searchProviderAjax(provider, query, searchUrl) {
 
 // Empfehlungen: von jeder aktiven Anbieterseite ein paar Titel von der
 // Startseite lesen und abwechselnd mischen, damit jede Seite vorkommt.
+// Der Kalender der Anbieter - zwei Bauarten.
+//
+// AniWorld liefert fertiges HTML unter /animekalender. S.to laedt seinen
+// Kalender per JavaScript nach; die Daten liegen unter /api/calendar und sind
+// nach Datum geordnet. Probiert wird deshalb erst die Schnittstelle, dann die
+// Seite - was zuerst etwas hergibt, gewinnt.
+const KALENDER_QUELLEN = [
+  { pfad: "api/calendar", art: "json" },
+  { pfad: "animekalender", art: "html" },
+  { pfad: "serienkalender", art: "html" },
+  { pfad: "kalender", art: "html" }
+];
+const KALENDER_CACHE_MS = 30 * 60 * 1000;
+let kalenderCache = null;
+
+async function ladeKalender(refresh) {
+  if (!refresh && kalenderCache && Date.now() - kalenderCache.at < KALENDER_CACHE_MS) {
+    return kalenderCache.daten;
+  }
+
+  const anbieter = enabledProviders();
+  const listen = await Promise.all(anbieter.map(async (provider) => {
+    const basis = providerModel.normalizeUrl(provider.startUrl || "");
+    if (!basis) return [];
+    for (const quelle of KALENDER_QUELLEN) {
+      try {
+        const adresse = new URL(quelle.pfad, basis).href;
+        // fetchProviderHtml liefert { html, url } - und null, wenn die Seite
+        // nicht antwortet. Beides muss hier ausgepackt werden, sonst sieht der
+        // Parser "[object Object]" und findet nie etwas.
+        const antwort = await fetchProviderHtml(adresse);
+        if (!antwort?.html) continue;
+        const eintraege = quelle.art === "json"
+          ? extractCalendarJson(antwort.html)
+          : extractCalendarEntries(antwort.html);
+        if (!eintraege.length) continue;
+        console.log(`[ELFIX KALENDER] ${provider.name}: ${eintraege.length} Eintraege aus ${quelle.pfad}`);
+        return eintraege.map((eintrag) => ({
+          ...eintrag,
+          url: absoluteHttpUrl(eintrag.url, basis),
+          // Die Cover stehen relativ zur Anbieterseite.
+          image: eintrag.image ? absoluteHttpUrl(eintrag.image, basis) : "",
+          providerId: provider.id,
+          providerName: provider.name || ""
+        }));
+      } catch {
+        // Diese Quelle kennt der Anbieter nicht - die naechste ist dran.
+      }
+    }
+    return [];
+  }));
+
+  const daten = { days: WOCHENTAGE_LISTE, entries: listen.flat() };
+  kalenderCache = { at: Date.now(), daten };
+  return daten;
+}
+
+const WOCHENTAGE_LISTE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+
 async function collectRecommendations(proAnbieter, refresh) {
   const anbieter = enabledProviders();
   if (!anbieter.length) return [];
@@ -4434,7 +4500,29 @@ async function collectRecommendations(proAnbieter, refresh) {
       if (liste[index]) gemischt.push(liste[index]);
     }
   }
+  await ergaenzeErscheinungsdaten(gemischt);
   return gemischt;
+}
+
+// Das Erscheinungsdatum steht nicht auf der Startseite des Anbieters, sondern
+// erst auf der Seite des Titels. Es wird deshalb nachgeholt - nur fuer die
+// Kacheln, die wirklich in der Reihe stehen, und gemerkt, damit dieselbe Seite
+// nicht mehrfach geladen wird.
+async function ergaenzeErscheinungsdaten(items) {
+  const offen = items.filter((item) => item?.url && !erscheinungsdaten.has(item.url));
+  await inBatches(offen, TASTE_FETCH_PARALLEL, async (item) => {
+    try {
+      const html = await fetchProviderHtml(seriesPageUrl(item.url) || item.url);
+      erscheinungsdaten.set(item.url, extractReleaseDate(html) || "");
+    } catch {
+      erscheinungsdaten.set(item.url, "");
+    }
+    return null;
+  });
+  for (const item of items) {
+    const datum = erscheinungsdaten.get(item.url);
+    if (datum) item.releasedAt = datum;
+  }
 }
 
 async function discoverForProvider(provider, refresh) {

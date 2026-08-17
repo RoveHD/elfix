@@ -3,6 +3,36 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.5 — 16. August 2026
+
+Ein Kalender, zwischen Suche und Watchlist:
+- Zeigt, wann die naechsten Folgen bei deinen Anbietern erscheinen - nach
+  Wochentagen, geoeffnet auf heute, mit der Anzahl je Tag
+- Je Eintrag Cover, Titel, Anbieter, Staffel und Folge, Datum und Uhrzeit.
+  Ein Klick oeffnet den Titel beim Anbieter
+- Bei AniWorld steht dazu die Fassung: Deutsch, Japanisch mit deutschem oder
+  mit englischem Untertitel. Dieselbe Folge steht deshalb mehrfach im
+  Kalender - das sind keine Doppelten, sondern die Synchronfassungen. Wirklich
+  Doppeltes, also gleiche Folge in gleicher Fassung, wird zusammengefasst
+- Die beiden Anbieter bauen ihren Kalender verschieden: AniWorld liefert
+  fertiges HTML, S.to laedt ihn per JavaScript nach und stellt die Daten unter
+  einer Schnittstelle bereit. Probiert wird erst die Schnittstelle, dann die
+  Seite - was zuerst etwas hergibt, gewinnt
+
+Erscheinungsdatum in "Neu bei deinen Anbietern":
+- Auf der Kachel steht jetzt, wann der Titel erschienen ist; liegt das Datum
+  in der Zukunft, steht "Ab" davor
+- Die Anbieter schreiben es in drei Formaten und an drei Stellen. Eine leere
+  Angabe kommt dabei als "November 30, -0001" daher - alles vor 1900 wird
+  verworfen, sonst stuende dort ein Datum aus dem Jahr null
+- "Veroeffentlicht bei uns" bleibt aussen vor, das ist der Zeitpunkt des
+  Uploads und nicht der Erscheinung
+
+Ausserdem:
+- In der Seitenleiste leuchteten Startseite und Kalender gleichzeitig: der
+  neuen Ansicht fehlte ihre Zuordnung, damit galt fuer sie die Route der
+  Startseite
+
 ## 1.17.4 — 16. August 2026
 
 Die Watchlist nimmt jetzt den weitesten Stand:
