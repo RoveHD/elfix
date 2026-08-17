@@ -639,11 +639,11 @@ function spracheAusFlagge(name) {
   const wert = String(name || "").toLowerCase();
   if (!wert) return "";
   if (wert === "german" || wert === "deutsch") return "Deutsch";
-  if (wert === "japanese-german") return "Japanisch, dt. Untertitel";
-  if (wert === "japanese-english") return "Japanisch, engl. Untertitel";
+  if (wert === "japanese-german") return "Japanisch, Deutsche Untertitel";
+  if (wert === "japanese-english") return "Japanisch, Englische Untertitel";
   if (wert === "japanese") return "Japanisch";
   if (wert === "english") return "Englisch";
-  if (wert === "english-german") return "Englisch, dt. Untertitel";
+  if (wert === "english-german") return "Englisch, Deutsche Untertitel";
   return wert.replace(/-/g, ", ");
 }
 
@@ -676,9 +676,9 @@ function ohneDoppelte(eintraege) {
 }
 
 function rang(sprache) {
-  if (/^Deutsch/i.test(sprache)) return 0;
-  if (/dt\. Untertitel/i.test(sprache)) return 1;
-  if (/engl\. Untertitel/i.test(sprache)) return 2;
+  if (/^Deutsch$/i.test(sprache)) return 0;
+  if (/Deutsche Untertitel/i.test(sprache)) return 1;
+  if (/Englische Untertitel/i.test(sprache)) return 2;
   return 3;
 }
 

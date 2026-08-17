@@ -1524,6 +1524,19 @@ function kalenderDatum(wert) {
   return teile ? `${teile[3]}.${teile[2]}.` : "";
 }
 
+// Jede Fassung auf eine eigene Zeile. Hintereinander getrennt durch Punkte
+// brach der Text mitten im Namen um - "Japanisch, dt. Unter-" auf der einen,
+// "titel" auf der naechsten Zeile.
+function kalenderFassungen(eintrag) {
+  const fassungen = eintrag.languages?.length
+    ? eintrag.languages
+    : (eintrag.language ? [eintrag.language] : []);
+  if (!fassungen.length) return "";
+  return `<small class="calendar-language">${fassungen
+    .map((fassung) => `<span>${escapeHtml(fassung)}</span>`)
+    .join("")}</small>`;
+}
+
 function kalenderKarte(eintrag) {
   const karte = document.createElement("div");
   karte.className = `favorite-card${eintrag.image ? " has-thumb" : ""}`;
@@ -1545,7 +1558,7 @@ function kalenderKarte(eintrag) {
     <strong>${escapeHtml(eintrag.title)}</strong>
     <span>${escapeHtml(herkunft)}</span>
     ${wann ? `<small class="media-progress-detail">${escapeHtml(wann)}</small>` : ""}
-    ${eintrag.language ? `<small class="calendar-language">${escapeHtml(eintrag.language)}</small>` : ""}
+    ${kalenderFassungen(eintrag)}
   `;
   const oeffnen = () => api.openProviderUrl?.(eintrag.providerId, eintrag.url);
   karte.addEventListener("click", oeffnen);

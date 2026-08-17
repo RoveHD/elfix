@@ -4688,6 +4688,11 @@ input[type="color"] {
 
 /* Die Fassung steht auf eigener Zeile und darf umbrechen - "Japanisch, dt.
    Untertitel" passt sonst nicht neben Anbieter und Folge. */
+/* Eine Zeile je Fassung, untereinander. */
+.calendar-language span {
+  display: block;
+}
+
 .calendar-language {
   position: relative;
   z-index: 1;
@@ -4709,4 +4714,29 @@ input[type="color"] {
   flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 10px;
+}
+
+/* Der Kalender zeigt bis zu sechzig Kacheln auf einmal - deutlich mehr als
+   jede andere Ansicht. Der uebliche Hover animiert neben der Groesse auch
+   Helligkeit und Schatten; beides zwingt zum Neuzeichnen der ganzen Kachel
+   samt Cover, und beim Fahren ueber das Gitter laufen davon mehrere
+   gleichzeitig. Hier bleibt es bei der Groesse - die schiebt die
+   Grafikkarte, ohne neu zu zeichnen. */
+#calendarGrid .favorite-card {
+  transition: transform calc(170ms * var(--animation-speed)) ease;
+  /* Was ausserhalb des Sichtfensters liegt, wird gar nicht erst gezeichnet.
+     Die Ersatzhoehe haelt die Bildlaufleiste ruhig. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--favorite-card-height);
+}
+
+#calendarGrid .favorite-card:hover,
+#calendarGrid .favorite-card:focus-visible {
+  filter: none;
+}
+
+/* Waehrend der Zeiger darauf steht, bekommt nur diese eine Kachel eine eigene
+   Ebene - dauerhaft fuer alle waere teurer als das Problem. */
+#calendarGrid .favorite-card:hover {
+  will-change: transform;
 }

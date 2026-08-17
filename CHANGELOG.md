@@ -3,6 +3,25 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.7 — 16. August 2026
+
+Der Kalender laeuft fluessiger:
+- Beim Ueberfahren wurde neben der Groesse auch die Helligkeit angepasst.
+  Ein Helligkeitsfilter zwingt zum Neuzeichnen der ganzen Kachel samt Cover,
+  und bei bis zu sechzig Kacheln nebeneinander laufen davon mehrere
+  gleichzeitig. Jetzt bleibt es bei der Groesse - die schiebt die Grafikkarte,
+  ohne neu zu zeichnen
+- Was ausserhalb des Sichtfensters liegt, wird gar nicht erst gezeichnet
+- Die Kachel unter dem Zeiger bekommt eine eigene Ebene, solange er darauf
+  steht. Dauerhaft fuer alle waere teurer als das Problem
+- Alles nur im Kalender: die uebrigen Ansichten sehen aus wie bisher
+
+Die Fassungen stehen jetzt untereinander:
+- Hintereinander mit Trennpunkten brach der Text mitten im Namen um. Jede
+  Fassung ist eine eigene Zeile
+- Ausgeschrieben statt abgekuerzt: "Japanisch, Deutsche Untertitel" statt
+  "Japanisch, dt. Untertitel"
+
 ## 1.17.6 — 16. August 2026
 
 Der Kalender zeigt jetzt eine Woche statt drei:
