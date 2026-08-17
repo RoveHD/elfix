@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.18.2 — 16. August 2026
+
+Der Windows-Build lief nicht mehr durch:
+- Mit 1.18.1 sind die Pruefungen in "npm test" gewandert. Vier davon starten
+  ein echtes Relay - dessen Abhaengigkeit war auf dem Bauserver aber nie
+  installiert, also schlugen sie dort fehl und der Installer wurde gar nicht
+  erst gebaut
+- Der Bauserver richtet das Relay jetzt mit ein
+- Fehlt es trotzdem, werden diese vier Pruefungen uebersprungen statt
+  fehlzuschlagen - mit einem deutlichen Hinweis, damit die Abdeckung nicht
+  still wegfaellt
+
 ## 1.18.1 — 16. August 2026
 
 Der Abgleich dreht nicht mehr am Ton:

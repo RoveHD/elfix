@@ -45,7 +45,18 @@ function laufen(datei, umgebung) {
     for (const zeile of r.fehler) console.log(`        ${zeile}`);
   }
 
-  for (const datei of MIT_RELAY) {
+  // Ohne die Abhaengigkeit des Relays laufen diese Suiten nicht. Das ist kein
+  // Fehlschlag - es fehlt schlicht das Werkzeug. Gemeldet wird es trotzdem
+  // deutlich, sonst faellt die Abdeckung still weg.
+  const relayDa = fs.existsSync(path.join(HIER, "..", "..", "sync-server", "node_modules", "ws"));
+  if (!relayDa) {
+    console.log("");
+    console.log("uebersprungen: " + MIT_RELAY.join(", "));
+    console.log("  Diese Pruefungen brauchen ein laufendes Relay.");
+    console.log("  Einmalig einrichten:  cd sync-server && npm ci");
+  }
+
+  for (const datei of relayDa ? MIT_RELAY : []) {
     // Frischer Server je Suite - sonst faerbt der Zustand des vorigen ab.
     for (const rest of fs.readdirSync(ablage)) fs.rmSync(path.join(ablage, rest), { force: true });
     const server = spawn(process.execPath, [RELAY], {

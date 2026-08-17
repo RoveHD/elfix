@@ -31,6 +31,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install relay dependencies
+        # Vier Pruefungen starten ein echtes Relay - ohne dessen Abhaengigkeit
+        # werden sie uebersprungen und die Abdeckung faellt still weg.
+        working-directory: sync-server
+        run: npm ci --omit=dev
+
       - name: Typecheck
         run: npm run test
 
