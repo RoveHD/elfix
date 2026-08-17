@@ -1,6 +1,6 @@
 "use strict";
 // Die zwoelf Faelle aus der Aufgabe, gegen das echte Relay.
-const WS = require("D:\\Dokumente\\Serien Filme und Animes\\sync-server\\node_modules\\ws");
+const WS = require("../../sync-server/node_modules/ws");
 
 const PORT = Number(process.env.TESTPORT) || 8799;
 const ADRESSE = `ws://127.0.0.1:${PORT}`;

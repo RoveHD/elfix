@@ -3,6 +3,15 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.18.3 — 16. August 2026
+
+Der Windows-Build lief noch immer nicht durch:
+- In drei der vier Relay-Pruefungen stand noch der absolute Pfad aus meinem
+  Arbeitsverzeichnis. Auf dem Bauserver gibt es das Laufwerk nicht, also
+  stuerzten sie ab, bevor sie irgendetwas melden konnten - und weil der
+  Laeufer nur die Ausgabe las, stand dort nur "FEHL" ohne Grund
+- Alle Pruefungen finden das Relay jetzt ueber einen relativen Pfad
+
 ## 1.18.2 — 16. August 2026
 
 Der Windows-Build lief nicht mehr durch:

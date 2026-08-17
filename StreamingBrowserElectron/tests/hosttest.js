@@ -1,6 +1,6 @@
 "use strict";
 // Host je Folge, Herzschlag, Attribution der Pause.
-const WS = require("D:\\Dokumente\\Serien Filme und Animes\\sync-server\\node_modules\\ws");
+const WS = require("../../sync-server/node_modules/ws");
 
 const PORT = Number(process.env.TESTPORT) || 8799;
 const RAUM = "hostraum";
