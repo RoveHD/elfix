@@ -2112,7 +2112,60 @@ async function clearHistory() {
 function favoriteEntries() {
   return favorites
     .filter((item) => item.favorite !== false && !item.completed)
+    .map((item) => weitesterStand(item))
     .sort((left, right) => favoriteTimestamp(right) - favoriteTimestamp(left));
+}
+
+// Denselben Titel gibt es mehrfach: den eigenen Eintrag und je einen pro
+// Watchparty-Runde. Auf der Watchlist zaehlt der weiteste Stand - steht die
+// Runde bei Folge 3, waehrend der eigene noch auf Folge 1 hing, ist Folge 3
+// der Stand, an dem man weitermacht. Vorher zeigte die Watchlist stur den
+// eigenen Eintrag und blieb damit hinter der Gruppe zurueck.
+function weitesterStand(favorite) {
+  const gruppe = favorites.filter((anderer) => (
+    anderer.id === favorite.id || (!anderer.completed && istGleicheSerieLokal(anderer, favorite))
+  ));
+  if (gruppe.length < 2) return favorite;
+  return gruppe.reduce((bester, kandidat) => (
+    folgeVergleich(kandidat, bester) > 0 ? kandidat : bester
+  ), favorite);
+}
+
+// Weiter heisst: hoehere Staffel, sonst hoehere Folge, sonst die spaetere
+// Stelle. Ohne Folgenangabe entscheidet allein die Stelle.
+function folgeVergleich(links, rechts) {
+  const staffelL = Number(links?.season || 0);
+  const staffelR = Number(rechts?.season || 0);
+  if (staffelL !== staffelR) return staffelL - staffelR;
+  const folgeL = Number(links?.episode || 0);
+  const folgeR = Number(rechts?.episode || 0);
+  if (folgeL !== folgeR) return folgeL - folgeR;
+  return Number(links?.position || 0) - Number(rechts?.position || 0);
+}
+
+// Zwei Eintraege derselben Serie: die Adresse ohne Staffel und Folge
+// entscheidet, sonst der bereinigte Titel.
+function istGleicheSerieLokal(links, rechts) {
+  const schluessel = (wert) => {
+    try {
+      const adresse = new URL(String(wert || ""));
+      const pfad = adresse.pathname
+        .replace(/\/(?:staffel|season)-\d+(?:\/(?:episode|folge)-\d+)?\/?$/i, "")
+        .replace(/\/+$/, "");
+      return `${adresse.host}${pfad}`.toLowerCase();
+    } catch {
+      return "";
+    }
+  };
+  const a = schluessel(links?.url);
+  const b = schluessel(rechts?.url);
+  if (a && b) return a === b;
+  return normalisierterTitel(basisTitel(links?.title)) === normalisierterTitel(basisTitel(rechts?.title));
+}
+
+// "Bleach - Staffel 3 Folge 14" -> "Bleach"
+function basisTitel(wert) {
+  return String(wert || "").replace(/\s*[·|-]?\s*staffel\s*\d+.*$/i, "").trim();
 }
 
 function libraryEntries() {

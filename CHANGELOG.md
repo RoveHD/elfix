@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.4 — 16. August 2026
+
+Die Watchlist nimmt jetzt den weitesten Stand:
+- Denselben Titel gibt es mehrfach in der Ablage: den eigenen Eintrag und je
+  einen pro Watchparty-Runde. Die Watchlist zeigte stur den eigenen - stand
+  die Runde laengst bei Folge 3, hing die Watchlist weiter auf Folge 1
+- Jetzt zaehlt je Titel der weiteste Stand: hoehere Staffel vor hoeherer
+  Folge, bei gleicher Folge die weitere Stelle. Abgeschlossene Eintraege
+  zaehlen nicht mit
+- Zusammengehoerig ist, was auf dieselbe Serien-Adresse zeigt; fehlt die,
+  entscheidet der Titel ohne Staffel- und Folgenangabe
+
 ## 1.17.3 — 16. August 2026
 
 Host weitergeben, jetzt dort, wo man es sucht:
