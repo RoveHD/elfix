@@ -38,10 +38,15 @@ const NACHREICHEN_MS = 3000;
 // Ab dieser Abweichung vom Host gilt ein Geraet als auseinandergelaufen und
 // wird zurueckgeholt. Enger waere Zappeln: jeder Sprung laesst den Hoster neu
 // puffern, und Puffern erzeugt genau die Abweichung, die man beheben wollte.
-const DRIFT_GRENZE_S = 1.2;
+// Ab hier lohnt es, dem Client die Host-Zeit zu schicken. Was er damit macht -
+// nichts, Tempo oder Sprung - entscheidet er selbst: nur er kennt seine
+// tatsaechliche Stelle in dem Moment, in dem er handelt.
+const DRIFT_GRENZE_S = 0.5;
 // Und so lange bleibt es danach in Ruhe. Wer dauerhaft hinterherhaengt - lahme
 // Leitung, langsamer Hoster -, soll nicht im Sekundentakt neu ansetzen.
-const DRIFT_RUHE_MS = 6000;
+// Der Abgleich geht hoechstens alle zwei Sekunden hinaus - haeufiger braucht
+// eine sanfte Regelung nicht, und jede Meldung ist eine Gelegenheit zu zappeln.
+const DRIFT_RUHE_MS = 2000;
 // So alt darf die letzte Meldung eines Geraets hoechstens sein, damit es in der
 // Leiste steht. Gemeldet wird jede Sekunde, im Notfall alle fuenf - wer hier
 // herausfaellt, schaut gerade nicht mit.
@@ -237,7 +242,7 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit"]
     }));
     return;
   }
@@ -953,15 +958,20 @@ wss.on("connection", (socket) => {
 
       if (hostJetzt && hostJetzt.geraetId !== socket.geraetId
         && !pausiert && !hostJetzt.paused && !eintrag.sync
-        && gleicheFolge
-        && Date.now() - (zustand.gerueckt || 0) > DRIFT_RUHE_MS) {
+        && gleicheFolge) {
         const ziel = hostStandJetzt(socket.raum, eintrag);
-        if (ziel != null && Math.abs(zahl(nachricht.position, 100000) - ziel) > DRIFT_GRENZE_S) {
+        const abstand = ziel == null ? 0 : Math.abs(zahl(nachricht.position, 100000) - ziel);
+        // Nur melden, wie spaet es beim Host ist. Ob daraus nichts, ein
+        // sanfteres Tempo oder ein Sprung wird, entscheidet der Client - er
+        // kennt seine Stelle im Augenblick des Handelns, das Relay nur die
+        // von vorhin.
+        if (ziel != null && abstand > DRIFT_GRENZE_S && Date.now() - (zustand.gerueckt || 0) > DRIFT_RUHE_MS) {
           zustand.gerueckt = Date.now();
           senden({
             type: "control",
             key: eintrag.key,
-            action: "seek",
+            action: "hostzeit",
+            hostPlaying: !hostJetzt.paused,
             position: ziel,
             url: eintrag.live?.url || eintrag.url,
             from: hostJetzt.name || "Host",

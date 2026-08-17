@@ -3,6 +3,36 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.18.0 — 16. August 2026
+
+Der Abgleich ruckelt nicht mehr alle paar Sekunden.
+
+Bisher hat das Relay bei jeder kleinen Abweichung einen Sprung angeordnet, und
+jedes Setzen der Stelle laesst den Hoster neu puffern - das Puffern erzeugte
+prompt die naechste Abweichung. Die Regelung sitzt jetzt dort, wo der Player
+ist, und das Relay meldet nur noch, wie spaet es beim Host ist:
+
+- Unter einer halben Sekunde passiert nichts. Das sieht niemand
+- Zwischen einer halben und zweieinhalb Sekunden wird ueber die
+  Abspielgeschwindigkeit angeglichen, zwischen 0,95 und 1,05 je nach Abstand.
+  Das faellt nicht auf, und es puffert nichts nach
+- Erst unter einer viertel Sekunde geht es zurueck auf Normalgeschwindigkeit -
+  diese Hysterese verhindert das staendige Hin und Her
+- Ueber zweieinhalb Sekunden bleibt es beim Sprung, danach acht Sekunden Ruhe
+- Der Host ist die Zeitquelle und wird nie nachgeregelt
+- Pause, Weiter und bewusste Spruenge laufen unveraendert ueber den exakten
+  Weg - nur der laufende Drift ist sanft
+
+Dazu:
+- Das Skript wirkt in dem Rahmen, in dem das Video wirklich haengt - bei VOE
+  ist das der Rahmen des Hosters, nicht das Dokument von AniWorld. Kann ein
+  Player die Geschwindigkeit nicht aendern, wird die Totzone groesser und nur
+  noch selten gesprungen, statt wieder im Sekundentakt zu zappeln
+- Waehrend gepuffert oder gesprungen wird, regelt nichts nach
+- Ein Folgenwechsel setzt Tempo, Merker und Sperren zurueck
+- Ein Bericht im Log, hoechstens alle fuenf Sekunden und nur bei echter
+  Aktion: hostTime, clientTime, drift, action und rate
+
 ## 1.17.7 — 16. August 2026
 
 Der Kalender laeuft fluessiger:

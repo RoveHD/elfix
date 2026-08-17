@@ -1296,6 +1296,11 @@ function getProviderView(provider) {
       : args[1];
     // Wo dieses Geraet steht. Kommt aus der Seite, sobald sich etwas aendert -
     // deshalb sehen die anderen eine Pause ohne Umweg ueber einen Zeitgeber.
+    // Der Bericht der sanften Regelung aus dem Player.
+    if (String(nachricht || "").startsWith("__elfix:wp:sync:")) {
+      console.log(`[watchparty-sync] ${String(nachricht).slice(16)}`);
+      return;
+    }
     const stand = String(nachricht || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
     if (stand) {
       meldeWatchpartyStandAusSeite(view, Number(stand[1]), stand[2] === "1");
@@ -1330,6 +1335,7 @@ function getProviderView(provider) {
     watchpartyAngeklinkt.clear();
     // Neue Seite, neuer Player, neue Sitzung.
     watchpartySitzung.set(provider.id, crypto.randomUUID());
+    executeJavaScriptInMediaFrames(view, watchpartySyncZuruecksetzenScript()).catch(() => []);
     meldeWatchpartyFolgenwechsel(url);
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
@@ -5388,6 +5394,110 @@ function watchpartyControlScript() {
   })()`;
 }
 
+// Sanfter Abgleich im Player-Frame.
+//
+// Kleine Abweichungen bleiben stehen - die sieht niemand. Mittlere werden ueber
+// die Abspielgeschwindigkeit weggeholt, das faellt nicht auf. Nur grosse oder
+// absichtliche Spruenge rechtfertigen ein currentTime: jedes Setzen laesst den
+// Hoster neu puffern, und genau das hat alle paar Sekunden geruckelt.
+//
+// Der Zustand liegt in dem Frame, in dem das Video wirklich haengt - bei VOE
+// ist das der Rahmen des Hosters, nicht das Dokument von AniWorld. Deshalb geht
+// dieses Skript in alle Frames und tut nur dort etwas, wo ein Video mit
+// Laufzeit liegt.
+function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
+  const ziel = Number(hostZeit) || 0;
+  const laeuft = hostLaeuft ? "true" : "false";
+  return `(() => {
+    const medien = Array.from(document.querySelectorAll("video"))
+      .filter((m) => m instanceof HTMLVideoElement && Number(m.duration) > 0);
+    const media = medien.sort((a, b) => b.duration - a.duration)[0];
+    if (!media) return "kein-video";
+
+    const S = (window.__elfixWpSync = window.__elfixWpSync || { tempo: 1, seitSprung: 0, gemeldet: 0 });
+    const ziel = ${ziel};
+    const laeuft = ${laeuft};
+    const jetzt = Number(media.currentTime) || 0;
+    const drift = ziel - jetzt;
+    const betrag = Math.abs(drift);
+
+    // Nicht jeder Player laesst sich bremsen. Wenn nicht, wird lieber
+    // grosszuegig gewartet und selten gesprungen, statt staendig zu zappeln.
+    const tempoGeht = typeof media.playbackRate === "number";
+    const zurueck = () => {
+      if (tempoGeht && S.tempo !== 1) {
+        try { media.playbackRate = 1; } catch (_) {}
+      }
+      S.tempo = 1;
+    };
+
+    // Waehrend gepuffert oder gesprungen wird, nicht nachregeln.
+    if (media.readyState < 3 || media.seeking) { zurueck(); return "puffert"; }
+    // Steht der Host oder steht man selbst, regelt nichts: Pause und Play
+    // kommen als eigene Befehle und setzen die Stelle exakt.
+    if (!laeuft || media.paused) { zurueck(); return "steht"; }
+
+    let tat = "none";
+
+    if (betrag > 2.5) {
+      // So weit auseinander waere Aufholen eine Minutenangelegenheit. Aber
+      // hoechstens alle acht Sekunden, sonst puffert es sich zu Tode.
+      if (Date.now() - S.seitSprung > 8000) {
+        zurueck();
+        try { media.currentTime = ziel; } catch (_) {}
+        S.seitSprung = Date.now();
+        tat = "hard-seek";
+      } else {
+        tat = "seek-cooldown";
+      }
+    } else if (!tempoGeht) {
+      tat = "kein-tempo";
+    } else if (S.tempo !== 1 && betrag < 0.25) {
+      // Wieder beieinander. Erst hier zurueckstellen, nicht schon bei 0.5 -
+      // diese Hysterese verhindert das Hin und Her.
+      zurueck();
+      tat = "restore-rate";
+    } else if (betrag > 0.5 || S.tempo !== 1) {
+      // Zwischen einer halben und zweieinhalb Sekunden sanft angleichen. Je
+      // groesser der Abstand, desto kraeftiger - aber nie ueber fuenf Prozent,
+      // sonst hoert man die Tonhoehe.
+      const staerke = Math.min(1, (betrag - 0.25) / 2.25);
+      let tempo = drift > 0 ? 1 + 0.02 + 0.03 * staerke : 1 - 0.02 - 0.03 * staerke;
+      tempo = Math.max(0.95, Math.min(1.05, Number(tempo.toFixed(3))));
+      if (tempo !== S.tempo) {
+        try { media.playbackRate = tempo; } catch (_) { return "tempo-fehlt"; }
+        S.tempo = tempo;
+      }
+      tat = drift > 0 ? "soft-speed-up" : "soft-slow-down";
+    }
+
+    // Hoechstens alle fuenf Sekunden schreiben, und nur wenn etwas geschah.
+    if (tat !== "none" && Date.now() - S.gemeldet > 5000) {
+      S.gemeldet = Date.now();
+      console.log("__elfix:wp:sync:" + JSON.stringify({
+        expectedHostTime: Number(ziel.toFixed(2)),
+        clientTime: Number(jetzt.toFixed(2)),
+        drift: Number(drift.toFixed(2)),
+        action: tat,
+        rate: S.tempo
+      }));
+    }
+    return tat;
+  })()`;
+}
+
+// Beim Folgenwechsel faengt alles bei eins an - Tempo, Merker und Sperren
+// gehoeren zur Folge davor.
+function watchpartySyncZuruecksetzenScript() {
+  return `(() => {
+    window.__elfixWpSync = { tempo: 1, seitSprung: 0, gemeldet: 0 };
+    for (const media of document.querySelectorAll("video")) {
+      try { if (typeof media.playbackRate === "number") media.playbackRate = 1; } catch (_) {}
+    }
+    return "zurueckgesetzt";
+  })()`;
+}
+
 // Ein Befehl von aussen. Waehrend er ausgefuehrt wird, meldet dieses Geraet
 // selbst nichts zurueck.
 //
@@ -5534,6 +5644,8 @@ async function followWatchpartyEpisode(eintrag, nachricht) {
     // weiterschaltete, blieb im Vollbild, wer nur mitgezogen wurde, fiel
     // heraus.
     const warVollbild = isContentFullscreen;
+    // Tempo, Merker und Sperren gehoeren zur alten Folge.
+    executeJavaScriptInMediaFrames(view, watchpartySyncZuruecksetzenScript()).catch(() => []);
     merkeWatchpartySprung(provider.id, { position: nachricht.position });
     await navigateProvider(provider, ziel);
     scheduleProviderAutoplay(provider, view, { fullscreen: warVollbild });
@@ -5808,6 +5920,23 @@ async function applyWatchpartyControl(nachricht) {
   // Bin ich der Host, gilt meine Stelle - ich ruecke nicht, die anderen kommen
   // zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
+
+  // Der Abgleich im Lauf geht durch die sanfte Regelung: sie entscheidet im
+  // Player, ob nichts, ein leicht anderes Tempo oder doch ein Sprung noetig
+  // ist. Frueher wurde hier stumpf currentTime gesetzt - jedes Mal ein Ruckler.
+  if (nachricht.action === "hostzeit") {
+    // Der Host ist die Zeitquelle und wird nie nachgeregelt.
+    if (binHost) return;
+    for (const [, view] of providerViews) {
+      if (!isLiveView(view)) continue;
+      if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, view.webContents.getURL())) continue;
+      await executeJavaScriptInMediaFrames(
+        view,
+        watchpartySoftSyncScript(position, nachricht.hostPlaying !== false)
+      ).catch(() => []);
+    }
+    return;
+  }
 
   // Nur anwenden, wo genau dieselbe Folge offen ist - nicht bloss dieselbe
   // Serie. Wer eine Folge zurueckliegt, soll nicht mitpausiert werden.
