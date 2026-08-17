@@ -2632,6 +2632,13 @@ let watchpartyHinweisTimer = 0;
 let watchpartyHinweisBis = 0;
 
 function watchpartyHint(favorite) {
+  // Zuerst der Live-Stand aus der Runde - dieselbe Quelle, aus der auch der
+  // Sekundentakt schoepft. Sonst baut renderHome die Karte ohne die Zeile,
+  // der Takt setzt sie eine Sekunde spaeter wieder ein, und genau das
+  // flackerte alle paar Sekunden.
+  const live = liveKartenText(frischeMitglieder(favorite));
+  if (live) return `<small class="media-progress-live">${escapeHtml(live)}</small>`;
+
   const wer = favorite?.watchpartyFrom;
   const wann = Date.parse(favorite?.watchpartyAt || 0) || 0;
   if (!wer || !wann) return "";
@@ -2688,6 +2695,16 @@ function liveKartenText(mitglieder) {
   return `❚❚ ${stehend.join(", ")} ${stehend.length > 1 ? "pausieren" : "pausiert"}`;
 }
 
+// Wer bei diesem Titel gerade meldet - fuer Kartenbau und Sekundentakt
+// dieselbe Auskunft.
+function frischeMitglieder(favorite) {
+  if (!favorite?.watchpartyRoom) return [];
+  const daten = watchpartyStandKarten.get(watchpartyKarteSchluessel(favorite));
+  if (!daten) return [];
+  const seit = (Date.now() - daten.empfangen) / 1000;
+  return daten.members.filter((person) => Number(person.age || 0) + seit <= 20);
+}
+
 // Die Kacheln in Ort nachziehen, statt die Ansicht neu zu bauen.
 function aktualisiereLiveKarten() {
   const jetzt = Date.now();
@@ -2705,16 +2722,10 @@ function aktualisiereLiveKarten() {
       : 0;
 
     for (const kachel of kacheln) {
-      let zeile = kachel.querySelector(".media-progress-live");
-      if (text && !zeile) {
-        zeile = document.createElement("small");
-        zeile.className = "media-progress-live";
-        kachel.append(zeile);
-      }
-      if (zeile) {
-        zeile.textContent = text;
-        zeile.classList.toggle("is-hidden", !text);
-      }
+      // Nur den Text auffrischen. Eingefuegt wird die Zeile beim Kartenbau -
+      // haenge sie hier an, wuerde jeder Neuaufbau sie wieder wegnehmen.
+      const zeile = kachel.querySelector(".media-progress-live");
+      if (zeile && zeile.textContent !== text) zeile.textContent = text;
       if (!fuehrend) continue;
       const dauer = Number(kachel.dataset.wpDauer || 0);
       const detail = kachel.querySelector(".media-progress-detail");
@@ -4828,11 +4839,10 @@ function showWatchpartyStand(info) {
   // Fuer die Karten: nach Titel und Runde ablegen, unabhaengig davon, was
   // gerade offen ist.
   const kartenSchluessel = `${info?.key || ""}|${info?.room || ""}`;
-  if (mitglieder.length) {
-    watchpartyStandKarten.set(kartenSchluessel, { members: mitglieder, empfangen: Date.now() });
-  } else {
-    watchpartyStandKarten.delete(kartenSchluessel);
-  }
+  // Auch eine leere Liste wird abgelegt, nicht geloescht: sonst faellt die
+  // Karte auf die alte Quelle zurueck und die Zeile springt hin und her. Ob
+  // jemand noch dabei ist, entscheidet allein das Alter der Meldung.
+  watchpartyStandKarten.set(kartenSchluessel, { members: mitglieder, empfangen: Date.now() });
   aktualisiereLiveKarten();
   if (!watchpartyStandTimer) {
     watchpartyStandTimer = window.setInterval(() => {

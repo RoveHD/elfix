@@ -3,6 +3,35 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.18.1 — 16. August 2026
+
+Der Abgleich dreht nicht mehr am Ton:
+- Bis zu einer Sekunde Unterschied bleibt jetzt einfach stehen. Das sieht
+  niemand, und jede Korrektur ist hoerbar oder sichtbar - beides stoert mehr
+  als der Versatz selbst
+- Zwischen einer und zweieinhalb Sekunden wird noch angeglichen, aber
+  hoechstens um zwei Prozent statt fuenf. Dazu bleibt die Tonhoehe erhalten,
+  soweit der Player das kennt - ohne das klingt schon ein Prozent seltsam
+- Angefangen wird ueber einer Sekunde, aufgehoert schon unter 0,7: dazwischen
+  passiert nichts Neues, damit das Tempo nicht staendig wechselt
+- Erst ueber zweieinhalb Sekunden wird gesprungen
+
+Die Anzeige "X schaut gerade" flackerte:
+- Der Kartenbau nahm den gebuchten Fortschritt, der Sekundentakt den
+  Live-Stand - jeder Neuaufbau nahm die Zeile weg, der Takt setzte sie wieder
+  ein. Beide fragen jetzt dieselbe Stelle, und der Takt frischt nur noch den
+  Text auf, statt die Zeile anzuhaengen
+- Eine leere Meldung loescht den Stand nicht mehr; ob jemand dabei ist,
+  entscheidet allein das Alter der Meldung
+
+Die Pruefungen liegen jetzt im Projekt:
+- Acht Suiten mit 152 Pruefungen unter "tests/", darunter vier, die je ein
+  frisches Relay starten und das Zusammenspiel zweier Geraete pruefen
+- "npm test" faehrt sie mit; bisher pruefte es nur die Syntax und hat damit
+  keinen der Fehler dieser Reihe gefunden
+- Die echten Kalenderseiten beider Anbieter liegen als Testdaten dabei -
+  aendert sich dort das Markup, schlagen die Pruefungen an
+
 ## 1.18.0 — 16. August 2026
 
 Der Abgleich ruckelt nicht mehr alle paar Sekunden.

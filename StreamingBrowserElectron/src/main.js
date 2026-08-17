@@ -5424,6 +5424,10 @@ function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
     // Nicht jeder Player laesst sich bremsen. Wenn nicht, wird lieber
     // grosszuegig gewartet und selten gesprungen, statt staendig zu zappeln.
     const tempoGeht = typeof media.playbackRate === "number";
+    // Ohne das klingt schon ein Prozent nach Micky Maus.
+    if (tempoGeht) {
+      try { if ("preservesPitch" in media) media.preservesPitch = true; } catch (_) {}
+    }
     const zurueck = () => {
       if (tempoGeht && S.tempo !== 1) {
         try { media.playbackRate = 1; } catch (_) {}
@@ -5439,9 +5443,15 @@ function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
 
     let tat = "none";
 
-    if (betrag > 2.5) {
-      // So weit auseinander waere Aufholen eine Minutenangelegenheit. Aber
-      // hoechstens alle acht Sekunden, sonst puffert es sich zu Tode.
+    // Bis zu einer Sekunde Unterschied bleibt einfach stehen. Das sieht
+    // niemand, und jede Korrektur ist hoerbar oder sichtbar - beides ist
+    // schlimmer als der Versatz selbst.
+    if (betrag <= 0.7) {
+      zurueck();
+      tat = S.tempo !== 1 ? "restore-rate" : "none";
+    } else if (betrag > 2.5) {
+      // So weit auseinander: aufholen wuerde bei zwei Prozent Minuten dauern.
+      // Aber hoechstens alle acht Sekunden, sonst puffert es sich zu Tode.
       if (Date.now() - S.seitSprung > 8000) {
         zurueck();
         try { media.currentTime = ziel; } catch (_) {}
@@ -5451,19 +5461,19 @@ function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
         tat = "seek-cooldown";
       }
     } else if (!tempoGeht) {
+      // Dieser Player laesst sich nicht bremsen. Dann lieber den Versatz
+      // aushalten und erst weit oben springen, als am Ton zu drehen.
       tat = "kein-tempo";
-    } else if (S.tempo !== 1 && betrag < 0.25) {
-      // Wieder beieinander. Erst hier zurueckstellen, nicht schon bei 0.5 -
-      // diese Hysterese verhindert das Hin und Her.
-      zurueck();
-      tat = "restore-rate";
-    } else if (betrag > 0.5 || S.tempo !== 1) {
-      // Zwischen einer halben und zweieinhalb Sekunden sanft angleichen. Je
-      // groesser der Abstand, desto kraeftiger - aber nie ueber fuenf Prozent,
-      // sonst hoert man die Tonhoehe.
-      const staerke = Math.min(1, (betrag - 0.25) / 2.25);
-      let tempo = drift > 0 ? 1 + 0.02 + 0.03 * staerke : 1 - 0.02 - 0.03 * staerke;
-      tempo = Math.max(0.95, Math.min(1.05, Number(tempo.toFixed(3))));
+    } else if (betrag > 1 || S.tempo !== 1) {
+      // Zwischen einer und zweieinhalb Sekunden sanft angleichen - und zwar
+      // hoechstens zwei Prozent. Mehr hoert man.
+      //
+      // Angefangen wird erst ueber einer Sekunde, aufgehoert schon unter 0,7:
+      // zwischen 0,7 und 1,0 passiert nichts Neues. Diese Hysterese
+      // verhindert das staendige Wechseln zwischen 0,98, 1,0 und 1,02.
+      const staerke = Math.min(1, (betrag - 0.7) / 1.8);
+      let tempo = drift > 0 ? 1 + 0.01 + 0.01 * staerke : 1 - 0.01 - 0.01 * staerke;
+      tempo = Math.max(0.98, Math.min(1.02, Number(tempo.toFixed(3))));
       if (tempo !== S.tempo) {
         try { media.playbackRate = tempo; } catch (_) { return "tempo-fehlt"; }
         S.tempo = tempo;

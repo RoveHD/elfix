@@ -41,7 +41,7 @@ const NACHREICHEN_MS = 3000;
 // Ab hier lohnt es, dem Client die Host-Zeit zu schicken. Was er damit macht -
 // nichts, Tempo oder Sprung - entscheidet er selbst: nur er kennt seine
 // tatsaechliche Stelle in dem Moment, in dem er handelt.
-const DRIFT_GRENZE_S = 0.5;
+const DRIFT_GRENZE_S = 1.0;
 // Und so lange bleibt es danach in Ruhe. Wer dauerhaft hinterherhaengt - lahme
 // Leitung, langsamer Hoster -, soll nicht im Sekundentakt neu ansetzen.
 // Der Abgleich geht hoechstens alle zwei Sekunden hinaus - haeufiger braucht
