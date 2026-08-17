@@ -676,6 +676,23 @@
   color: var(--error);
 }
 
+/* Den Takt weitergeben - steht nur beim Host und nur neben den anderen. */
+.watchparty-handover {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--focus) 45%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 1px 7px;
+  margin-right: 2px;
+}
+
+.watchparty-handover:hover {
+  border-color: var(--focus);
+  color: var(--focus);
+}
+
 .watchparty-kick[disabled] {
   cursor: not-allowed;
   opacity: 0.5;

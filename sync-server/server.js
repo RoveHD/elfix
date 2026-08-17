@@ -237,7 +237,7 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "episodehost"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost"]
     }));
     return;
   }
@@ -1011,6 +1011,26 @@ wss.on("connection", (socket) => {
     // Startseite liegt darueber, es laeuft etwas anderes, oder auf privat
     // umgestellt. Ohne das wuerde erst der ablaufende Herzschlag verraten,
     // dass jemand weg ist, und bis dahin stuende er noch oben in der Leiste.
+    // Den Host weitergeben. Nur wer ihn gerade hat, darf das, und nur an
+    // jemanden, der bei derselben Folge aktiv mitschaut. Host ist, wer die
+    // Folge zuerst betreten hat - also wird der Beschenkte vorgereiht.
+    if (nachricht.type === "handover") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      const wen = text(nachricht.memberId, 64);
+      if (!eintrag || !wen || wen === socket.geraetId) return;
+      if (socket.geraetId !== aktuelleHostId(socket.raum, eintrag)) return;
+
+      const runde = aktiveTeilnehmer(socket.raum, eintrag, eintrag.season, eintrag.episode);
+      if (!runde.some((teilnehmer) => teilnehmer.geraetId === wen)) return;
+
+      const frueheste = Math.min(...runde.map((teilnehmer) => teilnehmer.seitFolge || 0));
+      const ziel = eintrag.stand.get(wen);
+      ziel.seitFolge = frueheste - 1;
+      zustandSenden(socket.raum);
+      standSenden(socket.raum, eintrag);
+      return;
+    }
+
     if (nachricht.type === "bye") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag?.stand?.delete(socket.geraetId)) return;

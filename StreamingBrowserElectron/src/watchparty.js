@@ -305,6 +305,11 @@ class Watchparty {
     this.senden({ type: "syncready", key });
   }
 
+  // Den Host an ein anderes Geraet weitergeben.
+  hostUebergeben(key, memberId) {
+    this.senden({ type: "handover", key, memberId });
+  }
+
   // Ein Mitglied aus einer Serie werfen - nur fuer den, der sie eingestellt hat.
   rauswerfen(key, memberId) {
     this.senden({ type: "kick", key, memberId });

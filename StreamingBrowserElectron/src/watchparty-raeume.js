@@ -208,6 +208,10 @@ class WatchpartyRaeume {
     this.raumFuer(key, room)?.entfernen(key);
   }
 
+  hostUebergeben(key, memberId, room) {
+    this.raumFuer(key, room)?.hostUebergeben(key, memberId);
+  }
+
   rauswerfen(key, memberId, room) {
     this.raumFuer(key, room)?.rauswerfen(key, memberId);
   }

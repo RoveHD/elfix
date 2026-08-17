@@ -3,6 +3,30 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.2 — 16. August 2026
+
+Die Karten in "Gemeinsam weiterschauen" zeigen jetzt, was gerade passiert:
+- "Jakob schaut gerade" und der Stand kamen bisher allein aus dem gebuchten
+  Fortschritt - also aus derselben Buchhaltung, die schon die Folgen haengen
+  liess. Meist stand deshalb gar nichts da
+- Die Live-Meldungen des Relays wurden ausserdem verworfen, sobald sie nicht
+  zur gerade offenen Seite gehoerten. Fuer eine Karte traf das praktisch
+  immer zu. Jetzt gehen sie fuer alle Titel durch; Kopfzeile und Player
+  nehmen weiterhin nur die offene Seite
+- Auf der Karte steht, wer laeuft und wer angehalten hat, dazu die Stelle und
+  der Balken. Das eigene Geraet bleibt aussen vor
+- Nachgezogen wird in Ort, nicht durch einen Neuaufbau: eine
+  Sekundenaktualisierung der ganzen Startseite wuerde beim Scrollen springen
+- Wer nichts mehr meldet, verschwindet nach zwanzig Sekunden aus dem Hinweis
+
+Den Host weitergeben:
+- In der Watchparty-Karte steht neben jedem anderen Mitglied ein Knopf dafuer
+  - sichtbar nur, wenn man selbst Host ist
+- Das Relay prueft es noch einmal: nur der aktuelle Host darf, und nur an
+  jemanden, der bei derselben Folge wirklich mitschaut
+- Umgesetzt im bestehenden Modell statt daneben: Host ist, wer die Folge
+  zuerst betreten hat, also wird der Beschenkte vorgereiht
+
 ## 1.17.1 — 16. August 2026
 
 Wer die Folge nicht mehr offen hat, ist sofort raus:

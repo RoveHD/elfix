@@ -1086,6 +1086,11 @@ ipcMain.handle("watchparty:resync", async (_event, key, room) => {
   return true;
 });
 
+ipcMain.handle("watchparty:handover", (_event, key, memberId, room) => {
+  watchparty.hostUebergeben(String(key || ""), String(memberId || ""), String(room || ""));
+  return true;
+});
+
 ipcMain.handle("watchparty:kick", (_event, key, memberId, room) => {
   watchparty.rauswerfen(String(key || ""), String(memberId || ""), String(room || ""));
   return true;
@@ -5714,10 +5719,16 @@ function sendWatchpartyWatchstate(nachricht) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const adresse = activeView?.webContents?.getURL() || "";
   const raum = watchpartyRaumForUrl(adresse);
-  if (!raum || (nachricht.room && nachricht.room !== raum)) return;
-  if (watchpartySerieForUrl(adresse) !== nachricht.key) return;
+  // Gilt diese Meldung der Seite, die gerade offen ist? Nur dann gehoert sie
+  // in die Kopfzeile und in den Player. In die Karten gehoert sie immer -
+  // dort will man sehen, wer bei welchem Titel gerade mitschaut. Vorher wurde
+  // alles verworfen, was nicht zur offenen Seite passte, und die Karten
+  // blieben stumm.
+  const istOffen = Boolean(raum)
+    && (!nachricht.room || nachricht.room === raum)
+    && watchpartySerieForUrl(adresse) === nachricht.key;
 
-  const hier = episodeIdentity(adresse);
+  const hier = istOffen ? episodeIdentity(adresse) : null;
   const mitglieder = (nachricht.members || []).map((mitglied) => ({
     id: String(mitglied.id || ""),
     name: String(mitglied.name || "Gerät"),
@@ -5733,11 +5744,12 @@ function sendWatchpartyWatchstate(nachricht) {
     me: String(mitglied.id || "") === watchparty.geraetId
   }));
 
-  // Dieselben Angaben zweimal: in die Kopfzeile und in den Player.
-  zeigeLeisteImPlayer(mitglieder);
+  // Dieselben Angaben dreifach: Kopfzeile, Player und Karten.
+  if (istOffen) zeigeLeisteImPlayer(mitglieder);
   mainWindow.webContents.send("watchparty:watchstate", {
     key: nachricht.key,
-    room: nachricht.room || raum,
+    room: nachricht.room || raum || "",
+    offen: istOffen,
     // Wer zuletzt gedrueckt hat - getrennt davon, wer gerade angehalten ist.
     pausedBy: String(nachricht.pausedBy || ""),
     lastAction: nachricht.lastAction || null,

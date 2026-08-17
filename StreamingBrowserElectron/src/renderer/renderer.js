@@ -189,6 +189,10 @@ let watchpartyPausedBy = "";
 // Die letzte vollstaendige Meldung. Die Anzeige greift immer darauf zurueck,
 // nie auf einen zwischengespeicherten Hostnamen aus einem alten Zwischenruf.
 let watchpartyLetzteMeldung = null;
+// Der Live-Stand je Titel, nicht nur fuer die offene Seite. Die Karten in
+// "Gemeinsam weiterschauen" zeigen damit, wer gerade schaut und wo er steht -
+// vorher kam das nur aus dem gebuchten Fortschritt und blieb deshalb leer.
+const watchpartyStandKarten = new Map();
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
@@ -1626,6 +1630,24 @@ function watchpartyCard(item) {
       const id = item.memberIds?.[index];
       const eigenes = id && id === item.myId;
       mitgliederZeile.append(index ? ", " : "");
+      // Wer den Takt vorgibt, kann ihn weitergeben - an jemanden, der bei
+      // derselben Folge wirklich mitschaut. Das Relay prueft das noch einmal.
+      const binHost = Boolean(item.hostId) && item.hostId === item.myId;
+      if (binHost && id && !eigenes) {
+        const geben = document.createElement("button");
+        geben.type = "button";
+        geben.className = "watchparty-handover";
+        geben.textContent = "⇧";
+        geben.title = `Host an ${name} weitergeben`;
+        geben.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          if (geben.disabled) return;
+          geben.disabled = true;
+          await api.handoverWatchpartyHost?.(item.key, id, item.room);
+          showToast(`Host an ${name} weitergegeben`);
+        });
+        mitgliederZeile.append(geben);
+      }
       // Wer die Serie eingestellt hat, kann andere wieder herauswerfen.
       if (item.mine && id && !eigenes) {
         const werfen = document.createElement("button");
@@ -2403,6 +2425,75 @@ function merkeHinweisAblauf(bis) {
   }, Math.max(250, bis - Date.now()));
 }
 
+// Titel und Runde als Kennung - dieselbe Bildung wie beim Ablegen des Stands.
+function watchpartyKarteSchluessel(favorite) {
+  return `${watchpartySerieSchluessel(favorite)}|${favorite?.watchpartyRoom || ""}`;
+}
+
+// Die Kachel kennt ihren Raum-Schluessel nicht direkt; der Live-Stand kommt
+// aber unter dem Schluessel der Runde. Beides trifft sich ueber den Titel.
+function watchpartySerieSchluessel(favorite) {
+  const treffer = watchpartyItems.find((item) => (
+    item.room === favorite?.watchpartyRoom
+    && normalisierterTitel(item.title) === normalisierterTitel(favorite?.title)
+  ));
+  return treffer?.key || "";
+}
+
+function normalisierterTitel(wert) {
+  return String(wert || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// Was gerade in einer Runde passiert, in Worte gefasst: wer schaut, wer haelt
+// an. Das eigene Geraet bleibt aussen vor - man weiss selbst, was man tut.
+function liveKartenText(mitglieder) {
+  const andere = mitglieder.filter((person) => !person.me);
+  if (!andere.length) return "";
+  const laufend = andere.filter((person) => !person.paused).map((person) => person.name);
+  const stehend = andere.filter((person) => person.paused).map((person) => person.name);
+  if (laufend.length) {
+    return `▶ ${laufend.join(", ")} ${laufend.length > 1 ? "schauen" : "schaut"} gerade`;
+  }
+  return `❚❚ ${stehend.join(", ")} ${stehend.length > 1 ? "pausieren" : "pausiert"}`;
+}
+
+// Die Kacheln in Ort nachziehen, statt die Ansicht neu zu bauen.
+function aktualisiereLiveKarten() {
+  const jetzt = Date.now();
+  for (const [schluessel, daten] of watchpartyStandKarten) {
+    const kacheln = document.querySelectorAll(`[data-wp-karte="${CSS.escape(schluessel)}"]`);
+    if (!kacheln.length) continue;
+    const seit = (jetzt - daten.empfangen) / 1000;
+    // Zu alt: dann meldet dort niemand mehr, und der Hinweis muss weg.
+    const frisch = daten.members.filter((person) => Number(person.age || 0) + seit <= 20);
+    const text = liveKartenText(frisch);
+    // Die Stelle des Hosts fuehrt die Kachel - sonst die erste Meldung.
+    const fuehrend = frisch.find((person) => person.host) || frisch[0];
+    const stelle = fuehrend
+      ? Number(fuehrend.position || 0) + (fuehrend.paused ? 0 : Number(fuehrend.age || 0) + seit)
+      : 0;
+
+    for (const kachel of kacheln) {
+      let zeile = kachel.querySelector(".media-progress-live");
+      if (text && !zeile) {
+        zeile = document.createElement("small");
+        zeile.className = "media-progress-live";
+        kachel.append(zeile);
+      }
+      if (zeile) {
+        zeile.textContent = text;
+        zeile.classList.toggle("is-hidden", !text);
+      }
+      if (!fuehrend) continue;
+      const dauer = Number(kachel.dataset.wpDauer || 0);
+      const detail = kachel.querySelector(".media-progress-detail");
+      if (detail) detail.textContent = dauer > 0 ? `${formatClock(stelle)} / ${formatClock(dauer)}` : formatClock(stelle);
+      const balken = kachel.querySelector(".media-progress b");
+      if (balken && dauer > 0) balken.style.width = `${Math.max(1, Math.min(100, (stelle / dauer) * 100))}%`;
+    }
+  }
+}
+
 function progressMarkup(favorite, options = {}) {
   if (!options.showProgress) return "";
   const live = watchpartyHint(favorite);
@@ -2449,6 +2540,12 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     <span>${escapeHtml(favoriteHerkunft(favorite))}</span>
     ${progressMarkup(favorite, options)}
   `;
+  // Gehoert die Kachel zu einer Runde, wird sie im Sekundentakt nachgezogen -
+  // ohne die ganze Ansicht neu zu bauen, das wuerde beim Scrollen springen.
+  if (favorite?.watchpartyRoom) {
+    card.dataset.wpKarte = `${watchpartyKarteSchluessel(favorite)}`;
+    card.dataset.wpDauer = String(Number(favorite.duration) || 0);
+  }
   card.addEventListener("click", async () => {
     // Nach dem Umsortieren kommt noch ein Klick hinterher - der soll den
     // Titel nicht oeffnen.
@@ -4465,6 +4562,26 @@ function showWatchpartyLive(info) {
 // ein Streifen darunter waere ausgerechnet beim Schauen unsichtbar.
 function showWatchpartyStand(info) {
   const mitglieder = Array.isArray(info?.members) ? info.members : [];
+
+  // Fuer die Karten: nach Titel und Runde ablegen, unabhaengig davon, was
+  // gerade offen ist.
+  const kartenSchluessel = `${info?.key || ""}|${info?.room || ""}`;
+  if (mitglieder.length) {
+    watchpartyStandKarten.set(kartenSchluessel, { members: mitglieder, empfangen: Date.now() });
+  } else {
+    watchpartyStandKarten.delete(kartenSchluessel);
+  }
+  aktualisiereLiveKarten();
+  if (!watchpartyStandTimer) {
+    watchpartyStandTimer = window.setInterval(() => {
+      renderWatchpartyStand();
+      aktualisiereLiveKarten();
+    }, 1000);
+  }
+
+  // Kopfzeile und Player betreffen nur die offene Seite.
+  if (info && info.offen === false) return;
+
   watchpartyPausedBy = String(info?.pausedBy || "");
   watchpartyStandDaten = mitglieder.length
     ? {
