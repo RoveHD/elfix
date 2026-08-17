@@ -5394,12 +5394,22 @@ function watchpartyControlScript() {
   })()`;
 }
 
-// Sanfter Abgleich im Player-Frame.
+// Abgleich im Player-Frame - und zwar so wenig wie moeglich.
 //
-// Kleine Abweichungen bleiben stehen - die sieht niemand. Mittlere werden ueber
-// die Abspielgeschwindigkeit weggeholt, das faellt nicht auf. Nur grosse oder
-// absichtliche Spruenge rechtfertigen ein currentTime: jedes Setzen laesst den
-// Hoster neu puffern, und genau das hat alle paar Sekunden geruckelt.
+// Abgeglichen wird nur noch, was jemand tut: Play, Pause, Folgenwechsel,
+// absichtliches Spulen. Der Zeitversatz, der im Lauf von allein entsteht, wird
+// nicht mehr angefasst. Beides, was frueher hier stand, hat bei VOE mehr
+// kaputtgemacht als geradegerueckt:
+//
+// - am Tempo drehen: der Hoster wechselt dabei hoerbar die Tonhoehe, und
+//   manche Player setzen die Rate von sich aus wieder zurueck, worauf sofort
+//   die naechste Korrektur ansetzt
+// - currentTime setzen: jedes Setzen laesst den Hoster neu puffern, und das
+//   Puffern erzeugt genau den Versatz, den der Sprung beheben sollte
+//
+// Uebrig bleibt eine Notbremse. Ein paar Sekunden Unterschied faellt beim
+// gemeinsamen Schauen nicht auf - fuenf schon, denn dann redet der eine ueber
+// etwas, das der andere noch nicht gesehen hat. Nur dann wird gesprungen.
 //
 // Der Zustand liegt in dem Frame, in dem das Video wirklich haengt - bei VOE
 // ist das der Rahmen des Hosters, nicht das Dokument von AniWorld. Deshalb geht
@@ -5414,71 +5424,40 @@ function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
     const media = medien.sort((a, b) => b.duration - a.duration)[0];
     if (!media) return "kein-video";
 
-    const S = (window.__elfixWpSync = window.__elfixWpSync || { tempo: 1, seitSprung: 0, gemeldet: 0 });
+    const S = (window.__elfixWpSync = window.__elfixWpSync || { seitSprung: 0, gemeldet: 0 });
     const ziel = ${ziel};
     const laeuft = ${laeuft};
     const jetzt = Number(media.currentTime) || 0;
     const drift = ziel - jetzt;
     const betrag = Math.abs(drift);
 
-    // Nicht jeder Player laesst sich bremsen. Wenn nicht, wird lieber
-    // grosszuegig gewartet und selten gesprungen, statt staendig zu zappeln.
-    const tempoGeht = typeof media.playbackRate === "number";
-    // Ohne das klingt schon ein Prozent nach Micky Maus.
-    if (tempoGeht) {
-      try { if ("preservesPitch" in media) media.preservesPitch = true; } catch (_) {}
+    // Ein Tempo aus einer aelteren Fassung koennte noch stehen - dieses Skript
+    // stellt keins mehr ein, raeumt ein fremdes aber weg.
+    if (typeof media.playbackRate === "number" && media.playbackRate !== 1) {
+      try { media.playbackRate = 1; } catch (_) {}
     }
-    const zurueck = () => {
-      if (tempoGeht && S.tempo !== 1) {
-        try { media.playbackRate = 1; } catch (_) {}
-      }
-      S.tempo = 1;
-    };
 
-    // Waehrend gepuffert oder gesprungen wird, nicht nachregeln.
-    if (media.readyState < 3 || media.seeking) { zurueck(); return "puffert"; }
-    // Steht der Host oder steht man selbst, regelt nichts: Pause und Play
-    // kommen als eigene Befehle und setzen die Stelle exakt.
-    if (!laeuft || media.paused) { zurueck(); return "steht"; }
+    // Waehrend gepuffert oder gesprungen wird, gar nichts tun.
+    if (media.readyState < 3 || media.seeking) return "puffert";
+    // Steht der Host oder steht man selbst, entscheidet nicht der Versatz:
+    // Pause und Play kommen als eigene Befehle und setzen die Stelle exakt.
+    if (!laeuft || media.paused) return "steht";
 
     let tat = "none";
 
-    // Bis zu einer Sekunde Unterschied bleibt einfach stehen. Das sieht
-    // niemand, und jede Korrektur ist hoerbar oder sichtbar - beides ist
-    // schlimmer als der Versatz selbst.
-    if (betrag <= 0.7) {
-      zurueck();
-      tat = S.tempo !== 1 ? "restore-rate" : "none";
-    } else if (betrag > 2.5) {
-      // So weit auseinander: aufholen wuerde bei zwei Prozent Minuten dauern.
-      // Aber hoechstens alle acht Sekunden, sonst puffert es sich zu Tode.
-      if (Date.now() - S.seitSprung > 8000) {
-        zurueck();
+    // Unter fuenf Sekunden passiert nichts. Kein Tempo, kein Sprung, keine
+    // Zwischenstufe - das ist der ganze Punkt dieser Fassung.
+    if (betrag > 5) {
+      // Aber hoechstens alle fuenfzehn Sekunden, sonst puffert es sich zu
+      // Tode: wer dauerhaft hinterherhaengt, wird sonst genau dadurch
+      // langsamer, dass man ihn staendig nach vorn zieht.
+      if (Date.now() - S.seitSprung > 15000) {
         try { media.currentTime = ziel; } catch (_) {}
         S.seitSprung = Date.now();
         tat = "hard-seek";
       } else {
         tat = "seek-cooldown";
       }
-    } else if (!tempoGeht) {
-      // Dieser Player laesst sich nicht bremsen. Dann lieber den Versatz
-      // aushalten und erst weit oben springen, als am Ton zu drehen.
-      tat = "kein-tempo";
-    } else if (betrag > 1 || S.tempo !== 1) {
-      // Zwischen einer und zweieinhalb Sekunden sanft angleichen - und zwar
-      // hoechstens zwei Prozent. Mehr hoert man.
-      //
-      // Angefangen wird erst ueber einer Sekunde, aufgehoert schon unter 0,7:
-      // zwischen 0,7 und 1,0 passiert nichts Neues. Diese Hysterese
-      // verhindert das staendige Wechseln zwischen 0,98, 1,0 und 1,02.
-      const staerke = Math.min(1, (betrag - 0.7) / 1.8);
-      let tempo = drift > 0 ? 1 + 0.01 + 0.01 * staerke : 1 - 0.01 - 0.01 * staerke;
-      tempo = Math.max(0.98, Math.min(1.02, Number(tempo.toFixed(3))));
-      if (tempo !== S.tempo) {
-        try { media.playbackRate = tempo; } catch (_) { return "tempo-fehlt"; }
-        S.tempo = tempo;
-      }
-      tat = drift > 0 ? "soft-speed-up" : "soft-slow-down";
     }
 
     // Hoechstens alle fuenf Sekunden schreiben, und nur wenn etwas geschah.
@@ -5488,19 +5467,19 @@ function watchpartySoftSyncScript(hostZeit, hostLaeuft) {
         expectedHostTime: Number(ziel.toFixed(2)),
         clientTime: Number(jetzt.toFixed(2)),
         drift: Number(drift.toFixed(2)),
-        action: tat,
-        rate: S.tempo
+        action: tat
       }));
     }
     return tat;
   })()`;
 }
 
-// Beim Folgenwechsel faengt alles bei eins an - Tempo, Merker und Sperren
-// gehoeren zur Folge davor.
+// Beim Folgenwechsel faengt alles von vorn an - Merker und Sperren gehoeren zur
+// Folge davor. Das Tempo wird mit zurueckgesetzt: der Abgleich stellt zwar
+// keins mehr ein, eine aeltere Fassung oder die Seite selbst aber schon.
 function watchpartySyncZuruecksetzenScript() {
   return `(() => {
-    window.__elfixWpSync = { tempo: 1, seitSprung: 0, gemeldet: 0 };
+    window.__elfixWpSync = { seitSprung: 0, gemeldet: 0 };
     for (const media of document.querySelectorAll("video")) {
       try { if (typeof media.playbackRate === "number") media.playbackRate = 1; } catch (_) {}
     }

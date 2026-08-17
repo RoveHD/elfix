@@ -3,6 +3,32 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.19.0 — 17. August 2026
+
+Der Abgleich fasst die laufende Wiedergabe nicht mehr an.
+
+Abgeglichen wird nur noch, was jemand tut: Play, Pause, Folgenwechsel,
+absichtliches Spulen. Der Zeitversatz, der beim Schauen von allein entsteht,
+bleibt stehen.
+
+- Am Tempo wird gar nicht mehr gedreht. Bei VOE hat das die Tonhoehe hoerbar
+  verzogen, und manche Player stellen die Rate von sich aus zurueck - worauf
+  sofort die naechste Korrektur ansetzte
+- Auch die seltenen Spruenge sind weg. Jedes Setzen der Stelle laesst den
+  Hoster neu puffern, und das Puffern erzeugt genau den Versatz, den der
+  Sprung beheben sollte
+- Uebrig bleibt eine Notbremse: erst ab fuenf Sekunden Unterschied wird
+  gesprungen, und hoechstens alle fuenfzehn Sekunden. Weniger sieht beim
+  gemeinsamen Schauen niemand, fuenf schon - dann redet der eine ueber etwas,
+  das der andere noch nicht gesehen hat
+- Das Relay meldet die Host-Zeit entsprechend erst ab vier Sekunden und
+  hoechstens alle fuenf Sekunden statt alle zwei. Ob daraus ein Sprung wird,
+  entscheidet weiterhin der Player - nur er kennt seine Stelle in dem Moment,
+  in dem er handelt
+
+Pause, Weiter und Spulen sitzen unveraendert auf die Hundertstelsekunde - an
+den Ereignissen selbst aendert sich nichts.
+
 ## 1.18.3 — 16. August 2026
 
 Der Windows-Build lief noch immer nicht durch:

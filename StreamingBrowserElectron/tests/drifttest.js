@@ -1,5 +1,7 @@
 "use strict";
-// Spulen und Ausgleich auseinandergelaufener Geraete.
+// Spulen - und die Frage, wann ein auseinandergelaufenes Geraet ueberhaupt noch
+// zurueckgeholt wird. Seit dem Umstieg auf reinen Ereignis-Abgleich lautet die
+// Antwort: erst bei weitem Versatz, sonst nie.
 const WS = require("../../sync-server/node_modules/ws");
 const PORT = Number(process.env.TESTPORT) || 8799;
 const RAUM = "driftraum";
@@ -74,15 +76,31 @@ function puls(c) {
   const sprung = await B.erwarte((m) => m.type === "control" && m.action === "seek");
   pruefe("1. Ein Sprung erreicht den anderen mit genauer Stelle",
     sprung && Math.abs(sprung.position - 400) < 0.001, sprung ? `position=${sprung.position}` : "kam nicht");
+  // B folgt dem Sprung, wie es die App auch taete.
+  B.stelle = 400;
 
-  // --- 2. Landet er daneben, wird nachgezogen ----------------------------
-  // B landet nach dem Sprung auf einem anderen Schluesselbild: 397 statt 400.
-  B.stelle = 397;
+  // --- 2. Kleiner Versatz bleibt stehen ----------------------------------
+  // Das ist der Kern dieser Fassung: der Zeitversatz, der im Lauf von allein
+  // entsteht, wird nicht mehr ausgeglichen. B landet nach dem Sprung auf einem
+  // anderen Schluesselbild - drei Sekunden daneben - und wird in Ruhe gelassen.
+  //
+  // Vorher die Ruhezeit einer moeglichen Meldung aus dem Sprung eben abwarten,
+  // sonst koennte deren Sperre das Ergebnis vortaeuschen.
+  B.stelle = 400;
+  await schlaf(5500);
+  B.stelle = A.stelle - 3;
+  B.leeren();
+  const kleiner = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 3000);
+  pruefe("2. Drei Sekunden Versatz werden in Ruhe gelassen", !kleiner,
+    kleiner ? `wurde auf ${kleiner.position.toFixed(2)} gerueckt` : "bleibt stehen");
+
+  // --- 2b. Weiter Versatz wird dagegen gemeldet --------------------------
+  B.stelle = A.stelle - 20;
   B.leeren();
   const ausgleich = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 3000);
-  pruefe("2. Wer danebenliegt, bekommt die Host-Zeit gemeldet",
-    Boolean(ausgleich), ausgleich ? `auf ${ausgleich.position.toFixed(2)} (war 397)` : "kein Ausgleich");
-  pruefe("2b. Gemeldet wird die Stelle des Hosts",
+  pruefe("2b. Zwanzig Sekunden Versatz bekommen die Host-Zeit gemeldet",
+    Boolean(ausgleich), ausgleich ? `auf ${ausgleich.position.toFixed(2)}` : "kein Ausgleich");
+  pruefe("2c. Gemeldet wird die Stelle des Hosts",
     ausgleich && Math.abs(ausgleich.position - A.stelle) < 2.5,
     ausgleich ? `Ziel ${ausgleich.position.toFixed(2)}, Host ${A.stelle.toFixed(2)}` : "-");
 
@@ -92,21 +110,21 @@ function puls(c) {
   const anHost = await A.erwarte((m) => m.type === "control" && m.action === "hostzeit", 2500);
   pruefe("3. Der Host bekommt nie eine Korrektur", !anHost, anHost ? "er wurde gerueckt" : "bleibt stehen");
 
-  // --- 4./5. Totzone und Takt --------------------------------------------
-  // Die Totzone (unter einer halben Sekunde nichts tun) liegt jetzt im Player,
-  // nicht mehr im Relay - sie laesst sich von hier nicht pruefen. Das Relay
-  // meldet die Host-Zeit hoechstens alle zwei Sekunden; genau das wird hier
-  // gemessen.
+  // --- 4./5. Takt der Meldungen ------------------------------------------
+  // Ob aus der gemeldeten Host-Zeit ein Sprung wird, entscheidet der Player -
+  // das laesst sich von hier nicht pruefen. Das Relay meldet sie hoechstens
+  // alle fuenf Sekunden; genau das wird hier gemessen.
   B.stelle = 300;
   B.leeren();
-  const ersteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 3000);
+  // Grosszuegig warten: aus 2b kann noch eine Ruhezeit laufen.
+  const ersteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 7000);
   const seitdem = Date.now();
   B.leeren();
-  const zweiteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 3000);
-  pruefe("4. Die Host-Zeit kommt beim Abweichen an", Boolean(ersteMeldung),
+  const zweiteMeldung = await B.erwarte((m) => m.type === "control" && m.action === "hostzeit", 7000);
+  pruefe("4. Die Host-Zeit kommt bei weitem Versatz an", Boolean(ersteMeldung),
     ersteMeldung ? `position=${ersteMeldung.position.toFixed(2)}` : "kam nicht");
-  pruefe("5. Und hoechstens alle zwei Sekunden",
-    !zweiteMeldung || Date.now() - seitdem >= 1800,
+  pruefe("5. Und hoechstens alle fuenf Sekunden",
+    !zweiteMeldung || Date.now() - seitdem >= 4500,
     zweiteMeldung ? `${Date.now() - seitdem} ms Abstand` : "keine zweite");
 
   // --- 6. Pausierte werden nicht gerueckt --------------------------------

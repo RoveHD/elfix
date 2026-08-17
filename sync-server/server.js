@@ -35,18 +35,21 @@ const STAND_TAKT_MS = 1000;
 // So lange wird gewartet, bevor einem stehengebliebenen Geraet noch einmal ein
 // Play nachgereicht wird - sonst haemmert es im Sekundentakt dagegen.
 const NACHREICHEN_MS = 3000;
-// Ab dieser Abweichung vom Host gilt ein Geraet als auseinandergelaufen und
-// wird zurueckgeholt. Enger waere Zappeln: jeder Sprung laesst den Hoster neu
-// puffern, und Puffern erzeugt genau die Abweichung, die man beheben wollte.
-// Ab hier lohnt es, dem Client die Host-Zeit zu schicken. Was er damit macht -
-// nichts, Tempo oder Sprung - entscheidet er selbst: nur er kennt seine
-// tatsaechliche Stelle in dem Moment, in dem er handelt.
-const DRIFT_GRENZE_S = 1.0;
+// Der laufende Zeitversatz wird nicht mehr ausgeglichen - abgeglichen wird nur
+// noch, was jemand tut: Play, Pause, Folgenwechsel, absichtliches Spulen. Jede
+// Korrektur im Lauf war entweder hoerbar oder liess den Hoster neu puffern, und
+// das Puffern erzeugte genau die Abweichung, die man beheben wollte.
+//
+// Was bleibt, ist eine Notbremse fuer den Fall, dass zwei Geraete wirklich weit
+// auseinanderliegen. Ab hier lohnt es, dem Client die Host-Zeit zu schicken -
+// ob er springt, entscheidet er selbst: nur er kennt seine tatsaechliche Stelle
+// in dem Moment, in dem er handelt, und er springt erst ab fuenf Sekunden.
+// Diese Grenze liegt bewusst etwas darunter, damit die Meldung schon da ist,
+// wenn es soweit ist.
+const DRIFT_GRENZE_S = 4.0;
 // Und so lange bleibt es danach in Ruhe. Wer dauerhaft hinterherhaengt - lahme
 // Leitung, langsamer Hoster -, soll nicht im Sekundentakt neu ansetzen.
-// Der Abgleich geht hoechstens alle zwei Sekunden hinaus - haeufiger braucht
-// eine sanfte Regelung nicht, und jede Meldung ist eine Gelegenheit zu zappeln.
-const DRIFT_RUHE_MS = 2000;
+const DRIFT_RUHE_MS = 5000;
 // So alt darf die letzte Meldung eines Geraets hoechstens sein, damit es in der
 // Leiste steht. Gemeldet wird jede Sekunde, im Notfall alle fuenf - wer hier
 // herausfaellt, schaut gerade nicht mit.
@@ -945,12 +948,10 @@ wss.on("connection", (socket) => {
         }
       }
 
-      // Auseinandergelaufen? Wer beim Schauen zu weit vom Host abweicht, wird
-      // zurueckgeholt - nur er, nur bei derselben Folge, und nur wenn beide
-      // wirklich laufen. Der Host selbst wird nie gerueckt, die anderen kommen
-      // zu ihm. Das faengt auch das ab, was nach einem Sprung uebrig bleibt:
-      // ein Hoster landet auf dem naechsten Schluesselbild, und das liegt bei
-      // jedem woanders.
+      // Weit auseinandergelaufen? Kleiner Versatz bleibt jetzt stehen - erst
+      // wer wirklich weit vom Host abweicht, bekommt dessen Stelle gemeldet.
+      // Nur er, nur bei derselben Folge, und nur wenn beide wirklich laufen.
+      // Der Host selbst wird nie gerueckt, die anderen kommen zu ihm.
       // Gemeinsame Grundlage fuer beide Korrekturen darunter.
       const zustand = eintrag.stand.get(socket.geraetId);
       const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
@@ -961,10 +962,9 @@ wss.on("connection", (socket) => {
         && gleicheFolge) {
         const ziel = hostStandJetzt(socket.raum, eintrag);
         const abstand = ziel == null ? 0 : Math.abs(zahl(nachricht.position, 100000) - ziel);
-        // Nur melden, wie spaet es beim Host ist. Ob daraus nichts, ein
-        // sanfteres Tempo oder ein Sprung wird, entscheidet der Client - er
-        // kennt seine Stelle im Augenblick des Handelns, das Relay nur die
-        // von vorhin.
+        // Nur melden, wie spaet es beim Host ist. Ob daraus nichts oder ein
+        // Sprung wird, entscheidet der Client - er kennt seine Stelle im
+        // Augenblick des Handelns, das Relay nur die von vorhin.
         if (ziel != null && abstand > DRIFT_GRENZE_S && Date.now() - (zustand.gerueckt || 0) > DRIFT_RUHE_MS) {
           zustand.gerueckt = Date.now();
           senden({
