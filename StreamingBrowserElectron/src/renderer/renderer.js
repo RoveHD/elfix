@@ -420,6 +420,7 @@ function bindEvents() {
   watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
   watchpartyLiveBanner?.addEventListener("click", switchWatchpartyContext);
   document.querySelector("#watchpartyResync")?.addEventListener("click", resyncWatchparty);
+  document.querySelector("#watchpartyHandover")?.addEventListener("click", watchpartyHostWeitergeben);
   api.onWatchpartyItems?.((items) => {
     watchpartyItems = Array.isArray(items) ? items : [];
     renderWatchpartyItems();
@@ -1209,7 +1210,14 @@ function sortedHomeFavorites() {
 }
 
 function favoriteTimestamp(favorite) {
-  const candidates = [favorite.lastWatchedAt, favorite.openedAt, favorite.updatedAt, favorite.createdAt, favorite.addedAt];
+  // Eintraege einer Runde bekommen bei jeder fremden Meldung eine neue
+  // "zuletzt geschaut"-Zeit - im Sekundentakt. Danach zu sortieren liess die
+  // Kacheln staendig die Plaetze tauschen, sobald zwei Leute gleichzeitig
+  // schauten. Fuer sie zaehlt deshalb, wann dieses Geraet zuletzt selbst dran
+  // war; die Reihe steht damit still, waehrend die Inhalte weiterlaufen.
+  const candidates = favorite.watchpartyRoom
+    ? [favorite.openedAt, favorite.createdAt, favorite.addedAt, favorite.updatedAt]
+    : [favorite.lastWatchedAt, favorite.openedAt, favorite.updatedAt, favorite.createdAt, favorite.addedAt];
   for (const value of candidates) {
     const time = Date.parse(value);
     if (Number.isFinite(time)) return time;
@@ -4454,6 +4462,28 @@ async function frageLiveRaum(raeume) {
   return api.chooseWatchpartyRoom?.(raeume, punkt).catch(() => "");
 }
 
+// Den Takt an jemand anderen abgeben. Zur Wahl steht, wer gerade wirklich bei
+// derselben Folge mitschaut - das weiss die Leiste ohnehin schon.
+async function watchpartyHostWeitergeben() {
+  if (!watchpartyLiveKey) return;
+  const andere = (watchpartyStandDaten?.members || []).filter((person) => !person.me);
+  if (!andere.length) {
+    showToast("Gerade schaut niemand sonst mit");
+    return;
+  }
+  const knopf = document.querySelector("#watchpartyHandover");
+  const anker = knopf?.getBoundingClientRect();
+  const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
+  const wen = await api.chooseWatchpartyMember?.(
+    andere.map((person) => ({ id: person.id, name: person.name, paused: person.paused })),
+    punkt
+  ).catch(() => "");
+  if (!wen) return;
+  await api.handoverWatchpartyHost?.(watchpartyLiveKey, wen, watchpartyLiveRoom);
+  const name = andere.find((person) => person.id === wen)?.name || "das Gerät";
+  showToast(`Host an ${name} weitergegeben`);
+}
+
 // Bringt alle gemeinsam auf dieselbe Stelle: erst halten alle an und springen
 // dorthin, dann startet der Raum sie zusammen.
 async function resyncWatchparty() {
@@ -4499,6 +4529,11 @@ function showWatchpartyLive(info) {
   watchpartyLiveLeave.classList.toggle("is-hidden", !erkannt);
   // Abgleichen ergibt nur Sinn, wenn man live dabei und verbunden ist.
   syncKnopf?.classList.toggle("is-hidden", !erkannt || !watchpartyLiveOn || !verbunden);
+  // Weitergeben kann nur, wer den Takt hat - und nur, wenn jemand da ist.
+  const uebergabeKnopf = document.querySelector("#watchpartyHandover");
+  const andereDa = (watchpartyStandDaten?.members || []).some((person) => !person.me);
+  uebergabeKnopf?.classList.toggle("is-hidden",
+    !erkannt || !watchpartyLiveOn || !verbunden || !info?.host || !andereDa);
   // Die Leiste haengt am selben Zustand: privat gibt es nichts zu vergleichen.
   renderWatchpartyStand();
   if (!erkannt) return;

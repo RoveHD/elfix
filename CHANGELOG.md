@@ -3,6 +3,24 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.3 — 16. August 2026
+
+Host weitergeben, jetzt dort, wo man es sucht:
+- Ein Knopf in der Kopfzeile neben "Sync". Er erscheint nur, wenn man den Takt
+  selbst hat und ausser einem noch jemand mitschaut
+- Ein Klick fragt, wer es werden soll - zur Wahl steht, wer gerade wirklich
+  bei derselben Folge dabei ist, mitsamt Hinweis, wer davon pausiert hat
+- Gefragt wird ueber ein Fenstermenue: ueber der Anbieterseite waere ein
+  Kaestchen aus HTML nicht anklickbar
+- In der Watchparty-Karte bleibt der Knopf je Mitglied bestehen
+
+Die Kacheln auf der Startseite sprangen hin und her:
+- Sortiert wird nach "zuletzt geschaut" - und eine Runde schreibt diese Zeit
+  bei jeder fremden Meldung neu, also im Sekundentakt. Schauten zwei Leute
+  gleichzeitig, tauschten ihre Kacheln staendig die Plaetze
+- Fuer Eintraege einer Runde zaehlt jetzt, wann dieses Geraet zuletzt selbst
+  dran war. Die Reihe steht damit still, waehrend die Inhalte weiterlaufen
+
 ## 1.17.2 — 16. August 2026
 
 Die Karten in "Gemeinsam weiterschauen" zeigen jetzt, was gerade passiert:

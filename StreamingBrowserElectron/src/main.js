@@ -1086,6 +1086,10 @@ ipcMain.handle("watchparty:resync", async (_event, key, room) => {
   return true;
 });
 
+ipcMain.handle("watchparty:choose-member", async (_event, kandidaten, punkt) => (
+  frageWatchpartyMitglied(kandidaten, punkt)
+));
+
 ipcMain.handle("watchparty:handover", (_event, key, memberId, room) => {
   watchparty.hostUebergeben(String(key || ""), String(memberId || ""), String(room || ""));
   return true;
@@ -4661,6 +4665,31 @@ function frageWatchpartyRaum(punkt, nurDiese = null, optionen = {}) {
       // Der Rueckruf kommt erst, nachdem der Klick verarbeitet wurde.
       callback: () => fertig(gewaehlt)
     });
+  });
+}
+
+// Wen soll der Host bekommen? Gefragt wird ueber ein Fenstermenue - ueber der
+// Anbieterseite waere ein Kaestchen aus HTML nicht anklickbar. Zur Wahl stehen
+// nur die, die gerade wirklich bei derselben Folge mitschauen.
+function frageWatchpartyMitglied(kandidaten, punkt) {
+  const liste = Array.isArray(kandidaten) ? kandidaten.filter((person) => person?.id) : [];
+  if (!mainWindow || mainWindow.isDestroyed() || !liste.length) return Promise.resolve("");
+  return new Promise((fertig) => {
+    let gewaehlt = "";
+    const menue = Menu.buildFromTemplate([
+      { label: "Host weitergeben an", enabled: false },
+      { type: "separator" },
+      ...liste.map((person) => ({
+        label: `${person.name || "Gerät"}${person.paused ? "   (pausiert)" : ""}`,
+        click: () => {
+          gewaehlt = String(person.id);
+        }
+      }))
+    ]);
+    const stelle = punkt && Number.isFinite(punkt.x) && Number.isFinite(punkt.y)
+      ? { x: Math.round(punkt.x), y: Math.round(punkt.y) }
+      : {};
+    menue.popup({ window: mainWindow, ...stelle, callback: () => fertig(gewaehlt) });
   });
 }
 

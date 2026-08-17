@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   kickFromWatchparty: (key, memberId, room) => ipcRenderer.invoke("watchparty:kick", key, memberId, room),
   onWatchpartyState: (callback) => ipcRenderer.on("watchparty:state", (_event, state) => callback(state)),
   onWatchpartyItems: (callback) => ipcRenderer.on("watchparty:items", (_event, items) => callback(items)),
+  chooseWatchpartyMember: (kandidaten, punkt) => ipcRenderer.invoke("watchparty:choose-member", kandidaten, punkt),
   handoverWatchpartyHost: (key, memberId, room) => ipcRenderer.invoke("watchparty:handover", key, memberId, room),
   onWatchpartyLive: (callback) => ipcRenderer.on("watchparty:live", (_event, info) => callback(info)),
   onWatchpartyWatchstate: (callback) => ipcRenderer.on("watchparty:watchstate", (_event, info) => callback(info)),
