@@ -20,6 +20,13 @@ const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
 const sicherung = require("./sicherung");
+const titelModul = require("./titel");
+const empfehlung = require("./empfehlung");
+
+// Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
+// die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
+// Oberflaeche sichtbar - das ist ein Werkzeug zum Nachvollziehen, kein Feature.
+const EMPFEHLUNG_DEBUG = process.env.ELFIX_EMPFEHLUNG_DEBUG === "1";
 const providerModel = require("../shared/provider-model");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -1457,6 +1464,9 @@ function getProviderView(provider) {
   view.webContents.on("did-stop-loading", () => sendActiveState());
   view.webContents.on("did-navigate", (_event, url) => {
     rememberProviderUrl(provider.id, url);
+    // Wer einen Titel wirklich oeffnet, hat ihn nicht ignoriert - die
+    // Muedigkeitszaehlung dieses Werks faengt von vorn an.
+    vergissEmpfehlungsMuedigkeit(url, cleanBaseMediaTitle("", url), "");
     // Neue Seite: der Merker fuers Anhaengen gilt nicht mehr - wer die Folge
     // erneut betritt, gleicht wieder mit dem Host ab.
     watchpartyAngeklinkt.clear();
@@ -6190,10 +6200,12 @@ function loadTasteCache() {
     const roh = JSON.parse(fs.readFileSync(TASTE_FILE, "utf8"));
     tasteCache = {
       pages: roh?.pages && typeof roh.pages === "object" ? roh.pages : {},
-      lists: roh?.lists && typeof roh.lists === "object" ? roh.lists : {}
+      lists: roh?.lists && typeof roh.lists === "object" ? roh.lists : {},
+      // Wie oft ein Werk schon vorgeschlagen wurde, ohne geoeffnet zu werden.
+      anzeigen: roh?.anzeigen && typeof roh.anzeigen === "object" ? roh.anzeigen : {}
     };
   } catch {
-    tasteCache = { pages: {}, lists: {} };
+    tasteCache = { pages: {}, lists: {}, anzeigen: {} };
   }
   return tasteCache;
 }
@@ -6288,17 +6300,6 @@ function seriesPageUrl(value) {
   }
 }
 
-// Kleiner, ueber den Tag stabiler Zufallswert. Genre-Listen sind alphabetisch
-// sortiert - ohne diesen Anstoss staenden dort immer dieselben Titel vorn.
-function dailyJitter(value) {
-  const text = `${value}#${Math.floor(Date.now() / (24 * 60 * 60 * 1000))}`;
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (hash * 31 + text.charCodeAt(index)) | 0;
-  }
-  return (Math.abs(hash) % 1000) / 1000;
-}
-
 async function inBatches(items, size, worker) {
   const ergebnisse = [];
   for (let index = 0; index < items.length; index += size) {
@@ -6347,13 +6348,19 @@ async function collectPersonalRecommendations(limit, refresh, type = "", exclude
   // Ist die Hauptreihe ausgeblendet, waeren diese Titel sonst gar nicht zu
   // sehen - dann greifen die Kategorien auf die ganze Liste zu.
   const haupt = excludeMain ? alle.slice(0, PERSONAL_MAIN_SIZE) : [];
-  if (!type) return alle.slice(0, limit);
+  if (!type) {
+    const gezeigt = alle.slice(0, limit);
+    merkeEmpfehlungAngezeigt(gezeigt);
+    return gezeigt;
+  }
 
-  const vergeben = new Set(haupt.map((item) => taste.urlSchluessel(item.url)));
-  return alle
+  const vergeben = new Set(haupt.map((item) => item.werkKey));
+  const gezeigt = alle
     .filter((item) => candidateMediaType(item.url) === type)
-    .filter((item) => !vergeben.has(taste.urlSchluessel(item.url)))
+    .filter((item) => !vergeben.has(item.werkKey))
     .slice(0, limit);
+  merkeEmpfehlungAngezeigt(gezeigt);
+  return gezeigt;
 }
 
 async function personalRecommendationPool(refresh) {
@@ -6388,25 +6395,34 @@ async function buildPersonalRecommendations(limit, refresh) {
     if (!provider || !url) return null;
     const seite = await tastePage(url, provider, refresh);
     return {
+      favoriteId: favorite.id,
       title: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
       providerId: provider.id,
-      weight: taste.watchWeight(favorite, jetzt),
+      weight: empfehlung.signalStaerke(favorite),
       genres: seite?.genres || [],
       related: seite?.related || []
     };
   })).filter(Boolean);
   if (!saat.length) return [];
 
-  const profil = taste.buildTasteProfile(saat, jetzt);
+  // Das Profil entsteht aus den Eintraegen selbst - mit Fortschritt,
+  // Zeitstempeln und den eben geholten Genres. Frueher ging nur ein Auszug
+  // hinein; damit fehlten dem Ranking Abbrueche, Watchlist und Sitzung.
+  const genreNach = new Map(saat.map((eintrag) => [eintrag.favoriteId, eintrag.genres.map((g) => g.key)]));
+  const profil = empfehlung.profilBauen(verlauf.map((favorite) => ({
+    ...favorite,
+    baseTitle: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
+    genres: genreNach.get(favorite.id) || []
+  })), jetzt);
 
-  // 2. Was schon im Verlauf oder auf der Watchlist steht, faellt raus.
+  // 2. Was schon in der Ablage steht, faellt raus - anhand der Werk-Identitaet,
+  // damit derselbe Titel bei einem anderen Anbieter ebenfalls erkannt wird.
   const ausschluss = new Set();
   for (const favorite of favorites) {
-    for (const wert of [favorite.url, favorite.normalizedUrl, seriesPageUrl(favorite.url)]) {
-      if (wert) ausschluss.add(taste.urlSchluessel(wert));
-    }
-    const titel = cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title;
-    if (titel) ausschluss.add(taste.titelSchluessel(titel));
+    const name = cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title;
+    if (!name) continue;
+    const art = candidateMediaType(favorite.url) === "film" ? "film" : favorite.type;
+    ausschluss.add(titelModul.werkSchluessel(name, art));
   }
 
   const kandidaten = [];
@@ -6425,9 +6441,26 @@ async function buildPersonalRecommendations(limit, refresh) {
     }
   }
 
-  // 3b. Titel aus den Lieblingsgenres.
+  // 3b. Titel aus den Lieblingsgenres. Welche Adresse zu einem Genre gehoert,
+  // wissen nur die Detailseiten - also von dort einsammeln und den Genres des
+  // Profils zuordnen.
+  const genreAdressen = new Map();
+  for (const eintrag of saat) {
+    for (const genre of eintrag.genres) {
+      if (!genre?.key || !genre.url) continue;
+      const bekannt = genreAdressen.get(genre.key) || { key: genre.key, label: genre.label, urls: new Map() };
+      if (!bekannt.urls.has(eintrag.providerId)) bekannt.urls.set(eintrag.providerId, genre.url);
+      genreAdressen.set(genre.key, bekannt);
+    }
+  }
+  const beliebteste = [...profil.genres.entries()]
+    .sort((links, rechts) => rechts[1] - links[1])
+    .slice(0, 6)
+    .map(([key]) => genreAdressen.get(key))
+    .filter(Boolean);
+
   const genreSeiten = [];
-  for (const genre of profil.genres.slice(0, 6)) {
+  for (const genre of beliebteste) {
     for (const [providerId, url] of genre.urls) {
       if (!anbieterNach.has(providerId)) continue;
       genreSeiten.push({ genre, providerId, url });
@@ -6455,8 +6488,7 @@ async function buildPersonalRecommendations(limit, refresh) {
         ...item,
         via: "genre",
         genres: [treffer.seite.genre.key],
-        genreLabel: treffer.seite.genre.label,
-        bonus: dailyJitter(item.url) * 0.3
+        genreLabel: treffer.seite.genre.label
       });
     }
   }
@@ -6471,8 +6503,7 @@ async function buildPersonalRecommendations(limit, refresh) {
   // einmal in die Vorschlaege - auf der Startseite soll nichts doppelt stehen.
   for (const liste of startseiten) {
     for (const item of liste.slice(0, TASTE_NEW_OFFSET)) {
-      ausschluss.add(taste.urlSchluessel(item.url));
-      ausschluss.add(taste.titelSchluessel(item.title));
+      ausschluss.add(titelModul.werkSchluessel(item.title, candidateMediaType(item.url)));
     }
   }
   // Die vorderen Titel jeder Startseite stehen schon in der Reihe "Neu bei
@@ -6488,7 +6519,8 @@ async function buildPersonalRecommendations(limit, refresh) {
   // 4. Fuer die neuen Titel die Genres nachladen, damit sie ueberhaupt zum
   // Profil passen koennen. Streng begrenzt, der Rest bleibt ungenutzt.
   const anzureichern = neu
-    .filter((item) => !item.viaSearch && !ausschluss.has(taste.urlSchluessel(item.url)) && !ausschluss.has(taste.titelSchluessel(item.title)))
+    .filter((item) => !item.viaSearch
+      && !ausschluss.has(titelModul.werkSchluessel(item.title, candidateMediaType(item.url))))
     .slice(0, TASTE_ENRICH_LIMIT);
   await inBatches(anzureichern, TASTE_FETCH_PARALLEL, async (item) => {
     const provider = anbieterNach.get(item.providerId);
@@ -6503,7 +6535,72 @@ async function buildPersonalRecommendations(limit, refresh) {
   });
   kandidaten.push(...anzureichern.filter((item) => item.genres.length));
 
-  return taste.scoreCandidates(kandidaten, profil, { limit, exclude: ausschluss, perSeed: 3 });
+  // 5. Bewerten. Der Typ gehoert an jeden Kandidaten - er entscheidet ueber
+  // die Werk-Identitaet (eine Serie und ein gleichnamiger Film sind zwei
+  // Werke) und ueber die leichte Bevorzugung der Art, die gerade laeuft.
+  const ergebnis = empfehlung.empfehlen(kandidaten.map((item) => ({
+    ...item,
+    type: candidateMediaType(item.url) === "film" ? "film" : "serie"
+  })), profil, {
+    jetzt,
+    limit,
+    ausschluss,
+    anzeigen: empfehlungAnzeigen(),
+    debug: EMPFEHLUNG_DEBUG
+  });
+
+  if (EMPFEHLUNG_DEBUG) {
+    console.log(`[empfehlung] ${ergebnis.length} Vorschlaege aus ${kandidaten.length} Kandidaten,`
+      + ` Profil aus ${profil.umfang} Eintraegen, ${profil.reihen.size} Reihen`);
+    for (const eintrag of ergebnis.slice(0, 5)) console.log(empfehlung.debugBericht(eintrag));
+  }
+  return ergebnis;
+}
+
+// --- Muedigkeit ---------------------------------------------------------------
+//
+// Wie oft wurde ein Werk schon vorgeschlagen, ohne dass es jemanden
+// interessiert hat? Das wird mitgezaehlt, damit derselbe Titel nicht ewig
+// oben steht.
+//
+// Wichtig: gezaehlt wird nur das Anzeigen. Eine Anzeige ist kein Interesse -
+// sie darf das Profil nicht beeinflussen, sonst verstaerkt sich das System
+// selbst und empfiehlt immer mehr von dem, was es ohnehin schon zeigt.
+function empfehlungAnzeigen() {
+  const cache = loadTasteCache();
+  const karte = new Map();
+  for (const [key, wert] of Object.entries(cache.anzeigen || {})) {
+    karte.set(key, Number(wert?.n) || 0);
+  }
+  return karte;
+}
+
+function merkeEmpfehlungAngezeigt(eintraege) {
+  const cache = loadTasteCache();
+  if (!cache.anzeigen) cache.anzeigen = {};
+  let geaendert = false;
+  for (const eintrag of eintraege || []) {
+    if (!eintrag?.werkKey) continue;
+    const bekannt = cache.anzeigen[eintrag.werkKey] || { n: 0, at: 0 };
+    // Hoechstens einmal je Stunde zaehlen: die Startseite baut sich oft neu
+    // auf, und jedes Neuzeichnen als eigene Anzeige zu werten waere unfair.
+    if (Date.now() - (Number(bekannt.at) || 0) < 3600000) continue;
+    cache.anzeigen[eintrag.werkKey] = { n: (Number(bekannt.n) || 0) + 1, at: Date.now() };
+    geaendert = true;
+  }
+  if (geaendert) saveTasteCacheSoon();
+}
+
+// Wurde ein Vorschlag wirklich geoeffnet, war er offenbar doch interessant -
+// dann faengt die Zaehlung von vorn an.
+function vergissEmpfehlungsMuedigkeit(url, titel, typ) {
+  const cache = loadTasteCache();
+  if (!cache.anzeigen) return;
+  const key = titelModul.werkSchluessel(titel || "", typ || candidateMediaType(url));
+  if (cache.anzeigen[key]) {
+    delete cache.anzeigen[key];
+    saveTasteCacheSoon();
+  }
 }
 
 function usesAniWorldAjaxSearch(provider) {

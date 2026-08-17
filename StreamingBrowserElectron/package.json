@@ -1,6 +1,6 @@
 {
   "name": "elfix",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "description": "ELFIX, a compact Chromium-based streaming website browser.",
   "author": "RoveHD",
   "repository": {
@@ -10,7 +10,7 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "typecheck": "node --check shared/provider-model.js && node --check src/main.js && node --check src/discover.js && node --check src/taste.js && node --check src/watchparty.js && node --check src/watchparty-raeume.js && node --check src/watchparty-sync.js && node --check src/sicherung.js && node --check src/preload.js && node --check src/renderer/renderer.js",
+    "typecheck": "node --check shared/provider-model.js && node --check src/main.js && node --check src/discover.js && node --check src/taste.js && node --check src/titel.js && node --check src/empfehlung.js && node --check src/watchparty.js && node --check src/watchparty-raeume.js && node --check src/watchparty-sync.js && node --check src/sicherung.js && node --check src/preload.js && node --check src/renderer/renderer.js",
     "lint": "node scripts/lint.js",
     "test": "npm run typecheck && npm run suite",
     "make-icon": "node scripts/make-icon.js",

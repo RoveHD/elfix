@@ -3,6 +3,69 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.22.0 — 18. August 2026
+
+Die Empfehlungen verstehen jetzt Filmreihen.
+
+Bisher lief alles ueber ein einziges Signal: passt das Genre zum Profil? Wer
+Teil 1 einer Reihe durchgeschaut hatte, bekam irgendeinen Actionfilm
+vorgeschlagen - nur nicht Teil 2. Das Ranking hat jetzt mehrere Signale, und
+das staerkste davon ist die Reihe.
+
+**Reihen und Fortsetzungen**
+
+- Aus dem Titel wird erkannt, was zusammengehoert: "John Wick: Kapitel 4",
+  "Iron Man 2", "Harry Potter und die Kammer des Schreckens", "The Dark Knight
+  Rises". Auch ueber Schreibweisen hinweg - roemische Zahlen, "Teil 2",
+  "Chapter 3", "Vol. 2"
+- Wer Teil 1 fertig hat, bekommt Teil 2 ganz oben. Wer Teil 2 fertig hat,
+  Teil 3 - und Teil 2 nicht noch einmal
+- Ohne Nummern gilt es als dieselbe Reihe, aber nicht als belegte
+  Fortsetzung: dass "Die Kammer des Schreckens" nach "Der Stein der Weisen"
+  kommt, steht nirgends in den Daten
+- In der echten Ablage findet das Iron Man 1 bis 3, Avengers 1 bis 4,
+  Dark Knight und Harry Potter zusammen
+
+**Dubletten**
+
+- Derselbe Film bei drei Anbietern ist eine Empfehlung, nicht drei. "Ger Dub"
+  neben "Ger Sub" ebenfalls nicht. Die anderen Fassungen haengen als
+  Alternativen daran
+- Auch "Reacher Staffel 1 | SerienStream (S.to)" und "Reacher" fallen
+  zusammen - Anbieter- und Staffelzusaetze gehoeren nicht zum Titel
+
+**Was sonst noch zaehlt**
+
+- Was gerade laeuft, wiegt schwerer als der Verlauf von vor Monaten - ohne
+  dass der langfristige Geschmack wegfaellt
+- Genres werden als Mengen verglichen, nicht einzeln: "Action+SciFi+Thriller"
+  passt deutlich besser zu "Action+SciFi" als zu "Action+Comedy+Family"
+- Die Watchlist zaehlt positiv, aber schwaecher als etwas, das wirklich
+  geschaut wurde. Mehrere aehnliche Merkzettel verstaerken sich
+- Mehrere kurze Abbrueche in dieselbe Richtung wirken vorsichtig negativ. Ein
+  einzelner Abbruch bedeutet nichts
+- Ein Titel, der oft gezeigt und nie geoeffnet wurde, sinkt langsam ab statt
+  ewig oben zu stehen. Wird er doch geoeffnet, faengt die Zaehlung von vorn an
+- Abgeschlossenes kommt nicht erneut
+
+**Aufgeraeumt**
+
+- Empfehlungen bleiben bei gleichem Profil gleich. Der Zufallswert, der
+  bisher mit ins Ranking ging, ist weg - Erkundung laeuft ueber einen festen
+  Wert je Titel
+- Eine Reihe fuellt nicht mehr die ganze Startseite: nach dem naechsten Teil
+  kommt etwas anderes
+- Die alte Bewertung ist entfernt statt danebengestellt worden. Es gibt genau
+  eine
+- Mit ELFIX_EMPFEHLUNG_DEBUG=1 schreibt das System in die Konsole, woher die
+  Punkte jedes Vorschlags kommen
+
+Nicht umgesetzt, weil die Daten fehlen: Aehnlichkeit ueber Beschreibungen und
+ueber Besetzung/Regie. ELFIX hat weder das eine noch das andere, und geraten
+waere schlechter als weggelassen.
+
+77 neue Pruefungen in zwei Suiten.
+
 ## 1.21.0 — 18. August 2026
 
 Sicherung und Wiederherstellung.
