@@ -3,6 +3,42 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.21.0 — 18. August 2026
+
+Sicherung und Wiederherstellung.
+
+Bisher gab es keinen Weg, den eigenen Stand mitzunehmen - man musste wissen,
+welche Dateien im Datenordner die wichtigen sind. Unter "Daten & Updates" steht
+jetzt ein eigener Abschnitt mit zwei Knoepfen.
+
+- "Sicherung erstellen" schreibt eine einzelne Datei mit allem, was nicht von
+  selbst wiederkommt: Einstellungen, Watchlist samt Weiterschauen-Staenden und
+  eigenen Bildern, die Watchparty-Ablage und die eigenen Anbieter
+- Die beiden Zwischenspeicher bleiben ausdruecklich draussen - Filterlisten und
+  Geschmacksprofil sind zusammen groesser als alles andere und bauen sich von
+  selbst wieder auf
+- "Sicherung einlesen" zeigt vorher, was in der Datei steckt: von wann sie ist,
+  wie viele Eintraege, wie viele davon mit Weiterschauen-Stand und eigenem
+  Bild. Erst danach wird ersetzt
+- Der bisherige Stand wird davor als Kopie in den Datenordner gelegt. Wer die
+  falsche Datei erwischt hat, hat eine Rueckfahrkarte
+- Eingelesen wird ueber denselben Weg wie beim Programmstart. Eine von Hand
+  bearbeitete oder aeltere Sicherung laeuft damit durch dieselbe Pruefung wie
+  sonst auch, statt ungeprueft hereinzukommen
+
+Die Geraetekennung der Watchparty bleibt bewusst draussen:
+
+- Sonst gaebe es nach dem Einlesen auf einem zweiten Rechner zwei Geraete mit
+  derselben Kennung, und das Relay haelt sie fuer eines - Host-Wahl und Leiste
+  waeren dahin
+- Beim Einlesen gilt darum immer die Kennung des Rechners, auf dem eingelesen
+  wird. Der Geraetename kommt dagegen mit, und daran erkennt das Relay ein
+  wiederhergestelltes Geraet wieder und zieht seinen Stand um
+- Wer also nach einer Neuinstallation einliest, steht in seinen Runden wieder
+  da, wo er war
+
+Dazu 26 Pruefungen, die vor allem festhalten, was NICHT mitkommen darf.
+
 ## 1.20.0 — 17. August 2026
 
 Der Abgleich startet jetzt klug und laesst danach in Ruhe.

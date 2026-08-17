@@ -580,6 +580,8 @@ function bindEvents() {
   document.querySelector("#updateFiltersButton").addEventListener("click", updateFilters);
   document.querySelector("#clearCacheButton").addEventListener("click", () => api.clearCache());
   document.querySelector("#openDataFolderButton").addEventListener("click", () => api.openDataFolder());
+  document.querySelector("#exportBackupButton").addEventListener("click", sicherungErstellen);
+  document.querySelector("#importBackupButton").addEventListener("click", sicherungEinlesen);
   document.querySelector("#resetSettingsButton").addEventListener("click", resetAllSettings);
   document.querySelector("#resetDataButton").addEventListener("click", resetData);
   updateCheckButton.addEventListener("click", checkForUpdates);
@@ -3595,6 +3597,33 @@ function renderUpdateInfo() {
 
 function isUpdateBusy() {
   return ["checking", "available", "downloading", "installing"].includes(updateState.status);
+}
+
+// Die Rueckfrage vor dem Einlesen stellt der Hauptprozess - er kennt den Inhalt
+// der Datei und kann sagen, was drinsteckt. Hier bleibt nur, das Ergebnis zu
+// melden und die Ansicht neu zu bauen.
+async function sicherungErstellen() {
+  const ergebnis = await api.exportBackup?.().catch(() => null);
+  if (!ergebnis?.saved) {
+    if (ergebnis?.reason) showToast(ergebnis.reason);
+    return;
+  }
+  showToast(`Sicherung erstellt — ${ergebnis.favoriten} Einträge, ${ergebnis.bilder} eigene Bilder`);
+}
+
+async function sicherungEinlesen() {
+  const ergebnis = await api.importBackup?.().catch(() => null);
+  if (!ergebnis?.restored) {
+    if (ergebnis?.reason) showToast(ergebnis.reason);
+    return;
+  }
+  providers = ergebnis.providers || providers;
+  favorites = ergebnis.favorites || [];
+  settings = ergebnis.settings || settings;
+  selectedProviderIndex = -1;
+  render();
+  applyAppearance();
+  showToast(`Sicherung eingelesen — ${ergebnis.favoriten} Einträge, ${ergebnis.weiterschauen} mit Weiterschauen-Stand`);
 }
 
 async function resetData() {

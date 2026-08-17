@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getMediaDiagnostics: () => ipcRenderer.invoke("media:diagnostics"),
   clearCache: () => ipcRenderer.invoke("data:clear-cache"),
   openDataFolder: () => ipcRenderer.invoke("data:open-folder"),
+  exportBackup: () => ipcRenderer.invoke("data:backup-export"),
+  importBackup: () => ipcRenderer.invoke("data:backup-import"),
   resetData: () => ipcRenderer.invoke("data:confirm-reset"),
   onBrowserState: (callback) => ipcRenderer.on("browser:state", (_event, state) => callback(state)),
   onBlocked: (callback) => ipcRenderer.on("adblock:blocked", (_event, items) => callback(items)),

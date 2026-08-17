@@ -19,6 +19,7 @@ const {
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+const sicherung = require("./sicherung");
 const providerModel = require("../shared/provider-model");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -1140,6 +1141,127 @@ ipcMain.handle("data:clear-cache", async () => {
 ipcMain.handle("data:open-folder", () => {
   shell.openPath(DATA_DIR);
   return true;
+});
+
+// --- Sicherung ---------------------------------------------------------------
+//
+// Was hineingehoert und was nicht, entscheidet sicherung.js - dort steht auch,
+// warum die Geraetekennung draussen bleibt. Hier bleiben Dateien und Dialoge.
+function sicherungBauen() {
+  return sicherung.bauen({
+    settings: publicSettings(settings),
+    favorites,
+    providers,
+    watchparty: watchpartyLokal,
+    programm: app.getVersion()
+  });
+}
+
+ipcMain.handle("data:backup-export", async () => {
+  const ziel = await dialog.showSaveDialog(mainWindow, {
+    title: "Sicherung speichern",
+    defaultPath: sicherung.dateiname(),
+    filters: [{ name: "ELFIX-Sicherung", extensions: ["json"] }]
+  });
+  if (ziel.canceled || !ziel.filePath) return { saved: false };
+
+  try {
+    const daten = sicherungBauen();
+    fs.writeFileSync(ziel.filePath, JSON.stringify(daten, null, 2));
+    const umfang = sicherung.umfang(daten);
+    console.log(`[ELFIX] Sicherung geschrieben: ${ziel.filePath} (${umfang.favoriten} Eintraege, ${umfang.bilder} Bilder)`);
+    return { saved: true, path: ziel.filePath, ...umfang };
+  } catch (fehler) {
+    return { saved: false, reason: String(fehler?.message || fehler) };
+  }
+});
+
+ipcMain.handle("data:backup-import", async () => {
+  const wahl = await dialog.showOpenDialog(mainWindow, {
+    title: "Sicherung einlesen",
+    properties: ["openFile"],
+    filters: [{ name: "ELFIX-Sicherung", extensions: ["json"] }]
+  });
+  if (wahl.canceled || !wahl.filePaths?.length) return { restored: false };
+
+  let daten;
+  try {
+    daten = JSON.parse(fs.readFileSync(wahl.filePaths[0], "utf8"));
+  } catch {
+    return { restored: false, reason: "Die Datei liess sich nicht lesen" };
+  }
+  const geprueft = sicherung.pruefen(daten);
+  if (!geprueft.ok) return { restored: false, reason: geprueft.reason };
+
+  const umfang = sicherung.umfang(daten);
+  const erstellt = Date.parse(daten.erstellt) ? new Date(daten.erstellt).toLocaleString("de-DE") : "unbekannt";
+  const antwort = await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    buttons: ["Abbrechen", "Einlesen"],
+    defaultId: 0,
+    cancelId: 0,
+    message: "Sicherung einlesen?",
+    detail: [
+      `Vom ${erstellt}, erstellt mit ELFIX ${daten.programm || "?"}.`,
+      "",
+      `Enthalten: ${umfang.favoriten} Eintraege in der Watchlist, davon ${umfang.weiterschauen} mit Weiterschauen-Stand`
+        + ` und ${umfang.bilder} mit eigenem Bild. Dazu ${umfang.anbieter} Anbieter`
+        + `${umfang.einstellungen ? " und alle Einstellungen" : ""}.`,
+      "",
+      "Was jetzt hier steht, wird dabei ersetzt. Der bisherige Stand wird vorher"
+        + " als Sicherheitskopie in den Datenordner gelegt."
+    ].join("\n")
+  });
+  if (antwort.response !== 1) return { restored: false };
+
+  try {
+    ensureDataDir();
+    // Erst die Rueckfahrkarte. Wer die falsche Datei erwischt hat, soll nicht
+    // seinen ganzen Stand verloren haben.
+    const vorher = path.join(DATA_DIR, `vor-dem-einlesen-${Date.now()}.elfix.json`);
+    fs.writeFileSync(vorher, JSON.stringify(sicherungBauen(), null, 2));
+
+    // Die eigene Kennung bleibt, was sie ist - sie gehoert zu diesem Rechner,
+    // nicht zur Sicherung.
+    const uebernommen = sicherung.einstellungenUebernehmen(daten.settings, settings?.watchparty?.deviceId);
+    if (uebernommen) {
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(normalizeSettings(uebernommen), null, 2));
+    }
+    if (Array.isArray(daten.favorites)) {
+      fs.writeFileSync(FAVORITES_FILE, JSON.stringify(daten.favorites, null, 2));
+    }
+    if (Array.isArray(daten.providers) && daten.providers.length) {
+      fs.writeFileSync(PROVIDER_FILE, JSON.stringify(daten.providers, null, 2));
+    }
+    if (daten.watchparty) {
+      fs.writeFileSync(WATCHPARTY_FILE, JSON.stringify(daten.watchparty));
+    }
+
+    // Und jetzt einlesen wie beim Start. Damit laeuft alles durch dieselbe
+    // Pruefung wie sonst auch - eine Sicherung von Hand bearbeitet oder aus
+    // einer aelteren Fassung kommt so gar nicht erst ungeprueft herein.
+    // Die Reihenfolge zaehlt: die Watchparty-Ablage braucht die Raeume aus den
+    // Einstellungen.
+    settings = loadSettings();
+    providers = loadProviders();
+    favorites = loadFavorites();
+    watchpartyLokal = loadWatchpartyLocal();
+    watchpartyWiederhergestellt.clear();
+
+    syncAutomaticCacheCleanup();
+    syncWatchparty();
+    sendActiveState();
+    console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, Kopie vorher unter ${vorher}`);
+    return {
+      restored: true,
+      providers,
+      favorites,
+      settings: publicSettings(settings),
+      ...umfang
+    };
+  } catch (fehler) {
+    return { restored: false, reason: String(fehler?.message || fehler) };
+  }
 });
 
 ipcMain.handle("data:confirm-reset", async () => {
