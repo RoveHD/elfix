@@ -282,6 +282,13 @@ class Watchparty {
     this.senden({ type: "here", key, ...stand });
   }
 
+  // Diese Folge ist hier nicht mehr offen. Sofort abmelden, statt still zu
+  // werden - sonst steht man bei den anderen noch, bis der Herzschlag ablaeuft.
+  verlasseStand(key) {
+    if (!this.aktiv || !key) return;
+    this.senden({ type: "bye", key });
+  }
+
   // Den Stand des Hosts anfordern.
   abgleichen(key) {
     if (!this.aktiv || !key || !this.istBeigetreten(key)) return;

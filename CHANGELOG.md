@@ -3,6 +3,32 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.1 — 16. August 2026
+
+Wer die Folge nicht mehr offen hat, ist sofort raus:
+- Bisher wurde ein Geraet einfach still und verschwand erst, wenn sein
+  Herzschlag fuenfzehn Sekunden alt war. So lange stand oben noch jemand, der
+  laengst die Startseite anschaute
+- Jetzt meldet sich das Geraet ausdruecklich ab. Das gilt fuer Startseite,
+  Watchlist, Mediathek, Verlauf, Einstellungen, geschlossene Anbieterseite,
+  eine andere Serie und das Umschalten auf privat
+- Der Herzschlag schweigt ausserdem, solange eine eigene Ansicht ueber der
+  Anbieterseite liegt. Vorher lief er weiter, weil die Seite dahinter am Leben
+  bleibt - man stand also in der Leiste, waehrend man die Startseite ansah
+- Der Ablauf nach fuenfzehn Sekunden bleibt als Netz fuer Absturz, Netzausfall
+  und geschlossenes Fenster
+
+Die Mitschauenden stehen jetzt auch im Player:
+- Oben im Bild, sichtbar bei Mausbewegung, Klick oder Tastendruck, und nach
+  gut zwei Sekunden Ruhe wieder weg - wie die Bedienleiste des Players
+- Je Geraet Name, Zeichen fuer laeuft oder haelt an, die Sekunde und die
+  Marke fuer den Host
+- Allein in der Runde bleibt sie leer und damit unsichtbar
+- Sie wird in den Rahmen eingespritzt, der das Video fuehrt: die
+  Anbieterseite liegt ueber der Oberflaeche, ein Element der App waere dort
+  nie zu sehen. Dadurch geht sie auch ins Vollbild mit - dort ist genau
+  dieser Rahmen der Vollbild-Rahmen
+
 ## 1.17.0 — 16. August 2026
 
 Der Host gehoert jetzt zur Folge, nicht zum Raum. Das war die Ursache dafuer,

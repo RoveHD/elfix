@@ -237,7 +237,7 @@ const server = http.createServer((req, res) => {
       raeume: raeume.size,
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "episodehost"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "episodehost"]
     }));
     return;
   }
@@ -1004,6 +1004,18 @@ wss.on("connection", (socket) => {
 
       if (geaendert) standSenden(socket.raum, eintrag);
       else standSendenGedrosselt(socket.raum, eintrag);
+      return;
+    }
+
+    // Ausdrueckliche Abmeldung: die Folge ist hier nicht mehr offen - die
+    // Startseite liegt darueber, es laeuft etwas anderes, oder auf privat
+    // umgestellt. Ohne das wuerde erst der ablaufende Herzschlag verraten,
+    // dass jemand weg ist, und bis dahin stuende er noch oben in der Leiste.
+    if (nachricht.type === "bye") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag?.stand?.delete(socket.geraetId)) return;
+      zustandSenden(socket.raum);
+      standSenden(socket.raum, eintrag);
       return;
     }
 

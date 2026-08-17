@@ -93,6 +93,11 @@ const watchpartyAngeklinkt = new Set();
 // Aufenthalt beginnt. Ohne das gaelte ein alter Player weiter als aktiv - und
 // jemand, der laengst woanders ist, bliebe Host.
 const watchpartySitzung = new Map();
+// Woran dieses Geraet zuletzt als anwesend gemeldet war. Verlaesst es die
+// Folge - Startseite darueber, andere Serie, auf privat gestellt -, wird das
+// ausdruecklich abgemeldet. Nur still zu werden reicht nicht: bis der
+// Herzschlag ablaeuft, stuende man bei den anderen noch in der Leiste.
+let watchpartyAnwesend = null;
 // Ein Sprungwunsch verfaellt, wenn die Folge nicht bald startet.
 const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
 // Im Normalfall meldet die Seite selbst, sobald sich etwas tut. Dieser Takt ist
@@ -5062,6 +5067,114 @@ async function openWatchpartyItem(key, room) {
 // kleines Skript im Player-Frame auf die Ereignisse des Videos und meldet sie
 // ueber die Konsole zurueck - denselben Rueckkanal nutzt schon der
 // "Naechste Folge"-Knopf.
+// Die Leiste der Mitschauenden - aber im Player, nicht in der Kopfzeile.
+//
+// Sie muss in die Seite eingespritzt werden: die Anbieteransicht liegt ueber
+// der Oberflaeche, ein Element der App waere dort nie zu sehen. Eingehaengt
+// wird nur in dem Rahmen, der das Video fuehrt. Damit sitzt sie ueber dem Bild
+// und geht im Vollbild mit - dort ist genau dieser Rahmen der Vollbild-Rahmen,
+// waehrend ein Element des aeusseren Dokuments verschwinden wuerde.
+//
+// Sichtbar wird sie mit der Maus, wie die Bedienleiste des Players, und
+// verschwindet nach kurzer Ruhe wieder.
+function watchpartyLeisteScript() {
+  return `(() => {
+    if (window.__elfixWpLeisteBereit) return "schon-da";
+    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
+    // Nur der Rahmen mit dem Video zeigt sie - sonst stuende sie doppelt da,
+    // einmal in der Seite und einmal im Player.
+    if (!medien.length) return "kein-video";
+    window.__elfixWpLeisteBereit = true;
+
+    const kasten = document.createElement("div");
+    // Alles ueber die Eigenschaften setzen, nicht ueber ein Stylesheet: viele
+    // Hoster verbieten eingebettete Stile per Content-Security-Policy.
+    const s = kasten.style;
+    s.position = "fixed";
+    s.top = "10px";
+    s.left = "50%";
+    s.transform = "translateX(-50%)";
+    s.zIndex = "2147483647";
+    s.display = "flex";
+    s.gap = "6px";
+    s.padding = "5px 8px";
+    s.borderRadius = "999px";
+    s.background = "rgba(10, 14, 22, 0.82)";
+    s.color = "#f7f8fb";
+    s.font = "500 12px/1.35 system-ui, sans-serif";
+    s.pointerEvents = "none";
+    s.opacity = "0";
+    s.transition = "opacity 180ms ease";
+    s.maxWidth = "92vw";
+    s.overflow = "hidden";
+    kasten.setAttribute("aria-hidden", "true");
+    document.documentElement.appendChild(kasten);
+
+    let ruheTimer = 0;
+    const zeigen = () => {
+      if (!kasten.childElementCount) return;
+      kasten.style.opacity = "1";
+      clearTimeout(ruheTimer);
+      ruheTimer = setTimeout(() => { kasten.style.opacity = "0"; }, 2600);
+    };
+    document.addEventListener("mousemove", zeigen, true);
+    document.addEventListener("mousedown", zeigen, true);
+    document.addEventListener("keydown", zeigen, true);
+
+    // Im Vollbild werden alle Geschwister des Vollbild-Elements ausgeblendet.
+    // Also zieht die Leiste dorthin um.
+    const umhaengen = () => {
+      const ziel = document.fullscreenElement || document.documentElement;
+      if (kasten.parentNode !== ziel) ziel.appendChild(kasten);
+      zeigen();
+    };
+    document.addEventListener("fullscreenchange", umhaengen, true);
+    document.addEventListener("webkitfullscreenchange", umhaengen, true);
+
+    // Von aussen befuellt: eine Marke je Geraet.
+    window.__elfixWpLeiste = (leute) => {
+      kasten.replaceChildren();
+      for (const person of Array.isArray(leute) ? leute : []) {
+        const marke = document.createElement("span");
+        const ms = marke.style;
+        ms.display = "inline-flex";
+        ms.alignItems = "center";
+        ms.gap = "5px";
+        ms.padding = "2px 8px";
+        ms.borderRadius = "999px";
+        ms.whiteSpace = "nowrap";
+        ms.background = person.me ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.08)";
+
+        const zeichen = document.createElement("span");
+        zeichen.textContent = person.paused ? "❚❚" : "▶";
+        zeichen.style.fontSize = "9px";
+        zeichen.style.color = person.paused ? "#f5b84b" : "#22c55e";
+
+        const name = document.createElement("span");
+        name.textContent = person.name || "Gerät";
+        if (person.host) name.style.fontWeight = "700";
+
+        marke.append(zeichen, name);
+        if (person.host) {
+          const host = document.createElement("span");
+          host.textContent = "HOST";
+          host.style.fontSize = "9px";
+          host.style.opacity = "0.8";
+          marke.append(host);
+        }
+        const uhr = document.createElement("span");
+        uhr.textContent = person.zeit || "";
+        uhr.style.opacity = "0.85";
+        uhr.style.fontVariantNumeric = "tabular-nums";
+        marke.append(uhr);
+        kasten.append(marke);
+      }
+      if (!kasten.childElementCount) kasten.style.opacity = "0";
+    };
+    return "installiert";
+  })()`;
+}
+
 function watchpartyControlScript() {
   return `(() => {
     if (window.__elfixWpInstalled) return "schon-da";
@@ -5461,6 +5574,16 @@ function pushWatchpartyLiveState(url = "") {
   // unberuehrt: die Live-Steuerung wird trotzdem eingehaengt.
   const seiteOffen = Boolean(activeView) && overlayReasons.size === 0;
 
+  // Anwesend heisst: diese Folge ist hier wirklich zu sehen und laeuft live in
+  // dieser Runde mit. Faellt eine der beiden Bedingungen weg, sofort abmelden.
+  const anwesend = seiteOffen && key && raum ? { key, raum } : null;
+  if (watchpartyAnwesend && (!anwesend
+    || watchpartyAnwesend.key !== anwesend.key
+    || watchpartyAnwesend.raum !== anwesend.raum)) {
+    watchparty.verlasseStand(watchpartyAnwesend.key, watchpartyAnwesend.raum);
+  }
+  watchpartyAnwesend = anwesend;
+
   sendWatchpartyLive({
     // Sichtbar, sobald dieser Titel ueberhaupt in einer Runde laeuft - dann
     // gibt es etwas zu unterscheiden und die Anzeige sagt, was gerade gilt.
@@ -5491,6 +5614,7 @@ async function installWatchpartyControls(provider, view, url) {
   if (!raum) return;
 
   await executeJavaScriptInMediaFrames(view, watchpartyControlScript()).catch(() => []);
+  await executeJavaScriptInMediaFrames(view, watchpartyLeisteScript()).catch(() => []);
   // Bei jedem Betreten dieser Folge den Stand des Hosts holen - auch wenn man
   // schon einmal drin war. Der Merker gilt nur fuer den laufenden Aufenthalt
   // und wird beim Verlassen der Seite geloescht.
@@ -5594,6 +5718,23 @@ function sendWatchpartyWatchstate(nachricht) {
   if (watchpartySerieForUrl(adresse) !== nachricht.key) return;
 
   const hier = episodeIdentity(adresse);
+  const mitglieder = (nachricht.members || []).map((mitglied) => ({
+    id: String(mitglied.id || ""),
+    name: String(mitglied.name || "Gerät"),
+    position: sanitizePositiveNumber(mitglied.position),
+    paused: Boolean(mitglied.paused),
+    host: Boolean(mitglied.host),
+    season: sanitizePositiveNumber(mitglied.season),
+    episode: sanitizePositiveNumber(mitglied.episode),
+    // Wie alt die Meldung ist, in Sekunden. Die Zahl kommt fertig vom Relay
+    // und wird hier nicht nachgerechnet: sonst mischten sich zwei Uhren, und
+    // jede Abweichung zwischen Rechner und Relay stuende in der Anzeige.
+    age: Math.max(0, Number(mitglied.age) || 0),
+    me: String(mitglied.id || "") === watchparty.geraetId
+  }));
+
+  // Dieselben Angaben zweimal: in die Kopfzeile und in den Player.
+  zeigeLeisteImPlayer(mitglieder);
   mainWindow.webContents.send("watchparty:watchstate", {
     key: nachricht.key,
     room: nachricht.room || raum,
@@ -5602,21 +5743,35 @@ function sendWatchpartyWatchstate(nachricht) {
     lastAction: nachricht.lastAction || null,
     season: hier?.season || 0,
     episode: hier?.episode || 0,
-    members: (nachricht.members || []).map((mitglied) => ({
-      id: String(mitglied.id || ""),
-      name: String(mitglied.name || "Gerät"),
-      position: sanitizePositiveNumber(mitglied.position),
-      paused: Boolean(mitglied.paused),
-      host: Boolean(mitglied.host),
-      season: sanitizePositiveNumber(mitglied.season),
-      episode: sanitizePositiveNumber(mitglied.episode),
-      // Wie alt die Meldung ist, in Sekunden. Die Zahl kommt fertig vom Relay
-      // und wird hier nicht nachgerechnet: sonst mischten sich zwei Uhren, und
-      // jede Abweichung zwischen Rechner und Relay stuende in der Anzeige.
-      age: Math.max(0, Number(mitglied.age) || 0),
-      me: String(mitglied.id || "") === watchparty.geraetId
-    }))
+    members: mitglieder
   });
+}
+
+// Die Leiste im Player befuellen. Allein schaut man niemandem zu - dann bleibt
+// sie leer und damit unsichtbar.
+function zeigeLeisteImPlayer(mitglieder) {
+  if (!isLiveView(activeView)) return;
+  const leute = mitglieder.length > 1
+    ? mitglieder.map((mitglied) => ({
+      name: mitglied.me ? "Du" : mitglied.name,
+      paused: mitglied.paused,
+      host: mitglied.host,
+      me: mitglied.me,
+      zeit: formatUhr(mitglied.position + (mitglied.paused ? 0 : mitglied.age))
+    }))
+    : [];
+  const script = `window.__elfixWpLeiste && window.__elfixWpLeiste(${JSON.stringify(leute)})`;
+  executeJavaScriptInMediaFrames(activeView, script).catch(() => []);
+}
+
+// Sekunden als Uhrzeit - dieselbe Schreibweise wie in der Oberflaeche.
+function formatUhr(sekunden) {
+  const gesamt = Math.max(0, Math.round(Number(sekunden) || 0));
+  const stunden = Math.floor(gesamt / 3600);
+  const minuten = Math.floor((gesamt % 3600) / 60);
+  const rest = gesamt % 60;
+  const zwei = (wert) => String(wert).padStart(2, "0");
+  return stunden > 0 ? `${stunden}:${zwei(minuten)}:${zwei(rest)}` : `${minuten}:${zwei(rest)}`;
 }
 
 // Die Sitzung des gerade laufenden Players. Fehlt sie noch, entsteht sie hier.
@@ -5630,6 +5785,9 @@ function watchpartySitzungFuer(providerId) {
 // Verzoegerung, die eine Umfrage zwangslaeufig hat.
 function meldeWatchpartyStandAusSeite(view, position, pausiert) {
   if (!watchparty.aktiv || !isLiveView(view) || view !== activeView) return;
+  // Liegt die Startseite oder eine andere Ansicht darueber, schaut hier
+  // niemand mehr zu - dann gehoert dieses Geraet auch nicht in die Leiste.
+  if (overlayReasons.size > 0) return;
   const adresse = view.webContents.getURL();
   const key = watchpartyLiveKeyForUrl(adresse);
   const raum = watchpartyRaumForUrl(adresse);
@@ -5651,6 +5809,7 @@ function meldeWatchpartyStandAusSeite(view, position, pausiert) {
 // Abstand; im Normalfall hat die Seite laengst selbst gemeldet.
 async function meldeWatchpartyStand() {
   if (!watchparty.aktiv || !watchparty.verbunden) return;
+  if (overlayReasons.size > 0) return;
   const view = activeView;
   if (!isLiveView(view)) return;
   const adresse = view.webContents.getURL();

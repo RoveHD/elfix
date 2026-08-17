@@ -224,6 +224,10 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.meldeStand(key, stand);
   }
 
+  verlasseStand(key, room) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.verlasseStand(key);
+  }
+
   abgleichen(key, room) {
     for (const raum of this.raeumeMitTitel(key, room)) raum.abgleichen(key);
   }
