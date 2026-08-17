@@ -4701,3 +4701,12 @@ input[type="color"] {
   /* Wie die anderen Zeilen: ohne Schatten verschwindet der Text im Cover. */
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.88);
 }
+
+/* Die Auswahl zwischen Animes und Serien - dieselbe Form wie die Wochentage,
+   nur etwas abgesetzt darueber. */
+.calendar-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}

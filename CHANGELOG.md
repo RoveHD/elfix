@@ -3,6 +3,29 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.17.6 — 16. August 2026
+
+Der Kalender zeigt jetzt eine Woche statt drei:
+- S.to liefert ueber seine Schnittstelle knapp drei Wochen am Stueck - unter
+  "Montag" standen deshalb gleich drei verschiedene Montage untereinander.
+  Gezeigt wird jetzt heute und die sechs Tage danach
+- An den Wochentagen steht das Datum: "Montag 17.08. (56)". Es kommt aus den
+  Eintraegen selbst, damit Reiter und Karten darunter dasselbe zeigen
+
+Eine Folge, ein Eintrag:
+- Die Anbieter listen dieselbe Folge je Synchronfassung einmal - sie stand
+  dadurch dreifach untereinander. Jetzt steht sie einmal da und traegt ihre
+  Fassungen gemeinsam: "Deutsch · Japanisch, dt. Untertitel · Japanisch,
+  engl. Untertitel". Deutsch zuerst, danach die Untertitelfassungen
+- Bei AniWorld werden aus 172 Zeilen damit 91 Eintraege
+
+Filter zwischen Animes und Serien:
+- Ueber den Wochentagen steht "Alles / Animes / Serien" mit der jeweiligen
+  Anzahl. Die Wahl bleibt beim Blaettern durch die Woche bestehen
+- Die Art kommt aus der Adresse, nicht vom Anbieter - fuehrt einer beides,
+  stimmt die Zuordnung trotzdem
+- Angeboten wird die Zeile nur, wenn es wirklich beides gibt
+
 ## 1.17.5 — 16. August 2026
 
 Ein Kalender, zwischen Suche und Watchlist:

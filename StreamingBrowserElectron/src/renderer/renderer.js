@@ -1429,6 +1429,9 @@ async function showHome() {
 // hoechstens taeglich.
 let kalenderDaten = null;
 let kalenderTag = "";
+// Anime, Serie oder beides. Getrennt vom Wochentag: man will die Woche
+// durchblaettern, ohne die Auswahl jedes Mal neu zu treffen.
+let kalenderArt = "alle";
 
 async function showCalendar() {
   await enterInternalMode();
@@ -1458,20 +1461,49 @@ function renderKalender() {
   const leer = document.querySelector("#calendarEmpty");
   if (!tage || !gitter) return;
 
-  const eintraege = kalenderDaten?.entries || [];
-  leer?.classList.toggle("is-hidden", eintraege.length > 0);
-  if (!eintraege.length) {
+  const alle = kalenderDaten?.entries || [];
+  leer?.classList.toggle("is-hidden", alle.length > 0);
+  if (!alle.length) {
     tage.replaceChildren();
     gitter.replaceChildren();
+    document.querySelector("#calendarFilter")?.replaceChildren();
     return;
   }
+
+  // Die Auswahl zwischen Animes und Serien. Angeboten wird nur, was es auch
+  // gibt - bei einem Anbieter allein waere die Wahl sinnlos.
+  const filter = document.querySelector("#calendarFilter");
+  const arten = [
+    { wert: "alle", titel: "Alles" },
+    { wert: "anime", titel: "Animes" },
+    { wert: "serie", titel: "Serien" }
+  ].filter((art) => art.wert === "alle" || alle.some((eintrag) => eintrag.type === art.wert));
+  if (arten.length < 3) kalenderArt = "alle";
+  filter?.replaceChildren(...(arten.length > 2 ? arten.map((art) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = `calendar-day${art.wert === kalenderArt ? " is-active" : ""}`;
+    const anzahl = art.wert === "alle" ? alle.length : alle.filter((e) => e.type === art.wert).length;
+    knopf.textContent = `${art.titel} (${anzahl})`;
+    knopf.addEventListener("click", () => {
+      kalenderArt = art.wert;
+      renderKalender();
+    });
+    return knopf;
+  }) : []));
+
+  const eintraege = kalenderArt === "alle"
+    ? alle
+    : alle.filter((eintrag) => eintrag.type === kalenderArt);
 
   tage.replaceChildren(...(kalenderDaten.days || []).map((tag) => {
     const knopf = document.createElement("button");
     knopf.type = "button";
     knopf.className = `calendar-day${tag === kalenderTag ? " is-active" : ""}`;
     const anzahl = eintraege.filter((eintrag) => eintrag.day === tag).length;
-    knopf.textContent = anzahl ? `${tag} (${anzahl})` : tag;
+    // Das Datum gehoert dazu - sonst weiss man nicht, welcher Montag gemeint ist.
+    const datum = kalenderDatum(kalenderDaten?.dates?.[tag] || "");
+    knopf.textContent = [tag, datum, anzahl ? `(${anzahl})` : ""].filter(Boolean).join(" ");
     knopf.disabled = !anzahl;
     knopf.addEventListener("click", () => {
       kalenderTag = tag;

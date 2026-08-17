@@ -4480,7 +4480,28 @@ async function ladeKalender(refresh) {
     return [];
   }));
 
-  const daten = { days: WOCHENTAGE_LISTE, entries: listen.flat() };
+  // Nur die kommende Woche. S.to liefert ueber die Schnittstelle knapp drei
+  // Wochen am Stueck - dann stuenden unter "Montag" gleich drei verschiedene
+  // Montage untereinander.
+  const heute = new Date();
+  heute.setHours(0, 0, 0, 0);
+  const grenze = new Date(heute);
+  grenze.setDate(grenze.getDate() + 7);
+  const inDerWoche = (eintrag) => {
+    if (!eintrag.date) return true;
+    const wann = new Date(`${eintrag.date}T00:00:00`);
+    return wann >= heute && wann < grenze;
+  };
+
+  const eintraege = listen.flat().filter(inDerWoche);
+  // Welches Datum gehoert zu welchem Wochentag? Kommt aus den Eintraegen
+  // selbst, damit die Reiter dasselbe zeigen wie die Karten darunter.
+  const datumJeTag = {};
+  for (const eintrag of eintraege) {
+    if (eintrag.date && !datumJeTag[eintrag.day]) datumJeTag[eintrag.day] = eintrag.date;
+  }
+
+  const daten = { days: WOCHENTAGE_LISTE, dates: datumJeTag, entries: eintraege };
   kalenderCache = { at: Date.now(), daten };
   return daten;
 }

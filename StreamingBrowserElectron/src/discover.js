@@ -623,6 +623,7 @@ function extractCalendarEntries(html) {
         title: titel,
         url: adresse,
         image: bild,
+        type: artAusAdresse(adresse),
         language: spracheAusFlagge(flagge),
         season: folge.length ? Number(folge[1]) : 0,
         episode: folge.length ? Number(folge[2]) : 0
@@ -646,22 +647,39 @@ function spracheAusFlagge(name) {
   return wert.replace(/-/g, ", ");
 }
 
-// Wirklich Doppeltes zusammenfassen: gleiche Folge *und* gleiche Fassung. Die
-// Synchronfassungen bleiben getrennt - sie sind der Grund, warum ein Titel
-// mehrfach im Kalender steht.
+// Eine Folge, ein Eintrag. Die Anbieter listen sie je Synchronfassung einmal -
+// dieselbe Folge stand dadurch dreimal untereinander. Zusammengezogen wird auf
+// den Titel samt Folge; die Fassungen werden gesammelt und stehen gemeinsam
+// auf der Karte.
 function ohneDoppelte(eintraege) {
   const nach = new Map();
   for (const eintrag of eintraege) {
-    const schluessel = `${eintrag.day}|${eintrag.url}|${eintrag.season}|${eintrag.episode}|${eintrag.language || ""}`;
+    const schluessel = `${eintrag.day}|${eintrag.url}|${eintrag.season}|${eintrag.episode}`;
     const vorhanden = nach.get(schluessel);
     if (!vorhanden) {
-      nach.set(schluessel, { ...eintrag });
+      nach.set(schluessel, { ...eintrag, languages: eintrag.language ? [eintrag.language] : [] });
       continue;
     }
     if (!vorhanden.image && eintrag.image) vorhanden.image = eintrag.image;
     if (!vorhanden.time && eintrag.time) vorhanden.time = eintrag.time;
+    if (eintrag.language && !vorhanden.languages.includes(eintrag.language)) {
+      vorhanden.languages.push(eintrag.language);
+    }
+  }
+  // Deutsch zuerst, danach die Untertitelfassungen - das ist die Reihenfolge,
+  // in der man sie sucht.
+  for (const eintrag of nach.values()) {
+    eintrag.languages.sort((links, rechts) => rang(links) - rang(rechts));
+    eintrag.language = eintrag.languages.join(" · ");
   }
   return [...nach.values()];
+}
+
+function rang(sprache) {
+  if (/^Deutsch/i.test(sprache)) return 0;
+  if (/dt\. Untertitel/i.test(sprache)) return 1;
+  if (/engl\. Untertitel/i.test(sprache)) return 2;
+  return 3;
 }
 
 // S.to: die Schnittstelle liefert je Datum eine Liste.
@@ -689,6 +707,7 @@ function extractCalendarJson(rohdaten) {
         title: titel,
         url: adresse,
         image: String(roh?.cover_url || ""),
+        type: artAusAdresse(adresse),
         season: Number(roh?.season) || 0,
         episode: Number(roh?.episode) || 0,
         language: String(roh?.language || "")
@@ -696,6 +715,13 @@ function extractCalendarJson(rohdaten) {
     }
   }
   return ohneDoppelte(eintraege);
+}
+
+// Anime oder Serie? Steht in der Adresse: "/anime/stream/..." gegen
+// "/serie/...". Das ist verlaesslicher als der Anbieter - der eine fuehrt
+// beides, wenn auch selten.
+function artAusAdresse(adresse) {
+  return /\/anime\//i.test(String(adresse || "")) ? "anime" : "serie";
 }
 
 function entschaerfe(roh) {
@@ -711,6 +737,7 @@ function entschaerfe(roh) {
 
 module.exports = {
   extractCalendarEntries,
+  artAusAdresse,
   spracheAusFlagge,
   extractCalendarJson,
   wochentagAusDatum,
