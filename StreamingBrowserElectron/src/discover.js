@@ -312,6 +312,195 @@ function extractCatalogItems(html, baseUrl, provider = {}, limit = 40) {
   return treffer;
 }
 
+// --- Angaben zu einem einzelnen Werk -----------------------------------------
+//
+// Was auf einer Detailseite ausser Genres noch steht - und wofuer es taugt:
+//
+//   imdb       AniWorld (data-imdb) und S.to (Link auf imdb.com). Damit laesst
+//              sich ein Werk bei TMDB exakt aufloesen, ohne Titelvergleich.
+//              Filmo fuehrt keine.
+//   jahr/bis   AniWorld (itemprop startDate/endDate), S.to (Links auf /jahr/N),
+//              Filmo ("Erscheinungsdatum: 2008"). Ohne Jahr trifft eine Suche
+//              nach "Hunter x Hunter" die Fassung von 1999 statt der von 2011.
+//   fsk        Alle drei. Die einzige Angabe der Anbieter, die etwas ueber das
+//              Publikum sagt: Paw Patrol 0, Korra 6, Naruto 12, One Piece 16.
+//              Genres tun das nicht - dort ist beides "Animation, Abenteuer".
+//   titelAlt   AniWorld (data-alternativeTitles), inklusive des japanischen
+//              Originaltitels. Der beste Aufhaenger fuer eine Anime-Datenbank.
+//   cast/regie AniWorld (itemprop actor/director).
+//
+// Fehlt etwas, fehlt es - geraten wird nichts.
+
+const FSK_STUFEN = new Set([0, 6, 12, 16, 18]);
+
+function jahrAus(wert) {
+  const zahl = Number.parseInt(String(wert || "").trim(), 10);
+  return zahl >= 1900 && zahl <= 2100 ? zahl : 0;
+}
+
+// Personen aus schema.org-Auszeichnung. Der Name steht nicht direkt hinter
+// dem itemprop, sondern eine Ebene tiefer:
+//   <li itemprop="actor" ...><a itemprop="url"><span itemprop="name">Name</span></a></li>
+// Deshalb wird ein Fenster hinter dem Treffer gelesen und daraus der
+// verschachtelte Name geholt; ein <meta ... content="Name"> geht auch.
+function itemprops(html, name) {
+  const treffer = [];
+  const quelle = String(html || "");
+  const muster = new RegExp('itemprop="' + name + '"', "gi");
+  for (const fund of quelle.matchAll(muster)) {
+    const fenster = quelle.slice(fund.index, fund.index + 400);
+    const wert = (
+      attribut((fenster.match(/^[^>]*>/) || [""])[0], "content")
+      || ohneTags((fenster.match(/itemprop="name"[^>]*>([^<]{1,80})</i) || [])[1] || "")
+    ).trim();
+    if (wert && wert.length <= 80 && !treffer.includes(wert)) treffer.push(wert);
+  }
+  return treffer;
+}
+
+function extractTitleMeta(html, baseUrl) {
+  const quelle = String(html || "");
+
+  // IMDB: AniWorld schreibt sie als Attribut, S.to verlinkt sie.
+  const imdb = (quelle.match(/data-imdb="(tt\d{6,})"/i)
+    || quelle.match(/imdb\.com\/title\/(tt\d{6,})/i)
+    || [])[1] || "";
+
+  // Altersfreigabe: Attribut zuerst, sonst der Text im Kopf der Seite.
+  const fskRoh = (quelle.match(/data-fsk="(\d{1,2})"/i) || quelle.match(/\bFSK\s*:?\s*(\d{1,2})\b/i) || [])[1];
+  const fsk = FSK_STUFEN.has(Number(fskRoh)) ? Number(fskRoh) : null;
+
+  // Jahre: drei Schreibweisen, in der Reihenfolge ihrer Verlaesslichkeit.
+  let jahr = jahrAus((quelle.match(/itemprop="startDate"[^>]*>(?:\s*<a[^>]*>)?\s*(\d{4})/i) || [])[1]);
+  let bis = jahrAus((quelle.match(/itemprop="endDate"[^>]*>(?:\s*<a[^>]*>)?\s*(\d{4})/i) || [])[1]);
+  if (!jahr) {
+    // S.to verlinkt Anfangs- und Endjahr; das kleinere ist der Anfang.
+    const jahre = [...quelle.matchAll(/href="[^"]*\/jahr\/(\d{4})"/gi)].map((t) => jahrAus(t[1])).filter(Boolean);
+    if (jahre.length) {
+      jahr = Math.min(...jahre);
+      if (jahre.length > 1) bis = Math.max(...jahre);
+    }
+  }
+  if (!jahr) jahr = jahrAus((quelle.match(/Erscheinungsdatum:\s*(?:\d{1,2}\.\s*)?(?:\w+\s*)?(\d{4})/i) || [])[1]);
+  if (!jahr) {
+    const datum = extractReleaseDate(quelle);
+    if (datum) jahr = jahrAus(datum.slice(0, 4));
+  }
+
+  // Fremdsprachige und alternative Titel.
+  const titelAlt = [];
+  const rohAlt = (quelle.match(/data-alternativeTitles="([^"]*)"/i) || [])[1] || "";
+  for (const teil of entitaetenDekodieren(rohAlt).split(",")) {
+    const wert = teil.trim();
+    if (wert && wert.length <= 80 && !titelAlt.includes(wert)) titelAlt.push(wert);
+  }
+
+  const cast = itemprops(quelle, "actor");
+  const regie = itemprops(quelle, "director");
+
+  return {
+    imdb,
+    fsk,
+    jahr: jahr || 0,
+    bis: bis && bis >= jahr ? bis : 0,
+    titelAlt,
+    cast: cast.slice(0, 20),
+    regie: regie.slice(0, 5)
+  };
+}
+
+// --- Paginierung --------------------------------------------------------------
+//
+// Die Genre-Uebersichten der Anbieter sind blaetterbar und zeigen je Seite nur
+// dreissig bis vierzig Titel. Sortiert sind sie alphabetisch (AniWorld, S.to)
+// oder nach Erscheinungsdatum (Filmo). Wer nur Seite 1 liest, sieht damit
+// entweder nur "A" oder nur die letzten Neuerscheinungen - nie den Katalog.
+// Deshalb wird hier ausgelesen, wie viele Seiten es gibt und wie ihre Adressen
+// gebaut sind.
+//
+// Zwei Formen kommen vor:
+//   AniWorld:  /genre/action/2      (Seitenzahl am Pfadende)
+//   S.to/Filmo: /genre/action?page=2 (Seitenzahl als Parameter)
+
+function regexSicher(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, (z) => "\\" + z);
+}
+
+// Liefert { letzte, muster }. `muster` enthaelt "{n}" an der Stelle der
+// Seitenzahl; `letzte` ist die hoechste verlinkte Seite. Ohne Blaetterleiste
+// bleibt es bei einer Seite.
+function extractPagination(html, baseUrl) {
+  let basis;
+  try {
+    basis = new URL(baseUrl);
+  } catch {
+    return { letzte: 1, muster: "" };
+  }
+  const basisPfad = basis.pathname.replace(/\/+$/, "");
+  const pfadMuster = new RegExp("^" + regexSicher(basisPfad) + "/(\\d+)$");
+  let letzte = 1;
+  let muster = "";
+
+  for (const match of String(html || "").matchAll(/<a\s([^>]*)>/gi)) {
+    const href = absolut(attribut("<x " + match[1] + ">", "href"), baseUrl);
+    if (!href) continue;
+    let url;
+    try {
+      url = new URL(href);
+    } catch {
+      continue;
+    }
+    if (url.host !== basis.host) continue;
+    const pfad = url.pathname.replace(/\/+$/, "");
+
+    let nummer = 0;
+    let form = "";
+    const parameter = url.searchParams.get("page");
+    if (pfad === basisPfad && /^\d+$/.test(parameter || "")) {
+      nummer = Number(parameter);
+      form = basis.origin + basisPfad + "?page={n}";
+    } else {
+      const treffer = pfad.match(pfadMuster);
+      if (treffer) {
+        nummer = Number(treffer[1]);
+        form = basis.origin + basisPfad + "/{n}";
+      }
+    }
+    // Eine vierstellige "Seitenzahl" ist keine Blaetterleiste mehr, sondern ein
+    // Jahr oder eine Werk-Nummer, die zufaellig so aussieht.
+    if (nummer > letzte && nummer <= 5000) {
+      letzte = nummer;
+      muster = form;
+    }
+  }
+  return { letzte, muster };
+}
+
+// Aus dem Muster die Adresse der n-ten Seite. Seite 1 ist immer die
+// Ausgangsadresse - die Anbieter verlinken sie nicht als "/1".
+function seitenAdresse(muster, nummer, baseUrl) {
+  if (nummer <= 1 || !muster) return baseUrl;
+  return muster.replace("{n}", String(nummer));
+}
+
+// Welche Seiten werden gelesen? Gleichmaessig ueber die ganze Blaetterleiste
+// verteilt, Seite 1 immer dabei. Deterministisch: dieselbe Seitenzahl ergibt
+// immer dieselbe Auswahl. Damit deckt eine Stichprobe von acht Seiten bei
+// alphabetischer Sortierung das ganze Alphabet ab und bei Sortierung nach
+// Datum den ganzen Zeitraum - statt in beiden Faellen nur den Anfang.
+function seitenStichprobe(letzte, anzahl) {
+  const gesamt = Math.max(1, Math.floor(letzte) || 1);
+  const wieviele = Math.max(1, Math.min(Math.floor(anzahl) || 1, gesamt));
+  if (wieviele >= gesamt) return Array.from({ length: gesamt }, (_, i) => i + 1);
+  const schritt = gesamt / wieviele;
+  const seiten = [];
+  for (let index = 0; index < wieviele; index += 1) {
+    const seite = Math.min(gesamt, Math.floor(index * schritt) + 1);
+    if (!seiten.includes(seite)) seiten.push(seite);
+  }
+  return seiten;
+}
+
 // S.to blendet unter einer Serie "Das schauen andere" ein, Filmo "Verwandte
 // Filme". Das ist die beste Aehnlichkeitsquelle, die die Seiten selbst liefern.
 const AEHNLICH_UEBERSCHRIFT = /(?:das schauen andere|schauen andere|verwandte\s+\w+|ähnliche[sr]?|aehnliche[sr]?|empfehlungen|könnte dir (?:auch )?gefallen)/i;
@@ -750,6 +939,10 @@ module.exports = {
   extractGenres,
   extractCatalogItems,
   extractRelatedItems,
+  extractTitleMeta,
+  extractPagination,
+  seitenAdresse,
+  seitenStichprobe,
   extractNewReleaseItems,
   extractHeroItem,
   extractUnplayableEpisodes,

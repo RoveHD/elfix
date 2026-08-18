@@ -7,6 +7,9 @@
 #
 # Der Dienst schreibt nichts auf die Platte, deshalb laeuft er mit stark
 # eingeschraenkten Rechten.
+#
+# Er ist ausserdem das Metadaten-Tor: die App fragt ihn statt TMDB, damit der
+# TMDB-Schluessel nicht auf die Geraete muss. Siehe EnvironmentFile weiter unten.
 
 [Unit]
 Description=ELFIX Watchparty-Relay
@@ -22,6 +25,21 @@ WorkingDirectory=/opt/elfix-watchparty
 ExecStart=/usr/bin/node server.js
 Environment=NODE_ENV=production
 Environment=PORT=8787
+
+# Der TMDB-Schluessel fuer das Metadaten-Tor.
+#
+# Er steht bewusst NICHT in dieser Datei: sie liegt im Repository und waere
+# damit oeffentlich. Stattdessen in einer eigenen Datei, die nur root lesen
+# darf. Ohne sie startet der Dienst genauso - dann fehlen nur die Film- und
+# Seriendaten, Watchparty und Anime laufen normal weiter.
+#
+#   sudo install -m 600 -o root -g root /dev/null /etc/elfix-watchparty.env
+#   sudo nano /etc/elfix-watchparty.env
+#       TMDB_API_TOKEN=hier-der-schluessel-von-themoviedb.org
+#   sudo systemctl restart elfix-watchparty
+#
+# Das Minuszeichen heisst: fehlt die Datei, ist das kein Fehler.
+EnvironmentFile=-/etc/elfix-watchparty.env
 Restart=always
 RestartSec=5
 

@@ -19,6 +19,14 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
+const metadaten = require("./metadaten");
+
+// Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
+// Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
+// was in ein Electron-Bundle wandert, ist lesbar. Die Watchparty merkt davon
+// nichts - die Metadaten haengen an eigenen Routen und teilen mit ihr nur den
+// Port. Fehlt der Schluessel, fehlen die Filmdaten; die Watchparty laeuft.
+const metadatenDienst = metadaten.erstellen();
 
 const PORT = Number(process.env.PORT) || 8787;
 const MAX_TITEL_JE_RAUM = 100;
@@ -238,7 +246,21 @@ function titelNachAussen(raumcode, eintrag, fuerGeraet) {
 // --- Server -----------------------------------------------------------------
 
 const server = http.createServer((req, res) => {
-  if (req.url === "/health") {
+  // Der Pfad ohne Abfrageteil - die Metadaten-Routen nehmen keine offenen
+  // Parameter entgegen, und was hier nicht passt, kommt gar nicht erst an.
+  const pfad = String(req.url || "").split("?")[0];
+
+  if (pfad.startsWith("/metadata")) {
+    // Ein Fehler in der Anreicherung darf das Relay nicht mitnehmen.
+    Promise.resolve(metadatenDienst.behandeln(req, res, pfad)).catch(() => {
+      if (res.headersSent) return;
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ fehler: "metadaten-fehlgeschlagen" }));
+    });
+    return;
+  }
+
+  if (pfad === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({
       ok: true,
@@ -248,7 +270,10 @@ const server = http.createServer((req, res) => {
       // "clock" heisst: dieses Relay beantwortet Uhrproben, der smarte Start
       // kann also rechnen. "seq" heisst: jede Steuernachricht traegt eine
       // laufende Nummer, verspaetete Ereignisse lassen sich abweisen.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq"]
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata"],
+      // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
+      // gehoert weder in eine Antwort noch ins Journal.
+      ...metadatenDienst.zustand()
     }));
     return;
   }

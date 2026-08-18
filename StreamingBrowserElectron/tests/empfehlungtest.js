@@ -297,7 +297,11 @@ const opt = (extra = {}) => ({ jetzt: JETZT, limit: 20, ...extra });
   ], profil, opt());
   pruefe("15. Was der Anbieter als aehnlich ausweist, steht vorn",
     liste[0]?.title === "Laut Anbieter aehnlich", liste.map((e) => e.title).join(" | "));
-  pruefe("15b. Mit passendem Grund", liste[0]?.grund === E.GRUND.ANBIETER_AEHNLICH, liste[0]?.grund);
+  // Der Anbieterhinweis darf den Rang heben, aber nie als Erklaerung dastehen:
+  // belegt ist damit nur, dass zwei Seiten verlinkt sind.
+  pruefe("15b. Aber er wird nicht als Grund angezeigt",
+    liste[0]?.grund !== "RELATED_BY_PROVIDER" && !/Vorgeschlagen bei/.test(liste[0]?.grundText || ""),
+    `${liste[0]?.grund}: ${liste[0]?.grundText}`);
 }
 
 // --- 16. Ausschluss und Debug --------------------------------------------------
@@ -316,8 +320,179 @@ const opt = (extra = {}) => ({ jetzt: JETZT, limit: 20, ...extra });
   const mitDebug = E.empfehlen([kandidat("Bleibt", ["action"])], profil, opt({ debug: true }));
   const bericht = E.debugBericht(mitDebug[0]);
   pruefe("16b. Der Debug-Bericht nennt Punkte, Sicherheit und Grund",
-    /Total:/.test(bericht) && /Confidence:/.test(bericht) && /Reason:/.test(bericht),
-    bericht.split("\n")[1]);
+    /Final Score:/.test(bericht) && /Confidence:/.test(bericht)
+    && /Selected Reason:/.test(bericht) && /Visible Reason:/.test(bericht),
+    bericht.split("\n")[2]);
+  pruefe("16c. Und zeigt, woran der Grund gemessen wurde",
+    /Staerkster Seed:/.test(bericht) && /Watchlist:/.test(bericht) && /Genre:/.test(bericht),
+    bericht.split("\n").find((zeile) => zeile.startsWith("Staerkster")) || "fehlt");
+}
+
+// --- 17. Belege zum Grund ------------------------------------------------------
+//
+// Der Grund allein reicht der Oberflaeche nicht - sie muss ihn benennen
+// koennen. Dafuer traegt jeder Vorschlag mit, woran sein Grund haengt. Was
+// hier leer bleibt, darf dort nicht behauptet werden.
+
+{
+  const profil = E.profilBauen([
+    gesehen("John Wick", ["action"]),
+    gesehen("John Wick: Kapitel 2", ["action"], { lastWatchedAt: vorTagen(1) })
+  ], JETZT);
+  const liste = E.empfehlen([kandidat("John Wick: Kapitel 3", ["action"])], profil, opt());
+
+  pruefe("17. Die Fortsetzung nennt den Teil, bei dem der Nutzer steht",
+    liste[0]?.grundTitel === "John Wick: Kapitel 2", liste[0]?.grundTitel);
+  pruefe("17b. Und nicht den aehnlichsten Teil der Reihe",
+    liste[0]?.grundTitel !== "John Wick", liste[0]?.grundTitel);
+  pruefe("17c. Die Sicherheit ist der Anteil am positiven Score, nicht die Punktzahl",
+    liste[0]?.grundKonfidenz > 0 && liste[0]?.grundKonfidenz <= 1
+    && liste[0]?.grundKonfidenz < liste[0]?.score,
+    `${liste[0]?.grundKonfidenz} bei ${liste[0]?.score}`);
+}
+
+{
+  // Ein Titel, der nur vorgemerkt ist, wurde nicht geschaut - der Grund ist
+  // dann die Watchlist und nicht der Verlauf.
+  const profil = E.profilBauen([
+    { title: "Der Exorzist", genres: ["horror"], type: "film", providerId: "filmo", favorite: true, createdAt: vorTagen(3) }
+  ], JETZT);
+  const liste = E.empfehlen([kandidat("Hereditary", ["horror"])], profil, opt());
+  pruefe("17d. Ein nur gemerkter Titel begruendet keine Verlaufs-Aehnlichkeit",
+    liste[0]?.grund === E.GRUND.WATCHLIST, liste[0]?.grund);
+  pruefe("17e. Genannt wird der vorgemerkte Titel",
+    liste[0]?.grundTitel === "Der Exorzist", liste[0]?.grundTitel);
+}
+
+{
+  // Ohne Profil gibt es nichts zu belegen - und dann steht dort auch nichts.
+  const leer = E.profilBauen([], JETZT);
+  const liste = E.empfehlen([kandidat("Irgendein Film", ["action"])], leer, opt());
+  pruefe("17f. Ohne Verlauf bleibt der Grund Erkundung",
+    liste[0]?.grund === E.GRUND.ERKUNDUNG, liste[0]?.grund);
+  pruefe("17g. Und es wird kein Beleg erfunden",
+    liste[0]?.grundTitel === "" && liste[0]?.grundGenre === "",
+    `"${liste[0]?.grundTitel}" / "${liste[0]?.grundGenre}"`);
+  pruefe("17h. Der Satz kommt fertig aus der Engine",
+    liste[0]?.grundText === "Könnte einen Versuch wert sein", liste[0]?.grundText);
+}
+
+{
+  // Das Genre traegt den Grund nur, wenn kein einzelner Titel passt. Dann
+  // gehoert dazu, ob es aus der laufenden Sitzung stammt oder aus dem Profil.
+  const sitzung = E.profilBauen([
+    gesehen("Action A", ["action", "thriller"], { lastWatchedAt: vorStunden(2) }),
+    gesehen("Action B", ["action", "krimi"], { lastWatchedAt: vorStunden(4) })
+  ], JETZT);
+  const breit = kandidat("Bunter Mix", ["action", "sport", "familie", "drama"]);
+  const jetztGleich = E.empfehlen([breit], sitzung, opt());
+  pruefe("17i. Das Genre-Signal nennt das fuehrende Genre",
+    jetztGleich[0]?.grund === E.GRUND.GENRE && jetztGleich[0]?.grundGenre === "action",
+    `${jetztGleich[0]?.grund} / ${jetztGleich[0]?.grundGenre}`);
+  pruefe("17j. Und weist die laufende Sitzung als Quelle aus",
+    jetztGleich[0]?.grundSitzung === true, String(jetztGleich[0]?.grundSitzung));
+
+  const alt = E.profilBauen([
+    gesehen("Action A", ["action", "thriller"], { lastWatchedAt: vorTagen(40) }),
+    gesehen("Action B", ["action", "krimi"], { lastWatchedAt: vorTagen(50) })
+  ], JETZT);
+  const spaeter = E.empfehlen([breit], alt, opt());
+  pruefe("17k. Ein alter Geschmack wird nicht als Sitzung ausgegeben",
+    spaeter[0]?.grundGenre === "action" && spaeter[0]?.grundSitzung === false,
+    `${spaeter[0]?.grundGenre} / ${spaeter[0]?.grundSitzung}`);
+}
+
+{
+  // Der Beleg gehoert zum genannten Grund - der eines anderen waere falsch.
+  const profil = E.profilBauen([gesehen("Vorbild", ["drama"])], JETZT);
+  const liste = E.empfehlen([
+    { ...kandidat("Laut Anbieter aehnlich", ["drama"]), via: "related", seedTitle: "Vorbild", seedWeight: 1 }
+  ], profil, opt({ debug: true }));
+  pruefe("17l. Die Anbieter-Verknuepfung bleibt ein internes Signal",
+    liste[0]?.grund !== "RELATED_BY_PROVIDER", liste[0]?.grund);
+  pruefe("17m. Sie hebt den Rang trotzdem",
+    liste[0]?.teilwerte?.aehnlichLautAnbieter > 0, String(liste[0]?.teilwerte?.aehnlichLautAnbieter));
+}
+
+// --- 18. Der Grund kommt aus den Score-Beitraegen ------------------------------
+//
+// Nicht aus einer Rangtabelle und nicht daraus, wie der Kandidat gefunden
+// wurde. Genau das ging frueher auseinander: gefunden ueber die Liste von
+// Titel A, gerankt ueber das Genre - genannt wurde A.
+
+{
+  const profil = E.profilBauen([
+    gesehen("Vorbild", ["drama", "krimi", "thriller"], { lastWatchedAt: vorStunden(4) }),
+    gesehen("Anderes", ["komoedie", "familie"], { lastWatchedAt: vorTagen(3) })
+  ], JETZT);
+  const liste = E.empfehlen([kandidat("Kandidat", ["drama", "krimi", "thriller"])], profil, opt({ debug: true }));
+  const b = liste[0].beitraege;
+
+  pruefe("18. Die Beitraege sind Gewicht mal Merkmal",
+    Math.abs(b.genre - E.GEWICHTE.genre * liste[0].teilwerte.genre) < 1e-9,
+    `${b.genre.toFixed(3)} gegen ${(E.GEWICHTE.genre * liste[0].teilwerte.genre).toFixed(3)}`);
+  pruefe("18b. Und summieren sich zur Punktzahl auf",
+    Math.abs(Object.values(b).reduce((s, w) => s + w, 0) - E.punkte(liste[0].teilwerte)) < 1e-9,
+    `${Object.values(b).reduce((s, w) => s + w, 0).toFixed(3)} gegen ${E.punkte(liste[0].teilwerte).toFixed(3)}`);
+  pruefe("18c. Der genannte Grund ist der, der den Score traegt",
+    liste[0].grundKonfidenz >= 0.25, `Anteil ${liste[0].grundKonfidenz}`);
+}
+
+{
+  // Ueber die Liste von A hereingekommen, aber vom Genreprofil getragen: dann
+  // erklaert A gar nichts, und A wird auch nicht genannt.
+  const profil = E.profilBauen([
+    gesehen("Kinderfilm", ["familie"], { lastWatchedAt: vorTagen(30) }),
+    gesehen("Actionfilm A", ["action", "thriller"], { lastWatchedAt: vorStunden(3) }),
+    gesehen("Actionfilm B", ["action", "krimi"], { lastWatchedAt: vorStunden(5) }),
+    gesehen("Actionfilm C", ["action", "abenteuer"], { lastWatchedAt: vorStunden(7) })
+  ], JETZT);
+  const liste = E.empfehlen([
+    { ...kandidat("Ganz woanders her", ["action", "thriller", "krimi", "abenteuer"]),
+      via: "related", seedTitle: "Kinderfilm", seedWeight: 0.08 }
+  ], profil, opt({ debug: true }));
+
+  pruefe("18d. Ein schwacher Fundort wird nicht als Grund ausgegeben",
+    liste[0]?.grundTitel !== "Kinderfilm", `"${liste[0]?.grundTitel}"`);
+  pruefe("18e. Genannt wird, was wirklich getragen hat",
+    liste[0]?.grund === E.GRUND.GENRE || liste[0]?.grund === E.GRUND.VERLAUF, liste[0]?.grund);
+}
+
+{
+  // Ein einzelnes gemeinsames Genre ist kein Titelbezug - egal wie stark der
+  // Verlaufseintrag sonst ist.
+  const profil = E.profilBauen([
+    gesehen("Sehr stark", ["animation"], { lastWatchedAt: vorStunden(1), completedEpisodes: new Array(12).fill(1) })
+  ], JETZT);
+  const liste = E.empfehlen([kandidat("Nur Animation", ["animation"])], profil, opt({ debug: true }));
+  pruefe("18f. Ein einziges gemeinsames Genre begruendet keinen Titelbezug",
+    liste[0]?.grundTitel === "" && liste[0]?.belege.verlaufGemeinsam === 1,
+    `"${liste[0]?.grundTitel}" bei ${liste[0]?.belege.verlaufGemeinsam} gemeinsamen Genres`);
+  pruefe("18g. Der Beleg wird trotzdem gemessen und ist nachlesbar",
+    liste[0]?.belege.verlaufBester === "Sehr stark" && liste[0]?.belege.verlaufDeckung === 1,
+    `${liste[0]?.belege.verlaufBester} / ${liste[0]?.belege.verlaufDeckung}`);
+}
+
+{
+  // Zwei gleich gute Seeds: keiner erklaert die Empfehlung allein.
+  const gleichauf = E.profilBauen([
+    gesehen("Seed A", ["drama", "krimi", "thriller"], { lastWatchedAt: vorStunden(4) }),
+    gesehen("Seed B", ["drama", "krimi", "thriller"], { lastWatchedAt: vorStunden(5) })
+  ], JETZT);
+  const a = E.empfehlen([kandidat("Kandidat", ["drama", "krimi", "thriller"])], gleichauf, opt({ debug: true }));
+  pruefe("18h. Zwei gleich starke Seeds ergeben keinen konkreten Bezug",
+    a[0]?.grundTitel === "" && a[0]?.belege.verlaufAnteil < 0.55,
+    `Anteil ${a[0]?.belege.verlaufAnteil.toFixed(2)}`);
+
+  // Derselbe Titel zweimal in der Ablage ist ein Werk, kein zweiter Seed.
+  const doppelt = E.profilBauen([
+    gesehen("Seed A", ["drama", "krimi", "thriller"], { lastWatchedAt: vorStunden(4) }),
+    gesehen("Seed A", ["drama", "krimi", "thriller"], { lastWatchedAt: vorStunden(5), providerId: "sto" }),
+    gesehen("Weit weg", ["komoedie"], { lastWatchedAt: vorTagen(9) })
+  ], JETZT);
+  const b = E.empfehlen([kandidat("Kandidat", ["drama", "krimi", "thriller"])], doppelt, opt({ debug: true }));
+  pruefe("18i. Zwei Eintraege desselben Werks nehmen sich nicht den Vorsprung",
+    b[0]?.grundTitel === "Seed A", `"${b[0]?.grundTitel}"`);
 }
 
 const fehler = pruefungen.filter((p) => !p).length;

@@ -901,14 +901,26 @@
   cursor: not-allowed;
 }
 
-/* Bei "Empfohlen fuer dich" steht in der zweiten Zeile die Begruendung. Sie
-   darf zweizeilig werden, ohne die Karte zu sprengen. */
-.personal-rail .favorite-card span {
+/* Unter dem Titel steht bei den persoenlichen Vorschlaegen, warum er
+   vorgeschlagen wird. Eine Zeile, gedaempft und notfalls mit Auslassung: die
+   Karte darf davon nicht groesser werden. */
+.favorite-card .card-reason {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  opacity: 0.82;
+  overflow: hidden;
+  /* Der Grund muss vollstaendig lesbar sein - lieber zwei Zeilen als ein
+     abgeschnittener Satz. Mehr als zwei werden es nicht: die Saetze sind auf
+     wenige Woerter angelegt. */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.25;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.88);
 }
 
 .home-bottom-nav {

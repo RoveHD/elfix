@@ -1109,12 +1109,16 @@ function discoverCard(item) {
   if (item.image) {
     card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(item.image)}")`;
   }
-  const untertitel = item.reason
-    ? `${item.reason} · ${item.providerName || ""}`
-    : item.providerName || "";
-  if (item.reason && !item.viaSearch) card.title = `${item.title} – ${item.reason}`;
+  // Warum dieser Titel vorgeschlagen wird, hat die Empfehlungs-Engine bereits
+  // entschieden und ausformuliert - hier wird der Satz nur angezeigt. Reihen
+  // ohne Empfehlungslogik ("Neu bei deinen Anbietern") tragen keinen Grund und
+  // bekommen deshalb auch keine zusaetzliche Zeile.
+  const begruendung = item.grundText || "";
+  const untertitel = item.providerName || "";
+  if (begruendung && !item.viaSearch) card.title = `${item.title} – ${begruendung}`;
   card.innerHTML = `
     <strong>${escapeHtml(item.title)}</strong>
+    ${begruendung ? `<small class="card-reason">${escapeHtml(begruendung)}</small>` : ""}
     <span>${escapeHtml(untertitel)}</span>
     ${item.releasedAt ? `<small class="media-progress-detail">${escapeHtml(erscheinungsdatum(item.releasedAt))}</small>` : ""}
   `;

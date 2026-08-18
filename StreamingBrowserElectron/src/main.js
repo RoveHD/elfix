@@ -12,6 +12,9 @@ const {
   extractGenres,
   extractCatalogItems,
   extractRelatedItems,
+  extractPagination,
+  seitenAdresse,
+  seitenStichprobe,
   extractReleaseDate,
   extractCalendarEntries,
   extractCalendarJson
@@ -154,13 +157,42 @@ const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
 const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
 const TASTE_HISTORY_SIZE = 12;
 const TASTE_ENRICH_LIMIT = 18;
+// Die Genre-Uebersichten der Anbieter sind blaetterbar. So viele Seiten werden
+// je Liste gelesen - gleichmaessig ueber die ganze Blaetterleiste verteilt,
+// damit der Katalog und nicht nur sein Anfang in die Auswahl kommt.
+const TASTE_LIST_PAGES = 8;
+// Obergrenze je Liste. Acht Seiten sind bei den Anbietern 240 bis 336 Titel;
+// mehr braucht das Ranking nicht, und die Ablage bleibt handlich.
+const TASTE_LIST_SIZE = 360;
+// So viele Eintraege werden aus einer einzelnen Katalogseite gelesen.
+// Grosszuegig: die Seiten zeigen dreissig bis zweiundvierzig, gekappt werden
+// soll hier nichts mehr.
+const TASTE_LIST_ROH = 120;
+// Version des Geschmacks-Caches. Wird sie erhoeht, verwirft loadTasteCache die
+// alten Listen - sonst haengen sechs Stunden lang die alten, abgeschnittenen
+// Kandidaten in der Ablage.
+const TASTE_CACHE_VERSION = 2;
+// So viele Titel aus den Genre-Listen gehen ins Ranking. Die Listen liefern
+// jetzt den ganzen Katalog - das sind mehrere tausend Eintraege, von denen die
+// meisten nur ein einziges Genre mit dem Profil teilen. Gekappt wird nach
+// Relevanz, nicht nach Listenposition (siehe nachRelevanzKappen).
+const TASTE_GENRE_KANDIDATEN = 900;
+// So viele der aussichtsreichsten Kandidaten bekommen vor der endgueltigen
+// Bewertung ihre echten Genres von der Detailseite - siehe die zweite Runde in
+// buildPersonalRecommendations. Die Seiten liegen danach eine Woche im Cache,
+// die Kosten fallen also nur beim ersten Mal an.
+const TASTE_TIEFE = 60;
+// Ab wie vielen verschiedenen Werken zaehlt ein Genre des Profils voll, wenn es
+// darum geht, dafuer einen ganzen Katalog zu holen? Darunter wird es anteilig
+// abgeschwaecht.
+const GENRE_TRAEGER_VOLL = 3;
 // So viele Titel je Anbieter zeigt bereits die Reihe "Neu bei deinen Anbietern".
 const TASTE_NEW_OFFSET = 6;
 const TASTE_FETCH_PARALLEL = 4;
 let tasteCache = null;
 let tasteSaveTimer = 0;
 let personalPending = null;
-let personalCache = { at: 0, items: [] };
+let personalCache = { at: 0, items: [], signatur: "" };
 const PERSONAL_CACHE_MS = 15 * 60 * 1000;
 const PERSONAL_POOL_SIZE = 150;
 // So viele Titel gehen an "Empfohlen fuer dich"; die Kategoriereihen bedienen
@@ -6198,14 +6230,28 @@ function loadTasteCache() {
   if (tasteCache) return tasteCache;
   try {
     const roh = JSON.parse(fs.readFileSync(TASTE_FILE, "utf8"));
+    // Aeltere Staende haben die Genre-Listen nur von Seite 1 der Anbieter
+    // gelesen. Die ist alphabetisch sortiert, also standen dort lauter "A".
+    // Solche Listen sind nicht bloss alt, sie sind falsch - sie werden sofort
+    // verworfen, statt sechs Stunden lang abzulaufen. Die Detailseiten (pages)
+    // sind davon nicht betroffen und bleiben: sie kosten die meiste Zeit.
+    const veraltet = (Number(roh?.version) || 0) < TASTE_CACHE_VERSION;
     tasteCache = {
+      version: TASTE_CACHE_VERSION,
       pages: roh?.pages && typeof roh.pages === "object" ? roh.pages : {},
-      lists: roh?.lists && typeof roh.lists === "object" ? roh.lists : {},
+      lists: !veraltet && roh?.lists && typeof roh.lists === "object" ? roh.lists : {},
       // Wie oft ein Werk schon vorgeschlagen wurde, ohne geoeffnet zu werden.
-      anzeigen: roh?.anzeigen && typeof roh.anzeigen === "object" ? roh.anzeigen : {}
+      anzeigen: roh?.anzeigen && typeof roh.anzeigen === "object" ? roh.anzeigen : {},
+      // Die zuletzt berechneten Vorschlaege. Sie ueberdauern den Neustart,
+      // damit die Startseite nicht jedes Mal auf zwei Dutzend Netzabrufe
+      // wartet - neu gerechnet wird danach im Hintergrund.
+      personal: !veraltet && roh?.personal && Array.isArray(roh.personal.items) ? roh.personal : null
     };
+    // Die zuletzt gezeigten Vorschlaege stammen aus denselben kaputten Listen.
+    // Sie muessen mit weg, sonst zeigt die Startseite sie weiter an.
+    if (veraltet) personalCache = { at: 0, items: [], signatur: "" };
   } catch {
-    tasteCache = { pages: {}, lists: {}, anzeigen: {} };
+    tasteCache = { version: TASTE_CACHE_VERSION, pages: {}, lists: {}, anzeigen: {}, personal: null };
   }
   return tasteCache;
 }
@@ -6266,21 +6312,194 @@ async function tastePage(url, provider, refresh = false) {
 }
 
 // Uebersichtsseite (Genre-Liste) mit den Titeln, die dort stehen.
+//
+// Eine solche Uebersicht ist blaetterbar und zeigt je Seite nur dreissig bis
+// vierzig Titel von mehreren tausend. Wer nur die erste Seite liest, bekommt
+// bei AniWorld und S.to den Anfang des Alphabets ("#Compass", "100-man",
+// "A Certain Magical Index", "Acapulco H.E.A.T.") und bei Filmo die letzten
+// Neuerscheinungen - in beiden Faellen keinen Querschnitt des Katalogs. Genau
+// daher kamen die vielen A-Titel und die Kinderanimation in den Empfehlungen.
+//
+// Deshalb wird die Blaetterleiste ausgelesen und ueber ihre ganze Laenge
+// gleichmaessig gelesen. Kein Zufall: dieselbe Seitenzahl ergibt immer
+// dieselben Seiten, sonst sortierte sich die Startseite bei jedem Durchlauf um.
 async function tasteList(url, provider, refresh = false) {
   const cache = loadTasteCache();
   const gespeichert = cache.lists[url];
-  if (!refresh && gespeichert && Date.now() - gespeichert.at < TASTE_LIST_CACHE_MS) return gespeichert.items;
+  const gueltig = gespeichert
+    && Number(gespeichert.version) === TASTE_CACHE_VERSION
+    && Date.now() - gespeichert.at < TASTE_LIST_CACHE_MS;
+  if (!refresh && gueltig) return gespeichert.items;
 
   try {
-    const seite = await fetchProviderHtml(url);
-    if (!seite) return gespeichert?.items || [];
-    const items = extractCatalogItems(seite.html, seite.url, provider, 40);
-    cache.lists[url] = { at: Date.now(), items };
+    const erste = await fetchProviderHtml(url);
+    if (!erste) return gespeichert?.items || [];
+    const blaettern = extractPagination(erste.html, erste.url);
+    const seiten = seitenStichprobe(blaettern.letzte, TASTE_LIST_PAGES);
+
+    // Seite 1 liegt schon vor - nur der Rest wird geholt.
+    const weitere = seiten
+      .filter((nummer) => nummer > 1)
+      .map((nummer) => seitenAdresse(blaettern.muster, nummer, erste.url));
+    const geladen = await inBatches(weitere, TASTE_FETCH_PARALLEL, (adresse) => fetchProviderHtml(adresse));
+
+    const items = [];
+    const gesehen = new Set();
+    for (const seite of [erste, ...geladen]) {
+      if (!seite) continue;
+      for (const item of extractCatalogItems(seite.html, seite.url, provider, TASTE_LIST_ROH)) {
+        if (gesehen.has(item.url)) continue;
+        gesehen.add(item.url);
+        items.push(item);
+      }
+    }
+    // Faellt die Blaetterleiste aus (Anbieter ohne Paginierung, Fehler beim
+    // Nachladen), bleibt der alte Stand die bessere Auskunft als eine Liste,
+    // die wieder nur den Anfang enthaelt.
+    if (!items.length) return gespeichert?.items || [];
+
+    const auswahl = gleichmaessigVerteilt(items, TASTE_LIST_SIZE);
+    cache.lists[url] = { at: Date.now(), version: TASTE_CACHE_VERSION, seiten: blaettern.letzte, items: auswahl };
     saveTasteCacheSoon();
-    return items;
+    return auswahl;
   } catch {
     return gespeichert?.items || [];
   }
+}
+
+// Wie schwer wiegt ein Genre des Profils, wenn daraus Kandidaten geholt werden?
+//
+// Nicht einfach sein Gewicht. Ein Genre, das nur an ein oder zwei Werken
+// haengt, holt sonst einen ganzen Katalog herbei: "Die Legende von Korra"
+// laeuft bei S.to unter "Zeichentrick", und daraus wurde das komplette
+// Animationsangebot - also vor allem Kinderfilme. Dieselbe Regel steht in
+// empfehlung.js schon fuer die Begruendung ("Aus einem Film folgt kein
+// Geschmack"); hier entscheidet sie ueber den Pool.
+//
+// Ein spezifischer Tag ("Fighting-Shounen", "Isekai") zaehlt umgekehrt mehr als
+// ein Sammelgenre, das halbe Kataloge umfasst.
+function profilGenreGewicht(profil, key) {
+  return profil.genreWert(key)
+    * (empfehlung.istSpezifisch(key) ? 1.6 : 1)
+    * Math.min(1, profil.genreTraeger(key) / GENRE_TRAEGER_VOLL);
+}
+
+// Wie gut passt ein einzelner Katalogtitel zum Profil? Mehr als die Listen
+// hergeben, ist es nicht: in wie vielen Lieblingsgenres er steht, wie schwer
+// die wiegen, und ob er zu einer Reihe gehoert, die im Verlauf vorkommt -
+// "Naruto Shippuden" neben "Naruto" ist der Grund, warum es diese Auswahl
+// ueberhaupt gibt. Gerundet, damit "gleich gut" auch wirklich eine Gruppe
+// bildet und nicht an der fuenfzehnten Nachkommastelle auseinanderfaellt.
+function katalogGuete(item, profil) {
+  let wert = 0;
+  for (const key of item.genres || []) wert += profil.genreWert(key);
+  const reihe = titelModul.franchiseSchluessel(titelModul.zerlegen(item.title || ""));
+  if (reihe && profil.reihen.has(reihe)) wert += 2;
+  wert += 0.05 * profil.anbieterAnteil(item.providerId);
+  return Math.round(wert * 1000) / 1000;
+}
+
+// Die besten "anzahl" aus einer Menge - aber ohne die Reihenfolge der
+// Anbieterliste durchschlagen zu lassen. Gleichauf liegende Titel sind die
+// Mehrheit, und wer von ihnen den Anfang nimmt, nimmt das Alphabet. Volle
+// Guetegruppen wandern ganz hinein, die eine ueberlaufende wird gleichmaessig
+// ueber ihre Laenge verteilt.
+function besteAusMenge(menge, anzahl, guete) {
+  if (anzahl <= 0) return [];
+  if (menge.length <= anzahl) return menge;
+  const gruppen = new Map();
+  for (const item of menge) {
+    const wert = guete(item);
+    const fach = gruppen.get(wert) || [];
+    fach.push(item);
+    gruppen.set(wert, fach);
+  }
+  const auswahl = [];
+  for (const wert of [...gruppen.keys()].sort((links, rechts) => rechts - links)) {
+    const rest = anzahl - auswahl.length;
+    if (rest <= 0) break;
+    const fach = gruppen.get(wert);
+    auswahl.push(...(fach.length <= rest ? fach : gleichmaessigVerteilt(fach, rest)));
+  }
+  return auswahl;
+}
+
+// Aus tausenden Katalogtiteln die aussichtsreichsten waehlen.
+//
+// Drei Dinge sollen dabei nicht passieren.
+//
+// Erstens darf die Reihenfolge der Anbieterliste nicht durchschlagen - sie ist
+// alphabetisch, und wer von ihr den Anfang nimmt, empfiehlt wieder nur "A".
+//
+// Zweitens soll die Auswahl nicht gewuerfelt sein: derselbe Geschmack muss
+// dieselben Kandidaten ergeben.
+//
+// Drittens - und das ist der Grund fuer die Quoten - darf der Pool nicht auf
+// das staerkste Genre zusammenfallen. Wer nach blosser Passung kappt, waehlt
+// fast nur noch Titel des Spitzengenres aus: bei diesem Verlauf trugen 81% der
+// Kandidaten "Abenteuer", und die Reihe "Anime fuer dich" wurde zu einer Liste
+// beliebiger Abenteuer-Anime. Das Profil ist aber nicht ein Genre, sondern eine
+// Mischung. Also bekommt jedes Lieblingsgenre einen Anteil an den Plaetzen, der
+// seinem Gewicht im Profil entspricht - und innerhalb seines Anteils
+// entscheidet wieder die Passung.
+function nachRelevanzKappen(kandidaten, profil, grenze) {
+  const liste = kandidaten || [];
+  if (liste.length <= grenze) return liste;
+  const guete = (item) => katalogGuete(item, profil);
+
+  // Welche Profilgenres kommen im Angebot ueberhaupt vor?
+  const gewichte = new Map();
+  for (const item of liste) {
+    for (const key of item.genres || []) {
+      if (gewichte.has(key)) continue;
+      const wert = profilGenreGewicht(profil, key);
+      if (wert > 0) gewichte.set(key, wert);
+    }
+  }
+  const genres = [...gewichte.entries()].sort((links, rechts) => (
+    rechts[1] - links[1] || (links[0] < rechts[0] ? -1 : 1)
+  ));
+  const summe = genres.reduce((wert, [, gewicht]) => wert + gewicht, 0);
+  // Ohne Profilgenres gibt es nichts zu quotieren - dann bleibt nur, den
+  // Katalog gleichmaessig auszuduennen.
+  if (!summe) return gleichmaessigVerteilt(liste, grenze);
+
+  const vergeben = new Set();
+  const auswahl = [];
+  for (const [key, gewicht] of genres) {
+    const rest = grenze - auswahl.length;
+    if (rest <= 0) break;
+    // Mindestens einer je Genre: auch ein schwaches Lieblingsgenre soll
+    // ueberhaupt vorkommen.
+    const anteil = Math.min(rest, Math.max(1, Math.round(grenze * gewicht / summe)));
+    const fach = liste.filter((item) => !vergeben.has(item) && (item.genres || []).includes(key));
+    for (const item of besteAusMenge(fach, anteil, guete)) {
+      vergeben.add(item);
+      auswahl.push(item);
+    }
+  }
+
+  // Bleiben Plaetze frei - etwa weil ein Genre weniger Titel hat als seine
+  // Quote -, gehen sie an die beste uebrige Passung.
+  if (auswahl.length < grenze) {
+    const uebrig = liste.filter((item) => !vergeben.has(item));
+    auswahl.push(...besteAusMenge(uebrig, grenze - auswahl.length, guete));
+  }
+  return auswahl;
+}
+
+// Aus einer langen Liste gleichmaessig verteilt auswaehlen. Deterministisch:
+// dieselbe Liste ergibt immer dieselbe Auswahl, sonst sortierte sich die
+// Startseite bei jedem Durchlauf um.
+function gleichmaessigVerteilt(items, anzahl) {
+  const liste = items || [];
+  if (liste.length <= anzahl) return liste;
+  const schritt = liste.length / anzahl;
+  const auswahl = [];
+  for (let index = 0; index < anzahl; index += 1) {
+    auswahl.push(liste[Math.floor(index * schritt)]);
+  }
+  return auswahl;
 }
 
 // Aus einer Episoden-Adresse die Seite der Serie machen - nur dort stehen
@@ -6363,14 +6582,47 @@ async function collectPersonalRecommendations(limit, refresh, type = "", exclude
   return gezeigt;
 }
 
+// Woran haengt die Gueltigkeit der Empfehlungen? Nur an dem, was den Geschmack
+// wirklich veraendert: was abgeschlossen wurde, was auf der Watchlist steht,
+// was verschwunden ist. Nicht an jeder Sekunde Wiedergabezeit - sonst rechnet
+// die App dauernd neu und holt dabei zwei Dutzend Seiten.
+function verlaufSignatur() {
+  return tasteHistoryEntries()
+    .map((favorite) => [
+      favorite.id,
+      favorite.completed ? 1 : 0,
+      favorite.watched ? 1 : 0,
+      favorite.favorite ? 1 : 0,
+      Math.floor((Number(favorite.progress) || 0) / 10),
+      (favorite.completedEpisodes || []).length
+    ].join("."))
+    .join("|");
+}
+
 async function personalRecommendationPool(refresh) {
-  const frisch = personalCache.items.length && Date.now() - personalCache.at < PERSONAL_CACHE_MS;
+  // Beim ersten Zugriff nach dem Start liegen die Empfehlungen des letzten
+  // Laufs in der Ablage. Sie werden sofort ausgeliefert, damit die Startseite
+  // nicht auf zwei Dutzend Netzabrufe wartet.
+  if (!personalCache.items.length) {
+    const gespeichert = loadTasteCache().personal;
+    if (gespeichert?.items?.length) {
+      personalCache = { at: Number(gespeichert.at) || 0, items: gespeichert.items, signatur: gespeichert.signatur || "" };
+    }
+  }
+  const signatur = verlaufSignatur();
+  const passt = personalCache.signatur === undefined || personalCache.signatur === signatur;
+  const frisch = personalCache.items.length && passt && Date.now() - personalCache.at < PERSONAL_CACHE_MS;
   if (!refresh && frisch) return personalCache.items;
-  if (personalPending) return personalPending;
+  // Veraltet, aber vorhanden: erst die alten Vorschlaege zeigen und im
+  // Hintergrund neu rechnen. Nur wenn gar nichts da ist, wird gewartet.
+  if (personalPending) return personalCache.items.length && !refresh ? personalCache.items : personalPending;
 
   const lauf = buildPersonalRecommendations(PERSONAL_POOL_SIZE, refresh)
     .then((items) => {
-      personalCache = { at: Date.now(), items };
+      personalCache = { at: Date.now(), items, signatur: verlaufSignatur() };
+      const cache = loadTasteCache();
+      cache.personal = { at: personalCache.at, signatur: personalCache.signatur, items };
+      saveTasteCacheSoon();
       return items;
     })
     .catch(() => personalCache.items)
@@ -6412,6 +6664,10 @@ async function buildPersonalRecommendations(limit, refresh) {
   const profil = empfehlung.profilBauen(verlauf.map((favorite) => ({
     ...favorite,
     baseTitle: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
+    // Anime, Serie oder Film - feiner als `type`, das Anime und Serie
+    // zusammenwirft. Fuer die Bewertung aendert das nichts; die Begruendung
+    // kann damit sagen, dass jemand vor allem Anime schaut.
+    art: candidateMediaType(favorite.url) || favorite.type || "",
     genres: genreNach.get(favorite.id) || []
   })), jetzt);
 
@@ -6445,15 +6701,43 @@ async function buildPersonalRecommendations(limit, refresh) {
   // wissen nur die Detailseiten - also von dort einsammeln und den Genres des
   // Profils zuordnen.
   const genreAdressen = new Map();
+  const merkeGenreAdresse = (providerId, genre) => {
+    if (!providerId || !genre?.key || !genre.url) return;
+    const bekannt = genreAdressen.get(genre.key) || { key: genre.key, label: genre.label, urls: new Map() };
+    if (!bekannt.urls.has(providerId)) bekannt.urls.set(providerId, genre.url);
+    genreAdressen.set(genre.key, bekannt);
+  };
   for (const eintrag of saat) {
-    for (const genre of eintrag.genres) {
-      if (!genre?.key || !genre.url) continue;
-      const bekannt = genreAdressen.get(genre.key) || { key: genre.key, label: genre.label, urls: new Map() };
-      if (!bekannt.urls.has(eintrag.providerId)) bekannt.urls.set(eintrag.providerId, genre.url);
-      genreAdressen.set(genre.key, bekannt);
+    for (const genre of eintrag.genres) merkeGenreAdresse(eintrag.providerId, genre);
+  }
+  // Die zwoelf Titel des Verlaufs reichen dafuer nicht aus. Ob Filmos
+  // Action-Katalog ueberhaupt erreichbar ist, haengt sonst daran, ob gerade
+  // zufaellig ein Actionfilm unter den letzten zwoelf steht - faellt er heraus,
+  // besteht die Reihe "Filme fuer dich" ploetzlich nur noch aus Abenteuer- und
+  // Animationsfilmen, also vor allem Familienkino. Deshalb zaehlt jede
+  // Detailseite mit, die schon einmal gelesen wurde: welche Adresse ein Genre
+  // bei einem Anbieter hat, aendert sich nicht.
+  const anbieterNachWirt = new Map();
+  for (const provider of anbieter) {
+    try {
+      anbieterNachWirt.set(new URL(provider.startUrl || "").host, provider.id);
+    } catch {
+      // Ohne brauchbare Startadresse laesst sich kein Wirt zuordnen.
     }
   }
+  for (const [adresse, eintrag] of Object.entries(loadTasteCache().pages || {})) {
+    let providerId = "";
+    try {
+      providerId = anbieterNachWirt.get(new URL(adresse).host) || "";
+    } catch {
+      continue;
+    }
+    for (const genre of eintrag?.genres || []) merkeGenreAdresse(providerId, genre);
+  }
+  // Welche Genre-Listen werden geholt? Die schwersten des Profils - gewichtet
+  // wie in profilGenreGewicht beschrieben, also nicht nach blossem Gewicht.
   const beliebteste = [...profil.genres.entries()]
+    .map(([key]) => [key, profilGenreGewicht(profil, key)])
     .sort((links, rechts) => rechts[1] - links[1])
     .slice(0, 6)
     .map(([key]) => genreAdressen.get(key))
@@ -6492,7 +6776,9 @@ async function buildPersonalRecommendations(limit, refresh) {
       });
     }
   }
-  kandidaten.push(...ausGenres.values());
+  // Der Katalog ist gross - was davon ueberhaupt zur Wahl steht, entscheidet
+  // die Passung zum Profil, nicht die Position in der Anbieterliste.
+  kandidaten.push(...nachRelevanzKappen([...ausGenres.values()], profil, TASTE_GENRE_KANDIDATEN));
 
   // 3c. Neues von den Startseiten - die Genres dazu werden gleich nachgeholt.
   const startseiten = await Promise.all(anbieter.map((provider) => (
@@ -6538,16 +6824,62 @@ async function buildPersonalRecommendations(limit, refresh) {
   // 5. Bewerten. Der Typ gehoert an jeden Kandidaten - er entscheidet ueber
   // die Werk-Identitaet (eine Serie und ein gleichnamiger Film sind zwei
   // Werke) und ueber die leichte Bevorzugung der Art, die gerade laeuft.
-  const ergebnis = empfehlung.empfehlen(kandidaten.map((item) => ({
+  const bewertbar = kandidaten.map((item) => ({
     ...item,
-    type: candidateMediaType(item.url) === "film" ? "film" : "serie"
-  })), profil, {
+    type: candidateMediaType(item.url) === "film" ? "film" : "serie",
+    art: candidateMediaType(item.url) || ""
+  }));
+  const laufOptionen = {
     jetzt,
-    limit,
     ausschluss,
     anzeigen: empfehlungAnzeigen(),
     debug: EMPFEHLUNG_DEBUG
+  };
+
+  // Zweite Runde: die vordersten Kandidaten bekommen ihre echten Genres.
+  //
+  // Ein Titel aus einer Genre-Liste weiss von sich nur, in welchen der sechs
+  // geholten Listen er vorkam. "Naruto Shippuden" stand in "Fighting-Shounen"
+  // und "Abenteuer" und galt damit als Titel mit zwei Genres - obwohl seine
+  // Seite dieselben sechs nennt wie Naruto selbst. Ein Titel von der Startseite
+  // wurde dagegen laengst angereichert und trat mit allen Genres an. So
+  // bewerten sich zwei Quellen mit ungleichem Wissen gegeneinander, und der
+  // Katalogtitel verliert immer.
+  //
+  // Ausgewaehlt wird nach der Katalogguete, nicht nach einer Vorbewertung: wer
+  // zu wenige Genres kennt, kaeme dort nie nach vorn und bekaeme seine Genres
+  // deshalb nie - ein Zirkelschluss, an dem genau die gesuchten Titel haengen
+  // blieben. Die Guete misst dagegen, in welchen Lieblingslisten ein Titel
+  // steht, und die kleinen, spezifischen Listen sind die aussagekraeftigen.
+  //
+  // Getrennt nach Anime, Serie und Film, damit die Vertiefung nicht einer
+  // einzigen Reihe der Startseite zugutekommt.
+  const nachWelt = new Map();
+  for (const item of bewertbar) {
+    if (item.via !== "genre" || item.vertieft) continue;
+    const welt = item.art || "serie";
+    const fach = nachWelt.get(welt) || [];
+    fach.push(item);
+    nachWelt.set(welt, fach);
+  }
+  const jeWelt = Math.max(1, Math.ceil(TASTE_TIEFE / Math.max(1, nachWelt.size)));
+  const zuVertiefen = [...nachWelt.values()].flatMap((fach) => (
+    besteAusMenge(fach, jeWelt, (item) => katalogGuete(item, profil))
+  ));
+  await inBatches(zuVertiefen, TASTE_FETCH_PARALLEL, async (item) => {
+    const provider = anbieterNach.get(item.providerId);
+    const url = seriesPageUrl(item.url);
+    if (!provider || !url) return null;
+    const seite = await tastePage(url, provider, false);
+    const echte = (seite?.genres || []).map((genre) => genre.key);
+    // Die Listen-Genres bleiben stehen: dass ein Titel in einer Lieblingsliste
+    // stand, ist wahr, auch wenn seine Seite es anders nennt.
+    if (echte.length) item.genres = [...new Set([...(item.genres || []), ...echte])];
+    item.vertieft = true;
+    return null;
   });
+
+  const ergebnis = empfehlung.empfehlen(bewertbar, profil, { ...laufOptionen, limit });
 
   if (EMPFEHLUNG_DEBUG) {
     console.log(`[empfehlung] ${ergebnis.length} Vorschlaege aus ${kandidaten.length} Kandidaten,`
