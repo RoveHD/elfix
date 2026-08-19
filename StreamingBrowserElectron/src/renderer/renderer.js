@@ -1,4 +1,8 @@
 const api = window.streamingBrowser;
+// Die Rechnung hinter dem Titelhintergrund. Dasselbe Modul benutzt der
+// Hauptprozess beim Speichern - Vorschau, Anzeige und Ablage koennen sich
+// deshalb nicht widersprechen.
+const bildausschnittModul = globalThis.ELFIX_BILDAUSSCHNITT;
 
 let providers = [];
 let favorites = [];
@@ -50,6 +54,12 @@ const homeSidebarProviders = document.querySelector("#homeSidebarProviders");
 const homeRecommendations = document.querySelector("#homeRecommendations");
 const recommendedHomeRow = document.querySelector("#recommendedHomeRow");
 const homePersonal = document.querySelector("#homePersonal");
+const discoveryView = document.querySelector("#discoveryView");
+const discoveryGrid = document.querySelector("#discoveryGrid");
+const discoveryFoot = document.querySelector("#discoveryFoot");
+const discoverySentinel = document.querySelector("#discoverySentinel");
+const discoveryTitle = document.querySelector("#discoveryTitle");
+const discoveryCopy = document.querySelector("#discoveryCopy");
 const personalHomeRow = document.querySelector("#personalHomeRow");
 // Die drei Kategoriereihen unterscheiden sich nur im Medientyp - der Main
 // bewertet einmal und filtert danach, deshalb kostet jede Reihe nichts extra.
@@ -117,6 +127,19 @@ const confirmTitle = document.querySelector("#confirmTitle");
 const confirmCopy = document.querySelector("#confirmCopy");
 const confirmAccept = document.querySelector("#confirmAccept");
 const confirmCancel = document.querySelector("#confirmCancel");
+const cropModal = document.querySelector("#cropModal");
+const cropStage = document.querySelector("#cropStage");
+const cropPreview = document.querySelector("#cropPreview");
+const cropModes = document.querySelector("#cropModes");
+const cropZoom = document.querySelector("#cropZoom");
+const cropZoomValue = document.querySelector("#cropZoomValue");
+const cropReset = document.querySelector("#cropReset");
+const cropCenter = document.querySelector("#cropCenter");
+const cropSave = document.querySelector("#cropSave");
+const cropSaveHint = document.querySelector("#cropSaveHint");
+const cropBody = document.querySelector("#cropBody");
+const cropCancel = document.querySelector("#cropCancel");
+const cropApply = document.querySelector("#cropApply");
 const omnibox = document.querySelector("#omnibox");
 const settingsModal = document.querySelector("#settingsModal");
 const settingsSearch = document.querySelector("#settingsSearch");
@@ -400,6 +423,7 @@ function bindEvents() {
   window.addEventListener("resize", syncBrowserBounds);
   window.addEventListener("resize", () => window.setTimeout(syncBrowserBounds, 200));
   new ResizeObserver(syncBrowserBounds).observe(browserFrame);
+  cropBinden();
 
   document.querySelector("#startButton")?.addEventListener("click", showHome);
   document.querySelector("#searchButton")?.addEventListener("click", openSearchView);
@@ -813,6 +837,21 @@ function bindEvents() {
     window.setTimeout(syncBrowserBounds, 0);
   });
 
+  // "Mehr anzeigen" an den drei Reihen.
+  document.querySelectorAll("[data-discovery]").forEach((knopf) => {
+    knopf.addEventListener("click", () => showDiscovery(knopf.dataset.discovery));
+  });
+  document.querySelector("#discoveryBack")?.addEventListener("click", () => {
+    entdeckungMerkeScroll();
+    showHome();
+  });
+  // Scrollposition laufend mitschreiben - wer einen Titel oeffnet, verlaesst
+  // die Seite ohne Umweg ueber den Zurueck-Knopf.
+  entdeckungsFlaeche()?.addEventListener("scroll", () => {
+    if (discoveryView?.classList.contains("is-hidden")) return;
+    entdeckungMerkeScroll();
+  }, { passive: true });
+
   api.onToast((message) => {
     showToast(message);
   });
@@ -824,6 +863,16 @@ function bindEvents() {
   api.onUpdateState((state) => {
     updateState = state || {};
     renderUpdateInfo();
+  });
+
+  // Der Hauptprozess hat externe Metadaten nachgeholt und damit bessere
+  // Grundlagen fuer die Empfehlungen. Die Reihe wird einmal kontrolliert
+  // nachgezogen - nicht neu aufgebaut: was schon dasteht, bleibt sichtbar,
+  // bis die neue Liste da ist.
+  api.onPersonalUpdated?.(() => {
+    if (personalPending) return;
+    personalLoaded = false;
+    loadPersonalPicks();
   });
 }
 
@@ -898,7 +947,8 @@ function renderHome() {
     autoplay: true,
     fullscreen: true,
     allowImage: true,
-    allowContinueRemove: true
+    allowContinueRemove: true,
+    allowWatchlistAdd: true
   };
   const privateItems = continueItems.filter((favorite) => !favorite.watchpartyRoom).slice(0, 8);
   const partyItems = continueItems.filter((favorite) => favorite.watchpartyRoom).slice(0, 8);
@@ -1100,15 +1150,267 @@ function erscheinungsdatum(wert) {
   return Number.isFinite(zeitpunkt) && zeitpunkt > Date.now() ? `Ab ${lesbar}` : lesbar;
 }
 
+// --- Entdeckungsseiten --------------------------------------------------------
+//
+// "Mehr anzeigen" oeffnet je Art eine eigene Seite, die beim Scrollen
+// nachlaedt. Der Hauptprozess liefert Abschnitte einer Liste, die zwischen
+// zwei Abrufen stabil bleibt - deshalb reicht hier ein Versatz, und kein Titel
+// kann doppelt kommen. Die Menge der schon gezeigten Werke wird trotzdem
+// mitgefuehrt: derselbe Film liegt bei mehreren Anbietern, und die Engine
+// fuehrt ihn zwar als ein Werk, aber sicher ist sicher.
+const ENTDECKUNG_STAPEL = 30;
+const ENTDECKUNG_TITEL = {
+  anime: { titel: "Anime für dich", copy: "Aus deinem Verlauf, deiner Watchlist und dem, was AniList über deine Anime weiß." },
+  serie: { titel: "Serien für dich", copy: "Aus deinem Verlauf, deiner Watchlist und dem, was TMDB über deine Serien weiß." },
+  film: { titel: "Filme für dich", copy: "Aus deinem Verlauf, deiner Watchlist und dem, was TMDB über deine Filme weiß." }
+};
+
+// Je Art ein eigener Zustand. Er ueberdauert das Verlassen der Seite, damit
+// jemand, der einen Titel oeffnet und zurueckkommt, wieder dort steht, wo er
+// war - und nicht 150 Karten noch einmal laedt.
+const entdeckung = new Map();
+let entdeckungArt = "";
+let entdeckungBeobachter = null;
+
+function entdeckungsZustand(art) {
+  if (!entdeckung.has(art)) {
+    entdeckung.set(art, {
+      items: [], gesehen: new Set(), versatz: 0,
+      fertig: false, pending: false, fehler: false, waechst: false,
+      nachschlag: 0, versuche: 0, scroll: 0
+    });
+  }
+  return entdeckung.get(art);
+}
+
+async function showDiscovery(art) {
+  if (!ENTDECKUNG_TITEL[art] || !discoveryView) return;
+  await enterInternalMode();
+  // Erst schliessen, dann umschalten: `hideContentViews` sichert die
+  // Scrollposition der Seite, die gerade verlassen wird - stuende die neue Art
+  // schon fest, landete der Wert beim falschen Eintrag.
+  hideContentViews();
+  const wechsel = entdeckungArt !== art;
+  entdeckungArt = art;
+  setCurrentRoute(`discovery:${art}`);
+  discoveryView.classList.remove("is-hidden");
+  // Beim Wechsel der Art muss das Raster leer sein. Es wird sonst nur
+  // ergaenzt, und die Karten der vorigen Art blieben oben stehen.
+  if (wechsel) discoveryGrid?.replaceChildren();
+  const beschriftung = ENTDECKUNG_TITEL[art];
+  if (discoveryTitle) discoveryTitle.textContent = beschriftung.titel;
+  if (discoveryCopy) discoveryCopy.textContent = beschriftung.copy;
+
+  const zustand = entdeckungsZustand(art);
+  renderDiscovery();
+  // Erst zeichnen, dann die Scrollposition wiederherstellen - vorher hat die
+  // Seite noch keine Hoehe, und jedes Zuruecksetzen liefe ins Leere.
+  window.requestAnimationFrame(() => {
+    const flaeche = entdeckungsFlaeche();
+    if (flaeche && zustand.scroll) flaeche.scrollTop = zustand.scroll;
+    entdeckungBeobachten();
+    if (!zustand.items.length) loadDiscoveryPage();
+    // Wer zurueckkommt und dabei am Ende der Liste stand, soll nicht warten,
+    // bis er einmal gescrollt hat.
+    else entdeckungNachfassen();
+  });
+  window.setTimeout(syncBrowserBounds, 0);
+}
+
+// In welchem Element wird gescrollt? In der Ansicht selbst: sie liegt
+// absolut im Rahmen und traegt `overflow: auto` - der Rahmen darum ist
+// bewusst starr. Das ist auch der Bezugspunkt des Beobachters weiter unten;
+// mit dem Fenster als Bezug wuerde er nie ausloesen.
+function entdeckungsFlaeche() {
+  return discoveryView || null;
+}
+
+function entdeckungMerkeScroll() {
+  if (!entdeckungArt) return;
+  const flaeche = entdeckungsFlaeche();
+  if (flaeche) entdeckungsZustand(entdeckungArt).scroll = flaeche.scrollTop;
+}
+
+// Der Beobachter allein reicht nicht.
+//
+// Ein IntersectionObserver meldet *Uebergaenge*, nicht Zustaende. Beim Oeffnen
+// steht der Beobachtungspunkt sofort im Sichtbereich, ein Stapel wird geladen -
+// und danach passiert nichts mehr: dreissig Karten fuellen den Bildschirm samt
+// Vorlauf nicht, der Punkt bleibt sichtbar, es gibt keinen neuen Uebergang.
+// Genau deshalb lud die Seite erst wieder, wenn man sie verliess und neu
+// betrat, denn dabei wird der Beobachter neu gesetzt.
+//
+// Also nach jedem Stapel selbst nachsehen, ob noch Platz ist. Die Schleife
+// endet von allein: `loadDiscoveryPage` steigt bei `pending` und `fertig`
+// sofort wieder aus.
+function entdeckungNachfassen() {
+  if (!discoverySentinel || !entdeckungArt) return;
+  if (discoveryView?.classList.contains("is-hidden")) return;
+  const zustand = entdeckungsZustand(entdeckungArt);
+  if (zustand.pending || zustand.fertig || zustand.fehler) return;
+  const flaeche = entdeckungsFlaeche();
+  if (!flaeche) return;
+  const punkt = discoverySentinel.getBoundingClientRect();
+  const rand = flaeche.getBoundingClientRect();
+  // Derselbe Vorlauf wie beim Beobachter unten.
+  if (punkt.top <= rand.bottom + 800) loadDiscoveryPage();
+}
+
+// Nachgeladen wird, bevor das Ende sichtbar ist - deshalb ein Beobachtungspunkt
+// mit Vorlauf statt eines Scroll-Zaehlers, der bei jedem Pixel feuert.
+function entdeckungBeobachten() {
+  if (!discoverySentinel) return;
+  entdeckungBeobachter?.disconnect();
+  entdeckungBeobachter = new IntersectionObserver((eintraege) => {
+    if (!eintraege.some((eintrag) => eintrag.isIntersecting)) return;
+    loadDiscoveryPage();
+  }, { root: entdeckungsFlaeche(), rootMargin: "800px 0px" });
+  entdeckungBeobachter.observe(discoverySentinel);
+}
+
+async function loadDiscoveryPage() {
+  const art = entdeckungArt;
+  if (!art) return;
+  const zustand = entdeckungsZustand(art);
+  if (zustand.pending || zustand.fertig) return;
+  zustand.pending = true;
+  zustand.fehler = false;
+  renderDiscoveryFoot(art);
+  try {
+    const antwort = await api.getPersonalPage({
+      type: art, offset: zustand.versatz, limit: ENTDECKUNG_STAPEL
+    });
+    const neue = Array.isArray(antwort?.items) ? antwort.items : [];
+    // Derselbe Titel darf in einer Sitzung nur einmal erscheinen.
+    const frisch = neue.filter((item) => {
+      const schluessel = item.werkKey || item.url;
+      if (!schluessel || zustand.gesehen.has(schluessel)) return false;
+      zustand.gesehen.add(schluessel);
+      return true;
+    });
+    zustand.items.push(...frisch);
+    zustand.versatz += neue.length;
+    zustand.waechst = Boolean(antwort?.waechst);
+    // "Fertig" nur, wenn wirklich nichts mehr kommt. Holt der Hauptprozess
+    // gerade weitere Katalogseiten, ist die Liste nicht zu Ende - sie ist nur
+    // noch nicht gewachsen. Dann wird gleich noch einmal gefragt.
+    zustand.fertig = Boolean(antwort?.fertig);
+    if (frisch.length) zustand.versuche = 0;
+    if (!frisch.length && zustand.waechst && !zustand.fertig) {
+      // Zwei Wartezeiten stecken dahinter: eine Neuberechnung ist in gut zwei
+      // Sekunden da, ein Katalog-Nachschlag braucht laenger. Statt eine feste
+      // Zahl zu waehlen, die fuer den einen zu lang und fuer den anderen zu
+      // kurz ist, wird schnell zuerst gefragt und dann nachgelassen.
+      zustand.versuche += 1;
+      const warten = Math.min(8000, 1500 + zustand.versuche * 1500);
+      window.clearTimeout(zustand.nachschlag);
+      zustand.nachschlag = window.setTimeout(() => {
+        if (entdeckungArt === art) loadDiscoveryPage();
+      }, warten);
+    }
+  } catch {
+    zustand.fehler = true;
+  }
+  zustand.pending = false;
+  if (entdeckungArt !== art) return;
+  renderDiscovery();
+  // Erst zeichnen lassen, dann pruefen: vorher stehen die neuen Karten noch
+  // nicht im Layout, und der Beobachtungspunkt saesse noch an seiner alten
+  // Stelle.
+  window.requestAnimationFrame(entdeckungNachfassen);
+}
+
+function renderDiscovery() {
+  if (!discoveryGrid || !entdeckungArt) return;
+  const zustand = entdeckungsZustand(entdeckungArt);
+  // Nur anhaengen, was noch nicht steht: die Liste waechst nur am Ende, und
+  // ein vollstaendiger Neuaufbau wuerde bei mehreren hundert Karten ruckeln
+  // und nebenbei die Scrollposition verlieren.
+  const vorhanden = discoveryGrid.childElementCount;
+  if (vorhanden > zustand.items.length) discoveryGrid.replaceChildren();
+  const anzufuegen = zustand.items.slice(discoveryGrid.childElementCount);
+  if (anzufuegen.length) {
+    const kasten = document.createDocumentFragment();
+    for (const item of anzufuegen) kasten.append(discoverCard(item));
+    discoveryGrid.append(kasten);
+  }
+  renderDiscoveryFoot(entdeckungArt);
+}
+
+// Ein laufender Balken plus Text. Beides zusammen, weil eines allein nicht
+// reicht: der Balken sagt "es passiert etwas", der Satz sagt "was".
+function ladeAnzeige(text, skelette = 6) {
+  const kasten = document.createDocumentFragment();
+  const balken = document.createElement("div");
+  balken.className = "discovery-balken";
+  balken.role = "progressbar";
+  balken.ariaLabel = text;
+  kasten.append(balken);
+  if (text) {
+    const hinweis = document.createElement("div");
+    hinweis.className = "discovery-hinweis";
+    hinweis.textContent = text;
+    kasten.append(hinweis);
+  }
+  if (skelette > 0) {
+    const reihe = document.createElement("div");
+    reihe.className = "discovery-skeletons";
+    for (let index = 0; index < skelette; index += 1) {
+      const platzhalter = document.createElement("div");
+      platzhalter.className = "discovery-skeleton";
+      reihe.append(platzhalter);
+    }
+    kasten.append(reihe);
+  }
+  return kasten;
+}
+
+function renderDiscoveryFoot(art) {
+  if (!discoveryFoot) return;
+  const zustand = entdeckungsZustand(art);
+  discoveryFoot.replaceChildren();
+  if (zustand.pending) {
+    discoveryFoot.append(ladeAnzeige(zustand.items.length
+      ? "Weitere Vorschläge werden geladen …"
+      : "Vorschläge werden zusammengestellt …"));
+    return;
+  }
+  if (zustand.fehler) {
+    const hinweis = document.createElement("div");
+    hinweis.className = "discovery-hinweis";
+    // Kein Balken: hier laeuft gerade nichts, und ein laufender Balken waere
+    // eine Luege ueber den Zustand.
+    const text = document.createElement("span");
+    text.textContent = "Weitere Empfehlungen konnten nicht geladen werden.";
+    const knopf = document.createElement("button");
+    knopf.className = "text-action";
+    knopf.type = "button";
+    knopf.textContent = "Erneut versuchen";
+    knopf.addEventListener("click", () => loadDiscoveryPage());
+    hinweis.append(text, knopf);
+    discoveryFoot.append(hinweis);
+    return;
+  }
+  // Der Hauptprozess holt gerade weitere Katalogseiten. Das ist kein Ende,
+  // sondern eine Pause - und sie wird auch so beschriftet.
+  if (zustand.waechst && !zustand.fertig) {
+    discoveryFoot.append(ladeAnzeige("Weitere Vorschläge werden gesucht …", 3));
+    return;
+  }
+  if (zustand.fertig && zustand.items.length) {
+    const hinweis = document.createElement("div");
+    hinweis.className = "discovery-hinweis";
+    hinweis.textContent = "Das war alles, was gerade dazu passt.";
+    discoveryFoot.append(hinweis);
+  }
+}
+
 function discoverCard(item) {
   const card = document.createElement("div");
-  card.className = `favorite-card${item.image ? " has-thumb" : ""}`;
+  card.className = "favorite-card";
   card.tabIndex = 0;
   card.role = "button";
   card.title = item.viaSearch ? `${item.title} bei ${item.providerName} suchen` : item.title;
-  if (item.image) {
-    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(item.image)}")`;
-  }
   // Warum dieser Titel vorgeschlagen wird, hat die Empfehlungs-Engine bereits
   // entschieden und ausformuliert - hier wird der Satz nur angezeigt. Reihen
   // ohne Empfehlungslogik ("Neu bei deinen Anbietern") tragen keinen Grund und
@@ -1122,6 +1424,9 @@ function discoverCard(item) {
     <span>${escapeHtml(untertitel)}</span>
     ${item.releasedAt ? `<small class="media-progress-detail">${escapeHtml(erscheinungsdatum(item.releasedAt))}</small>` : ""}
   `;
+  // Nach dem Inhalt, sonst raeumt innerHTML die Bildebene gleich wieder weg.
+  // Ein Vorschlag traegt das Bild des Anbieters und keinen eigenen Ausschnitt.
+  bildEbeneSetzen(card, item.image, null);
   const oeffnen = () => openDiscoverItem(item);
   card.addEventListener("click", oeffnen);
   card.addEventListener("keydown", (event) => {
@@ -1202,7 +1507,7 @@ function renderHomeHero(favorite, provider, hasProviders) {
     const watchButton = document.querySelector("#heroWatch");
     if (watchButton) watchButton.textContent = "Weiter schauen";
     heroDetails?.classList.remove("is-hidden");
-    setHeroArtwork(favoriteBild(favorite));
+    setHeroArtwork(favoriteBild(favorite), favoriteAusschnitt(favorite));
     return;
   }
 
@@ -1220,11 +1525,91 @@ function renderHomeHero(favorite, provider, hasProviders) {
   setHeroArtwork("");
 }
 
-function setHeroArtwork(value) {
-  if (!homeHero) return;
-  const image = String(value || "").trim();
-  homeHero.style.setProperty("--hero-image", image ? `url("${cssUrl(image)}")` : "none");
-  homeHero.classList.toggle("has-artwork", Boolean(image));
+// Das Seitenverhaeltnis, das der Titelhintergrund gerade wirklich hat. Es
+// haengt an der Fenstergroesse (min-height clamp gegen die volle Breite), also
+// gibt es keine Konstante dafuer - es wird gemessen.
+//
+// Gemerkt wird es, weil der Zuschneide-Editor auch dann das richtige Format
+// braucht, wenn die Startseite in dem Moment nicht sichtbar ist - etwa beim
+// Bearbeiten aus der Mediathek heraus. Der Rueckfallwert greift nur, solange
+// die Startseite in dieser Sitzung noch kein einziges Mal gezeichnet wurde.
+const BANNER_SEITE_RUECKFALL = 16 / 9;
+let letzteBannerSeite = 0;
+
+function bannerSeite() {
+  const kasten = homeHero?.getBoundingClientRect();
+  if (kasten && kasten.width > 0 && kasten.height > 0) {
+    letzteBannerSeite = kasten.width / kasten.height;
+  }
+  return letzteBannerSeite || BANNER_SEITE_RUECKFALL;
+}
+
+// --- Die Bildebene ------------------------------------------------------------
+//
+// Eine einzige Stelle setzt jedes Titelbild: die Karten in "Gemeinsam
+// weiterschauen", auf der Watchlist, in der Mediathek, bei den Empfehlungen
+// und im Kalender - und das Banner der Startseite. Die Live-Vorschau im
+// Zuschneide-Editor ruft dieselbe Funktion auf demselben Kartenaufbau auf.
+// Deshalb kann die Vorschau nichts anderes zeigen als die fertige Karte.
+//
+// Gerechnet wird hier nichts: die drei Variablen gehen so, wie sie gespeichert
+// sind, ans Stylesheet. Weil keine davon eine Pixelgroesse kennt, gilt
+// derselbe Ausschnitt in jeder Kartenform und bei jeder Fenstergroesse.
+// Welche Form haben die Karten gerade? Sie steht als Klasse an der Huelle -
+// dieselbe Klasse, aus der das Stylesheet die Kartenmasse holt. "Klein" hat
+// keinen eigenen Ausschnitt: es ist dieselbe liegende Form wie die
+// gewoehnliche Karte, nur kleiner, und ein Ausschnitt haengt am Verhaeltnis
+// und nicht an der Groesse.
+function kartenFormat() {
+  const huelle = document.querySelector(".app-shell");
+  const gefunden = ["poster", "large", "medium", "small"]
+    .find((groesse) => huelle?.classList.contains(`favorites-${groesse}`));
+  return gefunden && gefunden !== "small" ? gefunden : "medium";
+}
+
+function bildEbeneSetzen(kasten, bildUrl, ausschnitt, format = kartenFormat()) {
+  if (!kasten) return;
+  const url = String(bildUrl || "").trim();
+  let ebene = kasten.querySelector(":scope > .karten-bild");
+  if (!url) {
+    ebene?.remove();
+    kasten.classList.remove("has-thumb");
+    return;
+  }
+  if (!ebene) {
+    ebene = document.createElement("div");
+    ebene.className = "karten-bild";
+    const neuesBild = document.createElement("img");
+    neuesBild.alt = "";
+    neuesBild.draggable = false;
+    neuesBild.decoding = "async";
+    ebene.append(neuesBild);
+    // Ganz nach vorn in die Karte: Titel, Anbieter und Fortschritt stehen
+    // danach im Aufbau und liegen damit ueber dem Bild.
+    kasten.prepend(ebene);
+  }
+  const bild = ebene.querySelector("img");
+  // Nur bei Bedarf neu setzen - sonst faengt ein eigenes Bild bei jedem
+  // Zeichnen wieder von vorn an zu laden, und die Karte blinkt.
+  if (bild.getAttribute("src") !== url) bild.src = url;
+  for (const [name, wert] of Object.entries(bildausschnittModul.cssWerte(ausschnitt, format))) {
+    ebene.style.setProperty(name, wert);
+  }
+  kasten.classList.add("has-thumb");
+}
+
+// Das Banner hat immer die Form "banner" - es ist keine Karte und folgt
+// deshalb auch nicht der eingestellten Kartengroesse.
+function setHeroArtwork(value, ausschnitt = null) {
+  bildEbeneSetzen(homeHero, value, ausschnitt, "banner");
+}
+
+// Der Ausschnitt gilt nur fuer ein selbst gewaehltes Bild. Das Bild der
+// Anbieterseite kann von einem Durchlauf zum naechsten ein anderes sein - eine
+// dafuer gewaehlte Lage waere dann die Lage eines fremden Bildes.
+function favoriteAusschnitt(favorite) {
+  if (!favorite?.customThumbnail) return null;
+  return favorite.customThumbnailCrop || null;
 }
 
 function sortedHomeFavorites() {
@@ -1325,8 +1710,13 @@ async function handleHomeAction(action) {
     return;
   }
   if (action === "help") {
-    setCurrentRoute("help");
-    showToast("Hilfe & Support kommt in die Einstellungen");
+    // Hilfe liegt dort, wo auch geantwortet wird: bei den Issues des Projekts.
+    // Das oeffnet der Standardbrowser, nicht ELFIX - dort ist der Benutzer bei
+    // GitHub angemeldet. Die Ansicht hier bleibt stehen, wo sie war.
+    const ergebnis = await api.openHelpIssues();
+    showToast(ergebnis?.ok
+      ? "Hilfe & Support im Browser geöffnet"
+      : "Browser konnte nicht geöffnet werden — github.com/RoveHD/elfix/issues");
   }
 }
 
@@ -1545,10 +1935,7 @@ function kalenderFassungen(eintrag) {
 
 function kalenderKarte(eintrag) {
   const karte = document.createElement("div");
-  karte.className = `favorite-card${eintrag.image ? " has-thumb" : ""}`;
-  if (eintrag.image) {
-    karte.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(eintrag.image)}")`;
-  }
+  karte.className = "favorite-card";
   karte.tabIndex = 0;
   karte.role = "button";
   karte.title = `${eintrag.title} bei ${eintrag.providerName} öffnen`;
@@ -1566,6 +1953,7 @@ function kalenderKarte(eintrag) {
     ${wann ? `<small class="media-progress-detail">${escapeHtml(wann)}</small>` : ""}
     ${kalenderFassungen(eintrag)}
   `;
+  bildEbeneSetzen(karte, eintrag.image, null);
   const oeffnen = () => api.openProviderUrl?.(eintrag.providerId, eintrag.url);
   karte.addEventListener("click", oeffnen);
   karte.addEventListener("keydown", (event) => {
@@ -1772,10 +2160,7 @@ function warteAufEntfernen(key, room, timeoutMs = 3000) {
 
 function watchpartyCard(item) {
   const card = document.createElement("div");
-  card.className = `favorite-card watchparty-card${item.thumbnail ? " has-thumb" : ""}`;
-  if (item.thumbnail) {
-    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(item.thumbnail)}")`;
-  }
+  card.className = "favorite-card watchparty-card";
 
   // Der Stand kommt aus der Watchparty, sobald jemand Beigetretenes weiterschaut.
   const stand = item.progress;
@@ -1794,6 +2179,10 @@ function watchpartyCard(item) {
     <span>${escapeHtml(zeile)}</span>
     ${laufend ? `<span class="watchparty-progress">${escapeHtml(laufend)}</span>` : ""}
   `;
+  // Genau hier sah es bisher schlecht aus: ein eigenes Titelbild wurde auf der
+  // schmalen Karte mittig gedeckt, und was oben oder unten stand, war weg.
+  // Jetzt gilt derselbe Ausschnitt, den der Benutzer gewaehlt hat.
+  bildEbeneSetzen(card, item.thumbnail, item.thumbnailCrop || null);
 
   const mitgliederZeile = document.createElement("div");
   mitgliederZeile.className = "watchparty-members";
@@ -2002,13 +2391,51 @@ async function showGlobalSearch(query) {
 // Ein Suchtreffer: klicken oeffnet ihn, das Herz nimmt ihn ohne Umweg auf die
 // Watchlist. Die Karte ist deshalb kein Knopf mehr - ein Knopf im Knopf waere
 // kein gueltiges HTML und liesse sich nicht getrennt anklicken.
-function searchResultCard(result, provider) {
+// Den Suchbegriff im Titel sichtbar machen. Ausschliesslich Darstellung: der
+// Titel wird nicht zerlegt, nicht veraendert und nicht ersetzt - er wird nur
+// stueckweise in Textknoten geschrieben, von denen einer ausgezeichnet ist.
+//
+// Wichtig ist das Gegenteil dessen, was der Anbieter tut: dort steckt die
+// Hervorhebung im gelieferten Titel und macht aus "Demon" ein "Demo n". Hier
+// bleibt `result.title` unberuehrt, und die Zerlegung endet an der Oberflaeche.
+function titelMitFundstelle(titel, suche) {
+  const ziel = document.createElement("strong");
+  const text = String(titel || "");
+  const begriff = String(suche || "").trim();
+  if (!begriff) {
+    ziel.textContent = text;
+    return ziel;
+  }
+  // Ohne Ruecksicht auf Gross- und Kleinschreibung suchen, aber immer die
+  // Zeichen des Originals anzeigen.
+  const stelle = text.toLowerCase().indexOf(begriff.toLowerCase());
+  if (stelle < 0) {
+    ziel.textContent = text;
+    return ziel;
+  }
+  const treffer = document.createElement("mark");
+  treffer.textContent = text.slice(stelle, stelle + begriff.length);
+  // Drei Knoten, kein Leerzeichen dazwischen: davor, die Fundstelle, danach.
+  if (stelle > 0) ziel.append(document.createTextNode(text.slice(0, stelle)));
+  ziel.append(treffer);
+  const rest = text.slice(stelle + begriff.length);
+  if (rest) ziel.append(document.createTextNode(rest));
+  return ziel;
+}
+
+function searchResultCard(result, provider, suche = "") {
   const card = document.createElement("div");
   card.className = "search-result-card provider-result";
   card.tabIndex = 0;
   card.role = "button";
+  // Die stabile Kennung des Treffers. Alles, was die Karte spaeter tut, laeuft
+  // ueber sie - nie ueber den angezeigten Titel, die Fundstelle oder die
+  // Position in der Liste.
+  card.dataset.resultUrl = String(result.url || "");
   const meta = [result.genre, provider.providerName].filter(Boolean).join(" · ");
-  card.innerHTML = `<strong>${escapeHtml(result.title)}</strong><span>${escapeHtml(meta)}</span>`;
+  const untertitel = document.createElement("span");
+  untertitel.textContent = meta;
+  card.append(titelMitFundstelle(result.title, suche), untertitel);
 
   const oeffnen = async () => {
     hideContentViews();
@@ -2087,7 +2514,7 @@ async function renderProviderResults(query, searchToken) {
       resultNodes.push(heading);
       for (const result of provider.results) {
         total += 1;
-        resultNodes.push(searchResultCard(result, provider));
+        resultNodes.push(searchResultCard(result, provider, query));
       }
     }
   }
@@ -2152,7 +2579,10 @@ function renderLibraryViews() {
   macheMediathekSortierbar();
 
   const continueItems = continueEntries();
-  const weiterOptionen = { showProgress: true, allowContinueRemove: true, allowComplete: true, autoplay: true, fullscreen: true };
+  const weiterOptionen = {
+    showProgress: true, allowContinueRemove: true, allowComplete: true,
+    allowWatchlistAdd: true, autoplay: true, fullscreen: true
+  };
   // Oben der eigene Stand, darunter abgesetzt die Watchparty-Runden.
   const privatOffen = continueItems.filter((favorite) => !favorite.watchpartyRoom);
   const partyOffen = continueItems.filter((favorite) => favorite.watchpartyRoom);
@@ -2611,6 +3041,13 @@ function hideContentViews() {
   historyView?.classList.add("is-hidden");
   watchpartyView?.classList.add("is-hidden");
   document.querySelector("#calendarView")?.classList.add("is-hidden");
+  // Beim Verlassen die Scrollposition sichern, damit "zurueck" wieder dort
+  // landet, wo der Nutzer war.
+  if (discoveryView && !discoveryView.classList.contains("is-hidden")) {
+    entdeckungMerkeScroll();
+    entdeckungBeobachter?.disconnect();
+  }
+  discoveryView?.classList.add("is-hidden");
 }
 
 function switchToPlayerView() {
@@ -2774,20 +3211,57 @@ function formatClock(seconds) {
   return `${minutes}:${String(secs).padStart(2, "0")}`;
 }
 
-function favoriteCard(favorite, allowRemove, options = {}) {
-  const card = document.createElement("div");
-  const kartenBild = favoriteBild(favorite);
-  card.className = `favorite-card${kartenBild ? " has-thumb" : ""}`;
-  card.tabIndex = 0;
-  card.role = "button";
-  if (kartenBild) {
-    card.style.backgroundImage = `linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)), url("${cssUrl(kartenBild)}")`;
-  }
-  card.innerHTML = `
+// Was in einer Karte steht: Titel mit Staffel und Folge, Anbieter (und Runde,
+// wenn der Eintrag zu einer Watchparty gehoert), Fortschrittsbalken und
+// Laufzeit. Ausgelagert, weil die Live-Vorschau im Zuschneide-Editor genau
+// dieselbe Karte zeigen soll - nicht eine, die so aehnlich aussieht.
+// Was im Startbanner steht. Dieselben Zeilen, die renderHomeHero() in das
+// echte Banner schreibt - ausgelagert, damit die Vorschau im Zuschneide-Editor
+// in der Form "Banner" wirklich wie die Startseite aussieht und nicht wie eine
+// breitgezogene Karte.
+function heroInhalt(favorite) {
+  const titel = cleanFavoriteTitle(favorite?.title, favorite?.url) || displayFavoriteTitle(favorite);
+  const folge = favoriteEpisodeLabel(favorite?.url);
+  const zeile = [folge, favorite?.providerName].filter(Boolean).join(" - ") || "Gespeicherter Favorit";
+  const anteil = favoriteProgressPercent(favorite);
+  return `
+    <div class="home-hero-content">
+      <p class="eyebrow">Fortsetzen</p>
+      <h1>${escapeHtml(titel)}</h1>
+      <p>${escapeHtml(zeile)}</p>
+      <div class="hero-progress${anteil > 0 ? "" : " is-hidden"}">
+        <div><span style="width:${anteil}%"></span></div>
+        <strong>${anteil > 0 ? `${anteil}%` : ""}</strong>
+      </div>
+      <div class="hero-actions">
+        <button class="primary-action" type="button" tabindex="-1">Weiter schauen</button>
+        <button class="secondary-action" type="button" tabindex="-1">Details</button>
+        <button class="secondary-action" type="button" tabindex="-1">Einstellungen</button>
+      </div>
+    </div>
+    <div class="hero-dots">
+      <button type="button" tabindex="-1"></button>
+      <button type="button" tabindex="-1"></button>
+      <button type="button" class="is-active" tabindex="-1"></button>
+    </div>
+  `;
+}
+
+function favoriteCardInhalt(favorite, options = {}) {
+  return `
     <strong>${escapeHtml(displayFavoriteTitle(favorite))}</strong>
     <span>${escapeHtml(favoriteHerkunft(favorite))}</span>
     ${progressMarkup(favorite, options)}
   `;
+}
+
+function favoriteCard(favorite, allowRemove, options = {}) {
+  const card = document.createElement("div");
+  card.className = "favorite-card";
+  card.tabIndex = 0;
+  card.role = "button";
+  card.innerHTML = favoriteCardInhalt(favorite, options);
+  bildEbeneSetzen(card, favoriteBild(favorite), favoriteAusschnitt(favorite));
   // Gehoert die Kachel zu einer Runde, wird sie im Sekundentakt nachgezogen -
   // ohne die ganze Ansicht neu zu bauen, das wuerde beim Scrollen springen.
   if (favorite?.watchpartyRoom) {
@@ -2816,7 +3290,8 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     card.title = "Zum Umsortieren ziehen";
   }
 
-  if (allowRemove || options.allowContinueRemove || options.allowLibraryRemove || options.allowComplete || options.allowImage === true) {
+  if (allowRemove || options.allowContinueRemove || options.allowLibraryRemove || options.allowComplete
+    || options.allowWatchlistAdd || options.allowImage === true) {
     const menu = document.createElement("button");
     menu.className = "favorite-menu";
     menu.type = "button";
@@ -2869,6 +3344,16 @@ function favoriteCard(favorite, allowRemove, options = {}) {
       actions.append(bildWaehlen);
 
       if (favorite.customThumbnail) {
+        const ausschnitt = document.createElement("button");
+        ausschnitt.type = "button";
+        ausschnitt.textContent = "Ausschnitt bearbeiten";
+        ausschnitt.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          actions.classList.remove("is-open");
+          await bildAusschnittBearbeiten(favorite);
+        });
+        actions.append(ausschnitt);
+
         const bildWeg = document.createElement("button");
         bildWeg.type = "button";
         bildWeg.textContent = "Eigenes Bild entfernen";
@@ -2879,6 +3364,30 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         });
         actions.append(bildWeg);
       }
+    }
+
+    // Aus Weiterschauen heraus vormerken. Steht der Titel schon auf der
+    // Watchlist, waere der Eintrag sinnlos - dann fehlt er.
+    if (options.allowWatchlistAdd && !favorite.favorite) {
+      const merken = document.createElement("button");
+      merken.type = "button";
+      merken.textContent = "Auf die Watchlist";
+      merken.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        actions.classList.remove("is-open");
+        const ergebnis = await api.setFavoriteWatchlist?.(favorite.id, true).catch(() => null);
+        if (!ergebnis?.favorite) {
+          showToast("Konnte nicht vorgemerkt werden");
+          return;
+        }
+        favorites = ergebnis.favorites || favorites;
+        renderFavorites();
+        renderHome();
+        renderLibraryViews();
+        renderFavoriteToggle();
+        showToast(`„${displayFavoriteTitle(favorite)}“ steht auf der Watchlist`);
+      });
+      actions.append(merken);
     }
 
     // In der Watchlist: eine Serie, die man laengst gesehen hat, direkt
@@ -4412,10 +4921,442 @@ function bildAuswaehlen() {
   });
 }
 
+// --- Titelhintergrund zuschneiden --------------------------------------------
+//
+// Ein eigenes Bild passt selten von selbst in eine Karte. Statt es
+// stillschweigend mittig zu beschneiden - und dabei zuverlaessig das Logo oder
+// das Gesicht zu erwischen, das oben steht - darf der Benutzer sagen, welcher
+// Teil stehen bleiben soll, und zwar fuer jede Form einzeln.
+//
+// Der Editor baut dafuer keine eigene Darstellung. In den drei Kartenformen
+// ist die Vorschau eine .favorite-card mit demselben Inhalt, den
+// favoriteCard() erzeugt; in der Form "Banner" ist sie ein
+// .home-dashboard-hero mit demselben Inhalt, den renderHomeHero() schreibt.
+// Das Bild darin setzt in beiden Faellen bildEbeneSetzen() - dieselbe
+// Funktion, die auch die Karten in "Gemeinsam weiterschauen", auf der
+// Watchlist, in der Mediathek und bei den Empfehlungen beliefert. Eine
+// Vorschau, die anders rechnet als die Anzeige, waere frueher oder spaeter
+// eine Vorschau, die luegt.
+
+// Poster und Mittel kommen aus den echten Kartenmassen von ELFIX. Die Zahlen
+// stehen nicht hier, sondern im Stylesheet (--favorite-card-min und
+// --favorite-card-height); sie werden am lebenden Element gelesen, damit sie
+// nicht an zwei Stellen gepflegt werden muessen und nicht auseinanderlaufen.
+//
+// "Gross" ist 16:9 - so steht eine grosse Karte in einem weiten Raster
+// tatsaechlich, denn die Kartenbreite waechst dort ueber ihren Mindestwert
+// hinaus. Das Banner wird am laufenden Fenster gemessen; es ist echte
+// Bildschirmbreite und passt deshalb nur verkleinert in den Dialog.
+const CROP_BANNER_RUECKFALL = { breite: 1280, hoehe: 360 };
+// Der Innenabstand der Buehne, doppelt - links und rechts, oben und unten.
+const CROP_BUEHNE_LUFT = 24;
+// So weit darf die Karte hoechstens vergroessert werden. Eine 290 mal 220
+// Pixel kleine Karte waere in der Buehne sonst kaum zu erkennen; mehr als das
+// Doppelte wirkt dagegen aufgeblasen.
+const CROP_MAX_LUPE = 2.2;
+const CROP_RAD_SCHRITT = 0.12;
+
+let cropZustand = null;
+
+// Die Kartenmasse einer Groesse, gelesen aus dem Stylesheet. Ein unsichtbares
+// Element mit der passenden Klasse ist der ehrlichste Weg dorthin: es
+// beantwortet die Frage mit denselben Regeln, nach denen die echten Karten
+// gezeichnet werden.
+function cropKartenMasse(groesse) {
+  const probe = document.createElement("div");
+  probe.className = `app-shell favorites-${groesse}`;
+  probe.style.cssText = "position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none";
+  document.body.append(probe);
+  const stil = getComputedStyle(probe);
+  const breite = Number.parseFloat(stil.getPropertyValue("--favorite-card-min"));
+  const hoehe = Number.parseFloat(stil.getPropertyValue("--favorite-card-height"));
+  probe.remove();
+  return breite > 0 && hoehe > 0 ? { breite, hoehe } : null;
+}
+
+function cropFormatMasse(format) {
+  if (format === "banner") {
+    // Das echte Banner, in echten Pixeln. Es ist breiter als der Dialog und
+    // wird deshalb gleich wieder verkleinert - aber nur so stimmen darin auch
+    // die Groessenverhaeltnisse von Titel, Zeile und Knoepfen.
+    const kasten = homeHero?.getBoundingClientRect();
+    return kasten && kasten.width > 0 && kasten.height > 0
+      ? { breite: Math.round(kasten.width), hoehe: Math.round(kasten.height) }
+      : { ...CROP_BANNER_RUECKFALL };
+  }
+  if (format === "large") {
+    const gross = cropKartenMasse("large") || { hoehe: 260 };
+    return { breite: Math.round(gross.hoehe * 16 / 9), hoehe: Math.round(gross.hoehe) };
+  }
+  const masse = cropKartenMasse(format)
+    || (format === "poster" ? { breite: 230, hoehe: 330 } : { breite: 290, hoehe: 220 });
+  return { breite: Math.round(masse.breite), hoehe: Math.round(masse.hoehe) };
+}
+
+// Der sichtbare Kasten der Vorschau. Gemessen wird bei jedem Zug neu: der
+// Dialog faehrt beim Oeffnen mit einer kurzen Vergroesserung auf, und waehrend
+// dieser Animation ist der Kasten fuer ein paar Bilder noch nicht so gross wie
+// gleich darauf. Das Rechteck traegt die Lupe bereits in sich - der Zeiger
+// bewegt sich in denselben Bildschirmpixeln, also passt beides zusammen.
+function cropMasse() {
+  const kasten = cropPreview.getBoundingClientRect();
+  return { breite: kasten.width || 1, hoehe: kasten.height || 1 };
+}
+
+// Die Form, die gerade bearbeitet wird, und ihre Lage.
+function cropFormat() {
+  return cropZustand.ausschnitt.format;
+}
+
+function cropLage() {
+  return bildausschnittModul.lage(cropZustand.ausschnitt, cropFormat());
+}
+
+// Die Vorschau traegt zwei Gestalten: eine Karte und das Startbanner. Getauscht
+// wird nur, wenn wirklich gewechselt wird - und die Bildebene wandert dabei
+// unveraendert mit, sonst laedt das Bild bei jedem Wechsel neu.
+function cropHautSetzen(format) {
+  const alsBanner = format === "banner";
+  const haut = alsBanner ? "banner" : "karte";
+  if (cropZustand.haut === haut) return;
+  cropZustand.haut = haut;
+  const ebene = cropPreview.querySelector(".karten-bild");
+  cropPreview.className = alsBanner
+    ? "hero home-dashboard-hero crop-preview is-banner"
+    : "favorite-card crop-preview";
+  cropPreview.innerHTML = alsBanner
+    ? heroInhalt(cropZustand.favorite)
+    : favoriteCardInhalt(cropZustand.favorite, { showProgress: true });
+  if (ebene) cropPreview.prepend(ebene);
+}
+
+// Wie stark die Karte vergroessert wird, damit sie die Buehne fuellt.
+//
+// Das haengt allein an der Form und an der Groesse der Buehne - und keines von
+// beiden aendert sich, waehrend jemand das Bild zieht. Genau deshalb wird hier
+// gemerkt, wofuer die Lupe zuletzt gerechnet wurde: eine Lupe, die sich
+// mitten im Zug aendert, waere eine Karte, die unter dem Zeiger ihre Groesse
+// wechselt - und dann bewegt sich das Bild nicht mehr um die Strecke, die die
+// Maus zurueckgelegt hat.
+function cropLupeSetzen(erzwingen = false) {
+  if (!cropZustand) return;
+  const format = cropFormat();
+  const kennung = `${format}|${cropStage.clientWidth}x${cropStage.clientHeight}`;
+  if (!erzwingen && cropZustand.lupeFuer === kennung) return;
+  cropZustand.lupeFuer = kennung;
+
+  const masse = cropFormatMasse(format);
+  cropPreview.style.width = `${masse.breite}px`;
+  cropPreview.style.height = `${masse.hoehe}px`;
+  // Gemessen an der Layoutgroesse der Buehne und nicht an ihrem Rechteck auf
+  // dem Schirm: der Dialog faehrt mit einer kurzen Vergroesserung auf, und
+  // waehrend dieser Animation waere das Rechteck noch nicht das, was gleich
+  // dasteht.
+  const platz = {
+    breite: (cropStage.clientWidth || masse.breite) - CROP_BUEHNE_LUFT,
+    hoehe: (cropStage.clientHeight || masse.hoehe) - CROP_BUEHNE_LUFT
+  };
+  const lupe = Math.min(platz.breite / masse.breite, platz.hoehe / masse.hoehe, CROP_MAX_LUPE);
+  cropPreview.style.setProperty("--crop-lupe", Math.max(0.1, lupe).toFixed(4));
+}
+
+function cropZeichnen() {
+  if (!cropZustand) return;
+  const format = cropFormat();
+  const wert = cropLage();
+
+  cropHautSetzen(format);
+  cropBody?.classList.toggle("is-banner", format === "banner");
+
+  cropLupeSetzen();
+
+  // Dieselbe Funktion wie an jeder echten Karte. Sie legt die Bildebene beim
+  // ersten Mal an und setzt danach nur noch die drei Variablen - das Bild
+  // selbst wird nicht neu geladen, sonst blinkte es bei jedem Zug.
+  bildEbeneSetzen(cropPreview, cropZustand.dataUrl, cropZustand.ausschnitt, format);
+
+  for (const knopf of cropModes.querySelectorAll("button")) {
+    knopf.classList.toggle("is-active", knopf.dataset.cropFormat === format);
+  }
+  cropZoom.value = String(Math.round(wert.scale * 100));
+  cropZoomValue.textContent = `${Math.round(wert.scale * 100)} %`;
+}
+
+// Jede Bewegung geht durch diese drei Stellen - und jede fasst nur die Form
+// an, die gerade zu sehen ist. Ein Zug im Poster laesst das Banner in Ruhe.
+function cropVerschieben(dx, dy) {
+  const masse = cropMasse();
+  cropZustand.ausschnitt = bildausschnittModul.verschieben(
+    cropZustand.ausschnitt, cropFormat(), dx, dy, masse.breite, masse.hoehe, cropZustand.bildSeite
+  );
+  cropGeaendert();
+}
+
+function cropZoomen(skala) {
+  cropZustand.ausschnitt = bildausschnittModul.zoomen(cropZustand.ausschnitt, cropFormat(), skala);
+  cropGeaendert();
+}
+
+// Mausrad und Finger sagen "ein Stueck naeher", nicht "auf diesen Wert".
+function cropZoomenUm(faktor) {
+  cropZoomen(cropLage().scale * faktor);
+}
+
+function cropFormatSetzen(format) {
+  cropZustand.ausschnitt = bildausschnittModul.formatSetzen(cropZustand.ausschnitt, format);
+  // Die Form selbst ist keine Aenderung am Bild - aber sie soll mitgespeichert
+  // werden, damit der Editor beim naechsten Mal hier wieder aufgeht.
+  cropGeaendert();
+}
+
+// Nach jeder Aenderung ist der gespeicherte Stand nicht mehr der aktuelle.
+function cropGeaendert() {
+  cropZustand.gespeichert = false;
+  cropZeichnen();
+  cropStandZeigen("");
+}
+
+function cropStandZeigen(text) {
+  if (!cropSaveHint) return;
+  cropSaveHint.textContent = text;
+  cropSaveHint.classList.toggle("is-sichtbar", Boolean(text));
+}
+
+// Speichern, ohne den Editor zu schliessen. Damit laesst sich Form fuer Form
+// durchgehen: Poster einstellen, speichern, auf Mittel wechseln, einstellen,
+// speichern - ohne den Dialog jedes Mal neu aufzumachen.
+async function cropSpeichern() {
+  if (!cropZustand?.speichern) return true;
+  cropSave?.setAttribute("disabled", "disabled");
+  cropStandZeigen("Wird gespeichert …");
+  const lage = bildausschnittModul.normalisierenOderNull(cropZustand.ausschnitt);
+  const ok = await cropZustand.speichern(lage).catch(() => false);
+  cropSave?.removeAttribute("disabled");
+  if (!cropZustand) return ok;
+  cropZustand.gespeichert = Boolean(ok);
+  cropStandZeigen(ok ? "Gespeichert" : "Konnte nicht gespeichert werden");
+  return ok;
+}
+
+// Zwei Finger auf dem Schirm: der Abstand zwischen ihnen ist der Zoom, die
+// Mitte zwischen ihnen die Lage. Mehr braucht es nicht, und mehr waere hier
+// auch nicht ehrlich zu pruefen.
+const cropFinger = new Map();
+let cropFingerAbstand = 0;
+
+function cropFingerMitte() {
+  const punkte = [...cropFinger.values()];
+  return {
+    x: (punkte[0].x + punkte[1].x) / 2,
+    y: (punkte[0].y + punkte[1].y) / 2
+  };
+}
+
+function cropAbstand() {
+  const punkte = [...cropFinger.values()];
+  return Math.hypot(punkte[0].x - punkte[1].x, punkte[0].y - punkte[1].y);
+}
+
+function cropBinden() {
+  if (!cropModal || !cropStage || !cropPreview) return;
+  let zieht = false;
+  let letzteX = 0;
+  let letzteY = 0;
+
+  // Gezogen wird an der Karte selbst. Die Erfassung des Zeigers sorgt dafuer,
+  // dass ein Zug auch dann weiterlaeuft, wenn die Maus dabei ueber den Rand
+  // der Karte hinausgeraet - sonst bliebe das Bild mitten in der Bewegung
+  // stehen.
+  cropPreview.addEventListener("pointerdown", (event) => {
+    if (!cropZustand) return;
+    // Ohne das faengt der Browser den Zug als Textmarkierung ab: Titel,
+    // Anbieter und Laufzeit stehen als Text in der Karte, und beim Ziehen
+    // waeren sie blau hinterlegt statt das Bild zu bewegen.
+    event.preventDefault();
+    cropFinger.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    try { cropPreview.setPointerCapture(event.pointerId); } catch { /* ohne Erfassung geht es auch */ }
+    if (cropFinger.size === 2) {
+      cropFingerAbstand = cropAbstand();
+      zieht = false;
+      return;
+    }
+    zieht = true;
+    letzteX = event.clientX;
+    letzteY = event.clientY;
+    cropStage.classList.add("is-dragging");
+  });
+
+  cropPreview.addEventListener("pointermove", (event) => {
+    if (!cropZustand || !cropFinger.has(event.pointerId)) return;
+    cropFinger.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (cropFinger.size === 2) {
+      const jetzt = cropAbstand();
+      if (cropFingerAbstand > 0 && jetzt > 0) cropZoomenUm(jetzt / cropFingerAbstand);
+      cropFingerAbstand = jetzt;
+      const mitte = cropFingerMitte();
+      letzteX = mitte.x;
+      letzteY = mitte.y;
+      return;
+    }
+
+    if (!zieht) return;
+    cropVerschieben(event.clientX - letzteX, event.clientY - letzteY);
+    letzteX = event.clientX;
+    letzteY = event.clientY;
+  });
+
+  const loslassen = (event) => {
+    cropFinger.delete(event.pointerId);
+    if (cropFinger.size < 2) cropFingerAbstand = 0;
+    if (cropFinger.size === 0) {
+      zieht = false;
+      cropStage.classList.remove("is-dragging");
+    }
+  };
+  cropPreview.addEventListener("pointerup", loslassen);
+  cropPreview.addEventListener("pointercancel", loslassen);
+
+  cropStage.addEventListener("wheel", (event) => {
+    if (!cropZustand) return;
+    event.preventDefault();
+    const richtung = event.deltaY < 0 ? 1 : -1;
+    cropZoomenUm(1 + richtung * CROP_RAD_SCHRITT);
+  }, { passive: false });
+
+  cropZoom.addEventListener("input", () => {
+    if (!cropZustand) return;
+    cropZoomen(Number(cropZoom.value) / 100);
+  });
+
+  cropModes.addEventListener("click", (event) => {
+    const knopf = event.target.closest("button[data-crop-format]");
+    if (!knopf || !cropZustand) return;
+    cropFormatSetzen(knopf.dataset.cropFormat);
+  });
+
+  cropReset.addEventListener("click", () => {
+    if (!cropZustand) return;
+    // Zuruecksetzen gilt fuer die Form, die gerade zu sehen ist - die Arbeit
+    // an den anderen dreien bleibt stehen.
+    cropZustand.ausschnitt = bildausschnittModul.zuruecksetzen(cropZustand.ausschnitt, cropFormat());
+    cropGeaendert();
+  });
+
+  cropCenter.addEventListener("click", () => {
+    if (!cropZustand) return;
+    cropZustand.ausschnitt = bildausschnittModul.zentrieren(cropZustand.ausschnitt, cropFormat());
+    cropGeaendert();
+  });
+
+  // Aendert sich die Fenstergroesse, aendert sich die Buehne mit. Waehrend
+  // eines Zugs kann das nicht passieren, also stoert es dort auch nichts.
+  new ResizeObserver(() => cropLupeSetzen()).observe(cropStage);
+
+  cropSave?.addEventListener("click", () => { cropSpeichern(); });
+  cropCancel.addEventListener("click", () => cropSchliessen({ ok: false, ausschnitt: null }));
+  cropApply.addEventListener("click", cropUebernehmen);
+  // Escape und der Systemknopf schliessen den Dialog ohne Klick auf Abbrechen -
+  // auch dann darf nichts uebernommen werden.
+  cropModal.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    cropSchliessen({ ok: false, ausschnitt: null });
+  });
+}
+
+function cropSchliessen(ergebnis) {
+  const fertig = cropZustand?.fertig;
+  cropZustand = null;
+  // Die Vorschau bleibt als Element im Dokument stehen. Ohne diese Zeile
+  // bliebe auch das Bild darin stehen, und beim naechsten Oeffnen - womoeglich
+  // fuer einen ganz anderen Titel - waere fuer einen Augenblick das alte zu
+  // sehen, bis das neue dekodiert ist.
+  cropPreview?.querySelector(":scope > .karten-bild")?.remove();
+  cropPreview?.classList.remove("has-thumb");
+  cropFinger.clear();
+  cropFingerAbstand = 0;
+  cropStage?.classList.remove("is-dragging");
+  cropStandZeigen("");
+  if (cropModal?.open) cropModal.close();
+  fertig?.(ergebnis);
+}
+
+function cropUebernehmen() {
+  // Deckend, mittig, ohne Zoom in jeder Form ist der Normalfall und wird nicht
+  // gespeichert - so bleibt die Ablage frei von Werten, die nichts aendern.
+  const gewaehlt = cropZustand?.ausschnitt || null;
+  cropSchliessen({ ok: true, ausschnitt: bildausschnittModul.normalisierenOderNull(gewaehlt) });
+}
+
+// Liefert { ok, ausschnitt }. `ok: false` heisst abgebrochen - und nur das
+// darf den Aufrufer davon abhalten, ueberhaupt zu speichern. Ein Ausschnitt,
+// der `null` ist, ist dagegen ein gueltiges Ergebnis: es bedeutet "wie immer",
+// also vollflaechig und mittig.
+//
+// `speichern` ist die Zwischenablage fuer den Knopf "Speichern": eine Funktion,
+// die den Ausschnitt sofort wegschreibt, ohne dass der Editor zugeht. Fehlt
+// sie, bleibt der Knopf ohne Wirkung und wird ausgeblendet.
+function bildAusschnittWaehlen(dataUrl, start, favorite = null, speichern = null) {
+  // Ohne Dialog (aelteres Chromium, fehlendes Modul) bleibt es bei dem, was
+  // schon galt. Ein Bild waehlen laesst sich dann trotzdem.
+  if (!cropModal?.showModal || !bildausschnittModul) {
+    return Promise.resolve({ ok: true, ausschnitt: start || null });
+  }
+
+  return new Promise((fertig) => {
+    const bild = new Image();
+    const oeffnen = (bildSeite) => {
+      cropZustand = {
+        bildSeite,
+        dataUrl,
+        favorite,
+        speichern,
+        haut: "",
+        gespeichert: true,
+        ausschnitt: bildausschnittModul.normalisieren(start || {}),
+        fertig
+      };
+      cropSave?.classList.toggle("is-hidden", !speichern);
+      cropStandZeigen("");
+      cropModal.showModal();
+      cropZeichnen();
+      // Der Dialog wird erst mit dem naechsten Bild gemessen, wie er dasteht.
+      // Einmal nachfassen, damit die Lupe von Anfang an die richtige ist -
+      // danach bleibt sie stehen, solange die Form dieselbe ist.
+      requestAnimationFrame(() => {
+        if (cropZustand) cropLupeSetzen(true);
+      });
+      window.setTimeout(() => cropApply.focus(), 0);
+    };
+    bild.onload = () => oeffnen(bild.naturalHeight > 0 ? bild.naturalWidth / bild.naturalHeight : 0);
+    // Ohne lesbares Bild gibt es nichts zuzuschneiden. Dann bleibt es bei dem,
+    // was vorher galt - der Aufrufer speichert trotzdem, nur eben ohne Lage.
+    bild.onerror = () => fertig({ ok: true, ausschnitt: start || null });
+    bild.src = dataUrl;
+  });
+}
+
 async function eigenesBildSetzen(favorite) {
   const bild = await bildAuswaehlen();
   if (!bild) return;
-  const ergebnis = await api.setFavoriteImage?.(favorite.id, bild).catch(() => null);
+  // Erst waehlen, dann formatieren. Wer hier abbricht, hat auch kein Bild
+  // gewaehlt - sonst haenge ein halb gesetztes Bild in der Ablage.
+  //
+  // "Speichern" im Editor legt Bild und Ausschnitt sofort ab, ohne den Dialog
+  // zu schliessen. Danach laesst sich die naechste Form einstellen und wieder
+  // speichern; der Aufrufer unten setzt am Ende nur noch denselben Stand.
+  const zwischenspeichern = async (lage) => {
+    const stand = await api.setFavoriteImage?.(favorite.id, bild, lage).catch(() => null);
+    if (!stand?.saved) return false;
+    favorites = stand.favorites || favorites;
+    renderFavorites();
+    renderHome();
+    renderLibraryViews();
+    return true;
+  };
+  const gewaehlt = await bildAusschnittWaehlen(bild, null, favorite, zwischenspeichern);
+  if (!gewaehlt.ok) return;
+  const ergebnis = await api.setFavoriteImage?.(favorite.id, bild, gewaehlt.ausschnitt).catch(() => null);
   if (!ergebnis?.saved) {
     showToast(ergebnis?.reason || "Bild konnte nicht gesetzt werden");
     return;
@@ -4429,6 +5370,36 @@ async function eigenesBildSetzen(favorite) {
   showToast(Number(ergebnis.entries) > 1
     ? "Eigenes Bild gesetzt — gilt überall für diesen Titel"
     : "Eigenes Bild gesetzt");
+}
+
+// Ein gespeichertes Bild noch einmal anders zuschneiden. Das Bild selbst wird
+// dabei nicht angefasst - es wandert nicht ueber die Bruecke und wird nicht
+// neu abgelegt, es aendern sich vier Zahlen.
+async function bildAusschnittBearbeiten(favorite) {
+  if (!favorite?.customThumbnail) return;
+  const zwischenspeichern = async (lage) => {
+    const stand = await api.setFavoriteImageCrop?.(favorite.id, lage).catch(() => null);
+    if (!stand?.saved) return false;
+    favorites = stand.favorites || favorites;
+    renderFavorites();
+    renderHome();
+    renderLibraryViews();
+    return true;
+  };
+  const gewaehlt = await bildAusschnittWaehlen(
+    favorite.customThumbnail, favorite.customThumbnailCrop || null, favorite, zwischenspeichern
+  );
+  if (!gewaehlt.ok) return;
+  const ergebnis = await api.setFavoriteImageCrop?.(favorite.id, gewaehlt.ausschnitt).catch(() => null);
+  if (!ergebnis?.saved) {
+    showToast(ergebnis?.reason || "Ausschnitt konnte nicht gespeichert werden");
+    return;
+  }
+  favorites = ergebnis.favorites || favorites;
+  renderFavorites();
+  renderHome();
+  renderLibraryViews();
+  showToast("Ausschnitt gespeichert");
 }
 
 async function eigenesBildEntfernen(favorite) {

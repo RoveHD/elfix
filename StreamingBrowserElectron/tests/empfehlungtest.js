@@ -495,6 +495,57 @@ const opt = (extra = {}) => ({ jetzt: JETZT, limit: 20, ...extra });
     b[0]?.grundTitel === "Seed A", `"${b[0]?.grundTitel}"`);
 }
 
+// --- 19. Reihenfolge der Entdeckungsseiten -----------------------------------
+//
+// Weiter unten soll mehr Erkundung stehen - aber oben darf sie die
+// Personalisierung nicht verdraengen, und kein Titel darf zweimal kommen.
+
+{
+  const liste = Array.from({ length: 800 }, (_, index) => ({ werkKey: "w" + index, rang: index }));
+  // Der Erkundungsmassstab ist hier absichtlich genau gegenlaeufig: was das
+  // Profil hinten sieht, steht bei der Erkundung vorn. So laesst sich der
+  // Anteil an den Raengen ablesen.
+  const geordnet = E.erkundungsReihenfolge(liste, (eintrag) => eintrag.rang);
+
+  pruefe("19a. Es geht kein Titel verloren", geordnet.length === liste.length, String(geordnet.length));
+  pruefe("19b. Und keiner kommt doppelt",
+    new Set(geordnet.map((e) => e.werkKey)).size === geordnet.length);
+
+  const anteil = (von, bis) => {
+    const teil = geordnet.slice(von, bis);
+    return teil.filter((e) => e.rang >= liste.length / 2).length / teil.length;
+  };
+  pruefe("19c. Ganz oben steht fast nur Personalisierung", anteil(0, 30) <= 0.15,
+    (100 * anteil(0, 30)).toFixed(0) + "%");
+  pruefe("19d. Die ersten Plaetze sind unangetastet",
+    geordnet.slice(0, 8).every((e, index) => e.rang === index),
+    geordnet.slice(0, 8).map((e) => e.rang).join(","));
+  pruefe("19e. In der Mitte waechst der Erkundungsanteil",
+    anteil(200, 230) > anteil(0, 30), (100 * anteil(200, 230)).toFixed(0) + "%");
+  pruefe("19f. Und weiter unten noch einmal",
+    anteil(400, 430) > anteil(200, 230), (100 * anteil(400, 430)).toFixed(0) + "%");
+  pruefe("19g. Aber nie ueber den Deckel hinaus", anteil(400, 430) <= 0.45,
+    (100 * anteil(400, 430)).toFixed(0) + "%");
+}
+
+{
+  const eine = [{ werkKey: "a" }];
+  pruefe("19h. Eine Liste mit einem Eintrag bleibt unveraendert",
+    E.erkundungsReihenfolge(eine, () => 1).length === 1);
+  pruefe("19i. Ohne Massstab wird nichts umsortiert",
+    E.erkundungsReihenfolge([{ werkKey: "a" }, { werkKey: "b" }], null)
+      .map((e) => e.werkKey).join("") === "ab");
+  pruefe("19j. Eine leere Liste bleibt leer", E.erkundungsReihenfolge([], () => 1).length === 0);
+}
+
+{
+  const doppelt = [{ werkKey: "a" }, { werkKey: "b" }, { werkKey: "a" }, { werkKey: "c" }];
+  const geordnet = E.erkundungsReihenfolge(doppelt, (e) => (e.werkKey === "c" ? 9 : 0));
+  pruefe("19k. Derselbe Werk-Schluessel erscheint nur einmal",
+    new Set(geordnet.map((e) => e.werkKey)).size === geordnet.length,
+    geordnet.map((e) => e.werkKey).join(","));
+}
+
 const fehler = pruefungen.filter((p) => !p).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

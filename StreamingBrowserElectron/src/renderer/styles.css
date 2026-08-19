@@ -272,6 +272,8 @@
 
 .home-dashboard-hero {
   position: relative;
+  isolation: isolate;
+  user-select: none;
   max-width: none;
   min-height: clamp(270px, 34vw, 420px);
   display: grid;
@@ -287,11 +289,66 @@
   box-shadow: var(--shadow);
 }
 
-.home-dashboard-hero.has-artwork {
-  background:
+/* --- Die Bildebene -----------------------------------------------------------
+
+   Ein eigenes Titelbild erscheint an vielen Stellen: als Karte in "Gemeinsam
+   weiterschauen", auf der Watchlist, in der Mediathek, bei den Empfehlungen -
+   und als breites Banner auf der Startseite. Alle benutzen diese eine
+   Komponente, und die Live-Vorschau im Zuschneide-Editor benutzt sie auch.
+   Nicht aus Sparsamkeit: zwei getrennte Regeln wuerden irgendwann auseinander
+   laufen, und dann zeigte der Editor einen anderen Ausschnitt als die Karte.
+
+   Die drei Variablen kommen aus shared/bildausschnitt.js. Warum die vier
+   Zeilen unten zusammen genau den gespeicherten Ausschnitt ergeben - und das
+   ohne zu wissen, wie breit die Karte gerade ist - steht dort ausfuehrlich. */
+.karten-bild {
+  position: absolute;
+  inset: 0;
+  /* Unter allem, was in der Karte steht - und trotzdem ueber ihrem eigenen
+     Farbverlauf. Genau dort sass das Bild frueher als Hintergrund, und genau
+     das ist der Grund fuer die negative Zahl: bei z-index 0 laege die
+     Bildebene ueber jedem Kind, das nicht selbst positioniert ist, und
+     verdeckte die Mitglieder einer Watchparty, ihre Knoepfe und die
+     Begruendung unter einer Empfehlung. Damit die Zahl nicht hinter die Karte
+     durchschlaegt, ist die Karte ein eigener Stapel (isolation: isolate). */
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  /* Gezogen wird an der Karte, nicht am Bild - sonst faenge der Browser den
+     Zug als eigenes Bildziehen ab. */
+  pointer-events: none;
+}
+
+.karten-bild img {
+  position: absolute;
+  display: block;
+  width: calc(var(--bild-zoom, 1) * 100%);
+  height: calc(var(--bild-zoom, 1) * 100%);
+  left: calc((1 - var(--bild-zoom, 1)) * 100% * var(--bild-x, 0.5));
+  top: calc((1 - var(--bild-zoom, 1)) * 100% * var(--bild-y, 0.5));
+  object-fit: cover;
+  object-position: calc(var(--bild-x, 0.5) * 100%) calc(var(--bild-y, 0.5) * 100%);
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Die Abdunklung liegt ueber dem Bild, damit Titel, Anbieter und Fortschritt
+   lesbar bleiben. Sie gehoert zur Bildebene und nicht zum Hintergrund der
+   Karte: ein Hintergrund wird von jedem Kind ueberdeckt, und das Bild ist
+   eines. Welcher Schleier es ist, entscheidet die Stelle - Karten dunkeln von
+   unten ab, das Banner zusaetzlich von links. */
+.karten-bild::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bild-schleier, linear-gradient(180deg, rgba(7, 10, 16, 0.05), rgba(7, 10, 16, 0.94)));
+}
+
+.home-dashboard-hero,
+.crop-preview.is-banner {
+  --bild-schleier:
     linear-gradient(90deg, rgba(5, 8, 13, 0.98) 0%, rgba(5, 8, 13, 0.66) 42%, rgba(5, 8, 13, 0.18) 100%),
-    linear-gradient(180deg, rgba(5, 8, 13, 0.05), rgba(5, 8, 13, 0.7)),
-    var(--hero-image) center / cover no-repeat;
+    linear-gradient(180deg, rgba(5, 8, 13, 0.05), rgba(5, 8, 13, 0.7));
 }
 
 .home-hero-content {
@@ -1660,6 +1717,13 @@ h1 {
 
 .favorite-card {
   position: relative;
+  /* Ein eigener Stapel, damit die Bildebene darin bleibt - siehe .karten-bild. */
+  isolation: isolate;
+  /* Eine Karte ist ein Knopf, kein Fliesstext. Ohne diese Zeile faengt jeder
+     Zug - beim Umsortieren in der Mediathek genauso wie beim Verschieben des
+     Bildes im Zuschneide-Editor - als Textmarkierung an: Titel, Anbieter und
+     Laufzeit stehen dann blau hinterlegt da, statt dass sich etwas bewegt. */
+  user-select: none;
   min-height: var(--favorite-card-height);
   border: 0;
   border-radius: var(--card-radius);
@@ -1690,10 +1754,11 @@ h1 {
   box-shadow: var(--shadow);
 }
 
-.favorite-card.has-thumb {
-  background-size: cover;
-  background-position: center;
-}
+/* Frueher stand hier das Bild als Hintergrund der Karte. Jetzt liegt es in
+   .karten-bild darueber - nur so laesst sich der Ausschnitt verschieben, ohne
+   dass irgendeine Stelle die Kartenbreite kennen muss. Der Farbverlauf der
+   Karte bleibt als Grund darunter stehen, fuer den Moment bis das Bild da
+   ist. */
 
 .favorite-card strong {
   position: relative;
@@ -4751,4 +4816,452 @@ input[type="color"] {
    Ebene - dauerhaft fuer alle waere teurer als das Problem. */
 #calendarGrid .favorite-card:hover {
   will-change: transform;
+}
+
+/* Die Fundstelle im Suchtreffer. Nur Farbe, kein eigener Kasten und kein
+   Abstand - sonst risse die Hervorhebung das Wort optisch auseinander, und
+   genau das war der gemeldete Fehler. */
+.search-result-card strong mark {
+  background: none;
+  color: var(--accent, #6ea8fe);
+  font-weight: inherit;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* --- "Mehr anzeigen" und die Entdeckungsseiten -----------------------------
+ *
+ * Der Knopf sitzt rechts im Reihenkopf und tritt erst hervor, wenn man ihn
+ * meint - eine Reihe hat ihren Titel als Hauptsache, nicht ihre Schaltflaeche.
+ */
+.row-more {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #dfe6f3;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 32px;
+  padding: 0 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.row-more:hover,
+.row-more:focus-visible {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+}
+
+.discovery-head {
+  align-items: flex-end;
+}
+
+.discovery-back {
+  margin-bottom: 10px;
+}
+
+.discovery-grid {
+  align-content: start;
+}
+
+/* Die Fusszeile traegt beides: die Skelette beim Nachladen und den Hinweis,
+ * wenn nichts mehr kommt oder etwas schiefging. */
+.discovery-foot {
+  margin-top: 18px;
+  min-height: 8px;
+}
+
+.discovery-skeletons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--favorite-card-min), 1fr));
+  gap: var(--card-gap);
+}
+
+.discovery-skeleton {
+  min-height: var(--favorite-card-height);
+  border-radius: var(--card-radius);
+  background: linear-gradient(100deg,
+    rgba(255, 255, 255, 0.05) 30%,
+    rgba(255, 255, 255, 0.11) 50%,
+    rgba(255, 255, 255, 0.05) 70%);
+  background-size: 220% 100%;
+  animation: discovery-schimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes discovery-schimmer {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discovery-skeleton { animation: none; }
+  .row-more { transition: none; }
+}
+
+/* Ein schmaler Balken, der laeuft, solange etwas laeuft.
+ *
+ * Skelettkarten allein reichen nicht: sie stehen still und sehen aus wie
+ * leere Karten, die eben so aussehen. Ein wandernder Balken sagt eindeutig,
+ * dass gerade gearbeitet wird - ohne den Platz einer Vollbildanzeige zu
+ * brauchen. Unbestimmt, weil ELFIX nicht weiss, wie viele Seiten der Anbieter
+ * noch hergibt; ein Prozentwert waere geraten. */
+.discovery-balken {
+  position: relative;
+  height: 3px;
+  margin: 0 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.discovery-balken::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32%;
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(var(--accent-rgb), 0.85) 45%,
+    rgba(255, 255, 255, 0.75) 70%,
+    transparent);
+  animation: discovery-lauf 1.15s ease-in-out infinite;
+}
+
+@keyframes discovery-lauf {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(420%); }
+}
+
+/* Ohne Bewegung bleibt ein ruhiger, aber sichtbarer Streifen stehen. */
+@media (prefers-reduced-motion: reduce) {
+  .discovery-balken::after {
+    animation: none;
+    width: 100%;
+    background: rgba(var(--accent-rgb), 0.5);
+  }
+}
+
+.discovery-hinweis {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px 0 6px;
+  color: rgba(223, 230, 243, 0.72);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* Der Beobachtungspunkt selbst ist unsichtbar - er steht nur da, damit das
+ * Nachladen anspringt, bevor der Nutzer das Ende sieht. */
+.discovery-sentinel {
+  height: 1px;
+}
+
+/* --- Titelhintergrund zuschneiden ----------------------------------------- */
+
+.crop-modal {
+  width: min(840px, calc(100vw - 32px));
+  margin: auto;
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  overflow: visible;
+}
+
+.crop-modal::backdrop {
+  background: rgba(4, 7, 12, 0.62);
+  backdrop-filter: blur(6px);
+}
+
+.crop-shell {
+  display: grid;
+  gap: 14px;
+  padding: 26px;
+  border-radius: calc(var(--radius) + 4px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background:
+    radial-gradient(circle at 88% -24%, rgba(var(--accent-rgb), 0.22), transparent 20rem),
+    linear-gradient(160deg, color-mix(in srgb, var(--bg-settings), #1d2635 32%), var(--bg-settings));
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.58);
+  animation: confirm-pop-in calc(170ms * var(--animation-speed)) ease both;
+}
+
+.crop-shell .eyebrow {
+  margin: 0;
+}
+
+.crop-shell h2 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+}
+
+.crop-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Links die Bedienung, rechts die Karte. Wird es eng, rutscht die Karte
+   darunter - beschrieben ist beides, und beides liest sich von oben nach
+   unten in derselben Reihenfolge. */
+.crop-body {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+/* Das Startbanner ist sehr breit und flach. In der schmalen rechten Spalte
+   waere es so klein, dass sich der Ausschnitt nicht mehr beurteilen liesse -
+   also bekommt es die ganze Breite, und die Bedienung rueckt darueber. */
+.crop-body.is-banner {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.crop-body.is-banner .crop-modes {
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+}
+
+.crop-body.is-banner .crop-controls {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.crop-body.is-banner .crop-tools {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* Das Banner ist flach: es fuellt die Breite der Buehne aus und braucht dann
+   nur einen Bruchteil ihrer Hoehe. Ohne diese Zeile staende darunter und
+   darueber ein Streifen Karomuster, der nichts zeigt. */
+.crop-body.is-banner .crop-stage {
+  height: 210px;
+}
+
+.crop-field-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.crop-controls {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.crop-tools {
+  display: grid;
+  gap: 8px;
+}
+
+.crop-stage-wrap {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+/* Die Buehne gibt der Karte einen Platz und ein Karomuster dahinter. Die
+   Groesse setzt der Editor an der Karte selbst - sie ist die echte
+   Kartengroesse der gewaehlten Form, damit auch Titel und Fortschritt in der
+   richtigen Groesse dastehen. */
+.crop-stage {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  /* Feste Hoehe, nicht bloss eine Mindesthoehe: die Karte darin liegt absolut
+     und traegt zur Hoehe nichts bei, waehrend der Dialog beim Oeffnen noch
+     einen Augenblick nachrueckt. Mit einer Mindesthoehe aendert sich die
+     Buehne dabei um ein paar Pixel - und die Karte, die sich nach ihr richtet,
+     wechselte kurz nach dem Aufgehen sichtbar ihre Groesse. */
+  height: 350px;
+  padding: 12px;
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background:
+    repeating-conic-gradient(rgba(255, 255, 255, 0.05) 0% 25%, transparent 0% 50%) 50% / 22px 22px;
+  touch-action: none;
+}
+
+/* Die Vorschau ist eine echte .favorite-card oder ein echtes
+   .home-dashboard-hero und erbt von dort alles: Rundung, Innenabstand,
+   Schriftgroessen, Fortschrittsbalken, Knoepfe. Hier stehen nur die paar
+   Dinge, die im Editor anders sein muessen.
+
+   Sie haengt absolut in der Buehne und nicht im Fluss: in der Form "Banner"
+   ist sie ueber zweitausend Pixel breit - das echte Startbanner - und wuerde
+   den Dialog sonst auseinanderdruecken. Verkleinert wird sie danach mit der
+   Lupe, wodurch Titel, Zeile und Knoepfe ihr Groessenverhaeltnis behalten. */
+.crop-preview {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  cursor: grab;
+  /* Erst in die Mitte, dann die Lupe. Das Rechteck auf dem Schirm traegt die
+     Lupe danach in sich - und weil der Zug in denselben Bildschirmpixeln
+     gemessen wird, bleibt "ein Pixel gezogen, ein Pixel bewegt" richtig. */
+  transform: translate(-50%, -50%) scale(var(--crop-lupe, 1));
+  min-height: 0;
+  max-width: none;
+  transition: none;
+}
+
+/* Die Knoepfe im Banner und die Punkte daneben sind Schaustuecke - ein Zug
+   darueber soll das Bild bewegen und nicht auf einem Knopf haengen bleiben. */
+.crop-preview .hero-actions,
+.crop-preview .hero-dots,
+.crop-preview .favorite-menu {
+  pointer-events: none;
+}
+
+/* Eine Karte waechst beim Ueberfahren ein Stueck. In der Vorschau darf sie das
+   nicht: sie wuerde unter dem Zeiger ihre Groesse wechseln, und dann bewegt
+   sich das Bild nicht mehr um die Strecke, die die Maus zurueckgelegt hat.
+   Wiederholt wird dabei die volle Angabe und nicht "transform: none" - die
+   Zentrierung und die Lupe stecken in derselben Eigenschaft und wuerden sonst
+   mit weggeworfen. */
+.crop-preview:hover,
+.crop-preview:focus-visible {
+  transform: translate(-50%, -50%) scale(var(--crop-lupe, 1));
+  filter: none;
+}
+
+.crop-stage.is-dragging .crop-preview {
+  cursor: grabbing;
+}
+
+.crop-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.crop-field {
+  display: grid;
+  gap: 8px;
+}
+
+.crop-field > strong {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.crop-modes {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.crop-modes button {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  text-align: left;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color calc(140ms * var(--animation-speed)) ease,
+    background calc(140ms * var(--animation-speed)) ease;
+}
+
+.crop-modes button small {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.crop-modes button:hover {
+  border-color: rgba(var(--accent-rgb), 0.55);
+}
+
+.crop-modes button.is-active {
+  border-color: rgba(var(--accent-rgb), 0.9);
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+.crop-zoom input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.crop-zoom span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.crop-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.crop-actions-gap {
+  flex: 1;
+}
+
+/* Kurze Rueckmeldung neben den Knoepfen - "Gespeichert", wenn der Knopf
+   gedrueckt wurde, und wieder weg, sobald etwas verschoben wird. */
+.crop-save-hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  opacity: 0;
+  transition: opacity calc(160ms * var(--animation-speed)) ease;
+}
+
+.crop-save-hint.is-sichtbar {
+  opacity: 1;
+}
+
+@media (max-width: 760px) {
+  .crop-shell {
+    padding: 20px;
+  }
+
+  /* Kein Platz nebeneinander: die Bedienung nach oben, die Karte darunter.
+     Die vier Formen stehen dann in zwei Reihen statt in einer Spalte. */
+  .crop-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .crop-modes {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .crop-tools {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .crop-modes button small {
+    display: none;
+  }
+
+  .crop-actions {
+    flex-wrap: wrap;
+  }
+
+  .crop-actions-gap {
+    display: none;
+  }
+
+  .crop-actions button {
+    flex: 1 1 auto;
+  }
 }

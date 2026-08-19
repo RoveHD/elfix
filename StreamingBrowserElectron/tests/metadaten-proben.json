@@ -1,0 +1,3815 @@
+{
+ "naruto": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Naruto",
+   "jahr": 2002,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 20,
+    "mal": 20
+   },
+   "titel": "Naruto",
+   "originalTitel": "NARUTO -ナルト-",
+   "altTitel": [
+    "NARUTO",
+    "Naruto",
+    "נארוטו"
+   ],
+   "art": "anime",
+   "jahr": 2002,
+   "bisJahr": 2007,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Comedy",
+    "Drama",
+    "Fantasy",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Ninja",
+     "rang": 98
+    },
+    {
+     "name": "Shounen",
+     "rang": 95
+    },
+    {
+     "name": "Coming of Age",
+     "rang": 89
+    },
+    {
+     "name": "Male Protagonist",
+     "rang": 88
+    },
+    {
+     "name": "Orphan",
+     "rang": 87
+    },
+    {
+     "name": "Super Power",
+     "rang": 85
+    },
+    {
+     "name": "Martial Arts",
+     "rang": 81
+    },
+    {
+     "name": "Found Family",
+     "rang": 80
+    },
+    {
+     "name": "Primarily Child Cast",
+     "rang": 77
+    },
+    {
+     "name": "Ensemble Cast",
+     "rang": 71
+    },
+    {
+     "name": "Slapstick",
+     "rang": 63
+    },
+    {
+     "name": "Bullying",
+     "rang": 63
+    },
+    {
+     "name": "Heterosexual",
+     "rang": 62
+    },
+    {
+     "name": "Anachronism",
+     "rang": 60
+    },
+    {
+     "name": "Unrequited Love",
+     "rang": 60
+    },
+    {
+     "name": "Travel",
+     "rang": 57
+    },
+    {
+     "name": "Battle Royale",
+     "rang": 55
+    },
+    {
+     "name": "Primarily Teen Cast",
+     "rang": 52
+    },
+    {
+     "name": "School",
+     "rang": 50
+    },
+    {
+     "name": "Assassins",
+     "rang": 49
+    },
+    {
+     "name": "LGBTQ+ Themes",
+     "rang": 47
+    },
+    {
+     "name": "Gender Bending",
+     "rang": 42
+    },
+    {
+     "name": "Love Triangle",
+     "rang": 40
+    },
+    {
+     "name": "Achronological Order",
+     "rang": 40
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "SEQUEL",
+     "id": 1735,
+     "titel": "Naruto: Shippuden"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 442,
+     "titel": "Naruto the Movie: Ninja Clash in the Land of Snow"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 594,
+     "titel": "Naruto: The Lost Story - Mission: Protect the Waterfall Village"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 761,
+     "titel": "NARUTO: Akaki Yotsuba no Clover wo Sagase"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 936,
+     "titel": "Naruto the Movie: Legend of the Stone of Gelel"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 1074,
+     "titel": "NARUTO: Narutimate Hero 3: Tsui ni Gekitotsu! Jounin VS Genin!! Musabetsu Dairansen Taikai Kaisai!!"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 2144,
+     "titel": "Naruto the Movie: Guardians of the Crescent Moon Kingdom"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 7367,
+     "titel": "NARUTO: THE CROSS ROADS"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 10659,
+     "titel": "Naruto, the Genie, and the Three Wishes, Believe It!"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 155348,
+     "titel": "ROAD OF NARUTO"
+    },
+    {
+     "art": "OTHER",
+     "id": 162561,
+     "titel": "NARUTO (Shinsaku Anime)"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "Studio Pierrot"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8,
+   "bewertungStimmen": 0,
+   "beliebtheit": 718718,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "shippuden": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Naruto Shippuden",
+   "jahr": 2007,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 1735,
+    "mal": 1735
+   },
+   "titel": "Naruto: Shippuden",
+   "originalTitel": "NARUTO -ナルト- 疾風伝",
+   "altTitel": [
+    "NARUTO: Shippuuden",
+    "Naruto: Shippuden",
+    "Naruto Shippuuden"
+   ],
+   "art": "anime",
+   "jahr": 2007,
+   "bisJahr": 2017,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Comedy",
+    "Drama",
+    "Fantasy",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Ninja",
+     "rang": 96
+    },
+    {
+     "name": "Shounen",
+     "rang": 92
+    },
+    {
+     "name": "Criminal Organization",
+     "rang": 90
+    },
+    {
+     "name": "Male Protagonist",
+     "rang": 89
+    },
+    {
+     "name": "Super Power",
+     "rang": 88
+    },
+    {
+     "name": "Orphan",
+     "rang": 83
+    },
+    {
+     "name": "Revenge",
+     "rang": 83
+    },
+    {
+     "name": "Martial Arts",
+     "rang": 82
+    },
+    {
+     "name": "Coming of Age",
+     "rang": 82
+    },
+    {
+     "name": "Conspiracy",
+     "rang": 78
+    },
+    {
+     "name": "Philosophy",
+     "rang": 75
+    },
+    {
+     "name": "Cultivation",
+     "rang": 70
+    },
+    {
+     "name": "Fugitive",
+     "rang": 68
+    },
+    {
+     "name": "Ensemble Cast",
+     "rang": 67
+    },
+    {
+     "name": "Military",
+     "rang": 60
+    },
+    {
+     "name": "Achronological Order",
+     "rang": 60
+    },
+    {
+     "name": "Swordplay",
+     "rang": 58
+    },
+    {
+     "name": "Anti-Hero",
+     "rang": 58
+    },
+    {
+     "name": "Anachronism",
+     "rang": 57
+    },
+    {
+     "name": "Travel",
+     "rang": 53
+    },
+    {
+     "name": "Unrequited Love",
+     "rang": 46
+    },
+    {
+     "name": "Shapeshifting",
+     "rang": 40
+    },
+    {
+     "name": "Slapstick",
+     "rang": 37
+    },
+    {
+     "name": "Gender Bending",
+     "rang": 30
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "PREQUEL",
+     "id": 20,
+     "titel": "Naruto"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 2472,
+     "titel": "Naruto Shippuden the Movie"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 4437,
+     "titel": "Naruto Shippuden the Movie: Bonds"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 6325,
+     "titel": "Naruto Shippuden the Movie: The Will of Fire"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 8246,
+     "titel": "Naruto Shippuden the Movie: The Lost Tower"
+    },
+    {
+     "art": "OTHER",
+     "id": 10075,
+     "titel": "NARUTO×UT"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 10589,
+     "titel": "Naruto Shippuden the Movie: Blood Prison"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 13667,
+     "titel": "Road to Ninja: Naruto the Movie"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 16870,
+     "titel": "The Last: Naruto the Movie"
+    },
+    {
+     "art": "OTHER",
+     "id": 4134,
+     "titel": "Naruto Shippuden: Konoha Gakuen - Special"
+    },
+    {
+     "art": "OTHER",
+     "id": 12979,
+     "titel": "NARUTO Spin-Off: Rock Lee & His Ninja Pals"
+    },
+    {
+     "art": "OTHER",
+     "id": 19511,
+     "titel": "NARUTO: Shippuuden - Sunny Side Battle!!!"
+    },
+    {
+     "art": "SEQUEL",
+     "id": 21579,
+     "titel": "Boruto: Naruto the Movie - The Day Naruto Became Hokage"
+    },
+    {
+     "art": "SEQUEL",
+     "id": 97938,
+     "titel": "Boruto: Naruto Next Generations"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 10686,
+     "titel": "NARUTO: Honoo no Chuunin Shiken! Naruto vs Konohamaru!!"
+    },
+    {
+     "art": "OTHER",
+     "id": 115105,
+     "titel": "Newsong"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 155348,
+     "titel": "ROAD OF NARUTO"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "Studio Pierrot"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8.2,
+   "bewertungStimmen": 0,
+   "beliebtheit": 604428,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "boruto": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Boruto Naruto Next Generations",
+   "jahr": 2017,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 97938,
+    "mal": 34566
+   },
+   "titel": "Boruto: Naruto Next Generations",
+   "originalTitel": "BORUTO-ボルト- NARUTO NEXT GENERATIONS",
+   "altTitel": [
+    "BORUTO: NARUTO NEXT GENERATIONS",
+    "Boruto: Naruto Next Generations",
+    "博人传 火影忍者新时代"
+   ],
+   "art": "anime",
+   "jahr": 2017,
+   "bisJahr": 2023,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Shounen",
+     "rang": 99
+    },
+    {
+     "name": "Ninja",
+     "rang": 96
+    },
+    {
+     "name": "Super Power",
+     "rang": 87
+    },
+    {
+     "name": "Male Protagonist",
+     "rang": 84
+    },
+    {
+     "name": "Primarily Child Cast",
+     "rang": 81
+    },
+    {
+     "name": "Swordplay",
+     "rang": 79
+    },
+    {
+     "name": "Battle Royale",
+     "rang": 79
+    },
+    {
+     "name": "Martial Arts",
+     "rang": 72
+    },
+    {
+     "name": "Anachronism",
+     "rang": 60
+    },
+    {
+     "name": "Episodic",
+     "rang": 25
+    },
+    {
+     "name": "Table Tennis",
+     "rang": 20
+    },
+    {
+     "name": "School",
+     "rang": 20
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "PREQUEL",
+     "id": 1735,
+     "titel": "Naruto: Shippuden"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 21220,
+     "titel": "Boruto: Naruto the Movie"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 100721,
+     "titel": "Boruto: Jump Festa 2016 Special"
+    },
+    {
+     "art": "SEQUEL",
+     "id": 165523,
+     "titel": "BORUTO: NARUTO NEXT GENERATIONS Part 2"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 21579,
+     "titel": "Boruto: Naruto the Movie - The Day Naruto Became Hokage"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "Studio Pierrot"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 5.7,
+   "bewertungStimmen": 0,
+   "beliebtheit": 223648,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "onepiece": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "One Piece",
+   "jahr": 1999,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 21,
+    "mal": 21
+   },
+   "titel": "ONE PIECE",
+   "originalTitel": "ONE PIECE",
+   "altTitel": [
+    "ONE PIECE",
+    "ワンピース",
+    "海贼王"
+   ],
+   "art": "anime",
+   "jahr": 1999,
+   "bisJahr": 0,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Comedy",
+    "Drama",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Pirates",
+     "rang": 98
+    },
+    {
+     "name": "Travel",
+     "rang": 94
+    },
+    {
+     "name": "Shounen",
+     "rang": 93
+    },
+    {
+     "name": "Ensemble Cast",
+     "rang": 93
+    },
+    {
+     "name": "Super Power",
+     "rang": 90
+    },
+    {
+     "name": "Found Family",
+     "rang": 88
+    },
+    {
+     "name": "Male Protagonist",
+     "rang": 83
+    },
+    {
+     "name": "Ships",
+     "rang": 81
+    },
+    {
+     "name": "Conspiracy",
+     "rang": 81
+    },
+    {
+     "name": "Slapstick",
+     "rang": 80
+    },
+    {
+     "name": "Prophecy",
+     "rang": 80
+    },
+    {
+     "name": "Politics",
+     "rang": 79
+    },
+    {
+     "name": "War",
+     "rang": 77
+    },
+    {
+     "name": "Dystopian",
+     "rang": 76
+    },
+    {
+     "name": "Fugitive",
+     "rang": 74
+    },
+    {
+     "name": "Crime",
+     "rang": 73
+    },
+    {
+     "name": "Lost Civilization",
+     "rang": 70
+    },
+    {
+     "name": "Swordplay",
+     "rang": 70
+    },
+    {
+     "name": "Monster Boy",
+     "rang": 66
+    },
+    {
+     "name": "Primarily Adult Cast",
+     "rang": 65
+    },
+    {
+     "name": "Shapeshifting",
+     "rang": 65
+    },
+    {
+     "name": "Cyborg",
+     "rang": 65
+    },
+    {
+     "name": "Food",
+     "rang": 65
+    },
+    {
+     "name": "Animals",
+     "rang": 64
+    },
+    {
+     "name": "Anti-Hero",
+     "rang": 64
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "SIDE_STORY",
+     "id": 466,
+     "titel": "One Piece: Defeat the Pirate Ganzack!"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 1094,
+     "titel": "One Piece: Umi no Heso no Daibouken-hen"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 1237,
+     "titel": "One Piece Special: Open Upon the Great Sea! A Father's Huge, HUGE Dream!"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 1238,
+     "titel": "One Piece Special: Protect! The Last Great Performance"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 2020,
+     "titel": "One Piece Special: The Detective Memoirs of Chief Straw Hat Luffy"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 2386,
+     "titel": "ONE PIECE: Yume no Soccer Ou!"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 2490,
+     "titel": "ONE PIECE: Mezase! Kaizoku Yakyuu Ou"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 12001,
+     "titel": "ONE PIECE 3D: Gekisou! Trap Coaster"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 16239,
+     "titel": "One Piece: Episode of Luffy - Hand Island Adventure"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 16468,
+     "titel": "ONE PIECE FILM: Z - GLORIOUS ISLAND"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 15323,
+     "titel": "ONE PIECE: Episode of Nami - Koukaishi no Namida to Nakama no Kizuna"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 19123,
+     "titel": "One Piece: Episode of Merry - The Tale of One More Friend"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 20835,
+     "titel": "One Piece 3D2Y: Overcome Ace’s Death! Luffy’s Vow to his Friends"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 21230,
+     "titel": "One Piece - Episode of Sabo: Bond of Three Brothers - A Miraculous Reunion and an Inherited Will"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 21485,
+     "titel": "One Piece: Adventure of Nebulandia"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 21831,
+     "titel": "One Piece: Heart of Gold"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 99302,
+     "titel": "One Piece: Episode of East Blue"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 459,
+     "titel": "ONE PIECE: The Movie"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 460,
+     "titel": "One Piece: Clockwork Island Adventure"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 461,
+     "titel": "One Piece: Chopper’s Kingdom on the Island of Strange Animals"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 462,
+     "titel": "One Piece The Movie: The Dead End Adventure"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 463,
+     "titel": "One Piece: The Curse of the Sacred Sword"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 464,
+     "titel": "One Piece: Baron Omatsuri and the Secret Island"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 465,
+     "titel": "One Piece: Mega Mecha Soldier of Karakuri Castle"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 2107,
+     "titel": "One Piece: The Desert Princess and the Pirates, Adventures in Alabasta"
+    },
+    {
+     "art": "SUMMARY",
+     "id": 3848,
+     "titel": "One Piece: Episode Of Chopper +: The Miracle Winter Cherry Blossom"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 4155,
+     "titel": "One Piece Film: Strong World"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 9999,
+     "titel": "One Piece 3D: Mugiwara Chase"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 12859,
+     "titel": "One Piece Film: Z"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 21335,
+     "titel": "One Piece Film: Gold"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "Toei Animation"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8.7,
+   "bewertungStimmen": 0,
+   "beliebtheit": 742370,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "hxh": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Hunter x Hunter",
+   "jahr": 2011,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 11061,
+    "mal": 11061
+   },
+   "titel": "Hunter x Hunter (2011)",
+   "originalTitel": "HUNTER×HUNTER (2011)",
+   "altTitel": [
+    "HUNTER×HUNTER (2011)",
+    "Hunter x Hunter (2011)",
+    "ハンター×ハンター"
+   ],
+   "art": "anime",
+   "jahr": 2011,
+   "bisJahr": 2014,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Shounen",
+     "rang": 95
+    },
+    {
+     "name": "Super Power",
+     "rang": 91
+    },
+    {
+     "name": "Male Protagonist",
+     "rang": 88
+    },
+    {
+     "name": "Travel",
+     "rang": 82
+    },
+    {
+     "name": "Ensemble Cast",
+     "rang": 80
+    },
+    {
+     "name": "Martial Arts",
+     "rang": 80
+    },
+    {
+     "name": "Philosophy",
+     "rang": 80
+    },
+    {
+     "name": "Primarily Male Cast",
+     "rang": 79
+    },
+    {
+     "name": "Anthropomorphism",
+     "rang": 76
+    },
+    {
+     "name": "Primarily Teen Cast",
+     "rang": 73
+    },
+    {
+     "name": "Coming of Age",
+     "rang": 71
+    },
+    {
+     "name": "Criminal Organization",
+     "rang": 70
+    },
+    {
+     "name": "Crime",
+     "rang": 68
+    },
+    {
+     "name": "Urban Fantasy",
+     "rang": 65
+    },
+    {
+     "name": "Environmental",
+     "rang": 65
+    },
+    {
+     "name": "Assassins",
+     "rang": 64
+    },
+    {
+     "name": "Gore",
+     "rang": 60
+    },
+    {
+     "name": "Anti-Hero",
+     "rang": 58
+    },
+    {
+     "name": "Mafia",
+     "rang": 56
+    },
+    {
+     "name": "Card Battle",
+     "rang": 54
+    },
+    {
+     "name": "Gangs",
+     "rang": 53
+    },
+    {
+     "name": "Shogi",
+     "rang": 53
+    },
+    {
+     "name": "Animals",
+     "rang": 51
+    },
+    {
+     "name": "Video Games",
+     "rang": 50
+    },
+    {
+     "name": "Board Game",
+     "rang": 45
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "SIDE_STORY",
+     "id": 13271,
+     "titel": "Hunter x Hunter: Phantom Rouge"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 136,
+     "titel": "Hunter x Hunter"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 137,
+     "titel": "Hunter x Hunter: Yorknew City"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 138,
+     "titel": "HUNTER×HUNTER: Greed Island"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 139,
+     "titel": "HUNTER×HUNTER: Greed Island Final"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 19951,
+     "titel": "Hunter x Hunter: The Last Mission"
+    },
+    {
+     "art": "OTHER",
+     "id": 99530,
+     "titel": "Just Awake"
+    },
+    {
+     "art": "CHARACTER",
+     "id": 9834,
+     "titel": "Level E"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "MADHOUSE"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8.9,
+   "bewertungStimmen": 0,
+   "beliebtheit": 833351,
+   "altersfreigabe": null,
+   "konfidenz": "HIGH"
+  }
+ },
+ "bleach": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Bleach",
+   "jahr": 2004,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 269,
+    "mal": 269
+   },
+   "titel": "Bleach",
+   "originalTitel": "BLEACH",
+   "altTitel": [
+    "BLEACH",
+    "Bleach",
+    "ブリーチ"
+   ],
+   "art": "anime",
+   "jahr": 2004,
+   "bisJahr": 2012,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Swordplay",
+     "rang": 96
+    },
+    {
+     "name": "Shounen",
+     "rang": 95
+    },
+    {
+     "name": "Super Power",
+     "rang": 94
+    },
+    {
+     "name": "Ghost",
+     "rang": 87
+    },
+    {
+     "name": "Male Protagonist",
+     "rang": 85
+    },
+    {
+     "name": "Exorcism",
+     "rang": 82
+    },
+    {
+     "name": "Urban Fantasy",
+     "rang": 80
+    },
+    {
+     "name": "Demons",
+     "rang": 80
+    },
+    {
+     "name": "Philosophy",
+     "rang": 79
+    },
+    {
+     "name": "Ensemble Cast",
+     "rang": 72
+    },
+    {
+     "name": "School",
+     "rang": 57
+    },
+    {
+     "name": "Kuudere",
+     "rang": 52
+    },
+    {
+     "name": "Achronological Order",
+     "rang": 50
+    },
+    {
+     "name": "Language Barrier",
+     "rang": 48
+    },
+    {
+     "name": "Ninja",
+     "rang": 48
+    },
+    {
+     "name": "Tanned Skin",
+     "rang": 46
+    },
+    {
+     "name": "Tomboy",
+     "rang": 40
+    },
+    {
+     "name": "Isekai",
+     "rang": 40
+    },
+    {
+     "name": "Centaur",
+     "rang": 38
+    },
+    {
+     "name": "Tsundere",
+     "rang": 26
+    },
+    {
+     "name": "Spearplay",
+     "rang": 20
+    },
+    {
+     "name": "Disability",
+     "rang": 20
+    },
+    {
+     "name": "Reverse Isekai",
+     "rang": 20
+    },
+    {
+     "name": "Body Horror",
+     "rang": 20
+    },
+    {
+     "name": "Guns",
+     "rang": 10
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "SIDE_STORY",
+     "id": 834,
+     "titel": "BLEACH: The Sealed Sword Frenzy"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 1686,
+     "titel": "Bleach the Movie: Memories of Nobody"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 2889,
+     "titel": "Bleach the Movie: The DiamondDust Rebellion"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 4835,
+     "titel": "Bleach the Movie: Fade to Black"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 8247,
+     "titel": "Bleach the Movie: Hell Verse"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 100719,
+     "titel": "BLEACH Colorful!: Gotei Juusan Yatai Daisakusen!"
+    },
+    {
+     "art": "SEQUEL",
+     "id": 116674,
+     "titel": "BLEACH: Thousand-Year Blood War"
+    },
+    {
+     "art": "OTHER",
+     "id": 116673,
+     "titel": "BURN THE WITCH"
+    },
+    {
+     "art": "ALTERNATIVE",
+     "id": 154037,
+     "titel": "BLEACH: memories in the rain"
+    },
+    {
+     "art": "OTHER",
+     "id": 182561,
+     "titel": "BLEACH 20th Anime Anniversary Official Trailer"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "Studio Pierrot"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 7.9,
+   "bewertungStimmen": 0,
+   "beliebtheit": 512615,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "fruitsbasket": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Fruits Basket",
+   "jahr": 2019,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 105334,
+    "mal": 38680
+   },
+   "titel": "Fruits Basket (2019)",
+   "originalTitel": "フルーツバスケット 1st Season",
+   "altTitel": [
+    "Fruits Basket: 1st Season",
+    "Fruits Basket (2019)",
+    "Fruits Basket (Zenpen)"
+   ],
+   "art": "anime",
+   "jahr": 2019,
+   "bisJahr": 2019,
+   "genres": [
+    "Comedy",
+    "Drama",
+    "Romance",
+    "Slice of Life",
+    "Supernatural"
+   ],
+   "tags": [
+    {
+     "name": "Found Family",
+     "rang": 99
+    },
+    {
+     "name": "Female Protagonist",
+     "rang": 92
+    },
+    {
+     "name": "Urban Fantasy",
+     "rang": 92
+    },
+    {
+     "name": "Family Life",
+     "rang": 91
+    },
+    {
+     "name": "Shoujo",
+     "rang": 87
+    },
+    {
+     "name": "Mythology",
+     "rang": 83
+    },
+    {
+     "name": "Coming of Age",
+     "rang": 82
+    },
+    {
+     "name": "Shapeshifting",
+     "rang": 78
+    },
+    {
+     "name": "Primarily Teen Cast",
+     "rang": 78
+    },
+    {
+     "name": "Ensemble Cast",
+     "rang": 77
+    },
+    {
+     "name": "Fairy Tale",
+     "rang": 76
+    },
+    {
+     "name": "Orphan",
+     "rang": 76
+    },
+    {
+     "name": "Rehabilitation",
+     "rang": 75
+    },
+    {
+     "name": "Curses",
+     "rang": 75
+    },
+    {
+     "name": "Animals",
+     "rang": 73
+    },
+    {
+     "name": "Delinquents",
+     "rang": 73
+    },
+    {
+     "name": "Episodic",
+     "rang": 68
+    },
+    {
+     "name": "School Club",
+     "rang": 68
+    },
+    {
+     "name": "Homeless",
+     "rang": 68
+    },
+    {
+     "name": "Heterosexual",
+     "rang": 67
+    },
+    {
+     "name": "Primarily Male Cast",
+     "rang": 66
+    },
+    {
+     "name": "Kuudere",
+     "rang": 66
+    },
+    {
+     "name": "Cohabitation",
+     "rang": 65
+    },
+    {
+     "name": "Slapstick",
+     "rang": 64
+    },
+    {
+     "name": "Male Harem",
+     "rang": 64
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "ALTERNATIVE",
+     "id": 120,
+     "titel": "Fruits Basket"
+    },
+    {
+     "art": "SEQUEL",
+     "id": 111762,
+     "titel": "Fruits Basket Season 2"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "TMS Entertainment"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8.2,
+   "bewertungStimmen": 0,
+   "beliebtheit": 308832,
+   "altersfreigabe": null,
+   "konfidenz": "HIGH"
+  }
+ },
+ "yurucamp": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Yuru Camp",
+   "jahr": 2018,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 98444,
+    "mal": 34798
+   },
+   "titel": "Laid-Back Camp",
+   "originalTitel": "ゆるキャン△",
+   "altTitel": [
+    "Yuru Camp△",
+    "Laid-Back Camp",
+    "Yurucamp"
+   ],
+   "art": "anime",
+   "jahr": 2018,
+   "bisJahr": 2018,
+   "genres": [
+    "Comedy",
+    "Slice of Life"
+   ],
+   "tags": [
+    {
+     "name": "Outdoor Activities",
+     "rang": 98
+    },
+    {
+     "name": "Camping",
+     "rang": 96
+    },
+    {
+     "name": "Iyashikei",
+     "rang": 95
+    },
+    {
+     "name": "Cute Girls Doing Cute Things",
+     "rang": 92
+    },
+    {
+     "name": "Primarily Female Cast",
+     "rang": 87
+    },
+    {
+     "name": "Female Protagonist",
+     "rang": 86
+    },
+    {
+     "name": "Rural",
+     "rang": 78
+    },
+    {
+     "name": "Food",
+     "rang": 73
+    },
+    {
+     "name": "Primarily Teen Cast",
+     "rang": 73
+    },
+    {
+     "name": "Educational",
+     "rang": 72
+    },
+    {
+     "name": "Travel",
+     "rang": 70
+    },
+    {
+     "name": "School Club",
+     "rang": 68
+    },
+    {
+     "name": "Kuudere",
+     "rang": 66
+    },
+    {
+     "name": "Seinen",
+     "rang": 66
+    },
+    {
+     "name": "Episodic",
+     "rang": 65
+    },
+    {
+     "name": "Mopeds",
+     "rang": 52
+    },
+    {
+     "name": "School",
+     "rang": 40
+    },
+    {
+     "name": "Animals",
+     "rang": 32
+    },
+    {
+     "name": "Yuri",
+     "rang": 32
+    },
+    {
+     "name": "Cycling",
+     "rang": 31
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [
+    {
+     "art": "SEQUEL",
+     "id": 104459,
+     "titel": "LAID-BACK CAMP SEASON2"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 101206,
+     "titel": "Yuru Camp△ OVA"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 104461,
+     "titel": "ROOM CAMP"
+    },
+    {
+     "art": "SIDE_STORY",
+     "id": 114981,
+     "titel": "ROOM CAMP: Saunas and Grub and Three-Wheeler Bikes"
+    }
+   ],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "C-Station"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8.1,
+   "bewertungStimmen": 0,
+   "beliebtheit": 165375,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "ironman": {
+  "anfrage": {
+   "art": "film",
+   "titel": "Iron Man",
+   "jahr": 2008,
+   "imdb": "tt0371746"
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 1726,
+    "imdb": "tt0371746"
+   },
+   "titel": "Iron Man",
+   "originalTitel": "Iron Man",
+   "altTitel": [
+    "Iron Man: el hombre de hierro",
+    "Hombre De Hierro",
+    "아이언 맨"
+   ],
+   "art": "film",
+   "jahr": 2008,
+   "bisJahr": 0,
+   "genres": [
+    "Action",
+    "Science Fiction",
+    "Abenteuer"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "middle east",
+    "kidnapping",
+    "superhero",
+    "arms dealer",
+    "based on comic",
+    "aftercreditsstinger",
+    "marvel cinematic universe (mcu)",
+    "aggressive",
+    "counterterrorism",
+    "antagonistic",
+    "bold"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 284054,
+     "titel": "Black Panther"
+    },
+    {
+     "id": 24428,
+     "titel": "Marvel's The Avengers"
+    },
+    {
+     "id": 566525,
+     "titel": "Shang-Chi and the Legend of the Ten Rings"
+    },
+    {
+     "id": 68721,
+     "titel": "Iron Man 3"
+    },
+    {
+     "id": 436270,
+     "titel": "Black Adam"
+    },
+    {
+     "id": 141052,
+     "titel": "Justice League"
+    },
+    {
+     "id": 609681,
+     "titel": "The Marvels"
+    },
+    {
+     "id": 100402,
+     "titel": "The Return of the First Avenger"
+    },
+    {
+     "id": 283995,
+     "titel": "Guardians of the Galaxy Vol. 2"
+    },
+    {
+     "id": 453395,
+     "titel": "Doctor Strange in the Multiverse of Madness"
+    },
+    {
+     "id": 10138,
+     "titel": "Iron Man 2"
+    },
+    {
+     "id": 1771,
+     "titel": "Captain America: The First Avenger"
+    }
+   ],
+   "sammlung": {
+    "id": 131292,
+    "titel": "Iron Man Filmreihe"
+   },
+   "studios": [
+    "Marvel Studios",
+    "Marvel Entertainment",
+    "Fairview Entertainment"
+   ],
+   "besetzung": [
+    "Robert Downey Jr.",
+    "Terrence Howard",
+    "Jeff Bridges",
+    "Gwyneth Paltrow",
+    "Leslie Bibb",
+    "Shaun Toub"
+   ],
+   "regie": [
+    "Jon Favreau"
+   ],
+   "autoren": [
+    "Mark Fergus",
+    "Hawk Ostby",
+    "Art Marcum",
+    "Matt Holloway"
+   ],
+   "bewertung": 7.664,
+   "bewertungStimmen": 28596,
+   "beliebtheit": 38.9673,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "ironman2": {
+  "anfrage": {
+   "art": "film",
+   "titel": "Iron Man 2",
+   "jahr": 2010,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 10138,
+    "imdb": "tt1228705"
+   },
+   "titel": "Iron Man 2",
+   "originalTitel": "Iron Man 2",
+   "altTitel": [
+    "Iron Man II",
+    "ไอรอน แมน 2 มหาประลัยคนเกราะเหล็ก",
+    "Hombre De Hierro 2"
+   ],
+   "art": "film",
+   "jahr": 2010,
+   "bisJahr": 0,
+   "genres": [
+    "Abenteuer",
+    "Action",
+    "Science Fiction"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "technology",
+    "superhero",
+    "malibu",
+    "based on comic",
+    "sequel",
+    "revenge",
+    "aftercreditsstinger",
+    "marvel cinematic universe (mcu)",
+    "break out"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 271110,
+     "titel": "The First Avenger: Civil War"
+    },
+    {
+     "id": 447365,
+     "titel": "Guardians of the Galaxy Vol. 3"
+    },
+    {
+     "id": 68721,
+     "titel": "Iron Man 3"
+    },
+    {
+     "id": 640146,
+     "titel": "Ant-Man and the Wasp: Quantumania"
+    },
+    {
+     "id": 283995,
+     "titel": "Guardians of the Galaxy Vol. 2"
+    },
+    {
+     "id": 609681,
+     "titel": "The Marvels"
+    },
+    {
+     "id": 100402,
+     "titel": "The Return of the First Avenger"
+    },
+    {
+     "id": 284054,
+     "titel": "Black Panther"
+    },
+    {
+     "id": 299536,
+     "titel": "Avengers: Infinity War"
+    },
+    {
+     "id": 453395,
+     "titel": "Doctor Strange in the Multiverse of Madness"
+    },
+    {
+     "id": 118340,
+     "titel": "Guardians of the Galaxy"
+    },
+    {
+     "id": 284053,
+     "titel": "Thor: Tag der Entscheidung"
+    }
+   ],
+   "sammlung": {
+    "id": 131292,
+    "titel": "Iron Man Filmreihe"
+   },
+   "studios": [
+    "Marvel Studios",
+    "Fairview Entertainment",
+    "Marvel Entertainment"
+   ],
+   "besetzung": [
+    "Robert Downey Jr.",
+    "Gwyneth Paltrow",
+    "Don Cheadle",
+    "Scarlett Johansson",
+    "Sam Rockwell",
+    "Mickey Rourke"
+   ],
+   "regie": [
+    "Jon Favreau"
+   ],
+   "autoren": [
+    "Justin Theroux"
+   ],
+   "bewertung": 6.855,
+   "bewertungStimmen": 22742,
+   "beliebtheit": 33.2451,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "ironman3": {
+  "anfrage": {
+   "art": "film",
+   "titel": "Iron Man 3",
+   "jahr": 2013,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 68721,
+    "imdb": "tt1300854"
+   },
+   "titel": "Iron Man 3",
+   "originalTitel": "Iron Man 3",
+   "altTitel": [
+    "Marvel's Iron Man 3",
+    "Залiзна людина 3",
+    "Caged Heat"
+   ],
+   "art": "film",
+   "jahr": 2013,
+   "bisJahr": 0,
+   "genres": [
+    "Action",
+    "Abenteuer",
+    "Science Fiction"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "california",
+    "war on terror",
+    "superhero",
+    "malibu",
+    "based on comic",
+    "sequel",
+    "tennessee",
+    "billionaire",
+    "aftercreditsstinger",
+    "marvel cinematic universe (mcu)",
+    "christmas",
+    "america"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 10138,
+     "titel": "Iron Man 2"
+    },
+    {
+     "id": 100402,
+     "titel": "The Return of the First Avenger"
+    },
+    {
+     "id": 640146,
+     "titel": "Ant-Man and the Wasp: Quantumania"
+    },
+    {
+     "id": 284054,
+     "titel": "Black Panther"
+    },
+    {
+     "id": 271110,
+     "titel": "The First Avenger: Civil War"
+    },
+    {
+     "id": 283995,
+     "titel": "Guardians of the Galaxy Vol. 2"
+    },
+    {
+     "id": 447365,
+     "titel": "Guardians of the Galaxy Vol. 3"
+    },
+    {
+     "id": 299536,
+     "titel": "Avengers: Infinity War"
+    },
+    {
+     "id": 609681,
+     "titel": "The Marvels"
+    },
+    {
+     "id": 24428,
+     "titel": "Marvel's The Avengers"
+    },
+    {
+     "id": 774752,
+     "titel": "The Guardians of the Galaxy Holiday Special"
+    },
+    {
+     "id": 284053,
+     "titel": "Thor: Tag der Entscheidung"
+    }
+   ],
+   "sammlung": {
+    "id": 131292,
+    "titel": "Iron Man Filmreihe"
+   },
+   "studios": [
+    "Marvel Studios"
+   ],
+   "besetzung": [
+    "Robert Downey Jr.",
+    "Gwyneth Paltrow",
+    "Don Cheadle",
+    "Guy Pearce",
+    "Rebecca Hall",
+    "Jon Favreau"
+   ],
+   "regie": [
+    "Shane Black"
+   ],
+   "autoren": [
+    "Drew Pearce",
+    "Shane Black"
+   ],
+   "bewertung": 6.934,
+   "bewertungStimmen": 23736,
+   "beliebtheit": 27.1249,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "avengers": {
+  "anfrage": {
+   "art": "film",
+   "titel": "The Avengers",
+   "jahr": 2012,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 24428,
+    "imdb": "tt0848228"
+   },
+   "titel": "Marvel's The Avengers",
+   "originalTitel": "The Avengers",
+   "altTitel": [
+    "Avengers Assemble",
+    "Avengers 3D",
+    "The Avengers 3D"
+   ],
+   "art": "film",
+   "jahr": 2012,
+   "bisJahr": 0,
+   "genres": [
+    "Science Fiction",
+    "Action",
+    "Abenteuer"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "new york city",
+    "superhero",
+    "shield",
+    "based on comic",
+    "alien invasion",
+    "superhero team",
+    "aftercreditsstinger",
+    "duringcreditsstinger",
+    "marvel cinematic universe (mcu)"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 284054,
+     "titel": "Black Panther"
+    },
+    {
+     "id": 118340,
+     "titel": "Guardians of the Galaxy"
+    },
+    {
+     "id": 127585,
+     "titel": "X-Men: Zukunft ist Vergangenheit"
+    },
+    {
+     "id": 100402,
+     "titel": "The Return of the First Avenger"
+    },
+    {
+     "id": 283995,
+     "titel": "Guardians of the Galaxy Vol. 2"
+    },
+    {
+     "id": 447365,
+     "titel": "Guardians of the Galaxy Vol. 3"
+    },
+    {
+     "id": 1771,
+     "titel": "Captain America: The First Avenger"
+    },
+    {
+     "id": 299536,
+     "titel": "Avengers: Infinity War"
+    },
+    {
+     "id": 436270,
+     "titel": "Black Adam"
+    },
+    {
+     "id": 640146,
+     "titel": "Ant-Man and the Wasp: Quantumania"
+    },
+    {
+     "id": 453395,
+     "titel": "Doctor Strange in the Multiverse of Madness"
+    },
+    {
+     "id": 609681,
+     "titel": "The Marvels"
+    }
+   ],
+   "sammlung": {
+    "id": 86311,
+    "titel": "Marvel's The Avengers Filmreihe"
+   },
+   "studios": [
+    "Marvel Studios"
+   ],
+   "besetzung": [
+    "Robert Downey Jr.",
+    "Chris Evans",
+    "Mark Ruffalo",
+    "Chris Hemsworth",
+    "Scarlett Johansson",
+    "Jeremy Renner"
+   ],
+   "regie": [
+    "Joss Whedon"
+   ],
+   "autoren": [
+    "Joss Whedon"
+   ],
+   "bewertung": 8.067,
+   "bewertungStimmen": 39281,
+   "beliebtheit": 77.5842,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "strange": {
+  "anfrage": {
+   "art": "film",
+   "titel": "Doctor Strange",
+   "jahr": 2016,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 284052,
+    "imdb": "tt1211837"
+   },
+   "titel": "Doctor Strange",
+   "originalTitel": "Doctor Strange",
+   "altTitel": [
+    "Marvel's Doctor Strange",
+    "마블 닥터 스트레인지",
+    "Doctor Extraño"
+   ],
+   "art": "film",
+   "jahr": 2016,
+   "bisJahr": 0,
+   "genres": [
+    "Fantasy",
+    "Abenteuer",
+    "Action"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "magic",
+    "superhero",
+    "training",
+    "based on comic",
+    "sorcerer",
+    "doctor",
+    "neurosurgeon",
+    "injury",
+    "wizard",
+    "aftercreditsstinger",
+    "duringcreditsstinger",
+    "marvel cinematic universe (mcu)",
+    "speculative",
+    "origin story",
+    "interdimensional travel",
+    "ambiguous",
+    "ambivalent"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 453395,
+     "titel": "Doctor Strange in the Multiverse of Madness"
+    },
+    {
+     "id": 284054,
+     "titel": "Black Panther"
+    },
+    {
+     "id": 76338,
+     "titel": "Thor - The Dark Kingdom"
+    },
+    {
+     "id": 566525,
+     "titel": "Shang-Chi and the Legend of the Ten Rings"
+    },
+    {
+     "id": 118340,
+     "titel": "Guardians of the Galaxy"
+    },
+    {
+     "id": 436270,
+     "titel": "Black Adam"
+    },
+    {
+     "id": 609681,
+     "titel": "The Marvels"
+    },
+    {
+     "id": 299536,
+     "titel": "Avengers: Infinity War"
+    },
+    {
+     "id": 10195,
+     "titel": "Thor"
+    },
+    {
+     "id": 616037,
+     "titel": "Thor: Love and Thunder"
+    },
+    {
+     "id": 640146,
+     "titel": "Ant-Man and the Wasp: Quantumania"
+    },
+    {
+     "id": 283995,
+     "titel": "Guardians of the Galaxy Vol. 2"
+    }
+   ],
+   "sammlung": {
+    "id": 618529,
+    "titel": "Doctor Strange Filmreihe"
+   },
+   "studios": [
+    "Marvel Studios"
+   ],
+   "besetzung": [
+    "Benedict Cumberbatch",
+    "Chiwetel Ejiofor",
+    "Rachel McAdams",
+    "Benedict Wong",
+    "Mads Mikkelsen",
+    "Tilda Swinton"
+   ],
+   "regie": [
+    "Scott Derrickson"
+   ],
+   "autoren": [
+    "Jon Spaihts",
+    "Scott Derrickson",
+    "C. Robert Cargill"
+   ],
+   "bewertung": 7.424,
+   "bewertungStimmen": 23740,
+   "beliebtheit": 35.0035,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "darkknight": {
+  "anfrage": {
+   "art": "film",
+   "titel": "The Dark Knight",
+   "jahr": 2008,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 155,
+    "imdb": "tt0468569"
+   },
+   "titel": "The Dark Knight",
+   "originalTitel": "The Dark Knight",
+   "altTitel": [
+    "Batman: The Dark Knight",
+    "배트맨 다크 나이트",
+    "Batman, Le Chevalier Noir"
+   ],
+   "art": "film",
+   "jahr": 2008,
+   "bisJahr": 0,
+   "genres": [
+    "Action",
+    "Krimi",
+    "Thriller"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "sadism",
+    "chaos",
+    "secret identity",
+    "crime fighter",
+    "superhero",
+    "anti hero",
+    "scarecrow",
+    "based on comic",
+    "vigilante",
+    "organized crime",
+    "tragic hero",
+    "anti villain",
+    "criminal mastermind",
+    "district attorney",
+    "super power",
+    "super villain",
+    "neo-noir",
+    "bold"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 268,
+     "titel": "Batman"
+    },
+    {
+     "id": 49026,
+     "titel": "The Dark Knight Rises"
+    },
+    {
+     "id": 272,
+     "titel": "Batman Begins"
+    },
+    {
+     "id": 414906,
+     "titel": "The Batman"
+    },
+    {
+     "id": 232842,
+     "titel": "The Flash"
+    },
+    {
+     "id": 69735,
+     "titel": "Batman: Year One"
+    },
+    {
+     "id": 408648,
+     "titel": "Batman und Harley Quinn"
+    },
+    {
+     "id": 242643,
+     "titel": "Batman: Assault on Arkham"
+    },
+    {
+     "id": 46529,
+     "titel": "Ich bin Nummer Vier"
+    },
+    {
+     "id": 5174,
+     "titel": "Rush Hour 3"
+    },
+    {
+     "id": 823625,
+     "titel": "Blacklight - Im Schatten des FBI"
+    },
+    {
+     "id": 5175,
+     "titel": "Rush Hour 2"
+    }
+   ],
+   "sammlung": {
+    "id": 263,
+    "titel": "The Dark Knight Filmreihe"
+   },
+   "studios": [
+    "Warner Bros. Pictures",
+    "Legendary Pictures",
+    "Syncopy",
+    "DC"
+   ],
+   "besetzung": [
+    "Christian Bale",
+    "Heath Ledger",
+    "Aaron Eckhart",
+    "Michael Caine",
+    "Maggie Gyllenhaal",
+    "Gary Oldman"
+   ],
+   "regie": [
+    "Christopher Nolan"
+   ],
+   "autoren": [
+    "Christopher Nolan",
+    "Jonathan Nolan"
+   ],
+   "bewertung": 8.534,
+   "bewertungStimmen": 36427,
+   "beliebtheit": 63.5235,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "titanic": {
+  "anfrage": {
+   "art": "film",
+   "titel": "Titanic",
+   "jahr": 1997,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 597,
+    "imdb": "tt0120338"
+   },
+   "titel": "Titanic",
+   "originalTitel": "Titanic",
+   "altTitel": [
+    "The Ship of Dreams",
+    "טיטאניק",
+    "Titanic 3D"
+   ],
+   "art": "film",
+   "jahr": 1997,
+   "bisJahr": 0,
+   "genres": [
+    "Drama",
+    "Liebesfilm"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "ship",
+    "soulmates",
+    "shipwreck",
+    "atlantic ocean",
+    "evacuation",
+    "iceberg",
+    "titanic",
+    "forbidden love",
+    "ocean liner",
+    "based on true story",
+    "rich woman poor man",
+    "tragedy",
+    "tragic love",
+    "historical fiction",
+    "class differences",
+    "love affair",
+    "historical event",
+    "sinking ship",
+    "rich snob",
+    "tragic romance",
+    "disaster movie",
+    "1910s"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 10971,
+     "titel": "Die letzte Nacht der Titanic"
+    },
+    {
+     "id": 16535,
+     "titel": "Der Untergang der Titanic"
+    },
+    {
+     "id": 66027,
+     "titel": "Liebende Frauen"
+    },
+    {
+     "id": 11036,
+     "titel": "Wie ein einziger Tag"
+    },
+    {
+     "id": 59709,
+     "titel": "Britannic"
+    },
+    {
+     "id": 429300,
+     "titel": "Die Farbe des Horizonts"
+    },
+    {
+     "id": 4922,
+     "titel": "Der seltsame Fall des Benjamin Button"
+    },
+    {
+     "id": 6003,
+     "titel": "Romeo und Julia"
+    },
+    {
+     "id": 8966,
+     "titel": "Twilight - Biss zum Morgengrauen"
+    },
+    {
+     "id": 503,
+     "titel": "Poseidon"
+    },
+    {
+     "id": 907,
+     "titel": "Doktor Schiwago"
+    },
+    {
+     "id": 30080,
+     "titel": "Das Narrenschiff"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Paramount Pictures",
+    "20th Century Fox",
+    "Lightstorm Entertainment"
+   ],
+   "besetzung": [
+    "Leonardo DiCaprio",
+    "Kate Winslet",
+    "Billy Zane",
+    "Kathy Bates",
+    "Frances Fisher",
+    "Gloria Stuart"
+   ],
+   "regie": [
+    "James Cameron"
+   ],
+   "autoren": [
+    "James Cameron"
+   ],
+   "bewertung": 7.901,
+   "bewertungStimmen": 27555,
+   "beliebtheit": 30.8367,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "got": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Game of Thrones",
+   "jahr": 2011,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 1399,
+    "imdb": "tt0944947"
+   },
+   "titel": "Game of Thrones",
+   "originalTitel": "Game of Thrones",
+   "altTitel": [
+    "Froni i shpatave",
+    "Գահերի Խաղը",
+    "El Juego de Tronos"
+   ],
+   "art": "serie",
+   "jahr": 2011,
+   "bisJahr": 2019,
+   "genres": [
+    "Sci-Fi & Fantasy",
+    "Drama",
+    "Action & Adventure"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "based on novel or book",
+    "kingdom",
+    "dragon",
+    "king",
+    "intrigue",
+    "fantasy world"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 71912,
+     "titel": "The Witcher"
+    },
+    {
+     "id": 62417,
+     "titel": "Emerald City - Die dunkle Welt von Oz"
+    },
+    {
+     "id": 7704,
+     "titel": "Legend of the Seeker"
+    },
+    {
+     "id": 106541,
+     "titel": "The Witcher: Blood Origin"
+    },
+    {
+     "id": 71914,
+     "titel": "Das Rad der Zeit"
+    },
+    {
+     "id": 90228,
+     "titel": "Dune: Prophecy"
+    },
+    {
+     "id": 63333,
+     "titel": "The Last Kingdom"
+    },
+    {
+     "id": 95839,
+     "titel": "Lisey's Story"
+    },
+    {
+     "id": 128839,
+     "titel": "La Brea"
+    },
+    {
+     "id": 76479,
+     "titel": "The Boys"
+    },
+    {
+     "id": 85273,
+     "titel": "NOS4A2"
+    },
+    {
+     "id": 83125,
+     "titel": "Cursed - Die Auserwählte"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Revolution Sun Studios",
+    "Television 360",
+    "Generator Entertainment",
+    "Bighead Littlehead",
+    "Grok! Television",
+    "HBO"
+   ],
+   "besetzung": [
+    "Peter Dinklage",
+    "Kit Harington",
+    "Nikolaj Coster-Waldau",
+    "Lena Headey",
+    "Emilia Clarke",
+    "Liam Cunningham"
+   ],
+   "regie": [],
+   "autoren": [
+    "David Benioff",
+    "D. B. Weiss"
+   ],
+   "bewertung": 8.469,
+   "bewertungStimmen": 27540,
+   "beliebtheit": 176.0046,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "hotd": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "House of the Dragon",
+   "jahr": 2022,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 94997,
+    "imdb": "tt11198330"
+   },
+   "titel": "House of the Dragon",
+   "originalTitel": "House of the Dragon",
+   "altTitel": [
+    "Дом дракона",
+    "La Maison du Dragon / House of the Dragon",
+    "龙之家族"
+   ],
+   "art": "serie",
+   "jahr": 2022,
+   "bisJahr": 2026,
+   "genres": [
+    "Sci-Fi & Fantasy",
+    "Drama",
+    "Action & Adventure"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "based on novel or book",
+    "kingdom",
+    "prequel",
+    "dysfunctional family",
+    "knight",
+    "dragon",
+    "king",
+    "fantasy world",
+    "dark fantasy",
+    "epic battle",
+    "power struggle",
+    "power madness",
+    "grimdark"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 1399,
+     "titel": "Game of Thrones"
+    },
+    {
+     "id": 71912,
+     "titel": "The Witcher"
+    },
+    {
+     "id": 118956,
+     "titel": "DOTA: Dragon's Blood"
+    },
+    {
+     "id": 90802,
+     "titel": "Sandman"
+    },
+    {
+     "id": 71914,
+     "titel": "Das Rad der Zeit"
+    },
+    {
+     "id": 7704,
+     "titel": "Legend of the Seeker"
+    },
+    {
+     "id": 63333,
+     "titel": "The Last Kingdom"
+    },
+    {
+     "id": 62417,
+     "titel": "Emerald City - Die dunkle Welt von Oz"
+    },
+    {
+     "id": 224372,
+     "titel": "A Knight of the Seven Kingdoms"
+    },
+    {
+     "id": 219543,
+     "titel": "Creature Commandos"
+    },
+    {
+     "id": 97333,
+     "titel": "Twilight of the Gods"
+    },
+    {
+     "id": 106541,
+     "titel": "The Witcher: Blood Origin"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "HBO",
+    "Bastard Sword",
+    "1:26 Pictures",
+    "GRRM"
+   ],
+   "besetzung": [
+    "Matt Smith",
+    "Emma D'Arcy",
+    "Olivia Cooke",
+    "James Norton",
+    "Steve Toussaint",
+    "Fabien Frankel"
+   ],
+   "regie": [],
+   "autoren": [
+    "George R.R. Martin",
+    "Ryan Condal"
+   ],
+   "bewertung": 8.386,
+   "bewertungStimmen": 6986,
+   "beliebtheit": 318.2955,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "witcher": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "The Witcher",
+   "jahr": 2019,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 71912,
+    "imdb": "tt5180504"
+   },
+   "titel": "The Witcher",
+   "originalTitel": "The Witcher",
+   "altTitel": [
+    "გრძნეული"
+   ],
+   "art": "serie",
+   "jahr": 2019,
+   "bisJahr": 2025,
+   "genres": [
+    "Sci-Fi & Fantasy",
+    "Drama",
+    "Action & Adventure"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "based on novel or book",
+    "monster",
+    "mutant",
+    "magic",
+    "mutation",
+    "fantasy world",
+    "dark fantasy"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 90802,
+     "titel": "Sandman"
+    },
+    {
+     "id": 1399,
+     "titel": "Game of Thrones"
+    },
+    {
+     "id": 7704,
+     "titel": "Legend of the Seeker"
+    },
+    {
+     "id": 219543,
+     "titel": "Creature Commandos"
+    },
+    {
+     "id": 62417,
+     "titel": "Emerald City - Die dunkle Welt von Oz"
+    },
+    {
+     "id": 71914,
+     "titel": "Das Rad der Zeit"
+    },
+    {
+     "id": 85720,
+     "titel": "Shadow and Bone - Legenden der Grisha"
+    },
+    {
+     "id": 67861,
+     "titel": "Midnight, Texas"
+    },
+    {
+     "id": 85273,
+     "titel": "NOS4A2"
+    },
+    {
+     "id": 106541,
+     "titel": "The Witcher: Blood Origin"
+    },
+    {
+     "id": 60556,
+     "titel": "Bitten"
+    },
+    {
+     "id": 128839,
+     "titel": "La Brea"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Sean Daniel Company",
+    "Platige Image",
+    "Hivemind",
+    "Little Schmidt Productions",
+    "Platige Films"
+   ],
+   "besetzung": [
+    "Liam Hemsworth",
+    "Anya Chalotra",
+    "Freya Allan",
+    "Joey Batey",
+    "Eamon Farren",
+    "Mimî M. Khayisa"
+   ],
+   "regie": [],
+   "autoren": [
+    "Lauren Schmidt Hissrich"
+   ],
+   "bewertung": 7.897,
+   "bewertungStimmen": 6847,
+   "beliebtheit": 47.8791,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "lastkingdom": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "The Last Kingdom",
+   "jahr": 2015,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 63333,
+    "imdb": "tt4179452"
+   },
+   "titel": "The Last Kingdom",
+   "originalTitel": "The Last Kingdom",
+   "altTitel": [
+    "Sonuncu Krallıq",
+    "Последното кралство",
+    "O Último Reino"
+   ],
+   "art": "serie",
+   "jahr": 2015,
+   "bisJahr": 2022,
+   "genres": [
+    "Action & Adventure",
+    "Drama",
+    "War & Politics"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "based on novel or book",
+    "vikings (norsemen)",
+    "royalty",
+    "historical fiction",
+    "king",
+    "historical",
+    "historical drama",
+    "costume drama",
+    "saxons",
+    "northumbria",
+    "9th century",
+    "dark",
+    "gritty",
+    "period piece",
+    "sword and sandal",
+    "action",
+    "adventure",
+    "violent",
+    "middle ages"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 44217,
+     "titel": "Vikings"
+    },
+    {
+     "id": 116135,
+     "titel": "Vikings: Valhalla"
+    },
+    {
+     "id": 73117,
+     "titel": "Knightfall"
+    },
+    {
+     "id": 1399,
+     "titel": "Game of Thrones"
+    },
+    {
+     "id": 272418,
+     "titel": "Robin Hood"
+    },
+    {
+     "id": 235685,
+     "titel": "The Pendragon Cycle: Rise of the Merlin"
+    },
+    {
+     "id": 7704,
+     "titel": "Legend of the Seeker"
+    },
+    {
+     "id": 47665,
+     "titel": "Black Sails"
+    },
+    {
+     "id": 99737,
+     "titel": "The Winter King"
+    },
+    {
+     "id": 120911,
+     "titel": "The Terminal List - Die Abschussliste"
+    },
+    {
+     "id": 219760,
+     "titel": "The Terminal List: Dark Wolf"
+    },
+    {
+     "id": 70215,
+     "titel": "The White Princess"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Carnival Films",
+    "BBC Two",
+    "BBC America"
+   ],
+   "besetzung": [
+    "Alexander Dreymon",
+    "Eliza Butterworth",
+    "Mark Rowley",
+    "Ruby Hartley",
+    "James Northcote",
+    "Arnas Fedaravičius"
+   ],
+   "regie": [],
+   "autoren": [
+    "Stephen Butchard"
+   ],
+   "bewertung": 8.258,
+   "bewertungStimmen": 2020,
+   "beliebtheit": 51.7666,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "vikings": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Vikings",
+   "jahr": 2013,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 44217,
+    "imdb": "tt2306299"
+   },
+   "titel": "Vikings",
+   "originalTitel": "Vikings",
+   "altTitel": [
+    "Vikings",
+    "Vikingos"
+   ],
+   "art": "serie",
+   "jahr": 2013,
+   "bisJahr": 2020,
+   "genres": [
+    "Action & Adventure",
+    "Drama",
+    "War & Politics"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "scandinavia",
+    "vikings (norsemen)",
+    "royalty",
+    "historical fiction",
+    "king",
+    "battle",
+    "historical",
+    "middle ages (476-1453)",
+    "dark ages",
+    "norse mythology",
+    "historical drama",
+    "warrior",
+    "8th century",
+    "period piece",
+    "violence",
+    "sword and sandal",
+    "exciting",
+    "action",
+    "antagonistic",
+    "violent"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 116135,
+     "titel": "Vikings: Valhalla"
+    },
+    {
+     "id": 63333,
+     "titel": "The Last Kingdom"
+    },
+    {
+     "id": 1399,
+     "titel": "Game of Thrones"
+    },
+    {
+     "id": 240459,
+     "titel": "Spartacus: Das Haus Ashur"
+    },
+    {
+     "id": 7704,
+     "titel": "Legend of the Seeker"
+    },
+    {
+     "id": 73117,
+     "titel": "Knightfall"
+    },
+    {
+     "id": 120911,
+     "titel": "The Terminal List - Die Abschussliste"
+    },
+    {
+     "id": 47665,
+     "titel": "Black Sails"
+    },
+    {
+     "id": 2321,
+     "titel": "The Unit - Eine Frage der Ehre"
+    },
+    {
+     "id": 235685,
+     "titel": "The Pendragon Cycle: Rise of the Merlin"
+    },
+    {
+     "id": 106541,
+     "titel": "The Witcher: Blood Origin"
+    },
+    {
+     "id": 272418,
+     "titel": "Robin Hood"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Shaw Media",
+    "World 2000 Entertainment",
+    "Take 5 Productions"
+   ],
+   "besetzung": [
+    "Alex Høgh Andersen",
+    "Jordan Patrick Smith",
+    "Marco Ilsø",
+    "Peter Franzén",
+    "Georgia Hirst",
+    "Danila Kozlovsky"
+   ],
+   "regie": [],
+   "autoren": [
+    "Michael Hirst"
+   ],
+   "bewertung": 8.1,
+   "bewertungStimmen": 7788,
+   "beliebtheit": 119.6452,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "friends": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Friends",
+   "jahr": 1994,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 1668,
+    "imdb": "tt0108778"
+   },
+   "titel": "Friends",
+   "originalTitel": "Friends",
+   "altTitel": [
+    "老友记",
+    "Venner",
+    "חברים"
+   ],
+   "art": "serie",
+   "jahr": 1994,
+   "bisJahr": 2004,
+   "genres": [
+    "Komödie"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "new york city",
+    "roommates",
+    "friendship",
+    "cafe",
+    "apartment building",
+    "group of friends",
+    "manhattan, new york city",
+    "sitcom",
+    "young adult",
+    "searching for love",
+    "apartment",
+    "best friends"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 4454,
+     "titel": "Will & Grace"
+    },
+    {
+     "id": 1100,
+     "titel": "How I Met Your Mother"
+    },
+    {
+     "id": 39331,
+     "titel": "Apartment 23"
+    },
+    {
+     "id": 33,
+     "titel": "Hallo Holly"
+    },
+    {
+     "id": 1400,
+     "titel": "Seinfeld"
+    },
+    {
+     "id": 39340,
+     "titel": "2 Broke Girls"
+    },
+    {
+     "id": 1964,
+     "titel": "Die Jeffersons"
+    },
+    {
+     "id": 40505,
+     "titel": "The Exes"
+    },
+    {
+     "id": 4238,
+     "titel": "King of Queens"
+    },
+    {
+     "id": 284725,
+     "titel": "Not Suitable for Work"
+    },
+    {
+     "id": 1938,
+     "titel": "227"
+    },
+    {
+     "id": 1869,
+     "titel": "What's Happening!!"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Warner Bros. Television",
+    "Bright/Kauffman/Crane Productions"
+   ],
+   "besetzung": [
+    "Jennifer Aniston",
+    "Courteney Cox",
+    "Lisa Kudrow",
+    "Matt LeBlanc",
+    "Matthew Perry",
+    "David Schwimmer"
+   ],
+   "regie": [],
+   "autoren": [
+    "Marta Kauffman",
+    "David Crane"
+   ],
+   "bewertung": 8.414,
+   "bewertungStimmen": 9302,
+   "beliebtheit": 145.8108,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "korra": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Die Legende von Korra",
+   "jahr": 2012,
+   "imdb": "tt1695360"
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 33880,
+    "imdb": "tt1695360"
+   },
+   "titel": "Die Legende von Korra",
+   "originalTitel": "The Legend of Korra",
+   "altTitel": [
+    "Avatar: A Lenda de Korra",
+    "Avatar: Die Legende von Korra",
+    "Avatar - Die Legende von Korra"
+   ],
+   "art": "serie",
+   "jahr": 2012,
+   "bisJahr": 2014,
+   "genres": [
+    "Animation",
+    "Action & Adventure",
+    "Sci-Fi & Fantasy"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "buddhism",
+    "martial arts",
+    "asia",
+    "friendship",
+    "romance",
+    "steampunk",
+    "coming of age",
+    "spirituality",
+    "female protagonist",
+    "spirit",
+    "spin off",
+    "fantasy world",
+    "political corruption",
+    "anime inspired"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 246,
+     "titel": "Avatar - Der Herr der Elemente"
+    },
+    {
+     "id": 79732,
+     "titel": "She-Ra und die Rebellen-Prinzessinnen"
+    },
+    {
+     "id": 15804,
+     "titel": "Batman: The Brave and the Bold"
+    },
+    {
+     "id": 60879,
+     "titel": "Halo Legends"
+    },
+    {
+     "id": 604,
+     "titel": "Teen Titans"
+    },
+    {
+     "id": 61175,
+     "titel": "Steven Universe"
+    },
+    {
+     "id": 63181,
+     "titel": "Marvel's Guardians of the Galaxy"
+    },
+    {
+     "id": 84200,
+     "titel": "Die Liga der Gerechten"
+    },
+    {
+     "id": 46974,
+     "titel": "Max Steel"
+    },
+    {
+     "id": 4616,
+     "titel": "Xena"
+    },
+    {
+     "id": 138503,
+     "titel": "Der freundliche Spider-Man aus der Nachbarschaft"
+    },
+    {
+     "id": 2826,
+     "titel": "Dragon Booster"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Pierrot",
+    "Nickelodeon Animation Studio",
+    "Studio Mir",
+    "Ginormous Madman"
+   ],
+   "besetzung": [
+    "Janet Varney",
+    "David Faustino",
+    "P.J. Byrne",
+    "Seychelle Gabriel",
+    "J.K. Simmons",
+    "Dee Bradley Baker"
+   ],
+   "regie": [],
+   "autoren": [
+    "Bryan Konietzko",
+    "Michael Dante DiMartino"
+   ],
+   "bewertung": 8.2,
+   "bewertungStimmen": 2402,
+   "beliebtheit": 45.6347,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "avatar": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Avatar - Der Herr der Elemente",
+   "jahr": 2005,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 246,
+    "imdb": "tt0417299"
+   },
+   "titel": "Avatar - Der Herr der Elemente",
+   "originalTitel": "Avatar: The Last Airbender",
+   "altTitel": [
+    "Avatar: De Legende van Aang",
+    "Avatar - A Lenda de Aang",
+    "Avatar - The Last Airbender"
+   ],
+   "art": "serie",
+   "jahr": 2005,
+   "bisJahr": 2008,
+   "genres": [
+    "Animation",
+    "Action & Adventure",
+    "Sci-Fi & Fantasy"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "saving the world",
+    "monk",
+    "martial arts",
+    "asia",
+    "magic",
+    "affectation",
+    "villain",
+    "child hero",
+    "reincarnation",
+    "friendship",
+    "honor",
+    "destiny",
+    "wonder",
+    "hilarious",
+    "awestruck",
+    "exhilarated",
+    "anime inspired"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 33880,
+     "titel": "Die Legende von Korra"
+    },
+    {
+     "id": 138503,
+     "titel": "Der freundliche Spider-Man aus der Nachbarschaft"
+    },
+    {
+     "id": 94810,
+     "titel": "Adventure Time: Ferne Länder"
+    },
+    {
+     "id": 129959,
+     "titel": "Kung Fu Panda: Der Drachenritter"
+    },
+    {
+     "id": 240,
+     "titel": "Jackie Chan Adventures"
+    },
+    {
+     "id": 15804,
+     "titel": "Batman: The Brave and the Bold"
+    },
+    {
+     "id": 234721,
+     "titel": "Masters of the Universe: Revolution"
+    },
+    {
+     "id": 84200,
+     "titel": "Die Liga der Gerechten"
+    },
+    {
+     "id": 604,
+     "titel": "Teen Titans"
+    },
+    {
+     "id": 38693,
+     "titel": "LEGO Ninjago: Meister des Spinjitzu"
+    },
+    {
+     "id": 127635,
+     "titel": "Spidey und seine Super Freunde"
+    },
+    {
+     "id": 3809,
+     "titel": "Yin Yang Yo!"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Nickelodeon Animation Studio",
+    "JM Animation",
+    "DR Movie",
+    "Moi Animation",
+    "Nickelodeon Productions"
+   ],
+   "besetzung": [
+    "Zach Tyler Eisen",
+    "Mae Whitman",
+    "Jack De Sena",
+    "Dante Basco",
+    "Michaela Jill Murphy",
+    "Dee Bradley Baker"
+   ],
+   "regie": [],
+   "autoren": [
+    "Michael Dante DiMartino",
+    "Bryan Konietzko"
+   ],
+   "bewertung": 8.778,
+   "bewertungStimmen": 5051,
+   "beliebtheit": 30.8563,
+   "altersfreigabe": null,
+   "konfidenz": "HIGH"
+  }
+ },
+ "paw": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "PAW Patrol",
+   "jahr": 2013,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 57532,
+    "imdb": "tt3121722"
+   },
+   "titel": "Paw Patrol: Helfer auf vier Pfoten",
+   "originalTitel": "PAW Patrol",
+   "altTitel": [
+    "Patrulla e putrave",
+    "Köməyə tələsən itlər",
+    "Psići u ophodnji"
+   ],
+   "art": "serie",
+   "jahr": 2013,
+   "bisJahr": 2026,
+   "genres": [
+    "Animation",
+    "Kids"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "rescue mission",
+    "dog",
+    "rescue team",
+    "cartoon dog",
+    "cachorros",
+    "3d animation",
+    "patrulla",
+    "paw"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 1453,
+     "titel": "Krypto, der Superhund"
+    },
+    {
+     "id": 11982,
+     "titel": "Max & Ruby"
+    },
+    {
+     "id": 18352,
+     "titel": "Garfield"
+    },
+    {
+     "id": 47480,
+     "titel": "Die Tom und Jerry Show"
+    },
+    {
+     "id": 82728,
+     "titel": "Bluey"
+    },
+    {
+     "id": 3934,
+     "titel": "Micky Maus Wunderhaus"
+    },
+    {
+     "id": 4274,
+     "titel": "Tom & Jerry Kids"
+    },
+    {
+     "id": 117162,
+     "titel": "Ein Lustiges Hundeleben"
+    },
+    {
+     "id": 70823,
+     "titel": "Micky und die flinken Flitzer"
+    },
+    {
+     "id": 127635,
+     "titel": "Spidey und seine Super Freunde"
+    },
+    {
+     "id": 10867,
+     "titel": "Wonder Pets!"
+    },
+    {
+     "id": 618,
+     "titel": "Brandy & Mr. Whiskers"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "Spin Master",
+    "TVOKids",
+    "Nickelodeon Productions"
+   ],
+   "besetzung": [
+    "Majestie lewton ll"
+   ],
+   "regie": [],
+   "autoren": [
+    "Keith Chapman"
+   ],
+   "bewertung": 6.988,
+   "bewertungStimmen": 816,
+   "beliebtheit": 105.0469,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "teentitans": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Teen Titans",
+   "jahr": 2003,
+   "imdb": ""
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 604,
+    "imdb": "tt0343314"
+   },
+   "titel": "Teen Titans",
+   "originalTitel": "Teen Titans",
+   "altTitel": [
+    "أبطال التايتنز"
+   ],
+   "art": "serie",
+   "jahr": 2003,
+   "bisJahr": 2006,
+   "genres": [
+    "Animation",
+    "Action & Adventure",
+    "Sci-Fi & Fantasy"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "superhero",
+    "based on comic",
+    "superhero team",
+    "teen superhero",
+    "anime inspired"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 127635,
+     "titel": "Spidey und seine Super Freunde"
+    },
+    {
+     "id": 84200,
+     "titel": "Die Liga der Gerechten"
+    },
+    {
+     "id": 33623,
+     "titel": "Die Avengers - Die mächtigsten Helden der Welt"
+    },
+    {
+     "id": 40044,
+     "titel": "Hulk und das Team S.M.A.S.H."
+    },
+    {
+     "id": 15804,
+     "titel": "Batman: The Brave and the Bold"
+    },
+    {
+     "id": 34391,
+     "titel": "Der ultimative Spider-Man"
+    },
+    {
+     "id": 59427,
+     "titel": "Avengers - Gemeinsam unbesiegbar!"
+    },
+    {
+     "id": 4028,
+     "titel": "Legion of Super Heroes"
+    },
+    {
+     "id": 63181,
+     "titel": "Marvel's Guardians of the Galaxy"
+    },
+    {
+     "id": 68837,
+     "titel": "Justice League Action"
+    },
+    {
+     "id": 1300,
+     "titel": "The Avengers: United They Stand"
+    },
+    {
+     "id": 138503,
+     "titel": "Der freundliche Spider-Man aus der Nachbarschaft"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "DC",
+    "Warner Bros. Animation"
+   ],
+   "besetzung": [
+    "Greg Cipes",
+    "Scott Menville",
+    "Khary Payton",
+    "Tara Strong",
+    "Hynden Walch"
+   ],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 8.346,
+   "bewertungStimmen": 1351,
+   "beliebtheit": 30.1153,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "tombraiderking": {
+  "anfrage": {
+   "art": "anime",
+   "titel": "Tomb Raider King",
+   "jahr": 2026
+  },
+  "form": {
+   "quelle": "anilist",
+   "externeIds": {
+    "anilist": 184356,
+    "mal": 63316
+   },
+   "titel": "Tomb Raider King",
+   "originalTitel": "도굴왕",
+   "altTitel": [
+    "Dogul Wang",
+    "Tomb Raider King",
+    "Toukutsuou"
+   ],
+   "art": "anime",
+   "jahr": 2026,
+   "bisJahr": 0,
+   "genres": [
+    "Action",
+    "Adventure",
+    "Fantasy"
+   ],
+   "tags": [
+    {
+     "name": "Male Protagonist",
+     "rang": 79
+    },
+    {
+     "name": "Anti-Hero",
+     "rang": 79
+    },
+    {
+     "name": "Magic",
+     "rang": 79
+    },
+    {
+     "name": "Gods",
+     "rang": 79
+    },
+    {
+     "name": "Surreal Comedy",
+     "rang": 79
+    },
+    {
+     "name": "Demons",
+     "rang": 79
+    },
+    {
+     "name": "Dungeon",
+     "rang": 60
+    },
+    {
+     "name": "CGI",
+     "rang": 26
+    },
+    {
+     "name": "Urban Fantasy",
+     "rang": 20
+    },
+    {
+     "name": "Urban",
+     "rang": 20
+    }
+   ],
+   "schlagworte": [],
+   "relationen": [],
+   "aehnlich": [],
+   "sammlung": null,
+   "studios": [
+    "STUDIO EEK"
+   ],
+   "besetzung": [],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 6.6,
+   "bewertungStimmen": 0,
+   "beliebtheit": 29647,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ },
+ "laracroft": {
+  "anfrage": {
+   "art": "serie",
+   "titel": "Tomb Raider: The Legend of Lara Croft",
+   "jahr": 2024
+  },
+  "form": {
+   "quelle": "tmdb",
+   "externeIds": {
+    "tmdb": 117830,
+    "imdb": "tt13930822"
+   },
+   "titel": "Tomb Raider: The Legend of Lara Croft",
+   "originalTitel": "Tomb Raider: The Legend of Lara Croft",
+   "altTitel": [
+    "Tomb Raider: A Lenda de Lara Croft",
+    "Расхитительница гробниц Легенда о Ларе Крофт",
+    "Расхитительница гробниц: Легенда о Ларе Крофт"
+   ],
+   "art": "serie",
+   "jahr": 2024,
+   "bisJahr": 2025,
+   "genres": [
+    "Action & Adventure",
+    "Animation"
+   ],
+   "tags": [],
+   "schlagworte": [
+    "treasure hunt",
+    "based on video game",
+    "adventurer",
+    "loving",
+    "chinese mythology",
+    "traumatic past",
+    "admiring",
+    "amused"
+   ],
+   "relationen": [],
+   "aehnlich": [
+    {
+     "id": 83125,
+     "titel": "Cursed - Die Auserwählte"
+    },
+    {
+     "id": 106480,
+     "titel": "Fena: Pirate Princess"
+    },
+    {
+     "id": 219080,
+     "titel": "The Mighty Nein"
+    },
+    {
+     "id": 195530,
+     "titel": "Tekken: Bloodline"
+    },
+    {
+     "id": 235930,
+     "titel": "Devil May Cry"
+    },
+    {
+     "id": 133903,
+     "titel": "Hit-Monkey"
+    },
+    {
+     "id": 106541,
+     "titel": "The Witcher: Blood Origin"
+    },
+    {
+     "id": 229711,
+     "titel": "The Bondsman - Kopfgeldjäger des Teufels"
+    },
+    {
+     "id": 84469,
+     "titel": "Cowboy Bebop"
+    },
+    {
+     "id": 88118,
+     "titel": "Blood & Treasure"
+    },
+    {
+     "id": 62413,
+     "titel": "Killjoys"
+    },
+    {
+     "id": 65988,
+     "titel": "Wynonna Earp"
+    }
+   ],
+   "sammlung": null,
+   "studios": [
+    "dj2 Entertainment",
+    "Legendary Television",
+    "Crystal Dynamics",
+    "Powerhouse Animation Studios",
+    "Panda Burrow",
+    "Story Kitchen"
+   ],
+   "besetzung": [
+    "Hayley Atwell",
+    "Karen Fukuhara",
+    "O-T Fagbenle",
+    "Allen Maldonado"
+   ],
+   "regie": [],
+   "autoren": [],
+   "bewertung": 6.4,
+   "bewertungStimmen": 156,
+   "beliebtheit": 16.39,
+   "altersfreigabe": null,
+   "konfidenz": "EXACT"
+  }
+ }
+}

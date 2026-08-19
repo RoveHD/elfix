@@ -23,22 +23,40 @@
 
 const titel = require("./titel");
 const begruendung = require("./begruendung");
+const metadaten = require("./metadaten");
 
 // --- Gewichte ----------------------------------------------------------------
 //
 // Keine Kennzahl darf allein entscheiden - mit einer Ausnahme: der naechste
 // ungesehene Teil einer Reihe, die gerade laeuft. Das ist der einzige Fall,
 // in dem sich die Absicht des Nutzers wirklich sicher ablesen laesst.
+//
+// Die Werte mit `extern` im Namen stuetzen sich auf TMDB und AniList (siehe
+// metadaten.js). Sie ersetzen nichts: wo die Anbieterdaten schon eine Reihe
+// belegen, bestaetigen sie nur - und wo externe Daten fehlen, faellt die
+// Rechnung auf genau das zurueck, was sie vorher war.
 const G = {
   naechsterTeil: 1.6,
+  // Eine belegte Fortsetzung aus einer Datenbank ist dasselbe Ereignis wie ein
+  // erkannter naechster Teil, nur besser belegt. Sie liegt knapp darunter,
+  // weil die Reihenerkennung zusaetzlich weiss, welchen Teil der Nutzer
+  // wirklich fertig hat - das weiss TMDB nicht.
+  externRelation: 1.5,
   reihe: 0.9,
+  externInhalt: 0.85,
   aehnlichLautAnbieter: 0.8,
   sitzung: 0.7,
   verlauf: 0.6,
   genre: 0.5,
   watchlist: 0.35,
+  externEmpfehlung: 0.35,
+  externPersonen: 0.3,
   titel: 0.3,
-  neuheit: 0.15
+  neuheit: 0.15,
+  // Bewertung und Bekanntheit entscheiden nichts. Sie trennen Titel, die
+  // ansonsten gleichauf liegen - mehr Gewicht waere eine Rangliste und keine
+  // Empfehlung.
+  externRang: 0.1
 };
 
 // Halbwertszeit des Interesses. Was vor einem Monat lief, zaehlt halb so viel.
@@ -152,6 +170,10 @@ function profilBauen(verlauf, jetzt = Date.now()) {
       frische: aktualitaet(roh, jetzt),
       wann: zeitpunkt(roh),
       genres: inhaltsTags((roh.genres || []).map((g) => (typeof g === "string" ? g : g?.key))),
+      // Was TMDB oder AniList zu diesem Titel sagen - oder nichts. Ein Verlauf
+      // ohne externe Daten ergibt dieselben Empfehlungen wie vorher.
+      extern: externBrauchbar(roh.extern) ? roh.extern : null,
+      externKeys: externSchluessel(roh.extern),
       typ: String(roh.type || "").toLowerCase(),
       art: String(roh.art || "").toLowerCase(),
       abgebrochen: istAbgebrochen(roh, jetzt),
@@ -497,6 +519,382 @@ const ART_WERKE = 3;
 // statt einer laufenden Reihe.
 const WIEDER_TAGE = 45;
 
+// Dasselbe fuer die externe Inhaltsaehnlichkeit - und hier steht eine an
+// echten Daten nachgemessene Zahl, keine geschaetzte.
+//
+// Gezaehlt werden nur *spezifische* Merkmale: Tags und Schlagworte, nicht die
+// breiten Genres der Datenbank. Der Grund ist derselbe wie beim Anbieter -
+// dass zwei Anime beide "action" und "fantasy" sind, verbindet sie nicht.
+// Gemessen an 62 zugeordneten Kandidaten eines echten Profils trennt genau
+// diese Zaehlung sauber: bei drei und mehr gemeinsamen Tags stehen Paare wie
+// "Dororo / Demon Slayer" (demons, revenge, curses, swordplay, orphan) und
+// "Gate / How Not to Summon a Demon Lord" (isekai, magic, elf); bei zwei
+// stehen "Red River / Demon Spirit Seed Manual" (isekai, magic) und
+// "A Knight of the Seven Kingdoms / Die Legende von Korra" (spin off,
+// fantasy world) - beides Zufallstreffer.
+//
+// Die alte Fassung zaehlte alle Merkmale gleich und verlangte eine Deckung von
+// 0.25. Das war strukturell zu streng: die Deckung ist ein Jaccard-Wert, und
+// externe Merkmalsmengen sind gross (13 bis 30 Eintraege). Von 62 Kandidaten
+// nahm die Regel genau einen - bei 20, die drei und mehr spezifische Merkmale
+// teilen.
+const EXTERN_GEMEINSAM = 3;
+const EXTERN_DECKUNG = 0.15;
+// Und trotzdem: ein Titel erklaert nur dann etwas, wenn er sich vom naechsten
+// abhebt. 1.25 verlangte dabei mehr, als bei einem Verlauf aus zwoelf
+// aehnlichen Titeln je erreichbar ist - dort liegen die besten Seeds
+// naturgemaess dicht beieinander, ohne dass einer davon falsch waere.
+const EXTERN_VORSPRUNG = 1.1;
+
+// --- Externe Daten: was sie belegen und was nicht ----------------------------
+//
+// TMDB und AniList liefern etwas, das die Anbieterseiten nicht haben: belegte
+// Beziehungen zwischen zwei Werken. Genau darum geht es hier - nicht um mehr
+// Genres, sondern um den Unterschied zwischen "sieht aehnlich aus" und "ist
+// die Fortsetzung".
+//
+// Was getrennt bleibt, weil es verschiedene Dinge sind:
+//
+//   Relation     AniList sagt: Naruto -> SEQUEL -> Naruto: Shippuden. Das ist
+//                eine Aussage ueber die Werke, nicht ueber ihr Publikum.
+//   Sammlung     TMDB fuehrt Iron Man und Iron Man 2 unter derselben Kennung
+//                (131292). Fuer Serien gibt es dieses Feld nicht - nachgesehen:
+//                Game of Thrones und House of the Dragon haben keine.
+//   Aehnlich     TMDBs eigene Empfehlungsliste. Ein Hinweis, mehr nicht: auf
+//                der Iron-Man-Seite steht auch Black Adam, und der gehoert
+//                weder zur Reihe noch zum Universum.
+//   Inhalt       Tags (AniList, gewichtet) und Schlagworte (TMDB). Hier
+//                entsteht die Aehnlichkeit, die kein Titelvergleich findet.
+//   Personen     Besetzung, Regie, Autoren, Studio.
+//
+// Diese fuenf werden nie zusammengeworfen. Wer aus einer TMDB-Empfehlung eine
+// Reihe macht, behauptet etwas, das in den Daten nicht steht.
+//
+// Und die Gegenprobe: eine Zuordnung, der nicht zu trauen ist, darf gar nichts
+// tragen. Deshalb steht vor jedem starken Signal eine Konfidenzhuerde.
+
+// Ab dieser Stufe darf eine Zuordnung eine Beziehung belegen. Darunter koennte
+// die Beziehung zu einem ganz anderen Werk gehoeren.
+const EXTERN_BEZIEHUNG_MIN = 3; // HIGH
+// Fuer blosse Inhaltsaehnlichkeit reicht weniger: trifft es das falsche Werk,
+// entsteht daraus ein schwaches Signal, keine falsche Aussage.
+const EXTERN_INHALT_MIN = 2; // MEDIUM
+// AniList gibt jedem Tag einen Rang - wie viele Nutzer ihn fuer zutreffend
+// halten. Was darunter liegt, ist Randnotiz und wuerde die Aehnlichkeit nur
+// verrauschen.
+const EXTERN_TAG_RANG_MIN = 50;
+
+function externStufe(extern) {
+  return metadaten.rang(extern?.konfidenz);
+}
+
+function externBrauchbar(extern) {
+  return Boolean(extern) && externStufe(extern) >= EXTERN_INHALT_MIN;
+}
+
+function externName(wert) {
+  return String(wert || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Alles, was ein Werk inhaltlich beschreibt, als eine Liste von Schluesseln.
+//
+// Zwei Toepfe, nicht drei:
+//
+//   "s:"  Sachmerkmale - AniLists Tags und TMDBs Schlagworte zusammen. Beide
+//         beschreiben denselben Gegenstand ("martial arts", "isekai",
+//         "swordplay", "superhero", "kaiju"), nur fuehrt sie eben je eine
+//         Datenbank. Nachgezaehlt am Cache dieser Installation: 61 Begriffe
+//         kommen wortgleich in beiden vor. Sie getrennt zu halten hiess, dass
+//         ein Anime aus dem Verlauf mit keiner Serie und keinem Film je etwas
+//         gemeinsam haben konnte - die beiden Reihen "Serien fuer dich" und
+//         "Filme fuer dich" hatten damit gar keine Chance auf einen externen
+//         Grund.
+//
+//   "g:"  Genres der Datenbank. Die bleiben getrennt gefuehrt und zaehlen
+//         nicht als Beleg: "Action" bei AniList und "Action & Adventure" bei
+//         TMDB sind zwei Taxonomien, und breit sind sie beide.
+function externSchluessel(extern) {
+  if (!externBrauchbar(extern)) return [];
+  const keys = [];
+  for (const genre of extern.genres || []) {
+    const name = externName(genre);
+    if (name) keys.push("g:" + name);
+  }
+  for (const tag of extern.tags || []) {
+    if ((Number(tag?.rang) || 0) < EXTERN_TAG_RANG_MIN) continue;
+    const name = externName(tag?.name);
+    if (name) keys.push("s:" + name);
+  }
+  for (const wort of extern.schlagworte || []) {
+    const name = externName(wort);
+    if (name) keys.push("s:" + name);
+  }
+  return [...new Set(keys)];
+}
+
+// Wie AniList seine Beziehungen benennt - und was davon eine Reihe ist.
+//
+// Nicht aufgefuehrt und damit ohne Wirkung: SUMMARY und COMPILATION (eine
+// Zusammenfassung dessen, was man gerade gesehen hat, ist keine Empfehlung),
+// ADAPTATION und SOURCE (das Werk in einem anderen Medium - ELFIX zeigt keine
+// Mangas), CHARACTER (nur eine gemeinsame Figur).
+const RELATION_ART = new Map(Object.entries({
+  SEQUEL: "fortsetzung",
+  PREQUEL: "vorgaenger",
+  SIDE_STORY: "reihe",
+  SPIN_OFF: "reihe",
+  PARENT: "reihe",
+  ALTERNATIVE: "reihe",
+  OTHER: "reihe"
+}));
+
+const UMGEKEHRT = { fortsetzung: "vorgaenger", vorgaenger: "fortsetzung", reihe: "reihe" };
+
+// Wie stark zaehlt eine Beziehung ihrer Art nach? Die Fortsetzung ist das,
+// wonach jemand als Naechstes sucht. Die Vorgeschichte ist derselbe Stoff,
+// aber niemand hat danach gefragt; ein Ableger noch weniger.
+const BEZIEHUNG_WERT = { fortsetzung: 1, vorgaenger: 0.75, reihe: 0.6 };
+
+// Besteht zwischen zwei Werken eine belegte Beziehung? Zwei Wege fuehren
+// dorthin, und beide brauchen auf beiden Seiten eine sichere Zuordnung.
+function beziehungZwischen(kandidat, saat) {
+  if (externStufe(kandidat) < EXTERN_BEZIEHUNG_MIN || externStufe(saat) < EXTERN_BEZIEHUNG_MIN) return null;
+
+  // 1. AniList nennt die Beziehung selbst - verglichen wird ueber die Kennung,
+  //    nie ueber den Titel. Ein Titelvergleich waere genau die Unsicherheit,
+  //    die hier abgeloest werden soll.
+  const kandidatId = Number(kandidat.externeIds?.anilist) || 0;
+  const saatId = Number(saat.externeIds?.anilist) || 0;
+  if (kandidatId && saatId && kandidatId !== saatId) {
+    for (const rel of saat.relationen || []) {
+      if (rel.id !== kandidatId) continue;
+      const art = RELATION_ART.get(rel.art);
+      if (art) return { art, quelle: "anilist", belegt: rel.art, naehe: 1 };
+    }
+    // Andersherum steht dieselbe Beziehung aus der anderen Blickrichtung:
+    // fuehrt der Kandidat die Saat als PREQUEL, ist er ihre Fortsetzung.
+    for (const rel of kandidat.relationen || []) {
+      if (rel.id !== saatId) continue;
+      const art = RELATION_ART.get(rel.art);
+      if (art) return { art: UMGEKEHRT[art], quelle: "anilist", belegt: rel.art, naehe: 1 };
+    }
+  }
+
+  // 2. TMDB fuehrt Filme einer Reihe unter einer gemeinsamen Sammlung. Eine
+  //    Reihenfolge steht dort nicht - die einzige Ordnung, die die Daten
+  //    hergeben, ist das Erscheinungsjahr. Deshalb faellt der Wert mit dem
+  //    Abstand: nach Iron Man kommt Iron Man 2, nicht Iron Man 3.
+  const sammlung = kandidat.sammlung;
+  if (sammlung && saat.sammlung && sammlung.id === saat.sammlung.id) {
+    const abstand = kandidat.jahr && saat.jahr ? kandidat.jahr - saat.jahr : 0;
+    const naehe = 1 / (1 + Math.max(0, Math.abs(abstand) - 2) * 0.15);
+    if (abstand > 0) return { art: "fortsetzung", quelle: "tmdb", sammlung, naehe, abstand };
+    if (abstand < 0) return { art: "vorgaenger", quelle: "tmdb", sammlung, naehe, abstand };
+    return { art: "reihe", quelle: "tmdb", sammlung, naehe: 1, abstand: 0 };
+  }
+  return null;
+}
+
+// Fuehrt eine der beiden Datenbanken das andere Werk in ihrer eigenen
+// Empfehlungsliste? Das ist eine fremde Meinung, keine Beziehung - und wird
+// entsprechend schwach gewichtet. Zeigen beide aufeinander, wiegt es mehr.
+function empfehlungZwischen(kandidat, saat) {
+  if (externStufe(kandidat) < EXTERN_INHALT_MIN || externStufe(saat) < EXTERN_INHALT_MIN) return 0;
+  const kandidatId = Number(kandidat.externeIds?.tmdb || kandidat.externeIds?.anilist) || 0;
+  const saatId = Number(saat.externeIds?.tmdb || saat.externeIds?.anilist) || 0;
+  if (!kandidatId || !saatId || kandidat.quelle !== saat.quelle) return 0;
+  const hin = (saat.aehnlich || []).some((eintrag) => eintrag.id === kandidatId);
+  const zurueck = (kandidat.aehnlich || []).some((eintrag) => eintrag.id === saatId);
+  if (hin && zurueck) return 1;
+  return hin || zurueck ? 0.6 : 0;
+}
+
+// Gemeinsame Personen und Studios. Getrennt gefuehrt, weil sie
+// Verschiedenes bedeuten: derselbe Hauptdarsteller ist ein Grund, dasselbe
+// Studio kaum einer - Studio Pierrot hat Naruto und Bleach gemacht, aber auch
+// dreissig andere Serien.
+function personenZwischen(kandidat, saat) {
+  if (externStufe(kandidat) < EXTERN_INHALT_MIN || externStufe(saat) < EXTERN_INHALT_MIN) return null;
+  const schnitt = (links, rechts) => {
+    const menge = new Set((rechts || []).map(externName));
+    return (links || []).filter((wert) => menge.has(externName(wert)));
+  };
+  const besetzung = schnitt(kandidat.besetzung, saat.besetzung);
+  const regie = schnitt(kandidat.regie, saat.regie);
+  const autoren = schnitt(kandidat.autoren, saat.autoren);
+  const studios = schnitt(kandidat.studios, saat.studios);
+  const wert = Math.max(
+    regie.length ? 0.7 : 0,
+    autoren.length ? 0.6 : 0,
+    besetzung.length >= 2 ? 0.6 : (besetzung.length ? 0.35 : 0),
+    studios.length ? 0.25 : 0
+  );
+  if (!wert) return null;
+  return { wert, besetzung, regie, autoren, studios };
+}
+
+// Was von einer externen Bewertung uebrig bleibt, wenn man ihr nur so weit
+// traut, wie sie belegt ist.
+//
+// TMDB nennt eine Stimmenzahl; unter ein paar hundert Stimmen sagt der
+// Durchschnitt nichts - "8.5 aus vier Stimmen" ist keine Aussage. AniList
+// nennt gar keine Stimmenzahl (siehe metadaten.js im Relay), dort tritt die
+// Zahl der Nutzer an ihre Stelle, die den Titel ueberhaupt in ihrer Liste
+// haben.
+const STIMMEN_GENUG = 500;
+const ANILIST_NUTZER_GENUG = 10000;
+
+function rangWert(extern) {
+  if (!externBrauchbar(extern)) return { wert: 0, bewertung: null, beliebtheit: 0, belegt: false };
+  const beliebtheit = Number(extern.beliebtheit) || 0;
+  const stimmen = Number(extern.bewertungStimmen) || 0;
+  const belegt = extern.quelle === "anilist"
+    ? beliebtheit >= ANILIST_NUTZER_GENUG
+    : stimmen >= STIMMEN_GENUG;
+  const bewertung = typeof extern.bewertung === "number" ? extern.bewertung : null;
+  if (!belegt || bewertung === null) return { wert: 0, bewertung, beliebtheit, belegt: false };
+  // Alles unter 6 von 10 traegt nichts bei; darueber steigt es linear. Eine
+  // schlechte Bewertung zieht nichts ab - dafuer ist die Datenlage zu duenn,
+  // und ELFIX soll personalisiert bleiben und keine Bestenliste sein.
+  return { wert: Math.max(0, Math.min(1, (bewertung - 6) / 3)), bewertung, beliebtheit, belegt: true };
+}
+
+// Alle externen Teilwerte eines Kandidaten gegen den ganzen Verlauf.
+//
+// Gemessen wird immer gegen einzelne Verlaufstitel, nie gegen einen
+// Durchschnitt: "gehoert zur Reihe von X" ist eine Aussage ueber ein Paar.
+// Jedes Signal merkt sich, welcher Titel es getragen hat - sonst koennte die
+// Begruendung ihn spaeter nicht nennen.
+// Ab so wenigen Merkmalen sagt eine fehlende Uebereinstimmung nichts mehr -
+// ein Werk, zu dem TMDB drei Schlagworte kennt, teilt eben mit niemandem
+// welche.
+const EXTERN_AUSSAGEKRAEFTIG = 4;
+// Und ab hier ist die Uebereinstimmung so klein, dass sie ein Widerspruch ist.
+const EXTERN_WIDERSPRUCH = 0.05;
+const EXTERN_DAEMPFUNG = 0.35;
+
+function externeMerkmale(kandidat, profil, optionen = {}) {
+  const werte = { relation: 0, inhalt: 0, empfehlung: 0, personen: 0, rang: 0 };
+  // Je Verlaufstitel: wie aehnlich sind sich die beiden im feinen Vokabular?
+  // Gebraucht wird das nicht nur fuer die Punkte, sondern auch als Gegenprobe
+  // zu den groben Anbietergenres - siehe unten in merkmale().
+  const paare = new Map();
+  const belege = {
+    externQuelle: "", externId: "", externKonfidenz: "", externTitel: "",
+    beziehung: "", beziehungQuelle: "", beziehungTitel: "", beziehungBelegt: "",
+    sammlung: "", sammlungTitel: "",
+    inhaltTitel: "", inhaltDeckung: 0, inhaltGeteilt: [], inhaltSpezifisch: 0, inhaltVorsprung: 0,
+    empfehlungTitel: "",
+    schauspieler: "", regie: "", autor: "", studio: "", personenTitel: "",
+    bewertung: null, bewertungStimmen: 0, beliebtheit: 0, rangBelegt: false
+  };
+  const extern = kandidat.extern;
+  if (!externBrauchbar(extern)) return { werte, belege, paare };
+
+  belege.externQuelle = extern.quelle || "";
+  belege.externKonfidenz = extern.konfidenz || "";
+  belege.externTitel = extern.titel || "";
+  const ids = extern.externeIds || {};
+  belege.externId = [ids.anilist && "anilist:" + ids.anilist, ids.tmdb && "tmdb:" + ids.tmdb,
+    ids.imdb && ids.imdb].filter(Boolean).join(" ");
+
+  const gewichte = optionen.externGewichte;
+  const eigene = kandidat.externKeys || externSchluessel(extern);
+  let zweitbesterInhalt = 0;
+
+  for (const e of profil.eintraege) {
+    if (e.abgebrochen || !e.extern) continue;
+    // Wie ernst ist dem Nutzer dieser Verlaufstitel? Eine Fortsetzung von
+    // etwas halb Angeschautem wiegt weniger als eine von etwas Beendetem.
+    const saatGewicht = Math.min(1, e.staerke * e.frische);
+    if (saatGewicht <= 0) continue;
+    const name = anzeigeName(e);
+
+    const beziehung = beziehungZwischen(extern, e.extern);
+    if (beziehung) {
+      const wert = BEZIEHUNG_WERT[beziehung.art] * (beziehung.naehe ?? 1) * saatGewicht;
+      if (wert > werte.relation) {
+        werte.relation = wert;
+        belege.beziehung = beziehung.art;
+        belege.beziehungQuelle = beziehung.quelle;
+        belege.beziehungTitel = name;
+        belege.beziehungBelegt = beziehung.belegt || "";
+        if (beziehung.sammlung) {
+          belege.sammlung = String(beziehung.sammlung.id);
+          belege.sammlungTitel = beziehung.sammlung.titel || "";
+        }
+      }
+    }
+
+    const empfehlung = empfehlungZwischen(extern, e.extern);
+    if (empfehlung) {
+      const wert = empfehlung * saatGewicht;
+      if (wert > werte.empfehlung) {
+        werte.empfehlung = wert;
+        belege.empfehlungTitel = name;
+      }
+    }
+
+    const personen = personenZwischen(extern, e.extern);
+    if (personen) {
+      const wert = personen.wert * saatGewicht;
+      if (wert > werte.personen) {
+        werte.personen = wert;
+        belege.personenTitel = name;
+        belege.schauspieler = personen.besetzung[0] || "";
+        belege.regie = personen.regie[0] || "";
+        belege.autor = personen.autoren[0] || "";
+        belege.studio = personen.studios[0] || "";
+      }
+    }
+
+    // Inhaltliche Aehnlichkeit ueber Tags, Schlagworte und die Genres der
+    // Datenbank - dieselbe Rechnung wie bei den Anbietergenres, nur mit einem
+    // viel feineren Vokabular. Genau hier trennen sich "Die Legende von Korra"
+    // und "Paw Patrol", die fuer den Anbieter beide "Animation, Abenteuer"
+    // sind.
+    if (eigene.length && e.externKeys?.length) {
+      const deckung = genreAehnlichkeit(eigene, e.externKeys, gewichte);
+      // Nur wenn beide Seiten ueberhaupt genug beschrieben sind, ist eine
+      // fehlende Uebereinstimmung eine Aussage.
+      if (eigene.length >= EXTERN_AUSSAGEKRAEFTIG && e.externKeys.length >= EXTERN_AUSSAGEKRAEFTIG) {
+        paare.set(e, deckung);
+      }
+      const wert = deckung * saatGewicht;
+      if (wert > werte.inhalt) {
+        zweitbesterInhalt = werte.inhalt;
+        werte.inhalt = wert;
+        belege.inhaltTitel = name;
+        belege.inhaltDeckung = deckung;
+        const menge = new Set(e.externKeys);
+        belege.inhaltGeteilt = eigene.filter((key) => menge.has(key));
+        // Nur Tags und Schlagworte zaehlen als Beleg. Die Genres der Datenbank
+        // reisen im Vergleich mit, weil sie zur Aehnlichkeit beitragen - als
+        // Begruendung taugen sie so wenig wie "beides ist Action".
+        belege.inhaltSpezifisch = belege.inhaltGeteilt
+          .filter((key) => key.startsWith("s:")).length;
+      } else if (wert > zweitbesterInhalt) {
+        zweitbesterInhalt = wert;
+      }
+    }
+  }
+  // Hebt sich ein einzelner Verlaufstitel wirklich ab? Wenn ein Dutzend Titel
+  // gleich gut passen, erklaert keiner von ihnen die Empfehlung - dann ist es
+  // der Geschmack und nicht dieser eine Titel. Dieselbe Ueberlegung wie bei
+  // den Anbietergenres weiter oben, nur mit dem feineren Vokabular.
+  belege.inhaltVorsprung = zweitbesterInhalt > 0
+    ? werte.inhalt / zweitbesterInhalt
+    : (werte.inhalt > 0 ? Infinity : 0);
+
+  const rang = rangWert(extern);
+  werte.rang = rang.wert;
+  belege.bewertung = rang.bewertung;
+  belege.bewertungStimmen = Number(extern.bewertungStimmen) || 0;
+  belege.beliebtheit = rang.beliebtheit;
+  belege.rangBelegt = rang.belegt;
+  return { werte, belege, paare };
+}
+
 // --- Merkmale eines Kandidaten ------------------------------------------------
 
 const GRUND = {
@@ -512,7 +910,19 @@ const GRUND = {
   SITZUNG: "CURRENT_TASTE",
   VERLAUF: "LONG_TERM_TASTE",
   NEUHEIT: "NOVELTY",
-  ERKUNDUNG: "EXPLORATION"
+  ERKUNDUNG: "EXPLORATION",
+  // Aus externen Daten. Jeder dieser Gruende setzt eine Zuordnung voraus, der
+  // zu trauen ist - was nicht sicher zugeordnet ist, traegt keinen davon.
+  EXTERN_FORTSETZUNG: "EXTERNAL_SEQUEL",
+  EXTERN_VORGAENGER: "EXTERNAL_PREQUEL",
+  EXTERN_SAMMLUNG: "EXTERNAL_COLLECTION",
+  EXTERN_REIHE: "EXTERNAL_FRANCHISE",
+  EXTERN_INHALT: "EXTERNAL_TAG_SIMILARITY",
+  EXTERN_EMPFEHLUNG: "EXTERNAL_RECOMMENDATION",
+  EXTERN_SCHAUSPIELER: "SAME_ACTOR",
+  EXTERN_REGIE: "SAME_DIRECTOR",
+  EXTERN_AUTOR: "SAME_CREATOR",
+  EXTERN_STUDIO: "SAME_STUDIO"
 };
 
 // Breite Sammelgenres. Alles andere, was die Anbieter als Genre fuehren, ist
@@ -566,6 +976,11 @@ function merkmale(kandidat, profil, optionen = {}) {
     watchlist: 0,
     titel: 0,
     neuheit: 0,
+    externRelation: 0,
+    externInhalt: 0,
+    externEmpfehlung: 0,
+    externPersonen: 0,
+    externRang: 0,
     abneigung: 0,
     schonGesehen: 0,
     muede: 0
@@ -577,7 +992,7 @@ function merkmale(kandidat, profil, optionen = {}) {
   // Grund benennen kann, statt ihn zu umschreiben. Was hier leer bleibt, darf
   // dort nicht behauptet werden.
   const belege = {
-    reiheTitel: "", reiheKonfidenz: 0, reiheTage: 0,
+    reiheTitel: "", reiheKonfidenz: 0, reiheTage: 0, reiheWiderlegt: "",
     anbieterSeiten: 0, anbieterBreite: 0,
     anbieterTitel: "",
     // `verlaufTitel` ist der Titel, der genannt werden DARF. `verlaufBester`
@@ -676,7 +1091,53 @@ function merkmale(kandidat, profil, optionen = {}) {
   belege.artAnteil = art ? profil.artAnteil(art) : 0;
   belege.art = art && belege.artAnteil >= ART_ANTEIL && profil.artWerke(art) >= ART_WERKE ? art : "";
 
-  // 4. Aehnlichkeit zu einzelnen Titeln des Verlaufs - ueber Genre-Mengen,
+  // 4. Externe Daten - TMDB und AniList. Sie ersetzen nichts von dem oben:
+  //    fehlen sie, bleibt jede Zahl darueber unveraendert. Sie stehen hier und
+  //    nicht am Ende, weil der naechste Abschnitt sie braucht.
+  const aussen = externeMerkmale(kandidat, profil, optionen);
+  m.externRelation = aussen.werte.relation;
+  m.externInhalt = aussen.werte.inhalt;
+  m.externEmpfehlung = aussen.werte.empfehlung;
+  m.externPersonen = aussen.werte.personen;
+  m.externRang = aussen.werte.rang;
+  Object.assign(belege, aussen.belege);
+
+  // Der Gegenbeweis: der Titel behauptet eine Reihe, die Datenbanken kennen
+  // keine.
+  //
+  // Die Reihenerkennung arbeitet nur mit Namen, und manche Namen luegen. "Tomb
+  // Raider King" und "Tomb Raider: The Legend of Lara Croft" teilen zwei
+  // Inhaltswoerter und kommen damit auf eine Konfidenz von 0.82 - weit ueber
+  // der Schwelle, ab der ELFIX von derselben Reihe spricht. Es sind zwei
+  // verschiedene Werke, die denselben Markennamen tragen.
+  //
+  // Widerlegt ist das nur, wenn beide Seiten wirklich beschrieben sind: beide
+  // sicher zugeordnet, beide mit genug Merkmalen, keine belegte Beziehung
+  // zwischen ihnen - und im Inhalt praktisch keine Ueberschneidung. Trifft das
+  // alles zu, war der gemeinsame Titel ein Zufall. Fehlt eine der Bedingungen,
+  // bleibt die Reihe stehen: kein Gegenbeweis ist kein Beweis.
+  if ((m.naechsterTeil > 0 || m.reihe > 0) && reihe?.bezug) {
+    const eigenerBezug = titel.schluessel(reihe.bezug.zerlegt.klar);
+    const bezugEintrag = profil.eintraege
+      .find((e) => titel.schluessel(e.zerlegt.klar) === eigenerBezug);
+    const paarDeckung = bezugEintrag ? aussen.paare.get(bezugEintrag) : undefined;
+    const belegteBeziehung = bezugEintrag?.extern && kandidat.extern
+      ? beziehungZwischen(kandidat.extern, bezugEintrag.extern)
+      : null;
+    if (paarDeckung !== undefined && paarDeckung < EXTERN_WIDERSPRUCH && !belegteBeziehung) {
+      m.naechsterTeil = 0;
+      m.reihe = 0;
+      belege.reiheWiderlegt = belege.reiheTitel || reihe.bezug.name || "";
+      belege.reiheTitel = "";
+      belege.reiheKonfidenz = 0;
+      const raus = new Set([GRUND.NAECHSTER_TEIL, GRUND.REIHE]);
+      for (let index = gruende.length - 1; index >= 0; index -= 1) {
+        if (raus.has(gruende[index])) gruende.splice(index, 1);
+      }
+    }
+  }
+
+  // 5. Aehnlichkeit zu einzelnen Titeln des Verlaufs - ueber Genre-Mengen,
   //    gewichtet mit Signalstaerke und Aktualitaet. Das ist etwas anderes als
   //    das Profil oben: hier zaehlt die Uebereinstimmung mit einem konkreten
   //    Titel, nicht mit dem Durchschnitt.
@@ -693,7 +1154,19 @@ function merkmale(kandidat, profil, optionen = {}) {
   const jeWerk = new Map();
   for (const e of profil.eintraege) {
     if (e.abgebrochen) continue;
-    const g = genreAehnlichkeit(kandidat.genres, e.genres, gewichte);
+    // Die Gegenprobe aus den externen Daten: sind beide Titel sicher
+    // zugeordnet, beide ausreichend beschrieben und haben im feinen Vokabular
+    // trotzdem praktisch nichts gemeinsam, dann sagt die Uebereinstimmung in
+    // den groben Anbietergenres nichts. Genau das ist der Fall "Die Legende
+    // von Korra" gegen "Paw Patrol": beide sind "Animation, Abenteuer", die
+    // eine handelt von Kampfkunst und Geisterwelt, die andere von
+    // Rettungshunden. Kein Titel ist dafuer verdrahtet - nur die Frage, ob
+    // ausser dem Sammelgenre irgendetwas uebereinstimmt.
+    const externPaar = aussen.paare.get(e);
+    const daempfung = externPaar !== undefined && externPaar < EXTERN_WIDERSPRUCH
+      ? EXTERN_DAEMPFUNG
+      : 1;
+    const g = genreAehnlichkeit(kandidat.genres, e.genres, gewichte) * daempfung;
     if (g <= 0) continue;
     // Mehrere aehnliche Titel auf der Watchlist verstaerken einander - ein
     // einzelner vorgemerkter Film sagt wenig, drei in dieselbe Richtung viel.
@@ -755,7 +1228,7 @@ function merkmale(kandidat, profil, optionen = {}) {
   belege.watchlistAnteil = watchlistSumme > 0 ? (besteWatchlist * 0.5) / watchlistSumme : 0;
   belege.watchlistTitel = belege.watchlistAnteil >= WATCHLIST_ANTEIL ? belege.watchlistBester : "";
 
-  // 5. Titelaehnlichkeit - schwaches Signal, aber es faengt Reihen, die die
+  // 6. Titelaehnlichkeit - schwaches Signal, aber es faengt Reihen, die die
   //    Konfidenz knapp verfehlen, und Fortsetzungen ohne Nummer.
   if (!m.reihe) {
     let besteTitel = 0;
@@ -767,25 +1240,35 @@ function merkmale(kandidat, profil, optionen = {}) {
     m.titel = besteTitel > 0.35 ? besteTitel : 0;
   }
 
-  // 6. Abneigung: mehrere Abbrueche in dieselbe Richtung.
+  // 7. Abneigung: mehrere Abbrueche in dieselbe Richtung.
   let abneigung = 0;
   for (const key of kandidat.genres || []) abneigung += profil.abneigung.get(key) || 0;
   // Gedeckelt, und erst ab dem zweiten Abbruch spuerbar.
   m.abneigung = Math.min(0.5, Math.max(0, abneigung - 0.25) * 0.3);
 
-  // 7. Schon gesehen. Ein abgeschlossener Titel gehoert nicht in die normalen
+  // 8. Schon gesehen. Ein abgeschlossener Titel gehoert nicht in die normalen
   //    Empfehlungen - er wird nicht nur abgewertet, sondern spaeter gefiltert.
   if (profil.werke.has(titel.werkSchluessel(kandidat.zerlegt, kandidat.type))) m.schonGesehen = 1;
 
-  // 8. Muedigkeit: oft gezeigt, nie geoeffnet.
+  // 9. Muedigkeit: oft gezeigt, nie geoeffnet.
   const anzeigen = zahl(optionen.anzeigen?.get(kandidat.werkKey));
   if (anzeigen > MUEDE_AB) {
     m.muede = Math.min(MUEDE_MAX, (anzeigen - MUEDE_AB) * 0.08);
   }
 
-  // 9. Neuheit. Bewusst klein und ohne Zufall: ein stabiler Wert je Titel,
+  // 10. Neuheit. Bewusst klein und ohne Zufall: ein stabiler Wert je Titel,
   //    damit die Startseite sich nicht bei jedem Aufruf umsortiert.
   m.neuheit = kandidat.via === "new" ? 0.6 : 0.2;
+
+  // Eine belegte Fortsetzung ist auch dann eine, wenn der Titelvergleich sie
+  // nicht gefunden hat. Sie gehoert deshalb in dieselbe grobe Liste - unter
+  // anderem entscheidet die Vielfaltsregel daran, wen sie vorbeilaesst.
+  if (m.externRelation > 0) {
+    gruende.push(belege.beziehung === "fortsetzung" ? GRUND.EXTERN_FORTSETZUNG
+      : belege.beziehung === "vorgaenger" ? GRUND.EXTERN_VORGAENGER
+        : belege.sammlung ? GRUND.EXTERN_SAMMLUNG : GRUND.EXTERN_REIHE);
+  }
+  if (m.externInhalt > 0.3) gruende.push(GRUND.EXTERN_INHALT);
 
   return { m, gruende, reihe, belege };
 }
@@ -813,23 +1296,59 @@ function merkmale(kandidat, profil, optionen = {}) {
 
 // Die Beitraege zum Score, aufgeschluesselt. `punkte` summiert genau diese
 // Werte - beide muessen dieselben Gewichte benutzen.
+// Dieselbe Beziehung, auf drei Arten belegt, ist eine Beziehung. Der
+// Titelvergleich ("Naruto Shippuden faengt mit Naruto an"), die Reihenerkennung
+// und die externe Datenbank sagen bei einer Fortsetzung alle dasselbe - wer
+// das addiert, zahlt einem Titel dreimal aus, was er einmal verdient hat, und
+// keine Vielfaltsregel holt ihn danach noch ein.
+//
+// Gezaehlt wird deshalb nur der staerkste Beleg. Das hat zwei erwuenschte
+// Folgen: ohne externe Daten aendert sich gar nichts (die beiden inneren Werte
+// schliessen sich ohnehin gegenseitig aus), und mit ihnen gewinnt der bessere
+// Beleg - eine belegte Fortsetzung schlaegt eine erratene Reihe.
+const BEZIEHUNGS_FAMILIE = ["naechsterTeil", "externRelation", "reihe"];
+
 function beitraege(m) {
-  return {
+  const alle = {
     naechsterTeil: G.naechsterTeil * m.naechsterTeil,
+    externRelation: G.externRelation * m.externRelation,
     reihe: G.reihe * m.reihe,
+    externInhalt: G.externInhalt * m.externInhalt,
     anbieter: G.aehnlichLautAnbieter * m.aehnlichLautAnbieter,
     sitzung: G.sitzung * m.sitzung,
     verlauf: G.verlauf * m.verlauf,
     genre: G.genre * m.genre,
     watchlist: G.watchlist * m.watchlist,
+    externEmpfehlung: G.externEmpfehlung * m.externEmpfehlung,
+    externPersonen: G.externPersonen * m.externPersonen,
     titel: G.titel * m.titel,
-    neuheit: G.neuheit * m.neuheit
+    neuheit: G.neuheit * m.neuheit,
+    externRang: G.externRang * m.externRang
   };
+  const groesster = Math.max(...BEZIEHUNGS_FAMILIE.map((name) => alle[name]));
+  let behalten = false;
+  for (const name of BEZIEHUNGS_FAMILIE) {
+    if (!behalten && alle[name] === groesster && groesster > 0) {
+      behalten = true;
+      continue;
+    }
+    alle[name] = 0;
+  }
+  return alle;
 }
 
 // So viel muss ein Signal am positiven Gesamtbeitrag halten, um ueberhaupt
 // genannt zu werden - es sei denn, es ist ohnehin das groesste.
+//
+// Fuer Gruende, die ein konkretes Paar benennen, liegt die Huerde niedriger.
+// Nicht aus Nachsicht, sondern weil beide Zahlen Verschiedenes messen: ein
+// Genre-Beitrag sammelt sich ueber das ganze Profil, ein Paar-Beitrag haengt
+// an einem einzigen Verlaufstitel. Dieselbe Huerde fuer beide bevorzugt
+// systematisch das Allgemeine. Ganz ohne Huerde bliebe sie nicht - ein
+// Beitrag von vier Prozent erklaert auch dann nichts, wenn er einen Namen
+// traegt.
 const GRUND_RELEVANZ = 0.25;
+const GRUND_RELEVANZ_PAAR = 0.12;
 
 // Wie sehr ist einem Grund zu trauen? Fakten ueber genau dieses Titelpaar
 // (Reihe, belegter Seed, Anbieter-Verknuepfung) stehen ueber Aussagen ueber
@@ -850,14 +1369,32 @@ function gueteVon(grund) {
 // dann, wenn das Geschmackssignal rechnerisch etwas mehr beitraegt. Deshalb
 // zaehlt zuerst die Klasse der Beziehung und erst danach ihr Gewicht.
 //
-// Die Klassen sind bewusst grob: alles unterhalb der Reihen wird ueber die
-// Guete sortiert, damit sich Spezifitaet und Beitrag dort frei auswirken.
-const KLASSE = { fortsetzung: 0, reihe: 1, rest: 2 };
+// Vier Klassen, und die Grenze zwischen den letzten beiden ist die wichtigste:
+// ein Grund, der einen konkreten Titel oder eine konkrete Person nennt, sagt
+// etwas ueber genau dieses Paar. Ein Grund, der nur ein Genre nennt, sagt
+// etwas ueber den Nutzer - und das passt auf jede zweite Karte.
+//
+// Ohne diese Grenze entschied allein der Beitrag, und der faellt fuer die
+// Paar-Gruende naturgemaess kleiner aus: das Genre-Signal steckt in jedem
+// Kandidaten, die Aehnlichkeit zu genau einem Verlaufstitel nur in wenigen.
+// Gemessen an einem echten Profil hiess das: "Dororo" teilt dreizehn Tags mit
+// "Demon Slayer" - und auf der Karte stand "Passend zu deinen Abenteuer-Anime".
+//
+// Innerhalb einer Klasse entscheidet weiter die Guete, damit sich Spezifitaet
+// und Beitrag frei auswirken koennen.
+const KLASSE = { fortsetzung: 0, reihe: 1, paar: 2, profil: 3 };
+
+const KLASSE_FORTSETZUNG = new Set([GRUND.NAECHSTER_TEIL, GRUND.EXTERN_FORTSETZUNG]);
+const KLASSE_REIHE = new Set([GRUND.REIHE, GRUND.WIEDERENTDECKUNG, GRUND.EXTERN_VORGAENGER,
+  GRUND.EXTERN_SAMMLUNG, GRUND.EXTERN_REIHE]);
 
 function klasseVon(grund) {
-  if (grund.grund === GRUND.NAECHSTER_TEIL) return KLASSE.fortsetzung;
-  if (grund.grund === GRUND.REIHE || grund.grund === GRUND.WIEDERENTDECKUNG) return KLASSE.reihe;
-  return KLASSE.rest;
+  if (KLASSE_FORTSETZUNG.has(grund.grund)) return KLASSE.fortsetzung;
+  if (KLASSE_REIHE.has(grund.grund)) return KLASSE.reihe;
+  // Kein fester Katalog von Gruenden, sondern die Frage, ob dieser eine Grund
+  // wirklich etwas Konkretes benennt. Derselbe Grund kann beides sein: die
+  // Watchlist mit tragendem Einzeltitel ist konkret, ohne ihn nicht.
+  return grund.titel || grund.person ? KLASSE.paar : KLASSE.profil;
 }
 
 // Alle Gruende, die dieser Kandidat wirklich hergibt - der beste zuerst.
@@ -870,19 +1407,26 @@ function gruendeSammeln(m, belege, kandidat) {
   // als Grund sagen. Zaehlte sie mit, faenden Titel, die vor allem ueber die
   // Anbieterliste hereinkommen, gar keine Erklaerung mehr - obwohl ihre
   // uebrigen Signale echt sind.
-  const erklaerbar = Object.entries(b).filter(([name]) => name !== "anbieter").map(([, wert]) => wert);
+  // Zwei Beitraege bleiben draussen: die Anbieter-Verknuepfung (siehe unten)
+  // und der externe Rang. Bewertung und Bekanntheit heben einen Titel ein
+  // wenig an, taugen aber nicht als Erklaerung - "das schauen viele" ist keine
+  // Aussage ueber diesen Nutzer.
+  const stumm = new Set(["anbieter", "externRang"]);
+  const erklaerbar = Object.entries(b).filter(([name]) => !stumm.has(name)).map(([, wert]) => wert);
   const gesamt = erklaerbar.reduce((summe, wert) => summe + Math.max(0, wert), 0);
   const groesster = Math.max(...erklaerbar, 0);
-  const zaehlt = (wert) => wert > 0 && (wert >= gesamt * GRUND_RELEVANZ || wert >= groesster);
+  const zaehlt = (wert, huerde) => wert > 0 && (wert >= gesamt * huerde || wert >= groesster);
   const gefunden = [];
   const nimm = (grund, wert, spezifitaet, vertrauen, extra = {}) => {
-    if (!zaehlt(wert)) return;
+    const konkret = Boolean(extra.titel || extra.person);
+    if (!zaehlt(wert, konkret ? GRUND_RELEVANZ_PAAR : GRUND_RELEVANZ)) return;
     gefunden.push({
       grund,
       titel: "",
       genre: "",
       tag: "",
       art: "",
+      person: "",
       sitzung: false,
       beitrag: wert,
       anteil: gesamt > 0 ? wert / gesamt : 0,
@@ -901,9 +1445,67 @@ function gruendeSammeln(m, belege, kandidat) {
     nimm(GRUND.REIHE, b.reihe, 0.95, VERTRAUEN.paar, { titel: belege.reiheTitel });
   }
 
+  // 1b. Dieselbe Beziehung, aus einer Datenbank belegt. Welcher Satz daraus
+  //     wird, haengt daran, was dort wirklich steht: eine Fortsetzung ist eine
+  //     Fortsetzung, eine gemeinsame Sammlung ist eine Reihe, und eine
+  //     Vorgeschichte ist beides nicht.
+  if (belege.beziehung === "fortsetzung") {
+    nimm(GRUND.EXTERN_FORTSETZUNG, b.externRelation, 1, VERTRAUEN.paar, { titel: belege.beziehungTitel });
+  } else if (belege.beziehung === "vorgaenger") {
+    nimm(GRUND.EXTERN_VORGAENGER, b.externRelation, 0.95, VERTRAUEN.paar, { titel: belege.beziehungTitel });
+  } else if (belege.beziehung === "reihe") {
+    // Eine TMDB-Sammlung traegt einen Namen ("Iron Man Filmreihe"), eine
+    // AniList-Beziehung nicht. Genannt wird deshalb der Verlaufstitel - er ist
+    // das, was der Nutzer kennt.
+    nimm(belege.sammlung ? GRUND.EXTERN_SAMMLUNG : GRUND.EXTERN_REIHE,
+      b.externRelation, 0.9, VERTRAUEN.paar, { titel: belege.beziehungTitel });
+  }
+
   // 2. Ein einzelner Titel aus dem Verlauf - nur mit belegtem Bezug.
   if (belege.verlaufTitel) {
     nimm(GRUND.AEHNLICH_ZULETZT, b.verlauf, 0.9, VERTRAUEN.paar, { titel: belege.verlaufTitel });
+  }
+
+  // 2b. Inhaltliche Naehe aus externen Tags und Schlagworten. Sie darf einen
+  //     Titel nur dann beim Namen nennen, wenn dieser Titel sich vom Rest des
+  //     Verlaufs abhebt - sonst erklaert er nichts. Die Huerden sind dieselben
+  //     wie oben bei den Anbietergenres, nur an einem feineren Vokabular
+  //     gemessen: hier zaehlen "Ninja" und "marvel cinematic universe", nicht
+  //     "Action".
+  const inhaltTraegt = belege.inhaltTitel
+    && belege.inhaltSpezifisch >= EXTERN_GEMEINSAM
+    && belege.inhaltDeckung >= EXTERN_DECKUNG
+    && belege.inhaltVorsprung >= EXTERN_VORSPRUNG;
+  if (inhaltTraegt) {
+    nimm(GRUND.EXTERN_INHALT, b.externInhalt, 0.85, VERTRAUEN.paar, { titel: belege.inhaltTitel });
+  }
+
+  // 2c. Die Empfehlungsliste der Datenbank selbst. Belegt ist damit, dass
+  //     TMDB oder AniList diese beiden Titel nebeneinanderstellen - nicht,
+  //     dass sie zusammengehoeren. Der Satz behauptet entsprechend nur
+  //     Aehnlichkeit.
+  if (belege.empfehlungTitel) {
+    nimm(GRUND.EXTERN_EMPFEHLUNG, b.externEmpfehlung, 0.7, VERTRAUEN.paar, { titel: belege.empfehlungTitel });
+  }
+
+  // 2d. Personen und Studios. Vier verschiedene Aussagen mit vier verschieden
+  //     starken Belegen: derselbe Regisseur ist eine Handschrift, dasselbe
+  //     Studio nur eine Adresse.
+  if (belege.regie) {
+    nimm(GRUND.EXTERN_REGIE, b.externPersonen, 0.75, VERTRAUEN.paar,
+      { titel: belege.personenTitel, person: belege.regie });
+  }
+  if (belege.autor) {
+    nimm(GRUND.EXTERN_AUTOR, b.externPersonen, 0.7, VERTRAUEN.paar,
+      { titel: belege.personenTitel, person: belege.autor });
+  }
+  if (belege.schauspieler) {
+    nimm(GRUND.EXTERN_SCHAUSPIELER, b.externPersonen, 0.65, VERTRAUEN.paar,
+      { titel: belege.personenTitel, person: belege.schauspieler });
+  }
+  if (belege.studio) {
+    nimm(GRUND.EXTERN_STUDIO, b.externPersonen, 0.4, VERTRAUEN.tag,
+      { titel: belege.personenTitel, person: belege.studio });
   }
 
   // 3. Watchlist - einmal mit tragendem Einzeltitel, einmal ohne.
@@ -972,7 +1574,7 @@ function gruendeSammeln(m, belege, kandidat) {
   if (!gefunden.length) {
     gefunden.push({
       grund: GRUND.ERKUNDUNG,
-      titel: "", genre: "", tag: "", art: "", sitzung: false,
+      titel: "", genre: "", tag: "", art: "", person: "", sitzung: false,
       beitrag: b.neuheit,
       anteil: gesamt > 0 ? b.neuheit / gesamt : 0,
       spezifitaet: 0.1,
@@ -982,18 +1584,13 @@ function gruendeSammeln(m, belege, kandidat) {
   return gefunden;
 }
 
-// Aus den Teilwerten die Gesamtpunktzahl.
+// Aus den Teilwerten die Gesamtpunktzahl. Gerechnet wird ueber genau die
+// Beitraege, die auch die Begruendung sieht - frueher standen die Gewichte
+// zweimal im Code, und zwei Listen, die gleich bleiben muessen, bleiben es
+// nicht.
 function punkte(m) {
   let summe = 0;
-  summe += G.naechsterTeil * m.naechsterTeil;
-  summe += G.reihe * m.reihe;
-  summe += G.aehnlichLautAnbieter * m.aehnlichLautAnbieter;
-  summe += G.sitzung * m.sitzung;
-  summe += G.verlauf * m.verlauf;
-  summe += G.genre * m.genre;
-  summe += G.watchlist * m.watchlist;
-  summe += G.titel * m.titel;
-  summe += G.neuheit * m.neuheit;
+  for (const wert of Object.values(beitraege(m))) summe += wert;
   summe -= m.abneigung;
   summe -= m.muede;
   return summe;
@@ -1003,8 +1600,9 @@ function punkte(m) {
 // kann aus wenigen Daten viele Punkte holen. Die Konfidenz sagt, auf wie
 // vielen unabhaengigen Signalen das Ergebnis steht.
 function konfidenz(m) {
-  if (m.naechsterTeil >= 0.6) return "VERY_HIGH";
-  const signale = [m.reihe, m.aehnlichLautAnbieter, m.sitzung, m.verlauf, m.genre, m.watchlist]
+  if (m.naechsterTeil >= 0.6 || m.externRelation >= 0.6) return "VERY_HIGH";
+  const signale = [m.reihe, m.aehnlichLautAnbieter, m.sitzung, m.verlauf, m.genre, m.watchlist,
+    m.externRelation, m.externInhalt, m.externEmpfehlung, m.externPersonen]
     .filter((wert) => wert > 0.2).length;
   if (signale >= 3) return "HIGH";
   if (signale === 2) return "MEDIUM";
@@ -1057,6 +1655,8 @@ function zusammenfuehren(kandidaten) {
         type: typ,
         welt: welt(kandidat),
         genres: inhaltsTags(kandidat.genres),
+        extern: externBrauchbar(kandidat.extern) ? kandidat.extern : null,
+        externKeys: externSchluessel(kandidat.extern),
         // Auf wessen Seiten dieses Werk als verwandt gefuehrt wird. Ein Titel,
         // der bei jedem zweiten Seed auftaucht, ist Bewerbung und keine
         // Beziehung - das laesst sich nur an der Menge erkennen.
@@ -1076,6 +1676,14 @@ function zusammenfuehren(kandidaten) {
       providerId: kandidat.providerId,
       providerName: kandidat.providerName
     });
+    // Kennt eine Fassung ihre externen Daten und die andere nicht, gilt das
+    // fuer das Werk: dieselbe Serie bei zwei Anbietern ist ein Werk, und
+    // welcher der beiden Eintraege die IMDB-Kennung auf seiner Seite stehen
+    // hatte, ist Zufall.
+    if (!vorhanden.extern && externBrauchbar(kandidat.extern)) {
+      vorhanden.extern = kandidat.extern;
+      vorhanden.externKeys = externSchluessel(kandidat.extern);
+    }
     // "related" ist das beste Herkunftssignal - wenn eine Fassung so
     // hereinkam, gilt das fuer das Werk.
     const besser = kandidat.via === "related" && vorhanden.via !== "related";
@@ -1122,7 +1730,8 @@ function vielfalt(bewertet, limit) {
       // nur der erste. Sonst belegt eine Reihe mit vier ungesehenen Teilen die
       // ganze Liste, und genau das soll die Vielfalt verhindern: nach dem
       // naechsten Teil kommt etwas anderes, der uebernaechste kann warten.
-      const istFortsetzung = kandidat.gruende.includes(GRUND.NAECHSTER_TEIL);
+      const istFortsetzung = kandidat.gruende.includes(GRUND.NAECHSTER_TEIL)
+        || kandidat.gruende.includes(GRUND.EXTERN_FORTSETZUNG);
       // Anteilig, nicht als fester Abzug: die Punktzahlen liegen je nach
       // Profil weit auseinander, und ein fester Betrag waere mal alles und
       // mal nichts. So verliert jeder weitere Titel derselben Reihe
@@ -1172,7 +1781,16 @@ function empfehlen(kandidaten, profil, optionen = {}) {
   // Titel etwas aus.
   const seedSeiten = new Set();
   for (const kandidat of zusammen) for (const seed of kandidat.seeds || []) seedSeiten.add(seed);
-  const laufOptionen = { ...optionen, gewichte, seedSeiten: seedSeiten.size };
+  // Dieselbe Rechnung noch einmal fuer das externe Vokabular. Sie ist dort
+  // wichtiger als bei den Anbietergenres: "based on comic" haengt an jedem
+  // zweiten Film, "marvel cinematic universe" an einem Dutzend. Ohne diese
+  // Gewichtung waeren beide gleich viel wert - und dann verbindet ein
+  // Allerweltsschlagwort zwei Titel genauso stark wie ein Universum.
+  const externGewichte = optionen.externGewichte || genreGewichte([
+    ...zusammen.map((kandidat) => kandidat.externKeys || []),
+    ...profil.eintraege.map((eintrag) => eintrag.externKeys || [])
+  ]);
+  const laufOptionen = { ...optionen, gewichte, externGewichte, seedSeiten: seedSeiten.size };
   const bewertet = [];
 
   for (const kandidat of zusammen) {
@@ -1219,7 +1837,12 @@ function empfehlen(kandidaten, profil, optionen = {}) {
       type: kandidat.type,
       welt: kandidat.welt,
       werkKey: kandidat.werkKey,
-      reiheKey: reihe ? reihe.reihe.key : titel.franchiseSchluessel(kandidat.zerlegt),
+      // Woran die Vielfaltsregel eine Reihe erkennt. Eine belegte Sammlung ist
+      // dafuer der bessere Schluessel als ein Titelvergleich: "Marvel's The
+      // Avengers" und "Avengers: Endgame" gehoeren zusammen, ohne dass ihre
+      // Titel das zeigen muessten.
+      reiheKey: belege.sammlung ? "sammlung:" + belege.sammlung
+        : reihe ? reihe.reihe.key : titel.franchiseSchluessel(kandidat.zerlegt),
       seedTitle: kandidat.seedTitle || "",
       alternativen: kandidat.alternativen,
       score: Number(score.toFixed(4)),
@@ -1254,6 +1877,7 @@ function alsFelder(grund) {
     grundGenre: grund.genre || "",
     grundTag: grund.tag || "",
     grundArt: grund.art || "",
+    grundPerson: grund.person || "",
     grundSitzung: Boolean(grund.sitzung)
   };
 }
@@ -1267,7 +1891,7 @@ function sagbar(grund) {
 
 const ERKUNDUNG_GRUND = {
   grund: GRUND.ERKUNDUNG,
-  titel: "", genre: "", tag: "", art: "", sitzung: false,
+  titel: "", genre: "", tag: "", art: "", person: "", sitzung: false,
   beitrag: 0, anteil: 0, spezifitaet: 0.1, vertrauen: VERTRAUEN.rest
 };
 
@@ -1285,6 +1909,7 @@ function erklaerungAnhaengen(eintrag) {
     grundGenre: bester.genre,
     grundTag: bester.tag,
     grundArt: bester.art,
+    grundPerson: bester.person || "",
     grundSitzung: bester.sitzung,
     // Wie viel des positiven Gesamtbeitrags erklaert dieser Grund?
     grundKonfidenz: Number(bester.anteil.toFixed(3)),
@@ -1347,6 +1972,70 @@ function abwechslung(liste) {
   });
 }
 
+// --- Reihenfolge fuer die Entdeckungsseiten -----------------------------------
+//
+// Die Startseite zeigt zwei Dutzend Titel, eine Entdeckungsseite mehrere
+// hundert. Irgendwann sind die starken persoenlichen Treffer aufgebraucht -
+// und dann soll ELFIX weder aufhoeren noch in eine Bestenliste kippen.
+//
+// Deshalb mischt sich mit wachsender Tiefe Erkundung dazu: dieselben Titel,
+// nur nach einem anderen Massstab geordnet (`wertFn` - in der App die externe
+// Bewertung und Bekanntheit). Oben ist es ein Zehntel, weit unten zwei
+// Fuenftel, und dazwischen waechst der Anteil stetig. Keine Stufen, keine
+// Seitengrenzen: der Nutzer soll nicht merken, dass hier zwei Listen
+// ineinandergeschoben werden.
+//
+// Beliebtheit verdraengt die Personalisierung damit nie - sie fuellt nur die
+// Luecken, die weiter unten ohnehin entstehen.
+const ERKUNDUNG_ANFANG = 0.1;
+const ERKUNDUNG_ENDE = 0.4;
+const ERKUNDUNG_RAMPE = 400;
+
+function erkundungsReihenfolge(liste, wertFn, optionen = {}) {
+  const eingang = liste || [];
+  if (eingang.length < 2 || typeof wertFn !== "function") return [...eingang];
+  const anfang = optionen.anfang ?? ERKUNDUNG_ANFANG;
+  const ende = optionen.ende ?? ERKUNDUNG_ENDE;
+  const rampe = optionen.rampe ?? ERKUNDUNG_RAMPE;
+  const schluesselVon = (eintrag) => eintrag?.werkKey || eintrag?.url || "";
+  // Einmal bewerten, nicht bei jedem Vergleich - `wertFn` schaut in der App in
+  // den Metadaten-Cache.
+  const werte = new Map();
+  for (const eintrag of eingang) werte.set(eintrag, wertFn(eintrag));
+  const erkundung = [...eingang].sort((links, rechts) => werte.get(rechts) - werte.get(links));
+
+  const vergeben = new Set();
+  const ergebnis = [];
+  let ausPersoenlich = 0;
+  let ausErkundung = 0;
+  // Gebrochene Anteile summieren sich auf: bei zehn Prozent kommt jeder zehnte
+  // Platz aus der Erkundung, ohne dass irgendwo gerundet werden muesste.
+  let schuld = 0;
+  while (ergebnis.length < eingang.length) {
+    schuld += anfang + (ende - anfang) * Math.min(1, ergebnis.length / rampe);
+    let genommen = null;
+    if (schuld >= 1) {
+      while (ausErkundung < erkundung.length && vergeben.has(schluesselVon(erkundung[ausErkundung]))) {
+        ausErkundung += 1;
+      }
+      if (ausErkundung < erkundung.length) {
+        genommen = erkundung[ausErkundung];
+        schuld -= 1;
+      }
+    }
+    if (!genommen) {
+      while (ausPersoenlich < eingang.length && vergeben.has(schluesselVon(eingang[ausPersoenlich]))) {
+        ausPersoenlich += 1;
+      }
+      if (ausPersoenlich >= eingang.length) break;
+      genommen = eingang[ausPersoenlich];
+    }
+    vergeben.add(schluesselVon(genommen));
+    ergebnis.push(genommen);
+  }
+  return ergebnis;
+}
+
 // Der Debug-Bericht zu einem Kandidaten - fuer die Konsole, nicht fuer die
 // Oberflaeche.
 //
@@ -1354,6 +2043,63 @@ function abwechslung(liste) {
 // staerksten Seed samt seinem Anteil - auch dann, wenn er die Huerden nicht
 // genommen hat. Genau daran laesst sich ablesen, warum ein Titel *nicht* mit
 // einem konkreten Bezug erklaert wurde.
+// Der externe Teil des Berichts. Er steht bewusst neben dem Anbieterteil und
+// nicht darin: die Frage, die man beim Lesen hat, ist ja gerade, was die
+// externen Daten beigetragen haben - und was ohne sie dagestanden haette.
+const EXTERNE_NAMEN = new Set(["externRelation", "externInhalt", "externEmpfehlung",
+  "externPersonen", "externRang"]);
+
+function externeZeilen(eintrag, belege, b) {
+  const anbieterAnteil = Object.entries(b)
+    .filter(([name]) => !EXTERNE_NAMEN.has(name))
+    .reduce((summe, [, wert]) => summe + wert, 0);
+  const externAnteil = Object.entries(b)
+    .filter(([name]) => EXTERNE_NAMEN.has(name))
+    .reduce((summe, [, wert]) => summe + wert, 0);
+
+  if (!belege.externQuelle) {
+    return [
+      "Externe Daten: (keine Zuordnung)",
+      `Score-Anteile: Anbieter ${anbieterAnteil.toFixed(3)}   extern 0.000`,
+      ""
+    ];
+  }
+  const geteilt = (belege.inhaltGeteilt || []);
+  const tags = geteilt.filter((key) => key.startsWith("s:")).map((key) => key.slice(2));
+  const worte = [];
+  const genres = geteilt.filter((key) => key.startsWith("g:")).map((key) => key.slice(2));
+  const personen = [
+    belege.schauspieler && `Schauspieler ${belege.schauspieler}`,
+    belege.regie && `Regie ${belege.regie}`,
+    belege.autor && `Autor ${belege.autor}`,
+    belege.studio && `Studio ${belege.studio}`
+  ].filter(Boolean);
+
+  return [
+    `Externe Quelle: ${belege.externQuelle}   ${belege.externId}   Konfidenz ${belege.externKonfidenz}`,
+    `  als "${belege.externTitel}" zugeordnet`,
+    `Beziehung: ${belege.beziehung
+      ? `${belege.beziehung} (${belege.beziehungQuelle}${belege.beziehungBelegt ? " " + belege.beziehungBelegt : ""})`
+        + ` zu ${belege.beziehungTitel}`
+      : "(keine belegte)"}`,
+    `Sammlung:  ${belege.sammlung ? `${belege.sammlungTitel} (#${belege.sammlung})` : "(keine)"}`,
+    `Fremde Empfehlung: ${belege.empfehlungTitel || "(keine)"}`,
+    "Inhaltliche Naehe:",
+    belege.inhaltTitel
+      ? `  zu ${belege.inhaltTitel}   Deckung ${belege.inhaltDeckung.toFixed(2)}`
+        + `   Vorsprung ${Number.isFinite(belege.inhaltVorsprung) ? belege.inhaltVorsprung.toFixed(2) + "x" : "allein"}`
+      : "  (keine)",
+    `  gemeinsame Sachmerkmale: ${tags.length ? tags.join(", ") : "(keine)"}`,
+    `  gemeinsame Genres:       ${genres.length ? genres.join(", ") : "(keine)"}`,
+    `Personen/Studio: ${personen.length ? personen.join("   ") : "(keine gemeinsamen)"}`,
+    `Bewertung: ${belege.bewertung === null ? "(keine)" : belege.bewertung}`
+      + `   Stimmen ${belege.bewertungStimmen}   Bekanntheit ${belege.beliebtheit}`
+      + `   ${belege.rangBelegt ? "-> zaehlt als Feinsortierung" : "-> zu duenn belegt, zaehlt nicht"}`,
+    `Score-Anteile: Anbieter ${anbieterAnteil.toFixed(3)}   extern ${externAnteil.toFixed(3)}`,
+    ""
+  ];
+}
+
 function debugBericht(eintrag) {
   if (!eintrag?.teilwerte) return `${eintrag?.title || "?"}: keine Teilwerte (Debug aus)`;
   const b = eintrag.beitraege || beitraege(eintrag.teilwerte);
@@ -1428,8 +2174,11 @@ function debugBericht(eintrag) {
     "",
     `Anbieter-Verknuepfung: ${belege.anbieterTitel || "(keine)"}`,
     `Reihe: ${belege.reiheTitel || "(keine)"}`
-      + (belege.reiheKonfidenz ? `   Konfidenz ${belege.reiheKonfidenz.toFixed(2)}` : ""),
+      + (belege.reiheKonfidenz ? `   Konfidenz ${belege.reiheKonfidenz.toFixed(2)}` : "")
+      + (belege.reiheWiderlegt
+        ? `   (Titelreihe zu "${belege.reiheWiderlegt}" von den Daten widerlegt)` : ""),
     "",
+    ...externeZeilen(eintrag, belege, b),
     `Selected Reason: ${eintrag.grund}`
       + `${eintrag.grundTitel ? ` <- ${eintrag.grundTitel}` : ""}`
       + `${eintrag.grundGenre ? ` <- ${eintrag.grundGenre}` : ""}`
@@ -1456,11 +2205,34 @@ module.exports = {
   beitraege,
   gruendeSammeln,
   istSpezifisch,
+  externSchluessel,
+  beziehungZwischen,
+  externeMerkmale,
   zusammenfuehren,
   vielfalt,
   empfehlen,
+  erkundungsReihenfolge,
   debugBericht,
   streuwert,
   GRUND,
-  GEWICHTE: G
+  GEWICHTE: G,
+  // Die Schwellen, an denen sich entscheidet, ob ein externes Signal genannt
+  // werden darf. Ausgestellt, damit Pruefungen und die Diagnose mit denselben
+  // Zahlen rechnen wie die Engine - und nicht mit Abschriften davon.
+  SCHWELLEN: {
+    EXTERN_BEZIEHUNG_MIN,
+    EXTERN_INHALT_MIN,
+    EXTERN_TAG_RANG_MIN,
+    EXTERN_GEMEINSAM,
+    EXTERN_DECKUNG,
+    EXTERN_VORSPRUNG,
+    EXTERN_AUSSAGEKRAEFTIG,
+    EXTERN_WIDERSPRUCH,
+    EXTERN_DAEMPFUNG,
+    GRUND_RELEVANZ,
+    GRUND_RELEVANZ_PAAR,
+    SEED_GEMEINSAM,
+    SEED_DECKUNG,
+    SEED_DOMINANZ
+  }
 };

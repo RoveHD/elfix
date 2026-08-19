@@ -82,6 +82,11 @@ function namensDeckung(suche, name) {
   const rechts = worte(name);
   if (!links.length || !rechts.length) return 0;
   if (links.length === rechts.length && links.every((w, i) => w === rechts[i])) return 1;
+  // Wortgrenzen sind keine Aussage: die Anbieter fuehren "Dragonball", AniList
+  // "Dragon Ball". Ohne diese Zeile schneidet sich die Wortmenge zu nichts,
+  // und ein exakter Treffer wird als LOW gemeldet - womit die Beziehung
+  // "Dragon Ball -> SEQUEL -> Dragon Ball Z" ungenutzt bleibt.
+  if (links.join("") === rechts.join("")) return 1;
   if (links.every((w, i) => rechts[i] === w)) return 0.9;
   if (rechts.every((w, i) => links[i] === w)) return 0.85;
   const menge = new Set(rechts);
@@ -476,10 +481,25 @@ function erstellen(optionen = {}) {
     return null;
   }
 
+  // Die Suche laeuft auf Deutsch - und das ist kein Schoenheitsfehler, sondern
+  // die Bedingung dafuer, dass sie ueberhaupt trifft.
+  //
+  // Die Anbieter fuehren deutsche Titel. Ohne `language` gibt TMDB seine
+  // Ergebnisse mit englischem Namen zurueck, und der Namensvergleich unten
+  // vergleicht dann "Der letzte Tempelritter" mit "Season of the Witch" - also
+  // nichts mit nichts. Nachgemessen an sechs Filmen aus einem echten Katalog:
+  // ueber den englischen Titel gefragt, wurden alle sechs exakt aufgeloest;
+  // ueber den deutschen keiner - obwohl TMDB zu jedem den deutschen Titel
+  // fuehrt und ihn beim Abruf des Werks auch ausgibt.
+  //
+  // Der englische Weg bleibt dabei offen: verglichen wird weiter gegen `title`
+  // UND `original_title`, und der Originaltitel aendert sich mit der Sprache
+  // nicht. Ein Titel wird also unter beiden Namen gefunden.
   async function tmdbSuchen(wunsch) {
     const istFilm = wunsch.art === "film";
     const antwort = await tmdbHolen(istFilm ? "/search/movie" : "/search/tv", {
       query: wunsch.titel,
+      language: "de-DE",
       ...(wunsch.jahr ? (istFilm ? { year: wunsch.jahr } : { first_air_date_year: wunsch.jahr }) : {}),
       include_adult: "false"
     });

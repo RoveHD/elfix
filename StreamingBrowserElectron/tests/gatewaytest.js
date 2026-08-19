@@ -211,6 +211,67 @@ const suchen = (titel) => ({ method: "POST", headers: { "content-type": "applica
     });
   }
 
+  // ===================================== Deutsche Titel finden ihr Werk
+  //
+  // Die Anbieter fuehren deutsche Titel, TMDB antwortet ohne Sprachangabe auf
+  // Englisch - und dann vergleicht der Namensvergleich "Der letzte
+  // Tempelritter" mit "Season of the Witch". Gemessen an echten Titeln fiel
+  // dadurch jeder deutsche Filmtitel durch, obwohl TMDB ihn fuehrt.
+  {
+    const netz = netzBauen([
+      { wenn: "/search/movie", daten: () => ({
+        results: [{
+          id: 46528,
+          // So antwortet TMDB mit language=de-DE: lokalisierter Titel,
+          // unveraenderter Originaltitel.
+          title: "Der letzte Tempelritter",
+          original_title: "Season of the Witch",
+          release_date: "2011-01-07",
+          popularity: 12
+        }]
+      }) },
+      { wenn: "/movie/46528", daten: () => ({
+        id: 46528, title: "Der letzte Tempelritter", original_title: "Season of the Witch",
+        release_date: "2011-01-07", genres: [{ name: "Abenteuer" }]
+      }) }
+    ]);
+    await mitDienst({ tmdbSchluessel: GEHEIM, fetch: netz.holen }, async ({ rufen }) => {
+      const antwort = await rufen("/metadata/lookup", suchen([
+        { id: "t", art: "film", titel: "Der letzte Tempelritter", jahr: 2011 }
+      ]));
+      pruefe("Die Suche fragt auf Deutsch",
+        netz.rufe.some((ruf) => ruf.url.includes("/search/movie") && ruf.url.includes("language=de-DE")),
+        netz.rufe.map((r) => r.url.split("?")[1] || r.url).join(" | ").slice(0, 160));
+      pruefe("Und findet damit den deutschen Titel",
+        antwort.daten.treffer[0].konfidenz === "EXACT",
+        antwort.daten.treffer[0].konfidenz + " / " + antwort.daten.treffer[0].titel);
+    });
+  }
+  {
+    // Der englische Weg darf dadurch nicht zugehen: verglichen wird weiter
+    // auch gegen den Originaltitel, und der bleibt englisch.
+    const netz = netzBauen([
+      { wenn: "/search/movie", daten: () => ({
+        results: [{
+          id: 46528, title: "Der letzte Tempelritter", original_title: "Season of the Witch",
+          release_date: "2011-01-07", popularity: 12
+        }]
+      }) },
+      { wenn: "/movie/46528", daten: () => ({
+        id: 46528, title: "Der letzte Tempelritter", original_title: "Season of the Witch",
+        release_date: "2011-01-07"
+      }) }
+    ]);
+    await mitDienst({ tmdbSchluessel: GEHEIM, fetch: netz.holen }, async ({ rufen }) => {
+      const antwort = await rufen("/metadata/lookup", suchen([
+        { id: "t", art: "film", titel: "Season of the Witch", jahr: 2011 }
+      ]));
+      pruefe("Der englische Originaltitel findet dasselbe Werk weiterhin",
+        antwort.daten.treffer[0].konfidenz === "EXACT",
+        antwort.daten.treffer[0].konfidenz);
+    });
+  }
+
   // ================================================================= Fehlgriffe
   {
     const netz = netzBauen([

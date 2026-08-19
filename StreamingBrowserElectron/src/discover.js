@@ -25,8 +25,15 @@ function attribut(tag, name) {
   return match ? entitaetenDekodieren(match[1]).trim() : "";
 }
 
+// Auszeichnungen im Fliesstext trennen keine Woerter. AniWorld liefert die
+// Fundstelle einer Suche als "<em>Demo</em>n Lord" - wer daraus "Demo n Lord"
+// macht, hat den Titel zerstoert, nicht nur die Formatierung entfernt.
+const INLINE_TAGS = /<\/?(?:em|strong|b|i|u|mark|span|small|wbr|font|abbr|cite|q|sub|sup)(?:\s[^>]*)?>/gi;
+
 function ohneTags(value) {
-  return entitaetenDekodieren(String(value || "").replace(/<[^>]*>/g, " "))
+  return entitaetenDekodieren(String(value || "")
+    .replace(INLINE_TAGS, "")
+    .replace(/<[^>]*>/g, " "))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -93,27 +100,63 @@ function titelAusPfad(href) {
   }
 }
 
-function bildAusTag(tag, baseUrl) {
+// Der Slug eines Werks aus seiner Adresse: "/serie/avatar" -> "avatar".
+function slugAusAdresse(href) {
+  try {
+    const teile = new URL(href).pathname.split("/").filter(Boolean);
+    return (teile[teile.length - 1] || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+// Ist das ein echtes Bild zum Werk - oder Zierrat?
+//
+// Die Muellliste faengt Logos, Fahnen und Profilbilder ab. Sie faengt aber
+// auch echte Poster: S.to legt das Cover von "Avatar - Der Herr der Elemente"
+// unter `.../channel/desktop/avatar-OPQmI5KE` ab, und "avatar" steht auf der
+// Liste. Das Poster flog raus, die Notfallsuche nahm das Bild der Nachbarkachel
+// - so bekam Avatar das Plakat von Supergirl.
+//
+// Deshalb schlaegt ein positiver Beleg die Liste: traegt der Bildpfad den Slug
+// des Werks, gehoert das Bild zu diesem Werk. Ein Profilbild heisst nie wie der
+// Titel, unter dem es steht.
+function bildBrauchbar(bild, slug) {
+  if (!bild) return false;
+  if (slug && slug.length >= 3 && bild.toLowerCase().includes(slug)) return true;
+  return !MUELL_BILD.test(bild);
+}
+
+function bildAusTag(tag, baseUrl, slug = "") {
   if (!tag) return "";
   const quelle = attribut(tag, "data-src")
     || attribut(tag, "data-original")
     || attribut(tag, "data-lazy")
     || attribut(tag, "src");
   const bild = absolut(quelle, baseUrl);
-  return bild && !MUELL_BILD.test(bild) ? bild : "";
+  return bildBrauchbar(bild, slug) ? bild : "";
 }
 
 // Manche Seiten setzen das Poster nicht in den Link, sondern daneben. Dann in
 // einem Fenster um den Link herum nach dem naechsten Bild suchen.
-function bildInDerNaehe(html, position, baseUrl) {
+function bildInDerNaehe(html, position, baseUrl, slug = "") {
   const davor = html.slice(Math.max(0, position - 2500), position);
   const danach = html.slice(position, position + 2500);
   const kandidaten = [
     ...[...davor.matchAll(/<img\s[^>]*>/gi)].reverse(),
     ...danach.matchAll(/<img\s[^>]*>/gi)
   ];
+  // Erst suchen, ob eines der Bilder in der Naehe den Slug des Werks traegt -
+  // das ist dann keine Naeherung mehr, sondern ein Beleg. Die Nachbarkachel
+  // kommt nur zum Zug, wenn gar nichts passt.
+  if (slug && slug.length >= 3) {
+    for (const kandidat of kandidaten) {
+      const bild = bildAusTag(kandidat[0], baseUrl, slug);
+      if (bild && bild.toLowerCase().includes(slug)) return bild;
+    }
+  }
   for (const kandidat of kandidaten) {
-    const bild = bildAusTag(kandidat[0], baseUrl);
+    const bild = bildAusTag(kandidat[0], baseUrl, slug);
     if (bild) return bild;
   }
   return "";
@@ -251,7 +294,7 @@ function extractGenres(html, baseUrl, limit = 12) {
 
 // Poster aus <picture>/<source srcset="...">: Filmo und S.to legen ihre Bilder
 // nur dort ab, ein <img src> gibt es teils gar nicht.
-function bildAusSrcset(abschnitt, baseUrl) {
+function bildAusSrcset(abschnitt, baseUrl, slug = "") {
   const match = String(abschnitt || "").match(/(?:data-)?srcset\s*=\s*"([^"]+)"/i);
   if (!match) return "";
   let bestes = "";
@@ -259,7 +302,7 @@ function bildAusSrcset(abschnitt, baseUrl) {
   for (const eintrag of match[1].split(",")) {
     const teile = eintrag.trim().split(/\s+/);
     const href = absolut(teile[0] || "", baseUrl);
-    if (!href || MUELL_BILD.test(href)) continue;
+    if (!href || !bildBrauchbar(href, slug)) continue;
     const w = Number.parseInt(teile[1] || "", 10) || 0;
     if (w > breite) {
       breite = w;
@@ -285,10 +328,11 @@ function extractCatalogItems(html, baseUrl, provider = {}, limit = 40) {
 
     const ende = quelltext.indexOf("</a>", match.index);
     const abschnitt = quelltext.slice(match.index, ende < 0 ? match.index + 8000 : Math.min(ende, match.index + 8000));
+    const slug = slugAusAdresse(href);
     const bildTag = (abschnitt.match(/<img\s[^>]*>/i) || [""])[0];
-    const bild = bildAusTag(bildTag, baseUrl)
-      || bildAusSrcset(abschnitt, baseUrl)
-      || bildInDerNaehe(quelltext, match.index, baseUrl);
+    const bild = bildAusTag(bildTag, baseUrl, slug)
+      || bildAusSrcset(abschnitt, baseUrl, slug)
+      || bildInDerNaehe(quelltext, match.index, baseUrl, slug);
     if (!bild) continue;
 
     const ueberschrift = abschnitt.match(/<h[1-6][^>]*>([\s\S]{0,120}?)<\/h[1-6]>/i);

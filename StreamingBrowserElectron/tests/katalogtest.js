@@ -164,6 +164,84 @@ pruefe("Gleich gute Kandidaten: Auswahl ist deterministisch",
 pruefe("Gleich gute Kandidaten: nichts geht verloren, wenn Platz da ist",
   gleichmaessigVerteilt(gleichGut, 100).length === gleichGut.length);
 
+// --- Kachel, Titel und Bild gehoeren zusammen --------------------------------
+//
+// Der Ausschnitt ist echtes S.to-Markup aus dem "Das schauen andere"-Block.
+// Zwei Fallen stecken darin, und beide haben in der App zugeschlagen:
+//
+//   1. Das Poster liegt unter `.../channel/desktop/avatar-OPQmI5KE`. Das Wort
+//      "avatar" steht auf der Muellliste (gedacht fuer Profilbilder), also flog
+//      das richtige Bild raus - und die Notfallsuche nahm das der Nachbarkachel.
+//      Auf der Karte stand Avatar mit dem Plakat von Supergirl.
+//   2. Faellt der Bild-Anker aus, greift der zweite Anker mit dem Titel. Dort
+//      stehen zwei Spans: der Titel und darunter das Genre. Zusammengezogen
+//      wurde daraus "Avatar - Der Herr der Elemente Zeichentrick" - ein Werk,
+//      das es nicht gibt, und das deshalb auch nicht mehr als schon gesehen
+//      erkannt wurde. Die Karte begruendete sich am Ende mit sich selbst.
+
+const STO_KACHELN = `
+<h2>Das schauen andere</h2>
+<div class="swiper-wrapper">
+  <div class="swiper-slide"><article class="continue-card">
+    <a href="/serie/avatar" class="d-block continue-cover">
+      <picture>
+        <source type="image/webp" data-srcset=" /media/images/channel/desktop/avatar-OPQmI5KE?format=webp 1024w">
+        <img data-src="/media/images/channel/desktop/avatar-OPQmI5KE?format=jpg"
+             src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
+             alt="Avatar - Der Herr der Elemente">
+      </picture>
+    </a>
+    <h3 class="continue-title">
+      <a href="/serie/avatar" class="stretched-link">
+        <span class="d-block fs-6 fw-semibold mb-1">Avatar - Der Herr der Elemente</span>
+        <span class="d-block text-muted">Zeichentrick</span>
+      </a>
+    </h3>
+  </article></div>
+  <div class="swiper-slide"><article class="continue-card">
+    <a href="/serie/supergirl" class="d-block continue-cover">
+      <picture>
+        <img data-src="/media/images/channel/desktop/supergirl-f9mn2n41?format=jpg"
+             src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
+             alt="Supergirl">
+      </picture>
+    </a>
+    <h3 class="continue-title">
+      <a href="/serie/supergirl" class="stretched-link">
+        <span class="d-block fs-6 fw-semibold mb-1">Supergirl</span>
+        <span class="d-block text-muted">Action &amp; Adventure</span>
+      </a>
+    </h3>
+  </article></div>
+</div>`;
+
+{
+  const kacheln = D.extractRelatedItems(STO_KACHELN, "http://sto.test/serie/game-of-thrones",
+    { id: "sto", name: "S.to" }, 12);
+  const avatar = kacheln.find((k) => /\/serie\/avatar$/.test(k.url));
+  const supergirl = kacheln.find((k) => /supergirl/.test(k.url));
+
+  pruefe("Kacheln: beide Werke erkannt, jedes einmal", kacheln.length === 2,
+    kacheln.map((k) => k.title).join(" | "));
+  pruefe("Kacheln: das Genre klebt nicht am Titel",
+    avatar?.title === "Avatar - Der Herr der Elemente", avatar?.title);
+  pruefe("Kacheln: das Poster gehoert zum Werk, nicht zum Nachbarn",
+    /avatar-OPQmI5KE/.test(avatar?.image || ""), avatar?.image);
+  pruefe("Kacheln: der Nachbar behaelt sein eigenes Poster",
+    /supergirl-f9mn2n41/.test(supergirl?.image || ""), supergirl?.image);
+  pruefe("Kacheln: der Platzhalter aus dem src wird nicht genommen",
+    !/base64|data:image/.test(avatar?.image || ""), avatar?.image);
+}
+
+{
+  // Die Muellliste muss weiter greifen, wo sie soll: ein Profilbild heisst
+  // nicht wie das Werk, unter dem es steht.
+  const mitLogo = `<a href="/serie/dark"><img src="/assets/avatar-platzhalter.png" alt="Dark"></a>`;
+  const kacheln = D.extractCatalogItems(mitLogo, "http://sto.test/", { id: "sto", name: "S.to" }, 5);
+  pruefe("Ein Profilbild bleibt aussen vor, wenn es nicht zum Werk gehoert",
+    kacheln.length === 0, JSON.stringify(kacheln.map((k) => k.image)));
+}
+
 const gesamt = pruefungen.length;
 const gut = pruefungen.filter(Boolean).length;
 console.log(`${gut}/${gesamt} bestanden`);

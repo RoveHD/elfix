@@ -158,6 +158,7 @@
             <section class="home-row recommended-row is-hidden" id="animeHomeRow">
               <div class="row-head">
                 <div class="row-title">Anime für dich</div>
+                <button class="row-more" type="button" data-discovery="anime">Mehr anzeigen</button>
               </div>
               <div class="favorite-rail recommendation-rail personal-rail" id="homeAnime"></div>
             </section>
@@ -165,6 +166,7 @@
             <section class="home-row recommended-row is-hidden" id="serienHomeRow">
               <div class="row-head">
                 <div class="row-title">Serien für dich</div>
+                <button class="row-more" type="button" data-discovery="serie">Mehr anzeigen</button>
               </div>
               <div class="favorite-rail recommendation-rail personal-rail" id="homeSerien"></div>
             </section>
@@ -172,6 +174,7 @@
             <section class="home-row recommended-row is-hidden" id="filmeHomeRow">
               <div class="row-head">
                 <div class="row-title">Filme für dich</div>
+                <button class="row-more" type="button" data-discovery="film">Mehr anzeigen</button>
               </div>
               <div class="favorite-rail recommendation-rail personal-rail" id="homeFilme"></div>
             </section>
@@ -184,6 +187,20 @@
               <button type="button" data-home-action="settings">⚙ <span>Einstellungen</span></button>
             </nav>
           </div>
+        </div>
+      </section>
+      <section class="favorites-view is-hidden" id="discoveryView">
+        <div class="favorites-page discovery-page">
+          <div class="row-head discovery-head">
+            <div>
+              <button class="text-action discovery-back" type="button" id="discoveryBack">← Zurück</button>
+              <h1 id="discoveryTitle">Für dich</h1>
+              <p id="discoveryCopy">Vorschläge aus deinem Verlauf.</p>
+            </div>
+          </div>
+          <div class="favorite-grid discovery-grid" id="discoveryGrid"></div>
+          <div class="discovery-foot" id="discoveryFoot" aria-live="polite"></div>
+          <div class="discovery-sentinel" id="discoverySentinel"></div>
         </div>
       </section>
       <section class="favorites-view is-hidden" id="calendarView">
@@ -1150,6 +1167,55 @@
     </form>
   </dialog>
 
+  <dialog class="crop-modal" id="cropModal">
+    <div class="crop-shell">
+      <p class="eyebrow">Titelhintergrund</p>
+      <h2>Bildausschnitt wählen</h2>
+      <p class="crop-copy">Die Vorschau ist die echte ELFIX-Ansicht — mit Titel, Anbieter, Fortschritt und Abdunklung. Jedes Format hat seinen eigenen Zoom und seine eigene Position: stelle eines ein, speichere, und wechsle dann zum nächsten.</p>
+
+      <div class="crop-body" id="cropBody">
+        <div class="crop-controls">
+          <div class="crop-field">
+            <strong>Format</strong>
+            <div class="crop-modes" id="cropModes">
+              <button type="button" data-crop-format="poster">Poster<small>Hochformat, etwa 2:3</small></button>
+              <button type="button" data-crop-format="medium">Mittel<small>Wie die ELFIX-Karten</small></button>
+              <button type="button" data-crop-format="large">Groß<small>Breites Backdrop, 16:9</small></button>
+              <button type="button" data-crop-format="banner">Banner<small>Startseite, ganz breit</small></button>
+            </div>
+            <small class="crop-field-note">Jedes Format wird einzeln eingestellt und gespeichert.</small>
+          </div>
+
+          <label class="crop-field crop-zoom">
+            <strong>Zoom <span id="cropZoomValue">100 %</span></strong>
+            <input id="cropZoom" type="range" min="100" max="400" step="1" value="100">
+          </label>
+
+          <div class="crop-tools">
+            <button type="button" class="soft-action" id="cropReset">Zurücksetzen</button>
+            <button type="button" class="soft-action" id="cropCenter">Bild zentrieren</button>
+          </div>
+        </div>
+
+        <div class="crop-stage-wrap">
+          <div class="crop-stage" id="cropStage">
+            <div class="favorite-card crop-preview" id="cropPreview"></div>
+          </div>
+          <p class="crop-hint" id="cropHint">Bild ziehen, um den sichtbaren Ausschnitt anzupassen — Mausrad zoomt.</p>
+        </div>
+      </div>
+
+      <div class="crop-actions">
+        <span class="crop-save-hint" id="cropSaveHint" role="status"></span>
+        <span class="crop-actions-gap"></span>
+        <button type="button" class="soft-action" id="cropCancel">Abbrechen</button>
+        <button type="button" class="soft-action" id="cropSave" title="Dieses Format jetzt speichern, ohne den Editor zu schließen">Speichern</button>
+        <button type="button" class="primary-action" id="cropApply">Übernehmen</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="../../shared/bildausschnitt.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

@@ -121,27 +121,78 @@
 // Confidence-Regel:  kein anderes Signal traegt
 // Beispieltext:      "Koennte einen Versuch wert sein"
 //
+// --- Aus externen Daten -----------------------------------------------------
+//
+// Seit die App das Metadaten-Tor des Relays benutzt (src/metadaten.js), kommen
+// zu jedem sicher zugeordneten Titel Daten von TMDB oder AniList dazu. Damit
+// sind Saetze belegbar, die vorher erfunden gewesen waeren. Jeder von ihnen
+// setzt eine Zuordnung mit ausreichender Konfidenz voraus - was nur vermutet
+// zugeordnet ist, traegt keinen dieser Gruende.
+//
+// Reason:            EXTERNAL_SEQUEL
+// Benoetigte Daten:  AniList-Beziehung SEQUEL zwischen zwei Kennungen, oder
+//                    dieselbe TMDB-Sammlung mit spaeterem Erscheinungsjahr
+// Confidence-Regel:  beide Titel mindestens HIGH zugeordnet
+// Ranking-Signal:    m.externRelation (Gewicht 1.5)
+// Beispieltext:      "Fortsetzung von Naruto"
+//
+// Reason:            EXTERNAL_PREQUEL
+// Benoetigte Daten:  wie oben, Richtung umgekehrt
+// Beispieltext:      "Die Vorgeschichte zu Naruto Shippuden"
+//
+// Reason:            EXTERNAL_COLLECTION
+// Benoetigte Daten:  gemeinsame TMDB-Sammlungskennung (nur Filme - fuer Serien
+//                    fuehrt TMDB dieses Feld nicht)
+// Beispieltext:      "Mehr aus der Welt von Iron Man"
+//
+// Reason:            EXTERNAL_FRANCHISE
+// Benoetigte Daten:  AniList-Beziehung SIDE_STORY, SPIN_OFF, PARENT,
+//                    ALTERNATIVE oder OTHER
+// Beispieltext:      "Aus derselben Reihe wie Bleach"
+//
+// Reason:            EXTERNAL_TAG_SIMILARITY
+// Benoetigte Daten:  gewichtete AniList-Tags bzw. TMDB-Schlagworte beider
+//                    Titel
+// Confidence-Regel:  >= 3 gemeinsame Merkmale, gewichtete Deckung >= 0.25 und
+//                    Vorsprung vor dem zweitbesten Verlaufstitel
+// Ranking-Signal:    m.externInhalt (Gewicht 0.85)
+// Beispieltext:      "Weil du Naruto geschaut hast"
+//
+// Reason:            EXTERNAL_RECOMMENDATION
+// Benoetigte Daten:  der eine Titel steht in der Empfehlungsliste des anderen
+// Ranking-Signal:    m.externEmpfehlung (Gewicht 0.35)
+// Beispieltext:      "Ähnlich wie Game of Thrones"
+//                    Bewusst schwach formuliert: belegt ist, dass TMDB die
+//                    beiden nebeneinanderstellt - nicht, dass sie
+//                    zusammengehoeren. Auf der Iron-Man-Seite steht dort auch
+//                    Black Adam.
+//
+// Reason:            SAME_ACTOR / SAME_DIRECTOR / SAME_CREATOR / SAME_STUDIO
+// Benoetigte Daten:  Besetzung, Regie, Autoren, Produktionsfirmen von TMDB;
+//                    Hauptstudio von AniList
+// Ranking-Signal:    m.externPersonen (Gewicht 0.3)
+// Beispieltext:      "Mehr mit Robert Downey Jr.", "Vom Regisseur von Iron Man"
+//
 // --- Bewusst nicht vorhanden ------------------------------------------------
 //
-// SAME_ACTOR, SAME_DIRECTOR, SAME_STUDIO: es werden nirgends Personen oder
-//   Studios ausgelesen - weder discover.js noch main.js kennen ein solches
-//   Feld. Ohne diese Daten waere jeder solche Satz erfunden.
-// SIMILAR_THEME: es gibt keine Beschreibungen.
-// COUNTRY_AFFINITY: es gibt keine Herkunftsangabe. (Dass AniWorld ueberwiegend
-//   Anime fuehrt, ist eine Aussage ueber den Anbieter, nicht ueber das Land.)
-// SAME_UNIVERSE / SPINOFF_RELATED: nachgeprueft und nicht moeglich. "Game of
-//   Thrones" und "House of the Dragon" haben kein gemeinsames Titelwort, und
-//   die Related-Listen der Anbieter verbinden sie nicht: auf der GoT-Seite
-//   stehen Avatar, Supergirl, Chicago Fire, Battlestar Galactica; auf der
-//   HotD-Seite Ringe der Macht und The Old Man. Dasselbe bei Breaking Bad und
-//   Better Call Saul. Ohne Collection-Kennung, Keywords oder Beschreibung ist
-//   diese Beziehung nicht ableitbar - und geraten wird sie nicht.
-// POPULAR / POPULAR_FOR_PROFILE / TRENDING / HIGH_RATED:
-//   es gibt keine Abrufzahlen, keine Ranglisten, keine Bewertungen und keine
-//   Zeitreihen. Der einzige haeufige Titel im Datenbestand ist der Werbeblock,
-//   den Filmo unter jede Seite haengt - das ist bezahlte Platzierung und keine
-//   Beliebtheit. Wird deshalb abgewertet statt gefeiert.
-// HIGH_RATING: es werden keine Bewertungen ausgelesen.
+// SIMILAR_THEME: Beschreibungen verlassen das Relay nicht - die Normalform
+//   fuehrt sie gar nicht. Die Schlagworte leisten dasselbe genauer.
+// COUNTRY_AFFINITY: die Normalform gibt kein Herkunftsland aus. (Dass AniWorld
+//   ueberwiegend Anime fuehrt, ist eine Aussage ueber den Anbieter, nicht
+//   ueber das Land.)
+// SAME_UNIVERSE fuer Serien: weiterhin nicht belegbar - und nachgemessen.
+//   TMDB fuehrt Sammlungen nur fuer Filme; "Game of Thrones" und "House of the
+//   Dragon" haben keine gemeinsame Kennung, keinen gemeinsamen Autor und kein
+//   gemeinsames Titelwort. Was es gibt: HotD fuehrt GoT in seiner
+//   Empfehlungsliste, beide teilen fuenf Schlagworte und den Sender. Das
+//   traegt "Ähnlich wie Game of Thrones" - es traegt nicht "spielt in derselben
+//   Welt". Fuer Filme ist genau diese Aussage dagegen belegt, dort heisst sie
+//   EXTERNAL_COLLECTION.
+// POPULAR / TRENDING / HIGH_RATED: Bewertung und Bekanntheit gibt es jetzt,
+//   aber sie bleiben ohne eigenen Grund. Sie sortieren fein (Gewicht 0.1) und
+//   sagen nichts ueber diesen Nutzer; "das schauen viele" waere eine Aussage
+//   ueber alle anderen. Ausserdem taeuscht ein Durchschnitt aus wenigen
+//   Stimmen - unter 500 Stimmen zaehlt er in empfehlung.js gar nicht.
 // NEXT_IN_SERIES: Fortschritt und Folgen sind zwar bekannt, die eigene Serie
 //   ist in den Empfehlungen aber ausgeschlossen - dafuer gibt es
 //   "Weiterschauen" auf derselben Startseite.
@@ -165,7 +216,17 @@ const GRUND = {
   SITZUNG: "CURRENT_TASTE",
   VERLAUF: "LONG_TERM_TASTE",
   NEUHEIT: "NOVELTY",
-  ERKUNDUNG: "EXPLORATION"
+  ERKUNDUNG: "EXPLORATION",
+  EXTERN_FORTSETZUNG: "EXTERNAL_SEQUEL",
+  EXTERN_VORGAENGER: "EXTERNAL_PREQUEL",
+  EXTERN_SAMMLUNG: "EXTERNAL_COLLECTION",
+  EXTERN_REIHE: "EXTERNAL_FRANCHISE",
+  EXTERN_INHALT: "EXTERNAL_TAG_SIMILARITY",
+  EXTERN_EMPFEHLUNG: "EXTERNAL_RECOMMENDATION",
+  EXTERN_SCHAUSPIELER: "SAME_ACTOR",
+  EXTERN_REGIE: "SAME_DIRECTOR",
+  EXTERN_AUTOR: "SAME_CREATOR",
+  EXTERN_STUDIO: "SAME_STUDIO"
 };
 
 // Die Genre-Schluessel der Engine sind vereinheitlicht und umlautfrei
@@ -291,6 +352,10 @@ function textVarianten(item) {
   const tag = tagName(item.grundTag);
   const genre = genreName(item.grundGenre);
   const kombi = kombiName(item.grundGenre, item.grundArt);
+  // Namen von Personen und Studios kommen aus TMDB und AniList. Sie werden
+  // nur gekuerzt, nicht uebersetzt oder gebeugt - "Mehr mit Robert Downey Jr."
+  // ist richtig, alles Weitergehende waere geraten.
+  const person = kuerzen(item.grundPerson, 32);
 
   switch (item.grund) {
     case GRUND.NAECHSTER_TEIL:
@@ -366,6 +431,55 @@ function textVarianten(item) {
     case GRUND.ERKUNDUNG:
       return ["Könnte einen Versuch wert sein", "Mal etwas anderes", "Ein neuer Tipp für dich",
         "Noch nicht von dir entdeckt"];
+
+    // Ab hier: Saetze, die auf externen Daten stehen. Ohne den Bezugstitel
+    // gibt es keinen Satz - "eine Fortsetzung" ohne zu sagen, wovon, ist
+    // keine Auskunft.
+    case GRUND.EXTERN_FORTSETZUNG:
+      return titel
+        ? [`Fortsetzung von ${titel}`, `Nächster Teil nach ${titel}`, `Weiter nach ${titel}`,
+          `Geht weiter nach ${titel}`]
+        : [];
+
+    case GRUND.EXTERN_VORGAENGER:
+      return titel
+        ? [`Die Vorgeschichte zu ${titel}`, `Spielt vor ${titel}`, `Was vor ${titel} geschah`]
+        : [];
+
+    // Belegt ist eine gemeinsame Sammlung bzw. eine belegte Reihenbeziehung -
+    // also mehr als Aehnlichkeit und weniger als eine Fortsetzung.
+    case GRUND.EXTERN_SAMMLUNG:
+    case GRUND.EXTERN_REIHE:
+      return titel
+        ? [`Mehr aus der Welt von ${titel}`, `Aus derselben Reihe wie ${titel}`,
+          `Gehört zur Reihe von ${titel}`]
+        : [];
+
+    case GRUND.EXTERN_INHALT:
+      return titel
+        ? [`Weil du ${titel} geschaut hast`, `Ähnlich wie ${titel}`, `Passend zu ${titel}`,
+          `Mehr wie ${titel}`]
+        : [];
+
+    // Bewusst zurueckhaltend: belegt ist, dass die Datenbank die beiden
+    // nebeneinanderstellt.
+    case GRUND.EXTERN_EMPFEHLUNG:
+      return titel ? [`Ähnlich wie ${titel}`, `Passt zu ${titel}`] : [];
+
+    case GRUND.EXTERN_SCHAUSPIELER:
+      return person ? [`Mehr mit ${person}`, `Auch mit ${person}`] : [];
+
+    case GRUND.EXTERN_REGIE:
+      if (!person) return [];
+      return titel ? [`Vom Regisseur von ${titel}`, `Von ${person}`] : [`Von ${person}`];
+
+    case GRUND.EXTERN_AUTOR:
+      if (!person) return [];
+      return titel ? [`Von den Machern von ${titel}`, `Von ${person}`] : [`Von ${person}`];
+
+    case GRUND.EXTERN_STUDIO:
+      if (!person) return [];
+      return titel ? [`Aus demselben Studio wie ${titel}`, `Von ${person}`] : [`Von ${person}`];
 
     default:
       return [];
