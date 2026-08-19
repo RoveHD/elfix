@@ -3,6 +3,259 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.25.0 — 19. August 2026
+
+Vier Einstellungen, die nichts bewirkt haben, ein Kalenderfilter nach Fassung
+und eine Seitenleiste, die beim Kleinerziehen des Fensters verschwand.
+
+**Das Kartenmenue am Vorschlag und am Suchtreffer**
+
+- Ein Vorschlag auf der Startseite und ein Treffer in der Suche waren
+  Sackgassen: vormerken ging nur ueber das Herz in der Suche, abhaken gar
+  nicht - man musste den Titel dafuer erst beim Anbieter oeffnen
+- Beide tragen jetzt dasselbe Menue wie eine Karte, mit "Auf die Watchlist"
+  und "Als gesehen abhaken". Weil ein Vorschlag noch kein Eintrag ist, legt
+  ihn beides erst an
+- Der Knopf haengt nur dort, wo es auch etwas anzulegen gibt: ein Vorschlag,
+  der bloss zur Suche des Anbieters fuehrt, wuerde sonst mit der Suchadresse
+  auf der Watchlist landen
+- Steht ein Titel schon auf der Watchlist, fehlt der Eintrag - gefragt wird
+  beim Oeffnen des Menues und nicht beim Bauen der Karte
+
+**Rechtsklick auf die Kachel**
+
+- Der Knopf mit den drei Punkten ist klein und sitzt in einer Ecke. Die rechte
+  Maustaste oeffnet jetzt dasselbe Menue, ueberall: Weiterschauen, Startseite,
+  Watchlist, Mediathek, Vorschlaege, Suchtreffer
+- Das Kaestchen haengt sich an den Knopf und nicht an den Zeiger. So steht es
+  immer an derselben Stelle der Kachel, und das Nachfuehren beim Neuzeichnen
+  greift unveraendert
+- Der Rechtsklick oeffnet immer und schaltet nie - sonst waere das Menue beim
+  zweiten Druck auf dieselbe Kachel zugeblieben
+- Neben allen Kacheln bleibt das Menue des Systems stehen
+
+**Die Seitenleiste beim Kleinerziehen**
+
+Zwei Fehler, die zusammen so aussahen, als loese sich die Leiste auf.
+
+- Niedriges Fenster: die Leiste schnitt unten einfach ab. Bei 620 Pixeln
+  Fensterhoehe endete sie bei "Watchparty", und Anbieter, Einstellungen und
+  Hilfe standen 334 Pixel unterhalb der Kante - erreichbar mit nichts. Jetzt
+  scrollt sie, und ihre Abschnitte lassen sich nicht mehr zusammendruecken
+- Schmales Fenster: unter 1180 Pixeln blendete eine Regel Zeichen und
+  Beschriftung jedes Eintrags aus. Sie stammte aus der Zeit, als die Leiste
+  dort auf 78 Pixel schrumpfte - heute behaelt sie bis 980 Pixel ihre vollen
+  232. Zurueck blieben leere Streifen mit den Ueberschriften dazwischen. Genau
+  so sah es aus
+- Auf Zeichenbreite schrumpft die Leiste weiterhin ab 980 Pixeln. Dort bleiben
+  die Zeichen stehen und nur die Beschriftungen weichen
+- Dabei aufgefallen: auf 64 Pixeln passten das "E"-Zeichen und der Pfeil
+  daneben nicht nebeneinander, das Zeichen stand angeschnitten am Rand. Der
+  Pfeil weicht dort jetzt; ein- und ausklappen geht weiter ueber das Zeichen in
+  der Kopfzeile der Startseite
+
+**Kalender: Filter nach Fassung**
+
+- Wer nur deutsche Synchronfassungen schaut, interessierte sich fuer den Rest
+  der Woche gar nicht - alles stand gemischt untereinander. Ueber der Woche
+  steht jetzt eine zweite Filterzeile
+- "Alle Fassungen", danach die vorkommenden: deutsche Synchronfassung zuerst,
+  dann die Untertitelfassungen, der Rest alphabetisch
+- Gezaehlt wird innerhalb der schon gewaehlten Art, damit die Zahlen zu dem
+  passen, was danach dasteht. Bei nur einer Fassung bleibt die Zeile leer
+- Dafuer mussten die Anbieter erst dieselbe Sprache sprechen: AniWorld nennt
+  die Fassung ueber die Flagge neben der Folge ("japanese-german"), S.to
+  schreibt sie in seine Schnittstelle ("Ger-Sub"). Ohne Abgleich stuenden zwei
+  Knoepfe fuer dieselbe Sache nebeneinander
+- "Ger-Sub" wird zu "Deutsche Untertitel" und nicht zu "Japanisch, Deutsche
+  Untertitel" - was der Ton ist, steht in den Daten nicht
+
+**Vier Einstellungen, die nichts bewirkt haben**
+
+- "Groesse der Anbieter-Kacheln" wirkte auf keine einzige Kachel. Die Masse
+  standen an fuenf Stellen fest, auf der Startseite sogar als Inline-Stil, der
+  ohnehin jede Regel schlaegt. Jetzt stehen sie an einer Stelle, und die Dichte
+  rechnet relativ dazu
+- Der Netflix-Stil gab den Watchlist-Karten 320 auf 250 Pixel, also liegend -
+  und setzte in den Einstellungen gleichzeitig "Poster", hochkant. Der Regler
+  zeigte "Poster", die Karten waren keine. Welche Form sie haben, entscheidet
+  jetzt allein "Groesse der Watchlist-Karten"
+- Poster ist die Werkseinstellung. Der Hauptprozess sagte hier "medium", die
+  Oberflaeche "poster" - wer nie an den Einstellungen drehte, sah nie Poster
+- In "Dichte & Groesse" leuchteten zwei Knoepfe gleichzeitig: der zur
+  eingestellten Dichte und "Benutzerdef.". Beide hingen an demselben Feld, das
+  auch die Layout-Voreinstellung traegt. Ob die Dichte von Hand gesetzt wurde,
+  steht jetzt fuer sich
+
+Neu: leistetest mit 15 Pruefungen, die beide Regeln der Seitenleiste
+festhalten. Dazu 12 Faelle fuer den Rechtsklick und der Filter nach Fassung.
+24 Suiten, alle bestanden.
+
+## 1.24.1 — 19. August 2026
+
+Ein Fehler aus 1.24.0 und das Kartenmenue, das dabei aufgefallen ist.
+
+**Nichts liegt mehr hinter dem Bild**
+
+- In 1.24.0 wurde das eigene Titelbild vom Hintergrund der Karte zu einer
+  eigenen Ebene. Die lag ueber jedem Kind, das nicht selbst positioniert ist -
+  als Hintergrund lag das Bild vorher automatisch unter allem
+- Lautlos verschwunden waren dadurch: die Mitglieder-Zeile einer Watchparty,
+  ihre Knoepfe "Verlassen", "Oeffnen" und "Entfernen", die Zeile mit dem Stand
+  und die Begruendung unter einer Empfehlung
+- Titel, Anbieter und Fortschrittsbalken blieben zufaellig sichtbar - deshalb
+  sah eine Karte auf den ersten Blick richtig aus
+- Behoben an der Wurzel statt Element fuer Element. Jedes kuenftige Kind ist
+  damit automatisch mit abgedeckt
+- Geprueft wird das nicht an Klassennamen: fuer jedes sichtbare Kind aller vier
+  Kartenarten und des Banners fragt die Pruefung, was an der Stelle wirklich
+  obenauf liegt
+
+**Das Kartenmenue**
+
+- Es lag in der Karte, und eine Karte schneidet alles ab, was ueber ihren Rand
+  hinausragt. Sechs Eintraege brauchten 262 Pixel, eine gewoehnliche Karte ist
+  220 hoch - der untere Teil war schlicht abgeschnitten
+- Ausserdem trug jede Karte ihr eigenes: wer nacheinander auf drei Karten
+  tippte, hatte drei offene Menues nebeneinander, und keines ging von selbst
+  wieder zu
+- Jetzt gibt es ein einziges Kaestchen, das unter seinen Knopf gestellt wird.
+  Zu geht es bei einem Druck woanders hin, bei Escape, beim zweiten Druck auf
+  denselben Knopf und wenn der Knopf aus dem Bild scrollt
+- Listenzeilen statt fetter Pillen: sechs Eintraege brauchen 216 statt 262
+  Pixel. Die Schrift kam vorher aus einem fest verdrahteten Rosa, das zu keiner
+  Einstellung passte - jetzt kommt sie aus dem Theme
+- Die Eintraege stehen in drei Gruppen, durch eine duenne Linie getrennt: was
+  man mit dem Titel vorhat, wie er aussieht, was man wegnimmt. Das Wegnehmen
+  steht unten - es ist das Seltenste und das, was man am ehesten aus Versehen
+  trifft
+- Jeder Eintrag traegt ein Symbol, alle als Schriftzeichen und keines farbig,
+  damit die Spalte ruhig bleibt. Das Herz ist dasselbe wie in der Kopfleiste -
+  hohl, solange ein Titel nicht vorgemerkt ist, voll wenn doch
+
+Zwei Dinge, die dabei gemessen und nicht vermutet wurden: waehrend einer
+Watchparty werden die Karten alle paar Sekunden neu gezeichnet - das Menue
+haengt sich deshalb an den neuen Knopf derselben Karte um, statt zuzugehen. Und
+ein Horcher auf "scroll" war schaedlich, weil beim Neuzeichnen die
+Scrollposition einer Reihe auf Null springt und ihn feuerte.
+
+32 Pruefungen am Menue selbst und 111 an der laufenden App. Die Symbole werden
+gegen ein Zeichen gemessen, das es in keiner Schrift gibt - fehlt eines in der
+Schrift des Systems, malt der Browser ein leeres Kaestchen, und im Quelltext
+faellt das nie auf.
+
+## 1.24.0 — 19. August 2026
+
+Zwei Arbeitsstaende, die seit 1.23.0 liegengeblieben sind.
+
+**Titelhintergrund: Bildausschnitt waehlen**
+
+- Ein eigenes Titelbild wurde ueberall mittig gedeckt - auf dem breiten Banner
+  der Startseite genauso wie auf den schmalen Karten. Bei einem Bild, dessen
+  Logo oben sitzt, schnitt ELFIX genau das Logo weg
+- Nach der Wahl eines Bildes - und ueber "Ausschnitt bearbeiten" auch spaeter
+  noch - geht jetzt ein Editor auf. Die Vorschau darin ist keine nachgebaute
+  Ansicht, sondern die echte Karte samt Titel, Anbieter, Fortschrittsbalken,
+  Laufzeit und Abdunklung
+- Vier Formen lassen sich einzeln einstellen und einzeln speichern: Poster
+  (2:3), Mittel, Gross (16:9) und Banner. Jede haelt ihren eigenen Zoom und
+  ihre eigene Lage; ein Zug im Poster laesst das Banner unberuehrt
+- Verschoben wird mit Maus oder Finger direkt im Bild, gezoomt mit Regler,
+  Mausrad oder zwei Fingern. Dazu "Zuruecksetzen", "Bild zentrieren",
+  "Speichern", "Abbrechen" und "Uebernehmen"
+- Gestreckt wird nie, und leere Flaechen kann es nicht geben: der Zoom faellt
+  nie unter die Deckungsgroesse. Das gilt ohne Fallunterscheidung, in jeder
+  Form und bei jeder Fenstergroesse
+- Gespeichert wird getrennt vom Bild, am Titel, in Verhaeltnissen statt in
+  Pixeln. Ein neuer Ausschnitt bewegt damit ein paar Zahlen und nicht ein paar
+  hundert Kilobyte - dasselbe Bild wird nie zweimal abgelegt
+- Aeltere Eintraege mit nur einer Lage werden auf alle vier Formen gelegt,
+  damit sich am Bild nichts aendert
+- Nebenbei laesst sich der Text auf Karten und im Banner nicht mehr markieren.
+  Ein Zug ueber den Titel bewegt jetzt das Bild - das half auch beim
+  Umsortieren in der Mediathek
+
+**Externe Metadaten und bessere Empfehlungen**
+
+- TMDB und AniList haengen jetzt am Watchparty-Relay statt an jedem Geraet
+  einzeln, dazu ein Client in der App, der zuerst den eigenen Zwischenspeicher
+  fragt und einen Treffer bei zu geringer Konfidenz nachprueft
+- Der Kandidaten-Pool der Empfehlungen ist gerichtet: paginierte Genrelisten,
+  kein Genre-Kollaps mehr, gleichmaessigeres Genre-Wissen ueber die Anbieter
+  hinweg und Adressen nicht mehr nur aus der Saat
+- Die sichtbare Begruendung kommt aus dem finalen Scoring, damit dort nicht ein
+  Grund steht, der die Reihenfolge gar nicht bestimmt hat
+
+79 Rechenpruefungen zum Ausschnitt und 94 an der laufenden App: alle vier
+Formen, fuenf Bildformate von 3840x600 bis 600x3000, Ziehen mit echter Maus,
+Mausrad, Regler, Anschlag - und ein Ende-zu-Ende-Lauf, der einen Ausschnitt
+speichert und danach an den echten Karten und am Banner nachliest. Insgesamt
+23 Suiten, davon vier gegen ein laufendes Relay.
+
+## 1.23.0 — 19. August 2026
+
+Empfehlungen: der Kandidaten-Pool war kaputt, nicht die Bewertung.
+
+Die Genre-Uebersichten der Anbieter sind blaetterbar und alphabetisch
+sortiert. Gelesen wurde nur Seite 1 - bei AniWorld eine von 36, bei S.to eine
+von 60. Damit bestand das Angebot, aus dem ueberhaupt ausgewaehlt werden
+konnte, dauerhaft aus dem Anfang des Alphabets: 46 Prozent aller Vorschlaege
+begannen mit "A". Ein Limit beim Lesen einer Seite behebt das nicht - was nie
+Kandidat war, kann nicht empfohlen werden.
+
+**Vier Fehler, alle vor dem Ranking**
+
+- Nur Seite 1 je Genre-Liste. Jetzt wird die Blaetterleiste ausgelesen und
+  gleichmaessig ueber ihre ganze Laenge gelesen: statt 859 Rohtiteln aus 26
+  Seiten sind es 4642 aus 136
+- Die Kappung auf 900 Kandidaten ging nach blosser Profilpassung und liess den
+  Pool auf das staerkste Genre zusammenfallen - 81 Prozent trugen "Abenteuer".
+  Jetzt bekommt jedes Lieblingsgenre einen Anteil an den Plaetzen, der seinem
+  Gewicht im Profil entspricht
+- Die beiden Kandidatenquellen wurden mit ungleichem Wissen bewertet: ein
+  Titel aus einer Genre-Liste kannte nur die Genres der Listen, in denen er
+  zufaellig gefunden wurde. Jetzt bekommen die aussichtsreichsten Kandidaten
+  ihre echten Genres von der Detailseite
+- Genre-Adressen kamen nur aus den zwoelf Verlaufstiteln. Fiel der letzte
+  Actionfilm aus dem Verlauf, war der Action-Katalog unerreichbar. Jetzt zaehlt
+  jede je gelesene Detailseite als Adressquelle
+
+Mit echten Daten nachgerechnet: A-Anteil 46 auf 13 Prozent, Kandidaten 416 auf
+968. Bei einem Naruto-Verlauf steht Naruto Shippuden auf Platz 1, Hunter x
+Hunter auf 3; bei Iron Man stehen Teil 2 und 3 in der Top 15.
+
+**Die Anbieterseiten geben mehr her als Genres**
+
+- Gelesen werden jetzt auch IMDB-Kennung, Altersfreigabe, Anfangs- und
+  Endjahr, fremdsprachige Titel sowie Besetzung und Regie. Das war schon immer
+  da und wurde nie gelesen
+- Die IMDB-Kennung loest ein Werk eindeutig auf: kein Titelvergleich, keine
+  Verwechslung zwischen zwei Verfilmungen desselben Stoffs
+- Die Altersfreigabe trennt, was die Genres nicht trennen: Paw Patrol 0, Korra
+  6, Naruto 12, One Piece 16. Fuer die Genres ist beides "Animation, Abenteuer"
+
+**Metadaten-Tor im Watchparty-Relay**
+
+- Der TMDB-Schluessel darf nicht auf die Geraete - alles, was in ein
+  Electron-Bundle wandert, ist lesbar. Deshalb fragt die App nicht TMDB,
+  sondern das Relay
+- Vier Routen und eine Statusauskunft. Keine allgemeine Weiterleitung, kein
+  durchgereichter Pfad, nach aussen nur eine Normalform statt roher
+  Fremdantworten
+- Mit Cache und Negativ-Cache, Zusammenlegung gleichzeitiger gleicher
+  Anfragen, Taktbremse je Adresse, Zeitgrenzen und geprueftem Eingabeschema
+- Belegte Beziehungen und fremde Empfehlungen bleiben getrennte Felder - eine
+  TMDB-Empfehlung wird nie zu einer Fortsetzung
+- Fehlt der Schluessel, laeuft alles weiter: Anime kommt von AniList, Filme und
+  Serien bleiben ohne Anreicherung
+
+Alte, abgeschnittene Listen werden beim Start automatisch verworfen - ohne das
+haetten sie sechs Stunden ueberdauert. 17 Suiten, darunter drei neue: Katalog
+(Blaetterleisten und Stichproben), Metadaten (die Angaben der Anbieterseiten)
+und Gateway (52 Pruefungen mit gestellten Fremdantworten, bis hin zu
+Ausbruchsversuchen aus dem Pfad und dem Nachweis, dass der Schluessel nirgends
+auftaucht).
+
 ## 1.22.0 — 18. August 2026
 
 Die Empfehlungen verstehen jetzt Filmreihen.
