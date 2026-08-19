@@ -1968,30 +1968,34 @@ h1 {
   top: 10px;
   right: 10px;
   z-index: 2;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 11, 17, 0.58);
+  backdrop-filter: blur(6px);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.82;
+  transition: opacity calc(140ms * var(--animation-speed)) ease,
+              background calc(140ms * var(--animation-speed)) ease;
 }
 
-.favorite-actions {
-  position: absolute;
-  top: 48px;
-  right: 10px;
-  z-index: 3;
-  display: none;
-  min-width: 170px;
-  border-radius: 14px;
-  padding: 8px;
-  background: rgba(14, 18, 27, 0.96);
-  box-shadow: var(--shadow);
+.favorite-card:hover .favorite-menu,
+.favorite-menu:focus-visible,
+.favorite-menu.is-open {
+  opacity: 1;
+  background: rgba(8, 11, 17, 0.82);
 }
 
-.favorite-actions.is-open {
-  display: block;
+/* Solange sein Menue offen steht, bleibt der Knopf sichtbar angefasst. */
+.favorite-menu.is-open {
+  border-color: rgba(var(--accent-rgb), 0.55);
 }
 
-.favorite-actions button,
 .text-action {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
@@ -1999,19 +2003,106 @@ h1 {
   padding: 0 12px;
 }
 
-.favorite-actions button {
+/* --- Das Menue einer Karte --------------------------------------------------
+
+   Es haengt am Rand des Dokuments und wird von kartenMenueOeffnen() unter
+   seinen Knopf gestellt - in der Karte wuerde es abgeschnitten. Dort steht
+   auch, warum es nur eines davon gibt. */
+.karten-menue {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  min-width: 210px;
+  max-width: min(300px, calc(100vw - 24px));
+  padding: 5px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel), #05080d 12%);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+  animation: karten-menue-auf calc(120ms * var(--animation-speed)) ease both;
+}
+
+.karten-menue.is-hidden {
+  display: none;
+}
+
+@keyframes karten-menue-auf {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Eine Zeile, keine Pille: ohne eigene Flaeche, ohne Rundung um jeden Eintrag
+   und ohne Abstand dazwischen braucht ein Menue mit sechs Eintraegen rund ein
+   Drittel weniger Platz - und es liest sich als Liste statt als Knopfhaufen.
+   Die Farbe kommt aus dem Theme; vorher stand hier ein festes Rosa, das zu
+   keiner Einstellung passte. */
+.karten-menue button {
   width: 100%;
-  color: #ffd9de;
+  min-height: 31px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  /* Symbol und Text in zwei Spalten: so stehen alle Beschriftungen an
+     derselben Kante und die Symbole bilden eine Reihe, statt dass jede Zeile
+     woanders anfaengt. */
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
 }
 
-/* Mehrere Eintraege im Menue brauchen Luft dazwischen. */
-.favorite-actions button + button {
-  margin-top: 6px;
+.karten-menue button > span:last-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.favorite-actions button.is-danger {
-  background: color-mix(in srgb, var(--error) 22%, transparent);
-  color: #ffe3e6;
+/* Die Symbole sind Beiwerk, kein Schmuckstueck: Schriftzeichen in der Farbe
+   der Zeile, etwas zurueckgenommen, damit der Text sie fuehrt. Farbige
+   Bildmarken standen hier vorher - nebeneinander gaben sie eine unruhige
+   Spalte aus Abzeichen, und die roten und gruenen darunter zogen den Blick
+   staerker auf sich als die Beschriftung. */
+.karten-menue-symbol {
+  font-size: 14.5px;
+  line-height: 1;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.karten-menue button:hover .karten-menue-symbol,
+.karten-menue button:focus-visible .karten-menue-symbol {
+  opacity: 1;
+}
+
+/* Eine duenne Linie trennt die drei Gruppen: vormerken, Bild, wegnehmen. Sie
+   ordnet, ohne nennenswert Platz zu kosten. */
+.karten-menue-strich {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--line);
+}
+
+.karten-menue button:hover,
+.karten-menue button:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+  outline: 0;
+}
+
+/* Loeschen faellt durch die Farbe auf, nicht durch eine eigene Flaeche - sonst
+   zoege es den Blick staerker auf sich als alles andere im Menue. */
+.karten-menue button.is-danger {
+  color: var(--error);
+}
+
+.karten-menue button.is-danger:hover,
+.karten-menue button.is-danger:focus-visible {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
 }
 
 /* Umsortieren in der Mediathek: die gezogene Karte bleibt sichtbar, liegt

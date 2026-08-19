@@ -48,6 +48,7 @@ function element(tag) {
     append(...k) { this.children.push(...k.filter(Boolean)); },
     appendChild(k) { this.children.push(k); return k; },
     replaceChildren(...k) { this.children = k; },
+    setAttribute(name, wert) { (this._attr = this._attr || {})[name] = wert; },
     addEventListener(art, fn) { (this._h = this._h || {})[art] = fn; },
     auslösen(art) { return this._h?.[art]?.({ stopPropagation() {} }); },
     querySelector: () => null, querySelectorAll: () => [], remove() {}, focus() {}
@@ -57,8 +58,13 @@ function element(tag) {
 // Was die Kachel sonst noch aus renderer.js braucht, ist fuer diese Frage
 // belanglos - unbekannte Namen werden zu harmlosen Platzhaltern.
 function kachelBauen(zusatz = {}) {
-  const gerufen = { watchlist: [], toasts: [] };
+  const gerufen = { watchlist: [], toasts: [], menue: [] };
   const kontext = {
+    // Die Eintraege stehen seit 1.24.0 nicht mehr als Knoepfe in der Kachel,
+    // sondern gehen beim Klick auf "⋯" an ein gemeinsames Kaestchen. Hier
+    // steht der Empfaenger, damit sich weiter der echte Quelltext pruefen
+    // laesst und nicht seine Beschreibung.
+    kartenMenueOeffnen: (knopf, eintraege) => gerufen.menue.push({ knopf, eintraege }),
     document: { createElement: element, createDocumentFragment: () => element("frag") },
     favorites: [],
     api: {
@@ -84,11 +90,16 @@ function kachelBauen(zusatz = {}) {
   return { karte, gerufen };
 }
 
-function menue(favorite, optionen, zusatz) {
+// `darfEntfernen` ist bei favoriteCard() das zweite Argument und nicht Teil der
+// Optionen - ohne es fehlt der Eintrag "Aus Watchlist entfernen" ganz.
+function menue(favorite, optionen, zusatz, darfEntfernen = false) {
   const { karte, gerufen } = kachelBauen(zusatz);
-  const gebaut = karte(favorite, false, optionen);
-  const fach = gebaut.children.find((k) => k?.className === "favorite-actions");
-  return { eintraege: fach?.children || [], namen: (fach?.children || []).map((k) => k.textContent), gerufen };
+  const gebaut = karte(favorite, darfEntfernen, optionen);
+  const knopf = gebaut.children.find((k) => k?.className === "favorite-menu");
+  // Erst der Klick auf "⋯" bringt die Eintraege hervor.
+  knopf?.auslösen("click");
+  const eintraege = gerufen.menue.at(-1)?.eintraege || [];
+  return { knopf, eintraege, namen: eintraege.map((e) => e.text), gerufen };
 }
 
 // --- Die Reihen, wie renderer.js sie wirklich baut --------------------------
@@ -117,12 +128,91 @@ pruefe("Schon vorgemerkt: der Eintrag fehlt",
 pruefe("In der Watchlist-Reihe: kein Eintrag",
   !menue(OFFEN, { allowImage: true }).namen.includes("Auf die Watchlist"));
 
+// --- Das Menue haengt nicht mehr in der Kachel ------------------------------
+//
+// Eine Kachel schneidet mit overflow:hidden alles ab, was ueber ihren Rand
+// hinausragt. Ein Menue mit sechs Eintraegen ist hoeher als eine Kachel von
+// 220 Pixeln und war unten abgeschnitten - sichtbar nur deshalb, weil es die
+// ganze Kachel verdeckte. Deshalb traegt die Kachel jetzt nur noch den Knopf.
+
+{
+  const gebaut = menue(OFFEN, WEITER);
+  pruefe("Die Kachel traegt nur noch den Knopf, kein Eintragsfach", Boolean(gebaut.knopf));
+  pruefe("Der Knopf oeffnet das gemeinsame Menue", gebaut.gerufen.menue.length === 1);
+  pruefe("Das Menue bekommt den Knopf als Anker mit", gebaut.gerufen.menue[0].knopf === gebaut.knopf);
+  pruefe("Jeder Eintrag traegt Text und eine Handlung",
+    gebaut.eintraege.length > 0
+    && gebaut.eintraege.every((e) => typeof e.text === "string" && e.text && typeof e.tun === "function"),
+    gebaut.namen.join(" | "));
+}
+
+// Ohne einen einzigen Eintrag braucht es auch keinen Knopf.
+pruefe("Ohne Eintraege gibt es keinen Knopf",
+  !menue(OFFEN, { allowImage: false }).knopf);
+
+// Loeschen ist der einzige Eintrag, der als gefaehrlich zaehlt.
+{
+  const mediathek = menue(OFFEN, { allowLibraryRemove: true, allowImage: false });
+  pruefe("Aus der Mediathek loeschen ist als gefaehrlich gekennzeichnet",
+    mediathek.eintraege.length === 1 && mediathek.eintraege[0].gefahr === true,
+    mediathek.namen.join(" | "));
+  pruefe("Die uebrigen Eintraege sind es nicht",
+    menue(OFFEN, WEITER).eintraege.every((e) => !e.gefahr));
+}
+
+// --- Symbole und Reihenfolge ------------------------------------------------
+//
+// Acht gleich aussehende Zeilen untereinander liest niemand. Jeder Eintrag
+// traegt deshalb ein Symbol, und die Eintraege stehen in drei Gruppen:
+// vormerken, Bild, wegnehmen - in dieser Reihenfolge, mit dem Wegnehmen unten.
+
+{
+  const alles = menue(OFFEN, { showProgress: true, allowContinueRemove: true, allowComplete: true,
+    allowWatchlistAdd: true, allowImage: true, allowLibraryRemove: true });
+  pruefe("Jeder Eintrag traegt ein Symbol",
+    alles.eintraege.every((e) => typeof e.symbol === "string" && e.symbol.length > 0),
+    alles.eintraege.map((e) => `${e.symbol} ${e.text}`).join(" | "));
+  pruefe("Jeder Eintrag gehoert zu einer Gruppe",
+    alles.eintraege.every((e) => ["vormerken", "bild", "weg"].includes(e.gruppe)),
+    alles.eintraege.map((e) => e.gruppe).join(" "));
+
+  // Die Gruppen stehen am Stueck und in fester Reihenfolge - sonst braechte
+  // der Trennstrich im Menue nichts.
+  const folge = alles.eintraege.map((e) => e.gruppe).filter((g, i, a) => g !== a[i - 1]);
+  pruefe("Die Gruppen stehen am Stueck und in fester Reihenfolge",
+    folge.join(">") === "vormerken>bild>weg", folge.join(">"));
+  pruefe("Das Wegnehmen steht unten",
+    alles.eintraege.at(-1).gruppe === "weg" && alles.eintraege.at(-1).gefahr === true,
+    alles.eintraege.at(-1).text);
+
+  // Die Watchlist traegt in ELFIX ein Herz - hohl, solange ein Titel nicht
+  // vorgemerkt ist, voll wenn doch. Das Menue benutzt dasselbe Zeichen wie der
+  // Knopf in der Kopfleiste; geprueft wird gegen dessen Quelltext, damit die
+  // beiden nicht auseinanderlaufen.
+  pruefe("Der Knopf in der Kopfleiste benutzt hohles und volles Herz",
+    /button\.textContent = active \? "♥" : "♡"/.test(renderer));
+  pruefe("\"Auf die Watchlist\" traegt das hohle Herz",
+    alles.eintraege.find((e) => e.text === "Auf die Watchlist")?.symbol === "♡");
+  const watchlist = menue(OFFEN, { allowImage: false }, undefined, true);
+  pruefe("\"Aus Watchlist entfernen\" traegt das volle Herz",
+    watchlist.eintraege.find((e) => e.text === "Aus Watchlist entfernen")?.symbol === "♥",
+    watchlist.eintraege.map((e) => `${e.symbol} ${e.text}`).join(" | "));
+
+  // Ein eigenes Bild bringt zwei weitere Eintraege in dieselbe Gruppe.
+  const mitBild = menue({ ...OFFEN, customThumbnail: "data:image/png;base64,x" }, { allowImage: true });
+  pruefe("Mit eigenem Bild kommen Ausschnitt und Entfernen dazu",
+    mitBild.namen.includes("Ausschnitt bearbeiten") && mitBild.namen.includes("Eigenes Bild entfernen")
+    && mitBild.namen.includes("Anderes Bild wählen"),
+    mitBild.namen.join(" | "));
+  pruefe("Ohne eigenes Bild fehlen sie",
+    !menue(OFFEN, { allowImage: true }).namen.includes("Ausschnitt bearbeiten"));
+}
+
 // --- Was der Eintrag ausloest ----------------------------------------------
 
 (async () => {
   const geklickt = menue(OFFEN, WEITER);
-  const knopf = geklickt.eintraege.find((k) => k.textContent === "Auf die Watchlist");
-  await knopf.auslösen("click");
+  await geklickt.eintraege.find((e) => e.text === "Auf die Watchlist").tun();
   pruefe("Klick meldet genau diesen Titel zum Vormerken",
     geklickt.gerufen.watchlist.length === 1 && geklickt.gerufen.watchlist[0][0] === "1"
     && geklickt.gerufen.watchlist[0][1] === true,
@@ -132,9 +222,8 @@ pruefe("In der Watchlist-Reihe: kein Eintrag",
 
   // Eine aeltere Bruecke kennt die Funktion nicht - dann darf nichts abstuerzen.
   const alt = menue(OFFEN, WEITER, { setFavoriteWatchlist: undefined });
-  const altKnopf = alt.eintraege.find((k) => k.textContent === "Auf die Watchlist");
   let geplatzt = false;
-  try { await altKnopf.auslösen("click"); } catch { geplatzt = true; }
+  try { await alt.eintraege.find((e) => e.text === "Auf die Watchlist").tun(); } catch { geplatzt = true; }
   pruefe("Ohne die Bruecke: kein Absturz, sondern ein Hinweis",
     !geplatzt && alt.gerufen.toasts.some((t) => /nicht/i.test(t)), alt.gerufen.toasts.join(" | "));
 

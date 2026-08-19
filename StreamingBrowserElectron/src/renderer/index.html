@@ -1215,6 +1215,12 @@
     </div>
   </dialog>
 
+  <!-- Das Menue einer Karte. Es steht hier und nicht in der Karte: eine Karte
+       schneidet mit overflow:hidden alles ab, was ueber ihren Rand hinausragt,
+       und ein Menue mit sechs Eintraegen ist hoeher als eine Karte. Ein
+       gemeinsames Kaestchen kann ausserdem gar nicht zweimal offen sein. -->
+  <div class="karten-menue is-hidden" id="kartenMenue" role="menu"></div>
+
   <script src="../../shared/bildausschnitt.js"></script>
   <script src="./renderer.js"></script>
 </body>

@@ -424,6 +424,7 @@ function bindEvents() {
   window.addEventListener("resize", () => window.setTimeout(syncBrowserBounds, 200));
   new ResizeObserver(syncBrowserBounds).observe(browserFrame);
   cropBinden();
+  kartenMenueBinden();
 
   document.querySelector("#startButton")?.addEventListener("click", showHome);
   document.querySelector("#searchButton")?.addEventListener("click", openSearchView);
@@ -3211,6 +3212,175 @@ function formatClock(seconds) {
   return `${minutes}:${String(secs).padStart(2, "0")}`;
 }
 
+// --- Das Menue einer Karte ------------------------------------------------------
+//
+// Ein einziges Kaestchen fuer alle Karten, das am Rand des Dokuments haengt und
+// nicht in der Karte. Zwei Gruende dafuer:
+//
+// Erstens schneidet eine Karte mit overflow:hidden alles ab, was ueber ihren
+// Rand hinausragt - und ein Menue mit sechs Eintraegen ist hoeher als eine
+// Karte von 220 Pixeln. Frueher lag das Menue in der Karte und wurde unten
+// abgeschnitten; sichtbar war es nur, weil es die ganze Karte verdeckte.
+//
+// Zweitens kann ein gemeinsames Kaestchen gar nicht zweimal gleichzeitig offen
+// sein. Vorher trug jede Karte ihr eigenes, und wer nacheinander auf drei
+// Karten tippte, hatte drei offene Menues nebeneinander.
+const kartenMenue = document.querySelector("#kartenMenue");
+let kartenMenueKnopf = null;
+// Zu welchem Titel das offene Menue gehoert. Es steht getrennt vom Knopf, weil
+// der Knopf verschwindet, sobald die Karten neu gezeichnet werden - siehe
+// kartenMenuePlatzieren().
+let kartenMenueFuer = "";
+
+function kartenMenueOeffnen(knopf, eintraege) {
+  if (!kartenMenue || !eintraege.length) return;
+  // Ein zweiter Klick auf denselben Knopf macht wieder zu.
+  const schonOffen = kartenMenueKnopf === knopf;
+  kartenMenueSchliessen();
+  if (schonOffen) return;
+
+  kartenMenueKnopf = knopf;
+  kartenMenueFuer = String(knopf.dataset.menueFuer || "");
+  knopf.classList.add("is-open");
+  kartenMenueZeilenSetzen(eintraege);
+  kartenMenue.classList.remove("is-hidden");
+  kartenMenuePlatzieren();
+  kartenMenue.querySelector("button")?.focus();
+  requestAnimationFrame(kartenMenueNachfuehren);
+}
+
+function kartenMenueZeilenSetzen(eintraege) {
+  // Stehen dieselben Eintraege schon da, bleibt alles, wie es ist - sonst
+  // verloere ein Neuaufbau die Zeile, ueber der die Maus gerade steht.
+  const kennung = eintraege.map((eintrag) => `${eintrag.gruppe}:${eintrag.text}`).join("\u0000");
+  if (kartenMenue.dataset.stand === kennung) return;
+  kartenMenue.dataset.stand = kennung;
+
+  const kinder = [];
+  let letzteGruppe = "";
+  for (const eintrag of eintraege) {
+    // Eine duenne Linie zwischen den Gruppen. Sie ordnet, ohne Platz zu
+    // kosten: drei Bloecke lesen sich schneller als acht gleich aussehende
+    // Zeilen untereinander.
+    if (letzteGruppe && eintrag.gruppe !== letzteGruppe) {
+      const strich = document.createElement("div");
+      strich.className = "karten-menue-strich";
+      kinder.push(strich);
+    }
+    letzteGruppe = eintrag.gruppe;
+
+    const zeile = document.createElement("button");
+    zeile.type = "button";
+    zeile.setAttribute("role", "menuitem");
+    if (eintrag.gefahr) zeile.className = "is-danger";
+    const symbol = document.createElement("span");
+    symbol.className = "karten-menue-symbol";
+    symbol.setAttribute("aria-hidden", "true");
+    symbol.textContent = eintrag.symbol || "";
+    const text = document.createElement("span");
+    text.textContent = eintrag.text;
+    zeile.append(symbol, text);
+    zeile.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      // Erst zu, dann handeln: fast jede dieser Aktionen zeichnet die Karten
+      // neu, und das Menue haenge sonst an einem Knopf, den es nicht mehr gibt.
+      kartenMenueSchliessen();
+      await eintrag.tun();
+    });
+    kinder.push(zeile);
+  }
+  kartenMenue.replaceChildren(...kinder);
+}
+
+function kartenMenueSchliessen() {
+  if (!kartenMenue) return;
+  kartenMenueKnopf?.classList.remove("is-open");
+  kartenMenueKnopf = null;
+  kartenMenueFuer = "";
+  kartenMenue.classList.add("is-hidden");
+  kartenMenue.replaceChildren();
+  delete kartenMenue.dataset.stand;
+}
+
+// Unter dem Knopf, rechtsbuendig zu ihm. Reicht der Platz nach unten nicht,
+// klappt es nach oben; ueber den Fensterrand hinaus geht es nie.
+function kartenMenuePlatzieren() {
+  if (!kartenMenueKnopf) return;
+  // Der Knopf verschwindet, sobald die Karten neu gezeichnet werden - waehrend
+  // einer Watchparty geschieht das alle paar Sekunden, gemessen. Das Menue
+  // deswegen zuzuklappen hiesse, es dem Benutzer mitten im Lesen wegzunehmen.
+  // Stattdessen wird der Knopf derselben Karte wieder gesucht und das Menue
+  // haengt sich dort ein; erst wenn es die Karte nicht mehr gibt, ist Schluss.
+  if (!kartenMenueKnopf.isConnected) {
+    const ersatz = kartenMenueFuer
+      ? document.querySelector(`.favorite-menu[data-menue-fuer="${CSS.escape(kartenMenueFuer)}"]`)
+      : null;
+    if (!ersatz) {
+      kartenMenueSchliessen();
+      return;
+    }
+    kartenMenueKnopf = ersatz;
+    ersatz.classList.add("is-open");
+    // Die Eintraege koennen sich geaendert haben - nach dem Setzen eines
+    // eigenen Bildes kommt "Ausschnitt bearbeiten" dazu. Genommen wird
+    // deshalb die Liste des neuen Knopfes.
+    if (Array.isArray(ersatz.kartenEintraege)) kartenMenueZeilenSetzen(ersatz.kartenEintraege);
+  }
+  const anker = kartenMenueKnopf.getBoundingClientRect();
+  // Ist der Knopf aus dem Bild gescrollt, hat das Menue keinen Bezugspunkt
+  // mehr und stuende allein im Fenster.
+  if (anker.bottom <= 0 || anker.top >= window.innerHeight
+    || anker.right <= 0 || anker.left >= window.innerWidth) {
+    kartenMenueSchliessen();
+    return;
+  }
+  const eigen = kartenMenue.getBoundingClientRect();
+  const luft = 8;
+  let oben = anker.bottom + 6;
+  if (oben + eigen.height > window.innerHeight - luft) {
+    oben = Math.max(luft, anker.top - eigen.height - 6);
+  }
+  const links = Math.min(
+    Math.max(luft, anker.right - eigen.width),
+    Math.max(luft, window.innerWidth - eigen.width - luft)
+  );
+  kartenMenue.style.left = `${Math.round(links)}px`;
+  kartenMenue.style.top = `${Math.round(oben)}px`;
+}
+
+// Solange das Menue offen steht, bleibt es an seinem Knopf. Das kostet nur
+// waehrend dieser Zeit etwas - und es faengt den Fall ab, dass die Karten
+// darunter neu gezeichnet werden: dann gibt es den Knopf nicht mehr, und ein
+// Menue ohne Knopf haette nichts, worauf es sich bezieht.
+function kartenMenueNachfuehren() {
+  if (!kartenMenueKnopf) return;
+  kartenMenuePlatzieren();
+  if (kartenMenueKnopf) requestAnimationFrame(kartenMenueNachfuehren);
+}
+
+function kartenMenueBinden() {
+  if (!kartenMenue) return;
+  // Irgendwo sonst hindruecken macht zu. In der Erfassungsphase, damit es auch
+  // dann greift, wenn das Ziel den Klick fuer sich behaelt - Karten tun das.
+  document.addEventListener("pointerdown", (event) => {
+    if (!kartenMenueKnopf) return;
+    // Nicht bei einem Druck ins Menue selbst, und nicht bei einem Druck auf
+    // einen Menueknopf: der entscheidet gleich selbst, ob er auf- oder zumacht.
+    if (event.target.closest?.("#kartenMenue") || event.target.closest?.(".favorite-menu")) return;
+    kartenMenueSchliessen();
+  }, true);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && kartenMenueKnopf) kartenMenueSchliessen();
+  });
+
+  // Auf Scrollen und Groessenaendern muss hier nichts horchen: solange das
+  // Menue offen ist, laeuft kartenMenueNachfuehren() in jedem Bild und stellt
+  // es neu unter seinen Knopf. Ein Horcher auf "scroll" waere sogar schaedlich
+  // gewesen - beim Neuzeichnen springt die Scrollposition einer Reihe auf
+  // Null, und das Menue ginge jedes Mal zu.
+}
+
 // Was in einer Karte steht: Titel mit Staffel und Folge, Anbieter (und Runde,
 // wenn der Eintrag zu einer Watchparty gehoert), Fortschrittsbalken und
 // Laufzeit. Ausgelagert, weil die Live-Vorschau im Zuschneide-Editor genau
@@ -3290,91 +3460,33 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     card.title = "Zum Umsortieren ziehen";
   }
 
-  if (allowRemove || options.allowContinueRemove || options.allowLibraryRemove || options.allowComplete
-    || options.allowWatchlistAdd || options.allowImage === true) {
-    const menu = document.createElement("button");
-    menu.className = "favorite-menu";
-    menu.type = "button";
-    menu.textContent = "⋯";
-    menu.addEventListener("click", (event) => {
-      event.stopPropagation();
-      actions.classList.toggle("is-open");
-    });
-    const actions = document.createElement("div");
-    actions.className = "favorite-actions";
-    if (allowRemove) {
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.textContent = "Aus Watchlist entfernen";
-      remove.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        favorites = await api.removeFavorite(favorite.id);
-        renderFavorites();
-        renderHome();
-        renderLibraryViews();
-        renderFavoriteToggle();
-        showToast("Aus Watchlist entfernt");
-      });
-      actions.append(remove);
-    }
-    if (options.allowContinueRemove) {
-      const hideContinue = document.createElement("button");
-      hideContinue.type = "button";
-      hideContinue.textContent = "Aus Weiterschauen entfernen";
-      hideContinue.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        favorites = await api.hideFromContinue(favorite.id);
-        renderHome();
-        renderLibraryViews();
-        showToast("Weiterschauen auf Anfang zurueckgesetzt");
-      });
-      actions.append(hideContinue);
-    }
-    // Eigenes Bild: taugt das Bild der Anbieterseite nichts, nimmt man ein
-    // anderes. Ohne eigenes bleibt alles wie bisher.
-    if (options.allowImage !== false) {
-      const bildWaehlen = document.createElement("button");
-      bildWaehlen.type = "button";
-      bildWaehlen.textContent = favorite.customThumbnail ? "Anderes Bild wählen" : "Eigenes Bild wählen";
-      bildWaehlen.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        actions.classList.remove("is-open");
-        await eigenesBildSetzen(favorite);
-      });
-      actions.append(bildWaehlen);
+  // Die Eintraege des Kartenmenues. Sie stehen hier nur als Liste - gezeigt
+  // werden sie von kartenMenueOeffnen() in einem gemeinsamen Kaestchen, das
+  // nicht in der Karte haengt und deshalb auch nicht von ihr abgeschnitten
+  // wird.
+  //
+  // Geordnet in drei Gruppen, die im Menue durch eine duenne Linie getrennt
+  // sind: "vormerken" (was man mit dem Titel vorhat), "bild" (wie er
+  // aussieht) und "weg" (was man wegnimmt). Das Wegnehmen steht unten - es
+  // ist das Seltenste und das, was man am ehesten aus Versehen trifft.
+  const eintraege = [];
 
-      if (favorite.customThumbnail) {
-        const ausschnitt = document.createElement("button");
-        ausschnitt.type = "button";
-        ausschnitt.textContent = "Ausschnitt bearbeiten";
-        ausschnitt.addEventListener("click", async (event) => {
-          event.stopPropagation();
-          actions.classList.remove("is-open");
-          await bildAusschnittBearbeiten(favorite);
-        });
-        actions.append(ausschnitt);
-
-        const bildWeg = document.createElement("button");
-        bildWeg.type = "button";
-        bildWeg.textContent = "Eigenes Bild entfernen";
-        bildWeg.addEventListener("click", async (event) => {
-          event.stopPropagation();
-          actions.classList.remove("is-open");
-          await eigenesBildEntfernen(favorite);
-        });
-        actions.append(bildWeg);
-      }
-    }
-
-    // Aus Weiterschauen heraus vormerken. Steht der Titel schon auf der
-    // Watchlist, waere der Eintrag sinnlos - dann fehlt er.
-    if (options.allowWatchlistAdd && !favorite.favorite) {
-      const merken = document.createElement("button");
-      merken.type = "button";
-      merken.textContent = "Auf die Watchlist";
-      merken.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        actions.classList.remove("is-open");
+  // --- vormerken ---
+  //
+  // Aus Weiterschauen heraus vormerken. Steht der Titel schon auf der
+  // Watchlist, waere der Eintrag sinnlos - dann fehlt er.
+  if (options.allowWatchlistAdd && !favorite.favorite) {
+    eintraege.push({
+      gruppe: "vormerken",
+      // Dasselbe Herz, das der Knopf in der Kopfleiste zeigt: hohl, solange der
+      // Titel nicht vorgemerkt ist. ELFIX benutzt es seit jeher als Zeichen fuer
+      // die Watchlist - ein anderes Symbol waere eine zweite Sprache fuer
+      // dieselbe Sache. Alle Symbole hier sind Schriftzeichen und keine
+      // farbigen Bildmarken; nebeneinander bilden sie so eine ruhige Spalte,
+      // statt dass jede Zeile ein buntes Abzeichen traegt.
+      symbol: "♡",
+      text: "Auf die Watchlist",
+      tun: async () => {
         const ergebnis = await api.setFavoriteWatchlist?.(favorite.id, true).catch(() => null);
         if (!ergebnis?.favorite) {
           showToast("Konnte nicht vorgemerkt werden");
@@ -3386,19 +3498,18 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${displayFavoriteTitle(favorite)}“ steht auf der Watchlist`);
-      });
-      actions.append(merken);
-    }
+      }
+    });
+  }
 
-    // In der Watchlist: eine Serie, die man laengst gesehen hat, direkt
-    // abhaken - sie wandert in die Mediathek, der Stand bleibt liegen.
-    if (options.allowComplete && !favorite.completed) {
-      const abhaken = document.createElement("button");
-      abhaken.type = "button";
-      abhaken.textContent = "Als gesehen abhaken";
-      abhaken.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        actions.classList.remove("is-open");
+  // Eine Serie, die man laengst gesehen hat, direkt abhaken - sie wandert in
+  // die Mediathek, der Stand bleibt liegen.
+  if (options.allowComplete && !favorite.completed) {
+    eintraege.push({
+      gruppe: "vormerken",
+      symbol: "✓",
+      text: "Als gesehen abhaken",
+      tun: async () => {
         const titel = displayFavoriteTitle(favorite);
         const bestaetigt = await confirmAction({
           eyebrow: "Mediathek",
@@ -3418,17 +3529,78 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${titel}“ ist jetzt in der Mediathek`);
+      }
+    });
+  }
+
+  // --- bild ---
+  //
+  // Taugt das Bild der Anbieterseite nichts, nimmt man ein anderes. Ohne
+  // eigenes bleibt alles wie bisher.
+  if (options.allowImage !== false) {
+    eintraege.push({
+      gruppe: "bild",
+      symbol: "▣",
+      text: favorite.customThumbnail ? "Anderes Bild wählen" : "Eigenes Bild wählen",
+      tun: () => eigenesBildSetzen(favorite)
+    });
+    if (favorite.customThumbnail) {
+      eintraege.push({
+        gruppe: "bild",
+        symbol: "✂",
+        text: "Ausschnitt bearbeiten",
+        tun: () => bildAusschnittBearbeiten(favorite)
       });
-      actions.append(abhaken);
+      eintraege.push({
+        gruppe: "bild",
+        symbol: "↺",
+        text: "Eigenes Bild entfernen",
+        tun: () => eigenesBildEntfernen(favorite)
+      });
     }
-    if (options.allowLibraryRemove) {
-      const loeschen = document.createElement("button");
-      loeschen.type = "button";
-      loeschen.className = "is-danger";
-      loeschen.textContent = "Aus Mediathek löschen";
-      loeschen.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        actions.classList.remove("is-open");
+  }
+
+  // --- weg ---
+  if (options.allowContinueRemove) {
+    eintraege.push({
+      gruppe: "weg",
+      symbol: "−",
+      text: "Aus Weiterschauen entfernen",
+      tun: async () => {
+        favorites = await api.hideFromContinue(favorite.id);
+        renderHome();
+        renderLibraryViews();
+        showToast("Weiterschauen auf Anfang zurueckgesetzt");
+      }
+    });
+  }
+
+  if (allowRemove) {
+    eintraege.push({
+      gruppe: "weg",
+      // Und hier das volle Herz: dieser Titel steht auf der Watchlist. Das
+      // Symbol zeigt den Zustand, die Beschriftung sagt, was passiert - genau
+      // wie beim Knopf in der Kopfleiste.
+      symbol: "♥",
+      text: "Aus Watchlist entfernen",
+      tun: async () => {
+        favorites = await api.removeFavorite(favorite.id);
+        renderFavorites();
+        renderHome();
+        renderLibraryViews();
+        renderFavoriteToggle();
+        showToast("Aus Watchlist entfernt");
+      }
+    });
+  }
+
+  if (options.allowLibraryRemove) {
+    eintraege.push({
+      gruppe: "weg",
+      symbol: "✕",
+      text: "Aus Mediathek löschen",
+      gefahr: true,
+      tun: async () => {
         const titel = displayFavoriteTitle(favorite);
         const bestaetigt = await confirmAction({
           eyebrow: "Mediathek",
@@ -3447,10 +3619,26 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${titel}“ gelöscht`);
-      });
-      actions.append(loeschen);
-    }
-    card.append(menu, actions);
+      }
+    });
+  }
+
+  if (eintraege.length) {
+    const menu = document.createElement("button");
+    menu.className = "favorite-menu";
+    menu.type = "button";
+    menu.textContent = "⋯";
+    menu.title = "Mehr zu diesem Titel";
+    menu.setAttribute("aria-haspopup", "menu");
+    // Beides, damit sich das Menue nach einem Neuzeichnen wieder einhaengen
+    // kann: woran es haengt und was drinstehen soll.
+    menu.dataset.menueFuer = favorite.id;
+    menu.kartenEintraege = eintraege;
+    menu.addEventListener("click", (event) => {
+      event.stopPropagation();
+      kartenMenueOeffnen(menu, eintraege);
+    });
+    card.append(menu);
   }
 
   queueFavoriteThumbnailRepair(favorite);
