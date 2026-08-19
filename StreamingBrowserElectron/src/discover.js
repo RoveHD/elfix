@@ -866,18 +866,33 @@ function extractCalendarEntries(html) {
   return ohneDoppelte(eintraege);
 }
 
-// Die Flaggen der Anbieter in Worte. "japanese-german" heisst: japanischer Ton
-// mit deutschem Untertitel - nicht etwa zwei Sprachen.
+// Die Fassungsangaben der Anbieter in Worte. "japanese-german" heisst:
+// japanischer Ton mit deutschem Untertitel - nicht etwa zwei Sprachen.
+//
+// Hier laufen zwei Quellen zusammen. AniWorld nennt die Fassung ueber die
+// Flagge neben der Folge ("japanese-german"), S.to schreibt sie in seine
+// Schnittstelle ("Ger-Sub"). Beide muessen dieselben Worte ergeben, sonst
+// stuenden im Kalenderfilter zwei Knoepfe fuer dieselbe Sache - einer davon
+// in einer Abkuerzung, die niemand ausser dem Anbieter benutzt.
+//
+// Was S.to "Ger-Sub" nennt, sagt nur etwas ueber den Untertitel und nichts
+// ueber den Ton. Es wird deshalb zu "Deutsche Untertitel" und nicht zu
+// "Japanisch, Deutsche Untertitel" - das waere eine Behauptung, die in den
+// Daten nicht steht.
 function spracheAusFlagge(name) {
-  const wert = String(name || "").toLowerCase();
+  const wert = String(name || "").trim().toLowerCase();
   if (!wert) return "";
-  if (wert === "german" || wert === "deutsch") return "Deutsch";
+  if (wert === "german" || wert === "deutsch" || wert === "ger-dub") return "Deutsch";
   if (wert === "japanese-german") return "Japanisch, Deutsche Untertitel";
   if (wert === "japanese-english") return "Japanisch, Englische Untertitel";
   if (wert === "japanese") return "Japanisch";
-  if (wert === "english") return "Englisch";
+  if (wert === "english" || wert === "englisch" || wert === "eng-dub") return "Englisch";
   if (wert === "english-german") return "Englisch, Deutsche Untertitel";
-  return wert.replace(/-/g, ", ");
+  if (wert === "ger-sub") return "Deutsche Untertitel";
+  if (wert === "eng-sub") return "Englische Untertitel";
+  // Unbekanntes bleibt lesbar stehen, statt klein geschrieben zu werden: es
+  // landet als Beschriftung auf einem Knopf.
+  return wert.split("-").map((teil) => teil.charAt(0).toUpperCase() + teil.slice(1)).join(", ");
 }
 
 // Eine Folge, ein Eintrag. Die Anbieter listen sie je Synchronfassung einmal -
@@ -943,7 +958,9 @@ function extractCalendarJson(rohdaten) {
         type: artAusAdresse(adresse),
         season: Number(roh?.season) || 0,
         episode: Number(roh?.episode) || 0,
-        language: String(roh?.language || "")
+        // Durch dieselbe Normalisierung wie die Flaggen des anderen Anbieters -
+        // sonst stuende hier "Ger-Sub" neben "Japanisch, Deutsche Untertitel".
+        language: spracheAusFlagge(roh?.language)
       });
     }
   }

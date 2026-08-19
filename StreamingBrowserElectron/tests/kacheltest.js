@@ -208,6 +208,133 @@ pruefe("Ohne Eintraege gibt es keinen Knopf",
     !menue(OFFEN, { allowImage: true }).namen.includes("Ausschnitt bearbeiten"));
 }
 
+// --- Rechtsklick auf die Kachel ---------------------------------------------
+//
+// Der Knopf mit den drei Punkten ist klein und sitzt in einer Ecke. Wer mit
+// der Maus arbeitet, drueckt die rechte Taste dort, wo der Zeiger schon steht.
+// Beides soll dasselbe Menue bringen.
+
+{
+  // Ein Ersatz-DOM, das nur kann, was der Weg nach oben braucht: sich selbst
+  // erkennen, das eigene Kind finden und sein Elternteil nennen.
+  function knoten(className, kinder = []) {
+    const k = {
+      className,
+      parentElement: null,
+      matches: (wahl) => wahl === "." + className,
+      querySelector: (wahl) => (wahl === ":scope > .favorite-menu"
+        ? kinder.find((kind) => kind.className === "favorite-menu") || null
+        : null)
+    };
+    for (const kind of kinder) kind.parentElement = k;
+    return k;
+  }
+
+  function bindungBauen() {
+    const horcher = {};
+    const gerufen = { auf: [], zu: 0 };
+    const koerper = knoten("body");
+    const kontext = {
+      document: {
+        body: koerper,
+        addEventListener: (art, fn) => { (horcher[art] = horcher[art] || []).push(fn); }
+      },
+      kartenMenue: { classList: { add() {}, remove() {} } },
+      kartenMenueKnopf: null,
+      kartenMenueOeffnen: (knopf, eintraege) => gerufen.auf.push({ knopf, eintraege }),
+      kartenMenueSchliessen: () => { gerufen.zu += 1; },
+      console, Math, Date, String, Number, Boolean, Array, Object, JSON, Set, Map, Promise
+    };
+    const platzhalter = () => "";
+    const sand = new Proxy(kontext, {
+      has: () => true,
+      get: (ziel, name) => (name in ziel ? ziel[name] : (typeof name === "symbol" ? undefined : platzhalter)),
+      set: (ziel, name, wert) => { ziel[name] = wert; return true; }
+    });
+    vm.createContext(sand);
+    const quelle = lies("src/renderer/renderer.js");
+    for (const name of ["function kartenMenueKnopfZu(", "function kartenMenueBinden("]) {
+      vm.runInContext(abschnitt(quelle, name), sand);
+    }
+    vm.runInContext("kartenMenueBinden()", sand);
+    const rechtsklick = (ziel) => {
+      let verhindert = false;
+      for (const fn of horcher.contextmenu || []) fn({ target: ziel, preventDefault() { verhindert = true; } });
+      return verhindert;
+    };
+    return { rechtsklick, gerufen, koerper, knopfSuche: vm.runInContext("kartenMenueKnopfZu", sand) };
+  }
+
+  const EINTRAEGE = [{ gruppe: "vormerken", symbol: "♡", text: "Auf die Watchlist", tun() {} }];
+  function kachelMitKnopf(eintraege = EINTRAEGE, zusatz = {}) {
+    const knopf = Object.assign(knoten("favorite-menu"), { kartenEintraege: eintraege }, zusatz);
+    const titel = knoten("card-title");
+    const karte = knoten("favorite-card", [titel, knopf]);
+    return { karte, knopf, titel };
+  }
+
+  const b = bindungBauen();
+  pruefe("Der Rechtsklick wird ueberhaupt abgehorcht", typeof b.rechtsklick === "function");
+
+  {
+    const { karte, knopf, titel } = kachelMitKnopf();
+    karte.parentElement = b.koerper;
+    pruefe("Ein Druck mitten in die Kachel findet ihren Knopf", b.knopfSuche(titel) === knopf);
+    pruefe("Ein Druck auf den Knopf selbst ebenso", b.knopfSuche(knopf) === knopf);
+    pruefe("Neben allen Kacheln gibt es keinen Knopf", b.knopfSuche(b.koerper) === null);
+    pruefe("Ohne Ziel auch nicht", b.knopfSuche(null) === null);
+  }
+
+  {
+    const s = bindungBauen();
+    const { karte, knopf, titel } = kachelMitKnopf();
+    karte.parentElement = s.koerper;
+    const verhindert = s.rechtsklick(titel);
+    pruefe("Der Rechtsklick oeffnet das Menue der Kachel",
+      s.gerufen.auf.length === 1 && s.gerufen.auf[0].knopf === knopf
+      && s.gerufen.auf[0].eintraege === EINTRAEGE);
+    pruefe("Und das Menue des Systems bleibt weg", verhindert === true);
+    // Erst zu, dann auf: der Rechtsklick soll oeffnen und nicht schalten,
+    // sonst bliebe das Menue bei einem zweiten Druck auf dieselbe Kachel zu.
+    pruefe("Ein offenes Menue wird vorher geschlossen", s.gerufen.zu === 1);
+  }
+
+  {
+    // Neben den Kacheln bleibt das Menue des Systems, und geoeffnet wird nichts.
+    const s = bindungBauen();
+    const verhindert = s.rechtsklick(s.koerper);
+    pruefe("Neben den Kacheln passiert nichts",
+      s.gerufen.auf.length === 0 && verhindert === false);
+  }
+
+  {
+    // Ein Vorschlag kann zwischen zwei Klicks vorgemerkt worden sein - dann
+    // gehoert der Eintrag nicht mehr ins Menue. Der Rechtsklick fragt deshalb
+    // dieselbe Funktion wie der Knopf.
+    const s = bindungBauen();
+    const frisch = [{ gruppe: "vormerken", symbol: "✓", text: "Als gesehen abhaken", tun() {} }];
+    const { karte, knopf, titel } = kachelMitKnopf(EINTRAEGE, { eintraegeFrisch: () => frisch });
+    karte.parentElement = s.koerper;
+    s.rechtsklick(titel);
+    pruefe("Der Rechtsklick nimmt die frisch gefragten Eintraege",
+      s.gerufen.auf[0]?.eintraege === frisch && knopf.kartenEintraege === frisch);
+  }
+
+  {
+    // Eine Kachel ohne Eintraege traegt gar keinen Knopf - und wo doch einer
+    // haengt, ohne dass etwas drinsteht, bleibt das Menue zu.
+    const s = bindungBauen();
+    const { karte, titel } = kachelMitKnopf([]);
+    karte.parentElement = s.koerper;
+    s.rechtsklick(titel);
+    pruefe("Ohne Eintraege oeffnet der Rechtsklick nichts", s.gerufen.auf.length === 0);
+  }
+
+  // Und der Vorschlagsknopf bietet die frische Liste wirklich an.
+  pruefe("Der Vorschlagsknopf hinterlegt seine frische Liste",
+    /knopf\.eintraegeFrisch = \(\) => vorschlagEintraege\(item\);/.test(renderer));
+}
+
 // --- Was der Eintrag ausloest ----------------------------------------------
 
 (async () => {
@@ -275,6 +402,107 @@ pruefe("Ohne Eintraege gibt es keinen Knopf",
 
   const unbekannt = h.rufen("gibtesnicht", true);
   pruefe("Unbekannte Kennung aendert nichts", unbekannt.gefunden === false && unbekannt.favorite === false);
+
+  // --- Vorschlaege und Suchtreffer ------------------------------------------
+  //
+  // Ein Vorschlag auf der Startseite und ein Treffer in der Suche waren bisher
+  // Sackgassen: vormerken ging nur ueber das Herz in der Suche, abhaken gar
+  // nicht - man musste den Titel dafuer erst beim Anbieter oeffnen.
+  //
+  // Geprueft wird wieder der echte Quelltext: die Funktionen werden aus
+  // renderer.js herausgeschnitten und mit einer eigenen Favoritenliste
+  // aufgerufen.
+
+  function vorschlagBauen(liste) {
+    const kontext = {
+      favorites: liste,
+      document: { createElement: element },
+      console, Math, Date, String, Number, Boolean, Array, Object, JSON, Set, Map, Promise, RegExp
+    };
+    const platzhalter = () => "";
+    const sand = new Proxy(kontext, {
+      has: () => true,
+      get: (ziel, name) => (name in ziel ? ziel[name] : (typeof name === "symbol" ? undefined : platzhalter)),
+      set: (ziel, name, wert) => { ziel[name] = wert; return true; }
+    });
+    vm.createContext(sand);
+    const quelle = lies("src/renderer/renderer.js");
+    for (const name of ["function adressSchluessel(", "function gleicheAdresse(",
+      "function stehtInWatchlist(", "function vorschlagEintraege(", "function vorschlagMenueAnhaengen("]) {
+      vm.runInContext(abschnitt(quelle, name), sand);
+    }
+    return {
+      eintraege: vm.runInContext("vorschlagEintraege", sand),
+      anhaengen: vm.runInContext("vorschlagMenueAnhaengen", sand),
+      gleich: vm.runInContext("gleicheAdresse", sand)
+    };
+  }
+
+  const VORSCHLAG = {
+    providerId: "aniworld",
+    providerName: "Aniworld",
+    url: "https://aniworld.to/anime/stream/bleach",
+    title: "Bleach",
+    image: ""
+  };
+
+  {
+    const leer = vorschlagBauen([]);
+    const namen = leer.eintraege(VORSCHLAG).map((e) => e.text);
+    pruefe("Ein unbekannter Vorschlag laesst sich vormerken und abhaken",
+      namen.includes("Auf die Watchlist") && namen.includes("Als gesehen abhaken"),
+      namen.join(" | "));
+    pruefe("Die Eintraege tragen Herz und Haken",
+      leer.eintraege(VORSCHLAG).find((e) => e.text === "Auf die Watchlist")?.symbol === "♡"
+      && leer.eintraege(VORSCHLAG).find((e) => e.text === "Als gesehen abhaken")?.symbol === "✓",
+      leer.eintraege(VORSCHLAG).map((e) => `${e.symbol} ${e.text}`).join(" | "));
+    pruefe("Jeder Eintrag traegt eine Handlung",
+      leer.eintraege(VORSCHLAG).every((e) => typeof e.tun === "function"));
+  }
+
+  {
+    // Steht der Titel schon auf der Watchlist, waere der Eintrag ohne Wirkung.
+    const drin = vorschlagBauen([{ id: "a", url: VORSCHLAG.url, favorite: true }]);
+    const namen = drin.eintraege(VORSCHLAG).map((e) => e.text);
+    pruefe("Was schon vorgemerkt ist, laesst sich nicht noch einmal vormerken",
+      !namen.includes("Auf die Watchlist"), namen.join(" | "));
+    pruefe("Abhaken geht trotzdem", namen.includes("Als gesehen abhaken"), namen.join(" | "));
+
+    // Protokoll und Schraegstrich sagen nichts ueber den Titel.
+    const anders = vorschlagBauen([{ id: "a", url: "http://aniworld.to/anime/stream/bleach/", favorite: true }]);
+    pruefe("Der Abgleich stoert sich nicht an http und Schraegstrich",
+      !anders.eintraege(VORSCHLAG).map((e) => e.text).includes("Auf die Watchlist"));
+    pruefe("Ein anderer Titel wird nicht verwechselt",
+      vorschlagBauen([{ id: "a", url: "https://aniworld.to/anime/stream/naruto", favorite: true }])
+        .eintraege(VORSCHLAG).map((e) => e.text).includes("Auf die Watchlist"));
+    pruefe("Ein heruntergenommener Eintrag zaehlt nicht als vorgemerkt",
+      vorschlagBauen([{ id: "a", url: VORSCHLAG.url, favorite: false }])
+        .eintraege(VORSCHLAG).map((e) => e.text).includes("Auf die Watchlist"));
+  }
+
+  {
+    // Der Knopf haengt nur dort, wo es auch etwas anzulegen gibt.
+    const bau = vorschlagBauen([]);
+    const mitKnopf = () => { const k = element("div"); bau.anhaengen(k, VORSCHLAG); return k.children.length; };
+    pruefe("Ein richtiger Vorschlag bekommt den Knopf", mitKnopf() === 1);
+
+    const ohne = (aenderung) => {
+      const k = element("div");
+      bau.anhaengen(k, { ...VORSCHLAG, ...aenderung });
+      return k.children.length;
+    };
+    // Ein Vorschlag, der nur zur Suche des Anbieters fuehrt, traegt die
+    // Suchadresse - die gehoert nicht auf die Watchlist.
+    pruefe("Ein Vorschlag, der nur zur Suche fuehrt, bekommt keinen", ohne({ viaSearch: true }) === 0);
+    pruefe("Ohne Adresse bekommt er keinen", ohne({ url: "" }) === 0);
+    pruefe("Ohne Anbieter bekommt er keinen", ohne({ providerId: "" }) === 0);
+  }
+
+  // Und die Karten benutzen das auch wirklich.
+  pruefe("Die Vorschlagskarte haengt das Menue an",
+    /bildEbeneSetzen\(card, item\.image, null\);[\s\S]{0,300}?vorschlagMenueAnhaengen\(card, item\)/.test(renderer));
+  pruefe("Die Suchkarte haengt es ebenfalls an",
+    /card\.append\(herz\);[\s\S]{0,400}?vorschlagMenueAnhaengen\(card, \{/.test(renderer));
 
   const gut = pruefungen.filter(Boolean).length;
   console.log(`${gut}/${pruefungen.length} bestanden`);

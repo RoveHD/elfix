@@ -896,7 +896,10 @@ ipcMain.handle("favorites:add-result", async (_event, treffer) => {
     moveFavoriteToFront(vorhanden);
     saveFavorites();
     sendActiveState();
-    return { favorites, added: true, already: schonDabei, title: vorhanden.title };
+    // Der Eintrag selbst gehoert mit zurueck: wer einen Suchtreffer nicht
+    // vormerken, sondern gleich abhaken will, braucht danach seine Kennung -
+    // und die gibt es nur hier, denn der Treffer hatte noch keine.
+    return { favorites, added: true, already: schonDabei, title: vorhanden.title, favorite: vorhanden };
   }
 
   const identity = episodeIdentity(url);
@@ -9509,6 +9512,11 @@ function normalizeSettings(raw) {
       accentColor: sanitizeColor(raw?.appearance?.accentColor, defaults.appearance.accentColor),
       accentStrength: sanitizeNumber(raw?.appearance?.accentStrength, 30, 100, defaults.appearance.accentStrength),
       uiDensity: sanitizeChoice(raw?.appearance?.uiDensity, ["compact", "comfortable", "roomy"], defaults.appearance.uiDensity),
+      // Ob die Dichte einer Voreinstellung entspricht oder von Hand gesetzt
+      // wurde. Ohne diese Zeile faellt die Angabe beim Speichern weg - hier
+      // werden nur bekannte Felder uebernommen -, und in "Dichte & Groesse"
+      // liesse sich "Benutzerdef." nicht mehr auswaehlen.
+      densityMode: sanitizeChoice(raw?.appearance?.densityMode, ["preset", "custom"], defaults.appearance.densityMode),
       cardSize: sanitizeChoice(raw?.appearance?.cardSize, ["small", "medium", "large"], defaults.appearance.cardSize),
       favoriteSize: sanitizeChoice(raw?.appearance?.favoriteSize, ["small", "medium", "large", "poster"], defaults.appearance.favoriteSize),
       favoriteLayout: sanitizeChoice(raw?.appearance?.favoriteLayout, ["grid", "wide", "list"], defaults.appearance.favoriteLayout),
@@ -9608,8 +9616,13 @@ function defaultSettings() {
       accentColor: "#7c3aed",
       accentStrength: 72,
       uiDensity: "comfortable",
+      densityMode: "preset",
       cardSize: "medium",
-      favoriteSize: "medium",
+      // Poster von Haus aus - dieselbe Werkseinstellung wie in der
+      // Oberflaeche. Stuende hier etwas anderes, gaebe der Hauptprozess einer
+      // frischen Einrichtung eine andere Kartenform als die Oberflaeche
+      // vorsieht, und wer nie an den Einstellungen dreht, saehe nie Poster.
+      favoriteSize: "poster",
       favoriteLayout: "grid",
       favoriteTextSize: "medium",
       favoriteArtwork: "clear",

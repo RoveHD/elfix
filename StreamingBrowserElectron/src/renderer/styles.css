@@ -45,6 +45,14 @@
   --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5 L10 17.5 L19 7.5' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   --radius: 18px;
   --card-min: 210px;
+  /* Die Anbieter-Kacheln: einmal in der Leiste oben, einmal groesser auf der
+     Startseite. Beide Masse standen frueher fest im Quelltext - die Kachel in
+     der Leiste im Stylesheet, die auf der Startseite sogar als Inline-Stil,
+     der ohnehin jede Regel geschlagen haette. Die Einstellung "Groesse der
+     Anbieter-Kacheln" wirkte deshalb auf keine von beiden. */
+  --provider-card-min: 154px;
+  --provider-card-large: 220px;
+  --provider-card-large-height: 78px;
   --favorite-card-min: 270px;
   --favorite-card-height: 210px;
   --favorite-title-size: 18px;
@@ -82,11 +90,21 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 22px 14px;
   border-right: 1px solid var(--line);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg-sidebar), transparent 4%), color-mix(in srgb, var(--bg-sidebar), #000 22%)),
     radial-gradient(circle at 0 8%, rgba(var(--accent-rgb), var(--accent-soft-alpha)), transparent 16rem);
+}
+
+/* In einer Spalte gibt Flex jedem Kind nach, sobald der Platz knapp wird.
+   Genau das war zu sehen: die Abschnitte wurden zusammengedrueckt, bis von den
+   Eintraegen nur noch leere Streifen uebrig waren. Sie behalten jetzt ihre
+   Hoehe - was nicht mehr hineinpasst, wird gescrollt. */
+.home-sidebar > * {
+  flex: 0 0 auto;
 }
 
 .home-sidebar-brand {
@@ -436,9 +454,14 @@
   opacity: 0;
 }
 
+/* Die Schaukachel darf wachsen (flex: 1) - das ist ihr Wesen. Ihre Hoehe kam
+   frueher mit einem !important daher, um die Regeln davor zu ueberstimmen.
+   Damit war die Groesse der Anbieter-Kacheln an fuenf Stellen festgelegt, jede
+   spezifischer als die vorige, und die Einstellung wirkte an keiner. Jetzt
+   steht die Hoehe an einer Stelle: in der Variablen. */
 .provider-showcase-card {
   flex: 1 0 min(260px, 31%);
-  height: 78px !important;
+  height: var(--provider-card-large-height);
   justify-content: center;
   background:
     radial-gradient(circle at 18% 10%, rgba(var(--accent-rgb), var(--accent-mid-alpha)), transparent 16rem),
@@ -1007,37 +1030,18 @@
 }
 
 @media (max-width: 1180px) {
-  .desktop-home-shell {
-    grid-template-columns: 78px minmax(0, 1fr);
-  }
-
-  .home-sidebar {
-    padding-inline: 10px;
-  }
-
-  .home-sidebar-brand img,
-  .home-sidebar-section p,
-  .home-side-link span:not(.side-provider-badge),
-  .home-sidebar-footer > span {
-    display: none;
-  }
-
-  /* Faellt die Wortmarke weg, muss das Zeichen einspringen. Sonst blieb
-     zwischen diesem und dem naechsten Umbruchpunkt ein angeschnittenes Logo
-     stehen. */
-  .sidebar-mark {
-    display: grid;
-  }
-
-  .home-sidebar-brand {
-    justify-content: center;
-  }
-
-  .home-side-link {
-    justify-content: center;
-    padding: 0;
-  }
-
+  /* Hier stand einmal, dass die Leiste ab dieser Breite nur noch Zeichen
+     zeigt: Wortmarke, Ueberschriften und der Inhalt jedes Eintrags wurden
+     ausgeblendet. Das stammt aus der Zeit, als die Leiste in
+     ".desktop-home-shell" sass und dort auf 78 Pixel schrumpfte.
+     Heute steht sie in ".app-area" und behaelt bis 980 Pixel ihre vollen
+     232 - die Regel liess also eine 232 Pixel breite Leiste zurueck, in der
+     kein einziges Zeichen und keine einzige Beschriftung mehr stand: leere
+     Streifen, ueber denen die Ueberschriften noch zu lesen waren. Genau das
+     war zu sehen.
+     Das Zusammenschrumpfen auf Zeichenbreite macht seit 1.24.0 der Block bei
+     980 Pixeln - dort bleiben die Zeichen stehen und nur die Beschriftungen
+     weichen. Hier bleibt deshalb nur, was die Kopfzeile darueber betrifft. */
   .home-topbar {
     grid-template-columns: 42px auto minmax(0, 1fr) 42px;
   }
@@ -1462,7 +1466,7 @@ body.is-content-fullscreen .fullscreen-exit-button {
 }
 
 .provider-card {
-  flex: 0 0 154px;
+  flex: 0 0 var(--provider-card-min);
   height: var(--provider-card-height);
   display: flex;
   align-items: center;
@@ -1472,6 +1476,16 @@ body.is-content-fullscreen .fullscreen-exit-button {
   background: linear-gradient(135deg, color-mix(in srgb, var(--bg-card-strong), transparent 4%), color-mix(in srgb, var(--bg-card), #000 18%));
   box-shadow: var(--shadow);
   transition: transform calc(190ms * var(--animation-speed)) ease, box-shadow calc(190ms * var(--animation-speed)) ease, background calc(190ms * var(--animation-speed)) ease, filter calc(190ms * var(--animation-speed)) ease;
+}
+
+/* Die groessere Kachel auf der Startseite. */
+.provider-card.is-large {
+  flex-basis: var(--provider-card-large);
+  height: var(--provider-card-large-height);
+}
+
+.app-shell.density-compact .provider-card.is-large {
+  flex-basis: calc(var(--provider-card-large) * 0.92);
 }
 
 .provider-card:hover {
@@ -1696,9 +1710,13 @@ h1 {
   padding-bottom: 10px;
 }
 
+/* Die Kacheln auf der Startseite. Auch hier standen feste Pixel - und weil
+   diese Regel weiter unten steht als .provider-card.is-large und dieselbe
+   Spezifitaet hat, gewann sie. Die Groesse der Anbieter-Kacheln war damit an
+   drei Stellen festgelegt und an keiner einstellbar. */
 .home-provider-grid .provider-card {
-  flex-basis: 220px;
-  height: 74px;
+  flex-basis: var(--provider-card-large);
+  height: var(--provider-card-large-height);
 }
 
 .favorite-rail,
@@ -1985,10 +2003,20 @@ h1 {
 }
 
 .favorite-card:hover .favorite-menu,
+.search-result-card:hover .favorite-menu,
 .favorite-menu:focus-visible,
 .favorite-menu.is-open {
   opacity: 1;
   background: rgba(8, 11, 17, 0.82);
+}
+
+/* In der Suche sitzt oben rechts schon das Herz, das direkt vormerkt. Der
+   Knopf fuers Menue rueckt deshalb darunter, statt es zu verdecken. */
+.search-result-card .favorite-menu {
+  top: 44px;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
 }
 
 /* Solange sein Menue offen steht, bleibt der Knopf sichtbar angefasst. */
@@ -2274,7 +2302,9 @@ h1 {
 }
 
 .app-shell.density-compact .provider-card {
-  flex-basis: 142px;
+  /* Relativ zur eingestellten Groesse, nicht absolut: sonst haette die Dichte
+     die Groesse wieder ausgehebelt - derselbe Fehler eine Ebene tiefer. */
+  flex-basis: calc(var(--provider-card-min) * 0.92);
   gap: 8px;
   padding: 7px 10px;
 }
@@ -2316,10 +2346,16 @@ h1 {
 
 .app-shell.cards-small {
   --card-min: 176px;
+  --provider-card-min: 128px;
+  --provider-card-large: 180px;
+  --provider-card-large-height: 66px;
 }
 
 .app-shell.cards-large {
   --card-min: 260px;
+  --provider-card-min: 192px;
+  --provider-card-large: 268px;
+  --provider-card-large-height: 92px;
 }
 
 .app-shell.favorites-small {
@@ -3936,10 +3972,15 @@ input[type="color"] {
   --card-gap: max(18px, calc(var(--card-gap) * 1.18));
 }
 
-.app-shell.layout-netflix {
-  --favorite-card-min: 320px;
-  --favorite-card-height: 250px;
-}
+/* Hier stand einmal eine eigene Kartengroesse fuer den Netflix-Stil - 320 auf
+   250 Pixel, also liegend. Das war ein Widerspruch in sich: der Stil setzt in
+   den Einstellungen "Poster" (230 auf 330, hochkant), und diese Regel hob es
+   sofort wieder auf, weil sie im Stylesheet weiter unten steht und dieselbe
+   Spezifitaet hat. Der Regler zeigte "Poster", die Karten waren keine.
+
+   Welche Form die Karten haben, entscheidet allein "Groesse der
+   Watchlist-Karten" - jeder Stil stellt sie ueber favoriteSize ein. Eine
+   zweite Stelle, die dasselbe bestimmt, kann nur auseinanderlaufen. */
 
 .app-shell.layout-minimal .hero,
 .app-shell.layout-minimal .row-head {
@@ -4147,9 +4188,12 @@ input[type="color"] {
   padding-top: clamp(22px, 3vw, 42px);
 }
 
+/* Die Schaukachel richtet ihre Breite nach ihrem Inhalt - das ist Absicht und
+   bleibt so. Die Hoehe folgt der Einstellung, sonst waere sie die einzige
+   Kachel auf der Startseite, die sich nicht ruehrt. */
 .home-view .home-provider-grid .provider-card.provider-showcase-card {
   flex-basis: auto;
-  height: 78px;
+  height: var(--provider-card-large-height);
 }
 
 .app-shell {
@@ -4185,10 +4229,38 @@ input[type="color"] {
   height: auto;
   width: auto;
   min-width: 0;
+  min-height: 0;
   z-index: 8;
-  overflow: hidden;
+  /* Quer nie, laengs bei Bedarf. Vorher stand hier overflow:hidden, und ein
+     niedriges Fenster schnitt die Leiste unten einfach ab - Einstellungen und
+     Hilfe waren dann nicht mehr erreichbar. Quer bleibt es geschlossen, damit
+     das Einklappen der Leiste keinen Balken unten anwirft. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Ist die Leiste am Ende, soll das Rad nicht die Seite dahinter mitnehmen. */
+  overscroll-behavior: contain;
   padding: 18px 12px;
   border-right: 1px solid var(--line);
+}
+
+/* Ein schmalerer Balken als der des Fensters: die Leiste ist 232 Pixel breit
+   und eingeklappt nur 64 - elf Pixel davon waeren dort ein Viertel der
+   Beschriftung. */
+.app-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.app-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-sidebar::-webkit-scrollbar-thumb {
+  border: 0;
+  background: color-mix(in srgb, var(--scrollbar), transparent 55%);
+}
+
+.app-sidebar:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--scrollbar), transparent 18%);
 }
 
 .desktop-home-shell {
@@ -4433,11 +4505,31 @@ input[type="color"] {
     padding-inline: 8px;
   }
 
-  .sidebar-wordmark {
+  /* Mit dem Elternteil davor, weil ".app-sidebar .sidebar-wordmark" die
+     Wortmarke sonst wieder hervorholt - eine Klasse mehr wiegt schwerer als
+     ein Umbruchpunkt. Ohne das blieb von ihr ein Streifen stehen, der das
+     Zeichen daneben aus der 64 Pixel breiten Leiste schob. */
+  .app-shell .app-sidebar .sidebar-wordmark {
     display: none;
   }
 
   .sidebar-mark {
+    display: grid;
+  }
+
+  /* Auf 64 Pixeln bleiben nach dem Innenabstand 48 uebrig - das Zeichen misst
+     34, der Pfeil daneben 32. Beides zusammen passte nicht, und das Zeichen
+     stand angeschnitten am Rand. Der Pfeil faellt deshalb weg: die Breite
+     liegt hier ohnehin fest, er koennte nichts mehr aendern. Ein- und
+     ausklappen laesst sich die Leiste weiter ueber das Zeichen in der
+     Kopfzeile der Startseite. */
+  .app-sidebar .sidebar-collapse {
+    display: none;
+  }
+
+  /* Sonst stuende die Kopfzeile der Leiste leer da: eingeklappt weicht das
+     Zeichen normalerweise dem Pfeil - und den gibt es hier nicht mehr. */
+  .app-shell.sidebar-collapsed .sidebar-mark {
     display: grid;
   }
 
@@ -4474,16 +4566,11 @@ input[type="color"] {
    Leiste blieb vom Logo nur ein angeschnittener Rest stehen - sichtbar beim
    Wechsel auf einen kleineren Bildschirm. Steht am Ende der Datei, damit die
    Regel bei gleicher Genauigkeit gewinnt. */
-@media (max-width: 1180px) {
-  .app-shell .app-sidebar .sidebar-wordmark {
-    display: none;
-  }
-
-  /* Eingeklappt bleibt das Zeichen weg - dort steht der Pfeil an seiner Stelle. */
-  .app-shell:not(.sidebar-collapsed) .app-sidebar .sidebar-mark {
-    display: grid;
-  }
-}
+/* Die Wortmarke wich hier frueher schon dem "E"-Zeichen - als Gegenstueck zu
+   der Regel weiter oben, die ab derselben Breite den Inhalt der Leiste
+   ausblendete. Ohne die ist auch das hinfaellig: die Leiste behaelt bis 980
+   Pixel ihre vollen 232, und darin steht die Wortmarke so gut wie zuvor. Erst
+   der Block bei 980 Pixeln tauscht sie gegen das Zeichen. */
 
 /* --- Live-Vorschau in den Einstellungen -------------------------------------
    Der Einstellungsdialog liegt ausserhalb von ".app-shell". Die Modus-Klassen

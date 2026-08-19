@@ -324,8 +324,16 @@ const DEFAULT_APPEARANCE_SETTINGS = {
   accentColor: "#7c3aed",
   accentStrength: 72,
   uiDensity: "comfortable",
+  // Ob die Dichte einer der drei Voreinstellungen entspricht oder von Hand
+  // gesetzt wurde. Frueher merkte sich das layoutStyle mit - dasselbe Feld,
+  // das auch die Layout-Voreinstellung (Standard, Netflix, ...) traegt. Dann
+  // leuchteten in "Dichte & Groesse" zwei Knoepfe gleichzeitig: der zur
+  // eingestellten Dichte und "Benutzerdef.".
+  densityMode: "preset",
   cardSize: "medium",
-  favoriteSize: "medium",
+  // Poster von Haus aus: hochkant zeigt mehr Bild und weniger Leerraum, und
+  // die Titelbilder der Anbieter sind ohnehin fast alle Hochformat.
+  favoriteSize: "poster",
   favoriteLayout: "grid",
   favoriteTextSize: "medium",
   favoriteArtwork: "clear",
@@ -734,8 +742,15 @@ function bindEvents() {
   for (const button of document.querySelectorAll("[data-density-choice]")) {
     button.addEventListener("click", () => {
       const choice = button.dataset.densityChoice;
+      // Eine der drei Dichten zu waehlen heisst: nicht mehr von Hand gesetzt.
+      // Die Layout-Voreinstellung bleibt dabei unberuehrt - sie ist eine
+      // andere Frage und wird eine Ueberschrift weiter oben gestellt.
       if (choice !== "custom") setRangeChoice("uiDensity", choice);
-      settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS, ...(settings.appearance || {}), layoutStyle: choice === "custom" ? "custom" : settings.appearance?.layoutStyle || "standard" };
+      settings.appearance = {
+        ...DEFAULT_APPEARANCE_SETTINGS,
+        ...(settings.appearance || {}),
+        densityMode: choice === "custom" ? "custom" : "preset"
+      };
       saveSettings();
     });
   }
@@ -1428,6 +1443,9 @@ function discoverCard(item) {
   // Nach dem Inhalt, sonst raeumt innerHTML die Bildebene gleich wieder weg.
   // Ein Vorschlag traegt das Bild des Anbieters und keinen eigenen Ausschnitt.
   bildEbeneSetzen(card, item.image, null);
+  // Vormerken und Abhaken, ohne den Titel vorher oeffnen zu muessen. Vorher
+  // fuehrte jeder Weg dorthin ueber die Anbieterseite.
+  vorschlagMenueAnhaengen(card, item);
   const oeffnen = () => openDiscoverItem(item);
   card.addEventListener("click", oeffnen);
   card.addEventListener("keydown", (event) => {
@@ -1753,10 +1771,16 @@ async function openHeroTarget() {
 
 function providerCard(provider, large) {
   const card = document.createElement("button");
-  card.className = `provider-card${provider.id === activeProviderId ? " is-active" : ""}`;
+  // Die Groesse steht im Stylesheet und richtet sich nach der Einstellung
+  // "Groesse der Anbieter-Kacheln". Hier standen frueher feste Pixel als
+  // Inline-Stil - und der schlaegt jede Regel, weshalb der Regler wirkungslos
+  // blieb.
+  card.className = [
+    "provider-card",
+    provider.id === activeProviderId ? "is-active" : "",
+    large ? "is-large" : ""
+  ].filter(Boolean).join(" ");
   card.type = "button";
-  card.style.flexBasis = large ? "220px" : "";
-  card.style.height = large ? "78px" : "";
   card.innerHTML = `
     <span class="provider-logo">${escapeHtml(provider.logo || provider.name.slice(0, 2).toUpperCase())}</span>
     <span class="provider-name">${escapeHtml(provider.name)}</span>
@@ -1829,6 +1853,10 @@ let kalenderTag = "";
 // Anime, Serie oder beides. Getrennt vom Wochentag: man will die Woche
 // durchblaettern, ohne die Auswahl jedes Mal neu zu treffen.
 let kalenderArt = "alle";
+// Und dasselbe fuer die Fassung. Wer nur deutsche Synchronfassungen schaut,
+// interessiert sich fuer den Rest der Woche gar nicht - vorher stand alles
+// gemischt untereinander und musste Karte fuer Karte gelesen werden.
+let kalenderSprache = "alle";
 
 async function showCalendar() {
   await enterInternalMode();
@@ -1852,6 +1880,51 @@ async function ladeKalender(refresh = false) {
   renderKalender();
 }
 
+// Die Reihenfolge der Fassungen: deutsche Synchronfassung zuerst, danach die
+// Untertitelfassungen. Dieselbe Regel wie in discover.js, wo die Fassungen
+// einer Folge sortiert werden - stuende hier eine andere, sprangen die Knoepfe
+// gegenueber der Beschriftung auf den Karten durcheinander.
+function kalenderSprachRang(sprache) {
+  if (/^Deutsch$/i.test(sprache)) return 0;
+  if (/Deutsche Untertitel/i.test(sprache)) return 1;
+  if (/Englische Untertitel/i.test(sprache)) return 2;
+  return 3;
+}
+
+// Welche Fassungen ein Eintrag traegt. Manche Anbieter liefern nur eine, dann
+// steht sie im Einzelfeld.
+function kalenderSprachen(eintrag) {
+  if (eintrag?.languages?.length) return eintrag.languages;
+  return eintrag?.language ? [eintrag.language] : [];
+}
+
+// Welche Fassungen kommen in diesen Eintraegen vor - deutsche Synchronfassung
+// zuerst, danach die Untertitelfassungen, der Rest alphabetisch.
+function kalenderSprachAuswahl(eintraege) {
+  return [...new Set(eintraege.flatMap(kalenderSprachen))]
+    .sort((links, rechts) => kalenderSprachRang(links) - kalenderSprachRang(rechts)
+      || links.localeCompare(rechts, "de"));
+}
+
+// Ein Eintrag zaehlt zu einer Fassung, wenn er sie traegt. Er kann mehrere
+// tragen und steht dann unter jeder - dieselbe Folge gibt es auf Deutsch und
+// mit Untertiteln, und wer nach beidem sucht, soll sie beide Male finden.
+function kalenderNachSprache(eintraege, sprache) {
+  if (!sprache || sprache === "alle") return eintraege;
+  return eintraege.filter((eintrag) => kalenderSprachen(eintrag).includes(sprache));
+}
+
+// Ein Knopf einer Filterzeile. Beide Zeilen sehen gleich aus und verhalten
+// sich gleich - deshalb steht das hier einmal.
+function kalenderFilterKnopf(titel, anzahl, aktiv, waehlen) {
+  const knopf = document.createElement("button");
+  knopf.type = "button";
+  knopf.className = `calendar-day${aktiv ? " is-active" : ""}`;
+  knopf.textContent = `${titel} (${anzahl})`;
+  knopf.addEventListener("click", waehlen);
+  return knopf;
+}
+
 function renderKalender() {
   const tage = document.querySelector("#calendarDays");
   const gitter = document.querySelector("#calendarGrid");
@@ -1864,6 +1937,7 @@ function renderKalender() {
     tage.replaceChildren();
     gitter.replaceChildren();
     document.querySelector("#calendarFilter")?.replaceChildren();
+    document.querySelector("#calendarLanguageFilter")?.replaceChildren();
     return;
   }
 
@@ -1876,22 +1950,36 @@ function renderKalender() {
     { wert: "serie", titel: "Serien" }
   ].filter((art) => art.wert === "alle" || alle.some((eintrag) => eintrag.type === art.wert));
   if (arten.length < 3) kalenderArt = "alle";
-  filter?.replaceChildren(...(arten.length > 2 ? arten.map((art) => {
-    const knopf = document.createElement("button");
-    knopf.type = "button";
-    knopf.className = `calendar-day${art.wert === kalenderArt ? " is-active" : ""}`;
-    const anzahl = art.wert === "alle" ? alle.length : alle.filter((e) => e.type === art.wert).length;
-    knopf.textContent = `${art.titel} (${anzahl})`;
-    knopf.addEventListener("click", () => {
-      kalenderArt = art.wert;
-      renderKalender();
-    });
-    return knopf;
-  }) : []));
+  filter?.replaceChildren(...(arten.length > 2 ? arten.map((art) => kalenderFilterKnopf(
+    art.titel,
+    art.wert === "alle" ? alle.length : alle.filter((e) => e.type === art.wert).length,
+    art.wert === kalenderArt,
+    () => { kalenderArt = art.wert; renderKalender(); }
+  )) : []));
 
-  const eintraege = kalenderArt === "alle"
+  const nachArt = kalenderArt === "alle"
     ? alle
     : alle.filter((eintrag) => eintrag.type === kalenderArt);
+
+  // Die Auswahl der Fassung. Wie bei der Art wird nur angeboten, was es auch
+  // gibt - und gezaehlt wird innerhalb der schon gewaehlten Art, damit die
+  // Zahlen zu dem passen, was danach dasteht. Bei nur einer Fassung waere die
+  // Wahl sinnlos, dann bleibt die Zeile leer.
+  const sprachFilter = document.querySelector("#calendarLanguageFilter");
+  const sprachen = kalenderSprachAuswahl(nachArt);
+  if (!sprachen.includes(kalenderSprache)) kalenderSprache = "alle";
+  sprachFilter?.replaceChildren(...(sprachen.length > 1 ? [
+    kalenderFilterKnopf("Alle Fassungen", nachArt.length, kalenderSprache === "alle",
+      () => { kalenderSprache = "alle"; renderKalender(); }),
+    ...sprachen.map((sprache) => kalenderFilterKnopf(
+      sprache,
+      kalenderNachSprache(nachArt, sprache).length,
+      sprache === kalenderSprache,
+      () => { kalenderSprache = sprache; renderKalender(); }
+    ))
+  ] : []));
+
+  const eintraege = kalenderNachSprache(nachArt, kalenderSprache);
 
   tage.replaceChildren(...(kalenderDaten.days || []).map((tag) => {
     const knopf = document.createElement("button");
@@ -2490,15 +2578,161 @@ function searchResultCard(result, provider, suche = "") {
     }
   });
   card.append(herz);
+  // Das Herz merkt vor; alles Weitere - vor allem das Abhaken - steht im
+  // Menue daneben.
+  vorschlagMenueAnhaengen(card, {
+    providerId: provider.providerId,
+    providerName: provider.providerName,
+    url: result.url,
+    title: result.title,
+    image: result.image || result.thumbnail || ""
+  });
   return card;
 }
 
-// Grober Abgleich ueber die Adresse - fuer die Anzeige des Herzens genuegt das.
+// --- Vorschlaege und Suchtreffer ---------------------------------------------
+//
+// Ein Vorschlag auf der Startseite und ein Treffer in der Suche sind noch kein
+// Eintrag in ELFIX: sie haben keine Kennung, nur Anbieter, Adresse und Titel.
+// Beides - vormerken und abhaken - legt sie deshalb erst an. Das erledigt
+// dieselbe Bruecke, die schon hinter dem Herzen in der Suche steht.
+function vorschlagAlsTreffer(item) {
+  return {
+    providerId: item.providerId,
+    providerName: item.providerName,
+    url: item.url,
+    title: item.title,
+    thumbnail: item.image || item.thumbnail || ""
+  };
+}
+
+async function vorschlagAnlegen(item) {
+  return api.addSearchResultToWatchlist?.(vorschlagAlsTreffer(item)).catch(() => null);
+}
+
+// Nach dem Anlegen sind Watchlist, Startseite und Mediathek nicht mehr aktuell.
+function listenNeuZeichnen() {
+  renderFavorites();
+  renderHome();
+  renderLibraryViews();
+  renderFavoriteToggle();
+}
+
+async function vorschlagVormerken(item) {
+  const ergebnis = await vorschlagAnlegen(item);
+  if (!ergebnis?.added) {
+    showToast(ergebnis?.reason || "Konnte nicht vorgemerkt werden");
+    return false;
+  }
+  favorites = ergebnis.favorites || favorites;
+  listenNeuZeichnen();
+  const titel = ergebnis.title || item.title;
+  showToast(ergebnis.already
+    ? `„${titel}“ steht schon auf der Watchlist`
+    : `„${titel}“ steht auf der Watchlist`);
+  return true;
+}
+
+// Abhaken in zwei Schritten: erst anlegen, dann abhaken. Der zweite Schritt
+// nimmt den Titel gleich wieder von der Watchlist - genau das soll er, denn
+// gesehen und vorgemerkt schliessen sich aus.
+async function vorschlagAbhaken(item) {
+  const titel = item.title || "Dieser Titel";
+  const bestaetigt = await confirmAction({
+    eyebrow: "Mediathek",
+    title: `„${titel}“ als gesehen abhaken?`,
+    copy: "Der Titel wandert in die Mediathek, ohne dass du ihn vorher öffnen musst. Er taucht danach nicht mehr in Vorschlägen auf — nur neue Folgen holen ihn zurück.",
+    confirmLabel: "Abhaken"
+  });
+  if (!bestaetigt) return false;
+
+  const angelegt = await vorschlagAnlegen(item);
+  if (!angelegt?.added) {
+    showToast(angelegt?.reason || "Konnte nicht abgehakt werden");
+    return false;
+  }
+  favorites = angelegt.favorites || favorites;
+  const kennung = angelegt.favorite?.id
+    || favorites.find((favorite) => gleicheAdresse(favorite.url, item.url))?.id;
+  if (!kennung) {
+    showToast("Konnte nicht abgehakt werden");
+    return false;
+  }
+  const ergebnis = await api.markFavoriteCompleted?.(kennung).catch(() => null);
+  if (!ergebnis?.completed) {
+    showToast("Konnte nicht abgehakt werden");
+    return false;
+  }
+  favorites = ergebnis.favorites || favorites;
+  listenNeuZeichnen();
+  showToast(`„${angelegt.title || titel}“ ist jetzt in der Mediathek`);
+  return true;
+}
+
+// Das Menue eines Vorschlags oder Treffers. Vormerken faellt weg, wenn er
+// schon auf der Watchlist steht - der Eintrag waere ohne Wirkung.
+function vorschlagEintraege(item) {
+  const eintraege = [];
+  if (!stehtInWatchlist(item.url)) {
+    eintraege.push({
+      gruppe: "vormerken",
+      symbol: "♡",
+      text: "Auf die Watchlist",
+      tun: () => vorschlagVormerken(item)
+    });
+  }
+  eintraege.push({
+    gruppe: "vormerken",
+    symbol: "✓",
+    text: "Als gesehen abhaken",
+    tun: () => vorschlagAbhaken(item)
+  });
+  return eintraege;
+}
+
+// Der Knopf dazu, gleich angehaengt. Ohne eigene Adresse gibt es nichts
+// anzulegen: ein Vorschlag, der nur zur Suche des Anbieters fuehrt, wuerde
+// sonst mit der Suchadresse in der Watchlist landen.
+function vorschlagMenueAnhaengen(karte, item) {
+  if (item.viaSearch || !item.url || !item.providerId) return;
+  const eintraege = vorschlagEintraege(item);
+  const knopf = document.createElement("button");
+  knopf.className = "favorite-menu";
+  knopf.type = "button";
+  knopf.textContent = "⋯";
+  knopf.title = "Mehr zu diesem Titel";
+  knopf.setAttribute("aria-haspopup", "menu");
+  knopf.dataset.menueFuer = `vorschlag:${item.url}`;
+  knopf.kartenEintraege = eintraege;
+  // Frisch gefragt: zwischen zwei Klicks kann der Titel vorgemerkt worden
+  // sein, dann gehoert der Eintrag nicht mehr ins Menue. Der Rechtsklick auf
+  // die Kachel geht denselben Weg und fragt ueber diese Funktion nach.
+  knopf.eintraegeFrisch = () => vorschlagEintraege(item);
+  knopf.addEventListener("click", (event) => {
+    event.stopPropagation();
+    knopf.kartenEintraege = vorschlagEintraege(item);
+    kartenMenueOeffnen(knopf, knopf.kartenEintraege);
+  });
+  karte.append(knopf);
+}
+
+// Grober Abgleich ueber die Adresse - fuer die Anzeige des Herzens und fuer das
+// Wiederfinden eines gerade angelegten Eintrags genuegt das. Protokoll und
+// abschliessender Schraegstrich sagen nichts ueber den Titel.
+function adressSchluessel(url) {
+  return String(url || "").replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+}
+
+function gleicheAdresse(links, rechts) {
+  const schluessel = adressSchluessel(links);
+  return Boolean(schluessel) && schluessel === adressSchluessel(rechts);
+}
+
 function stehtInWatchlist(url) {
-  const schluessel = String(url || "").replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+  const schluessel = adressSchluessel(url);
   if (!schluessel) return false;
   return favorites.some((favorite) => favorite.favorite !== false
-    && String(favorite.url || "").replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase() === schluessel);
+    && adressSchluessel(favorite.url) === schluessel);
 }
 
 async function renderProviderResults(query, searchToken) {
@@ -3358,6 +3592,25 @@ function kartenMenueNachfuehren() {
   if (kartenMenueKnopf) requestAnimationFrame(kartenMenueNachfuehren);
 }
 
+// Von der angeklickten Stelle nach oben bis zu der Kachel, die einen
+// Menueknopf traegt. Gesucht wird der Knopf selbst und nicht die Kachel: die
+// Kacheln heissen je nach Ansicht anders, der Knopf heisst ueberall gleich.
+// Beim Rand des Dokuments ist Schluss, damit ein Klick neben alle Kacheln
+// nicht doch noch irgendeinen Knopf im Dokument findet.
+function kartenMenueKnopfZu(ziel) {
+  // Getroffen werden kann auch ein Textknoten; der kennt weder matches() noch
+  // querySelector(), traegt aber ein Elternteil - die Schleife geht darueber
+  // hinweg, statt sich daran zu verschlucken.
+  let knoten = ziel;
+  while (knoten && knoten !== document.body) {
+    if (knoten.matches?.(".favorite-menu")) return knoten;
+    const knopf = knoten.querySelector?.(":scope > .favorite-menu");
+    if (knopf) return knopf;
+    knoten = knoten.parentElement;
+  }
+  return null;
+}
+
 function kartenMenueBinden() {
   if (!kartenMenue) return;
   // Irgendwo sonst hindruecken macht zu. In der Erfassungsphase, damit es auch
@@ -3372,6 +3625,27 @@ function kartenMenueBinden() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && kartenMenueKnopf) kartenMenueSchliessen();
+  });
+
+  // Rechtsklick irgendwo auf eine Kachel oeffnet dasselbe Menue wie der
+  // Knopf mit den drei Punkten. Der Knopf ist klein und sitzt in einer Ecke;
+  // wer mit der Maus arbeitet, sucht das Menue zuerst dort, wo der Zeiger
+  // schon steht. Das Kaestchen haengt sich trotzdem an den Knopf und nicht an
+  // den Zeiger - so steht es immer an derselben Stelle der Kachel, und die
+  // Nachfuehrung beim Neuzeichnen greift unveraendert.
+  document.addEventListener("contextmenu", (event) => {
+    const knopf = kartenMenueKnopfZu(event.target);
+    if (!knopf) return;
+    event.preventDefault();
+    // Der Druck der rechten Taste hat das offene Menue oben schon
+    // zugemacht. Ein Rechtsklick oeffnet deshalb immer, statt zu schalten.
+    if (typeof knopf.eintraegeFrisch === "function") {
+      knopf.kartenEintraege = knopf.eintraegeFrisch();
+    }
+    const eintraege = knopf.kartenEintraege;
+    if (!Array.isArray(eintraege) || !eintraege.length) return;
+    kartenMenueSchliessen();
+    kartenMenueOeffnen(knopf, eintraege);
   });
 
   // Auf Scrollen und Groessenaendern muss hier nichts horchen: solange das
@@ -4208,6 +4482,7 @@ async function saveSettings() {
     accentColor: chosenAccent,
     accentStrength: Number(accentStrength.value),
     uiDensity: getRangeChoice("uiDensity"),
+    densityMode: settings.appearance?.densityMode || (settings.appearance?.layoutStyle === "custom" ? "custom" : "preset"),
     cardSize: getRangeChoice("cardSize"),
     favoriteSize: getRangeChoice("favoriteSize"),
     favoriteLayout: favoriteLayout.value,
@@ -4518,17 +4793,30 @@ function syncChoiceCards(appearance) {
     button.classList.toggle("is-selected", button.dataset.navChoice === (appearance.navStyle || "sidebar"));
   });
   document.querySelectorAll("[data-density-choice]").forEach((button) => {
-    const isCustom = button.dataset.densityChoice === "custom" && appearance.layoutStyle === "custom";
-    button.classList.toggle("is-selected", button.dataset.densityChoice === appearance.uiDensity || isCustom);
+    // Genau einer leuchtet: entweder "Benutzerdef." oder die Dichte, die
+    // gerade gilt. Beides zugleich waeren zwei gewaehlte Knoepfe in einer
+    // Reihe, die sich gegenseitig ausschliessen soll.
+    const vonHand = eigeneDichte(appearance);
+    const istCustom = button.dataset.densityChoice === "custom";
+    button.classList.toggle("is-selected",
+      istCustom ? vonHand : (!vonHand && button.dataset.densityChoice === appearance.uiDensity));
   });
   document.querySelectorAll("[data-settings-mode-choice]").forEach((button) => {
     button.classList.toggle("is-selected", button.dataset.settingsModeChoice === (appearance.settingsMode || "simple"));
   });
 }
 
+// Ist die Dichte von Hand gesetzt? Aeltere Staende trugen das in layoutStyle
+// mit; sie werden hier weiter verstanden, ohne dass irgendwo umgeschrieben
+// werden muss.
+function eigeneDichte(appearance) {
+  if (appearance?.densityMode) return appearance.densityMode === "custom";
+  return appearance?.layoutStyle === "custom";
+}
+
 async function applyLayoutChoice(choice) {
   const updates = {
-    standard: { uiDensity: "comfortable", cardSize: "medium", favoriteSize: "medium", favoriteLayout: "grid", cardStyle: "standard", spacingScale: 100, cardGap: 18 },
+    standard: { uiDensity: "comfortable", cardSize: "medium", favoriteSize: "poster", favoriteLayout: "grid", cardStyle: "standard", spacingScale: 100, cardGap: 18 },
     compact: { uiDensity: "compact", cardSize: "small", favoriteSize: "small", favoriteLayout: "grid", cardStyle: "flat", spacingScale: 86, cardGap: 12 },
     roomy: { uiDensity: "roomy", cardSize: "large", favoriteSize: "large", favoriteLayout: "wide", cardStyle: "standard", spacingScale: 118, cardGap: 24 },
     netflix: { uiDensity: "comfortable", cardSize: "large", favoriteSize: "poster", favoriteLayout: "grid", cardStyle: "glass", spacingScale: 108, cardGap: 20 },
@@ -4539,7 +4827,10 @@ async function applyLayoutChoice(choice) {
     ...DEFAULT_APPEARANCE_SETTINGS,
     ...(settings.appearance || {}),
     ...next,
-    layoutStyle: choice
+    layoutStyle: choice,
+    // Der Stil bringt seine eigene Dichte mit - danach ist sie keine eigene
+    // Einstellung mehr.
+    densityMode: "preset"
   };
   renderSettings();
   await saveSettings();
