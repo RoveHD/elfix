@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, WebContentsView, ipcMain, net, session, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, WebContentsView, ipcMain, net, session, shell, dialog, webFrameMain } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
@@ -27,6 +27,8 @@ const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
 const metadatenModul = require("./metadaten");
+const { AdblockEngine } = require("./adblock-engine");
+const kosmetik = require("./adblock-kosmetik");
 
 // Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
 // die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
@@ -39,7 +41,18 @@ const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
 const DATA_DIR = path.join(app.getPath("appData"), "ELFIX");
 const PROVIDER_FILE = path.join(DATA_DIR, "providers.json");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
-const FILTER_CACHE_FILE = path.join(DATA_DIR, "filter-cache.json");
+// Die alte Datei aus der Zeit des Eigenbau-Parsers. Sie wird beim Start
+// geloescht: ihr Inhalt - ein paar tausend Domainnamen - ist gegenueber den
+// echten Listen wertlos, und stehen lassen hiesse, sie nie wieder loszuwerden.
+const LEGACY_FILTER_CACHE_FILE = path.join(DATA_DIR, "filter-cache.json");
+// Hier liegen die Rohtexte der AdGuard-Listen, eine Datei je Liste. tsurlfilter
+// kennt kein eigenes Speicherformat, aus dem sich eine fertige Engine laden
+// liesse - gebaut wird sie bei jedem Start neu, aber eben aus der Platte statt
+// aus dem Netz. Ohne Internet startet ELFIX damit mit dem letzten guten Stand.
+const FILTER_LIST_DIR = path.join(DATA_DIR, "filterlisten");
+// Die AdGuard-Nummer der Tracking-Liste. Ueber sie entscheidet der Schalter
+// "Tracking-Schutz", ohne dass die Engine dafuer neu gebaut werden muss.
+const TRACKING_LISTEN_ID = 3;
 const FAVORITES_FILE = path.join(DATA_DIR, "favorites.json");
 const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 // Externe Metadaten liegen in einer eigenen Datei, nicht im Geschmacks-Cache.
@@ -67,22 +80,34 @@ const WATCHPARTY_MIN_WATCH_SECONDS = 30;
 // zerstoeren, eine Minute bewusstes Schauen aber schon.
 const BACKWARD_WATCH_TIME_SECONDS = 60;
 const COMPLETED_PROGRESS_PERCENT = 90;
+// Die Listennummern sind die von AdGuard - sie stecken spaeter in jedem
+// Treffer und machen nachvollziehbar, aus welcher Liste eine Regel kam.
+//
+// "Social Media" (4) ist bewusst nicht dabei: die Liste raeumt Teilen-Knoepfe
+// und Like-Zaehler weg. Auf Anbieter- und Hosterseiten gibt es die kaum, und
+// fuer Fake-Gewinnspiele, Casino-Einblendungen und Popunder traegt sie nichts
+// bei - sie kostete nur Speicher. "German" (6) ist neu und deckt genau das ab,
+// was auf deutschsprachigen Streaming-Seiten laeuft.
 const ADGUARD_FILTER_LISTS = [
   {
+    id: 2,
     name: "AdGuard Base Filter",
     url: "https://filters.adtidy.org/extension/chromium/filters/2.txt"
   },
   {
+    id: 3,
     name: "AdGuard Tracking Protection",
     url: "https://filters.adtidy.org/extension/chromium/filters/3.txt"
   },
   {
-    name: "AdGuard Social Media",
-    url: "https://filters.adtidy.org/extension/chromium/filters/4.txt"
-  },
-  {
+    id: 14,
     name: "AdGuard Annoyances",
     url: "https://filters.adtidy.org/extension/chromium/filters/14.txt"
+  },
+  {
+    id: 6,
+    name: "AdGuard German Filter",
+    url: "https://filters.adtidy.org/extension/chromium/filters/6.txt"
   }
 ];
 
@@ -303,7 +328,7 @@ let updateState = {
 app.setName("ELFIX");
 
 app.whenReady().then(async () => {
-  adblock = new FilterEngine();
+  adblock = new AdblockEngine();
   ensureDataDir();
   providers = loadProviders();
   favorites = loadFavorites();
@@ -313,7 +338,6 @@ app.whenReady().then(async () => {
   settings = loadSettings();
   saveSettings();
   watchpartyLokal = loadWatchpartyLocal();
-  loadFilterCache();
 
   browserSession = session.fromPartition(SESSION_PARTITION, { cache: true });
   configureBrowserSession();
@@ -329,10 +353,19 @@ app.whenReady().then(async () => {
   repairStalledSeriesFavorites().catch(() => {});
   // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
   setInterval(() => { meldeWatchpartyStand().catch(() => {}); }, WATCHPARTY_STAND_INTERVALL_MS).unref?.();
-  // Werbefilter: fehlende oder alte Listen nachladen, ohne den Start zu bremsen.
-  setTimeout(() => ensureFilterLists().catch((fehler) => {
-    console.log(`[ELFIX ADBLOCK] Listen konnten nicht geholt werden: ${fehler?.message || fehler}`);
-  }), 4000).unref?.();
+  // Werbefilter. Erst die Engine aus dem bauen, was auf der Platte liegt -
+  // das geht ohne Netz und ist der Grund, warum ELFIX auch offline filtert.
+  // Danach nachsehen, ob die Listen zu alt sind. Beides nebenher: der Aufbau
+  // dauert Sekunden, und solange gilt die eingebaute Notfallliste.
+  ladeFilterListenVonPlatte()
+    .catch((fehler) => {
+      console.log(`[ELFIX ADBLOCK] Aufbau fehlgeschlagen: ${fehler?.message || fehler}`);
+    })
+    .then(() => new Promise((fertig) => { setTimeout(fertig, 4000); }))
+    .then(() => ensureFilterLists())
+    .catch((fehler) => {
+      console.log(`[ELFIX ADBLOCK] Listen konnten nicht geholt werden: ${fehler?.message || fehler}`);
+    });
   // Abgeschlossene Serien auf neue Folgen pruefen - erst nach dem Start, damit
   // das Fenster nicht darauf wartet, danach in ruhigem Takt.
   setTimeout(() => pruefeNeueFolgen().catch(() => {}), 20000).unref?.();
@@ -562,43 +595,28 @@ function installAdblock() {
       return;
     }
 
-    // Die Wiedergabe darf der Filter nicht zerlegen - aber nur, was wirklich
-    // dazugehoert. Frueher genuegte "video", "stream" oder "player" irgendwo
-    // in der Adresse; damit lief jedes Werbenetz mit passendem Pfad ungeprueft
-    // durch, egal welche Liste geladen war.
-    if (details.resourceType !== "popup" && istWiedergabeAnfrage(details.url, provider)) {
-      callback({});
-      return;
-    }
-
-    const decision = adblock.shouldBlock(details, settings, provider);
-    if (decision.block) {
-      logBlocked(details, provider, decision.rule);
+    const urteil = adblockUrteil(details, provider);
+    if (urteil.block) {
+      logBlocked(details, provider, urteil.rule, urteil.kategorie);
       callback({ cancel: true });
       return;
     }
 
+    // Ausnahmen werden gemeldet, aber nur einmal je Anbieter und Host. Sonst
+    // stuende nach zehn Minuten Film ein Eintrag je Videostueck im Protokoll
+    // und das Fenster waere nicht mehr zu gebrauchen.
+    if (urteil.kategorie) logAusnahme(details.url, provider, urteil.rule, urteil.kategorie);
     callback({});
   });
 }
 
-function shouldBlockTarget(url, provider, resourceType = "mainFrame") {
+// Fuer Navigationen und Popups: dieselbe Entscheidung, aber ohne echtes
+// Request-Objekt.
+function shouldBlockTarget(url, provider, resourceType = "mainFrame", quelle = "") {
   if (!provider || !settings.adblock.enabled || provider.adblockEnabled === false || !providerModel.isHttpUrl(url)) {
     return { block: false };
   }
-  if (isChallengeOrVerificationUrl(url, provider)) {
-    return { block: false };
-  }
-
-  return adblock.shouldBlock(
-    {
-      url,
-      resourceType,
-      webContentsId: getProviderView(provider).webContents.id
-    },
-    settings,
-    provider
-  );
+  return adblockUrteil({ url, resourceType, referrer: quelle }, provider);
 }
 
 ipcMain.handle("app:init", () => ({
@@ -1637,6 +1655,34 @@ function getProviderView(provider) {
       event.preventDefault();
     }
   });
+  // Navigationen innerhalb eingebetteter Rahmen. Gibt es seit Electron 27;
+  // faellt die Ereignisart einmal weg, laeuft ELFIX ohne diesen Schutz weiter,
+  // statt beim Anlegen der Ansicht auszusteigen.
+  try {
+    view.webContents.on("will-frame-navigate", (ereignis) => {
+      if (ereignis.isMainFrame) return;
+      let quelle = "";
+      try {
+        quelle = ereignis.frame?.url || "";
+      } catch {
+        quelle = "";
+      }
+      if (shouldCancelFrameNavigation(ereignis.url, provider, quelle)) {
+        ereignis.preventDefault();
+      }
+    });
+  } catch {
+    console.log("[ELFIX ADBLOCK] will-frame-navigate steht nicht zur Verfuegung");
+  }
+  // Kosmetik: nach jeder Navigation in jedem Rahmen neu einspielen. Ein Rahmen,
+  // der neu laedt, hat weder Stil noch Beobachter - und genau nach dem Wechsel
+  // auf die Hosterseite kommen die Overlays.
+  view.webContents.on("did-frame-navigate", (_ereignis, url, _code, _text, istHauptrahmen, prozessId, rahmenId) => {
+    kosmetikEinspielen(provider, view, url, istHauptrahmen, prozessId, rahmenId);
+  });
+  view.webContents.on("dom-ready", () => {
+    kosmetikEinspielen(provider, view, view.webContents.getURL(), true);
+  });
   view.webContents.on("enter-html-full-screen", () => markContentFullscreen(true));
   view.webContents.on("leave-html-full-screen", () => markContentFullscreen(false));
   view.webContents.on("before-input-event", (event, input) => {
@@ -1650,6 +1696,20 @@ function getProviderView(provider) {
     const nachricht = typeof args[0] === "object" && args[0] !== null && "message" in args[0]
       ? args[0].message
       : args[1];
+    // Rueckkanal des kosmetischen Filters. Steht vor allem anderen, weil hier
+    // die meisten Meldungen ankommen - und weil sie ihren eigenen Rahmen
+    // mitbringen muessen: eine Antwort ins Hauptdokument nuetzt einem Overlay
+    // im Hosterrahmen nichts.
+    if (String(nachricht || "").startsWith(kosmetik.MELDE_PRAEFIX)) {
+      let rahmen = null;
+      try {
+        rahmen = typeof args[0] === "object" && args[0] !== null ? args[0].frame || null : null;
+      } catch {
+        rahmen = null;
+      }
+      kosmetikMeldung(provider, view, rahmen, nachricht);
+      return;
+    }
     // Wo dieses Geraet steht. Kommt aus der Seite, sobald sich etwas aendert -
     // deshalb sehen die anderen eine Pause ohne Umweg ueber einen Zeitgeber.
     // Der Bericht der sanften Regelung aus dem Player.
@@ -3292,17 +3352,49 @@ function sendFullscreenState() {
 // Anbieters (aniworld.to -> aniworld.sx) die App.
 function shouldCancelNavigation(url, provider, streng = false) {
   if (shouldBlockProviderNavigation(url, provider)) {
-    logBlockedUrl(url, provider, "site-lock", "navigation");
+    logBlockedUrl(url, provider, "site-lock", "navigation", "MAIN_FRAME_REDIRECT");
     return true;
   }
   if (streng && istPopupNavigation(url, provider)) {
-    logBlockedUrl(url, provider, "popup:navigation", "popup");
+    logBlockedUrl(url, provider, "popup:navigation", "popup", "POPUP");
     return true;
   }
   if (!settings.adblock.blockRedirects) return false;
   const decision = shouldBlockTarget(url, provider, "mainFrame");
   if (!decision.block) return false;
-  logBlockedUrl(url, provider, `redirect:${decision.rule}`, "redirect");
+  logBlockedUrl(url, provider, `redirect:${decision.rule}`, "redirect", "MAIN_FRAME_REDIRECT");
+  return true;
+}
+
+// Dasselbe fuer eingebettete Rahmen.
+//
+// will-navigate greift nur fuer das Hauptdokument. Ein Werberahmen, der sich
+// selbst auf eine Fake-Gewinnspielseite schickt, lief bisher voellig
+// ungeprueft - die Seite bleibt ja stehen, es wechselt nur der Rahmen, und
+// genau darin sitzt dann das Gewinnspiel.
+//
+// Hier darf nicht dieselbe Strenge gelten wie oben: der Hosterrahmen leitet im
+// Normalbetrieb mehrfach weiter, und ein fremder Rahmen ist nicht schon
+// deshalb Werbung, weil er fremd ist. Geprueft wird deshalb gegen die
+// Filterlisten - fremd und bekannt boese, das ist der Abbruchgrund.
+function shouldCancelFrameNavigation(url, provider, quelle = "") {
+  if (!provider || !settings.adblock.enabled || provider.adblockEnabled === false) return false;
+  if (!settings.adblock.blockRedirects) return false;
+  const adresse = String(url || "");
+  if (!adresse || adresse === "about:blank") return false;
+  // Fremde Schemata (intent:, market:, ...) sind in einem Rahmen immer eine
+  // Weiterleitung in einen App-Store, nie Teil der Wiedergabe.
+  if (!providerModel.isHttpUrl(adresse)) {
+    logBlockedUrl(adresse, provider, "frame:fremdes-schema", "frame", "FRAME_REDIRECT");
+    return true;
+  }
+
+  if (isChallengeOrVerificationUrl(adresse, provider) || istCaptchaHost(adresse)) return false;
+  if (isKnownAuthHost(adresse)) return false;
+
+  const decision = shouldBlockTarget(adresse, provider, "subFrame", quelle);
+  if (!decision.block) return false;
+  logBlockedUrl(adresse, provider, `frame:${decision.rule}`, "frame", "FRAME_REDIRECT");
   return true;
 }
 
@@ -3399,17 +3491,10 @@ function isAllowedProviderHost(hostname, provider) {
   return isAllowedResultHost(hostname, providerModel.hostFromUrl(provider.startUrl), provider);
 }
 
-// Gehoert diese Anfrage zum Abspielen? Nur der Anbieter selbst, die bekannten
-// Hoster und die Videodateien - sonst nichts. Das haelt den Player am Laufen,
-// ohne den Filter fuer alles andere auszuhebeln.
-function istWiedergabeAnfrage(url, provider) {
-  if (!providerModel.isHttpUrl(url)) return false;
-  if (isKnownVideoHosterUrl(url)) return true;
-  if (isProviderFirstParty(providerModel.hostFromUrl(url), provider)) return true;
-  return /\.(m3u8|mpd|mp4|webm|ts)(\?|$)/i.test(url);
-}
-
-
+// Ein bekannter Hoster - mehr sagt diese Pruefung nicht, und mehr darf sie
+// auch nicht sagen. Sie entscheidet, wohin die ganze Ansicht wechseln und
+// welcher Rahmen den Player tragen darf. Sie entscheidet nicht mehr, ob eine
+// Anfrage am Filter vorbeigeht; das macht wiedergabeAusnahme().
 function isKnownVideoHosterUrl(url) {
   const host = providerModel.hostFromUrl(url).toLowerCase();
   return /(voe|v[-.]?o[-.]?e|filemoon|filelions|dood|mixdrop|streamtape|vidmoly|vidoza|upstream|supervideo|streamsb|streamwish|lulustream|savefiles|mp4upload|vidsrc|vidguard|streamcloud|cloudflarestream)/i.test(host);
@@ -9389,21 +9474,58 @@ function normalizeFavoriteUrl(value) {
   }
 }
 
-function loadFilterCache() {
-  try {
-    const cache = JSON.parse(fs.readFileSync(FILTER_CACHE_FILE, "utf8"));
-    adblock.load(cache);
-  } catch {
-    adblock.load({ domains: defaultAdDomains(), trackers: defaultTrackerDomains(), rules: [] });
+function filterListenDatei(liste) {
+  return path.join(FILTER_LIST_DIR, `${liste.id}.txt`);
+}
+
+// Die Rohtexte von der Platte. Fehlt eine Liste, fehlt sie eben - die anderen
+// ergeben trotzdem eine brauchbare Engine.
+function gespeicherteFilterListen() {
+  const listen = [];
+  for (const liste of ADGUARD_FILTER_LISTS) {
+    try {
+      const text = fs.readFileSync(filterListenDatei(liste), "utf8");
+      if (text.trim()) listen.push({ id: liste.id, name: liste.name, text });
+    } catch {
+      // Noch nie geholt oder von Hand geloescht.
+    }
   }
+  return listen;
 }
 
-function saveFilterCache() {
+function speichereFilterListe(liste, text) {
   ensureDataDir();
-  fs.writeFileSync(FILTER_CACHE_FILE, JSON.stringify(adblock.serialize(), null, 2));
+  fs.mkdirSync(FILTER_LIST_DIR, { recursive: true });
+  fs.writeFileSync(filterListenDatei(liste), text);
 }
 
-// Ohne geladene Listen blockt nur die eingebaute Heuristik - und genau dann
+// Beim Start: Engine aus dem bauen, was schon da ist - ohne Netz, ohne Warten.
+//
+// Der Aufbau dauert rund vier Sekunden. Er laeuft deshalb nebenher, und bis er
+// fertig ist, filtert die eingebaute Notfallliste weiter. ELFIX startet also
+// nie ungeschuetzt und haengt nie am Adblocker.
+async function ladeFilterListenVonPlatte() {
+  try {
+    fs.rmSync(LEGACY_FILTER_CACHE_FILE, { force: true });
+  } catch {
+    // Wenn die alte Datei nicht weggeht, ist das kein Grund aufzuhoeren.
+  }
+  const listen = gespeicherteFilterListen();
+  if (!listen.length) {
+    console.log("[ELFIX ADBLOCK] keine Listen auf der Platte - vorerst nur die eingebauten Regeln");
+    return false;
+  }
+  const start = Date.now();
+  const ok = await adblock.bauen(listen);
+  if (!ok) {
+    console.log("[ELFIX ADBLOCK] tsurlfilter liess sich nicht laden - es gelten nur die eingebauten Regeln");
+    return false;
+  }
+  console.log(`[ELFIX ADBLOCK] ${adblock.ruleCount()} Regeln aus ${listen.length} Listen in ${Date.now() - start} ms`);
+  return true;
+}
+
+// Ohne geladene Listen blockt nur die eingebaute Notfallliste - und genau dann
 // kommen Popups und Werbung durch. Beim Start wird deshalb nachgeholt, was
 // fehlt oder zu alt ist; laeuft nebenher, damit das Fenster nicht wartet.
 async function ensureFilterLists() {
@@ -9413,7 +9535,7 @@ async function ensureFilterLists() {
   const vorhanden = adblock.hatGeladeneListen();
   if (vorhanden && !veraltet) return;
 
-  console.log(`[ELFIX ADBLOCK] ${vorhanden ? "Listen sind veraltet" : "nur die eingebauten Regeln aktiv"} - werden geholt`);
+  console.log(`[ELFIX ADBLOCK] ${vorhanden ? "Listen sind veraltet" : "keine Listen vorhanden"} - werden geholt`);
   const ergebnis = await updateFilterLists();
   if (ergebnis.fehlend?.length) {
     console.log(`[ELFIX ADBLOCK] nicht erreichbar: ${ergebnis.fehlend.join(", ")}`);
@@ -9422,7 +9544,7 @@ async function ensureFilterLists() {
 }
 
 async function updateFilterLists() {
-  const texts = [];
+  const listen = [];
   const fehlend = [];
   for (const list of ADGUARD_FILTER_LISTS) {
     try {
@@ -9430,22 +9552,30 @@ async function updateFilterLists() {
       // des Systems - das globale fetch scheitert hier je nach Umgebung.
       const response = await net.fetch(list.url, { signal: AbortSignal.timeout(25000) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      texts.push(await response.text());
+      const text = await response.text();
+      if (!text.trim()) throw new Error("leere Antwort");
+      speichereFilterListe(list, text);
+      listen.push({ id: list.id, name: list.name, text });
     } catch (fehler) {
-      // Eine hakende Liste darf die anderen drei nicht mitreissen - lieber
-      // etwas weniger Regeln als gar keine.
+      // Eine hakende Liste darf die anderen nicht mitreissen - lieber etwas
+      // weniger Regeln als gar keine. Was schon auf der Platte liegt, wird
+      // unten wieder mit eingesammelt.
       fehlend.push(`${list.name} (${fehler?.message || fehler})`);
     }
   }
 
-  if (!texts.length) {
+  // Auch die Listen, die diesmal nicht durchkamen, aber noch vom letzten Mal
+  // da sind. Sonst wuerde ein einzelner Netzfehler den Schutz verkleinern.
+  const vollstaendig = gespeicherteFilterListen();
+  const quelle = vollstaendig.length >= listen.length ? vollstaendig : listen;
+  if (!quelle.length) {
     throw new Error(`Keine Filterliste erreichbar: ${fehlend.join(", ")}`);
   }
 
-  adblock.parseLists(texts);
+  await adblock.bauen(quelle);
   settings.adblock.lastUpdated = new Date().toISOString();
-  saveFilterCache();
   saveSettings();
+  kosmetikZuruecksetzen();
   return { ruleCount: adblock.ruleCount(), lastUpdated: settings.adblock.lastUpdated, fehlend };
 }
 
@@ -9698,10 +9828,11 @@ function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-function logBlocked(details, provider, rule) {
+function logBlocked(details, provider, rule, kategorie = "NETWORK_RULE") {
   blockedRequests.push({
     time: new Date().toLocaleTimeString(),
     provider: provider.name,
+    kategorie,
     type: details.resourceType,
     url: details.url,
     rule
@@ -9712,10 +9843,44 @@ function logBlocked(details, provider, rule) {
   sendBlockedRequests();
 }
 
-function logBlockedUrl(url, provider, rule, type) {
+// Wer durfte durch, obwohl eine Regel ihn erwischt haette? Das ist die Spur,
+// an der man einen kaputten Player erkennt - aber nur einmal je Anbieter und
+// Host. Ein Film laedt tausende Videostuecke; jedes einzelne zu melden waere
+// kein Protokoll mehr, sondern Rauschen.
+const ausnahmeGemeldet = new Set();
+
+function logAusnahme(url, provider, rule, kategorie) {
+  const host = providerModel.hostFromUrl(url);
+  const schluessel = `${provider?.id || ""}|${host}|${kategorie}`;
+  if (ausnahmeGemeldet.has(schluessel)) return;
+  ausnahmeGemeldet.add(schluessel);
+  // Nicht unbegrenzt wachsen lassen - nach einem langen Abend mit vielen
+  // Folgen steht hier sonst jeder je gesehene Auslieferungsknoten drin.
+  if (ausnahmeGemeldet.size > 500) ausnahmeGemeldet.clear();
   blockedRequests.push({
     time: new Date().toLocaleTimeString(),
     provider: provider?.name || "Unbekannt",
+    kategorie,
+    type: "ausnahme",
+    url: `${host} (erste Anfrage dieser Art)`,
+    rule: rule || kategorie
+  });
+  if (blockedRequests.length > MAX_BLOCK_LOG) {
+    blockedRequests.shift();
+  }
+  sendBlockedRequests();
+}
+
+function kosmetikZuruecksetzen() {
+  ausnahmeGemeldet.clear();
+  kosmetikStand.clear();
+}
+
+function logBlockedUrl(url, provider, rule, type, kategorie = "") {
+  blockedRequests.push({
+    time: new Date().toLocaleTimeString(),
+    provider: provider?.name || "Unbekannt",
+    kategorie: kategorie || String(type || "").toUpperCase(),
     type,
     url,
     rule
@@ -9818,224 +9983,237 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-// Diese Liste gilt immer, auch wenn keine einzige AdGuard-Liste geladen werden
-// konnte. Sie deckt die Netze ab, die auf Streaming-Seiten die Popups und
-// Popunder ausliefern - ohne sie haengt der Schutz an einem Download.
-function defaultAdDomains() {
-  return [
-    // Anzeigen-Vermarkter
-    "doubleclick.net",
-    "googlesyndication.com",
-    "googleadservices.com",
-    "adservice.google.com",
-    "adsystem.com",
-    "amazon-adsystem.com",
-    "taboola.com",
-    "outbrain.com",
-    "scorecardresearch.com",
-    "adnxs.com",
-    "pubmatic.com",
-    "rubiconproject.com",
-    "criteo.com",
-    "zedo.com",
-    "smartadserver.com",
-    "adform.net",
-    "openx.net",
-    "casalemedia.com",
-    "moatads.com",
-    "media.net",
-    "mgid.com",
-    "adskeeper.com",
-    "revcontent.com",
-    // Popup- und Popunder-Netze
-    "popads.net",
-    "popcash.net",
-    "popunder.net",
-    "popmyads.com",
-    "poptm.com",
-    "onclickads.net",
-    "onclickalgo.com",
-    "clickadu.com",
-    "adcash.com",
-    "propellerads.com",
-    "propeller-tracking.com",
-    "propu.sh",
-    "adsterra.com",
-    "adsterra.net",
-    "highperformanceformat.com",
-    "profitableratecpm.com",
-    "effectiveratecpm.com",
-    "displaycontentnetwork.com",
-    "exoclick.com",
-    "exosrv.com",
-    "exdynsrv.com",
-    "realsrv.com",
-    "trafficjunky.net",
-    "trafficstars.com",
-    "tsyndicate.com",
-    "juicyads.com",
-    "hilltopads.net",
-    "hilltopads.com",
-    "adspyglass.com",
-    "bidgear.com",
-    "adnium.com",
-    "adsupply.com"
-  ];
-}
+// Was die Wiedergabe wirklich braucht - und sonst nichts.
+//
+// Frueher stand hier istWiedergabeAnfrage(): "kommt es von VOE, Filemoon,
+// StreamWish und so weiter, ist es Wiedergabe" - und die Anfrage lief komplett
+// am Filter vorbei. Genau darueber kamen die Popunder-Skripte und die
+// Werbenetze herein, denn die liegen auf denselben Hostern.
+//
+// Jetzt wird unterschieden. Freigegeben wird nur, was ein Player wirklich
+// laedt: das Manifest, die Segmente, die Mediendatei, dazu der eine Rahmen,
+// mit dem der Anbieter den Hoster einbettet. Ein Skript, ein XHR an ein
+// Werbenetz oder ein zweites Iframe im Hosterrahmen bekommt keine Freigabe -
+// das prueft tsurlfilter, auch wenn es von voe.sx kommt.
+const MEDIEN_ENDUNGEN = /\.(m3u8|mpd|m4s|ts|mp4|m4v|webm|mkv|mov|m4a|aac|mp3|opus|vtt|srt|ass|key)(\?|$|#)/i;
+const MEDIEN_PFADE = /\/(hls\d?|dash|manifest|playlist|segment|chunk|videoplayback|get_video|getvid|engine\/hls)/i;
+// Nur diese Typen koennen ueberhaupt Medien sein. Ein "script" ist nie ein
+// Segment, auch wenn die Adresse auf .ts endet - Typescript-Dateien heissen
+// genauso.
+const MEDIEN_TYPEN = ["media", "xhr", "other", "object"];
 
-function defaultTrackerDomains() {
-  return [
-    "google-analytics.com",
-    "googletagmanager.com",
-    "facebook.net",
-    "facebook.com",
-    "hotjar.com",
-    "mixpanel.com",
-    "segment.io",
-    "clarity.ms",
-    "amplitude.com"
-  ];
-}
+function wiedergabeAusnahme(url, provider, resourceType, quelle) {
+  // Chromium kennzeichnet selbst, was ein <video> oder <audio> laedt. Das ist
+  // die verlaesslichste Angabe, die es hier gibt - vor jeder Adressenraterei.
+  if (resourceType === "media") return "MEDIA_ALLOWED";
 
-class FilterEngine {
-  constructor() {
-    this.domains = new Set(defaultAdDomains());
-    this.trackers = new Set(defaultTrackerDomains());
-    this.substringRules = [];
+  const zielHost = providerModel.hostFromUrl(url);
+  const hosterZiel = isKnownVideoHosterUrl(url);
+  const hosterQuelle = Boolean(quelle) && isKnownVideoHosterUrl(quelle);
+  const eigenerAnbieter = isProviderFirstParty(zielHost, provider);
+
+  if (MEDIEN_TYPEN.includes(resourceType)
+    && (hosterZiel || hosterQuelle || eigenerAnbieter)
+    && (MEDIEN_ENDUNGEN.test(url) || MEDIEN_PFADE.test(url))) {
+    return "MEDIA_ALLOWED";
   }
 
-  load(cache) {
-    this.domains = new Set([...sanitizeCachedRules(cache?.domains), ...defaultAdDomains()]);
-    this.trackers = new Set([...sanitizeCachedRules(cache?.trackers), ...defaultTrackerDomains()]);
-    this.substringRules = Array.isArray(cache?.rules) ? cache.rules.slice(0, 3000) : [];
+  // Der Player-Rahmen selbst: der Anbieter bettet den Hoster ein. Was
+  // innerhalb dieses Rahmens nachgeladen wird, laeuft wieder ganz normal durch
+  // den Filter - die Freigabe gilt nur fuer den Rahmen.
+  if (resourceType === "subFrame" && hosterZiel && isProviderFirstParty(providerModel.hostFromUrl(quelle || ""), provider)) {
+    return "PLAYER_ALLOWED";
   }
 
-  serialize() {
-    return {
-      domains: [...this.domains],
-      trackers: [...this.trackers],
-      rules: this.substringRules
-    };
-  }
-
-  parseLists(texts) {
-    const domains = new Set(defaultAdDomains());
-    const trackers = new Set(defaultTrackerDomains());
-    const rules = [];
-
-    for (const text of texts) {
-      for (const rawLine of text.split(/\r?\n/)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith("!") || line.startsWith("[") || line.startsWith("@@")) continue;
-        if (line.includes("$document") || line.includes("$generichide") || line.includes("$elemhide")) continue;
-
-        const domainMatch = line.match(/^\|\|([a-z0-9.-]+)\^?(?:[$/]|$)/i);
-        if (domainMatch) {
-          const domain = domainMatch[1].replace(/^\.+|\.+$/g, "").toLowerCase();
-          if (domain.includes(".") && domain.length < 120 && isLikelyAdOrTrackerRule(line, domain)) {
-            if (line.includes("track") || line.includes("privacy")) trackers.add(domain);
-            else domains.add(domain);
-          }
-          continue;
-        }
-
-        if (line.startsWith("/") || line.includes("##") || line.includes("#@#")) continue;
-        const cleaned = line.replace(/[|^*]/g, "").split("$")[0].trim();
-        if (cleaned.length >= 8 && cleaned.length <= 100 && !cleaned.includes("{")) {
-          rules.push(cleaned);
-        }
-      }
-    }
-
-    this.domains = domains;
-    this.trackers = trackers;
-    this.substringRules = [...new Set(rules)].slice(0, 5000);
-  }
-
-  ruleCount() {
-    return this.domains.size + this.trackers.size + this.substringRules.length;
-  }
-
-  // Steht hier mehr als das eingebaute Grundgeruest? ruleCount() ist nie null,
-  // weil die Standarddomains immer dabei sind - fuer "sind Listen da?" taugt
-  // die Zahl deshalb nicht.
-  hatGeladeneListen() {
-    return this.substringRules.length > 0 || this.domains.size > defaultAdDomains().length;
-  }
-
-  shouldBlock(details, activeSettings, provider) {
-    let hostname;
-    try {
-      hostname = new URL(details.url).hostname.toLowerCase();
-    } catch {
-      return { block: false };
-    }
-
-    if (isChallengeOrVerificationUrl(details.url, provider)) {
-      return { block: false };
-    }
-
-    if (isWhitelisted(hostname, activeSettings.adblock.whitelist) || isProviderFirstParty(hostname, provider)) {
-      return { block: false };
-    }
-
-    if (isPageCriticalResource(details.resourceType)) {
-      return { block: false };
-    }
-
-    const domainRule = findDomainRule(hostname, this.domains);
-    if (domainRule) return { block: true, rule: domainRule };
-
-    const thirdParty = isThirdParty(details, provider);
-    if (activeSettings.adblock.trackingProtection && thirdParty) {
-      const trackerRule = findDomainRule(hostname, this.trackers);
-      if (trackerRule) return { block: true, rule: trackerRule };
-    }
-
-    const lowerUrl = details.url.toLowerCase();
-    if (allowsSubstringBlocking(details.resourceType)) {
-      for (const rule of this.substringRules) {
-        if (lowerUrl.includes(rule.toLowerCase())) {
-          return { block: true, rule };
-        }
-      }
-    }
-
-    return { block: false };
-  }
-}
-
-function sanitizeCachedRules(rules) {
-  if (!Array.isArray(rules)) return [];
-  return rules
-    .map((rule) => String(rule || "").trim().toLowerCase())
-    .filter((rule) => rule.includes(".") && rule.length < 120 && isLikelyAdOrTrackerRule(rule, rule));
-}
-
-function isPageCriticalResource(resourceType) {
-  return ["image", "stylesheet", "font", "media"].includes(resourceType || "");
-}
-
-function allowsSubstringBlocking(resourceType) {
-  return ["popup", "ping", "cspReport"].includes(resourceType || "");
-}
-
-function isLikelyAdOrTrackerRule(line, domain) {
-  const value = `${domain} ${line}`.toLowerCase();
-  return /(^|[_.-])(ad|ads|adv|advert|analytics|beacon|click|metric|pixel|pop|promo|sponsor|stat|track|tracker|tracking)([_.-]|$)/.test(value)
-    || value.includes("doubleclick")
-    || value.includes("googlesyndication")
-    || value.includes("googleadservices");
-}
-
-function findDomainRule(hostname, rules) {
-  for (const rule of rules) {
-    if (hostname === rule || hostname.endsWith(`.${rule}`)) {
-      return rule;
-    }
-  }
   return "";
 }
+
+// Aus welchem Dokument kommt diese Anfrage? Ohne diese Angabe kann keine
+// Regel mit $third-party oder $domain= richtig greifen - und genau die
+// trennen auf einer Hosterseite die Wiedergabe von der Werbung.
+function frameQuelle(details) {
+  try {
+    const rahmen = details.frame;
+    if (rahmen && typeof rahmen.url === "string" && rahmen.url.startsWith("http")) return rahmen.url;
+  } catch {
+    // Ein Frame, der waehrend der Anfrage verworfen wird, wirft beim Zugriff.
+    // Dann bleibt der Verweis.
+  }
+  const verweis = String(details.referrer || "");
+  return verweis.startsWith("http") ? verweis : "";
+}
+
+// Das Urteil ueber eine einzelne Anfrage, mit allem, was ELFIX ueber den
+// Anbieter weiss. Die Reihenfolge ist die eigentliche Aussage dieser Funktion:
+//
+//   1. Verifizierung  - Cloudflare und Captchas gehen immer vor
+//   2. Ausnahmeliste  - was von Hand freigegeben wurde
+//   3. Anbieterdomain - die Seite, auf der man gerade ist
+//   4. tsurlfilter    - die eigentliche Entscheidung
+//   5. Wiedergabe     - rettet nur noch das, was der Filter fallen liesse
+//
+// Punkt 5 kam frueher vor Punkt 4. Das war der Fehler: der Hoster-Bypass lief
+// vor dem Filter und hat ihn damit fuer alles von diesem Host ausgehebelt.
+function adblockUrteil(details, provider) {
+  const url = String(details.url || "");
+  const resourceType = String(details.resourceType || "other");
+  if (!providerModel.isHttpUrl(url)) return { block: false };
+
+  if (isChallengeOrVerificationUrl(url, provider) || istCaptchaHost(url)) {
+    return { block: false, kategorie: "CAPTCHA_ALLOWED" };
+  }
+
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return { block: false };
+  }
+
+  if (isWhitelisted(hostname, settings.adblock.whitelist)) {
+    return { block: false, kategorie: "FILTER_EXCEPTION", rule: "Ausnahmeliste" };
+  }
+  if (isProviderFirstParty(hostname, provider)) return { block: false };
+
+  const quelle = frameQuelle(details);
+  const urteil = adblock.matchRequest({ url, resourceType, sourceUrl: quelle });
+
+  if (!urteil.block) {
+    if (urteil.allowlist) {
+      return { block: false, kategorie: "FILTER_EXCEPTION", rule: urteil.rule };
+    }
+    return { block: false };
+  }
+
+  // Der Schalter "Tracking-Schutz" soll etwas tun, ohne dass dafuer die Engine
+  // neu gebaut werden muss: steht er aus, faellt genau das weg, was allein aus
+  // der Tracking-Liste kommt. Werbung aus den anderen Listen bleibt geblockt.
+  if (!settings.adblock.trackingProtection && Number(urteil.listId) === TRACKING_LISTEN_ID) {
+    return { block: false, kategorie: "FILTER_EXCEPTION", rule: urteil.rule };
+  }
+
+  const ausnahme = wiedergabeAusnahme(url, provider, resourceType, quelle);
+  if (ausnahme) return { block: false, kategorie: ausnahme, rule: urteil.rule };
+
+  return { block: true, rule: urteil.rule, kategorie: blockKategorie(resourceType, urteil) };
+}
+
+function blockKategorie(resourceType, urteil) {
+  if (Number(urteil.listId) === TRACKING_LISTEN_ID) return "TRACKER_BLOCKED";
+  if (resourceType === "script") return "SCRIPT_BLOCKED";
+  if (["ping", "cspReport"].includes(resourceType)) return "TRACKER_BLOCKED";
+  return "NETWORK_RULE";
+}
+
+// ---------------------------------------------------------------------------
+// Kosmetisches Filtern
+//
+// tsurlfilter sagt, welche Selektoren auf dieser Seite verborgen gehoeren.
+// Eine Browsererweiterung haette dafuer Content Scripts; Electron hat
+// frame.executeJavaScript(). Diese Haelfte bringt das eine ins andere.
+//
+// Eingespielt wird in jeden Rahmen einzeln: das Hauptdokument des Anbieters
+// hat andere Regeln als der eingebettete Hosterrahmen, und das Gewinnspiel
+// sitzt meistens im zweiten.
+// ---------------------------------------------------------------------------
+
+// Was fuer eine Adresse schon berechnet wurde. Der Aufruf kostet rund vier
+// Millisekunden - fuer jeden Rahmen und jedes dom-ready neu waere das spuerbar.
+const kosmetikStand = new Map();
+const KOSMETIK_STAND_MAX = 40;
+
+function kosmetikFuerAdresse(url) {
+  const vorhanden = kosmetikStand.get(url);
+  if (vorhanden) return vorhanden;
+  const daten = adblock.kosmetik(url);
+  const eintrag = {
+    css: kosmetik.stilAusSelektoren(daten.stile),
+    skripte: daten.skripte,
+    selektoren: daten.stile.length
+  };
+  if (kosmetikStand.size > KOSMETIK_STAND_MAX) kosmetikStand.clear();
+  kosmetikStand.set(url, eintrag);
+  return eintrag;
+}
+
+function rahmenFinden(view, istHauptrahmen, prozessId, rahmenId) {
+  try {
+    if (Number.isInteger(prozessId) && Number.isInteger(rahmenId)) {
+      const treffer = webFrameMain.fromId(prozessId, rahmenId);
+      if (treffer) return treffer;
+    }
+  } catch {
+    // Ein Rahmen, der beim Nachschlagen schon wieder weg ist.
+  }
+  try {
+    return istHauptrahmen === false ? null : view.webContents.mainFrame;
+  } catch {
+    return null;
+  }
+}
+
+function frameAusfuehren(rahmen, script) {
+  try {
+    if (!rahmen || typeof rahmen.executeJavaScript !== "function") return Promise.resolve(null);
+    return rahmen.executeJavaScript(script, true).catch(() => null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
+function kosmetikEinspielen(provider, view, url, istHauptrahmen, prozessId, rahmenId) {
+  if (!provider || !settings.adblock?.enabled || provider.adblockEnabled === false) return;
+  if (!isLiveView(view) || !providerModel.isHttpUrl(url)) return;
+
+  const host = providerModel.hostFromUrl(url);
+  // Wer eine Seite von Hand freigegeben hat, will dort auch nichts verborgen
+  // haben - sonst waere die Ausnahmeliste nur eine halbe Ausnahme.
+  if (isWhitelisted(host, settings.adblock.whitelist)) return;
+
+  const rahmen = rahmenFinden(view, istHauptrahmen, prozessId, rahmenId);
+  if (!rahmen) return;
+
+  const eintrag = kosmetikFuerAdresse(url);
+  // Das Seitenskript zuerst: der Stil und das Ausblenden laufen ueber die
+  // Schnittstelle, die es anlegt.
+  frameAusfuehren(rahmen, kosmetik.seitenScript()).then(() => {
+    if (eintrag.css) frameAusfuehren(rahmen, kosmetik.stilAufrufScript(eintrag.css));
+    // Scriptlets sind das schaerfste Werkzeug in den Listen: sie klemmen
+    // Popunder-Aufrufe direkt im Javascript der Seite ab. Sie greifen damit
+    // aber auch am tiefsten ein, deshalb haengen sie am Popup-Schalter - wer
+    // einen kaputten Player vermutet, hat genau eine Stelle zum Abschalten.
+    if (!settings.adblock.blockPopups) return;
+    for (const code of eintrag.skripte) frameAusfuehren(rahmen, code);
+  });
+}
+
+// Antwort auf eine Meldung aus der Seite.
+function kosmetikMeldung(provider, view, rahmen, nachricht) {
+  const meldung = kosmetik.meldungLesen(nachricht);
+  if (!meldung || meldung.art !== "kandidaten" || !Array.isArray(meldung.daten)) return;
+  if (!settings.adblock?.enabled || provider?.adblockEnabled === false) return;
+
+  const ziel = rahmen || rahmenFinden(view, true);
+  if (!ziel) return;
+
+  const marken = [];
+  for (const kandidat of meldung.daten.slice(0, 6)) {
+    const urteil = kosmetik.istWerbeOverlay(kandidat, {
+      istWerbeHost: (hostname) => adblock.istWerbeHost(hostname)
+    });
+    if (!urteil.entfernen) continue;
+    marken.push(kandidat.marke);
+    logBlockedUrl(
+      `${kandidat.tag}${kandidat.id ? "#" + kandidat.id : ""}${kandidat.klassen ? "." + String(kandidat.klassen).trim().split(/\s+/)[0] : ""}`,
+      provider,
+      `overlay:${urteil.grund}`,
+      "overlay",
+      "COSMETIC_RULE"
+    );
+  }
+  if (marken.length) frameAusfuehren(ziel, kosmetik.entfernenAufrufScript(marken));
+}
+
 
 function isWhitelisted(hostname, whitelist) {
   return whitelist.some((entry) => {
@@ -10054,15 +10232,6 @@ function isProviderFirstParty(hostname, provider) {
   if (isStoProviderLike(provider)) return target === "s.to" || target.endsWith(".s.to") || target === providerHost;
   if (name.includes("filmo")) return target.includes("filmo");
   return false;
-}
-
-function isThirdParty(details, provider) {
-  try {
-    const targetHost = new URL(details.url).hostname;
-    return !isProviderFirstParty(targetHost, provider);
-  } catch {
-    return true;
-  }
 }
 
 function isKnownAuthHost(url) {

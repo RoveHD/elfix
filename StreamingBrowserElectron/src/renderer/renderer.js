@@ -4647,7 +4647,12 @@ function renderBlocked() {
   for (const item of blockedRequests) {
     const row = document.createElement("div");
     row.className = "blocked-row";
-    row.textContent = `${item.time} · ${item.provider} · ${item.type} · ${item.rule} · ${item.url}`;
+    // Die Kategorie sagt in einem Wort, warum etwas hier steht - geblockte
+    // Regel, Popup, Frame-Umleitung, Overlay oder eine bewusste Ausnahme fuer
+    // Wiedergabe und Verifizierung. Alte Eintraege ohne Kategorie bleiben
+    // lesbar, deshalb die Ausweiche auf den Typ.
+    const kategorie = item.kategorie || String(item.type || "").toUpperCase();
+    row.textContent = `${item.time} · ${item.provider} · ${kategorie} · ${item.type} · ${item.rule} · ${item.url}`;
     blockedList.append(row);
   }
 }
