@@ -3,6 +3,48 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.27.0 — 20. August 2026
+
+Die Mediathek laesst sich sortieren und sagt, wann du etwas gesehen hast, ELFIX
+meldet neue Folgen auch bei geschlossenem Fenster, und in einer Watchparty auf
+YouTube zieht ein Videowechsel die Runde mit.
+
+**Mediathek**
+
+- Sortieren nach "Von Hand", "Zuletzt gesehen", "A-Z" und "Nach Anbieter".
+  Keine dieser Ansichten schreibt die Reihenfolge - nur das Ziehen tut das,
+  und Ziehen gibt es nur in "Von Hand". Eine selbst gelegte Reihenfolge
+  ueberlebt also einen Ausflug nach A-Z unveraendert
+- Jede Karte sagt, wann der Titel durch war
+- Wer einen Titel mehrfach geschaut hat, findet unter den drei Punkten
+  "Verlauf ansehen": wie oft, an wie vielen Tagen, und die Liste mit Datum
+  und Folge. Gezaehlt werden Tage, nicht Folgen - zwanzig Folgen an einem
+  Abend sind ein Abend
+- Derselbe Titel stand doppelt da, wenn man ihn privat und in einer
+  Watchparty geschaut hatte. Jeder Raum fuehrt seinen eigenen Fortschritt,
+  das ist gewollt - aber in der Mediathek zaehlt das Werk, nicht der Raum.
+  Uebrig bleibt der private Eintrag mit der laengeren Geschichte
+
+**Benachrichtigungen**
+
+- ELFIX meldet neue Folgen jetzt ueber Windows, auch wenn das Fenster zu ist.
+  Erkannt wurden sie laengst - gesagt wurde es nur, solange man hinschaute,
+  und genau dann braucht man es nicht
+- Standardmaessig aus. Eine Meldung, die man nicht bestellt hat, ist eine
+  Stoerung
+
+**Watchparty auf YouTube**
+
+- Klickte jemand ein neues Video an, ruehrten sich die anderen nicht. Bei
+  Serien nimmt ein Folgenwechsel die Runde laengst mit - die Kette war also
+  da und scheiterte an einer Stelle: der Serienschluessel wirft die Abfrage
+  einer Adresse weg, und die YouTube-Videokennung steckt genau dort. Fuer die
+  Watchparty sah damit jedes Video aus wie dasselbe
+- Verglichen wird jetzt die Videokennung. Mitgezogen wird weiterhin nur, wer
+  live geschaltet ist; die Startseite, ein Kanal oder Shorts loesen nichts aus
+- Nebenbei behoben: eine Pause an einem YouTube-Video wurde bisher auch bei
+  jemandem angewendet, der gerade ein ganz anderes schaute
+
 ## 1.26.0 — 20. August 2026
 
 Ein neuer Werbefilter, der die AdGuard-Listen wirklich versteht, das
