@@ -76,7 +76,6 @@ const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
 const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
-const CACHE_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 const MIN_WATCH_TIME_SECONDS = 2.5 * 60;
 // In einer Watchparty gilt eine kuerzere Schwelle: dort schauen mehrere
 // dieselbe Folge, und die Runde soll nicht minutenlang die vorige anzeigen.
@@ -319,7 +318,6 @@ let pendingAutostart = null;
 let curtainView = null;
 const overlayReasons = new Set();
 let adblock;
-let cacheCleanupTimer;
 let updateState = {
   status: "idle",
   message: "Noch nicht geprüft.",
@@ -352,6 +350,9 @@ app.whenReady().then(async () => {
   if (youtubeGeradegezogen) saveFavorites();
   settings = loadSettings();
   saveSettings();
+  // Erst jetzt moeglich: der Nachtrag braucht beide Seiten - die Anbieterliste
+  // und den Merker aus den Einstellungen.
+  youtubeAnbieterNachtragen();
   watchpartyLokal = loadWatchpartyLocal();
 
   browserSession = session.fromPartition(SESSION_PARTITION, { cache: true });
@@ -359,7 +360,6 @@ app.whenReady().then(async () => {
   if (settings.browser.cacheMode !== "normal") {
     await clearBrowserDataPreservingLogin();
   }
-  syncAutomaticCacheCleanup();
   installAdblock();
   createMainWindow();
   setupAutoUpdater();
@@ -543,6 +543,16 @@ function configureBrowserSession() {
   });
 }
 
+// Cache und Website-Daten raeumen, ohne dich auszuloggen und ohne dir deine
+// Player-Einstellungen zu nehmen.
+//
+// Cookies bleiben - daher der Name. Der localStorage bleibt inzwischen
+// ebenfalls, und das ist kein Detail: dort merkt sich jeder Player die
+// Lautstaerke, und dort liegen bei YouTube die Qualitaets- und
+// Untertitelwahl. Wer sie mitloescht, stellt nichts zurueck, sondern
+// verstellt es - jede Seite fing wieder bei ihrem Standard an, also bei
+// voller Lautstaerke. Werbung und Zaehlpixel sitzen ohnehin in Cache,
+// Service Workern und dem Cache Storage, und die gehen weiter.
 async function clearBrowserDataPreservingLogin() {
   if (!browserSession) return;
   await browserSession.clearCache().catch(() => {});
@@ -560,31 +570,12 @@ async function clearBrowserDataPreservingLogin() {
       "appcache",
       "filesystem",
       "indexdb",
-      "localstorage",
       "shadercache",
       "websql",
       "serviceworkers",
       "cachestorage"
     ]
   }).catch(() => {});
-}
-
-function startAutomaticCacheCleanup() {
-  if (cacheCleanupTimer) clearInterval(cacheCleanupTimer);
-  cacheCleanupTimer = setInterval(() => {
-    clearBrowserDataPreservingLogin().catch(() => {});
-  }, CACHE_CLEANUP_INTERVAL_MS);
-  if (typeof cacheCleanupTimer.unref === "function") cacheCleanupTimer.unref();
-}
-
-function stopAutomaticCacheCleanup() {
-  if (cacheCleanupTimer) clearInterval(cacheCleanupTimer);
-  cacheCleanupTimer = null;
-}
-
-function syncAutomaticCacheCleanup() {
-  if (settings.browser?.cacheMode === "aggressive") startAutomaticCacheCleanup();
-  else stopAutomaticCacheCleanup();
 }
 
 function installAdblock() {
@@ -1183,6 +1174,30 @@ ipcMain.handle("favorites:repair-thumbnail", async (_event, favoriteId, force = 
   return { favorites, favorite, repaired };
 });
 
+// Das Kontextmenue eines Anbieters in der Leiste.
+//
+// Ein Fenstermenue und kein Kaestchen aus HTML: die Leiste steht direkt ueber
+// der Anbieterseite, und die ist eine eigene Ansicht, die jedes HTML darunter
+// verdeckt. Ein aufgeklapptes Menue waere dort halb unsichtbar und nicht
+// anklickbar - dasselbe Problem wie beim Umschalten der Watchparty.
+ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return "";
+  const titel = String(name || "").slice(0, 60);
+  return new Promise((fertig) => {
+    let gewaehlt = "";
+    const menue = Menu.buildFromTemplate([
+      { label: titel || "Anbieter", enabled: false },
+      { type: "separator" },
+      { label: "Bearbeiten", click: () => { gewaehlt = "edit"; } },
+      { label: "Neuer Anbieter", click: () => { gewaehlt = "new"; } }
+    ]);
+    const stelle = punkt && Number.isFinite(punkt.x) && Number.isFinite(punkt.y)
+      ? { x: Math.round(punkt.x), y: Math.round(punkt.y) }
+      : {};
+    menue.popup({ window: mainWindow, ...stelle, callback: () => fertig(gewaehlt) });
+  });
+});
+
 ipcMain.handle("provider:save-all", (_event, nextProviders) => {
   providers = providerModel.normalizeProviders(nextProviders);
   if (!enabledProviders().some((item) => item.id === activeProviderId)) {
@@ -1435,7 +1450,6 @@ ipcMain.handle("youtubeparty:open", async () => {
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();
-  syncAutomaticCacheCleanup();
   syncWatchparty();
   return publicSettings(settings);
 });
@@ -1588,8 +1602,7 @@ ipcMain.handle("data:backup-import", async () => {
     watchpartyLokal = loadWatchpartyLocal();
     watchpartyWiederhergestellt.clear();
 
-    syncAutomaticCacheCleanup();
-    syncWatchparty();
+      syncWatchparty();
     sendActiveState();
     console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, Kopie vorher unter ${vorher}`);
     return {
@@ -1619,8 +1632,7 @@ ipcMain.handle("data:confirm-reset", async () => {
     saveProviders();
     saveFavorites();
     saveSettings();
-    syncAutomaticCacheCleanup();
-    return { providers, favorites, settings: publicSettings(settings) };
+      return { providers, favorites, settings: publicSettings(settings) };
   }
   return null;
 });
@@ -1697,8 +1709,9 @@ async function enterHomeMode() {
   sendActiveState();
   // Sind die Anbieterseiten zu, bleibt sonst alles liegen, was sie angelegt
   // haben - Cache, Service Worker, lokale Ablagen der Werbenetze. Beim
-  // naechsten Oeffnen faengt der Browser jetzt sauber an. Anmeldungen bleiben:
-  // Cookies fasst diese Reinigung nicht an.
+  // naechsten Oeffnen faengt der Browser jetzt sauber an. Anmeldungen und
+  // Player-Einstellungen bleiben: Cookies und localStorage fasst diese
+  // Reinigung nicht an.
   clearBrowserDataPreservingLogin().catch(() => {});
 }
 
@@ -1885,6 +1898,7 @@ function getProviderView(provider) {
     // eine Empfehlung, ein Treffer aus der Suche, das naechste Video. Fuer die
     // Runde ist genau das ein Videowechsel.
     meldeYoutubeVideowechsel(view, url).catch(() => {});
+    installYoutubeWiedergabe(view, url).catch(() => {});
     pushWatchpartyLiveState(url);
     resumePendingProviderAutoplay(provider, view);
   });
@@ -1909,6 +1923,7 @@ function getProviderView(provider) {
     // Folge unbemerkt, weil bis zum ersten Takt noch Sekunden vergehen.
     installWatchpartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubePartyControls(provider, view, view.webContents.getURL()).catch(() => {});
+    installYoutubeWiedergabe(view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -7182,6 +7197,17 @@ async function installYoutubePartyControls(provider, view, url) {
   youtubeNachziehenPlanen();
 }
 
+// Beste Qualitaet, keine Untertitel - einmal je Video.
+//
+// Das Skript haengt sich selbst in die Seite und bleibt dort, weil YouTube das
+// Video ohne Neuladen wechselt. Hier wird es nur angestossen; alles Weitere
+// steht in youtube.js, samt der Begruendung, warum genau einmal je Video und
+// nicht dauernd nachgestellt wird.
+async function installYoutubeWiedergabe(view, url) {
+  if (!isLiveView(view) || !youtube.istYoutubeUrl(url)) return;
+  await view.webContents.executeJavaScript(youtube.wiedergabeScript(), true).catch(() => {});
+}
+
 // --- Was die Oberflaeche davon sieht -----------------------------------------
 
 function sendYoutubePartyState(status) {
@@ -8912,6 +8938,45 @@ function saveProviders() {
   fs.writeFileSync(PROVIDER_FILE, JSON.stringify(providers, null, 2));
 }
 
+// YouTube einmalig nachtragen.
+//
+// Eine frisch angelegte Anbieterliste bringt YouTube mit. Wer ELFIX schon
+// laenger benutzt, hat seine Liste aber von einer Fassung geerbt, die es noch
+// nicht kannte - und damit auch nichts von dem, was inzwischen daran haengt:
+// die eigene Reihe auf der Startseite, der Reiter in der Mediathek, die
+// YouTube-Watchparty. All das setzt den Anbieter voraus.
+//
+// Einmalig heisst hier wirklich einmalig, und darauf kommt es an. Der Merker
+// wird gesetzt, bevor ueberhaupt geprueft wird, ob etwas zu tun ist. Wer
+// YouTube danach aus seiner Liste wirft, hat es damit geworfen - ein Nachtrag,
+// der bei jedem Start wieder anruecke, waere keine Ergaenzung, sondern eine
+// Weigerung, die Entscheidung des Benutzers anzunehmen.
+//
+// Erkannt wird ein vorhandener Eintrag an seiner Adresse, nicht am Namen: wer
+// ihn "YT" oder "Youtube (DE)" genannt hat, soll keinen zweiten bekommen.
+function youtubeAnbieterNachtragen() {
+  if (settings.migrations?.youtubeProvider === true) return false;
+  settings.migrations = { ...(settings.migrations || {}), youtubeProvider: true };
+  saveSettings();
+
+  if (providers.some((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl))) return false;
+  const vorlage = providerModel.defaultProviders()
+    .find((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl));
+  if (!vorlage) return false;
+
+  // Ans Ende und sichtbar. Eine eigene Kennung, damit er sich nicht mit einem
+  // Eintrag aus einer anderen Ablage beisst.
+  providers.push({
+    ...vorlage,
+    id: crypto.randomUUID(),
+    enabled: true,
+    sortOrder: providers.length
+  });
+  saveProviders();
+  console.log("[ELFIX] YouTube als Anbieter nachgetragen");
+  return true;
+}
+
 function loadFavorites() {
   youtubeGeradegezogen = 0;
   try {
@@ -10406,6 +10471,15 @@ function normalizeSettings(raw) {
     notifications: {
       newEpisodes: raw?.notifications?.newEpisodes === true
     },
+    // Was einmalig schon geschehen ist. Diese Merker muessen hier stehen und
+    // nicht bloss in der Datei: die Oberflaeche schickt beim Speichern den
+    // ganzen Einstellungsblock, und was normalizeSettings nicht kennt, faellt
+    // dabei heraus. Ein verlorener Merker hiesse, die einmalige Aenderung
+    // laeuft beim naechsten Start noch einmal - und traegt etwas nach, das
+    // man inzwischen bewusst geloescht hat.
+    migrations: {
+      youtubeProvider: raw?.migrations?.youtubeProvider === true
+    },
     playback: {
       pauseOnProviderSwitch: raw?.playback?.pauseOnProviderSwitch ?? defaults.playback.pauseOnProviderSwitch,
       favoriteProgressMode: sanitizeChoice(raw?.playback?.favoriteProgressMode, ["sequential", "static"], defaults.playback.favoriteProgressMode),
@@ -10540,6 +10614,11 @@ function defaultSettings() {
     },
     notifications: {
       newEpisodes: false
+    },
+    // Eine frische Ablage bringt YouTube schon mit - fuer sie ist das
+    // Nachtragen von vornherein erledigt.
+    migrations: {
+      youtubeProvider: true
     },
     playback: {
       pauseOnProviderSwitch: true,

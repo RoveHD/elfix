@@ -624,6 +624,7 @@ function bindEvents() {
     });
   });
   document.querySelector("#newProviderButton").addEventListener("click", clearProviderForm);
+  document.querySelector("#providerAddButton")?.addEventListener("click", () => { anbieterHinzufuegen().catch(() => {}); });
   document.querySelector("#deleteProviderButton").addEventListener("click", deleteSelectedProvider);
   document.querySelector("#moveUpButton").addEventListener("click", () => moveSelectedProvider(-1));
   document.querySelector("#moveDownButton").addEventListener("click", () => moveSelectedProvider(1));
@@ -1832,7 +1833,52 @@ function providerCard(provider, large) {
     }
     openProviderTab(true);
   });
+  // Rechtsklick fuehrt dorthin, wo dieser Anbieter eingestellt wird. Der
+  // einfache Klick oeffnet ihn ja - beides an denselben Knopf zu haengen geht
+  // nur ueber die zweite Maustaste.
+  card.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    anbieterMenue(provider, card).catch(() => {});
+  });
   return card;
+}
+
+// Was der Rechtsklick anbietet. Die Auswahl faellt im Hauptprozess, weil ein
+// Menue aus HTML hinter der Anbieterseite verschwaende.
+async function anbieterMenue(provider, karte) {
+  const anker = karte?.getBoundingClientRect();
+  const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
+  const wahl = await api.providerContextMenu?.(provider.name, punkt).catch(() => "");
+  if (wahl === "edit") await anbieterBearbeiten(provider);
+  else if (wahl === "new") await anbieterHinzufuegen();
+}
+
+// Direkt in die Einstellungen dieses einen Anbieters: Seite "Anbieter", er
+// selbst ausgewaehlt, sein Formular ausgefuellt.
+//
+// Die Auswahl wird vor dem Oeffnen gesetzt, nicht danach - openSettings baut
+// die Ansicht bereits auf, und eine spaeter gesetzte Auswahl saehe man erst
+// beim naechsten Aufbau.
+async function anbieterBearbeiten(provider) {
+  const stelle = providers.findIndex((eintrag) => eintrag.id === provider.id);
+  if (stelle < 0) {
+    showToast("Diesen Anbieter gibt es nicht mehr");
+    return;
+  }
+  selectedProviderIndex = stelle;
+  await openSettings();
+  activateTab("providers");
+  renderSettings();
+}
+
+// Dasselbe mit leerem Formular. Eine Auswahl von -1 heisst "neu" - dieselbe
+// Stellung, die auch der "+ Neu"-Knopf in den Einstellungen herstellt.
+async function anbieterHinzufuegen() {
+  selectedProviderIndex = -1;
+  await openSettings("add-provider");
+  activateTab("providers");
+  renderSettings();
+  providerName?.focus();
 }
 
 function emptyText(text) {
@@ -2990,7 +3036,8 @@ function renderFavorites() {
 
 function renderLibraryViews() {
   const sortierung = mediathekSortierung();
-  const libraryItems = libraryEntries(sortierung);
+  const tab = mediathekAktiverTab();
+  const libraryItems = mediathekTabEintraege(tab, sortierung);
   // Ziehen gibt es nur in der Handsortierung. In einer A-Z-Ansicht waere es
   // sinnlos - die naechste Sortierung wuerde es sofort wieder aufheben - und
   // es wuerde die gespeicherte Handarbeit ueberschreiben.
@@ -3001,6 +3048,11 @@ function renderLibraryViews() {
     sortable: vonHand
   })));
   libraryEmpty?.classList.toggle("is-hidden", libraryItems.length > 0);
+  renderMediathekTabs({
+    titel: mediathekTabEintraege("titel", sortierung).length,
+    youtube: mediathekTabEintraege("youtube", sortierung).length
+  });
+  setzeMediathekLeermeldung(tab);
   renderMediathekSortierung(libraryItems.length);
   macheMediathekSortierbar();
 
@@ -3123,6 +3175,26 @@ function macheMediathekSortierbar() {
   });
 }
 
+// Ein leerer Reiter soll sagen, welcher leer ist. "Noch keine Mediathek" waere
+// auf dem YouTube-Reiter schlicht falsch, solange nebenan zwanzig Serien
+// stehen.
+function setzeMediathekLeermeldung(tab = mediathekAktiverTab()) {
+  const titel = document.querySelector("#libraryEmptyTitle");
+  const text = document.querySelector("#libraryEmptyCopy");
+  if (!titel || !text) return;
+  if (mediathekYoutubeGetrennt() && tab === "youtube") {
+    titel.textContent = "Noch keine YouTube-Videos";
+    text.textContent = "Fertig geschaute Videos landen hier. Shorts kommen nie hierher.";
+    return;
+  }
+  titel.textContent = "Noch keine Mediathek";
+  text.textContent = "Starte einen Inhalt, dann landet er automatisch hier.";
+}
+
+// Die Reihenfolge wird je Reiter gespeichert, und das geht gut: der
+// Hauptprozess vergibt die Stellen nur fuer die uebergebenen Kennungen. Wer im
+// YouTube-Reiter zieht, laesst die Serien unberuehrt und umgekehrt. Dass beide
+// Reihen bei null anfangen, faellt nirgends auf - gemischt werden sie ja nie.
 async function mediathekReihenfolgeSpeichern() {
   // Doppelter Boden: in einer sortierten Ansicht sind die Karten gar nicht
   // ziehbar, aber wenn hier je etwas anderes ankaeme, duerfte es die
@@ -3395,6 +3467,72 @@ function libraryEntries(sortierung = mediathekSortierung()) {
     .filter((item) => item.completed)
     .filter((item) => youtubeErlaubt || !istYoutubeEintrag(item));
   return mediathekSortieren(mediathekEntdoppeln(sichtbar), sortierung);
+}
+
+// YouTube bekommt in der Mediathek einen eigenen Reiter, sobald die Einstellung
+// es dort hineinlaesst.
+//
+// Der Grund ist derselbe wie auf der Startseite, wo YouTube schon eine eigene
+// Reihe hat: ein Video und eine abgeschlossene Serie sind nicht dasselbe. Wer
+// nachsehen will, was er durchhat, sucht Serien und Filme - und findet sie
+// zwischen zwanzig nebenbei geschauten Videos nicht mehr. Getrennt bleiben
+// beide auffindbar, und die Einstellung heisst weiterhin, was sie sagt: die
+// Videos verschwinden nicht, sie werden abgelegt.
+//
+// Ist die Einstellung aus, gibt es nichts zu trennen - dann steht kein Reiter
+// da, und die Mediathek sieht aus wie zuvor.
+const MEDIATHEK_TABS = [
+  { wert: "titel", titel: "Serien & Filme" },
+  { wert: "youtube", titel: "YouTube" }
+];
+
+let mediathekTab = "titel";
+
+function mediathekYoutubeGetrennt() {
+  return settings?.playback?.youtubeInMediathek === true;
+}
+
+// Welcher Reiter gilt gerade. Ohne YouTube-Reiter gibt es nur einen, und wer
+// beim Abschalten der Einstellung auf ihm stand, faellt zurueck - sonst saehe
+// er eine leere Mediathek und keinen Weg zurueck.
+function mediathekAktiverTab() {
+  if (!mediathekYoutubeGetrennt()) return "titel";
+  return mediathekTab === "youtube" ? "youtube" : "titel";
+}
+
+function mediathekTabEintraege(tab = mediathekAktiverTab(), sortierung = mediathekSortierung()) {
+  const alle = libraryEntries(sortierung);
+  if (!mediathekYoutubeGetrennt()) return alle;
+  return alle.filter((item) => istYoutubeEintrag(item) === (tab === "youtube"));
+}
+
+async function mediathekTabSetzen(tab) {
+  if (mediathekAktiverTab() === tab) return;
+  mediathekTab = tab === "youtube" ? "youtube" : "titel";
+  renderLibraryViews();
+}
+
+// Die Reiter selbst. Sie stehen auch dann da, wenn einer der beiden leer ist -
+// sonst kaeme man von einem leergeraeumten Reiter nicht mehr weg.
+function renderMediathekTabs(zahlen) {
+  const leiste = document.querySelector("#libraryTabs");
+  if (!leiste) return;
+  const getrennt = mediathekYoutubeGetrennt();
+  leiste.classList.toggle("is-hidden", !getrennt);
+  if (!getrennt) {
+    leiste.replaceChildren();
+    return;
+  }
+  const jetzt = mediathekAktiverTab();
+  leiste.replaceChildren(...MEDIATHEK_TABS.map((art) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = `calendar-day${art.wert === jetzt ? " is-active" : ""}`;
+    const zahl = Number(zahlen?.[art.wert]) || 0;
+    knopf.textContent = zahl ? `${art.titel} (${zahl})` : art.titel;
+    knopf.addEventListener("click", () => { mediathekTabSetzen(art.wert).catch(() => {}); });
+    return knopf;
+  }));
 }
 
 function continueEntries() {
@@ -4983,6 +5121,10 @@ async function saveSettings() {
   syncInlineLabels();
   renderHome();
   renderProviders();
+  // Die Mediathek haengt an zwei Einstellungen: ob YouTube ueberhaupt
+  // hineindarf und ob es einen eigenen Reiter bekommt. Ohne diese Zeile stand
+  // die Reiterleiste erst nach dem naechsten Oeffnen richtig da.
+  renderLibraryViews();
   recoverVisibleContent();
   syncBrowserBounds();
 }

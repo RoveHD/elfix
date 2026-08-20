@@ -1480,21 +1480,54 @@ body.is-content-fullscreen .fullscreen-exit-button {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus), transparent 76%);
 }
 
+/* Die Leiste traegt zwei Dinge: die Anbieter, die bei Platzmangel scrollen
+   duerfen, und das Plus, das immer sichtbar bleiben soll. Deshalb steht hier
+   eine Reihe - solange nur die Schiene darin sass, brauchte es keine. */
 .provider-strip {
   min-width: 0;
   overflow: visible;
+  display: flex;
+  align-items: center;
+  gap: max(10px, calc(var(--card-gap) * 0.72));
   padding: calc(10px * var(--spacing-scale)) calc(22px * var(--spacing-scale));
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg-surface), transparent 2%), color-mix(in srgb, var(--bg-app), transparent 10%));
 }
 
 .provider-rail {
   height: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   gap: max(10px, calc(var(--card-gap) * 0.72));
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0 2px;
   align-items: center;
+}
+
+/* Das Plus steht ausserhalb der Schiene: es soll nicht mitscrollen und nicht
+   schrumpfen, wenn viele Anbieter da sind. Quadratisch und so hoch wie eine
+   Kachel, damit die Reihe eine Kante behaelt. */
+.provider-add {
+  flex: 0 0 auto;
+  width: var(--provider-card-height);
+  height: var(--provider-card-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--card-radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--bg-card-strong), transparent 4%), color-mix(in srgb, var(--bg-card), #000 18%));
+  box-shadow: var(--shadow);
+  color: color-mix(in srgb, var(--text), transparent 35%);
+  font-size: 1.35rem;
+  line-height: 1;
+  transition: transform calc(190ms * var(--animation-speed)) ease, color calc(190ms * var(--animation-speed)) ease, filter calc(190ms * var(--animation-speed)) ease;
+}
+
+.provider-add:hover {
+  transform: translateY(-1px) scale(var(--hover-zoom));
+  filter: brightness(var(--hover-brightness));
+  color: var(--text);
 }
 
 .provider-rail::-webkit-scrollbar {
@@ -5053,6 +5086,20 @@ input[type="color"] {
   flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 10px;
+}
+
+/* In der Mediathek stehen zwei solche Reihen untereinander: oben die Reiter,
+   darunter die Sortierung. Ohne die Trennlinie lasen sie sich als eine einzige
+   Leiste mit sieben gleichrangigen Knoepfen - der Reiter entscheidet aber, was
+   ueberhaupt dasteht, und die Sortierung nur, in welcher Reihenfolge. */
+.library-tabs {
+  padding: 0 0 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text), transparent 88%);
+}
+
+.library-tabs.is-hidden {
+  display: none;
 }
 
 /* Der Kalender zeigt bis zu sechzig Kacheln auf einmal - deutlich mehr als

@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   openFavorite: (id, options = {}) => ipcRenderer.invoke("favorites:open", id, options),
   repairFavoriteThumbnail: (id, force = false) => ipcRenderer.invoke("favorites:repair-thumbnail", id, force),
   saveProviders: (providers) => ipcRenderer.invoke("provider:save-all", providers),
+  providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   updateFilters: () => ipcRenderer.invoke("adblock:update-filters"),

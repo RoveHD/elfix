@@ -3,6 +3,46 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.27.2 — 20. August 2026
+
+ELFIX loeschte bei jedem Start die Einstellungen der Websites mit. Deshalb
+stand der Ton ueberall wieder auf 100.
+
+**Was die Seiten sich merken**
+
+- Im localStorage jeder Seite liegt, was du dort eingestellt hast - bei jedem
+  Player die Lautstaerke, bei YouTube Qualitaet und Untertitel. ELFIX raeumte
+  ihn zusammen mit dem Cache weg. Das stellt nichts zurueck, es verstellt es:
+  jede Seite fing wieder bei ihrem eigenen Standard an, also bei voller
+  Lautstaerke. Der localStorage bleibt jetzt
+- Cache, Service Worker und die Ablagen der Werbenetze werden weiter geraeumt -
+  sie sind der Grund, warum ueberhaupt geloescht wird. Cookies ebenfalls
+  unberuehrt, du bleibst eingeloggt
+- Der Taktgeber, der zusaetzlich alle 15 Minuten loeschte - auch mitten im
+  Film -, ist weg. Geloescht wird nur noch beim Start und bei "Alles neu
+  laden", also genau das, was in der Einstellung steht
+
+**YouTube**
+
+- Beste verfuegbare Qualitaet und Untertitel aus, gesetzt beim Oeffnen eines
+  Videos und bei jedem Videowechsel. Nur einmal je Video: wer Untertitel fuer
+  eine Szene einschaltet oder bei schlechter Leitung heruntergeht, behaelt
+  seine Wahl
+- Wem YouTube als Anbieter fehlt, bekommt ihn einmalig nachgetragen. Erkannt
+  wird ein vorhandener Eintrag an seiner Adresse, nicht am Namen. Einmalig
+  heisst einmalig: wer ihn danach loescht, behaelt ihn geloescht
+- Steht "YouTube-Videos in die Mediathek" an, hat die Mediathek jetzt zwei
+  Reiter: "Serien & Filme" und "YouTube". Vorher liefen die Videos zwischen
+  die Serien, und wer nachsehen wollte, was er durchhat, fand es nicht mehr.
+  Ohne die Einstellung sieht die Mediathek aus wie zuvor
+
+**Anbieter**
+
+- Rechtsklick auf einen Anbieter in der Leiste fuehrt ueber "Bearbeiten"
+  direkt zu seinen Einstellungen - Anbieterseite, er selbst ausgewaehlt,
+  Formular ausgefuellt
+- Rechts neben den Anbietern steht ein Plus, das einen neuen anlegt
+
 ## 1.27.1 — 20. August 2026
 
 Der Verlauf in der Mediathek zaehlte das Oeffnen statt das Schauen, und die

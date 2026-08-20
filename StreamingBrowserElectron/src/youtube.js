@@ -240,6 +240,121 @@ function vollbildScript(ueberKnopf = false) {
 })()`;
 }
 
+// Beste Qualitaet, keine Untertitel.
+//
+// Beides stellt YouTube selbst her, sobald es darf: die Qualitaet faellt auf
+// "Auto" zurueck, und Untertitel kommen wieder, wenn sie im Konto voreingestellt
+// sind. Deshalb setzt ELFIX es aktiv - aber nur einmal je Video.
+//
+// Das "nur einmal" ist der ganze Punkt. Ein Skript, das dauernd nachstellt,
+// waere kein Standard, sondern eine Sperre: wer Untertitel fuer eine Szene
+// einschaltet oder bei schlechter Leitung heruntergeht, saehe seine Wahl sofort
+// wieder ueberschrieben. Gesetzt wird also beim Ankommen auf einem Video, und
+// danach gehoert der Player wieder dir.
+//
+// Der Beobachter haengt an "yt-navigate-finish": YouTube wechselt das Video
+// ohne Neuladen, ein Klick auf eine Empfehlung wuerde sonst nichts ausloesen.
+// Beim Wechsel kann der Player noch die alte Videokennung tragen und die Liste
+// der Qualitaetsstufen noch leer sein - darum die paar Anlaeufe.
+function wiedergabeScript() {
+  return `(() => {
+  if (window.__elfixYtPrefs) { window.__elfixYtPrefs(); return "yt-prefs-schon-da"; }
+
+  const erledigt = new Set();
+
+  function spieler() {
+    const p = document.querySelector("#movie_player") || document.querySelector(".html5-video-player");
+    return p && typeof p.getAvailableQualityLevels === "function" ? p : null;
+  }
+
+  function kennung() {
+    try {
+      const p = spieler();
+      const daten = p && typeof p.getVideoData === "function" ? p.getVideoData() : null;
+      if (daten && daten.video_id) return String(daten.video_id);
+    } catch (_) {}
+    try { return new URL(location.href).searchParams.get("v") || ""; } catch (_) { return ""; }
+  }
+
+  // Die Liste kommt von YouTube bereits nach Guete sortiert, beste zuerst.
+  // "auto" steht als Wort mit darin und waere das Gegenteil dessen, was hier
+  // gewollt ist - es faellt raus.
+  function beste(stufen) {
+    return (stufen || []).find((stufe) => stufe && stufe !== "auto" && stufe !== "unknown") || "";
+  }
+
+  function setzen() {
+    const p = spieler();
+    if (!p) return false;
+    const id = kennung();
+    if (!id || erledigt.has(id)) return Boolean(id);
+
+    let stufen = [];
+    try { stufen = p.getAvailableQualityLevels() || []; } catch (_) {}
+    const ziel = beste(stufen);
+    if (!ziel) return false;
+
+    try {
+      if (typeof p.setPlaybackQualityRange === "function") p.setPlaybackQualityRange(ziel, ziel);
+      if (typeof p.setPlaybackQuality === "function") p.setPlaybackQuality(ziel);
+    } catch (_) {}
+
+    // Untertitel heissen im Player je nach Alter des Bausteins "captions" oder
+    // "cc". Beides zu versuchen kostet nichts; was es nicht gibt, wirft.
+    try { if (typeof p.unloadModule === "function") p.unloadModule("captions"); } catch (_) {}
+    try { if (typeof p.unloadModule === "function") p.unloadModule("cc"); } catch (_) {}
+    try { if (typeof p.setOption === "function") p.setOption("captions", "track", {}); } catch (_) {}
+
+    erledigt.add(id);
+    return true;
+  }
+
+  // Nachsehen, bis es einmal geklappt hat - dann sofort aufhoeren.
+  //
+  // Eine feste Leiter aus ein paar Anlaeufen war zu wenig: steht der Player
+  // erst nach ihrem letzten Sprosse da, wird er nie bedient, und genau das
+  // passiert bei einem langsamen Start oder einer Seite, die im Hintergrund
+  // laedt. Der Takt haelt durch, bis ein Player mit einer Stufenliste da ist.
+  //
+  // Er haelt aber auch an. Ohne Grenze liefe er auf jeder Seite ohne Player
+  // ewig weiter, und ohne das Aufhoeren nach dem ersten Erfolg waere aus der
+  // Vorgabe eine Sperre geworden.
+  const TAKT_MS = 500;
+  const GRENZE = 40;
+  let takt = null;
+  let versuche = 0;
+
+  function anhalten() {
+    if (takt !== null) clearInterval(takt);
+    takt = null;
+  }
+
+  function anlauf() {
+    versuche += 1;
+    let fertig = false;
+    try { fertig = setzen(); } catch (_) {}
+    if (!fertig && versuche < GRENZE) return false;
+    anhalten();
+    return true;
+  }
+
+  function versuchen() {
+    // Ein Videowechsel gibt dem Takt sein volles Fenster zurueck.
+    versuche = 0;
+    anhalten();
+    // Steht der Player schon, ist es hier vorbei - dann faengt gar kein Takt
+    // an zu laufen.
+    if (anlauf()) return;
+    takt = setInterval(anlauf, TAKT_MS);
+  }
+
+  window.__elfixYtPrefs = versuchen;
+  window.addEventListener("yt-navigate-finish", versuchen, true);
+  versuchen();
+  return "yt-prefs-gesetzt";
+})()`;
+}
+
 // Das Kartenbild.
 //
 // ELFIX sucht sich das Bild einer Seite sonst zusammen: es bewertet alle
@@ -303,6 +418,7 @@ module.exports = {
   startSekunde,
   brauchtNachsprung,
   vollbildScript,
+  wiedergabeScript,
   vorschaubildKandidaten,
   istVorschaubildUrl,
   istShortsUrl

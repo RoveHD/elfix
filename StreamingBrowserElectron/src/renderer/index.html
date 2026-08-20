@@ -38,6 +38,7 @@
 
     <section class="provider-strip">
       <div class="provider-rail" id="providerRail"></div>
+      <button type="button" class="provider-add" id="providerAddButton" title="Neuen Anbieter hinzufügen" aria-label="Neuen Anbieter hinzufügen">+</button>
     </section>
 
     <div class="app-area">
@@ -254,12 +255,13 @@
               <p id="libraryCopy">Vollständig abgeschlossene Filme und Serien.</p>
             </div>
           </div>
+          <div class="calendar-filter library-tabs is-hidden" id="libraryTabs"></div>
           <div class="calendar-filter" id="librarySort"></div>
           <div class="favorite-grid" id="libraryGrid"></div>
           <div class="empty-state is-hidden" id="libraryEmpty">
             <div class="empty-icon">▣</div>
-            <h1>Noch keine Mediathek</h1>
-            <p>Starte einen Inhalt, dann landet er automatisch hier.</p>
+            <h1 id="libraryEmptyTitle">Noch keine Mediathek</h1>
+            <p id="libraryEmptyCopy">Starte einen Inhalt, dann landet er automatisch hier.</p>
           </div>
         </div>
       </section>
@@ -576,7 +578,7 @@
                   <option value="clearOnStart">Bei jedem App-Start</option>
                   <option value="aggressive">Bei App-Start und „Alles neu laden“</option>
                 </select>
-                <small>Betrifft Cache und lokale Website-Daten. Cookies bleiben in allen Varianten erhalten — du bleibst also eingeloggt.</small>
+                <small>Betrifft Cache, Service Worker und die Ablagen der Werbenetze. Cookies und der localStorage der Seiten bleiben in allen Varianten erhalten — du bleibst eingeloggt, und Lautstärke, Qualität und Untertitel bleiben so, wie du sie zuletzt gestellt hast.</small>
               </label>
               <div class="setting-card">„Alles neu laden“ in der Toolbar baut sämtliche Anbieter-Tabs komplett neu auf. Hilft, wenn eine Seite hängt.</div>
             </div>
