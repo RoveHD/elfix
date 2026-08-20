@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getYoutubePartyStatus: () => ipcRenderer.invoke("youtubeparty:status"),
   setYoutubePartyRoom: (room) => ipcRenderer.invoke("youtubeparty:set-room", room),
   resyncYoutubeParty: () => ipcRenderer.invoke("youtubeparty:resync"),
+  switchYoutubePartyContext: (punkt) => ipcRenderer.invoke("youtubeparty:switch-context", punkt),
   openYoutubeParty: () => ipcRenderer.invoke("youtubeparty:open"),
   onYoutubePartyState: (callback) => ipcRenderer.on("youtubeparty:state", (_event, state) => callback(state)),
   navigate: (input) => ipcRenderer.invoke("browser:navigate", input),

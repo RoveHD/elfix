@@ -5,7 +5,25 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
 ## 1.27.1 — 20. August 2026
 
-Der Verlauf in der Mediathek zaehlte das Oeffnen statt das Schauen.
+Der Verlauf in der Mediathek zaehlte das Oeffnen statt das Schauen, und die
+YouTube-Watchparty ist jetzt auch in der App da.
+
+**YouTube-Watchparty**
+
+- Auf YouTube ist nicht ein Video die Runde, sondern die Sitzung: man klickt
+  sich durch Empfehlungen, Suche und "Naechstes Video", und genau dieses
+  Weiterklicken machen jetzt alle mit. Ein Videowechsel beendet die Runde
+  also nicht, sondern zieht sie mit
+- Einen Host gibt es nicht - jedes Mitglied darf anhalten, springen und
+  weiterschalten
+- Der eigene Raum wird oben in der Leiste gewaehlt: die Anzeige der Runde ist
+  zugleich der Schalter zwischen "privat" und einem Raum. Sie erscheint nur
+  auf YouTube-Seiten, und dort verschwindet dafuer der ⇄ Knopf der
+  Serien-Watchparty. Der stellt einen Titel in einen Raum, und ein
+  YouTube-Video ist keiner - nebeneinander waren es zwei Schalter fuer
+  dasselbe, von denen einer das Falsche tat
+- Eingerichtet wird sie ueber Server und Raeume der bestehenden Watchparty;
+  ein eigener Bereich dafuer steht in der Watchparty-Ansicht
 
 **Verlauf**
 

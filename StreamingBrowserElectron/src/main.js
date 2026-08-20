@@ -1379,6 +1379,31 @@ ipcMain.handle("youtubeparty:set-room", (_event, room) => {
   return { ok: true, status: youtubePartyStatus(), settings: publicSettings(settings) };
 });
 
+// Umschalten, fuer wen YouTube gerade zaehlt: privat oder eine bestimmte Runde.
+// Auf der YouTube-Seite ist die Anzeige oben der einzige Schalter. Der ⇄ Knopf
+// der Serien-Watchparty ist dort weg, denn er stellt einen Titel in einen Raum
+// - und eine YouTube-Runde ist kein Titel, sondern die ganze Sitzung.
+ipcMain.handle("youtubeparty:switch-context", async (_event, punkt) => {
+  if (!watchparty.aktiv || !watchparty.codes.length) return { switched: false, status: youtubePartyStatus() };
+
+  const bisher = String(settings.watchparty?.youtubeRoom || "");
+  const wahl = await frageWatchpartyRaum(punkt, watchparty.codes, {
+    withPrivate: true,
+    aktuell: bisher || PRIVAT,
+    titel: "YouTube gemeinsam schauen?"
+  });
+  // Leer heisst abgebrochen; dieselbe Wahl noch einmal ist keine Aenderung und
+  // soll die Runde nicht neu aufbauen.
+  if (!wahl) return { switched: false, status: youtubePartyStatus() };
+  const code = wahl === PRIVAT ? "" : wahl;
+  if (code === bisher) return { switched: false, status: youtubePartyStatus() };
+
+  settings.watchparty = { ...(settings.watchparty || {}), youtubeRoom: code };
+  saveSettings();
+  youtubePartySync();
+  return { switched: true, room: code, status: youtubePartyStatus(), settings: publicSettings(settings) };
+});
+
 // Von Hand nachfragen, was gilt, und sich daran anschliessen. Derselbe Weg wie
 // nach einem Verbindungsabriss - alte eigene Ereignisse werden dabei nie
 // nachgereicht.

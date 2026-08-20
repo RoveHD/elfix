@@ -476,7 +476,7 @@ function bindEvents() {
   youtubePartyRoom?.addEventListener("change", youtubePartyRaumWaehlen);
   document.querySelector("#youtubePartyResync")?.addEventListener("click", youtubePartyAbgleichen);
   document.querySelector("#youtubePartyOpen")?.addEventListener("click", youtubePartyOeffnen);
-  youtubePartyBanner?.addEventListener("click", youtubePartyOeffnen);
+  youtubePartyBanner?.addEventListener("click", youtubePartyKontextWechseln);
   api.getYoutubePartyStatus?.().then(renderYoutubeParty).catch(() => {});
   // Aus der Watchparty heraus direkt deren Bereich in den Einstellungen.
   const watchpartyEinstellungen = async () => {
@@ -2202,23 +2202,54 @@ function youtubePartyText(state, raeume) {
   return `${state.video.playing ? "Läuft" : "Pausiert"} bei ${wo} · ${titel}${wer}`;
 }
 
-// Oben in der Kopfzeile: nur ein Hinweis, dass gerade gemeinsam geschaut wird,
-// und der kurze Weg zurueck zum Video der Runde. Die Bedienung steht in der
-// Watchparty-Ansicht - eine zweite Steuerung im Kopf waere eine zu viel.
+// Oben in der Kopfzeile, und nur auf YouTube: wofuer das Schauen hier zaehlt.
+// Auf jeder anderen Seite haette die Anzeige nichts zu sagen - die Runde
+// bewegt dort nichts -, deshalb haengt sie an der offenen Seite und nicht am
+// Zustand der Runde. Sie ist zugleich der einzige Schalter: privat oder Raum.
 function renderYoutubePartyBanner() {
   if (!youtubePartyBanner) return;
   const state = youtubePartyState;
-  const sichtbar = Boolean(state?.enabled && state.video?.videoId);
+  // Ohne eingerichtete Watchparty bliebe nur "privat" zur Wahl - ein Schalter
+  // mit einer Stellung ist keiner.
+  const waehlbar = Boolean(state?.watchpartyEnabled && (state.rooms || []).length);
+  const sichtbar = aufYoutubeSeite() && (waehlbar || Boolean(state?.enabled));
   youtubePartyBanner.classList.toggle("is-hidden", !sichtbar);
   if (!sichtbar) return;
-  youtubePartyBanner.classList.toggle("is-private", !state.connected);
+  youtubePartyBanner.classList.toggle("is-private", !state?.enabled);
+  youtubePartyBanner.classList.toggle("is-offline", Boolean(state?.enabled) && !state.connected);
+  youtubePartyBanner.title = state?.enabled
+    ? `YouTube-Runde „${state.room}“ — klicken, um privat zu schauen oder den Raum zu wechseln`
+    : "Zählt nur für dich — klicken, um in eine YouTube-Runde zu wechseln";
   if (!youtubePartyBannerText) return;
+  if (!state?.enabled) {
+    youtubePartyBannerText.textContent = "YouTube: privat";
+    return;
+  }
   if (!state.connected) {
     youtubePartyBannerText.textContent = "YouTube-Runde: Verbindung weg …";
     return;
   }
+  if (!state.video?.videoId) {
+    youtubePartyBannerText.textContent = `YouTube-Runde: ${state.room}`;
+    return;
+  }
   const wer = state.video.by ? ` · ${state.video.by}` : "";
   youtubePartyBannerText.textContent = `YouTube-Runde: ${state.video.playing ? "läuft" : "pausiert"}${wer}`;
+}
+
+// Der Schalter auf der YouTube-Seite. Ein Fenstermenue, kein Kaestchen aus
+// HTML: ueber der Anbieterseite waere das nicht anklickbar.
+async function youtubePartyKontextWechseln() {
+  if (youtubePartyBanner?.classList.contains("is-hidden")) return;
+  const anker = youtubePartyBanner?.getBoundingClientRect();
+  const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
+  const antwort = await api.switchYoutubePartyContext?.(punkt).catch(() => null);
+  if (antwort?.settings) settings = antwort.settings;
+  if (antwort?.status) renderYoutubeParty(antwort.status);
+  if (!antwort?.switched) return;
+  showToast(antwort.room
+    ? `YouTube zählt jetzt für „${antwort.room}“ — ihr schaut gemeinsam`
+    : "YouTube zählt jetzt nur für dich");
 }
 
 async function youtubePartyRaumWaehlen() {
@@ -3258,6 +3289,18 @@ function istYoutubeEintrag(item) {
   } catch {
     return false;
   }
+}
+
+// Steht gerade eine YouTube-Seite vorn? Danach richtet sich, ob die Anzeige
+// der YouTube-Runde erscheint und ob der ⇄ Knopf der Serien-Watchparty
+// verschwindet. Erkannt wird der Anbieter an seiner Startadresse - dieselbe
+// Pruefung, mit der auch der Hauptprozess seinen YouTube-Anbieter sucht.
+function aufYoutubeSeite() {
+  const route = String(currentRoute || "");
+  if (!route.startsWith("provider:")) return false;
+  const id = route.slice("provider:".length);
+  const provider = providers.find((eintrag) => String(eintrag.id) === id);
+  return istYoutubeEintrag({ url: provider?.startUrl });
 }
 
 // Wie die Mediathek sortiert wird. "manuell" ist die von Hand gelegte
@@ -4473,6 +4516,12 @@ function renderChromeButtons() {
   for (const auswahl of ["#favoriteButton", "#watchpartyShareButton", "#stopButton", "#fullscreenButton"]) {
     document.querySelector(auswahl)?.classList.toggle("is-hidden", !aufSeite);
   }
+  // Auf YouTube faellt der ⇄ Knopf weg: er stellt einen Titel in einen Raum,
+  // und ein YouTube-Video ist keiner. Dort fuehrt der einzige Weg in die Runde
+  // ueber deren eigene Anzeige, die im selben Zug mitgezogen wird.
+  document.querySelector("#watchpartyShareButton")?.classList
+    .toggle("is-hidden", !aufSeite || aufYoutubeSeite());
+  renderYoutubePartyBanner();
 }
 
 function renderRouteActiveState() {
