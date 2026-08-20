@@ -23,6 +23,9 @@
         <button type="button" class="watchparty-live-banner is-hidden" id="watchpartyLiveBanner" title="Umschalten: privat oder Watchparty">
           <span class="live-dot"></span><span id="watchpartyLiveText">Live</span><span class="banner-caret">▾</span>
         </button>
+        <button type="button" class="watchparty-live-banner is-hidden" id="youtubePartyBanner" title="YouTube-Watchparty — klicken, um zum Video der Runde zu springen">
+          <span class="live-dot"></span><span id="youtubePartyBannerText">YouTube-Runde</span>
+        </button>
         <div class="watchparty-stand is-hidden" id="watchpartyStand" title="Wo die anderen gerade stehen"></div>
         <button class="chrome-btn watchparty-leave is-hidden" id="watchpartyHandover" title="Host an jemand anderen weitergeben">⇧ Host</button>
         <button class="chrome-btn watchparty-leave is-hidden" id="watchpartyResync" title="Mit dem Host abgleichen">⟲ Sync</button>
@@ -295,6 +298,26 @@
             </div>
             <button class="text-action" id="watchpartySettingsLink">Einstellungen</button>
           </div>
+          <!-- Die YouTube-Watchparty ist ein eigener Modus und bekommt deshalb
+               eine eigene Flaeche: sie kennt keine eingestellten Titel, sondern
+               genau ein gemeinsames Video, das jeder wechseln darf. -->
+          <section class="youtube-party" id="youtubeParty">
+            <div class="youtube-party-head">
+              <div class="youtube-party-text">
+                <p class="eyebrow">YouTube</p>
+                <h2>YouTube-Watchparty</h2>
+                <p id="youtubePartyCopy">Eine gemeinsame YouTube-Sitzung: alle sehen dasselbe Video, jeder darf steuern, und wer weiterklickt, nimmt die anderen mit.</p>
+              </div>
+              <div class="youtube-party-actions">
+                <label class="youtube-party-label" for="youtubePartyRoom">Raum</label>
+                <select id="youtubePartyRoom"></select>
+                <button class="text-action" id="youtubePartyResync" type="button" title="Nachfragen, was gilt, und sich daran anschließen">Abgleichen</button>
+                <button class="primary-action" id="youtubePartyOpen" type="button" title="Zum Video der Runde springen">Zum Video</button>
+              </div>
+            </div>
+            <p class="youtube-party-status" id="youtubePartyStatus">Wird geladen …</p>
+            <p class="youtube-party-members" id="youtubePartyMembers"></p>
+          </section>
           <div class="favorite-grid" id="watchpartyGrid"></div>
           <div class="empty-state is-hidden" id="watchpartyEmpty">
             <div class="empty-icon">⇄</div>

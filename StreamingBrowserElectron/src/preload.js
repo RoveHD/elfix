@@ -34,6 +34,13 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   handoverWatchpartyHost: (key, memberId, room) => ipcRenderer.invoke("watchparty:handover", key, memberId, room),
   onWatchpartyLive: (callback) => ipcRenderer.on("watchparty:live", (_event, info) => callback(info)),
   onWatchpartyWatchstate: (callback) => ipcRenderer.on("watchparty:watchstate", (_event, info) => callback(info)),
+  // Die YouTube-Watchparty. Eigener Modus, eigene Kanaele - nichts davon geht
+  // durch die Steuerung der Watchparty fuer Serien.
+  getYoutubePartyStatus: () => ipcRenderer.invoke("youtubeparty:status"),
+  setYoutubePartyRoom: (room) => ipcRenderer.invoke("youtubeparty:set-room", room),
+  resyncYoutubeParty: () => ipcRenderer.invoke("youtubeparty:resync"),
+  openYoutubeParty: () => ipcRenderer.invoke("youtubeparty:open"),
+  onYoutubePartyState: (callback) => ipcRenderer.on("youtubeparty:state", (_event, state) => callback(state)),
   navigate: (input) => ipcRenderer.invoke("browser:navigate", input),
   browserCommand: (command) => ipcRenderer.invoke("browser:command", command),
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),

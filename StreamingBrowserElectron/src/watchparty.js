@@ -36,6 +36,14 @@ class Watchparty {
     this.aufSteuerung = optionen.onControl || (() => {});
     // Wer steht wo: fuer die Leiste, die zeigt, ob alle beieinander sind.
     this.aufStand = optionen.onWatchstate || (() => {});
+    // Die YouTube-Watchparty faehrt auf derselben Leitung, hat aber ihre eigene
+    // Logik. Alles, was mit "yt" anfaengt, wird hier nur durchgereicht - dieses
+    // Modul weiss nichts davon, was drueben damit geschieht, und drueben nichts
+    // von Serien, Folgen und Host.
+    this.aufYoutube = optionen.onYoutube || (() => {});
+    // Leitung auf oder zu. Der YouTube-Modus meldet sich danach selbst wieder
+    // an und holt den Raumzustand.
+    this.aufVerbindung = optionen.onConnection || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse || globalThis.WebSocket;
 
     this.socket = null;
@@ -145,6 +153,11 @@ class Watchparty {
       // Sofort messen: das erste Ereignis kann Millisekunden spaeter kommen,
       // und ohne Versatz steigt der smarte Start auf die alte Stelle ein.
       this.uhrMessen();
+      // Die erste Antwort des YouTube-Modus faellt damit noch vor die erste
+      // Uhrprobe. Das ist eingeplant: fuer diesen einen Fall schickt das Relay
+      // die schon hochgerechnete Stelle mit, und der Fehler ist die Laufzeit
+      // der Nachricht statt der Gang zweier Systemuhren.
+      this.aufVerbindung(true);
     };
     socket.onmessage = (ereignis) => this.nachrichtVerarbeiten(ereignis?.data);
     socket.onerror = (ereignis) => {
@@ -154,6 +167,7 @@ class Watchparty {
       this.verbunden = false;
       this.socket = null;
       this.teilnehmer = [];
+      this.aufVerbindung(false);
       this.uhrAnhalten();
       this.uhr = null;
       this.uhrProben = [];
@@ -252,6 +266,7 @@ class Watchparty {
     this.verbunden = false;
     this.teilnehmer = [];
     if (!socket) return;
+    this.aufVerbindung(false);
     socket.onopen = null;
     socket.onmessage = null;
     socket.onerror = null;
@@ -279,6 +294,14 @@ class Watchparty {
     try {
       nachricht = JSON.parse(String(rohdaten));
     } catch {
+      return;
+    }
+
+    // Die YouTube-Watchparty. Sie kommt vor allem anderen und wird nur
+    // weitergereicht: ihr Zustand, ihre Ordnung und ihre Entscheidungen liegen
+    // vollstaendig woanders. Nichts unterhalb dieser Zeile sieht sie je.
+    if (typeof nachricht?.type === "string" && nachricht.type.startsWith("yt")) {
+      this.aufYoutube(nachricht);
       return;
     }
 
@@ -347,6 +370,13 @@ class Watchparty {
       console.error("[ELFIX WATCHPARTY] Empfang fehlgeschlagen:", fehler);
       this.melde();
     }
+  }
+
+  // Der Ausgang der YouTube-Watchparty. Sie baut ihre Nachrichten selbst; hier
+  // wird nur die Leitung geteilt.
+  youtubeSenden(nachricht) {
+    if (!this.aktiv) return;
+    this.senden(nachricht);
   }
 
   teilen(item) {

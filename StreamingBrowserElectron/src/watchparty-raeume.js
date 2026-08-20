@@ -24,6 +24,10 @@ class WatchpartyRaeume {
     this.aufKennung = optionen.onDeviceId || (() => {});
     this.aufSteuerung = optionen.onControl || (() => {});
     this.aufStand = optionen.onWatchstate || (() => {});
+    // Durchreiche fuer die YouTube-Watchparty: sie faehrt auf denselben
+    // Verbindungen, fuehrt aber ihren Zustand selbst.
+    this.aufYoutube = optionen.onYoutube || (() => {});
+    this.aufVerbindung = optionen.onConnection || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse;
 
     this.raeume = new Map();
@@ -100,6 +104,10 @@ class WatchpartyRaeume {
       onProgress: (key, fortschritt) => this.aufFortschritt(key, fortschritt, code),
       onControl: (nachricht) => this.aufSteuerung({ ...nachricht, room: code }),
       onWatchstate: (nachricht) => this.aufStand({ ...nachricht, room: code }),
+      // Der Raumcode gehoert an die Nachricht: die YouTube-Watchparty laeuft in
+      // genau einem Raum und muss fremde Raeume erkennen und liegenlassen.
+      onYoutube: (nachricht) => this.aufYoutube({ ...nachricht, room: nachricht.room || code }),
+      onConnection: (offen) => this.aufVerbindung(code, offen),
       onStatus: () => this.melde(code),
       onDeviceId: (kennung) => this.kennungUebernehmen(kennung, code)
     };
@@ -246,6 +254,13 @@ class WatchpartyRaeume {
 
   fortschrittMelden(key, fortschritt, room) {
     for (const raum of this.raeumeMitTitel(key, room)) raum.fortschrittMelden(key, fortschritt);
+  }
+
+  // Eine Nachricht der YouTube-Watchparty in genau einen Raum. Gibt es ihn hier
+  // nicht, geht nichts hinaus - lieber keine Nachricht als eine in den falschen
+  // Raum.
+  youtubeSenden(room, nachricht) {
+    this.raeume.get(String(room || "").trim())?.youtubeSenden(nachricht);
   }
 
   // Die Serverzeit des Raums, aus dem eine Nachricht kam. Jeder Raum ist eine

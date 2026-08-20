@@ -23,6 +23,10 @@ const {
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+// Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
+// der Watchparty fuer Serien nur die Leitung.
+const { YoutubeWatchparty } = require("./youtube-watchparty");
+const youtubeSync = require("./youtube-sync");
 const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
@@ -364,6 +368,9 @@ app.whenReady().then(async () => {
   repairStalledSeriesFavorites().catch(() => {});
   // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
   setInterval(() => { meldeWatchpartyStand().catch(() => {}); }, WATCHPARTY_STAND_INTERVALL_MS).unref?.();
+  // Die Notbremse der YouTube-Watchparty. Sie laeuft immer mit und steigt
+  // sofort wieder aus, solange kein YouTube-Modus aktiv ist.
+  setInterval(() => { youtubeAbgleichen().catch(() => {}); }, YOUTUBE_ABGLEICH_TAKT_MS).unref?.();
   // Werbefilter. Erst die Engine aus dem bauen, was auf der Platte liegt -
   // das geht ohne Netz und ist der Grund, warum ELFIX auch offline filtert.
   // Danach nachsehen, ob die Listen zu alt sind. Beides nebenher: der Aufbau
@@ -1350,6 +1357,56 @@ ipcMain.handle("watchparty:kick", (_event, key, memberId, room) => {
   return true;
 });
 
+// --- YouTube-Watchparty ------------------------------------------------------
+// Ein eigener Modus, also auch eigene Kanaele. Nichts hiervon geht durch die
+// Steuerung der Watchparty fuer Serien.
+
+ipcMain.handle("youtubeparty:status", () => youtubePartyStatus());
+
+// Die YouTube-Runde ein- oder ausschalten. Leerer Raumcode heisst aus.
+//
+// Die Einstellungen kommen mit zurueck: die Oberflaeche baut beim naechsten
+// Speichern den ganzen Watchparty-Block neu auf und wuerde den Raum sonst
+// wieder herausschreiben, weil sie ihn noch nicht kennt.
+ipcMain.handle("youtubeparty:set-room", (_event, room) => {
+  const code = String(room || "").trim().normalize("NFC").slice(0, 64);
+  if (code && !watchparty.codes.includes(code)) {
+    return { ok: false, reason: "Diesen Raum gibt es nicht", status: youtubePartyStatus(), settings: publicSettings(settings) };
+  }
+  settings.watchparty = { ...(settings.watchparty || {}), youtubeRoom: code };
+  saveSettings();
+  youtubePartySync();
+  return { ok: true, status: youtubePartyStatus(), settings: publicSettings(settings) };
+});
+
+// Von Hand nachfragen, was gilt, und sich daran anschliessen. Derselbe Weg wie
+// nach einem Verbindungsabriss - alte eigene Ereignisse werden dabei nie
+// nachgereicht.
+ipcMain.handle("youtubeparty:resync", async () => {
+  youtubeParty.anfordern();
+  await youtubeAnschluss("handbetrieb").catch(() => {});
+  return youtubePartyStatus();
+});
+
+// Zum Video der Runde springen - ausdruecklich gewollt, deshalb hier auch dann,
+// wenn gerade ein anderer Anbieter vorn ist.
+ipcMain.handle("youtubeparty:open", async () => {
+  const zustand = youtubeParty.stand;
+  const provider = enabledProviders().find((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl));
+  if (!zustand?.videoId || !provider) return activeState();
+  const sekunde = Math.max(0, Math.floor(
+    youtubeSync.zielPosition(zustand, Date.now() + (zustand.versatz || 0))
+  ));
+  youtubeErwartet = { videoId: zustand.videoId, bis: Date.now() + YOUTUBE_ERWARTET_MS };
+  await navigateProvider(provider, youtube.fortsetzenUrl(
+    zustand.url || `https://www.youtube.com/watch?v=${zustand.videoId}`,
+    sekunde
+  ));
+  scheduleProviderAutoplay(provider, activeView, { fullscreen: false });
+  youtubeNachziehenPlanen();
+  return activeState();
+});
+
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();
@@ -1738,6 +1795,17 @@ function getProviderView(provider) {
       console.log(`[watchparty-sync] ${String(nachricht).slice(16)}`);
       return;
     }
+    // Der Rueckkanal der YouTube-Watchparty. Eigenes Praefix, eigener Weg -
+    // damit kann keine Meldung des einen Modus im anderen landen.
+    if (String(nachricht || "").startsWith("__elfix:yt:sync:")) {
+      console.log(`[youtube-party] ${String(nachricht).slice(16)}`);
+      return;
+    }
+    const ytTat = String(nachricht || "").match(/^__elfix:yt:(play|pause|seek):(\d+(?:\.\d+)?):([01])$/);
+    if (ytTat) {
+      meldeYoutubeAktion(view, ytTat[1], Number(ytTat[2]), ytTat[3] === "1");
+      return;
+    }
     const stand = String(nachricht || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
     if (stand) {
       meldeWatchpartyStandAusSeite(view, Number(stand[1]), stand[2] === "1");
@@ -1777,6 +1845,9 @@ function getProviderView(provider) {
     watchpartySitzung.set(provider.id, crypto.randomUUID());
     executeJavaScriptInMediaFrames(view, watchpartySyncZuruecksetzenScript()).catch(() => []);
     meldeWatchpartyFolgenwechsel(url);
+    // Ein anderes YouTube-Video ist kein Ende der Runde, sondern ihr
+    // haeufigster Vorgang - die anderen ziehen mit.
+    meldeYoutubeVideowechsel(view, url).catch(() => {});
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
     // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
@@ -1785,6 +1856,10 @@ function getProviderView(provider) {
   });
   view.webContents.on("did-navigate-in-page", (_event, url) => {
     rememberProviderUrl(provider.id, url);
+    // YouTube wechselt das Video, ohne die Seite neu zu laden: ein Klick auf
+    // eine Empfehlung, ein Treffer aus der Suche, das naechste Video. Fuer die
+    // Runde ist genau das ein Videowechsel.
+    meldeYoutubeVideowechsel(view, url).catch(() => {});
     pushWatchpartyLiveState(url);
     resumePendingProviderAutoplay(provider, view);
   });
@@ -1808,6 +1883,7 @@ function getProviderView(provider) {
     // Fortschritts-Takt: sonst blieb das erste Play einer frisch geladenen
     // Folge unbemerkt, weil bis zum ersten Takt noch Sekunden vergehen.
     installWatchpartyControls(provider, view, view.webContents.getURL()).catch(() => {});
+    installYoutubePartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -3755,6 +3831,9 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
     || (geoeffnet && favoriteMatchesCurrentProviderTitle(geoeffnet, provider, url, normalized, requestedType) ? geoeffnet : null)
     || favorites.find((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized, requestedType));
   const identity = episodeIdentity(url);
+  // Vor jeder Aenderung festhalten: nur der Uebergang von "offen" auf "durch"
+  // ist ein Abschluss. Danach gelesen waere es immer "war schon fertig".
+  const warBereitsAbgeschlossen = Boolean(existing?.completed);
   const hasMediaProgress = isValidMediaProgress({
     currentTime: meta.currentTime || meta.position,
     duration: meta.duration
@@ -3948,6 +4027,18 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
     entry.episode = identity.episode || entry.episode || 0;
   }
   appendMediaActivity(entry, url, options.label || mediaActivityLabel(url, entry));
+  // Der Moment, in dem ein Titel durch ist, wurde nirgends festgehalten. Im
+  // Verlauf standen deshalb nur "Film geoeffnet"-Zeilen, und dreimal geoeffnet
+  // sah aus wie dreimal geschaut. Ein "Abgeschlossen" gab es zwar als Label,
+  // aber nur, wenn der Player wirklich ein Ende meldete - bei einem Film, der
+  // ueber die 90 Prozent oder von Hand fertig wird, nie.
+  //
+  // Der Uebergang wird deshalb hier vermerkt, und nur der Uebergang: wer einen
+  // fertigen Titel noch einmal oeffnet, erzeugt keinen zweiten Abschluss. Erst
+  // wenn er wieder anfaengt und erneut durchkommt, steht ein zweiter da.
+  if (entry.completed && !warBereitsAbgeschlossen) {
+    appendMediaActivity(entry, url, "Abgeschlossen");
+  }
 
   if (!existing) {
     favorites.unshift(entry);
@@ -5366,6 +5457,10 @@ const watchparty = new WatchpartyRaeume({
   onProgress: (key, fortschritt, raum) => applyWatchpartyProgress(key, fortschritt, raum),
   onControl: (nachricht) => applyWatchpartyControl(nachricht).catch(() => {}),
   onWatchstate: (nachricht) => sendWatchpartyWatchstate(nachricht),
+  // Alles mit "yt" davor gehoert der YouTube-Watchparty. Hier wird es nur
+  // weitergereicht - die Watchparty fuer Serien sieht es nie.
+  onYoutube: (nachricht) => { youtubeParty.nachricht(nachricht); },
+  onConnection: (raum, offen) => youtubeParty.verbindung(raum, offen),
   onStatus: (status, raum) => {
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt - je Raum getrennt.
@@ -5376,6 +5471,9 @@ const watchparty = new WatchpartyRaeume({
       watchpartyWiederhergestellt.delete(raum);
     }
     pushWatchpartyLiveState();
+    // Der YouTube-Modus haengt am selben Raum: faellt der weg oder kommt er
+    // zurueck, muss er das erfahren.
+    youtubePartySync();
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("watchparty:state", status);
   }
@@ -5394,6 +5492,7 @@ function syncWatchparty() {
     name: konfiguration.deviceName || "ELFIX",
     deviceId: konfiguration.deviceId || ""
   });
+  youtubePartySync();
 }
 
 // Der Schluessel muss auf jedem Geraet gleich ausfallen. Die Adresse taugt
@@ -6320,6 +6419,12 @@ function istGleicheFolge(links, rechts) {
 // Die Serie, zu der die offene Seite gehoert - unabhaengig von der Folge.
 // Danach richtet sich, ob ein Folgenwechsel uebernommen wird.
 function watchpartySerieForUrl(url) {
+  // Laeuft fuer diese Adresse der YouTube-Modus, gehoert sie ihm allein. Sonst
+  // koennte dasselbe Video in beiden Systemen haengen: die eine Seite meldete
+  // Pause als Folgen-Steuerung, die andere als Raumereignis, und beide zoegen
+  // aneinander. Diese eine Zeile ist die Trennung - sie sitzt an der Stelle,
+  // ueber die jede Live-Entscheidung der Serien-Watchparty geht.
+  if (youtubeModusGiltFuer(url)) return "";
   const treffer = watchpartyShared.find((eintrag) => (
     eintrag.joined && taste.urlSchluessel(eintrag.url) === taste.urlSchluessel(url)
   ));
@@ -6776,6 +6881,296 @@ async function applyWatchpartySeek(provider, view, progress) {
   if (!gesprungen) return;
   watchpartySprung.delete(provider.id);
   logMediaDiagnostic(provider, view.webContents.getURL(), "watchparty", `an ${Math.round(wunsch.position)}s gesprungen`, {});
+}
+
+// --- YouTube-Watchparty ------------------------------------------------------
+//
+// Ein eigener Modus, und zwar von Grund auf. Die Watchparty fuer Serien dreht
+// sich um einen Titel: jemand stellt eine Serie ein, andere treten ihr bei, und
+// wer etwas anderes oeffnet, ist draussen. Bei YouTube waere das falsch herum
+// gedacht - dort ist nicht ein Video die Runde, sondern die Sitzung. Man klickt
+// sich durch Empfehlungen, Suche und "Naechstes Video", und genau dieses
+// Weiterklicken sollen alle mitmachen.
+//
+// Deshalb liegt die Wahrheit hier nicht bei einem Host, sondern beim Relay:
+// welches Video, wo, ob es laeuft. Jeder darf das bewegen, jede Bewegung
+// bekommt dort eine Nummer, und alle richten sich nach der zuletzt vergebenen.
+//
+// Geteilt wird ausschliesslich die gemeinsame Mediennavigation und Wiedergabe.
+// Lautstaerke, Stumm, Vollbild, Fenstergroesse, Scrollstand, Untertitel und
+// alles, was sonst am Geraet haengt, bleibt hier - es geht nirgends hinaus und
+// kommt nirgendwo an.
+
+// So oft wird nachgesehen, ob dieses Geraet noch bei der Runde steht. Bewusst
+// traege: korrigiert wird erst ab 2,5 Sekunden und zweimal bestaetigt.
+const YOUTUBE_ABGLEICH_TAKT_MS = 2000;
+// So lange gilt ein Videowechsel, den die Runde ausgeloest hat, als erwartet.
+// Meldet die Seite genau dieses Video als geoeffnet, ist das das Echo des
+// Mitziehens und kein neuer Wunsch.
+const YOUTUBE_ERWARTET_MS = 20000;
+// Nach dem Laden einer Seite braucht YouTube einen Moment, bis ein Video mit
+// Laufzeit dasteht. Deshalb wird der Raumzustand mehrfach nachgereicht statt
+// einmal auf gut Glueck.
+const YOUTUBE_NACHZIEHEN_MS = [1200, 3000, 6500];
+
+// Das Video, auf das dieses Geraet gerade gezogen wird.
+let youtubeErwartet = null;
+
+const youtubeParty = new YoutubeWatchparty({
+  senden: (raum, nachricht) => watchparty.youtubeSenden(raum, nachricht),
+  // Der gemessene Uhrversatz kommt aus der Verbindung, die beide Modi teilen.
+  // Ohne ihn waere jede Hochrechnung "wo steht die Runde jetzt?" um die
+  // Differenz zweier Systemuhren daneben.
+  serverJetzt: (raum) => watchparty.serverJetzt(raum),
+  onState: (zustand, hinweis) => { applyYoutubeParty(zustand, hinweis).catch(() => {}); },
+  onStatus: (status) => sendYoutubePartyState(status)
+});
+
+// Welcher Raum fuehrt die YouTube-Runde? Genau einer, und nur solange die
+// Watchparty ueberhaupt laeuft und diesen Raum kennt.
+function youtubePartySync() {
+  const konfiguration = watchpartySettings();
+  youtubeParty.kennung(watchparty.geraetId || konfiguration.deviceId || "");
+  const gewuenscht = String(konfiguration.youtubeRoom || "").trim();
+  const raum = (watchparty.status().rooms || []).find((eintrag) => eintrag.room === gewuenscht);
+  if (!watchparty.aktiv || !gewuenscht || !raum) {
+    youtubeParty.ausschalten();
+    return;
+  }
+  youtubeParty.einschalten(gewuenscht);
+  youtubeParty.verbindung(gewuenscht, Boolean(raum.connected));
+}
+
+// Die Anbieteransicht, in der YouTube laeuft. Gibt es sie noch nicht - weil
+// YouTube in dieser Sitzung nie offen war -, gibt es auch nichts zu steuern:
+// beim ersten Oeffnen haengt sich die Runde von selbst an.
+function youtubeAnsicht() {
+  const provider = enabledProviders().find((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl));
+  if (!provider) return null;
+  const view = providerViews.get(provider.id);
+  return isLiveView(view) ? { provider, view } : null;
+}
+
+function youtubeVideoIdAus(url) {
+  return youtube.videoKennung(url)?.id || "";
+}
+
+// Gehoert diese Adresse dem YouTube-Modus? Diese Frage entscheidet zugleich,
+// dass die Watchparty fuer Serien hier nichts zu suchen hat - siehe
+// watchpartySerieForUrl.
+function youtubeModusGiltFuer(url) {
+  return youtubeParty.aktiv && Boolean(youtubeVideoIdAus(url));
+}
+
+// "Titel - YouTube" ist der Seitentitel, nicht der des Videos.
+function youtubeVideotitel(view) {
+  const roh = String(view?.webContents?.getTitle?.() || "").trim();
+  return roh.replace(/\s*[-–—]\s*YouTube\s*$/i, "").slice(0, 200);
+}
+
+// --- Was hier passiert, erfahren die anderen ---------------------------------
+
+// Play, Pause und Sprung aus dem eigenen Player. Der Echoschutz sitzt in der
+// Seite (siehe youtube-sync.js): was gerade auf Anweisung von aussen geschehen
+// ist, kommt hier gar nicht erst an.
+function meldeYoutubeAktion(view, aktion, position, pausiert) {
+  if (!youtubeParty.aktiv) return;
+  const ziel = youtubeAnsicht();
+  if (!ziel || ziel.view !== view) return;
+  const adresse = view.webContents.getURL();
+  const videoId = youtubeVideoIdAus(adresse);
+  if (!videoId) return;
+
+  const daten = {
+    videoId,
+    url: youtube.normalisiereYoutubeUrl(adresse) || adresse,
+    position,
+    title: youtubeVideotitel(view)
+  };
+  // Beim Spulen gehoert der Laufzustand dazu: YouTube haelt dabei gelegentlich
+  // an, und ohne diese Angabe stuende die Runde danach falsch.
+  if (aktion === "seek") daten.playing = !pausiert;
+  youtubeParty.melden(aktion, daten);
+}
+
+// Ein anderes Video. Das ist der wichtigste Unterschied zur Watchparty fuer
+// Serien: die Runde endet dadurch nicht, das neue Video wird ihr Video.
+//
+// Der Weg dorthin ist egal - Empfehlung, Suchtreffer, Kanal, Playlist oder das
+// automatisch folgende naechste Video. YouTube wechselt dabei meist ohne
+// Neuladen, deshalb haengt das hier an beiden Navigationsereignissen.
+async function meldeYoutubeVideowechsel(view, url) {
+  if (!youtubeParty.aktiv) return;
+  const ziel = youtubeAnsicht();
+  if (!ziel || ziel.view !== view) return;
+  const videoId = youtubeVideoIdAus(url);
+  if (!videoId) return;
+
+  // Das Echo des eigenen Mitziehens. Ohne diese Sperre meldete jedes Geraet das
+  // Video, auf das es gerade gezogen wurde, als eigenen Wunsch zurueck.
+  if (youtubeErwartet && youtubeErwartet.videoId === videoId && Date.now() < youtubeErwartet.bis) {
+    youtubeErwartet = null;
+    await executeJavaScriptInMediaFrames(view, youtubeSync.zuruecksetzenScript()).catch(() => []);
+    youtubeNachziehenPlanen();
+    return;
+  }
+  // Schon das Video der Runde - dann gibt es nichts zu wechseln. Das Relay
+  // wiese es ohnehin ab; hier bleibt dafuer die Nachricht gleich ganz aus.
+  if (youtubeParty.stand?.videoId === videoId) return;
+
+  // Neues Video, neue Rechnung: bestaetigte Messungen und Merker gehoeren zum
+  // Video davor.
+  await executeJavaScriptInMediaFrames(view, youtubeSync.zuruecksetzenScript()).catch(() => []);
+  const gemeldet = youtubeParty.melden("video", {
+    videoId,
+    url: youtube.normalisiereYoutubeUrl(url) || url,
+    // Wer mit Startzeit einsteigt, laesst die Runde dort einsteigen.
+    position: youtube.startSekunde(url),
+    title: youtubeVideotitel(view)
+  });
+  if (gemeldet) {
+    logMediaDiagnostic(ziel.provider, url, "youtube-party", "Video an die Runde gemeldet", {});
+  }
+}
+
+// --- Was die anderen tun, passiert hier ebenfalls ----------------------------
+
+// Ein neuer Raumzustand. Ob daraus ueberhaupt etwas folgt, hat die
+// YoutubeWatchparty schon entschieden: der eigene Zug kommt nur zurueck, damit
+// dieses Geraet seine Nummer erfaehrt, und derselbe Stand ein zweites Mal ist
+// kein Anlass, im Bild herumzuspringen.
+async function applyYoutubeParty(zustand, hinweis) {
+  if (!youtubeParty.aktiv || !zustand?.videoId || !hinweis?.anwenden) return;
+
+  const ziel = youtubeAnsicht();
+  // YouTube war in dieser Sitzung nie offen. Dann wird nichts erzwungen - beim
+  // Oeffnen haengt sich die Runde von selbst an (installYoutubePartyControls).
+  if (!ziel) return;
+
+  const offen = ziel.view.webContents.getURL();
+  if (youtubeVideoIdAus(offen) !== zustand.videoId) {
+    await oeffneYoutubeVideo(ziel, zustand, hinweis.action || "video");
+    return;
+  }
+
+  await executeJavaScriptInMediaFrames(
+    ziel.view,
+    youtubeSync.anwendenScript(zustand, { aktion: hinweis.action || "state", versatz: zustand.versatz })
+  ).catch(() => []);
+  logMediaDiagnostic(ziel.provider, offen, "youtube-party",
+    `${zustand.byName || "Jemand"}: ${hinweis.action || "Stand"}`, {});
+}
+
+// Das Video der Runde oeffnen.
+//
+// Die Startsekunde wandert in die Adresse. Das ist deutlich verlaesslicher, als
+// nach dem Laden im Player herumzuspringen: YouTube startet dann von sich aus
+// an der richtigen Stelle, ohne dass etwas sichtbar zurueckspult.
+//
+// Wer YouTube gerade vorn hat, wechselt ueber den normalen Weg der App - mit
+// Autoplay und Vollbild, wie bei einem Klick. Wer gerade woanders ist, bekommt
+// die Seite still im Hintergrund geladen: die Runde soll niemanden aus dem
+// herausreissen, was er sich gerade ansieht.
+async function oeffneYoutubeVideo({ provider, view }, zustand, grund) {
+  const sekunde = Math.max(0, Math.floor(
+    youtubeSync.zielPosition(zustand, Date.now() + (zustand.versatz || 0))
+  ));
+  const basis = zustand.url || `https://www.youtube.com/watch?v=${zustand.videoId}`;
+  const adresse = youtube.fortsetzenUrl(basis, sekunde);
+
+  youtubeErwartet = { videoId: zustand.videoId, bis: Date.now() + YOUTUBE_ERWARTET_MS };
+  await executeJavaScriptInMediaFrames(view, youtubeSync.zuruecksetzenScript()).catch(() => []);
+
+  if (activeProviderId === provider.id) {
+    const warVollbild = isContentFullscreen;
+    await navigateProvider(provider, adresse);
+    scheduleProviderAutoplay(provider, view, { fullscreen: warVollbild });
+  } else {
+    view.webContents.loadURL(adresse).catch(() => {});
+  }
+  logMediaDiagnostic(provider, adresse, "youtube-party",
+    `${zustand.byName || "Jemand"}: Video gewechselt (${grund})`, {});
+  youtubeNachziehenPlanen();
+}
+
+// Nach einem Seitenwechsel steht das Video nicht sofort bereit. Statt einmal
+// auf gut Glueck wird der Raumzustand mehrfach nachgereicht - jeder Versuch
+// steigt von selbst aus, sobald er nicht mehr passt.
+function youtubeNachziehenPlanen() {
+  for (const verzoegerung of YOUTUBE_NACHZIEHEN_MS) {
+    const timer = setTimeout(() => { youtubeAnschluss("nachziehen").catch(() => {}); }, verzoegerung);
+    timer.unref?.();
+  }
+}
+
+// Dieses Geraet an die Runde anschliessen: richtiges Video, richtige Stelle,
+// richtiger Laufzustand. Genau das braucht ein spaeter Beitretender, und genau
+// das braucht auch, wer gerade wieder Verbindung bekommen hat.
+async function youtubeAnschluss(grund) {
+  const zustand = youtubeParty.stand;
+  if (!youtubeParty.aktiv || !zustand?.videoId) return;
+  const ziel = youtubeAnsicht();
+  if (!ziel) return;
+
+  const offen = ziel.view.webContents.getURL();
+  if (!youtube.istYoutubeUrl(offen)) return;
+  if (youtubeVideoIdAus(offen) !== zustand.videoId) {
+    await oeffneYoutubeVideo(ziel, zustand, grund);
+    return;
+  }
+  await executeJavaScriptInMediaFrames(
+    ziel.view,
+    youtubeSync.anwendenScript(zustand, { aktion: "state", versatz: zustand.versatz })
+  ).catch(() => []);
+}
+
+// Die Notbremse, im Takt.
+//
+// Sie tut fast immer nichts - das ist Absicht und steht ausfuehrlich in
+// youtube-sync.js. Ein bis zwei Sekunden Versatz sieht beim gemeinsamen Schauen
+// niemand; jede Korrektur dagegen laesst YouTube neu puffern, und das Puffern
+// erzeugt genau den Versatz, den man beheben wollte.
+async function youtubeAbgleichen() {
+  const zustand = youtubeParty.stand;
+  if (!youtubeParty.aktiv || !youtubeParty.verbunden || !zustand?.videoId) return;
+  const ziel = youtubeAnsicht();
+  // Nur was hier wirklich zu sehen ist. Liegt eine eigene Ansicht darueber oder
+  // ist ein anderer Anbieter vorn, schaut hier gerade niemand YouTube.
+  if (!ziel || ziel.view !== activeView || overlayReasons.size > 0) return;
+  if (youtubeVideoIdAus(ziel.view.webContents.getURL()) !== zustand.videoId) return;
+
+  await executeJavaScriptInMediaFrames(
+    ziel.view,
+    youtubeSync.abgleichScript(zustand, { versatz: zustand.versatz })
+  ).catch(() => []);
+}
+
+// Den Horcher in die Seite haengen und dieses Geraet an die Runde anschliessen.
+// Laeuft bei jedem "dom-ready" - der Horcher setzt sich nur einmal, das
+// Anschliessen prueft selbst, ob es noch etwas zu tun gibt.
+async function installYoutubePartyControls(provider, view, url) {
+  if (!youtubeParty.aktiv || !youtube.istYoutubeUrl(url)) return;
+  const ziel = youtubeAnsicht();
+  if (!ziel || ziel.view !== view) return;
+
+  await executeJavaScriptInMediaFrames(view, youtubeSync.beobachterScript()).catch(() => []);
+  youtubeNachziehenPlanen();
+}
+
+// --- Was die Oberflaeche davon sieht -----------------------------------------
+
+function sendYoutubePartyState(status) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("youtubeparty:state", youtubePartyStatus(status));
+}
+
+function youtubePartyStatus(status) {
+  return {
+    ...(status || youtubeParty.status()),
+    // Welche Raeume ueberhaupt in Frage kommen. Ohne Watchparty gibt es keine.
+    rooms: watchparty.aktiv ? watchparty.codes : [],
+    watchpartyEnabled: watchparty.aktiv
+  };
 }
 
 // --- Empfohlen fuer dich -----------------------------------------------------
@@ -10010,6 +10405,16 @@ function normalizeSettings(raw) {
         ...defaults.watchparty.rooms
       ]).slice(0, WATCHPARTY_MAX_RAEUME),
       deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
+      // In welchem Raum die YouTube-Watchparty laeuft. Leer heisst: aus. Es ist
+      // bewusst genau einer - es gibt einen YouTube-Player, und zwei Runden
+      // gleichzeitig hiessen zwei Videos gleichzeitig.
+      // Wie die Kennung: sie kommt aus dem Formular nicht immer mit, und ohne
+      // diesen Rueckfall schaltete jedes Speichern der Einstellungen die
+      // laufende YouTube-Runde ab. Ausgeschaltet wird sie ueber ihren eigenen
+      // Kanal, nicht ueber das Einstellungsformular.
+      youtubeRoom: String(raw?.watchparty?.youtubeRoom
+        || settings?.watchparty?.youtubeRoom
+        || defaults.watchparty.youtubeRoom || "").trim().normalize("NFC").slice(0, 64),
       // Erst die mitgeschickte Kennung, dann die bereits bekannte - eine neue
       // nur, wenn dieses Geraet wirklich noch keine hat. Kaeme hier bei jedem
       // Speichern eine frische heraus, waere das Geraet fuer die Raeume jedes
@@ -10126,7 +10531,8 @@ function defaultSettings() {
       serverUrl: "",
       rooms: [],
       deviceName: "",
-      deviceId: ""
+      deviceId: "",
+      youtubeRoom: ""
     },
     home: {
       showHero: true,

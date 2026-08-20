@@ -135,6 +135,32 @@ function kanonisch(kennung, sekunden) {
   return adresse.href;
 }
 
+// Die Startsekunde, die in einer Adresse steht.
+//
+// YouTube schreibt sie als "t" und laesst dabei mehrere Schreibweisen zu: "90",
+// "90s", "1m30s", "1h2m3s". Wer nur parseInt darauf wirft, liest aus "1m30s"
+// eine Sekunde. Fuer die Watchparty zaehlt das: wird ein Video mit Startzeit
+// geoeffnet, ist genau diese Sekunde die Stelle, an der die Runde einsteigt.
+function startSekunde(url) {
+  if (!istYoutubeUrl(url)) return 0;
+  let adresse;
+  try {
+    adresse = new URL(String(url));
+  } catch {
+    return 0;
+  }
+  const roh = String(adresse.searchParams.get("t") || adresse.searchParams.get("start") || "").trim();
+  if (!roh) return 0;
+  if (/^\d+(\.\d+)?$/.test(roh)) return Math.max(0, Math.floor(Number(roh)));
+
+  const treffer = roh.toLowerCase().match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  if (!treffer || !treffer.slice(1).some(Boolean)) return 0;
+  const stunden = Number(treffer[1] || 0);
+  const minuten = Number(treffer[2] || 0);
+  const sekunden = Number(treffer[3] || 0);
+  return stunden * 3600 + minuten * 60 + sekunden;
+}
+
 // Lohnt sich der Nachsprung im Player? Nur, wenn die Adresse ihre Startzeit
 // mitbekommen hat und der Player trotzdem woanders steht - YouTube ignoriert
 // "t" gelegentlich, etwa wenn es selbst einen Stand gespeichert hat.
@@ -274,6 +300,7 @@ module.exports = {
   videoKennung,
   normalisiereYoutubeUrl,
   fortsetzenUrl,
+  startSekunde,
   brauchtNachsprung,
   vollbildScript,
   vorschaubildKandidaten,

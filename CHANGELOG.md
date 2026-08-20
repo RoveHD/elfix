@@ -3,6 +3,33 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.27.1 — 20. August 2026
+
+Der Verlauf in der Mediathek zaehlte das Oeffnen statt das Schauen.
+
+**Verlauf**
+
+- "3 Mal geschaut an 2 Tagen" stand an einem Film, den ELFIX dreimal
+  geoeffnet, aber nie beim Abschluss gesehen hatte. Die Zeilen hiessen
+  "Film geöffnet" - das sagt nur, dass die Seite auf war
+- Gezaehlt werden jetzt Abschluesse. Aufgelistet wird nur, was wirklich
+  geschaut wurde: abgeschlossene Durchlaeufe und einzelne Folgen
+- ELFIX haelt den Abschluss ab jetzt auch fest. Vorher gab es das Ereignis
+  nur, wenn der Player ein echtes Ende meldete - bei einem Film, der ueber
+  die 90 Prozent oder von Hand fertig wird, also nie. Vermerkt wird nur der
+  Uebergang: wer einen fertigen Titel noch einmal oeffnet, erzeugt keinen
+  zweiten Abschluss
+- Fuer Titel aus der Zeit davor zaehlt der gespeicherte Abschlusszeitpunkt
+  mit, damit dort nicht "null Mal abgeschlossen" steht
+- Der Menuepunkt erscheint nur noch, wenn es mehr als den einen
+  offensichtlichen Abschluss gibt - dessen Datum steht ohnehin auf der Karte
+
+**Kleinigkeit**
+
+- Im Verlaufs-Kasten stand ein "Abbrechen"-Knopf, obwohl es dort nichts
+  abzubrechen gibt. Er war als versteckt markiert, aber in dieser Oberflaeche
+  gibt es keine allgemeine Regel dafuer - jede haengt an ihrer Klasse
+
 ## 1.27.0 — 20. August 2026
 
 Die Mediathek laesst sich sortieren und sagt, wann du etwas gesehen hast, ELFIX

@@ -200,6 +200,15 @@ const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
 const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
 const watchpartyStand = document.querySelector("#watchpartyStand");
+// Die YouTube-Watchparty. Eigener Modus, eigene Flaeche - sie zeigt kein Raster
+// aus eingestellten Titeln, sondern genau das eine Video der Runde.
+const youtubeParty = document.querySelector("#youtubeParty");
+const youtubePartyRoom = document.querySelector("#youtubePartyRoom");
+const youtubePartyStatus = document.querySelector("#youtubePartyStatus");
+const youtubePartyMembers = document.querySelector("#youtubePartyMembers");
+const youtubePartyBanner = document.querySelector("#youtubePartyBanner");
+const youtubePartyBannerText = document.querySelector("#youtubePartyBannerText");
+let youtubePartyState = null;
 let watchpartyLiveTimer = 0;
 // Der zuletzt gemeldete Stand je Geraet und der Zeitgeber, der die Uhren
 // zwischen zwei Meldungen weiterlaufen laesst.
@@ -463,6 +472,12 @@ function bindEvents() {
   });
   api.getWatchpartyStatus?.().then(renderWatchpartyStatus).catch(() => {});
   loadWatchpartyItems();
+  api.onYoutubePartyState?.(renderYoutubeParty);
+  youtubePartyRoom?.addEventListener("change", youtubePartyRaumWaehlen);
+  document.querySelector("#youtubePartyResync")?.addEventListener("click", youtubePartyAbgleichen);
+  document.querySelector("#youtubePartyOpen")?.addEventListener("click", youtubePartyOeffnen);
+  youtubePartyBanner?.addEventListener("click", youtubePartyOeffnen);
+  api.getYoutubePartyStatus?.().then(renderYoutubeParty).catch(() => {});
   // Aus der Watchparty heraus direkt deren Bereich in den Einstellungen.
   const watchpartyEinstellungen = async () => {
     await openSettings();
@@ -2116,6 +2131,132 @@ function renderWatchpartyViewStatus(state) {
   watchpartyViewStatus.textContent = `${wo} — ${geraete}. ${grund}`;
 }
 
+
+// --- YouTube-Watchparty ------------------------------------------------------
+//
+// Bewusst eine andere Flaeche als die Kacheln darunter. Dort stellt jemand eine
+// Serie ein und andere treten ihr bei; hier gibt es nur eine Sitzung, in der
+// alle dasselbe Video sehen und jeder es wechseln darf. Deshalb steht hier eine
+// Raumwahl statt eines Rasters - mehr Bedienung braucht es nicht.
+
+function renderYoutubeParty(state) {
+  youtubePartyState = state || null;
+  renderYoutubePartyBanner();
+  if (!youtubeParty) return;
+
+  const raeume = Array.isArray(state?.rooms) ? state.rooms : [];
+  const gewaehlt = state?.enabled ? String(state.room || "") : "";
+  youtubeParty.classList.toggle("is-off", !state?.enabled);
+
+  if (youtubePartyRoom) {
+    // Nur neu bauen, wenn sich wirklich etwas geaendert hat: sonst klappt eine
+    // gerade geoeffnete Auswahlliste bei jeder Statusmeldung wieder zu.
+    const soll = ["", ...raeume].join("\u0000");
+    if (youtubePartyRoom.dataset.raeume !== soll) {
+      youtubePartyRoom.dataset.raeume = soll;
+      const aus = document.createElement("option");
+      aus.value = "";
+      aus.textContent = "Aus";
+      const eintraege = [aus];
+      for (const raum of raeume) {
+        const option = document.createElement("option");
+        option.value = raum;
+        option.textContent = raum;
+        eintraege.push(option);
+      }
+      youtubePartyRoom.replaceChildren(...eintraege);
+    }
+    youtubePartyRoom.value = gewaehlt;
+    youtubePartyRoom.disabled = raeume.length === 0;
+  }
+
+  const offen = document.querySelector("#youtubePartyOpen");
+  const abgleich = document.querySelector("#youtubePartyResync");
+  const laeuftRunde = Boolean(state?.enabled && state.video?.videoId);
+  if (offen) offen.disabled = !laeuftRunde;
+  if (abgleich) abgleich.disabled = !state?.enabled;
+
+  if (youtubePartyStatus) youtubePartyStatus.textContent = youtubePartyText(state, raeume);
+  if (youtubePartyMembers) {
+    const namen = (state?.members || []).map((person) => (
+      person.id === state.me ? `${person.name} (du)` : person.name
+    ));
+    youtubePartyMembers.textContent = state?.enabled && namen.length
+      ? `Dabei: ${namen.join(", ")}`
+      : "";
+  }
+}
+
+function youtubePartyText(state, raeume) {
+  if (!state?.watchpartyEnabled) return "Die Watchparty ist ausgeschaltet — trage zuerst Server und Raumcode in den Einstellungen ein.";
+  if (!raeume.length) return "Noch kein Raum eingetragen. Der YouTube-Modus läuft in einem der Watchparty-Räume.";
+  if (!state.enabled) return "Aus. Wähle einen Raum, und ab dann seht ihr alle dasselbe YouTube-Video.";
+  if (state.error) return state.error;
+  if (!state.connected) return `Raum „${state.room}“ — keine Verbindung. Sobald sie zurück ist, wird der Stand neu geholt.`;
+  if (!state.joined) return `Raum „${state.room}“ — wird angemeldet …`;
+  if (!state.video?.videoId) return `Raum „${state.room}“ — noch kein Video. Öffne eines auf YouTube, dann sehen es alle anderen auch.`;
+
+  const titel = state.video.title || state.video.videoId;
+  const wo = formatClock(Number(state.video.position) || 0);
+  const wer = state.video.by ? ` — zuletzt: ${state.video.by}` : "";
+  return `${state.video.playing ? "Läuft" : "Pausiert"} bei ${wo} · ${titel}${wer}`;
+}
+
+// Oben in der Kopfzeile: nur ein Hinweis, dass gerade gemeinsam geschaut wird,
+// und der kurze Weg zurueck zum Video der Runde. Die Bedienung steht in der
+// Watchparty-Ansicht - eine zweite Steuerung im Kopf waere eine zu viel.
+function renderYoutubePartyBanner() {
+  if (!youtubePartyBanner) return;
+  const state = youtubePartyState;
+  const sichtbar = Boolean(state?.enabled && state.video?.videoId);
+  youtubePartyBanner.classList.toggle("is-hidden", !sichtbar);
+  if (!sichtbar) return;
+  youtubePartyBanner.classList.toggle("is-private", !state.connected);
+  if (!youtubePartyBannerText) return;
+  if (!state.connected) {
+    youtubePartyBannerText.textContent = "YouTube-Runde: Verbindung weg …";
+    return;
+  }
+  const wer = state.video.by ? ` · ${state.video.by}` : "";
+  youtubePartyBannerText.textContent = `YouTube-Runde: ${state.video.playing ? "läuft" : "pausiert"}${wer}`;
+}
+
+async function youtubePartyRaumWaehlen() {
+  const wahl = youtubePartyRoom ? youtubePartyRoom.value : "";
+  try {
+    const antwort = await api.setYoutubePartyRoom?.(wahl);
+    if (antwort?.settings) settings = antwort.settings;
+    if (antwort?.status) renderYoutubeParty(antwort.status);
+    if (antwort && antwort.ok === false) showToast(antwort.reason || "Der Raum konnte nicht gesetzt werden");
+    else showToast(wahl ? `YouTube-Watchparty läuft in „${wahl}“` : "YouTube-Watchparty ausgeschaltet");
+  } catch {
+    showToast("Der Raum konnte nicht gesetzt werden");
+  }
+}
+
+async function youtubePartyAbgleichen() {
+  try {
+    renderYoutubeParty(await api.resyncYoutubeParty?.());
+    showToast("Mit der Runde abgeglichen");
+  } catch {
+    showToast("Abgleichen hat nicht geklappt");
+  }
+}
+
+async function youtubePartyOeffnen() {
+  if (!youtubePartyState?.video?.videoId) return;
+  try {
+    hideContentViews();
+    const state = await api.openYoutubeParty?.();
+    activeProviderId = state?.activeProviderId || activeProviderId;
+    setCurrentRoute(`provider:${activeProviderId}`);
+    renderProviders();
+    window.setTimeout(syncBrowserBounds, 0);
+  } catch {
+    showToast("Das Video der Runde ließ sich nicht öffnen");
+  }
+}
+
 // Getrennt von der eigenen Weiterschauen-Liste: hier steht ausschliesslich,
 // was die anderen Geraete im Raum gemeldet haben.
 async function showWatchparty() {
@@ -2125,6 +2266,7 @@ async function showWatchparty() {
   watchpartyView?.classList.remove("is-hidden");
   renderWatchpartyItems();
   loadWatchpartyItems();
+  api.getYoutubePartyStatus?.().then(renderYoutubeParty).catch(() => {});
   window.setTimeout(syncBrowserBounds, 0);
 }
 
@@ -2968,20 +3110,27 @@ async function mediathekReihenfolgeSpeichern() {
 // Gezeigt wird derselbe Kasten wie bei einer Rueckfrage, nur ohne zweite
 // Schaltflaeche - hier gibt es nichts zu entscheiden, nur etwas zu lesen.
 async function zeigeVerlauf(favorite, liste = verlaufListe(favorite)) {
-  const tage = verlaufTage(liste);
+  const abschluesse = abschlussListe(favorite);
   const zeilen = liste.slice(0, 40).map((eintrag) => {
     const wann = eintrag.zeit.toLocaleString("de-DE", {
       day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
     });
-    return eintrag.label ? `${wann} · ${eintrag.label}` : wann;
+    return `${wann} · ${eintrag.label}`;
   });
   const rest = liste.length - zeilen.length;
   if (rest > 0) zeilen.push(`… und ${rest} weitere`);
 
+  // Gezaehlt wird der Abschluss, nicht das Oeffnen - danach war gefragt.
+  const wieOft = abschluesse.length === 1 ? "Einmal abgeschlossen" : `${abschluesse.length} Mal abgeschlossen`;
+  const tage = verlaufTage(liste.length ? liste : abschluesse);
+  const kopf = abschluesse.length
+    ? `${wieOft} · an ${tage} ${tage === 1 ? "Tag" : "Tagen"} geschaut`
+    : `Noch nicht abgeschlossen · an ${tage} ${tage === 1 ? "Tag" : "Tagen"} geschaut`;
+
   await confirmAction({
     eyebrow: "Verlauf",
     title: displayFavoriteTitle(favorite),
-    copy: `${liste.length} Mal geschaut an ${tage} ${tage === 1 ? "Tag" : "Tagen"}\n\n${zeilen.join("\n")}`,
+    copy: zeilen.length ? `${kopf}\n\n${zeilen.join("\n")}` : kopf,
     confirmLabel: "Schließen",
     nurSchliessen: true,
     mehrzeilig: true
@@ -3889,15 +4038,40 @@ function datumKurz(datum) {
   return datum.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-// Der Verlauf eines Titels, neueste zuerst. "Geoeffnet" faellt weg: es sagt
-// nur, dass die Seite auf war, nicht dass etwas lief - in einer Liste "wann
-// habe ich das geschaut" waere es Rauschen.
+// "Geoeffnet" und "Film geoeffnet" sagen nur, dass die Seite auf war - nicht,
+// dass etwas lief. Genau daran lag es, dass ein dreimal geoeffneter Film als
+// "3 Mal geschaut" dastand.
+const NUR_GEOEFFNET = /ge(ö|oe)ffnet/i;
+
+function istAbschluss(label) {
+  return /^abgeschlossen$/i.test(String(label || "").trim());
+}
+
+// Der Verlauf eines Titels, neueste zuerst - nur was wirklich geschaut wurde:
+// abgeschlossene Durchlaeufe und einzelne Folgen.
 function verlaufListe(favorite) {
   const roh = Array.isArray(favorite?.activity) ? favorite.activity : [];
   return roh
-    .filter((eintrag) => eintrag && eintrag.at && !/^ge(ö|oe)ffnet$/i.test(String(eintrag.label || "").trim()))
+    .filter((eintrag) => eintrag && eintrag.at)
     .map((eintrag) => ({ zeit: new Date(Date.parse(eintrag.at)), label: String(eintrag.label || "").trim() }))
+    .filter((eintrag) => eintrag.label && !NUR_GEOEFFNET.test(eintrag.label))
     .filter((eintrag) => Number.isFinite(eintrag.zeit?.getTime?.()))
+    .sort((links, rechts) => rechts.zeit - links.zeit);
+}
+
+// Wie oft war der Titel wirklich durch?
+//
+// Aufgezeichnet wird das erst seit 1.27.1 - aeltere Eintraege haben nur
+// "completedAt", den Zeitpunkt des letzten Abschlusses. Der zaehlt deshalb
+// mit, solange er nicht ohnehin schon als Ereignis dasteht. So steht bei einem
+// Titel aus der Mediathek nie "null Mal abgeschlossen", obwohl er dort liegt.
+function abschlussListe(favorite) {
+  const ausVerlauf = verlaufListe(favorite).filter((eintrag) => istAbschluss(eintrag.label));
+  const bekannt = Date.parse(favorite?.completedAt || "");
+  if (!Number.isFinite(bekannt)) return ausVerlauf;
+  const schonDrin = ausVerlauf.some((eintrag) => Math.abs(eintrag.zeit.getTime() - bekannt) < 60000);
+  if (schonDrin) return ausVerlauf;
+  return [...ausVerlauf, { zeit: new Date(bekannt), label: "Abgeschlossen" }]
     .sort((links, rechts) => rechts.zeit - links.zeit);
 }
 
@@ -4093,7 +4267,10 @@ function favoriteCard(favorite, allowRemove, options = {}) {
   // man einmal durchgeschaut hat, waere ein Menuepunkt mit einer einzigen
   // Zeile dahinter nur ein Klick ins Leere.
   const verlauf = verlaufListe(favorite);
-  if (options.allowLibraryRemove && verlauf.length > 1) {
+  // Sichtbar, sobald es mehr als den einen offensichtlichen Abschluss gibt -
+  // das Datum steht ja schon auf der Karte.
+  const verlaufLohnt = verlauf.length > 1 || abschlussListe(favorite).length > 1;
+  if (options.allowLibraryRemove && verlaufLohnt) {
     eintraege.push({
       gruppe: "info",
       symbol: "◷",
@@ -4712,7 +4889,11 @@ async function saveSettings() {
     // das Geraet beim Speichern eine neue und faellt in jedem Raum aus seinen
     // Mitgliedschaften - es steht dann mit altem Namen, aber fremder Kennung
     // in den Listen und muss ueberall neu beitreten.
-    deviceId: settings.watchparty?.deviceId || ""
+    deviceId: settings.watchparty?.deviceId || "",
+    // Wie die Kennung: die YouTube-Runde haengt am Raum, hat aber kein
+    // Bedienelement in diesem Formular. Ohne diese Zeile schaltete jedes
+    // Speichern der Einstellungen eine laufende YouTube-Runde ab.
+    youtubeRoom: settings.watchparty?.youtubeRoom || ""
   };
   settings.appearance = {
     settingsMode: "advanced",

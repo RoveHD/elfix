@@ -223,14 +223,22 @@ function rendererAbschnitt(anfang) {
 
 const mediathek = { console };
 vm.createContext(mediathek);
+// NUR_GEOEFFNET ist eine Konstante, keine Funktion - rendererAbschnitt() holt
+// nur Funktionen, deshalb kommt sie hier einzeln dazu.
+const NUR_GEOEFFNET_QUELLE = (RENDERER.match(/^const NUR_GEOEFFNET = .*$/m) || [""])[0];
 vm.runInContext([
-  "function mediathekEntdoppeln",
-  "function istBessererMediathekEintrag",
-  "function verlaufListe",
-  "function verlaufTage",
-  "function gesehenAm",
-  "function datumKurz"
-].map(rendererAbschnitt).join("\n\n"), mediathek);
+  NUR_GEOEFFNET_QUELLE,
+  ...[
+    "function mediathekEntdoppeln",
+    "function istBessererMediathekEintrag",
+    "function istAbschluss",
+    "function verlaufListe",
+    "function abschlussListe",
+    "function verlaufTage",
+    "function gesehenAm",
+    "function datumKurz"
+  ].map(rendererAbschnitt)
+].join("\n\n"), mediathek);
 
 const PRIVAT = { id: "a", normalizedUrl: "https://filmo.to/movies/x", watchpartyRoom: "", libraryOrder: 39, createdAt: "2026-08-14T08:00:00.000Z" };
 const RUNDE = { id: "b", normalizedUrl: "https://filmo.to/movies/x", watchpartyRoom: "Bangus", createdAt: "2026-08-20T11:51:00.000Z" };
@@ -278,17 +286,57 @@ const liste = mediathek.verlaufListe(VERLAUF);
 pruefe("Der Verlauf laesst \"Geoeffnet\" weg - das sagt nichts ueber Geschautes",
   liste.length === 3 && !liste.some((e) => /geöffnet/i.test(e.label)),
   liste.map((e) => e.label).join(", "));
+// Der gemeldete Fall: ein dreimal geoeffneter Film stand als "3 Mal
+// geschaut" da. Das Label heisst bei Filmen "Film geöffnet", nicht
+// "Geöffnet" - der erste Filter traf es deshalb nicht.
+const NUR_AUF = { completedAt: "2026-08-16T11:55:14.522Z", activity: [
+  { at: "2026-08-16T13:49:00.000Z", label: "Film geöffnet" },
+  { at: "2026-08-16T22:06:00.000Z", label: "Film geöffnet" },
+  { at: "2026-08-17T11:07:00.000Z", label: "Film geöffnet" }
+] };
+pruefe("Dreimal geoeffnet ist nicht dreimal geschaut",
+  mediathek.verlaufListe(NUR_AUF).length === 0,
+  `${mediathek.verlaufListe(NUR_AUF).length} statt 0`);
+pruefe("Gezaehlt wird der Abschluss - und den gibt es hier genau einmal",
+  mediathek.abschlussListe(NUR_AUF).length === 1);
+pruefe("Der Abschluss kommt aus completedAt, wenn er nicht aufgezeichnet wurde",
+  mediathek.abschlussListe(NUR_AUF)[0].zeit.toISOString().startsWith("2026-08-16"));
+pruefe("Ein aufgezeichneter Abschluss wird nicht doppelt gezaehlt",
+  mediathek.abschlussListe({
+    completedAt: "2026-08-16T11:55:14.522Z",
+    activity: [{ at: "2026-08-16T11:55:20.000Z", label: "Abgeschlossen" }]
+  }).length === 1);
+pruefe("Zweimal wirklich durchgeschaut zaehlt zweimal",
+  mediathek.abschlussListe({
+    completedAt: "2026-08-20T10:00:00.000Z",
+    activity: [
+      { at: "2026-08-16T11:55:20.000Z", label: "Abgeschlossen" },
+      { at: "2026-08-20T10:00:05.000Z", label: "Abgeschlossen" }
+    ]
+  }).length === 2);
+pruefe("Ohne Abschluss bleibt die Zaehlung bei null",
+  mediathek.abschlussListe({ activity: [{ at: "2026-08-16T11:00:00.000Z", label: "Staffel 1 Folge 1" }] }).length === 0);
+
 pruefe("Kaputte Zeitangaben fliegen raus", !liste.some((e) => Number.isNaN(e.zeit.getTime())));
 pruefe("Neueste zuerst", liste[0].label === "Staffel 2 Folge 11");
 pruefe("Gezaehlt werden Tage, nicht Folgen",
   mediathek.verlaufTage(liste) === 2, `${mediathek.verlaufTage(liste)} Tage bei 3 Eintraegen`);
 pruefe("Ohne Verlauf bleibt die Liste leer",
   mediathek.verlaufListe({}).length === 0 && mediathek.verlaufListe({ activity: "kein Array" }).length === 0);
-pruefe("Der Menuepunkt erscheint nur, wo es mehr als einen Eintrag gibt",
-  /options\.allowLibraryRemove && verlauf\.length > 1/.test(RENDERER));
-pruefe("Der Kasten zeigt Anzahl und Tage",
-  /Mal geschaut an \$\{tage\}/.test(RENDERER)
+pruefe("Der Menuepunkt erscheint nur, wo es mehr als den einen Abschluss gibt",
+  /verlauf\.length > 1 \|\| abschlussListe\(favorite\)\.length > 1/.test(RENDERER));
+pruefe("Der Kasten zaehlt Abschluesse, nicht Oeffnungen",
+  /Mal abgeschlossen/.test(RENDERER)
   && /nurSchliessen: true/.test(RENDERER) && /mehrzeilig: true/.test(RENDERER));
+// Damit die Zaehlung kuenftig nicht mehr auf completedAt angewiesen ist.
+pruefe("Der Abschluss wird beim Uebergang aufgezeichnet",
+  /const warBereitsAbgeschlossen = Boolean\(existing\?\.completed\);/.test(QUELLE)
+  && /if \(entry\.completed && !warBereitsAbgeschlossen\) \{\n\s*appendMediaActivity\(entry, url, "Abgeschlossen"\);/.test(QUELLE));
+// Ohne diese Regel blieb "Abbrechen" im Verlaufs-Kasten stehen: eine
+// allgemeine .is-hidden-Regel gibt es in dieser Datei nicht.
+const STIL = fs.readFileSync(path.join(WURZEL, "src/renderer/styles.css"), "utf8");
+pruefe("Der Kasten kann seinen Abbrechen-Knopf wirklich ausblenden",
+  /\.confirm-actions button\.is-hidden \{\s*display: none;/.test(STIL));
 // Der Kasten ist derselbe wie bei jeder Rueckfrage - bleibt ein Merker
 // stehen, steht die naechste Loeschabfrage ohne Abbrechen da.
 pruefe("Beide Merker werden bei jedem Aufruf neu gesetzt",
