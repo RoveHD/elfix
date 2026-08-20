@@ -2989,6 +2989,15 @@ function resumePendingProviderAutoplay(provider, view) {
 // der Vollbild-Knopf im Player macht. Die Fenster-/Bounds-Anpassung uebernimmt
 // danach das "enter-html-full-screen"-Event ueber markContentFullscreen().
 async function enterPlayerFullscreen(provider, request, view) {
+  // YouTube geht einen eigenen Weg und faellt bewusst nicht in den allgemeinen
+  // zurueck. Dessen Notfallpfad zieht das groesste iframe der Seite ins
+  // Vollbild - bei YouTube ist das ein unsichtbarer Anmelde-Rahmen von
+  // accounts.google.com, und dann war "alles" im Vollbild statt des Players.
+  if (youtube.istYoutubeUrl(view.webContents.getURL())) {
+    await enterYoutubeFullscreen(provider, request, view);
+    return;
+  }
+
   const buttonPass = await startPlaybackInView(view, { mode: "fullscreen" }).catch(() => []);
   const marks = Array.isArray(buttonPass) ? buttonPass : [];
   logAutoplayAttempt(provider, request, marks);
@@ -3012,6 +3021,25 @@ async function enterPlayerFullscreen(provider, request, view) {
 
   const forcePass = await startPlaybackInView(view, { mode: "fullscreen-force" }).catch(() => []);
   logAutoplayAttempt(provider, request, Array.isArray(forcePass) ? forcePass : []);
+}
+
+// Zwei Anlaeufe, beide nur am Player.
+//
+// Zuerst direkt: "#movie_player" ins Vollbild, ausgefuehrt mit echter
+// Nutzergeste. Das ist der verlaessliche Weg - YouTube stellt seine Bedienung
+// ueber "fullscreenchange" selbst um, es sieht also aus wie ein Knopfdruck.
+//
+// Klappt das nicht, wird YouTubes eigener Knopf gedrueckt. Klappt auch das
+// nicht, bleibt es beim Fenster - lieber kein Vollbild als das falsche.
+async function enterYoutubeFullscreen(provider, request, view) {
+  const direkt = await view.webContents.executeJavaScript(youtube.vollbildScript(), true).catch(() => "");
+  logAutoplayAttempt(provider, request, [String(direkt || "yt-vollbild-fehlgeschlagen")]);
+  if (String(direkt) === "yt-vollbild-schon-aktiv") return;
+  if (await waitForPageFullscreen(view, 1200)) return;
+
+  const ueberKnopf = await view.webContents.executeJavaScript(youtube.vollbildScript(true), true).catch(() => "");
+  logAutoplayAttempt(provider, request, [String(ueberKnopf || "yt-knopf-fehlgeschlagen")]);
+  await waitForPageFullscreen(view, 1200);
 }
 
 async function waitForPageFullscreen(view, timeoutMs) {

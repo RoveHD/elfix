@@ -148,6 +148,38 @@ pruefe("normalizeFavoriteUrl laesst fremde Adressen wie bisher",
   fremdErwartet.every(([ein, aus]) => normalizeFavoriteUrl(ein) === aus),
   fremdErwartet.filter(([ein, aus]) => normalizeFavoriteUrl(ein) !== aus).map(([ein]) => `${ein} -> ${normalizeFavoriteUrl(ein)}`).join(", ") || "alle");
 
+console.log("\n-- Vollbild --");
+// Der allgemeine Notfallpfad zieht das groesste iframe der Seite ins Vollbild.
+// Auf YouTube ist das nachgemessen ein unsichtbarer Anmelde-Rahmen von
+// accounts.google.com (0 x 0) - der ging ins Vollbild, der Player nicht.
+const direkt = yt.vollbildScript();
+const ueberKnopf = yt.vollbildScript(true);
+pruefe("Das Vollbild-Skript spricht YouTubes Player an",
+  direkt.includes("#movie_player") && direkt.includes("requestFullscreen"));
+// Ohne Kommentarzeilen: im Skript steht erklaerend, dass documentElement und
+// body ausdruecklich nicht angefasst werden - das darf die Pruefung nicht als
+// Treffer werten.
+const ohneKommentare = (s) => s.split("\n").filter((z) => !z.trim().startsWith("//")).join("\n");
+pruefe("Es fasst weder documentElement noch body an",
+  !/documentElement|document\.body|querySelector\(["']body["']\)/.test(ohneKommentare(direkt))
+  && !/documentElement|document\.body/.test(ohneKommentare(ueberKnopf)));
+pruefe("Es greift nie nach einem iframe - genau daran lag der Fehler",
+  !/iframe|embed/i.test(direkt) && !/iframe|embed/i.test(ueberKnopf));
+pruefe("Der zweite Anlauf benutzt YouTubes eigenen Knopf",
+  ueberKnopf.includes(".ytp-fullscreen-button") && ueberKnopf.includes("dispatchEvent"));
+pruefe("Ein verdeckter Knopf wird nicht blind geklickt",
+  /r\.width < 8 \|\| r\.height < 8/.test(ueberKnopf));
+pruefe("Laeuft schon ein Vollbild, wird nichts erneut ausgeloest",
+  direkt.includes("yt-vollbild-schon-aktiv") && ueberKnopf.includes("yt-vollbild-schon-aktiv"));
+pruefe("Beide Skripte sind gueltiges Javascript", [direkt, ueberKnopf].every((s) => {
+  try { new Function(`return ${s};`); return true; } catch { return false; }
+}));
+pruefe("enterPlayerFullscreen biegt bei YouTube ab und faellt nicht zurueck",
+  /if \(youtube\.istYoutubeUrl\(view\.webContents\.getURL\(\)\)\) \{\n\s+await enterYoutubeFullscreen\(provider, request, view\);\n\s+return;/.test(main));
+pruefe("Der allgemeine Weg bleibt fuer die anderen Anbieter erhalten",
+  /const buttonPass = await startPlaybackInView\(view, \{ mode: "fullscreen" \}\)/.test(main)
+  && /mode: "fullscreen-force"/.test(main));
+
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",
   /if \(!youtube\.istYoutubeUrl\(adresse\)\) return adresse;/.test(main));

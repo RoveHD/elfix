@@ -146,6 +146,74 @@ function brauchtNachsprung(sekunden, dauer = 0) {
   return true;
 }
 
+// Vollbild bei YouTube.
+//
+// Der allgemeine Weg von ELFIX endet hier im Falschen. Er sucht erst einen
+// Vollbild-Knopf und faellt, wenn der nichts bewirkt, auf einen Notfall
+// zurueck: "nimm das groesste iframe der Seite und zieh es ins Vollbild".
+//
+// Auf einer YouTube-Seite ist das groesste iframe nachgemessen dieses:
+//
+//   https://accounts.google.com/ServiceLogin?service=youtube&...   (0 x 0)
+//
+// Ein unsichtbarer Anmelde-Rahmen. Der ging ins Vollbild, der Player nicht -
+// und weil ELFIX daraufhin sein Fenster auf Vollbild stellt, sah es aus, als
+// waere "alles" im Vollbild statt des Players. Genau das war zu sehen.
+//
+// Der Knopf davor hilft nicht weiter: requestFullscreen() verlangt eine echte
+// Nutzergeste, und ein nachgebauter Klick bringt keine mit. YouTube ruft ihn
+// also auf und wird abgewiesen.
+//
+// Hier wird deshalb direkt das Richtige angesprochen: "#movie_player" ist
+// YouTubes eigener Player-Container, und ELFIX fuehrt sein Skript mit echter
+// Nutzergeste aus. YouTube hoert auf "fullscreenchange" und stellt seine
+// Bedienung selbst auf Vollbild um - es sieht also genauso aus, als haette man
+// den Knopf gedrueckt.
+//
+// Das Hauptdokument und der Koerper der Seite werden nie angefasst. Ueber sie
+// kaeme genau der Zustand zustande, der hier abgestellt wird.
+function vollbildScript(ueberKnopf = false) {
+  if (ueberKnopf) {
+    return `(() => {
+  if (document.fullscreenElement) return "yt-vollbild-schon-aktiv";
+  const knopf = document.querySelector(".ytp-fullscreen-button");
+  if (!knopf) return "yt-kein-knopf";
+  const r = knopf.getBoundingClientRect();
+  if (r.width < 8 || r.height < 8) return "yt-knopf-verdeckt";
+  const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+  try {
+    knopf.dispatchEvent(new PointerEvent("pointerdown", o));
+    knopf.dispatchEvent(new MouseEvent("mousedown", o));
+    knopf.dispatchEvent(new PointerEvent("pointerup", o));
+    knopf.dispatchEvent(new MouseEvent("mouseup", o));
+    knopf.dispatchEvent(new MouseEvent("click", o));
+    if (typeof knopf.click === "function") knopf.click();
+  } catch (fehler) {
+    return "yt-knopf-fehler:" + String(fehler && fehler.message).slice(0, 50);
+  }
+  return "yt-vollbild-knopf-geklickt";
+})()`;
+  }
+
+  return `(() => {
+  if (document.fullscreenElement) return "yt-vollbild-schon-aktiv";
+  // Nur YouTubes Player - ausdruecklich nicht documentElement oder body.
+  const player = document.querySelector("#movie_player") || document.querySelector(".html5-video-player");
+  if (!player || typeof player.requestFullscreen !== "function") return "yt-kein-player";
+  try {
+    const ergebnis = player.requestFullscreen();
+    if (ergebnis && typeof ergebnis.then === "function") {
+      return ergebnis
+        .then(() => "yt-vollbild-player")
+        .catch((fehler) => "yt-vollbild-abgelehnt:" + String((fehler && fehler.message) || fehler).slice(0, 60));
+    }
+    return "yt-vollbild-player";
+  } catch (fehler) {
+    return "yt-vollbild-abgelehnt:" + String((fehler && fehler.message) || fehler).slice(0, 60);
+  }
+})()`;
+}
+
 module.exports = {
   YOUTUBE_HOSTS,
   MINDEST_SEKUNDEN,
@@ -154,5 +222,6 @@ module.exports = {
   videoKennung,
   normalisiereYoutubeUrl,
   fortsetzenUrl,
-  brauchtNachsprung
+  brauchtNachsprung,
+  vollbildScript
 };
