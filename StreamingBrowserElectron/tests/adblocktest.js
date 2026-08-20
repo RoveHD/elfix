@@ -130,6 +130,11 @@ const FILMO = { id: "filmo", name: "Filmo", startUrl: "https://filmo.co/", enabl
       adblock: { enabled: true, trackingProtection: true, blockPopups: true, blockRedirects: true, whitelist: [] }
     },
     logBlockedUrl: (url, provider, rule, type, kategorie) => protokoll.push({ url, rule, type, kategorie }),
+    // Das Vorbereitungsfenster hat seine eigene Pruefung (verifizierungtest).
+    // Hier zaehlt nur, dass der Popup-Schutz ohne frische Bestaetigung streng
+    // bleibt - deshalb steht der Nachlauf standardmaessig auf "nein".
+    istTorNachlauf: () => sandkasten.torNachlauf === true,
+    torNachlauf: false,
     console
   };
   vm.createContext(sandkasten);
@@ -235,6 +240,17 @@ const FILMO = { id: "filmo", name: "Filmo", startUrl: "https://filmo.co/", enabl
     !isAllowedNewWindowTarget("https://voe.sx/e/abc", PROVIDER));
   pruefe("   window.open() fuer die Cloudflare-Abfrage geht auf",
     isAllowedNewWindowTarget("https://challenges.cloudflare.com/turnstile/", PROVIDER));
+  pruefe("   Ohne frische Bestaetigung bleibt der Hoster im Popup gesperrt",
+    !isAllowedNewWindowTarget("https://voe.sx/e/abc", PROVIDER));
+  pruefe("   Nach dem Vorbereitungsfenster darf der Hoster in die laufende Ansicht",
+    (() => {
+      sandkasten.torNachlauf = true;
+      const hoster = isAllowedNewWindowTarget("https://voe.sx/e/abc", PROVIDER);
+      const werbung = isAllowedNewWindowTarget("https://werbenetz-test.com/gewinn", PROVIDER);
+      sandkasten.torNachlauf = false;
+      return hoster && !werbung;
+    })(),
+    "Werbung bleibt auch im Nachlauf gesperrt");
 
   protokoll.length = 0;
   pruefe("8. Werbeumleitung des Hauptdokuments wird abgebrochen",

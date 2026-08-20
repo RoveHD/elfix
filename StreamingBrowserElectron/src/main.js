@@ -29,6 +29,7 @@ const empfehlung = require("./empfehlung");
 const metadatenModul = require("./metadaten");
 const { AdblockEngine } = require("./adblock-engine");
 const kosmetik = require("./adblock-kosmetik");
+const verifizierungstor = require("./verifizierungstor");
 
 // Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
 // die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
@@ -2833,6 +2834,57 @@ function scheduleProviderAutoplay(provider, view, options = {}) {
   }, 250);
 }
 
+// Wann zuletzt ein Vorbereitungsfenster bestaetigt wurde. Der Zeitpunkt zaehlt
+// gleich zweimal: er verlaengert das Autostart-Fenster und er entscheidet, ob
+// ein gleich danach aufspringendes Fenster zur Wiedergabe gehoert.
+const torKlickZeit = new Map();
+const TOR_NACHLAUF_MS = 8000;
+
+// Nur im Hauptdokument des Anbieters: das Fenster gehoert der Anbieterseite,
+// nicht dem Hoster-Rahmen. Ein Aufruf je Autoplay-Runde, und die Seite selbst
+// bremst mit ihrer eigenen Sperre nach - teuer ist das nicht.
+function pruefeVerifizierungsTor(provider, request, view) {
+  if (!provider || !isLiveView(view)) return;
+  if (request.sawPlayback) return;
+  if (request.torLaeuft) return;
+  request.torLaeuft = true;
+
+  view.webContents.executeJavaScript(verifizierungstor.torScript(), true)
+    .catch(() => "")
+    .then((ergebnis) => {
+      request.torLaeuft = false;
+      const meldung = String(ergebnis || "");
+      if (!meldung) return;
+      if (meldung.startsWith("tor-gewartet:")) {
+        // Einmal melden, nicht im Sekundentakt - das Fenster steht ja.
+        if (request.torGewartet === meldung) return;
+        request.torGewartet = meldung;
+        logNextEpisode(provider, `Vorbereitungsfenster: ${meldung.slice(13)}`);
+        return;
+      }
+      if (!meldung.startsWith("tor-geklickt:")) return;
+
+      torKlickZeit.set(provider.id, Date.now());
+      logNextEpisode(provider, `Vorbereitungsfenster bestaetigt (${meldung.slice(13)})`);
+      // Hinter dem Knopf faengt das Laden erst an. Ohne diese Verlaengerung
+      // waere das Autostart-Fenster meist schon fast aufgebraucht, und der
+      // Player kaeme zu spaet.
+      if (!request.torVerlaengert) {
+        request.torVerlaengert = true;
+        request.until = Math.max(request.until, Date.now() + 25000);
+        request.startedAt = Date.now();
+      }
+    });
+}
+
+// Hat der Nutzer beziehungsweise der Autostart gerade das Vorbereitungsfenster
+// bestaetigt? Dann ist ein Fenster, das sich unmittelbar danach oeffnet, der
+// Stream und nicht die uebliche Werbung.
+function istTorNachlauf(provider) {
+  const zeit = torKlickZeit.get(provider?.id);
+  return Boolean(zeit) && Date.now() - zeit < TOR_NACHLAUF_MS;
+}
+
 function stopAutoplayRequest(providerId) {
   const request = providerAutoplayRequests.get(providerId);
   if (request?.timer) clearInterval(request.timer);
@@ -2867,6 +2919,11 @@ function resumePendingProviderAutoplay(provider, view) {
       : `Zielseite nach 12s nicht erkannt (offen: ${kurzeUrl(aktuell)}) - Autoplay startet trotzdem`);
     request.expectUrl = "";
   }
+  // Steht das Vorbereitungsfenster im Weg? Dahinter entsteht das <video> erst -
+  // ohne diesen Schritt sucht der Autostart die ganze Zeit einen Player, den es
+  // noch gar nicht gibt, und laeuft in sein Zeitfenster.
+  pruefeVerifizierungsTor(provider, request, view);
+
   // Zeitgebunden statt nur boolesch: bleibt ein Durchlauf haengen, war der
   // Autoplay danach dauerhaft blockiert.
   if (request.busy && Date.now() < (request.busyUntil || 0)) return;
@@ -3447,7 +3504,20 @@ function istErlaubtesHauptziel(url, provider) {
 function isAllowedNewWindowTarget(url, provider) {
   if (shouldBlockProviderNavigation(url, provider)) return false;
   if (!settings.adblock.blockPopups) return true;
-  return istVerifizierungsFenster(url, provider);
+  if (istVerifizierungsFenster(url, provider)) return true;
+  // Eng gefasste Ausnahme fuer das Vorbereitungsfenster bei S.to: wurde eben
+  // "Weiter" bestaetigt und geht daraufhin ein Fenster zu einem bekannten
+  // Hoster oder zurueck zum Anbieter auf, ist das der Stream. Ohne diese
+  // Ausnahme haette der Popup-Schutz genau den Klick entwertet, den der
+  // Autostart gerade gemacht hat.
+  //
+  // Streng bleibt sie durch dreierlei: es zaehlt nur eine Bestaetigung, die
+  // hoechstens acht Sekunden her ist, nur diese Ziele, und geoeffnet wird
+  // ohnehin kein zweites Fenster - die Adresse laedt in der laufenden Ansicht.
+  if (istTorNachlauf(provider) && (isKnownVideoHosterUrl(url) || isProviderFirstParty(providerModel.hostFromUrl(url), provider))) {
+    return true;
+  }
+  return false;
 }
 
 // Streng gefasst: nur echte Abfragen, keine Wiedergabe-Adressen. Der Player
@@ -10152,9 +10222,24 @@ function rahmenFinden(view, istHauptrahmen, prozessId, rahmenId) {
   }
 }
 
-function frameAusfuehren(rahmen, script) {
+// Ein Rahmen kann zwischen Nachschlagen und Aufruf verschwinden - beim
+// Folgenwechsel passiert genau das staendig. Electron meldet den Zugriff dann
+// als Fehler auf der Konsole, noch bevor das Versprechen entsteht; ohne diese
+// Pruefung steht nach jedem Wechsel "Render frame was disposed" im Protokoll.
+function rahmenLebt(rahmen) {
   try {
-    if (!rahmen || typeof rahmen.executeJavaScript !== "function") return Promise.resolve(null);
+    if (!rahmen || typeof rahmen.executeJavaScript !== "function") return false;
+    if (typeof rahmen.isDestroyed === "function" && rahmen.isDestroyed()) return false;
+    if (rahmen.detached === true) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function frameAusfuehren(rahmen, script) {
+  if (!rahmenLebt(rahmen)) return Promise.resolve(null);
+  try {
     return rahmen.executeJavaScript(script, true).catch(() => null);
   } catch {
     return Promise.resolve(null);
