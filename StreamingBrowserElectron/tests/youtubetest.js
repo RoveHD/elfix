@@ -206,7 +206,8 @@ pruefe("Ein schon richtiges Bild wird als solches erkannt",
   && yt.istVorschaubildUrl("") === false);
 
 pruefe("Beim Laden werden alte Karten mit fremdem Bild geradegezogen",
-  /youtube\.istYoutubeUrl\(favorite\?\.url \|\| ""\) && !youtube\.istVorschaubildUrl\(favorite\?\.thumbnail\)/.test(main));
+  /if \(youtube\.istYoutubeUrl\(favorite\?\.url \|\| ""\)\) \{/.test(main)
+  && /if \(!youtube\.istVorschaubildUrl\(favorite\?\.thumbnail\)\) \{\n\s*const kandidaten = youtube\.vorschaubildKandidaten\(favorite\.url\);/.test(main));
 pruefe("Der Bildabruf haelt den Fortschritts-Takt nicht auf",
   /function youtubeBildNachreichen\(view, meta\)/.test(main)
   && !/await [^\n]*erstesErreichbaresBild/.test(main)
@@ -224,8 +225,21 @@ pruefe("Shorts werden gar nicht erst gemerkt",
   && /function isTrackableMediaUrl\(url, provider\) \{\n\s*\/\/[\s\S]{0,400}?if \(youtube\.istShortsUrl\(url\)\) return false;/.test(main),
   "steht in isTrackableMediaUrl, also vor jedem Eintrag");
 
-pruefe("YouTube gilt mit 90 Prozent als durch",
-  /if \(!entry\.completed && youtube\.istYoutubeUrl\(url\) && progressPercent >= COMPLETED_PROGRESS_PERCENT\) \{/.test(main));
+pruefe("YouTube gilt genau ab 90 Prozent als durch - und darunter wieder nicht",
+  /if \(hasMediaProgress && youtube\.istYoutubeUrl\(url\) && !entry\.completedManually\) \{\n\s*entry\.completed = progressPercent >= COMPLETED_PROGRESS_PERCENT;/.test(main),
+  "in beide Richtungen, sonst bleibt der Merker kleben");
+// Der Fehler, der es in die App geschafft hat: "abgeschlossen" wurde nur
+// gesetzt, nie zurueckgenommen. Ein Eintrag mit 26 Prozent galt deshalb als
+// durch und verschwand aus "Weiterschauen", waehrend er noch lief.
+pruefe("Der Merker wird nicht mehr nur gesetzt, sondern neu bestimmt",
+  !/if \(!entry\.completed && youtube\.istYoutubeUrl/.test(main));
+pruefe("Von Hand Abgehaktes bleibt abgehakt",
+  /!entry\.completedManually/.test(main) && /!favorite\.completedManually/.test(main));
+pruefe("Beim Laden werden falsch gesetzte Merker geradegezogen",
+  /favorite\.completed && !favorite\.completedManually\n\s*&& sanitizeProgress\(favorite\.progress\) < COMPLETED_PROGRESS_PERCENT/.test(main)
+  && /favorite\.hideFromContinueWatching = false;/.test(main));
+pruefe("Alte Shorts-Eintraege verschwinden beim Laden",
+  /\.filter\(\(favorite\) => !youtube\.istShortsUrl\(favorite\.url\)\)/.test(main));
 pruefe("Die anderen Anbieter warten weiter auf das Ende der Folge",
   /const wholeItemCompleted = isWholeMediaCompleted\(entry, url, mediaEnded\);/.test(main)
   && /function isWholeMediaCompleted\(entry, url, mediaEnded\) \{\n\s*if \(!mediaEnded\) return false;/.test(main));
@@ -285,6 +299,39 @@ pruefe("Kein Verweis auf Entferntes ist stehengeblieben",
   "sonst wirft der Renderer beim Laden");
 pruefe("Die Anbieter bleiben ueber die Seitenleiste erreichbar",
   /renderSidebarProviders\(enabled\)/.test(renderer) && /function sidebarProviderButton\(provider\)/.test(renderer));
+
+console.log("\n-- YouTube als Standard-Anbieter --");
+const providerModelPfad = path.join(WURZEL, "shared", "provider-model.js");
+const pm = require(providerModelPfad);
+const standard = pm.defaultProviders();
+const ytAnbieter = standard.find((p) => /youtube/i.test(p.name));
+pruefe("YouTube ist bei einer Neuinstallation dabei", Boolean(ytAnbieter),
+  standard.map((p) => p.name).join(", "));
+pruefe("Startadresse und Suche stimmen",
+  ytAnbieter?.startUrl === "https://www.youtube.com/"
+  && pm.buildSearchUrl(ytAnbieter, "splatoon raiders") === "https://www.youtube.com/results?search_query=splatoon%20raiders",
+  pm.buildSearchUrl(ytAnbieter, "splatoon raiders"));
+pruefe("Er steht hinten und ist eingeschaltet",
+  ytAnbieter?.sortOrder === 3 && ytAnbieter?.enabled === true && ytAnbieter?.adblockEnabled === true);
+pruefe("Er uebersteht die Normalisierung unveraendert",
+  (() => {
+    const nach = pm.normalizeProviders([ytAnbieter])[0];
+    return nach.startUrl === ytAnbieter.startUrl && nach.searchUrl === ytAnbieter.searchUrl
+      && nach.name === ytAnbieter.name && nach.logo === ytAnbieter.logo;
+  })());
+pruefe("Jeder Anbieter hat eine eigene Kennung",
+  new Set(standard.map((p) => p.id)).size === standard.length);
+// Die drei bisherigen duerfen sich dabei nicht veraendert haben - sie sind das,
+// womit ELFIX seit jeher ausgeliefert wird.
+pruefe("Aniworld, S.to und Filmo sind unveraendert geblieben",
+  standard.slice(0, 3).map((p) => `${p.name}|${p.startUrl}|${p.sortOrder}`).join(" ")
+  === "Aniworld|https://aniworld.to/|0 S.to|http://186.2.175.5/|1 Filmo|https://filmo.to/|2",
+  standard.slice(0, 3).map((p) => p.name).join(", "));
+// Die neue Adresse muss von allem verstanden werden, was diese Datei kann -
+// sonst stuende YouTube zwar in der Liste, waere aber fuer den Rest fremd.
+pruefe("Das YouTube-Modul erkennt die eigene Standardadresse",
+  yt.istYoutubeUrl(ytAnbieter.startUrl) === true
+  && yt.istYoutubeUrl(pm.buildSearchUrl(ytAnbieter, "test")) === true);
 
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",

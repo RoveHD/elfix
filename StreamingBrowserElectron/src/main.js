@@ -337,6 +337,11 @@ app.whenReady().then(async () => {
   // Einmalig: eigene Bilder aus der Zeit nachziehen, als sie nur an einer
   // einzelnen Kachel hingen.
   if (verteileEigeneBilder(favorites)) saveFavorites();
+  // Wurde beim Laden ein YouTube-Eintrag geradegezogen oder ein Short
+  // aussortiert, gilt das sofort - sonst stuende die Reparatur nur im
+  // Speicher und die Ablage saehe bis zur naechsten Aenderung weiter falsch
+  // aus.
+  if (youtubeGeradegezogen) saveFavorites();
   settings = loadSettings();
   saveSettings();
   watchpartyLokal = loadWatchpartyLocal();
@@ -3864,14 +3869,25 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   const nextContinueUrl = shouldAdvanceEpisode ? nextEpisodeContinueUrl(url, meta.nextUrl, entry, meta) : "";
   let advancedToNextEpisode = false;
   entry.completed = Boolean(entry.completed || wholeItemCompleted);
-  // YouTube gilt mit 90 Prozent als durch, auch ohne dass der Player das Ende
-  // gemeldet hat. Bei den anderen Anbietern wartet ELFIX auf dieses Ende, weil
-  // dort die naechste Folge ansteht und der Wechsel daran haengt. Ein
-  // YouTube-Video hat keine naechste Folge - wer neunzig Prozent gesehen hat,
-  // will es nicht wiederfinden, sondern loswerden. Die letzten Minuten sind
-  // Abspann, Kanalhinweise und Endcards.
-  if (!entry.completed && youtube.istYoutubeUrl(url) && progressPercent >= COMPLETED_PROGRESS_PERCENT) {
-    entry.completed = true;
+  // Bei YouTube entscheidet allein der Fortschritt - und zwar in beide
+  // Richtungen.
+  //
+  // Sonst ist "abgeschlossen" ein Merker, der einmal gesetzt wird und stehen
+  // bleibt: bei einer Serie ist das richtig, denn die letzte Folge bleibt
+  // gesehen, egal was man danach anfaengt. Ein YouTube-Video ist aber ein
+  // einzelnes Werk unter einer einzigen Adresse. Blieb der Merker dort einmal
+  // haengen, galt das Video fuer immer als durch - auch bei sechsundzwanzig
+  // Prozent, und dann verschwand es aus "Weiterschauen", waehrend man es noch
+  // schaute.
+  //
+  // Deshalb wird der Merker hier bei jedem Stand neu bestimmt. Faellt der
+  // Fortschritt wieder unter neunzig Prozent - weil man zurueckspringt oder
+  // das Video neu beginnt -, ist es auch wieder offen.
+  //
+  // "Von Hand abgehakt" bleibt davon unberuehrt: das ist eine Entscheidung des
+  // Nutzers und keine Messung.
+  if (hasMediaProgress && youtube.istYoutubeUrl(url) && !entry.completedManually) {
+    entry.completed = progressPercent >= COMPLETED_PROGRESS_PERCENT;
   }
   if (hasMediaProgress) {
     entry.currentTime = sanitizePositiveNumber(meta.currentTime || meta.position);
@@ -8386,6 +8402,7 @@ function saveProviders() {
 }
 
 function loadFavorites() {
+  youtubeGeradegezogen = 0;
   try {
     const raw = JSON.parse(fs.readFileSync(FAVORITES_FILE, "utf8"));
     if (!Array.isArray(raw)) return [];
@@ -8439,10 +8456,19 @@ function loadFavorites() {
       createdAt: String(favorite.createdAt || new Date().toISOString()),
       openedAt: String(favorite.openedAt || ""),
       updatedAt: String(favorite.updatedAt || "")
-    })).filter((favorite) => providerModel.isHttpUrl(favorite.url));
+    })).filter((favorite) => providerModel.isHttpUrl(favorite.url))
+      // Shorts werden seit dem YouTube-Umbau gar nicht mehr gemerkt. Was aus
+      // der Zeit davor noch herumliegt, kommt hier weg - sonst blieben die
+      // Eintraege ewig in der Ablage stehen, ohne dass man sie je zu sehen
+      // bekaeme.
+      .filter((favorite) => !youtube.istShortsUrl(favorite.url));
     // Aeltere Staende koennen den Widerspruch schon enthalten: die Titel waren
     // von Hand abgehakt, standen aber nicht mehr in der Mediathek. Sie kommen
     // beim Laden zurueck.
+    const shortsWeg = raw.length - geladen.length - raw.filter((f) => !providerModel.isHttpUrl(String(f.url || ""))).length;
+    if (youtubeGeradegezogen || shortsWeg > 0) {
+      console.log(`[ELFIX YOUTUBE] ${youtubeGeradegezogen} wieder offen, ${Math.max(0, shortsWeg)} Short(s) entfernt`);
+    }
     const gerichtet = widersprucheGeraderichten(geladen);
     if (gerichtet) console.log(`[ELFIX] ${gerichtet} Titel in die Mediathek zurueckgeholt`);
     return geladen;
@@ -8511,15 +8537,40 @@ function normalizeStoredEpisodeCompletion(favorite) {
   return type === "serie" && Boolean(favorite?.episodeCompleted || isCompletedProgress(favorite?.progress));
 }
 
+// Wie viele Eintraege beim letzten Laden geradegezogen wurden. Ohne diese Zahl
+// bliebe die Reparatur nur im Speicher: geschrieben wird die Ablage erst, wenn
+// sich sonst etwas aendert, und bis dahin saehe die Datei weiter falsch aus.
+let youtubeGeradegezogen = 0;
+
 function normalizeLoadedFavorite(favorite) {
   // YouTube-Karten bekommen ihr Bild aus der Videokennung. Das ist reine
   // Rechnerei, kostet also nichts, und es raeumt gleich die Karten auf, die
   // noch ein zusammengesuchtes Bild aus der Empfehlungsspalte tragen - sonst
   // haetten die es behalten, denn beim Fortschritt wird das Bild eines
   // bestehenden Eintrags nicht mehr angefasst.
-  if (youtube.istYoutubeUrl(favorite?.url || "") && !youtube.istVorschaubildUrl(favorite?.thumbnail)) {
-    const kandidaten = youtube.vorschaubildKandidaten(favorite.url);
-    if (kandidaten.length) favorite.thumbnail = kandidaten[kandidaten.length - 1];
+  if (youtube.istYoutubeUrl(favorite?.url || "")) {
+    if (!youtube.istVorschaubildUrl(favorite?.thumbnail)) {
+      const kandidaten = youtube.vorschaubildKandidaten(favorite.url);
+      if (kandidaten.length) favorite.thumbnail = kandidaten[kandidaten.length - 1];
+    }
+    // Der Merker "abgeschlossen" war bei YouTube klebrig: einmal gesetzt, galt
+    // das Video fuer immer als durch. Eintraege aus dieser Zeit tragen ihn bei
+    // achtundzwanzig Prozent und waren damit aus "Weiterschauen" verschwunden,
+    // obwohl sie offen sind. Beim Laden wird das am gespeicherten Stand
+    // geradegezogen - von Hand Abgehaktes bleibt abgehakt.
+    if (favorite.completed && !favorite.completedManually
+      && sanitizeProgress(favorite.progress) < COMPLETED_PROGRESS_PERCENT) {
+      favorite.completed = false;
+      // Der Bedingung nach ist es hier ohnehin schon false. Es steht trotzdem
+      // da: "abgehakt, aber nicht abgeschlossen" ist der Widerspruch, ueber
+      // den Titel frueher unrettbar aus der Mediathek verschwanden, und
+      // mediathektest besteht zu Recht darauf, dass jede Stelle, die
+      // `completed` loescht, den Merker mitloescht.
+      favorite.completedManually = false;
+      favorite.completedAt = "";
+      favorite.hideFromContinueWatching = false;
+      youtubeGeradegezogen += 1;
+    }
     return favorite;
   }
   if (isStoFavoriteRecord(favorite)) {

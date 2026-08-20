@@ -38,6 +38,20 @@ function defaultProviders() {
       adblockEnabled: true,
       sortOrder: 2,
       lastUrl: ""
+    },
+    {
+      id: createId(),
+      name: "YouTube",
+      startUrl: "https://www.youtube.com/",
+      // Der Weg, den YouTube selbst benutzt. "/search?q=" tut es auch, landet
+      // aber ueber eine Weiterleitung hier - nachgesehen: 301 auf genau diese
+      // Adresse.
+      searchUrl: "https://www.youtube.com/results?search_query={query}",
+      logo: "YT",
+      enabled: true,
+      adblockEnabled: true,
+      sortOrder: 3,
+      lastUrl: ""
     }
   ];
 }
