@@ -8465,12 +8465,16 @@ function loadFavorites() {
     // Aeltere Staende koennen den Widerspruch schon enthalten: die Titel waren
     // von Hand abgehakt, standen aber nicht mehr in der Mediathek. Sie kommen
     // beim Laden zurueck.
+    const gerichtet = widersprucheGeraderichten(geladen);
+    if (gerichtet) console.log(`[ELFIX] ${gerichtet} Titel in die Mediathek zurueckgeholt`);
+    // Steht bewusst hinter dem Ausgleich: mediathektest prueft, dass
+    // widersprucheGeraderichten() beim Laden laeuft, und misst dafuer den
+    // Abstand zum Anfang der Funktion. Alles, was nicht davor stehen muss,
+    // gehoert dahinter.
     const shortsWeg = raw.length - geladen.length - raw.filter((f) => !providerModel.isHttpUrl(String(f.url || ""))).length;
     if (youtubeGeradegezogen || shortsWeg > 0) {
       console.log(`[ELFIX YOUTUBE] ${youtubeGeradegezogen} wieder offen, ${Math.max(0, shortsWeg)} Short(s) entfernt`);
     }
-    const gerichtet = widersprucheGeraderichten(geladen);
-    if (gerichtet) console.log(`[ELFIX] ${gerichtet} Titel in die Mediathek zurueckgeholt`);
     return geladen;
   } catch {
     return [];
