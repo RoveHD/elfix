@@ -133,11 +133,12 @@
               <div class="favorite-rail" id="homeWatchpartyContinue"></div>
             </section>
 
-            <section class="home-row providers-row" id="providersHomeRow">
+            <section class="home-row favorites-row is-hidden" id="youtubeHomeRow">
               <div class="row-head">
-                <div class="row-title">Beliebte Anbieter</div>
+                <div class="row-title">Weiterschauen auf YouTube</div>
+                <button class="text-action" id="showAllYoutubeContinue">Alle anzeigen</button>
               </div>
-              <div class="home-provider-grid" id="homeProviders"></div>
+              <div class="favorite-rail" id="homeYoutubeContinue"></div>
             </section>
 
             <section class="home-row recommended-row" id="recommendedHomeRow">
@@ -489,7 +490,7 @@
           <div class="settings-section-grid">
             <label class="check setting-row"><input id="showHeroHome" type="checkbox"><span><strong>Großes Titelbild oben</strong><small>Zeigt den zuletzt gesehenen Titel mit „Weiter schauen“-Knopf.</small></span></label>
             <label class="check setting-row"><input id="showHomeFavorites" type="checkbox"><span><strong>Reihe „Weiterschauen“</strong><small>Angefangene Filme und Folgen direkt auf der Startseite.</small></span></label>
-            <label class="check setting-row"><input id="showHomeProviders" type="checkbox"><span><strong>Reihe „Beliebte Anbieter“</strong><small>Deine Streaming-Seiten als Kacheln zum Direktstart.</small></span></label>
+            <label class="check setting-row"><input id="showHomeYoutube" type="checkbox"><span><strong>Reihe „Weiterschauen auf YouTube“</strong><small>Angefangene YouTube-Videos in einer eigenen Reihe, getrennt von Serien und Filmen.</small></span></label>
             <label class="check setting-row"><input id="showHomePersonal" type="checkbox"><span><strong>Reihe „Empfohlen für dich“</strong><small>Vorschläge aus Genres und ähnlichen Titeln zu dem, was du geschaut hast.</small></span></label>
             <label class="check setting-row"><input id="showHomeCategories" type="checkbox"><span><strong>Reihen nach Kategorie</strong><small>Je eine Reihe mit Vorschlägen für Anime, Serien und Filme.</small></span></label>
             <label>Beschriftung der Anbieter-Kacheln
@@ -1137,13 +1138,11 @@
                   </div>
                 </section>
 
-                <section class="preview-row preview-row-providers">
-                  <div class="preview-row-head"><strong>Beliebte Anbieter</strong><span>Alle anzeigen</span></div>
-                  <div class="preview-providers">
-                    <b><i>AN</i><span>Aniworld</span></b>
-                    <b><i>S.</i><span>S.to</span></b>
-                    <b><i>FI</i><span>Filmo</span></b>
-                    <button type="button">+</button>
+                <section class="preview-row preview-row-youtube">
+                  <div class="preview-row-head"><strong>Weiterschauen auf YouTube</strong><span>Alle anzeigen</span></div>
+                  <div class="preview-posters">
+                    <article class="art-1"><div></div><strong>Splatoon Raiders</strong><small>Youtube</small><span><i style="width:45%"></i></span></article>
+                    <article class="art-2"><div></div><strong>Avatar Analyse</strong><small>Youtube</small><span><i style="width:70%"></i></span></article>
                   </div>
                 </section>
               </div>

@@ -9868,7 +9868,7 @@ function normalizeSettings(raw) {
     },
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
-      showProviders: raw?.home?.showProviders ?? defaults.home.showProviders,
+      showYoutube: raw?.home?.showYoutube ?? defaults.home.showYoutube,
       showFavorites: raw?.home?.showFavorites ?? defaults.home.showFavorites,
       showPersonal: raw?.home?.showPersonal ?? defaults.home.showPersonal,
       showCategories: raw?.home?.showCategories ?? defaults.home.showCategories,
@@ -9973,7 +9973,7 @@ function defaultSettings() {
     },
     home: {
       showHero: true,
-      showProviders: true,
+      showYoutube: true,
       showFavorites: true,
       showPersonal: true,
       showCategories: true,

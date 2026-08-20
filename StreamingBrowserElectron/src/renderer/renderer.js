@@ -49,7 +49,7 @@ const appSidebar = document.querySelector("#appSidebar");
 const sidebarToggle = document.querySelector("#sidebarToggle");
 const homeSidebarToggle = document.querySelector("#homeSidebarToggle");
 const providerRail = document.querySelector("#providerRail");
-const homeProviders = document.querySelector("#homeProviders");
+const homeYoutubeContinue = document.querySelector("#homeYoutubeContinue");
 const homeSidebarProviders = document.querySelector("#homeSidebarProviders");
 const homeRecommendations = document.querySelector("#homeRecommendations");
 const recommendedHomeRow = document.querySelector("#recommendedHomeRow");
@@ -91,7 +91,7 @@ const historyView = document.querySelector("#historyView");
 const noProvidersState = document.querySelector("#noProvidersState");
 const homeHero = document.querySelector("#homeHero");
 const heroDots = document.querySelector("#heroDots");
-const providersHomeRow = document.querySelector("#providersHomeRow");
+const youtubeHomeRow = document.querySelector("#youtubeHomeRow");
 const favoritesHomeRow = document.querySelector("#favoritesHomeRow");
 const heroTitle = document.querySelector("#heroTitle");
 const heroCopy = document.querySelector("#heroCopy");
@@ -185,7 +185,7 @@ const cardStyle = document.querySelector("#cardStyle");
 const shadowStyle = document.querySelector("#shadowStyle");
 const showProviderStrip = document.querySelector("#showProviderStrip");
 const showHeroHome = document.querySelector("#showHeroHome");
-const showHomeProviders = document.querySelector("#showHomeProviders");
+const showHomeYoutube = document.querySelector("#showHomeYoutube");
 const showHomeFavorites = document.querySelector("#showHomeFavorites");
 const showHomePersonal = document.querySelector("#showHomePersonal");
 const showHomeCategories = document.querySelector("#showHomeCategories");
@@ -305,7 +305,7 @@ const rangeSettings = {
 
 const DEFAULT_HOME_SETTINGS = {
   showHero: true,
-  showProviders: true,
+  showYoutube: true,
   showFavorites: true,
   showPersonal: true,
   showCategories: true,
@@ -523,6 +523,7 @@ function bindEvents() {
   // Watchlist, also an einen anderen Ort als die Karten darunter.
   document.querySelector("#showAllFavorites").addEventListener("click", showContinue);
   document.querySelector("#showAllWatchpartyContinue")?.addEventListener("click", showContinue);
+  document.querySelector("#showAllYoutubeContinue")?.addEventListener("click", showContinue);
   document.querySelector("#dismissNewEpisodes")?.addEventListener("click", dismissNewEpisodes);
   historySearch?.addEventListener("input", () => {
     historyFilter.suche = historySearch.value;
@@ -675,7 +676,7 @@ function bindEvents() {
     shadowStyle,
     showProviderStrip,
     showHeroHome,
-    showHomeProviders,
+    showHomeYoutube,
     showHomeFavorites,
     showHomePersonal,
     showHomeCategories,
@@ -932,14 +933,13 @@ function renderSidebarProviders(enabled = providers.filter((provider) => provide
 }
 
 function renderHome() {
-  if (!homeView || !homeHero || !homeProviders || !homeFavorites) return;
+  if (!homeView || !homeHero || !homeFavorites) return;
   const enabled = providers.filter((provider) => provider.enabled !== false);
   const hasProviders = enabled.length > 0;
   const homeSettings = settings.home || DEFAULT_HOME_SETTINGS;
   const heroVisible = hasProviders && homeSettings.showHero !== false;
   noProvidersState?.classList.toggle("is-hidden", hasProviders);
   homeHero.classList.toggle("is-hidden", !heroVisible);
-  providersHomeRow?.classList.toggle("is-hidden", !hasProviders || homeSettings.showProviders === false);
 
   const continueItems = sortedHomeFavorites();
   const heroProvider = enabled.find((provider) => provider.id === activeProviderId) || enabled[0] || null;
@@ -949,10 +949,6 @@ function renderHome() {
   renderHeroDots();
   startHeroRotation();
 
-  homeProviders.replaceChildren(...enabled.map((provider) => providerShowcaseCard(provider)));
-  if (!enabled.length) {
-    homeProviders.append(emptyText("Noch keine Websites gespeichert."));
-  }
   renderSidebarProviders(enabled);
 
   renderNewEpisodes();
@@ -968,7 +964,15 @@ function renderHome() {
     allowContinueRemove: true,
     allowWatchlistAdd: true
   };
-  const privateItems = continueItems.filter((favorite) => !favorite.watchpartyRoom).slice(0, 8);
+  // YouTube bekommt eine eigene Reihe. Ein angefangenes Video und eine
+  // angefangene Serie sind zwei verschiedene Dinge: bei der Serie geht es
+  // darum, sie zu Ende zu bringen, bei YouTube schaut man nebenbei. Gemischt
+  // schiebt das eine das andere aus der Reihe, und weil YouTube-Videos oft
+  // kommen und gehen, waeren es meist die Serien, die verdraengt werden.
+  const youtubeItems = continueItems.filter((favorite) => istYoutubeEintrag(favorite)).slice(0, 8);
+  const privateItems = continueItems
+    .filter((favorite) => !favorite.watchpartyRoom && !istYoutubeEintrag(favorite))
+    .slice(0, 8);
   const partyItems = continueItems.filter((favorite) => favorite.watchpartyRoom).slice(0, 8);
 
   favoritesHomeRow?.classList.toggle("is-hidden", privateItems.length === 0 || homeSettings.showFavorites === false);
@@ -976,6 +980,9 @@ function renderHome() {
 
   watchpartyHomeRow?.classList.toggle("is-hidden", partyItems.length === 0 || homeSettings.showFavorites === false);
   homeWatchpartyContinue?.replaceChildren(...partyItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
+
+  youtubeHomeRow?.classList.toggle("is-hidden", youtubeItems.length === 0 || homeSettings.showYoutube === false);
+  homeYoutubeContinue?.replaceChildren(...youtubeItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
 
   renderRecommendations();
   invalidatePicksIfWatchChanged();
@@ -1664,16 +1671,6 @@ function favoriteProgressPercent(favorite) {
   return null;
 }
 
-function providerShowcaseCard(provider) {
-  const card = providerCard(provider, true);
-  card.classList.add("provider-showcase-card");
-  const host = document.createElement("span");
-  host.className = "provider-host";
-  host.textContent = providerHost(provider);
-  card.append(host);
-  return card;
-}
-
 function sidebarProviderButton(provider) {
   const button = document.createElement("button");
   button.className = "home-side-link provider-side-link";
@@ -1683,14 +1680,6 @@ function sidebarProviderButton(provider) {
   button.innerHTML = `<span class="side-provider-badge side-icon">${escapeHtml(provider.logo || provider.name.slice(0, 2).toUpperCase())}</span><span class="side-label">${escapeHtml(provider.name)}</span>`;
   button.addEventListener("click", () => openProviderFromHome(provider.id));
   return button;
-}
-
-function providerHost(provider) {
-  try {
-    return new URL(provider.startUrl || provider.home || provider.searchUrl || "").hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
 }
 
 async function handleHomeAction(action) {
@@ -4286,7 +4275,7 @@ function renderSettings() {
   showProviderStrip.checked = appearance.showProviderStrip !== false;
   if (showProviderStripNav) showProviderStripNav.checked = appearance.showProviderStrip !== false;
   showHeroHome.checked = home.showHero !== false;
-  showHomeProviders.checked = home.showProviders !== false;
+  showHomeYoutube.checked = home.showYoutube !== false;
   showHomeFavorites.checked = home.showFavorites !== false;
   if (showHomePersonal) showHomePersonal.checked = home.showPersonal !== false;
   if (showHomeCategories) showHomeCategories.checked = home.showCategories !== false;
@@ -4474,7 +4463,7 @@ async function saveSettings() {
   };
   settings.home = {
     showHero: showHeroHome.checked,
-    showProviders: showHomeProviders.checked,
+    showYoutube: showHomeYoutube.checked,
     showFavorites: showHomeFavorites.checked,
     showPersonal: showHomePersonal ? showHomePersonal.checked : true,
     showCategories: showHomeCategories ? showHomeCategories.checked : true,

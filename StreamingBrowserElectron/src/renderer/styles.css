@@ -4875,6 +4875,11 @@ input[type="color"] {
   content: "⇄ ";
 }
 
+.preview-row-youtube .preview-row-head strong::before {
+  color: var(--accent);
+  content: "▶ ";
+}
+
 /* Herz auf einem Suchtreffer: nimmt den Titel ohne Umweg auf die Watchlist. */
 .result-fav {
   background: color-mix(in srgb, var(--bg-app) 55%, transparent);

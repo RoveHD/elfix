@@ -256,6 +256,36 @@ pruefe("Renderer und Modul kennen dieselben YouTube-Hosts",
   JSON.stringify(imRenderer.split(",").map((s) => s.trim().replace(/"/g, ""))) === JSON.stringify(yt.YOUTUBE_HOSTS),
   imRenderer.replace(/\s+/g, " ").trim());
 
+console.log("\n-- Eigene Reihe auf der Startseite --");
+pruefe("YouTube hat eine eigene Reihe im Markup",
+  /id="youtubeHomeRow"/.test(html) && /id="homeYoutubeContinue"/.test(html)
+  && /<div class="row-title">Weiterschauen auf YouTube<\/div>/.test(html));
+pruefe("Die Reihe „Beliebte Anbieter\" ist von der Startseite verschwunden",
+  !/id="providersHomeRow"/.test(html) && !/id="homeProviders"/.test(html)
+  && !/<div class="row-title">Beliebte Anbieter<\/div>/.test(html));
+pruefe("YouTube faellt aus der normalen Weiterschauen-Reihe heraus",
+  /\.filter\(\(favorite\) => !favorite\.watchpartyRoom && !istYoutubeEintrag\(favorite\)\)/.test(renderer));
+pruefe("Die YouTube-Reihe wird aus denselben Eintraegen gefuellt",
+  /const youtubeItems = continueItems\.filter\(\(favorite\) => istYoutubeEintrag\(favorite\)\)/.test(renderer)
+  && /youtubeHomeRow\?\.classList\.toggle\("is-hidden", youtubeItems\.length === 0 \|\| homeSettings\.showYoutube === false\)/.test(renderer));
+pruefe("Die Reihe hat ihren eigenen Schalter, Voreinstellung an",
+  /id="showHomeYoutube" type="checkbox"/.test(html)
+  && /showYoutube: raw\?\.home\?\.showYoutube \?\? defaults\.home\.showYoutube/.test(main)
+  && /showYoutube: true/.test(main));
+pruefe("„Alle anzeigen\" der neuen Reihe fuehrt nach Weiterschauen",
+  /#showAllYoutubeContinue"\)\?\.addEventListener\("click", showContinue\)/.test(renderer));
+// Wird ein Element geloescht, auf das renderHome() prueft, bleibt die ganze
+// Startseite leer. Genau das waere hier fast passiert.
+pruefe("renderHome prueft nicht mehr auf das geloeschte Anbieter-Element",
+  /if \(!homeView \|\| !homeHero \|\| !homeFavorites\) return;/.test(renderer)
+  && !/!homeProviders/.test(renderer));
+pruefe("Kein Verweis auf Entferntes ist stehengeblieben",
+  !/homeProviders|providersHomeRow|showHomeProviders|providerShowcaseCard/.test(renderer)
+  && !/homeProviders|providersHomeRow|showHomeProviders/.test(html),
+  "sonst wirft der Renderer beim Laden");
+pruefe("Die Anbieter bleiben ueber die Seitenleiste erreichbar",
+  /renderSidebarProviders\(enabled\)/.test(renderer) && /function sidebarProviderButton\(provider\)/.test(renderer));
+
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",
   /if \(!youtube\.istYoutubeUrl\(adresse\)\) return adresse;/.test(main));
