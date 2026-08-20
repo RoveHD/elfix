@@ -106,6 +106,103 @@ pruefe("Der Ausgleich laeuft vor jedem Schreiben",
 pruefe("Der Ausgleich laeuft auch beim Laden",
   /function loadFavorites\(\)[\s\S]{0,4000}?widersprucheGeraderichten\(geladen\)/.test(QUELLE));
 
+// --- Die Sortierung der Mediathek --------------------------------------------
+//
+// Vier Ansichten auf dieselben Titel: von Hand gelegt, zuletzt gesehen, A-Z und
+// nach Anbieter. Die wichtigste Zusage steht dabei nicht in der Sortierung
+// selbst, sondern daneben: keine der drei anderen Ansichten darf die von Hand
+// gelegte Reihenfolge anfassen. Wer sie sich einmal gelegt hat, findet sie nach
+// einem Ausflug nach A-Z unveraendert wieder vor.
+//
+// Geprueft wird der echte Quelltext der Oberflaeche.
+
+const RENDERER = fs.readFileSync(path.join(WURZEL, "src/renderer/renderer.js"), "utf8").split("\r\n").join("\n");
+
+function rendererAbschnitt(anfang, ende = "}") {
+  const zeilen = RENDERER.split("\n");
+  const von = zeilen.findIndex((z) => z.startsWith(anfang));
+  if (von < 0) throw new Error("nicht gefunden: " + anfang);
+  let bis = von;
+  while (bis < zeilen.length && zeilen[bis] !== ende) bis += 1;
+  return zeilen.slice(von, bis + 1).join("\n");
+}
+
+const sortSand = {
+  // Was die Sortierung von aussen braucht: der angezeigte Titel und der
+  // Zeitpunkt. Beide kommen aus der Oberflaeche und sind hier nachgestellt,
+  // damit die Reihenfolge fuer sich geprueft werden kann.
+  displayFavoriteTitle: (favorite) => String(favorite?.title || ""),
+  favoriteTimestamp: (favorite) => Number(favorite?.stand || 0),
+  Number, String, Array, Math, console
+};
+vm.createContext(sortSand);
+vm.runInContext(rendererAbschnitt("function mediathekSortieren("), sortSand);
+const sortieren = vm.runInContext("mediathekSortieren", sortSand);
+
+const SAMMLUNG = [
+  { id: "c", title: "Cowboy Bebop", providerName: "S.to", libraryOrder: 2, stand: 300 },
+  { id: "a", title: "Attack on Titan", providerName: "Aniworld", libraryOrder: 0, stand: 100 },
+  { id: "d", title: "Death Note", providerName: "Filmo", libraryOrder: 1, stand: 500 },
+  { id: "b", title: "Bleach", providerName: "Aniworld", libraryOrder: 3, stand: 200 }
+];
+const reihe = (liste) => liste.map((x) => x.id).join("");
+
+pruefe("Von Hand: die gespeicherte Stelle entscheidet",
+  reihe(sortieren(SAMMLUNG, "manuell")) === "adcb", reihe(sortieren(SAMMLUNG, "manuell")));
+pruefe("Zuletzt gesehen: das Neueste oben",
+  reihe(sortieren(SAMMLUNG, "zuletzt")) === "dcba", reihe(sortieren(SAMMLUNG, "zuletzt")));
+pruefe("A-Z: nach Titel",
+  reihe(sortieren(SAMMLUNG, "titel")) === "abcd", reihe(sortieren(SAMMLUNG, "titel")));
+pruefe("Nach Anbieter: Anbieter zuerst, darin nach Titel",
+  reihe(sortieren(SAMMLUNG, "anbieter")) === "abdc",
+  sortieren(SAMMLUNG, "anbieter").map((x) => `${x.providerName}/${x.title}`).join(" | "));
+
+// Das Entscheidende: keine Ansicht fasst die Handarbeit an.
+{
+  const vorher = JSON.stringify(SAMMLUNG);
+  for (const art of ["manuell", "zuletzt", "titel", "anbieter"]) sortieren(SAMMLUNG, art);
+  pruefe("Keine Ansicht aendert die Eintraege selbst", JSON.stringify(SAMMLUNG) === vorher);
+  pruefe("Die urspruengliche Liste bleibt in ihrer Reihenfolge",
+    reihe(SAMMLUNG) === "cadb", reihe(SAMMLUNG));
+  pruefe("Nach A-Z steht die Handsortierung unveraendert bereit",
+    reihe(sortieren(SAMMLUNG, "manuell")) === "adcb", reihe(sortieren(SAMMLUNG, "manuell")));
+}
+
+pruefe("Eine unbekannte Sortierung faellt auf die Handarbeit zurueck",
+  reihe(sortieren(SAMMLUNG, "zauberei")) === "adcb" && reihe(sortieren(SAMMLUNG)) === "adcb");
+
+// Frisch abgehakte Titel haben noch keine Stelle und gehoeren nach oben, sonst
+// gingen sie unten unter.
+{
+  const frisch = [...SAMMLUNG, { id: "n", title: "Neu", providerName: "S.to", stand: 900 }];
+  pruefe("Ohne gespeicherte Stelle steht ein Titel oben",
+    reihe(sortieren(frisch, "manuell")).startsWith("n"), reihe(sortieren(frisch, "manuell")));
+}
+
+// Umlaute gehoeren an ihre Stelle im Alphabet, nicht ans Ende.
+{
+  const umlaute = [
+    { id: "z", title: "Zorn", stand: 1 },
+    { id: "u", title: "Über den Wolken", stand: 2 },
+    { id: "a", title: "Alles", stand: 3 }
+  ];
+  pruefe("A-Z ordnet Umlaute deutsch ein",
+    reihe(sortieren(umlaute, "titel")) === "auz", reihe(sortieren(umlaute, "titel")));
+}
+
+// --- Und die Oberflaeche haelt sich daran ------------------------------------
+
+pruefe("Gezogen werden darf nur in der Handsortierung",
+  /const vonHand = sortierung === "manuell";[\s\S]{0,400}?sortable: vonHand/.test(RENDERER));
+pruefe("Das Speichern der Reihenfolge weigert sich in jeder anderen Ansicht",
+  /async function mediathekReihenfolgeSpeichern\(\)[\s\S]{0,400}?if \(mediathekSortierung\(\) !== "manuell"\) return;/.test(RENDERER));
+pruefe("Der Wechsel der Ansicht schreibt keine Reihenfolge",
+  /async function mediathekSortierungSetzen\([\s\S]{0,600}?\n\}/.test(RENDERER)
+  && !/async function mediathekSortierungSetzen\([\s\S]{0,600}?reorderLibrary/.test(RENDERER));
+pruefe("Die Wahl wird gespeichert und ueberlebt den Neustart",
+  /librarySort: sanitizeChoice\(raw\?\.home\?\.librarySort/.test(QUELLE)
+  && /librarySort: "manuell"/.test(QUELLE));
+
 const gut = pruefungen.filter(Boolean).length;
 console.log(`${gut}/${pruefungen.length} bestanden`);
 process.exit(gut === pruefungen.length ? 0 : 1);

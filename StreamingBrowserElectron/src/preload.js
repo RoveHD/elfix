@@ -67,6 +67,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   onMediaDiagnostics: (callback) => ipcRenderer.on("media:diagnostics", (_event, items) => callback(items)),
   onFullscreen: (callback) => ipcRenderer.on("browser:fullscreen", (_event, enabled) => callback(enabled)),
   onUpdateState: (callback) => ipcRenderer.on("updates:state", (_event, state) => callback(state)),
+  // Ein Klick auf die Benachrichtigung ueber eine neue Folge. Der Hauptprozess
+  // holt das Fenster nach vorn und schickt hierher, um welchen Titel es ging.
+  onZeigeFavorit: (callback) => ipcRenderer.on("elfix:zeige-favorit", (_event, id) => callback(id)),
   onToast: (callback) => ipcRenderer.on("app:toast", (_event, message) => callback(message)),
   onAutostartDone: (callback) => ipcRenderer.on("app:autostart-done", (_event, info) => callback(info))
 });

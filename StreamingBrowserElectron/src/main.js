@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, WebContentsView, ipcMain, net, session, shell, dialog, webFrameMain } = require("electron");
+const { app, BrowserWindow, Menu, WebContentsView, ipcMain, net, session, shell, dialog, webFrameMain, Notification } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
@@ -328,6 +328,10 @@ let updateState = {
 };
 
 app.setName("ELFIX");
+// Ohne diese Kennung zeigt Windows Benachrichtigungen einer Electron-App gar
+// nicht an oder schreibt "electron.app.Elfix" darueber. Sie muss zu der aus
+// electron-builder passen, sonst findet Windows die App nicht wieder.
+if (process.platform === "win32") app.setAppUserModelId("com.rovehd.elfix");
 
 app.whenReady().then(async () => {
   adblock = new AdblockEngine();
@@ -4120,6 +4124,10 @@ async function pruefeNeueFolgen() {
   if (!kandidaten.length) return;
 
   let geaendert = false;
+  // Was in diesem Durchlauf neu dazukommt. Nur darueber wird eine Meldung
+  // geschickt - newEpisodeAt bleibt am Eintrag stehen, bis der Titel geoeffnet
+  // wird, und von dort gemeldet kaeme dieselbe Meldung immer wieder.
+  const gemeldet = [];
   for (const favorite of kandidaten) {
     const umfang = await serienUmfangLaden(favorite).catch(() => null);
     if (!umfang) continue;
@@ -4162,12 +4170,78 @@ async function pruefeNeueFolgen() {
       ? `Staffel ${bekannteStaffel + 1} ist da`
       : `Folge ${bekannteFolge + 1} ist da`;
     geaendert = true;
+    gemeldet.push(favorite);
     console.log(`[ELFIX NEU] ${favorite.title}: ${favorite.newEpisodeLabel}`);
   }
 
   if (!geaendert) return;
   saveFavorites();
   sendActiveState();
+  meldeNeueFolgen(gemeldet);
+}
+
+// Eine Windows-Benachrichtigung je neu gefundener Folge.
+//
+// ELFIX erkennt neue Folgen laengst - es sagte es nur, solange das Fenster
+// offen war. Genau dann braucht man es aber nicht.
+//
+// Gemeldet wird nur, was in diesem Durchlauf neu dazugekommen ist. Die Liste
+// steht in newEpisodeAt am Eintrag und bleibt dort stehen, bis der Titel
+// geoeffnet wird; wuerde von dort gemeldet, kaeme bei jedem Durchlauf dieselbe
+// Meldung wieder.
+function meldeNeueFolgen(neue) {
+  if (!neue.length) return;
+  if (!settings.notifications?.newEpisodes) return;
+  if (!Notification.isSupported()) {
+    console.log("[ELFIX NEU] Benachrichtigungen sind auf diesem System nicht moeglich");
+    return;
+  }
+
+  // Bei einem Schwall lieber eine Meldung als zehn. Drei Titel passen noch in
+  // eine Zeile, danach wird gezaehlt.
+  if (neue.length > 1) {
+    const namen = neue.slice(0, 3).map((favorite) => cleanTitle(favorite.title));
+    const rest = neue.length - namen.length;
+    zeigeHinweis({
+      titel: `${neue.length} neue Folgen`,
+      text: namen.join(", ") + (rest > 0 ? ` und ${rest} weitere` : ""),
+      favorite: neue[0]
+    });
+    return;
+  }
+
+  const favorite = neue[0];
+  zeigeHinweis({
+    titel: cleanTitle(favorite.title),
+    text: favorite.newEpisodeLabel,
+    favorite
+  });
+}
+
+function zeigeHinweis({ titel, text, favorite }) {
+  try {
+    const hinweis = new Notification({ title: titel, body: text, silent: false });
+    // Windows nimmt die Meldung an und liefert sie trotzdem nicht aus, wenn
+    // Benachrichtigungen dort abgeschaltet sind - "isSupported" sagt davon
+    // nichts. Ohne diese Zeile scheitert das lautlos, und man sucht den Fehler
+    // in ELFIX statt in den Windows-Einstellungen.
+    hinweis.on("failed", (_ereignis, fehler) => {
+      console.log(`[ELFIX NEU] Windows hat die Benachrichtigung nicht angezeigt: ${fehler}`);
+      console.log("[ELFIX NEU] Meist sind Benachrichtigungen in den Windows-Einstellungen aus (System > Benachrichtigungen).");
+    });
+    // Ein Klick soll dorthin fuehren, wovon die Meldung handelt - sonst steht
+    // man im Fenster und sucht selbst.
+    hinweis.on("click", () => {
+      const fenster = BrowserWindow.getAllWindows()[0];
+      if (!fenster) return;
+      if (fenster.isMinimized()) fenster.restore();
+      fenster.focus();
+      if (favorite?.id) fenster.webContents.send("elfix:zeige-favorit", favorite.id);
+    });
+    hinweis.show();
+  } catch (fehler) {
+    console.log(`[ELFIX NEU] Benachrichtigung fehlgeschlagen: ${fehler?.message || fehler}`);
+  }
 }
 
 // Wartende Fassung fuer Aufrufer, die nicht im Fortschritts-Takt haengen.
@@ -9907,6 +9981,11 @@ function normalizeSettings(raw) {
       whitelist: Array.isArray(raw?.adblock?.whitelist) ? raw.adblock.whitelist.map(String) : [],
       lastUpdated: raw?.adblock?.lastUpdated || ""
     },
+    // Standardmaessig aus: eine Meldung, die man nicht bestellt hat, ist eine
+    // Stoerung. Wer sie will, schaltet sie in den Einstellungen ein.
+    notifications: {
+      newEpisodes: raw?.notifications?.newEpisodes === true
+    },
     playback: {
       pauseOnProviderSwitch: raw?.playback?.pauseOnProviderSwitch ?? defaults.playback.pauseOnProviderSwitch,
       favoriteProgressMode: sanitizeChoice(raw?.playback?.favoriteProgressMode, ["sequential", "static"], defaults.playback.favoriteProgressMode),
@@ -9944,7 +10023,10 @@ function normalizeSettings(raw) {
       showFavorites: raw?.home?.showFavorites ?? defaults.home.showFavorites,
       showPersonal: raw?.home?.showPersonal ?? defaults.home.showPersonal,
       showCategories: raw?.home?.showCategories ?? defaults.home.showCategories,
-      providerCardMeta: sanitizeChoice(raw?.home?.providerCardMeta, ["logoName", "logo", "name"], defaults.home.providerCardMeta)
+      providerCardMeta: sanitizeChoice(raw?.home?.providerCardMeta, ["logoName", "logo", "name"], defaults.home.providerCardMeta),
+      // Wie die Mediathek sortiert ist. Ohne diese Zeile faellt die Wahl beim
+      // Speichern weg - hier werden nur bekannte Felder uebernommen.
+      librarySort: sanitizeChoice(raw?.home?.librarySort, ["manuell", "zuletzt", "titel", "anbieter"], defaults.home.librarySort)
     },
     appearance: {
       settingsMode: sanitizeChoice(raw?.appearance?.settingsMode, ["simple", "advanced"], defaults.appearance.settingsMode),
@@ -10026,6 +10108,9 @@ function defaultSettings() {
       whitelist: [],
       lastUpdated: ""
     },
+    notifications: {
+      newEpisodes: false
+    },
     playback: {
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
@@ -10049,7 +10134,8 @@ function defaultSettings() {
       showFavorites: true,
       showPersonal: true,
       showCategories: true,
-      providerCardMeta: "logoName"
+      providerCardMeta: "logoName",
+      librarySort: "manuell"
     },
     appearance: {
       settingsMode: "advanced",

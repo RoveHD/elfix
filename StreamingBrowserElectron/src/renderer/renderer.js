@@ -229,6 +229,7 @@ const showFavoriteMetaMirror = document.querySelector("#showFavoriteMetaMirror")
 const favoriteProgressMode = document.querySelector("#favoriteProgressMode");
 const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
+const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
 const pauseOnBlur = document.querySelector("#pauseOnBlur");
 const blockedList = document.querySelector("#blockedList");
@@ -309,7 +310,8 @@ const DEFAULT_HOME_SETTINGS = {
   showFavorites: true,
   showPersonal: true,
   showCategories: true,
-  providerCardMeta: "logoName"
+  providerCardMeta: "logoName",
+  librarySort: "manuell"
 };
 
 const DEFAULT_APPEARANCE_SETTINGS = {
@@ -827,6 +829,7 @@ function bindEvents() {
   });
   pauseOnProviderSwitch.addEventListener("change", saveSettings);
   youtubeInMediathek?.addEventListener("change", saveSettings);
+  notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
   pauseOnMinimize.addEventListener("change", saveSettings);
   pauseOnBlur.addEventListener("change", saveSettings);
@@ -882,6 +885,19 @@ function bindEvents() {
   api.onUpdateState((state) => {
     updateState = state || {};
     renderUpdateInfo();
+  });
+
+  // Klick auf die Benachrichtigung ueber eine neue Folge. Der Titel steht nach
+  // dem Fund wieder auf der Watchlist - dorthin also, und die Karte kurz
+  // hervorheben, damit man sie zwischen den anderen findet.
+  api.onZeigeFavorit?.(async (id) => {
+    await showFavorites();
+    const karte = [...document.querySelectorAll("#favoritesGrid .favorite-card")]
+      .find((k) => k.dataset.favoriteId === String(id || ""));
+    if (!karte) return;
+    karte.scrollIntoView({ block: "center", behavior: "smooth" });
+    karte.classList.add("ist-hervorgehoben");
+    window.setTimeout(() => karte.classList.remove("ist-hervorgehoben"), 2600);
   });
 
   // Der Hauptprozess hat externe Metadaten nachgeholt und damit bessere
@@ -2034,6 +2050,10 @@ function kalenderKarte(eintrag) {
     ${kalenderFassungen(eintrag)}
   `;
   bildEbeneSetzen(karte, eintrag.image, null);
+  // Vormerken und Abhaken direkt aus dem Kalender. Vorher fuehrte von hier nur
+  // ein Weg zum Anbieter - man sah, dass Freitag eine Folge kommt, und musste
+  // den Titel erst dort oeffnen, um ihn vorzumerken.
+  vorschlagMenueAnhaengen(karte, eintrag);
   const oeffnen = () => api.openProviderUrl?.(eintrag.providerId, eintrag.url);
   karte.addEventListener("click", oeffnen);
   karte.addEventListener("keydown", (event) => {
@@ -2796,12 +2816,18 @@ function renderFavorites() {
 }
 
 function renderLibraryViews() {
-  const libraryItems = libraryEntries();
+  const sortierung = mediathekSortierung();
+  const libraryItems = libraryEntries(sortierung);
+  // Ziehen gibt es nur in der Handsortierung. In einer A-Z-Ansicht waere es
+  // sinnlos - die naechste Sortierung wuerde es sofort wieder aufheben - und
+  // es wuerde die gespeicherte Handarbeit ueberschreiben.
+  const vonHand = sortierung === "manuell";
   libraryGrid?.replaceChildren(...libraryItems.map((favorite) => favoriteCard(favorite, false, {
     allowLibraryRemove: true,
-    sortable: true
+    sortable: vonHand
   })));
   libraryEmpty?.classList.toggle("is-hidden", libraryItems.length > 0);
+  renderMediathekSortierung(libraryItems.length);
   macheMediathekSortierbar();
 
   const continueItems = continueEntries();
@@ -2843,6 +2869,36 @@ function renderLibraryViews() {
 
 // Karten der Mediathek lassen sich mit der Maus umsortieren. Die Vorschau
 // laeuft im DOM mit, damit man beim Ziehen sieht, wo die Karte landet;
+// Die Leiste ueber der Mediathek. Sie erscheint erst, wenn es genug zu
+// sortieren gibt - bei drei Titeln waere sie nur im Weg.
+function renderMediathekSortierung(anzahl) {
+  const leiste = document.querySelector("#librarySort");
+  if (!leiste) return;
+  if (anzahl < 2) {
+    leiste.replaceChildren();
+    return;
+  }
+  const jetzt = mediathekSortierung();
+  leiste.replaceChildren(...MEDIATHEK_SORTIERUNGEN.map((art) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = `calendar-day${art.wert === jetzt ? " is-active" : ""}`;
+    knopf.textContent = art.titel;
+    if (art.wert === "manuell") knopf.title = "Deine eigene Reihenfolge — zum Umsortieren die Karten ziehen";
+    knopf.addEventListener("click", () => mediathekSortierungSetzen(art.wert));
+    return knopf;
+  }));
+}
+
+async function mediathekSortierungSetzen(sortierung) {
+  if (mediathekSortierung() === sortierung) return;
+  settings.home = { ...DEFAULT_HOME_SETTINGS, ...(settings.home || {}), librarySort: sortierung };
+  // Nur die Ansicht wechselt. libraryOrder bleibt unberuehrt - das ist der
+  // ganze Sinn: die Handsortierung wartet, bis man wieder zu ihr zurueckkehrt.
+  renderLibraryViews();
+  await saveSettings();
+}
+
 // gespeichert wird erst beim Loslassen.
 let mediathekZiehtId = "";
 let mediathekZuletztGezogen = 0;
@@ -2894,6 +2950,10 @@ function macheMediathekSortierbar() {
 }
 
 async function mediathekReihenfolgeSpeichern() {
+  // Doppelter Boden: in einer sortierten Ansicht sind die Karten gar nicht
+  // ziehbar, aber wenn hier je etwas anderes ankaeme, duerfte es die
+  // Handarbeit nicht ueberschreiben.
+  if (mediathekSortierung() !== "manuell") return;
   const ids = [...libraryGrid.querySelectorAll(".favorite-card")]
     .map((karte) => karte.dataset.favoriteId)
     .filter(Boolean);
@@ -3019,19 +3079,64 @@ function istYoutubeEintrag(item) {
   }
 }
 
-function libraryEntries() {
+// Wie die Mediathek sortiert wird. "manuell" ist die von Hand gelegte
+// Reihenfolge; die anderen drei sind nur Ansichten darauf.
+//
+// Der entscheidende Punkt: keine dieser Ansichten schreibt libraryOrder. Nur
+// das Ziehen tut das, und Ziehen gibt es nur in "manuell". Wer sich also von
+// Hand eine Reihenfolge gelegt hat, findet sie nach einem Ausflug nach A-Z
+// unveraendert wieder vor - ein A-Z, das die Handarbeit ueberschriebe, waere
+// keine Sortierung, sondern ein Verlust.
+const MEDIATHEK_SORTIERUNGEN = [
+  { wert: "manuell", titel: "Von Hand" },
+  { wert: "zuletzt", titel: "Zuletzt gesehen" },
+  { wert: "titel", titel: "A–Z" },
+  { wert: "anbieter", titel: "Nach Anbieter" }
+];
+
+function mediathekSortierung() {
+  const wert = settings?.home?.librarySort;
+  return MEDIATHEK_SORTIERUNGEN.some((art) => art.wert === wert) ? wert : "manuell";
+}
+
+// Die Reihenfolge selbst - ohne DOM und ohne Zustand, damit sie sich pruefen
+// laesst.
+function mediathekSortieren(liste, sortierung) {
+  const eintraege = [...liste];
+  const titel = (favorite) => displayFavoriteTitle(favorite).toLocaleLowerCase("de");
+  const anbieter = (favorite) => String(favorite?.providerName || "").toLocaleLowerCase("de");
+
+  if (sortierung === "zuletzt") {
+    return eintraege.sort((links, rechts) =>
+      favoriteTimestamp(rechts) - favoriteTimestamp(links)
+      || titel(links).localeCompare(titel(rechts), "de"));
+  }
+  if (sortierung === "titel") {
+    return eintraege.sort((links, rechts) => titel(links).localeCompare(titel(rechts), "de"));
+  }
+  if (sortierung === "anbieter") {
+    return eintraege.sort((links, rechts) =>
+      anbieter(links).localeCompare(anbieter(rechts), "de")
+      || titel(links).localeCompare(titel(rechts), "de"));
+  }
+  // Von Hand: die gespeicherte Stelle. Frisch abgeschlossene haben noch keine
+  // und stehen oben, damit sie nicht unten untergehen.
+  return eintraege.sort((links, rechts) => {
+    const a = Number.isFinite(Number(links.libraryOrder)) ? Number(links.libraryOrder) : -1;
+    const b = Number.isFinite(Number(rechts.libraryOrder)) ? Number(rechts.libraryOrder) : -1;
+    if (a !== b) return a - b;
+    return favoriteTimestamp(rechts) - favoriteTimestamp(links);
+  });
+}
+
+// Gefiltert wird vor dem Sortieren: was gar nicht angezeigt wird, soll die
+// Reihenfolge auch nicht mitbestimmen.
+function libraryEntries(sortierung = mediathekSortierung()) {
   const youtubeErlaubt = settings.playback?.youtubeInMediathek === true;
-  return favorites
+  const sichtbar = favorites
     .filter((item) => item.completed)
-    .filter((item) => youtubeErlaubt || !istYoutubeEintrag(item))
-    // Selbst gelegte Reihenfolge zuerst. Frisch abgeschlossene haben noch
-    // keine Stelle und stehen oben, damit sie nicht unten untergehen.
-    .sort((left, right) => {
-      const links = Number.isFinite(Number(left.libraryOrder)) ? Number(left.libraryOrder) : -1;
-      const rechts = Number.isFinite(Number(right.libraryOrder)) ? Number(right.libraryOrder) : -1;
-      if (links !== rechts) return links - rechts;
-      return favoriteTimestamp(right) - favoriteTimestamp(left);
-    });
+    .filter((item) => youtubeErlaubt || !istYoutubeEintrag(item));
+  return mediathekSortieren(sichtbar, sortierung);
 }
 
 function continueEntries() {
@@ -3741,9 +3846,12 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     }
   });
 
+  // Die Kennung traegt jede Karte, nicht nur die ziehbaren: sie ist der einzige
+  // Weg, eine bestimmte Karte spaeter wiederzufinden - etwa nach dem Klick auf
+  // eine Benachrichtigung.
+  card.dataset.favoriteId = favorite.id;
   if (options.sortable) {
     card.draggable = true;
-    card.dataset.favoriteId = favorite.id;
     card.title = "Zum Umsortieren ziehen";
   }
 
@@ -4243,6 +4351,9 @@ function renderSettings() {
   cacheMode.value = browser.cacheMode || "aggressive";
   pauseOnProviderSwitch.checked = settings.playback?.pauseOnProviderSwitch !== false;
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
+  // Aus, solange nichts anderes dasteht - eine Meldung, die man nicht bestellt
+  // hat, ist eine Stoerung.
+  if (notifyNewEpisodes) notifyNewEpisodes.checked = settings.notifications?.newEpisodes === true;
   favoriteProgressMode.value = settings.playback?.favoriteProgressMode || "sequential";
   pauseOnMinimize.checked = Boolean(settings.playback?.pauseOnMinimize);
   pauseOnBlur.checked = Boolean(settings.playback?.pauseOnBlur);
@@ -4454,6 +4565,7 @@ async function saveSettings() {
   settings.browser = {
     cacheMode: cacheMode.value
   };
+  settings.notifications = { newEpisodes: Boolean(notifyNewEpisodes?.checked) };
   settings.playback = {
     pauseOnProviderSwitch: pauseOnProviderSwitch.checked,
     youtubeInMediathek: Boolean(youtubeInMediathek?.checked),
@@ -4467,7 +4579,12 @@ async function saveSettings() {
     showFavorites: showHomeFavorites.checked,
     showPersonal: showHomePersonal ? showHomePersonal.checked : true,
     showCategories: showHomeCategories ? showHomeCategories.checked : true,
-    providerCardMeta: providerCardMeta.value
+    providerCardMeta: providerCardMeta.value,
+    // Die Sortierung der Mediathek hat kein Bedienelement in den
+    // Einstellungen - sie wird ueber der Mediathek selbst gewaehlt. Ohne diese
+    // Zeile schriebe jedes Speichern sie auf "manuell" zurueck, denn hier wird
+    // settings.home vollstaendig aus den Bedienelementen neu gebaut.
+    librarySort: mediathekSortierung()
   };
   settings.watchparty = {
     enabled: watchpartyEnabled ? watchpartyEnabled.checked : false,

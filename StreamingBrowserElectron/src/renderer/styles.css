@@ -291,7 +291,6 @@
 .home-dashboard-hero {
   position: relative;
   isolation: isolate;
-  user-select: none;
   max-width: none;
   min-height: clamp(270px, 34vw, 420px);
   display: grid;
@@ -1133,6 +1132,43 @@ body {
   background: var(--bg-app);
   color: var(--text);
   font-size: calc(15px * var(--font-scale) * var(--ui-scale));
+  /* ELFIX ist eine Anwendung und keine Textseite. Ihre Beschriftungen sind
+     zum Anklicken da, nicht zum Lesen am Stueck - und ein Zug ueber eine
+     Karte, eine Kachel oder eine Leiste soll sie bewegen, nicht die Schrift
+     blau hinterlegen. Deshalb steht das Verbot hier an einer Stelle und nicht
+     verstreut an jedem Bauteil: an body und nicht an .app-shell, weil die
+     Dialoge und das Kartenmenue ausserhalb der Huelle liegen.
+
+     Was man wirklich kopieren will, steht ein paar Zeilen weiter unten. */
+  user-select: none;
+}
+
+/* Ein modaler Dialog wandert beim Oeffnen in die Top-Layer - und dort erbt er
+   user-select nicht mehr von body. Gemessen: die ganze Kette vom Dialog
+   abwaerts meldet "text", waehrend body auf "none" steht. Ohne diese Zeile
+   liesse sich im Zuschneide-Editor, in der Rueckfrage und in den
+   Einstellungen weiter alles blau hinterlegen, und ein Zug am Bild faenge
+   wieder als Textmarkierung an. */
+dialog {
+  user-select: none;
+}
+
+/* Eingabefelder bleiben Eingabefelder. Ohne diese Zeile liesse sich der eigene
+   Suchbegriff nicht mehr markieren, kein Raumcode kopieren und keine Adresse
+   in den Einstellungen korrigieren. Sie steht bewusst nach der Dialogregel -
+   die meisten Eingabefelder von ELFIX stehen in den Einstellungen, also in
+   einem Dialog. */
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+/* Und die kurzen Meldungen unten links: dort steht im Fehlerfall eine Adresse
+   oder ein Grund, den man weitergeben moechte. */
+.toast {
+  user-select: text;
 }
 
 body.startup-error {
@@ -1737,11 +1773,6 @@ h1 {
   position: relative;
   /* Ein eigener Stapel, damit die Bildebene darin bleibt - siehe .karten-bild. */
   isolation: isolate;
-  /* Eine Karte ist ein Knopf, kein Fliesstext. Ohne diese Zeile faengt jeder
-     Zug - beim Umsortieren in der Mediathek genauso wie beim Verschieben des
-     Bildes im Zuschneide-Editor - als Textmarkierung an: Titel, Anbieter und
-     Laufzeit stehen dann blau hinterlegt da, statt dass sich etwas bewegt. */
-  user-select: none;
   min-height: var(--favorite-card-height);
   border: 0;
   border-radius: var(--card-radius);
@@ -2137,6 +2168,20 @@ h1 {
    aber blass unter dem Zeiger, damit die Luecke erkennbar ist. */
 .favorite-grid.is-sorting .favorite-card {
   cursor: grabbing;
+}
+
+/* Kurz hervorgehoben: nach einem Klick auf die Benachrichtigung ueber eine
+   neue Folge. Zwischen zwanzig gleich aussehenden Karten findet man die
+   gesuchte sonst nicht. */
+.ist-hervorgehoben {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  animation: karte-hervorheben calc(900ms * var(--animation-speed)) ease 2;
+}
+
+@keyframes karte-hervorheben {
+  0%, 100% { outline-color: var(--accent); }
+  50% { outline-color: transparent; }
 }
 
 .favorite-card.is-dragging {
