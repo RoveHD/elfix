@@ -117,18 +117,29 @@ Normalfall schon an). Cloudflare kappt stille Verbindungen nach etwa 100
 Sekunden; der Server sendet alle 30 Sekunden einen Ping und haelt sie damit
 offen. In der App wird dann `wss://watchparty.deine-domain.tld` eingetragen.
 
-**Relay aktualisieren.** Nicht jede App-Version braucht das - aber wenn sich
-`sync-server/server.js` geaendert hat, muss der Dienst nachgezogen werden, sonst
+**Relay aktualisieren.** Nicht jede App-Version braucht das - aber wenn sich in
+`sync-server/` etwas geaendert hat, muss der Dienst nachgezogen werden, sonst
 fehlen dort die neuen Faehigkeiten:
 
 ```bash
 git -C /pfad/zum/repo pull
-sudo cp /pfad/zum/repo/sync-server/server.js /opt/elfix-watchparty/
+sudo cp /pfad/zum/repo/sync-server/*.js /opt/elfix-watchparty/
 sudo systemctl restart elfix-watchparty
 curl http://localhost:8787/health
 ```
 
+Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
+inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor und
+`youtube-party.js` fuer die YouTube-Watchparty. Wird nur `server.js`
+uebertragen, startet der Dienst gar nicht mehr - ihm fehlt dann ein Modul.
+
+Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
+Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
+`cd /opt/elfix-watchparty && sudo npm ci --omit=dev`.
+
 Die Antwort von `/health` nennt unter `features`, was die laufende Fassung kann.
+Steht dort `youtube`, beherrscht das Relay die YouTube-Watchparty; `youtubeRaeume`
+sagt, wie viele davon gerade laufen.
 
 Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
 setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login

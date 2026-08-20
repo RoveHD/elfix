@@ -20,6 +20,9 @@ const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const metadaten = require("./metadaten");
+// Die YouTube-Watchparty. Ein eigenes Modul mit eigenem Zustand - es teilt sich
+// mit der Titelverwaltung nur die Verbindung und den Raumcode.
+const youtubeParty = require("./youtube-party");
 
 // Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
 // Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
@@ -150,6 +153,9 @@ function aufraeumen() {
     }
   }
   if (entfernt) zustandSpeichernSpaeter();
+  // Die YouTube-Runden liegen nur im Speicher und raeumen sich nach eigener
+  // Frist auf - hier haengt bloss der Zeitgeber.
+  youtubeParty.aufraeumen();
 }
 setInterval(aufraeumen, 60 * 60 * 1000).unref?.();
 
@@ -265,12 +271,15 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       raeume: raeume.size,
+      youtubeRaeume: youtubeParty.anzahl(),
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
       // "clock" heisst: dieses Relay beantwortet Uhrproben, der smarte Start
       // kann also rechnen. "seq" heisst: jede Steuernachricht traegt eine
       // laufende Nummer, verspaetete Ereignisse lassen sich abweisen.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata"],
+      // "youtube" heisst: dieses Relay kennt den eigenen YouTube-Modus mit
+      // gemeinsamem Video, Revisionsnummer und ohne Host.
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
@@ -287,6 +296,17 @@ function anRaumSenden(raumcode, nachricht) {
   const daten = JSON.stringify(nachricht);
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    client.send(daten);
+  }
+}
+
+// An einen ausgewaehlten Kreis im Raum. Die YouTube-Watchparty fuehrt ihre
+// Mitglieder selbst - hier steht nur der Versand.
+function anMitgliederSenden(raumcode, nachricht, ids) {
+  const daten = JSON.stringify(nachricht);
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    if (!ids.has(client.geraetId)) continue;
     client.send(daten);
   }
 }
@@ -723,6 +743,23 @@ wss.on("connection", (socket) => {
     }
 
     if (!socket.raum) return;
+
+    // Die YouTube-Watchparty. Sie kommt vor allem anderen und geht komplett an
+    // ihr eigenes Modul: eigener Zustand, eigene Ordnung, eigene Nachrichten.
+    // Unterhalb dieser Zeile aendert sich fuer Serien und Filme nichts - was
+    // hier abgefangen wird, hat die Titelverwaltung noch nie gesehen.
+    if (String(nachricht?.type || "").startsWith("yt")) {
+      youtubeParty.behandeln({
+        nachricht,
+        raumcode: socket.raum,
+        geraetId: socket.geraetId,
+        name: socket.name,
+        senden,
+        verteilen: (antwort, ids) => anMitgliederSenden(socket.raum, antwort, ids)
+      });
+      return;
+    }
+
     const raum = raumHolen(socket.raum);
 
     // Eine Serie in den Raum stellen. Wer sie einstellt, ist automatisch dabei.
@@ -1273,6 +1310,13 @@ wss.on("connection", (socket) => {
 
   socket.on("close", () => {
     if (!socket.raum) return;
+    // Aus der YouTube-Runde austragen. Wer nur kurz herausfaellt, meldet sich
+    // beim naechsten Verbindungsaufbau selbst wieder an.
+    youtubeParty.abmelden({
+      raumcode: socket.raum,
+      geraetId: socket.geraetId,
+      verteilen: (antwort, ids) => anMitgliederSenden(socket.raum, antwort, ids)
+    });
     const raum = raeume.get(socket.raum);
     let gewechselt = false;
     for (const eintrag of raum?.titel.values() || []) {
