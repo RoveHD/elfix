@@ -30,6 +30,7 @@ const metadatenModul = require("./metadaten");
 const { AdblockEngine } = require("./adblock-engine");
 const kosmetik = require("./adblock-kosmetik");
 const verifizierungstor = require("./verifizierungstor");
+const youtube = require("./youtube");
 
 // Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
 // die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
@@ -1151,7 +1152,7 @@ ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
   recordMediaActivity(provider, favorite.url, {}, { existing: favorite, label: "Geöffnet" });
   await repairFavoriteThumbnailIfNeeded(favorite, provider).catch(() => false);
   if (options?.autoplay) await beginAutostart(provider.id, cleanTitle(favorite.title));
-  await navigateProvider(provider, favorite.url);
+  await navigateProvider(provider, oeffnenAdresse(provider, favorite));
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
   return activeState();
 });
@@ -6556,6 +6557,35 @@ async function meldeWatchpartyStand() {
 
 // Ein offener Sprungwunsch je Anbieter. Er wird eingeloest, sobald tatsaechlich
 // ein Video laeuft - vorher laesst sich die Stelle nicht setzen.
+// Mit welcher Adresse ein Eintrag aus "Weiterschauen" geoeffnet wird.
+//
+// Fuer alle bisherigen Anbieter ist das unveraendert die gespeicherte Adresse:
+// dort ist eine Folge eine Seite, und der Hoster erinnert sich selbst, wo man
+// war. Nur YouTube kennt kein "diese Folge", sondern ein stundenlanges Video -
+// dort bekommt die Adresse die Sekunde mit, an der es weitergehen soll.
+//
+// Zusaetzlich wird fuer YouTube der Nachsprung im Player vorgemerkt. YouTube
+// ignoriert "t" gelegentlich, etwa wenn es selbst einen Stand gespeichert hat;
+// dann zieht dieselbe Mechanik nach, die auch eine Watchparty an die geteilte
+// Stelle bringt.
+function oeffnenAdresse(provider, favorite) {
+  const adresse = String(favorite?.url || "");
+  if (!youtube.istYoutubeUrl(adresse)) return adresse;
+
+  const stand = sanitizePositiveNumber(favorite?.currentTime || favorite?.position);
+  const dauer = sanitizePositiveNumber(favorite?.duration);
+  const ziel = youtube.fortsetzenUrl(adresse, stand, dauer);
+
+  if (youtube.brauchtNachsprung(stand, dauer)) {
+    merkeWatchpartySprung(provider.id, { position: stand });
+    console.log(`[ELFIX YOUTUBE] weiter bei ${Math.floor(stand)}s: ${ziel}`);
+  }
+  return ziel;
+}
+
+// Merkt vor, dass nach dem Start einmal an eine Stelle gesprungen wird.
+// Urspruenglich nur fuer die Watchparty gebaut, inzwischen auch der Weg, auf
+// dem YouTube seinen Stand zurueckbekommt - die Mechanik ist dieselbe.
 function merkeWatchpartySprung(providerId, fortschritt) {
   const ziel = sanitizePositiveNumber(fortschritt?.position);
   if (!providerId || ziel < 5) return;
@@ -9554,6 +9584,13 @@ function mediaSlugFromUrl(value) {
 }
 
 function normalizeFavoriteUrl(value) {
+  // YouTube haengt an dieselbe Adresse je nach Herkunft "list", "index", "pp"
+  // oder "si" an. Ohne diese Zeile ist jede Variante ein eigener Eintrag mit
+  // eigenem Stand - und in "Weiterschauen" landete dann oft der frische mit
+  // null Prozent. Das sah aus wie "faengt von vorne an".
+  const alsYoutube = youtube.normalisiereYoutubeUrl(value);
+  if (alsYoutube) return alsYoutube;
+
   try {
     const url = new URL(value);
     url.hash = "";

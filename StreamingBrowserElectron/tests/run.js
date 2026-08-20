@@ -17,7 +17,7 @@ const RELAY = path.join(HIER, "..", "..", "sync-server", "server.js");
 const PORT = Number(process.env.TESTPORT) || 8791;
 
 // Ohne Relay: reine Rechenpruefungen.
-const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "adblocktest", "verifizierungtest"];
+const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "adblocktest", "verifizierungtest", "youtubetest"];
 // Mit Relay: das Zusammenspiel.
 const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest"];
 
