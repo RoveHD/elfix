@@ -3,6 +3,71 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.28.0 — 21. August 2026
+
+ELFIX misst ab jetzt, wie lange wirklich geschaut wurde - und baut daraus eine
+Statistik, einen Jahresrueckblick und einen Chat fuer die Watchparty.
+
+**Wiedergabezeit**
+
+- Die Messung gab es laengst: ein Takt in der Anbieterseite vergleicht die
+  Position des Players mit der real vergangenen Zeit und zaehlt nur, was zu
+  beidem passt. Pause bewegt die Position nicht, ein Sprung nach vorn bewegt
+  sie zu weit, ein schlafender Rechner gar nicht. Benutzt wurde das bisher nur
+  als Schwelle - der Wert selbst wurde weggeworfen. Jetzt wird er gespeichert
+- Eine Folge mit 24 Minuten Laufzeit ergibt keine 24 Minuten Wiedergabe. Wer
+  fuenf Minuten schaut, zehn pausiert, sieben weiterschaut, acht vorspringt und
+  zwei zu Ende sieht, hat 14 Minuten geschaut - nicht 24
+- Wiedergabesitzungen liegen in einer eigenen Datei und werden alle 30 Sekunden
+  gesichert. Ein Absturz kostet hoechstens eine halbe Minute, nie eine Sitzung
+- Aus dem bisherigen Verlauf wurde uebernommen, was sicher ableitbar ist:
+  Folgen, Abschluesse, Tage. **Keine** Wiedergabezeit - aus "abgeschlossen"
+  folgt keine Stundenzahl. Solche Saetze sind als rekonstruiert gekennzeichnet
+  und ihre Zeit zaehlt nirgends mit
+
+**Statistik**
+
+- Neuer Punkt "Rueckblick" in der Seitenleiste: Folgen, abgeschlossene Titel,
+  Schautage, laengste Strecke, staerkster Tag, Genres, Top-Titel
+- Zeitraum waehlbar - 7 Tage, 30 Tage, dieser Monat, Kalenderjahre, gesamt
+- Wo nichts gemessen wurde, steht nichts. Keine Karte mit "0 Stunden", wenn die
+  Wahrheit "unbekannt" lautet - stattdessen der Hinweis, ab wann gemessen wird
+- Laeuft ein Titel unter mehreren Genres, wird seine Zeit anteilig verteilt.
+  Sonst zaehlte eine Stunde bei drei Genres als drei
+
+**ELFIX Wrapped**
+
+- Ein eigener Jahresrueckblick im Vollbild: bis zu 19 Bilder, eine Aussage je
+  Bild, grosse Zahlen, Poster im Hintergrund
+- Verfuegbar vom 1. Dezember bis 6. Januar. Er meldet sich dezent auf der
+  Startseite - kein Fenster, das sich vor die App stellt - und ist danach
+  jederzeit ueber das Archiv auf der Statistikseite erreichbar
+- Jedes Bild kennt seine Bedingung: ohne Wiederholungen keine Rewatch-Seite,
+  ohne gemessene Zeit keine Stundenseite, ohne Anime keine Anime-Seite
+- Ein angefangenes Jahr sagt, ab wann es Daten gibt. Januar bis Juli erscheinen
+  nicht als ausgewertet, wenn im August angefangen wurde
+- Statistik und Wrapped rechnen an derselben Stelle. Zwei Rechenwege ergaeben
+  irgendwann zwei verschiedene Folgenzahlen fuer dasselbe Jahr
+
+**Watchparty-Chat**
+
+- Ein paar Zeilen ueber dem Video. Das Relay kannte Raum, Mitglieder und
+  Absender ohnehin - der Chat ist ein kleiner Aufsatz darauf
+- Eingeklappt, bis man ihn aufmacht, und sichtbar nur, solange die Maus sich
+  bewegt. Unter dem Zeiger und beim Tippen bleibt er stehen
+- Gespeichert wird nichts, weder im Relay noch in der App. Wer nicht dabei war,
+  hat es nicht gelesen
+- Das Relay muss dafuer neu ausgerollt werden. Aeltere ELFIX-Fassungen stoeren
+  sich nicht daran: sie senden nie eine solche Nachricht
+
+**Nach der Folge**
+
+- Neue Einstellung "Naechste Folge von selbst starten". Aus heisst: der Knopf
+  steht weiter da, nur der Zaehler laeuft nicht. Abgeschaltet ist der
+  Automatismus, nicht der Weg zur naechsten Folge
+- Und in der Einblendung selbst ein "Danach aufhoeren" fuer genau diese eine
+  Folge. Zuruecknehmen nimmt den Zaehler wieder auf
+
 ## 1.27.2 — 20. August 2026
 
 ELFIX loeschte bei jedem Start die Einstellungen der Websites mit. Deshalb

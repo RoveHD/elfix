@@ -41,6 +41,7 @@ class Watchparty {
     // Modul weiss nichts davon, was drueben damit geschieht, und drueben nichts
     // von Serien, Folgen und Host.
     this.aufYoutube = optionen.onYoutube || (() => {});
+    this.aufChat = optionen.onChat || (() => {});
     // Leitung auf oder zu. Der YouTube-Modus meldet sich danach selbst wieder
     // an und holt den Raumzustand.
     this.aufVerbindung = optionen.onConnection || (() => {});
@@ -310,6 +311,19 @@ class Watchparty {
       this.melde();
       return;
     }
+    // Der Chat geht wie die Uhrprobe an der Zustandsverarbeitung vorbei: er
+    // aendert nichts an Raum, Titel oder Stand und darf deshalb auch nie einen
+    // Fehler in den Zustand schreiben.
+    if (nachricht?.type === "chat") {
+      this.aufChat({
+        text: String(nachricht.text || ""),
+        from: String(nachricht.from || ""),
+        deviceId: String(nachricht.deviceId || ""),
+        at: Number(nachricht.at) || Date.now(),
+        eigen: String(nachricht.deviceId || "") === String(this.geraetId || "")
+      });
+      return;
+    }
     if (nachricht?.type === "peers") {
       this.teilnehmer = Array.isArray(nachricht.peers) ? nachricht.peers : [];
       this.melde();
@@ -377,6 +391,13 @@ class Watchparty {
   youtubeSenden(nachricht) {
     if (!this.aktiv) return;
     this.senden(nachricht);
+  }
+
+  chatSenden(zeile) {
+    const text = String(zeile || "").trim().slice(0, 500);
+    if (!text) return false;
+    this.senden({ type: "chat", text });
+    return true;
   }
 
   teilen(item) {

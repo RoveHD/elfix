@@ -31,6 +31,7 @@ const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
 const metadatenModul = require("./metadaten");
+const statistik = require("./statistik");
 const { AdblockEngine } = require("./adblock-engine");
 const kosmetik = require("./adblock-kosmetik");
 const verifizierungstor = require("./verifizierungstor");
@@ -60,6 +61,7 @@ const FILTER_LIST_DIR = path.join(DATA_DIR, "filterlisten");
 // "Tracking-Schutz", ohne dass die Engine dafuer neu gebaut werden muss.
 const TRACKING_LISTEN_ID = 3;
 const FAVORITES_FILE = path.join(DATA_DIR, "favorites.json");
+const SESSION_FILE = path.join(DATA_DIR, "sitzungen.json");
 const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 // Externe Metadaten liegen in einer eigenen Datei, nicht im Geschmacks-Cache.
 // Sie haben eine ganz andere Lebensdauer: Anbieterseiten veralten in Tagen,
@@ -76,6 +78,7 @@ const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
 const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
+const SITZUNG_SCHEMA_VERSION = 1;
 const MIN_WATCH_TIME_SECONDS = 2.5 * 60;
 // In einer Watchparty gilt eine kuerzere Schwelle: dort schauen mehrere
 // dieselbe Folge, und die Runde soll nicht minutenlang die vorige anzeigen.
@@ -169,6 +172,10 @@ const WATCHPARTY_SPRUNG_GUELTIG_MS = 3 * 60 * 1000;
 const WATCHPARTY_STAND_INTERVALL_MS = 5000;
 const nextEpisodePromptState = new Map();
 const nextEpisodeAutostartState = new Map();
+// "Nach dieser Folge aufhoeren", je Anbieter und je Folge. Einmalig von Bauart:
+// der Wechsel zur naechsten Folge loest did-navigate aus, und dort wird der
+// Merker geleert - er kann also gar nicht auf die uebernaechste durchschlagen.
+const stopNachFolge = new Map();
 let nextEpisodeLogState = "";
 const DISCOVER_CACHE_MS = 15 * 60 * 1000;
 const SEASON_INFO_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -353,6 +360,9 @@ app.whenReady().then(async () => {
   // Erst jetzt moeglich: der Nachtrag braucht beide Seiten - die Anbieterliste
   // und den Merker aus den Einstellungen.
   youtubeAnbieterNachtragen();
+  // Aus dem vorhandenen Verlauf uebernehmen, was sicher ableitbar ist -
+  // ohne Wiedergabezeit, die es dort nie gab.
+  sitzungenNachtragen();
   watchpartyLokal = loadWatchpartyLocal();
 
   browserSession = session.fromPartition(SESSION_PARTITION, { cache: true });
@@ -395,6 +405,9 @@ app.on("before-quit", () => {
   // sonst geht eine Aenderung der letzten Sekunden verloren und nach dem
   // naechsten Start fehlen die gemeinsamen Staende.
   if (watchparty?.aktiv) rememberWatchpartyState(watchpartyShared);
+  // Dasselbe fuer die laufende Wiedergabe: ohne das fehlte die letzte Folge
+  // eines Abends in der Bilanz, weil sie nie geschlossen wurde.
+  sitzungenSchliessen();
 });
 
 app.on("window-all-closed", () => {
@@ -889,6 +902,36 @@ ipcMain.handle("library:remove", (_event, favoriteId) => {
 
 // Die selbst gelegte Reihenfolge der Mediathek. Gespeichert wird sie am
 // Eintrag: so verschwindet sie mit ihm und ueberlebt jeden Neustart.
+// Der Rueckblick. Beides liegt hier: der Verlauf an den Favoriten und die
+// Genres im Geschmack-Cache - deshalb wird hier gerechnet und drueben nur
+// gezeigt. Der Cache wird gelesen, nicht gefuellt: fehlt er, fehlen Genres,
+// und die Seite sagt das auch.
+ipcMain.handle("review:data", (_event, zeitraum) => {
+  const sitzungen = loadSitzungen();
+  if (!sitzungen.length) return { zeitraeume: [], gewaehlt: "", daten: null };
+
+  // Welche Zeitraeume ueberhaupt etwas hergeben. Ein Reiter, hinter dem nichts
+  // steht, ist eine Enttaeuschung mit Vorankuendigung - deshalb wird jeder
+  // durchgerechnet und nur angeboten, wenn Sitzungen darin liegen.
+  const jahre = [...new Set(sitzungen
+    .map((sitzung) => new Date(Date.parse(sitzung.begonnenAm)).getFullYear())
+    .filter((jahr) => Number.isFinite(jahr)))].sort((links, rechts) => rechts - links);
+  const angebot = [
+    { wert: "7tage", titel: "7 Tage" },
+    { wert: "30tage", titel: "30 Tage" },
+    { wert: "monat", titel: "Dieser Monat" },
+    ...jahre.map((jahr) => ({ wert: String(jahr), titel: String(jahr) })),
+    { wert: "alles", titel: "Gesamt" }
+  ].filter((eintrag) => watchStatistik(eintrag.wert).sitzungen > 0);
+
+  // Ohne Wahl der Gesamtzeitraum: er hat immer etwas zu zeigen, ein leerer
+  // "diese Woche" waere ein schlechter erster Eindruck.
+  const gewaehlt = angebot.some((eintrag) => eintrag.wert === zeitraum)
+    ? zeitraum
+    : (angebot[angebot.length - 1]?.wert || "alles");
+  return { zeitraeume: angebot, gewaehlt, daten: watchStatistik(gewaehlt) };
+});
+
 ipcMain.handle("library:reorder", (_event, ids) => {
   const liste = Array.isArray(ids) ? ids.map((wert) => String(wert || "")) : [];
   if (!liste.length) return favorites;
@@ -1833,6 +1876,14 @@ function getProviderView(provider) {
       console.log(`[watchparty-sync] ${String(nachricht).slice(16)}`);
       return;
     }
+    // Eine Chatzeile aus der Seite. Sie geht an den Raum, in dem gerade
+    // geschaut wird - und nur dann, wenn es einen gibt.
+    const chat = String(nachricht || "").match(/^__elfix:chat:([\s\S]+)$/);
+    if (chat) {
+      const key = watchpartyLiveKeyForUrl(view.webContents.getURL());
+      if (key) watchparty.chatSenden(chat[1]);
+      return;
+    }
     // Der Rueckkanal der YouTube-Watchparty. Eigenes Praefix, eigener Weg -
     // damit kann keine Meldung des einen Modus im anderen landen.
     if (String(nachricht || "").startsWith("__elfix:yt:sync:")) {
@@ -1860,6 +1911,20 @@ function getProviderView(provider) {
       // musste den Raumzustand befragen; hinkte der einer Folge hinterher,
       // verwarf er jede Pause als "andere Folge".
       if (key) watchparty.steuernMitAdresse(key, live[1], Number(live[2]), adresse, watchpartyRaumForUrl(adresse));
+      return;
+    }
+    // "Danach aufhoeren" an- und abgeschaltet. Gemerkt wird die Adresse der
+    // laufenden Folge, nicht bloss ein Ja: sonst gaelte die Ansage auch fuer
+    // eine ganz andere Folge, die derselbe Anbieter spaeter zeigt.
+    const schluss = String(nachricht || "").match(/^__elfix:stop-after-episode:([01])$/);
+    if (schluss) {
+      const adresse = view.webContents.getURL();
+      if (schluss[1] === "1") stopNachFolge.set(provider.id, adresse);
+      else stopNachFolge.delete(provider.id);
+      logNextEpisode(provider, schluss[1] === "1" ? "Danach aufhoeren: an" : "Danach aufhoeren: aus");
+      sendToast(schluss[1] === "1"
+        ? "Nach dieser Folge ist Schluss"
+        : "Es geht wieder von selbst weiter");
       return;
     }
     const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
@@ -1890,6 +1955,9 @@ function getProviderView(provider) {
     nextEpisodePromptState.delete(provider.id);
     // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
     nextEpisodeAutostartState.delete(provider.id);
+    // Das macht "Danach aufhoeren" einmalig: die Ansage galt der Folge, die
+    // gerade verlassen wurde.
+    stopNachFolge.delete(provider.id);
     resumePendingProviderAutoplay(provider, view);
   });
   view.webContents.on("did-navigate-in-page", (_event, url) => {
@@ -1924,6 +1992,7 @@ function getProviderView(provider) {
     installWatchpartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubePartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubeWiedergabe(view, view.webContents.getURL()).catch(() => {});
+    installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -2067,6 +2136,12 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   });
   if (!entry) return;
 
+  // Die gemessene Wiedergabezeit festhalten. Sie entsteht ohnehin schon - der
+  // Takt in der Seite rechnet sie aus, damit die 2:30-Schwelle greifen kann -,
+  // wurde bisher aber nur geprueft und dann weggeworfen. Ohne sie kann ein
+  // Rueckblick nie sagen, wie lange wirklich geschaut wurde.
+  sitzungMelden(provider, url, entry, progress);
+
   const prozent = mediaProgressPercent(progress.currentTime, progress.duration);
   // Bewusst nicht ueber entry.completed: das gilt schon ab 90 Prozent. Hier
   // zaehlt nur das tatsaechliche Ende der Folge.
@@ -2084,11 +2159,20 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
 
   // Folge durchgelaufen: Countdown einblenden, der von selbst weiterschaltet.
   // Der Merker verhindert, dass der 5-Sekunden-Takt ihn neu startet.
+  //
+  // Ist der automatische Wechsel abgeschaltet, bleibt der Knopf trotzdem
+  // stehen - nur eben ohne Zaehler. Abgeschaltet ist der Automatismus, nicht
+  // der Weg zur naechsten Folge: wer selbst entscheiden will, wann es
+  // weitergeht, will darum nicht muehsam suchen muessen, wo es weitergeht.
   if (amEnde && naechste) {
     if (nextEpisodeAutostartState.get(provider.id) !== url) {
       nextEpisodeAutostartState.set(provider.id, url);
       nextEpisodePromptState.set(provider.id, "countdown");
-      installNextEpisodePrompt(view, naechste, { countdown: NEXT_EPISODE_COUNTDOWN_SECONDS });
+      installNextEpisodePrompt(view, naechste, {
+        countdown: autoplayZaehler(provider, url),
+        schluss: settings.playback?.autoplayNextEpisode !== false,
+        schlussScharf: stopNachFolge.get(provider.id) === url
+      });
     }
     if (reason !== "poll" || entry.completed) sendActiveState();
     return;
@@ -2099,10 +2183,26 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   const gewuenscht = fastFertig && naechste ? naechste : "";
   if (nextEpisodePromptState.get(provider.id) !== gewuenscht) {
     nextEpisodePromptState.set(provider.id, gewuenscht);
-    installNextEpisodePrompt(view, gewuenscht);
+    installNextEpisodePrompt(view, gewuenscht, {
+      schluss: settings.playback?.autoplayNextEpisode !== false,
+      schlussScharf: stopNachFolge.get(provider.id) === url
+    });
   }
 
   if (reason !== "poll" || entry.completed) sendActiveState();
+}
+
+// Wie lange der Zaehler laeuft, bevor die naechste Folge von selbst startet.
+//
+// Null heisst: gar nicht - dann steht nur der Knopf da. Zwei Wege fuehren
+// dorthin, und sie meinen Verschiedenes. Die Einstellung gilt dauerhaft und
+// fuer alles; "Danach aufhoeren" gilt fuer diese eine Folge und ist danach
+// wieder weg. Beide enden am selben Ergebnis, weil es nur eines gibt: der Weg
+// zur naechsten Folge bleibt, allein das Von-selbst faellt aus.
+function autoplayZaehler(provider, url) {
+  if (settings.playback?.autoplayNextEpisode === false) return 0;
+  if (stopNachFolge.get(provider.id) === url) return 0;
+  return NEXT_EPISODE_COUNTDOWN_SECONDS;
 }
 
 // Der Knopf lebt in der Anbieterseite, weil deren View im Vollbild alles
@@ -2113,6 +2213,11 @@ function installNextEpisodePrompt(view, url, options = {}) {
   const script = `(() => {
     const ziel = ${JSON.stringify(String(url || ""))};
     const countdown = ${Number(options.countdown) || 0};
+    // Ob "Danach aufhoeren" ueberhaupt angeboten wird - ohne Zaehler gaebe es
+    // nichts aufzuhalten - und ob es schon scharf ist. Der scharfe Zustand
+    // kommt von aussen mit, damit ein erneutes Einspielen ihn nicht vergisst.
+    const schlussMoeglich = ${options.schluss === false ? "false" : "true"};
+    const schlussScharf = ${options.schlussScharf ? "true" : "false"};
     const id = "__elfixNextEpisode";
     let karte = document.getElementById(id);
     const obenDrauf = window.top === window.self;
@@ -2219,9 +2324,57 @@ function installNextEpisodePrompt(view, url, options = {}) {
         abbrechen.style.display = "none";
       }, true);
 
+      // "Danach aufhoeren": haelt den Zaehler auf, bevor er ueberhaupt
+      // anfaengt. Der Knopf daneben bleibt - wer es sich anders ueberlegt,
+      // kommt weiter mit einem Klick zur naechsten Folge.
+      const schluss = document.createElement("button");
+      schluss.type = "button";
+      Object.assign(schluss.style, {
+        display: "none",
+        minHeight: "46px",
+        padding: "0 16px",
+        border: "0",
+        borderRadius: "10px",
+        background: "rgba(12, 16, 24, 0.78)",
+        color: "#fff",
+        font: "750 14px/1 system-ui, sans-serif",
+        boxShadow: "0 12px 34px rgba(0, 0, 0, 0.45)",
+        cursor: "pointer"
+      });
+      schluss.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const an = karte.dataset.schluss !== "ja";
+        karte.dataset.schluss = an ? "ja" : "";
+        if (an) {
+          // Laeuft der Zaehler schon, wird er hier angehalten - sonst waere
+          // der Klick eine Ansage, die zu spaet kommt.
+          if (karte.__timer) clearInterval(karte.__timer);
+          karte.__timer = 0;
+          karte.__abbrechen.style.display = "none";
+          karte.__haupt.textContent = "Nächste Folge  ›";
+        } else if (karte.__zaehlerStarten) {
+          // Zurueckgenommen: lief die Folge schon aus, faengt der Zaehler
+          // wieder an. Sonst passiert hier nichts sichtbares - das Ende kommt
+          // ja erst noch, und dann zaehlt er von selbst.
+          karte.__zaehlerStarten(Number(karte.dataset.zaehler) || 0);
+        }
+        karte.__schlussBeschriften();
+        console.log("__elfix:stop-after-episode:" + (an ? "1" : "0"));
+      }, true);
+
       karte.__haupt = haupt;
       karte.__abbrechen = abbrechen;
-      karte.append(haupt, abbrechen);
+      karte.__schluss = schluss;
+      karte.__schlussBeschriften = () => {
+        schluss.textContent = karte.dataset.schluss === "ja"
+          ? "Danach aufhören ✓"
+          : "Danach aufhören";
+        schluss.style.background = karte.dataset.schluss === "ja"
+          ? "rgba(255, 255, 255, 0.22)"
+          : "rgba(12, 16, 24, 0.78)";
+      };
+      karte.append(haupt, abbrechen, schluss);
       buehne.appendChild(karte);
 
       // Der Knopf liegt ueber dem Bild und soll beim Schauen nicht stoeren:
@@ -2262,10 +2415,22 @@ function installNextEpisodePrompt(view, url, options = {}) {
 
     karte.dataset.url = ziel;
 
-    if (countdown > 0 && !karte.__timer && karte.dataset.abgebrochen !== "ja") {
+    // Der scharfe Zustand kommt von aussen: ELFIX merkt ihn sich je Folge, und
+    // ein erneutes Einspielen soll ihn nicht stillschweigend zuruecknehmen.
+    if (schlussScharf) karte.dataset.schluss = "ja";
+    karte.__schluss.style.display = schlussMoeglich ? "" : "none";
+    karte.__schlussBeschriften();
+
+    // Der Zaehler steht als eigene Funktion an der Karte, weil er von zwei
+    // Seiten gebraucht wird: beim Einspielen am Ende der Folge und dann, wenn
+    // jemand "Danach aufhoeren" wieder zuruecknimmt. Ohne das waere das
+    // Zuruecknehmen eine Ansage ohne Folgen - der Zaehler bliebe stehen.
+    karte.__zaehlerStarten = (sekunden) => {
+      if (!karte || karte.__timer || !(sekunden > 0)) return false;
+      if (karte.dataset.abgebrochen === "ja" || karte.dataset.schluss === "ja") return false;
       // Feste Zielzeit statt Zaehlschritte: ein Intervall driftet, und der
       // Wechsel kaeme sonst spuerbar spaeter als angekuendigt.
-      const ende = Date.now() + countdown * 1000;
+      const ende = Date.now() + sekunden * 1000;
       karte.__abbrechen.style.display = "";
       // Der Countdown ist eine Ansage - der Knopf gehoert dafuer sichtbar,
       // auch wenn er gerade verblasst war.
@@ -2284,8 +2449,13 @@ function installNextEpisodePrompt(view, url, options = {}) {
       };
       tick();
       karte.__timer = setInterval(tick, 200);
-      return "countdown@" + location.hostname;
-    }
+      return true;
+    };
+    // Wie lange gezaehlt wuerde. Gemerkt, damit ein zurueckgenommenes
+    // "Danach aufhoeren" denselben Zaehler wieder aufnehmen kann.
+    if (countdown > 0) karte.dataset.zaehler = String(countdown);
+
+    if (karte.__zaehlerStarten(countdown)) return "countdown@" + location.hostname;
 
     if (!countdown && !karte.__timer) {
       karte.__haupt.textContent = "Nächste Folge  ›";
@@ -2811,6 +2981,9 @@ async function pauseProviderForSwitch(providerId, view, mute) {
   if (!providerId || !isLiveView(view)) return;
   const provider = providers.find((item) => item.id === providerId);
   if (provider) await syncViewMediaProgress(provider, view, "pause");
+  // Erst melden, dann schliessen: der Takt oben traegt die letzten Sekunden
+  // noch ein, bevor die Sitzung zugemacht wird.
+  sitzungenSchliessen(providerId);
   const wasPlaying = await view.webContents.executeJavaScript(
     `(() => {
       let playing = false;
@@ -5500,6 +5673,8 @@ const watchparty = new WatchpartyRaeume({
   // Alles mit "yt" davor gehoert der YouTube-Watchparty. Hier wird es nur
   // weitergereicht - die Watchparty fuer Serien sieht es nie.
   onYoutube: (nachricht) => { youtubeParty.nachricht(nachricht); },
+  // Der Chat aendert nichts am Raumzustand - er wird nur weitergereicht.
+  onChat: (nachricht) => watchpartyChatZeigen(nachricht),
   onConnection: (raum, offen) => youtubeParty.verbindung(raum, offen),
   onStatus: (status, raum) => {
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
@@ -7223,6 +7398,657 @@ function youtubePartyStatus(status) {
     watchpartyEnabled: watchparty.aktiv
   };
 }
+
+// --- Wiedergabesitzungen -----------------------------------------------------
+//
+// Die Ablage der gemessenen Wiedergabezeit. Die Regeln stehen in statistik.js -
+// hier steht nur, wann geschrieben wird und wohin.
+//
+// Eigene Datei, nicht an den Favoriten: deren Verlauf ist auf 120 Eintraege je
+// Titel gekappt, damit die Ablage nicht auflaeuft. Sitzungen duerfen aber nicht
+// wegfallen, sonst schrumpft die Bilanz eines Jahres mit jeder neuen Folge.
+//
+// Je Anbieter genau eine offene Sitzung: mehr kann es nicht geben, weil je
+// Anbieter nur eine Seite vorn steht.
+const offeneSitzungen = new Map();
+let sitzungenSpeicher = null;
+let sitzungenSchmutzig = false;
+let sitzungenZuletztGespeichert = 0;
+
+// So oft wird die laufende Sitzung weggeschrieben. Nicht bei jedem Takt - das
+// waeren alle fuenf Sekunden ein Dateizugriff -, aber oft genug, dass ein
+// Absturz hoechstens eine halbe Minute kostet.
+const SITZUNG_SICHERN_MS = 30 * 1000;
+
+function loadSitzungen() {
+  if (sitzungenSpeicher) return sitzungenSpeicher;
+  try {
+    const roh = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
+    sitzungenSpeicher = Array.isArray(roh?.sitzungen) ? roh.sitzungen : [];
+  } catch {
+    sitzungenSpeicher = [];
+  }
+  return sitzungenSpeicher;
+}
+
+function saveSitzungen() {
+  if (!sitzungenSchmutzig) return;
+  ensureDataDir();
+  try {
+    fs.writeFileSync(SESSION_FILE, JSON.stringify({
+      version: SITZUNG_SCHEMA_VERSION,
+      sitzungen: loadSitzungen()
+    }, null, 2));
+    sitzungenSchmutzig = false;
+    sitzungenZuletztGespeichert = Date.now();
+  } catch (fehler) {
+    console.log("[ELFIX STATISTIK] Sitzungen nicht gespeichert: " + (fehler?.message || fehler));
+  }
+}
+
+// Die laufende Sitzung steht bereits in der Liste und wird an Ort und Stelle
+// fortgeschrieben. Dadurch ueberlebt sie einen Absturz mit dem Stand des
+// letzten Sicherns - eine leere Liste waere das schlechtere Ergebnis.
+function sitzungAblegen(sitzung) {
+  const liste = loadSitzungen();
+  const stelle = liste.findIndex((eintrag) => eintrag.id === sitzung.id);
+  if (stelle >= 0) liste[stelle] = sitzung;
+  else liste.push(sitzung);
+  sitzungenSchmutzig = true;
+}
+
+function sitzungVerwerfen(id) {
+  const liste = loadSitzungen();
+  const stelle = liste.findIndex((eintrag) => eintrag.id === id);
+  if (stelle >= 0) {
+    liste.splice(stelle, 1);
+    sitzungenSchmutzig = true;
+  }
+}
+
+// Ob diese Folge schon einmal zu Ende gesehen wurde. Genau das macht ein
+// erneutes Anschauen zur Wiederholung - und eine Wiederholung zaehlt nicht als
+// weitere Folge, sonst stuenden am Ende mehr Folgen da, als es gibt.
+function istWiederholung(entry, url) {
+  if (!entry) return false;
+  const identity = episodeIdentity(url);
+  if (identity?.episode) {
+    // Derselbe Schluessel, den appendCompletedEpisode vergibt - sonst faende
+    // man den vorhandenen Abschluss nie wieder.
+    const schluessel = `${identity.key}:s${identity.season}:e${identity.episode}`;
+    return (entry.completedEpisodes || []).some((eintrag) => eintrag.key === schluessel);
+  }
+  return Boolean(entry.completed);
+}
+
+function sitzungMelden(provider, url, entry, progress) {
+  if (!provider || !entry) return;
+  const identity = episodeIdentity(url);
+  const jetzt = Date.now();
+  const vorher = offeneSitzungen.get(provider.id) || null;
+
+  const ergebnis = statistik.meldungEinarbeiten(vorher, {
+    favoriteId: entry.id,
+    url,
+    titel: entry.title || "",
+    providerId: provider.id,
+    providerName: provider.name || "",
+    type: entry.type || "",
+    season: identity?.season || entry.season || 0,
+    episode: identity?.episode || entry.episode || 0,
+    sekunden: Number(progress?.playedSeconds) || 0,
+    position: Number(progress?.currentTime) || 0,
+    laufzeit: Number(progress?.duration) || 0,
+    abgeschlossen: Boolean(progress?.ended)
+      || mediaProgressPercent(progress?.currentTime, progress?.duration) >= COMPLETED_PROGRESS_PERCENT,
+    // Zum Zeitpunkt des Beginns gefragt, nicht am Ende: waehrend dieser Sitzung
+    // wird die Folge ja gerade abgeschlossen, und danach saehe jede
+    // Erstansicht wie eine Wiederholung aus.
+    wiederholung: vorher && vorher.url === url ? vorher.wiederholung : istWiederholung(entry, url)
+  }, jetzt);
+
+  if (ergebnis.geschlossen) sitzungBeenden(ergebnis.geschlossen);
+  offeneSitzungen.set(provider.id, ergebnis.offen);
+
+  if (ergebnis.offen) {
+    const stand = statistik.sitzungSchliessen(ergebnis.offen);
+    if (statistik.sitzungLohnt(stand)) sitzungAblegen(stand);
+    if (jetzt - sitzungenZuletztGespeichert >= SITZUNG_SICHERN_MS) saveSitzungen();
+  }
+}
+
+function sitzungBeenden(stand) {
+  if (!stand) return;
+  if (statistik.sitzungLohnt(stand)) sitzungAblegen(stand);
+  else sitzungVerwerfen(stand.id);
+  saveSitzungen();
+}
+
+// Alles offene schliessen: beim Anbieterwechsel, beim Schliessen einer Ansicht
+// und beim Beenden der App. Ohne das bliebe die letzte Folge eines Abends
+// ungezaehlt.
+function sitzungenSchliessen(providerId) {
+  const betroffen = providerId ? [providerId] : [...offeneSitzungen.keys()];
+  for (const id of betroffen) {
+    const offen = offeneSitzungen.get(id);
+    offeneSitzungen.delete(id);
+    if (offen) sitzungBeenden(statistik.sitzungSchliessen(offen));
+  }
+}
+
+// Was die Auswertung ueber einen Titel wissen muss - aus den Caches, die
+// ohnehin gefuellt sind. Kein einziger zusaetzlicher Abruf.
+function sitzungTitelInfo(sitzung, seiten = {}) {
+  const favorite = favorites.find((eintrag) => eintrag.id === sitzung?.favoriteId);
+  // Nachgesehen wird unter der Adresse des Titels, nicht der der Folge: der
+  // Geschmack-Cache kennt Serienseiten, und eine Folgenadresse steht dort nie.
+  // Genau daran fielen anfangs alle Genres aus.
+  const seite = seiten[String(favorite?.url || "")] || seiten[String(sitzung?.url || "")];
+  // Genres kommen vom Anbieter, aus dem Geschmack-Cache. Der Metadaten-Cache
+  // haette ebenfalls welche, ist aber nur ueber den asynchronen Client
+  // erreichbar - und eine Auswertung soll keine Abrufe ausloesen.
+  const eigene = (Array.isArray(seite?.genres) ? seite.genres : [])
+    .map((genre) => ({ key: String(genre.key || ""), label: String(genre.label || genre.key || "") }))
+    .filter((genre) => genre.key);
+  return {
+    genres: eigene,
+    bild: favorite?.customThumbnail || favorite?.thumbnail || "",
+    jahr: Number(seite?.meta?.jahr) || 0
+  };
+}
+
+// Altdaten uebernehmen - einmalig, und nur was sicher ableitbar ist.
+//
+// Vor dieser Fassung hat ELFIX die Wiedergabezeit zwar gemessen, aber nur als
+// Schwelle benutzt und danach verworfen. Was in der Ablage steht, sind
+// Ereignisse: diese Folge lief, dieser Titel war durch, an diesem Tag.
+//
+// Genau das wird uebernommen - und nichts darueber hinaus. Aus "Folge 8
+// abgeschlossen" folgt nicht "24 Minuten geschaut", auch wenn die Folge 24
+// Minuten dauert: gesehen haben kann man sie in zwei Minuten Vorspulen. Solche
+// Saetze tragen deshalb `qualitaet: "rekonstruiert"` und keine Sekunden, und
+// die Auswertung zaehlt ihre Zeit nirgends mit.
+//
+// Der Unterschied ist nicht kosmetisch. Eine erfundene Stundenzahl laesst sich
+// ein Jahr spaeter nicht mehr widerlegen - sie steht dann einfach da.
+function sitzungenAusAltdaten(liste) {
+  const gebaut = [];
+  const gesehen = new Set();
+
+  for (const favorite of liste || []) {
+    const basis = {
+      favoriteId: String(favorite?.id || ""),
+      titel: String(favorite?.title || ""),
+      providerId: String(favorite?.providerId || ""),
+      anbieter: String(favorite?.providerName || ""),
+      gattung: statistik.gattungBestimmen({
+        type: favorite?.type,
+        providerName: favorite?.providerName,
+        url: favorite?.url
+      }),
+      sekunden: 0,
+      qualitaet: statistik.REKONSTRUIERT,
+      wiederholung: false
+    };
+
+    // Die genaueste Quelle zuerst: abgeschlossene Folgen tragen Nummer und
+    // Zeitpunkt.
+    for (const folge of favorite?.completedEpisodes || []) {
+      const zeit = Date.parse(folge?.completedAt || "");
+      if (!Number.isFinite(zeit)) continue;
+      const kennung = `alt:${basis.favoriteId}:s${folge.season}:e${folge.episode}`;
+      if (gesehen.has(kennung)) continue;
+      gesehen.add(kennung);
+      gebaut.push({
+        ...basis,
+        id: kennung,
+        url: String(folge?.url || favorite?.url || ""),
+        season: Number(folge?.season) || 0,
+        episode: Number(folge?.episode) || 0,
+        begonnenAm: new Date(zeit).toISOString(),
+        beendetAm: new Date(zeit).toISOString(),
+        startPosition: 0,
+        endPosition: 0,
+        laufzeit: 0,
+        abgeschlossen: true
+      });
+    }
+
+    // Ein abgeschlossener Titel ohne jede Folgenangabe - typisch fuer Filme:
+    // ihr Verlauf enthaelt oft nur "Film geoeffnet", und das ist keine
+    // Wiedergabe. Der Abschluss selbst ist aber belegt und traegt einen
+    // Zeitpunkt. Ohne diesen Zweig fehlten in der Bilanz saemtliche Filme.
+    const abschlussZeit = Date.parse(favorite?.completedAt || "");
+    if (favorite?.completed && Number.isFinite(abschlussZeit) && !(favorite?.completedEpisodes || []).length) {
+      const kennung = `altab:${basis.favoriteId}`;
+      if (!gesehen.has(kennung)) {
+        gesehen.add(kennung);
+        gebaut.push({
+          ...basis,
+          id: kennung,
+          url: String(favorite?.url || ""),
+          season: Number(favorite?.season) || 0,
+          episode: Number(favorite?.episode) || 0,
+          begonnenAm: new Date(abschlussZeit).toISOString(),
+          beendetAm: new Date(abschlussZeit).toISOString(),
+          startPosition: 0,
+          endPosition: 0,
+          laufzeit: 0,
+          abgeschlossen: true
+        });
+      }
+    }
+
+    // Danach der Verlauf: er nennt Folgen mit Zeitpunkt, sagt aber nicht, ob
+    // sie zu Ende liefen. "Geoeffnet" bleibt draussen - das ist keine
+    // Wiedergabe, sondern eine offene Seite.
+    for (const eintrag of favorite?.activity || []) {
+      const label = String(eintrag?.label || "");
+      if (/ge(ö|oe)ffnet/i.test(label)) continue;
+      const zeit = Date.parse(eintrag?.at || "");
+      if (!Number.isFinite(zeit)) continue;
+      const abschluss = /^abgeschlossen$/i.test(label.trim());
+      const folge = Number(eintrag?.episode) || 0;
+      // Die Abschlusszeile traegt die Nummer der letzten Folge mit und waere
+      // sonst eine Folge zu viel.
+      if (abschluss && folge) continue;
+      const kennung = `alt:${basis.favoriteId}:s${eintrag?.season || 0}:e${folge}`;
+      if (folge && gesehen.has(kennung)) continue;
+      if (folge) gesehen.add(kennung);
+      gebaut.push({
+        ...basis,
+        id: `altv:${basis.favoriteId}:${zeit}`,
+        url: String(eintrag?.url || favorite?.url || ""),
+        season: Number(eintrag?.season) || 0,
+        episode: folge,
+        begonnenAm: new Date(zeit).toISOString(),
+        beendetAm: new Date(zeit).toISOString(),
+        startPosition: 0,
+        endPosition: 0,
+        laufzeit: 0,
+        abgeschlossen: abschluss
+      });
+    }
+  }
+
+  return gebaut.sort((links, rechts) => Date.parse(links.begonnenAm) - Date.parse(rechts.begonnenAm));
+}
+
+// Einmalig, mit demselben Merker-Verfahren wie beim Nachtragen von YouTube: der
+// Merker wird gesetzt, bevor geprueft wird. Wer die uebernommenen Saetze
+// spaeter loescht, bekommt sie nicht beim naechsten Start zurueck.
+function sitzungenNachtragen() {
+  if (settings.migrations?.sitzungen === true) return 0;
+  settings.migrations = { ...(settings.migrations || {}), sitzungen: true };
+  saveSettings();
+
+  const vorhanden = loadSitzungen();
+  const bekannte = new Set(vorhanden.map((eintrag) => eintrag.id));
+  const neue = sitzungenAusAltdaten(favorites).filter((eintrag) => !bekannte.has(eintrag.id));
+  if (!neue.length) return 0;
+
+  vorhanden.push(...neue);
+  sitzungenSchmutzig = true;
+  saveSitzungen();
+  console.log(`[ELFIX STATISTIK] ${neue.length} Saetze aus dem Verlauf uebernommen (ohne Wiedergabezeit)`);
+  return neue.length;
+}
+
+// --- Die Auswertung ----------------------------------------------------------
+
+// Ein Zeitraum als Name statt als zwei Zeitstempel. Die Seite fragt nach
+// "letzte 30 Tage", nicht nach zwei Millisekundenwerten.
+function zeitraumGrenzen(name, jetzt = Date.now()) {
+  const heute = new Date(jetzt);
+  const tagesBeginn = (datum) => new Date(datum.getFullYear(), datum.getMonth(), datum.getDate()).getTime();
+  const vorTagen = (anzahl) => tagesBeginn(new Date(jetzt - anzahl * 86400000));
+  switch (String(name || "")) {
+    case "7tage": return { von: vorTagen(6), bis: jetzt };
+    case "30tage": return { von: vorTagen(29), bis: jetzt };
+    case "monat": return { von: new Date(heute.getFullYear(), heute.getMonth(), 1).getTime(), bis: jetzt };
+    case "jahr": return { von: new Date(heute.getFullYear(), 0, 1).getTime(), bis: jetzt };
+    case "alles": return { von: Number.NEGATIVE_INFINITY, bis: jetzt };
+    default: {
+      // Eine Jahreszahl - "2025" heisst das ganze Kalenderjahr.
+      const jahr = Number(name);
+      if (Number.isFinite(jahr) && jahr > 2000) {
+        return { von: new Date(jahr, 0, 1).getTime(), bis: new Date(jahr + 1, 0, 1).getTime() - 1 };
+      }
+      return { von: Number.NEGATIVE_INFINITY, bis: jetzt };
+    }
+  }
+}
+
+// Die eine Stelle, an der Statistiken entstehen. Alles, was die Oberflaeche
+// zeigt, kommt hier heraus - damit es keine zweite Rechenart gibt, die
+// irgendwann andere Zahlen liefert.
+function watchStatistik(zeitraum = "alles") {
+  const sitzungen = loadSitzungen();
+  const grenzen = zeitraumGrenzen(zeitraum);
+  let seiten = {};
+  try { seiten = loadTasteCache()?.pages || {}; } catch { seiten = {}; }
+  return statistik.auswerten(sitzungen, {
+    von: grenzen.von,
+    bis: grenzen.bis,
+    titel: (sitzung) => sitzungTitelInfo(sitzung, seiten)
+  });
+}
+
+// --- Watchparty-Chat ---------------------------------------------------------
+//
+// Ein paar Zeilen ueber dem Video, mehr nicht. Das Relay kannte die Mitglieder
+// eines Raums ohnehin und weiss, wer schreibt - der Chat ist deshalb ein
+// kleiner Aufsatz darauf und kein eigenes System.
+//
+// Er lebt in der Anbieterseite, nicht in der Oberflaeche von ELFIX: waehrend
+// einer Watchparty liegt die Anbieteransicht vorn und wuerde jedes HTML der App
+// verdecken. Dieselbe Ueberlegung wie beim Knopf fuer die naechste Folge, und
+// derselbe Rueckkanal ueber eine Konsolenzeile.
+//
+// Zwei Dinge machen ihn im Betrieb ertraeglich:
+//
+// Er ist eingeklappt, bis man ihn aufmacht. Eine offene Chatspalte neben einem
+// Film ist eine Ablenkung, die man nicht bestellt hat.
+//
+// Und er verschwindet, wenn die Maus stillsteht - genau wie der Knopf fuer die
+// naechste Folge. Wer schaut, bewegt die Maus nicht; wer die Maus bewegt, will
+// etwas. Eingeklappt bleibt nur ein kleiner Knopf, und auch der verblasst.
+const CHAT_RUHE_MS = 3500;
+
+function watchpartyChatScript(optionen = {}) {
+  return `(() => {
+  const id = "__elfixChat";
+  const eigenerName = ${JSON.stringify(String(optionen.name || "Du"))};
+  if (window.__elfixChat) { window.__elfixChat.wach(); return "chat-schon-da"; }
+
+  const obenDrauf = window.top === window.self;
+  const sichtbaresVideo = Array.from(document.querySelectorAll("video")).some((video) => {
+    const rect = video.getBoundingClientRect();
+    return rect.width > 120 && rect.height > 80;
+  });
+  const rahmen = Array.from(document.querySelectorAll("iframe, embed")).some((node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.width > 200 && rect.height > 120;
+  });
+  // Dieselbe Regel wie beim Folgenknopf: die Einblendung gehoert in den Frame
+  // mit dem Video, sonst ist sie im Vollbild nicht zu sehen.
+  if (!(sichtbaresVideo || (obenDrauf && !rahmen))) return "chat-nicht-zustaendig";
+
+  const vollbild = document.fullscreenElement;
+  const buehne = vollbild && vollbild.tagName !== "IFRAME" && vollbild.tagName !== "EMBED"
+    ? vollbild : document.documentElement;
+
+  const kasten = document.createElement("div");
+  kasten.id = id;
+  Object.assign(kasten.style, {
+    position: "fixed", right: "22px", bottom: "22px", zIndex: "2147483646",
+    display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px",
+    font: "500 14px/1.4 system-ui, sans-serif", color: "#fff",
+    opacity: "0", transition: "opacity 220ms ease"
+  });
+
+  // --- Der zusammengeklappte Zustand ---
+  const knopf = document.createElement("button");
+  knopf.type = "button";
+  Object.assign(knopf.style, {
+    minHeight: "38px", padding: "0 16px", border: "0", borderRadius: "999px",
+    background: "rgba(12, 16, 24, 0.86)", color: "#fff",
+    font: "700 13px/1 system-ui, sans-serif", cursor: "pointer",
+    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.45)"
+  });
+  knopf.textContent = "Chat";
+
+  // --- Der aufgeklappte Zustand ---
+  const feld = document.createElement("div");
+  Object.assign(feld.style, {
+    display: "none", flexDirection: "column", width: "min(320px, 34vw)",
+    maxHeight: "min(340px, 42vh)", borderRadius: "14px", overflow: "hidden",
+    background: "rgba(10, 13, 20, 0.9)", backdropFilter: "blur(10px)",
+    boxShadow: "0 18px 50px rgba(0, 0, 0, 0.55)"
+  });
+
+  const kopf = document.createElement("div");
+  Object.assign(kopf.style, {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "10px 14px", font: "700 13px/1 system-ui, sans-serif",
+    borderBottom: "1px solid rgba(255, 255, 255, 0.1)"
+  });
+  const titel = document.createElement("span");
+  titel.textContent = "Watchparty-Chat";
+  const zu = document.createElement("button");
+  zu.type = "button";
+  zu.textContent = "\\u2013";
+  Object.assign(zu.style, {
+    border: "0", background: "transparent", color: "#fff",
+    fontSize: "18px", lineHeight: "1", cursor: "pointer", padding: "0 4px"
+  });
+  kopf.append(titel, zu);
+
+  const liste = document.createElement("div");
+  Object.assign(liste.style, {
+    flex: "1", minHeight: "0", overflowY: "auto", padding: "10px 14px",
+    display: "flex", flexDirection: "column", gap: "8px"
+  });
+
+  const zeile = document.createElement("form");
+  Object.assign(zeile.style, {
+    display: "flex", gap: "8px", padding: "10px 12px",
+    borderTop: "1px solid rgba(255, 255, 255, 0.1)"
+  });
+  const eingabe = document.createElement("input");
+  eingabe.type = "text";
+  eingabe.placeholder = "Nachricht …";
+  eingabe.maxLength = 500;
+  Object.assign(eingabe.style, {
+    flex: "1", minWidth: "0", border: "0", borderRadius: "8px",
+    padding: "9px 12px", background: "rgba(255, 255, 255, 0.1)",
+    color: "#fff", font: "500 13px/1 system-ui, sans-serif"
+  });
+  const ab = document.createElement("button");
+  ab.type = "submit";
+  ab.textContent = "\\u2191";
+  Object.assign(ab.style, {
+    border: "0", borderRadius: "8px", padding: "0 14px",
+    background: "rgba(255, 255, 255, 0.9)", color: "#0b0f16",
+    font: "700 14px/1 system-ui, sans-serif", cursor: "pointer"
+  });
+  zeile.append(eingabe, ab);
+  feld.append(kopf, liste, zeile);
+  kasten.append(feld, knopf);
+  buehne.appendChild(kasten);
+
+  // --- Sichtbarkeit ---
+  // Der Chat gehoert zur Bedienung, nicht zum Film. Steht die Maus still, geht
+  // er weg; jede Bewegung holt ihn zurueck. Waehrend man tippt, bleibt er - es
+  // waere absurd, mitten im Satz zu verblassen.
+  let ruhe = 0;
+  const wach = () => {
+    kasten.style.opacity = "1";
+    if (ruhe) clearTimeout(ruhe);
+    ruhe = setTimeout(() => {
+      if (kasten.__offen && (document.activeElement === eingabe || kasten.__ueber)) return;
+      if (kasten.__ueber) return;
+      kasten.style.opacity = "0";
+    }, ${CHAT_RUHE_MS});
+  };
+  kasten.addEventListener("mouseenter", () => { kasten.__ueber = true; wach(); });
+  kasten.addEventListener("mouseleave", () => { kasten.__ueber = false; wach(); });
+  document.addEventListener("mousemove", wach, true);
+
+  const umschalten = (offen) => {
+    kasten.__offen = offen;
+    feld.style.display = offen ? "flex" : "none";
+    knopf.style.display = offen ? "none" : "";
+    if (offen) {
+      eingabe.focus();
+      liste.scrollTop = liste.scrollHeight;
+    }
+    wach();
+  };
+  knopf.addEventListener("click", (event) => { event.preventDefault(); umschalten(true); });
+  zu.addEventListener("click", (event) => { event.preventDefault(); umschalten(false); });
+
+  // Tasten gehoeren dem Chat, solange man in ihm tippt: sonst nimmt der Player
+  // die Leertaste und pausiert mitten im Satz.
+  for (const name of ["keydown", "keyup", "keypress"]) {
+    eingabe.addEventListener(name, (event) => { event.stopPropagation(); }, true);
+  }
+
+  zeile.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = eingabe.value.trim();
+    if (!text) return;
+    eingabe.value = "";
+    console.log("__elfix:chat:" + text);
+    wach();
+  });
+
+  // --- Eintragen ---
+  const anhaengen = (nachricht) => {
+    const zeileKnoten = document.createElement("div");
+    Object.assign(zeileKnoten.style, { display: "flex", flexDirection: "column", gap: "2px" });
+    const wer = document.createElement("small");
+    wer.textContent = nachricht.eigen ? eigenerName : (nachricht.from || "Jemand");
+    Object.assign(wer.style, {
+      fontSize: "11px", opacity: "0.6",
+      color: nachricht.eigen ? "#9ec1ff" : "#fff"
+    });
+    const was = document.createElement("span");
+    was.textContent = nachricht.text;
+    Object.assign(was.style, { fontSize: "13px", wordBreak: "break-word" });
+    zeileKnoten.append(wer, was);
+    liste.append(zeileKnoten);
+    // Nur die letzten fuenfzig behalten: gespeichert wird nichts, und eine
+    // endlos wachsende Liste in einer fremden Seite waere unhoeflich.
+    while (liste.children.length > 50) liste.firstChild.remove();
+    liste.scrollTop = liste.scrollHeight;
+  };
+
+  window.__elfixChat = {
+    wach,
+    anhaengen,
+    // Kommt etwas an, waehrend der Chat zu ist, meldet sich der Knopf - aber
+    // leise: ein Punkt, kein Fenster.
+    melden: (nachricht) => {
+      anhaengen(nachricht);
+      if (!kasten.__offen && !nachricht.eigen) {
+        knopf.textContent = "Chat \\u2022";
+        wach();
+      }
+    },
+    entfernen: () => {
+      if (ruhe) clearTimeout(ruhe);
+      document.removeEventListener("mousemove", wach, true);
+      kasten.remove();
+      window.__elfixChat = null;
+    }
+  };
+  knopf.addEventListener("click", () => { knopf.textContent = "Chat"; });
+
+  umschalten(false);
+  requestAnimationFrame(wach);
+  return "chat-da@" + location.hostname;
+})()`;
+}
+
+// In die Seite bringen - aber nur, wo eine Watchparty wirklich laeuft. Auf einer
+// Seite ohne Runde haette der Knopf niemanden, mit dem er spraeche.
+async function installWatchpartyChat(provider, view, url) {
+  if (!isLiveView(view)) return;
+  const key = watchpartyLiveKeyForUrl(url);
+  if (!key || !watchparty.aktiv) return;
+  await executeJavaScriptInMediaFrames(view, watchpartyChatScript({
+    name: settings.watchparty?.deviceName || "Du"
+  })).catch(() => []);
+}
+
+// Eine eingegangene Nachricht in die offene Seite tragen. Sie geht nur dorthin,
+// wo auch geschaut wird - eine Chatzeile auf einer Seite ohne Runde waere ein
+// Fremdkoerper.
+function watchpartyChatZeigen(nachricht) {
+  const eintrag = [...providerViews.entries()].find(([, ansicht]) => isLiveView(ansicht));
+  if (!eintrag) return;
+  const [, view] = eintrag;
+  const adresse = view.webContents.getURL();
+  if (!watchpartyLiveKeyForUrl(adresse)) return;
+  executeJavaScriptInMediaFrames(view,
+    `window.__elfixChat && window.__elfixChat.melden(${JSON.stringify(nachricht)})`).catch(() => []);
+}
+
+// --- Jahresrueckblick --------------------------------------------------------
+//
+// Die Statistikseite ist zum Nachschlagen da; das hier ist zum Ansehen, einmal
+// im Jahr. Deshalb meldet es sich von selbst - aber nur unter Bedingungen, die
+// eine Enttaeuschung ausschliessen.
+//
+// Das Fenster reicht vom 1. Dezember bis zum 6. Januar. Der Januar gehoert
+// dazu, weil sonst jeder leer ausgeht, der ELFIX im Dezember nicht oeffnet; in
+// diesen Tagen zeigt es dann das vergangene Jahr.
+const WRAPPED_VON = { monat: 11, tag: 1 };
+const WRAPPED_BIS = { monat: 0, tag: 6 };
+
+// Unter diesen Grenzen gibt es nichts zu feiern. Wer ELFIX am 20. Dezember
+// installiert, soll keinen Jahresrueckblick ueber vier Folgen bekommen -
+// aufrufen kann er ihn trotzdem, er draengt sich nur nicht auf.
+const WRAPPED_MIN_FOLGEN = 10;
+const WRAPPED_MIN_TAGE = 3;
+
+// Welches Jahr gerade an der Reihe ist - oder null ausserhalb des Fensters.
+function wrappedJahrFuer(jetzt = new Date()) {
+  const monat = jetzt.getMonth();
+  const tag = jetzt.getDate();
+  if (monat === WRAPPED_VON.monat && tag >= WRAPPED_VON.tag) return jetzt.getFullYear();
+  if (monat === WRAPPED_BIS.monat && tag <= WRAPPED_BIS.tag) return jetzt.getFullYear() - 1;
+  return null;
+}
+
+function wrappedStatus(jahrWunsch) {
+  const imFenster = wrappedJahrFuer();
+  // Auf Wunsch jedes Jahr - der Knopf im Rueckblick soll auch im Juli gehen.
+  const jahr = Number(jahrWunsch) || imFenster;
+  if (!jahr) return { faellig: false, jahr: 0, daten: null };
+
+  const daten = watchStatistik(String(jahr));
+  const genug = daten.folgen >= WRAPPED_MIN_FOLGEN && daten.tage >= WRAPPED_MIN_TAGE;
+  const schonGesehen = Number(settings.wrapped?.gesehenJahr) === jahr;
+  return {
+    // "Faellig" heisst: von selbst zeigen. Alles drei muss stimmen.
+    faellig: Boolean(imFenster) && imFenster === jahr && genug && !schonGesehen,
+    jahr,
+    genug,
+    daten: daten.sitzungen ? daten : null
+  };
+}
+
+ipcMain.handle("wrapped:status", (_event, jahr) => wrappedStatus(jahr));
+
+// Das Archiv: Jahre, fuer die es genug zu erzaehlen gibt. Ein Jahr mit vier
+// Folgen wird nicht als grosser Rueckblick angeboten - es stuende sonst als
+// Versprechen da, das die Daten nicht halten.
+ipcMain.handle("wrapped:jahre", () => {
+  const jahre = [...new Set(loadSitzungen()
+    .map((sitzung) => new Date(Date.parse(sitzung.begonnenAm)).getFullYear())
+    .filter((jahr) => Number.isFinite(jahr)))].sort((links, rechts) => rechts - links);
+  return jahre.filter((jahr) => {
+    const daten = watchStatistik(String(jahr));
+    return daten.folgen >= WRAPPED_MIN_FOLGEN && daten.tage >= WRAPPED_MIN_TAGE;
+  });
+});
+
+// Gesehen heisst gesehen: der Rueckblick draengt sich in diesem Jahr nicht noch
+// einmal auf. Aufrufen laesst er sich danach weiterhin.
+ipcMain.handle("wrapped:gesehen", (_event, jahr) => {
+  const wert = Number(jahr) || 0;
+  if (!wert) return false;
+  settings.wrapped = { ...(settings.wrapped || {}), gesehenJahr: wert };
+  saveSettings();
+  return true;
+});
+
+ipcMain.handle("wrapped:set-open", (_event, offen) => {
+  setOverlayOpen("wrapped", Boolean(offen));
+  return true;
+});
 
 // --- Empfohlen fuer dich -----------------------------------------------------
 // Baut aus dem Verlauf ein Geschmacksprofil (siehe taste.js) und sucht dazu
@@ -10478,7 +11304,14 @@ function normalizeSettings(raw) {
     // laeuft beim naechsten Start noch einmal - und traegt etwas nach, das
     // man inzwischen bewusst geloescht hat.
     migrations: {
-      youtubeProvider: raw?.migrations?.youtubeProvider === true
+      youtubeProvider: raw?.migrations?.youtubeProvider === true,
+      sitzungen: raw?.migrations?.sitzungen === true
+    },
+    // Welches Jahr schon gezeigt wurde. Muss hier stehen, sonst faellt es beim
+    // naechsten Speichern der Einstellungen heraus und der Jahresrueckblick
+    // draengt sich erneut auf.
+    wrapped: {
+      gesehenJahr: Number(raw?.wrapped?.gesehenJahr) || 0
     },
     playback: {
       pauseOnProviderSwitch: raw?.playback?.pauseOnProviderSwitch ?? defaults.playback.pauseOnProviderSwitch,
@@ -10488,7 +11321,11 @@ function normalizeSettings(raw) {
       // Standardmaessig aus: die Mediathek ist die Ablage fuer Serien und
       // Filme, die man zu Ende gesehen hat. Ein YouTube-Video landet dort
       // ungefragt nicht - wer es doch will, schaltet es hier ein.
-      youtubeInMediathek: raw?.playback?.youtubeInMediathek === true
+      youtubeInMediathek: raw?.playback?.youtubeInMediathek === true,
+      // Standardmaessig an, weil es bisher immer so war. Nur ein
+      // ausdrueckliches Nein schaltet den Zaehler ab; der Knopf bleibt in
+      // jedem Fall.
+      autoplayNextEpisode: raw?.playback?.autoplayNextEpisode !== false
     },
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
@@ -10617,15 +11454,20 @@ function defaultSettings() {
     },
     // Eine frische Ablage bringt YouTube schon mit - fuer sie ist das
     // Nachtragen von vornherein erledigt.
+    wrapped: { gesehenJahr: 0 },
     migrations: {
-      youtubeProvider: true
+      youtubeProvider: true,
+      // Eine frische Ablage hat keinen Verlauf, aus dem etwas zu uebernehmen
+      // waere - sie sammelt von Anfang an gemessene Zeiten.
+      sitzungen: true
     },
     playback: {
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
       pauseOnMinimize: false,
       pauseOnBlur: false,
-      youtubeInMediathek: false
+      youtubeInMediathek: false,
+      autoplayNextEpisode: true
     },
     browser: {
       cacheMode: "aggressive"

@@ -784,6 +784,27 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    // Der Chat. Das Relay reicht ihn nur weiter: es kennt die Mitglieder eines
+    // Raums ohnehin und weiss, wer gerade schreibt.
+    //
+    // Nichts davon wird gespeichert - weder hier noch in der App. Ein
+    // Chatverlauf auf einem fremden Server ist etwas anderes als ein
+    // Raumzustand: er enthaelt, was Leute einander schreiben, und dafuer gibt
+    // es hier keinen Grund und keine Einwilligung. Wer nicht dabei war, hat es
+    // nicht gelesen.
+    if (nachricht.type === "chat") {
+      const zeile = text(nachricht.text, 500).trim();
+      if (!zeile) return;
+      anRaumSenden(socket.raum, {
+        type: "chat",
+        text: zeile,
+        from: socket.name,
+        deviceId: socket.geraetId,
+        at: Date.now()
+      });
+      return;
+    }
+
     if (nachricht.type === "enter" || nachricht.type === "leave") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag) return;

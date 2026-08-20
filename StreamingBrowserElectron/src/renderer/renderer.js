@@ -80,6 +80,8 @@ const homeView = document.querySelector("#homeView");
 const globalSearchView = document.querySelector("#globalSearchView");
 const favoritesView = document.querySelector("#favoritesView");
 const libraryView = document.querySelector("#libraryView");
+const reviewView = document.querySelector("#reviewView");
+const wrappedModal = document.querySelector("#wrappedModal");
 const continueView = document.querySelector("#continueView");
 const watchpartyView = document.querySelector("#watchpartyView");
 const watchpartyGrid = document.querySelector("#watchpartyGrid");
@@ -238,6 +240,7 @@ const showFavoriteMetaMirror = document.querySelector("#showFavoriteMetaMirror")
 const favoriteProgressMode = document.querySelector("#favoriteProgressMode");
 const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
+const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
 const pauseOnBlur = document.querySelector("#pauseOnBlur");
@@ -407,6 +410,7 @@ const SETTINGS_INDEX = [
   ["providers", "Adblock pro Anbieter", "Werbung einzelne Seite ausnehmen"],
   ["playback", "Automatisch pausieren", "Anbieterwechsel Minimieren Fokus verlassen"],
   ["playback", "Weiterschauen-Fortschritt", "nächste Folge weiterrücken stehen bleiben"],
+  ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
   ["browser", "Werbung blockieren", "Adblock Popups Weiterleitungen Tracking Filterlisten"],
   ["browser", "Ausnahmen", "Whitelist Domain erlauben Seite funktioniert nicht"],
   ["browser", "Zwischenspeicher", "Cache Browserdaten löschen Start Reload"],
@@ -625,6 +629,30 @@ function bindEvents() {
   });
   document.querySelector("#newProviderButton").addEventListener("click", clearProviderForm);
   document.querySelector("#providerAddButton")?.addEventListener("click", () => { anbieterHinzufuegen().catch(() => {}); });
+  // Der Jahresrueckblick: blaettern per Klick, Pfeiltasten und Punkten.
+  document.querySelector("#wrappedClose")?.addEventListener("click", wrappedSchliessen);
+  document.querySelector("#wrappedNext")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    wrappedZeigen(wrappedStelle + 1);
+  });
+  document.querySelector("#wrappedPrev")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    wrappedZeigen(wrappedStelle - 1);
+  });
+  // Ein Klick auf die Flaeche blaettert weiter - wie man es von solchen
+  // Geschichten kennt.
+  document.querySelector("#wrappedStage")?.addEventListener("click", () => {
+    if (wrappedStelle >= wrappedSeiten.length - 1) return;
+    wrappedZeigen(wrappedStelle + 1);
+  });
+  wrappedModal?.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight" || event.key === " ") { event.preventDefault(); wrappedZeigen(wrappedStelle + 1); }
+    if (event.key === "ArrowLeft") { event.preventDefault(); wrappedZeigen(wrappedStelle - 1); }
+  });
+  // Escape schliesst den Dialog von selbst - die Anbieteransicht muss trotzdem
+  // zurueckkommen.
+  wrappedModal?.addEventListener("close", () => { api.setWrappedOpen?.(false); });
+
   document.querySelector("#deleteProviderButton").addEventListener("click", deleteSelectedProvider);
   document.querySelector("#moveUpButton").addEventListener("click", () => moveSelectedProvider(-1));
   document.querySelector("#moveDownButton").addEventListener("click", () => moveSelectedProvider(1));
@@ -845,6 +873,7 @@ function bindEvents() {
   });
   pauseOnProviderSwitch.addEventListener("change", saveSettings);
   youtubeInMediathek?.addEventListener("change", saveSettings);
+  autoplayNextEpisode?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
   pauseOnMinimize.addEventListener("change", saveSettings);
@@ -982,6 +1011,10 @@ function renderHome() {
   startHeroRotation();
 
   renderSidebarProviders(enabled);
+
+  // Der Jahresrueckblick meldet sich hier - dezent und nur im Dezember, nicht
+  // als Fenster, das sich vor die App stellt.
+  renderWrappedHinweis().catch(() => {});
 
   renderNewEpisodes();
 
@@ -1749,6 +1782,10 @@ async function handleHomeAction(action) {
   }
   if (action === "history") {
     await showHistory();
+    return;
+  }
+  if (action === "review") {
+    await showReview();
     return;
   }
   if (action === "help") {
@@ -2646,6 +2683,944 @@ async function showHistory() {
   renderLibraryViews();
   window.setTimeout(syncBrowserBounds, 0);
 }
+
+// --- Rueckblick --------------------------------------------------------------
+// Gerechnet wird im Hauptprozess, aus den gespeicherten Wiedergabesitzungen.
+// Hier wird nur gezeigt - und zwar nur, was wirklich bekannt ist.
+//
+// Der Zeitraum wird nicht behauptet, sondern benannt: die Ueberschrift richtet
+// sich danach, wie weit die Daten reichen. Wer ELFIX seit drei Wochen benutzt,
+// liest "Deine Zeit mit ELFIX" und nicht "Dein Jahr 2026".
+//
+// Und wo nichts gemessen wurde, steht nichts. Eine Karte "0 Stunden" waere
+// falsch, wenn die Wahrheit "unbekannt" lautet - solche Karten fallen weg und
+// die Seite sagt einmal, ab wann gemessen wird.
+
+let reviewZeitraum = "";
+
+const WOCHENTAGE = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
+const MONATE = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+  "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+function reviewDatum(tag, mitJahr = true) {
+  const teile = String(tag || "").slice(0, 10).split("-");
+  if (teile.length !== 3) return "";
+  return `${Number(teile[2])}. ${MONATE[Number(teile[1]) - 1] || ""}${mitJahr ? " " + teile[0] : ""}`;
+}
+
+// Stunden und Minuten, wie man sie sagt. Sekunden sind hier belanglos, und
+// "3,7 Stunden" liest niemand gern.
+function reviewDauer(sekunden) {
+  const gesamt = Math.max(0, Math.round(Number(sekunden) || 0));
+  const stunden = Math.floor(gesamt / 3600);
+  const minuten = Math.round((gesamt % 3600) / 60);
+  if (!stunden) return `${minuten} min`;
+  return minuten ? `${stunden} h ${minuten} min` : `${stunden} h`;
+}
+
+async function showReview() {
+  await enterInternalMode();
+  setCurrentRoute("review");
+  hideContentViews();
+  reviewView?.classList.remove("is-hidden");
+  await renderReview();
+  window.setTimeout(syncBrowserBounds, 0);
+}
+
+async function renderReview() {
+  const koerper = document.querySelector("#reviewBody");
+  const leer = document.querySelector("#reviewEmpty");
+  const titel = document.querySelector("#reviewTitle");
+  const spanne = document.querySelector("#reviewSpan");
+  const leiste = document.querySelector("#reviewYears");
+  if (!koerper) return;
+
+  const antwort = await api.getReview?.(reviewZeitraum).catch(() => null);
+  const daten = antwort?.daten || null;
+  const zeitraeume = Array.isArray(antwort?.zeitraeume) ? antwort.zeitraeume : [];
+  reviewZeitraum = antwort?.gewaehlt || reviewZeitraum;
+
+  const etwasDa = Boolean(daten && daten.sitzungen);
+  leer?.classList.toggle("is-hidden", etwasDa);
+  koerper.classList.toggle("is-hidden", !etwasDa);
+  if (!etwasDa) {
+    koerper.replaceChildren();
+    leiste?.classList.add("is-hidden");
+    if (titel) titel.textContent = "Rückblick";
+    if (spanne) spanne.textContent = "Sobald du etwas geschaut hast, entsteht hier deine Bilanz.";
+    return;
+  }
+
+  if (leiste) {
+    leiste.classList.toggle("is-hidden", zeitraeume.length < 2);
+    leiste.replaceChildren(...(zeitraeume.length < 2 ? [] : zeitraeume.map((eintrag) => {
+      const knopf = document.createElement("button");
+      knopf.type = "button";
+      knopf.className = `calendar-day${eintrag.wert === reviewZeitraum ? " is-active" : ""}`;
+      knopf.textContent = eintrag.titel;
+      knopf.addEventListener("click", () => {
+        reviewZeitraum = eintrag.wert;
+        renderReview().catch(() => {});
+      });
+      return knopf;
+    })));
+  }
+
+  if (titel) titel.textContent = reviewUeberschrift(daten, reviewZeitraum);
+  if (spanne) {
+    spanne.textContent = daten.von
+      ? `${reviewDatum(daten.von, false)} bis ${reviewDatum(daten.bis)} · an ${daten.tage} ${daten.tage === 1 ? "Tag" : "Tagen"} lief etwas`
+      : "In diesem Zeitraum lief nichts.";
+  }
+
+  koerper.replaceChildren(...reviewAbschnitte(daten));
+  renderWrappedArchiv().catch(() => {});
+}
+
+// Wie der Zeitraum heisst. Ein Kalenderjahr wird als solches benannt, alles
+// andere nach seiner tatsaechlichen Laenge - drei Wochen Nutzung sind kein
+// Jahresrueckblick, auch wenn sie in einem Jahr liegen.
+function reviewUeberschrift(daten, zeitraum) {
+  if (/^\d{4}$/.test(String(zeitraum))) {
+    const tage = reviewSpannweite(daten);
+    return tage >= 90 ? `Dein Jahr ${zeitraum}` : `Dein ELFIX-Rückblick · ${zeitraum}`;
+  }
+  if (zeitraum === "7tage") return "Deine letzten 7 Tage";
+  if (zeitraum === "30tage") return "Deine letzten 30 Tage";
+  if (zeitraum === "monat") return "Dieser Monat";
+  const tage = reviewSpannweite(daten);
+  return tage >= 300 ? "Deine Zeit mit ELFIX" : "Dein ELFIX-Rückblick";
+}
+
+function reviewSpannweite(daten) {
+  const von = Date.parse(daten?.von || "");
+  const bis = Date.parse(daten?.bis || "");
+  if (!Number.isFinite(von) || !Number.isFinite(bis)) return 0;
+  return Math.round((bis - von) / 86400000) + 1;
+}
+
+function reviewAbschnitte(daten) {
+  const stuecke = [];
+  const zeitBekannt = daten.sekundenBekannt > 0 && daten.sekunden > 0;
+
+  // Die grossen Zahlen zuerst. Die Watchtime steht nur dabei, wenn sie
+  // gemessen wurde - sonst faellt die Kachel weg statt eine Null zu zeigen.
+  const kopf = document.createElement("div");
+  kopf.className = "review-hero";
+  kopf.append(
+    reviewGross(daten.folgen, daten.folgen === 1 ? "Folge" : "Folgen"),
+    reviewGross(daten.folgenAbgeschlossen, "abgeschlossen")
+  );
+  if (zeitBekannt) kopf.append(reviewGross(reviewDauer(daten.sekunden), "geschaut"));
+  stuecke.push(kopf);
+
+  // Der ehrliche Hinweis, sobald ein Teil der Saetze keine gemessene Zeit hat.
+  if (daten.sekundenBekannt < daten.sekundenGesamt) {
+    const hinweis = document.createElement("p");
+    hinweis.className = "review-note";
+    hinweis.textContent = zeitBekannt
+      ? `Wiedergabezeit ist für ${daten.sekundenBekannt} von ${daten.sekundenGesamt} Einträgen gemessen — ältere stammen aus dem Verlauf und tragen keine Zeit.`
+      : "Wiedergabezeit wird erst seit dieser Version gemessen. Was hier steht, stammt aus dem bisherigen Verlauf: Folgen und Tage sind belegt, Stunden nicht.";
+    stuecke.push(hinweis);
+  }
+
+  const kacheln = document.createElement("div");
+  kacheln.className = "review-tiles";
+  kacheln.append(reviewKachel(daten.tage, daten.tage === 1 ? "Tag geschaut" : "Tage geschaut"));
+  kacheln.append(reviewKachel(daten.strecke.tage, "Tage am Stück",
+    daten.strecke.von ? `${reviewDatum(daten.strecke.von, false)} bis ${reviewDatum(daten.strecke.bis, false)}` : ""));
+  if (daten.laufendeStrecke > 0) {
+    kacheln.append(reviewKachel(daten.laufendeStrecke, "Tage aktuell am Stück"));
+  }
+  if (daten.folgenJeTag > 0) {
+    kacheln.append(reviewKachel(daten.folgenJeTag, "Folgen je Schautag"));
+  }
+  if (daten.wiederholungen > 0) {
+    kacheln.append(reviewKachel(daten.wiederholungen, "Wiederholungen"));
+  }
+  if (zeitBekannt && daten.laengsteSitzung > 0) {
+    kacheln.append(reviewKachel(reviewDauer(daten.laengsteSitzung), "längste Sitzung"));
+    kacheln.append(reviewKachel(reviewDauer(daten.sitzungsschnitt), "Sitzung im Schnitt"));
+  }
+  if (daten.aktivsterTag) {
+    kacheln.append(reviewKachel(
+      daten.aktivsterTag.sekunden > 0 ? reviewDauer(daten.aktivsterTag.sekunden) : daten.aktivsterTag.folgen,
+      daten.aktivsterTag.sekunden > 0 ? "stärkster Tag" : "Folgen am stärksten Tag",
+      reviewDatum(daten.aktivsterTag.tag)));
+  }
+  if (daten.aktivsterWochentag) {
+    kacheln.append(reviewKachel(WOCHENTAGE[daten.aktivsterWochentag.tag] || "—", "liebster Wochentag",
+      daten.aktivsterWochentag.sekunden > 0
+        ? reviewDauer(daten.aktivsterWochentag.sekunden)
+        : `${daten.aktivsterWochentag.folgen} Folgen`));
+  }
+  stuecke.push(kacheln);
+
+  stuecke.push(...reviewBalken("Deine Genres",
+    daten.genres.map((genre) => ({
+      name: genre.label,
+      wert: zeitBekannt && genre.sekunden > 0 ? genre.sekunden : genre.titel,
+      anzeige: zeitBekannt && genre.sekunden > 0 ? reviewDauer(genre.sekunden) : `${genre.titel}`
+    })),
+    zeitBekannt
+      ? "Läuft ein Titel unter mehreren Genres, wird seine Zeit anteilig verteilt — sonst zählte eine Stunde dreifach."
+      : "Gezählt werden Titel, solange keine Wiedergabezeit gemessen ist."));
+
+  stuecke.push(...reviewTitelliste("Deine meistgesehenen Serien", daten.serien, zeitBekannt));
+  stuecke.push(...reviewTitelliste("Deine Filme", daten.filme, zeitBekannt));
+  if (daten.wiederholteste.length) {
+    stuecke.push(...reviewTitelliste("Am häufigsten wiederholt", daten.wiederholteste, zeitBekannt, "wiederholungen"));
+  }
+  return stuecke;
+}
+
+function reviewGross(wert, label) {
+  const block = document.createElement("div");
+  block.className = "review-big";
+  const zahl = document.createElement("strong");
+  zahl.textContent = String(wert);
+  const name = document.createElement("span");
+  name.textContent = label;
+  block.append(zahl, name);
+  return block;
+}
+
+function reviewKachel(wert, oben, unten = "") {
+  const kachel = document.createElement("div");
+  kachel.className = "review-tile";
+  const zahl = document.createElement("strong");
+  zahl.textContent = String(wert);
+  const label = document.createElement("span");
+  label.textContent = oben;
+  kachel.append(zahl, label);
+  if (unten) {
+    const klein = document.createElement("small");
+    klein.textContent = unten;
+    kachel.append(klein);
+  }
+  return kachel;
+}
+
+// Balken statt Zahlenreihe: die Frage ist die Verteilung, nicht der Betrag.
+// Gemessen wird am groessten Wert, nicht an der Summe - ein Titel zaehlt in
+// mehreren Genres, eine Prozentangabe waere hier schlicht falsch.
+function reviewBalken(ueberschrift, werte, fussnote) {
+  const brauchbar = werte.filter((eintrag) => eintrag.wert > 0);
+  if (!brauchbar.length) return [];
+  const kopf = document.createElement("h2");
+  kopf.className = "review-head";
+  kopf.textContent = ueberschrift;
+
+  const liste = document.createElement("div");
+  liste.className = "review-bars";
+  const groesster = Math.max(...brauchbar.map((eintrag) => eintrag.wert), 1);
+  for (const eintrag of brauchbar) {
+    const zeile = document.createElement("div");
+    zeile.className = "review-bar";
+    const name = document.createElement("span");
+    name.textContent = eintrag.name;
+    const schiene = document.createElement("div");
+    schiene.className = "review-bar-rail";
+    const fuellung = document.createElement("div");
+    fuellung.className = "review-bar-fill";
+    fuellung.style.width = `${Math.round((eintrag.wert / groesster) * 100)}%`;
+    schiene.append(fuellung);
+    const zahl = document.createElement("small");
+    zahl.textContent = eintrag.anzeige;
+    zeile.append(name, schiene, zahl);
+    liste.append(zeile);
+  }
+  const stuecke = [kopf, liste];
+  if (fussnote) {
+    const hinweis = document.createElement("p");
+    hinweis.className = "review-note";
+    hinweis.textContent = fussnote;
+    stuecke.push(hinweis);
+  }
+  return stuecke;
+}
+
+function reviewTitelliste(ueberschrift, eintraege, zeitBekannt, schluessel = "sekunden") {
+  const brauchbar = (eintraege || []).filter((eintrag) => eintrag && eintrag.titel);
+  if (!brauchbar.length) return [];
+  const kopf = document.createElement("h2");
+  kopf.className = "review-head";
+  kopf.textContent = ueberschrift;
+
+  const liste = document.createElement("div");
+  liste.className = "review-list";
+  for (const eintrag of brauchbar) {
+    const zeile = document.createElement("div");
+    zeile.className = "review-row";
+    if (eintrag.bild) {
+      const bild = document.createElement("img");
+      bild.className = "review-poster";
+      bild.src = eintrag.bild;
+      bild.alt = "";
+      bild.loading = "lazy";
+      zeile.append(bild);
+    }
+    const name = document.createElement("strong");
+    name.textContent = eintrag.titel;
+    const meta = document.createElement("span");
+    meta.className = "review-row-meta";
+    meta.textContent = eintrag.anbieter || "";
+    const wert = document.createElement("small");
+    if (schluessel === "wiederholungen") {
+      wert.textContent = `${eintrag.wiederholungen}×`;
+    } else {
+      wert.textContent = zeitBekannt && eintrag.sekunden > 0
+        ? reviewDauer(eintrag.sekunden)
+        : `${eintrag.folgen} ${eintrag.folgen === 1 ? "Folge" : "Folgen"}`;
+    }
+    zeile.append(name, meta, wert);
+    liste.append(zeile);
+  }
+  return [kopf, liste];
+}
+
+// --- ELFIX Wrapped -----------------------------------------------------------
+//
+// Die Statistikseite ist zum Nachschlagen, das hier ist zum Ansehen. Deshalb
+// eine Folge einzelner Bilder statt einer Tabelle: wenig Text, eine Aussage je
+// Seite, grosse Zahlen.
+//
+// Gerechnet wird hier nichts. Alle Zahlen stammen aus derselben Auswertung, die
+// auch die Statistikseite speist - waeren es zwei Rechenwege, stuenden
+// irgendwann zwei verschiedene Folgenzahlen fuer dasselbe Jahr da, und keiner
+// waere zu widerlegen.
+//
+// Jede Seite kennt ihre Bedingung. Fehlt die Grundlage - keine gemessene Zeit,
+// keine Wiederholungen, kein Film -, faellt sie aus. Ein Wrapped mit zwoelf
+// Seiten, von denen fuenf "0" zeigen, waere schlechter als eines mit sieben.
+
+let wrappedSeiten = [];
+let wrappedStelle = 0;
+let wrappedJahr = 0;
+
+const WRAPPED_TAGESZEIT = {
+  nacht: { name: "Nachteule", satz: "zwischen 22 und 4 Uhr" },
+  morgen: { name: "Frühaufsteher", satz: "zwischen 4 und 12 Uhr" },
+  nachmittag: { name: "Nachmittagsmensch", satz: "zwischen 12 und 18 Uhr" },
+  abend: { name: "Abendmensch", satz: "zwischen 18 und 22 Uhr" }
+};
+
+function wrappedZahl(wert) {
+  return Number(wert || 0).toLocaleString("de-DE");
+}
+
+// Ob ueberhaupt bewegt werden darf. Zwei Quellen, beide gelten: die Einstellung
+// in ELFIX und die Systemvorgabe des Betriebssystems.
+function wrappedRuhig() {
+  if (document.querySelector(".app-shell")?.classList.contains("animations-off")) return true;
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+}
+
+async function wrappedOeffnen(jahr) {
+  const antwort = await api.getWrapped?.(jahr).catch(() => null);
+  if (!antwort?.daten) {
+    showToast("Für dieses Jahr gibt es noch zu wenig zu erzählen");
+    return;
+  }
+  wrappedJahr = antwort.jahr;
+  wrappedSeiten = wrappedBauen(antwort.daten, antwort.jahr);
+  wrappedStelle = 0;
+  await api.setWrappedOpen?.(true);
+  wrappedModal?.showModal();
+  wrappedZeigen(0);
+  // Gesehen ist gesehen: der Hinweis auf der Startseite verschwindet, und im
+  // Dezember draengt sich nichts ein zweites Mal auf.
+  api.markWrappedSeen?.(antwort.jahr).then(() => renderWrappedHinweis()).catch(() => {});
+}
+
+function wrappedSchliessen() {
+  wrappedModal?.close();
+  api.setWrappedOpen?.(false);
+}
+
+function wrappedZeigen(stelle) {
+  const buehne = document.querySelector("#wrappedStage");
+  if (!buehne || !wrappedSeiten.length) return;
+  wrappedStelle = Math.max(0, Math.min(wrappedSeiten.length - 1, stelle));
+  const seite = wrappedSeiten[wrappedStelle];
+  buehne.replaceChildren(seite.knoten);
+  buehne.className = `wrapped-stage ${seite.art || ""}`;
+  // Neu angehaengt heisst: die Einblendung laeuft von vorn. Ohne das saehe man
+  // beim Zurueckblaettern eine Seite, die schon fertig eingeblendet ist.
+  if (!wrappedRuhig()) {
+    seite.knoten.classList.remove("is-da");
+    requestAnimationFrame(() => seite.knoten.classList.add("is-da"));
+    wrappedZaehlenStarten(seite.knoten);
+  } else {
+    seite.knoten.classList.add("is-da");
+  }
+  renderWrappedPunkte();
+}
+
+// Zahlen laufen hoch. Kurz und ohne Bibliothek: eine Schleife ueber
+// requestAnimationFrame, die nach 900 Millisekunden beim echten Wert steht.
+function wrappedZaehlenStarten(wurzel) {
+  for (const knoten of wurzel.querySelectorAll?.("[data-zaehl]") || []) {
+    const ziel = Number(knoten.dataset.zaehl) || 0;
+    if (!ziel) continue;
+    const start = performance.now();
+    const dauer = 900;
+    const schritt = (jetzt) => {
+      const anteil = Math.min(1, (jetzt - start) / dauer);
+      // Zum Ende hin langsamer - sonst wirkt der Stopp wie ein Abbruch.
+      const weich = 1 - Math.pow(1 - anteil, 3);
+      knoten.textContent = wrappedZahl(Math.round(ziel * weich));
+      if (anteil < 1) requestAnimationFrame(schritt);
+    };
+    requestAnimationFrame(schritt);
+  }
+}
+
+function renderWrappedPunkte() {
+  const leiste = document.querySelector("#wrappedDots");
+  if (!leiste) return;
+  leiste.replaceChildren(...wrappedSeiten.map((_, i) => {
+    const punkt = document.createElement("button");
+    punkt.type = "button";
+    punkt.className = `wrapped-dot${i === wrappedStelle ? " is-active" : ""}`;
+    punkt.setAttribute("aria-label", `Seite ${i + 1}`);
+    punkt.addEventListener("click", (event) => { event.stopPropagation(); wrappedZeigen(i); });
+    return punkt;
+  }));
+  document.querySelector("#wrappedPrev")?.classList.toggle("is-hidden", wrappedStelle === 0);
+  document.querySelector("#wrappedNext")?.classList.toggle("is-hidden", wrappedStelle >= wrappedSeiten.length - 1);
+}
+
+// --- Die Seiten --------------------------------------------------------------
+
+function wrappedSeite(art, teile, bild = "") {
+  const knoten = document.createElement("div");
+  knoten.className = "wrapped-card";
+  if (bild) {
+    const hintergrund = document.createElement("div");
+    hintergrund.className = "wrapped-backdrop";
+    hintergrund.style.backgroundImage = `url("${bild.replace(/"/g, "%22")}")`;
+    knoten.append(hintergrund);
+  }
+  const inhalt = document.createElement("div");
+  inhalt.className = "wrapped-content";
+  inhalt.append(...teile.filter(Boolean));
+  knoten.append(inhalt);
+  return { art, knoten };
+}
+
+function wrappedText(klasse, inhalt) {
+  const knoten = document.createElement(klasse === "wrapped-huge" ? "strong" : "p");
+  knoten.className = klasse;
+  knoten.textContent = inhalt;
+  return knoten;
+}
+
+// Eine grosse Zahl, die hochlaeuft. Der Wert steht im Datenfeld, damit die
+// Animation ihn kennt und der Text auch ohne sie stimmt.
+function wrappedGrosseZahl(wert, einheit = "") {
+  const knoten = document.createElement("strong");
+  knoten.className = "wrapped-huge";
+  if (typeof wert === "number") {
+    knoten.dataset.zaehl = String(wert);
+    knoten.textContent = wrappedZahl(wert);
+  } else {
+    knoten.textContent = String(wert);
+  }
+  if (einheit) {
+    const klein = document.createElement("span");
+    klein.className = "wrapped-unit";
+    klein.textContent = einheit;
+    knoten.append(klein);
+  }
+  return knoten;
+}
+
+function wrappedBauen(daten, jahr) {
+  const seiten = [];
+  const zeitBekannt = daten.sekundenBekannt > 0 && daten.sekunden > 0;
+  const topSerie = daten.serien[0] || null;
+  const topFilm = daten.filme[0] || null;
+  const bild = topSerie?.bild || topFilm?.bild || daten.erster?.bild || "";
+
+  // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
+  // Einschraenkung, unter der alles Folgende gilt.
+  seiten.push(wrappedSeite("is-auftakt", [
+    wrappedText("wrapped-eyebrow", "ELFIX Wrapped"),
+    wrappedText("wrapped-title", String(jahr)),
+    wrappedText("wrapped-lead", wrappedAuftakt(daten, jahr)),
+    wrappedZeitraumHinweis(daten, jahr)
+  ], bild));
+
+  // 2 - Watchtime. Faellt aus, solange nichts gemessen wurde.
+  if (zeitBekannt) {
+    const stunden = Math.round(daten.sekunden / 3600);
+    const tage = Math.round(daten.sekunden / 86400 * 10) / 10;
+    seiten.push(wrappedSeite("is-zeit", [
+      wrappedGrosseZahl(stunden, "Stunden"),
+      wrappedText("wrapped-lead", "hast du dieses Jahr mit ELFIX geschaut."),
+      tage >= 1 ? wrappedText("wrapped-sub", `Das sind ${String(tage).replace(".", ",")} Tage am Stück.`) : null
+    ]));
+  }
+
+  // 3 - Folgen
+  if (daten.folgen > 0) {
+    seiten.push(wrappedSeite("is-folgen", [
+      wrappedGrosseZahl(daten.folgen, daten.folgen === 1 ? "Folge" : "Folgen"),
+      wrappedText("wrapped-lead", `hast du ${jahr} angesehen.`),
+      daten.folgenJeTag > 0
+        ? wrappedText("wrapped-sub", `Im Schnitt ${String(daten.folgenJeTag).replace(".", ",")} an jedem Schautag.`)
+        : null
+    ]));
+  }
+
+  // 4/5/6 - Abgeschlossenes, je Gattung und nur wenn es etwas gibt.
+  if (daten.abschluesse.serie > 0) {
+    seiten.push(wrappedSeite("is-serien", [
+      wrappedGrosseZahl(daten.abschluesse.serie, daten.abschluesse.serie === 1 ? "Serie" : "Serien"),
+      wrappedText("wrapped-lead", "hast du abgeschlossen.")
+    ], topSerie?.bild || ""));
+  }
+  if (daten.abschluesse.film > 0) {
+    seiten.push(wrappedSeite("is-filme", [
+      wrappedGrosseZahl(daten.abschluesse.film, daten.abschluesse.film === 1 ? "Film" : "Filme"),
+      wrappedText("wrapped-lead", "hast du abgeschlossen.")
+    ], topFilm?.bild || ""));
+  }
+  if (daten.abschluesse.anime > 0) {
+    seiten.push(wrappedSeite("is-anime", [
+      wrappedGrosseZahl(daten.abschluesse.anime, daten.abschluesse.anime === 1 ? "Anime" : "Anime"),
+      wrappedText("wrapped-lead", "hast du abgeschlossen.")
+    ]));
+  }
+
+  // 7 - Serie des Jahres. Ausgewaehlt nach geschauter Zeit, und wo die fehlt,
+  // nach Folgen - nicht nach einer erfundenen Punktzahl.
+  if (topSerie) {
+    seiten.push(wrappedSeite("is-top", [
+      wrappedText("wrapped-eyebrow", "Deine Serie des Jahres"),
+      wrappedPoster(topSerie.bild),
+      wrappedText("wrapped-title", topSerie.titel),
+      wrappedText("wrapped-sub", wrappedTitelZahlen(topSerie, zeitBekannt))
+    ], topSerie.bild));
+  }
+  if (topFilm) {
+    seiten.push(wrappedSeite("is-top", [
+      wrappedText("wrapped-eyebrow", "Dein Film des Jahres"),
+      wrappedPoster(topFilm.bild),
+      wrappedText("wrapped-title", topFilm.titel),
+      wrappedText("wrapped-sub", wrappedTitelZahlen(topFilm, zeitBekannt))
+    ], topFilm.bild));
+  }
+
+  // 8 - Genre des Jahres samt Verfolgerfeld.
+  if (daten.genres.length) {
+    const erste = daten.genres[0];
+    seiten.push(wrappedSeite("is-genre", [
+      wrappedText("wrapped-lead", `Du warst dieses Jahr eindeutig auf ${erste.label}.`),
+      wrappedRangliste(daten.genres.slice(0, 3))
+    ]));
+  }
+
+  // 9 - Der Mix in Prozent. Nur wo Zeit gemessen wurde: eine Prozentangabe auf
+  // Titelzahlen waere eine andere Aussage, die genauso aussieht.
+  const mix = wrappedMix(daten, zeitBekannt);
+  if (mix.length >= 2) {
+    seiten.push(wrappedSeite("is-mix", [
+      wrappedText("wrapped-eyebrow", `Dein ${jahr} Mix`),
+      wrappedMixBalken(mix)
+    ]));
+  }
+
+  // 10 - Streak
+  if (daten.strecke.tage >= 2) {
+    seiten.push(wrappedSeite("is-streak", [
+      wrappedText("wrapped-lead", `Du konntest ${daten.strecke.tage} Tage nicht aufhören.`),
+      wrappedGrosseZahl(daten.strecke.tage, "Tage am Stück"),
+      wrappedText("wrapped-sub", "Deine längste Strecke ohne Pause.")
+    ]));
+  }
+
+  // 11 - Wochentag und 12 - Rekordtag sind zwei verschiedene Dinge und stehen
+  // deshalb auf zwei Seiten.
+  if (daten.aktivsterWochentag) {
+    const tag = WOCHENTAGE[daten.aktivsterWochentag.tag] || "";
+    seiten.push(wrappedSeite("is-tag", [
+      wrappedText("wrapped-lead", `${tag} war dein Tag.`),
+      wrappedText("wrapped-sub", daten.aktivsterWochentag.sekunden > 0
+        ? `Insgesamt ${reviewDauer(daten.aktivsterWochentag.sekunden)} an ${tag}en.`
+        : `${daten.aktivsterWochentag.folgen} Folgen an ${tag}en.`)
+    ]));
+  }
+  if (daten.aktivsterTag) {
+    seiten.push(wrappedSeite("is-tag", [
+      wrappedText("wrapped-eyebrow", "Dein intensivster Tag"),
+      wrappedText("wrapped-title", reviewDatum(daten.aktivsterTag.tag)),
+      wrappedText("wrapped-sub", daten.aktivsterTag.sekunden > 0
+        ? reviewDauer(daten.aktivsterTag.sekunden)
+        : `${daten.aktivsterTag.folgen} Folgen`)
+    ]));
+  }
+
+  // 13 - Laengste Sitzung
+  if (zeitBekannt && daten.laengsteSitzung >= 1800) {
+    seiten.push(wrappedSeite("is-session", [
+      wrappedText("wrapped-lead", "Nur noch eine Folge?"),
+      wrappedGrosseZahl(reviewDauer(daten.laengsteSitzung)),
+      wrappedText("wrapped-sub", "Deine längste Sitzung am Stück.")
+    ]));
+  }
+
+  // 14 - Tageszeit. Nur bei gemessener Zeit und genug Sitzungen: aus fuenf
+  // Abenden folgt kein Typ.
+  const zeitfach = wrappedTageszeit(daten, zeitBekannt);
+  if (zeitfach) {
+    seiten.push(wrappedSeite("is-nacht", [
+      wrappedText("wrapped-lead", `Du bist ${zeitfach.artikel} ${zeitfach.name}.`),
+      wrappedGrosseZahl(zeitfach.prozent, "%"),
+      wrappedText("wrapped-sub", `deiner Zeit lagen ${zeitfach.satz}.`)
+    ]));
+  }
+
+  // 15 - Wiederholungen, nur wenn es welche gab.
+  if (daten.wiederholteste.length) {
+    const oft = daten.wiederholteste[0];
+    seiten.push(wrappedSeite("is-rewatch", [
+      wrappedText("wrapped-lead", "Das kam dir bekannt vor …"),
+      wrappedText("wrapped-title", oft.titel),
+      wrappedText("wrapped-sub", `${oft.wiederholungen}× noch einmal gesehen.`)
+    ], oft.bild));
+  }
+
+  // 16 - Monat des Jahres, mit allen Monaten als kleine Reihe.
+  if (daten.aktivsterMonat && daten.monate.length >= 2) {
+    seiten.push(wrappedSeite("is-monat", [
+      wrappedText("wrapped-lead", `${wrappedMonatName(daten.aktivsterMonat.monat)} war dein stärkster Monat.`),
+      wrappedText("wrapped-sub", daten.aktivsterMonat.sekunden > 0
+        ? reviewDauer(daten.aktivsterMonat.sekunden)
+        : `${daten.aktivsterMonat.folgen} Folgen`),
+      wrappedMonatsreihe(daten.monate)
+    ]));
+  }
+
+  // 17 - Anfang und Ende. Solange das Jahr laeuft, ist der letzte Titel nur der
+  // bisher letzte - alles andere waere eine Behauptung ueber die Zukunft.
+  if (daten.erster) {
+    seiten.push(wrappedSeite("is-erster", [
+      wrappedText("wrapped-eyebrow", "So hat dein Jahr begonnen"),
+      wrappedPoster(daten.erster.bild),
+      wrappedText("wrapped-title", daten.erster.titel),
+      wrappedText("wrapped-sub", reviewDatum(String(daten.erster.wann).slice(0, 10)))
+    ], daten.erster.bild));
+  }
+  if (daten.letzter && daten.letzter.titel !== daten.erster?.titel) {
+    const laeuftNoch = new Date().getFullYear() === Number(jahr);
+    seiten.push(wrappedSeite("is-letzter", [
+      wrappedText("wrapped-eyebrow", laeuftNoch ? "Dein bisher letzter Titel" : "Und damit hast du das Jahr beendet"),
+      wrappedPoster(daten.letzter.bild),
+      wrappedText("wrapped-title", daten.letzter.titel),
+      wrappedText("wrapped-sub", reviewDatum(String(daten.letzter.wann).slice(0, 10)))
+    ], daten.letzter.bild));
+  }
+
+  // 18 - Was sonst noch auffiel. Nur Saetze, deren Zahl eindeutig ist.
+  const fakten = wrappedFakten(daten, zeitBekannt);
+  if (fakten.length) {
+    seiten.push(wrappedSeite("is-fakten", [
+      wrappedText("wrapped-eyebrow", "Nebenbei"),
+      wrappedFaktenListe(fakten)
+    ]));
+  }
+
+  // 19 - Das Finale. Bewusst als eigener Block gebaut, damit sich daraus
+  // spaeter ein Bild erzeugen laesst, ohne den Rest mitzunehmen.
+  seiten.push(wrappedFinale(daten, jahr, zeitBekannt, bild));
+  return seiten;
+}
+
+function wrappedAuftakt(daten, jahr) {
+  if (daten.tage >= 200) return `${jahr} hast du kaum einen Abend ausgelassen.`;
+  if (daten.folgen >= 300) return `${jahr} war ein gutes Jahr zum Schauen.`;
+  if (daten.folgen >= 50) return `Schauen wir uns dein ${jahr} an.`;
+  return `Dein ${jahr}, kurz zusammengefasst.`;
+}
+
+// Der ehrliche Hinweis unter der Ueberschrift: seit wann es ueberhaupt Daten
+// gibt und ob darunter gemessene Zeit ist. Ohne ihn saehe ein angefangenes
+// Jahr aus wie ein volles.
+function wrappedZeitraumHinweis(daten, jahr) {
+  const von = String(daten.von || "").slice(0, 10);
+  if (!von) return null;
+  const start = new Date(Date.parse(von));
+  const teile = [];
+  if (start.getMonth() > 0) teile.push(`Daten seit ${MONATE[start.getMonth()]} ${jahr}`);
+  if (daten.sekundenBekannt < daten.sekundenGesamt) {
+    teile.push(daten.sekundenBekannt
+      ? "Wiedergabezeit nur für einen Teil erfasst"
+      : "Wiedergabezeit noch nicht erfasst");
+  }
+  return teile.length ? wrappedText("wrapped-fussnote", teile.join(" · ")) : null;
+}
+
+function wrappedTitelZahlen(eintrag, zeitBekannt) {
+  const teile = [`${eintrag.folgen} ${eintrag.folgen === 1 ? "Folge" : "Folgen"}`];
+  if (zeitBekannt && eintrag.sekunden > 0) teile.push(reviewDauer(eintrag.sekunden));
+  return teile.join(" · ");
+}
+
+function wrappedPoster(bild) {
+  if (!bild) return null;
+  const knoten = document.createElement("img");
+  knoten.className = "wrapped-poster";
+  knoten.src = bild;
+  knoten.alt = "";
+  return knoten;
+}
+
+function wrappedRangliste(eintraege) {
+  const liste = document.createElement("ol");
+  liste.className = "wrapped-rang";
+  eintraege.forEach((eintrag, i) => {
+    const zeile = document.createElement("li");
+    const platz = document.createElement("span");
+    platz.className = "wrapped-rang-platz";
+    platz.textContent = `#${i + 1}`;
+    const name = document.createElement("strong");
+    name.textContent = eintrag.label;
+    zeile.append(platz, name);
+    liste.append(zeile);
+  });
+  return liste;
+}
+
+// Prozentanteile des Genre-Mixes. Grundlage ist die anteilig verteilte Zeit -
+// dadurch ergeben die Anteile zusammen hoechstens hundert Prozent und nicht ein
+// Vielfaches davon.
+function wrappedMix(daten, zeitBekannt) {
+  const werte = daten.genres.map((genre) => ({
+    label: genre.label,
+    wert: zeitBekannt && genre.sekunden > 0 ? genre.sekunden : genre.titel
+  })).filter((eintrag) => eintrag.wert > 0);
+  const summe = werte.reduce((a, e) => a + e.wert, 0);
+  if (!summe) return [];
+
+  // Jeden Anteil einzeln zu runden ergibt Summen wie 101 Prozent - auf einer
+  // Karte, die "dein Mix" heisst, sieht das schlicht falsch aus. Deshalb erst
+  // abrunden und die uebrigen Punkte an die groessten Reste vergeben: so
+  // stimmt die Summe genau, und keine Zahl weicht um mehr als einen Punkt ab.
+  const genau = werte.map((eintrag) => ({ label: eintrag.label, roh: (eintrag.wert / summe) * 100 }));
+  const anteile = genau.map((eintrag) => ({ ...eintrag, prozent: Math.floor(eintrag.roh) }));
+  let offen = 100 - anteile.reduce((a, e) => a + e.prozent, 0);
+  [...anteile]
+    .sort((links, rechts) => (rechts.roh % 1) - (links.roh % 1))
+    .forEach((eintrag) => { if (offen > 0) { eintrag.prozent += 1; offen -= 1; } });
+
+  const oben = anteile.slice(0, 4).map(({ label, prozent }) => ({ label, prozent }));
+  const rest = 100 - oben.reduce((a, e) => a + e.prozent, 0);
+  if (rest >= 3) oben.push({ label: "andere", prozent: rest });
+  return oben;
+}
+
+function wrappedMixBalken(mix) {
+  const block = document.createElement("div");
+  block.className = "wrapped-mix";
+  for (const eintrag of mix) {
+    const zeile = document.createElement("div");
+    zeile.className = "wrapped-mix-zeile";
+    const wert = document.createElement("strong");
+    wert.textContent = `${eintrag.prozent} %`;
+    const name = document.createElement("span");
+    name.textContent = eintrag.label;
+    const schiene = document.createElement("div");
+    schiene.className = "wrapped-mix-rail";
+    const fuellung = document.createElement("div");
+    fuellung.className = "wrapped-mix-fill";
+    fuellung.style.width = `${eintrag.prozent}%`;
+    schiene.append(fuellung);
+    zeile.append(wert, name, schiene);
+    block.append(zeile);
+  }
+  return block;
+}
+
+function wrappedMonatName(schluessel) {
+  return MONATE[Number(String(schluessel).slice(5, 7)) - 1] || "";
+}
+
+function wrappedMonatsreihe(monate) {
+  const block = document.createElement("div");
+  block.className = "wrapped-monate";
+  const groesster = Math.max(...monate.map((m) => m.sekunden || m.folgen), 1);
+  for (const monat of monate) {
+    const saeule = document.createElement("div");
+    saeule.className = "wrapped-monat";
+    const balken = document.createElement("div");
+    balken.className = "wrapped-monat-balken";
+    balken.style.height = `${Math.max(6, Math.round(((monat.sekunden || monat.folgen) / groesster) * 100))}%`;
+    const name = document.createElement("small");
+    name.textContent = wrappedMonatName(monat.monat).slice(0, 3);
+    saeule.append(balken, name);
+    block.append(saeule);
+  }
+  return block;
+}
+
+// Der Tageszeit-Typ. Zwei Bedingungen, damit daraus keine Behauptung wird: es
+// muss gemessene Zeit geben, und der Anteil muss deutlich genug sein.
+function wrappedTageszeit(daten, zeitBekannt) {
+  if (!zeitBekannt || daten.sitzungen < 15) return null;
+  const gesamt = daten.tageszeiten.reduce((a, e) => a + e.sekunden, 0);
+  if (!gesamt) return null;
+  const beste = [...daten.tageszeiten].sort((a, b) => b.sekunden - a.sekunden)[0];
+  const prozent = Math.round((beste.sekunden / gesamt) * 100);
+  if (prozent < 35) return null;
+  const wort = WRAPPED_TAGESZEIT[beste.fach];
+  if (!wort) return null;
+  return { ...wort, prozent, artikel: beste.fach === "nacht" ? "eine" : "ein" };
+}
+
+function wrappedFakten(daten, zeitBekannt) {
+  const fakten = [];
+  if (daten.welten >= 3) fakten.push(`Du warst in ${daten.welten} verschiedenen Titeln unterwegs.`);
+  if (daten.marathon >= 3) fakten.push(`Dein längster Marathon: ${daten.marathon} Folgen ohne Unterbrechung.`);
+  if (zeitBekannt && daten.sitzungsschnitt >= 600) {
+    fakten.push(`Deine Sitzungen dauerten im Schnitt ${reviewDauer(daten.sitzungsschnitt)}.`);
+  }
+  if (daten.folgenJeTag >= 2) {
+    fakten.push(`An einem Schautag liefen im Schnitt ${String(daten.folgenJeTag).replace(".", ",")} Folgen.`);
+  }
+  return fakten.slice(0, 4);
+}
+
+function wrappedFaktenListe(fakten) {
+  const liste = document.createElement("ul");
+  liste.className = "wrapped-fakten";
+  for (const satz of fakten) {
+    const zeile = document.createElement("li");
+    zeile.textContent = satz;
+    liste.append(zeile);
+  }
+  return liste;
+}
+
+// Die Abschlusskarte. Sie steht als eigener, in sich geschlossener Block mit
+// eigener Kennung - so laesst sich spaeter genau dieser Ausschnitt als Bild
+// ausgeben, ohne dass dafuer etwas umgebaut werden muesste.
+function wrappedFinale(daten, jahr, zeitBekannt, bild) {
+  const karte = document.createElement("div");
+  karte.className = "wrapped-summary";
+  karte.id = "wrappedSummary";
+
+  const kopf = document.createElement("p");
+  kopf.className = "wrapped-eyebrow";
+  kopf.textContent = "Dein ELFIX";
+  const zahl = document.createElement("strong");
+  zahl.className = "wrapped-summary-jahr";
+  zahl.textContent = String(jahr);
+  karte.append(kopf, zahl);
+
+  const gitter = document.createElement("div");
+  gitter.className = "wrapped-summary-grid";
+  const zelle = (wert, label) => {
+    const block = document.createElement("div");
+    const w = document.createElement("strong");
+    w.textContent = String(wert);
+    const l = document.createElement("span");
+    l.textContent = label;
+    block.append(w, l);
+    return block;
+  };
+  if (zeitBekannt) gitter.append(zelle(reviewDauer(daten.sekunden), "geschaut"));
+  gitter.append(zelle(wrappedZahl(daten.folgen), "Folgen"));
+  if (daten.abschluesse.serie) gitter.append(zelle(daten.abschluesse.serie, "Serien"));
+  if (daten.abschluesse.film) gitter.append(zelle(daten.abschluesse.film, "Filme"));
+  if (daten.abschluesse.anime) gitter.append(zelle(daten.abschluesse.anime, "Anime"));
+  if (daten.strecke.tage >= 2) gitter.append(zelle(daten.strecke.tage, "Tage Streak"));
+  karte.append(gitter);
+
+  if (daten.genres[0]) {
+    const genre = document.createElement("p");
+    genre.className = "wrapped-summary-zeile";
+    genre.textContent = `Genre des Jahres · ${daten.genres[0].label}`;
+    karte.append(genre);
+  }
+  if (daten.serien[0]) {
+    const serie = document.createElement("p");
+    serie.className = "wrapped-summary-zeile";
+    serie.textContent = `Serie des Jahres · ${daten.serien[0].titel}`;
+    karte.append(serie);
+  }
+
+  const schluss = document.createElement("button");
+  schluss.type = "button";
+  schluss.className = "wrapped-ende-knopf";
+  schluss.textContent = "Zur Statistik";
+  schluss.addEventListener("click", (event) => {
+    event.stopPropagation();
+    wrappedSchliessen();
+    showReview().catch(() => {});
+  });
+
+  return wrappedSeite("is-finale", [karte, schluss], bild);
+}
+
+// Das Archiv auf der Statistikseite. Hier - und nicht in der Hauptnavigation -
+// gehoert es hin: der Rueckblick ist eine Sicht auf dieselben Daten, kein
+// eigener Bereich.
+async function renderWrappedArchiv() {
+  const kasten = document.querySelector("#wrappedArchiv");
+  if (!kasten) return;
+  const jahre = await api.getWrappedJahre?.().catch(() => []);
+  const brauchbar = Array.isArray(jahre) ? jahre : [];
+  kasten.classList.toggle("is-hidden", !brauchbar.length);
+  if (!brauchbar.length) {
+    kasten.replaceChildren();
+    return;
+  }
+  const kopf = document.createElement("span");
+  kopf.className = "wrapped-archiv-titel";
+  kopf.textContent = brauchbar.length === 1 ? "Dein Rückblick" : "Deine Rückblicke";
+  const knoepfe = brauchbar.map((jahr) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = "wrapped-archiv-jahr";
+    knopf.textContent = String(jahr);
+    knopf.addEventListener("click", () => { wrappedOeffnen(jahr).catch(() => {}); });
+    return knopf;
+  });
+  kasten.replaceChildren(kopf, ...knoepfe);
+}
+
+// --- Der Hinweis auf der Startseite ------------------------------------------
+//
+// Dezent und nicht als Popup: der Rueckblick soll auffallen, nicht ueberfallen.
+// Er verschwindet, sobald er einmal geoeffnet wurde, und bleibt ueber das
+// Archiv erreichbar.
+async function renderWrappedHinweis() {
+  const kasten = document.querySelector("#wrappedHinweis");
+  if (!kasten) return;
+  const antwort = await api.getWrapped?.().catch(() => null);
+  const zeigen = Boolean(antwort?.faellig && antwort?.daten);
+  kasten.classList.toggle("is-hidden", !zeigen);
+  if (!zeigen) return;
+  kasten.replaceChildren();
+
+  const text = document.createElement("div");
+  const kopf = document.createElement("strong");
+  kopf.textContent = `✨ Dein ELFIX Wrapped ${antwort.jahr} ist da`;
+  const unten = document.createElement("span");
+  unten.textContent = "Sieh dir dein Jahr an.";
+  text.append(kopf, unten);
+
+  const knopf = document.createElement("button");
+  knopf.type = "button";
+  knopf.className = "primary-action";
+  knopf.textContent = "Rückblick ansehen";
+  knopf.addEventListener("click", () => { wrappedOeffnen(antwort.jahr).catch(() => {}); });
+
+  kasten.append(text, knopf);
+}
+
 
 async function showGlobalSearch(query) {
   const searchToken = ++activeSearchToken;
@@ -3788,6 +4763,7 @@ function hideContentViews() {
   libraryView?.classList.add("is-hidden");
   continueView?.classList.add("is-hidden");
   historyView?.classList.add("is-hidden");
+  reviewView?.classList.add("is-hidden");
   watchpartyView?.classList.add("is-hidden");
   document.querySelector("#calendarView")?.classList.add("is-hidden");
   // Beim Verlassen die Scrollposition sichern, damit "zurueck" wieder dort
@@ -4715,6 +5691,7 @@ function sidebarRouteForAction(action) {
   if (action === "watchparty") return "watchparty";
   if (action === "library") return "library";
   if (action === "history") return "history";
+  if (action === "review") return "review";
   if (action === "search") return "search";
   // Ohne diese Zeile faellt "calendar" auf "start" zurueck - dann leuchteten
   // Startseite und Kalender gleichzeitig.
@@ -4789,6 +5766,7 @@ function zeigeAnsicht(route) {
     case "library": return showLibrary();
     case "continue": return showContinue();
     case "history": return showHistory();
+    case "review": return showReview();
     case "watchlist": return showFavorites();
     case "calendar": return showCalendar();
     default: return showHome();
@@ -4830,6 +5808,7 @@ function renderSettings() {
   cacheMode.value = browser.cacheMode || "aggressive";
   pauseOnProviderSwitch.checked = settings.playback?.pauseOnProviderSwitch !== false;
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
+  if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   // Aus, solange nichts anderes dasteht - eine Meldung, die man nicht bestellt
   // hat, ist eine Stoerung.
   if (notifyNewEpisodes) notifyNewEpisodes.checked = settings.notifications?.newEpisodes === true;
@@ -5048,6 +6027,8 @@ async function saveSettings() {
   settings.playback = {
     pauseOnProviderSwitch: pauseOnProviderSwitch.checked,
     youtubeInMediathek: Boolean(youtubeInMediathek?.checked),
+    // Fehlt das Kaestchen, gilt weiter, was gespeichert ist - nicht "aus".
+    autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
     favoriteProgressMode: favoriteProgressMode.value,
     pauseOnMinimize: pauseOnMinimize.checked,
     pauseOnBlur: pauseOnBlur.checked
@@ -5249,7 +6230,8 @@ async function resetAllSettings() {
     favoriteProgressMode: "sequential",
     pauseOnMinimize: false,
     pauseOnBlur: false,
-    youtubeInMediathek: false
+    youtubeInMediathek: false,
+    autoplayNextEpisode: true
   };
   settings.home = { ...DEFAULT_HOME_SETTINGS };
   settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };

@@ -5645,3 +5645,669 @@ input[type="color"] {
   font-size: 12px;
   margin: 0;
 }
+
+/* --- Rueckblick ---------------------------------------------------------- */
+/* Eine Seite zum Ansehen, nicht zum Bedienen: grosse Zahlen, darunter das
+   Wort, das sie erklaert, und Balken statt einer Zahlenkolonne. */
+
+.review-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(18px * var(--spacing-scale));
+}
+
+.review-body.is-hidden {
+  display: none;
+}
+
+/* Die grossen Zahlen am Kopf der Seite. Sie sollen als Erstes gelesen werden -
+   deshalb hier wirklich gross, waehrend die Kacheln darunter die Einordnung
+   liefern. */
+.review-hero {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(28px * var(--spacing-scale));
+  padding: calc(6px * var(--spacing-scale)) 0 calc(10px * var(--spacing-scale));
+}
+
+.review-big {
+  display: flex;
+  flex-direction: column;
+}
+
+.review-big strong {
+  font-size: clamp(2.4rem, 6vw, 3.6rem);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.review-big span {
+  margin-top: 4px;
+  color: color-mix(in srgb, var(--text), transparent 35%);
+  font-size: 0.95rem;
+}
+
+.review-poster {
+  width: 34px;
+  height: 48px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text), transparent 90%);
+}
+
+.review-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: max(10px, calc(var(--card-gap) * 0.7));
+}
+
+.review-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 20px;
+  border-radius: var(--card-radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--bg-card-strong), transparent 4%), color-mix(in srgb, var(--bg-card), #000 18%));
+  box-shadow: var(--shadow);
+}
+
+.review-tile strong {
+  font-size: 2rem;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.review-tile span {
+  color: color-mix(in srgb, var(--text), transparent 25%);
+  font-size: 0.92rem;
+}
+
+.review-tile small {
+  color: color-mix(in srgb, var(--text), transparent 48%);
+  font-size: 0.8rem;
+  /* Lange Titel duerfen die Kachel nicht auseinanderziehen. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-head {
+  margin: calc(8px * var(--spacing-scale)) 0 0;
+  font-size: 1.05rem;
+  font-weight: 750;
+}
+
+.review-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-bar {
+  display: grid;
+  grid-template-columns: minmax(90px, 170px) 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.review-bar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+
+.review-bar-rail {
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text), transparent 90%);
+  overflow: hidden;
+}
+
+.review-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, rgb(var(--accent-rgb)), transparent 35%), rgb(var(--accent-rgb)));
+}
+
+.review-bar small {
+  color: color-mix(in srgb, var(--text), transparent 40%);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-note {
+  margin: 2px 0 0;
+  color: color-mix(in srgb, var(--text), transparent 45%);
+  font-size: 0.85rem;
+}
+
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  /* Ein Poster darf die Zeile nicht hoeher machen als noetig. */
+  align-items: center;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: calc(var(--card-radius) * 0.7);
+  background: color-mix(in srgb, var(--bg-card), transparent 35%);
+}
+
+.review-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.review-art {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text), transparent 88%);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.review-row-meta,
+.review-row small {
+  color: color-mix(in srgb, var(--text), transparent 48%);
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  /* Schmal zaehlt der Titel; Anbieter und Datum ruecken darunter weg. */
+  .review-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .review-row .review-row-meta { display: none; }
+  .review-bar { grid-template-columns: minmax(70px, 110px) 1fr auto; }
+}
+
+/* --- ELFIX Wrapped -------------------------------------------------------- */
+/* Eine eigene Buehne, keine Seite: Vollbild, eine Aussage je Bild, grosse
+   Typografie. Die Farben kommen aus dem Theme - der Rueckblick soll nach ELFIX
+   aussehen und nicht nach einer fremden App. */
+
+.wrapped-modal {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  padding: 0;
+  border: 0;
+  background: var(--bg-app);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.wrapped-modal::backdrop {
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.wrapped-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.wrapped-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Das Hintergrundbild traegt die Stimmung, nicht die Aussage - deshalb weit
+   heruntergedimmt und weich ausgelaufen. Ohne den Verlauf darueber stuende der
+   Text auf einem beliebigen Bildausschnitt und waere stellenweise unlesbar. */
+.wrapped-backdrop {
+  position: absolute;
+  inset: -6%;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.22;
+  filter: blur(12px) saturate(1.2);
+  transform: scale(1.06);
+}
+
+.wrapped-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 45%, transparent 20%, color-mix(in srgb, var(--bg-app), transparent 25%) 75%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-app), transparent 45%), color-mix(in srgb, var(--bg-app), transparent 5%));
+  pointer-events: none;
+}
+
+.wrapped-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  max-width: min(860px, 86vw);
+  padding: 4vh 0;
+  text-align: center;
+}
+
+.wrapped-eyebrow {
+  margin: 0;
+  font-size: clamp(0.8rem, 1.4vw, 1rem);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--text), transparent 45%);
+}
+
+.wrapped-huge {
+  font-size: clamp(3.4rem, 13vw, 9rem);
+  line-height: 0.94;
+  font-weight: 850;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, var(--text), rgb(var(--accent-rgb)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.wrapped-unit {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(1rem, 2.2vw, 1.5rem);
+  font-weight: 600;
+  letter-spacing: 0;
+  -webkit-text-fill-color: color-mix(in srgb, var(--text), transparent 30%);
+}
+
+.wrapped-title {
+  margin: 0;
+  font-size: clamp(1.8rem, 5vw, 3.4rem);
+  line-height: 1.06;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.wrapped-lead {
+  margin: 0;
+  font-size: clamp(1.1rem, 2.6vw, 1.8rem);
+  line-height: 1.3;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text), transparent 12%);
+}
+
+.wrapped-sub {
+  margin: 0;
+  font-size: clamp(0.95rem, 1.8vw, 1.15rem);
+  color: color-mix(in srgb, var(--text), transparent 38%);
+}
+
+.wrapped-fussnote {
+  margin: 18px 0 0;
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--text), transparent 55%);
+}
+
+.wrapped-poster {
+  width: clamp(120px, 18vh, 190px);
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.6);
+}
+
+.wrapped-rang {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wrapped-rang li {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: clamp(1.1rem, 2.4vw, 1.7rem);
+}
+
+.wrapped-rang-platz {
+  color: rgb(var(--accent-rgb));
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.wrapped-mix {
+  width: min(560px, 80vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.wrapped-mix-zeile {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  grid-template-areas: "wert name" "wert rail";
+  align-items: center;
+  gap: 2px 14px;
+  text-align: left;
+}
+
+.wrapped-mix-zeile strong {
+  grid-area: wert;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.wrapped-mix-zeile span {
+  grid-area: name;
+  color: color-mix(in srgb, var(--text), transparent 30%);
+}
+
+.wrapped-mix-rail {
+  grid-area: rail;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text), transparent 88%);
+  overflow: hidden;
+}
+
+.wrapped-mix-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, rgb(var(--accent-rgb)), transparent 40%), rgb(var(--accent-rgb)));
+  transform-origin: left;
+  animation: wrapped-wachsen 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.wrapped-monate {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 110px;
+  margin-top: 18px;
+}
+
+.wrapped-monat {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.wrapped-monat-balken {
+  width: 16px;
+  border-radius: 4px;
+  transform-origin: bottom;
+  background: linear-gradient(180deg, rgb(var(--accent-rgb)), color-mix(in srgb, rgb(var(--accent-rgb)), transparent 55%));
+  animation: wrapped-aufsteigen 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.wrapped-monat small {
+  color: color-mix(in srgb, var(--text), transparent 55%);
+  font-size: 0.7rem;
+}
+
+.wrapped-fakten {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: clamp(1rem, 2.2vw, 1.4rem);
+  color: color-mix(in srgb, var(--text), transparent 15%);
+}
+
+/* Die Abschlusskarte steht als geschlossener Block mit eigener Kennung - genau
+   der Ausschnitt, der sich spaeter als Bild ausgeben laesst, ohne dass dafuer
+   etwas umgebaut werden muesste. */
+.wrapped-summary {
+  padding: clamp(24px, 4vw, 44px);
+  border-radius: 22px;
+  background: linear-gradient(150deg,
+    color-mix(in srgb, var(--bg-card-strong), transparent 6%),
+    color-mix(in srgb, rgb(var(--accent-rgb)), var(--bg-app) 78%));
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: min(520px, 84vw);
+}
+
+.wrapped-summary-jahr {
+  font-size: clamp(3rem, 9vw, 5.5rem);
+  line-height: 1;
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+
+.wrapped-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 18px 26px;
+  width: 100%;
+  margin: 14px 0 6px;
+}
+
+.wrapped-summary-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wrapped-summary-grid strong {
+  font-size: clamp(1.3rem, 3vw, 1.9rem);
+  font-weight: 800;
+}
+
+.wrapped-summary-grid span {
+  font-size: 0.85rem;
+  color: color-mix(in srgb, var(--text), transparent 40%);
+}
+
+.wrapped-summary-zeile {
+  margin: 0;
+  font-size: 0.95rem;
+  color: color-mix(in srgb, var(--text), transparent 22%);
+}
+
+.wrapped-ende-knopf {
+  margin-top: 22px;
+  padding: 12px 26px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg-app);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Bedienung */
+
+.wrapped-close,
+.wrapped-arrow {
+  position: fixed;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text), transparent 88%);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wrapped-close {
+  top: 22px;
+  right: 26px;
+  width: 40px;
+  height: 40px;
+  font-size: 1.4rem;
+}
+
+.wrapped-arrow {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 46px;
+  height: 46px;
+  font-size: 1.8rem;
+}
+
+.wrapped-arrow.is-prev { left: 20px; }
+.wrapped-arrow.is-next { right: 20px; }
+.wrapped-arrow.is-hidden { display: none; }
+
+.wrapped-dots {
+  position: fixed;
+  z-index: 3;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+
+.wrapped-dot {
+  width: 26px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text), transparent 80%);
+  cursor: pointer;
+}
+
+.wrapped-dot.is-active { background: rgb(var(--accent-rgb)); }
+
+/* Die Einblendung.
+   Der Inhalt kommt gestaffelt - das ist der Unterschied zwischen "erscheint"
+   und "wird aufgebaut". Vorgehalten wird nichts: der Anfangszustand kommt aus
+   animation-fill-mode "both", das ihn waehrend der Verzoegerung setzt. Wuerde
+   man die Elemente stattdessen von vornherein auf opacity 0 stellen, blieben
+   sie bei abgeschalteter Animation fuer immer unsichtbar. */
+.wrapped-card.is-da .wrapped-content > * {
+  animation: wrapped-auftauchen 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.wrapped-card.is-da .wrapped-content > *:nth-child(2) { animation-delay: 110ms; }
+.wrapped-card.is-da .wrapped-content > *:nth-child(3) { animation-delay: 210ms; }
+.wrapped-card.is-da .wrapped-content > *:nth-child(4) { animation-delay: 300ms; }
+
+.wrapped-card.is-da .wrapped-backdrop {
+  animation: wrapped-heranziehen 1400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes wrapped-auftauchen {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes wrapped-heranziehen {
+  from { opacity: 0; transform: scale(1.14); }
+  to { opacity: 0.22; transform: scale(1.06); }
+}
+
+@keyframes wrapped-wachsen {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes wrapped-aufsteigen {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+/* Wer keine Bewegung will, bekommt keine - aus der ELFIX-Einstellung wie aus
+   der Systemvorgabe. Der Inhalt steht dann sofort und vollstaendig da; das
+   Weglassen der Animation genuegt dafuer, weil nichts vorgehalten wird. */
+.app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-content > *,
+.app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-backdrop,
+.app-shell.animations-off .wrapped-modal .wrapped-mix-fill,
+.app-shell.animations-off .wrapped-modal .wrapped-monat-balken {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wrapped-card.is-da .wrapped-content > *,
+  .wrapped-card.is-da .wrapped-backdrop,
+  .wrapped-mix-fill,
+  .wrapped-monat-balken {
+    animation: none;
+  }
+}
+
+/* Der Hinweis auf der Startseite. Eine Zeile, kein Fenster: der Rueckblick soll
+   auffallen, nicht ueberfallen. */
+.wrapped-hinweis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 0 0 calc(18px * var(--spacing-scale));
+  padding: 16px 20px;
+  border-radius: var(--card-radius);
+  background: linear-gradient(120deg,
+    color-mix(in srgb, rgb(var(--accent-rgb)), var(--bg-card) 72%),
+    color-mix(in srgb, var(--bg-card-strong), transparent 4%));
+  box-shadow: var(--shadow);
+}
+
+.wrapped-hinweis.is-hidden { display: none; }
+
+.wrapped-hinweis > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wrapped-hinweis strong { font-size: 1.05rem; }
+
+.wrapped-hinweis span {
+  color: color-mix(in srgb, var(--text), transparent 32%);
+  font-size: 0.9rem;
+}
+
+/* Das Archiv auf der Statistikseite - dort, wo die Zahlen ohnehin stehen, und
+   nicht als eigener Punkt in der Hauptnavigation. */
+.wrapped-archiv {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 calc(14px * var(--spacing-scale));
+}
+
+.wrapped-archiv.is-hidden { display: none; }
+
+.wrapped-archiv-titel {
+  color: color-mix(in srgb, var(--text), transparent 40%);
+  font-size: 0.9rem;
+}
+
+.wrapped-archiv-jahr {
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: linear-gradient(120deg,
+    color-mix(in srgb, rgb(var(--accent-rgb)), var(--bg-card) 66%),
+    color-mix(in srgb, var(--bg-card-strong), transparent 4%));
+  font-weight: 700;
+  cursor: pointer;
+}

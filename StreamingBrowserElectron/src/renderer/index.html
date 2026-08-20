@@ -54,6 +54,7 @@
           <button class="home-side-link" type="button" data-home-action="calendar" title="Kalender"><span class="side-icon">🗓</span><span class="side-label">Kalender</span></button>
           <button class="home-side-link" type="button" data-home-action="favorites" title="Watchlist"><span class="side-icon">♡</span><span class="side-label">Watchlist</span><span class="side-badge is-hidden" id="watchlistBadge"></span></button>
           <button class="home-side-link" type="button" data-home-action="history" title="Verlauf"><span class="side-icon">◴</span><span class="side-label">Verlauf</span></button>
+          <button class="home-side-link" type="button" data-home-action="review" title="Rückblick"><span class="side-icon">✦</span><span class="side-label">Rückblick</span></button>
         </nav>
         <div class="home-sidebar-section">
           <p>Bibliothek</p>
@@ -129,6 +130,7 @@
               <div class="favorite-rail" id="homeFavorites"></div>
             </section>
 
+            <div class="wrapped-hinweis is-hidden" id="wrappedHinweis"></div>
             <section class="home-row favorites-row is-hidden" id="watchpartyHomeRow">
               <div class="row-head">
                 <div class="row-title">Gemeinsam weiterschauen</div>
@@ -326,6 +328,32 @@
             <h1 id="watchpartyEmptyTitle">Noch keine Watchparty</h1>
             <p id="watchpartyEmptyCopy">Trage Server und Raumcode in den Einstellungen ein. Danach stellst du eine Serie über den ⇄ Knopf oben rechts in den Raum.</p>
             <button class="primary-action" id="watchpartyOpenSettings">Watchparty einrichten</button>
+          </div>
+        </div>
+      </section>
+      <dialog class="wrapped-modal" id="wrappedModal" aria-label="Jahresrückblick">
+        <div class="wrapped-stage" id="wrappedStage"></div>
+        <div class="wrapped-dots" id="wrappedDots"></div>
+        <button type="button" class="wrapped-close" id="wrappedClose" title="Schließen" aria-label="Schließen">×</button>
+        <button type="button" class="wrapped-arrow is-prev" id="wrappedPrev" aria-label="Zurück">‹</button>
+        <button type="button" class="wrapped-arrow is-next" id="wrappedNext" aria-label="Weiter">›</button>
+      </dialog>
+      <section class="favorites-view is-hidden" id="reviewView">
+        <div class="favorites-page">
+          <div class="row-head">
+            <div>
+              <p class="eyebrow">Rückblick</p>
+              <h1 id="reviewTitle">Rückblick</h1>
+              <p id="reviewSpan">Wird geladen …</p>
+            </div>
+          </div>
+          <div class="calendar-filter is-hidden" id="reviewYears"></div>
+          <div class="wrapped-archiv is-hidden" id="wrappedArchiv"></div>
+          <div class="review-body" id="reviewBody"></div>
+          <div class="empty-state is-hidden" id="reviewEmpty">
+            <div class="empty-icon">✦</div>
+            <h1>Noch nichts zurückzublicken</h1>
+            <p>Sobald du etwas zu Ende geschaut hast, entsteht hier deine Bilanz.</p>
           </div>
         </div>
       </section>
@@ -628,6 +656,7 @@
                 </select>
                 <small>Beim Weiterrücken zeigt die Karte direkt die nächste Folge an — bei Filmen ändert sich nichts.</small>
               </label>
+              <label class="check setting-row"><input id="autoplayNextEpisode" type="checkbox"><span><strong>Nächste Folge von selbst starten</strong><small>Ein: nach dem Ende einer Folge läuft ein Zähler von 5 und schaltet dann weiter. Aus: der Knopf „Nächste Folge“ steht trotzdem da — es geht nur weiter, wenn du ihn drückst.</small></span></label>
               <label class="check setting-row"><input id="youtubeInMediathek" type="checkbox"><span><strong>YouTube-Videos in die Mediathek</strong><small>Aus: fertig geschaute YouTube-Videos verschwinden einfach. Ein: sie werden dort abgelegt wie Serien und Filme. Shorts kommen nie in „Weiterschauen“.</small></span></label>
               <div class="setting-card">Ein Eintrag verschwindet erst aus „Weiterschauen“, wenn er zu 90 % gesehen wurde oder du ihn über das ⋯-Menü entfernst.</div>
             </div>
