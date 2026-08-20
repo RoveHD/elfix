@@ -16,10 +16,18 @@
 //
 // Der eigentliche Schutz ist die erste Bedingung: geklickt wird ausschliesslich
 // innerhalb eines Kastens, in dem eine echte Cloudflare-Abfrage steckt. Ein
-// Werbe-Overlay bringt keine mit. Und ob die Abfrage bestanden ist, verraet
-// Cloudflare selbst - das versteckte Feld "cf-turnstile-response" traegt dann
-// einen Wert. Das ist unabhaengig von der Sprache der Seite und davon, wie der
-// Erfolg gerade aussieht.
+// Werbe-Overlay bringt keine mit.
+//
+// Auf das Ergebnis der Abfrage wird bewusst nicht gewartet. Turnstile loest
+// sich auf diesen Seiten von selbst, und bis das versteckte Token gesetzt ist,
+// vergeht Zeit, in der das Fenster nur im Weg steht. Geklickt wird deshalb,
+// sobald der Knopf ueberhaupt klickbar ist. Kommt der Klick zu frueh, bleibt
+// das Fenster einfach stehen - und der Beobachter unten versucht es erneut,
+// sobald sich am Fenster etwas ruehrt.
+//
+// "Sofort" heisst hier wirklich sofort: das Skript haengt sich einmal in die
+// Seite und schlaegt in dem Moment zu, in dem das Fenster auftaucht oder der
+// Knopf freigegeben wird. Vorher hing das am 700-ms-Takt des Autostarts.
 
 // Was auf dem Knopf stehen darf. "weitere" ist ausdruecklich nicht dabei -
 // "Weitere Informationen" ist kein Weiter.
@@ -50,34 +58,45 @@ function istFreigegebenesTor(kandidat) {
   const text = String(k.knopfText).trim();
   if (SCHLIESSEN_MUSTER.test(text)) return nein("das ist der Schliessen-Knopf");
   if (!WEITER_MUSTER.test(text)) return nein(`Knopftext passt nicht: ${text.slice(0, 40)}`);
+  // Das Einzige, worauf gewartet wird: ein gesperrter Knopf laesst sich nicht
+  // druecken. Sobald die Sperre faellt, meldet der Beobachter das und es geht
+  // weiter - schneller kann es nicht gehen.
   if (k.knopfDeaktiviert) return nein("Knopf ist noch gesperrt");
-  // false heisst: das Feld ist da und leer - die Abfrage laeuft noch. null
-  // heisst: kein Feld gefunden, dann entscheidet der Knopf allein, denn nicht
-  // jede Einbindung legt es an.
-  if (k.geloest === false) return nein("Verifizierung noch nicht bestanden");
 
-  return { klicken: true, grund: k.geloest === true ? "Verifizierung bestanden" : "Knopf frei" };
+  // Auf das Token der Abfrage wird ausdruecklich nicht gewartet. Es ist nur
+  // noch Auskunft fuers Protokoll.
+  return { klicken: true, grund: k.geloest === true ? "Verifizierung bestanden" : "sofort" };
 }
 
-// Das Skript, das in der Anbieterseite nachsieht.
+// Womit sich die Seite meldet, wenn der Beobachter zugeschlagen hat. Denselben
+// Kanal benutzt ELFIX schon fuer den Player und die Watchparty.
+const TOR_MELDUNG = "__elfix:tor:";
+
+// Das Skript, das sich in die Anbieterseite haengt.
 //
 // Es sucht nicht die ganze Seite ab, sondern geht von der Cloudflare-Abfrage
 // aus nach oben: sie ist der seltene, eindeutige Anker. Was darueber liegt,
 // ist der Dialog, und darin steht der Knopf.
-function torScript(maxKlicks = 3) {
+//
+// Eingehaengt wird einmal je Dokument. Danach laeuft ein MutationObserver mit
+// und prueft bei jeder Aenderung erneut - dadurch faellt der Klick in dem
+// Moment, in dem das Fenster erscheint oder der Knopf freigegeben wird, und
+// nicht erst beim naechsten Durchlauf des Autostarts.
+function torScript(maxKlicks = 4) {
   return `(() => {
-  const MARKE = "__elfixTorKlicks";
+  const KENN = "__elfixTorV1";
+  const MELDUNG = ${JSON.stringify(TOR_MELDUNG)};
+  const MAX = ${Number(maxKlicks) || 4};
+  if (window[KENN]) return window[KENN].pruefen();
+
   const istFreigegebenesTor = ${istFreigegebenesTor.toString()};
   const nein = ${nein.toString()};
   const WEITER_MUSTER = ${WEITER_MUSTER.toString()};
   const SCHLIESSEN_MUSTER = ${SCHLIESSEN_MUSTER.toString()};
 
-  const bisher = Number(document.documentElement.dataset[MARKE] || 0);
-  if (bisher >= ${Number(maxKlicks) || 3}) return "";
-  // Nicht zweimal im selben Atemzug: nach dem Klick braucht die Seite einen
-  // Moment, und der Autostart fragt im Sekundentakt nach.
-  const zuletzt = Number(document.documentElement.dataset.elfixTorZeit || 0);
-  if (Date.now() - zuletzt < 3000) return "";
+  let klicks = 0;
+  let letzterKlick = 0;
+  let letzteMeldung = "";
 
   const sichtbar = (el) => {
     if (!el) return false;
@@ -89,56 +108,88 @@ function torScript(maxKlicks = 3) {
   };
   const text = (el) => String((el && (el.innerText || el.textContent || el.value || el.getAttribute("aria-label") || el.title)) || "").replace(/\\s+/g, " ").trim();
 
-  // Der Anker: die Cloudflare-Abfrage.
-  const abfrage = document.querySelector('.cf-turnstile, [data-sitekey], iframe[src*="challenges.cloudflare.com"], iframe[title*="Cloudflare" i], iframe[title*="Widget" i]');
-  if (!abfrage) return "";
+  const pruefen = () => {
+    if (klicks >= MAX) return "";
+    // Nach einem Klick kurz Ruhe: die Seite braucht einen Moment, und der
+    // Beobachter feuert waehrend des Umbaus sonst mehrfach.
+    if (Date.now() - letzterKlick < 1200) return "";
 
-  // Von dort nach oben, bis ein Kasten kommt, der einen Knopf traegt.
-  let kasten = abfrage.parentElement;
-  let knopf = null;
-  for (let tiefe = 0; kasten && tiefe < 6; tiefe += 1) {
-    const knoepfe = Array.from(kasten.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a[href="#"],a:not([href])'))
-      .filter(sichtbar)
-      .filter((el) => !SCHLIESSEN_MUSTER.test(text(el)));
-    knopf = knoepfe.find((el) => WEITER_MUSTER.test(text(el))) || null;
-    if (knopf) break;
-    kasten = kasten.parentElement;
-  }
-  if (!kasten || !knopf) return "";
+    // Der Anker: die Cloudflare-Abfrage.
+    const abfrage = document.querySelector('.cf-turnstile, [data-sitekey], iframe[src*="challenges.cloudflare.com"], iframe[title*="Cloudflare" i], iframe[title*="Widget" i]');
+    if (!abfrage) return "";
 
-  // Hat Cloudflare die Abfrage abgesegnet? Das Feld traegt dann ein Token.
-  const feld = kasten.querySelector('input[name="cf-turnstile-response"], input[name="g-recaptcha-response"]');
-  const geloest = feld ? Boolean(String(feld.value || "").trim()) : null;
+    // Von dort nach oben, bis ein Kasten kommt, der einen Knopf traegt.
+    let kasten = abfrage.parentElement;
+    let knopf = null;
+    for (let tiefe = 0; kasten && tiefe < 6; tiefe += 1) {
+      const knoepfe = Array.from(kasten.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a[href="#"],a:not([href])'))
+        .filter(sichtbar)
+        .filter((el) => !SCHLIESSEN_MUSTER.test(text(el)));
+      knopf = knoepfe.find((el) => WEITER_MUSTER.test(text(el))) || null;
+      if (knopf) break;
+      kasten = kasten.parentElement;
+    }
+    if (!kasten || !knopf) return "";
 
-  const urteil = istFreigegebenesTor({
-    sichtbar: sichtbar(kasten),
-    hatVerifizierung: true,
-    knopfText: text(knopf),
-    knopfDeaktiviert: Boolean(knopf.disabled) || knopf.getAttribute("aria-disabled") === "true" || knopf.classList.contains("disabled"),
-    geloest
-  });
-  if (!urteil.klicken) return "tor-gewartet:" + urteil.grund;
+    // Nur noch fuers Protokoll: ob Cloudflare schon abgesegnet hat. Gewartet
+    // wird darauf nicht.
+    const feld = kasten.querySelector('input[name="cf-turnstile-response"], input[name="g-recaptcha-response"]');
+    const geloest = feld ? Boolean(String(feld.value || "").trim()) : null;
 
-  document.documentElement.dataset[MARKE] = String(bisher + 1);
-  document.documentElement.dataset.elfixTorZeit = String(Date.now());
+    const urteil = istFreigegebenesTor({
+      sichtbar: sichtbar(kasten),
+      hatVerifizierung: true,
+      knopfText: text(knopf),
+      knopfDeaktiviert: Boolean(knopf.disabled) || knopf.getAttribute("aria-disabled") === "true" || knopf.classList.contains("disabled"),
+      geloest
+    });
+    if (!urteil.klicken) return melde("tor-gewartet:" + urteil.grund);
+
+    klicks += 1;
+    letzterKlick = Date.now();
+    try {
+      knopf.scrollIntoView({ block: "center", behavior: "instant" });
+      const r = knopf.getBoundingClientRect();
+      const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+      knopf.dispatchEvent(new PointerEvent("pointerdown", o));
+      knopf.dispatchEvent(new MouseEvent("mousedown", o));
+      knopf.dispatchEvent(new PointerEvent("pointerup", o));
+      knopf.dispatchEvent(new MouseEvent("mouseup", o));
+      knopf.dispatchEvent(new MouseEvent("click", o));
+      if (typeof knopf.click === "function") knopf.click();
+    } catch (fehler) {
+      return melde("tor-fehler:" + String(fehler && fehler.message));
+    }
+    return melde("tor-geklickt:" + text(knopf).slice(0, 24) + ":" + urteil.grund);
+  };
+
+  // Jede Meldung nur einmal: der Beobachter feuert bei jeder Kleinigkeit, und
+  // dasselbe "warte noch" hundertmal im Protokoll hilft niemandem.
+  const melde = (nachricht) => {
+    if (nachricht && nachricht !== letzteMeldung) {
+      letzteMeldung = nachricht;
+      try { console.log(MELDUNG + nachricht); } catch (_) {}
+    }
+    return nachricht;
+  };
+
+  window[KENN] = { pruefen };
   try {
-    knopf.scrollIntoView({ block: "center", behavior: "instant" });
-    const r = knopf.getBoundingClientRect();
-    const o = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
-    knopf.dispatchEvent(new PointerEvent("pointerdown", o));
-    knopf.dispatchEvent(new MouseEvent("mousedown", o));
-    knopf.dispatchEvent(new PointerEvent("pointerup", o));
-    knopf.dispatchEvent(new MouseEvent("mouseup", o));
-    knopf.dispatchEvent(new MouseEvent("click", o));
-    if (typeof knopf.click === "function") knopf.click();
-  } catch (fehler) {
-    return "tor-fehler:" + String(fehler && fehler.message);
-  }
-  return "tor-geklickt:" + text(knopf).slice(0, 24) + ":" + urteil.grund;
+    const beobachter = new MutationObserver(() => { pruefen(); });
+    beobachter.observe(document.documentElement || document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "disabled", "aria-disabled", "value"]
+    });
+  } catch (_) {}
+
+  return pruefen();
 })()`;
 }
 
 module.exports = {
+  TOR_MELDUNG,
   WEITER_MUSTER,
   SCHLIESSEN_MUSTER,
   istFreigegebenesTor,

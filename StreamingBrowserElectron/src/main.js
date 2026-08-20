@@ -1683,6 +1683,10 @@ function getProviderView(provider) {
   });
   view.webContents.on("dom-ready", () => {
     kosmetikEinspielen(provider, view, view.webContents.getURL(), true);
+    // Den Beobachter fuer das Vorbereitungsfenster gleich mit einhaengen, nicht
+    // erst wenn ein Autostart laeuft. Er soll schon dastehen, bevor das Fenster
+    // aufgeht - sonst waere "sofort" nur das naechste Abfragen.
+    torBeobachterEinhaengen(provider, view);
   });
   view.webContents.on("enter-html-full-screen", () => markContentFullscreen(true));
   view.webContents.on("leave-html-full-screen", () => markContentFullscreen(false));
@@ -1709,6 +1713,12 @@ function getProviderView(provider) {
         rahmen = null;
       }
       kosmetikMeldung(provider, view, rahmen, nachricht);
+      return;
+    }
+    // Das Vorbereitungsfenster meldet sich von selbst, sobald es aufgeht - der
+    // Beobachter in der Seite wartet nicht auf die naechste Autoplay-Runde.
+    if (String(nachricht || "").startsWith(verifizierungstor.TOR_MELDUNG)) {
+      torMeldungVerarbeiten(provider, String(nachricht).slice(verifizierungstor.TOR_MELDUNG.length));
       return;
     }
     // Wo dieses Geraet steht. Kommt aus der Seite, sobald sich etwas aendert -
@@ -2840,41 +2850,53 @@ function scheduleProviderAutoplay(provider, view, options = {}) {
 const torKlickZeit = new Map();
 const TOR_NACHLAUF_MS = 8000;
 
-// Nur im Hauptdokument des Anbieters: das Fenster gehoert der Anbieterseite,
-// nicht dem Hoster-Rahmen. Ein Aufruf je Autoplay-Runde, und die Seite selbst
-// bremst mit ihrer eigenen Sperre nach - teuer ist das nicht.
-function pruefeVerifizierungsTor(provider, request, view) {
-  if (!provider || !isLiveView(view)) return;
-  if (request.sawPlayback) return;
-  if (request.torLaeuft) return;
-  request.torLaeuft = true;
-
-  view.webContents.executeJavaScript(verifizierungstor.torScript(), true)
+// Den Beobachter in das Hauptdokument des Anbieters einhaengen. Das Fenster
+// gehoert der Anbieterseite, nicht dem Hoster-Rahmen.
+//
+// Der Aufruf ist absichtlich billig und wiederholbar: steht das Skript schon,
+// prueft es nur nach; sonst haengt es sich ein. Deshalb darf es sowohl bei
+// dom-ready als auch in jeder Autoplay-Runde kommen - ersetzt die Seite ihr
+// documentElement, ist der Beobachter beim naechsten Mal wieder da.
+function torBeobachterEinhaengen(provider, view) {
+  if (!provider || !isLiveView(view)) return Promise.resolve("");
+  return view.webContents.executeJavaScript(verifizierungstor.torScript(), true)
     .catch(() => "")
     .then((ergebnis) => {
-      request.torLaeuft = false;
-      const meldung = String(ergebnis || "");
-      if (!meldung) return;
-      if (meldung.startsWith("tor-gewartet:")) {
-        // Einmal melden, nicht im Sekundentakt - das Fenster steht ja.
-        if (request.torGewartet === meldung) return;
-        request.torGewartet = meldung;
-        logNextEpisode(provider, `Vorbereitungsfenster: ${meldung.slice(13)}`);
-        return;
-      }
-      if (!meldung.startsWith("tor-geklickt:")) return;
-
-      torKlickZeit.set(provider.id, Date.now());
-      logNextEpisode(provider, `Vorbereitungsfenster bestaetigt (${meldung.slice(13)})`);
-      // Hinter dem Knopf faengt das Laden erst an. Ohne diese Verlaengerung
-      // waere das Autostart-Fenster meist schon fast aufgebraucht, und der
-      // Player kaeme zu spaet.
-      if (!request.torVerlaengert) {
-        request.torVerlaengert = true;
-        request.until = Math.max(request.until, Date.now() + 25000);
-        request.startedAt = Date.now();
-      }
+      torMeldungVerarbeiten(provider, String(ergebnis || ""));
+      return String(ergebnis || "");
     });
+}
+
+function pruefeVerifizierungsTor(provider, request, view) {
+  if (!request || request.sawPlayback || request.torLaeuft) return;
+  request.torLaeuft = true;
+  torBeobachterEinhaengen(provider, view).then(() => {
+    request.torLaeuft = false;
+  });
+}
+
+// Eine Meldung des Beobachters - egal ob als Rueckgabe oder ueber die Konsole.
+function torMeldungVerarbeiten(provider, meldung) {
+  if (!provider || !meldung) return;
+
+  if (meldung.startsWith("tor-gewartet:") || meldung.startsWith("tor-fehler:")) {
+    logNextEpisode(provider, `Vorbereitungsfenster: ${meldung.slice(meldung.indexOf(":") + 1)}`);
+    return;
+  }
+  if (!meldung.startsWith("tor-geklickt:")) return;
+
+  torKlickZeit.set(provider.id, Date.now());
+  logNextEpisode(provider, `Vorbereitungsfenster bestaetigt (${meldung.slice(13)})`);
+
+  // Hinter dem Knopf faengt das Laden erst an. Laeuft gerade ein Autostart,
+  // waere sein Zeitfenster sonst meist schon fast aufgebraucht und der Player
+  // kaeme zu spaet.
+  const request = providerAutoplayRequests.get(provider.id);
+  if (request && !request.torVerlaengert) {
+    request.torVerlaengert = true;
+    request.until = Math.max(request.until, Date.now() + 25000);
+    request.startedAt = Date.now();
+  }
 }
 
 // Hat der Nutzer beziehungsweise der Autostart gerade das Vorbereitungsfenster

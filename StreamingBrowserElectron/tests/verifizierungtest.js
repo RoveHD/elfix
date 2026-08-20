@@ -34,6 +34,12 @@ const echt = tor({});
 pruefe("Das bestaetigte Vorbereitungsfenster wird geklickt", echt.klicken, echt.grund);
 pruefe("Auch ohne Token-Feld, solange der Knopf frei ist",
   tor({ geloest: null }).klicken, tor({ geloest: null }).grund);
+// Das ist die Ansage: nicht abwarten, bis Cloudflare fertig ist, sondern
+// druecken und den Nutzer auf die Seite schicken. Kommt der Klick zu frueh,
+// bleibt das Fenster stehen und der Beobachter versucht es gleich wieder.
+const nochOffen = tor({ geloest: false });
+pruefe("Auf die laufende Abfrage wird NICHT gewartet - es wird sofort geklickt",
+  nochOffen.klicken, nochOffen.grund);
 for (const wort of ["Weiter", "weiter", "WEITER", "Continue", "Fortfahren", "Proceed", "Zum Stream", "Jetzt ansehen"]) {
   if (!tor({ knopfText: wort }).klicken) pruefe(`Knopftext "${wort}" wird erkannt`, false);
 }
@@ -46,8 +52,6 @@ const ohneAbfrage = tor({ hatVerifizierung: false });
 pruefe("Ohne Cloudflare-Abfrage wird nichts geklickt", !ohneAbfrage.klicken, ohneAbfrage.grund);
 const unsichtbar = tor({ sichtbar: false });
 pruefe("Ein unsichtbares Fenster wird nicht geklickt", !unsichtbar.klicken, unsichtbar.grund);
-const offen = tor({ geloest: false });
-pruefe("Solange die Abfrage laeuft, wird gewartet", !offen.klicken, offen.grund);
 const gesperrt = tor({ knopfDeaktiviert: true });
 pruefe("Ein gesperrter Knopf wird nicht geklickt", !gesperrt.klicken, gesperrt.grund);
 const schliessen = tor({ knopfText: "Schliessen" });
@@ -73,7 +77,16 @@ pruefe("Das Skript sucht die Cloudflare-Abfrage als Anker",
 pruefe("Es bringt die geprueften Regeln mit, statt sie nachzubauen",
   skript.includes("istFreigegebenesTor") && skript.includes(WEITER_MUSTER.source));
 pruefe("Es begrenzt sich selbst auf wenige Versuche",
-  /bisher >= 3/.test(skript) && skript.includes("elfixTorZeit"));
+  /klicks >= MAX/.test(skript) && /letzterKlick < 1200/.test(skript) && /const MAX = 4;/.test(skript));
+// Der Grund, warum es ueberhaupt "sofort" heissen darf: das Skript haengt sich
+// ein und wartet nicht darauf, dass jemand nachfragt.
+pruefe("Es haengt sich als Beobachter ein, statt auf den naechsten Takt zu warten",
+  skript.includes("MutationObserver") && skript.includes("attributeFilter")
+  && /"disabled"/.test(skript) && skript.includes("beobachter.observe"));
+pruefe("Es meldet sich von selbst ueber die Konsole",
+  skript.includes("console.log(MELDUNG"));
+pruefe("Es haengt sich nur einmal je Dokument ein",
+  /if \(window\[KENN\]\) return window\[KENN\]\.pruefen\(\);/.test(skript));
 pruefe("Es ist gueltiges Javascript", (() => {
   try { new Function(`return ${skript};`); return true; } catch (fehler) { return String(fehler.message); }
 })() === true);
