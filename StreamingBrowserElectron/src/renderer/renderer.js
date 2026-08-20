@@ -228,6 +228,7 @@ const favoriteArtworkMirror = document.querySelector("#favoriteArtworkMirror");
 const showFavoriteMetaMirror = document.querySelector("#showFavoriteMetaMirror");
 const favoriteProgressMode = document.querySelector("#favoriteProgressMode");
 const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
+const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
 const pauseOnBlur = document.querySelector("#pauseOnBlur");
 const blockedList = document.querySelector("#blockedList");
@@ -824,6 +825,7 @@ function bindEvents() {
     saveSettings();
   });
   pauseOnProviderSwitch.addEventListener("change", saveSettings);
+  youtubeInMediathek?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
   pauseOnMinimize.addEventListener("change", saveSettings);
   pauseOnBlur.addEventListener("change", saveSettings);
@@ -3008,9 +3010,31 @@ function basisTitel(wert) {
   return String(wert || "").replace(/\s*[·|-]?\s*staffel\s*\d+.*$/i, "").trim();
 }
 
+// Die Mediathek ist die Ablage fuer Serien und Filme, die man zu Ende gesehen
+// hat. YouTube-Videos gehoeren da standardmaessig nicht hinein - man schaut
+// dort viel und will es hinterher nicht sammeln. Sie sind trotzdem als
+// abgeschlossen gemerkt, damit sie aus "Weiterschauen" verschwinden; nur
+// angezeigt werden sie hier nicht.
+//
+// Der Schalter in den Einstellungen dreht das um, und weil hier nur gefiltert
+// und nichts geloescht wird, sind die Eintraege danach sofort wieder da.
+const YOUTUBE_KARTEN_HOSTS = ["youtube.com", "youtu.be", "youtube-nocookie.com"];
+
+function istYoutubeEintrag(item) {
+  try {
+    const host = new URL(String(item?.url || "")).hostname.toLowerCase()
+      .replace(/^www\./, "").replace(/^m\./, "").replace(/^music\./, "");
+    return YOUTUBE_KARTEN_HOSTS.some((eintrag) => host === eintrag || host.endsWith(`.${eintrag}`));
+  } catch {
+    return false;
+  }
+}
+
 function libraryEntries() {
+  const youtubeErlaubt = settings.playback?.youtubeInMediathek === true;
   return favorites
     .filter((item) => item.completed)
+    .filter((item) => youtubeErlaubt || !istYoutubeEintrag(item))
     // Selbst gelegte Reihenfolge zuerst. Frisch abgeschlossene haben noch
     // keine Stelle und stehen oben, damit sie nicht unten untergehen.
     .sort((left, right) => {
@@ -4229,6 +4253,7 @@ function renderSettings() {
   whitelistInput.value = (settings.adblock?.whitelist || []).join("\n");
   cacheMode.value = browser.cacheMode || "aggressive";
   pauseOnProviderSwitch.checked = settings.playback?.pauseOnProviderSwitch !== false;
+  if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
   favoriteProgressMode.value = settings.playback?.favoriteProgressMode || "sequential";
   pauseOnMinimize.checked = Boolean(settings.playback?.pauseOnMinimize);
   pauseOnBlur.checked = Boolean(settings.playback?.pauseOnBlur);
@@ -4442,6 +4467,7 @@ async function saveSettings() {
   };
   settings.playback = {
     pauseOnProviderSwitch: pauseOnProviderSwitch.checked,
+    youtubeInMediathek: Boolean(youtubeInMediathek?.checked),
     favoriteProgressMode: favoriteProgressMode.value,
     pauseOnMinimize: pauseOnMinimize.checked,
     pauseOnBlur: pauseOnBlur.checked
@@ -4629,7 +4655,8 @@ async function resetAllSettings() {
     pauseOnProviderSwitch: true,
     favoriteProgressMode: "sequential",
     pauseOnMinimize: false,
-    pauseOnBlur: false
+    pauseOnBlur: false,
+    youtubeInMediathek: false
   };
   settings.home = { ...DEFAULT_HOME_SETTINGS };
   settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };

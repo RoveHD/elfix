@@ -255,6 +255,17 @@ function istVorschaubildUrl(url) {
   return host === "ytimg.com" || host.endsWith(".ytimg.com");
 }
 
+// Ein Short.
+//
+// Die dauern Sekunden und laufen in einer Endlosschleife. In "Weiterschauen"
+// haben sie nichts verloren - dort geht es darum, etwas Angefangenes zu Ende
+// zu bringen. Ein Short, den man einmal durchgewischt hat, ist kein
+// angefangenes Werk, und bei dreissig gewischten Shorts waere die Liste nur
+// noch Rauschen.
+function istShortsUrl(url) {
+  return videoKennung(url)?.kurz === true;
+}
+
 module.exports = {
   YOUTUBE_HOSTS,
   MINDEST_SEKUNDEN,
@@ -266,5 +277,6 @@ module.exports = {
   brauchtNachsprung,
   vollbildScript,
   vorschaubildKandidaten,
-  istVorschaubildUrl
+  istVorschaubildUrl,
+  istShortsUrl
 };

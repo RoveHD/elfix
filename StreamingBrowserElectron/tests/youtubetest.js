@@ -16,6 +16,7 @@ const vm = require("vm");
 const path = require("path");
 
 const WURZEL = path.join(__dirname, "..");
+const lies = (datei) => fs.readFileSync(path.join(WURZEL, datei), "utf8").split("\r\n").join("\n");
 const yt = require(path.join(WURZEL, "src", "youtube.js"));
 
 const pruefungen = [];
@@ -210,6 +211,50 @@ pruefe("Der Bildabruf haelt den Fortschritts-Takt nicht auf",
   /function youtubeBildNachreichen\(view, meta\)/.test(main)
   && !/await [^\n]*erstesErreichbaresBild/.test(main)
   && /pruefeGrossesVorschaubild\(kandidaten\[0\]\);/.test(main));
+
+console.log("\n-- Shorts, Mediathek, 90 Prozent --");
+pruefe("Ein Short wird als Short erkannt, ein Video nicht",
+  yt.istShortsUrl("https://www.youtube.com/shorts/ABC") === true
+  && yt.istShortsUrl("https://www.youtube.com/watch?v=ABC") === false
+  && yt.istShortsUrl("https://youtu.be/ABC") === false);
+pruefe("Fremde Adressen sind nie Shorts",
+  FREMDE.every((u) => yt.istShortsUrl(u) === false));
+pruefe("Shorts werden gar nicht erst gemerkt",
+  /if \(youtube\.istShortsUrl\(url\)\) return false;/.test(main)
+  && /function isTrackableMediaUrl\(url, provider\) \{\n\s*\/\/[\s\S]{0,400}?if \(youtube\.istShortsUrl\(url\)\) return false;/.test(main),
+  "steht in isTrackableMediaUrl, also vor jedem Eintrag");
+
+pruefe("YouTube gilt mit 90 Prozent als durch",
+  /if \(!entry\.completed && youtube\.istYoutubeUrl\(url\) && progressPercent >= COMPLETED_PROGRESS_PERCENT\) \{/.test(main));
+pruefe("Die anderen Anbieter warten weiter auf das Ende der Folge",
+  /const wholeItemCompleted = isWholeMediaCompleted\(entry, url, mediaEnded\);/.test(main)
+  && /function isWholeMediaCompleted\(entry, url, mediaEnded\) \{\n\s*if \(!mediaEnded\) return false;/.test(main));
+
+// Die Einstellung - und dass sie standardmaessig aus ist.
+pruefe("Die Einstellung ist standardmaessig aus",
+  /youtubeInMediathek: raw\?\.playback\?\.youtubeInMediathek === true/.test(main)
+  && /youtubeInMediathek: false/.test(main),
+  "=== true heisst: alles ausser einem ausdruecklichen Ja bleibt aus");
+
+const renderer = lies("src/renderer/renderer.js");
+const html = lies("src/renderer/index.html");
+pruefe("Die Mediathek blendet YouTube aus, solange die Einstellung aus ist",
+  /const youtubeErlaubt = settings\.playback\?\.youtubeInMediathek === true;/.test(renderer)
+  && /\.filter\(\(item\) => youtubeErlaubt \|\| !istYoutubeEintrag\(item\)\)/.test(renderer));
+pruefe("Dabei wird nur gefiltert, nichts geloescht - der Schalter ist umkehrbar",
+  !/favorites\.splice|delete favorite|completed = false/.test(renderer.split("function libraryEntries")[1].slice(0, 600)));
+pruefe("Der Schalter steht in den Einstellungen",
+  /id="youtubeInMediathek" type="checkbox"/.test(html)
+  && /youtubeInMediathek\?\.addEventListener\("change", saveSettings\)/.test(renderer)
+  && /youtubeInMediathek: Boolean\(youtubeInMediathek\?\.checked\)/.test(renderer));
+
+// Zwei Hostlisten, die dasselbe meinen muessen: der Renderer kann das Modul
+// nicht laden, deshalb steht sie dort ein zweites Mal. Driftet eine ab, faellt
+// es hier auf und nicht erst an einer Karte, die im falschen Bereich landet.
+const imRenderer = (renderer.match(/const YOUTUBE_KARTEN_HOSTS = \[([^\]]+)\]/) || [])[1] || "";
+pruefe("Renderer und Modul kennen dieselben YouTube-Hosts",
+  JSON.stringify(imRenderer.split(",").map((s) => s.trim().replace(/"/g, ""))) === JSON.stringify(yt.YOUTUBE_HOSTS),
+  imRenderer.replace(/\s+/g, " ").trim());
 
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",

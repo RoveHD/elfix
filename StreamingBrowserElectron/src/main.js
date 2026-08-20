@@ -3864,6 +3864,15 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   const nextContinueUrl = shouldAdvanceEpisode ? nextEpisodeContinueUrl(url, meta.nextUrl, entry, meta) : "";
   let advancedToNextEpisode = false;
   entry.completed = Boolean(entry.completed || wholeItemCompleted);
+  // YouTube gilt mit 90 Prozent als durch, auch ohne dass der Player das Ende
+  // gemeldet hat. Bei den anderen Anbietern wartet ELFIX auf dieses Ende, weil
+  // dort die naechste Folge ansteht und der Wechsel daran haengt. Ein
+  // YouTube-Video hat keine naechste Folge - wer neunzig Prozent gesehen hat,
+  // will es nicht wiederfinden, sondern loswerden. Die letzten Minuten sind
+  // Abspann, Kanalhinweise und Endcards.
+  if (!entry.completed && youtube.istYoutubeUrl(url) && progressPercent >= COMPLETED_PROGRESS_PERCENT) {
+    entry.completed = true;
+  }
   if (hasMediaProgress) {
     entry.currentTime = sanitizePositiveNumber(meta.currentTime || meta.position);
     entry.position = entry.currentTime;
@@ -4567,6 +4576,11 @@ function titelAusSlug(slug) {
 }
 
 function isTrackableMediaUrl(url, provider) {
+  // Shorts werden gar nicht erst gemerkt. Sie dauern Sekunden und laufen in
+  // einer Schleife - "Weiterschauen" heisst aber, etwas Angefangenes zu Ende
+  // zu bringen. Nach einer Viertelstunde Wischen stuenden dort dreissig
+  // Eintraege, und alles Echte waere darunter begraben.
+  if (youtube.istShortsUrl(url)) return false;
   if (isFavoriteProgressUrl(url, provider)) return true;
   const slug = mediaSlugFromUrl(url);
   if (!slug) return false;
@@ -9825,7 +9839,11 @@ function normalizeSettings(raw) {
       pauseOnProviderSwitch: raw?.playback?.pauseOnProviderSwitch ?? defaults.playback.pauseOnProviderSwitch,
       favoriteProgressMode: sanitizeChoice(raw?.playback?.favoriteProgressMode, ["sequential", "static"], defaults.playback.favoriteProgressMode),
       pauseOnMinimize: migrateBackgroundAudio ? defaults.playback.pauseOnMinimize : raw?.playback?.pauseOnMinimize ?? defaults.playback.pauseOnMinimize,
-      pauseOnBlur: migrateBackgroundAudio ? defaults.playback.pauseOnBlur : raw?.playback?.pauseOnBlur ?? defaults.playback.pauseOnBlur
+      pauseOnBlur: migrateBackgroundAudio ? defaults.playback.pauseOnBlur : raw?.playback?.pauseOnBlur ?? defaults.playback.pauseOnBlur,
+      // Standardmaessig aus: die Mediathek ist die Ablage fuer Serien und
+      // Filme, die man zu Ende gesehen hat. Ein YouTube-Video landet dort
+      // ungefragt nicht - wer es doch will, schaltet es hier ein.
+      youtubeInMediathek: raw?.playback?.youtubeInMediathek === true
     },
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
@@ -9940,7 +9958,8 @@ function defaultSettings() {
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
       pauseOnMinimize: false,
-      pauseOnBlur: false
+      pauseOnBlur: false,
+      youtubeInMediathek: false
     },
     browser: {
       cacheMode: "aggressive"
