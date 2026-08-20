@@ -6218,6 +6218,23 @@ function watchpartyGibtFolgeVor(url) {
 function istGleicheFolge(links, rechts) {
   if (!links || !rechts) return false;
   if (taste.urlSchluessel(links) !== taste.urlSchluessel(rechts)) return false;
+
+  // YouTube kennt weder Staffel noch Folge, und der Serienschluessel ist fuer
+  // jedes Video derselbe: "www.youtube.com/watch" - die Kennung steckt in der
+  // Abfrage, die dort wegfaellt. Ohne diese Zeile sahen deshalb alle
+  // YouTube-Videos wie dasselbe aus, und das hatte zwei Folgen. Ein
+  // Videowechsel wurde als "steht ja schon dort" verworfen, statt die Runde
+  // mitzunehmen. Und eine Pause an einem Video wurde bei jemandem angewendet,
+  // der gerade ein voellig anderes schaute.
+  //
+  // Was ein YouTube-Video ausmacht, ist seine Kennung - danach wird hier
+  // verglichen.
+  const linksVideo = youtube.videoKennung(links);
+  const rechtsVideo = youtube.videoKennung(rechts);
+  if (linksVideo || rechtsVideo) {
+    return Boolean(linksVideo && rechtsVideo && linksVideo.id === rechtsVideo.id);
+  }
+
   const hier = episodeIdentity(links);
   const dort = episodeIdentity(rechts);
   // Filme und Seiten ohne Folgenangabe: die Serien-Adresse genuegt.

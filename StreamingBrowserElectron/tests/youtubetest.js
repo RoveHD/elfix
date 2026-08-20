@@ -18,6 +18,7 @@ const path = require("path");
 const WURZEL = path.join(__dirname, "..");
 const lies = (datei) => fs.readFileSync(path.join(WURZEL, datei), "utf8").split("\r\n").join("\n");
 const yt = require(path.join(WURZEL, "src", "youtube.js"));
+const taste = require(path.join(WURZEL, "src", "taste.js"));
 
 const pruefungen = [];
 const pruefe = (n, b, d) => { pruefungen.push(Boolean(b)); console.log(`${b ? "OK  " : "FAIL"}  ${n}${d ? "   -> " + d : ""}`); };
@@ -332,6 +333,57 @@ pruefe("Aniworld, S.to und Filmo sind unveraendert geblieben",
 pruefe("Das YouTube-Modul erkennt die eigene Standardadresse",
   yt.istYoutubeUrl(ytAnbieter.startUrl) === true
   && yt.istYoutubeUrl(pm.buildSearchUrl(ytAnbieter, "test")) === true);
+
+console.log("\n-- Watchparty: alle werden mitgezogen --");
+// Warum das nicht von selbst ging: taste.urlSchluessel() wirft die Abfrage weg,
+// und die YouTube-Videokennung steckt genau dort. Fuer die Watchparty sah
+// deshalb jedes Video aus wie dasselbe.
+pruefe("Der Serienschluessel ist bei allen YouTube-Videos derselbe",
+  taste.urlSchluessel("https://www.youtube.com/watch?v=AAA")
+  === taste.urlSchluessel("https://www.youtube.com/watch?v=BBB"),
+  taste.urlSchluessel("https://www.youtube.com/watch?v=AAA"));
+
+const sandkastenWP = { URL, taste, youtube: yt, console };
+vm.createContext(sandkastenWP);
+vm.runInContext(["function istGleicheFolge", "function episodeIdentity", "function stripWww"]
+  .map((n) => abschnitt(main, n)).join("\n\n"), sandkastenWP);
+const gleich = sandkastenWP.istGleicheFolge;
+const VIDEO_A = "https://www.youtube.com/watch?v=AAA";
+const VIDEO_B = "https://www.youtube.com/watch?v=BBB";
+
+pruefe("Zwei verschiedene Videos gelten nicht mehr als dasselbe",
+  gleich(VIDEO_A, VIDEO_B) === false,
+  "sonst verwarf der Empfaenger den Wechsel als \"steht ja schon dort\"");
+pruefe("Dasselbe Video bleibt dasselbe - auch mit Startzeit oder Playlist",
+  gleich(VIDEO_A, VIDEO_A) === true
+  && gleich(VIDEO_A, `${VIDEO_A}&t=90`) === true
+  && gleich(VIDEO_A, `${VIDEO_A}&list=PL9&index=2`) === true);
+// Serien duerfen von der Sonderbehandlung nichts abbekommen.
+const EP1 = "https://aniworld.to/anime/stream/naruto/staffel-1/episode-1";
+pruefe("Folgen und Staffeln werden weiter wie bisher unterschieden",
+  gleich(EP1, EP1) === true
+  && gleich(EP1, "https://aniworld.to/anime/stream/naruto/staffel-1/episode-2") === false
+  && gleich(EP1, "https://aniworld.to/anime/stream/naruto/staffel-2/episode-1") === false
+  && gleich(EP1, "https://aniworld.to/anime/stream/bleach/staffel-1/episode-1") === false);
+pruefe("Ein Film ohne Folgenangabe bleibt derselbe Film",
+  gleich("https://filmo.to/film/x", "https://filmo.to/film/x") === true);
+
+// Die Kette vom Klick bis zum Nachziehen - jedes Glied muss stehen.
+pruefe("Der Videowechsel wird gemeldet",
+  /function meldeWatchpartyFolgenwechsel\(url\)/.test(main)
+  && /watchparty\.steuernMitAdresse\(key, "navigate", 0, url, raum\);/.test(main)
+  && /meldeWatchpartyFolgenwechsel\(url\);/.test(main));
+pruefe("Die Gegenseite zieht auf die neue Adresse nach",
+  /if \(nachricht\.action === "navigate" && nachricht\.url\) \{\n\s*await followWatchpartyEpisode\(eintrag, nachricht\);/.test(main)
+  && /if \(istGleicheFolge\(offen, ziel\)\) continue;/.test(main)
+  && /await navigateProvider\(provider, ziel\);/.test(main));
+pruefe("Nur wer live geschaltet ist, wird mitgezogen",
+  /if \(!ziel \|\| !watchpartyLiveAktiv\(eintrag\.key, eintrag\.room\)\) return;/.test(main));
+
+// Und der Fehler, den derselbe Fix nebenbei behebt.
+pruefe("Eine Pause an Video A trifft nicht mehr den, der Video B schaut",
+  gleich(VIDEO_A, VIDEO_B) === false
+  && /if \(!istGleicheFolge\(nachricht\.url \|\| eintrag\.live\?\.url \|\| eintrag\.url, offen\)\) continue;/.test(main));
 
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",
