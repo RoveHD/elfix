@@ -203,6 +203,98 @@ pruefe("Die Wahl wird gespeichert und ueberlebt den Neustart",
   /librarySort: sanitizeChoice\(raw\?\.home\?\.librarySort/.test(QUELLE)
   && /librarySort: "manuell"/.test(QUELLE));
 
+
+// --- Doppelte Eintraege, Datum und Verlauf -----------------------------------
+//
+// Gemeldet war: "Spider-Man: Brand New Day ist zweimal drin". In der echten
+// Ablage standen dafuer zwei Eintraege - einer privat, einer aus der
+// Watchparty "Bangus". Das ist so gewollt: jeder Raum fuehrt seinen eigenen
+// Fortschritt, und auf der Startseite sind die beiden Reihen getrennt. Die
+// Mediathek kannte diese Trennung nicht und zeigte beide nebeneinander.
+
+function rendererAbschnitt(anfang) {
+  const zeilen = RENDERER.split("\n");
+  const von = zeilen.findIndex((z) => z.startsWith(anfang));
+  if (von < 0) throw new Error("nicht gefunden: " + anfang);
+  let bis = von;
+  while (bis < zeilen.length && zeilen[bis] !== "}") bis += 1;
+  return zeilen.slice(von, bis + 1).join("\n");
+}
+
+const mediathek = { console };
+vm.createContext(mediathek);
+vm.runInContext([
+  "function mediathekEntdoppeln",
+  "function istBessererMediathekEintrag",
+  "function verlaufListe",
+  "function verlaufTage",
+  "function gesehenAm",
+  "function datumKurz"
+].map(rendererAbschnitt).join("\n\n"), mediathek);
+
+const PRIVAT = { id: "a", normalizedUrl: "https://filmo.to/movies/x", watchpartyRoom: "", libraryOrder: 39, createdAt: "2026-08-14T08:00:00.000Z" };
+const RUNDE = { id: "b", normalizedUrl: "https://filmo.to/movies/x", watchpartyRoom: "Bangus", createdAt: "2026-08-20T11:51:00.000Z" };
+const ANDERER = { id: "c", normalizedUrl: "https://filmo.to/movies/y", watchpartyRoom: "", createdAt: "2026-08-01T08:00:00.000Z" };
+
+const entdoppelt = mediathek.mediathekEntdoppeln([PRIVAT, RUNDE, ANDERER]);
+pruefe("Derselbe Film aus Watchparty und privat steht nur noch einmal da",
+  entdoppelt.length === 2, `${entdoppelt.length} statt 3`);
+pruefe("Uebrig bleibt der private Eintrag, nicht der aus der Runde",
+  entdoppelt.find((e) => e.normalizedUrl === "https://filmo.to/movies/x")?.id === "a");
+pruefe("Die Reihenfolge des Eingangs aendert daran nichts",
+  mediathek.mediathekEntdoppeln([RUNDE, PRIVAT]).find((e) => e.id === "a") !== undefined);
+pruefe("Gibt es den Titel nur aus einer Runde, steht eben der da",
+  mediathek.mediathekEntdoppeln([RUNDE]).length === 1
+  && mediathek.mediathekEntdoppeln([RUNDE])[0].id === "b");
+pruefe("Verschiedene Filme werden nicht zusammengeworfen",
+  mediathek.mediathekEntdoppeln([PRIVAT, ANDERER]).length === 2);
+pruefe("Entdoppelt wird vor dem Sortieren",
+  /return mediathekSortieren\(mediathekEntdoppeln\(sichtbar\), sortierung\);/.test(RENDERER),
+  "sonst bestimmt eine Karte die Reihenfolge mit, die gar nicht angezeigt wird");
+
+// Das Datum auf der Karte.
+pruefe("Das Datum kommt aus dem Abschluss, nicht aus dem letzten Oeffnen",
+  mediathek.gesehenAm({ completedAt: "2026-08-16T11:55:14.522Z", lastWatchedAt: "2026-08-20T09:00:00.000Z" })
+    ?.toISOString().startsWith("2026-08-16"));
+pruefe("Fehlt der Abschluss, tut es der letzte Fortschritt",
+  mediathek.gesehenAm({ lastWatchedAt: "2026-08-14T14:00:45.619Z" })?.toISOString().startsWith("2026-08-14"));
+pruefe("Ohne jede Angabe gibt es kein Datum",
+  mediathek.gesehenAm({}) === null && mediathek.datumKurz(null) === "");
+pruefe("Das Datum steht nur auf den Karten der Mediathek",
+  /showWatchedDate: true,/.test(RENDERER)
+  && /options\.showWatchedDate \? datumKurz\(gesehenAm\(favorite\)\) : ""/.test(RENDERER));
+
+// Der Verlauf im Menue.
+const VERLAUF = {
+  activity: [
+    { at: "2026-08-16T17:14:51.972Z", label: "Geöffnet" },
+    { at: "2026-08-16T17:39:39.397Z", label: "Staffel 2 Folge 9" },
+    { at: "2026-08-16T17:43:22.511Z", label: "Staffel 2 Folge 10" },
+    { at: "2026-08-18T20:01:00.000Z", label: "Staffel 2 Folge 11" },
+    { at: "kaputt", label: "Unsinn" }
+  ]
+};
+const liste = mediathek.verlaufListe(VERLAUF);
+pruefe("Der Verlauf laesst \"Geoeffnet\" weg - das sagt nichts ueber Geschautes",
+  liste.length === 3 && !liste.some((e) => /geöffnet/i.test(e.label)),
+  liste.map((e) => e.label).join(", "));
+pruefe("Kaputte Zeitangaben fliegen raus", !liste.some((e) => Number.isNaN(e.zeit.getTime())));
+pruefe("Neueste zuerst", liste[0].label === "Staffel 2 Folge 11");
+pruefe("Gezaehlt werden Tage, nicht Folgen",
+  mediathek.verlaufTage(liste) === 2, `${mediathek.verlaufTage(liste)} Tage bei 3 Eintraegen`);
+pruefe("Ohne Verlauf bleibt die Liste leer",
+  mediathek.verlaufListe({}).length === 0 && mediathek.verlaufListe({ activity: "kein Array" }).length === 0);
+pruefe("Der Menuepunkt erscheint nur, wo es mehr als einen Eintrag gibt",
+  /options\.allowLibraryRemove && verlauf\.length > 1/.test(RENDERER));
+pruefe("Der Kasten zeigt Anzahl und Tage",
+  /Mal geschaut an \$\{tage\}/.test(RENDERER)
+  && /nurSchliessen: true/.test(RENDERER) && /mehrzeilig: true/.test(RENDERER));
+// Der Kasten ist derselbe wie bei jeder Rueckfrage - bleibt ein Merker
+// stehen, steht die naechste Loeschabfrage ohne Abbrechen da.
+pruefe("Beide Merker werden bei jedem Aufruf neu gesetzt",
+  /confirmCopy\.classList\.toggle\("is-mehrzeilig", Boolean\(mehrzeilig\)\);/.test(RENDERER)
+  && /confirmCancel\.classList\.toggle\("is-hidden", Boolean\(nurSchliessen\)\);/.test(RENDERER));
+
 const gut = pruefungen.filter(Boolean).length;
 console.log(`${gut}/${pruefungen.length} bestanden`);
 process.exit(gut === pruefungen.length ? 0 : 1);

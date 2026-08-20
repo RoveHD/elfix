@@ -2582,11 +2582,38 @@ h1 {
   line-height: 1.55;
 }
 
+/* Der Verlauf ist eine Liste, kein Fliesstext: die Zeilenumbrueche stehen im
+   Text und muessen erhalten bleiben. Bei vielen Abenden wird der Kasten sonst
+   laenger als der Bildschirm, deshalb scrollt er ab einer Hoehe. */
+.confirm-copy.is-mehrzeilig {
+  white-space: pre-line;
+  max-height: 46vh;
+  overflow-y: auto;
+  font-variant-numeric: tabular-nums;
+}
+
 .confirm-actions {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* Wann der Titel durch war. Steht unter der Herkunft und bleibt bewusst
+   leiser als sie - das Datum ist eine Randnotiz, kein Titel. */
+.favorite-card .favorite-datum {
+  position: relative;
+  z-index: 1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.app-shell.hide-favorite-meta .favorite-card .favorite-datum {
+  display: none;
 }
 
 .confirm-actions button {

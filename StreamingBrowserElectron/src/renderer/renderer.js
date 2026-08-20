@@ -2824,6 +2824,7 @@ function renderLibraryViews() {
   const vonHand = sortierung === "manuell";
   libraryGrid?.replaceChildren(...libraryItems.map((favorite) => favoriteCard(favorite, false, {
     allowLibraryRemove: true,
+    showWatchedDate: true,
     sortable: vonHand
   })));
   libraryEmpty?.classList.toggle("is-hidden", libraryItems.length > 0);
@@ -2962,12 +2963,43 @@ async function mediathekReihenfolgeSpeichern() {
   if (Array.isArray(gespeichert)) favorites = gespeichert;
 }
 
-function confirmAction({ eyebrow = "ELFIX", title, copy = "", confirmLabel = "Löschen", cancelLabel = "Abbrechen" }) {
+// Der Verlauf eines Titels: wann und wie oft.
+//
+// Gezeigt wird derselbe Kasten wie bei einer Rueckfrage, nur ohne zweite
+// Schaltflaeche - hier gibt es nichts zu entscheiden, nur etwas zu lesen.
+async function zeigeVerlauf(favorite, liste = verlaufListe(favorite)) {
+  const tage = verlaufTage(liste);
+  const zeilen = liste.slice(0, 40).map((eintrag) => {
+    const wann = eintrag.zeit.toLocaleString("de-DE", {
+      day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
+    });
+    return eintrag.label ? `${wann} · ${eintrag.label}` : wann;
+  });
+  const rest = liste.length - zeilen.length;
+  if (rest > 0) zeilen.push(`… und ${rest} weitere`);
+
+  await confirmAction({
+    eyebrow: "Verlauf",
+    title: displayFavoriteTitle(favorite),
+    copy: `${liste.length} Mal geschaut an ${tage} ${tage === 1 ? "Tag" : "Tagen"}\n\n${zeilen.join("\n")}`,
+    confirmLabel: "Schließen",
+    nurSchliessen: true,
+    mehrzeilig: true
+  });
+}
+
+function confirmAction({ eyebrow = "ELFIX", title, copy = "", confirmLabel = "Löschen", cancelLabel = "Abbrechen", nurSchliessen = false, mehrzeilig = false }) {
   if (!confirmModal?.showModal) return Promise.resolve(window.confirm(title));
   confirmEyebrow.textContent = eyebrow;
   confirmTitle.textContent = title;
   confirmCopy.textContent = copy;
   confirmCopy.classList.toggle("is-hidden", !copy);
+  // Beide Merker werden bei jedem Aufruf neu gesetzt, nicht nur eingeschaltet -
+  // der Kasten ist derselbe fuer alle Rueckfragen, und ein Rest vom letzten
+  // Mal saehe man erst, wenn die naechste Loeschabfrage ploetzlich einspaltig
+  // und ohne Abbrechen dastuende.
+  confirmCopy.classList.toggle("is-mehrzeilig", Boolean(mehrzeilig));
+  confirmCancel.classList.toggle("is-hidden", Boolean(nurSchliessen));
   confirmAccept.textContent = confirmLabel;
   confirmCancel.textContent = cancelLabel;
   return new Promise((resolve) => {
@@ -3129,6 +3161,40 @@ function mediathekSortieren(liste, sortierung) {
   });
 }
 
+// Denselben Titel gibt es absichtlich mehrfach: einmal privat und je
+// Watchparty einmal. Auf der Startseite ist das getrennt - "Weiterschauen"
+// und "Gemeinsam weiterschauen" sind zwei Reihen. Die Mediathek kennt diese
+// Trennung nicht, und dort standen dieselben Filme dann doppelt.
+//
+// Hier zaehlt das Werk, nicht der Raum, in dem man es geschaut hat. Bleibt der
+// private Eintrag - er traegt die von Hand gelegte Stelle und die laengere
+// Geschichte. Gibt es nur einen aus einer Runde, steht eben der da.
+function mediathekEntdoppeln(liste) {
+  const nachWerk = new Map();
+  for (const eintrag of liste) {
+    const schluessel = String(eintrag.normalizedUrl || eintrag.url || eintrag.id);
+    const bisher = nachWerk.get(schluessel);
+    if (!bisher) {
+      nachWerk.set(schluessel, eintrag);
+      continue;
+    }
+    if (istBessererMediathekEintrag(eintrag, bisher)) nachWerk.set(schluessel, eintrag);
+  }
+  return [...nachWerk.values()];
+}
+
+function istBessererMediathekEintrag(neu, bisher) {
+  const neuPrivat = !neu.watchpartyRoom;
+  const bisherPrivat = !bisher.watchpartyRoom;
+  if (neuPrivat !== bisherPrivat) return neuPrivat;
+  // Beide gleich privat: der mit der gelegten Stelle, sonst der aeltere -
+  // der hat die laengere Geschichte hinter sich.
+  const neuStelle = Number.isFinite(Number(neu.libraryOrder));
+  const bisherStelle = Number.isFinite(Number(bisher.libraryOrder));
+  if (neuStelle !== bisherStelle) return neuStelle;
+  return String(neu.createdAt || "") < String(bisher.createdAt || "");
+}
+
 // Gefiltert wird vor dem Sortieren: was gar nicht angezeigt wird, soll die
 // Reihenfolge auch nicht mitbestimmen.
 function libraryEntries(sortierung = mediathekSortierung()) {
@@ -3136,7 +3202,7 @@ function libraryEntries(sortierung = mediathekSortierung()) {
   const sichtbar = favorites
     .filter((item) => item.completed)
     .filter((item) => youtubeErlaubt || !istYoutubeEintrag(item));
-  return mediathekSortieren(sichtbar, sortierung);
+  return mediathekSortieren(mediathekEntdoppeln(sichtbar), sortierung);
 }
 
 function continueEntries() {
@@ -3809,10 +3875,44 @@ function heroInhalt(favorite) {
   `;
 }
 
+// Wann wurde das zuletzt geschaut? "completedAt" ist der Moment, in dem der
+// Titel durch war - das ist die Angabe, die in der Mediathek zaehlt. Fehlt sie
+// bei aelteren Eintraegen, tut es der letzte Fortschritt.
+function gesehenAm(favorite) {
+  const roh = favorite?.completedAt || favorite?.lastWatchedAt || favorite?.openedAt || "";
+  const zeit = Date.parse(roh);
+  return Number.isFinite(zeit) ? new Date(zeit) : null;
+}
+
+function datumKurz(datum) {
+  if (!datum) return "";
+  return datum.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// Der Verlauf eines Titels, neueste zuerst. "Geoeffnet" faellt weg: es sagt
+// nur, dass die Seite auf war, nicht dass etwas lief - in einer Liste "wann
+// habe ich das geschaut" waere es Rauschen.
+function verlaufListe(favorite) {
+  const roh = Array.isArray(favorite?.activity) ? favorite.activity : [];
+  return roh
+    .filter((eintrag) => eintrag && eintrag.at && !/^ge(ö|oe)ffnet$/i.test(String(eintrag.label || "").trim()))
+    .map((eintrag) => ({ zeit: new Date(Date.parse(eintrag.at)), label: String(eintrag.label || "").trim() }))
+    .filter((eintrag) => Number.isFinite(eintrag.zeit?.getTime?.()))
+    .sort((links, rechts) => rechts.zeit - links.zeit);
+}
+
+// An wie vielen Tagen wurde geschaut? Zwanzig Folgen an einem Abend sind ein
+// Abend, nicht zwanzig Male - danach fragt man, wenn man "wie oft" fragt.
+function verlaufTage(liste) {
+  return new Set(liste.map((eintrag) => eintrag.zeit.toDateString())).size;
+}
+
 function favoriteCardInhalt(favorite, options = {}) {
+  const datum = options.showWatchedDate ? datumKurz(gesehenAm(favorite)) : "";
   return `
     <strong>${escapeHtml(displayFavoriteTitle(favorite))}</strong>
     <span>${escapeHtml(favoriteHerkunft(favorite))}</span>
+    ${datum ? `<small class="favorite-datum">Gesehen am ${escapeHtml(datum)}</small>` : ""}
     ${progressMarkup(favorite, options)}
   `;
 }
@@ -3985,6 +4085,21 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast("Aus Watchlist entfernt");
+      }
+    });
+  }
+
+  // Der Verlauf steht nur dort, wo es auch einen gibt. Bei einem Titel, den
+  // man einmal durchgeschaut hat, waere ein Menuepunkt mit einer einzigen
+  // Zeile dahinter nur ein Klick ins Leere.
+  const verlauf = verlaufListe(favorite);
+  if (options.allowLibraryRemove && verlauf.length > 1) {
+    eintraege.push({
+      gruppe: "info",
+      symbol: "◷",
+      text: "Verlauf ansehen",
+      tun: async () => {
+        await zeigeVerlauf(favorite, verlauf);
       }
     });
   }
