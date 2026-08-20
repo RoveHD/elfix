@@ -180,6 +180,37 @@ pruefe("Der allgemeine Weg bleibt fuer die anderen Anbieter erhalten",
   /const buttonPass = await startPlaybackInView\(view, \{ mode: "fullscreen" \}\)/.test(main)
   && /mode: "fullscreen-force"/.test(main));
 
+console.log("\n-- Kartenbild --");
+// Die allgemeine Bildsuche nimmt das groesste Bild oben auf der Seite. Auf
+// YouTube ist das nicht das laufende Video - ein <video> ist gar kein Bild -,
+// sondern die erste Empfehlung rechts. Auf der Karte stand deshalb das
+// Vorschaubild eines fremden Videos.
+const bilder = yt.vorschaubildKandidaten("https://www.youtube.com/watch?v=VlVj3wyEMMw");
+pruefe("Das Bild kommt aus der Videokennung, nicht von der Seite",
+  bilder.length === 2 && bilder.every((b) => b.includes("VlVj3wyEMMw")),
+  bilder.join(" -> "));
+pruefe("Zuerst die grosse, dann die immer vorhandene Groesse",
+  bilder[0].endsWith("/maxresdefault.jpg") && bilder[1].endsWith("/mqdefault.jpg"));
+pruefe("Die Rueckfallgroesse ist 16:9, nicht 4:3",
+  bilder[1].includes("mqdefault") && !bilder.some((b) => b.includes("hqdefault")),
+  "hqdefault waere 4:3 und haette schwarze Balken");
+pruefe("Jede Schreibweise fuehrt zum selben Bild",
+  new Set(varianten.map((u) => yt.vorschaubildKandidaten(u)[1])).size === 1);
+pruefe("Fremde Adressen bekommen kein YouTube-Bild",
+  FREMDE.every((u) => yt.vorschaubildKandidaten(u).length === 0));
+pruefe("Ein schon richtiges Bild wird als solches erkannt",
+  yt.istVorschaubildUrl("https://i.ytimg.com/vi/ABC/mqdefault.jpg") === true
+  && yt.istVorschaubildUrl("https://i9.ytimg.com/vi/ABC/hq720.jpg") === true
+  && yt.istVorschaubildUrl("https://aniworld.to/bild.jpg") === false
+  && yt.istVorschaubildUrl("") === false);
+
+pruefe("Beim Laden werden alte Karten mit fremdem Bild geradegezogen",
+  /youtube\.istYoutubeUrl\(favorite\?\.url \|\| ""\) && !youtube\.istVorschaubildUrl\(favorite\?\.thumbnail\)/.test(main));
+pruefe("Der Bildabruf haelt den Fortschritts-Takt nicht auf",
+  /function youtubeBildNachreichen\(view, meta\)/.test(main)
+  && !/await [^\n]*erstesErreichbaresBild/.test(main)
+  && /pruefeGrossesVorschaubild\(kandidaten\[0\]\);/.test(main));
+
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",
   /if \(!youtube\.istYoutubeUrl\(adresse\)\) return adresse;/.test(main));

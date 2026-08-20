@@ -8498,6 +8498,16 @@ function normalizeStoredEpisodeCompletion(favorite) {
 }
 
 function normalizeLoadedFavorite(favorite) {
+  // YouTube-Karten bekommen ihr Bild aus der Videokennung. Das ist reine
+  // Rechnerei, kostet also nichts, und es raeumt gleich die Karten auf, die
+  // noch ein zusammengesuchtes Bild aus der Empfehlungsspalte tragen - sonst
+  // haetten die es behalten, denn beim Fortschritt wird das Bild eines
+  // bestehenden Eintrags nicht mehr angefasst.
+  if (youtube.istYoutubeUrl(favorite?.url || "") && !youtube.istVorschaubildUrl(favorite?.thumbnail)) {
+    const kandidaten = youtube.vorschaubildKandidaten(favorite.url);
+    if (kandidaten.length) favorite.thumbnail = kandidaten[kandidaten.length - 1];
+    return favorite;
+  }
   if (isStoFavoriteRecord(favorite)) {
     const thumbnail = absoluteHttpUrl(favorite.thumbnail, favorite.url);
     const passend = isStoChannelArtworkUrl(thumbnail) && stoArtworkMatchesFavorite(thumbnail, favorite.url);
@@ -8965,6 +8975,66 @@ function saveSettings() {
 }
 
 async function readPageMetadata(view) {
+  const meta = await readPageMetadataRoh(view);
+  return youtubeBildNachreichen(view, meta);
+}
+
+// Auf YouTube bleibt alles aus der Seite - Titel, Typ, Favicon -, nur das Bild
+// wird ersetzt. Die allgemeine Bildsuche nimmt dort das groesste Bild oben auf
+// der Seite, und das ist nicht das laufende Video (ein <video> ist gar kein
+// Bild), sondern die erste Empfehlung in der rechten Spalte. Auf der Karte
+// stand deshalb ein fremdes Vorschaubild.
+//
+// Wichtig: hier wird nicht auf das Netz gewartet. readPageMetadata() haengt am
+// Fortschritts-Takt, und ein zaeher Abruf wuerde das Merken des Standes
+// aufhalten. Genommen wird sofort die Groesse, die es garantiert gibt; ob es
+// die grosse auch gibt, wird nebenher geklaert und gilt ab dem naechsten Mal.
+function youtubeBildNachreichen(view, meta) {
+  let adresse = "";
+  try {
+    adresse = view.webContents.getURL();
+  } catch {
+    return meta;
+  }
+  if (!youtube.istYoutubeUrl(adresse)) return meta;
+
+  const kandidaten = youtube.vorschaubildKandidaten(adresse);
+  if (!kandidaten.length) return meta;
+
+  const sicher = kandidaten[kandidaten.length - 1];
+  const bekannt = youtubeBildCache.get(kandidaten[0]);
+  if (bekannt) return { ...meta, thumbnail: bekannt };
+
+  pruefeGrossesVorschaubild(kandidaten[0]);
+  return { ...meta, thumbnail: sicher };
+}
+
+// "maxresdefault" gibt es nur, wenn das Video in HD hochgeladen wurde - sonst
+// antwortet YouTube mit 404 und auf der Karte bliebe ein Loch. Einmal je Video
+// nachsehen, das Ergebnis merken; beim naechsten Fortschritts-Takt steht dann
+// das grosse Bild an der Karte.
+const youtubeBildCache = new Map();
+const youtubeBildLaeuft = new Set();
+
+function pruefeGrossesVorschaubild(adresse) {
+  if (!adresse || youtubeBildCache.has(adresse) || youtubeBildLaeuft.has(adresse)) return;
+  youtubeBildLaeuft.add(adresse);
+  net.fetch(adresse, { method: "HEAD", signal: AbortSignal.timeout(8000) })
+    .then((antwort) => {
+      if (!antwort.ok) return;
+      if (youtubeBildCache.size > 200) youtubeBildCache.clear();
+      youtubeBildCache.set(adresse, adresse);
+    })
+    .catch(() => {
+      // Kein Netz, Zeitueberschreitung oder das Video hat kein HD-Bild. Dann
+      // bleibt es bei der kleinen Groesse - die ist richtig, nur kleiner.
+    })
+    .then(() => {
+      youtubeBildLaeuft.delete(adresse);
+    });
+}
+
+async function readPageMetadataRoh(view) {
   return view.webContents.executeJavaScript(`(() => {
     const abs = (value) => {
       try { return value ? new URL(value, location.href).href : ""; } catch (_) { return ""; }

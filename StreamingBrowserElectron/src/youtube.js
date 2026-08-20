@@ -214,6 +214,47 @@ function vollbildScript(ueberKnopf = false) {
 })()`;
 }
 
+// Das Kartenbild.
+//
+// ELFIX sucht sich das Bild einer Seite sonst zusammen: es bewertet alle
+// Bilder im Dokument nach Groesse, Lage und Umgebungstext und nimmt das beste.
+// Fuer AniWorld, S.to und Filmo gibt es dazu je einen eigenen Zweig, weil die
+// Heuristik dort danebengriff.
+//
+// Auf YouTube greift sie besonders zuverlaessig daneben. Das groesste und am
+// weitesten oben liegende Bild ist nicht das laufende Video - das ist ein
+// <video>-Element und gar kein Bild -, sondern die erste Empfehlung in der
+// rechten Spalte. Auf der Karte stand deshalb das Vorschaubild eines fremden
+// Videos.
+//
+// Geraten werden muss hier aber gar nichts: YouTube legt das Vorschaubild
+// jedes Videos unter einer festen Adresse ab, die sich aus der Videokennung
+// ergibt. Die kennt ELFIX bereits.
+//
+// Zwei Groessen, in dieser Reihenfolge:
+//
+//   maxresdefault.jpg   1280x720, 16:9 - gibt es aber nicht fuer jedes Video
+//   mqdefault.jpg        320x180, 16:9 - gibt es immer
+//
+// "hqdefault" waere ebenfalls immer da, ist aber 4:3 und haette auf der Karte
+// schwarze Balken. Deshalb lieber das kleinere mqdefault im richtigen Format.
+function vorschaubildKandidaten(url) {
+  const kennung = videoKennung(url);
+  if (!kennung) return [];
+  return [
+    `https://i.ytimg.com/vi/${kennung.id}/maxresdefault.jpg`,
+    `https://i.ytimg.com/vi/${kennung.id}/mqdefault.jpg`
+  ];
+}
+
+// Gehoert diese Adresse zu YouTubes Bilderdienst? Damit laesst sich erkennen,
+// ob an einer Karte noch ein zusammengesuchtes Bild haengt oder schon das
+// richtige.
+function istVorschaubildUrl(url) {
+  const host = hostVon(url);
+  return host === "ytimg.com" || host.endsWith(".ytimg.com");
+}
+
 module.exports = {
   YOUTUBE_HOSTS,
   MINDEST_SEKUNDEN,
@@ -223,5 +264,7 @@ module.exports = {
   normalisiereYoutubeUrl,
   fortsetzenUrl,
   brauchtNachsprung,
-  vollbildScript
+  vollbildScript,
+  vorschaubildKandidaten,
+  istVorschaubildUrl
 };
