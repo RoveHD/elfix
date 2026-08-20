@@ -3,6 +3,104 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.26.0 — 20. August 2026
+
+Ein neuer Werbefilter, der die AdGuard-Listen wirklich versteht, das
+Vorbereitungsfenster bei S.to klickt sich selbst durch, und YouTube ist vom
+geduldeten Sonderfall zum richtigen Anbieter geworden.
+
+**Der Werbefilter blockt jetzt auch, was keine eigene Anfrage ist**
+
+- Trotz eingeschaltetem Adblocker standen Fake-Gewinnspiele, Casino- und
+  "Virus gefunden"-Einblendungen ueber dem Player. Die sind meist kein
+  zweites Fenster, sondern ein paar DIVs, die ein laengst geladenes Skript
+  in die Seite haengt - dagegen half kein Domainfilter
+- Der bisherige Filter war ein Teilparser: er zog Domainnamen aus den
+  AdGuard-Listen und warf den Rest weg. Typoptionen ($script, $third-party),
+  Domaineinschraenkungen, Ausnahmen (@@) und jede kosmetische Regel (##)
+  fielen unter den Tisch
+- Neu laeuft @adguard/tsurlfilter, die Engine aus AdGuards eigener
+  Browsererweiterung. Sie liest dieselben Listen, die ELFIX ohnehin holt,
+  und versteht sie vollstaendig
+- Listen: Base, Tracking Protection, Annoyances und neu German. Social Media
+  faellt weg - Teilen-Knoepfe gibt es auf Streaming-Seiten kaum
+- Die Selektoren der Listen werden je Rahmen als CSS eingespielt, im
+  Hauptdokument wie im eingebetteten Hoster-Rahmen, nach jeder Navigation
+  neu. Weil es CSS ist, greift es auch bei Elementen, die erst spaeter
+  entstehen
+- Fuer Overlays mit zufaelligen Klassennamen, die in keiner Liste stehen
+  koennen, kommt eine eigene Erkennung dazu. Sie entscheidet nie nach
+  Groesse allein: ohne Werbesignal - ein Ziel, das die Listen kennen, ein
+  verraeterischer Text oder ein Werbename - bleibt alles stehen.
+  Player-Bedienung, Captchas, Anmeldefenster und Cookie-Hinweise sind
+  ausdruecklich geschuetzt
+- Werberahmen koennen sich nicht mehr unbemerkt auf eine Gewinnspielseite
+  schicken; der Hoster-Rahmen darf innerhalb seiner Seite weiter umleiten
+- Der Hoster-Freibrief ist weg. Frueher hiess es "kommt es von VOE, ist es
+  Wiedergabe" und die Anfrage lief komplett am Filter vorbei - genau
+  darueber kamen die Popunder herein, denn die liegen auf denselben Hostern.
+  Freigegeben wird jetzt nur noch, was ein Player wirklich laedt: Manifest,
+  Segmente, Mediendatei und der eine Rahmen, mit dem der Anbieter den Hoster
+  einbettet
+- Geprueft an VOE, Filemoon, StreamWish, Dood, Vidmoly und Streamtape:
+  Wiedergabe laeuft, Werbe- und Popunder-Skripte fallen trotzdem
+- Das Protokoll trennt jetzt Netzregel, Skript, Tracker, Overlay, Popup,
+  Haupt- und Rahmenumleitung sowie die Ausnahmen fuer Medien, Player und
+  Verifizierung
+
+**Das Vorbereitungsfenster bei S.to**
+
+- S.to legt manchmal ein Fenster "Video wird vorbereitet..." vor den Stream,
+  mit einer Cloudflare-Abfrage und einem Knopf "Weiter". Der Autostart
+  wartete davor auf ein Video, das erst hinter diesem Knopf entsteht, und
+  gab nach seinem Zeitfenster auf
+- ELFIX bestaetigt das Fenster jetzt selbst, und zwar sofort - es wartet
+  nicht darauf, dass Cloudflare fertig ist
+- Geklickt wird ausschliesslich innerhalb eines Kastens, in dem eine echte
+  Cloudflare-Abfrage steckt, und nur bei passender Knopfbeschriftung.
+  "Schliessen", "Abbrechen" und Werbeknoepfe werden nie angefasst
+- Oeffnet die Seite den Stream daraufhin in einem neuen Fenster, darf er
+  ausnahmsweise in die laufende Ansicht laden - sonst haette der
+  Popup-Schutz genau den Klick entwertet, den ELFIX gerade gemacht hat
+
+**YouTube**
+
+- YouTube ist bei einer Neuinstallation als vierter Anbieter dabei
+- "Weiterschauen" setzt an der richtigen Sekunde fort statt am Anfang. Die
+  Sekunde wird der Adresse mitgegeben, dadurch startet der Player von sich
+  aus an der Stelle
+- Dieselbe Adresse mit "list", "index", "pp" oder "si" ist nicht mehr ein
+  eigener Titel mit eigenem Stand - alle Schreibweisen fuehren auf dasselbe
+  Video
+- Das Kartenbild ist das Vorschaubild des Videos. Vorher stand dort das Bild
+  aus der Empfehlungsspalte, weil das laufende Video gar kein Bild ist,
+  sondern ein Videoelement
+- Vollbild macht den Player gross, nicht die ganze Seite. Der allgemeine
+  Notfallweg zog auf YouTube das groesste iframe ins Vollbild, und das ist
+  dort ein unsichtbarer Anmelde-Rahmen von accounts.google.com
+- Shorts kommen nicht mehr in "Weiterschauen" - sie dauern Sekunden und
+  laufen in einer Schleife. Bereits gespeicherte werden aussortiert
+- Ein Video gilt ab 90 Prozent als durch und verschwindet aus
+  "Weiterschauen". Faellt der Fortschritt wieder darunter, ist es auch
+  wieder offen
+- YouTube-Videos landen nicht mehr in der Mediathek. Wer sie dort haben
+  will, schaltet das unter "Fortschritt in Weiterschauen" ein
+- Angefangene YouTube-Videos stehen in einer eigenen Reihe auf der
+  Startseite, getrennt von Serien und Filmen. Sie steht an der Stelle, an
+  der bisher "Beliebte Anbieter" stand; die Anbieter bleiben ueber die
+  Seitenleiste erreichbar
+
+**Unter der Haube**
+
+- Der Aufbau des Filters dauert rund vier Sekunden und laeuft nebenher.
+  Bis er steht, filtert eine eingebaute Notfallliste weiter - ELFIX startet
+  nie ungeschuetzt und wartet nie auf den Werbefilter
+- Die Listen liegen als Text auf der Platte. Ohne Internet startet ELFIX mit
+  dem letzten gueltigen Stand; nachgeladen wird nur, was aelter als eine
+  Woche ist
+- Der Filter braucht dauerhaft rund 480 MB Arbeitsspeicher im
+  Hauptprozess - das ist der Preis dieser Engine
+
 ## 1.25.0 — 19. August 2026
 
 Vier Einstellungen, die nichts bewirkt haben, ein Kalenderfilter nach Fassung
