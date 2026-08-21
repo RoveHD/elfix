@@ -1881,7 +1881,7 @@ function getProviderView(provider) {
     const chat = String(nachricht || "").match(/^__elfix:chat:([\s\S]+)$/);
     if (chat) {
       const key = watchpartyLiveKeyForUrl(view.webContents.getURL());
-      if (key) watchparty.chatSenden(chat[1]);
+      if (key) watchparty.chatSenden(key, chat[1]);
       return;
     }
     // Der Rueckkanal der YouTube-Watchparty. Eigenes Praefix, eigener Weg -
@@ -7786,8 +7786,8 @@ function watchpartyChatScript(optionen = {}) {
   const kasten = document.createElement("div");
   kasten.id = id;
   Object.assign(kasten.style, {
-    position: "fixed", right: "22px", bottom: "22px", zIndex: "2147483646",
-    display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "8px",
+    position: "fixed", left: "22px", top: "22px", zIndex: "2147483646",
+    display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "8px",
     font: "500 14px/1.4 system-ui, sans-serif", color: "#fff",
     opacity: "0", transition: "opacity 220ms ease"
   });
@@ -7859,7 +7859,10 @@ function watchpartyChatScript(optionen = {}) {
   });
   zeile.append(eingabe, ab);
   feld.append(kopf, liste, zeile);
-  kasten.append(feld, knopf);
+  // Links oben angeschlagen waechst der Chat nach unten. Der Knopf steht an
+  // derselben Ecke wie die Kopfzeile des Feldes, das er ersetzt - deshalb hier
+  // vor dem Feld und nicht dahinter.
+  kasten.append(knopf, feld);
   buehne.appendChild(kasten);
 
   // --- Sichtbarkeit ---

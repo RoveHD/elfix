@@ -3,6 +3,44 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.28.2 — 21. August 2026
+
+Der Watchparty-Chat aus 1.28.0 hat nie funktioniert. Beim Absenden stuerzte
+ELFIX ab, empfangene Zeilen kamen nie an. Ausserdem sitzt er jetzt links oben.
+
+**Der Absturz**
+
+- Beim Absenden einer Zeile beendete sich der Hauptprozess mit
+  "watchparty.chatSenden is not a function". ELFIX spricht nicht mit einer
+  einzelnen Watchparty, sondern mit der Fassade ueber alle Raeume - und die
+  kannte kein chatSenden. Sie hat es jetzt
+- Eine Chatzeile geht in jeden Raum, in dem dieser Titel mitlaeuft - wie Pause
+  und Sprung auch. Wer dieselbe Folge in zwei Raeumen schaut, schreibt in beide.
+  Laeuft der Titel in keinem Raum, geht nichts hinaus
+
+**Der Rueckkanal**
+
+- Empfangene Zeilen erreichten die Seite nie. Die Fassade bekam einen Weg nach
+  oben uebergeben, las ihn aber nicht aus - jede eingehende Nachricht verfiel
+  still. Auch das ist verbunden, und die Zeile traegt jetzt den Raum, aus dem
+  sie kam
+
+**Warum das durchging**
+
+- Geprueft wurde der Sendeweg mit einem Textvergleich ueber den Quelltext. Der
+  stand richtig da - nur fand der Aufruf am anderen Ende niemanden. Das sieht
+  man einem Quelltext nicht an
+- An dieser Stelle laeuft jetzt die echte Fassade an einer echten Verbindung:
+  eine Zeile hinaus, eine Zeile herein. Nimmt man die Korrektur weg, faellt die
+  Pruefung um
+
+**Position**
+
+- Der Chat sitzt links oben statt rechts unten und waechst von dort nach unten.
+  Der Knopf steht an derselben Ecke wie die Kopfzeile des Feldes, das er
+  ersetzt. Der Folgenknopf und die Hinweise liegen am rechten Rand - dort kamen
+  sie sich in die Quere
+
 ## 1.28.1 — 21. August 2026
 
 Zwei Nachbesserungen an 1.28.0: der Watchparty-Chat war eingebaut, aber nicht zu

@@ -24,6 +24,10 @@ class WatchpartyRaeume {
     this.aufKennung = optionen.onDeviceId || (() => {});
     this.aufSteuerung = optionen.onControl || (() => {});
     this.aufStand = optionen.onWatchstate || (() => {});
+    // Der Chat geht wie der Stand je Raum heraus und herein. Er fehlte hier:
+    // main.js reichte ein onChat herein, die Fassade las es nie - damit kam
+    // keine einzige empfangene Zeile jemals in der Seite an.
+    this.aufChat = optionen.onChat || (() => {});
     // Durchreiche fuer die YouTube-Watchparty: sie faehrt auf denselben
     // Verbindungen, fuehrt aber ihren Zustand selbst.
     this.aufYoutube = optionen.onYoutube || (() => {});
@@ -104,6 +108,7 @@ class WatchpartyRaeume {
       onProgress: (key, fortschritt) => this.aufFortschritt(key, fortschritt, code),
       onControl: (nachricht) => this.aufSteuerung({ ...nachricht, room: code }),
       onWatchstate: (nachricht) => this.aufStand({ ...nachricht, room: code }),
+      onChat: (nachricht) => this.aufChat({ ...nachricht, room: code }),
       // Der Raumcode gehoert an die Nachricht: die YouTube-Watchparty laeuft in
       // genau einem Raum und muss fremde Raeume erkennen und liegenlassen.
       onYoutube: (nachricht) => this.aufYoutube({ ...nachricht, room: nachricht.room || code }),
@@ -254,6 +259,17 @@ class WatchpartyRaeume {
 
   fortschrittMelden(key, fortschritt, room) {
     for (const raum of this.raeumeMitTitel(key, room)) raum.fortschrittMelden(key, fortschritt);
+  }
+
+  // Eine Chatzeile gehoert zum Schauen, nicht zum Verwalten: sie geht in jeden
+  // Raum, in dem dieser Titel mitlaeuft - wie Pause und Sprung. Wer dieselbe
+  // Folge in zwei Raeumen schaut, schreibt in beide.
+  chatSenden(key, zeile, room) {
+    let gesendet = false;
+    for (const raum of this.raeumeMitTitel(key, room)) {
+      if (raum.chatSenden(zeile)) gesendet = true;
+    }
+    return gesendet;
   }
 
   // Eine Nachricht der YouTube-Watchparty in genau einen Raum. Gibt es ihn hier

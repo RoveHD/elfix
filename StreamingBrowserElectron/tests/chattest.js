@@ -174,6 +174,15 @@ function client(name, deviceId) {
   pruefe("Die Einblendung meldet sich als eingerichtet",
     buehne.ergebnis.startsWith("chat-da@"),
     buehne.ergebnis);
+  pruefe("Sie sitzt links oben",
+    buehne.kasten.style.left === "22px" && buehne.kasten.style.top === "22px"
+    && !buehne.kasten.style.right && !buehne.kasten.style.bottom,
+    [buehne.kasten.style.top, buehne.kasten.style.left,
+      buehne.kasten.style.bottom, buehne.kasten.style.right].join(" / "));
+  pruefe("und waechst von dort nach unten",
+    buehne.kasten.style.alignItems === "flex-start"
+    && buehne.kasten.children[0] === buehne.knopf,
+    "der Knopf steht an derselben Ecke wie die Kopfzeile des Feldes, das er ersetzt");
   pruefe("Sie ist eingeklappt: nur ein Knopf",
     buehne.knopfSichtbar() && !buehne.feldSichtbar(),
     "eine offene Chatspalte neben einem Film waere eine Ablenkung, die man nicht bestellt hat");
@@ -257,9 +266,78 @@ function client(name, deviceId) {
     && /if \(!key \|\| !watchparty\.aktiv\) \{/.test(install),
     "ohne Raum haette der Knopf niemanden, mit dem er spraeche");
   pruefe("Gesendet wird nur aus einer laufenden Runde",
-    /const key = watchpartyLiveKeyForUrl\(view\.webContents\.getURL\(\)\);\s*\n\s*if \(key\) watchparty\.chatSenden\(chat\[1\]\);/.test(MAIN));
+    /const key = watchpartyLiveKeyForUrl\(view\.webContents\.getURL\(\)\);\s*\n\s*if \(key\) watchparty\.chatSenden\(key, chat\[1\]\);/.test(MAIN));
   pruefe("Empfangenes geht nur in eine Seite mit Runde",
     /if \(!watchpartyLiveKeyForUrl\(adresse\)\) return;/.test(abschnitt(MAIN, "function watchpartyChatZeigen(")));
+
+  // --- Die Fassade, ausgefuehrt statt gelesen --------------------------------
+  //
+  // Der Chat lief zuerst durch keine einzige Runde. main.js spricht nicht mit
+  // einer Watchparty, sondern mit der Fassade ueber alle Raeume - und die
+  // kannte weder ein chatSenden noch das onChat, das ihr uebergeben wurde.
+  // Beim Absenden stuerzte der Hauptprozess ab, Empfangenes verfiel still.
+  //
+  // Auffallen konnte das hier nicht: die Pruefung oben ist eine Regex ueber
+  // main.js, und die stand richtig da. Ob der Aufruf am anderen Ende jemanden
+  // findet, sieht man einem Quelltext nicht an - deshalb steht hier die echte
+  // Fassade an einer echten Verbindung.
+
+  const { WatchpartyRaeume } = require("../src/watchparty-raeume");
+  const FKEY = "serie:fassade";
+  const empfangen = [];
+  const fassade = new WatchpartyRaeume({
+    WebSocketKlasse: WS,
+    onChat: (nachricht) => empfangen.push(nachricht)
+  });
+  fassade.konfigurieren({
+    enabled: true, serverUrl: ADRESSE, rooms: [RAUM],
+    name: "Dora", deviceId: "geraet-dora"
+  });
+  await schlaf(400);
+  // Wer einstellt, ist beigetreten - erst dann laeuft der Titel in diesem Raum.
+  fassade.teilen({
+    key: FKEY, title: "X",
+    url: "https://aniworld.to/anime/stream/x/staffel-1/episode-1"
+  }, RAUM);
+  await schlaf(400);
+
+  pruefe("Die Fassade kennt ein chatSenden",
+    typeof fassade.chatSenden === "function",
+    "main.js ruft es auf - fehlt es, stuerzt der Hauptprozess ab");
+
+  // Fehlt die Methode, wirft der Aufruf - und zwar genau die Zeile, mit der
+  // ELFIX 1.28.1 abstuerzte. Abgefangen wird sie hier trotzdem: sonst endet die
+  // Suite an dieser Stelle und der Rueckkanal darunter bliebe ungeprueft.
+  const senden = (key, text) => {
+    try {
+      return fassade.chatSenden(key, text);
+    } catch (fehler) {
+      return String(fehler?.message || fehler);
+    }
+  };
+
+  ben.leeren();
+  const ging = senden(FKEY, "aus der Fassade");
+  const ausFassade = await ben.erwarte((m) => m.type === "chat" && m.from === "Dora");
+  pruefe("Eine Zeile aus der Fassade erreicht den Raum",
+    ging === true && ausFassade?.text === "aus der Fassade",
+    ging === true ? ausFassade?.text : String(ging));
+
+  pruefe("Ohne diesen Titel im Raum geht nichts hinaus",
+    senden("serie:gibtesnicht", "ins Leere") === false,
+    "eine Zeile im falschen Raum waere schlimmer als keine");
+
+  empfangen.length = 0;
+  anna.send({ type: "chat", text: "kommt das an?" });
+  await schlaf(400);
+  pruefe("Empfangenes erreicht das onChat der Fassade",
+    empfangen.some((m) => m.text === "kommt das an?"),
+    "dieser Rueckkanal fehlte ganz - keine empfangene Zeile kam je in der Seite an");
+  pruefe("und traegt den Raum, aus dem es kam",
+    empfangen.length > 0 && empfangen.every((m) => m.room === RAUM),
+    empfangen.map((m) => m.room).join(","));
+
+  fassade.trennen();
 
   anna.zu();
   ben.zu();
@@ -339,8 +417,11 @@ function seiteBauen() {
   const ergebnis = vm.runInContext(script, kontext);
 
   const kasten = wurzel.children.find((k) => k.id === "__elfixChat");
-  const feld = kasten.children[0];
-  const knopf = kasten.children[1];
+  // Nach Gestalt statt nach Platz: der Kasten haelt genau einen Knopf und
+  // genau ein Feld. Welcher von beiden zuerst kommt, haengt daran, in welcher
+  // Ecke der Chat sitzt - und das darf sich aendern, ohne den Test zu brechen.
+  const knopf = kasten.children.find((k) => k.tag === "button");
+  const feld = kasten.children.find((k) => k.tag === "div");
   const kopf = feld.children[0];
   const liste = feld.children[1];
   const zeile = feld.children[2];
