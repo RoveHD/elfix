@@ -3,6 +3,44 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.29.0 — 21. August 2026
+
+Der Player beim Hoster startet nicht mehr auf "Auto", sondern auf der hoechsten
+angebotenen Stufe.
+
+**Beste Bildstufe**
+
+- VOE liess den Player auf "Auto" stehen. Auto waehlt nach Leitung und Puffer
+  und liegt dabei gern eine Stufe unter dem, was moeglich waere - einmal nach
+  unten geregelt, kommt es von selbst oft nicht wieder hoch
+- Gewaehlt wird die hoechste echte Stufe: der Hoehe nach, sonst aus der
+  Beschriftung ("1080p"), sonst nach Bitrate. "Auto" zaehlt dabei nicht mit -
+  das ist keine Qualitaet, sondern der Verzicht auf die Wahl
+- Gesetzt wird einmal je Folge, nicht dauernd. Wer waehrend des Schauens von
+  Hand auf 720p geht, hat einen Grund dafuer; ein Skript, das ihn sofort wieder
+  hochdreht, waere eine Bevormundung. Erst die naechste Folge faengt wieder oben
+  an
+- Gibt es nur eine Stufe, bleibt alles, wie es ist
+
+**Wo es greift**
+
+- Der Player sitzt im Rahmen des Hosters, nicht im Dokument von AniWorld.
+  Deshalb geht das Skript in alle Rahmen und tut nur dort etwas, wo ein solcher
+  Player wirklich liegt
+- Am Hostnamen laesst sich das nicht festmachen - VOE wechselt seine Adressen
+  staendig. Deshalb entscheidet der Player selbst: findet sich keiner mit einer
+  Stufenliste, geschieht nichts
+- Eingespielt wird beim Laden und im Fortschritts-Takt. Beim Laden steht der
+  Rahmen des Hosters oft noch nicht, und ohne Manifest kennt sein Player noch
+  keine Stufen
+
+**Hinweis**
+
+- Immer die hoechste Stufe heisst auch: mehr Daten und, auf einer schwachen
+  Leitung, eher ein Nachladen als bei "Auto". Wer das nicht will, stellt die
+  Stufe im Player von Hand zurueck - fuer die laufende Folge bleibt sie dann
+  stehen
+
 ## 1.28.2 — 21. August 2026
 
 Der Watchparty-Chat aus 1.28.0 hat nie funktioniert. Beim Absenden stuerzte

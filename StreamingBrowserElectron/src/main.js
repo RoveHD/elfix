@@ -23,6 +23,9 @@ const {
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+// Die beste Bildstufe beim Hoster. Eigenes Modul, damit die Auswahl gegen
+// nachgebaute Stufenlisten pruefbar bleibt statt nur als Zeichenkette zu reisen.
+const voeQualitaet = require("./voe-qualitaet");
 // Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
 // der Watchparty fuer Serien nur die Leitung.
 const { YoutubeWatchparty } = require("./youtube-watchparty");
@@ -1993,6 +1996,7 @@ function getProviderView(provider) {
     installYoutubePartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubeWiedergabe(view, view.webContents.getURL()).catch(() => {});
     installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
+    installHosterQualitaet(view).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -2116,6 +2120,10 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // laeuft. Wer erst danach beitritt oder live schaltet, bekaeme sonst nie
   // einen Chat - das Einspielen beim dom-ready allein greift zu frueh.
   await installWatchpartyChat(provider, view, url).catch(() => {});
+  // Und die beste Bildstufe. Aus demselben Grund wie oben: beim Laden der
+  // Seite steht der Rahmen des Hosters noch nicht, und ohne Manifest kennt
+  // sein Player noch keine Stufen.
+  await installHosterQualitaet(view).catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -6712,6 +6720,14 @@ function pushWatchpartyLiveState(url = "") {
     host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId
   });
   return key;
+}
+
+// Die hoechste Bildstufe beim Hoster waehlen. Das Skript geht in alle Frames
+// und findet nur dort einen Player, wo der Hoster wirklich sitzt - im Dokument
+// von AniWorld gibt es keinen.
+async function installHosterQualitaet(view) {
+  if (!isLiveView(view)) return;
+  await executeJavaScriptInMediaFrames(view, voeQualitaet.qualitaetScript()).catch(() => []);
 }
 
 async function installWatchpartyControls(provider, view, url) {
