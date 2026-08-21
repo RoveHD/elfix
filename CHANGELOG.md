@@ -3,6 +3,68 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.32.0 — 21. August 2026
+
+Der Rueckblick zaehlt jetzt alles zusammen. Bisher zeigte jedes Geraet seine
+eigene Haelfte.
+
+**Wiedergabezeit gehoert dazu**
+
+- Seit 1.31.0 gleichen die Geraete ihren Stand ab - die gemessene Zeit aber
+  nicht. Wer abends am Rechner und am Wochenende auf dem Laptop schaut, sah
+  zweimal die halbe Bilanz. Vorher war das folgerichtig: die Zahlen sagten,
+  was *dieses* Geraet gesehen hat. Seit die Titel mitwandern, war es ein
+  Widerspruch
+- Sitzungen gehen jetzt denselben Weg wie die Staende, aber nach anderen
+  Regeln. Ein Stand aendert sich - eine abgeschlossene Sitzung nie. Sie kommt
+  dazu oder sie ist schon da; ueberschrieben wird nichts, und einen Grabstein
+  gibt es nicht. Zwei Geraete koennen denselben Satz nicht verschieden wissen
+- Die gerade laufende Sitzung bleibt, wo sie ist. Sie waechst noch, und
+  drueben stuende sie als fertiger Satz da - ihre halbe Stunde zaehlte als
+  ganze
+- Verschickt wird in Schueben. Beim ersten Abgleich eines Geraets sind das
+  leicht ein paar tausend Saetze, und die will niemand auf einmal durch eine
+  Leitung schieben, an der nebenbei eine Folge laeuft
+
+**Wann sind zwei Saetze dieselbe Folge?**
+
+- Daran haengt alles, und die bisherige Antwort taugte nicht mehr: es war die
+  Kennung des Favoriten. Auf einem Geraet ist die eindeutig - sie entsteht
+  aber beim Anlegen und ist auf jedem Geraet eine andere. Zusammengelegt
+  stuende dieselbe Folge zweimal da, und zwar ohne dass es auffiele: die
+  Stundenzahl bliebe richtig, nur die Zahl der Folgen waere zu hoch
+- Jetzt entscheidet der Titel, mit derselben Normalisierung wie ueberall sonst
+  in ELFIX. Nebenbei raeumt das einen alten Fehler mit auf: wer eine Serie bei
+  zwei Anbietern schaute, hatte zwei Favoriten - und damit doppelt so viele
+  Folgen in der Bilanz
+- Dieselbe Umstellung bei den Saetzen, die 1.28.0 aus dem Verlauf uebernommen
+  hat. Ihre Kennungen werden einmalig umgerechnet, Doppelgaenger fallen dabei
+  weg. Ohne das truege jedes Geraet dieselbe Vorgeschichte noch einmal
+- Gemessen schlaegt rekonstruiert: liegt zu einer Folge beides vor - das eine
+  Geraet hat sie gemessen, das andere sie beim Einrichten aus dem Verlauf
+  nachgetragen -, faellt der rekonstruierte Satz weg. Er beschreibt dasselbe
+  Ansehen und weiss weniger darueber
+
+**Eine Folge zaehlt einmal**
+
+- Fuer die Gesamtzahl galt das immer. Die Zahlen je Tag, Wochentag, Monat und
+  Titel zaehlten dagegen Sitzungen, und auf einem Geraet fiel der Unterschied
+  kaum auf. Wer eine Folge auf dem Rechner anfaengt und auf dem Laptop zu Ende
+  sieht, haette sie dort sonst zweimal stehen
+- Die Saetze werden vor dem Zaehlen nach Zeit sortiert. Seit sie von mehreren
+  Geraeten kommen, ist die Reihenfolge in der Ablage die des Eintreffens und
+  nicht die des Schauens - ohne diese Zeile haenge daran, welchem Tag eine
+  Folge zugerechnet wird
+
+**Relay**
+
+- Ein Schluessel fasst jetzt zwanzigtausend Eintraege statt zweitausend. Die
+  Titel sind wenige hundert; die Sitzungen treiben die Zahl, und sie verfallen
+  nicht - ein Jahresrueckblick, der mit der Zeit schrumpft, waere keiner. Das
+  reicht fuer ungefaehr ein Jahrzehnt taeglichen Schauens
+- Zu sehen bekommt es davon so wenig wie bisher: eine Sitzung traegt den Titel
+  der Folge, und sie ist verschlossen, bevor sie das Geraet verlaesst
+
 ## 1.31.0 — 21. August 2026
 
 Laptop und Rechner haben ab jetzt denselben Stand. Ein Schluessel, kein Konto -

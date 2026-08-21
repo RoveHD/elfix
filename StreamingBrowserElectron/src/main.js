@@ -26,7 +26,7 @@ const watchpartySync = require("./watchparty-sync");
 // Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
 // die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
 // Schluessel, und Laptop und Rechner haben denselben Stand.
-const { Geraeteabgleich } = require("./geraete");
+const { Geraeteabgleich, SITZUNG_PRAEFIX } = require("./geraete");
 const geraeteSchluessel = require("./geraete-schluessel");
 // Die beste Bildstufe beim Hoster. Eigenes Modul, damit die Auswahl gegen
 // nachgebaute Stufenlisten pruefbar bleibt statt nur als Zeichenkette zu reisen.
@@ -90,7 +90,10 @@ const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
 const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
-const SITZUNG_SCHEMA_VERSION = 1;
+// 2 seit 1.32.0: nachgetragene Saetze tragen die Kennung des Titels statt der
+// des Favoriten, damit zwei Geraete dieselbe Vorgeschichte nicht doppelt
+// fuehren.
+const SITZUNG_SCHEMA_VERSION = 2;
 const MIN_WATCH_TIME_SECONDS = 2.5 * 60;
 // In einer Watchparty gilt eine kuerzere Schwelle: dort schauen mehrere
 // dieselbe Folge, und die Runde soll nicht minutenlang die vorige anzeigen.
@@ -374,6 +377,9 @@ app.whenReady().then(async () => {
   youtubeAnbieterNachtragen();
   // Aus dem vorhandenen Verlauf uebernehmen, was sicher ableitbar ist -
   // ohne Wiedergabezeit, die es dort nie gab.
+  // Erst die Kennungen angleichen, dann nachtragen: das Nachtragen vergleicht
+  // gegen die vorhandenen Kennungen, und die muessen dafuer schon die neuen sein.
+  sitzungenKennungenAngleichen();
   sitzungenNachtragen();
   watchpartyLokal = loadWatchpartyLocal();
 
@@ -1565,6 +1571,7 @@ ipcMain.handle("geraete:trennen", () => {
 ipcMain.handle("geraete:jetzt-abgleichen", () => {
   geraete.vollAbgleichen();
   geraete.abgleichen(geraeteStaende());
+  geraete.anhaengen(geraeteSitzungen());
   return geraete.status();
 });
 
@@ -5855,9 +5862,12 @@ let geraeteFolgestaende = false;
 const geraete = new Geraeteabgleich({
   onEintrag: (stand, at) => uebernimmGeraeteStand(stand, at),
   onWeg: (key) => entferneGeraeteEintrag(key),
+  onSitzung: (sitzung) => uebernimmGeraeteSitzung(sitzung),
   // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
   onFertig: (anzahl) => {
     saveFavorites();
+    // Angekommene Sitzungen liegen bis hierher nur im Speicher.
+    saveSitzungen();
     sendActiveState();
     console.log(`[ELFIX GERAETE] ${anzahl} Eintrag/Eintraege von einem anderen Geraet uebernommen`);
     if (!geraeteFolgestaende) return;
@@ -5934,12 +5944,51 @@ function geraeteStaende() {
   return staende;
 }
 
+// Die Wiedergabesitzungen, die dieses Geraet noch nicht gemeldet hat.
+//
+// Anders als die Staende sind sie ein Ereignis und kein Zustand: eine
+// abgeschlossene Sitzung aendert sich nie wieder. Deshalb geht jede genau
+// einmal hinaus, und "welche schon?" beantwortet der Spiegel.
+//
+// Die laufende Sitzung bleibt draussen. Sie waechst noch, und was hier
+// hinausginge, waere ein Zwischenstand, der drueben als fertiger Satz
+// dastuende.
+function geraeteSitzungen() {
+  const offen = laufendeSitzungIds();
+  const liste = [];
+  for (const sitzung of loadSitzungen()) {
+    const id = String(sitzung?.id || "");
+    if (!id || offen.has(id)) continue;
+    const key = `${SITZUNG_PRAEFIX}${id}`;
+    if (geraete.kennt(key)) continue;
+    liste.push({ key, sitzung });
+  }
+  // Ungekuerzt. Wie viel davon in einem Zug hinausgeht, entscheidet der Abgleich
+  // selbst - er verschickt in Schueben und schiebt den Rest nach. Hier zu kappen
+  // hiesse, dass der Rest liegenbleibt, bis zufaellig wieder jemand etwas
+  // schaut.
+  return liste;
+}
+
+// Eine Sitzung von einem anderen Geraet. Sie kommt dazu oder sie ist schon da -
+// ueberschrieben wird nie: zwei Geraete koennen denselben Satz nicht
+// verschieden wissen.
+function uebernimmGeraeteSitzung(sitzung) {
+  if (!sitzung?.id || !sitzung?.begonnenAm) return false;
+  const { sitzungen, dazu } = statistik.vereinen(loadSitzungen(), [sitzung]);
+  if (!dazu) return false;
+  sitzungenSpeicher = sitzungen;
+  sitzungenSchmutzig = true;
+  return true;
+}
+
 function geraeteAbgleichSpaeter(verzoegerung = GERAETE_ABGLEICH_MS) {
   if (!geraete.aktiv || geraeteAbgleichTimer) return;
   geraeteAbgleichTimer = setTimeout(() => {
     geraeteAbgleichTimer = 0;
     try {
       geraete.abgleichen(geraeteStaende());
+      geraete.anhaengen(geraeteSitzungen());
     } catch (fehler) {
       console.log(`[ELFIX GERAETE] Abgleich fehlgeschlagen: ${fehler?.message || fehler}`);
     }
@@ -7799,6 +7848,17 @@ function youtubePartyStatus(status) {
 // Je Anbieter genau eine offene Sitzung: mehr kann es nicht geben, weil je
 // Anbieter nur eine Seite vorn steht.
 const offeneSitzungen = new Map();
+
+// Welche Saetze gerade noch wachsen. Sie stehen bereits in der Ablage - damit
+// ein Absturz sie nicht kostet -, sind aber noch keine fertigen Sitzungen und
+// haben deshalb bei den anderen Geraeten nichts verloren.
+function laufendeSitzungIds() {
+  const offen = new Set();
+  for (const sitzung of offeneSitzungen.values()) {
+    if (sitzung?.id) offen.add(String(sitzung.id));
+  }
+  return offen;
+}
 let sitzungenSpeicher = null;
 let sitzungenSchmutzig = false;
 let sitzungenZuletztGespeichert = 0;
@@ -7829,6 +7889,10 @@ function saveSitzungen() {
     }, null, 2));
     sitzungenSchmutzig = false;
     sitzungenZuletztGespeichert = Date.now();
+    // Dieselbe Ueberlegung wie bei den Favoriten: der eine Punkt, an dem sich am
+    // Bestand wirklich etwas geaendert hat. Die laufende Sitzung faellt beim
+    // Sammeln durch den Filter - sie waechst noch.
+    geraeteAbgleichSpaeter();
   } catch (fehler) {
     console.log("[ELFIX STATISTIK] Sitzungen nicht gespeichert: " + (fehler?.message || fehler));
   }
@@ -7959,6 +8023,22 @@ function sitzungTitelInfo(sitzung, seiten = {}) {
 //
 // Der Unterschied ist nicht kosmetisch. Eine erfundene Stundenzahl laesst sich
 // ein Jahr spaeter nicht mehr widerlegen - sie steht dann einfach da.
+// Die Kennung eines nachgetragenen Satzes. Sie muss auf jedem Geraet dieselbe
+// sein: seit die Geraete ihre Saetze austauschen, tragen beide dieselbe
+// Vorgeschichte nach - jedes aus seinen eigenen Favoriten, die inzwischen
+// ohnehin dieselben sind. Haenge die Kennung wie frueher an der Kennung des
+// Favoriten, kaeme jede alte Folge doppelt heraus.
+//
+// Der Titel taugt dafuer, die Kennung des Favoriten nicht: sie entsteht beim
+// Anlegen und ist auf jedem Geraet eine andere.
+function altSchluessel(favorite) {
+  // Dieselbe Normalisierung, mit der statistik.js zwei Saetze derselben Folge
+  // zusammenbringt - nicht irgendeine. Zwei Rechnungen fuer dieselbe Frage
+  // waeren genau die Sorte Unterschied, die man erst ein Jahr spaeter an einer
+  // falschen Zahl bemerkt.
+  return taste.titelSchluessel(favorite?.title) || String(favorite?.id || "");
+}
+
 function sitzungenAusAltdaten(liste) {
   const gebaut = [];
   const gesehen = new Set();
@@ -7984,7 +8064,7 @@ function sitzungenAusAltdaten(liste) {
     for (const folge of favorite?.completedEpisodes || []) {
       const zeit = Date.parse(folge?.completedAt || "");
       if (!Number.isFinite(zeit)) continue;
-      const kennung = `alt:${basis.favoriteId}:s${folge.season}:e${folge.episode}`;
+      const kennung = `alt:${altSchluessel(favorite)}:s${folge.season}:e${folge.episode}`;
       if (gesehen.has(kennung)) continue;
       gesehen.add(kennung);
       gebaut.push({
@@ -8008,7 +8088,7 @@ function sitzungenAusAltdaten(liste) {
     // Zeitpunkt. Ohne diesen Zweig fehlten in der Bilanz saemtliche Filme.
     const abschlussZeit = Date.parse(favorite?.completedAt || "");
     if (favorite?.completed && Number.isFinite(abschlussZeit) && !(favorite?.completedEpisodes || []).length) {
-      const kennung = `altab:${basis.favoriteId}`;
+      const kennung = `altab:${altSchluessel(favorite)}`;
       if (!gesehen.has(kennung)) {
         gesehen.add(kennung);
         gebaut.push({
@@ -8040,7 +8120,7 @@ function sitzungenAusAltdaten(liste) {
       // Die Abschlusszeile traegt die Nummer der letzten Folge mit und waere
       // sonst eine Folge zu viel.
       if (abschluss && folge) continue;
-      const kennung = `alt:${basis.favoriteId}:s${eintrag?.season || 0}:e${folge}`;
+      const kennung = `alt:${altSchluessel(favorite)}:s${eintrag?.season || 0}:e${folge}`;
       if (folge && gesehen.has(kennung)) continue;
       if (folge) gesehen.add(kennung);
       gebaut.push({
@@ -8080,6 +8160,57 @@ function sitzungenNachtragen() {
   saveSitzungen();
   console.log(`[ELFIX STATISTIK] ${neue.length} Saetze aus dem Verlauf uebernommen (ohne Wiedergabezeit)`);
   return neue.length;
+}
+
+// Die Kennungen der nachgetragenen Saetze umstellen - einmalig.
+//
+// Bis 1.31.0 hingen sie an der Kennung des Favoriten, die auf jedem Geraet eine
+// andere ist. Solange die Saetze das Geraet nie verliessen, war das gleichgueltig.
+// Seit sie es tun, wuerde dieselbe alte Folge zweimal dastehen: einmal unter der
+// Kennung von hier, einmal unter der von drueben.
+//
+// Umgerechnet wird aus dem Titel, der in jedem Satz steht - dieselbe Rechnung
+// wie beim Nachtragen. Faellt dabei ein Satz auf einen schon vergebenen
+// Schluessel, war er ein Doppelgaenger und faellt weg.
+function sitzungenKennungenAngleichen() {
+  if (settings.migrations?.sitzungKennung === true) return 0;
+  settings.migrations = { ...(settings.migrations || {}), sitzungKennung: true };
+  saveSettings();
+
+  const liste = loadSitzungen();
+  const bekannt = new Set();
+  const behalten = [];
+  let umgestellt = 0;
+  let doppelt = 0;
+
+  for (const sitzung of liste) {
+    const alt = String(sitzung?.id || "");
+    const treffer = /^(alt|altab):/.exec(alt);
+    if (!treffer) {
+      // Gemessene Saetze tragen schon eine eigene, weltweit eindeutige Kennung.
+      if (alt) bekannt.add(alt);
+      behalten.push(sitzung);
+      continue;
+    }
+    const schluessel = taste.titelSchluessel(sitzung.titel) || String(sitzung.favoriteId || "");
+    const neu = treffer[1] === "altab"
+      ? `altab:${schluessel}`
+      : `alt:${schluessel}:s${Number(sitzung.season) || 0}:e${Number(sitzung.episode) || 0}`;
+    if (bekannt.has(neu)) {
+      doppelt += 1;
+      continue;
+    }
+    bekannt.add(neu);
+    if (neu !== alt) umgestellt += 1;
+    behalten.push({ ...sitzung, id: neu });
+  }
+
+  if (!umgestellt && !doppelt) return 0;
+  sitzungenSpeicher = behalten;
+  sitzungenSchmutzig = true;
+  saveSitzungen();
+  console.log(`[ELFIX STATISTIK] ${umgestellt} Kennungen umgestellt, ${doppelt} Doppelgaenger entfernt`);
+  return umgestellt;
 }
 
 // --- Die Auswertung ----------------------------------------------------------
@@ -11874,7 +12005,11 @@ function normalizeSettings(raw) {
     // man inzwischen bewusst geloescht hat.
     migrations: {
       youtubeProvider: raw?.migrations?.youtubeProvider === true,
-      sitzungen: raw?.migrations?.sitzungen === true
+      sitzungen: raw?.migrations?.sitzungen === true,
+      // Einmalig: die Kennungen der nachgetragenen Saetze auf den Titel
+      // umstellen, damit zwei Geraete dieselbe Vorgeschichte nicht doppelt
+      // fuehren.
+      sitzungKennung: raw?.migrations?.sitzungKennung === true
     },
     // Welches Jahr schon gezeigt wurde. Muss hier stehen, sonst faellt es beim
     // naechsten Speichern der Einstellungen heraus und der Jahresrueckblick
@@ -12049,7 +12184,9 @@ function defaultSettings() {
       youtubeProvider: true,
       // Eine frische Ablage hat keinen Verlauf, aus dem etwas zu uebernehmen
       // waere - sie sammelt von Anfang an gemessene Zeiten.
-      sitzungen: true
+      sitzungen: true,
+      // Und keine Saetze mit alten Kennungen.
+      sitzungKennung: true
     },
     playback: {
       pauseOnProviderSwitch: true,

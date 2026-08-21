@@ -31,8 +31,11 @@
 // ist ja, dass ein Geraet, das eine Woche aus war, den Stand nachgereicht
 // bekommt - ein fluechtiger Zustand koennte genau das nicht.
 
-// Mehr Titel hat niemand offen; wer daran stoesst, hat einen Fehler im Client.
-const MAX_EINTRAEGE_JE_RAUM = 2000;
+// Titel *und* Wiedergabesitzungen liegen hier. Die Titel sind wenige hundert;
+// die Sitzungen sind das, was die Zahl treibt - eine je angeschauter Folge, und
+// sie verfallen nicht, weil ein Jahresrueckblick sonst mit der Zeit schrumpfen
+// wuerde. Zwanzigtausend sind ungefaehr ein Jahrzehnt taeglichen Schauens.
+const MAX_EINTRAEGE_JE_RAUM = 20000;
 // Ein Eintrag mit fuenfhundert abgehakten Folgen ist gross. Doppelt so viel
 // waere kein Eintrag mehr, sondern ein Versehen.
 const MAX_BLOB = 128 * 1024;

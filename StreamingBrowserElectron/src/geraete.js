@@ -30,6 +30,11 @@ const schluesselModul = require("./geraete-schluessel");
 const { websocketAdresse } = require("./watchparty");
 const { versatzAusProben } = require("./watchparty-sync");
 
+// Woran eine Sitzung zu erkennen ist. Sie faehrt durch denselben Kanal wie die
+// Staende - fuer das Relay ist beides derselbe verschlossene Klumpen -, und der
+// Schluessel ist das Einzige, was sie hier auseinanderhaelt.
+const SITZUNG_PRAEFIX = "sitzung:";
+
 const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 60000;
 // So viel geht in einem Schub hinaus. Danach wird auf die Bestaetigung
@@ -58,6 +63,11 @@ class Geraeteabgleich {
     // naechsten Takt einen Unterschied, meldete ihn hinaus, drueben ebenso -
     // und die beiden Geraete schoeben sich denselben Eintrag ewig hin und her.
     this.aufEintrag = optionen.onEintrag || (() => null);
+    // Eine Wiedergabesitzung von einem anderen Geraet. Sie ist ein anderer Fall
+    // als ein Stand: ein Stand aendert sich, eine abgeschlossene Sitzung nie.
+    // Deshalb wird hier nichts verglichen und nichts ueberschrieben - sie kommt
+    // dazu oder sie ist schon da.
+    this.aufSitzung = optionen.onSitzung || (() => false);
     // Anderswo geloescht. Bekommt den Titelschluessel, nicht die Kennung des
     // Relays - der Rest der App kennt nur den.
     this.aufWeg = optionen.onWeg || (() => false);
@@ -83,8 +93,21 @@ class Geraeteabgleich {
     this.versuche = 0;
     this.reconnectTimer = 0;
     this.nachschubTimer = 0;
-    // id -> { at, hash, key }
+    // id -> { at, hash, key, art }
     this.spiegel = new Map();
+    // Welche Schluessel der Spiegel kennt. Ohne dieses Verzeichnis muesste der
+    // Rest der App fuer jede Sitzung einen HMAC rechnen lassen, nur um zu
+    // fragen "kennst du die schon?" - bei ein paar tausend Saetzen im
+    // Sekundentakt.
+    this.nachKey = new Set();
+    // Was gerade hinausgeht und noch nicht bestaetigt ist. Nur damit dieselbe
+    // Sitzung nicht zweimal in derselben Runde losgeschickt wird; geht eine
+    // Nachricht unterwegs verloren, bietet der naechste Takt sie ohnehin
+    // wieder an.
+    this.unterwegs = new Set();
+    // id -> { at, key } fuer alles, was noch auf seine Bestaetigung wartet.
+    this.warteAuf = new Map();
+    this.eigeneSitzungen = [];
     // Bis hierher kennt dieses Geraet den Raum. Das Relay vergibt die Nummern;
     // sie sind das Einzige, woran sich "was fehlt mir noch?" verlaesslich
     // ablesen laesst.
@@ -156,6 +179,26 @@ class Geraeteabgleich {
     this.verbinden();
   }
 
+  // Jeder Eintrag im Spiegel geht durch diese eine Stelle - sonst laeuft das
+  // Schluesselverzeichnis irgendwann auseinander, und "kennst du die schon?"
+  // beantwortet sich falsch.
+  merken(id, eintrag) {
+    this.spiegel.set(id, eintrag);
+    if (eintrag.key) this.nachKey.add(eintrag.key);
+  }
+
+  vergessen(id) {
+    const eintrag = this.spiegel.get(id);
+    if (eintrag?.key) this.nachKey.delete(eintrag.key);
+    this.spiegel.delete(id);
+  }
+
+  // Kennt der Spiegel diesen Schluessel? Fuer alles, was nur einmal hinaus
+  // muss.
+  kennt(key) {
+    return this.nachKey.has(String(key || ""));
+  }
+
   // Was auf die Platte gehoert und beim naechsten Start wieder hereinkommt.
   ablage() {
     return {
@@ -163,19 +206,23 @@ class Geraeteabgleich {
       // Der Schluessel steht nicht mit drin: er liegt in den Einstellungen, und
       // zweimal aufbewahrt ist einmal zu oft.
       eintraege: [...this.spiegel.entries()].map(([id, eintrag]) => ({
-        id, at: eintrag.at, hash: eintrag.hash, key: eintrag.key
+        id, at: eintrag.at, hash: eintrag.hash, key: eintrag.key, art: eintrag.art || "stand",
+        weg: eintrag.weg ? true : undefined
       }))
     };
   }
 
   ablageSetzen(roh) {
     this.spiegel.clear();
+    this.nachKey.clear();
     for (const eintrag of roh?.eintraege || []) {
       if (!eintrag?.id) continue;
-      this.spiegel.set(String(eintrag.id), {
+      this.merken(String(eintrag.id), {
         at: Number(eintrag.at) || 0,
         hash: String(eintrag.hash || ""),
-        key: String(eintrag.key || "")
+        key: String(eintrag.key || ""),
+        art: eintrag.art === "sitzung" ? "sitzung" : "stand",
+        weg: Boolean(eintrag.weg)
       });
     }
     this.nr = Number(roh?.nr) || 0;
@@ -216,6 +263,10 @@ class Geraeteabgleich {
       this.verbunden = false;
       this.socket = null;
       this.offen = false;
+      // Was unterwegs war, ist es nicht mehr. Ob es angekommen ist, sagt jetzt
+      // niemand mehr - also wird es beim naechsten Mal neu angeboten.
+      this.unterwegs.clear();
+      this.warteAuf.clear();
       this.uhrAnhalten();
       this.uhr = null;
       this.uhrProben = [];
@@ -343,6 +394,18 @@ class Geraeteabgleich {
     return this.hinausschicken();
   }
 
+  // Sitzungen. Uebergeben wird alles, was der Spiegel noch nicht kennt - der
+  // Rest der App filtert das ueber kennt(). Hier wird nur noch verschickt.
+  anhaengen(sitzungen) {
+    if (!this.aktiv || !this.abgeleitet) return 0;
+    this.eigeneSitzungen = Array.isArray(sitzungen) ? sitzungen : [];
+    if (!this.verbunden || !this.offen) {
+      this.nachholen = true;
+      return 0;
+    }
+    return this.hinausschicken();
+  }
+
   hinausschicken() {
     const staende = this.eigeneStaende || [];
     const gesehen = new Set();
@@ -363,9 +426,28 @@ class Geraeteabgleich {
     // Was der Spiegel kennt und dieses Geraet nicht mehr hat, ist hier
     // geloescht worden. Ein Grabstein sagt das dem anderen Geraet; ohne ihn
     // faende es den Titel beim naechsten Abgleich wieder vor.
+    //
+    // Ausdruecklich nur fuer Staende: Sitzungen stehen nicht in dieser Liste,
+    // und ein Grabstein fuer jede von ihnen waere das Gegenteil dessen, was
+    // hier gewollt ist.
     for (const [id, eintrag] of this.spiegel) {
-      if (gesehen.has(id) || eintrag.weg) continue;
+      if (gesehen.has(id) || eintrag.weg || eintrag.art === "sitzung") continue;
       aufgaben.push({ id, key: eintrag.key, hash: "", stand: null });
+    }
+
+    // Und die Sitzungen. Sie werden nie verglichen und nie zurueckgenommen -
+    // eine abgeschlossene Sitzung ist ein Ereignis, kein Zustand.
+    for (const sitzung of this.eigeneSitzungen) {
+      // Genug fuer diesen Durchgang. Beim ersten Abgleich eines Geraets liegen
+      // hier ein paar tausend Saetze, und fuer jeden einen Schluessel zu
+      // rechnen, von denen dann hundert verschickt werden, waere Arbeit fuer
+      // nichts. Der Rest folgt gleich - dafuer steht der Nachschub unten.
+      if (aufgaben.length >= SCHUB * 4) break;
+      const key = String(sitzung?.key || "");
+      if (!key || this.kennt(key)) continue;
+      const id = schluesselModul.eintragId(this.abgeleitet, key);
+      if (!id || this.unterwegs.has(id)) continue;
+      aufgaben.push({ id, key, hash: "", stand: sitzung, art: "sitzung" });
     }
 
     if (!aufgaben.length) return 0;
@@ -395,17 +477,26 @@ class Geraeteabgleich {
       // Bestaetigung. Sonst schickte der naechste Takt - er kommt alle paar
       // Sekunden - dasselbe noch einmal, und bei stockender Leitung waere das
       // eine Schleife.
-      if (eintrag.stand) {
-        this.spiegel.set(eintrag.id, { at, hash: eintrag.hash, key: eintrag.key });
+      //
+      // Fuer Sitzungen gilt das Gegenteil: sie stehen nur hier. Ein Stand
+      // ergibt sich beim naechsten Takt wieder aus den Favoriten, eine
+      // verlorene Sitzung waere weg. Also erst mit der Bestaetigung - bis dahin
+      // gilt sie als unterwegs und wird nicht noch einmal losgeschickt.
+      if (eintrag.art === "sitzung") {
+        this.unterwegs.add(eintrag.id);
+        this.warteAuf.set(eintrag.id, { at, key: eintrag.key });
+      } else if (eintrag.stand) {
+        this.merken(eintrag.id, { at, hash: eintrag.hash, key: eintrag.key, art: "stand" });
       } else {
-        this.spiegel.delete(eintrag.id);
+        this.vergessen(eintrag.id);
       }
     }
     abschicken();
     // Mehr als ein Schwung auf einmal geht nicht hinaus. Der Rest folgt gleich
     // - liegenbleiben darf er nicht: sonst haengt der Nachtrag eines Geraets,
     // das lange aus war, bis zufaellig wieder jemand etwas schaut.
-    if (aufgaben.length > hinaus && !this.nachschubTimer) {
+    if ((aufgaben.length > hinaus || this.eigeneSitzungen.some((eintrag) => !this.kennt(String(eintrag?.key || ""))))
+      && !this.nachschubTimer) {
       this.nachschubTimer = setTimeout(() => {
         this.nachschubTimer = 0;
         if (this.verbunden && this.offen) this.hinausschicken();
@@ -496,6 +587,17 @@ class Geraeteabgleich {
 
     if (nachricht?.type === "grack") {
       if (Number(nachricht.nr) > this.nr) this.nr = Number(nachricht.nr);
+      // Erst jetzt gilt eine Sitzung als abgelegt. Was nicht angenommen wurde,
+      // faellt aus der Warteschlange und wird beim naechsten Takt erneut
+      // angeboten - der Rest der App reicht ohnehin alles herein, was der
+      // Spiegel nicht kennt.
+      for (const id of nachricht.angenommen || []) {
+        const offen = this.warteAuf.get(id);
+        if (!offen) continue;
+        this.merken(String(id), { at: offen.at, hash: "", key: offen.key, art: "sitzung" });
+      }
+      for (const id of this.unterwegs) this.warteAuf.delete(id);
+      this.unterwegs.clear();
       this.letzterAbgleich = Date.now();
       this.aufSpeichern(this.ablage());
       this.melde();
@@ -521,22 +623,34 @@ class Geraeteabgleich {
         // Der Grabstein bleibt im Spiegel stehen, bis das Relay ihn vergisst.
         // Ohne ihn meldete dieses Geraet den Titel beim naechsten Takt als
         // "neu bei mir" wieder hinaus - es hat ihn ja gerade geloescht.
-        this.spiegel.set(id, { at, hash: "", key, weg: true });
+        this.merken(id, { at, hash: "", key, art: "stand", weg: true });
         continue;
       }
 
-      const stand = schluesselModul.entschluesseln(this.abgeleitet, roh.blob);
-      if (!stand?.key) {
+      const inhalt = schluesselModul.entschluesseln(this.abgeleitet, roh.blob);
+      if (!inhalt?.key) {
         this.letzterFehler = "Ein Eintrag liess sich nicht lesen";
         continue;
       }
-      const hier = this.aufEintrag(stand, at);
+
+      // Eine Sitzung. Sie wird nicht verglichen und nicht zurueckgeschrieben -
+      // sie kommt dazu. Steht sie schon da, war es dieselbe.
+      if (String(inhalt.key).startsWith(SITZUNG_PRAEFIX)) {
+        if (this.aufSitzung(inhalt.sitzung, at)) geaendert += 1;
+        // Gemerkt wird sie so oder so: dass dieses Geraet sie kennt, haengt
+        // nicht daran, ob sie neu war.
+        this.merken(id, { at, hash: "", key: String(inhalt.key), art: "sitzung" });
+        continue;
+      }
+
+      const hier = this.aufEintrag(inhalt, at);
       if (!hier) continue;
       // Gemerkt wird, was hier steht - nicht, was hereinkam.
-      this.spiegel.set(id, {
+      this.merken(id, {
         at,
-        hash: schluesselModul.standHash(typeof hier === "object" ? hier : stand),
-        key: String(stand.key)
+        hash: schluesselModul.standHash(typeof hier === "object" ? hier : inhalt),
+        key: String(inhalt.key),
+        art: "stand"
       });
       geaendert += 1;
     }
@@ -546,4 +660,4 @@ class Geraeteabgleich {
   }
 }
 
-module.exports = { Geraeteabgleich };
+module.exports = { Geraeteabgleich, SITZUNG_PRAEFIX };

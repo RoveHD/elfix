@@ -13,7 +13,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
 - Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
 - Watchparty: mehrere Raeume gleichzeitig, jeder mit eigenem Fortschritt und eigener Live-Steuerung
-- Meine Geraete: ein Schluessel haelt Laptop und Rechner auf demselben Stand - ohne Konto, und das Relay kann nicht mitlesen
+- Meine Geraete: ein Schluessel haelt Laptop und Rechner auf demselben Stand - samt Wiedergabezeit, ohne Konto, und das Relay kann nicht mitlesen
 - Mediathek fuer abgeschlossene Titel: loeschen mit Rueckfrage, Reihenfolge per Ziehen
 - Hinweis, wenn zu einer abgeschlossenen Serie neue Folgen erscheinen
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
@@ -193,6 +193,12 @@ sollen zusammenbleiben, auch wenn gerade niemand mit anderen schaut.
 **Was abgeglichen wird.** Folge, Stelle, Fortschritt, abgeschlossene Titel und
 Folgen, Watchlist und die Reihenfolge in der Mediathek. Geloeschtes verschwindet
 ueberall.
+
+Dazu die gemessene Wiedergabezeit: *Rueckblick* und *Wrapped* zaehlen auf jedem
+Geraet alles zusammen. Wer abends am Rechner und am Wochenende auf dem Laptop
+schaut, saehe sonst zweimal die halbe Bilanz. Eine Sitzung ist dabei ein
+Ereignis und kein Zustand - sie kommt dazu oder sie ist schon da, ueberschrieben
+wird nie. Die gerade laufende bleibt, wo sie ist, bis sie zu Ende ist.
 
 **Was nicht.** Selbst gewaehlte Titelbilder (sie liegen als Data-URL vor und
 sind um ein Vielfaches groesser als alles andere zusammen) und der Verlauf je

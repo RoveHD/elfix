@@ -332,10 +332,114 @@ const info = () => GENRES;
     statistik.auswerten([], {}).folgen === 0);
 }
 
+// --- Mehrere Geraete ---------------------------------------------------------
+//
+// Seit 1.32.0 tauschen die Geraete ihre Saetze aus, und die Bilanz zaehlt alles
+// zusammen. Damit steht und faellt sie an einer Frage: wann sind zwei Saetze
+// dieselbe Folge? Frueher entschied das die Kennung des Favoriten - und die ist
+// auf jedem Geraet eine andere.
+
+{
+  // Dieselbe Folge, auf zwei Geraeten geschaut. Verschiedene Favoriten-
+  // Kennungen, verschiedene Sitzungskennungen, derselbe Titel.
+  const zwei = statistik.auswerten([
+    satz({ id: "a", favoriteId: "hier-1", sekunden: 600 }),
+    satz({ id: "b", favoriteId: "drueben-9", sekunden: 900 })
+  ], { titel: info, heute: "2026-08-10" });
+  pruefe("Dieselbe Folge von zwei Geraeten ist eine Folge",
+    zwei.folgen === 1,
+    `${zwei.folgen} Folgen`);
+  pruefe("Die Zeit beider Geraete zaehlt aber zusammen",
+    zwei.sekunden === 1500,
+    `${zwei.sekunden}s`);
+  pruefe("und der Titel steht einmal da, nicht zweimal",
+    zwei.titel.length === 1 && zwei.titel[0].folgen === 1,
+    `${zwei.titel.length} Titel, ${zwei.titel[0]?.folgen} Folgen`);
+  pruefe("Auch der Tag zaehlt sie einmal",
+    zwei.aktivsterTag?.folgen === 1,
+    `${zwei.aktivsterTag?.folgen} Folgen an diesem Tag`);
+  pruefe("Ein abgeschlossener Titel ebenso",
+    zwei.abschluesse.gesamt === 1,
+    `${zwei.abschluesse.gesamt} Abschluesse`);
+}
+
+{
+  // Zwei verschiedene Folgen bleiben zwei - die Zusammenlegung darf nicht
+  // ueber das Ziel hinausschiessen.
+  const echte = statistik.auswerten([
+    satz({ id: "a", episode: 1 }),
+    satz({ id: "b", episode: 2 })
+  ], { titel: info, heute: "2026-08-10" });
+  pruefe("Zwei verschiedene Folgen bleiben zwei",
+    echte.folgen === 2 && echte.aktivsterTag?.folgen === 2);
+}
+
+{
+  // Gemessen schlaegt rekonstruiert: das eine Geraet hat die Folge gemessen,
+  // das andere sie beim Einrichten aus dem Verlauf nachgetragen.
+  const gemischt = [
+    satz({ id: "gemessen", sekunden: 1200 }),
+    satz({ id: "alt:loki:s1:e1", sekunden: 0, qualitaet: statistik.REKONSTRUIERT })
+  ];
+  const bereinigt = statistik.bereinigen(gemischt);
+  pruefe("Der rekonstruierte Satz faellt weg, wo gemessen wurde",
+    bereinigt.length === 1 && bereinigt[0].id === "gemessen",
+    bereinigt.map((e) => e.id).join(","));
+
+  const zahlen = statistik.auswerten(gemischt, { titel: info, heute: "2026-08-10" });
+  pruefe("Die Bilanz zaehlt ihn deshalb nicht mit",
+    zahlen.folgen === 1 && zahlen.sekundenGesamt === 1,
+    `${zahlen.folgen} Folgen, ${zahlen.sekundenGesamt} Saetze`);
+
+  pruefe("Ohne gemessenen Satz bleibt der rekonstruierte stehen",
+    statistik.bereinigen([gemischt[1]]).length === 1,
+    "sonst verschwaende die ganze Vorgeschichte");
+}
+
+{
+  // Die Reihenfolge in der Ablage ist seit dem Abgleich die des Eintreffens,
+  // nicht die des Schauens.
+  const saetze = [
+    satz({ id: "a", episode: 1, begonnenAm: zeit(9), beendetAm: zeit(9, 20) }),
+    satz({ id: "b", episode: 2, begonnenAm: zeit(10), beendetAm: zeit(10, 20) }),
+    satz({ id: "c", episode: 3, begonnenAm: zeit(11), beendetAm: zeit(11, 20) })
+  ];
+  const vorwaerts = statistik.auswerten(saetze, { titel: info, heute: "2026-08-10" });
+  const rueckwaerts = statistik.auswerten([...saetze].reverse(), { titel: info, heute: "2026-08-10" });
+  pruefe("Die Reihenfolge der Saetze aendert nichts am Ergebnis",
+    JSON.stringify(vorwaerts) === JSON.stringify(rueckwaerts),
+    "sonst haenge die Bilanz daran, welches Geraet zuerst gemeldet hat");
+  pruefe("und der erste Titel ist der zeitlich erste",
+    vorwaerts.erster?.wann === saetze[0].begonnenAm);
+}
+
+{
+  // Zusammenlegen: eine abgeschlossene Sitzung aendert sich nie wieder.
+  const bestand = [satz({ id: "a" }), satz({ id: "b" })];
+  const eins = statistik.vereinen(bestand, [satz({ id: "b", sekunden: 99 }), satz({ id: "c" })]);
+  pruefe("Zusammengelegt wird ueber die Kennung",
+    eins.sitzungen.length === 3 && eins.dazu === 1,
+    `${eins.sitzungen.length} Saetze, ${eins.dazu} dazu`);
+  pruefe("Ein bekannter Satz wird nicht ueberschrieben",
+    eins.sitzungen.find((e) => e.id === "b").sekunden === 1500,
+    "zwei Geraete koennen denselben Satz nicht verschieden wissen");
+  pruefe("Saetze ohne Kennung kommen nicht herein",
+    statistik.vereinen([], [{ titel: "X" }]).sitzungen.length === 0,
+    "ohne Kennung liesse sich nie feststellen, ob er schon dasteht");
+}
+
 // --- Migration ---------------------------------------------------------------
 
-const umgebung = { statistik, console, Date, Number, String, Boolean, Array, Object, Set, Map, Math, JSON };
+// taste ist kein Platzhalter: die Kennung eines nachgetragenen Satzes wird aus
+// dem Titel gerechnet, und zwar mit derselben Normalisierung wie ueberall
+// sonst. Sie muss auf jedem Geraet dieselbe sein - daran haengt, ob zwei
+// Geraete dieselbe Vorgeschichte einmal oder zweimal fuehren.
+const umgebung = {
+  statistik, taste: require("../src/taste"),
+  console, Date, Number, String, Boolean, Array, Object, Set, Map, Math, JSON
+};
 vm.createContext(umgebung);
+vm.runInContext(abschnitt("function altSchluessel("), umgebung);
 vm.runInContext(abschnitt("function sitzungenAusAltdaten("), umgebung);
 const ausAlt = vm.runInContext("sitzungenAusAltdaten", umgebung);
 

@@ -36,9 +36,18 @@ const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 // uebernehmen, den eigenen Stand daraus bilden, hinausmelden.
 function geraet(name, key, staende = []) {
   const eigen = new Map(staende.map((stand) => [stand.key, stand]));
+  // Die Wiedergabesitzungen dieses Geraets, wie sie in sitzungen.json laegen.
+  const sitzungen = new Map();
   const ereignisse = [];
   const abgleich = new Geraeteabgleich({
     WebSocketKlasse: WS,
+    onSitzung: (sitzung) => {
+      ereignisse.push({ art: "sitzung", key: sitzung?.id });
+      // Wie main.js: dazu oder schon da - nie ueberschrieben.
+      if (!sitzung?.id || sitzungen.has(sitzung.id)) return false;
+      sitzungen.set(sitzung.id, sitzung);
+      return true;
+    },
     onEintrag: (stand) => {
       ereignisse.push({ art: "herein", key: stand.key, position: stand.position });
       const vorher = eigen.get(stand.key) || {};
@@ -59,8 +68,16 @@ function geraet(name, key, staende = []) {
     onSpeichern: () => {},
     onStatus: () => {}
   });
+  const offeneSitzungen = new Set();
   return {
-    name, abgleich, eigen, ereignisse,
+    name, abgleich, eigen, ereignisse, sitzungen, offeneSitzungen,
+    // Wie main.js: alles, was der Spiegel nicht kennt und nicht mehr waechst.
+    meldenSitzungen: () => abgleich.anhaengen([...sitzungen.values()]
+      .filter((sitzung) => !offeneSitzungen.has(sitzung.id))
+      .map((sitzung) => ({ key: `sitzung:${sitzung.id}`, sitzung }))
+      .filter((eintrag) => !abgleich.kennt(eintrag.key))),
+    sitzungSetzen: (sitzung) => { sitzungen.set(sitzung.id, sitzung); },
+    sitzungenHerein: () => ereignisse.filter((e) => e.art === "sitzung").length,
     an: () => abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: name }),
     melden: () => abgleich.abgleichen([...eigen.values()]),
     setzen: (stand) => {
@@ -271,6 +288,63 @@ function stand(key, extra = {}) {
     fremdesGeraet.eigen.size === 0,
     [...fremdesGeraet.eigen.keys()].join(","));
 
+  // --- Wiedergabesitzungen --------------------------------------------------
+  //
+  // Ein anderer Fall als ein Stand. Ein Stand aendert sich - eine
+  // abgeschlossene Sitzung nie. Sie kommt dazu oder sie ist schon da, und
+  // zurueckgenommen wird sie nicht: ein Grabstein je Sitzung waere das
+  // Gegenteil dessen, was hier gewollt ist.
+
+  const sitzung = (id, zusatz = {}) => ({
+    id, favoriteId: `lokal-${id}`, url: "https://aniworld.to/anime/stream/one-piece/staffel-1/episode-3",
+    titel: "One Piece", anbieter: "AniWorld", gattung: "anime", season: 1, episode: 3,
+    begonnenAm: "2026-08-20T20:00:00.000Z", beendetAm: "2026-08-20T20:24:00.000Z",
+    sekunden: 1440, abgeschlossen: true, wiederholung: false, qualitaet: "gemessen",
+    ...zusatz
+  });
+
+  laptop.sitzungSetzen(sitzung("s1"));
+  laptop.sitzungSetzen(sitzung("s2", { episode: 4, sekunden: 900 }));
+  laptop.meldenSitzungen();
+  await schlaf(600);
+
+  pruefe("Gemessene Zeit kommt beim anderen Geraet an",
+    rechner.sitzungen.size === 2 && rechner.sitzungen.get("s1")?.sekunden === 1440,
+    `${rechner.sitzungen.size} Saetze`);
+
+  const vorRunde = { laptop: laptop.sitzungenHerein(), rechner: rechner.sitzungenHerein() };
+  for (let i = 0; i < 4; i += 1) {
+    rechner.meldenSitzungen();
+    laptop.meldenSitzungen();
+    await schlaf(200);
+  }
+  pruefe("Eine uebernommene Sitzung wird nicht zurueckgemeldet",
+    laptop.sitzungenHerein() === vorRunde.laptop && rechner.sitzungenHerein() === vorRunde.rechner,
+    `Laptop ${laptop.sitzungenHerein() - vorRunde.laptop} / Rechner ${rechner.sitzungenHerein() - vorRunde.rechner}`);
+
+  // Die laufende Sitzung waechst noch. Drueben stuende sie als fertiger Satz
+  // da, und ihre halbe Stunde zaehlte als ganze.
+  laptop.sitzungSetzen(sitzung("laeuft", { episode: 5, sekunden: 30 }));
+  laptop.offeneSitzungen.add("laeuft");
+  laptop.meldenSitzungen();
+  await schlaf(400);
+  pruefe("Die laufende Sitzung bleibt hier",
+    !rechner.sitzungen.has("laeuft"),
+    [...rechner.sitzungen.keys()].join(","));
+
+  laptop.offeneSitzungen.delete("laeuft");
+  laptop.meldenSitzungen();
+  await schlaf(400);
+  pruefe("Ist sie zu Ende, geht sie hinaus",
+    rechner.sitzungen.get("laeuft")?.sekunden === 30,
+    [...rechner.sitzungen.keys()].join(","));
+
+  // Und der Titel der Folge darf so wenig beim Relay landen wie bei den
+  // Staenden - eine Sitzung traegt ihn ebenso.
+  laptop.sitzungSetzen(sitzung("geheim", { titel: "Heimliche Serie", episode: 9 }));
+  laptop.meldenSitzungen();
+  await schlaf(500);
+
   // --- Was beim Relay liegt -------------------------------------------------
 
   const ablage = path.join(process.env.STATE_DIRECTORY || path.join(__dirname, "..", "..", "sync-server"), "raeume.json");
@@ -283,6 +357,9 @@ function stand(key, extra = {}) {
     gespeichert && !gespeichert.includes("One Piece") && !gespeichert.includes("Nur fuer mich")
     && !gespeichert.includes("aniworld"),
     "was jemand schaut, geht das Relay nichts an");
+  pruefe("Auch nicht aus den Wiedergabesitzungen",
+    gespeichert && !gespeichert.includes("Heimliche Serie") && !gespeichert.includes("gemessen"),
+    "eine Sitzung traegt den Titel genauso");
   pruefe("Und der Schluessel auch nicht",
     gespeichert && !gespeichert.includes(schluessel.normalisieren(key)),
     "er verlaesst das Geraet nie");
@@ -299,6 +376,9 @@ function stand(key, extra = {}) {
   pruefe("und den Grabstein nicht als Eintrag",
     !drittes.eigen.has("serie:sto"),
     "sonst holte jedes neue Geraet die geloeschten Titel zurueck");
+  pruefe("Die Wiedergabezeit bekommt es ebenfalls",
+    drittes.sitzungen.size === 4,
+    `${drittes.sitzungen.size} Saetze - ohne sie zeigte jedes Geraet seinen halben Rueckblick`);
 
   // --- Der Weg zurueck ------------------------------------------------------
   //
