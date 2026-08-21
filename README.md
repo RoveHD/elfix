@@ -259,7 +259,11 @@ ELFIX nutzt `electron-updater` mit GitHub Releases:
 https://github.com/RoveHD/elfix/releases
 ```
 
-Ein Release wird durch einen Tag wie `v1.13.0` oder manuell ueber den GitHub Actions Workflow gebaut. Fuer automatische Updates muessen die vom Workflow erzeugten Assets im GitHub Release liegen, besonders:
+Ein Release wird durch einen Tag wie `v1.13.0` oder manuell ueber den GitHub
+Actions Workflow gebaut. Von Hand gestartet fragt der Workflow nach einem Tag:
+bleibt das Feld leer, wird nur gebaut - steht ein Tag darin, wird
+veroeffentlicht, und der Tag entsteht dabei an dem Commit, auf dem der Lauf
+startet. Das ist der Weg, wenn sich ein Tag lokal nicht pushen laesst. Fuer automatische Updates muessen die vom Workflow erzeugten Assets im GitHub Release liegen, besonders:
 
 ```text
 ELFIX-Setup-<version>-x64.exe
