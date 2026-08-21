@@ -198,6 +198,16 @@ const watchpartyRoomAdd = document.querySelector("#watchpartyRoomAdd");
 const watchpartyRoomList = document.querySelector("#watchpartyRoomList");
 const watchpartyName = document.querySelector("#watchpartyName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
+// Meine Geraete. Der Schluessel steht bewusst nicht im Einstellungsformular:
+// er wird ueber eigene Aufrufe gesetzt und geloescht, damit ihn kein
+// beilaeufiges Speichern der Einstellungen mitnimmt.
+const geraeteKey = document.querySelector("#geraeteKey");
+const geraeteKeyUse = document.querySelector("#geraeteKeyUse");
+const geraeteKeyNew = document.querySelector("#geraeteKeyNew");
+const geraeteKeyCopy = document.querySelector("#geraeteKeyCopy");
+const geraeteDisconnect = document.querySelector("#geraeteDisconnect");
+const geraeteSyncNow = document.querySelector("#geraeteSyncNow");
+const geraeteStatus = document.querySelector("#geraeteStatus");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
 const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
@@ -468,6 +478,20 @@ function bindEvents() {
     watchpartyRaumHinzufuegen();
   });
   api.onWatchpartyState?.(renderWatchpartyStatus);
+  geraeteKeyNew?.addEventListener("click", geraeteSchluesselErzeugen);
+  geraeteKeyUse?.addEventListener("click", geraeteSchluesselUebernehmen);
+  geraeteKeyCopy?.addEventListener("click", geraeteSchluesselKopieren);
+  geraeteDisconnect?.addEventListener("click", geraeteTrennen);
+  geraeteSyncNow?.addEventListener("click", geraeteJetztAbgleichen);
+  geraeteKey?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    // Sonst schickt Enter das Einstellungsformular ab, statt den Schluessel zu
+    // uebernehmen.
+    event.preventDefault();
+    geraeteSchluesselUebernehmen();
+  });
+  api.onGeraeteState?.(renderGeraeteStatus);
+  api.getGeraeteStatus?.().then(renderGeraeteStatus).catch(() => {});
   api.onWatchpartyLive?.(showWatchpartyLive);
   api.onWatchpartyWatchstate?.(showWatchpartyStand);
   watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
@@ -1240,6 +1264,88 @@ function renderWatchpartyStatus(state) {
       : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
     return `„${raum.room}“: verbunden, ${geraete}`;
   }).join(" · ");
+}
+
+// --- Meine Geraete ----------------------------------------------------------
+//
+// Der Schluessel steht im Feld, aber er wird nicht mit dem Formular
+// gespeichert: erzeugen, uebernehmen und trennen sind eigene Aufrufe. Sonst
+// haenge das Zusammenspiel zweier Geraete daran, ob jemand nach dem Eintippen
+// noch irgendwo anders speichert.
+
+function renderGeraeteStatus(status) {
+  if (geraeteKey && document.activeElement !== geraeteKey) geraeteKey.value = status?.key || geraeteKey.value || "";
+  if (geraeteDisconnect) geraeteDisconnect.disabled = !status?.hasKey;
+  if (geraeteKeyCopy) geraeteKeyCopy.disabled = !geraeteKey?.value;
+  if (geraeteSyncNow) geraeteSyncNow.disabled = !status?.connected;
+  if (!geraeteStatus) return;
+  if (!status?.hasKey) {
+    geraeteStatus.textContent = "Kein Schlüssel — erzeuge einen und trage ihn auf dem zweiten Gerät ein.";
+    return;
+  }
+  if (!status.enabled) {
+    geraeteStatus.textContent = "Keine Server-Adresse — sie steht bei der Watchparty.";
+    return;
+  }
+  if (!status.connected) {
+    geraeteStatus.textContent = status.error ? `Nicht verbunden: ${status.error}` : "Verbinde …";
+    return;
+  }
+  const stand = status.lastSync
+    ? `zuletzt abgeglichen ${new Date(status.lastSync).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`
+    : "noch nichts abzugleichen";
+  const titel = status.entries === 1 ? "1 Titel" : `${status.entries} Titel`;
+  geraeteStatus.textContent = `Verbunden, ${titel}, ${stand}.`;
+}
+
+async function geraeteSchluesselErzeugen() {
+  // Ein neuer Schluessel loest dieses Geraet vom alten. Wer schon zwei
+  // zusammenhat, verliert damit die Verbindung zum anderen - das muss vorher
+  // dastehen, nicht hinterher.
+  if (geraeteKey?.value && !window.confirm("Neuen Schlüssel erzeugen? Dieses Gerät ist danach nicht mehr mit den bisherigen verbunden.")) return;
+  const antwort = await api.createGeraeteSchluessel?.();
+  if (!antwort) return;
+  if (geraeteKey) geraeteKey.value = antwort.key || "";
+  renderGeraeteStatus({ ...antwort.status, key: antwort.key });
+  showToast("Schlüssel erzeugt — trage ihn auf deinem anderen Gerät ein.");
+}
+
+async function geraeteSchluesselUebernehmen() {
+  const wert = geraeteKey ? geraeteKey.value.trim() : "";
+  if (!wert) return;
+  const antwort = await api.setGeraeteSchluessel?.(wert);
+  if (!antwort?.ok) {
+    showToast(antwort?.reason || "Schlüssel nicht erkannt");
+    return;
+  }
+  if (geraeteKey) geraeteKey.value = antwort.key || "";
+  renderGeraeteStatus({ ...antwort.status, key: antwort.key });
+  showToast("Schlüssel übernommen — die Geräte gleichen sich ab.");
+}
+
+async function geraeteSchluesselKopieren() {
+  const wert = geraeteKey ? geraeteKey.value.trim() : "";
+  if (!wert) return;
+  try {
+    await navigator.clipboard.writeText(wert);
+    showToast("Schlüssel kopiert");
+  } catch {
+    // Ohne Zwischenablage bleibt das Feld - abtippen geht immer.
+    geraeteKey?.select?.();
+  }
+}
+
+async function geraeteTrennen() {
+  if (!window.confirm("Dieses Gerät trennen? Deine Einträge bleiben hier stehen, gleichen sich aber nicht mehr ab.")) return;
+  const status = await api.disconnectGeraete?.();
+  if (geraeteKey) geraeteKey.value = "";
+  renderGeraeteStatus(status);
+  showToast("Getrennt");
+}
+
+async function geraeteJetztAbgleichen() {
+  const status = await api.syncGeraeteNow?.();
+  renderGeraeteStatus(status);
 }
 
 // "2026-07-29" -> "29. Juli 2026". Liegt es in der Zukunft, ist es ein

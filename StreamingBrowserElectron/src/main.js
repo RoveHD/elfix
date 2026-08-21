@@ -23,6 +23,11 @@ const {
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+// Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
+// die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
+// Schluessel, und Laptop und Rechner haben denselben Stand.
+const { Geraeteabgleich } = require("./geraete");
+const geraeteSchluessel = require("./geraete-schluessel");
 // Die beste Bildstufe beim Hoster. Eigenes Modul, damit die Auswahl gegen
 // nachgebaute Stufenlisten pruefbar bleibt statt nur als Zeichenkette zu reisen.
 const voeQualitaet = require("./voe-qualitaet");
@@ -73,6 +78,10 @@ const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 // der teuerste Teil des Ganzen.
 const METADATEN_FILE = path.join(DATA_DIR, "metadaten-cache.json");
 const WATCHPARTY_FILE = path.join(DATA_DIR, "watchparty.json");
+// Der Spiegel des Geraeteabgleichs: was zuletzt hinausging oder hereinkam.
+// Ohne ihn faengt jeder Start von vorn an und meldet den ganzen Bestand noch
+// einmal - richtig waere das Ergebnis trotzdem, aber es waere viel Laerm.
+const GERAETE_FILE = path.join(DATA_DIR, "geraete.json");
 // Das Projekt-Repository. Eine Stelle, an der die Adresse steht: die
 // Update-Anzeige verlinkt darauf, und "Hilfe & Support" oeffnet den
 // Issue-Bereich darunter.
@@ -377,6 +386,10 @@ app.whenReady().then(async () => {
   createMainWindow();
   setupAutoUpdater();
   syncWatchparty();
+  // Erst den Spiegel, dann einrichten: ohne ihn haelt der Abgleich den ganzen
+  // Bestand fuer neu und meldet ihn beim Start noch einmal hinaus.
+  geraete.ablageSetzen(loadGeraeteSpiegel());
+  syncGeraete();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
   // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
@@ -1497,7 +1510,62 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();
   syncWatchparty();
+  syncGeraete();
   return publicSettings(settings);
+});
+
+// --- Meine Geraete: die Aufrufe aus der Oberflaeche --------------------------
+
+ipcMain.handle("geraete:status", () => geraete.status());
+
+// Einen neuen Schluessel erzeugen. Er wird sofort gespeichert und der Abgleich
+// eingeschaltet: ein Schluessel, den man erst noch bestaetigen muss, ist auf
+// dem zweiten Geraet schon abgetippt und hier noch nicht in Kraft.
+ipcMain.handle("geraete:schluessel-erzeugen", () => {
+  const schluessel = geraeteSchluessel.erzeugen();
+  settings.geraete = { enabled: true, key: schluessel };
+  saveSettings();
+  syncGeraete();
+  meldeEinstellungen();
+  return { key: geraeteSchluessel.anzeigen(schluessel), status: geraete.status() };
+});
+
+// Einen abgetippten Schluessel uebernehmen.
+ipcMain.handle("geraete:schluessel-setzen", (_event, wert) => {
+  const schluessel = geraeteSchluessel.normalisieren(wert);
+  if (!schluessel) {
+    return { ok: false, reason: "Das ist kein ELFIX-Schlüssel", status: geraete.status() };
+  }
+  settings.geraete = { enabled: true, key: schluessel };
+  saveSettings();
+  syncGeraete();
+  meldeEinstellungen();
+  return { ok: true, key: geraeteSchluessel.anzeigen(schluessel), status: geraete.status() };
+});
+
+// Dieses Geraet herausloesen. Der Schluessel geht hier weg, die Eintraege
+// bleiben - was geschaut wurde, wurde geschaut. Beim Relay bleibt der Raum
+// stehen, bis ihn ein halbes Jahr niemand mehr benutzt; die anderen Geraete
+// laufen also unveraendert weiter.
+ipcMain.handle("geraete:trennen", () => {
+  settings.geraete = { enabled: false, key: "" };
+  saveSettings();
+  syncGeraete();
+  meldeEinstellungen();
+  return geraete.status();
+});
+
+// Von Hand anstossen - fuer den Knopf in den Einstellungen. Ohne ihn muesste
+// man raten, ob gerade etwas passiert.
+//
+// Der Knopf holt dabei den ganzen Raum noch einmal, nicht nur das Neue. Er ist
+// der Weg zurueck fuer den einen Fall, den der laufende Abgleich nicht von
+// selbst heilt: ein Eintrag, der hier nicht angelegt werden konnte, weil der
+// Anbieter dazu fehlte. Ist er inzwischen da, kommt der Titel damit nach.
+ipcMain.handle("geraete:jetzt-abgleichen", () => {
+  geraete.vollAbgleichen();
+  geraete.abgleichen(geraeteStaende());
+  return geraete.status();
 });
 
 ipcMain.handle("adblock:update-filters", async () => {
@@ -1647,8 +1715,15 @@ ipcMain.handle("data:backup-import", async () => {
     favorites = loadFavorites();
     watchpartyLokal = loadWatchpartyLocal();
     watchpartyWiederhergestellt.clear();
+    // Der Spiegel des Geraeteabgleichs gehoert nicht in die Sicherung: er
+    // beschreibt, was zuletzt hinausging - und das passt nach dem Einlesen zu
+    // nichts mehr. Ohne ihn gilt beim naechsten Verbinden der Stand des Raums,
+    // und das ist hier das Richtige: die Sicherung bringt zurueck, was fehlt,
+    // ueberschreibt aber nicht den neueren Stand des anderen Geraets.
+    geraete.ablageSetzen(null);
 
       syncWatchparty();
+    syncGeraete();
     sendActiveState();
     console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, Kopie vorher unter ${vorher}`);
     return {
@@ -5753,6 +5828,258 @@ function syncWatchparty() {
     deviceId: konfiguration.deviceId || ""
   });
   youtubePartySync();
+}
+
+// --- Meine Geraete ----------------------------------------------------------
+//
+// Ein Schluessel haelt die Geraete einer Person zusammen. Kein Raum, kein
+// Beitreten, keine Mitglieder: was hier privat in "Weiterschauen" steht, steht
+// auf dem anderen Geraet genauso.
+//
+// Was mitgeht, ist der Stand - Folge, Stelle, abgeschlossen, die Reihenfolge in
+// der Mediathek. Nicht mit gehen das eigene Bild (es liegt als Data-URL vor und
+// ist um ein Vielfaches groesser als alles andere zusammen) und der Verlauf je
+// Eintrag (er ist die Chronik dieses Geraets). Was daran zaehlt, steht ohnehin
+// im Stand.
+//
+// Watchparty-Eintraege bleiben ausdruecklich draussen. Sie gehoeren ihrem Raum
+// und werden dort abgeglichen; sie hier ein zweites Mal zu verschicken, hiesse
+// zwei Wege fuer denselben Stand - und der eine wuerde den anderen ueberholen.
+const GERAETE_ABGLEICH_MS = 3000;
+let geraeteSpiegelTimer = 0;
+let geraeteAbgleichTimer = 0;
+let geraeteSpiegel = null;
+// Ob nach diesem Schub die Folgestaende nachgezogen werden muessen.
+let geraeteFolgestaende = false;
+
+const geraete = new Geraeteabgleich({
+  onEintrag: (stand, at) => uebernimmGeraeteStand(stand, at),
+  onWeg: (key) => entferneGeraeteEintrag(key),
+  // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
+  onFertig: (anzahl) => {
+    saveFavorites();
+    sendActiveState();
+    console.log(`[ELFIX GERAETE] ${anzahl} Eintrag/Eintraege von einem anderen Geraet uebernommen`);
+    if (!geraeteFolgestaende) return;
+    geraeteFolgestaende = false;
+    // Hat das andere Geraet eine Folge zu Ende geschaut, gehoert der eigene
+    // Eintrag auf die naechste - sonst verschwindet er aus "Weiterschauen".
+    repariereFolgestaendeSpaeter();
+  },
+  onSpeichern: (ablage) => geraeteSpiegelSichernSpaeter(ablage),
+  onStatus: (status) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("geraete:state", status);
+  }
+});
+
+function geraeteSettings() {
+  return settings.geraete || {};
+}
+
+function syncGeraete() {
+  const konfiguration = geraeteSettings();
+  geraete.konfigurieren({
+    enabled: konfiguration.enabled === true,
+    // Dieselbe Adresse wie die Watchparty: es ist dasselbe Relay. Zwei Felder
+    // dafuer waeren zwei Gelegenheiten, sich zu vertippen - und eine Frage
+    // mehr, wenn dann eines von beidem nicht geht.
+    serverUrl: settings.watchparty?.serverUrl || "",
+    schluessel: konfiguration.key || "",
+    // Dasselbe Geraet wie in der Watchparty. Es gibt keinen Grund, hier eine
+    // zweite Kennung zu fuehren.
+    geraetId: settings.watchparty?.deviceId || ""
+  });
+  // Nach dem Einrichten einmal nachsehen, ob etwas hinaus muss - beim Start
+  // ist das der ganze Bestand, wenn dieses Geraet neu dazugekommen ist.
+  geraeteAbgleichSpaeter(1000);
+}
+
+function loadGeraeteSpiegel() {
+  try {
+    return JSON.parse(fs.readFileSync(GERAETE_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function geraeteSpiegelSichernSpaeter(ablage) {
+  geraeteSpiegel = ablage;
+  if (geraeteSpiegelTimer) return;
+  geraeteSpiegelTimer = setTimeout(() => {
+    geraeteSpiegelTimer = 0;
+    try {
+      ensureDataDir();
+      fs.writeFileSync(GERAETE_FILE, JSON.stringify(geraeteSpiegel));
+    } catch {
+      // Ohne die Datei meldet der naechste Start einmal zu viel. Mehr nicht.
+    }
+  }, 1000);
+  geraeteSpiegelTimer.unref?.();
+}
+
+// Alles Private, je Titel einmal. Steht derselbe Titel mehrfach in der Liste,
+// zaehlt der vorderste: die Liste ist nach zuletzt geoeffnet sortiert, und
+// hinten liegt in dem Fall eine Karteileiche.
+function geraeteStaende() {
+  const staende = [];
+  const gesehen = new Set();
+  for (const favorite of favorites) {
+    if (String(favorite?.watchpartyRoom || "")) continue;
+    const key = watchpartyKey(favorite);
+    if (!key || gesehen.has(key)) continue;
+    gesehen.add(key);
+    staende.push(geraeteSchluessel.stand({ ...favorite, key }));
+  }
+  return staende;
+}
+
+function geraeteAbgleichSpaeter(verzoegerung = GERAETE_ABGLEICH_MS) {
+  if (!geraete.aktiv || geraeteAbgleichTimer) return;
+  geraeteAbgleichTimer = setTimeout(() => {
+    geraeteAbgleichTimer = 0;
+    try {
+      geraete.abgleichen(geraeteStaende());
+    } catch (fehler) {
+      console.log(`[ELFIX GERAETE] Abgleich fehlgeschlagen: ${fehler?.message || fehler}`);
+    }
+  }, verzoegerung);
+  geraeteAbgleichTimer.unref?.();
+}
+
+// Der private Eintrag zu diesem Titel. Ausdruecklich ohne die der Watchparty:
+// derselbe Anime kann in zwei Raeumen und einmal privat dastehen, und nur der
+// private gehoert diesem Abgleich.
+function lokalerGeraeteEintrag(key) {
+  return favorites.find((favorite) => !String(favorite?.watchpartyRoom || "")
+    && watchpartyKey(favorite) === key) || null;
+}
+
+// Ein Stand vom anderen Geraet. Rueckgabe ist der Stand, wie er danach hier
+// gilt - oder null, wenn nichts daraus wurde.
+function uebernimmGeraeteStand(stand, at) {
+  const key = String(stand?.key || "");
+  if (!key) return null;
+  const lokal = lokalerGeraeteEintrag(key);
+
+  if (!lokal) {
+    // Ohne passenden Anbieter waere der Eintrag eine Karte, die sich nicht
+    // oeffnen laesst. Dann lieber keine.
+    const provider = providerForWatchpartyUrl(stand.url || "", stand.providerName);
+    if (!provider) return null;
+    const neu = createGeraeteFavorite(stand, provider);
+    if (!neu) return null;
+    favorites.unshift(neu);
+    console.log(`[ELFIX GERAETE] ${neu.title} von einem anderen Geraet uebernommen`);
+    if (neu.episodeCompleted && !neu.completed) geraeteFolgestaende = true;
+    return geraeteSchluessel.stand({ ...neu, key });
+  }
+
+  // Die Adresse ist auf jedem Geraet eine andere, sobald der Anbieter unter
+  // zwei Namen erreichbar ist. Beim selben Wirt passt sie direkt, sonst wird
+  // nur die Folge auf die eigene Adresse umgeschrieben - genauso wie in der
+  // Watchparty.
+  const gleicherAnbieter = providerModel.hostFromUrl(lokal.url).toLowerCase()
+    === providerModel.hostFromUrl(stand.url || "").toLowerCase();
+  const ziel = gleicherAnbieter
+    ? stand.url
+    : (stand.season && stand.episode ? replaceEpisodeUrl(lokal.url, stand.season, stand.episode) : "");
+  if (ziel && ziel !== lokal.url) {
+    lokal.url = ziel;
+    lokal.normalizedUrl = normalizeFavoriteUrl(ziel);
+    const identity = episodeIdentity(ziel);
+    lokal.season = identity?.season || stand.season || lokal.season || 0;
+    lokal.episode = identity?.episode || stand.episode || lokal.episode || 0;
+  } else if (stand.season || stand.episode) {
+    lokal.season = stand.season || lokal.season || 0;
+    lokal.episode = stand.episode || lokal.episode || 0;
+  }
+
+  lokal.position = stand.position;
+  lokal.currentTime = stand.position;
+  lokal.duration = stand.duration || lokal.duration;
+  lokal.progress = stand.progress;
+  lokal.completed = stand.completed;
+  lokal.episodeCompleted = stand.episodeCompleted;
+  // "Von Hand abgehakt" und "abgeschlossen" schliessen einander nicht aus,
+  // sondern bedingen sich - widersprucheGeraderichten() besteht darauf. Also
+  // geht der Merker nur mit, wo er auch stimmen kann.
+  lokal.completedManually = Boolean(stand.completedManually && stand.completed);
+  if (stand.completedAt) lokal.completedAt = stand.completedAt;
+  lokal.hideFromContinueWatching = Boolean(stand.hideFromContinueWatching);
+  lokal.continuePending = Boolean(stand.continuePending);
+  lokal.watched = Boolean(stand.watched) || lokal.watched;
+  lokal.favorite = stand.favorite !== false;
+  if (stand.finalSeason) lokal.finalSeason = stand.finalSeason;
+  if (stand.finalEpisode) lokal.finalEpisode = stand.finalEpisode;
+  if (Array.isArray(stand.completedEpisodes)) lokal.completedEpisodes = stand.completedEpisodes;
+  if (stand.libraryOrder != null) lokal.libraryOrder = stand.libraryOrder;
+  if (stand.lastWatchedAt) lokal.lastWatchedAt = stand.lastWatchedAt;
+  // Ein Titelbild nur, wo hier keines ist: das eigene Bild bleibt ohnehin
+  // draussen, und ein Anbieterbild ist besser als gar keines.
+  if (!lokal.thumbnail && stand.thumbnail) lokal.thumbnail = stand.thumbnail;
+
+  console.log(`[ELFIX GERAETE] ${lokal.title}: Stand von einem anderen Geraet uebernommen`);
+  if (lokal.episodeCompleted && !lokal.completed) geraeteFolgestaende = true;
+  return geraeteSchluessel.stand({ ...lokal, key });
+}
+
+function createGeraeteFavorite(stand, provider) {
+  const url = absoluteHttpUrl(stand?.url || "", provider.startUrl || "");
+  if (!url) return null;
+  const identity = episodeIdentity(url);
+  return normalizeLoadedFavorite({
+    id: crypto.randomUUID(),
+    providerId: provider.id,
+    providerName: provider.name || stand?.providerName || "",
+    title: cleanTitle(stand?.title || url),
+    url,
+    normalizedUrl: normalizeFavoriteUrl(url),
+    favicon: "",
+    thumbnail: stand?.thumbnail || "",
+    // Ein eigenes Bild gehoert zum Titel. Es kommt nicht ueber den Abgleich,
+    // aber wenn es hier schon zu dieser Serie liegt, gilt es auch hier.
+    customThumbnail: bekanntesEigenesBild(url),
+    customThumbnailCrop: bekannterBildAusschnitt(url),
+    logo: provider.logo || "",
+    favorite: stand?.favorite !== false,
+    watched: Boolean(stand?.watched),
+    completed: Boolean(stand?.completed),
+    completedManually: Boolean(stand?.completedManually && stand?.completed),
+    completedAt: String(stand?.completedAt || ""),
+    episodeCompleted: Boolean(stand?.episodeCompleted),
+    continuePending: Boolean(stand?.continuePending),
+    hideFromContinueWatching: Boolean(stand?.hideFromContinueWatching),
+    completedEpisodes: Array.isArray(stand?.completedEpisodes) ? stand.completedEpisodes : [],
+    progress: sanitizeProgress(stand?.progress),
+    duration: sanitizePositiveNumber(stand?.duration),
+    position: sanitizePositiveNumber(stand?.position),
+    currentTime: sanitizePositiveNumber(stand?.position),
+    type: normalizeMediaType(stand?.type || inferMediaType(url)),
+    season: identity?.season || stand?.season || 0,
+    episode: identity?.episode || stand?.episode || 0,
+    finalSeason: sanitizePositiveNumber(stand?.finalSeason),
+    finalEpisode: sanitizePositiveNumber(stand?.finalEpisode),
+    libraryOrder: stand?.libraryOrder == null ? null : Number(stand.libraryOrder),
+    // Der eigene Bestand, kein Raum.
+    watchpartyRoom: "",
+    createdAt: String(stand?.createdAt || new Date().toISOString()),
+    lastWatchedAt: String(stand?.lastWatchedAt || ""),
+    activity: []
+  });
+}
+
+// Anderswo geloescht. Hier gilt dasselbe wie dort: der Eintrag verschwindet,
+// und zwar wirklich - ein Grabstein liegt beim Relay, damit ihn niemand
+// zurueckholt.
+function entferneGeraeteEintrag(key) {
+  const lokal = lokalerGeraeteEintrag(key);
+  if (!lokal) return false;
+  const index = favorites.indexOf(lokal);
+  if (index < 0) return false;
+  favorites.splice(index, 1);
+  console.log(`[ELFIX GERAETE] ${lokal.title} auf einem anderen Geraet geloescht`);
+  return true;
 }
 
 // Der Schluessel muss auf jedem Geraet gleich ausfallen. Die Adresse taugt
@@ -10251,6 +10578,11 @@ function saveFavorites() {
   ensureDataDir();
   widersprucheGeraderichten();
   fs.writeFileSync(FAVORITES_FILE, JSON.stringify(favorites, null, 2));
+  // Der eine Punkt, an dem sich am Bestand wirklich etwas geaendert hat. Ihn
+  // zu nehmen statt der zwei Dutzend Stellen, die Staende anfassen, ist der
+  // Grund, warum der Abgleich nichts verpassen kann - auch nicht das Abhaken
+  // von Hand oder das Umsortieren der Mediathek.
+  geraeteAbgleichSpaeter();
 }
 
 function moveFavoriteToFront(favorite) {
@@ -11595,6 +11927,22 @@ function normalizeSettings(raw) {
       deviceId: String(raw?.watchparty?.deviceId || settings?.watchparty?.deviceId || "").slice(0, 64)
         || crypto.randomUUID()
     },
+    geraete: (() => {
+      // Wie die Geraetekennung: der Schluessel gehoert nicht ins
+      // Einstellungsformular, muss aber jedes Speichern ueberstehen. Deshalb
+      // der Rueckfall auf den bekannten - ein Formular, das ihn nicht kennt,
+      // schickt ein leeres Feld, und das darf ihn nicht loeschen. Weg kommt er
+      // ueber "Dieses Gerät trennen", nicht nebenbei.
+      //
+      // Ein unbrauchbarer Schluessel wird hier verworfen statt spaeter still
+      // ignoriert: sonst stuende der Abgleich auf "an", ohne dass je etwas
+      // geschieht.
+      const key = geraeteSchluessel.normalisieren(raw?.geraete?.key || settings?.geraete?.key);
+      // Der Schluessel *ist* der Schalter. Ein zweiter daneben koennte nur
+      // einen Zustand herstellen, den niemand haben will: Schluessel
+      // eingetragen, Abgleich trotzdem aus.
+      return { key, enabled: Boolean(key) };
+    })(),
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
       showYoutube: raw?.home?.showYoutube ?? defaults.home.showYoutube,
@@ -11721,6 +12069,12 @@ function defaultSettings() {
       deviceName: "",
       deviceId: "",
       youtubeRoom: ""
+    },
+    // Meine Geraete. Ohne Schluessel gibt es nichts abzugleichen, und einen
+    // erzeugt nur, wer ihn will.
+    geraete: {
+      enabled: false,
+      key: ""
     },
     home: {
       showHero: true,

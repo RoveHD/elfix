@@ -243,13 +243,8 @@ class Watchparty {
     return { versatz: this.uhr.versatz, umlauf: this.uhr.umlauf, alter: Date.now() - this.uhr.at };
   }
 
-  // http(s)-Adressen bequem eintippen koennen - verbunden wird ueber ws(s).
   websocketAdresse() {
-    const roh = this.serverUrl;
-    if (/^wss?:\/\//i.test(roh)) return roh;
-    if (/^https:\/\//i.test(roh)) return roh.replace(/^https:/i, "wss:");
-    if (/^http:\/\//i.test(roh)) return roh.replace(/^http:/i, "ws:");
-    return `wss://${roh}`;
+    return websocketAdresse(this.serverUrl);
   }
 
   trennen() {
@@ -504,4 +499,15 @@ class Watchparty {
   }
 }
 
-module.exports = { Watchparty };
+// http(s)-Adressen bequem eintippen koennen - verbunden wird ueber ws(s).
+// Steht modulweit, weil der Geraeteabgleich zum selben Relay faehrt: zwei
+// Auslegungen derselben Adresse waeren zwei Fehlerquellen.
+function websocketAdresse(wert) {
+  const roh = String(wert || "").trim();
+  if (/^wss?:\/\//i.test(roh)) return roh;
+  if (/^https:\/\//i.test(roh)) return roh.replace(/^https:/i, "wss:");
+  if (/^http:\/\//i.test(roh)) return roh.replace(/^http:/i, "ws:");
+  return `wss://${roh}`;
+}
+
+module.exports = { Watchparty, websocketAdresse };

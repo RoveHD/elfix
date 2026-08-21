@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   resyncWatchparty: (key, room) => ipcRenderer.invoke("watchparty:resync", key, room),
   kickFromWatchparty: (key, memberId, room) => ipcRenderer.invoke("watchparty:kick", key, memberId, room),
   onWatchpartyState: (callback) => ipcRenderer.on("watchparty:state", (_event, state) => callback(state)),
+  // Meine Geraete: der Abgleich zwischen den Geraeten einer Person.
+  getGeraeteStatus: () => ipcRenderer.invoke("geraete:status"),
+  createGeraeteSchluessel: () => ipcRenderer.invoke("geraete:schluessel-erzeugen"),
+  setGeraeteSchluessel: (wert) => ipcRenderer.invoke("geraete:schluessel-setzen", wert),
+  disconnectGeraete: () => ipcRenderer.invoke("geraete:trennen"),
+  syncGeraeteNow: () => ipcRenderer.invoke("geraete:jetzt-abgleichen"),
+  onGeraeteState: (callback) => ipcRenderer.on("geraete:state", (_event, state) => callback(state)),
   onWatchpartyItems: (callback) => ipcRenderer.on("watchparty:items", (_event, items) => callback(items)),
   chooseWatchpartyMember: (kandidaten, punkt) => ipcRenderer.invoke("watchparty:choose-member", kandidaten, punkt),
   handoverWatchpartyHost: (key, memberId, room) => ipcRenderer.invoke("watchparty:handover", key, memberId, room),

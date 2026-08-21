@@ -422,6 +422,7 @@
           <button class="tab" data-tab="providers"><span>☰</span>Anbieter<small>Seiten verwalten</small></button>
           <button class="tab" data-tab="playback"><span>▷</span>Wiedergabe<small>Player & Fortschritt</small></button>
           <button class="tab" data-tab="watchparty"><span>⇄</span>Watchparty<small>Fortschritt teilen</small></button>
+          <button class="tab" data-tab="geraete"><span>⇉</span>Meine Geräte<small>Laptop & Rechner</small></button>
           <div class="settings-nav-section">System</div>
           <button class="tab" data-tab="browser"><span>◉</span>Browser & Schutz<small>Werbung, Cache</small></button>
           <button class="tab" data-tab="data"><span>▤</span>Daten & Updates<small>Version, Speicher</small></button>
@@ -529,6 +530,43 @@
             </label>
             <div class="setting-row">
               <span><strong>Status</strong><small id="watchpartyStatus">Nicht verbunden.</small></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-page" data-page="geraete">
+          <div class="settings-head">
+            <div>
+              <h3>Meine Geräte</h3>
+              <p>Hält deine eigenen Geräte auf demselben Stand: Was du am Rechner schaust, steht auf dem Laptop in „Weiterschauen“ an derselben Stelle. Kein Konto und kein Raum — ein Schlüssel, den nur deine Geräte kennen.</p>
+            </div>
+          </div>
+          <div class="settings-section-grid">
+            <div class="setting-block">
+              <strong>Schlüssel</strong>
+              <div class="room-add">
+                <input id="geraeteKey" maxlength="45" spellcheck="false" autocomplete="off" placeholder="Noch kein Schlüssel">
+                <button type="button" class="soft-action" id="geraeteKeyUse">Übernehmen</button>
+              </div>
+              <div class="geraete-aktionen">
+                <button type="button" class="soft-action" id="geraeteKeyNew">Neuen Schlüssel erzeugen</button>
+                <button type="button" class="soft-action" id="geraeteKeyCopy">Kopieren</button>
+                <button type="button" class="soft-action" id="geraeteDisconnect">Dieses Gerät trennen</button>
+              </div>
+              <small>Auf dem ersten Gerät einen Schlüssel erzeugen, auf jedem weiteren denselben eintragen — mehr ist es nicht. Groß- und Kleinschreibung und die Striche sind egal. Wer den Schlüssel hat, sieht deinen Stand und kann ihn ändern: Er gehört nicht in einen Chat.</small>
+            </div>
+            <div class="setting-row">
+              <span><strong>Status</strong><small id="geraeteStatus">Ausgeschaltet.</small></span>
+              <button type="button" class="soft-action" id="geraeteSyncNow">Jetzt abgleichen</button>
+            </div>
+            <div class="setting-row">
+              <span><strong>Server</strong><small>Es ist dasselbe Relay wie bei der Watchparty — die Adresse steht dort. Die Watchparty selbst muss dafür nicht eingeschaltet sein.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Was abgeglichen wird</strong><small>Folge, Stelle, abgeschlossene Titel und die Reihenfolge in der Mediathek. Nicht dabei: selbst gewählte Bilder und der Verlauf je Eintrag — die bleiben auf dem Gerät. Einträge einer Watchparty bleiben bei ihrem Raum.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Was der Server sieht</strong><small>Nichts davon. Die Einträge sind mit deinem Schlüssel verschlossen, bevor sie das Gerät verlassen; der Schlüssel selbst geht nie hinaus. Sichtbar bleibt, wie viele Einträge es gibt und wann sie sich ändern.</small></span>
             </div>
           </div>
         </div>

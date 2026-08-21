@@ -3,6 +3,87 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.31.0 — 21. August 2026
+
+Laptop und Rechner haben ab jetzt denselben Stand. Ein Schluessel, kein Konto -
+und das Relay kann nicht mitlesen.
+
+**Meine Geraete**
+
+- Neuer Punkt in den Einstellungen. Auf dem ersten Geraet einen Schluessel
+  erzeugen, auf dem zweiten denselben eintragen - fertig. Was am Rechner
+  geschaut wird, steht auf dem Laptop in *Weiterschauen* an derselben Stelle
+- Nichts einzustellen und nichts beizutreten. Die Watchparty verbindet
+  Menschen, und dort ist jeder Schritt eine Entscheidung: einstellen, beitreten,
+  mitschauen. Zwischen den eigenen Geraeten gibt es nichts zu entscheiden - wer
+  denselben Schluessel traegt, ist dieselbe Person
+- Der Schluessel ist zugleich der Schalter. Ein zweiter daneben koennte nur
+  einen Zustand herstellen, den niemand haben will: Schluessel eingetragen,
+  Abgleich trotzdem aus
+- Abgetipptes wird geradegezogen. Gross- und Kleinschreibung, Striche und
+  Leerzeichen sind egal; `I` und `L` gelten als Eins, `O` als Null - genau die
+  Verwechslungen, die beim Abschreiben vorkommen. Was danach nicht passt, wird
+  abgewiesen: ein "fast richtig" gibt es hier nicht
+- Es ist dasselbe Relay wie fuer die Watchparty. Eingeschaltet sein muss die
+  dafuer nicht - die eigenen Geraete sollen zusammenbleiben, auch wenn gerade
+  niemand mit anderen schaut
+
+**Was mitgeht**
+
+- Folge, Stelle, Fortschritt, abgeschlossene Titel und Folgen, Watchlist und
+  die Reihenfolge in der Mediathek. Geloeschtes verschwindet ueberall - dafuer
+  bleibt beim Relay ein Grabstein liegen, sonst holte das andere Geraet den
+  Titel beim naechsten Abgleich zurueck
+- Nicht mit gehen das eigene Titelbild und der Verlauf je Eintrag. Das Bild
+  liegt als Data-URL vor und ist um ein Vielfaches groesser als alles andere
+  zusammen; der Verlauf ist die Chronik eines Geraets. Was daran zaehlt, steht
+  ohnehin im Stand
+- Watchparty-Eintraege bleiben bei ihrem Raum. Dort werden sie abgeglichen, und
+  zwei Wege fuer denselben Stand wuerden einander ueberholen
+- Faellt etwas auseinander, gilt der neuere Stand - dieselbe Regel wie in der
+  Watchparty. Gerechnet wird in der Zeit des Relays: zwei Rechner sind sich
+  ueber die Uhrzeit selten einig, und ein Geraet mit falsch gestellter Uhr
+  gewaenne sonst jeden Vergleich, fuer immer
+
+**Was das Relay sieht**
+
+- Nichts von dem, was dort steht. Aus dem Schluessel faellt eine Raumkennung
+  (dort liegen die Eintraege), je Titel eine Eintragskennung (welcher Eintrag
+  welcher ist) und eine Chiffre. Die ersten beiden gehen hinaus, die Chiffre
+  nie - verschlossen wird mit AES-256-GCM, bevor etwas das Geraet verlaesst
+- Die Eintragskennung ist ein HMAC, keine Pruefsumme: ohne den Schluessel laesst
+  sich weder ein Titel zurueckrechnen noch eine Liste bekannter Titel
+  durchprobieren. Sichtbar bleibt, wie viele Eintraege es gibt und wann sie
+  sich aendern
+- Das ist der Unterschied zur Watchparty, und er ist beabsichtigt: dort muss
+  der Raum die Titel kennen, um sie anzuzeigen. Hier liest ohnehin nur der
+  Besitzer
+- Ein blosses Anmelden legt keinen Raum an. Ein vertippter Schluessel
+  hinterlaesst damit nichts
+
+**Der Kreis, der keiner werden durfte**
+
+- Jedes Uebernehmen schreibt die Favoriten, und jedes Schreiben meldet den
+  Stand hinaus. Merkt sich ein Geraet dabei das Empfangene statt das daraus
+  Gewordene, schieben sich zwei Geraete denselben Eintrag ewig hin und her
+- Das ist kein Sonderfall: die Adresse ist auf jedem Geraet eine andere, sobald
+  ein Anbieter unter zwei Namen erreichbar ist - S.to laeuft hier ueber eine
+  IP, dort ueber die Domain. Gemerkt wird deshalb, was hier gilt, nicht, was
+  hereinkam
+- Geprueft wird das ausgefuehrt, nicht gelesen: zwei echte Geraete an einer
+  echten Verbindung, mit verschiedenen Adressen fuer denselben Titel. Nimmt man
+  die Korrektur weg, faellt die Pruefung um
+
+**Relay**
+
+- Neue Datei `geraete.js`. Beim Aktualisieren muessen weiterhin alle
+  `.js`-Dateien mit - `/health` weist den Abgleich unter `features` als
+  `geraete` aus und zaehlt unter `geraeteRaeume`, wie viele Schluessel dort
+  liegen
+- Der Abgleich haengt an keinem Raumcode und steht deshalb vor der Raumpflicht:
+  wer nur seine eigenen Geraete zusammenhaelt, soll keine Watchparty betreten
+  muessen
+
 ## 1.30.0 — 21. August 2026
 
 Ein Autoplay-Schalter im Bild, neben dem Chat. Und drei Stellen, an denen sich

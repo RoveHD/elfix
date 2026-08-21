@@ -23,6 +23,10 @@ const metadaten = require("./metadaten");
 // Die YouTube-Watchparty. Ein eigenes Modul mit eigenem Zustand - es teilt sich
 // mit der Titelverwaltung nur die Verbindung und den Raumcode.
 const youtubeParty = require("./youtube-party");
+// Der Abgleich zwischen den Geraeten einer Person. Er faehrt auf denselben
+// Verbindungen, kennt aber weder Raeume noch Titel - nur Kennungen und
+// verschlossene Klumpen. Was er sieht und was nicht, steht in geraete.js.
+const geraete = require("./geraete");
 
 // Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
 // Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
@@ -104,14 +108,15 @@ function zustandLaden() {
     }
     raeume.set(code, { titel, at: Number(raum?.at) || Date.now() });
   }
-  console.log(`Zustand geladen: ${raeume.size} Raum/Raeume`);
+  geraete.zustandSetzen(roh?.geraete);
+  console.log(`Zustand geladen: ${raeume.size} Raum/Raeume, ${geraete.anzahl()} Geraeteschluessel`);
 }
 
 function zustandSpeichernSpaeter() {
   if (speicherTimer) return;
   speicherTimer = setTimeout(() => {
     speicherTimer = null;
-    const roh = { raeume: {} };
+    const roh = { raeume: {}, geraete: geraete.zustandLesen() };
     for (const [code, raum] of raeume) {
       roh.raeume[code] = {
         at: raum.at,
@@ -156,6 +161,9 @@ function aufraeumen() {
   // Die YouTube-Runden liegen nur im Speicher und raeumen sich nach eigener
   // Frist auf - hier haengt bloss der Zeitgeber.
   youtubeParty.aufraeumen();
+  // Der Geraeteabgleich liegt dagegen auf der Platte: verfallene Grabsteine und
+  // Schluessel, die ein halbes Jahr niemand benutzt hat, muessen auch dort weg.
+  if (geraete.aufraeumen()) zustandSpeichernSpaeter();
 }
 setInterval(aufraeumen, 60 * 60 * 1000).unref?.();
 
@@ -272,6 +280,7 @@ const server = http.createServer((req, res) => {
       ok: true,
       raeume: raeume.size,
       youtubeRaeume: youtubeParty.anzahl(),
+      geraeteRaeume: geraete.anzahl(),
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
       // "clock" heisst: dieses Relay beantwortet Uhrproben, der smarte Start
@@ -284,7 +293,10 @@ const server = http.createServer((req, res) => {
       // einzige Moeglichkeit, nach dem Ausrollen von aussen zu sehen, ob die
       // neue Fassung wirklich laeuft - eine Chatzeile schickt man dafuer nicht
       // gern versuchsweise durch einen fremden Raum.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat"],
+      // "geraete" heisst: dieses Relay kennt den Abgleich zwischen den
+      // Geraeten einer Person. Ohne den Eintrag laeuft dort drueben eine
+      // aeltere Fassung, und die App wartet auf einen Zustand, der nie kommt.
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat", "geraete"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
@@ -312,6 +324,18 @@ function anMitgliederSenden(raumcode, nachricht, ids) {
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!ids.has(client.geraetId)) continue;
+    client.send(daten);
+  }
+}
+
+// An die uebrigen Geraete desselben Schluessels. Sie haengen an keinem
+// Raumcode - der Geraeteabgleich kennt nur seine abgeleitete Kennung, und die
+// steht am Socket.
+function anGeraeteSenden(raumId, nachricht, ausser) {
+  const daten = JSON.stringify(nachricht);
+  for (const client of wss.clients) {
+    if (client.geraeteRaum !== raumId || client.readyState !== client.OPEN) continue;
+    if (client === ausser) continue;
     client.send(daten);
   }
 }
@@ -706,6 +730,9 @@ function syncStarten(raumcode, eintrag) {
 wss.on("connection", (socket) => {
   socket.raum = "";
   socket.geraetId = "";
+  // Der Geraeteabgleich haengt an einer eigenen Kennung und an keinem Raumcode.
+  // Ein Geraet kann ihn benutzen, ohne je eine Watchparty zu betreten.
+  socket.geraeteRaum = "";
   socket.name = "";
   socket.isAlive = true;
   socket.on("pong", () => { socket.isAlive = true; });
@@ -729,6 +756,29 @@ wss.on("connection", (socket) => {
     // Proben zuordnen kann.
     if (nachricht?.type === "time") {
       senden({ type: "timeack", t0: nachricht.t0, t1: Date.now() });
+      return;
+    }
+
+    // Der Abgleich zwischen den Geraeten einer Person. Er steht bewusst vor
+    // "join" und vor der Raumpflicht darunter: er hat keinen Raumcode, und wer
+    // nur seine eigenen Geraete zusammenhaelt, soll keine Watchparty betreten
+    // muessen.
+    if (String(nachricht?.type || "").startsWith("gr")) {
+      if (nachricht.type === "grhello") {
+        if (!geraete.istKennung(nachricht.room)) {
+          senden({ type: "grerror", message: "Ungueltiger Schluessel" });
+          return;
+        }
+        socket.geraeteRaum = nachricht.room;
+      }
+      if (!socket.geraeteRaum) return;
+      const geaendert = geraete.behandeln({
+        nachricht,
+        raumId: socket.geraeteRaum,
+        senden,
+        verteilen: (antwort) => anGeraeteSenden(socket.geraeteRaum, antwort, socket)
+      });
+      if (geaendert) zustandSpeichernSpaeter();
       return;
     }
 

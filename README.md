@@ -13,6 +13,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
 - Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
 - Watchparty: mehrere Raeume gleichzeitig, jeder mit eigenem Fortschritt und eigener Live-Steuerung
+- Meine Geraete: ein Schluessel haelt Laptop und Rechner auf demselben Stand - ohne Konto, und das Relay kann nicht mitlesen
 - Mediathek fuer abgeschlossene Titel: loeschen mit Rueckfrage, Reihenfolge per Ziehen
 - Hinweis, wenn zu einer abgeschlossenen Serie neue Folgen erscheinen
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
@@ -129,9 +130,10 @@ curl http://localhost:8787/health
 ```
 
 Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
-inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor und
-`youtube-party.js` fuer die YouTube-Watchparty. Wird nur `server.js`
-uebertragen, startet der Dienst gar nicht mehr - ihm fehlt dann ein Modul.
+inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor,
+`youtube-party.js` fuer die YouTube-Watchparty und `geraete.js` fuer den
+Abgleich der eigenen Geraete. Wird nur `server.js` uebertragen, startet der
+Dienst gar nicht mehr - ihm fehlt dann ein Modul.
 
 Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
 Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
@@ -139,7 +141,8 @@ Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
 
 Die Antwort von `/health` nennt unter `features`, was die laufende Fassung kann.
 Steht dort `youtube`, beherrscht das Relay die YouTube-Watchparty; `youtubeRaeume`
-sagt, wie viele davon gerade laufen.
+sagt, wie viele davon gerade laufen. Steht dort `geraete`, kennt es den Abgleich
+der eigenen Geraete; `geraeteRaeume` sagt, wie viele Schluessel dort liegen.
 
 Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
 setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login
@@ -162,6 +165,65 @@ Verlaesst man eine Runde, wird man herausgeworfen oder nimmt jemand den Titel
 heraus, verschwindet auch dessen Weiterschauen-Eintrag. Bei fehlender Verbindung
 oder ausgeschalteter Watchparty wird nichts geloescht - ein Aussetzer darf keine
 Staende kosten.
+
+## Meine Geraete
+
+Watchparty verbindet Menschen. **Meine Geraete** verbindet die Geraete *einer*
+Person: was am Rechner geschaut wird, steht auf dem Laptop in *Weiterschauen* an
+derselben Stelle. Es gibt nichts einzustellen und nichts beizutreten - wer
+denselben Schluessel traegt, hat denselben Stand.
+
+Einzurichten unter *Einstellungen > Meine Geraete*:
+
+1. Auf dem ersten Geraet **Neuen Schluessel erzeugen**. Es kommt etwas heraus
+   wie `T5M3BQS8-4FDBBB8N-5QQ2YME2-05T7R6SY`.
+2. Auf jedem weiteren Geraet denselben Schluessel eintragen und
+   **Uebernehmen** druecken. Gross- und Kleinschreibung, Striche und
+   Leerzeichen sind egal; `I` und `L` gelten als Eins, `O` als Null - genau die
+   Verwechslungen, die beim Abschreiben vorkommen.
+
+Der Schluessel ist zugleich der Schalter: wer ihn eintraegt, will den Abgleich.
+*Dieses Geraet trennen* nimmt ihn wieder heraus - die Eintraege bleiben stehen,
+sie gleichen sich nur nicht mehr ab.
+
+Gebraucht wird dasselbe Relay wie fuer die Watchparty; die Adresse steht dort.
+Eingeschaltet sein muss die Watchparty dafuer **nicht** - die eigenen Geraete
+sollen zusammenbleiben, auch wenn gerade niemand mit anderen schaut.
+
+**Was abgeglichen wird.** Folge, Stelle, Fortschritt, abgeschlossene Titel und
+Folgen, Watchlist und die Reihenfolge in der Mediathek. Geloeschtes verschwindet
+ueberall.
+
+**Was nicht.** Selbst gewaehlte Titelbilder (sie liegen als Data-URL vor und
+sind um ein Vielfaches groesser als alles andere zusammen) und der Verlauf je
+Eintrag - beides bleibt auf dem Geraet. Eintraege einer Watchparty bleiben
+ausserdem bei ihrem Raum: dort werden sie ohnehin abgeglichen, und zwei Wege
+fuer denselben Stand wuerden einander ueberholen.
+
+Faellt etwas auseinander, gilt der neuere Stand - dieselbe Regel wie in der
+Watchparty. Gerechnet wird dabei in der Zeit des Relays, nicht in der des
+Geraets: zwei Rechner sind sich ueber die Uhrzeit selten einig.
+
+### Was das Relay dabei sieht
+
+Nichts von dem, was dort steht. Aus dem Schluessel faellt dreierlei, und nur
+das Erste und die Kennungen gehen hinaus:
+
+| Ableitung | wozu | beim Relay sichtbar |
+| --- | --- | --- |
+| Raumkennung | wo die Eintraege liegen | ja, 32 Hexzeichen |
+| Eintragskennung | welcher Eintrag welcher ist | ja, ein HMAC je Titel |
+| Chiffre | AES-256-GCM | nein, nie |
+
+Der Schluessel selbst verlaesst das Geraet nie. Ein Eintrag ist verschlossen,
+bevor er hinausgeht; die Kennung ist ein HMAC und keine Pruefsumme, aus ihr
+laesst sich also kein Titel zurueckrechnen. Sichtbar bleibt, wie viele
+Eintraege es gibt und wann sie sich aendern.
+
+Das ist der Unterschied zur Watchparty, und er ist beabsichtigt: dort muss der
+Raum die Titel kennen, um sie anzuzeigen. Hier liest ohnehin nur der Besitzer.
+
+Wer den Schluessel hat, ist die Person. Er gehoert nicht in einen Chat.
 
 ## Windows Build
 
@@ -269,6 +331,8 @@ StreamingBrowserElectron/src/
   taste.js              Geschmacksprofil fuer "Empfohlen fuer dich"
   watchparty.js         Ein Raum: Verbindung, Mitglieder, Live-Steuerung
   watchparty-raeume.js  Mehrere Raeume nebeneinander
+  geraete.js            Meine Geraete: Verbindung und Abgleichregeln
+  geraete-schluessel.js Schluessel, Ableitungen, Verschluesselung
   renderer/             Oberflaeche (index.html, renderer.js, styles.css)
 sync-server/            Relay fuer die Watchparty
 shared/                 Von Desktop und Android gemeinsam genutztes Anbietermodell

@@ -923,6 +923,20 @@
   flex: 0 0 auto;
 }
 
+/* Meine Geraete: der Schluessel wird abgeschrieben, nicht gelesen. Gleiche
+   Zeichenbreite laesst vier Achtergruppen wie vier Achtergruppen aussehen - in
+   einer Proportionalschrift muss man sie nachzaehlen. */
+#geraeteKey {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.geraete-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .room-list {
   display: flex;
   flex-wrap: wrap;
