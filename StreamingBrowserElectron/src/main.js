@@ -1919,6 +1919,27 @@ function getProviderView(provider) {
     // "Danach aufhoeren" an- und abgeschaltet. Gemerkt wird die Adresse der
     // laufenden Folge, nicht bloss ein Ja: sonst gaelte die Ansage auch fuer
     // eine ganz andere Folge, die derselbe Anbieter spaeter zeigt.
+    // Der Autoplay-Schalter aus der Seite. Er stellt dieselbe Einstellung wie
+    // die Seitenleiste - deshalb wird sie hier wirklich geschrieben und nicht
+    // bloss gemerkt. Sonst haette der Schalter die Folge ueberdauert, die
+    // Einstellung aber nicht.
+    const autoplay = String(nachricht || "").match(/^__elfix:autoplay:([01])$/);
+    if (autoplay) {
+      const an = autoplay[1] === "1";
+      settings.playback = { ...(settings.playback || {}), autoplayNextEpisode: an };
+      saveSettings();
+      // Ein Zaehler, der gerade laeuft, muss die Ansage sofort spueren. Beide
+      // Merker zuruecksetzen heisst: der naechste Takt spielt die Einblendung
+      // neu ein, und autoplayZaehler() entscheidet dann mit dem neuen Stand.
+      nextEpisodePromptState.delete(provider.id);
+      nextEpisodeAutostartState.delete(provider.id);
+      meldeEinstellungen();
+      logNextEpisode(provider, an ? "Autoplay: an" : "Autoplay: aus");
+      sendToast(an
+        ? "Nächste Folge startet von selbst"
+        : "Nächste Folge startet nicht mehr von selbst");
+      return;
+    }
     const schluss = String(nachricht || "").match(/^__elfix:stop-after-episode:([01])$/);
     if (schluss) {
       const adresse = view.webContents.getURL();
@@ -1997,6 +2018,7 @@ function getProviderView(provider) {
     installYoutubeWiedergabe(view, view.webContents.getURL()).catch(() => {});
     installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
     installHosterQualitaet(view).catch(() => {});
+    installAutoplaySchalter(view).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -2124,6 +2146,7 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // Seite steht der Rahmen des Hosters noch nicht, und ohne Manifest kennt
   // sein Player noch keine Stufen.
   await installHosterQualitaet(view).catch(() => {});
+  await installAutoplaySchalter(view).catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -5707,6 +5730,15 @@ const watchparty = new WatchpartyRaeume({
   }
 });
 
+// Die Einstellungen haben sich geaendert, ohne dass die Oberflaeche es
+// veranlasst hat. Ohne diese Meldung stuende in der Seitenleiste weiter der
+// alte Stand - und das naechste Speichern von dort haette den Schalter aus
+// der Seite still wieder zurueckgedreht.
+function meldeEinstellungen() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("settings:changed", publicSettings(settings));
+}
+
 function watchpartySettings() {
   return settings.watchparty || {};
 }
@@ -6725,6 +6757,14 @@ function pushWatchpartyLiveState(url = "") {
 // Die hoechste Bildstufe beim Hoster waehlen. Das Skript geht in alle Frames
 // und findet nur dort einen Player, wo der Hoster wirklich sitzt - im Dokument
 // von AniWorld gibt es keinen.
+// Der Autoplay-Schalter. Anders als der Chat haengt er an keiner Runde: er
+// steht in jeder Folge, auch wenn niemand mitschaut.
+async function installAutoplaySchalter(view) {
+  if (!isLiveView(view)) return;
+  const an = settings.playback?.autoplayNextEpisode !== false;
+  await executeJavaScriptInMediaFrames(view, autoplaySchalterScript(an)).catch(() => []);
+}
+
 async function installHosterQualitaet(view) {
   if (!isLiveView(view)) return;
   await executeJavaScriptInMediaFrames(view, voeQualitaet.qualitaetScript()).catch(() => []);
@@ -7774,36 +7814,197 @@ function watchStatistik(zeitraum = "alles") {
 // Und er verschwindet, wenn die Maus stillsteht - genau wie der Knopf fuer die
 // naechste Folge. Wer schaut, bewegt die Maus nicht; wer die Maus bewegt, will
 // etwas. Eingeklappt bleibt nur ein kleiner Knopf, und auch der verblasst.
-const CHAT_RUHE_MS = 3500;
+const LEISTE_RUHE_MS = 3500;
+
+// Die Leiste links oben.
+//
+// Dort liegen die Bedienelemente, die zur Folge gehoeren und nicht zum Player:
+// der Chat der Watchparty und der Schalter fuer die naechste Folge. Sie teilen
+// sich einen Kasten, damit sie nebeneinander stehen statt uebereinander - und
+// damit der eine nicht springt, wenn der andere kommt oder geht.
+//
+// Die Reihenfolge steht ueber "order", nicht ueber die Reihenfolge im DOM:
+// welches Skript zuerst laeuft, haengt davon ab, ob gerade eine Runde laeuft.
+// Der Schalter ist immer da und steht deshalb links; der Chat kommt und geht
+// und haengt sich rechts daneben.
+function leisteQuelltext() {
+  return `
+  function elfixLeisteLinks() {
+    const obenDrauf = window.top === window.self;
+    const sichtbaresVideo = Array.from(document.querySelectorAll("video")).some((video) => {
+      const rect = video.getBoundingClientRect();
+      return rect.width > 120 && rect.height > 80;
+    });
+    const rahmen = Array.from(document.querySelectorAll("iframe, embed")).some((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 200 && rect.height > 120;
+    });
+    // Dieselbe Regel wie beim Folgenknopf: die Einblendung gehoert in den Frame
+    // mit dem Video, sonst ist sie im Vollbild nicht zu sehen.
+    if (!(sichtbaresVideo || (obenDrauf && !rahmen))) return null;
+
+    const vollbild = document.fullscreenElement;
+    const buehne = vollbild && vollbild.tagName !== "IFRAME" && vollbild.tagName !== "EMBED"
+      ? vollbild : document.documentElement;
+
+    let leiste = document.getElementById("__elfixLeisteLinks");
+    // Beim Wechsel ins Vollbild wandert die Buehne. Eine Leiste, die noch am
+    // alten Dokument haengt, wuerde dort nie wieder gezeichnet.
+    if (leiste && leiste.parentElement !== buehne) {
+      leiste.remove();
+      leiste = null;
+    }
+    if (!leiste) {
+      leiste = document.createElement("div");
+      leiste.id = "__elfixLeisteLinks";
+      Object.assign(leiste.style, {
+        position: "fixed", left: "22px", top: "22px", zIndex: "2147483646",
+        display: "flex", alignItems: "flex-start", gap: "8px"
+      });
+      buehne.appendChild(leiste);
+    }
+    return leiste;
+  }
+
+  // Bleibt nichts mehr darin, gehoert auch die Leiste weg - ein leerer Kasten
+  // ueber dem Bild faengt sonst Klicks ab, die dem Player gehoeren.
+  function elfixLeisteAufraeumen() {
+    const leiste = document.getElementById("__elfixLeisteLinks");
+    if (leiste && leiste.children.length === 0) leiste.remove();
+  }
+`;
+}
+
+// Der Schalter fuer die naechste Folge - wie bei YouTube, an derselben Stelle
+// wie der Chat.
+//
+// Es ist derselbe Schalter wie in den Einstellungen, nicht ein zweiter daneben:
+// er schreibt dieselbe Einstellung und gilt damit ueber die Folge hinaus. Was
+// nur fuer die laufende Folge gilt, steht schon in der Einblendung am Ende
+// ("Danach aufhoeren") - zwei Dinge, die verschieden lange gelten, duerfen
+// nicht gleich aussehen.
+function autoplaySchalterScript(an) {
+  return `(() => {
+  ${leisteQuelltext()}
+  const id = "__elfixAutoplaySchalter";
+  const anfangs = ${an ? "true" : "false"};
+
+  const leiste = elfixLeisteLinks();
+  if (!leiste) {
+    const alt = document.getElementById(id);
+    if (alt) { alt.remove(); elfixLeisteAufraeumen(); }
+    return "autoplay-nicht-zustaendig";
+  }
+
+  let schalter = document.getElementById(id);
+  // Beim Wechsel ins Vollbild baut sich die Leiste neu - dann gehoert der
+  // Schalter mit hinueber statt am alten Dokument haengenzubleiben.
+  if (schalter && schalter.parentElement !== leiste) {
+    schalter.remove();
+    schalter = null;
+  }
+  // Schon da: dann nur den Stand nachziehen. Er kann sich in den
+  // Einstellungen geaendert haben, waehrend die Folge lief.
+  if (schalter) {
+    schalter.__setzen(anfangs);
+    schalter.__wach();
+    return "autoplay-schon-da";
+  }
+
+  schalter = document.createElement("button");
+  schalter.id = id;
+  schalter.type = "button";
+  Object.assign(schalter.style, {
+    // Links vom Chat: der Schalter ist immer da, der Chat kommt und geht.
+    order: "1",
+    display: "flex", alignItems: "center", gap: "9px",
+    minHeight: "38px", padding: "0 14px", border: "0", borderRadius: "999px",
+    background: "rgba(12, 16, 24, 0.86)", color: "#fff",
+    font: "700 13px/1 system-ui, sans-serif", cursor: "pointer",
+    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.45)",
+    opacity: "0", transition: "opacity 220ms ease"
+  });
+
+  const beschriftung = document.createElement("span");
+  beschriftung.textContent = "Autoplay";
+  const bahn = document.createElement("span");
+  Object.assign(bahn.style, {
+    position: "relative", width: "32px", height: "18px", borderRadius: "999px",
+    flex: "0 0 auto", transition: "background 160ms ease"
+  });
+  const griff = document.createElement("span");
+  Object.assign(griff.style, {
+    position: "absolute", top: "2px", left: "2px", width: "14px", height: "14px",
+    borderRadius: "50%", background: "#fff", transition: "transform 160ms ease"
+  });
+  bahn.appendChild(griff);
+  schalter.append(beschriftung, bahn);
+  leiste.appendChild(schalter);
+
+  schalter.__setzen = (zustand) => {
+    schalter.dataset.an = zustand ? "ja" : "";
+    schalter.setAttribute("aria-pressed", zustand ? "true" : "false");
+    schalter.title = zustand
+      ? "N\u00e4chste Folge startet von selbst"
+      : "N\u00e4chste Folge startet nicht von selbst";
+    bahn.style.background = zustand ? "#3ea6ff" : "rgba(255, 255, 255, 0.28)";
+    griff.style.transform = zustand ? "translateX(14px)" : "translateX(0)";
+  };
+  schalter.__setzen(anfangs);
+
+  // Dieselbe Ruhe wie beim Chat: wer schaut, bewegt die Maus nicht.
+  let ruhe = 0;
+  const wach = () => {
+    schalter.style.opacity = "1";
+    if (ruhe) clearTimeout(ruhe);
+    ruhe = setTimeout(() => {
+      if (schalter.__ueber) return;
+      schalter.style.opacity = "0";
+    }, ${LEISTE_RUHE_MS});
+  };
+  schalter.__wach = wach;
+  schalter.addEventListener("mouseenter", () => { schalter.__ueber = true; wach(); });
+  schalter.addEventListener("mouseleave", () => { schalter.__ueber = false; wach(); });
+  document.addEventListener("mousemove", wach, true);
+
+  schalter.addEventListener("click", (ereignis) => {
+    ereignis.preventDefault();
+    ereignis.stopPropagation();
+    const neu = schalter.dataset.an !== "ja";
+    // Sofort umlegen, nicht erst auf die Antwort warten: die Einstellung liegt
+    // eine Prozessgrenze weiter, und ein Schalter, der erst danach reagiert,
+    // fuehlt sich kaputt an.
+    schalter.__setzen(neu);
+    wach();
+    console.log("__elfix:autoplay:" + (neu ? "1" : "0"));
+  }, true);
+
+  // Sonst nimmt der Player die Leertaste und pausiert, waehrend man schaltet.
+  for (const name of ["keydown", "keyup", "keypress"]) {
+    schalter.addEventListener(name, (ereignis) => { ereignis.stopPropagation(); }, true);
+  }
+
+  requestAnimationFrame(wach);
+  return "autoplay-da@" + location.hostname;
+})()`;
+}
 
 function watchpartyChatScript(optionen = {}) {
   return `(() => {
+  ${leisteQuelltext()}
   const id = "__elfixChat";
   const eigenerName = ${JSON.stringify(String(optionen.name || "Du"))};
   if (window.__elfixChat) { window.__elfixChat.wach(); return "chat-schon-da"; }
 
-  const obenDrauf = window.top === window.self;
-  const sichtbaresVideo = Array.from(document.querySelectorAll("video")).some((video) => {
-    const rect = video.getBoundingClientRect();
-    return rect.width > 120 && rect.height > 80;
-  });
-  const rahmen = Array.from(document.querySelectorAll("iframe, embed")).some((node) => {
-    const rect = node.getBoundingClientRect();
-    return rect.width > 200 && rect.height > 120;
-  });
-  // Dieselbe Regel wie beim Folgenknopf: die Einblendung gehoert in den Frame
-  // mit dem Video, sonst ist sie im Vollbild nicht zu sehen.
-  if (!(sichtbaresVideo || (obenDrauf && !rahmen))) return "chat-nicht-zustaendig";
-
-  const vollbild = document.fullscreenElement;
-  const buehne = vollbild && vollbild.tagName !== "IFRAME" && vollbild.tagName !== "EMBED"
-    ? vollbild : document.documentElement;
+  const leiste = elfixLeisteLinks();
+  if (!leiste) return "chat-nicht-zustaendig";
 
   const kasten = document.createElement("div");
   kasten.id = id;
   Object.assign(kasten.style, {
-    position: "fixed", left: "22px", top: "22px", zIndex: "2147483646",
     display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "8px",
+    // Rechts vom Schalter: der ist immer da, der Chat kommt und geht.
+    order: "2",
     font: "500 14px/1.4 system-ui, sans-serif", color: "#fff",
     opacity: "0", transition: "opacity 220ms ease"
   });
@@ -7879,7 +8080,7 @@ function watchpartyChatScript(optionen = {}) {
   // derselben Ecke wie die Kopfzeile des Feldes, das er ersetzt - deshalb hier
   // vor dem Feld und nicht dahinter.
   kasten.append(knopf, feld);
-  buehne.appendChild(kasten);
+  leiste.appendChild(kasten);
 
   // --- Sichtbarkeit ---
   // Der Chat gehoert zur Bedienung, nicht zum Film. Steht die Maus still, geht
@@ -7893,7 +8094,7 @@ function watchpartyChatScript(optionen = {}) {
       if (kasten.__offen && (document.activeElement === eingabe || kasten.__ueber)) return;
       if (kasten.__ueber) return;
       kasten.style.opacity = "0";
-    }, ${CHAT_RUHE_MS});
+    }, ${LEISTE_RUHE_MS});
   };
   kasten.addEventListener("mouseenter", () => { kasten.__ueber = true; wach(); });
   kasten.addEventListener("mouseleave", () => { kasten.__ueber = false; wach(); });
@@ -7964,6 +8165,7 @@ function watchpartyChatScript(optionen = {}) {
       if (ruhe) clearTimeout(ruhe);
       document.removeEventListener("mousemove", wach, true);
       kasten.remove();
+      elfixLeisteAufraeumen();
       window.__elfixChat = null;
     }
   };

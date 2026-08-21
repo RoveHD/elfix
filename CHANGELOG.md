@@ -3,6 +3,53 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.30.0 — 21. August 2026
+
+Ein Autoplay-Schalter im Bild, neben dem Chat. Und drei Stellen, an denen sich
+etwas ausblenden liess, ohne dass es verschwand.
+
+**Autoplay-Schalter**
+
+- Links oben im Bild, neben dem Chat: ein kleiner Schalter fuer "Naechste Folge
+  von selbst starten" - wie bei YouTube, an Ort und Stelle statt in den
+  Einstellungen
+- Es ist derselbe Schalter wie dort, nicht ein zweiter daneben. Er schreibt
+  dieselbe Einstellung und gilt damit ueber die Folge hinaus. Was nur fuer die
+  laufende Folge gilt, steht weiterhin am Ende in der Einblendung ("Danach
+  aufhoeren") - zwei Dinge, die verschieden lange gelten, duerfen nicht gleich
+  aussehen
+- Er legt sich sofort um und meldet erst danach nach aussen. Die Einstellung
+  liegt eine Prozessgrenze weiter; ein Schalter, der erst danach reagiert,
+  fuehlt sich kaputt an
+- Laeuft gerade ein Zaehler zur naechsten Folge, spuert er die Ansage sofort -
+  nicht erst bei der uebernaechsten Folge
+- Die Seitenleiste erfaehrt davon. Ohne diese Meldung stuende dort weiter der
+  alte Stand, und das naechste Speichern von dort haette den Schalter aus dem
+  Bild still wieder zurueckgedreht
+
+**Eine Leiste fuer beides**
+
+- Chat und Schalter teilen sich jetzt einen Kasten links oben, statt jeder fuer
+  sich in derselben Ecke zu liegen. Der Schalter steht links und ist immer da;
+  der Chat kommt und geht mit der Watchparty und haengt sich rechts daneben -
+  so springt der Schalter nicht, wenn eine Runde beginnt oder endet
+- Bleibt nichts uebrig, verschwindet auch die Leiste. Ein leerer Kasten ueber
+  dem Bild finge sonst Klicks ab, die dem Player gehoeren
+
+**Ausblenden, das wirklich ausblendet**
+
+- Der Punkt "Rueckblick" stand in der Seitenleiste, auch wenn die Statistik
+  abgeschaltet war. Der Code setzte die Klasse brav - nur hob sie das
+  `display` der Grundregel nicht auf. Eine allgemeine Regel dafuer gibt es in
+  dieser Datei bewusst nicht; jede haengt an ihrer Klasse, und diese fehlte
+- Dieselbe Falle an zwei weiteren Stellen, gefunden beim Nachsehen: die
+  Standzeile der Watchparty und die Jahresleiste auf der Statistikseite liessen
+  sich ebenso wenig ausblenden
+- Geprueft wird das jetzt fuer die ganze Oberflaeche auf einmal: jedes Element,
+  das im Markup verborgen anfaengt, braucht eine Regel, die auf eine seiner
+  Klassen passt. An dieser Stelle war ELFIX schon zweimal haengengeblieben -
+  einmal bei "Live verlassen", einmal hier
+
 ## 1.29.0 — 21. August 2026
 
 Der Player beim Hoster startet nicht mehr auf "Auto", sondern auf der hoechsten

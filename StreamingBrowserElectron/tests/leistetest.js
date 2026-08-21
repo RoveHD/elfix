@@ -108,6 +108,46 @@ pruefe("Der Pfeil weicht dem Zeichen", /\.app-sidebar\s+\.sidebar-collapse\s*\{\
 pruefe("Und eingeklappt steht das Zeichen dann trotzdem da",
   /\.app-shell\.sidebar-collapsed\s+\.sidebar-mark\s*\{\s*display:\s*grid/.test(bei980));
 
+// --- Jede is-hidden-Klasse braucht ihre eigene Regel -------------------------
+//
+// In dieser Datei gibt es bewusst keine allgemeine .is-hidden-Regel: jede haengt
+// an ihrer Klasse. Das ist eine Falle, in die ELFIX zweimal getreten ist - bei
+// "Live verlassen" und bei "Rueckblick". Beide Male setzte der Code die Klasse
+// brav, nur hob sie das display der Grundregel nicht auf, und der Knopf blieb
+// stehen. Am Verhalten war das nicht zu sehen: die Klasse stand ja im Element.
+//
+// Deshalb hier die Gegenprobe ueber die ganze Oberflaeche.
+
+const MARKUP = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "index.html"), "utf8")
+  .replace(/\r/g, "");
+
+// Alle Klassen, fuer die es eine Regel gibt, die sie wirklich verschwinden laesst.
+const versteckbar = new Set();
+for (const stueck of QUELLE.split("}")) {
+  const auf = stueck.indexOf("{");
+  if (auf < 0) continue;
+  if (!/display:\s*none/.test(stueck.slice(auf))) continue;
+  for (const treffer of stueck.slice(0, auf).matchAll(/\.([a-z0-9-]+)\.is-hidden/gi)) {
+    versteckbar.add(treffer[1]);
+  }
+}
+
+const ungedeckt = [];
+for (const treffer of MARKUP.matchAll(/class="([^"]*\bis-hidden\b[^"]*)"/g)) {
+  const klassen = treffer[1].split(/\s+/).filter(Boolean).filter((k) => k !== "is-hidden");
+  if (klassen.some((k) => versteckbar.has(k))) continue;
+  ungedeckt.push(treffer[1].trim());
+}
+
+pruefe("Jedes verborgene Element im Markup hat auch eine Regel dafuer",
+  ungedeckt.length === 0,
+  ungedeckt.join("  |  ") || "alle gedeckt");
+
+// Und der Fall, der es ausgeloest hat, noch einmal beim Namen.
+pruefe("\"Rueckblick\" laesst sich wirklich ausblenden",
+  versteckbar.has("home-side-link"),
+  "ohne diese Regel stand der Punkt in der Seitenleiste, obwohl die Statistik aus war");
+
 const gut = pruefungen.filter(Boolean).length;
 console.log(`${gut}/${pruefungen.length} bestanden`);
 process.exit(gut === pruefungen.length ? 0 : 1);

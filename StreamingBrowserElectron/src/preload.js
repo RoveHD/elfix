@@ -84,6 +84,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Ein Klick auf die Benachrichtigung ueber eine neue Folge. Der Hauptprozess
   // holt das Fenster nach vorn und schickt hierher, um welchen Titel es ging.
   onZeigeFavorit: (callback) => ipcRenderer.on("elfix:zeige-favorit", (_event, id) => callback(id)),
+  // Die Einstellungen haben sich ohne Zutun der Oberflaeche geaendert - etwa
+  // durch den Autoplay-Schalter in der Anbieterseite.
+  onSettingsChanged: (callback) => ipcRenderer.on("settings:changed", (_event, neu) => callback(neu)),
   onToast: (callback) => ipcRenderer.on("app:toast", (_event, message) => callback(message)),
   onAutostartDone: (callback) => ipcRenderer.on("app:autostart-done", (_event, info) => callback(info))
 });

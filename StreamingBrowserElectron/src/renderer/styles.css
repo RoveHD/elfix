@@ -179,6 +179,14 @@
   font-weight: 750;
 }
 
+/* Es gibt keine allgemeine .is-hidden-Regel in dieser Datei - jede haengt an
+   ihrer Klasse. Ohne diese hier blieb "Rueckblick" in der Seitenleiste stehen,
+   auch wenn die Statistik abgeschaltet war: der Code setzte die Klasse, nur
+   ueberschrieb sie das display: flex von .home-side-link nicht. */
+.home-side-link.is-hidden {
+  display: none;
+}
+
 .home-side-link:hover,
 .home-side-link.is-active,
 .home-top-link:hover,
@@ -599,6 +607,13 @@
   gap: 4px;
   min-width: 0;
   overflow: hidden;
+}
+
+/* Jede is-hidden-Regel haengt an ihrer Klasse; eine allgemeine gibt es hier
+   nicht. Ohne diese blieb die Standzeile stehen, obwohl der Code sie
+   ausdruecklich abschaltet. */
+.watchparty-stand.is-hidden {
+  display: none;
 }
 
 .stand-chip {
@@ -5086,6 +5101,12 @@ input[type="color"] {
   flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 10px;
+}
+
+/* Dieselbe Falle: ohne diese Regel stand die Jahresleiste auf der
+   Statistikseite auch dann da, wenn es nur einen Zeitraum zu waehlen gab. */
+.calendar-filter.is-hidden {
+  display: none;
 }
 
 /* In der Mediathek stehen zwei solche Reihen untereinander: oben die Reiter,

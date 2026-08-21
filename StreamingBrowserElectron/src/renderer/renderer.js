@@ -924,6 +924,18 @@ function bindEvents() {
     entdeckungMerkeScroll();
   }, { passive: true });
 
+  // Der Autoplay-Schalter sitzt in der Anbieterseite und stellt dieselbe
+  // Einstellung wie die Seitenleiste. Ohne diese Meldung stuende hier weiter
+  // der alte Stand - und das naechste Speichern von hier haette ihn still
+  // wieder zurueckgedreht.
+  api.onSettingsChanged((neu) => {
+    if (!neu) return;
+    settings = neu;
+    if (autoplayNextEpisode) {
+      autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
+    }
+  });
+
   api.onToast((message) => {
     showToast(message);
   });

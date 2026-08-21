@@ -16,6 +16,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const WS = require("../../sync-server/node_modules/ws");
+const seite = require("./seite");
 
 const PORT = Number(process.env.TESTPORT) || 8799;
 const ADRESSE = `ws://127.0.0.1:${PORT}`;
@@ -174,12 +175,18 @@ function client(name, deviceId) {
   pruefe("Die Einblendung meldet sich als eingerichtet",
     buehne.ergebnis.startsWith("chat-da@"),
     buehne.ergebnis);
-  pruefe("Sie sitzt links oben",
-    buehne.kasten.style.left === "22px" && buehne.kasten.style.top === "22px"
-    && !buehne.kasten.style.right && !buehne.kasten.style.bottom,
-    [buehne.kasten.style.top, buehne.kasten.style.left,
-      buehne.kasten.style.bottom, buehne.kasten.style.right].join(" / "));
-  pruefe("und waechst von dort nach unten",
+  pruefe("Die Leiste sitzt links oben",
+    buehne.leiste.style.left === "22px" && buehne.leiste.style.top === "22px"
+    && !buehne.leiste.style.right && !buehne.leiste.style.bottom,
+    [buehne.leiste.style.top, buehne.leiste.style.left,
+      buehne.leiste.style.bottom, buehne.leiste.style.right].join(" / "));
+  pruefe("Der Chat haengt in der Leiste, nicht am Dokument",
+    buehne.kasten.parentElement === buehne.leiste && !buehne.kasten.style.position,
+    "sonst laege er ueber dem Schalter statt neben ihm");
+  pruefe("und steht rechts vom Schalter",
+    buehne.kasten.style.order === "2",
+    "der Schalter ist immer da, der Chat kommt und geht - der soll nicht springen");
+  pruefe("Er waechst nach unten",
     buehne.kasten.style.alignItems === "flex-start"
     && buehne.kasten.children[0] === buehne.knopf,
     "der Knopf steht an derselben Ecke wie die Kopfzeile des Feldes, das er ersetzt");
@@ -346,77 +353,18 @@ function client(name, deviceId) {
   process.exit(fehler ? 1 : 0);
 })();
 
-// --- Ein Ersatz-DOM fuer die Einblendung ------------------------------------
+// --- Die Einblendung auf der gemeinsamen Buehne -----------------------------
+//
+// Das Ersatz-DOM liegt in seite.js: seit der gemeinsamen Leiste links oben
+// teilen der Chat und der Autoplay-Schalter sich dieselbe Buehne, und zwei
+// Nachbauten waeren zwei Wahrheiten.
 
 function seiteBauen() {
-  const meldungen = [];
-  const uhr = { jetzt: 0 };
-  const wartende = [];
-  let nummer = 1;
+  const buehne = seite.seiteBauen();
+  const ergebnis = buehne.lauf(seite.skriptBauen("watchpartyChatScript", { name: "Du" }));
 
-  function element(tag) {
-    const horcher = {};
-    const knoten = {
-      tag, id: "", textContent: "", type: "", value: "", maxLength: 0, placeholder: "",
-      style: {}, children: [], parentElement: null,
-      addEventListener(name, fn) { (horcher[name] = horcher[name] || []).push(fn); },
-      removeEventListener() {},
-      append(...k) { k.forEach((x) => { x.parentElement = knoten; knoten.children.push(x); }); },
-      appendChild(k) { k.parentElement = knoten; knoten.children.push(k); return k; },
-      remove() {
-        if (knoten.parentElement) {
-          knoten.parentElement.children = knoten.parentElement.children.filter((x) => x !== knoten);
-        }
-      },
-      get firstChild() { return knoten.children[0] || null; },
-      focus() { dokument.activeElement = knoten; },
-      getBoundingClientRect: () => ({ width: 800, height: 450 }),
-      scrollTop: 0, scrollHeight: 0,
-      ausloesen(name, ereignis = {}) {
-        const daten = { preventDefault() {}, stopPropagation() { daten.gestoppt = true; }, ...ereignis };
-        for (const fn of horcher[name] || []) fn(daten);
-        return daten;
-      },
-      hat: (name) => Boolean(horcher[name])
-    };
-    return knoten;
-  }
-
-  const video = element("video");
-  const wurzel = element("html");
-  const dokument = {
-    documentElement: wurzel,
-    fullscreenElement: null,
-    activeElement: null,
-    createElement: element,
-    querySelectorAll: (auswahl) => (auswahl === "video" ? [video] : []),
-    addEventListener(name, fn) { (dokument.__h = dokument.__h || {})[name] = fn; },
-    removeEventListener() {}
-  };
-  const fenster = {};
-  fenster.top = fenster;
-  fenster.self = fenster;
-
-  const kontext = {
-    document: dokument,
-    window: fenster,
-    location: { hostname: "aniworld.to" },
-    console: { log: (t) => meldungen.push(String(t)) },
-    Object, Array, String, Number, Boolean, Math, JSON, Date,
-    setTimeout: (fn, ms) => { const n = nummer++; wartende.push({ n, fn, faellig: uhr.jetzt + (Number(ms) || 0) }); return n; },
-    clearTimeout: (n) => { const i = wartende.findIndex((w) => w.n === n); if (i >= 0) wartende.splice(i, 1); },
-    requestAnimationFrame: (fn) => fn()
-  };
-  vm.createContext(kontext);
-
-  const u = { JSON, String, Number };
-  vm.createContext(u);
-  vm.runInContext(MAIN.match(/^const CHAT_RUHE_MS = .+$/m)[0], u);
-  vm.runInContext(abschnitt(MAIN, "function watchpartyChatScript("), u);
-  const script = vm.runInContext("watchpartyChatScript", u)({ name: "Du" });
-  const ergebnis = vm.runInContext(script, kontext);
-
-  const kasten = wurzel.children.find((k) => k.id === "__elfixChat");
+  const leiste = buehne.leiste();
+  const kasten = buehne.holen("__elfixChat");
   // Nach Gestalt statt nach Platz: der Kasten haelt genau einen Knopf und
   // genau ein Feld. Welcher von beiden zuerst kommt, haengt daran, in welcher
   // Ecke der Chat sitzt - und das darf sich aendern, ohne den Test zu brechen.
@@ -438,24 +386,20 @@ function seiteBauen() {
   eingabe.ausloesen("keydown");
 
   return {
-    ergebnis, meldungen, kasten, feld, knopf, zu, liste, eingabe,
+    ergebnis, kasten, leiste, feld, knopf, zu, liste, eingabe,
+    meldungen: buehne.meldungen,
     get tastenGestoppt() { return tastenGestoppt; },
     knopfSichtbar: () => knopf.style.display !== "none",
     feldSichtbar: () => feld.style.display === "flex",
     klick: (knoten) => knoten.ausloesen("click"),
     absenden: () => zeile.ausloesen("submit"),
-    mausBewegen: () => dokument.__h.mousemove({}),
+    mausBewegen: () => buehne.mausBewegen(),
     mausDrauf: () => kasten.ausloesen("mouseenter"),
     mausWeg: () => kasten.ausloesen("mouseleave"),
-    // Die Uhr weiterdrehen und alles ausloesen, was faellig geworden ist.
-    warten(ms) {
-      uhr.jetzt += ms;
-      for (const eintrag of wartende.splice(0).sort((a, b) => a.faellig - b.faellig)) {
-        if (eintrag.faellig <= uhr.jetzt) eintrag.fn();
-        else wartende.push(eintrag);
-      }
-    },
-    melden: (nachricht) => vm.runInContext("window.__elfixChat", kontext).melden(nachricht),
+    warten: (ms) => buehne.warten(ms),
+    entfernen: () => buehne.lauf("window.__elfixChat.entfernen()"),
+    leisteDa: () => Boolean(buehne.leiste()),
+    melden: (nachricht) => buehne.lauf("window.__elfixChat").melden(nachricht),
     listeText: () => liste.children.map((k) => k.children.map((x) => x.textContent).join(" ")).join(" | ")
   };
 }
