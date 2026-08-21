@@ -3,6 +3,42 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.28.1 — 21. August 2026
+
+Zwei Nachbesserungen an 1.28.0: der Watchparty-Chat war eingebaut, aber nicht zu
+sehen, und der Rueckblick stand ungefragt in der Seitenleiste.
+
+**Chat erscheint jetzt wirklich**
+
+- Der Merker fuer den Chat wurde nur beim Laden der Seite gesetzt. Zu diesem
+  Zeitpunkt steht noch gar nicht fest, ob hier eine Watchparty laeuft - der
+  Live-Zustand entsteht erst danach. Damit war der Merker praktisch immer leer
+  und die Einblendung fiel aus
+- Er haengt jetzt am selben Fortschritts-Takt wie die Steuerung der Watchparty,
+  die dieses Problem seit jeher so loest. Wer erst nach dem Laden beitritt oder
+  live schaltet, bekommt den Chat damit ebenfalls - und endet die Runde,
+  verschwindet er wieder
+
+**Rueckblick nur auf Wunsch**
+
+- Die Statistik ist von Haus aus ausgeblendet und laesst sich unter Startseite
+  einschalten. Wer sie sucht, findet sie; wer sie nie brauchte, hat den Punkt
+  nicht mehr in der Seitenleiste
+- Im Dezember erscheint sie trotzdem, solange der Jahresrueckblick verfuegbar
+  ist. Dafuer gibt es einen eigenen Merker neben "faellig": "faellig" erlischt,
+  sobald man Wrapped angesehen hat - haenge die Sichtbarkeit daran, verschwaende
+  der Weg zum Archiv genau dann, wenn man ihn wiederfinden moechte
+
+**Relay**
+
+- `/health` weist den Chat unter "features" aus. Das README verspricht, dass
+  dort steht, was die laufende Fassung kann - genau daran sieht man nach dem
+  Kopieren, ob der Dienst die neue Datei wirklich benutzt. Fuer den Chat stand
+  dort bisher nichts
+- Die Alternative waere gewesen, versuchsweise eine Chatzeile durch einen Raum
+  zu schicken. Das will man nicht: entweder ist niemand da und man weiss
+  weiterhin nichts, oder es sitzt jemand darin und liest den Test mit
+
 ## 1.28.0 — 21. August 2026
 
 ELFIX misst ab jetzt, wie lange wirklich geschaut wurde - und baut daraus eine
