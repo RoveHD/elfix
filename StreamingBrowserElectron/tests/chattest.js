@@ -154,6 +154,10 @@ function client(name, deviceId) {
     !/zustandSpeichernSpaeter\(\);/.test(abschnitt(SERVER, '    if (nachricht.type === "chat") {', "    }")),
     "eine Chatzeile ist kein Raumzustand");
 
+  pruefe("/health weist den Chat aus",
+    /"chat"/.test(SERVER.slice(SERVER.indexOf("features: ["), SERVER.indexOf("features: [") + 400)),
+    "sonst laesst sich nach dem Ausrollen nicht pruefen, ob die neue Fassung laeuft");
+
   // --- Die Seite des Clients ---
 
   pruefe("Der Client reicht den Chat an der Zustandsverarbeitung vorbei",

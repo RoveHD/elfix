@@ -279,7 +279,12 @@ const server = http.createServer((req, res) => {
       // laufende Nummer, verspaetete Ereignisse lassen sich abweisen.
       // "youtube" heisst: dieses Relay kennt den eigenen YouTube-Modus mit
       // gemeinsamem Video, Revisionsnummer und ohne Host.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube"],
+      //
+      // "chat" heisst: es reicht Textzeilen im Raum weiter. Der Eintrag ist die
+      // einzige Moeglichkeit, nach dem Ausrollen von aussen zu sehen, ob die
+      // neue Fassung wirklich laeuft - eine Chatzeile schickt man dafuer nicht
+      // gern versuchsweise durch einen fremden Raum.
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
