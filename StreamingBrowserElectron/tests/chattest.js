@@ -240,8 +240,21 @@ function client(name, deviceId) {
   // --- Wann sie ueberhaupt eingespielt wird ---
 
   const install = abschnitt(MAIN, "async function installWatchpartyChat(");
+  // Der Fehler, an dem der Chat zuerst gar nicht erschien: eingespielt wurde er
+  // nur beim Laden der Seite. Da steht aber noch nicht fest, ob hier eine Runde
+  // laeuft - die Steuerung der Watchparty wird aus genau diesem Grund seit
+  // jeher auch im Fortschritts-Takt nachgezogen.
+  const taktStelle = MAIN.indexOf("await installWatchpartyControls(provider, view, url)");
+  pruefe("Der Chat wird im Fortschritts-Takt nachgezogen, nicht nur beim Laden",
+    taktStelle > 0 && MAIN.slice(taktStelle, taktStelle + 600).includes("await installWatchpartyChat(provider, view, url)"),
+    "wer erst nach dem Laden beitritt, bekaeme sonst nie einen Chat");
+  pruefe("Endet die Runde, wird er wieder entfernt",
+    /window\.__elfixChat && window\.__elfixChat\.entfernen\(\)/.test(MAIN),
+    "ein Feld, dessen Nachrichten niemand bekommt, ist schlimmer als keines");
+
   pruefe("Eingespielt wird nur, wo eine Runde laeuft",
-    /const key = watchpartyLiveKeyForUrl\(url\);\s*\n\s*if \(!key \|\| !watchparty\.aktiv\) return;/.test(install),
+    /const key = watchpartyLiveKeyForUrl\(url\);/.test(install)
+    && /if \(!key \|\| !watchparty\.aktiv\) \{/.test(install),
     "ohne Raum haette der Knopf niemanden, mit dem er spraeche");
   pruefe("Gesendet wird nur aus einer laufenden Runde",
     /const key = watchpartyLiveKeyForUrl\(view\.webContents\.getURL\(\)\);\s*\n\s*if \(key\) watchparty\.chatSenden\(chat\[1\]\);/.test(MAIN));

@@ -302,6 +302,31 @@ pruefe("Der Hinweis steht auf der Startseite, nicht als Fenster",
   "kein Popup bei jedem Start");
 pruefe("Er verschwindet, sobald der Rueckblick geoeffnet wurde",
   /api\.markWrappedSeen\?\.\(antwort\.jahr\)\.then\(\(\) => renderWrappedHinweis\(\)\)/.test(RENDERER));
+// --- Der Eintrag in der Seitenleiste ---
+
+pruefe("Der Punkt ist von Haus aus nicht zu sehen",
+  /id="reviewSideLink" data-home-action="review"/.test(HTML)
+  && /class="home-side-link is-hidden" type="button" id="reviewSideLink"/.test(HTML),
+  "eine Statistik ist etwas fuer den, der sie sucht");
+pruefe("Die Einstellung steht bei den uebrigen Sichtbarkeits-Schaltern",
+  /id="showReviewLink" type="checkbox"/.test(HTML));
+pruefe("Von Haus aus steht sie auf aus",
+  /showReview: raw\?\.home\?\.showReview === true/.test(MAIN)
+  && /showReview: false/.test(MAIN),
+  "nur ein ausdrueckliches Ja blendet den Punkt ein");
+pruefe("Eingeschaltet steht er da",
+  /if \(settings\.home\?\.showReview === true\) \{[\s\S]{0,80}knopf\.classList\.remove\("is-hidden"\);/.test(RENDERER));
+pruefe("In der Wrapped-Saison ebenfalls, auch ohne die Einstellung",
+  /knopf\.classList\.toggle\("is-hidden", !antwort\?\.saison\)/.test(RENDERER));
+pruefe("Die Saison endet nicht, weil man den Rueckblick schon gesehen hat",
+  /saison: Boolean\(imFenster\) && imFenster === jahr && genug,/.test(MAIN),
+  "sonst verschwaende der Weg dorthin genau dann, wenn man ihn wiederfinden will");
+pruefe("Die Sichtbarkeit wird beim Speichern der Einstellungen nachgezogen",
+  (RENDERER.match(/renderRueckblickEintrag\(\)/g) || []).length >= 3,
+  "sonst stuende der Punkt erst nach einem Neustart richtig da");
+pruefe("Die Suche in den Einstellungen findet sie",
+  /\["home", "Statistik in der Seitenleiste"/.test(RENDERER));
+
 pruefe("Das Archiv sitzt auf der Statistikseite",
   /<div class="wrapped-archiv is-hidden" id="wrappedArchiv">/.test(HTML)
   && /renderWrappedArchiv\(\)/.test(RENDERER),

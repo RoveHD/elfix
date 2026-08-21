@@ -54,7 +54,7 @@
           <button class="home-side-link" type="button" data-home-action="calendar" title="Kalender"><span class="side-icon">🗓</span><span class="side-label">Kalender</span></button>
           <button class="home-side-link" type="button" data-home-action="favorites" title="Watchlist"><span class="side-icon">♡</span><span class="side-label">Watchlist</span><span class="side-badge is-hidden" id="watchlistBadge"></span></button>
           <button class="home-side-link" type="button" data-home-action="history" title="Verlauf"><span class="side-icon">◴</span><span class="side-label">Verlauf</span></button>
-          <button class="home-side-link" type="button" data-home-action="review" title="Rückblick"><span class="side-icon">✦</span><span class="side-label">Rückblick</span></button>
+          <button class="home-side-link is-hidden" type="button" id="reviewSideLink" data-home-action="review" title="Rückblick"><span class="side-icon">✦</span><span class="side-label">Rückblick</span></button>
         </nav>
         <div class="home-sidebar-section">
           <p>Bibliothek</p>
@@ -544,6 +544,7 @@
           <div class="settings-section-grid">
             <label class="check setting-row"><input id="showHeroHome" type="checkbox"><span><strong>Großes Titelbild oben</strong><small>Zeigt den zuletzt gesehenen Titel mit „Weiter schauen“-Knopf.</small></span></label>
             <label class="check setting-row"><input id="showHomeFavorites" type="checkbox"><span><strong>Reihe „Weiterschauen“</strong><small>Angefangene Filme und Folgen direkt auf der Startseite.</small></span></label>
+            <label class="check setting-row"><input id="showReviewLink" type="checkbox"><span><strong>Statistik in der Seitenleiste</strong><small>Aus: der Punkt „Rückblick“ ist nicht zu sehen. Im Dezember erscheint er trotzdem, solange dein Jahresrückblick verfügbar ist.</small></span></label>
             <label class="check setting-row"><input id="showHomeYoutube" type="checkbox"><span><strong>Reihe „Weiterschauen auf YouTube“</strong><small>Angefangene YouTube-Videos in einer eigenen Reihe, getrennt von Serien und Filmen.</small></span></label>
             <label class="check setting-row"><input id="showHomePersonal" type="checkbox"><span><strong>Reihe „Empfohlen für dich“</strong><small>Vorschläge aus Genres und ähnlichen Titeln zu dem, was du geschaut hast.</small></span></label>
             <label class="check setting-row"><input id="showHomeCategories" type="checkbox"><span><strong>Reihen nach Kategorie</strong><small>Je eine Reihe mit Vorschlägen für Anime, Serien und Filme.</small></span></label>

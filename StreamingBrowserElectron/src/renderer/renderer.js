@@ -241,6 +241,7 @@ const favoriteProgressMode = document.querySelector("#favoriteProgressMode");
 const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
+const showReviewLink = document.querySelector("#showReviewLink");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
 const pauseOnBlur = document.querySelector("#pauseOnBlur");
@@ -322,6 +323,8 @@ const DEFAULT_HOME_SETTINGS = {
   showFavorites: true,
   showPersonal: true,
   showCategories: true,
+  // Aus: die Statistik draengt sich nicht in die Seitenleiste.
+  showReview: false,
   providerCardMeta: "logoName",
   librarySort: "manuell"
 };
@@ -411,6 +414,7 @@ const SETTINGS_INDEX = [
   ["playback", "Automatisch pausieren", "Anbieterwechsel Minimieren Fokus verlassen"],
   ["playback", "Weiterschauen-Fortschritt", "nächste Folge weiterrücken stehen bleiben"],
   ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
+  ["home", "Statistik in der Seitenleiste", "Rückblick Statistik Wrapped Jahresrückblick einblenden ausblenden"],
   ["browser", "Werbung blockieren", "Adblock Popups Weiterleitungen Tracking Filterlisten"],
   ["browser", "Ausnahmen", "Whitelist Domain erlauben Seite funktioniert nicht"],
   ["browser", "Zwischenspeicher", "Cache Browserdaten löschen Start Reload"],
@@ -874,6 +878,7 @@ function bindEvents() {
   pauseOnProviderSwitch.addEventListener("change", saveSettings);
   youtubeInMediathek?.addEventListener("change", saveSettings);
   autoplayNextEpisode?.addEventListener("change", saveSettings);
+  showReviewLink?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
   pauseOnMinimize.addEventListener("change", saveSettings);
@@ -1015,6 +1020,7 @@ function renderHome() {
   // Der Jahresrueckblick meldet sich hier - dezent und nur im Dezember, nicht
   // als Fenster, das sich vor die App stellt.
   renderWrappedHinweis().catch(() => {});
+  renderRueckblickEintrag().catch(() => {});
 
   renderNewEpisodes();
 
@@ -3564,6 +3570,27 @@ function wrappedFinale(daten, jahr, zeitBekannt, bild) {
   return wrappedSeite("is-finale", [karte, schluss], bild);
 }
 
+// Ob der Punkt "Rueckblick" in der Seitenleiste steht.
+//
+// Von Haus aus nicht: eine Statistik ist etwas fuer den, der sie sucht, und
+// nicht fuer jeden, der die App oeffnet. Wer sie will, schaltet sie ein.
+//
+// Im Dezember steht sie trotzdem da - dann aber wegen der Saison und nicht
+// wegen der Einstellung. Und ausdruecklich nicht nur, solange der
+// Jahresrueckblick noch ungesehen ist: er soll erreichbar bleiben, nachdem man
+// ihn einmal angesehen hat, sonst verschwindet der Weg dorthin genau in dem
+// Moment, in dem man ihn wiederfinden moechte.
+async function renderRueckblickEintrag() {
+  const knopf = document.querySelector("#reviewSideLink");
+  if (!knopf) return;
+  if (settings.home?.showReview === true) {
+    knopf.classList.remove("is-hidden");
+    return;
+  }
+  const antwort = await api.getWrapped?.().catch(() => null);
+  knopf.classList.toggle("is-hidden", !antwort?.saison);
+}
+
 // Das Archiv auf der Statistikseite. Hier - und nicht in der Hauptnavigation -
 // gehoert es hin: der Rueckblick ist eine Sicht auf dieselben Daten, kein
 // eigener Bereich.
@@ -5848,6 +5875,7 @@ function renderSettings() {
   showHomeFavorites.checked = home.showFavorites !== false;
   if (showHomePersonal) showHomePersonal.checked = home.showPersonal !== false;
   if (showHomeCategories) showHomeCategories.checked = home.showCategories !== false;
+  if (showReviewLink) showReviewLink.checked = home.showReview === true;
   const party = settings.watchparty || {};
   if (watchpartyEnabled) watchpartyEnabled.checked = party.enabled === true;
   if (watchpartyServer) watchpartyServer.value = party.serverUrl || "";
@@ -6039,6 +6067,7 @@ async function saveSettings() {
     showFavorites: showHomeFavorites.checked,
     showPersonal: showHomePersonal ? showHomePersonal.checked : true,
     showCategories: showHomeCategories ? showHomeCategories.checked : true,
+    showReview: Boolean(showReviewLink?.checked),
     providerCardMeta: providerCardMeta.value,
     // Die Sortierung der Mediathek hat kein Bedienelement in den
     // Einstellungen - sie wird ueber der Mediathek selbst gewaehlt. Ohne diese
@@ -6106,6 +6135,7 @@ async function saveSettings() {
   // hineindarf und ob es einen eigenen Reiter bekommt. Ohne diese Zeile stand
   // die Reiterleiste erst nach dem naechsten Oeffnen richtig da.
   renderLibraryViews();
+  renderRueckblickEintrag().catch(() => {});
   recoverVisibleContent();
   syncBrowserBounds();
 }

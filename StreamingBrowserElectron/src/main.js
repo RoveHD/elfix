@@ -2111,6 +2111,11 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // Video wirklich laeuft.
   await applyWatchpartySeek(provider, view, progress).catch(() => {});
   await installWatchpartyControls(provider, view, url).catch(() => {});
+  // Der Chat gehoert an dieselbe Stelle wie die Steuerung, und aus demselben
+  // Grund: beim Laden der Seite steht noch nicht fest, ob hier eine Runde
+  // laeuft. Wer erst danach beitritt oder live schaltet, bekaeme sonst nie
+  // einen Chat - das Einspielen beim dom-ready allein greift zu frueh.
+  await installWatchpartyChat(provider, view, url).catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -7956,7 +7961,13 @@ function watchpartyChatScript(optionen = {}) {
 async function installWatchpartyChat(provider, view, url) {
   if (!isLiveView(view)) return;
   const key = watchpartyLiveKeyForUrl(url);
-  if (!key || !watchparty.aktiv) return;
+  if (!key || !watchparty.aktiv) {
+    // Keine Runde mehr: der Chat gehoert weg. Ein Eingabefeld, dessen
+    // Nachrichten niemand bekommt, ist schlimmer als keines.
+    await executeJavaScriptInMediaFrames(view,
+      "window.__elfixChat && window.__elfixChat.entfernen()").catch(() => []);
+    return;
+  }
   await executeJavaScriptInMediaFrames(view, watchpartyChatScript({
     name: settings.watchparty?.deviceName || "Du"
   })).catch(() => []);
@@ -8014,6 +8025,11 @@ function wrappedStatus(jahrWunsch) {
   return {
     // "Faellig" heisst: von selbst zeigen. Alles drei muss stimmen.
     faellig: Boolean(imFenster) && imFenster === jahr && genug && !schonGesehen,
+    // "Saison" heisst nur: es ist Dezember und es gibt genug zu erzaehlen.
+    // Anders als "faellig" bleibt das stehen, nachdem man den Rueckblick
+    // angesehen hat - daran haengt, ob der Eintrag in der Seitenleiste
+    // sichtbar ist, und der soll nicht mitten in der Saison verschwinden.
+    saison: Boolean(imFenster) && imFenster === jahr && genug,
     jahr,
     genug,
     daten: daten.sitzungen ? daten : null
@@ -11364,6 +11380,11 @@ function normalizeSettings(raw) {
       showFavorites: raw?.home?.showFavorites ?? defaults.home.showFavorites,
       showPersonal: raw?.home?.showPersonal ?? defaults.home.showPersonal,
       showCategories: raw?.home?.showCategories ?? defaults.home.showCategories,
+      // Die Statistikseite ist etwas fuer den, der sie sucht - sie draengt sich
+      // nicht in die Seitenleiste. Nur ein ausdrueckliches Ja blendet sie ein.
+      // Im Dezember erscheint sie ohnehin, dann aber wegen der Saison und nicht
+      // wegen dieser Einstellung.
+      showReview: raw?.home?.showReview === true,
       providerCardMeta: sanitizeChoice(raw?.home?.providerCardMeta, ["logoName", "logo", "name"], defaults.home.providerCardMeta),
       // Wie die Mediathek sortiert ist. Ohne diese Zeile faellt die Wahl beim
       // Speichern weg - hier werden nur bekannte Felder uebernommen.
@@ -11486,6 +11507,7 @@ function defaultSettings() {
       showFavorites: true,
       showPersonal: true,
       showCategories: true,
+      showReview: false,
       providerCardMeta: "logoName",
       librarySort: "manuell"
     },
