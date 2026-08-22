@@ -50,6 +50,11 @@ const youtube = require("./youtube");
 // Oberflaeche sichtbar - das ist ein Werkzeug zum Nachvollziehen, kein Feature.
 const EMPFEHLUNG_DEBUG = process.env.ELFIX_EMPFEHLUNG_DEBUG === "1";
 const providerModel = require("../shared/provider-model");
+// Ein Anbieter zieht um: welche Adresse mitwandert und welche nicht. Eigenes
+// Modul, damit sich das ohne laufende App pruefen laesst - es geht durch jeden
+// Eintrag der Watchlist, und ein Fehler darin faellt erst auf, wenn nichts mehr
+// zu oeffnen ist.
+const umzug = require("./umzug");
 const bildausschnitt = require("../shared/bildausschnitt");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -1268,6 +1273,78 @@ ipcMain.handle("provider:save-all", (_event, nextProviders) => {
   }
   saveProviders();
   return { providers, activeProviderId };
+});
+
+// Der Anbieter hat eine neue Adresse.
+//
+// AniWorld und S.to wechseln sie regelmaessig, und danach zeigt jeder Eintrag
+// ins Leere - die Watchlist, die Mediathek, die abgehakten Folgen, der Verlauf
+// und die Bilder gleich mit. Hier wird der Wirt in allem auf einmal ersetzt.
+//
+// Gerechnet wird zuerst und geschrieben erst nach der Rueckfrage: was der
+// Bericht nennt, ist genau das, was danach anders ist.
+ipcMain.handle("provider:relocate", async (_event, providerId, neueAdresse) => {
+  const vorschau = umzug.umziehen({
+    providers,
+    favorites,
+    providerId: String(providerId || ""),
+    neueAdresse,
+    normalisieren: normalizeFavoriteUrl
+  });
+  if (!vorschau.ok) return { moved: false, reason: vorschau.grund };
+
+  const bericht = vorschau.bericht;
+  const dieser = providers.find((eintrag) => eintrag.id === providerId);
+  const zeilen = [
+    `Von ${bericht.vonHost} auf ${bericht.nachWurzel}.`,
+    "",
+    bericht.eintraege === 0
+      ? "Kein Eintrag der Watchlist zeigt auf die alte Adresse - es ziehen nur die Anbieterangaben um."
+      : `${bericht.eintraege} Eintrag/Eintraege ziehen mit, davon ${bericht.mediathek} in der Mediathek.`
+      + ` Insgesamt ${bericht.felder} Adressen, Vorschaubilder und abgehakte Folgen inbegriffen.`,
+    "",
+    "Geaendert wird nur der Wirt. Pfade bleiben, wie sie sind - liegt drueben"
+      + " etwas anderes unter demselben Pfad, hilft das hier nicht."
+  ];
+  if (bericht.bilder) {
+    zeilen.push("", `${bericht.bilder} Vorschaubilder liegen beim alten Wirt und ziehen mit.`);
+  }
+  if (bericht.mitbewohner.length) {
+    zeilen.push("", `Achtung: ${bericht.mitbewohner.join(", ")} steht/stehen auf derselben alten Adresse und bleibt/bleiben dort.`);
+  }
+
+  const antwort = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Abbrechen", "Umziehen"],
+    defaultId: 0,
+    cancelId: 0,
+    message: `${dieser?.name || "Anbieter"} umziehen?`,
+    detail: zeilen.join("\n")
+  });
+  if (antwort.response !== 1) return { moved: false };
+
+  // Wohin die offene Seite gehoert, muss vor dem Umschreiben feststehen -
+  // danach ist die alte Adresse nirgends mehr zu finden.
+  const offeneAdresse = activeProvider()?.id === providerId
+    ? umzug.adresse(activeView?.webContents?.getURL() || "", vorschau.vonHost, vorschau.nachWurzel)
+    : "";
+
+  providers = providerModel.normalizeProviders(vorschau.providers);
+  favorites = vorschau.favorites;
+  saveProviders();
+  // Zieht die neuen Adressen an die anderen Geraete nach. Uebernehmen werden
+  // sie den Wirt nicht - jedes Geraet hat seine eigene Anbieterliste, und wer
+  // den Anbieter unter einer anderen Adresse erreicht, soll sie behalten.
+  saveFavorites();
+  sendActiveState();
+
+  const ziel = providers.find((eintrag) => eintrag.id === providerId);
+  if (ziel && offeneAdresse) {
+    await navigateProvider(ziel, offeneAdresse).catch(() => {});
+  }
+
+  console.log(`[ELFIX UMZUG] ${ziel?.name || providerId}: ${bericht.vonHost} -> ${bericht.nachWurzel}, ${bericht.eintraege} Eintraege`);
+  return { moved: true, providers, favorites, bericht };
 });
 
 ipcMain.handle("watchparty:status", () => watchparty.status());

@@ -8,7 +8,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 
 - Windows-App mit Chromium-Webviews und installierbarem Setup
 - Android/Android-TV-App mit Touch-, D-Pad- und Mausmodus
-- Anbieter-Verwaltung fuer AniWorld, S.to, Filmo und eigene Provider
+- Anbieter-Verwaltung fuer AniWorld, S.to, Filmo und eigene Provider - samt Umzug, wenn eine Seite ihre Adresse wechselt
 - Globale Suche mit Anbieter-spezifischen Such-URLs und Schreibweisen wie `spiderman`/`spider-man`
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
 - Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
@@ -60,6 +60,33 @@ ein Aerger. Und wo eine Taste gerade nichts bedeutet, bekommt die Seite sie:
 geoeffnete Anbieterseite werden durchgereicht, statt geschluckt zu werden.
 
 Nachzulesen sind sie in der App unter *Einstellungen > Wiedergabe*.
+
+## Wenn ein Anbieter umzieht
+
+AniWorld und S.to wechseln ihre Adresse - nicht oft, aber regelmaessig, und
+manchmal von einer Domain auf eine blosse IP. Danach zeigt jeder Eintrag ins
+Leere: Watchlist, Mediathek, abgehakte Folgen, Verlauf und die Vorschaubilder
+gleich mit.
+
+Unter *Einstellungen > Anbieter* die neue Adresse ins Feld **Website** eintragen
+und **Adresse hat sich geaendert** druecken. Vor dem Umschreiben kommt eine
+Rueckfrage, die sagt, was passieren wird - wie viele Eintraege mitziehen, wie
+viele davon in der Mediathek stehen und wie viele Bilder betroffen sind.
+
+Umgezogen wird ausschliesslich der Wirt. Pfad, Abfrage und Anker bleiben, wie
+sie sind: liegt die Serie drueben unter demselben Pfad, passt danach alles -
+liegt sie woanders, hilft der Umzug nicht, und dann waere es auch kein Umzug,
+sondern ein anderer Anbieter.
+
+Was nicht dazugehoert, bleibt stehen. Ein Vorschaubild auf einem fremden Server
+zieht nicht mit, ein eigenes Bild schon gar nicht (es liegt als Data-URL vor),
+und Eintraege anderer Anbieter werden nicht angefasst. Steht ein zweiter
+Anbieter auf derselben alten Adresse, sagt die Rueckfrage das - er bleibt, wo er
+ist.
+
+Die Adresse ist Sache dieses Geraets. Ueber *Meine Geraete* wandert sie nicht
+mit: wer denselben Anbieter anderswo unter einer anderen Adresse erreicht, soll
+seine behalten.
 
 ## Watchparty
 

@@ -689,6 +689,7 @@ function bindEvents() {
   wrappedModal?.addEventListener("close", () => { api.setWrappedOpen?.(false); });
 
   document.querySelector("#deleteProviderButton").addEventListener("click", deleteSelectedProvider);
+  document.querySelector("#relocateProviderButton")?.addEventListener("click", relocateSelectedProvider);
   document.querySelector("#moveUpButton").addEventListener("click", () => moveSelectedProvider(-1));
   document.querySelector("#moveDownButton").addEventListener("click", () => moveSelectedProvider(1));
   providerForm.addEventListener("submit", saveProviderForm);
@@ -6123,6 +6124,38 @@ async function deleteSelectedProvider() {
   providers = saved.providers;
   activeProviderId = saved.activeProviderId;
   render();
+}
+
+// Der Anbieter hat eine neue Adresse.
+//
+// Die neue steht im Feld, die alte im gespeicherten Anbieter - der Umzug ist
+// also die Frage "was liegt zwischen diesen beiden?". Deshalb kein eigenes
+// Eingabefeld: das waere ein zweiter Ort fuer dieselbe Angabe, und man muesste
+// sie zweimal richtig eintippen.
+//
+// Gerechnet, gefragt und geschrieben wird im Hauptprozess. Er kennt die
+// Watchlist, und die Rueckfrage soll sagen, was wirklich passiert, statt es zu
+// schaetzen.
+async function relocateSelectedProvider() {
+  if (selectedProviderIndex < 0) return;
+  const provider = providers[selectedProviderIndex];
+  const neueAdresse = providerHome.value.trim();
+  if (!provider?.id || !neueAdresse) return;
+  const antwort = await api.relocateProvider?.(provider.id, neueAdresse);
+  if (!antwort) return;
+  if (!antwort.moved) {
+    // Kein Grund heisst: abgebrochen. Dann hat der Benutzer gerade selbst
+    // entschieden und braucht keine Meldung darueber.
+    if (antwort.reason) showToast(antwort.reason);
+    return;
+  }
+  providers = antwort.providers;
+  favorites = antwort.favorites;
+  render();
+  const bericht = antwort.bericht;
+  showToast(bericht.eintraege
+    ? `Umgezogen auf ${bericht.nachWurzel} — ${bericht.eintraege} Einträge nachgezogen`
+    : `Umgezogen auf ${bericht.nachWurzel}`);
 }
 
 async function moveSelectedProvider(direction) {

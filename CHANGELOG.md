@@ -81,6 +81,37 @@ eigene Haelfte.
 - Das Escape aus dem Vollbild stand bis dahin an zwei Stellen mit demselben
   Code. Beide rufen jetzt dieselbe Weiche
 
+**Anbieter umziehen**
+
+- Wechselt AniWorld oder S.to die Adresse, zeigt jeder Eintrag ins Leere:
+  Watchlist, Mediathek, abgehakte Folgen, Verlauf und die Vorschaubilder gleich
+  mit. Von Hand ist das ein Nachmittag
+- Neuer Knopf unter *Einstellungen > Anbieter*: neue Adresse ins Feld
+  **Website**, dann **Adresse hat sich geaendert**. Kein zweites Eingabefeld
+  dafuer - das waere ein zweiter Ort fuer dieselbe Angabe, und man muesste sie
+  zweimal richtig eintippen
+- Vor dem Umschreiben kommt eine Rueckfrage, und sie sagt, was passieren wird:
+  wie viele Eintraege mitziehen, wie viele davon in der Mediathek stehen, wie
+  viele Bilder betroffen sind. Gerechnet wird vorher, geschrieben erst danach -
+  was der Bericht nennt, ist genau das, was hinterher anders ist
+- Umgezogen wird ausschliesslich der Wirt; Pfad, Abfrage und Anker bleiben. Und
+  weil geparst und nicht ersetzt wird, bleibt ein alter Wirt, der in einer
+  Abfrage steht (`?ziel=https://alt.example/x`), unangetastet - eine
+  Textersetzung truege ihn mit um
+- Nicht angefasst wird, was nicht dazugehoert: ein Vorschaubild auf einem
+  fremden Server, ein eigenes Bild als Data-URL, ein Unterwirt wie
+  `cdn.alt.example`, und die Eintraege aller anderen Anbieter. Steht ein
+  zweiter Anbieter auf derselben alten Adresse, nennt die Rueckfrage ihn - er
+  bleibt, wo er ist
+- Strenger als sonst bei Adressen: ein Wirt ohne Punkt wird abgewiesen. Beim
+  Anlegen eines Anbieters ist Grosszuegigkeit richtig, hier nicht - ein
+  Vertipper zoege die ganze Watchlist auf einen Wirt, den es nicht gibt, und
+  die alte Adresse waere danach nirgends mehr nachzuschlagen
+- Die offene Anbieterseite wird gleich mit auf die neue Adresse gezogen, statt
+  als tote Seite stehenzubleiben
+- Ueber *Meine Geraete* wandert die neue Adresse nicht mit. Wer denselben
+  Anbieter anderswo unter einer anderen Adresse erreicht, behaelt seine
+
 **Relay**
 
 - Ein Schluessel fasst jetzt zwanzigtausend Eintraege statt zweitausend. Die

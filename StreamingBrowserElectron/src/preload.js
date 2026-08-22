@@ -71,6 +71,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   markWrappedSeen: (jahr) => ipcRenderer.invoke("wrapped:gesehen", jahr),
   setWrappedOpen: (offen) => ipcRenderer.invoke("wrapped:set-open", offen),
   saveProviders: (providers) => ipcRenderer.invoke("provider:save-all", providers),
+  // Der Anbieter hat eine neue Adresse - der Wirt wird in allen Eintraegen
+  // ersetzt.
+  relocateProvider: (id, adresse) => ipcRenderer.invoke("provider:relocate", id, adresse),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),

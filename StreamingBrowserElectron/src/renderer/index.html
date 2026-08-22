@@ -483,7 +483,7 @@
                 <small>Steht auf der Anbieter-Kachel und im Tab.</small>
               </label>
               <label>Website<input id="providerHome" required placeholder="https://www.imdb.com">
-                <small>Diese Seite wird geöffnet, wenn du den Anbieter anklickst.</small>
+                <small>Diese Seite wird geöffnet, wenn du den Anbieter anklickst. Hat der Anbieter die Adresse gewechselt: neue Adresse hier eintragen und unten „Adresse hat sich geändert“ drücken — dann ziehen alle Einträge mit um, statt ins Leere zu zeigen.</small>
               </label>
               <label>Such-Adresse <em>optional</em><input id="providerSearch" placeholder="https://www.imdb.com/find/?q={query}">
                 <small>Nur nötig für die globale Suche. <code>{query}</code> wird durch deinen Suchbegriff ersetzt — ohne diese Angabe wird der Anbieter beim Suchen übersprungen.</small>
@@ -494,6 +494,7 @@
               <label class="check setting-row"><input id="providerEnabled" type="checkbox" checked><span><strong>Anbieter anzeigen</strong><small>Ausgeschaltet bleibt er gespeichert, verschwindet aber aus Leiste und Suche.</small></span></label>
               <label class="check setting-row"><input id="providerAdblock" type="checkbox" checked><span><strong>Werbung hier blockieren</strong><small>Einzeln abschaltbar, falls eine Seite mit aktivem Blocker nicht funktioniert.</small></span></label>
               <div class="form-actions">
+                <button type="button" class="soft-action" id="relocateProviderButton">Adresse hat sich geändert</button>
                 <button type="button" class="soft-action" id="moveUpButton">Hoch</button>
                 <button type="button" class="soft-action" id="moveDownButton">Runter</button>
                 <button type="button" class="danger-action" id="deleteProviderButton">Löschen</button>
