@@ -251,6 +251,9 @@ const favoriteProgressMode = document.querySelector("#favoriteProgressMode");
 const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
+const introSkip = document.querySelector("#introSkip");
+const markenStand = document.querySelector("#markenStand");
+const markenVergessen = document.querySelector("#markenVergessen");
 const showReviewLink = document.querySelector("#showReviewLink");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
@@ -910,6 +913,8 @@ function bindEvents() {
   pauseOnProviderSwitch.addEventListener("change", saveSettings);
   youtubeInMediathek?.addEventListener("change", saveSettings);
   autoplayNextEpisode?.addEventListener("change", saveSettings);
+  introSkip?.addEventListener("change", saveSettings);
+  markenVergessen?.addEventListener("click", markenVergessenLassen);
   showReviewLink?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
@@ -1272,6 +1277,30 @@ function renderWatchpartyStatus(state) {
       : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
     return `„${raum.room}“: verbunden, ${geraete}`;
   }).join(" · ");
+}
+
+// Was ELFIX bisher an Intros gelernt hat. Ohne diese Zeile waere "Vergessen"
+// ein Knopf ins Ungewisse.
+async function renderMarkenStand() {
+  if (!markenStand) return;
+  const stand = await api.getMarkenStand?.().catch(() => null);
+  if (!stand || !stand.serien) {
+    markenStand.textContent = "Noch nichts gelernt.";
+    if (markenVergessen) markenVergessen.disabled = true;
+    return;
+  }
+  const serien = stand.serien === 1 ? "1 Serie" : `${stand.serien} Serien`;
+  markenStand.textContent = stand.marken
+    ? `${serien} beobachtet, für ${stand.marken} davon steht der Knopf bereit.`
+    : `${serien} beobachtet — noch keine Stelle hat sich wiederholt.`;
+  if (markenVergessen) markenVergessen.disabled = false;
+}
+
+async function markenVergessenLassen() {
+  if (!confirm("Alle gelernten Intro-Stellen vergessen?")) return;
+  await api.forgetMarken?.();
+  renderMarkenStand();
+  showToast("Gelernte Intros vergessen");
 }
 
 // --- Meine Geraete ----------------------------------------------------------
@@ -5962,6 +5991,8 @@ function renderSettings() {
   pauseOnProviderSwitch.checked = settings.playback?.pauseOnProviderSwitch !== false;
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
+  if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
+  renderMarkenStand();
   // Aus, solange nichts anderes dasteht - eine Meldung, die man nicht bestellt
   // hat, ist eine Stoerung.
   if (notifyNewEpisodes) notifyNewEpisodes.checked = settings.notifications?.newEpisodes === true;
@@ -6215,6 +6246,7 @@ async function saveSettings() {
     youtubeInMediathek: Boolean(youtubeInMediathek?.checked),
     // Fehlt das Kaestchen, gilt weiter, was gespeichert ist - nicht "aus".
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
+    introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
     favoriteProgressMode: favoriteProgressMode.value,
     pauseOnMinimize: pauseOnMinimize.checked,
     pauseOnBlur: pauseOnBlur.checked

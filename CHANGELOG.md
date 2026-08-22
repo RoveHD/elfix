@@ -56,6 +56,38 @@ eigene Haelfte.
   nicht die des Schauens - ohne diese Zeile haenge daran, welchem Tag eine
   Folge zugerechnet wird
 
+**Intro ueberspringen**
+
+- Gelernt statt erkannt. Ein Intro zu erkennen geht hier nicht - ELFIX sieht das
+  Video nie, es liegt im Rahmen des Hosters. Also andersherum: wer eine Serie
+  schaut, spult das Intro selbst weg, jede Folge an derselben Stelle. Der Player
+  meldet Anfang und Ziel eines Sprungs auf die Sekunde
+- Aus zwei aehnlichen Sprüngen in zwei **verschiedenen** Folgen derselben
+  Staffel wird eine Marke, und ab der naechsten Folge steht dort ein Knopf. Ein
+  einzelner Sprung kann Langeweile gewesen sein; zweimal in derselben Folge ist
+  Herumspulen, und dort zaehlt der letzte
+- Gesprungen wird nur auf Druck. Derselbe Grund wie bei der Bildstufe in
+  1.29.0: ein Skript, das ungefragt eingreift, ist eine Bevormundung - und ein
+  falscher Sprung kostet neunzig Sekunden Handlung, die man erst wiederfinden
+  muss
+- Gelernt wird nur, was ein Intro sein kann: vorwaerts, 20 bis 180 Sekunden, in
+  den ersten zehn Minuten. Was spaeter uebersprungen wird, ist Handlung
+- Je Titel und Staffel, nicht je Folge und nicht je Adresse. Intros wechseln
+  zwischen Staffeln, und ein Anbieterumzug soll das Gelernte nicht mitnehmen
+  muessen
+- Aendert sich das Intro mitten in der Serie, zieht die Marke nach: gerechnet
+  wird der Median der groessten uebereinstimmenden Gruppe. Ein einzelner
+  Ausreisser verzieht sie nicht
+- Der eigene Knopf zaehlt nie als Beleg. Lernte die Marke von sich selbst,
+  verschoebe sie sich mit jedem Druck ein Stueck weiter, und niemand koennte
+  sagen, warum das Intro nach zehn Folgen mitten in der Handlung anfaengt
+- Waehrend einer Watchparty wird nicht gelernt. Dort zieht der Host den Player,
+  und diese Sprünge sind nicht die Entscheidung dessen, der hier sitzt
+- Abspanne bleiben aussen vor: was am Ende zu tun ist, weiss ELFIX laengst -
+  dort steht der Knopf zur naechsten Folge
+- Unter *Einstellungen > Wiedergabe* abschaltbar, mit Anzeige, fuer wie viele
+  Serien etwas gelernt wurde, und einem **Vergessen**
+
 **Tastenkuerzel**
 
 - Fuenf Stueck, und es gab bisher kein einziges: `Strg + K` fuer die Suche,

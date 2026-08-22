@@ -55,6 +55,9 @@ const providerModel = require("../shared/provider-model");
 // Eintrag der Watchlist, und ein Fehler darin faellt erst auf, wenn nichts mehr
 // zu oeffnen ist.
 const umzug = require("./umzug");
+// Intro ueberspringen: was ein Sprung als Beleg taugt, wann daraus eine Marke
+// wird und was in der Seite dafuer laeuft.
+const marken = require("./marken");
 const bildausschnitt = require("../shared/bildausschnitt");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -87,6 +90,10 @@ const WATCHPARTY_FILE = path.join(DATA_DIR, "watchparty.json");
 // Ohne ihn faengt jeder Start von vorn an und meldet den ganzen Bestand noch
 // einmal - richtig waere das Ergebnis trotzdem, aber es waere viel Laerm.
 const GERAETE_FILE = path.join(DATA_DIR, "geraete.json");
+// Die gelernten Intro-Marken. Eigene Datei: sie gehoeren keinem Eintrag der
+// Watchlist, sondern einer Serie - und die kann in der Watchlist stehen oder
+// auch nicht.
+const MARKEN_FILE = path.join(DATA_DIR, "marken.json");
 // Das Projekt-Repository. Eine Stelle, an der die Adresse steht: die
 // Update-Anzeige verlinkt darauf, und "Hilfe & Support" oeffnet den
 // Issue-Bereich darunter.
@@ -1347,6 +1354,34 @@ ipcMain.handle("provider:relocate", async (_event, providerId, neueAdresse) => {
   return { moved: true, providers, favorites, bericht };
 });
 
+// Alles Gelernte vergessen. Der Weg zurueck, wenn eine Marke einmal daneben
+// liegt - und der einzige: nachbessern kann man sie nicht, man kann ihr nur
+// neue Sprünge zeigen.
+ipcMain.handle("marken:vergessen", () => {
+  const anzahl = Object.keys(loadMarken()).length;
+  markenSpeicher = {};
+  markenSchmutzig = true;
+  saveMarken();
+  // Der Knopf in der offenen Seite verschwindet sofort mit.
+  if (isLiveView(activeView)) {
+    executeJavaScriptInMediaFrames(activeView,
+      "window.__elfixMarke && window.__elfixMarke.entfernen()").catch(() => []);
+  }
+  console.log(`[ELFIX MARKEN] ${anzahl} Serien vergessen`);
+  return { vergessen: anzahl };
+});
+
+// Wie viele Serien ELFIX inzwischen kennt - fuer die Zeile in den
+// Einstellungen. Ohne sie waere "vergessen" ein Knopf ins Ungewisse.
+ipcMain.handle("marken:stand", () => {
+  const eintraege = loadMarken();
+  const schluessel = Object.keys(eintraege);
+  return {
+    serien: schluessel.length,
+    marken: schluessel.filter((eintrag) => eintraege[eintrag]?.marke).length
+  };
+});
+
 ipcMain.handle("watchparty:status", () => watchparty.status());
 
 ipcMain.handle("watchparty:items", () => watchpartyItems());
@@ -2115,6 +2150,17 @@ function getProviderView(provider) {
         : "Es geht wieder von selbst weiter");
       return;
     }
+    // Ein Sprung im Player. Er ist der einzige Weg, auf dem ELFIX je von einem
+    // Intro erfaehrt.
+    const gesprungen = String(nachricht || "").match(/^__elfix:sprung:(\d+):(\d+)$/);
+    if (gesprungen) {
+      markeLernen(provider, view.webContents.getURL(), Number(gesprungen[1]), Number(gesprungen[2]));
+      return;
+    }
+    if (String(nachricht || "") === marken.MELDE_GENUTZT) {
+      logMediaDiagnostic(provider, view.webContents.getURL(), "marke", "Intro uebersprungen", {});
+      return;
+    }
     const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
     if (!treffer) return;
     logNextEpisode(provider, "Knopf/Countdown ausgeloest");
@@ -2183,6 +2229,7 @@ function getProviderView(provider) {
     installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
     installHosterQualitaet(view).catch(() => {});
     installAutoplaySchalter(view).catch(() => {});
+    installMarke(provider, view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -2311,6 +2358,10 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // sein Player noch keine Stufen.
   await installHosterQualitaet(view).catch(() => {});
   await installAutoplaySchalter(view).catch(() => {});
+  // Der Knopf haengt am selben Takt wie die Steuerung der Watchparty: beim
+  // Laden steht der Rahmen des Hosters oft noch nicht, und ohne Video gibt es
+  // nichts, woran ein Sprung zu merken waere.
+  await installMarke(provider, view, url).catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -7341,6 +7392,103 @@ async function installAutoplaySchalter(view) {
   await executeJavaScriptInMediaFrames(view, autoplaySchalterScript(an)).catch(() => []);
 }
 
+// --- Intro ueberspringen -----------------------------------------------------
+//
+// Die Regeln stehen in marken.js, hier steht nur, wann gelesen und geschrieben
+// wird. Gelernt wird aus den eigenen Sprüngen: wer eine Serie schaut, spult das
+// Intro selbst weg, jede Folge an derselben Stelle - das ist das Einzige, was
+// ELFIX von einem Intro je erfahren kann.
+let markenSpeicher = null;
+let markenSchmutzig = false;
+
+function loadMarken() {
+  if (markenSpeicher) return markenSpeicher;
+  try {
+    const roh = JSON.parse(fs.readFileSync(MARKEN_FILE, "utf8"));
+    markenSpeicher = roh && typeof roh.eintraege === "object" && roh.eintraege ? roh.eintraege : {};
+  } catch {
+    markenSpeicher = {};
+  }
+  return markenSpeicher;
+}
+
+function saveMarken() {
+  if (!markenSchmutzig) return;
+  ensureDataDir();
+  try {
+    fs.writeFileSync(MARKEN_FILE, JSON.stringify({ version: 1, eintraege: loadMarken() }, null, 2));
+    markenSchmutzig = false;
+  } catch (fehler) {
+    console.log("[ELFIX MARKEN] nicht gespeichert: " + (fehler?.message || fehler));
+  }
+}
+
+// Unter welchem Schluessel die Marke dieser Seite liegt: Titel und Staffel.
+// Ausdruecklich der Titel und nicht die Adresse - ein Anbieterumzug soll die
+// gelernten Marken nicht mitnehmen muessen.
+function markenSchluesselFuer(provider, url) {
+  const identity = episodeIdentity(url);
+  if (!identity) return "";
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === identity.key);
+  const titel = taste.titelSchluessel(eintrag?.title || cleanBaseMediaTitle("", url));
+  return marken.schluessel(titel, identity.season);
+}
+
+function markeFuer(schluessel) {
+  if (!schluessel) return null;
+  return loadMarken()[schluessel]?.marke || null;
+}
+
+// Ein Sprung aus der Seite. Er wird aufgenommen, und daraus faellt - vielleicht
+// - eine Marke.
+function markeLernen(provider, url, von, nach) {
+  const schluessel = markenSchluesselFuer(provider, url);
+  if (!schluessel) return;
+  const identity = episodeIdentity(url);
+  const eintraege = loadMarken();
+  const vorher = eintraege[schluessel] || { spruenge: [], marke: null };
+  const spruenge = marken.sprungAufnehmen(vorher.spruenge, {
+    folge: identity?.episode || 0,
+    von,
+    nach
+  });
+  if (spruenge === vorher.spruenge) return;
+
+  const marke = marken.markeAus(spruenge);
+  eintraege[schluessel] = { spruenge, marke };
+  markenSchmutzig = true;
+  saveMarken();
+
+  const vorherBelege = vorher.marke?.belege || 0;
+  if (marke && marke.belege > vorherBelege) {
+    console.log(`[ELFIX MARKEN] ${schluessel}: Intro bei ${marke.von}s, ${marke.dauer}s lang (${marke.belege} Folgen)`);
+    // Erst ab der zweiten Uebereinstimmung gibt es ueberhaupt etwas zu zeigen.
+    if (vorherBelege === 0) sendToast("Intro gemerkt — ab der nächsten Folge steht der Knopf da");
+  }
+}
+
+// Das Skript in die Seite bringen. Es laeuft im Fortschritts-Takt erneut und
+// reicht dann nur die Marke nach - eingerichtet wird es genau einmal je Video.
+async function installMarke(provider, view, url) {
+  if (!isLiveView(view)) return;
+  if (settings.playback?.introSkip === false) {
+    // Ausgeschaltet heisst auch: der Knopf verschwindet sofort, nicht erst bei
+    // der naechsten Folge.
+    await executeJavaScriptInMediaFrames(view,
+      "window.__elfixMarke && window.__elfixMarke.entfernen()").catch(() => []);
+    return;
+  }
+  const schluessel = markenSchluesselFuer(provider, url);
+  if (!schluessel) return;
+  // Waehrend einer laufenden Watchparty wird nicht gelernt. Der Player wird
+  // dort staendig auf den Host gezogen, und diese Sprünge sind nicht die
+  // Entscheidung dessen, der hier sitzt.
+  const lernen = !watchpartyLiveKeyForUrl(url);
+  await executeJavaScriptInMediaFrames(view,
+    marken.markenScript(markeFuer(schluessel), { lernen })).catch(() => []);
+}
+
 async function installHosterQualitaet(view) {
   if (!isLiveView(view)) return;
   await executeJavaScriptInMediaFrames(view, voeQualitaet.qualitaetScript()).catch(() => []);
@@ -12229,7 +12377,10 @@ function normalizeSettings(raw) {
       // Standardmaessig an, weil es bisher immer so war. Nur ein
       // ausdrueckliches Nein schaltet den Zaehler ab; der Knopf bleibt in
       // jedem Fall.
-      autoplayNextEpisode: raw?.playback?.autoplayNextEpisode !== false
+      autoplayNextEpisode: raw?.playback?.autoplayNextEpisode !== false,
+      // Von Haus aus an. Der Knopf kann nichts tun, bevor man ihm das Intro
+      // zweimal selbst gezeigt hat - und er springt nie von allein.
+      introSkip: raw?.playback?.introSkip !== false
     },
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
@@ -12389,6 +12540,7 @@ function defaultSettings() {
       sitzungKennung: true
     },
     playback: {
+      introSkip: true,
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
       pauseOnMinimize: false,

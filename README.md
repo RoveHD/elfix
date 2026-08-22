@@ -11,6 +11,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Anbieter-Verwaltung fuer AniWorld, S.to, Filmo und eigene Provider - samt Umzug, wenn eine Seite ihre Adresse wechselt
 - Globale Suche mit Anbieter-spezifischen Such-URLs und Schreibweisen wie `spiderman`/`spider-man`
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
+- Intro ueberspringen: gelernt aus den eigenen Spruengen, angeboten als Knopf - nie von selbst
 - Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
 - Watchparty: mehrere Raeume gleichzeitig, jeder mit eigenem Fortschritt und eigener Live-Steuerung
 - Meine Geraete: ein Schluessel haelt Laptop und Rechner auf demselben Stand - samt Wiedergabezeit, ohne Konto, und das Relay kann nicht mitlesen
@@ -37,6 +38,50 @@ Ist eine Folge durch, rueckt der Eintrag auf die naechste und bleibt als
 "Naechste Folge" in *Weiterschauen*. Zusammengefasste Folgen ("[In E18
 enthalten]") werden dabei uebersprungen, am Staffelende geht es in die naechste
 Staffel, und am Serienende landet der Titel in der Mediathek.
+
+## Intro ueberspringen
+
+Ein Intro laesst sich hier nicht *erkennen*: ELFIX sieht das Video nie, es liegt
+im Rahmen des Hosters. Also andersherum - gelernt wird aus den eigenen
+Spruengen.
+
+Wer eine Serie schaut, spult das Intro selbst weg, jede Folge an derselben
+Stelle. Der Player meldet Anfang und Ziel eines Sprungs auf die Sekunde genau;
+das ist das Einzige, was ELFIX von einem Intro je erfahren kann. Springst du in
+**zwei verschiedenen Folgen** derselben Staffel aehnlich - Beginn innerhalb von
+zwoelf Sekunden, Laenge innerhalb von sechs -, entsteht daraus eine Marke, und
+ab der naechsten Folge steht an dieser Stelle ein Knopf.
+
+Gesprungen wird nur, wenn du ihn drueckst. Aus demselben Grund, aus dem die
+Bildstufe nur einmal je Folge gesetzt wird: ein Skript, das ungefragt eingreift,
+ist eine Bevormundung - und ein falscher Sprung kostet neunzig Sekunden
+Handlung, die man erst wiederfinden muss.
+
+Was dabei gilt:
+
+| Regel | Warum |
+| --- | --- |
+| Nur Sprünge nach vorn, 20 bis 180 Sekunden | kuerzer ist ein Verspieler, laenger keine Titelmelodie |
+| Nur in den ersten zehn Minuten | was spaeter uebersprungen wird, ist Handlung |
+| Zwei verschiedene Folgen noetig | ein einzelner Sprung kann Langeweile gewesen sein |
+| Je Folge zaehlt der letzte Sprung | wer nachjustiert, hat einmal uebersprungen, nicht dreimal |
+| Je Titel **und Staffel** | Intros wechseln zwischen Staffeln |
+| Waehrend einer Watchparty wird nicht gelernt | dort zieht der Host den Player, das ist nicht die eigene Entscheidung |
+
+Aendert sich das Intro mitten in der Serie, zieht die Marke nach: gerechnet wird
+der Median der groessten uebereinstimmenden Gruppe, nicht der Durchschnitt ueber
+alles. Ein einzelner Ausreisser verzieht sie damit nicht.
+
+Der eigene Knopf zaehlt nie als Beleg. Lernte die Marke von sich selbst,
+verschoebe sie sich mit jedem Druck ein Stueck weiter.
+
+Ab- und wieder anschalten unter *Einstellungen > Wiedergabe*; dort steht auch,
+fuer wie viele Serien schon etwas gelernt wurde, samt **Vergessen**. Die Marken
+liegen in `marken.json` im Datenordner und gelten nur fuer dieses Geraet - ueber
+*Meine Geraete* wandern sie (noch) nicht mit.
+
+Abspanne bleiben aussen vor: was am Ende einer Folge zu tun ist, weiss ELFIX
+laengst - dort steht der Knopf zur naechsten Folge, mit Zaehler.
 
 ## Tastenkuerzel
 

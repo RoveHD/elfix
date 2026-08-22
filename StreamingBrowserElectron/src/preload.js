@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Der Anbieter hat eine neue Adresse - der Wirt wird in allen Eintraegen
   // ersetzt.
   relocateProvider: (id, adresse) => ipcRenderer.invoke("provider:relocate", id, adresse),
+  // Intro ueberspringen: was ELFIX aus den eigenen Sprüngen gelernt hat.
+  getMarkenStand: () => ipcRenderer.invoke("marken:stand"),
+  forgetMarken: () => ipcRenderer.invoke("marken:vergessen"),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
