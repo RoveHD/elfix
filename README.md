@@ -18,6 +18,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Hinweis, wenn zu einer abgeschlossenen Serie neue Folgen erscheinen
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
 - Verlauf mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie Tagesueberschriften
+- Tastenkuerzel fuer Suche, Zurueck, Vollbild, naechste Folge und den Watchparty-Wechsel - auch waehrend die Anbieterseite vorn liegt
 - Automatische Updates ueber GitHub Releases - still im Hintergrund, ohne Installer-Fenster
 - Settings mit Version, Update-Status und Fortschrittsbalken
 
@@ -36,6 +37,29 @@ Ist eine Folge durch, rueckt der Eintrag auf die naechste und bleibt als
 "Naechste Folge" in *Weiterschauen*. Zusammengefasste Folgen ("[In E18
 enthalten]") werden dabei uebersprungen, am Staffelende geht es in die naechste
 Staffel, und am Serienende landet der Titel in der Mediathek.
+
+## Tastenkuerzel
+
+| Taste | Wirkung |
+| --- | --- |
+| `Strg + K` | Suche oeffnen |
+| `Alt + ←` | Zurueck auf der Anbieterseite |
+| `F11` | Vollbild an und aus |
+| `Strg + →` | Naechste Folge |
+| `Strg + Umschalt + W` | *Wofuer zaehlt das hier?* - zwischen dem eigenen Stand und einer Watchparty wechseln |
+
+Sie gelten auch, waehrend eine Anbieterseite im Vordergrund liegt. Das ist der
+Grund, warum sie im Hauptprozess haengen und nicht in der Oberflaeche: die
+Anbieterseite ist eine eigene `WebContentsView` **ueber** der Oberflaeche, und
+ein Tastendruck dort erreicht den Renderer nie.
+
+Zwei Regeln halten sie aus dem Weg. Jedes Kuerzel traegt eine Zusatztaste oder
+ist eine Funktionstaste - ein blosses `n` waere im Suchfeld einer Anbieterseite
+ein Aerger. Und wo eine Taste gerade nichts bedeutet, bekommt die Seite sie:
+`Alt + ←` ohne Verlauf, `Strg + →` ausserhalb einer Folgenseite und `F11` ohne
+geoeffnete Anbieterseite werden durchgereicht, statt geschluckt zu werden.
+
+Nachzulesen sind sie in der App unter *Einstellungen > Wiedergabe*.
 
 ## Watchparty
 

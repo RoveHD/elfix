@@ -485,10 +485,7 @@ function createMainWindow() {
     }
   });
   mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (input.key === "Escape" && isContentFullscreen) {
-      event.preventDefault();
-      leaveContentFullscreen();
-    }
+    if (tastenkuerzel(input)) event.preventDefault();
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -1292,7 +1289,15 @@ ipcMain.handle("watchparty:choose-room", async (_event, rooms, punkt) => {
 // Umschalten, fuer wen das gerade Geschaute zaehlt: fuer dich allein oder fuer
 // eine bestimmte Runde. Das entscheidet, wohin der Fortschritt laeuft und wer
 // mitsteuern darf.
-ipcMain.handle("watchparty:switch-context", async (_event, punkt) => {
+ipcMain.handle("watchparty:switch-context", (_event, punkt) => watchpartyKontextWechseln(punkt));
+
+// Wofuer zaehlt das hier? Der Wechsel zwischen dem eigenen Stand und den
+// Raeumen, in denen dieser Titel mitlaeuft.
+//
+// Eigene Funktion, weil zwei Wege hierher fuehren: die Kopfzeile - die einen
+// Punkt mitbringt, an dem das Menue aufgehen soll - und das Tastenkuerzel, das
+// keinen hat.
+async function watchpartyKontextWechseln(punkt) {
   const adresse = activeView?.webContents?.getURL() || "";
   const moeglich = watchpartyRaeumeForUrl(adresse);
   if (!moeglich.length) return { switched: false };
@@ -1324,7 +1329,7 @@ ipcMain.handle("watchparty:switch-context", async (_event, punkt) => {
   watchpartyAngeklinkt.clear();
   watchparty.abgleichen(key, wahl);
   return { switched: true, room: wahl };
-});
+}
 
 ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
   const provider = activeProvider();
@@ -1923,11 +1928,11 @@ function getProviderView(provider) {
   });
   view.webContents.on("enter-html-full-screen", () => markContentFullscreen(true));
   view.webContents.on("leave-html-full-screen", () => markContentFullscreen(false));
+  // Dieselben Kuerzel wie im Fenster. Sie muessen hier noch einmal haengen:
+  // liegt die Anbieterseite vorn, bekommt das Fenster den Tastendruck nie zu
+  // sehen.
   view.webContents.on("before-input-event", (event, input) => {
-    if (input.key === "Escape" && isContentFullscreen) {
-      event.preventDefault();
-      leaveContentFullscreen();
-    }
+    if (tastenkuerzel(input)) event.preventDefault();
   });
   // Rueckkanal des "Naechste Folge"-Knopfes aus der Anbieterseite.
   view.webContents.on("console-message", (...args) => {
@@ -2613,6 +2618,124 @@ async function readNextEpisodeLink(view) {
 // Gilt fuer beide Wege gleich: Knopf gedrueckt oder Folge durchgelaufen. Die
 // naechste Folge wird geladen, gestartet und ins Vollbild gebracht - derselbe
 // Ablauf wie beim Start aus "Weiterschauen".
+// --- Tastenkuerzel -----------------------------------------------------------
+//
+// Die Anbieterseite liegt als eigene View **ueber** der Oberflaeche. Ein
+// Tastendruck dort geht an die fremde Seite und erreicht den Renderer nie -
+// window.addEventListener("keydown") im Renderer taugt fuer diese Kuerzel also
+// nicht, und globalShortcut waere das andere Extrem: das naehme die Taste auch
+// jedem anderen Programm weg.
+//
+// Bleibt before-input-event: es sitzt zwischen Fenster und Seite, gilt fuer
+// jede View und laesst durch, was hier niemand haben will. Genau das machte
+// bisher schon das Escape aus dem Vollbild - an zwei Stellen, mit demselben
+// Code. Jetzt gibt es dafuer eine.
+//
+// Drei Regeln, damit die Kuerzel niemandem im Weg stehen:
+//
+// Jedes traegt eine Zusatztaste oder ist eine Funktionstaste. Ein blosses "n"
+// waere in jedem Suchfeld einer Anbieterseite ein Aerger.
+//
+// Was hier nicht behandelt wird, geht weiter an die Seite - abgefangen wird nur,
+// was wirklich etwas tut. Deshalb gibt jeder Zweig zurueck, ob er zustaendig
+// war, statt blind preventDefault zu rufen.
+//
+// Und was gerade nichts bedeutet, bedeutet nichts: "naechste Folge" greift nur,
+// wo es eine naechste Folge gibt, "zurueck" nur, wo es ein Zurueck gibt. Sonst
+// bekommt die Seite ihre Taste.
+// Welche Tasten es sind, steht nicht hier als Tabelle, sondern nachlesbar in den
+// Einstellungen unter *Wiedergabe*. Eine Liste im Hauptprozess, die niemand
+// benutzt, waere eine zweite Wahrheit neben der, die man wirklich zu sehen
+// bekommt - und die beiden liefen irgendwann auseinander.
+function tastenkuerzel(input) {
+  if (input?.type !== "keyDown") return false;
+  const nurStrg = input.control && !input.alt && !input.shift && !input.meta;
+  const nurAlt = input.alt && !input.control && !input.shift && !input.meta;
+  const ohneAlles = !input.control && !input.alt && !input.shift && !input.meta;
+
+  // Escape aus dem Vollbild. Steht zuerst, weil es die einzige Taste ohne
+  // Zusatztaste ist - und die einzige, die auch dann greifen muss, wenn eine
+  // Seite gerade alles ueberdeckt.
+  if (input.key === "Escape" && ohneAlles && isContentFullscreen) {
+    leaveContentFullscreen();
+    return true;
+  }
+
+  // Vollbild. Ohne Anbieterseite bleibt es beim Fenster-Vollbild, das Electron
+  // von Haus aus auf F11 legt - deshalb hier nichts tun und die Taste
+  // durchlassen. Mit Anbieterseite dagegen muss es das Vollbild von ELFIX sein:
+  // das bezieht Overlay und Bildflaeche mit ein, das andere nicht.
+  if (input.key === "F11" && ohneAlles) {
+    if (!isLiveView(activeView)) return false;
+    if (isContentFullscreen) leaveContentFullscreen();
+    else enterContentFullscreen();
+    return true;
+  }
+
+  // Suche. Die Oberflaeche holt sie selbst nach vorn - sie weiss, was dabei zu
+  // verbergen ist. Der Tastaturfokus muss aber von hier umgehaengt werden:
+  // er liegt in der Anbieterseite, und ein Suchfeld ohne Fokus waere ein
+  // Suchfeld, in das man erst klicken muss.
+  if (nurStrg && input.key.toLowerCase() === "k") {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (isContentFullscreen) leaveContentFullscreen();
+    mainWindow.webContents.send("tasten:befehl", "suche");
+    mainWindow.webContents.focus();
+    return true;
+  }
+
+  // Zurueck. Dieselbe Taste, die jeder Browser dafuer hat.
+  if (nurAlt && input.key === "ArrowLeft") {
+    if (!isLiveView(activeView) || !activeView.webContents.canGoBack()) return false;
+    activeView.webContents.goBack();
+    return true;
+  }
+
+  // Naechste Folge. Sie tut, was der Knopf im Bild tut - und rechnet dafuer
+  // dieselbe Adresse aus, statt eine eigene Vorstellung davon zu haben, was als
+  // Naechstes kommt.
+  if (nurStrg && input.key === "ArrowRight") {
+    if (input.isAutoRepeat) return true;
+    const provider = activeProvider();
+    if (!provider || !isLiveView(activeView)) return false;
+    if (!episodeIdentity(activeView.webContents.getURL())) return false;
+    naechsteFolgePerTaste(provider, activeView).catch(() => {});
+    return true;
+  }
+
+  // Wofuer zaehlt das hier? Derselbe Wechsel wie ueber die Kopfzeile. Ohne
+  // Mauszeiger gibt es keinen Punkt, an dem das Menue aufgehen koennte - dann
+  // waehlt Electron selbst eine Stelle.
+  if (input.control && input.shift && !input.alt && !input.meta
+    && input.key.toLowerCase() === "w") {
+    watchpartyKontextWechseln(null).catch(() => {});
+    return true;
+  }
+
+  return false;
+}
+
+// Der Zweig fuer die Taste. Er darf nichts tun, wo es nichts zu tun gibt: eine
+// Taste, die mitten in der Folge auf gut Glueck weiterschaltet, waere schlimmer
+// als keine.
+async function naechsteFolgePerTaste(provider, view) {
+  const url = view.webContents.getURL();
+  const identity = episodeIdentity(url);
+  if (!identity) return;
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider.id
+    && episodeIdentity(favorite.url)?.key === identity.key);
+  // Erst die Seite fragen - sie kennt ihre eigenen Folgenlinks -, dann die
+  // eigenen Regeln darueber, was ueberhaupt als naechste Folge gelten darf.
+  const ausDerSeite = await readNextEpisodeLink(view).catch(() => "");
+  const ziel = nextEpisodeContinueUrl(url, ausDerSeite, eintrag, null);
+  if (!ziel) {
+    sendToast("Hier gibt es keine nächste Folge");
+    return;
+  }
+  logNextEpisode(provider, "Tastenkuerzel ausgeloest");
+  await playNextEpisode(provider, view, ziel);
+}
+
 async function playNextEpisode(provider, view, url) {
   if (!provider || !isLiveView(view)) {
     logNextEpisode(provider, "abgebrochen - keine lebende Ansicht");

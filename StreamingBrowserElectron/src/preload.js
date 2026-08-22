@@ -95,5 +95,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // durch den Autoplay-Schalter in der Anbieterseite.
   onSettingsChanged: (callback) => ipcRenderer.on("settings:changed", (_event, neu) => callback(neu)),
   onToast: (callback) => ipcRenderer.on("app:toast", (_event, message) => callback(message)),
+  // Tastenkuerzel. Der Hauptprozess faengt sie ab, weil die Anbieterseite ueber
+  // der Oberflaeche liegt und Tastendruecke dort nie hier ankaemen.
+  onTastenBefehl: (callback) => ipcRenderer.on("tasten:befehl", (_event, befehl) => callback(befehl)),
   onAutostartDone: (callback) => ipcRenderer.on("app:autostart-done", (_event, info) => callback(info))
 });

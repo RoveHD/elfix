@@ -56,6 +56,31 @@ eigene Haelfte.
   nicht die des Schauens - ohne diese Zeile haenge daran, welchem Tag eine
   Folge zugerechnet wird
 
+**Tastenkuerzel**
+
+- Fuenf Stueck, und es gab bisher kein einziges: `Strg + K` fuer die Suche,
+  `Alt + ←` fuer zurueck, `F11` fuers Vollbild, `Strg + →` fuer die naechste
+  Folge und `Strg + Umschalt + W` fuer *Wofuer zaehlt das hier?*
+- Sie gelten auch, waehrend eine Anbieterseite vorn liegt. Genau deshalb haengen
+  sie im Hauptprozess: die Anbieterseite ist eine eigene Ansicht **ueber** der
+  Oberflaeche, und ein Tastendruck dort erreicht den Renderer nie. Ein
+  systemweites Kuerzel waere das andere Extrem - das naehme die Taste auch jedem
+  anderen Programm weg
+- Was gerade nichts bedeutet, bedeutet nichts: `Alt + ←` ohne Verlauf,
+  `Strg + →` ausserhalb einer Folgenseite und `F11` ohne geoeffnete
+  Anbieterseite werden an die Seite durchgereicht, statt geschluckt zu werden.
+  Jede Taste, die hier abgefangen wird, fehlt der Anbieterseite - abgefangen
+  wird deshalb nur, was wirklich etwas tut
+- Jedes Kuerzel traegt eine Zusatztaste oder ist eine Funktionstaste. Ein
+  blosses `n` waere im Suchfeld einer Anbieterseite ein Aerger
+- `F11` machte bisher das Falsche: Electron legt darauf von Haus aus sein
+  Fenster-Vollbild, und das kennt weder die Bildflaeche noch die Einblendung
+  zum Verlassen. Jetzt ist es das Vollbild von ELFIX - solange eine
+  Anbieterseite offen ist. Sonst bleibt es beim alten Verhalten
+- Nachzulesen unter *Einstellungen > Wiedergabe*
+- Das Escape aus dem Vollbild stand bis dahin an zwei Stellen mit demselben
+  Code. Beide rufen jetzt dieselbe Weiche
+
 **Relay**
 
 - Ein Schluessel fasst jetzt zwanzigtausend Eintraege statt zweitausend. Die

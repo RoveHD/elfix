@@ -491,6 +491,13 @@ function bindEvents() {
     geraeteSchluesselUebernehmen();
   });
   api.onGeraeteState?.(renderGeraeteStatus);
+  // Was per Tastenkuerzel aus dem Hauptprozess kommt. Die Ansicht wechselt hier
+  // und nicht dort: welche Bereiche dabei zu verbergen sind, weiss nur die
+  // Oberflaeche.
+  api.onTastenBefehl?.((befehl) => {
+    if (befehl !== "suche") return;
+    openSearchView().catch(() => {});
+  });
   api.getGeraeteStatus?.().then(renderGeraeteStatus).catch(() => {});
   api.onWatchpartyLive?.(showWatchpartyLive);
   api.onWatchpartyWatchstate?.(showWatchpartyStand);

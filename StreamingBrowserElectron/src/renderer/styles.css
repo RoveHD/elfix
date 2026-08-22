@@ -923,6 +923,40 @@
   flex: 0 0 auto;
 }
 
+/* Die Tastenkuerzel in den Einstellungen. Zwei Spalten: links die Tasten,
+   rechts, was sie tun - die Tastenspalte so breit wie ihr laengster Eintrag,
+   damit die Beschreibungen auf einer Kante stehen. */
+.tasten-liste {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  align-items: center;
+  margin: 4px 0 0;
+}
+
+.tasten-liste dt {
+  display: flex;
+  gap: 4px;
+}
+
+.tasten-liste dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tasten-liste kbd {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: 600 12px/1 ui-monospace, Consolas, monospace;
+}
+
 /* Meine Geraete: der Schluessel wird abgeschrieben, nicht gelesen. Gleiche
    Zeichenbreite laesst vier Achtergruppen wie vier Achtergruppen aussehen - in
    einer Proportionalschrift muss man sie nachzaehlen. */
