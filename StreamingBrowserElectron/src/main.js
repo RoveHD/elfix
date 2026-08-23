@@ -28,6 +28,7 @@ const watchpartySync = require("./watchparty-sync");
 // Schluessel, und Laptop und Rechner haben denselben Stand.
 const { Geraeteabgleich, SITZUNG_PRAEFIX } = require("./geraete");
 const geraeteSchluessel = require("./geraete-schluessel");
+const geraeteStand = require("./geraete-stand");
 // Die beste Bildstufe beim Hoster. Eigenes Modul, damit die Auswahl gegen
 // nachgebaute Stufenlisten pruefbar bleibt statt nur als Zeichenkette zu reisen.
 const voeQualitaet = require("./voe-qualitaet");
@@ -5516,21 +5517,13 @@ function geraeteSpiegelSichernSpaeter(ablage) {
   geraeteSpiegelTimer.unref?.();
 }
 
-// Alles Private, je Titel einmal. Steht derselbe Titel mehrfach in der Liste,
-// zaehlt der vorderste: die Liste ist nach zuletzt geoeffnet sortiert, und
-// hinten liegt in dem Fall eine Karteileiche.
+// Alles Private, je Titel einmal. Welche Eintraege das sind und was von
+// ihnen hinausgeht, steht in geraete-stand.js - dasselbe Modul, das auch das
+// Telefon benutzt.
 function geraeteStaende() {
-  const staende = [];
-  const gesehen = new Set();
-  for (const favorite of favorites) {
-    if (String(favorite?.watchpartyRoom || "")) continue;
-    const key = watchpartyKey(favorite);
-    if (!key || gesehen.has(key)) continue;
-    gesehen.add(key);
-    staende.push(geraeteSchluessel.stand({ ...favorite, key }));
-  }
-  return staende;
+  return geraeteStand.staende(favorites);
 }
+
 
 // Die Wiedergabesitzungen, die dieses Geraet noch nicht gemeldet hat.
 //
@@ -5588,134 +5581,42 @@ function geraeteAbgleichSpaeter(verzoegerung = GERAETE_ABGLEICH_MS) {
 // derselbe Anime kann in zwei Raeumen und einmal privat dastehen, und nur der
 // private gehoert diesem Abgleich.
 function lokalerGeraeteEintrag(key) {
-  return favorites.find((favorite) => !String(favorite?.watchpartyRoom || "")
-    && watchpartyKey(favorite) === key) || null;
+  return geraeteStand.eintragFinden(favorites, key);
+}
+
+// Was dieses Geraet dem gemeinsamen Modul an die Hand gibt: alles, was von der
+// laufenden App abhaengt und deshalb nicht in ein teilbares Modul gehoert.
+function geraeteUmgebung() {
+  return {
+    favoriten: favorites,
+    anbieterFuer: (url, providerName) => providerForWatchpartyUrl(url, providerName),
+    normalisieren: (favorit) => normalizeLoadedFavorite(favorit),
+    eigenesBild: (url) => bekanntesEigenesBild(url),
+    bildAusschnitt: (url) => bekannterBildAusschnitt(url),
+    kennung: () => crypto.randomUUID()
+  };
 }
 
 // Ein Stand vom anderen Geraet. Rueckgabe ist der Stand, wie er danach hier
-// gilt - oder null, wenn nichts daraus wurde.
+// gilt - oder null, wenn nichts daraus wurde. Die Regel steht im gemeinsamen
+// Modul; hier bleibt, was danach in dieser App geschehen muss.
 function uebernimmGeraeteStand(stand, at) {
-  const key = String(stand?.key || "");
-  if (!key) return null;
-  const lokal = lokalerGeraeteEintrag(key);
-
-  if (!lokal) {
-    // Ohne passenden Anbieter waere der Eintrag eine Karte, die sich nicht
-    // oeffnen laesst. Dann lieber keine.
-    const provider = providerForWatchpartyUrl(stand.url || "", stand.providerName);
-    if (!provider) return null;
-    const neu = createGeraeteFavorite(stand, provider);
-    if (!neu) return null;
-    favorites.unshift(neu);
-    console.log(`[ELFIX GERAETE] ${neu.title} von einem anderen Geraet uebernommen`);
-    if (neu.episodeCompleted && !neu.completed) geraeteFolgestaende = true;
-    return geraeteSchluessel.stand({ ...neu, key });
-  }
-
-  // Die Adresse ist auf jedem Geraet eine andere, sobald der Anbieter unter
-  // zwei Namen erreichbar ist. Beim selben Wirt passt sie direkt, sonst wird
-  // nur die Folge auf die eigene Adresse umgeschrieben - genauso wie in der
-  // Watchparty.
-  const gleicherAnbieter = providerModel.hostFromUrl(lokal.url).toLowerCase()
-    === providerModel.hostFromUrl(stand.url || "").toLowerCase();
-  const ziel = gleicherAnbieter
-    ? stand.url
-    : (stand.season && stand.episode ? replaceEpisodeUrl(lokal.url, stand.season, stand.episode) : "");
-  if (ziel && ziel !== lokal.url) {
-    lokal.url = ziel;
-    lokal.normalizedUrl = normalizeFavoriteUrl(ziel);
-    const identity = episodeIdentity(ziel);
-    lokal.season = identity?.season || stand.season || lokal.season || 0;
-    lokal.episode = identity?.episode || stand.episode || lokal.episode || 0;
-  } else if (stand.season || stand.episode) {
-    lokal.season = stand.season || lokal.season || 0;
-    lokal.episode = stand.episode || lokal.episode || 0;
-  }
-
-  lokal.position = stand.position;
-  lokal.currentTime = stand.position;
-  lokal.duration = stand.duration || lokal.duration;
-  lokal.progress = stand.progress;
-  lokal.completed = stand.completed;
-  lokal.episodeCompleted = stand.episodeCompleted;
-  // "Von Hand abgehakt" und "abgeschlossen" schliessen einander nicht aus,
-  // sondern bedingen sich - widersprucheGeraderichten() besteht darauf. Also
-  // geht der Merker nur mit, wo er auch stimmen kann.
-  lokal.completedManually = Boolean(stand.completedManually && stand.completed);
-  if (stand.completedAt) lokal.completedAt = stand.completedAt;
-  lokal.hideFromContinueWatching = Boolean(stand.hideFromContinueWatching);
-  lokal.continuePending = Boolean(stand.continuePending);
-  lokal.watched = Boolean(stand.watched) || lokal.watched;
-  lokal.favorite = stand.favorite !== false;
-  if (stand.finalSeason) lokal.finalSeason = stand.finalSeason;
-  if (stand.finalEpisode) lokal.finalEpisode = stand.finalEpisode;
-  if (Array.isArray(stand.completedEpisodes)) lokal.completedEpisodes = stand.completedEpisodes;
-  if (stand.libraryOrder != null) lokal.libraryOrder = stand.libraryOrder;
-  if (stand.lastWatchedAt) lokal.lastWatchedAt = stand.lastWatchedAt;
-  // Ein Titelbild nur, wo hier keines ist: das eigene Bild bleibt ohnehin
-  // draussen, und ein Anbieterbild ist besser als gar keines.
-  if (!lokal.thumbnail && stand.thumbnail) lokal.thumbnail = stand.thumbnail;
-
-  console.log(`[ELFIX GERAETE] ${lokal.title}: Stand von einem anderen Geraet uebernommen`);
-  if (lokal.episodeCompleted && !lokal.completed) geraeteFolgestaende = true;
-  return geraeteSchluessel.stand({ ...lokal, key });
-}
-
-function createGeraeteFavorite(stand, provider) {
-  const url = absoluteHttpUrl(stand?.url || "", provider.startUrl || "");
-  if (!url) return null;
-  const identity = episodeIdentity(url);
-  return normalizeLoadedFavorite({
-    id: crypto.randomUUID(),
-    providerId: provider.id,
-    providerName: provider.name || stand?.providerName || "",
-    title: cleanTitle(stand?.title || url),
-    url,
-    normalizedUrl: normalizeFavoriteUrl(url),
-    favicon: "",
-    thumbnail: stand?.thumbnail || "",
-    // Ein eigenes Bild gehoert zum Titel. Es kommt nicht ueber den Abgleich,
-    // aber wenn es hier schon zu dieser Serie liegt, gilt es auch hier.
-    customThumbnail: bekanntesEigenesBild(url),
-    customThumbnailCrop: bekannterBildAusschnitt(url),
-    logo: provider.logo || "",
-    favorite: stand?.favorite !== false,
-    watched: Boolean(stand?.watched),
-    completed: Boolean(stand?.completed),
-    completedManually: Boolean(stand?.completedManually && stand?.completed),
-    completedAt: String(stand?.completedAt || ""),
-    episodeCompleted: Boolean(stand?.episodeCompleted),
-    continuePending: Boolean(stand?.continuePending),
-    hideFromContinueWatching: Boolean(stand?.hideFromContinueWatching),
-    completedEpisodes: Array.isArray(stand?.completedEpisodes) ? stand.completedEpisodes : [],
-    progress: sanitizeProgress(stand?.progress),
-    duration: sanitizePositiveNumber(stand?.duration),
-    position: sanitizePositiveNumber(stand?.position),
-    currentTime: sanitizePositiveNumber(stand?.position),
-    type: normalizeMediaType(stand?.type || inferMediaType(url)),
-    season: identity?.season || stand?.season || 0,
-    episode: identity?.episode || stand?.episode || 0,
-    finalSeason: sanitizePositiveNumber(stand?.finalSeason),
-    finalEpisode: sanitizePositiveNumber(stand?.finalEpisode),
-    libraryOrder: stand?.libraryOrder == null ? null : Number(stand.libraryOrder),
-    // Der eigene Bestand, kein Raum.
-    watchpartyRoom: "",
-    createdAt: String(stand?.createdAt || new Date().toISOString()),
-    lastWatchedAt: String(stand?.lastWatchedAt || ""),
-    activity: []
-  });
+  const ergebnis = geraeteStand.uebernehmen(stand, geraeteUmgebung());
+  if (!ergebnis) return null;
+  if (ergebnis.folgestand) geraeteFolgestaende = true;
+  console.log(ergebnis.neu
+    ? `[ELFIX GERAETE] ${ergebnis.eintrag.title} von einem anderen Geraet uebernommen`
+    : `[ELFIX GERAETE] ${ergebnis.eintrag.title}: Stand von einem anderen Geraet uebernommen`);
+  return ergebnis.stand;
 }
 
 // Anderswo geloescht. Hier gilt dasselbe wie dort: der Eintrag verschwindet,
 // und zwar wirklich - ein Grabstein liegt beim Relay, damit ihn niemand
 // zurueckholt.
 function entferneGeraeteEintrag(key) {
-  const lokal = lokalerGeraeteEintrag(key);
-  if (!lokal) return false;
-  const index = favorites.indexOf(lokal);
-  if (index < 0) return false;
-  favorites.splice(index, 1);
-  console.log(`[ELFIX GERAETE] ${lokal.title} auf einem anderen Geraet geloescht`);
+  const weg = geraeteStand.entfernen(favorites, key);
+  if (!weg) return false;
+  console.log(`[ELFIX GERAETE] ${weg.title} auf einem anderen Geraet geloescht`);
   return true;
 }
 
@@ -5723,11 +5624,9 @@ function entferneGeraeteEintrag(key) {
 // dafuer nicht: S.to laeuft hier ueber eine IP, beim naechsten ueber die
 // Domain. Titel und Medientyp sind dagegen ueberall dieselben.
 function watchpartyKey(favorite) {
-  const titel = cleanBaseMediaTitle(favorite?.title, favorite?.url) || favorite?.title || "";
-  const schluessel = taste.titelSchluessel(titel);
-  if (!schluessel) return "";
-  return `${favorite?.type || inferMediaType(favorite?.url) || "serie"}:${schluessel}`;
+  return geraeteStand.titelSchluessel(favorite);
 }
+
 
 // Eine Serie in den Raum stellen - ausgeloest vom Knopf in der Kopfzeile.
 // Gemeldet wird erst, wenn der Raum die Serie zurueckspiegelt: sonst hiesse es
