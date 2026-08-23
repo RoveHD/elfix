@@ -3,6 +3,49 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.35.1 — 23. August 2026
+
+Warum sich die Fernbedienung nicht installieren liess - und warum das dreimal
+nicht zu finden war.
+
+**Der Grund: das Relay war zu alt**
+
+- Manifest, Symbole und Service Worker kamen erst mit 1.34.0 dazu. Die App
+  aktualisiert sich von selbst, das Relay wird von Hand kopiert - wessen
+  `.js`-Dateien vom Stand 1.33.0 sind, bekommt am Handy eine Seite ganz ohne
+  Manifest
+- Die sieht gleich aus, die Fernbedienung funktioniert, und Chrome bietet
+  trotzdem nur "Zum Startbildschirm hinzufuegen" an. Das ist eine Verknuepfung
+  mit Browserleiste, keine App - und Chrome sagt nirgends, warum
+- Nachgemessen statt vermutet: mit der Seite von 1.33.0 meldet Chromium
+  `no-manifest`, mit der aktuellen Seite null Beanstandungen. Auch die
+  Selbstauskunft aus 1.35.0 half hier nicht - sie steht in derselben Seite, die
+  vom alten Relay gar nicht erst kommt
+
+**Also fragt ELFIX jetzt nach**
+
+- `/health` weist mit `fernapp` aus, dass die ausgelieferte Seite Manifest,
+  Symbole und Service Worker mitbringt. Getrennt von `fern`, das es seit
+  1.33.0 gibt
+- Unter *Einstellungen > Fernbedienung* steht eine Zeile **Relay**, sobald
+  etwas im Weg ist: "zu alt zum Installieren" samt Handgriff, "nicht
+  erreichbar" oder "kein https". Steht dort nichts, ist drueben alles in
+  Ordnung
+- Ein Blick pro Minute, nicht pro Tastendruck
+
+**Und ein Fehler, der noch niemandem aufgefallen ist**
+
+- `start_url`, `scope` und die Symbolpfade im Manifest standen ab der Wurzel.
+  Haengt das Relay hinter einem Vorspann wie `/elfix/`, zeigten sie ins Leere -
+  installieren liess sich die App noch, aber sie oeffnete danach eine
+  404-Seite. Jetzt stehen sie relativ und werden gegen die Adresse des
+  Manifests aufgeloest
+- Die feste `id` faellt damit weg: Chrome leitet sie aus `start_url` ab, und die
+  ist jetzt an jeder Stelle die richtige
+- `prefer_related_applications: false` steht ausdruecklich da. Es ist der
+  Vorgabewert, aber es ist auch die einzige Angabe im Manifest, mit der man die
+  Installation abschalten koennte - wer dort sucht, soll die Antwort sehen
+
 ## 1.35.0 — 23. August 2026
 
 Die Fassung bleibt gemerkt, die Fernbedienung kann jetzt auch anfangen, und sie

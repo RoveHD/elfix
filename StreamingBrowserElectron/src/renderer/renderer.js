@@ -216,6 +216,8 @@ const fernAdresse = document.querySelector("#fernAdresse");
 const fernCodeCopy = document.querySelector("#fernCodeCopy");
 const fernCodeNeu = document.querySelector("#fernCodeNeu");
 const fernStatus = document.querySelector("#fernStatus");
+const fernRelay = document.querySelector("#fernRelay");
+const fernRelayZeile = document.querySelector("#fernRelayZeile");
 const fernQr = document.querySelector("#fernQr");
 const fernQrHinweis = document.querySelector("#fernQrHinweis");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
@@ -1362,6 +1364,16 @@ function renderFernStatus(status) {
     fernAdresse.textContent = alsWeb ? `${alsWeb}/fern/` : "…/fern/ (erst die Server-Adresse bei der Watchparty eintragen)";
   }
   renderFernQr(status);
+  // Die Lage drueben. Sie steht nur da, wenn etwas zu tun ist - eine Zeile
+  // "alles in Ordnung" liest nach dem zweiten Mal niemand mehr.
+  // Nur, wenn die Lage ueberhaupt mitkommt: die Meldungen aus dem Hauptprozess
+  // tragen sie nicht, und ohne diese Pruefung verschwaende die Zeile bei jedem
+  // Verbindungswechsel und kaeme erst beim naechsten Aufklappen wieder.
+  if (fernRelayZeile && fernRelay && status && "relay" in status) {
+    const hinweis = status.relay?.hinweis || "";
+    fernRelayZeile.style.display = hinweis ? "" : "none";
+    fernRelay.textContent = hinweis;
+  }
   if (!fernStatus) return;
   if (!status?.enabled) {
     fernStatus.textContent = "Ausgeschaltet — kein Handy kann etwas auslösen.";

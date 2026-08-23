@@ -60,7 +60,7 @@ const umzug = require("./umzug");
 const marken = require("./marken");
 const fassung = require("./fassung");
 // Das Handy als Fernbedienung: Verbindung zum Relay und der Kopplungscode.
-const { Fernbedienung, codeErzeugen, kopplungsAdresse } = require("./fernbedienung");
+const { Fernbedienung, codeErzeugen, kopplungsAdresse, webAdresse, relayLage, relayHinweis } = require("./fernbedienung");
 // Ein QR-Code, selbst gerechnet - fuer das Handy, damit die Adresse samt Code
 // nicht abgetippt werden muss.
 const qr = require("./qr");
@@ -1488,7 +1488,41 @@ ipcMain.handle("marken:vergessen", () => {
 // Einstellungen. Ohne sie waere "vergessen" ein Knopf ins Ungewisse.
 // --- Fernbedienung: die Aufrufe aus der Oberflaeche --------------------------
 
-ipcMain.handle("fern:status", () => fernbedienung.status());
+ipcMain.handle("fern:status", async () => ({
+  ...fernbedienung.status(),
+  // Die Lage drueben gehoert dazu: ohne sie steht in den Einstellungen "bereit
+  // fuers Handy", waehrend das Handy von einem alten Relay eine Seite bekommt,
+  // die sich nicht installieren laesst.
+  relay: await relayZustand()
+}));
+
+// Das Relay einmal fragen, was es kann. Die Antwort haelt eine Minute - die
+// Einstellungen werden oft auf- und zugeklappt, und /health soll davon nicht
+// im Sekundentakt getroffen werden.
+let relaySpeicher = { at: 0, adresse: "", lage: null };
+const RELAY_FRISCH_MS = 60000;
+
+async function relayZustand() {
+  const adresse = webAdresse(settings.watchparty?.serverUrl || "");
+  if (!adresse) return null;
+  if (relaySpeicher.adresse === adresse && Date.now() - relaySpeicher.at < RELAY_FRISCH_MS) {
+    return relaySpeicher.lage;
+  }
+  let gesundheit = null;
+  try {
+    // Chromiums Netzwerkschicht statt des nackten fetch: sie geht denselben Weg
+    // wie alles andere in dieser App, samt Proxy und Zertifikatsspeicher.
+    const antwort = await net.fetch(`${adresse}/health`, { cache: "no-store" });
+    if (antwort.ok) gesundheit = await antwort.json();
+  } catch {
+    // Nicht erreichbar ist selbst eine Auskunft - relayLage macht daraus die
+    // erste Zeile des Hinweises.
+  }
+  const lage = relayLage(adresse, gesundheit);
+  lage.hinweis = relayHinweis(lage);
+  relaySpeicher = { at: Date.now(), adresse, lage };
+  return lage;
+}
 
 // Der QR-Code fuer das Handy: Adresse und Kopplungscode in einem Bild.
 //

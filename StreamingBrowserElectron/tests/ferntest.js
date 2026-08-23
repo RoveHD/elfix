@@ -13,7 +13,7 @@ const WS = require("../../sync-server/node_modules/ws");
 const fern = require("../../sync-server/fern");
 const fernSeite = require("../../sync-server/fern-seite");
 const fernIcon = require("../../sync-server/fern-icon");
-const { Fernbedienung, codeErzeugen, codeNormalisieren, kopplungsAdresse } = require("../src/fernbedienung");
+const { Fernbedienung, codeErzeugen, codeNormalisieren, kopplungsAdresse, relayLage, relayHinweis } = require("../src/fernbedienung");
 
 const PORT = Number(process.env.TESTPORT) || 8799;
 const ADRESSE = `ws://127.0.0.1:${PORT}`;
@@ -282,15 +282,33 @@ function client() {
   pruefe("Es macht daraus eine App und kein Lesezeichen",
     manifest.display === "standalone" && manifest.name && manifest.short_name,
     manifest.display);
-  pruefe("Die Startadresse liegt im Geltungsbereich",
-    manifest.start_url.startsWith(manifest.scope) && manifest.scope === "/fern/",
-    `${manifest.start_url} in ${manifest.scope}`);
+  pruefe("Startadresse und Geltungsbereich stehen relativ da",
+    manifest.start_url === "./" && manifest.scope === "./",
+    "aufgeloest wird gegen die Adresse des Manifests - so stimmt es auch, wenn"
+    + " das Relay hinter einem Vorspann wie /elfix/ haengt. Stuende dort"
+    + " \"/fern/\", oeffnete die installierte App eine 404-Seite");
+  {
+    // Genau das nachrechnen, was der Browser rechnet: gegen die Adresse des
+    // Manifests aufloesen. Beide Male muss die Seite herauskommen, die es
+    // ausgeliefert hat - an der Wurzel wie hinter einem Vorspann.
+    for (const basis of [`http://127.0.0.1:${PORT}/fern/`, "https://haus.example/elfix/fern/"]) {
+      const manifestAdresse = new URL("manifest.webmanifest", basis);
+      pruefe(`Aufgeloest gegen ${basis} zeigt start_url auf die Seite selbst`,
+        new URL(manifest.start_url, manifestAdresse).href === basis);
+      pruefe(`und der Geltungsbereich umfasst sie`,
+        new URL(manifest.start_url, manifestAdresse).href.startsWith(new URL(manifest.scope, manifestAdresse).href));
+    }
+  }
   pruefe("Es nennt beide Groessen, die Chrome kennt",
     ["192x192", "512x512"].every((groesse) => manifest.icons.some((symbol) => symbol.sizes === groesse)),
     JSON.stringify(manifest.icons.map((i) => i.sizes)));
-  pruefe("und eine eigene Kennung",
-    manifest.id === "/fern/",
-    "ohne sie nimmt Chrome die Startadresse - aendert die sich, liegt die App zweimal da");
+  pruefe("Es traegt keine feste Kennung",
+    manifest.id === undefined,
+    "Chrome leitet sie aus start_url ab, und die ist jetzt an jeder Stelle die"
+    + " richtige - eine feste \"/fern/\" waere hinter einem Vorspann die falsche");
+  pruefe("Und es schaltet die Installation nicht selbst ab",
+    manifest.prefer_related_applications === false,
+    "das Feld ist die einzige Angabe im Manifest, die genau das koennte");
   pruefe("und eines, das sich ausschneiden laesst",
     manifest.icons.some((symbol) => String(symbol.purpose).includes("maskable")),
     "sonst klebt auf runden Startbildschirmen ein Quadrat");
@@ -389,11 +407,55 @@ function client() {
   const health = await fetch(`http://127.0.0.1:${PORT}/health`).then((a) => a.json());
   pruefe("/health weist die Fernbedienung aus",
     Array.isArray(health.features) && health.features.includes("fern"));
+  pruefe("und getrennt davon, dass sie sich installieren laesst",
+    health.features.includes("fernapp"),
+    "das Relay wird von Hand aktualisiert, die App von selbst. Ohne diesen"
+    + " Eintrag kann die App nicht erkennen, dass drueben eine Fassung ohne"
+    + " Manifest laeuft - und der Nutzer bekommt am Handy still eine"
+    + " Verknuepfung statt einer App");
   pruefe("und zaehlt die Kopplungen",
     Number.isFinite(health.fernbedienungen),
     String(health.fernbedienungen));
 
   // --- Die Fassade des Rechners, ausgefuehrt --------------------------------
+
+  // --- Was die App ueber das Relay drueben sagen kann ------------------------
+  //
+  // Der Fall, an dem das Installieren wirklich haengengeblieben ist: das Relay
+  // liefert die Fernbedienung aus, aber ohne Manifest, Symbol und Service
+  // Worker. Chrome legt davon eine Verknuepfung an und sagt nirgends warum.
+
+  {
+    const alt133 = { ok: true, features: ["fern", "chat", "geraete"] };
+    const lageAlt = relayLage("https://haus.example", alt133);
+    pruefe("Ein Relay mit \"fern\", aber ohne \"fernapp\", gilt als zu alt",
+      lageAlt.fern && !lageAlt.app && lageAlt.erreichbar);
+    pruefe("und der Hinweis nennt den Grund und den Handgriff",
+      /Manifest/.test(relayHinweis(lageAlt)) && /sync-server/.test(relayHinweis(lageAlt)));
+
+    const lageNeu = relayLage("https://haus.example", { ok: true, features: ["fern", "fernapp"] });
+    pruefe("Ein aktuelles Relay ueber https sagt nichts",
+      relayHinweis(lageNeu) === "",
+      "eine Zeile 'alles in Ordnung' liest nach dem zweiten Mal niemand");
+
+    const lageHttp = relayLage("http://192.168.0.5:8787", { ok: true, features: ["fern", "fernapp"] });
+    pruefe("Ueber http steht der Grund trotzdem da",
+      /https/.test(relayHinweis(lageHttp)),
+      "ohne https bietet Chrome nur eine Verknuepfung an");
+
+    const lageWeg = relayLage("https://haus.example", null);
+    pruefe("Ein Relay, das nicht antwortet, ist die erste Meldung",
+      !lageWeg.erreichbar && /nicht erreichbar/i.test(relayHinweis(lageWeg)));
+
+    const lageOhneFern = relayLage("https://haus.example", { ok: true, features: ["chat"] });
+    pruefe("Ein Relay ganz ohne Fernbedienung wird als solches genannt",
+      /kennt die Fernbedienung nicht/.test(relayHinweis(lageOhneFern)),
+      "das ist ein anderer Handgriff als 'zu alt fuer die App'");
+
+    pruefe("Der echte /health-Stand dieses Relays gilt als tauglich",
+      relayHinweis(relayLage("https://haus.example", health)) === "",
+      "sonst warnte die App vor ihrem eigenen, aktuellen Relay");
+  }
 
   const dritterCode = codeErzeugen();
   const empfangen = [];

@@ -367,7 +367,14 @@ const server = http.createServer((req, res) => {
       features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat", "geraete",
         // "fern" heisst: dieses Relay koppelt Handy und Rechner und liefert die
         // Seite dafuer unter /fern aus.
-        "fern"],
+        "fern",
+        // "fernapp" heisst: die Seite kommt mit Manifest, Symbolen und Service
+        // Worker - erst damit bietet Chrome "App installieren" an. Ein Relay
+        // ohne diesen Eintrag liefert die Fernbedienung zwar aus, aber Chrome
+        // legt davon nur eine Verknuepfung mit Browserleiste an. Das sieht man
+        // der Seite nicht an, und darum steht es hier: die App fragt danach und
+        // sagt es, statt den Nutzer raten zu lassen.
+        "fernapp"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
