@@ -3,6 +3,21 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.37.2 — 24. August 2026
+
+Und noch einmal die Umgebung, nicht der Code.
+
+- Die Probe des Geraeteabgleichs laesst die echte Android-Bruecke laufen. Die
+  gibt `geraete.js` keine WebSocket-Klasse mit, weil es im WebView nichts
+  mitzugeben gibt - dort ist WebSocket eine Globale. Node bringt die erst ab
+  Fassung 22 mit, der Bau-Server faehrt 20: hier gruen, dort rot
+- Die Probe stellt die Globale jetzt selbst bereit und bildet damit die
+  WebView-Umgebung nach, statt sich auf die des Rechners zu verlassen.
+  Nachgewiesen mit geloeschter Globale: 18/18, also genau der Fall des
+  Bau-Servers
+
+An ELFIX selbst aendert sich wieder nichts. Android bleibt bei 1.5.0.
+
 ## 1.37.1 — 24. August 2026
 
 Ein Test, der die Maschine geprueft hat statt den Code.

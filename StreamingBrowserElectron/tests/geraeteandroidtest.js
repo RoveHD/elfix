@@ -28,6 +28,14 @@ const schluesselModul = require("../src/geraete-schluessel");
 const geraeteStand = require("../src/geraete-stand");
 const { Geraeteabgleich } = require("../src/geraete");
 
+// Im WebView ist WebSocket eine Globale, und `geraete.js` faellt genau darauf
+// zurueck, wenn ihm keine Klasse uebergeben wird - die Bruecke uebergibt keine,
+// weil es dort nichts zu uebergeben gibt. Node bringt die Globale erst ab
+// Fassung 22 mit; der Bau-Server faehrt 20. Ohne diese Zeile laeuft die Probe
+// hier durch und dort nicht, und das Release scheitert an der Umgebung statt
+// an einem Fehler.
+if (!globalThis.WebSocket) globalThis.WebSocket = WS;
+
 const PORT = Number(process.env.TESTPORT) || 8799;
 const ADRESSE = `ws://127.0.0.1:${PORT}`;
 const WURZEL = path.join(__dirname, "..");
