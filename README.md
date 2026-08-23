@@ -87,6 +87,20 @@ Dafuer liefert das Relay vier Dinge mit: ein Manifest, zwei Symbole (192 und
 da sind - und wenn die Seite ueber **https** kommt. Ueber den Cloudflare Tunnel
 ist das erfuellt; ueber eine nackte IP im WLAN nicht.
 
+> **Zuerst das Relay aktualisieren.** Diese vier Dinge kamen erst mit 1.34.0
+> dazu. Die App aktualisiert sich von selbst, das Relay nicht - wer seine
+> `.js`-Dateien zuletzt zu 1.33.0 kopiert hat, bekommt am Handy weiterhin eine
+> Seite ganz ohne Manifest. Sie sieht gleich aus und die Fernbedienung
+> funktioniert, aber Chrome legt davon nur eine **Verknuepfung mit
+> Browserleiste** an und sagt nirgends, warum. Das ist der haeufigste Grund,
+> warum "Installieren" nicht geht.
+>
+> ELFIX prueft das jetzt selbst: unter *Einstellungen > Fernbedienung* steht
+> eine Zeile **Relay**, sobald etwas im Weg ist - "zu alt zum Installieren",
+> "nicht erreichbar" oder "kein https". Steht dort nichts, ist drueben alles
+> in Ordnung. Gefragt wird `/health`; der Eintrag `fernapp` in `features` sagt,
+> dass die ausgelieferte Seite Manifest, Symbole und Service Worker mitbringt.
+
 Fehlt eine Bedingung, bekommt man eine Verknuepfung mit Browserleiste statt
 einer App. Chrome nennt seine Gruende dafuer nur in der Entwicklerkonsole, und
 da kommt am Handy niemand hin - darum fragt die Seite jede Bedingung selbst ab.
@@ -98,7 +112,7 @@ erfuellt ist und was nicht:
 | Sichere Verbindung (https) | Die Seite kam ueber `http` - eine nackte IP im WLAN. Ueber den Tunnel oeffnen |
 | Browser kann Apps installieren | Ein Browser ohne Service Worker, oder ein privates Fenster |
 | Service Worker laeuft | Er wurde abgewiesen; die Meldung steht dabei |
-| Manifest / Symbole erreichbar | Das Relay ist zu alt - `.js`-Dateien nachkopieren |
+| Manifest / Symbole erreichbar | Das Relay ist zu alt - `.js`-Dateien nachkopieren. Ist es *sehr* alt, fehlt diese Auskunft ganz: sie steht selbst in der Seite, die von dort kommt |
 | Chrome bietet das Installieren an | Alles andere gruen und trotzdem nichts? Dann hat Chrome die Seite schon einmal installiert oder das Angebot ist noch unterwegs |
 
 Die Auskunft steht nur da, solange das Installieren nicht geht. Kommt das
@@ -113,6 +127,14 @@ Symbole und Seite liegen als Zeichenketten in `.js`-Dateien (`fern-seite.js`,
 `fern-icon.js`). Auch das folgt der Regel oben: kopiert werden beim
 Aktualisieren nur `.js`-Dateien, und ein Startbildschirm-Symbol, das ins Leere
 zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet.
+
+Im Manifest stehen `start_url`, `scope` und die Symbolpfade **relativ**. Der
+Browser loest sie gegen die Adresse des Manifests auf, und damit stimmen sie
+auch dann, wenn das Relay nicht an der Wurzel einer Domain haengt, sondern
+hinter einem Vorspann wie `/elfix/`. Stuende dort `/fern/`, liesse Chrome sich
+zwar noch installieren, aber die installierte App oeffnete eine 404-Seite. Eine
+feste `id` gibt es aus demselben Grund nicht - Chrome leitet sie aus `start_url`
+ab.
 
 ### Was hinausgeht und was nicht
 
@@ -387,6 +409,10 @@ sagt, wie viele davon gerade laufen. Steht dort `geraete`, kennt es den Abgleich
 der eigenen Geraete; `geraeteRaeume` sagt, wie viele Schluessel dort liegen.
 Steht dort `fern`, kennt es die Fernbedienung und liefert ihre Seite unter
 `/fern` aus; `fernbedienungen` sagt, wie viele Rechner gerade steuerbar sind.
+Steht dort ausserdem `fernapp`, bringt diese Seite Manifest, Symbole und
+Service Worker mit und laesst sich am Handy als App installieren - fehlt der
+Eintrag, gibt Chrome nur eine Verknuepfung her. ELFIX fragt genau danach und
+sagt es in den Einstellungen.
 
 Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
 setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login

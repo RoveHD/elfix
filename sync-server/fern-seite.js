@@ -467,13 +467,21 @@ const MANIFEST = {
   name: "ELFIX Fernbedienung",
   short_name: "ELFIX",
   description: "Pause, Spulen und naechste Folge fuer ELFIX auf dem Rechner.",
-  // Die Kennung der App. Ohne sie nimmt Chrome die Startadresse dafuer - und
-  // aendert die sich einmal, gilt es als andere App und liegt zweimal auf dem
-  // Startbildschirm.
-  id: "/fern/",
-  start_url: "/fern/",
-  scope: "/fern/",
+  // Alles relativ, nichts ab der Wurzel. Aufgeloest wird es gegen die Adresse
+  // des Manifests, und damit stimmt es auch dann, wenn das Relay nicht unter
+  // dem Wurzelverzeichnis einer Domain haengt, sondern hinter einem Vorspann
+  // wie /elfix/. Stuende hier "/fern/", zeigte start_url dort ins Leere -
+  // Chrome verweigert die Installation und legt eine Verknuepfung an.
+  //
+  // Eine eigene "id" gibt es deshalb nicht: Chrome leitet sie aus start_url ab,
+  // und die ist jetzt an jeder Stelle die richtige.
+  start_url: "./",
+  scope: "./",
   display: "standalone",
+  // Ausdruecklich, auch wenn es der Vorgabewert ist: das Feld ist die einzige
+  // Angabe im Manifest, mit der man die Installation der Web-App zugunsten
+  // einer Store-App abschalten kann. Wer hier sucht, soll die Antwort sehen.
+  prefer_related_applications: false,
   background_color: "#070a10",
   theme_color: "#070a10",
   lang: "de",

@@ -270,8 +270,47 @@ function kopplungsAdresse(serverUrl, code) {
   return `${basis}/fern/?code=${sauber}`;
 }
 
+// Was das Relay drueben kann - und ob das fuers Installieren reicht.
+//
+// Das Relay wird von Hand aktualisiert ("alle .js aus sync-server/ kopieren"),
+// die App dagegen von selbst. Beides laeuft also auseinander, und zwar
+// lautlos: eine Fernbedienung von einem alten Relay sieht genauso aus und tut
+// dasselbe - nur liefert sie kein Manifest, kein Symbol und keinen Service
+// Worker mit. Chrome legt davon eine Verknuepfung an statt einer App, sagt aber
+// nirgends warum. Genau diese Luecke schliesst die Abfrage.
+function relayLage(webAdresse, gesundheit) {
+  const merkmale = Array.isArray(gesundheit?.features) ? gesundheit.features : [];
+  return {
+    erreichbar: Boolean(gesundheit && gesundheit.ok !== false),
+    fern: merkmale.includes("fern"),
+    app: merkmale.includes("fernapp"),
+    https: /^https:/i.test(String(webAdresse || ""))
+  };
+}
+
+// Und was davon dem Nutzer zu sagen ist. Der erste Grund, nicht alle: wer drei
+// Saetze auf einmal liest, arbeitet keinen davon ab.
+function relayHinweis(lage) {
+  if (!lage) return "";
+  if (!lage.erreichbar) {
+    return "Relay nicht erreichbar — von dort kommt die Seite fürs Handy.";
+  }
+  if (!lage.fern) {
+    return "Das Relay kennt die Fernbedienung nicht. Alle .js-Dateien aus sync-server/ kopieren und den Dienst neu starten.";
+  }
+  if (!lage.app) {
+    return "Das Relay ist zu alt zum Installieren: es liefert die Seite ohne Manifest, Symbol und Service Worker aus — Chrome legt davon nur eine Verknüpfung mit Browserleiste an. Alle .js-Dateien aus sync-server/ kopieren und den Dienst neu starten.";
+  }
+  if (!lage.https) {
+    return "Die Server-Adresse ist kein https. Ohne https bietet Chrome kein Installieren an, sondern nur eine Verknüpfung.";
+  }
+  return "";
+}
+
 module.exports = {
   Fernbedienung,
+  relayLage,
+  relayHinweis,
   codeErzeugen,
   codeNormalisieren,
   webAdresse,
