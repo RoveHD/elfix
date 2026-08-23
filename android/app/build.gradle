@@ -2,6 +2,67 @@ plugins {
     id "com.android.application"
 }
 
+/*
+ * Der gemeinsame Kern.
+ *
+ * Die Geschaeftslogik von ELFIX steht einmal, in JavaScript, unter
+ * StreamingBrowserElectron. Android hat sie bisher ein zweites Mal in Java
+ * gehabt - 37 gleichnamige Funktionen, von Hand nachgezogen und laengst
+ * auseinandergelaufen. Statt sie weiter zu pflegen, kopiert dieser Schritt die
+ * Module unveraendert in die Assets; die App laedt sie zur Laufzeit in einen
+ * unsichtbaren WebView (siehe Kern.java).
+ *
+ * Kopiert wird beim Bauen, nicht von Hand: so kann eine Aenderung am Desktop
+ * gar nicht erst vergessen werden. Die Liste ist bewusst ausdruecklich - es
+ * wandert nur mit, was ohne Electron und ohne Node auskommt.
+ */
+def kernQuelle = file("$rootDir/../StreamingBrowserElectron")
+def kernModule = [
+    "src/titel.js",
+    "src/fortschritt.js",
+    "src/messung.js",
+    "src/adblock-kosmetik.js",
+    "src/fortschritt-proben.js",
+    "src/begruendung.js",
+    "src/empfehlung.js",
+    "src/metadaten.js",
+    "src/statistik.js",
+    "src/discover.js",
+    "src/taste.js",
+    "src/watchparty.js",
+    "src/watchparty-sync.js",
+    "src/watchparty-raeume.js",
+    "src/youtube.js",
+    "src/youtube-sync.js",
+    "src/voe-qualitaet.js",
+    "shared/provider-model.js",
+    "shared/bildausschnitt.js"
+]
+
+tasks.register("kernKopieren", Copy) {
+    description = "Kopiert die gemeinsamen ELFIX-Module aus der Desktop-App in die Assets."
+    group = "build"
+    from(kernQuelle) {
+        kernModule.each { include it }
+        eachFile { it.path = it.sourceName }
+    }
+    into layout.buildDirectory.dir("kern-assets/kern/module")
+    includeEmptyDirs = false
+
+    doFirst {
+        if (!kernQuelle.isDirectory()) {
+            throw new GradleException(
+                "Die Desktop-App wurde unter ${kernQuelle} nicht gefunden. " +
+                "Der gemeinsame Kern kann ohne sie nicht gebaut werden.")
+        }
+        kernModule.each { pfad ->
+            if (!new File(kernQuelle, pfad).isFile()) {
+                throw new GradleException("Kern-Modul fehlt: ${pfad}")
+            }
+        }
+    }
+}
+
 android {
     namespace "local.elflix.android"
     compileSdk 35
@@ -10,7 +71,38 @@ android {
         applicationId "local.elflix.android"
         minSdk 26
         targetSdk 35
-        versionCode 120
-        versionName "1.2.0"
+        versionCode 130
+        versionName "1.3.0"
     }
+
+    sourceSets {
+        main {
+            assets.srcDirs += layout.buildDirectory.dir("kern-assets")
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn "kernKopieren"
+}
+
+/*
+ * Die Probenliste der Fortschrittsregel wandert mit.
+ *
+ * Sie ist keine Bibliothek, sondern eine Pruefung - und genau deshalb gehoert
+ * sie ins Paket: nur so laesst sich auf dem Geraet selbst zeigen, dass dort
+ * dasselbe herauskommt wie am Rechner. Ohne sie waere "teilt sich die Logik"
+ * eine Behauptung.
+ */
+tasks.register("probenKopieren", Copy) {
+    description = "Kopiert die Faelle der Fortschrittsregel in die Assets."
+    group = "build"
+    from(new File(kernQuelle, "tests")) {
+        include "fortschritt-proben.json"
+    }
+    into layout.buildDirectory.dir("kern-assets/kern")
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn "probenKopieren"
 }

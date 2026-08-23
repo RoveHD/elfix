@@ -243,8 +243,19 @@ final class MobileViews {
      * There is no artwork in the favourites store, so the placeholder is designed rather than left
      * as an empty rectangle.
      */
+    /**
+     * Eine Zeile in Weiterschauen, Watchlist, Mediathek oder Verlauf.
+     *
+     * @param prozent    Fortschritt der laufenden Folge, 0 blendet den Balken aus
+     * @param hinweis    was unter dem Titel steht - "Staffel 3 Folge 8", "Abgeschlossen", ...
+     * @param aufruf     was der Knopf unten sagt: "Weiter ansehen", "Ansehen", "Nochmal ansehen"
+     * @param onMenu     das Dreipunktmenue - bekommt den Knopf als Anker, damit das
+     *                   Menue daneben aufgeht und nicht am Bildschirmrand klebt;
+     *                   {@code null} laesst es weg
+     */
     static View favoriteCard(Context context, Provider provider, String title, String episodeLine,
-                             String providerName, Runnable onOpen, Runnable onRemove) {
+                             String providerName, int prozent, String aufruf,
+                             Runnable onOpen, View.OnClickListener onMenu) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setPadding(dp(context, 10), dp(context, 10), dp(context, 12), dp(context, 10));
@@ -267,6 +278,34 @@ final class MobileViews {
         posterText.setGravity(Gravity.CENTER);
         poster.addView(posterText, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Der Fortschrittsbalken sitzt im Bild, nicht darunter: unter dem Titel
+        // waere er eine weitere Zeile, und die Liste soll auf einem Telefon so
+        // viele Eintraege wie moeglich zeigen.
+        if (prozent > 0) {
+            View spur = new View(context);
+            GradientDrawable spurBg = new GradientDrawable();
+            spurBg.setColor(Color.argb(150, 0, 0, 0));
+            spur.setBackground(spurBg);
+            FrameLayout.LayoutParams spurParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 4));
+            spurParams.gravity = Gravity.BOTTOM;
+            poster.addView(spur, spurParams);
+
+            View balken = new View(context);
+            GradientDrawable balkenBg = new GradientDrawable();
+            balkenBg.setColor(Theme.PRIMARY);
+            balken.setBackground(balkenBg);
+            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, 4));
+            balkenParams.gravity = Gravity.BOTTOM;
+            poster.addView(balken, balkenParams);
+            // Die Breite steht erst fest, wenn das Bild gemessen ist.
+            poster.post(() -> {
+                FrameLayout.LayoutParams neu = (FrameLayout.LayoutParams) balken.getLayoutParams();
+                neu.width = Math.max(dp(context, 3), poster.getWidth() * Math.min(100, prozent) / 100);
+                balken.setLayoutParams(neu);
+            });
+        }
+
         LinearLayout.LayoutParams posterParams = new LinearLayout.LayoutParams(dp(context, 66), dp(context, 88));
         posterParams.rightMargin = dp(context, 12);
         card.addView(poster, posterParams);
@@ -306,7 +345,7 @@ final class MobileViews {
         playParams.rightMargin = dp(context, 4);
         footer.addView(play, playParams);
         TextView cue = new TextView(context);
-        cue.setText("Weiter ansehen");
+        cue.setText(aufruf == null || aufruf.isEmpty() ? "Weiter ansehen" : aufruf);
         cue.setTextColor(Theme.PRIMARY);
         cue.setTextSize(12);
         cue.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -325,9 +364,27 @@ final class MobileViews {
         card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         card.setOnClickListener(v -> onOpen.run());
-        if (onRemove != null) {
+        if (onMenu != null) {
+            // Ein sichtbarer Knopf statt eines langen Drucks: was man nicht
+            // sieht, findet auf einem Telefon niemand. Der lange Druck bleibt
+            // zusaetzlich, weil er fuer Geuebte schneller ist.
+            ImageView menue = new ImageView(context);
+            menue.setImageResource(R.drawable.ic_more_vert);
+            menue.setColorFilter(Theme.TEXT_SECONDARY);
+            menue.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+            menue.setPadding(dp(context, 10), dp(context, 10), dp(context, 6), dp(context, 10));
+            menue.setContentDescription("Weitere Aktionen für " + title);
+            menue.setOnClickListener(onMenu);
+            LinearLayout.LayoutParams menueParams = new LinearLayout.LayoutParams(
+                dp(context, TOUCH_TARGET), dp(context, TOUCH_TARGET));
+            menueParams.gravity = Gravity.CENTER_VERTICAL;
+            card.addView(menue, menueParams);
+
             card.setOnLongClickListener(v -> {
-                onRemove.run();
+                // Der lange Druck liegt auf der Karte, das Menue soll aber am
+                // Dreipunktknopf haengen - sonst geht es an einer Stelle auf,
+                // an der man gar nicht getippt hat.
+                onMenu.onClick(menue);
                 return true;
             });
         }

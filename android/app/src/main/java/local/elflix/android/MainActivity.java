@@ -70,8 +70,19 @@ public class MainActivity extends Activity {
     private static final int SUBTLE_BORDER = Color.rgb(46, 56, 76);
     private final Map<String, WebView> webViews = new HashMap<>();
     private final Adblocker adblocker = new Adblocker();
+    /** Die gemeinsame Geschaeftslogik, dieselbe wie am Desktop. Siehe Kern.java. */
+    private Kern kern;
     private List<Provider> providers;
-    private List<Favorite> favorites;
+    /** Watchlist, Weiterschauen, Mediathek und Verlauf - eine Liste, vier Blicke. */
+    private Bestand bestand;
+    /** Welche der vier Listen zuletzt offen war. */
+    private Bibliothek offeneListe = Bibliothek.WEITERSCHAUEN;
+    /** Der Takt, der misst, was gerade laeuft. Siehe Messung.java. */
+    private Messung messung;
+    /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
+    private Watchparty watchparty;
+    /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
+    private Kosmetik kosmetik;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -176,11 +187,63 @@ public class MainActivity extends Activity {
         }
         WebView.setWebContentsDebuggingEnabled(false);
         Adblocker.loadAdGuardList(this);
+        // Sind die Listen aelter als eine Woche, im Hintergrund nachladen. Das
+        // stoert nichts: bis der Abruf durch ist, filtert der bisherige Stand
+        // weiter.
+        if (Filterlisten.faellig(this)) {
+            Filterlisten.aktualisieren(this, (anzahl, fehler) -> {
+                if (fehler != null) Log.w(TAG, "Filterlisten nicht erneuert: " + fehler);
+                else Log.i(TAG, "Filterlisten erneuert: " + anzahl + " Domains");
+            });
+        }
         providers = ProviderStore.load(this);
-        favorites = FavoriteStore.load(this);
         favoriteProgressMode = getSharedPreferences("elflix_settings", MODE_PRIVATE)
             .getString("favorite_progress_mode", "sequential");
         activeProvider = null;
+        kern = new Kern(this, this::kernEreignis);
+        kern.starten();
+        kern.wennBereit(this::kernSelbsttest);
+        bestand = new Bestand(this, kern, this::bestandGeaendert, this::showToast);
+        bestand.laden();
+        messung = new Messung(kern, bestand, new Messung.Seite() {
+            @Override
+            public Provider anbieter() {
+                return activeProvider;
+            }
+
+            @Override
+            public WebView ansicht() {
+                return activeProvider == null ? null : webViews.get(activeProvider.id);
+            }
+
+            @Override
+            public String adresse() {
+                WebView ansicht = ansicht();
+                return ansicht == null ? null : ansicht.getUrl();
+            }
+
+            @Override
+            public boolean watchpartyFuehrt() {
+                // Noch gibt es kein Live-Mitschauen auf Android, nur den
+                // Abgleich des Stands - also gibt die Runde keine Folge vor.
+                // Sobald das Live-Schauen dazukommt, wird hier gefragt.
+                return false;
+            }
+        });
+        watchparty = new Watchparty(this, kern, this::watchpartyGeaendert);
+        bestand.setzeStandMelder(watchparty::standMelden);
+        watchparty.setzeBestand(bestand);
+        kosmetik = new Kosmetik(kern, adblocker);
+        kern.wennBereit(() -> {
+            messung.starten();
+            watchparty.anwenden();
+            kosmetik.vorbereiten();
+            // Die erste Anbieterseite ist oft schon fertig, bevor der Kern
+            // steht - sie bekommt das Suchskript deshalb hier nachgereicht.
+            if (activeProvider != null) {
+                kosmetik.einspielen(webViews.get(activeProvider.id), activeProvider);
+            }
+        });
         buildRoot();
         clearBrowserCachesPreservingLogin();
         cacheCleanupHandler.postDelayed(cacheCleanupTask, CACHE_CLEANUP_INTERVAL_MS);
@@ -189,6 +252,7 @@ public class MainActivity extends Activity {
         lastConfigWidthDp = config.screenWidthDp;
         lastConfigHeightDp = config.screenHeightDp;
         showHome();
+        deepLinkOeffnen(getIntent());
     }
 
     @Override
@@ -484,7 +548,8 @@ public class MainActivity extends Activity {
 
         bar.addView(bottomNavTab("home", R.drawable.ic_nav_home, "Home", this::showHome));
         bar.addView(bottomNavTab("search", R.drawable.ic_nav_search, "Suche", () -> showGlobalSearch("")));
-        bar.addView(bottomNavTab("favorites", R.drawable.ic_nav_favorite, "Favoriten", this::showFavorites));
+        bar.addView(bottomNavTab("favorites", R.drawable.ic_nav_favorite, "Meine Liste", this::showFavorites));
+        bar.addView(bottomNavTab("watchparty", R.drawable.ic_play, "Watchparty", this::zeigeWatchparty));
         bar.addView(bottomNavTab("settings", R.drawable.ic_nav_settings, "Einstellungen", this::showSettings));
         updateBottomNav();
     }
@@ -734,16 +799,12 @@ public class MainActivity extends Activity {
         }
         addSpacing(page, providerRow, TvViews.ITEM_GAP);
 
-        if (!favorites.isEmpty()) {
-            addSpacing(page, TvViews.sectionTitle(this, "Weiter ansehen"), TvViews.SECTION_GAP);
-            int favWidth = tvCardWidthDp(200, 160);
-            LinearLayout favRow = tvRow();
-            int shown = Math.min(5, favorites.size());
-            for (int i = 0; i < shown; i += 1) {
-                addTvRowItem(favRow, tvFavoriteCard(favorites.get(i), favWidth), i == 0);
-            }
-            addSpacing(page, favRow, TvViews.ITEM_GAP);
-        }
+        // Dieselben Reihen wie auf dem Telefon und am Rechner. Leere bleiben
+        // weg: eine Ueberschrift ohne Kacheln kostet auf dem Fernseher eine
+        // ganze Bildschirmhoehe.
+        tvStartseitenReihe(page, Bibliothek.WEITERSCHAUEN, 5);
+        tvStartseitenReihe(page, Bibliothek.WATCHLIST, 5);
+        tvStartseitenReihe(page, Bibliothek.MEDIATHEK, 5);
 
         // Give the remote something focused to start from, so the first D-pad press is predictable.
         if (firstCard != null) {
@@ -752,42 +813,94 @@ public class MainActivity extends Activity {
         }
     }
 
-    private View tvFavoriteCard(Favorite favorite, int widthDp) {
-        String title = cleanFavoriteTitle(favorite.title, favorite.url);
-        if (title.isEmpty()) title = "Favorit";
-        return TvViews.favoriteCard(this, providerForFavorite(favorite), title,
-            favoriteEpisodeLabel(favorite.url), favorite.providerName, widthDp,
-            () -> openFavorite(favorite),
-            () -> {
-                favorites.remove(favorite);
-                FavoriteStore.save(this, favorites);
-                showToast("Aus Favoriten entfernt");
-                if ("favorites".equals(currentScreen)) showFavorites();
-                else showHome();
-            });
+    private void tvStartseitenReihe(LinearLayout page, Bibliothek liste, int hoechstens) {
+        List<Favorite> eintraege = liste.eintraege(bestand);
+        if (eintraege.isEmpty()) return;
+        addSpacing(page, TvViews.sectionTitle(this, liste.titel), TvViews.SECTION_GAP);
+        int breite = tvCardWidthDp(200, 160);
+        LinearLayout reihe = tvRow();
+        int gezeigt = Math.min(hoechstens, eintraege.size());
+        for (int i = 0; i < gezeigt; i += 1) {
+            addTvRowItem(reihe, tvEintragsKarte(eintraege.get(i), liste, breite), i == 0);
+        }
+        addSpacing(page, reihe, TvViews.ITEM_GAP);
     }
 
-    private void renderTvFavorites() {
+    private View tvFavoriteCard(Favorite favorite, int widthDp) {
+        return tvEintragsKarte(favorite, Bibliothek.WEITERSCHAUEN, widthDp);
+    }
+
+    /**
+     * Die vier Listen auf dem Fernseher.
+     *
+     * <p>Dieselben Listen, andere Bedienung: die Reiter sind fokussierbare
+     * Knoepfe in einer Reihe, damit das Steuerkreuz sie erreicht, und die
+     * Eintraege liegen im Raster statt untereinander - auf zwei Metern
+     * Entfernung liest sich eine lange Liste nicht.
+     */
+    private void renderTvBibliothek(Bibliothek liste) {
         LinearLayout page = tvPage();
-        page.addView(TvViews.eyebrow(this, "Deine Liste"));
-        page.addView(TvViews.heroTitle(this, "Favoriten"));
-        if (favorites.isEmpty()) {
-            addSpacing(page, TvViews.infoCard(this, "Noch keine Favoriten",
-                "Öffne einen Anbieter und drücke in der Leiste oben auf das Herz. ELFIX merkt sich "
-                    + "die Folge und springt beim nächsten Mal automatisch weiter.", null, null), TvViews.SECTION_GAP);
+        page.addView(TvViews.eyebrow(this, "Meine Liste"));
+        page.addView(TvViews.heroTitle(this, liste.titel));
+        page.addView(TvViews.body(this, liste.untertitel));
+
+        LinearLayout reiter = tvRow();
+        addSpacing(page, reiter, TvViews.ITEM_GAP);
+        View ersterReiter = null;
+        for (Bibliothek eintrag : Bibliothek.values()) {
+            int anzahl = eintrag.eintraege(bestand).size();
+            Button knopf = textButton(anzahl > 0 ? eintrag.titel + "  " + anzahl : eintrag.titel);
+            boolean gewaehlt = eintrag == liste;
+            knopf.setTextColor(gewaehlt ? Color.WHITE : Theme.TEXT_SECONDARY);
+            applyTvFocus(knopf, gewaehlt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, Theme.PRIMARY, 20);
+            knopf.setOnClickListener(view -> zeigeBibliothek(eintrag));
+            addTvRowItem(reiter, knopf, ersterReiter == null);
+            if (gewaehlt) ersterReiter = knopf;
+        }
+
+        List<Favorite> eintraege = liste.eintraege(bestand);
+        if (eintraege.isEmpty()) {
+            addSpacing(page, TvViews.infoCard(this, liste.leerTitel, liste.leerText, null, null),
+                TvViews.SECTION_GAP);
+            if (ersterReiter != null) {
+                View ziel = ersterReiter;
+                ziel.post(ziel::requestFocus);
+            }
             return;
         }
+
         int width = tvCardWidthDp(200, 160);
         int perRow = Math.max(1, (getResources().getConfiguration().screenWidthDp - 2 * TvViews.SCREEN_PADDING
             + TvViews.ITEM_GAP) / (width + TvViews.ITEM_GAP));
         LinearLayout row = null;
-        for (int i = 0; i < favorites.size(); i += 1) {
+        View ersteKarte = null;
+        for (int i = 0; i < eintraege.size(); i += 1) {
             if (i % perRow == 0) {
                 row = tvRow();
                 addSpacing(page, row, i == 0 ? TvViews.SECTION_GAP : TvViews.ITEM_GAP);
             }
-            addTvRowItem(row, tvFavoriteCard(favorites.get(i), width), i % perRow == 0);
+            View karte = tvEintragsKarte(eintraege.get(i), liste, width);
+            addTvRowItem(row, karte, i % perRow == 0);
+            if (ersteKarte == null) ersteKarte = karte;
         }
+        if (ersteKarte != null) {
+            View ziel = ersteKarte;
+            ziel.post(ziel::requestFocus);
+        }
+    }
+
+    private View tvEintragsKarte(Favorite eintrag, Bibliothek liste, int widthDp) {
+        String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+        if (titel.isEmpty()) titel = "Titel";
+        String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
+        if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
+            hinweis = "Nächste Folge: " + eintrag.folgenText();
+        }
+        return TvViews.favoriteCard(this, providerForFavorite(eintrag), titel, hinweis,
+            eintrag.providerName(), widthDp,
+            liste.zeigtFortschritt() ? eintrag.progress() : 0,
+            () -> openFavorite(eintrag),
+            anker -> eintragsMenue(anker, eintrag, liste));
     }
 
     private void renderTvSettings() {
@@ -801,12 +914,12 @@ public class MainActivity extends Activity {
             null, null), TvViews.SECTION_GAP);
 
         addSpacing(page, TvViews.infoCard(this, "Favoriten-Fortschritt",
-            isStaticFavoriteProgress()
-                ? "Favoriten bleiben statisch auf der gespeicherten Folge."
-                : "Favoriten springen automatisch zur direkt nächsten Folge.",
-            isStaticFavoriteProgress() ? "Auf nächste Folge umstellen" : "Statisch machen",
+            folgeStatisch()
+                ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
+                : "Der Eintrag rückt mit, wenn du zur nächsten Folge blätterst.",
+            folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
             () -> {
-                favoriteProgressMode = isStaticFavoriteProgress() ? "sequential" : "static";
+                favoriteProgressMode = folgeStatisch() ? "sequential" : "static";
                 getSharedPreferences("elflix_settings", MODE_PRIVATE)
                     .edit().putString("favorite_progress_mode", favoriteProgressMode).apply();
                 showToast("Gespeichert");
@@ -897,8 +1010,10 @@ public class MainActivity extends Activity {
                     }
                     String meta = result.genre == null || result.genre.isEmpty()
                         ? result.provider.name : result.genre;
+                    // Ein Suchtreffer hat noch keinen Fortschritt und kein Menue.
                     addTvRowItem(row, TvViews.favoriteCard(this, result.provider, result.title, meta,
-                        result.provider.name, width, () -> openProvider(result.provider, result.url), null),
+                        result.provider.name, width, 0,
+                        () -> openProvider(result.provider, result.url), null),
                         shown % perRow == 0);
                     shown += 1;
                 }
@@ -945,20 +1060,39 @@ public class MainActivity extends Activity {
         addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
         addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
 
-        addSpacing(page, MobileViews.sectionHeader(this, "Weiter ansehen",
-            favorites.isEmpty() ? null : "Alle anzeigen",
-            favorites.isEmpty() ? null : this::showFavorites), MobileViews.SECTION_GAP);
-        if (favorites.isEmpty()) {
-            // Keeps the section present instead of leaving the lower half of the screen blank.
-            addSpacing(page, settingsCard("Noch nichts gespeichert",
-                "Tippe beim Ansehen oben auf das Herz. ELFIX merkt sich dann die Folge und "
-                    + "springt beim nächsten Mal automatisch weiter.", null, null), MobileViews.ITEM_GAP);
-        } else {
-            int shown = Math.min(3, favorites.size());
-            for (int i = 0; i < shown; i += 1) {
-                addSpacing(page, mobileFavoriteCard(favorites.get(i)), MobileViews.ITEM_GAP);
-            }
+        // Die Startseite zeigt dieselben Reihen wie am Rechner, in derselben
+        // Reihenfolge: was laeuft, dann was gemerkt ist. Leere Reihen bleiben
+        // weg statt als leerer Kasten dazustehen - nur wenn beide leer sind,
+        // steht ein Hinweis da, damit die untere Bildschirmhaelfte nicht
+        // unerklaert leer bleibt.
+        boolean etwasGezeigt = false;
+        etwasGezeigt |= startseitenReihe(page, Bibliothek.WEITERSCHAUEN, 3);
+        etwasGezeigt |= startseitenReihe(page, Bibliothek.WATCHLIST, 3);
+        etwasGezeigt |= startseitenReihe(page, Bibliothek.MEDIATHEK, 2);
+        if (!etwasGezeigt) {
+            addSpacing(page, MobileViews.sectionHeader(this, "Weiterschauen", null, null),
+                MobileViews.SECTION_GAP);
+            addSpacing(page, settingsCard("Noch nichts angefangen",
+                "Öffne einen Anbieter und sieh dir etwas an. ELFIX merkt sich die Folge und "
+                    + "die Stelle und schlägt sie dir hier wieder vor.", null, null), MobileViews.ITEM_GAP);
         }
+    }
+
+    /**
+     * Eine Reihe der Startseite.
+     *
+     * @return ob sie ueberhaupt etwas zu zeigen hatte
+     */
+    private boolean startseitenReihe(LinearLayout page, Bibliothek liste, int hoechstens) {
+        List<Favorite> eintraege = liste.eintraege(bestand);
+        if (eintraege.isEmpty()) return false;
+        addSpacing(page, MobileViews.sectionHeader(this, liste.titel, "Alle anzeigen",
+            () -> zeigeBibliothek(liste)), MobileViews.SECTION_GAP);
+        int gezeigt = Math.min(hoechstens, eintraege.size());
+        for (int i = 0; i < gezeigt; i += 1) {
+            addSpacing(page, eintragsKarte(eintraege.get(i), liste), MobileViews.ITEM_GAP);
+        }
+        return true;
     }
 
     /**
@@ -1089,7 +1223,10 @@ public class MainActivity extends Activity {
                     String meta = result.genre == null || result.genre.isEmpty()
                         ? result.provider.name
                         : result.genre + " · " + result.provider.name;
+                    // Ein Suchtreffer hat noch keinen Fortschritt und kein
+                    // Menue - er ist noch gar kein Eintrag.
                     View card = MobileViews.favoriteCard(this, result.provider, result.title, meta, null,
+                        0, "Ansehen",
                         () -> openProvider(result.provider, result.url), null);
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1139,17 +1276,30 @@ public class MainActivity extends Activity {
         page.addView(MobileViews.heroTitle(this, "Einstellungen"));
 
         addSpacing(page, settingsCard("Werbeblocker",
-            "AdGuard-Filterlisten (Basis, Mobile Ads, Tracking-Schutz) sind aktiv. Innerhalb des Video-Hosters "
-                + "wird bewusst zurückhaltender gefiltert, damit die Wiedergabe nicht blockiert wird.",
+            "AdGuard-Filterlisten sind aktiv. Innerhalb des Video-Hosters wird bewusst zurückhaltender "
+                + "gefiltert, damit die Wiedergabe nicht blockiert wird. Schichten, die den Player "
+                + "zudecken, werden zusätzlich erkannt und ausgeblendet.",
             null, null), 18);
 
-        addSpacing(page, settingsCard("Favoriten-Fortschritt",
-            isStaticFavoriteProgress()
-                ? "Favoriten bleiben statisch auf der gespeicherten Folge."
-                : "Favoriten springen automatisch zur direkt nächsten Folge.",
-            isStaticFavoriteProgress() ? "Auf nächste Folge umstellen" : "Statisch machen",
+        addSpacing(page, settingsCard("Filterlisten",
+            Filterlisten.standText(this),
+            "Jetzt aktualisieren",
             () -> {
-                favoriteProgressMode = isStaticFavoriteProgress() ? "sequential" : "static";
+                showToast("Filterlisten werden geladen …");
+                Filterlisten.aktualisieren(this, (anzahl, fehler) -> {
+                    if (fehler != null) showToast("Ging nicht: " + fehler);
+                    else showToast(anzahl + " Domains geladen");
+                    showSettings();
+                });
+            }), MobileViews.ITEM_GAP);
+
+        addSpacing(page, settingsCard("Favoriten-Fortschritt",
+            folgeStatisch()
+                ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
+                : "Der Eintrag rückt mit, wenn du zur nächsten Folge blätterst.",
+            folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
+            () -> {
+                favoriteProgressMode = folgeStatisch() ? "sequential" : "static";
                 getSharedPreferences("elflix_settings", MODE_PRIVATE)
                     .edit()
                     .putString("favorite_progress_mode", favoriteProgressMode)
@@ -1158,31 +1308,214 @@ public class MainActivity extends Activity {
                 showSettings();
             }), MobileViews.ITEM_GAP);
 
+        watchpartyEinstellungen(page);
+
         addSpacing(page, settingsCard("Zwischenspeicher",
             "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
             "Alles neu laden", this::reloadAllWebViews), MobileViews.ITEM_GAP);
     }
 
+    /**
+     * Die Watchparty einrichten - dieselben vier Angaben wie am Rechner.
+     *
+     * <p>Server, Raumcodes, Gerätename und der Schalter. Mehr braucht es nicht:
+     * der Raumcode ist der ganze Zugang, Konten gibt es keine.
+     */
+    private void watchpartyEinstellungen(LinearLayout page) {
+        addSpacing(page, settingsCard("Watchparty",
+            watchparty.istEingeschaltet()
+                ? (watchparty.istVerbunden() ? "Eingeschaltet und verbunden." : "Eingeschaltet, noch nicht verbunden.")
+                : "Aus. Eingeschaltet gleicht ELFIX den Weiterschauen-Stand mit deinen anderen Geräten ab.",
+            watchparty.istEingeschaltet() ? "Ausschalten" : "Einschalten",
+            () -> {
+                watchparty.setzeEingeschaltet(!watchparty.istEingeschaltet());
+                showSettings();
+            }), MobileViews.SECTION_GAP);
+
+        addSpacing(page, settingsCard("Server-Adresse",
+            watchparty.serverUrl().isEmpty()
+                ? "Noch keine eingetragen. Ohne sie bleibt die Watchparty aus."
+                : watchparty.serverUrl(),
+            "Ändern",
+            () -> textFrage("Server-Adresse", "wss://watchparty.deine-domain.tld",
+                watchparty.serverUrl(), wert -> {
+                    watchparty.setzeServer(wert);
+                    showSettings();
+                })), MobileViews.ITEM_GAP);
+
+        List<String> codes = watchparty.raumcodes();
+        addSpacing(page, settingsCard("Raumcodes",
+            codes.isEmpty()
+                ? "Noch keiner. Derselbe Code auf allen Geräten, die zusammenlaufen sollen."
+                : android.text.TextUtils.join(", ", codes),
+            "Raum hinzufügen",
+            () -> textFrage("Raumcode", "mindestens vier Zeichen", "", wert ->
+                watchparty.raumHinzufuegen(wert, (angenommen, fehler) -> {
+                    if (fehler != null) showToast(fehler);
+                    else showToast("Raum hinzugefügt");
+                    showSettings();
+                }))), MobileViews.ITEM_GAP);
+
+        for (String code : codes) {
+            addSpacing(page, settingsCard("Raum " + code, "Dieses Gerät gehört zu diesem Raum.",
+                "Entfernen", () -> frage("Raum entfernen?",
+                    "Der Stand aus diesem Raum verschwindet von diesem Gerät. Auf den anderen bleibt er.",
+                    () -> {
+                        watchparty.raumEntfernen(code);
+                        showSettings();
+                    })), MobileViews.ITEM_GAP);
+        }
+
+        addSpacing(page, settingsCard("Name dieses Geräts",
+            watchparty.geraetName().isEmpty() ? "Nicht gesetzt - nur zur Anzeige bei den anderen."
+                : watchparty.geraetName(),
+            "Ändern",
+            () -> textFrage("Name dieses Geräts", "z. B. Handy", watchparty.geraetName(), wert -> {
+                watchparty.setzeGeraetName(wert);
+                showSettings();
+            })), MobileViews.ITEM_GAP);
+    }
+
+    /** Eine Eingabe in einem Fenster. Die Tastatur verdeckt sie nicht - der Dialog rückt hoch. */
+    private void textFrage(String titel, String hinweis, String vorbelegung,
+                           java.util.function.Consumer<String> beiOk) {
+        EditText feld = new EditText(this);
+        feld.setHint(hinweis);
+        feld.setText(vorbelegung == null ? "" : vorbelegung);
+        feld.setSingleLine(true);
+        feld.setTextColor(Theme.TEXT_PRIMARY);
+        feld.setHintTextColor(Theme.TEXT_DISABLED);
+        int rand = dp(20);
+        FrameLayout rahmen = new FrameLayout(this);
+        rahmen.setPadding(rand, dp(8), rand, 0);
+        rahmen.addView(feld);
+
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(titel)
+            .setView(rahmen)
+            .setNegativeButton("Abbrechen", null)
+            .setPositiveButton("Speichern", (dialog, welcher) -> beiOk.accept(feld.getText().toString().trim()))
+            .show();
+        feld.requestFocus();
+    }
+
     private Provider providerForFavorite(Favorite favorite) {
         for (Provider provider : providers) {
-            if (provider.id.equals(favorite.providerId)) return provider;
+            if (provider.id.equals(favorite.providerId())) return provider;
         }
         return null;
     }
 
+    /** Eine Zeile in einer der vier Listen, mit Fortschritt und Aktionsmenü. */
+    private View eintragsKarte(Favorite eintrag, Bibliothek liste) {
+        String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+        if (titel.isEmpty()) titel = "Titel";
+        String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
+        if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
+            hinweis = "Nächste Folge: " + eintrag.folgenText();
+        }
+        return MobileViews.favoriteCard(this, providerForFavorite(eintrag), titel, hinweis,
+            eintrag.providerName(),
+            liste.zeigtFortschritt() ? eintrag.progress() : 0,
+            liste.aufruf,
+            () -> openFavorite(eintrag),
+            anker -> eintragsMenue(anker, eintrag, liste));
+    }
+
+    /**
+     * Was sich mit einem Eintrag anstellen laesst.
+     *
+     * <p>Die Auswahl haengt daran, wo er steht: aus Weiterschauen nimmt man ihn
+     * heraus, ohne ihn zu verlieren; aus der Mediathek loescht man ihn wirklich.
+     * Alles, was nicht rueckgaengig zu machen ist, fragt vorher nach.
+     */
+    private void eintragsMenue(View anker, Favorite eintrag, Bibliothek liste) {
+        String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+        android.widget.PopupMenu menue = new android.widget.PopupMenu(this, anker, Gravity.END);
+        java.util.ArrayList<Runnable> aktionen = new java.util.ArrayList<>();
+
+        menue.getMenu().add(liste.aufruf);
+        aktionen.add(() -> openFavorite(eintrag));
+
+        if (liste == Bibliothek.WEITERSCHAUEN) {
+            menue.getMenu().add("Aus Weiterschauen nehmen");
+            aktionen.add(() -> {
+                bestand.ausWeiterschauenNehmen(eintrag.id());
+                showToast("Aus Weiterschauen genommen");
+            });
+        }
+        if (eintrag.istWatchlist()) {
+            menue.getMenu().add("Von der Watchlist nehmen");
+            aktionen.add(() -> {
+                bestand.watchlistSetzen(eintrag.id(), false);
+                showToast("Von der Watchlist genommen");
+            });
+        } else if (!eintrag.istAbgeschlossen()) {
+            menue.getMenu().add("Auf die Watchlist setzen");
+            aktionen.add(() -> {
+                bestand.watchlistSetzen(eintrag.id(), true);
+                showToast("Zur Watchlist hinzugefügt");
+            });
+        }
+        if (!eintrag.istAbgeschlossen()) {
+            menue.getMenu().add("Als abgeschlossen markieren");
+            aktionen.add(() -> frage("Als abgeschlossen markieren?",
+                titel + " wandert damit in die Mediathek und verlässt die Watchlist.",
+                () -> {
+                    bestand.alsAbgeschlossenMarkieren(eintrag.id());
+                    showToast("In die Mediathek verschoben");
+                }));
+        } else {
+            menue.getMenu().add("Zurück auf die Watchlist");
+            aktionen.add(() -> {
+                bestand.watchlistSetzen(eintrag.id(), true);
+                showToast("Zurück auf der Watchlist");
+            });
+        }
+
+        menue.getMenu().add("Löschen");
+        aktionen.add(() -> frage("Eintrag löschen?",
+            titel + " wird vollständig entfernt - auch der Fortschritt.",
+            () -> {
+                bestand.entfernen(eintrag.id());
+                showToast("Gelöscht");
+            }));
+
+        menue.setOnMenuItemClickListener(punkt -> {
+            for (int i = 0; i < menue.getMenu().size(); i += 1) {
+                if (menue.getMenu().getItem(i) == punkt) {
+                    aktionen.get(i).run();
+                    return true;
+                }
+            }
+            return false;
+        });
+        menue.show();
+    }
+
+    /**
+     * Rueckfrage vor allem, was sich nicht zuruecknehmen laesst.
+     *
+     * <p>Derselbe Gedanke wie am Desktop: geloescht wird erst nach einem
+     * zweiten Ja, und die Frage sagt, was genau verschwindet.
+     */
+    private void frage(String titel, String text, Runnable beiJa) {
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(titel)
+            .setMessage(text)
+            .setNegativeButton("Abbrechen", null)
+            .setPositiveButton("Ja", (dialog, welcher) -> beiJa.run())
+            .show();
+    }
+
     private View mobileFavoriteCard(Favorite favorite) {
-        String title = cleanFavoriteTitle(favorite.title, favorite.url);
+        String title = cleanFavoriteTitle(favorite.title(), favorite.url());
         if (title.isEmpty()) title = "Favorit";
         return MobileViews.favoriteCard(this, providerForFavorite(favorite), title,
-            favoriteEpisodeLabel(favorite.url), favorite.providerName,
+            favorite.folgenText(), favorite.providerName(),
+            favorite.progress(), "Weiter ansehen",
             () -> openFavorite(favorite),
-            () -> {
-                favorites.remove(favorite);
-                FavoriteStore.save(this, favorites);
-                showToast("Aus Favoriten entfernt");
-                if ("favorites".equals(currentScreen)) showFavorites();
-                else showHome();
-            });
+            anker -> eintragsMenue(anker, favorite, Bibliothek.WEITERSCHAUEN));
     }
 
     private TextView smallLabel(String text) {
@@ -1858,9 +2191,9 @@ public class MainActivity extends Activity {
 
     private String displayFavoriteTitle(Favorite favorite) {
         if (favorite == null) return "Favorit";
-        String value = cleanFavoriteTitle(favorite.title, favorite.url);
+        String value = cleanFavoriteTitle(favorite.title(), favorite.url());
         if (value.isEmpty()) value = "Favorit";
-        String progress = favoriteEpisodeLabel(favorite.url);
+        String progress = favorite.folgenText();
         return progress.isEmpty() ? value : value + " · " + progress;
     }
 
@@ -1928,13 +2261,6 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             return "";
         }
-    }
-
-    private String favoriteEpisodeLabel(String url) {
-        EpisodeIdentity identity = episodeIdentity(url);
-        if (identity == null) return "";
-        if (identity.season > 0) return "Staffel " + identity.season + " Folge " + identity.episode;
-        return "Folge " + identity.episode;
     }
 
     private String slugToTitle(String slug) {
@@ -2024,7 +2350,114 @@ public class MainActivity extends Activity {
         else renderMobileSearch(query);
     }
 
+    /**
+     * Die Watchparty: Räume, eingestellte Titel und der Abgleich.
+     *
+     * <p>Was hier steht, ist bewusst knapp: der Raumcode ist der ganze
+     * Zugang, und ein Gerät gehört entweder dazu oder nicht. Alles Weitere -
+     * Verbindung, Mitglieder, Host - führt der geteilte Kern.
+     */
+    private void zeigeWatchparty() {
+        currentScreen = "watchparty";
+        mouseMode = false;
+        setMouseCursorVisible(false);
+        setChromeCollapsed(false, false);
+        content.removeAllViews();
+        updateBottomNav();
+
+        LinearLayout page = isTelevision() ? tvPage() : mobilePage();
+        if (isTelevision()) {
+            page.addView(TvViews.eyebrow(this, "Gemeinsam schauen"));
+            page.addView(TvViews.heroTitle(this, "Watchparty"));
+        } else {
+            page.addView(MobileViews.eyebrow(this, "Gemeinsam schauen"));
+            page.addView(MobileViews.heroTitle(this, "Watchparty"));
+            page.addView(MobileViews.subtitle(this,
+                "Derselbe Raumcode auf mehreren Geräten - der Stand läuft zusammen."));
+        }
+
+        if (!watchparty.istEingeschaltet() || watchparty.serverUrl().isEmpty()) {
+            addSpacing(page, settingsCard("Noch nicht eingerichtet",
+                "Trage in den Einstellungen die Adresse deines Relays und einen Raumcode ein. "
+                    + "Denselben Code auf dem Rechner - dann laufen beide Stände zusammen.",
+                "Zu den Einstellungen", this::showSettings), MobileViews.SECTION_GAP);
+            return;
+        }
+
+        String zustand = watchparty.istVerbunden() ? "Verbunden" : "Nicht verbunden";
+        String fehler = watchparty.fehlertext();
+        addSpacing(page, settingsCard(zustand,
+            fehler.isEmpty()
+                ? watchparty.serverUrl() + (watchparty.geraetName().isEmpty()
+                    ? "" : "  ·  dieses Gerät: " + watchparty.geraetName())
+                : fehler,
+            null, null), MobileViews.SECTION_GAP);
+
+        JSONArray raeume = watchparty.raeume();
+        for (int i = 0; i < raeume.length(); i += 1) {
+            JSONObject raum = raeume.optJSONObject(i);
+            if (raum == null) continue;
+            boolean verbunden = raum.optBoolean("connected", false);
+            JSONArray mitglieder = raum.optJSONArray("peers");
+            int anzahl = mitglieder == null ? 0 : mitglieder.length();
+            String beschreibung = (verbunden ? "Verbunden" : "Getrennt")
+                + (anzahl > 0 ? "  ·  " + (anzahl == 1 ? "1 Gerät" : anzahl + " Geräte") : "  ·  allein");
+            addSpacing(page, settingsCard("Raum " + raum.optString("room", "?"),
+                beschreibung, null, null), MobileViews.ITEM_GAP);
+        }
+
+        JSONArray eingestellt = watchparty.eintraege();
+        if (eingestellt.length() == 0) {
+            addSpacing(page, settingsCard("Noch nichts eingestellt",
+                "Öffne einen Titel und stelle ihn über das Menü in einen Raum. Erst wer beitritt, "
+                    + "teilt seinen Fortschritt - von allein wird nichts geteilt.",
+                null, null), MobileViews.SECTION_GAP);
+            return;
+        }
+        addSpacing(page, isTelevision()
+            ? TvViews.sectionTitle(this, "Im Raum eingestellt")
+            : MobileViews.sectionHeader(this, "Im Raum eingestellt", null, null), MobileViews.SECTION_GAP);
+        for (int i = 0; i < eingestellt.length(); i += 1) {
+            JSONObject eintrag = eingestellt.optJSONObject(i);
+            if (eintrag == null) continue;
+            addSpacing(page, watchpartyKarte(eintrag), MobileViews.ITEM_GAP);
+        }
+    }
+
+    private View watchpartyKarte(JSONObject eintrag) {
+        String titel = eintrag.optString("title", "Titel");
+        String raum = eintrag.optString("room", "");
+        boolean dabei = eintrag.optBoolean("joined", false);
+        String schluessel = eintrag.optString("key", "");
+        String beschreibung = "Raum " + raum
+            + (dabei ? "  ·  du bist dabei" : "  ·  Vorschlag");
+        return settingsCard(titel, beschreibung,
+            dabei ? "Verlassen" : "Beitreten",
+            () -> {
+                Kern.Antwort danach = (wert, fehler) -> {
+                    if (fehler != null) showToast("Ging nicht: " + fehler);
+                    else showToast(dabei ? "Runde verlassen" : "Der Runde beigetreten");
+                };
+                if (dabei) watchparty.verlassen(schluessel, raum, danach);
+                else watchparty.beitreten(schluessel, raum, danach);
+            });
+    }
+
+    /** Der Weg aus der unteren Leiste: die zuletzt benutzte Liste. */
     private void showFavorites() {
+        zeigeBibliothek(offeneListe);
+    }
+
+    /**
+     * Meine Liste - Weiterschauen, Watchlist, Mediathek und Verlauf.
+     *
+     * <p>Auf dem Telefon liegen die vier hinter Reitern statt hinter vier
+     * Punkten in einer Seitenleiste: die untere Leiste hat nur Platz fuer eine
+     * Handvoll Ziele, und vier davon fuer Listen zu vergeben liesse fuer alles
+     * andere keinen Raum. Welche Liste zuletzt offen war, bleibt gemerkt.
+     */
+    private void zeigeBibliothek(Bibliothek liste) {
+        offeneListe = liste;
         currentScreen = "favorites";
         mouseMode = false;
         setMouseCursorVisible(false);
@@ -2032,23 +2465,71 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         updateBottomNav();
         if (isTelevision()) {
-            renderTvFavorites();
+            renderTvBibliothek(liste);
             return;
         }
+        renderMobileBibliothek(liste);
+    }
+
+    private void renderMobileBibliothek(Bibliothek liste) {
         LinearLayout page = mobilePage();
-        page.addView(MobileViews.eyebrow(this, "Deine Liste"));
-        page.addView(MobileViews.heroTitle(this, "Favoriten"));
-        if (favorites.isEmpty()) {
+        page.addView(MobileViews.eyebrow(this, "Meine Liste"));
+        page.addView(MobileViews.heroTitle(this, liste.titel));
+        page.addView(MobileViews.subtitle(this, liste.untertitel));
+        addSpacing(page, listenReiter(liste), 16);
+
+        List<Favorite> eintraege = liste.eintraege(bestand);
+        if (eintraege.isEmpty()) {
             addSpacing(page, MobileViews.emptyState(this, R.drawable.ic_nav_favorite,
-                "Noch keine Favoriten",
-                "Tippe im Anbieter oben auf das Herz, um hier weiterzumachen."), 8);
+                liste.leerTitel, liste.leerText), 20);
             return;
         }
-        addSpacing(page, MobileViews.subtitle(this,
-            favorites.size() == 1 ? "1 Titel gespeichert" : favorites.size() + " Titel gespeichert"), 0);
-        for (Favorite favorite : favorites) {
-            addSpacing(page, mobileFavoriteCard(favorite), MobileViews.ITEM_GAP);
+        for (Favorite eintrag : eintraege) {
+            addSpacing(page, eintragsKarte(eintrag, liste), MobileViews.ITEM_GAP);
         }
+        if (liste == Bibliothek.VERLAUF) {
+            addSpacing(page, MobileViews.secondaryButton(this, "Verlauf leeren", () -> frage(
+                "Verlauf leeren?",
+                "Gemerkte und abgeschlossene Titel bleiben. Alles andere wird entfernt.",
+                () -> {
+                    bestand.verlaufLeeren();
+                    showToast("Verlauf geleert");
+                })), MobileViews.SECTION_GAP);
+        }
+    }
+
+    /** Die Reiter ueber der Liste. Waagerecht scrollbar, damit sie auf schmalen Geraeten passen. */
+    private View listenReiter(Bibliothek aktiv) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout leiste = new LinearLayout(this);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        scroll.addView(leiste, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        for (Bibliothek liste : Bibliothek.values()) {
+            boolean gewaehlt = liste == aktiv;
+            int anzahl = liste.eintraege(bestand).size();
+            TextView reiter = new TextView(this);
+            reiter.setText(anzahl > 0 ? liste.titel + "  " + anzahl : liste.titel);
+            reiter.setTextColor(gewaehlt ? Color.WHITE : Theme.TEXT_SECONDARY);
+            reiter.setTextSize(14);
+            reiter.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            reiter.setGravity(Gravity.CENTER);
+            // Volle Zeilenhoehe als Tippflaeche: ein Reiter, der nur so gross
+            // ist wie seine Schrift, ist mit dem Daumen nicht zu treffen.
+            reiter.setPadding(dp(16), dp(11), dp(16), dp(11));
+            reiter.setMinHeight(dp(MobileViews.TOUCH_TARGET));
+            reiter.setBackground(MobileViews.shape(this,
+                gewaehlt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 22,
+                gewaehlt ? Theme.PRIMARY : Theme.BORDER, 1));
+            reiter.setOnClickListener(view -> zeigeBibliothek(liste));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.rightMargin = dp(8);
+            leiste.addView(reiter, params);
+        }
+        return scroll;
     }
 
     private void showSettings() {
@@ -2212,88 +2693,77 @@ public class MainActivity extends Activity {
     private void openFavorite(Favorite favorite) {
         Provider provider = null;
         for (Provider item : providers) {
-            if (item.id.equals(favorite.providerId)) {
+            if (item.id.equals(favorite.providerId())) {
                 provider = item;
                 break;
             }
         }
         if (provider == null && !providers.isEmpty()) provider = providers.get(0);
         if (provider != null) {
-            activeFavoriteId = favorite.id;
+            activeFavoriteId = favorite.id();
             // Picking a favourite means "watch this", so the page opens its player and goes
             // fullscreen by itself instead of leaving three more button presses to do.
-            armAutoStart(favorite.url);
-            openProvider(provider, favorite.url, true);
+            armAutoStart(favorite.url());
+            openProvider(provider, favorite.url(), true);
         }
     }
 
+    /**
+     * Der Herz-Knopf: die laufende Seite auf die Watchlist oder herunter.
+     *
+     * <p>Angelegt wird der Eintrag ueber die geteilte Regel, nicht von Hand.
+     * Sie kennt die Adresse, erkennt Staffel und Folge, bestimmt die Art und
+     * legt den Eintrag genau so an, wie ihn der Rechner anlegen wuerde - ein
+     * hier zusammengesetztes Objekt haette spaetestens beim Abgleich gefehlt,
+     * weil ihm die halben Felder fehlten.
+     */
     private void toggleFavorite() {
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-        if (webView == null || webView.getUrl() == null) return;
+        if (webView == null || webView.getUrl() == null || bestand == null) return;
+        String url = webView.getUrl();
 
-        Favorite favorite = new Favorite();
-        favorite.id = UUID.randomUUID().toString();
-        favorite.providerId = activeProvider.id;
-        favorite.providerName = activeProvider.name;
-        favorite.title = webView.getTitle() == null || webView.getTitle().isEmpty() ? activeProvider.name : webView.getTitle();
-        favorite.url = webView.getUrl();
-        favorite.favicon = "";
-        favorite.thumbnail = "";
-        favorite.createdAt = Instant.now().toString();
-
-        int existingIndex = matchingFavoriteIndex(activeProvider, favorite.url);
-        if (existingIndex >= 0) {
-            Favorite existing = favorites.remove(existingIndex);
-            favorite.id = existing.id;
-            favorite.createdAt = existing.createdAt == null || existing.createdAt.isEmpty() ? favorite.createdAt : existing.createdAt;
-            if (favorite.thumbnail == null || favorite.thumbnail.isEmpty()) favorite.thumbnail = existing.thumbnail;
-            favorites.add(0, favorite);
-            activeFavoriteId = favorite.id;
-            FavoriteStore.save(this, favorites);
+        Favorite vorhanden = bestand.mitId(bestand.aktiverEintragId());
+        if (vorhanden != null && vorhanden.istWatchlist()) {
+            bestand.watchlistSetzen(vorhanden.id(), false);
+            showToast("Von der Watchlist genommen");
             updateFavoriteButton();
-            showToast("Favorit aktualisiert");
+            return;
+        }
+        if (vorhanden != null) {
+            bestand.watchlistSetzen(vorhanden.id(), true);
+            showToast("Zur Watchlist hinzugefügt");
+            updateFavoriteButton();
             return;
         }
 
-        favorites.add(0, favorite);
-        activeFavoriteId = favorite.id;
-        FavoriteStore.save(this, favorites);
-        updateFavoriteButton();
-        showToast("Zu Favoriten hinzugefügt");
+        // Noch kein Eintrag: die Regel legt ihn an. "Geoeffnet" reicht als
+        // Anlass - Fortschritt kommt, sobald wirklich etwas laeuft.
+        String titel = webView.getTitle() == null || webView.getTitle().isEmpty()
+            ? activeProvider.name : webView.getTitle();
+        JSONObject meta = new JSONObject();
+        try {
+            meta.put("title", titel);
+            meta.put("vonHand", true);
+        } catch (Exception ignoriert) {
+            // Zwei Felder in einem frischen Objekt koennen nicht scheitern.
+        }
+        bestand.anlegenUndMerken(activeProvider, url, meta, () -> {
+            updateFavoriteButton();
+            showToast("Zur Watchlist hinzugefügt");
+        });
     }
 
     private void updateFavoriteButton() {
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
+        Favorite offen = bestand == null ? null : bestand.mitId(bestand.aktiverEintragId());
         boolean saved = webView != null && webView.getUrl() != null
-            && matchingFavoriteIndex(activeProvider, webView.getUrl()) >= 0;
+            && offen != null && offen.istWatchlist();
         if (browserFavoriteIcon != null) {
             browserFavoriteIcon.setImageResource(saved
                 ? R.drawable.ic_nav_favorite_filled : R.drawable.ic_nav_favorite);
             browserFavoriteIcon.setColorFilter(saved ? Theme.PRIMARY : Theme.TEXT_PRIMARY);
         }
         if (favoriteButton != null) favoriteButton.setText(saved ? "♥" : "♡");
-    }
-
-    private int matchingFavoriteIndex(Provider provider, String url) {
-        String normalized = FavoriteStore.normalizeUrl(url == null ? "" : url);
-        for (int i = 0; i < favorites.size(); i += 1) {
-            if (favoriteMatchesCurrentProviderTitle(favorites.get(i), provider, url, normalized)) return i;
-        }
-        return -1;
-    }
-
-    private boolean favoriteMatchesCurrentProviderTitle(Favorite favorite, Provider provider, String url, String normalized) {
-        if (favorite == null || provider == null) return false;
-        boolean sameProvider = provider.id.equals(favorite.providerId) || provider.name.equals(favorite.providerName);
-        if (!sameProvider) return false;
-        if (FavoriteStore.normalizeUrl(favorite.url).equals(normalized)) return true;
-        return favoriteReplacementKey(provider, favorite.url).equals(favoriteReplacementKey(provider, url));
-    }
-
-    private String favoriteReplacementKey(Provider provider, String url) {
-        String providerKey = provider == null ? "" : (provider.id == null || provider.id.isEmpty() ? provider.name : provider.id);
-        String slug = mediaSlugFromUrl(url);
-        return providerKey.toLowerCase() + ":" + (slug.isEmpty() ? FavoriteStore.normalizeUrl(url == null ? "" : url) : slug);
     }
 
     private String mediaSlugFromUrl(String value) {
@@ -2321,119 +2791,6 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
         }
         return "";
-    }
-
-    private void updateActiveFavoriteProgress(Provider provider, String url, String pageTitle) {
-        if (activeFavoriteId == null || provider == null || url == null || !isFavoriteProgressUrl(provider, url)) return;
-        for (Favorite favorite : favorites) {
-            if (!favorite.id.equals(activeFavoriteId) || !favorite.providerId.equals(provider.id)) continue;
-            String normalized = FavoriteStore.normalizeUrl(url);
-            if (FavoriteStore.normalizeUrl(favorite.url).equals(normalized)) return;
-            EpisodeIdentity previousEpisode = episodeIdentity(favorite.url);
-            EpisodeIdentity nextEpisode = episodeIdentity(url);
-            if (previousEpisode == null || nextEpisode == null) return;
-
-            if (isStaticFavoriteProgress() || !isSequentialFavoriteProgress(previousEpisode, nextEpisode)) {
-                activeFavoriteId = null;
-                updateFavoriteButton();
-                return;
-            }
-
-            favorite.url = url;
-            String title = pageTitle == null || pageTitle.trim().isEmpty() ? titleFromPath(url) : pageTitle.trim();
-            if (!title.isEmpty()) favorite.title = title;
-            favorite.providerName = provider.name;
-            FavoriteStore.save(this, favorites);
-            updateFavoriteButton();
-            showToast("Favorit auf " + favoriteProgressTargetLabel(url) + " geändert");
-            return;
-        }
-    }
-
-    private boolean isStaticFavoriteProgress() {
-        return "static".equals(favoriteProgressMode);
-    }
-
-    private String favoriteProgressLabel() {
-        return isStaticFavoriteProgress()
-            ? "Favoriten-Fortschritt: Statisch"
-            : "Favoriten-Fortschritt: Nur naechste Folge";
-    }
-
-    private boolean isSequentialFavoriteProgress(EpisodeIdentity previous, EpisodeIdentity next) {
-        if (previous == null || next == null || !previous.key.equals(next.key)) return false;
-        if (previous.season == next.season && next.episode == previous.episode + 1) return true;
-        return previous.season > 0
-            && next.season == previous.season + 1
-            && previous.episode > 1
-            && next.episode == 1;
-    }
-
-    private String favoriteProgressTargetLabel(String url) {
-        EpisodeIdentity identity = episodeIdentity(url);
-        if (identity == null) return "neue Folge";
-        if (identity.season > 0) return "Staffel " + identity.season + " Folge " + identity.episode;
-        return "Folge " + identity.episode;
-    }
-
-    private EpisodeIdentity episodeIdentity(String value) {
-        try {
-            URI uri = new URI(value);
-            String host = stripWww(uri.getHost());
-            String path = uri.getPath();
-            if (host.isEmpty() || path == null || path.isEmpty()) return null;
-            String[] rawParts = path.split("/");
-            ArrayList<String> parts = new ArrayList<>();
-            for (String part : rawParts) {
-                if (!part.isEmpty()) parts.add(part);
-            }
-
-            String mediaSlug = "";
-            for (int i = 0; i < parts.size() - 1; i += 1) {
-                String part = parts.get(i).toLowerCase();
-                if (part.matches("^(stream|serie|film|filme|movie|movies|title)$")) {
-                    mediaSlug = parts.get(i + 1).toLowerCase();
-                    break;
-                }
-            }
-            if (mediaSlug.isEmpty()) return null;
-
-            int season = 0;
-            int episode = 0;
-            for (String part : parts) {
-                Matcher seasonMatcher = Pattern.compile("^(staffel|season)-(\\d+)$", Pattern.CASE_INSENSITIVE).matcher(part);
-                if (seasonMatcher.find()) season = Integer.parseInt(seasonMatcher.group(2));
-                Matcher episodeMatcher = Pattern.compile("^(episode|folge)-(\\d+)$", Pattern.CASE_INSENSITIVE).matcher(part);
-                if (episodeMatcher.find()) episode = Integer.parseInt(episodeMatcher.group(2));
-            }
-            if (episode <= 0) return null;
-            EpisodeIdentity identity = new EpisodeIdentity();
-            identity.key = host + ":" + mediaSlug;
-            identity.season = season;
-            identity.episode = episode;
-            return identity;
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private static final class EpisodeIdentity {
-        String key;
-        int season;
-        int episode;
-    }
-
-    private boolean isFavoriteProgressUrl(Provider provider, String url) {
-        try {
-            URI uri = new URI(url);
-            if (uri.getHost() == null) return false;
-            String providerHost = new URI(provider.startUrl).getHost();
-            if (!isAllowedResultHost(provider, uri.getHost(), providerHost)) return false;
-            String path = uri.getPath() == null || uri.getPath().isEmpty() ? "/" : uri.getPath().replaceAll("/+$", "");
-            return !path.equals("/") && !path.matches("(?i).*(^|/)(search|suche|login|register|logout|settings|profile|account)(/|$).*");
-        } catch (Exception ignored) {
-            return false;
-        }
     }
 
     private boolean shouldBlockProviderNavigation(Provider provider, String url) {
@@ -2617,7 +2974,112 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
+        if (messung != null) messung.anhalten();
+        if (kern != null) kern.beenden();
         super.onDestroy();
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        deepLinkOeffnen(intent);
+    }
+
+    /**
+     * Oeffnet eine von aussen hereingereichte Adresse.
+     *
+     * <p>Zwei Formen: {@code elfix://open?url=...} und die Adresse eines
+     * eingebauten Anbieters direkt. Beide landen beim selben Anbieter-WebView
+     * wie ein Tippen in der App - nicht in einem fremden Browser, denn sonst
+     * waeren Anmeldung, Werbeblocker und Fortschritt weg.
+     *
+     * <p>Kennt ELFIX den Anbieter nicht, passiert bewusst nichts ausser einem
+     * Hinweis: eine beliebige Adresse in einem Anbieter-Fenster zu oeffnen
+     * waere kein Dienst, sondern eine Ueberraschung.
+     */
+    private void deepLinkOeffnen(android.content.Intent intent) {
+        if (intent == null) return;
+        android.net.Uri daten = intent.getData();
+        if (daten == null) return;
+        String ziel;
+        if ("elfix".equals(daten.getScheme())) {
+            ziel = daten.getQueryParameter("url");
+        } else {
+            ziel = daten.toString();
+        }
+        if (ziel == null || !ziel.startsWith("http")) return;
+
+        String host;
+        try {
+            host = stripWww(new URI(ziel).getHost());
+        } catch (Exception fehler) {
+            return;
+        }
+        if (host == null || host.isEmpty()) return;
+
+        for (Provider provider : providers) {
+            String anbieterHost;
+            try {
+                anbieterHost = stripWww(new URI(provider.startUrl).getHost());
+            } catch (Exception fehler) {
+                continue;
+            }
+            if (anbieterHost == null) continue;
+            if (host.equals(anbieterHost) || host.endsWith("." + anbieterHost) || anbieterHost.endsWith("." + host)) {
+                openProvider(provider, ziel);
+                return;
+            }
+        }
+        showToast("Diese Adresse gehört zu keinem eingerichteten Anbieter");
+    }
+
+    /**
+     * Ob der Eintrag beim Blaettern stehenbleiben soll.
+     *
+     * <p>Dieselbe Einstellung wie am Desktop ({@code playback.favoriteProgressMode}).
+     * Sie betrifft nur das Mitruecken beim Blaettern - der gemessene Fortschritt
+     * laeuft davon unabhaengig weiter.
+     */
+    private boolean folgeStatisch() {
+        return "static".equals(favoriteProgressMode);
+    }
+
+    /** Der Bestand hat sich geaendert - die sichtbare Liste neu zeichnen. */
+    private void bestandGeaendert() {
+        if ("favorites".equals(currentScreen)) showFavorites();
+        else if ("home".equals(currentScreen)) showHome();
+        updateFavoriteButton();
+    }
+
+    /** Was der Kern von sich aus meldet - bisher ausschliesslich die Watchparty. */
+    private void kernEreignis(String name, String nutzlastJson) {
+        if (name != null && name.startsWith("watchparty:") && watchparty != null) {
+            watchparty.ereignis(name, nutzlastJson);
+            return;
+        }
+        Log.i(TAG, "Kern-Ereignis " + name + ": " + nutzlastJson);
+    }
+
+    /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
+    private void watchpartyGeaendert() {
+        if ("watchparty".equals(currentScreen)) zeigeWatchparty();
+    }
+
+    /**
+     * Ein kurzer Beweis, dass wirklich die Desktop-Module laufen.
+     *
+     * <p>Geprueft wird an Werten, die vom Desktop bekannt sind: derselbe
+     * Werkschluessel fuer denselben Titel, dieselbe Suchvorlage fuer denselben
+     * Anbieter. Schlaegt das fehl, ist der Kern zwar hochgekommen, rechnet aber
+     * anders als der Rechner - und das faellt besser hier auf als spaeter an
+     * einem Fortschritt, der nicht zusammenpasst.
+     */
+    private void kernSelbsttest() {
+        kern.probenFahren((zeile, fehler) -> {
+            if (fehler != null) Log.e(TAG, "Fortschritts-Proben nicht gefahren: " + fehler);
+            else Log.i(TAG, "Fortschritts-Proben: " + zeile);
+        });
     }
 
     private void clearBrowserCachesPreservingLogin() {
@@ -4113,9 +4575,12 @@ public class MainActivity extends Activity {
             if (shouldBlockProviderNavigation(provider, url)) return;
             installTvWebNavigation(view);
             installStoPlayerFix(view, provider);
+            if (kosmetik != null) kosmetik.einspielen(view, provider);
             provider.lastUrl = url;
-            updateActiveFavoriteProgress(provider, url, view.getTitle());
-            updateFavoriteButton();
+            if (bestand != null) {
+                bestand.nachziehen(provider, url, favoriteProgressMode);
+                bestand.aktuellenEintragBestimmen(provider, url, MainActivity.this::updateFavoriteButton);
+            }
             super.onPageFinished(view, url);
         }
 
@@ -4313,6 +4778,13 @@ public class MainActivity extends Activity {
             // Only our own diagnostics, so provider pages cannot flood logcat.
             String text = message.message() == null ? "" : message.message();
             if (text.startsWith("ELFIX:")) Log.i(TAG, "page " + text);
+            // Die kosmetische Filterung meldet ihre Kandidaten über die
+            // Konsole - das ist der Weg, den auch der Rechner benutzt, und
+            // damit derselbe Meldetext.
+            if (kosmetik != null && kosmetik.istMeldung(text)) {
+                WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
+                kosmetik.meldung(ansicht, activeProvider, text);
+            }
             return true;
         }
 

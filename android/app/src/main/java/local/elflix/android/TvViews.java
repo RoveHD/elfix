@@ -204,8 +204,16 @@ final class TvViews {
     }
 
     /** Continue-watching card with a designed poster block, since the store holds no artwork. */
+    /**
+     * Eine Kachel in einer der vier Listen.
+     *
+     * @param prozent Fortschritt der laufenden Folge; 0 blendet den Balken aus
+     * @param onMenu  laengeres Druecken auf der Fernbedienung - dieselbe Auswahl
+     *                wie das Dreipunktmenue auf dem Telefon
+     */
     static View favoriteCard(Context context, Provider provider, String title, String episodeLine,
-                             String providerName, int widthDp, Runnable onOpen, Runnable onRemove) {
+                             String providerName, int widthDp, int prozent,
+                             Runnable onOpen, View.OnClickListener onMenu) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 14));
@@ -229,6 +237,32 @@ final class TvViews {
         posterText.setGravity(Gravity.CENTER);
         poster.addView(posterText, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Der Fortschritt liegt im Bild, wie auf dem Telefon - aus zwei Metern
+        // Entfernung ist ein Balken unter dem Text kaum noch zu sehen.
+        if (prozent > 0) {
+            View spur = new View(context);
+            GradientDrawable spurBg = new GradientDrawable();
+            spurBg.setColor(Color.argb(150, 0, 0, 0));
+            spur.setBackground(spurBg);
+            FrameLayout.LayoutParams spurParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 6));
+            spurParams.gravity = Gravity.BOTTOM;
+            poster.addView(spur, spurParams);
+
+            View balken = new View(context);
+            GradientDrawable balkenBg = new GradientDrawable();
+            balkenBg.setColor(Theme.PRIMARY);
+            balken.setBackground(balkenBg);
+            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, 6));
+            balkenParams.gravity = Gravity.BOTTOM;
+            poster.addView(balken, balkenParams);
+            poster.post(() -> {
+                FrameLayout.LayoutParams neu = (FrameLayout.LayoutParams) balken.getLayoutParams();
+                neu.width = Math.max(dp(context, 4), poster.getWidth() * Math.min(100, prozent) / 100);
+                balken.setLayoutParams(neu);
+            });
+        }
+
         card.addView(poster, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 96)));
 
@@ -264,9 +298,9 @@ final class TvViews {
         }
 
         card.setOnClickListener(v -> onOpen.run());
-        if (onRemove != null) {
+        if (onMenu != null) {
             card.setOnLongClickListener(v -> {
-                onRemove.run();
+                onMenu.onClick(v);
                 return true;
             });
         }

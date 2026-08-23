@@ -82,7 +82,10 @@ const FILMO = { id: "filmo", name: "Filmo", startUrl: "https://filmo.co/", enabl
   }
 
   // --- Die Entscheidungsfunktionen aus main.js ----------------------------
-  const main = lies("src/main.js");
+  // Die Fortschritts- und Adressregeln stehen seit der Verschiebung in
+  // src/fortschritt.js, damit die Android-App dieselben benutzt. Zum
+  // Herausschneiden zaehlt beides als eine Quelle.
+  const main = [lies("src/main.js"), lies("src/fortschritt.js")].join("\n");
   const teile = [
     "const MEDIEN_ENDUNGEN",
     "const MEDIEN_PFADE",

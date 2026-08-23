@@ -1,0 +1,120 @@
+{
+  "hinweis": "Faelle fuer die Fortschrittsregel, die Desktop und Android gemeinsam fahren. Der Desktop prueft sie in tests/fortschritttest.js, die Android-App in ihrem Kern (Kern.selbsttest). Weichen die Ergebnisse ab, laufen die Geraete auseinander - genau das soll die Datei verhindern.",
+  "anbieter": { "id": "p1", "name": "Aniworld", "startUrl": "https://aniworld.to/", "logo": "AN" },
+  "stand": {
+    "id": "e1", "providerId": "p1", "providerName": "Aniworld", "title": "Naruto",
+    "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+    "normalizedUrl": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+    "type": "serie", "season": 3, "episode": 7, "progress": 20,
+    "currentTime": 280, "duration": 1400,
+    "favorite": true, "watched": true, "completed": false, "episodeCompleted": false,
+    "continuePending": false, "completedEpisodes": [], "activity": [],
+    "finalSeason": 5, "finalEpisode": 20, "hideFromContinueWatching": false,
+    "createdAt": "2026-01-01T00:00:00.000Z", "lastWatchedAt": "2026-01-01T00:00:00.000Z"
+  },
+  "faelle": [
+    {
+      "name": "ohne Videodaten kein Eintrag",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+      "meta": {},
+      "mitStand": false,
+      "erwartet": "kein Eintrag"
+    },
+    {
+      "name": "Film sofort",
+      "url": "https://filmo.to/film/spiderman",
+      "meta": { "currentTime": 30, "duration": 6000, "watchedSeconds": 30 },
+      "mitStand": false,
+      "erwartet": "S0E0 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "Staffel 1 Folge 1 sofort",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-1/episode-1",
+      "meta": { "currentTime": 20, "duration": 1400, "watchedSeconds": 20 },
+      "mitStand": false,
+      "erwartet": "S1E1 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "mitten in der Serie unter 2:30",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+      "meta": { "currentTime": 60, "duration": 1400, "watchedSeconds": 60 },
+      "mitStand": false,
+      "erwartet": "kein Eintrag"
+    },
+    {
+      "name": "mitten in der Serie ab 2:30",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+      "meta": { "currentTime": 160, "duration": 1400, "watchedSeconds": 160 },
+      "mitStand": false,
+      "erwartet": "S3E7 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "90 Prozent ohne Wiedergabezeit",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+      "meta": { "currentTime": 1330, "duration": 1400, "watchedSeconds": 10 },
+      "mitStand": true,
+      "erwartet": "S3E7 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "90 Prozent mit Wiedergabezeit rueckt vor",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-7",
+      "meta": { "currentTime": 1330, "duration": 1400, "watchedSeconds": 900 },
+      "mitStand": true,
+      "erwartet": "S3E8 offen weiter=ja folgen=1"
+    },
+    {
+      "name": "Staffelende geht in die naechste Staffel",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-24",
+      "standAenderung": { "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-24", "season": 3, "episode": 24 },
+      "meta": { "currentTime": 1330, "duration": 1400, "watchedSeconds": 900, "seasonLastEpisode": 24, "finalSeason": 5, "finalEpisode": 20 },
+      "mitStand": true,
+      "erwartet": "S4E1 offen weiter=ja folgen=1"
+    },
+    {
+      "name": "letzte Folge schliesst die Serie ab",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-5/episode-20",
+      "standAenderung": { "url": "https://aniworld.to/anime/stream/naruto/staffel-5/episode-20", "season": 5, "episode": 20 },
+      "meta": { "currentTime": 1330, "duration": 1400, "watchedSeconds": 900, "finalSeason": 5, "finalEpisode": 20 },
+      "mitStand": true,
+      "_hinweis": "folgen=0, weil beim Abschluss der ganzen Serie nicht mehr auf eine naechste Folge gerueckt wird - und nur dieser Schritt traegt eine Folge in completedEpisodes nach.",
+      "erwartet": "S5E20 abgeschlossen weiter=nein folgen=0"
+    },
+    {
+      "name": "zurueck unter einer Minute",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-2",
+      "meta": { "currentTime": 30, "duration": 1400, "watchedSeconds": 30 },
+      "mitStand": true,
+      "erwartet": "S3E7 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "zurueck ab einer Minute",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-2",
+      "meta": { "currentTime": 70, "duration": 1400, "watchedSeconds": 70 },
+      "mitStand": true,
+      "erwartet": "S3E2 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "kurzer Sprung nach vorn ohne Runde",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-4/episode-3",
+      "meta": { "currentTime": 10, "duration": 1400, "watchedSeconds": 10 },
+      "mitStand": true,
+      "erwartet": "S3E7 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "die Runde gibt die Folge vor",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-4/episode-3",
+      "meta": { "currentTime": 10, "duration": 1400, "watchedSeconds": 10 },
+      "mitStand": true,
+      "watchpartyFuehrt": true,
+      "erwartet": "S4E3 offen weiter=nein folgen=0"
+    },
+    {
+      "name": "in einer Runde genuegt eine halbe Minute",
+      "url": "https://aniworld.to/anime/stream/naruto/staffel-3/episode-9",
+      "standAenderung": { "watchpartyRoom": "familie" },
+      "meta": { "currentTime": 40, "duration": 1400, "watchedSeconds": 40 },
+      "mitStand": true,
+      "erwartet": "S3E9 offen weiter=nein folgen=0"
+    }
+  ]
+}

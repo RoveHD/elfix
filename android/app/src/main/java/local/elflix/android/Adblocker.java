@@ -15,12 +15,36 @@ public final class Adblocker {
     private static volatile Set<String> adGuardDomains = Collections.emptySet();
     private static final AtomicBoolean adGuardLoading = new AtomicBoolean(false);
 
+    /**
+     * Uebernimmt eine frisch geladene Liste.
+     *
+     * <p>Wird von {@link Filterlisten} gerufen, sobald der Abruf durch ist.
+     * Der Austausch ist ein einziger Zeigerwechsel auf ein fertiges Set -
+     * waehrenddessen filtert die alte Liste weiter, und es gibt keinen
+     * Augenblick, in dem gar nichts blockt.
+     */
+    public static void uebernimmGeladeneDomains(Set<String> domains) {
+        if (domains == null || domains.isEmpty()) return;
+        adGuardDomains = domains;
+    }
+
+    /**
+     * Laedt die Liste: zuerst die abgelegte, sonst die mitgelieferte.
+     *
+     * <p>Die mitgelieferte ist der Notnagel - sie altert mit der App, und
+     * Werbenetze wechseln ihre Adressen schneller als ELFIX erscheint.
+     */
     public static void loadAdGuardList(Context context) {
         if (!adGuardDomains.isEmpty() || !adGuardLoading.compareAndSet(false, true)) {
             return;
         }
         Context appContext = context.getApplicationContext();
         new Thread(() -> {
+            Set<String> abgelegt = Filterlisten.geladene(appContext);
+            if (!abgelegt.isEmpty()) {
+                adGuardDomains = abgelegt;
+                return;
+            }
             Set<String> loaded = new HashSet<>(150_000);
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                     appContext.getAssets().open("adguard_blocklist.txt"), StandardCharsets.UTF_8))) {
@@ -279,6 +303,26 @@ public final class Adblocker {
             || value.contains("utm_source=ad")
             || value.contains("ad_type=")
             || value.contains("adformat=");
+    }
+
+    /**
+     * Ob ein Host fuer Werbung oder Verfolgung steht.
+     *
+     * <p>Fuer die kosmetische Filterung: {@code istWerbeOverlay} im geteilten
+     * Modul fragt danach, um zu entscheiden, ob eine Schicht ueber der Seite
+     * wirklich Werbung ist. Am Rechner antwortet dort die Filter-Engine, hier
+     * die mitgelieferten Listen - dieselbe Frage, andere Quelle.
+     *
+     * <p>Geprueft wird der Host samt seiner uebergeordneten Domains, damit
+     * {@code werbung.beispiel.de} an {@code beispiel.de} haengenbleibt.
+     */
+    public boolean istWerbeHost(String host) {
+        if (host == null) return false;
+        String sauber = host.toLowerCase().trim();
+        if (sauber.isEmpty()) return false;
+        return matchesAny(sauber, adDomains)
+            || matchesAny(sauber, trackers)
+            || matchesAny(sauber, adGuardDomains);
     }
 
     private static boolean matchesAny(String host, Set<String> rules) {

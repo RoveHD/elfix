@@ -18,6 +18,7 @@
             android:name=".MainActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="unspecified">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -26,6 +27,42 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                Eigene Adressen: elfix://open?url=...
+
+                Damit laesst sich ein Titel gezielt in ELFIX oeffnen - aus einer
+                Benachrichtigung, aus einer Verknuepfung, von einem anderen
+                Geraet. Ein eigenes Schema statt eines allgemeinen, weil nur
+                ELFIX es benutzt und deshalb niemand gefragt werden muss, welche
+                App gemeint war.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="elfix" />
+            </intent-filter>
+
+            <!--
+                Adressen der eingebauten Anbieter.
+
+                Absichtlich nur diese und nicht http/https allgemein: ELFIX ist
+                kein Browser, und es soll nicht bei jedem angetippten Link zur
+                Auswahl stehen. Wer einen eigenen Anbieter eintraegt, oeffnet
+                ihn in der App - dafuer braucht es keinen Eintrag hier.
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="aniworld.to" />
+                <data android:scheme="https" android:host="www.aniworld.to" />
+                <data android:scheme="https" android:host="s.to" />
+                <data android:scheme="https" android:host="www.s.to" />
+                <data android:scheme="https" android:host="filmo.to" />
+                <data android:scheme="https" android:host="www.filmo.to" />
             </intent-filter>
         </activity>
     </application>

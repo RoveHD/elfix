@@ -16,7 +16,12 @@ const vm = require("vm");
 const path = require("path");
 
 const WURZEL = path.join(__dirname, "..");
-const QUELLE = fs.readFileSync(path.join(WURZEL, "src/main.js"), "utf8").split("\r\n").join("\n");
+// Der Fortschritt selbst steht seit der Verschiebung in src/fortschritt.js,
+// damit Desktop und Android dieselbe Regel benutzen. Fuer die Pruefungen hier
+// zaehlen beide Dateien als eine Quelle.
+const QUELLE = ["src/main.js", "src/fortschritt.js"]
+  .map((datei) => fs.readFileSync(path.join(WURZEL, datei), "utf8").split("\r\n").join("\n"))
+  .join("\n");
 
 const pruefungen = [];
 const pruefe = (n, b, d) => { pruefungen.push(b); console.log(`${b ? "OK  " : "FAIL"}  ${n}${d ? "   -> " + d : ""}`); };

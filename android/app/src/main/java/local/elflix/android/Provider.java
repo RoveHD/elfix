@@ -11,6 +11,40 @@ public final class Provider {
     public int sortOrder;
     public String lastUrl = "";
 
+    /**
+     * Der Anbieter in der Form, die der geteilte Kern erwartet.
+     *
+     * <p>Dieselben Feldnamen wie am Desktop - die Regeln dort lesen
+     * {@code provider.id}, {@code provider.name} und {@code provider.startUrl},
+     * und sie sollen auf dem Telefon nichts anderes vorfinden.
+     */
+    public org.json.JSONObject alsJson() {
+        org.json.JSONObject json = new org.json.JSONObject();
+        try {
+            json.put("id", id == null ? "" : id);
+            json.put("name", name == null ? "" : name);
+            json.put("startUrl", startUrl == null ? "" : startUrl);
+            json.put("searchUrl", searchUrl == null ? "" : searchUrl);
+            json.put("logo", logo == null ? "" : logo);
+        } catch (Exception ignoriert) {
+            // Ein Objekt aus fuenf Textfeldern kann nicht scheitern.
+        }
+        return json;
+    }
+
+    /** Der Anbieter, wie er in die Ablage gehoert - dieselben Felder wie am Desktop. */
+    public org.json.JSONObject alsAblage() {
+        org.json.JSONObject json = alsJson();
+        try {
+            json.put("enabled", enabled);
+            json.put("adblockEnabled", adblockEnabled);
+            json.put("sortOrder", sortOrder);
+        } catch (Exception ignoriert) {
+            // Drei einfache Werte koennen nicht scheitern.
+        }
+        return json;
+    }
+
     public String buildSearchUrl(String query) {
         String encoded = android.net.Uri.encode(query == null ? "" : query.trim());
         if (searchUrl != null && searchUrl.contains("{query}") && !isGoogleSiteSearch(searchUrl)) {

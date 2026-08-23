@@ -25,6 +25,9 @@ const WURZEL = path.join(__dirname, "..");
 const MAIN = fs.readFileSync(path.join(WURZEL, "src/main.js"), "utf8").replace(/\r/g, "");
 const RENDERER = fs.readFileSync(path.join(WURZEL, "src/renderer/renderer.js"), "utf8").replace(/\r/g, "");
 const PRELOAD = fs.readFileSync(path.join(WURZEL, "src/preload.js"), "utf8").replace(/\r/g, "");
+// Die Fortschrittsregeln stehen seit der Verschiebung in einem eigenen Modul,
+// das sich Desktop und Android teilen - dort ist jetzt nachzusehen.
+const FORTSCHRITT = fs.readFileSync(path.join(WURZEL, "src/fortschritt.js"), "utf8").replace(/\r/g, "");
 
 const pruefungen = [];
 const pruefe = (name, bedingung, detail) => {
@@ -387,7 +390,7 @@ const ausAlt = vm.runInContext("sitzungenAusAltdaten", umgebung);
   pruefe("Eine gewoehnliche Serie bleibt Serie",
     statistik.gattungBestimmen({ type: "serie", providerName: "S.to", url: "https://s.to/serie/loki" }) === "serie");
   pruefe("Der bestehende Typ an den Favoriten wird nicht angefasst",
-    /if \(type === "serie" \|\| type === "series" \|\| type === "anime"\) return "serie";/.test(MAIN),
+    /if \(type === "serie" \|\| type === "series" \|\| type === "anime"\) return "serie";/.test(FORTSCHRITT),
     "Mediathek, Empfehlungen und Fortschritt haengen daran");
 }
 

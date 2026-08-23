@@ -124,7 +124,11 @@ pruefe("Auch Unsinn kommt heil zurueck",
 
 // Die eigentliche Absicherung: normalizeFavoriteUrl aus main.js muss fremde
 // Adressen weiter genau so behandeln wie vorher.
-const main = fs.readFileSync(path.join(WURZEL, "src", "main.js"), "utf8").split("\r\n").join("\n");
+// Sie steht seit der Verschiebung in src/fortschritt.js, damit die Android-App
+// dieselbe Regel benutzt. Zum Herausschneiden zaehlen beide als eine Quelle.
+const main = ["src/main.js", "src/fortschritt.js"]
+  .map((datei) => fs.readFileSync(path.join(WURZEL, datei), "utf8").split("\r\n").join("\n"))
+  .join("\n");
 function abschnitt(quelle, anfang) {
   const zeilen = quelle.split("\n");
   const von = zeilen.findIndex((z) => z.startsWith(anfang));
