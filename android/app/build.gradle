@@ -35,6 +35,7 @@ def kernModule = [
     "src/youtube.js",
     "src/youtube-sync.js",
     "src/voe-qualitaet.js",
+    "src/fassung.js",
     "shared/provider-model.js",
     "shared/bildausschnitt.js"
 ]

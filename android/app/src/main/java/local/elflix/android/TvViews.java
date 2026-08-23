@@ -329,6 +329,9 @@ final class TvViews {
         text.setTextSize(16);
         text.setLineSpacing(0, 1.2f);
         text.setPadding(0, dp(context, 8), 0, 0);
+        // Damit ein Nachtrag den Text spaeter wiederfindet, ohne dass die
+        // ganze Seite neu gebaut werden muss.
+        text.setTag("karten-text");
         card.addView(text);
 
         if (actionLabel != null && onAction != null) {

@@ -83,6 +83,7 @@ public class MainActivity extends Activity {
     private Watchparty watchparty;
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
     private Kosmetik kosmetik;
+    private Fassungen fassungen;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -145,6 +146,14 @@ public class MainActivity extends Activity {
     private static final long AUTOSTART_ARM_TTL_MS = 600_000L;
     private static final long AUTOSTART_POLL_MS = 500L;
     private static final long AUTOSTART_HOSTER_TIMEOUT_MS = 60_000L;
+    /**
+     * Wie oft nachgesehen wird, ob die Fassung inzwischen umgeschaltet hat.
+     *
+     * <p>Kurz genug, dass niemand es merkt, lang genug, dass die Seite
+     * dazwischen wirklich neu aufbauen kann. Die Sperre selbst laeuft nach
+     * vier Sekunden von allein ab - haengen kann das hier also nicht.
+     */
+    private static final long FASSUNG_NACHFASSEN_MS = 250L;
     private static final long AUTOSTART_PLAYER_TIMEOUT_MS = 30_000L;
     /** Breathing room between "the player element exists" and touching it. */
     private static final long AUTOSTART_SETTLE_MS = 4_000L;
@@ -234,10 +243,12 @@ public class MainActivity extends Activity {
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
         kosmetik = new Kosmetik(kern, adblocker);
+        fassungen = new Fassungen(this, kern);
         kern.wennBereit(() -> {
             messung.starten();
             watchparty.anwenden();
             kosmetik.vorbereiten();
+            fassungen.vorbereiten();
             // Die erste Anbieterseite ist oft schon fertig, bevor der Kern
             // steht - sie bekommt das Suchskript deshalb hier nachgereicht.
             if (activeProvider != null) {
@@ -903,6 +914,57 @@ public class MainActivity extends Activity {
             anker -> eintragsMenue(anker, eintrag, liste));
     }
 
+    /**
+     * Sprachfassung merken - eine Karte fuer beide Geraete.
+     *
+     * <p>Der Text nennt, was wirklich gemerkt wurde, statt nur "an" oder
+     * "aus": eine Funktion, die aus dem eigenen Verhalten lernt, muss zeigen
+     * koennen, was sie gelernt hat - sonst ist sie nicht nachvollziehbar. Die
+     * Auskunft kommt aus dem Kern und damit aus demselben Bestand, der auch
+     * vorwaehlt; deshalb wird die Karte nachtraeglich beschriftet.
+     */
+    private View fassungsKarte(boolean fernseher) {
+        boolean an = fassungen != null && fassungen.eingeschaltet();
+        String text = an
+            ? "Womit du eine Serie angefangen hast, steht ab der zweiten Folge vorgewählt da."
+            : "Aus. Jede Folge startet in der Fassung, die der Anbieter vorgibt.";
+        Runnable umschalten = () -> {
+            if (fassungen == null) return;
+            fassungen.einschalten(!fassungen.eingeschaltet());
+            showSettings();
+        };
+        View karte = fernseher
+            ? TvViews.infoCard(this, "Sprachfassung merken", text, an ? "Ausschalten" : "Einschalten", umschalten)
+            : settingsCard("Sprachfassung merken", text, an ? "Ausschalten" : "Einschalten", umschalten);
+        if (an && fassungen != null) fassungsStandNachtragen(karte);
+        return karte;
+    }
+
+    /** Traegt nach, was gemerkt wurde, sobald der Kern geantwortet hat. */
+    private void fassungsStandNachtragen(View karte) {
+        fassungen.stand(bericht -> {
+            if (bericht == null || karte == null) return;
+            int titel = bericht.optInt("titel", 0);
+            if (titel <= 0) return;
+            org.json.JSONArray fassungsListe = bericht.optJSONArray("fassungen");
+            StringBuilder text = new StringBuilder();
+            text.append(titel == 1 ? "Für einen Titel gemerkt" : "Für " + titel + " Titel gemerkt");
+            if (fassungsListe != null && fassungsListe.length() > 0) {
+                text.append(": ");
+                for (int i = 0; i < fassungsListe.length() && i < 3; i += 1) {
+                    org.json.JSONObject eintrag = fassungsListe.optJSONObject(i);
+                    if (eintrag == null) continue;
+                    if (i > 0) text.append(", ");
+                    text.append(eintrag.optString("name"))
+                        .append(" (").append(eintrag.optInt("anzahl")).append(")");
+                }
+            }
+            text.append(".");
+            TextView koerper = karte.findViewWithTag("karten-text");
+            if (koerper != null) koerper.setText(text.toString());
+        });
+    }
+
     private void renderTvSettings() {
         LinearLayout page = tvPage();
         page.addView(TvViews.eyebrow(this, "ELFIX"));
@@ -925,6 +987,8 @@ public class MainActivity extends Activity {
                 showToast("Gespeichert");
                 showSettings();
             }), TvViews.ITEM_GAP);
+
+        addSpacing(page, fassungsKarte(true), TvViews.ITEM_GAP);
 
         addSpacing(page, TvViews.infoCard(this, "Zwischenspeicher",
             "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
@@ -1258,6 +1322,9 @@ public class MainActivity extends Activity {
         text.setTextSize(13.5f);
         text.setLineSpacing(0, 1.15f);
         text.setPadding(0, dp(6), 0, 0);
+        // Damit ein Nachtrag den Text spaeter wiederfindet, ohne dass die
+        // ganze Seite neu gebaut werden muss.
+        text.setTag("karten-text");
         card.addView(text);
 
         if (actionLabel != null && onAction != null) {
@@ -1307,6 +1374,8 @@ public class MainActivity extends Activity {
                 showToast("Gespeichert");
                 showSettings();
             }), MobileViews.ITEM_GAP);
+
+        addSpacing(page, fassungsKarte(false), MobileViews.ITEM_GAP);
 
         watchpartyEinstellungen(page);
 
@@ -3387,8 +3456,21 @@ public class MainActivity extends Activity {
             });
     }
 
-    /** Fallback for pages that do not embed a player themselves. */
+    /**
+     * Fallback for pages that do not embed a player themselves.
+     *
+     * <p>Erst die Fassung, dann der Hoster. Die Anbieterseite zeigt nur die
+     * Hoster der gewaehlten Fassung; ein Klick davor traefe die, die gerade
+     * noch dastanden - und damit die falsche Sprache, obwohl alles richtig
+     * gemerkt war. Dieselbe Reihenfolge wie am Rechner.
+     */
     private void clickHoster(WebView webView, String url) {
+        if (fassungen != null && fassungen.wartet()) {
+            webView.postDelayed(() -> {
+                if (currentWebView() == webView) clickHoster(webView, url);
+            }, FASSUNG_NACHFASSEN_MS);
+            return;
+        }
         awaitPage(webView, url,
             "(function(){"
                 + "function visible(el){var r=el.getBoundingClientRect();return r.width>0&&r.height>0;}"
@@ -4576,6 +4658,11 @@ public class MainActivity extends Activity {
             installTvWebNavigation(view);
             installStoPlayerFix(view, provider);
             if (kosmetik != null) kosmetik.einspielen(view, provider);
+            // Die gemerkte Fassung anklicken, bevor der Autostart einen
+            // Hoster sucht - die Seite zeigt nur die Hoster der gewaehlten.
+            if (fassungen != null) {
+                fassungen.einspielen(view, provider, url, FavoriteStore.ladeRoh(MainActivity.this));
+            }
             provider.lastUrl = url;
             if (bestand != null) {
                 bestand.nachziehen(provider, url, favoriteProgressMode);
@@ -4784,6 +4871,13 @@ public class MainActivity extends Activity {
             if (kosmetik != null && kosmetik.istMeldung(text)) {
                 WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
                 kosmetik.meldung(ansicht, activeProvider, text);
+            }
+            // Welche Fassung dasteht - und welche jemand angeklickt hat.
+            if (fassungen != null && fassungen.istMeldung(text)) {
+                WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
+                String adresse = ansicht == null ? null : ansicht.getUrl();
+                fassungen.meldung(activeProvider, adresse,
+                    FavoriteStore.ladeRoh(MainActivity.this), text, MainActivity.this::showToast);
             }
             return true;
         }
