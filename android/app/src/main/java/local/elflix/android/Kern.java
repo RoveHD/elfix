@@ -147,6 +147,11 @@ public final class Kern {
             }
         });
         webView.addJavascriptInterface(new Bruecke(), "AndroidKern");
+        // Die Krypto-Grundrechenarten. Eigene Bruecke, weil sie nichts mit dem
+        // Kern zu tun haben: sie kennen keinen Aufruf, keine Antwort und keinen
+        // Zustand - sie rechnen. Was damit geschieht, entscheidet ausschliesslich
+        // geraete-schluessel.js.
+        webView.addJavascriptInterface(new Krypto(), "AndroidKrypto");
         webView.loadUrl(SEITE);
     }
 

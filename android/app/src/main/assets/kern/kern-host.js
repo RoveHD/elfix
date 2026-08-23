@@ -50,9 +50,13 @@
     var name = schluessel(pfad);
     if (Object.prototype.hasOwnProperty.call(geladene, name)) return geladene[name].exports;
 
-    // crypto ist der einzige Node-Baustein, den ein Modul anfasst:
-    // watchparty-raeume.js will randomUUID. Das WebView hat es selbst.
-    if (name === "crypto") return kryptoErsatz();
+    // crypto ist der einzige Node-Baustein, den ein Modul ueber require
+    // anfasst. watchparty-raeume.js will nur randomUUID; der Geraeteabgleich
+    // verlangt HKDF, HMAC und AES-256-GCM, und zwar synchron - das liefert
+    // kern-knoten.js ueber Java.
+    if (name === "crypto") {
+      return (window.ElfixKnoten && window.ElfixKnoten.crypto) || kryptoErsatz();
+    }
 
     var quelle = quelltexte[name];
     if (typeof quelle !== "string") {

@@ -5801,11 +5801,7 @@ function reportWatchpartyProgress(favorite) {
 }
 
 function providerForWatchpartyUrl(url, providerName) {
-  const host = providerModel.hostFromUrl(url).toLowerCase();
-  const aktive = enabledProviders();
-  return aktive.find((provider) => providerModel.hostFromUrl(provider.startUrl).toLowerCase() === host)
-    || aktive.find((provider) => String(provider.name || "").toLowerCase() === String(providerName || "").toLowerCase())
-    || null;
+  return geraeteStand.anbieterFinden(enabledProviders(), url, providerName);
 }
 
 // Fortschritt eines Mitglieds einarbeiten. Das betrifft nur Serien, denen

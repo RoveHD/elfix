@@ -228,8 +228,28 @@ function entfernen(favoriten, key) {
   return lokal;
 }
 
+/**
+ * Der Anbieter zu einer Adresse.
+ *
+ * <p>Erst ueber den Wirt, dann ueber den Namen. Der Name ist der Rueckfall fuer
+ * den Fall, dass derselbe Anbieter hier unter einer anderen Adresse laeuft als
+ * dort - dann passt der Wirt nicht, und der Name ist alles, was bleibt.
+ *
+ * <p>Uebergeben wird ausdruecklich die Liste der *eingeschalteten* Anbieter:
+ * ein abgeschalteter waere eine Karte, die sich nicht oeffnen laesst.
+ */
+function anbieterFinden(anbieter, url, providerName) {
+  const wirt = providerModel.hostFromUrl(url).toLowerCase();
+  const liste = anbieter || [];
+  return liste.find((eintrag) => providerModel.hostFromUrl(eintrag?.startUrl).toLowerCase() === wirt)
+    || liste.find((eintrag) => String(eintrag?.name || "").toLowerCase()
+      === String(providerName || "").toLowerCase())
+    || null;
+}
+
 module.exports = {
   titelSchluessel,
+  anbieterFinden,
   eintragFinden,
   staende,
   erzeugen,

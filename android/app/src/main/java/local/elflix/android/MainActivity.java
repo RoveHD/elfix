@@ -87,6 +87,7 @@ public class MainActivity extends Activity {
     private Rahmen rahmen;
     private Marken marken;
     private Qualitaet qualitaet;
+    private Geraete geraete;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -244,6 +245,10 @@ public class MainActivity extends Activity {
         });
         messung.setzeRahmen(rahmen);
         watchparty = new Watchparty(this, kern, this::watchpartyGeaendert);
+        geraete = new Geraete(this, kern, watchparty, zustand -> {
+            // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
+            if ("settings".equals(currentScreen)) showSettings();
+        });
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
         kosmetik = new Kosmetik(kern, adblocker);
@@ -264,6 +269,7 @@ public class MainActivity extends Activity {
             fassungen.vorbereiten();
             marken.vorbereiten();
             qualitaet.vorbereiten();
+            geraete.vorbereiten();
             // Die erste Anbieterseite ist oft schon fertig, bevor der Kern
             // steht - sie bekommt das Suchskript deshalb hier nachgereicht.
             if (activeProvider != null) {
@@ -929,6 +935,304 @@ public class MainActivity extends Activity {
             anker -> eintragsMenue(anker, eintrag, liste));
     }
 
+    // --- Meine Geraete -------------------------------------------------------
+
+    /**
+     * Der Abschnitt "Meine Geraete" - fuer Telefon und Fernseher aus denselben
+     * Bausteinen, aber nicht im selben Zuschnitt.
+     *
+     * <p>Am Rechner steht das Feld fuer den Schluessel neben vier Knoepfen in
+     * einer Zeile. Auf sechs Zoll waeren das vier Ziele von je zwei Zentimetern -
+     * also stehen sie hier untereinander und sind jedes so hoch, wie ein Daumen
+     * es braucht. Auf dem Fernseher passen sie nebeneinander, weil dort Platz
+     * ist und die Fernbedienung ohnehin von Feld zu Feld springt.
+     *
+     * <p>Die Reihenfolge ist auf beiden dieselbe wie am Rechner: erst der
+     * Schluessel, dann was er bewirkt, dann was hinausgeht und was der Server
+     * davon sieht. Wer das einmal gelesen hat, findet es auf dem zweiten Geraet
+     * an derselben Stelle wieder.
+     */
+    private void geraeteEinstellungen(LinearLayout page, boolean fernseher) {
+        int abstand = fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP;
+        int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
+
+        addSpacing(page, fernseher
+            ? TvViews.sectionTitle(this, "Meine Geräte")
+            : sectionTitle("Meine Geräte"), abstand);
+
+        addSpacing(page, karte(fernseher, "Wozu das gut ist",
+            "Hält deine eigenen Geräte auf demselben Stand. Was du am Rechner schaust, steht "
+                + "auf dem Handy oder Fernseher in „Weiterschauen“ an derselben Stelle. "
+                + "Kein Konto und kein Raum — ein Schlüssel, den nur deine Geräte kennen.",
+            null, null), luecke);
+
+        addSpacing(page, schluesselKarte(fernseher), luecke);
+        addSpacing(page, geraeteStatusKarte(fernseher), luecke);
+
+        addSpacing(page, karte(fernseher, "Server",
+            watchparty.serverUrl().isEmpty()
+                ? "Noch keine Adresse eingetragen. Es ist dasselbe Relay wie bei der Watchparty — "
+                    + "die Adresse steht dort. Die Watchparty selbst muss dafür nicht eingeschaltet sein."
+                : watchparty.serverUrl() + "\n\nDasselbe Relay wie bei der Watchparty. Die Watchparty "
+                    + "selbst muss dafür nicht eingeschaltet sein.",
+            null, null), luecke);
+
+        addSpacing(page, karte(fernseher, "Was abgeglichen wird",
+            "Folge, Stelle, abgeschlossene Titel, die Reihenfolge in der Mediathek — und die "
+                + "gemessene Wiedergabezeit, damit der Rückblick auf jedem Gerät alles zusammenzählt "
+                + "statt nur die Hälfte.\n\n"
+                + "Nicht dabei: selbst gewählte Bilder und der Verlauf je Eintrag — die bleiben auf "
+                + "dem Gerät. Einträge einer Watchparty bleiben bei ihrem Raum.",
+            null, null), luecke);
+
+        addSpacing(page, karte(fernseher, "Was der Server sieht",
+            "Nichts davon. Die Einträge sind mit deinem Schlüssel verschlossen, bevor sie das Gerät "
+                + "verlassen; der Schlüssel selbst geht nie hinaus. Sichtbar bleibt, wie viele "
+                + "Einträge es gibt und wann sie sich ändern.",
+            null, null), luecke);
+    }
+
+    /** Eine Karte, die auf beiden Geraeten dasselbe sagt und verschieden aussieht. */
+    private View karte(boolean fernseher, String titel, String text, String knopf, Runnable beiKlick) {
+        return fernseher
+            ? TvViews.infoCard(this, titel, text, knopf, beiKlick)
+            : settingsCard(titel, text, knopf, beiKlick);
+    }
+
+    /**
+     * Der Schluessel: ein Feld und was man damit tun kann.
+     *
+     * <p>Das Feld steht wirklich da und ist kein Dialog. Einen Schluessel tippt
+     * man genau einmal ab, und dabei will man sehen, was man schon hat - auf dem
+     * Fernseher erst recht, wo jedes Zeichen einzeln erfahren wird.
+     */
+    private View schluesselKarte(boolean fernseher) {
+        LinearLayout karte = new LinearLayout(this);
+        karte.setOrientation(LinearLayout.VERTICAL);
+        int rand = dp(fernseher ? 22 : 14);
+        karte.setPadding(rand, rand, rand, rand);
+        karte.setBackground(MobileViews.shape(this, Theme.SURFACE_ELEVATED,
+            MobileViews.CARD_RADIUS, Theme.BORDER, 1));
+
+        TextView kopf = new TextView(this);
+        kopf.setText("Schlüssel");
+        kopf.setTextColor(Theme.TEXT_PRIMARY);
+        kopf.setTextSize(fernseher ? 20 : 16);
+        kopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        karte.addView(kopf);
+
+        EditText feld = new EditText(this);
+        feld.setText(geraeteSchluesselAnzeige());
+        feld.setHint("PDWNBCRH-J6KZNF0A-…");
+        feld.setSingleLine(true);
+        feld.setTextColor(Theme.TEXT_PRIMARY);
+        feld.setHintTextColor(Theme.TEXT_DISABLED);
+        feld.setTextSize(fernseher ? 18 : 15);
+        feld.setTypeface(android.graphics.Typeface.MONOSPACE);
+        // Grossschreibung und keine Vorschlaege: ein Schluessel ist kein Wort,
+        // und die Autokorrektur macht aus ihm zuverlaessig einen falschen.
+        feld.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        feld.setBackground(MobileViews.shape(this, Theme.SURFACE, 12, Theme.BORDER, 1));
+        int feldRand = dp(12);
+        feld.setPadding(feldRand, feldRand, feldRand, feldRand);
+        feld.setFocusable(true);
+        feld.setFocusableInTouchMode(true);
+        LinearLayout.LayoutParams feldMasse = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        feldMasse.topMargin = dp(10);
+        karte.addView(feld, feldMasse);
+
+        TextView hinweis = new TextView(this);
+        hinweis.setText("Auf dem ersten Gerät einen Schlüssel erzeugen, auf jedem weiteren denselben "
+            + "eintragen. Groß- und Kleinschreibung und die Striche sind egal.");
+        hinweis.setTextColor(Theme.TEXT_SECONDARY);
+        hinweis.setTextSize(fernseher ? 15 : 13);
+        hinweis.setLineSpacing(0, 1.15f);
+        LinearLayout.LayoutParams hinweisMasse = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hinweisMasse.topMargin = dp(8);
+        karte.addView(hinweis, hinweisMasse);
+
+        // Die Knoepfe. Auf dem Telefon untereinander und jeder ueber die volle
+        // Breite - vier nebeneinander waeren vier Ziele von zwei Zentimetern.
+        LinearLayout knoepfe = new LinearLayout(this);
+        knoepfe.setOrientation(fernseher ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams knopfBereich = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        knopfBereich.topMargin = dp(14);
+        karte.addView(knoepfe, knopfBereich);
+
+        geraeteKnopf(knoepfe, fernseher, "Übernehmen", true,
+            () -> schluesselUebernehmen(feld.getText().toString()));
+        geraeteKnopf(knoepfe, fernseher, "Neuen Schlüssel erzeugen", false, this::schluesselNeuFragen);
+        geraeteKnopf(knoepfe, fernseher, "Kopieren", false, this::schluesselKopieren);
+        if (geraete != null && geraete.eingeschaltet()) {
+            geraeteKnopf(knoepfe, fernseher, "Dieses Gerät trennen", false, this::geraetTrennenFragen);
+        }
+        return karte;
+    }
+
+    private void geraeteKnopf(LinearLayout reihe, boolean fernseher, String text,
+                              boolean betont, Runnable beiKlick) {
+        TextView knopf = new TextView(this);
+        knopf.setText(text);
+        knopf.setTextColor(Theme.TEXT_PRIMARY);
+        knopf.setTextSize(fernseher ? 16 : 14);
+        knopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        knopf.setGravity(Gravity.CENTER);
+        int quer = dp(fernseher ? 20 : 16);
+        int hoch = dp(fernseher ? 12 : 10);
+        knopf.setPadding(quer, hoch, quer, hoch);
+        knopf.setFocusable(true);
+        knopf.setFocusableInTouchMode(false);
+        GradientDrawable ruhe = MobileViews.shape(this,
+            betont ? Theme.PRIMARY_DEEP : Theme.SURFACE_PRESSED, 12, Theme.BORDER, 1);
+        GradientDrawable wach = MobileViews.shape(this,
+            betont ? Theme.PRIMARY : Theme.PRIMARY_DEEP, 12, Theme.PRIMARY, 2);
+        if (fernseher) TvViews.applyFocus(knopf, ruhe, wach);
+        else MobileViews.addPressFeedback(knopf, ruhe, wach);
+        knopf.setOnClickListener(v -> beiKlick.run());
+
+        LinearLayout.LayoutParams masse = new LinearLayout.LayoutParams(
+            fernseher ? ViewGroup.LayoutParams.WRAP_CONTENT : ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(fernseher ? 52 : MobileViews.TOUCH_TARGET));
+        if (reihe.getChildCount() > 0) {
+            if (fernseher) masse.leftMargin = dp(12);
+            else masse.topMargin = dp(8);
+        }
+        reihe.addView(knopf, masse);
+    }
+
+    /**
+     * Der Status - und zwar in Worten, die etwas heissen.
+     *
+     * <p>"Nicht verbunden" allein waere keine Auskunft: es kann bedeuten, dass
+     * nichts eingerichtet ist, dass die Adresse fehlt, dass das Relay nicht
+     * antwortet oder dass der Schluessel nicht passt. Jeder dieser Faelle
+     * braucht einen anderen Handgriff, also steht auch jeder einzeln da.
+     */
+    private View geraeteStatusKarte(boolean fernseher) {
+        JSONObject zustand = geraete == null ? null : geraete.zustand();
+        boolean an = geraete != null && geraete.eingeschaltet();
+        boolean verbunden = zustand != null && zustand.optBoolean("connected", false);
+        String fehler = zustand == null ? "" : zustand.optString("error", "");
+        int titel = zustand == null ? 0 : zustand.optInt("entries", 0);
+        long zuletzt = zustand == null ? 0 : zustand.optLong("lastSync", 0);
+
+        String text;
+        if (!an) {
+            text = "Nicht verbunden. Trag oben einen Schlüssel ein oder erzeug einen neuen.";
+        } else if (watchparty.serverUrl().isEmpty()) {
+            text = "Keine Server-Adresse. Sie steht bei der Watchparty — ohne sie gibt es nichts abzugleichen.";
+        } else if (!fehler.isEmpty()) {
+            text = "Abgleich fehlgeschlagen: " + fehler
+                + "\n\nEs wird von selbst weiter versucht. Dein Stand bleibt so lange hier.";
+        } else if (!verbunden) {
+            text = "Wird verbunden … Ist das Gerät offline oder das Relay nicht erreichbar, "
+                + "wartet ELFIX und versucht es erneut.";
+        } else {
+            StringBuilder bauen = new StringBuilder("Verbunden");
+            bauen.append(titel == 1 ? ", 1 Titel" : ", " + titel + " Titel");
+            if (zuletzt > 0) {
+                bauen.append(", zuletzt abgeglichen ").append(
+                    android.text.format.DateFormat.format("HH:mm", zuletzt));
+            }
+            bauen.append(".");
+            text = bauen.toString();
+        }
+        return karte(fernseher, "Status", text,
+            an ? "Jetzt abgleichen" : null,
+            an ? () -> {
+                showToast("Wird abgeglichen …");
+                geraete.jetztAbgleichen();
+            } : null);
+    }
+
+    private String geraeteSchluesselAnzeige() {
+        JSONObject zustand = geraete == null ? null : geraete.zustand();
+        String ausZustand = zustand == null ? "" : zustand.optString("key", "");
+        return ausZustand;
+    }
+
+    private void schluesselUebernehmen(String eingabe) {
+        if (geraete == null) return;
+        if (eingabe == null || eingabe.trim().isEmpty()) {
+            showToast("Kein Schlüssel eingetragen");
+            return;
+        }
+        geraete.schluesselSetzen(eingabe, anzeige -> {
+            if (anzeige.isEmpty()) {
+                showToast("Das ist kein ELFIX-Schlüssel");
+                return;
+            }
+            showToast("Schlüssel übernommen — wird abgeglichen");
+            showSettings();
+        });
+    }
+
+    /**
+     * Ein neuer Schluessel trennt dieses Geraet vom bisherigen Verbund.
+     *
+     * <p>Deshalb die Rueckfrage, und deshalb steht in ihr, was wirklich
+     * geschieht: die anderen Geraete behalten ihren Stand, dieses hier findet
+     * ihn nur nicht mehr.
+     */
+    private void schluesselNeuFragen() {
+        frage("Neuen Schlüssel erzeugen?",
+            geraete != null && geraete.eingeschaltet()
+                ? "Dieses Gerät verlässt damit den bisherigen Verbund. Deine anderen Geräte behalten "
+                    + "ihren Schlüssel und ihren Stand — dieses hier gleicht sich nicht mehr mit ihnen "
+                    + "ab, bis du den neuen Schlüssel auch dort einträgst. Hier gelöscht wird nichts."
+                : "Damit fängt der Verbund an. Den neuen Schlüssel trägst du auf jedem weiteren Gerät "
+                    + "ein, das mitlaufen soll.",
+            () -> geraete.neuerSchluessel(neu -> {
+                if (neu.isEmpty()) {
+                    showToast("Schlüssel ließ sich nicht erzeugen");
+                    return;
+                }
+                showToast("Neuer Schlüssel erzeugt");
+                showSettings();
+            }));
+    }
+
+    /**
+     * Den Schluessel kopieren.
+     *
+     * <p>Auf dem Telefon ist die Zwischenablage der Weg zum naechsten Geraet.
+     * Auf dem Fernseher nuetzt sie wenig - dort steht der Schluessel im Feld
+     * darueber und wird abgelesen. Der Knopf bleibt trotzdem: manche
+     * Fernbedienungs-Tastaturen fuegen ein, und ein Knopf, der auf einem Geraet
+     * weniger kann, ist besser als zwei verschiedene Oberflaechen.
+     */
+    private void schluesselKopieren() {
+        String schluessel = geraeteSchluesselAnzeige();
+        if (schluessel.isEmpty()) {
+            showToast("Noch kein Schlüssel da");
+            return;
+        }
+        android.content.ClipboardManager ablage =
+            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (ablage == null) {
+            showToast("Zwischenablage nicht verfügbar");
+            return;
+        }
+        ablage.setPrimaryClip(android.content.ClipData.newPlainText("ELFIX", schluessel));
+        showToast("Schlüssel kopiert");
+    }
+
+    private void geraetTrennenFragen() {
+        frage("Dieses Gerät trennen?",
+            "Nur dieses. Deine anderen Geräte behalten ihren Schlüssel und ihren Stand. "
+                + "Hier bleibt alles stehen, was du geschaut hast — es läuft nur nicht mehr mit.",
+            () -> {
+                geraete.trennen();
+                showToast("Getrennt");
+                showSettings();
+            });
+    }
+
     /**
      * Intro ueberspringen - eine Karte fuer beide Geraete.
      *
@@ -1058,6 +1362,8 @@ public class MainActivity extends Activity {
         addSpacing(page, TvViews.infoCard(this, "Zwischenspeicher",
             "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
             "Alles neu laden", this::reloadAllWebViews), TvViews.ITEM_GAP);
+
+        geraeteEinstellungen(page, true);
     }
 
     private void renderTvSearch(String query) {
@@ -1445,6 +1751,8 @@ public class MainActivity extends Activity {
         addSpacing(page, fassungsKarte(false), MobileViews.ITEM_GAP);
 
         watchpartyEinstellungen(page);
+
+        geraeteEinstellungen(page, false);
 
         addSpacing(page, settingsCard("Zwischenspeicher",
             "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
@@ -3103,6 +3411,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Zurueck in der App: waehrend sie weg war, kann am Rechner etwas
+        // gelaufen sein. Einmal nachsehen, nicht dauernd fragen.
+        if (geraete != null) geraete.abgleichenSpaeter(500);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onResume();
         if (fullscreenView != null) {
@@ -3189,6 +3500,11 @@ public class MainActivity extends Activity {
         if ("favorites".equals(currentScreen)) showFavorites();
         else if ("home".equals(currentScreen)) showHome();
         updateFavoriteButton();
+        // Der eine Punkt, an dem sich am Bestand wirklich etwas geaendert hat.
+        // Ihn zu nehmen statt der zwei Dutzend Stellen, die Staende anfassen,
+        // ist der Grund, warum der Abgleich nichts verpassen kann - auch nicht
+        // das Abhaken von Hand oder das Umsortieren der Mediathek.
+        if (geraete != null) geraete.abgleichenSpaeter();
     }
 
     /** Was der Kern von sich aus meldet - bisher ausschliesslich die Watchparty. */
@@ -3223,6 +3539,7 @@ public class MainActivity extends Activity {
             watchparty.ereignis(name, nutzlastJson);
             return;
         }
+        if (geraete != null && geraete.ereignis(name, nutzlastJson)) return;
         Log.i(TAG, "Kern-Ereignis " + name + ": " + nutzlastJson);
     }
 

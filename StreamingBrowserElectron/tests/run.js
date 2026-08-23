@@ -17,9 +17,9 @@ const RELAY = path.join(HIER, "..", "..", "sync-server", "server.js");
 const PORT = Number(process.env.TESTPORT) || 8791;
 
 // Ohne Relay: reine Rechenpruefungen.
-const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "rueckblicktest", "wrappedtest", "qualitaettest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest"];
+const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "rueckblicktest", "wrappedtest", "qualitaettest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest"];
 // Mit Relay: das Zusammenspiel.
-const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "ferntest"];
+const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "ferntest"];
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 

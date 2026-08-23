@@ -1,0 +1,219 @@
+"use strict";
+
+/*
+ * Meine Geraete auf Android - die Verkabelung, nicht die Sache selbst.
+ *
+ * Verbindung, Wiederanschluss, Uhrabgleich, Spiegel, Grabsteine, Schuebe und
+ * die Frage, welcher Stand gewinnt: alles das steht in `geraete.js`, demselben
+ * Modul wie am Rechner. Was ein Stand ist und was von ihm hinausgeht, steht in
+ * `geraete-schluessel.js`. Was beim Uebernehmen mit ihm geschieht, in
+ * `geraete-stand.js`. Keine Zeile davon ist hier noch einmal geschrieben, und
+ * das ist der ganze Punkt: ein zweiter Abgleich waere ein zweiter Abgleich, und
+ * zwei Geraete kaemen an derselben Stelle zu verschiedenen Ergebnissen.
+ *
+ * Hier steht das Gegenstueck zu dem, was am Rechner in main.js liegt: die
+ * Favoriten hereinreichen, die Rueckmeldungen nach Java geben, die Ablage
+ * anstossen. Am Rechner geht "nach draussen" ueber IPC in die Oberflaeche, hier
+ * ueber die Bruecke nach Java.
+ *
+ * Ein WebView bringt WebSocket mit, deshalb laeuft die Verbindung wirklich in
+ * diesem Modul - nicht in Java nachgebaut, sondern dieselbe. Was ihm fehlt,
+ * sind Buffer und ein synchrones crypto; beides liefert kern-knoten.js.
+ */
+(function () {
+  const { Geraeteabgleich } = require("geraete");
+  const schluesselModul = require("geraete-schluessel");
+  const geraeteStand = require("geraete-stand");
+  const statistik = require("statistik");
+
+  let abgleich = null;
+  let letzterStatus = null;
+  // Die Favoriten in genau der Form, die favorites.json traegt. Das Modul
+  // aendert sie an Ort und Stelle - deshalb liegt hier die Liste selbst und
+  // nicht eine Abschrift davon.
+  let favoriten = [];
+  let sitzungen = [];
+  let anbieter = [];
+  // Was sich seit der letzten Meldung an Java geaendert hat. Gesammelt, weil
+  // beim ersten Abgleich leicht zweihundert Eintraege auf einmal hereinkommen
+  // und jede einzelne Datei zu schreiben zweihundertmal dieselbe Datei waere.
+  let favoritenSchmutzig = false;
+  let sitzungenSchmutzig = false;
+
+  function ereignis(name, nutzlast) {
+    if (window.ElfixKern && typeof window.ElfixKern.ereignis === "function") {
+      window.ElfixKern.ereignis(name, nutzlast);
+    }
+  }
+
+  function sicherstellen() {
+    if (abgleich) return abgleich;
+    abgleich = new Geraeteabgleich({
+      onEintrag: (stand) => {
+        const ergebnis = geraeteStand.uebernehmen(stand, umgebung());
+        if (!ergebnis) return null;
+        favoritenSchmutzig = true;
+        return ergebnis.stand;
+      },
+      onWeg: (key) => {
+        const weg = geraeteStand.entfernen(favoriten, key);
+        if (!weg) return false;
+        favoritenSchmutzig = true;
+        return true;
+      },
+      // Eine Sitzung kommt dazu oder sie ist schon da - ueberschrieben wird
+      // nie: zwei Geraete koennen denselben Satz nicht verschieden wissen.
+      onSitzung: (sitzung) => {
+        if (!sitzung || !sitzung.id || !sitzung.begonnenAm) return false;
+        const { sitzungen: vereint, dazu } = statistik.vereinen(sitzungen, [sitzung]);
+        if (!dazu) return false;
+        sitzungen = vereint;
+        sitzungenSchmutzig = true;
+        return true;
+      },
+      // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
+      onFertig: (anzahl) => {
+        if (favoritenSchmutzig) {
+          favoritenSchmutzig = false;
+          ereignis("geraete:favoriten", favoriten);
+        }
+        if (sitzungenSchmutzig) {
+          sitzungenSchmutzig = false;
+          ereignis("geraete:sitzungen", sitzungen);
+        }
+        ereignis("geraete:uebernommen", { anzahl });
+      },
+      onSpeichern: (ablage) => ereignis("geraete:spiegel", ablage),
+      onStatus: (status) => {
+        letzterStatus = status;
+        ereignis("geraete:zustand", status);
+      }
+    });
+    return abgleich;
+  }
+
+  /**
+   * Was das Geraet dem gemeinsamen Modul an die Hand gibt.
+   *
+   * <p>Dieselben fuenf Rueckrufe wie am Rechner. Zwei davon fallen hier
+   * schlanker aus: eigene Bilder gibt es auf Android noch nicht, also gibt es
+   * auch keine, die zu einem uebernommenen Titel passen wuerden. Das ist kein
+   * Unterschied im Abgleich - eigene Bilder gehen ohnehin nie hinaus.
+   */
+  function umgebung() {
+    return {
+      favoriten,
+      anbieterFuer: (url, providerName) => geraeteStand.anbieterFinden(anbieter, url, providerName),
+      normalisieren: (favorit) => favorit,
+      eigenesBild: () => "",
+      bildAusschnitt: () => null,
+      kennung: () => (window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : String(Date.now()) + Math.random().toString(16).slice(2))
+    };
+  }
+
+  // --- Was Java hereinreicht ---------------------------------------------
+
+  function konfigurieren(einstellungen) {
+    const abg = sicherstellen();
+    abg.konfigurieren({
+      enabled: einstellungen && einstellungen.enabled === true,
+      // Dieselbe Adresse wie die Watchparty: es ist dasselbe Relay.
+      serverUrl: (einstellungen && einstellungen.serverUrl) || "",
+      schluessel: (einstellungen && einstellungen.schluessel) || "",
+      geraetId: (einstellungen && einstellungen.geraetId) || ""
+    });
+    return abg.status();
+  }
+
+  /** Der Spiegel aus der Datei. Ohne ihn faengt jeder Start von vorn an. */
+  function spiegelSetzen(roh) {
+    sicherstellen().ablageSetzen(roh || null);
+    return true;
+  }
+
+  function favoritenSetzen(liste) {
+    favoriten = Array.isArray(liste) ? liste : [];
+    return favoriten.length;
+  }
+
+  function sitzungenSetzen(liste) {
+    sitzungen = Array.isArray(liste) ? liste : [];
+    return sitzungen.length;
+  }
+
+  function anbieterSetzen(liste) {
+    anbieter = Array.isArray(liste) ? liste : [];
+    return anbieter.length;
+  }
+
+  /**
+   * Einmal nachsehen, ob etwas hinaus muss.
+   *
+   * <p>Staende und Sitzungen in einem Zug - genau wie am Rechner. Was davon
+   * wirklich hinausgeht, entscheidet das Modul am Spiegel; hier wird nichts
+   * gefiltert.
+   */
+  function abgleichen() {
+    const abg = sicherstellen();
+    const hinaus = abg.abgleichen(geraeteStand.staende(favoriten));
+    const offene = [];
+    for (const sitzung of sitzungen) {
+      const id = String((sitzung && sitzung.id) || "");
+      if (!id) continue;
+      const key = `sitzung:${id}`;
+      if (abg.kennt(key)) continue;
+      offene.push({ key, sitzung });
+    }
+    return { staende: hinaus, sitzungen: abg.anhaengen(offene) };
+  }
+
+  /** Alles noch einmal holen - der Weg zurueck, wenn hier etwas fehlt. */
+  function vollAbgleichen() {
+    const abg = sicherstellen();
+    abg.vollAbgleichen();
+    return abgleichen();
+  }
+
+  function status() {
+    return abgleich ? abgleich.status() : letzterStatus;
+  }
+
+  // --- Der Schluessel ------------------------------------------------------
+
+  function erzeugen() {
+    return schluesselModul.erzeugen();
+  }
+
+  /**
+   * Einen abgetippten Schluessel pruefen und geradeziehen.
+   *
+   * <p>Dieselbe Regel wie am Rechner: Kleinschreibung, Striche und Leerzeichen
+   * sind egal, und I/L werden zur Eins, O zur Null - die drei Verwechslungen,
+   * die beim Abschreiben wirklich vorkommen. Ein "fast richtig" gibt es nicht.
+   */
+  function pruefen(wert) {
+    const sauber = schluesselModul.normalisieren(wert);
+    if (!sauber) return { ok: false, key: "" };
+    return { ok: true, key: sauber, anzeige: schluesselModul.anzeigen(sauber) };
+  }
+
+  function anzeigen(wert) {
+    return schluesselModul.anzeigen(wert);
+  }
+
+  module.exports = {
+    konfigurieren,
+    spiegelSetzen,
+    favoritenSetzen,
+    sitzungenSetzen,
+    anbieterSetzen,
+    abgleichen,
+    vollAbgleichen,
+    status,
+    erzeugen,
+    pruefen,
+    anzeigen
+  };
+})();

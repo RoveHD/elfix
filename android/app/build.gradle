@@ -37,6 +37,9 @@ def kernModule = [
     "src/voe-qualitaet.js",
     "src/fassung.js",
     "src/marken.js",
+    "src/geraete.js",
+    "src/geraete-schluessel.js",
+    "src/geraete-stand.js",
     "shared/provider-model.js",
     "shared/bildausschnitt.js"
 ]

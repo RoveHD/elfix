@@ -104,6 +104,17 @@ public final class Watchparty {
         return serverUrl;
     }
 
+    /**
+     * Die Kennung dieses Geraets.
+     *
+     * <p>Dieselbe wie beim Geraeteabgleich - es gibt keinen Grund, dort eine
+     * zweite zu fuehren, und zwei Kennungen fuer dasselbe Geraet waeren fuer das
+     * Relay zwei Geraete.
+     */
+    public String geraetId() {
+        return geraetId;
+    }
+
     public String geraetName() {
         return geraetName;
     }

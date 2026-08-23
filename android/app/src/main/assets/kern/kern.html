@@ -6,6 +6,9 @@
 <title>ELFIX Kern</title>
 </head>
 <body>
+<!-- Erst die Node-Bausteine, dann der Lader: kern-host.js reicht sie beim
+     require weiter, und ein Modul kann sie schon beim Laden anfassen. -->
+<script src="kern-knoten.js"></script>
 <script src="kern-host.js"></script>
 </body>
 </html>
