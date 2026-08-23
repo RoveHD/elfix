@@ -3,6 +3,61 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.37.0 — 24. August 2026
+
+„Meine Geräte" gibt es jetzt auch am Telefon und am Fernseher.
+
+**Denselben Schlüssel eintragen, und der Stand läuft zusammen**
+
+- Was am Rechner läuft, steht am Handy in „Weiterschauen" an derselben Stelle -
+  und umgekehrt. Kein Konto, kein Raum: ein Schlüssel, den nur die eigenen
+  Geräte kennen
+- Abgeglichen wird dasselbe wie am Rechner: Folge, Stelle, abgeschlossene
+  Titel, die Reihenfolge in der Mediathek und die gemessene Wiedergabezeit
+- Auf dem Gerät bleiben: selbst gewählte Bilder, der Verlauf je Eintrag und
+  alles, was zu einer Watchparty gehört
+- Der Server sieht nichts davon. Die Einträge sind verschlossen, bevor sie das
+  Gerät verlassen; der Schlüssel geht nie hinaus und steht in keiner
+  Protokollzeile
+
+**Kein zweiter Abgleich, sondern derselbe**
+
+- Verbindung, Wiederanschluss, Uhrabgleich, Spiegel, Grabsteine und die Frage,
+  welcher Stand gewinnt, laufen auf beiden Geräten in denselben Dateien. Ein
+  zweiter Abgleich wäre ein zweiter Abgleich - und zwei Geräte kämen an
+  derselben Stelle zu verschiedenen Ergebnissen
+- Was beim Übernehmen mit einem Stand geschieht, lag bis hierher in `main.js`
+  und war damit an Electron gebunden. Es steht jetzt in `geraete-stand.js`;
+  der Rechner reicht fünf Rückrufe hinein und verhält sich unverändert
+
+**Das Hindernis war die Krypto**
+
+- Der Schlüssel wird synchron abgeleitet und synchron verschlüsselt; die
+  WebCrypto-API des WebViews kann das nur mit Versprechen. Also liefert Java
+  die Grundrechenarten, und der Kern übersetzt darauf
+- Belegt statt behauptet: Prüfvektoren aus Node gegen javax.crypto (17/17), das
+  echte Schlüsselmodul durch den Ersatz gefahren (24/24), und Rechner gegen
+  Telefon an einem echten Relay mit der Brücke aus dem Paket der App (18/18) -
+  darunter der teuerste Fall überhaupt: ein leeres Telefon darf den Bestand des
+  Rechners nicht überschreiben
+
+**Am Telefon anders als am Rechner, und mit Absicht**
+
+- Am Rechner steht das Schlüsselfeld neben vier Knöpfen in einer Zeile. Auf
+  sechs Zoll wären das vier Ziele von je zwei Zentimetern - hier stehen sie
+  untereinander und sind daumenhoch. Am Fernseher nebeneinander und mit
+  Fokusrahmen
+- Der Status sagt, was wirklich los ist: nicht verbunden, keine Server-Adresse,
+  wird verbunden, oder verbunden samt Anzahl und Uhrzeit. Jeder Fall braucht
+  einen anderen Handgriff
+- Kommt die Leitung zurück, wird sofort abgeglichen statt bis zu einer Minute
+  gewartet
+
+**Noch nicht auf einem Gerät bestätigt**
+
+- Wie schon in 1.36.0: geprüft sind Build und Logik, nicht der Lauf auf echter
+  Hardware
+
 ## 1.36.0 — 24. August 2026
 
 Android hoert auf, ELFIX ein zweites Mal zu sein.
