@@ -264,6 +264,9 @@ const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
 const markenStand = document.querySelector("#markenStand");
 const markenVergessen = document.querySelector("#markenVergessen");
+const rememberLanguage = document.querySelector("#rememberLanguage");
+const fassungenStand = document.querySelector("#fassungenStand");
+const fassungenVergessen = document.querySelector("#fassungenVergessen");
 const showReviewLink = document.querySelector("#showReviewLink");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
@@ -930,6 +933,8 @@ function bindEvents() {
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
   markenVergessen?.addEventListener("click", markenVergessenLassen);
+  rememberLanguage?.addEventListener("change", saveSettings);
+  fassungenVergessen?.addEventListener("click", fassungenVergessenLassen);
   showReviewLink?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
@@ -1309,6 +1314,30 @@ async function renderMarkenStand() {
     ? `${serien} beobachtet, für ${stand.marken} davon steht der Knopf bereit.`
     : `${serien} beobachtet — noch keine Stelle hat sich wiederholt.`;
   if (markenVergessen) markenVergessen.disabled = false;
+}
+
+// Dasselbe fuer die Fassungen. Ohne diese Zeile waere nicht zu sehen, ob ELFIX
+// ueberhaupt etwas gemerkt hat - und eine Vorwahl, die man nicht kennt, ist
+// eine Seite, die sich unerklaerlich anders verhaelt.
+async function renderFassungenStand() {
+  if (!fassungenStand) return;
+  const stand = await api.getFassungenStand?.().catch(() => null);
+  if (!stand || !stand.serien) {
+    fassungenStand.textContent = "Noch nichts gemerkt.";
+    if (fassungenVergessen) fassungenVergessen.disabled = true;
+    return;
+  }
+  const serien = stand.serien === 1 ? "1 Serie" : `${stand.serien} Serien`;
+  const namen = (stand.fassungen || []).map((eintrag) => `${eintrag.name} (${eintrag.anzahl})`).join(", ");
+  fassungenStand.textContent = namen ? `${serien}: ${namen}` : serien;
+  if (fassungenVergessen) fassungenVergessen.disabled = false;
+}
+
+async function fassungenVergessenLassen() {
+  if (!confirm("Alle gemerkten Fassungen vergessen?")) return;
+  await api.forgetFassungen?.();
+  renderFassungenStand();
+  showToast("Gemerkte Fassungen vergessen");
 }
 
 async function markenVergessenLassen() {
@@ -6085,6 +6114,8 @@ function renderSettings() {
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
   renderMarkenStand();
+  if (rememberLanguage) rememberLanguage.checked = settings.playback?.rememberLanguage !== false;
+  renderFassungenStand();
   // Aus, solange nichts anderes dasteht - eine Meldung, die man nicht bestellt
   // hat, ist eine Stoerung.
   if (notifyNewEpisodes) notifyNewEpisodes.checked = settings.notifications?.newEpisodes === true;
@@ -6339,6 +6370,7 @@ async function saveSettings() {
     // Fehlt das Kaestchen, gilt weiter, was gespeichert ist - nicht "aus".
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
+    rememberLanguage: rememberLanguage ? rememberLanguage.checked : settings.playback?.rememberLanguage !== false,
     favoriteProgressMode: favoriteProgressMode.value,
     pauseOnMinimize: pauseOnMinimize.checked,
     pauseOnBlur: pauseOnBlur.checked

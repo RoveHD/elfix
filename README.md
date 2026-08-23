@@ -20,6 +20,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
 - Verlauf mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie Tagesueberschriften
 - Tastenkuerzel fuer Suche, Zurueck, Vollbild, naechste Folge und den Watchparty-Wechsel - auch waehrend die Anbieterseite vorn liegt
+- Fassung merken (Sub/Dub): ab der zweiten Folge steht die Flagge vorgewaehlt, mit der du angefangen hast
 - Handy als Fernbedienung: Pause, Spulen, Folge vor und zurueck, Vollbild und Ton - und die angefangenen Serien zum Aussuchen, wenn gerade nichts laeuft
 - Automatische Updates ueber GitHub Releases - still im Hintergrund, ohne Installer-Fenster
 - Settings mit Version, Update-Status und Fortschrittsbalken
@@ -183,6 +184,44 @@ liegen in `marken.json` im Datenordner und gelten nur fuer dieses Geraet - ueber
 
 Abspanne bleiben aussen vor: was am Ende einer Folge zu tun ist, weiss ELFIX
 laengst - dort steht der Knopf zur naechsten Folge, mit Zaehler.
+
+## Fassung merken (Sub/Dub)
+
+AniWorld und S.to legen jede Folge mehrfach ab - einmal je Synchronfassung.
+Welche man bekommt, entscheidet die Reihe kleiner Flaggen ueber der
+Hosterliste, und die steht bei jeder neuen Folge wieder auf der Vorgabe des
+Anbieters. Wer eine Serie mit Untertiteln schaut, klickt das zwanzig Mal.
+
+Also dasselbe Verfahren wie beim Intro: gelernt wird aus dem, was du selbst
+tust.
+
+- **Die erste Folge** sagt, womit du angefangen hast. Was beim Laden dasteht,
+  wird gemerkt - aber nur, solange fuer diesen Titel noch nichts bekannt ist
+- **Ab der zweiten** klickt ELFIX die Flagge an, bevor der Hoster geladen wird.
+  Kurz steht dann *„Japanisch, Deutsche Untertitel vorgewählt"* im Bild
+- **Klickst du selbst eine andere an**, gilt ab dann die. Nur ein echter Klick
+  zaehlt als Entscheidung - der eigene Klick der Vorwahl traegt `isTrusted`
+  nicht und lernt deshalb nichts von sich selbst
+
+Die Reihenfolge ist der eigentliche Punkt: die Anbieterseite zeigt nur die
+Hoster der gewaehlten Fassung. Wer davor auf einen Hoster klickt, startet die
+falsche und merkt es erst am Ton. Der Autostart wartet deshalb, bis die Fassung
+steht - hoechstens vier Sekunden, und nur, wenn ueberhaupt etwas umzustellen
+ist.
+
+Gibt es die gemerkte Fassung bei einer Folge nicht - eine Staffel, die nur
+untertitelt vorliegt -, bleibt stehen, was der Anbieter anbietet. Etwas
+anderes anzuklicken waere schlechter als nichts zu tun.
+
+Gemerkt wird der Titel, nicht die Adresse: ein Anbieterumzug nimmt die Fassung
+mit. Erkannt wird sie ueber die Angabe der Seite (`data-lang-key`) und den
+Dateinamen der Flagge - der Schluessel ist eindeutig, der Dateiname ueberlebt
+den Umzug.
+
+Ab- und wieder anschalten unter *Einstellungen > Wiedergabe*; dort steht auch,
+fuer wie viele Serien etwas gemerkt ist und in welchen Fassungen, samt
+**Vergessen**. Die Angaben liegen in `fassungen.json` im Datenordner und gelten
+nur fuer dieses Geraet.
 
 ## Tastenkuerzel
 

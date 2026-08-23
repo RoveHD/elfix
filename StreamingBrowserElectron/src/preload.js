@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Intro ueberspringen: was ELFIX aus den eigenen Sprüngen gelernt hat.
   getMarkenStand: () => ipcRenderer.invoke("marken:stand"),
   forgetMarken: () => ipcRenderer.invoke("marken:vergessen"),
+  getFassungenStand: () => ipcRenderer.invoke("fassungen:stand"),
+  forgetFassungen: () => ipcRenderer.invoke("fassungen:vergessen"),
   // Das Handy als Fernbedienung.
   getFernStatus: () => ipcRenderer.invoke("fern:status"),
   getFernQr: () => ipcRenderer.invoke("fern:qr"),

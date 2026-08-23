@@ -58,6 +58,7 @@ const umzug = require("./umzug");
 // Intro ueberspringen: was ein Sprung als Beleg taugt, wann daraus eine Marke
 // wird und was in der Seite dafuer laeuft.
 const marken = require("./marken");
+const fassung = require("./fassung");
 // Das Handy als Fernbedienung: Verbindung zum Relay und der Kopplungscode.
 const { Fernbedienung, codeErzeugen, kopplungsAdresse } = require("./fernbedienung");
 // Ein QR-Code, selbst gerechnet - fuer das Handy, damit die Adresse samt Code
@@ -99,6 +100,10 @@ const GERAETE_FILE = path.join(DATA_DIR, "geraete.json");
 // Watchlist, sondern einer Serie - und die kann in der Watchlist stehen oder
 // auch nicht.
 const MARKEN_FILE = path.join(DATA_DIR, "marken.json");
+// Welche Synchronfassung eine Serie hat - Deutsch, Untertitel, Englisch.
+// Ebenfalls eigene Datei und aus demselben Grund: sie gilt der Serie und nicht
+// dem Eintrag, unter dem sie gerade in der Watchlist steht.
+const FASSUNGEN_FILE = path.join(DATA_DIR, "fassungen.json");
 // Wie weit die Fernbedienung springt. Vorwaerts groesser als rueckwaerts: nach
 // vorn spult man ueber etwas hinweg, zurueck holt man etwas nach, das man eben
 // verpasst hat.
@@ -1443,6 +1448,36 @@ ipcMain.handle("marken:stand", () => {
   };
 });
 
+// Was ELFIX sich an Fassungen gemerkt hat, und der Weg zurueck. Denselben Weg
+// gibt es fuer die Intromarken, und aus demselben Grund: gelernt wird aus dem
+// eigenen Verhalten, und was daraus wurde, muss man sehen und loeschen koennen.
+ipcMain.handle("fassungen:stand", () => {
+  const eintraege = loadFassungen();
+  const schluessel = Object.keys(eintraege);
+  const namen = new Map();
+  for (const eintrag of schluessel) {
+    const name = fassung.lesen(eintraege, eintrag)?.name || "";
+    if (name) namen.set(name, (namen.get(name) || 0) + 1);
+  }
+  return {
+    serien: schluessel.length,
+    // Haeufigste zuerst - das ist die Fassung, in der jemand schaut.
+    fassungen: [...namen.entries()]
+      .sort((links, rechts) => rechts[1] - links[1])
+      .slice(0, 4)
+      .map(([name, anzahl]) => ({ name, anzahl }))
+  };
+});
+
+ipcMain.handle("fassungen:vergessen", () => {
+  const anzahl = Object.keys(loadFassungen()).length;
+  fassungSpeicher = {};
+  fassungSchmutzig = true;
+  saveFassungen();
+  console.log(`[ELFIX FASSUNG] ${anzahl} Serien vergessen`);
+  return { vergessen: anzahl };
+});
+
 ipcMain.handle("watchparty:status", () => watchparty.status());
 
 ipcMain.handle("watchparty:items", () => watchpartyItems());
@@ -2220,6 +2255,12 @@ function getProviderView(provider) {
       markeLernen(provider, view.webContents.getURL(), Number(gesprungen[1]), Number(gesprungen[2]));
       return;
     }
+    // Welche Fassung dasteht - und welche jemand angeklickt hat.
+    const fassungMeldung = fassung.meldung(nachricht);
+    if (fassungMeldung) {
+      fassungMelden(provider, view.webContents.getURL(), fassungMeldung.art, fassungMeldung.fassung);
+      return;
+    }
     if (String(nachricht || "") === marken.MELDE_GENUTZT) {
       logMediaDiagnostic(provider, view.webContents.getURL(), "marke", "Intro uebersprungen", {});
       return;
@@ -2250,6 +2291,8 @@ function getProviderView(provider) {
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
+    // Neue Folge, neue Ansage: die Vorwahl darf hier wieder einmal etwas sagen.
+    fassungGemeldet.delete(provider.id);
     // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
     nextEpisodeAutostartState.delete(provider.id);
     // Das macht "Danach aufhoeren" einmalig: die Ansage galt der Folge, die
@@ -2274,6 +2317,9 @@ function getProviderView(provider) {
   view.webContents.on("did-finish-load", () => {
     installStoPlayerFix(provider, view);
     installAniWorldImageFix(provider, view);
+    // Zweiter Lauf: beim dom-ready haengen die eigenen Klickhorcher des
+    // Anbieters manchmal noch nicht, und ein Klick ins Leere waehlt nichts aus.
+    installFassung(provider, view, view.webContents.getURL(), { nachlauf: true }).catch(() => {});
     syncViewMediaProgress(provider, view, "load");
     updateActiveFavoriteTitle(provider.id, view);
     scheduleFavoriteMetadataRefresh(provider.id, view);
@@ -2293,6 +2339,9 @@ function getProviderView(provider) {
     installHosterQualitaet(view).catch(() => {});
     installAutoplaySchalter(view).catch(() => {});
     installMarke(provider, view, view.webContents.getURL()).catch(() => {});
+    // Vor dem Autostart, nicht danach: der Aufruf setzt die Sperre, auf die
+    // resumePendingProviderAutoplay() wartet, noch bevor er selbst etwas tut.
+    installFassung(provider, view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -3676,6 +3725,13 @@ function resumePendingProviderAutoplay(provider, view) {
       : `Zielseite nach 12s nicht erkannt (offen: ${kurzeUrl(aktuell)}) - Autoplay startet trotzdem`);
     request.expectUrl = "";
   }
+  // Erst die Fassung, dann der Hoster. Die Anbieterseite zeigt nur die Hoster
+  // der gewaehlten Fassung; ein Klick davor traefe die, die gerade noch
+  // dasteht - und das ist beim Anbieter meistens Deutsch.
+  const fassungBis = fassungWartet.get(provider.id) || 0;
+  if (Date.now() < fassungBis) return;
+  if (fassungBis) fassungWartet.delete(provider.id);
+
   // Steht das Vorbereitungsfenster im Weg? Dahinter entsteht das <video> erst -
   // ohne diesen Schritt sucht der Autostart die ganze Zeit einen Player, den es
   // noch gar nicht gibt, und laeuft in sein Zeitfenster.
@@ -7826,6 +7882,106 @@ async function installMarke(provider, view, url) {
   const lernen = !watchpartyLiveKeyForUrl(url);
   await executeJavaScriptInMediaFrames(view,
     marken.markenScript(markeFuer(schluessel), { lernen })).catch(() => []);
+}
+
+// --- Fassung merken ----------------------------------------------------------
+//
+// Die Regeln stehen in fassung.js, hier steht nur, wann gelesen, geschrieben
+// und geklickt wird.
+let fassungSpeicher = null;
+let fassungSchmutzig = false;
+// Solange hier ein Zeitpunkt steht, wartet der Autostart. Grund: die
+// Anbieterseite zeigt nur die Hoster der gewaehlten Fassung - wer davor auf
+// einen Hoster klickt, startet die falsche und merkt es erst am Ton.
+const fassungWartet = new Map();
+// Damit die Ansage einmal je Folge kommt und nicht bei jedem Lauf des Skripts.
+const fassungGemeldet = new Map();
+const FASSUNG_WARTE_MS = 4000;
+
+function loadFassungen() {
+  if (fassungSpeicher) return fassungSpeicher;
+  try {
+    const roh = JSON.parse(fs.readFileSync(FASSUNGEN_FILE, "utf8"));
+    fassungSpeicher = roh && typeof roh.eintraege === "object" && roh.eintraege ? roh.eintraege : {};
+  } catch {
+    fassungSpeicher = {};
+  }
+  return fassungSpeicher;
+}
+
+function saveFassungen() {
+  if (!fassungSchmutzig) return;
+  ensureDataDir();
+  try {
+    fs.writeFileSync(FASSUNGEN_FILE, JSON.stringify({ version: 1, eintraege: loadFassungen() }, null, 2));
+    fassungSchmutzig = false;
+  } catch (fehler) {
+    console.log("[ELFIX FASSUNG] nicht gespeichert: " + (fehler?.message || fehler));
+  }
+}
+
+// Unter welchem Schluessel die Fassung dieser Seite liegt: der Titel, ohne
+// Staffel. Anders als beim Intro - das kann sich ab Staffel 2 aendern, die
+// Sprache, in der man eine Serie schaut, tut das nicht.
+function fassungSchluesselFuer(provider, url) {
+  const identity = episodeIdentity(url);
+  if (!identity) return "";
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === identity.key);
+  return taste.titelSchluessel(eintrag?.title || cleanBaseMediaTitle("", url));
+}
+
+// Eine Meldung aus der Seite. "stand" ist die Vorgabe des Anbieters und zaehlt
+// nur, solange nichts bekannt ist; "wahl" ist ein Klick und gilt immer.
+function fassungMelden(provider, url, art, neueFassung) {
+  if (settings.playback?.rememberLanguage === false) return;
+  const schluessel = fassungSchluesselFuer(provider, url);
+  if (!schluessel) return;
+  const vorher = fassung.lesen(loadFassungen(), schluessel);
+  const nachher = fassung.merken(loadFassungen(), schluessel, neueFassung, { nurWennNeu: art === "stand" });
+  if (nachher === fassungSpeicher) return;
+  fassungSpeicher = nachher;
+  fassungSchmutzig = true;
+  saveFassungen();
+
+  const jetzt = fassung.lesen(fassungSpeicher, schluessel);
+  console.log(`[ELFIX FASSUNG] ${schluessel}: ${jetzt?.name || jetzt?.roh || "?"} gemerkt (${art})`);
+  // Beim ersten Mal ist nichts geschehen, was eine Ansage rechtfertigt - die
+  // Folge laeuft ja genau so, wie sie dasteht. Erst ein Wechsel ist eine
+  // Entscheidung, von der man wissen will, dass sie gemerkt wurde.
+  if (art === "wahl" && vorher && !fassung.gleich(vorher, jetzt) && jetzt?.name) {
+    sendToast(`${jetzt.name} gemerkt — ab der nächsten Folge steht sie vorgewählt`);
+  }
+}
+
+// Die gemerkte Fassung anklicken, bevor der Autostart nach einem Hoster sucht.
+async function installFassung(provider, view, url, optionen = {}) {
+  if (!isLiveView(view)) return "";
+  if (settings.playback?.rememberLanguage === false) return "";
+  const schluessel = fassungSchluesselFuer(provider, url);
+  if (!schluessel) return "";
+  const gewuenscht = fassung.lesen(loadFassungen(), schluessel);
+  // Die Sperre muss stehen, bevor irgendetwas darauf wartet - und nur dann,
+  // wenn ueberhaupt etwas umzustellen ist. Ohne gemerkte Fassung gibt es
+  // nichts zu verzoegern.
+  if (gewuenscht && !optionen.nachlauf) fassungWartet.set(provider.id, Date.now() + FASSUNG_WARTE_MS);
+
+  const ergebnisse = await executeJavaScriptInMediaFrames(view, fassung.fassungScript(gewuenscht)).catch(() => []);
+  const antwort = (Array.isArray(ergebnisse) ? ergebnisse : [])
+    .map((eintrag) => String(eintrag?.value ?? eintrag ?? ""))
+    .find((wert) => wert) || "";
+
+  // "geklickt" heisst: gedrueckt, aber die Seite hat noch nicht umgeschaltet.
+  // Dann bleibt die Sperre stehen, bis der zweite Lauf sie aufloest oder die
+  // Zeit ablaeuft - ein Hoster, der jetzt geklickt wird, waere der falsche.
+  if (!antwort.startsWith("geklickt")) fassungWartet.delete(provider.id);
+
+  if (antwort.startsWith("gewechselt") && fassungGemeldet.get(provider.id) !== url) {
+    fassungGemeldet.set(provider.id, url);
+    console.log(`[ELFIX FASSUNG] ${schluessel}: ${gewuenscht?.name || gewuenscht?.roh} vorgewaehlt`);
+    if (gewuenscht?.name) sendToast(`${gewuenscht.name} vorgewählt`);
+  }
+  return antwort;
 }
 
 async function installHosterQualitaet(view) {
@@ -12730,7 +12886,11 @@ function normalizeSettings(raw) {
       autoplayNextEpisode: raw?.playback?.autoplayNextEpisode !== false,
       // Von Haus aus an. Der Knopf kann nichts tun, bevor man ihm das Intro
       // zweimal selbst gezeigt hat - und er springt nie von allein.
-      introSkip: raw?.playback?.introSkip !== false
+      introSkip: raw?.playback?.introSkip !== false,
+      // Ebenfalls von Haus aus an. Vorgewaehlt wird nur, was jemand fuer
+      // dieselbe Serie schon einmal selbst angeklickt hat - eine eigene
+      // Meinung zur richtigen Fassung hat ELFIX nicht.
+      rememberLanguage: raw?.playback?.rememberLanguage !== false
     },
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
@@ -12900,6 +13060,7 @@ function defaultSettings() {
     },
     playback: {
       introSkip: true,
+      rememberLanguage: true,
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
       pauseOnMinimize: false,

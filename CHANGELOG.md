@@ -5,8 +5,31 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
 ## 1.35.0 — 23. August 2026
 
-Die Fernbedienung kann jetzt auch anfangen, und sie sagt selbst, warum Chrome
-sie nicht installieren will.
+Die Fassung bleibt gemerkt, die Fernbedienung kann jetzt auch anfangen, und sie
+sagt selbst, warum Chrome sie nicht installieren will.
+
+**Sub bleibt Sub**
+
+- AniWorld und S.to legen jede Folge einmal je Synchronfassung ab, und die
+  Flaggenreihe steht bei jeder neuen Folge wieder auf der Vorgabe des
+  Anbieters. Wer eine Serie mit Untertiteln schaut, hat das bisher zwanzig Mal
+  angeklickt
+- Jetzt sagt die erste Folge, womit man angefangen hat, und ab der zweiten
+  klickt ELFIX die Flagge selbst an. Kein Erkennen, kein Raten - gelernt wird
+  aus dem, was jemand selbst tut, wie beim Intro
+- Was beim Laden dasteht, ueberschreibt nie eine gelernte Fassung: das ist die
+  Vorgabe des Anbieters und keine Entscheidung. Sonst haette die Vorwahl sich
+  nach der ersten Folge selbst wieder abgewaehlt
+- Und der eigene Klick der Vorwahl zaehlt auch nicht - nur ein Klick mit
+  `isTrusted` ist einer von einem Menschen
+- Der Autostart wartet, bis die Fassung steht. Das ist der eigentliche Punkt:
+  die Seite zeigt nur die Hoster der gewaehlten Fassung, und wer davor auf
+  einen Hoster klickt, startet die falsche und merkt es erst am Ton. Hoechstens
+  vier Sekunden, und nur, wenn ueberhaupt etwas umzustellen ist
+- Gibt es die gemerkte Fassung bei einer Folge nicht, bleibt stehen, was der
+  Anbieter anbietet
+- Ab- und anschalten unter *Einstellungen > Wiedergabe*, mit Anzeige und
+  **Vergessen** - dieselbe Zeile wie bei den Intros
 
 **Aussuchen statt nur druecken**
 
