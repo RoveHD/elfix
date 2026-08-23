@@ -32,6 +32,28 @@ Das Handy wird zur Fernbedienung. Ohne App - eine Seite im Browser genuegt.
 - Wacht das Handy aus dem Ruhezustand auf, verbindet sie sich von selbst neu.
   Ein Telefon schlaeft ein, sobald man es weglegt
 
+**Als App auf dem Startbildschirm**
+
+- Ein Knopf *Als App installieren* auf der Seite selbst - im Chrome-Menue ist
+  das gut versteckt. Danach liegt die Fernbedienung als eigenes Symbol auf dem
+  Handy, oeffnet ohne Browserleiste und startet mit dem letzten Code
+- Dafuer liefert das Relay Manifest, Symbol und Service Worker mit. Chrome
+  bietet das Installieren nur an, wenn alle drei da sind - und nur ueber
+  `https`. Ueber den Cloudflare Tunnel ist das erfuellt, ueber eine nackte IP im
+  WLAN nicht
+- `/fern` leitet auf `/fern/` um. Der Service Worker gilt fuer sein Verzeichnis,
+  und eine Startadresse ohne Schraegstrich laege ausserhalb - Chrome verweigerte
+  dann die Installation
+- Das Symbol ist der ELFIX-Mark auf dem dunklen Grund der App, auf 62 Prozent
+  der Flaeche: so schneidet ein rundes oder abgerundetes Ausschneiden nichts ab
+- Der Service Worker haelt die Seite vor, aber nur als Rueckfall - geladen wird
+  immer erst aus dem Netz. Sonst stuende nach einem Aktualisieren des Relays
+  wochenlang die alte Fassung da. Ohne Verbindung oeffnet sie trotzdem und sagt
+  selbst, dass gerade nichts geht
+- Symbol und Seite liegen als Zeichenketten in `.js`-Dateien. Beim Aktualisieren
+  des Relays werden nur solche kopiert, und ein Startbildschirm-Symbol, das ins
+  Leere zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet
+
 **Was durchgeht - und was nicht**
 
 - Vom Rechner zum Handy: Titel, Folge, Stelle, laeuft oder nicht. Keine Liste,
@@ -62,7 +84,7 @@ Das Handy wird zur Fernbedienung. Ohne App - eine Seite im Browser genuegt.
 
 **Relay**
 
-- Neue Dateien `fern.js` und `fern-seite.js`. `/health` weist die
+- Neue Dateien `fern.js`, `fern-seite.js` und `fern-icon.js`. `/health` weist die
   Fernbedienung unter `features` als `fern` aus und zaehlt unter
   `fernbedienungen`, wie viele Rechner gerade steuerbar sind
 

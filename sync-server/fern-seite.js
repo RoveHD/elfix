@@ -16,6 +16,13 @@ const SEITE = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070a10">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.png" sizes="512x512" type="image/png">
+<!-- iOS kennt kein Manifest: dort machen diese beiden aus der Seite eine App. -->
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ELFIX">
 <title>ELFIX Fernbedienung</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -58,6 +65,9 @@ const SEITE = `<!doctype html>
 </head>
 <body>
 <h1>ELFIX</h1>
+<button id="installieren" class="weg" style="width:100%">
+  <span class="zeichen">⤓</span>Als App installieren
+</button>
 
 <form id="koppeln">
   <div class="karte">
@@ -198,10 +208,113 @@ const SEITE = `<!doctype html>
     $("code").value = code;
     verbinden();
   }
+
+  // Als App auf dem Startbildschirm. Chrome bietet das von sich aus an, aber
+  // gut versteckt im Menue - hier steht ein Knopf, sobald es moeglich ist.
+  let angebot = null;
+  window.addEventListener("beforeinstallprompt", (ereignis) => {
+    ereignis.preventDefault();
+    angebot = ereignis;
+    $("installieren").classList.remove("weg");
+  });
+  $("installieren").addEventListener("click", async () => {
+    if (!angebot) return;
+    $("installieren").classList.add("weg");
+    angebot.prompt();
+    await angebot.userChoice.catch(() => {});
+    angebot = null;
+  });
+  // Ist sie schon installiert, hat der Knopf nichts mehr zu tun.
+  window.addEventListener("appinstalled", () => {
+    $("installieren").classList.add("weg");
+  });
+
+  // Ohne Service Worker bietet Chrome das Installieren gar nicht erst an. Er
+  // haelt ausserdem die Seite vor: eine Fernbedienung, die im Funkloch eine
+  // Fehlerseite zeigt, waere schlimmer als eine, die sagt "keine Verbindung".
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
 })();
 </script>
 </body>
 </html>
 `;
 
-module.exports = { SEITE };
+// Das Manifest. Ohne es gibt es kein "Zum Startbildschirm hinzufuegen", das
+// wie eine App aussieht - nur ein Lesezeichen mit Browserleiste.
+//
+// start_url und scope tragen beide den Schraegstrich am Ende: der Service
+// Worker liegt unter /fern/sw.js und hat damit den Geltungsbereich /fern/. Eine
+// Startadresse ohne Schraegstrich laege ausserhalb davon, und Chrome
+// verweigerte die Installation - deshalb leitet das Relay /fern dorthin um.
+const MANIFEST = {
+  name: "ELFIX Fernbedienung",
+  short_name: "ELFIX",
+  description: "Pause, Spulen und naechste Folge fuer ELFIX auf dem Rechner.",
+  start_url: "/fern/",
+  scope: "/fern/",
+  display: "standalone",
+  background_color: "#070a10",
+  theme_color: "#070a10",
+  lang: "de",
+  icons: [
+    {
+      src: "icon.png",
+      sizes: "512x512",
+      type: "image/png",
+      // Beides in einem: als gewoehnliches Symbol und als eines, das rund oder
+      // eckig ausgeschnitten wird. Das Zeichen sitzt weit genug innen dafuer.
+      purpose: "any maskable"
+    }
+  ]
+};
+
+// Der Service Worker.
+//
+// Er tut absichtlich wenig. Fuer die Seite selbst gilt "erst das Netz, dann der
+// Vorrat": nach einem Aktualisieren des Relays soll sofort die neue Fassung
+// dastehen und nicht wochenlang die alte. Nur wenn gar nichts geht, kommt sie
+// aus dem Vorrat - dann laesst sich die Fernbedienung wenigstens oeffnen und
+// sagt selbst, dass keine Verbindung besteht.
+//
+// Das Icon und das Manifest aendern sich praktisch nie und kommen deshalb
+// zuerst aus dem Vorrat.
+const SERVICE_WORKER = `const VORRAT = "elfix-fern-1";
+const SCHALE = ["./", "./icon.png", "./manifest.webmanifest"];
+
+self.addEventListener("install", (ereignis) => {
+  ereignis.waitUntil(caches.open(VORRAT).then((vorrat) => vorrat.addAll(SCHALE)).catch(() => {}));
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (ereignis) => {
+  ereignis.waitUntil(caches.keys().then((namen) => Promise.all(
+    namen.filter((name) => name !== VORRAT).map((name) => caches.delete(name))
+  )).then(() => self.clients.claim()).catch(() => {}));
+});
+
+self.addEventListener("fetch", (ereignis) => {
+  const anfrage = ereignis.request;
+  if (anfrage.method !== "GET") return;
+  const adresse = new URL(anfrage.url);
+  if (adresse.origin !== location.origin || !adresse.pathname.startsWith("/fern")) return;
+
+  // Symbol und Manifest: erst aus dem Vorrat.
+  if (adresse.pathname.endsWith("icon.png") || adresse.pathname.endsWith("manifest.webmanifest")) {
+    ereignis.respondWith(caches.match(anfrage).then((treffer) => treffer || fetch(anfrage)));
+    return;
+  }
+
+  // Die Seite: erst das Netz, und was ankommt, wandert in den Vorrat.
+  ereignis.respondWith(
+    fetch(anfrage).then((antwort) => {
+      const kopie = antwort.clone();
+      caches.open(VORRAT).then((vorrat) => vorrat.put(anfrage, kopie)).catch(() => {});
+      return antwort;
+    }).catch(() => caches.match(anfrage).then((treffer) => treffer || caches.match("./")))
+  );
+});
+`;
+
+module.exports = { SEITE, MANIFEST, SERVICE_WORKER };

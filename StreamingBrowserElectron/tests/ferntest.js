@@ -12,6 +12,7 @@ const path = require("path");
 const WS = require("../../sync-server/node_modules/ws");
 const fern = require("../../sync-server/fern");
 const fernSeite = require("../../sync-server/fern-seite");
+const fernIcon = require("../../sync-server/fern-icon");
 const { Fernbedienung, codeErzeugen, codeNormalisieren } = require("../src/fernbedienung");
 
 const PORT = Number(process.env.TESTPORT) || 8799;
@@ -197,7 +198,69 @@ function client() {
 
   // --- Die Seite und die Auskunft -------------------------------------------
 
-  const seite = await fetch(`http://127.0.0.1:${PORT}/fern`);
+  // --- Als App auf dem Startbildschirm --------------------------------------
+  //
+  // Chrome bietet "Installieren" nur an, wenn drei Dinge zusammenkommen: ein
+  // Manifest mit Symbol, ein Service Worker mit fetch-Behandlung und eine
+  // Startadresse, die im Geltungsbereich dieses Workers liegt. Fehlt eines
+  // davon, bleibt es ein Lesezeichen mit Browserleiste - und das faellt erst
+  // am Handy auf.
+
+  const ohneStrich = await fetch(`http://127.0.0.1:${PORT}/fern`, { redirect: "manual" });
+  pruefe("/fern leitet auf /fern/ um",
+    ohneStrich.status === 302 && ohneStrich.headers.get("location") === "/fern/",
+    "der Service Worker gilt fuer sein Verzeichnis - eine Startadresse ohne"
+    + " Schraegstrich laege ausserhalb, und Chrome verweigerte die Installation");
+
+  const manifestAntwort = await fetch(`http://127.0.0.1:${PORT}/fern/manifest.webmanifest`);
+  const manifest = await manifestAntwort.json();
+  pruefe("Das Manifest wird ausgeliefert",
+    manifestAntwort.status === 200
+    && manifestAntwort.headers.get("content-type").includes("application/manifest+json"),
+    manifestAntwort.headers.get("content-type"));
+  pruefe("Es macht daraus eine App und kein Lesezeichen",
+    manifest.display === "standalone" && manifest.name && manifest.short_name,
+    manifest.display);
+  pruefe("Die Startadresse liegt im Geltungsbereich",
+    manifest.start_url.startsWith(manifest.scope) && manifest.scope === "/fern/",
+    `${manifest.start_url} in ${manifest.scope}`);
+  pruefe("Es nennt ein Symbol, gross genug fuer Chrome",
+    manifest.icons.some((symbol) => Number(String(symbol.sizes).split("x")[0]) >= 192),
+    JSON.stringify(manifest.icons.map((i) => i.sizes)));
+  pruefe("und eines, das sich ausschneiden laesst",
+    manifest.icons.some((symbol) => String(symbol.purpose).includes("maskable")),
+    "sonst klebt auf runden Startbildschirmen ein Quadrat");
+
+  const symbol = await fetch(`http://127.0.0.1:${PORT}/fern/icon.png`);
+  const bytes = Buffer.from(await symbol.arrayBuffer());
+  pruefe("Das Symbol ist ein echtes PNG",
+    symbol.status === 200 && symbol.headers.get("content-type") === "image/png"
+    && bytes.subarray(1, 4).toString() === "PNG");
+  pruefe("und so gross, wie das Manifest behauptet",
+    bytes.readUInt32BE(16) === 512 && bytes.readUInt32BE(20) === 512,
+    `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`);
+  pruefe("Es liegt als Base64 in einer .js-Datei",
+    fernIcon.ICON.length === bytes.length,
+    "beim Aktualisieren des Relays werden nur .js-Dateien kopiert");
+
+  const worker = await fetch(`http://127.0.0.1:${PORT}/fern/sw.js`);
+  const workerText = await worker.text();
+  pruefe("Der Service Worker wird ausgeliefert",
+    worker.status === 200 && worker.headers.get("content-type").includes("javascript"));
+  pruefe("Er behandelt Anfragen",
+    /addEventListener\("fetch"/.test(workerText),
+    "ohne fetch-Behandlung bietet Chrome das Installieren gar nicht erst an");
+  pruefe("und kommt nie aus dem Zwischenspeicher",
+    worker.headers.get("cache-control") === "no-store",
+    "sonst liesse sich eine Fassung, die etwas falsch macht, nicht mehr abloesen");
+  pruefe("Die Seite meldet ihn an und bringt das Manifest mit",
+    fernSeite.SEITE.includes('rel="manifest"')
+    && fernSeite.SEITE.includes('navigator.serviceWorker.register("sw.js")'));
+  pruefe("Sie bietet das Installieren auch selbst an",
+    fernSeite.SEITE.includes("beforeinstallprompt"),
+    "im Chrome-Menue ist es gut versteckt");
+
+  const seite = await fetch(`http://127.0.0.1:${PORT}/fern/`);
   const inhalt = await seite.text();
   pruefe("Das Relay liefert die Fernbedienung aus",
     seite.status === 200 && seite.headers.get("content-type").includes("text/html"),

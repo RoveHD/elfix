@@ -31,6 +31,7 @@ const geraete = require("./geraete");
 // ausliefert.
 const fern = require("./fern");
 const fernSeite = require("./fern-seite");
+const fernIcon = require("./fern-icon");
 
 // Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
 // Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
@@ -282,15 +283,60 @@ const server = http.createServer((req, res) => {
   }
 
   // Die Fernbedienung fuers Handy. Sie kommt aus diesem Relay, damit auf dem
-  // Telefon nichts zu installieren ist - eine Adresse im Browser genuegt.
-  if (pfad === "/fern" || pfad === "/fern/") {
+  // Telefon nichts zu installieren ist - eine Adresse im Browser genuegt. Und
+  // wer will, macht daraus mit einem Griff eine App auf dem Startbildschirm;
+  // dafuer liegen hier Manifest, Symbol und Service Worker.
+  //
+  // Alles unter /fern/ mit Schraegstrich: der Service Worker gilt fuer sein
+  // Verzeichnis, und eine Startadresse ausserhalb davon wuerde Chrome die
+  // Installation verweigern.
+  if (pfad === "/fern") {
+    res.writeHead(302, { location: "/fern/" });
+    res.end();
+    return;
+  }
+
+  if (pfad === "/fern/") {
     res.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       // Nicht zwischenspeichern: sonst haelt ein Handy nach dem Aktualisieren
-      // des Relays wochenlang an der alten Seite fest.
+      // des Relays wochenlang an der alten Seite fest. Der Service Worker haelt
+      // sie trotzdem vor - aber nur als Rueckfall ohne Netz.
       "cache-control": "no-store"
     });
     res.end(fernSeite.SEITE);
+    return;
+  }
+
+  if (pfad === "/fern/manifest.webmanifest") {
+    res.writeHead(200, {
+      "content-type": "application/manifest+json; charset=utf-8",
+      "cache-control": "no-store"
+    });
+    res.end(JSON.stringify(fernSeite.MANIFEST));
+    return;
+  }
+
+  if (pfad === "/fern/icon.png") {
+    res.writeHead(200, {
+      "content-type": "image/png",
+      // Das Symbol aendert sich praktisch nie.
+      "cache-control": "public, max-age=604800",
+      "content-length": fernIcon.ICON.length
+    });
+    res.end(fernIcon.ICON);
+    return;
+  }
+
+  if (pfad === "/fern/sw.js") {
+    res.writeHead(200, {
+      "content-type": "text/javascript; charset=utf-8",
+      // Der Service Worker selbst darf nie aus dem Zwischenspeicher kommen -
+      // sonst laesst sich eine Fassung, die etwas falsch macht, nicht mehr
+      // abloesen.
+      "cache-control": "no-store"
+    });
+    res.end(fernSeite.SERVICE_WORKER);
     return;
   }
 

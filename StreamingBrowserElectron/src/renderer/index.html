@@ -585,15 +585,16 @@
             <div class="setting-block">
               <strong>So verbindest du das Handy</strong>
               <ol class="fern-schritte">
-                <li>Im Handybrowser <code id="fernAdresse">…/fern</code> öffnen</li>
+                <li>Im Handybrowser <code id="fernAdresse">…/fern/</code> öffnen</li>
                 <li>Diesen Code eintippen:</li>
+                <li>Im Browsermenü <em>Zum Startbildschirm hinzufügen</em> — dann liegt die Fernbedienung als App auf dem Handy</li>
               </ol>
               <div class="fern-code" id="fernCode">– – – – – – – –</div>
               <div class="geraete-aktionen">
                 <button type="button" class="soft-action" id="fernCodeCopy">Code kopieren</button>
                 <button type="button" class="soft-action" id="fernCodeNeu">Neuen Code erzeugen</button>
               </div>
-              <small>Ein neuer Code löst alle gekoppelten Handys — der Weg, wenn ihn jemand kennt, der ihn nicht kennen soll. Nach dreimal falsch Tippen ist für dieses Handy Schluss.</small>
+              <small>Schritt 3 geht nur über <code>https</code> — über den Cloudflare Tunnel also, nicht über eine nackte IP im WLAN. Ein neuer Code löst alle gekoppelten Handys — der Weg, wenn ihn jemand kennt, der ihn nicht kennen soll. Nach dreimal falsch Tippen ist für dieses Handy Schluss.</small>
             </div>
             <div class="setting-row">
               <span><strong>Status</strong><small id="fernStatus">Ausgeschaltet.</small></span>

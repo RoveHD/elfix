@@ -1328,7 +1328,7 @@ function renderFernStatus(status) {
   if (fernAdresse) {
     const server = (watchpartyServer?.value || "").trim().replace(/\/+$/, "");
     const alsWeb = server.replace(/^wss:/i, "https:").replace(/^ws:/i, "http:");
-    fernAdresse.textContent = alsWeb ? `${alsWeb}/fern` : "…/fern (erst die Server-Adresse bei der Watchparty eintragen)";
+    fernAdresse.textContent = alsWeb ? `${alsWeb}/fern/` : "…/fern/ (erst die Server-Adresse bei der Watchparty eintragen)";
   }
   if (!fernStatus) return;
   if (!status?.enabled) {

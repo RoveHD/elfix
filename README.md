@@ -20,7 +20,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
 - Verlauf mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie Tagesueberschriften
 - Tastenkuerzel fuer Suche, Zurueck, Vollbild, naechste Folge und den Watchparty-Wechsel - auch waehrend die Anbieterseite vorn liegt
-- Handy als Fernbedienung: Pause, Spulen, naechste Folge, Vollbild und Ton - eine Seite im Browser, keine App
+- Handy als Fernbedienung: Pause, Spulen, naechste Folge, Vollbild und Ton - eine Seite im Browser, auf Wunsch als App auf dem Startbildschirm
 - Automatische Updates ueber GitHub Releases - still im Hintergrund, ohne Installer-Fenster
 - Settings mit Version, Update-Status und Fortschrittsbalken
 
@@ -49,8 +49,12 @@ Einzurichten unter *Einstellungen > Fernbedienung*:
 
 1. **Fernbedienung erlauben** einschalten. Dabei entsteht ein Kopplungscode aus
    acht Zeichen.
-2. Im Handybrowser `https://dein-relay.example.com/fern` oeffnen und den Code
+2. Im Handybrowser `https://dein-relay.example.com/fern/` oeffnen und den Code
    eintippen. Das Handy merkt ihn sich - beim naechsten Mal ist es sofort da.
+3. Wenn sie liegen bleiben soll: **Als App installieren** druecken (oder im
+   Browsermenue *Zum Startbildschirm hinzufuegen*). Danach liegt die
+   Fernbedienung als eigenes Symbol auf dem Handy, oeffnet ohne Browserleiste
+   und startet mit dem letzten Code.
 
 Dann gibt es sechs Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor,
 Ton aus, Vollbild und naechste Folge. Daneben steht, was gerade laeuft, mit
@@ -60,6 +64,23 @@ Gesteuert wird immer, was gerade vorn liegt - eine Fernbedienung bedient das,
 was zu sehen ist, und nicht eine Seite, die vorhin einmal offen war. Die
 naechste Folge rechnet dieselbe Adresse aus wie der Knopf im Bild und das
 Tastenkuerzel.
+
+### Als App auf dem Startbildschirm
+
+Dafuer liefert das Relay drei Dinge mit: ein Manifest, ein Symbol und einen
+Service Worker. Chrome bietet das Installieren nur an, wenn alle drei da sind -
+und wenn die Seite ueber **https** kommt. Ueber den Cloudflare Tunnel ist das
+erfuellt; ueber eine nackte IP im WLAN nicht, dort bleibt es beim Lesezeichen.
+
+Der Service Worker haelt die Seite vor, aber nur als Rueckfall: geladen wird
+immer erst aus dem Netz. Nach einem Aktualisieren des Relays steht damit sofort
+die neue Fassung da statt wochenlang die alte. Ohne Verbindung oeffnet die
+Fernbedienung trotzdem und sagt selbst, dass gerade nichts geht.
+
+Symbol und Seite liegen als Zeichenketten in `.js`-Dateien (`fern-seite.js`,
+`fern-icon.js`). Auch das folgt der Regel oben: kopiert werden beim
+Aktualisieren nur `.js`-Dateien, und ein Startbildschirm-Symbol, das ins Leere
+zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet.
 
 ### Was hinausgeht und was nicht
 
@@ -271,13 +292,14 @@ curl http://localhost:8787/health
 Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
 inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor,
 `youtube-party.js` fuer die YouTube-Watchparty, `geraete.js` fuer den Abgleich
-der eigenen Geraete und `fern.js` samt `fern-seite.js` fuer die Fernbedienung.
+der eigenen Geraete und `fern.js` samt `fern-seite.js` und `fern-icon.js` fuer
+die Fernbedienung.
 Wird nur `server.js` uebertragen, startet der Dienst gar nicht mehr - ihm fehlt
 dann ein Modul.
 
-Die Seite der Fernbedienung steht bewusst in einer `.js`-Datei und nicht als
-`.html` daneben: sonst waere sie genau die Datei, die beim Kopieren jedes Mal
-liegenbliebe.
+Seite und Symbol der Fernbedienung stehen bewusst in `.js`-Dateien und nicht als
+`.html` und `.png` daneben: sonst waeren genau sie die Dateien, die beim
+Kopieren jedes Mal liegenblieben.
 
 Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
 Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
