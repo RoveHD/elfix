@@ -84,6 +84,9 @@ public class MainActivity extends Activity {
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
     private Kosmetik kosmetik;
     private Fassungen fassungen;
+    private Rahmen rahmen;
+    private Marken marken;
+    private Qualitaet qualitaet;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -239,16 +242,28 @@ public class MainActivity extends Activity {
                 return false;
             }
         });
+        messung.setzeRahmen(rahmen);
         watchparty = new Watchparty(this, kern, this::watchpartyGeaendert);
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
         kosmetik = new Kosmetik(kern, adblocker);
         fassungen = new Fassungen(this, kern);
+        rahmen = new Rahmen(this::rahmenMeldung);
+        marken = new Marken(this, kern, rahmen);
+        qualitaet = new Qualitaet(kern, rahmen);
+        if (!Rahmen.verfuegbar()) {
+            // Aeltere WebViews kennen den Weg in die Rahmen nicht. Die App
+            // laeuft dann wie zuvor - nur ohne Intromarke und ohne
+            // Qualitaetswahl, und die Messung sieht nur das Hauptdokument.
+            Log.w(TAG, "WebView ohne Rahmenzugriff - Player-Skripte bleiben aus");
+        }
         kern.wennBereit(() -> {
             messung.starten();
             watchparty.anwenden();
             kosmetik.vorbereiten();
             fassungen.vorbereiten();
+            marken.vorbereiten();
+            qualitaet.vorbereiten();
             // Die erste Anbieterseite ist oft schon fertig, bevor der Kern
             // steht - sie bekommt das Suchskript deshalb hier nachgereicht.
             if (activeProvider != null) {
@@ -915,6 +930,54 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Intro ueberspringen - eine Karte fuer beide Geraete.
+     *
+     * <p>Der Text sagt, warum nichts dasteht, solange nichts gelernt wurde: eine
+     * Funktion, die auf zwei uebereinstimmende Spruenge wartet, sieht sonst
+     * kaputt aus. Ohne Rahmenzugriff sagt sie das ebenfalls, statt einen
+     * Schalter anzubieten, der nichts bewirkt.
+     */
+    private View introKarte(boolean fernseher) {
+        boolean moeglich = Rahmen.verfuegbar();
+        boolean an = moeglich && marken != null && marken.eingeschaltet();
+        String text;
+        if (!moeglich) {
+            text = "Auf diesem Gerät nicht möglich: die System-WebView ist zu alt, um in den "
+                + "Rahmen des Hosters zu sehen. Ein Update der Android System WebView genügt.";
+        } else if (an) {
+            text = "Spulst du das Intro zweimal an derselben Stelle weg, steht ab der nächsten "
+                + "Folge ein Knopf dafür da.";
+        } else {
+            text = "Aus. Es wird weder gelernt noch ein Knopf angeboten.";
+        }
+        Runnable umschalten = () -> {
+            if (marken == null) return;
+            marken.einschalten(!marken.eingeschaltet());
+            showSettings();
+        };
+        String knopf = moeglich ? (an ? "Ausschalten" : "Einschalten") : null;
+        View karte = fernseher
+            ? TvViews.infoCard(this, "Intro überspringen", text, knopf, moeglich ? umschalten : null)
+            : settingsCard("Intro überspringen", text, knopf, moeglich ? umschalten : null);
+        if (an) introStandNachtragen(karte);
+        return karte;
+    }
+
+    /** Traegt nach, wie viel gelernt wurde, sobald der Kern geantwortet hat. */
+    private void introStandNachtragen(View karte) {
+        marken.stand(bericht -> {
+            if (bericht == null || karte == null) return;
+            int gelernt = bericht.optInt("marken", 0);
+            if (gelernt <= 0) return;
+            TextView koerper = karte.findViewWithTag("karten-text");
+            if (koerper == null) return;
+            koerper.setText(gelernt == 1
+                ? "Für eine Staffel gelernt. Der Knopf steht dort ab der nächsten Folge."
+                : "Für " + gelernt + " Staffeln gelernt. Der Knopf steht dort ab der nächsten Folge.");
+        });
+    }
+
+    /**
      * Sprachfassung merken - eine Karte fuer beide Geraete.
      *
      * <p>Der Text nennt, was wirklich gemerkt wurde, statt nur "an" oder
@@ -987,6 +1050,8 @@ public class MainActivity extends Activity {
                 showToast("Gespeichert");
                 showSettings();
             }), TvViews.ITEM_GAP);
+
+        addSpacing(page, introKarte(true), TvViews.ITEM_GAP);
 
         addSpacing(page, fassungsKarte(true), TvViews.ITEM_GAP);
 
@@ -1374,6 +1439,8 @@ public class MainActivity extends Activity {
                 showToast("Gespeichert");
                 showSettings();
             }), MobileViews.ITEM_GAP);
+
+        addSpacing(page, introKarte(false), MobileViews.ITEM_GAP);
 
         addSpacing(page, fassungsKarte(false), MobileViews.ITEM_GAP);
 
@@ -2635,6 +2702,9 @@ public class MainActivity extends Activity {
         settings.setUserAgentString(settings.getUserAgentString() + " ElflixAndroid/0.1");
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
+        // Vor dem ersten Laden: das Startskript gilt erst ab dem naechsten
+        // Dokument, spaeter angeschlossen bliebe die erste Seite ohne Rahmen.
+        if (rahmen != null) rahmen.anschliessen(webView);
         webView.setWebViewClient(new GuardedWebViewClient(provider));
         webView.setWebChromeClient(new GuardedChromeClient());
         // Ad frames on these sites try to push APKs and other files. ELFIX never downloads anything,
@@ -3122,6 +3192,32 @@ public class MainActivity extends Activity {
     }
 
     /** Was der Kern von sich aus meldet - bisher ausschliesslich die Watchparty. */
+    /**
+     * Ein Rahmen der Anbieterseite hat sich gemeldet.
+     *
+     * <p>Das ist der Augenblick, in dem die Spielerskripte hineingehoeren -
+     * nicht das Seitenende. Der Hoster baut sein Video oft erst danach ein, und
+     * ein Skript, das vorher laeuft, findet nichts.
+     *
+     * <p>Am Rechner faellt dieser Schritt weg: dort spielt Electron in jeden
+     * Rahmen ein, sobald die Seite steht.
+     */
+    private void rahmenMeldung(WebView ansicht, String adresse, boolean hatVideo, String nachricht) {
+        if (nachricht != null && nachricht.startsWith(Messung.MELDE_MESSUNG)) {
+            if (messung != null) messung.ausRahmen(nachricht);
+            return;
+        }
+        if (!hatVideo || activeProvider == null || ansicht != webViews.get(activeProvider.id)) return;
+        String seite = ansicht.getUrl();
+        if (seite == null || !seite.startsWith("http")) return;
+        Log.i(TAG, "Rahmen mit Video: " + safeHost(adresse));
+        org.json.JSONArray eintraege = FavoriteStore.ladeRoh(this);
+        // Kein Live-Mitschauen auf Android, also gibt keine Runde die Folge vor
+        // und jeder Sprung ist die Entscheidung dessen, der hier sitzt.
+        if (marken != null) marken.einspielen(ansicht, activeProvider, seite, eintraege, true);
+        if (qualitaet != null) qualitaet.einspielen(ansicht);
+    }
+
     private void kernEreignis(String name, String nutzlastJson) {
         if (name != null && name.startsWith("watchparty:") && watchparty != null) {
             watchparty.ereignis(name, nutzlastJson);
@@ -4511,6 +4607,9 @@ public class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             mainFrameUrl = url == null ? "" : url;
+            // Die Rahmen der vorigen Seite sind tot; ihre Kanaele wuerden
+            // sonst mitgezaehlt und die Skripte gingen ins Leere.
+            if (rahmen != null) rahmen.vergessen(view);
             // Navigating anywhere other than the armed page means the request no longer refers to
             // what is about to appear, so it must not fire on whatever loads instead.
             if (isEpisodeUrl(url)) {
@@ -4871,6 +4970,15 @@ public class MainActivity extends Activity {
             if (kosmetik != null && kosmetik.istMeldung(text)) {
                 WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
                 kosmetik.meldung(ansicht, activeProvider, text);
+            }
+            // Ein Sprung im Player - daraus wird vielleicht eine Intromarke.
+            // Die Meldung kommt aus dem Rahmen des Hosters; onConsoleMessage
+            // hoert dort mit, anders als evaluateJavascript.
+            if (marken != null && marken.istMeldung(text)) {
+                WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
+                String adresse = ansicht == null ? null : ansicht.getUrl();
+                marken.meldung(activeProvider, adresse,
+                    FavoriteStore.ladeRoh(MainActivity.this), text, MainActivity.this::showToast);
             }
             // Welche Fassung dasteht - und welche jemand angeklickt hat.
             if (fassungen != null && fassungen.istMeldung(text)) {

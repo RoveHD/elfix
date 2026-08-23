@@ -196,6 +196,27 @@ public final class Kern {
      * den sonst erst der Benutzer bemerkt - an einem Stand, der nicht passt.
      * Dieselben Faelle stehen in {@code tests/fortschritttest.js}.
      */
+    /**
+     * Ein Textwert aus einer Kern-Antwort.
+     *
+     * <p>Die Antworten kommen als JSON-Text herein; eine Zeichenkette steht
+     * darin in Anfuehrungszeichen und mit maskierten Sonderzeichen. Das hier
+     * macht daraus wieder den Text - eine Stelle, damit nicht jeder Aufrufer
+     * seine eigene halbe Loesung dafuer mitbringt.
+     */
+    public static String text(String jsonWert) {
+        String text = jsonWert == null ? "" : jsonWert.trim();
+        if (text.isEmpty() || "null".equals(text)) return "";
+        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+            try {
+                return new JSONArray("[" + text + "]").getString(0);
+            } catch (Exception ignoriert) {
+                return text.substring(1, text.length() - 1);
+            }
+        }
+        return text;
+    }
+
     public void probenFahren(Antwort antwort) {
         String roh = assetLesen("kern/fortschritt-proben.json");
         if (roh == null) {

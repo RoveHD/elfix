@@ -8,11 +8,6 @@ import android.webkit.WebView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-
 /**
  * Sub bleibt Sub - ab der zweiten Folge.
  *
@@ -48,6 +43,8 @@ public final class Fassungen {
 
     private final Context context;
     private final Kern kern;
+    /** Dasselbe Format wie fassungen.json am Rechner - siehe {@link Ablage}. */
+    private final Ablage ablage;
 
     /** Bis wann der Autostart auf die Fassung wartet (uptimeMillis). */
     private long wartetBis = 0;
@@ -59,13 +56,14 @@ public final class Fassungen {
     public Fassungen(Context context, Kern kern) {
         this.context = context;
         this.kern = kern;
+        this.ablage = new Ablage(context, DATEI, SCHEMA);
     }
 
     /** Bestand und Meldepraefixe einmalig in den Kern reichen. */
     public void vorbereiten() {
         if (kern == null) return;
         kern.wennBereit(() -> {
-            kern.rufe("fassung-bruecke.laden", Kern.args(lesen()), (wert, fehler) -> {
+            kern.rufe("fassung-bruecke.laden", Kern.args(ablage.lesen()), (wert, fehler) -> {
                 if (fehler != null) Log.e(TAG, "Fassungen nicht geladen: " + fehler);
                 else Log.i(TAG, "Fassungen geladen: " + wert + " Titel");
             });
@@ -76,7 +74,7 @@ public final class Fassungen {
 
     private void praefixHolen(String pfad, java.util.function.Consumer<String> beiWert) {
         kern.rufe(pfad, (wert, fehler) -> {
-            String text = textAus(wert);
+            String text = Kern.text(wert);
             if (fehler == null && !text.isEmpty()) beiWert.accept(text);
         });
     }
@@ -105,7 +103,7 @@ public final class Fassungen {
                         wartetBis = SystemClock.uptimeMillis() + WARTE_MS;
                     }
                     ansicht.evaluateJavascript(skript, ergebnis -> {
-                        String stand = textAus(ergebnis);
+                        String stand = Kern.text(ergebnis);
                         // "geklickt" heisst: gedrueckt, aber die Seite hat noch
                         // nicht umgeschaltet. Dann bleibt die Sperre stehen,
                         // bis die Zeit ablaeuft.
@@ -150,7 +148,7 @@ public final class Fassungen {
                     JSONObject ergebnis = new JSONObject(wert);
                     JSONObject neu = ergebnis.optJSONObject("eintraege");
                     if (neu == null) return;
-                    schreiben(neu);
+                    ablage.schreiben(neu);
                     Log.i(TAG, "Fassung gemerkt: " + ergebnis.optString("schluessel")
                         + " -> " + ergebnis.optString("name")
                         + " (" + ergebnis.optString("art") + ")");
@@ -188,7 +186,7 @@ public final class Fassungen {
             return;
         }
         kern.rufe("fassung-bruecke.vergessen", (wert, fehler) -> {
-            schreiben(new JSONObject());
+            ablage.schreiben(new JSONObject());
             if (danach != null) danach.run();
         });
     }
@@ -211,56 +209,4 @@ public final class Fassungen {
             .edit().putBoolean("remember_language", an).apply();
     }
 
-    // --- Die Datei ---------------------------------------------------------
-    //
-    // Dasselbe Format wie am Rechner: {version, eintraege}. Nicht aus Ordnung,
-    // sondern damit der Geraeteabgleich sie spaeter ohne Uebersetzung mitnehmen
-    // kann - jede Uebersetzung ist eine Gelegenheit, etwas zu verlieren.
-
-    private JSONObject lesen() {
-        File datei = new File(context.getFilesDir(), DATEI);
-        if (!datei.isFile()) return new JSONObject();
-        try (InputStream strom = new java.io.FileInputStream(datei)) {
-            byte[] roh = new byte[(int) datei.length()];
-            int gelesen = 0;
-            while (gelesen < roh.length) {
-                int schritt = strom.read(roh, gelesen, roh.length - gelesen);
-                if (schritt < 0) break;
-                gelesen += schritt;
-            }
-            JSONObject inhalt = new JSONObject(new String(roh, 0, gelesen, StandardCharsets.UTF_8));
-            JSONObject eintraege = inhalt.optJSONObject("eintraege");
-            return eintraege == null ? new JSONObject() : eintraege;
-        } catch (Exception fehler) {
-            Log.e(TAG, "fassungen.json unlesbar - es wird nichts geloescht, nur nichts geladen", fehler);
-            return new JSONObject();
-        }
-    }
-
-    private void schreiben(JSONObject eintraege) {
-        try {
-            JSONObject inhalt = new JSONObject();
-            inhalt.put("version", SCHEMA);
-            inhalt.put("eintraege", eintraege);
-            byte[] roh = inhalt.toString(2).getBytes(StandardCharsets.UTF_8);
-            try (FileOutputStream strom = new FileOutputStream(new File(context.getFilesDir(), DATEI))) {
-                strom.write(roh);
-            }
-        } catch (Exception fehler) {
-            Log.e(TAG, "fassungen.json nicht gespeichert", fehler);
-        }
-    }
-
-    private static String textAus(String jsonWert) {
-        String text = jsonWert == null ? "" : jsonWert.trim();
-        if ("null".equals(text) || text.isEmpty()) return "";
-        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-            try {
-                return new JSONArray("[" + text + "]").getString(0);
-            } catch (Exception ignoriert) {
-                return text.substring(1, text.length() - 1);
-            }
-        }
-        return text;
-    }
 }

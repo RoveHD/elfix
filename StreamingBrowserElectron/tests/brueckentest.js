@@ -150,6 +150,59 @@ pruefe("Ein geladener Bestand wird uebernommen",
   && fassungBruecke.stand().titel === 1,
   "dasselbe Format wie fassungen.json am Rechner");
 
+// --- Intro ueberspringen ------------------------------------------------------
+
+const markenBruecke = brueckeLaden("marken-bruecke");
+const marken = require("../src/marken");
+
+// Der Schluessel traegt hier die Staffel - anders als bei der Fassung. Ein
+// Intro kann ab Staffel 2 ein anderes sein.
+pruefe("Der Markenschluessel traegt die Staffel",
+  markenBruecke.skript(eintraege, anbieter, FOLGE1, true).schluessel
+  === marken.schluessel(taste.titelSchluessel("Dandadan"), 1));
+pruefe("Staffel 2 landet unter einem anderen Schluessel",
+  markenBruecke.skript(eintraege, anbieter,
+    "https://aniworld.to/anime/stream/dandadan/staffel-2/episode-1", true).schluessel
+  !== markenBruecke.skript(eintraege, anbieter, FOLGE1, true).schluessel,
+  "sonst traegt die zweite Staffel das Intro der ersten");
+pruefe("Und main.js bildet ihn wirklich so",
+  MAIN.includes("function markenSchluesselFuer")
+  && MAIN.includes("return marken.schluessel(titel, identity.season);"),
+  "mit Staffel - anders als bei der Fassung");
+
+// Ein einzelner Sprung ergibt noch keine Marke.
+const ersterSprung = markenBruecke.sprung(eintraege, anbieter, FOLGE1, 30, 120);
+pruefe("Ein Sprung wird aufgenommen", ersterSprung !== null);
+pruefe("Aber ergibt noch keine Marke",
+  ersterSprung.marke === null && ersterSprung.ansage === "",
+  "ein einzelner Sprung ist kein Intro, sondern ein Sprung");
+
+// Derselbe Sprung in einer anderen Folge macht daraus eine Marke.
+const zweiterSprung = markenBruecke.sprung(eintraege, anbieter, FOLGE2, 31, 121);
+pruefe("Zwei uebereinstimmende Spruenge in zwei Folgen ergeben eine Marke",
+  zweiterSprung && zweiterSprung.marke && zweiterSprung.marke.belege === 2);
+pruefe("Und das wird einmal angesagt",
+  zweiterSprung.ansage.includes("Intro gemerkt"));
+
+// Ab jetzt traegt das Skript die Marke.
+const mitMarke = markenBruecke.skript(eintraege, anbieter, FOLGE1, true);
+pruefe("Das Skript bekommt die Marke mit",
+  mitMarke.marke && mitMarke.marke.belege === 2 && mitMarke.skript.length > 0);
+pruefe("Waehrend einer Watchparty wird nicht gelernt",
+  markenBruecke.skript(eintraege, anbieter, FOLGE1, false).skript
+  !== markenBruecke.skript(eintraege, anbieter, FOLGE1, true).skript,
+  "der Player wird dort auf den Host gezogen - das sind nicht die eigenen Spruenge");
+
+pruefe("Die Meldung aus der Seite wird gelesen",
+  JSON.stringify(markenBruecke.sprungLesen("__elfix:sprung:30:120")) === JSON.stringify({ von: 30, nach: 120 }));
+pruefe("Eine fremde Zeile nicht",
+  markenBruecke.sprungLesen("irgendwas") === null);
+
+pruefe("Die Auskunft zaehlt Staffeln und Marken",
+  markenBruecke.stand().titel === 1 && markenBruecke.stand().marken === 1);
+pruefe("Es gibt einen Weg zurueck",
+  markenBruecke.vergessen() === 1 && markenBruecke.stand().titel === 0);
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

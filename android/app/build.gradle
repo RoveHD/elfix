@@ -36,6 +36,7 @@ def kernModule = [
     "src/youtube-sync.js",
     "src/voe-qualitaet.js",
     "src/fassung.js",
+    "src/marken.js",
     "shared/provider-model.js",
     "shared/bildausschnitt.js"
 ]
@@ -106,4 +107,22 @@ tasks.register("probenKopieren", Copy) {
 
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
     dependsOn "probenKopieren"
+}
+
+/*
+ * Die einzige Abhaengigkeit - und sie ersetzt etwas, das Electron mitbringt.
+ *
+ * Am Rechner spielt ELFIX seine Skripte in jeden Rahmen einer Seite ein, auch
+ * in den cross-origin-Rahmen des Hosters. Genau dort liegt das Video: die
+ * Intromarken brauchen seine Zeitachse, die Qualitaetswahl seinen Player, und
+ * die Messung zaehlt dort die wirklich gespielten Sekunden.
+ *
+ * WebView.evaluateJavascript erreicht nur das Hauptdokument. androidx.webkit
+ * bringt die beiden Gegenstuecke mit: addDocumentStartJavaScript spielt beim
+ * Start *jedes* Dokuments ein, addWebMessageListener ist der Rueckkanal.
+ * Beides ist AndroidX und kein Kunstgriff - ohne beides waeren drei Funktionen
+ * des Rechners auf Android schlicht nicht erreichbar.
+ */
+dependencies {
+    implementation "androidx.webkit:webkit:1.12.1"
 }

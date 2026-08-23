@@ -54,10 +54,27 @@ public final class Messung {
         }
     };
 
+    /**
+     * Der Weg in den Rahmen des Hosters - dort, wo das Video wirklich liegt.
+     *
+     * <p>Ohne ihn sieht die Messung nur das Hauptdokument. Bei den grossen
+     * Anbietern steht dort kein Video, sondern ein Rahmen von einem fremden
+     * Wirt; die gezaehlten Sekunden blieben dann null, und die 2:30-Schwelle
+     * bekaeme nie etwas zu sehen.
+     */
+    private Rahmen rahmen;
+
+    /** Der Meldekopf, an dem eine Antwort aus einem Rahmen zu erkennen ist. */
+    public static final String MELDE_MESSUNG = "mess:";
+
     public Messung(Kern kern, Bestand bestand, Seite seite) {
         this.kern = kern;
         this.bestand = bestand;
         this.seite = seite;
+    }
+
+    public void setzeRahmen(Rahmen rahmen) {
+        this.rahmen = rahmen;
     }
 
     public void starten() {
@@ -106,6 +123,15 @@ public final class Messung {
         String adresse = seite.adresse();
         if (ansicht == null || anbieter == null || adresse == null || !adresse.startsWith("http")) return;
 
+        // Erst die Rahmen: liegt das Video beim Hoster, kann nur von dort eine
+        // Antwort kommen. Das Hauptdokument wird trotzdem gefragt - manche
+        // Anbieter binden den Player unmittelbar ein, und ein Rahmen ohne Video
+        // liefert ohnehin nichts.
+        if (rahmen != null) {
+            rahmen.anSpieler(ansicht,
+                "try{elfixRahmen.postMessage(\"" + MELDE_MESSUNG
+                    + "\"+JSON.stringify(" + messSkript + "))}catch(e){}");
+        }
         ansicht.evaluateJavascript(messSkript, wert -> {
             if (wert == null || "null".equals(wert)) return;
             try {
@@ -117,6 +143,27 @@ public final class Messung {
                 Log.d(TAG, "Messwert unlesbar: " + fehler);
             }
         });
+    }
+
+    /**
+     * Eine Antwort aus einem Rahmen.
+     *
+     * <p>Verbucht wird sie auf die Adresse des Hauptdokuments, nicht auf die des
+     * Rahmens: der Eintrag gehoert zur Folge beim Anbieter, und der Hoster
+     * heisst bei jeder Folge anders.
+     */
+    public void ausRahmen(String nachricht) {
+        if (nachricht == null || !nachricht.startsWith(MELDE_MESSUNG) || seite == null) return;
+        String roh = nachricht.substring(MELDE_MESSUNG.length());
+        if (roh.isEmpty() || "null".equals(roh)) return;
+        Provider anbieter = seite.anbieter();
+        String adresse = seite.adresse();
+        if (anbieter == null || adresse == null || !adresse.startsWith("http")) return;
+        try {
+            verbuchen(anbieter, adresse, new JSONObject(roh));
+        } catch (Exception fehler) {
+            Log.d(TAG, "Messwert aus dem Rahmen unlesbar: " + fehler);
+        }
     }
 
     private void verbuchen(Provider anbieter, String adresse, JSONObject gemessen) {
