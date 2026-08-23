@@ -3,6 +3,64 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.36.0 — 24. August 2026
+
+Android hoert auf, ELFIX ein zweites Mal zu sein.
+
+**Die Regeln stehen jetzt einmal**
+
+- Die Android-App hatte die Geschaeftslogik von ELFIX in Java nachgebaut: 37
+  gleichnamige Funktionen, von Hand nachgezogen und laengst auseinander-
+  gelaufen. Zwei Abschriften derselben Regel laufen auseinander, sobald nur
+  eine gepflegt wird
+- Statt weiter abzuschreiben laedt die App die Original-Module in einen
+  unsichtbaren WebView. Sie brauchen kein Electron und kein Node, sondern nur
+  `fetch`, `WebSocket` und `setTimeout`. Ein Kopierschritt beim Bauen sorgt
+  dafuer, dass immer dieselbe Fassung laeuft wie am Rechner
+- Die Fortschrittsregel wandert dafuer aus `main.js` nach `fortschritt.js`, die
+  Messung nach `messung.js`. Am Rechner aendert sich dadurch nichts - dieselben
+  Namen, dieselben Aufrufstellen
+- Belegt statt behauptet: 14 Faelle der Fortschrittsregel fahren auf beiden
+  Geraeten, der Rechner ueber `fortschritttest`, das Telefon beim Start
+
+**Sub bleibt Sub - auch am Telefon**
+
+- Womit du eine Serie angefangen hast, steht ab der zweiten Folge vorgewaehlt
+  da. Bisher klickte man die Flaggenreihe bei jeder Folge neu, mit dem Daumen
+- Der Autostart wartet auf die Umschaltung, bevor er einen Hoster anklickt: die
+  Anbieterseite zeigt nur die Hoster der gewaehlten Fassung
+- `fassungen.json` hat auf beiden Geraeten dasselbe Format - der Abgleich kann
+  sie spaeter ohne Uebersetzung mitnehmen
+
+**Der Weg in den Rahmen des Hosters**
+
+- Das Video liegt nicht auf der Anbieterseite, sondern in einem Rahmen von
+  einem fremden Wirt. Dorthin reichte auf Android nichts: drei Funktionen des
+  Rechners waren damit gar nicht zu haben
+- Jetzt schon - ueber die beiden AndroidX-Gegenstuecke zu dem, was Electron
+  mitbringt. Damit kommen **Intro ueberspringen** (gelernt aus den eigenen
+  Spruengen) und die **beste Bildstufe beim Hoster** auf Android an, und die
+  Fortschrittsmessung sieht endlich, was wirklich laeuft
+- Ist die System-WebView zu alt (aelter als 83), faellt alles still auf das
+  Hauptdokument zurueck - und die Einstellungen sagen es, statt einen Schalter
+  anzubieten, der nichts bewirkt
+- Ein Punkt ist auf Android bewusst besser geloest als am Rechner: wird "Intro
+  ueberspringen" mitten in einer Folge abgeschaltet, hoert das Telefon sofort
+  auf zu lernen
+
+**Neu geprueft**
+
+- `brueckentest` fuehrt die Android-Bruecken wirklich aus und haelt ihre
+  Schluessel gegen die, die `main.js` bildet. Laufen die auseinander, merken
+  sich beide Geraete dasselbe und finden das des anderen nie wieder - ohne
+  diesen Test waere das still passiert
+
+**Noch nicht auf einem Geraet bestaetigt**
+
+- Rahmenzugriff, Intromarke, Bildstufe und die Messung im Rahmen sind gebaut
+  und gegen die geteilten Module geprueft, aber zur Laufzeit noch nicht auf
+  einem Telefon oder Fernseher nachgemessen
+
 ## 1.35.1 — 23. August 2026
 
 Warum sich die Fernbedienung nicht installieren liess - und warum das dreimal
