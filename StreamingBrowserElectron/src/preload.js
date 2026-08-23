@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   resyncWatchparty: (key, room) => ipcRenderer.invoke("watchparty:resync", key, room),
   kickFromWatchparty: (key, memberId, room) => ipcRenderer.invoke("watchparty:kick", key, memberId, room),
   onWatchpartyState: (callback) => ipcRenderer.on("watchparty:state", (_event, state) => callback(state)),
+  // Meine Geraete: der Abgleich zwischen den Geraeten einer Person.
+  getGeraeteStatus: () => ipcRenderer.invoke("geraete:status"),
+  createGeraeteSchluessel: () => ipcRenderer.invoke("geraete:schluessel-erzeugen"),
+  setGeraeteSchluessel: (wert) => ipcRenderer.invoke("geraete:schluessel-setzen", wert),
+  disconnectGeraete: () => ipcRenderer.invoke("geraete:trennen"),
+  syncGeraeteNow: () => ipcRenderer.invoke("geraete:jetzt-abgleichen"),
+  onGeraeteState: (callback) => ipcRenderer.on("geraete:state", (_event, state) => callback(state)),
   onWatchpartyItems: (callback) => ipcRenderer.on("watchparty:items", (_event, items) => callback(items)),
   chooseWatchpartyMember: (kandidaten, punkt) => ipcRenderer.invoke("watchparty:choose-member", kandidaten, punkt),
   handoverWatchpartyHost: (key, memberId, room) => ipcRenderer.invoke("watchparty:handover", key, memberId, room),
@@ -64,6 +71,21 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   markWrappedSeen: (jahr) => ipcRenderer.invoke("wrapped:gesehen", jahr),
   setWrappedOpen: (offen) => ipcRenderer.invoke("wrapped:set-open", offen),
   saveProviders: (providers) => ipcRenderer.invoke("provider:save-all", providers),
+  // Der Anbieter hat eine neue Adresse - der Wirt wird in allen Eintraegen
+  // ersetzt.
+  relocateProvider: (id, adresse) => ipcRenderer.invoke("provider:relocate", id, adresse),
+  // Intro ueberspringen: was ELFIX aus den eigenen Sprüngen gelernt hat.
+  getMarkenStand: () => ipcRenderer.invoke("marken:stand"),
+  forgetMarken: () => ipcRenderer.invoke("marken:vergessen"),
+  getFassungenStand: () => ipcRenderer.invoke("fassungen:stand"),
+  forgetFassungen: () => ipcRenderer.invoke("fassungen:vergessen"),
+  // Das Handy als Fernbedienung.
+  getFernStatus: () => ipcRenderer.invoke("fern:status"),
+  getFernQr: () => ipcRenderer.invoke("fern:qr"),
+  enableFern: () => ipcRenderer.invoke("fern:einschalten"),
+  disableFern: () => ipcRenderer.invoke("fern:ausschalten"),
+  newFernCode: () => ipcRenderer.invoke("fern:neuer-code"),
+  onFernState: (callback) => ipcRenderer.on("fern:state", (_event, state) => callback(state)),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
@@ -88,5 +110,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // durch den Autoplay-Schalter in der Anbieterseite.
   onSettingsChanged: (callback) => ipcRenderer.on("settings:changed", (_event, neu) => callback(neu)),
   onToast: (callback) => ipcRenderer.on("app:toast", (_event, message) => callback(message)),
+  // Tastenkuerzel. Der Hauptprozess faengt sie ab, weil die Anbieterseite ueber
+  // der Oberflaeche liegt und Tastendruecke dort nie hier ankaemen.
+  onTastenBefehl: (callback) => ipcRenderer.on("tasten:befehl", (_event, befehl) => callback(befehl)),
   onAutostartDone: (callback) => ipcRenderer.on("app:autostart-done", (_event, info) => callback(info))
 });

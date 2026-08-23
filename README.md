@@ -8,15 +8,20 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 
 - Windows-App mit Chromium-Webviews und installierbarem Setup
 - Android/Android-TV-App mit Touch-, D-Pad- und Mausmodus
-- Anbieter-Verwaltung fuer AniWorld, S.to, Filmo und eigene Provider
+- Anbieter-Verwaltung fuer AniWorld, S.to, Filmo und eigene Provider - samt Umzug, wenn eine Seite ihre Adresse wechselt
 - Globale Suche mit Anbieter-spezifischen Such-URLs und Schreibweisen wie `spiderman`/`spider-man`
 - Favoriten mit Anbieter-spezifischer Bild-Erkennung und Fortschrittslogik
+- Intro ueberspringen: gelernt aus den eigenen Spruengen, angeboten als Knopf - nie von selbst
 - Startseiten-Reihe "Empfohlen fuer dich": Vorschlaege aus den Genres des Verlaufs und den Aehnlichkeits-Listen der Anbieter
 - Watchparty: mehrere Raeume gleichzeitig, jeder mit eigenem Fortschritt und eigener Live-Steuerung
+- Meine Geraete: ein Schluessel haelt Laptop und Rechner auf demselben Stand - samt Wiedergabezeit, ohne Konto, und das Relay kann nicht mitlesen
 - Mediathek fuer abgeschlossene Titel: loeschen mit Rueckfrage, Reihenfolge per Ziehen
 - Hinweis, wenn zu einer abgeschlossenen Serie neue Folgen erscheinen
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
 - Verlauf mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie Tagesueberschriften
+- Tastenkuerzel fuer Suche, Zurueck, Vollbild, naechste Folge und den Watchparty-Wechsel - auch waehrend die Anbieterseite vorn liegt
+- Fassung merken (Sub/Dub): ab der zweiten Folge steht die Flagge vorgewaehlt, mit der du angefangen hast
+- Handy als Fernbedienung: Pause, Spulen, Folge vor und zurueck, Vollbild und Ton - und die angefangenen Serien zum Aussuchen, wenn gerade nichts laeuft
 - Automatische Updates ueber GitHub Releases - still im Hintergrund, ohne Installer-Fenster
 - Settings mit Version, Update-Status und Fortschrittsbalken
 
@@ -35,6 +40,238 @@ Ist eine Folge durch, rueckt der Eintrag auf die naechste und bleibt als
 "Naechste Folge" in *Weiterschauen*. Zusammengefasste Folgen ("[In E18
 enthalten]") werden dabei uebersprungen, am Staffelende geht es in die naechste
 Staffel, und am Serienende landet der Titel in der Mediathek.
+
+## Handy als Fernbedienung
+
+Vom Sofa aus anhalten, ohne aufzustehen. Auf dem Telefon ist nichts zu
+installieren: die Seite liefert das Relay unter `/fern` selbst aus.
+
+Einzurichten unter *Einstellungen > Fernbedienung*:
+
+1. **Fernbedienung erlauben** einschalten. Dabei entsteht ein Kopplungscode aus
+   acht Zeichen.
+2. Den **QR-Code** daneben mit der Kamera scannen - damit oeffnet sich die
+   Seite und ist gleich gekoppelt. Wer lieber tippt: im Handybrowser
+   `https://dein-relay.example.com/fern/` oeffnen und den Code eintragen. So
+   oder so merkt das Handy ihn sich; beim naechsten Mal ist es sofort da.
+3. Wenn sie liegen bleiben soll: **Als App installieren** druecken (oder im
+   Browsermenue *Zum Startbildschirm hinzufuegen*). Danach liegt die
+   Fernbedienung als eigenes Symbol auf dem Handy, oeffnet ohne Browserleiste
+   und startet mit dem letzten Code.
+
+Dann gibt es neun Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor,
+vorherige und naechste Folge, leiser, Ton aus, lauter und Vollbild. *Vollbild*
+meint dabei den Player und nicht das Fenster - dasselbe, was der Knopf im Bild
+tut. Darueber steht, was gerade laeuft, mit Fortschrittsbalken.
+
+Gesteuert wird immer, was gerade vorn liegt - eine Fernbedienung bedient das,
+was zu sehen ist, und nicht eine Seite, die vorhin einmal offen war. Die
+naechste Folge rechnet dieselbe Adresse aus wie der Knopf im Bild und das
+Tastenkuerzel; die vorherige ist die Folge davor in derselben Staffel.
+
+### Anfangen, nicht nur bedienen
+
+Darunter steht **Weiterschauen**: die angefangenen Serien dieses Rechners, mit
+Folge und Fortschrittsbalken. Ein Tipp oeffnet den Eintrag und spielt ihn an -
+ohne aufzustehen. *Aktualisieren* holt die Liste neu; von selbst kommt sie beim
+Verbinden.
+
+Das Handy schickt dabei nie eine Adresse, sondern die Kennung eines Eintrags,
+den ELFIX vorher selbst herausgegeben hat. Eine Kennung, die es hier nicht gibt,
+oeffnet nichts.
+
+### Als App auf dem Startbildschirm
+
+Dafuer liefert das Relay vier Dinge mit: ein Manifest, zwei Symbole (192 und
+512) und einen Service Worker. Chrome bietet das Installieren nur an, wenn alle
+da sind - und wenn die Seite ueber **https** kommt. Ueber den Cloudflare Tunnel
+ist das erfuellt; ueber eine nackte IP im WLAN nicht.
+
+Fehlt eine Bedingung, bekommt man eine Verknuepfung mit Browserleiste statt
+einer App. Chrome nennt seine Gruende dafuer nur in der Entwicklerkonsole, und
+da kommt am Handy niemand hin - darum fragt die Seite jede Bedingung selbst ab.
+Unter **Warum geht "Installieren" nicht?** steht dann Zeile fuer Zeile, was
+erfuellt ist und was nicht:
+
+| Zeile | Woran es liegt, wenn sie rot ist |
+| --- | --- |
+| Sichere Verbindung (https) | Die Seite kam ueber `http` - eine nackte IP im WLAN. Ueber den Tunnel oeffnen |
+| Browser kann Apps installieren | Ein Browser ohne Service Worker, oder ein privates Fenster |
+| Service Worker laeuft | Er wurde abgewiesen; die Meldung steht dabei |
+| Manifest / Symbole erreichbar | Das Relay ist zu alt - `.js`-Dateien nachkopieren |
+| Chrome bietet das Installieren an | Alles andere gruen und trotzdem nichts? Dann hat Chrome die Seite schon einmal installiert oder das Angebot ist noch unterwegs |
+
+Die Auskunft steht nur da, solange das Installieren nicht geht. Kommt das
+Angebot doch noch, verschwindet sie von selbst.
+
+Der Service Worker haelt die Seite vor, aber nur als Rueckfall: geladen wird
+immer erst aus dem Netz. Nach einem Aktualisieren des Relays steht damit sofort
+die neue Fassung da statt wochenlang die alte. Ohne Verbindung oeffnet die
+Fernbedienung trotzdem und sagt selbst, dass gerade nichts geht.
+
+Symbole und Seite liegen als Zeichenketten in `.js`-Dateien (`fern-seite.js`,
+`fern-icon.js`). Auch das folgt der Regel oben: kopiert werden beim
+Aktualisieren nur `.js`-Dateien, und ein Startbildschirm-Symbol, das ins Leere
+zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet.
+
+### Was hinausgeht und was nicht
+
+| Vom Rechner zum Handy | Vom Handy zum Rechner |
+| --- | --- |
+| Titel, Folge, Stelle, laeuft/pausiert | elf feste Befehlswoerter |
+| Weiterschauen: Titel, Folge, Fortschritt | die Kennung eines Eintrags daraus |
+
+Mehr nicht. Kein Verlauf, keine Mediathek, keine Adresse. Bis 1.34.0 galt "wer
+den Code hat, kann druecken, aber nicht mitlesen"; mit der Weiterschauen-Liste
+stimmt das nicht mehr, und das soll hier auch so stehen: **wer den Code hat,
+sieht, welche Serien angefangen sind.** Ausgesucht werden wollte vom Sofa aus,
+und ohne Liste geht das nicht.
+
+Was das Relay durchlaesst, steht als feste Liste in `fern.js`: ein Wort, das
+dort nicht steht, kommt gar nicht erst an. Die Liste selbst schaut es sich nicht
+an - es kuerzt sie nur auf vierzig Eintraege und feste Felder.
+
+**Der Code ist der einzige Zugangsschutz.** Acht Zeichen aus zweiunddreissig
+sind vierzig Bit, und nach drei Fehlversuchen ist fuer diese Verbindung Schluss
+- durchprobieren geht also nicht. Trotzdem gilt: laeuft dein Relay ueber einen
+Cloudflare Tunnel, ist `/fern` oeffentlich erreichbar. *Fernbedienung erlauben*
+auszuschalten nimmt jedem Handy die Moeglichkeit, auch dem, das den Code kennt;
+**Neuen Code erzeugen** loest alle gekoppelten.
+
+Geht ELFIX aus, erfahren die Handys es und der Code koppelt niemanden mehr - die
+Kopplung lebt nur, solange der Rechner da ist.
+
+## Intro ueberspringen
+
+Ein Intro laesst sich hier nicht *erkennen*: ELFIX sieht das Video nie, es liegt
+im Rahmen des Hosters. Also andersherum - gelernt wird aus den eigenen
+Spruengen.
+
+Wer eine Serie schaut, spult das Intro selbst weg, jede Folge an derselben
+Stelle. Der Player meldet Anfang und Ziel eines Sprungs auf die Sekunde genau;
+das ist das Einzige, was ELFIX von einem Intro je erfahren kann. Springst du in
+**zwei verschiedenen Folgen** derselben Staffel aehnlich - Beginn innerhalb von
+zwoelf Sekunden, Laenge innerhalb von sechs -, entsteht daraus eine Marke, und
+ab der naechsten Folge steht an dieser Stelle ein Knopf.
+
+Gesprungen wird nur, wenn du ihn drueckst. Aus demselben Grund, aus dem die
+Bildstufe nur einmal je Folge gesetzt wird: ein Skript, das ungefragt eingreift,
+ist eine Bevormundung - und ein falscher Sprung kostet neunzig Sekunden
+Handlung, die man erst wiederfinden muss.
+
+Was dabei gilt:
+
+| Regel | Warum |
+| --- | --- |
+| Nur Sprünge nach vorn, 20 bis 180 Sekunden | kuerzer ist ein Verspieler, laenger keine Titelmelodie |
+| Nur in den ersten zehn Minuten | was spaeter uebersprungen wird, ist Handlung |
+| Zwei verschiedene Folgen noetig | ein einzelner Sprung kann Langeweile gewesen sein |
+| Je Folge zaehlt der letzte Sprung | wer nachjustiert, hat einmal uebersprungen, nicht dreimal |
+| Je Titel **und Staffel** | Intros wechseln zwischen Staffeln |
+| Waehrend einer Watchparty wird nicht gelernt | dort zieht der Host den Player, das ist nicht die eigene Entscheidung |
+
+Aendert sich das Intro mitten in der Serie, zieht die Marke nach: gerechnet wird
+der Median der groessten uebereinstimmenden Gruppe, nicht der Durchschnitt ueber
+alles. Ein einzelner Ausreisser verzieht sie damit nicht.
+
+Der eigene Knopf zaehlt nie als Beleg. Lernte die Marke von sich selbst,
+verschoebe sie sich mit jedem Druck ein Stueck weiter.
+
+Ab- und wieder anschalten unter *Einstellungen > Wiedergabe*; dort steht auch,
+fuer wie viele Serien schon etwas gelernt wurde, samt **Vergessen**. Die Marken
+liegen in `marken.json` im Datenordner und gelten nur fuer dieses Geraet - ueber
+*Meine Geraete* wandern sie (noch) nicht mit.
+
+Abspanne bleiben aussen vor: was am Ende einer Folge zu tun ist, weiss ELFIX
+laengst - dort steht der Knopf zur naechsten Folge, mit Zaehler.
+
+## Fassung merken (Sub/Dub)
+
+AniWorld und S.to legen jede Folge mehrfach ab - einmal je Synchronfassung.
+Welche man bekommt, entscheidet die Reihe kleiner Flaggen ueber der
+Hosterliste, und die steht bei jeder neuen Folge wieder auf der Vorgabe des
+Anbieters. Wer eine Serie mit Untertiteln schaut, klickt das zwanzig Mal.
+
+Also dasselbe Verfahren wie beim Intro: gelernt wird aus dem, was du selbst
+tust.
+
+- **Die erste Folge** sagt, womit du angefangen hast. Was beim Laden dasteht,
+  wird gemerkt - aber nur, solange fuer diesen Titel noch nichts bekannt ist
+- **Ab der zweiten** klickt ELFIX die Flagge an, bevor der Hoster geladen wird.
+  Kurz steht dann *„Japanisch, Deutsche Untertitel vorgewählt"* im Bild
+- **Klickst du selbst eine andere an**, gilt ab dann die. Nur ein echter Klick
+  zaehlt als Entscheidung - der eigene Klick der Vorwahl traegt `isTrusted`
+  nicht und lernt deshalb nichts von sich selbst
+
+Die Reihenfolge ist der eigentliche Punkt: die Anbieterseite zeigt nur die
+Hoster der gewaehlten Fassung. Wer davor auf einen Hoster klickt, startet die
+falsche und merkt es erst am Ton. Der Autostart wartet deshalb, bis die Fassung
+steht - hoechstens vier Sekunden, und nur, wenn ueberhaupt etwas umzustellen
+ist.
+
+Gibt es die gemerkte Fassung bei einer Folge nicht - eine Staffel, die nur
+untertitelt vorliegt -, bleibt stehen, was der Anbieter anbietet. Etwas
+anderes anzuklicken waere schlechter als nichts zu tun.
+
+Gemerkt wird der Titel, nicht die Adresse: ein Anbieterumzug nimmt die Fassung
+mit. Erkannt wird sie ueber die Angabe der Seite (`data-lang-key`) und den
+Dateinamen der Flagge - der Schluessel ist eindeutig, der Dateiname ueberlebt
+den Umzug.
+
+Ab- und wieder anschalten unter *Einstellungen > Wiedergabe*; dort steht auch,
+fuer wie viele Serien etwas gemerkt ist und in welchen Fassungen, samt
+**Vergessen**. Die Angaben liegen in `fassungen.json` im Datenordner und gelten
+nur fuer dieses Geraet.
+
+## Tastenkuerzel
+
+| Taste | Wirkung |
+| --- | --- |
+| `Strg + K` | Suche oeffnen |
+| `Alt + ←` | Zurueck auf der Anbieterseite |
+| `F11` | Vollbild an und aus |
+| `Strg + →` | Naechste Folge |
+| `Strg + Umschalt + W` | *Wofuer zaehlt das hier?* - zwischen dem eigenen Stand und einer Watchparty wechseln |
+
+Sie gelten auch, waehrend eine Anbieterseite im Vordergrund liegt. Das ist der
+Grund, warum sie im Hauptprozess haengen und nicht in der Oberflaeche: die
+Anbieterseite ist eine eigene `WebContentsView` **ueber** der Oberflaeche, und
+ein Tastendruck dort erreicht den Renderer nie.
+
+Zwei Regeln halten sie aus dem Weg. Jedes Kuerzel traegt eine Zusatztaste oder
+ist eine Funktionstaste - ein blosses `n` waere im Suchfeld einer Anbieterseite
+ein Aerger. Und wo eine Taste gerade nichts bedeutet, bekommt die Seite sie:
+`Alt + ←` ohne Verlauf, `Strg + →` ausserhalb einer Folgenseite und `F11` ohne
+geoeffnete Anbieterseite werden durchgereicht, statt geschluckt zu werden.
+
+Nachzulesen sind sie in der App unter *Einstellungen > Wiedergabe*.
+
+## Wenn ein Anbieter umzieht
+
+AniWorld und S.to wechseln ihre Adresse - nicht oft, aber regelmaessig, und
+manchmal von einer Domain auf eine blosse IP. Danach zeigt jeder Eintrag ins
+Leere: Watchlist, Mediathek, abgehakte Folgen, Verlauf und die Vorschaubilder
+gleich mit.
+
+Unter *Einstellungen > Anbieter* die neue Adresse ins Feld **Website** eintragen
+und **Adresse hat sich geaendert** druecken. Vor dem Umschreiben kommt eine
+Rueckfrage, die sagt, was passieren wird - wie viele Eintraege mitziehen, wie
+viele davon in der Mediathek stehen und wie viele Bilder betroffen sind.
+
+Umgezogen wird ausschliesslich der Wirt. Pfad, Abfrage und Anker bleiben, wie
+sie sind: liegt die Serie drueben unter demselben Pfad, passt danach alles -
+liegt sie woanders, hilft der Umzug nicht, und dann waere es auch kein Umzug,
+sondern ein anderer Anbieter.
+
+Was nicht dazugehoert, bleibt stehen. Ein Vorschaubild auf einem fremden Server
+zieht nicht mit, ein eigenes Bild schon gar nicht (es liegt als Data-URL vor),
+und Eintraege anderer Anbieter werden nicht angefasst. Steht ein zweiter
+Anbieter auf derselben alten Adresse, sagt die Rueckfrage das - er bleibt, wo er
+ist.
+
+Die Adresse ist Sache dieses Geraets. Ueber *Meine Geraete* wandert sie nicht
+mit: wer denselben Anbieter anderswo unter einer anderen Adresse erreicht, soll
+seine behalten.
 
 ## Watchparty
 
@@ -129,9 +366,16 @@ curl http://localhost:8787/health
 ```
 
 Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
-inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor und
-`youtube-party.js` fuer die YouTube-Watchparty. Wird nur `server.js`
-uebertragen, startet der Dienst gar nicht mehr - ihm fehlt dann ein Modul.
+inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor,
+`youtube-party.js` fuer die YouTube-Watchparty, `geraete.js` fuer den Abgleich
+der eigenen Geraete und `fern.js` samt `fern-seite.js` und `fern-icon.js` fuer
+die Fernbedienung.
+Wird nur `server.js` uebertragen, startet der Dienst gar nicht mehr - ihm fehlt
+dann ein Modul.
+
+Seite und Symbol der Fernbedienung stehen bewusst in `.js`-Dateien und nicht als
+`.html` und `.png` daneben: sonst waeren genau sie die Dateien, die beim
+Kopieren jedes Mal liegenblieben.
 
 Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
 Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
@@ -139,7 +383,10 @@ Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
 
 Die Antwort von `/health` nennt unter `features`, was die laufende Fassung kann.
 Steht dort `youtube`, beherrscht das Relay die YouTube-Watchparty; `youtubeRaeume`
-sagt, wie viele davon gerade laufen.
+sagt, wie viele davon gerade laufen. Steht dort `geraete`, kennt es den Abgleich
+der eigenen Geraete; `geraeteRaeume` sagt, wie viele Schluessel dort liegen.
+Steht dort `fern`, kennt es die Fernbedienung und liefert ihre Seite unter
+`/fern` aus; `fernbedienungen` sagt, wie viele Rechner gerade steuerbar sind.
 
 Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
 setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login
@@ -162,6 +409,71 @@ Verlaesst man eine Runde, wird man herausgeworfen oder nimmt jemand den Titel
 heraus, verschwindet auch dessen Weiterschauen-Eintrag. Bei fehlender Verbindung
 oder ausgeschalteter Watchparty wird nichts geloescht - ein Aussetzer darf keine
 Staende kosten.
+
+## Meine Geraete
+
+Watchparty verbindet Menschen. **Meine Geraete** verbindet die Geraete *einer*
+Person: was am Rechner geschaut wird, steht auf dem Laptop in *Weiterschauen* an
+derselben Stelle. Es gibt nichts einzustellen und nichts beizutreten - wer
+denselben Schluessel traegt, hat denselben Stand.
+
+Einzurichten unter *Einstellungen > Meine Geraete*:
+
+1. Auf dem ersten Geraet **Neuen Schluessel erzeugen**. Es kommt etwas heraus
+   wie `T5M3BQS8-4FDBBB8N-5QQ2YME2-05T7R6SY`.
+2. Auf jedem weiteren Geraet denselben Schluessel eintragen und
+   **Uebernehmen** druecken. Gross- und Kleinschreibung, Striche und
+   Leerzeichen sind egal; `I` und `L` gelten als Eins, `O` als Null - genau die
+   Verwechslungen, die beim Abschreiben vorkommen.
+
+Der Schluessel ist zugleich der Schalter: wer ihn eintraegt, will den Abgleich.
+*Dieses Geraet trennen* nimmt ihn wieder heraus - die Eintraege bleiben stehen,
+sie gleichen sich nur nicht mehr ab.
+
+Gebraucht wird dasselbe Relay wie fuer die Watchparty; die Adresse steht dort.
+Eingeschaltet sein muss die Watchparty dafuer **nicht** - die eigenen Geraete
+sollen zusammenbleiben, auch wenn gerade niemand mit anderen schaut.
+
+**Was abgeglichen wird.** Folge, Stelle, Fortschritt, abgeschlossene Titel und
+Folgen, Watchlist und die Reihenfolge in der Mediathek. Geloeschtes verschwindet
+ueberall.
+
+Dazu die gemessene Wiedergabezeit: *Rueckblick* und *Wrapped* zaehlen auf jedem
+Geraet alles zusammen. Wer abends am Rechner und am Wochenende auf dem Laptop
+schaut, saehe sonst zweimal die halbe Bilanz. Eine Sitzung ist dabei ein
+Ereignis und kein Zustand - sie kommt dazu oder sie ist schon da, ueberschrieben
+wird nie. Die gerade laufende bleibt, wo sie ist, bis sie zu Ende ist.
+
+**Was nicht.** Selbst gewaehlte Titelbilder (sie liegen als Data-URL vor und
+sind um ein Vielfaches groesser als alles andere zusammen) und der Verlauf je
+Eintrag - beides bleibt auf dem Geraet. Eintraege einer Watchparty bleiben
+ausserdem bei ihrem Raum: dort werden sie ohnehin abgeglichen, und zwei Wege
+fuer denselben Stand wuerden einander ueberholen.
+
+Faellt etwas auseinander, gilt der neuere Stand - dieselbe Regel wie in der
+Watchparty. Gerechnet wird dabei in der Zeit des Relays, nicht in der des
+Geraets: zwei Rechner sind sich ueber die Uhrzeit selten einig.
+
+### Was das Relay dabei sieht
+
+Nichts von dem, was dort steht. Aus dem Schluessel faellt dreierlei, und nur
+das Erste und die Kennungen gehen hinaus:
+
+| Ableitung | wozu | beim Relay sichtbar |
+| --- | --- | --- |
+| Raumkennung | wo die Eintraege liegen | ja, 32 Hexzeichen |
+| Eintragskennung | welcher Eintrag welcher ist | ja, ein HMAC je Titel |
+| Chiffre | AES-256-GCM | nein, nie |
+
+Der Schluessel selbst verlaesst das Geraet nie. Ein Eintrag ist verschlossen,
+bevor er hinausgeht; die Kennung ist ein HMAC und keine Pruefsumme, aus ihr
+laesst sich also kein Titel zurueckrechnen. Sichtbar bleibt, wie viele
+Eintraege es gibt und wann sie sich aendern.
+
+Das ist der Unterschied zur Watchparty, und er ist beabsichtigt: dort muss der
+Raum die Titel kennen, um sie anzuzeigen. Hier liest ohnehin nur der Besitzer.
+
+Wer den Schluessel hat, ist die Person. Er gehoert nicht in einen Chat.
 
 ## Windows Build
 
@@ -197,7 +509,11 @@ ELFIX nutzt `electron-updater` mit GitHub Releases:
 https://github.com/RoveHD/elfix/releases
 ```
 
-Ein Release wird durch einen Tag wie `v1.13.0` oder manuell ueber den GitHub Actions Workflow gebaut. Fuer automatische Updates muessen die vom Workflow erzeugten Assets im GitHub Release liegen, besonders:
+Ein Release wird durch einen Tag wie `v1.13.0` oder manuell ueber den GitHub
+Actions Workflow gebaut. Von Hand gestartet fragt der Workflow nach einem Tag:
+bleibt das Feld leer, wird nur gebaut - steht ein Tag darin, wird
+veroeffentlicht, und der Tag entsteht dabei an dem Commit, auf dem der Lauf
+startet. Das ist der Weg, wenn sich ein Tag lokal nicht pushen laesst. Fuer automatische Updates muessen die vom Workflow erzeugten Assets im GitHub Release liegen, besonders:
 
 ```text
 ELFIX-Setup-<version>-x64.exe
@@ -269,6 +585,11 @@ StreamingBrowserElectron/src/
   taste.js              Geschmacksprofil fuer "Empfohlen fuer dich"
   watchparty.js         Ein Raum: Verbindung, Mitglieder, Live-Steuerung
   watchparty-raeume.js  Mehrere Raeume nebeneinander
+  fernbedienung.js      Handy als Fernbedienung: Verbindung und Kopplungscode
+  qr.js                 QR-Code, selbst gerechnet - fuer die Kopplung
+  marken.js             Intro ueberspringen: Regeln und das Skript im Player
+  geraete.js            Meine Geraete: Verbindung und Abgleichregeln
+  geraete-schluessel.js Schluessel, Ableitungen, Verschluesselung
   renderer/             Oberflaeche (index.html, renderer.js, styles.css)
 sync-server/            Relay fuer die Watchparty
 shared/                 Von Desktop und Android gemeinsam genutztes Anbietermodell

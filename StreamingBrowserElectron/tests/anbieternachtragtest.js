@@ -140,7 +140,13 @@ pruefe("Wer YouTube danach loescht, behaelt es geloescht",
 // Helfer, die mit dieser Frage nichts zu tun haben. Unbekannte Namen werden
 // deshalb zu harmlosen Platzhaltern - geprueft wird hier allein, was mit dem
 // Merker geschieht.
-const roheUmgebung = { console: { log() {} }, crypto, Boolean, String, Number, Array, Object, JSON, Math, Date };
+// Der Geraeteschluessel ist kein Platzhalter: normalizeSettings prueft mit ihm,
+// ob ein Schluessel ueberhaupt einer ist. Ein Platzhalter, der eine leere Liste
+// zurueckgibt, machte daraus stillschweigend "kein Schluessel".
+const roheUmgebung = {
+  console: { log() {} }, crypto, Boolean, String, Number, Array, Object, JSON, Math, Date,
+  geraeteSchluessel: require("../src/geraete-schluessel")
+};
 const umgebung = new Proxy(roheUmgebung, {
   has: () => true,
   get: (ziel, name) => (name in ziel ? ziel[name] : (typeof name === "symbol" ? undefined : () => [])),

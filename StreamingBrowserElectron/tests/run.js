@@ -17,9 +17,9 @@ const RELAY = path.join(HIER, "..", "..", "sync-server", "server.js");
 const PORT = Number(process.env.TESTPORT) || 8791;
 
 // Ohne Relay: reine Rechenpruefungen.
-const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "rueckblicktest", "wrappedtest", "qualitaettest", "schaltertest"];
+const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "rueckblicktest", "wrappedtest", "qualitaettest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest"];
 // Mit Relay: das Zusammenspiel.
-const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest", "ytpartytest", "chattest"];
+const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "ferntest"];
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -64,7 +64,9 @@ function laufen(datei, umgebung) {
       stdio: "ignore"
     });
     await schlaf(1200);
-    const r = laufen(datei, { TESTPORT: String(PORT) });
+    // Die Ablage kommt mit: geraetetest sieht dort nach, was das Relay
+    // wirklich auf die Platte schreibt - und vor allem, was nicht.
+    const r = laufen(datei, { TESTPORT: String(PORT), STATE_DIRECTORY: ablage });
     server.kill();
     await schlaf(200);
     if (!r.ok) alleOk = false;

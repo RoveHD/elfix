@@ -284,9 +284,13 @@ pruefe("Nach Abbrechen bleibt der Zaehler auch dann aus",
 
 // --- Die Einstellung ---------------------------------------------------------
 
+// Der Geraeteschluessel ist kein Platzhalter: normalizeSettings prueft mit ihm,
+// ob ein Schluessel ueberhaupt einer ist. Ein Platzhalter, der eine leere Liste
+// zurueckgibt, machte daraus stillschweigend "kein Schluessel".
 const umgebung = new Proxy({
   console: { log() {} }, crypto: require("crypto"),
-  Boolean, String, Number, Array, Object, JSON, Math, Date
+  Boolean, String, Number, Array, Object, JSON, Math, Date,
+  geraeteSchluessel: require("../src/geraete-schluessel")
 }, {
   has: () => true,
   get: (ziel, name) => (name in ziel ? ziel[name] : (typeof name === "symbol" ? undefined : () => [])),

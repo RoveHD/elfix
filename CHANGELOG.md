@@ -3,6 +3,466 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.35.0 — 23. August 2026
+
+Die Fassung bleibt gemerkt, die Fernbedienung kann jetzt auch anfangen, und sie
+sagt selbst, warum Chrome sie nicht installieren will.
+
+**Sub bleibt Sub**
+
+- AniWorld und S.to legen jede Folge einmal je Synchronfassung ab, und die
+  Flaggenreihe steht bei jeder neuen Folge wieder auf der Vorgabe des
+  Anbieters. Wer eine Serie mit Untertiteln schaut, hat das bisher zwanzig Mal
+  angeklickt
+- Jetzt sagt die erste Folge, womit man angefangen hat, und ab der zweiten
+  klickt ELFIX die Flagge selbst an. Kein Erkennen, kein Raten - gelernt wird
+  aus dem, was jemand selbst tut, wie beim Intro
+- Was beim Laden dasteht, ueberschreibt nie eine gelernte Fassung: das ist die
+  Vorgabe des Anbieters und keine Entscheidung. Sonst haette die Vorwahl sich
+  nach der ersten Folge selbst wieder abgewaehlt
+- Und der eigene Klick der Vorwahl zaehlt auch nicht - nur ein Klick mit
+  `isTrusted` ist einer von einem Menschen
+- Der Autostart wartet, bis die Fassung steht. Das ist der eigentliche Punkt:
+  die Seite zeigt nur die Hoster der gewaehlten Fassung, und wer davor auf
+  einen Hoster klickt, startet die falsche und merkt es erst am Ton. Hoechstens
+  vier Sekunden, und nur, wenn ueberhaupt etwas umzustellen ist
+- Gibt es die gemerkte Fassung bei einer Folge nicht, bleibt stehen, was der
+  Anbieter anbietet
+- Ab- und anschalten unter *Einstellungen > Wiedergabe*, mit Anzeige und
+  **Vergessen** - dieselbe Zeile wie bei den Intros
+
+**Aussuchen statt nur druecken**
+
+- Unter den Knoepfen steht "Weiterschauen": die angefangenen Serien dieses
+  Rechners, mit Folge und Fortschrittsbalken. Ein Tipp oeffnet den Eintrag und
+  spielt ihn an - bisher konnte die Fernbedienung nur bedienen, was schon lief,
+  und wer vom Sofa aus anfangen wollte, musste doch aufstehen
+- Drei Knoepfe mehr: vorherige Folge, lauter, leiser. Lauter hebt nebenbei die
+  Stummschaltung auf - lauter zu stellen, was stumm ist, waere folgenlos
+- Was hinausgeht, ist damit mehr als vorher, und das steht auch so im README:
+  Wer den Kopplungscode hat, sieht Titel und Folge der angefangenen Serien.
+  Adressen, Verlauf und Mediathek bleiben hier, und das Handy schickt nie eine
+  Adresse, sondern nur die Kennung eines Eintrags, den ELFIX selbst
+  herausgegeben hat
+
+**"Es installiert nicht" ist keine Sackgasse mehr**
+
+- Chrome nennt seine Gruende in der Entwicklerkonsole. Am Handy kommt da
+  niemand hin, und uebrig bleibt eine Verknuepfung mit Browserleiste, ohne dass
+  jemand erfaehrt, woran es lag
+- Darum fragt die Seite jede Bedingung selbst ab und schreibt sie hin: https,
+  Service Worker vorhanden, Service Worker laeuft (mit seiner Fehlermeldung,
+  falls nicht), Manifest ladbar, beide Symbole ladbar, Angebot von Chrome da.
+  Die Auskunft steht nur da, solange das Installieren nicht geht
+- Der haeufigste Grund steht dabei ganz oben: ueber `http` - eine nackte IP im
+  WLAN - bietet Chrome grundsaetzlich keine Installation an, sondern nur die
+  Verknuepfung. Der Cloudflare Tunnel erfuellt die Bedingung, der Umweg ueber
+  die lokale Adresse nicht
+
+**Unter der Haube**
+
+- `fnliste` und `fnoeffnen` im Relay: die Frage geht durch, die Antwort wird
+  gekuerzt (40 Eintraege, feste Felder). Was auf der Liste steht, entscheidet
+  ELFIX - das Relay sieht sie nur im Vorbeigehen
+- `favoritOeffnen` ist aus dem IPC herausgeloest, weil jetzt zwei Wege dorthin
+  fuehren: die Oberflaeche und das Handy
+
+## 1.34.0 — 21. August 2026
+
+Ein QR-Code fuer die Fernbedienung, und zwei Dinge an ihr, die nicht stimmten.
+
+**Scannen statt abtippen**
+
+- Neben dem Kopplungscode steht jetzt ein QR-Code. Wer ihn mit der Kamera
+  scannt, hat die Fernbedienung offen und ist gekoppelt, ohne etwas getippt zu
+  haben - die Adresse traegt den Code mit
+- Aus der Adresszeile verschwindet er sofort wieder. Ein Geheimnis hat weder im
+  Verlauf des Browsers noch in einem geteilten Link etwas verloren
+- Gerechnet wird der Code selbst. ELFIX hat zwei Laufzeit-Abhaengigkeiten und
+  das Relay keine einzige; im README steht ausdruecklich, dass ein `npm ci`
+  beim Aktualisieren nie noetig war. Ein Bildchen ist kein Grund, das
+  aufzugeben
+- Byte-Modus, Fehlerkorrektur M, Fassungen 1 bis 10 - das reicht fuer 213
+  Zeichen, und eine Adresse mit Code ist halb so lang
+
+**Vollbild meint den Player**
+
+- Der Knopf machte das Fenster gross. Das ist nicht dasselbe: die Anbieterseite
+  fuellt dann den Bildschirm, das Video sitzt aber weiter in seinem Kasten
+  mittendrin, mit Kopfzeile und Empfehlungen ringsum
+- Jetzt wird der Player gefragt, so wie es ein Klick auf seinen eigenen Knopf
+  taete. Das Fenster bleibt der Rueckfall, wenn kein Video da ist oder der
+  Rahmen kein Vollbild zulaesst
+- Genommen wird das groesste sichtbare Video - auf Anbieterseiten liegen
+  Vorschauen in Briefmarkengroesse daneben
+- Dieselbe Aenderung fuer `F11`: auch dort war es bisher das Fenster
+
+**Installieren, das wirklich installiert**
+
+- Chrome fiel auf eine blosse Verknuepfung zurueck, und die oeffnet mit
+  Browserleiste. Drei Dinge daran waren zu holen
+- Die Seite trug nur die veraltete Apple-Angabe. Chrome sagt das sogar in der
+  Konsole und fragt nach `mobile-web-app-capable` - jetzt steht beides da
+- Das Manifest nannte nur ein Symbol. Jetzt sind es beide Groessen, die Chrome
+  kennt: 192 fuer den Startbildschirm, 512 fuer alles Groessere
+- Und es hat eine eigene Kennung. Ohne sie nimmt Chrome die Startadresse dafuer
+  - aendert die sich einmal, gilt es als andere App und liegt zweimal auf dem
+  Startbildschirm
+- Vor allem aber sagt die Seite jetzt, wenn es *nicht* geht: ohne `https` gibt
+  es keinen Service Worker und damit kein Installieren. Das ist der haeufigste
+  Fall und der unauffaelligste - vorher passierte schlicht nichts
+
+**Geprueft**
+
+- Der QR-Code laesst sich nicht ansehen, sondern nur lesen: ein falscher sieht
+  vollkommen richtig aus. Beim Bauen lag die Formatangabe transponiert, und
+  aufgefallen ist das erst, als ein fremder Decoder nichts fand
+- Nachgerechnet wird die Fehlerkorrektur gegen die Musterloesung der Norm, dazu
+  jede Fassungsgrenze und der Aufbau des Musters. Fuer das Ganze steht ein
+  Fingerabdruck: drei Codes, einmal mit einem fremden Leser geprueft und
+  seither festgeschrieben
+- Fuer das Installieren wird jede Bedingung einzeln geprueft - die Umleitung
+  auf `/fern/`, das Manifest samt Geltungsbereich, beide Symbole in der
+  Groesse, die das Manifest behauptet, und der Service Worker mit seiner
+  fetch-Behandlung. Keine davon meldet sich, wenn sie fehlt
+
+## 1.33.0 — 21. August 2026
+
+Das Handy wird zur Fernbedienung. Ohne App - eine Seite im Browser genuegt.
+
+**Vom Sofa aus**
+
+- Unter *Einstellungen > Fernbedienung* einschalten, im Handybrowser
+  `…/fern` oeffnen, den Kopplungscode eintippen. Das war es; das Handy merkt
+  ihn sich und ist beim naechsten Mal sofort da
+- Sechs Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor, Ton aus,
+  Vollbild, naechste Folge. Vorwaerts weiter als rueckwaerts - nach vorn spult
+  man ueber etwas hinweg, zurueck holt man etwas nach, das man eben verpasst hat
+- Daneben steht, was laeuft: Titel, Folge, Stelle, Fortschrittsbalken
+- Gesteuert wird immer, was gerade vorn liegt. Eine Fernbedienung bedient das,
+  was zu sehen ist, und nicht eine Seite, die vorhin einmal offen war
+- Die naechste Folge rechnet dieselbe Adresse aus wie der Knopf im Bild und das
+  Tastenkuerzel - drei Wege, eine Regel
+
+**Die Seite kommt aus dem Relay**
+
+- Ausgeliefert unter `/fern`, in einem Stueck: kein Stylesheet, kein Skript von
+  aussen. Sie laedt oft ueber Mobilfunk und soll dann sofort dastehen
+- Sie steht als Zeichenkette in `fern-seite.js` und nicht als `.html` daneben.
+  Das README sagt beim Aktualisieren des Relays "alle .js-Dateien kopieren", und
+  eine einzelne HTML-Datei waere genau die, die dabei jedes Mal liegenbliebe -
+  dann liefe der Dienst mit neuem Code und alter Seite
+- Wacht das Handy aus dem Ruhezustand auf, verbindet sie sich von selbst neu.
+  Ein Telefon schlaeft ein, sobald man es weglegt
+
+**Als App auf dem Startbildschirm**
+
+- Ein Knopf *Als App installieren* auf der Seite selbst - im Chrome-Menue ist
+  das gut versteckt. Danach liegt die Fernbedienung als eigenes Symbol auf dem
+  Handy, oeffnet ohne Browserleiste und startet mit dem letzten Code
+- Dafuer liefert das Relay Manifest, Symbol und Service Worker mit. Chrome
+  bietet das Installieren nur an, wenn alle drei da sind - und nur ueber
+  `https`. Ueber den Cloudflare Tunnel ist das erfuellt, ueber eine nackte IP im
+  WLAN nicht
+- `/fern` leitet auf `/fern/` um. Der Service Worker gilt fuer sein Verzeichnis,
+  und eine Startadresse ohne Schraegstrich laege ausserhalb - Chrome verweigerte
+  dann die Installation
+- Das Symbol ist der ELFIX-Mark auf dem dunklen Grund der App, auf 62 Prozent
+  der Flaeche: so schneidet ein rundes oder abgerundetes Ausschneiden nichts ab
+- Der Service Worker haelt die Seite vor, aber nur als Rueckfall - geladen wird
+  immer erst aus dem Netz. Sonst stuende nach einem Aktualisieren des Relays
+  wochenlang die alte Fassung da. Ohne Verbindung oeffnet sie trotzdem und sagt
+  selbst, dass gerade nichts geht
+- Symbol und Seite liegen als Zeichenketten in `.js`-Dateien. Beim Aktualisieren
+  des Relays werden nur solche kopiert, und ein Startbildschirm-Symbol, das ins
+  Leere zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet
+
+**Was durchgeht - und was nicht**
+
+- Vom Rechner zum Handy: Titel, Folge, Stelle, laeuft oder nicht. Keine Liste,
+  kein Verlauf, keine Adresse. Wer den Code hat, kann druecken, nicht mitlesen
+- Vom Handy zum Rechner: acht feste Befehlswoerter. Eine Liste im Relay und
+  keine durchgereichte Zeichenkette - was die Fernbedienung kann, entscheidet
+  ELFIX und nicht das, was jemand in eine Nachricht schreibt
+- Der Code ist acht Zeichen aus zweiunddreissig, also vierzig Bit, und nach drei
+  Fehlversuchen ist fuer diese Verbindung Schluss. Durchprobieren geht damit
+  nicht
+- Ausschalten nimmt jedem Handy die Moeglichkeit, auch dem, das den Code kennt.
+  Ein neuer Code loest alle gekoppelten
+- Geht ELFIX aus, erfahren die Handys es und der Code koppelt niemanden mehr.
+  Eine Kopplung ohne Gegenstelle waere ein Knopf ins Leere
+- Der Stand geht nur hinaus, wenn er sich geaendert hat, und die Stelle zaehlt
+  sekundenweise. Sonst liefe je Takt eine Nachricht durch die Leitung, auch wenn
+  das Bild seit zehn Minuten steht
+
+**Geprueft**
+
+- Gegen das echte Relay, mit beiden Seiten an einer echten Verbindung. Die
+  Haelfte gilt dem, was nicht durchgeht: ein falscher Code, ein fremder Code,
+  ein Befehl, den es nicht gibt, ein Rechner, der sich selbst steuern will, und
+  zwei Kopplungen, die einander nicht in die Quere kommen duerfen
+- Dazu die Frage, die sonst erst am toten Knopf auffiele: kennt jede Seite
+  dieselben Befehle? Geprueft wird, dass jedes Wort aus dem Relay im
+  Hauptprozess behandelt wird und jeder Knopf der Seite eines davon ist
+
+**Relay**
+
+- Neue Dateien `fern.js`, `fern-seite.js` und `fern-icon.js`. `/health` weist die
+  Fernbedienung unter `features` als `fern` aus und zaehlt unter
+  `fernbedienungen`, wie viele Rechner gerade steuerbar sind
+
+## 1.32.1 — 21. August 2026
+
+Die Leiste links oben blendete sich von selbst ein, immer wieder, ohne dass
+jemand die Maus bewegt hatte.
+
+**Der Takt statt der Maus**
+
+- Chat und Autoplay-Schalter verblassen nach dreieinhalb Sekunden Stille - wer
+  schaut, bewegt die Maus nicht. Zurueckholen sollte sie nur eine Bewegung
+- Beide Skripte werden aber im Fortschritts-Takt erneut eingespielt, alle paar
+  Sekunden, und beide weckten die Leiste bei jedem Durchlauf auf. Das Ergebnis
+  war ein Blinken waehrend der ganzen Folge: kurz weg, wieder da, kurz weg
+- Erneut eingespielt wird jetzt still. Der Chat bleibt, wie er ist; der
+  Schalter zieht den Stand nach, ohne sich zu melden
+- Nur wenn sich wirklich etwas geaendert hat, blendet sich noch etwas ein: eine
+  eingehende Chatzeile, oder ein Schalter, der in den Einstellungen umgelegt
+  wurde, waehrend die Folge lief. Das ist eine Nachricht und kein Takt
+- Der Fehler steckte seit 1.28.1 im Chat und seit 1.30.0 im Schalter. Beide
+  Suiten pruefen jetzt genau das: ein zweites Einspielen darf nichts sichtbar
+  machen, eine echte Aenderung schon
+
+## 1.32.0 — 21. August 2026
+
+Der Rueckblick zaehlt jetzt alles zusammen. Bisher zeigte jedes Geraet seine
+eigene Haelfte.
+
+**Wiedergabezeit gehoert dazu**
+
+- Seit 1.31.0 gleichen die Geraete ihren Stand ab - die gemessene Zeit aber
+  nicht. Wer abends am Rechner und am Wochenende auf dem Laptop schaut, sah
+  zweimal die halbe Bilanz. Vorher war das folgerichtig: die Zahlen sagten,
+  was *dieses* Geraet gesehen hat. Seit die Titel mitwandern, war es ein
+  Widerspruch
+- Sitzungen gehen jetzt denselben Weg wie die Staende, aber nach anderen
+  Regeln. Ein Stand aendert sich - eine abgeschlossene Sitzung nie. Sie kommt
+  dazu oder sie ist schon da; ueberschrieben wird nichts, und einen Grabstein
+  gibt es nicht. Zwei Geraete koennen denselben Satz nicht verschieden wissen
+- Die gerade laufende Sitzung bleibt, wo sie ist. Sie waechst noch, und
+  drueben stuende sie als fertiger Satz da - ihre halbe Stunde zaehlte als
+  ganze
+- Verschickt wird in Schueben. Beim ersten Abgleich eines Geraets sind das
+  leicht ein paar tausend Saetze, und die will niemand auf einmal durch eine
+  Leitung schieben, an der nebenbei eine Folge laeuft
+
+**Wann sind zwei Saetze dieselbe Folge?**
+
+- Daran haengt alles, und die bisherige Antwort taugte nicht mehr: es war die
+  Kennung des Favoriten. Auf einem Geraet ist die eindeutig - sie entsteht
+  aber beim Anlegen und ist auf jedem Geraet eine andere. Zusammengelegt
+  stuende dieselbe Folge zweimal da, und zwar ohne dass es auffiele: die
+  Stundenzahl bliebe richtig, nur die Zahl der Folgen waere zu hoch
+- Jetzt entscheidet der Titel, mit derselben Normalisierung wie ueberall sonst
+  in ELFIX. Nebenbei raeumt das einen alten Fehler mit auf: wer eine Serie bei
+  zwei Anbietern schaute, hatte zwei Favoriten - und damit doppelt so viele
+  Folgen in der Bilanz
+- Dieselbe Umstellung bei den Saetzen, die 1.28.0 aus dem Verlauf uebernommen
+  hat. Ihre Kennungen werden einmalig umgerechnet, Doppelgaenger fallen dabei
+  weg. Ohne das truege jedes Geraet dieselbe Vorgeschichte noch einmal
+- Gemessen schlaegt rekonstruiert: liegt zu einer Folge beides vor - das eine
+  Geraet hat sie gemessen, das andere sie beim Einrichten aus dem Verlauf
+  nachgetragen -, faellt der rekonstruierte Satz weg. Er beschreibt dasselbe
+  Ansehen und weiss weniger darueber
+
+**Eine Folge zaehlt einmal**
+
+- Fuer die Gesamtzahl galt das immer. Die Zahlen je Tag, Wochentag, Monat und
+  Titel zaehlten dagegen Sitzungen, und auf einem Geraet fiel der Unterschied
+  kaum auf. Wer eine Folge auf dem Rechner anfaengt und auf dem Laptop zu Ende
+  sieht, haette sie dort sonst zweimal stehen
+- Die Saetze werden vor dem Zaehlen nach Zeit sortiert. Seit sie von mehreren
+  Geraeten kommen, ist die Reihenfolge in der Ablage die des Eintreffens und
+  nicht die des Schauens - ohne diese Zeile haenge daran, welchem Tag eine
+  Folge zugerechnet wird
+
+**Intro ueberspringen**
+
+- Gelernt statt erkannt. Ein Intro zu erkennen geht hier nicht - ELFIX sieht das
+  Video nie, es liegt im Rahmen des Hosters. Also andersherum: wer eine Serie
+  schaut, spult das Intro selbst weg, jede Folge an derselben Stelle. Der Player
+  meldet Anfang und Ziel eines Sprungs auf die Sekunde
+- Aus zwei aehnlichen Sprüngen in zwei **verschiedenen** Folgen derselben
+  Staffel wird eine Marke, und ab der naechsten Folge steht dort ein Knopf. Ein
+  einzelner Sprung kann Langeweile gewesen sein; zweimal in derselben Folge ist
+  Herumspulen, und dort zaehlt der letzte
+- Gesprungen wird nur auf Druck. Derselbe Grund wie bei der Bildstufe in
+  1.29.0: ein Skript, das ungefragt eingreift, ist eine Bevormundung - und ein
+  falscher Sprung kostet neunzig Sekunden Handlung, die man erst wiederfinden
+  muss
+- Gelernt wird nur, was ein Intro sein kann: vorwaerts, 20 bis 180 Sekunden, in
+  den ersten zehn Minuten. Was spaeter uebersprungen wird, ist Handlung
+- Je Titel und Staffel, nicht je Folge und nicht je Adresse. Intros wechseln
+  zwischen Staffeln, und ein Anbieterumzug soll das Gelernte nicht mitnehmen
+  muessen
+- Aendert sich das Intro mitten in der Serie, zieht die Marke nach: gerechnet
+  wird der Median der groessten uebereinstimmenden Gruppe. Ein einzelner
+  Ausreisser verzieht sie nicht
+- Der eigene Knopf zaehlt nie als Beleg. Lernte die Marke von sich selbst,
+  verschoebe sie sich mit jedem Druck ein Stueck weiter, und niemand koennte
+  sagen, warum das Intro nach zehn Folgen mitten in der Handlung anfaengt
+- Waehrend einer Watchparty wird nicht gelernt. Dort zieht der Host den Player,
+  und diese Sprünge sind nicht die Entscheidung dessen, der hier sitzt
+- Abspanne bleiben aussen vor: was am Ende zu tun ist, weiss ELFIX laengst -
+  dort steht der Knopf zur naechsten Folge
+- Unter *Einstellungen > Wiedergabe* abschaltbar, mit Anzeige, fuer wie viele
+  Serien etwas gelernt wurde, und einem **Vergessen**
+
+**Tastenkuerzel**
+
+- Fuenf Stueck, und es gab bisher kein einziges: `Strg + K` fuer die Suche,
+  `Alt + ←` fuer zurueck, `F11` fuers Vollbild, `Strg + →` fuer die naechste
+  Folge und `Strg + Umschalt + W` fuer *Wofuer zaehlt das hier?*
+- Sie gelten auch, waehrend eine Anbieterseite vorn liegt. Genau deshalb haengen
+  sie im Hauptprozess: die Anbieterseite ist eine eigene Ansicht **ueber** der
+  Oberflaeche, und ein Tastendruck dort erreicht den Renderer nie. Ein
+  systemweites Kuerzel waere das andere Extrem - das naehme die Taste auch jedem
+  anderen Programm weg
+- Was gerade nichts bedeutet, bedeutet nichts: `Alt + ←` ohne Verlauf,
+  `Strg + →` ausserhalb einer Folgenseite und `F11` ohne geoeffnete
+  Anbieterseite werden an die Seite durchgereicht, statt geschluckt zu werden.
+  Jede Taste, die hier abgefangen wird, fehlt der Anbieterseite - abgefangen
+  wird deshalb nur, was wirklich etwas tut
+- Jedes Kuerzel traegt eine Zusatztaste oder ist eine Funktionstaste. Ein
+  blosses `n` waere im Suchfeld einer Anbieterseite ein Aerger
+- `F11` machte bisher das Falsche: Electron legt darauf von Haus aus sein
+  Fenster-Vollbild, und das kennt weder die Bildflaeche noch die Einblendung
+  zum Verlassen. Jetzt ist es das Vollbild von ELFIX - solange eine
+  Anbieterseite offen ist. Sonst bleibt es beim alten Verhalten
+- Nachzulesen unter *Einstellungen > Wiedergabe*
+- Das Escape aus dem Vollbild stand bis dahin an zwei Stellen mit demselben
+  Code. Beide rufen jetzt dieselbe Weiche
+
+**Anbieter umziehen**
+
+- Wechselt AniWorld oder S.to die Adresse, zeigt jeder Eintrag ins Leere:
+  Watchlist, Mediathek, abgehakte Folgen, Verlauf und die Vorschaubilder gleich
+  mit. Von Hand ist das ein Nachmittag
+- Neuer Knopf unter *Einstellungen > Anbieter*: neue Adresse ins Feld
+  **Website**, dann **Adresse hat sich geaendert**. Kein zweites Eingabefeld
+  dafuer - das waere ein zweiter Ort fuer dieselbe Angabe, und man muesste sie
+  zweimal richtig eintippen
+- Vor dem Umschreiben kommt eine Rueckfrage, und sie sagt, was passieren wird:
+  wie viele Eintraege mitziehen, wie viele davon in der Mediathek stehen, wie
+  viele Bilder betroffen sind. Gerechnet wird vorher, geschrieben erst danach -
+  was der Bericht nennt, ist genau das, was hinterher anders ist
+- Umgezogen wird ausschliesslich der Wirt; Pfad, Abfrage und Anker bleiben. Und
+  weil geparst und nicht ersetzt wird, bleibt ein alter Wirt, der in einer
+  Abfrage steht (`?ziel=https://alt.example/x`), unangetastet - eine
+  Textersetzung truege ihn mit um
+- Nicht angefasst wird, was nicht dazugehoert: ein Vorschaubild auf einem
+  fremden Server, ein eigenes Bild als Data-URL, ein Unterwirt wie
+  `cdn.alt.example`, und die Eintraege aller anderen Anbieter. Steht ein
+  zweiter Anbieter auf derselben alten Adresse, nennt die Rueckfrage ihn - er
+  bleibt, wo er ist
+- Strenger als sonst bei Adressen: ein Wirt ohne Punkt wird abgewiesen. Beim
+  Anlegen eines Anbieters ist Grosszuegigkeit richtig, hier nicht - ein
+  Vertipper zoege die ganze Watchlist auf einen Wirt, den es nicht gibt, und
+  die alte Adresse waere danach nirgends mehr nachzuschlagen
+- Die offene Anbieterseite wird gleich mit auf die neue Adresse gezogen, statt
+  als tote Seite stehenzubleiben
+- Ueber *Meine Geraete* wandert die neue Adresse nicht mit. Wer denselben
+  Anbieter anderswo unter einer anderen Adresse erreicht, behaelt seine
+
+**Relay**
+
+- Ein Schluessel fasst jetzt zwanzigtausend Eintraege statt zweitausend. Die
+  Titel sind wenige hundert; die Sitzungen treiben die Zahl, und sie verfallen
+  nicht - ein Jahresrueckblick, der mit der Zeit schrumpft, waere keiner. Das
+  reicht fuer ungefaehr ein Jahrzehnt taeglichen Schauens
+- Zu sehen bekommt es davon so wenig wie bisher: eine Sitzung traegt den Titel
+  der Folge, und sie ist verschlossen, bevor sie das Geraet verlaesst
+
+## 1.31.0 — 21. August 2026
+
+Laptop und Rechner haben ab jetzt denselben Stand. Ein Schluessel, kein Konto -
+und das Relay kann nicht mitlesen.
+
+**Meine Geraete**
+
+- Neuer Punkt in den Einstellungen. Auf dem ersten Geraet einen Schluessel
+  erzeugen, auf dem zweiten denselben eintragen - fertig. Was am Rechner
+  geschaut wird, steht auf dem Laptop in *Weiterschauen* an derselben Stelle
+- Nichts einzustellen und nichts beizutreten. Die Watchparty verbindet
+  Menschen, und dort ist jeder Schritt eine Entscheidung: einstellen, beitreten,
+  mitschauen. Zwischen den eigenen Geraeten gibt es nichts zu entscheiden - wer
+  denselben Schluessel traegt, ist dieselbe Person
+- Der Schluessel ist zugleich der Schalter. Ein zweiter daneben koennte nur
+  einen Zustand herstellen, den niemand haben will: Schluessel eingetragen,
+  Abgleich trotzdem aus
+- Abgetipptes wird geradegezogen. Gross- und Kleinschreibung, Striche und
+  Leerzeichen sind egal; `I` und `L` gelten als Eins, `O` als Null - genau die
+  Verwechslungen, die beim Abschreiben vorkommen. Was danach nicht passt, wird
+  abgewiesen: ein "fast richtig" gibt es hier nicht
+- Es ist dasselbe Relay wie fuer die Watchparty. Eingeschaltet sein muss die
+  dafuer nicht - die eigenen Geraete sollen zusammenbleiben, auch wenn gerade
+  niemand mit anderen schaut
+
+**Was mitgeht**
+
+- Folge, Stelle, Fortschritt, abgeschlossene Titel und Folgen, Watchlist und
+  die Reihenfolge in der Mediathek. Geloeschtes verschwindet ueberall - dafuer
+  bleibt beim Relay ein Grabstein liegen, sonst holte das andere Geraet den
+  Titel beim naechsten Abgleich zurueck
+- Nicht mit gehen das eigene Titelbild und der Verlauf je Eintrag. Das Bild
+  liegt als Data-URL vor und ist um ein Vielfaches groesser als alles andere
+  zusammen; der Verlauf ist die Chronik eines Geraets. Was daran zaehlt, steht
+  ohnehin im Stand
+- Watchparty-Eintraege bleiben bei ihrem Raum. Dort werden sie abgeglichen, und
+  zwei Wege fuer denselben Stand wuerden einander ueberholen
+- Faellt etwas auseinander, gilt der neuere Stand - dieselbe Regel wie in der
+  Watchparty. Gerechnet wird in der Zeit des Relays: zwei Rechner sind sich
+  ueber die Uhrzeit selten einig, und ein Geraet mit falsch gestellter Uhr
+  gewaenne sonst jeden Vergleich, fuer immer
+
+**Was das Relay sieht**
+
+- Nichts von dem, was dort steht. Aus dem Schluessel faellt eine Raumkennung
+  (dort liegen die Eintraege), je Titel eine Eintragskennung (welcher Eintrag
+  welcher ist) und eine Chiffre. Die ersten beiden gehen hinaus, die Chiffre
+  nie - verschlossen wird mit AES-256-GCM, bevor etwas das Geraet verlaesst
+- Die Eintragskennung ist ein HMAC, keine Pruefsumme: ohne den Schluessel laesst
+  sich weder ein Titel zurueckrechnen noch eine Liste bekannter Titel
+  durchprobieren. Sichtbar bleibt, wie viele Eintraege es gibt und wann sie
+  sich aendern
+- Das ist der Unterschied zur Watchparty, und er ist beabsichtigt: dort muss
+  der Raum die Titel kennen, um sie anzuzeigen. Hier liest ohnehin nur der
+  Besitzer
+- Ein blosses Anmelden legt keinen Raum an. Ein vertippter Schluessel
+  hinterlaesst damit nichts
+
+**Der Kreis, der keiner werden durfte**
+
+- Jedes Uebernehmen schreibt die Favoriten, und jedes Schreiben meldet den
+  Stand hinaus. Merkt sich ein Geraet dabei das Empfangene statt das daraus
+  Gewordene, schieben sich zwei Geraete denselben Eintrag ewig hin und her
+- Das ist kein Sonderfall: die Adresse ist auf jedem Geraet eine andere, sobald
+  ein Anbieter unter zwei Namen erreichbar ist - S.to laeuft hier ueber eine
+  IP, dort ueber die Domain. Gemerkt wird deshalb, was hier gilt, nicht, was
+  hereinkam
+- Geprueft wird das ausgefuehrt, nicht gelesen: zwei echte Geraete an einer
+  echten Verbindung, mit verschiedenen Adressen fuer denselben Titel. Nimmt man
+  die Korrektur weg, faellt die Pruefung um
+
+**Relay**
+
+- Neue Datei `geraete.js`. Beim Aktualisieren muessen weiterhin alle
+  `.js`-Dateien mit - `/health` weist den Abgleich unter `features` als
+  `geraete` aus und zaehlt unter `geraeteRaeume`, wie viele Schluessel dort
+  liegen
+- Der Abgleich haengt an keinem Raumcode und steht deshalb vor der Raumpflicht:
+  wer nur seine eigenen Geraete zusammenhaelt, soll keine Watchparty betreten
+  muessen
+
 ## 1.30.0 — 21. August 2026
 
 Ein Autoplay-Schalter im Bild, neben dem Chat. Und drei Stellen, an denen sich

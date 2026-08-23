@@ -422,6 +422,8 @@
           <button class="tab" data-tab="providers"><span>☰</span>Anbieter<small>Seiten verwalten</small></button>
           <button class="tab" data-tab="playback"><span>▷</span>Wiedergabe<small>Player & Fortschritt</small></button>
           <button class="tab" data-tab="watchparty"><span>⇄</span>Watchparty<small>Fortschritt teilen</small></button>
+          <button class="tab" data-tab="geraete"><span>⇉</span>Meine Geräte<small>Laptop & Rechner</small></button>
+          <button class="tab" data-tab="fern"><span>⌾</span>Fernbedienung<small>Steuern per Handy</small></button>
           <div class="settings-nav-section">System</div>
           <button class="tab" data-tab="browser"><span>◉</span>Browser & Schutz<small>Werbung, Cache</small></button>
           <button class="tab" data-tab="data"><span>▤</span>Daten & Updates<small>Version, Speicher</small></button>
@@ -482,7 +484,7 @@
                 <small>Steht auf der Anbieter-Kachel und im Tab.</small>
               </label>
               <label>Website<input id="providerHome" required placeholder="https://www.imdb.com">
-                <small>Diese Seite wird geöffnet, wenn du den Anbieter anklickst.</small>
+                <small>Diese Seite wird geöffnet, wenn du den Anbieter anklickst. Hat der Anbieter die Adresse gewechselt: neue Adresse hier eintragen und unten „Adresse hat sich geändert“ drücken — dann ziehen alle Einträge mit um, statt ins Leere zu zeigen.</small>
               </label>
               <label>Such-Adresse <em>optional</em><input id="providerSearch" placeholder="https://www.imdb.com/find/?q={query}">
                 <small>Nur nötig für die globale Suche. <code>{query}</code> wird durch deinen Suchbegriff ersetzt — ohne diese Angabe wird der Anbieter beim Suchen übersprungen.</small>
@@ -493,6 +495,7 @@
               <label class="check setting-row"><input id="providerEnabled" type="checkbox" checked><span><strong>Anbieter anzeigen</strong><small>Ausgeschaltet bleibt er gespeichert, verschwindet aber aus Leiste und Suche.</small></span></label>
               <label class="check setting-row"><input id="providerAdblock" type="checkbox" checked><span><strong>Werbung hier blockieren</strong><small>Einzeln abschaltbar, falls eine Seite mit aktivem Blocker nicht funktioniert.</small></span></label>
               <div class="form-actions">
+                <button type="button" class="soft-action" id="relocateProviderButton">Adresse hat sich geändert</button>
                 <button type="button" class="soft-action" id="moveUpButton">Hoch</button>
                 <button type="button" class="soft-action" id="moveDownButton">Runter</button>
                 <button type="button" class="danger-action" id="deleteProviderButton">Löschen</button>
@@ -529,6 +532,84 @@
             </label>
             <div class="setting-row">
               <span><strong>Status</strong><small id="watchpartyStatus">Nicht verbunden.</small></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-page" data-page="geraete">
+          <div class="settings-head">
+            <div>
+              <h3>Meine Geräte</h3>
+              <p>Hält deine eigenen Geräte auf demselben Stand: Was du am Rechner schaust, steht auf dem Laptop in „Weiterschauen“ an derselben Stelle. Kein Konto und kein Raum — ein Schlüssel, den nur deine Geräte kennen.</p>
+            </div>
+          </div>
+          <div class="settings-section-grid">
+            <div class="setting-block">
+              <strong>Schlüssel</strong>
+              <div class="room-add">
+                <input id="geraeteKey" maxlength="45" spellcheck="false" autocomplete="off" placeholder="Noch kein Schlüssel">
+                <button type="button" class="soft-action" id="geraeteKeyUse">Übernehmen</button>
+              </div>
+              <div class="geraete-aktionen">
+                <button type="button" class="soft-action" id="geraeteKeyNew">Neuen Schlüssel erzeugen</button>
+                <button type="button" class="soft-action" id="geraeteKeyCopy">Kopieren</button>
+                <button type="button" class="soft-action" id="geraeteDisconnect">Dieses Gerät trennen</button>
+              </div>
+              <small>Auf dem ersten Gerät einen Schlüssel erzeugen, auf jedem weiteren denselben eintragen — mehr ist es nicht. Groß- und Kleinschreibung und die Striche sind egal. Wer den Schlüssel hat, sieht deinen Stand und kann ihn ändern: Er gehört nicht in einen Chat.</small>
+            </div>
+            <div class="setting-row">
+              <span><strong>Status</strong><small id="geraeteStatus">Ausgeschaltet.</small></span>
+              <button type="button" class="soft-action" id="geraeteSyncNow">Jetzt abgleichen</button>
+            </div>
+            <div class="setting-row">
+              <span><strong>Server</strong><small>Es ist dasselbe Relay wie bei der Watchparty — die Adresse steht dort. Die Watchparty selbst muss dafür nicht eingeschaltet sein.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Was abgeglichen wird</strong><small>Folge, Stelle, abgeschlossene Titel, die Reihenfolge in der Mediathek — und die gemessene Wiedergabezeit, damit der Rückblick auf jedem Gerät alles zusammenzählt statt nur die Hälfte. Nicht dabei: selbst gewählte Bilder und der Verlauf je Eintrag — die bleiben auf dem Gerät. Einträge einer Watchparty bleiben bei ihrem Raum.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Was der Server sieht</strong><small>Nichts davon. Die Einträge sind mit deinem Schlüssel verschlossen, bevor sie das Gerät verlassen; der Schlüssel selbst geht nie hinaus. Sichtbar bleibt, wie viele Einträge es gibt und wann sie sich ändern.</small></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-page" data-page="fern">
+          <div class="settings-head">
+            <div>
+              <h3>Fernbedienung</h3>
+              <p>Das Handy als Fernbedienung: Pause, Spulen, nächste Folge, Vollbild und Ton — vom Sofa aus. Auf dem Telefon ist nichts zu installieren, es genügt eine Adresse im Browser.</p>
+            </div>
+          </div>
+          <div class="settings-section-grid">
+            <label class="check setting-row"><input id="fernEnabled" type="checkbox"><span><strong>Fernbedienung erlauben</strong><small>Meldet ELFIX beim Relay als steuerbar an. Aus heißt: kein Handy kann etwas auslösen, auch keines, das den Code kennt.</small></span></label>
+            <div class="setting-block">
+              <strong>So verbindest du das Handy</strong>
+              <ol class="fern-schritte">
+                <li>Im Handybrowser <code id="fernAdresse">…/fern/</code> öffnen</li>
+                <li>Diesen Code eintippen:</li>
+                <li>Im Browsermenü <em>Zum Startbildschirm hinzufügen</em> — dann liegt die Fernbedienung als App auf dem Handy</li>
+              </ol>
+              <div class="fern-kopplung">
+                <div class="fern-qr" id="fernQr"></div>
+                <div class="fern-kopplung-text">
+                  <div class="fern-code" id="fernCode">– – – – – – – –</div>
+                  <small id="fernQrHinweis">Mit der Kamera scannen — dann öffnet sich die Fernbedienung und ist gleich verbunden.</small>
+                </div>
+              </div>
+              <div class="geraete-aktionen">
+                <button type="button" class="soft-action" id="fernCodeCopy">Code kopieren</button>
+                <button type="button" class="soft-action" id="fernCodeNeu">Neuen Code erzeugen</button>
+              </div>
+              <small>Schritt 3 geht nur über <code>https</code> — über den Cloudflare Tunnel also, nicht über eine nackte IP im WLAN. Ein neuer Code löst alle gekoppelten Handys — der Weg, wenn ihn jemand kennt, der ihn nicht kennen soll. Nach dreimal falsch Tippen ist für dieses Handy Schluss.</small>
+            </div>
+            <div class="setting-row">
+              <span><strong>Status</strong><small id="fernStatus">Ausgeschaltet.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Server</strong><small>Dasselbe Relay wie bei der Watchparty — die Adresse steht dort. Das Handy muss es erreichen können; im selben WLAN reicht das, von unterwegs braucht es den Tunnel.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Was das Handy sieht</strong><small>Titel, Folge und die Stelle in der Folge — mehr geht nicht hinaus. Keine Liste, kein Verlauf, keine Adresse. Wer den Code hat, kann drücken, nicht mitlesen.</small></span>
             </div>
           </div>
         </div>
@@ -636,6 +717,22 @@
 
           <section class="settings-group">
             <div class="settings-group-head">
+              <h4>Tastenkürzel</h4>
+              <p>Sie gelten auch, während eine Anbieterseite im Vordergrund liegt. Wo eine Taste gerade nichts bedeutet — kein Zurück, keine nächste Folge —, bekommt die Seite sie wie gewohnt.</p>
+            </div>
+            <div class="settings-section-grid">
+              <dl class="tasten-liste">
+                <dt><kbd>Strg</kbd><kbd>K</kbd></dt><dd>Suche öffnen</dd>
+                <dt><kbd>Alt</kbd><kbd>←</kbd></dt><dd>Zurück auf der Anbieterseite</dd>
+                <dt><kbd>F11</kbd></dt><dd>Vollbild an und aus</dd>
+                <dt><kbd>Strg</kbd><kbd>→</kbd></dt><dd>Nächste Folge</dd>
+                <dt><kbd>Strg</kbd><kbd>Umschalt</kbd><kbd>W</kbd></dt><dd>Wofür zählt das hier? — zwischen dem eigenen Stand und einer Watchparty wechseln</dd>
+              </dl>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
               <h4>Benachrichtigungen</h4>
               <p>ELFIX sieht im Hintergrund nach, ob es bei abgeschlossenen Serien weitergegangen ist. Ob es dir das auch sagt, wenn das Fenster gerade zu ist, entscheidest du hier.</p>
             </div>
@@ -657,6 +754,16 @@
                 </select>
                 <small>Beim Weiterrücken zeigt die Karte direkt die nächste Folge an — bei Filmen ändert sich nichts.</small>
               </label>
+              <label class="check setting-row"><input id="introSkip" type="checkbox"><span><strong>Intro überspringen anbieten</strong><small>ELFIX merkt sich, wo du in einer Serie das Intro wegspulst. Ab der zweiten Folge, in der du an derselben Stelle springst, steht dort ein Knopf. Gesprungen wird nur, wenn du ihn drückst — von selbst passiert nichts.</small></span></label>
+              <div class="setting-row">
+                <span><strong>Gelernte Intros</strong><small id="markenStand">Noch nichts gelernt.</small></span>
+                <button type="button" class="soft-action" id="markenVergessen">Vergessen</button>
+              </div>
+              <label class="check setting-row"><input id="rememberLanguage" type="checkbox"><span><strong>Fassung merken (Sub/Dub)</strong><small>Die erste Folge einer Serie sagt, womit du angefangen hast — Deutsch, Untertitel, Englisch. Ab der zweiten klickt ELFIX sie an, bevor der Hoster geladen wird. Klickst du selbst eine andere Flagge an, gilt ab dann die.</small></span></label>
+              <div class="setting-row">
+                <span><strong>Gemerkte Fassungen</strong><small id="fassungenStand">Noch nichts gemerkt.</small></span>
+                <button type="button" class="soft-action" id="fassungenVergessen">Vergessen</button>
+              </div>
               <label class="check setting-row"><input id="autoplayNextEpisode" type="checkbox"><span><strong>Nächste Folge von selbst starten</strong><small>Ein: nach dem Ende einer Folge läuft ein Zähler von 5 und schaltet dann weiter. Aus: der Knopf „Nächste Folge“ steht trotzdem da — es geht nur weiter, wenn du ihn drückst.</small></span></label>
               <label class="check setting-row"><input id="youtubeInMediathek" type="checkbox"><span><strong>YouTube-Videos in die Mediathek</strong><small>Aus: fertig geschaute YouTube-Videos verschwinden einfach. Ein: sie werden dort abgelegt wie Serien und Filme. Shorts kommen nie in „Weiterschauen“.</small></span></label>
               <div class="setting-card">Ein Eintrag verschwindet erst aus „Weiterschauen“, wenn er zu 90 % gesehen wurde oder du ihn über das ⋯-Menü entfernst.</div>

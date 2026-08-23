@@ -923,6 +923,117 @@
   flex: 0 0 auto;
 }
 
+/* Die Tastenkuerzel in den Einstellungen. Zwei Spalten: links die Tasten,
+   rechts, was sie tun - die Tastenspalte so breit wie ihr laengster Eintrag,
+   damit die Beschreibungen auf einer Kante stehen. */
+.tasten-liste {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  align-items: center;
+  margin: 4px 0 0;
+}
+
+.tasten-liste dt {
+  display: flex;
+  gap: 4px;
+}
+
+.tasten-liste dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tasten-liste kbd {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: 600 12px/1 ui-monospace, Consolas, monospace;
+}
+
+/* Code und QR nebeneinander: scannen, wer die Kamera zur Hand hat, abtippen,
+   wer sie nicht hat. Auf schmalen Fenstern untereinander. */
+.fern-kopplung {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  margin: 10px 0;
+}
+
+.fern-kopplung-text {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.fern-kopplung-text .fern-code {
+  margin: 0 0 8px;
+}
+
+/* Der weisse Grund gehoert zum Code, nicht zur Oberflaeche: ein QR auf dunklem
+   Grund wird von vielen Kameras nicht erkannt. */
+.fern-qr {
+  flex: 0 0 auto;
+  width: 168px;
+  height: 168px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.fern-qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.fern-qr:empty {
+  display: none;
+}
+
+/* Der Kopplungscode wird vom Bildschirm abgetippt, meist im Halbdunkel und aus
+   zwei Metern Entfernung. Gross, mit Abstand zwischen den Zeichen. */
+.fern-code {
+  margin: 10px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-soft, rgba(255, 255, 255, 0.04));
+  font: 700 30px/1.2 ui-monospace, Consolas, monospace;
+  letter-spacing: 0.22em;
+  text-align: center;
+  user-select: all;
+}
+
+.fern-schritte {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Meine Geraete: der Schluessel wird abgeschrieben, nicht gelesen. Gleiche
+   Zeichenbreite laesst vier Achtergruppen wie vier Achtergruppen aussehen - in
+   einer Proportionalschrift muss man sie nachzaehlen. */
+#geraeteKey {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.geraete-aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .room-list {
   display: flex;
   flex-wrap: wrap;

@@ -23,6 +23,11 @@ const {
 const taste = require("./taste");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+// Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
+// die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
+// Schluessel, und Laptop und Rechner haben denselben Stand.
+const { Geraeteabgleich, SITZUNG_PRAEFIX } = require("./geraete");
+const geraeteSchluessel = require("./geraete-schluessel");
 // Die beste Bildstufe beim Hoster. Eigenes Modul, damit die Auswahl gegen
 // nachgebaute Stufenlisten pruefbar bleibt statt nur als Zeichenkette zu reisen.
 const voeQualitaet = require("./voe-qualitaet");
@@ -45,6 +50,20 @@ const youtube = require("./youtube");
 // Oberflaeche sichtbar - das ist ein Werkzeug zum Nachvollziehen, kein Feature.
 const EMPFEHLUNG_DEBUG = process.env.ELFIX_EMPFEHLUNG_DEBUG === "1";
 const providerModel = require("../shared/provider-model");
+// Ein Anbieter zieht um: welche Adresse mitwandert und welche nicht. Eigenes
+// Modul, damit sich das ohne laufende App pruefen laesst - es geht durch jeden
+// Eintrag der Watchlist, und ein Fehler darin faellt erst auf, wenn nichts mehr
+// zu oeffnen ist.
+const umzug = require("./umzug");
+// Intro ueberspringen: was ein Sprung als Beleg taugt, wann daraus eine Marke
+// wird und was in der Seite dafuer laeuft.
+const marken = require("./marken");
+const fassung = require("./fassung");
+// Das Handy als Fernbedienung: Verbindung zum Relay und der Kopplungscode.
+const { Fernbedienung, codeErzeugen, kopplungsAdresse } = require("./fernbedienung");
+// Ein QR-Code, selbst gerechnet - fuer das Handy, damit die Adresse samt Code
+// nicht abgetippt werden muss.
+const qr = require("./qr");
 const bildausschnitt = require("../shared/bildausschnitt");
 
 // Die Fortschrittsregeln stehen nicht mehr hier, sondern in ./fortschritt -
@@ -177,6 +196,23 @@ const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 // der teuerste Teil des Ganzen.
 const METADATEN_FILE = path.join(DATA_DIR, "metadaten-cache.json");
 const WATCHPARTY_FILE = path.join(DATA_DIR, "watchparty.json");
+// Der Spiegel des Geraeteabgleichs: was zuletzt hinausging oder hereinkam.
+// Ohne ihn faengt jeder Start von vorn an und meldet den ganzen Bestand noch
+// einmal - richtig waere das Ergebnis trotzdem, aber es waere viel Laerm.
+const GERAETE_FILE = path.join(DATA_DIR, "geraete.json");
+// Die gelernten Intro-Marken. Eigene Datei: sie gehoeren keinem Eintrag der
+// Watchlist, sondern einer Serie - und die kann in der Watchlist stehen oder
+// auch nicht.
+const MARKEN_FILE = path.join(DATA_DIR, "marken.json");
+// Welche Synchronfassung eine Serie hat - Deutsch, Untertitel, Englisch.
+// Ebenfalls eigene Datei und aus demselben Grund: sie gilt der Serie und nicht
+// dem Eintrag, unter dem sie gerade in der Watchlist steht.
+const FASSUNGEN_FILE = path.join(DATA_DIR, "fassungen.json");
+// Wie weit die Fernbedienung springt. Vorwaerts groesser als rueckwaerts: nach
+// vorn spult man ueber etwas hinweg, zurueck holt man etwas nach, das man eben
+// verpasst hat.
+const FERN_VOR_S = 30;
+const FERN_ZURUECK_S = 10;
 // Das Projekt-Repository. Eine Stelle, an der die Adresse steht: die
 // Update-Anzeige verlinkt darauf, und "Hilfe & Support" oeffnet den
 // Issue-Bereich darunter.
@@ -185,7 +221,10 @@ const SESSION_PARTITION = "persist:streaming-browser";
 const MAX_BLOCK_LOG = 400;
 const MAX_MEDIA_LOG = 300;
 const SETTINGS_SCHEMA_VERSION = 4;
-const SITZUNG_SCHEMA_VERSION = 1;
+// 2 seit 1.32.0: nachgetragene Saetze tragen die Kennung des Titels statt der
+// des Favoriten, damit zwei Geraete dieselbe Vorgeschichte nicht doppelt
+// fuehren.
+const SITZUNG_SCHEMA_VERSION = 2;
 // Die Listennummern sind die von AdGuard - sie stecken spaeter in jedem
 // Treffer und machen nachvollziehbar, aus welcher Liste eine Regel kam.
 //
@@ -458,6 +497,9 @@ app.whenReady().then(async () => {
   youtubeAnbieterNachtragen();
   // Aus dem vorhandenen Verlauf uebernehmen, was sicher ableitbar ist -
   // ohne Wiedergabezeit, die es dort nie gab.
+  // Erst die Kennungen angleichen, dann nachtragen: das Nachtragen vergleicht
+  // gegen die vorhandenen Kennungen, und die muessen dafuer schon die neuen sein.
+  sitzungenKennungenAngleichen();
   sitzungenNachtragen();
   watchpartyLokal = loadWatchpartyLocal();
 
@@ -470,6 +512,11 @@ app.whenReady().then(async () => {
   createMainWindow();
   setupAutoUpdater();
   syncWatchparty();
+  // Erst den Spiegel, dann einrichten: ohne ihn haelt der Abgleich den ganzen
+  // Bestand fuer neu und meldet ihn beim Start noch einmal hinaus.
+  geraete.ablageSetzen(loadGeraeteSpiegel());
+  syncGeraete();
+  syncFern();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
   // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
@@ -559,10 +606,7 @@ function createMainWindow() {
     }
   });
   mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (input.key === "Escape" && isContentFullscreen) {
-      event.preventDefault();
-      leaveContentFullscreen();
-    }
+    if (tastenkuerzel(input)) event.preventDefault();
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -1274,7 +1318,11 @@ ipcMain.handle("history:clear", () => {
   return { favorites, cleared: true };
 });
 
-ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
+ipcMain.handle("favorites:open", (_event, favoriteId, options = {}) => favoritOeffnen(favoriteId, options));
+
+// Einen Eintrag oeffnen. Eigene Funktion, weil zwei Wege hierher fuehren: die
+// Oberflaeche und die Fernbedienung im Handy.
+async function favoritOeffnen(favoriteId, options = {}) {
   const favorite = favorites.find((item) => item.id === favoriteId);
   // Wer die Serie oeffnet, hat den Hinweis gesehen.
   if (favorite?.newEpisodeAt) {
@@ -1301,7 +1349,7 @@ ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
   await navigateProvider(provider, oeffnenAdresse(provider, favorite));
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
   return activeState();
-});
+}
 
 ipcMain.handle("favorites:repair-thumbnail", async (_event, favoriteId, force = false) => {
   const favorite = favorites.find((item) => item.id === favoriteId);
@@ -1347,6 +1395,182 @@ ipcMain.handle("provider:save-all", (_event, nextProviders) => {
   return { providers, activeProviderId };
 });
 
+// Der Anbieter hat eine neue Adresse.
+//
+// AniWorld und S.to wechseln sie regelmaessig, und danach zeigt jeder Eintrag
+// ins Leere - die Watchlist, die Mediathek, die abgehakten Folgen, der Verlauf
+// und die Bilder gleich mit. Hier wird der Wirt in allem auf einmal ersetzt.
+//
+// Gerechnet wird zuerst und geschrieben erst nach der Rueckfrage: was der
+// Bericht nennt, ist genau das, was danach anders ist.
+ipcMain.handle("provider:relocate", async (_event, providerId, neueAdresse) => {
+  const vorschau = umzug.umziehen({
+    providers,
+    favorites,
+    providerId: String(providerId || ""),
+    neueAdresse,
+    normalisieren: normalizeFavoriteUrl
+  });
+  if (!vorschau.ok) return { moved: false, reason: vorschau.grund };
+
+  const bericht = vorschau.bericht;
+  const dieser = providers.find((eintrag) => eintrag.id === providerId);
+  const zeilen = [
+    `Von ${bericht.vonHost} auf ${bericht.nachWurzel}.`,
+    "",
+    bericht.eintraege === 0
+      ? "Kein Eintrag der Watchlist zeigt auf die alte Adresse - es ziehen nur die Anbieterangaben um."
+      : `${bericht.eintraege} Eintrag/Eintraege ziehen mit, davon ${bericht.mediathek} in der Mediathek.`
+      + ` Insgesamt ${bericht.felder} Adressen, Vorschaubilder und abgehakte Folgen inbegriffen.`,
+    "",
+    "Geaendert wird nur der Wirt. Pfade bleiben, wie sie sind - liegt drueben"
+      + " etwas anderes unter demselben Pfad, hilft das hier nicht."
+  ];
+  if (bericht.bilder) {
+    zeilen.push("", `${bericht.bilder} Vorschaubilder liegen beim alten Wirt und ziehen mit.`);
+  }
+  if (bericht.mitbewohner.length) {
+    zeilen.push("", `Achtung: ${bericht.mitbewohner.join(", ")} steht/stehen auf derselben alten Adresse und bleibt/bleiben dort.`);
+  }
+
+  const antwort = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["Abbrechen", "Umziehen"],
+    defaultId: 0,
+    cancelId: 0,
+    message: `${dieser?.name || "Anbieter"} umziehen?`,
+    detail: zeilen.join("\n")
+  });
+  if (antwort.response !== 1) return { moved: false };
+
+  // Wohin die offene Seite gehoert, muss vor dem Umschreiben feststehen -
+  // danach ist die alte Adresse nirgends mehr zu finden.
+  const offeneAdresse = activeProvider()?.id === providerId
+    ? umzug.adresse(activeView?.webContents?.getURL() || "", vorschau.vonHost, vorschau.nachWurzel)
+    : "";
+
+  providers = providerModel.normalizeProviders(vorschau.providers);
+  favorites = vorschau.favorites;
+  saveProviders();
+  // Zieht die neuen Adressen an die anderen Geraete nach. Uebernehmen werden
+  // sie den Wirt nicht - jedes Geraet hat seine eigene Anbieterliste, und wer
+  // den Anbieter unter einer anderen Adresse erreicht, soll sie behalten.
+  saveFavorites();
+  sendActiveState();
+
+  const ziel = providers.find((eintrag) => eintrag.id === providerId);
+  if (ziel && offeneAdresse) {
+    await navigateProvider(ziel, offeneAdresse).catch(() => {});
+  }
+
+  console.log(`[ELFIX UMZUG] ${ziel?.name || providerId}: ${bericht.vonHost} -> ${bericht.nachWurzel}, ${bericht.eintraege} Eintraege`);
+  return { moved: true, providers, favorites, bericht };
+});
+
+// Alles Gelernte vergessen. Der Weg zurueck, wenn eine Marke einmal daneben
+// liegt - und der einzige: nachbessern kann man sie nicht, man kann ihr nur
+// neue Sprünge zeigen.
+ipcMain.handle("marken:vergessen", () => {
+  const anzahl = Object.keys(loadMarken()).length;
+  markenSpeicher = {};
+  markenSchmutzig = true;
+  saveMarken();
+  // Der Knopf in der offenen Seite verschwindet sofort mit.
+  if (isLiveView(activeView)) {
+    executeJavaScriptInMediaFrames(activeView,
+      "window.__elfixMarke && window.__elfixMarke.entfernen()").catch(() => []);
+  }
+  console.log(`[ELFIX MARKEN] ${anzahl} Serien vergessen`);
+  return { vergessen: anzahl };
+});
+
+// Wie viele Serien ELFIX inzwischen kennt - fuer die Zeile in den
+// Einstellungen. Ohne sie waere "vergessen" ein Knopf ins Ungewisse.
+// --- Fernbedienung: die Aufrufe aus der Oberflaeche --------------------------
+
+ipcMain.handle("fern:status", () => fernbedienung.status());
+
+// Der QR-Code fuer das Handy: Adresse und Kopplungscode in einem Bild.
+//
+// Er wird hier gerechnet und nicht in der Oberflaeche: dort gibt es kein
+// require, und ein zweites Mal wollte ich das nicht schreiben. Heraus kommt
+// fertiges SVG - die Seite setzt es nur noch ein.
+ipcMain.handle("fern:qr", () => {
+  const adresse = kopplungsAdresse(settings.watchparty?.serverUrl || "", fernSettings().code || "");
+  if (!adresse) return { adresse: "", svg: "" };
+  return { adresse, svg: qr.alsSvg(adresse, { hell: "#ffffff", dunkel: "#0b0f16" }) };
+});
+
+// Einschalten. Ohne Code gibt es nichts zu koppeln - also entsteht beim ersten
+// Mal einer.
+ipcMain.handle("fern:einschalten", () => {
+  const code = fernSettings().code || codeErzeugen();
+  settings.fern = { enabled: true, code };
+  saveSettings();
+  syncFern();
+  meldeEinstellungen();
+  return fernbedienung.status();
+});
+
+ipcMain.handle("fern:ausschalten", () => {
+  // Der Code bleibt stehen. Wer nur kurz abschaltet, soll das Handy danach
+  // nicht neu koppeln muessen.
+  settings.fern = { ...(settings.fern || {}), enabled: false };
+  saveSettings();
+  syncFern();
+  meldeEinstellungen();
+  return fernbedienung.status();
+});
+
+// Ein neuer Code loest alle gekoppelten Handys. Der Weg, wenn jemand den alten
+// kennt, der ihn nicht kennen soll.
+ipcMain.handle("fern:neuer-code", () => {
+  settings.fern = { enabled: true, code: codeErzeugen() };
+  saveSettings();
+  syncFern();
+  meldeEinstellungen();
+  return fernbedienung.status();
+});
+
+ipcMain.handle("marken:stand", () => {
+  const eintraege = loadMarken();
+  const schluessel = Object.keys(eintraege);
+  return {
+    serien: schluessel.length,
+    marken: schluessel.filter((eintrag) => eintraege[eintrag]?.marke).length
+  };
+});
+
+// Was ELFIX sich an Fassungen gemerkt hat, und der Weg zurueck. Denselben Weg
+// gibt es fuer die Intromarken, und aus demselben Grund: gelernt wird aus dem
+// eigenen Verhalten, und was daraus wurde, muss man sehen und loeschen koennen.
+ipcMain.handle("fassungen:stand", () => {
+  const eintraege = loadFassungen();
+  const schluessel = Object.keys(eintraege);
+  const namen = new Map();
+  for (const eintrag of schluessel) {
+    const name = fassung.lesen(eintraege, eintrag)?.name || "";
+    if (name) namen.set(name, (namen.get(name) || 0) + 1);
+  }
+  return {
+    serien: schluessel.length,
+    // Haeufigste zuerst - das ist die Fassung, in der jemand schaut.
+    fassungen: [...namen.entries()]
+      .sort((links, rechts) => rechts[1] - links[1])
+      .slice(0, 4)
+      .map(([name, anzahl]) => ({ name, anzahl }))
+  };
+});
+
+ipcMain.handle("fassungen:vergessen", () => {
+  const anzahl = Object.keys(loadFassungen()).length;
+  fassungSpeicher = {};
+  fassungSchmutzig = true;
+  saveFassungen();
+  console.log(`[ELFIX FASSUNG] ${anzahl} Serien vergessen`);
+  return { vergessen: anzahl };
+});
+
 ipcMain.handle("watchparty:status", () => watchparty.status());
 
 ipcMain.handle("watchparty:items", () => watchpartyItems());
@@ -1366,7 +1590,15 @@ ipcMain.handle("watchparty:choose-room", async (_event, rooms, punkt) => {
 // Umschalten, fuer wen das gerade Geschaute zaehlt: fuer dich allein oder fuer
 // eine bestimmte Runde. Das entscheidet, wohin der Fortschritt laeuft und wer
 // mitsteuern darf.
-ipcMain.handle("watchparty:switch-context", async (_event, punkt) => {
+ipcMain.handle("watchparty:switch-context", (_event, punkt) => watchpartyKontextWechseln(punkt));
+
+// Wofuer zaehlt das hier? Der Wechsel zwischen dem eigenen Stand und den
+// Raeumen, in denen dieser Titel mitlaeuft.
+//
+// Eigene Funktion, weil zwei Wege hierher fuehren: die Kopfzeile - die einen
+// Punkt mitbringt, an dem das Menue aufgehen soll - und das Tastenkuerzel, das
+// keinen hat.
+async function watchpartyKontextWechseln(punkt) {
   const adresse = activeView?.webContents?.getURL() || "";
   const moeglich = watchpartyRaeumeForUrl(adresse);
   if (!moeglich.length) return { switched: false };
@@ -1398,7 +1630,7 @@ ipcMain.handle("watchparty:switch-context", async (_event, punkt) => {
   watchpartyAngeklinkt.clear();
   watchparty.abgleichen(key, wahl);
   return { switched: true, room: wahl };
-});
+}
 
 ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
   const provider = activeProvider();
@@ -1590,7 +1822,64 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();
   syncWatchparty();
+  syncGeraete();
+  syncFern();
   return publicSettings(settings);
+});
+
+// --- Meine Geraete: die Aufrufe aus der Oberflaeche --------------------------
+
+ipcMain.handle("geraete:status", () => geraete.status());
+
+// Einen neuen Schluessel erzeugen. Er wird sofort gespeichert und der Abgleich
+// eingeschaltet: ein Schluessel, den man erst noch bestaetigen muss, ist auf
+// dem zweiten Geraet schon abgetippt und hier noch nicht in Kraft.
+ipcMain.handle("geraete:schluessel-erzeugen", () => {
+  const schluessel = geraeteSchluessel.erzeugen();
+  settings.geraete = { enabled: true, key: schluessel };
+  saveSettings();
+  syncGeraete();
+  meldeEinstellungen();
+  return { key: geraeteSchluessel.anzeigen(schluessel), status: geraete.status() };
+});
+
+// Einen abgetippten Schluessel uebernehmen.
+ipcMain.handle("geraete:schluessel-setzen", (_event, wert) => {
+  const schluessel = geraeteSchluessel.normalisieren(wert);
+  if (!schluessel) {
+    return { ok: false, reason: "Das ist kein ELFIX-Schlüssel", status: geraete.status() };
+  }
+  settings.geraete = { enabled: true, key: schluessel };
+  saveSettings();
+  syncGeraete();
+  meldeEinstellungen();
+  return { ok: true, key: geraeteSchluessel.anzeigen(schluessel), status: geraete.status() };
+});
+
+// Dieses Geraet herausloesen. Der Schluessel geht hier weg, die Eintraege
+// bleiben - was geschaut wurde, wurde geschaut. Beim Relay bleibt der Raum
+// stehen, bis ihn ein halbes Jahr niemand mehr benutzt; die anderen Geraete
+// laufen also unveraendert weiter.
+ipcMain.handle("geraete:trennen", () => {
+  settings.geraete = { enabled: false, key: "" };
+  saveSettings();
+  syncGeraete();
+  meldeEinstellungen();
+  return geraete.status();
+});
+
+// Von Hand anstossen - fuer den Knopf in den Einstellungen. Ohne ihn muesste
+// man raten, ob gerade etwas passiert.
+//
+// Der Knopf holt dabei den ganzen Raum noch einmal, nicht nur das Neue. Er ist
+// der Weg zurueck fuer den einen Fall, den der laufende Abgleich nicht von
+// selbst heilt: ein Eintrag, der hier nicht angelegt werden konnte, weil der
+// Anbieter dazu fehlte. Ist er inzwischen da, kommt der Titel damit nach.
+ipcMain.handle("geraete:jetzt-abgleichen", () => {
+  geraete.vollAbgleichen();
+  geraete.abgleichen(geraeteStaende());
+  geraete.anhaengen(geraeteSitzungen());
+  return geraete.status();
 });
 
 ipcMain.handle("adblock:update-filters", async () => {
@@ -1740,8 +2029,16 @@ ipcMain.handle("data:backup-import", async () => {
     favorites = loadFavorites();
     watchpartyLokal = loadWatchpartyLocal();
     watchpartyWiederhergestellt.clear();
+    // Der Spiegel des Geraeteabgleichs gehoert nicht in die Sicherung: er
+    // beschreibt, was zuletzt hinausging - und das passt nach dem Einlesen zu
+    // nichts mehr. Ohne ihn gilt beim naechsten Verbinden der Stand des Raums,
+    // und das ist hier das Richtige: die Sicherung bringt zurueck, was fehlt,
+    // ueberschreibt aber nicht den neueren Stand des anderen Geraets.
+    geraete.ablageSetzen(null);
 
       syncWatchparty();
+    syncGeraete();
+    syncFern();
     sendActiveState();
     console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, Kopie vorher unter ${vorher}`);
     return {
@@ -1934,11 +2231,11 @@ function getProviderView(provider) {
   });
   view.webContents.on("enter-html-full-screen", () => markContentFullscreen(true));
   view.webContents.on("leave-html-full-screen", () => markContentFullscreen(false));
+  // Dieselben Kuerzel wie im Fenster. Sie muessen hier noch einmal haengen:
+  // liegt die Anbieterseite vorn, bekommt das Fenster den Tastendruck nie zu
+  // sehen.
   view.webContents.on("before-input-event", (event, input) => {
-    if (input.key === "Escape" && isContentFullscreen) {
-      event.preventDefault();
-      leaveContentFullscreen();
-    }
+    if (tastenkuerzel(input)) event.preventDefault();
   });
   // Rueckkanal des "Naechste Folge"-Knopfes aus der Anbieterseite.
   view.webContents.on("console-message", (...args) => {
@@ -2044,6 +2341,23 @@ function getProviderView(provider) {
         : "Es geht wieder von selbst weiter");
       return;
     }
+    // Ein Sprung im Player. Er ist der einzige Weg, auf dem ELFIX je von einem
+    // Intro erfaehrt.
+    const gesprungen = String(nachricht || "").match(/^__elfix:sprung:(\d+):(\d+)$/);
+    if (gesprungen) {
+      markeLernen(provider, view.webContents.getURL(), Number(gesprungen[1]), Number(gesprungen[2]));
+      return;
+    }
+    // Welche Fassung dasteht - und welche jemand angeklickt hat.
+    const fassungMeldung = fassung.meldung(nachricht);
+    if (fassungMeldung) {
+      fassungMelden(provider, view.webContents.getURL(), fassungMeldung.art, fassungMeldung.fassung);
+      return;
+    }
+    if (String(nachricht || "") === marken.MELDE_GENUTZT) {
+      logMediaDiagnostic(provider, view.webContents.getURL(), "marke", "Intro uebersprungen", {});
+      return;
+    }
     const treffer = String(nachricht || "").match(/^__elfix:next-episode:(\S+)$/);
     if (!treffer) return;
     logNextEpisode(provider, "Knopf/Countdown ausgeloest");
@@ -2070,6 +2384,8 @@ function getProviderView(provider) {
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
+    // Neue Folge, neue Ansage: die Vorwahl darf hier wieder einmal etwas sagen.
+    fassungGemeldet.delete(provider.id);
     // Merker loeschen, sonst wechselt eine erneut angesehene Folge nicht mehr.
     nextEpisodeAutostartState.delete(provider.id);
     // Das macht "Danach aufhoeren" einmalig: die Ansage galt der Folge, die
@@ -2094,6 +2410,9 @@ function getProviderView(provider) {
   view.webContents.on("did-finish-load", () => {
     installStoPlayerFix(provider, view);
     installAniWorldImageFix(provider, view);
+    // Zweiter Lauf: beim dom-ready haengen die eigenen Klickhorcher des
+    // Anbieters manchmal noch nicht, und ein Klick ins Leere waehlt nichts aus.
+    installFassung(provider, view, view.webContents.getURL(), { nachlauf: true }).catch(() => {});
     syncViewMediaProgress(provider, view, "load");
     updateActiveFavoriteTitle(provider.id, view);
     scheduleFavoriteMetadataRefresh(provider.id, view);
@@ -2112,6 +2431,10 @@ function getProviderView(provider) {
     installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
     installHosterQualitaet(view).catch(() => {});
     installAutoplaySchalter(view).catch(() => {});
+    installMarke(provider, view, view.webContents.getURL()).catch(() => {});
+    // Vor dem Autostart, nicht danach: der Aufruf setzt die Sperre, auf die
+    // resumePendingProviderAutoplay() wartet, noch bevor er selbst etwas tut.
+    installFassung(provider, view, view.webContents.getURL()).catch(() => {});
     resumePendingProviderAutoplay(provider, view);
   });
 
@@ -2158,6 +2481,13 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // sein Player noch keine Stufen.
   await installHosterQualitaet(view).catch(() => {});
   await installAutoplaySchalter(view).catch(() => {});
+  // Der Knopf haengt am selben Takt wie die Steuerung der Watchparty: beim
+  // Laden steht der Rahmen des Hosters oft noch nicht, und ohne Video gibt es
+  // nichts, woran ein Sprung zu merken waere.
+  await installMarke(provider, view, url).catch(() => {});
+  // Und dem Handy sagen, was hier gerade laeuft. Die Zeile geht nur hinaus,
+  // wenn sie sich geaendert hat.
+  fernStandMelden().catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -2542,6 +2872,125 @@ async function readNextEpisodeLink(view) {
 // Gilt fuer beide Wege gleich: Knopf gedrueckt oder Folge durchgelaufen. Die
 // naechste Folge wird geladen, gestartet und ins Vollbild gebracht - derselbe
 // Ablauf wie beim Start aus "Weiterschauen".
+// --- Tastenkuerzel -----------------------------------------------------------
+//
+// Die Anbieterseite liegt als eigene View **ueber** der Oberflaeche. Ein
+// Tastendruck dort geht an die fremde Seite und erreicht den Renderer nie -
+// window.addEventListener("keydown") im Renderer taugt fuer diese Kuerzel also
+// nicht, und globalShortcut waere das andere Extrem: das naehme die Taste auch
+// jedem anderen Programm weg.
+//
+// Bleibt before-input-event: es sitzt zwischen Fenster und Seite, gilt fuer
+// jede View und laesst durch, was hier niemand haben will. Genau das machte
+// bisher schon das Escape aus dem Vollbild - an zwei Stellen, mit demselben
+// Code. Jetzt gibt es dafuer eine.
+//
+// Drei Regeln, damit die Kuerzel niemandem im Weg stehen:
+//
+// Jedes traegt eine Zusatztaste oder ist eine Funktionstaste. Ein blosses "n"
+// waere in jedem Suchfeld einer Anbieterseite ein Aerger.
+//
+// Was hier nicht behandelt wird, geht weiter an die Seite - abgefangen wird nur,
+// was wirklich etwas tut. Deshalb gibt jeder Zweig zurueck, ob er zustaendig
+// war, statt blind preventDefault zu rufen.
+//
+// Und was gerade nichts bedeutet, bedeutet nichts: "naechste Folge" greift nur,
+// wo es eine naechste Folge gibt, "zurueck" nur, wo es ein Zurueck gibt. Sonst
+// bekommt die Seite ihre Taste.
+// Welche Tasten es sind, steht nicht hier als Tabelle, sondern nachlesbar in den
+// Einstellungen unter *Wiedergabe*. Eine Liste im Hauptprozess, die niemand
+// benutzt, waere eine zweite Wahrheit neben der, die man wirklich zu sehen
+// bekommt - und die beiden liefen irgendwann auseinander.
+function tastenkuerzel(input) {
+  if (input?.type !== "keyDown") return false;
+  const nurStrg = input.control && !input.alt && !input.shift && !input.meta;
+  const nurAlt = input.alt && !input.control && !input.shift && !input.meta;
+  const ohneAlles = !input.control && !input.alt && !input.shift && !input.meta;
+
+  // Escape aus dem Vollbild. Steht zuerst, weil es die einzige Taste ohne
+  // Zusatztaste ist - und die einzige, die auch dann greifen muss, wenn eine
+  // Seite gerade alles ueberdeckt.
+  if (input.key === "Escape" && ohneAlles && isContentFullscreen) {
+    leaveContentFullscreen();
+    return true;
+  }
+
+  // Vollbild. Ohne Anbieterseite bleibt es beim Fenster-Vollbild, das Electron
+  // von Haus aus auf F11 legt - deshalb hier nichts tun und die Taste
+  // durchlassen. Mit Anbieterseite dagegen muss es das Vollbild von ELFIX sein:
+  // das bezieht Overlay und Bildflaeche mit ein, das andere nicht.
+  if (input.key === "F11" && ohneAlles) {
+    if (!isLiveView(activeView)) return false;
+    // Derselbe Weg wie der Knopf auf der Fernbedienung: erst den Player, dann
+    // das Fenster.
+    vollbildUmschalten().catch(() => {});
+    return true;
+  }
+
+  // Suche. Die Oberflaeche holt sie selbst nach vorn - sie weiss, was dabei zu
+  // verbergen ist. Der Tastaturfokus muss aber von hier umgehaengt werden:
+  // er liegt in der Anbieterseite, und ein Suchfeld ohne Fokus waere ein
+  // Suchfeld, in das man erst klicken muss.
+  if (nurStrg && input.key.toLowerCase() === "k") {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (isContentFullscreen) leaveContentFullscreen();
+    mainWindow.webContents.send("tasten:befehl", "suche");
+    mainWindow.webContents.focus();
+    return true;
+  }
+
+  // Zurueck. Dieselbe Taste, die jeder Browser dafuer hat.
+  if (nurAlt && input.key === "ArrowLeft") {
+    if (!isLiveView(activeView) || !activeView.webContents.canGoBack()) return false;
+    activeView.webContents.goBack();
+    return true;
+  }
+
+  // Naechste Folge. Sie tut, was der Knopf im Bild tut - und rechnet dafuer
+  // dieselbe Adresse aus, statt eine eigene Vorstellung davon zu haben, was als
+  // Naechstes kommt.
+  if (nurStrg && input.key === "ArrowRight") {
+    if (input.isAutoRepeat) return true;
+    const provider = activeProvider();
+    if (!provider || !isLiveView(activeView)) return false;
+    if (!episodeIdentity(activeView.webContents.getURL())) return false;
+    naechsteFolgePerTaste(provider, activeView).catch(() => {});
+    return true;
+  }
+
+  // Wofuer zaehlt das hier? Derselbe Wechsel wie ueber die Kopfzeile. Ohne
+  // Mauszeiger gibt es keinen Punkt, an dem das Menue aufgehen koennte - dann
+  // waehlt Electron selbst eine Stelle.
+  if (input.control && input.shift && !input.alt && !input.meta
+    && input.key.toLowerCase() === "w") {
+    watchpartyKontextWechseln(null).catch(() => {});
+    return true;
+  }
+
+  return false;
+}
+
+// Der Zweig fuer die Taste. Er darf nichts tun, wo es nichts zu tun gibt: eine
+// Taste, die mitten in der Folge auf gut Glueck weiterschaltet, waere schlimmer
+// als keine.
+async function naechsteFolgePerTaste(provider, view) {
+  const url = view.webContents.getURL();
+  const identity = episodeIdentity(url);
+  if (!identity) return;
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider.id
+    && episodeIdentity(favorite.url)?.key === identity.key);
+  // Erst die Seite fragen - sie kennt ihre eigenen Folgenlinks -, dann die
+  // eigenen Regeln darueber, was ueberhaupt als naechste Folge gelten darf.
+  const ausDerSeite = await readNextEpisodeLink(view).catch(() => "");
+  const ziel = nextEpisodeContinueUrl(url, ausDerSeite, eintrag, null);
+  if (!ziel) {
+    sendToast("Hier gibt es keine nächste Folge");
+    return;
+  }
+  logNextEpisode(provider, "Tastenkuerzel ausgeloest");
+  await playNextEpisode(provider, view, ziel);
+}
+
 async function playNextEpisode(provider, view, url) {
   if (!provider || !isLiveView(view)) {
     logNextEpisode(provider, "abgebrochen - keine lebende Ansicht");
@@ -3287,6 +3736,13 @@ function resumePendingProviderAutoplay(provider, view) {
       : `Zielseite nach 12s nicht erkannt (offen: ${kurzeUrl(aktuell)}) - Autoplay startet trotzdem`);
     request.expectUrl = "";
   }
+  // Erst die Fassung, dann der Hoster. Die Anbieterseite zeigt nur die Hoster
+  // der gewaehlten Fassung; ein Klick davor traefe die, die gerade noch
+  // dasteht - und das ist beim Anbieter meistens Deutsch.
+  const fassungBis = fassungWartet.get(provider.id) || 0;
+  if (Date.now() < fassungBis) return;
+  if (fassungBis) fassungWartet.delete(provider.id);
+
   // Steht das Vorbereitungsfenster im Weg? Dahinter entsteht das <video> erst -
   // ohne diesen Schritt sucht der Autostart die ganze Zeit einen Player, den es
   // noch gar nicht gibt, und laeuft in sein Zeitfenster.
@@ -4935,6 +5391,300 @@ function syncWatchparty() {
   youtubePartySync();
 }
 
+// --- Meine Geraete ----------------------------------------------------------
+//
+// Ein Schluessel haelt die Geraete einer Person zusammen. Kein Raum, kein
+// Beitreten, keine Mitglieder: was hier privat in "Weiterschauen" steht, steht
+// auf dem anderen Geraet genauso.
+//
+// Was mitgeht, ist der Stand - Folge, Stelle, abgeschlossen, die Reihenfolge in
+// der Mediathek. Nicht mit gehen das eigene Bild (es liegt als Data-URL vor und
+// ist um ein Vielfaches groesser als alles andere zusammen) und der Verlauf je
+// Eintrag (er ist die Chronik dieses Geraets). Was daran zaehlt, steht ohnehin
+// im Stand.
+//
+// Watchparty-Eintraege bleiben ausdruecklich draussen. Sie gehoeren ihrem Raum
+// und werden dort abgeglichen; sie hier ein zweites Mal zu verschicken, hiesse
+// zwei Wege fuer denselben Stand - und der eine wuerde den anderen ueberholen.
+const GERAETE_ABGLEICH_MS = 3000;
+let geraeteSpiegelTimer = 0;
+let geraeteAbgleichTimer = 0;
+let geraeteSpiegel = null;
+// Ob nach diesem Schub die Folgestaende nachgezogen werden muessen.
+let geraeteFolgestaende = false;
+
+const geraete = new Geraeteabgleich({
+  onEintrag: (stand, at) => uebernimmGeraeteStand(stand, at),
+  onWeg: (key) => entferneGeraeteEintrag(key),
+  onSitzung: (sitzung) => uebernimmGeraeteSitzung(sitzung),
+  // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
+  onFertig: (anzahl) => {
+    saveFavorites();
+    // Angekommene Sitzungen liegen bis hierher nur im Speicher.
+    saveSitzungen();
+    sendActiveState();
+    console.log(`[ELFIX GERAETE] ${anzahl} Eintrag/Eintraege von einem anderen Geraet uebernommen`);
+    if (!geraeteFolgestaende) return;
+    geraeteFolgestaende = false;
+    // Hat das andere Geraet eine Folge zu Ende geschaut, gehoert der eigene
+    // Eintrag auf die naechste - sonst verschwindet er aus "Weiterschauen".
+    repariereFolgestaendeSpaeter();
+  },
+  onSpeichern: (ablage) => geraeteSpiegelSichernSpaeter(ablage),
+  onStatus: (status) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("geraete:state", status);
+  }
+});
+
+function geraeteSettings() {
+  return settings.geraete || {};
+}
+
+function syncGeraete() {
+  const konfiguration = geraeteSettings();
+  geraete.konfigurieren({
+    enabled: konfiguration.enabled === true,
+    // Dieselbe Adresse wie die Watchparty: es ist dasselbe Relay. Zwei Felder
+    // dafuer waeren zwei Gelegenheiten, sich zu vertippen - und eine Frage
+    // mehr, wenn dann eines von beidem nicht geht.
+    serverUrl: settings.watchparty?.serverUrl || "",
+    schluessel: konfiguration.key || "",
+    // Dasselbe Geraet wie in der Watchparty. Es gibt keinen Grund, hier eine
+    // zweite Kennung zu fuehren.
+    geraetId: settings.watchparty?.deviceId || ""
+  });
+  // Nach dem Einrichten einmal nachsehen, ob etwas hinaus muss - beim Start
+  // ist das der ganze Bestand, wenn dieses Geraet neu dazugekommen ist.
+  geraeteAbgleichSpaeter(1000);
+}
+
+function loadGeraeteSpiegel() {
+  try {
+    return JSON.parse(fs.readFileSync(GERAETE_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function geraeteSpiegelSichernSpaeter(ablage) {
+  geraeteSpiegel = ablage;
+  if (geraeteSpiegelTimer) return;
+  geraeteSpiegelTimer = setTimeout(() => {
+    geraeteSpiegelTimer = 0;
+    try {
+      ensureDataDir();
+      fs.writeFileSync(GERAETE_FILE, JSON.stringify(geraeteSpiegel));
+    } catch {
+      // Ohne die Datei meldet der naechste Start einmal zu viel. Mehr nicht.
+    }
+  }, 1000);
+  geraeteSpiegelTimer.unref?.();
+}
+
+// Alles Private, je Titel einmal. Steht derselbe Titel mehrfach in der Liste,
+// zaehlt der vorderste: die Liste ist nach zuletzt geoeffnet sortiert, und
+// hinten liegt in dem Fall eine Karteileiche.
+function geraeteStaende() {
+  const staende = [];
+  const gesehen = new Set();
+  for (const favorite of favorites) {
+    if (String(favorite?.watchpartyRoom || "")) continue;
+    const key = watchpartyKey(favorite);
+    if (!key || gesehen.has(key)) continue;
+    gesehen.add(key);
+    staende.push(geraeteSchluessel.stand({ ...favorite, key }));
+  }
+  return staende;
+}
+
+// Die Wiedergabesitzungen, die dieses Geraet noch nicht gemeldet hat.
+//
+// Anders als die Staende sind sie ein Ereignis und kein Zustand: eine
+// abgeschlossene Sitzung aendert sich nie wieder. Deshalb geht jede genau
+// einmal hinaus, und "welche schon?" beantwortet der Spiegel.
+//
+// Die laufende Sitzung bleibt draussen. Sie waechst noch, und was hier
+// hinausginge, waere ein Zwischenstand, der drueben als fertiger Satz
+// dastuende.
+function geraeteSitzungen() {
+  const offen = laufendeSitzungIds();
+  const liste = [];
+  for (const sitzung of loadSitzungen()) {
+    const id = String(sitzung?.id || "");
+    if (!id || offen.has(id)) continue;
+    const key = `${SITZUNG_PRAEFIX}${id}`;
+    if (geraete.kennt(key)) continue;
+    liste.push({ key, sitzung });
+  }
+  // Ungekuerzt. Wie viel davon in einem Zug hinausgeht, entscheidet der Abgleich
+  // selbst - er verschickt in Schueben und schiebt den Rest nach. Hier zu kappen
+  // hiesse, dass der Rest liegenbleibt, bis zufaellig wieder jemand etwas
+  // schaut.
+  return liste;
+}
+
+// Eine Sitzung von einem anderen Geraet. Sie kommt dazu oder sie ist schon da -
+// ueberschrieben wird nie: zwei Geraete koennen denselben Satz nicht
+// verschieden wissen.
+function uebernimmGeraeteSitzung(sitzung) {
+  if (!sitzung?.id || !sitzung?.begonnenAm) return false;
+  const { sitzungen, dazu } = statistik.vereinen(loadSitzungen(), [sitzung]);
+  if (!dazu) return false;
+  sitzungenSpeicher = sitzungen;
+  sitzungenSchmutzig = true;
+  return true;
+}
+
+function geraeteAbgleichSpaeter(verzoegerung = GERAETE_ABGLEICH_MS) {
+  if (!geraete.aktiv || geraeteAbgleichTimer) return;
+  geraeteAbgleichTimer = setTimeout(() => {
+    geraeteAbgleichTimer = 0;
+    try {
+      geraete.abgleichen(geraeteStaende());
+      geraete.anhaengen(geraeteSitzungen());
+    } catch (fehler) {
+      console.log(`[ELFIX GERAETE] Abgleich fehlgeschlagen: ${fehler?.message || fehler}`);
+    }
+  }, verzoegerung);
+  geraeteAbgleichTimer.unref?.();
+}
+
+// Der private Eintrag zu diesem Titel. Ausdruecklich ohne die der Watchparty:
+// derselbe Anime kann in zwei Raeumen und einmal privat dastehen, und nur der
+// private gehoert diesem Abgleich.
+function lokalerGeraeteEintrag(key) {
+  return favorites.find((favorite) => !String(favorite?.watchpartyRoom || "")
+    && watchpartyKey(favorite) === key) || null;
+}
+
+// Ein Stand vom anderen Geraet. Rueckgabe ist der Stand, wie er danach hier
+// gilt - oder null, wenn nichts daraus wurde.
+function uebernimmGeraeteStand(stand, at) {
+  const key = String(stand?.key || "");
+  if (!key) return null;
+  const lokal = lokalerGeraeteEintrag(key);
+
+  if (!lokal) {
+    // Ohne passenden Anbieter waere der Eintrag eine Karte, die sich nicht
+    // oeffnen laesst. Dann lieber keine.
+    const provider = providerForWatchpartyUrl(stand.url || "", stand.providerName);
+    if (!provider) return null;
+    const neu = createGeraeteFavorite(stand, provider);
+    if (!neu) return null;
+    favorites.unshift(neu);
+    console.log(`[ELFIX GERAETE] ${neu.title} von einem anderen Geraet uebernommen`);
+    if (neu.episodeCompleted && !neu.completed) geraeteFolgestaende = true;
+    return geraeteSchluessel.stand({ ...neu, key });
+  }
+
+  // Die Adresse ist auf jedem Geraet eine andere, sobald der Anbieter unter
+  // zwei Namen erreichbar ist. Beim selben Wirt passt sie direkt, sonst wird
+  // nur die Folge auf die eigene Adresse umgeschrieben - genauso wie in der
+  // Watchparty.
+  const gleicherAnbieter = providerModel.hostFromUrl(lokal.url).toLowerCase()
+    === providerModel.hostFromUrl(stand.url || "").toLowerCase();
+  const ziel = gleicherAnbieter
+    ? stand.url
+    : (stand.season && stand.episode ? replaceEpisodeUrl(lokal.url, stand.season, stand.episode) : "");
+  if (ziel && ziel !== lokal.url) {
+    lokal.url = ziel;
+    lokal.normalizedUrl = normalizeFavoriteUrl(ziel);
+    const identity = episodeIdentity(ziel);
+    lokal.season = identity?.season || stand.season || lokal.season || 0;
+    lokal.episode = identity?.episode || stand.episode || lokal.episode || 0;
+  } else if (stand.season || stand.episode) {
+    lokal.season = stand.season || lokal.season || 0;
+    lokal.episode = stand.episode || lokal.episode || 0;
+  }
+
+  lokal.position = stand.position;
+  lokal.currentTime = stand.position;
+  lokal.duration = stand.duration || lokal.duration;
+  lokal.progress = stand.progress;
+  lokal.completed = stand.completed;
+  lokal.episodeCompleted = stand.episodeCompleted;
+  // "Von Hand abgehakt" und "abgeschlossen" schliessen einander nicht aus,
+  // sondern bedingen sich - widersprucheGeraderichten() besteht darauf. Also
+  // geht der Merker nur mit, wo er auch stimmen kann.
+  lokal.completedManually = Boolean(stand.completedManually && stand.completed);
+  if (stand.completedAt) lokal.completedAt = stand.completedAt;
+  lokal.hideFromContinueWatching = Boolean(stand.hideFromContinueWatching);
+  lokal.continuePending = Boolean(stand.continuePending);
+  lokal.watched = Boolean(stand.watched) || lokal.watched;
+  lokal.favorite = stand.favorite !== false;
+  if (stand.finalSeason) lokal.finalSeason = stand.finalSeason;
+  if (stand.finalEpisode) lokal.finalEpisode = stand.finalEpisode;
+  if (Array.isArray(stand.completedEpisodes)) lokal.completedEpisodes = stand.completedEpisodes;
+  if (stand.libraryOrder != null) lokal.libraryOrder = stand.libraryOrder;
+  if (stand.lastWatchedAt) lokal.lastWatchedAt = stand.lastWatchedAt;
+  // Ein Titelbild nur, wo hier keines ist: das eigene Bild bleibt ohnehin
+  // draussen, und ein Anbieterbild ist besser als gar keines.
+  if (!lokal.thumbnail && stand.thumbnail) lokal.thumbnail = stand.thumbnail;
+
+  console.log(`[ELFIX GERAETE] ${lokal.title}: Stand von einem anderen Geraet uebernommen`);
+  if (lokal.episodeCompleted && !lokal.completed) geraeteFolgestaende = true;
+  return geraeteSchluessel.stand({ ...lokal, key });
+}
+
+function createGeraeteFavorite(stand, provider) {
+  const url = absoluteHttpUrl(stand?.url || "", provider.startUrl || "");
+  if (!url) return null;
+  const identity = episodeIdentity(url);
+  return normalizeLoadedFavorite({
+    id: crypto.randomUUID(),
+    providerId: provider.id,
+    providerName: provider.name || stand?.providerName || "",
+    title: cleanTitle(stand?.title || url),
+    url,
+    normalizedUrl: normalizeFavoriteUrl(url),
+    favicon: "",
+    thumbnail: stand?.thumbnail || "",
+    // Ein eigenes Bild gehoert zum Titel. Es kommt nicht ueber den Abgleich,
+    // aber wenn es hier schon zu dieser Serie liegt, gilt es auch hier.
+    customThumbnail: bekanntesEigenesBild(url),
+    customThumbnailCrop: bekannterBildAusschnitt(url),
+    logo: provider.logo || "",
+    favorite: stand?.favorite !== false,
+    watched: Boolean(stand?.watched),
+    completed: Boolean(stand?.completed),
+    completedManually: Boolean(stand?.completedManually && stand?.completed),
+    completedAt: String(stand?.completedAt || ""),
+    episodeCompleted: Boolean(stand?.episodeCompleted),
+    continuePending: Boolean(stand?.continuePending),
+    hideFromContinueWatching: Boolean(stand?.hideFromContinueWatching),
+    completedEpisodes: Array.isArray(stand?.completedEpisodes) ? stand.completedEpisodes : [],
+    progress: sanitizeProgress(stand?.progress),
+    duration: sanitizePositiveNumber(stand?.duration),
+    position: sanitizePositiveNumber(stand?.position),
+    currentTime: sanitizePositiveNumber(stand?.position),
+    type: normalizeMediaType(stand?.type || inferMediaType(url)),
+    season: identity?.season || stand?.season || 0,
+    episode: identity?.episode || stand?.episode || 0,
+    finalSeason: sanitizePositiveNumber(stand?.finalSeason),
+    finalEpisode: sanitizePositiveNumber(stand?.finalEpisode),
+    libraryOrder: stand?.libraryOrder == null ? null : Number(stand.libraryOrder),
+    // Der eigene Bestand, kein Raum.
+    watchpartyRoom: "",
+    createdAt: String(stand?.createdAt || new Date().toISOString()),
+    lastWatchedAt: String(stand?.lastWatchedAt || ""),
+    activity: []
+  });
+}
+
+// Anderswo geloescht. Hier gilt dasselbe wie dort: der Eintrag verschwindet,
+// und zwar wirklich - ein Grabstein liegt beim Relay, damit ihn niemand
+// zurueckholt.
+function entferneGeraeteEintrag(key) {
+  const lokal = lokalerGeraeteEintrag(key);
+  if (!lokal) return false;
+  const index = favorites.indexOf(lokal);
+  if (index < 0) return false;
+  favorites.splice(index, 1);
+  console.log(`[ELFIX GERAETE] ${lokal.title} auf einem anderen Geraet geloescht`);
+  return true;
+}
+
 // Der Schluessel muss auf jedem Geraet gleich ausfallen. Die Adresse taugt
 // dafuer nicht: S.to laeuft hier ueber eine IP, beim naechsten ueber die
 // Domain. Titel und Medientyp sind dagegen ueberall dieselben.
@@ -5907,6 +6657,475 @@ async function installAutoplaySchalter(view) {
   await executeJavaScriptInMediaFrames(view, autoplaySchalterScript(an)).catch(() => []);
 }
 
+// --- Handy als Fernbedienung -------------------------------------------------
+//
+// Der Rechner meldet sich beim Relay mit seinem Kopplungscode als steuerbar,
+// das Handy oeffnet dort eine Seite und tippt denselben Code ein. Auf dem
+// Telefon ist nichts zu installieren.
+//
+// Was hier steht, ist die Uebersetzung: aus einem Knopfdruck wird eine
+// Handlung. Welche Knoepfe es gibt, entscheidet diese Liste - das Relay laesst
+// nur feste Woerter durch, und was hier nicht steht, tut nichts.
+const fernbedienung = new Fernbedienung({
+  onBefehl: (befehl) => { fernBefehl(befehl).catch(() => {}); },
+  onWach: () => { fernStandMelden().catch(() => {}); },
+  // "Was kann ich schauen?" - die Weiterschauen-Liste dieses Rechners.
+  onListe: () => { fernbedienung.listeMelden(fernListe()); },
+  // Und einen davon oeffnen.
+  onOeffnen: (key) => { fernOeffnen(key).catch(() => {}); },
+  onStatus: (status) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("fern:state", status);
+  }
+});
+
+function fernSettings() {
+  return settings.fern || {};
+}
+
+function syncFern() {
+  const konfiguration = fernSettings();
+  fernbedienung.konfigurieren({
+    enabled: konfiguration.enabled === true,
+    // Dasselbe Relay wie die Watchparty und der Geraeteabgleich.
+    serverUrl: settings.watchparty?.serverUrl || "",
+    code: konfiguration.code || "",
+    geraetId: settings.watchparty?.deviceId || ""
+  });
+}
+
+// Ein Knopfdruck. Er wirkt immer auf das, was gerade vorn liegt - eine
+// Fernbedienung steuert, was zu sehen ist, und nicht eine Seite, die man
+// vorhin einmal offen hatte.
+async function fernBefehl(befehl) {
+  const provider = activeProvider();
+  if (!isLiveView(activeView)) return;
+
+  if (befehl === "vollbild") {
+    await vollbildUmschalten();
+    await fernStandMelden();
+    return;
+  }
+
+  if (befehl === "stumm") {
+    activeView.webContents.setAudioMuted(!activeView.webContents.isAudioMuted());
+    await fernStandMelden();
+    return;
+  }
+
+  if (befehl === "naechste") {
+    if (!provider || !episodeIdentity(activeView.webContents.getURL())) return;
+    // Derselbe Weg wie das Tastenkuerzel und der Knopf im Bild: die Adresse
+    // wird aus denselben Regeln gerechnet, nicht geraten.
+    await naechsteFolgePerTaste(provider, activeView);
+    return;
+  }
+
+  if (befehl === "vorherige") {
+    await vorherigeFolge(provider, activeView);
+    return;
+  }
+
+  await executeJavaScriptInMediaFrames(activeView, fernMediaScript(befehl)).catch(() => []);
+  // Sofort melden statt auf den naechsten Takt zu warten: fuenf Sekunden
+  // Verzoegerung fuehlen sich an, als waere der Druck nicht angekommen.
+  await fernStandMelden();
+}
+
+// Vollbild heisst: das Bild wird gross, nicht das Fenster.
+//
+// Das Fenster gross zu machen war das, was hier bisher passierte, und es ist
+// nicht dasselbe: die Anbieterseite fuellt dann den Bildschirm, das Video sitzt
+// aber weiter in seinem Kasten mittendrin, mit Kopfzeile und Empfehlungen
+// ringsum. Gemeint ist der Knopf des Players.
+//
+// Deshalb wird zuerst der Player gefragt. Gelingt es, meldet die Seite
+// "enter-html-full-screen", und der vorhandene Weg zieht Bildflaeche und
+// Ausstieg nach - genau wie bei einem Klick auf den Knopf im Player.
+//
+// Nur wenn dort nichts zu holen ist - kein Video, oder der Rahmen laesst
+// Vollbild nicht zu -, bleibt es beim Fenster. Das ist immer noch besser als
+// eine Taste, die nichts tut.
+async function vollbildUmschalten() {
+  if (!isLiveView(activeView)) return false;
+  const ergebnisse = await executeJavaScriptInMediaFrames(activeView, vollbildScript()).catch(() => []);
+  const gelungen = (ergebnisse || []).some((eintrag) => {
+    const wert = String(eintrag?.value ?? eintrag ?? "");
+    return wert === "an" || wert === "aus";
+  });
+  if (gelungen) return true;
+  if (isContentFullscreen) leaveContentFullscreen();
+  else enterContentFullscreen();
+  return true;
+}
+
+// requestFullscreen() verlangt eine Nutzergeste. Die bringt
+// executeJavaScriptInMediaFrames mit - dafuer steht das Flag dort.
+function vollbildScript() {
+  return `(() => {
+    if (document.fullscreenElement) {
+      try {
+        document.exitFullscreen();
+        return "aus";
+      } catch (_) {
+        return "fehlgeschlagen";
+      }
+    }
+    const medien = Array.from(document.querySelectorAll("video"))
+      .filter((media) => Number(media.duration) > 0 || Number(media.readyState) > 0);
+    // Das groesste sichtbare Video - auf Anbieterseiten liegen oft Vorschauen
+    // in Briefmarkengroesse daneben.
+    const media = medien.sort((links, rechts) => (
+      (rechts.clientWidth * rechts.clientHeight) - (links.clientWidth * links.clientHeight)
+    ))[0];
+    if (!media) return "kein-video";
+    // Lieber der Kasten des Players als das nackte Video: dort sitzt seine
+    // Steuerung, und die soll im Vollbild mitkommen.
+    const ziel = (media.closest && media.closest(".jwplayer, .video-js, .plyr, [data-player], .player")) || media;
+    const anfordern = ziel.requestFullscreen || ziel.webkitRequestFullscreen || ziel.mozRequestFullScreen;
+    if (typeof anfordern !== "function") return "nicht-moeglich";
+    try {
+      const versprechen = anfordern.call(ziel);
+      if (versprechen && typeof versprechen.catch === "function") versprechen.catch(() => {});
+      return "an";
+    } catch (_) {
+      return "fehlgeschlagen";
+    }
+  })()`;
+}
+
+// Was am Video zu tun ist. Ein Skript, weil das Video im Rahmen des Hosters
+// liegt und nicht im Dokument des Anbieters.
+function fernMediaScript(befehl) {
+  return `(() => {
+    const befehl = ${JSON.stringify(String(befehl))};
+    const medien = Array.from(document.querySelectorAll("video, audio"))
+      .filter((media) => Number(media.duration) > 0 && media.readyState > 0);
+    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return "kein-video";
+    try {
+      if (befehl === "pause") media.pause();
+      else if (befehl === "abspielen") { const p = media.play(); if (p && p.catch) p.catch(() => {}); }
+      else if (befehl === "umschalten") {
+        if (media.paused) { const p = media.play(); if (p && p.catch) p.catch(() => {}); }
+        else media.pause();
+      } else if (befehl === "lauter" || befehl === "leiser") {
+        const schritt = befehl === "lauter" ? 0.1 : -0.1;
+        media.volume = Math.max(0, Math.min(1, Number(media.volume) + schritt));
+        // Wer lauter drueckt, will hoeren - eine stumme Wiedergabe lauter zu
+        // stellen waere folgenlos.
+        if (befehl === "lauter") media.muted = false;
+      } else if (befehl === "vor" || befehl === "zurueck") {
+        const weite = befehl === "vor" ? ${FERN_VOR_S} : -${FERN_ZURUECK_S};
+        // Nicht ueber das Ende hinaus: dort beendet der Player die Folge, und
+        // aus einem Vorspulen wuerde ein Folgenwechsel.
+        const ziel = Math.max(0, Math.min(media.duration - 5, media.currentTime + weite));
+        media.currentTime = ziel;
+      } else {
+        return "unbekannt";
+      }
+      return "getan";
+    } catch (_) {
+      return "fehlgeschlagen";
+    }
+  })()`;
+}
+
+// Die Weiterschauen-Liste fuers Handy.
+//
+// Bis 1.34.0 ging aus ELFIX nur heraus, was gerade laeuft - die Fernbedienung
+// sollte druecken koennen und nicht mitlesen. Das ist jetzt anders: wer nichts
+// offen hat, soll vom Sofa aus auswaehlen koennen, und dafuer muss die Liste
+// hinaus. Wer den Kopplungscode hat, sieht damit, was in "Weiterschauen" steht -
+// Titel und Folge, nicht mehr. Verlauf, Mediathek und Adressen bleiben hier.
+function fernListe() {
+  const eintraege = [];
+  for (const favorite of favorites) {
+    if (String(favorite?.watchpartyRoom || "")) continue;
+    if (!hasContinueProgressRecord(favorite)) continue;
+    const identity = episodeIdentity(favorite.url);
+    const dauer = sanitizePositiveNumber(favorite.duration);
+    const stelle = sanitizePositiveNumber(favorite.currentTime || favorite.position);
+    eintraege.push({
+      // Die Kennung des Eintrags, nicht die Adresse: das Handy soll keine
+      // Adressen bekommen und auch keine schicken koennen.
+      key: String(favorite.id || ""),
+      titel: cleanBaseMediaTitle(favorite.title || "", favorite.url) || favorite.title || "",
+      folge: identity
+        ? (identity.season > 0 ? `S${identity.season} · F${identity.episode}` : `Folge ${identity.episode}`)
+        : "",
+      anteil: dauer > 0 && stelle > 0 ? Math.round((stelle / dauer) * 100) : sanitizeProgress(favorite.progress)
+    });
+    if (eintraege.length >= 40) break;
+  }
+  return eintraege;
+}
+
+// Einen Eintrag aus der Liste oeffnen - und gleich losspielen. Wer vom Sofa aus
+// waehlt, will nicht danach noch aufstehen und auf Play druecken.
+async function fernOeffnen(key) {
+  const favorite = favorites.find((eintrag) => eintrag.id === String(key || ""));
+  if (!favorite) return;
+  console.log(`[ELFIX FERN] ${favorite.title} vom Handy geoeffnet`);
+  await favoritOeffnen(favorite.id, { autoplay: true, fullscreen: false });
+  await fernStandMelden();
+}
+
+// Eine Folge zurueck. Die naechste rechnet ELFIX aus den Regeln der Serie; hier
+// genuegt die Folge davor in derselben Staffel - was davor liegt, ist immer
+// schon dagewesen.
+async function vorherigeFolge(provider, view) {
+  if (!provider || !isLiveView(view)) return;
+  const url = view.webContents.getURL();
+  const identity = episodeIdentity(url);
+  if (!identity || identity.episode <= 1) {
+    sendToast("Das ist schon die erste Folge");
+    return;
+  }
+  const ziel = replaceEpisodeUrl(url, identity.season, identity.episode - 1);
+  if (!ziel || ziel === url) return;
+  await beginAutostart(provider.id, naechsteFolgeLabel(provider, ziel), { snapshot: false });
+  await navigateProvider(provider, ziel);
+  scheduleProviderAutoplay(provider, activeView, { fullscreen: false, expectUrl: ziel, durationMs: 45000 });
+}
+
+// Was gerade laeuft, in einer Zeile. Sie geht nur hinaus, wenn sie sich
+// geaendert hat - darum kuemmert sich das Modul.
+async function fernStandMelden() {
+  if (!fernbedienung.aktiv || !fernbedienung.verbunden) return;
+  if (!isLiveView(activeView)) {
+    fernbedienung.standMelden({ titel: "", folge: "", laeuft: false, position: 0, dauer: 0 });
+    return;
+  }
+  const url = activeView.webContents.getURL();
+  const provider = activeProvider();
+  const identity = episodeIdentity(url);
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === identity?.key);
+  const progress = await readBestMediaProgress(activeView, fernStandScript()).catch(() => null);
+  fernbedienung.standMelden({
+    titel: cleanBaseMediaTitle(eintrag?.title || "", url) || eintrag?.title || provider?.name || "",
+    folge: identity
+      ? (identity.season > 0 ? `Staffel ${identity.season} · Folge ${identity.episode}` : `Folge ${identity.episode}`)
+      : "",
+    laeuft: Boolean(progress && !progress.paused),
+    position: progress?.currentTime || 0,
+    dauer: progress?.duration || 0,
+    stumm: activeView.webContents.isAudioMuted()
+  });
+}
+
+function fernStandScript() {
+  return `(() => {
+    const medien = Array.from(document.querySelectorAll("video, audio"))
+      .filter((media) => Number(media.duration) > 0);
+    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return null;
+    return {
+      currentTime: Number(media.currentTime) || 0,
+      duration: Number(media.duration) || 0,
+      paused: Boolean(media.paused)
+    };
+  })()`;
+}
+
+// --- Intro ueberspringen -----------------------------------------------------
+//
+// Die Regeln stehen in marken.js, hier steht nur, wann gelesen und geschrieben
+// wird. Gelernt wird aus den eigenen Sprüngen: wer eine Serie schaut, spult das
+// Intro selbst weg, jede Folge an derselben Stelle - das ist das Einzige, was
+// ELFIX von einem Intro je erfahren kann.
+let markenSpeicher = null;
+let markenSchmutzig = false;
+
+function loadMarken() {
+  if (markenSpeicher) return markenSpeicher;
+  try {
+    const roh = JSON.parse(fs.readFileSync(MARKEN_FILE, "utf8"));
+    markenSpeicher = roh && typeof roh.eintraege === "object" && roh.eintraege ? roh.eintraege : {};
+  } catch {
+    markenSpeicher = {};
+  }
+  return markenSpeicher;
+}
+
+function saveMarken() {
+  if (!markenSchmutzig) return;
+  ensureDataDir();
+  try {
+    fs.writeFileSync(MARKEN_FILE, JSON.stringify({ version: 1, eintraege: loadMarken() }, null, 2));
+    markenSchmutzig = false;
+  } catch (fehler) {
+    console.log("[ELFIX MARKEN] nicht gespeichert: " + (fehler?.message || fehler));
+  }
+}
+
+// Unter welchem Schluessel die Marke dieser Seite liegt: Titel und Staffel.
+// Ausdruecklich der Titel und nicht die Adresse - ein Anbieterumzug soll die
+// gelernten Marken nicht mitnehmen muessen.
+function markenSchluesselFuer(provider, url) {
+  const identity = episodeIdentity(url);
+  if (!identity) return "";
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === identity.key);
+  const titel = taste.titelSchluessel(eintrag?.title || cleanBaseMediaTitle("", url));
+  return marken.schluessel(titel, identity.season);
+}
+
+function markeFuer(schluessel) {
+  if (!schluessel) return null;
+  return loadMarken()[schluessel]?.marke || null;
+}
+
+// Ein Sprung aus der Seite. Er wird aufgenommen, und daraus faellt - vielleicht
+// - eine Marke.
+function markeLernen(provider, url, von, nach) {
+  const schluessel = markenSchluesselFuer(provider, url);
+  if (!schluessel) return;
+  const identity = episodeIdentity(url);
+  const eintraege = loadMarken();
+  const vorher = eintraege[schluessel] || { spruenge: [], marke: null };
+  const spruenge = marken.sprungAufnehmen(vorher.spruenge, {
+    folge: identity?.episode || 0,
+    von,
+    nach
+  });
+  if (spruenge === vorher.spruenge) return;
+
+  const marke = marken.markeAus(spruenge);
+  eintraege[schluessel] = { spruenge, marke };
+  markenSchmutzig = true;
+  saveMarken();
+
+  const vorherBelege = vorher.marke?.belege || 0;
+  if (marke && marke.belege > vorherBelege) {
+    console.log(`[ELFIX MARKEN] ${schluessel}: Intro bei ${marke.von}s, ${marke.dauer}s lang (${marke.belege} Folgen)`);
+    // Erst ab der zweiten Uebereinstimmung gibt es ueberhaupt etwas zu zeigen.
+    if (vorherBelege === 0) sendToast("Intro gemerkt — ab der nächsten Folge steht der Knopf da");
+  }
+}
+
+// Das Skript in die Seite bringen. Es laeuft im Fortschritts-Takt erneut und
+// reicht dann nur die Marke nach - eingerichtet wird es genau einmal je Video.
+async function installMarke(provider, view, url) {
+  if (!isLiveView(view)) return;
+  if (settings.playback?.introSkip === false) {
+    // Ausgeschaltet heisst auch: der Knopf verschwindet sofort, nicht erst bei
+    // der naechsten Folge.
+    await executeJavaScriptInMediaFrames(view,
+      "window.__elfixMarke && window.__elfixMarke.entfernen()").catch(() => []);
+    return;
+  }
+  const schluessel = markenSchluesselFuer(provider, url);
+  if (!schluessel) return;
+  // Waehrend einer laufenden Watchparty wird nicht gelernt. Der Player wird
+  // dort staendig auf den Host gezogen, und diese Sprünge sind nicht die
+  // Entscheidung dessen, der hier sitzt.
+  const lernen = !watchpartyLiveKeyForUrl(url);
+  await executeJavaScriptInMediaFrames(view,
+    marken.markenScript(markeFuer(schluessel), { lernen })).catch(() => []);
+}
+
+// --- Fassung merken ----------------------------------------------------------
+//
+// Die Regeln stehen in fassung.js, hier steht nur, wann gelesen, geschrieben
+// und geklickt wird.
+let fassungSpeicher = null;
+let fassungSchmutzig = false;
+// Solange hier ein Zeitpunkt steht, wartet der Autostart. Grund: die
+// Anbieterseite zeigt nur die Hoster der gewaehlten Fassung - wer davor auf
+// einen Hoster klickt, startet die falsche und merkt es erst am Ton.
+const fassungWartet = new Map();
+// Damit die Ansage einmal je Folge kommt und nicht bei jedem Lauf des Skripts.
+const fassungGemeldet = new Map();
+const FASSUNG_WARTE_MS = 4000;
+
+function loadFassungen() {
+  if (fassungSpeicher) return fassungSpeicher;
+  try {
+    const roh = JSON.parse(fs.readFileSync(FASSUNGEN_FILE, "utf8"));
+    fassungSpeicher = roh && typeof roh.eintraege === "object" && roh.eintraege ? roh.eintraege : {};
+  } catch {
+    fassungSpeicher = {};
+  }
+  return fassungSpeicher;
+}
+
+function saveFassungen() {
+  if (!fassungSchmutzig) return;
+  ensureDataDir();
+  try {
+    fs.writeFileSync(FASSUNGEN_FILE, JSON.stringify({ version: 1, eintraege: loadFassungen() }, null, 2));
+    fassungSchmutzig = false;
+  } catch (fehler) {
+    console.log("[ELFIX FASSUNG] nicht gespeichert: " + (fehler?.message || fehler));
+  }
+}
+
+// Unter welchem Schluessel die Fassung dieser Seite liegt: der Titel, ohne
+// Staffel. Anders als beim Intro - das kann sich ab Staffel 2 aendern, die
+// Sprache, in der man eine Serie schaut, tut das nicht.
+function fassungSchluesselFuer(provider, url) {
+  const identity = episodeIdentity(url);
+  if (!identity) return "";
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === identity.key);
+  return taste.titelSchluessel(eintrag?.title || cleanBaseMediaTitle("", url));
+}
+
+// Eine Meldung aus der Seite. "stand" ist die Vorgabe des Anbieters und zaehlt
+// nur, solange nichts bekannt ist; "wahl" ist ein Klick und gilt immer.
+function fassungMelden(provider, url, art, neueFassung) {
+  if (settings.playback?.rememberLanguage === false) return;
+  const schluessel = fassungSchluesselFuer(provider, url);
+  if (!schluessel) return;
+  const vorher = fassung.lesen(loadFassungen(), schluessel);
+  const nachher = fassung.merken(loadFassungen(), schluessel, neueFassung, { nurWennNeu: art === "stand" });
+  if (nachher === fassungSpeicher) return;
+  fassungSpeicher = nachher;
+  fassungSchmutzig = true;
+  saveFassungen();
+
+  const jetzt = fassung.lesen(fassungSpeicher, schluessel);
+  console.log(`[ELFIX FASSUNG] ${schluessel}: ${jetzt?.name || jetzt?.roh || "?"} gemerkt (${art})`);
+  // Beim ersten Mal ist nichts geschehen, was eine Ansage rechtfertigt - die
+  // Folge laeuft ja genau so, wie sie dasteht. Erst ein Wechsel ist eine
+  // Entscheidung, von der man wissen will, dass sie gemerkt wurde.
+  if (art === "wahl" && vorher && !fassung.gleich(vorher, jetzt) && jetzt?.name) {
+    sendToast(`${jetzt.name} gemerkt — ab der nächsten Folge steht sie vorgewählt`);
+  }
+}
+
+// Die gemerkte Fassung anklicken, bevor der Autostart nach einem Hoster sucht.
+async function installFassung(provider, view, url, optionen = {}) {
+  if (!isLiveView(view)) return "";
+  if (settings.playback?.rememberLanguage === false) return "";
+  const schluessel = fassungSchluesselFuer(provider, url);
+  if (!schluessel) return "";
+  const gewuenscht = fassung.lesen(loadFassungen(), schluessel);
+  // Die Sperre muss stehen, bevor irgendetwas darauf wartet - und nur dann,
+  // wenn ueberhaupt etwas umzustellen ist. Ohne gemerkte Fassung gibt es
+  // nichts zu verzoegern.
+  if (gewuenscht && !optionen.nachlauf) fassungWartet.set(provider.id, Date.now() + FASSUNG_WARTE_MS);
+
+  const ergebnisse = await executeJavaScriptInMediaFrames(view, fassung.fassungScript(gewuenscht)).catch(() => []);
+  const antwort = (Array.isArray(ergebnisse) ? ergebnisse : [])
+    .map((eintrag) => String(eintrag?.value ?? eintrag ?? ""))
+    .find((wert) => wert) || "";
+
+  // "geklickt" heisst: gedrueckt, aber die Seite hat noch nicht umgeschaltet.
+  // Dann bleibt die Sperre stehen, bis der zweite Lauf sie aufloest oder die
+  // Zeit ablaeuft - ein Hoster, der jetzt geklickt wird, waere der falsche.
+  if (!antwort.startsWith("geklickt")) fassungWartet.delete(provider.id);
+
+  if (antwort.startsWith("gewechselt") && fassungGemeldet.get(provider.id) !== url) {
+    fassungGemeldet.set(provider.id, url);
+    console.log(`[ELFIX FASSUNG] ${schluessel}: ${gewuenscht?.name || gewuenscht?.roh} vorgewaehlt`);
+    if (gewuenscht?.name) sendToast(`${gewuenscht.name} vorgewählt`);
+  }
+  return antwort;
+}
+
 async function installHosterQualitaet(view) {
   if (!isLiveView(view)) return;
   await executeJavaScriptInMediaFrames(view, voeQualitaet.qualitaetScript()).catch(() => []);
@@ -6614,6 +7833,17 @@ function youtubePartyStatus(status) {
 // Je Anbieter genau eine offene Sitzung: mehr kann es nicht geben, weil je
 // Anbieter nur eine Seite vorn steht.
 const offeneSitzungen = new Map();
+
+// Welche Saetze gerade noch wachsen. Sie stehen bereits in der Ablage - damit
+// ein Absturz sie nicht kostet -, sind aber noch keine fertigen Sitzungen und
+// haben deshalb bei den anderen Geraeten nichts verloren.
+function laufendeSitzungIds() {
+  const offen = new Set();
+  for (const sitzung of offeneSitzungen.values()) {
+    if (sitzung?.id) offen.add(String(sitzung.id));
+  }
+  return offen;
+}
 let sitzungenSpeicher = null;
 let sitzungenSchmutzig = false;
 let sitzungenZuletztGespeichert = 0;
@@ -6644,6 +7874,10 @@ function saveSitzungen() {
     }, null, 2));
     sitzungenSchmutzig = false;
     sitzungenZuletztGespeichert = Date.now();
+    // Dieselbe Ueberlegung wie bei den Favoriten: der eine Punkt, an dem sich am
+    // Bestand wirklich etwas geaendert hat. Die laufende Sitzung faellt beim
+    // Sammeln durch den Filter - sie waechst noch.
+    geraeteAbgleichSpaeter();
   } catch (fehler) {
     console.log("[ELFIX STATISTIK] Sitzungen nicht gespeichert: " + (fehler?.message || fehler));
   }
@@ -6774,6 +8008,22 @@ function sitzungTitelInfo(sitzung, seiten = {}) {
 //
 // Der Unterschied ist nicht kosmetisch. Eine erfundene Stundenzahl laesst sich
 // ein Jahr spaeter nicht mehr widerlegen - sie steht dann einfach da.
+// Die Kennung eines nachgetragenen Satzes. Sie muss auf jedem Geraet dieselbe
+// sein: seit die Geraete ihre Saetze austauschen, tragen beide dieselbe
+// Vorgeschichte nach - jedes aus seinen eigenen Favoriten, die inzwischen
+// ohnehin dieselben sind. Haenge die Kennung wie frueher an der Kennung des
+// Favoriten, kaeme jede alte Folge doppelt heraus.
+//
+// Der Titel taugt dafuer, die Kennung des Favoriten nicht: sie entsteht beim
+// Anlegen und ist auf jedem Geraet eine andere.
+function altSchluessel(favorite) {
+  // Dieselbe Normalisierung, mit der statistik.js zwei Saetze derselben Folge
+  // zusammenbringt - nicht irgendeine. Zwei Rechnungen fuer dieselbe Frage
+  // waeren genau die Sorte Unterschied, die man erst ein Jahr spaeter an einer
+  // falschen Zahl bemerkt.
+  return taste.titelSchluessel(favorite?.title) || String(favorite?.id || "");
+}
+
 function sitzungenAusAltdaten(liste) {
   const gebaut = [];
   const gesehen = new Set();
@@ -6799,7 +8049,7 @@ function sitzungenAusAltdaten(liste) {
     for (const folge of favorite?.completedEpisodes || []) {
       const zeit = Date.parse(folge?.completedAt || "");
       if (!Number.isFinite(zeit)) continue;
-      const kennung = `alt:${basis.favoriteId}:s${folge.season}:e${folge.episode}`;
+      const kennung = `alt:${altSchluessel(favorite)}:s${folge.season}:e${folge.episode}`;
       if (gesehen.has(kennung)) continue;
       gesehen.add(kennung);
       gebaut.push({
@@ -6823,7 +8073,7 @@ function sitzungenAusAltdaten(liste) {
     // Zeitpunkt. Ohne diesen Zweig fehlten in der Bilanz saemtliche Filme.
     const abschlussZeit = Date.parse(favorite?.completedAt || "");
     if (favorite?.completed && Number.isFinite(abschlussZeit) && !(favorite?.completedEpisodes || []).length) {
-      const kennung = `altab:${basis.favoriteId}`;
+      const kennung = `altab:${altSchluessel(favorite)}`;
       if (!gesehen.has(kennung)) {
         gesehen.add(kennung);
         gebaut.push({
@@ -6855,7 +8105,7 @@ function sitzungenAusAltdaten(liste) {
       // Die Abschlusszeile traegt die Nummer der letzten Folge mit und waere
       // sonst eine Folge zu viel.
       if (abschluss && folge) continue;
-      const kennung = `alt:${basis.favoriteId}:s${eintrag?.season || 0}:e${folge}`;
+      const kennung = `alt:${altSchluessel(favorite)}:s${eintrag?.season || 0}:e${folge}`;
       if (folge && gesehen.has(kennung)) continue;
       if (folge) gesehen.add(kennung);
       gebaut.push({
@@ -6895,6 +8145,57 @@ function sitzungenNachtragen() {
   saveSitzungen();
   console.log(`[ELFIX STATISTIK] ${neue.length} Saetze aus dem Verlauf uebernommen (ohne Wiedergabezeit)`);
   return neue.length;
+}
+
+// Die Kennungen der nachgetragenen Saetze umstellen - einmalig.
+//
+// Bis 1.31.0 hingen sie an der Kennung des Favoriten, die auf jedem Geraet eine
+// andere ist. Solange die Saetze das Geraet nie verliessen, war das gleichgueltig.
+// Seit sie es tun, wuerde dieselbe alte Folge zweimal dastehen: einmal unter der
+// Kennung von hier, einmal unter der von drueben.
+//
+// Umgerechnet wird aus dem Titel, der in jedem Satz steht - dieselbe Rechnung
+// wie beim Nachtragen. Faellt dabei ein Satz auf einen schon vergebenen
+// Schluessel, war er ein Doppelgaenger und faellt weg.
+function sitzungenKennungenAngleichen() {
+  if (settings.migrations?.sitzungKennung === true) return 0;
+  settings.migrations = { ...(settings.migrations || {}), sitzungKennung: true };
+  saveSettings();
+
+  const liste = loadSitzungen();
+  const bekannt = new Set();
+  const behalten = [];
+  let umgestellt = 0;
+  let doppelt = 0;
+
+  for (const sitzung of liste) {
+    const alt = String(sitzung?.id || "");
+    const treffer = /^(alt|altab):/.exec(alt);
+    if (!treffer) {
+      // Gemessene Saetze tragen schon eine eigene, weltweit eindeutige Kennung.
+      if (alt) bekannt.add(alt);
+      behalten.push(sitzung);
+      continue;
+    }
+    const schluessel = taste.titelSchluessel(sitzung.titel) || String(sitzung.favoriteId || "");
+    const neu = treffer[1] === "altab"
+      ? `altab:${schluessel}`
+      : `alt:${schluessel}:s${Number(sitzung.season) || 0}:e${Number(sitzung.episode) || 0}`;
+    if (bekannt.has(neu)) {
+      doppelt += 1;
+      continue;
+    }
+    bekannt.add(neu);
+    if (neu !== alt) umgestellt += 1;
+    behalten.push({ ...sitzung, id: neu });
+  }
+
+  if (!umgestellt && !doppelt) return 0;
+  sitzungenSpeicher = behalten;
+  sitzungenSchmutzig = true;
+  saveSitzungen();
+  console.log(`[ELFIX STATISTIK] ${umgestellt} Kennungen umgestellt, ${doppelt} Doppelgaenger entfernt`);
+  return umgestellt;
 }
 
 // --- Die Auswertung ----------------------------------------------------------
@@ -7047,9 +8348,17 @@ function autoplaySchalterScript(an) {
   }
   // Schon da: dann nur den Stand nachziehen. Er kann sich in den
   // Einstellungen geaendert haben, waehrend die Folge lief.
+  //
+  // Und zwar still. Dieses Skript laeuft im Fortschritts-Takt erneut - alle
+  // paar Sekunden. Wer hier jedes Mal aufweckt, laesst die Leiste von selbst
+  // aufblenden, ohne dass jemand die Maus bewegt hat, und genau davor sollte
+  // das Verblassen ja schuetzen: wer schaut, bewegt die Maus nicht.
   if (schalter) {
+    const vorher = schalter.dataset.an === "ja";
     schalter.__setzen(anfangs);
-    schalter.__wach();
+    // Hat sich der Stand wirklich geaendert, gehoert er gezeigt - dann ist es
+    // eine Nachricht und kein Takt.
+    if (vorher !== anfangs) schalter.__wach();
     return "autoplay-schon-da";
   }
 
@@ -7136,7 +8445,10 @@ function watchpartyChatScript(optionen = {}) {
   ${leisteQuelltext()}
   const id = "__elfixChat";
   const eigenerName = ${JSON.stringify(String(optionen.name || "Du"))};
-  if (window.__elfixChat) { window.__elfixChat.wach(); return "chat-schon-da"; }
+  // Schon da: dann bleibt alles, wie es ist. Aufgeweckt wird der Chat von einer
+  // Mausbewegung und von einer eingehenden Zeile - nicht davon, dass dieses
+  // Skript im Fortschritts-Takt noch einmal vorbeikommt.
+  if (window.__elfixChat) return "chat-schon-da";
 
   const leiste = elfixLeisteLinks();
   if (!leiste) return "chat-nicht-zustaendig";
@@ -9328,6 +10640,11 @@ function saveFavorites() {
   ensureDataDir();
   widersprucheGeraderichten();
   fs.writeFileSync(FAVORITES_FILE, JSON.stringify(favorites, null, 2));
+  // Der eine Punkt, an dem sich am Bestand wirklich etwas geaendert hat. Ihn
+  // zu nehmen statt der zwei Dutzend Stellen, die Staende anfassen, ist der
+  // Grund, warum der Abgleich nichts verpassen kann - auch nicht das Abhaken
+  // von Hand oder das Umsortieren der Mediathek.
+  geraeteAbgleichSpaeter();
 }
 
 function moveFavoriteToFront(favorite) {
@@ -10522,7 +11839,11 @@ function normalizeSettings(raw) {
     // man inzwischen bewusst geloescht hat.
     migrations: {
       youtubeProvider: raw?.migrations?.youtubeProvider === true,
-      sitzungen: raw?.migrations?.sitzungen === true
+      sitzungen: raw?.migrations?.sitzungen === true,
+      // Einmalig: die Kennungen der nachgetragenen Saetze auf den Titel
+      // umstellen, damit zwei Geraete dieselbe Vorgeschichte nicht doppelt
+      // fuehren.
+      sitzungKennung: raw?.migrations?.sitzungKennung === true
     },
     // Welches Jahr schon gezeigt wurde. Muss hier stehen, sonst faellt es beim
     // naechsten Speichern der Einstellungen heraus und der Jahresrueckblick
@@ -10542,7 +11863,14 @@ function normalizeSettings(raw) {
       // Standardmaessig an, weil es bisher immer so war. Nur ein
       // ausdrueckliches Nein schaltet den Zaehler ab; der Knopf bleibt in
       // jedem Fall.
-      autoplayNextEpisode: raw?.playback?.autoplayNextEpisode !== false
+      autoplayNextEpisode: raw?.playback?.autoplayNextEpisode !== false,
+      // Von Haus aus an. Der Knopf kann nichts tun, bevor man ihm das Intro
+      // zweimal selbst gezeigt hat - und er springt nie von allein.
+      introSkip: raw?.playback?.introSkip !== false,
+      // Ebenfalls von Haus aus an. Vorgewaehlt wird nur, was jemand fuer
+      // dieselbe Serie schon einmal selbst angeklickt hat - eine eigene
+      // Meinung zur richtigen Fassung hat ELFIX nicht.
+      rememberLanguage: raw?.playback?.rememberLanguage !== false
     },
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
@@ -10574,6 +11902,31 @@ function normalizeSettings(raw) {
       // Mal ein anderes und muesste ueberall neu beitreten.
       deviceId: String(raw?.watchparty?.deviceId || settings?.watchparty?.deviceId || "").slice(0, 64)
         || crypto.randomUUID()
+    },
+    geraete: (() => {
+      // Wie die Geraetekennung: der Schluessel gehoert nicht ins
+      // Einstellungsformular, muss aber jedes Speichern ueberstehen. Deshalb
+      // der Rueckfall auf den bekannten - ein Formular, das ihn nicht kennt,
+      // schickt ein leeres Feld, und das darf ihn nicht loeschen. Weg kommt er
+      // ueber "Dieses Gerät trennen", nicht nebenbei.
+      //
+      // Ein unbrauchbarer Schluessel wird hier verworfen statt spaeter still
+      // ignoriert: sonst stuende der Abgleich auf "an", ohne dass je etwas
+      // geschieht.
+      const key = geraeteSchluessel.normalisieren(raw?.geraete?.key || settings?.geraete?.key);
+      // Der Schluessel *ist* der Schalter. Ein zweiter daneben koennte nur
+      // einen Zustand herstellen, den niemand haben will: Schluessel
+      // eingetragen, Abgleich trotzdem aus.
+      return { key, enabled: Boolean(key) };
+    })(),
+    fern: {
+      // Wie der Geraeteschluessel: der Code gehoert nicht ins
+      // Einstellungsformular, muss aber jedes Speichern ueberstehen.
+      code: String(raw?.fern?.code || settings?.fern?.code || "").toUpperCase().slice(0, 16),
+      // Hier ist der Schalter ein echter Schalter und nicht der Code: eine
+      // Fernbedienung schaltet man ab, ohne den Code wegzuwerfen - sonst
+      // muesste man das Handy danach neu koppeln.
+      enabled: (raw?.fern?.enabled ?? settings?.fern?.enabled) === true
     },
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
@@ -10681,9 +12034,13 @@ function defaultSettings() {
       youtubeProvider: true,
       // Eine frische Ablage hat keinen Verlauf, aus dem etwas zu uebernehmen
       // waere - sie sammelt von Anfang an gemessene Zeiten.
-      sitzungen: true
+      sitzungen: true,
+      // Und keine Saetze mit alten Kennungen.
+      sitzungKennung: true
     },
     playback: {
+      introSkip: true,
+      rememberLanguage: true,
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
       pauseOnMinimize: false,
@@ -10701,6 +12058,18 @@ function defaultSettings() {
       deviceName: "",
       deviceId: "",
       youtubeRoom: ""
+    },
+    // Meine Geraete. Ohne Schluessel gibt es nichts abzugleichen, und einen
+    // erzeugt nur, wer ihn will.
+    geraete: {
+      enabled: false,
+      key: ""
+    },
+    // Das Handy als Fernbedienung. Aus, bis jemand sie einschaltet - erst dann
+    // entsteht ein Kopplungscode.
+    fern: {
+      enabled: false,
+      code: ""
     },
     home: {
       showHero: true,

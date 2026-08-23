@@ -198,6 +198,26 @@ const watchpartyRoomAdd = document.querySelector("#watchpartyRoomAdd");
 const watchpartyRoomList = document.querySelector("#watchpartyRoomList");
 const watchpartyName = document.querySelector("#watchpartyName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
+// Meine Geraete. Der Schluessel steht bewusst nicht im Einstellungsformular:
+// er wird ueber eigene Aufrufe gesetzt und geloescht, damit ihn kein
+// beilaeufiges Speichern der Einstellungen mitnimmt.
+const geraeteKey = document.querySelector("#geraeteKey");
+const geraeteKeyUse = document.querySelector("#geraeteKeyUse");
+const geraeteKeyNew = document.querySelector("#geraeteKeyNew");
+const geraeteKeyCopy = document.querySelector("#geraeteKeyCopy");
+const geraeteDisconnect = document.querySelector("#geraeteDisconnect");
+const geraeteSyncNow = document.querySelector("#geraeteSyncNow");
+const geraeteStatus = document.querySelector("#geraeteStatus");
+// Die Fernbedienung. Der Code steht nicht im Einstellungsformular: er wird
+// ueber eigene Aufrufe erzeugt und erneuert.
+const fernEnabled = document.querySelector("#fernEnabled");
+const fernCode = document.querySelector("#fernCode");
+const fernAdresse = document.querySelector("#fernAdresse");
+const fernCodeCopy = document.querySelector("#fernCodeCopy");
+const fernCodeNeu = document.querySelector("#fernCodeNeu");
+const fernStatus = document.querySelector("#fernStatus");
+const fernQr = document.querySelector("#fernQr");
+const fernQrHinweis = document.querySelector("#fernQrHinweis");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
 const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
@@ -241,6 +261,12 @@ const favoriteProgressMode = document.querySelector("#favoriteProgressMode");
 const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
+const introSkip = document.querySelector("#introSkip");
+const markenStand = document.querySelector("#markenStand");
+const markenVergessen = document.querySelector("#markenVergessen");
+const rememberLanguage = document.querySelector("#rememberLanguage");
+const fassungenStand = document.querySelector("#fassungenStand");
+const fassungenVergessen = document.querySelector("#fassungenVergessen");
 const showReviewLink = document.querySelector("#showReviewLink");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
@@ -468,6 +494,32 @@ function bindEvents() {
     watchpartyRaumHinzufuegen();
   });
   api.onWatchpartyState?.(renderWatchpartyStatus);
+  geraeteKeyNew?.addEventListener("click", geraeteSchluesselErzeugen);
+  geraeteKeyUse?.addEventListener("click", geraeteSchluesselUebernehmen);
+  geraeteKeyCopy?.addEventListener("click", geraeteSchluesselKopieren);
+  geraeteDisconnect?.addEventListener("click", geraeteTrennen);
+  geraeteSyncNow?.addEventListener("click", geraeteJetztAbgleichen);
+  geraeteKey?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    // Sonst schickt Enter das Einstellungsformular ab, statt den Schluessel zu
+    // uebernehmen.
+    event.preventDefault();
+    geraeteSchluesselUebernehmen();
+  });
+  api.onGeraeteState?.(renderGeraeteStatus);
+  fernEnabled?.addEventListener("change", fernUmschalten);
+  fernCodeNeu?.addEventListener("click", fernNeuerCode);
+  fernCodeCopy?.addEventListener("click", fernCodeKopieren);
+  api.onFernState?.(renderFernStatus);
+  api.getFernStatus?.().then(renderFernStatus).catch(() => {});
+  // Was per Tastenkuerzel aus dem Hauptprozess kommt. Die Ansicht wechselt hier
+  // und nicht dort: welche Bereiche dabei zu verbergen sind, weiss nur die
+  // Oberflaeche.
+  api.onTastenBefehl?.((befehl) => {
+    if (befehl !== "suche") return;
+    openSearchView().catch(() => {});
+  });
+  api.getGeraeteStatus?.().then(renderGeraeteStatus).catch(() => {});
   api.onWatchpartyLive?.(showWatchpartyLive);
   api.onWatchpartyWatchstate?.(showWatchpartyStand);
   watchpartyLiveLeave?.addEventListener("click", toggleWatchpartyLive);
@@ -658,6 +710,7 @@ function bindEvents() {
   wrappedModal?.addEventListener("close", () => { api.setWrappedOpen?.(false); });
 
   document.querySelector("#deleteProviderButton").addEventListener("click", deleteSelectedProvider);
+  document.querySelector("#relocateProviderButton")?.addEventListener("click", relocateSelectedProvider);
   document.querySelector("#moveUpButton").addEventListener("click", () => moveSelectedProvider(-1));
   document.querySelector("#moveDownButton").addEventListener("click", () => moveSelectedProvider(1));
   providerForm.addEventListener("submit", saveProviderForm);
@@ -878,6 +931,10 @@ function bindEvents() {
   pauseOnProviderSwitch.addEventListener("change", saveSettings);
   youtubeInMediathek?.addEventListener("change", saveSettings);
   autoplayNextEpisode?.addEventListener("change", saveSettings);
+  introSkip?.addEventListener("change", saveSettings);
+  markenVergessen?.addEventListener("click", markenVergessenLassen);
+  rememberLanguage?.addEventListener("change", saveSettings);
+  fassungenVergessen?.addEventListener("click", fassungenVergessenLassen);
   showReviewLink?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
@@ -1240,6 +1297,213 @@ function renderWatchpartyStatus(state) {
       : `${andere} weiteres Gerät${andere === 1 ? "" : "e"}`;
     return `„${raum.room}“: verbunden, ${geraete}`;
   }).join(" · ");
+}
+
+// Was ELFIX bisher an Intros gelernt hat. Ohne diese Zeile waere "Vergessen"
+// ein Knopf ins Ungewisse.
+async function renderMarkenStand() {
+  if (!markenStand) return;
+  const stand = await api.getMarkenStand?.().catch(() => null);
+  if (!stand || !stand.serien) {
+    markenStand.textContent = "Noch nichts gelernt.";
+    if (markenVergessen) markenVergessen.disabled = true;
+    return;
+  }
+  const serien = stand.serien === 1 ? "1 Serie" : `${stand.serien} Serien`;
+  markenStand.textContent = stand.marken
+    ? `${serien} beobachtet, für ${stand.marken} davon steht der Knopf bereit.`
+    : `${serien} beobachtet — noch keine Stelle hat sich wiederholt.`;
+  if (markenVergessen) markenVergessen.disabled = false;
+}
+
+// Dasselbe fuer die Fassungen. Ohne diese Zeile waere nicht zu sehen, ob ELFIX
+// ueberhaupt etwas gemerkt hat - und eine Vorwahl, die man nicht kennt, ist
+// eine Seite, die sich unerklaerlich anders verhaelt.
+async function renderFassungenStand() {
+  if (!fassungenStand) return;
+  const stand = await api.getFassungenStand?.().catch(() => null);
+  if (!stand || !stand.serien) {
+    fassungenStand.textContent = "Noch nichts gemerkt.";
+    if (fassungenVergessen) fassungenVergessen.disabled = true;
+    return;
+  }
+  const serien = stand.serien === 1 ? "1 Serie" : `${stand.serien} Serien`;
+  const namen = (stand.fassungen || []).map((eintrag) => `${eintrag.name} (${eintrag.anzahl})`).join(", ");
+  fassungenStand.textContent = namen ? `${serien}: ${namen}` : serien;
+  if (fassungenVergessen) fassungenVergessen.disabled = false;
+}
+
+async function fassungenVergessenLassen() {
+  if (!confirm("Alle gemerkten Fassungen vergessen?")) return;
+  await api.forgetFassungen?.();
+  renderFassungenStand();
+  showToast("Gemerkte Fassungen vergessen");
+}
+
+async function markenVergessenLassen() {
+  if (!confirm("Alle gelernten Intro-Stellen vergessen?")) return;
+  await api.forgetMarken?.();
+  renderMarkenStand();
+  api.getFernStatus?.().then(renderFernStatus).catch(() => {});
+  showToast("Gelernte Intros vergessen");
+}
+
+// --- Fernbedienung ------------------------------------------------------------
+
+function renderFernStatus(status) {
+  if (fernEnabled) fernEnabled.checked = status?.enabled === true;
+  if (fernCode) fernCode.textContent = status?.code ? status.code.split("").join(" ") : "– – – – – – – –";
+  if (fernCodeCopy) fernCodeCopy.disabled = !status?.code;
+  // Die Adresse steht bei der Watchparty; hier wird sie nur noch zu der Seite
+  // ergaenzt, die das Relay ausliefert.
+  if (fernAdresse) {
+    const server = (watchpartyServer?.value || "").trim().replace(/\/+$/, "");
+    const alsWeb = server.replace(/^wss:/i, "https:").replace(/^ws:/i, "http:");
+    fernAdresse.textContent = alsWeb ? `${alsWeb}/fern/` : "…/fern/ (erst die Server-Adresse bei der Watchparty eintragen)";
+  }
+  renderFernQr(status);
+  if (!fernStatus) return;
+  if (!status?.enabled) {
+    fernStatus.textContent = "Ausgeschaltet — kein Handy kann etwas auslösen.";
+    return;
+  }
+  if (!status.connected) {
+    fernStatus.textContent = status.error ? `Nicht verbunden: ${status.error}` : "Verbinde …";
+    return;
+  }
+  fernStatus.textContent = "Verbunden — bereit für das Handy.";
+}
+
+// Der QR-Code kommt fertig als SVG aus dem Hauptprozess. Hier wird er nur
+// eingesetzt - und wieder weggeraeumt, wenn es nichts zu koppeln gibt.
+async function renderFernQr(status) {
+  if (!fernQr) return;
+  if (!status?.code) {
+    fernQr.replaceChildren();
+    if (fernQrHinweis) fernQrHinweis.textContent = "";
+    return;
+  }
+  const antwort = await api.getFernQr?.().catch(() => null);
+  if (!antwort?.svg) {
+    fernQr.replaceChildren();
+    if (fernQrHinweis) {
+      fernQrHinweis.textContent = "Für den QR-Code fehlt die Server-Adresse — sie steht bei der Watchparty.";
+    }
+    return;
+  }
+  // Das SVG kommt aus dem eigenen Hauptprozess und nicht von einer Seite -
+  // hier wird nichts Fremdes eingesetzt.
+  fernQr.innerHTML = antwort.svg;
+  if (fernQrHinweis) {
+    fernQrHinweis.textContent = "Mit der Kamera scannen — dann öffnet sich die Fernbedienung und ist gleich verbunden.";
+  }
+}
+
+async function fernUmschalten() {
+  const status = fernEnabled?.checked
+    ? await api.enableFern?.()
+    : await api.disableFern?.();
+  renderFernStatus(status);
+}
+
+async function fernNeuerCode() {
+  if (!confirm("Neuen Code erzeugen? Bereits gekoppelte Handys müssen danach neu verbunden werden.")) return;
+  const status = await api.newFernCode?.();
+  renderFernStatus(status);
+  showToast("Neuer Code — die alten Handys sind draußen");
+}
+
+async function fernCodeKopieren() {
+  const code = (fernCode?.textContent || "").replace(/\s/g, "");
+  if (!code || code.startsWith("–")) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast("Code kopiert");
+  } catch {
+    // Ohne Zwischenablage bleibt das Feld - abtippen geht immer.
+  }
+}
+
+// --- Meine Geraete ----------------------------------------------------------
+//
+// Der Schluessel steht im Feld, aber er wird nicht mit dem Formular
+// gespeichert: erzeugen, uebernehmen und trennen sind eigene Aufrufe. Sonst
+// haenge das Zusammenspiel zweier Geraete daran, ob jemand nach dem Eintippen
+// noch irgendwo anders speichert.
+
+function renderGeraeteStatus(status) {
+  if (geraeteKey && document.activeElement !== geraeteKey) geraeteKey.value = status?.key || geraeteKey.value || "";
+  if (geraeteDisconnect) geraeteDisconnect.disabled = !status?.hasKey;
+  if (geraeteKeyCopy) geraeteKeyCopy.disabled = !geraeteKey?.value;
+  if (geraeteSyncNow) geraeteSyncNow.disabled = !status?.connected;
+  if (!geraeteStatus) return;
+  if (!status?.hasKey) {
+    geraeteStatus.textContent = "Kein Schlüssel — erzeuge einen und trage ihn auf dem zweiten Gerät ein.";
+    return;
+  }
+  if (!status.enabled) {
+    geraeteStatus.textContent = "Keine Server-Adresse — sie steht bei der Watchparty.";
+    return;
+  }
+  if (!status.connected) {
+    geraeteStatus.textContent = status.error ? `Nicht verbunden: ${status.error}` : "Verbinde …";
+    return;
+  }
+  const stand = status.lastSync
+    ? `zuletzt abgeglichen ${new Date(status.lastSync).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`
+    : "noch nichts abzugleichen";
+  const titel = status.entries === 1 ? "1 Titel" : `${status.entries} Titel`;
+  geraeteStatus.textContent = `Verbunden, ${titel}, ${stand}.`;
+}
+
+async function geraeteSchluesselErzeugen() {
+  // Ein neuer Schluessel loest dieses Geraet vom alten. Wer schon zwei
+  // zusammenhat, verliert damit die Verbindung zum anderen - das muss vorher
+  // dastehen, nicht hinterher.
+  if (geraeteKey?.value && !window.confirm("Neuen Schlüssel erzeugen? Dieses Gerät ist danach nicht mehr mit den bisherigen verbunden.")) return;
+  const antwort = await api.createGeraeteSchluessel?.();
+  if (!antwort) return;
+  if (geraeteKey) geraeteKey.value = antwort.key || "";
+  renderGeraeteStatus({ ...antwort.status, key: antwort.key });
+  showToast("Schlüssel erzeugt — trage ihn auf deinem anderen Gerät ein.");
+}
+
+async function geraeteSchluesselUebernehmen() {
+  const wert = geraeteKey ? geraeteKey.value.trim() : "";
+  if (!wert) return;
+  const antwort = await api.setGeraeteSchluessel?.(wert);
+  if (!antwort?.ok) {
+    showToast(antwort?.reason || "Schlüssel nicht erkannt");
+    return;
+  }
+  if (geraeteKey) geraeteKey.value = antwort.key || "";
+  renderGeraeteStatus({ ...antwort.status, key: antwort.key });
+  showToast("Schlüssel übernommen — die Geräte gleichen sich ab.");
+}
+
+async function geraeteSchluesselKopieren() {
+  const wert = geraeteKey ? geraeteKey.value.trim() : "";
+  if (!wert) return;
+  try {
+    await navigator.clipboard.writeText(wert);
+    showToast("Schlüssel kopiert");
+  } catch {
+    // Ohne Zwischenablage bleibt das Feld - abtippen geht immer.
+    geraeteKey?.select?.();
+  }
+}
+
+async function geraeteTrennen() {
+  if (!window.confirm("Dieses Gerät trennen? Deine Einträge bleiben hier stehen, gleichen sich aber nicht mehr ab.")) return;
+  const status = await api.disconnectGeraete?.();
+  if (geraeteKey) geraeteKey.value = "";
+  renderGeraeteStatus(status);
+  showToast("Getrennt");
+}
+
+async function geraeteJetztAbgleichen() {
+  const status = await api.syncGeraeteNow?.();
+  renderGeraeteStatus(status);
 }
 
 // "2026-07-29" -> "29. Juli 2026". Liegt es in der Zukunft, ist es ein
@@ -5848,6 +6112,10 @@ function renderSettings() {
   pauseOnProviderSwitch.checked = settings.playback?.pauseOnProviderSwitch !== false;
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
+  if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
+  renderMarkenStand();
+  if (rememberLanguage) rememberLanguage.checked = settings.playback?.rememberLanguage !== false;
+  renderFassungenStand();
   // Aus, solange nichts anderes dasteht - eine Meldung, die man nicht bestellt
   // hat, ist eine Stoerung.
   if (notifyNewEpisodes) notifyNewEpisodes.checked = settings.notifications?.newEpisodes === true;
@@ -6012,6 +6280,38 @@ async function deleteSelectedProvider() {
   render();
 }
 
+// Der Anbieter hat eine neue Adresse.
+//
+// Die neue steht im Feld, die alte im gespeicherten Anbieter - der Umzug ist
+// also die Frage "was liegt zwischen diesen beiden?". Deshalb kein eigenes
+// Eingabefeld: das waere ein zweiter Ort fuer dieselbe Angabe, und man muesste
+// sie zweimal richtig eintippen.
+//
+// Gerechnet, gefragt und geschrieben wird im Hauptprozess. Er kennt die
+// Watchlist, und die Rueckfrage soll sagen, was wirklich passiert, statt es zu
+// schaetzen.
+async function relocateSelectedProvider() {
+  if (selectedProviderIndex < 0) return;
+  const provider = providers[selectedProviderIndex];
+  const neueAdresse = providerHome.value.trim();
+  if (!provider?.id || !neueAdresse) return;
+  const antwort = await api.relocateProvider?.(provider.id, neueAdresse);
+  if (!antwort) return;
+  if (!antwort.moved) {
+    // Kein Grund heisst: abgebrochen. Dann hat der Benutzer gerade selbst
+    // entschieden und braucht keine Meldung darueber.
+    if (antwort.reason) showToast(antwort.reason);
+    return;
+  }
+  providers = antwort.providers;
+  favorites = antwort.favorites;
+  render();
+  const bericht = antwort.bericht;
+  showToast(bericht.eintraege
+    ? `Umgezogen auf ${bericht.nachWurzel} — ${bericht.eintraege} Einträge nachgezogen`
+    : `Umgezogen auf ${bericht.nachWurzel}`);
+}
+
 async function moveSelectedProvider(direction) {
   const target = selectedProviderIndex + direction;
   if (selectedProviderIndex < 0 || target < 0 || target >= providers.length) return;
@@ -6069,6 +6369,8 @@ async function saveSettings() {
     youtubeInMediathek: Boolean(youtubeInMediathek?.checked),
     // Fehlt das Kaestchen, gilt weiter, was gespeichert ist - nicht "aus".
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
+    introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
+    rememberLanguage: rememberLanguage ? rememberLanguage.checked : settings.playback?.rememberLanguage !== false,
     favoriteProgressMode: favoriteProgressMode.value,
     pauseOnMinimize: pauseOnMinimize.checked,
     pauseOnBlur: pauseOnBlur.checked

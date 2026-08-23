@@ -23,6 +23,15 @@ const metadaten = require("./metadaten");
 // Die YouTube-Watchparty. Ein eigenes Modul mit eigenem Zustand - es teilt sich
 // mit der Titelverwaltung nur die Verbindung und den Raumcode.
 const youtubeParty = require("./youtube-party");
+// Der Abgleich zwischen den Geraeten einer Person. Er faehrt auf denselben
+// Verbindungen, kennt aber weder Raeume noch Titel - nur Kennungen und
+// verschlossene Klumpen. Was er sieht und was nicht, steht in geraete.js.
+const geraete = require("./geraete");
+// Das Handy als Fernbedienung: die Kopplung und die Seite, die das Relay dafuer
+// ausliefert.
+const fern = require("./fern");
+const fernSeite = require("./fern-seite");
+const fernIcon = require("./fern-icon");
 
 // Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
 // Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
@@ -104,14 +113,15 @@ function zustandLaden() {
     }
     raeume.set(code, { titel, at: Number(raum?.at) || Date.now() });
   }
-  console.log(`Zustand geladen: ${raeume.size} Raum/Raeume`);
+  geraete.zustandSetzen(roh?.geraete);
+  console.log(`Zustand geladen: ${raeume.size} Raum/Raeume, ${geraete.anzahl()} Geraeteschluessel`);
 }
 
 function zustandSpeichernSpaeter() {
   if (speicherTimer) return;
   speicherTimer = setTimeout(() => {
     speicherTimer = null;
-    const roh = { raeume: {} };
+    const roh = { raeume: {}, geraete: geraete.zustandLesen() };
     for (const [code, raum] of raeume) {
       roh.raeume[code] = {
         at: raum.at,
@@ -156,6 +166,12 @@ function aufraeumen() {
   // Die YouTube-Runden liegen nur im Speicher und raeumen sich nach eigener
   // Frist auf - hier haengt bloss der Zeitgeber.
   youtubeParty.aufraeumen();
+  // Der Geraeteabgleich liegt dagegen auf der Platte: verfallene Grabsteine und
+  // Schluessel, die ein halbes Jahr niemand benutzt hat, muessen auch dort weg.
+  if (geraete.aufraeumen()) zustandSpeichernSpaeter();
+  // Kopplungen liegen nur im Speicher - der Rechner meldet sich nach einem
+  // Neustart ohnehin neu an.
+  fern.aufraeumen();
 }
 setInterval(aufraeumen, 60 * 60 * 1000).unref?.();
 
@@ -266,12 +282,73 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Die Fernbedienung fuers Handy. Sie kommt aus diesem Relay, damit auf dem
+  // Telefon nichts zu installieren ist - eine Adresse im Browser genuegt. Und
+  // wer will, macht daraus mit einem Griff eine App auf dem Startbildschirm;
+  // dafuer liegen hier Manifest, Symbol und Service Worker.
+  //
+  // Alles unter /fern/ mit Schraegstrich: der Service Worker gilt fuer sein
+  // Verzeichnis, und eine Startadresse ausserhalb davon wuerde Chrome die
+  // Installation verweigern.
+  if (pfad === "/fern") {
+    res.writeHead(302, { location: "/fern/" });
+    res.end();
+    return;
+  }
+
+  if (pfad === "/fern/") {
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      // Nicht zwischenspeichern: sonst haelt ein Handy nach dem Aktualisieren
+      // des Relays wochenlang an der alten Seite fest. Der Service Worker haelt
+      // sie trotzdem vor - aber nur als Rueckfall ohne Netz.
+      "cache-control": "no-store"
+    });
+    res.end(fernSeite.SEITE);
+    return;
+  }
+
+  if (pfad === "/fern/manifest.webmanifest") {
+    res.writeHead(200, {
+      "content-type": "application/manifest+json; charset=utf-8",
+      "cache-control": "no-store"
+    });
+    res.end(JSON.stringify(fernSeite.MANIFEST));
+    return;
+  }
+
+  if (pfad === "/fern/icon.png" || pfad === "/fern/icon-192.png") {
+    const bild = pfad.endsWith("icon-192.png") ? fernIcon.ICON_192 : fernIcon.ICON_512;
+    res.writeHead(200, {
+      "content-type": "image/png",
+      // Die Symbole aendern sich praktisch nie.
+      "cache-control": "public, max-age=604800",
+      "content-length": bild.length
+    });
+    res.end(bild);
+    return;
+  }
+
+  if (pfad === "/fern/sw.js") {
+    res.writeHead(200, {
+      "content-type": "text/javascript; charset=utf-8",
+      // Der Service Worker selbst darf nie aus dem Zwischenspeicher kommen -
+      // sonst laesst sich eine Fassung, die etwas falsch macht, nicht mehr
+      // abloesen.
+      "cache-control": "no-store"
+    });
+    res.end(fernSeite.SERVICE_WORKER);
+    return;
+  }
+
   if (pfad === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({
       ok: true,
       raeume: raeume.size,
       youtubeRaeume: youtubeParty.anzahl(),
+      geraeteRaeume: geraete.anzahl(),
+      fernbedienungen: fern.anzahl(),
       // "syncall" und "hostpause" sagen der App, dass dieses Relay das genaue
       // Gleichziehen und die Pause auf die Host-Zeit beherrscht.
       // "clock" heisst: dieses Relay beantwortet Uhrproben, der smarte Start
@@ -284,7 +361,13 @@ const server = http.createServer((req, res) => {
       // einzige Moeglichkeit, nach dem Ausrollen von aussen zu sehen, ob die
       // neue Fassung wirklich laeuft - eine Chatzeile schickt man dafuer nicht
       // gern versuchsweise durch einen fremden Raum.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat"],
+      // "geraete" heisst: dieses Relay kennt den Abgleich zwischen den
+      // Geraeten einer Person. Ohne den Eintrag laeuft dort drueben eine
+      // aeltere Fassung, und die App wartet auf einen Zustand, der nie kommt.
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat", "geraete",
+        // "fern" heisst: dieses Relay koppelt Handy und Rechner und liefert die
+        // Seite dafuer unter /fern aus.
+        "fern"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
@@ -312,6 +395,29 @@ function anMitgliederSenden(raumcode, nachricht, ids) {
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!ids.has(client.geraetId)) continue;
+    client.send(daten);
+  }
+}
+
+// An die uebrigen Geraete desselben Schluessels. Sie haengen an keinem
+// Raumcode - der Geraeteabgleich kennt nur seine abgeleitete Kennung, und die
+// steht am Socket.
+function anGeraeteSenden(raumId, nachricht, ausser) {
+  const daten = JSON.stringify(nachricht);
+  for (const client of wss.clients) {
+    if (client.geraeteRaum !== raumId || client.readyState !== client.OPEN) continue;
+    if (client === ausser) continue;
+    client.send(daten);
+  }
+}
+
+// Die beiden Seiten einer Fernbedienung. Sie haengen an keinem Raum, sondern
+// nur am Kopplungscode am Socket.
+function anFernSeite(code, nachricht, seite) {
+  const daten = JSON.stringify(nachricht);
+  for (const client of wss.clients) {
+    if (client.fernCode !== code || client.fernSeite !== seite) continue;
+    if (client.readyState !== client.OPEN) continue;
     client.send(daten);
   }
 }
@@ -706,6 +812,12 @@ function syncStarten(raumcode, eintrag) {
 wss.on("connection", (socket) => {
   socket.raum = "";
   socket.geraetId = "";
+  // Der Geraeteabgleich haengt an einer eigenen Kennung und an keinem Raumcode.
+  // Ein Geraet kann ihn benutzen, ohne je eine Watchparty zu betreten.
+  socket.geraeteRaum = "";
+  // Die Fernbedienung: welcher Code und welche Seite - Rechner oder Handy.
+  socket.fernCode = "";
+  socket.fernSeite = "";
   socket.name = "";
   socket.isAlive = true;
   socket.on("pong", () => { socket.isAlive = true; });
@@ -729,6 +841,43 @@ wss.on("connection", (socket) => {
     // Proben zuordnen kann.
     if (nachricht?.type === "time") {
       senden({ type: "timeack", t0: nachricht.t0, t1: Date.now() });
+      return;
+    }
+
+    // Das Handy als Fernbedienung. Wie der Geraeteabgleich vor der Raumpflicht:
+    // eine Fernbedienung hat keinen Raumcode, und wer nur sein eigenes ELFIX
+    // anhalten will, soll dafuer keine Watchparty betreten muessen.
+    if (String(nachricht?.type || "").startsWith("fn")) {
+      fern.behandeln({
+        nachricht,
+        socket,
+        senden,
+        anRechner: (antwort) => anFernSeite(socket.fernCode, antwort, "rechner"),
+        anHandys: (antwort) => anFernSeite(socket.fernCode, antwort, "handy")
+      });
+      return;
+    }
+
+    // Der Abgleich zwischen den Geraeten einer Person. Er steht bewusst vor
+    // "join" und vor der Raumpflicht darunter: er hat keinen Raumcode, und wer
+    // nur seine eigenen Geraete zusammenhaelt, soll keine Watchparty betreten
+    // muessen.
+    if (String(nachricht?.type || "").startsWith("gr")) {
+      if (nachricht.type === "grhello") {
+        if (!geraete.istKennung(nachricht.room)) {
+          senden({ type: "grerror", message: "Ungueltiger Schluessel" });
+          return;
+        }
+        socket.geraeteRaum = nachricht.room;
+      }
+      if (!socket.geraeteRaum) return;
+      const geaendert = geraete.behandeln({
+        nachricht,
+        raumId: socket.geraeteRaum,
+        senden,
+        verteilen: (antwort) => anGeraeteSenden(socket.geraeteRaum, antwort, socket)
+      });
+      if (geaendert) zustandSpeichernSpaeter();
       return;
     }
 
@@ -1335,6 +1484,12 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("close", () => {
+    // Geht der Rechner, ist nichts mehr zu steuern. Die Handys erfahren es und
+    // die Kopplung faellt weg - beim naechsten Start meldet er sich neu an.
+    if (socket.fernSeite === "rechner" && socket.fernCode) {
+      anFernSeite(socket.fernCode, { type: "fnweg" }, "handy");
+      fern.abmelden(socket.fernCode);
+    }
     if (!socket.raum) return;
     // Aus der YouTube-Runde austragen. Wer nur kurz herausfaellt, meldet sich
     // beim naechsten Verbindungsaufbau selbst wieder an.

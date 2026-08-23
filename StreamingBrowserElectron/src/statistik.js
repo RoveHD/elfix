@@ -27,6 +27,11 @@
 // einer laufenden Zahl werden abgeschlossene Datensaetze, die einen Neustart,
 // einen Seitenwechsel und einen Absturz ueberleben.
 
+// Der Titelschluessel kommt aus taste.js - dieselbe Normalisierung, die ELFIX
+// ueberall benutzt, wenn zwei Schreibweisen denselben Titel meinen. Eine zweite
+// hier waere eine zweite Wahrheit.
+const taste = require("./taste");
+
 // Laenger keine Meldung: die Wiedergabe gilt als beendet. Der Fortschritt
 // meldet sich im Sekundentakt, solange etwas laeuft - fuenf Minuten Stille
 // heissen, dass nichts mehr laeuft.
@@ -188,6 +193,80 @@ function sitzungLohnt(sitzung) {
   return Boolean(sitzung) && (zahl(sitzung.sekunden) >= 5 || sitzung.abgeschlossen);
 }
 
+// --- Wer ist dieselbe Folge? -------------------------------------------------
+//
+// Bis 1.31.0 stand hier die Kennung des Favoriten. Auf einem Geraet ist das
+// eindeutig, und mehr wurde nicht gebraucht: die Saetze kamen alle von hier.
+//
+// Seit die Geraete ihre Saetze austauschen, taugt sie nicht mehr. Derselbe
+// Titel traegt auf jedem Geraet eine eigene Kennung - sie entsteht beim Anlegen
+// des Favoriten und wird ausdruecklich nicht mitgeschickt. Zusammengelegt
+// stuende dieselbe Folge deshalb zweimal da, und zwar ohne dass es auffiele:
+// die Stundenzahl bliebe richtig, nur die Zahl der Folgen waere zu hoch.
+//
+// Also ueber den Titel. Er steht in jedem Satz, ist auf allen Geraeten derselbe
+// und wird mit derselben Normalisierung geschluesselt wie ueberall sonst in
+// ELFIX. Nebenbei raeumt das einen alten Fehler mit auf: wer eine Serie bei
+// zwei Anbietern schaut, hatte zwei Favoriten - und damit doppelt so viele
+// Folgen in der Bilanz.
+//
+// Der Rueckfall bleibt fuer Saetze ohne Titel: erst die Kennung des Favoriten,
+// dann die Adresse.
+function folgenKennung(sitzung) {
+  const schluessel = taste.titelSchluessel(sitzung?.titel);
+  if (schluessel) return `${schluessel}|${zahl(sitzung?.season)}|${zahl(sitzung?.episode)}`;
+  if (sitzung?.favoriteId) return `${sitzung.favoriteId}|${sitzung.season}|${sitzung.episode}`;
+  return text(sitzung?.url);
+}
+
+// Und dasselbe fuer den ganzen Titel - fuer "abgeschlossene Titel", wo eine
+// Serie einmal zaehlt und nicht je Geraet einmal.
+function titelKennung(sitzung) {
+  return taste.titelSchluessel(sitzung?.titel)
+    || text(sitzung?.favoriteId)
+    || text(sitzung?.titel)
+    || text(sitzung?.url);
+}
+
+// Gemessen schlaegt rekonstruiert.
+//
+// Ein rekonstruierter Satz sagt "diese Folge lief an diesem Tag" und kennt
+// keine Zeit; ein gemessener sagt dasselbe und weiss dazu, wie lange. Liegen
+// beide zu derselben Folge vor, beschreiben sie dasselbe Ansehen - der
+// rekonstruierte faellt weg.
+//
+// Vorkommen kann das erst, seit die Geraete ihre Saetze austauschen: das eine
+// hat eine Folge gemessen, das andere sie beim Einrichten aus dem Verlauf
+// nachgetragen, den es inzwischen ebenfalls hat.
+function bereinigen(sitzungen) {
+  const liste = Array.isArray(sitzungen) ? sitzungen : [];
+  const gemessen = new Set();
+  for (const sitzung of liste) {
+    if (sitzung?.qualitaet === REKONSTRUIERT) continue;
+    gemessen.add(folgenKennung(sitzung));
+  }
+  if (!gemessen.size) return liste;
+  return liste.filter((sitzung) => sitzung?.qualitaet !== REKONSTRUIERT
+    || !gemessen.has(folgenKennung(sitzung)));
+}
+
+// Saetze zusammenlegen. Eine abgeschlossene Sitzung aendert sich nie wieder -
+// deshalb gewinnt hier nicht der neuere, sondern es bleibt schlicht der, der
+// schon dasteht. Zwei Geraete koennen denselben Satz nicht verschieden wissen.
+function vereinen(bestand, neue) {
+  const liste = Array.isArray(bestand) ? [...bestand] : [];
+  const bekannt = new Set(liste.map((sitzung) => text(sitzung?.id)));
+  let dazu = 0;
+  for (const sitzung of Array.isArray(neue) ? neue : []) {
+    const id = text(sitzung?.id);
+    if (!id || bekannt.has(id)) continue;
+    bekannt.add(id);
+    liste.push(sitzung);
+    dazu += 1;
+  }
+  return { sitzungen: liste, dazu };
+}
+
 // --- Auswerten ---------------------------------------------------------------
 
 function imZeitraum(sitzung, von, bis) {
@@ -297,7 +376,15 @@ function auswerten(sitzungen, optionen = {}) {
   const heute = optionen.heute || tagesschluessel(new Date());
   const titelInfo = typeof optionen.titel === "function" ? optionen.titel : () => ({});
 
-  const gewaehlt = (sitzungen || []).filter((sitzung) => imZeitraum(sitzung, von, bis));
+  // Bereinigt und nach Zeit sortiert, bevor irgendetwas gezaehlt wird.
+  //
+  // Die Sortierung ist keine Kosmetik: unten zaehlt die erste Sitzung einer
+  // Folge, und seit die Saetze von mehreren Geraeten kommen, ist die
+  // Reihenfolge in der Ablage die des Eintreffens - nicht die des Schauens. Ohne
+  // diese Zeile haenge an ihr, welchem Tag eine Folge zugerechnet wird.
+  const gewaehlt = bereinigen(sitzungen)
+    .filter((sitzung) => imZeitraum(sitzung, von, bis))
+    .sort((links, rechts) => Date.parse(links.begonnenAm) - Date.parse(rechts.begonnenAm));
   const gemessene = gewaehlt.filter((sitzung) => sitzung.qualitaet !== REKONSTRUIERT);
 
   const sekunden = gemessene.reduce((summe, sitzung) => summe + zahl(sitzung.sekunden), 0);
@@ -315,10 +402,23 @@ function auswerten(sitzungen, optionen = {}) {
   const fertigeTitel = new Map();
   let wiederholungen = 0;
 
+  // Welche Folgen schon gezaehlt wurden. Eine Folge zaehlt einmal - egal, ob sie
+  // ueber zwei Sitzungen lief, ueber zwei Abende oder ueber zwei Geraete. Fuer
+  // die Gesamtzahl galt das immer; die Zahlen je Tag, Wochentag, Monat und
+  // Titel zaehlten dagegen Sitzungen. Auf einem Geraet fiel der Unterschied
+  // kaum auf. Wer eine Folge auf dem Rechner anfaengt und auf dem Laptop zu
+  // Ende sieht, haette sie dort sonst zweimal stehen.
+  const gezaehlt = new Set();
+
   for (const sitzung of gewaehlt) {
     const zeit = Date.parse(sitzung.begonnenAm);
     const tag = tagesschluessel(new Date(zeit));
     const eigene = zahl(sitzung.sekunden);
+    const kennung = folgenKennung(sitzung);
+    // Neu ist eine Folge beim ersten Mal. Eine Wiederholung ist nie neu - sie
+    // wird eigens gezaehlt.
+    const neueFolge = !sitzung.wiederholung && !gezaehlt.has(kennung);
+    if (neueFolge) gezaehlt.add(kennung);
     const stand = jeTag.get(tag) || { tag, sekunden: 0, sitzungen: 0, folgen: 0 };
     stand.sekunden += eigene;
     stand.sitzungen += 1;
@@ -331,7 +431,7 @@ function auswerten(sitzungen, optionen = {}) {
     const wochentag = new Date(zeit).getDay();
     const wStand = wochentage.get(wochentag) || { tag: wochentag, sekunden: 0, folgen: 0 };
     wStand.sekunden += eigene;
-    wStand.folgen += sitzung.wiederholung ? 0 : 1;
+    wStand.folgen += neueFolge ? 1 : 0;
     wochentage.set(wochentag, wStand);
     // Tageszeit: nach dem Beginn der Sitzung. Die Grenzen stehen fest und
     // ausdruecklich im Code, damit "Nachteule" eine Definition hat und keine
@@ -342,29 +442,28 @@ function auswerten(sitzungen, optionen = {}) {
         : stunde < 18 ? "nachmittag" : "abend";
     const tStand = tageszeiten.get(fach) || { fach, sekunden: 0, folgen: 0 };
     tStand.sekunden += eigene;
-    tStand.folgen += sitzung.wiederholung ? 0 : 1;
+    tStand.folgen += neueFolge ? 1 : 0;
     tageszeiten.set(fach, tStand);
 
     const monat = tag.slice(0, 7);
     const mStand = monate.get(monat) || { monat, sekunden: 0, folgen: 0 };
     mStand.sekunden += eigene;
-    mStand.folgen += sitzung.wiederholung ? 0 : 1;
+    mStand.folgen += neueFolge ? 1 : 0;
     monate.set(monat, mStand);
 
-    // Eine Folge zaehlt einmal, auch wenn sie ueber mehrere Sitzungen lief.
     // Ein zweites Anschauen ist keine zweite Folge, sondern eine Wiederholung -
     // sonst stuenden am Ende mehr Folgen da, als es gibt.
-    const kennung = sitzung.favoriteId
-      ? `${sitzung.favoriteId}|${sitzung.season}|${sitzung.episode}`
-      : sitzung.url;
     if (sitzung.wiederholung) wiederholungen += 1;
     else folgenSchluessel.add(kennung);
     if (sitzung.abgeschlossen && !sitzung.wiederholung) {
       abgeschlosseneFolgen.add(kennung);
-      const titelKennung = sitzung.favoriteId || sitzung.titel || sitzung.url;
-      if (titelKennung) fertigeTitel.set(titelKennung, sitzung.gattung || "serie");
+      // Nicht "titel" nennen: so heisst zwei Zeilen weiter die Sammlung der
+      // Titelstaende, und ein Schatten darauf laedt zu einem Fehler ein, den
+      // niemand sieht.
+      const titelId = titelKennung(sitzung);
+      if (titelId) fertigeTitel.set(titelId, sitzung.gattung || "serie");
     }
-    stand.folgen = stand.folgen + (sitzung.wiederholung ? 0 : 1);
+    stand.folgen = stand.folgen + (neueFolge ? 1 : 0);
 
     const info = titelInfo(sitzung) || {};
     const name = sitzung.titel || info.titel || sitzung.url;
@@ -378,7 +477,7 @@ function auswerten(sitzungen, optionen = {}) {
       wiederholungen: 0
     };
     titelStand.sekunden += eigene;
-    titelStand.folgen += sitzung.wiederholung ? 0 : 1;
+    titelStand.folgen += neueFolge ? 1 : 0;
     titelStand.wiederholungen += sitzung.wiederholung ? 1 : 0;
     if (!titelStand.bild && info.bild) titelStand.bild = info.bild;
     titel.set(name, titelStand);
@@ -418,8 +517,8 @@ function auswerten(sitzungen, optionen = {}) {
     .sort((links, rechts) => (rechts.sekunden - links.sekunden)
       || (rechts.folgen - links.folgen) || links.tag.localeCompare(rechts.tag))[0] || null;
 
-  const nachZeit = [...gewaehlt].sort((links, rechts) =>
-    Date.parse(links.begonnenAm) - Date.parse(rechts.begonnenAm));
+  // Schon oben sortiert.
+  const nachZeit = gewaehlt;
 
   return {
     // Der Zeitraum, den die Zahlen wirklich abdecken - nicht der angefragte.
@@ -505,5 +604,9 @@ module.exports = {
   strecke,
   laufendeStrecke,
   genreAnteile,
+  folgenKennung,
+  titelKennung,
+  bereinigen,
+  vereinen,
   auswerten
 };
