@@ -40,6 +40,30 @@ function pruefe(name, bedingung, detail) {
 }
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Warten, bis etwas eingetreten ist - und nicht, bis eine Zahl abgelaufen ist.
+ *
+ * Ein Abgleich ueber eine echte Verbindung dauert unterschiedlich lange; auf
+ * einem geteilten Runner leicht das Fuenffache. Feste Wartezeiten pruefen
+ * deshalb die Maschine und nicht den Code. Die Obergrenze ist grosszuegig, weil
+ * sie nur im Fehlerfall ueberhaupt erreicht wird.
+ */
+async function warteBis(bedingung, was, hoechstens = 15000) {
+  const bis = Date.now() + hoechstens;
+  while (Date.now() < bis) {
+    let erfuellt = false;
+    try {
+      erfuellt = Boolean(bedingung());
+    } catch (fehler) {
+      erfuellt = false;
+    }
+    if (erfuellt) return true;
+    await schlaf(50);
+  }
+  console.log(`      (Wartezeit abgelaufen: ${was})`);
+  return false;
+}
+
 // --- Das Telefon: die echte Bruecke -------------------------------------------
 
 const KERN_MODULE = new Set(
@@ -190,9 +214,9 @@ const ANBIETER = [{
 
   const pc = rechner("rechner", key, [geraeteStand.staende([favorit()])[0]]);
   pc.an();
-  await schlaf(400);
+  await warteBis(() => pc.abgleich.status().connected, "Rechner verbindet sich");
   pc.melden();
-  await schlaf(400);
+  await warteBis(() => pc.abgleich.status().entries > 0, "Rechner meldet seinen Stand");
 
   handy.bruecke.anbieterSetzen(ANBIETER);
   handy.bruecke.favoritenSetzen([]);
@@ -200,20 +224,21 @@ const ANBIETER = [{
   handy.bruecke.konfigurieren({
     enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: "handy"
   });
-  await schlaf(900);
+  await warteBis(() => (handy.gespeichert.favoriten || []).length === 1,
+    "Telefon uebernimmt den Bestand");
 
   const beimHandy = handy.gespeichert.favoriten || [];
   pruefe("Das Telefon uebernimmt den Bestand des Rechners",
-    beimHandy.length === 1 && beimHandy[0].title === "One Piece" && beimHandy[0].episode === 3,
+    beimHandy.length === 1 && beimHandy[0]?.title === "One Piece" && beimHandy[0]?.episode === 3,
     "Fall 2 der Liste: ein leeres Telefon bekommt den bestehenden Stand");
   pruefe("Und ordnet ihn dem eigenen Anbieter zu",
-    beimHandy.length === 1 && beimHandy[0].providerId === "aniworld",
+    beimHandy.length === 1 && beimHandy[0]?.providerId === "aniworld",
     "gefunden ueber den Namen, weil der Wirt hier ein anderer ist");
   pruefe("Ein neuer Eintrag traegt zunaechst die Adresse des anderen Geraets",
-    beimHandy.length === 1 && beimHandy[0].url.includes("aniworld.to"),
+    beimHandy.length === 1 && String(beimHandy[0]?.url).includes("aniworld.to"),
     "genau wie am Rechner: erst der naechste Abgleich schreibt nur noch die Folge um");
   pruefe("Der Stand selbst kommt vollstaendig an",
-    beimHandy.length === 1 && beimHandy[0].position === 300 && beimHandy[0].progress === 21);
+    beimHandy.length === 1 && beimHandy[0]?.position === 300 && beimHandy[0]?.progress === 21);
 
   const standVorher = pc.eigen.get(geraeteStand.titelSchluessel(favorit()));
   pruefe("Der Rechner hat dabei nichts verloren",
@@ -223,10 +248,11 @@ const ANBIETER = [{
   // --- Kein Kreis ------------------------------------------------------------
 
   const spiegelStand = handy.ereignisse.filter((e) => e.art === "geraete:favoriten").length;
-  await schlaf(1200);
   handy.bruecke.abgleichen();
   pc.melden();
-  await schlaf(900);
+  // Hier steht die feste Zeit zu Recht: geprueft wird, dass in einer Spanne
+  // *nichts* geschieht, und darauf laesst sich nicht warten.
+  await schlaf(1500);
   pruefe("Danach ist Ruhe",
     handy.ereignisse.filter((e) => e.art === "geraete:favoriten").length === spiegelStand
     && pc.herein.length <= 1,
@@ -234,13 +260,17 @@ const ANBIETER = [{
 
   // --- Das Telefon schaut weiter, der Rechner bekommt es --------------------
 
-  const telefonFavoriten = handy.gespeichert.favoriten;
+  // Ohne Uebernahme gibt es hier nichts zu aendern - dann sind die Pruefungen
+  // darueber schon rot, und ein Absturz an dieser Stelle verdeckte sie nur.
+  const telefonFavoriten = handy.gespeichert.favoriten || [];
+  if (!telefonFavoriten.length) telefonFavoriten.push({});
   telefonFavoriten[0].position = 812;
   telefonFavoriten[0].progress = 58;
   telefonFavoriten[0].episode = 4;
   handy.bruecke.favoritenSetzen(telefonFavoriten);
   handy.bruecke.abgleichen();
-  await schlaf(900);
+  await warteBis(() => pc.eigen.get(geraeteStand.titelSchluessel(favorit()))?.position === 812,
+    "Rechner bekommt den Stand des Telefons");
 
   const beimRechner = pc.eigen.get(geraeteStand.titelSchluessel(favorit()));
   pruefe("Was am Telefon laeuft, steht danach am Rechner",
@@ -259,16 +289,18 @@ const ANBIETER = [{
   // Von Hand in die Ablage des Rechners und gemeldet - das Relay vergibt einen
   // neueren Zeitstempel, also *gewinnt* er hier. Genau das ist die Regel.
   pc.setzen(alt);
-  await schlaf(900);
-  const nachAlt = handy.gespeichert.favoriten;
+  await warteBis(() => (handy.gespeichert.favoriten || [])[0]?.episode === 1,
+    "Telefon uebernimmt den zuletzt gemeldeten Stand");
+  const nachAlt = handy.gespeichert.favoriten || [];
   pruefe("Der zuletzt gemeldete Stand gilt",
-    nachAlt[0].episode === 1 && nachAlt[0].position === 5,
+    nachAlt[0]?.episode === 1 && nachAlt[0]?.position === 5,
     "Fall 7: zwei Geraete am selben Titel - es entscheidet die Zeit des Relays, nicht der Inhalt");
 
   // --- Geloescht bleibt geloescht --------------------------------------------
 
   pc.loeschen(geraeteStand.titelSchluessel(favorit()));
-  await schlaf(900);
+  await warteBis(() => (handy.gespeichert.favoriten || []).length === 0,
+    "Telefon uebernimmt die Loeschung");
   pruefe("Ein geloeschter Titel verschwindet auch am Telefon",
     (handy.gespeichert.favoriten || []).length === 0,
     "der Grabstein - ohne ihn holte das Telefon ihn beim naechsten Abgleich zurueck");
@@ -291,7 +323,11 @@ const ANBIETER = [{
   fremdes.bruecke.konfigurieren({
     enabled: true, serverUrl: ADRESSE, schluessel: schluesselModul.erzeugen(), geraetId: "fremd"
   });
-  await schlaf(900);
+  // Erst verbinden lassen - ein Geraet, das nichts sieht, weil es gar nicht
+  // erst verbunden war, belegt nichts.
+  await warteBis(() => fremdes.gespeichert.zustand?.connected === true,
+    "fremdes Geraet verbindet sich");
+  await schlaf(500);
   pruefe("Ein fremder Schluessel bekommt nichts zu sehen",
     (fremdes.gespeichert.favoriten || []).length === 0,
     "Fall 13: ein anderer Schluessel ist ein anderer Raum - und ein anderes Schloss");

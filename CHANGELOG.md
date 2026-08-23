@@ -3,6 +3,23 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.37.1 — 24. August 2026
+
+Ein Test, der die Maschine geprueft hat statt den Code.
+
+- Die neue Probe des Geraeteabgleichs wartete feste Zeitspannen auf einen
+  Abgleich ueber eine echte Verbindung. Auf diesem Rechner genuegten 900 ms, auf
+  dem Bau-Server nicht - der Lauf von 1.37.0 ist daran gescheitert, ohne dass am
+  Abgleich selbst etwas falsch war
+- Jetzt wird auf das Eintreten gewartet und nicht auf die Uhr: hoechstens 15
+  Sekunden, und im Regelfall ist es nach Millisekunden vorbei. Nur an der einen
+  Stelle, an der geprueft wird, dass *nichts* geschieht, steht weiterhin eine
+  feste Spanne - darauf laesst sich nicht warten
+- Dazu jede Behauptung gegen einen fehlenden Wert abgesichert. Ein Abbruch
+  mitten in der Probe verdeckte vorher die Pruefungen darueber
+
+An ELFIX selbst aendert sich nichts. Android bleibt bei 1.5.0.
+
 ## 1.37.0 — 24. August 2026
 
 „Meine Geräte" gibt es jetzt auch am Telefon und am Fernseher.
