@@ -3,6 +3,65 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.34.0 — 21. August 2026
+
+Ein QR-Code fuer die Fernbedienung, und zwei Dinge an ihr, die nicht stimmten.
+
+**Scannen statt abtippen**
+
+- Neben dem Kopplungscode steht jetzt ein QR-Code. Wer ihn mit der Kamera
+  scannt, hat die Fernbedienung offen und ist gekoppelt, ohne etwas getippt zu
+  haben - die Adresse traegt den Code mit
+- Aus der Adresszeile verschwindet er sofort wieder. Ein Geheimnis hat weder im
+  Verlauf des Browsers noch in einem geteilten Link etwas verloren
+- Gerechnet wird der Code selbst. ELFIX hat zwei Laufzeit-Abhaengigkeiten und
+  das Relay keine einzige; im README steht ausdruecklich, dass ein `npm ci`
+  beim Aktualisieren nie noetig war. Ein Bildchen ist kein Grund, das
+  aufzugeben
+- Byte-Modus, Fehlerkorrektur M, Fassungen 1 bis 10 - das reicht fuer 213
+  Zeichen, und eine Adresse mit Code ist halb so lang
+
+**Vollbild meint den Player**
+
+- Der Knopf machte das Fenster gross. Das ist nicht dasselbe: die Anbieterseite
+  fuellt dann den Bildschirm, das Video sitzt aber weiter in seinem Kasten
+  mittendrin, mit Kopfzeile und Empfehlungen ringsum
+- Jetzt wird der Player gefragt, so wie es ein Klick auf seinen eigenen Knopf
+  taete. Das Fenster bleibt der Rueckfall, wenn kein Video da ist oder der
+  Rahmen kein Vollbild zulaesst
+- Genommen wird das groesste sichtbare Video - auf Anbieterseiten liegen
+  Vorschauen in Briefmarkengroesse daneben
+- Dieselbe Aenderung fuer `F11`: auch dort war es bisher das Fenster
+
+**Installieren, das wirklich installiert**
+
+- Chrome fiel auf eine blosse Verknuepfung zurueck, und die oeffnet mit
+  Browserleiste. Drei Dinge daran waren zu holen
+- Die Seite trug nur die veraltete Apple-Angabe. Chrome sagt das sogar in der
+  Konsole und fragt nach `mobile-web-app-capable` - jetzt steht beides da
+- Das Manifest nannte nur ein Symbol. Jetzt sind es beide Groessen, die Chrome
+  kennt: 192 fuer den Startbildschirm, 512 fuer alles Groessere
+- Und es hat eine eigene Kennung. Ohne sie nimmt Chrome die Startadresse dafuer
+  - aendert die sich einmal, gilt es als andere App und liegt zweimal auf dem
+  Startbildschirm
+- Vor allem aber sagt die Seite jetzt, wenn es *nicht* geht: ohne `https` gibt
+  es keinen Service Worker und damit kein Installieren. Das ist der haeufigste
+  Fall und der unauffaelligste - vorher passierte schlicht nichts
+
+**Geprueft**
+
+- Der QR-Code laesst sich nicht ansehen, sondern nur lesen: ein falscher sieht
+  vollkommen richtig aus. Beim Bauen lag die Formatangabe transponiert, und
+  aufgefallen ist das erst, als ein fremder Decoder nichts fand
+- Nachgerechnet wird die Fehlerkorrektur gegen die Musterloesung der Norm, dazu
+  jede Fassungsgrenze und der Aufbau des Musters. Fuer das Ganze steht ein
+  Fingerabdruck: drei Codes, einmal mit einem fremden Leser geprueft und
+  seither festgeschrieben
+- Fuer das Installieren wird jede Bedingung einzeln geprueft - die Umleitung
+  auf `/fern/`, das Manifest samt Geltungsbereich, beide Symbole in der
+  Groesse, die das Manifest behauptet, und der Service Worker mit seiner
+  fetch-Behandlung. Keine davon meldet sich, wenn sie fehlt
+
 ## 1.33.0 — 21. August 2026
 
 Das Handy wird zur Fernbedienung. Ohne App - eine Seite im Browser genuegt.

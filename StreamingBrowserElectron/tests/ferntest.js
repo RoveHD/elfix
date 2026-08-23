@@ -13,7 +13,7 @@ const WS = require("../../sync-server/node_modules/ws");
 const fern = require("../../sync-server/fern");
 const fernSeite = require("../../sync-server/fern-seite");
 const fernIcon = require("../../sync-server/fern-icon");
-const { Fernbedienung, codeErzeugen, codeNormalisieren } = require("../src/fernbedienung");
+const { Fernbedienung, codeErzeugen, codeNormalisieren, kopplungsAdresse } = require("../src/fernbedienung");
 
 const PORT = Number(process.env.TESTPORT) || 8799;
 const ADRESSE = `ws://127.0.0.1:${PORT}`;
@@ -224,24 +224,37 @@ function client() {
   pruefe("Die Startadresse liegt im Geltungsbereich",
     manifest.start_url.startsWith(manifest.scope) && manifest.scope === "/fern/",
     `${manifest.start_url} in ${manifest.scope}`);
-  pruefe("Es nennt ein Symbol, gross genug fuer Chrome",
-    manifest.icons.some((symbol) => Number(String(symbol.sizes).split("x")[0]) >= 192),
+  pruefe("Es nennt beide Groessen, die Chrome kennt",
+    ["192x192", "512x512"].every((groesse) => manifest.icons.some((symbol) => symbol.sizes === groesse)),
     JSON.stringify(manifest.icons.map((i) => i.sizes)));
+  pruefe("und eine eigene Kennung",
+    manifest.id === "/fern/",
+    "ohne sie nimmt Chrome die Startadresse - aendert die sich, liegt die App zweimal da");
   pruefe("und eines, das sich ausschneiden laesst",
     manifest.icons.some((symbol) => String(symbol.purpose).includes("maskable")),
     "sonst klebt auf runden Startbildschirmen ein Quadrat");
 
-  const symbol = await fetch(`http://127.0.0.1:${PORT}/fern/icon.png`);
-  const bytes = Buffer.from(await symbol.arrayBuffer());
-  pruefe("Das Symbol ist ein echtes PNG",
-    symbol.status === 200 && symbol.headers.get("content-type") === "image/png"
-    && bytes.subarray(1, 4).toString() === "PNG");
-  pruefe("und so gross, wie das Manifest behauptet",
-    bytes.readUInt32BE(16) === 512 && bytes.readUInt32BE(20) === 512,
-    `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`);
-  pruefe("Es liegt als Base64 in einer .js-Datei",
-    fernIcon.ICON.length === bytes.length,
+  // Jedes Symbol einzeln: was das Manifest verspricht, muss auch dastehen und
+  // muss die Groesse haben, die es behauptet. Ein Symbol in der falschen Groesse
+  // faellt erst auf dem Startbildschirm auf.
+  for (const [datei, groesse] of [["icon.png", 512], ["icon-192.png", 192]]) {
+    const symbol = await fetch(`http://127.0.0.1:${PORT}/fern/${datei}`);
+    const bytes = Buffer.from(await symbol.arrayBuffer());
+    pruefe(`${datei} ist ein echtes PNG`,
+      symbol.status === 200 && symbol.headers.get("content-type") === "image/png"
+      && bytes.subarray(1, 4).toString() === "PNG");
+    pruefe(`und ${groesse} mal ${groesse} gross, wie das Manifest sagt`,
+      bytes.readUInt32BE(16) === groesse && bytes.readUInt32BE(20) === groesse,
+      `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`);
+  }
+  pruefe("Beide liegen als Base64 in einer .js-Datei",
+    fernIcon.ICON_512.length > 1000 && fernIcon.ICON_192.length > 1000,
     "beim Aktualisieren des Relays werden nur .js-Dateien kopiert");
+  for (const symbol of manifest.icons) {
+    const antwort = await fetch(`http://127.0.0.1:${PORT}/fern/${symbol.src}`);
+    pruefe(`Das Manifest zeigt mit ${symbol.src} nicht ins Leere`,
+      antwort.status === 200, String(antwort.status));
+  }
 
   const worker = await fetch(`http://127.0.0.1:${PORT}/fern/sw.js`);
   const workerText = await worker.text();
@@ -259,6 +272,32 @@ function client() {
   pruefe("Sie bietet das Installieren auch selbst an",
     fernSeite.SEITE.includes("beforeinstallprompt"),
     "im Chrome-Menue ist es gut versteckt");
+  pruefe("Sie traegt die Angabe, nach der Chrome fragt",
+    fernSeite.SEITE.includes('name="mobile-web-app-capable"'),
+    "die Apple-Fassung allein ist veraltet und Chrome sagt das auch");
+  pruefe("Und sie sagt, warum es gerade nicht geht",
+    fernSeite.SEITE.includes("window.isSecureContext")
+    && fernSeite.SEITE.includes("Ohne https gibt es nur eine Verknüpfung"),
+    "ohne diese Zeile passiert schlicht nichts, und niemand erfaehrt den Grund");
+  pruefe("Laeuft sie schon als App, bietet sie es nicht noch einmal an",
+    fernSeite.SEITE.includes('matchMedia("(display-mode: standalone)")'));
+
+  // Der QR-Code traegt den Kopplungscode in der Adresse. Die Seite muss ihn
+  // von dort nehmen - und sofort wieder daraus entfernen.
+  pruefe("Die Seite nimmt den Code aus der Adresse",
+    fernSeite.SEITE.includes('new URLSearchParams(location.search).get("code")'),
+    "wer den QR scannt, soll nichts mehr abtippen");
+  pruefe("und raeumt ihn gleich wieder weg",
+    fernSeite.SEITE.includes('history.replaceState(null, "", location.pathname)'),
+    "im Verlauf des Browsers hat ein Geheimnis nichts verloren");
+
+  const kopplung = kopplungsAdresse("wss://relay.example.com", code);
+  pruefe("Die Adresse fuer den QR-Code passt zur Seite",
+    kopplung === `https://relay.example.com/fern/?code=${code}`,
+    kopplung);
+  pruefe("Ohne Server-Adresse gibt es keinen QR-Code",
+    kopplungsAdresse("", code) === "" && kopplungsAdresse("wss://x.example", "") === "",
+    "ein Code, der ins Leere zeigt, ist schlimmer als keiner");
 
   const seite = await fetch(`http://127.0.0.1:${PORT}/fern/`);
   const inhalt = await seite.text();
@@ -337,12 +376,24 @@ function client() {
   // Ein Befehl, den das Relay durchlaesst und den ELFIX nicht kennt, waere ein
   // Knopf, der nichts tut - und einer, den ELFIX kennt und das Relay nicht
   // durchlaesst, ein Knopf, der nie ankommt.
-  const inMain = MAIN.slice(MAIN.indexOf("async function fernBefehl("), MAIN.indexOf("function fernMediaScript("))
-    + MAIN.slice(MAIN.indexOf("function fernMediaScript("), MAIN.indexOf("async function fernStandMelden("));
+  const inMain = MAIN.slice(MAIN.indexOf("async function fernBefehl("), MAIN.indexOf("async function fernStandMelden("));
   const fehlend = fern.BEFEHLE.filter((befehl) => !inMain.includes(`"${befehl}"`));
   pruefe("Jeder Befehl des Relays wird im Hauptprozess behandelt",
     fehlend.length === 0,
     fehlend.join(",") || "alle acht");
+
+  // Vollbild heisst der Player und nicht das Fenster. Das Fenster gross zu
+  // machen laesst das Video in seinem Kasten sitzen, mit Kopfzeile und
+  // Empfehlungen ringsum - und genau das tat der Knopf zuerst.
+  pruefe("Vollbild geht ueber den Player",
+    /await vollbildUmschalten\(\);/.test(inMain)
+    && /requestFullscreen/.test(MAIN.slice(MAIN.indexOf("function vollbildScript("), MAIN.indexOf("function vollbildScript(") + 2000)),
+    "das Fenster ist nur der Rueckfall, wenn die Seite kein Vollbild zulaesst");
+  pruefe("Es nimmt das groesste Video",
+    /clientWidth \* rechts.clientHeight/.test(MAIN),
+    "auf Anbieterseiten liegen Vorschauen in Briefmarkengroesse daneben");
+  pruefe("Und es schaltet auch wieder aus",
+    /if \(document.fullscreenElement\) \{/.test(MAIN));
 
   const seiteBefehle = [...fernSeite.SEITE.matchAll(/data-befehl="([a-z]+)"/g)].map((t) => t[1]);
   const unbekannt = seiteBefehle.filter((befehl) => !fern.BEFEHLE.includes(befehl));

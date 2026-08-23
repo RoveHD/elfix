@@ -230,4 +230,32 @@ class Fernbedienung {
   }
 }
 
-module.exports = { Fernbedienung, codeErzeugen, codeNormalisieren, CODE_LAENGE };
+// Die Adresse, die auf dem Handy landet. Das Relay spricht die App ueber
+// ws(s) an, der Browser braucht http(s) - und den Schraegstrich am Ende, weil
+// die Seite dort liegt.
+function webAdresse(serverUrl) {
+  const roh = String(serverUrl || "").trim().replace(/\/+$/, "");
+  if (!roh) return "";
+  if (/^wss:\/\//i.test(roh)) return roh.replace(/^wss:/i, "https:");
+  if (/^ws:\/\//i.test(roh)) return roh.replace(/^ws:/i, "http:");
+  if (/^https?:\/\//i.test(roh)) return roh;
+  return `https://${roh}`;
+}
+
+// Adresse samt Code - das, was im QR-Code steht. Wer ihn scannt, hat die Seite
+// offen und ist gekoppelt, ohne etwas abgetippt zu haben.
+function kopplungsAdresse(serverUrl, code) {
+  const basis = webAdresse(serverUrl);
+  const sauber = codeNormalisieren(code);
+  if (!basis || !sauber) return "";
+  return `${basis}/fern/?code=${sauber}`;
+}
+
+module.exports = {
+  Fernbedienung,
+  codeErzeugen,
+  codeNormalisieren,
+  webAdresse,
+  kopplungsAdresse,
+  CODE_LAENGE
+};

@@ -49,15 +49,18 @@ Einzurichten unter *Einstellungen > Fernbedienung*:
 
 1. **Fernbedienung erlauben** einschalten. Dabei entsteht ein Kopplungscode aus
    acht Zeichen.
-2. Im Handybrowser `https://dein-relay.example.com/fern/` oeffnen und den Code
-   eintippen. Das Handy merkt ihn sich - beim naechsten Mal ist es sofort da.
+2. Den **QR-Code** daneben mit der Kamera scannen - damit oeffnet sich die
+   Seite und ist gleich gekoppelt. Wer lieber tippt: im Handybrowser
+   `https://dein-relay.example.com/fern/` oeffnen und den Code eintragen. So
+   oder so merkt das Handy ihn sich; beim naechsten Mal ist es sofort da.
 3. Wenn sie liegen bleiben soll: **Als App installieren** druecken (oder im
    Browsermenue *Zum Startbildschirm hinzufuegen*). Danach liegt die
    Fernbedienung als eigenes Symbol auf dem Handy, oeffnet ohne Browserleiste
    und startet mit dem letzten Code.
 
 Dann gibt es sechs Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor,
-Ton aus, Vollbild und naechste Folge. Daneben steht, was gerade laeuft, mit
+Ton aus, Vollbild und naechste Folge. *Vollbild* meint dabei den Player und
+nicht das Fenster - dasselbe, was der Knopf im Bild tut. Daneben steht, was gerade laeuft, mit
 Fortschrittsbalken.
 
 Gesteuert wird immer, was gerade vorn liegt - eine Fernbedienung bedient das,
@@ -67,17 +70,22 @@ Tastenkuerzel.
 
 ### Als App auf dem Startbildschirm
 
-Dafuer liefert das Relay drei Dinge mit: ein Manifest, ein Symbol und einen
-Service Worker. Chrome bietet das Installieren nur an, wenn alle drei da sind -
-und wenn die Seite ueber **https** kommt. Ueber den Cloudflare Tunnel ist das
-erfuellt; ueber eine nackte IP im WLAN nicht, dort bleibt es beim Lesezeichen.
+Dafuer liefert das Relay vier Dinge mit: ein Manifest, zwei Symbole (192 und
+512) und einen Service Worker. Chrome bietet das Installieren nur an, wenn alle
+da sind - und wenn die Seite ueber **https** kommt. Ueber den Cloudflare Tunnel
+ist das erfuellt; ueber eine nackte IP im WLAN nicht.
+
+Fehlt eine Bedingung, sagt die Seite das auch. Ohne diese Zeile passiert
+schlicht nichts, und wer die Seite dann ueber *Zum Startbildschirm hinzufuegen*
+ablegt, bekommt eine Verknuepfung mit Browserleiste statt einer App - ohne je zu
+erfahren, woran es lag.
 
 Der Service Worker haelt die Seite vor, aber nur als Rueckfall: geladen wird
 immer erst aus dem Netz. Nach einem Aktualisieren des Relays steht damit sofort
 die neue Fassung da statt wochenlang die alte. Ohne Verbindung oeffnet die
 Fernbedienung trotzdem und sagt selbst, dass gerade nichts geht.
 
-Symbol und Seite liegen als Zeichenketten in `.js`-Dateien (`fern-seite.js`,
+Symbole und Seite liegen als Zeichenketten in `.js`-Dateien (`fern-seite.js`,
 `fern-icon.js`). Auch das folgt der Regel oben: kopiert werden beim
 Aktualisieren nur `.js`-Dateien, und ein Startbildschirm-Symbol, das ins Leere
 zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet.
@@ -510,6 +518,7 @@ StreamingBrowserElectron/src/
   watchparty.js         Ein Raum: Verbindung, Mitglieder, Live-Steuerung
   watchparty-raeume.js  Mehrere Raeume nebeneinander
   fernbedienung.js      Handy als Fernbedienung: Verbindung und Kopplungscode
+  qr.js                 QR-Code, selbst gerechnet - fuer die Kopplung
   marken.js             Intro ueberspringen: Regeln und das Skript im Player
   geraete.js            Meine Geraete: Verbindung und Abgleichregeln
   geraete-schluessel.js Schluessel, Ableitungen, Verschluesselung

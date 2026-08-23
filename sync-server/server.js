@@ -317,14 +317,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (pfad === "/fern/icon.png") {
+  if (pfad === "/fern/icon.png" || pfad === "/fern/icon-192.png") {
+    const bild = pfad.endsWith("icon-192.png") ? fernIcon.ICON_192 : fernIcon.ICON_512;
     res.writeHead(200, {
       "content-type": "image/png",
-      // Das Symbol aendert sich praktisch nie.
+      // Die Symbole aendern sich praktisch nie.
       "cache-control": "public, max-age=604800",
-      "content-length": fernIcon.ICON.length
+      "content-length": bild.length
     });
-    res.end(fernIcon.ICON);
+    res.end(bild);
     return;
   }
 

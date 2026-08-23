@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   forgetMarken: () => ipcRenderer.invoke("marken:vergessen"),
   // Das Handy als Fernbedienung.
   getFernStatus: () => ipcRenderer.invoke("fern:status"),
+  getFernQr: () => ipcRenderer.invoke("fern:qr"),
   enableFern: () => ipcRenderer.invoke("fern:einschalten"),
   disableFern: () => ipcRenderer.invoke("fern:ausschalten"),
   newFernCode: () => ipcRenderer.invoke("fern:neuer-code"),

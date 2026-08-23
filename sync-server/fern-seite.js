@@ -18,8 +18,10 @@ const SEITE = `<!doctype html>
 <meta name="theme-color" content="#070a10">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.png" sizes="512x512" type="image/png">
-<!-- iOS kennt kein Manifest: dort machen diese beiden aus der Seite eine App. -->
-<link rel="apple-touch-icon" href="icon.png">
+<!-- Die Angabe, nach der Chrome ausdruecklich fragt. Die Apple-Fassung darunter
+     ist veraltet, aber iOS kennt bis heute nichts anderes. -->
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ELFIX">
@@ -68,6 +70,7 @@ const SEITE = `<!doctype html>
 <button id="installieren" class="weg" style="width:100%">
   <span class="zeichen">⤓</span>Als App installieren
 </button>
+<div class="zustand" id="installZustand"></div>
 
 <form id="koppeln">
   <div class="karte">
@@ -104,8 +107,19 @@ const SEITE = `<!doctype html>
   const adresse = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
   const $ = (id) => document.getElementById(id);
   let socket = null;
-  let code = localStorage.getItem("elfix-fern-code") || "";
+  // Aus dem QR-Code: wer ihn scannt, hat den Code schon in der Adresse und
+  // soll nichts mehr abtippen.
+  const ausAdresse = (new URLSearchParams(location.search).get("code") || "")
+    .toUpperCase().replace(/[^0-9A-Z]/g, "");
+  let code = ausAdresse.length === 8 ? ausAdresse : (localStorage.getItem("elfix-fern-code") || "");
   let gekoppelt = false;
+
+  // Und gleich wieder aus der Adresse heraus. Der Code ist ein Geheimnis; im
+  // Verlauf des Browsers und in der Adresszeile hat er nichts verloren, und
+  // beim Teilen des Links ginge er sonst mit.
+  if (ausAdresse && history.replaceState) {
+    history.replaceState(null, "", location.pathname);
+  }
 
   const zeit = (sekunden) => {
     const s = Math.max(0, Math.round(sekunden || 0));
@@ -211,11 +225,52 @@ const SEITE = `<!doctype html>
 
   // Als App auf dem Startbildschirm. Chrome bietet das von sich aus an, aber
   // gut versteckt im Menue - hier steht ein Knopf, sobald es moeglich ist.
+  //
+  // Und wenn es nicht moeglich ist, steht hier, warum. Das ist der eigentliche
+  // Punkt: ohne diese Zeile passiert schlicht nichts, und wer die Seite dann
+  // ueber "Zum Startbildschirm hinzufuegen" ablegt, bekommt eine Verknuepfung
+  // mit Browserleiste und keine App - ohne je zu erfahren, woran es lag.
   let angebot = null;
+
+  const alsApp = () => window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
+
+  const installLage = () => {
+    const feld = $("installZustand");
+    if (alsApp()) {
+      $("installieren").classList.add("weg");
+      feld.textContent = "";
+      return;
+    }
+    if (angebot) {
+      feld.textContent = "";
+      return;
+    }
+    if (!window.isSecureContext) {
+      // Der haeufigste Fall, und der unauffaelligste: ueber eine nackte IP im
+      // WLAN gibt es keinen Service Worker und damit kein Installieren. Chrome
+      // bietet dann nur "Zum Startbildschirm hinzufuegen" an - das ist eine
+      // Verknuepfung, die im Browser mit Leiste aufgeht.
+      feld.textContent = "Ohne https gibt es nur eine Verknüpfung. Öffne die Seite über deine Tunnel-Adresse, dann geht auch „Installieren“.";
+      feld.className = "zustand fehler";
+      return;
+    }
+    if (!("serviceWorker" in navigator)) {
+      feld.textContent = "Dieser Browser kann keine Apps installieren. In Chrome oder Safari klappt es.";
+      feld.className = "zustand fehler";
+      return;
+    }
+    // Chrome prueft die Bedingungen erst, wenn der Service Worker steht - beim
+    // allerersten Oeffnen ist das oft noch nicht so.
+    feld.textContent = "Chrome prüft noch, ob es installieren kann. Meist erscheint der Knopf beim nächsten Öffnen.";
+    feld.className = "zustand";
+  };
+
   window.addEventListener("beforeinstallprompt", (ereignis) => {
     ereignis.preventDefault();
     angebot = ereignis;
     $("installieren").classList.remove("weg");
+    installLage();
   });
   $("installieren").addEventListener("click", async () => {
     if (!angebot) return;
@@ -226,7 +281,9 @@ const SEITE = `<!doctype html>
   });
   // Ist sie schon installiert, hat der Knopf nichts mehr zu tun.
   window.addEventListener("appinstalled", () => {
+    angebot = null;
     $("installieren").classList.add("weg");
+    installLage();
   });
 
   // Ohne Service Worker bietet Chrome das Installieren gar nicht erst an. Er
@@ -235,6 +292,7 @@ const SEITE = `<!doctype html>
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
+  installLage();
 })();
 </script>
 </body>
@@ -252,21 +310,26 @@ const MANIFEST = {
   name: "ELFIX Fernbedienung",
   short_name: "ELFIX",
   description: "Pause, Spulen und naechste Folge fuer ELFIX auf dem Rechner.",
+  // Die Kennung der App. Ohne sie nimmt Chrome die Startadresse dafuer - und
+  // aendert die sich einmal, gilt es als andere App und liegt zweimal auf dem
+  // Startbildschirm.
+  id: "/fern/",
   start_url: "/fern/",
   scope: "/fern/",
   display: "standalone",
   background_color: "#070a10",
   theme_color: "#070a10",
   lang: "de",
+  // Beide Groessen, die Chrome nennt. Eine allein reicht fuer das Angebot zum
+  // Installieren, aber die fertige App sieht damit auf manchen Geraeten
+  // nachgeschaerft aus.
+  //
+  // "any maskable" heisst: dasselbe Bild dient als gewoehnliches Symbol und als
+  // eines, das rund oder eckig ausgeschnitten wird. Das Zeichen sitzt weit
+  // genug innen dafuer.
   icons: [
-    {
-      src: "icon.png",
-      sizes: "512x512",
-      type: "image/png",
-      // Beides in einem: als gewoehnliches Symbol und als eines, das rund oder
-      // eckig ausgeschnitten wird. Das Zeichen sitzt weit genug innen dafuer.
-      purpose: "any maskable"
-    }
+    { src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
+    { src: "icon.png", sizes: "512x512", type: "image/png", purpose: "any maskable" }
   ]
 };
 
@@ -280,8 +343,8 @@ const MANIFEST = {
 //
 // Das Icon und das Manifest aendern sich praktisch nie und kommen deshalb
 // zuerst aus dem Vorrat.
-const SERVICE_WORKER = `const VORRAT = "elfix-fern-1";
-const SCHALE = ["./", "./icon.png", "./manifest.webmanifest"];
+const SERVICE_WORKER = `const VORRAT = "elfix-fern-2";
+const SCHALE = ["./", "./icon.png", "./icon-192.png", "./manifest.webmanifest"];
 
 self.addEventListener("install", (ereignis) => {
   ereignis.waitUntil(caches.open(VORRAT).then((vorrat) => vorrat.addAll(SCHALE)).catch(() => {}));
@@ -301,7 +364,7 @@ self.addEventListener("fetch", (ereignis) => {
   if (adresse.origin !== location.origin || !adresse.pathname.startsWith("/fern")) return;
 
   // Symbol und Manifest: erst aus dem Vorrat.
-  if (adresse.pathname.endsWith("icon.png") || adresse.pathname.endsWith("manifest.webmanifest")) {
+  if (adresse.pathname.endsWith(".png") || adresse.pathname.endsWith("manifest.webmanifest")) {
     ereignis.respondWith(caches.match(anfrage).then((treffer) => treffer || fetch(anfrage)));
     return;
   }

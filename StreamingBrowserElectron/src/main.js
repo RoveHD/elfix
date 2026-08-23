@@ -59,7 +59,10 @@ const umzug = require("./umzug");
 // wird und was in der Seite dafuer laeuft.
 const marken = require("./marken");
 // Das Handy als Fernbedienung: Verbindung zum Relay und der Kopplungscode.
-const { Fernbedienung, codeErzeugen } = require("./fernbedienung");
+const { Fernbedienung, codeErzeugen, kopplungsAdresse } = require("./fernbedienung");
+// Ein QR-Code, selbst gerechnet - fuer das Handy, damit die Adresse samt Code
+// nicht abgetippt werden muss.
+const qr = require("./qr");
 const bildausschnitt = require("../shared/bildausschnitt");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -1384,6 +1387,17 @@ ipcMain.handle("marken:vergessen", () => {
 // --- Fernbedienung: die Aufrufe aus der Oberflaeche --------------------------
 
 ipcMain.handle("fern:status", () => fernbedienung.status());
+
+// Der QR-Code fuer das Handy: Adresse und Kopplungscode in einem Bild.
+//
+// Er wird hier gerechnet und nicht in der Oberflaeche: dort gibt es kein
+// require, und ein zweites Mal wollte ich das nicht schreiben. Heraus kommt
+// fertiges SVG - die Seite setzt es nur noch ein.
+ipcMain.handle("fern:qr", () => {
+  const adresse = kopplungsAdresse(settings.watchparty?.serverUrl || "", fernSettings().code || "");
+  if (!adresse) return { adresse: "", svg: "" };
+  return { adresse, svg: qr.alsSvg(adresse, { hell: "#ffffff", dunkel: "#0b0f16" }) };
+});
 
 // Einschalten. Ohne Code gibt es nichts zu koppeln - also entsteht beim ersten
 // Mal einer.
@@ -2843,8 +2857,9 @@ function tastenkuerzel(input) {
   // das bezieht Overlay und Bildflaeche mit ein, das andere nicht.
   if (input.key === "F11" && ohneAlles) {
     if (!isLiveView(activeView)) return false;
-    if (isContentFullscreen) leaveContentFullscreen();
-    else enterContentFullscreen();
+    // Derselbe Weg wie der Knopf auf der Fernbedienung: erst den Player, dann
+    // das Fenster.
+    vollbildUmschalten().catch(() => {});
     return true;
   }
 
@@ -7481,8 +7496,7 @@ async function fernBefehl(befehl) {
   if (!isLiveView(activeView)) return;
 
   if (befehl === "vollbild") {
-    if (isContentFullscreen) leaveContentFullscreen();
-    else enterContentFullscreen();
+    await vollbildUmschalten();
     await fernStandMelden();
     return;
   }
@@ -7505,6 +7519,68 @@ async function fernBefehl(befehl) {
   // Sofort melden statt auf den naechsten Takt zu warten: fuenf Sekunden
   // Verzoegerung fuehlen sich an, als waere der Druck nicht angekommen.
   await fernStandMelden();
+}
+
+// Vollbild heisst: das Bild wird gross, nicht das Fenster.
+//
+// Das Fenster gross zu machen war das, was hier bisher passierte, und es ist
+// nicht dasselbe: die Anbieterseite fuellt dann den Bildschirm, das Video sitzt
+// aber weiter in seinem Kasten mittendrin, mit Kopfzeile und Empfehlungen
+// ringsum. Gemeint ist der Knopf des Players.
+//
+// Deshalb wird zuerst der Player gefragt. Gelingt es, meldet die Seite
+// "enter-html-full-screen", und der vorhandene Weg zieht Bildflaeche und
+// Ausstieg nach - genau wie bei einem Klick auf den Knopf im Player.
+//
+// Nur wenn dort nichts zu holen ist - kein Video, oder der Rahmen laesst
+// Vollbild nicht zu -, bleibt es beim Fenster. Das ist immer noch besser als
+// eine Taste, die nichts tut.
+async function vollbildUmschalten() {
+  if (!isLiveView(activeView)) return false;
+  const ergebnisse = await executeJavaScriptInMediaFrames(activeView, vollbildScript()).catch(() => []);
+  const gelungen = (ergebnisse || []).some((eintrag) => {
+    const wert = String(eintrag?.value ?? eintrag ?? "");
+    return wert === "an" || wert === "aus";
+  });
+  if (gelungen) return true;
+  if (isContentFullscreen) leaveContentFullscreen();
+  else enterContentFullscreen();
+  return true;
+}
+
+// requestFullscreen() verlangt eine Nutzergeste. Die bringt
+// executeJavaScriptInMediaFrames mit - dafuer steht das Flag dort.
+function vollbildScript() {
+  return `(() => {
+    if (document.fullscreenElement) {
+      try {
+        document.exitFullscreen();
+        return "aus";
+      } catch (_) {
+        return "fehlgeschlagen";
+      }
+    }
+    const medien = Array.from(document.querySelectorAll("video"))
+      .filter((media) => Number(media.duration) > 0 || Number(media.readyState) > 0);
+    // Das groesste sichtbare Video - auf Anbieterseiten liegen oft Vorschauen
+    // in Briefmarkengroesse daneben.
+    const media = medien.sort((links, rechts) => (
+      (rechts.clientWidth * rechts.clientHeight) - (links.clientWidth * links.clientHeight)
+    ))[0];
+    if (!media) return "kein-video";
+    // Lieber der Kasten des Players als das nackte Video: dort sitzt seine
+    // Steuerung, und die soll im Vollbild mitkommen.
+    const ziel = (media.closest && media.closest(".jwplayer, .video-js, .plyr, [data-player], .player")) || media;
+    const anfordern = ziel.requestFullscreen || ziel.webkitRequestFullscreen || ziel.mozRequestFullScreen;
+    if (typeof anfordern !== "function") return "nicht-moeglich";
+    try {
+      const versprechen = anfordern.call(ziel);
+      if (versprechen && typeof versprechen.catch === "function") versprechen.catch(() => {});
+      return "an";
+    } catch (_) {
+      return "fehlgeschlagen";
+    }
+  })()`;
 }
 
 // Was am Video zu tun ist. Ein Skript, weil das Video im Rahmen des Hosters

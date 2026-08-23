@@ -216,6 +216,8 @@ const fernAdresse = document.querySelector("#fernAdresse");
 const fernCodeCopy = document.querySelector("#fernCodeCopy");
 const fernCodeNeu = document.querySelector("#fernCodeNeu");
 const fernStatus = document.querySelector("#fernStatus");
+const fernQr = document.querySelector("#fernQr");
+const fernQrHinweis = document.querySelector("#fernQrHinweis");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
 const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
@@ -1330,6 +1332,7 @@ function renderFernStatus(status) {
     const alsWeb = server.replace(/^wss:/i, "https:").replace(/^ws:/i, "http:");
     fernAdresse.textContent = alsWeb ? `${alsWeb}/fern/` : "…/fern/ (erst die Server-Adresse bei der Watchparty eintragen)";
   }
+  renderFernQr(status);
   if (!fernStatus) return;
   if (!status?.enabled) {
     fernStatus.textContent = "Ausgeschaltet — kein Handy kann etwas auslösen.";
@@ -1340,6 +1343,31 @@ function renderFernStatus(status) {
     return;
   }
   fernStatus.textContent = "Verbunden — bereit für das Handy.";
+}
+
+// Der QR-Code kommt fertig als SVG aus dem Hauptprozess. Hier wird er nur
+// eingesetzt - und wieder weggeraeumt, wenn es nichts zu koppeln gibt.
+async function renderFernQr(status) {
+  if (!fernQr) return;
+  if (!status?.code) {
+    fernQr.replaceChildren();
+    if (fernQrHinweis) fernQrHinweis.textContent = "";
+    return;
+  }
+  const antwort = await api.getFernQr?.().catch(() => null);
+  if (!antwort?.svg) {
+    fernQr.replaceChildren();
+    if (fernQrHinweis) {
+      fernQrHinweis.textContent = "Für den QR-Code fehlt die Server-Adresse — sie steht bei der Watchparty.";
+    }
+    return;
+  }
+  // Das SVG kommt aus dem eigenen Hauptprozess und nicht von einer Seite -
+  // hier wird nichts Fremdes eingesetzt.
+  fernQr.innerHTML = antwort.svg;
+  if (fernQrHinweis) {
+    fernQrHinweis.textContent = "Mit der Kamera scannen — dann öffnet sich die Fernbedienung und ist gleich verbunden.";
+  }
 }
 
 async function fernUmschalten() {

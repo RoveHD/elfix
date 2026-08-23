@@ -59,6 +59,9 @@ function buehne(zustand = {}) {
     isLiveView: (view) => Boolean(view) && !zustand.toteAnsicht,
     leaveContentFullscreen: () => { getan.push("vollbild-aus"); umgebung.isContentFullscreen = false; },
     enterContentFullscreen: () => { getan.push("vollbild-an"); umgebung.isContentFullscreen = true; },
+    // Seit 1.34.0 geht F11 denselben Weg wie der Knopf auf der Fernbedienung:
+    // erst den Player fragen, erst dann das Fenster.
+    vollbildUmschalten: async () => { getan.push("vollbild"); },
     activeProvider: () => (zustand.ohneAnbieter ? null : { id: "aniworld", name: "AniWorld" }),
     episodeIdentity: (url) => (/episode-\d+/.test(String(url)) ? { key: "one-piece", season: 1, episode: 3 } : null),
     naechsteFolgePerTaste: async () => { getan.push("naechste-folge"); },
@@ -95,11 +98,11 @@ function buehne(zustand = {}) {
 
 {
   const b = buehne();
-  pruefe("F11 schaltet das Vollbild ein",
-    b.taste("F11") === true && b.getan.includes("vollbild-an"));
-  pruefe("und noch einmal wieder aus",
-    b.taste("F11") === true && b.getan.includes("vollbild-aus"),
-    b.getan.join(","));
+  pruefe("F11 schaltet das Vollbild um",
+    b.taste("F11") === true && b.getan.includes("vollbild"));
+  pruefe("und zwar ueber den Player, nicht ueber das Fenster",
+    !b.getan.includes("vollbild-an"),
+    "das Fenster gross zu machen laesst das Video in seinem Kasten sitzen");
 }
 
 {
