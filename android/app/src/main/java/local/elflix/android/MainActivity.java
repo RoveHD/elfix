@@ -270,6 +270,7 @@ public class MainActivity extends Activity {
             marken.vorbereiten();
             qualitaet.vorbereiten();
             geraete.vorbereiten();
+            geraete.netzBeobachten();
             // Die erste Anbieterseite ist oft schon fertig, bevor der Kern
             // steht - sie bekommt das Suchskript deshalb hier nachgereicht.
             if (activeProvider != null) {

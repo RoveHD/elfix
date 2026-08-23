@@ -248,6 +248,35 @@ public final class Geraete {
         return letzterZustand;
     }
 
+    /**
+     * Auf die Leitung horchen.
+     *
+     * <p>{@code geraete.js} verbindet sich von selbst wieder, mit wachsendem
+     * Abstand bis zu einer Minute. Das genuegt, kostet aber im schlechtesten
+     * Fall eine Minute Wartezeit, nachdem das WLAN wieder da ist - und genau
+     * dann sieht jemand auf sein Telefon. Diese Meldung verkuerzt das auf einen
+     * Augenblick.
+     *
+     * <p>Kein eigener Takt: gehorcht wird auf das Ereignis, nicht in einer
+     * Schleife gefragt.
+     */
+    public void netzBeobachten() {
+        try {
+            android.net.ConnectivityManager netz =
+                (android.net.ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (netz == null) return;
+            netz.registerDefaultNetworkCallback(new android.net.ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(android.net.Network verfuegbar) {
+                    haupt.post(() -> abgleichenSpaeter(500));
+                }
+            });
+        } catch (Exception fehler) {
+            // Ohne diese Meldung dauert es laenger, mehr nicht.
+            Log.w(TAG, "Netzbeobachtung nicht moeglich: " + fehler);
+        }
+    }
+
     // --- Der Schluessel ------------------------------------------------------
 
     /** Ein neuer Schluessel. Der Aufrufer fragt vorher nach - das trennt Geraete. */
