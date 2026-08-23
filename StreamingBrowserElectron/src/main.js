@@ -58,6 +58,8 @@ const umzug = require("./umzug");
 // Intro ueberspringen: was ein Sprung als Beleg taugt, wann daraus eine Marke
 // wird und was in der Seite dafuer laeuft.
 const marken = require("./marken");
+// Das Handy als Fernbedienung: Verbindung zum Relay und der Kopplungscode.
+const { Fernbedienung, codeErzeugen } = require("./fernbedienung");
 const bildausschnitt = require("../shared/bildausschnitt");
 
 const LEGACY_DATA_DIR = path.join(app.getPath("appData"), "GlobalSearchHub");
@@ -94,6 +96,11 @@ const GERAETE_FILE = path.join(DATA_DIR, "geraete.json");
 // Watchlist, sondern einer Serie - und die kann in der Watchlist stehen oder
 // auch nicht.
 const MARKEN_FILE = path.join(DATA_DIR, "marken.json");
+// Wie weit die Fernbedienung springt. Vorwaerts groesser als rueckwaerts: nach
+// vorn spult man ueber etwas hinweg, zurueck holt man etwas nach, das man eben
+// verpasst hat.
+const FERN_VOR_S = 30;
+const FERN_ZURUECK_S = 10;
 // Das Projekt-Repository. Eine Stelle, an der die Adresse steht: die
 // Update-Anzeige verlinkt darauf, und "Hilfe & Support" oeffnet den
 // Issue-Bereich darunter.
@@ -408,6 +415,7 @@ app.whenReady().then(async () => {
   // Bestand fuer neu und meldet ihn beim Start noch einmal hinaus.
   geraete.ablageSetzen(loadGeraeteSpiegel());
   syncGeraete();
+  syncFern();
   // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
   repairStalledSeriesFavorites().catch(() => {});
   // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
@@ -1373,6 +1381,41 @@ ipcMain.handle("marken:vergessen", () => {
 
 // Wie viele Serien ELFIX inzwischen kennt - fuer die Zeile in den
 // Einstellungen. Ohne sie waere "vergessen" ein Knopf ins Ungewisse.
+// --- Fernbedienung: die Aufrufe aus der Oberflaeche --------------------------
+
+ipcMain.handle("fern:status", () => fernbedienung.status());
+
+// Einschalten. Ohne Code gibt es nichts zu koppeln - also entsteht beim ersten
+// Mal einer.
+ipcMain.handle("fern:einschalten", () => {
+  const code = fernSettings().code || codeErzeugen();
+  settings.fern = { enabled: true, code };
+  saveSettings();
+  syncFern();
+  meldeEinstellungen();
+  return fernbedienung.status();
+});
+
+ipcMain.handle("fern:ausschalten", () => {
+  // Der Code bleibt stehen. Wer nur kurz abschaltet, soll das Handy danach
+  // nicht neu koppeln muessen.
+  settings.fern = { ...(settings.fern || {}), enabled: false };
+  saveSettings();
+  syncFern();
+  meldeEinstellungen();
+  return fernbedienung.status();
+});
+
+// Ein neuer Code loest alle gekoppelten Handys. Der Weg, wenn jemand den alten
+// kennt, der ihn nicht kennen soll.
+ipcMain.handle("fern:neuer-code", () => {
+  settings.fern = { enabled: true, code: codeErzeugen() };
+  saveSettings();
+  syncFern();
+  meldeEinstellungen();
+  return fernbedienung.status();
+});
+
 ipcMain.handle("marken:stand", () => {
   const eintraege = loadMarken();
   const schluessel = Object.keys(eintraege);
@@ -1634,6 +1677,7 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   saveSettings();
   syncWatchparty();
   syncGeraete();
+  syncFern();
   return publicSettings(settings);
 });
 
@@ -1848,6 +1892,7 @@ ipcMain.handle("data:backup-import", async () => {
 
       syncWatchparty();
     syncGeraete();
+    syncFern();
     sendActiveState();
     console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, Kopie vorher unter ${vorher}`);
     return {
@@ -2362,6 +2407,9 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // Laden steht der Rahmen des Hosters oft noch nicht, und ohne Video gibt es
   // nichts, woran ein Sprung zu merken waere.
   await installMarke(provider, view, url).catch(() => {});
+  // Und dem Handy sagen, was hier gerade laeuft. Die Zeile geht nur hinaus,
+  // wenn sie sich geaendert hat.
+  fernStandMelden().catch(() => {});
   const pageMeta = await readPageMetadata(view).catch(() => ({}));
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
@@ -7390,6 +7438,144 @@ async function installAutoplaySchalter(view) {
   if (!isLiveView(view)) return;
   const an = settings.playback?.autoplayNextEpisode !== false;
   await executeJavaScriptInMediaFrames(view, autoplaySchalterScript(an)).catch(() => []);
+}
+
+// --- Handy als Fernbedienung -------------------------------------------------
+//
+// Der Rechner meldet sich beim Relay mit seinem Kopplungscode als steuerbar,
+// das Handy oeffnet dort eine Seite und tippt denselben Code ein. Auf dem
+// Telefon ist nichts zu installieren.
+//
+// Was hier steht, ist die Uebersetzung: aus einem Knopfdruck wird eine
+// Handlung. Welche Knoepfe es gibt, entscheidet diese Liste - das Relay laesst
+// nur feste Woerter durch, und was hier nicht steht, tut nichts.
+const fernbedienung = new Fernbedienung({
+  onBefehl: (befehl) => { fernBefehl(befehl).catch(() => {}); },
+  onWach: () => { fernStandMelden().catch(() => {}); },
+  onStatus: (status) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("fern:state", status);
+  }
+});
+
+function fernSettings() {
+  return settings.fern || {};
+}
+
+function syncFern() {
+  const konfiguration = fernSettings();
+  fernbedienung.konfigurieren({
+    enabled: konfiguration.enabled === true,
+    // Dasselbe Relay wie die Watchparty und der Geraeteabgleich.
+    serverUrl: settings.watchparty?.serverUrl || "",
+    code: konfiguration.code || "",
+    geraetId: settings.watchparty?.deviceId || ""
+  });
+}
+
+// Ein Knopfdruck. Er wirkt immer auf das, was gerade vorn liegt - eine
+// Fernbedienung steuert, was zu sehen ist, und nicht eine Seite, die man
+// vorhin einmal offen hatte.
+async function fernBefehl(befehl) {
+  const provider = activeProvider();
+  if (!isLiveView(activeView)) return;
+
+  if (befehl === "vollbild") {
+    if (isContentFullscreen) leaveContentFullscreen();
+    else enterContentFullscreen();
+    await fernStandMelden();
+    return;
+  }
+
+  if (befehl === "stumm") {
+    activeView.webContents.setAudioMuted(!activeView.webContents.isAudioMuted());
+    await fernStandMelden();
+    return;
+  }
+
+  if (befehl === "naechste") {
+    if (!provider || !episodeIdentity(activeView.webContents.getURL())) return;
+    // Derselbe Weg wie das Tastenkuerzel und der Knopf im Bild: die Adresse
+    // wird aus denselben Regeln gerechnet, nicht geraten.
+    await naechsteFolgePerTaste(provider, activeView);
+    return;
+  }
+
+  await executeJavaScriptInMediaFrames(activeView, fernMediaScript(befehl)).catch(() => []);
+  // Sofort melden statt auf den naechsten Takt zu warten: fuenf Sekunden
+  // Verzoegerung fuehlen sich an, als waere der Druck nicht angekommen.
+  await fernStandMelden();
+}
+
+// Was am Video zu tun ist. Ein Skript, weil das Video im Rahmen des Hosters
+// liegt und nicht im Dokument des Anbieters.
+function fernMediaScript(befehl) {
+  return `(() => {
+    const befehl = ${JSON.stringify(String(befehl))};
+    const medien = Array.from(document.querySelectorAll("video, audio"))
+      .filter((media) => Number(media.duration) > 0 && media.readyState > 0);
+    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return "kein-video";
+    try {
+      if (befehl === "pause") media.pause();
+      else if (befehl === "abspielen") { const p = media.play(); if (p && p.catch) p.catch(() => {}); }
+      else if (befehl === "umschalten") {
+        if (media.paused) { const p = media.play(); if (p && p.catch) p.catch(() => {}); }
+        else media.pause();
+      } else if (befehl === "vor" || befehl === "zurueck") {
+        const weite = befehl === "vor" ? ${FERN_VOR_S} : -${FERN_ZURUECK_S};
+        // Nicht ueber das Ende hinaus: dort beendet der Player die Folge, und
+        // aus einem Vorspulen wuerde ein Folgenwechsel.
+        const ziel = Math.max(0, Math.min(media.duration - 5, media.currentTime + weite));
+        media.currentTime = ziel;
+      } else {
+        return "unbekannt";
+      }
+      return "getan";
+    } catch (_) {
+      return "fehlgeschlagen";
+    }
+  })()`;
+}
+
+// Was gerade laeuft, in einer Zeile. Sie geht nur hinaus, wenn sie sich
+// geaendert hat - darum kuemmert sich das Modul.
+async function fernStandMelden() {
+  if (!fernbedienung.aktiv || !fernbedienung.verbunden) return;
+  if (!isLiveView(activeView)) {
+    fernbedienung.standMelden({ titel: "", folge: "", laeuft: false, position: 0, dauer: 0 });
+    return;
+  }
+  const url = activeView.webContents.getURL();
+  const provider = activeProvider();
+  const identity = episodeIdentity(url);
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === identity?.key);
+  const progress = await readBestMediaProgress(activeView, fernStandScript()).catch(() => null);
+  fernbedienung.standMelden({
+    titel: cleanBaseMediaTitle(eintrag?.title || "", url) || eintrag?.title || provider?.name || "",
+    folge: identity
+      ? (identity.season > 0 ? `Staffel ${identity.season} · Folge ${identity.episode}` : `Folge ${identity.episode}`)
+      : "",
+    laeuft: Boolean(progress && !progress.paused),
+    position: progress?.currentTime || 0,
+    dauer: progress?.duration || 0,
+    stumm: activeView.webContents.isAudioMuted()
+  });
+}
+
+function fernStandScript() {
+  return `(() => {
+    const medien = Array.from(document.querySelectorAll("video, audio"))
+      .filter((media) => Number(media.duration) > 0);
+    const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
+    if (!media) return null;
+    return {
+      currentTime: Number(media.currentTime) || 0,
+      duration: Number(media.duration) || 0,
+      paused: Boolean(media.paused)
+    };
+  })()`;
 }
 
 // --- Intro ueberspringen -----------------------------------------------------
@@ -12440,6 +12626,15 @@ function normalizeSettings(raw) {
       // eingetragen, Abgleich trotzdem aus.
       return { key, enabled: Boolean(key) };
     })(),
+    fern: {
+      // Wie der Geraeteschluessel: der Code gehoert nicht ins
+      // Einstellungsformular, muss aber jedes Speichern ueberstehen.
+      code: String(raw?.fern?.code || settings?.fern?.code || "").toUpperCase().slice(0, 16),
+      // Hier ist der Schalter ein echter Schalter und nicht der Code: eine
+      // Fernbedienung schaltet man ab, ohne den Code wegzuwerfen - sonst
+      // muesste man das Handy danach neu koppeln.
+      enabled: (raw?.fern?.enabled ?? settings?.fern?.enabled) === true
+    },
     home: {
       showHero: raw?.home?.showHero ?? raw?.appearance?.showHero ?? defaults.home.showHero,
       showYoutube: raw?.home?.showYoutube ?? defaults.home.showYoutube,
@@ -12575,6 +12770,12 @@ function defaultSettings() {
     geraete: {
       enabled: false,
       key: ""
+    },
+    // Das Handy als Fernbedienung. Aus, bis jemand sie einschaltet - erst dann
+    // entsteht ein Kopplungscode.
+    fern: {
+      enabled: false,
+      code: ""
     },
     home: {
       showHero: true,

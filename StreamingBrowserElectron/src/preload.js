@@ -77,6 +77,12 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Intro ueberspringen: was ELFIX aus den eigenen Sprüngen gelernt hat.
   getMarkenStand: () => ipcRenderer.invoke("marken:stand"),
   forgetMarken: () => ipcRenderer.invoke("marken:vergessen"),
+  // Das Handy als Fernbedienung.
+  getFernStatus: () => ipcRenderer.invoke("fern:status"),
+  enableFern: () => ipcRenderer.invoke("fern:einschalten"),
+  disableFern: () => ipcRenderer.invoke("fern:ausschalten"),
+  newFernCode: () => ipcRenderer.invoke("fern:neuer-code"),
+  onFernState: (callback) => ipcRenderer.on("fern:state", (_event, state) => callback(state)),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),

@@ -20,6 +20,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
 - Verlauf mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie Tagesueberschriften
 - Tastenkuerzel fuer Suche, Zurueck, Vollbild, naechste Folge und den Watchparty-Wechsel - auch waehrend die Anbieterseite vorn liegt
+- Handy als Fernbedienung: Pause, Spulen, naechste Folge, Vollbild und Ton - eine Seite im Browser, keine App
 - Automatische Updates ueber GitHub Releases - still im Hintergrund, ohne Installer-Fenster
 - Settings mit Version, Update-Status und Fortschrittsbalken
 
@@ -38,6 +39,48 @@ Ist eine Folge durch, rueckt der Eintrag auf die naechste und bleibt als
 "Naechste Folge" in *Weiterschauen*. Zusammengefasste Folgen ("[In E18
 enthalten]") werden dabei uebersprungen, am Staffelende geht es in die naechste
 Staffel, und am Serienende landet der Titel in der Mediathek.
+
+## Handy als Fernbedienung
+
+Vom Sofa aus anhalten, ohne aufzustehen. Auf dem Telefon ist nichts zu
+installieren: die Seite liefert das Relay unter `/fern` selbst aus.
+
+Einzurichten unter *Einstellungen > Fernbedienung*:
+
+1. **Fernbedienung erlauben** einschalten. Dabei entsteht ein Kopplungscode aus
+   acht Zeichen.
+2. Im Handybrowser `https://dein-relay.example.com/fern` oeffnen und den Code
+   eintippen. Das Handy merkt ihn sich - beim naechsten Mal ist es sofort da.
+
+Dann gibt es sechs Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor,
+Ton aus, Vollbild und naechste Folge. Daneben steht, was gerade laeuft, mit
+Fortschrittsbalken.
+
+Gesteuert wird immer, was gerade vorn liegt - eine Fernbedienung bedient das,
+was zu sehen ist, und nicht eine Seite, die vorhin einmal offen war. Die
+naechste Folge rechnet dieselbe Adresse aus wie der Knopf im Bild und das
+Tastenkuerzel.
+
+### Was hinausgeht und was nicht
+
+| Vom Rechner zum Handy | Vom Handy zum Rechner |
+| --- | --- |
+| Titel, Folge, Stelle, laeuft/pausiert | acht feste Befehlswoerter |
+
+Mehr nicht. Keine Liste, kein Verlauf, keine Adresse. Wer den Code hat, kann
+druecken - mitlesen kann er nicht. Und was das Relay durchlaesst, steht als
+feste Liste in `fern.js`: ein Wort, das dort nicht steht, kommt gar nicht erst
+an.
+
+**Der Code ist der einzige Zugangsschutz.** Acht Zeichen aus zweiunddreissig
+sind vierzig Bit, und nach drei Fehlversuchen ist fuer diese Verbindung Schluss
+- durchprobieren geht also nicht. Trotzdem gilt: laeuft dein Relay ueber einen
+Cloudflare Tunnel, ist `/fern` oeffentlich erreichbar. *Fernbedienung erlauben*
+auszuschalten nimmt jedem Handy die Moeglichkeit, auch dem, das den Code kennt;
+**Neuen Code erzeugen** loest alle gekoppelten.
+
+Geht ELFIX aus, erfahren die Handys es und der Code koppelt niemanden mehr - die
+Kopplung lebt nur, solange der Rechner da ist.
 
 ## Intro ueberspringen
 
@@ -227,9 +270,14 @@ curl http://localhost:8787/health
 
 Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
 inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor,
-`youtube-party.js` fuer die YouTube-Watchparty und `geraete.js` fuer den
-Abgleich der eigenen Geraete. Wird nur `server.js` uebertragen, startet der
-Dienst gar nicht mehr - ihm fehlt dann ein Modul.
+`youtube-party.js` fuer die YouTube-Watchparty, `geraete.js` fuer den Abgleich
+der eigenen Geraete und `fern.js` samt `fern-seite.js` fuer die Fernbedienung.
+Wird nur `server.js` uebertragen, startet der Dienst gar nicht mehr - ihm fehlt
+dann ein Modul.
+
+Die Seite der Fernbedienung steht bewusst in einer `.js`-Datei und nicht als
+`.html` daneben: sonst waere sie genau die Datei, die beim Kopieren jedes Mal
+liegenbliebe.
 
 Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
 Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
@@ -239,6 +287,8 @@ Die Antwort von `/health` nennt unter `features`, was die laufende Fassung kann.
 Steht dort `youtube`, beherrscht das Relay die YouTube-Watchparty; `youtubeRaeume`
 sagt, wie viele davon gerade laufen. Steht dort `geraete`, kennt es den Abgleich
 der eigenen Geraete; `geraeteRaeume` sagt, wie viele Schluessel dort liegen.
+Steht dort `fern`, kennt es die Fernbedienung und liefert ihre Seite unter
+`/fern` aus; `fernbedienungen` sagt, wie viele Rechner gerade steuerbar sind.
 
 Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
 setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login
@@ -437,6 +487,8 @@ StreamingBrowserElectron/src/
   taste.js              Geschmacksprofil fuer "Empfohlen fuer dich"
   watchparty.js         Ein Raum: Verbindung, Mitglieder, Live-Steuerung
   watchparty-raeume.js  Mehrere Raeume nebeneinander
+  fernbedienung.js      Handy als Fernbedienung: Verbindung und Kopplungscode
+  marken.js             Intro ueberspringen: Regeln und das Skript im Player
   geraete.js            Meine Geraete: Verbindung und Abgleichregeln
   geraete-schluessel.js Schluessel, Ableitungen, Verschluesselung
   renderer/             Oberflaeche (index.html, renderer.js, styles.css)

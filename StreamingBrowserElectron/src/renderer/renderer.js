@@ -208,6 +208,14 @@ const geraeteKeyCopy = document.querySelector("#geraeteKeyCopy");
 const geraeteDisconnect = document.querySelector("#geraeteDisconnect");
 const geraeteSyncNow = document.querySelector("#geraeteSyncNow");
 const geraeteStatus = document.querySelector("#geraeteStatus");
+// Die Fernbedienung. Der Code steht nicht im Einstellungsformular: er wird
+// ueber eigene Aufrufe erzeugt und erneuert.
+const fernEnabled = document.querySelector("#fernEnabled");
+const fernCode = document.querySelector("#fernCode");
+const fernAdresse = document.querySelector("#fernAdresse");
+const fernCodeCopy = document.querySelector("#fernCodeCopy");
+const fernCodeNeu = document.querySelector("#fernCodeNeu");
+const fernStatus = document.querySelector("#fernStatus");
 const watchpartyLiveBanner = document.querySelector("#watchpartyLiveBanner");
 const watchpartyLiveLeave = document.querySelector("#watchpartyLiveLeave");
 const watchpartyLiveText = document.querySelector("#watchpartyLiveText");
@@ -494,6 +502,11 @@ function bindEvents() {
     geraeteSchluesselUebernehmen();
   });
   api.onGeraeteState?.(renderGeraeteStatus);
+  fernEnabled?.addEventListener("change", fernUmschalten);
+  fernCodeNeu?.addEventListener("click", fernNeuerCode);
+  fernCodeCopy?.addEventListener("click", fernCodeKopieren);
+  api.onFernState?.(renderFernStatus);
+  api.getFernStatus?.().then(renderFernStatus).catch(() => {});
   // Was per Tastenkuerzel aus dem Hauptprozess kommt. Die Ansicht wechselt hier
   // und nicht dort: welche Bereiche dabei zu verbergen sind, weiss nur die
   // Oberflaeche.
@@ -1300,7 +1313,58 @@ async function markenVergessenLassen() {
   if (!confirm("Alle gelernten Intro-Stellen vergessen?")) return;
   await api.forgetMarken?.();
   renderMarkenStand();
+  api.getFernStatus?.().then(renderFernStatus).catch(() => {});
   showToast("Gelernte Intros vergessen");
+}
+
+// --- Fernbedienung ------------------------------------------------------------
+
+function renderFernStatus(status) {
+  if (fernEnabled) fernEnabled.checked = status?.enabled === true;
+  if (fernCode) fernCode.textContent = status?.code ? status.code.split("").join(" ") : "– – – – – – – –";
+  if (fernCodeCopy) fernCodeCopy.disabled = !status?.code;
+  // Die Adresse steht bei der Watchparty; hier wird sie nur noch zu der Seite
+  // ergaenzt, die das Relay ausliefert.
+  if (fernAdresse) {
+    const server = (watchpartyServer?.value || "").trim().replace(/\/+$/, "");
+    const alsWeb = server.replace(/^wss:/i, "https:").replace(/^ws:/i, "http:");
+    fernAdresse.textContent = alsWeb ? `${alsWeb}/fern` : "…/fern (erst die Server-Adresse bei der Watchparty eintragen)";
+  }
+  if (!fernStatus) return;
+  if (!status?.enabled) {
+    fernStatus.textContent = "Ausgeschaltet — kein Handy kann etwas auslösen.";
+    return;
+  }
+  if (!status.connected) {
+    fernStatus.textContent = status.error ? `Nicht verbunden: ${status.error}` : "Verbinde …";
+    return;
+  }
+  fernStatus.textContent = "Verbunden — bereit für das Handy.";
+}
+
+async function fernUmschalten() {
+  const status = fernEnabled?.checked
+    ? await api.enableFern?.()
+    : await api.disableFern?.();
+  renderFernStatus(status);
+}
+
+async function fernNeuerCode() {
+  if (!confirm("Neuen Code erzeugen? Bereits gekoppelte Handys müssen danach neu verbunden werden.")) return;
+  const status = await api.newFernCode?.();
+  renderFernStatus(status);
+  showToast("Neuer Code — die alten Handys sind draußen");
+}
+
+async function fernCodeKopieren() {
+  const code = (fernCode?.textContent || "").replace(/\s/g, "");
+  if (!code || code.startsWith("–")) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast("Code kopiert");
+  } catch {
+    // Ohne Zwischenablage bleibt das Feld - abtippen geht immer.
+  }
 }
 
 // --- Meine Geraete ----------------------------------------------------------

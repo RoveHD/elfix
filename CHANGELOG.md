@@ -3,6 +3,69 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.33.0 — 21. August 2026
+
+Das Handy wird zur Fernbedienung. Ohne App - eine Seite im Browser genuegt.
+
+**Vom Sofa aus**
+
+- Unter *Einstellungen > Fernbedienung* einschalten, im Handybrowser
+  `…/fern` oeffnen, den Kopplungscode eintippen. Das war es; das Handy merkt
+  ihn sich und ist beim naechsten Mal sofort da
+- Sechs Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor, Ton aus,
+  Vollbild, naechste Folge. Vorwaerts weiter als rueckwaerts - nach vorn spult
+  man ueber etwas hinweg, zurueck holt man etwas nach, das man eben verpasst hat
+- Daneben steht, was laeuft: Titel, Folge, Stelle, Fortschrittsbalken
+- Gesteuert wird immer, was gerade vorn liegt. Eine Fernbedienung bedient das,
+  was zu sehen ist, und nicht eine Seite, die vorhin einmal offen war
+- Die naechste Folge rechnet dieselbe Adresse aus wie der Knopf im Bild und das
+  Tastenkuerzel - drei Wege, eine Regel
+
+**Die Seite kommt aus dem Relay**
+
+- Ausgeliefert unter `/fern`, in einem Stueck: kein Stylesheet, kein Skript von
+  aussen. Sie laedt oft ueber Mobilfunk und soll dann sofort dastehen
+- Sie steht als Zeichenkette in `fern-seite.js` und nicht als `.html` daneben.
+  Das README sagt beim Aktualisieren des Relays "alle .js-Dateien kopieren", und
+  eine einzelne HTML-Datei waere genau die, die dabei jedes Mal liegenbliebe -
+  dann liefe der Dienst mit neuem Code und alter Seite
+- Wacht das Handy aus dem Ruhezustand auf, verbindet sie sich von selbst neu.
+  Ein Telefon schlaeft ein, sobald man es weglegt
+
+**Was durchgeht - und was nicht**
+
+- Vom Rechner zum Handy: Titel, Folge, Stelle, laeuft oder nicht. Keine Liste,
+  kein Verlauf, keine Adresse. Wer den Code hat, kann druecken, nicht mitlesen
+- Vom Handy zum Rechner: acht feste Befehlswoerter. Eine Liste im Relay und
+  keine durchgereichte Zeichenkette - was die Fernbedienung kann, entscheidet
+  ELFIX und nicht das, was jemand in eine Nachricht schreibt
+- Der Code ist acht Zeichen aus zweiunddreissig, also vierzig Bit, und nach drei
+  Fehlversuchen ist fuer diese Verbindung Schluss. Durchprobieren geht damit
+  nicht
+- Ausschalten nimmt jedem Handy die Moeglichkeit, auch dem, das den Code kennt.
+  Ein neuer Code loest alle gekoppelten
+- Geht ELFIX aus, erfahren die Handys es und der Code koppelt niemanden mehr.
+  Eine Kopplung ohne Gegenstelle waere ein Knopf ins Leere
+- Der Stand geht nur hinaus, wenn er sich geaendert hat, und die Stelle zaehlt
+  sekundenweise. Sonst liefe je Takt eine Nachricht durch die Leitung, auch wenn
+  das Bild seit zehn Minuten steht
+
+**Geprueft**
+
+- Gegen das echte Relay, mit beiden Seiten an einer echten Verbindung. Die
+  Haelfte gilt dem, was nicht durchgeht: ein falscher Code, ein fremder Code,
+  ein Befehl, den es nicht gibt, ein Rechner, der sich selbst steuern will, und
+  zwei Kopplungen, die einander nicht in die Quere kommen duerfen
+- Dazu die Frage, die sonst erst am toten Knopf auffiele: kennt jede Seite
+  dieselben Befehle? Geprueft wird, dass jedes Wort aus dem Relay im
+  Hauptprozess behandelt wird und jeder Knopf der Seite eines davon ist
+
+**Relay**
+
+- Neue Dateien `fern.js` und `fern-seite.js`. `/health` weist die
+  Fernbedienung unter `features` als `fern` aus und zaehlt unter
+  `fernbedienungen`, wie viele Rechner gerade steuerbar sind
+
 ## 1.32.1 — 21. August 2026
 
 Die Leiste links oben blendete sich von selbst ein, immer wieder, ohne dass

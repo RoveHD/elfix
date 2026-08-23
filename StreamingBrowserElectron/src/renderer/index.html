@@ -423,6 +423,7 @@
           <button class="tab" data-tab="playback"><span>▷</span>Wiedergabe<small>Player & Fortschritt</small></button>
           <button class="tab" data-tab="watchparty"><span>⇄</span>Watchparty<small>Fortschritt teilen</small></button>
           <button class="tab" data-tab="geraete"><span>⇉</span>Meine Geräte<small>Laptop & Rechner</small></button>
+          <button class="tab" data-tab="fern"><span>⌾</span>Fernbedienung<small>Steuern per Handy</small></button>
           <div class="settings-nav-section">System</div>
           <button class="tab" data-tab="browser"><span>◉</span>Browser & Schutz<small>Werbung, Cache</small></button>
           <button class="tab" data-tab="data"><span>▤</span>Daten & Updates<small>Version, Speicher</small></button>
@@ -568,6 +569,40 @@
             </div>
             <div class="setting-row">
               <span><strong>Was der Server sieht</strong><small>Nichts davon. Die Einträge sind mit deinem Schlüssel verschlossen, bevor sie das Gerät verlassen; der Schlüssel selbst geht nie hinaus. Sichtbar bleibt, wie viele Einträge es gibt und wann sie sich ändern.</small></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-page" data-page="fern">
+          <div class="settings-head">
+            <div>
+              <h3>Fernbedienung</h3>
+              <p>Das Handy als Fernbedienung: Pause, Spulen, nächste Folge, Vollbild und Ton — vom Sofa aus. Auf dem Telefon ist nichts zu installieren, es genügt eine Adresse im Browser.</p>
+            </div>
+          </div>
+          <div class="settings-section-grid">
+            <label class="check setting-row"><input id="fernEnabled" type="checkbox"><span><strong>Fernbedienung erlauben</strong><small>Meldet ELFIX beim Relay als steuerbar an. Aus heißt: kein Handy kann etwas auslösen, auch keines, das den Code kennt.</small></span></label>
+            <div class="setting-block">
+              <strong>So verbindest du das Handy</strong>
+              <ol class="fern-schritte">
+                <li>Im Handybrowser <code id="fernAdresse">…/fern</code> öffnen</li>
+                <li>Diesen Code eintippen:</li>
+              </ol>
+              <div class="fern-code" id="fernCode">– – – – – – – –</div>
+              <div class="geraete-aktionen">
+                <button type="button" class="soft-action" id="fernCodeCopy">Code kopieren</button>
+                <button type="button" class="soft-action" id="fernCodeNeu">Neuen Code erzeugen</button>
+              </div>
+              <small>Ein neuer Code löst alle gekoppelten Handys — der Weg, wenn ihn jemand kennt, der ihn nicht kennen soll. Nach dreimal falsch Tippen ist für dieses Handy Schluss.</small>
+            </div>
+            <div class="setting-row">
+              <span><strong>Status</strong><small id="fernStatus">Ausgeschaltet.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Server</strong><small>Dasselbe Relay wie bei der Watchparty — die Adresse steht dort. Das Handy muss es erreichen können; im selben WLAN reicht das, von unterwegs braucht es den Tunnel.</small></span>
+            </div>
+            <div class="setting-row">
+              <span><strong>Was das Handy sieht</strong><small>Titel, Folge und die Stelle in der Folge — mehr geht nicht hinaus. Keine Liste, kein Verlauf, keine Adresse. Wer den Code hat, kann drücken, nicht mitlesen.</small></span>
             </div>
           </div>
         </div>
