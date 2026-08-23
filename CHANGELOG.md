@@ -3,6 +3,27 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.32.1 — 21. August 2026
+
+Die Leiste links oben blendete sich von selbst ein, immer wieder, ohne dass
+jemand die Maus bewegt hatte.
+
+**Der Takt statt der Maus**
+
+- Chat und Autoplay-Schalter verblassen nach dreieinhalb Sekunden Stille - wer
+  schaut, bewegt die Maus nicht. Zurueckholen sollte sie nur eine Bewegung
+- Beide Skripte werden aber im Fortschritts-Takt erneut eingespielt, alle paar
+  Sekunden, und beide weckten die Leiste bei jedem Durchlauf auf. Das Ergebnis
+  war ein Blinken waehrend der ganzen Folge: kurz weg, wieder da, kurz weg
+- Erneut eingespielt wird jetzt still. Der Chat bleibt, wie er ist; der
+  Schalter zieht den Stand nach, ohne sich zu melden
+- Nur wenn sich wirklich etwas geaendert hat, blendet sich noch etwas ein: eine
+  eingehende Chatzeile, oder ein Schalter, der in den Einstellungen umgelegt
+  wurde, waehrend die Folge lief. Das ist eine Nachricht und kein Takt
+- Der Fehler steckte seit 1.28.1 im Chat und seit 1.30.0 im Schalter. Beide
+  Suiten pruefen jetzt genau das: ein zweites Einspielen darf nichts sichtbar
+  machen, eine echte Aenderung schon
+
 ## 1.32.0 — 21. August 2026
 
 Der Rueckblick zaehlt jetzt alles zusammen. Bisher zeigte jedes Geraet seine

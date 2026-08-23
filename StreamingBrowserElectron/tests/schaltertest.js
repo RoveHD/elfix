@@ -108,6 +108,27 @@ s.buehne.warten(4000);
 pruefe("Unter dem Zeiger bleibt er stehen",
   s.schalter.style.opacity === "1",
   "sonst verblasste er unter der eigenen Hand");
+s.schalter.ausloesen("mouseleave");
+s.buehne.warten(4000);
+
+// Der Fehler, der ELFIX 1.32.1 ausgeloest hat: das Skript laeuft im
+// Fortschritts-Takt erneut, und jedes Einspielen weckte die Leiste. Sie blendete
+// sich damit alle paar Sekunden von selbst ein, waehrend man dasass und schaute.
+pruefe("Ein erneutes Einspielen weckt ihn nicht",
+  (() => {
+    s.nochmal(false);
+    return s.schalter.style.opacity === "0";
+  })(),
+  "wer schaut, bewegt die Maus nicht - dann soll auch nichts aufblenden");
+pruefe("Ein geaenderter Stand dagegen schon",
+  (() => {
+    s.nochmal(true);
+    return s.schalter.style.opacity === "1";
+  })(),
+  "das ist eine Nachricht und kein Takt");
+s.buehne.warten(4000);
+pruefe("und verblasst danach wieder",
+  s.schalter.style.opacity === "0");
 
 // --- Tasten -----------------------------------------------------------------
 

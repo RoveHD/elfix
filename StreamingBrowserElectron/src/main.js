@@ -8711,9 +8711,17 @@ function autoplaySchalterScript(an) {
   }
   // Schon da: dann nur den Stand nachziehen. Er kann sich in den
   // Einstellungen geaendert haben, waehrend die Folge lief.
+  //
+  // Und zwar still. Dieses Skript laeuft im Fortschritts-Takt erneut - alle
+  // paar Sekunden. Wer hier jedes Mal aufweckt, laesst die Leiste von selbst
+  // aufblenden, ohne dass jemand die Maus bewegt hat, und genau davor sollte
+  // das Verblassen ja schuetzen: wer schaut, bewegt die Maus nicht.
   if (schalter) {
+    const vorher = schalter.dataset.an === "ja";
     schalter.__setzen(anfangs);
-    schalter.__wach();
+    // Hat sich der Stand wirklich geaendert, gehoert er gezeigt - dann ist es
+    // eine Nachricht und kein Takt.
+    if (vorher !== anfangs) schalter.__wach();
     return "autoplay-schon-da";
   }
 
@@ -8800,7 +8808,10 @@ function watchpartyChatScript(optionen = {}) {
   ${leisteQuelltext()}
   const id = "__elfixChat";
   const eigenerName = ${JSON.stringify(String(optionen.name || "Du"))};
-  if (window.__elfixChat) { window.__elfixChat.wach(); return "chat-schon-da"; }
+  // Schon da: dann bleibt alles, wie es ist. Aufgeweckt wird der Chat von einer
+  // Mausbewegung und von einer eingehenden Zeile - nicht davon, dass dieses
+  // Skript im Fortschritts-Takt noch einmal vorbeikommt.
+  if (window.__elfixChat) return "chat-schon-da";
 
   const leiste = elfixLeisteLinks();
   if (!leiste) return "chat-nicht-zustaendig";

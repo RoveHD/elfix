@@ -218,6 +218,20 @@ function client(name, deviceId) {
     buehne.kasten.style.opacity === "1",
     "sonst verblasste sie unter der eigenen Hand");
   buehne.mausWeg();
+  buehne.warten(4000);
+
+  // Der Fehler aus 1.32.1: das Skript laeuft im Fortschritts-Takt erneut, und
+  // jedes Einspielen weckte die Leiste. Sie blendete sich damit alle paar
+  // Sekunden von selbst ein, waehrend man dasass und schaute.
+  buehne.nochmal();
+  pruefe("Ein erneutes Einspielen weckt sie nicht",
+    buehne.kasten.style.opacity === "0",
+    "wer schaut, bewegt die Maus nicht - dann soll auch nichts aufblenden");
+  buehne.melden({ text: "Hallo?", from: "Ben", eigen: false });
+  pruefe("Eine eingehende Zeile dagegen schon",
+    buehne.kasten.style.opacity === "1",
+    "das ist eine Nachricht und kein Takt");
+  buehne.warten(4000);
 
   // Senden
   buehne.klick(buehne.knopf);
@@ -398,6 +412,7 @@ function seiteBauen() {
     mausWeg: () => kasten.ausloesen("mouseleave"),
     warten: (ms) => buehne.warten(ms),
     entfernen: () => buehne.lauf("window.__elfixChat.entfernen()"),
+    nochmal: () => buehne.lauf(seite.skriptBauen("watchpartyChatScript", { name: "Du" })),
     leisteDa: () => Boolean(buehne.leiste()),
     melden: (nachricht) => buehne.lauf("window.__elfixChat").melden(nachricht),
     listeText: () => liste.children.map((k) => k.children.map((x) => x.textContent).join(" ")).join(" | ")
