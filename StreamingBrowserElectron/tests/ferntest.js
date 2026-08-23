@@ -120,6 +120,67 @@ function client() {
     stand?.titel === "One Piece" && stand?.position === 312 && stand?.laeuft === true,
     JSON.stringify(stand?.titel));
 
+  // --- Die Liste ------------------------------------------------------------
+  //
+  // Seit 1.35.0 darf das Handy auch auswaehlen, wenn nichts laeuft. Damit geht
+  // erstmals mehr hinaus als "was gerade laeuft" - und deshalb ist hier
+  // wichtig, dass es genau die Liste ist und nichts weiter.
+
+  rechner.leeren();
+  handy.send({ type: "fnliste" });
+  const gefragt = await rechner.erwarte((m) => m.type === "fnliste");
+  pruefe("Das Handy kann nach dem Weiterschauen fragen",
+    Boolean(gefragt));
+
+  handy.leeren();
+  rechner.send({
+    type: "fnliste",
+    eintraege: [
+      { key: "f1", titel: "One Piece", folge: "S1 · F3", anteil: 42 },
+      { key: "f2", titel: "Dark", folge: "S2 · F1", anteil: 0 },
+      { key: "", titel: "ohne Kennung" },
+      { titel: "", key: "f4" }
+    ]
+  });
+  const angekommen = await handy.erwarte((m) => m.type === "fnliste");
+  pruefe("Die Antwort erreicht das Handy",
+    angekommen?.eintraege?.length === 2,
+    `${angekommen?.eintraege?.length} Eintraege`);
+  pruefe("Eintraege ohne Kennung oder Titel fallen weg",
+    angekommen.eintraege.every((eintrag) => eintrag.key && eintrag.titel),
+    "ein Knopf ohne Ziel waere ein Knopf ins Leere");
+  pruefe("Und es kommt nur, was hingehoert",
+    Object.keys(angekommen.eintraege[0]).sort().join(",") === "anteil,folge,key,titel",
+    "keine Adresse, kein Anbieter, kein Verlauf");
+
+  rechner.send({
+    type: "fnliste",
+    eintraege: Array.from({ length: 90 }, (_, i) => ({ key: `k${i}`, titel: `Titel ${i}` }))
+  });
+  const gekuerzt = await handy.erwarte((m) => m.type === "fnliste" && m.eintraege.length !== 2);
+  pruefe("Sehr lange Listen werden gekuerzt",
+    gekuerzt?.eintraege.length === fern.MAX_LISTE,
+    `${gekuerzt?.eintraege.length} statt 90`);
+
+  rechner.leeren();
+  handy.send({ type: "fnoeffnen", key: "f1" });
+  const oeffnen = await rechner.erwarte((m) => m.type === "fnoeffnen");
+  pruefe("Ein Titel aus der Liste laesst sich oeffnen",
+    oeffnen?.key === "f1");
+
+  rechner.leeren();
+  handy.send({ type: "fnoeffnen", key: "" });
+  await schlaf(200);
+  pruefe("Ohne Kennung geschieht nichts",
+    !rechner.eingang.some((m) => m.type === "fnoeffnen"));
+
+  handy.leeren();
+  rechner.send({ type: "fnoeffnen", key: "f1" });
+  await schlaf(200);
+  pruefe("Und der Rechner kann sich nicht selbst etwas oeffnen lassen",
+    !handy.eingang.some((m) => m.type === "fnoeffnen"),
+    "die Richtung haengt an der Seite");
+
   // --- Und was nicht --------------------------------------------------------
 
   rechner.leeren();
@@ -272,6 +333,17 @@ function client() {
   pruefe("Sie bietet das Installieren auch selbst an",
     fernSeite.SEITE.includes("beforeinstallprompt"),
     "im Chrome-Menue ist es gut versteckt");
+  pruefe("Sie bringt die Weiterschauen-Liste mit",
+    fernSeite.SEITE.includes('id="liste"') && fernSeite.SEITE.includes('type: "fnoeffnen"'),
+    "wer nichts offen hat, soll vom Sofa aus waehlen koennen");
+  pruefe("Und sie sagt, woran das Installieren haengt",
+    fernSeite.SEITE.includes('id="installPruefung"')
+    && fernSeite.SEITE.includes("getRegistration")
+    && fernSeite.SEITE.includes('fetch("manifest.webmanifest"'),
+    "Chrome nennt seine Gruende nirgends, wo man sie am Handy zu sehen bekaeme");
+  pruefe("Die Auskunft sammelt erst und setzt dann ein",
+    fernSeite.SEITE.includes("$(\"installPruefung\").replaceChildren(...zeilen)"),
+    "zwei Laeufe nebeneinander schrieben sonst jede Zeile doppelt");
   pruefe("Sie traegt die Angabe, nach der Chrome fragt",
     fernSeite.SEITE.includes('name="mobile-web-app-capable"'),
     "die Apple-Fassung allein ist veraltet und Chrome sagt das auch");
@@ -328,7 +400,9 @@ function client() {
   const fassade = new Fernbedienung({
     WebSocketKlasse: WS,
     onBefehl: (b) => empfangen.push(b),
-    onWach: () => empfangen.push("wach")
+    onWach: () => empfangen.push("wach"),
+    onListe: () => empfangen.push("liste"),
+    onOeffnen: (key) => empfangen.push("oeffnen:" + key)
   });
   fassade.konfigurieren({ enabled: true, serverUrl: ADRESSE, code: dritterCode, geraetId: "fassade" });
   await schlaf(400);
@@ -347,6 +421,22 @@ function client() {
   await schlaf(300);
   pruefe("Ein Knopfdruck erreicht ihren Rueckruf",
     empfangen.includes("pause"),
+    empfangen.join(","));
+
+  drittesHandy.leeren();
+  drittesHandy.send({ type: "fnliste" });
+  await schlaf(300);
+  pruefe("Die Fassade wird nach der Liste gefragt",
+    empfangen.includes("liste"),
+    empfangen.join(","));
+  fassade.listeMelden([{ key: "f9", titel: "Loki", folge: "S1 · F1", anteil: 12 }]);
+  const ausFassade = await drittesHandy.erwarte((m) => m.type === "fnliste");
+  pruefe("und ihre Antwort kommt an",
+    ausFassade?.eintraege[0]?.titel === "Loki");
+  drittesHandy.send({ type: "fnoeffnen", key: "f9" });
+  await schlaf(300);
+  pruefe("Ein Griff in die Liste erreicht sie",
+    empfangen.includes("oeffnen:f9"),
     empfangen.join(","));
 
   drittesHandy.leeren();

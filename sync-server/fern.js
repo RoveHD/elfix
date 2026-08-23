@@ -26,13 +26,18 @@ const LEBENSDAUER_MS = 12 * 60 * 60 * 1000;
 // vierzig Bit soll nicht daran scheitern, dass es zu lange dauert, sondern
 // daran, dass es gar nicht erst geht.
 const MAX_FEHLVERSUCHE = 3;
+// So viele Titel gehen hoechstens an das Handy. Wer mehr offen hat, sucht sie
+// besser am Rechner als auf einem Bildschirm von der Groesse einer Handflaeche.
+const MAX_LISTE = 40;
 // Nur diese Befehle gehen durch. Eine feste Liste, keine durchgereichte
 // Zeichenkette: was die Fernbedienung kann, entscheidet ELFIX und nicht das,
 // was jemand in eine Nachricht schreibt.
 const BEFEHLE = [
   "umschalten", "abspielen", "pause",
   "vor", "zurueck",
-  "naechste", "vollbild", "stumm"
+  "naechste", "vorherige",
+  "lauter", "leiser", "stumm",
+  "vollbild"
 ];
 
 // code -> { geraetId, at }
@@ -123,6 +128,38 @@ function behandeln({ nachricht, socket, senden, anRechner, anHandys }) {
     return;
   }
 
+  // "Was kann ich denn schauen?" - das Handy fragt nach dem Weiterschauen des
+  // Rechners. Weitergereicht wird nur die Frage; was darauf steht, entscheidet
+  // ELFIX.
+  if (nachricht.type === "fnliste" && socket.fernSeite === "handy") {
+    anRechner({ type: "fnliste" });
+    return;
+  }
+
+  // Und die Antwort darauf. Die Eintraege selbst schaut sich das Relay nicht
+  // an - es kuerzt nur, damit eine Nachricht nicht ins Uferlose waechst.
+  if (nachricht.type === "fnliste" && socket.fernSeite === "rechner") {
+    const eintraege = (Array.isArray(nachricht.eintraege) ? nachricht.eintraege : [])
+      .slice(0, MAX_LISTE)
+      .map((eintrag) => ({
+        key: text(eintrag?.key, 300),
+        titel: text(eintrag?.titel, 200),
+        folge: text(eintrag?.folge, 60),
+        anteil: Number(eintrag?.anteil) || 0
+      }))
+      .filter((eintrag) => eintrag.key && eintrag.titel);
+    anHandys({ type: "fnliste", eintraege });
+    return;
+  }
+
+  // Einen davon oeffnen.
+  if (nachricht.type === "fnoeffnen" && socket.fernSeite === "handy") {
+    const key = text(nachricht.key, 300);
+    if (!key) return;
+    anRechner({ type: "fnoeffnen", key });
+    return;
+  }
+
   // Und was zurueckkommt: eine Zeile Zustand.
   if (nachricht.type === "fnstand" && socket.fernSeite === "rechner") {
     anHandys({
@@ -143,6 +180,7 @@ function zuruecksetzen() {
 
 module.exports = {
   BEFEHLE,
+  MAX_LISTE,
   CODE,
   MAX_FEHLVERSUCHE,
   istCode,

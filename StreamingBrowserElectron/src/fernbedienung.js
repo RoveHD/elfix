@@ -56,6 +56,10 @@ class Fernbedienung {
     this.aufBefehl = optionen.onBefehl || (() => {});
     // Jemand hat gerade gekoppelt und wartet auf den ersten Stand.
     this.aufWach = optionen.onWach || (() => {});
+    // Das Handy fragt, was es schauen kann.
+    this.aufListe = optionen.onListe || (() => {});
+    // Und will einen davon oeffnen.
+    this.aufOeffnen = optionen.onOeffnen || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse || globalThis.WebSocket;
 
@@ -196,6 +200,14 @@ class Fernbedienung {
       this.aufBefehl(String(nachricht.befehl || ""));
       return;
     }
+    if (nachricht?.type === "fnliste") {
+      this.aufListe();
+      return;
+    }
+    if (nachricht?.type === "fnoeffnen") {
+      this.aufOeffnen(String(nachricht.key || ""));
+      return;
+    }
     if (nachricht?.type === "fnwach") {
       // Frisch gekoppelt: der naechste Stand muss hinaus, auch wenn er
       // derselbe ist wie eben.
@@ -207,6 +219,13 @@ class Fernbedienung {
       this.letzterFehler = String(nachricht.message || "Abgewiesen");
       this.melde();
     }
+  }
+
+  // Die Weiterschauen-Liste. Sie geht nur auf Nachfrage hinaus - unaufgefordert
+  // hat sie am Handy nichts verloren.
+  listeMelden(eintraege) {
+    if (!this.aktiv || !this.verbunden) return false;
+    return this.senden({ type: "fnliste", eintraege: Array.isArray(eintraege) ? eintraege : [] });
   }
 
   // Der Stand geht nur hinaus, wenn er sich geaendert hat - und die Stelle

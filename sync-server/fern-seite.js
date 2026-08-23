@@ -53,6 +53,26 @@ const SEITE = `<!doctype html>
   button.gross { grid-column: span 3; background: #3ea6ff; border-color: #3ea6ff; color: #06101d; font-size: 17px; }
   button.gross:active { background: #62b6ff; }
   button[disabled] { opacity: .4; }
+  .kopf { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  button.klein {
+    padding: 8px 12px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    flex-direction: row; gap: 6px; background: #151d2c;
+  }
+  .liste { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .liste button {
+    display: block; text-align: left; padding: 13px 14px; width: 100%;
+    font-weight: 600; font-size: 15px;
+  }
+  .liste .unten { margin-top: 5px; color: #8b97a9; font-size: 13px; font-weight: 500; }
+  .liste .streifen { margin-top: 8px; height: 3px; border-radius: 2px; background: #24304a; overflow: hidden; }
+  .liste .streifen div { height: 100%; background: #3ea6ff; }
+  .leer { color: #6f7b8c; font-size: 14px; text-align: center; padding: 10px 0; }
+  details { border: 1px solid #1e2838; border-radius: 12px; background: #101725; padding: 12px 14px; }
+  summary { cursor: pointer; color: #8b97a9; font-size: 14px; }
+  details ul { margin: 12px 0 0; padding-left: 20px; color: #8b97a9; font-size: 13px; line-height: 1.5; }
+  details li.ja::marker { content: "✓ "; color: #62d19a; }
+  details li.nein::marker { content: "✗ "; color: #ff8a8a; }
+  details li.nein { color: #ffb3b3; }
   .zustand { text-align: center; color: #8b97a9; font-size: 14px; min-height: 20px; }
   .zustand.fehler { color: #ff8a8a; }
   form { display: flex; flex-direction: column; gap: 12px; }
@@ -71,6 +91,10 @@ const SEITE = `<!doctype html>
   <span class="zeichen">⤓</span>Als App installieren
 </button>
 <div class="zustand" id="installZustand"></div>
+<details id="installWarum" class="weg">
+  <summary>Warum geht „Installieren“ nicht?</summary>
+  <ul id="installPruefung"></ul>
+</details>
 
 <form id="koppeln">
   <div class="karte">
@@ -95,11 +119,22 @@ const SEITE = `<!doctype html>
     <button data-befehl="zurueck"><span class="zeichen">⏪</span>10 s</button>
     <button data-befehl="umschalten" id="spielen"><span class="zeichen">⏯</span>Pause</button>
     <button data-befehl="vor"><span class="zeichen">⏩</span>30 s</button>
-    <button data-befehl="stumm"><span class="zeichen">🔇</span>Ton</button>
+    <button data-befehl="vorherige"><span class="zeichen">⏮</span>Vorherige</button>
     <button data-befehl="vollbild"><span class="zeichen">⛶</span>Vollbild</button>
     <button data-befehl="naechste"><span class="zeichen">⏭</span>Nächste</button>
+    <button data-befehl="leiser"><span class="zeichen">🔉</span>Leiser</button>
+    <button data-befehl="stumm"><span class="zeichen">🔇</span>Ton aus</button>
+    <button data-befehl="lauter"><span class="zeichen">🔊</span>Lauter</button>
   </div>
   <div class="zustand" id="zustand" style="margin-top:16px"></div>
+
+  <div class="karte" style="margin-top:18px">
+    <div class="kopf">
+      <div class="titel" style="font-size:16px">Weiterschauen</div>
+      <button class="klein" id="listeHolen" type="button">Aktualisieren</button>
+    </div>
+    <div id="liste" class="liste"></div>
+  </div>
 </div>
 
 <script>
@@ -162,6 +197,7 @@ const SEITE = `<!doctype html>
         $("koppeln").classList.add("weg");
         $("steuerung").classList.remove("weg");
         melden("Verbunden");
+        listeHolen();
         return;
       }
       if (nachricht.type === "fnfehler") {
@@ -176,6 +212,8 @@ const SEITE = `<!doctype html>
         return;
       }
       if (nachricht.type === "fnstand") zeigen(nachricht);
+      if (nachricht.type === "fnliste") listeZeigen(nachricht.eintraege || []);
+      if (nachricht.type === "fnweg") melden("ELFIX ist gerade zu", true);
     };
     socket.onclose = () => {
       socket = null;
@@ -185,6 +223,50 @@ const SEITE = `<!doctype html>
       setTimeout(verbinden, 2000);
     };
   };
+
+  const listeZeigen = (eintraege) => {
+    const feld = $("liste");
+    feld.replaceChildren();
+    if (!eintraege.length) {
+      const leer = document.createElement("div");
+      leer.className = "leer";
+      leer.textContent = "Nichts angefangen.";
+      feld.appendChild(leer);
+      return;
+    }
+    for (const eintrag of eintraege) {
+      const knopf = document.createElement("button");
+      knopf.type = "button";
+      knopf.textContent = eintrag.titel;
+      if (eintrag.folge) {
+        const unten = document.createElement("div");
+        unten.className = "unten";
+        unten.textContent = eintrag.folge;
+        knopf.appendChild(unten);
+      }
+      if (eintrag.anteil > 0) {
+        const streifen = document.createElement("div");
+        streifen.className = "streifen";
+        const fuellung = document.createElement("div");
+        fuellung.style.width = Math.min(100, eintrag.anteil) + "%";
+        streifen.appendChild(fuellung);
+        knopf.appendChild(streifen);
+      }
+      knopf.addEventListener("click", () => {
+        if (!socket || socket.readyState !== 1) return;
+        socket.send(JSON.stringify({ type: "fnoeffnen", key: eintrag.key }));
+        melden("Wird geöffnet …");
+        if (navigator.vibrate) navigator.vibrate(12);
+      });
+      feld.appendChild(knopf);
+    }
+  };
+
+  const listeHolen = () => {
+    if (!socket || socket.readyState !== 1) return;
+    socket.send(JSON.stringify({ type: "fnliste" }));
+  };
+  $("listeHolen").addEventListener("click", listeHolen);
 
   $("koppeln").addEventListener("submit", (ereignis) => {
     ereignis.preventDefault();
@@ -239,9 +321,12 @@ const SEITE = `<!doctype html>
     const feld = $("installZustand");
     if (alsApp()) {
       $("installieren").classList.add("weg");
+      $("installWarum").classList.add("weg");
       feld.textContent = "";
       return;
     }
+    // Solange es nicht geht, steht die Auskunft bereit.
+    $("installWarum").classList.toggle("weg", Boolean(angebot));
     if (angebot) {
       feld.textContent = "";
       return;
@@ -272,6 +357,72 @@ const SEITE = `<!doctype html>
     $("installieren").classList.remove("weg");
     installLage();
   });
+
+  // Die Selbstauskunft. Chrome nennt seine Gruende nirgends, wo man sie am
+  // Handy zu sehen bekaeme - also fragt die Seite jede Bedingung selbst ab und
+  // schreibt hin, woran es haengt. Ohne das bleibt "es installiert nicht" eine
+  // Sackgasse.
+  let swFehler = "";
+  const pruefen = async () => {
+    // Gesammelt wird in einer eigenen Liste und erst am Ende eingesetzt. Die
+    // Pruefung wartet zwischendurch auf das Netz; laeuft sie zweimal
+    // nebeneinander - ein Tippen auf- und wieder zu genuegt -, schrieben sonst
+    // beide Laeufe in dieselbe Liste, und die Zeilen stuenden doppelt da.
+    const zeilen = [];
+    const zeile = (ok, text) => {
+      const li = document.createElement("li");
+      li.className = ok ? "ja" : "nein";
+      li.textContent = text;
+      zeilen.push(li);
+    };
+
+    zeile(window.isSecureContext,
+      window.isSecureContext
+        ? "Sichere Verbindung (https)"
+        : "Keine sichere Verbindung — über https öffnen, sonst geht nur eine Verknüpfung");
+
+    const kann = "serviceWorker" in navigator;
+    zeile(kann, kann ? "Browser kann Apps installieren" : "Dieser Browser kann keine Apps installieren");
+
+    if (kann) {
+      let reg = null;
+      try {
+        reg = await navigator.serviceWorker.getRegistration();
+      } catch (fehler) {
+        swFehler = String(fehler && fehler.message || fehler);
+      }
+      zeile(Boolean(reg && reg.active),
+        reg && reg.active
+          ? "Service Worker läuft"
+          : "Service Worker läuft nicht" + (swFehler ? " (" + swFehler + ")" : ""));
+    }
+
+    try {
+      const antwort = await fetch("manifest.webmanifest", { cache: "no-store" });
+      const manifest = await antwort.json();
+      zeile(antwort.ok && manifest.display === "standalone",
+        antwort.ok ? "Manifest gelesen (" + manifest.display + ")" : "Manifest fehlt (" + antwort.status + ")");
+      let symbole = 0;
+      for (const symbol of manifest.icons || []) {
+        const bild = await fetch(symbol.src, { method: "GET", cache: "no-store" }).catch(() => null);
+        if (bild && bild.ok) symbole += 1;
+      }
+      zeile(symbole === (manifest.icons || []).length && symbole > 0,
+        symbole + " von " + (manifest.icons || []).length + " Symbolen erreichbar");
+    } catch (fehler) {
+      zeile(false, "Manifest nicht lesbar: " + String(fehler && fehler.message || fehler));
+    }
+
+    zeile(Boolean(angebot),
+      angebot
+        ? "Chrome bietet das Installieren an"
+        : "Chrome bietet es (noch) nicht an — bei erfülltem Rest hilft: Seite neu laden");
+
+    $("installPruefung").replaceChildren(...zeilen);
+  };
+  $("installWarum").addEventListener("toggle", () => {
+    if ($("installWarum").open) pruefen();
+  });
   $("installieren").addEventListener("click", async () => {
     if (!angebot) return;
     $("installieren").classList.add("weg");
@@ -290,7 +441,13 @@ const SEITE = `<!doctype html>
   // haelt ausserdem die Seite vor: eine Fernbedienung, die im Funkloch eine
   // Fehlerseite zeigt, waere schlimmer als eine, die sagt "keine Verbindung".
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    // Der Fehler wird festgehalten und nicht verschluckt: scheitert die
+    // Anmeldung, ist das der Grund fuers fehlende Installieren, und ohne die
+    // Meldung sucht man ihn nie.
+    navigator.serviceWorker.register("sw.js").catch((fehler) => {
+      swFehler = String(fehler && fehler.message || fehler);
+      installLage();
+    });
   }
   installLage();
 })();

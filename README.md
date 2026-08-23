@@ -20,7 +20,7 @@ Alle Aenderungen je Version stehen in [CHANGELOG.md](CHANGELOG.md).
 - Eigene Titelbilder je Eintrag, wenn das Bild des Anbieters nichts taugt
 - Verlauf mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie Tagesueberschriften
 - Tastenkuerzel fuer Suche, Zurueck, Vollbild, naechste Folge und den Watchparty-Wechsel - auch waehrend die Anbieterseite vorn liegt
-- Handy als Fernbedienung: Pause, Spulen, naechste Folge, Vollbild und Ton - eine Seite im Browser, auf Wunsch als App auf dem Startbildschirm
+- Handy als Fernbedienung: Pause, Spulen, Folge vor und zurueck, Vollbild und Ton - und die angefangenen Serien zum Aussuchen, wenn gerade nichts laeuft
 - Automatische Updates ueber GitHub Releases - still im Hintergrund, ohne Installer-Fenster
 - Settings mit Version, Update-Status und Fortschrittsbalken
 
@@ -58,15 +58,26 @@ Einzurichten unter *Einstellungen > Fernbedienung*:
    Fernbedienung als eigenes Symbol auf dem Handy, oeffnet ohne Browserleiste
    und startet mit dem letzten Code.
 
-Dann gibt es sechs Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor,
-Ton aus, Vollbild und naechste Folge. *Vollbild* meint dabei den Player und
-nicht das Fenster - dasselbe, was der Knopf im Bild tut. Daneben steht, was gerade laeuft, mit
-Fortschrittsbalken.
+Dann gibt es neun Knoepfe: 10 Sekunden zurueck, Pause/Weiter, 30 Sekunden vor,
+vorherige und naechste Folge, leiser, Ton aus, lauter und Vollbild. *Vollbild*
+meint dabei den Player und nicht das Fenster - dasselbe, was der Knopf im Bild
+tut. Darueber steht, was gerade laeuft, mit Fortschrittsbalken.
 
 Gesteuert wird immer, was gerade vorn liegt - eine Fernbedienung bedient das,
 was zu sehen ist, und nicht eine Seite, die vorhin einmal offen war. Die
 naechste Folge rechnet dieselbe Adresse aus wie der Knopf im Bild und das
-Tastenkuerzel.
+Tastenkuerzel; die vorherige ist die Folge davor in derselben Staffel.
+
+### Anfangen, nicht nur bedienen
+
+Darunter steht **Weiterschauen**: die angefangenen Serien dieses Rechners, mit
+Folge und Fortschrittsbalken. Ein Tipp oeffnet den Eintrag und spielt ihn an -
+ohne aufzustehen. *Aktualisieren* holt die Liste neu; von selbst kommt sie beim
+Verbinden.
+
+Das Handy schickt dabei nie eine Adresse, sondern die Kennung eines Eintrags,
+den ELFIX vorher selbst herausgegeben hat. Eine Kennung, die es hier nicht gibt,
+oeffnet nichts.
 
 ### Als App auf dem Startbildschirm
 
@@ -75,10 +86,22 @@ Dafuer liefert das Relay vier Dinge mit: ein Manifest, zwei Symbole (192 und
 da sind - und wenn die Seite ueber **https** kommt. Ueber den Cloudflare Tunnel
 ist das erfuellt; ueber eine nackte IP im WLAN nicht.
 
-Fehlt eine Bedingung, sagt die Seite das auch. Ohne diese Zeile passiert
-schlicht nichts, und wer die Seite dann ueber *Zum Startbildschirm hinzufuegen*
-ablegt, bekommt eine Verknuepfung mit Browserleiste statt einer App - ohne je zu
-erfahren, woran es lag.
+Fehlt eine Bedingung, bekommt man eine Verknuepfung mit Browserleiste statt
+einer App. Chrome nennt seine Gruende dafuer nur in der Entwicklerkonsole, und
+da kommt am Handy niemand hin - darum fragt die Seite jede Bedingung selbst ab.
+Unter **Warum geht "Installieren" nicht?** steht dann Zeile fuer Zeile, was
+erfuellt ist und was nicht:
+
+| Zeile | Woran es liegt, wenn sie rot ist |
+| --- | --- |
+| Sichere Verbindung (https) | Die Seite kam ueber `http` - eine nackte IP im WLAN. Ueber den Tunnel oeffnen |
+| Browser kann Apps installieren | Ein Browser ohne Service Worker, oder ein privates Fenster |
+| Service Worker laeuft | Er wurde abgewiesen; die Meldung steht dabei |
+| Manifest / Symbole erreichbar | Das Relay ist zu alt - `.js`-Dateien nachkopieren |
+| Chrome bietet das Installieren an | Alles andere gruen und trotzdem nichts? Dann hat Chrome die Seite schon einmal installiert oder das Angebot ist noch unterwegs |
+
+Die Auskunft steht nur da, solange das Installieren nicht geht. Kommt das
+Angebot doch noch, verschwindet sie von selbst.
 
 Der Service Worker haelt die Seite vor, aber nur als Rueckfall: geladen wird
 immer erst aus dem Netz. Nach einem Aktualisieren des Relays steht damit sofort
@@ -94,12 +117,18 @@ zeigt, faellt erst auf, wenn jemand sein Handy neu einrichtet.
 
 | Vom Rechner zum Handy | Vom Handy zum Rechner |
 | --- | --- |
-| Titel, Folge, Stelle, laeuft/pausiert | acht feste Befehlswoerter |
+| Titel, Folge, Stelle, laeuft/pausiert | elf feste Befehlswoerter |
+| Weiterschauen: Titel, Folge, Fortschritt | die Kennung eines Eintrags daraus |
 
-Mehr nicht. Keine Liste, kein Verlauf, keine Adresse. Wer den Code hat, kann
-druecken - mitlesen kann er nicht. Und was das Relay durchlaesst, steht als
-feste Liste in `fern.js`: ein Wort, das dort nicht steht, kommt gar nicht erst
-an.
+Mehr nicht. Kein Verlauf, keine Mediathek, keine Adresse. Bis 1.34.0 galt "wer
+den Code hat, kann druecken, aber nicht mitlesen"; mit der Weiterschauen-Liste
+stimmt das nicht mehr, und das soll hier auch so stehen: **wer den Code hat,
+sieht, welche Serien angefangen sind.** Ausgesucht werden wollte vom Sofa aus,
+und ohne Liste geht das nicht.
+
+Was das Relay durchlaesst, steht als feste Liste in `fern.js`: ein Wort, das
+dort nicht steht, kommt gar nicht erst an. Die Liste selbst schaut es sich nicht
+an - es kuerzt sie nur auf vierzig Eintraege und feste Felder.
 
 **Der Code ist der einzige Zugangsschutz.** Acht Zeichen aus zweiunddreissig
 sind vierzig Bit, und nach drei Fehlversuchen ist fuer diese Verbindung Schluss

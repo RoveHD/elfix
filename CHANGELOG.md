@@ -3,6 +3,47 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.35.0 — 23. August 2026
+
+Die Fernbedienung kann jetzt auch anfangen, und sie sagt selbst, warum Chrome
+sie nicht installieren will.
+
+**Aussuchen statt nur druecken**
+
+- Unter den Knoepfen steht "Weiterschauen": die angefangenen Serien dieses
+  Rechners, mit Folge und Fortschrittsbalken. Ein Tipp oeffnet den Eintrag und
+  spielt ihn an - bisher konnte die Fernbedienung nur bedienen, was schon lief,
+  und wer vom Sofa aus anfangen wollte, musste doch aufstehen
+- Drei Knoepfe mehr: vorherige Folge, lauter, leiser. Lauter hebt nebenbei die
+  Stummschaltung auf - lauter zu stellen, was stumm ist, waere folgenlos
+- Was hinausgeht, ist damit mehr als vorher, und das steht auch so im README:
+  Wer den Kopplungscode hat, sieht Titel und Folge der angefangenen Serien.
+  Adressen, Verlauf und Mediathek bleiben hier, und das Handy schickt nie eine
+  Adresse, sondern nur die Kennung eines Eintrags, den ELFIX selbst
+  herausgegeben hat
+
+**"Es installiert nicht" ist keine Sackgasse mehr**
+
+- Chrome nennt seine Gruende in der Entwicklerkonsole. Am Handy kommt da
+  niemand hin, und uebrig bleibt eine Verknuepfung mit Browserleiste, ohne dass
+  jemand erfaehrt, woran es lag
+- Darum fragt die Seite jede Bedingung selbst ab und schreibt sie hin: https,
+  Service Worker vorhanden, Service Worker laeuft (mit seiner Fehlermeldung,
+  falls nicht), Manifest ladbar, beide Symbole ladbar, Angebot von Chrome da.
+  Die Auskunft steht nur da, solange das Installieren nicht geht
+- Der haeufigste Grund steht dabei ganz oben: ueber `http` - eine nackte IP im
+  WLAN - bietet Chrome grundsaetzlich keine Installation an, sondern nur die
+  Verknuepfung. Der Cloudflare Tunnel erfuellt die Bedingung, der Umweg ueber
+  die lokale Adresse nicht
+
+**Unter der Haube**
+
+- `fnliste` und `fnoeffnen` im Relay: die Frage geht durch, die Antwort wird
+  gekuerzt (40 Eintraege, feste Felder). Was auf der Liste steht, entscheidet
+  ELFIX - das Relay sieht sie nur im Vorbeigehen
+- `favoritOeffnen` ist aus dem IPC herausgeloest, weil jetzt zwei Wege dorthin
+  fuehren: die Oberflaeche und das Handy
+
 ## 1.34.0 — 21. August 2026
 
 Ein QR-Code fuer die Fernbedienung, und zwei Dinge an ihr, die nicht stimmten.

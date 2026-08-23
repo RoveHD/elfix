@@ -1220,7 +1220,11 @@ ipcMain.handle("history:clear", () => {
   return { favorites, cleared: true };
 });
 
-ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
+ipcMain.handle("favorites:open", (_event, favoriteId, options = {}) => favoritOeffnen(favoriteId, options));
+
+// Einen Eintrag oeffnen. Eigene Funktion, weil zwei Wege hierher fuehren: die
+// Oberflaeche und die Fernbedienung im Handy.
+async function favoritOeffnen(favoriteId, options = {}) {
   const favorite = favorites.find((item) => item.id === favoriteId);
   // Wer die Serie oeffnet, hat den Hinweis gesehen.
   if (favorite?.newEpisodeAt) {
@@ -1247,7 +1251,7 @@ ipcMain.handle("favorites:open", async (_event, favoriteId, options = {}) => {
   await navigateProvider(provider, oeffnenAdresse(provider, favorite));
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
   return activeState();
-});
+}
 
 ipcMain.handle("favorites:repair-thumbnail", async (_event, favoriteId, force = false) => {
   const favorite = favorites.find((item) => item.id === favoriteId);
@@ -7467,6 +7471,10 @@ async function installAutoplaySchalter(view) {
 const fernbedienung = new Fernbedienung({
   onBefehl: (befehl) => { fernBefehl(befehl).catch(() => {}); },
   onWach: () => { fernStandMelden().catch(() => {}); },
+  // "Was kann ich schauen?" - die Weiterschauen-Liste dieses Rechners.
+  onListe: () => { fernbedienung.listeMelden(fernListe()); },
+  // Und einen davon oeffnen.
+  onOeffnen: (key) => { fernOeffnen(key).catch(() => {}); },
   onStatus: (status) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("fern:state", status);
@@ -7512,6 +7520,11 @@ async function fernBefehl(befehl) {
     // Derselbe Weg wie das Tastenkuerzel und der Knopf im Bild: die Adresse
     // wird aus denselben Regeln gerechnet, nicht geraten.
     await naechsteFolgePerTaste(provider, activeView);
+    return;
+  }
+
+  if (befehl === "vorherige") {
+    await vorherigeFolge(provider, activeView);
     return;
   }
 
@@ -7598,6 +7611,12 @@ function fernMediaScript(befehl) {
       else if (befehl === "umschalten") {
         if (media.paused) { const p = media.play(); if (p && p.catch) p.catch(() => {}); }
         else media.pause();
+      } else if (befehl === "lauter" || befehl === "leiser") {
+        const schritt = befehl === "lauter" ? 0.1 : -0.1;
+        media.volume = Math.max(0, Math.min(1, Number(media.volume) + schritt));
+        // Wer lauter drueckt, will hoeren - eine stumme Wiedergabe lauter zu
+        // stellen waere folgenlos.
+        if (befehl === "lauter") media.muted = false;
       } else if (befehl === "vor" || befehl === "zurueck") {
         const weite = befehl === "vor" ? ${FERN_VOR_S} : -${FERN_ZURUECK_S};
         // Nicht ueber das Ende hinaus: dort beendet der Player die Folge, und
@@ -7612,6 +7631,64 @@ function fernMediaScript(befehl) {
       return "fehlgeschlagen";
     }
   })()`;
+}
+
+// Die Weiterschauen-Liste fuers Handy.
+//
+// Bis 1.34.0 ging aus ELFIX nur heraus, was gerade laeuft - die Fernbedienung
+// sollte druecken koennen und nicht mitlesen. Das ist jetzt anders: wer nichts
+// offen hat, soll vom Sofa aus auswaehlen koennen, und dafuer muss die Liste
+// hinaus. Wer den Kopplungscode hat, sieht damit, was in "Weiterschauen" steht -
+// Titel und Folge, nicht mehr. Verlauf, Mediathek und Adressen bleiben hier.
+function fernListe() {
+  const eintraege = [];
+  for (const favorite of favorites) {
+    if (String(favorite?.watchpartyRoom || "")) continue;
+    if (!hasContinueProgressRecord(favorite)) continue;
+    const identity = episodeIdentity(favorite.url);
+    const dauer = sanitizePositiveNumber(favorite.duration);
+    const stelle = sanitizePositiveNumber(favorite.currentTime || favorite.position);
+    eintraege.push({
+      // Die Kennung des Eintrags, nicht die Adresse: das Handy soll keine
+      // Adressen bekommen und auch keine schicken koennen.
+      key: String(favorite.id || ""),
+      titel: cleanBaseMediaTitle(favorite.title || "", favorite.url) || favorite.title || "",
+      folge: identity
+        ? (identity.season > 0 ? `S${identity.season} · F${identity.episode}` : `Folge ${identity.episode}`)
+        : "",
+      anteil: dauer > 0 && stelle > 0 ? Math.round((stelle / dauer) * 100) : sanitizeProgress(favorite.progress)
+    });
+    if (eintraege.length >= 40) break;
+  }
+  return eintraege;
+}
+
+// Einen Eintrag aus der Liste oeffnen - und gleich losspielen. Wer vom Sofa aus
+// waehlt, will nicht danach noch aufstehen und auf Play druecken.
+async function fernOeffnen(key) {
+  const favorite = favorites.find((eintrag) => eintrag.id === String(key || ""));
+  if (!favorite) return;
+  console.log(`[ELFIX FERN] ${favorite.title} vom Handy geoeffnet`);
+  await favoritOeffnen(favorite.id, { autoplay: true, fullscreen: false });
+  await fernStandMelden();
+}
+
+// Eine Folge zurueck. Die naechste rechnet ELFIX aus den Regeln der Serie; hier
+// genuegt die Folge davor in derselben Staffel - was davor liegt, ist immer
+// schon dagewesen.
+async function vorherigeFolge(provider, view) {
+  if (!provider || !isLiveView(view)) return;
+  const url = view.webContents.getURL();
+  const identity = episodeIdentity(url);
+  if (!identity || identity.episode <= 1) {
+    sendToast("Das ist schon die erste Folge");
+    return;
+  }
+  const ziel = replaceEpisodeUrl(url, identity.season, identity.episode - 1);
+  if (!ziel || ziel === url) return;
+  await beginAutostart(provider.id, naechsteFolgeLabel(provider, ziel), { snapshot: false });
+  await navigateProvider(provider, ziel);
+  scheduleProviderAutoplay(provider, activeView, { fullscreen: false, expectUrl: ziel, durationMs: 45000 });
 }
 
 // Was gerade laeuft, in einer Zeile. Sie geht nur hinaus, wenn sie sich
