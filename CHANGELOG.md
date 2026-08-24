@@ -3,6 +3,51 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.40.1 — 24. August 2026
+
+Zwei Sperren, die zu spaet kamen - und deshalb selbst das waren, was sie
+verhindern sollten.
+
+### AniWorld wurde weiss, nachdem die Werbung blockiert war
+
+Gemeldet war: auf AniWorld erschien "Weiterleitung blockiert", und danach war
+die Ansicht weiss oder blieb dauerhaft bei "wird geladen ...". Die naheliegende
+Lesart - der Blocker sperrt zu viel - war die falsche. Er sperrte zu spaet.
+
+Ein Klick auf einen Hoster gab der Seite vier Spruenge Budget, damit die Kette
+des Hosters aufgehen kann. Verbraucht wurde dieses Budget aber, *bevor*
+irgendjemand nach dem Ziel gefragt hatte. Die Werbeskripte einer Episodenseite
+feuern genau in diesem Augenblick; sie nahmen die vier Spruenge, und gesperrt
+wurde erst der fuenfte. Da war die Folgenseite drei Navigationen her, und
+stehen blieb, was zuletzt bestaetigt worden war: eine leere Werbe-Weiche.
+
+Genau in dieser Reihenfolge sah es der Benutzer - erst die Meldung, dann weiss.
+Die Meldung war nie zu frueh, sie war zu spaet.
+
+Das Budget bleibt, denn ohne es geht der Hoster nicht auf: dessen zweiter
+Sprung kommt vom Skript und nicht vom Server. Es greift jetzt aber nur noch
+dort, wo wirklich eine solche Kette laufen kann - bei einer Weiterleitung des
+Servers, oder bei einem Sprung aus einem Dokument, das dem Anbieter schon nicht
+mehr gehoert. Der Werbesprung ist keines von beidem: er kommt aus dem Skript
+und geht von einer Seite des Anbieters aus. Er wird gesperrt, waehrend die
+Folgenseite noch dasteht - und damit bleibt sie stehen.
+
+### Und die Ladeschicht ging nie wieder weg
+
+Der zweite Teil derselben Meldung, aber eine eigene Ursache: die Schicht
+"AniWorld wird geladen ..." wird abgeraeumt, wenn eine Seite fertig laedt. Eine
+abgebrochene Navigation laedt nie fertig. Also blieb sie stehen, bis jemand den
+Anbieter wechselte.
+
+### Der Autoplay-Schalter klebte ueber der Serienuebersicht
+
+Er entschied nach der Form der Seite - "oberstes Dokument, kein grosser Rahmen"
+-, und das trifft auf jede Hosterseite zu, aber eben auch auf eine Startseite
+ohne jedes Video. Jetzt entscheidet, ob dort etwas laeuft: Folge, Film,
+YouTube-Video ja; Startseite, Suche, Uebersicht und Shorts nein. Und er
+verschwindet wieder, wenn man vom Video zurueckgeht - YouTube wechselt die
+Seite, ohne das Dokument neu zu laden.
+
 ## 1.40.0 — 24. August 2026
 
 Drei Fehler, die sich beim Nachmessen als drei ganz verschiedene Dinge
