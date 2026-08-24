@@ -49,6 +49,9 @@ const UHR_PROBEN = 5;
 const UHR_ABSTAND_MS = 120;
 const UHR_AUFFRISCHEN_MS = 60000;
 const UHR_HALTBAR_MS = 300000;
+// Bis hierher ist eine leere Liste ein Aufraeumen, darueber ein Verlust.
+// Bewusst klein: drei Titel loescht jemand von Hand, zweihundert nicht.
+const VERLUST_GRENZE = 3;
 
 class Geraeteabgleich {
   constructor(optionen = {}) {
@@ -120,6 +123,21 @@ class Geraeteabgleich {
     this.uhrTimer = 0;
     this.uhrAuffrischen = 0;
     this.eigeneStaende = null;
+    // Wie oft von aussen etwas hereingekommen ist. Nicht die Zahl der
+    // Eintraege, sondern die Zahl der Aenderungen - sie sagt nur, ob sich seit
+    // einem bestimmten Augenblick etwas getan hat.
+    //
+    // Gebraucht wird sie fuer eine einzige Frage, an der sonst ein Bestand
+    // haengt: ist die Liste, die der Rest der App zuletzt hereingereicht hat,
+    // juenger als das zuletzt Empfangene? Ist sie es nicht, weiss sie von den
+    // eben angekommenen Eintraegen nichts - und was sie nicht kennt, duerfte
+    // hier sonst als "hier geloescht" hinausgehen.
+    this.hereinStand = 0;
+    this.eigeneStaendeStand = 0;
+    // Ob auf dieser Verbindung schon einmal nachgefasst wurde, weil der
+    // Bestand fehlte. Einmal ist ein Weg zurueck, immer wieder ist eine
+    // Schleife.
+    this.wiederholung = false;
   }
 
   status() {
@@ -132,6 +150,12 @@ class Geraeteabgleich {
       // Hauptprozess heraus geht er nirgendwo sonst hin.
       key: this.schluessel ? schluesselModul.anzeigen(this.schluessel) : "",
       entries: this.spiegel.size,
+      // Was davon wirklich ein Titel ist. `entries` ist die Groesse des
+      // Spiegels und zaehlt Wiedergabesitzungen und Grabsteine mit - eine Zahl
+      // fuer die Buchfuehrung, keine fuer den Menschen davor. Wer "231 Titel"
+      // liest und eine leere Mediathek sieht, sucht den Fehler an der falschen
+      // Stelle.
+      titel: this.lebendeStaende(),
       lastSync: this.letzterAbgleich,
       error: this.letzterFehler
     };
@@ -199,6 +223,27 @@ class Geraeteabgleich {
     return this.nachKey.has(String(key || ""));
   }
 
+  /** Wie viele Titel der Spiegel kennt - ohne Grabsteine, ohne Sitzungen. */
+  lebendeStaende() {
+    let anzahl = 0;
+    for (const eintrag of this.spiegel.values()) {
+      if (!eintrag.weg && eintrag.art !== "sitzung") anzahl += 1;
+    }
+    return anzahl;
+  }
+
+  /**
+   * Den Spiegel vergessen - bis auf die Grabsteine.
+   *
+   * <p>Geloescht bleibt geloescht: ein Grabstein steht fuer eine Entscheidung,
+   * die jemand getroffen hat, und die holt kein Nachfassen zurueck.
+   */
+  spiegelVergessen() {
+    for (const [id, eintrag] of [...this.spiegel]) {
+      if (!eintrag.weg) this.vergessen(id);
+    }
+  }
+
   // Was auf die Platte gehoert und beim naechsten Start wieder hereinkommt.
   ablage() {
     return {
@@ -249,6 +294,7 @@ class Geraeteabgleich {
       this.verbunden = true;
       this.versuche = 0;
       this.offen = false;
+      this.wiederholung = false;
       // Zuerst die Uhr, dann anmelden: die Zeitstempel der eigenen Meldungen
       // sollen von Anfang an in Relayzeit stehen.
       this.uhrMessen();
@@ -384,6 +430,9 @@ class Geraeteabgleich {
   abgleichen(staende) {
     if (!this.aktiv || !this.abgeleitet) return 0;
     this.eigeneStaende = Array.isArray(staende) ? staende : [];
+    // Der Augenblick, aus dem diese Liste stammt. Ab hier ist sie ein
+    // Schnappschuss und altert; was danach hereinkommt, steht nicht in ihr.
+    this.eigeneStaendeStand = this.hereinStand;
     if (!this.verbunden || !this.offen) {
       // Noch nicht angemeldet: nachholen, sobald der Zustand da ist. Vorher
       // hinauszuschicken hiesse, gegen einen Stand zu schreiben, den man noch
@@ -411,16 +460,39 @@ class Geraeteabgleich {
     const gesehen = new Set();
     const aufgaben = [];
 
-    for (const stand of staende) {
-      const key = String(stand?.key || "");
-      if (!key) continue;
-      const id = schluesselModul.eintragId(this.abgeleitet, key);
-      if (!id) continue;
-      gesehen.add(id);
-      const hash = schluesselModul.standHash(stand);
-      const bekannt = this.spiegel.get(id);
-      if (bekannt && bekannt.hash === hash) continue;
-      aufgaben.push({ id, key, hash, stand });
+    // Ist der Schnappschuss juenger als das zuletzt Empfangene?
+    //
+    // Er muss es sein, denn gleich wird aus ihm abgeleitet, was hier *fehlt* -
+    // und was hier fehlt, geht als Loeschung hinaus. Eine Liste, die vor dem
+    // letzten Eingang entstanden ist, kennt die eben angekommenen Eintraege
+    // nicht: sie fehlen in ihr, weil sie noch nicht in ihr stehen konnten,
+    // nicht weil jemand sie geloescht haette.
+    //
+    // Genau das ist der teuerste Fehler dieses Moduls, und er trifft den
+    // Normalfall: ein frisch eingerichtetes Geraet sieht einmal nach, ob etwas
+    // hinaus muss ("noch nichts da"), bekommt einen Augenblick spaeter den
+    // ganzen Bestand des anderen - und schickte daraufhin fuer jeden einzelnen
+    // dieser Eintraege einen Grabstein zurueck. Am Ende steht der Bestand
+    // nirgends mehr.
+    //
+    // Also: veralteter Schnappschuss, dann geht von den Staenden nichts hinaus.
+    // Der Rest der App reicht seine Liste ohnehin gleich wieder herein - am
+    // Rechner nach dem Schreiben, am Telefon, sobald der Bestand steht -, und
+    // dann ist sie juenger als der Eingang und alles Weitere gilt.
+    const frisch = this.eigeneStaendeStand === this.hereinStand;
+
+    if (frisch) {
+      for (const stand of staende) {
+        const key = String(stand?.key || "");
+        if (!key) continue;
+        const id = schluesselModul.eintragId(this.abgeleitet, key);
+        if (!id) continue;
+        gesehen.add(id);
+        const hash = schluesselModul.standHash(stand);
+        const bekannt = this.spiegel.get(id);
+        if (bekannt && bekannt.hash === hash) continue;
+        aufgaben.push({ id, key, hash, stand });
+      }
     }
 
     // Was der Spiegel kennt und dieses Geraet nicht mehr hat, ist hier
@@ -430,9 +502,36 @@ class Geraeteabgleich {
     // Ausdruecklich nur fuer Staende: Sitzungen stehen nicht in dieser Liste,
     // und ein Grabstein fuer jede von ihnen waere das Gegenteil dessen, was
     // hier gewollt ist.
-    for (const [id, eintrag] of this.spiegel) {
-      if (gesehen.has(id) || eintrag.weg || eintrag.art === "sitzung") continue;
-      aufgaben.push({ id, key: eintrag.key, hash: "", stand: null });
+    //
+    // Und ausdruecklich nur, wenn dieses Geraet ueberhaupt etwas hat.
+    // Eine leere Liste neben einem Spiegel voller Titel ist fast nie "ich habe
+    // alles geloescht". Wer wirklich aufraeumt, loescht Stueck fuer Stueck,
+    // und jedes davon geht einzeln hinaus. Auf einen Schlag verschwindet ein
+    // Bestand nur, wenn er abhanden gekommen ist: eine geleerte Ablage, eine
+    // Datei, die sich nicht lesen liess, eine Fassung, die ihn woanders
+    // suchte.
+    //
+    // Den Unterschied macht die Zahl, und nur sie kann ihn machen - dem
+    // einzelnen Eintrag sieht niemand an, warum er fehlt. Ein paar wenige sind
+    // ein Aufraeumen und gehen als Grabstein hinaus; eine ganze Mediathek ist
+    // ein Verlust und geht als Frage zurueck.
+    const verloren = frisch && gesehen.size === 0 && this.lebendeStaende() > VERLUST_GRENZE;
+
+    if (frisch && !verloren) {
+      for (const [id, eintrag] of this.spiegel) {
+        if (gesehen.has(id) || eintrag.weg || eintrag.art === "sitzung") continue;
+        aufgaben.push({ id, key: eintrag.key, hash: "", stand: null });
+      }
+    } else if (verloren && !this.wiederholung) {
+      // Loeschen waere hier das Falscheste von allem, und Nichtstun das
+      // Zweitfalscheste: der Spiegel behauptet ja, alles zu kennen, also
+      // reicht das Relay von sich aus nichts mehr nach, und das Geraet bliebe
+      // fuer immer leer. Also das Gegenteil des Loeschens - den Spiegel
+      // vergessen und alles noch einmal holen.
+      this.spiegelVergessen();
+      this.wiederholung = true;
+      this.vollAbgleichen();
+      return 0;
     }
 
     // Und die Sitzungen. Sie werden nie verglichen und nie zurueckgenommen -
@@ -616,6 +715,10 @@ class Geraeteabgleich {
       // der Watchparty. Gleichstand ist der eigene, eben gemeldete Eintrag, der
       // vom Relay zurueckkommt: da gibt es nichts zu tun.
       if (bekannt && bekannt.at >= at) continue;
+      // Ab hier aendert dieser Eintrag den Spiegel - gleich ob als Stand, als
+      // Sitzung oder als Grabstein. Damit ist jede Liste, die vorher
+      // hereingereicht wurde, veraltet.
+      this.hereinStand += 1;
 
       if (roh.weg) {
         const key = bekannt?.key || "";

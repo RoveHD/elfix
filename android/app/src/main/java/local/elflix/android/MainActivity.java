@@ -245,7 +245,7 @@ public class MainActivity extends Activity {
         });
         messung.setzeRahmen(rahmen);
         watchparty = new Watchparty(this, kern, this::watchpartyGeaendert);
-        geraete = new Geraete(this, kern, watchparty, zustand -> {
+        geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
             // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
             if ("settings".equals(currentScreen)) showSettings();
         });
@@ -1119,7 +1119,11 @@ public class MainActivity extends Activity {
         boolean an = geraete != null && geraete.eingeschaltet();
         boolean verbunden = zustand != null && zustand.optBoolean("connected", false);
         String fehler = zustand == null ? "" : zustand.optString("error", "");
-        int titel = zustand == null ? 0 : zustand.optInt("entries", 0);
+        // "titel" und nicht "entries": letzteres ist die Groesse des Spiegels
+        // und zaehlt Wiedergabesitzungen und Grabsteine mit. Eine Zahl, die
+        // "231 Titel" sagt, waehrend die Mediathek leer ist, schickt beim
+        // Suchen in die falsche Richtung.
+        int titel = zustand == null ? 0 : zustand.optInt("titel", zustand.optInt("entries", 0));
         long zuletzt = zustand == null ? 0 : zustand.optLong("lastSync", 0);
 
         String text;
@@ -1147,7 +1151,11 @@ public class MainActivity extends Activity {
             an ? "Jetzt abgleichen" : null,
             an ? () -> {
                 showToast("Wird abgeglichen …");
-                geraete.jetztAbgleichen();
+                // Derselbe Knopf tut dasselbe wie am Rechner: er holt den
+                // ganzen Raum noch einmal. Nur nachzusehen, ob etwas hinaus
+                // muss, hilft genau dem nicht, der ihn drueckt - wer ihn
+                // drueckt, vermisst etwas.
+                geraete.vollAbgleichen();
             } : null);
     }
 

@@ -3,6 +3,45 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.38.0 — 24. August 2026
+
+Der Geraeteabgleich hat auf dem Telefon nichts angezeigt - und dabei still den
+Bestand geloescht. Beides ist behoben.
+
+- **Das Telefon zeigte nach dem Abgleich nichts an.** Was hereinkam, ging
+  direkt in `favorites.json` - am `Bestand` vorbei, der die Liste im Speicher
+  haelt und aus dem Weiterschauen, Merkliste, Mediathek und Verlauf gezeichnet
+  werden. Die Datei war voll, die Oberflaeche leer. Schlimmer noch: beim
+  naechsten oertlichen Handgriff schrieb der Bestand seinen alten Stand
+  darueber, und der Abgleich meldete den Verlust als Loeschung weiter. Der
+  Abgleich geht jetzt durch den Bestand - er speichert, und die Ansicht
+  zeichnet sofort neu
+- **Der erste Blick loeschte den Bestand des anderen Geraets.** Eine Sekunde
+  nach dem Einrichten sieht das Telefon nach, ob etwas hinaus muss. Ueber
+  Mobilfunk ist der Raum bis dahin oft noch nicht da: es sah in eine leere
+  Liste, bekam einen Augenblick spaeter den ganzen Bestand des Rechners - und
+  schickte fuer jeden dieser Titel einen Grabstein zurueck. Danach stand die
+  Mediathek auf keinem Geraet mehr. Was fehlt, gilt nur noch dann als
+  geloescht, wenn die Liste juenger ist als das zuletzt Empfangene
+- **Ein Geraet, dem der Bestand abhanden kam, loescht ihn nicht mehr ueberall.**
+  Eine leere Liste neben einem Spiegel voller Titel ist kein Aufraeumen - wer
+  aufraeumt, loescht Stueck fuer Stueck. Statt zu loeschen wird jetzt der
+  Spiegel vergessen und alles noch einmal geholt. Das ist zugleich der Weg
+  zurueck fuer jedes Geraet, das der alte Fehler leergeraeumt hat
+- **Android schnitt beim Speichern bei sechshundert Eintraegen ab** - mit der
+  Begruendung, der Rechner tue dasselbe. Er tut es nicht. Wer mehr Titel
+  mitbrachte, verlor den Rest, und der Abgleich trug den Verlust auf die
+  anderen Geraete weiter
+- „Jetzt abgleichen" holt am Telefon jetzt den ganzen Raum noch einmal, genau
+  wie am Rechner. Nur nachzusehen, ob etwas hinaus muss, hilft dem nicht, der
+  den Knopf drueckt - wer ihn drueckt, vermisst etwas
+- Der Status zaehlt Titel und nicht mehr die Groesse des Spiegels.
+  „231 Titel" neben einer leeren Mediathek waren Wiedergabesitzungen und
+  Grabsteine und schickten beim Suchen in die falsche Richtung
+- Zwei neue Proben mit der echten Android-Bruecke halten beides fest: der Blick
+  vor dem Zustand und das Telefon ohne Bestand. Gegen den alten Stand
+  gefahren, bleiben von zwoelf Titeln null uebrig
+
 ## 1.37.2 — 24. August 2026
 
 Und noch einmal die Umgebung, nicht der Code.

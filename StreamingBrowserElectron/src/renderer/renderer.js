@@ -1464,7 +1464,8 @@ function renderGeraeteStatus(status) {
   const stand = status.lastSync
     ? `zuletzt abgeglichen ${new Date(status.lastSync).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`
     : "noch nichts abzugleichen";
-  const titel = status.entries === 1 ? "1 Titel" : `${status.entries} Titel`;
+  const anzahl = Number.isFinite(Number(status.titel)) ? Number(status.titel) : status.entries;
+  const titel = anzahl === 1 ? "1 Titel" : `${anzahl} Titel`;
   geraeteStatus.textContent = `Verbunden, ${titel}, ${stand}.`;
 }
 
