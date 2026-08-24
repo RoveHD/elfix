@@ -593,7 +593,12 @@ Der Schluessel wird einmal erzeugt und liegt **nie im Repository**:
 ```powershell
 keytool -genkeypair -v -keystore elfix.jks -alias elfix `
   -keyalg RSA -keysize 4096 -validity 10000
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("elfix.jks")) > elfix.jks.txt
+# Bewusst ueber WriteAllText und nicht ueber ">": Windows PowerShell bricht
+# lange Zeilen bei der Umleitung an der Konsolenbreite um und schreibt UTF-16.
+# Beides ist hier zwar verkraftbar - Convert.FromBase64String ueberliest
+# Zeilenumbrueche -, aber eine Datei, die genau das enthaelt, was sie enthalten
+# soll, erspart die Frage.
+[IO.File]::WriteAllText("$PWD\elfix.jks.txt", [Convert]::ToBase64String([IO.File]::ReadAllBytes("elfix.jks")))
 ```
 
 Der Inhalt von `elfix.jks.txt` und die drei Passwoerter kommen als Secrets in

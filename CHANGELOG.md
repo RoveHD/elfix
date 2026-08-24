@@ -3,46 +3,13 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
-## 1.39.0 — 24. August 2026
-
-Die APK aktualisiert sich jetzt selbst - und kann es zum ersten Mal ueberhaupt.
-
-- **Jede je gebaute APK trug eine andere Unterschrift.** Der Workflow baute
-  `assembleDebug`, und Gradle unterschreibt dann mit `~/.android/debug.keystore` -
-  den legt jede Maschine selbst an, mit einem *zufaelligen* Schluessel. Auf
-  einem GitHub-Runner, der nach jedem Lauf verschwindet, hiess das: Android
-  verweigerte jedes Update, und der einzige Weg war Deinstallieren - mitsamt
-  allem, was auf dem Geraet stand. Die APK wird jetzt mit einem festen
-  Schluessel unterschrieben, der als Geheimnis hereinkommt
-- **Und jede trug dieselbe Fassungsnummer** (`versionCode 150`, `versionName
-  1.5.0`), fest in `build.gradle`. Android entscheidet an genau dieser Nummer,
-  ob eine APK neuer ist, und die App konnte gar nicht ablesen, ob es etwas
-  Neueres gibt. Beides kommt jetzt aus dem Tag: `v1.39.0` wird zu `1.39.0` und
-  `versionCode 13900`
-- ELFIX sieht beim Start nach neuen Fassungen - hoechstens alle sechs Stunden -,
-  laedt sie im Hintergrund und fragt dann einmal. Wer „Spaeter" sagt, wird zu
-  dieser Fassung nicht noch einmal gefragt; sie bleibt in den Einstellungen
-  stehen
-- Installiert wird nie von allein. Das kann eine App auf Android auch nicht:
-  der Paketinstaller zeigt immer seinen eigenen Dialog, und die Erlaubnis
-  „Unbekannte Apps installieren" muss einmal von Hand gegeben werden. Fehlt
-  sie, schickt ELFIX auf die richtige Systemseite statt eine Fehlermeldung
-  anzuzeigen
-- Neue Karte in den Einstellungen, auf dem Telefon wie am Fernseher: welche
-  Fassung laeuft, was gerade geschieht, und ein Knopf, der sofort nachsieht
-- Nach draussen geht dabei eine Anfrage an die oeffentliche GitHub-API und,
-  wenn wirklich etwas Neues da ist, das Herunterladen der Datei. Kein Konto,
-  keine Kennung, nichts ueber das Geraet
-
-**Einmalig noch von Hand:** die gerade installierte APK traegt eine der alten
-Zufallsunterschriften. Diese eine Fassung muss deshalb noch deinstalliert und
-neu installiert werden - ab da laeuft es von selbst. Vorher den
-Geraeteabgleich einschalten, dann steht der Bestand nachher wieder da.
-
 ## 1.38.0 — 24. August 2026
 
-Der Geraeteabgleich hat auf dem Telefon nichts angezeigt - und dabei still den
-Bestand geloescht. Beides ist behoben.
+Der Geraeteabgleich hat auf dem Telefon nichts angezeigt und dabei still den
+Bestand geloescht. Und die APK konnte sich nie aktualisieren - auch das lag an
+etwas, das niemand sehen konnte.
+
+### Der Geraeteabgleich
 
 - **Das Telefon zeigte nach dem Abgleich nichts an.** Was hereinkam, ging
   direkt in `favorites.json` - am `Bestand` vorbei, der die Liste im Speicher
@@ -77,6 +44,43 @@ Bestand geloescht. Beides ist behoben.
 - Zwei neue Proben mit der echten Android-Bruecke halten beides fest: der Blick
   vor dem Zustand und das Telefon ohne Bestand. Gegen den alten Stand
   gefahren, bleiben von zwoelf Titeln null uebrig
+
+### Die APK bringt sich selbst auf den neuesten Stand
+
+- **Jede je gebaute APK trug eine andere Unterschrift.** Der Workflow baute
+  `assembleDebug`, und Gradle unterschreibt dann mit `~/.android/debug.keystore` -
+  den legt jede Maschine selbst an, mit einem *zufaelligen* Schluessel. Auf
+  einem GitHub-Runner, der nach jedem Lauf verschwindet, hiess das: Android
+  verweigerte jedes Update, und der einzige Weg war Deinstallieren - mitsamt
+  allem, was auf dem Geraet stand. Die APK wird jetzt mit einem festen
+  Schluessel unterschrieben, der als Geheimnis hereinkommt
+- **Und jede trug dieselbe Fassungsnummer** (`versionCode 150`, `versionName
+  1.5.0`), fest in `build.gradle`. Android entscheidet an genau dieser Nummer,
+  ob eine APK neuer ist, und die App konnte gar nicht ablesen, ob es etwas
+  Neueres gibt. Beides kommt jetzt aus dem Tag: `v1.38.0` wird zu `1.38.0` und
+  `versionCode 13800`
+- ELFIX sieht beim Start nach neuen Fassungen - hoechstens alle sechs Stunden -,
+  laedt sie im Hintergrund und fragt dann einmal. Wer „Spaeter" sagt, wird zu
+  dieser Fassung nicht noch einmal gefragt; sie bleibt in den Einstellungen
+  stehen
+- Installiert wird nie von allein. Das kann eine App auf Android auch nicht:
+  der Paketinstaller zeigt immer seinen eigenen Dialog, und die Erlaubnis
+  „Unbekannte Apps installieren" muss einmal von Hand gegeben werden. Fehlt
+  sie, schickt ELFIX auf die richtige Systemseite statt eine Fehlermeldung
+  anzuzeigen
+- Neue Karte in den Einstellungen, auf dem Telefon wie am Fernseher: welche
+  Fassung laeuft, was gerade geschieht, und ein Knopf, der sofort nachsieht
+- Nach draussen geht dabei eine Anfrage an die oeffentliche GitHub-API und,
+  wenn wirklich etwas Neues da ist, das Herunterladen der Datei. Kein Konto,
+  keine Kennung, nichts ueber das Geraet
+
+**Einmalig noch von Hand:** die gerade installierte APK traegt eine der alten
+Zufallsunterschriften. Diese eine Fassung muss deshalb noch deinstalliert und
+neu installiert werden - ab da laeuft es von selbst. Vorher den
+Geraeteabgleich einschalten, dann steht der Bestand nachher wieder da.
+
+Android traegt ab hier dieselbe Fassungsnummer wie der Rechner. Die bisherige
+Zaehlung (zuletzt 1.5.0) war eine zweite Buchfuehrung fuer dasselbe Programm.
 
 ## 1.37.2 — 24. August 2026
 

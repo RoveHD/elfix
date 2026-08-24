@@ -24,6 +24,17 @@ latest.yml
 **/bin/
 **/obj/
 
+# Der Unterschriftsschluessel der APK - und alles, was ihn enthaelt.
+#
+# Er gehoert in die Actions-Secrets und nirgendwo sonst hin. Dieses Repository
+# ist oeffentlich: ein einziges `git add -A` im falschen Augenblick, und jeder
+# koennte eine APK bauen, die sich als Update ueber ein bestehendes ELFIX legt.
+# Geht er verloren, laesst sich ausserdem nie wieder ein Update ausliefern -
+# eine Kopie gehoert also an einen sicheren Ort, nur eben nicht hierher.
+*.jks
+*.keystore
+*.jks.txt
+
 # Local/editor noise
 .DS_Store
 Thumbs.db
