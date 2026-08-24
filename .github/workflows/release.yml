@@ -172,9 +172,22 @@ jobs:
           }
           if ($aus -match "does not exist") {
             Write-Host "::error::Das Passwort stimmt, aber der Alias nicht: in diesem $art gibt es keinen Eintrag unter dem Namen aus ANDROID_KEY_ALIAS. 'keytool -list -keystore elfix.jks' zeigt, wie er wirklich heisst."
-          } else {
-            Write-Host "::error::Die Datei ist ein gueltiges $art, laesst sich mit ANDROID_KEYSTORE_PASSWORT aber nicht oeffnen. Entweder stimmt das Passwort nicht (ein angehaengtes Leerzeichen oder Zeilenende genuegt), oder die Datei ist beim Uebertragen beschaedigt worden - dann passt ihre Groesse oben nicht zu der von elfix.jks auf deinem Rechner."
+            exit 1
           }
+          # Der haeufigste Einzelfall: beim Einfuegen ist ein Zeilenende oder
+          # ein Leerzeichen mitgegangen. Das ist von einem schlicht falschen
+          # Passwort nicht zu unterscheiden - ausser man probiert es. Geprueft
+          # wird nur, um es benennen zu koennen; gebaut wird damit nicht, sonst
+          # bliebe das Geheimnis fuer immer falsch hinterlegt.
+          $beschnitten = $env:PASSWORT.Trim()
+          if ($beschnitten -ne $env:PASSWORT) {
+            & keytool -list -keystore $pfad -storepass $beschnitten -alias $env:ALIAS 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "::error::In ANDROID_KEYSTORE_PASSWORT steht ein Leerzeichen oder Zeilenende zu viel - ohne das Ueberfluessige geht der Keystore auf. Das Geheimnis bitte neu einfuegen, ohne den Zeilenumbruch am Ende."
+              exit 1
+            }
+          }
+          Write-Host "::error::Die Datei ist ein gueltiges $art und laesst sich lesen, aber ANDROID_KEYSTORE_PASSWORT oeffnet sie nicht. Sie ist $($bytes.Length) Bytes gross - stimmt das mit elfix.jks auf deinem Rechner ueberein, ist die Uebertragung in Ordnung und es liegt wirklich am Passwort."
           exit 1
 
       - name: Build signed release APK
