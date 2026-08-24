@@ -136,20 +136,16 @@ public class MainActivity extends Activity {
     private int lastConfigOrientation = -1;
     private int lastConfigWidthDp = -1;
     private int lastConfigHeightDp = -1;
-    /** URL that ELFIX itself decided to load into the main frame; allowed exactly once. */
-    private String selfInitiatedNavigation;
     /**
-     * Main-frame hops still allowed while a hoster gateway ELFIX opened itself is resolving.
+     * Wer den Hauptrahmen bekommt.
      *
-     * The gateway (AniWorld's /redirect/<id>, s.to's equivalent) does not land on the player in one
-     * step. It bounces to the hoster's own rotating domain, and that second jump is made client-side
-     * -- measured: voe.sx -> nicolehappyoutside.com arriving with isRedirect()=false. The old rule
-     * allowed server-side redirects only, blocked exactly this hop, and left the user on a blank
-     * page. A budget rather than a boolean is what keeps the allowance from becoming a free pass for
-     * an advert chain: it is handed out once per gateway click and spent per hop.
+     * <p>Stand hier vorher als zwei nackte Felder - eine selbst gewaehlte
+     * Adresse und ein Sprungbudget -, und das Budget war der Fehler: es wurde
+     * verbraucht, bevor irgendjemand nach dem Ziel gefragt hatte. Die Regel
+     * steht jetzt in {@link Navigationswache}, wo sie sich ohne Geraet pruefen
+     * laesst; die Begruendung dazu ebenfalls.
      */
-    private int hosterChainHops;
-    private static final int HOSTER_CHAIN_HOPS = 4;
+    private final Navigationswache wache = new Navigationswache();
     private View loadingOverlay;
     private FrameLayout fullscreenContainer;
     private View fullscreenView;
@@ -3246,7 +3242,7 @@ public class MainActivity extends Activity {
     private void openProvider(Provider provider, String url, boolean preserveFavoriteProgress) {
         currentScreen = "provider";
         // A deliberate navigation ends any hoster chain that was still allowed to hop.
-        hosterChainHops = 0;
+        wache.zuruecksetzen();
         // Switching provider while a video is fullscreen would otherwise strand the overlay: the
         // content frame gets cleared below while fullscreenView still pointed at the removed view.
         hideFullscreen();
@@ -5152,6 +5148,140 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Die zuletzt vollstaendig geladene, gueltige Seite je Anbieter.
+     *
+     * <p>Der Rueckweg, wenn im Verlauf nichts Brauchbares mehr steht. Bewusst
+     * je Anbieter und nicht global: die Anbieter haben eigene WebViews und
+     * eigene Verlaeufe, und ein Rueckwurf auf die Seite eines anderen waere
+     * schlimmer als die weisse Seite.
+     */
+    private final Map<String, String> letzteGueltigeSeite = new HashMap<>();
+
+    private volatile Boolean debugBau;
+
+    /**
+     * Ob dies ein Debug-Bau ist.
+     *
+     * <p>Ueber das Flag der Anwendung und nicht ueber {@code BuildConfig}:
+     * dessen Erzeugung ist beim Android-Plugin abschaltbar und hier gar nicht
+     * eingeschaltet. Das Flag setzt Gradle bei jedem Debug-Bau selbst.
+     */
+    private boolean istDebugBau() {
+        if (debugBau == null) {
+            debugBau = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        }
+        return debugBau;
+    }
+
+    /**
+     * Eine Zeile ueber eine Entscheidung des Blockers - nur im Debug-Bau.
+     *
+     * <p>Es steht ausschliesslich der Wirt darin. Pfad, Abfrage und Fragment
+     * bleiben draussen: dort tragen diese Seiten Sitzungskennungen, und ein
+     * Protokoll, das die mitschreibt, ist ein Leck und keine Diagnose.
+     *
+     * @param rahmen "main" oder "sub" - Hauptnavigation oder Unterressource
+     * @param art    "navigation", "weiterleitung", "popup", "anfrage", "rettung"
+     * @param aktion "erlaubt" oder "blockiert"
+     * @param grund  warum genau
+     */
+    private void spur(String rahmen, String url, String art, String aktion, String grund) {
+        if (!istDebugBau()) return;
+        Log.d(TAG, "ELFIX-Nav rahmen=" + rahmen + " art=" + art
+            + " wirt=" + safeHost(url) + " aktion=" + aktion + " grund=" + grund);
+    }
+
+    /**
+     * Eine gesperrte Hauptnavigation melden - hoechstens so oft, wie es hilft.
+     *
+     * <p>Eine Werbekette versucht es in Schueben; ohne die Bremse in der Wache
+     * staende die Meldung fuenfmal uebereinander.
+     */
+    private void sperreMelden(WebView view, String url, Provider provider, String meldung) {
+        if (wache.meldungFaellig(safeHost(url), SystemClock.uptimeMillis())) {
+            showToast(meldung);
+        }
+        nachSperrePruefen(view, provider);
+    }
+
+    /**
+     * Was nach einer gesperrten Hauptnavigation zu tun bleibt.
+     *
+     * <p>Zwei Dinge, und beide waren vorher nicht da.
+     *
+     * <p><b>Die Ladeschicht.</b> Sie wird von {@code onPageFinished} abgeraeumt.
+     * Eine abgebrochene Navigation liefert diesen Rueckruf nie - also blieb
+     * "&lt;Anbieter&gt; wird geladen ..." stehen, bis jemand den Anbieter
+     * wechselte. Das war die eine Haelfte des gemeldeten Fehlers.
+     *
+     * <p><b>Der Blick danach.</b> Erst im naechsten Durchlauf: hier ist
+     * Chromium noch mitten im Abbruch, und {@code getUrl()} traegt bis dahin
+     * noch die Adresse, die gerade verworfen wird.
+     */
+    private void nachSperrePruefen(WebView view, Provider provider) {
+        if (view == null || provider == null) return;
+        if (provider == activeProvider) hideProviderLoading();
+        view.post(() -> rettungWennGestrandet(view, provider));
+    }
+
+    /**
+     * Zurueck auf die letzte gueltige Seite, wenn gar keine mehr dasteht.
+     *
+     * <p>Das Sicherheitsnetz, nicht die Reparatur: die Reparatur ist, dass eine
+     * Werbeweiterleitung jetzt gesperrt wird, <em>waehrend</em> die Folgenseite
+     * noch steht (siehe {@link Navigationswache}). Hier geht es nur noch um
+     * das, was uebrigbleibt - ein {@code about:blank}, das ein
+     * {@code window.open()} ohne Adresse hinterlassen hat, oder ein
+     * Hauptrahmen, in dem ueberhaupt kein Dokument steht.
+     *
+     * <p>Zurueckgeholt wird ueber den Verlauf, nicht ueber ein Neuladen: der
+     * Verlauf weiss noch, welcher Eintrag dem Anbieter gehoerte, und die Seite
+     * kommt dann mitsamt ihrer Stelle zurueck. Gesucht wird der neueste
+     * erstparteiliche Eintrag und nicht einfach der vorige - eine Werbekette
+     * hinterlaesst mehrere, und der vorige waere wieder einer davon.
+     */
+    private void rettungWennGestrandet(WebView view, Provider provider) {
+        if (view == null || provider == null) return;
+        String aktuell = view.getUrl();
+        if (!Navigationswache.istGestrandet(aktuell)) {
+            spur("main", aktuell, "rettung", "erlaubt", "seite steht noch, nichts zu tun");
+            return;
+        }
+        long jetzt = SystemClock.uptimeMillis();
+        if (!wache.rettungFaellig(jetzt)) {
+            spur("main", aktuell, "rettung", "blockiert", "zu dicht hinter der letzten");
+            return;
+        }
+        android.webkit.WebBackForwardList verlauf = view.copyBackForwardList();
+        if (verlauf != null) {
+            for (int i = verlauf.getCurrentIndex() - 1; i >= 0; i -= 1) {
+                android.webkit.WebHistoryItem eintrag = verlauf.getItemAtIndex(i);
+                String adresse = eintrag == null ? null : eintrag.getUrl();
+                if (adresse == null || Navigationswache.istGestrandet(adresse)) continue;
+                if (!isPopupFirstParty(provider, adresse)) continue;
+                spur("main", adresse, "rettung", "erlaubt",
+                    "zurueck " + (verlauf.getCurrentIndex() - i) + " im verlauf");
+                // Der Sprung geht auf eine Adresse, die die Wache ohnehin
+                // durchliesse - angemeldet wird er trotzdem, damit er nicht von
+                // der eigenen Regel aufgehalten wird, falls WebView ihn meldet.
+                wache.selbstGewaehlt(adresse, jetzt);
+                view.goBackOrForward(i - verlauf.getCurrentIndex());
+                return;
+            }
+        }
+        String zurueck = letzteGueltigeSeite.get(provider.id);
+        if (zurueck == null || zurueck.isEmpty()) zurueck = provider.startUrl;
+        if (zurueck == null || zurueck.isEmpty() || isSameUrl(zurueck, aktuell)) {
+            spur("main", aktuell, "rettung", "blockiert", "kein rueckweg bekannt");
+            return;
+        }
+        spur("main", zurueck, "rettung", "erlaubt", "letzte gueltige seite neu geladen");
+        wache.selbstGewaehlt(zurueck, jetzt);
+        view.loadUrl(zurueck);
+    }
+
     private final class GuardedWebViewClient extends WebViewClient {
         private final Provider provider;
         /**
@@ -5217,48 +5347,63 @@ public class MainActivity extends Activity {
                 return false;
             }
             String url = request.getUrl().toString();
-            Log.i(TAG, "NAV main=" + request.isForMainFrame()
-                + " gesture=" + request.hasGesture()
-                + " redirect=" + request.isRedirect()
-                + " from=" + safeHost(mainFrameUrl)
-                + " to=" + safeHost(url)
-                + " scheme=" + request.getUrl().getScheme());
             // Only http(s) is ever handed to the WebView. These sites push intent://, market://
             // and similar app-store/deeplink schemes through ad frames; forwarding those to
             // startActivity() is what produces ActivityNotFoundException, and letting the WebView
             // attempt them just yields a dead error page. Refuse them explicitly instead.
             String scheme = request.getUrl().getScheme();
             if (scheme != null && !"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-                Log.i(TAG, "External scheme requested provider=" + provider.id + " scheme=" + scheme);
-                showToast("Externer Link blockiert");
+                spur("main", url, "navigation", "blockiert", "fremdes schema " + scheme);
+                if (wache.meldungFaellig(scheme, SystemClock.uptimeMillis())) {
+                    showToast("Externer Link blockiert");
+                }
+                // Ein fremdes Schema hat nie ein Dokument bestaetigt; die Seite
+                // steht noch. Trotzdem nachsehen - es kostet nichts und deckt
+                // den Fall ab, dass die Werbung vorher schon umgezogen ist.
+                nachSperrePruefen(view, provider);
                 return true;
             }
             if (Adblocker.isChallengeOrVerificationUrl(url, provider)) {
+                spur("main", url, "navigation", "erlaubt", "pruefung/captcha");
                 return false;
             }
             if (shouldBlockProviderNavigation(provider, url)) {
-                showToast("Provider-Wechsel blockiert");
+                spur("main", url, "navigation", "blockiert", "anderer eingerichteter anbieter");
+                if (wache.meldungFaellig(safeHost(url), SystemClock.uptimeMillis())) {
+                    showToast("Provider-Wechsel blockiert");
+                }
+                nachSperrePruefen(view, provider);
                 return true;
             }
-            // The main frame must stay on the provider's own site. Measured on AniWorld: a card
-            // click carries a real user gesture and still navigated the main frame to
-            // watchcolleague.com -> omg10.com, leaving the provider unusable. So the gesture is not
-            // evidence of intent here. The hoster chain runs inside the player iframe and does not
-            // need the main frame; the one exception is a URL ELFIX itself chose to load.
-            if (url.equals(selfInitiatedNavigation)) {
-                selfInitiatedNavigation = null;
-            } else if (hosterChainHops > 0) {
-                // Hop of the hoster gateway we opened ourselves, server-side or client-side.
-                hosterChainHops -= 1;
-                Log.i(TAG, "Following hoster hop to " + safeHost(url)
-                    + " redirect=" + request.isRedirect() + " budgetLeft=" + hosterChainHops);
-            } else if (!isPopupFirstParty(provider, url)) {
-                Log.i(TAG, "Blocked main-frame navigation to " + safeHost(url)
-                    + " gesture=" + request.hasGesture() + " redirect=" + request.isRedirect());
-                showToast("Weiterleitung blockiert");
+            // Wer den Hauptrahmen bekommt, entscheidet die Wache - und zwar
+            // anhand des Ziels *und* der Herkunft. Der Unterschied, an dem die
+            // weisse Seite haengt: ein Sprung, den kein Server angesagt hat und
+            // der von einer Seite des Anbieters ausgeht, ist die Werbung. Er
+            // wird gesperrt, solange die Folgenseite noch dasteht - statt erst
+            // vier Spruenge spaeter, wenn sie weg ist.
+            Navigationswache.Urteil urteil = wache.hauptnavigation(url,
+                isPopupFirstParty(provider, url),
+                isPopupFirstParty(provider, mainFrameUrl),
+                request.isRedirect(),
+                SystemClock.uptimeMillis());
+            if (!urteil.erlaubt) {
+                spur("main", url, request.isRedirect() ? "weiterleitung" : "navigation",
+                    "blockiert", urteil.grund + ", von " + safeHost(mainFrameUrl));
+                sperreMelden(view, url, provider, "Weiterleitung blockiert");
                 return true;
             }
-            return adblocker.shouldBlock(url, provider, Adblocker.isLikelyVideoPlayerUrl(view.getUrl()));
+            // Und zuletzt die Filterlisten: auch eine formal zulaessige
+            // Hauptnavigation kann auf einem Werbenetz landen. Auch das ist
+            // eine Sperre und geht denselben Weg - vorher endete sie hier
+            // stumm, ohne Meldung und ohne Blick darauf, was stehenbleibt.
+            if (adblocker.shouldBlock(url, provider, Adblocker.isLikelyVideoPlayerUrl(view.getUrl()))) {
+                spur("main", url, "navigation", "blockiert", "filterliste");
+                sperreMelden(view, url, provider, "Weiterleitung blockiert");
+                return true;
+            }
+            spur("main", url, request.isRedirect() ? "weiterleitung" : "navigation",
+                "erlaubt", urteil.grund);
+            return false;
         }
 
         @Override
@@ -5273,15 +5418,15 @@ public class MainActivity extends Activity {
             // phone" panels) get in. Log them with their referer so the ad frame can be told apart
             // from the legitimate player embed instead of guessed at.
             if (isSubFrameDocument(request)) {
-                Log.i(TAG, "SUBDOC host=" + safeHost(request.getUrl().toString())
-                    + " ref=" + safeHost(refererOf(request))
-                    + " thirdPartyFrame=" + Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider));
+                spur("sub", request.getUrl().toString(), "unterdokument", "gepruft",
+                    "von " + safeHost(refererOf(request)) + ", fremder rahmen="
+                        + Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider));
             }
             // Intrusive overlay creatives are blocked before the page-critical bypass, because
             // parts of them arrive as CSS and images and would otherwise be waved through.
             if (Adblocker.isIntrusiveOverlayRequest(request.getUrl().toString())) {
-                Log.i(TAG, "Blocked[overlay] host=" + safeHost(request.getUrl().toString())
-                    + " path=" + safePath(request.getUrl().toString()));
+                spur("sub", request.getUrl().toString(), "anfrage", "blockiert",
+                    "aufdringliche werbeschicht " + safePath(request.getUrl().toString()));
                 return blockedResourceResponse(request);
             }
             if (isPageCriticalRequest(request)) {
@@ -5304,12 +5449,12 @@ public class MainActivity extends Activity {
                 && Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider)) {
                 // Everything the hoster frame is still allowed to pull in. This is where the
                 // in-page ad overlays come from, so their source has to be nameable.
-                Log.i(TAG, "ALLOWED-IN-HOSTER host=" + safeHost(requestUrl)
-                    + " ref=" + safeHost(refererOf(request)) + " path=" + safePath(requestUrl));
+                spur("sub", requestUrl, "anfrage", "erlaubt",
+                    "im hoster-rahmen, von " + safeHost(refererOf(request)));
             }
             if (reason != null) {
-                Log.d(TAG, "Blocked[" + reason + "] provider=" + provider.id + " host=" + safeHost(requestUrl)
-                    + " ref=" + safeHost(refererOf(request)));
+                spur("sub", requestUrl, "anfrage", "blockiert",
+                    reason + ", von " + safeHost(refererOf(request)));
                 return blockedResourceResponse(request);
             }
             return null;
@@ -5333,10 +5478,23 @@ public class MainActivity extends Activity {
         @Override
         public void onPageFinished(WebView view, String url) {
             mainFrameUrl = url == null ? "" : url;
-            // The budget is deliberately NOT cleared here. VOE's rotation jump happens after its
-            // gateway page has finished loading, so clearing on settle would take the allowance away
-            // one moment before the hop that needs it. It decays with use instead, and openProvider()
-            // resets it whenever ELFIX itself navigates somewhere.
+            // Ein about:blank darf nicht als sichtbare Ersatzseite stehenbleiben.
+            // Es entsteht dort, wo ein window.open() erst die leere Seite
+            // aufmacht und die Adresse nachreicht - und die Nachreichung ist
+            // die Werbung, die gerade gesperrt wurde.
+            if (Navigationswache.istGestrandet(url)) {
+                spur("main", url, "seite fertig", "blockiert", "leeres dokument - wird zurueckgeholt");
+                if (provider == activeProvider) hideProviderLoading();
+                rettungWennGestrandet(view, provider);
+                return;
+            }
+            letzteGueltigeSeite.put(provider.id, url);
+            // Das Sprungbudget der Wache wird hier absichtlich NICHT geleert:
+            // der Rotationssprung von VOE kommt erst, nachdem seine
+            // Weichenseite fertig geladen hat - ein Leeren an dieser Stelle
+            // naehme die Erlaubnis einen Augenblick vor dem Sprung weg, der sie
+            // braucht. Es laeuft stattdessen ab und wird verbraucht, und
+            // openProvider() setzt es zurueck, sobald ELFIX selbst navigiert.
             if (provider == activeProvider) hideProviderLoading();
             if (shouldBlockProviderNavigation(provider, url)) return;
             installTvWebNavigation(view);
@@ -5622,7 +5780,7 @@ public class MainActivity extends Activity {
                 Log.w(TAG, "Popup requested with unexpected transport, ignoring");
                 return false;
             }
-            Log.i(TAG, "Popup requested userGesture=" + isUserGesture);
+            spur("popup", "-", "anfrage", "gepruft", "gesture=" + isUserGesture);
             WebView popup = new WebView(MainActivity.this);
             popup.getSettings().setJavaScriptEnabled(true);
             popup.setWebViewClient(new WebViewClient() {
@@ -5634,17 +5792,31 @@ public class MainActivity extends Activity {
                     handled = true;
                     Provider provider = activeProvider;
                     boolean allowed = isAllowedPopupTarget(provider, url);
-                    Log.i(TAG, "POPUP target=" + safeHost(url)
-                        + " allowed=" + allowed
-                        + " playerUrlHeuristic=" + Adblocker.isLikelyVideoPlayerUrl(url)
-                        + " firstParty=" + isPopupFirstParty(provider, url)
-                        + " path=" + safePath(url));
+                    spur("popup", url, "popup", allowed ? "erlaubt" : "blockiert",
+                        allowed
+                            ? (isPopupFirstParty(provider, url) ? "erstpartei" : "hoster")
+                            : "kein hoster, keine erstpartei");
                     if (allowed) {
-                        selfInitiatedNavigation = url;
-                        hosterChainHops = HOSTER_CHAIN_HOPS;
+                        long jetzt = SystemClock.uptimeMillis();
+                        wache.selbstGewaehlt(url, jetzt);
+                        wache.ketteEroeffnen(jetzt);
                         view.post(() -> view.loadUrl(url));
                     } else {
-                        view.post(() -> showToast("Popup blockiert"));
+                        // Die Hauptseite bleibt, wie sie ist: das Popup hat ein
+                        // eigenes, nie eingehaengtes WebView bekommen und
+                        // verschwindet gleich mit ihm. Nur die Meldung geht
+                        // hinaus, und auch die nur, wenn sie nicht gerade eben
+                        // schon dastand.
+                        Provider betroffen = provider;
+                        view.post(() -> {
+                            if (wache.meldungFaellig(safeHost(url), SystemClock.uptimeMillis())) {
+                                showToast("Popup blockiert");
+                            }
+                            // Ein Popup, das window.open() ohne Adresse aufmacht
+                            // und erst danach umleitet, kann die Hauptseite auf
+                            // about:blank stehenlassen. Nachsehen, nicht hoffen.
+                            rettungWennGestrandet(view, betroffen);
+                        });
                     }
                     // Never destroy a WebView synchronously from within its own WebViewClient
                     // callback -- the Chromium engine is still unwinding this exact call frame,

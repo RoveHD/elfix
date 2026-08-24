@@ -239,6 +239,25 @@ android {
             if (schluesselDa) signingConfig signingConfigs.elfix
             minifyEnabled false
         }
+        /*
+         * Der Debug-Bau bekommt eine eigene Kennung.
+         *
+         * Sonst ist er nicht zu installieren, solange ein Release auf dem
+         * Geraet liegt: Android laesst keine zweite Unterschrift auf denselben
+         * Paketnamen, und die Debug-APK traegt zwangslaeufig eine andere. Der
+         * Ausweg war bisher, das Release zu deinstallieren - und damit gingen
+         * Favoriten, Fortschritt, Geraeteschluessel und Anmeldungen weg, nur um
+         * eine Aenderung ausprobieren zu koennen.
+         *
+         * Mit dem Zusatz stehen beide nebeneinander und haben getrennte Daten.
+         * Die Kennung wird nirgends fest angenommen: die Adresse des
+         * FileProviders steht im Manifest als ${applicationId}.dateien und im
+         * Code als getPackageName() + ".dateien" - beide wandern mit.
+         */
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
     }
 
 }
