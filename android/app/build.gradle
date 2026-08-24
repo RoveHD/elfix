@@ -44,26 +44,65 @@ def kernModule = [
     "shared/bildausschnitt.js"
 ]
 
-tasks.register("kernKopieren", Copy) {
-    description = "Kopiert die gemeinsamen ELFIX-Module aus der Desktop-App in die Assets."
-    group = "build"
-    from(kernQuelle) {
-        kernModule.each { include it }
-        eachFile { it.path = it.sourceName }
-    }
-    into layout.buildDirectory.dir("kern-assets/kern/module")
-    includeEmptyDirs = false
+/*
+ * Wie die Dateien in die Assets kommen - und warum das ein eigener Typ ist.
+ *
+ * Vorher waren es zwei Copy-Tasks, die in einen Ordner schrieben, den
+ * `sourceSets` als Asset-Quelle nannte. Fuer Gradle war das ein Ordner ohne
+ * Erzeuger: er stand einfach da. Wer ihn liest, konnte also nicht wissen, dass
+ * erst jemand hineinschreiben muss - und lesen tut ihn nicht nur das
+ * Zusammenfuehren der Assets, sondern auch Lint. Genau daran ist der
+ * Release-Bau gescheitert:
+ *
+ *   Task ':app:lintVitalAnalyzeRelease' uses this output of task
+ *   ':app:kernKopieren' without declaring an explicit or implicit dependency.
+ *
+ * Ein `dependsOn` je betroffenem Task waere die Antwort auf die Fehlermeldung
+ * und nicht auf ihre Ursache: die naechste Fassung des Android-Plugins bringt
+ * einen weiteren Leser mit, und dann steht dieselbe Meldung wieder da, nur mit
+ * einem anderen Namen.
+ *
+ * Deshalb sagt der Task jetzt selbst, wohin er schreibt (`ziel` ist ein
+ * erklaerter Ausgabeordner), und das Android-Plugin bekommt ihn ueber
+ * `addGeneratedSourceDirectory` als *erzeugte* Asset-Quelle gereicht. Ab da
+ * weiss Gradle von sich aus, dass jeder Leser dieses Ordners hinter diesem
+ * Task kommt - Lint eingeschlossen, und jeder kuenftige Leser ebenso.
+ */
+abstract class AssetsSammeln extends DefaultTask {
+    /** Die Dateien selbst. Ihre Namen zaehlen, ihre Herkunftspfade nicht. */
+    @InputFiles
+    @PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract ConfigurableFileCollection getQuellen()
 
-    doFirst {
-        if (!kernQuelle.isDirectory()) {
-            throw new GradleException(
-                "Die Desktop-App wurde unter ${kernQuelle} nicht gefunden. " +
-                "Der gemeinsame Kern kann ohne sie nicht gebaut werden.")
+    /** Wohin unterhalb der Asset-Wurzel, z. B. "kern/module". */
+    @Input
+    abstract Property<String> getUnterordner()
+
+    /**
+     * Der Ausgabeordner.
+     *
+     * <p>Wird nicht hier gesetzt, sondern vom Android-Plugin: es sucht je
+     * Variante eine Stelle aus und traegt sie ein. Das ist der ganze
+     * Unterschied zu vorher - dadurch kennt Gradle den Erzeuger dieses Ordners.
+     */
+    @OutputDirectory
+    abstract DirectoryProperty getZiel()
+
+    @javax.inject.Inject
+    abstract FileSystemOperations getDateien()
+
+    @TaskAction
+    void sammeln() {
+        def wurzel = ziel.get()
+        // Was von einem frueheren Lauf liegengeblieben ist, gehoert weg: sonst
+        // wandert ein Modul, das aus der Liste geflogen ist, weiter mit.
+        def vorhanden = wurzel.asFile.listFiles()
+        if (vorhanden) {
+            dateien.delete { spec -> spec.delete(vorhanden as Object[]) }
         }
-        kernModule.each { pfad ->
-            if (!new File(kernQuelle, pfad).isFile()) {
-                throw new GradleException("Kern-Modul fehlt: ${pfad}")
-            }
+        dateien.copy { spec ->
+            spec.from(quellen)
+            spec.into(wurzel.dir(unterordner.get()))
         }
     }
 }
@@ -137,11 +176,6 @@ android {
         }
     }
 
-    sourceSets {
-        main {
-            assets.srcDirs += layout.buildDirectory.dir("kern-assets")
-        }
-    }
 }
 
 /*
@@ -161,29 +195,58 @@ tasks.matching { it.name == "assembleRelease" }.configureEach {
     }
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn "kernKopieren"
-}
-
 /*
- * Die Probenliste der Fortschrittsregel wandert mit.
+ * Je Variante ein eigener Satz Tasks.
  *
- * Sie ist keine Bibliothek, sondern eine Pruefung - und genau deshalb gehoert
- * sie ins Paket: nur so laesst sich auf dem Geraet selbst zeigen, dass dort
- * dasselbe herauskommt wie am Rechner. Ohne sie waere "teilt sich die Logik"
- * eine Behauptung.
+ * Nicht aus Vorliebe fuer Umstaende: `addGeneratedSourceDirectory` sucht dem
+ * Task seinen Ausgabeordner aus, und der liegt je Variante woanders. Ein
+ * einziger Task fuer Debug *und* Release bekaeme diesen Ordner zweimal
+ * zugewiesen - der zweite Eintrag gaebe, und eine der beiden Varianten baute
+ * gegen die Assets der anderen.
+ *
+ * Damit ist zugleich die Frage beantwortet, ob andere Varianten dieselbe
+ * unausgesprochene Abhaengigkeit haben: `selector().all()` trifft jede, die es
+ * gibt und die es geben wird, und jede bekommt ihre eigene erklaerte
+ * Verbindung. Es bleibt keine uebrig, an der noch etwas nachzureichen waere.
+ *
+ * Die Probenliste faehrt genauso mit. Sie ist keine Bibliothek, sondern eine
+ * Pruefung - und gehoert genau deshalb ins Paket: nur so laesst sich auf dem
+ * Geraet selbst zeigen, dass dort dasselbe herauskommt wie am Rechner. Ohne
+ * sie waere "teilt sich die Logik" eine Behauptung.
  */
-tasks.register("probenKopieren", Copy) {
-    description = "Kopiert die Faelle der Fortschrittsregel in die Assets."
-    group = "build"
-    from(new File(kernQuelle, "tests")) {
-        include "fortschritt-proben.json"
-    }
-    into layout.buildDirectory.dir("kern-assets/kern")
-}
+androidComponents {
+    onVariants(selector().all()) { variante ->
+        def variantenName = variante.name.capitalize()
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn "probenKopieren"
+        def module = tasks.register("kernModuleKopieren${variantenName}", AssetsSammeln) {
+            description = "Kopiert die gemeinsamen ELFIX-Module aus der Desktop-App in die Assets."
+            group = "build"
+            unterordner.set("kern/module")
+            quellen.from(kernModule.collect { new File(kernQuelle, it) })
+
+            doFirst {
+                if (!kernQuelle.isDirectory()) {
+                    throw new GradleException(
+                        "Die Desktop-App wurde unter ${kernQuelle} nicht gefunden. " +
+                        "Der gemeinsame Kern kann ohne sie nicht gebaut werden.")
+                }
+                kernModule.each { pfad ->
+                    if (!new File(kernQuelle, pfad).isFile()) {
+                        throw new GradleException("Kern-Modul fehlt: ${pfad}")
+                    }
+                }
+            }
+        }
+        variante.sources.assets.addGeneratedSourceDirectory(module) { it.ziel }
+
+        def proben = tasks.register("kernProbenKopieren${variantenName}", AssetsSammeln) {
+            description = "Kopiert die Faelle der Fortschrittsregel in die Assets."
+            group = "build"
+            unterordner.set("kern")
+            quellen.from(new File(kernQuelle, "tests/fortschritt-proben.json"))
+        }
+        variante.sources.assets.addGeneratedSourceDirectory(proben) { it.ziel }
+    }
 }
 
 /*
