@@ -3,6 +3,30 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.39.2 — 24. August 2026
+
+Die Liste sprang beim Scrollen nach oben.
+
+- Kein Scroll-Fehler, sondern ein Neuzeichnen. `bestandGeaendert()` baut die
+  sichtbare Seite von Grund auf neu auf - `content.removeAllViews()`, und
+  `mobilePage()` legt dabei eine neue ScrollView an. Die alte ist danach weg,
+  samt ihrer Position, also faengt die Seite oben an
+- Solange das nur nach einem eigenen Handgriff geschah, fiel es kaum auf: der
+  kam ja von einer sichtbaren Stelle. Seit der Geraeteabgleich in 1.38.0 ueber
+  `Bestand.setzeRoh()` hier hereinreicht, kommt es auch von aussen - ein Schub
+  vom anderen Geraet, und die Liste springt unter dem Finger nach oben. Daher
+  auch das "manchmal": es haengt daran, ob gerade ein Abgleich hereinkommt
+- Die Position wird jetzt vor dem Neuzeichnen gemerkt und danach wieder
+  gesetzt. Ausdruecklich nur an dieser Stelle und nicht in `mobilePage()`: wer
+  eine Liste *oeffnet*, soll weiter oben anfangen
+- `scrollTo` statt `setScrollY`, weil die ScrollView dabei auf das kappt, was
+  wirklich da ist - wurde die Liste durch den Abgleich kuerzer, landet man am
+  neuen Ende statt im Leeren. Und der Umweg ueber `post()`, weil die frisch
+  gebaute Seite noch nicht vermessen ist; vorher waere jede Position ausserhalb
+  und wuerde auf null gekappt
+
+Nur Android. Am Rechner aendert sich nichts.
+
 ## 1.39.1 — 24. August 2026
 
 Zwei Dinge, die auf AniWorld gemeldet wurden - beide am Rechner, beide aelter
