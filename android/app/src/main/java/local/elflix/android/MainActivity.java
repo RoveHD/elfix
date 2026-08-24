@@ -93,6 +93,15 @@ public class MainActivity extends Activity {
     private Qualitaet qualitaet;
     private Geraete geraete;
     private Aktualisierung aktualisierung;
+    /**
+     * Die ScrollView der Seite, die gerade steht.
+     *
+     * <p>Jeder Bildschirm baut sich neu auf und legt dabei eine neue an - die
+     * alte samt ihrer Position ist danach weg. Fuer einen Wechsel ist das
+     * richtig: eine frisch geoeffnete Liste faengt oben an. Fuer ein
+     * Neuzeichnen derselben Liste ist es falsch.
+     */
+    private ScrollView seitenScroll;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -792,6 +801,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout tvPage() {
         ScrollView scroll = new ScrollView(this);
+        seitenScroll = scroll;
         scroll.setBackgroundColor(Theme.BACKGROUND);
         // Focused cards scale up by 5%; without this the growth is clipped at the row/page bounds
         // and the focus outline looks cut off.
@@ -1504,6 +1514,7 @@ public class MainActivity extends Activity {
     /** Scrollable page shell with the shared mobile spacing already applied. */
     private LinearLayout mobilePage() {
         ScrollView scroll = new ScrollView(this);
+        seitenScroll = scroll;
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(Theme.BACKGROUND);
         LinearLayout page = new LinearLayout(this);
@@ -3689,16 +3700,52 @@ public class MainActivity extends Activity {
         return "static".equals(favoriteProgressMode);
     }
 
-    /** Der Bestand hat sich geaendert - die sichtbare Liste neu zeichnen. */
+    /**
+     * Der Bestand hat sich geaendert - die sichtbare Liste neu zeichnen.
+     *
+     * <p>Und dabei stehenbleiben, wo man war. Ein Neuzeichnen baut die Seite
+     * von Grund auf neu auf, mitsamt einer neuen ScrollView; ohne Zutun faengt
+     * sie oben an. Solange das nur nach einem eigenen Handgriff geschah, fiel
+     * es kaum auf - der kam ja von einer sichtbaren Stelle. Seit der
+     * Geraeteabgleich hier hereinreicht, kommt es auch von aussen: ein Schub
+     * vom anderen Geraet, und die Liste springt unter dem Finger nach oben.
+     *
+     * <p>Gemerkt wird nur fuer diesen einen Fall. Wer eine Liste *oeffnet*,
+     * soll weiter oben anfangen - deshalb steht das hier und nicht in
+     * {@code mobilePage()}.
+     */
     private void bestandGeaendert() {
+        boolean zeichnetNeu = "favorites".equals(currentScreen) || "home".equals(currentScreen);
+        int stand = zeichnetNeu && seitenScroll != null ? seitenScroll.getScrollY() : 0;
         if ("favorites".equals(currentScreen)) showFavorites();
         else if ("home".equals(currentScreen)) showHome();
+        // Nur wenn wirklich neu gezeichnet wurde. Waehrend einer Folge meldet
+        // die Messung alle paar Sekunden einen Stand; dann steht hier keine
+        // Liste, und `seitenScroll` zeigt auf eine laengst abgehaengte Seite.
+        if (zeichnetNeu) scrollStandHerstellen(stand);
         updateFavoriteButton();
         // Der eine Punkt, an dem sich am Bestand wirklich etwas geaendert hat.
         // Ihn zu nehmen statt der zwei Dutzend Stellen, die Staende anfassen,
         // ist der Grund, warum der Abgleich nichts verpassen kann - auch nicht
         // das Abhaken von Hand oder das Umsortieren der Mediathek.
         if (geraete != null) geraete.abgleichenSpaeter();
+    }
+
+    /**
+     * Die Seite wieder dorthin schieben, wo sie stand.
+     *
+     * <p>Ueber {@code scrollTo} und nicht {@code setScrollY}: die ScrollView
+     * kappt dabei auf das, was wirklich da ist. Wurde die Liste durch den
+     * Abgleich kuerzer, landet man am neuen Ende statt im Leeren.
+     *
+     * <p>Der Umweg ueber {@code post} ist noetig, weil die frisch gebaute
+     * Seite noch nicht vermessen ist - vorher waere jede Position ausserhalb
+     * und wuerde auf null gekappt.
+     */
+    private void scrollStandHerstellen(int stand) {
+        if (stand <= 0 || seitenScroll == null) return;
+        ScrollView scroll = seitenScroll;
+        scroll.post(() -> scroll.scrollTo(0, stand));
     }
 
     /** Was der Kern von sich aus meldet - bisher ausschliesslich die Watchparty. */
