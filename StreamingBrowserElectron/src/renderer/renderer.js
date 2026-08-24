@@ -43,6 +43,41 @@ let watchpartyState = null;
 // Die eingetragenen Raumcodes waehrend der Einstellungen offen sind.
 let watchpartyRaeume = [];
 const thumbnailRepairAttempts = new Set();
+// Bilder, die sich nicht laden liessen - Adresse und Zeitpunkt.
+//
+// Ohne dieses Gedaechtnis gaebe es zwei schlechte Ausgaenge und keinen
+// guten: entweder setzt jedes Neuzeichnen dieselbe kaputte Adresse wieder
+// in den src und der onerror feuert im Kreis, oder die Adresse wird
+// weggeworfen und ein Aussetzer von zehn Sekunden kostet das Bild bis zum
+// naechsten Neustart. Gemerkt wird deshalb der *Fehlschlag*, nicht das
+// Urteil: nach BILDFEHLER_PAUSE_MS ist die Adresse wieder einen Versuch
+// wert, und wer wieder online geht, bekommt ihn sofort.
+const bildFehler = new Map();
+const BILDFEHLER_PAUSE_MS = 5 * 60 * 1000;
+const BILDFEHLER_MAX = 400;
+
+function bildGiltAlsKaputt(url) {
+  const seit = bildFehler.get(url);
+  if (!seit) return false;
+  if (Date.now() - seit < BILDFEHLER_PAUSE_MS) return true;
+  bildFehler.delete(url);
+  return false;
+}
+
+function bildAlsKaputtMerken(url) {
+  if (bildFehler.size > BILDFEHLER_MAX) bildFehler.clear();
+  bildFehler.set(url, Date.now());
+}
+
+// Wieder am Netz heisst: jede Adresse hat einen neuen Versuch verdient.
+window.addEventListener("online", () => {
+  if (!bildFehler.size) return;
+  bildFehler.clear();
+  thumbnailRepairAttempts.clear();
+  renderFavorites();
+  renderHome();
+  renderLibraryViews();
+});
 
 const appShell = document.querySelector(".app-shell");
 const appSidebar = document.querySelector("#appSidebar");
@@ -1959,11 +1994,16 @@ function bildEbeneSetzen(kasten, bildUrl, ausschnitt, format = kartenFormat()) {
   if (!kasten) return;
   const url = String(bildUrl || "").trim();
   let ebene = kasten.querySelector(":scope > .karten-bild");
-  if (!url) {
+  // Keine Adresse - oder eine, die sich eben erst als kaputt erwiesen hat.
+  // In beiden Faellen bekommt die Karte die Ersatzgrafik statt einer
+  // Flaeche, die nur nach einem Ladefehler aussieht.
+  if (!url || bildGiltAlsKaputt(url)) {
     ebene?.remove();
     kasten.classList.remove("has-thumb");
+    kasten.classList.toggle("ohne-bild", Boolean(url));
     return;
   }
+  kasten.classList.remove("ohne-bild");
   if (!ebene) {
     ebene = document.createElement("div");
     ebene.className = "karten-bild";
@@ -1977,6 +2017,15 @@ function bildEbeneSetzen(kasten, bildUrl, ausschnitt, format = kartenFormat()) {
     kasten.prepend(ebene);
   }
   const bild = ebene.querySelector("img");
+  // Laedt die Adresse nicht, wird sie gemerkt und die Karte neu gezeichnet -
+  // dann greift oben die Ersatzgrafik. Der Horcher haengt an der Adresse und
+  // nicht am Bild: sonst meldete er nach dem naechsten Wechsel des src noch
+  // einmal fuer das alte, und aus einem Fehlschlag wuerden zwei.
+  bild.onerror = () => {
+    if (bild.getAttribute("src") !== url) return;
+    bildAlsKaputtMerken(url);
+    bildEbeneSetzen(kasten, url, ausschnitt, format);
+  };
   // Nur bei Bedarf neu setzen - sonst faengt ein eigenes Bild bei jedem
   // Zeichnen wieder von vorn an zu laden, und die Karte blinkt.
   if (bild.getAttribute("src") !== url) bild.src = url;
@@ -5814,6 +5863,9 @@ function queueFavoriteThumbnailRepair(favorite) {
 
   const probe = new Image();
   probe.onerror = () => repairFavoriteThumbnailOnce(favorite.id, true);
+  // Laedt die Adresse, ist nichts zu reparieren - und ein frueherer
+  // Fehlschlag war ein Aussetzer und kein Urteil.
+  probe.onload = () => bildFehler.delete(favorite.thumbnail);
   probe.src = favorite.thumbnail;
 }
 
@@ -5824,9 +5876,14 @@ async function repairFavoriteThumbnailOnce(favoriteId, force) {
   if (result?.favorites) {
     favorites = result.favorites;
   }
+  // Frueher wurde die Adresse hier geleert, wenn die Reparatur nichts fand.
+  // Das machte aus jedem Aussetzer - kein Netz, ein Zeitablauf, ein Anbieter
+  // mit Schluckauf - einen dauerhaften Verlust: die Karte blieb leer, und da
+  // keine Adresse mehr dastand, konnte sie auch nie wieder etwas anzeigen.
+  // Jetzt bleibt die Adresse stehen; sichtbar ist bis zum naechsten Versuch
+  // die Ersatzgrafik, und der naechste Versuch ist ueberhaupt moeglich.
   if (!result?.repaired) {
-    const favorite = favorites.find((item) => item.id === favoriteId);
-    if (force && favorite) favorite.thumbnail = "";
+    thumbnailRepairAttempts.delete(favoriteId);
   }
   renderFavorites();
   renderHome();

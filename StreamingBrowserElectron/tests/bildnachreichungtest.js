@@ -47,6 +47,10 @@ function bild(attribute) {
     textContent: "",
     getAttribute: (name) => (name in werte ? werte[name] : null),
     setAttribute: (name, wert) => { werte[name] = wert; },
+    // Die Seite haengt ihr Cover nicht nur an data-src - sie *versteckt* auch
+    // jedes Bild, das dieses Attribut noch traegt. Ohne removeAttribute liesse
+    // sich hier nicht pruefen, was der Fehler eigentlich war.
+    removeAttribute: (name) => { delete werte[name]; },
     zustand: werte
   };
 }
@@ -84,6 +88,33 @@ pruefe("Das Cover kommt in den src, obwohl dort ein Platzhalter stand",
   cover.zustand.src.slice(0, 80));
 pruefe("und das Bild laedt danach sofort statt beim Scrollen",
   cover.loading === "eager", cover.loading);
+
+// Und jetzt der Grund, warum das Cover trotz richtiger Adresse unsichtbar
+// blieb. AniWorld blendet in seinem eigenen Stylesheet aus:
+//
+//   .homeContentPromotionBoxPicture img[data-src],
+//   .seriesCoverBox img[data-src],
+//   .coverListItem img[data-src] { opacity: 0; }
+//
+// Sichtbar wird ein Bild dort also nicht dadurch, dass eine Adresse im src
+// steht, sondern dadurch, dass vanilla-lazyload das Attribut nach dem
+// Umhaengen *entfernt*. Kommt dieses Skript nicht durch, blieb die Kachel
+// dunkelblau - mit einem Bild dahinter, das vollstaendig geladen war.
+//
+// Gemessen am 24.08.2026 auf der Startseite von AniWorld in ELFIX: 337 Bilder,
+// keines mit naturalWidth 0, und die obere Kachelreihe trotzdem leer. Jedes
+// betroffene <img> stand auf opacity 0 und trug noch sein data-src.
+pruefe("Das Lazy-Attribut ist danach weg - sonst haelt die Seite das Bild verborgen",
+  cover.zustand["data-src"] === undefined, JSON.stringify(cover.zustand["data-src"]));
+
+// Aber nur, wenn wirklich ein Bild uebernommen wurde. Sonst bliebe der
+// durchsichtige Platzhalter sichtbar - und nachkommen koennte auch nichts
+// mehr, weil die Adresse dann nirgends mehr steht.
+const ohneBrauchbares = bild({ src: PLATZHALTER, "data-src": "/public/img/spinner.gif" });
+nachreichen([ohneBrauchbares]);
+pruefe("Ohne uebernommenes Bild bleibt das Lazy-Attribut stehen",
+  ohneBrauchbares.zustand["data-src"] === "/public/img/spinner.gif",
+  JSON.stringify(ohneBrauchbares.zustand["data-src"]));
 
 // Die Sprachfahnen neben jeder Folge haengen genauso in data-src. Sie gehoeren
 // zur Seite und kommen deshalb mit - hier geht es darum, wiederherzustellen,

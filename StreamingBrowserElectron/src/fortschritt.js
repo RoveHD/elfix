@@ -233,6 +233,24 @@ function mediaActivityLabel(url, entry) {
 // davorstand. S.to schreibt es ohne ("Titel Staffel 1 Folge 2"), also bekam
 // dort jede Folge einen eigenen Schluessel: der Fortschritt passte zu keinem
 // Raum-Eintrag mehr und nach einem Folgenwechsel war die Runde still.
+// Der Serientitel eines Eintrags, in dieser Reihenfolge:
+//
+//   1. was die Seite sagt - von der Folgenangabe befreit. "Staffel 3 Folge
+//      21 von Attack on Titan | AniWorld.to" ist eine Folgenueberschrift und
+//      kein Serientitel; als Titel eines Eintrags waere sie beim naechsten
+//      Wechsel schon wieder falsch.
+//   2. der Serien-Slug der Adresse. Der wechselt mit der Folge nicht.
+//   3. der Anbietername - damit ueberhaupt etwas dasteht.
+//
+// Ohne Punkt 3 wuerde cleanBaseMediaTitle() hier "Favorit" liefern: es gibt
+// nie eine leere Zeichenkette zurueck, und damit kaeme der Ersatz nie an.
+function serienTitel(rohTitel, url, ersatz = "") {
+  const roh = String(rohTitel || "").trim();
+  if (roh) return cleanBaseMediaTitle(roh, url);
+  const ausAdresse = titleFromPath(url);
+  return ausAdresse ? cleanTitle(ausAdresse) : cleanTitle(ersatz);
+}
+
 function cleanBaseMediaTitle(title, url) {
   const raw = cleanTitle(title || titleFromPath(url));
   const value = raw
@@ -392,6 +410,83 @@ function episodeIdentity(value) {
   }
 }
 
+// Die kanonische Serienidentitaet einer Adresse: Wirt und Serien-Slug.
+//
+// episodeIdentity() kann das auch, verlangt dafuer aber eine Folgennummer -
+// und genau die fehlt der Serienseite, der Staffeluebersicht und jeder
+// Filmadresse. Fuer die Frage "sind das dieselben zwei Werke?" ist das die
+// falsche Huerde: eine Staffelseite ist nicht identitaetslos, sie hat bloss
+// keine Folge. Deshalb hier eine Kennung, die auch ohne Folge trägt.
+//
+// Wirt und Slug zusammen, nicht der Slug allein: derselbe Slug auf zwei
+// Anbietern sind zwei Eintraege mit zwei Staenden, und "attack-on-titan" auf
+// s.to ist nicht der Eintrag von aniworld.to.
+function serienKennungAusUrl(value) {
+  const slug = mediaSlugFromUrl(value);
+  if (!slug) return "";
+  try {
+    return `${stripWww(new URL(value).hostname)}:${slug}`;
+  } catch {
+    return "";
+  }
+}
+
+// Gehoeren diese Seitenangaben zu dieser Adresse?
+//
+// Der Fall, der das noetig macht: readPageMetadata() wird erst nach einer
+// Reihe von Awaits abgeschickt. Wechselt die Folge in diesem Fenster, liest
+// das Skript die *neue* Seite, waehrend der Aufrufer noch die *alte* Adresse
+// in der Hand haelt. Wer beides zusammenlegt, schreibt den Titel, das
+// Titelbild und die Serienlaenge einer fremden Serie auf einen Eintrag.
+//
+// Fehlt der Stempel - altes Ergebnis, fehlgeschlagener Abruf, ein Kern, der
+// die Angabe noch nicht mitschickt -, wird nicht widersprochen: es gibt dann
+// nichts zu pruefen, und ein Nein waere hier so falsch wie ein Ja.
+function seitendatenPassenZu(meta, url) {
+  const stempel = String(meta?.seiteUrl || "");
+  if (!stempel) return true;
+  const gelesen = serienKennungAusUrl(stempel);
+  const erwartet = serienKennungAusUrl(url);
+  // Adressen ohne erkennbaren Slug (Startseite, Suche) lassen sich nicht
+  // vergleichen. Dann entscheidet der Wirt allein.
+  if (!gelesen || !erwartet) return stripWww(hostOf(stempel)) === stripWww(hostOf(url));
+  return gelesen === erwartet;
+}
+
+function hostOf(value) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "";
+  }
+}
+
+// Seitenangaben, die dieser Adresse nicht widersprechen.
+//
+// Passt der Stempel, kommt alles durch. Passt er nicht, faellt genau das weg,
+// was die Identitaet eines Eintrags ausmacht - Titel, Titelbild und die
+// Grenzen der Serie. Uebrig bleibt, was von der Adresse unabhaengig ist.
+//
+// Weggelassen und nicht ersetzt: ein Eintrag, der schon einen bestaetigten
+// Titel hat, behaelt ihn. Lieber eine Angabe zu wenig als die einer fremden
+// Serie - der Nutzer sieht sonst unter dem Bild von Attack on Titan die
+// Beschreibung eines Werks, das er nie geoeffnet hat.
+function gepruefteSeitendaten(meta, url) {
+  if (!meta || seitendatenPassenZu(meta, url)) return meta || {};
+  const {
+    title: _titel,
+    thumbnail: _bild,
+    finalSeason: _staffel,
+    finalEpisode: _folge,
+    finalEpisodeTrimmed: _gekuerzt,
+    seasonLastEpisode: _letzte,
+    unplayableSeason: _sperrStaffel,
+    unplayableEpisodes: _gesperrt,
+    ...rest
+  } = meta;
+  return rest;
+}
+
 function isFavoriteProgressUrl(url, provider) {
   if (!providerModel.isHttpUrl(url)) return false;
   try {
@@ -422,7 +517,16 @@ function stripWww(hostname) {
   return String(hostname || "").toLowerCase().replace(/^www\./, "");
 }
 
+// Ein Titel aus der Adresse - fuer den Fall, dass die Seite keinen hergibt.
+//
+// Der letzte Pfadteil war dafuer die falsche Wahl: bei
+// "/attack-on-titan/staffel-3/episode-21" ist das "Episode 21", und das
+// heisst bei jeder Serie gleich. Als Rueckfall fuer einen *Serien*titel ist
+// der Serien-Slug das einzig Brauchbare; nur wo die Adresse keinen fuehrt
+// (YouTube etwa), bleibt es beim letzten Pfadteil.
 function titleFromPath(href) {
+  const ausSlug = titelAusSlug(mediaSlugFromUrl(href));
+  if (ausSlug) return ausSlug;
   try {
     const parts = new URL(href).pathname.split("/").filter(Boolean);
     const slug = parts[parts.length - 1] || "";
@@ -905,7 +1009,7 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
     id: kennungErzeugen(),
     providerId: provider.id,
     providerName: provider.name,
-    title: cleanTitle(meta.title || titleFromPath(url) || provider.name),
+    title: serienTitel(meta.title, url, provider.name),
     url,
     normalizedUrl: normalized,
     favicon: meta.favicon || "",
@@ -1274,6 +1378,9 @@ module.exports = {
   cleanTitle,
   isAllowedResultHost,
   mediaSlugFromUrl,
+  serienKennungAusUrl,
+  seitendatenPassenZu,
+  gepruefteSeitendaten,
   normalizeFavoriteUrl,
   inferMediaType,
   normalizeMediaType,
@@ -1291,6 +1398,7 @@ module.exports = {
   isTrackableMediaUrl,
   titelAusSlug,
   cleanBaseMediaTitle,
+  serienTitel,
   sanitizePositiveNumber,
   sanitizeProgress,
   isCompletedProgress,

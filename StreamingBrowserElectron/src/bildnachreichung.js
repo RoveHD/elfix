@@ -63,6 +63,36 @@ function nachreichSkript() {
       }
       img.loading = "eager";
       img.decoding = "async";
+      // Und jetzt die Lazy-Attribute weg - der eigentliche Punkt.
+      //
+      // Das Bild zu laden reichte naemlich nicht. AniWorld blendet in seinem
+      // eigenen Stylesheet jedes Bild aus, das noch ein data-src traegt:
+      //
+      //   .homeContentPromotionBoxPicture img[data-src],
+      //   .seriesCoverBox img[data-src],
+      //   .coverListItem img[data-src] { opacity: 0; }
+      //
+      // Sichtbar wird ein Bild dort nicht durch seine Adresse, sondern
+      // dadurch, dass vanilla-lazyload das Attribut nach dem Umhaengen
+      // *entfernt*. Kommt dieses Skript nicht durch - es liegt bei
+      // cdnjs.cloudflare.com -, blieb bisher genau das aus: ELFIX setzte den
+      // src, das Bild wurde vollstaendig geladen (naturalWidth > 0) und dann
+      // von der Seite auf opacity 0 gehalten. Auf der Startseite standen
+      // deshalb dunkelblaue Flaechen mit Titel darunter.
+      //
+      // Entfernt wird nur, was hier auch wirklich uebernommen wurde: ohne
+      // brauchbares Bild im src bliebe sonst der durchsichtige Platzhalter
+      // sichtbar - schlechter als eine leere Flaeche, weil dann gar nichts
+      // mehr nachkommen kann.
+      if (usefulImage(img.getAttribute("src"))) {
+        for (const name of ["data-src", "data-lazy-src", "data-original", "data-url", "data-image"]) {
+          img.removeAttribute(name);
+        }
+        if (img.getAttribute("srcset")) {
+          img.removeAttribute("data-srcset");
+          img.removeAttribute("data-lazy-srcset");
+        }
+      }
       img.dataset.elflixHydrated = "1";
       img.dataset.elflixHydrationKey = key;
     };

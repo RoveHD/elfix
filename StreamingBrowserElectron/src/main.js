@@ -98,6 +98,9 @@ const {
   compareEpisodeIdentity,
   endeSchwelle,
   episodeIdentity,
+  serienTitel,
+  serienKennungAusUrl,
+  gepruefteSeitendaten,
   favoriteProgressTargetLabel,
   firstEpisodeUrl,
   hasContinueProgressRecord,
@@ -764,6 +767,7 @@ function installAdblock() {
     const urteil = adblockUrteil(details, provider);
     if (urteil.block) {
       logBlocked(details, provider, urteil.rule, urteil.kategorie);
+      meldeHosterBlockade(details, provider, urteil);
       callback({ cancel: true });
       return;
     }
@@ -774,6 +778,32 @@ function installAdblock() {
     if (urteil.kategorie) logAusnahme(details.url, provider, urteil.rule, urteil.kategorie);
     callback({});
   });
+}
+
+// Was im Rahmen des Hosters faellt, kommt zusaetzlich ins Protokoll.
+//
+// Anlass: bei Filmo zeigte VOE "Werbeblocker sind auf VOE nicht erlaubt", und
+// die Frage "was genau haben wir ihm weggenommen?" liess sich nicht
+// beantworten. Die Liste im Fenster nennt Adresse und Regel, aber nicht, in
+// welchem Dokument die Anfrage entstand - und genau darauf kommt es an: was
+// auf der Anbieterseite faellt, ist Werbung; was im Player-Rahmen faellt,
+// kann der Grund sein, warum der Player nicht laedt.
+//
+// Eine Zeile je Wirt und Anbieter, nicht je Anfrage - ein Film laedt tausende
+// Segmente, und ein Protokoll, das mitscrollt, liest niemand.
+const hosterBlockadeGemeldet = new Set();
+
+function meldeHosterBlockade(details, provider, urteil) {
+  const quelle = frameQuelle(details);
+  if (!quelle || !istFremderPlayerRahmen(provider, quelle, false)) return;
+  const zielHost = providerModel.hostFromUrl(details.url);
+  const merker = `${provider.id}|${providerModel.hostFromUrl(quelle)}|${zielHost}|${details.resourceType}`;
+  if (hosterBlockadeGemeldet.has(merker)) return;
+  if (hosterBlockadeGemeldet.size > 400) hosterBlockadeGemeldet.clear();
+  hosterBlockadeGemeldet.add(merker);
+  console.log(`[ELFIX HOSTER-BLOCK] ${provider.name} | Rahmen ${providerModel.hostFromUrl(quelle)}`
+    + ` | ${details.resourceType} ${zielHost} | ${urteil.kategorie || "?"} | ${urteil.rule || "?"}`
+    + ` | ${kurzeUrl(details.url)}`);
 }
 
 // Fuer Navigationen und Popups: dieselbe Entscheidung, aber ohne echtes
@@ -944,7 +974,7 @@ ipcMain.handle("favorites:toggle-current", async () => {
     id: crypto.randomUUID(),
     providerId: provider.id,
     providerName: provider.name,
-    title: cleanTitle(meta.title || activeView.webContents.getTitle() || provider.name),
+    title: serienTitel(meta.title || activeView.webContents.getTitle(), url, provider.name),
     url,
     normalizedUrl: normalized,
     favicon: meta.favicon || "",
@@ -1688,7 +1718,7 @@ ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
     const identity = episodeIdentity(url);
     favorite = {
       providerName: provider.name,
-      title: cleanTitle(meta.title || activeView.webContents.getTitle() || provider.name),
+      title: serienTitel(meta.title || activeView.webContents.getTitle(), url, provider.name),
       url,
       thumbnail: meta.thumbnail || "",
       type: normalizeMediaType(meta.type || inferMediaType(url)),
@@ -2259,6 +2289,9 @@ function getProviderView(provider) {
   // auf die Hosterseite kommen die Overlays.
   view.webContents.on("did-frame-navigate", (_ereignis, url, _code, _text, istHauptrahmen, prozessId, rahmenId) => {
     kosmetikEinspielen(provider, view, url, istHauptrahmen, prozessId, rahmenId);
+    // Vor dem ersten Klick, nicht danach: der Player fragt nach google.ima,
+    // sobald jemand Play drueckt.
+    attrappenEinspielen(provider, view, url, istHauptrahmen, prozessId, rahmenId);
   });
   view.webContents.on("dom-ready", () => {
     kosmetikEinspielen(provider, view, view.webContents.getURL(), true);
@@ -2526,7 +2559,21 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // Und dem Handy sagen, was hier gerade laeuft. Die Zeile geht nur hinaus,
   // wenn sie sich geaendert hat.
   fernStandMelden().catch(() => {});
-  const pageMeta = await readPageMetadata(view).catch(() => ({}));
+  // Zwischen der Adresse oben und diesem Punkt liegen ein Dutzend Awaits -
+  // Steuerung, Chat, Bildstufe, Autoplay, Marke. Beim Folgenwechsel reicht
+  // das: die Seite ist dann laengst eine andere, und das Seitenskript liest
+  // sie auch. Wer das Ergebnis trotzdem unter der alten Adresse verbucht,
+  // schreibt Titel und Serienlaenge einer fremden Serie auf diesen Eintrag.
+  // Genau daran wurde aus Attack on Titan "Young Ladies Don't Play Fighting
+  // Games". Steht die Ansicht nicht mehr bei derselben Serie, gehoert dieser
+  // Takt der Vergangenheit - der naechste faehrt in fuenf Sekunden.
+  const jetzt = isLiveView(view) ? view.webContents.getURL() : "";
+  if (serienKennungAusUrl(jetzt) !== serienKennungAusUrl(url)) return;
+
+  // Und dasselbe noch einmal am Ergebnis selbst: das Seitenskript stempelt
+  // seine eigene Adresse mit, und was nicht zu dieser Serie gehoert, faellt
+  // hier heraus statt in den Eintrag.
+  const pageMeta = gepruefteSeitendaten(await readPageMetadata(view).catch(() => ({})), url);
   applySeasonPlaybackInfo(pageMeta, url);
   const entry = recordMediaActivity(provider, url, {
     currentTime: progress.currentTime,
@@ -4177,6 +4224,23 @@ async function startPlaybackInView(view, options = {}) {
     // den Hoster herein. Das muss vor der Rahmen-Pruefung stehen: die Seite
     // bringt schon einen Rahmen mit, und mit dem Abbruch darunter kam der
     // Autostart nie an den Knopf - Wiedergabe und Vollbild blieben aus.
+    // Fuehrt dieses Element von der Seite weg?
+    //
+    // Ein Play-Knopf tut das nie: er startet, was hier schon liegt. Ein Link
+    // auf eine andere Seite ist deshalb kein Play-Knopf, egal wie er
+    // beschriftet ist - und genau daran ist der Autostart gescheitert.
+    const fuehrtWeg = (node) => {
+      const anker = node.closest && node.closest("a[href]");
+      if (!anker) return false;
+      const roh = String(anker.getAttribute("href") || "").trim();
+      if (!roh || roh.startsWith("#") || /^javascript:/i.test(roh)) return false;
+      try {
+        const ziel = new URL(roh, location.href);
+        return ziel.origin + ziel.pathname !== location.origin + location.pathname;
+      } catch (_) {
+        return false;
+      }
+    };
     const startknopf = () => {
       const auswahl = "button,[role='button'],a,[class*='play'],[class*='Play'],[class*='start'],[class*='poster']";
       const treffer = Array.from(document.querySelectorAll(auswahl))
@@ -4188,9 +4252,24 @@ async function startPlaybackInView(view, options = {}) {
           // Weder Briefmarke noch halbe Seite: der Knopf liegt dazwischen.
           if (rect.width < 32 || rect.height < 32) return { node, score: 0 };
           if (rect.width > innerWidth * 0.7 && rect.height > innerHeight * 0.7) return { node, score: 0 };
+          // Ein Ziel woanders ist kein Startknopf.
+          if (fuehrtWeg(node)) return { node, score: 0 };
           let score = 0;
           if (/tippe auf play|auf play|wiedergabe zu starten|zum abspielen|jetzt abspielen|start playback/i.test(text)) score += 2000;
-          if (/(^|[^a-z])play([^a-z]|$)/i.test(text)) score += 900;
+          // "play" zaehlt nur als Aufschrift eines Knopfes, nicht als Wort in
+          // einem Fliesstext.
+          //
+          // Gemessen am 24.08.2026 auf AniWorld: der Autostart klickte auf der
+          // Folgenseite von Attack on Titan die Empfehlungskachel "Young Ladies
+          // Don't Play Fighting Games" - weil in diesem *Serientitel* das Wort
+          // "Play" steht. Danach stand das Hauptfenster bei einer fremden Serie,
+          // und der laufende Fortschritts-Takt schrieb deren Angaben auf den
+          // Eintrag von Attack on Titan. Von dort kam der falsche Titel.
+          //
+          // Ein Knopf traegt eine Aufschrift, keinen Satz. 24 Zeichen lassen
+          // "Play", "Abspielen", "Play now" und "▶ Play" durch und halten jeden
+          // Titel draussen, der das Wort nur enthaelt.
+          if (text.length <= 24 && /(^|[^a-z])play([^a-z]|$)/i.test(text)) score += 900;
           // Der runde Knopf traegt oft gar keinen Text, nur eine Klasse wie
           // "vjs-big-play-button" - der muss allein schon reichen. Nur "play"
           // als ganzes Wort: "start" waere zu weit, das steckt bei Bootstrap
@@ -4910,9 +4989,22 @@ async function updateActiveFavoriteTitle(providerId, view) {
   if (!favorite || !provider || favorite.providerId !== providerId || !isFavoriteProgressUrl(url, provider)) return;
   if (favorite.normalizedUrl !== normalizeFavoriteUrl(url)) return;
 
-  const meta = await readPageMetadata(view).catch(() => ({}));
+  const roh = await readPageMetadata(view).catch(() => ({}));
   if (!isLiveView(view)) return;
-  const title = cleanTitle(meta.title || view.webContents.getTitle() || titleFromPath(url) || favorite.title);
+  // Waehrend das Skript unterwegs war, kann die Folge gewechselt haben. Dann
+  // gehoert das Ergebnis nicht mehr hierher: der Eintrag traegt noch die alte
+  // Adresse, die Seite zeigt schon die naechste Serie. Beides zusammenlegen
+  // heisst, einem Eintrag den Titel eines fremden Werks zu geben.
+  if (normalizeFavoriteUrl(view.webContents.getURL()) !== normalizeFavoriteUrl(url)) return;
+  if (favorite.normalizedUrl !== normalizeFavoriteUrl(url)) return;
+  // Zweiter Riegel, unabhaengig von der Zeit: das Seitenskript sagt selbst,
+  // welche Seite es gelesen hat. Passt sie nicht zu dieser Serie, bleibt der
+  // bestaetigte Titel stehen - lieber der alte als ein fremder.
+  const meta = gepruefteSeitendaten(roh, url);
+  // Und der Titel selbst wird von der Folge befreit: "Staffel 3 Folge 21 von
+  // Attack on Titan | AniWorld.to" ist eine Folgenueberschrift, kein
+  // Serientitel. Gibt die Seite gar nichts her, entscheidet die Adresse.
+  const title = serienTitel(meta.title, url, favorite.title);
   let changed = false;
   if (title && favorite.title !== title) {
     favorite.title = title;
@@ -11713,6 +11805,42 @@ const MEDIEN_PFADE = /\/(hls\d?|dash|manifest|playlist|segment|chunk|videoplayba
 // genauso.
 const MEDIEN_TYPEN = ["media", "xhr", "other", "object"];
 
+// Was im Player-Rahmen nicht fehlen darf, sondern ersetzt gehoert.
+//
+// AdGuard fuehrt fuer voe.sx die Regel
+//
+//   ||imasdk.googleapis.com/js/sdkloader/ima3.js$script,redirect=google-ima3
+//
+// also: nicht abweisen, sondern eine Attrappe ausliefern. Der Grund steht im
+// Verhalten des Players - er fragt nach google.ima, und findet er nichts,
+// haelt er das fuer einen Werbeblocker und spielt nicht.
+//
+// Diese Regel nennt ihre Wirte namentlich, und genau daran ist sie
+// vorbeigelaufen: VOE liefert seinen Player laengst nicht mehr von voe.sx,
+// sondern von taeglich wechselnden Adressen. Gemessen am 24.08.2026 lief der
+// deutsche Stream bei Filmo ueber tracylocalschool.com - dort greift die
+// Regel nicht, das SDK wurde hart geblockt, und im Rahmen stand "Werbeblocker
+// sind auf VOE nicht erlaubt".
+//
+// Deshalb wird dieselbe Neutralisierung hier auch dann angewandt, wenn die
+// Liste den Wirt nicht kennt - aber nur im eingebetteten Player-Rahmen und
+// nur fuer diese eine Datei. Das ist keine Freigabe: geladen wird nicht das
+// SDK, sondern AdGuards Attrappe, und die kann keine Werbung zeigen. Alles
+// andere - Popunder, Umleitungen, Werbeskripte, Tracker - faellt wie zuvor.
+// Die Attrappen, die ein Player-Rahmen braucht, damit er ueberhaupt spielt.
+//
+// Nur eine bisher, und sie ist der ganze gemeldete Fehler: das IMA-SDK von
+// Google. VOEs Player fragt nach google.ima; findet er es nicht, haelt er
+// das fuer einen Werbeblocker und zeigt "Werbeblocker sind auf VOE nicht
+// erlaubt" statt des Films. Belegt am 24.08.2026 bei Filmo: mit
+// eingespielter Attrappe laeuft derselbe Stream sofort (1:21:27, die
+// Laufzeit des Films), ohne sie steht die Warnung.
+//
+// Das SDK selbst bleibt geblockt - hier wird nichts freigegeben. Die
+// Attrappe stammt von AdGuard und kann keine Werbung zeigen; sie beantwortet
+// nur die Frage, ob es sie gibt.
+const PLAYER_ATTRAPPEN = ["google-ima3"];
+
 function wiedergabeAusnahme(url, provider, resourceType, quelle) {
   // Chromium kennzeichnet selbst, was ein <video> oder <audio> laedt. Das ist
   // die verlaesslichste Angabe, die es hier gibt - vor jeder Adressenraterei.
@@ -11833,18 +11961,38 @@ function blockKategorie(resourceType, urteil) {
 const kosmetikStand = new Map();
 const KOSMETIK_STAND_MAX = 40;
 
-function kosmetikFuerAdresse(url) {
-  const vorhanden = kosmetikStand.get(url);
+function kosmetikFuerAdresse(url, generisch = true) {
+  // Die Wahl gehoert in den Schluessel: dieselbe Adresse kann als
+  // Hauptdokument die vollen Regeln bekommen und als eingebetteter
+  // Player-Rahmen nur die spezifischen.
+  const schluessel = (generisch ? "voll:" : "eng:") + url;
+  const vorhanden = kosmetikStand.get(schluessel);
   if (vorhanden) return vorhanden;
-  const daten = adblock.kosmetik(url);
+  const daten = adblock.kosmetik(url, { generisch });
   const eintrag = {
     css: kosmetik.stilAusSelektoren(daten.stile),
     skripte: daten.skripte,
     selektoren: daten.stile.length
   };
   if (kosmetikStand.size > KOSMETIK_STAND_MAX) kosmetikStand.clear();
-  kosmetikStand.set(url, eintrag);
+  kosmetikStand.set(schluessel, eintrag);
   return eintrag;
+}
+
+// Ist das der Rahmen, in dem der Hoster seinen Player zeigt?
+//
+// Nicht am Namen festgemacht - VOE wechselt seine Adressen taeglich, und
+// gemessen am 24.08.2026 lief der deutsche Stream von Filmo ueber
+// tracylocalschool.com. Kein Wort darin verraet einen Videohoster, und eine
+// Liste solcher Wegwerf-Wirte waere schon beim Aufschreiben veraltet.
+//
+// Woran es sich stattdessen erkennen laesst: ein Rahmen, der nicht das
+// Hauptdokument ist und nicht zum Anbieter gehoert. Das ist genau die
+// Stelle, an der ein Anbieter einen fremden Player einbettet - dieselbe
+// Unterscheidung, die wiedergabeAusnahme() fuer PLAYER_ALLOWED trifft.
+function istFremderPlayerRahmen(provider, url, istHauptrahmen) {
+  if (istHauptrahmen !== false) return false;
+  return !isProviderFirstParty(providerModel.hostFromUrl(url), provider);
 }
 
 function rahmenFinden(view, istHauptrahmen, prozessId, rahmenId) {
@@ -11899,7 +12047,22 @@ function kosmetikEinspielen(provider, view, url, istHauptrahmen, prozessId, rahm
   const rahmen = rahmenFinden(view, istHauptrahmen, prozessId, rahmenId);
   if (!rahmen) return;
 
-  const eintrag = kosmetikFuerAdresse(url);
+  // Im Rahmen des Hosters nur die Regeln, die ihn ausdruecklich nennen.
+  //
+  // Gemeldet war: bei Filmo zeigte der deutsche VOE-Stream "Werbeblocker sind
+  // auf VOE nicht erlaubt" statt des Films. Der Netzfilter war unschuldig -
+  // im Mitschnitt fiel keine einzige Anfrage an VOE. Es war diese Stelle:
+  // in den Player-Rahmen gingen 278 kB generisches Verbergen-CSS, und ein
+  // Anti-Adblock-Skript braucht davon nur eine Zeile. Nachgemessen im
+  // laufenden Rahmen: ein angelegtes <div class="ad-space"> stand sofort auf
+  // display:none - fuer ein solches Skript der Beweis, den es sucht.
+  //
+  // Weggenommen wird nur die Masse. Der Netzfilter, die Scriptlets gegen
+  // Popunder, die Umleitungssperre und die eigene Overlay-Erkennung wirken
+  // im Player-Rahmen unveraendert weiter - und die Regeln, die einen
+  // Listenautor diesen Wirt namentlich nennen liessen, auch.
+  const generisch = !istFremderPlayerRahmen(provider, url, istHauptrahmen);
+  const eintrag = kosmetikFuerAdresse(url, generisch);
   // Das Seitenskript zuerst: der Stil und das Ausblenden laufen ueber die
   // Schnittstelle, die es anlegt.
   frameAusfuehren(rahmen, kosmetik.seitenScript()).then(() => {
@@ -11911,6 +12074,36 @@ function kosmetikEinspielen(provider, view, url, istHauptrahmen, prozessId, rahm
     if (!settings.adblock.blockPopups) return;
     for (const code of eintrag.skripte) frameAusfuehren(rahmen, code);
   });
+}
+
+// Die Attrappen in den Rahmen des Hosters.
+//
+// Sie gehoeren hierher und nicht zum Netzfilter: der kann eine Anfrage nur
+// durchlassen oder abweisen, und beides ist hier falsch. Durchlassen hiesse
+// Werbung; abweisen heisst, dass der Player nicht spielt. Was fehlt, ist ein
+// Drittes - eine Antwort, die keine Werbung enthaelt -, und die kommt nicht
+// aus dem Netz, sondern aus der Seite.
+//
+// Eingespielt wird nur in einen eingebetteten fremden Rahmen, also dort, wo
+// ein Anbieter einen Player einbettet. Auf der Anbieterseite selbst hat die
+// Attrappe nichts zu suchen.
+function attrappenEinspielen(provider, view, url, istHauptrahmen, prozessId, rahmenId) {
+  if (!provider || !settings.adblock?.enabled || provider.adblockEnabled === false) return;
+  if (!isLiveView(view) || !providerModel.isHttpUrl(url)) return;
+  if (!istFremderPlayerRahmen(provider, url, istHauptrahmen)) return;
+  if (isWhitelisted(providerModel.hostFromUrl(url), settings.adblock.whitelist)) return;
+
+  const rahmen = rahmenFinden(view, istHauptrahmen, prozessId, rahmenId);
+  if (!rahmen) return;
+
+  for (const name of PLAYER_ATTRAPPEN) {
+    const quelltext = adblock.ersatzInhalt(name);
+    if (!quelltext) continue;
+    // In einen eigenen Ausdruck gepackt: die Attrappe darf die Seite nicht
+    // mit ihren eigenen Namen belegen, und ein Fehler in ihr darf nicht das
+    // Einspielen der naechsten verhindern.
+    frameAusfuehren(rahmen, `(() => { try { ${quelltext} } catch (fehler) { return String(fehler); } return true; })()`);
+  }
 }
 
 // Antwort auf eine Meldung aus der Seite.

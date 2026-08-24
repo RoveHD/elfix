@@ -344,6 +344,47 @@
   pointer-events: none;
 }
 
+/* Wenn ein Bild nicht laedt: eine Ersatzgrafik statt einer leeren Flaeche.
+
+   Der Unterschied ist keine Kosmetik. Eine Karte ohne Bild und eine Karte,
+   deren Bild gescheitert ist, sahen bisher gleich aus - eine dunkle Flaeche
+   mit Titel. Wer sie sieht, weiss nicht, ob hier nie eines vorgesehen war
+   oder ob gerade etwas kaputt ist. Das Zeichen sagt es.
+
+   Gezeichnet und nicht geladen: eine Ersatzgrafik, die selbst eine Datei
+   braucht, ist genau dann weg, wenn man sie braucht. */
+.favorite-card.ohne-bild::before,
+.home-dashboard-hero.ohne-bild::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.07), transparent 62%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.16));
+}
+
+.favorite-card.ohne-bild::after,
+.home-dashboard-hero.ohne-bild::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  z-index: -1;
+  width: 34px;
+  height: 27px;
+  transform: translate(-50%, -50%);
+  border: 2px solid currentColor;
+  border-radius: 5px;
+  opacity: 0.24;
+  /* Der Bogen und die Sonne eines Bildsymbols - mit Farbverlaeufen gezeichnet,
+     damit kein zweites Element noetig ist. */
+  background:
+    radial-gradient(circle at 27% 30%, currentColor 2.6px, transparent 3px),
+    linear-gradient(to top right, transparent 46%, currentColor 46%, currentColor 62%, transparent 62%);
+}
+
 .karten-bild img {
   position: absolute;
   display: block;

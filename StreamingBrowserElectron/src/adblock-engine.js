@@ -159,6 +159,43 @@ const ELECTRON_TYPEN = {
   other: "Other"
 };
 
+// Wo die Ersatzressourcen liegen. Sie kommen mit @adguard/scriptlets, das
+// tsurlfilter ohnehin mitbringt - kein zusaetzliches Paket.
+// Der Ordner laesst sich nicht ueber require.resolve finden: das Paket ist
+// ESM-only und nennt in seiner exports-Tabelle keine package.json. Gesucht
+// wird deshalb am Ort - erst neben dieser Datei, dann in den Ebenen darueber.
+// Im gepackten Zustand liegt alles in app.asar, und fs liest dort wie in einem
+// Ordner.
+const ERSATZ_TEILPFAD = ["node_modules", "@adguard", "scriptlets", "dist", "redirect-files"];
+
+function ersatzOrdnerFinden() {
+  const path = require("path");
+  const fs = require("fs");
+  let ordner = __dirname;
+  for (let tiefe = 0; tiefe < 6; tiefe += 1) {
+    const versuch = path.join(ordner, ...ERSATZ_TEILPFAD);
+    try {
+      if (fs.existsSync(versuch)) return versuch;
+    } catch {
+      // Ein Pfad, den es nicht gibt, ist kein Fehler - nur der naechste.
+    }
+    const hoeher = path.dirname(ordner);
+    if (hoeher === ordner) break;
+    ordner = hoeher;
+  }
+  return "";
+}
+
+// Auch dieses Paket ist ESM - derselbe Weg wie bei tsurlfilter.
+async function ladeErsatzNamen() {
+  try {
+    const modul = await import("@adguard/scriptlets/redirects");
+    return typeof modul.getRedirectFilename === "function" ? modul.getRedirectFilename : null;
+  } catch {
+    return null;
+  }
+}
+
 class AdblockEngine {
   constructor() {
     this.modul = null;
@@ -167,6 +204,39 @@ class AdblockEngine {
     this.notfallDomains = new Set(defaultAdDomains());
     this.notfallTracker = new Set(defaultTrackerDomains());
     this.bauLaeuft = null;
+    // Name der Ersatzressource -> Quelltext. Wird erst beim ersten Bedarf
+    // gefuellt; google-ima3 allein sind 23 kB.
+    this.ersatzInhalte = new Map();
+    this.ersatzDateiname = null;
+  }
+
+  // Eine Ersatzressource von AdGuard, im Quelltext.
+  //
+  // AdGuard liefert zu seinen Listen kleine Dateien mit, die anstelle des
+  // Originals ausgeliefert werden sollen: statt eines Werbeskripts eine
+  // leere Datei, statt des IMA-SDK von Google eine Attrappe, die so tut,
+  // als waere sie es. In den Listen steht das als $redirect=<name>.
+  //
+  // Ausgeliefert wird hier nichts - eine Umleitung auf eine data:-Adresse
+  // laesst Chromium nicht mehr zu, gemessen am 24.08.2026: die Regel griff,
+  // das Protokoll meldete den Ersatz, und im Rahmen war google.ima trotzdem
+  // nicht da. Wer eine solche Attrappe braucht, spielt ihren Quelltext ein.
+  ersatzInhalt(name) {
+    const schluessel = String(name || "");
+    if (!schluessel || !this.ersatzDateiname) return "";
+    if (this.ersatzInhalte.has(schluessel)) return this.ersatzInhalte.get(schluessel);
+
+    let quelltext = "";
+    try {
+      const datei = this.ersatzDateiname(schluessel);
+      const ordner = datei ? ersatzOrdnerFinden() : "";
+      if (ordner) quelltext = require("fs").readFileSync(require("path").join(ordner, datei), "utf8");
+    } catch {
+      // Fehlt die Datei, gibt es eben keine Attrappe.
+      quelltext = "";
+    }
+    this.ersatzInhalte.set(schluessel, quelltext);
+    return quelltext;
   }
 
   // Ist tsurlfilter ueberhaupt da? Wenn nicht, laeuft alles ueber die
@@ -212,6 +282,7 @@ class AdblockEngine {
     const modul = await ladeModul();
     if (!modul) return false;
     this.modul = modul;
+    this.ersatzDateiname = await ladeErsatzNamen();
 
     // Ohne diese Angabe haelt sich tsurlfilter fuer eine CoreLibs-Umgebung und
     // verwirft Regeln, die nur die Browsererweiterung kennt.
@@ -326,16 +397,24 @@ class AdblockEngine {
   // $specifichide aus. Wer diese Ausnahmen uebergeht, blendet auf Seiten
   // Elemente aus, fuer die AdGuard das ausdruecklich untersagt hat - und genau
   // dort sitzen erfahrungsgemaess Player und Anmeldedialoge.
-  kosmetik(url) {
+  // Die generischen Regeln lassen sich weglassen (`generisch: false`). Sie
+  // sind die Masse - zehntausende Selektoren wie `.ad-space` oder `#AdZone1`,
+  // die auf jeder Seite gelten sollen. Auf einer Inhaltsseite ist das genau
+  // richtig; in einem fremden Player-Rahmen ist es ein Verrat: dort legt ein
+  // Anti-Adblock-Skript einen Koeder mit genau so einem Namen an und misst
+  // seine Hoehe. Die spezifischen Regeln - die, in denen ein Listenautor
+  // diesen Wirt ausdruecklich nennt - bleiben in beiden Faellen.
+  kosmetik(url, optionen = {}) {
     const leer = { stile: [], skripte: [] };
     if (!this.engine) return leer;
+    const generisch = optionen.generisch !== false;
     const { Request, RequestType } = this.modul;
     try {
       const anfrage = new Request(String(url || ""), null, RequestType.Document);
       const option = this.engine.matchRequest(anfrage).getCosmeticOption();
       const ergebnis = this.engine.getCosmeticResult(anfrage, option);
       const stile = [
-        ...ergebnis.elementHiding.generic,
+        ...(generisch ? ergebnis.elementHiding.generic : []),
         ...ergebnis.elementHiding.specific
       ].map((regel) => regel.getContent()).filter(Boolean);
       const skripte = ergebnis.getScriptRules()

@@ -3,6 +3,136 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.40.0 — 24. August 2026
+
+Drei Fehler, die sich beim Nachmessen als drei ganz verschiedene Dinge
+herausgestellt haben - und zweimal war die naheliegende Erklaerung die falsche.
+
+### Aus Attack on Titan wurde eine fremde Serie
+
+Gemeldet war: nach dem Wechsel zur naechsten Folge standen Titel, Beschreibung
+und Genres von "Young Ladies Don't Play Fighting Games" auf der Karte, waehrend
+das Bild noch Attack on Titan zeigte. In den Daten sah das so aus:
+
+    url:          .../attack-on-titan/staffel-3/episode-20
+    thumbnail:    .../attack-on-titan-stream-cover-...
+    title:        "Young Ladies Don't Play Fighting Games"
+    finalSeason:  1     (Attack on Titan hat vier)
+
+- **Der Autostart hat eine Empfehlungskachel angeklickt.** Er sucht auf der
+  Seite einen Play-Knopf und wertet dafuer das Wort "play" - im Text wie in der
+  Klasse. In "Young Ladies Don't **Play** Fighting Games" steht es. Die Kachel
+  liegt auf AniWorld in jeder Empfehlungsspalte, und deshalb war es immer
+  dieselbe fremde Serie. Im Protokoll:
+  `startknopf-geklickt:Young Ladies Don't Play Fighti`
+- Ein Play-Knopf fuehrt jetzt nicht mehr von der Seite weg - er startet, was
+  schon da liegt -, und "play" zaehlt nur als Aufschrift eines Knopfes, nicht
+  als Wort in einem Titel. Die Aufforderung von Filmo ("Tippe auf Play, um die
+  Wiedergabe zu starten") hat ihre eigene Regel und bleibt
+- **Danach schrieb der Fortschritts-Takt die falsche Serie fest.** Er merkt
+  sich die Adresse ganz oben und schickt das Seitenskript erst ein Dutzend
+  Awaits spaeter los - Steuerung, Chat, Bildstufe, Autoplay, Marke liegen
+  dazwischen. Wechselt die Folge in diesem Fenster, liest das Skript die neue
+  Seite, waehrend der Aufrufer noch die alte Adresse haelt
+- Jedes Ergebnis des Seitenskripts traegt jetzt seine eigene Adresse mit. Passt
+  sie nicht zur Serie, fallen Titel, Titelbild und Serienlaenge heraus, und der
+  bestaetigte Stand bleibt stehen. Lieber eine Angabe zu wenig als die einer
+  fremden Serie
+- Eine Folgenueberschrift ist kein Serientitel mehr: "Episode 21 Staffel 3 von
+  Attack on Titan | AniWorld.to" wird auf "Attack on Titan" zurueckgefuehrt,
+  und wo die Seite nichts hergibt, entscheidet der Serien-Slug der Adresse
+  statt des letzten Pfadteils - der hiess bisher bei jeder Serie "Episode 21"
+- Ein verdorbener Titel blieb nicht bei sich: er ging als Suchbegriff an die
+  Metadaten und erzeugte dort einen Eintrag, der zu keiner der beiden Serien
+  gehoerte - fremder Titel, eigenes Jahr, eigene IMDB-Kennung, Konfidenz
+  UNMATCHED
+
+### Leere Flaechen statt Titelbilder
+
+- **Die Bilder waren da.** 337 Bilder auf der Startseite von AniWorld, keines
+  ohne Masse, jedes vollstaendig geladen - und die Kachelreihe oben trotzdem
+  dunkelblau. AniWorld blendet in seinem eigenen Stylesheet jedes Bild aus,
+  das noch ein `data-src` traegt:
+
+      .homeContentPromotionBoxPicture img[data-src],
+      .seriesCoverBox img[data-src],
+      .coverListItem img[data-src] { opacity: 0; }
+
+  Sichtbar wird ein Bild dort nicht durch seine Adresse, sondern dadurch, dass
+  das Lazyload-Skript das Attribut nach dem Umhaengen entfernt. Kommt dieses
+  Skript nicht durch, laedt ELFIX das Bild - und die Seite versteckt es
+- Die Nachreichung raeumt die Lazy-Attribute jetzt ab, genau wie das Skript der
+  Seite es taete. Nur dort, wo wirklich ein Bild uebernommen wurde: sonst
+  bliebe der durchsichtige Platzhalter sichtbar und nichts koennte mehr
+  nachkommen
+- **Karten mit gescheitertem Bild sehen nicht mehr aus wie Karten ohne Bild.**
+  Es gibt eine gezeichnete Ersatzgrafik, und der Fehlschlag wird mit Zeitpunkt
+  gemerkt statt als Urteil: nach fuenf Minuten ist dieselbe Adresse wieder
+  einen Versuch wert, und wer wieder online geht, bekommt ihn sofort
+- Frueher wurde die Adresse bei einer fehlgeschlagenen Reparatur geleert. Damit
+  kostete ein Aussetzer von zehn Sekunden das Bild bis zum naechsten Neustart -
+  ohne Adresse konnte die Karte nie wieder etwas anzeigen
+- Und kein Kreislauf mehr: eine Adresse, die eben gescheitert ist, wird nicht
+  im naechsten Zeichnen wieder in denselben `src` gesetzt
+
+### "Werbeblocker sind auf VOE nicht erlaubt"
+
+Bei Filmo zeigte der deutsche VOE-Stream statt des Films eine Warnung. Zwei
+naheliegende Erklaerungen waren falsch, und das Nachmessen hat sie beide
+ausgeschlossen: am Netz lag es nicht - im Mitschnitt fiel keine einzige Anfrage
+an VOE selbst, und auch mit allen sechs geblockten Fremdhosts freigegeben blieb
+die Warnung. Am Popup-Schutz lag es auch nicht - ein Spion auf `window.open`
+zeigt, dass der Player es beim Klick gar nicht aufruft.
+
+- **Es lag an einer Datei, die der Filter zu Recht abweist:** Googles
+  Werbe-SDK `imasdk.googleapis.com/js/sdkloader/ima3.js`. VOEs Player fragt
+  nach `google.ima`; findet er nichts, haelt er das fuer einen Werbeblocker
+  und spielt nicht
+- **AdGuard loest das seit Langem - aber domaingebunden.** Fuer `voe.sx` traegt
+  die Regel ein `$redirect=google-ima3` ("nicht abweisen, sondern eine Attrappe
+  ausliefern"), dazu sieben voe.sx-eigene Scriptlets. Gemessen an den echten
+  Listen: `voe.sx` bekommt 11 Scriptlets und den Redirect,
+  `tracylocalschool.com` vier Scriptlets und keinen. VOE liefert seinen Player
+  naemlich laengst nicht mehr von `voe.sx`, sondern von taeglich wechselnden
+  Adressen - dort greift keine dieser Regeln. Deshalb ist der Fehler
+  zurueckgekommen, ohne dass an ELFIX etwas geaendert wurde
+- Das SDK bleibt geblockt. In den Rahmen des Hosters wird AdGuards eigene
+  Attrappe eingespielt - sie beantwortet die Frage, ob es das SDK gibt, und
+  kann keine Werbung zeigen. Erkannt wird der Rahmen an der Einbettung, nicht
+  am Namen: eine Liste von VOE-Adressen waere schon beim Aufschreiben veraltet
+- **Im Player-Rahmen fallen die generischen Verbergen-Regeln weg**, die
+  hosterspezifischen bleiben. 278 kB Selektoren gehoeren auf eine Inhaltsseite,
+  nicht in einen fremden Player: dort legt ein Anti-Adblock-Skript einen Koeder
+  mit genau so einem Namen an und misst seine Hoehe. Nachgemessen im laufenden
+  Rahmen - ein `<div class="ad-space">` stand sofort auf `display:none`
+- Popunder, Umleitungen, Werbeskripte und Tracker fallen unveraendert. Geprueft
+  mit echten Klicks: der Film laeuft (1:21:27), Pause haelt, Play setzt fort,
+  der Streamwechsel auf Englisch laedt neu, und der Popunder auf
+  `blue-ribbonmacadamizeprovide.com` bleibt geblockt
+- Jede Blockade **im Rahmen des Hosters** kommt jetzt zusaetzlich ins
+  Protokoll, mit Rahmen, Typ, Ziel und Regel. Genau diese Angabe hat bei der
+  Suche gefehlt: die Liste im Fenster nennt die Adresse, aber nicht, in welchem
+  Dokument die Anfrage entstand - und was auf der Anbieterseite faellt, ist
+  Werbung, waehrend dasselbe im Player-Rahmen der Grund sein kann, warum nichts
+  mehr laeuft
+
+### Proben
+
+- `startknopftest` faehrt die echte Auswahl aus main.js gegen eine Seite mit
+  genau der Kachel, die den Fehler ausgeloest hat - und gegen die Knoepfe, die
+  weiter als Startknopf gelten muessen
+- `folgentiteltest` deckt den ganzen Weg ab: Serienkennung aus Folgen-,
+  Staffel- und Serienadresse, das verspaetete Ergebnis der vorigen Navigation,
+  und der Cache-Eintrag, der aus einem verdorbenen Titel entstanden ist. Mit
+  Gegenprobe - ohne den Riegel entsteht er wieder
+- `bildfallbacktest` prueft Ersatzgrafik, Wiederholbarkeit und den fehlenden
+  Kreislauf am echten Quelltext des Renderers
+- `hosterplayertest` haelt fest, dass AdGuards Attrappe da ist, `google.ima`
+  anlegt und nichts nachlaedt - und dass im Player-Rahmen die generischen
+  Regeln weg sind, die hosterspezifischen aber nicht
+- `bildnachreichungtest` misst jetzt auch, dass das Lazy-Attribut wirklich
+  verschwindet - daran hing die ganze Sichtbarkeit
+
 ## 1.39.2 — 24. August 2026
 
 Die Liste sprang beim Scrollen nach oben.

@@ -14,6 +14,15 @@
  * WebView ein. Ein Bild, das der Rechner findet, findet das Telefon damit
  * auch - und wenn sich die Bildsuche aendert, aendert sie sich fuer beide.
  *
+ * Jedes Ergebnis traegt seine eigene Adresse mit (`seiteUrl`). Das klingt
+ * ueberfluessig - der Aufrufer weiss doch, welche Seite er gefragt hat -, ist
+ * es aber nicht: zwischen "Adresse merken" und "Skript ausgewertet" liegen
+ * beim Folgenwechsel mehrere Awaits, und wer danach beides zusammenlegt, legt
+ * womoeglich die Adresse der alten Folge auf die Angaben der neuen. Genau so
+ * bekam ein Eintrag von Attack on Titan den Titel einer fremden Serie. Mit dem
+ * Stempel laesst sich das pruefen statt hoffen - siehe seitendatenPassenZu()
+ * in fortschritt.js.
+ *
  * Herausgesucht wird ein Titelbild und kein beliebiges: Platzhalter, Logos,
  * Fahnen und die Poster aus den Empfehlungsspalten fallen durch, und was
  * uebrig bleibt, wird an den Woertern des Titels gemessen. Ein falsches Bild
@@ -524,6 +533,7 @@ function seitenSkript() {
           title: mediaTitle(),
           type: activeMediaType(),
           favicon: abs(icon && icon.getAttribute("href")),
+          seiteUrl: location.href,
           thumbnail: infoPanelPoster,
           ...seriesBounds
         };
@@ -533,6 +543,7 @@ function seitenSkript() {
         title: mediaTitle(),
         type: activeMediaType(),
         favicon: abs(icon && icon.getAttribute("href")),
+        seiteUrl: location.href,
         thumbnail: "",
         ...seriesBounds
       };
@@ -542,6 +553,7 @@ function seitenSkript() {
         title: mediaTitle(),
         type: activeMediaType(),
         favicon: abs(icon && icon.getAttribute("href")),
+        seiteUrl: location.href,
         thumbnail: filmoMainImage(),
         ...seriesBounds
       };
@@ -551,6 +563,7 @@ function seitenSkript() {
         title: mediaTitle(),
         type: activeMediaType(),
         favicon: abs(icon && icon.getAttribute("href")),
+        seiteUrl: location.href,
         thumbnail: aniWorldMainImage(),
         ...seriesBounds
       };
@@ -585,6 +598,7 @@ function seitenSkript() {
       title: mediaTitle(),
       type: activeMediaType(),
       favicon: abs(icon && icon.getAttribute("href")),
+      seiteUrl: location.href,
       thumbnail: candidates[0]?.href || "",
       ...seriesBounds
     };
