@@ -34,6 +34,13 @@ latest.yml
 *.jks
 *.keystore
 *.jks.txt
+# PKCS12 in beiden Schreibweisen: keytool legt seit Java 9 genau dieses Format
+# an, und das Windows-Zertifikat hinter CSC_LINK ist ueblicherweise eine .pfx.
+*.p12
+*.pfx
+# Und was sonst noch ein privater Schluessel ist.
+*.pem
+*.key
 
 # Local/editor noise
 .DS_Store
