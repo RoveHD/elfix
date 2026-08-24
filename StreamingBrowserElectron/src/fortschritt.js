@@ -919,6 +919,95 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
 }
 
 /**
+ * Einen Eintrag von Hand anlegen - vorgemerkt, nicht angefangen.
+ *
+ * <p>Der zweite Weg, auf dem ein Titel in die Ablage kommt. Der erste ist
+ * {@link medienStandVerbuchen}: dort meldet sich ein laufendes Video, und die
+ * Regel entscheidet, ob daraus ein Stand wird. Hier gibt es kein Video - jemand
+ * hat auf ein Herz getippt oder einen Vorschlag vorgemerkt, und die Absicht ist
+ * eindeutig.
+ *
+ * <p>Warum das nicht ueber medienStandVerbuchen geht, obwohl es verlockend
+ * aussieht: die Regel dort verlangt zu Recht Videodaten, sonst fuellte jeder
+ * geoeffnete Reiter die Liste. Android hat ihr deshalb einen Mindeststand
+ * vorgetaeuscht (currentTime 0.1, duration 1) - mit zwei Folgen, die beide
+ * falsch sind. Erstens wurde der Eintrag bei einer Serienuebersicht und bei
+ * jeder Folge ausser der ersten gar nicht angelegt: ohne 2:30 Wiedergabe und
+ * ohne Folge 1 blockiert die Regel, und der Herz-Knopf tat schlicht nichts.
+ * Zweitens trug ein angelegter Eintrag zehn Prozent Fortschritt und stand
+ * damit sofort in "Weiterschauen" - vorgemerkt und angefangen sind aber zwei
+ * verschiedene Dinge.
+ *
+ * <p>Gibt es den Titel schon, wird er nur wieder auf die Merkliste gesetzt und
+ * nach vorn geholt; sein Fortschritt bleibt unangetastet.
+ *
+ * @param zustand  { favoriten, aktiverFavoritId }
+ * @param angaben  { title, thumbnail, type } - alles freiwillig
+ * @returns {{ eintrag, favoriten, neu, schonDabei }} oder `eintrag: null`,
+ *          wenn die Adresse nichts hergibt
+ */
+function vonHandAnlegen(zustand, provider, url, angaben = {}) {
+  const favoriten = Array.isArray(zustand?.favoriten) ? zustand.favoriten.slice() : [];
+  const leer = { eintrag: null, favoriten, neu: false, schonDabei: false };
+  if (!provider || !providerModel.isHttpUrl(url)) return leer;
+
+  const normalized = normalizeFavoriteUrl(url);
+  const jetzt = new Date().toISOString();
+  const vorhanden = favoriten.find(
+    (favorit) => favoriteMatchesCurrentProviderTitle(favorit, provider, url, normalized));
+  if (vorhanden) {
+    const schonDabei = vorhanden.favorite !== false && !vorhanden.completed;
+    vorhanden.favorite = true;
+    // Wieder auf der Merkliste heisst: nicht mehr abgeschlossen. Sonst stuende
+    // der Titel gleichzeitig in Watchlist und Mediathek - derselbe Widerspruch,
+    // den watchlistSetzen an seiner Stelle aufloest.
+    if (vorhanden.completed) {
+      vorhanden.completed = false;
+      vorhanden.completedManually = false;
+      vorhanden.completedAt = "";
+      vorhanden.hideFromContinueWatching = false;
+    }
+    vorhanden.updatedAt = jetzt;
+    const ohne = favoriten.filter((favorit) => favorit !== vorhanden);
+    return { eintrag: vorhanden, favoriten: [vorhanden, ...ohne], neu: false, schonDabei };
+  }
+
+  const identity = episodeIdentity(url);
+  const eintrag = {
+    id: kennungErzeugen(),
+    providerId: provider.id,
+    providerName: provider.name || "",
+    title: serienTitel(angaben.title, url, provider.name || ""),
+    url,
+    normalizedUrl: normalized,
+    favicon: String(angaben.favicon || ""),
+    thumbnail: String(angaben.thumbnail || ""),
+    logo: provider.logo || "",
+    favorite: true,
+    watched: false,
+    completed: false,
+    episodeCompleted: false,
+    continuePending: false,
+    completedEpisodes: [],
+    hideFromContinueWatching: false,
+    // Null, und das ist der Punkt: vorgemerkt ist nicht angefangen. Mit einem
+    // Fortschritt stuende der Titel in derselben Sekunde auch in
+    // "Weiterschauen", und dort gehoert er erst hin, wenn wirklich etwas lief.
+    progress: 0,
+    duration: 0,
+    position: 0,
+    currentTime: 0,
+    type: normalizeMediaType(angaben.type || inferMediaType(url)),
+    season: identity?.season || 0,
+    episode: identity?.episode || 0,
+    lastWatchedAt: "",
+    activity: [],
+    createdAt: jetzt
+  };
+  return { eintrag, favoriten: [eintrag, ...favoriten], neu: true, schonDabei: false };
+}
+
+/**
  * Verbucht, was gerade lief - die Regel, nach der ELFIX Fortschritt zaehlt.
  *
  * Bekommt ihren Zustand herein und fasst nichts ausserhalb an: sie legt keine
@@ -1387,6 +1476,7 @@ module.exports = {
   mediaDiagnosticDecisionText,
   applyFavoriteSeriesBounds,
   medienStandVerbuchen,
+  vonHandAnlegen,
   COMPLETED_PROGRESS_PERCENT,
   MIN_WATCH_TIME_SECONDS,
   BACKWARD_WATCH_TIME_SECONDS,

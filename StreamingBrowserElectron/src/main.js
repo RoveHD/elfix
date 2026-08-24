@@ -39,6 +39,7 @@ const youtubeSync = require("./youtube-sync");
 const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
+const empfehlungslauf = require("./empfehlungslauf");
 const metadatenModul = require("./metadaten");
 const statistik = require("./statistik");
 const { AdblockEngine } = require("./adblock-engine");
@@ -132,6 +133,7 @@ const {
   titelAusSlug,
   titleFromPath,
   uebernahmeSchwelle,
+  vonHandAnlegen,
 } = fortschritt;
 
 // Einzige Ausnahme: ob die Runde gerade eine Folge vorgibt, weiss nur der
@@ -283,9 +285,6 @@ const providerAutoplayRequests = new Map();
 const blockedRequests = [];
 const mediaDiagnostics = [];
 const mediaConsoleLogState = new Map();
-const discoverCache = new Map();
-// Erscheinungsdaten je Adresse - einmal geholt, dann gemerkt.
-const erscheinungsdaten = new Map();
 const seasonInfoCache = new Map();
 let watchpartyShared = [];
 let watchpartyLokal = { shared: [], joined: [] };
@@ -322,7 +321,6 @@ const nextEpisodeAutostartState = new Map();
 // Merker geleert - er kann also gar nicht auf die uebernaechste durchschlagen.
 const stopNachFolge = new Map();
 let nextEpisodeLogState = "";
-const DISCOVER_CACHE_MS = 15 * 60 * 1000;
 const SEASON_INFO_CACHE_MS = 6 * 60 * 60 * 1000;
 // So lange wird auf die Bestaetigung des Raums gewartet, bevor das Teilen als
 // gescheitert gilt.
@@ -345,54 +343,6 @@ const CUSTOM_BILD_MAX_ZEICHEN = 3 * 1024 * 1024;
 // oft. Jede kostet zwei Seitenaufrufe, deshalb in kleinen Portionen.
 const NEUE_FOLGEN_PRO_LAUF = 6;
 const NEUE_FOLGEN_INTERVALL_MS = 6 * 60 * 60 * 1000;
-// Detailseiten aendern ihre Genres praktisch nie, Uebersichtsseiten schon.
-const TASTE_PAGE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
-const TASTE_LIST_CACHE_MS = 6 * 60 * 60 * 1000;
-// Wie viele Verlaufstitel praegen das Profil? Alle.
-//
-// Frueher waren es die letzten zwoelf. Wer viel schaut, hat einen
-// abgeschlossenen Titel damit nach drei Tagen verloren: gemessen an einem
-// echten Verlauf lag "Dragonball Z" auf Platz 47, obwohl es gerade fertig
-// geschaut war - und die Plaetze 38 bis 48 waren durchgehend abgeschlossene
-// Titel, alle innerhalb derselben vier Minuten markiert. Jede feste Zahl
-// schneidet mitten durch so einen Block, und was dahinter liegt, existiert
-// fuer die Empfehlungen nicht. Die belegte Beziehung "Dragon Ball -> SEQUEL ->
-// Dragon Ball Z" war deshalb nie zu sehen.
-//
-// Dass alte Titel das Profil verwaessern, verhindert die Frische-Kurve in
-// empfehlung.js: sie halbiert das Gewicht alle dreissig Tage. Ein Titel von
-// vor einem Jahr traegt also kaum noch zum Geschmack bei - seine belegten
-// Beziehungen und Reihen behaelt er trotzdem, und genau darum geht es.
-//
-// Die Kosten sind einmalig: je Titel eine Detailseite, danach liegt sie eine
-// Woche im Cache. Die Obergrenze schuetzt nur vor dem Entarteten - das
-// Bewerten vergleicht jeden Kandidaten mit jedem Verlaufstitel, und bei
-// mehreren tausend Eintraegen waere das keine Empfehlung mehr, sondern eine
-// Rechenaufgabe. Fuer eine normale Mediathek greift sie nie.
-const TASTE_HISTORY_MAX = 500;
-const TASTE_ENRICH_LIMIT = 18;
-// Die Genre-Uebersichten der Anbieter sind blaetterbar. So viele Seiten werden
-// je Liste gelesen - gleichmaessig ueber die ganze Blaetterleiste verteilt,
-// damit der Katalog und nicht nur sein Anfang in die Auswahl kommt.
-const TASTE_LIST_PAGES = 8;
-// Obergrenze je Liste. Sie war 360 und damit die eigentliche Wand hinter den
-// Entdeckungsseiten: die Genre-Uebersichten der Anbieter haben 14 bis 122
-// Seiten, gelesen wurden acht davon. Wer weit scrollte, war nach rund 400
-// Titeln je Art am Ende - nicht weil der Katalog leer war, sondern weil nie
-// mehr davon geholt wurde.
-//
-// Jetzt waechst die Liste beim Scrollen nach (siehe tasteListErweitern). Die
-// Grenze bleibt trotzdem stehen, damit eine einzelne Liste die Ablage nicht
-// sprengt.
-const TASTE_LIST_SIZE = 2400;
-// So viele Seiten liest ein Nachschlag je Liste. Klein gehalten: das laeuft
-// waehrend jemand scrollt, und vier Seiten sind bei den Anbietern gut hundert
-// neue Titel.
-const TASTE_LIST_NACHSCHLAG = 4;
-// So viele Eintraege werden aus einer einzelnen Katalogseite gelesen.
-// Grosszuegig: die Seiten zeigen dreissig bis zweiundvierzig, gekappt werden
-// soll hier nichts mehr.
-const TASTE_LIST_ROH = 120;
 // Version des Geschmacks-Caches. Wird sie erhoeht, verwirft loadTasteCache die
 // alten Listen - sonst haengen sechs Stunden lang die alten, abgeschnittenen
 // Kandidaten in der Ablage.
@@ -401,60 +351,8 @@ const TASTE_LIST_ROH = 120;
 // Genre ("Avatar - Der Herr der Elemente Zeichentrick") - das ist nicht alt,
 // sondern falsch, und muss weg.
 const TASTE_CACHE_VERSION = 3;
-// So viele Titel aus den Genre-Listen gehen ins Ranking. Die Listen liefern
-// jetzt den ganzen Katalog - das sind mehrere tausend Eintraege, von denen die
-// meisten nur ein einziges Genre mit dem Profil teilen. Gekappt wird nach
-// Relevanz, nicht nach Listenposition (siehe nachRelevanzKappen).
-// Frueher 900 - das reichte fuer eine Startseite mit zwei Dutzend Karten.
-// Die Entdeckungsseiten blaettern durch denselben Pool; bei 900 Kandidaten
-// blieben nach Dubletten, Ausschluss und Aufteilung auf drei Arten rund 330
-// Titel je Art, also elf Stapel. Mit 2400 sind es rund tausend. Gekappt wird
-// weiter nach Relevanz und Genre-Quote, nicht nach Listenposition - der Pool
-// wird also breiter, nicht beliebiger.
-const TASTE_GENRE_KANDIDATEN = 6000;
-// So viele der aussichtsreichsten Kandidaten bekommen vor der endgueltigen
-// Bewertung ihre echten Genres von der Detailseite - siehe die zweite Runde in
-// buildPersonalRecommendations. Die Seiten liegen danach eine Woche im Cache,
-// die Kosten fallen also nur beim ersten Mal an.
-const TASTE_TIEFE = 60;
-// Ab wie vielen verschiedenen Werken zaehlt ein Genre des Profils voll, wenn es
-// darum geht, dafuer einen ganzen Katalog zu holen? Darunter wird es anteilig
-// abgeschwaecht.
-const GENRE_TRAEGER_VOLL = 3;
-// So viele Titel je Anbieter zeigt bereits die Reihe "Neu bei deinen Anbietern".
-const TASTE_NEW_OFFSET = 6;
-const TASTE_FETCH_PARALLEL = 4;
 let tasteCache = null;
 let tasteSaveTimer = 0;
-let personalPending = null;
-// `vollstaendig` unterscheidet den frisch gerechneten Pool von dem, was beim
-// Start von der Platte kam - dort liegt nur der Anfang. Die Startseite merkt
-// das nicht, eine Entdeckungsseite schon.
-let personalCache = { at: 0, items: [], signatur: "", vollstaendig: false };
-const PERSONAL_CACHE_MS = 15 * 60 * 1000;
-const PERSONAL_POOL_SIZE = 150;
-// So tief reicht der Pool, aus dem die Entdeckungsseiten schoepfen.
-//
-// Gerechnet wird er nur einmal - die Startseite nimmt seinen Anfang, die
-// Entdeckungsseiten blaettern durch den Rest. Ihn zweimal zu bauen hiesse,
-// dieselben Seiten zweimal zu lesen.
-//
-// Warum so gross? Gemessen an einem echten Katalog aus 4626 Kandidaten tragen
-// 681 Anime, 841 Filme und 647 Serien einen echten Grund (also nicht blosse
-// Erkundung). Wer scrollt, soll so weit kommen, bevor die Saetze allgemein
-// werden.
-// Gemessen an 4626 Kandidaten: 1200 Titel kosten 1458 ms, 4000 kosten 1900 ms.
-// Die Vielfaltsregel arbeitet die Restliste ab, wird also mit jedem Platz
-// billiger - der grosse Pool ist deshalb fast geschenkt. 4000 sind rund 1300
-// je Art und damit vierzig Stapel, bevor ueberhaupt nachgeholt werden muss.
-const ENTDECKUNG_POOL_SIZE = 4000;
-// Gehalten wird der grosse Pool nur im Speicher. In die Ablage geht sein
-// Anfang - tausend Eintraege auf die Platte zu schreiben, damit die Startseite
-// zwoelf davon zeigt, waere Unfug.
-const ENTDECKUNG_CACHE_MS = 30 * 60 * 1000;
-// So viele Titel gehen an "Empfohlen fuer dich"; die Kategoriereihen bedienen
-// sich erst danach.
-const PERSONAL_MAIN_SIZE = 24;
 const autoplayConsoleLogState = new Map();
 const AUTOPLAY_POLL_MS = 700;
 const NEXT_EPISODE_PROMPT_PERCENT = 90;
@@ -897,7 +795,7 @@ ipcMain.handle("calendar:load", async (_event, refresh = false) => ladeKalender(
 ipcMain.handle("discover:personal", async (_event, options = {}) => {
   const limit = sanitizeNumber(options?.limit, 6, 40, 24);
   const type = sanitizeChoice(options?.type, ["anime", "serie", "film"], "");
-  return collectPersonalRecommendations(limit, Boolean(options?.refresh), type, options?.excludeMain !== false);
+  return lauf.persoenlich(limit, Boolean(options?.refresh), type, options?.excludeMain !== false);
 });
 
 // Eine Seite der Entdeckungsansicht. Der Versatz steht in der Anfrage, damit
@@ -908,12 +806,12 @@ ipcMain.handle("discover:personal-page", async (_event, options = {}) => {
   if (!type) return { items: [], versatz: 0, gesamt: 0, fertig: true };
   const versatz = sanitizeNumber(options?.offset, 0, 20000, 0);
   const limit = sanitizeNumber(options?.limit, 6, 60, 30);
-  return entdeckungsSeite(type, versatz, limit, Boolean(options?.refresh));
+  return lauf.entdeckungsSeite(type, versatz, limit, Boolean(options?.refresh));
 });
 
 ipcMain.handle("discover:recommendations", async (_event, options = {}) => {
   const proAnbieter = Math.max(2, Math.min(12, Number(options?.perProvider) || 6));
-  return collectRecommendations(proAnbieter, Boolean(options?.refresh));
+  return lauf.neuesVonAnbietern(proAnbieter, Boolean(options?.refresh));
 });
 
 ipcMain.handle("browser:navigate", async (_event, input) => {
@@ -1132,49 +1030,27 @@ ipcMain.handle("favorites:add-result", async (_event, treffer) => {
   const url = roh ? absoluteHttpUrl(roh, provider.startUrl || "") : "";
   if (!providerModel.isHttpUrl(url)) return { favorites, added: false, reason: "Adresse nicht erkannt" };
 
-  const normalized = normalizeFavoriteUrl(url);
-  const vorhanden = favorites.find((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized));
-  if (vorhanden) {
-    const schonDabei = vorhanden.favorite !== false && !vorhanden.completed;
-    vorhanden.favorite = true;
-    vorhanden.updatedAt = new Date().toISOString();
-    moveFavoriteToFront(vorhanden);
+  // Wie der Eintrag aussieht, entscheidet die geteilte Regel - dieselbe, die
+  // auf dem Telefon laeuft. Hier bleibt nur, was den Rechner ausmacht:
+  // Anbieterbilder geradeziehen und ein fehlendes Poster nachholen.
+  const urteil = vonHandAnlegen({ favoriten: favorites }, provider, url, {
+    title: treffer?.title,
+    thumbnail: treffer?.thumbnail,
+    type: treffer?.type
+  });
+  if (!urteil.eintrag) return { favorites, added: false, reason: "Adresse nicht erkannt" };
+  favorites = urteil.favoriten;
+  const favorite = urteil.eintrag;
+  if (!urteil.neu) {
     saveFavorites();
     sendActiveState();
     // Der Eintrag selbst gehoert mit zurueck: wer einen Suchtreffer nicht
     // vormerken, sondern gleich abhaken will, braucht danach seine Kennung -
     // und die gibt es nur hier, denn der Treffer hatte noch keine.
-    return { favorites, added: true, already: schonDabei, title: vorhanden.title, favorite: vorhanden };
+    return { favorites, added: true, already: urteil.schonDabei, title: favorite.title, favorite };
   }
 
-  const identity = episodeIdentity(url);
-  const favorite = normalizeLoadedFavorite({
-    id: crypto.randomUUID(),
-    providerId: provider.id,
-    providerName: provider.name,
-    title: cleanTitle(treffer?.title || titleFromPath(url) || provider.name),
-    url,
-    normalizedUrl: normalized,
-    favicon: "",
-    thumbnail: String(treffer?.thumbnail || ""),
-    logo: provider.logo || "",
-    favorite: true,
-    watched: false,
-    completed: false,
-    episodeCompleted: false,
-    hideFromContinueWatching: false,
-    progress: 0,
-    duration: 0,
-    position: 0,
-    currentTime: 0,
-    type: normalizeMediaType(treffer?.type || inferMediaType(url)),
-    season: identity?.season || 0,
-    episode: identity?.episode || 0,
-    lastWatchedAt: "",
-    activity: [],
-    createdAt: new Date().toISOString()
-  });
-  favorites.unshift(favorite);
+  normalizeLoadedFavorite(favorite);
   // Die Trefferliste der Anbieter bringt oft kein Bild mit - AniWorlds
   // Schnellsuche liefert nur Titel und Adresse. Eine Kachel ohne Bild ist die
   // gemeldete "Luecke" in der Watchlist: sie fuellte sich erst, wenn man den
@@ -2443,7 +2319,7 @@ function getProviderView(provider) {
     rememberProviderUrl(provider.id, url);
     // Wer einen Titel wirklich oeffnet, hat ihn nicht ignoriert - die
     // Muedigkeitszaehlung dieses Werks faengt von vorn an.
-    vergissEmpfehlungsMuedigkeit(url, cleanBaseMediaTitle("", url), "");
+    lauf.vergissMuedigkeit(url, cleanBaseMediaTitle("", url), "");
     // Neue Seite: der Merker fuers Anhaengen gilt nicht mehr - wer die Folge
     // erneut betritt, gleicht wieder mit dem Host ab.
     watchpartyAngeklinkt.clear();
@@ -5273,75 +5149,6 @@ async function ladeKalender(refresh) {
 }
 
 const WOCHENTAGE_LISTE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
-
-async function collectRecommendations(proAnbieter, refresh) {
-  const anbieter = enabledProviders();
-  if (!anbieter.length) return [];
-  const listen = await Promise.all(anbieter.map((provider) => (
-    discoverForProvider(provider, refresh).catch(() => [])
-  )));
-
-  const gemischt = [];
-  for (let index = 0; index < proAnbieter; index += 1) {
-    for (const liste of listen) {
-      if (liste[index]) gemischt.push(liste[index]);
-    }
-  }
-  await ergaenzeErscheinungsdaten(gemischt);
-  return gemischt;
-}
-
-// Das Erscheinungsdatum steht nicht auf der Startseite des Anbieters, sondern
-// erst auf der Seite des Titels. Es wird deshalb nachgeholt - nur fuer die
-// Kacheln, die wirklich in der Reihe stehen, und gemerkt, damit dieselbe Seite
-// nicht mehrfach geladen wird.
-async function ergaenzeErscheinungsdaten(items) {
-  const offen = items.filter((item) => item?.url && !erscheinungsdaten.has(item.url));
-  await inBatches(offen, TASTE_FETCH_PARALLEL, async (item) => {
-    try {
-      const html = await fetchProviderHtml(seriesPageUrl(item.url) || item.url);
-      erscheinungsdaten.set(item.url, extractReleaseDate(html) || "");
-    } catch {
-      erscheinungsdaten.set(item.url, "");
-    }
-    return null;
-  });
-  for (const item of items) {
-    const datum = erscheinungsdaten.get(item.url);
-    if (datum) item.releasedAt = datum;
-  }
-}
-
-async function discoverForProvider(provider, refresh) {
-  const cached = discoverCache.get(provider.id);
-  if (!refresh && cached && Date.now() - cached.at < DISCOVER_CACHE_MS) return cached.items;
-
-  const startUrl = providerModel.normalizeUrl(provider.startUrl || "");
-  if (!startUrl) return [];
-  const seite = await fetchProviderHtml(startUrl);
-  if (!seite) return cached?.items || [];
-
-  const html = seite.html;
-  const basis = seite.url;
-  // Zuerst die Neuheiten-Reihe der Seite ("Neue Animes", "Neu auf
-  // SerienStream", "Neu veroeffentlichte Filme") - nur die gehoert in diese
-  // Reihe. Dazu das grosse Titelbild der Startseite, wo es eines gibt.
-  let items = extractNewReleaseItems(html, basis, provider, 30);
-  const hero = extractHeroItem(html, basis, provider);
-  if (hero && !items.some((item) => item.url === hero.url)) items.unshift(hero);
-
-  // Kennt eine Seite keine solche Reihe, bleibt es beim bisherigen Verhalten:
-  // alles von der Startseite, notfalls nur Poster mit Titel.
-  if (!items.length) {
-    items = extractDiscoverItems(html, basis, provider);
-    if (items.length < 4) {
-      const ersatz = extractPosterFallbacks(html, basis, provider);
-      if (ersatz.length > items.length) items = ersatz;
-    }
-  }
-  if (items.length) discoverCache.set(provider.id, { at: Date.now(), items });
-  return items;
-}
 
 // --- Watchparty --------------------------------------------------------------
 // Gemeinsam an einer Serie dranbleiben. Nichts wird von selbst geteilt: jemand
@@ -8840,7 +8647,7 @@ function loadTasteCache() {
     };
     // Die zuletzt gezeigten Vorschlaege stammen aus denselben kaputten Listen.
     // Sie muessen mit weg, sonst zeigt die Startseite sie weiter an.
-    if (veraltet) personalCache = { at: 0, items: [], signatur: "", vollstaendig: false };
+    if (veraltet) lauf.poolVerwerfen();
   } catch {
     tasteCache = { version: TASTE_CACHE_VERSION, pages: {}, lists: {}, anzeigen: {}, personal: null };
   }
@@ -8877,18 +8684,6 @@ function saveTasteCacheSoon() {
 
 let metadatenSpeicher = null;
 let metadatenSaveTimer = 0;
-let metadatenPending = null;
-let metadatenZuletzt = 0;
-// So lange nach einem Anreicherungslauf bleibt es dabei. Ohne diese Bremse
-// zoege jeder Durchlauf den naechsten nach sich: anreichern, neu rechnen,
-// wieder anreichern.
-//
-// Fuenf Minuten waren zu vorsichtig. Ein Lauf holt hoechstens ein paar hundert
-// Titel, der Kandidatenpool ist vierstellig - bei fuenf Minuten Abstand haette
-// eine Sitzung nicht gereicht, um die sichtbaren Reihen abzudecken. Anderthalb
-// Minuten bleiben deutlich unter der Taktbremse des Relays (300 Titel je
-// Minute) und decken die Startseite innerhalb weniger Minuten Nutzung ab.
-const METADATEN_PAUSE_MS = 90 * 1000;
 
 function metadatenAdresse() {
   const eigen = String(process.env.ELFIX_METADATEN_SERVER || "").trim();
@@ -8934,137 +8729,6 @@ function metadatenSpeichernSoon() {
   metadatenSaveTimer.unref?.();
 }
 
-// Was ELFIX ueber ein Werk weiss, in der Form, die das Relay erwartet. Die
-// Angaben stammen von der Detailseite des Anbieters (siehe tastePage) - ohne
-// sie bleibt der Titel, und damit faengt die Verwechslungsgefahr an.
-function metadatenWunsch(name, url, meta) {
-  const titel = String(name || "").trim();
-  if (!titel) return null;
-  return {
-    art: candidateMediaType(url) || "serie",
-    titel,
-    jahr: meta?.jahr || 0,
-    imdb: meta?.imdb || "",
-    altTitel: meta?.titelAlt || []
-  };
-}
-
-// Die Seitenangaben zu einer Adresse, soweit sie schon einmal gelesen wurde.
-function seitenMeta(url) {
-  const seite = seriesPageUrl(url);
-  if (!seite) return null;
-  return loadTasteCache().pages?.[seite]?.meta || null;
-}
-
-// Externe Daten aus dem lokalen Cache - ohne einen einzigen Netzabruf. Das ist
-// der Weg, den das Bauen der Empfehlungen nimmt.
-function metadatenAusCache(name, url) {
-  const wunsch = metadatenWunsch(name, url, seitenMeta(url));
-  if (!wunsch) return null;
-  try {
-    return metadatenClient().ausCache(wunsch) || null;
-  } catch {
-    return null;
-  }
-}
-
-// Zu welchem Anbieter gehoert eine Adresse? Gebraucht, um eine Detailseite
-// nachzulesen, ohne den Kandidaten selbst mitschleppen zu muessen.
-function anbieterZuAdresse(url) {
-  try {
-    const wirt = new URL(url).host;
-    return enabledProviders().find((provider) => {
-      try {
-        return new URL(provider.startUrl || "").host === wirt;
-      } catch {
-        return false;
-      }
-    }) || null;
-  } catch {
-    return null;
-  }
-}
-
-// So viele Detailseiten liest ein Anreicherungslauf nach.
-//
-// Das ist der Schritt, an dem die Zuordnung wirklich haengt. Gemessen an einem
-// echten Profil: von 49 Filmen im Vorschlagspool hatte KEINER eine
-// IMDB-Kennung und nur elf ein Erscheinungsjahr - Filmo fuehrt keine Kennung,
-// und die Detailseiten der uebrigen waren nie gelesen worden. Damit bleibt fuer
-// die Anfrage nur der deutsche Titel, und mit dem allein findet TMDB "Die
-// Odyssee" oder "Der letzte Tempelritter" nicht. Bei Anime faellt das nicht
-// auf: AniList sucht ueber Romaji- und Englischtitel, die die Anbieter ohnehin
-// fuehren - dort waren 46 von 51 zugeordnet.
-const METADATEN_SEITEN_JE_LAUF = 60;
-
-// Die Anreicherung im Hintergrund. Die Reihenfolge der Eintraege ist die
-// Rangfolge: erst der Verlauf, dann die Vorschlaege, dann der Rest der Ablage.
-// Was nicht mehr in einen Lauf passt, kommt beim naechsten Mal.
-//
-// Zwei Schritte, und der erste ist der wichtigere: erst die Detailseiten, dann
-// die Datenbank. Ohne Jahr und Kennung ist die zweite Anfrage ein Titelraten.
-async function metadatenAnreichern(eintraege) {
-  if (metadatenPending) return metadatenPending;
-  const jetzt = Date.now();
-  if (jetzt - metadatenZuletzt < METADATEN_PAUSE_MS) return null;
-  let client;
-  try {
-    client = metadatenClient();
-  } catch {
-    return null;
-  }
-  if (!client.bereit() || client.gesperrt()) return null;
-
-  const liste = (eintraege || []).filter((eintrag) => eintrag?.titel && eintrag?.url);
-  const wunschVon = (eintrag) => metadatenWunsch(eintrag.titel, eintrag.url, seitenMeta(eintrag.url));
-  if (!liste.some((eintrag) => client.fehltImCache(wunschVon(eintrag)))) return null;
-  metadatenZuletzt = jetzt;
-
-  const lauf = (async () => {
-    // Schritt 1: fehlende Seitenangaben nachlesen. Die Seiten liegen danach
-    // eine Woche im Cache, die Kosten fallen also einmal je Titel an.
-    const ohneAngaben = liste
-      .filter((eintrag) => !seitenMeta(eintrag.url))
-      .filter((eintrag) => client.fehltImCache(wunschVon(eintrag)))
-      .slice(0, METADATEN_SEITEN_JE_LAUF);
-    if (ohneAngaben.length) {
-      await inBatches(ohneAngaben, TASTE_FETCH_PARALLEL, async (eintrag) => {
-        const provider = anbieterZuAdresse(eintrag.url);
-        const seite = seriesPageUrl(eintrag.url);
-        if (!provider || !seite) return null;
-        await tastePage(seite, provider, false);
-        return null;
-      });
-    }
-
-    // Schritt 2: jetzt erst fragen - mit allem, was die Seiten hergeben.
-    const offen = liste.map(wunschVon).filter(Boolean)
-      .filter((wunsch) => client.fehltImCache(wunsch));
-    if (!offen.length) return new Map();
-    return client.nachschlagen(offen);
-  })()
-    .then((ergebnisse) => {
-      if (!ergebnisse || !ergebnisse.size) return;
-      if (EMPFEHLUNG_DEBUG) {
-        console.log(`[metadaten] ${ergebnisse.size} Titel angereichert,`
-          + ` ${JSON.stringify(client.statistik())}`);
-      }
-      // Jetzt liegen bessere Daten vor als beim letzten Rechnen. Der
-      // vorhandene Stand bleibt sichtbar; neu gerechnet wird beim naechsten
-      // Abruf, und der kommt gleich - die Oberflaeche wird angestossen.
-      personalCache = { ...personalCache, at: 0 };
-      for (const fenster of BrowserWindow.getAllWindows()) {
-        fenster.webContents.send("discover:personal-updated");
-      }
-    })
-    .catch(() => null)
-    .finally(() => {
-      if (metadatenPending === lauf) metadatenPending = null;
-    });
-  metadatenPending = lauf;
-  return lauf;
-}
-
 // Nodes eingebautes fetch erreicht im Hauptprozess nicht jede Anbieterseite -
 // aniworld.to und filmo.to laufen dort in einen Timeout, waehrend dieselbe
 // Adresse in der Browser-Ansicht laedt. Chromiums Netzwerkschicht (net.fetch)
@@ -9082,1013 +8746,26 @@ async function fetchProviderHtml(url) {
   return { html: await response.text(), url: response.url || url };
 }
 
-// Detailseite eines Titels: Genres und der "Das schauen andere"-Block.
-async function tastePage(url, provider, refresh = false) {
-  const cache = loadTasteCache();
-  const gespeichert = cache.pages[url];
-  // Ein Eintrag ohne `meta` stammt aus der Zeit vor den Seitenangaben. Er ist
-  // nicht alt, sondern unvollstaendig - und die fehlenden Angaben sind genau
-  // die, mit denen sich ein Werk exakt zuordnen laesst. Also einmal nachlesen,
-  // statt eine Woche auf den Ablauf zu warten.
-  const vollstaendig = gespeichert && gespeichert.meta;
-  if (!refresh && vollstaendig && Date.now() - gespeichert.at < TASTE_PAGE_CACHE_MS) return gespeichert;
-
-  try {
-    const seite = await fetchProviderHtml(url);
-    if (!seite) return gespeichert || null;
-    const eintrag = {
-      at: Date.now(),
-      genres: extractGenres(seite.html, seite.url),
-      related: extractRelatedItems(seite.html, seite.url, provider, 10),
-      // IMDB-Kennung, Jahr, Altersfreigabe und fremdsprachige Titel. Sie
-      // stehen auf denselben Seiten und wurden bisher gelesen und
-      // weggeworfen. Fuer die Zuordnung zu TMDB und AniList sind sie das
-      // Wertvollste, was ELFIX hat: mit einer IMDB-Kennung wird aus einem
-      // Titelvergleich eine eindeutige Aufloesung.
-      meta: extractTitleMeta(seite.html, seite.url)
-    };
-    cache.pages[url] = eintrag;
-    saveTasteCacheSoon();
-    return eintrag;
-  } catch {
-    return gespeichert || null;
-  }
-}
-
-// Uebersichtsseite (Genre-Liste) mit den Titeln, die dort stehen.
+// --- Der Empfehlungslauf ------------------------------------------------------
 //
-// Eine solche Uebersicht ist blaetterbar und zeigt je Seite nur dreissig bis
-// vierzig Titel von mehreren tausend. Wer nur die erste Seite liest, bekommt
-// bei AniWorld und S.to den Anfang des Alphabets ("#Compass", "100-man",
-// "A Certain Magical Index", "Acapulco H.E.A.T.") und bei Filmo die letzten
-// Neuerscheinungen - in beiden Faellen keinen Querschnitt des Katalogs. Genau
-// daher kamen die vielen A-Titel und die Kinderanimation in den Empfehlungen.
-//
-// Deshalb wird die Blaetterleiste ausgelesen und ueber ihre ganze Laenge
-// gleichmaessig gelesen. Kein Zufall: dieselbe Seitenzahl ergibt immer
-// dieselben Seiten, sonst sortierte sich die Startseite bei jedem Durchlauf um.
-async function tasteList(url, provider, refresh = false) {
-  const cache = loadTasteCache();
-  const gespeichert = cache.lists[url];
-  const gueltig = gespeichert
-    && Number(gespeichert.version) === TASTE_CACHE_VERSION
-    && Date.now() - gespeichert.at < TASTE_LIST_CACHE_MS;
-  if (!refresh && gueltig) return gespeichert.items;
-
-  try {
-    const erste = await fetchProviderHtml(url);
-    if (!erste) return gespeichert?.items || [];
-    const blaettern = extractPagination(erste.html, erste.url);
-    const seiten = seitenStichprobe(blaettern.letzte, TASTE_LIST_PAGES);
-
-    // Seite 1 liegt schon vor - nur der Rest wird geholt.
-    const weitere = seiten
-      .filter((nummer) => nummer > 1)
-      .map((nummer) => seitenAdresse(blaettern.muster, nummer, erste.url));
-    const geladen = await inBatches(weitere, TASTE_FETCH_PARALLEL, (adresse) => fetchProviderHtml(adresse));
-
-    const items = [];
-    const gesehen = new Set();
-    for (const seite of [erste, ...geladen]) {
-      if (!seite) continue;
-      for (const item of extractCatalogItems(seite.html, seite.url, provider, TASTE_LIST_ROH)) {
-        if (gesehen.has(item.url)) continue;
-        gesehen.add(item.url);
-        items.push(item);
-      }
+// Die Rechnung selbst steht in src/empfehlungslauf.js und laeuft dort
+// unveraendert auch auf Android (siehe kern-host.js). Hier steht nur, woher sie
+// ihre vier Dinge bekommt: eine Seite, den Geschmacks-Cache, die Ablage und ein
+// Fenster, dem man Bescheid sagt.
+const lauf = empfehlungslauf.erstellen({
+  holen: (url) => fetchProviderHtml(url),
+  cacheLesen: () => loadTasteCache(),
+  cacheSchreiben: () => saveTasteCacheSoon(),
+  anbieter: () => enabledProviders(),
+  eintraege: () => favorites,
+  metadaten: () => metadatenClient(),
+  melden: () => {
+    for (const fenster of BrowserWindow.getAllWindows()) {
+      fenster.webContents.send("discover:personal-updated");
     }
-    // Faellt die Blaetterleiste aus (Anbieter ohne Paginierung, Fehler beim
-    // Nachladen), bleibt der alte Stand die bessere Auskunft als eine Liste,
-    // die wieder nur den Anfang enthaelt.
-    if (!items.length) return gespeichert?.items || [];
-
-    const auswahl = gleichmaessigVerteilt(items, TASTE_LIST_SIZE);
-    cache.lists[url] = {
-      at: Date.now(),
-      version: TASTE_CACHE_VERSION,
-      seiten: blaettern.letzte,
-      // Welche Seiten schon gelesen wurden. Ohne diese Liste weiss ein
-      // Nachschlag nicht, wo er anfangen soll, und holt wieder dieselben.
-      geholt: seiten,
-      muster: blaettern.muster,
-      basis: erste.url,
-      items: auswahl
-    };
-    saveTasteCacheSoon();
-    return auswahl;
-  } catch {
-    return gespeichert?.items || [];
-  }
-}
-
-// Eine schon gelesene Genre-Liste um weitere Seiten ergaenzen.
-//
-// Das ist der Unterschied zwischen "die ersten vierhundert Titel" und einer
-// Seite, die weiterlaedt, solange es etwas zu laden gibt. Geholt werden nur
-// Seiten, die noch nicht dran waren - gleichmaessig ueber den Rest verteilt,
-// damit nicht nur das Alphabet weiterwaechst.
-//
-// Rueckgabe: wie viele Titel wirklich dazugekommen sind. Null heisst, dass die
-// Liste erschoepft ist - und nur dann darf die Oberflaeche sagen, dass es
-// nichts mehr gibt.
-async function tasteListErweitern(url, provider) {
-  const cache = loadTasteCache();
-  const eintrag = cache.lists[url];
-  if (!eintrag) return 0;
-  if ((eintrag.items || []).length >= TASTE_LIST_SIZE) return 0;
-
-  // Listen aus der Zeit vor dem Nachschlag kennen weder ihr Blaettermuster
-  // noch die schon gelesenen Seiten. Beides laesst sich mit einem Abruf
-  // nachtragen: das Muster steht auf Seite 1, und gelesen wurde damals genau
-  // die Stichprobe, die derselbe Code auch heute zieht.
-  if (!eintrag.muster || !eintrag.seiten) {
-    const erste = await fetchProviderHtml(url);
-    if (!erste) return 0;
-    const blaettern = extractPagination(erste.html, erste.url);
-    if (!blaettern.muster || !blaettern.letzte) return 0;
-    eintrag.muster = blaettern.muster;
-    eintrag.basis = erste.url;
-    eintrag.seiten = blaettern.letzte;
-    eintrag.geholt = seitenStichprobe(blaettern.letzte, TASTE_LIST_PAGES);
-    cache.lists[url] = eintrag;
-  }
-
-  const geholt = new Set(eintrag.geholt || []);
-  const offen = [];
-  for (let nummer = 1; nummer <= eintrag.seiten; nummer += 1) {
-    if (!geholt.has(nummer)) offen.push(nummer);
-  }
-  if (!offen.length) return 0;
-  const naechste = gleichmaessigVerteilt(offen, TASTE_LIST_NACHSCHLAG);
-
-  try {
-    const adressen = naechste.map((nummer) => seitenAdresse(eintrag.muster, nummer, eintrag.basis || url));
-    const geladen = await inBatches(adressen, TASTE_FETCH_PARALLEL, (adresse) => fetchProviderHtml(adresse));
-    const bekannt = new Set((eintrag.items || []).map((item) => item.url));
-    const neue = [];
-    for (const seite of geladen) {
-      if (!seite) continue;
-      for (const item of extractCatalogItems(seite.html, seite.url, provider, TASTE_LIST_ROH)) {
-        if (bekannt.has(item.url)) continue;
-        bekannt.add(item.url);
-        neue.push(item);
-      }
-    }
-    // Auch ohne Ertrag gelten die Seiten als gelesen - sonst versucht es der
-    // naechste Nachschlag endlos mit denselben.
-    eintrag.geholt = [...geholt, ...naechste];
-    if (neue.length) {
-      eintrag.items = [...(eintrag.items || []), ...neue].slice(0, TASTE_LIST_SIZE);
-      eintrag.at = Date.now();
-    }
-    cache.lists[url] = eintrag;
-    saveTasteCacheSoon();
-    return neue.length;
-  } catch {
-    return 0;
-  }
-}
-
-// Wie schwer wiegt ein Genre des Profils, wenn daraus Kandidaten geholt werden?
-//
-// Nicht einfach sein Gewicht. Ein Genre, das nur an ein oder zwei Werken
-// haengt, holt sonst einen ganzen Katalog herbei: "Die Legende von Korra"
-// laeuft bei S.to unter "Zeichentrick", und daraus wurde das komplette
-// Animationsangebot - also vor allem Kinderfilme. Dieselbe Regel steht in
-// empfehlung.js schon fuer die Begruendung ("Aus einem Film folgt kein
-// Geschmack"); hier entscheidet sie ueber den Pool.
-//
-// Ein spezifischer Tag ("Fighting-Shounen", "Isekai") zaehlt umgekehrt mehr als
-// ein Sammelgenre, das halbe Kataloge umfasst.
-function profilGenreGewicht(profil, key) {
-  return profil.genreWert(key)
-    * (empfehlung.istSpezifisch(key) ? 1.6 : 1)
-    * Math.min(1, profil.genreTraeger(key) / GENRE_TRAEGER_VOLL);
-}
-
-// Wie gut passt ein einzelner Katalogtitel zum Profil? Mehr als die Listen
-// hergeben, ist es nicht: in wie vielen Lieblingsgenres er steht, wie schwer
-// die wiegen, und ob er zu einer Reihe gehoert, die im Verlauf vorkommt -
-// "Naruto Shippuden" neben "Naruto" ist der Grund, warum es diese Auswahl
-// ueberhaupt gibt. Gerundet, damit "gleich gut" auch wirklich eine Gruppe
-// bildet und nicht an der fuenfzehnten Nachkommastelle auseinanderfaellt.
-function katalogGuete(item, profil) {
-  let wert = 0;
-  for (const key of item.genres || []) wert += profil.genreWert(key);
-  const reihe = titelModul.franchiseSchluessel(titelModul.zerlegen(item.title || ""));
-  if (reihe && profil.reihen.has(reihe)) wert += 2;
-  wert += 0.05 * profil.anbieterAnteil(item.providerId);
-  return Math.round(wert * 1000) / 1000;
-}
-
-// Die besten "anzahl" aus einer Menge - aber ohne die Reihenfolge der
-// Anbieterliste durchschlagen zu lassen. Gleichauf liegende Titel sind die
-// Mehrheit, und wer von ihnen den Anfang nimmt, nimmt das Alphabet. Volle
-// Guetegruppen wandern ganz hinein, die eine ueberlaufende wird gleichmaessig
-// ueber ihre Laenge verteilt.
-function besteAusMenge(menge, anzahl, guete) {
-  if (anzahl <= 0) return [];
-  if (menge.length <= anzahl) return menge;
-  const gruppen = new Map();
-  for (const item of menge) {
-    const wert = guete(item);
-    const fach = gruppen.get(wert) || [];
-    fach.push(item);
-    gruppen.set(wert, fach);
-  }
-  const auswahl = [];
-  for (const wert of [...gruppen.keys()].sort((links, rechts) => rechts - links)) {
-    const rest = anzahl - auswahl.length;
-    if (rest <= 0) break;
-    const fach = gruppen.get(wert);
-    auswahl.push(...(fach.length <= rest ? fach : gleichmaessigVerteilt(fach, rest)));
-  }
-  return auswahl;
-}
-
-// Aus tausenden Katalogtiteln die aussichtsreichsten waehlen.
-//
-// Drei Dinge sollen dabei nicht passieren.
-//
-// Erstens darf die Reihenfolge der Anbieterliste nicht durchschlagen - sie ist
-// alphabetisch, und wer von ihr den Anfang nimmt, empfiehlt wieder nur "A".
-//
-// Zweitens soll die Auswahl nicht gewuerfelt sein: derselbe Geschmack muss
-// dieselben Kandidaten ergeben.
-//
-// Drittens - und das ist der Grund fuer die Quoten - darf der Pool nicht auf
-// das staerkste Genre zusammenfallen. Wer nach blosser Passung kappt, waehlt
-// fast nur noch Titel des Spitzengenres aus: bei diesem Verlauf trugen 81% der
-// Kandidaten "Abenteuer", und die Reihe "Anime fuer dich" wurde zu einer Liste
-// beliebiger Abenteuer-Anime. Das Profil ist aber nicht ein Genre, sondern eine
-// Mischung. Also bekommt jedes Lieblingsgenre einen Anteil an den Plaetzen, der
-// seinem Gewicht im Profil entspricht - und innerhalb seines Anteils
-// entscheidet wieder die Passung.
-function nachRelevanzKappen(kandidaten, profil, grenze) {
-  const liste = kandidaten || [];
-  if (liste.length <= grenze) return liste;
-  const guete = (item) => katalogGuete(item, profil);
-
-  // Welche Profilgenres kommen im Angebot ueberhaupt vor?
-  const gewichte = new Map();
-  for (const item of liste) {
-    for (const key of item.genres || []) {
-      if (gewichte.has(key)) continue;
-      const wert = profilGenreGewicht(profil, key);
-      if (wert > 0) gewichte.set(key, wert);
-    }
-  }
-  const genres = [...gewichte.entries()].sort((links, rechts) => (
-    rechts[1] - links[1] || (links[0] < rechts[0] ? -1 : 1)
-  ));
-  const summe = genres.reduce((wert, [, gewicht]) => wert + gewicht, 0);
-  // Ohne Profilgenres gibt es nichts zu quotieren - dann bleibt nur, den
-  // Katalog gleichmaessig auszuduennen.
-  if (!summe) return gleichmaessigVerteilt(liste, grenze);
-
-  const vergeben = new Set();
-  const auswahl = [];
-  for (const [key, gewicht] of genres) {
-    const rest = grenze - auswahl.length;
-    if (rest <= 0) break;
-    // Mindestens einer je Genre: auch ein schwaches Lieblingsgenre soll
-    // ueberhaupt vorkommen.
-    const anteil = Math.min(rest, Math.max(1, Math.round(grenze * gewicht / summe)));
-    const fach = liste.filter((item) => !vergeben.has(item) && (item.genres || []).includes(key));
-    for (const item of besteAusMenge(fach, anteil, guete)) {
-      vergeben.add(item);
-      auswahl.push(item);
-    }
-  }
-
-  // Bleiben Plaetze frei - etwa weil ein Genre weniger Titel hat als seine
-  // Quote -, gehen sie an die beste uebrige Passung.
-  if (auswahl.length < grenze) {
-    const uebrig = liste.filter((item) => !vergeben.has(item));
-    auswahl.push(...besteAusMenge(uebrig, grenze - auswahl.length, guete));
-  }
-  return auswahl;
-}
-
-// Aus einer langen Liste gleichmaessig verteilt auswaehlen. Deterministisch:
-// dieselbe Liste ergibt immer dieselbe Auswahl, sonst sortierte sich die
-// Startseite bei jedem Durchlauf um.
-function gleichmaessigVerteilt(items, anzahl) {
-  const liste = items || [];
-  if (liste.length <= anzahl) return liste;
-  const schritt = liste.length / anzahl;
-  const auswahl = [];
-  for (let index = 0; index < anzahl; index += 1) {
-    auswahl.push(liste[Math.floor(index * schritt)]);
-  }
-  return auswahl;
-}
-
-// Aus einer Episoden-Adresse die Seite der Serie machen - nur dort stehen
-// Genres und Aehnlichkeitsblock.
-function seriesPageUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    url.hash = "";
-    url.search = "";
-    url.pathname = url.pathname
-      .replace(/\/(?:episode|folge|film)-\d+\/?$/i, "")
-      .replace(/\/(?:staffel|season)-\d+\/?$/i, "")
-      .replace(/\/+$/, "");
-    return url.href;
-  } catch {
-    return "";
-  }
-}
-
-async function inBatches(items, size, worker) {
-  const ergebnisse = [];
-  for (let index = 0; index < items.length; index += size) {
-    const teil = items.slice(index, index + size);
-    ergebnisse.push(...await Promise.all(teil.map((item) => worker(item).catch(() => null))));
-  }
-  return ergebnisse;
-}
-
-// Der Verlauf, aus dem das Profil entsteht: zuletzt Geschautes zuerst, nur von
-// Anbietern, die noch eingeschaltet sind.
-function tasteHistoryEntries() {
-  const aktive = new Set(enabledProviders().map((provider) => provider.id));
-  return favorites
-    .filter((favorite) => aktive.has(favorite.providerId))
-    .filter((favorite) => favorite.watched || favorite.favorite || favorite.completed || Number(favorite.position) > 0)
-    .slice()
-    .sort((links, rechts) => (
-      Date.parse(rechts.lastWatchedAt || rechts.openedAt || rechts.createdAt || 0)
-      - Date.parse(links.lastWatchedAt || links.openedAt || links.createdAt || 0)
-    ))
-    .slice(0, TASTE_HISTORY_MAX);
-}
-
-// Anime, Serie oder Film - abgelesen an der Adresse, nicht am Anbieter, damit
-// auch selbst angelegte Seiten in den Kategoriereihen landen. Anime-Filme
-// bleiben bewusst bei Anime.
-function candidateMediaType(value) {
-  try {
-    const pfad = new URL(String(value || "")).pathname.toLowerCase();
-    if (/\/anime(?:\/|$)/.test(pfad)) return "anime";
-    if (/\/(?:movies?|filme?)(?:\/|-)/.test(pfad)) return "film";
-    if (/\/(?:serie|series|show|tv)(?:\/|$)/.test(pfad)) return "serie";
-    return "";
-  } catch {
-    return "";
-  }
-}
-
-// Alle vier Reihen der Startseite fragen gleichzeitig an. Sie teilen sich
-// deshalb einen Durchlauf: einmal bewerten, danach nur noch filtern.
-async function collectPersonalRecommendations(limit, refresh, type = "", excludeMain = true) {
-  const alle = await personalRecommendationPool(refresh);
-  // "Empfohlen fuer dich" bekommt den Anfang der Liste. Die Kategoriereihen
-  // fangen dahinter an, damit kein Titel zweimal auf der Startseite steht.
-  // Ist die Hauptreihe ausgeblendet, waeren diese Titel sonst gar nicht zu
-  // sehen - dann greifen die Kategorien auf die ganze Liste zu.
-  const haupt = excludeMain ? alle.slice(0, PERSONAL_MAIN_SIZE) : [];
-  if (!type) {
-    const gezeigt = alle.slice(0, limit);
-    merkeEmpfehlungAngezeigt(gezeigt);
-    return gezeigt;
-  }
-
-  const vergeben = new Set(haupt.map((item) => item.werkKey));
-  const gezeigt = alle
-    .filter((item) => candidateMediaType(item.url) === type)
-    .filter((item) => !vergeben.has(item.werkKey))
-    .slice(0, limit);
-  merkeEmpfehlungAngezeigt(gezeigt);
-  return gezeigt;
-}
-
-// --- Entdeckungsseiten ---------------------------------------------------------
-//
-// "Mehr anzeigen" oeffnet je Art eine eigene Seite, die beim Scrollen
-// nachlaedt. Sie benutzt denselben Pool und dieselbe Engine wie die Startseite
-// - nur tiefer. Neu ist hier genau eine Ueberlegung: was passiert, wenn die
-// starken persoenlichen Treffer ausgehen?
-//
-// Nicht aufhoeren, und auch nicht in eine Bestenliste kippen. Stattdessen
-// mischt sich mit wachsender Tiefe Erkundung dazu: Titel, die zum Profil
-// weniger zu sagen haben, dafuer aber extern gut belegt sind. Oben bleibt es
-// bei einem Zehntel, weit unten sind es zwei Fuenftel. Der Anteil waechst
-// stetig, nicht in Stufen - der Nutzer soll keine Grenze bemerken.
-// Aus der nach Punkten sortierten Liste wird die Reihenfolge, die der Nutzer
-// sieht - das Mischen selbst steht in empfehlung.js, hier steht nur, woran
-// sich die Erkundung orientiert.
-//
-// Wie gut ist ein Titel unabhaengig vom Profil belegt? Bewertung nur, wo sie
-// auf genug Stimmen steht - sonst zaehlt die Bekanntheit, und wo auch die
-// fehlt, entscheidet der stabile Streuwert, damit dieselbe Liste immer gleich
-// aussieht.
-function erkundungsWert(eintrag) {
-  // Auch ein Erkundungsplatz soll nach Moeglichkeit etwas sagen koennen. Ein
-  // Titel, zu dem die Engine einen belegten Grund gefunden hat, geht deshalb
-  // vor - sonst sammeln sich ausgerechnet auf den eingeschobenen Plaetzen die
-  // Karten ohne Aussage, und je tiefer man scrollt, desto oefter steht dort
-  // "Koennte einen Versuch wert sein".
-  const sagbar = eintrag.grund && eintrag.grund !== "EXPLORATION" ? 0.25 : 0;
-  const extern = metadatenAusCache(eintrag.title, eintrag.url);
-  if (!extern) return sagbar + empfehlung.streuwert(eintrag.werkKey) * 0.1;
-  const stimmen = Number(extern.bewertungStimmen) || 0;
-  const beliebt = Number(extern.beliebtheit) || 0;
-  const bewertung = typeof extern.bewertung === "number" ? extern.bewertung : 0;
-  const belegt = extern.quelle === "anilist" ? beliebt >= 10000 : stimmen >= 500;
-  const guete = belegt ? Math.max(0, Math.min(1, (bewertung - 5) / 5)) : 0;
-  // Bekanntheit logarithmisch: zwischen 1000 und 10000 Nutzern liegt mehr als
-  // zwischen 100000 und 110000.
-  const reichweite = beliebt > 0 ? Math.min(1, Math.log10(beliebt + 1) / 6) : 0;
-  return sagbar + guete * 0.7 + reichweite * 0.3 + empfehlung.streuwert(eintrag.werkKey) * 0.05;
-}
-
-let entdeckungCache = new Map();
-let katalogPending = null;
-let katalogLetzter = 0;
-// Wo der naechste Nachschlag je Art ansetzt. Ohne diesen Zeiger holt jede
-// Runde dieselben Listen und die uebrigen kaemen nie dran.
-const katalogZeiger = new Map();
-// So viele Listen je Runde. Klein gehalten, und das ist der Punkt: eine Runde
-// soll in Sekunden fertig sein und ihre neuen Titel sofort sichtbar machen.
-// Alle 23 Listen auf einmal zu erweitern hiess, den Nutzer eine Minute vor
-// einem Skelett warten zu lassen, bevor irgendetwas erscheint.
-const KATALOG_LISTEN_JE_RUNDE = 3;
-// Zwischen zwei Nachschlaegen. Sie kosten Anbieterseiten, und wer schnell
-// scrollt, soll sie nicht im Sekundentakt ausloesen.
-const KATALOG_PAUSE_MS = 20 * 1000;
-// So nah am Ende der Liste wird nachgeholt - lange bevor der Nutzer es sieht.
-const ENTDECKUNG_VORLAUF = 90;
-
-// Den Katalog verbreitern, wenn die Entdeckungsseite gegen ihr Ende laeuft.
-//
-// Geholt werden weitere Seiten der Genre-Uebersichten, die ohnehin schon im
-// Cache liegen - dieselbe Quelle, nur tiefer. Danach wird der Pool neu
-// gerechnet; die Entdeckungsseiten haengen ihre neuen Titel hinten an, statt
-// die Reihenfolge zu verwerfen (siehe entdeckungsListe).
-// Welche Listen tragen ueberhaupt zu dieser Art bei? Abgelesen an dem, was
-// schon in ihnen steht - ein Anbieter kann mehrere Arten fuehren, und eine
-// Filmliste zu erweitern hilft der Anime-Seite nicht.
-function listenFuerArt(type) {
-  const listen = loadTasteCache().lists || {};
-  const passende = [];
-  for (const [url, eintrag] of Object.entries(listen)) {
-    const items = eintrag?.items || [];
-    if (!items.length) continue;
-    const treffer = items.filter((item) => candidateMediaType(item.url) === type).length;
-    if (treffer / items.length >= 0.5) passende.push(url);
-  }
-  return passende;
-}
-
-function katalogErweitern(type) {
-  if (katalogPending) return katalogPending;
-  const jetzt = Date.now();
-  if (jetzt - katalogLetzter < KATALOG_PAUSE_MS) return null;
-
-  const anbieterNachWirt = new Map();
-  for (const provider of enabledProviders()) {
-    try {
-      anbieterNachWirt.set(new URL(provider.startUrl || "").host, provider);
-    } catch {
-      // Ohne brauchbare Startadresse laesst sich kein Wirt zuordnen.
-    }
-  }
-  const alle = listenFuerArt(type);
-  if (!alle.length) return null;
-  // Reihum, damit ueber mehrere Runden jede Liste drankommt.
-  const zeiger = katalogZeiger.get(type) || 0;
-  const listen = [];
-  for (let index = 0; index < Math.min(KATALOG_LISTEN_JE_RUNDE, alle.length); index += 1) {
-    listen.push(alle[(zeiger + index) % alle.length]);
-  }
-  katalogZeiger.set(type, (zeiger + listen.length) % alle.length);
-  katalogLetzter = jetzt;
-
-  const lauf = inBatches(listen, 2, async (url) => {
-    let provider = null;
-    try {
-      provider = anbieterNachWirt.get(new URL(url).host) || null;
-    } catch {
-      return 0;
-    }
-    if (!provider) return 0;
-    return tasteListErweitern(url, provider);
-  })
-    .then((ergebnisse) => {
-      const dazu = ergebnisse.reduce((summe, wert) => summe + (Number(wert) || 0), 0);
-      if (EMPFEHLUNG_DEBUG) {
-        console.log(`[katalog] ${type}: ${dazu} neue Titel aus ${listen.length} Listen`);
-      }
-      if (dazu > 0) {
-        // Neu rechnen, damit die neuen Titel bewertet werden. Die bestehende
-        // Reihenfolge der Entdeckungsseiten bleibt erhalten.
-        personalCache = { ...personalCache, at: 0 };
-      }
-      return dazu;
-    })
-    .catch(() => 0)
-    .finally(() => {
-      if (katalogPending === lauf) katalogPending = null;
-    });
-  katalogPending = lauf;
-  return lauf;
-}
-
-// Die fertige Reihenfolge je Art. Sie wird einmal gebaut und dann nur noch
-// geschnitten - sonst verschoebe sich die Liste unter dem Nutzer, waehrend er
-// scrollt.
-async function entdeckungsListe(type, refresh) {
-  const alle = await personalRecommendationPool(refresh);
-  const signatur = verlaufSignatur();
-  const bekannt = entdeckungCache.get(type);
-  if (!refresh && bekannt && bekannt.signatur === signatur
-    && Date.now() - bekannt.at < ENTDECKUNG_CACHE_MS) {
-    return bekannt.items;
-  }
-  const eigene = (alle || []).filter((eintrag) => candidateMediaType(eintrag.url) === type);
-  const geordnet = empfehlung.erkundungsReihenfolge(eigene, erkundungsWert);
-
-  // Was der Nutzer schon gesehen hat, bleibt an seinem Platz - Neues haengt
-  // hinten an. Sonst verschoebe sich die Liste unter ihm, waehrend er scrollt,
-  // und der Versatz zeigte auf einen anderen Titel als beim vorigen Abruf.
-  // Das gilt fuer beide Faelle: gewachsener Katalog und nachgerechneter Pool.
-  const vorher = bekannt?.signatur === signatur ? bekannt.items : null;
-  let liste = geordnet;
-  if (vorher?.length) {
-    const gesehen = new Set(vorher.map((eintrag) => eintrag.werkKey));
-    liste = [...vorher, ...geordnet.filter((eintrag) => !gesehen.has(eintrag.werkKey))];
-  }
-
-  // Kam der Pool gekuerzt von der Platte, ist diese Reihenfolge vorlaeufig.
-  // Gemerkt wird sie trotzdem, damit die ersten Karten ihren Platz behalten -
-  // aber mit Zeitstempel 0, sodass der naechste Abruf sie ergaenzt, statt sie
-  // fuer bare Muenze zu nehmen.
-  const vorlaeufig = !personalCache.vollstaendig;
-  if (vorlaeufig) personalRecommendationPool(false, true).catch(() => null);
-  entdeckungCache.set(type, { at: vorlaeufig ? 0 : Date.now(), signatur, items: liste });
-  return liste;
-}
-
-// Ein Abschnitt der Liste. Der Versatz kommt von der Oberflaeche, und weil die
-// Liste zwischen zwei Abrufen dieselbe bleibt, kann kein Titel doppelt kommen.
-async function entdeckungsSeite(type, versatz, limit, refresh) {
-  const liste = await entdeckungsListe(type, refresh);
-  const teil = liste.slice(versatz, versatz + limit);
-  // Was als Naechstes drankaeme, wird schon einmal angereichert - dann steht
-  // beim Weiterscrollen mehr fest als ein Genre. Das laeuft im Hintergrund und
-  // haelt diese Antwort nicht auf.
-  const naechste = liste.slice(versatz + limit, versatz + limit * 3);
-  metadatenAnreichern([...teil, ...naechste]
-    .map((eintrag) => ({ titel: eintrag.title, url: eintrag.url })));
-
-  // Waechst da noch etwas? Zwei ganz verschiedene Faelle, und sie zu
-  // verwechseln kostet den Nutzer eine Minute vor einem Skelett.
-  //
-  //   1. Der Pool kam gekuerzt von der Platte. Dann ist die Liste kurz, das
-  //      Ende sofort erreicht - aber es fehlt nur die Rechnung, nicht der
-  //      Katalog. Sie laeuft bereits (siehe entdeckungsListe) und ist in
-  //      Sekunden da. Hier darf auf keinen Fall der Anbieter befragt werden.
-  //   2. Der Pool ist vollstaendig und trotzdem zu Ende. Erst dann lohnt es,
-  //      weitere Katalogseiten zu holen.
-  let waechst = false;
-  if (!personalCache.vollstaendig) {
-    waechst = true;
-  } else if (versatz + limit >= liste.length - ENTDECKUNG_VORLAUF) {
-    waechst = Boolean(katalogErweitern(type)) || Boolean(katalogPending);
-  }
-  return {
-    items: teil,
-    versatz,
-    gesamt: liste.length,
-    // "Fertig" heisst: es kommt nichts mehr. Solange noch Seiten nachgeholt
-    // werden, ist das schlicht nicht wahr.
-    fertig: versatz + teil.length >= liste.length && !waechst,
-    waechst
-  };
-}
-
-// Woran haengt die Gueltigkeit der Empfehlungen? Nur an dem, was den Geschmack
-// wirklich veraendert: was abgeschlossen wurde, was auf der Watchlist steht,
-// was verschwunden ist. Nicht an jeder Sekunde Wiedergabezeit - sonst rechnet
-// die App dauernd neu und holt dabei zwei Dutzend Seiten.
-function verlaufSignatur() {
-  return tasteHistoryEntries()
-    .map((favorite) => [
-      favorite.id,
-      favorite.completed ? 1 : 0,
-      favorite.watched ? 1 : 0,
-      favorite.favorite ? 1 : 0,
-      Math.floor((Number(favorite.progress) || 0) / 10),
-      (favorite.completedEpisodes || []).length
-    ].join("."))
-    .join("|");
-}
-
-// `refresh` und `neuRechnen` sind zwei verschiedene Dinge, und sie zu
-// verwechseln kostet zweihundertsechzig Anbieterseiten.
-//
-//   refresh     alles noch einmal holen - Detailseiten, Genre-Listen, alles.
-//               Das ist die Wirkung des Knopfs "Neu berechnen".
-//   neuRechnen  nur die Rechnung wiederholen, aus dem, was schon im Cache
-//               liegt. Das braucht die Entdeckungsseite, wenn der Pool von der
-//               Platte kam und deshalb gekuerzt ist - dabei hat sich an den
-//               Seiten nichts geaendert, nur an der gewuenschten Tiefe.
-async function personalRecommendationPool(refresh, neuRechnen = false) {
-  // Beim ersten Zugriff nach dem Start liegen die Empfehlungen des letzten
-  // Laufs in der Ablage. Sie werden sofort ausgeliefert, damit die Startseite
-  // nicht auf zwei Dutzend Netzabrufe wartet.
-  if (!personalCache.items.length) {
-    const gespeichert = loadTasteCache().personal;
-    if (gespeichert?.items?.length) {
-      personalCache = {
-        at: Number(gespeichert.at) || 0,
-        items: gespeichert.items,
-        signatur: gespeichert.signatur || "",
-        vollstaendig: false
-      };
-    }
-  }
-  const signatur = verlaufSignatur();
-  const passt = personalCache.signatur === undefined || personalCache.signatur === signatur;
-  const frisch = personalCache.items.length && passt && Date.now() - personalCache.at < PERSONAL_CACHE_MS;
-  if (!refresh && !neuRechnen && frisch) return personalCache.items;
-  // Veraltet, aber vorhanden: erst die alten Vorschlaege zeigen und im
-  // Hintergrund neu rechnen. Nur wenn gar nichts da ist, wird gewartet.
-  if (personalPending) {
-    return personalCache.items.length && !refresh && !neuRechnen ? personalCache.items : personalPending;
-  }
-
-  const lauf = buildPersonalRecommendations(ENTDECKUNG_POOL_SIZE, refresh)
-    .then((items) => {
-      personalCache = { at: Date.now(), items, signatur: verlaufSignatur(), vollstaendig: true };
-      const cache = loadTasteCache();
-      // Auf die Platte geht nur der Anfang: daraus baut sich die Startseite
-      // beim naechsten Start sofort auf. Den langen Rest rechnet die
-      // Entdeckungsseite neu, wenn sie geoeffnet wird.
-      cache.personal = {
-        at: personalCache.at,
-        signatur: personalCache.signatur,
-        items: items.slice(0, PERSONAL_POOL_SIZE)
-      };
-      saveTasteCacheSoon();
-      return items;
-    })
-    .catch(() => personalCache.items)
-    .finally(() => {
-      if (personalPending === lauf) personalPending = null;
-    });
-  personalPending = lauf;
-  return lauf;
-}
-
-async function buildPersonalRecommendations(limit, refresh) {
-  const anbieter = enabledProviders();
-  const verlauf = tasteHistoryEntries();
-  if (!anbieter.length || !verlauf.length) return [];
-  const anbieterNach = new Map(anbieter.map((provider) => [provider.id, provider]));
-  const jetzt = Date.now();
-
-  // 1. Geschmacksprofil aus den geschauten Titeln.
-  const saat = (await inBatches(verlauf, TASTE_FETCH_PARALLEL, async (favorite) => {
-    const provider = anbieterNach.get(favorite.providerId);
-    const url = seriesPageUrl(favorite.url || favorite.normalizedUrl);
-    if (!provider || !url) return null;
-    const seite = await tastePage(url, provider, refresh);
-    return {
-      favoriteId: favorite.id,
-      title: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
-      providerId: provider.id,
-      url,
-      weight: empfehlung.signalStaerke(favorite),
-      genres: seite?.genres || [],
-      related: seite?.related || [],
-      // Jahr, IMDB-Kennung und fremdsprachige Titel - die Grundlage jeder
-      // Zuordnung zu TMDB oder AniList.
-      meta: seite?.meta || null
-    };
-  })).filter(Boolean);
-  if (!saat.length) return [];
-
-  // Das Profil entsteht aus den Eintraegen selbst - mit Fortschritt,
-  // Zeitstempeln und den eben geholten Genres. Frueher ging nur ein Auszug
-  // hinein; damit fehlten dem Ranking Abbrueche, Watchlist und Sitzung.
-  const genreNach = new Map(saat.map((eintrag) => [eintrag.favoriteId, eintrag.genres.map((g) => g.key)]));
-  // Externe Daten zum Verlauf, ausschliesslich aus dem lokalen Cache. Ein
-  // fehlender Eintrag ist hier kein Problem, sondern der Normalfall beim
-  // ersten Start - dann rechnet alles wie vorher, und der naechste Durchlauf
-  // weiss mehr.
-  const externNach = new Map(saat.map((eintrag) => [
-    eintrag.favoriteId,
-    metadatenAusCache(eintrag.title, eintrag.url)
-  ]));
-  const profil = empfehlung.profilBauen(verlauf.map((favorite) => ({
-    ...favorite,
-    baseTitle: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
-    // Anime, Serie oder Film - feiner als `type`, das Anime und Serie
-    // zusammenwirft. Fuer die Bewertung aendert das nichts; die Begruendung
-    // kann damit sagen, dass jemand vor allem Anime schaut.
-    art: candidateMediaType(favorite.url) || favorite.type || "",
-    genres: genreNach.get(favorite.id) || [],
-    extern: externNach.get(favorite.id) || null
-  })), jetzt);
-
-  // 2. Was schon in der Ablage steht, faellt raus - anhand der Werk-Identitaet,
-  // damit derselbe Titel bei einem anderen Anbieter ebenfalls erkannt wird.
-  const ausschluss = new Set();
-  for (const favorite of favorites) {
-    const name = cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title;
-    if (!name) continue;
-    const art = candidateMediaType(favorite.url) === "film" ? "film" : favorite.type;
-    ausschluss.add(titelModul.werkSchluessel(name, art));
-  }
-
-  const kandidaten = [];
-
-  // 3a. Was der Anbieter selbst als aehnlich ausweist - das staerkste Signal.
-  const staerksteSaat = Math.max(...saat.map((eintrag) => eintrag.weight), 1e-9);
-  for (const eintrag of saat) {
-    for (const item of eintrag.related) {
-      kandidaten.push({
-        ...item,
-        via: "related",
-        seedTitle: eintrag.title,
-        seedWeight: eintrag.weight / staerksteSaat,
-        genres: []
-      });
-    }
-  }
-
-  // 3b. Titel aus den Lieblingsgenres. Welche Adresse zu einem Genre gehoert,
-  // wissen nur die Detailseiten - also von dort einsammeln und den Genres des
-  // Profils zuordnen.
-  const genreAdressen = new Map();
-  const merkeGenreAdresse = (providerId, genre) => {
-    if (!providerId || !genre?.key || !genre.url) return;
-    const bekannt = genreAdressen.get(genre.key) || { key: genre.key, label: genre.label, urls: new Map() };
-    if (!bekannt.urls.has(providerId)) bekannt.urls.set(providerId, genre.url);
-    genreAdressen.set(genre.key, bekannt);
-  };
-  for (const eintrag of saat) {
-    for (const genre of eintrag.genres) merkeGenreAdresse(eintrag.providerId, genre);
-  }
-  // Die zwoelf Titel des Verlaufs reichen dafuer nicht aus. Ob Filmos
-  // Action-Katalog ueberhaupt erreichbar ist, haengt sonst daran, ob gerade
-  // zufaellig ein Actionfilm unter den letzten zwoelf steht - faellt er heraus,
-  // besteht die Reihe "Filme fuer dich" ploetzlich nur noch aus Abenteuer- und
-  // Animationsfilmen, also vor allem Familienkino. Deshalb zaehlt jede
-  // Detailseite mit, die schon einmal gelesen wurde: welche Adresse ein Genre
-  // bei einem Anbieter hat, aendert sich nicht.
-  const anbieterNachWirt = new Map();
-  for (const provider of anbieter) {
-    try {
-      anbieterNachWirt.set(new URL(provider.startUrl || "").host, provider.id);
-    } catch {
-      // Ohne brauchbare Startadresse laesst sich kein Wirt zuordnen.
-    }
-  }
-  for (const [adresse, eintrag] of Object.entries(loadTasteCache().pages || {})) {
-    let providerId = "";
-    try {
-      providerId = anbieterNachWirt.get(new URL(adresse).host) || "";
-    } catch {
-      continue;
-    }
-    for (const genre of eintrag?.genres || []) merkeGenreAdresse(providerId, genre);
-  }
-  // Welche Genre-Listen werden geholt? Die schwersten des Profils - gewichtet
-  // wie in profilGenreGewicht beschrieben, also nicht nach blossem Gewicht.
-  const beliebteste = [...profil.genres.entries()]
-    .map(([key]) => [key, profilGenreGewicht(profil, key)])
-    .sort((links, rechts) => rechts[1] - links[1])
-    .slice(0, 6)
-    .map(([key]) => genreAdressen.get(key))
-    .filter(Boolean);
-
-  const genreSeiten = [];
-  for (const genre of beliebteste) {
-    for (const [providerId, url] of genre.urls) {
-      if (!anbieterNach.has(providerId)) continue;
-      genreSeiten.push({ genre, providerId, url });
-    }
-  }
-  const genreListen = await inBatches(genreSeiten, TASTE_FETCH_PARALLEL, async (seite) => {
-    const provider = anbieterNach.get(seite.providerId);
-    const items = await tasteList(seite.url, provider, refresh);
-    return { seite, items };
-  });
-  // Steht ein Titel in mehreren Lieblingsgenres, ist das der beste Hinweis, den
-  // die Listen hergeben - also die Genres pro Titel zusammenfuehren, statt ihn
-  // mehrfach mit je einem Genre zu fuehren.
-  const ausGenres = new Map();
-  for (const treffer of genreListen) {
-    if (!treffer?.items?.length) continue;
-    for (const item of treffer.items) {
-      const schluessel = taste.urlSchluessel(item.url);
-      const vorhanden = ausGenres.get(schluessel);
-      if (vorhanden) {
-        if (!vorhanden.genres.includes(treffer.seite.genre.key)) vorhanden.genres.push(treffer.seite.genre.key);
-        continue;
-      }
-      ausGenres.set(schluessel, {
-        ...item,
-        via: "genre",
-        genres: [treffer.seite.genre.key],
-        genreLabel: treffer.seite.genre.label
-      });
-    }
-  }
-  // Der Katalog ist gross - was davon ueberhaupt zur Wahl steht, entscheidet
-  // die Passung zum Profil, nicht die Position in der Anbieterliste.
-  kandidaten.push(...nachRelevanzKappen([...ausGenres.values()], profil, TASTE_GENRE_KANDIDATEN));
-
-  // 3c. Neues von den Startseiten - die Genres dazu werden gleich nachgeholt.
-  const startseiten = await Promise.all(anbieter.map((provider) => (
-    discoverForProvider(provider, false).catch(() => [])
-  )));
-
-  // Was die Reihe "Neu bei deinen Anbietern" bereits zeigt, gehoert nicht noch
-  // einmal in die Vorschlaege - auf der Startseite soll nichts doppelt stehen.
-  for (const liste of startseiten) {
-    for (const item of liste.slice(0, TASTE_NEW_OFFSET)) {
-      ausschluss.add(titelModul.werkSchluessel(item.title, candidateMediaType(item.url)));
-    }
-  }
-  // Die vorderen Titel jeder Startseite stehen schon in der Reihe "Neu bei
-  // deinen Anbietern" - hier faengt es dahinter an, sonst steht derselbe Titel
-  // zweimal untereinander.
-  const neu = [];
-  for (let index = TASTE_NEW_OFFSET; index < TASTE_NEW_OFFSET + 8; index += 1) {
-    for (const liste of startseiten) {
-      if (liste[index]) neu.push({ ...liste[index], via: "new", genres: [] });
-    }
-  }
-
-  // 4. Fuer die neuen Titel die Genres nachladen, damit sie ueberhaupt zum
-  // Profil passen koennen. Streng begrenzt, der Rest bleibt ungenutzt.
-  const anzureichern = neu
-    .filter((item) => !item.viaSearch
-      && !ausschluss.has(titelModul.werkSchluessel(item.title, candidateMediaType(item.url))))
-    .slice(0, TASTE_ENRICH_LIMIT);
-  await inBatches(anzureichern, TASTE_FETCH_PARALLEL, async (item) => {
-    const provider = anbieterNach.get(item.providerId);
-    const url = seriesPageUrl(item.url);
-    if (!provider || !url) return null;
-    const seite = await tastePage(url, provider, false);
-    item.genres = (seite?.genres || []).map((genre) => genre.key);
-    // Die Startseiten verlinken die neueste Folge. Als Empfehlung ist die
-    // Uebersichtsseite der Serie richtig.
-    item.url = url;
-    return null;
-  });
-  kandidaten.push(...anzureichern.filter((item) => item.genres.length));
-
-  // 5. Bewerten. Der Typ gehoert an jeden Kandidaten - er entscheidet ueber
-  // die Werk-Identitaet (eine Serie und ein gleichnamiger Film sind zwei
-  // Werke) und ueber die leichte Bevorzugung der Art, die gerade laeuft.
-  const bewertbar = kandidaten.map((item) => ({
-    ...item,
-    type: candidateMediaType(item.url) === "film" ? "film" : "serie",
-    art: candidateMediaType(item.url) || ""
-  }));
-  const laufOptionen = {
-    jetzt,
-    ausschluss,
-    anzeigen: empfehlungAnzeigen(),
-    debug: EMPFEHLUNG_DEBUG
-  };
-
-  // Zweite Runde: die vordersten Kandidaten bekommen ihre echten Genres.
-  //
-  // Ein Titel aus einer Genre-Liste weiss von sich nur, in welchen der sechs
-  // geholten Listen er vorkam. "Naruto Shippuden" stand in "Fighting-Shounen"
-  // und "Abenteuer" und galt damit als Titel mit zwei Genres - obwohl seine
-  // Seite dieselben sechs nennt wie Naruto selbst. Ein Titel von der Startseite
-  // wurde dagegen laengst angereichert und trat mit allen Genres an. So
-  // bewerten sich zwei Quellen mit ungleichem Wissen gegeneinander, und der
-  // Katalogtitel verliert immer.
-  //
-  // Ausgewaehlt wird nach der Katalogguete, nicht nach einer Vorbewertung: wer
-  // zu wenige Genres kennt, kaeme dort nie nach vorn und bekaeme seine Genres
-  // deshalb nie - ein Zirkelschluss, an dem genau die gesuchten Titel haengen
-  // blieben. Die Guete misst dagegen, in welchen Lieblingslisten ein Titel
-  // steht, und die kleinen, spezifischen Listen sind die aussagekraeftigen.
-  //
-  // Getrennt nach Anime, Serie und Film, damit die Vertiefung nicht einer
-  // einzigen Reihe der Startseite zugutekommt.
-  const nachWelt = new Map();
-  for (const item of bewertbar) {
-    if (item.via !== "genre" || item.vertieft) continue;
-    const welt = item.art || "serie";
-    const fach = nachWelt.get(welt) || [];
-    fach.push(item);
-    nachWelt.set(welt, fach);
-  }
-  const jeWelt = Math.max(1, Math.ceil(TASTE_TIEFE / Math.max(1, nachWelt.size)));
-  const zuVertiefen = [...nachWelt.values()].flatMap((fach) => (
-    besteAusMenge(fach, jeWelt, (item) => katalogGuete(item, profil))
-  ));
-  await inBatches(zuVertiefen, TASTE_FETCH_PARALLEL, async (item) => {
-    const provider = anbieterNach.get(item.providerId);
-    const url = seriesPageUrl(item.url);
-    if (!provider || !url) return null;
-    const seite = await tastePage(url, provider, false);
-    const echte = (seite?.genres || []).map((genre) => genre.key);
-    // Die Listen-Genres bleiben stehen: dass ein Titel in einer Lieblingsliste
-    // stand, ist wahr, auch wenn seine Seite es anders nennt.
-    if (echte.length) item.genres = [...new Set([...(item.genres || []), ...echte])];
-    item.vertieft = true;
-    return null;
-  });
-
-  // Erst jetzt die externen Daten anhaengen - die Vertiefung oben hat gerade
-  // Detailseiten geholt, und damit gibt es zu diesen Kandidaten Jahr und
-  // IMDB-Kennung. Gelesen wird nur der lokale Cache: dieser Durchlauf soll auf
-  // nichts warten.
-  for (const item of bewertbar) {
-    item.extern = metadatenAusCache(item.baseTitle || item.title, item.url);
-  }
-
-  const ergebnis = empfehlung.empfehlen(bewertbar, profil, { ...laufOptionen, limit });
-
-  if (EMPFEHLUNG_DEBUG) {
-    console.log(`[empfehlung] ${ergebnis.length} Vorschlaege aus ${kandidaten.length} Kandidaten,`
-      + ` Profil aus ${profil.umfang} Eintraegen, ${profil.reihen.size} Reihen`);
-    for (const eintrag of ergebnis.slice(0, 5)) console.log(empfehlung.debugBericht(eintrag));
-  }
-
-  // Und zum Schluss anstossen, was fehlt. Die Reihenfolge ist die Rangfolge:
-  // was wirklich geschaut wurde, dann was vorgemerkt ist, dann die Titel, die
-  // es gerade nach vorn geschafft haben, und erst danach der Rest. So werden
-  // die Empfehlungen schnell besser, ohne dass tausend Kandidaten auf einmal
-  // durch fremde Schnittstellen laufen.
-  //
-  // Die Reihenfolge ist nicht beliebig: sie entscheidet, was innerhalb des
-  // ersten Laufs fertig wird. Gemessen an einem echten Profil standen zuerst
-  // alle 75 Ablage-Eintraege vor den Vorschlaegen - und damit war das
-  // Kontingent aufgebraucht, bevor die Titel drankamen, die der Nutzer
-  // tatsaechlich vor sich sieht. Deshalb kommen jetzt direkt nach dem Verlauf
-  // die Vorschlaege selbst, und erst danach der Rest der Ablage.
-  const wuensche = [
-    ...saat.map((eintrag) => ({ titel: eintrag.title, url: eintrag.url })),
-    ...ergebnis.map((eintrag) => ({ titel: eintrag.title, url: eintrag.url })),
-    ...favorites.map((favorite) => ({
-      titel: cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title,
-      url: favorite.url
-    })),
-    ...zuVertiefen.map((item) => ({ titel: item.baseTitle || item.title, url: item.url }))
-  ];
-  metadatenAnreichern(wuensche);
-
-  return ergebnis;
-}
-
-// --- Muedigkeit ---------------------------------------------------------------
-//
-// Wie oft wurde ein Werk schon vorgeschlagen, ohne dass es jemanden
-// interessiert hat? Das wird mitgezaehlt, damit derselbe Titel nicht ewig
-// oben steht.
-//
-// Wichtig: gezaehlt wird nur das Anzeigen. Eine Anzeige ist kein Interesse -
-// sie darf das Profil nicht beeinflussen, sonst verstaerkt sich das System
-// selbst und empfiehlt immer mehr von dem, was es ohnehin schon zeigt.
-function empfehlungAnzeigen() {
-  const cache = loadTasteCache();
-  const karte = new Map();
-  for (const [key, wert] of Object.entries(cache.anzeigen || {})) {
-    karte.set(key, Number(wert?.n) || 0);
-  }
-  return karte;
-}
-
-function merkeEmpfehlungAngezeigt(eintraege) {
-  const cache = loadTasteCache();
-  if (!cache.anzeigen) cache.anzeigen = {};
-  let geaendert = false;
-  for (const eintrag of eintraege || []) {
-    if (!eintrag?.werkKey) continue;
-    const bekannt = cache.anzeigen[eintrag.werkKey] || { n: 0, at: 0 };
-    // Hoechstens einmal je Stunde zaehlen: die Startseite baut sich oft neu
-    // auf, und jedes Neuzeichnen als eigene Anzeige zu werten waere unfair.
-    if (Date.now() - (Number(bekannt.at) || 0) < 3600000) continue;
-    cache.anzeigen[eintrag.werkKey] = { n: (Number(bekannt.n) || 0) + 1, at: Date.now() };
-    geaendert = true;
-  }
-  if (geaendert) saveTasteCacheSoon();
-}
-
-// Wurde ein Vorschlag wirklich geoeffnet, war er offenbar doch interessant -
-// dann faengt die Zaehlung von vorn an.
-function vergissEmpfehlungsMuedigkeit(url, titel, typ) {
-  const cache = loadTasteCache();
-  if (!cache.anzeigen) return;
-  const key = titelModul.werkSchluessel(titel || "", typ || candidateMediaType(url));
-  if (cache.anzeigen[key]) {
-    delete cache.anzeigen[key];
-    saveTasteCacheSoon();
-  }
-}
+  },
+  debug: EMPFEHLUNG_DEBUG
+});
 
 function usesAniWorldAjaxSearch(provider) {
   const name = String(provider?.name || "").toLowerCase();

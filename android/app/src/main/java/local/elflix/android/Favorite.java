@@ -190,6 +190,94 @@ public final class Favorite {
         return jemalsGeoeffnet && progress() > 0;
     }
 
+    /**
+     * Der Fortschritt, wie ihn der Balken zeigt.
+     *
+     * <p>Gerechnet aus Stand und Laufzeit, nicht aus dem abgelegten Feld
+     * {@code progress} - dieselbe Rechnung wie {@code favoriteProgressPercent}
+     * am Rechner. Der Unterschied ist keiner der Genauigkeit, sondern der
+     * Aktualitaet: {@code progress} wird an bestimmten Stellen absichtlich
+     * gesetzt (auf 0 beim Wechsel zur naechsten Folge, auf 100 beim Abschluss),
+     * waehrend Stand und Laufzeit das sind, was zuletzt wirklich gemessen
+     * wurde.
+     *
+     * <p>Fehlt die Laufzeit - ein Eintrag vom Geraeteabgleich, eine Seite ohne
+     * lesbaren Player -, bleibt das abgelegte Feld die einzige Auskunft. Dann
+     * gilt es.
+     */
+    public int fortschrittProzent() {
+        double laufzeit = duration();
+        double stand = currentTime();
+        if (laufzeit > 0 && stand >= 0) {
+            return Math.max(0, Math.min(100, (int) Math.round(stand / laufzeit * 100)));
+        }
+        return progress();
+    }
+
+    /** "12:34 / 24:10", oder leer, solange die Laufzeit unbekannt ist. */
+    public String standText() {
+        double laufzeit = duration();
+        if (laufzeit <= 0) return "";
+        return uhr(currentTime()) + " / " + uhr(laufzeit);
+    }
+
+    private static String uhr(double sekunden) {
+        long gesamt = Math.max(0, Math.round(sekunden));
+        long stunden = gesamt / 3600;
+        long minuten = (gesamt % 3600) / 60;
+        long rest = gesamt % 60;
+        if (stunden > 0) return String.format(java.util.Locale.GERMAN, "%d:%02d:%02d", stunden, minuten, rest);
+        return String.format(java.util.Locale.GERMAN, "%d:%02d", minuten, rest);
+    }
+
+    /** Wann zu dieser Serie zuletzt eine neue Folge auftauchte; leer heisst: keine. */
+    public String neueFolgeAm() {
+        return roh.optString("newEpisodeAt", "");
+    }
+
+    /** Was auf der Fahne steht - "Folge 12" etwa. Der Rueckfall ist "Neue Folge". */
+    public String neueFolgeText() {
+        String text = roh.optString("newEpisodeLabel", "");
+        return text.isEmpty() ? "Neue Folge" : text;
+    }
+
+    /**
+     * Wonach "Weiterschauen" sortiert.
+     *
+     * <p>Dieselbe Staffelung wie {@code favoriteTimestamp} am Rechner, und der
+     * Sonderfall dort ist der Grund fuer diese Methode: ein Eintrag einer Runde
+     * bekommt bei jeder fremden Meldung eine neue "zuletzt geschaut"-Zeit, im
+     * Sekundentakt. Danach zu sortieren liess die Kacheln staendig die Plaetze
+     * tauschen, sobald zwei Leute gleichzeitig schauten. Fuer sie zaehlt
+     * deshalb, wann dieses Geraet zuletzt selbst dran war.
+     *
+     * <p>Vorher stand hier nur {@code lastWatchedAt}. Ein Eintrag ohne diesen
+     * Zeitstempel - frisch vom Geraeteabgleich, gerade erst geoeffnet - fiel
+     * damit ans Ende der Liste, obwohl er der zuletzt angefasste war.
+     */
+    public long zeitstempel() {
+        String[] kandidaten = watchpartyRaum().isEmpty()
+            ? new String[]{lastWatchedAt(), roh.optString("openedAt", ""),
+                roh.optString("updatedAt", ""), createdAt(), roh.optString("addedAt", "")}
+            : new String[]{roh.optString("openedAt", ""), createdAt(),
+                roh.optString("addedAt", ""), roh.optString("updatedAt", "")};
+        for (String wert : kandidaten) {
+            long zeit = alsZeit(wert);
+            if (zeit > 0) return zeit;
+        }
+        return 0;
+    }
+
+    /** ISO-Zeit in Millisekunden; 0, wenn dort nichts Lesbares steht. */
+    private static long alsZeit(String wert) {
+        if (wert == null || wert.isEmpty()) return 0;
+        try {
+            return java.time.Instant.parse(wert).toEpochMilli();
+        } catch (Exception fehler) {
+            return 0;
+        }
+    }
+
     /** "Staffel 3 Folge 8", "Film" oder leer. */
     public String folgenText() {
         if ("film".equals(type())) return "Film";

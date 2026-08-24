@@ -203,6 +203,223 @@ pruefe("Die Auskunft zaehlt Staffeln und Marken",
 pruefe("Es gibt einen Weg zurueck",
   markenBruecke.vergessen() === 1 && markenBruecke.stand().titel === 0);
 
-const fehler = pruefungen.filter((ok) => !ok).length;
-console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
-process.exit(fehler ? 1 : 0);
+// --- Empfehlungen -------------------------------------------------------------
+//
+// Diese Bruecke ist die groesste der sechs, weil hinter ihr der ganze
+// Empfehlungslauf haengt. Geprueft wird deshalb nicht nur, dass sie laedt,
+// sondern der ganze Weg, den Android geht: Cache von einer abgefangenen Adresse
+// lesen, rechnen, und den Cache in Stuecken wieder nach Java schicken.
+//
+// Der Umweg ueber Stuecke ist der Punkt. Die Bruecke zwischen JavaScript und
+// Java traegt jeden Wert als eine einzige Zeichenkette, und ein
+// Geschmacks-Cache mit mehreren tausend Katalogtiteln wird megabytegross. Geht
+// dabei etwas verloren, faellt das nicht beim Schreiben auf, sondern erst beim
+// naechsten Start - an einer halben Datei.
+
+const WIRT = "https://anbieter.test";
+const EMPF_ANBIETER = [{ id: "test", name: "Testanbieter", startUrl: WIRT + "/", enabled: true }];
+
+function empfKachel(nummer) {
+  return `<a href="${WIRT}/anime/stream/titel-${nummer}" title="Titel ${nummer}">`
+    + `<img src="${WIRT}/bild/titel-${nummer}.jpg" alt="Titel ${nummer}"></a>`;
+}
+
+function empfSeite(adresse) {
+  const url = new URL(adresse);
+  if (url.pathname === "/") {
+    const kacheln = [];
+    for (let i = 1; i <= 12; i += 1) kacheln.push(empfKachel(i));
+    return `<h2>Neue Animes</h2>${kacheln.join("")}`;
+  }
+  if (/^\/genre\//.test(url.pathname)) {
+    const kacheln = [];
+    for (let i = 0; i < 20; i += 1) kacheln.push(empfKachel(500 + i));
+    return `<nav><a href="?page=2">2</a><a href="?page=4">4</a></nav>${kacheln.join("")}`;
+  }
+  const treffer = url.pathname.match(/titel-(\d+)$/);
+  if (!treffer) return null;
+  const nummer = Number(treffer[1]);
+  const genres = ["action", "fantasy", "drama"]
+    .map((name) => `<a href="${WIRT}/genre/${name}">${name}</a>`).join(" ");
+  return `<h1>Titel ${nummer}</h1>${genres}`
+    + `<h2>Das schauen andere</h2>${empfKachel(nummer + 200)}${empfKachel(nummer + 201)}`;
+}
+
+/**
+ * Die Bruecke laden - mit allem, was sie im WebView vorfindet.
+ *
+ * Der Unterschied zu {@link brueckeLaden}: hier gibt es `fetch`, `setTimeout`,
+ * `URL` und die beiden Java-Bruecken. Genau das steht im Kern-WebView zur
+ * Verfuegung, und was hier fehlt, fehlt dort auch.
+ */
+function empfehlungsBrueckeLaden() {
+  const quelle = fs.readFileSync(path.join(BRUECKEN, "empfehlung-bruecke.js"), "utf8");
+  const modul = { exports: {} };
+  const lader = (gesucht) => {
+    if (!KERN_MODULE.has(gesucht)) {
+      throw new Error(`"${gesucht}" steht nicht in kernModule und faehrt nicht mit`);
+    }
+    const unter = fs.existsSync(path.join(WURZEL, "src", `${gesucht}.js`)) ? "src" : "shared";
+    return require(path.join(WURZEL, unter, `${gesucht}.js`));
+  };
+
+  // Was Java zu sehen bekommt: die Stuecke, in denen der Cache zurueckkommt.
+  const lager = { stuecke: {}, fertig: {} };
+  const gelegt = {};
+  const AndroidEmpfehlung = {
+    teil(art, nummer, text) {
+      if (nummer === 0) lager.stuecke[art] = [];
+      lager.stuecke[art].push(text);
+    },
+    fertig(art, anzahl) {
+      lager.fertig[art] = anzahl;
+    }
+  };
+
+  const fenster = {
+    AndroidEmpfehlung,
+    AndroidKern: { protokoll: () => {} },
+    ElfixKern: {
+      ereignis: () => {},
+      // Das Gegenstueck zu Kern.zwischenAusliefern: eine Adresse, die nie ins
+      // Netz geht, sondern eine Datei von der Platte liefert.
+      browserAbruf: async (adresse) => {
+        const name = String(adresse).replace("https://elfix.dateien/", "");
+        if (!Object.prototype.hasOwnProperty.call(gelegt, name)) {
+          return { ok: false, status: 404, text: async () => "" };
+        }
+        return { ok: true, status: 200, text: async () => gelegt[name] };
+      }
+    }
+  };
+
+  vm.runInNewContext(quelle, {
+    require: lader,
+    module: modul,
+    exports: modul.exports,
+    console,
+    window: fenster,
+    // Der Abruf der Anbieterseiten geht im Kern ueber Java - hier ueber
+    // Papierseiten, damit die Pruefung ohne Netz laeuft.
+    fetch: async (adresse) => {
+      const html = empfSeite(adresse);
+      if (html === null) return { ok: false, status: 404, url: adresse, text: async () => "" };
+      return { ok: true, status: 200, url: adresse, text: async () => html };
+    },
+    setTimeout,
+    clearTimeout,
+    URL,
+    TextEncoder,
+    TextDecoder
+  });
+  return { bruecke: modul.exports, lager, gelegt };
+}
+
+(async () => {
+  const { bruecke: empfehlung, lager, gelegt } = empfehlungsBrueckeLaden();
+
+  pruefe("Die Empfehlungsbruecke laedt nur mitkopierte Module",
+    typeof empfehlung.starten === "function",
+    "sonst haette der Lader oben geworfen");
+  pruefe("Vor dem Start beantwortet sie nichts",
+    empfehlung.bereit() === false,
+    "ohne Cache wuerde der erste Abruf zwei Dutzend Seiten holen, die schon dastehen");
+
+  const stand = await empfehlung.starten({
+    geschmackUrl: "https://elfix.dateien/geschmack.json",
+    metadatenUrl: "https://elfix.dateien/metadaten.json",
+    relay: "",
+    grenzen: { poolGroesse: 60, listenGroesse: 80, genreKandidaten: 100 }
+  });
+  pruefe("Ohne Cache faengt sie leer an", stand.seiten === 0 && stand.listen === 0,
+    "das ist der erste Start und kein Fehler");
+  pruefe("Und ist danach bereit", empfehlung.bereit() === true);
+
+  const ablage = [1, 2, 3].map((nummer) => ({
+    id: "f" + nummer,
+    providerId: "test",
+    providerName: "Testanbieter",
+    url: `${WIRT}/anime/stream/titel-${nummer}`,
+    title: "Titel " + nummer,
+    type: "serie",
+    watched: true,
+    completed: true,
+    progress: 100,
+    lastWatchedAt: new Date().toISOString()
+  }));
+  const gemeldet = empfehlung.standSetzen(EMPF_ANBIETER, ablage);
+  pruefe("Anbieter und Ablage kommen an",
+    gemeldet.anbieter === 1 && gemeldet.eintraege === 3);
+
+  const neues = await empfehlung.neuesVonAnbietern(4, false);
+  pruefe("Die Neuheiten-Reihe kommt zurueck", neues.length === 4, `${neues.length} Kacheln`);
+
+  const persoenlich = await empfehlung.persoenlich(8, "", false, true);
+  pruefe("Persoenliche Vorschlaege entstehen", persoenlich.length > 0,
+    `${persoenlich.length} Titel`);
+  pruefe("Und tragen ihren Grund mit",
+    persoenlich.every((item) => item.grundText),
+    (persoenlich[0] || {}).grundText || "");
+
+  const seite = await empfehlung.entdeckungsSeite("anime", 0, 10, false);
+  pruefe("Die Entdeckungsseite blaettert",
+    Array.isArray(seite.items) && seite.items.length > 0,
+    `${(seite.items || []).length} von ${seite.gesamt}`);
+
+  // --- Der Rueckweg des Caches ------------------------------------------------
+  //
+  // Er ist verzoegert, damit ein Lauf mit vielen Seiten nicht dutzendfach
+  // dieselbe Datei anfasst. Hier wird gewartet, statt die Verzoegerung
+  // wegzudrehen: geprueft werden soll der Weg, den das Geraet wirklich geht.
+  await new Promise((fertig) => setTimeout(fertig, 4500));
+  pruefe("Der Cache geht in Stuecken nach Java",
+    Array.isArray(lager.stuecke.geschmack) && lager.stuecke.geschmack.length > 0,
+    `${(lager.stuecke.geschmack || []).length} Stueck(e)`);
+  pruefe("Und Java erfaehrt, wie viele es waren",
+    lager.fertig.geschmack === (lager.stuecke.geschmack || []).length,
+    `${lager.fertig.geschmack}`);
+
+  const zusammengesetzt = (lager.stuecke.geschmack || []).join("");
+  let gelesen = null;
+  try {
+    gelesen = JSON.parse(zusammengesetzt);
+  } catch (fehler) {
+    gelesen = null;
+  }
+  pruefe("Zusammengesetzt ergibt es wieder gueltiges JSON", gelesen !== null,
+    `${zusammengesetzt.length} Zeichen`);
+  pruefe("Mit den gelesenen Detailseiten darin",
+    gelesen && Object.keys(gelesen.pages || {}).length > 0,
+    gelesen ? `${Object.keys(gelesen.pages || {}).length} Seiten` : "");
+
+  // --- Und wieder herein ------------------------------------------------------
+  //
+  // Der eigentliche Zweck des ganzen Umwegs: beim naechsten Start liegt der
+  // Cache da und der Lauf faengt nicht bei null an.
+  gelegt["geschmack.json"] = zusammengesetzt;
+  const { bruecke: zweite } = empfehlungsBrueckeLaden();
+  // Der zweite Lauf liest dieselbe Datei - dafuer muss sie im neuen Lader
+  // liegen, nicht im alten.
+  const zweiterStand = await (async () => {
+    const eigen = empfehlungsBrueckeLaden();
+    eigen.gelegt["geschmack.json"] = zusammengesetzt;
+    return eigen.bruecke.starten({
+      geschmackUrl: "https://elfix.dateien/geschmack.json",
+      metadatenUrl: "https://elfix.dateien/metadaten.json",
+      relay: ""
+    });
+  })();
+  pruefe("Beim naechsten Start steht der Cache wieder da",
+    zweiterStand.seiten > 0,
+    `${zweiterStand.seiten} Seiten, ${zweiterStand.listen} Listen`);
+  pruefe("Die zweite Bruecke ist eine eigene",
+    zweite.bereit() === false,
+    "zwei Instanzen teilen ihren Zustand nicht");
+
+  const fehler = pruefungen.filter((ok) => !ok).length;
+  console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
+  process.exit(fehler ? 1 : 0);
+})().catch((fehler) => {
+  console.log("FAIL  Empfehlungsbruecke abgebrochen   -> " + (fehler && fehler.stack || fehler));
+  process.exit(1);
+});

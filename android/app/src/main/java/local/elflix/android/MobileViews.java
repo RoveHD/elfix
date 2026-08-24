@@ -11,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -257,6 +258,20 @@ final class MobileViews {
      */
     static FrameLayout poster(Context context, Provider provider, String title, String bildUrl,
                               int prozent, int breiteDp, int hoeheDp, float schriftSp, int balkenDp) {
+        return poster(context, provider, title, bildUrl, prozent, breiteDp, hoeheDp,
+            schriftSp, balkenDp, null);
+    }
+
+    /**
+     * Derselbe Bildkasten, aber mit Sichtfenster.
+     *
+     * <p>Fuer lange Raster: das Bild wird erst geholt, wenn seine Karte in die
+     * Naehe des Bildschirms kommt, und wieder freigegeben, wenn sie weit weg
+     * ist. Kurze Reihen brauchen das nicht und uebergeben {@code null}.
+     */
+    static FrameLayout poster(Context context, Provider provider, String title, String bildUrl,
+                              int prozent, int breiteDp, int hoeheDp, float schriftSp, int balkenDp,
+                              Bilder.Sichtfenster fenster) {
         FrameLayout poster = new FrameLayout(context);
         int tint = provider == null ? Theme.PRIMARY_DEEP : Theme.providerTint(provider.id);
         GradientDrawable posterBg = new GradientDrawable();
@@ -288,7 +303,13 @@ final class MobileViews {
         bild.setScaleType(ImageView.ScaleType.CENTER_CROP);
         poster.addView(bild, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        Bilder.laden(bild, bildUrl, breiteDp, hoeheDp, () -> posterText.setVisibility(View.GONE));
+        if (fenster == null) {
+            Bilder.laden(bild, bildUrl, breiteDp, hoeheDp, () -> posterText.setVisibility(View.GONE));
+        } else {
+            fenster.merken(bild, bildUrl, breiteDp, hoeheDp,
+                () -> posterText.setVisibility(View.GONE),
+                () -> posterText.setVisibility(View.VISIBLE));
+        }
 
         // Der Fortschrittsbalken sitzt im Bild, nicht darunter: unter dem Titel
         // waere er eine weitere Zeile, und die Liste soll auf einem Telefon so
@@ -486,6 +507,404 @@ final class MobileViews {
         button.setPadding(dp(context, 18), 0, dp(context, 18), 0);
         button.setMinHeight(dp(context, TOUCH_TARGET));
         return button;
+    }
+
+    /* ------------------------------------------------- Die neue Startseite */
+
+    /**
+     * Der Titelhintergrund der Startseite.
+     *
+     * <p>Am Rechner ist er ein breites Banner; auf dem Telefon steht dasselbe
+     * hochkant, weil eine liegende 16:9-Flaeche auf einem schmalen Bildschirm
+     * entweder zwei Zentimeter hoch waere oder das Bild bis zur
+     * Unkenntlichkeit beschneidet. Der Aufbau ist derselbe: Bild ganz hinten,
+     * darueber ein Verlauf, damit die Schrift lesbar bleibt, und erst darauf
+     * der Text.
+     *
+     * <p>Der Verlauf ist keine Verzierung. Ohne ihn steht weisse Schrift auf
+     * einem beliebigen Poster, und ob sie lesbar ist, entscheidet der Zufall.
+     *
+     * @param prozent   Fortschritt der laufenden Folge; 0 laesst den Balken weg
+     * @param aufruf    was auf dem grossen Knopf steht
+     * @param zweitText Beschriftung des zweiten Knopfs, {@code null} laesst ihn weg
+     */
+    static View hero(Context context, String augenbraue, String titel, String unterzeile,
+                     String bildUrl, int prozent, String aufruf, Runnable beiAufruf,
+                     String zweitText, Runnable beiZweit) {
+        FrameLayout kasten = new FrameLayout(context);
+        kasten.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View ansicht, Outline umriss) {
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 18));
+            }
+        });
+        kasten.setClipToOutline(true);
+        kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 18, Theme.BORDER, 1));
+
+        ImageView bild = new ImageView(context);
+        bild.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        kasten.addView(bild, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        Bilder.laden(bild, bildUrl, 360, 260, null);
+
+        View schleier = new View(context);
+        GradientDrawable verlauf = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[]{Color.argb(40, 7, 10, 18), Color.argb(190, 7, 10, 18), Color.argb(245, 7, 10, 18)});
+        schleier.setBackground(verlauf);
+        kasten.addView(schleier, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout text = new LinearLayout(context);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setPadding(dp(context, 16), dp(context, 18), dp(context, 16), dp(context, 16));
+        text.addView(eyebrow(context, augenbraue));
+
+        TextView ueberschrift = new TextView(context);
+        ueberschrift.setText(titel);
+        ueberschrift.setTextColor(Theme.TEXT_PRIMARY);
+        ueberschrift.setTextSize(24);
+        ueberschrift.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
+        ueberschrift.setMaxLines(2);
+        ueberschrift.setEllipsize(TextUtils.TruncateAt.END);
+        ueberschrift.setPadding(0, dp(context, 4), 0, 0);
+        text.addView(ueberschrift);
+
+        if (unterzeile != null && !unterzeile.isEmpty()) {
+            TextView zeile = new TextView(context);
+            zeile.setText(unterzeile);
+            zeile.setTextColor(Theme.TEXT_SECONDARY);
+            zeile.setTextSize(13);
+            zeile.setMaxLines(1);
+            zeile.setEllipsize(TextUtils.TruncateAt.END);
+            zeile.setPadding(0, dp(context, 5), 0, 0);
+            text.addView(zeile);
+        }
+
+        if (prozent > 0) {
+            LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            balkenRand.topMargin = dp(context, 12);
+            text.addView(fortschrittsBalken(context, prozent, true), balkenRand);
+        }
+
+        LinearLayout knoepfe = new LinearLayout(context);
+        knoepfe.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams knopfRand = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        knopfRand.topMargin = dp(context, 14);
+        TextView haupt = primaryButton(context, aufruf, beiAufruf);
+        LinearLayout.LayoutParams hauptParams =
+            new LinearLayout.LayoutParams(0, dp(context, TOUCH_TARGET), 1);
+        knoepfe.addView(haupt, hauptParams);
+        if (zweitText != null && beiZweit != null) {
+            TextView zweit = secondaryButton(context, zweitText, beiZweit);
+            LinearLayout.LayoutParams zweitParams =
+                new LinearLayout.LayoutParams(0, dp(context, TOUCH_TARGET), 1);
+            zweitParams.leftMargin = dp(context, 10);
+            knoepfe.addView(zweit, zweitParams);
+        }
+        text.addView(knoepfe, knopfRand);
+
+        FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        textParams.gravity = Gravity.BOTTOM;
+        kasten.addView(text, textParams);
+        return kasten;
+    }
+
+    /**
+     * Die Punkte unter dem Titelhintergrund.
+     *
+     * <p>Sie sind nicht nur Anzeige, sondern auch Bedienung: sie sagen, wie
+     * viele Titel dahinterstehen, und man kommt mit einem Tipp zu jedem. Die
+     * Tippflaeche ist deutlich groesser als der sichtbare Punkt - ein Punkt von
+     * sieben Pixeln ist mit dem Daumen nicht zu treffen.
+     */
+    static View heroPunkte(Context context, int anzahl, int aktiv, IntVerbraucher beiWahl) {
+        LinearLayout reihe = new LinearLayout(context);
+        reihe.setOrientation(LinearLayout.HORIZONTAL);
+        reihe.setGravity(Gravity.CENTER);
+        for (int i = 0; i < anzahl; i += 1) {
+            int stelle = i;
+            boolean gewaehlt = i == aktiv;
+            FrameLayout flaeche = new FrameLayout(context);
+            View punkt = new View(context);
+            punkt.setBackground(shape(context, gewaehlt ? Theme.PRIMARY : Theme.BORDER, 4, Color.TRANSPARENT, 0));
+            FrameLayout.LayoutParams punktParams = new FrameLayout.LayoutParams(
+                dp(context, gewaehlt ? 18 : 7), dp(context, 7));
+            punktParams.gravity = Gravity.CENTER;
+            flaeche.addView(punkt, punktParams);
+            flaeche.setOnClickListener(v -> beiWahl.nimm(stelle));
+            flaeche.setContentDescription("Titel " + (i + 1) + " von " + anzahl);
+            reihe.addView(flaeche, new LinearLayout.LayoutParams(
+                dp(context, 30), dp(context, 26)));
+        }
+        return reihe;
+    }
+
+    /** Was ein Punkt meldet, wenn man ihn antippt. */
+    interface IntVerbraucher {
+        void nimm(int stelle);
+    }
+
+    /** Der Fortschrittsbalken samt Prozentzahl, wie ihn der Titelhintergrund traegt. */
+    static View fortschrittsBalken(Context context, int prozent, boolean mitZahl) {
+        LinearLayout reihe = new LinearLayout(context);
+        reihe.setOrientation(LinearLayout.HORIZONTAL);
+        reihe.setGravity(Gravity.CENTER_VERTICAL);
+
+        FrameLayout spur = new FrameLayout(context);
+        spur.setBackground(shape(context, Color.argb(120, 0, 0, 0), 3, Color.TRANSPARENT, 0));
+        View balken = new View(context);
+        balken.setBackground(shape(context, Theme.PRIMARY, 3, Color.TRANSPARENT, 0));
+        spur.addView(balken, new FrameLayout.LayoutParams(0, dp(context, 6)));
+        // Die Breite steht erst fest, wenn die Spur gemessen ist.
+        spur.post(() -> {
+            FrameLayout.LayoutParams neu = (FrameLayout.LayoutParams) balken.getLayoutParams();
+            neu.width = Math.max(dp(context, 4), spur.getWidth() * Math.min(100, Math.max(0, prozent)) / 100);
+            balken.setLayoutParams(neu);
+        });
+        LinearLayout.LayoutParams spurParams = new LinearLayout.LayoutParams(0, dp(context, 6), 1);
+        reihe.addView(spur, spurParams);
+
+        if (mitZahl) {
+            TextView zahl = new TextView(context);
+            zahl.setText(Math.min(100, Math.max(0, prozent)) + " %");
+            zahl.setTextColor(Theme.TEXT_SECONDARY);
+            zahl.setTextSize(12);
+            zahl.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            LinearLayout.LayoutParams zahlParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            zahlParams.leftMargin = dp(context, 8);
+            reihe.addView(zahl, zahlParams);
+        }
+        return reihe;
+    }
+
+    /**
+     * Eine waagerechte Reihe.
+     *
+     * <p>Am Rechner steht dort eine Kachelreihe, die man mit dem Rad schiebt.
+     * Auf dem Telefon ist es dieselbe Reihe unter dem Daumen - mit einem
+     * Zusatz: die Reihe laeuft ueber den Seitenrand hinaus. Ohne das haetten
+     * die Karten links und rechts einen Rand, den keine andere Reihe hat, und
+     * die letzte Karte klebte am Rand, statt anzudeuten, dass es weitergeht.
+     */
+    static HorizontalScrollView reihe(Context context, java.util.List<View> karten, int kartenBreiteDp) {
+        HorizontalScrollView scroll = new HorizontalScrollView(context);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(dp(context, SCREEN_PADDING), 0, dp(context, SCREEN_PADDING), 0);
+        LinearLayout leiste = new LinearLayout(context);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < karten.size(); i += 1) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                kartenBreiteDp > 0 ? dp(context, kartenBreiteDp) : ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
+            leiste.addView(karten.get(i), params);
+        }
+        scroll.addView(leiste, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return scroll;
+    }
+
+    /**
+     * Eine Kachel in einer waagerechten Reihe.
+     *
+     * <p>Hochformat, weil Titelbilder Poster sind, und mit dem Fortschritt im
+     * Bild statt darunter: eine Reihe soll auf einem Telefon so viele Kacheln
+     * wie moeglich zeigen, und jede zusaetzliche Textzeile kostet eine.
+     *
+     * @param fahne   ein kleiner Aufkleber oben links ("Neue Folge"), leer erlaubt
+     * @param onMenu  das Dreipunktmenue; {@code null} laesst es weg
+     */
+    static View kachel(Context context, Provider provider, String titel, String unterzeile,
+                       String bildUrl, int prozent, String fahne, int breiteDp,
+                       Runnable beiKlick, View.OnClickListener onMenu) {
+        LinearLayout karte = new LinearLayout(context);
+        karte.setOrientation(LinearLayout.VERTICAL);
+
+        int hoehe = Math.round(breiteDp * 1.45f);
+        FrameLayout bild = poster(context, provider, titel, bildUrl, prozent,
+            breiteDp, hoehe, 26, 4);
+
+        if (fahne != null && !fahne.isEmpty()) {
+            TextView aufkleber = new TextView(context);
+            aufkleber.setText(fahne);
+            aufkleber.setTextColor(Color.WHITE);
+            aufkleber.setTextSize(10);
+            aufkleber.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            aufkleber.setPadding(dp(context, 7), dp(context, 3), dp(context, 7), dp(context, 3));
+            aufkleber.setBackground(shape(context, Theme.PRIMARY_DEEP, 6, Color.TRANSPARENT, 0));
+            FrameLayout.LayoutParams fahnenParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            fahnenParams.gravity = Gravity.TOP | Gravity.START;
+            fahnenParams.setMargins(dp(context, 6), dp(context, 6), 0, 0);
+            bild.addView(aufkleber, fahnenParams);
+        }
+        karte.addView(bild, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(context, hoehe)));
+
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(13);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setPadding(0, dp(context, 7), 0, 0);
+        karte.addView(name);
+
+        if (unterzeile != null && !unterzeile.isEmpty()) {
+            TextView zeile = new TextView(context);
+            zeile.setText(unterzeile);
+            zeile.setTextColor(Theme.TEXT_SECONDARY);
+            zeile.setTextSize(11);
+            zeile.setMaxLines(1);
+            zeile.setEllipsize(TextUtils.TruncateAt.END);
+            zeile.setPadding(0, dp(context, 2), 0, 0);
+            karte.addView(zeile);
+        }
+
+        karte.setOnClickListener(v -> beiKlick.run());
+        if (onMenu != null) {
+            // Auf einer schmalen Kachel ist kein Platz fuer einen sichtbaren
+            // Dreipunktknopf, ohne dass er das Bild verdeckt. Hier ist der
+            // lange Druck deshalb der Weg - die senkrechten Karten in "Meine
+            // Liste" tragen den Knopf weiterhin, und dort liegt die Arbeit mit
+            // den Eintraegen ohnehin.
+            karte.setOnLongClickListener(v -> {
+                onMenu.onClick(karte);
+                return true;
+            });
+        }
+        return karte;
+    }
+
+    /**
+     * Eine Vorschlagskarte.
+     *
+     * <p>Der Unterschied zur gewoehnlichen Kachel ist die Zeile mit dem Grund.
+     * Sie ist der Punkt der ganzen Reihe: warum ausgerechnet dieser Titel? Die
+     * Antwort hat die Empfehlungs-Engine bereits ausformuliert - hier wird sie
+     * nur angezeigt. Reihen ohne Empfehlungslogik ("Neu bei deinen Anbietern")
+     * tragen keinen Grund und bekommen deshalb auch keine Zeile.
+     *
+     * @param grund    der ausformulierte Satz, leer erlaubt
+     * @param zusatz   Anbieter, oder das Erscheinungsdatum, wenn eines bekannt ist
+     * @param fenster  Sichtfenster fuer lange Raster, {@code null} fuer kurze Reihen
+     */
+    static View vorschlag(Context context, Provider provider, String titel, String grund,
+                          String zusatz, String bildUrl, int breiteDp,
+                          Bilder.Sichtfenster fenster, Runnable beiKlick,
+                          View.OnClickListener onMenu) {
+        LinearLayout karte = new LinearLayout(context);
+        karte.setOrientation(LinearLayout.VERTICAL);
+
+        int hoehe = Math.round(breiteDp * 1.45f);
+        FrameLayout bild = poster(context, provider, titel, bildUrl, 0, breiteDp, hoehe, 26, 0, fenster);
+        karte.addView(bild, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(context, hoehe)));
+
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(13);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setPadding(0, dp(context, 7), 0, 0);
+        karte.addView(name);
+
+        if (grund != null && !grund.isEmpty()) {
+            TextView satz = new TextView(context);
+            satz.setText(grund);
+            satz.setTextColor(Theme.PRIMARY);
+            satz.setTextSize(11);
+            satz.setMaxLines(2);
+            satz.setEllipsize(TextUtils.TruncateAt.END);
+            satz.setLineSpacing(0, 1.05f);
+            satz.setPadding(0, dp(context, 3), 0, 0);
+            karte.addView(satz);
+        }
+
+        if (zusatz != null && !zusatz.isEmpty()) {
+            TextView zeile = new TextView(context);
+            zeile.setText(zusatz);
+            zeile.setTextColor(Theme.TEXT_DISABLED);
+            zeile.setTextSize(11);
+            zeile.setMaxLines(1);
+            zeile.setEllipsize(TextUtils.TruncateAt.END);
+            zeile.setPadding(0, dp(context, 3), 0, 0);
+            karte.addView(zeile);
+        }
+
+        karte.setOnClickListener(v -> beiKlick.run());
+        if (onMenu != null) {
+            karte.setOnLongClickListener(v -> {
+                onMenu.onClick(karte);
+                return true;
+            });
+        }
+        return karte;
+    }
+
+    /**
+     * Ein Platzhalter, solange eine Reihe noch geholt wird.
+     *
+     * <p>Graue Kaesten in der Form der spaeteren Kacheln, nicht das Wort
+     * "Laedt". Der Unterschied ist nicht Geschmack: die Seite behaelt damit
+     * ihre Hoehe, und was danach kommt, springt nicht.
+     */
+    static View reihenSkelett(Context context, int breiteDp, int anzahl) {
+        HorizontalScrollView scroll = new HorizontalScrollView(context);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(dp(context, SCREEN_PADDING), 0, dp(context, SCREEN_PADDING), 0);
+        LinearLayout leiste = new LinearLayout(context);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        int hoehe = Math.round(breiteDp * 1.45f);
+        for (int i = 0; i < anzahl; i += 1) {
+            View kasten = new View(context);
+            kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 10, Theme.BORDER, 1));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dp(context, breiteDp), dp(context, hoehe));
+            if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
+            leiste.addView(kasten, params);
+        }
+        scroll.addView(leiste, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return scroll;
+    }
+
+    /**
+     * Eine Zeile mit einem Hinweis und wahlweise einem Knopf.
+     *
+     * <p>Sie steht unter langen Listen und sagt, woran man ist: wird noch
+     * geladen, ist Schluss, oder ist etwas schiefgegangen. Im letzten Fall
+     * gehoert ein Knopf dazu - ein Fehler ohne Ausweg ist eine Sackgasse.
+     */
+    static View hinweis(Context context, String text, String knopfText, Runnable beiKnopf) {
+        LinearLayout zeile = new LinearLayout(context);
+        zeile.setOrientation(LinearLayout.VERTICAL);
+        zeile.setGravity(Gravity.CENTER_HORIZONTAL);
+        zeile.setPadding(dp(context, 12), dp(context, 16), dp(context, 12), dp(context, 16));
+
+        TextView satz = new TextView(context);
+        satz.setText(text);
+        satz.setTextColor(Theme.TEXT_SECONDARY);
+        satz.setTextSize(13);
+        satz.setGravity(Gravity.CENTER);
+        zeile.addView(satz);
+
+        if (knopfText != null && beiKnopf != null) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(context, TOUCH_TARGET));
+            params.topMargin = dp(context, 10);
+            zeile.addView(secondaryButton(context, knopfText, beiKnopf), params);
+        }
+        return zeile;
     }
 
     /** Empty-state block used instead of a bare screen when a list has nothing in it. */

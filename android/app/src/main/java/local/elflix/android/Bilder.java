@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
 import android.util.LruCache;
+import android.view.View;
 import android.widget.ImageView;
 
 import java.io.ByteArrayOutputStream;
@@ -104,6 +105,126 @@ public final class Bilder {
             speicher(context).put(schluessel, bild);
             haupt.post(() -> zeigen(ziel, sauber, bild, beiBild));
         });
+    }
+
+    /**
+     * Bilder nur laden, solange ihre Karte in der Naehe des Bildschirms ist.
+     *
+     * <p>Fuer kurze Reihen braucht es das nicht - da laedt {@link #laden}
+     * einfach alles. Die Entdeckungsseite ist etwas anderes: sie waechst beim
+     * Scrollen unbegrenzt weiter, und jedes gesetzte Bitmap bleibt am
+     * {@link ImageView} haengen, auch wenn die Karte laengst hundert Zeilen
+     * weiter oben steht. Der Bildspeicher raeumt es dann nicht mehr weg - er
+     * kennt es zwar nicht mehr, aber die Ansicht haelt es fest. Bei
+     * dreihundert Karten sind das mehrere hundert Megabyte, und die App
+     * verschwindet lautlos.
+     *
+     * <p>Also wird geladen, was in der Naehe ist, und wieder freigegeben, was
+     * es nicht mehr ist. Zurueck bleibt der gestaltete Platzhalter - dieselbe
+     * Karte wie vor dem Laden, kein Loch.
+     */
+    public static final class Sichtfenster {
+        /** So weit ueber den Bildschirm hinaus wird geladen. */
+        private static final int VORLAUF_DP = 600;
+
+        private static final class Posten {
+            final ImageView bild;
+            final String adresse;
+            final int breiteDp;
+            final int hoeheDp;
+            final Runnable beiBild;
+            final Runnable beiLeer;
+            boolean geladen;
+
+            Posten(ImageView bild, String adresse, int breiteDp, int hoeheDp,
+                   Runnable beiBild, Runnable beiLeer) {
+                this.bild = bild;
+                this.adresse = adresse;
+                this.breiteDp = breiteDp;
+                this.hoeheDp = hoeheDp;
+                this.beiBild = beiBild;
+                this.beiLeer = beiLeer;
+            }
+        }
+
+        private final java.util.ArrayList<Posten> posten = new java.util.ArrayList<>();
+        /**
+         * Wann zuletzt nachgesehen wurde.
+         *
+         * <p>Der Aufruf haengt an jedem Scrollschritt, und die Liste hat auf
+         * einer weit gescrollten Entdeckungsseite mehrere hundert Eintraege.
+         * Jeden davon sechzigmal in der Sekunde zu vermessen waere genau das
+         * Ruckeln, das diese Klasse verhindern soll. Ein Achtelsekunde reicht:
+         * so weit scrollt niemand, dass ein Bild zu spaet kaeme.
+         */
+        private long zuletzt;
+        private static final long PAUSE_MS = 120;
+
+        /**
+         * Ein Bild anmelden. Geholt wird es erst, wenn seine Karte in die Naehe
+         * des Bildschirms kommt.
+         *
+         * @param beiLeer laeuft, wenn das Bild wieder freigegeben wird - dort
+         *                gehoert der Platzhalter zurueck
+         */
+        public void merken(ImageView bild, String adresse, int breiteDp, int hoeheDp,
+                           Runnable beiBild, Runnable beiLeer) {
+            if (bild == null) return;
+            String sauber = adresse == null ? "" : adresse.trim();
+            if (sauber.isEmpty()) return;
+            posten.add(new Posten(bild, sauber, breiteDp, hoeheDp, beiBild, beiLeer));
+        }
+
+        /** Alles vergessen - beim Verlassen der Seite. */
+        public void leeren() {
+            posten.clear();
+        }
+
+        /**
+         * Nachsehen, was jetzt in der Naehe ist.
+         *
+         * <p>Billig gehalten: es wird nur gerechnet, kein Bild angefasst, das
+         * schon im richtigen Zustand ist. Der Aufruf haengt an jedem
+         * Scrollschritt.
+         */
+        public void pruefen(View fenster) {
+            pruefen(fenster, false);
+        }
+
+        /** @param sofort ohne Pause - nach dem Anhaengen neuer Karten */
+        public void pruefen(View fenster, boolean sofort) {
+            if (fenster == null || posten.isEmpty()) return;
+            long jetzt = android.os.SystemClock.uptimeMillis();
+            if (!sofort && jetzt - zuletzt < PAUSE_MS) return;
+            zuletzt = jetzt;
+            int vorlauf = Math.round(VORLAUF_DP
+                * fenster.getResources().getDisplayMetrics().density);
+            int[] rahmen = new int[2];
+            fenster.getLocationOnScreen(rahmen);
+            int oben = rahmen[1] - vorlauf;
+            int unten = rahmen[1] + fenster.getHeight() + vorlauf;
+            int[] stelle = new int[2];
+            for (Posten eintrag : posten) {
+                if (eintrag.bild.getWindowToken() == null) continue;
+                eintrag.bild.getLocationOnScreen(stelle);
+                int hoehe = eintrag.bild.getHeight();
+                // Eine Karte, die noch nie gemessen wurde, steht bei 0 - das
+                // waere "weit oben" und damit nie in der Naehe. Sie gilt
+                // deshalb als sichtbar, bis sie eine Hoehe hat.
+                boolean nah = hoehe <= 0 || (stelle[1] + hoehe >= oben && stelle[1] <= unten);
+                if (nah == eintrag.geladen) continue;
+                eintrag.geladen = nah;
+                if (nah) {
+                    laden(eintrag.bild, eintrag.adresse, eintrag.breiteDp, eintrag.hoeheDp,
+                        eintrag.beiBild);
+                } else {
+                    eintrag.bild.setImageDrawable(null);
+                    eintrag.bild.setVisibility(View.GONE);
+                    eintrag.bild.setTag(null);
+                    if (eintrag.beiLeer != null) eintrag.beiLeer.run();
+                }
+            }
+        }
     }
 
     private static void zeigen(ImageView ziel, String adresse, Bitmap bild, Runnable beiBild) {

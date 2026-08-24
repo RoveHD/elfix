@@ -51,6 +51,14 @@ public final class Bestand {
     /** Welcher Eintrag gerade geoeffnet ist - entscheidet bei mehrfach vorhandenen Titeln. */
     private String aktiverEintragId = "";
     private StandMelder standMelder;
+    /**
+     * Die zuletzt gemeldete Art von Diagnose.
+     *
+     * <p>Die Messung meldet alle fuenf Sekunden. Ohne diesen Merker stuende
+     * dieselbe Zeile zwoelfmal in der Minute im Protokoll und man saehe vor
+     * lauter Wiederholung die Aenderung nicht.
+     */
+    private String letzteDiagnose = "";
 
     public Bestand(Context context, Kern kern, Beobachter beobachter, Melder melder) {
         this.context = context.getApplicationContext();
@@ -111,8 +119,7 @@ public final class Bestand {
         for (Favorite eintrag : alle()) {
             if (eintrag.stehtInWeiterschauen()) liste.add(eintrag);
         }
-        Collections.sort(liste, Comparator.comparing(
-            (Favorite eintrag) -> eintrag.lastWatchedAt()).reversed());
+        Collections.sort(liste, Comparator.comparingLong(Favorite::zeitstempel).reversed());
         return liste;
     }
 
@@ -202,7 +209,22 @@ public final class Bestand {
             // Ohne Eintrag hat die Regel bewusst nichts uebernommen - etwa weil
             // die 2:30 noch nicht um sind. Dann bleibt auch die Ablage, wie sie
             // war; ein Speichern waere hier nur unnoetiges Schreiben.
-            if (eintrag == null) return;
+            //
+            // Warum sie nichts uebernommen hat, sagt sie selbst. Am Rechner
+            // steht das in der Medien-Diagnose; hier stand es nirgends, und ein
+            // Stand, der nicht weiterrueckt, war damit nicht zu erklaeren -
+            // man sah die gemessenen Sekunden und danach nichts mehr.
+            if (eintrag == null) {
+                JSONArray diagnosen = ergebnis.optJSONArray("diagnosen");
+                JSONObject erste = diagnosen == null ? null : diagnosen.optJSONObject(0);
+                if (erste != null && !erste.optString("art").equals(letzteDiagnose)) {
+                    letzteDiagnose = erste.optString("art");
+                    Log.i(TAG, "Stand nicht uebernommen (" + letzteDiagnose + "): "
+                        + erste.optString("text"));
+                }
+                return;
+            }
+            letzteDiagnose = "";
 
             if (neueListe != null) eintraege = neueListe;
             aktiverEintragId = eintrag.optString("id", aktiverEintragId);
@@ -217,47 +239,60 @@ public final class Bestand {
     /**
      * Legt einen Eintrag fuer diese Adresse an und setzt ihn auf die Watchlist.
      *
-     * <p>Angelegt wird ueber dieselbe Regel wie jeder gemessene Stand - nur
-     * ohne Wiedergabedaten. So bekommt ein von Hand gemerkter Titel dieselben
-     * Felder wie ein erschauter, und beim Abgleich mit dem Rechner fehlt
-     * nichts.
+     * <p>Ueber {@code fortschritt.vonHandAnlegen} und nicht ueber die
+     * Fortschrittsregel. Der Unterschied ist keine Feinheit, sondern der
+     * Unterschied zwischen "tut etwas" und "tut nichts": die Fortschrittsregel
+     * verlangt zu Recht Videodaten, sonst fuellte jeder geoeffnete Reiter die
+     * Liste. Hier wurde ihr deshalb ein Mindeststand vorgetaeuscht - mit zwei
+     * Folgen, die beide falsch waren.
+     *
+     * <p>Erstens legte sie bei einer Serienuebersicht und bei jeder Folge
+     * ausser der ersten gar nichts an: ohne 2:30 Wiedergabe und ohne Folge 1
+     * blockiert sie, und der Herz-Knopf tat schlicht nichts. Zweitens trug ein
+     * angelegter Eintrag zehn Prozent Fortschritt und stand damit sofort auch
+     * in "Weiterschauen" - vorgemerkt und angefangen sind aber zwei
+     * verschiedene Dinge.
+     *
+     * <p>Die neue Regel steht in demselben geteilten Modul und wird am Rechner
+     * an derselben Stelle benutzt (siehe {@code favorites:add-result}).
+     *
+     * @param meta was ueber den Titel bekannt ist: title, thumbnail, type
      */
     public void anlegenUndMerken(Provider provider, String url, JSONObject meta, Runnable danach) {
         if (kern == null || !kern.istBereit() || provider == null || url == null) return;
         JSONObject zustand = new JSONObject();
-        JSONObject angaben = meta == null ? new JSONObject() : meta;
         try {
             zustand.put("favoriten", eintraege);
             zustand.put("aktiverFavoritId", aktiverEintragId);
-            zustand.put("watchpartyFuehrt", false);
-            // Ohne Videodaten legt die Regel nichts an - das ist richtig, denn
-            // sonst fuellte jeder geoeffnete Reiter die Liste. Beim Herzknopf
-            // ist die Absicht aber eindeutig, deshalb zaehlt hier ein
-            // Mindeststand als Anlass.
-            if (!angaben.has("currentTime")) angaben.put("currentTime", 0.1);
-            if (!angaben.has("duration")) angaben.put("duration", 1);
-            if (!angaben.has("watchedSeconds")) angaben.put("watchedSeconds", 0);
         } catch (Exception fehler) {
             Log.e(TAG, "Eintrag liess sich nicht anlegen", fehler);
             return;
         }
-        JSONArray argumente = new JSONArray();
-        argumente.put(zustand);
-        argumente.put(provider.alsJson());
-        argumente.put(url);
-        argumente.put(angaben);
-        argumente.put(new JSONObject());
-
-        kern.rufe("fortschritt.medienStandVerbuchen", argumente, (wert, fehler) -> {
-            if (fehler != null) {
-                Log.e(TAG, "Eintrag nicht angelegt: " + fehler);
-                return;
-            }
-            uebernehmen(wert);
-            String neueId = aktiverEintragId;
-            if (!neueId.isEmpty()) watchlistSetzen(neueId, true);
-            if (danach != null) danach.run();
-        });
+        kern.rufe("fortschritt.vonHandAnlegen",
+            Kern.args(zustand, provider.alsJson(), url, meta == null ? new JSONObject() : meta),
+            (wert, fehler) -> {
+                if (fehler != null) {
+                    Log.e(TAG, "Eintrag nicht angelegt: " + fehler);
+                    if (melder != null) melder.melde("Konnte nicht gemerkt werden");
+                    return;
+                }
+                try {
+                    JSONObject urteil = new JSONObject(wert == null ? "{}" : wert);
+                    JSONObject eintrag = urteil.optJSONObject("eintrag");
+                    if (eintrag == null) {
+                        if (melder != null) melder.melde("Adresse nicht erkannt");
+                        return;
+                    }
+                    JSONArray neueListe = urteil.optJSONArray("favoriten");
+                    if (neueListe != null) eintraege = neueListe;
+                    aktiverEintragId = eintrag.optString("id", aktiverEintragId);
+                    speichern();
+                    if (beobachter != null) beobachter.bestandGeaendert();
+                    if (danach != null) danach.run();
+                } catch (Exception ausnahme) {
+                    Log.e(TAG, "Ergebnis des Kerns unlesbar", ausnahme);
+                }
+            });
     }
 
     /**
@@ -371,6 +406,32 @@ public final class Bestand {
         }
         speichern();
         if (beobachter != null) beobachter.bestandGeaendert();
+    }
+
+    /**
+     * Der Eintrag zu genau dieser Adresse.
+     *
+     * <p>Grober Abgleich ueber Protokoll und abschliessenden Schraegstrich
+     * hinweg - dieselbe Regel wie {@code adressSchluessel} am Rechner. Fuer die
+     * Frage "steht dieser Vorschlag schon auf der Watchlist?" reicht das; was
+     * feiner zu entscheiden ist, entscheidet der Kern.
+     */
+    public Favorite zuAdresse(String url) {
+        String gesucht = adressSchluessel(url);
+        if (gesucht.isEmpty()) return null;
+        for (Favorite eintrag : alle()) {
+            if (gesucht.equals(adressSchluessel(eintrag.url()))) return eintrag;
+        }
+        return null;
+    }
+
+    private static String adressSchluessel(String url) {
+        String text = url == null ? "" : url.trim();
+        // ROOT und nicht die Sprache des Geraets: in der Tuerkei wird aus einem
+        // "I" ein punktloses "ı", und zwei Adressen, die gleich sind, waeren
+        // es dort nicht mehr.
+        return text.replaceFirst("(?i)^https?://", "").replaceAll("/+$", "")
+            .toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Der Eintrag zu einer Serienadresse, egal auf welcher Folge er gerade steht. */

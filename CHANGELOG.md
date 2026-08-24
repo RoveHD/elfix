@@ -3,6 +3,110 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.41.0 — 25. August 2026
+
+Die Startseite des Telefons zeigt jetzt dasselbe wie die des Rechners. Auf dem
+Weg dorthin kamen zwei Fehler ans Licht, die schwerer wiegen als das Feature:
+Android hat nie einen Wiedergabefortschritt gespeichert, und der Herz-Knopf tat
+in den meisten Faellen gar nichts.
+
+### Android hat nie Fortschritt verbucht
+
+Nicht selten, nicht gelegentlich — nie. "Weiterschauen" konnte damit gar nicht
+funktionieren, und was dort trotzdem stand, kam vom Geraeteabgleich.
+
+Die Ursache liegt im Unterschied der beiden Apps. Am Rechner liegt der Hoster in
+einem eingebetteten Rahmen, und die Adresse der Anbieterseite bleibt in der
+Ansicht stehen. Auf dem Telefon ersetzt "Video oeffnen" bei AniWorld das
+*oberste* Dokument: danach steht dort vidmoly.biz. Gemeldet wurde genau diese
+Adresse, und die Fortschrittsregel verwarf sie zu Recht — sie erkennt darin
+keine Folge.
+
+Lautlos war es, weil ausgerechnet dieser frueheste Ausstieg der Regel als
+einziger keine Diagnose traegt. Im Protokoll stand also die gemessene Sekunde
+und danach nichts.
+
+Jetzt zaehlt die zuletzt besuchte Folgenseite, sobald die laufende Adresse dem
+Anbieter nicht mehr gehoert. Nur dann — wer beim Anbieter selbst weiterblaettert,
+meldet weiter seinen wirklichen Ort. Nachgemessen auf einem S24 Ultra: vor 150
+Sekunden Wiedergabe bleibt der Stand bei null, die 2:30-Schwelle haelt; danach
+steht er in der Ablage.
+
+Dazu protokolliert Android jetzt, *warum* die Regel einen Stand nicht uebernimmt
+— einmal je Art, nicht zwoelfmal in der Minute.
+
+### Der Herz-Knopf tat meistens nichts
+
+Er taeuschte der Fortschrittsregel einen Mindeststand vor, damit sie ueberhaupt
+einen Eintrag anlegt. Das hatte zwei Folgen, und beide waren falsch: bei einer
+Serienuebersicht und bei jeder Folge ausser der ersten legte sie nichts an — ohne
+2:30 Wiedergabe und ohne Folge 1 blockiert sie —, und wo sie anlegte, trug der
+Eintrag zehn Prozent Fortschritt und stand damit sofort auch in
+"Weiterschauen". Vorgemerkt und angefangen sind aber zwei verschiedene Dinge.
+
+Vormerken hat jetzt eine eigene Regel im geteilten Modul. Der Rechner benutzt
+dieselbe, wenn ein Suchtreffer auf die Watchlist wandert.
+
+### Der Empfehlungslauf steht jetzt einmal
+
+Geschmacksprofil, Kandidatensuche, Katalogtiefe, Entdeckungsseiten und die
+Anreicherung mit externen Metadaten lagen in main.js und waren dadurch an
+Electron gebunden — an drei Dinge: einen Seitenabruf, eine Datei und ein
+Fenster. Android konnte damit nichts anfangen und hatte deshalb ueberhaupt keine
+Empfehlungen.
+
+Sie stehen jetzt in src/empfehlungslauf.js, bekommen diese drei Dinge gereicht
+und laufen unveraendert im Kern der Android-App. Damit rechnen beide Geraete
+dieselbe Rangfolge mit denselben Schwellen und denselben Begruendungen.
+
+Das Telefon rechnet mit kleineren Zahlen — Pool 1200 statt 4000 —, weil der
+Kern-WebView daneben schon den Werbefilter traegt. Es ist dieselbe Liste, sie
+endet nur frueher.
+
+### Die Startseite des Telefons
+
+Titelhintergrund mit dem Bild des Titels, der Folge, dem echten Stand
+("3:18 / 22:51"), einem Fortschrittsbalken und zwei Knoepfen; er wechselt alle
+fuenfzehn Sekunden durch die fuenf zuletzt geschauten Titel, und die Punkte
+darunter sind auch Bedienung.
+
+Darunter waagerechte Reihen statt einer senkrechten Liste: Neue Folgen,
+Weiterschauen, Gemeinsam weiterschauen, Watchlist, Mediathek, Neu bei deinen
+Anbietern, Empfohlen fuer dich, Anime, Serien und Filme fuer dich. Jede
+Vorschlagskarte traegt den Satz, warum sie dasteht — "Passend zu Naruto auf
+deiner Watchlist", nicht "empfohlen".
+
+"Mehr anzeigen" oeffnet je Art eine eigene Seite, die beim Scrollen weiterlaedt
+und ihre Stelle behaelt, wenn man einen Titel oeffnet und zurueckkommt.
+
+Hochkant statt quer, weil eine liegende 16:9-Flaeche auf einem schmalen
+Bildschirm entweder zwei Zentimeter hoch waere oder das Bild bis zur
+Unkenntlichkeit beschneidet. Die Reihen laufen ueber den Seitenrand hinaus,
+damit die letzte sichtbare Kachel andeutet, dass es weitergeht. Beim Drehen
+werden die Masse neu gerechnet — vorher blieben es die des Hochformats —, ohne
+dass dabei irgendetwas neu geholt wird.
+
+### Und die Bilder bleiben bezahlbar
+
+Ein Raster, das beim Scrollen unbegrenzt waechst, haelt jedes gesetzte Bild an
+seiner Ansicht fest, auch wenn die Karte laengst hundert Zeilen weiter oben
+steht. Bei dreihundert Karten sind das mehrere hundert Megabyte, und die App
+verschwindet lautlos. Geladen wird jetzt, was in der Naehe des Bildschirms ist,
+und wieder freigegeben, was es nicht mehr ist; zurueck bleibt der gestaltete
+Platzhalter.
+
+### Kleinigkeiten
+
+- "Weiterschauen" sortiert auf dem Telefon jetzt nach derselben Staffelung wie
+  am Rechner. Vorher zaehlte nur "zuletzt geschaut", und ein Eintrag ohne diesen
+  Zeitstempel fiel ans Ende, obwohl er der zuletzt angefasste war.
+- Auf keiner Kachel von "Neu bei deinen Anbietern" stand je ein
+  Erscheinungsdatum — auch am Rechner nicht: in die Extraktion ging das ganze
+  Abrufergebnis statt seines Quelltextes, und daraus wurde "[object Object]".
+- Der Fortschrittsbalken zeigt Stand durch Laufzeit, nicht das abgelegte Feld.
+  Das ist dieselbe Rechnung wie am Rechner und aktueller als der Merker, der an
+  bestimmten Stellen absichtlich gesetzt wird.
+
 ## 1.40.1 — 24. August 2026
 
 Zwei Sperren, die zu spaet kamen - und deshalb selbst das waren, was sie

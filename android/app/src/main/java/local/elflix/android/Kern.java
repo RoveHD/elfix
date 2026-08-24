@@ -74,6 +74,20 @@ public final class Kern {
      * die Bruecke muss.
      */
     static final String LISTEN_WIRT = "https://elfix.listen/";
+    /**
+     * Unter dieser Adresse liegen die Zwischenspeicher des Kerns.
+     *
+     * <p>Derselbe Kniff wie bei den Filterlisten und aus demselben Grund: der
+     * Geschmacks-Cache traegt mehrere tausend Katalogtitel und wird
+     * megabytegross. Ueber die Bruecke kaeme er als eine einzige Zeichenkette
+     * herein - hier streamt der WebView ihn stattdessen von der Platte.
+     *
+     * <p>Zurueck geht er in Stuecken (siehe {@link Zwischenlager}); ein
+     * Rueckweg ueber eine Adresse gibt es nicht.
+     */
+    static final String DATEI_WIRT = "https://elfix.dateien/";
+    /** Wo die Zwischenspeicher liegen. Nicht die Ablage - das hier ist wegwerfbar. */
+    static final String ZWISCHEN_ORDNER = "kern-zwischen";
     /** Ein Abruf ueber Java, damit die Anbieter-Kekse mitgehen und CORS nicht im Weg steht. */
     private static final int NETZ_TIMEOUT_MS = 20_000;
     private static final String NETZ_AGENT =
@@ -161,7 +175,8 @@ public final class Kern {
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest anfrage) {
-                return listeAusliefern(anfrage);
+                WebResourceResponse liste = listeAusliefern(anfrage);
+                return liste != null ? liste : zwischenAusliefern(anfrage);
             }
 
             /**
@@ -191,6 +206,10 @@ public final class Kern {
         // Zustand - sie rechnen. Was damit geschieht, entscheidet ausschliesslich
         // geraete-schluessel.js.
         webView.addJavascriptInterface(new Krypto(), "AndroidKrypto");
+        // Der Rueckweg der Zwischenspeicher. Eigene Bruecke, weil sie mit dem
+        // Aufruf-Antwort-Spiel des Kerns nichts zu tun hat: hier reisen Stuecke
+        // einer Datei, keine Werte.
+        webView.addJavascriptInterface(new Zwischenlager(), "AndroidEmpfehlung");
         webView.loadUrl(SEITE);
     }
 
@@ -225,6 +244,112 @@ public final class Kern {
         } catch (Exception fehler) {
             Log.e(TAG, "Filterliste nicht ausgeliefert: " + name, fehler);
             return null;
+        }
+    }
+
+    /* --------------------------------------------------- Zwischenspeicher */
+
+    /** Nur Kleinbuchstaben - damit hier kein Pfad hereinkommt, der irgendwohin sonst zeigt. */
+    private static boolean zwischenName(String name) {
+        return name != null && name.matches("[a-z]{1,20}");
+    }
+
+    private static File zwischenDatei(Context context, String art) {
+        return new File(new File(context.getFilesDir(), ZWISCHEN_ORDNER), art + ".json");
+    }
+
+    /**
+     * Einen Zwischenspeicher an den Kern ausliefern.
+     *
+     * <p>Fehlt die Datei, ist das kein Fehler, sondern der erste Start: der
+     * Kern faengt dann mit einem leeren Cache an und fuellt ihn.
+     */
+    private WebResourceResponse zwischenAusliefern(WebResourceRequest anfrage) {
+        if (anfrage == null || anfrage.getUrl() == null) return null;
+        String adresse = anfrage.getUrl().toString();
+        if (!adresse.startsWith(DATEI_WIRT)) return null;
+        String name = adresse.substring(DATEI_WIRT.length());
+        int frage = name.indexOf('?');
+        if (frage >= 0) name = name.substring(0, frage);
+        if (!name.endsWith(".json")) return null;
+        String art = name.substring(0, name.length() - 5);
+        if (!zwischenName(art)) return null;
+
+        Map<String, String> kopf = new java.util.HashMap<>();
+        kopf.put("Access-Control-Allow-Origin", "*");
+        kopf.put("Cache-Control", "no-store");
+        File datei = zwischenDatei(context, art);
+        try {
+            if (!datei.isFile()) {
+                return new WebResourceResponse("application/json", "utf-8", 404, "Nicht da", kopf,
+                    new java.io.ByteArrayInputStream(new byte[0]));
+            }
+            return new WebResourceResponse("application/json", "utf-8", 200, "OK", kopf,
+                new java.io.FileInputStream(datei));
+        } catch (Exception fehler) {
+            Log.e(TAG, "Zwischenspeicher nicht ausgeliefert: " + art, fehler);
+            return null;
+        }
+    }
+
+    /**
+     * Der Rueckweg: eine Datei in Stuecken.
+     *
+     * <p>Warum in Stuecken? Weil die Bruecke jeden Wert als eine einzige
+     * Zeichenkette traegt und der Geschmacks-Cache mehrere Megabyte gross wird.
+     * Ein Aufruf mit allem darin sucht die Groessengrenze zwischen den
+     * Prozessen - und die faellt nicht beim Schreiben auf, sondern erst, wenn
+     * beim naechsten Start die halbe Datei dasteht.
+     *
+     * <p>Geschrieben wird erst bei {@code fertig}, und dort erst daneben und
+     * dann umbenannt. Ein Absturz mitten im Sammeln laesst damit die alte Datei
+     * unangetastet stehen.
+     */
+    private final class Zwischenlager {
+        private final Map<String, StringBuilder> offen = new ConcurrentHashMap<>();
+
+        @JavascriptInterface
+        public void teil(String art, int nummer, String text) {
+            if (!zwischenName(art) || text == null) return;
+            StringBuilder puffer = offen.get(art);
+            if (nummer == 0 || puffer == null) {
+                puffer = new StringBuilder(text.length() * 2);
+                offen.put(art, puffer);
+            }
+            puffer.append(text);
+        }
+
+        @JavascriptInterface
+        public void fertig(String art, int anzahl) {
+            if (!zwischenName(art)) return;
+            StringBuilder puffer = offen.remove(art);
+            if (puffer == null) return;
+            String inhalt = puffer.toString();
+            netz.execute(() -> zwischenSchreiben(art, inhalt));
+        }
+    }
+
+    private void zwischenSchreiben(String art, String inhalt) {
+        File ziel = zwischenDatei(context, art);
+        File zwischen = new File(ziel.getParentFile(), art + ".json.neu");
+        try {
+            File ordner = ziel.getParentFile();
+            if (ordner != null && !ordner.isDirectory() && !ordner.mkdirs()) {
+                Log.e(TAG, "Zwischenordner nicht angelegt");
+                return;
+            }
+            try (OutputStream strom = new java.io.FileOutputStream(zwischen)) {
+                strom.write(inhalt.getBytes(StandardCharsets.UTF_8));
+            }
+            if (!zwischen.renameTo(ziel) && !(ziel.delete() && zwischen.renameTo(ziel))) {
+                Log.e(TAG, "Zwischenspeicher nicht ersetzt: " + art);
+            }
+        } catch (Exception fehler) {
+            Log.e(TAG, "Zwischenspeicher nicht geschrieben: " + art, fehler);
+        } finally {
+            if (zwischen.exists() && !zwischen.delete()) {
+                Log.w(TAG, "Zwischendatei blieb liegen: " + zwischen.getName());
+            }
         }
     }
 

@@ -28,6 +28,7 @@ def kernModule = [
     "src/fortschritt-proben.js",
     "src/begruendung.js",
     "src/empfehlung.js",
+    "src/empfehlungslauf.js",
     "src/metadaten.js",
     "src/statistik.js",
     "src/discover.js",

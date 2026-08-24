@@ -193,6 +193,59 @@ public class MainActivity extends Activity {
     /** Last provider page that was an episode, kept because playing takes the frame off it. */
     private String lastEpisodeUrl;
     private boolean pendingNextEpisode;
+    /**
+     * Die Empfehlungen der Startseite.
+     *
+     * <p>Gerechnet werden sie im Kern, von demselben Modul wie am Rechner.
+     * Siehe {@link Empfehlungen}.
+     */
+    private Empfehlungen empfehlungen;
+    /** So viele Titel wechseln sich im Titelhintergrund ab - wie am Rechner. */
+    private static final int HERO_ANZAHL = 5;
+    /** Und so lange steht jeder. */
+    private static final long HERO_TAKT_MS = 15_000L;
+    /** So viele Karten holt eine Entdeckungsseite je Stapel. */
+    private static final int ENTDECKUNG_STAPEL = 30;
+    private List<Favorite> heroEintraege = new ArrayList<>();
+    private int heroStelle;
+    /**
+     * Der Taktgeber der gebauten Seiten.
+     *
+     * <p>Zwei Dinge haengen daran: der Titelhintergrund, der alle fuenfzehn
+     * Sekunden weiterwechselt, und der Nachschlag der Entdeckungsseite, wenn
+     * der Katalog gerade waechst. Beides sind verzoegerte Laeufe an einer
+     * Seite, die auch verschwinden kann - deshalb derselbe Taktgeber, der beim
+     * Verlassen der App in einem Zug geleert wird.
+     */
+    private final Handler takt = new Handler(Looper.getMainLooper());
+    /** Wo der Titelhintergrund steckt - er wird fuer sich neu gezeichnet, nicht die Seite. */
+    private FrameLayout heroPlatz;
+    private LinearLayout heroPunkte;
+
+    /**
+     * Was eine Entdeckungsseite ueber ihren Stand weiss.
+     *
+     * <p>Sie ueberdauert das Verlassen der Ansicht: wer einen Titel oeffnet und
+     * zurueckkommt, steht wieder dort, wo er war.
+     */
+    private static final class Entdeckung {
+        final List<JSONObject> eintraege = new ArrayList<>();
+        final java.util.Set<String> gesehen = new java.util.HashSet<>();
+        int versatz;
+        boolean laeuft;
+        boolean fertig;
+        boolean waechst;
+        String fehler = "";
+        int scroll;
+        int versuche;
+    }
+
+    private final Map<String, Entdeckung> entdeckungen = new HashMap<>();
+    private String entdeckungArt = "";
+    private Bilder.Sichtfenster entdeckungBilder;
+    private LinearLayout entdeckungRaster;
+    private LinearLayout entdeckungFuss;
+
     private final Runnable cacheCleanupTask = new Runnable() {
         @Override
         public void run() {
@@ -248,10 +301,32 @@ public class MainActivity extends Activity {
                 return activeProvider == null ? null : webViews.get(activeProvider.id);
             }
 
+            /**
+             * Welche Seite gerade laeuft - aus Sicht des Fortschritts.
+             *
+             * <p>Nicht immer die, die im Rahmen steht. Am Rechner liegt der
+             * Hoster in einem eingebetteten Rahmen, und die Adresse der
+             * Anbieterseite bleibt stehen. Auf dem Telefon nimmt "Video
+             * oeffnen" den Hauptrahmen: danach steht dort vidmoly.biz, und die
+             * Fortschrittsregel erkennt das zu Recht nicht als Folge - sie
+             * verwarf jeden gemessenen Stand, und "Weiterschauen" blieb auf
+             * einem Telefon fuer immer leer.
+             *
+             * <p>Deshalb zaehlt hier die letzte Folgenseite, sobald die
+             * laufende Adresse dem Anbieter gar nicht mehr gehoert. Nur dann:
+             * wer beim Anbieter selbst weiterblaettert, soll seinen wirklichen
+             * Ort melden und nicht eine Folge, die er verlassen hat.
+             */
             @Override
             public String adresse() {
                 WebView ansicht = ansicht();
-                return ansicht == null ? null : ansicht.getUrl();
+                String jetzt = ansicht == null ? null : ansicht.getUrl();
+                if (jetzt == null || activeProvider == null || lastEpisodeUrl == null) return jetzt;
+                if (isProviderFirstPartyHost(activeProvider, safeHost(jetzt),
+                    safeHost(activeProvider.startUrl))) {
+                    return jetzt;
+                }
+                return lastEpisodeUrl;
             }
 
             @Override
@@ -272,6 +347,11 @@ public class MainActivity extends Activity {
         });
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
+        // Die Empfehlungen brauchen die Relay-Adresse: dieselbe Maschine wie
+        // die Watchparty, nur das andere Protokoll - deshalb erst hier, nach
+        // dem Anlegen der Watchparty.
+        empfehlungen = new Empfehlungen(kern, this::empfehlungenGeaendert);
+        empfehlungen.vorbereiten(watchparty.serverUrl());
         kosmetik = new Kosmetik(kern, adblocker);
         werbefilter = new Werbefilter(this, kern, () -> {
             // Der Aufbau dauert; steht die Seite gerade offen, soll sie es zeigen.
@@ -340,6 +420,54 @@ public class MainActivity extends Activity {
             buildChrome();
             updateFavoriteButton();
         }
+        // Die gebauten Seiten rechnen ihre Masse aus der Breite: wie viele
+        // Anbieter in eine Zeile passen, wie breit eine Kachel ist, wie hoch
+        // der Titelhintergrund sein darf, wie viele Spalten das Raster hat.
+        // Nach dem Drehen stimmt davon nichts mehr, und die Reihen liefen quer
+        // ueber den Bildschirmrand hinaus.
+        //
+        // Neu geholt wird dabei nichts: die Empfehlungsreihen liegen in
+        // {@link Empfehlungen}, die Entdeckungsseite fuehrt ihre Liste selbst,
+        // und die Ablage steht ohnehin im Speicher. Der Anbieterbildschirm ist
+        // ausgenommen - dort haengt ein WebView im Inhalt, und den abzureissen
+        // hiesse die Seite neu zu laden und die Wiedergabe abzubrechen. Die
+        // Suche ebenfalls: sie ist eine senkrechte Liste ueber die ganze
+        // Breite und braucht keinen Neuaufbau - er wuerde die Abfrage bei allen
+        // Anbietern ein zweites Mal losschicken.
+        if (!"provider".equals(currentScreen)) seiteNeuZeichnen();
+    }
+
+    /**
+     * Den gerade offenen Bildschirm noch einmal bauen - an derselben Stelle.
+     *
+     * <p>Gebraucht beim Drehen. Die Scrollposition wird gerettet, weil ein
+     * Neuaufbau eine neue ScrollView anlegt und die alte samt Position weg ist.
+     */
+    private void seiteNeuZeichnen() {
+        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+        switch (currentScreen == null ? "" : currentScreen) {
+            case "home":
+                showHome();
+                break;
+            case "favorites":
+                showFavorites();
+                break;
+            case "entdeckung":
+                zeigeEntdeckung(entdeckungArt);
+                // Die Entdeckungsseite stellt ihre Position selbst wieder her,
+                // sobald sie vermessen ist - der gerettete Wert gilt fuer die
+                // alte Spaltenzahl und waere hier falsch.
+                return;
+            case "settings":
+                showSettings();
+                break;
+            case "watchparty":
+                zeigeWatchparty();
+                break;
+            default:
+                return;
+        }
+        scrollStandHerstellen(stand);
     }
 
     /**
@@ -650,10 +778,18 @@ public class MainActivity extends Activity {
         return tab;
     }
 
-    /** Highlights the tab matching the current screen; the provider view keeps Home selected. */
+    /**
+     * Highlights the tab matching the current screen.
+     *
+     * <p>Zwei Bildschirme haben keinen eigenen Reiter und behalten deshalb den
+     * der Startseite: die Anbieteransicht und die Entdeckungsseite. Beide
+     * fuehren von dort weg und wieder dorthin zurueck - waehrenddessen gar
+     * keinen Reiter leuchten zu lassen, saehe aus wie ein Fehler.
+     */
     private void updateBottomNav() {
         if (bottomNavTabs.isEmpty()) return;
-        String active = "provider".equals(currentScreen) ? "home" : currentScreen;
+        String active = "provider".equals(currentScreen) || "entdeckung".equals(currentScreen)
+            ? "home" : currentScreen;
         for (Map.Entry<String, LinearLayout> entry : bottomNavTabs.entrySet()) {
             boolean selected = entry.getKey().equals(active);
             LinearLayout tab = entry.getValue();
@@ -1532,32 +1668,62 @@ public class MainActivity extends Activity {
         page.addView(view, params);
     }
 
+    /**
+     * Die Startseite des Telefons.
+     *
+     * <p>Sie zeigt dasselbe wie die des Rechners und in derselben Reihenfolge -
+     * Titelhintergrund, was laeuft, was gemerkt ist, was vorgeschlagen wird -,
+     * aber nicht in derselben Form. Am Rechner stehen Kachelreihen nebeneinander
+     * in einem breiten Fenster; hier laeuft jede Reihe unter dem Daumen nach
+     * rechts weiter, und der Titelhintergrund steht hochkant statt quer.
+     *
+     * <p>Der Anbieterrost bleibt, obwohl der Rechner ihn in der Seitenleiste
+     * fuehrt: auf einem Telefon gibt es keine Seitenleiste, und die Anbieter
+     * sind der Weg zu allem, was ELFIX nicht selbst weiss.
+     */
     private void renderMobileHome() {
         LinearLayout page = mobilePage();
+        empfehlungenNachfuehren();
 
-        page.addView(MobileViews.eyebrow(this, "ELFIX"));
-        page.addView(MobileViews.heroTitle(this, "Was möchtest du ansehen?"));
-        page.addView(MobileViews.subtitle(this, "Deine Anbieter an einem Ort."));
+        List<Favorite> laufend = bestand.weiterschauen();
+        heroEintraege = new ArrayList<>(laufend.subList(0, Math.min(HERO_ANZAHL, laufend.size())));
+        if (heroStelle >= heroEintraege.size()) heroStelle = 0;
+
+        heroPlatz = new FrameLayout(this);
+        addSpacing(page, heroPlatz, 4);
+        heroPunkte = new LinearLayout(this);
+        heroPunkte.setOrientation(LinearLayout.HORIZONTAL);
+        heroPunkte.setGravity(Gravity.CENTER);
+        addSpacing(page, heroPunkte, 8);
+        heroZeichnen();
+        heroWechselPlanen();
 
         View search = MobileViews.searchEntry(this, "Serien, Anime und Filme suchen",
             () -> showGlobalSearch(""));
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
-        searchParams.topMargin = dp(18);
+        searchParams.topMargin = dp(16);
         page.addView(search, searchParams);
 
         addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
         addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
 
-        // Die Startseite zeigt dieselben Reihen wie am Rechner, in derselben
-        // Reihenfolge: was laeuft, dann was gemerkt ist. Leere Reihen bleiben
-        // weg statt als leerer Kasten dazustehen - nur wenn beide leer sind,
-        // steht ein Hinweis da, damit die untere Bildschirmhaelfte nicht
-        // unerklaert leer bleibt.
-        boolean etwasGezeigt = false;
-        etwasGezeigt |= startseitenReihe(page, Bibliothek.WEITERSCHAUEN, 3);
-        etwasGezeigt |= startseitenReihe(page, Bibliothek.WATCHLIST, 3);
-        etwasGezeigt |= startseitenReihe(page, Bibliothek.MEDIATHEK, 2);
+        // Erst was schon laeuft, dann was vorgeschlagen wird - dieselbe
+        // Reihenfolge wie am Rechner. Leere Reihen fallen weg statt als leerer
+        // Kasten dazustehen.
+        boolean etwasGezeigt = neueFolgenReihe(page);
+        List<Favorite> privat = new ArrayList<>();
+        List<Favorite> gemeinsam = new ArrayList<>();
+        for (Favorite eintrag : laufend) {
+            if (eintrag.watchpartyRaum().isEmpty()) privat.add(eintrag);
+            else gemeinsam.add(eintrag);
+        }
+        etwasGezeigt |= kachelReihe(page, "Weiterschauen", privat, Bibliothek.WEITERSCHAUEN, 8);
+        etwasGezeigt |= kachelReihe(page, "Gemeinsam weiterschauen", gemeinsam, Bibliothek.WEITERSCHAUEN, 8);
+        etwasGezeigt |= kachelReihe(page, Bibliothek.WATCHLIST.titel,
+            bestand.watchlist(), Bibliothek.WATCHLIST, 12);
+        etwasGezeigt |= kachelReihe(page, Bibliothek.MEDIATHEK.titel,
+            bestand.mediathek(), Bibliothek.MEDIATHEK, 12);
         if (!etwasGezeigt) {
             addSpacing(page, MobileViews.sectionHeader(this, "Weiterschauen", null, null),
                 MobileViews.SECTION_GAP);
@@ -1565,23 +1731,760 @@ public class MainActivity extends Activity {
                 "Öffne einen Anbieter und sieh dir etwas an. ELFIX merkt sich die Folge und "
                     + "die Stelle und schlägt sie dir hier wieder vor.", null, null), MobileViews.ITEM_GAP);
         }
+
+        vorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
+        vorschlagsReihe(page, Empfehlungen.FUER_DICH, "Empfohlen für dich",
+            "Neu berechnen", () -> {
+                empfehlungen.neuBerechnen();
+                showToast("Empfehlungen werden neu berechnet");
+            });
+        vorschlagsReihe(page, Empfehlungen.ANIME, "Anime für dich", "Mehr anzeigen",
+            () -> zeigeEntdeckung(Empfehlungen.ANIME));
+        vorschlagsReihe(page, Empfehlungen.SERIE, "Serien für dich", "Mehr anzeigen",
+            () -> zeigeEntdeckung(Empfehlungen.SERIE));
+        vorschlagsReihe(page, Empfehlungen.FILM, "Filme für dich", "Mehr anzeigen",
+            () -> zeigeEntdeckung(Empfehlungen.FILM));
+    }
+
+    /* ------------------------------------------------- Der Titelhintergrund */
+
+    /**
+     * Den Titelhintergrund zeichnen - und nur ihn.
+     *
+     * <p>Der Punkt dieser Methode ist, was sie <em>nicht</em> tut: die Seite
+     * neu bauen. Er wechselt alle fuenfzehn Sekunden durch die zuletzt
+     * geschauten Titel, und jedes Mal die ganze Startseite neu aufzubauen hiesse
+     * jedes Mal die Scrollposition zu verlieren, jedes Bild neu anzufordern und
+     * die Empfehlungsreihen erneut zu befragen.
+     */
+    private void heroZeichnen() {
+        if (heroPlatz == null) return;
+        heroPlatz.removeAllViews();
+        Favorite eintrag = heroEintraege.isEmpty() ? null
+            : heroEintraege.get(Math.min(heroStelle, heroEintraege.size() - 1));
+
+        View kasten;
+        if (eintrag != null) {
+            String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            if (titel.isEmpty()) titel = "Titel";
+            String unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
+                    ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText(),
+                eintrag.providerName(), eintrag.standText());
+            kasten = MobileViews.hero(this, "Fortsetzen", titel, unterzeile, eintrag.bild(),
+                eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent(),
+                "Weiter schauen", () -> openFavorite(eintrag),
+                // Am Rechner steht hier "Details", und der Knopf tut dasselbe
+                // wie der daneben. Zwei gleiche Knoepfe nebeneinander sind auf
+                // einem Telefon verschenkte Daumenbreite - dieser fuehrt
+                // deshalb dorthin, wo alles Angefangene steht.
+                "Meine Liste", () -> zeigeBibliothek(Bibliothek.WEITERSCHAUEN));
+        } else if (!providers.isEmpty()) {
+            Provider erster = activeProvider != null ? activeProvider : providers.get(0);
+            kasten = MobileViews.hero(this, "ELFIX", "Was möchtest du ansehen?",
+                "Wähle einen Anbieter oder durchsuche alle auf einmal.", "", 0,
+                erster.name + " öffnen",
+                () -> openProvider(erster, erster.lastUrl.isEmpty() ? erster.startUrl : erster.lastUrl),
+                "Suchen", () -> showGlobalSearch(""));
+        } else {
+            kasten = MobileViews.hero(this, "ELFIX", "Noch keine Anbieter",
+                "Ohne Anbieter gibt es nichts zu zeigen.", "", 0,
+                "Einstellungen öffnen", this::showSettings, null, null);
+        }
+        // Mindesthoehe statt fester Hoehe, und nur wo es ein Bild zu zeigen
+        // gibt. Der Textblock sitzt unten im Kasten; braucht er einmal mehr
+        // Platz - ein zweizeiliger Titel, eine lange Zeile mit Folge, Anbieter
+        // und Stand -, waechst der Kasten mit, statt oben abzuschneiden.
+        //
+        // Ohne Eintrag gibt es kein Bild, und dann waere die Mindesthoehe
+        // nichts als eine leere Flaeche ueber der Schrift: beim ersten Start
+        // stand ein Drittel des Bildschirms leer, bevor ueberhaupt etwas kam.
+        if (eintrag != null) kasten.setMinimumHeight(dp(heroHoeheDp()));
+        heroPlatz.addView(kasten, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        if (heroPunkte == null) return;
+        heroPunkte.removeAllViews();
+        heroPunkte.setVisibility(heroEintraege.size() > 1 ? View.VISIBLE : View.GONE);
+        if (heroEintraege.size() > 1) {
+            heroPunkte.addView(MobileViews.heroPunkte(this, heroEintraege.size(), heroStelle,
+                stelle -> {
+                    heroStelle = stelle;
+                    heroZeichnen();
+                    // Von Hand gewaehlt heisst: hier ist gerade Aufmerksamkeit.
+                    // Die Uhr faengt von vorn an, damit nicht eine Sekunde
+                    // spaeter weitergedreht wird.
+                    heroWechselPlanen();
+                }));
+        }
     }
 
     /**
-     * Eine Reihe der Startseite.
+     * Wie hoch der Titelhintergrund sein darf.
+     *
+     * <p>Im Hochformat ein gutes Drittel des Bildschirms - genug fuer ein Bild,
+     * das als Bild wirkt, und wenig genug, dass die erste Reihe darunter noch
+     * anfaengt. Im Querformat waere dasselbe Mass die ganze Hoehe, deshalb dort
+     * deutlich flacher.
+     */
+    private int heroHoeheDp() {
+        Configuration config = getResources().getConfiguration();
+        int hoehe = config.screenHeightDp;
+        if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            return Math.max(170, Math.min(230, Math.round(hoehe * 0.55f)));
+        }
+        return Math.max(230, Math.min(360, Math.round(hoehe * 0.38f)));
+    }
+
+    /**
+     * Der Takt, in dem der Titelhintergrund weiterwechselt.
+     *
+     * <p>Dieselben fuenfzehn Sekunden wie am Rechner. Er laeuft nur, solange die
+     * Startseite wirklich zu sehen ist: ein Wechsel hinter einer offenen
+     * Anbieterseite kostet Strom und aendert nichts.
+     */
+    private void heroWechselPlanen() {
+        takt.removeCallbacksAndMessages(null);
+        if (heroEintraege.size() < 2) return;
+        takt.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!"home".equals(currentScreen) || fullscreenView != null || heroPlatz == null) return;
+                if (heroEintraege.size() < 2) return;
+                heroStelle = (heroStelle + 1) % heroEintraege.size();
+                heroZeichnen();
+                takt.postDelayed(this, HERO_TAKT_MS);
+            }
+        }, HERO_TAKT_MS);
+    }
+
+    /** Aus mehreren Angaben eine Zeile machen - leere fallen weg. */
+    private static String zusammen(String... teile) {
+        StringBuilder text = new StringBuilder();
+        for (String teil : teile) {
+            if (teil == null || teil.isEmpty()) continue;
+            if (text.length() > 0) text.append("  ·  ");
+            text.append(teil);
+        }
+        return text.toString();
+    }
+
+    /* -------------------------------------------------------- Die Reihen */
+
+    /**
+     * Eine waagerechte Reihe in die Seite haengen.
+     *
+     * <p>Mit negativem Rand, und der ist Absicht: die Seite hat links und
+     * rechts sechzehn Pixel Rand, die Reihe soll aber bis an den Bildschirmrand
+     * laufen. Sonst endete die letzte sichtbare Kachel an einer Kante, und
+     * nichts deutete darauf hin, dass dahinter noch etwas kommt.
+     */
+    private void reiheAnhaengen(LinearLayout page, View reihe, int obenDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(obenDp);
+        params.leftMargin = -dp(MobileViews.SCREEN_PADDING);
+        params.rightMargin = -dp(MobileViews.SCREEN_PADDING);
+        page.addView(reihe, params);
+    }
+
+    /**
+     * Wie breit eine Kachel ist.
+     *
+     * <p>Gerechnet statt festgelegt: auf einem schmalen Telefon sollen zweieinhalb
+     * Kacheln zu sehen sein, auf einem breiten mehr - die halbe Kachel am Rand
+     * ist das, was sagt, dass die Reihe weitergeht. Eine feste Breite waere auf
+     * dem einen Geraet zu gross und auf dem anderen verschenkter Platz.
+     */
+    private int kachelBreiteDp() {
+        int breite = getResources().getConfiguration().screenWidthDp;
+        return Math.max(104, Math.min(170, Math.round((breite - 2f * MobileViews.SCREEN_PADDING) / 2.6f)));
+    }
+
+    /**
+     * Eine Reihe aus Eintraegen der Ablage.
      *
      * @return ob sie ueberhaupt etwas zu zeigen hatte
      */
-    private boolean startseitenReihe(LinearLayout page, Bibliothek liste, int hoechstens) {
-        List<Favorite> eintraege = liste.eintraege(bestand);
+    private boolean kachelReihe(LinearLayout page, String titel, List<Favorite> eintraege,
+                                Bibliothek liste, int hoechstens) {
         if (eintraege.isEmpty()) return false;
-        addSpacing(page, MobileViews.sectionHeader(this, liste.titel, "Alle anzeigen",
+        addSpacing(page, MobileViews.sectionHeader(this, titel, "Alle anzeigen",
             () -> zeigeBibliothek(liste)), MobileViews.SECTION_GAP);
-        int gezeigt = Math.min(hoechstens, eintraege.size());
-        for (int i = 0; i < gezeigt; i += 1) {
-            addSpacing(page, eintragsKarte(eintraege.get(i), liste), MobileViews.ITEM_GAP);
+
+        int breite = kachelBreiteDp();
+        ArrayList<View> karten = new ArrayList<>();
+        for (int i = 0; i < Math.min(hoechstens, eintraege.size()); i += 1) {
+            Favorite eintrag = eintraege.get(i);
+            String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            if (name.isEmpty()) name = "Titel";
+            String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen"
+                : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
+                : eintrag.folgenText();
+            karten.add(MobileViews.kachel(this, providerForFavorite(eintrag), name, hinweis,
+                eintrag.bild(), liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
+                    ? eintrag.fortschrittProzent() : 0,
+                "", breite,
+                () -> openFavorite(eintrag),
+                anker -> eintragsMenue(anker, eintrag, liste)));
         }
+        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
         return true;
+    }
+
+    /**
+     * Die Reihe "Neue Folgen".
+     *
+     * <p>Sie steht ganz oben, weil sie das einzige ist, was von selbst dazukommt:
+     * eine Serie, die man durch hatte, hat Nachschub bekommen. Am Rechner
+     * dieselbe Reihe an derselben Stelle.
+     */
+    private boolean neueFolgenReihe(LinearLayout page) {
+        ArrayList<Favorite> neue = new ArrayList<>();
+        for (Favorite eintrag : bestand.alle()) {
+            if (!eintrag.neueFolgeAm().isEmpty()) neue.add(eintrag);
+        }
+        if (neue.isEmpty()) return false;
+        java.util.Collections.sort(neue,
+            java.util.Comparator.comparing(Favorite::neueFolgeAm).reversed());
+
+        addSpacing(page, MobileViews.sectionHeader(this, "Neue Folgen", "Alle anzeigen",
+            () -> zeigeBibliothek(Bibliothek.WATCHLIST)), MobileViews.SECTION_GAP);
+        int breite = kachelBreiteDp();
+        ArrayList<View> karten = new ArrayList<>();
+        for (int i = 0; i < Math.min(8, neue.size()); i += 1) {
+            Favorite eintrag = neue.get(i);
+            String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            if (name.isEmpty()) name = "Titel";
+            karten.add(MobileViews.kachel(this, providerForFavorite(eintrag), name,
+                eintrag.providerName(), eintrag.bild(), 0, eintrag.neueFolgeText(), breite,
+                () -> openFavorite(eintrag),
+                anker -> eintragsMenue(anker, eintrag, Bibliothek.WATCHLIST)));
+        }
+        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+        return true;
+    }
+
+    /* --------------------------------------------------------- Vorschlaege */
+
+    /**
+     * Anbieter und Ablage an den Empfehlungslauf melden.
+     *
+     * <p>Bei jedem Zeichnen, und das ist billig: gerechnet wird davon nichts.
+     * Der Lauf entscheidet selbst, ob sich genug geaendert hat, um neu zu
+     * rechnen - genau wie am Rechner.
+     */
+    private void empfehlungenNachfuehren() {
+        if (empfehlungen == null) return;
+        empfehlungen.standSetzen(providers, bestand.roh());
+    }
+
+    /**
+     * Eine Vorschlagsreihe.
+     *
+     * <p>Sie steht auch da, wenn noch nichts geholt ist - dann als Skelett. Der
+     * Grund ist derselbe wie am Rechner: die Reihe braucht beim ersten Mal ein
+     * paar Sekunden, und eine Seite, die waehrenddessen ohne sie auskommt und
+     * sie danach dazwischenschiebt, springt unter dem Finger.
+     *
+     * <p>Vier Zustaende, und jeder sagt etwas anderes:
+     * gefuellt, wird geholt, geht nicht, und "dazu gibt es nichts". Der letzte
+     * ist der einzige, in dem die Reihe ganz verschwindet - eine Ueberschrift
+     * ueber nichts ist schlimmer als eine fehlende Reihe.
+     *
+     * @param aktion Beschriftung des Knopfs rechts, {@code null} laesst ihn weg
+     */
+    private void vorschlagsReihe(LinearLayout page, String schluessel, String titel,
+                                 String aktion, Runnable beiAktion) {
+        if (empfehlungen == null) return;
+        int breite = kachelBreiteDp();
+
+        // Der Lauf ist gar nicht erst hochgekommen. Das einmal sagen, nicht
+        // fuenfmal - deshalb nur bei der ersten Reihe.
+        if (!empfehlungen.istBereit() && !empfehlungen.startFehler().isEmpty()) {
+            if (!Empfehlungen.NEUES.equals(schluessel)) return;
+            addSpacing(page, MobileViews.sectionHeader(this, "Vorschläge", null, null),
+                MobileViews.SECTION_GAP);
+            addSpacing(page, MobileViews.hinweis(this,
+                "Die Vorschläge konnten nicht vorbereitet werden. Ohne sie funktioniert alles "
+                    + "Übrige weiter.", "Erneut versuchen",
+                () -> {
+                    empfehlungen.erneutStarten(watchparty == null ? "" : watchparty.serverUrl());
+                    showToast("Vorschläge werden erneut vorbereitet");
+                }), MobileViews.ITEM_GAP);
+            return;
+        }
+
+        int anzahl = Empfehlungen.NEUES.equals(schluessel) ? 6 : 20;
+        empfehlungen.anfordern(schluessel, anzahl);
+
+        List<JSONObject> eintraege = empfehlungen.eintraege(schluessel);
+        String fehler = empfehlungen.fehler(schluessel);
+        // Fertig geholt, kein Fehler und trotzdem leer heisst: dazu gibt es
+        // gerade nichts. Dann steht die Reihe gar nicht erst da.
+        if (eintraege.isEmpty() && fehler.isEmpty()
+            && empfehlungen.geladen(schluessel) && !empfehlungen.laedt(schluessel)) {
+            return;
+        }
+
+        addSpacing(page, MobileViews.sectionHeader(this, titel,
+            eintraege.isEmpty() ? null : aktion, beiAktion), MobileViews.SECTION_GAP);
+
+        if (!fehler.isEmpty() && eintraege.isEmpty()) {
+            addSpacing(page, MobileViews.hinweis(this,
+                "Diese Vorschläge konnten nicht geladen werden.", "Erneut versuchen",
+                () -> {
+                    empfehlungen.erneutVersuchen(schluessel);
+                    if ("home".equals(currentScreen)) empfehlungenGeaendert();
+                }), MobileViews.ITEM_GAP);
+            return;
+        }
+        if (eintraege.isEmpty()) {
+            reiheAnhaengen(page, MobileViews.reihenSkelett(this, breite, 5), MobileViews.ITEM_GAP);
+            return;
+        }
+
+        ArrayList<View> karten = new ArrayList<>();
+        for (JSONObject item : eintraege) karten.add(vorschlagsKarte(item, breite, null));
+        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+    }
+
+    /** Eine einzelne Vorschlagskarte - in der Reihe wie im Raster dieselbe. */
+    private View vorschlagsKarte(JSONObject item, int breiteDp, Bilder.Sichtfenster fenster) {
+        String titel = item.optString("title", "");
+        if (titel.isEmpty()) titel = "Titel";
+        String grund = item.optString("grundText", "");
+        // Das Erscheinungsdatum sagt mehr als der Anbietername - aber nur, wenn
+        // es eines gibt. Sonst bleibt der Anbieter, damit die Zeile nicht leer
+        // ist und die Karten unterschiedlich hoch werden.
+        String datum = erscheinungsdatum(item.optString("releasedAt", ""));
+        String zusatz = datum.isEmpty() ? item.optString("providerName", "") : datum;
+        return MobileViews.vorschlag(this, providerMitId(item.optString("providerId", "")),
+            titel, grund, zusatz, item.optString("image", ""), breiteDp, fenster,
+            () -> vorschlagOeffnen(item),
+            anker -> vorschlagsMenue(anker, item));
+    }
+
+    /**
+     * Ein Erscheinungsdatum in Worten.
+     *
+     * <p>Dieselbe Form wie am Rechner ({@code erscheinungsdatum} in
+     * renderer.js): ein Datum in der Zukunft bekommt ein "Ab" davor, denn
+     * "3. Mai 2027" allein liest sich, als waere es schon da.
+     */
+    private static final String[] MONATE = {"Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember"};
+
+    static String erscheinungsdatum(String wert) {
+        String[] teile = (wert == null ? "" : wert).split("-");
+        if (teile.length != 3) return "";
+        try {
+            int jahr = Integer.parseInt(teile[0]);
+            int monat = Integer.parseInt(teile[1]);
+            int tag = Integer.parseInt(teile[2].substring(0, Math.min(2, teile[2].length())));
+            if (monat < 1 || monat > 12) return "";
+            String lesbar = tag + ". " + MONATE[monat - 1] + " " + jahr;
+            java.time.LocalDate datum = java.time.LocalDate.of(jahr, monat, tag);
+            return datum.isAfter(java.time.LocalDate.now()) ? "Ab " + lesbar : lesbar;
+        } catch (Exception fehler) {
+            return "";
+        }
+    }
+
+    private Provider providerMitId(String id) {
+        for (Provider provider : providers) {
+            if (provider.id.equals(id)) return provider;
+        }
+        return null;
+    }
+
+    /**
+     * Einen Vorschlag oeffnen.
+     *
+     * <p>Und dabei melden, dass er geoeffnet wurde: wer einen Vorschlag
+     * annimmt, hat ihn nicht ignoriert, und seine Muedigkeitszaehlung faengt von
+     * vorn an. Am Rechner haengt dieselbe Meldung an {@code did-navigate}.
+     */
+    private void vorschlagOeffnen(JSONObject item) {
+        String url = item.optString("url", "");
+        if (url.isEmpty()) return;
+        Provider provider = providerMitId(item.optString("providerId", ""));
+        if (provider == null && !providers.isEmpty()) provider = providers.get(0);
+        if (provider == null) return;
+        if (empfehlungen != null) {
+            empfehlungen.geoeffnet(url, item.optString("title", ""), "");
+        }
+        openProvider(provider, url);
+    }
+
+    /**
+     * Was sich mit einem Vorschlag anstellen laesst, ohne ihn zu oeffnen.
+     *
+     * <p>Dieselben zwei Moeglichkeiten wie am Rechner: vormerken und abhaken.
+     * Ohne sie fuehrte jeder Weg zu einem Titel ueber die Anbieterseite - auch
+     * der, an dessen Ende "kenne ich schon" steht.
+     *
+     * <p>Ein Vorschlag ohne eigene Adresse (er fuehrt nur zur Suche des
+     * Anbieters) bekommt kein Menue: angelegt wuerde sonst die Suchadresse.
+     */
+    private void vorschlagsMenue(View anker, JSONObject item) {
+        String url = item.optString("url", "");
+        String titel = item.optString("title", "");
+        Provider provider = providerMitId(item.optString("providerId", ""));
+        if (url.isEmpty() || provider == null || item.optBoolean("viaSearch", false)) return;
+
+        android.widget.PopupMenu menue = new android.widget.PopupMenu(this, anker, Gravity.END);
+        java.util.ArrayList<Runnable> aktionen = new java.util.ArrayList<>();
+        Favorite vorhanden = bestand.zuAdresse(url);
+
+        menue.getMenu().add("Öffnen");
+        aktionen.add(() -> vorschlagOeffnen(item));
+
+        if (vorhanden == null || !vorhanden.istWatchlist()) {
+            menue.getMenu().add("Auf die Watchlist");
+            aktionen.add(() -> vorschlagVormerken(provider, item, false));
+        }
+        menue.getMenu().add("Als gesehen abhaken");
+        aktionen.add(() -> frage("Als gesehen abhaken?",
+            "„" + (titel.isEmpty() ? "Dieser Titel" : titel) + "“ wandert in die Mediathek, ohne "
+                + "dass du ihn vorher öffnen musst. Er taucht danach nicht mehr in Vorschlägen auf.",
+            () -> vorschlagVormerken(provider, item, true)));
+
+        menue.setOnMenuItemClickListener(punkt -> {
+            for (int i = 0; i < menue.getMenu().size(); i += 1) {
+                if (menue.getMenu().getItem(i) == punkt) {
+                    aktionen.get(i).run();
+                    return true;
+                }
+            }
+            return false;
+        });
+        menue.show();
+    }
+
+    /**
+     * Einen Vorschlag anlegen - vorgemerkt oder gleich abgehakt.
+     *
+     * <p>Angelegt wird ueber dieselbe geteilte Regel wie jeder erschaute
+     * Eintrag. Ein hier zusammengesetztes Objekt haette spaetestens beim
+     * Geraeteabgleich gefehlt, weil ihm die halben Felder fehlten.
+     */
+    private void vorschlagVormerken(Provider provider, JSONObject item, boolean abhaken) {
+        String url = item.optString("url", "");
+        String titel = item.optString("title", "");
+        JSONObject meta = new JSONObject();
+        try {
+            if (!titel.isEmpty()) meta.put("title", titel);
+            String bild = item.optString("image", "");
+            if (!bild.isEmpty()) meta.put("thumbnail", bild);
+            meta.put("vonHand", true);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Vorschlag nicht uebernommen", fehler);
+            return;
+        }
+        bestand.anlegenUndMerken(provider, url, meta, () -> {
+            if (!abhaken) {
+                showToast("Zur Watchlist hinzugefügt");
+                return;
+            }
+            // Die Regel meldet zurueck, welcher Eintrag es geworden ist -
+            // verlaesslicher als ein zweiter Abgleich ueber die Adresse, denn
+            // sie normalisiert sie unterwegs.
+            Favorite angelegt = bestand.mitId(bestand.aktiverEintragId());
+            if (angelegt == null) angelegt = bestand.zuAdresse(url);
+            if (angelegt == null) {
+                showToast("Konnte nicht abgehakt werden");
+                return;
+            }
+            bestand.alsAbgeschlossenMarkieren(angelegt.id());
+            showToast("In die Mediathek verschoben");
+        });
+    }
+
+    /* ------------------------------------------------- Die Entdeckungsseite */
+
+    /**
+     * "Mehr anzeigen" - je Art eine eigene Seite, die beim Scrollen nachlaedt.
+     *
+     * <p>Der Zustand je Art ueberdauert das Verlassen der Seite. Wer einen
+     * Titel oeffnet und zurueckkommt, steht wieder dort, wo er war, statt
+     * hundertfuenfzig Karten noch einmal zu laden - dieselbe Ueberlegung wie am
+     * Rechner.
+     */
+    private void zeigeEntdeckung(String art) {
+        entdeckungArt = art;
+        currentScreen = "entdeckung";
+        mouseMode = false;
+        setMouseCursorVisible(false);
+        setChromeCollapsed(false, false);
+        takt.removeCallbacksAndMessages(null);
+        content.removeAllViews();
+        updateBottomNav();
+        renderEntdeckung();
+    }
+
+    /** Ueberschrift und Erklaerung je Art - dieselben Saetze wie am Rechner. */
+    private static String entdeckungsTitel(String art) {
+        if (Empfehlungen.ANIME.equals(art)) return "Anime für dich";
+        if (Empfehlungen.FILM.equals(art)) return "Filme für dich";
+        return "Serien für dich";
+    }
+
+    private static String entdeckungsText(String art) {
+        if (Empfehlungen.ANIME.equals(art)) {
+            return "Aus deinem Verlauf, deiner Watchlist und dem, was AniList über deine Anime weiß.";
+        }
+        if (Empfehlungen.FILM.equals(art)) {
+            return "Aus deinem Verlauf, deiner Watchlist und dem, was TMDB über deine Filme weiß.";
+        }
+        return "Aus deinem Verlauf, deiner Watchlist und dem, was TMDB über deine Serien weiß.";
+    }
+
+    private Entdeckung entdeckungsZustand() {
+        Entdeckung zustand = entdeckungen.get(entdeckungArt);
+        if (zustand == null) {
+            zustand = new Entdeckung();
+            entdeckungen.put(entdeckungArt, zustand);
+        }
+        return zustand;
+    }
+
+    private void renderEntdeckung() {
+        LinearLayout page = mobilePage();
+        Entdeckung zustand = entdeckungsZustand();
+        // Die Bilder der vorigen Ansicht sind weg - ihre Ansichten auch.
+        entdeckungBilder = new Bilder.Sichtfenster();
+
+        LinearLayout kopf = new LinearLayout(this);
+        kopf.setOrientation(LinearLayout.HORIZONTAL);
+        kopf.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView zurueck = MobileViews.iconButton(this, R.drawable.ic_arrow_back, this::showHome);
+        zurueck.setContentDescription("Zurück zur Startseite");
+        kopf.addView(zurueck, new LinearLayout.LayoutParams(
+            dp(MobileViews.TOUCH_TARGET), dp(MobileViews.TOUCH_TARGET)));
+        TextView marke = MobileViews.eyebrow(this, "Für dich");
+        marke.setPadding(dp(6), 0, 0, 0);
+        kopf.addView(marke);
+        page.addView(kopf);
+
+        page.addView(MobileViews.heroTitle(this, entdeckungsTitel(entdeckungArt)));
+        TextView erklaerung = MobileViews.subtitle(this, entdeckungsText(entdeckungArt));
+        erklaerung.setMaxLines(3);
+        page.addView(erklaerung);
+
+        entdeckungRaster = new LinearLayout(this);
+        entdeckungRaster.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, entdeckungRaster, MobileViews.SECTION_GAP);
+
+        entdeckungFuss = new LinearLayout(this);
+        entdeckungFuss.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, entdeckungFuss, 4);
+
+        entdeckungKartenAnhaengen(0);
+        entdeckungFussZeichnen();
+
+        // Der Horcher haengt an der ScrollView selbst und nicht am
+        // ViewTreeObserver: der gehoert dem Fenster, und ein dort angemeldeter
+        // Horcher bliebe nach dem Verlassen der Seite haengen. Nach drei
+        // Besuchen liefen drei davon bei jedem Scrollschritt mit.
+        ScrollView scroll = seitenScroll;
+        scroll.setOnScrollChangeListener((ansicht, x, y, altX, altY) -> {
+            if (!"entdeckung".equals(currentScreen) || seitenScroll != scroll) return;
+            zustand.scroll = y;
+            if (entdeckungBilder != null) entdeckungBilder.pruefen(scroll);
+            entdeckungNachfassen();
+        });
+        // Erst zeichnen lassen, dann die Position wiederherstellen: vorher hat
+        // die Seite noch keine Hoehe, und jedes Zuruecksetzen liefe ins Leere.
+        scroll.post(() -> {
+            if (zustand.scroll > 0) scroll.scrollTo(0, zustand.scroll);
+            if (entdeckungBilder != null) entdeckungBilder.pruefen(scroll, true);
+            // Wer zurueckkommt und dabei am Ende stand, soll nicht warten, bis
+            // er einmal gescrollt hat.
+            if (zustand.eintraege.isEmpty()) entdeckungLaden();
+            else entdeckungNachfassen();
+        });
+    }
+
+    /** Wie viele Karten nebeneinander stehen - zwei auf dem Telefon, mehr auf breiten Geraeten. */
+    private int entdeckungsSpalten() {
+        int breite = getResources().getConfiguration().screenWidthDp;
+        if (breite >= 840) return 4;
+        return breite >= 600 ? 3 : 2;
+    }
+
+    /**
+     * Die neuen Karten anhaengen.
+     *
+     * <p>Nur die neuen: die Liste waechst ausschliesslich am Ende, und ein
+     * vollstaendiger Neuaufbau wuerde bei mehreren hundert Karten ruckeln und
+     * nebenbei die Scrollposition verlieren. Dieselbe Ueberlegung wie in
+     * {@code renderDiscovery} am Rechner.
+     */
+    private void entdeckungKartenAnhaengen(int abStelle) {
+        if (entdeckungRaster == null) return;
+        Entdeckung zustand = entdeckungsZustand();
+        int spalten = entdeckungsSpalten();
+        int abstand = dp(MobileViews.ITEM_GAP);
+        int breite = Math.round((getResources().getConfiguration().screenWidthDp
+            - 2f * MobileViews.SCREEN_PADDING - (spalten - 1f) * MobileViews.ITEM_GAP) / spalten);
+
+        // Die letzte Zeile kann halb gefuellt sein. Sie wird dann noch einmal
+        // gebaut, damit die naechsten Karten in ihre Luecken kommen statt in
+        // eine neue Zeile.
+        int vollstaendig = (abStelle / spalten) * spalten;
+        while (entdeckungRaster.getChildCount() > vollstaendig / spalten) {
+            entdeckungRaster.removeViewAt(entdeckungRaster.getChildCount() - 1);
+        }
+
+        for (int start = vollstaendig; start < zustand.eintraege.size(); start += spalten) {
+            LinearLayout zeile = new LinearLayout(this);
+            zeile.setOrientation(LinearLayout.HORIZONTAL);
+            for (int spalte = 0; spalte < spalten; spalte += 1) {
+                int stelle = start + spalte;
+                LinearLayout.LayoutParams zelle = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+                if (spalte > 0) zelle.leftMargin = abstand;
+                if (stelle < zustand.eintraege.size()) {
+                    zeile.addView(vorschlagsKarte(zustand.eintraege.get(stelle), breite,
+                        entdeckungBilder), zelle);
+                } else {
+                    // Ein Platzhalter mit Hoehe 0: eine nackte View liefert bei
+                    // WRAP_CONTENT die volle erlaubte Hoehe und schoebe alles
+                    // Weitere aus der Seite.
+                    LinearLayout.LayoutParams leer = new LinearLayout.LayoutParams(0, 0, 1);
+                    leer.leftMargin = zelle.leftMargin;
+                    zeile.addView(new android.widget.Space(this), leer);
+                }
+            }
+            LinearLayout.LayoutParams zeilenParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (entdeckungRaster.getChildCount() > 0) zeilenParams.topMargin = dp(18);
+            entdeckungRaster.addView(zeile, zeilenParams);
+        }
+    }
+
+    /**
+     * Der Fuss der Entdeckungsseite.
+     *
+     * <p>Er sagt in jeder Lage, woran man ist: wird geladen, wird noch gesucht,
+     * ist Schluss, oder ist etwas schiefgegangen. Die Unterscheidung zwischen
+     * "Schluss" und "wird noch gesucht" ist der Punkt - solange der Katalog
+     * nachgeholt wird, waere "das war alles" schlicht unwahr.
+     */
+    private void entdeckungFussZeichnen() {
+        if (entdeckungFuss == null) return;
+        Entdeckung zustand = entdeckungsZustand();
+        entdeckungFuss.removeAllViews();
+        if (zustand.laeuft) {
+            entdeckungFuss.addView(MobileViews.hinweis(this, zustand.eintraege.isEmpty()
+                ? "Vorschläge werden zusammengestellt …"
+                : "Weitere Vorschläge werden geladen …", null, null));
+            return;
+        }
+        if (!zustand.fehler.isEmpty()) {
+            entdeckungFuss.addView(MobileViews.hinweis(this,
+                "Weitere Empfehlungen konnten nicht geladen werden.",
+                "Erneut versuchen", () -> {
+                    entdeckungsZustand().fehler = "";
+                    entdeckungLaden();
+                }));
+            return;
+        }
+        if (zustand.waechst && !zustand.fertig) {
+            entdeckungFuss.addView(MobileViews.hinweis(this,
+                "Weitere Vorschläge werden gesucht …", null, null));
+            return;
+        }
+        if (zustand.fertig && !zustand.eintraege.isEmpty()) {
+            entdeckungFuss.addView(MobileViews.hinweis(this,
+                "Das war alles, was gerade dazu passt.", null, null));
+            return;
+        }
+        if (zustand.fertig && zustand.eintraege.isEmpty()) {
+            entdeckungFuss.addView(MobileViews.emptyState(this, R.drawable.ic_nav_favorite,
+                "Noch keine Vorschläge",
+                "ELFIX braucht ein paar angesehene Titel, bevor es etwas empfehlen kann."));
+        }
+    }
+
+    /**
+     * Nachsehen, ob noch Platz ist.
+     *
+     * <p>Ein Scrollhorcher allein reicht nicht: dreissig Karten fuellen einen
+     * Bildschirm samt Vorlauf nicht, es wird also gar nicht gescrollt, und ohne
+     * Scrollen faellt kein Ereignis. Deshalb wird nach jedem Stapel selbst
+     * nachgesehen. Die Schleife endet von allein - {@link #entdeckungLaden}
+     * steigt bei laufendem Abruf und am Ende sofort wieder aus.
+     */
+    private void entdeckungNachfassen() {
+        if (!"entdeckung".equals(currentScreen) || seitenScroll == null) return;
+        Entdeckung zustand = entdeckungsZustand();
+        if (zustand.laeuft || zustand.fertig || !zustand.fehler.isEmpty()) return;
+        View inhalt = seitenScroll.getChildAt(0);
+        if (inhalt == null) return;
+        int unten = inhalt.getHeight() - seitenScroll.getHeight() - seitenScroll.getScrollY();
+        if (unten <= dp(800)) entdeckungLaden();
+    }
+
+    /** Den naechsten Abschnitt holen. */
+    private void entdeckungLaden() {
+        if (empfehlungen == null) return;
+        String art = entdeckungArt;
+        Entdeckung zustand = entdeckungsZustand();
+        if (zustand.laeuft || zustand.fertig) return;
+        zustand.laeuft = true;
+        zustand.fehler = "";
+        entdeckungFussZeichnen();
+
+        empfehlungen.seite(art, zustand.versatz, ENTDECKUNG_STAPEL, (seite, fehler) -> {
+            zustand.laeuft = false;
+            if (fehler != null) {
+                zustand.fehler = fehler;
+            } else {
+                int vorher = zustand.eintraege.size();
+                for (int i = 0; i < seite.eintraege.length(); i += 1) {
+                    JSONObject item = seite.eintraege.optJSONObject(i);
+                    if (item == null) continue;
+                    // Derselbe Titel darf in einer Sitzung nur einmal
+                    // erscheinen. Die Liste bleibt zwischen zwei Abrufen
+                    // dieselbe, aber derselbe Film liegt bei mehreren
+                    // Anbietern - sicher ist sicher.
+                    String schluessel = item.optString("werkKey", item.optString("url", ""));
+                    if (schluessel.isEmpty() || !zustand.gesehen.add(schluessel)) continue;
+                    zustand.eintraege.add(item);
+                }
+                zustand.versatz += seite.eintraege.length();
+                zustand.waechst = seite.waechst;
+                zustand.fertig = seite.fertig;
+                boolean gewachsen = zustand.eintraege.size() > vorher;
+                if (gewachsen) zustand.versuche = 0;
+                if (!gewachsen && zustand.waechst && !zustand.fertig) {
+                    // Zwei Wartezeiten stecken dahinter: eine Neuberechnung ist
+                    // in gut zwei Sekunden da, ein Katalog-Nachschlag braucht
+                    // laenger. Also schnell zuerst fragen und dann nachlassen.
+                    zustand.versuche += 1;
+                    long warten = Math.min(8000, 1500 + zustand.versuche * 1500L);
+                    takt.postDelayed(() -> {
+                        if ("entdeckung".equals(currentScreen) && art.equals(entdeckungArt)) {
+                            entdeckungLaden();
+                        }
+                    }, warten);
+                }
+                if (art.equals(entdeckungArt) && "entdeckung".equals(currentScreen)) {
+                    entdeckungKartenAnhaengen(vorher);
+                }
+            }
+            if (!art.equals(entdeckungArt) || !"entdeckung".equals(currentScreen)) return;
+            entdeckungFussZeichnen();
+            // Erst zeichnen lassen, dann pruefen: vorher stehen die neuen
+            // Karten noch nicht im Layout.
+            if (seitenScroll != null) {
+                seitenScroll.post(() -> {
+                    if (entdeckungBilder != null) entdeckungBilder.pruefen(seitenScroll, true);
+                    entdeckungNachfassen();
+                });
+            }
+        });
     }
 
     /**
@@ -3618,6 +4521,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
+        // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
+        // Takt wieder auf.
+        takt.removeCallbacksAndMessages(null);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onPause();
     }
@@ -3630,6 +4537,9 @@ public class MainActivity extends Activity {
         if (geraete != null) geraete.abgleichenSpaeter(500);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onResume();
+        // Der Takt des Titelhintergrunds haengt an onPause. Steht die
+        // Startseite, laeuft er wieder los.
+        if ("home".equals(currentScreen)) heroWechselPlanen();
         if (fullscreenView != null) {
             applyFullscreenSystemUi();
         }
@@ -3638,6 +4548,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
+        takt.removeCallbacksAndMessages(null);
         if (messung != null) messung.anhalten();
         if (kern != null) kern.beenden();
         super.onDestroy();
@@ -3741,6 +4652,21 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Eine Empfehlungsreihe ist fertig geworden.
+     *
+     * <p>Nur die Startseite geht das etwas an - und auch die nur, wenn sie
+     * gerade zu sehen ist. Der Titelhintergrund behaelt dabei seine Stelle,
+     * und die Seite ihre Scrollposition: eine Reihe, die nach zehn Sekunden
+     * fertig wird, darf niemanden nach oben werfen.
+     */
+    private void empfehlungenGeaendert() {
+        if (!"home".equals(currentScreen)) return;
+        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+        showHome();
+        scrollStandHerstellen(stand);
+    }
+
+    /**
      * Die Seite wieder dorthin schieben, wo sie stand.
      *
      * <p>Ueber {@code scrollTo} und nicht {@code setScrollY}: die ScrollView
@@ -3790,6 +4716,12 @@ public class MainActivity extends Activity {
             return;
         }
         if (geraete != null && geraete.ereignis(name, nutzlastJson)) return;
+        // Der Empfehlungslauf hat bessere Daten bekommen und neu gerechnet.
+        // Was steht, bleibt stehen; beim naechsten Zeichnen wird gefragt.
+        if ("empfehlung.neu".equals(name) && empfehlungen != null) {
+            empfehlungen.kernMeldung();
+            return;
+        }
         Log.i(TAG, "Kern-Ereignis " + name + ": " + nutzlastJson);
     }
 

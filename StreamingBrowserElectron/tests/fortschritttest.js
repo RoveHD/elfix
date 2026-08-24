@@ -198,6 +198,76 @@ pruefe("Kurze Folgen koennen trotzdem enden",
 // Ab hier laeuft nicht mehr dieser Test, sondern der gemeinsame Pruefstand.
 // Er liest tests/fortschritt-proben.json, und genau diese Datei liegt auch im
 // Paket der Android-App. Stimmt hier alles und dort nicht, liegt es am Geraet
+// --- Von Hand vormerken -------------------------------------------------------
+//
+// Der zweite Weg in die Ablage, und lange der kaputte. Das Telefon hat dafuer
+// `medienStandVerbuchen` einen Mindeststand vorgetaeuscht (currentTime 0.1,
+// duration 1) - mit zwei Folgen: bei einer Serienuebersicht und bei jeder Folge
+// ausser der ersten legte die Regel gar nichts an, der Herz-Knopf tat also
+// nichts; und wo sie anlegte, trug der Eintrag zehn Prozent Fortschritt und
+// stand damit sofort auch in "Weiterschauen".
+{
+  const merken = (favoriten, url, angaben = {}) =>
+    fortschritt.vonHandAnlegen({ favoriten }, ANBIETER, url, angaben);
+
+  const uebersicht = merken([], SERIE, { title: "Naruto", thumbnail: "https://bild/p.jpg" });
+  pruefe("Eine Serienuebersicht laesst sich vormerken",
+    Boolean(uebersicht.eintrag) && uebersicht.neu === true,
+    "die Fortschrittsregel blockte hier, weil es keine Folge 1 ist");
+  pruefe("Und steht danach auf der Watchlist",
+    uebersicht.eintrag.favorite === true);
+  pruefe("Aber nicht in Weiterschauen",
+    uebersicht.eintrag.progress === 0
+    && fortschritt.hasContinueProgressRecord(uebersicht.eintrag) === false,
+    "vorgemerkt und angefangen sind zwei verschiedene Dinge");
+  pruefe("Titel und Bild kommen mit",
+    uebersicht.eintrag.title === "Naruto" && uebersicht.eintrag.thumbnail === "https://bild/p.jpg");
+
+  const spaeteFolge = merken([], folge(2, 5), { title: "Naruto" });
+  pruefe("Auch eine spaete Folge laesst sich vormerken",
+    Boolean(spaeteFolge.eintrag) && spaeteFolge.eintrag.season === 2 && spaeteFolge.eintrag.episode === 5,
+    "der haeufigste Fall, und genau der ging vorher nicht");
+
+  const zweimal = merken(uebersicht.favoriten, SERIE, { title: "Naruto" });
+  pruefe("Zweimal vormerken legt nichts doppelt an",
+    zweimal.favoriten.length === 1 && zweimal.neu === false && zweimal.schonDabei === true,
+    `${zweimal.favoriten.length} Eintrag(e)`);
+
+  // Ein abgehakter Titel, der wieder vorgemerkt wird: er darf nicht
+  // gleichzeitig in Watchlist und Mediathek stehen.
+  const abgehakt = [{
+    ...uebersicht.eintrag,
+    favorite: false,
+    completed: true,
+    completedManually: true,
+    completedAt: "2026-01-01T00:00:00.000Z",
+    hideFromContinueWatching: true
+  }];
+  const zurueck = merken(abgehakt, SERIE, { title: "Naruto" });
+  pruefe("Wieder vormerken holt aus der Mediathek zurueck",
+    zurueck.eintrag.favorite === true && zurueck.eintrag.completed === false
+    && zurueck.eintrag.completedManually === false && zurueck.eintrag.completedAt === "",
+    "sonst stuende der Titel gleichzeitig in beiden Listen");
+  pruefe("Und der Fortschritt bleibt, wo er war",
+    zurueck.eintrag.progress === abgehakt[0].progress);
+
+  pruefe("Ohne brauchbare Adresse entsteht nichts",
+    merken([], "keine-adresse", {}).eintrag === null);
+
+  // Dieselbe Serie, nur eine Folge davon: das ist kein zweiter Titel.
+  const gleicheSerie = merken(uebersicht.favoriten, folge(1, 1), { title: "Naruto" });
+  pruefe("Eine Folge derselben Serie legt keinen zweiten Eintrag an",
+    gleicheSerie.favoriten.length === 1 && gleicheSerie.neu === false,
+    `${gleicheSerie.favoriten.length} Eintrag(e)`);
+
+  // Der frisch Vorgemerkte steht vorn - er ist das Letzte, was jemand getan hat.
+  const zweiter = merken(uebersicht.favoriten,
+    "https://aniworld.to/anime/stream/one-piece", { title: "One Piece" });
+  pruefe("Der neue Eintrag steht vorn",
+    zweiter.favoriten[0] === zweiter.eintrag && zweiter.favoriten.length === 2,
+    `${zweiter.favoriten.length} Eintrag(e)`);
+}
+
 // und nicht an der Regel - das ist der Zweck der Aufteilung.
 {
   const pruefstand = require("../src/fortschritt-proben");

@@ -669,6 +669,9 @@ StreamingBrowserElectron/src/
   preload.js            Bruecke zwischen Oberflaeche und Hauptprozess
   discover.js           Auslesen der Anbieterseiten (Kacheln, Genres, Staffeln)
   taste.js              Geschmacksprofil fuer "Empfohlen fuer dich"
+  empfehlung.js         Die Bewertung: Profil, Punkte, Vielfalt, Erkundung
+  empfehlungslauf.js    Der Lauf drumherum - Kandidaten, Katalogtiefe,
+                        Entdeckungsseiten. Laeuft auch im Android-Kern.
   watchparty.js         Ein Raum: Verbindung, Mitglieder, Live-Steuerung
   watchparty-raeume.js  Mehrere Raeume nebeneinander
   fernbedienung.js      Handy als Fernbedienung: Verbindung und Kopplungscode
