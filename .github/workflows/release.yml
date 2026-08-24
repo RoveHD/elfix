@@ -84,19 +84,87 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
-      - name: Build debug APK
-        working-directory: android
-        run: .\gradlew.bat :app:assembleDebug
+      # Die Fassung kommt aus dem Tag und nicht aus build.gradle. Dort stand
+      # sie fest, also trug jede je gebaute APK dieselbe Nummer - und Android
+      # entscheidet an genau dieser Nummer, ob eine APK neuer ist.
+      #
+      # versionCode muss eine steigende ganze Zahl sein: 1.38.0 wird zu 13800.
+      # Damit bleibt die Reihenfolge erhalten, solange Neben- und Fehlerstand
+      # unter hundert bleiben.
+      - name: Fassung aus dem Tag ableiten
+        id: fassung
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          if ($tag -match '^v?(\d+)\.(\d+)\.(\d+)') {
+            $name = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+            $code = [int]$Matches[1] * 10000 + [int]$Matches[2] * 100 + [int]$Matches[3]
+          } else {
+            # Ein Lauf von Hand ohne Tag baut nur zur Probe. Die APK daraus
+            # wird nie veroeffentlicht (der Release-Schritt laeuft dann nicht) -
+            # sie soll sich aber auch nicht versehentlich ueber eine echte
+            # Installation legen koennen.
+            $name = "0.0.0"
+            $code = 1
+          }
+          "name=$name" >> $env:GITHUB_OUTPUT
+          "code=$code" >> $env:GITHUB_OUTPUT
+          Write-Host "Fassung $name (versionCode $code)"
 
+      # Ohne festen Schluessel gibt es kein Update: Gradle unterschreibt sonst
+      # mit einem debug.keystore, den jeder Runner neu und zufaellig anlegt -
+      # und Android verweigert ein Update ueber eine anders unterschriebene App.
+      - name: Unterschriftsschluessel auslegen
+        id: schluessel
+        shell: pwsh
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_BASE64)) {
+            Write-Host "::warning::Kein ANDROID_KEYSTORE_BASE64 hinterlegt - es wird nur eine Debug-APK gebaut. Sie laesst sich nicht als Update installieren."
+            "da=nein" >> $env:GITHUB_OUTPUT
+          } else {
+            $pfad = Join-Path $env:RUNNER_TEMP "elfix.jks"
+            [IO.File]::WriteAllBytes($pfad, [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+            "pfad=$pfad" >> $env:GITHUB_OUTPUT
+            "da=ja" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Build signed release APK
+        if: steps.schluessel.outputs.da == 'ja'
+        working-directory: android
+        env:
+          ELFIX_KEYSTORE: ${{ steps.schluessel.outputs.pfad }}
+          ELFIX_KEYSTORE_PASSWORT: ${{ secrets.ANDROID_KEYSTORE_PASSWORT }}
+          ELFIX_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ELFIX_KEY_PASSWORT: ${{ secrets.ANDROID_KEY_PASSWORT }}
+        run: .\gradlew.bat :app:assembleRelease "-PelfixFassung=${{ steps.fassung.outputs.name }}" "-PelfixFassungNummer=${{ steps.fassung.outputs.code }}"
+
+      - name: Build debug APK (ohne Schluessel)
+        if: steps.schluessel.outputs.da != 'ja'
+        working-directory: android
+        run: .\gradlew.bat :app:assembleDebug "-PelfixFassung=${{ steps.fassung.outputs.name }}" "-PelfixFassungNummer=${{ steps.fassung.outputs.code }}"
+
+      # Der Name traegt die Fassung. Die App sucht im Release nach dem Anhang,
+      # der auf .apk endet - der Name selbst ist ihr gleich, aber ein Mensch,
+      # der drei Dateien im Ordner liegen hat, will wissen, welche welche ist.
       - name: Prepare APK asset
         shell: pwsh
-        run: Copy-Item -LiteralPath android\app\build\outputs\apk\debug\app-debug.apk -Destination ELFIX-Android-debug.apk -Force
+        run: |
+          if ("${{ steps.schluessel.outputs.da }}" -eq "ja") {
+            $quelle = "android\app\build\outputs\apk\release\app-release.apk"
+            $ziel = "ELFIX-Android-${{ steps.fassung.outputs.name }}.apk"
+          } else {
+            $quelle = "android\app\build\outputs\apk\debug\app-debug.apk"
+            $ziel = "ELFIX-Android-${{ steps.fassung.outputs.name }}-debug.apk"
+          }
+          Copy-Item -LiteralPath $quelle -Destination $ziel -Force
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-release-assets
-          path: ELFIX-Android-debug.apk
+          path: ELFIX-Android-*.apk
 
   release:
     name: Publish GitHub release

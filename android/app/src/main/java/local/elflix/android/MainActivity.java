@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
     private Marken marken;
     private Qualitaet qualitaet;
     private Geraete geraete;
+    private Aktualisierung aktualisierung;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -277,6 +278,13 @@ public class MainActivity extends Activity {
                 kosmetik.einspielen(webViews.get(activeProvider.id), activeProvider);
             }
         });
+        // Sich selbst auf den neuesten Stand bringen. Haengt an keinem Kern und
+        // an keinem Anbieter - nur an der Leitung.
+        aktualisierung = new Aktualisierung(this, () -> {
+            if ("settings".equals(currentScreen)) showSettings();
+        });
+        aktualisierung.setzeFrager(this::neueFassungAnbieten);
+        aktualisierung.nachsehen(false);
         buildRoot();
         clearBrowserCachesPreservingLogin();
         cacheCleanupHandler.postDelayed(cacheCleanupTask, CACHE_CLEANUP_INTERVAL_MS);
@@ -1373,6 +1381,8 @@ public class MainActivity extends Activity {
             "Alles neu laden", this::reloadAllWebViews), TvViews.ITEM_GAP);
 
         geraeteEinstellungen(page, true);
+
+        addSpacing(page, aktualisierungsKarte(true), TvViews.ITEM_GAP);
     }
 
     private void renderTvSearch(String query) {
@@ -1766,6 +1776,8 @@ public class MainActivity extends Activity {
         addSpacing(page, settingsCard("Zwischenspeicher",
             "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
             "Alles neu laden", this::reloadAllWebViews), MobileViews.ITEM_GAP);
+
+        addSpacing(page, aktualisierungsKarte(false), MobileViews.ITEM_GAP);
     }
 
     /**
@@ -1959,6 +1971,102 @@ public class MainActivity extends Activity {
             .setNegativeButton("Abbrechen", null)
             .setPositiveButton("Ja", (dialog, welcher) -> beiJa.run())
             .show();
+    }
+
+    // --- Neue Fassungen ------------------------------------------------------
+
+    /**
+     * Die Karte in den Einstellungen - fuer Telefon und Fernseher dieselbe.
+     *
+     * <p>Sie sagt in jeder Lage, woran man ist: welche Fassung laeuft, ob
+     * nachgesehen wird, was geladen wird, was bereitliegt. Ein Knopf, der nur
+     * "Update" heisst und sonst nichts verraet, waere auf einem Geraet ohne
+     * Laden zu wenig.
+     */
+    private View aktualisierungsKarte(boolean fernseher) {
+        String eigene = aktualisierung == null ? "" : aktualisierung.eigeneFassung();
+        String laeuft = eigene.isEmpty() ? "" : "ELFIX " + eigene + " läuft hier. ";
+        Aktualisierung.Lage lage = aktualisierung == null
+            ? Aktualisierung.Lage.RUHT : aktualisierung.lage();
+
+        String text;
+        String knopf = "Nach neuer Fassung sehen";
+        Runnable beiKlick = () -> {
+            if (aktualisierung != null) aktualisierung.nachsehen(true);
+        };
+
+        switch (lage) {
+            case SUCHT:
+                text = laeuft + "Es wird nachgesehen …";
+                knopf = null;
+                beiKlick = null;
+                break;
+            case LAEDT:
+                text = laeuft + "ELFIX " + aktualisierung.neueFassung() + " wird geladen — "
+                    + aktualisierung.fortschritt() + " %.";
+                knopf = null;
+                beiKlick = null;
+                break;
+            case BEREIT:
+                text = laeuft + "ELFIX " + aktualisierung.neueFassung()
+                    + " liegt bereit. Dein Bestand bleibt dabei stehen — es wird "
+                    + "darüber installiert, nicht neu.";
+                knopf = "Jetzt installieren";
+                beiKlick = this::neueFassungInstallieren;
+                break;
+            case AKTUELL:
+                text = laeuft + "Das ist die neueste Fassung.";
+                break;
+            case FEHLER:
+                text = laeuft + "Nachsehen ging nicht: " + aktualisierung.fehler()
+                    + "\n\nOhne Leitung geht es nicht — es schadet aber auch nichts, "
+                    + "es später noch einmal zu versuchen.";
+                break;
+            default:
+                text = laeuft + "ELFIX kommt aus keinem Laden und sieht selbst nach neuen "
+                    + "Fassungen — beim Start, höchstens ein paar Mal am Tag.";
+                break;
+        }
+        return karte(fernseher, "ELFIX aktualisieren", text, knopf, beiKlick);
+    }
+
+    /**
+     * Die Frage, wenn eine Fassung geladen bereitliegt.
+     *
+     * <p>Genau einmal je Fassung. Wer "Später" sagt, findet sie in den
+     * Einstellungen wieder - noch einmal von selbst gefragt wird nicht.
+     */
+    private void neueFassungAnbieten(String fassung) {
+        if (isFinishing() || isDestroyed()) return;
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("ELFIX " + fassung + " ist da")
+            .setMessage("Geladen ist sie schon. Beim Installieren bleibt alles stehen, was hier "
+                + "steht — Mediathek, Verlauf und Einstellungen inbegriffen.")
+            .setNegativeButton("Später", (dialog, welcher) -> {
+                if (aktualisierung != null) aktualisierung.ueberspringen();
+            })
+            .setPositiveButton("Installieren", (dialog, welcher) -> neueFassungInstallieren())
+            .show();
+    }
+
+    /**
+     * Von hier an entscheidet das Betriebssystem.
+     *
+     * <p>Fehlt ELFIX die Erlaubnis, ueberhaupt zu fragen, schickt
+     * {@link Aktualisierung#installieren()} auf die Systemseite, auf der sie
+     * sich geben laesst. Deshalb steht hier ein Hinweis und keine Fehlermeldung:
+     * es ist nichts kaputt, es fehlt nur ein Haken.
+     */
+    private void neueFassungInstallieren() {
+        if (aktualisierung == null) return;
+        boolean darf = aktualisierung.darfInstallieren();
+        if (!aktualisierung.installieren()) {
+            showToast("Die geladene Fassung ist nicht mehr da — bitte noch einmal nachsehen");
+            return;
+        }
+        if (!darf) {
+            showToast("Erlaub ELFIX einmal, Apps zu installieren — danach hier noch einmal tippen");
+        }
     }
 
     private View mobileFavoriteCard(Favorite favorite) {

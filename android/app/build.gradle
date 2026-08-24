@@ -68,6 +68,38 @@ tasks.register("kernKopieren", Copy) {
     }
 }
 
+/*
+ * Die Fassung kommt von aussen, nicht aus dieser Datei.
+ *
+ * Solange sie hier stand, trug jede je gebaute APK dieselbe Nummer. Das faellt
+ * nicht auf, solange von Hand installiert wird - fuer ein Update ist es das
+ * Ende: Android entscheidet an `versionCode`, ob eine APK neuer ist, und die
+ * App kann an `versionName` gar nicht erst ablesen, ob es etwas Neueres gibt.
+ *
+ * Gesetzt wird beides beim Bauen aus dem Tag (siehe .github/workflows/release.yml).
+ * Die Werte hier sind nur der Rueckfall fuer den Bau von Hand.
+ */
+def fassungName = (project.findProperty("elfixFassung") ?: "0.0.0").toString()
+def fassungNummer = (project.findProperty("elfixFassungNummer") ?: "1").toString().toInteger()
+
+/*
+ * Der Schluessel, mit dem die APK unterschrieben wird.
+ *
+ * Bis hierher gab es keinen: der Workflow baute `assembleDebug`, und Gradle
+ * unterschreibt dann mit `~/.android/debug.keystore`. Den legt jede Maschine
+ * bei Bedarf selbst an - mit einem *zufaelligen* Schluessel. Auf einem
+ * GitHub-Runner, der nach jedem Lauf verschwindet, heisst das: jedes Release
+ * trug eine andere Unterschrift, und Android verweigert ein Update ueber eine
+ * anders unterschriebene App. Deshalb musste bisher jedes Mal deinstalliert
+ * werden - und mit dem Deinstallieren ging der ganze oertliche Bestand.
+ *
+ * Der Schluessel gehoert nicht ins Repository. Er kommt als Geheimnis herein;
+ * wer ihn nicht hat, kann keine APK bauen, die sich ueber eine bestehende
+ * legt.
+ */
+def schluesselDatei = System.getenv("ELFIX_KEYSTORE") ?: project.findProperty("elfixKeystore")
+def schluesselDa = schluesselDatei != null && new File(schluesselDatei.toString()).isFile()
+
 android {
     namespace "local.elflix.android"
     compileSdk 35
@@ -76,13 +108,55 @@ android {
         applicationId "local.elflix.android"
         minSdk 26
         targetSdk 35
-        versionCode 150
-        versionName "1.5.0"
+        versionCode fassungNummer
+        versionName fassungName
+    }
+
+    signingConfigs {
+        if (schluesselDa) {
+            elfix {
+                storeFile file(schluesselDatei.toString())
+                storePassword System.getenv("ELFIX_KEYSTORE_PASSWORT")
+                    ?: project.findProperty("elfixKeystorePasswort")
+                keyAlias System.getenv("ELFIX_KEY_ALIAS")
+                    ?: project.findProperty("elfixKeyAlias")
+                keyPassword System.getenv("ELFIX_KEY_PASSWORT")
+                    ?: project.findProperty("elfixKeyPasswort")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // Ohne Schluessel bleibt die APK unsigniert. Das ist kein stiller
+            // Rueckfall auf den Debug-Schluessel: eine unsignierte APK laesst
+            // sich gar nicht erst installieren und faellt sofort auf, waehrend
+            // eine falsch signierte erst beim naechsten Update auffiele.
+            if (schluesselDa) signingConfig signingConfigs.elfix
+            minifyEnabled false
+        }
     }
 
     sourceSets {
         main {
             assets.srcDirs += layout.buildDirectory.dir("kern-assets")
+        }
+    }
+}
+
+/*
+ * Eine Release-APK ohne Schluessel ist keine, die jemand installieren kann.
+ * Also lieber hier abbrechen als eine Datei ausliefern, an der es erst auf dem
+ * Telefon scheitert.
+ */
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    doFirst {
+        if (!schluesselDa) {
+            throw new GradleException(
+                "Kein Unterschriftsschluessel. Erwartet wird der Pfad zur Keystore-Datei in " +
+                "ELFIX_KEYSTORE (Umgebung) oder -PelfixKeystore=... . " +
+                "Ohne ihn laesst sich die APK nicht installieren und erst recht nicht aktualisieren. " +
+                "Fuer einen Bau zum Ausprobieren: assembleDebug.")
         }
     }
 }
@@ -128,4 +202,16 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.con
  */
 dependencies {
     implementation "androidx.webkit:webkit:1.12.1"
+    /*
+     * Fuer den FileProvider.
+     *
+     * Er kaeme ueber webkit ohnehin mit herein, aber eine Abhaengigkeit, auf
+     * die eine Zeile Code unmittelbar zugreift, gehoert hingeschrieben - sonst
+     * verschwindet sie mit dem naechsten Versionssprung von webkit.
+     *
+     * Gebraucht wird er genau einmal: um dem Paketinstaller die
+     * heruntergeladene APK zu reichen. Seit Android 7 geht das nicht mehr ueber
+     * einen file://-Verweis.
+     */
+    implementation "androidx.core:core:1.13.1"
 }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Welche Dateien ELFIX herausreichen darf.
+
+    Genau ein Weg, und der ist so eng wie moeglich: der Ordner, in den die
+    heruntergeladene APK gelegt wird. Der Paketinstaller ist eine fremde App
+    und kommt an eine Datei im Zwischenspeicher sonst nicht heran; ein
+    file://-Verweis waere seit Android 7 ohnehin ein Absturz.
+
+    Bewusst nicht der ganze Zwischenspeicher: dort liegt auch, was ELFIX beim
+    Schauen ablegt, und das geht keine andere App etwas an.
+-->
+<paths>
+    <cache-path name="fassungen" path="fassungen/" />
+</paths>

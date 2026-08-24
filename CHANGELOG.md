@@ -3,6 +3,42 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.39.0 — 24. August 2026
+
+Die APK aktualisiert sich jetzt selbst - und kann es zum ersten Mal ueberhaupt.
+
+- **Jede je gebaute APK trug eine andere Unterschrift.** Der Workflow baute
+  `assembleDebug`, und Gradle unterschreibt dann mit `~/.android/debug.keystore` -
+  den legt jede Maschine selbst an, mit einem *zufaelligen* Schluessel. Auf
+  einem GitHub-Runner, der nach jedem Lauf verschwindet, hiess das: Android
+  verweigerte jedes Update, und der einzige Weg war Deinstallieren - mitsamt
+  allem, was auf dem Geraet stand. Die APK wird jetzt mit einem festen
+  Schluessel unterschrieben, der als Geheimnis hereinkommt
+- **Und jede trug dieselbe Fassungsnummer** (`versionCode 150`, `versionName
+  1.5.0`), fest in `build.gradle`. Android entscheidet an genau dieser Nummer,
+  ob eine APK neuer ist, und die App konnte gar nicht ablesen, ob es etwas
+  Neueres gibt. Beides kommt jetzt aus dem Tag: `v1.39.0` wird zu `1.39.0` und
+  `versionCode 13900`
+- ELFIX sieht beim Start nach neuen Fassungen - hoechstens alle sechs Stunden -,
+  laedt sie im Hintergrund und fragt dann einmal. Wer „Spaeter" sagt, wird zu
+  dieser Fassung nicht noch einmal gefragt; sie bleibt in den Einstellungen
+  stehen
+- Installiert wird nie von allein. Das kann eine App auf Android auch nicht:
+  der Paketinstaller zeigt immer seinen eigenen Dialog, und die Erlaubnis
+  „Unbekannte Apps installieren" muss einmal von Hand gegeben werden. Fehlt
+  sie, schickt ELFIX auf die richtige Systemseite statt eine Fehlermeldung
+  anzuzeigen
+- Neue Karte in den Einstellungen, auf dem Telefon wie am Fernseher: welche
+  Fassung laeuft, was gerade geschieht, und ein Knopf, der sofort nachsieht
+- Nach draussen geht dabei eine Anfrage an die oeffentliche GitHub-API und,
+  wenn wirklich etwas Neues da ist, das Herunterladen der Datei. Kein Konto,
+  keine Kennung, nichts ueber das Geraet
+
+**Einmalig noch von Hand:** die gerade installierte APK traegt eine der alten
+Zufallsunterschriften. Diese eine Fassung muss deshalb noch deinstalliert und
+neu installiert werden - ab da laeuft es von selbst. Vorher den
+Geraeteabgleich einschalten, dann steht der Bestand nachher wieder da.
+
 ## 1.38.0 — 24. August 2026
 
 Der Geraeteabgleich hat auf dem Telefon nichts angezeigt - und dabei still den
