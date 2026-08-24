@@ -145,6 +145,18 @@ jobs:
         working-directory: android
         run: .\gradlew.bat :app:assembleDebug "-PelfixFassung=${{ steps.fassung.outputs.name }}" "-PelfixFassungNummer=${{ steps.fassung.outputs.code }}"
 
+      # Ein Lauf von Hand ohne Tag ist laut der Beschreibung oben dafuer da, zu
+      # sehen, ob beide Ziele durchlaufen. Bisher galt das nur fuer Windows und
+      # Android nebeneinander, nicht fuer die beiden Android-Varianten - und
+      # genau dazwischen sass der Fehler, an dem 1.38.0 zuerst gescheitert ist:
+      # lintVital gibt es nur fuer Release, also lief Debug durch, waehrend
+      # Release stehenblieb. Ein Release-Lauf braucht diesen Schritt nicht und
+      # bekommt ihn deshalb auch nicht.
+      - name: Debug-Bau zur Probe (nur ohne Tag)
+        if: steps.schluessel.outputs.da == 'ja' && steps.fassung.outputs.name == '0.0.0'
+        working-directory: android
+        run: .\gradlew.bat :app:assembleDebug "-PelfixFassung=${{ steps.fassung.outputs.name }}" "-PelfixFassungNummer=${{ steps.fassung.outputs.code }}"
+
       # Der Name traegt die Fassung. Die App sucht im Release nach dem Anhang,
       # der auf .apk endet - der Name selbst ist ihr gleich, aber ein Mensch,
       # der drei Dateien im Ordner liegen hat, will wissen, welche welche ist.
