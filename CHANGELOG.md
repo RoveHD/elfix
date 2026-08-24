@@ -3,6 +3,37 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.39.1 — 24. August 2026
+
+Zwei Dinge, die auf AniWorld gemeldet wurden - beide am Rechner, beide aelter
+als 1.39.0.
+
+- **"Naechste Folge" landete bei einer fremden Serie.** Gemeldet an Attack on
+  Titan: der Knopf fuehrte immer zu "Young Ladies Don't Play Fighting Games".
+  Der Knopf und der Zaehler leben in der Anbieterseite - im Vollbild deckt
+  deren Fenster alles zu -, und ihr Klick kommt ueber eine Konsolenzeile
+  zurueck, den einzigen Kanal, den es dort ohne Preload gibt. Was dort
+  hereinkam, wurde gefahren: ohne Frage, ob es dieselbe Serie ist. Jetzt steht
+  ein Torwaechter davor, und was nicht die naechste Folge derselben Serie ist,
+  wird nicht gefahren, sondern gemeldet
+- **Der Folgenlink wurde an der blossen Nummer gesucht** - "irgendein Link, der
+  auf `/episode-N+1` endet". Auf einer Anbieterseite stehen davon Dutzende: in
+  "Neue Episoden", in "Das schauen andere", in der Vorschlagsspalte. An zwei
+  Stellen (`readNextEpisodeLink` und der Fuehler in `messung.js`) wird jetzt
+  zuerst gefragt, ob der Link ueberhaupt zu dieser Serie gehoert
+- **Die Bilder auf AniWorld blieben leer.** Die Seite haengt ihre Cover nicht
+  in den `<img>`, sondern daneben in `data-src`; im `src` steht ein
+  durchsichtiges PNG von einem Pixel, und tauschen soll das ein Skript von
+  einem fremden Wirt. ELFIX reicht solche Bilder selbst nach - nur war die
+  Nachreichung blind geworden: der eingebettete Platzhalter trug keines der
+  Woerter, an denen ELFIX Beiwerk erkennt, galt damit als brauchbares Bild, und
+  ein Bild von einem Pixel ist sofort fertig geladen. Sie sah also ein Bild,
+  das schon da war, und liess das Cover daneben liegen. Eine eingebettete
+  Adresse ist jetzt nie das gemeinte Bild
+- Zwei neue Proben fahren beides mit dem echten Quelltext: die Folgensuche in
+  einer Seite mit genau den Links, die den Fehler ausgeloest haben, und die
+  Bildnachreichung an den `<img>`, wie sie auf aniworld.to stehen
+
 ## 1.39.0 — 24. August 2026
 
 Die APK holt auf: sie zeigt Titelbilder statt Anfangsbuchstaben, und sie

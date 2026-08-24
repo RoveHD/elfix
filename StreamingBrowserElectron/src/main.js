@@ -74,6 +74,7 @@ const bildausschnitt = require("../shared/bildausschnitt");
 const fortschritt = require("./fortschritt");
 const messung = require("./messung");
 const seitendaten = require("./seitendaten");
+const bildnachreichung = require("./bildnachreichung");
 const {
   absoluteHttpUrl,
   appendMediaActivity,
@@ -3161,69 +3162,8 @@ async function executeJavaScriptInMediaFrames(view, script) {
 
 function installAniWorldImageFix(provider, view) {
   if (!provider || !isLiveView(view) || !isAniWorldProvider(provider)) return;
-
-  view.webContents.executeJavaScript(`(() => {
-    if (window.__elflixAniWorldImageFixV1) return;
-    window.__elflixAniWorldImageFixV1 = true;
-
-    const abs = (value) => {
-      try { return value ? new URL(value, location.href).href : ""; } catch (_) { return ""; }
-    };
-    const usefulImage = (value) => {
-      const href = abs(value);
-      return href && !/(?:logo|favicon|sprite|icon|avatar|flag|placeholder|blank|transparent|loading|spinner)/i.test(href);
-    };
-    const firstUrlFromSrcset = (value) => String(value || "")
-      .split(",")
-      .map((entry) => entry.trim().split(/\\s+/)[0])
-      .find(Boolean) || "";
-    const hydrateImage = (img) => {
-      if (!img || img.dataset.elflixHydrated === "1") return;
-      const lazySrcset = img.getAttribute("data-srcset") || img.getAttribute("data-lazy-srcset");
-      const lazySrc = img.getAttribute("data-src")
-        || img.getAttribute("data-lazy-src")
-        || img.getAttribute("data-original")
-        || img.getAttribute("data-url")
-        || img.getAttribute("data-image")
-        || firstUrlFromSrcset(lazySrcset);
-      if (lazySrcset && !img.getAttribute("srcset")) img.setAttribute("srcset", lazySrcset);
-      if (usefulImage(lazySrc) && (!usefulImage(img.getAttribute("src")) || img.complete === false)) {
-        img.setAttribute("src", abs(lazySrc));
-      }
-      img.loading = "eager";
-      img.decoding = "async";
-      img.dataset.elflixHydrated = "1";
-    };
-    const hydrateBackground = (node) => {
-      if (!node || node.dataset.elflixBgHydrated === "1") return;
-      const raw = node.getAttribute("data-bg")
-        || node.getAttribute("data-background")
-        || node.getAttribute("data-image")
-        || node.getAttribute("data-src");
-      if (usefulImage(raw)) node.style.backgroundImage = 'url("' + abs(raw).replace(/"/g, "%22") + '")';
-      node.dataset.elflixBgHydrated = "1";
-    };
-    const hideInfoToggles = () => {
-      for (const node of Array.from(document.querySelectorAll("button, a, [role='button'], .btn, [class*='button'], [class*='toggle'], [class*='info']"))) {
-        const text = String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim();
-        if (!/^infos?\\s+(?:verstecken|anzeigen)\\b/i.test(text) || text.length > 40) continue;
-        node.style.setProperty("display", "none", "important");
-        node.setAttribute("aria-hidden", "true");
-        node.tabIndex = -1;
-      }
-    };
-    const run = () => {
-      document.querySelectorAll("img").forEach(hydrateImage);
-      document.querySelectorAll("[data-bg], [data-background], [data-image], [data-src]").forEach(hydrateBackground);
-      hideInfoToggles();
-      window.dispatchEvent(new Event("scroll"));
-      window.dispatchEvent(new Event("resize"));
-    };
-    run();
-    const observer = new MutationObserver(run);
-    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-src", "data-srcset", "data-lazy-src", "data-original", "src"] });
-    for (const delay of [250, 900, 1800, 3600]) setTimeout(run, delay);
-  })()`, true).catch(() => {});
+  // Der Quelltext steht in ./bildnachreichung - dort laesst er sich fahren.
+  view.webContents.executeJavaScript(bildnachreichung.nachreichSkript(), true).catch(() => {});
 }
 
 function isLiveView(view) {
