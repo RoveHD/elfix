@@ -29,3 +29,12 @@ latest.yml
 Thumbs.db
 .idea/
 .vscode/
+
+# Signing keys / certificates / secrets
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.jks.txt
