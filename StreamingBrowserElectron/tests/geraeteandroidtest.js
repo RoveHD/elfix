@@ -340,6 +340,97 @@ const ANBIETER = [{
     (fremdes.gespeichert.favoriten || []).length === 0,
     "Fall 13: ein anderer Schluessel ist ein anderer Raum - und ein anderes Schloss");
 
+  // --- Der erste Blick kommt vor dem Zustand ---------------------------------
+  //
+  // So faehrt Java den Abgleich wirklich: einrichten, und eine Sekunde spaeter
+  // einmal nachsehen, ob etwas hinaus muss. Ueber Mobilfunk ist der Raum bis
+  // dahin oft noch nicht da - Verbinden, fuenf Uhrproben, Anmelden, Zustand.
+  // Das Telefon sieht dann in eine leere Liste und weiss zugleich nichts von
+  // dem, was gleich hereinkommt.
+  //
+  // Genau hier lag der Fehler, der die Mediathek gekostet hat: was in der
+  // Liste fehlt, gilt als "hier geloescht", und einen Augenblick spaeter fehlte
+  // dort alles, was eben erst angekommen war. Das Telefon schickte fuer jeden
+  // Titel einen Grabstein zurueck, und danach stand der Bestand auf keinem
+  // Geraet mehr.
+
+  const frueherKey = schluesselModul.erzeugen();
+  const viele = [];
+  for (let i = 0; i < 12; i += 1) {
+    viele.push(favorit({
+      id: `v${i}`,
+      title: `Serie ${i}`,
+      url: `https://aniworld.to/anime/stream/serie-${i}/staffel-1/episode-2`
+    }));
+  }
+  const pcFrueh = rechner("frueh-pc", frueherKey, geraeteStand.staende(viele));
+  pcFrueh.an();
+  await warteBis(() => pcFrueh.abgleich.status().connected, "Rechner verbindet sich");
+  pcFrueh.melden();
+  await warteBis(() => pcFrueh.abgleich.status().entries === viele.length,
+    "Rechner meldet seinen Bestand");
+
+  const frueh = telefon("frueh");
+  frueh.bruecke.spiegelSetzen({});
+  frueh.bruecke.anbieterSetzen(ANBIETER);
+  frueh.bruecke.favoritenSetzen([]);
+  frueh.bruecke.sitzungenSetzen([]);
+  frueh.bruecke.konfigurieren({
+    enabled: true, serverUrl: ADRESSE, schluessel: frueherKey, geraetId: "frueh"
+  });
+  // Der erste Blick - noch bevor der Raum da ist. Java tut das eine Sekunde
+  // nach dem Einrichten; hier sofort, weil die Leitung hier kurz ist.
+  frueh.bruecke.abgleichen();
+
+  await warteBis(() => (frueh.gespeichert.favoriten || []).length === viele.length,
+    "Telefon uebernimmt den Bestand");
+  // Und danach lange genug still stehen, dass ein Grabsteinschub aufgefallen
+  // waere: der Nachschub laeuft im Sekundentakt.
+  await schlaf(2500);
+
+  pruefe("Ein Blick vor dem Zustand loescht dem Rechner nichts",
+    pcFrueh.eigen.size === viele.length,
+    `${pcFrueh.eigen.size} von ${viele.length} sind noch da`);
+  pruefe("Und das Telefon behaelt, was es bekommen hat",
+    (frueh.gespeichert.favoriten || []).length === viele.length,
+    `${(frueh.gespeichert.favoriten || []).length} Eintraege`);
+
+  // --- Ein Telefon, dem der Bestand abhanden kam -----------------------------
+  //
+  // Der Spiegel weiss von zwoelf Titeln, die Ablage ist leer. Das ist kein
+  // Aufraeumen - wer aufraeumt, loescht Stueck fuer Stueck. Also darf daraus
+  // keine Loeschung werden, und das Telefon darf auch nicht fuer immer leer
+  // bleiben: der Spiegel behauptet ja, alles zu kennen.
+
+  const spiegelVoll = frueh.gespeichert.spiegel;
+  const verloren = telefon("verloren");
+  verloren.bruecke.spiegelSetzen(spiegelVoll);
+  verloren.bruecke.anbieterSetzen(ANBIETER);
+  verloren.bruecke.favoritenSetzen([]);
+  verloren.bruecke.sitzungenSetzen([]);
+  verloren.bruecke.konfigurieren({
+    enabled: true, serverUrl: ADRESSE, schluessel: frueherKey, geraetId: "verloren"
+  });
+  await warteBis(() => verloren.gespeichert.zustand?.connected === true,
+    "das Telefon verbindet sich");
+  verloren.bruecke.abgleichen();
+
+  await warteBis(() => (verloren.gespeichert.favoriten || []).length === viele.length,
+    "Telefon holt sich seinen Bestand zurueck");
+  await schlaf(1500);
+
+  pruefe("Ein leeres Telefon loescht dem Rechner nicht die Mediathek",
+    pcFrueh.eigen.size === viele.length,
+    `${pcFrueh.eigen.size} von ${viele.length} sind noch da`);
+  pruefe("Sondern holt sich seinen Bestand zurueck",
+    (verloren.gespeichert.favoriten || []).length === viele.length,
+    "der Spiegel kennt alles, also reicht das Relay von sich aus nichts nach - "
+    + "es muss noch einmal gefragt werden");
+
+  pcFrueh.abgleich.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "frueh-pc" });
+  frueh.bruecke.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "frueh" });
+  verloren.bruecke.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "verloren" });
+
   // --- Der Spiegel wandert auf die Platte ------------------------------------
 
   pruefe("Der Spiegel wird zum Speichern gemeldet",

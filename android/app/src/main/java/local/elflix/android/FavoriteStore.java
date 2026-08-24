@@ -34,8 +34,6 @@ public final class FavoriteStore {
     private static final String DATEI = "favorites.json";
     private static final String ALT_PREFS = "elflix-favorites";
     private static final String ALT_KEY = "favorites";
-    /** Genauso viele wie am Desktop - darueber hinaus faellt hinten weg. */
-    private static final int HOECHSTZAHL = 600;
 
     private FavoriteStore() {
     }
@@ -68,19 +66,29 @@ public final class FavoriteStore {
         }
     }
 
+    /**
+     * Schreibt die Liste - vollstaendig.
+     *
+     * <p>Hier stand einmal eine Obergrenze von sechshundert Eintraegen, mit der
+     * Begruendung, der Rechner habe dieselbe. Er hat sie nicht. Was das in
+     * Wahrheit war: eine stille Loeschung. Wer mehr Titel mitbringt, verlor
+     * beim Speichern den Rest - und weil der Abgleich aus eben dieser Datei
+     * ableitet, was hier noch steht, ging der abgeschnittene Rest beim
+     * naechsten Start als "hier geloescht" hinaus und war danach auf keinem
+     * Geraet mehr da.
+     *
+     * <p>Eine Grenze, die Daten wegwirft, gehoert nicht in die Ablage. Wenn
+     * lange Listen einmal zu langsam werden, ist das eine Frage der Anzeige -
+     * und dort gehoert sie dann auch hin.
+     */
     public static void speichereRoh(Context context, JSONArray eintraege) {
-        JSONArray gekuerzt = eintraege;
-        if (eintraege.length() > HOECHSTZAHL) {
-            gekuerzt = new JSONArray();
-            for (int i = 0; i < HOECHSTZAHL; i += 1) gekuerzt.put(eintraege.opt(i));
-        }
         File ziel = new File(context.getFilesDir(), DATEI);
         // Erst danebenschreiben, dann umbenennen: bricht der Vorgang ab, ist
         // die alte Datei noch da. Ein halb geschriebener Stand waere schlimmer
         // als ein alter.
         File zwischen = new File(context.getFilesDir(), DATEI + ".neu");
         try (FileOutputStream aus = new FileOutputStream(zwischen)) {
-            aus.write(gekuerzt.toString().getBytes(StandardCharsets.UTF_8));
+            aus.write(eintraege.toString().getBytes(StandardCharsets.UTF_8));
             aus.flush();
         } catch (Exception fehler) {
             Log.e(TAG, "favorites.json liess sich nicht schreiben", fehler);

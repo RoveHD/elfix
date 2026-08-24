@@ -573,6 +573,50 @@ CSC_KEY_PASSWORD
 
 Ohne echtes Code-Signing-Zertifikat kann eine Warnung bei unbekannten Downloads nicht technisch garantiert verhindert werden.
 
+## Android: Updates und der Unterschriftsschluessel
+
+Auch die APK aktualisiert sich selbst - aus denselben GitHub Releases wie der
+Rechner. Beim Start sieht ELFIX nach (hoechstens alle sechs Stunden), laedt eine
+neuere Fassung im Hintergrund und fragt dann einmal. Installiert wird nie von
+allein: der Paketinstaller von Android zeigt immer seinen eigenen Dialog, und
+ELFIX braucht dafuer einmalig die Erlaubnis „Unbekannte Apps installieren".
+In den Einstellungen steht die Karte `ELFIX aktualisieren` mit Fassung, Stand
+und einem Knopf, der sofort nachsieht.
+
+Damit ein Update sich ueber die bestehende App legen kann, muss **jede** APK mit
+demselben Schluessel unterschrieben sein. Android verweigert sonst die
+Installation (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`), und der einzige Ausweg
+waere Deinstallieren - mitsamt allem, was auf dem Geraet steht.
+
+Der Schluessel wird einmal erzeugt und liegt **nie im Repository**:
+
+```powershell
+keytool -genkeypair -v -keystore elfix.jks -alias elfix `
+  -keyalg RSA -keysize 4096 -validity 10000
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("elfix.jks")) > elfix.jks.txt
+```
+
+Der Inhalt von `elfix.jks.txt` und die drei Passwoerter kommen als Secrets in
+das Repository (Settings -> Secrets and variables -> Actions):
+
+```text
+ANDROID_KEYSTORE_BASE64     der Inhalt von elfix.jks.txt
+ANDROID_KEYSTORE_PASSWORT   das Keystore-Passwort
+ANDROID_KEY_ALIAS           elfix
+ANDROID_KEY_PASSWORT        das Schluessel-Passwort
+```
+
+Die `elfix.jks` selbst gut aufheben. Geht sie verloren, laesst sich **kein**
+Update mehr ausliefern - dann hilft nur eine neue App und eine Neuinstallation
+von Hand.
+
+Ohne die Secrets baut der Workflow weiterhin eine Debug-APK und schreibt eine
+Warnung in den Lauf. Die laesst sich installieren, aber nicht aktualisieren.
+
+Die Fassung setzt der Workflow aus dem Tag: `v1.38.0` wird zu `versionName
+1.38.0` und `versionCode 13800`. In `build.gradle` steht sie deshalb nicht mehr
+fest.
+
 ## Android Build
 
 ```powershell
@@ -584,6 +628,17 @@ Die Debug-APK liegt danach unter:
 
 ```text
 android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Eine Release-APK - die einzige, die sich als Update installieren laesst -
+braucht den Schluessel:
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleRelease `
+  "-PelfixKeystore=C:\Pfad\zu\elfix.jks" `
+  "-PelfixKeystorePasswort=..." "-PelfixKeyAlias=elfix" "-PelfixKeyPasswort=..." `
+  "-PelfixFassung=1.38.0" "-PelfixFassungNummer=13800"
 ```
 
 ## Entwicklung

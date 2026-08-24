@@ -64,6 +64,7 @@ public final class Geraete {
 
     private final Context context;
     private final Kern kern;
+    private final Bestand bestand;
     private final Watchparty watchparty;
     private final Horcher horcher;
     private final Handler haupt = new Handler(Looper.getMainLooper());
@@ -72,9 +73,11 @@ public final class Geraete {
     private JSONObject letzterZustand;
     private boolean geplant = false;
 
-    public Geraete(Context context, Kern kern, Watchparty watchparty, Horcher horcher) {
+    public Geraete(Context context, Kern kern, Bestand bestand, Watchparty watchparty,
+                   Horcher horcher) {
         this.context = context;
         this.kern = kern;
+        this.bestand = bestand;
         this.watchparty = watchparty;
         this.horcher = horcher;
     }
@@ -121,11 +124,20 @@ public final class Geraete {
         });
     }
 
-    /** Favoriten und Anbieter hineinreichen - sie aendern sich zur Laufzeit. */
+    /**
+     * Favoriten und Anbieter hineinreichen - sie aendern sich zur Laufzeit.
+     *
+     * <p>Ausdruecklich aus {@link Bestand} und nicht aus der Datei. Der Bestand
+     * haelt die Liste im Speicher und schreibt sie, wenn sich etwas aendert;
+     * wer daneben die Datei liest, liest im ungluecklichen Augenblick den
+     * Stand von vorhin. Und was hier hineingereicht wird, ist die Grundlage
+     * dafuer, was der Abgleich fuer "hier geloescht" haelt - eine Liste von
+     * vorhin waere dort keine Ungenauigkeit, sondern ein Loeschbefehl.
+     */
     private void bestandReichen() {
         if (kern == null || !kern.istBereit()) return;
         kern.rufe("geraete-bruecke.favoritenSetzen",
-            Kern.args(FavoriteStore.ladeRoh(context)), null);
+            Kern.args(bestand == null ? FavoriteStore.ladeRoh(context) : bestand.roh()), null);
         JSONArray anbieter = new JSONArray();
         for (Provider eintrag : ProviderStore.load(context)) {
             if (eintrag != null && eintrag.enabled) anbieter.put(eintrag.alsJson());
@@ -204,7 +216,14 @@ public final class Geraete {
                     zustandUebernehmen(nutzlastJson);
                     return true;
                 case "geraete:favoriten":
-                    FavoriteStore.speichereRoh(context, new JSONArray(nutzlastJson));
+                    // Ueber den Bestand, nicht an ihm vorbei. Er haelt die
+                    // Liste, aus der Weiterschauen, Merkliste, Mediathek und
+                    // Verlauf gezeichnet werden; wer nur die Datei schreibt,
+                    // hat abgeglichen, ohne dass es jemand sieht - und beim
+                    // naechsten oertlichen Handgriff schreibt der Bestand
+                    // seinen alten Stand darueber.
+                    if (bestand != null) bestand.setzeRoh(new JSONArray(nutzlastJson));
+                    else FavoriteStore.speichereRoh(context, new JSONArray(nutzlastJson));
                     return true;
                 case "geraete:sitzungen":
                     sitzungenSchreiben(new JSONArray(nutzlastJson));

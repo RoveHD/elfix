@@ -3,6 +3,81 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.39.0 — 24. August 2026
+
+Die APK aktualisiert sich jetzt selbst - und kann es zum ersten Mal ueberhaupt.
+
+- **Jede je gebaute APK trug eine andere Unterschrift.** Der Workflow baute
+  `assembleDebug`, und Gradle unterschreibt dann mit `~/.android/debug.keystore` -
+  den legt jede Maschine selbst an, mit einem *zufaelligen* Schluessel. Auf
+  einem GitHub-Runner, der nach jedem Lauf verschwindet, hiess das: Android
+  verweigerte jedes Update, und der einzige Weg war Deinstallieren - mitsamt
+  allem, was auf dem Geraet stand. Die APK wird jetzt mit einem festen
+  Schluessel unterschrieben, der als Geheimnis hereinkommt
+- **Und jede trug dieselbe Fassungsnummer** (`versionCode 150`, `versionName
+  1.5.0`), fest in `build.gradle`. Android entscheidet an genau dieser Nummer,
+  ob eine APK neuer ist, und die App konnte gar nicht ablesen, ob es etwas
+  Neueres gibt. Beides kommt jetzt aus dem Tag: `v1.39.0` wird zu `1.39.0` und
+  `versionCode 13900`
+- ELFIX sieht beim Start nach neuen Fassungen - hoechstens alle sechs Stunden -,
+  laedt sie im Hintergrund und fragt dann einmal. Wer „Spaeter" sagt, wird zu
+  dieser Fassung nicht noch einmal gefragt; sie bleibt in den Einstellungen
+  stehen
+- Installiert wird nie von allein. Das kann eine App auf Android auch nicht:
+  der Paketinstaller zeigt immer seinen eigenen Dialog, und die Erlaubnis
+  „Unbekannte Apps installieren" muss einmal von Hand gegeben werden. Fehlt
+  sie, schickt ELFIX auf die richtige Systemseite statt eine Fehlermeldung
+  anzuzeigen
+- Neue Karte in den Einstellungen, auf dem Telefon wie am Fernseher: welche
+  Fassung laeuft, was gerade geschieht, und ein Knopf, der sofort nachsieht
+- Nach draussen geht dabei eine Anfrage an die oeffentliche GitHub-API und,
+  wenn wirklich etwas Neues da ist, das Herunterladen der Datei. Kein Konto,
+  keine Kennung, nichts ueber das Geraet
+
+**Einmalig noch von Hand:** die gerade installierte APK traegt eine der alten
+Zufallsunterschriften. Diese eine Fassung muss deshalb noch deinstalliert und
+neu installiert werden - ab da laeuft es von selbst. Vorher den
+Geraeteabgleich einschalten, dann steht der Bestand nachher wieder da.
+
+## 1.38.0 — 24. August 2026
+
+Der Geraeteabgleich hat auf dem Telefon nichts angezeigt - und dabei still den
+Bestand geloescht. Beides ist behoben.
+
+- **Das Telefon zeigte nach dem Abgleich nichts an.** Was hereinkam, ging
+  direkt in `favorites.json` - am `Bestand` vorbei, der die Liste im Speicher
+  haelt und aus dem Weiterschauen, Merkliste, Mediathek und Verlauf gezeichnet
+  werden. Die Datei war voll, die Oberflaeche leer. Schlimmer noch: beim
+  naechsten oertlichen Handgriff schrieb der Bestand seinen alten Stand
+  darueber, und der Abgleich meldete den Verlust als Loeschung weiter. Der
+  Abgleich geht jetzt durch den Bestand - er speichert, und die Ansicht
+  zeichnet sofort neu
+- **Der erste Blick loeschte den Bestand des anderen Geraets.** Eine Sekunde
+  nach dem Einrichten sieht das Telefon nach, ob etwas hinaus muss. Ueber
+  Mobilfunk ist der Raum bis dahin oft noch nicht da: es sah in eine leere
+  Liste, bekam einen Augenblick spaeter den ganzen Bestand des Rechners - und
+  schickte fuer jeden dieser Titel einen Grabstein zurueck. Danach stand die
+  Mediathek auf keinem Geraet mehr. Was fehlt, gilt nur noch dann als
+  geloescht, wenn die Liste juenger ist als das zuletzt Empfangene
+- **Ein Geraet, dem der Bestand abhanden kam, loescht ihn nicht mehr ueberall.**
+  Eine leere Liste neben einem Spiegel voller Titel ist kein Aufraeumen - wer
+  aufraeumt, loescht Stueck fuer Stueck. Statt zu loeschen wird jetzt der
+  Spiegel vergessen und alles noch einmal geholt. Das ist zugleich der Weg
+  zurueck fuer jedes Geraet, das der alte Fehler leergeraeumt hat
+- **Android schnitt beim Speichern bei sechshundert Eintraegen ab** - mit der
+  Begruendung, der Rechner tue dasselbe. Er tut es nicht. Wer mehr Titel
+  mitbrachte, verlor den Rest, und der Abgleich trug den Verlust auf die
+  anderen Geraete weiter
+- „Jetzt abgleichen" holt am Telefon jetzt den ganzen Raum noch einmal, genau
+  wie am Rechner. Nur nachzusehen, ob etwas hinaus muss, hilft dem nicht, der
+  den Knopf drueckt - wer ihn drueckt, vermisst etwas
+- Der Status zaehlt Titel und nicht mehr die Groesse des Spiegels.
+  „231 Titel" neben einer leeren Mediathek waren Wiedergabesitzungen und
+  Grabsteine und schickten beim Suchen in die falsche Richtung
+- Zwei neue Proben mit der echten Android-Bruecke halten beides fest: der Blick
+  vor dem Zustand und das Telefon ohne Bestand. Gegen den alten Stand
+  gefahren, bleiben von zwoelf Titeln null uebrig
+
 ## 1.37.2 — 24. August 2026
 
 Und noch einmal die Umgebung, nicht der Code.

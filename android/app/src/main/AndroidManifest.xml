@@ -1,6 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+        ELFIX kommt nicht aus einem Laden, also holt es seine Updates selbst.
+        Ohne dieses Recht darf es dem Paketinstaller keine APK reichen.
+
+        Installiert wird trotzdem nichts von allein: der Paketinstaller fragt
+        jedes Mal, und dieses Recht muss ausserdem einmal von Hand erlaubt
+        werden ("Unbekannte Apps installieren"). Beides ist gut so.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -65,5 +74,23 @@
                 <data android:scheme="https" android:host="www.filmo.to" />
             </intent-filter>
         </activity>
+
+        <!--
+            Der Weg, auf dem die heruntergeladene APK zum Paketinstaller kommt.
+
+            Seit Android 7 darf keine App der anderen einen file://-Verweis
+            reichen; wer es versucht, bekommt eine FileUriExposedException.
+            Der Provider gibt stattdessen einen content://-Verweis heraus, und
+            zwar nur auf den einen Ordner in res/xml/dateiwege.xml.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.dateien"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/dateiwege" />
+        </provider>
     </application>
 </manifest>
