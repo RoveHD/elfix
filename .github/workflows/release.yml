@@ -130,6 +130,53 @@ jobs:
             "da=ja" >> $env:GITHUB_OUTPUT
           }
 
+      # Ein frueher, eindeutiger Befund statt eines spaeten, mehrdeutigen.
+      #
+      # Ohne diesen Schritt faellt ein falscher Schluessel erst bei
+      # packageRelease auf - zwei Minuten spaeter, und mit einer Meldung
+      # ("keystore password was incorrect"), die drei verschiedene Ursachen
+      # haben kann: falsches Passwort, falscher Alias, oder eine Datei, die gar
+      # kein Keystore ist, weil beim Uebertragen der Base64-Fassung etwas
+      # verlorenging. Hier werden die drei auseinandergehalten.
+      #
+      # Nichts davon steht im Protokoll: geprueft wird ueber Rueckgabewerte,
+      # und was keytool ausgibt, maskiert GitHub ohnehin, wo ein Geheimnis
+      # darin vorkommt.
+      - name: Schluessel pruefen
+        if: steps.schluessel.outputs.da == 'ja'
+        shell: pwsh
+        env:
+          PASSWORT: ${{ secrets.ANDROID_KEYSTORE_PASSWORT }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          $pfad = "${{ steps.schluessel.outputs.pfad }}"
+          $bytes = [IO.File]::ReadAllBytes($pfad)
+          Write-Host "Datei: $($bytes.Length) Bytes"
+          if ($bytes.Length -lt 100) {
+            Write-Host "::error::Die Datei ist zu klein fuer einen Keystore. ANDROID_KEYSTORE_BASE64 ist unvollstaendig - vermutlich wurde nur ein Teil eingefuegt."
+            exit 1
+          }
+          # PKCS12 faengt mit einer DER-Sequenz an (0x30), JKS mit 0xFEEDFEED.
+          if ($bytes[0] -eq 0x30) { $art = "PKCS12" }
+          elseif ($bytes[0] -eq 0xFE) { $art = "JKS" }
+          else { $art = "" }
+          if (-not $art) {
+            Write-Host "::error::Der entschluesselte Inhalt ist kein Keystore (beginnt mit 0x$('{0:X2}' -f $bytes[0])). In ANDROID_KEYSTORE_BASE64 steht etwas anderes, oder die Base64-Fassung wurde beim Uebertragen veraendert."
+            exit 1
+          }
+          Write-Host "Format: $art"
+          $aus = (& keytool -list -keystore $pfad -storepass $env:PASSWORT -alias $env:ALIAS 2>&1) | Out-String
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Keystore und Alias in Ordnung."
+            exit 0
+          }
+          if ($aus -match "does not exist") {
+            Write-Host "::error::Das Passwort stimmt, aber der Alias nicht: in diesem $art gibt es keinen Eintrag unter dem Namen aus ANDROID_KEY_ALIAS. 'keytool -list -keystore elfix.jks' zeigt, wie er wirklich heisst."
+          } else {
+            Write-Host "::error::Die Datei ist ein gueltiges $art, laesst sich mit ANDROID_KEYSTORE_PASSWORT aber nicht oeffnen. Entweder stimmt das Passwort nicht (ein angehaengtes Leerzeichen oder Zeilenende genuegt), oder die Datei ist beim Uebertragen beschaedigt worden - dann passt ihre Groesse oben nicht zu der von elfix.jks auf deinem Rechner."
+          }
+          exit 1
+
       - name: Build signed release APK
         if: steps.schluessel.outputs.da == 'ja'
         working-directory: android
