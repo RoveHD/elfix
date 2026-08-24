@@ -26,6 +26,33 @@ function messSkript() {
     const abs = (value) => {
       try { return value ? new URL(value, location.href).href : ""; } catch (_) { return ""; }
     };
+    // Welche Serie steht hier? Dieselbe Markerliste wie episodeIdentity() in
+    // fortschritt.js - der Pfad nennt das Werk hinter "stream", "serie" oder
+    // "film".
+    const serienName = (pfad) => {
+      const teile = String(pfad || "").split("/").filter(Boolean);
+      const marken = ["stream", "serie", "film", "filme", "movie", "movies", "title"];
+      for (let index = 0; index < teile.length - 1; index += 1) {
+        if (marken.includes(teile[index].toLowerCase())) return teile[index + 1].toLowerCase();
+      }
+      return "";
+    };
+    const eigeneSerie = serienName(location.pathname);
+    // Ohne diese Frage nimmt der Fuehler den erstbesten Folgenlink der Seite -
+    // und auf einer Anbieterseite stehen davon Dutzende: "Neue Episoden", "Das
+    // schauen andere", die Vorschlagsspalte. Gemeldet wurde genau das: aus
+    // Attack on Titan wurde beim Weiterschalten immer dieselbe fremde Serie.
+    const gleicheSerie = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        const wirt = (name) => String(name || "").toLowerCase().replace(/^www\\./, "");
+        if (wirt(url.hostname) !== wirt(location.hostname)) return false;
+        if (!eigeneSerie) return true;
+        return serienName(url.pathname) === eigeneSerie;
+      } catch (_) {
+        return false;
+      }
+    };
     const nextEpisodeUrl = () => {
       const anchors = Array.from(document.querySelectorAll("a[href]"));
       const currentEpisodeMatch = location.pathname.match(/\\/(?:episode|folge)-(\\d+)(?:\\/?|$)/i);
@@ -40,12 +67,17 @@ function messSkript() {
           anchor.className
         ].join(" ");
         const href = abs(anchor.getAttribute("href"));
-        return href && nextTextPattern.test(label) && /\\/(?:episode|folge)-\\d+(?:[/?#]|$)/i.test(href);
+        return href && nextTextPattern.test(label)
+          && /\\/(?:episode|folge)-\\d+(?:[/?#]|$)/i.test(href)
+          && gleicheSerie(href);
       });
       if (semantic) return abs(semantic.getAttribute("href"));
       if (!currentEpisode) return "";
       const directPattern = new RegExp("\\\\/(?:episode|folge)-" + (currentEpisode + 1) + "(?:[/?#]|$)", "i");
-      const direct = anchors.find((anchor) => directPattern.test(abs(anchor.getAttribute("href"))));
+      const direct = anchors.find((anchor) => {
+        const href = abs(anchor.getAttribute("href"));
+        return href && directPattern.test(href) && gleicheSerie(href);
+      });
       return direct ? abs(direct.getAttribute("href")) : "";
     };
     const visibleArea = (node) => {

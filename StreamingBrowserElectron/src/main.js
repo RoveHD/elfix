@@ -83,6 +83,7 @@ const {
   mediaDiagnosticDecisionText,
   nextEpisodeAfterFavoriteUrl,
   nextEpisodeContinueUrl,
+  darfNaechsteFolgeSein,
   repairTrimmedSeriesTail,
   unplayableEpisodeSet,
   MIN_WATCH_TIME_SECONDS,
@@ -2898,8 +2899,33 @@ async function readNextEpisodeLink(view) {
     const currentMatch = location.pathname.match(/\\/(?:episode|folge)-(\\d+)(?:\\/?|$)/i);
     const current = currentMatch ? Number(currentMatch[1]) : 0;
     if (!current) return "";
+    // Welche Serie hier laeuft - dieselbe Markerliste wie episodeIdentity().
+    // Ohne diese Frage zaehlt die blosse Folgennummer, und die steht auf einer
+    // Anbieterseite in jedem Vorschlagsblock.
+    const serienName = (pfad) => {
+      const teile = String(pfad || "").split("/").filter(Boolean);
+      const marken = ["stream", "serie", "film", "filme", "movie", "movies", "title"];
+      for (let index = 0; index < teile.length - 1; index += 1) {
+        if (marken.includes(teile[index].toLowerCase())) return teile[index + 1].toLowerCase();
+      }
+      return "";
+    };
+    const eigene = serienName(location.pathname);
+    const gleicheSerie = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        const wirt = (name) => String(name || "").toLowerCase().replace(/^www\\./, "");
+        if (wirt(url.hostname) !== wirt(location.hostname)) return false;
+        return !eigene || serienName(url.pathname) === eigene;
+      } catch (_) {
+        return false;
+      }
+    };
     const muster = new RegExp("\\\\/(?:episode|folge)-" + (current + 1) + "(?:[/?#]|$)", "i");
-    const treffer = anchors.find((anchor) => muster.test(abs(anchor.getAttribute("href"))));
+    const treffer = anchors.find((anchor) => {
+      const href = abs(anchor.getAttribute("href"));
+      return href && muster.test(href) && gleicheSerie(href);
+    });
     return treffer ? abs(treffer.getAttribute("href")) : "";
   })()`).catch(() => "");
   return typeof link === "string" ? link : "";
@@ -3030,6 +3056,19 @@ async function naechsteFolgePerTaste(provider, view) {
 async function playNextEpisode(provider, view, url) {
   if (!provider || !isLiveView(view)) {
     logNextEpisode(provider, "abgebrochen - keine lebende Ansicht");
+    return;
+  }
+  // Gemeldet war: bei Attack on Titan landete der Knopf immer bei derselben
+  // fremden Serie. Kein Wunder - das Ziel kommt aus der Anbieterseite zurueck,
+  // ueber eine Konsolenzeile, und die stand jedem Skript dort offen. Was
+  // hereinkommt, wird deshalb geprueft: dieselbe Serie, weiter vorn als die
+  // laufende Folge. Alles andere wird nicht gefahren, sondern gemeldet.
+  const laufende = view.webContents.getURL();
+  const eintrag = favorites.find((favorite) => favorite.id === activeFavoriteId) || null;
+  if (!darfNaechsteFolgeSein(url, laufende, eintrag)) {
+    logNextEpisode(provider, `abgelehnt - ${kurzeUrl(url)} ist keine naechste Folge von `
+      + `${kurzeUrl(laufende || eintrag?.url || "")}`);
+    sendToast("Das war nicht die nächste Folge");
     return;
   }
   logNextEpisode(provider, `Wechsel angefordert -> ${kurzeUrl(url)}`);

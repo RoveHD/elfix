@@ -578,6 +578,33 @@ function unplayableEpisodeSet(meta, season) {
   return new Set(nummern.map((wert) => Number(wert)).filter((wert) => Number.isFinite(wert) && wert > 0));
 }
 
+/**
+ * Darf ELFIX dieser Adresse als "naechste Folge" folgen?
+ *
+ * <p>Der Knopf und der Zaehler leben in der Anbieterseite - im Vollbild deckt
+ * deren Fenster alles zu, ein anderer Platz waere unsichtbar. Ihr Klick kommt
+ * ueber eine Konsolenzeile zurueck, den einzigen Kanal, den es in einer fremden
+ * Seite ohne Preload gibt. Genau das ist aber auch die Schwaeche: in eine
+ * Konsolenzeile kann jedes Skript der Seite schreiben, und was dort steht, war
+ * bis hierher Anweisung genug. Ein Ziel aus der Seite wird deshalb geprueft,
+ * bevor ihm jemand folgt.
+ *
+ * <p>Geprueft wird gegen die Folge, bei der wir stehen - und wenn das
+ * Hauptfenster gerade beim Hoster ist, gegen den Eintrag, der dazu gehoert.
+ * Es muss dieselbe Serie sein und weiter vorn liegen als die laufende Folge.
+ *
+ * @param zielUrl    was die Seite meldet
+ * @param currentUrl wo das Hauptfenster gerade steht
+ * @param entry      der Eintrag, der gerade laeuft (darf fehlen)
+ */
+function darfNaechsteFolgeSein(zielUrl, currentUrl, entry = null) {
+  const ziel = episodeIdentity(zielUrl);
+  if (!ziel) return false;
+  const bezug = episodeIdentity(currentUrl) || episodeIdentity(entry?.url || "");
+  if (!bezug) return false;
+  return ziel.key === bezug.key && compareEpisodeIdentity(ziel, bezug) > 0;
+}
+
 function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null, meta = null) {
   const currentIdentity = episodeIdentity(currentUrl);
   const resolvedPreferred = absoluteHttpUrl(preferredUrl, currentUrl);
@@ -1228,6 +1255,7 @@ module.exports = {
   absoluteHttpUrl,
   unplayableEpisodeSet,
   nextEpisodeContinueUrl,
+  darfNaechsteFolgeSein,
   appendMediaActivity,
   hasNewEpisodeAfterCompletedFavorite,
   nextEpisodeAfterFavoriteUrl,
