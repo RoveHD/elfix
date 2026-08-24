@@ -251,6 +251,68 @@ public final class Adblocker {
         return isLikelyVideoPlayerUrl(url, host(url));
     }
 
+    /**
+     * Darf ELFIX diesem Ziel seinen Hauptrahmen ueberlassen?
+     *
+     * <p>Das ist eine andere Frage als {@link #isLikelyVideoPlayerUrl}, auch
+     * wenn beide "ist das ein Player?" heissen. Bei einer Ressource ist ein
+     * Irrtum billig: was faelschlich durchgelassen wird, ist ein Bild zu viel.
+     * Bei einer Navigation kostet derselbe Irrtum die Seite - der Hauptrahmen
+     * verlaesst den Anbieter, und was dann dasteht, ist weiss.
+     *
+     * <p>Genau das ist passiert. Gemessen am 24.08.2026 auf AniWorld: ein
+     * Popunder auf {@code blue-ribbonmacadamizeprovide.com} galt als Player,
+     * weil der Wirt die Zeichenfolge "vid" enthaelt - in "pro<b>vid</b>e".
+     * Danach wanderte der Hauptrahmen ueber cruzswim.org nach crmared.com, und
+     * die Folge war weg. Der Player selbst hatte laengst geladen.
+     *
+     * <p>Deshalb hier strenger: ein Wort zaehlt nur, wenn es einen Namensteil
+     * <em>beginnt</em>. {@code voe.sx}, {@code vidmoly.to}, {@code streamtape.com}
+     * und {@code player.example.com} bleiben Player;
+     * {@code ...macadamizeprovide.com} ist keiner. Dieselbe Lehre, die weiter
+     * unten schon fuer die Pfade gezogen wurde - dort hiess der Fall
+     * "watchcolleague.com".
+     */
+    public static boolean isLikelyPlayerNavigation(String url) {
+        return istPlayerName(host(url), pathOf(url));
+    }
+
+    /**
+     * Die Entscheidung ohne Android drumherum - damit sie sich pruefen laesst.
+     *
+     * <p>{@code Uri} gibt es auf einer nackten JVM nicht; eine Regel, die man
+     * nur auf einem Geraet ausprobieren kann, wird nicht ausprobiert.
+     */
+    static boolean istPlayerName(String host, String path) {
+        String wirt = host == null ? "" : host.toLowerCase();
+        // Die Schreibweisen von VOE mit Trennern dazwischen: v-o-e, v.o.e.
+        if (wirt.matches("(^|.*\\.)v[-.]?o[-.]?e(\\..*|$)")) return true;
+        for (String teil : wirt.split("[.-]")) {
+            for (String wort : PLAYER_WOERTER) {
+                if (teil.startsWith(wort)) return true;
+            }
+        }
+        String pfad = path == null ? "" : path.toLowerCase();
+        return pfad.matches(".*(/embed|/player|/watch|/stream|/hoster|/video).*")
+            || pfad.matches(".*\\.(m3u8|mp4|webm)$");
+    }
+
+    /**
+     * Woran ein Hoster in seinem Namen zu erkennen ist.
+     *
+     * <p>Bewusst dieselben Woerter wie in der lockeren Fassung - der
+     * Unterschied liegt nicht in der Liste, sondern darin, wo sie stehen
+     * duerfen. Rotierende Wegwerf-Adressen wie {@code tracylocalschool.com}
+     * stehen hier ohnehin nicht drin und sollen es auch nicht: sie wechseln
+     * taeglich, und der Rahmen des Hosters braucht diese Pruefung gar nicht.
+     */
+    private static final String[] PLAYER_WOERTER = {
+        "voe", "vid", "video", "player", "stream", "filemoon", "filelions",
+        "dood", "mixdrop", "streamtape", "vidmoly", "vidoza", "upstream",
+        "supervideo", "streamsb", "streamwish", "lulustream", "savefiles",
+        "mp4upload", "vidsrc", "embed"
+    };
+
     private static boolean isLikelyVideoPlayerUrl(String url, String host) {
         String targetHost = host == null ? "" : host.toLowerCase();
         if (targetHost.matches(".*(voe|v[-.]?o[-.]?e|vid|video|player|stream|filemoon|filelions|dood|mixdrop|streamtape|vidmoly|vidoza|upstream|supervideo|streamsb|streamwish|lulustream|savefiles|mp4upload|vidsrc|embed).*")) {

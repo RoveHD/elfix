@@ -81,6 +81,8 @@ public class MainActivity extends Activity {
     private Messung messung;
     /** Woher die Karten ihr Titelbild bekommen. Siehe Titelbild.java. */
     private Titelbild titelbild;
+    private String aniworldBildNachreichungSkript;
+    private boolean aniworldBildNachreichungLaedt;
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
@@ -2783,6 +2785,17 @@ public class MainActivity extends Activity {
         }
     }
 
+    private boolean isAniWorldProvider(Provider provider) {
+        String name = provider == null || provider.name == null ? "" : provider.name.toLowerCase();
+        try {
+            String host = new URI(provider == null ? "" : provider.startUrl).getHost();
+            host = host == null ? "" : host.toLowerCase();
+            return name.contains("aniworld") || host.contains("aniworld");
+        } catch (Exception ignored) {
+            return name.contains("aniworld");
+        }
+    }
+
     private String stripWww(String hostname) {
         return (hostname == null ? "" : hostname).toLowerCase().replaceFirst("^www\\.", "");
     }
@@ -3482,7 +3495,7 @@ public class MainActivity extends Activity {
             }
         } catch (Exception ignored) {
         }
-        return Adblocker.isLikelyVideoPlayerUrl(url) && !adblocker.shouldBlock(url, provider);
+        return Adblocker.isLikelyPlayerNavigation(url) && !adblocker.shouldBlock(url, provider);
     }
 
     /**
@@ -3505,7 +3518,7 @@ public class MainActivity extends Activity {
             }
             String baseHost = provider == null ? null : new URI(provider.startUrl).getHost();
             if (baseHost != null && isProviderFirstPartyHost(provider, targetHost, baseHost)) return false;
-            if (Adblocker.isLikelyVideoPlayerUrl(url)) return false;
+            if (Adblocker.isLikelyPlayerNavigation(url)) return false;
             return true;
         } catch (Exception ignored) {
             return false;
@@ -5190,6 +5203,11 @@ public class MainActivity extends Activity {
                 autoStartUrl = null;
                 runAutoStart(view, url);
             }
+            if (isAniWorldProvider(provider)) {
+                for (long delay : new long[] {700L, 1800L}) {
+                    view.postDelayed(() -> installAniWorldImageFix(view, provider), delay);
+                }
+            }
             super.onPageStarted(view, url, favicon);
         }
 
@@ -5323,6 +5341,7 @@ public class MainActivity extends Activity {
             if (shouldBlockProviderNavigation(provider, url)) return;
             installTvWebNavigation(view);
             installStoPlayerFix(view, provider);
+            installAniWorldImageFix(view, provider);
             if (kosmetik != null) kosmetik.einspielen(view, provider);
             // Und die kosmetischen Regeln der Filterlisten - das, was ein
             // Domainfilter grundsaetzlich nicht kann.
@@ -5385,6 +5404,35 @@ public class MainActivity extends Activity {
             + "})();",
             null
         );
+    }
+
+    private void installAniWorldImageFix(WebView webView, Provider provider) {
+        if (webView == null || provider == null || !isAniWorldProvider(provider)) return;
+        if (aniworldBildNachreichungSkript != null) {
+            webView.evaluateJavascript(aniworldBildNachreichungSkript, null);
+            return;
+        }
+        if (kern == null) return;
+        if (!kern.istBereit()) {
+            kern.wennBereit(() -> installAniWorldImageFix(webView, provider));
+            return;
+        }
+        if (aniworldBildNachreichungLaedt) return;
+        aniworldBildNachreichungLaedt = true;
+        kern.rufe("bildnachreichung.nachreichSkript", (wert, fehler) -> {
+            aniworldBildNachreichungLaedt = false;
+            if (fehler != null || wert == null) {
+                Log.d(TAG, "AniWorld-Bildnachreichung nicht erhalten: " + fehler);
+                return;
+            }
+            try {
+                aniworldBildNachreichungSkript = new JSONArray("[" + wert + "]").getString(0);
+            } catch (Exception ausnahme) {
+                Log.d(TAG, "AniWorld-Bildnachreichung unlesbar: " + ausnahme);
+                return;
+            }
+            webView.evaluateJavascript(aniworldBildNachreichungSkript, null);
+        });
     }
 
     private void installTvWebNavigation(WebView webView) {

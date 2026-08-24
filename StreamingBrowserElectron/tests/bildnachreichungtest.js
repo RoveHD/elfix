@@ -52,11 +52,15 @@ function bild(attribute) {
 }
 
 function nachreichen(bilder) {
+  let mutation = null;
   const kontext = vm.createContext({
     location: { href: "https://aniworld.to/anime/stream/mushoku-tensei/staffel-3" },
     URL, Array, String, Number, Boolean, RegExp, JSON, console,
     setTimeout: () => 0,
-    MutationObserver: function () { this.observe = () => {}; },
+    MutationObserver: function (callback) {
+      mutation = callback;
+      this.observe = () => {};
+    },
     Event: function (name) { this.type = name; },
     document: {
       documentElement: {},
@@ -67,6 +71,9 @@ function nachreichen(bilder) {
   kontext.globalThis = kontext;
   kontext.window.dispatchEvent = () => {};
   vm.runInContext(bildnachreichung.nachreichSkript(), kontext, { filename: "bildnachreichung.js" });
+  kontext.__elflixRunMutation = () => {
+    if (mutation) mutation([]);
+  };
   return bilder;
 }
 
@@ -108,6 +115,35 @@ nachreichen([nochmal]);
 nachreichen([nochmal]);
 pruefe("Ein zweiter Durchgang aendert nichts mehr",
   nochmal.zustand.src === "https://aniworld.to" + COVER);
+
+// AniWorld baut Kacheln teils in zwei Schritten: erst steht nur der
+// Platzhalter, danach kommt data-src dazu. Die Nachreichung darf das Bild dann
+// nicht als "schon erledigt" abtun.
+const spaet = bild({ src: PLATZHALTER });
+let mutation = null;
+const kontext = vm.createContext({
+  location: { href: "https://aniworld.to/anime/stream/mushoku-tensei/staffel-3" },
+  URL, Array, String, Number, Boolean, RegExp, JSON, console,
+  setTimeout: () => 0,
+  MutationObserver: function (callback) {
+    mutation = callback;
+    this.observe = () => {};
+  },
+  Event: function (name) { this.type = name; },
+  document: {
+    documentElement: {},
+    querySelectorAll: (auswahl) => (auswahl === "img" ? [spaet] : [])
+  }
+});
+kontext.window = kontext;
+kontext.globalThis = kontext;
+kontext.window.dispatchEvent = () => {};
+vm.runInContext(bildnachreichung.nachreichSkript(), kontext, { filename: "bildnachreichung.js" });
+spaet.setAttribute("data-src", COVER);
+if (mutation) mutation([]);
+pruefe("Ein spaeter gesetztes data-src wird nachgezogen",
+  spaet.zustand.src === "https://aniworld.to" + COVER,
+  spaet.zustand.src.slice(0, 80));
 
 const bestanden = pruefungen.filter(Boolean).length;
 console.log(`${bestanden}/${pruefungen.length} bestanden`);

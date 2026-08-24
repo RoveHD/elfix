@@ -18,8 +18,8 @@
 /** Das Skript als Quelltext, fertig zum Einspielen. */
 function nachreichSkript() {
   return `(() => {
-    if (window.__elflixAniWorldImageFixV1) return;
-    window.__elflixAniWorldImageFixV1 = true;
+    if (window.__elflixAniWorldImageFixV2) return;
+    window.__elflixAniWorldImageFixV2 = true;
 
     const abs = (value) => {
       try { return value ? new URL(value, location.href).href : ""; } catch (_) { return ""; }
@@ -47,7 +47,7 @@ function nachreichSkript() {
       .map((entry) => entry.trim().split(/\\s+/)[0])
       .find(Boolean) || "";
     const hydrateImage = (img) => {
-      if (!img || img.dataset.elflixHydrated === "1") return;
+      if (!img) return;
       const lazySrcset = img.getAttribute("data-srcset") || img.getAttribute("data-lazy-srcset");
       const lazySrc = img.getAttribute("data-src")
         || img.getAttribute("data-lazy-src")
@@ -55,6 +55,8 @@ function nachreichSkript() {
         || img.getAttribute("data-url")
         || img.getAttribute("data-image")
         || firstUrlFromSrcset(lazySrcset);
+      const key = [lazySrcset || "", lazySrc || "", img.getAttribute("src") || ""].join("|");
+      if (img.dataset.elflixHydrated === "1" && img.dataset.elflixHydrationKey === key) return;
       if (lazySrcset && !img.getAttribute("srcset")) img.setAttribute("srcset", lazySrcset);
       if (usefulImage(lazySrc) && (!usefulImage(img.getAttribute("src")) || img.complete === false)) {
         img.setAttribute("src", abs(lazySrc));
@@ -62,15 +64,18 @@ function nachreichSkript() {
       img.loading = "eager";
       img.decoding = "async";
       img.dataset.elflixHydrated = "1";
+      img.dataset.elflixHydrationKey = key;
     };
     const hydrateBackground = (node) => {
-      if (!node || node.dataset.elflixBgHydrated === "1") return;
+      if (!node) return;
       const raw = node.getAttribute("data-bg")
         || node.getAttribute("data-background")
         || node.getAttribute("data-image")
         || node.getAttribute("data-src");
+      if (node.dataset.elflixBgHydrated === "1" && node.dataset.elflixBgHydrationKey === String(raw || "")) return;
       if (usefulImage(raw)) node.style.backgroundImage = 'url("' + abs(raw).replace(/"/g, "%22") + '")';
       node.dataset.elflixBgHydrated = "1";
+      node.dataset.elflixBgHydrationKey = String(raw || "");
     };
     const hideInfoToggles = () => {
       for (const node of Array.from(document.querySelectorAll("button, a, [role='button'], .btn, [class*='button'], [class*='toggle'], [class*='info']"))) {

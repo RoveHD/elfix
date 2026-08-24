@@ -2311,7 +2311,7 @@ function getProviderView(provider) {
     // geschaut wird - und nur dann, wenn es einen gibt.
     const chat = String(nachricht || "").match(/^__elfix:chat:([\s\S]+)$/);
     if (chat) {
-      const key = watchpartyLiveKeyForUrl(view.webContents.getURL());
+      const key = watchpartyChatLiveKeyForUrl(view.webContents.getURL());
       if (key) watchparty.chatSenden(key, chat[1]);
       return;
     }
@@ -6505,6 +6505,22 @@ function watchpartyLiveKeyForUrl(url) {
   return key && watchpartyLiveAktiv(key, raum) ? key : "";
 }
 
+// Der Chat sitzt am Player. Wenn die ganze Ansicht auf einen Hoster gewechselt
+// ist, traegt die Browser-Adresse keine Serienkennung mehr - der aktive
+// Watchparty-Eintrag weiss aber noch, in welchem Raum gerade geschaut wird.
+function aktiverWatchpartyChatKeyFuerHoster(url) {
+  if (!isKnownVideoHosterUrl(url)) return "";
+  const favorite = activeFavoriteId ? favorites.find((item) => item.id === activeFavoriteId) : null;
+  const raum = String(favorite?.watchpartyRoom || "");
+  const key = favorite ? watchpartyKey(favorite) : "";
+  const eintrag = key && raum ? watchpartyEintrag(key, raum) : null;
+  return eintrag?.joined && watchpartyLiveAktiv(key, raum) ? key : "";
+}
+
+function watchpartyChatLiveKeyForUrl(url) {
+  return watchpartyLiveKeyForUrl(url) || aktiverWatchpartyChatKeyFuerHoster(url);
+}
+
 // Eine einzige Stelle, die den Live-Zustand meldet. Sie wird bei jedem Anlass
 // aufgerufen - Takt, Umschalten, Seitenwechsel, Raumaenderung, Verbindung -,
 // damit die Anzeige nie hinterherhinkt.
@@ -8544,7 +8560,7 @@ function watchpartyChatScript(optionen = {}) {
 // Seite ohne Runde haette der Knopf niemanden, mit dem er spraeche.
 async function installWatchpartyChat(provider, view, url) {
   if (!isLiveView(view)) return;
-  const key = watchpartyLiveKeyForUrl(url);
+  const key = watchpartyChatLiveKeyForUrl(url);
   if (!key || !watchparty.aktiv) {
     // Keine Runde mehr: der Chat gehoert weg. Ein Eingabefeld, dessen
     // Nachrichten niemand bekommt, ist schlimmer als keines.
@@ -8565,7 +8581,7 @@ function watchpartyChatZeigen(nachricht) {
   if (!eintrag) return;
   const [, view] = eintrag;
   const adresse = view.webContents.getURL();
-  if (!watchpartyLiveKeyForUrl(adresse)) return;
+  if (!watchpartyChatLiveKeyForUrl(adresse)) return;
   executeJavaScriptInMediaFrames(view,
     `window.__elfixChat && window.__elfixChat.melden(${JSON.stringify(nachricht)})`).catch(() => []);
 }

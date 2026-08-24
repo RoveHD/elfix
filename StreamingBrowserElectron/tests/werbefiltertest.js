@@ -35,6 +35,10 @@ const BRUECKEN = path.join(WURZEL, "..", "android/app/src/main/assets/kern/eigen
 const GRADLE = fs.readFileSync(path.join(WURZEL, "..", "android/app/build.gradle"), "utf8");
 const KERN_HOST = fs.readFileSync(
   path.join(WURZEL, "..", "android/app/src/main/assets/kern/kern-host.js"), "utf8");
+const MAIN_ACTIVITY = fs.readFileSync(
+  path.join(WURZEL, "..", "android/app/src/main/java/local/elflix/android/MainActivity.java"), "utf8");
+const ADBLOCKER_JAVA = fs.readFileSync(
+  path.join(WURZEL, "..", "android/app/src/main/java/local/elflix/android/Adblocker.java"), "utf8");
 
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
@@ -136,6 +140,18 @@ pruefe("adblock-engine.js faehrt in den Assets mit", KERN_MODULE.has("adblock-en
 pruefe("adblock-kosmetik.js ebenfalls", KERN_MODULE.has("adblock-kosmetik"));
 pruefe("kern-host.js haelt den eigenen Abruf des WebViews fest",
   /browserAbruf/.test(KERN_HOST));
+pruefe("Hauptnavigation nimmt die strengere Player-Heuristik",
+  /isLikelyPlayerNavigation\(url\) && !adblocker\.shouldBlock\(url, provider\)/.test(MAIN_ACTIVITY)
+  && /if \(Adblocker\.isLikelyPlayerNavigation\(url\)\) return false;/.test(MAIN_ACTIVITY));
+pruefe("Die strengere Player-Heuristik laesst provide.com nicht durch",
+  /static boolean istPlayerName\(String host, String path\)/.test(ADBLOCKER_JAVA)
+  && /teil\.startsWith\(wort\)/.test(ADBLOCKER_JAVA)
+  && !/targetHost\.matches\("[^"]*\(voe\|v\[-\.\]\?o\[-\.\]\?e\|vid/.test(
+    ADBLOCKER_JAVA.slice(
+      ADBLOCKER_JAVA.indexOf("public static boolean isLikelyPlayerNavigation"),
+      ADBLOCKER_JAVA.indexOf("private static boolean isLikelyVideoPlayerUrl")
+    )
+  ));
 
 // Die Listen holt die Bruecke ueber den eigenen Abruf des WebViews von der
 // Adresse, unter der Java sie ausliefert. Hier steht eine kleine Liste, in der

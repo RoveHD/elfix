@@ -283,13 +283,21 @@ function client(name, deviceId) {
     "ein Feld, dessen Nachrichten niemand bekommt, ist schlimmer als keines");
 
   pruefe("Eingespielt wird nur, wo eine Runde laeuft",
-    /const key = watchpartyLiveKeyForUrl\(url\);/.test(install)
+    /const key = watchpartyChatLiveKeyForUrl\(url\);/.test(install)
     && /if \(!key \|\| !watchparty\.aktiv\) \{/.test(install),
     "ohne Raum haette der Knopf niemanden, mit dem er spraeche");
   pruefe("Gesendet wird nur aus einer laufenden Runde",
-    /const key = watchpartyLiveKeyForUrl\(view\.webContents\.getURL\(\)\);\s*\n\s*if \(key\) watchparty\.chatSenden\(key, chat\[1\]\);/.test(MAIN));
+    /const key = watchpartyChatLiveKeyForUrl\(view\.webContents\.getURL\(\)\);\s*\n\s*if \(key\) watchparty\.chatSenden\(key, chat\[1\]\);/.test(MAIN));
   pruefe("Empfangenes geht nur in eine Seite mit Runde",
-    /if \(!watchpartyLiveKeyForUrl\(adresse\)\) return;/.test(abschnitt(MAIN, "function watchpartyChatZeigen(")));
+    /if \(!watchpartyChatLiveKeyForUrl\(adresse\)\) return;/.test(abschnitt(MAIN, "function watchpartyChatZeigen(")));
+  const hosterSchluessel = abschnitt(MAIN, "function aktiverWatchpartyChatKeyFuerHoster(");
+  pruefe("Auf dem Hoster zaehlt der aktive Watchparty-Eintrag weiter",
+    /isKnownVideoHosterUrl\(url\)/.test(hosterSchluessel)
+    && /activeFavoriteId/.test(hosterSchluessel)
+    && /watchpartyKey\(favorite\)/.test(hosterSchluessel)
+    && /watchpartyEintrag\(key, raum\)/.test(hosterSchluessel)
+    && /watchpartyLiveAktiv\(key, raum\)/.test(hosterSchluessel),
+    "sonst steht Autoplay im Player, aber der Chat verschwindet daneben");
 
   // --- Die Fassade, ausgefuehrt statt gelesen --------------------------------
   //
