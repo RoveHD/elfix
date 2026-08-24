@@ -305,6 +305,25 @@ function isTrackableMediaUrl(url, provider) {
   }
 }
 
+// Laeuft auf dieser Adresse ueberhaupt etwas?
+//
+// isTrackableMediaUrl() beantwortet eine andere Frage: dort geht es darum, ob
+// ein Fortschritt gemerkt werden darf, und das gilt schon fuer die Serienseite.
+// Hier geht es um die Einblendungen im Bild - und die gehoeren nur dorthin, wo
+// wirklich ein Video steht: eine Folge, ein Film, ein YouTube-Video.
+//
+// Ohne diese Frage entschied allein die Seite: "oberstes Dokument und kein
+// grosser Rahmen" trifft auf jede Hosterseite zu - aber eben auch auf die
+// Startseite eines Anbieters, die weder Video noch Rahmen hat. Genau dort stand
+// der Autoplay-Schalter dann ueber der Serienuebersicht.
+function istAbspielseite(url) {
+  if (!providerModel.isHttpUrl(url)) return false;
+  // Shorts laufen in einer Schleife - eine naechste Folge gibt es dort nicht.
+  if (youtube.istShortsUrl(url)) return false;
+  if (youtube.istYoutubeUrl(url)) return Boolean(youtube.videoKennung(url));
+  return Boolean(episodeIdentity(url)) || isExplicitFilmUrl(url);
+}
+
 function isValidMediaProgress(progress) {
   const currentTime = Number(progress?.currentTime);
   const duration = Number(progress?.duration);
@@ -1396,6 +1415,7 @@ module.exports = {
   firstEpisodeUrl,
   isFavoriteProgressUrl,
   isTrackableMediaUrl,
+  istAbspielseite,
   titelAusSlug,
   cleanBaseMediaTitle,
   serienTitel,

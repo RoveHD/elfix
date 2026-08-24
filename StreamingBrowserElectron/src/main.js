@@ -113,6 +113,7 @@ const {
   isFirstEpisodeIdentity,
   isSequentialFavoriteProgress,
   isTrackableMediaUrl,
+  istAbspielseite,
   isValidMediaProgress,
   isWholeMediaCompleted,
   mediaActivityLabel,
@@ -2471,6 +2472,9 @@ function getProviderView(provider) {
     // Runde ist genau das ein Videowechsel.
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     installYoutubeWiedergabe(view, url).catch(() => {});
+    // Ohne Neuladen gibt es kein dom-ready. Der Schalter muss trotzdem
+    // mitkommen - beim Video dazu, auf der Startseite weg.
+    installAutoplaySchalter(view).catch(() => {});
     pushWatchpartyLiveState(url);
     resumePendingProviderAutoplay(provider, view);
   });
@@ -6668,8 +6672,28 @@ function pushWatchpartyLiveState(url = "") {
 // von AniWorld gibt es keinen.
 // Der Autoplay-Schalter. Anders als der Chat haengt er an keiner Runde: er
 // steht in jeder Folge, auch wenn niemand mitschaut.
+//
+// In jeder Folge - und nur dort. istAbspielseite() kennt die Anbieteradressen -
+// Folge, Film, YouTube-Video. Dazu kommt der Hoster selbst: normalerweise
+// laeuft er im Rahmen der Anbieterseite, nach dem Vorbereitungsfenster von S.to
+// aber in der ganzen Ansicht. Dann steht in der Adresse keine Folge, und das
+// Video laeuft trotzdem.
+function autoplaySchalterSeite(url) {
+  return istAbspielseite(url) || isKnownVideoHosterUrl(url);
+}
+
 async function installAutoplaySchalter(view) {
   if (!isLiveView(view)) return;
+  // Nur dort, wo etwas laeuft. Auf der Startseite, in der Suche oder in einer
+  // Uebersicht gibt es keine naechste Folge - der Schalter waere dort nur ein
+  // Kasten, der ueber der Seite klebt.
+  if (!autoplaySchalterSeite(view.webContents.getURL())) {
+    // Und zwar auch dann, wenn er schon dasteht: YouTube wechselt die Seite,
+    // ohne das Dokument neu zu laden. Wer vom Video zurueck auf die Startseite
+    // geht, behielte ihn sonst.
+    await executeJavaScriptInMediaFrames(view, autoplaySchalterEntfernenScript()).catch(() => []);
+    return;
+  }
   const an = settings.playback?.autoplayNextEpisode !== false;
   await executeJavaScriptInMediaFrames(view, autoplaySchalterScript(an)).catch(() => []);
 }
@@ -8454,6 +8478,22 @@ function autoplaySchalterScript(an) {
 
   requestAnimationFrame(wach);
   return "autoplay-da@" + location.hostname;
+})()`;
+}
+
+// Und der Weg zurueck. Er steht hier fuer sich, weil das Aufbau-Skript nur
+// aufraeumt, wenn die Seite selbst unzustaendig ist - eine YouTube-Startseite
+// ohne Neuladen ist das nicht: dort steht der Player von vorhin noch im
+// Dokument, und die Leiste bliebe stehen.
+function autoplaySchalterEntfernenScript() {
+  return `(() => {
+  const alt = document.getElementById("__elfixAutoplaySchalter");
+  if (!alt) return "autoplay-nicht-da";
+  alt.remove();
+  // Ein leerer Kasten ueber dem Bild finge Klicks ab, die dem Player gehoeren.
+  const leiste = document.getElementById("__elfixLeisteLinks");
+  if (leiste && leiste.children.length === 0) leiste.remove();
+  return "autoplay-entfernt";
 })()`;
 }
 

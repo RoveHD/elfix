@@ -164,6 +164,61 @@ pruefe("Bleibt nichts uebrig, verschwindet die Leiste",
   !alleine.leiste(),
   "ein leerer Kasten ueber dem Bild finge Klicks ab, die dem Player gehoeren");
 
+// --- Wo er ueberhaupt hingehoert --------------------------------------------
+//
+// Der Fehler dahinter: die Seite entschied allein, und ihre Regel lautete
+// "oberstes Dokument und kein grosser Rahmen". Das trifft auf jede Hosterseite
+// zu - aber genauso auf die Startseite eines Anbieters, die weder Video noch
+// Rahmen hat. Dort klebte der Schalter dann ueber der Serienuebersicht.
+
+const { istAbspielseite } = require("../src/fortschritt");
+
+const seiten = [
+  ["Startseite des Anbieters", "https://s.to/", false],
+  ["Suche", "https://s.to/suche?term=reacher", false],
+  ["Serienuebersicht", "https://s.to/serie/stream/reacher", false],
+  ["Staffeluebersicht", "https://s.to/serie/stream/reacher/staffel-1", false],
+  ["Folge", "https://s.to/serie/stream/reacher/staffel-1/episode-3", true],
+  ["Film", "https://filmo.to/film/beispiel", true],
+  ["YouTube-Startseite", "https://www.youtube.com/", false],
+  ["YouTube-Suche", "https://www.youtube.com/results?search_query=reacher", false],
+  ["YouTube-Video", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", true],
+  ["YouTube-Shorts", "https://www.youtube.com/shorts/abcdefghijk", false]
+];
+for (const [name, url, erwartet] of seiten) {
+  pruefe(`${erwartet ? "Dort gehoert er hin" : "Dort nicht"}: ${name}`,
+    istAbspielseite(url) === erwartet,
+    url);
+}
+
+// --- Und der Weg zurueck ----------------------------------------------------
+//
+// YouTube wechselt die Seite, ohne das Dokument neu zu laden: kein dom-ready,
+// kein frisches Dokument. Wer vom Video auf die Startseite geht, behielte den
+// Schalter sonst - der Player von vorhin steht dort ja noch.
+
+const weg = seite.seiteBauen();
+weg.lauf(seite.skriptBauen("autoplaySchalterScript", true));
+const wegAntwort = weg.lauf(seite.skriptBauen("autoplaySchalterEntfernenScript"));
+pruefe("Auf einer Seite ohne Video wird er wieder entfernt",
+  !weg.holen("__elfixAutoplaySchalter") && wegAntwort === "autoplay-entfernt",
+  String(wegAntwort));
+pruefe("und die leere Leiste gleich mit",
+  !weg.leiste(),
+  "ein leerer Kasten ueber dem Bild finge Klicks ab, die dem Player gehoeren");
+
+const chatBleibt = seite.seiteBauen();
+chatBleibt.lauf(seite.skriptBauen("autoplaySchalterScript", true));
+chatBleibt.lauf(seite.skriptBauen("watchpartyChatScript", { name: "Du" }));
+chatBleibt.lauf(seite.skriptBauen("autoplaySchalterEntfernenScript"));
+pruefe("Laeuft eine Runde, bleibt der Chat stehen",
+  Boolean(chatBleibt.leiste()) && Boolean(chatBleibt.holen("__elfixChat")),
+  "entfernt wird der Schalter, nicht die Leiste");
+
+pruefe("Zweimal entfernen ist kein Fehler",
+  weg.lauf(seite.skriptBauen("autoplaySchalterEntfernenScript")) === "autoplay-nicht-da",
+  "der Aufruf kommt bei jedem Seitenwechsel");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);
