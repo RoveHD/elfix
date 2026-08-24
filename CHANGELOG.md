@@ -3,6 +3,37 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.39.0 — 24. August 2026
+
+Auf dem Telefon standen zwei Buchstaben, wo am Rechner das Titelbild steht.
+
+- **Die Karten der APK zeigen das Titelbild** - in Weiterschauen, auf der
+  Merkliste, in der Mediathek und im Verlauf, auf dem Telefon wie auf dem
+  Fernseher. Das Bild fehlte nie: es steht im Eintrag und kommt sogar ueber den
+  Geraeteabgleich mit. Es hat nur niemand geholt. Bis es da ist - und fuer
+  Eintraege, die keines haben - bleibt der gestaltete Platzhalter mit den
+  Anfangsbuchstaben stehen, es entsteht also kein Loch
+- **Welches Bild zum Titel gehoert, entscheidet dieselbe Regel wie am
+  Rechner.** Die Auswahl stand als Textblock mitten in `main.js` und war damit
+  nur dort zu haben; sie liegt jetzt in `src/seitendaten.js`, und der Kern der
+  Android-App spielt genau diesen Quelltext in die Anbieterseite ein - wie
+  schon beim Messskript. Ein zweites Verfahren waere ein zweites Programm, und
+  ein Bild aus der Empfehlungsspalte nebenan ist schlimmer als gar keins
+- **Ein Eintrag ohne Bild bekommt eines nachgereicht**, sobald seine Seite
+  offen ist. Die geteilte Regel setzt das Bild nur beim Anlegen - wer seine
+  Titel vom Rechner geerbt hat oder aus einer aelteren Fassung mitbringt, saehe
+  sonst dauerhaft Buchstaben. Nachgetragen wird nur, wo nichts steht, und an
+  dem Eintrag, den der Kern zu dieser Adresse nennt
+- Geholte Bilder liegen im Arbeitsspeicher und auf der Platte, verkleinert
+  schon beim Dekodieren: eine Liste flackert beim Blaettern nicht, ein Telefon
+  im Mobilfunk laedt dasselbe Poster kein zweites Mal, und vierzig Megabyte
+  Ablage sind die Grenze
+- Noch ohne Bild bleiben Suchtreffer: sie sind noch gar kein Eintrag, und die
+  Trefferliste der Anbieter gibt keines her
+- Eine neue Probe faehrt das Skript in einem nackten Kontext, wie ihn ein
+  WebView stellt: es kommt ohne Electron und ohne Node aus, findet das Bild
+  einer Seite - und erfindet keins, wo keins steht
+
 ## 1.38.0 — 24. August 2026
 
 Der Geraeteabgleich hat auf dem Telefon nichts angezeigt und dabei still den

@@ -21,6 +21,7 @@ def kernModule = [
     "src/titel.js",
     "src/fortschritt.js",
     "src/messung.js",
+    "src/seitendaten.js",
     "src/adblock-kosmetik.js",
     "src/fortschritt-proben.js",
     "src/begruendung.js",

@@ -526,6 +526,51 @@ public final class Bestand {
         if (beobachter != null) beobachter.bestandGeaendert();
     }
 
+    /**
+     * Ein Titelbild nachtragen, das die Anbieterseite hergegeben hat.
+     *
+     * <p>Das Gegenstueck zu {@code updateActiveFavoriteTitle} am Rechner: die
+     * geteilte Regel setzt das Bild nur beim Anlegen des Eintrags. Wer ihn aus
+     * dem Geraeteabgleich oder aus einer aelteren Fassung hat, hat deshalb oft
+     * keines - sobald seine Seite offen ist, ist es zu haben.
+     *
+     * <p>Welcher Eintrag zu dieser Adresse gehoert, entscheidet der Kern und
+     * nicht der gemerkte "aktive" Eintrag: der zeigt beim Seitenwechsel einen
+     * Augenblick lang noch auf die vorige Seite, und ein Bild am falschen Titel
+     * waere schlimmer als gar keins.
+     *
+     * <p>Nachgetragen wird nur, wo nichts steht. Ein vorhandenes Bild zu
+     * ersetzen hiesse, bei jedem Seitenaufruf die Ablage neu zu schreiben und
+     * dieselbe Aenderung ueber den Geraeteabgleich hinauszuschicken.
+     */
+    public void bildNachtragen(Provider provider, String url, String bild) {
+        if (kern == null || !kern.istBereit() || provider == null || url == null) return;
+        if (bild == null || bild.isEmpty()) return;
+        JSONArray argumente = new JSONArray();
+        argumente.put(eintraege);
+        argumente.put(provider.alsJson());
+        argumente.put(url);
+        kern.rufe("fortschritt.eintragFinden", argumente, (wert, fehler) -> {
+            if (fehler != null || wert == null) return;
+            // Der Wert kommt als JSON-Text; eine Kennung ist in
+            // Anfuehrungszeichen gefasst.
+            String id = wert.trim();
+            if (id.length() >= 2 && id.startsWith("\"") && id.endsWith("\"")) {
+                id = id.substring(1, id.length() - 1);
+            }
+            JSONObject eintrag = rohMitId(id);
+            if (eintrag == null || !eintrag.optString("thumbnail", "").isEmpty()) return;
+            try {
+                eintrag.put("thumbnail", bild);
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Titelbild nicht nachgetragen", ausnahme);
+                return;
+            }
+            speichern();
+            if (beobachter != null) beobachter.bestandGeaendert();
+        });
+    }
+
     private JSONObject rohMitId(String id) {
         if (id == null || id.isEmpty()) return null;
         for (int i = 0; i < eintraege.length(); i += 1) {

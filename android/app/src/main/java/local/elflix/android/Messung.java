@@ -64,6 +64,15 @@ public final class Messung {
      */
     private Rahmen rahmen;
 
+    /**
+     * Das Titelbild der laufenden Seite.
+     *
+     * <p>Es gehoert an den Stand, weil die geteilte Regel es genau einmal
+     * setzt: beim Anlegen des Eintrags. Wer es hier nicht mitgibt, hat auf der
+     * Karte nie eines - so war es bisher.
+     */
+    private Titelbild titelbild;
+
     /** Der Meldekopf, an dem eine Antwort aus einem Rahmen zu erkennen ist. */
     public static final String MELDE_MESSUNG = "mess:";
 
@@ -75,6 +84,10 @@ public final class Messung {
 
     public void setzeRahmen(Rahmen rahmen) {
         this.rahmen = rahmen;
+    }
+
+    public void setzeTitelbild(Titelbild titelbild) {
+        this.titelbild = titelbild;
     }
 
     public void starten() {
@@ -197,6 +210,8 @@ public final class Messung {
         Log.i(TAG, String.format(java.util.Locale.ROOT,
             "Messung: %d%% (%.1f/%.1fs) wirklich gespielt %.1fs%s",
             prozent, position, laufzeit, gespielt, beendet ? " ENDE" : ""));
-        bestand.verbuchen(anbieter, adresse, meta, seite.watchpartyFuehrt());
+        bestand.verbuchen(anbieter, adresse,
+            titelbild == null ? meta : titelbild.ergaenzen(meta, adresse),
+            seite.watchpartyFuehrt());
     }
 }

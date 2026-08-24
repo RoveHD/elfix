@@ -203,16 +203,17 @@ final class TvViews {
         return card;
     }
 
-    /** Continue-watching card with a designed poster block, since the store holds no artwork. */
+    /** Continue-watching tile: the entry's artwork, with the designed block underneath it. */
     /**
      * Eine Kachel in einer der vier Listen.
      *
+     * @param bildUrl das Titelbild des Eintrags - ohne eines bleibt der Platzhalter
      * @param prozent Fortschritt der laufenden Folge; 0 blendet den Balken aus
      * @param onMenu  laengeres Druecken auf der Fernbedienung - dieselbe Auswahl
      *                wie das Dreipunktmenue auf dem Telefon
      */
     static View favoriteCard(Context context, Provider provider, String title, String episodeLine,
-                             String providerName, int widthDp, int prozent,
+                             String providerName, String bildUrl, int widthDp, int prozent,
                              Runnable onOpen, View.OnClickListener onMenu) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -221,47 +222,11 @@ final class TvViews {
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 3));
 
-        int tint = provider == null ? Theme.PRIMARY_DEEP : Theme.providerTint(provider.id);
-        FrameLayout poster = new FrameLayout(context);
-        GradientDrawable posterBg = new GradientDrawable();
-        posterBg.setCornerRadius(dp(context, 10));
-        posterBg.setColors(new int[]{MobileViews.blend(tint, Color.WHITE, 0.12f),
-            MobileViews.blend(tint, Color.BLACK, 0.55f)});
-        posterBg.setOrientation(GradientDrawable.Orientation.TL_BR);
-        poster.setBackground(posterBg);
-        TextView posterText = new TextView(context);
-        posterText.setText(MobileViews.initials(title));
-        posterText.setTextColor(Color.argb(235, 255, 255, 255));
-        posterText.setTextSize(30);
-        posterText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        posterText.setGravity(Gravity.CENTER);
-        poster.addView(posterText, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        // Der Fortschritt liegt im Bild, wie auf dem Telefon - aus zwei Metern
-        // Entfernung ist ein Balken unter dem Text kaum noch zu sehen.
-        if (prozent > 0) {
-            View spur = new View(context);
-            GradientDrawable spurBg = new GradientDrawable();
-            spurBg.setColor(Color.argb(150, 0, 0, 0));
-            spur.setBackground(spurBg);
-            FrameLayout.LayoutParams spurParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 6));
-            spurParams.gravity = Gravity.BOTTOM;
-            poster.addView(spur, spurParams);
-
-            View balken = new View(context);
-            GradientDrawable balkenBg = new GradientDrawable();
-            balkenBg.setColor(Theme.PRIMARY);
-            balken.setBackground(balkenBg);
-            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, 6));
-            balkenParams.gravity = Gravity.BOTTOM;
-            poster.addView(balken, balkenParams);
-            poster.post(() -> {
-                FrameLayout.LayoutParams neu = (FrameLayout.LayoutParams) balken.getLayoutParams();
-                neu.width = Math.max(dp(context, 4), poster.getWidth() * Math.min(100, prozent) / 100);
-                balken.setLayoutParams(neu);
-            });
-        }
+        // Derselbe Bildkasten wie auf dem Telefon - nur groesser, mit
+        // groesseren Buchstaben und einem Balken, der aus zwei Metern
+        // Entfernung noch zu sehen ist.
+        FrameLayout poster = MobileViews.poster(context, provider, title, bildUrl, prozent,
+            widthDp, 96, 30, 6);
 
         card.addView(poster, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 96)));

@@ -55,6 +55,29 @@ public final class Favorite {
         return roh.optString("thumbnail", "");
     }
 
+    /**
+     * Ein selbst gewaehltes Titelbild, wenn eines zu diesem Titel abgelegt ist.
+     *
+     * <p>Es entsteht am Rechner und geht nicht ueber den Geraeteabgleich - es
+     * kann hier also fehlen, wo dort eines steht. Steht es da, gilt es.
+     */
+    public String customThumbnail() {
+        return roh.optString("customThumbnail", "");
+    }
+
+    /**
+     * Das Bild der Karte.
+     *
+     * <p>Dieselbe Reihenfolge wie am Rechner (siehe {@code favoriteBild} in
+     * renderer.js): ein eigenes Bild hat Vorrang, sonst bleibt es beim Bild der
+     * Anbieterseite. Ist keines von beiden da, bleibt der Platzhalter mit den
+     * Anfangsbuchstaben stehen.
+     */
+    public String bild() {
+        String eigenes = customThumbnail();
+        return eigenes.isEmpty() ? thumbnail() : eigenes;
+    }
+
     public String favicon() {
         return roh.optString("favicon", "");
     }

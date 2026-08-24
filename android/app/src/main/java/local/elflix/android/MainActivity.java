@@ -79,6 +79,8 @@ public class MainActivity extends Activity {
     private Bibliothek offeneListe = Bibliothek.WEITERSCHAUEN;
     /** Der Takt, der misst, was gerade laeuft. Siehe Messung.java. */
     private Messung messung;
+    /** Woher die Karten ihr Titelbild bekommen. Siehe Titelbild.java. */
+    private Titelbild titelbild;
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
@@ -245,6 +247,8 @@ public class MainActivity extends Activity {
             }
         });
         messung.setzeRahmen(rahmen);
+        titelbild = new Titelbild(kern, bestand);
+        messung.setzeTitelbild(titelbild);
         watchparty = new Watchparty(this, kern, this::watchpartyGeaendert);
         geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
             // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
@@ -938,7 +942,7 @@ public class MainActivity extends Activity {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
         }
         return TvViews.favoriteCard(this, providerForFavorite(eintrag), titel, hinweis,
-            eintrag.providerName(), widthDp,
+            eintrag.providerName(), eintrag.bild(), widthDp,
             liste.zeigtFortschritt() ? eintrag.progress() : 0,
             () -> openFavorite(eintrag),
             anker -> eintragsMenue(anker, eintrag, liste));
@@ -1466,7 +1470,7 @@ public class MainActivity extends Activity {
                         ? result.provider.name : result.genre;
                     // Ein Suchtreffer hat noch keinen Fortschritt und kein Menue.
                     addTvRowItem(row, TvViews.favoriteCard(this, result.provider, result.title, meta,
-                        result.provider.name, width, 0,
+                        result.provider.name, "", width, 0,
                         () -> openProvider(result.provider, result.url), null),
                         shown % perRow == 0);
                     shown += 1;
@@ -1680,7 +1684,7 @@ public class MainActivity extends Activity {
                     // Ein Suchtreffer hat noch keinen Fortschritt und kein
                     // Menue - er ist noch gar kein Eintrag.
                     View card = MobileViews.favoriteCard(this, result.provider, result.title, meta, null,
-                        0, "Ansehen",
+                        "", 0, "Ansehen",
                         () -> openProvider(result.provider, result.url), null);
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1880,7 +1884,7 @@ public class MainActivity extends Activity {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
         }
         return MobileViews.favoriteCard(this, providerForFavorite(eintrag), titel, hinweis,
-            eintrag.providerName(),
+            eintrag.providerName(), eintrag.bild(),
             liste.zeigtFortschritt() ? eintrag.progress() : 0,
             liste.aufruf,
             () -> openFavorite(eintrag),
@@ -2073,7 +2077,7 @@ public class MainActivity extends Activity {
         String title = cleanFavoriteTitle(favorite.title(), favorite.url());
         if (title.isEmpty()) title = "Favorit";
         return MobileViews.favoriteCard(this, providerForFavorite(favorite), title,
-            favorite.folgenText(), favorite.providerName(),
+            favorite.folgenText(), favorite.providerName(), favorite.bild(),
             favorite.progress(), "Weiter ansehen",
             () -> openFavorite(favorite),
             anker -> eintragsMenue(anker, favorite, Bibliothek.WEITERSCHAUEN));
@@ -3311,6 +3315,9 @@ public class MainActivity extends Activity {
         } catch (Exception ignoriert) {
             // Zwei Felder in einem frischen Objekt koennen nicht scheitern.
         }
+        // Das Titelbild dieser Seite, falls es schon gefunden wurde: die
+        // geteilte Regel setzt es beim Anlegen und danach nicht mehr.
+        if (titelbild != null) meta = titelbild.ergaenzen(meta, url);
         bestand.anlegenUndMerken(activeProvider, url, meta, () -> {
             updateFavoriteButton();
             showToast("Zur Watchlist hinzugefügt");
@@ -5201,6 +5208,10 @@ public class MainActivity extends Activity {
                 bestand.nachziehen(provider, url, favoriteProgressMode);
                 bestand.aktuellenEintragBestimmen(provider, url, MainActivity.this::updateFavoriteButton);
             }
+            // Und nachsehen, welches Titelbild die Seite hergibt. Damit traegt
+            // eine Karte auf dem Telefon dasselbe Bild wie am Rechner, statt
+            // der beiden Anfangsbuchstaben.
+            if (titelbild != null) titelbild.suchen(view, provider, url);
             super.onPageFinished(view, url);
         }
 

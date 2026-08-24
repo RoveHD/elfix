@@ -2,12 +2,14 @@ package local.elflix.android;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Outline;
 import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -239,30 +241,22 @@ final class MobileViews {
     }
 
     /**
-     * Continue-watching card: poster placeholder, title, episode line, provider, and a play cue.
-     * There is no artwork in the favourites store, so the placeholder is designed rather than left
-     * as an empty rectangle.
-     */
-    /**
-     * Eine Zeile in Weiterschauen, Watchlist, Mediathek oder Verlauf.
+     * Der Bildkasten einer Karte.
      *
-     * @param prozent    Fortschritt der laufenden Folge, 0 blendet den Balken aus
-     * @param hinweis    was unter dem Titel steht - "Staffel 3 Folge 8", "Abgeschlossen", ...
-     * @param aufruf     was der Knopf unten sagt: "Weiter ansehen", "Ansehen", "Nochmal ansehen"
-     * @param onMenu     das Dreipunktmenue - bekommt den Knopf als Anker, damit das
-     *                   Menue daneben aufgeht und nicht am Bildschirmrand klebt;
-     *                   {@code null} laesst es weg
+     * <p>Am Rechner traegt jede Karte das Titelbild des Eintrags. Auf dem
+     * Telefon standen hier zwei Buchstaben - nicht als Gestaltung, sondern
+     * weil das Bild nie geholt wurde. Jetzt liegt es darueber, sobald es da
+     * ist; bis dahin und ohne Bild bleibt der gestaltete Platzhalter stehen.
+     *
+     * <p>Die Reihenfolge im Kasten ist Absicht: erst die Buchstaben, dann das
+     * Bild, dann der Fortschrittsbalken. So verdeckt das Bild den Platzhalter,
+     * und der Balken liegt trotzdem obenauf.
+     *
+     * @param bildUrl das Titelbild des Eintrags, leer erlaubt
+     * @param prozent Fortschritt der laufenden Folge, 0 blendet den Balken aus
      */
-    static View favoriteCard(Context context, Provider provider, String title, String episodeLine,
-                             String providerName, int prozent, String aufruf,
-                             Runnable onOpen, View.OnClickListener onMenu) {
-        LinearLayout card = new LinearLayout(context);
-        card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setPadding(dp(context, 10), dp(context, 10), dp(context, 12), dp(context, 10));
-        addPressFeedback(card,
-            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
-            shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
-
+    static FrameLayout poster(Context context, Provider provider, String title, String bildUrl,
+                              int prozent, int breiteDp, int hoeheDp, float schriftSp, int balkenDp) {
         FrameLayout poster = new FrameLayout(context);
         int tint = provider == null ? Theme.PRIMARY_DEEP : Theme.providerTint(provider.id);
         GradientDrawable posterBg = new GradientDrawable();
@@ -270,14 +264,32 @@ final class MobileViews {
         posterBg.setColors(new int[]{blend(tint, Color.WHITE, 0.10f), blend(tint, Color.BLACK, 0.55f)});
         posterBg.setOrientation(GradientDrawable.Orientation.TL_BR);
         poster.setBackground(posterBg);
+        // Ohne den Zuschnitt stuenden die Ecken des Bildes ueber den runden
+        // Ecken des Kastens - genau der Rand, an dem eine aufgeklebte Kachel
+        // von einer gestalteten zu unterscheiden ist.
+        poster.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View ansicht, Outline umriss) {
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 10));
+            }
+        });
+        poster.setClipToOutline(true);
+
         TextView posterText = new TextView(context);
         posterText.setText(initials(title));
         posterText.setTextColor(Color.argb(230, 255, 255, 255));
-        posterText.setTextSize(22);
+        posterText.setTextSize(schriftSp);
         posterText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         posterText.setGravity(Gravity.CENTER);
         poster.addView(posterText, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        ImageView bild = new ImageView(context);
+        bild.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        poster.addView(bild, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        Bilder.laden(bild, bildUrl, breiteDp, hoeheDp, () -> posterText.setVisibility(View.GONE));
+
         // Der Fortschrittsbalken sitzt im Bild, nicht darunter: unter dem Titel
         // waere er eine weitere Zeile, und die Liste soll auf einem Telefon so
         // viele Eintraege wie moeglich zeigen.
@@ -287,7 +299,7 @@ final class MobileViews {
             spurBg.setColor(Color.argb(150, 0, 0, 0));
             spur.setBackground(spurBg);
             FrameLayout.LayoutParams spurParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 4));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, balkenDp));
             spurParams.gravity = Gravity.BOTTOM;
             poster.addView(spur, spurParams);
 
@@ -295,16 +307,46 @@ final class MobileViews {
             GradientDrawable balkenBg = new GradientDrawable();
             balkenBg.setColor(Theme.PRIMARY);
             balken.setBackground(balkenBg);
-            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, 4));
+            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, balkenDp));
             balkenParams.gravity = Gravity.BOTTOM;
             poster.addView(balken, balkenParams);
-            // Die Breite steht erst fest, wenn das Bild gemessen ist.
+            // Die Breite steht erst fest, wenn der Kasten gemessen ist.
             poster.post(() -> {
                 FrameLayout.LayoutParams neu = (FrameLayout.LayoutParams) balken.getLayoutParams();
                 neu.width = Math.max(dp(context, 3), poster.getWidth() * Math.min(100, prozent) / 100);
                 balken.setLayoutParams(neu);
             });
         }
+        return poster;
+    }
+
+    /**
+     * Continue-watching card: artwork, title, episode line, provider, and a play cue.
+     * Until the artwork is there -- and for entries that have none -- the designed placeholder
+     * with the title's initials stays in its place rather than leaving an empty rectangle.
+     */
+    /**
+     * Eine Zeile in Weiterschauen, Watchlist, Mediathek oder Verlauf.
+     *
+     * @param bildUrl    das Titelbild des Eintrags - ohne eines bleibt der Platzhalter
+     * @param prozent    Fortschritt der laufenden Folge, 0 blendet den Balken aus
+     * @param hinweis    was unter dem Titel steht - "Staffel 3 Folge 8", "Abgeschlossen", ...
+     * @param aufruf     was der Knopf unten sagt: "Weiter ansehen", "Ansehen", "Nochmal ansehen"
+     * @param onMenu     das Dreipunktmenue - bekommt den Knopf als Anker, damit das
+     *                   Menue daneben aufgeht und nicht am Bildschirmrand klebt;
+     *                   {@code null} laesst es weg
+     */
+    static View favoriteCard(Context context, Provider provider, String title, String episodeLine,
+                             String providerName, String bildUrl, int prozent, String aufruf,
+                             Runnable onOpen, View.OnClickListener onMenu) {
+        LinearLayout card = new LinearLayout(context);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setPadding(dp(context, 10), dp(context, 10), dp(context, 12), dp(context, 10));
+        addPressFeedback(card,
+            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
+            shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
+
+        FrameLayout poster = poster(context, provider, title, bildUrl, prozent, 66, 88, 22, 4);
 
         LinearLayout.LayoutParams posterParams = new LinearLayout.LayoutParams(dp(context, 66), dp(context, 88));
         posterParams.rightMargin = dp(context, 12);
