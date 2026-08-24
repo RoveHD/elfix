@@ -39,12 +39,22 @@
 // package.json angekuendigte UMD-Datei fehlt im Paket). ELFIX ist CommonJS,
 // deshalb der dynamische import() - der laeuft in Electrons Hauptprozess und
 // passt ohnehin zum asynchronen Aufbau.
+//
+// Auf dem Telefon gibt es weder npm noch import(): dort liegt das Paket als
+// gebuendelte Datei neben dem Kern (siehe scripts/kern-tsurlfilter.js), haengt
+// am globalen Namen und ist schon da, bevor dieses Modul geladen wird. Deshalb
+// wird zuerst dort nachgesehen - und deshalb ist diese Datei die einzige
+// Stelle, an der die Herkunft der Engine ueberhaupt vorkommt. Alles darunter
+// ist auf beiden Geraeten dasselbe.
 
 let modulVersprechen = null;
 
 function ladeModul() {
   if (!modulVersprechen) {
-    modulVersprechen = import("@adguard/tsurlfilter").catch(() => null);
+    const gebuendelt = typeof globalThis !== "undefined" && globalThis.ELFIX_TSURLFILTER;
+    modulVersprechen = gebuendelt
+      ? Promise.resolve(gebuendelt)
+      : import("@adguard/tsurlfilter").catch(() => null);
   }
   return modulVersprechen;
 }

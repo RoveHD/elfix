@@ -5,7 +5,10 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
 ## 1.39.0 — 24. August 2026
 
-Auf dem Telefon standen zwei Buchstaben, wo am Rechner das Titelbild steht.
+Die APK holt auf: sie zeigt Titelbilder statt Anfangsbuchstaben, und sie
+filtert Werbung nach denselben Regeln wie der Rechner statt nach Domainnamen.
+
+### Titelbilder
 
 - **Die Karten der APK zeigen das Titelbild** - in Weiterschauen, auf der
   Merkliste, in der Mediathek und im Verlauf, auf dem Telefon wie auf dem
@@ -33,6 +36,48 @@ Auf dem Telefon standen zwei Buchstaben, wo am Rechner das Titelbild steht.
 - Eine neue Probe faehrt das Skript in einem nackten Kontext, wie ihn ein
   WebView stellt: es kommt ohne Electron und ohne Node aus, findet das Bild
   einer Seite - und erfindet keins, wo keins steht
+
+### Der Werbeblocker
+
+- **tsurlfilter faehrt jetzt in der APK mit** - dieselbe Engine, die am Rechner
+  filtert, und dieselbe Datei (`adblock-engine.js`) faehrt sie. Damit gilt auf
+  dem Telefon die ganze Regelsprache der AdGuard-Listen: Regeln mit Pfad,
+  Bedingungen wie `$script`, `$third-party` oder `$domain=`, die Ausnahmen
+  (`@@`), ueber die Captchas durchkommen - und die kosmetischen Regeln, gegen
+  die ein Domainfilter grundsaetzlich nichts ausrichtet. Bisher konnte die APK
+  genau eines: eine Domain sperren
+- **Die Schichten ueber dem Player gehen jetzt auch nach Liste weg.** Ein
+  Werbe-Overlay ist oft gar keine eigene Anfrage, sondern ein paar DIVs, die
+  ein laengst geladenes Skript einhaengt - genau dafuer stehen die
+  `##`-Regeln in den Listen. Die eigene Overlay-Erkennung bleibt daneben
+  bestehen: die Listen kennen die benannten Werbeplaetze, sie erkennt die
+  unbenannten
+- **Kein Warten und kein Risiko fuer den Rest.** `shouldInterceptRequest` ist
+  synchron und laeuft im Netzfaden, die Engine antwortet ueber den Hauptfaden;
+  beides zusammenzuzwingen hiesse, den Netzverkehr auf die Oberflaeche warten
+  zu lassen. Also entscheidet ein Zwischenspeicher, was die Engine schon
+  beurteilt hat, und was neu ist, geht als Stapel hinterher - die erste
+  Anfrage einer Adresse entscheidet noch die Domainliste, jede weitere die
+  Engine
+- **Nicht auf jedem Geraet.** Eine Regelbasis dieser Groesse kostet dauerhaft
+  ein paar hundert Megabyte; auf einem Fernseh-Stick ist das nicht zu halten.
+  Geraete unter drei Gigabyte bleiben deshalb bei der Domainliste - und wer
+  das anders will, stellt es unter *Einstellungen > Volle Regeln* um, in beide
+  Richtungen
+- **Die Domainliste bleibt der Boden.** Sie filtert vor dem Aufbau, waehrend er
+  laeuft und ueberall dort, wo die Engine nicht laeuft. Es gibt keinen
+  Augenblick, in dem gar nichts filtert
+- Die Filterlisten werden beim Laden zweimal ausgewertet: der Rohtext bleibt
+  liegen (aus ihm baut sich die Engine), die Domainsperren wie bisher. Geholt
+  wird weiter einmal
+- Stirbt der Kern-WebView - dem Renderer kann der Speicher ausgehen -, wird er
+  neu hochgezogen und jeder offene Aufruf scheitert mit einer Auskunft. Vorher
+  waere das ein stiller Ausfall gewesen: Fortschritt, Watchparty und Abgleich
+  haetten auf Antworten gewartet, die niemand mehr gibt
+- Eine neue Probe faehrt den ganzen Weg in einem nackten Kontext: das Buendel
+  entsteht, laeuft ohne Node, `adblock-engine.js` findet es, und die Bruecke
+  baut daraus eine Engine, die Pfadregeln blockt, `@@`-Ausnahmen erlaubt und
+  die kosmetischen Regeln fertig zum Einspielen herausgibt
 
 ## 1.38.0 — 24. August 2026
 

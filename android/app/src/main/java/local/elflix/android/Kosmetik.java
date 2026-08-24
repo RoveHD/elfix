@@ -22,10 +22,17 @@ import org.json.JSONObject;
  * das Skript ein, faengt seine Meldungen auf und fuehrt aus, was
  * zurueckkommt.
  *
- * <p>Ein Unterschied bleibt und ist unvermeidbar: die Frage "ist dieser Host
- * ein Werbe-Host" beantwortet am Rechner die tsurlfilter-Engine, hier die
- * mitgelieferte Domainliste. Die Engine braucht dauerhaft rund 480 MB - das
- * ueberlebt kein Fernseher-Stick.
+ * <p>Die Frage "ist dieser Host ein Werbe-Host" beantwortet hier die
+ * Domainliste und nicht die Regel-Engine, auch wo diese laeuft (siehe
+ * {@link Werbefilter}): die Antwort muss sofort dastehen, und der Weg zur
+ * Engine fuehrt ueber den Kern. Fuer diese eine Frage - kennt jemand diesen
+ * Namen als Werbenetz - genuegt die Liste.
+ *
+ * <p>Was die Engine dagegen beitraegt, sind die kosmetischen Regeln der
+ * Filterlisten selbst. Sie kommen nicht hier an, sondern gehen direkt in die
+ * Seite (siehe {@link Werbefilter#seitenregelnEinspielen}). Beides steht
+ * nebeneinander: die Listen kennen die benannten Werbeplaetze, diese Klasse
+ * erkennt die unbenannten.
  */
 public final class Kosmetik {
     private static final String TAG = CrashReporter.TAG;

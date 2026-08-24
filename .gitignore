@@ -47,3 +47,6 @@ latest.yml
 Thumbs.db
 .idea/
 .vscode/
+
+# Zwischenablage des Kern-Buendlers (scripts/kern-tsurlfilter.js)
+StreamingBrowserElectron/.kernbau-*/

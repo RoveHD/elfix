@@ -85,6 +85,8 @@ public class MainActivity extends Activity {
     private Watchparty watchparty;
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
     private Kosmetik kosmetik;
+    /** Die vollen AdGuard-Regeln, wo das Geraet sie traegt. Siehe Werbefilter.java. */
+    private Werbefilter werbefilter;
     private Fassungen fassungen;
     private Rahmen rahmen;
     private Marken marken;
@@ -208,8 +210,15 @@ public class MainActivity extends Activity {
         // weiter.
         if (Filterlisten.faellig(this)) {
             Filterlisten.aktualisieren(this, (anzahl, fehler) -> {
-                if (fehler != null) Log.w(TAG, "Filterlisten nicht erneuert: " + fehler);
-                else Log.i(TAG, "Filterlisten erneuert: " + anzahl + " Domains");
+                if (fehler != null) {
+                    Log.w(TAG, "Filterlisten nicht erneuert: " + fehler);
+                    return;
+                }
+                Log.i(TAG, "Filterlisten erneuert: " + anzahl + " Domains");
+                // Die vollen Regeln haengen am Rohtext derselben Listen. Nach
+                // dem ersten Abruf ist ueberhaupt erst einer da - ohne diese
+                // Zeile stuende die Engine bis zum naechsten Start still.
+                if (werbefilter != null) werbefilter.neuBauen();
             });
         }
         providers = ProviderStore.load(this);
@@ -257,6 +266,10 @@ public class MainActivity extends Activity {
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
         kosmetik = new Kosmetik(kern, adblocker);
+        werbefilter = new Werbefilter(this, kern, () -> {
+            // Der Aufbau dauert; steht die Seite gerade offen, soll sie es zeigen.
+            if ("settings".equals(currentScreen)) showSettings();
+        });
         fassungen = new Fassungen(this, kern);
         rahmen = new Rahmen(this::rahmenMeldung);
         marken = new Marken(this, kern, rahmen);
@@ -271,6 +284,7 @@ public class MainActivity extends Activity {
             messung.starten();
             watchparty.anwenden();
             kosmetik.vorbereiten();
+            werbefilter.vorbereiten();
             fassungen.vorbereiten();
             marken.vorbereiten();
             qualitaet.vorbereiten();
@@ -1363,6 +1377,14 @@ public class MainActivity extends Activity {
                 + "Video-Hosters wird bewusst zurückhaltender gefiltert, damit die Wiedergabe startet.",
             null, null), TvViews.SECTION_GAP);
 
+        addSpacing(page, TvViews.infoCard(this, "Volle Regeln",
+            werbefilter == null ? "" : werbefilter.standText(),
+            regelKnopf(), this::regelModusUmschalten), TvViews.ITEM_GAP);
+
+        addSpacing(page, TvViews.infoCard(this, "Filterlisten",
+            Filterlisten.standText(this),
+            "Jetzt aktualisieren", this::filterlistenLaden), TvViews.ITEM_GAP);
+
         addSpacing(page, TvViews.infoCard(this, "Favoriten-Fortschritt",
             folgeStatisch()
                 ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
@@ -1696,6 +1718,57 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /**
+     * Die Filterlisten holen - und die vollen Regeln danach neu aufbauen.
+     *
+     * <p>Beides gehoert zusammen: die Engine haelt den Rohtext, den sie beim
+     * Aufbau gelesen hat. Ohne den zweiten Schritt filterte sie nach dem
+     * Herunterladen weiter nach dem alten Stand.
+     */
+    private void filterlistenLaden() {
+        showToast("Filterlisten werden geladen …");
+        Filterlisten.aktualisieren(this, (anzahl, fehler) -> {
+            if (fehler != null) {
+                showToast("Ging nicht: " + fehler);
+            } else {
+                showToast(anzahl + " Domains geladen");
+                if (werbefilter != null) werbefilter.neuBauen();
+            }
+            showSettings();
+        });
+    }
+
+    /** Was auf dem Knopf der Regelkarte steht - drei Zustaende im Kreis. */
+    private String regelKnopf() {
+        if (werbefilter == null) return null;
+        switch (werbefilter.modus()) {
+            case "an": return "Abschalten";
+            case "aus": return "Dem Gerät überlassen";
+            default: return Werbefilter.geraetTraegt(this) ? "Abschalten" : "Trotzdem einschalten";
+        }
+    }
+
+    /**
+     * Der Reihe nach durch die drei Zustaende.
+     *
+     * <p>"Automatisch" heisst: das Geraet entscheidet an seinem Speicher. Wer
+     * das ueberstimmt, soll es koennen - es ist sein Geraet, und wer ein
+     * ruckelndes Bild in Kauf nimmt, um mehr Werbung loszuwerden, hat dafuer
+     * seine Gruende.
+     */
+    private void regelModusUmschalten() {
+        if (werbefilter == null) return;
+        String jetzt = werbefilter.modus();
+        String neu;
+        if ("an".equals(jetzt)) neu = "aus";
+        else if ("aus".equals(jetzt)) neu = "auto";
+        else neu = Werbefilter.geraetTraegt(this) ? "aus" : "an";
+        werbefilter.setzeModus(neu);
+        showToast("aus".equals(neu) ? "Volle Regeln aus"
+            : ("an".equals(neu) ? "Volle Regeln an" : "Das Gerät entscheidet"));
+        showSettings();
+    }
+
     /** Settings rows as grouped cards instead of stacked headline/paragraph pairs. */
     private View settingsCard(String title, String body, String actionLabel, Runnable onAction) {
         LinearLayout card = new LinearLayout(this);
@@ -1742,17 +1815,14 @@ public class MainActivity extends Activity {
                 + "zudecken, werden zusätzlich erkannt und ausgeblendet.",
             null, null), 18);
 
+        addSpacing(page, settingsCard("Volle Regeln",
+            werbefilter == null ? "" : werbefilter.standText(),
+            regelKnopf(), this::regelModusUmschalten), MobileViews.ITEM_GAP);
+
         addSpacing(page, settingsCard("Filterlisten",
             Filterlisten.standText(this),
             "Jetzt aktualisieren",
-            () -> {
-                showToast("Filterlisten werden geladen …");
-                Filterlisten.aktualisieren(this, (anzahl, fehler) -> {
-                    if (fehler != null) showToast("Ging nicht: " + fehler);
-                    else showToast(anzahl + " Domains geladen");
-                    showSettings();
-                });
-            }), MobileViews.ITEM_GAP);
+            this::filterlistenLaden), MobileViews.ITEM_GAP);
 
         addSpacing(page, settingsCard("Favoriten-Fortschritt",
             folgeStatisch()
@@ -5155,7 +5225,16 @@ public class MainActivity extends Activity {
             // Deliberately NOT view.getUrl() -- see mainFrameUrl above. This runs off the UI thread.
             String requestUrl = request.getUrl().toString();
             boolean hosterFrame = isHosterFrameRequest(request);
-            String reason = adblocker.blockReason(requestUrl, provider, hosterFrame);
+            // Was die vollen Regeln zu dieser Anfrage sagen - sofern sie sie
+            // schon einmal gesehen haben. Beim ersten Mal entscheidet die
+            // Domainliste; die Engine sieht sich die Adresse danach an und
+            // urteilt ab dem naechsten Mal. Warten kann diese Stelle nicht:
+            // sie laeuft im Netzfaden, und die Engine antwortet ueber den
+            // Hauptfaden.
+            Boolean engineUrteil = werbefilter == null ? null : werbefilter.urteil(requestUrl,
+                Werbefilter.artAus(request.getRequestHeaders(), false, requestUrl),
+                refererOf(request));
+            String reason = adblocker.blockReason(requestUrl, provider, hosterFrame, engineUrteil);
             if (reason == null && hosterFrame
                 && Adblocker.isEmbeddedThirdPartyFrame(refererOf(request), provider)) {
                 // Everything the hoster frame is still allowed to pull in. This is where the
@@ -5198,6 +5277,9 @@ public class MainActivity extends Activity {
             installTvWebNavigation(view);
             installStoPlayerFix(view, provider);
             if (kosmetik != null) kosmetik.einspielen(view, provider);
+            // Und die kosmetischen Regeln der Filterlisten - das, was ein
+            // Domainfilter grundsaetzlich nicht kann.
+            if (werbefilter != null) werbefilter.seitenregelnEinspielen(view, provider, url);
             // Die gemerkte Fassung anklicken, bevor der Autostart einen
             // Hoster sucht - die Seite zeigt nur die Hoster der gewaehlten.
             if (fassungen != null) {

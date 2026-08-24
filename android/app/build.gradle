@@ -22,6 +22,7 @@ def kernModule = [
     "src/fortschritt.js",
     "src/messung.js",
     "src/seitendaten.js",
+    "src/adblock-engine.js",
     "src/adblock-kosmetik.js",
     "src/fortschritt-proben.js",
     "src/begruendung.js",
@@ -104,6 +105,68 @@ abstract class AssetsSammeln extends DefaultTask {
         dateien.copy { spec ->
             spec.from(quellen)
             spec.into(wurzel.dir(unterordner.get()))
+        }
+    }
+}
+
+/*
+ * tsurlfilter in die APK.
+ *
+ * Der Werbeblocker des Rechners ist @adguard/tsurlfilter - dieselbe Engine,
+ * die AdGuard in seiner Browsererweiterung fuehrt. Auf Android lief bisher nur
+ * ein Domainabgleich: was eine Regel mit Pfad, mit $script, mit $third-party
+ * oder mit einer Ausnahme (@@) sagt, war hier nicht zu haben, und kosmetische
+ * Regeln (##.werbe-overlay) schon gar nicht.
+ *
+ * Das Paket ist ein ES-Modul aus npm. Auf dem Telefon gibt es beides nicht,
+ * also wird es beim Bauen zu einer einzigen Browserdatei gebuendelt (siehe
+ * StreamingBrowserElectron/scripts/kern-tsurlfilter.js). Sie landet neben dem
+ * Kern und wird von kern.html als Skript geladen - nicht ueber die Bruecke
+ * eingespielt: 1,3 MB in einem evaluateJavascript-Aufruf laufen in die
+ * Groessengrenze zwischen den Prozessen.
+ *
+ * Gebuendelt wird beim Bauen und nicht von Hand, aus demselben Grund wie beim
+ * Kopieren der Module: eine Datei, die von Hand zu erneuern waere, traegt
+ * irgendwann eine andere Fassung als der Rechner - und dann filtern beide
+ * Geraete verschieden, ohne dass es jemand sieht.
+ */
+abstract class KernBuendeln extends DefaultTask {
+    /** Der Buendler selbst. */
+    @InputFile
+    abstract RegularFileProperty getBuendler()
+
+    /**
+     * Die Sperrdatei.
+     *
+     * <p>Sie steht hier als Eingabe, damit ein Versionssprung von tsurlfilter
+     * ein neues Buendel erzwingt. Ohne sie waere das Ergebnis eines frueheren
+     * Laufs fuer Gradle immer noch gueltig.
+     */
+    @InputFile
+    abstract RegularFileProperty getSperre()
+
+    @OutputDirectory
+    abstract DirectoryProperty getZiel()
+
+    @javax.inject.Inject
+    abstract ExecOperations getAusfuehren()
+
+    @TaskAction
+    void buendeln() {
+        def datei = ziel.get().file("kern/tsurlfilter.js").asFile
+        datei.parentFile.mkdirs()
+        def fehler = new ByteArrayOutputStream()
+        def ergebnis = ausfuehren.exec { spec ->
+            spec.commandLine "node", buendler.get().asFile.absolutePath, datei.absolutePath
+            spec.workingDir = buendler.get().asFile.parentFile.parentFile
+            spec.errorOutput = fehler
+            spec.ignoreExitValue = true
+        }
+        if (ergebnis.exitValue != 0) {
+            throw new GradleException(
+                "tsurlfilter liess sich nicht buendeln. Ohne das Buendel filtert die APK nur ueber " +
+                "Domainnamen. Einmalig einrichten:  cd StreamingBrowserElectron && npm ci\n" +
+                fehler.toString())
         }
     }
 }
@@ -239,6 +302,14 @@ androidComponents {
             }
         }
         variante.sources.assets.addGeneratedSourceDirectory(module) { it.ziel }
+
+        def buendel = tasks.register("kernTsurlfilter${variantenName}", KernBuendeln) {
+            description = "Buendelt @adguard/tsurlfilter fuer den Kern der App."
+            group = "build"
+            buendler.set(new File(kernQuelle, "scripts/kern-tsurlfilter.js"))
+            sperre.set(new File(kernQuelle, "package-lock.json"))
+        }
+        variante.sources.assets.addGeneratedSourceDirectory(buendel) { it.ziel }
 
         def proben = tasks.register("kernProbenKopieren${variantenName}", AssetsSammeln) {
             description = "Kopiert die Faelle der Fortschrittsregel in die Assets."

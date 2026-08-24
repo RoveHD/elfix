@@ -23,12 +23,19 @@ import java.util.Set;
  * wechseln ihre Adressen im Wochenrhythmus; eine Liste, die mit der App altert,
  * blockt nach einem halben Jahr an den falschen Stellen.
  *
- * <p>Geholt werden dieselben vier Listen wie am Rechner. Was daraus wird, ist
- * bewusst weniger als dort: der Rechner faehrt die vollstaendige Regelsprache
- * ueber tsurlfilter, das hier waere mit rund 480 MB Dauerbedarf auf einem
- * Fernseher nicht zu halten. Also werden nur die reinen Domainsperren
- * herausgezogen - {@code ||host^} und Freunde -, und die genuegen fuer den
- * groessten Teil des Verkehrs.
+ * <p>Geholt werden dieselben Listen wie am Rechner, und seit dem Einzug von
+ * tsurlfilter in die APK wird zweierlei daraus gemacht:
+ *
+ * <ul>
+ *   <li>Der <b>Rohtext</b> bleibt liegen - Zeile fuer Zeile so, wie AdGuard
+ *       ihn schreibt. Aus ihm baut {@link Werbefilter} die Engine, und nur er
+ *       traegt, was eine Domainliste nicht ausdruecken kann: Pfade,
+ *       {@code $script}, {@code $third-party}, Ausnahmen ({@code @@}) und die
+ *       kosmetischen Regeln.
+ *   <li>Die <b>Domainsperren</b> werden weiter herausgezogen. Sie sind der
+ *       Boden: sie filtern, bevor die Engine steht, und auf Geraeten, die sie
+ *       nicht tragen koennen, filtern sie allein.
+ * </ul>
  *
  * <p>Die eingebaute Liste bleibt als Notnagel: solange nichts geladen ist, und
  * fuer den Fall, dass das Laden dauerhaft scheitert.
@@ -37,7 +44,16 @@ public final class Filterlisten {
     private static final String TAG = CrashReporter.TAG;
     private static final String PREFS = "elflix_filterlisten";
     private static final String DATEI = "filterdomains.txt";
-    /** Dieselben vier Quellen wie am Desktop (siehe FILTER_LISTEN in main.js). */
+    /** Wo die Rohtexte liegen - je Liste eine Datei, benannt nach ihrer Nummer. */
+    static final String ROH_ORDNER = "filterlisten";
+    /**
+     * Dieselben Quellen wie am Desktop (siehe FILTER_LISTEN in main.js).
+     *
+     * <p>Die Nummer ist die AdGuard-Listennummer. Sie benennt die abgelegte
+     * Datei und steckt spaeter in jedem Treffer der Engine - im Protokoll ist
+     * damit nachvollziehbar, aus welcher Liste eine Regel kam.
+     */
+    static final int[] LISTEN_NUMMERN = {2, 3, 14, 6, 11};
     private static final String[] QUELLEN = {
         "https://filters.adtidy.org/extension/chromium/filters/2.txt",   // Base
         "https://filters.adtidy.org/extension/chromium/filters/3.txt",   // Tracking Protection
@@ -106,12 +122,14 @@ public final class Filterlisten {
             LinkedHashSet<String> domains = new LinkedHashSet<>(250_000);
             String letzterFehler = null;
             int gelungen = 0;
-            for (String quelle : QUELLEN) {
+            for (int i = 0; i < QUELLEN.length; i += 1) {
+                String quelle = QUELLEN[i];
                 try {
                     int vorher = domains.size();
-                    listeLesen(quelle, domains);
+                    long zeichen = listeLesen(anwendung, LISTEN_NUMMERN[i], quelle, domains);
                     gelungen += 1;
-                    Log.i(TAG, "Filterliste " + quelle + ": +" + (domains.size() - vorher) + " Domains");
+                    Log.i(TAG, "Filterliste " + quelle + ": +" + (domains.size() - vorher)
+                        + " Domains, " + (zeichen / 1024) + " kB Rohtext");
                 } catch (Exception fehler) {
                     letzterFehler = String.valueOf(fehler.getMessage() == null ? fehler : fehler.getMessage());
                     Log.e(TAG, "Filterliste nicht geladen: " + quelle, fehler);
@@ -155,21 +173,64 @@ public final class Filterlisten {
      * <p>Ausnahmen ({@code @@}) werden ebenfalls uebergangen: ohne die Regeln,
      * auf die sie sich beziehen, haetten sie keinen Sinn.
      */
-    static void listeLesen(String adresse, Set<String> ziel) throws Exception {
+    static long listeLesen(Context context, int nummer, String adresse, Set<String> ziel) throws Exception {
+        File ordner = rohOrdner(context);
+        File abgelegt = new File(ordner, nummer + ".txt");
+        File zwischen = new File(ordner, nummer + ".txt.neu");
         HttpURLConnection verbindung = (HttpURLConnection) new URL(adresse).openConnection();
         verbindung.setConnectTimeout(TIMEOUT_MS);
         verbindung.setReadTimeout(TIMEOUT_MS);
         verbindung.setRequestProperty("User-Agent", "ELFIX-Android");
+        long zeichen = 0;
+        // Ein Durchgang, zwei Ergebnisse: der Rohtext geht auf die Platte, die
+        // Domainsperren in die Menge. Zweimal zu lesen hiesse, dieselben
+        // Megabyte zweimal ueber die Leitung zu holen.
         try (InputStream strom = verbindung.getInputStream();
-             BufferedReader leser = new BufferedReader(new InputStreamReader(strom, StandardCharsets.UTF_8))) {
+             BufferedReader leser = new BufferedReader(new InputStreamReader(strom, StandardCharsets.UTF_8));
+             java.io.Writer schreiber = new java.io.BufferedWriter(new java.io.OutputStreamWriter(
+                 new FileOutputStream(zwischen), StandardCharsets.UTF_8), 1 << 16)) {
             String zeile;
             while ((zeile = leser.readLine()) != null) {
+                schreiber.write(zeile);
+                schreiber.write('\n');
+                zeichen += zeile.length() + 1;
                 String domain = domainAusRegel(zeile);
                 if (domain != null) ziel.add(domain);
             }
         } finally {
             verbindung.disconnect();
         }
+        if (!zwischen.renameTo(abgelegt) && (!abgelegt.delete() || !zwischen.renameTo(abgelegt))) {
+            Log.e(TAG, "Rohliste " + nummer + " liess sich nicht ersetzen");
+        }
+        return zeichen;
+    }
+
+    /** Wo die Rohtexte liegen. Wird angelegt, wenn es ihn noch nicht gibt. */
+    static File rohOrdner(Context context) {
+        File ordner = new File(context.getFilesDir(), ROH_ORDNER);
+        if (!ordner.isDirectory() && !ordner.mkdirs()) {
+            Log.e(TAG, "Ordner fuer die Rohlisten nicht angelegt");
+        }
+        return ordner;
+    }
+
+    /**
+     * Welche Rohlisten abgelegt sind.
+     *
+     * <p>In der Reihenfolge von {@link #LISTEN_NUMMERN}, damit die Engine
+     * dieselbe Rangfolge sieht wie der Rechner. Fehlt eine, wird sie
+     * uebergangen - vier von fuenf Listen sind besser als keine Engine.
+     */
+    static int[] abgelegteListen(Context context) {
+        File ordner = new File(context.getFilesDir(), ROH_ORDNER);
+        int[] gefunden = new int[LISTEN_NUMMERN.length];
+        int anzahl = 0;
+        for (int nummer : LISTEN_NUMMERN) {
+            File datei = new File(ordner, nummer + ".txt");
+            if (datei.isFile() && datei.length() > 1024) gefunden[anzahl++] = nummer;
+        }
+        return java.util.Arrays.copyOf(gefunden, anzahl);
     }
 
     /** @return die gesperrte Domain, oder {@code null}, wenn die Zeile keine schlichte Domainsperre ist */

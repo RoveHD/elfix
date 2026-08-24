@@ -9,6 +9,7 @@ import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -17,6 +18,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -61,6 +63,17 @@ public final class Kern {
      * {@code kern/module}, damit beide Geraete sie teilen.
      */
     private static final String EIGEN_ORDNER = "kern/eigen";
+    /**
+     * Unter dieser Adresse liefert der Kern die Filterlisten an sich selbst aus.
+     *
+     * <p>Sie geht nie ins Netz: {@link #listeAusliefern} faengt sie ab und
+     * reicht die Datei von der Platte durch. Der Umweg ueber eine Adresse ist
+     * Absicht - die Listen sind mehrere Megabyte gross, und die Bruecke
+     * (evaluateJavascript) traegt Antworten als Text in einem einzigen Aufruf.
+     * So streamt der WebView sie stattdessen selbst, ohne dass ein Byte durch
+     * die Bruecke muss.
+     */
+    static final String LISTEN_WIRT = "https://elfix.listen/";
     /** Ein Abruf ueber Java, damit die Anbieter-Kekse mitgehen und CORS nicht im Weg steht. */
     private static final int NETZ_TIMEOUT_MS = 20_000;
     private static final String NETZ_AGENT =
@@ -145,6 +158,32 @@ public final class Kern {
                     Log.e(TAG, startFehler);
                 }
             }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest anfrage) {
+                return listeAusliefern(anfrage);
+            }
+
+            /**
+             * Der Kern ist gestorben - meist, weil der Renderer keinen
+             * Speicher mehr hatte.
+             *
+             * <p>Ohne diese Stelle waere das ein stiller Ausfall: der WebView
+             * ist weg, jeder weitere Aufruf ginge ins Leere, und jeder offene
+             * bliebe fuer immer offen. Die Oberflaeche wartete dann auf
+             * Antworten, die niemand mehr gibt.
+             *
+             * <p>Also: alle offenen Aufrufe scheitern lassen und den Kern neu
+             * hochziehen. Was er haelt, ist wiederherstellbar - die Regel
+             * steht in den Modulen, der Bestand in der Ablage.
+             */
+            @Override
+            public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail hinweis) {
+                Log.e(TAG, "Kern-WebView gestorben (abgestuerzt: "
+                    + (hinweis != null && hinweis.didCrash()) + ") - wird neu gestartet");
+                neuStarten();
+                return true;
+            }
         });
         webView.addJavascriptInterface(new Bruecke(), "AndroidKern");
         // Die Krypto-Grundrechenarten. Eigene Bruecke, weil sie nichts mit dem
@@ -153,6 +192,62 @@ public final class Kern {
         // geraete-schluessel.js.
         webView.addJavascriptInterface(new Krypto(), "AndroidKrypto");
         webView.loadUrl(SEITE);
+    }
+
+    /**
+     * Eine Filterliste an den Kern selbst ausliefern.
+     *
+     * <p>Nur unter {@link #LISTEN_WIRT} und nur ein Dateiname aus Ziffern -
+     * damit hier kein Pfad hereinkommt, der irgendwohin sonst zeigt.
+     *
+     * <p>Der Kopf {@code Access-Control-Allow-Origin} muss sein: die Kern-Seite
+     * kommt aus dem Paket und hat damit gar keinen Ursprung, den ein Browser
+     * als denselben ansieht. Ohne ihn duerfte das Skript die Antwort nicht
+     * lesen, obwohl sie aus der eigenen App kommt.
+     */
+    private WebResourceResponse listeAusliefern(WebResourceRequest anfrage) {
+        if (anfrage == null || anfrage.getUrl() == null) return null;
+        String adresse = anfrage.getUrl().toString();
+        if (!adresse.startsWith(LISTEN_WIRT)) return null;
+        String name = adresse.substring(LISTEN_WIRT.length());
+        if (!name.matches("\\d{1,4}\\.txt")) return null;
+        File datei = new File(new File(context.getFilesDir(), Filterlisten.ROH_ORDNER), name);
+        Map<String, String> kopf = new java.util.HashMap<>();
+        kopf.put("Access-Control-Allow-Origin", "*");
+        kopf.put("Cache-Control", "no-store");
+        try {
+            if (!datei.isFile()) {
+                return new WebResourceResponse("text/plain", "utf-8", 404, "Nicht da", kopf,
+                    new java.io.ByteArrayInputStream(new byte[0]));
+            }
+            return new WebResourceResponse("text/plain", "utf-8", 200, "OK", kopf,
+                new java.io.FileInputStream(datei));
+        } catch (Exception fehler) {
+            Log.e(TAG, "Filterliste nicht ausgeliefert: " + name, fehler);
+            return null;
+        }
+    }
+
+    /**
+     * Den Kern noch einmal hochziehen.
+     *
+     * <p>Wer auf eine Antwort wartet, bekommt einen Fehler statt ewiger Stille -
+     * das ist der Unterschied zwischen "hat nicht geklappt" und "haengt".
+     */
+    private void neuStarten() {
+        bereit = false;
+        for (String id : new java.util.ArrayList<>(offeneAufrufe.keySet())) {
+            melde(id, null, "Kern wurde neu gestartet");
+        }
+        if (webView != null) {
+            try {
+                webView.destroy();
+            } catch (Exception fehler) {
+                Log.e(TAG, "Alten Kern nicht abgeraeumt", fehler);
+            }
+            webView = null;
+        }
+        starten();
     }
 
     public void beenden() {

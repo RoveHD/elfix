@@ -78,6 +78,25 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # Der Werbeblocker der APK ist @adguard/tsurlfilter - dasselbe Paket wie
+      # am Rechner. Es kommt aus npm und wird beim Bauen zu einer Browserdatei
+      # gebuendelt (siehe android/app/build.gradle, KernBuendeln). Ohne Node
+      # gibt es kein Buendel, und der Bau bricht mit genau dieser Auskunft ab.
+      #
+      # --ignore-scripts spart den Electron-Download: gebraucht wird hier nur
+      # esbuild und das Paket selbst, und esbuild kommt ohne Installationsskript
+      # aus.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+
+      - name: Buendel-Abhaengigkeiten
+        working-directory: StreamingBrowserElectron
+        run: npm ci --ignore-scripts
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 

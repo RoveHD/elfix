@@ -193,11 +193,29 @@ public final class Adblocker {
      * instead of by guesswork.
      */
     public String blockReason(String url, Provider provider, boolean hosterFrame) {
+        return blockReason(url, provider, hosterFrame, null);
+    }
+
+    /**
+     * Wie {@link #blockReason(String, Provider, boolean)}, aber mit dem Urteil
+     * der vollen Regeln, wenn es fuer diese Anfrage schon vorliegt.
+     *
+     * @param engineUrteil {@code TRUE} blocken, {@code FALSE} ausdruecklich
+     *                     erlaubt, {@code null} kein Urteil
+     */
+    public String blockReason(String url, Provider provider, boolean hosterFrame, Boolean engineUrteil) {
         if (provider == null || !provider.adblockEnabled) {
             return null;
         }
 
         if (isChallengeOrVerificationUrl(url, provider)) {
+            return null;
+        }
+
+        // Eine Ausnahme der Listen ist eine Entscheidung und kein Versehen:
+        // @@-Regeln sind der Weg, auf dem Cloudflare Turnstile, hCaptcha und
+        // reCAPTCHA durchkommen, ohne dass ELFIX sie kennen muss.
+        if (Boolean.FALSE.equals(engineUrteil)) {
             return null;
         }
 
@@ -209,6 +227,11 @@ public final class Adblocker {
         if (isLikelyVideoPlayerUrl(url, host)) {
             return null;
         }
+
+        // Was die Engine blockt, blockt sie aus einer Regel, die die
+        // Domainliste gar nicht ausdruecken kann - im Rahmen des Hosters
+        // bleibt es trotzdem bei den engen Kernlisten (siehe unten).
+        if (!hosterFrame && Boolean.TRUE.equals(engineUrteil)) return "engine";
 
         if (matchesAny(host, adDomains)) return "core-ads";
         if (matchesAny(host, trackers)) return "core-trackers";

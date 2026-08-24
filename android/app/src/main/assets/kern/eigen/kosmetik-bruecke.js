@@ -9,11 +9,11 @@
  * Java zusammenkommen.
  *
  * Eine Stelle braucht Hilfe von aussen: `istWerbeOverlay` fragt, ob ein Ziel
- * ein Werbe-Host ist. Am Rechner beantwortet das die tsurlfilter-Engine - die
- * passt mit ihren 480 MB nicht auf einen Fernseher. Auf Android antwortet
- * stattdessen die mitgelieferte Domainliste, und weil sie in Java liegt,
- * kommen die Treffer als fertige Liste herein. Die Entscheidung selbst faellt
- * trotzdem im geteilten Modul.
+ * ein Werbe-Host ist. Am Rechner beantwortet das die tsurlfilter-Engine. Auf
+ * Android antwortet die Domainliste, auch wo die Engine laeuft (siehe
+ * adblock-bruecke.js): sie liegt in Java, ihre Antwort ist sofort da, und die
+ * Treffer kommen deshalb als fertige Liste herein. Die Entscheidung selbst
+ * faellt trotzdem im geteilten Modul.
  */
 (function () {
   const kosmetik = require("adblock-kosmetik");

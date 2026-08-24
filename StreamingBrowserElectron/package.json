@@ -14,6 +14,7 @@
     "lint": "node scripts/lint.js",
     "test": "npm run typecheck && npm run suite",
     "make-icon": "node scripts/make-icon.js",
+    "kern:tsurlfilter": "node scripts/kern-tsurlfilter.js",
     "dist": "npm run make-icon && electron-builder --win nsis portable",
     "dist:installer": "npm run make-icon && electron-builder --win nsis",
     "publish:github": "npm run make-icon && electron-builder --win nsis portable --publish always",
@@ -63,6 +64,7 @@
   },
   "devDependencies": {
     "electron": "^37.2.6",
+    "esbuild": "^0.28.2",
     "electron-builder": "^26.0.12"
   },
   "dependencies": {

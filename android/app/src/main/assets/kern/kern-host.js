@@ -295,9 +295,19 @@
     offen.forEach(function (eintrag) { aufruf(eintrag[0], eintrag[1], eintrag[2]); });
   }
 
+  // Der eigene Abruf des WebViews, bevor er ueberschrieben wird.
+  //
+  // Er wird an genau einer Stelle gebraucht: die Filterlisten sind Megabytes
+  // gross, und ueber die Bruecke kaeme jede von ihnen als ein einziger,
+  // riesiger evaluateJavascript-Aufruf herein. Der Browser holt sie direkt von
+  // dort, wo Java sie hinlegt (siehe Kern.LISTEN_WIRT), und streamt sie -
+  // ohne dass ein Byte durch die Bruecke muss.
+  var eigenerAbruf = typeof window.fetch === "function" ? window.fetch.bind(window) : null;
+
   window.fetch = kernFetch;
 
   window.ElfixKern = {
+    browserAbruf: eigenerAbruf,
     quelle: quelle,
     start: start,
     netzFertig: netzFertig,
