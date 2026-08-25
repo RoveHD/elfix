@@ -320,6 +320,26 @@ public class MainActivity extends Activity {
     /** Und wo die Karte "wer schaut mit" steckt - aus demselben Grund. */
     private FrameLayout mitschauPlatz;
     /**
+     * Der Sekundentakt der Kacheln in "Gemeinsam weiterschauen".
+     *
+     * <p>Ein eigener Taktgeber und nicht {@link #takt}: der wird an mehreren
+     * Stellen in einem Zug geleert, und die Kacheln haben mit dem
+     * Titelhintergrund nichts zu tun.
+     */
+    private final Handler liveTakt = new Handler(Looper.getMainLooper());
+    /**
+     * Die Kacheln, deren Stand aus einer Runde kommt.
+     *
+     * <p>Sie werden im Sekundentakt in Ort nachgezogen - Zeile, Zeit und
+     * Balken -, statt die Startseite neu zu bauen. Am Rechner steht dafuer
+     * {@code aktualisiereLiveKarten}, und der Grund ist derselbe: eine Seite,
+     * die jede Sekunde neu entsteht, springt beim Blaettern und nimmt dem
+     * Fernseher den Fokus.
+     */
+    private final List<LiveKachel> liveKacheln = new ArrayList<>();
+    /** Welche Titel zuletzt in den Raeumen standen - siehe {@link #watchpartyGeaendert()}. */
+    private String watchpartyEintragsStand = "";
+    /**
      * Woher die offene Anbieterseite geoeffnet wurde.
      *
      * <p>Nur fuer den Weg zurueck: wer eine Folge aus der Watchparty oeffnet,
@@ -1232,6 +1252,7 @@ public class MainActivity extends Activity {
     private void renderTvHome() {
         LinearLayout page = tvPage();
         empfehlungenNachfuehren();
+        liveKachelnZuruecksetzen();
         // Auch hier, obwohl der Fernseher (noch) keine Kalenderreihe zeigt:
         // die Woche wird aus den Anbietern gerechnet, und ein Kalender ohne
         // sie liefert eine leere Woche statt gar keiner.
@@ -1343,6 +1364,7 @@ public class MainActivity extends Activity {
         }
 
         tvFokusHerstellen(page);
+        liveTaktPlanen();
     }
 
     /**
@@ -1382,17 +1404,26 @@ public class MainActivity extends Activity {
             Favorite eintrag = vorrat.get(stelle);
             String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
             if (name.isEmpty()) name = "Titel";
-            String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen"
-                : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
-                : eintrag.folgenText();
-            View karte = TvViews.kachel(this, providerForFavorite(eintrag), name, hinweis,
-                eintrag.bild(),
-                liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
-                    ? eintrag.fortschrittProzent() : 0,
-                "", breite, null,
+            String rundenSchluessel = liveSchluessel(eintrag);
+            int prozent = liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
+                ? eintrag.fortschrittProzent() : 0;
+            if (!rundenSchluessel.isEmpty()) prozent = Math.max(1, prozent);
+            View karte = TvViews.kachel(this, providerForFavorite(eintrag), name,
+                kachelUnterzeile(eintrag), eintrag.bild(), prozent, "", breite,
+                kachelStandtext(eintrag, liste),
+                rundenSchluessel.isEmpty() ? null : liveZeile(rundenSchluessel, eintrag), null,
                 () -> openFavorite(eintrag),
                 anker -> eintragsMenue(anker, eintrag, liste));
             karte.setTag("tv:" + schluessel + ":" + stelle);
+            if (!rundenSchluessel.isEmpty()) {
+                liveKacheln.add(new LiveKachel(karte, rundenSchluessel, eintrag.duration(),
+                    eintrag.watchpartyVon(), watchpartyZeit(eintrag)));
+                // Die Reihen des Fernsehers legen ihre Karten erst nach, wenn
+                // der Fokus in die Naehe kommt. Eine Karte, die dabei
+                // dazukommt, braucht ihren ersten Stand sofort - sonst bliebe
+                // sie bis zur naechsten vollen Sekunde stumm.
+                liveTaktPlanen();
+            }
             return karte;
         };
         reiheAnlegen(page, schluessel, vorrat.size(), bauer);
@@ -2380,9 +2411,10 @@ public class MainActivity extends Activity {
                     }
                     String meta = result.genre == null || result.genre.isEmpty()
                         ? result.provider.name : result.genre;
-                    // Ein Suchtreffer hat noch keinen Fortschritt und kein Menue.
+                    // Ein Suchtreffer hat noch keinen Fortschritt und kein Menue -
+                    // aber ein Titelbild, wenn die Trefferseite eines hergab.
                     addTvRowItem(row, TvViews.favoriteCard(this, result.provider, result.title, meta,
-                        result.provider.name, "", width, 0,
+                        result.provider.name, result.bild, width, 0,
                         () -> openProvider(result.provider, result.url), null),
                         shown % perRow == 0);
                     shown += 1;
@@ -2430,6 +2462,7 @@ public class MainActivity extends Activity {
     private void renderMobileHome() {
         LinearLayout page = mobilePage();
         empfehlungenNachfuehren();
+        liveKachelnZuruecksetzen();
         if (kalender != null) kalender.anbieterSetzen(providers);
 
         List<Favorite> laufend = bestand.weiterschauen();
@@ -2527,6 +2560,18 @@ public class MainActivity extends Activity {
                     showHome();
                 }), MobileViews.SECTION_GAP);
         }
+        liveTaktPlanen();
+    }
+
+    /**
+     * Die alten Kacheln vergessen, bevor die Startseite neu entsteht.
+     *
+     * <p>Sonst zoege der Takt Ansichten nach, die niemand mehr sieht - und
+     * die Liste wuechse mit jedem Zeichnen.
+     */
+    private void liveKachelnZuruecksetzen() {
+        liveTakt.removeCallbacksAndMessages(null);
+        liveKacheln.clear();
     }
 
     /** Ob diese Reihe der Startseite eingeschaltet ist. Ohne Einstellung: ja. */
@@ -3099,18 +3144,56 @@ public class MainActivity extends Activity {
             Favorite eintrag = eintraege.get(i);
             String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
             if (name.isEmpty()) name = "Titel";
-            String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen"
-                : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
-                : eintrag.folgenText();
-            karten.add(MobileViews.kachel(this, providerForFavorite(eintrag), name, hinweis,
-                eintrag.bild(), liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
-                    ? eintrag.fortschrittProzent() : 0,
-                "", breite,
+            String schluessel = liveSchluessel(eintrag);
+            int prozent = liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
+                ? eintrag.fortschrittProzent() : 0;
+            // Bei einer Kachel aus einer Runde wird der Balken auch dann
+            // angelegt, wenn der eigene Stand noch bei null steht: gleich
+            // meldet jemand, und der Takt kann keine Ansicht nachlegen.
+            if (!schluessel.isEmpty()) prozent = Math.max(1, prozent);
+            View karte = MobileViews.kachel(this, providerForFavorite(eintrag), name,
+                kachelUnterzeile(eintrag), eintrag.bild(), prozent, "", breite,
+                kachelStandtext(eintrag, liste),
+                schluessel.isEmpty() ? null : liveZeile(schluessel, eintrag),
                 () -> openFavorite(eintrag),
-                anker -> eintragsMenue(anker, eintrag, liste)));
+                anker -> eintragsMenue(anker, eintrag, liste));
+            if (!schluessel.isEmpty()) {
+                liveKacheln.add(new LiveKachel(karte, schluessel, eintrag.duration(),
+                    eintrag.watchpartyVon(), watchpartyZeit(eintrag)));
+            }
+            karten.add(karte);
         }
         reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
         return true;
+    }
+
+    /**
+     * Was unter dem Titel einer Kachel steht.
+     *
+     * <p>Die Folge, wie bisher - und bei einer Kachel aus einer Runde
+     * zusaetzlich der Raum. Ohne ihn saehen derselbe Titel in zwei Raeumen und
+     * der eigene Stand desselben Titels gleich aus, und genau das trennt der
+     * Rechner in {@code favoriteHerkunft} mit demselben Zeichen.
+     */
+    private static String kachelUnterzeile(Favorite eintrag) {
+        String folge = eintrag.istAbgeschlossen() ? "Abgeschlossen"
+            : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
+            : eintrag.folgenText();
+        String raum = eintrag.watchpartyRaum();
+        if (raum.isEmpty()) return folge;
+        return folge.isEmpty() ? "⇄ " + raum : folge + " · ⇄ " + raum;
+    }
+
+    /**
+     * Die Stelle im Klartext - "12:04 / 24:10".
+     *
+     * <p>Am Rechner steht sie unter jedem Balken. Auf dem Telefon stand dort
+     * nur der Balken selbst, und wie viel eine halbe Kachelbreite in Minuten
+     * ist, sieht man ihm nicht an.
+     */
+    private static String kachelStandtext(Favorite eintrag, Bibliothek liste) {
+        if (!liste.zeigtFortschritt() || eintrag.wartetAufNaechsteFolge()) return "";
+        return eintrag.standText();
     }
 
     /**
@@ -3942,9 +4025,10 @@ public class MainActivity extends Activity {
                         ? result.provider.name
                         : result.genre + " · " + result.provider.name;
                     // Ein Suchtreffer hat noch keinen Fortschritt und kein
-                    // Menue - er ist noch gar kein Eintrag.
+                    // Menue - er ist noch gar kein Eintrag. Ein Titelbild hat
+                    // er sehr wohl, sofern die Trefferseite eines hergab.
                     View card = MobileViews.favoriteCard(this, result.provider, result.title, meta, null,
-                        "", 0, "Ansehen",
+                        result.bild, 0, "Ansehen",
                         () -> openProvider(result.provider, result.url), null);
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -4736,10 +4820,18 @@ public class MainActivity extends Activity {
     }
 
     private ArrayList<SearchResult> fetchSearchResults(Provider provider, String searchUrl, String query) {
-        ArrayList<SearchResult> results = new ArrayList<>();
         ArrayList<SearchResult> ajaxResults = fetchAjaxSearchResults(provider, searchUrl, query);
-        if (!ajaxResults.isEmpty()) return ajaxResults;
+        if (!ajaxResults.isEmpty()) {
+            bilderNachtragen(ajaxResults, searchUrl);
+            return ajaxResults;
+        }
+        String html = holeTrefferseite(searchUrl);
+        if (html.isEmpty()) return new ArrayList<>();
+        return extractLinks(provider, searchUrl, html, query);
+    }
 
+    /** Die Trefferseite eines Anbieters holen - oder leer, wenn sie nicht kommt. */
+    private String holeTrefferseite(String searchUrl) {
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(searchUrl).openConnection();
@@ -4749,7 +4841,7 @@ public class MainActivity extends Activity {
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 ElflixAndroid/0.2");
             int status = connection.getResponseCode();
-            if (status < 200 || status >= 400) return results;
+            if (status < 200 || status >= 400) return "";
 
             StringBuilder html = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
@@ -4758,12 +4850,57 @@ public class MainActivity extends Activity {
                     html.append(line).append('\n');
                 }
             }
-            return extractLinks(provider, searchUrl, html.toString(), query);
+            return html.toString();
         } catch (Exception ignored) {
-            return results;
+            return "";
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    /**
+     * Bilder zu Treffern nachtragen, die aus einer Ajax-Antwort kommen.
+     *
+     * <p>Die Schnellsuche mancher Anbieter antwortet mit reinem JSON: Titel,
+     * Beschreibung, Adresse - kein Bild. Dieselben Titel stehen aber auch auf
+     * der gewoehnlichen Trefferseite, und dort mit Bild. Sie wird deshalb
+     * einmal geholt und ueber die Adresse zugeordnet; geraten wird nichts.
+     *
+     * <p>Einmal je Suche und Anbieter, nicht je Treffer - und gar nicht, wenn
+     * schon alle Treffer ein Bild haben.
+     */
+    private void bilderNachtragen(ArrayList<SearchResult> treffer, String searchUrl) {
+        boolean fehltEines = false;
+        for (SearchResult ergebnis : treffer) {
+            if (ergebnis.bild == null || ergebnis.bild.isEmpty()) fehltEines = true;
+        }
+        if (!fehltEines) return;
+
+        String html = holeTrefferseite(searchUrl);
+        if (html.isEmpty()) return;
+        Map<String, String> bilder = bilderZuAdressen(html, searchUrl);
+        if (bilder.isEmpty()) return;
+        for (SearchResult ergebnis : treffer) {
+            if (ergebnis.bild != null && !ergebnis.bild.isEmpty()) continue;
+            String bild = bilder.get(ergebnis.url);
+            if (bild != null) ergebnis.bild = bild;
+        }
+    }
+
+    /** Welche Adresse auf einer Trefferseite welches Bild traegt. */
+    private Map<String, String> bilderZuAdressen(String html, String baseUrl) {
+        Map<String, String> bilder = new HashMap<>();
+        Pattern pattern = Pattern.compile(
+            "<a\\b[^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>([\\s\\S]*?)</a>",
+            Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(html);
+        while (matcher.find()) {
+            String href = absoluteUrl(baseUrl, matcher.group(1));
+            if (href.isEmpty() || bilder.containsKey(href)) continue;
+            String bild = Trefferbild.ausMarkup(matcher.group(2), baseUrl);
+            if (!bild.isEmpty()) bilder.put(href, bild);
+        }
+        return bilder;
     }
 
     private ArrayList<SearchResult> fetchAjaxSearchResults(Provider provider, String searchUrl, String query) {
@@ -4862,6 +4999,9 @@ public class MainActivity extends Activity {
             result.title = title;
             result.genre = titleParts.genre;
             result.url = href;
+            // Das Bild steckt im selben Verweis - Marke, Auswahlliste oder
+            // Hintergrund. Gesucht wird nichts nach; siehe Trefferbild.
+            result.bild = Trefferbild.ausMarkup(matcher.group(0), baseUrl);
             results.add(result);
         }
         appendRawContentLinks(results, seen, provider, baseUrl, html, tokens);
@@ -5207,14 +5347,7 @@ public class MainActivity extends Activity {
     }
 
     private String absoluteUrl(String baseUrl, String href) {
-        try {
-            URI uri = new URI(baseUrl).resolve(href);
-            String scheme = uri.getScheme();
-            if (!"http".equals(scheme) && !"https".equals(scheme)) return "";
-            return uri.toString().split("#")[0];
-        } catch (Exception ignored) {
-            return "";
-        }
+        return Trefferbild.absolut(baseUrl, href);
     }
 
     private boolean isNoiseUrl(String url) {
@@ -5250,6 +5383,8 @@ public class MainActivity extends Activity {
         String title;
         String genre;
         String url;
+        /** Das Titelbild, wenn die Trefferseite eines hergab - siehe {@link Trefferbild}. */
+        String bild = "";
     }
 
     private void showGlobalSearch(String query) {
@@ -6497,8 +6632,10 @@ public class MainActivity extends Activity {
         super.onPause();
         // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
-        // Takt wieder auf.
+        // Takt wieder auf. Dasselbe gilt fuer die Kacheln einer Runde: was
+        // dort laeuft, laeuft weiter, aber niemand muss es mitzaehlen.
         takt.removeCallbacksAndMessages(null);
+        liveTakt.removeCallbacksAndMessages(null);
         // Was gemessen wurde, gehoert jetzt auf die Platte. Auf einem Telefon
         // ist das kein Feinschliff: eine App im Hintergrund wird ohne Vorwarnung
         // abgeraeumt, und ein onDestroy kommt dann nicht mehr. Nur schliessen -
@@ -6525,8 +6662,12 @@ public class MainActivity extends Activity {
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onResume();
         // Der Takt des Titelhintergrunds haengt an onPause. Steht die
-        // Startseite, laeuft er wieder los.
-        if ("home".equals(currentScreen)) heroWechselPlanen();
+        // Startseite, laeuft er wieder los - und mit ihm der der Kacheln.
+        if ("home".equals(currentScreen)) {
+            heroWechselPlanen();
+            liveKachelnAuffrischen();
+            liveTaktPlanen();
+        }
         if (fullscreenView != null) {
             applyFullscreenSystemUi();
         }
@@ -6536,6 +6677,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
         takt.removeCallbacksAndMessages(null);
+        liveTakt.removeCallbacksAndMessages(null);
         if (messung != null) messung.anhalten();
         // Die letzte Folge eines Abends zaehlt sonst nicht: sie steht als
         // offene Sitzung im Speicher und stirbt mit dem Prozess.
@@ -6756,7 +6898,40 @@ public class MainActivity extends Activity {
 
     /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
     private void watchpartyGeaendert() {
-        if ("watchparty".equals(currentScreen)) zeigeWatchparty();
+        if ("watchparty".equals(currentScreen)) {
+            zeigeWatchparty();
+            return;
+        }
+        // Die Startseite geht das auch etwas an: erst mit den eingestellten
+        // Titeln laesst sich einer Kachel ihr Schluessel in der Runde
+        // zuordnen. Beim Start ist die Seite meist schon gebaut, wenn die
+        // Liste vom Relay eintrifft - ohne dies bliebe "Gemeinsam
+        // weiterschauen" bis zur naechsten Aenderung im Bestand stumm.
+        //
+        // Neu gezeichnet wird nur, wenn sich an den Titeln wirklich etwas
+        // geaendert hat. Der Stand allein kommt im Sekundentakt und wird in
+        // Ort nachgezogen, nicht mit einer neuen Seite.
+        if (!"home".equals(currentScreen)) return;
+        String jetzt = watchpartyEintragsListe();
+        if (jetzt.equals(watchpartyEintragsStand)) return;
+        watchpartyEintragsStand = jetzt;
+        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+        showHome();
+        scrollStandHerstellen(stand);
+    }
+
+    /** Welche Titel gerade in welchen Raeumen stehen - als eine Zeile zum Vergleichen. */
+    private String watchpartyEintragsListe() {
+        if (watchparty == null) return "";
+        JSONArray eintraege = watchparty.eintraege();
+        StringBuilder zeile = new StringBuilder();
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag == null) continue;
+            zeile.append(eintrag.optString("key", "")).append('|')
+                .append(eintrag.optString("room", "")).append('\n');
+        }
+        return zeile.toString();
     }
 
     /**
@@ -6769,6 +6944,7 @@ public class MainActivity extends Activity {
      * oben an.
      */
     private void mitschauStandGeaendert() {
+        liveKachelnAuffrischen();
         if (!"watchparty".equals(currentScreen) || mitschauPlatz == null) return;
         mitschauPlatz.removeAllViews();
         View karte = mitschauKarte();
@@ -6776,6 +6952,157 @@ public class MainActivity extends Activity {
             mitschauPlatz.addView(karte, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
+    }
+
+    /* ------------------------------------ Kacheln aus einer Watchparty */
+
+    /**
+     * Eine Kachel, deren Stand nicht der eigene ist.
+     *
+     * <p>Sie merkt sich nicht ihren Inhalt, sondern nur, wo er herkommt: unter
+     * welchem Schluessel die Runde meldet und wie lang die Folge ist. Alles
+     * Weitere steht in der Ansicht und wird dort nachgezogen.
+     */
+    private static final class LiveKachel {
+        final View karte;
+        final String schluessel;
+        final double dauer;
+        /** Wer zuletzt einen Fortschritt schickte - der Rueckfall ohne Standmeldung. */
+        final String von;
+        /** Und wann; danach gilt der Hinweis nicht mehr. */
+        final long gemeldetUm;
+
+        LiveKachel(View karte, String schluessel, double dauer, String von, long gemeldetUm) {
+            this.karte = karte;
+            this.schluessel = schluessel;
+            this.dauer = dauer;
+            this.von = von;
+            this.gemeldetUm = gemeldetUm;
+        }
+    }
+
+    /** Wann der letzte geteilte Stand kam - 0, wenn keiner oder unlesbar. */
+    private static long watchpartyZeit(Favorite eintrag) {
+        String wann = eintrag == null ? "" : eintrag.watchpartyAm();
+        if (wann.isEmpty()) return 0;
+        try {
+            return java.time.Instant.parse(wann).toEpochMilli();
+        } catch (Exception unlesbar) {
+            return 0;
+        }
+    }
+
+    /**
+     * Unter welchem Schluessel eine Kachel ihren Stand in der Runde findet.
+     *
+     * @return leer, wenn der Eintrag zu keiner Runde gehoert oder dort nichts
+     *         Passendes eingestellt ist
+     */
+    private String liveSchluessel(Favorite eintrag) {
+        if (watchparty == null || eintrag == null) return "";
+        String raum = eintrag.watchpartyRaum();
+        if (raum.isEmpty()) return "";
+        return watchparty.kartenSchluessel(raum, eintrag.title());
+    }
+
+    /**
+     * Die Zeile "wer schaut gerade".
+     *
+     * <p>Zuerst der Stand aus der Runde - dieselbe Quelle, aus der auch der
+     * Sekundentakt schoepft. Erst wenn dort niemand meldet, zaehlt der letzte
+     * geteilte Fortschritt, und auch der nur eine knappe halbe Minute lang.
+     * Dieselbe Vorrangregel wie {@code watchpartyHint} am Rechner: andersherum
+     * flackerte die Zeile, weil der Aufbau sie anders faende als der Takt.
+     *
+     * @return leer, wenn ausser einem selbst niemand meldet
+     */
+    private String liveZeile(String schluessel, Favorite eintrag) {
+        if (watchparty == null || schluessel == null || schluessel.isEmpty()) return "";
+        String live = Mitschaustand.liveText(watchparty.frischeMitglieder(schluessel));
+        if (!live.isEmpty()) return live;
+        long gemeldet = watchpartyZeit(eintrag);
+        if (gemeldet <= 0) return "";
+        return Mitschaustand.hinweisText(eintrag.watchpartyVon(),
+            System.currentTimeMillis() - gemeldet);
+    }
+
+    /**
+     * Die Kacheln einer Runde nachziehen - Zeile, Zeit und Balken.
+     *
+     * <p>Kacheln, die nicht mehr an der Seite haengen, fallen dabei heraus:
+     * die Startseite wird bei jeder Aenderung im Bestand neu gebaut, und die
+     * alten Ansichten sollen den Takt nicht ueberdauern.
+     */
+    private void liveKachelnAuffrischen() {
+        if (watchparty == null || liveKacheln.isEmpty()) return;
+        java.util.Iterator<LiveKachel> lauf = liveKacheln.iterator();
+        while (lauf.hasNext()) {
+            LiveKachel kachel = lauf.next();
+            if (kachel.karte.getParent() == null) {
+                lauf.remove();
+                continue;
+            }
+            JSONArray frisch = watchparty.frischeMitglieder(kachel.schluessel);
+            double seit = watchparty.sekundenSeitMeldung(kachel.schluessel);
+
+            View zeile = kachel.karte.findViewWithTag(Mitschaustand.MARKE_LIVE);
+            if (zeile instanceof TextView) {
+                String text = Mitschaustand.liveText(frisch);
+                if (text.isEmpty() && kachel.gemeldetUm > 0) {
+                    text = Mitschaustand.hinweisText(kachel.von,
+                        System.currentTimeMillis() - kachel.gemeldetUm);
+                }
+                ((TextView) zeile).setText(text);
+                zeile.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+
+            // Ohne Meldung bleibt der eigene Stand stehen. Ihn auf null zu
+            // setzen, weil gerade niemand schaut, waere schlechter als der
+            // Stand von vorhin - er stimmt ja.
+            JSONObject fuehrend = Mitschaustand.fuehrend(frisch);
+            if (fuehrend == null) continue;
+            double stelle = Mitschaustand.stelle(fuehrend, seit);
+
+            View stand = kachel.karte.findViewWithTag(Mitschaustand.MARKE_STAND);
+            if (stand instanceof TextView) {
+                ((TextView) stand).setText(Mitschaustand.standText(stelle, kachel.dauer));
+            }
+
+            View balken = kachel.karte.findViewWithTag(Mitschaustand.MARKE_BALKEN);
+            if (kachel.dauer > 0 && balken != null && balken.getParent() instanceof View
+                && balken.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+                int breite = ((View) balken.getParent()).getWidth();
+                if (breite > 0) {
+                    FrameLayout.LayoutParams masse = (FrameLayout.LayoutParams) balken.getLayoutParams();
+                    masse.width = Math.max(dp(3),
+                        breite * Mitschaustand.prozent(stelle, kachel.dauer) / 100);
+                    balken.setLayoutParams(masse);
+                }
+            }
+        }
+        if (liveKacheln.isEmpty()) liveTakt.removeCallbacksAndMessages(null);
+    }
+
+    /**
+     * Den Sekundentakt stellen - aber nur, solange es etwas nachzuziehen gibt.
+     *
+     * <p>Er laeuft nicht, wenn keine Kachel aus einer Runde dasteht, nicht
+     * hinter einer offenen Anbieterseite und nicht im Vollbild: eine Uhr, die
+     * niemand sieht, kostet nur Strom.
+     */
+    private void liveTaktPlanen() {
+        liveTakt.removeCallbacksAndMessages(null);
+        if (liveKacheln.isEmpty()) return;
+        liveTakt.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!"home".equals(currentScreen) || fullscreenView != null) return;
+                if (liveKacheln.isEmpty()) return;
+                liveKachelnAuffrischen();
+                if (liveKacheln.isEmpty()) return;
+                liveTakt.postDelayed(this, 1000);
+            }
+        }, 1000);
     }
 
     /**

@@ -358,7 +358,17 @@ class Watchparty {
       // Der Stand je Geraet. Ein aelteres Relay schickt das nicht - dann bleibt
       // die Leiste eben leer, alles andere laeuft unveraendert weiter.
       if (nachricht?.type === "watchstate" && nachricht.key) {
-        this.aufStand({ key: nachricht.key, members: Array.isArray(nachricht.members) ? nachricht.members : [] });
+        // Mitgereicht wird auch, wer zuletzt gedrueckt hat. Das ist etwas
+        // anderes als "wer steht gerade": zieht ein zweites Geraet die Pause
+        // nur mit, bleibt der Ausloeser derselbe. Beide Felder wurden hier
+        // frueher weggeworfen - und weiter oben gelesen, wo sie deshalb nie
+        // ankamen.
+        this.aufStand({
+          key: nachricht.key,
+          members: Array.isArray(nachricht.members) ? nachricht.members : [],
+          pausedBy: String(nachricht.pausedBy || ""),
+          lastAction: nachricht.lastAction || null
+        });
         return;
       }
       if (nachricht?.type === "progress" && nachricht.key && nachricht.progress) {

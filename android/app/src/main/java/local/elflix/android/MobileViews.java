@@ -328,6 +328,10 @@ final class MobileViews {
             GradientDrawable balkenBg = new GradientDrawable();
             balkenBg.setColor(Theme.PRIMARY);
             balken.setBackground(balkenBg);
+            // Die Marke braucht der Sekundentakt: bei einer Kachel aus einer
+            // Watchparty zeigt der Balken den Stand des Fuehrenden, und der
+            // laeuft weiter, ohne dass die Seite neu gebaut wird.
+            balken.setTag(Mitschaustand.MARKE_BALKEN);
             FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, balkenDp));
             balkenParams.gravity = Gravity.BOTTOM;
             poster.addView(balken, balkenParams);
@@ -722,6 +726,28 @@ final class MobileViews {
     static View kachel(Context context, Provider provider, String titel, String unterzeile,
                        String bildUrl, int prozent, String fahne, int breiteDp,
                        Runnable beiKlick, View.OnClickListener onMenu) {
+        return kachel(context, provider, titel, unterzeile, bildUrl, prozent, fahne, breiteDp,
+            "", "", beiKlick, onMenu);
+    }
+
+    /**
+     * Dieselbe Kachel, dazu die beiden Zeilen, die eine Runde ausmachen.
+     *
+     * <p>Am Rechner traegt jede Weiterschauen-Karte die Stelle im Klartext
+     * ("12:04 / 24:10"), und eine Karte aus einer Watchparty zusaetzlich die
+     * Zeile, wer gerade schaut. Beide Zeilen tragen eine Marke, damit der
+     * Sekundentakt sie in Ort nachziehen kann: die ganze Seite dafuer neu zu
+     * bauen liesse sie beim Blaettern springen und naehme dem Fernseher den
+     * Fokus.
+     *
+     * @param standText die Stelle, leer laesst die Zeile weg
+     * @param liveText  wer gerade schaut; leer laesst die Zeile weg, legt sie
+     *                  aber an - sie kommt und geht im Takt
+     */
+    static View kachel(Context context, Provider provider, String titel, String unterzeile,
+                       String bildUrl, int prozent, String fahne, int breiteDp,
+                       String standText, String liveText,
+                       Runnable beiKlick, View.OnClickListener onMenu) {
         LinearLayout karte = new LinearLayout(context);
         karte.setOrientation(LinearLayout.VERTICAL);
 
@@ -765,6 +791,35 @@ final class MobileViews {
             zeile.setEllipsize(TextUtils.TruncateAt.END);
             zeile.setPadding(0, dp(context, 2), 0, 0);
             karte.addView(zeile);
+        }
+
+        if (standText != null && !standText.isEmpty()) {
+            TextView stelle = new TextView(context);
+            stelle.setTag(Mitschaustand.MARKE_STAND);
+            stelle.setText(standText);
+            stelle.setTextColor(Theme.TEXT_DISABLED);
+            stelle.setTextSize(10);
+            stelle.setMaxLines(1);
+            stelle.setEllipsize(TextUtils.TruncateAt.END);
+            stelle.setPadding(0, dp(context, 2), 0, 0);
+            karte.addView(stelle);
+        }
+
+        // Angelegt wird sie auch leer: sie kommt und geht mit den Meldungen
+        // der Runde, und der Takt haengt keine Ansichten nach - er schreibt
+        // nur Text. Ohne Text nimmt sie keine Hoehe ein.
+        if (liveText != null) {
+            TextView live = new TextView(context);
+            live.setTag(Mitschaustand.MARKE_LIVE);
+            live.setText(liveText);
+            live.setTextColor(Theme.PRIMARY);
+            live.setTextSize(10);
+            live.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            live.setMaxLines(1);
+            live.setEllipsize(TextUtils.TruncateAt.END);
+            live.setPadding(0, dp(context, 2), 0, 0);
+            live.setVisibility(liveText.isEmpty() ? View.GONE : View.VISIBLE);
+            karte.addView(live);
         }
 
         karte.setOnClickListener(v -> beiKlick.run());

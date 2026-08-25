@@ -71,6 +71,22 @@ public final class Watchparty {
     private JSONArray letzteEintraege = new JSONArray();
     /** Die letzte Standmeldung der Runde - wer steht wo, wer fuehrt, wer hat gedrueckt. */
     private String letzterMitschauStand = "";
+    /**
+     * Dieselben Meldungen, aber nach Titel und Raum abgelegt.
+     *
+     * <p>Der zuletzt gemeldete Stand allein genuegt fuer die Watchparty-Seite,
+     * auf der ohnehin nur eine Karte "wer schaut mit" steht. Die Startseite
+     * braucht mehr: dort steht je Titel eine Kachel, und in einem Raum duerfen
+     * mehrere Titel laufen. Faende jede Kachel nur die letzte Meldung, zeigten
+     * alle denselben Stand - den des Titels, der zufaellig zuletzt gemeldet
+     * hat.
+     *
+     * <p>Dieselbe Ablage wie {@code watchpartyStandKarten} am Rechner, mit
+     * demselben Schluessel aus Titel und Raum. Geloescht wird nichts: ob
+     * jemand noch dabei ist, entscheidet allein das Alter der Meldung.
+     */
+    private final java.util.Map<String, JSONArray> standKarten = new java.util.HashMap<>();
+    private final java.util.Map<String, Long> standEmpfangen = new java.util.HashMap<>();
     /** Die eingerichteten Anbieter, wie der Kern sie kennt. Siehe {@link #setzeAnbieter}. */
     private JSONArray anbieter = new JSONArray();
 
@@ -260,7 +276,7 @@ public final class Watchparty {
             case "watchparty:stand":
                 // Wer steht wo. Fuer die Anzeige; der Player braucht davon
                 // nichts, er bekommt seine Anweisungen ueber die Steuerung.
-                letzterMitschauStand = nutzlastJson == null ? "" : nutzlastJson;
+                letzterMitschauStand = standMerken(nutzlastJson);
                 if (beobachter != null) beobachter.watchpartyStandGeaendert();
                 break;
             case "watchparty:verbindung":
@@ -381,6 +397,84 @@ public final class Watchparty {
             return;
         }
         kern.rufe("watchparty-bruecke.teilen", Kern.args(item, raum), antwort);
+    }
+
+    /**
+     * Eine Standmeldung ablegen - einmal fuer die Seite, einmal je Titel.
+     *
+     * <p>Dabei wird jedes Mitglied als eigenes markiert oder nicht. Das Relay
+     * schickt nur Kennungen; wer davon dieses Geraet ist, weiss allein diese
+     * Klasse. Ohne die Marke stuende auf der eigenen Startseite "Wohnzimmer
+     * schaut gerade", waehrend man selbst das Wohnzimmer ist - genau die
+     * Zeile, die am Rechner deshalb {@code me} traegt.
+     *
+     * @return die Meldung, wie sie fuer die Anzeige gilt
+     */
+    private String standMerken(String json) {
+        if (json == null || json.isEmpty()) return "";
+        try {
+            JSONObject nachricht = new JSONObject(json);
+            JSONArray mitglieder = nachricht.optJSONArray("members");
+            if (mitglieder != null) {
+                for (int i = 0; i < mitglieder.length(); i += 1) {
+                    JSONObject person = mitglieder.optJSONObject(i);
+                    if (person == null) continue;
+                    person.put("me", !geraetId.isEmpty() && geraetId.equals(person.optString("id", "")));
+                }
+            }
+            String schluessel = Mitschaustand.schluessel(
+                nachricht.optString("key", ""), nachricht.optString("room", ""));
+            standKarten.put(schluessel, mitglieder == null ? new JSONArray() : mitglieder);
+            standEmpfangen.put(schluessel, System.currentTimeMillis());
+            return nachricht.toString();
+        } catch (Exception fehler) {
+            Log.e(TAG, "Standmeldung unlesbar", fehler);
+            return json;
+        }
+    }
+
+    /**
+     * Wer bei diesem Titel gerade meldet - und noch nicht zu lange her.
+     *
+     * <p>Dieselbe Auskunft wie {@code frischeMitglieder} am Rechner. Die
+     * Alterung rechnet {@link Mitschaustand}; hier kommt nur dazu, wie lange
+     * die Meldung schon hier liegt.
+     *
+     * @param schluessel aus {@link Mitschaustand#schluessel(String, String)}
+     */
+    public JSONArray frischeMitglieder(String schluessel) {
+        JSONArray mitglieder = standKarten.get(schluessel);
+        if (mitglieder == null) return new JSONArray();
+        return Mitschaustand.frische(mitglieder, sekundenSeitMeldung(schluessel));
+    }
+
+    /** Wie lange die letzte Meldung zu diesem Titel schon hier liegt, in Sekunden. */
+    public double sekundenSeitMeldung(String schluessel) {
+        Long empfangen = standEmpfangen.get(schluessel);
+        if (empfangen == null) return 0;
+        return Math.max(0, (System.currentTimeMillis() - empfangen) / 1000.0);
+    }
+
+    /**
+     * Der Schluessel, unter dem ein Titel in seiner Runde gefuehrt wird.
+     *
+     * <p>Eine Kachel kennt ihren Raum und ihren Titel, nicht aber den
+     * Schluessel - der ist die Serienadresse, wie der Einsteller sie hatte.
+     * Beides trifft sich ueber den Titel, genau wie in
+     * {@code watchpartySerieSchluessel} am Rechner.
+     *
+     * @return der zusammengesetzte Schluessel, oder leer, wenn nichts passt
+     */
+    public String kartenSchluessel(String raum, String titel) {
+        String gesucht = Mitschaustand.normalisierterTitel(titel);
+        if (raum == null || raum.isEmpty() || gesucht.isEmpty()) return "";
+        for (int i = 0; i < letzteEintraege.length(); i += 1) {
+            JSONObject eintrag = letzteEintraege.optJSONObject(i);
+            if (eintrag == null || !raum.equals(eintrag.optString("room", ""))) continue;
+            if (!gesucht.equals(Mitschaustand.normalisierterTitel(eintrag.optString("title", "")))) continue;
+            return Mitschaustand.schluessel(eintrag.optString("key", ""), raum);
+        }
+        return "";
     }
 
     /** Der Bestand, in den eingehende Staende laufen. */

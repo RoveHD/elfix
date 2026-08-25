@@ -158,6 +158,23 @@ public final class Favorite {
         return roh.optString("watchpartyRoom", "");
     }
 
+    /**
+     * Wer aus der Runde diesen Stand geschickt hat.
+     *
+     * <p>Beide Felder legt das geteilte Modul {@code fortschritt.js} ab, und
+     * am Rechner steht daraus der Hinweis auf der Karte: "Anna schaut gerade".
+     * Er gilt nur eine knappe halbe Minute - laenger ist eine Meldung kein
+     * Beleg dafuer, dass dort noch jemand sitzt.
+     */
+    public String watchpartyVon() {
+        return roh.optString("watchpartyFrom", "");
+    }
+
+    /** Wann dieser Stand kam - ISO-Zeit, wie das geteilte Modul sie ablegt. */
+    public String watchpartyAm() {
+        return roh.optString("watchpartyAt", "");
+    }
+
     public JSONArray abgeschlosseneFolgen() {
         JSONArray liste = roh.optJSONArray("completedEpisodes");
         return liste == null ? new JSONArray() : liste;

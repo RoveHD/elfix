@@ -634,6 +634,42 @@ function rechner(name, raum = RAUM) {
     pc2.raeume.trennen();
   }
 
+  /* --------------------------- Was die Startseite von der Runde braucht */
+  // Die Kacheln in "Gemeinsam weiterschauen" zeigen, wer gerade schaut, wo er
+  // steht und wer fuehrt - und wer angehalten hat. Alles davon schickt das
+  // Relay laengst; die letzten beiden Angaben wurden auf dem Weg in die App
+  // verworfen, und genau deshalb blieb die Zeile "Angehalten von ..." leer.
+  {
+    pc.staende.length = 0;
+    pc.puls(120, false, folge(6));
+    tv.puls(118, false, folge(6));
+    await warteBis(() => pc.staende.some((s) => (s.members || []).length >= 2),
+      "S: beide Geraete stehen in der Leiste");
+    const leiste = pc.staende.filter((s) => (s.members || []).length >= 2).pop();
+    const jemand = leiste.members[0];
+    pruefe("S1. Die Leiste nennt Name, Stelle, Pausenzustand und Alter",
+      typeof jemand.name === "string" && typeof jemand.position === "number"
+      && typeof jemand.paused === "boolean" && typeof jemand.age === "number",
+      JSON.stringify(jemand));
+    pruefe("S2. Und genau einer fuehrt",
+      leiste.members.filter((m) => m.host).length === 1,
+      leiste.members.map((m) => `${m.name}:${m.host}`).join(","));
+    pruefe("S3. Jedes Mitglied traegt seine Kennung - daran erkennt ein Geraet sich selbst",
+      leiste.members.every((m) => typeof m.id === "string" && m.id.length > 0),
+      leiste.members.map((m) => m.id).join(","));
+
+    pc.staende.length = 0;
+    tv.melden("pause", 130, folge(6));
+    await warteBis(() => pc.staende.some((s) => s.lastAction),
+      "S: die Pause steht in der Leiste");
+    const nachPause = pc.staende.filter((s) => s.lastAction).pop();
+    pruefe("S4. Wer angehalten hat, kommt bis in die App",
+      nachPause.lastAction.type === "pause" && nachPause.lastAction.name === "AndroidTV",
+      JSON.stringify(nachPause.lastAction));
+    pruefe("S5. Und pausedBy ebenso",
+      nachPause.pausedBy === "AndroidTV", `"${nachPause.pausedBy}"`);
+  }
+
   pc.stillstehen();
   tv.stillstehen();
   neu.stillstehen();

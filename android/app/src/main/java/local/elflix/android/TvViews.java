@@ -485,6 +485,22 @@ final class TvViews {
     static View kachel(Context context, Provider provider, String titel, String unterzeile,
                        String bildUrl, int prozent, String fahne, int breiteDp,
                        Bilder.Sichtfenster fenster, Runnable beiKlick, View.OnClickListener onMenu) {
+        return kachel(context, provider, titel, unterzeile, bildUrl, prozent, fahne, breiteDp,
+            "", "", fenster, beiKlick, onMenu);
+    }
+
+    /**
+     * Dieselbe Kachel, dazu die Stelle und die Zeile aus der Runde.
+     *
+     * <p>Wie am Telefon und aus demselben Grund - siehe
+     * {@link MobileViews#kachel}. Auf dem Fernseher wiegt der Grund schwerer:
+     * dort haelt eine Ansicht den Fokus, und eine Seite, die jede Sekunde neu
+     * gebaut wird, wirft die Fernbedienung jede Sekunde an den Anfang.
+     */
+    static View kachel(Context context, Provider provider, String titel, String unterzeile,
+                       String bildUrl, int prozent, String fahne, int breiteDp,
+                       String standText, String liveText,
+                       Bilder.Sichtfenster fenster, Runnable beiKlick, View.OnClickListener onMenu) {
         LinearLayout karte = new LinearLayout(context);
         karte.setOrientation(LinearLayout.VERTICAL);
         karte.setClipChildren(false);
@@ -535,6 +551,32 @@ final class TvViews {
             zeile.setEllipsize(TextUtils.TruncateAt.END);
             zeile.setPadding(0, dp(context, 3), 0, 0);
             karte.addView(zeile);
+        }
+
+        if (standText != null && !standText.isEmpty()) {
+            TextView stelle = new TextView(context);
+            stelle.setTag(Mitschaustand.MARKE_STAND);
+            stelle.setText(standText);
+            stelle.setTextColor(Theme.TEXT_DISABLED);
+            stelle.setTextSize(13);
+            stelle.setMaxLines(1);
+            stelle.setEllipsize(TextUtils.TruncateAt.END);
+            stelle.setPadding(0, dp(context, 3), 0, 0);
+            karte.addView(stelle);
+        }
+
+        if (liveText != null) {
+            TextView live = new TextView(context);
+            live.setTag(Mitschaustand.MARKE_LIVE);
+            live.setText(liveText);
+            live.setTextColor(Theme.PRIMARY);
+            live.setTextSize(13);
+            live.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            live.setMaxLines(1);
+            live.setEllipsize(TextUtils.TruncateAt.END);
+            live.setPadding(0, dp(context, 3), 0, 0);
+            live.setVisibility(liveText.isEmpty() ? View.GONE : View.VISIBLE);
+            karte.addView(live);
         }
 
         karte.setOnClickListener(v -> beiKlick.run());
