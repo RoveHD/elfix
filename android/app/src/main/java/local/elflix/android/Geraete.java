@@ -41,7 +41,6 @@ import java.nio.charset.StandardCharsets;
 public final class Geraete {
     private static final String TAG = CrashReporter.TAG;
     private static final String SPIEGEL_DATEI = "geraete.json";
-    private static final String SITZUNG_DATEI = "sitzungen.json";
     private static final String PREFS = "elflix_settings";
 
     /**
@@ -66,12 +65,24 @@ public final class Geraete {
     private final Kern kern;
     private final Bestand bestand;
     private final Watchparty watchparty;
+    /**
+     * Die gemessene Wiedergabezeit. Wird nach dem Anlegen gesetzt.
+     *
+     * <p>Ausdruecklich das Objekt und nicht die Datei - dieselbe Ueberlegung
+     * wie bei {@link Bestand}: es haelt die Liste im Speicher und schreibt sie,
+     * wenn sich etwas aendert. Wer daneben die Datei liest, liest im
+     * ungluecklichen Augenblick den Stand von vorhin, und bei Sitzungen heisst
+     * "von vorhin", dass die Folge dieses Abends nie hinausgeht.
+     */
+    private Statistik statistik;
     private final Horcher horcher;
     private final Handler haupt = new Handler(Looper.getMainLooper());
     private final Runnable abgleichAufgabe = this::jetztAbgleichen;
 
     private JSONObject letzterZustand;
     private boolean geplant = false;
+    /** Woran erkannt wird, dass die Sitzungsliste sich seit dem letzten Mal geaendert hat. */
+    private String sitzungsAbdruck = "";
 
     public Geraete(Context context, Kern kern, Bestand bestand, Watchparty watchparty,
                    Horcher horcher) {
@@ -82,6 +93,11 @@ public final class Geraete {
         this.horcher = horcher;
     }
 
+    /** Woher die Sitzungen kommen und wohin die anderer Geraete gehen. */
+    public void setzeStatistik(Statistik statistik) {
+        this.statistik = statistik;
+    }
+
     // --- Einrichten ---------------------------------------------------------
 
     /** Spiegel, Sitzungen und Einstellungen in den Kern reichen. Einmal beim Start. */
@@ -89,7 +105,7 @@ public final class Geraete {
         if (kern == null) return;
         kern.wennBereit(() -> {
             kern.rufe("geraete-bruecke.spiegelSetzen", Kern.args(spiegelLesen()), null);
-            kern.rufe("geraete-bruecke.sitzungenSetzen", Kern.args(sitzungenLesen()), null);
+            sitzungenReichen();
             anwenden();
         });
     }
@@ -114,6 +130,7 @@ public final class Geraete {
             return;
         }
         bestandReichen();
+        sitzungenReichen();
         kern.rufe("geraete-bruecke.konfigurieren", Kern.args(einstellungen), (wert, fehler) -> {
             if (fehler != null) {
                 Log.e(TAG, "Geraeteabgleich nicht eingerichtet: " + fehler);
@@ -145,6 +162,56 @@ public final class Geraete {
         kern.rufe("geraete-bruecke.anbieterSetzen", Kern.args(anbieter), null);
     }
 
+    /**
+     * Die Sitzungen hineinreichen - sie aendern sich zur Laufzeit.
+     *
+     * <p>Genau das fehlte. Sie gingen einmal beim Start hinein und danach nie
+     * wieder: der Abgleich kannte bis zum naechsten App-Start nur die Liste von
+     * damals. Alles, was an diesem Abend gemessen wurde, blieb auf dem Geraet,
+     * auf dem es entstand - und der Rueckblick zeigte auf jedem Geraet seine
+     * eigene Bilanz statt der gemeinsamen.
+     *
+     * <p>Die laufende Sitzung reist mit, aber als "offen" gekennzeichnet: sie
+     * steht schon in der Ablage, damit ein Prozessabbruch sie nicht kostet, ist
+     * aber noch kein fertiger Satz. Was davon hinausginge, waere ein
+     * Zwischenstand, der auf dem anderen Geraet fuer immer als abgeschlossene
+     * Sitzung dastuende.
+     */
+    private void sitzungenReichen() {
+        if (kern == null || !kern.istBereit() || statistik == null) return;
+        JSONArray alle = statistik.alle();
+        java.util.List<String> offeneIds = statistik.offeneIds();
+        // Nur wenn sich wirklich etwas geaendert hat.
+        //
+        // Diese Liste waechst mit jedem Abend und wird nie kuerzer; sie bei
+        // jedem Abgleich - also alle drei Sekunden, solange etwas laeuft -
+        // durch die Bruecke zu schicken hiesse, nach einem Jahr ein paar
+        // hundert Kilobyte JSON je Takt zu verpacken, damit drueben dasselbe
+        // steht wie vorher. Sitzungen kommen nur hinten dazu, deshalb genuegen
+        // Anzahl, letzte Kennung und die offenen als Fingerabdruck.
+        JSONObject letzte = alle.length() == 0 ? null : alle.optJSONObject(alle.length() - 1);
+        String fingerabdruck = alle.length() + "|"
+            + (letzte == null ? "" : letzte.optString("id", "")) + "|" + offeneIds;
+        if (fingerabdruck.equals(sitzungsAbdruck)) return;
+        sitzungsAbdruck = fingerabdruck;
+        JSONArray offene = new JSONArray();
+        for (String id : offeneIds) offene.put(id);
+        kern.rufe("geraete-bruecke.sitzungenSetzen", Kern.args(alle, offene), null);
+    }
+
+    /**
+     * Hier ist eine Sitzung entstanden oder gewachsen.
+     *
+     * <p>Der Gegenpart zu {@code saveSitzungen} am Rechner: der eine Punkt, an
+     * dem sich an den Sitzungen wirklich etwas geaendert hat. Gebuendelt
+     * angestossen - nicht alle fuenf Sekunden ein Funkspruch, aber eine
+     * abgeschlossene Sitzung geht zuverlaessig hinaus.
+     */
+    public void sitzungenGemeldet() {
+        sitzungenReichen();
+        abgleichenSpaeter();
+    }
+
     // --- Abgleichen ---------------------------------------------------------
 
     /**
@@ -171,6 +238,7 @@ public final class Geraete {
         haupt.removeCallbacks(abgleichAufgabe);
         if (kern == null || !kern.istBereit() || !eingeschaltet()) return;
         bestandReichen();
+        sitzungenReichen();
         kern.rufe("geraete-bruecke.abgleichen", (wert, fehler) -> {
             if (fehler != null) Log.e(TAG, "Abgleich fehlgeschlagen: " + fehler);
             standAbfragen();
@@ -188,6 +256,7 @@ public final class Geraete {
     public void vollAbgleichen() {
         if (kern == null || !kern.istBereit()) return;
         bestandReichen();
+        sitzungenReichen();
         kern.rufe("geraete-bruecke.vollAbgleichen", (wert, fehler) -> {
             if (fehler != null) Log.e(TAG, "Vollabgleich fehlgeschlagen: " + fehler);
             standAbfragen();
@@ -226,7 +295,17 @@ public final class Geraete {
                     else FavoriteStore.speichereRoh(context, new JSONArray(nutzlastJson));
                     return true;
                 case "geraete:sitzungen":
-                    sitzungenSchreiben(new JSONArray(nutzlastJson));
+                    // Ueber die Statistik, nicht an ihr vorbei. Sie haelt die
+                    // Liste, aus der Rueckblick und Wrapped rechnen; wer nur
+                    // die Datei schreibt, hat abgeglichen, ohne dass es jemand
+                    // sieht - und beim naechsten Sichern schreibt die Statistik
+                    // ihren alten Stand darueber.
+                    //
+                    // Die Nutzlast ist der Zuwachs, nicht die ganze Liste: eine
+                    // abgeschlossene Sitzung ist ein Ereignis, und Ereignisse
+                    // addieren sich. Was schon da ist, faellt beim Entdoppeln
+                    // ueber die Kennung heraus.
+                    if (statistik != null) statistik.uebernehmen(new JSONArray(nutzlastJson));
                     return true;
                 case "geraete:spiegel":
                     spiegelSchreiben(new JSONObject(nutzlastJson));
@@ -366,6 +445,9 @@ public final class Geraete {
      * laengst geaenderte Staende faelschlich fuer bekannt.
      */
     public void trennen() {
+        // Ein anderer Verbund ist ein anderer Abgleich: die Liste muss beim
+        // naechsten Mal wirklich wieder hinein, auch wenn sie dieselbe ist.
+        sitzungsAbdruck = "";
         einstellungen().edit().remove("geraete_key").putBoolean("geraete_an", false).apply();
         spiegelSchreiben(new JSONObject());
         if (kern != null && kern.istBereit()) {
@@ -375,6 +457,7 @@ public final class Geraete {
     }
 
     private void schluesselSetzenRoh(String schluessel) {
+        sitzungsAbdruck = "";
         einstellungen().edit()
             .putString("geraete_key", schluessel)
             .putBoolean("geraete_an", !schluessel.isEmpty())
@@ -415,11 +498,13 @@ public final class Geraete {
         return watchparty == null ? "" : watchparty.geraetId();
     }
 
-    // --- Die beiden Dateien --------------------------------------------------
+    // --- Der Spiegel auf der Platte ------------------------------------------
     //
     // Roh, ohne Rahmen: was das Modul ablegt, ist schon ein fertiges Objekt.
-    // sitzungen.json traegt dasselbe Format wie am Rechner, damit ein spaeterer
-    // Rueckblick auf beiden Geraeten dieselben Saetze zaehlt.
+    //
+    // sitzungen.json steht bewusst nicht mehr hier: sie gehoert {@link
+    // Statistik}, und zwei Schreiber auf derselben Datei sind ein Schreiber zu
+    // viel - der zweite schreibt irgendwann den Stand des ersten weg.
 
     private JSONObject spiegelLesen() {
         String roh = dateiLesen(SPIEGEL_DATEI);
@@ -434,31 +519,6 @@ public final class Geraete {
 
     private void spiegelSchreiben(JSONObject ablage) {
         dateiSchreiben(SPIEGEL_DATEI, ablage == null ? "{}" : ablage.toString());
-    }
-
-    private JSONArray sitzungenLesen() {
-        String roh = dateiLesen(SITZUNG_DATEI);
-        if (roh.isEmpty()) return new JSONArray();
-        try {
-            JSONObject inhalt = new JSONObject(roh);
-            JSONArray liste = inhalt.optJSONArray("sitzungen");
-            return liste == null ? new JSONArray() : liste;
-        } catch (Exception fehler) {
-            Log.e(TAG, SITZUNG_DATEI + " unlesbar - es wird nichts geloescht, nur nichts geladen", fehler);
-            return new JSONArray();
-        }
-    }
-
-    private void sitzungenSchreiben(JSONArray liste) {
-        try {
-            JSONObject inhalt = new JSONObject();
-            // Dieselbe Fassungsnummer wie die Datei am Rechner traegt.
-            inhalt.put("version", 2);
-            inhalt.put("sitzungen", liste);
-            dateiSchreiben(SITZUNG_DATEI, inhalt.toString());
-        } catch (Exception fehler) {
-            Log.e(TAG, SITZUNG_DATEI + " nicht gespeichert", fehler);
-        }
     }
 
     private String dateiLesen(String name) {

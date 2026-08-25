@@ -53,6 +53,40 @@ public final class Statistik {
         void fertig(JSONObject daten, String fehler);
     }
 
+    /**
+     * Wer erfahren muss, dass sich an den Sitzungen etwas geaendert hat.
+     *
+     * <p>Genau hier fehlte bisher eine Leitung, und daran hing der Fehler: die
+     * Sitzungen gingen beim Start einmal in den Geraeteabgleich und danach nie
+     * wieder. Alles, was an einem Abend gemessen wurde, blieb auf dem Geraet
+     * liegen, auf dem es entstand - der Rueckblick zeigte auf dem Telefon zwei
+     * Stunden, am Rechner drei, und niemandem fiel auf, dass es fuenf sein
+     * muessten.
+     *
+     * <p>Zwei Anlaesse, weil sie zwei verschiedene Dinge nach sich ziehen:
+     * eigene Sitzungen muessen <em>hinaus</em>, fremde muessen <em>angezeigt
+     * werden</em>.
+     */
+    public interface Beobachter {
+        /**
+         * Hier ist eine Sitzung entstanden oder gewachsen.
+         *
+         * <p>Der Aufrufer reicht die Liste in den Geraeteabgleich und stoesst
+         * ihn gebuendelt an - nicht sofort und nicht bei jedem Takt.
+         */
+        void sitzungenGespeichert();
+
+        /**
+         * Von einem anderen eigenen Geraet sind Sitzungen hereingekommen.
+         *
+         * <p>Ein offener Rueckblick und ein offenes Wrapped rechnen daraufhin
+         * neu. Ohne das stimmten die Zahlen erst nach einem Neustart, und das
+         * ist bei einer Jahresbilanz die Art Fehler, die niemand bemerkt.
+         */
+        default void sitzungenUebernommen() {
+        }
+    }
+
     private final Context context;
     private final Kern kern;
 
@@ -62,10 +96,16 @@ public final class Statistik {
     private JSONArray sitzungen;
     private boolean schmutzig;
     private long zuletztGespeichert;
+    private Beobachter beobachter;
 
     public Statistik(Context context, Kern kern) {
         this.context = context.getApplicationContext();
         this.kern = kern;
+    }
+
+    /** Wer von Aenderungen erfaehrt - der Geraeteabgleich und die Oberflaeche. */
+    public void setzeBeobachter(Beobachter beobachter) {
+        this.beobachter = beobachter;
     }
 
     /* ------------------------------------------------------------- Ablage */
@@ -120,6 +160,12 @@ public final class Statistik {
             }
             schmutzig = false;
             zuletztGespeichert = System.currentTimeMillis();
+            // Der eine Punkt, an dem sich an den Sitzungen wirklich etwas
+            // geaendert hat - genau wie am Rechner, wo saveSitzungen() den
+            // Abgleich anstoesst. Nicht bei jedem Takt: die laufende Sitzung
+            // faellt beim Sammeln ohnehin durch den Filter, weil sie noch
+            // waechst.
+            if (beobachter != null) beobachter.sitzungenGespeichert();
         } catch (Exception fehler) {
             Log.e(TAG, DATEI + " nicht gespeichert", fehler);
         } finally {
@@ -171,6 +217,58 @@ public final class Statistik {
         if (!weg) return;
         sitzungen = behalten;
         schmutzig = true;
+    }
+
+    /* --------------------------------------------- Von den anderen Geraeten */
+
+    /**
+     * Sitzungen, die auf einem anderen eigenen Geraet entstanden sind.
+     *
+     * <p>Sie kommen dazu oder sie sind schon da - ueberschrieben wird nie.
+     * Eine abgeschlossene Sitzung ist ein Ereignis und kein Zustand: zwei
+     * Geraete koennen denselben Satz nicht verschieden wissen, und dieselbe
+     * Kennung darf es nur einmal geben. Genau daran haengt, dass aus drei
+     * Stunden am Rechner, zwei am Telefon und vier am Fernseher neun werden -
+     * und nicht achtzehn.
+     *
+     * <p>Der Weg fuehrt ausdruecklich durch dieses Objekt und nicht an ihm
+     * vorbei in die Datei. Sonst haelt das laufende {@code Statistik} weiter
+     * seine alte Liste im Speicher, und ein Rueckblick, der jetzt geoeffnet
+     * wird, rechnet mit Zahlen von vorhin.
+     *
+     * @return wie viele wirklich dazugekommen sind
+     */
+    public int uebernehmen(JSONArray neue) {
+        // Die Regel selbst steht in Sitzungen.vereinen - dieselbe wie
+        // statistik.vereinen im Kern, und einmal geschrieben statt an jeder
+        // Stelle, die Sitzungen zusammenlegt.
+        Sitzungen.Ergebnis ergebnis = Sitzungen.vereinen(alle(), neue);
+        if (ergebnis.dazu == 0) return 0;
+        sitzungen = ergebnis.sitzungen;
+        schmutzig = true;
+        speichern();
+        Log.i(TAG, "Sitzungen von einem anderen Geraet uebernommen: " + ergebnis.dazu);
+        if (beobachter != null) beobachter.sitzungenUebernommen();
+        return ergebnis.dazu;
+    }
+
+    /**
+     * Die Kennungen der Sitzungen, die gerade noch wachsen.
+     *
+     * <p>Sie stehen bereits in der Ablage - damit ein Prozessabbruch sie nicht
+     * kostet -, sind aber keine fertigen Saetze. Was hier hinausginge, waere
+     * ein Zwischenstand, der drueben als abgeschlossene Sitzung dastuende und
+     * nie wieder korrigiert wuerde. Dieselbe Auskunft wie
+     * {@code laufendeSitzungIds} am Rechner.
+     */
+    public java.util.List<String> offeneIds() {
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        for (JSONObject offen : offene.values()) {
+            if (offen == null) continue;
+            String id = offen.optString("id", "");
+            if (!id.isEmpty()) ids.add(id);
+        }
+        return ids;
     }
 
     /* ----------------------------------------------------------- Der Takt */

@@ -84,7 +84,15 @@ public final class Mitschauen {
         /** Der Anbieter dazu. */
         Provider anbieter();
 
-        /** Auf diese Adresse wechseln, weil die Runde es tut. */
+        /**
+         * Auf diese Adresse wechseln, weil die Runde es tut.
+         *
+         * <p>Der Aufrufer muss dabei den Autostart scharfmachen. Genau das
+         * fehlte: die Seite ging auf, und danach stand der Fernseher auf einer
+         * Folgenuebersicht ohne Player, waehrend die anderen weiterschauten.
+         * Am Rechner ist der Player nach einem Wechsel selbstverstaendlich da -
+         * dort laeuft {@code scheduleProviderAutoplay} mit.
+         */
         void folgeOeffnen(Provider anbieter, String url);
 
         /** Der Zustand hat sich geaendert - die Anzeige darf nachziehen. */
@@ -147,6 +155,37 @@ public final class Mitschauen {
     /** Wie oft ein Stand hoechstens gemeldet wird. Dieselbe Sekunde wie am Rechner. */
     private static final long STAND_ABSTAND_MS = 1000;
 
+    /**
+     * Wo schon einmal nach dem Stand der Runde gefragt wurde.
+     *
+     * <p>Je Raum, Titel und Folge genau einmal - derselbe Merker wie
+     * {@code watchpartyAngeklinkt} am Rechner. Er ist der Grund, warum der
+     * Einstieg jetzt wirklich sitzt: gefragt wird nicht mehr anderthalb
+     * Sekunden nach dem Seitenende, sondern in dem Augenblick, in dem sich
+     * zum ersten Mal ein Rahmen <em>mit Video</em> meldet.
+     *
+     * <p>Der Unterschied ist alles. Beim Seitenende gibt es auf dem Telefon
+     * noch keinen Player: der Hoster wird erst danach angeklickt, und das
+     * dauert Sekunden. Die Antwort der Runde traf also auf ein Dokument ohne
+     * Videoelement, das Skript meldete "kein-video", und der Gast startete bei
+     * 0:00, waehrend die anderen bei 0:12 standen.
+     */
+    private final java.util.Set<String> angeklinkt = new java.util.HashSet<>();
+
+    /**
+     * Wo das Live-Schauen abgeschaltet ist - je Raum und Titel.
+     *
+     * <p>Dasselbe wie {@code watchpartyLiveAus} am Rechner, und der Grund,
+     * warum "Live verlassen" dort nichts kaputtmacht: es beendet die Teilnahme
+     * an dieser Folge und sonst gar nichts. Der Titel bleibt im Raum, die
+     * Mitgliedschaft bleibt bestehen, der eigene Fortschritt bleibt stehen -
+     * er zaehlt nur wieder allein fuer dieses Geraet.
+     *
+     * <p>Der Merker haengt am Raum, damit man in einer Runde live sein kann und
+     * in der anderen nicht - auch beim selben Anime.
+     */
+    private final java.util.Set<String> liveAus = new java.util.HashSet<>();
+
     public Mitschauen(Kern kern, Rahmen rahmen, Watchparty watchparty, Umgebung umgebung) {
         this.kern = kern;
         this.rahmen = rahmen;
@@ -196,7 +235,39 @@ public final class Mitschauen {
         if (ansicht == null || rahmen == null || beobachterSkript.isEmpty()) return;
         if (watchparty == null || !watchparty.istEingeschaltet()) return;
         int erreicht = rahmen.anSpieler(ansicht, beobachterSkript);
-        if (erreicht > 0) Log.d(TAG, "Watchparty-Horcher in " + erreicht + " Rahmen");
+        if (erreicht <= 0) return;
+        Log.d(TAG, "Watchparty-Horcher in " + erreicht + " Rahmen");
+        einklinken();
+    }
+
+    /**
+     * Beim ersten Player dieser Folge den Stand der Runde anfordern.
+     *
+     * <p>Dasselbe wie {@code installWatchpartyControls} am Rechner, und der
+     * Kern des Einstiegs: wer neu dazukommt oder gerade der Runde auf eine
+     * andere Folge gefolgt ist, bekommt vom Relay Stelle <em>und</em>
+     * Laufzustand des Hosts. Daraus rechnet das Skript im Player die Zielzeit
+     * selbst aus - zum Zeitpunkt der Anwendung, nicht zum Zeitpunkt des
+     * Empfangs. Genau das ist der smarte Start: die acht Sekunden Ladezeit
+     * stehen in der Rechnung drin.
+     *
+     * <p>Einmal je Raum, Titel und Folge. Ein Hosterwechsel innerhalb
+     * derselben Folge fragt nicht noch einmal - sonst spraenge der Player bei
+     * jedem Rahmenwechsel neu.
+     */
+    private void einklinken() {
+        String key = schluessel();
+        String raum = raum();
+        if (key.isEmpty() || raum.isEmpty()) return;
+        int[] folge = folgeAus(umgebung.adresse());
+        String marke = raum + "|" + key + "|s" + folge[0] + "e" + folge[1];
+        if (!angeklinkt.add(marke)) return;
+        Log.i(TAG, "Watchparty klinkt sich bei der Runde ein (Staffel " + folge[0]
+            + " Folge " + folge[1] + ")");
+        // Der eigene Stand zuerst - ohne ihn gilt dieses Geraet dem Relay als
+        // nicht aktiv, und die Antwort auf den Abgleich bliebe aus.
+        letzteStandMeldung = 0;
+        abgleichen();
     }
 
     /**
@@ -221,6 +292,10 @@ public final class Mitschauen {
         // ob hier wirklich jemand am Video sitzt.
         sitzung = "";
         sitzungFuer = "";
+        // Und eine neue Folge ist ein neuer Einstieg. Bliebe der Merker
+        // stehen, fragte niemand mehr nach dem Stand der Runde, und der Gast
+        // finge auf der neuen Folge bei null an.
+        angeklinkt.clear();
     }
 
     /* ------------------------------------------------- Aus dem Player heraus */
@@ -337,6 +412,9 @@ public final class Mitschauen {
         sitzungFuer = "";
         letzteStandMeldung = 0;
         gemeldeteFolge = "";
+        // Wer zurueckkommt, klinkt sich neu ein - sonst stuende er bei der
+        // Stelle von damals, waehrend die Runde weitergelaufen ist.
+        angeklinkt.clear();
     }
 
     /**
@@ -462,9 +540,22 @@ public final class Mitschauen {
         }
         // Der Wechsel ist vollzogen; ab jetzt zaehlt ein eigener wieder.
         folgtDerRunde = false;
-        // Etwas Vorlauf: der Stand geht erst hinaus, wenn der Player steht,
-        // und ein Abgleich davor traefe auf ein Geraet ohne Sitzung.
-        haupt.postDelayed(this::abgleichen, 1500);
+        // Der Stand der Runde wird hier nicht mehr angefordert - jedenfalls
+        // nicht als Hauptweg.
+        //
+        // Das tat frueher ein Zeitgeber, anderthalb Sekunden nach dem
+        // Seitenende. Auf dem Telefon gibt es zu diesem Zeitpunkt noch keinen
+        // Player: der Hoster wird erst danach angeklickt, und das dauert
+        // Sekunden. Die Antwort traf also auf ein Dokument ohne Videoelement,
+        // lief ins Leere - und der Gast startete bei 0:00, waehrend die
+        // anderen laengst weiter waren. Gefragt wird jetzt in
+        // {@link #anPlayer}, sobald sich wirklich ein Rahmen mit Video meldet.
+        //
+        // Der Zeitgeber bleibt als Netz darunter: ein WebView ohne
+        // Rahmenzugriff meldet nie einen Rahmen mit Video, und dort waere sonst
+        // gar kein Einstieg mehr. Eine Anfrage zu viel kostet nichts - die
+        // Antwort trifft dann auf kein Video und tut nichts.
+        if (!Rahmen.verfuegbar()) haupt.postDelayed(this::abgleichen, 2500);
     }
 
     /* --------------------------------------------------- Herein: die Befehle */
@@ -492,15 +583,27 @@ public final class Mitschauen {
 
         JSONObject lage = new JSONObject();
         int[] folge = folgeAus(adresse);
+        // Das gemeinsame Gleichziehen richtet sich ausdruecklich auch an die,
+        // bei denen die falsche Folge steht - sie sollen erst wechseln und dann
+        // mitkommen. Waere die Folgenpruefung hier scharf, faenden sie sich als
+        // "andere Folge" abgewiesen wieder und blieben zurueck, waehrend alle
+        // anderen gemeinsam starten.
+        //
+        // Deshalb bleibt sie fuer diesen einen Fall aussen vor - genau wie am
+        // Rechner, wo {@code applyWatchpartyControl} mit
+        // {@code gleicheAdresse: true, offen: null} fragt und die Folge erst je
+        // Ansicht prueft. Was hier wirklich offen steht, entscheidet danach
+        // {@link #folgen}.
+        boolean gleichziehen = "syncprepare".equals(nachricht.optString("action", ""));
         try {
             lage.put("binHost", binHost(key));
             lage.put("hostId", hostId(key));
             // Ob ueberhaupt dieselbe Folge offen steht. Die Adresse des
             // Absenders zaehlt; steht keine dabei, die der Runde.
-            lage.put("gleicheAdresse", gleicheFolge(
+            lage.put("gleicheAdresse", gleichziehen || gleicheFolge(
                 ersteAdresse(nachricht.optString("url", ""), key), adresse));
-            lage.put("season", folge[0]);
-            lage.put("episode", folge[1]);
+            lage.put("season", gleichziehen ? 0 : folge[0]);
+            lage.put("episode", gleichziehen ? 0 : folge[1]);
         } catch (Exception fehler) {
             Log.e(TAG, "Lage nicht gebaut", fehler);
             return;
@@ -530,20 +633,24 @@ public final class Mitschauen {
             return;
         }
         if ("navigate".equals(tun)) {
-            String ziel = urteil.optString("url", "");
-            if (ziel.isEmpty() || umgebung.anbieter() == null) return;
-            // Steht die Folge schon, ist nichts zu tun - sonst laedt jeder
-            // Nachzuegler die Seite ein zweites Mal neu.
-            if (gleicheFolge(ziel, umgebung.adresse())) return;
-            Log.i(TAG, "Watchparty folgt der Runde auf eine andere Folge");
-            // Der Zustand der alten Folge gehoert weg, bevor die neue steht.
-            zuruecksetzen(ansicht);
-            // Und der eigene Wechsel wird nicht zurueckgemeldet: er ist keine
-            // Entscheidung dieses Geraets, sondern deren Befolgung.
-            folgtDerRunde = true;
-            gemeldeteFolge = serienTeil(ziel) + "#s" + folgeAus(ziel)[0] + "e" + folgeAus(ziel)[1];
-            haupt.post(() -> umgebung.folgeOeffnen(umgebung.anbieter(), ziel));
+            folgen(ansicht, urteil.optString("url", ""));
             return;
+        }
+        // Beim gemeinsamen Gleichziehen kann die Runde inzwischen bei einer
+        // anderen Folge stehen. Dann wird erst gewechselt - dieselbe
+        // Reihenfolge wie in {@code prepareWatchpartySync} am Rechner. Ohne das
+        // spraenge dieses Geraet auf eine Stelle der falschen Folge und meldete
+        // sich dort als bereit.
+        if ("syncprepare".equals(tun)) {
+            String ziel = nachricht.optString("url", "");
+            if (!ziel.isEmpty() && !gleicheFolge(ziel, umgebung.adresse())
+                && folgen(ansicht, ziel)) {
+                // Gewechselt: die Bereitmeldung geht trotzdem sofort hinaus,
+                // sonst warten die anderen bis zum Zeitlimit auf ein Geraet,
+                // das gerade eine Seite laedt.
+                bereitMelden(nachricht);
+                return;
+            }
         }
         String skript = urteil.optString("skript", "");
         if (skript.isEmpty() || ansicht == null || rahmen == null) return;
@@ -553,15 +660,164 @@ public final class Mitschauen {
         // Beim gemeinsamen Gleichziehen wartet die Runde auf die Bereitmeldung.
         // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten
         // die anderen unnoetig bis zum Zeitlimit.
-        if ("syncprepare".equals(tun)) {
-            String key = nachricht.optString("key", "");
-            String raum = nachricht.optString("room", raum());
-            if (!key.isEmpty()) {
-                kern.rufe("watchparty-bruecke.bereitZumStart", Kern.args(key, raum),
-                    (wert, fehler) -> { });
-            }
-        }
+        if ("syncprepare".equals(tun)) bereitMelden(nachricht);
         umgebung.anzeigeAuffrischen();
+    }
+
+    private void bereitMelden(JSONObject nachricht) {
+        String key = nachricht.optString("key", "");
+        if (key.isEmpty() || kern == null || !kern.istBereit()) return;
+        String raum = nachricht.optString("room", raum());
+        kern.rufe("watchparty-bruecke.bereitZumStart", Kern.args(key, raum), (wert, fehler) -> { });
+    }
+
+    /**
+     * Der Runde auf eine andere Folge folgen.
+     *
+     * <p>Die drei Dinge, die dabei zusammengehoeren: den Zustand der alten
+     * Folge verwerfen, den eigenen Wechsel nicht zurueckmelden (er ist keine
+     * Entscheidung, sondern deren Befolgung) und die neue Folge oeffnen - samt
+     * Autostart, sonst steht danach eine Folgenuebersicht ohne Player da.
+     *
+     * @return ob wirklich gewechselt wurde
+     */
+    private boolean folgen(WebView ansicht, String ziel) {
+        if (ziel == null || ziel.isEmpty() || umgebung.anbieter() == null) return false;
+        // Steht die Folge schon, ist nichts zu tun - sonst laedt jeder
+        // Nachzuegler die Seite ein zweites Mal neu.
+        if (gleicheFolge(ziel, umgebung.adresse())) return false;
+        Log.i(TAG, "Watchparty folgt der Runde auf eine andere Folge");
+        // Der Zustand der alten Folge gehoert weg, bevor die neue steht.
+        zuruecksetzen(ansicht);
+        folgtDerRunde = true;
+        gemeldeteFolge = serienTeil(ziel) + "#s" + folgeAus(ziel)[0] + "e" + folgeAus(ziel)[1];
+        haupt.post(() -> umgebung.folgeOeffnen(umgebung.anbieter(), ziel));
+        return true;
+    }
+
+    /* --------------------------------------------------- Die Live-Aktionen */
+
+    /*
+     * Was der Rechner in seiner Leiste oben rechts anbietet und Android bisher
+     * nirgends: mit dem Host gleichziehen, den Takt weitergeben, die Teilnahme
+     * beenden. Entschieden wird nichts davon hier - das Relay prueft nach, ob
+     * der Empfaenger einer Hostuebergabe wirklich bei derselben Folge sitzt,
+     * und der gemeinsame Start ist ohnehin seine Sache.
+     */
+
+    /**
+     * "Mit Host synchronisieren".
+     *
+     * <p>Dasselbe wie {@code resyncWatchparty} am Rechner: alle halten an,
+     * springen auf die Stelle des Hosts, und erst wenn alle so weit sind, gibt
+     * das Relay das Startsignal. Steht hier die falsche Folge, wird vorher
+     * gewechselt - das entscheidet die eingehende Vorbereitung selbst
+     * ({@code syncprepare} traegt die Adresse der Runde).
+     *
+     * @param stelle die eigene Stelle. Sie zaehlt nur, wenn vom Host noch gar
+     *               nichts bekannt ist - sonst zoege ein Nachzuegler alle
+     *               anderen zu sich zurueck.
+     */
+    public void gleichziehen(double stelle) {
+        if (kern == null || !kern.istBereit()) return;
+        String key = schluessel();
+        String raum = raum();
+        if (key.isEmpty() || raum.isEmpty()) return;
+        kern.rufe("watchparty-bruecke.gleichziehen",
+            Kern.args(key, Math.max(0, stelle), raum), (wert, fehler) -> {
+                if (fehler != null) Log.d(TAG, "Gleichziehen ging nicht: " + fehler);
+            });
+    }
+
+    /** Den Takt an ein anderes Geraet abgeben. Das Relay prueft nach. */
+    public void hostUebergeben(String memberId, Kern.Antwort antwort) {
+        String key = schluessel();
+        String raum = raum();
+        if (kern == null || !kern.istBereit() || key.isEmpty() || raum.isEmpty()
+            || memberId == null || memberId.isEmpty()) {
+            antwort.fertig(null, "Dazu läuft gerade keine Runde");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.hostUebergeben", Kern.args(key, memberId, raum), antwort);
+    }
+
+    /**
+     * Die aktive Teilnahme an der offenen Folge beenden.
+     *
+     * <p>Ausdruecklich nur die Teilnahme. Der Titel bleibt im Raum, der Raum
+     * bleibt eingerichtet, der eigene Fortschritt bleibt stehen - danach laeuft
+     * dieses Geraet wieder privat weiter. Dieselbe Trennung wie beim
+     * "Live verlassen" am Rechner.
+     */
+    public void liveVerlassen(Kern.Antwort antwort) {
+        String key = schluessel();
+        String raum = raumRoh();
+        if (watchparty == null || key.isEmpty() || raum.isEmpty()) {
+            antwort.fertig(null, "Diese Folge läuft in keiner Runde mit");
+            return;
+        }
+        // Erst abmelden, damit die anderen es sofort sehen und dieses Geraet
+        // nicht Host einer Folge bleibt, an der es nicht mehr teilnimmt.
+        abmelden();
+        liveAus.add(liveMarke(key, raum));
+        // Und der eigene Eintrag zaehlt wieder fuer sich. Ausdruecklich nur
+        // das: der Titel bleibt im Raum, die Mitgliedschaft bleibt bestehen,
+        // der gemessene Fortschritt bleibt stehen. Dieselbe Trennung wie beim
+        // "Live verlassen" am Rechner - dort heisst der Gegenknopf "Live
+        // beitreten" und nicht "Erneut beitreten".
+        watchparty.privatSetzen(key);
+        antwort.fertig("", null);
+    }
+
+    /**
+     * Dieser Folge wieder live folgen.
+     *
+     * <p>Der Gegenknopf. Die Mitgliedschaft war nie weg - es zaehlt ab jetzt
+     * wieder fuer die Runde, und der Stand wird einmal angefordert, damit man
+     * nicht dort einsteigt, wo man vor einer halben Stunde aufgehoert hat.
+     */
+    public void liveBeitreten(Kern.Antwort antwort) {
+        String key = schluessel();
+        String raum = raumRoh();
+        if (watchparty == null || key.isEmpty() || raum.isEmpty()) {
+            antwort.fertig(null, "Diese Folge läuft in keiner Runde mit");
+            return;
+        }
+        liveAus.remove(liveMarke(key, raum));
+        watchparty.raumBinden(key, raum);
+        // Neu einklinken: sonst bliebe der Merker der letzten Teilnahme stehen
+        // und niemand fragte nach dem Stand der Runde.
+        angeklinkt.clear();
+        letzteStandMeldung = 0;
+        WebView ansicht = umgebung.spieler();
+        if (ansicht != null) anPlayer(ansicht);
+        else abgleichen();
+        antwort.fertig(raum, null);
+    }
+
+    /** Ob die offene Folge ueberhaupt in einer Runde steht - auch mit Live aus. */
+    public boolean stehtInRunde() {
+        return !raumRoh().isEmpty();
+    }
+
+    /** Der Raum, in dem die offene Folge mitlaeuft - leer heisst: privat. */
+    public String aktiverRaum() {
+        return raum();
+    }
+
+    /** Der Raum, in dem sie steht - auch wenn gerade privat geschaut wird. */
+    public String eingestellterRaum() {
+        return raumRoh();
+    }
+
+    /** Der Titelschluessel der offenen Folge in der Runde. */
+    public String aktiverSchluessel() {
+        return schluessel();
+    }
+
+    /** Staffel und Folge, die hier gerade offen stehen. */
+    public int[] offeneFolge() {
+        return folgeAus(umgebung.adresse());
     }
 
     /* ------------------------------------------------------------- Hilfen */
@@ -578,8 +834,21 @@ public final class Mitschauen {
             .toLowerCase();
     }
 
-    /** In welchem Raum diese Seite mitlaeuft - "" heisst: in keinem. */
+    /**
+     * In welchem Raum diese Seite live mitlaeuft - "" heisst: in keinem.
+     *
+     * <p>"Live aus" zaehlt hier wie "nicht dabei": es geht nichts hinaus und es
+     * kommt nichts an. Die Mitgliedschaft bleibt davon unberuehrt - siehe
+     * {@link #liveAus}.
+     */
     private String raum() {
+        String roh = raumRoh();
+        if (roh.isEmpty()) return "";
+        return liveAus.contains(liveMarke(schluessel(), roh)) ? "" : roh;
+    }
+
+    /** In welchem Raum diese Seite steht - auch wenn das Live-Schauen aus ist. */
+    private String raumRoh() {
         if (watchparty == null) return "";
         String key = schluessel();
         if (key.isEmpty()) return "";
@@ -592,6 +861,10 @@ public final class Mitschauen {
             return eintrag.optString("room", "");
         }
         return "";
+    }
+
+    private static String liveMarke(String key, String raum) {
+        return (raum == null ? "" : raum) + "|" + (key == null ? "" : key);
     }
 
     private JSONObject eintragZu(String key) {

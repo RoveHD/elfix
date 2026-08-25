@@ -131,6 +131,16 @@ public class MainActivity extends Activity {
     private LinearLayout appChrome;
     private LinearLayout collapsedChrome;
     private LinearLayout chromeHolder;
+    /**
+     * Der Live-Streifen der Watchparty und sein Platz.
+     *
+     * <p>Er haengt bewusst <em>neben</em> der Chrome-Leiste und nicht in ihr:
+     * auf dem Fernseher verschwindet die Leiste, sobald die Fernbedienung an
+     * die Seite geht, und mit ihr verschwaende sonst genau die Anzeige, an der
+     * man sieht, dass gerade drei Leute mitschauen.
+     */
+    private LinearLayout liveHolder;
+    private Livestreifen liveStreifen;
     private LinearLayout providerRail;
     private View providerRailScroll;
     private View providerRailDivider;
@@ -454,22 +464,17 @@ public class MainActivity extends Activity {
              */
             @Override
             public String adresse() {
-                WebView ansicht = ansicht();
-                String jetzt = ansicht == null ? null : ansicht.getUrl();
-                if (jetzt == null || activeProvider == null || lastEpisodeUrl == null) return jetzt;
-                if (isProviderFirstPartyHost(activeProvider, safeHost(jetzt),
-                    safeHost(activeProvider.startUrl))) {
-                    return jetzt;
-                }
-                return lastEpisodeUrl;
+                return laufendeFolgenAdresse(ansicht());
             }
 
             @Override
             public boolean watchpartyFuehrt() {
-                // Noch gibt es kein Live-Mitschauen auf Android, nur den
-                // Abgleich des Stands - also gibt die Runde keine Folge vor.
-                // Sobald das Live-Schauen dazukommt, wird hier gefragt.
-                return false;
+                // Laeuft diese Folge in einer Runde mit, gibt die Runde sie
+                // vor: ein Ruecksprung ist dann gewollt, und der eigene
+                // Eintrag zieht sofort mit. Dieselbe Frage, die der Rechner
+                // mit watchpartyGibtFolgeVor beantwortet - sie stand hier auf
+                // "nein", solange es auf Android kein Live-Mitschauen gab.
+                return mitschauen != null && mitschauen.laeuftMit();
             }
         });
         messung.setzeRahmen(rahmen);
@@ -504,6 +509,27 @@ public class MainActivity extends Activity {
         statistik = new Statistik(this, kern);
         bestand.setzeSitzungsmelder((provider, url, eintrag, fortschritt) ->
             statistik.melden(provider, url, eintrag, fortschritt));
+        // Die Leitung, die gefehlt hat. Ohne sie kannte der Geraeteabgleich nur
+        // die Sitzungsliste vom Start der App: was an diesem Abend gemessen
+        // wurde, ging nie hinaus, und was von einem anderen Geraet hereinkam,
+        // landete in der Datei, waehrend das laufende Statistik-Objekt seine
+        // alte Liste behielt. Der Rueckblick zeigte deshalb je Geraet eine
+        // eigene Bilanz statt der gemeinsamen.
+        geraete.setzeStatistik(statistik);
+        statistik.setzeBeobachter(new Statistik.Beobachter() {
+            @Override
+            public void sitzungenGespeichert() {
+                geraete.sitzungenGemeldet();
+            }
+
+            @Override
+            public void sitzungenUebernommen() {
+                // Steht eine Bilanz gerade offen, rechnet sie sofort neu -
+                // ohne App-Neustart. Die Auswertung selbst liest ohnehin bei
+                // jedem Aufruf frisch aus der Statistik.
+                statistikGeaendert();
+            }
+        });
         kalender = new Kalender(this, kern, this::kalenderGeaendert);
         kalender.vorladen();
         youtube = new Youtube(kern);
@@ -525,10 +551,19 @@ public class MainActivity extends Activity {
                 return activeProvider == null ? null : webViews.get(activeProvider.id);
             }
 
+            /**
+             * Welche Folge hier offen steht - aus Sicht der Runde.
+             *
+             * <p>Ausdruecklich dieselbe Antwort wie bei der Messung und nicht
+             * einfach {@code getUrl()}. Auf dem Telefon nimmt "Video oeffnen"
+             * den Hauptrahmen: danach steht dort vidmoly.biz, und aus Sicht
+             * der Watchparty gehoerte diese Seite dann zu gar keiner Runde
+             * mehr - kein Raum, kein Schluessel, keine Steuerung. Genau so
+             * ging der Watchparty-Kontext beim Player-Wechsel verloren.
+             */
             @Override
             public String adresse() {
-                WebView ansicht = spieler();
-                String url = ansicht == null ? null : ansicht.getUrl();
+                String url = laufendeFolgenAdresse(spieler());
                 return url == null ? "" : url;
             }
 
@@ -540,6 +575,14 @@ public class MainActivity extends Activity {
             @Override
             public void folgeOeffnen(Provider anbieter, String url) {
                 if (anbieter == null || url == null || url.isEmpty()) return;
+                Log.i(TAG, "Watchparty oeffnet die neue Folge der Runde: " + safePath(url));
+                // Scharfmachen, bevor geoeffnet wird. Ohne das laedt zwar die
+                // Folgenseite, aber niemand klickt den Hoster an - und der
+                // Gast sitzt vor einer Uebersicht, waehrend die anderen
+                // weiterschauen. Derselbe Weg wie beim Oeffnen aus
+                // Weiterschauen und aus der Watchparty-Seite; am Rechner
+                // uebernimmt das scheduleProviderAutoplay.
+                armAutoStart(url);
                 // Mit preserveFavoriteProgress: der Eintrag bleibt derselbe,
                 // es ist nur eine andere Folge davon.
                 openProvider(anbieter, url, true);
@@ -547,6 +590,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void anzeigeAuffrischen() {
+                liveStreifenAuffrischen();
                 if ("watchparty".equals(currentScreen)) zeigeWatchparty();
             }
         });
@@ -712,6 +756,11 @@ public class MainActivity extends Activity {
         chromeHolder.setOrientation(LinearLayout.VERTICAL);
         root.addView(chromeHolder, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        liveHolder = new LinearLayout(this);
+        liveHolder.setOrientation(LinearLayout.VERTICAL);
+        root.addView(liveHolder, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
@@ -759,10 +808,71 @@ public class MainActivity extends Activity {
         });
 
         buildChrome();
+        buildLiveStreifen();
         buildBottomNav();
         // Einmal je Sitzung: der Merker, der den Fokus ueber einen Neuaufbau
         // hinwegtraegt. Er haengt am content, nicht an einer gebauten Seite.
         tvFokusBeobachten();
+    }
+
+    /**
+     * Den Live-Streifen der Watchparty anlegen.
+     *
+     * <p>Einmal je Sitzung und nicht je Seite: er haelt seinen eigenen Takt,
+     * und ein Neuaufbau naehme dem Fernseher jede Sekunde den Fokus.
+     */
+    private void buildLiveStreifen() {
+        if (liveStreifen != null || liveHolder == null) return;
+        liveStreifen = new Livestreifen(this, new Livestreifen.Umgebung() {
+            @Override
+            public Watchparty watchparty() {
+                return watchparty;
+            }
+
+            @Override
+            public Mitschauen mitschauen() {
+                return mitschauen;
+            }
+
+            @Override
+            public boolean amSchauen() {
+                return activeProvider != null && "provider".equals(currentScreen);
+            }
+
+            @Override
+            public boolean fernseher() {
+                return isTelevision();
+            }
+
+            @Override
+            public void hinweis(String text) {
+                showToast(text);
+            }
+        });
+        liveStreifen.setzeZuhause(liveHolder);
+        liveHolder.addView(liveStreifen.ansicht(), new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /**
+     * Den Streifen nachziehen lassen - sofort, ohne auf den Sekundentakt zu warten.
+     *
+     * <p>Gerufen bei jedem Anlass, der etwas geaendert haben kann: eine
+     * Standmeldung, ein Steuerbefehl, ein Seitenwechsel, ein Raumwechsel.
+     * Dieselbe Ueberlegung wie bei {@code pushWatchpartyLiveState} am Rechner -
+     * eine Anzeige, die erst beim naechsten Takt nachzieht, hinkt sichtbar
+     * hinterher.
+     */
+    private void liveStreifenAuffrischen() {
+        if (liveStreifen == null) return;
+        // Der Takt laeuft, solange ueberhaupt ein Anbieter offen ist. Ob der
+        // Streifen dabei sichtbar ist, entscheidet er selbst - ueber
+        // {@code amSchauen()} und darueber, ob diese Folge in einer Runde
+        // mitlaeuft. Ein Takt, der auf der Startseite weiterliefe, kostete
+        // Strom fuer nichts; einer, der bei jedem Seitenwechsel neu anlaufen
+        // muesste, liesse den Streifen eine Sekunde zu spaet erscheinen.
+        liveStreifen.starten(activeProvider != null);
+        liveStreifen.auffrischen();
     }
 
     private void buildChrome() {
@@ -1161,6 +1271,8 @@ public class MainActivity extends Activity {
         activeFavoriteId = null;
         renderProviderRail();
         updateFavoriteButton();
+        // Keine Anbieterseite mehr, also auch kein Live-Streifen und kein Takt.
+        liveStreifenAuffrischen();
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -2894,6 +3006,24 @@ public class MainActivity extends Activity {
             wrappedPlatz = platz;
             wrappedZeichnen();
         });
+    }
+
+    /**
+     * Es sind Sitzungen von einem anderen eigenen Geraet hereingekommen.
+     *
+     * <p>Steht eine Bilanz gerade offen, rechnet sie neu. Ohne das stimmten die
+     * Zahlen erst nach einem Neustart - und ein Rückblick, den man aufhat,
+     * während der Abgleich läuft, zeigte weiter die Werte dieses einen Geräts.
+     *
+     * <p>Beim Wrapped bleibt die aufgeschlagene Karte stehen: die Seite wird
+     * neu gerechnet, nicht zurückgeblättert.
+     */
+    private void statistikGeaendert() {
+        if ("rueckblick".equals(currentScreen)) {
+            zeigeRueckblick(rueckblickZeitraum);
+            return;
+        }
+        if ("wrapped".equals(currentScreen)) zeigeWrapped(wrappedJahr);
     }
 
     /**
@@ -5626,25 +5756,29 @@ public class MainActivity extends Activity {
     private View mitschauKarte() {
         if (watchparty == null) return null;
         JSONObject stand = watchparty.mitschauStand();
-        JSONArray mitglieder = stand.optJSONArray("members");
-        if (mitglieder == null || mitglieder.length() == 0) return null;
+        String schluessel = Mitschaustand.schluessel(
+            stand.optString("key", ""), stand.optString("room", ""));
+
+        // Ueber die Frischepruefung und mit der Alterung - nicht roh.
+        //
+        // Vorher stand hier die gemeldete Stelle unveraendert und jedes
+        // Mitglied, das je gemeldet hatte. Ein Geraet, dessen WLAN weg ist,
+        // blieb damit fuer immer als "schaut gerade bei 12:04" stehen, und eine
+        // Sekunde nach der Meldung stimmte die Uhr schon nicht mehr. Beides
+        // rechnet {@link Livestand} - dieselbe Rechnung, die auch der Streifen
+        // ueber dem Bild anstellt, und dieselbe Grenze wie bei den Kacheln der
+        // Startseite.
+        java.util.List<Livestand.Marke> marken = Livestand.marken(
+            watchparty.mitgliederZu(schluessel),
+            watchparty.sekundenSeitMeldung(schluessel),
+            stand.optInt("season", 0), stand.optInt("episode", 0));
+        if (marken.isEmpty()) return null;
 
         StringBuilder zeilen = new StringBuilder();
-        String host = "";
-        for (int i = 0; i < mitglieder.length(); i += 1) {
-            JSONObject person = mitglieder.optJSONObject(i);
-            if (person == null) continue;
-            String name = person.optBoolean("me", false)
-                ? "Du" : person.optString("name", "Gerät");
-            if (person.optBoolean("host", false)) host = name;
+        for (Livestand.Marke person : marken) {
             if (zeilen.length() > 0) zeilen.append("\n");
-            zeilen.append(person.optBoolean("paused", false) ? "⏸  " : "▶  ")
-                .append(name)
-                .append(person.optBoolean("host", false) ? "  (führt)" : "")
-                .append("  ·  ")
-                .append(uhrzeit(person.optDouble("position", 0)));
+            zeilen.append(Livestand.zeile(person));
         }
-        if (zeilen.length() == 0) return null;
 
         // Wer gedrueckt hat - nicht, wer gerade angehalten ist. Zieht ein
         // zweites Geraet die Pause nur mit, bleibt der Ausloeser derselbe.
@@ -5657,12 +5791,29 @@ public class MainActivity extends Activity {
             if (!wer.isEmpty() && !was.isEmpty()) {
                 zeilen.append("\n\n")
                     .append("pause".equals(was) ? "Angehalten von "
-                        : "play".equals(was) ? "Gestartet von " : "Gesprungen von ")
+                        : "play".equals(was) ? "Gestartet von "
+                        : "navigate".equals(was) ? "Folge gewechselt von " : "Gesprungen von ")
                     .append(wer);
             }
         }
 
-        String kopf = host.isEmpty() ? "Wer schaut mit" : "Wer schaut mit  ·  " + host + " führt";
+        // Welcher Titel gemeint ist, gehoert dazu. Ein Raum darf mehrere
+        // fuehren, und "Wer schaut mit" ohne Titel waere bei drei Serien im
+        // selben Raum eine Auskunft ueber irgendeine davon.
+        String titel = "";
+        JSONArray eintraege = watchparty.eintraege();
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag == null) continue;
+            if (!stand.optString("key", "").equals(eintrag.optString("key", ""))) continue;
+            if (!stand.optString("room", "").equals(eintrag.optString("room", ""))) continue;
+            titel = eintrag.optString("title", "");
+            break;
+        }
+
+        Livestand.Marke host = Livestand.host(marken);
+        String kopf = titel.isEmpty() ? "Wer schaut mit" : "Wer schaut mit  ·  " + titel;
+        if (host != null) kopf = kopf + "  ·  " + host.anzeige + " führt";
         return isTelevision()
             ? TvViews.infoCard(this, kopf, zeilen.toString(), null, null)
             : settingsCard(kopf, zeilen.toString(), null, null);
@@ -5827,7 +5978,12 @@ public class MainActivity extends Activity {
         // auf dem Weg zum Oeffnen.
         boolean binHost = !eintrag.optString("hostId", "").isEmpty()
             && eintrag.optString("hostId", "").equals(eintrag.optString("myId", ""));
-        if (meins || binHost) {
+        // Auch fuer blosse Teilnehmer: dort steht "Mit Host abgleichen", und das
+        // ist die Aktion, die man am haeufigsten braucht. Am Rechner sitzt sie
+        // in der Leiste ueber dem Bild; hier gehoert sie zusaetzlich an den
+        // Eintrag, weil man von der Watchparty-Seite aus abgleichen koennen muss,
+        // ohne die Folge erst zu oeffnen.
+        if (meins || binHost || dabei) {
             View mehr = fernseher
                 ? TvViews.pillButton(this, "…", null)
                 : MobileViews.secondaryButton(this, "…", null);
@@ -5936,6 +6092,23 @@ public class MainActivity extends Activity {
 
         android.widget.PopupMenu menue = new android.widget.PopupMenu(this, anker);
         java.util.LinkedHashMap<String, Runnable> taten = new java.util.LinkedHashMap<>();
+
+        // Zuerst das, was man am haeufigsten will: alle auf dieselbe Stelle
+        // bringen. Dasselbe wie der Sync-Knopf am Rechner - das Relay laesst
+        // alle anhalten, auf die Stelle des Hosts springen und gibt dann
+        // gemeinsam das Startsignal. Wer bei der falschen Folge steht, wechselt
+        // dabei zuerst dorthin.
+        if (eintrag.optBoolean("joined", false)) {
+            taten.put("Mit Host abgleichen", () -> {
+                if (watchparty == null) return;
+                watchparty.gleichziehen(schluessel, eintrag.optDouble("stelle", 0), raum,
+                    (wert, fehler) -> {
+                        if (fehler != null) showToast("Ging nicht: " + fehler);
+                        else showToast("Alle werden abgeglichen …");
+                    });
+            });
+        }
+
         for (int i = 0; namen != null && i < namen.length(); i += 1) {
             String wer = namen.optString(i, "Gerät");
             String id = kennungen == null ? "" : kennungen.optString(i, "");
@@ -6289,6 +6462,9 @@ public class MainActivity extends Activity {
         updateBrowserBar();
         updateBottomNav();
         updateFavoriteButton();
+        // Der Live-Streifen gehoert zur Anbieterseite: hier faengt er an zu
+        // ticken, und auf jeder anderen Seite hoert er wieder auf.
+        liveStreifenAuffrischen();
     }
 
     private void showProviderLoading(Provider provider) {
@@ -6875,9 +7051,15 @@ public class MainActivity extends Activity {
         // Einspielen kostet also nichts.
         if (mitschauen != null) mitschauen.anPlayer(ansicht);
         org.json.JSONArray eintraege = FavoriteStore.ladeRoh(this);
-        // Kein Live-Mitschauen auf Android, also gibt keine Runde die Folge vor
-        // und jeder Sprung ist die Entscheidung dessen, der hier sitzt.
-        if (marken != null) marken.einspielen(ansicht, activeProvider, seite, eintraege, true);
+        // Waehrend einer laufenden Watchparty wird nicht gelernt. Der Player
+        // wird dann von aussen gefahren, und ein Sprung, den die Runde
+        // ausgeloest hat, ist keine Entscheidung dessen, der hier sitzt -
+        // daraus eine Intromarke zu lernen hiesse, fremde Sekunden als eigene
+        // Gewohnheit zu merken. Dieselbe Bedingung wie am Rechner
+        // ({@code lernen = !watchpartyLiveKeyForUrl(url)}); sie stand hier auf
+        // "immer lernen", solange es auf Android kein Live-Mitschauen gab.
+        boolean lernen = mitschauen == null || !mitschauen.laeuftMit();
+        if (marken != null) marken.einspielen(ansicht, activeProvider, seite, eintraege, lernen);
         if (qualitaet != null) qualitaet.einspielen(ansicht);
     }
 
@@ -6945,6 +7127,10 @@ public class MainActivity extends Activity {
      */
     private void mitschauStandGeaendert() {
         liveKachelnAuffrischen();
+        // Der Streifen ueber dem Bild zieht sofort nach und nicht erst beim
+        // naechsten Sekundentakt: eine Pause soll dort stehen, sobald sie
+        // gemeldet ist.
+        liveStreifenAuffrischen();
         if (!"watchparty".equals(currentScreen) || mitschauPlatz == null) return;
         mitschauPlatz.removeAllViews();
         View karte = mitschauKarte();
@@ -7156,6 +7342,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        // Zurueck schliesst zuerst die ausgeklappten Watchparty-Details - und
+        // nicht gleich das Vollbild oder die ganze Folge. Wer aufgeklappt hat,
+        // um zu sehen, wer mitschaut, will genau das wieder schliessen.
+        if (liveStreifen != null && liveStreifen.zurueck()) return;
         if (fullscreenView != null) {
             hideFullscreen();
             return;
@@ -7535,6 +7725,33 @@ public class MainActivity extends Activity {
         return a != null && b != null && FavoriteStore.normalizeUrl(a).equals(FavoriteStore.normalizeUrl(b));
     }
 
+    /**
+     * Welche Folge in einer Ansicht gerade laeuft.
+     *
+     * <p>Nicht immer die, die im Rahmen steht. Am Rechner liegt der Hoster in
+     * einem eingebetteten Rahmen, und die Adresse der Anbieterseite bleibt
+     * stehen. Auf dem Telefon nimmt "Video oeffnen" den Hauptrahmen: danach
+     * steht dort vidmoly.biz.
+     *
+     * <p>Deshalb zaehlt hier die letzte Folgenseite, sobald die laufende
+     * Adresse dem Anbieter gar nicht mehr gehoert. Nur dann: wer beim Anbieter
+     * selbst weiterblaettert, soll seinen wirklichen Ort melden und nicht eine
+     * Folge, die er verlassen hat.
+     *
+     * <p>Eine Antwort fuer beide Fragesteller. Die Messung hatte sie laengst;
+     * dem Mitschauen fehlte sie, und deshalb verlor die Watchparty beim
+     * Hosterwechsel ihren Raum, ihren Schluessel und damit jede Steuerung.
+     */
+    private String laufendeFolgenAdresse(WebView ansicht) {
+        String jetzt = ansicht == null ? null : ansicht.getUrl();
+        if (jetzt == null || activeProvider == null || lastEpisodeUrl == null) return jetzt;
+        if (isProviderFirstPartyHost(activeProvider, safeHost(jetzt),
+            safeHost(activeProvider.startUrl))) {
+            return jetzt;
+        }
+        return lastEpisodeUrl;
+    }
+
     /** Hand the remote back and forth between the ELFIX bar and the page. */
     private void toggleChromeFocus() {
         if (chromeCollapsed || isChromeFocused()) {
@@ -7677,11 +7894,28 @@ public class MainActivity extends Activity {
     private boolean handleFullscreenKey(KeyEvent event) {
         if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
         int keyCode = event.getKeyCode();
+        // Nach oben zum Live-Streifen der Watchparty. Das ist der einzige Weg
+        // dorthin, solange das Video den Fokus hat - und er kostet nichts, wo
+        // keine Runde laeuft: dann ist der Streifen unsichtbar und nimmt den
+        // Fokus gar nicht erst an.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP && !mouseMode
+            && liveStreifen != null && !liveStreifen.istOffen() && liveStreifen.fokussieren()) {
+            return true;
+        }
+        // Zurueck schliesst zuerst die ausgeklappten Details und nicht das
+        // Vollbild - sonst faellt man beim Nachsehen, wer mitschaut, aus dem
+        // Bild heraus.
+        if (keyCode == KeyEvent.KEYCODE_BACK && liveStreifen != null && liveStreifen.zurueck()) {
+            return true;
+        }
         // OK reaches the player as a real tap on the middle of the video. Sending the key onwards
         // does not: the hoster runs in a cross-origin iframe. In mouse mode OK belongs to the cursor
         // instead, so it is left to handleMouseModeKey().
         if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER
             || keyCode == KeyEvent.KEYCODE_SPACE) && !mouseMode) {
+            // Steht der Fokus auf dem Streifen, gehoert OK ihm - sonst liesse
+            // sich dort nichts oeffnen und nichts druecken.
+            if (liveStreifen != null && liveStreifen.hatFokus()) return false;
             tapFullscreenCentre();
             return true;
         }
@@ -8097,6 +8331,11 @@ public class MainActivity extends Activity {
             new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         fullscreenContainer.addView(view, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Der Live-Streifen zieht mit. Im Vollbild liegt das Video in einem
+        // eigenen Rahmen auf der Fensterdekoration; ein Streifen, der unten in
+        // der Oberflaeche haengen bleibt, waere schlicht nicht zu sehen - und
+        // dann wuesste man ausgerechnet beim Schauen nicht mehr, wer mitschaut.
+        if (liveStreifen != null) liveStreifen.inVollbild(fullscreenContainer);
         fullscreenContainer.bringToFront();
         view.requestFocus();
         // The cursor has to move up into the new container, otherwise it stays buried under the video.
@@ -8308,6 +8547,9 @@ public class MainActivity extends Activity {
         if (fullscreenView == null) return;
         Log.i(TAG, "Fullscreen exited");
         logLayoutState("beforeExit");
+        // Zuerst den Live-Streifen zurueckholen: gleich wird der Vollbild-Rahmen
+        // samt allen Kindern abgeraeumt, und danach waere er weg.
+        if (liveStreifen != null) liveStreifen.inVollbild(null);
         if (fullscreenContainer != null) {
             fullscreenContainer.removeAllViews();
             if (fullscreenContainer.getParent() instanceof ViewGroup) {

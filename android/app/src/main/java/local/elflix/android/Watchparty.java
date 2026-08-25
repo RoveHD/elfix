@@ -87,6 +87,27 @@ public final class Watchparty {
      */
     private final java.util.Map<String, JSONArray> standKarten = new java.util.HashMap<>();
     private final java.util.Map<String, Long> standEmpfangen = new java.util.HashMap<>();
+    /**
+     * Wer den jeweiligen Titel zuletzt angehalten hat - ebenfalls je Titel und
+     * Raum.
+     *
+     * <p>Getrennt von {@link #letzterMitschauStand} und aus demselben Grund wie
+     * {@link #standKarten}: laufen Bleach, Korra und BLACK TORCH im selben
+     * Raum, gilt "Angehalten von Elias" fuer genau einen davon. Der letzte
+     * Zwischenruf gehoerte sonst allen dreien, und der Live-Streifen zeigte bei
+     * jeder Folge, was bei der zuletzt gemeldeten geschah.
+     */
+    private final java.util.Map<String, String> standPausiertVon = new java.util.HashMap<>();
+    private final java.util.Map<String, JSONObject> standLetzteAktion = new java.util.HashMap<>();
+    /**
+     * Wann eine Tat hier zum ersten Mal ankam.
+     *
+     * <p>Nach eigener Uhr und nicht nach dem Zeitstempel des Relays: der
+     * Zwischenruf "Elias hat pausiert" soll nach ein paar Sekunden wieder
+     * verschwinden, und wie viele Sekunden das sind, darf nicht davon abhaengen,
+     * wie genau die Uhr dieses Geraets gegen die des Relays steht.
+     */
+    private final java.util.Map<String, Long> standAktionSeit = new java.util.HashMap<>();
     /** Die eingerichteten Anbieter, wie der Kern sie kennt. Siehe {@link #setzeAnbieter}. */
     private JSONArray anbieter = new JSONArray();
 
@@ -426,6 +447,21 @@ public final class Watchparty {
                 nachricht.optString("key", ""), nachricht.optString("room", ""));
             standKarten.put(schluessel, mitglieder == null ? new JSONArray() : mitglieder);
             standEmpfangen.put(schluessel, System.currentTimeMillis());
+            standPausiertVon.put(schluessel, nachricht.optString("pausedBy", ""));
+            JSONObject letzte = nachricht.optJSONObject("lastAction");
+            if (letzte == null) {
+                standLetzteAktion.remove(schluessel);
+                standAktionSeit.remove(schluessel);
+            } else {
+                JSONObject vorher = standLetzteAktion.get(schluessel);
+                // Nur eine wirklich neue Tat setzt die Uhr zurueck. Dieselbe
+                // Meldung kommt im Sekundentakt wieder; wuerde sie den
+                // Zwischenruf jedes Mal erneuern, stuende er fuer immer da.
+                boolean neuerAnlass = vorher == null
+                    || vorher.optLong("timestamp", 0) != letzte.optLong("timestamp", 0);
+                standLetzteAktion.put(schluessel, letzte);
+                if (neuerAnlass) standAktionSeit.put(schluessel, System.currentTimeMillis());
+            }
             return nachricht.toString();
         } catch (Exception fehler) {
             Log.e(TAG, "Standmeldung unlesbar", fehler);
@@ -446,6 +482,43 @@ public final class Watchparty {
         JSONArray mitglieder = standKarten.get(schluessel);
         if (mitglieder == null) return new JSONArray();
         return Mitschaustand.frische(mitglieder, sekundenSeitMeldung(schluessel));
+    }
+
+    /**
+     * Die Mitglieder zu einem Titel, so wie sie gemeldet wurden.
+     *
+     * <p>Ungefiltert - anders als {@link #frischeMitglieder}. Wer die Alterung
+     * selbst rechnet, soll die Rohliste bekommen und nicht eine, die schon
+     * einmal durch eine Frischepruefung gelaufen ist; sonst stuende die Grenze
+     * an zwei Stellen und irgendwann verschieden.
+     */
+    public JSONArray mitgliederZu(String schluessel) {
+        JSONArray mitglieder = standKarten.get(schluessel);
+        return mitglieder == null ? new JSONArray() : mitglieder;
+    }
+
+    /**
+     * Wer diesen Titel zuletzt angehalten hat.
+     *
+     * <p>Etwas anderes als "wer ist gerade angehalten": zieht ein zweites
+     * Geraet die Pause nur mit, bleibt der Ausloeser derselbe. Genau die
+     * Unterscheidung, die die Anzeige braucht, damit dort nicht ein veralteter
+     * Name steht.
+     */
+    public String pausiertVon(String schluessel) {
+        String wer = standPausiertVon.get(schluessel);
+        return wer == null ? "" : wer;
+    }
+
+    /** Was zuletzt gedrueckt wurde - {@code {type, name, timestamp}} oder {@code null}. */
+    public JSONObject letzteAktion(String schluessel) {
+        return standLetzteAktion.get(schluessel);
+    }
+
+    /** Wie lange diese Tat schon hier bekannt ist, in Millisekunden. */
+    public long seitLetzterAktion(String schluessel) {
+        Long seit = standAktionSeit.get(schluessel);
+        return seit == null ? Long.MAX_VALUE : Math.max(0, System.currentTimeMillis() - seit);
     }
 
     /** Wie lange die letzte Meldung zu diesem Titel schon hier liegt, in Sekunden. */
@@ -533,6 +606,28 @@ public final class Watchparty {
         });
     }
 
+    /**
+     * Der Eintrag zaehlt wieder nur fuer dieses Geraet.
+     *
+     * <p>Ausdruecklich ohne Austritt: die Mitgliedschaft im Raum bleibt, der
+     * Titel bleibt eingestellt, der gemessene Fortschritt bleibt stehen. Was
+     * wegfaellt, ist allein die Bindung des <em>oertlichen</em> Eintrags an den
+     * Raum - und damit die Meldung des eigenen Stands dorthin. Dasselbe wie
+     * {@code setzePrivatenKontext} am Rechner.
+     */
+    public void privatSetzen(String key) {
+        if (bestand == null || key == null || key.isEmpty()) return;
+        Favorite lokal = bestand.zuSerie(key);
+        if (lokal != null && !lokal.watchpartyRaum().isEmpty()) bestand.raumSetzen(lokal.id(), "");
+    }
+
+    /** Und der Weg zurueck: der Eintrag zaehlt wieder fuer diese Runde. */
+    public void raumBinden(String key, String raum) {
+        if (bestand == null || key == null || key.isEmpty() || raum == null || raum.isEmpty()) return;
+        Favorite lokal = bestand.zuSerie(key);
+        if (lokal != null && !raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+    }
+
     public void herausnehmen(String key, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.entfernen", Kern.args(key, raum), antwort);
     }
@@ -561,6 +656,24 @@ public final class Watchparty {
      */
     public void hostUebergeben(String key, String memberId, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.hostUebergeben", Kern.args(key, memberId, raum), antwort);
+    }
+
+    /**
+     * Alle auf dieselbe Stelle bringen.
+     *
+     * <p>Dasselbe wie der Sync-Knopf am Rechner: das Relay laesst alle
+     * anhalten, auf die Stelle des Hosts springen, und erst wenn alle so weit
+     * sind, gibt es das Startsignal. Massgeblich ist der Host - die eigene
+     * Stelle zaehlt nur, wenn von ihm noch gar nichts bekannt ist. Sonst zoege
+     * ein Nachzuegler alle anderen zu sich zurueck.
+     */
+    public void gleichziehen(String key, double stelle, String raum, Kern.Antwort antwort) {
+        if (kern == null || !kern.istBereit()) {
+            antwort.fertig(null, "Der Kern läuft noch nicht");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.gleichziehen",
+            Kern.args(key, Math.max(0, stelle), raum), antwort);
     }
 
     /** Ein Mitglied aus diesem Titel werfen - nur fuer den, der ihn eingestellt hat. */

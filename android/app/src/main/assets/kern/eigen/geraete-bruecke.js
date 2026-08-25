@@ -33,12 +33,26 @@
   // nicht eine Abschrift davon.
   let favoriten = [];
   let sitzungen = [];
+  // Welche Sitzungen gerade noch wachsen. Sie stehen bereits in der Liste -
+  // damit ein Prozessabbruch sie nicht kostet -, sind aber noch keine fertigen
+  // Saetze und haben deshalb bei den anderen Geraeten nichts verloren.
+  // Dieselbe Unterscheidung wie `laufendeSitzungIds` am Rechner; ohne sie ginge
+  // ein Zwischenstand hinaus und stuende drueben fuer immer als fertige
+  // Sitzung da - eine Sitzung wird nie ueberschrieben.
+  let offeneSitzungen = new Set();
   let anbieter = [];
   // Was sich seit der letzten Meldung an Java geaendert hat. Gesammelt, weil
   // beim ersten Abgleich leicht zweihundert Eintraege auf einmal hereinkommen
   // und jede einzelne Datei zu schreiben zweihundertmal dieselbe Datei waere.
   let favoritenSchmutzig = false;
-  let sitzungenSchmutzig = false;
+  // Was in diesem Schub wirklich neu hereinkam - nicht die ganze Liste.
+  //
+  // Vorher ging die vollstaendige Liste nach Java, und Java schrieb sie ueber
+  // seinen eigenen Stand. Damit entschied die Reihenfolge zweier Nachrichten
+  // darueber, ob eine Sitzung ueberlebt, die hier gerade erst entstanden ist.
+  // Ein Zuwachs ist dagegen immer richtig: eine abgeschlossene Sitzung ist ein
+  // Ereignis, und Ereignisse addieren sich.
+  let sitzungenDazu = [];
 
   function ereignis(name, nutzlast) {
     if (window.ElfixKern && typeof window.ElfixKern.ereignis === "function") {
@@ -68,7 +82,7 @@
         const { sitzungen: vereint, dazu } = statistik.vereinen(sitzungen, [sitzung]);
         if (!dazu) return false;
         sitzungen = vereint;
-        sitzungenSchmutzig = true;
+        sitzungenDazu.push(sitzung);
         return true;
       },
       // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
@@ -77,9 +91,10 @@
           favoritenSchmutzig = false;
           ereignis("geraete:favoriten", favoriten);
         }
-        if (sitzungenSchmutzig) {
-          sitzungenSchmutzig = false;
-          ereignis("geraete:sitzungen", sitzungen);
+        if (sitzungenDazu.length) {
+          const neue = sitzungenDazu;
+          sitzungenDazu = [];
+          ereignis("geraete:sitzungen", neue);
         }
         ereignis("geraete:uebernommen", { anzahl });
       },
@@ -138,8 +153,22 @@
     return favoriten.length;
   }
 
-  function sitzungenSetzen(liste) {
+  /**
+   * Die Sitzungen, wie Java sie gerade wirklich haelt.
+   *
+   * <p>Wird nicht mehr nur einmal beim Start gereicht, sondern nach jeder
+   * Aenderung. Genau daran hing der Fehler: der Abgleich kannte bis zum
+   * naechsten App-Start nur die Liste von damals, und alles, was an diesem
+   * Abend gemessen wurde, ging nie hinaus. Die Bilanz blieb je Geraet stehen.
+   *
+   * @param offene die Kennungen der Sitzungen, die noch laufen - sie bleiben
+   *               beim Abgleich draussen
+   */
+  function sitzungenSetzen(liste, offene) {
     sitzungen = Array.isArray(liste) ? liste : [];
+    offeneSitzungen = new Set(
+      (Array.isArray(offene) ? offene : []).map((id) => String(id || "")).filter(Boolean)
+    );
     return sitzungen.length;
   }
 
@@ -161,7 +190,7 @@
     const offene = [];
     for (const sitzung of sitzungen) {
       const id = String((sitzung && sitzung.id) || "");
-      if (!id) continue;
+      if (!id || offeneSitzungen.has(id)) continue;
       const key = `sitzung:${id}`;
       if (abg.kennt(key)) continue;
       offene.push({ key, sitzung });
