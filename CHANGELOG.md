@@ -3,6 +3,117 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.44.0 — 25. August 2026
+
+Die Watchparty auf Android hatte alles ausser einem Weg hinein: man sah, dass
+etwas eingestellt war, konnte es aber nicht oeffnen. Dazu die Startseite, die
+von einer laufenden Runde nichts zeigte, und Suchtreffer, die als Textzeilen
+dastanden.
+
+### Die Watchparty-Seite laesst sich endlich bedienen
+
+Unter jedem Titel im Raum stand genau ein Knopf: "Verlassen". Die Folge liess
+sich nicht oeffnen, die Staffel stand nirgends, und wer mitschaut, sah man
+nicht. Am Rechner gibt es das alles seit langem - die Daten dafuer schickt das
+Relay ohnehin mit, sie wurden nur nicht ausgelesen.
+
+Jede Karte traegt jetzt Poster, Titel, "Staffel 3 · Folge 8 · AniWorld", die
+Laufstelle, die Mitglieder und den Host, dazu die Aktionen "Folge oeffnen",
+"Beitreten"/"Verlassen" und ein Mehr-Menue mit Hostuebergabe und Rauswurf.
+Staffel und Folge stehen nur da, wo die Daten es hergeben; erfunden wird
+nichts.
+
+Geoeffnet wird ueber `oeffnungsZiel` in der Bruecke - dieselbe Aufloesung wie
+`openWatchpartyItem` am Rechner: Anbieter aus `geraete-stand.anbieterFinden`,
+Zieladresse aus dem Fortschritt der Runde statt aus der Serienadresse. Damit
+landet man auf `.../bleach/staffel-3/episode-8` und nicht auf der Uebersicht.
+Ohne aufloesbaren Anbieter bleibt der Knopf abgeschaltet, statt ins Leere zu
+fuehren.
+
+Ein Raum darf mehrere Titel fuehren. Jede Karte reicht ihren eigenen
+Schluessel *und* ihren Raum durch, es gibt keinen "aktuellen Eintrag", der sich
+ueberschreiben liesse - ein Klick auf Bleach oeffnet nie BLACK TORCH. Steht
+derselbe Titel in zwei Raeumen, bleiben es zwei Karten mit zwei Staenden.
+"Verlassen" betrifft wie am Rechner nur den einen Titel; der Raum selbst wird
+allein in den Einstellungen entfernt.
+
+Wer aus der Watchparty eine Folge oeffnet, kommt mit Zurueck auch wieder
+dorthin und nicht auf die Startseite. Auf dem Fernseher sind alle drei
+Aktionen je Karte eigene Fokusziele in der Reihenfolge der Karten.
+
+Die Sync-Engine selbst ist unberuehrt: Driftgrenze, Hostwahl, Relay-Protokoll,
+Wiederanschluss, Uhrenabgleich und Schleifenschutz stehen unveraendert in
+`watchparty-sync.js`.
+
+### Gemeinsam weiterschauen auf der Startseite
+
+Die Reihe gab es, aber ihre Kacheln waren die einer Serie, die man allein
+schaut: ein Balken vom letzten eigenen Messwert und sonst nichts. Man sah der
+Startseite nicht an, dass ueberhaupt jemand mitschaut.
+
+Jede Kachel in "Weiterschauen" zeigt jetzt die Stelle im Klartext
+("12:04 / 24:10"). Eine Kachel aus einer Runde traegt zusaetzlich ihren Raum
+unter dem Titel und darunter, wer gerade schaut - "Anna schaut gerade", "Anna
+pausiert" -, und ihr Balken folgt der Stelle des Fuehrenden statt der eigenen
+von vorhin. Ohne Standmeldung gilt fuenfundzwanzig Sekunden lang, wer zuletzt
+einen Fortschritt geteilt hat.
+
+Nachgezogen wird im Sekundentakt in Ort - nur Text und Balkenbreite, keine neue
+Seite. Am Telefon spraenge sie sonst beim Blaettern, auf dem Fernseher
+verschwaende jede Sekunde die Ansicht, die den Fokus haelt. Dieselbe
+Ueberlegung wie `aktualisiereLiveKarten` am Rechner.
+
+`Mitschaustand.java` rechnet dabei woertlich dasselbe wie `renderer.js`:
+Frische von zwanzig Sekunden, der Host fuehrt, Position plus Alter plus Zeit
+seit dem Empfang - bei einem Pausierten laeuft nichts weiter. Nicht ueber den
+Kern, weil eine Bildlaufliste beim Zeichnen nicht auf eine Antwort warten kann;
+die Prueffaelle daneben halten beide Fassungen zusammen.
+
+`Watchparty.java` legt Standmeldungen jetzt nach Titel und Raum ab statt nur
+die letzte. In einem Raum mit Bleach, BLACK TORCH und Korra zeigten sonst alle
+drei Kacheln den Stand dessen, der zufaellig zuletzt gemeldet hat. Beim
+Eintreffen wird markiert, welches Mitglied dieses Geraet ist - ohne das stuende
+auf der eigenen Startseite "Wohnzimmer schaut gerade", waehrend man selbst das
+Wohnzimmer ist.
+
+### pausedBy und lastAction kamen nie an
+
+`watchparty.js` warf beim Empfang einer Standmeldung zwei Felder weg. Das Relay
+schickt sie, `main.js` und die Android-Oberflaeche lesen sie - angekommen sind
+sie nie. Deshalb blieb "Angehalten von ..." auf beiden Geraeten leer. Wer
+gedrueckt hat, ist etwas anderes als wer gerade stillsteht: zieht ein zweites
+Geraet die Pause nur mit, bleibt der Ausloeser derselbe.
+
+### Suchtreffer mit Bild
+
+Die Suche geht ueber alle Anbieter gleichzeitig und zeigte ihre Treffer als
+Textzeilen mit zwei Buchstaben als Platzhalter. Das Bild steht aber im selben
+Verweis, den die Suche ohnehin ausliest.
+
+`Trefferbild.java` holt es dort heraus: Bildmarke, Auswahlliste (die groesste
+Fassung), verzoegerte Adressen wie `data-src` - denn wo eine steht, ist `src`
+meist nur das durchsichtige Pixel -, sonst das Hintergrundbild. Nichts wird
+nachgeschlagen und nichts aus dem Namen geraten. Logos, Sprachabzeichen,
+Sprites, SVG-Symbole und Platzhalter zaehlen nicht: ein falsches Bild ist
+schlechter als keins, und ohne Bild bleibt der gestaltete Platzhalter.
+
+Anbieter mit reiner JSON-Schnellsuche liefern kein Bild mit. Fuer sie wird
+einmal je Suche die gewoehnliche Trefferseite geholt und ueber die Adresse
+zugeordnet - nicht je Treffer, und gar nicht, wenn schon alle Treffer ein Bild
+haben.
+
+### Geprueft
+
+Gegen ein echt laufendes Relay mit der echten Android-Bruecke: `mitschauentest`
+49/49, darunter drei Titel in einem Raum, derselbe Titel in zwei Raeumen und
+die Standmeldung mit Kennung, Alter, Host, `pausedBy` und `lastAction`. Dazu 88
+JUnit-Faelle - neu die Kachelrechnung und die Bildauslese - und die volle
+JS-Suite, Typecheck und Lint.
+
+Ein Android-TV-Emulator stand erneut nicht zur Verfuegung: kein Geraetetest,
+kein Logcat, keine Screenshots. Die echte WebView-Navigation, das Bildladen der
+Anbieter und der D-Pad-Durchlauf auf einem Fernseher sind damit nicht belegt.
+
 ## 1.43.0 — 25. August 2026
 
 Zwei Dinge, die es auf dem Fernseher gar nicht gab: eine Startseite, die dem
