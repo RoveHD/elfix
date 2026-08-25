@@ -3,6 +3,105 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.46.0 — 25. August 2026
+
+Vier Fehler, drei davon am selben Punkt: gebaut war alles, aber der letzte
+Handgriff fehlte. Die Watchparty oeffnete auf Android die richtige Folge und
+liess sie dann stehen, und am Fernseher gab es sie ueberhaupt nicht.
+
+### Der Player startet jetzt wirklich
+
+Die Folge ging auf, das Vollbild kam, und dann stand das Bild - mit dem
+"Spielen"-Knopf des Hosters mitten drauf. Wer der Runde folgte, musste jedes Mal
+selbst tippen, waehrend die anderen weiterschauten.
+
+Gemessen auf dem Telefon (AniWorld -> VOE) liegt es an etwas, das man dem Player
+nicht ansieht: der Rahmen des Hosters traegt nach dem Laden ein `<video>` *ohne
+Quelle* - `duration=null`, `readyState=0`, `src=""`. Erst der Klick auf seine
+eigene Ueberlagerung laedt sie; danach steht `duration=1371` und
+`readyState=4`. Autoplay ist auf diesen Geraeten also gar nicht gesperrt - es
+fehlte der Klick, und ein `play()` davor lief ins Leere. Dass das nie auffiel,
+hatte einen zweiten Grund: das Versprechen von `play()` wurde weggefangen, ein
+abgelehnter Start sah damit von aussen aus wie ein gelungener.
+
+Neu ist ein Autostart-*Auftrag*. Er traegt Raum, Titel, Staffel, Folge,
+Zieladresse, eine laufende Nummer, die Zeit und den Stand des Hosts - und er
+liegt im Kern, nicht in der Ansicht. Das ist der Punkt: eine Navigation raeumt
+die Ansicht ab, und genau daran ist die alte Kette gescheitert. Der Ablauf ist
+begrenzt und richtet sich nach dem, was die Seite wirklich tut: hoechstens vier
+Anlaeufe mit wachsendem Abstand, vor jedem wird der Stand der Runde neu geholt,
+das Skript klickt die Ueberlagerung, wartet auf die Quelle, rechnet die Stelle
+*danach* neu aus, startet und sieht nach, ob die Stelle auch weiterlaeuft. Erst
+dann gilt der Start als gelungen. Klappt es endgueltig nicht, steht es am
+Bildschirm statt nur im Protokoll.
+
+Auf dem Telefon war die neue Folge damit nach fuenf Sekunden am Laufen, auf dem
+Fernseher nach drei Anlaeufen und fuenfundzwanzig - dieselbe Regel, verschieden
+schnelle Geraete, und genau dafuer gibt es die Anlaeufe statt einer festen
+Frist.
+
+Wer waehrend des Ladens einsteigt, kommt dort an, wo die Runde inzwischen steht:
+Host bei 300 Sekunden und weiterlaufend, Gast steigt bei 333 ein. Steht der Host,
+wird nicht hochgerechnet - Host pausiert bei 400, Gast kommt pausiert bei 400 an.
+Und wechselt der Host waehrend des Ladens noch einmal, startet nur die neueste
+Folge; die uebersprungene kommt gar nicht erst hoch.
+
+### Am Fernseher gibt es die Watchparty jetzt
+
+Die Einstellungen des Fernsehers kannten den ganzen Abschnitt nicht. Unter "Meine
+Geraete" stand die Auskunft "die Adresse steht bei der Watchparty" - und verwies
+damit auf eine Seite, die es dort nicht gab. Die Serveradresse liess sich weder
+eintragen noch aendern, und ohne sie bleibt nicht nur die Watchparty aus, sondern
+auch der Geraeteabgleich: beide fahren zum selben Relay. Die Watchparty-Seite
+selbst war ebenso unerreichbar, weil sie auf dem Telefon in der unteren Leiste
+haengt und die auf dem Fernseher ausgeblendet wird.
+
+Beides steht jetzt da, und zwar aus demselben Code wie auf dem Telefon: ein
+Eingabefeld, das wirklich dasteht statt in einem Dialog zu stecken, mit
+sichtbarem Fokus, Bildschirmtastatur auf OK und "Fertig" zum Speichern - dazu ein
+Knopf in der Kopfzeile. Was eine gueltige Adresse ist, entscheidet ein Modul fuer
+alle drei Geraete: Leerzeichen und Schraegstriche am Ende fallen weg, unsichtbare
+Zeichen aus einer Fernbedienungstastatur auch, `http`, `https` und ein Port sind
+erlaubt, und wer sich vertippt, bekommt es gesagt statt es zu erraten. Eine
+falsche Adresse sieht nicht mehr aus wie eine funktionierende: der Status nennt
+den Fehler und die Adresse, mit der er auftritt.
+
+### Wer pausiert hat, steht auch richtig da
+
+Das Relay schickt hinter ein Pause sofort die genaue Stelle hinterher. Beide
+Anweisungen waren angewendet, bevor der eigene Player sein Pause-Ereignis
+meldete - und der Merker, der genau dieses Echo verschlucken soll, trug da schon
+die zweite. Also ging das Echo als eigene Tat zurueck an die Runde, und danach
+stand in der Leiste "angehalten von" dem Geraet, das die Pause nur befolgt hatte.
+Gemerkt wird jetzt in einer Liste statt in einem einzelnen Fach.
+
+Dazu die kleine Schwester desselben Problems: waehrend ein Autostart laeuft, wird
+am Player gearbeitet, und was er dabei von sich aus meldet, ist eine Nebenwirkung
+und keine Entscheidung. In diesen paar Sekunden geht nichts hinaus - sonst legte
+ein Player, der beim Anlauf kurz pausiert, die ganze Runde stumm.
+
+### Geprueft
+
+An drei Geraeten gleichzeitig: dem Rechner-Modul an einem echten Relay, einem
+Samsung SM-S928B mit Android 16 und einem Android-TV-Emulator mit API 34.
+Folgenwechsel mit Autostart in beide Richtungen, Start bei laufendem und bei
+pausiertem Host, zweifacher Wechsel waehrend des Ladens, Play, Pause und Sprung
+danach, ein halber bis drei Sekunden Versatz ohne Korrektur und knapp sechs mit,
+Hostwechsel, Wiederanschluss, drei Teilnehmer, zwei Titel im selben Raum und der
+ganze Weg mit der Fernbedienung durch Einstellungen und Overlay. Dazu 2414
+Einzelpruefungen in 65 Suiten samt Typecheck und Lint - darunter eine neue Suite
+fuer den Autostart - und 120 JUnit-Faelle.
+
+Nebenbei aufgefallen und mitrepariert: in `package-lock.json` trugen drei fremde
+Pakete eine Versionsnummer, die nicht zu ihrem eigenen Paket passte. Eine
+Textersetzung bei einem alten Release hatte sie mitgenommen. Aufgefallen ist es
+nie, weil installiert wird, was danebensteht.
+
+Nicht belegt: die Desktop-Oberflaeche lief bei diesen Geraetetests nicht mit -
+die Rechner-Seite war das echte Modul an einem echten Relay, aber nicht das
+Fenster. Und die Hostuebergabe von Hand ist eingebaut und erreichbar, aber nicht
+am Geraet ausgeloest worden.
+
 ## 1.45.0 — 25. August 2026
 
 Zwei Dinge, die zusammengehoeren und beide dasselbe Muster hatten: gebaut war
