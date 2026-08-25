@@ -188,6 +188,21 @@ public class MainActivity extends Activity {
     private boolean autoStartRequested;
     private String autoStartUrl;
     private long autoStartArmedAt;
+    /**
+     * Der gespeicherte Wiedergabestand, an dem der Autostart weitermachen soll.
+     *
+     * <p>Er reist mit der Anfrage, weil er dort entsteht, wo jemand
+     * "Weiterschauen" drueckt - und nicht dort, wo Sekunden spaeter ein Player
+     * auftaucht. Null heisst: von vorn.
+     */
+    private double autoStartStelle;
+    /** Die Stelle des gerade laufenden Versuchs - die Anfrage selbst ist dann schon abgeraeumt. */
+    private double laufenderStart;
+    /** Welcher Eintrag zuletzt gestartet wurde und wann - gegen mehrfaches schnelles Tippen. */
+    private String letzterStartEintrag = "";
+    private long letzterStartAt;
+    /** So lange gilt ein zweiter Tipp auf denselben Eintrag als derselbe Tipp. */
+    private static final long START_SPERRE_MS = 2_500L;
     /** How long an unfired autostart request stays valid, and how patient each step of it is. */
     private static final long AUTOSTART_ARM_TTL_MS = 600_000L;
     private static final long AUTOSTART_POLL_MS = 500L;
@@ -597,6 +612,31 @@ public class MainActivity extends Activity {
             @Override
             public void hinweisZeigen(String text) {
                 showToast(text);
+            }
+
+            @Override
+            public void steuerungSichtbar(boolean sichtbar) {
+                // Weiter an die Teilnehmerleiste. Sie liegt im Vollbild ueber
+                // dem Video und soll genau dann dastehen, wenn auch die
+                // Bedienelemente des Players dastehen.
+                if (liveStreifen != null) liveStreifen.steuerungSichtbar(sichtbar);
+            }
+
+            @Override
+            public void oertlicherStartFertig(boolean laeuft) {
+                if (!laeuft) {
+                    // Kein Vollbild auf ein stehendes Bild. Der Player ist da,
+                    // er startet nur nicht von selbst - dann gehoert das gesagt.
+                    showToast("Startet nicht von selbst – bitte einmal Play drücken");
+                    return;
+                }
+                // Jetzt erst. Es laeuft wirklich etwas: der Player hat gemeldet,
+                // dass die Stelle weiterwandert.
+                if (fullscreenView != null) return;
+                WebView ansicht = currentWebView();
+                if (ansicht == null) return;
+                Log.i(TAG, "Oertlicher Start gelungen - Vollbild");
+                handleRemoteShortcut(KeyEvent.KEYCODE_5);
             }
         });
         watchparty.setzeMitschauen(mitschauen);
@@ -1272,7 +1312,14 @@ public class MainActivity extends Activity {
             // still zu werden. Sonst steht dieses Geraet bei den anderen noch
             // als aktiv - und bliebe Host einer Folge, die es nicht mehr
             // schaut, bis der Herzschlag ablaeuft.
-            if (mitschauen != null) mitschauen.abmelden();
+            if (mitschauen != null) {
+                mitschauen.abmelden();
+                // Wer die Seite verlaesst, will auch nicht mehr, dass sie sich
+                // gleich von selbst startet und ins Vollbild zieht.
+                mitschauen.oertlichenStartAbbrechen("Player verlassen");
+                mitschauen.vollbildwunschVerwerfen();
+            }
+            disarmAutoStart("Player verlassen");
             rememberAndPauseMedia(activeProvider.id, webViews.get(activeProvider.id));
             // Die Anbieterseite tritt zurueck: was dort lief, ist zu Ende
             // gezaehlt. Dieselbe Stelle wie am Rechner beim Schliessen einer
@@ -6396,8 +6443,9 @@ public class MainActivity extends Activity {
             }
             // Erst binden, dann oeffnen: der Stand, den die Seite gleich
             // meldet, soll schon in die Runde gehen und nicht erst der
-            // uebernaechste.
-            watchpartyRaumBinden(schluessel, raum);
+            // uebernaechste. Gebunden wird ueber die Serienadresse - der
+            // Titelschluessel des Relays ist kein Ort in der eigenen Ablage.
+            watchpartyRaumBinden(ziel.optString("serie", ""), raum);
             // Aus der Watchparty geoeffnet heisst: Zurueck fuehrt hierher.
             providerHerkunft = "watchparty";
             Log.i(TAG, "Watchparty öffnet " + safeHost(url)
@@ -6425,19 +6473,25 @@ public class MainActivity extends Activity {
      * hier nichts: er entsteht, sobald wirklich etwas laeuft, und
      * {@link #bestandGeaendert} bindet ihn dann nach.
      */
-    private void watchpartyRaumBinden(String schluessel, String raum) {
-        if (bestand == null || schluessel.isEmpty() || raum.isEmpty()) {
+    /**
+     * @param serienUrl die Adresse der Serie, wie der Raum sie fuehrt. Nicht der
+     *                  Titelschluessel: der wird seit der Vereinheitlichung mit
+     *                  dem Rechner aus Art und Titel gebildet ("serie:bleach")
+     *                  und passt damit auf keine Adresse in der Ablage mehr.
+     */
+    private void watchpartyRaumBinden(String serienUrl, String raum) {
+        if (bestand == null || serienUrl.isEmpty() || raum.isEmpty()) {
             offeneRaumbindung = null;
             return;
         }
-        Favorite lokal = bestand.zuSerie(schluessel);
+        Favorite lokal = bestand.zuSerie(serienUrl);
         if (lokal != null) {
             if (!raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
             offeneRaumbindung = null;
             return;
         }
         // Noch keiner da. Gemerkt, bis einer entsteht.
-        offeneRaumbindung = new String[]{schluessel, raum};
+        offeneRaumbindung = new String[]{serienUrl, raum};
     }
 
     /**
@@ -6737,8 +6791,16 @@ public class MainActivity extends Activity {
         retry.requestFocus();
     }
 
+    /**
+     * Einen Eintrag aus Weiterschauen oeffnen - und ihn wirklich starten.
+     *
+     * <p>Mehrfaches schnelles Tippen faengt hier auf: derselbe Eintrag,
+     * waehrend sein Start noch laeuft, ist keine zweite Absicht. Ohne diese
+     * Sperre laedt die Seite ein zweites Mal, der erste Versuch verliert seinen
+     * Player mitten im Anlauf, und in einer Runde gingen zwei Folgenwechsel
+     * hinaus statt einem.
+     */
     private void openFavorite(Favorite favorite) {
-        providerHerkunft = "";
         Provider provider = null;
         for (Provider item : providers) {
             if (item.id.equals(favorite.providerId())) {
@@ -6747,13 +6809,25 @@ public class MainActivity extends Activity {
             }
         }
         if (provider == null && !providers.isEmpty()) provider = providers.get(0);
-        if (provider != null) {
-            activeFavoriteId = favorite.id();
-            // Picking a favourite means "watch this", so the page opens its player and goes
-            // fullscreen by itself instead of leaving three more button presses to do.
-            armAutoStart(favorite.url());
-            openProvider(provider, favorite.url(), true);
+        if (provider == null) return;
+
+        long jetzt = SystemClock.uptimeMillis();
+        if (favorite.id().equals(letzterStartEintrag) && jetzt - letzterStartAt < START_SPERRE_MS) {
+            Log.i(TAG, "Weiterschauen: zweiter Tipp auf denselben Eintrag ignoriert");
+            return;
         }
+        letzterStartEintrag = favorite.id();
+        letzterStartAt = jetzt;
+
+        providerHerkunft = "";
+        activeFavoriteId = favorite.id();
+        // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
+        if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+        // Picking a favourite means "watch this": die Seite oeffnet ihren
+        // Player, springt auf den gespeicherten Stand, startet - und erst
+        // danach kommt das Vollbild.
+        armAutoStart(favorite.url(), favorite.currentTime());
+        openProvider(provider, favorite.url(), true);
     }
 
     /**
@@ -7579,8 +7653,25 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+        if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN
+            && fullscreenView != null && liveStreifen != null) {
+            liveStreifen.regung();
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         logRemoteKey(event);
+        // Jede Taste holt die Teilnehmerleiste zurueck - dieselbe Regung, die
+        // auch die Bedienelemente des Players wieder einblendet. Sie bleibt
+        // dabei der Rueckfall: sagt der Player selbst, was seine Leiste tut,
+        // hat sein Wort das letzte.
+        if (event.getAction() == KeyEvent.ACTION_DOWN && fullscreenView != null
+            && liveStreifen != null) {
+            liveStreifen.regung();
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN && handleRemoteShortcut(event.getKeyCode())) {
             return true;
         }
@@ -7766,16 +7857,32 @@ public class MainActivity extends Activity {
      * cannot survive indefinitely if no navigation ever happens again.
      */
     private void armAutoStart(String url) {
+        armAutoStart(url, 0);
+    }
+
+    /**
+     * @param stelle der gespeicherte Wiedergabestand in Sekunden. Er wird
+     *               gesetzt, sobald der Player wirklich eine Quelle hat - vorher
+     *               gibt es nichts zu springen.
+     */
+    private void armAutoStart(String url, double stelle) {
         autoStartRequested = true;
         autoStartUrl = url;
+        autoStartStelle = Math.max(0, stelle);
         autoStartArmedAt = SystemClock.uptimeMillis();
     }
 
     private void disarmAutoStart(String reason) {
+        // Der Anlauf haengt nicht an der Anfrage: er laeuft im Kern weiter,
+        // auch wenn die Anfrage laengst verbraucht ist. Wer woandershin geht,
+        // meint ihn nicht mehr - sonst startet eine halbe Minute spaeter eine
+        // Folge, die niemand mehr sehen will.
+        if (mitschauen != null) mitschauen.oertlichenStartAbbrechen(reason);
         if (!autoStartRequested) return;
         Log.i(TAG, "Autostart disarmed: " + reason);
         autoStartRequested = false;
         autoStartUrl = null;
+        autoStartStelle = 0;
     }
 
     private boolean autoStartArmedFor(String url) {
@@ -7828,13 +7935,14 @@ public class MainActivity extends Activity {
      * embed anything, not the opening move.
      */
     private void runAutoStart(WebView webView, String url) {
-        Log.i(TAG, "Autostart begin url=" + safePath(url));
+        Log.i(TAG, "Autostart begin url=" + safePath(url) + " stelle=" + Math.round(autoStartStelle));
         showToast("Startet …");
+        laufenderStart = autoStartStelle;
         awaitPage(webView, url, PLAYER_PROBE_JS,
             SystemClock.uptimeMillis() + AUTOSTART_EMBEDDED_TIMEOUT_MS,
             ready -> {
                 Log.i(TAG, "Autostart using the player the page already embeds");
-                autoStartPressFive(webView);
+                autoStartSpielen(webView, url);
             },
             () -> {
                 Log.i(TAG, "Autostart: nothing embedded, falling back to the hoster list");
@@ -7895,11 +8003,40 @@ public class MainActivity extends Activity {
     private void autoStartFullscreen(WebView webView, String url) {
         awaitPage(webView, null, PLAYER_PROBE_JS,
             SystemClock.uptimeMillis() + AUTOSTART_PLAYER_TIMEOUT_MS,
-            ready -> autoStartPressFive(webView),
+            ready -> autoStartSpielen(webView, url),
             () -> {
                 Log.w(TAG, "Autostart: player frame did not appear within timeout");
                 showToast("Player nicht bereit -- nochmal drücken");
             });
+    }
+
+    /**
+     * Der Player ist da - jetzt soll er wirklich laufen.
+     *
+     * <p>Hier endete die Kette bisher, und zwar im Vollbild: "The chain stops
+     * here, with the player up in fullscreen and paused." Das war fuer eine
+     * Fernbedienung eine bewusste Zurueckhaltung und fuer einen Tipp auf
+     * "Weiterschauen" schlicht der gemeldete Fehler - Vollbild da, Folge steht.
+     *
+     * <p>Dass ein Player-Rahmen existiert, heisst naemlich nicht, dass es
+     * etwas abzuspielen gibt. Gemessen am 25.08.2026 (AniWorld -> VOE): der
+     * Rahmen traegt ein {@code <video>} ohne Quelle, und erst der Klick auf
+     * seine eigene Ueberlagerung laedt sie. Genau diesen Ablauf fuehrt
+     * {@link Mitschauen} - Ueberlagerung klicken, auf die Quelle warten, den
+     * gespeicherten Stand setzen, starten, nachsehen, ob die Stelle
+     * weiterlaeuft. Erst sein Bericht loest das Vollbild aus.
+     *
+     * <p>Der Rueckfall bleibt der alte Weg: ohne Kern gibt es niemanden, der
+     * den Ablauf fuehren koennte, und dann ist ein Vollbild mit Player immer
+     * noch besser als gar nichts.
+     */
+    private void autoStartSpielen(WebView webView, String url) {
+        if (currentWebView() != webView) return;
+        double stelle = laufenderStart;
+        laufenderStart = 0;
+        if (mitschauen != null && mitschauen.oertlichenStartAnfordern(url, stelle)) return;
+        Log.i(TAG, "Autostart ohne Kern - nur Vollbild");
+        autoStartPressFive(webView);
     }
 
     private void autoStartPressFive(WebView webView) {
@@ -9147,6 +9284,9 @@ public class MainActivity extends Activity {
             // Nachzuegler ab - und dann waere Play/Pause nach einem
             // Folgenwechsel wieder tot.
             if (mitschauen != null && provider == activeProvider) mitschauen.zuruecksetzen(view);
+            // Und was der Player der vorigen Seite ueber seine Bedienelemente
+            // gesagt hat, gilt ab hier nicht mehr.
+            if (liveStreifen != null && provider == activeProvider) liveStreifen.playerNeu();
             // Eine neue Seite, neue Versuche: derselbe Hoster kann bei der
             // naechsten Folge durchaus antworten.
             rahmenVersuche.clear();

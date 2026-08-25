@@ -315,6 +315,11 @@ public final class Watchparty {
                 break;
             case "watchparty:zustand":
                 eintraegeHolen();
+                // Unter derselben Adresse kann ploetzlich eine Runde gelten -
+                // jemand hat den Titel eingestellt, jemand ist beigetreten.
+                // Ohne das bliebe die gepufferte Lage auf "keine Runde"
+                // stehen, bis die Seite wechselt.
+                if (mitschauen != null) mitschauen.lageVerwerfen();
                 break;
             case "watchparty:fortschritt":
                 standUebernehmen(nutzlastJson);
@@ -364,15 +369,50 @@ public final class Watchparty {
      */
     private void standUebernehmen(String json) {
         if (bestand == null || json == null) return;
+        JSONObject nachricht;
+        final JSONObject stand;
+        final String key;
+        final String raum;
         try {
-            JSONObject nachricht = new JSONObject(json);
-            JSONObject stand = nachricht.optJSONObject("progress");
-            String key = nachricht.optString("key", "");
-            if (stand == null || key.isEmpty()) return;
-            bestand.watchpartyStandUebernehmen(key, stand);
+            nachricht = new JSONObject(json);
+            stand = nachricht.optJSONObject("progress");
+            key = nachricht.optString("key", "");
+            raum = nachricht.optString("room", "");
         } catch (Exception fehler) {
             Log.e(TAG, "Eingehender Stand unlesbar", fehler);
+            return;
         }
+        if (stand == null || key.isEmpty()) return;
+        // Der Schluessel des Relays ist kein Ort auf diesem Geraet.
+        //
+        // Er war es einmal - solange Android die Serienadresse als Schluessel
+        // fuehrte, liess sich derselbe Wert unbesehen an {@code zuSerie}
+        // weiterreichen. Seit er wie am Rechner aus Art und Titel gebildet wird
+        // ("serie:bleach"), passt er auf keine Adresse mehr, und der Stand aus
+        // der Runde fand nie einen Eintrag. Uebersetzt wird deshalb im Kern:
+        // dort liegt der Raumzustand samt Adresse zu jedem Titel.
+        adresseZuSchluessel(key, raum, adresse -> {
+            if (adresse.isEmpty()) {
+                Log.d(TAG, "Stand ohne bekannten Titel verworfen: " + key);
+                return;
+            }
+            bestand.watchpartyStandUebernehmen(adresse, stand);
+        });
+    }
+
+    /**
+     * Die Serienadresse zu einem Titelschluessel des Relays.
+     *
+     * <p>Der Rueckweg vom Raum in die eigene Ablage. Gefragt wird der Kern - er
+     * fuehrt die Eintraege des Raums und kennt zu jedem Titel die Adresse.
+     */
+    public void adresseZuSchluessel(String key, String raum, java.util.function.Consumer<String> nimm) {
+        if (kern == null || !kern.istBereit() || key == null || key.isEmpty()) {
+            nimm.accept("");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.adresseZuSchluessel", Kern.args(key, raum == null ? "" : raum),
+            (wert, fehler) -> nimm.accept(fehler != null ? "" : textAus(wert)));
     }
 
     private void statusUebernehmen(String json) {
@@ -448,7 +488,12 @@ public final class Watchparty {
         }
         JSONObject item = new JSONObject();
         try {
-            item.put("key", schluessel(eintrag));
+            // Der Schluessel wird hier nicht mehr gebildet. Er entsteht im Kern
+            // aus Art und Titel - derselben Regel, die der Rechner benutzt
+            // ({@code geraete-stand.titelSchluessel}). Vorher stand hier die
+            // Serienadresse, und damit trug derselbe Anime in derselben Runde
+            // auf Telefon und Rechner zwei verschiedene Schluessel.
+            item.put("type", eintrag.type());
             item.put("title", eintrag.title());
             item.put("url", eintrag.url());
             item.put("providerName", eintrag.providerName());
@@ -629,10 +674,7 @@ public final class Watchparty {
      */
     public void beitreten(String key, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.beitreten", Kern.args(key, raum), (wert, fehler) -> {
-            if (fehler == null && bestand != null) {
-                Favorite lokal = bestand.zuSerie(key);
-                if (lokal != null) bestand.raumSetzen(lokal.id(), raum);
-            }
+            if (fehler == null && bestand != null) raumAmEintrag(key, raum, raum);
             antwort.fertig(wert, fehler);
         });
     }
@@ -640,11 +682,24 @@ public final class Watchparty {
     /** Die Runde verlassen - der Eintrag wird wieder privat. */
     public void verlassen(String key, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.verlassen", Kern.args(key, raum), (wert, fehler) -> {
-            if (fehler == null && bestand != null) {
-                Favorite lokal = bestand.zuSerie(key);
-                if (lokal != null) bestand.raumSetzen(lokal.id(), "");
-            }
+            if (fehler == null && bestand != null) raumAmEintrag(key, raum, "");
             antwort.fertig(wert, fehler);
+        });
+    }
+
+    /**
+     * Den Raum am eigenen Eintrag setzen - ueber die Adresse, nicht ueber den
+     * Schluessel.
+     *
+     * <p>Die Ablage kennt Adressen, der Raum kennt Titel. Das war dasselbe,
+     * solange Android den Titelschluessel aus der Adresse bildete; seit er wie
+     * am Rechner aus Art und Titel entsteht, muss uebersetzt werden.
+     */
+    private void raumAmEintrag(String key, String raum, String neuerRaum) {
+        adresseZuSchluessel(key, raum, adresse -> {
+            if (adresse.isEmpty() || bestand == null) return;
+            Favorite lokal = bestand.zuSerie(adresse);
+            if (lokal != null) bestand.raumSetzen(lokal.id(), neuerRaum);
         });
     }
 
@@ -657,17 +712,29 @@ public final class Watchparty {
      * Raum - und damit die Meldung des eigenen Stands dorthin. Dasselbe wie
      * {@code setzePrivatenKontext} am Rechner.
      */
+    /*
+     * Beides nimmt den Titelschluessel des Relays und muss ihn erst uebersetzen:
+     * die Ablage kennt Adressen, der Raum kennt Titel. Vorher war das dasselbe,
+     * weil Android den Schluessel aus der Adresse bildete - und genau daran ging
+     * die Vertraeglichkeit mit dem Rechner kaputt.
+     */
     public void privatSetzen(String key) {
         if (bestand == null || key == null || key.isEmpty()) return;
-        Favorite lokal = bestand.zuSerie(key);
-        if (lokal != null && !lokal.watchpartyRaum().isEmpty()) bestand.raumSetzen(lokal.id(), "");
+        adresseZuSchluessel(key, "", adresse -> {
+            if (adresse.isEmpty()) return;
+            Favorite lokal = bestand.zuSerie(adresse);
+            if (lokal != null && !lokal.watchpartyRaum().isEmpty()) bestand.raumSetzen(lokal.id(), "");
+        });
     }
 
     /** Und der Weg zurueck: der Eintrag zaehlt wieder fuer diese Runde. */
     public void raumBinden(String key, String raum) {
         if (bestand == null || key == null || key.isEmpty() || raum == null || raum.isEmpty()) return;
-        Favorite lokal = bestand.zuSerie(key);
-        if (lokal != null && !raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+        adresseZuSchluessel(key, raum, adresse -> {
+            if (adresse.isEmpty()) return;
+            Favorite lokal = bestand.zuSerie(adresse);
+            if (lokal != null && !raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+        });
     }
 
     public void herausnehmen(String key, String raum, Kern.Antwort antwort) {
@@ -734,27 +801,9 @@ public final class Watchparty {
         String raum = eintrag.optString("watchpartyRoom", "");
         if (raum.isEmpty()) return;
         kern.rufe("watchparty-bruecke.standMelden",
-            Kern.args(eintrag, schluesselAus(eintrag), geraetName), (wert, fehler) -> {
+            Kern.args(eintrag, geraetName), (wert, fehler) -> {
                 if (fehler != null) Log.e(TAG, "Stand nicht gemeldet: " + fehler);
             });
-    }
-
-    /**
-     * Der Schluessel, unter dem ein Titel in der Runde bekannt ist.
-     *
-     * <p>Bewusst nicht die Folgenadresse, sondern die der Serie: die Runde
-     * fuehrt einen Titel, nicht eine Folge - sonst waere jede neue Folge ein
-     * neuer Eintrag im Raum.
-     */
-    private static String schluessel(Favorite eintrag) {
-        return schluesselAus(eintrag.roh);
-    }
-
-    private static String schluesselAus(JSONObject eintrag) {
-        String url = eintrag.optString("url", "");
-        return url.replaceAll("(?i)/(staffel|season)-\\d+(/(episode|folge)-\\d+)?/?$", "")
-            .replaceAll("/+$", "")
-            .toLowerCase();
     }
 
     private static String textAus(String jsonWert) {

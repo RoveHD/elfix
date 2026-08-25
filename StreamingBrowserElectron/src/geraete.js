@@ -427,9 +427,15 @@ class Geraeteabgleich {
   // Uebergeben wird immer alles, nicht das Geaenderte: der Rest der App muesste
   // sonst mitfuehren, was sich seit wann geaendert hat, und genau das ist die
   // Sorte Buchhaltung, die irgendwann nicht mehr stimmt.
-  abgleichen(staende) {
+  abgleichen(staende, zurueckgehalten = []) {
     if (!this.aktiv || !this.abgeleitet) return 0;
     this.eigeneStaende = Array.isArray(staende) ? staende : [];
+    // Titel, die es hier gibt, die aber nicht abgeglichen werden - der Stand
+    // einer Watchparty gehoert der Runde. Sie duerfen niemals als Loeschung
+    // hinausgehen: sie fehlen in der Liste, weil sie zurueckgehalten werden,
+    // nicht weil jemand sie weggeworfen hat. Genau diese Verwechslung hat am
+    // 25.08.2026 einen ganzen Bestand als Grabsteine an alle Geraete geschickt.
+    this.eigeneZurueckgehalten = Array.isArray(zurueckgehalten) ? zurueckgehalten : [];
     // Der Augenblick, aus dem diese Liste stammt. Ab hier ist sie ein
     // Schnappschuss und altert; was danach hereinkommt, steht nicht in ihr.
     this.eigeneStaendeStand = this.hereinStand;
@@ -517,9 +523,16 @@ class Geraeteabgleich {
     // ein Verlust und geht als Frage zurueck.
     const verloren = frisch && gesehen.size === 0 && this.lebendeStaende() > VERLUST_GRENZE;
 
+    // Was hier nur zurueckgehalten wird, ist kein Grabstein.
+    const zurueck = new Set();
+    for (const key of this.eigeneZurueckgehalten || []) {
+      const id = schluesselModul.eintragId(this.abgeleitet, String(key || ""));
+      if (id) zurueck.add(id);
+    }
+
     if (frisch && !verloren) {
       for (const [id, eintrag] of this.spiegel) {
-        if (gesehen.has(id) || eintrag.weg || eintrag.art === "sitzung") continue;
+        if (gesehen.has(id) || zurueck.has(id) || eintrag.weg || eintrag.art === "sitzung") continue;
         aufgaben.push({ id, key: eintrag.key, hash: "", stand: null });
       }
     } else if (verloren && !this.wiederholung) {

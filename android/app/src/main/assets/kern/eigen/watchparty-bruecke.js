@@ -35,6 +35,14 @@
   // Zuordnung hier waere die zweite - und zwei Zuordnungen kommen
   // irgendwann zu zwei Anbietern.
   const geraeteStand = require("geraete-stand");
+  // Wie eine Adresse auf ihre Serie zurueckfaellt und wie ein Titel zu einem
+  // Schluessel wird, steht in `taste.js` - derselben Datei, aus der der Rechner
+  // es holt. Genau hier lag der Fehler: Android bildete den Titelschluessel
+  // selbst, aus der Adresse. Der Rechner bildet ihn aus Art und Titel
+  // ("serie:bleach"). Damit trug derselbe Anime in derselben Runde auf beiden
+  // Geraeten zwei verschiedene Schluessel - und alles, was am Schluessel haengt
+  // (Mitgliedschaft, Stand, Steuerung, Host), fand einander nie.
+  const taste = require("taste");
   // Der Folgen-Autostart. Die Regel - was ein Auftrag ist, wann er veraltet,
   // was als Naechstes zu tun ist und welches Skript im Player wirklich startet -
   // steht vollstaendig in `watchparty-autostart.js`. Hier liegt nur die
@@ -81,7 +89,12 @@
   function konfigurieren(einstellungen) {
     const wp = sicherstellen();
     // Wer die Watchparty ausschaltet, meint auch keinen offenen Autostart mehr.
-    if (!(einstellungen && einstellungen.enabled)) autostartVerwerfen();
+    // Einen oertlichen aber schon: der hat mit der Runde nichts zu tun, und
+    // ihn hier mitzuloeschen hiesse, dass "Weiterschauen" nicht mehr startet,
+    // sobald jemand die Watchparty abschaltet.
+    if (!(einstellungen && einstellungen.enabled) && !(auftrag && auftrag.oertlich)) {
+      autostartVerwerfen();
+    }
     wp.konfigurieren({
       enabled: Boolean(einstellungen && einstellungen.enabled),
       serverUrl: (einstellungen && einstellungen.serverUrl) || "",
@@ -107,12 +120,89 @@
    * Dieselbe Bedingung wie in `reportWatchpartyProgress` am Rechner, und der
    * Inhalt kommt aus derselben Funktion.
    */
-  function standMelden(eintrag, schluessel, geraetName) {
+  function standMelden(eintrag, geraetName) {
     if (!raeume || !raeume.aktiv) return false;
     const raum = String((eintrag && eintrag.watchpartyRoom) || "");
+    // Der Schluessel wird hier gebildet und nicht vom Aufrufer mitgebracht.
+    // Genau daran hing es: Java bildete ihn aus der Adresse, der Rechner aus
+    // Art und Titel - und der gemeldete Stand landete im Raum unter einem
+    // Titel, den es dort gar nicht gab.
+    const schluessel = titelSchluessel(eintrag);
     if (!raum || !schluessel) return false;
     raeume.fortschrittMelden(schluessel, fortschritt.watchpartyStand(eintrag, geraetName), raum);
     return true;
+  }
+
+  /* -------------------------------------- Titel und Adresse in der Runde */
+
+  /*
+   * Der Schluessel, unter dem ein Titel in einer Runde gefuehrt wird.
+   *
+   * Er muss auf jedem Geraet gleich ausfallen, sonst gibt es den Titel im Raum
+   * zweimal - einmal so, wie der Rechner ihn kennt, und einmal so, wie das
+   * Telefon ihn kennt. Genau das war der Zustand: der Rechner bildete ihn ueber
+   * `geraete-stand.titelSchluessel` aus Art und Titel ("serie:bleach"), Android
+   * ueber die Serienadresse. Ein Android-Geraet tauchte deshalb am Rechner
+   * weder als Host noch als Mitschauer auf, seine Pause kam nie an, und ein am
+   * Rechner eingestellter Titel war auf dem Telefon fuer die Steuerung
+   * unsichtbar - alles dasselbe Missverstaendnis, an vier Stellen sichtbar.
+   *
+   * Die Adresse taugt dafuer ohnehin nicht: s.to laeuft hier ueber eine IP und
+   * dort ueber die Domain. Titel und Medientyp sind ueberall dieselben.
+   */
+  function titelSchluessel(eintrag) {
+    return geraeteStand.titelSchluessel(eintrag || {});
+  }
+
+  /**
+   * Welcher Titel und welche Runde gelten fuer diese Adresse?
+   *
+   * <p>Dasselbe wie `watchpartySerieForUrl` und `watchpartyRaeumeForUrl` am
+   * Rechner: es zaehlt die Serie hinter der Adresse, verglichen ueber
+   * `taste.urlSchluessel`. Ein Folgenwechsel innerhalb derselben Serie aendert
+   * daran nichts, ein Hosterwechsel auch nicht - der Aufrufer reicht dann die
+   * zuletzt offene Folgenseite herein.
+   *
+   * <p>Java fragt hier und rechnet nicht selbst. Die Antwort ist der einzige
+   * Weg vom "was steht gerade offen" zum "welcher Eintrag im Raum ist das" -
+   * und sie kommt aus derselben Regel wie am Rechner.
+   *
+   * @return { key, room, joined, url, season, episode } - leer, wenn diese
+   *         Adresse in keiner beigetretenen Runde steht
+   */
+  function lageFuer(url) {
+    const leer = { key: "", room: "", joined: false, url: "", season: 0, episode: 0 };
+    const adresse = String(url || "");
+    if (!raeume || !adresse) return leer;
+    const gesucht = taste.urlSchluessel(adresse);
+    if (!gesucht) return leer;
+    const treffer = raeume.eintraege().filter((eintrag) => (
+      eintrag.joined && taste.urlSchluessel(eintrag.url || "") === gesucht
+    ));
+    const eintrag = treffer[0];
+    if (!eintrag) return leer;
+    const stand = eintrag.progress || null;
+    return {
+      key: String(eintrag.key || ""),
+      room: String(eintrag.room || ""),
+      joined: true,
+      url: String(eintrag.url || ""),
+      season: (stand && stand.season) || eintrag.season || 0,
+      episode: (stand && stand.episode) || eintrag.episode || 0
+    };
+  }
+
+  /**
+   * Die Serienadresse zu einem Schluessel.
+   *
+   * <p>Der Rueckweg. Das Relay schickt Fortschritt und Zustaende unter dem
+   * Titelschluessel; die Ablage auf dem Geraet kennt Adressen. Vorher war
+   * beides dasselbe, seit der Schluessel stimmt nicht mehr - also wird hier
+   * uebersetzt, statt in Java einen zweiten Schluesselbegriff zu fuehren.
+   */
+  function adresseZuSchluessel(key, room) {
+    const eintrag = eintragImRaum(String(key || ""), room);
+    return eintrag ? String(eintrag.url || "") : "";
   }
 
   /* --------------------------------------------------- Eintraege oeffnen */
@@ -171,6 +261,10 @@
       providerId: provider ? provider.id : "",
       providerName: (provider && provider.name) || eintrag.providerName || "",
       url,
+      // Die Adresse der Serie, nicht die der Folge. Sie ist der Weg zurueck in
+      // die eigene Ablage: der Titelschluessel des Relays passt dort auf
+      // nichts, seit er wie am Rechner aus Art und Titel gebildet wird.
+      serie: eintrag.url || "",
       titel: eintrag.title || "",
       // Was die Runde ueber die Folge weiss. Der Stand geht vor: er ist
       // juenger als die Angabe am Titel.
@@ -389,8 +483,15 @@
   }
 
   function autostartLage(lage) {
-    const room = (lage && lage.room) || "";
-    const key = (lage && lage.key) || "";
+    // Ein oertlicher Auftrag kennt keinen Raum und keinen Titelschluessel - er
+    // gehoert zu einer Serienadresse. Damit dieselbe Buchfuehrung fuer beide
+    // gilt, wird er hier auf dieselben zwei Felder abgebildet: Raum leer,
+    // Schluessel gleich der Serie hinter der Adresse.
+    const oertlich = Boolean(auftrag && auftrag.oertlich);
+    const room = oertlich ? "" : ((lage && lage.room) || "");
+    const key = oertlich
+      ? taste.urlSchluessel(String((lage && lage.url) || ""))
+      : ((lage && lage.key) || "");
     return {
       jetzt: Date.now(),
       generation: generationen.get(autostartMarke(room, key)) || 0,
@@ -398,6 +499,11 @@
       key: String(key),
       season: Number(lage && lage.season) || 0,
       episode: Number(lage && lage.episode) || 0,
+      // Ob dieses Geraet die Runde fuehrt, und wo die Runde steht. Beides
+      // zaehlt nur fuer den Start: der Host wartet auf keinen Hostzustand -
+      // er ist einer.
+      binHost: Boolean(lage && lage.binHost),
+      stelle: Number(lage && lage.stelle) || 0,
       berichtOffenSeit
     };
   }
@@ -417,8 +523,14 @@
    * waehrend des Ladens erneut, startet nur der neueste.
    */
   function autostartAnfordern(angaben) {
-    const room = (angaben && angaben.room) || "";
-    const key = (angaben && angaben.key) || "";
+    const oertlich = Boolean(angaben && angaben.oertlich);
+    const room = oertlich ? "" : ((angaben && angaben.room) || "");
+    // Ohne Runde ist die Serie hinter der Adresse der Schluessel. Sie ist
+    // stabil ueber den Folgenwechsel hinweg und unterscheidet zwei Titel, die
+    // zufaellig bei derselben Folge stehen.
+    const key = oertlich
+      ? taste.urlSchluessel(String((angaben && angaben.url) || ""))
+      : ((angaben && angaben.key) || "");
     if (!key) return null;
     const marke = autostartMarke(room, key);
     const generation = (generationen.get(marke) || 0) + 1;
@@ -432,10 +544,15 @@
       episode: (angaben && angaben.episode) || 0,
       url: (angaben && angaben.url) || "",
       hostId: (angaben && angaben.hostId) || "",
-      playing: Boolean(angaben && angaben.playing),
+      playing: oertlich ? true : Boolean(angaben && angaben.playing),
+      oertlich,
+      // Der gespeicherte Stand. Er ersetzt beim oertlichen Start genau das,
+      // was in einer Runde der Host beisteuert: die Stelle, an der es
+      // weitergehen soll.
+      stelle: (angaben && angaben.stelle) || 0,
       jetzt: Date.now()
     });
-    return { auftrag: auftrag.id, generation };
+    return { auftrag: auftrag.id, generation, oertlich, key };
   }
 
   /**
@@ -473,6 +590,36 @@
     }
     const schritt = autostart.naechsterSchritt(auftrag, l);
     if (schritt.tun === "anfordern") autostart.versuchVermerken(auftrag, l.jetzt);
+    // In einer Runde heisst "anfordern": den Stand des Hosts neu holen - die
+    // Antwort des Relays traegt ihn und loest ueber steuerungPruefen den
+    // Versuch aus. Ohne Runde gibt es niemanden zu fragen: der Stand steht
+    // schon im Auftrag, und das Skript kann sofort hinaus. Es ist dasselbe
+    // Skript, dieselben Fristen und dieselben Abstaende - nur ohne Umweg.
+    //
+    // Und dasselbe gilt fuer den Host einer Runde. Er wartet sonst auf einen
+    // Hostzustand, den es nicht gibt - er ist der Host. Gemessen am 25.08.2026
+    // auf dem Telefon: allein in der Runde, vier Versuche, "Stand der Runde
+    // wird geholt", und jedes Mal kam nichts zurueck, weil niemand da war, den
+    // das Relay haette fragen koennen. Danach "kein start nach 4 Versuchen" und
+    // ein stehendes Bild. Die Stelle der Runde steht im Raumzustand; sie ist
+    // hier die richtige Vorgabe.
+    if (schritt.tun === "anfordern" && (auftrag.oertlich || l.binHost)) {
+      berichtOffenSeit = Date.now();
+      const stelle = auftrag.oertlich ? auftrag.stelle : (l.stelle || auftrag.stelle || 0);
+      return autostartAntwort({
+        tun: "starten",
+        grund: schritt.grund + (auftrag.oertlich ? "" : " (als Host)"),
+        wartenMs: 0,
+        skript: autostart.startScript(auftrag.id, {
+          videoTime: stelle,
+          timestamp: Date.now(),
+          playing: true,
+          // Es wird nichts hochgerechnet: die Stelle ist eine Stelle im Video
+          // und keine Stelle plus Laufzeit einer Nachricht.
+          hatUhr: false
+        }, { playing: true })
+      });
+    }
     const antwort = autostartAntwort(schritt);
     if (schritt.tun === "aufgeben") {
       auftrag = null;
@@ -520,12 +667,19 @@
    */
   function autostartVerwerfen(lage) {
     if (!auftrag) return false;
-    const key = lage && lage.key ? String(lage.key) : "";
+    // Ein oertlicher Auftrag haengt an der Serienadresse und nicht an Raum und
+    // Titelschluessel - sonst zeigte die Lage immer woandershin und der
+    // Auftrag waere beim ersten eigenen Wechsel weg, auch wenn er genau
+    // dorthin fuehrt.
+    const oertlich = Boolean(auftrag.oertlich);
+    const key = oertlich
+      ? taste.urlSchluessel(String((lage && lage.url) || ""))
+      : (lage && lage.key ? String(lage.key) : "");
     if (key) {
       const gemeint = autostart.auftragGilt(auftrag, {
         jetzt: Date.now(),
-        generation: generationen.get(autostartMarke(lage.room, key)) || 0,
-        raum: String((lage && lage.room) || ""),
+        generation: generationen.get(autostartMarke(oertlich ? "" : (lage && lage.room), key)) || 0,
+        raum: oertlich ? "" : String((lage && lage.room) || ""),
         key,
         season: Number(lage && lage.season) || 0,
         episode: Number(lage && lage.episode) || 0
@@ -543,7 +697,10 @@
   // Verwaltendes reicht direkt durch. Eine eigene Pruefung waere hier falsch:
   // was ein gueltiger Raumcode ist, weiss das geteilte Modul.
   const durchreiche = {
-    teilen: (item, room) => sicherstellen().teilen(item, room),
+    // Der Schluessel wird hier ergaenzt, wenn er fehlt: die Oberflaeche soll
+    // ihn nicht selbst bilden - der Rechner tut es auch nicht.
+    teilen: (item, room) => sicherstellen().teilen(
+      Object.assign({}, item, { key: (item && item.key) || titelSchluessel(item) }), room),
     beitreten: (key, room) => sicherstellen().beitreten(key, room),
     verlassen: (key, room) => sicherstellen().verlassen(key, room),
     entfernen: (key, room) => sicherstellen().entfernen(key, room),
@@ -568,6 +725,10 @@
     status,
     eintraege,
     standMelden,
+    // Titel und Adresse in der Runde.
+    titelSchluessel,
+    lageFuer,
+    adresseZuSchluessel,
     // Eintraege oeffnen.
     oeffnungsZiel,
     eintraegeMitAnbieter,
@@ -590,6 +751,10 @@
     MELDE_AKTION: sync.MELDE_AKTION,
     MELDE_STAND: sync.MELDE_STAND,
     MELDE_SYNC: sync.MELDE_SYNC,
+    // Ob die Bedienelemente des Players zu sehen sind. Daran haengt die
+    // Teilnehmerleiste im Vollbild.
+    MELDE_UI: sync.MELDE_UI,
+    uiLesen: (zeile) => sync.uiLesen(zeile),
     // Damit die Oberflaeche einen eingetippten Code beanstanden kann, bevor
     // sie ihn speichert - mit demselben Wortlaut wie am Rechner.
     codeBeanstandung,

@@ -24,31 +24,29 @@ public class MitschauenTest {
     private static final String BASIS = "https://aniworld.to/anime/stream/naruto";
 
     /**
-     * Der Schluessel, den ein Autostart-Auftrag traegt.
+     * Android bildet den Titelschluessel nicht mehr selbst.
      *
-     * <p>Er muss derselbe sein, unter dem der Titel in der Runde gefuehrt wird -
-     * die Serienadresse ohne Staffel und Folge. Ein anders gebildeter liesse den
-     * Auftrag auf einen anderen Eintrag im selben Raum ueberspringen oder auf
-     * gar keinen: in einem Raum liegen Bleach, Korra und BLACK TORCH
-     * nebeneinander, und jeder braucht seinen eigenen.
+     * <p>Es tat es, und zwar unvertraeglich: aus der Serienadresse, waehrend
+     * der Rechner ihn aus Art und Titel bildet ("serie:bleach"). Dieselbe
+     * Runde, derselbe Anime, zwei Schluessel - und alles, was am Schluessel
+     * haengt, fand einander nie: die Mitgliedschaft im Titel, die
+     * Standmeldung, jeder Steuerbefehl, die Hostwahl. Ein Telefon tauchte am
+     * Rechner weder als Mitschauer noch als Host auf, und seine Pause ging
+     * nirgendwo hin.
+     *
+     * <p>Jetzt fragt {@link Mitschauen} den Kern
+     * ({@code watchparty-bruecke.lageFuer}). Diese Pruefung haelt fest, dass
+     * hier keine zweite Bildung zurueckkommt - der Vergleich beider Fassungen
+     * steht in {@code tests/androidwatchpartytest.js} und laeuft dort an einem
+     * echten Relay gegen die Watchparty des Rechners.
      */
     @Test
-    public void derAuftragTraegtDenSchluesselDerRunde() {
-        assertEquals(BASIS, Mitschauen.schluesselFuer(BASIS + "/staffel-3/episode-8"));
-        // Jede Folge derselben Serie ergibt denselben Schluessel - sonst waere
-        // ein Folgenwechsel ein Titelwechsel.
-        assertEquals(Mitschauen.schluesselFuer(BASIS + "/staffel-1/episode-1"),
-            Mitschauen.schluesselFuer(BASIS + "/staffel-9/episode-24"));
-        // Die deutsche Schreibweise ebenso.
-        assertEquals("https://s.to/serie/stream/test",
-            Mitschauen.schluesselFuer("https://s.to/serie/stream/test/staffel-1/folge-5"));
-        // Ein zweiter Titel im selben Raum ist ein anderer Schluessel.
-        assertFalse(Mitschauen.schluesselFuer(BASIS + "/staffel-1/episode-1")
-            .equals(Mitschauen.schluesselFuer(
-                "https://aniworld.to/anime/stream/bleach/staffel-1/episode-1")));
-        // Ohne Adresse kein Schluessel - und damit kein Auftrag.
-        assertEquals("", Mitschauen.schluesselFuer(null));
-        assertEquals("", Mitschauen.schluesselFuer(""));
+    public void bildetDenTitelschluesselNichtMehrSelbst() {
+        for (java.lang.reflect.Method methode : Mitschauen.class.getDeclaredMethods()) {
+            assertFalse("Mitschauen darf den Titelschluessel nicht selbst bilden: "
+                    + methode.getName(),
+                methode.getName().toLowerCase().startsWith("schluesselfuer"));
+        }
     }
 
     @Test

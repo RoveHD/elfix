@@ -96,6 +96,14 @@ function auftragAnlegen(angaben = {}) {
     url: String(angaben.url || ""),
     hostId: String(angaben.hostId || ""),
     playing: Boolean(angaben.playing),
+    // Ein oertlicher Auftrag ist derselbe Ablauf ohne Runde: Weiterschauen
+    // druecken, und die Folge soll wirklich laufen statt im Vollbild zu
+    // stehen. Er fragt niemanden nach dem Stand - er hat ihn schon
+    // ({@code stelle}) - und benutzt sonst dieselben Fristen, dieselben
+    // Abstaende und dasselbe Startskript. Zwei Ablaeufe nebeneinander waeren
+    // zwei Fassungen derselben Sache, und eine davon liefe irgendwann falsch.
+    oertlich: Boolean(angaben.oertlich),
+    stelle: Number(angaben.stelle) || 0,
     erstellt: Number(angaben.jetzt) || 0,
     versuche: 0,
     letzterVersuch: 0,

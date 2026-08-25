@@ -186,7 +186,11 @@
    */
   function abgleichen() {
     const abg = sicherstellen();
-    const hinaus = abg.abgleichen(geraeteStand.staende(favoriten));
+    // Die zurueckgehaltenen Titel gehen mit - sonst liest der Abgleich ihr
+    // Fehlen als Loeschung und schickt Grabsteine an alle Geraete. Dieselbe
+    // Uebergabe wie am Rechner.
+    const hinaus = abg.abgleichen(
+      geraeteStand.staende(favoriten), geraeteStand.zurueckgehalten(favoriten));
     const offene = [];
     for (const sitzung of sitzungen) {
       const id = String((sitzung && sitzung.id) || "");

@@ -1209,7 +1209,19 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
       }
     } else {
       entry.episodeCompleted = Boolean(mediaEnded && !entry.completed);
-      entry.continuePending = false;
+      // "Die naechste Folge steht an" faellt erst weg, wenn an ihr wirklich
+      // etwas gelaufen ist.
+      //
+      // Vorher genuegte das blosse Oeffnen: die Seite meldete sich, hier stand
+      // noch Stelle 0, und der Merker war weg. Damit war der Eintrag aus
+      // "Weiterschauen" verschwunden - er hat keinen Fortschritt auf dieser
+      // Folge (0 %), keinen auf der vorigen (die ist abgehakt), und
+      // hasContinueProgressRecord findet nichts mehr, woran es ihn halten
+      // koennte. Gemessen am 26.08.2026 an "Attack on Titan": Staffel 3 Folge
+      // 21 zu Ende geschaut, Folge 22 aufgemacht, und die Serie war aus der
+      // Liste. Genau in dem Augenblick, in dem man weiterschauen wollte.
+      const etwasGelaufen = sanitizePositiveNumber(entry.currentTime) > 0;
+      entry.continuePending = Boolean(entry.continuePending) && !etwasGelaufen;
     }
     if (!entry.completed && !entry.episodeCompleted) {
       entry.hideFromContinueWatching = false;

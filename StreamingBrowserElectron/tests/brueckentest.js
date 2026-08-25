@@ -237,6 +237,108 @@ pruefe("Und ohne Lage wird immer verworfen",
   wpBruecke.autostartVerwerfen();
 }
 
+// --- Der oertliche Start: "Weiterschauen" ohne Runde -------------------------
+//
+// Der gemeldete Fehler war: ein Tipp auf Weiterschauen oeffnete das Vollbild,
+// und darin stand ein Player, der nie eine Quelle bekommen hatte. Die Kette
+// endete dort mit Absicht ("The chain stops here, with the player up in
+// fullscreen and paused") - was fehlte, war der Ablauf, der einen VOE-Player
+// wirklich startet. Den gibt es seit dem Folgen-Autostart; er hing nur an
+// einer Runde. Hier wird geprueft, dass er auch ohne eine gilt.
+{
+  wpBruecke.autostartVerwerfen();
+  const FOLGE = BLEACH + "/staffel-3/episode-2";
+  const auftrag = wpBruecke.autostartAnfordern({
+    oertlich: true, url: FOLGE, stelle: 312.5, season: 3, episode: 2
+  });
+  pruefe("Ein oertlicher Auftrag braucht weder Raum noch Titelschluessel",
+    Boolean(auftrag) && auftrag.oertlich === true && auftrag.auftrag.startsWith("|"),
+    auftrag && auftrag.auftrag);
+
+  const schritt = wpBruecke.autostartSchritt({ url: FOLGE, season: 3, episode: 2 });
+  pruefe("Er wartet auf niemanden - der Stand steht schon im Auftrag",
+    schritt.tun === "starten" && schritt.skript.length > 0,
+    schritt.tun);
+  pruefe("Und das Skript springt auf den gespeicherten Stand",
+    schritt.skript.includes("312.5"),
+    "sonst faengt Weiterschauen wieder bei null an");
+  pruefe("Es klickt die Ueberlagerung des Hosters",
+    schritt.skript.includes("jw-icon-display"),
+    "ohne diesen Klick hat das <video> keine Quelle und play() laeuft ins Leere");
+  pruefe("Und es berichtet, ob wirklich etwas laeuft",
+    schritt.skript.includes("__elfix:wp:start:") && schritt.skript.includes("laeuft"),
+    "erst dieser Bericht darf das Vollbild ausloesen");
+
+  // Steht eine andere Serie offen, gilt der Auftrag nicht mehr.
+  pruefe("Fuer eine andere Serie gilt er nicht",
+    wpBruecke.autostartSchritt({ url: KORRA + "/staffel-3/episode-2" }).tun === "warten",
+    "der Auftrag gehoert zu seiner Serienadresse");
+
+  // Der Bericht schliesst ihn ab - und zwar nur der eigene.
+  pruefe("Ein fremder Bericht schliesst ihn nicht ab",
+    wpBruecke.autostartBericht(
+      wpBruecke.MELDE_START + JSON.stringify({ auftrag: "irgendwas", ok: true })).passt === false);
+  const fertig = wpBruecke.autostartBericht(
+    wpBruecke.MELDE_START + JSON.stringify({
+      auftrag: auftrag.auftrag, ok: true, zustand: "laeuft", stelle: 313.1
+    }));
+  pruefe("Der eigene Bericht schliesst ihn ab",
+    fertig.passt === true && fertig.fertig === true && fertig.zustand === "laeuft",
+    JSON.stringify(fertig));
+  pruefe("Danach klopft nichts mehr an",
+    wpBruecke.autostartSchritt({ url: FOLGE, season: 3, episode: 2 }).tun === "aufgeben");
+
+  // Ohne gespeicherten Stand faengt er vorn an - und springt nicht irgendwohin.
+  wpBruecke.autostartVerwerfen();
+  wpBruecke.autostartAnfordern({ oertlich: true, url: FOLGE, stelle: 0, season: 3, episode: 2 });
+  const ohneStand = wpBruecke.autostartSchritt({ url: FOLGE, season: 3, episode: 2 });
+  pruefe("Ohne gespeicherten Stand faengt er bei null an",
+    ohneStand.tun === "starten" && ohneStand.skript.includes('"videoTime":0'),
+    "ein Eintrag ohne Fortschritt darf nicht irgendwohin springen");
+  wpBruecke.autostartVerwerfen();
+
+  // Und die Runde hat Vorrang: laeuft dort ein Auftrag, gehoert ihm der Player.
+  wpBruecke.autostartAnfordern({
+    key: BLEACH, room: RAUM, url: BLEACH + "/staffel-1/episode-5",
+    season: 1, episode: 5, hostId: "rechner", playing: true
+  });
+  pruefe("Ein Auftrag der Runde bleibt ein Auftrag der Runde",
+    wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 5 }).tun === "anfordern",
+    "er holt den Stand des Hosts - das ist die genauere Antwort");
+  wpBruecke.autostartVerwerfen();
+}
+
+// --- Die Bedienelemente des Players ------------------------------------------
+//
+// Die Teilnehmerleiste im Vollbild haengt daran: sie soll mit ihnen kommen und
+// mit ihnen gehen. Gelesen wird die Meldung im Kern, damit Java nicht selbst
+// an einer Zeichenkette herumschneidet.
+{
+  pruefe("Eine Sichtbarkeitsmeldung wird gelesen",
+    wpBruecke.uiLesen(wpBruecke.MELDE_UI + "1").sichtbar === true
+      && wpBruecke.uiLesen(wpBruecke.MELDE_UI + "0").sichtbar === false);
+  pruefe("Und alles andere ist keine",
+    wpBruecke.uiLesen("__elfix:wp:stand:12.00:0") === null
+      && wpBruecke.uiLesen("__elfix:wp:ui:ja") === null,
+    "eine unlesbare Zeile darf die Leiste nicht wegnehmen");
+  const horcher = wpBruecke.beobachterSkript();
+  pruefe("Der Horcher misst die Leiste des Players und nicht ihren Rahmen",
+    horcher.includes("jw-controlbar") && horcher.includes("vjs-control-bar")
+      && horcher.includes("sichtbarerKnoten") && !horcher.includes('".jw-controls",'),
+    "gemessen am 25.08.2026: .jw-controls bleibt deckend, .jw-controlbar wird "
+    + "auf Deckkraft 0 gesetzt - wer den Rahmen misst, meldet immer 'sichtbar'");
+  pruefe("Und er sieht sich alle Leisten an, nicht nur die erste",
+    horcher.includes("gefunden.some(sichtbarerKnoten)"),
+    "die Seite traegt eine fremde, dauerhaft unsichtbare Leiste - "
+    + "wer bei der stehen bleibt, meldet dauernd 'ausgeblendet'");
+  pruefe("Und hat einen Rueckfall ueber die Regung",
+    horcher.includes("letzteRegung") && horcher.includes("__elfixWpRegung"),
+    "fuer Player, deren Leiste sich nicht finden laesst");
+  pruefe("Gemeldet wird nur die Aenderung",
+    horcher.includes("if (jetzt === uiGemeldet) return;"),
+    "sonst laeuft im Ruhezustand ein Strom von Meldungen");
+}
+
 // Die Serveradresse geht durch dieselbe Pruefung wie am Rechner.
 {
   const wp = require("../src/watchparty");

@@ -30,6 +30,47 @@
  */
 
 /** Das Skript als Quelltext, fertig zum Einspielen. */
+/**
+ * Welche Staffel steht in diesem Pfad - und gehoert sie ueberhaupt zu dieser Serie?
+ *
+ * <p>Rein und ohne DOM, damit sie sich pruefen laesst; ins Seitenskript geht
+ * sie als Quelltext, damit es sie genau einmal gibt.
+ *
+ * <p>Sie ist die Antwort auf einen teuren Fehler: die letzte Staffel wurde aus
+ * <em>allen</em> "/staffel-N"-Links der Seite gebildet, auch aus denen in
+ * Randspalte, Fusszeile und Empfehlungen. Die gehoeren fremden Serien. "Die
+ * Legende von Korra" hat vier Buecher; gespeichert war Staffel 16. Danach
+ * zaehlte die Fortschrittsregel nach der letzten Folge brav auf Staffel 5
+ * Folge 1 weiter - eine Folge, die es nicht gibt, die Serie liess sich nie
+ * abschliessen, und in Weiterschauen stand Unsinn.
+ *
+ * @param pfad      der Pfad des Links
+ * @param mediaSlug der Slug der Serie, um die es geht ("" heisst: unbekannt)
+ * @return die Staffelnummer, oder 0 wenn der Link nicht zu dieser Serie gehoert
+ */
+function staffelAusPfad(pfad, mediaSlug) {
+  const teile = String(pfad || "").split("/").filter(Boolean);
+  let slug = "";
+  let staffel = 0;
+  for (let index = 0; index < teile.length; index += 1) {
+    const teil = teile[index].toLowerCase();
+    if ((teil === "anime" || teil === "serie")
+      && teile[index + 1] && teile[index + 1].toLowerCase() === "stream" && teile[index + 2]) {
+      slug = teile[index + 2].toLowerCase();
+    }
+    if ((teil === "serie" || teil === "stream") && teile[index + 1] && !slug) {
+      slug = teile[index + 1].toLowerCase();
+    }
+    const treffer = teil.match(/^(?:staffel|season)-(\d+)$/i);
+    if (treffer) staffel = Number(treffer[1]);
+  }
+  if (!staffel) return 0;
+  // Ohne erkennbaren Slug ist die Herkunft offen - dann lieber nicht
+  // mitzaehlen, als die Staffelzahl einer fremden Serie zu erben.
+  if (mediaSlug) return slug === mediaSlug ? staffel : 0;
+  return slug ? staffel : 0;
+}
+
 function seitenSkript() {
   return `(() => {
     const abs = (value) => {
@@ -175,11 +216,22 @@ function seitenSkript() {
       const links = anchors
         .map((anchor) => episodeIdentityFromHref(anchor.getAttribute("href")))
         .filter(Boolean);
+      // Nur die Staffeln *dieser* Serie.
+      //
+      // Vorher zaehlte jeder "/staffel-N"-Link der Seite mit - auch die aus
+      // Randspalte, Fusszeile und Empfehlungen, und die gehoeren fremden
+      // Serien. Die Regel dafuer steht als staffelAusPfad im Modul und wird
+      // hier als Quelltext eingesetzt; so gibt es sie genau einmal, und sie
+      // laesst sich pruefen, ohne eine Seite zu bauen.
+      ${staffelAusPfad.toString()}
       const seasonNumbers = anchors
         .map((anchor) => {
-          const href = abs(anchor.getAttribute("href"));
-          const hrefMatch = href.match(/\\/(?:staffel|season)-(\\d+)(?:[/?#]|$)/i);
-          return hrefMatch ? Number(hrefMatch[1]) : 0;
+          try {
+            return staffelAusPfad(
+              new URL(abs(anchor.getAttribute("href")), location.href).pathname, mediaSlug);
+          } catch (_) {
+            return 0;
+          }
         })
         .filter((number) => Number.isFinite(number) && number > 0);
       const finalSeason = Math.max(0, ...seasonNumbers, ...links.map((link) => link.season || 0));
@@ -605,4 +657,4 @@ function seitenSkript() {
   })()`;
 }
 
-module.exports = { seitenSkript };
+module.exports = { seitenSkript, staffelAusPfad };

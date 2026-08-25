@@ -75,6 +75,29 @@ function staende(favoriten) {
   return liste;
 }
 
+/**
+ * Die Titel, die es hier gibt, die aber bewusst nicht abgeglichen werden.
+ *
+ * <p>Der Stand einer Watchparty gehoert der Runde und nicht diesem Konto -
+ * deshalb laesst {@link staende} raumgebundene Eintraege aus. Das ist richtig
+ * und war trotzdem gefaehrlich: der Abgleich leitet aus dem, was in seiner
+ * Liste <em>fehlt</em>, ab, was hier geloescht wurde. Ein Titel, der nur
+ * zurueckgehalten wird, sah damit aus wie einer, den jemand weggeworfen hat -
+ * und ging als Grabstein an alle anderen Geraete.
+ *
+ * <p>Am 25.08.2026 hat genau das einen Bestand gekostet. "Zurueckgehalten" und
+ * "geloescht" sind seither zwei verschiedene Auskuenfte.
+ */
+function zurueckgehalten(favoriten) {
+  const keys = new Set();
+  for (const favorit of favoriten || []) {
+    if (!String(favorit?.watchpartyRoom || "")) continue;
+    const key = titelSchluessel(favorit);
+    if (key) keys.add(key);
+  }
+  return [...keys];
+}
+
 /** Ein Eintrag, wie ihn ein Stand von einem anderen Geraet hergibt. */
 function erzeugen(stand, provider, umgebung = {}) {
   const url = fortschritt.absoluteHttpUrl(stand?.url || "", provider.startUrl || "");
@@ -249,6 +272,7 @@ function anbieterFinden(anbieter, url, providerName) {
 
 module.exports = {
   titelSchluessel,
+  zurueckgehalten,
   anbieterFinden,
   eintragFinden,
   staende,

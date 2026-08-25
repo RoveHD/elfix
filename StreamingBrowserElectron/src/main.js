@@ -1827,7 +1827,7 @@ ipcMain.handle("geraete:trennen", () => {
 // Anbieter dazu fehlte. Ist er inzwischen da, kommt der Titel damit nach.
 ipcMain.handle("geraete:jetzt-abgleichen", () => {
   geraete.vollAbgleichen();
-  geraete.abgleichen(geraeteStaende());
+  geraete.abgleichen(geraeteStaende(), geraeteZurueckgehalten());
   geraete.anhaengen(geraeteSitzungen());
   return geraete.status();
 });
@@ -2222,6 +2222,11 @@ function getProviderView(provider) {
       console.log(`[watchparty-sync] ${String(nachricht).slice(watchpartySync.MELDE_SYNC.length)}`);
       return;
     }
+    // Ob die Bedienelemente des Players zu sehen sind. Das interessiert nur
+    // Android: dort haengt die Teilnehmerleiste im Vollbild daran. Am Rechner
+    // steht die Kopfzeile ohnehin - hier wird die Zeile nur weggeraeumt, damit
+    // sie nicht als Seitenmeldung im Protokoll landet.
+    if (String(nachricht || "").startsWith(watchpartySync.MELDE_UI)) return;
     // Eine Chatzeile aus der Seite. Sie geht an den Raum, in dem gerade
     // geschaut wird - und nur dann, wenn es einen gibt.
     const chat = String(nachricht || "").match(/^__elfix:chat:([\s\S]+)$/);
@@ -5342,6 +5347,13 @@ function geraeteStaende() {
   return geraeteStand.staende(favorites);
 }
 
+// Die Titel, die es hier gibt und die trotzdem nicht abgeglichen werden - der
+// Stand einer Watchparty gehoert der Runde. Sie gehen mit, damit der Abgleich
+// ihr Fehlen nicht als Loeschung liest.
+function geraeteZurueckgehalten() {
+  return geraeteStand.zurueckgehalten(favorites);
+}
+
 
 // Die Wiedergabesitzungen, die dieses Geraet noch nicht gemeldet hat.
 //
@@ -5386,7 +5398,7 @@ function geraeteAbgleichSpaeter(verzoegerung = GERAETE_ABGLEICH_MS) {
   geraeteAbgleichTimer = setTimeout(() => {
     geraeteAbgleichTimer = 0;
     try {
-      geraete.abgleichen(geraeteStaende());
+      geraete.abgleichen(geraeteStaende(), geraeteZurueckgehalten());
       geraete.anhaengen(geraeteSitzungen());
     } catch (fehler) {
       console.log(`[ELFIX GERAETE] Abgleich fehlgeschlagen: ${fehler?.message || fehler}`);
@@ -5786,28 +5798,46 @@ function raeumeWatchpartyEintraegeAuf() {
     .filter((eintrag) => eintrag.joined)
     .map((eintrag) => `${eintrag.room}|${eintrag.key}`));
 
-  const behalten = [];
-  const entfernt = [];
+  // Geloest wird die Bindung, nicht der Eintrag.
+  //
+  // Hier stand einmal ein Loeschen, und es hat einen ganzen Bestand gekostet:
+  // am 25.08.2026 um 22:20:15 verschwanden 67 Eintraege in derselben Sekunde -
+  // Mediathek, Weiterschauen, Verlauf. Jeder von ihnen trug einen Raum, dem
+  // dieses Geraet gerade nicht beigetreten war, und das genuegte.
+  //
+  // Der Denkfehler ist der Umfang. "Ich bin in dieser Runde nicht mehr dabei"
+  // heisst, dass der Stand *der Runde* hier nichts mehr verloren hat - nicht,
+  // dass es den Titel nie gab. Was jemand gesehen hat, gehoert ihm und nicht
+  // dem Raum. Also faellt nur weg, was zur Runde gehoert: die Bindung, der
+  // fremde Fortschritt und der Name dessen, der ihn gemeldet hat. Titel,
+  // Fortschritt und Verlauf bleiben stehen, und der Eintrag zaehlt ab jetzt
+  // wieder privat.
+  //
+  // Es kam obendrein doppelt zurueck: `geraete-stand.staende` uebergeht jeden
+  // Favoriten mit Raum, ein geloeschter Eintrag fehlt also auch im
+  // Geraeteabgleich - und ging von dort als Grabstein an alle anderen Geraete.
+  // Ein geloeschter Bestand war damit ueberall geloescht.
+  const geloest = [];
   for (const favorite of favorites) {
     const raum = String(favorite.watchpartyRoom || "");
     // Ein eingerichteter Raum wird nur angefasst, wenn seine Verbindung steht
     // und seine Mitgliedschaften nachgetragen wurden. Fuer entfernte Raeume
-    // gilt das nicht - deren Staende sollen weg.
+    // gilt das nicht - deren Bindung soll weg.
     if (!raum
       || (eingerichtet.has(raum) && (!verbunden.has(raum) || !watchpartyWiederhergestellt.has(raum)))
       || dabei.has(`${raum}|${watchpartyKey(favorite)}`)) {
-      behalten.push(favorite);
       continue;
     }
-    entfernt.push(`${favorite.title} (${raum})`);
-    if (activeFavoriteId === favorite.id) activeFavoriteId = null;
+    favorite.watchpartyRoom = "";
+    favorite.watchpartyFrom = "";
+    favorite.watchpartyAt = "";
+    geloest.push(`${favorite.title} (${raum})`);
   }
-  if (!entfernt.length) return;
+  if (!geloest.length) return;
 
-  favorites = behalten;
   saveFavorites();
   sendActiveState();
-  console.log(`[ELFIX WATCHPARTY] Stand verworfen, nicht mehr dabei: ${entfernt.join(", ")}`);
+  console.log(`[ELFIX WATCHPARTY] Bindung geloest, nicht mehr dabei: ${geloest.join(", ")}`);
 }
 
 // Jeder Raum fuehrt seinen eigenen Weiterschauen-Eintrag. Wer denselben Anime

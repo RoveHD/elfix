@@ -76,6 +76,14 @@ final class Livestreifen {
 
     /** So lange bleiben die Details offen, wenn niemand mehr etwas tut. */
     private static final long ZUKLAPPEN_MS = 12000;
+    /**
+     * Der Rueckfall, falls der Player nie sagt, ob seine Leiste steht.
+     *
+     * <p>Er greift nur, solange kein einziger Bericht angekommen ist. Sobald
+     * einer da war, gilt allein der - ein Zeitgeber daneben waere die zweite
+     * Uhr, die nach ein paar Sekunden anders steht als die des Players.
+     */
+    private static final long RUECKFALL_RUHE_MS = 3500;
     /** Der Takt, in dem die Uhren nachziehen. Dieselbe Sekunde wie am Rechner. */
     private static final long TAKT_MS = 1000;
 
@@ -101,6 +109,44 @@ final class Livestreifen {
     /** Ob gerade privat geschaut wird, obwohl der Titel in einer Runde steht. */
     private boolean privat;
     private boolean laeuft;
+    /* ------------------------------------- Im Vollbild: mit der Steuerung */
+    /*
+     * Der Streifen liegt im Vollbild ueber dem Video. Dort darf er nicht
+     * dauerhaft stehen - und er soll auch nicht nach eigenem Zeitplan kommen
+     * und gehen, sondern genau dann, wenn der Player seine eigenen
+     * Bedienelemente zeigt. Der Player meldet das selbst (JW Player, den VOE
+     * fuehrt, setzt beim Ausblenden eine Klasse an seinem Wurzelknoten); die
+     * Meldung kommt ueber {@link Mitschauen} hier an.
+     *
+     * Solange von dort nichts kommt - ein Hoster ohne erkennbare Leiste, ein
+     * Rahmen, in den kein Skript kommt -, zaehlt die Regung: nach kurzer Ruhe
+     * verschwindet der Streifen, jede Beruehrung und jeder Tastendruck holt ihn
+     * zurueck. Das ist der Rueckfall, nicht die Regel.
+     */
+    /** Ob der Streifen gerade im Vollbild-Rahmen haengt. */
+    private boolean imVollbild;
+    /** Ob der Streifen gerade zu sehen sein soll. */
+    private boolean steuerungAn = true;
+    /** Was der Player zuletzt gesagt hat. Darauf faellt eine Regung wieder zurueck. */
+    private boolean gemeldetAn = true;
+    /** Ob der Player ueberhaupt jemals etwas gesagt hat. */
+    private boolean steuerungGemeldet;
+    /**
+     * Nach einer Regung zurueck zu dem, was der Player sagt.
+     *
+     * <p>Nicht "verbergen": eine Beruehrung ist eine Ausnahme auf Zeit, kein
+     * neuer Zustand. Danach gilt wieder der Player - und solange der noch nichts
+     * gesagt hat, gilt "weg". Ohne diesen Rueckweg blieb der Streifen nach einem
+     * Tipp stehen, weil der Player nur <em>Aenderungen</em> meldet und seine
+     * naechste Meldung dieselbe wie die letzte gewesen waere.
+     */
+    private final Runnable rueckfallVerbergen = () -> {
+        boolean ziel = steuerungGemeldet && gemeldetAn;
+        if (steuerungAn == ziel) return;
+        steuerungAn = ziel;
+        if (!ziel) setzeOffen(false);
+        steuerungAnwenden();
+    };
     /** Woran erkannt wird, dass sich die Teilnehmer wirklich geaendert haben. */
     private String teilnehmerMarke = "";
     private final List<Livestand.Marke> letzteMarken = new ArrayList<>();
@@ -251,6 +297,84 @@ final class Livestreifen {
         details.setVisibility(View.GONE);
         wurzel.setVisibility(View.GONE);
         haupt.removeCallbacks(zuklappen);
+        haupt.removeCallbacks(rueckfallVerbergen);
+    }
+
+    /* ------------------------------------- Im Vollbild: mit der Steuerung */
+
+    /**
+     * Der Player sagt, ob seine Bedienelemente zu sehen sind.
+     *
+     * <p>Ab der ersten Meldung gilt nur noch sie. Der Rueckfall ueber die
+     * Regung faellt damit weg - er war nur da, solange niemand etwas sagte.
+     */
+    /**
+     * Ein neuer Player - was der alte gemeldet hat, gilt nicht mehr.
+     *
+     * <p>Ohne das behielte ein Hoster ohne erkennbare Leiste die Auskunft des
+     * vorigen: der Streifen bliebe stehen, weil einmal jemand "sichtbar"
+     * gesagt hat, und der Rueckfall griffe nie wieder.
+     */
+    void playerNeu() {
+        steuerungGemeldet = false;
+        gemeldetAn = true;
+        steuerungAn = true;
+        haupt.removeCallbacks(rueckfallVerbergen);
+        if (imVollbild) haupt.postDelayed(rueckfallVerbergen, RUECKFALL_RUHE_MS);
+        steuerungAnwenden();
+    }
+
+    void steuerungSichtbar(boolean an) {
+        steuerungGemeldet = true;
+        gemeldetAn = an;
+        haupt.removeCallbacks(rueckfallVerbergen);
+        if (steuerungAn == an) return;
+        steuerungAn = an;
+        if (!an) setzeOffen(false);
+        steuerungAnwenden();
+    }
+
+    /**
+     * Jemand hat etwas getan - Beruehrung, D-Pad, Fernbedienung.
+     *
+     * <p>Der Streifen kommt zurueck. Solange der Player nichts meldet, ist das
+     * zugleich der Anfang der Ruhezeit, nach der er wieder verschwindet; sobald
+     * er meldet, ist es nur noch eine Anregung, und sein naechster Bericht
+     * entscheidet.
+     */
+    void regung() {
+        haupt.removeCallbacks(rueckfallVerbergen);
+        // Immer mit Rueckweg. Auch wenn der Player mitredet: er meldet nur
+        // Aenderungen, und "ich zeige meine Leiste" hat er womoeglich schon
+        // vor dieser Beruehrung gesagt. Ohne den Rueckweg bliebe der Streifen
+        // dann bis in alle Ewigkeit stehen.
+        haupt.postDelayed(rueckfallVerbergen, RUECKFALL_RUHE_MS);
+        if (steuerungAn) return;
+        steuerungAn = true;
+        steuerungAnwenden();
+    }
+
+    /**
+     * Sichtbarkeit anwenden.
+     *
+     * <p>Ausserhalb des Vollbilds steht der Streifen wie bisher: er liegt dort
+     * neben dem Bild und verdeckt nichts. Im Vollbild liegt er darauf - und
+     * dort gilt die Steuerung des Players.
+     */
+    private void steuerungAnwenden() {
+        wurzel.setVisibility(zeigen(sichtbar, imVollbild, steuerungAn) ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * Die Regel selbst - ohne Ansicht, damit sie sich pruefen laesst.
+     *
+     * <p>Ausserhalb des Vollbilds steht der Streifen neben dem Bild und
+     * verdeckt nichts; dort haengt er allein daran, ob es ueberhaupt etwas zu
+     * zeigen gibt. Im Vollbild liegt er auf dem Video - und dort gilt, was der
+     * Player ueber seine eigenen Bedienelemente sagt.
+     */
+    static boolean zeigen(boolean etwasZuZeigen, boolean imVollbild, boolean steuerungAn) {
+        return etwasZuZeigen && (!imVollbild || steuerungAn);
     }
 
     /**
@@ -304,7 +428,7 @@ final class Livestreifen {
             : zwischenruf;
 
         sichtbar = true;
-        wurzel.setVisibility(View.VISIBLE);
+        steuerungAnwenden();
         zeile.setText(kopfText);
         // Grün heisst: die Runde laeuft. Gelb: sie steht. Rot: die Leitung ist
         // weg. Drei Zustaende, drei Farben - eine Zeile allein liest niemand im
@@ -330,7 +454,7 @@ final class Livestreifen {
     private void privatZeigen() {
         sichtbar = true;
         privat = true;
-        wurzel.setVisibility(View.VISIBLE);
+        steuerungAnwenden();
         punkt.setTextColor(Theme.TEXT_DISABLED);
         zeile.setText("Privat");
         String raum = umgebung.mitschauen().eingestellterRaum();
@@ -574,6 +698,16 @@ final class Livestreifen {
         // Ausgeklappt in ein Vollbild zu wandern hiesse, dem Video einen Kasten
         // vor die Nase zu stellen. Er faengt dort zusammengeklappt an.
         setzeOffen(false);
+        imVollbild = rahmen != null;
+        // Beim Eintreten erst einmal da: die Bedienelemente des Players sind in
+        // diesem Augenblick fast immer offen, und ein Streifen, der gar nicht
+        // erst erscheint, sieht aus wie einer, der fehlt. Es ist dieselbe
+        // Ausnahme auf Zeit wie bei einer Beruehrung - was danach gilt, sagt
+        // der Player.
+        steuerungAn = true;
+        haupt.removeCallbacks(rueckfallVerbergen);
+        if (imVollbild) haupt.postDelayed(rueckfallVerbergen, RUECKFALL_RUHE_MS);
+        steuerungAnwenden();
         if (rahmen != null) {
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

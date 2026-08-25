@@ -107,6 +107,31 @@ public final class Mitschauen {
          * niemand die eine Taste, die noch helfen wuerde.
          */
         void hinweisZeigen(String text);
+
+        /**
+         * Ob die Bedienelemente des Players gerade zu sehen sind.
+         *
+         * <p>Der Player meldet es selbst - JW Player, den VOE fuehrt, setzt am
+         * Wurzelknoten eine Klasse, sobald er ausblendet. Daran haengt die
+         * Teilnehmerleiste im Vollbild: sie kommt mit den Bedienelementen und
+         * geht mit ihnen. Ein eigener Zeitgeber daneben waere eine zweite Uhr,
+         * die nach zwei Sekunden anders steht.
+         */
+        void steuerungSichtbar(boolean sichtbar);
+
+        /**
+         * Der oertliche Start ist durch - jetzt darf das Vollbild kommen.
+         *
+         * <p>Und keinen Augenblick frueher. Genau das war der gemeldete Fehler:
+         * ein Tipp auf "Weiterschauen" oeffnete das Vollbild, und darin stand
+         * ein Player, der nie eine Quelle bekommen hatte.
+         *
+         * @param laeuft ob wirklich etwas laeuft. Bei {@code false} ist der
+         *               Player da, startet aber nicht von selbst - dann bleibt
+         *               das Vollbild aus und der Zuschauer bekommt einen
+         *               Hinweis statt einer schwarzen Flaeche.
+         */
+        void oertlicherStartFertig(boolean laeuft);
     }
 
     private final Kern kern;
@@ -119,6 +144,40 @@ public final class Mitschauen {
     private String meldeAktion = "__elfix:wp:";
     private String meldeStand = "__elfix:wp:stand:";
     private String meldeSync = "__elfix:wp:sync:";
+    private String meldeUi = "__elfix:wp:ui:";
+
+    /* ------------------------------------------------ Titel und Raum hier */
+
+    /*
+     * Unter welchem Schluessel die offene Seite in der Runde gefuehrt wird.
+     *
+     * <h3>Warum das nicht mehr hier ausgerechnet wird</h3>
+     *
+     * <p>Es wurde hier ausgerechnet, und zwar falsch. Diese Klasse bildete den
+     * Schluessel aus der Adresse ("https://aniworld.to/anime/stream/bleach"),
+     * der Rechner bildet ihn aus Art und Titel ("serie:bleach") - dieselbe
+     * Runde, derselbe Anime, zwei Schluessel. Was daran haengt, haengt an
+     * <em>allem</em>: die Mitgliedschaft im Titel, die Standmeldung, jeder
+     * Steuerbefehl, die Hostwahl. Ein Telefon fand den vom Rechner
+     * eingestellten Titel deshalb nie, meldete nie einen Stand, tauchte drueben
+     * weder als Mitschauer noch als Host auf, und seine Pause ging nirgendwo
+     * hin. Vier gemeldete Fehler, ein Missverstaendnis.
+     *
+     * <p>Jetzt fragt diese Klasse den Kern - {@code watchparty-bruecke.lageFuer}
+     * benutzt dieselbe Regel wie {@code watchpartySerieForUrl} am Rechner. Die
+     * Antwort kommt asynchron und wird hier gehalten, weil die Meldungen aus
+     * dem Player sofort beantwortet werden muessen. Sie ist damit hoechstens
+     * einen Augenblick alt - genauso alt wie der Raumzustand, aus dem sie
+     * stammt.
+     */
+    /** Die Adresse, fuer die die gepufferte Lage gilt. */
+    private String lageAdresse = "";
+    /** Der Titelschluessel dazu, wie das Relay ihn fuehrt - leer heisst: in keiner Runde. */
+    private String lageKey = "";
+    /** Der Raum dazu, ohne Ruecksicht auf "Live aus". */
+    private String lageRaum = "";
+    /** Ob gerade eine Auskunft laeuft. Verhindert, dass jeder Herzschlag eine neue stellt. */
+    private boolean lageLaeuft;
 
     /**
      * Die Sitzung des laufenden Players.
@@ -207,6 +266,26 @@ public final class Mitschauen {
     private String meldeStart = "__elfix:wp:start:";
     /** Ob gerade ein Auftrag laeuft. Nur dann klopft der Takt an. */
     private boolean autostartLaeuft;
+    /**
+     * Ob der laufende Auftrag ein oertlicher ist - "Weiterschauen" statt Runde.
+     *
+     * <p>Derselbe Ablauf, dieselben Fristen, dasselbe Startskript; der
+     * Unterschied ist, dass es niemanden zu fragen gibt und der Stand nicht vom
+     * Host kommt, sondern aus der eigenen Ablage. Und dass am Ende das Vollbild
+     * kommt - erst dann, und nur wenn wirklich etwas laeuft.
+     */
+    private boolean oertlicherStart;
+    /**
+     * Ob nach einem gelungenen Start das Vollbild kommen soll.
+     *
+     * <p>Der Merker gilt fuer beide Faelle - den oertlichen Start aus
+     * "Weiterschauen" und den Start aus einer Runde. Beide enden im selben
+     * Wunsch ("jetzt Vollbild") und duerfen ihn beide erst erfuellen, wenn der
+     * Player gemeldet hat, dass wirklich etwas laeuft. Genau das fehlte: das
+     * Vollbild kam, sobald ein Player-Rahmen <em>existierte</em>, und darin
+     * stand dann eine Ueberlagerung ohne Quelle.
+     */
+    private boolean vollbildDanach;
     /** Der Takt, der den Auftrag vorantreibt. Er haelt an, sobald der Auftrag fertig ist. */
     private final Runnable autostartTakt = this::autostartWeiter;
     /** Wie oft nachgesehen wird, ob der Auftrag weiterkommt. */
@@ -234,6 +313,7 @@ public final class Mitschauen {
             praefix("watchparty-bruecke.MELDE_STAND", wert -> meldeStand = wert);
             praefix("watchparty-bruecke.MELDE_SYNC", wert -> meldeSync = wert);
             praefix("watchparty-bruecke.MELDE_START", wert -> meldeStart = wert);
+            praefix("watchparty-bruecke.MELDE_UI", wert -> meldeUi = wert);
         });
     }
 
@@ -294,7 +374,55 @@ public final class Mitschauen {
         // Der eigene Stand zuerst - ohne ihn gilt dieses Geraet dem Relay als
         // nicht aktiv, und die Antwort auf den Abgleich bliebe aus.
         letzteStandMeldung = 0;
+        anwesendMelden();
         abgleichen();
+    }
+
+    /**
+     * "Ich sitze an dieser Folge" - ohne auf den Player zu warten.
+     *
+     * <p>Das war die zweite Haelfte des Fehlers, und sie faellt erst am Geraet
+     * auf. Alles, was das Relay ueber die Anwesenheit weiss, kam bisher vom
+     * Horcher im Player - und der haengt an Medien-Ereignissen eines
+     * {@code <video>} mit Laufzeit. Bei VOE gibt es die erst nach dem Klick auf
+     * die Ueberlagerung des Hosters. Also:
+     *
+     * <ol>
+     *   <li>kein Video, kein Ereignis, keine Standmeldung;
+     *   <li>keine Standmeldung, keine Sitzung - das Geraet gilt dem Relay als
+     *       nicht aktiv und wird nie Host;
+     *   <li>kein Host, keine Antwort auf den Abgleich;
+     *   <li>keine Antwort, kein Start - und damit nie ein Video.
+     * </ol>
+     *
+     * <p>Gemessen am 25.08.2026 auf dem Telefon: vier Versuche "Stand der Runde
+     * wird geholt", jedes Mal ohne Antwort, danach "kein start nach 4
+     * Versuchen" und ein stehendes Bild. Dieselbe Schleife liess das Geraet am
+     * Rechner weder als Mitschauer noch als Host auftauchen, solange die Folge
+     * nur geladen und nicht gestartet war.
+     *
+     * <p>Die Meldung durchschneidet sie. Sie behauptet nichts, was nicht
+     * stimmt: die Stelle ist die der Runde, angehalten ist wahr, und die
+     * Sitzung ist die dieses Players. Sobald wirklich etwas laeuft, ueberholt
+     * der Horcher sie im Sekundentakt.
+     */
+    private void anwesendMelden() {
+        if (kern == null || !kern.istBereit()) return;
+        String key = schluessel();
+        String raum = raum();
+        if (key.isEmpty() || raum.isEmpty()) return;
+        JSONObject eintrag = eintragZu(key);
+        JSONObject stand = standRumpf();
+        try {
+            stand.put("position", eintrag == null ? 0 : rundenStelle(eintrag));
+            stand.put("paused", true);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Anwesenheit nicht gebaut", fehler);
+            return;
+        }
+        kern.rufe("watchparty-bruecke.meldeStand", Kern.args(key, stand, raum), (wert, fehler) -> {
+            if (fehler != null) Log.d(TAG, "Anwesenheit nicht gemeldet: " + fehler);
+        });
     }
 
     /**
@@ -341,16 +469,27 @@ public final class Mitschauen {
      */
     public void meldung(String zeile) {
         if (!istMeldung(zeile) || kern == null || !kern.istBereit()) return;
-        if (watchparty == null || !watchparty.istEingeschaltet()) return;
-        if (!imVordergrund) return;
+
+        // Ob die Bedienelemente des Players zu sehen sind. Das gilt unabhaengig
+        // von der Watchparty und auch im Hintergrund: es ist eine Auskunft ueber
+        // die Anzeige und keine Tat, die irgendwohin gemeldet wuerde.
+        if (zeile.startsWith(meldeUi)) {
+            steuerungSichtbarkeit(zeile);
+            return;
+        }
 
         // Der Bericht eines Autostart-Versuchs. Er geht nicht an die Runde
         // hinaus - er sagt diesem Geraet, ob sein eigener Start gelungen ist.
-        // Er kommt vor allem anderen, weil er sonst als Tat gelesen wuerde.
+        // Er kommt vor allem anderen, weil er sonst als Tat gelesen wuerde, und
+        // vor dem Watchparty-Schalter, weil "Weiterschauen" auch ohne Runde
+        // starten muss.
         if (zeile.startsWith(meldeStart)) {
             autostartBericht(zeile);
             return;
         }
+
+        if (watchparty == null || !watchparty.istEingeschaltet()) return;
+        if (!imVordergrund) return;
         if (zeile.startsWith(meldeSync)) {
             // Nur im Debug-Bau und nur eine Zeile: die Messung laeuft im
             // Zwei-Sekunden-Takt, und das Skript meldet ohnehin nur, wenn
@@ -488,8 +627,12 @@ public final class Mitschauen {
         }
         // Zurueck: sofort wieder melden, damit die Runde weiss, dass hier
         // wieder jemand ist. Die naechste Meldung des Horchers geht dann
-        // ungebremst durch.
+        // ungebremst durch - aber warten muss darauf niemand.
         letzteStandMeldung = 0;
+        // Und der Einstieg gilt neu: waehrend die App weg war, ist die Runde
+        // weitergelaufen.
+        angeklinkt.clear();
+        anwesendMelden();
     }
 
     /**
@@ -503,17 +646,20 @@ public final class Mitschauen {
         if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) return;
         if (watchparty == null || !watchparty.istEingeschaltet()) return;
         if (folgtDerRunde) return;
-        String key = schluesselFuer(url);
-        String raum = raum();
-        if (key.isEmpty() || raum.isEmpty()) return;
         // Wer selbst weiterblaettert, meint den Auftrag von vorhin nicht mehr -
         // es sei denn, er zeigt genau auf diese Folge. Aus der Watchparty-Seite
         // geoeffnet ist beides dasselbe Ereignis.
         autostartAbbrechen("eigener Folgenwechsel", url);
-        kern.rufe("watchparty-bruecke.folgenwechselMelden", Kern.args(key, url, raum),
-            (wert, fehler) -> {
-                if (fehler != null) Log.d(TAG, "Folgenwechsel nicht gemeldet: " + fehler);
-            });
+        // Zu welchem Titel und welcher Runde die neue Seite gehoert, weiss der
+        // Kern - hier gilt sie noch gar nicht als offen.
+        lageFuer(url, (key, raum) -> {
+            if (key.isEmpty() || raum.isEmpty()) return;
+            if (liveAus.contains(liveMarke(key, raum))) return;
+            kern.rufe("watchparty-bruecke.folgenwechselMelden", Kern.args(key, url, raum),
+                (wert, fehler) -> {
+                    if (fehler != null) Log.d(TAG, "Folgenwechsel nicht gemeldet: " + fehler);
+                });
+        });
     }
 
     /**
@@ -544,6 +690,7 @@ public final class Mitschauen {
             letzteStandMeldung = 0;
             WebView ansicht = umgebung.spieler();
             if (ansicht != null) anPlayer(ansicht);
+            anwesendMelden();
             abgleichen();
         }, 1200);
     }
@@ -764,10 +911,10 @@ public final class Mitschauen {
         // im Kern liegt und nicht in dieser Ansicht - genau das war der Fehler
         // der alten Kette: `autoStartRequested` und `autoStartUrl` gehoerten
         // dem WebView und waren nach dem Wechsel weg.
-        String neuerKey = schluesselFuer(ziel);
-        JSONObject neuerEintrag = eintragZu(neuerKey);
-        autostartAnfordern(neuerKey,
-            neuerEintrag == null ? raum() : neuerEintrag.optString("room", raum()), ziel);
+        String raumJetzt = raum();
+        lageFuer(ziel, (neuerKey, neuerRaum) -> autostartAnfordern(
+            neuerKey.isEmpty() ? lageKey : neuerKey,
+            neuerRaum.isEmpty() ? raumJetzt : neuerRaum, ziel));
         haupt.post(() -> umgebung.folgeOeffnen(umgebung.anbieter(), ziel));
         return true;
     }
@@ -831,9 +978,105 @@ public final class Mitschauen {
             }
             Log.i(TAG, "Autostart angefordert " + wert);
             autostartLaeuft = true;
+            oertlicherStart = false;
             haupt.removeCallbacks(autostartTakt);
             haupt.postDelayed(autostartTakt, AUTOSTART_TAKT_MS);
         });
+    }
+
+    /**
+     * Ob die Bedienelemente des Players zu sehen sind.
+     *
+     * <p>Zerlegt wird die Zeile im Kern - derselben Stelle, an der das Skript
+     * sie zusammensetzt. Eine unlesbare Zeile aendert nichts: sie darf die
+     * Leiste nicht wegnehmen.
+     */
+    private void steuerungSichtbarkeit(String zeile) {
+        kern.rufe("watchparty-bruecke.uiLesen", Kern.args(zeile), (wert, fehler) -> {
+            if (fehler != null || wert == null || "null".equals(wert)) return;
+            try {
+                boolean an = new JSONObject(wert).optBoolean("sichtbar", true);
+                Log.d(TAG, "Player-Steuerung " + (an ? "sichtbar" : "ausgeblendet"));
+                umgebung.steuerungSichtbar(an);
+            } catch (Exception ausnahme) {
+                Log.d(TAG, "Sichtbarkeit unlesbar: " + ausnahme);
+            }
+        });
+    }
+
+    /**
+     * Der oertliche Start: "Weiterschauen" soll wirklich weiterschauen.
+     *
+     * <p>Bis hierher endete diese Kette im Vollbild - so stand es sogar im
+     * Kommentar von {@code autoStartFullscreen}: "The chain stops here, with
+     * the player up in fullscreen and paused." Fuer eine Fernbedienung war das
+     * eine bewusste Zurueckhaltung; fuer einen Tipp auf "Weiterschauen" ist es
+     * schlicht der gemeldete Fehler - Vollbild da, Folge steht.
+     *
+     * <p>Was fehlte, war nie das Wissen: der Ablauf, der einen VOE-Player
+     * wirklich zum Laufen bringt, steht seit dem Folgen-Autostart in
+     * {@code watchparty-autostart.js} - Ueberlagerung klicken, auf die Quelle
+     * warten, Stelle setzen, starten, nachsehen, ob die Stelle weiterlaeuft.
+     * Er hing nur an einer Runde. Jetzt gilt er auch ohne: derselbe Auftrag,
+     * dieselben Fristen, dasselbe Skript, nur mit dem gespeicherten Stand
+     * statt dem des Hosts.
+     *
+     * @param url    die Folgenseite, die gerade offen ist
+     * @param stelle der gespeicherte Wiedergabestand in Sekunden, 0 wenn keiner
+     */
+    public boolean oertlichenStartAnfordern(String url, double stelle) {
+        if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) return false;
+        // Was auch immer gleich startet: danach das Vollbild.
+        vollbildDanach = true;
+        // Steht in einer Runde schon ein Auftrag, gehoert ihm der Player. Er
+        // holt den Stand des Hosts und ist damit die genauere Antwort - das
+        // Vollbild kommt dann von ihm.
+        if (autostartLaeuft && !oertlicherStart) {
+            Log.i(TAG, "Oertlicher Start entfaellt - die Runde startet diesen Player");
+            return true;
+        }
+        int[] folge = folgeAus(url);
+        JSONObject angaben = new JSONObject();
+        try {
+            angaben.put("oertlich", true);
+            angaben.put("url", url);
+            angaben.put("stelle", Math.max(0, stelle));
+            angaben.put("season", folge[0]);
+            angaben.put("episode", folge[1]);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Oertlicher Startauftrag nicht gebaut", fehler);
+            return false;
+        }
+        kern.rufe("watchparty-bruecke.autostartAnfordern", Kern.args(angaben), (wert, fehler) -> {
+            if (fehler != null) {
+                Log.w(TAG, "Oertlicher Start nicht angefordert: " + fehler);
+                return;
+            }
+            Log.i(TAG, "Oertlicher Start angefordert " + wert
+                + " bei " + Math.round(stelle) + "s");
+            autostartLaeuft = true;
+            oertlicherStart = true;
+            haupt.removeCallbacks(autostartTakt);
+            haupt.post(autostartTakt);
+        });
+        return true;
+    }
+
+    /** Ob gerade ein oertlicher Start laeuft - fuer den Aufrufer, der auf ihn wartet. */
+    public boolean oertlicherStartLaeuft() {
+        return autostartLaeuft && oertlicherStart;
+    }
+
+    /**
+     * Einen oertlichen Start abbrechen.
+     *
+     * <p>Wer waehrend des Anlaufs etwas anderes anfasst - zurueck, ein anderer
+     * Titel, die Ansicht verlassen -, meint ihn nicht mehr. Ohne das startet
+     * eine halbe Minute spaeter eine Folge, die niemand mehr sehen will.
+     */
+    public void oertlichenStartAbbrechen(String grund) {
+        if (!autostartLaeuft || !oertlicherStart) return;
+        autostartAbbrechen(grund);
     }
 
     /**
@@ -851,11 +1094,21 @@ public final class Mitschauen {
      */
     private void autostartWeiter() {
         if (!autostartLaeuft || kern == null || !kern.istBereit()) return;
-        int[] folge = folgeAus(umgebung.adresse());
+        String adresse = umgebung.adresse();
+        int[] folge = folgeAus(adresse);
+        String key = schluessel();
+        JSONObject eintrag = eintragZu(key);
         JSONObject lage = new JSONObject();
         try {
-            lage.put("key", schluessel());
+            lage.put("key", key);
             lage.put("room", raum());
+            // Fuehrt dieses Geraet die Runde, gibt es niemanden zu fragen: der
+            // Stand der Runde steht im Raumzustand, und der Start geht sofort.
+            lage.put("binHost", binHost(key));
+            lage.put("stelle", eintrag == null ? 0 : rundenStelle(eintrag));
+            // Die Adresse: ein oertlicher Auftrag haengt an ihr statt an Raum
+            // und Titelschluessel, und der Kern rechnet sie selbst um.
+            lage.put("url", adresse == null ? "" : adresse);
             lage.put("season", folge[0]);
             lage.put("episode", folge[1]);
         } catch (Exception fehler) {
@@ -880,20 +1133,42 @@ public final class Mitschauen {
             String grund = schritt.optString("grund", "");
             if ("aufgeben".equals(tun)) {
                 autostartLaeuft = false;
+                oertlicherStart = false;
                 haupt.removeCallbacks(autostartTakt);
                 boolean gelungen = "laeuft".equals(grund) || "pausiert".equals(grund);
                 boolean gegenstandslos = grund.isEmpty() || "veraltet".equals(grund)
                     || "kein auftrag".equals(grund) || "fertig".equals(grund);
                 if (gelungen || gegenstandslos) {
                     Log.i(TAG, "Autostart beendet: " + grund);
+                    if (gelungen) vollbildEinloesen(true);
+                    else vollbildDanach = false;
                     return;
                 }
                 // Ein Fehlschlag bleibt sichtbar. Still zu scheitern war der
                 // alte Zustand - dann sass man vor einem stehenden Bild und
                 // wusste nicht, woran es lag.
                 Log.w(TAG, "Autostart aufgegeben: " + grund);
-                umgebung.hinweisZeigen("Startet nicht von selbst - bitte einmal Play druecken");
+                // Kein Vollbild auf einen Player, der nicht laeuft: der
+                // Zuschauer bekommt den Player, wie er ist, und eine klare
+                // Ansage - statt einer schwarzen Flaeche, in der nichts
+                // geschieht.
+                if (vollbildDanach) vollbildEinloesen(false);
+                else umgebung.hinweisZeigen("Startet nicht von selbst - bitte einmal Play druecken");
                 return;
+            }
+            // Ohne Runde gibt es niemanden zu fragen: der Kern hat das Skript
+            // schon fertig, weil der Stand im Auftrag steht.
+            if ("starten".equals(tun)) {
+                String skript = schritt.optString("skript", "");
+                WebView ansicht = umgebung.spieler();
+                if (!skript.isEmpty() && ansicht != null && rahmen != null) {
+                    // In *alle* Rahmen, nicht nur in die mit Video: solange die
+                    // Quelle hinter der Ueberlagerung des Hosters liegt, traegt
+                    // der Rahmen zwar ein <video>, aber ohne Laufzeit - und hat
+                    // sich als "mit Video" nie gemeldet.
+                    int erreicht = rahmen.anAlle(ansicht, skript);
+                    Log.i(TAG, "Oertlicher Start (" + grund + ") in " + erreicht + " Rahmen");
+                }
             }
             if ("anfordern".equals(tun)) {
                 Log.i(TAG, "Autostart " + grund + " - Stand der Runde wird geholt");
@@ -902,12 +1177,44 @@ public final class Mitschauen {
                 letzteStandMeldung = 0;
                 WebView ansicht = umgebung.spieler();
                 if (ansicht != null) anPlayer(ansicht);
+                anwesendMelden();
                 abgleichen();
             }
             long warten = Math.max(AUTOSTART_TAKT_MS, schritt.optLong("wartenMs", 0));
             haupt.removeCallbacks(autostartTakt);
             haupt.postDelayed(autostartTakt, warten);
         });
+    }
+
+    /**
+     * Den Vollbildwunsch einloesen - genau einmal.
+     *
+     * <p>Ohne Wunsch geschieht nichts: ein Folgenwechsel mitten in einer Runde
+     * soll niemanden ungefragt ins Vollbild ziehen. Der Wunsch entsteht nur
+     * dort, wo jemand wirklich "jetzt schauen" gedrueckt hat.
+     */
+    private void vollbildEinloesen(boolean laeuft) {
+        if (!vollbildDanach) return;
+        vollbildDanach = false;
+        umgebung.oertlicherStartFertig(laeuft);
+    }
+
+    /** Der Vollbildwunsch gilt nicht mehr - der Zuschauer ist woanders. */
+    public void vollbildwunschVerwerfen() {
+        vollbildDanach = false;
+    }
+
+    /**
+     * Wo die Runde bei diesem Titel steht.
+     *
+     * <p>Dieselbe Vorrangregel wie ueberall: der gemeldete Stand der Runde geht
+     * vor der Angabe am Titel, weil er juenger ist. Gebraucht wird sie genau
+     * einmal - wenn dieses Geraet als Host startet und selbst wissen muss, wo.
+     */
+    private static double rundenStelle(JSONObject eintrag) {
+        JSONObject stand = eintrag.optJSONObject("progress");
+        if (stand != null) return Math.max(0, stand.optDouble("position", 0));
+        return Math.max(0, eintrag.optDouble("stelle", 0));
     }
 
     /** Was ein Versuch berichtet hat. Gelingt er, ist der Auftrag zu Ende. */
@@ -930,7 +1237,11 @@ public final class Mitschauen {
                 Log.i(TAG, "Autostart fertig: " + zustand + " bei "
                     + Math.round(bericht.optDouble("stelle", 0)) + "s");
                 autostartLaeuft = false;
+                oertlicherStart = false;
                 haupt.removeCallbacks(autostartTakt);
+                // Jetzt, und keinen Augenblick frueher: das Vollbild kommt erst,
+                // wenn der Player gemeldet hat, dass die Stelle weiterlaeuft.
+                vollbildEinloesen(true);
                 umgebung.anzeigeAuffrischen();
                 return;
             }
@@ -960,24 +1271,36 @@ public final class Mitschauen {
      */
     private void autostartAbbrechen(String grund, String ziel) {
         if (!autostartLaeuft || kern == null || !kern.istBereit()) return;
-        JSONObject lage = new JSONObject();
-        if (ziel != null && !ziel.isEmpty()) {
-            int[] folge = folgeAus(ziel);
-            String key = schluesselFuer(ziel);
-            JSONObject eintrag = eintragZu(key);
+        if (ziel == null || ziel.isEmpty()) {
+            autostartVerwerfen(new JSONObject(), grund);
+            return;
+        }
+        // Welche Runde und welcher Titel hinter dem Ziel stehen, weiss der
+        // Kern. Die Adresse geht mit: ein oertlicher Auftrag haengt an ihr und
+        // nicht an einem Titelschluessel.
+        final String zielAdresse = ziel;
+        lageFuer(zielAdresse, (key, raumDort) -> {
+            JSONObject lage = new JSONObject();
+            int[] folge = folgeAus(zielAdresse);
             try {
                 lage.put("key", key);
-                lage.put("room", eintrag == null ? raum() : eintrag.optString("room", raum()));
+                lage.put("room", raumDort.isEmpty() ? raum() : raumDort);
+                lage.put("url", zielAdresse);
                 lage.put("season", folge[0]);
                 lage.put("episode", folge[1]);
             } catch (Exception fehler) {
                 Log.e(TAG, "Lage fuer das Verwerfen nicht gebaut", fehler);
             }
-        }
+            autostartVerwerfen(lage, grund);
+        });
+    }
+
+    private void autostartVerwerfen(JSONObject lage, String grund) {
         kern.rufe("watchparty-bruecke.autostartVerwerfen", Kern.args(lage), (wert, fehler) -> {
             if (wert != null && wert.contains("true")) {
                 Log.i(TAG, "Autostart verworfen: " + grund);
                 autostartLaeuft = false;
+                oertlicherStart = false;
                 haupt.removeCallbacks(autostartTakt);
             }
         });
@@ -1114,22 +1437,91 @@ public final class Mitschauen {
 
     /** Der Titel, unter dem die offene Seite in der Runde bekannt ist. */
     private String schluessel() {
-        return schluesselFuer(umgebung.adresse());
+        lageAuffrischen();
+        return lageKey;
     }
 
     /**
-     * Derselbe Schluessel, unter dem der Titel in der Runde gefuehrt wird.
+     * Die Lage nachziehen, wenn die offene Adresse eine andere ist.
      *
-     * <p>Sichtbar fuer die Pruefung, weil daran mehr haengt als der Name
-     * vermuten laesst: der Autostart-Auftrag traegt ihn, und traege er einen
-     * anders gebildeten, spraenge der Auftrag auf einen anderen Eintrag im
-     * selben Raum ueber - oder auf gar keinen.
+     * <p>Gefragt wird der Kern, nicht diese Klasse: dort liegt dieselbe Regel,
+     * mit der der Rechner eine Adresse ihrer Runde zuordnet
+     * ({@code watchpartySerieForUrl}). Die Antwort kommt asynchron und wird
+     * gehalten - die Meldungen aus dem Player brauchen sie sofort und koennen
+     * nicht auf eine Rueckfrage warten.
+     *
+     * <p>Beim allerersten Mal ist sie damit einen Wimpernschlag zu alt. Das
+     * kostet nichts: die erste Meldung eines frischen Players kommt Sekunden
+     * spaeter, und der Horcher meldet ohnehin weiter.
      */
-    static String schluesselFuer(String url) {
-        if (url == null || url.isEmpty()) return "";
-        return url.replaceAll("(?i)/(staffel|season)-\\d+(/(episode|folge)-\\d+)?/?$", "")
-            .replaceAll("/+$", "")
-            .toLowerCase();
+    private void lageAuffrischen() {
+        if (kern == null || !kern.istBereit()) return;
+        String adresse = umgebung.adresse();
+        if (adresse == null) adresse = "";
+        if (adresse.equals(lageAdresse) || lageLaeuft) return;
+        lageLaeuft = true;
+        final String gefragt = adresse;
+        kern.rufe("watchparty-bruecke.lageFuer", Kern.args(adresse), (wert, fehler) -> {
+            lageLaeuft = false;
+            if (fehler != null || wert == null) return;
+            String key = "";
+            String raum = "";
+            try {
+                JSONObject lage = new JSONObject(wert);
+                key = lage.optString("key", "");
+                raum = lage.optString("room", "");
+            } catch (Exception ausnahme) {
+                Log.d(TAG, "Lage unlesbar: " + ausnahme);
+                return;
+            }
+            boolean neu = !key.equals(lageKey) || !raum.equals(lageRaum);
+            lageAdresse = gefragt;
+            lageKey = key;
+            lageRaum = raum;
+            if (neu) {
+                Log.i(TAG, "Watchparty-Lage: Titel " + (key.isEmpty() ? "(keiner)" : key)
+                    + ", Raum " + (raum.isEmpty() ? "(keiner)" : raum));
+                umgebung.anzeigeAuffrischen();
+            }
+        });
+    }
+
+    /**
+     * Die Lage von Grund auf neu holen.
+     *
+     * <p>Nicht nur bei einer anderen Adresse: der Raumzustand aendert sich auch
+     * unter derselben Adresse - jemand tritt bei, jemand stellt den Titel ein,
+     * eine Verbindung kommt zurueck. Dann gilt fuer dieselbe Seite ploetzlich
+     * eine Runde, von der sie eben noch nichts wusste.
+     */
+    public void lageVerwerfen() {
+        lageAdresse = "";
+        lageAuffrischen();
+    }
+
+    /**
+     * Schluessel und Raum zu irgendeiner Adresse - nicht nur zur offenen.
+     *
+     * <p>Fuer den Folgenwechsel und den Autostart: dort geht es um die Seite,
+     * die gleich aufgeht, und die steht noch nicht offen.
+     */
+    private void lageFuer(String url, java.util.function.BiConsumer<String, String> nimm) {
+        if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) {
+            nimm.accept("", "");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.lageFuer", Kern.args(url), (wert, fehler) -> {
+            if (fehler != null || wert == null) {
+                nimm.accept("", "");
+                return;
+            }
+            try {
+                JSONObject lage = new JSONObject(wert);
+                nimm.accept(lage.optString("key", ""), lage.optString("room", ""));
+            } catch (Exception ausnahme) {
+                nimm.accept("", "");
+            }
+        });
     }
 
     /**
@@ -1142,23 +1534,13 @@ public final class Mitschauen {
     private String raum() {
         String roh = raumRoh();
         if (roh.isEmpty()) return "";
-        return liveAus.contains(liveMarke(schluessel(), roh)) ? "" : roh;
+        return liveAus.contains(liveMarke(lageKey, roh)) ? "" : roh;
     }
 
     /** In welchem Raum diese Seite steht - auch wenn das Live-Schauen aus ist. */
     private String raumRoh() {
-        if (watchparty == null) return "";
-        String key = schluessel();
-        if (key.isEmpty()) return "";
-        JSONArray eintraege = watchparty.eintraege();
-        for (int i = 0; i < eintraege.length(); i += 1) {
-            JSONObject eintrag = eintraege.optJSONObject(i);
-            if (eintrag == null) continue;
-            if (!key.equals(eintrag.optString("key", ""))) continue;
-            if (!eintrag.optBoolean("joined", false)) continue;
-            return eintrag.optString("room", "");
-        }
-        return "";
+        lageAuffrischen();
+        return lageKey.isEmpty() ? "" : lageRaum;
     }
 
     private static String liveMarke(String key, String raum) {

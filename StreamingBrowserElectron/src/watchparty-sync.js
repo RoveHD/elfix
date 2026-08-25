@@ -563,6 +563,19 @@ function driftScript(ereignis) {
 const MELDE_AKTION = "__elfix:wp:";
 const MELDE_STAND = "__elfix:wp:stand:";
 const MELDE_SYNC = "__elfix:wp:sync:";
+// Ob die Bedienelemente des Players gerade zu sehen sind. Daran haengt die
+// Teilnehmerleiste im Vollbild: sie soll mit ihnen kommen und mit ihnen gehen
+// und nicht nach einem eigenen Zeitgeber, der irgendwann danebenliegt.
+const MELDE_UI = "__elfix:wp:ui:";
+
+/**
+ * Wie lange ohne jede Regung als "die Steuerung ist weg" gilt.
+ *
+ * <p>Nur der Rueckfall fuer Player, deren Leiste sich nicht finden laesst.
+ * Drei Sekunden ist, was JW Player selbst einstellt; laenger fuehlt sich der
+ * Streifen an, als bliebe er haengen.
+ */
+const UI_RUHE_MS = 3200;
 
 // Eine Aktionsmeldung zerlegen: "__elfix:wp:play:123.45".
 function aktionLesen(zeile) {
@@ -574,6 +587,15 @@ function aktionLesen(zeile) {
 function standLesen(zeile) {
   const treffer = String(zeile || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
   return treffer ? { position: Number(treffer[1]), paused: treffer[2] === "1" } : null;
+}
+
+// Eine Meldung ueber die Bedienelemente zerlegen: "__elfix:wp:ui:1".
+//
+// Rueckgabe null heisst "keine solche Zeile" - nicht "unsichtbar". Der
+// Unterschied zaehlt: eine unlesbare Zeile darf die Leiste nicht wegnehmen.
+function uiLesen(zeile) {
+  const treffer = String(zeile || "").match(/^__elfix:wp:ui:([01])$/);
+  return treffer ? { sichtbar: treffer[1] === "1" } : null;
 }
 
 // Meint diese Nachricht die Folge, die hier offen ist? Ein aelteres Relay
@@ -661,6 +683,96 @@ function beobachterScript() {
     horchen("waiting", (media) => standMelden(media, true));
     horchen("playing", (media) => standMelden(media, true));
     horchen("timeupdate", (media) => standMelden(media, false));
+
+    // --- Sind die Bedienelemente des Players gerade zu sehen? ---------------
+    //
+    // Die Teilnehmerleiste im Vollbild haengt daran. Ein eigener Zeitgeber
+    // waere die falsche Antwort: er faengt an, wenn ELFIX es fuer richtig
+    // haelt, und der Player blendet aus, wann *er* es fuer richtig haelt -
+    // zwei Uhren, die nach zwei Sekunden auseinanderlaufen.
+    //
+    // Zuerst wird deshalb der wirkliche Zustand gesucht. JW Player, den VOE
+    // fuehrt, setzt am Wurzelknoten "jw-flag-user-inactive" und blendet die
+    // Leiste per Deckkraft aus; video.js und Plyr machen es ueber eigene
+    // Klassen an einer Leiste, die man messen kann. Findet sich davon nichts,
+    // bleibt die Regung im Rahmen als Ersatz - und die ist immer noch besser
+    // als ein Zeitgeber, der nichts beobachtet.
+    // Die Leiste selbst, nicht ihr Rahmen.
+    //
+    // Gemessen am 25.08.2026 im VOE-Rahmen (JW Player), waehrend die
+    // Bedienelemente ausgeblendet waren:
+    //
+    //   .jw-controls     832x384  opacity 1  visible   <- der Rahmen, immer da
+    //   .jw-controlbar   832x60   opacity 0  hidden    <- die Leiste
+    //
+    // Wer den Rahmen misst, bekommt immer "sichtbar" und die Teilnehmerleiste
+    // verschwindet nie. Deshalb steht hier nur, was wirklich die Leiste ist.
+    const LEISTEN = [
+      ".jw-controlbar", ".vjs-control-bar", ".plyr__controls",
+      "[class*='control-bar']", "[class*='controlbar']"
+    ];
+    const sichtbarerKnoten = (knoten) => {
+      try {
+        const stil = getComputedStyle(knoten);
+        const feld = knoten.getBoundingClientRect();
+        if (stil.display === "none" || stil.visibility === "hidden") return false;
+        if (Number(stil.opacity || 1) <= 0.05) return false;
+        return feld.width > 8 && feld.height > 4;
+      } catch (_) {
+        return false;
+      }
+    };
+    // Alle Kandidaten, nicht der erste Waehler mit Treffern.
+    //
+    // Gemessen am 25.08.2026 auf dem Telefon (AniWorld -> VOE): die Seite
+    // traegt eine JW-artige Leiste, die zu diesem Player gar nicht gehoert und
+    // dauerhaft unsichtbar ist. Wer beim ersten Waehler mit Treffern stehen
+    // bleibt, misst genau die - und meldet "ausgeblendet", waehrend die
+    // wirklichen Bedienelemente sichtbar unten stehen. Die Teilnehmerleiste
+    // verschwand daraufhin, obwohl der Player seine Leiste zeigte.
+    const leisten = () => {
+      const alle = [];
+      for (const w of LEISTEN) {
+        try {
+          for (const knoten of document.querySelectorAll(w)) {
+            if (alle.indexOf(knoten) < 0) alle.push(knoten);
+          }
+        } catch (_) {}
+      }
+      return alle;
+    };
+    let letzteRegung = Date.now();
+    const regung = () => { letzteRegung = Date.now(); };
+    for (const name of ["pointerdown", "pointermove", "mousemove", "touchstart", "keydown", "click"]) {
+      try { document.addEventListener(name, regung, true); } catch (_) {}
+    }
+    // Von aussen anstossen: tippt jemand auf den Vollbild-Rahmen, sieht dieses
+    // Dokument davon unter Umstaenden nichts - Android reicht die Regung dann
+    // hier herein, statt die Leiste auf gut Glueck einzublenden.
+    try { window.__elfixWpRegung = regung; } catch (_) {}
+
+    const uiZustand = () => {
+      const gefunden = leisten();
+      // Sichtbar ist die Steuerung, sobald *irgendeine* gefundene Leiste
+      // wirklich zu sehen ist. Deckkraft zaehlt dabei mit: JW Player laesst
+      // seine Leiste stehen und blendet sie nur aus.
+      if (gefunden.length) return gefunden.some(sichtbarerKnoten);
+      // Kein Player, dessen Leiste sich finden laesst: dann zaehlt die Regung.
+      return Date.now() - letzteRegung < ${UI_RUHE_MS};
+    };
+
+    let uiGemeldet = null;
+    const uiPruefen = () => {
+      let jetzt = false;
+      try { jetzt = uiZustand(); } catch (_) { jetzt = false; }
+      if (jetzt === uiGemeldet) return;
+      uiGemeldet = jetzt;
+      console.log("__elfix:wp:ui:" + (jetzt ? "1" : "0"));
+    };
+    // Kein teurer Takt: drei Abfragen auf einem Dokument, viermal je Sekunde.
+    // Gemeldet wird nur die Aenderung - im Ruhezustand geht gar nichts hinaus.
+    setInterval(uiPruefen, 250);
+    uiPruefen();
     return "installiert";
   })()`;
 }
@@ -697,8 +809,11 @@ module.exports = {
   MELDE_AKTION,
   MELDE_STAND,
   MELDE_SYNC,
+  MELDE_UI,
+  UI_RUHE_MS,
   aktionLesen,
   standLesen,
+  uiLesen,
   folgePasst,
   beobachterScript,
   zielZeitBerechnen,
