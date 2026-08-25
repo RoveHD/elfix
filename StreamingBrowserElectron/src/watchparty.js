@@ -513,11 +513,78 @@ class Watchparty {
 // Steht modulweit, weil der Geraeteabgleich zum selben Relay faehrt: zwei
 // Auslegungen derselben Adresse waeren zwei Fehlerquellen.
 function websocketAdresse(wert) {
-  const roh = String(wert || "").trim();
+  const roh = serverNormalisieren(wert);
   if (/^wss?:\/\//i.test(roh)) return roh;
   if (/^https:\/\//i.test(roh)) return roh.replace(/^https:/i, "wss:");
   if (/^http:\/\//i.test(roh)) return roh.replace(/^http:/i, "ws:");
   return `wss://${roh}`;
 }
 
-module.exports = { Watchparty, websocketAdresse };
+// Die Adresse so, wie sie gespeichert gehoert.
+//
+// Sie steht an drei Stellen - Rechner, Telefon, Fernseher - und wurde an jeder
+// ein bisschen anders behandelt. Was am Fernseher eingetippt wird, kommt mit
+// Leerzeichen aus der Bildschirmtastatur und gern mit einem Schraegstrich am
+// Ende; beides ergibt eine andere Zeichenkette und damit einen unnoetigen
+// Neuaufbau der Verbindung, obwohl dasselbe Relay gemeint ist.
+//
+// Bewusst *ohne* Ergaenzung eines Protokolls: was jemand eintippt, bleibt
+// stehen. `websocketAdresse` weiss, wie daraus ws(s) wird.
+function serverNormalisieren(wert) {
+  return String(wert === undefined || wert === null ? "" : wert)
+    .trim()
+    // Was aus einer Fernbedienungstastatur kommt, traegt gern unsichtbare
+    // Zeichen mit - die machen aus einer richtigen Adresse eine falsche.
+    .replace(/[\u0000-\u001f\u007f\u00a0\u200b-\u200f\ufeff]/g, "")
+    // Nur die Schraegstriche am Ende des Pfades. Die des Protokolls bleiben
+    // stehen: aus "https://" ein "https:/" zu machen war der kuerzeste Weg zu
+    // einer Beanstandung, die vom falschen Fehler spricht.
+    .replace(/([^:/])\/+$/, "$1");
+}
+
+/**
+ * Was an einer eingetippten Serveradresse nicht stimmt.
+ *
+ * <p>Derselbe Wortlaut auf allen Geraeten, und dieselbe Strenge - nach dem
+ * Vorbild von {@code codeBeanstandung}. Eine leere Eingabe ist ausdruecklich
+ * *keine* Beanstandung: sie heisst "keine Adresse", und dann bleibt die
+ * Watchparty eben aus. Wer sie loeschen will, soll das koennen.
+ *
+ * @return leer, wenn sie in Ordnung ist, sonst die Beanstandung im Klartext
+ */
+function serverBeanstandung(wert) {
+  const sauber = serverNormalisieren(wert);
+  if (!sauber) return "";
+  if (/\s/.test(sauber)) return "Eine Adresse enthält keine Leerzeichen";
+  if (!/^[a-z]+:\/\//i.test(sauber)) {
+    return "Die Adresse braucht ein Protokoll — http:// oder https://";
+  }
+  if (!/^(https?|wss?):\/\//i.test(sauber)) {
+    return "Erlaubt sind http://, https://, ws:// und wss://";
+  }
+  // Der Port zuerst, und zwar an der eingetippten Zeichenkette. `new URL`
+  // raeumt ihn naemlich auf: aus "relay.example.org:" wird dort klaglos
+  // "relay.example.org", und der haengende Doppelpunkt - der immer ein
+  // Vertipper ist - kaeme nie zur Sprache.
+  const autoritaet = sauber.replace(/^[a-z]+:\/\//i, "").split(/[/?#]/)[0];
+  // Gesucht wird hinter der letzten Klammer, damit eine IPv6-Adresse nicht in
+  // ihre eigenen Doppelpunkte laeuft: [::1]:8787.
+  const doppelpunkt = autoritaet.lastIndexOf(":");
+  if (doppelpunkt > autoritaet.lastIndexOf("]")) {
+    const port = autoritaet.slice(doppelpunkt + 1);
+    if (!port) return "Der Port fehlt hinter dem Doppelpunkt";
+    if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+      return "Der Port muss eine Zahl zwischen 1 und 65535 sein";
+    }
+  }
+  let zerlegt = null;
+  try {
+    zerlegt = new URL(sauber);
+  } catch (_) {
+    return "Die Adresse ist unvollständig";
+  }
+  if (!zerlegt.hostname) return "Der Adresse fehlt der Rechnername";
+  return "";
+}
+
+module.exports = { Watchparty, websocketAdresse, serverNormalisieren, serverBeanstandung };

@@ -68,6 +68,185 @@ function brueckeLaden(name) {
   return modul.exports;
 }
 
+// --- Die Watchparty: der Folgen-Autostart -------------------------------------
+//
+// Der Auftrag liegt in der Bruecke und nicht in Java. Das ist der Kern der
+// Reparatur: `autoStartRequested` und `autoStartUrl` gehoerten dem WebView und
+// waren nach der Navigation weg - also konnte danach nichts mehr starten.
+//
+// Geprueft wird hier die Buchfuehrung, die dabei entsteht: wem ein Auftrag
+// gehoert, wann er veraltet, und dass in einem Raum mit Bleach, Korra und
+// BLACK TORCH kein Ereignis des einen den Start des anderen ausloest.
+
+const wpBruecke = brueckeLaden("watchparty-bruecke");
+
+const BLEACH = "https://aniworld.to/anime/stream/bleach";
+const KORRA = "https://aniworld.to/anime/stream/korra";
+const RAUM = "wohnzimmer";
+
+pruefe("Die Watchparty-Bruecke laedt nur Module, die auch mitkopiert werden",
+  typeof wpBruecke.autostartAnfordern === "function",
+  "sonst haette brueckeLaden oben geworfen - watchparty-autostart muss in kernModule stehen");
+
+// Ohne Auftrag ist nichts zu tun. Kein Takt, kein Skript, kein Nachklopfen.
+pruefe("Ohne Auftrag gibt es nichts zu tun",
+  wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH }).tun === "aufgeben");
+
+// Ein Auftrag fuer Bleach.
+const ersterAuftrag = wpBruecke.autostartAnfordern({
+  key: BLEACH, room: RAUM, url: BLEACH + "/staffel-1/episode-5",
+  season: 1, episode: 5, hostId: "rechner", playing: true
+});
+pruefe("Ein Auftrag traegt Raum, Titel und eine laufende Nummer",
+  ersterAuftrag && ersterAuftrag.auftrag.startsWith(RAUM + "|" + BLEACH + "|s1e5|")
+    && ersterAuftrag.generation === 1,
+  ersterAuftrag && ersterAuftrag.auftrag);
+
+pruefe("Und er will sofort losgehen",
+  wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 5 }).tun === "anfordern");
+
+// Steht eine andere Folge offen, ruehrt sich nichts - der Auftrag von vorhin
+// darf spaeter nicht die falsche Folge starten.
+pruefe("Steht eine andere Folge offen, gibt der Auftrag auf",
+  wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 9 }).tun === "aufgeben",
+  "sonst startete ein Auftrag von vorhin die Folge, die man gerade verlassen hat");
+
+// Waehrend die Seite noch laedt, steht hier noch der Titel von vorhin. Das ist
+// kein Grund aufzugeben - der Auftrag entsteht ja *vor* der Navigation.
+wpBruecke.autostartAnfordern({
+  key: BLEACH, room: RAUM, url: BLEACH + "/staffel-1/episode-5",
+  season: 1, episode: 5, hostId: "rechner", playing: true
+});
+{
+  const waehrendLadens = wpBruecke.autostartSchritt({ room: RAUM, key: KORRA, season: 2, episode: 3 });
+  pruefe("Steht noch ein anderer Titel, wird gewartet statt aufgegeben",
+    waehrendLadens.tun === "warten" && waehrendLadens.grund === "andere seite",
+    `${waehrendLadens.tun}/${waehrendLadens.grund}`);
+  pruefe("Und der Auftrag lebt weiter",
+    wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 5 }).tun === "anfordern");
+}
+
+// Ein zweiter Auftrag - der Host hat waehrend des Ladens erneut gewechselt.
+const vorher = wpBruecke.autostartAnfordern({
+  key: BLEACH, room: RAUM, url: BLEACH + "/staffel-1/episode-5",
+  season: 1, episode: 5, hostId: "rechner", playing: true
+});
+const zweiter = wpBruecke.autostartAnfordern({
+  key: BLEACH, room: RAUM, url: BLEACH + "/staffel-1/episode-6",
+  season: 1, episode: 6, hostId: "rechner", playing: true
+});
+pruefe("Ein erneuter Wechsel erhoeht die laufende Nummer",
+  zweiter.generation === vorher.generation + 1,
+  `${vorher.generation} -> ${zweiter.generation}`);
+pruefe("Und nur der neueste Auftrag ist noch offen",
+  wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 6 })
+    .auftrag === zweiter.auftrag,
+  "der aeltere kann keine Folge mehr starten");
+
+// Der Bericht des alten Auftrags kommt trotzdem noch an - er gehoert nicht
+// hierher.
+pruefe("Ein Bericht des alten Auftrags wird abgewiesen",
+  wpBruecke.autostartBericht(
+    wpBruecke.MELDE_START + JSON.stringify({ auftrag: ersterAuftrag.auftrag, ok: true })
+  ).passt === false,
+  "sonst meldete der Player der vorigen Folge diesen Auftrag als erledigt");
+
+pruefe("Und alles, was kein Bericht ist, ist auch keiner",
+  wpBruecke.autostartBericht("__elfix:wp:stand:{}") === null
+    && wpBruecke.autostartBericht("egal") === null);
+
+// Der eigene Bericht beendet ihn.
+const fertig = wpBruecke.autostartBericht(
+  wpBruecke.MELDE_START + JSON.stringify({
+    auftrag: zweiter.auftrag, ok: true, zustand: "laeuft", stelle: 17.4
+  }));
+pruefe("Der eigene Bericht schliesst den Auftrag ab",
+  fertig.passt === true && fertig.fertig === true && fertig.zustand === "laeuft"
+    && fertig.stelle === 17.4,
+  JSON.stringify(fertig));
+pruefe("Danach wird nicht weiter angeklopft",
+  wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 6 }).tun === "aufgeben",
+  "kein sekuendliches Nachklopfen nach einem gelungenen Start");
+
+// Mehrere Titel im selben Raum: ein Auftrag fuer Korra geht Bleach nichts an.
+const korraAuftrag = wpBruecke.autostartAnfordern({
+  key: KORRA, room: RAUM, url: KORRA + "/staffel-2/episode-3",
+  season: 2, episode: 3, hostId: "rechner", playing: true
+});
+pruefe("Ein Raum traegt mehrere Titel, jeder mit eigener laufender Nummer",
+  korraAuftrag.generation === 1 && korraAuftrag.auftrag.includes(KORRA),
+  korraAuftrag.auftrag);
+pruefe("Und Bleach loest den Auftrag von Korra nicht aus",
+  wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 6 }).tun !== "anfordern",
+  "ein Ereignis eines anderen Titels darf keinen Folgen-Autostart ausloesen");
+pruefe("Korra selbst schon",
+  wpBruecke.autostartSchritt({ room: RAUM, key: KORRA, season: 2, episode: 3 }).tun === "anfordern");
+
+// Verwerfen - aber nicht das, was der Auftrag selbst ausgeloest hat.
+//
+// Aus der Watchparty-Seite heraus geoeffnet meldet das Seitenende einen
+// "eigenen Folgenwechsel" auf genau die Folge, fuer die der Auftrag gilt.
+// Verwarf das den Auftrag, war der Start weg, eine Sekunde nachdem er
+// angefordert wurde - so gemessen am 25.08.2026 auf dem Telefon.
+pruefe("Ein Wechsel auf genau die Folge des Auftrags verwirft ihn nicht",
+  wpBruecke.autostartVerwerfen({ room: RAUM, key: KORRA, season: 2, episode: 3 }) === false
+    && wpBruecke.autostartSchritt({ room: RAUM, key: KORRA, season: 2, episode: 3 }).tun !== "aufgeben",
+  "sonst loescht der Weg zum Ziel den Auftrag, der dorthin fuehren sollte");
+pruefe("Ein Wechsel woandershin schon",
+  wpBruecke.autostartVerwerfen({ room: RAUM, key: BLEACH, season: 1, episode: 1 }) === true);
+pruefe("Und ohne Lage wird immer verworfen",
+  wpBruecke.autostartAnfordern({
+    key: KORRA, room: RAUM, url: KORRA + "/staffel-2/episode-3",
+    season: 2, episode: 3, hostId: "rechner", playing: true
+  }) !== null
+    && wpBruecke.autostartVerwerfen() === true
+    && wpBruecke.autostartSchritt({ room: RAUM, key: KORRA, season: 2, episode: 3 }).tun === "aufgeben");
+
+// Der eingehende Befehl der Runde traegt den Start.
+{
+  wpBruecke.autostartAnfordern({
+    key: BLEACH, room: RAUM, url: BLEACH + "/staffel-1/episode-5",
+    season: 1, episode: 5, hostId: "rechner", playing: true
+  });
+  const jetzt = Date.now();
+  const nachricht = {
+    type: "control", action: "play", key: BLEACH, room: RAUM,
+    position: 12, videoTime: 12, timestamp: jetzt - 5000, at: jetzt - 5000,
+    playing: true, resync: true, sequenceId: 7, episodeId: "s1e5", hostId: "rechner"
+  };
+  const urteil = wpBruecke.steuerungPruefen(nachricht,
+    { binHost: false, hostId: "rechner", gleicheAdresse: true, season: 1, episode: 5 });
+  pruefe("Steht ein Auftrag offen, traegt der Befehl der Runde den Autostart",
+    urteil.tun === "autostart" && urteil.skript.length > 0
+      && urteil.skript.includes("__elfix:wp:start:"),
+    urteil.tun);
+  pruefe("Und das Skript kennt den Auftrag, zu dem es gehoert",
+    urteil.skript.includes(urteil.auftrag), urteil.auftrag);
+
+  // Solange dieser Versuch laeuft, schiesst kein zweiter hinterher.
+  pruefe("Ein laufender Versuch wird nicht ueberholt",
+    wpBruecke.autostartSchritt({ room: RAUM, key: BLEACH, season: 1, episode: 5 }).tun === "warten",
+    "zwei gleichzeitige Anlaeufe pausieren einander zuverlaessig");
+
+  // Ein Befehl fuer Korra darf denselben Auftrag nicht anfassen.
+  const fremd = wpBruecke.steuerungPruefen(
+    { ...nachricht, key: KORRA, sequenceId: 8 },
+    { binHost: false, hostId: "rechner", gleicheAdresse: true, season: 1, episode: 5 });
+  pruefe("Ein Befehl eines anderen Titels loest den Autostart nicht aus",
+    fremd.tun !== "autostart", fremd.tun);
+  wpBruecke.autostartVerwerfen();
+}
+
+// Die Serveradresse geht durch dieselbe Pruefung wie am Rechner.
+{
+  const wp = require("../src/watchparty");
+  pruefe("Die Bruecke reicht die Adressenpruefung des Rechners durch",
+    wpBruecke.serverNormalisieren("  https://relay.example.org/  ") === "https://relay.example.org"
+      && wpBruecke.serverNormalisieren === wp.serverNormalisieren
+      && wpBruecke.serverBeanstandung === wp.serverBeanstandung,
+    "eine zweite Auslegung derselben Adresse waere die naechste Fehlerquelle");
+}
+
 // --- Fassung merken -----------------------------------------------------------
 
 const fassungBruecke = brueckeLaden("fassung-bruecke");

@@ -97,6 +97,16 @@ public final class Mitschauen {
 
         /** Der Zustand hat sich geaendert - die Anzeige darf nachziehen. */
         void anzeigeAuffrischen();
+
+        /**
+         * Ein kurzer Hinweis an den Zuschauer.
+         *
+         * <p>Gebraucht wird er genau einmal: wenn der Autostart endgueltig
+         * aufgegeben hat. Ein Fehlschlag, der nur im Protokoll steht, sieht von
+         * vorne aus wie ein Bild, das eben nicht laeuft - und dann drueckt
+         * niemand die eine Taste, die noch helfen wuerde.
+         */
+        void hinweisZeigen(String text);
     }
 
     private final Kern kern;
@@ -186,6 +196,22 @@ public final class Mitschauen {
      */
     private final java.util.Set<String> liveAus = new java.util.HashSet<>();
 
+    /* ------------------------------------------------- Der Folgen-Autostart */
+
+    /**
+     * Woran ein Bericht des Startskripts zu erkennen ist.
+     *
+     * <p>Wie die drei Meldetexte darueber aus dem Kern geholt - der Wortlaut
+     * gehoert dem geteilten Modul, nicht dieser Klasse.
+     */
+    private String meldeStart = "__elfix:wp:start:";
+    /** Ob gerade ein Auftrag laeuft. Nur dann klopft der Takt an. */
+    private boolean autostartLaeuft;
+    /** Der Takt, der den Auftrag vorantreibt. Er haelt an, sobald der Auftrag fertig ist. */
+    private final Runnable autostartTakt = this::autostartWeiter;
+    /** Wie oft nachgesehen wird, ob der Auftrag weiterkommt. */
+    private static final long AUTOSTART_TAKT_MS = 1200;
+
     public Mitschauen(Kern kern, Rahmen rahmen, Watchparty watchparty, Umgebung umgebung) {
         this.kern = kern;
         this.rahmen = rahmen;
@@ -207,6 +233,7 @@ public final class Mitschauen {
             praefix("watchparty-bruecke.MELDE_AKTION", wert -> meldeAktion = wert);
             praefix("watchparty-bruecke.MELDE_STAND", wert -> meldeStand = wert);
             praefix("watchparty-bruecke.MELDE_SYNC", wert -> meldeSync = wert);
+            praefix("watchparty-bruecke.MELDE_START", wert -> meldeStart = wert);
         });
     }
 
@@ -317,6 +344,13 @@ public final class Mitschauen {
         if (watchparty == null || !watchparty.istEingeschaltet()) return;
         if (!imVordergrund) return;
 
+        // Der Bericht eines Autostart-Versuchs. Er geht nicht an die Runde
+        // hinaus - er sagt diesem Geraet, ob sein eigener Start gelungen ist.
+        // Er kommt vor allem anderen, weil er sonst als Tat gelesen wuerde.
+        if (zeile.startsWith(meldeStart)) {
+            autostartBericht(zeile);
+            return;
+        }
         if (zeile.startsWith(meldeSync)) {
             // Nur im Debug-Bau und nur eine Zeile: die Messung laeuft im
             // Zwei-Sekunden-Takt, und das Skript meldet ohnehin nur, wenn
@@ -340,6 +374,26 @@ public final class Mitschauen {
                 Kern.args(zeile, key, standRumpf(), raum), (wert, fehler) -> {
                     if (fehler != null) Log.d(TAG, "Stand nicht gemeldet: " + fehler);
                 });
+            return;
+        }
+
+        // Waehrend ein Autostart laeuft, geht keine eigene Tat hinaus.
+        //
+        // In diesen paar Sekunden wird der Player angefasst: die Ueberlagerung
+        // des Hosters wird geklickt, die Quelle laedt, es wird gesprungen und
+        // gestartet. Was er dabei von sich aus meldet, ist eine Nebenwirkung
+        // und keine Entscheidung eines Zuschauers. Gemessen am 25.08.2026 auf
+        // dem Telefon: der Player meldete mitten im Anlauf ein "pause" bei
+        // 31,4 s; das ging als eigene Tat an die Runde, und weil dieses Geraet
+        // gerade Host war, stand danach die ganze Runde - der Autostart kam
+        // ordentlich an und pausiert.
+        //
+        // Was am Ende gilt, sagt der Bericht des Auftrags. Er kommt in
+        // laengstens ein paar Sekunden, und bis dahin ist Stille die richtige
+        // Antwort. Der eigene Stand geht weiter hinaus (siehe oben) - ohne ihn
+        // zaehlte dieses Geraet dem Relay als nicht aktiv.
+        if (autostartLaeuft) {
+            Log.d(TAG, "Eigene Tat waehrend des Autostarts nicht gemeldet: " + zeile);
             return;
         }
 
@@ -452,6 +506,10 @@ public final class Mitschauen {
         String key = schluesselFuer(url);
         String raum = raum();
         if (key.isEmpty() || raum.isEmpty()) return;
+        // Wer selbst weiterblaettert, meint den Auftrag von vorhin nicht mehr -
+        // es sei denn, er zeigt genau auf diese Folge. Aus der Watchparty-Seite
+        // geoeffnet ist beides dasselbe Ereignis.
+        autostartAbbrechen("eigener Folgenwechsel", url);
         kern.rufe("watchparty-bruecke.folgenwechselMelden", Kern.args(key, url, raum),
             (wert, fehler) -> {
                 if (fehler != null) Log.d(TAG, "Folgenwechsel nicht gemeldet: " + fehler);
@@ -654,9 +712,19 @@ public final class Mitschauen {
         }
         String skript = urteil.optString("skript", "");
         if (skript.isEmpty() || ansicht == null || rahmen == null) return;
-        int erreicht = rahmen.anSpieler(ansicht, skript);
+        // Der Autostart geht in *jeden* gemeldeten Rahmen, nicht nur in die mit
+        // Video. Das ist der Punkt: solange die Quelle hinter der Ueberlagerung
+        // des Hosters liegt, traegt der Rahmen zwar ein <video>, aber ohne
+        // Laufzeit - und ein Rahmen, der sich vor dem Klick noch gar nicht als
+        // "mit Video" gemeldet hat, waere sonst nie erreichbar. Ein Werberahmen
+        // bleibt trotzdem still: das Skript kehrt ohne jedes <video> sofort um.
+        boolean istAutostart = "autostart".equals(tun);
+        int erreicht = istAutostart
+            ? rahmen.anAlle(ansicht, skript)
+            : rahmen.anSpieler(ansicht, skript);
         Log.i(TAG, "Watchparty " + tun + " (" + urteil.optString("grund", "")
             + ") in " + erreicht + " Rahmen");
+        if (istAutostart) return;
         // Beim gemeinsamen Gleichziehen wartet die Runde auf die Bereitmeldung.
         // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten
         // die anderen unnoetig bis zum Zeitlimit.
@@ -690,9 +758,229 @@ public final class Mitschauen {
         // Der Zustand der alten Folge gehoert weg, bevor die neue steht.
         zuruecksetzen(ansicht);
         folgtDerRunde = true;
-        gemeldeteFolge = serienTeil(ziel) + "#s" + folgeAus(ziel)[0] + "e" + folgeAus(ziel)[1];
+        int[] neueFolge = folgeAus(ziel);
+        gemeldeteFolge = serienTeil(ziel) + "#s" + neueFolge[0] + "e" + neueFolge[1];
+        // Der Auftrag entsteht *vor* der Navigation. Er ueberlebt sie, weil er
+        // im Kern liegt und nicht in dieser Ansicht - genau das war der Fehler
+        // der alten Kette: `autoStartRequested` und `autoStartUrl` gehoerten
+        // dem WebView und waren nach dem Wechsel weg.
+        String neuerKey = schluesselFuer(ziel);
+        JSONObject neuerEintrag = eintragZu(neuerKey);
+        autostartAnfordern(neuerKey,
+            neuerEintrag == null ? raum() : neuerEintrag.optString("room", raum()), ziel);
         haupt.post(() -> umgebung.folgeOeffnen(umgebung.anbieter(), ziel));
         return true;
+    }
+
+    /* ------------------------------------------------- Der Folgen-Autostart */
+
+    /*
+     * Warum es diesen Ablauf gibt und nicht einfach ein play().
+     *
+     * Gemessen am 25.08.2026 auf dem Telefon (AniWorld -> VOE): der Rahmen des
+     * Hosters traegt nach dem Laden ein <video> *ohne Quelle* - duration=null,
+     * readyState=0, src="". Erst der Klick auf seine eigene Ueberlagerung laedt
+     * die Quelle; danach stand duration=1371, readyState=4, paused=false.
+     * Autoplay ist auf diesem Geraet also nicht gesperrt, es fehlte der Klick.
+     * Ein play() davor laeuft ins Leere - und weil das Versprechen von play()
+     * frueher weggefangen wurde, sah dieser Fehlschlag von aussen aus wie ein
+     * Erfolg.
+     *
+     * Der Auftrag liegt im Kern und nicht hier. Das ist Absicht: eine
+     * Navigation raeumt diese Ansicht ab, und ein Auftrag, der die Navigation
+     * nicht ueberlebt, kann danach nichts mehr starten. Genau daran ist die
+     * alte Kette gescheitert - `autoStartRequested` und `autoStartUrl` gehoeren
+     * dem WebView.
+     */
+
+    /**
+     * Einen Autostart-Auftrag anlegen und den Takt anwerfen.
+     *
+     * <p>Gerufen genau dort, wo die Runde einen Folgenwechsel erzwingt. Die
+     * laufende Nummer steigt dabei im Kern - ein aelterer Auftrag, der noch auf
+     * einen langsamen Player wartet, ist damit erledigt und startet nicht mehr
+     * die falsche Folge.
+     */
+    public void autostartAnfordern(String key, String raum, String ziel) {
+        if (kern == null || !kern.istBereit()) return;
+        if (key == null || key.isEmpty() || raum == null || raum.isEmpty()) return;
+        if (ziel == null || ziel.isEmpty()) return;
+        int[] folge = folgeAus(ziel);
+        int season = folge[0];
+        int episode = folge[1];
+        JSONObject eintrag = eintragZu(key);
+        JSONObject angaben = new JSONObject();
+        try {
+            angaben.put("key", key);
+            angaben.put("room", raum);
+            angaben.put("url", ziel);
+            angaben.put("season", season);
+            angaben.put("episode", episode);
+            angaben.put("hostId", hostId(key));
+            // Nur als Vorgabe. Unmittelbar vor dem Start wird der Stand des
+            // Hosts ohnehin neu geholt - die Antwort des Relays traegt ihn.
+            angaben.put("playing", eintrag == null || !eintrag.optBoolean("paused", false));
+        } catch (Exception fehler) {
+            Log.e(TAG, "Autostart-Auftrag nicht gebaut", fehler);
+            return;
+        }
+        kern.rufe("watchparty-bruecke.autostartAnfordern", Kern.args(angaben), (wert, fehler) -> {
+            if (fehler != null) {
+                Log.w(TAG, "Autostart nicht angefordert: " + fehler);
+                return;
+            }
+            Log.i(TAG, "Autostart angefordert " + wert);
+            autostartLaeuft = true;
+            haupt.removeCallbacks(autostartTakt);
+            haupt.postDelayed(autostartTakt, AUTOSTART_TAKT_MS);
+        });
+    }
+
+    /**
+     * Ein Schlag des Takts.
+     *
+     * <p>Entschieden wird im Kern: {@code anfordern} heisst, den Stand der
+     * Runde neu zu holen - seine Antwort traegt den frischen Hostzustand und
+     * loest ueber {@link #steuerung} den naechsten Versuch aus. Genau das ist
+     * "den Hostzustand unmittelbar vor dem Start erneut abrufen", und deshalb
+     * steigt der Gast nach einer langen Ladezeit dort ein, wo der Host
+     * inzwischen steht, und nicht dort, wo er beim Wechsel stand.
+     *
+     * <p>Kein fester Zeitgeber und keine Endlosschleife: wie viele Versuche es
+     * gibt und wie weit sie auseinanderliegen, steht im geteilten Modul.
+     */
+    private void autostartWeiter() {
+        if (!autostartLaeuft || kern == null || !kern.istBereit()) return;
+        int[] folge = folgeAus(umgebung.adresse());
+        JSONObject lage = new JSONObject();
+        try {
+            lage.put("key", schluessel());
+            lage.put("room", raum());
+            lage.put("season", folge[0]);
+            lage.put("episode", folge[1]);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Autostart-Lage nicht gebaut", fehler);
+            return;
+        }
+        kern.rufe("watchparty-bruecke.autostartSchritt", Kern.args(lage), (wert, fehler) -> {
+            if (fehler != null || wert == null) {
+                Log.d(TAG, "Autostart-Schritt nicht beurteilt: " + fehler);
+                autostartLaeuft = false;
+                return;
+            }
+            JSONObject schritt;
+            try {
+                schritt = new JSONObject(wert);
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Autostart-Schritt unlesbar", ausnahme);
+                autostartLaeuft = false;
+                return;
+            }
+            String tun = schritt.optString("tun", "aufgeben");
+            String grund = schritt.optString("grund", "");
+            if ("aufgeben".equals(tun)) {
+                autostartLaeuft = false;
+                haupt.removeCallbacks(autostartTakt);
+                boolean gelungen = "laeuft".equals(grund) || "pausiert".equals(grund);
+                boolean gegenstandslos = grund.isEmpty() || "veraltet".equals(grund)
+                    || "kein auftrag".equals(grund) || "fertig".equals(grund);
+                if (gelungen || gegenstandslos) {
+                    Log.i(TAG, "Autostart beendet: " + grund);
+                    return;
+                }
+                // Ein Fehlschlag bleibt sichtbar. Still zu scheitern war der
+                // alte Zustand - dann sass man vor einem stehenden Bild und
+                // wusste nicht, woran es lag.
+                Log.w(TAG, "Autostart aufgegeben: " + grund);
+                umgebung.hinweisZeigen("Startet nicht von selbst - bitte einmal Play druecken");
+                return;
+            }
+            if ("anfordern".equals(tun)) {
+                Log.i(TAG, "Autostart " + grund + " - Stand der Runde wird geholt");
+                // Der eigene Stand zuerst: ohne ihn gilt dieses Geraet dem
+                // Relay als nicht aktiv, und die Antwort bliebe aus.
+                letzteStandMeldung = 0;
+                WebView ansicht = umgebung.spieler();
+                if (ansicht != null) anPlayer(ansicht);
+                abgleichen();
+            }
+            long warten = Math.max(AUTOSTART_TAKT_MS, schritt.optLong("wartenMs", 0));
+            haupt.removeCallbacks(autostartTakt);
+            haupt.postDelayed(autostartTakt, warten);
+        });
+    }
+
+    /** Was ein Versuch berichtet hat. Gelingt er, ist der Auftrag zu Ende. */
+    private void autostartBericht(String zeile) {
+        if (kern == null || !kern.istBereit()) return;
+        kern.rufe("watchparty-bruecke.autostartBericht", Kern.args(zeile), (wert, fehler) -> {
+            if (fehler != null || wert == null || "null".equals(wert)) return;
+            JSONObject bericht;
+            try {
+                bericht = new JSONObject(wert);
+            } catch (Exception ausnahme) {
+                return;
+            }
+            if (!bericht.optBoolean("passt", false)) {
+                Log.d(TAG, "Autostart-Bericht eines anderen Auftrags verworfen");
+                return;
+            }
+            String zustand = bericht.optString("zustand", "");
+            if (bericht.optBoolean("fertig", false)) {
+                Log.i(TAG, "Autostart fertig: " + zustand + " bei "
+                    + Math.round(bericht.optDouble("stelle", 0)) + "s");
+                autostartLaeuft = false;
+                haupt.removeCallbacks(autostartTakt);
+                umgebung.anzeigeAuffrischen();
+                return;
+            }
+            Log.w(TAG, "Autostart-Versuch fehlgeschlagen: " + zustand
+                + " (" + bericht.optString("grund", "") + ")");
+            // Der naechste Versuch braucht keinen eigenen Zeitgeber - der Takt
+            // laeuft weiter und sieht im Kern nach, ob der Abstand um ist.
+            haupt.removeCallbacks(autostartTakt);
+            haupt.postDelayed(autostartTakt, AUTOSTART_TAKT_MS);
+        });
+    }
+
+    /**
+     * Einen offenen Auftrag verwerfen.
+     *
+     * <p>Immer dann, wenn er nicht mehr gemeint sein kann: die Teilnahme endet,
+     * die Watchparty geht aus, oder dieses Geraet wechselt die Folge selbst.
+     */
+    private void autostartAbbrechen(String grund) {
+        autostartAbbrechen(grund, null);
+    }
+
+    /**
+     * @param ziel wohin dieses Geraet gerade von sich aus geht, oder {@code null}
+     *             fuer "gar nicht mehr". Zeigt der offene Auftrag genau dorthin,
+     *             bleibt er stehen: er ist ja der Grund, warum die Seite aufgeht.
+     */
+    private void autostartAbbrechen(String grund, String ziel) {
+        if (!autostartLaeuft || kern == null || !kern.istBereit()) return;
+        JSONObject lage = new JSONObject();
+        if (ziel != null && !ziel.isEmpty()) {
+            int[] folge = folgeAus(ziel);
+            String key = schluesselFuer(ziel);
+            JSONObject eintrag = eintragZu(key);
+            try {
+                lage.put("key", key);
+                lage.put("room", eintrag == null ? raum() : eintrag.optString("room", raum()));
+                lage.put("season", folge[0]);
+                lage.put("episode", folge[1]);
+            } catch (Exception fehler) {
+                Log.e(TAG, "Lage fuer das Verwerfen nicht gebaut", fehler);
+            }
+        }
+        kern.rufe("watchparty-bruecke.autostartVerwerfen", Kern.args(lage), (wert, fehler) -> {
+            if (wert != null && wert.contains("true")) {
+                Log.i(TAG, "Autostart verworfen: " + grund);
+                autostartLaeuft = false;
+                haupt.removeCallbacks(autostartTakt);
+            }
+        });
     }
 
     /* --------------------------------------------------- Die Live-Aktionen */
@@ -759,6 +1047,8 @@ public final class Mitschauen {
         // Erst abmelden, damit die anderen es sofort sehen und dieses Geraet
         // nicht Host einer Folge bleibt, an der es nicht mehr teilnimmt.
         abmelden();
+        // Wer die Teilnahme beendet, will auch nicht mehr automatisch starten.
+        autostartAbbrechen("Live verlassen");
         liveAus.add(liveMarke(key, raum));
         // Und der eigene Eintrag zaehlt wieder fuer sich. Ausdruecklich nur
         // das: der Titel bleibt im Raum, die Mitgliedschaft bleibt bestehen,
@@ -827,7 +1117,15 @@ public final class Mitschauen {
         return schluesselFuer(umgebung.adresse());
     }
 
-    private String schluesselFuer(String url) {
+    /**
+     * Derselbe Schluessel, unter dem der Titel in der Runde gefuehrt wird.
+     *
+     * <p>Sichtbar fuer die Pruefung, weil daran mehr haengt als der Name
+     * vermuten laesst: der Autostart-Auftrag traegt ihn, und traege er einen
+     * anders gebildeten, spraenge der Auftrag auf einen anderen Eintrag im
+     * selben Raum ueber - oder auf gar keinen.
+     */
+    static String schluesselFuer(String url) {
         if (url == null || url.isEmpty()) return "";
         return url.replaceAll("(?i)/(staffel|season)-\\d+(/(episode|folge)-\\d+)?/?$", "")
             .replaceAll("/+$", "")

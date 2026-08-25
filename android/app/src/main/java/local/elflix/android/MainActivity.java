@@ -593,6 +593,11 @@ public class MainActivity extends Activity {
                 liveStreifenAuffrischen();
                 if ("watchparty".equals(currentScreen)) zeigeWatchparty();
             }
+
+            @Override
+            public void hinweisZeigen(String text) {
+                showToast(text);
+            }
         });
         watchparty.setzeMitschauen(mitschauen);
         // Damit die Bruecke einem Eintrag der Runde einen Anbieter zuordnen
@@ -1014,6 +1019,13 @@ public class MainActivity extends Activity {
             () -> showGlobalSearch("")), headerSlot());
         appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_favorite, "Favoriten",
             this::showFavorites), headerSlot());
+        // Die Watchparty gehoert in die Kopfzeile, weil sie sonst am Fernseher
+        // gar nicht erreichbar ist: die untere Leiste, in der sie auf dem
+        // Telefon steht, wird hier ausgeblendet (siehe buildBottomNav). Es gab
+        // die Seite also, aber keinen Weg zu ihr - und damit auf dem groessten
+        // Bildschirm im Haus kein gemeinsames Schauen.
+        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_play, "Watchparty",
+            this::zeigeWatchparty), headerSlot());
         appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_settings, "Einstellungen",
             this::showSettings), headerSlot());
 
@@ -2438,6 +2450,8 @@ public class MainActivity extends Activity {
         addSpacing(page, TvViews.infoCard(this, "Zwischenspeicher",
             "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
             "Alles neu laden", this::reloadAllWebViews), TvViews.ITEM_GAP);
+
+        watchpartyEinstellungen(page, true);
 
         geraeteEinstellungen(page, true);
 
@@ -4297,7 +4311,7 @@ public class MainActivity extends Activity {
 
         addSpacing(page, fassungsKarte(false), MobileViews.ITEM_GAP);
 
-        watchpartyEinstellungen(page);
+        watchpartyEinstellungen(page, false);
 
         geraeteEinstellungen(page, false);
 
@@ -4340,31 +4354,39 @@ public class MainActivity extends Activity {
      *
      * <p>Server, Raumcodes, Gerätename und der Schalter. Mehr braucht es nicht:
      * der Raumcode ist der ganze Zugang, Konten gibt es keine.
+     *
+     * <p><b>Und warum das jetzt auch am Fernseher steht.</b> Es stand dort
+     * nämlich nicht. {@code renderTvSettings} kannte diesen Abschnitt gar
+     * nicht - der Fernseher zeigte unter "Meine Geräte" nur die Auskunft
+     * "die Adresse steht bei der Watchparty" und verwies damit auf eine Seite,
+     * die es auf ihm nicht gab. Die Adresse liess sich also weder eintragen
+     * noch ändern, und ohne sie bleibt nicht nur die Watchparty aus, sondern
+     * auch der Geräteabgleich: beide fahren zu demselben Relay.
+     *
+     * <p>Es ist ausdrücklich <em>derselbe</em> Abschnitt und keine zweite
+     * Fassung für den Fernseher. Was er zeigt, woher es kommt und wohin es
+     * gespeichert wird, ist auf beiden Geräten dieselbe Zeile Code; nur der
+     * Zuschnitt der Karten unterscheidet sich, so wie bei "Meine Geräte".
      */
-    private void watchpartyEinstellungen(LinearLayout page) {
-        addSpacing(page, settingsCard("Watchparty",
-            watchparty.istEingeschaltet()
-                ? (watchparty.istVerbunden() ? "Eingeschaltet und verbunden." : "Eingeschaltet, noch nicht verbunden.")
-                : "Aus. Eingeschaltet gleicht ELFIX den Weiterschauen-Stand mit deinen anderen Geräten ab.",
+    private void watchpartyEinstellungen(LinearLayout page, boolean fernseher) {
+        int abstand = fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP;
+        int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
+
+        if (fernseher) {
+            addSpacing(page, TvViews.sectionTitle(this, "Watchparty"), abstand);
+        }
+
+        addSpacing(page, karte(fernseher, "Watchparty", watchpartyStandText(),
             watchparty.istEingeschaltet() ? "Ausschalten" : "Einschalten",
             () -> {
                 watchparty.setzeEingeschaltet(!watchparty.istEingeschaltet());
                 showSettings();
-            }), MobileViews.SECTION_GAP);
+            }), fernseher ? luecke : abstand);
 
-        addSpacing(page, settingsCard("Server-Adresse",
-            watchparty.serverUrl().isEmpty()
-                ? "Noch keine eingetragen. Ohne sie bleibt die Watchparty aus."
-                : watchparty.serverUrl(),
-            "Ändern",
-            () -> textFrage("Server-Adresse", "wss://watchparty.deine-domain.tld",
-                watchparty.serverUrl(), wert -> {
-                    watchparty.setzeServer(wert);
-                    showSettings();
-                })), MobileViews.ITEM_GAP);
+        addSpacing(page, serverKarte(fernseher), luecke);
 
         List<String> codes = watchparty.raumcodes();
-        addSpacing(page, settingsCard("Raumcodes",
+        addSpacing(page, karte(fernseher, "Raumcodes",
             codes.isEmpty()
                 ? "Noch keiner. Derselbe Code auf allen Geräten, die zusammenlaufen sollen."
                 : android.text.TextUtils.join(", ", codes),
@@ -4374,26 +4396,184 @@ public class MainActivity extends Activity {
                     if (fehler != null) showToast(fehler);
                     else showToast("Raum hinzugefügt");
                     showSettings();
-                }))), MobileViews.ITEM_GAP);
+                }))), luecke);
 
         for (String code : codes) {
-            addSpacing(page, settingsCard("Raum " + code, "Dieses Gerät gehört zu diesem Raum.",
+            addSpacing(page, karte(fernseher, "Raum " + code, "Dieses Gerät gehört zu diesem Raum.",
                 "Entfernen", () -> frage("Raum entfernen?",
                     "Der Stand aus diesem Raum verschwindet von diesem Gerät. Auf den anderen bleibt er.",
                     () -> {
                         watchparty.raumEntfernen(code);
                         showSettings();
-                    })), MobileViews.ITEM_GAP);
+                    })), luecke);
         }
 
-        addSpacing(page, settingsCard("Name dieses Geräts",
+        addSpacing(page, karte(fernseher, "Name dieses Geräts",
             watchparty.geraetName().isEmpty() ? "Nicht gesetzt - nur zur Anzeige bei den anderen."
                 : watchparty.geraetName(),
             "Ändern",
-            () -> textFrage("Name dieses Geräts", "z. B. Handy", watchparty.geraetName(), wert -> {
-                watchparty.setzeGeraetName(wert);
-                showSettings();
-            })), MobileViews.ITEM_GAP);
+            () -> textFrage("Name dieses Geräts", fernseher ? "z. B. Fernseher" : "z. B. Handy",
+                watchparty.geraetName(), wert -> {
+                    watchparty.setzeGeraetName(wert);
+                    showSettings();
+                })), luecke);
+    }
+
+    /**
+     * Der Verbindungszustand in Worten, die etwas heißen.
+     *
+     * <p>"Eingeschaltet" allein wäre keine Auskunft. Eine falsche Adresse darf
+     * nicht wie eine funktionierende Verbindung aussehen - sie sieht nämlich
+     * genau so aus, wenn nur "eingeschaltet" dasteht. Also steht jeder Fall
+     * einzeln da, samt dem Handgriff, der ihn behebt.
+     */
+    private String watchpartyStandText() {
+        if (!watchparty.istEingeschaltet()) {
+            return "Aus. Eingeschaltet gleicht ELFIX den Weiterschauen-Stand mit deinen anderen "
+                + "Geräten ab und lässt dich gemeinsam schauen.";
+        }
+        if (watchparty.serverUrl().isEmpty()) {
+            return "Eingeschaltet, aber ohne Server-Adresse. Trag sie unten ein — ohne sie kann "
+                + "sich nichts verbinden.";
+        }
+        String fehler = watchparty.fehlertext();
+        if (!fehler.isEmpty()) {
+            return "Nicht verbunden: " + fehler + "\n\nEs wird von selbst weiter versucht. "
+                + "Stimmt die Adresse? " + watchparty.serverUrl();
+        }
+        if (!watchparty.istVerbunden()) {
+            return "Eingeschaltet, noch nicht verbunden. Wird das nicht von selbst besser, prüf "
+                + "die Adresse: " + watchparty.serverUrl();
+        }
+        List<String> codes = watchparty.raumcodes();
+        if (codes.isEmpty()) {
+            return "Verbunden mit " + watchparty.serverUrl()
+                + ".\n\nNoch ohne Raum — trag unten denselben Raumcode ein wie auf den anderen Geräten.";
+        }
+        return "Verbunden mit " + watchparty.serverUrl() + ".";
+    }
+
+    /**
+     * Die Server-Adresse: ein Feld, das wirklich dasteht.
+     *
+     * <p>Kein Dialog, und zwar aus demselben Grund wie beim Geräteschlüssel:
+     * eine Adresse tippt man genau einmal ab, und dabei will man sehen, was
+     * schon dasteht. Am Fernseher erst recht, wo jedes Zeichen einzeln erfahren
+     * wird - und wo ein Dialog, der den Fokus nicht sicher an sein Feld gibt,
+     * eine Einstellung unerreichbar macht.
+     *
+     * <p>Geprüft und in Form gebracht wird nicht hier, sondern im geteilten
+     * Modul: {@code watchparty.js} entscheidet, was eine gültige Adresse ist,
+     * mit demselben Wortlaut auf jedem Gerät. Siehe
+     * {@link Watchparty#setzeServer(String, Kern.Antwort)}.
+     */
+    private View serverKarte(boolean fernseher) {
+        LinearLayout karte = new LinearLayout(this);
+        karte.setOrientation(LinearLayout.VERTICAL);
+        int rand = dp(fernseher ? 22 : 14);
+        karte.setPadding(rand, rand, rand, rand);
+        karte.setBackground(MobileViews.shape(this, Theme.SURFACE_ELEVATED,
+            MobileViews.CARD_RADIUS, Theme.BORDER, 1));
+
+        TextView kopf = new TextView(this);
+        kopf.setText("Server-Adresse");
+        kopf.setTextColor(Theme.TEXT_PRIMARY);
+        kopf.setTextSize(fernseher ? 20 : 16);
+        kopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        karte.addView(kopf);
+
+        EditText feld = new EditText(this);
+        feld.setText(watchparty.serverUrl());
+        feld.setHint("https://watchparty.deine-domain.tld");
+        feld.setSingleLine(true);
+        feld.setTextColor(Theme.TEXT_PRIMARY);
+        feld.setHintTextColor(Theme.TEXT_DISABLED);
+        feld.setTextSize(fernseher ? 18 : 15);
+        // Eine Adresse ist kein Satz: keine Grossschreibung am Anfang und keine
+        // Vorschlaege. Die Autokorrektur macht aus "wss" zuverlaessig "was".
+        feld.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_URI
+            | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        feld.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        feld.setBackground(MobileViews.shape(this, Theme.SURFACE, 12, Theme.BORDER, 1));
+        int feldRand = dp(12);
+        feld.setPadding(feldRand, feldRand, feldRand, feldRand);
+        feld.setFocusable(true);
+        feld.setFocusableInTouchMode(true);
+        // Am Fernseher muss man sehen, wo der Fokus steht - sonst tippt man ins
+        // Leere und weiss nicht, warum sich nichts tut.
+        if (fernseher) {
+            feld.setOnFocusChangeListener((ansicht, hat) -> feld.setBackground(
+                MobileViews.shape(this, Theme.SURFACE, 12,
+                    hat ? Theme.PRIMARY : Theme.BORDER, hat ? 3 : 1)));
+        }
+        LinearLayout.LayoutParams feldMasse = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        feldMasse.topMargin = dp(10);
+        karte.addView(feld, feldMasse);
+
+        TextView hinweis = new TextView(this);
+        hinweis.setText(watchparty.serverUrl().isEmpty()
+            ? "Die volle Adresse deines Relays, mit http:// oder https:// davor. Ein Port darf "
+                + "dahinter stehen: http://192.168.1.10:8787. Ohne sie bleiben Watchparty und "
+                + "Geräteabgleich aus."
+            : "Die volle Adresse deines Relays, mit http:// oder https:// davor. Ein Port darf "
+                + "dahinter stehen. Dasselbe Relay benutzt auch „Meine Geräte“.");
+        hinweis.setTextColor(Theme.TEXT_SECONDARY);
+        hinweis.setTextSize(fernseher ? 15 : 13);
+        hinweis.setLineSpacing(0, 1.15f);
+        LinearLayout.LayoutParams hinweisMasse = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hinweisMasse.topMargin = dp(8);
+        karte.addView(hinweis, hinweisMasse);
+
+        LinearLayout knoepfe = new LinearLayout(this);
+        knoepfe.setOrientation(fernseher ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams knopfBereich = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        knopfBereich.topMargin = dp(14);
+        karte.addView(knoepfe, knopfBereich);
+
+        Runnable uebernehmen = () -> serverUebernehmen(feld.getText().toString());
+        // Fertig auf der Bildschirmtastatur speichert auch. Am Fernseher ist das
+        // der kuerzeste Weg: tippen, fertig, und die Tastatur geht wieder zu.
+        feld.setOnEditorActionListener((ansicht, aktion, ereignis) -> {
+            uebernehmen.run();
+            return true;
+        });
+        geraeteKnopf(knoepfe, fernseher, "Übernehmen", true, uebernehmen);
+        if (!watchparty.serverUrl().isEmpty()) {
+            geraeteKnopf(knoepfe, fernseher, "Löschen", false, () -> frage("Adresse löschen?",
+                "Ohne Server-Adresse bleiben Watchparty und Geräteabgleich aus. Deine Räume, "
+                    + "dein Schlüssel und dein Stand bleiben erhalten.",
+                () -> serverUebernehmen("")));
+        }
+        return karte;
+    }
+
+    /**
+     * Eine eingetippte Adresse übernehmen.
+     *
+     * <p>Die Beanstandung kommt aus dem geteilten Modul und wird gezeigt, statt
+     * die Eingabe stillschweigend zu schlucken. Eine leere Eingabe ist erlaubt -
+     * sie heißt "keine Adresse".
+     */
+    private void serverUebernehmen(String eingabe) {
+        watchparty.setzeServer(eingabe, (gespeichert, fehler) -> {
+            if (fehler != null) {
+                showToast(fehler);
+                return;
+            }
+            String wert = gespeichert == null ? "" : gespeichert;
+            showToast(wert.isEmpty() ? "Adresse gelöscht" : "Gespeichert: " + wert);
+            // Der Geraeteabgleich und das Metadaten-Gateway fahren zum selben
+            // Relay und sollen die neue Adresse sofort benutzen - nicht erst
+            // beim naechsten Start. Ohne das blieb eine korrigierte Adresse
+            // wirkungslos, bis jemand die App neu startete.
+            if (geraete != null) geraete.anwenden();
+            if (empfehlungen != null) empfehlungen.erneutStarten(wert);
+            showSettings();
+        });
     }
 
     /** Eine Eingabe in einem Fenster. Die Tastatur verdeckt sie nicht - der Dialog rückt hoch. */
@@ -4410,12 +4590,27 @@ public class MainActivity extends Activity {
         rahmen.setPadding(rand, dp(8), rand, 0);
         rahmen.addView(feld);
 
-        new android.app.AlertDialog.Builder(this)
+        // Am Fernseher muss man den Fokus sehen - ein Feld, das aussieht wie
+        // ein Strich, ist kein Ziel fuer eine Fernbedienung.
+        if (isTelevision()) {
+            feld.setTextSize(18);
+            feld.setPadding(dp(12), dp(12), dp(12), dp(12));
+            feld.setBackground(MobileViews.shape(this, Theme.SURFACE, 12, Theme.PRIMARY, 3));
+        }
+
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
             .setTitle(titel)
             .setView(rahmen)
             .setNegativeButton("Abbrechen", null)
-            .setPositiveButton("Speichern", (dialog, welcher) -> beiOk.accept(feld.getText().toString().trim()))
-            .show();
+            .setPositiveButton("Speichern", (welcher, was) -> beiOk.accept(feld.getText().toString().trim()))
+            .create();
+        // Die Bildschirmtastatur ausdruecklich anfordern. Auf dem Telefon kommt
+        // sie ohnehin, sobald das Feld beruehrt wird; am Fernseher gibt es
+        // nichts zu beruehren, und ohne diese Zeile stand der Dialog da, ohne
+        // dass sich etwas eintippen liess.
+        dialog.getWindow().setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        dialog.show();
         feld.requestFocus();
     }
 
@@ -6211,6 +6406,13 @@ public class MainActivity extends Activity {
             // Wie beim Oeffnen aus Weiterschauen: die Seite soll ihren Player
             // selbst starten, statt drei weitere Tastendruecke zu verlangen.
             armAutoStart(url);
+            // Und weil das allein nicht reicht. Die Kette endet im Vollbild,
+            // vor der Ueberlagerung des Hosters ("Spielen") - gemessen am
+            // 25.08.2026 auf dem Telefon: Folge offen, Vollbild da, Bild steht.
+            // Wer aus der Watchparty heraus oeffnet, will aber mitschauen und
+            // nicht noch einmal tippen. Der Auftrag macht daraus einen echten
+            // Start, mit dem Stand des Hosts als Ziel.
+            if (mitschauen != null) mitschauen.autostartAnfordern(schluessel, raum, url);
             openProvider(anbieter, url, true);
         });
     }

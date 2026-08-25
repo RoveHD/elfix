@@ -37,6 +37,7 @@ def kernModule = [
     "src/taste.js",
     "src/watchparty.js",
     "src/watchparty-sync.js",
+    "src/watchparty-autostart.js",
     "src/watchparty-raeume.js",
     "src/youtube.js",
     "src/youtube-sync.js",

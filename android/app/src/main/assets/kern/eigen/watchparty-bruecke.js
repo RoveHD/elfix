@@ -20,6 +20,11 @@
  */
 (function () {
   const { WatchpartyRaeume, codeBeanstandung } = require("watchparty-raeume");
+  // Wie eine Serveradresse zu lesen und was an ihr zu beanstanden ist, steht in
+  // `watchparty.js` - derselben Datei, aus der `websocketAdresse` kommt. Zwei
+  // Auslegungen derselben Adresse waeren zwei Fehlerquellen, und eine davon
+  // haette der Fernseher gehabt.
+  const { serverNormalisieren, serverBeanstandung } = require("watchparty");
   const fortschritt = require("fortschritt");
   // Dieselbe Sync-Strategie wie am Rechner: Zielzeit, Drift, Veraltung, der
   // Horcher am Player und die Entscheidung, was mit einem eingehenden Befehl
@@ -30,6 +35,12 @@
   // Zuordnung hier waere die zweite - und zwei Zuordnungen kommen
   // irgendwann zu zwei Anbietern.
   const geraeteStand = require("geraete-stand");
+  // Der Folgen-Autostart. Die Regel - was ein Auftrag ist, wann er veraltet,
+  // was als Naechstes zu tun ist und welches Skript im Player wirklich startet -
+  // steht vollstaendig in `watchparty-autostart.js`. Hier liegt nur die
+  // Buchfuehrung: welcher Auftrag gerade offen ist und die laufende Nummer je
+  // Raum und Titel.
+  const autostart = require("watchparty-autostart");
 
   let raeume = null;
   let letzterStatus = null;
@@ -69,6 +80,8 @@
    */
   function konfigurieren(einstellungen) {
     const wp = sicherstellen();
+    // Wer die Watchparty ausschaltet, meint auch keinen offenen Autostart mehr.
+    if (!(einstellungen && einstellungen.enabled)) autostartVerwerfen();
     wp.konfigurieren({
       enabled: Boolean(einstellungen && einstellungen.enabled),
       serverUrl: (einstellungen && einstellungen.serverUrl) || "",
@@ -249,6 +262,36 @@
     if (urteil.tun === "navigate") {
       return { tun: "navigate", grund: urteil.grund, url: String(nachricht.url || ""), skript: "" };
     }
+
+    // Steht fuer genau diesen Raum und Titel ein Autostart-Auftrag offen, ist
+    // dieser Befehl der Stand des Hosts, auf den er gewartet hat - und dann
+    // geht nicht das gewoehnliche Skript in den Player, sondern das des
+    // Auftrags.
+    //
+    // Der Unterschied ist keiner der Rechnung, sondern des Ausgangspunkts:
+    // gewoehnlich liegt ein geladener Player vor, hier liegt ein Rahmen mit
+    // einem `<video>` ohne Quelle. `applyScript` ruft darauf play() und das
+    // laeuft ins Leere; das Skript des Auftrags klickt erst die Ueberlagerung
+    // des Hosters, wartet auf die Quelle und rechnet die Stelle danach neu.
+    // Das gemeinsame Gleichziehen bleibt aussen vor: es hat seinen eigenen
+    // Ablauf (alle springen, alle melden sich bereit, dann startet das Relay).
+    // Der Autostart uebernimmt beim darauffolgenden syncstart.
+    if (urteil.tun !== "syncprepare" && auftrag && !auftrag.fertig && autostart.auftragGilt(auftrag, {
+      jetzt: Date.now(),
+      generation: generationen.get(autostartMarke(raum, nachricht && nachricht.key)) || 0,
+      raum,
+      key: String((nachricht && nachricht.key) || "")
+    })) {
+      // Ab hier laeuft ein Versuch: bis sein Bericht da ist oder die Frist
+      // ablaeuft, schiesst kein zweiter hinterher.
+      berichtOffenSeit = Date.now();
+      return {
+        tun: "autostart",
+        grund: urteil.grund,
+        auftrag: auftrag.id,
+        skript: autostart.startScript(auftrag.id, ereignis, { playing: ereignis.playing })
+      };
+    }
     if (urteil.tun === "drift") {
       return { tun: "drift", grund: urteil.grund, skript: sync.driftScript(ereignis) };
     }
@@ -316,6 +359,187 @@
     return sync.zuruecksetzenScript();
   }
 
+  /* ------------------------------------------------- Der Folgen-Autostart */
+
+  /*
+   * Was der Rechner nach einem Folgenwechsel selbstverstaendlich hat und
+   * Android nicht hatte: einen laufenden Player.
+   *
+   * Am Rechner klopft `scheduleProviderAutoplay` im Takt an die frische Seite,
+   * drueckt Play und liest zurueck, ob wirklich etwas laeuft. Auf Android
+   * endete die Kette im Vollbild - mit Absicht, weil ein blinder Tipp auf eine
+   * fremde Seite auch pausieren kann. Fuer eine Runde ist das zu wenig: wer
+   * der Runde folgt, sass danach vor einem angehaltenen Bild.
+   *
+   * Der Auftrag ist der Ersatz fuer den blinden Tipp. Er weiss, wofuer er gilt
+   * (Raum, Titel, Folge, laufende Nummer), er gilt nur begrenzt lange, er zaehlt
+   * seine Versuche, und er ist erst fertig, wenn der Player gemeldet hat, dass
+   * die Stelle wirklich weiterlaeuft.
+   */
+
+  /** Der eine offene Auftrag. Es laeuft immer nur ein Player. */
+  let auftrag = null;
+  /** Die laufende Nummer je Raum und Titel. Sie macht einen aelteren Auftrag ungueltig. */
+  const generationen = new Map();
+  /** Seit wann ein Versuch auf seinen Bericht wartet. 0 heisst: keiner offen. */
+  let berichtOffenSeit = 0;
+
+  function autostartMarke(room, key) {
+    return `${String(room || "")}|${String(key || "")}`;
+  }
+
+  function autostartLage(lage) {
+    const room = (lage && lage.room) || "";
+    const key = (lage && lage.key) || "";
+    return {
+      jetzt: Date.now(),
+      generation: generationen.get(autostartMarke(room, key)) || 0,
+      raum: String(room),
+      key: String(key),
+      season: Number(lage && lage.season) || 0,
+      episode: Number(lage && lage.episode) || 0,
+      berichtOffenSeit
+    };
+  }
+
+  function autostartAntwort(schritt) {
+    return Object.assign({}, schritt, {
+      auftrag: auftrag ? auftrag.id : "",
+      versuche: auftrag ? auftrag.versuche : 0
+    });
+  }
+
+  /**
+   * Einen Auftrag anlegen - beim Folgenwechsel, den die Runde ausgeloest hat.
+   *
+   * <p>Die laufende Nummer steigt dabei. Ein Auftrag von vorhin, der noch auf
+   * einen langsamen Player wartet, ist damit erledigt: wechselt der Host
+   * waehrend des Ladens erneut, startet nur der neueste.
+   */
+  function autostartAnfordern(angaben) {
+    const room = (angaben && angaben.room) || "";
+    const key = (angaben && angaben.key) || "";
+    if (!key) return null;
+    const marke = autostartMarke(room, key);
+    const generation = (generationen.get(marke) || 0) + 1;
+    generationen.set(marke, generation);
+    berichtOffenSeit = 0;
+    auftrag = autostart.auftragAnlegen({
+      generation,
+      raum: room,
+      key,
+      season: (angaben && angaben.season) || 0,
+      episode: (angaben && angaben.episode) || 0,
+      url: (angaben && angaben.url) || "",
+      hostId: (angaben && angaben.hostId) || "",
+      playing: Boolean(angaben && angaben.playing),
+      jetzt: Date.now()
+    });
+    return { auftrag: auftrag.id, generation };
+  }
+
+  /**
+   * Was als Naechstes zu tun ist.
+   *
+   * <p>Java fragt im Takt und tut, was hier steht: {@code anfordern} heisst
+   * "den Stand der Runde neu holen" - die Antwort des Relays traegt den
+   * frischen Hostzustand und loest ueber {@link steuerungPruefen} den Versuch
+   * aus. {@code warten} heisst, dass ein Versuch noch laeuft oder der Abstand
+   * noch nicht um ist. {@code aufgeben} beendet den Auftrag.
+   */
+  function autostartSchritt(lage) {
+    if (!auftrag) return { tun: "aufgeben", grund: "kein auftrag", wartenMs: 0, auftrag: "", versuche: 0 };
+    const l = autostartLage(lage);
+    // Die Frist gilt in jedem Fall - auch fuer einen Auftrag, dessen Seite nie
+    // aufgeht. Sonst klopfte der Takt ewig weiter.
+    if (auftrag.erstellt && l.jetzt - auftrag.erstellt > autostart.AUFTRAG_FRIST_MS) {
+      const id = auftrag.id;
+      auftrag = null;
+      berichtOffenSeit = 0;
+      return { tun: "aufgeben", grund: "frist abgelaufen", wartenMs: 0, auftrag: id, versuche: 0 };
+    }
+    // Hier steht gerade ein anderer Titel. Zwei Faelle, und beide heissen
+    // "warten" und nicht "aufgeben":
+    //
+    //   - Die Seite laedt noch. Ein Auftrag entsteht *vor* der Navigation, und
+    //     bis sie durch ist, zeigt dieses Geraet noch die Folge davor.
+    //   - In einem Raum liegen mehrere Titel. Die Frage nach dem einen darf den
+    //     Auftrag des anderen nicht loeschen - Bleach, Korra und BLACK TORCH.
+    //
+    // Ausgefuehrt wird er dabei nicht: nur wenn Raum und Titel wirklich passen,
+    // geht ein Versuch hinaus.
+    if (l.raum !== auftrag.raum || l.key !== auftrag.key) {
+      return { tun: "warten", grund: "andere seite", wartenMs: 1500, auftrag: auftrag.id, versuche: auftrag.versuche };
+    }
+    const schritt = autostart.naechsterSchritt(auftrag, l);
+    if (schritt.tun === "anfordern") autostart.versuchVermerken(auftrag, l.jetzt);
+    const antwort = autostartAntwort(schritt);
+    if (schritt.tun === "aufgeben") {
+      auftrag = null;
+      berichtOffenSeit = 0;
+    }
+    return antwort;
+  }
+
+  /**
+   * Den Bericht eines Versuchs einarbeiten.
+   *
+   * @return null, wenn die Zeile kein Bericht ist; sonst wie er ausging
+   */
+  function autostartBericht(zeile) {
+    const bericht = autostart.berichtLesen(zeile);
+    if (!bericht) return null;
+    const passt = autostart.berichtVerarbeiten(auftrag, bericht);
+    // Nur der eigene Bericht macht den Weg fuer den naechsten Versuch frei.
+    // Der Player der vorigen Folge meldet sonst diesen Auftrag als erledigt.
+    if (passt) berichtOffenSeit = 0;
+    const antwort = {
+      passt,
+      ok: Boolean(bericht.ok),
+      zustand: String(bericht.zustand || ""),
+      grund: String(bericht.grund || ""),
+      stelle: Number(bericht.stelle) || 0,
+      fertig: Boolean(passt && auftrag && auftrag.fertig)
+    };
+    if (antwort.fertig) auftrag = null;
+    return antwort;
+  }
+
+  /**
+   * Den offenen Auftrag verwerfen - beim Verlassen und beim Ausschalten.
+   *
+   * <p>Mit einer Lage dazu heisst es: "dieses Geraet ist gerade von sich aus
+   * hierhin gegangen". Dann wird nur verworfen, was woandershin zeigt. Ohne
+   * diese Unterscheidung loeschte der Weg, den der Auftrag selbst ausgeloest
+   * hat, den Auftrag: die Folge ging auf, das Seitenende meldete einen eigenen
+   * Wechsel, und der Start war weg - gemessen am 25.08.2026 auf dem Telefon
+   * ("Autostart verworfen: eigener Folgenwechsel", eine Sekunde nach
+   * "Autostart angefordert").
+   *
+   * @return ob wirklich einer verworfen wurde
+   */
+  function autostartVerwerfen(lage) {
+    if (!auftrag) return false;
+    const key = lage && lage.key ? String(lage.key) : "";
+    if (key) {
+      const gemeint = autostart.auftragGilt(auftrag, {
+        jetzt: Date.now(),
+        generation: generationen.get(autostartMarke(lage.room, key)) || 0,
+        raum: String((lage && lage.room) || ""),
+        key,
+        season: Number(lage && lage.season) || 0,
+        episode: Number(lage && lage.episode) || 0
+      });
+      if (gemeint) return false;
+    }
+    auftrag = null;
+    berichtOffenSeit = 0;
+    return true;
+  }
+
+  /** Woran Java einen Bericht des Startskripts erkennt. */
+  const MELDE_START = autostart.MELDE_START;
+
   // Verwaltendes reicht direkt durch. Eine eigene Pruefung waere hier falsch:
   // was ein gueltiger Raumcode ist, weiss das geteilte Modul.
   const durchreiche = {
@@ -353,6 +577,12 @@
     meldungStand,
     folgenwechselMelden,
     zuruecksetzen,
+    // Der Folgen-Autostart.
+    autostartAnfordern,
+    autostartSchritt,
+    autostartBericht,
+    autostartVerwerfen,
+    MELDE_START,
     // Der Horcher, der im Player Play, Pause und Sprung bemerkt. Woertlich
     // dasselbe Skript, das der Rechner einsetzt.
     beobachterSkript: () => sync.beobachterScript(),
@@ -362,6 +592,10 @@
     MELDE_SYNC: sync.MELDE_SYNC,
     // Damit die Oberflaeche einen eingetippten Code beanstanden kann, bevor
     // sie ihn speichert - mit demselben Wortlaut wie am Rechner.
-    codeBeanstandung
+    codeBeanstandung,
+    // Dasselbe fuer die Serveradresse. Sie wird auf dem Telefon und am
+    // Fernseher eingetippt, also gehoert die Pruefung genau einmal hierher.
+    serverNormalisieren,
+    serverBeanstandung
   }, durchreiche);
 })();

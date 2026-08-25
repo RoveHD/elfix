@@ -416,6 +416,42 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
         `${echt.length} Meldungen`);
     }
 
+    // 14e2. Zwei Anweisungen dicht hintereinander - und das Echo der ersten
+    // kommt erst danach.
+    //
+    // Gemessen am 25.08.2026 auf dem Telefon (Rechner drueckt Pause, Handy
+    // schaut mit): das Relay schickt hinter das Pause sofort die genaue Stelle
+    // als "seek" nach. Beide Anweisungen waren angewendet, bevor der Player
+    // sein Pause-Ereignis meldete. Der Merker trug da schon "seek", das Echo
+    // ging als eigene Tat hinaus - und in der Runde stand danach
+    // pausedBy="Handy", obwohl der Rechner pausiert hatte.
+    {
+      const m = video(110, { paused: false });
+      const welt = seite([m]);
+      laufen(welt, beobachterScript());
+      const jetzt = Date.now();
+      // So, wie zwei applyScript-Laeufe kurz hintereinander es hinterlassen.
+      welt.fenster.__elfixWpEcho = [
+        { aktion: "pause", ziel: 110, bis: jetzt + 1500 },
+        { aktion: "seek", ziel: 110, bis: jetzt + 1500 }
+      ];
+      welt.fenster.__elfixWpErwartet = welt.fenster.__elfixWpEcho[1];
+      welt.feuern("pause", m);
+      const zurueck = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "pause");
+      pruefe("14e2. Auch das Echo der vorletzten Anweisung wird verschluckt",
+        zurueck.length === 0,
+        `${zurueck.length} Meldungen - sonst steht in der Runde der falsche pausedBy`);
+
+      // Und die Gegenrichtung kommt trotzdem durch: nach Ablauf beider Fristen
+      // ist ein Pause wieder eine eigene Tat.
+      welt.logs.length = 0;
+      welt.fenster.__elfixWpEcho = [{ aktion: "pause", ziel: 110, bis: jetzt - 1 }];
+      welt.fenster.__elfixWpErwartet = null;
+      welt.feuern("pause", m);
+      pruefe("14e3. Eine abgelaufene Anweisung verschluckt nichts mehr",
+        welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "pause").length === 1);
+    }
+
     // 14g. Beim Sprung entscheidet die Stelle, nicht die Art: wer waehrend
     // eines fremden Sprungs selbst woandershin spult, meint das ernst.
     {

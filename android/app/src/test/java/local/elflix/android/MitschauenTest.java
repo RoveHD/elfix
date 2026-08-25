@@ -23,6 +23,34 @@ public class MitschauenTest {
 
     private static final String BASIS = "https://aniworld.to/anime/stream/naruto";
 
+    /**
+     * Der Schluessel, den ein Autostart-Auftrag traegt.
+     *
+     * <p>Er muss derselbe sein, unter dem der Titel in der Runde gefuehrt wird -
+     * die Serienadresse ohne Staffel und Folge. Ein anders gebildeter liesse den
+     * Auftrag auf einen anderen Eintrag im selben Raum ueberspringen oder auf
+     * gar keinen: in einem Raum liegen Bleach, Korra und BLACK TORCH
+     * nebeneinander, und jeder braucht seinen eigenen.
+     */
+    @Test
+    public void derAuftragTraegtDenSchluesselDerRunde() {
+        assertEquals(BASIS, Mitschauen.schluesselFuer(BASIS + "/staffel-3/episode-8"));
+        // Jede Folge derselben Serie ergibt denselben Schluessel - sonst waere
+        // ein Folgenwechsel ein Titelwechsel.
+        assertEquals(Mitschauen.schluesselFuer(BASIS + "/staffel-1/episode-1"),
+            Mitschauen.schluesselFuer(BASIS + "/staffel-9/episode-24"));
+        // Die deutsche Schreibweise ebenso.
+        assertEquals("https://s.to/serie/stream/test",
+            Mitschauen.schluesselFuer("https://s.to/serie/stream/test/staffel-1/folge-5"));
+        // Ein zweiter Titel im selben Raum ist ein anderer Schluessel.
+        assertFalse(Mitschauen.schluesselFuer(BASIS + "/staffel-1/episode-1")
+            .equals(Mitschauen.schluesselFuer(
+                "https://aniworld.to/anime/stream/bleach/staffel-1/episode-1")));
+        // Ohne Adresse kein Schluessel - und damit kein Auftrag.
+        assertEquals("", Mitschauen.schluesselFuer(null));
+        assertEquals("", Mitschauen.schluesselFuer(""));
+    }
+
     @Test
     public void erkenntStaffelUndFolge() {
         assertArrayEquals(new int[]{3, 8},

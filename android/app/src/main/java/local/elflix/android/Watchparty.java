@@ -191,10 +191,52 @@ public final class Watchparty {
         anwenden();
     }
 
-    public void setzeServer(String url) {
-        serverUrl = url == null ? "" : url.trim();
-        speichern();
-        anwenden();
+    /**
+     * Die Serveradresse eintragen - geprüft und in einer Schreibweise.
+     *
+     * <p>Sie stand an drei Stellen und wurde an jeder ein bisschen anders
+     * behandelt: am Rechner nur getrimmt, hier nur getrimmt, und am Fernseher
+     * gab es sie gar nicht. Was aus einer Fernbedienungstastatur kommt, trägt
+     * Leerzeichen mit, gern einen Schrägstrich am Ende und manchmal
+     * unsichtbare Zeichen - jedes davon ergibt eine andere Zeichenkette und
+     * damit eine andere Verbindung, obwohl dasselbe Relay gemeint ist.
+     *
+     * <p>Deshalb entscheidet das auch hier nicht Java, sondern
+     * {@code watchparty.js}: dieselbe Normalisierung und derselbe Wortlaut der
+     * Beanstandung wie am Rechner. Eine leere Eingabe ist ausdrücklich keine
+     * Beanstandung - sie heißt "keine Adresse", und dann bleibt die
+     * Watchparty eben aus.
+     *
+     * @param antwort bekommt die gespeicherte Adresse, oder die Beanstandung
+     */
+    public void setzeServer(String url, Kern.Antwort antwort) {
+        String roh = url == null ? "" : url;
+        if (kern == null || !kern.istBereit()) {
+            antwort.fertig(null, "Der Kern läuft noch nicht");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.serverBeanstandung", Kern.args(roh), (wert, fehler) -> {
+            if (fehler != null) {
+                antwort.fertig(null, fehler);
+                return;
+            }
+            String beanstandung = textAus(wert);
+            if (beanstandung != null && !beanstandung.isEmpty()) {
+                antwort.fertig(null, beanstandung);
+                return;
+            }
+            kern.rufe("watchparty-bruecke.serverNormalisieren", Kern.args(roh),
+                (sauber, fehler2) -> {
+                    if (fehler2 != null) {
+                        antwort.fertig(null, fehler2);
+                        return;
+                    }
+                    serverUrl = textAus(sauber);
+                    speichern();
+                    anwenden();
+                    antwort.fertig(serverUrl, null);
+                });
+        });
     }
 
     public void setzeGeraetName(String name) {

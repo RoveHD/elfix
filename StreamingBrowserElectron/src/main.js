@@ -27,6 +27,7 @@ const kalender = require("./kalender");
 const sitzungslauf = require("./sitzungslauf");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+const watchpartyAutostart = require("./watchparty-autostart");
 // Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
 // die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
 // Schluessel, und Laptop und Rechner haben denselben Stand.
@@ -4056,19 +4057,10 @@ async function startPlaybackInView(view, options = {}) {
       }
     };
     const playerOverlayButton = () => {
-      const selectors = [
-        ".jw-icon-display",
-        ".jw-display-icon-display",
-        ".jw-display-icon-container",
-        ".vjs-big-play-button",
-        ".plyr__control--overlaid",
-        "[class*='big-play']",
-        "[class*='play-button']",
-        "[class*='playButton']",
-        "[class*='display-icon']",
-        "[aria-label='Play']",
-        "[title='Play']"
-      ];
+      // Die Liste steht in watchparty-autostart.js, weil Android sie fuer den
+      // Folgen-Autostart genauso braucht. Zwei Abschriften waeren zwei Listen,
+      // und die eine haette den naechsten Hoster gekannt und die andere nicht.
+      const selectors = ${JSON.stringify(watchpartyAutostart.UEBERLAGERUNG_WAEHLER)};
       for (const selector of selectors) {
         const node = Array.from(document.querySelectorAll(selector))
           .filter(visible)

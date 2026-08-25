@@ -333,6 +333,10 @@ function applyScript(action, ereignis, optionen = {}) {
     const warten = ${warten};
     const nichtSpringen = ${nichtSpringen};
     const anhalten = aktion === "pause" || aktion === "syncprepare";
+    // Womit play() abgelehnt hat, falls es das tat. Siehe unten: die Antwort
+    // dieses Skripts soll den Unterschied zwischen "laeuft" und "abgelehnt"
+    // wirklich tragen.
+    let abgelehnt = "";
     const laufen = aktion === "play" || aktion === "syncstart";
 
     // Das Ereignis, wie es das Relay geschickt hat, plus der gemessene
@@ -351,11 +355,27 @@ function applyScript(action, ereignis, optionen = {}) {
     // Was der eigene Player gleich von sich aus melden wird, ist nur das Echo
     // dieser Anweisung. Nur genau das wird verschluckt - eine Gegenrichtung
     // kommt weiter durch, damit Pausieren auch direkt nach einem Sync wirkt.
-    window.__elfixWpErwartet = {
+    //
+    // Gemerkt wird in einer *Liste* und nicht in einem einzelnen Fach. Gemessen
+    // am 25.08.2026 auf dem Telefon: das Relay schickt hinter ein Pause sofort
+    // die genaue Stelle als "seek" hinterher. Beide Anweisungen kamen an,
+    // bevor der Player sein Pause-Ereignis meldete - das Fach trug da schon
+    // "seek", das Echo galt als eigene Tat und ging zurueck an die Runde.
+    // Sichtbar wurde das an pausedBy: dort stand das Geraet, das die Pause
+    // nur befolgt hatte, statt dessen, das sie ausgeloest hat.
+    const merken = {
       aktion: anhalten ? "pause" : (laufen ? "play" : "seek"),
       ziel,
       bis: Date.now() + (warten ? 4000 : 1500)
     };
+    // Das Fach bleibt: die Zielkorrektur weiter unten schreibt hinein, und der
+    // Horcher liest es, wenn die Liste (noch) fehlt.
+    window.__elfixWpErwartet = merken;
+    const bisher = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
+    window.__elfixWpEcho = bisher
+      .filter((eintrag) => eintrag && Date.now() < eintrag.bis)
+      .concat([merken])
+      .slice(-6);
 
     // Warten, bis der Sprung wirklich sitzt und genug geladen ist. Wer zu
     // frueh weitermacht, startet mitten im Nachladen und liegt sofort wieder
@@ -404,11 +424,30 @@ function applyScript(action, ereignis, optionen = {}) {
           }
           window.__elfixWpErwartet.ziel = zielJetzt();
         }
-        const p = media.play();
-        if (p && typeof p.then === "function") p.catch(() => {});
+        // Das Versprechen von play() wird ausgewertet und nicht weggefangen.
+        // Es still zu verschlucken war der Grund, warum ein abgelehntes play()
+        // von aussen wie ein gelungenes aussah: die Antwort hiess "laeuft",
+        // waehrend das Bild stand. Gewartet wird nur kurz - ein Player, der
+        // sein Versprechen gar nicht einloest, soll den Befehl nicht aufhalten.
+        try {
+          const p = media.play();
+          if (p && typeof p.then === "function") {
+            await Promise.race([
+              p.catch((fehler) => {
+                abgelehnt = String((fehler && (fehler.name + ": " + fehler.message)) || fehler).slice(0, 120);
+              }),
+              new Promise((fertig) => setTimeout(fertig, 1200))
+            ]);
+          }
+        } catch (fehler) {
+          abgelehnt = String((fehler && fehler.message) || fehler).slice(0, 120);
+        }
       }
 
-      if (!warten) return anhalten ? "pausiert" : (laufen ? "laeuft" : "gesprungen");
+      if (!warten) {
+        if (laufen && abgelehnt) return "play-abgelehnt:" + abgelehnt;
+        return anhalten ? "pausiert" : (laufen ? "laeuft" : "gesprungen");
+      }
       const bereit = await abwarten(nichtSpringen ? null : ziel, 2200);
       return bereit ? "bereit" : "ungenau";
     } catch (_) {
@@ -554,6 +593,7 @@ function beobachterScript() {
     if (window.__elfixWpInstalled) return "schon-da";
     window.__elfixWpInstalled = true;
     window.__elfixWpErwartet = null;
+    window.__elfixWpEcho = [];
 
     const melden = (aktion, media) => {
       // Der eigene Player meldet eine eben ausgefuehrte fremde Anweisung als
@@ -562,8 +602,14 @@ function beobachterScript() {
       // waehrend gerade ein Play hereinkam, ist das eine echte Tat und muss
       // durch. Vorher schwieg das Geraet pauschal ein paar Sekunden lang, und
       // genau in dieser Zeit ging Pausieren nach einem Sync ins Leere.
-      const erwartet = window.__elfixWpErwartet;
-      if (erwartet && Date.now() < erwartet.bis) {
+      // Alle Anweisungen, die noch offen stehen - nicht nur die letzte. Zwei
+      // koennen dicht aufeinander folgen (Pause und die genaue Stelle danach),
+      // und dann gehoert das Echo der ersten immer noch dazu.
+      const liste = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
+      const einzeln = window.__elfixWpErwartet;
+      const offen = einzeln && liste.indexOf(einzeln) < 0 ? liste.concat([einzeln]) : liste;
+      for (const erwartet of offen) {
+        if (!erwartet || Date.now() >= erwartet.bis) continue;
         // Beim Sprung entscheidet die Stelle: nur der Sprung auf genau das
         // erwartete Ziel ist das Echo. Wer waehrenddessen selbst woandershin
         // spult, meint das ernst - vorher verschluckte diese Pruefung jeden
