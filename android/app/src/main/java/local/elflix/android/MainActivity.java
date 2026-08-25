@@ -85,6 +85,16 @@ public class MainActivity extends Activity {
     private boolean aniworldBildNachreichungLaedt;
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
+    /**
+     * Das Mitschauen: Play, Pause und Sprung zwischen den Geraeten. Siehe
+     * Mitschauen.java.
+     *
+     * <p>Getrennt von {@link Watchparty}: die haelt Raeume, Mitglieder und den
+     * Fortschritt, dieses hier haengt am Video. Zwei verschiedene Lebensdauern -
+     * eine Runde ueberdauert jede Folge, ein Player nicht einmal einen
+     * Hosterwechsel.
+     */
+    private Mitschauen mitschauen;
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
     private Kosmetik kosmetik;
     /**
@@ -307,6 +317,8 @@ public class MainActivity extends Activity {
     private final Handler takt = new Handler(Looper.getMainLooper());
     /** Wo der Titelhintergrund steckt - er wird fuer sich neu gezeichnet, nicht die Seite. */
     private FrameLayout heroPlatz;
+    /** Und wo die Karte "wer schaut mit" steckt - aus demselben Grund. */
+    private FrameLayout mitschauPlatz;
     private LinearLayout heroPunkte;
 
     /**
@@ -428,7 +440,17 @@ public class MainActivity extends Activity {
         messung.setzeRahmen(rahmen);
         titelbild = new Titelbild(kern, bestand);
         messung.setzeTitelbild(titelbild);
-        watchparty = new Watchparty(this, kern, this::watchpartyGeaendert);
+        watchparty = new Watchparty(this, kern, new Watchparty.Beobachter() {
+            @Override
+            public void watchpartyGeaendert() {
+                MainActivity.this.watchpartyGeaendert();
+            }
+
+            @Override
+            public void watchpartyStandGeaendert() {
+                MainActivity.this.mitschauStandGeaendert();
+            }
+        });
         geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
             // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
             if ("settings".equals(currentScreen)) showSettings();
@@ -462,6 +484,38 @@ public class MainActivity extends Activity {
         fassungen = new Fassungen(this, kern);
         rahmen = new Rahmen(this::rahmenMeldung);
         marken = new Marken(this, kern, rahmen);
+        mitschauen = new Mitschauen(kern, rahmen, watchparty, new Mitschauen.Umgebung() {
+            @Override
+            public WebView spieler() {
+                return activeProvider == null ? null : webViews.get(activeProvider.id);
+            }
+
+            @Override
+            public String adresse() {
+                WebView ansicht = spieler();
+                String url = ansicht == null ? null : ansicht.getUrl();
+                return url == null ? "" : url;
+            }
+
+            @Override
+            public Provider anbieter() {
+                return activeProvider;
+            }
+
+            @Override
+            public void folgeOeffnen(Provider anbieter, String url) {
+                if (anbieter == null || url == null || url.isEmpty()) return;
+                // Mit preserveFavoriteProgress: der Eintrag bleibt derselbe,
+                // es ist nur eine andere Folge davon.
+                openProvider(anbieter, url, true);
+            }
+
+            @Override
+            public void anzeigeAuffrischen() {
+                if ("watchparty".equals(currentScreen)) zeigeWatchparty();
+            }
+        });
+        watchparty.setzeMitschauen(mitschauen);
         qualitaet = new Qualitaet(kern, rahmen);
         if (!Rahmen.verfuegbar()) {
             // Aeltere WebViews kennen den Weg in die Rahmen nicht. Die App
@@ -477,6 +531,7 @@ public class MainActivity extends Activity {
             werbefilter.vorbereiten();
             fassungen.vorbereiten();
             marken.vorbereiten();
+            mitschauen.vorbereiten();
             qualitaet.vorbereiten();
             geraete.vorbereiten();
             geraete.netzBeobachten();
@@ -1052,6 +1107,11 @@ public class MainActivity extends Activity {
     void showHome() {
         currentScreen = "home";
         if (activeProvider != null) {
+            // Hier schaut niemand mehr zu: sofort aus der Runde abmelden, statt
+            // still zu werden. Sonst steht dieses Geraet bei den anderen noch
+            // als aktiv - und bliebe Host einer Folge, die es nicht mehr
+            // schaut, bis der Herzschlag ablaeuft.
+            if (mitschauen != null) mitschauen.abmelden();
             rememberAndPauseMedia(activeProvider.id, webViews.get(activeProvider.id));
             // Die Anbieterseite tritt zurueck: was dort lief, ist zu Ende
             // gezaehlt. Dieselbe Stelle wie am Rechner beim Schliessen einer
@@ -5193,6 +5253,7 @@ public class MainActivity extends Activity {
      */
     private void zeigeWatchparty() {
         currentScreen = "watchparty";
+        mitschauPlatz = null;
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -5227,6 +5288,12 @@ public class MainActivity extends Activity {
                 : fehler,
             null, null), MobileViews.SECTION_GAP);
 
+        // Ein Platz statt der Karte selbst: er bleibt stehen, waehrend sein
+        // Inhalt im Sekundentakt wechselt (siehe mitschauStandGeaendert).
+        mitschauPlatz = new FrameLayout(this);
+        addSpacing(page, mitschauPlatz, MobileViews.ITEM_GAP);
+        mitschauStandGeaendert();
+
         JSONArray raeume = watchparty.raeume();
         for (int i = 0; i < raeume.length(); i += 1) {
             JSONObject raum = raeume.optJSONObject(i);
@@ -5256,6 +5323,77 @@ public class MainActivity extends Activity {
             if (eintrag == null) continue;
             addSpacing(page, watchpartyKarte(eintrag), MobileViews.ITEM_GAP);
         }
+    }
+
+    /**
+     * Was gerade wirklich laeuft: wer mitschaut, wo jeder steht, wer fuehrt.
+     *
+     * <p>Bis hierher zeigte der Fernseher nur, ob eine Verbindung steht und
+     * welche Titel eingestellt sind - also die Verwaltung. Was beim Schauen
+     * zaehlt, stand nirgends: ob die anderen laufen oder stehen, wie weit sie
+     * sind, und wer zuletzt gedrueckt hat.
+     *
+     * <p>Die Angaben kommen fertig vom Relay ({@code watchstate}) und werden
+     * hier nicht nachgerechnet - insbesondere nicht die Altersangabe: sonst
+     * mischten sich zwei Uhren, und jede Abweichung zwischen Geraet und Relay
+     * stuende in der Anzeige.
+     *
+     * @return {@code null}, wenn gerade nichts mitlaeuft
+     */
+    private View mitschauKarte() {
+        if (watchparty == null) return null;
+        JSONObject stand = watchparty.mitschauStand();
+        JSONArray mitglieder = stand.optJSONArray("members");
+        if (mitglieder == null || mitglieder.length() == 0) return null;
+
+        StringBuilder zeilen = new StringBuilder();
+        String host = "";
+        for (int i = 0; i < mitglieder.length(); i += 1) {
+            JSONObject person = mitglieder.optJSONObject(i);
+            if (person == null) continue;
+            String name = person.optBoolean("me", false)
+                ? "Du" : person.optString("name", "Gerät");
+            if (person.optBoolean("host", false)) host = name;
+            if (zeilen.length() > 0) zeilen.append("\n");
+            zeilen.append(person.optBoolean("paused", false) ? "⏸  " : "▶  ")
+                .append(name)
+                .append(person.optBoolean("host", false) ? "  (führt)" : "")
+                .append("  ·  ")
+                .append(uhrzeit(person.optDouble("position", 0)));
+        }
+        if (zeilen.length() == 0) return null;
+
+        // Wer gedrueckt hat - nicht, wer gerade angehalten ist. Zieht ein
+        // zweites Geraet die Pause nur mit, bleibt der Ausloeser derselbe.
+        // Genau deshalb kommt der Name aus "lastAction" und nicht daraus, wer
+        // pausiert dasteht: sonst stuende dort irgendwann ein falscher.
+        JSONObject letzte = stand.optJSONObject("lastAction");
+        if (letzte != null) {
+            String wer = letzte.optString("name", "");
+            String was = letzte.optString("type", "");
+            if (!wer.isEmpty() && !was.isEmpty()) {
+                zeilen.append("\n\n")
+                    .append("pause".equals(was) ? "Angehalten von "
+                        : "play".equals(was) ? "Gestartet von " : "Gesprungen von ")
+                    .append(wer);
+            }
+        }
+
+        String kopf = host.isEmpty() ? "Wer schaut mit" : "Wer schaut mit  ·  " + host + " führt";
+        return isTelevision()
+            ? TvViews.infoCard(this, kopf, zeilen.toString(), null, null)
+            : settingsCard(kopf, zeilen.toString(), null, null);
+    }
+
+    /** Sekunden als Uhrzeit - dieselbe Schreibweise wie am Rechner. */
+    private static String uhrzeit(double sekunden) {
+        int gesamt = (int) Math.max(0, Math.round(sekunden));
+        int stunden = gesamt / 3600;
+        int minuten = (gesamt % 3600) / 60;
+        int rest = gesamt % 60;
+        return stunden > 0
+            ? String.format(java.util.Locale.GERMANY, "%d:%02d:%02d", stunden, minuten, rest)
+            : String.format(java.util.Locale.GERMANY, "%d:%02d", minuten, rest);
     }
 
     private View watchpartyKarte(JSONObject eintrag) {
@@ -5820,6 +5958,10 @@ public class MainActivity extends Activity {
         // nicht die offene Sitzung beenden: wer kurz auf eine Nachricht schaut
         // und zurueckkommt, hat nicht zweimal geschaut.
         if (statistik != null) statistik.speichern();
+        // Aus der Runde abmelden, aber nichts an sie senden: Android haelt
+        // gleich den WebView an, und die Pause, die der Player daraufhin
+        // meldet, ist keine Entscheidung des Zuschauers.
+        if (mitschauen != null) mitschauen.vordergrund(false);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onPause();
     }
@@ -5830,6 +5972,9 @@ public class MainActivity extends Activity {
         // Zurueck in der App: waehrend sie weg war, kann am Rechner etwas
         // gelaufen sein. Einmal nachsehen, nicht dauernd fragen.
         if (geraete != null) geraete.abgleichenSpaeter(500);
+        // Und der Runde sagen, dass hier wieder jemand sitzt. Ab jetzt zaehlen
+        // Pause und Weiter wieder als Entscheidung.
+        if (mitschauen != null) mitschauen.vordergrund(true);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onResume();
         // Der Takt des Titelhintergrunds haengt an onPause. Steht die
@@ -6030,6 +6175,12 @@ public class MainActivity extends Activity {
         String seite = ansicht.getUrl();
         if (seite == null || !seite.startsWith("http")) return;
         Log.i(TAG, "Rahmen mit Video: " + safeHost(adresse));
+        // Hier und nicht erst beim Seitenende: ein neuer Player entsteht auch
+        // mitten in einem Dokument - beim Hosterwechsel, beim Sprachwechsel,
+        // beim Nachladen des Rahmens. Genau daran ist die Watchparty frueher
+        // gestorben. Das Skript traegt seinen eigenen Merker, ein zweites
+        // Einspielen kostet also nichts.
+        if (mitschauen != null) mitschauen.anPlayer(ansicht);
         org.json.JSONArray eintraege = FavoriteStore.ladeRoh(this);
         // Kein Live-Mitschauen auf Android, also gibt keine Runde die Folge vor
         // und jeder Sprung ist die Entscheidung dessen, der hier sitzt.
@@ -6055,6 +6206,25 @@ public class MainActivity extends Activity {
     /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
     private void watchpartyGeaendert() {
         if ("watchparty".equals(currentScreen)) zeigeWatchparty();
+    }
+
+    /**
+     * Nur der Stand hat sich geaendert - dann auch nur die eine Karte.
+     *
+     * <p>Er kommt im Sekundentakt, solange jemand schaut. Die ganze Seite
+     * dafuer neu zu bauen war auf dem Telefon schon verschwenderisch; auf dem
+     * Fernseher waere es ein Fehler: mit jeder neuen Seite verschwindet die
+     * Ansicht, die den Fokus haelt, und die Fernbedienung faengt jede Sekunde
+     * oben an.
+     */
+    private void mitschauStandGeaendert() {
+        if (!"watchparty".equals(currentScreen) || mitschauPlatz == null) return;
+        mitschauPlatz.removeAllViews();
+        View karte = mitschauKarte();
+        if (karte != null) {
+            mitschauPlatz.addView(karte, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
     }
 
     /**
@@ -6223,10 +6393,20 @@ public class MainActivity extends Activity {
                 cycleProvider(1);
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-            case KeyEvent.KEYCODE_MEDIA_PLAY:
-            case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 if (fullscreen) tapFullscreenCentre();
                 else togglePlayback();
+                return true;
+            // Getrennt, weil die Fernbedienung sie getrennt meint. Beide gehen
+            // in den Rahmen des Hosters und loesen dort ein echtes Medien-
+            // ereignis aus - die Watchparty meldet es von selbst weiter.
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+                if (!onWebsite && !fullscreen) return false;
+                spielerAbspielen();
+                return true;
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_STOP:
+                if (!onWebsite && !fullscreen) return false;
+                spielerAnhalten();
                 return true;
 
             // Numbers, and the colour buttons alongside them for the same actions.
@@ -6866,8 +7046,48 @@ public class MainActivity extends Activity {
     }
 
     private void togglePlayback() {
+        spielerBefehl("m.paused?m.play():m.pause()");
+    }
+
+    /**
+     * Play und Pause der Fernbedienung - getrennt, nicht als Umschalter.
+     *
+     * <p>Eine Fernbedienung mit eigenen Tasten fuer Play und Pause meint sie
+     * auch getrennt: wer auf ein laufendes Video PLAY drueckt, will es laufen
+     * lassen und nicht anhalten. Nur PLAY_PAUSE schaltet um.
+     */
+    private void spielerAbspielen() {
+        spielerBefehl("m.play()");
+    }
+
+    private void spielerAnhalten() {
+        spielerBefehl("m.pause()");
+    }
+
+    /**
+     * Einen Befehl an das Video schicken - und zwar dorthin, wo es liegt.
+     *
+     * <p>Vorher ging das ueber {@code evaluateJavascript}, und das erreicht nur
+     * das Hauptdokument. Bei AniWorld und s.to liegt das Video im Rahmen des
+     * Hosters: die Taste tat schlicht nichts, solange der Player eingebettet
+     * war. Ueber {@link Rahmen} geht der Befehl in jeden Rahmen mit Video.
+     *
+     * <p>Und weil er dort ein echtes {@code play}- oder {@code pause}-Ereignis
+     * ausloest, meldet der Horcher der Watchparty ihn von selbst weiter. Die
+     * Fernbedienung braucht dafuer keine eigene Leitung - sie tut dasselbe wie
+     * ein Klick auf den Player.
+     */
+    private void spielerBefehl(String ausdruck) {
+        String skript = "(function(){var t=Array.prototype.slice.call("
+            + "document.querySelectorAll('video,audio')).filter(function(m){return Number(m.duration)>0;});"
+            + "if(!t.length)t=Array.prototype.slice.call(document.querySelectorAll('video,audio'));"
+            + "t.forEach(function(m){try{" + ausdruck + ";}catch(e){}});return t.length;})();";
         WebView webView = currentWebView();
-        if (webView != null) webView.evaluateJavascript("document.querySelectorAll('video,audio').forEach(m=>m.paused?m.play():m.pause());", null);
+        if (webView == null) return;
+        int erreicht = rahmen == null ? 0 : rahmen.anSpieler(webView, skript);
+        // Der Rueckfall fuer Seiten, deren Player im Hauptdokument liegt - und
+        // fuer WebViews ohne Rahmenzugriff.
+        if (erreicht == 0) webView.evaluateJavascript(skript, null);
     }
 
     private void focusSearch() {
@@ -7590,6 +7810,16 @@ public class MainActivity extends Activity {
             // Die Rahmen der vorigen Seite sind tot; ihre Kanaele wuerden
             // sonst mitgezaehlt und die Skripte gingen ins Leere.
             if (rahmen != null) rahmen.vergessen(view);
+            // Und mit ihnen der Zustand der Watchparty an diesem Player: die
+            // bestaetigten Driftmessungen und die zuletzt angewendete laufende
+            // Nummer gehoeren zur Folge davor. Bliebe die Nummer stehen, wiese
+            // der neue Player die ersten Befehle der neuen Folge als
+            // Nachzuegler ab - und dann waere Play/Pause nach einem
+            // Folgenwechsel wieder tot.
+            if (mitschauen != null && provider == activeProvider) mitschauen.zuruecksetzen(view);
+            // Eine neue Seite, neue Versuche: derselbe Hoster kann bei der
+            // naechsten Folge durchaus antworten.
+            rahmenVersuche.clear();
             // Navigating anywhere other than the armed page means the request no longer refers to
             // what is about to appear, so it must not fire on whatever loads instead.
             if (isEpisodeUrl(url)) {
@@ -7805,6 +8035,10 @@ public class MainActivity extends Activity {
                 fernsehwerbung.einspielen(view, provider);
             }
             installTvWebNavigation(view);
+            // Die Watchparty: Horcher einsetzen, einen Folgenwechsel melden und
+            // den Stand der Runde anfordern. Der eine Einstieg fuer alle sechs
+            // Wege, auf denen ELFIX eine Folge oeffnet - siehe Mitschauen.
+            if (mitschauen != null && provider == activeProvider) mitschauen.seiteFertig(view, url);
             installStoPlayerFix(view, provider);
             installAniWorldImageFix(view, provider);
             if (kosmetik != null) kosmetik.einspielen(view, provider);
@@ -7836,6 +8070,50 @@ public class MainActivity extends Activity {
         }
 
         /**
+         * Ein Serverfehler in einem Unterrahmen - der Playerkasten.
+         *
+         * <p>Das ist der Fall aus dem Foto: die Folgenseite steht, Sprache und
+         * Hosterliste stehen, und im Playerkasten steht "502 - Bad Gateway.
+         * Looks like we have got an invalid response from the upstream server."
+         * Der Fehler kommt nicht von ELFIX - es ist die Antwort des Anbieters
+         * beziehungsweise seines vorgelagerten Servers auf die Anfrage, die den
+         * Hoster aufloesen soll. ELFIX hat ihn bisher nur nicht bemerkt:
+         * {@code onReceivedError} sieht ausschliesslich den Hauptrahmen, und
+         * {@code onReceivedHttpError} war gar nicht ueberschrieben. Also blieb
+         * die fremde Fehlerseite als weisser Kasten stehen, und nichts deutete
+         * darauf hin, dass man einfach einen anderen Hoster nehmen kann.
+         *
+         * <p>Zwei Schritte, und mehr nicht:
+         *
+         * <ol>
+         *   <li>Einmal nachladen. Ein 502 ist meistens voruebergehend - eine
+         *       einzelne Anfrage, die der vorgelagerte Server nicht
+         *       durchbekommen hat. Nachgeladen wird nur der Rahmen, nicht die
+         *       Seite: ein Neuladen der Seite kostet die Sprachwahl und die
+         *       Stelle in der Folgenliste.
+         *   <li>Beim zweiten Mal ein eigener Satz an der Stelle des Rahmens.
+         *       Er ersetzt den Rahmen und nicht die Seite - Folgenliste,
+         *       Sprachwahl und Hosterliste bleiben genau, wie sie sind, und
+         *       der naechste Hoster ist einen Klick entfernt.
+         * </ol>
+         */
+        @Override
+        public void onReceivedHttpError(WebView view, WebResourceRequest request,
+                                        WebResourceResponse antwort) {
+            super.onReceivedHttpError(view, request, antwort);
+            if (antwort == null || request == null || request.isForMainFrame()) return;
+            if (provider != activeProvider) return;
+            // Nur Dokumente. Ein Bild oder ein Skript mit 404 ist Alltag auf
+            // diesen Seiten und geht niemanden etwas an.
+            if (!isSubFrameDocument(request)) return;
+            int status = antwort.getStatusCode();
+            if (status < 500 && status != 403 && status != 404) return;
+            String adresse = request.getUrl().toString();
+            spur("sub", adresse, "unterdokument", "fehler", "status " + status);
+            view.post(() -> rahmenFehler(view, adresse, status));
+        }
+
+        /**
          * Ad-heavy streaming pages can crash the WebView's *renderer* process (malformed video
          * codecs, hostile ad iframes, OOM). Without this override Android tears down the whole
          * app process when that happens. Returning true keeps ELFIX alive and discards only the
@@ -7858,6 +8136,75 @@ public class MainActivity extends Activity {
             }
             return true;
         }
+    }
+
+    /**
+     * Wie oft ein gescheiterter Playerrahmen nachgeladen wurde.
+     *
+     * <p>Je Adresse einmal. Der Zaehler wird beim Seitenwechsel geleert - eine
+     * neue Folge faengt von vorn an, und derselbe Hoster kann dort
+     * funktionieren.
+     */
+    private final Map<String, Integer> rahmenVersuche = new HashMap<>();
+
+    /**
+     * Ein Unterrahmen hat einen Serverfehler geliefert.
+     *
+     * <p>Beim ersten Mal wird er nachgeladen, beim zweiten durch einen eigenen
+     * Satz ersetzt. Gesucht wird der Rahmen ueber seine Adresse und nicht ueber
+     * eine Stelle im Dokument: welcher Kasten der Playerkasten ist, weiss die
+     * Seite, nicht ELFIX.
+     */
+    private void rahmenFehler(WebView ansicht, String adresse, int status) {
+        if (ansicht == null || adresse == null || adresse.isEmpty()) return;
+        int versuche = rahmenVersuche.getOrDefault(adresse, 0);
+        rahmenVersuche.put(adresse, versuche + 1);
+        boolean nochmal = versuche == 0;
+        String text = nochmal
+            ? ""
+            : status >= 500
+                ? "Dieser Hoster antwortet gerade nicht (Fehler " + status
+                    + "). Wähle unten einen anderen."
+                : "Dieser Hoster ist nicht erreichbar (Fehler " + status
+                    + "). Wähle unten einen anderen.";
+        String skript = "(function(){"
+            + "var ziel=" + jsZeichenkette(adresse) + ";"
+            + "var nochmal=" + (nochmal ? "true" : "false") + ";"
+            + "var text=" + jsZeichenkette(text) + ";"
+            + "var rahmen=Array.prototype.slice.call(document.querySelectorAll('iframe'));"
+            + "var treffer=null;"
+            + "for(var i=0;i<rahmen.length;i++){"
+                + "var quelle=rahmen[i].src||rahmen[i].getAttribute('src')||'';"
+                + "if(quelle===ziel){treffer=rahmen[i];break;}"
+            + "}"
+            // Ohne Treffer ist der Rahmen nicht der des Players - dann gehoert
+            // dieser Fehler nicht hierher und die Seite bleibt unberuehrt.
+            + "if(!treffer)return 'kein-rahmen';"
+            + "if(nochmal){try{treffer.src=ziel;}catch(e){}return 'neu-geladen';}"
+            + "var kasten=document.createElement('div');"
+            + "kasten.setAttribute('data-elfix-hosterfehler','');"
+            // Die Masse des Rahmens uebernehmen, damit die Seite nicht
+            // zusammenspringt - und sonst nichts anfassen.
+            + "kasten.style.cssText='display:flex;align-items:center;justify-content:center;"
+            + "text-align:center;padding:24px;box-sizing:border-box;font:600 17px/1.45 sans-serif;"
+            + "color:#e8ecf5;background:#141a27;border-radius:10px;'"
+            + "+'width:'+(treffer.offsetWidth||treffer.clientWidth||0)+'px;'"
+            + "+'height:'+(treffer.offsetHeight||treffer.clientHeight||0)+'px;';"
+            + "kasten.textContent=text;"
+            + "try{treffer.replaceWith(kasten);}catch(e){"
+                + "try{treffer.parentNode.replaceChild(kasten,treffer);}catch(e2){return 'ging-nicht';}"
+            + "}"
+            + "return 'ersetzt';"
+        + "})();";
+        ansicht.evaluateJavascript(skript, wert ->
+            Log.i(TAG, "Hosterrahmen " + status + " (" + safeHost(adresse) + "): " + wert));
+    }
+
+    /** Eine Zeichenkette so, wie JavaScript sie lesen kann. */
+    private static String jsZeichenkette(String wert) {
+        String sauber = wert == null ? "" : wert;
+        return "\"" + sauber.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", " ").replace("\r", " ").replace("<", "\\u003c") + "\"";
     }
 
     private void installStoPlayerFix(WebView webView, Provider provider) {
@@ -8084,6 +8431,13 @@ public class MainActivity extends Activity {
             if (kosmetik != null && kosmetik.istMeldung(text)) {
                 WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
                 kosmetik.meldung(ansicht, activeProvider, text);
+            }
+            // Play, Pause, Sprung und Stand aus dem Player. Sie kommen aus dem
+            // Rahmen des Hosters; onConsoleMessage hoert dort mit, anders als
+            // evaluateJavascript.
+            if (mitschauen != null && mitschauen.istMeldung(text)) {
+                mitschauen.meldung(text);
+                return true;
             }
             // Ein Sprung im Player - daraus wird vielleicht eine Intromarke.
             // Die Meldung kommt aus dem Rahmen des Hosters; onConsoleMessage

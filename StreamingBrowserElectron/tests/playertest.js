@@ -6,7 +6,9 @@
 // laufenden Betrieb nichts angefasst wird, und dass kein Weg im Skript je an
 // playbackRate dreht.
 
-const { applyScript, driftScript, zuruecksetzenScript } = require("../src/watchparty-sync");
+const {
+  applyScript, driftScript, zuruecksetzenScript, beobachterScript, aktionLesen, standLesen
+} = require("../src/watchparty-sync");
 
 const pruefungen = [];
 const pruefe = (n, b, d) => { pruefungen.push(b); console.log(`${b ? "OK  " : "FAIL"}  ${n}${d ? "   -> " + d : ""}`); };
@@ -280,6 +282,168 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       ergebnis === "zurueckgesetzt" && fenster.__elfixWpSync.bestaetigt === 0
         && fenster.__elfixWpSync.seitSprung === 0 && m.tempoGesetzt[0] === 1,
       JSON.stringify(fenster.__elfixWpSync));
+  }
+
+  // --- 14. Der Horcher am Player -------------------------------------------
+  //
+  // Er ist das Stueck, das Android bis zum Umbau ganz gefehlt hat, und er ist
+  // der Grund, warum eine Watchparty einen Folgenwechsel ueberlebt. Geprueft
+  // wird hier, was sich am echten Hoster nur schwer zeigen laesst: dass er
+  // nach einem Austausch des Videoelements weiterarbeitet, dass er das Echo
+  // einer angewendeten Fremdanweisung verschluckt - und nur das.
+  {
+    // Eine Seite mit Ereignissen. Der Horcher haengt sich am Dokument in der
+    // Abfangphase ein, genau wie im Browser.
+    // Die Klasse gehoert zur Seite und nicht zum Aufruf: im Browser gibt es sie
+    // genau einmal je Dokument, und ein Horcher, der beim ersten Einspielen
+    // entstanden ist, prueft gegen dieselbe.
+    class HTMLMediaElement {}
+    const seite = (medien) => {
+      const horcher = new Map();
+      const logs = [];
+      const liste = medien.slice();
+      for (const m of liste) Object.setPrototypeOf(m, HTMLMediaElement.prototype);
+      const dokument = {
+        addEventListener: (name, fn) => {
+          if (!horcher.has(name)) horcher.set(name, []);
+          horcher.get(name).push(fn);
+        },
+        querySelectorAll: () => liste
+      };
+      return {
+        dokument, logs, liste, horcher,
+        fenster: {},
+        // Ein Medienereignis, wie der Browser es liefert.
+        feuern: (name, ziel) => {
+          for (const fn of horcher.get(name) || []) fn({ target: ziel });
+        },
+        // Wieviele Horcher haengen insgesamt - fuer die Frage nach Doppelten.
+        anzahl: () => [...horcher.values()].reduce((summe, l) => summe + l.length, 0)
+      };
+    };
+
+    // Das Skript laeuft im Seitenkontext. HTMLMediaElement muss es geben:
+    // daran erkennt der Horcher, ob ein Ereignis von einem Video kommt.
+    const laufen = (welt, quelltext) => {
+      for (const m of welt.liste) Object.setPrototypeOf(m, HTMLMediaElement.prototype);
+      const umgebung = {
+        document: welt.dokument,
+        window: welt.fenster,
+        console: { log: (zeile) => welt.logs.push(String(zeile)) },
+        HTMLMediaElement,
+        Date, Math, Number, Boolean, Array, JSON, setTimeout
+      };
+      const namen = Object.keys(umgebung);
+      // eslint-disable-next-line no-new-func
+      return new Function(...namen, `return ${quelltext};`)(...namen.map((n) => umgebung[n]));
+    };
+
+    // 14a. Play, Pause und Sprung werden gemeldet.
+    {
+      const m = video(120, { paused: false });
+      const welt = seite([m]);
+      const erst = laufen(welt, beobachterScript());
+      welt.feuern("play", m);
+      welt.feuern("pause", m);
+      welt.feuern("seeked", m);
+      const taten = welt.logs.map(aktionLesen).filter(Boolean).map((t) => t.aktion);
+      pruefe("14a. Der Horcher meldet Play, Pause und Sprung",
+        erst === "installiert" && taten.join(",") === "play,pause,seek",
+        taten.join(",") || "nichts gemeldet");
+      const staende = welt.logs.map(standLesen).filter(Boolean);
+      pruefe("14b. Und wo das Geraet dabei steht",
+        staende.length >= 3 && nah(staende[0].position, 120, 0.01),
+        JSON.stringify(staende[0] || null));
+    }
+
+    // 14c. Zweimal einspielen ergibt keine doppelten Horcher. Das ist die
+    // Antwort auf "ein Tastendruck, drei Ereignisse": das Skript wird bei
+    // jeder Rahmenmeldung nachgereicht, und das darf nichts kosten.
+    {
+      const m = video(10, { paused: false });
+      const welt = seite([m]);
+      laufen(welt, beobachterScript());
+      const nachEinem = welt.anzahl();
+      const zweiter = laufen(welt, beobachterScript());
+      welt.feuern("pause", m);
+      const pausen = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "pause").length;
+      pruefe("14c. Zweimal eingespielt haengt der Horcher trotzdem nur einmal",
+        zweiter === "schon-da" && welt.anzahl() === nachEinem && pausen === 1,
+        `${zweiter}, ${welt.anzahl()} Horcher, ${pausen} Meldungen`);
+    }
+
+    // 14d. Der Player wird ausgetauscht - Hoster-, Sprach- oder Folgenwechsel.
+    // Der Horcher haengt am Dokument, nicht am Element, und gilt weiter.
+    {
+      const alt = video(10, { paused: false });
+      const welt = seite([alt]);
+      laufen(welt, beobachterScript());
+      // Der Hoster ersetzt das Videoelement durch ein neues.
+      const neu = video(0, { paused: true });
+      Object.setPrototypeOf(neu, HTMLMediaElement.prototype);
+      welt.liste.length = 0;
+      welt.liste.push(neu);
+      welt.logs.length = 0;
+      welt.feuern("play", neu);
+      const taten = welt.logs.map(aktionLesen).filter(Boolean).map((t) => t.aktion);
+      pruefe("14d. Nach dem Austausch des Videoelements meldet er weiter",
+        taten.includes("play"),
+        taten.join(",") || "nichts gemeldet");
+    }
+
+    // 14e. Der Loop-Schutz. Ein angewendetes fremdes Pause meldet sich nicht
+    // als eigene Tat zurueck - sonst schaukeln sich zwei Geraete auf.
+    {
+      const m = video(50, { paused: false });
+      const welt = seite([m]);
+      laufen(welt, beobachterScript());
+      // So, wie applyScript es setzt, bevor es media.pause() ruft.
+      welt.fenster.__elfixWpErwartet = { aktion: "pause", ziel: 50, bis: Date.now() + 1500 };
+      welt.feuern("pause", m);
+      const gemeldet = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "pause");
+      pruefe("14e. Das Echo einer angewendeten Fremdanweisung wird verschluckt",
+        gemeldet.length === 0,
+        `${gemeldet.length} Meldungen`);
+
+      // Aber nur das Echo: wer waehrend eines eingehenden Play selbst Pause
+      // drueckt, meint das ernst.
+      welt.logs.length = 0;
+      welt.fenster.__elfixWpErwartet = { aktion: "play", ziel: 50, bis: Date.now() + 1500 };
+      welt.feuern("pause", m);
+      const echt = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "pause");
+      pruefe("14f. Eine Gegenrichtung kommt weiterhin durch",
+        echt.length === 1,
+        `${echt.length} Meldungen`);
+    }
+
+    // 14g. Beim Sprung entscheidet die Stelle, nicht die Art: wer waehrend
+    // eines fremden Sprungs selbst woandershin spult, meint das ernst.
+    {
+      const m = video(300, { paused: false });
+      const welt = seite([m]);
+      laufen(welt, beobachterScript());
+      welt.fenster.__elfixWpErwartet = { aktion: "seek", ziel: 300, bis: Date.now() + 1500 };
+      welt.feuern("seeked", m);
+      const echo = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "seek").length;
+      m._zeit = 900;
+      welt.logs.length = 0;
+      welt.feuern("seeked", m);
+      const eigener = welt.logs.map(aktionLesen).filter((t) => t && t.aktion === "seek").length;
+      pruefe("14g. Beim Sprung zaehlt die Zielstelle, nicht die Art",
+        echo === 0 && eigener === 1,
+        `Echo ${echo}, eigener ${eigener}`);
+    }
+
+    // 14h. Und die Anweisung, die der Horcher abfaengt, wird von applyScript
+    // auch wirklich gesetzt - sonst haenge der Schutz in der Luft.
+    {
+      const m = video(0);
+      const { fenster } = await ausfuehren(
+        applyScript("pause", ereignis({ videoTime: 80, playing: false })), m);
+      pruefe("14h. applyScript meldet seine Anweisung beim Horcher an",
+        Boolean(fenster.__elfixWpErwartet) && fenster.__elfixWpErwartet.aktion === "pause",
+        JSON.stringify(fenster.__elfixWpErwartet || null));
+    }
   }
 
   const fehler = pruefungen.filter((p) => !p).length;

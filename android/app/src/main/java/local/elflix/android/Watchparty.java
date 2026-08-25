@@ -31,6 +31,18 @@ public final class Watchparty {
     /** Wenn sich Zustand oder eingestellte Titel geaendert haben. */
     public interface Beobachter {
         void watchpartyGeaendert();
+
+        /**
+         * Nur der Stand der Runde hat sich geaendert - wer wo steht.
+         *
+         * <p>Getrennt gemeldet, weil er im Sekundentakt kommt: die ganze Seite
+         * dafuer neu zu bauen hiesse auf dem Fernseher, dass der Fokus jede
+         * Sekunde von vorn anfaengt. Wer das nicht unterscheiden will,
+         * bekommt die Vorgabe und zeichnet alles neu.
+         */
+        default void watchpartyStandGeaendert() {
+            watchpartyGeaendert();
+        }
     }
 
     private final Context context;
@@ -38,6 +50,15 @@ public final class Watchparty {
     private final Beobachter beobachter;
     /** Wohin ein eingehender Stand geht. Wird nach dem Anlegen gesetzt. */
     private Bestand bestand;
+    /**
+     * Das Mitschauen am Player. Wird nach dem Anlegen gesetzt.
+     *
+     * <p>Getrennt gehalten, weil es eine andere Lebensdauer hat: die Runde
+     * ueberdauert jede Folge, der Player nicht einmal einen Hosterwechsel.
+     * Diese Klasse weiss nichts davon, wie ein Video angehalten wird - sie
+     * reicht nur weiter, was das Relay dazu meldet.
+     */
+    private Mitschauen mitschauen;
 
     private boolean eingeschaltet;
     private String serverUrl = "";
@@ -48,6 +69,8 @@ public final class Watchparty {
     /** Der zuletzt gemeldete Zustand - fuer die Anzeige, ohne den Kern zu fragen. */
     private JSONObject letzterStatus = new JSONObject();
     private JSONArray letzteEintraege = new JSONArray();
+    /** Die letzte Standmeldung der Runde - wer steht wo, wer fuehrt, wer hat gedrueckt. */
+    private String letzterMitschauStand = "";
 
     public Watchparty(Context context, Kern kern, Beobachter beobachter) {
         this.context = context.getApplicationContext();
@@ -226,10 +249,26 @@ public final class Watchparty {
                     Log.e(TAG, "Kennung unlesbar", fehler);
                 }
                 break;
+            case "watchparty:steuerung":
+                // Play, Pause, Sprung und Folgenwechsel aus der Runde. Was
+                // damit geschieht, entscheidet der Kern und fuehrt
+                // {@link Mitschauen} aus - hier wird nur zugestellt.
+                if (mitschauen != null) mitschauen.steuerung(nutzlastJson);
+                break;
+            case "watchparty:stand":
+                // Wer steht wo. Fuer die Anzeige; der Player braucht davon
+                // nichts, er bekommt seine Anweisungen ueber die Steuerung.
+                letzterMitschauStand = nutzlastJson == null ? "" : nutzlastJson;
+                if (beobachter != null) beobachter.watchpartyStandGeaendert();
+                break;
+            case "watchparty:verbindung":
+                // Die Leitung ist wieder offen. Der Raumzustand kommt vom
+                // Relay von selbst; was hier fehlt, ist der Stand der
+                // laufenden Folge - den holt der Abgleich.
+                if (mitschauen != null) mitschauen.nachWiederanschluss(nutzlastJson);
+                if (beobachter != null) beobachter.watchpartyGeaendert();
+                break;
             default:
-                // Steuerung, Stand und Chat gehoeren zum Live-Schauen. Sie
-                // kommen an, sobald die Wiedergabe-Steuerung sie braucht;
-                // bisher wird nur der Fortschritt abgeglichen.
                 Log.d(TAG, "Watchparty-Ereignis " + name + ": " + nutzlastJson);
                 break;
         }
@@ -297,6 +336,25 @@ public final class Watchparty {
         return letzteEintraege;
     }
 
+    /**
+     * Wer gerade wo steht - so, wie das Relay es zuletzt gemeldet hat.
+     *
+     * <p>Traegt die Mitglieder mit Position, Pausenzustand und Hostmarke, dazu
+     * {@code pausedBy} und {@code lastAction}: wer zuletzt gedrueckt hat. Das
+     * ist etwas anderes als "wer ist gerade angehalten" - zieht ein zweites
+     * Geraet die Pause nur mit, bleibt der Ausloeser derselbe. Genau die
+     * Unterscheidung, die die Anzeige braucht, damit dort nicht ein veralteter
+     * Name steht.
+     */
+    public JSONObject mitschauStand() {
+        if (letzterMitschauStand.isEmpty()) return new JSONObject();
+        try {
+            return new JSONObject(letzterMitschauStand);
+        } catch (Exception fehler) {
+            return new JSONObject();
+        }
+    }
+
     /* ------------------------------------------------------------ Anschluss */
 
     /** Stellt einen Titel in einen Raum ein, damit die anderen ihn sehen. */
@@ -324,6 +382,11 @@ public final class Watchparty {
     /** Der Bestand, in den eingehende Staende laufen. */
     public void setzeBestand(Bestand bestand) {
         this.bestand = bestand;
+    }
+
+    /** Wer die Steuerbefehle der Runde am Player ausfuehrt. */
+    public void setzeMitschauen(Mitschauen mitschauen) {
+        this.mitschauen = mitschauen;
     }
 
     /**

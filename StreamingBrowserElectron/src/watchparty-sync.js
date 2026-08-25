@@ -178,6 +178,114 @@ function versatzAusProben(proben) {
   return beste;
 }
 
+// --- 5. Was mit einem eingehenden Steuerbefehl zu geschehen hat ---------------
+//
+// Die letzte Regel, die noch zweimal dastand - einmal in main.js, und auf
+// Android gar nicht, weshalb dort ueberhaupt nichts ankam. Sie ist rein: was
+// hereinkommt, ist die Nachricht und die Lage; was herauskommt, ist eine
+// Anweisung. Wer sie ausfuehrt - Electron mit mehreren Ansichten oder Android
+// mit einem WebView -, ist ihre Sache und nicht die dieser Funktion.
+//
+// Die Reihenfolge ist nicht beliebig, jede Zeile davon ist ein behobener
+// Fehler:
+//
+//   1. Veraltetes zuerst. Ein verspaetetes Play nach einem neueren Pause
+//      liesse ein Geraet weiterlaufen, das alle anderen angehalten haben.
+//   2. Der Folgenwechsel vor der Folgenpruefung - er muss gerade die
+//      erreichen, die noch bei der alten Folge stehen.
+//   3. Erst danach die Frage, ob ueberhaupt dieselbe Folge offen ist. Wer eine
+//      Folge zurueckliegt, wird nicht mitpausiert.
+//   4. Der Host springt nie. Er gibt den Takt vor; Anhalten und Weiterlaufen
+//      macht er trotzdem mit, sonst liefe er waehrend eines Abgleichs davon.
+//
+// @param nachricht  das Ereignis des Relays
+// @param lage       { letzter, binHost, hostId, offen: {season, episode}|null,
+//                     gleicheAdresse: boolean }
+// @return { tun, merken, genau, warten, nichtSpringen, grund }
+function steuerungEntscheiden(nachricht, lage = {}) {
+  const nichts = (grund) => ({
+    tun: "nichts", merken: null, genau: false, warten: false, nichtSpringen: false, grund
+  });
+  if (!nachricht || !nachricht.action) return nichts("keine aktion");
+
+  if (istVeraltet(lage.letzter, nachricht)) return nichts("veraltet");
+
+  const merken = {
+    sequenceId: Number(nachricht.sequenceId) || 0,
+    timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
+    episodeId: String(nachricht.episodeId || "")
+  };
+  const binHost = Boolean(lage.binHost);
+  const aktion = String(nachricht.action);
+
+  // Der Folgenwechsel geht vor allem anderen durch: er richtet sich gerade an
+  // die, bei denen noch die alte Folge steht.
+  if (aktion === "navigate" && nachricht.url) {
+    return { tun: "navigate", merken, genau: false, warten: false, nichtSpringen: false, grund: "folgenwechsel" };
+  }
+
+  // Ab hier zaehlt nur, wer dieselbe Folge offen hat - ueber die Adresse und
+  // zusaetzlich ueber die Folgenangabe der Nachricht. Die Adresse allein
+  // reicht nicht: ein Ereignis der vorigen Folge kann dieselbe Serienadresse
+  // tragen, wenn der Absender inzwischen gewechselt hat.
+  const passt = lage.gleicheAdresse !== false
+    && folgePasst(nachricht.episodeId, lage.offen && lage.offen.season, lage.offen && lage.offen.episode);
+  if (!passt) return { ...nichts("andere folge"), merken };
+
+  if (aktion === "syncprepare") {
+    return { tun: "syncprepare", merken, genau: true, warten: true, nichtSpringen: binHost, grund: "gleichziehen" };
+  }
+
+  // Die laufende Messung des Hosts. Sie ist keine Korrektur - der Player
+  // entscheidet selbst, ob daraus etwas folgt, und meistens folgt nichts.
+  if (aktion === "hostzeit") {
+    // Der Host ist die Zeitquelle und wird nie nachgeregelt.
+    if (binHost) return { ...nichts("selbst host"), merken };
+    // Und eine Messung von einem Host, der es nicht mehr ist, beschreibt eine
+    // Runde, die es so nicht mehr gibt.
+    if (nachricht.hostId && lage.hostId && nachricht.hostId !== lage.hostId) {
+      return { ...nichts("alter host"), merken };
+    }
+    return { tun: "drift", merken, genau: false, warten: false, nichtSpringen: false, grund: "messung" };
+  }
+
+  // Pause, gezielter Sprung, Abgleich und gemeinsamer Start muessen sitzen.
+  // Nur beim beilaeufigen "der andere spielt weiter" darf es ungefaehr sein.
+  const genau = aktion !== "play" || Boolean(nachricht.resync);
+  return {
+    tun: aktion === "syncstart" ? "syncstart" : "anwenden",
+    merken,
+    genau,
+    warten: false,
+    // Der Host springt nie - die anderen kommen zu ihm.
+    nichtSpringen: binHost,
+    grund: aktion
+  };
+}
+
+// Das Ereignis, wie es in die Player-Skripte geht. Vier Angaben zum Rechnen
+// und der gemessene Uhrversatz - mehr braucht dort niemand, und mehr soll dort
+// auch nicht ankommen.
+function ereignisFuerPlayer(nachricht, laeuft, versatz, hatUhr) {
+  return {
+    videoTime: Number(nachricht.videoTime ?? nachricht.position) || 0,
+    timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
+    playing: Boolean(laeuft),
+    hatUhr: Boolean(hatUhr),
+    versatz: Number(versatz) || 0
+  };
+}
+
+// Laeuft das Video an der Quelle nach diesem Ereignis weiter? Nur dann wird die
+// Laufzeit der Nachricht auf die Stelle aufgeschlagen. Ein aelteres Relay
+// schickt das Feld nicht mit - dann entscheidet die Aktion.
+function laeuftDanach(nachricht) {
+  if (!nachricht) return false;
+  if (typeof nachricht.playing === "boolean") return nachricht.playing;
+  if (nachricht.action === "hostzeit") return nachricht.hostPlaying !== false;
+  return nachricht.action === "play" || nachricht.action === "syncstart";
+}
+
 // Der Quelltext einer dieser Funktionen, zum Einsetzen in ein Seiten-Skript.
 // Siehe der Hinweis oben: so laeuft im Player wortgleich das, was hier geprueft
 // wird.
@@ -381,6 +489,136 @@ function driftScript(ereignis) {
   })()`;
 }
 
+// --- Der Horcher am Player ---------------------------------------------------
+//
+// Er stand bis hierher in main.js und damit nur dem Rechner zur Verfuegung.
+// Android hatte nichts davon: dort lief die Watchparty ueberhaupt nur als
+// Fortschrittsabgleich, weil das Stueck fehlte, das Pause und Weiter
+// ueberhaupt bemerkt. Ihn hier ein zweites Mal hinzuschreiben waere die
+// dritte Fassung derselben Regel gewesen - also steht er jetzt an der Stelle,
+// an der die uebrige Sync-Strategie schon stand, und beide Geraete setzen
+// woertlich dasselbe Skript in ihren Player.
+//
+// Zwei Dinge macht er, und das zweite ist der Grund, warum eine Watchparty
+// einen Folgenwechsel ueberlebt:
+//
+//   1. Er meldet Play, Pause und Sprung - aber nicht das Echo einer eben
+//      ausgefuehrten fremden Anweisung. Das ist der Loop-Schutz, und er
+//      arbeitet ueber `window.__elfixWpErwartet`, das `applyScript` setzt.
+//      Kein Zeitgeber, keine pauschale Stille: verglichen wird die Art der
+//      Aktion und beim Sprung zusaetzlich die Zielstelle.
+//
+//   2. Er haengt am *Dokument* in der Abfangphase und nicht an einzelnen
+//      Videoelementen. Medienereignisse steigen nicht auf, lassen sich aber
+//      abfangen - damit gilt der Horcher auch fuer ein Video, das die Seite
+//      erst spaeter einsetzt. Genau das passiert bei jedem Hoster-, Sprach-
+//      und Folgenwechsel, und genau daran ist die Synchronisation frueher
+//      gestorben: die Horcher hingen an einem Element, das niemand mehr sah,
+//      waehrend der Merker "schon eingehaengt" jede Neuanlage verhinderte.
+//
+// Die Meldungen gehen ueber die Konsole hinaus. Das ist kein Notbehelf: der
+// Player liegt in einem fremden Rahmen, und die Konsole ist der einzige Weg,
+// der aus ihm heraus auf beiden Geraeten funktioniert.
+
+/** Womit eine Meldung dieses Horchers anfaengt. Java und main.js lesen daran mit. */
+const MELDE_AKTION = "__elfix:wp:";
+const MELDE_STAND = "__elfix:wp:stand:";
+const MELDE_SYNC = "__elfix:wp:sync:";
+
+// Eine Aktionsmeldung zerlegen: "__elfix:wp:play:123.45".
+function aktionLesen(zeile) {
+  const treffer = String(zeile || "").match(/^__elfix:wp:(play|pause|seek):(\d+(?:\.\d+)?)$/);
+  return treffer ? { aktion: treffer[1], position: Number(treffer[2]) } : null;
+}
+
+// Eine Standmeldung zerlegen: "__elfix:wp:stand:123.45:0".
+function standLesen(zeile) {
+  const treffer = String(zeile || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
+  return treffer ? { position: Number(treffer[1]), paused: treffer[2] === "1" } : null;
+}
+
+// Meint diese Nachricht die Folge, die hier offen ist? Ein aelteres Relay
+// schickt die Angabe nicht mit - dann bleibt es bei der Pruefung ueber die
+// Adresse, die es schon immer gab.
+function folgePasst(episodeId, season, episode) {
+  const gemeint = String(episodeId || "");
+  if (!gemeint) return true;
+  const staffel = Number(season) || 0;
+  const folge = Number(episode) || 0;
+  if (!staffel && !folge) return true;
+  return gemeint === `s${staffel}e${folge}`;
+}
+
+function beobachterScript() {
+  return `(() => {
+    if (window.__elfixWpInstalled) return "schon-da";
+    window.__elfixWpInstalled = true;
+    window.__elfixWpErwartet = null;
+
+    const melden = (aktion, media) => {
+      // Der eigene Player meldet eine eben ausgefuehrte fremde Anweisung als
+      // eigenes Ereignis zurueck - sonst schaukeln sich zwei Player auf. Genau
+      // dieses Echo wird verschluckt, aber auch nur das: drueckt jemand Pause,
+      // waehrend gerade ein Play hereinkam, ist das eine echte Tat und muss
+      // durch. Vorher schwieg das Geraet pauschal ein paar Sekunden lang, und
+      // genau in dieser Zeit ging Pausieren nach einem Sync ins Leere.
+      const erwartet = window.__elfixWpErwartet;
+      if (erwartet && Date.now() < erwartet.bis) {
+        // Beim Sprung entscheidet die Stelle: nur der Sprung auf genau das
+        // erwartete Ziel ist das Echo. Wer waehrenddessen selbst woandershin
+        // spult, meint das ernst - vorher verschluckte diese Pruefung jeden
+        // zweiten Sprung, weil sie nur auf die Art schaute.
+        if (aktion === "seek") {
+          if (Math.abs(Number(media.currentTime) - erwartet.ziel) < 2) return;
+        } else if (aktion === erwartet.aktion) {
+          return;
+        }
+      }
+      // Auf zwei Nachkommastellen: gerundete Sekunden reichen nicht, wenn alle
+      // exakt auf derselben Stelle stehen sollen.
+      console.log("__elfix:wp:" + aktion + ":" + (Number(media.currentTime) || 0).toFixed(2));
+    };
+
+    // Wo dieses Geraet steht - fuer die Leiste der anderen. Das haengt nicht am
+    // Echo-Schutz: eine Standmeldung ist kein Befehl, sie schaukelt nichts auf.
+    // Sie geht sofort raus, sobald sich etwas aendert, und waehrend der
+    // Wiedergabe nebenher im Sekundentakt. Vorher hat der Hauptprozess dafuer
+    // alle Frames der Seite abgefragt - langsam und teuer zugleich.
+    let letzteMeldung = 0;
+    const standMelden = (media, sofort) => {
+      const jetzt = Date.now();
+      if (!sofort && jetzt - letzteMeldung < 1000) return;
+      letzteMeldung = jetzt;
+      console.log("__elfix:wp:stand:"
+        + (Number(media.currentTime) || 0).toFixed(2) + ":" + (media.paused ? 1 : 0));
+    };
+
+    // Am Dokument in der Abfangphase, nicht an einzelnen Videos: Medien-
+    // Ereignisse steigen nicht auf, lassen sich aber abfangen. Damit gilt das
+    // auch fuer ein Video, das die Seite spaeter einsetzt.
+    //
+    // Vorher hingen die Horcher an den Elementen, die beim Einhaengen zufaellig
+    // schon da waren. Tauscht der Anbieter den Player aus - anderer Hoster,
+    // andere Qualitaet, neu geladener Rahmen -, waren sie an einem Element, das
+    // niemand mehr sieht, und das Geraet meldete Pause und Weiter gar nicht
+    // mehr. Der Merker stand ja auf "schon eingehaengt".
+    const passt = (ziel) => ziel instanceof HTMLMediaElement && Number(ziel.duration) > 0;
+    const horchen = (name, tun) => document.addEventListener(name, (ereignis) => {
+      if (passt(ereignis.target)) tun(ereignis.target);
+    }, true);
+
+    horchen("play", (media) => { melden("play", media); standMelden(media, true); });
+    horchen("pause", (media) => { melden("pause", media); standMelden(media, true); });
+    horchen("seeked", (media) => { melden("seek", media); standMelden(media, true); });
+    // Puffern ist keine Pause, sieht fuer die anderen aber genauso aus:
+    // die Stelle bleibt stehen. Also sofort melden, wenn es stockt.
+    horchen("waiting", (media) => standMelden(media, true));
+    horchen("playing", (media) => standMelden(media, true));
+    horchen("timeupdate", (media) => standMelden(media, false));
+    return "installiert";
+  })()`;
+}
+
 // Beim Folgenwechsel faengt alles von vorn an - die Zaehlung bestaetigter
 // Messungen, die Ruhezeit und die Merker gehoeren zur Folge davor. Das Tempo
 // wird mit zurueckgesetzt: der Abgleich stellt zwar keins mehr ein, eine
@@ -407,6 +645,16 @@ function ereignisSaeubern(ereignis) {
 }
 
 module.exports = {
+  steuerungEntscheiden,
+  ereignisFuerPlayer,
+  laeuftDanach,
+  MELDE_AKTION,
+  MELDE_STAND,
+  MELDE_SYNC,
+  aktionLesen,
+  standLesen,
+  folgePasst,
+  beobachterScript,
   zielZeitBerechnen,
   driftEntscheiden,
   istVeraltet,

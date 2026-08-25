@@ -2217,8 +2217,8 @@ function getProviderView(provider) {
     // Wo dieses Geraet steht. Kommt aus der Seite, sobald sich etwas aendert -
     // deshalb sehen die anderen eine Pause ohne Umweg ueber einen Zeitgeber.
     // Der Bericht der sanften Regelung aus dem Player.
-    if (String(nachricht || "").startsWith("__elfix:wp:sync:")) {
-      console.log(`[watchparty-sync] ${String(nachricht).slice(16)}`);
+    if (String(nachricht || "").startsWith(watchpartySync.MELDE_SYNC)) {
+      console.log(`[watchparty-sync] ${String(nachricht).slice(watchpartySync.MELDE_SYNC.length)}`);
       return;
     }
     // Eine Chatzeile aus der Seite. Sie geht an den Raum, in dem gerade
@@ -2240,13 +2240,15 @@ function getProviderView(provider) {
       meldeYoutubeAktion(view, ytTat[1], Number(ytTat[2]), ytTat[3] === "1");
       return;
     }
-    const stand = String(nachricht || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
+    // Zerlegt wird in watchparty-sync.js: dieselbe Stelle, an der das Skript
+    // die Zeile zusammensetzt, und dieselbe, aus der Android sie liest.
+    const stand = watchpartySync.standLesen(nachricht);
     if (stand) {
-      meldeWatchpartyStandAusSeite(view, Number(stand[1]), stand[2] === "1");
+      meldeWatchpartyStandAusSeite(view, stand.position, stand.paused);
       return;
     }
     // Live zuschauen: Pause, Weiter und Springen sofort an die anderen melden.
-    const live = String(nachricht || "").match(/^__elfix:wp:(play|pause|seek):(\d+(?:\.\d+)?)$/);
+    const live = watchpartySync.aktionLesen(nachricht);
     if (live) {
       const adresse = view.webContents.getURL();
       const key = watchpartyLiveKeyForUrl(adresse);
@@ -2255,7 +2257,7 @@ function getProviderView(provider) {
       // ist. Frueher ging der Befehl ohne Adresse hinaus und der Empfaenger
       // musste den Raumzustand befragen; hinkte der einer Folge hinterher,
       // verwarf er jede Pause als "andere Folge".
-      if (key) watchparty.steuernMitAdresse(key, live[1], Number(live[2]), adresse, watchpartyRaumForUrl(adresse));
+      if (key) watchparty.steuernMitAdresse(key, live.aktion, live.position, adresse, watchpartyRaumForUrl(adresse));
       return;
     }
     // "Danach aufhoeren" an- und abgeschaltet. Gemerkt wird die Adresse der
@@ -6008,74 +6010,11 @@ function watchpartyLeisteScript() {
   })()`;
 }
 
+// Der Horcher am Player steht in watchparty-sync.js - zusammen mit der uebrigen
+// Sync-Strategie und dort gegen ein nachgebautes Video geprueft. Android setzt
+// woertlich dasselbe Skript ein; eine zweite Fassung gibt es nicht mehr.
 function watchpartyControlScript() {
-  return `(() => {
-    if (window.__elfixWpInstalled) return "schon-da";
-    window.__elfixWpInstalled = true;
-    window.__elfixWpErwartet = null;
-
-    const melden = (aktion, media) => {
-      // Der eigene Player meldet eine eben ausgefuehrte fremde Anweisung als
-      // eigenes Ereignis zurueck - sonst schaukeln sich zwei Player auf. Genau
-      // dieses Echo wird verschluckt, aber auch nur das: drueckt jemand Pause,
-      // waehrend gerade ein Play hereinkam, ist das eine echte Tat und muss
-      // durch. Vorher schwieg das Geraet pauschal ein paar Sekunden lang, und
-      // genau in dieser Zeit ging Pausieren nach einem Sync ins Leere.
-      const erwartet = window.__elfixWpErwartet;
-      if (erwartet && Date.now() < erwartet.bis) {
-        // Beim Sprung entscheidet die Stelle: nur der Sprung auf genau das
-        // erwartete Ziel ist das Echo. Wer waehrenddessen selbst woandershin
-        // spult, meint das ernst - vorher verschluckte diese Pruefung jeden
-        // zweiten Sprung, weil sie nur auf die Art schaute.
-        if (aktion === "seek") {
-          if (Math.abs(Number(media.currentTime) - erwartet.ziel) < 2) return;
-        } else if (aktion === erwartet.aktion) {
-          return;
-        }
-      }
-      // Auf zwei Nachkommastellen: gerundete Sekunden reichen nicht, wenn alle
-      // exakt auf derselben Stelle stehen sollen.
-      console.log("__elfix:wp:" + aktion + ":" + (Number(media.currentTime) || 0).toFixed(2));
-    };
-
-    // Wo dieses Geraet steht - fuer die Leiste der anderen. Das haengt nicht am
-    // Echo-Schutz: eine Standmeldung ist kein Befehl, sie schaukelt nichts auf.
-    // Sie geht sofort raus, sobald sich etwas aendert, und waehrend der
-    // Wiedergabe nebenher im Sekundentakt. Vorher hat der Hauptprozess dafuer
-    // alle Frames der Seite abgefragt - langsam und teuer zugleich.
-    let letzteMeldung = 0;
-    const standMelden = (media, sofort) => {
-      const jetzt = Date.now();
-      if (!sofort && jetzt - letzteMeldung < 1000) return;
-      letzteMeldung = jetzt;
-      console.log("__elfix:wp:stand:"
-        + (Number(media.currentTime) || 0).toFixed(2) + ":" + (media.paused ? 1 : 0));
-    };
-
-    // Am Dokument in der Abfangphase, nicht an einzelnen Videos: Medien-
-    // Ereignisse steigen nicht auf, lassen sich aber abfangen. Damit gilt das
-    // auch fuer ein Video, das die Seite spaeter einsetzt.
-    //
-    // Vorher hingen die Horcher an den Elementen, die beim Einhaengen zufaellig
-    // schon da waren. Tauscht der Anbieter den Player aus - anderer Hoster,
-    // andere Qualitaet, neu geladener Rahmen -, waren sie an einem Element, das
-    // niemand mehr sieht, und das Geraet meldete Pause und Weiter gar nicht
-    // mehr. Der Merker stand ja auf "schon eingehaengt".
-    const passt = (ziel) => ziel instanceof HTMLMediaElement && Number(ziel.duration) > 0;
-    const horchen = (name, tun) => document.addEventListener(name, (ereignis) => {
-      if (passt(ereignis.target)) tun(ereignis.target);
-    }, true);
-
-    horchen("play", (media) => { melden("play", media); standMelden(media, true); });
-    horchen("pause", (media) => { melden("pause", media); standMelden(media, true); });
-    horchen("seeked", (media) => { melden("seek", media); standMelden(media, true); });
-    // Puffern ist keine Pause, sieht fuer die anderen aber genauso aus:
-    // die Stelle bleibt stehen. Also sofort melden, wenn es stockt.
-    horchen("waiting", (media) => standMelden(media, true));
-    horchen("playing", (media) => standMelden(media, true));
-    horchen("timeupdate", (media) => standMelden(media, false));
-    return "installiert";
-  })()`;
+  return watchpartySync.beobachterScript();
 }
 
 // Die Skripte, die im Player-Rahmen laufen, stehen in watchparty-sync.js -
@@ -6963,11 +6902,9 @@ function watchpartyEreignis(nachricht, laeuft) {
 // schickt die Angabe nicht mit - dann bleibt es bei der Pruefung ueber die
 // Adresse, die es schon immer gab.
 function watchpartyPasstZurFolge(episodeId, url) {
-  const gemeint = String(episodeId || "");
-  if (!gemeint) return true;
   const hier = episodeIdentity(url);
   if (!hier) return true;
-  return gemeint === `s${Number(hier.season) || 0}e${Number(hier.episode) || 0}`;
+  return watchpartySync.folgePasst(episodeId, hier.season, hier.episode);
 }
 
 // Laeuft das Video an der Quelle nach diesem Ereignis weiter? Nur dann wird die
@@ -6992,49 +6929,52 @@ async function applyWatchpartyControl(nachricht) {
   // nicht nach einem neueren Pause angewendet werden - sonst laeuft ein Geraet
   // weiter, das alle anderen laengst angehalten haben.
   const merker = `${nachricht.room || aktiv}|${nachricht.key}`;
-  if (watchpartySync.istVeraltet(watchpartyLetztesEreignis.get(merker), nachricht)) {
-    console.log(`[watchparty-sync] {"action":"stale","ignored":"${nachricht.action}"}`);
+  // Was mit diesem Befehl zu geschehen hat, entscheidet watchparty-sync.js -
+  // dieselbe Funktion, die Android ueber die Bruecke fragt. Was hier steht, ist
+  // nur noch die Ausfuehrung: mehrere Ansichten, Overlays, Electron.
+  const urteil = watchpartySync.steuerungEntscheiden(nachricht, {
+    letzter: watchpartyLetztesEreignis.get(merker),
+    // Bin ich der Host, gilt meine Stelle - ich ruecke nicht, die anderen
+    // kommen zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
+    binHost: Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId,
+    hostId: eintrag.hostId,
+    // Die Folgenpruefung je Ansicht steht weiter unten - hier ist nur die
+    // Frage, ob es ueberhaupt eine gibt.
+    gleicheAdresse: true,
+    offen: null
+  });
+  if (urteil.merken) watchpartyLetztesEreignis.set(merker, urteil.merken);
+  if (urteil.tun === "nichts") {
+    if (urteil.grund === "veraltet") {
+      console.log(`[watchparty-sync] {"action":"stale","ignored":"${nachricht.action}"}`);
+    }
     return;
   }
-  watchpartyLetztesEreignis.set(merker, {
-    sequenceId: Number(nachricht.sequenceId) || 0,
-    timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
-    episodeId: String(nachricht.episodeId || "")
-  });
 
-  // Bin ich der Host, gilt meine Stelle - ich ruecke nicht, die anderen kommen
-  // zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
   // derselben Serie, damit niemand ungefragt woanders landet.
-  if (nachricht.action === "navigate" && nachricht.url) {
+  if (urteil.tun === "navigate") {
     await followWatchpartyEpisode(eintrag, nachricht);
     return;
   }
 
   // Gemeinsam gleichziehen: anhalten, auf dieselbe Stelle, Bereitmeldung.
-  if (nachricht.action === "syncprepare") {
+  if (urteil.tun === "syncprepare") {
     await prepareWatchpartySync(eintrag, nachricht);
     return;
   }
-  if (nachricht.action === "syncstart") {
+  if (urteil.tun === "syncstart") {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
   }
 
   const ereignis = watchpartyEreignis(nachricht, watchpartyLaeuftDanach(nachricht));
-  // Pause, gezielter Sprung, Abgleich und gemeinsamer Start muessen sitzen.
-  // Nur beim beilaeufigen "der andere spielt weiter" darf es ungefaehr sein.
-  const genau = nachricht.action !== "play" || Boolean(nachricht.resync);
+  const genau = urteil.genau;
 
   // Die laufende Messung. Sie ist keine Korrektur - der Player entscheidet
   // selbst, ob daraus etwas folgt, und meistens folgt nichts.
-  if (nachricht.action === "hostzeit") {
-    // Der Host ist die Zeitquelle und wird nie nachgeregelt.
-    if (binHost) return;
-    // Und eine Messung von einem Host, der es nicht mehr ist, geht ins Leere:
-    // sie beschreibt eine Runde, die es so nicht mehr gibt.
-    if (nachricht.hostId && eintrag.hostId && nachricht.hostId !== eintrag.hostId) return;
+  if (urteil.tun === "drift") {
     for (const [, view] of providerViews) {
       if (!isLiveView(view)) continue;
       const offen = view.webContents.getURL();

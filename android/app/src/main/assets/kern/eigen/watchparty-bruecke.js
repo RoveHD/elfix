@@ -21,6 +21,10 @@
 (function () {
   const { WatchpartyRaeume, codeBeanstandung } = require("watchparty-raeume");
   const fortschritt = require("fortschritt");
+  // Dieselbe Sync-Strategie wie am Rechner: Zielzeit, Drift, Veraltung, der
+  // Horcher am Player und die Entscheidung, was mit einem eingehenden Befehl
+  // zu geschehen hat. Kein Stueck davon steht hier noch einmal.
+  const sync = require("watchparty-sync");
 
   let raeume = null;
   let letzterStatus = null;
@@ -93,6 +97,126 @@
     return true;
   }
 
+  /* ------------------------------------------------------- Das Mitschauen */
+
+  /*
+   * Was hier dazukommt, ist der Teil, den Android bis hierher nicht hatte.
+   *
+   * Die Watchparty lief auf dem Telefon und auf dem Fernseher nur als
+   * Fortschrittsabgleich: derselbe Raumcode, derselbe Weiterschauen-Stand -
+   * aber kein Play, kein Pause, kein Sprung. Es fehlte nicht die Fachlogik,
+   * die stand von Anfang an in den geteilten Modulen; es fehlte die
+   * Verkabelung zwischen ihr und dem Player im WebView.
+   *
+   * Genau die steht jetzt hier. Java bekommt fertige Skripte und fertige
+   * Urteile - es entscheidet nichts selbst, es fuehrt aus. Damit gibt es
+   * weiterhin genau eine Fassung jeder Regel, und sie ist die des Rechners.
+   */
+
+  /** Der letzte angewendete Befehl je Raum und Titel - fuer die Veraltungspruefung. */
+  const letzteEreignisse = new Map();
+
+  /**
+   * Was mit einem eingehenden Steuerbefehl zu geschehen ist.
+   *
+   * <p>Die Buchfuehrung ueber "was war zuletzt" liegt hier und nicht in Java:
+   * sie gehoert zur Regel, und eine Regel mit ihrem Zustand an zwei
+   * verschiedenen Orten ist keine Regel mehr.
+   *
+   * @param nachricht der Befehl, wie das Relay ihn geschickt hat
+   * @param lage      { binHost, hostId, gleicheAdresse, season, episode }
+   * @return { tun, genau, warten, nichtSpringen, grund, skript }
+   */
+  function steuerungPruefen(nachricht, lage) {
+    const raum = (nachricht && nachricht.room) || "";
+    const merker = `${raum}|${(nachricht && nachricht.key) || ""}`;
+    const urteil = sync.steuerungEntscheiden(nachricht, {
+      letzter: letzteEreignisse.get(merker),
+      binHost: Boolean(lage && lage.binHost),
+      hostId: (lage && lage.hostId) || "",
+      gleicheAdresse: !lage || lage.gleicheAdresse !== false,
+      offen: { season: (lage && lage.season) || 0, episode: (lage && lage.episode) || 0 }
+    });
+    if (urteil.merken) letzteEreignisse.set(merker, urteil.merken);
+    if (urteil.tun === "nichts") return { tun: "nichts", grund: urteil.grund, skript: "" };
+
+    // Der Uhrversatz gehoert zum Raum, aus dem die Nachricht kam: jeder Raum
+    // ist eine eigene Verbindung und misst ihn selbst.
+    const stand = raeume ? raeume.uhrStand(raum) : null;
+    const ereignis = sync.ereignisFuerPlayer(
+      nachricht, sync.laeuftDanach(nachricht), stand ? stand.versatz : 0, Boolean(stand)
+    );
+
+    if (urteil.tun === "navigate") {
+      return { tun: "navigate", grund: urteil.grund, url: String(nachricht.url || ""), skript: "" };
+    }
+    if (urteil.tun === "drift") {
+      return { tun: "drift", grund: urteil.grund, skript: sync.driftScript(ereignis) };
+    }
+    // syncprepare und syncstart gehen denselben Weg wie ein gewoehnlicher
+    // Befehl - nur mit anderen Flaggen. Beim Vorbereiten wartet das Skript,
+    // bis der Sprung wirklich sitzt; erst dann meldet Java "bereit".
+    const aktion = urteil.tun === "syncprepare" ? "syncprepare" : String(nachricht.action);
+    return {
+      tun: urteil.tun,
+      grund: urteil.grund,
+      skript: sync.applyScript(aktion, ereignis, {
+        genau: urteil.genau,
+        warten: urteil.warten,
+        nichtSpringen: urteil.nichtSpringen
+      })
+    };
+  }
+
+  /**
+   * Ein Befehl dieses Geraets, wie ihn der Horcher im Player gemeldet hat.
+   *
+   * <p>Java liest die Konsolenzeile nicht selbst - es reicht sie herein, und
+   * hier wird sie mit derselben Funktion zerlegt, die sie am Rechner zerlegt.
+   * Eine zweite Auslegung derselben Zeichenkette waere die naechste Stelle,
+   * an der die Geraete auseinanderlaufen.
+   *
+   * @return was gesendet wurde, oder null
+   */
+  function meldungSenden(zeile, key, url, room) {
+    const tat = sync.aktionLesen(zeile);
+    if (!tat || !raeume || !key) return null;
+    raeume.steuernMitAdresse(key, tat.aktion, tat.position, String(url || ""), room);
+    return tat;
+  }
+
+  /** Eine Standmeldung des Horchers: Position und ob es steht. */
+  function meldungStand(zeile, key, stand, room) {
+    const wert = sync.standLesen(zeile);
+    if (!wert || !raeume || !key) return null;
+    raeume.meldeStand(key, Object.assign({}, stand, {
+      position: wert.position,
+      paused: wert.paused
+    }), room);
+    return wert;
+  }
+
+  /** Ein Folgenwechsel dieses Geraets. */
+  function folgenwechselMelden(key, url, room) {
+    if (!raeume || !key) return false;
+    raeume.steuernMitAdresse(key, "navigate", 0, String(url || ""), room);
+    return true;
+  }
+
+  /**
+   * Der Zustand faengt von vorn an - beim Folgenwechsel und beim Hosterwechsel.
+   *
+   * <p>Beides ist ein neues Dokument mit einem neuen Videoelement. Die
+   * bestaetigten Driftmessungen, die Ruhezeit und die Veraltungsbuchhaltung
+   * gehoeren zur Folge davor; blieben sie stehen, wiese der neue Player die
+   * ersten Befehle der neuen Folge als "veraltet" ab.
+   */
+  function zuruecksetzen(key, room) {
+    if (key) letzteEreignisse.delete(`${room || ""}|${key}`);
+    else letzteEreignisse.clear();
+    return sync.zuruecksetzenScript();
+  }
+
   // Verwaltendes reicht direkt durch. Eine eigene Pruefung waere hier falsch:
   // was ein gueltiger Raumcode ist, weiss das geteilte Modul.
   const durchreiche = {
@@ -103,6 +227,10 @@
     rauswerfen: (key, memberId, room) => sicherstellen().rauswerfen(key, memberId, room),
     hostUebergeben: (key, memberId, room) => sicherstellen().hostUebergeben(key, memberId, room),
     steuern: (key, action, position, room) => sicherstellen().steuern(key, action, position, room),
+    steuernMitAdresse: (key, action, position, url, room) =>
+      sicherstellen().steuernMitAdresse(key, action, position, url, room),
+    gleichziehen: (key, position, room) => sicherstellen().gleichziehen(key, position, room),
+    bereitZumStart: (key, room) => sicherstellen().bereitZumStart(key, room),
     abgleichen: (key, room) => sicherstellen().abgleichen(key, room),
     meldeStand: (key, stand, room) => sicherstellen().meldeStand(key, stand, room),
     verlasseStand: (key, room) => sicherstellen().verlasseStand(key, room),
@@ -117,6 +245,19 @@
     status,
     eintraege,
     standMelden,
+    // Das Mitschauen.
+    steuerungPruefen,
+    meldungSenden,
+    meldungStand,
+    folgenwechselMelden,
+    zuruecksetzen,
+    // Der Horcher, der im Player Play, Pause und Sprung bemerkt. Woertlich
+    // dasselbe Skript, das der Rechner einsetzt.
+    beobachterSkript: () => sync.beobachterScript(),
+    // Woran Java eine Meldung dieses Horchers erkennt.
+    MELDE_AKTION: sync.MELDE_AKTION,
+    MELDE_STAND: sync.MELDE_STAND,
+    MELDE_SYNC: sync.MELDE_SYNC,
     // Damit die Oberflaeche einen eingetippten Code beanstanden kann, bevor
     // sie ihn speichert - mit demselben Wortlaut wie am Rechner.
     codeBeanstandung

@@ -19,7 +19,7 @@ const PORT = Number(process.env.TESTPORT) || 8791;
 // Ohne Relay: reine Rechenpruefungen.
 const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "empfehlungslauftest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "suchetest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "rueckblicktest", "wrappedtest", "qualitaettest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest", "titelbildtest", "werbefiltertest", "folgenlinktest", "folgentiteltest", "bildnachreichungtest", "bildfallbacktest", "startknopftest", "hosterplayertest"];
 // Mit Relay: das Zusammenspiel.
-const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "ferntest"];
+const MIT_RELAY = ["hosttest", "partytest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "mitschauentest", "ferntest"];
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 

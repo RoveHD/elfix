@@ -347,6 +347,7 @@ pruefe("Der Serienschluessel ist bei allen YouTube-Videos derselbe",
   === taste.urlSchluessel("https://www.youtube.com/watch?v=BBB"),
   taste.urlSchluessel("https://www.youtube.com/watch?v=AAA"));
 
+const wpSync = require("../src/watchparty-sync");
 const sandkastenWP = { URL, taste, youtube: yt, console };
 vm.createContext(sandkastenWP);
 vm.runInContext(["function istGleicheFolge", "function episodeIdentity", "function stripWww"]
@@ -377,8 +378,17 @@ pruefe("Der Videowechsel wird gemeldet",
   /function meldeWatchpartyFolgenwechsel\(url\)/.test(main)
   && /watchparty\.steuernMitAdresse\(key, "navigate", 0, url, raum\);/.test(main)
   && /meldeWatchpartyFolgenwechsel\(url\);/.test(main));
+// Die Entscheidung "das ist ein Folgenwechsel" liegt seit dem Umbau in
+// watchparty-sync.js - dieselbe Funktion, die Android ueber die Bruecke fragt.
+// Geprueft wird deshalb beides: dass sie richtig entscheidet, und dass main.js
+// die Entscheidung auch ausfuehrt.
+pruefe("Ein navigate mit Adresse gilt als Folgenwechsel",
+  wpSync.steuerungEntscheiden(
+    { action: "navigate", url: "https://www.youtube.com/watch?v=BBB", sequenceId: 2, timestamp: 2000 },
+    { letzter: null, binHost: false }
+  ).tun === "navigate");
 pruefe("Die Gegenseite zieht auf die neue Adresse nach",
-  /if \(nachricht\.action === "navigate" && nachricht\.url\) \{\n\s*await followWatchpartyEpisode\(eintrag, nachricht\);/.test(main)
+  /if \(urteil\.tun === "navigate"\) \{\n\s*await followWatchpartyEpisode\(eintrag, nachricht\);/.test(main)
   && /if \(istGleicheFolge\(offen, ziel\)\) continue;/.test(main)
   && /await navigateProvider\(provider, ziel\);/.test(main));
 pruefe("Nur wer live geschaltet ist, wird mitgezogen",
