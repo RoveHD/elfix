@@ -25,6 +25,11 @@
   // Horcher am Player und die Entscheidung, was mit einem eingehenden Befehl
   // zu geschehen hat. Kein Stueck davon steht hier noch einmal.
   const sync = require("watchparty-sync");
+  // Wer zu einer Adresse gehoert, entscheidet dieselbe Funktion wie am
+  // Rechner (siehe providerForWatchpartyUrl in main.js). Eine eigene
+  // Zuordnung hier waere die zweite - und zwei Zuordnungen kommen
+  // irgendwann zu zwei Anbietern.
+  const geraeteStand = require("geraete-stand");
 
   let raeume = null;
   let letzterStatus = null;
@@ -95,6 +100,100 @@
     if (!raum || !schluessel) return false;
     raeume.fortschrittMelden(schluessel, fortschritt.watchpartyStand(eintrag, geraetName), raum);
     return true;
+  }
+
+  /* --------------------------------------------------- Eintraege oeffnen */
+
+  /*
+   * Was der Rechner unter `openWatchpartyItem` tut - und was Android bisher
+   * gar nicht konnte.
+   *
+   * Auf dem Telefon und am Fernseher stand unter jedem Eintrag genau ein
+   * Knopf: "Verlassen". Die Folge liess sich nicht oeffnen. Dabei liegt alles
+   * Noetige schon im Eintrag, den das Relay ohnehin schickt - die Adresse der
+   * Serie, der Anbietername und, sobald jemand aus der Runde weiterschaut,
+   * der Stand mit der Adresse der *Folge*.
+   *
+   * Genau diese Auswahl trifft der Rechner:
+   *
+   *   const url = eintrag.progress?.url || eintrag.url;
+   *
+   * Die Folgenadresse geht vor. Sonst landet man auf der Serienuebersicht,
+   * waehrend die Runde bei Staffel 3 Folge 8 steht.
+   */
+
+  /** Der Eintrag zu genau einem Titel in genau einem Raum. */
+  function eintragImRaum(key, room) {
+    if (!raeume || !key) return null;
+    const raum = String(room || "");
+    return raeume.eintraege().find((eintrag) => (
+      eintrag.key === key && (!raum || String(eintrag.room || "") === raum)
+    )) || null;
+  }
+
+  /**
+   * Wohin ein Eintrag fuehrt, wenn man ihn oeffnet.
+   *
+   * <p>Java bekommt eine fertige Auskunft und sucht sich nichts selbst
+   * zusammen: Anbieter, Adresse, Staffel, Folge und die Stelle, an der die
+   * Runde steht.
+   *
+   * @param anbieter die eingerichteten Anbieter, wie sie der Kern kennt
+   * @return {@code null}, wenn es den Eintrag nicht gibt; sonst ein Objekt mit
+   *         {@code providerId} (leer, wenn kein Anbieter passt) und
+   *         {@code url}
+   */
+  function oeffnungsZiel(key, room, anbieter) {
+    const eintrag = eintragImRaum(key, room);
+    if (!eintrag) return null;
+    const provider = geraeteStand.anbieterFinden(anbieter || [], eintrag.url, eintrag.providerName);
+    const stand = eintrag.progress || null;
+    // Die Folgenadresse vor der Serienadresse - dieselbe Reihenfolge wie am
+    // Rechner. Ohne sie oeffnet ein Klick auf "Bleach" die Uebersicht statt
+    // der Folge, bei der die Runde gerade steht.
+    const url = (stand && stand.url) || eintrag.url || "";
+    return {
+      key: eintrag.key,
+      room: String(eintrag.room || ""),
+      providerId: provider ? provider.id : "",
+      providerName: (provider && provider.name) || eintrag.providerName || "",
+      url,
+      titel: eintrag.title || "",
+      // Was die Runde ueber die Folge weiss. Der Stand geht vor: er ist
+      // juenger als die Angabe am Titel.
+      season: (stand && stand.season) || eintrag.season || 0,
+      episode: (stand && stand.episode) || eintrag.episode || 0,
+      position: (stand && stand.position) || 0,
+      dabei: Boolean(eintrag.joined),
+      thumbnail: eintrag.thumbnail || ""
+    };
+  }
+
+  /**
+   * Die Eintraege samt der Frage, ob sie sich ueberhaupt oeffnen lassen.
+   *
+   * <p>Dasselbe `openable` wie am Rechner: ohne passenden eingerichteten
+   * Anbieter fuehrt der Knopf nirgendwohin, und ein Knopf, der nichts tut,
+   * ist schlimmer als keiner.
+   */
+  function eintraegeMitAnbieter(anbieter) {
+    const liste = anbieter || [];
+    return eintraege().map((eintrag) => {
+      const provider = geraeteStand.anbieterFinden(liste, eintrag.url, eintrag.providerName);
+      const stand = eintrag.progress || null;
+      return Object.assign({}, eintrag, {
+        openable: Boolean(provider),
+        providerId: provider ? provider.id : "",
+        // Ausgerechnet, damit die Oberflaeche nicht zweimal dieselbe
+        // Vorrangregel schreiben muss - einmal fuer die Anzeige, einmal
+        // fuers Oeffnen.
+        staffel: (stand && stand.season) || eintrag.season || 0,
+        folge: (stand && stand.episode) || eintrag.episode || 0,
+        stelle: (stand && stand.position) || 0,
+        dauer: (stand && stand.duration) || 0,
+        von: (stand && stand.from) || ""
+      });
+    });
   }
 
   /* ------------------------------------------------------- Das Mitschauen */
@@ -245,6 +344,9 @@
     status,
     eintraege,
     standMelden,
+    // Eintraege oeffnen.
+    oeffnungsZiel,
+    eintraegeMitAnbieter,
     // Das Mitschauen.
     steuerungPruefen,
     meldungSenden,

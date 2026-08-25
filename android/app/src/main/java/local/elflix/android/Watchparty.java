@@ -71,6 +71,8 @@ public final class Watchparty {
     private JSONArray letzteEintraege = new JSONArray();
     /** Die letzte Standmeldung der Runde - wer steht wo, wer fuehrt, wer hat gedrueckt. */
     private String letzterMitschauStand = "";
+    /** Die eingerichteten Anbieter, wie der Kern sie kennt. Siehe {@link #setzeAnbieter}. */
+    private JSONArray anbieter = new JSONArray();
 
     public Watchparty(Context context, Kern kern, Beobachter beobachter) {
         this.context = context.getApplicationContext();
@@ -305,7 +307,9 @@ public final class Watchparty {
 
     private void eintraegeHolen() {
         if (kern == null || !kern.istBereit()) return;
-        kern.rufe("watchparty-bruecke.eintraege", (wert, fehler) -> {
+        // Mit den Anbietern: die Antwort traegt dann auch, ob ein Eintrag sich
+        // oeffnen laesst und mit welchem Anbieter - beides braucht die Karte.
+        kern.rufe("watchparty-bruecke.eintraegeMitAnbieter", Kern.args(anbieter), (wert, fehler) -> {
             if (fehler != null || wert == null) return;
             try {
                 letzteEintraege = new JSONArray(wert);
@@ -384,6 +388,25 @@ public final class Watchparty {
         this.bestand = bestand;
     }
 
+    /**
+     * Die eingerichteten Anbieter.
+     *
+     * <p>Die Bruecke braucht sie, um einem Eintrag der Runde einen Anbieter
+     * zuzuordnen - dieselbe Frage, die der Rechner mit
+     * {@code providerForWatchpartyUrl} beantwortet, und dieselbe Funktion
+     * ({@code geraete-stand.anbieterFinden}). Ohne sie liesse sich nicht
+     * sagen, ob ein Eintrag ueberhaupt zu oeffnen ist.
+     */
+    public void setzeAnbieter(java.util.List<Provider> anbieter) {
+        JSONArray liste = new JSONArray();
+        if (anbieter != null) {
+            for (Provider eintrag : anbieter) {
+                if (eintrag != null) liste.put(eintrag.alsJson());
+            }
+        }
+        this.anbieter = liste;
+    }
+
     /** Wer die Steuerbefehle der Runde am Player ausfuehrt. */
     public void setzeMitschauen(Mitschauen mitschauen) {
         this.mitschauen = mitschauen;
@@ -418,6 +441,37 @@ public final class Watchparty {
 
     public void herausnehmen(String key, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.entfernen", Kern.args(key, raum), antwort);
+    }
+
+    /**
+     * Wohin ein Eintrag fuehrt, wenn man ihn oeffnet.
+     *
+     * <p>Beantwortet wird das in der Bruecke, nicht hier: welche Adresse gilt
+     * (die der Folge vor der der Serie) und welcher Anbieter dazugehoert, sind
+     * Regeln, die der Rechner schon hat. Diese Klasse reicht nur die Frage
+     * hinein und die Antwort heraus.
+     */
+    public void oeffnungsZiel(String key, String raum, Kern.Antwort antwort) {
+        if (kern == null || !kern.istBereit()) {
+            antwort.fertig(null, "Der Kern läuft noch nicht");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.oeffnungsZiel", Kern.args(key, raum, anbieter), antwort);
+    }
+
+    /**
+     * Den Host an ein anderes Geraet weitergeben.
+     *
+     * <p>Das Relay prueft noch einmal nach, ob der Empfaenger bei derselben
+     * Folge wirklich mitschaut - hier wird nur gefragt.
+     */
+    public void hostUebergeben(String key, String memberId, String raum, Kern.Antwort antwort) {
+        kern.rufe("watchparty-bruecke.hostUebergeben", Kern.args(key, memberId, raum), antwort);
+    }
+
+    /** Ein Mitglied aus diesem Titel werfen - nur fuer den, der ihn eingestellt hat. */
+    public void rauswerfen(String key, String memberId, String raum, Kern.Antwort antwort) {
+        kern.rufe("watchparty-bruecke.rauswerfen", Kern.args(key, memberId, raum), antwort);
     }
 
     /**

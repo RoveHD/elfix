@@ -319,6 +319,21 @@ public class MainActivity extends Activity {
     private FrameLayout heroPlatz;
     /** Und wo die Karte "wer schaut mit" steckt - aus demselben Grund. */
     private FrameLayout mitschauPlatz;
+    /**
+     * Woher die offene Anbieterseite geoeffnet wurde.
+     *
+     * <p>Nur fuer den Weg zurueck: wer eine Folge aus der Watchparty oeffnet,
+     * will beim Zurueckgehen wieder dort landen und nicht auf der Startseite.
+     */
+    private String providerHerkunft = "";
+    /**
+     * Ein Titel, der an einen Raum gebunden werden soll, sobald es ihn lokal gibt.
+     *
+     * <p>{@code [schluessel, raum]}. Beim Oeffnen aus der Watchparty liegt
+     * oft noch kein eigener Eintrag vor - er entsteht erst, wenn wirklich
+     * etwas laeuft.
+     */
+    private String[] offeneRaumbindung;
     private LinearLayout heroPunkte;
 
     /**
@@ -516,6 +531,10 @@ public class MainActivity extends Activity {
             }
         });
         watchparty.setzeMitschauen(mitschauen);
+        // Damit die Bruecke einem Eintrag der Runde einen Anbieter zuordnen
+        // kann - dieselbe Frage, die der Rechner mit providerForWatchpartyUrl
+        // beantwortet.
+        watchparty.setzeAnbieter(providers);
         qualitaet = new Qualitaet(kern, rahmen);
         if (!Rahmen.verfuegbar()) {
             // Aeltere WebViews kennen den Weg in die Rahmen nicht. Die App
@@ -1653,7 +1672,7 @@ public class MainActivity extends Activity {
                 }
             }
             for (String erst : new String[]{"tv:hero:0", "tv:anbieter:0", "tv:reiter:0",
-                "tv:entdeckung:0", "tv:liste:0"}) {
+                "tv:entdeckung:0", "tv:liste:0", "tv:wp:0:oeffnen", "tv:wp:einstellungen"}) {
                 View ziel = seite.findViewWithTag(erst);
                 if (ziel != null) {
                     ziel.requestFocus();
@@ -5251,6 +5270,25 @@ public class MainActivity extends Activity {
      * Zugang, und ein Gerät gehört entweder dazu oder nicht. Alles Weitere -
      * Verbindung, Mitglieder, Host - führt der geteilte Kern.
      */
+    /**
+     * Die Watchparty-Seite.
+     *
+     * <p>Sie zeigte bis hierher, dass eine Verbindung steht, welche Raeume es
+     * gibt und welche Titel darin eingestellt sind. Unter jedem Titel stand
+     * genau ein Knopf: "Verlassen". Die Folge liess sich nicht oeffnen, die
+     * Staffel stand nirgends, und wer mitschaut, sah man nicht. Am Rechner
+     * gibt es das alles seit langem.
+     *
+     * <p>Jetzt hier auch - aus denselben Daten. Der Eintrag, den das Relay
+     * schickt, traegt ohnehin Titel, Adresse, Anbieter, Staffel, Folge, Stand,
+     * Mitglieder und Host; er wurde nur nicht ausgelesen. Gerechnet wird
+     * nichts davon auf diesem Geraet.
+     *
+     * <p>Ein Raum darf ausdruecklich mehrere Titel enthalten. Deshalb wird
+     * nach Raum gegliedert, sobald es mehr als einen gibt, und jede Karte
+     * traegt ihren Raum mit sich - ein Klick auf "Bleach" darf nie "BLACK
+     * TORCH" oeffnen.
+     */
     private void zeigeWatchparty() {
         currentScreen = "watchparty";
         mitschauPlatz = null;
@@ -5260,8 +5298,9 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         updateBottomNav();
 
-        LinearLayout page = isTelevision() ? tvPage() : mobilePage();
-        if (isTelevision()) {
+        boolean fernseher = isTelevision();
+        LinearLayout page = fernseher ? tvPage() : mobilePage();
+        if (fernseher) {
             page.addView(TvViews.eyebrow(this, "Gemeinsam schauen"));
             page.addView(TvViews.heroTitle(this, "Watchparty"));
         } else {
@@ -5272,21 +5311,17 @@ public class MainActivity extends Activity {
         }
 
         if (!watchparty.istEingeschaltet() || watchparty.serverUrl().isEmpty()) {
-            addSpacing(page, settingsCard("Noch nicht eingerichtet",
+            addSpacing(page, hinweisKarte(fernseher, "Noch nicht eingerichtet",
                 "Trage in den Einstellungen die Adresse deines Relays und einen Raumcode ein. "
                     + "Denselben Code auf dem Rechner - dann laufen beide Stände zusammen.",
-                "Zu den Einstellungen", this::showSettings), MobileViews.SECTION_GAP);
+                "Zu den Einstellungen", this::showSettings, "tv:wp:einstellungen"),
+                MobileViews.SECTION_GAP);
+            tvFokusHerstellen(page);
             return;
         }
 
-        String zustand = watchparty.istVerbunden() ? "Verbunden" : "Nicht verbunden";
-        String fehler = watchparty.fehlertext();
-        addSpacing(page, settingsCard(zustand,
-            fehler.isEmpty()
-                ? watchparty.serverUrl() + (watchparty.geraetName().isEmpty()
-                    ? "" : "  ·  dieses Gerät: " + watchparty.geraetName())
-                : fehler,
-            null, null), MobileViews.SECTION_GAP);
+        addSpacing(page, hinweisKarte(fernseher, watchpartyKopfzeile(), watchpartyStatustext(),
+            null, null, null), MobileViews.SECTION_GAP);
 
         // Ein Platz statt der Karte selbst: er bleibt stehen, waehrend sein
         // Inhalt im Sekundentakt wechselt (siehe mitschauStandGeaendert).
@@ -5294,35 +5329,148 @@ public class MainActivity extends Activity {
         addSpacing(page, mitschauPlatz, MobileViews.ITEM_GAP);
         mitschauStandGeaendert();
 
+        JSONArray eingestellt = watchparty.eintraege();
+        if (eingestellt.length() == 0) {
+            addSpacing(page, hinweisKarte(fernseher, "Noch nichts eingestellt",
+                "Öffne einen Titel und stelle ihn über das Menü in einen Raum. Erst wer beitritt, "
+                    + "teilt seinen Fortschritt - von allein wird nichts geteilt.",
+                null, null, null), MobileViews.SECTION_GAP);
+            tvFokusHerstellen(page);
+            return;
+        }
+
+        // Gegliedert wird nach den eingerichteten Raeumen und nicht nach denen,
+        // in denen schon etwas steht - sonst saehe man bei zwei Raeumen eine
+        // Reihe Karten und wuesste nicht, zu welchem Raum sie gehoert.
+        // Dieselbe Ueberlegung wie in watchpartyKarten() am Rechner.
+        List<String> raeume = new ArrayList<>();
+        JSONArray gemeldet = watchparty.raeume();
+        for (int i = 0; i < gemeldet.length(); i += 1) {
+            JSONObject raum = gemeldet.optJSONObject(i);
+            String code = raum == null ? "" : raum.optString("room", "");
+            if (!code.isEmpty() && !raeume.contains(code)) raeume.add(code);
+        }
+        for (int i = 0; i < eingestellt.length(); i += 1) {
+            JSONObject eintrag = eingestellt.optJSONObject(i);
+            String code = eintrag == null ? "" : eintrag.optString("room", "");
+            if (!raeume.contains(code)) raeume.add(code);
+        }
+
+        int stelle = 0;
+        boolean mehrereRaeume = raeume.size() > 1;
+        if (!mehrereRaeume) {
+            addSpacing(page, fernseher
+                ? TvViews.sectionTitle(this, "Im Raum eingestellt")
+                : MobileViews.sectionHeader(this, "Im Raum eingestellt", null, null),
+                MobileViews.SECTION_GAP);
+        }
+        for (String raum : raeume) {
+            List<JSONObject> karten = new ArrayList<>();
+            for (int i = 0; i < eingestellt.length(); i += 1) {
+                JSONObject eintrag = eingestellt.optJSONObject(i);
+                if (eintrag == null) continue;
+                if (raum.equals(eintrag.optString("room", ""))) karten.add(eintrag);
+            }
+            if (mehrereRaeume) {
+                String kopf = raum.isEmpty() ? "Ohne Raum" : "Raum " + raum;
+                addSpacing(page, fernseher
+                    ? TvViews.sectionTitle(this, kopf + "  ·  " + raumStatus(raum))
+                    : MobileViews.sectionHeader(this, kopf + "  ·  " + raumStatus(raum), null, null),
+                    MobileViews.SECTION_GAP);
+            }
+            if (karten.isEmpty()) {
+                addSpacing(page, hinweisKarte(fernseher, "Noch nichts eingestellt",
+                    "In diesem Raum steht gerade kein Titel.", null, null, null),
+                    MobileViews.ITEM_GAP);
+                continue;
+            }
+            for (JSONObject eintrag : karten) {
+                addSpacing(page, watchpartyKarte(eintrag, stelle), MobileViews.ITEM_GAP);
+                stelle += 1;
+            }
+        }
+        tvFokusHerstellen(page);
+    }
+
+    /**
+     * Ein Kasten mit Ueberschrift, Text und hoechstens einer Aktion.
+     *
+     * <p>Es gab dafuer zwei Bauteile - {@code settingsCard} fuers Telefon und
+     * {@code TvViews.infoCard} fuer den Fernseher - und an jeder Stelle stand
+     * dieselbe Verzweigung. Hier steht sie einmal, mitsamt der Fokusmarke, die
+     * der Fernseher braucht.
+     */
+    private View hinweisKarte(boolean fernseher, String titel, String text,
+                              String knopf, Runnable beiKlick, String marke) {
+        View karte = fernseher
+            ? TvViews.infoCard(this, titel, text, knopf, beiKlick)
+            : settingsCard(titel, text, knopf, beiKlick);
+        // Die Aktion der TV-Karte ist ihr letztes Kind; sie ist das Fokusziel,
+        // nicht die Karte. Ohne Aktion gibt es dort nichts zu fokussieren.
+        if (fernseher && marke != null && karte instanceof ViewGroup) {
+            ViewGroup gruppe = (ViewGroup) karte;
+            if (gruppe.getChildCount() > 0) {
+                View letztes = gruppe.getChildAt(gruppe.getChildCount() - 1);
+                if (letztes.isFocusable()) letztes.setTag(marke);
+            }
+        }
+        return karte;
+    }
+
+    /** Die Kopfzeile der Statuskarte: verbunden, nicht verbunden, ausgeschaltet. */
+    private String watchpartyKopfzeile() {
+        if (!watchparty.istEingeschaltet()) return "Ausgeschaltet";
+        return watchparty.istVerbunden() ? "Verbunden" : "Nicht verbunden";
+    }
+
+    /**
+     * Derselbe Satz wie am Rechner ({@code renderWatchpartyViewStatus}): wo man
+     * ist, wer sonst noch da ist, und wofuer das gut ist.
+     */
+    private String watchpartyStatustext() {
+        String grund = "Wenn du beitrittst, läuft euer Fortschritt zusammen.";
+        String fehler = watchparty.fehlertext();
+        if (!watchparty.istVerbunden()) {
+            return fehler.isEmpty() ? "Verbinde mit dem Raum …" : "Nicht verbunden: " + fehler;
+        }
+        JSONArray raeume = watchparty.raeume();
+        List<String> stehen = new ArrayList<>();
+        int andere = 0;
+        for (int i = 0; i < raeume.length(); i += 1) {
+            JSONObject raum = raeume.optJSONObject(i);
+            if (raum == null || !raum.optBoolean("connected", false)) continue;
+            stehen.add(raum.optString("room", ""));
+            JSONArray leute = raum.optJSONArray("peers");
+            andere = Math.max(andere, Math.max(0, (leute == null ? 1 : leute.length()) - 1));
+        }
+        String geraete = andere == 0 ? "noch niemand sonst"
+            : andere + " weiteres Gerät" + (andere == 1 ? "" : "e");
+        String wo = stehen.size() > 1
+            ? stehen.size() + " Räume (" + String.join(", ", stehen) + ")"
+            : "Raum „" + (stehen.isEmpty() ? "?" : stehen.get(0)) + "“";
+        // Der eigene Name gehoerte schon auf die alte Karte und bleibt: bei
+        // drei Geraeten in einem Raum ist "welches bin ich" eine echte Frage.
+        String eigen = watchparty.geraetName();
+        return wo + " — " + geraete + ". " + grund
+            + (eigen.isEmpty() ? "" : "\n\nDieses Gerät: " + eigen);
+    }
+
+    /** Wie es um einen einzelnen Raum steht - fuer die Ueberschrift bei mehreren. */
+    private String raumStatus(String code) {
         JSONArray raeume = watchparty.raeume();
         for (int i = 0; i < raeume.length(); i += 1) {
             JSONObject raum = raeume.optJSONObject(i);
-            if (raum == null) continue;
-            boolean verbunden = raum.optBoolean("connected", false);
-            JSONArray mitglieder = raum.optJSONArray("peers");
-            int anzahl = mitglieder == null ? 0 : mitglieder.length();
-            String beschreibung = (verbunden ? "Verbunden" : "Getrennt")
-                + (anzahl > 0 ? "  ·  " + (anzahl == 1 ? "1 Gerät" : anzahl + " Geräte") : "  ·  allein");
-            addSpacing(page, settingsCard("Raum " + raum.optString("room", "?"),
-                beschreibung, null, null), MobileViews.ITEM_GAP);
+            if (raum == null || !code.equals(raum.optString("room", ""))) continue;
+            if (!raum.optBoolean("connected", false)) {
+                String fehler = raum.optString("error", "");
+                return fehler.isEmpty() ? "nicht verbunden" : fehler;
+            }
+            JSONArray leute = raum.optJSONArray("peers");
+            int andere = Math.max(0, (leute == null ? 1 : leute.length()) - 1);
+            return andere == 0 ? "nur du"
+                : andere + " weiteres Gerät" + (andere == 1 ? "" : "e");
         }
-
-        JSONArray eingestellt = watchparty.eintraege();
-        if (eingestellt.length() == 0) {
-            addSpacing(page, settingsCard("Noch nichts eingestellt",
-                "Öffne einen Titel und stelle ihn über das Menü in einen Raum. Erst wer beitritt, "
-                    + "teilt seinen Fortschritt - von allein wird nichts geteilt.",
-                null, null), MobileViews.SECTION_GAP);
-            return;
-        }
-        addSpacing(page, isTelevision()
-            ? TvViews.sectionTitle(this, "Im Raum eingestellt")
-            : MobileViews.sectionHeader(this, "Im Raum eingestellt", null, null), MobileViews.SECTION_GAP);
-        for (int i = 0; i < eingestellt.length(); i += 1) {
-            JSONObject eintrag = eingestellt.optJSONObject(i);
-            if (eintrag == null) continue;
-            addSpacing(page, watchpartyKarte(eintrag), MobileViews.ITEM_GAP);
-        }
+        return "nicht verbunden";
     }
 
     /**
@@ -5396,23 +5544,417 @@ public class MainActivity extends Activity {
             : String.format(java.util.Locale.GERMANY, "%d:%02d", minuten, rest);
     }
 
-    private View watchpartyKarte(JSONObject eintrag) {
-        String titel = eintrag.optString("title", "Titel");
+    /**
+     * Eine Karte je Titel im Raum.
+     *
+     * <p>Ein Bauplan fuer beide Geraete, zwei Saetze Bauteile. Was sie zeigt
+     * und was ihre Knoepfe tun, ist auf Telefon und Fernseher dasselbe; wie
+     * ein Knopf aussieht und ob er einen Fokusrahmen traegt, nicht.
+     *
+     * <p>Die Reihenfolge der Aktionen ist die des Rechners, mit einem
+     * Unterschied: dort ist "Beitreten/Verlassen" der erste Knopf, hier ist es
+     * "Folge öffnen". Auf einem Fernseher ist Oeffnen das, was man will; das
+     * Beitreten geschieht einmal und dann nie wieder.
+     *
+     * @param stelle laufende Nummer fuer die Fokusmarke des Fernsehers
+     */
+    private View watchpartyKarte(JSONObject eintrag, int stelle) {
+        boolean fernseher = isTelevision();
+        String schluessel = eintrag.optString("key", "");
         String raum = eintrag.optString("room", "");
         boolean dabei = eintrag.optBoolean("joined", false);
+        boolean meins = eintrag.optBoolean("mine", false);
+        boolean oeffenbar = eintrag.optBoolean("openable", false);
+        String rohTitel = eintrag.optString("title", "");
+        final String titel = rohTitel.isEmpty() ? "Titel" : rohTitel;
+
+        LinearLayout karte = new LinearLayout(this);
+        karte.setOrientation(LinearLayout.VERTICAL);
+        karte.setClipChildren(false);
+        karte.setClipToPadding(false);
+        int rand = dp(fernseher ? 20 : 16);
+        karte.setPadding(rand, rand, rand, rand);
+        karte.setBackground(fernseher
+            ? TvViews.shape(this, Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS, Theme.BORDER, 1)
+            : MobileViews.shape(this, Theme.SURFACE_ELEVATED, 14, Theme.BORDER, 1));
+
+        // --- Kopf: Bild und Text nebeneinander --------------------------------
+        LinearLayout kopf = new LinearLayout(this);
+        kopf.setOrientation(LinearLayout.HORIZONTAL);
+
+        int bildBreite = fernseher ? 78 : 58;
+        int bildHoehe = Math.round(bildBreite * 1.42f);
+        Provider anbieter = providerMitId(eintrag.optString("providerId", ""));
+        FrameLayout bild = MobileViews.poster(this, anbieter, titel,
+            eintrag.optString("thumbnail", ""), 0, bildBreite, bildHoehe, 20, 0);
+        LinearLayout.LayoutParams bildParams =
+            new LinearLayout.LayoutParams(dp(bildBreite), dp(bildHoehe));
+        bildParams.rightMargin = dp(14);
+        kopf.addView(bild, bildParams);
+
+        LinearLayout texte = new LinearLayout(this);
+        texte.setOrientation(LinearLayout.VERTICAL);
+
+        TextView name = new TextView(this);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(fernseher ? 20 : 17);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        // Umbrechen statt abschneiden: ein langer Serienname ist der Normalfall.
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        texte.addView(name);
+
+        // Staffel und Folge stehen nur da, wenn sie bekannt sind. Erfunden wird
+        // nichts: ein Film hat keine, und eine Serie, bei der noch niemand
+        // weitergeschaut hat, auch nicht.
+        String folgenzeile = watchpartyFolgentext(eintrag);
+        String anbietername = eintrag.optString("providerName", "");
+        String zeile = zusammen(folgenzeile, anbietername);
+        if (!zeile.isEmpty()) {
+            TextView unter = new TextView(this);
+            unter.setText(zeile);
+            unter.setTextColor(Theme.TEXT_SECONDARY);
+            unter.setTextSize(fernseher ? 16 : 14);
+            unter.setMaxLines(2);
+            unter.setPadding(0, dp(4), 0, 0);
+            texte.addView(unter);
+        }
+
+        // Wo die Runde gerade steht - dieselbe Zeile wie auf der Karte am
+        // Rechner, sobald jemand Beigetretenes weiterschaut.
+        String laufend = watchpartyStandtext(eintrag);
+        if (!laufend.isEmpty()) {
+            TextView stand = new TextView(this);
+            stand.setText(laufend);
+            stand.setTextColor(Theme.PRIMARY);
+            stand.setTextSize(fernseher ? 15 : 13);
+            stand.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            stand.setMaxLines(1);
+            stand.setEllipsize(TextUtils.TruncateAt.END);
+            stand.setPadding(0, dp(4), 0, 0);
+            texte.addView(stand);
+        }
+
+        TextView leute = new TextView(this);
+        leute.setText(watchpartyMitgliedertext(eintrag));
+        leute.setTextColor(Theme.TEXT_DISABLED);
+        leute.setTextSize(fernseher ? 15 : 13);
+        leute.setMaxLines(3);
+        leute.setEllipsize(TextUtils.TruncateAt.END);
+        leute.setPadding(0, dp(6), 0, 0);
+        texte.addView(leute);
+
+        kopf.addView(texte, new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        karte.addView(kopf, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // --- Aktionen ---------------------------------------------------------
+        LinearLayout aktionen = new LinearLayout(this);
+        aktionen.setOrientation(LinearLayout.HORIZONTAL);
+        aktionen.setClipChildren(false);
+        aktionen.setClipToPadding(false);
+        LinearLayout.LayoutParams aktionenParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        aktionenParams.topMargin = dp(14);
+
+        // Die Hauptaktion. Ohne passenden eingerichteten Anbieter fuehrt sie
+        // nirgendwohin - dann sagt sie das, statt ins Leere zu greifen.
+        String oeffnenText = folgenzeile.isEmpty() ? "Öffnen" : "Folge öffnen";
+        View oeffnen = fernseher
+            ? (oeffenbar
+                ? TvViews.hauptPillButton(this, oeffnenText,
+                    () -> watchpartyEintragOeffnen(schluessel, raum))
+                : TvViews.pillButton(this, "Kein Anbieter", () ->
+                    showToast("Für diesen Titel ist kein Anbieter eingerichtet")))
+            : (oeffenbar
+                ? MobileViews.primaryButton(this, oeffnenText,
+                    () -> watchpartyEintragOeffnen(schluessel, raum))
+                : MobileViews.secondaryButton(this, "Kein Anbieter", () ->
+                    showToast("Für diesen Titel ist kein Anbieter eingerichtet")));
+        oeffnen.setTag("tv:wp:" + stelle + ":oeffnen");
+        aktionen.addView(oeffnen, knopfPlatz(fernseher));
+
+        View beitreten = fernseher
+            ? TvViews.pillButton(this, dabei ? "Verlassen" : "Beitreten",
+                () -> watchpartyBeitrittUmschalten(schluessel, raum, titel, dabei))
+            : MobileViews.secondaryButton(this, dabei ? "Verlassen" : "Beitreten",
+                () -> watchpartyBeitrittUmschalten(schluessel, raum, titel, dabei));
+        beitreten.setTag("tv:wp:" + stelle + ":beitritt");
+        LinearLayout.LayoutParams zweitParams = knopfPlatz(fernseher);
+        zweitParams.leftMargin = dp(10);
+        aktionen.addView(beitreten, zweitParams);
+
+        // Alles Seltenere in ein Menue: Host weitergeben, jemanden entfernen,
+        // den Titel aus dem Raum nehmen. Auf einer schmalen Karte waeren das
+        // drei weitere Knoepfe, und mit der Fernbedienung drei weitere Stationen
+        // auf dem Weg zum Oeffnen.
+        boolean binHost = !eintrag.optString("hostId", "").isEmpty()
+            && eintrag.optString("hostId", "").equals(eintrag.optString("myId", ""));
+        if (meins || binHost) {
+            View mehr = fernseher
+                ? TvViews.pillButton(this, "…", null)
+                : MobileViews.secondaryButton(this, "…", null);
+            mehr.setOnClickListener(anker -> watchpartyMenue(anker, eintrag));
+            mehr.setTag("tv:wp:" + stelle + ":mehr");
+            LinearLayout.LayoutParams mehrParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                fernseher ? ViewGroup.LayoutParams.WRAP_CONTENT : dp(MobileViews.TOUCH_TARGET));
+            mehrParams.leftMargin = dp(10);
+            aktionen.addView(mehr, mehrParams);
+        }
+        karte.addView(aktionen, aktionenParams);
+
+        // Die ganze Karte oeffnet ebenfalls - auf dem Telefon der bequemere
+        // Weg. Auf dem Fernseher bleibt es bei den Knoepfen: eine fokussierbare
+        // Karte *und* fokussierbare Knoepfe darin waeren eine Station zu viel.
+        if (!fernseher && oeffenbar) {
+            karte.setOnClickListener(v -> watchpartyEintragOeffnen(schluessel, raum));
+        }
+        return karte;
+    }
+
+    private LinearLayout.LayoutParams knopfPlatz(boolean fernseher) {
+        return new LinearLayout.LayoutParams(0,
+            fernseher ? ViewGroup.LayoutParams.WRAP_CONTENT : dp(MobileViews.TOUCH_TARGET), 1);
+    }
+
+    /**
+     * "Staffel 3 · Folge 8" - oder nichts.
+     *
+     * <p>Der Stand der Runde geht vor der Angabe am Titel: er ist juenger.
+     * Dieselbe Vorrangregel wie auf der Karte am Rechner. Fehlt beides, steht
+     * hier nichts - eine erfundene Folge waere schlimmer als keine.
+     */
+    static String watchpartyFolgentext(JSONObject eintrag) {
+        int staffel = eintrag.optInt("staffel", 0);
+        int folge = eintrag.optInt("folge", 0);
+        if (staffel <= 0 && folge <= 0) {
+            JSONObject stand = eintrag.optJSONObject("progress");
+            staffel = stand == null ? eintrag.optInt("season", 0) : stand.optInt("season", 0);
+            folge = stand == null ? eintrag.optInt("episode", 0) : stand.optInt("episode", 0);
+            if (staffel <= 0) staffel = eintrag.optInt("season", 0);
+            if (folge <= 0) folge = eintrag.optInt("episode", 0);
+        }
+        if (folge <= 0) return "";
+        return staffel > 0 ? "Staffel " + staffel + " · Folge " + folge : "Folge " + folge;
+    }
+
+    /** "12:37 / 24:10 · Elias" - nur, wenn wirklich jemand weiterschaut. */
+    private String watchpartyStandtext(JSONObject eintrag) {
+        double dauer = eintrag.optDouble("dauer", 0);
+        double stelle = eintrag.optDouble("stelle", 0);
+        String von = eintrag.optString("von", "");
+        if (dauer <= 0) {
+            JSONObject stand = eintrag.optJSONObject("progress");
+            if (stand == null) return "";
+            dauer = stand.optDouble("duration", 0);
+            stelle = stand.optDouble("position", 0);
+            von = stand.optString("from", "");
+        }
+        if (dauer <= 0) return "";
+        String text = uhrzeit(stelle) + " / " + uhrzeit(dauer);
+        return von.isEmpty() ? text : text + "  ·  " + von;
+    }
+
+    /**
+     * "Host: Elias · 2 dabei: Elias, Fernseher" - dieselbe Zeile wie am Rechner.
+     *
+     * <p>Der Host steht dabei, weil er beim Abgleich den Takt vorgibt. Ob ich
+     * es selbst bin, entscheidet die Kennung und nicht der Name: zwei Geraete
+     * koennen gleich heissen, und ein Namenstreffer verdeckte, dass man gar
+     * nicht dabei ist.
+     */
+    static String watchpartyMitgliedertext(JSONObject eintrag) {
+        JSONArray namen = eintrag.optJSONArray("members");
+        if (namen == null || namen.length() == 0) return "noch niemand dabei";
+        String hostId = eintrag.optString("hostId", "");
+        String meineId = eintrag.optString("myId", "");
+        String hostName = eintrag.optString("hostName", "");
+        boolean binHost = hostId.isEmpty()
+            ? !hostName.isEmpty() && hostName.equals(eintrag.optString("myName", ""))
+            : hostId.equals(meineId);
+        StringBuilder text = new StringBuilder();
+        if (!hostName.isEmpty()) {
+            text.append(binHost ? "du bist Host" : "Host: " + hostName).append("  ·  ");
+        }
+        text.append(namen.length()).append(" dabei: ");
+        for (int i = 0; i < namen.length(); i += 1) {
+            if (i > 0) text.append(", ");
+            text.append(namen.optString(i, "Gerät"));
+        }
+        return text.toString();
+    }
+
+    /** Host weitergeben, jemanden entfernen, den Titel aus dem Raum nehmen. */
+    private void watchpartyMenue(View anker, JSONObject eintrag) {
         String schluessel = eintrag.optString("key", "");
-        String beschreibung = "Raum " + raum
-            + (dabei ? "  ·  du bist dabei" : "  ·  Vorschlag");
-        return settingsCard(titel, beschreibung,
-            dabei ? "Verlassen" : "Beitreten",
-            () -> {
-                Kern.Antwort danach = (wert, fehler) -> {
+        String raum = eintrag.optString("room", "");
+        String titel = eintrag.optString("title", "Titel");
+        String meineId = eintrag.optString("myId", "");
+        boolean meins = eintrag.optBoolean("mine", false);
+        boolean binHost = !eintrag.optString("hostId", "").isEmpty()
+            && eintrag.optString("hostId", "").equals(meineId);
+        JSONArray namen = eintrag.optJSONArray("members");
+        JSONArray kennungen = eintrag.optJSONArray("memberIds");
+
+        android.widget.PopupMenu menue = new android.widget.PopupMenu(this, anker);
+        java.util.LinkedHashMap<String, Runnable> taten = new java.util.LinkedHashMap<>();
+        for (int i = 0; namen != null && i < namen.length(); i += 1) {
+            String wer = namen.optString(i, "Gerät");
+            String id = kennungen == null ? "" : kennungen.optString(i, "");
+            if (id.isEmpty() || id.equals(meineId)) continue;
+            if (binHost) {
+                taten.put("Host an " + wer + " weitergeben", () ->
+                    watchparty.hostUebergeben(schluessel, id, raum, (wert, fehler) -> {
+                        if (fehler != null) showToast("Ging nicht: " + fehler);
+                        else showToast("Host an " + wer + " weitergegeben");
+                    }));
+            }
+            if (meins) {
+                taten.put(wer + " entfernen", () ->
+                    watchparty.rauswerfen(schluessel, id, raum, (wert, fehler) -> {
+                        if (fehler != null) showToast("Ging nicht: " + fehler);
+                        else showToast(wer + " entfernt");
+                    }));
+            }
+        }
+        if (meins) {
+            taten.put("Aus dem Raum nehmen", () ->
+                watchparty.herausnehmen(schluessel, raum, (wert, fehler) -> {
                     if (fehler != null) showToast("Ging nicht: " + fehler);
-                    else showToast(dabei ? "Runde verlassen" : "Der Runde beigetreten");
-                };
-                if (dabei) watchparty.verlassen(schluessel, raum, danach);
-                else watchparty.beitreten(schluessel, raum, danach);
-            });
+                    else showToast("„" + titel + "“ aus der Watchparty genommen");
+                }));
+        }
+        if (taten.isEmpty()) {
+            showToast("Hier gibt es gerade nichts weiter zu tun");
+            return;
+        }
+        for (String beschriftung : taten.keySet()) menue.getMenu().add(beschriftung);
+        menue.setOnMenuItemClickListener(punkt -> {
+            Runnable tat = taten.get(String.valueOf(punkt.getTitle()));
+            if (tat != null) tat.run();
+            return true;
+        });
+        menue.show();
+    }
+
+    /**
+     * Einen Eintrag der Runde oeffnen.
+     *
+     * <p>Das Gegenstueck zu {@code openWatchpartyItem} am Rechner, und die
+     * Antwort auf "warum liess sich eine Folge aus der Watchparty nicht
+     * oeffnen": es gab dafuer schlicht keinen Weg.
+     *
+     * <p>Wohin es geht, entscheidet diese Klasse nicht. Die Bruecke antwortet
+     * mit Anbieter und Adresse - und zwar mit der Adresse der <em>Folge</em>,
+     * sobald die Runde eine kennt ({@code progress.url}), sonst mit der der
+     * Serie. Dieselbe Vorrangregel wie am Rechner; ohne sie landet man auf der
+     * Uebersicht, waehrend die anderen bei Staffel 3 Folge 8 sitzen.
+     *
+     * <p>Der Watchparty-Zusammenhang geht dabei nicht verloren:
+     *
+     * <ul>
+     *   <li>Der lokale Eintrag wird an den Raum gebunden ({@code raumSetzen}),
+     *       sobald es einen gibt - erst dadurch meldet er seinen Stand in die
+     *       Runde.
+     *   <li>{@link Mitschauen} findet den Raum ueber den Titelschluessel im
+     *       Raumzustand und nicht ueber die Ablage, arbeitet also auch dann,
+     *       wenn hier noch kein Eintrag liegt.
+     *   <li>Die Herkunft wird gemerkt, damit Zurueck wieder hierher fuehrt.
+     * </ul>
+     *
+     * <p>Der Schluessel und der Raum reisen zusammen. Ein Raum darf mehrere
+     * Titel fuehren, und derselbe Titel darf in zwei Raeumen stehen - beides
+     * ist gewollt, und beides geht schief, sobald nur einer der beiden Werte
+     * weitergereicht wird.
+     */
+    private void watchpartyEintragOeffnen(String schluessel, String raum) {
+        if (watchparty == null || schluessel.isEmpty()) return;
+        watchparty.oeffnungsZiel(schluessel, raum, (wert, fehler) -> {
+            if (fehler != null || wert == null || "null".equals(wert)) {
+                showToast("Dieser Titel liess sich nicht öffnen");
+                return;
+            }
+            JSONObject ziel;
+            try {
+                ziel = new JSONObject(wert);
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Öffnungsziel unlesbar", ausnahme);
+                showToast("Dieser Titel liess sich nicht öffnen");
+                return;
+            }
+            Provider anbieter = providerMitId(ziel.optString("providerId", ""));
+            String url = ziel.optString("url", "");
+            if (anbieter == null || url.isEmpty()) {
+                showToast("Für diesen Titel ist kein Anbieter eingerichtet");
+                return;
+            }
+            // Erst binden, dann oeffnen: der Stand, den die Seite gleich
+            // meldet, soll schon in die Runde gehen und nicht erst der
+            // uebernaechste.
+            watchpartyRaumBinden(schluessel, raum);
+            // Aus der Watchparty geoeffnet heisst: Zurueck fuehrt hierher.
+            providerHerkunft = "watchparty";
+            Log.i(TAG, "Watchparty öffnet " + safeHost(url)
+                + " (Raum " + raum + ", Staffel " + ziel.optInt("season", 0)
+                + " Folge " + ziel.optInt("episode", 0) + ")");
+            // Wie beim Oeffnen aus Weiterschauen: die Seite soll ihren Player
+            // selbst starten, statt drei weitere Tastendruecke zu verlangen.
+            armAutoStart(url);
+            openProvider(anbieter, url, true);
+        });
+    }
+
+    /**
+     * Den lokalen Eintrag an die Runde binden.
+     *
+     * <p>Ohne Raum am Eintrag bleibt sein Stand privat - dann liefe der
+     * Abgleich nur in eine Richtung. Gibt es noch keinen Eintrag, geschieht
+     * hier nichts: er entsteht, sobald wirklich etwas laeuft, und
+     * {@link #bestandGeaendert} bindet ihn dann nach.
+     */
+    private void watchpartyRaumBinden(String schluessel, String raum) {
+        if (bestand == null || schluessel.isEmpty() || raum.isEmpty()) {
+            offeneRaumbindung = null;
+            return;
+        }
+        Favorite lokal = bestand.zuSerie(schluessel);
+        if (lokal != null) {
+            if (!raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+            offeneRaumbindung = null;
+            return;
+        }
+        // Noch keiner da. Gemerkt, bis einer entsteht.
+        offeneRaumbindung = new String[]{schluessel, raum};
+    }
+
+    /**
+     * Eine gemerkte Raumbindung nachholen.
+     *
+     * <p>Wird bei jeder Aenderung des Bestands versucht - das ist die Stelle,
+     * an der ein frisch angelegter Eintrag zum ersten Mal auftaucht.
+     */
+    private void raumbindungNachholen() {
+        if (offeneRaumbindung == null || bestand == null) return;
+        Favorite lokal = bestand.zuSerie(offeneRaumbindung[0]);
+        if (lokal == null) return;
+        String raum = offeneRaumbindung[1];
+        offeneRaumbindung = null;
+        if (!raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+    }
+
+    /** Beitreten oder verlassen - genau dieser Titel in genau diesem Raum. */
+    private void watchpartyBeitrittUmschalten(String schluessel, String raum, String titel,
+                                              boolean dabei) {
+        Kern.Antwort danach = (wert, fehler) -> {
+            if (fehler != null) showToast("Ging nicht: " + fehler);
+            else if (dabei) showToast("„" + titel + "“ verlassen");
+            else showToast("„" + titel + "“ beigetreten — ab jetzt läuft der Stand zusammen");
+        };
+        if (dabei) watchparty.verlassen(schluessel, raum, danach);
+        else watchparty.beitreten(schluessel, raum, danach);
     }
 
     /** Der Weg aus der unteren Leiste: die zuletzt benutzte Liste. */
@@ -5566,6 +6108,10 @@ public class MainActivity extends Activity {
     }
 
     private void openProvider(Provider provider, String url) {
+        // Der Weg ohne Vorgeschichte: ein Anbieter, von Hand geoeffnet. Wer aus
+        // der Watchparty kommt, geht ueber die dreistellige Fassung und setzt
+        // die Herkunft selbst.
+        providerHerkunft = "";
         openProvider(provider, url, false);
     }
 
@@ -5679,6 +6225,7 @@ public class MainActivity extends Activity {
     }
 
     private void openFavorite(Favorite favorite) {
+        providerHerkunft = "";
         Provider provider = null;
         for (Provider item : providers) {
             if (item.id.equals(favorite.providerId())) {
@@ -6082,6 +6629,10 @@ public class MainActivity extends Activity {
      * {@code mobilePage()}.
      */
     private void bestandGeaendert() {
+        // Ein Eintrag, der aus der Watchparty geoeffnet wurde, entsteht erst,
+        // wenn wirklich etwas laeuft. Hier taucht er zum ersten Mal auf - und
+        // bekommt seinen Raum.
+        raumbindungNachholen();
         boolean zeichnetNeu = "favorites".equals(currentScreen) || "home".equals(currentScreen);
         int stand = zeichnetNeu && seitenScroll != null ? seitenScroll.getScrollY() : 0;
         if ("favorites".equals(currentScreen)) showFavorites();
@@ -6291,6 +6842,14 @@ public class MainActivity extends Activity {
         // nach vorn: er ist von dort aus geoeffnet worden.
         if ("wrapped".equals(currentScreen)) {
             zeigeRueckblick(rueckblickZeitraum);
+            return;
+        }
+        // Aus der Watchparty geoeffnet: dorthin zurueck und nicht auf die
+        // Startseite. Wer eine Folge aus einem Raum heraus aufmacht, will
+        // danach wieder den Raum sehen - dort stehen die anderen Titel.
+        if ("provider".equals(currentScreen) && "watchparty".equals(providerHerkunft)) {
+            providerHerkunft = "";
+            zeigeWatchparty();
             return;
         }
         if (!"home".equals(currentScreen)) {

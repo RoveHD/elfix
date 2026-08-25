@@ -40,6 +40,18 @@ const SERIE = "https://aniworld.to/anime/stream/testserie";
 const KEY = SERIE.toLowerCase();
 const folge = (n) => `${SERIE}/staffel-1/episode-${n}`;
 
+// Die Anbieter, wie Provider.alsJson() sie in die Bruecke reicht.
+const ANBIETER = [
+  { id: "aniworld", name: "AniWorld", startUrl: "https://aniworld.to/", searchUrl: "", logo: "AW" },
+  { id: "sto", name: "S.to", startUrl: "https://s.to/", searchUrl: "", logo: "S" }
+];
+
+// Drei Titel in einem Raum - der Fall aus der Aufgabe.
+const BLEACH = "https://aniworld.to/anime/stream/bleach";
+const TORCH = "https://aniworld.to/anime/stream/black-torch";
+const KORRA = "https://aniworld.to/anime/stream/die-legende-von-korra";
+const folgeVon = (serie, staffel, n) => `${serie}/staffel-${staffel}/episode-${n}`;
+
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
   pruefungen.push(Boolean(bedingung));
@@ -156,7 +168,7 @@ function android(name) {
 
 // --- Der Rechner: dieselbe Klasse wie in der App ------------------------------
 
-function rechner(name) {
+function rechner(name, raum = RAUM) {
   const steuerung = [];
   const staende = [];
   const raeume = new WatchpartyRaeume({
@@ -165,7 +177,7 @@ function rechner(name) {
     onWatchstate: (stand) => staende.push(stand)
   });
   raeume.konfigurieren({
-    enabled: true, serverUrl: ADRESSE, rooms: [RAUM], name, deviceId: `${name}-id`
+    enabled: true, serverUrl: ADRESSE, rooms: [raum], name, deviceId: `${name}-id`
   });
   const eintragVon = () => raeume.eintraege().find((e) => e.key === KEY) || null;
   let takt = null;
@@ -177,7 +189,7 @@ function rechner(name) {
       season: 1,
       episode: Number((String(offen).match(/episode-(\d+)/) || [])[1] || 0),
       playerSessionId: `${name}-sitzung`
-    }, RAUM),
+    }, raum),
     puls: (position, pausiert, offen) => {
       lage = { position, pausiert, offen };
       if (!takt) {
@@ -194,7 +206,7 @@ function rechner(name) {
       lage = null;
     },
     melden: (aktion, position, offen) =>
-      raeume.steuernMitAdresse(KEY, aktion, position, offen, RAUM)
+      raeume.steuernMitAdresse(KEY, aktion, position, offen, raum)
   };
   return api;
 }
@@ -494,6 +506,133 @@ function rechner(name) {
   pruefe("Veraltet: ein ueberholtes Ereignis wird abgewiesen",
     nochmal.tun === "nichts" && nochmal.grund === "veraltet",
     `${nochmal.tun}/${nochmal.grund}`);
+
+  /* --------------------------------------------- Oeffnen eines Eintrags */
+  // Der Teil, den Android gar nicht hatte: unter jedem Eintrag stand genau
+  // "Verlassen". Geprueft wird, was die Bruecke der Oberflaeche antwortet -
+  // Anbieter, Adresse, Staffel und Folge.
+  {
+    const ziel = tv.bruecke.oeffnungsZiel(KEY, RAUM, ANBIETER);
+    pruefe("O1. Ein Eintrag laesst sich oeffnen und nennt seinen Anbieter",
+      Boolean(ziel) && ziel.providerId === "aniworld",
+      ziel ? `providerId=${ziel.providerId}` : "kein Ziel");
+    // Die Runde steht bei Folge 6 - also muss dorthin geoeffnet werden und
+    // nicht auf die Serienuebersicht.
+    pruefe("O2. Geoeffnet wird die Folge, nicht die Serie",
+      Boolean(ziel) && ziel.url.includes("episode-6"),
+      ziel ? ziel.url : "kein Ziel");
+    pruefe("O3. Staffel und Folge stehen dabei",
+      Boolean(ziel) && ziel.season === 1 && ziel.episode === 6,
+      ziel ? `s${ziel.season}e${ziel.episode}` : "kein Ziel");
+    pruefe("O4. Und der Raum, aus dem geoeffnet wurde",
+      Boolean(ziel) && ziel.room === RAUM,
+      ziel ? ziel.room : "kein Ziel");
+
+    // Ohne passenden Anbieter bleibt der Knopf wirkungslos - und sagt das.
+    const ohne = tv.bruecke.oeffnungsZiel(KEY, RAUM, [
+      { id: "filmo", name: "Filmo", startUrl: "https://filmo.to/" }
+    ]);
+    pruefe("O5. Ohne eingerichteten Anbieter gibt es kein Ziel",
+      Boolean(ohne) && ohne.providerId === "",
+      ohne ? `providerId="${ohne.providerId}"` : "kein Ziel");
+
+    pruefe("O6. Ein unbekannter Titel liefert gar nichts",
+      tv.bruecke.oeffnungsZiel("https://aniworld.to/anime/stream/gibtsnicht", RAUM, ANBIETER) === null);
+  }
+
+  /* ------------------------------------ Mehrere Titel in einem Raum */
+  // Raum Bangus mit Bleach, BLACK TORCH und Korra. Ein Klick auf Bleach darf
+  // niemals Korra oeffnen - das ist die eigentliche Gefahr, wenn Schluessel
+  // und Raum nicht zusammen gefuehrt werden.
+  {
+    for (const [serie, titel, staffel, nummer] of [
+      [BLEACH, "Bleach", 3, 8],
+      [TORCH, "BLACK TORCH", 1, 2],
+      [KORRA, "Die Legende von Korra", 2, 5]
+    ]) {
+      pc.raeume.teilen({
+        key: serie.toLowerCase(), url: folgeVon(serie, staffel, nummer), title: titel,
+        providerName: "AniWorld", type: "serie", season: staffel, episode: nummer
+      }, RAUM);
+      await schlaf(120);
+    }
+    await warteBis(() => tv.bruecke.eintraege().length >= 4, "drei weitere Titel im Raum");
+
+    const alle = tv.bruecke.eintraegeMitAnbieter(ANBIETER);
+    pruefe("M1. Der Raum fuehrt mehrere Titel nebeneinander",
+      alle.length >= 4, `${alle.length} Eintraege`);
+
+    const proben = [
+      ["Bleach", BLEACH, 3, 8],
+      ["BLACK TORCH", TORCH, 1, 2],
+      ["Die Legende von Korra", KORRA, 2, 5]
+    ];
+    let sauber = true;
+    const gemeldet = [];
+    for (const [titel, serie, staffel, nummer] of proben) {
+      const ziel = tv.bruecke.oeffnungsZiel(serie.toLowerCase(), RAUM, ANBIETER);
+      const passt = Boolean(ziel)
+        && ziel.titel === titel
+        && ziel.url === folgeVon(serie, staffel, nummer)
+        && ziel.season === staffel && ziel.episode === nummer;
+      if (!passt) sauber = false;
+      gemeldet.push(`${titel} -> ${ziel ? ziel.url.split("/stream/")[1] : "nichts"}`);
+    }
+    pruefe("M2. Jeder Titel oeffnet genau sich selbst", sauber, gemeldet.join(" | "));
+
+    const bleach = alle.find((e) => e.key === BLEACH.toLowerCase());
+    const korra = alle.find((e) => e.key === KORRA.toLowerCase());
+    pruefe("M3. Und traegt seine eigene Staffel und Folge",
+      Boolean(bleach) && bleach.staffel === 3 && bleach.folge === 8
+      && Boolean(korra) && korra.staffel === 2 && korra.folge === 5,
+      bleach && korra ? `Bleach s${bleach.staffel}e${bleach.folge}, Korra s${korra.staffel}e${korra.folge}` : "fehlt");
+    pruefe("M4. Alle liegen im selben Raum und sind oeffenbar",
+      alle.every((e) => e.room === RAUM && e.openable === true),
+      alle.map((e) => `${e.title}:${e.room}:${e.openable}`).join(" | "));
+
+    // Und die Sync laeuft danach unveraendert weiter - der Steuerbefehl fuer
+    // den einen Titel darf die anderen nicht anfassen.
+    neu.steuerung.length = 0;
+    tv.melden("pause", 900, folge(6));
+    await warteBis(() => neu.steuerung.some((m) => m.action === "pause" && m.key === KEY),
+      "M: Pause erreicht nur den eigenen Titel");
+    pruefe("M5. Ein Steuerbefehl gilt nur dem Titel, aus dem er kam",
+      neu.steuerung.every((m) => m.key === KEY),
+      neu.steuerung.map((m) => m.key.split("/stream/")[1]).join(","));
+  }
+
+  /* ---------------------------------- Ein Titel in zwei Raeumen */
+  // Derselbe Anime kann in zwei Runden stehen. Dann muss der Raum mitreisen,
+  // sonst oeffnet man den Eintrag der falschen Runde.
+  {
+    const ZWEITER = "zweiterraum";
+    const pc2 = rechner("ZweiterRaum", ZWEITER);
+    tv.bruecke.konfigurieren({
+      enabled: true, serverUrl: ADRESSE, rooms: [RAUM, ZWEITER],
+      deviceName: "AndroidTV", deviceId: "tv-id"
+    });
+    await warteBis(() => pc2.raeume.verbunden, "zweiter Raum verbunden");
+    pc2.raeume.teilen({
+      key: BLEACH.toLowerCase(), url: folgeVon(BLEACH, 5, 1), title: "Bleach",
+      providerName: "AniWorld", type: "serie", season: 5, episode: 1
+    }, ZWEITER);
+    await warteBis(
+      () => tv.bruecke.eintraege().filter((e) => e.key === BLEACH.toLowerCase()).length === 2,
+      "Bleach steht in zwei Raeumen");
+
+    const ausEins = tv.bruecke.oeffnungsZiel(BLEACH.toLowerCase(), RAUM, ANBIETER);
+    const ausZwei = tv.bruecke.oeffnungsZiel(BLEACH.toLowerCase(), ZWEITER, ANBIETER);
+    pruefe("R1. Derselbe Titel in zwei Raeumen bleibt unterscheidbar",
+      Boolean(ausEins) && Boolean(ausZwei)
+      && ausEins.url.includes("staffel-3/episode-8")
+      && ausZwei.url.includes("staffel-5/episode-1"),
+      `${ausEins ? ausEins.url.split("/stream/")[1] : "-"} vs ${ausZwei ? ausZwei.url.split("/stream/")[1] : "-"}`);
+    pruefe("R2. Und jeder nennt seinen eigenen Raum",
+      ausEins.room === RAUM && ausZwei.room === ZWEITER,
+      `${ausEins.room} / ${ausZwei.room}`);
+    pc2.stillstehen();
+    pc2.raeume.trennen();
+  }
 
   pc.stillstehen();
   tv.stillstehen();

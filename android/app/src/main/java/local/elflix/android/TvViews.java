@@ -382,6 +382,23 @@ final class TvViews {
         return reihe;
     }
 
+    /**
+     * Derselbe Knopf, aber als Hauptaktion.
+     *
+     * <p>Ein Unterschied, den es auf dem Fernseher wirklich braucht: dort
+     * stehen unter einem Watchparty-Eintrag mehrere Knoepfe nebeneinander, und
+     * ohne sichtbaren Vorrang sucht man den richtigen. Der Fokusrahmen ist
+     * derselbe - er sagt, wo man steht, nicht, was wichtig ist.
+     */
+    static TextView hauptPillButton(Context context, String label, Runnable beiKlick) {
+        TextView knopf = pillButton(context, label, beiKlick);
+        knopf.setTextColor(Color.WHITE);
+        applyFocus(knopf,
+            shape(context, Theme.PRIMARY_DEEP, 24, Theme.PRIMARY, 2),
+            shape(context, Theme.PRIMARY, 24, Color.WHITE, 3));
+        return knopf;
+    }
+
     /** Ein flacher Knopf mit Fokusrand - fuer "Mehr anzeigen", "Erneut versuchen" und dergleichen. */
     static TextView pillButton(Context context, String label, Runnable beiKlick) {
         TextView knopf = new TextView(context);
