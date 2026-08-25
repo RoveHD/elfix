@@ -907,6 +907,197 @@ final class MobileViews {
         return zeile;
     }
 
+    /**
+     * Eine Zeile mit einem Schalter.
+     *
+     * <p>Fuer die sichtbaren Startseitenreihen. Bewusst kein {@code Switch} aus
+     * dem Framework: die App baut ihre Oberflaeche von Hand und ohne Material,
+     * und ein einzelnes Framework-Bedienelement traegt seine eigene Farbwelt
+     * herein - auf einem dunklen Hintergrund faellt das sofort auf.
+     */
+    static View schalterZeile(Context context, String titel, String erklaerung,
+                              boolean an, Runnable beiKlick) {
+        LinearLayout zeile = new LinearLayout(context);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(Gravity.CENTER_VERTICAL);
+        zeile.setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 12));
+        addPressFeedback(zeile,
+            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
+            shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
+
+        LinearLayout texte = new LinearLayout(context);
+        texte.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(15);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        texte.addView(name);
+        if (erklaerung != null && !erklaerung.isEmpty()) {
+            TextView satz = new TextView(context);
+            satz.setText(erklaerung);
+            satz.setTextColor(Theme.TEXT_SECONDARY);
+            satz.setTextSize(12);
+            satz.setPadding(0, dp(context, 3), 0, 0);
+            texte.addView(satz);
+        }
+        zeile.addView(texte, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        // Der Schalter selbst: eine Bahn und ein Knopf darin. Zwei Rechtecke,
+        // die dieselbe Aussage tragen wie ein Haken, aber auf einen Blick zu
+        // erkennen sind - auch ohne die Zeile daneben zu lesen.
+        FrameLayout bahn = new FrameLayout(context);
+        bahn.setBackground(shape(context, an ? Theme.PRIMARY : Theme.SURFACE_PRESSED, 11,
+            an ? Theme.PRIMARY : Theme.BORDER, 1));
+        View knopf = new View(context);
+        knopf.setBackground(shape(context, an ? Color.WHITE : Theme.TEXT_DISABLED, 9,
+            Color.TRANSPARENT, 0));
+        FrameLayout.LayoutParams knopfParams = new FrameLayout.LayoutParams(
+            dp(context, 18), dp(context, 18));
+        knopfParams.gravity = Gravity.CENTER_VERTICAL | (an ? Gravity.END : Gravity.START);
+        knopfParams.setMargins(dp(context, 2), 0, dp(context, 2), 0);
+        bahn.addView(knopf, knopfParams);
+        LinearLayout.LayoutParams bahnParams = new LinearLayout.LayoutParams(
+            dp(context, 44), dp(context, 22));
+        bahnParams.leftMargin = dp(context, 12);
+        zeile.addView(bahn, bahnParams);
+
+        zeile.setOnClickListener(v -> beiKlick.run());
+        return zeile;
+    }
+
+    /**
+     * Eine grosse Zahl mit zwei Zeilen Beschriftung.
+     *
+     * <p>Der Baustein des Rueckblicks. Die Zahl steht gross, weil sie die
+     * Aussage ist; die Zeile darunter sagt, wovon - und die dritte, wie sicher
+     * sie ist. Genau darauf kommt es bei gemessener Zeit an: was nicht gemessen
+     * wurde, darf nicht als Null dastehen.
+     */
+    static View kennzahl(Context context, String wert, String oben, String unten) {
+        LinearLayout kasten = new LinearLayout(context);
+        kasten.setOrientation(LinearLayout.VERTICAL);
+        kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1));
+        kasten.setPadding(dp(context, 14), dp(context, 14), dp(context, 14), dp(context, 14));
+
+        TextView zahl = new TextView(context);
+        zahl.setText(wert);
+        zahl.setTextColor(Theme.TEXT_PRIMARY);
+        zahl.setTextSize(26);
+        zahl.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
+        kasten.addView(zahl);
+
+        TextView label = new TextView(context);
+        label.setText(oben);
+        label.setTextColor(Theme.TEXT_SECONDARY);
+        label.setTextSize(12);
+        label.setPadding(0, dp(context, 4), 0, 0);
+        kasten.addView(label);
+
+        if (unten != null && !unten.isEmpty()) {
+            TextView fuss = new TextView(context);
+            fuss.setText(unten);
+            fuss.setTextColor(Theme.TEXT_DISABLED);
+            fuss.setTextSize(11);
+            fuss.setPadding(0, dp(context, 2), 0, 0);
+            kasten.addView(fuss);
+        }
+        return kasten;
+    }
+
+    /**
+     * Ein waagerechter Balken mit Beschriftung.
+     *
+     * <p>Fuer die Ranglisten des Rueckblicks. Der Anteil steht als Breite da,
+     * die Zahl daneben - ohne die Zahl waere der Balken eine Behauptung, ohne
+     * den Balken die Zahl schwer zu vergleichen.
+     */
+    static View balken(Context context, String titel, String wert, float anteil) {
+        LinearLayout zeile = new LinearLayout(context);
+        zeile.setOrientation(LinearLayout.VERTICAL);
+        zeile.setPadding(0, dp(context, 6), 0, dp(context, 6));
+
+        LinearLayout kopf = new LinearLayout(context);
+        kopf.setOrientation(LinearLayout.HORIZONTAL);
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(13);
+        name.setMaxLines(1);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        kopf.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView zahl = new TextView(context);
+        zahl.setText(wert);
+        zahl.setTextColor(Theme.TEXT_SECONDARY);
+        zahl.setTextSize(12);
+        kopf.addView(zahl);
+        zeile.addView(kopf);
+
+        // Der Anteil kommt als Gewicht in einen waagerechten Kasten: eine feste
+        // Breite in dp waere hier falsch, weil die Bahn ueber die ganze
+        // Bildschirmbreite geht und die nicht bekannt ist.
+        LinearLayout bahn = new LinearLayout(context);
+        bahn.setOrientation(LinearLayout.HORIZONTAL);
+        bahn.setBackground(shape(context, Theme.SURFACE_PRESSED, 4, Color.TRANSPARENT, 0));
+        float sicher = Math.max(0f, Math.min(1f, anteil));
+        View fuellung = new View(context);
+        fuellung.setBackground(shape(context, Theme.PRIMARY, 4, Color.TRANSPARENT, 0));
+        bahn.addView(fuellung, new LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.MATCH_PARENT, Math.max(0.0001f, sicher)));
+        View rest = new View(context);
+        bahn.addView(rest, new LinearLayout.LayoutParams(0,
+            ViewGroup.LayoutParams.MATCH_PARENT, Math.max(0.0001f, 1f - sicher)));
+
+        LinearLayout.LayoutParams bahnParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 8));
+        bahnParams.topMargin = dp(context, 6);
+        zeile.addView(bahn, bahnParams);
+        return zeile;
+    }
+
+    /**
+     * Ein Reiter in einer waagerechten Leiste - fuer die Wochentage des
+     * Kalenders und die Zeitraeume des Rueckblicks.
+     */
+    static View reiter(Context context, String titel, String unterzeile, boolean aktiv,
+                       Runnable beiKlick) {
+        LinearLayout knopf = new LinearLayout(context);
+        knopf.setOrientation(LinearLayout.VERTICAL);
+        knopf.setGravity(Gravity.CENTER);
+        knopf.setPadding(dp(context, 14), dp(context, 8), dp(context, 14), dp(context, 8));
+        knopf.setBackground(shape(context, aktiv ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED,
+            10, aktiv ? Theme.PRIMARY : Theme.BORDER, 1));
+
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(aktiv ? Color.WHITE : Theme.TEXT_PRIMARY);
+        name.setTextSize(13);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        name.setGravity(Gravity.CENTER);
+        knopf.addView(name);
+
+        if (unterzeile != null && !unterzeile.isEmpty()) {
+            TextView zusatz = new TextView(context);
+            zusatz.setText(unterzeile);
+            zusatz.setTextColor(aktiv ? Color.WHITE : Theme.TEXT_SECONDARY);
+            zusatz.setTextSize(11);
+            zusatz.setGravity(Gravity.CENTER);
+            knopf.addView(zusatz);
+        }
+        knopf.setOnClickListener(v -> beiKlick.run());
+        return knopf;
+    }
+
+    /**
+     * Eine waagerechte Leiste aus Reitern.
+     *
+     * <p>Wie {@link #reihe}, aber ohne feste Breite: ein Wochentag ist so breit
+     * wie sein Name.
+     */
+    static HorizontalScrollView reiterLeiste(Context context, java.util.List<View> reiter) {
+        return reihe(context, reiter, 0);
+    }
+
     /** Empty-state block used instead of a bare screen when a list has nothing in it. */
     static View emptyState(Context context, int iconRes, String headline, String body) {
         LinearLayout box = new LinearLayout(context);

@@ -179,7 +179,35 @@ public final class Messung {
         }
     }
 
-    private void verbuchen(Provider anbieter, String adresse, JSONObject gemessen) {
+    /**
+     * Einen Messwert verbuchen.
+     *
+     * <p>Nicht privat, sondern paketweit sichtbar - wegen {@link Pruefstand}.
+     * Der Debug-Bau speist hier Werte ein, die sonst das Messskript liefert;
+     * alles ab dieser Zeile ist danach dieselbe Strecke, die eine echte
+     * Wiedergabe geht. Genau darum geht es: eine Pruefung, die den Weg
+     * abkuerzt, prueft den Weg nicht.
+     *
+     * <p>Im Release ruft das niemand: {@code Pruefstand} ist dort ein leerer
+     * Rumpf ohne Empfaenger.
+     */
+    void verbuchen(Provider anbieter, String adresse, JSONObject gemessen) {
+        verbuchen(anbieter, adresse, gemessen, null);
+    }
+
+    /**
+     * Wie oben, mit zusaetzlichen Angaben ueber die Seite.
+     *
+     * <p>Im Betrieb kommen sie aus {@link Titelbild} - Titel, Art und die
+     * Grenzen der Serie. Der {@link Pruefstand} reicht sie stattdessen von
+     * Hand herein, weil es dort keine Seite gibt, von der sie zu lesen waeren:
+     * "das ist die letzte Folge der letzten Staffel" ist eine Angabe der Seite
+     * und keine des Videos.
+     *
+     * @param zusatz wird nach den Bildangaben eingefuegt und ueberschreibt
+     *               nichts, was schon dasteht; {@code null} erlaubt
+     */
+    void verbuchen(Provider anbieter, String adresse, JSONObject gemessen, JSONObject zusatz) {
         double position = gemessen.optDouble("currentTime", 0);
         double laufzeit = gemessen.optDouble("duration", 0);
         if (!(laufzeit > 0)) return;
@@ -199,6 +227,15 @@ public final class Messung {
             // die geteilte Regel - sie verlangt zusaetzlich die Wiedergabezeit.
             meta.put("completed", beendet || prozent >= 90);
             meta.put("nextUrl", gemessen.optString("nextUrl", ""));
+            // Die beiden Rohwerte wandern unveraendert mit. Die
+            // Fortschrittsregel liest sie nicht - sie fragt nach
+            // watchedSeconds und completed -, aber die Sitzungsaufzeichnung
+            // braucht genau diese Namen: `sitzungslauf.js` bekommt am Rechner
+            // den rohen Messwert gereicht, und zwei Saetze Feldnamen fuer
+            // dieselbe Zahl waeren die erste Stelle, an der beide Geraete
+            // wieder auseinanderlaufen.
+            meta.put("playedSeconds", gespielt);
+            meta.put("ended", beendet);
         } catch (Exception fehler) {
             Log.e(TAG, "Messwerte liessen sich nicht bauen", fehler);
             return;
@@ -210,8 +247,19 @@ public final class Messung {
         Log.i(TAG, String.format(java.util.Locale.ROOT,
             "Messung: %d%% (%.1f/%.1fs) wirklich gespielt %.1fs%s",
             prozent, position, laufzeit, gespielt, beendet ? " ENDE" : ""));
-        bestand.verbuchen(anbieter, adresse,
-            titelbild == null ? meta : titelbild.ergaenzen(meta, adresse),
-            seite.watchpartyFuehrt());
+        JSONObject vollstaendig = titelbild == null ? meta : titelbild.ergaenzen(meta, adresse);
+        if (zusatz != null) {
+            for (java.util.Iterator<String> namen = zusatz.keys(); namen.hasNext(); ) {
+                String name = namen.next();
+                if (vollstaendig.has(name)) continue;
+                try {
+                    vollstaendig.put(name, zusatz.get(name));
+                } catch (Exception fehler) {
+                    Log.d(TAG, "Zusatzangabe nicht uebernommen: " + fehler);
+                }
+            }
+        }
+        bestand.verbuchen(anbieter, adresse, vollstaendig,
+            seite == null ? false : seite.watchpartyFuehrt());
     }
 }

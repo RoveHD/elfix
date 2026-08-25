@@ -57,6 +57,16 @@ public final class Empfehlungen {
 
     /** So lange gilt eine geholte Reihe als frisch genug, um nicht neu zu fragen. */
     private static final long REIHE_FRISCH_MS = 15 * 60 * 1000L;
+    /**
+     * Und so lange, wenn das Gezeigte von der Platte stammt.
+     *
+     * <p>Deutlich kuerzer, aus einem einfachen Grund: ein Stand von der Platte
+     * steht nur da, weil gerade nichts Besseres zu haben war. Kommt das Netz
+     * zurueck - und auf einem Telefon geschieht das staendig -, soll die Reihe
+     * das binnen einer Minute merken und nicht erst nach einer Viertelstunde.
+     * Null waere hier falsch: dann fragte jeder Zeichenlauf erneut.
+     */
+    private static final long ALT_FRISCH_MS = 60 * 1000L;
 
     /** Eine fertige Antwort und wann sie kam. */
     private static final class Reihe {
@@ -65,6 +75,14 @@ public final class Empfehlungen {
         boolean laeuft;
         boolean geladen;
         String fehler = "";
+        /** Ob das Gezeigte von der Platte kommt und nicht aus diesem Lauf. */
+        boolean ausSpeicher;
+        String alter = "";
+    }
+
+    /** Unter welchem Namen eine Reihe auf der Platte liegt. */
+    private static String speicherName(String schluessel) {
+        return "reihe-" + (schluessel == null || schluessel.isEmpty() ? "fuerdich" : schluessel);
     }
 
     /** Was eine Entdeckungsseite ueber ihren Stand weiss. */
@@ -89,6 +107,7 @@ public final class Empfehlungen {
         void fertig(Seite seite, String fehler);
     }
 
+    private final android.content.Context context;
     private final Kern kern;
     private final Beobachter beobachter;
     private final Map<String, Reihe> reihen = new HashMap<>();
@@ -99,9 +118,45 @@ public final class Empfehlungen {
     /** Woran der zuletzt gemeldete Stand haengt - aendert er sich, sind die Reihen veraltet. */
     private String standSignatur = "";
 
-    public Empfehlungen(Kern kern, Beobachter beobachter) {
+    public Empfehlungen(android.content.Context context, Kern kern, Beobachter beobachter) {
+        this.context = context == null ? null : context.getApplicationContext();
         this.kern = kern;
         this.beobachter = beobachter;
+    }
+
+    /**
+     * Was beim letzten Mal in den Reihen stand.
+     *
+     * <p>Wird beim Start gerufen, bevor der Lauf ueberhaupt aufgesetzt ist. Ohne
+     * diesen Schritt stehen bei einem Start ohne Netz alle Vorschlagsreihen als
+     * Fehlermeldung da - obwohl sie beim letzten Start vorlagen und nur im
+     * Arbeitsspeicher hingen, den Android beim Beenden abraeumt.
+     *
+     * <p>Was hier hereinkommt, ist ausdruecklich alt: es traegt sein Alter, die
+     * Oberflaeche schreibt es dazu, und der erste erfolgreiche Abruf ersetzt es.
+     */
+    public void vorladen() {
+        if (context == null) return;
+        int geladeneReihen = 0;
+        for (String schluessel : new String[]{NEUES, FUER_DICH, ANIME, SERIE, FILM}) {
+            Zwischenspeicher.Eintrag abgelegt =
+                Zwischenspeicher.lesen(context, speicherName(schluessel));
+            if (abgelegt == null) continue;
+            try {
+                JSONArray liste = new JSONArray(abgelegt.inhalt);
+                if (liste.length() == 0) continue;
+                Reihe reihe = new Reihe();
+                reihe.eintraege = liste;
+                reihe.geladen = true;
+                reihe.ausSpeicher = true;
+                reihe.alter = abgelegt.alter();
+                reihen.put(schluessel, reihe);
+                geladeneReihen += 1;
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Abgelegte Reihe unlesbar: " + schluessel, ausnahme);
+            }
+        }
+        if (geladeneReihen > 0) Log.i(TAG, "Reihen aus der Ablage: " + geladeneReihen);
     }
 
     /**
@@ -154,7 +209,7 @@ public final class Empfehlungen {
     public void erneutStarten(String relayAdresse) {
         gestartet = false;
         startFehler = "";
-        reihen.clear();
+        reihenVerwerfen();
         vorbereiten(relayAdresse);
     }
 
@@ -201,7 +256,7 @@ public final class Empfehlungen {
             if (fehler != null) Log.e(TAG, "Stand nicht gesetzt: " + fehler);
         });
         // Was gehalten wurde, gehoert zu einem anderen Stand.
-        reihen.clear();
+        reihenVerwerfen();
     }
 
     /**
@@ -227,6 +282,33 @@ public final class Empfehlungen {
                 .append('|');
         }
         return text.toString();
+    }
+
+
+    /**
+     * Die gehaltenen Reihen verwerfen - bis auf die von der Platte.
+     *
+     * <p>Der Unterschied zu {@code reihen.clear()} ist der Offline-Start. Was
+     * von der Platte kam, gehoert zu keinem Lauf und wird durch einen neuen
+     * Stand nicht falsch: es ist die Reihe von gestern, und sie steht ohnehin
+     * nur da, bis das Netz etwas Besseres liefert. Wer sie hier mit wegwirft,
+     * hat auf einem Telefon ohne Empfang eine leere Startseite - und genau das
+     * war der Fall.
+     */
+    private void reihenVerwerfen() {
+        Map<String, Reihe> behalten = new HashMap<>();
+        for (Map.Entry<String, Reihe> eintrag : reihen.entrySet()) {
+            Reihe reihe = eintrag.getValue();
+            if (reihe != null && reihe.ausSpeicher && reihe.eintraege.length() > 0) {
+                // Nicht mehr als geholt zaehlen: der naechste Zeichenlauf soll
+                // fragen, aber die Karten bis dahin stehen lassen.
+                reihe.laeuft = false;
+                reihe.stand = 0;
+                behalten.put(eintrag.getKey(), reihe);
+            }
+        }
+        reihen.clear();
+        reihen.putAll(behalten);
     }
 
     public boolean istBereit() {
@@ -261,9 +343,21 @@ public final class Empfehlungen {
      *
      * <p>Sie gilt danach als nie geholt - sonst haelt sie {@link #anfordern}
      * fuer frisch genug und faengt gar nicht erst an.
+     *
+     * <p>Was dabei <em>nicht</em> geschieht: die gezeigten Karten wegwerfen.
+     * Wer ohne Netz auf "Erneut versuchen" tippt, hat sonst hinterher weniger
+     * vor sich als vorher - die Reihe von gestern wich einem Skelett und dann
+     * einer Fehlermeldung. Sie bleibt stehen, bis etwas Besseres da ist.
      */
     public void erneutVersuchen(String schluessel) {
-        reihen.remove(schluessel);
+        Reihe reihe = reihen.get(schluessel);
+        if (reihe == null || reihe.eintraege.length() == 0) {
+            reihen.remove(schluessel);
+            return;
+        }
+        reihe.geladen = false;
+        reihe.stand = 0;
+        reihe.fehler = "";
     }
 
     /** Ob diese Reihe gerade noch geholt wird - dann steht dort ein Ladehinweis. */
@@ -278,9 +372,28 @@ public final class Empfehlungen {
         return reihe != null && reihe.geladen;
     }
 
+    /**
+     * Der Fehler dieser Reihe - aber nur, wenn auch nichts dasteht.
+     *
+     * <p>Ist ein Stand von der Platte da, hat der Benutzer etwas zu sehen; ihn
+     * gegen eine Fehlermeldung zu tauschen, waere ein Rueckschritt. Dass er alt
+     * ist, sagt {@link #istAlt} an derselben Stelle.
+     */
     public String fehler(String schluessel) {
         Reihe reihe = reihen.get(schluessel);
-        return reihe == null ? "" : reihe.fehler;
+        if (reihe == null) return "";
+        return reihe.eintraege.length() > 0 ? "" : reihe.fehler;
+    }
+
+    /** Ob das Gezeigte von der Platte stammt - dann gehoert sein Alter dazu. */
+    public boolean istAlt(String schluessel) {
+        Reihe reihe = reihen.get(schluessel);
+        return reihe != null && reihe.ausSpeicher && reihe.eintraege.length() > 0;
+    }
+
+    public String alter(String schluessel) {
+        Reihe reihe = reihen.get(schluessel);
+        return reihe == null ? "" : reihe.alter;
     }
 
     /**
@@ -298,7 +411,18 @@ public final class Empfehlungen {
             reihen.put(schluessel, reihe);
         }
         if (reihe.laeuft) return;
-        if (reihe.geladen && System.currentTimeMillis() - reihe.stand < REIHE_FRISCH_MS) return;
+        // Frisch ist eine Reihe, die vor weniger als einer Viertelstunde geholt
+        // wurde. Ein Stand von der Platte traegt keinen Zeitpunkt (stand = 0)
+        // und gilt damit sofort als alt - er wird gezeigt, damit die Reihe
+        // nicht leer dasteht, und einmal nachgefasst.
+        //
+        // "Einmal" ist hier keine Feinheit, sondern die ganze Bedingung: der
+        // Zeitpunkt wird auch dann gesetzt, wenn nichts hereinkam. Ohne das
+        // fragt die Startseite, bekommt eine Antwort, zeichnet daraufhin neu,
+        // fragt wieder - und ein Telefon ohne Empfang schickt in einer Tour
+        // Abrufe los, die alle scheitern.
+        long frist = reihe.ausSpeicher ? ALT_FRISCH_MS : REIHE_FRISCH_MS;
+        if (reihe.geladen && System.currentTimeMillis() - reihe.stand < frist) return;
         reihe.laeuft = true;
         reihe.fehler = "";
 
@@ -312,7 +436,18 @@ public final class Empfehlungen {
                 Log.e(TAG, "Reihe " + schluessel + " nicht geholt: " + fehler);
             } else {
                 try {
-                    ziel.eintraege = new JSONArray(wert == null ? "[]" : wert);
+                    JSONArray frisch = new JSONArray(wert == null ? "[]" : wert);
+                    // Eine leere Antwort ersetzt keinen vorhandenen Stand: ohne
+                    // Netz kommt der Lauf mit leeren Haenden zurueck, und die
+                    // Reihe von gestern ist mehr wert als gar keine.
+                    if (frisch.length() > 0 || !ziel.ausSpeicher) {
+                        ziel.eintraege = frisch;
+                        ziel.ausSpeicher = false;
+                        ziel.alter = "";
+                        if (context != null && frisch.length() > 0) {
+                            Zwischenspeicher.ablegen(context, speicherName(schluessel), frisch.toString());
+                        }
+                    }
                     // Eine Zeile je fertiger Reihe. Sie kostet nichts und ist
                     // das Einzige, woran sich von aussen ablesen laesst, ob der
                     // Lauf ueberhaupt etwas gefunden hat - eine leere Reihe
@@ -341,6 +476,14 @@ public final class Empfehlungen {
     /** Alles neu rechnen - der Knopf "Neu berechnen". */
     public void neuBerechnen() {
         if (!bereit) return;
+        // Hier faellt auch der Stand von der Platte: "Neu berechnen" ist eine
+        // ausdrueckliche Ansage, und ein Ergebnis von gestern stehen zu lassen
+        // waere das Gegenteil davon.
+        if (context != null) {
+            for (String schluessel : new String[]{NEUES, FUER_DICH, ANIME, SERIE, FILM}) {
+                Zwischenspeicher.loeschen(context, speicherName(schluessel));
+            }
+        }
         reihen.clear();
         kern.rufe("empfehlung-bruecke.poolVerwerfen", (wert, fehler) -> {
             if (beobachter != null) beobachter.empfehlungenGeaendert();
@@ -394,7 +537,7 @@ public final class Empfehlungen {
 
     /** Der Kern hat gemeldet, dass sich etwas gerechnet hat. */
     public void kernMeldung() {
-        reihen.clear();
+        reihenVerwerfen();
         if (beobachter != null) beobachter.empfehlungenGeaendert();
     }
 }

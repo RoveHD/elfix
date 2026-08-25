@@ -42,6 +42,19 @@ public final class Bestand {
         void melde(JSONObject eintrag);
     }
 
+    /**
+     * Wer ausserdem erfaehrt, dass gerade etwas lief - die gemessene Zeit.
+     *
+     * <p>Getrennt vom {@link StandMelder}, weil es etwas anderes meldet: der
+     * dort geht der <em>Stand</em> hinaus, hier die <em>Wiedergabe</em>. Am
+     * Rechner steht an genau dieser Stelle der Aufruf von {@code sitzungMelden},
+     * und zwar erst nach der Regel: gezaehlt wird nur, was auch als Fortschritt
+     * durchgegangen ist.
+     */
+    public interface Sitzungsmelder {
+        void melde(Provider provider, String url, JSONObject eintrag, JSONObject fortschritt);
+    }
+
     private final Context context;
     private final Kern kern;
     private final Beobachter beobachter;
@@ -51,6 +64,7 @@ public final class Bestand {
     /** Welcher Eintrag gerade geoeffnet ist - entscheidet bei mehrfach vorhandenen Titeln. */
     private String aktiverEintragId = "";
     private StandMelder standMelder;
+    private Sitzungsmelder sitzungsmelder;
     /**
      * Die zuletzt gemeldete Art von Diagnose.
      *
@@ -77,6 +91,11 @@ public final class Bestand {
      */
     public void setzeStandMelder(StandMelder melder) {
         this.standMelder = melder;
+    }
+
+    /** Wer die gemessene Wiedergabezeit mitschreibt. Siehe {@link Sitzungsmelder}. */
+    public void setzeSitzungsmelder(Sitzungsmelder melder) {
+        this.sitzungsmelder = melder;
     }
 
     public void laden() {
@@ -184,16 +203,17 @@ public final class Bestand {
         argumente.put(meta == null ? new JSONObject() : meta);
         argumente.put(new JSONObject());
 
+        JSONObject gemeldet = meta == null ? new JSONObject() : meta;
         kern.rufe("fortschritt.medienStandVerbuchen", argumente, (wert, fehler) -> {
             if (fehler != null) {
                 Log.e(TAG, "Fortschritt nicht verbucht: " + fehler);
                 return;
             }
-            uebernehmen(wert);
+            uebernehmen(wert, provider, url, gemeldet);
         });
     }
 
-    private void uebernehmen(String ergebnisJson) {
+    private void uebernehmen(String ergebnisJson, Provider provider, String url, JSONObject gemeldet) {
         try {
             JSONObject ergebnis = new JSONObject(ergebnisJson);
             JSONArray neueListe = ergebnis.optJSONArray("favoriten");
@@ -225,6 +245,15 @@ public final class Bestand {
                 return;
             }
             letzteDiagnose = "";
+
+            // Die gemessene Wiedergabezeit festhalten - dieselbe Stelle wie am
+            // Rechner, und aus demselben Grund erst hier: gezaehlt wird nur,
+            // was die Regel auch als Fortschritt gelten laesst. Die Sekunden
+            // entstehen ohnehin, sie wurden bisher nur geprueft und danach
+            // weggeworfen.
+            if (sitzungsmelder != null) {
+                sitzungsmelder.melde(provider, url, eintrag, gemeldet);
+            }
 
             if (neueListe != null) eintraege = neueListe;
             aktiverEintragId = eintrag.optString("id", aktiverEintragId);

@@ -28,6 +28,11 @@ const PRELOAD = fs.readFileSync(path.join(WURZEL, "src/preload.js"), "utf8").rep
 // Die Fortschrittsregeln stehen seit der Verschiebung in einem eigenen Modul,
 // das sich Desktop und Android teilen - dort ist jetzt nachzusehen.
 const FORTSCHRITT = fs.readFileSync(path.join(WURZEL, "src/fortschritt.js"), "utf8").replace(/\r/g, "");
+// Der Schritt von der Messung zur Sitzung steht ebenfalls in einem geteilten
+// Modul. Er stand in main.js, und genau deshalb hat Android nie eine Sekunde
+// Wiedergabezeit gezaehlt - ein Rueckblick dort haette zwangslaeufig eine leere
+// Bilanz gezeigt.
+const SITZUNGSLAUF = fs.readFileSync(path.join(WURZEL, "src/sitzungslauf.js"), "utf8").replace(/\r/g, "");
 
 const pruefungen = [];
 const pruefe = (name, bedingung, detail) => {
@@ -503,8 +508,20 @@ const ausAlt = vm.runInContext("sitzungenAusAltdaten", umgebung);
 pruefe("Die gemessene Zeit wird bei jedem Takt gemeldet",
   /sitzungMelden\(provider, url, entry, progress\);/.test(MAIN));
 pruefe("Sie stammt aus dem vorhandenen Messwert der Seite",
-  /sekunden: Number\(progress\?\.playedSeconds\) \|\| 0/.test(MAIN),
+  /sekunden: Number\(fortschritt\.playedSeconds\) \|\| 0/.test(SITZUNGSLAUF),
   "playedSeconds gab es schon - es wurde nur nie gespeichert");
+pruefe("Der Schritt zur Sitzung steht im geteilten Modul, nicht in main.js",
+  /sitzungslauf\.schritt\(vorher, \{ provider, url, entry, fortschritt: progress/.test(MAIN)
+    && /function schritt\(vorher, angaben = \{\}, jetzt = Date\.now\(\)\)/.test(SITZUNGSLAUF),
+  "sonst zaehlt das Telefon wieder gar keine Wiedergabezeit");
+pruefe("Ob es eine Wiederholung ist, wird beim Beginn der Sitzung entschieden",
+  /wiederholung: vorher && vorher\.url === url \? Boolean\(vorher\.wiederholung\) : istWiederholung\(entry, url\)/
+    .test(SITZUNGSLAUF),
+  "am Ende gefragt saehe jede Erstansicht wie eine Wiederholung aus");
+pruefe("Die Android-App reicht denselben Schritt in den Kern",
+  /sitzungslauf\.schritt/.test(fs.readFileSync(
+    path.join(WURZEL, "../android/app/src/main/java/local/elflix/android/Statistik.java"), "utf8")),
+  "sonst waere die geteilte Regel auf dem Telefon nur eine Behauptung");
 pruefe("Beim Beenden der App wird offen Stehendes geschlossen",
   /sitzungenSchliessen\(\);/.test(MAIN));
 pruefe("Beim Anbieterwechsel ebenso",

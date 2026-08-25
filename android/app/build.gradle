@@ -31,6 +31,8 @@ def kernModule = [
     "src/empfehlungslauf.js",
     "src/metadaten.js",
     "src/statistik.js",
+    "src/sitzungslauf.js",
+    "src/kalender.js",
     "src/discover.js",
     "src/taste.js",
     "src/watchparty.js",
@@ -215,6 +217,24 @@ android {
         targetSdk 35
         versionCode fassungNummer
         versionName fassungName
+        /*
+         * Der Laeufer fuer die Pruefungen auf dem Geraet.
+         *
+         * Sie sind nicht dasselbe wie die Unit-Tests daneben: dort laeuft Java
+         * ohne Android, hier laeuft die App. Eine Startseite, die sich beim
+         * Drehen falsch aufbaut, oder ein Fortschritt, der die Ablage nicht
+         * erreicht, faellt nur im zweiten Fall auf.
+         */
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    testOptions {
+        unitTests {
+            // Ohne das wirft jede nicht ueberschriebene Android-Methode im
+            // Unit-Test eine Ausnahme - auch android.util.Log, das in fast
+            // jeder Klasse steht.
+            returnDefaultValues = true
+        }
     }
 
     signingConfigs {
@@ -370,4 +390,21 @@ dependencies {
      * einen file://-Verweis.
      */
     implementation "androidx.core:core:1.13.1"
+
+    /*
+     * Die Pruefungen.
+     *
+     * org.json steht im Unit-Test ausdruecklich da: die Android-Fassung ist im
+     * JVM-Test nur ein leerer Rumpf, der bei jedem Aufruf wirft. Die Klassen
+     * hier rechnen aber mit JSON - ohne eine echte Umsetzung waere jede
+     * Pruefung eine Pruefung des Rumpfs.
+     */
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20231013"
+
+    androidTestImplementation "androidx.test:core:1.6.1"
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
+    androidTestImplementation "androidx.test:runner:1.6.2"
+    androidTestImplementation "androidx.test:rules:1.6.1"
+    androidTestImplementation "androidx.test.uiautomator:uiautomator:2.3.0"
 }

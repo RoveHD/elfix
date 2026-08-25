@@ -36,11 +36,34 @@ public final class Titelbild {
     private final Bestand bestand;
     private final Handler haupt = new Handler(Looper.getMainLooper());
 
+    /**
+     * Was von der Seite ausser dem Bild noch zaehlt.
+     *
+     * <p>Das Skript liest laengst mehr als ein Bild: den Titel, die Art und vor
+     * allem die Grenzen der Serie - welche Staffel die letzte ist, welche Folge
+     * darin die letzte, und welche Folgen gar nicht spielbar sind. Genau daran
+     * entscheidet die geteilte Regel, ob eine Serie mit dieser Folge
+     * <em>durch</em> ist.
+     *
+     * <p>Hier wurde bisher nur {@code thumbnail} und {@code favicon}
+     * herausgegriffen und der Rest weggeworfen. Die Folge war kein Schoenheits-
+     * fehler: auf dem Telefon konnte eine Serie nie abgeschlossen werden. Die
+     * letzte Folge wurde abgehakt wie jede andere, der Eintrag blieb in
+     * "Weiterschauen" stehen und wartete auf eine Folge, die es nicht gibt.
+     */
+    private static final String[] UEBERNOMMEN = {
+        "thumbnail", "favicon", "title", "type",
+        "finalSeason", "finalEpisode", "finalEpisodeTrimmed",
+        "unplayableSeason", "unplayableEpisodes"
+    };
+
     private String skript;
     /** Zu welcher Adresse das zuletzt Gefundene gehoert. */
     private String adresse = "";
     private String bild = "";
     private String favicon = "";
+    /** Die gepruefte Auskunft der Seite - siehe {@link #UEBERNOMMEN}. */
+    private JSONObject seitendaten = new JSONObject();
 
     public Titelbild(Kern kern, Bestand bestand) {
         this.kern = kern;
@@ -64,6 +87,7 @@ public final class Titelbild {
             adresse = seitenAdresse;
             bild = "";
             favicon = "";
+            seitendaten = new JSONObject();
         }
         skriptHolen(() -> lesen(ansicht, anbieter, seitenAdresse, 0));
     }
@@ -79,10 +103,15 @@ public final class Titelbild {
         JSONObject angaben = new JSONObject();
         if (seitenAdresse == null || !seitenAdresse.equals(adresse)) return angaben;
         try {
+            for (String name : UEBERNOMMEN) {
+                if (seitendaten.has(name)) angaben.put(name, seitendaten.get(name));
+            }
+            // Bild und Favicon koennen aus einem spaeteren Nachfassen stammen
+            // und stehen dann nicht in den Seitendaten des ersten Blicks.
             if (!bild.isEmpty()) angaben.put("thumbnail", bild);
             if (!favicon.isEmpty()) angaben.put("favicon", favicon);
         } catch (Exception fehler) {
-            Log.d(TAG, "Bildangaben nicht gebaut: " + fehler);
+            Log.d(TAG, "Seitenangaben nicht gebaut: " + fehler);
         }
         return angaben;
     }
@@ -129,32 +158,64 @@ public final class Titelbild {
         if (skript == null || !seitenAdresse.equals(adresse)) return;
         ansicht.evaluateJavascript(skript, wert -> {
             if (!seitenAdresse.equals(adresse)) return;
-            String gefunden = "";
-            String gefundenesFavicon = "";
-            if (wert != null && !"null".equals(wert)) {
-                try {
-                    JSONObject daten = new JSONObject(wert);
-                    gefunden = daten.optString("thumbnail", "");
-                    gefundenesFavicon = daten.optString("favicon", "");
-                } catch (Exception fehler) {
-                    // Ein aelterer WebView kann am Skript scheitern. Dann gibt
-                    // es hier eben kein Bild - die Karte bleibt bei ihren
-                    // Buchstaben, und sonst aendert sich nichts.
-                    Log.d(TAG, "Seitendaten unlesbar: " + fehler);
-                }
-            }
-            if (!gefundenesFavicon.isEmpty()) favicon = gefundenesFavicon;
-            if (!gefunden.isEmpty()) {
-                bild = gefunden;
-                if (bestand != null) bestand.bildNachtragen(anbieter, seitenAdresse, gefunden);
+            if (wert == null || "null".equals(wert)) {
+                nachfassen(ansicht, anbieter, seitenAdresse, versuch);
                 return;
             }
-            // Nichts gefunden: manche Anbieter haengen ihre Bilder erst nach
-            // dem Laden ein.
-            if (versuch < NACHFASSEN_MS.length) {
-                haupt.postDelayed(() -> lesen(ansicht, anbieter, seitenAdresse, versuch + 1),
-                    NACHFASSEN_MS[versuch]);
-            }
+            // Erst durch die Pruefung des Kerns, dann uebernehmen - dieselbe
+            // Reihenfolge wie am Rechner (gepruefteSeitendaten). Sie wirft weg,
+            // was zu einer anderen Adresse gehoert; ohne sie stuende die
+            // Staffelgrenze einer Serienuebersicht am Eintrag einer Folge.
+            kern.rufe("fortschritt.gepruefteSeitendaten",
+                Kern.args(rohObjekt(wert), seitenAdresse), (geprueft, fehler) -> {
+                    if (!seitenAdresse.equals(adresse)) return;
+                    if (fehler != null || geprueft == null) {
+                        Log.d(TAG, "Seitendaten nicht geprueft: " + fehler);
+                        nachfassen(ansicht, anbieter, seitenAdresse, versuch);
+                        return;
+                    }
+                    uebernehmen(ansicht, anbieter, seitenAdresse, versuch, geprueft);
+                });
         });
+    }
+
+    /** Der rohe Wert aus der Seite als Objekt - er kommt als JSON-Text herein. */
+    private static Object rohObjekt(String wert) {
+        try {
+            return new JSONObject(wert);
+        } catch (Exception fehler) {
+            // Ein aelterer WebView kann am Skript scheitern. Dann gibt es hier
+            // eben keine Angaben - die Karte bleibt bei ihren Buchstaben, und
+            // sonst aendert sich nichts.
+            return new JSONObject();
+        }
+    }
+
+    private void uebernehmen(WebView ansicht, Provider anbieter, String seitenAdresse,
+                             int versuch, String gepruefterJson) {
+        try {
+            seitendaten = new JSONObject(gepruefterJson);
+        } catch (Exception fehler) {
+            Log.d(TAG, "Gepruefte Seitendaten unlesbar: " + fehler);
+            seitendaten = new JSONObject();
+        }
+        String gefundenesFavicon = seitendaten.optString("favicon", "");
+        if (!gefundenesFavicon.isEmpty()) favicon = gefundenesFavicon;
+        String gefunden = seitendaten.optString("thumbnail", "");
+        if (!gefunden.isEmpty()) {
+            bild = gefunden;
+            if (bestand != null) bestand.bildNachtragen(anbieter, seitenAdresse, gefunden);
+            return;
+        }
+        // Kein Bild: manche Anbieter haengen ihre Bilder erst nach dem Laden
+        // ein. Die Seriengrenzen von eben bleiben dabei stehen - sie sind schon
+        // richtig, und ein zweiter Blick liefert dieselben.
+        nachfassen(ansicht, anbieter, seitenAdresse, versuch);
+    }
+
+    private void nachfassen(WebView ansicht, Provider anbieter, String seitenAdresse, int versuch) {
+        if (versuch >= NACHFASSEN_MS.length) return;
+        haupt.postDelayed(() -> lesen(ansicht, anbieter, seitenAdresse, versuch + 1),
+            NACHFASSEN_MS[versuch]);
     }
 }

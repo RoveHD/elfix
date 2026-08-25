@@ -200,6 +200,38 @@ public class MainActivity extends Activity {
      * Siehe {@link Empfehlungen}.
      */
     private Empfehlungen empfehlungen;
+    /**
+     * Die gemessene Wiedergabezeit.
+     *
+     * <p>Bis hierher hat die App keine einzige Sekunde aufgezeichnet - siehe
+     * {@link Statistik}. Ohne sie kann ein Rueckblick nichts sagen ausser Null,
+     * und Null sieht aus wie eine Aussage.
+     */
+    private Statistik statistik;
+    /** Was diese Woche bei den Anbietern erscheint. Siehe {@link Kalender}. */
+    private Kalender kalender;
+    /** Welche Reihen die Startseite zeigt. Siehe {@link Startseite}. */
+    private Startseite startseite;
+    /** Woran ein YouTube-Eintrag zu erkennen ist. Siehe {@link Youtube}. */
+    private Youtube youtube;
+    /**
+     * Was der Pruefstand aus dieser App sieht.
+     *
+     * <p>Als Feld und nicht als anonymes Objekt im Aufruf: beim Abbauen muss
+     * feststellbar sein, ob der Pruefstand ueberhaupt an <em>dieser</em> App
+     * haengt. Beim Neuaufbau leben zwei Activities kurz nebeneinander.
+     */
+    private Pruefumgebung pruefumgebung;
+    /** Welcher Wochentag im Kalender offen ist. */
+    private String kalenderTag = "";
+    private String kalenderDatumText = "";
+    /** Welcher Zeitraum im Rueckblick gewaehlt ist. */
+    private String rueckblickZeitraum = "alles";
+    /** Der Jahresrueckblick: die gebauten Karten, die offene und ihr Platz. */
+    private List<View> wrappedSeiten = new ArrayList<>();
+    private int wrappedStelle;
+    private int wrappedJahr;
+    private LinearLayout wrappedPlatz;
     /** So viele Titel wechseln sich im Titelhintergrund ab - wie am Rechner. */
     private static final int HERO_ANZAHL = 5;
     /** Und so lange steht jeder. */
@@ -282,6 +314,7 @@ public class MainActivity extends Activity {
             });
         }
         providers = ProviderStore.load(this);
+        startseite = new Startseite(this);
         favoriteProgressMode = getSharedPreferences("elflix_settings", MODE_PRIVATE)
             .getString("favorite_progress_mode", "sequential");
         activeProvider = null;
@@ -350,8 +383,18 @@ public class MainActivity extends Activity {
         // Die Empfehlungen brauchen die Relay-Adresse: dieselbe Maschine wie
         // die Watchparty, nur das andere Protokoll - deshalb erst hier, nach
         // dem Anlegen der Watchparty.
-        empfehlungen = new Empfehlungen(kern, this::empfehlungenGeaendert);
+        empfehlungen = new Empfehlungen(this, kern, this::empfehlungenGeaendert);
+        // Erst was von der Platte kommt, dann der Lauf. Andersherum stuenden
+        // bei einem Start ohne Netz alle Vorschlagsreihen als Fehlermeldung da,
+        // obwohl sie beim letzten Start vorlagen.
+        empfehlungen.vorladen();
         empfehlungen.vorbereiten(watchparty.serverUrl());
+        statistik = new Statistik(this, kern);
+        bestand.setzeSitzungsmelder((provider, url, eintrag, fortschritt) ->
+            statistik.melden(provider, url, eintrag, fortschritt));
+        kalender = new Kalender(this, kern, this::kalenderGeaendert);
+        kalender.vorladen();
+        youtube = new Youtube(kern);
         kosmetik = new Kosmetik(kern, adblocker);
         werbefilter = new Werbefilter(this, kern, () -> {
             // Der Aufbau dauert; steht die Seite gerade offen, soll sie es zeigen.
@@ -368,6 +411,7 @@ public class MainActivity extends Activity {
             Log.w(TAG, "WebView ohne Rahmenzugriff - Player-Skripte bleiben aus");
         }
         kern.wennBereit(() -> {
+            youtube.vorbereiten();
             messung.starten();
             watchparty.anwenden();
             kosmetik.vorbereiten();
@@ -399,6 +443,35 @@ public class MainActivity extends Activity {
         lastConfigHeightDp = config.screenHeightDp;
         showHome();
         deepLinkOeffnen(getIntent());
+        // Der Pruefstand. Im Release ist das ein leerer Aufruf: dort uebersetzt
+        // Gradle die Fassung aus src/release/java, und die tut nichts.
+        pruefumgebung = new Pruefumgebung() {
+            @Override
+            public Provider anbieter(String id) {
+                return providerMitId(id);
+            }
+
+            @Override
+            public Messung messung() {
+                return messung;
+            }
+
+            @Override
+            public Bestand bestand() {
+                return bestand;
+            }
+
+            @Override
+            public Statistik statistik() {
+                return statistik;
+            }
+
+            @Override
+            public void neuZeichnen() {
+                if ("home".equals(currentScreen)) seiteNeuZeichnen();
+            }
+        };
+        Pruefstand.einrichten(this, pruefumgebung);
     }
 
     @Override
@@ -905,10 +978,23 @@ public class MainActivity extends Activity {
         return drawable;
     }
 
-    private void showHome() {
+    /**
+     * Die Startseite.
+     *
+     * <p>Paketweit sichtbar statt privat, damit die Pruefungen auf dem Geraet
+     * sie aufrufen koennen (siehe {@code StartseiteGeraeteTest}). Ein
+     * Neuaufbau von aussen ist genau das, was dort gebraucht wird: eine
+     * geaenderte Einstellung soll sich zeigen, ohne dass die Pruefung durch
+     * Menues tippen muss.
+     */
+    void showHome() {
         currentScreen = "home";
         if (activeProvider != null) {
             rememberAndPauseMedia(activeProvider.id, webViews.get(activeProvider.id));
+            // Die Anbieterseite tritt zurueck: was dort lief, ist zu Ende
+            // gezaehlt. Dieselbe Stelle wie am Rechner beim Schliessen einer
+            // Ansicht - ohne sie bliebe die letzte Folge eines Abends offen.
+            if (statistik != null) statistik.schliessen(activeProvider.id);
         }
         activeProvider = null;
         activeFavoriteId = null;
@@ -1684,25 +1770,31 @@ public class MainActivity extends Activity {
     private void renderMobileHome() {
         LinearLayout page = mobilePage();
         empfehlungenNachfuehren();
+        if (kalender != null) kalender.anbieterSetzen(providers);
 
         List<Favorite> laufend = bestand.weiterschauen();
         heroEintraege = new ArrayList<>(laufend.subList(0, Math.min(HERO_ANZAHL, laufend.size())));
         if (heroStelle >= heroEintraege.size()) heroStelle = 0;
 
+        // Das Titelbild laesst sich abschalten - wie am Rechner. Die Plaetze
+        // werden trotzdem angelegt: der Wechseltakt zeichnet sie fuer sich neu
+        // und traefe sonst auf null.
         heroPlatz = new FrameLayout(this);
-        addSpacing(page, heroPlatz, 4);
         heroPunkte = new LinearLayout(this);
         heroPunkte.setOrientation(LinearLayout.HORIZONTAL);
         heroPunkte.setGravity(Gravity.CENTER);
-        addSpacing(page, heroPunkte, 8);
-        heroZeichnen();
-        heroWechselPlanen();
+        if (zeigt(Startseite.HERO)) {
+            addSpacing(page, heroPlatz, 4);
+            addSpacing(page, heroPunkte, 8);
+            heroZeichnen();
+            heroWechselPlanen();
+        }
 
         View search = MobileViews.searchEntry(this, "Serien, Anime und Filme suchen",
             () -> showGlobalSearch(""));
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
-        searchParams.topMargin = dp(16);
+        searchParams.topMargin = dp(zeigt(Startseite.HERO) ? 16 : 4);
         page.addView(search, searchParams);
 
         addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
@@ -1712,19 +1804,33 @@ public class MainActivity extends Activity {
         // Reihenfolge wie am Rechner. Leere Reihen fallen weg statt als leerer
         // Kasten dazustehen.
         boolean etwasGezeigt = neueFolgenReihe(page);
+        kalenderReihe(page);
         List<Favorite> privat = new ArrayList<>();
         List<Favorite> gemeinsam = new ArrayList<>();
+        List<Favorite> videos = new ArrayList<>();
         for (Favorite eintrag : laufend) {
-            if (eintrag.watchpartyRaum().isEmpty()) privat.add(eintrag);
+            // YouTube zuerst aussortieren, nicht zuletzt: sonst stuende ein
+            // angefangenes Video sowohl hier als auch in seiner eigenen Reihe.
+            if (youtube != null && youtube.istYoutube(eintrag)) videos.add(eintrag);
+            else if (eintrag.watchpartyRaum().isEmpty()) privat.add(eintrag);
             else gemeinsam.add(eintrag);
         }
-        etwasGezeigt |= kachelReihe(page, "Weiterschauen", privat, Bibliothek.WEITERSCHAUEN, 8);
-        etwasGezeigt |= kachelReihe(page, "Gemeinsam weiterschauen", gemeinsam, Bibliothek.WEITERSCHAUEN, 8);
-        etwasGezeigt |= kachelReihe(page, Bibliothek.WATCHLIST.titel,
-            bestand.watchlist(), Bibliothek.WATCHLIST, 12);
-        etwasGezeigt |= kachelReihe(page, Bibliothek.MEDIATHEK.titel,
-            bestand.mediathek(), Bibliothek.MEDIATHEK, 12);
-        if (!etwasGezeigt) {
+        if (zeigt(Startseite.WEITERSCHAUEN)) {
+            etwasGezeigt |= kachelReihe(page, "Weiterschauen", privat, Bibliothek.WEITERSCHAUEN, 8);
+            etwasGezeigt |= kachelReihe(page, "Gemeinsam weiterschauen", gemeinsam,
+                Bibliothek.WEITERSCHAUEN, 8);
+        }
+        if (zeigt(Startseite.YOUTUBE)) {
+            etwasGezeigt |= kachelReihe(page, "YouTube weiterschauen", videos,
+                Bibliothek.WEITERSCHAUEN, 8);
+        }
+        if (zeigt(Startseite.WEITERSCHAUEN)) {
+            etwasGezeigt |= kachelReihe(page, Bibliothek.WATCHLIST.titel,
+                bestand.watchlist(), Bibliothek.WATCHLIST, 12);
+            etwasGezeigt |= kachelReihe(page, Bibliothek.MEDIATHEK.titel,
+                bestand.mediathek(), Bibliothek.MEDIATHEK, 12);
+        }
+        if (!etwasGezeigt && zeigt(Startseite.WEITERSCHAUEN)) {
             addSpacing(page, MobileViews.sectionHeader(this, "Weiterschauen", null, null),
                 MobileViews.SECTION_GAP);
             addSpacing(page, settingsCard("Noch nichts angefangen",
@@ -1732,18 +1838,404 @@ public class MainActivity extends Activity {
                     + "die Stelle und schlägt sie dir hier wieder vor.", null, null), MobileViews.ITEM_GAP);
         }
 
-        vorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
-        vorschlagsReihe(page, Empfehlungen.FUER_DICH, "Empfohlen für dich",
-            "Neu berechnen", () -> {
-                empfehlungen.neuBerechnen();
-                showToast("Empfehlungen werden neu berechnet");
-            });
-        vorschlagsReihe(page, Empfehlungen.ANIME, "Anime für dich", "Mehr anzeigen",
-            () -> zeigeEntdeckung(Empfehlungen.ANIME));
-        vorschlagsReihe(page, Empfehlungen.SERIE, "Serien für dich", "Mehr anzeigen",
-            () -> zeigeEntdeckung(Empfehlungen.SERIE));
-        vorschlagsReihe(page, Empfehlungen.FILM, "Filme für dich", "Mehr anzeigen",
-            () -> zeigeEntdeckung(Empfehlungen.FILM));
+        rueckblicksReihe(page);
+
+        if (zeigt(Startseite.PERSOENLICH)) {
+            vorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
+            vorschlagsReihe(page, Empfehlungen.FUER_DICH, "Empfohlen für dich",
+                "Neu berechnen", () -> {
+                    empfehlungen.neuBerechnen();
+                    showToast("Empfehlungen werden neu berechnet");
+                });
+        }
+        if (zeigt(Startseite.KATEGORIEN)) {
+            vorschlagsReihe(page, Empfehlungen.ANIME, "Anime für dich", "Mehr anzeigen",
+                () -> zeigeEntdeckung(Empfehlungen.ANIME));
+            vorschlagsReihe(page, Empfehlungen.SERIE, "Serien für dich", "Mehr anzeigen",
+                () -> zeigeEntdeckung(Empfehlungen.SERIE));
+            vorschlagsReihe(page, Empfehlungen.FILM, "Filme für dich", "Mehr anzeigen",
+                () -> zeigeEntdeckung(Empfehlungen.FILM));
+        }
+        // Ist alles abgeschaltet, steht sonst nur die Suche da und die Seite
+        // sieht kaputt aus. Der Weg zurueck gehoert dorthin, wo der Mangel
+        // auffaellt - nicht in eine Einstellung, die man erst suchen muss.
+        if (startseite != null && startseite.anzahlAn() == 0) {
+            addSpacing(page, MobileViews.hinweis(this,
+                "Alle Reihen der Startseite sind ausgeblendet.", "Reihen einblenden",
+                () -> {
+                    startseite.zuruecksetzen();
+                    showHome();
+                }), MobileViews.SECTION_GAP);
+        }
+    }
+
+    /** Ob diese Reihe der Startseite eingeschaltet ist. Ohne Einstellung: ja. */
+    private boolean zeigt(String schluessel) {
+        return startseite == null || startseite.zeigt(schluessel);
+    }
+
+    /**
+     * Der Satz ueber einer Reihe, deren Inhalt von der Platte kommt.
+     *
+     * <p>"Ohne Netz" steht nur da, wenn gerade wirklich keine Leitung da ist.
+     * Sonst hiesse es das auch noch, wenn das Netz laengst zurueck ist und nur
+     * der letzte Abruf danebenging - eine Behauptung ueber einen Zustand, den
+     * die Zeile nicht kennt.
+     */
+    private String altHinweis(String alter) {
+        String stand = alter == null || alter.isEmpty() ? "vom letzten Mal" : alter;
+        return Netz.vorhanden(this)
+            ? "Gerade nicht erreichbar - Stand " + stand + "."
+            : "Ohne Netz - Stand " + stand + ".";
+    }
+
+    /**
+     * Die Reihe "Diese Woche".
+     *
+     * <p>Der Kalender ist am Rechner eine eigene Seite in der Seitenleiste. Auf
+     * dem Telefon gibt es keine Seitenleiste, und eine Seite, die man erst
+     * finden muss, wird nicht gefunden - also steht er als Reihe da, mit
+     * "Alle anzeigen" auf die volle Woche.
+     *
+     * <p>Vier Zustaende, wie bei den Vorschlagsreihen: gefuellt, wird geholt,
+     * geht nicht, und "diese Woche kommt nichts". Nur der letzte laesst die
+     * Reihe ganz verschwinden.
+     */
+    private void kalenderReihe(LinearLayout page) {
+        if (kalender == null || !zeigt(Startseite.KALENDER)) return;
+        kalender.anfordern(false);
+
+        List<Kalender.Eintrag> eintraege = kalender.eintraege();
+        String fehler = kalender.fehler();
+        boolean fertigUndLeer = eintraege.isEmpty() && fehler.isEmpty()
+            && kalender.geladen() && !kalender.laedt();
+        // Dieselbe Unterscheidung wie bei den Vorschlagsreihen: ohne Leitung
+        // heisst leer nicht leer, sondern unbekannt.
+        boolean ohneNetz = fertigUndLeer && !Netz.vorhanden(this);
+        if (fertigUndLeer && !ohneNetz) return;
+
+        addSpacing(page, MobileViews.sectionHeader(this, "Diese Woche",
+            eintraege.isEmpty() ? null : "Alle anzeigen", this::zeigeKalender),
+            MobileViews.SECTION_GAP);
+
+        if (!fehler.isEmpty() || ohneNetz) {
+            addSpacing(page, MobileViews.hinweis(this,
+                ohneNetz
+                    ? "Keine Verbindung - der Kalender kommt von deinen Anbietern."
+                    : "Der Kalender konnte nicht geladen werden.",
+                "Erneut versuchen",
+                () -> kalender.erneutVersuchen()), MobileViews.ITEM_GAP);
+            return;
+        }
+        int breite = kachelBreiteDp();
+        if (eintraege.isEmpty()) {
+            addSpacing(page, MobileViews.reihenSkelett(this, breite, 5), MobileViews.ITEM_GAP);
+            return;
+        }
+        if (kalender.istAlt()) {
+            addSpacing(page, MobileViews.hinweis(this, altHinweis(kalender.alter()),
+                "Erneut versuchen", () -> kalender.erneutVersuchen()), 0);
+        }
+
+        // Ab heute, nicht ab Montag: was gestern lief, hilft niemandem mehr.
+        List<Kalender.Eintrag> ab = new ArrayList<>();
+        List<String> tage = kalender.tage();
+        int start = Math.max(0, tage.indexOf(Kalender.heutigerTag()));
+        for (int i = 0; i < tage.size() && ab.size() < 12; i += 1) {
+            ab.addAll(kalender.anTag(tage.get((start + i) % tage.size())));
+        }
+
+        ArrayList<View> karten = new ArrayList<>();
+        for (Kalender.Eintrag eintrag : ab.subList(0, Math.min(12, ab.size()))) {
+            karten.add(kalenderKarte(eintrag, breite));
+        }
+        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+    }
+
+    private View kalenderKarte(Kalender.Eintrag eintrag, int breite) {
+        String fahne = eintrag.tag.isEmpty() ? "" : eintrag.tag.substring(0, 2);
+        if (!eintrag.uhrzeit.isEmpty()) fahne = fahne + " " + eintrag.uhrzeit;
+        String unterzeile = zusammen(eintrag.folgenText(), eintrag.sprache);
+        if (unterzeile.isEmpty()) unterzeile = eintrag.anbieterName;
+        return MobileViews.kachel(this, providerMitId(eintrag.anbieterId),
+            eintrag.titel.isEmpty() ? "Titel" : eintrag.titel, unterzeile, eintrag.bild, 0,
+            fahne, breite,
+            () -> kalenderEintragOeffnen(eintrag), null);
+    }
+
+    private void kalenderEintragOeffnen(Kalender.Eintrag eintrag) {
+        Provider provider = providerMitId(eintrag.anbieterId);
+        if (provider == null || eintrag.url.isEmpty()) {
+            showToast("Zu diesem Eintrag ist keine Seite bekannt");
+            return;
+        }
+        openProvider(provider, eintrag.url);
+    }
+
+    /**
+     * Die ganze Woche.
+     *
+     * <p>Ein Reiter je Wochentag, darunter die Eintraege dieses Tages als
+     * senkrechte Liste. Am Rechner steht dieselbe Ansicht in der Seitenleiste;
+     * die Filter nach Art und Fassung fehlen hier bewusst - auf einem Telefon
+     * traegt eine Woche selten mehr als ein paar Dutzend Eintraege, und zwei
+     * Filterleisten uebereinander kosten mehr Platz, als sie sparen.
+     */
+    void zeigeKalender() {
+        currentScreen = "kalender";
+        activeProvider = null;
+        content.removeAllViews();
+        updateBottomNav();
+        if (kalender != null) {
+            kalender.anbieterSetzen(providers);
+            kalender.anfordern(false);
+        }
+
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "ELFIX"));
+        page.addView(MobileViews.heroTitle(this, "Kalender"));
+        addSpacing(page, MobileViews.subtitle(this, "Was diese Woche bei deinen Anbietern erscheint."), 0);
+
+        if (kalender == null) return;
+        String fehler = kalender.fehler();
+        if (!fehler.isEmpty()) {
+            addSpacing(page, MobileViews.hinweis(this,
+                "Der Kalender konnte nicht geladen werden. Ohne ihn funktioniert alles Übrige weiter.",
+                "Erneut versuchen", () -> kalender.erneutVersuchen()), MobileViews.SECTION_GAP);
+            return;
+        }
+        List<Kalender.Eintrag> alle = kalender.eintraege();
+        if (alle.isEmpty()) {
+            String text;
+            if (kalender.laedt()) text = "Der Kalender wird geladen …";
+            else if (!Netz.vorhanden(this)) {
+                text = "Keine Verbindung. Der Kalender kommt von den Seiten deiner Anbieter - "
+                    + "ohne Netz gibt es nichts zu zeigen und nichts Gespeichertes.";
+            } else text = "Für diese Woche ist bei deinen Anbietern nichts eingetragen.";
+            addSpacing(page, MobileViews.hinweis(this, text,
+                kalender.laedt() ? null : "Erneut versuchen",
+                kalender.laedt() ? null : () -> kalender.erneutVersuchen()), MobileViews.SECTION_GAP);
+            return;
+        }
+        if (kalender.istAlt()) {
+            addSpacing(page, MobileViews.hinweis(this,
+                "Ohne Netz - Stand " + kalender.alter() + ".", "Erneut versuchen",
+                () -> kalender.erneutVersuchen()), MobileViews.ITEM_GAP);
+        }
+
+        if (kalenderTag.isEmpty() || kalender.anTag(kalenderTag).isEmpty()) {
+            kalenderTag = kalender.ersterTagMitInhalt();
+        }
+        ArrayList<View> reiter = new ArrayList<>();
+        for (String tag : kalender.tage()) {
+            int anzahl = kalender.anTag(tag).size();
+            String datum = kalender.datumVon(tag);
+            reiter.add(MobileViews.reiter(this, tag.substring(0, 2),
+                anzahl > 0 ? String.valueOf(anzahl) : "–", tag.equals(kalenderTag),
+                () -> {
+                    kalenderTag = tag;
+                    zeigeKalender();
+                }));
+            if (!datum.isEmpty() && tag.equals(kalenderTag)) {
+                // Das Datum steht unter der Leiste und nicht im Reiter: dort
+                // waere es auf einem schmalen Telefon nicht mehr zu lesen.
+                kalenderDatumText = Rueckblick.datum(datum, false);
+            }
+        }
+        reiheAnhaengen(page, MobileViews.reiterLeiste(this, reiter), MobileViews.SECTION_GAP);
+
+        List<Kalender.Eintrag> desTages = kalender.anTag(kalenderTag);
+        addSpacing(page, MobileViews.sectionHeader(this,
+            kalenderTag + (kalenderDatumText.isEmpty() ? "" : ", " + kalenderDatumText),
+            null, null), MobileViews.SECTION_GAP);
+        if (desTages.isEmpty()) {
+            addSpacing(page, settingsCard("Nichts eingetragen",
+                "An diesem Tag kündigt keiner deiner Anbieter etwas an.", null, null),
+                MobileViews.ITEM_GAP);
+            return;
+        }
+        for (Kalender.Eintrag eintrag : desTages) {
+            addSpacing(page, kalenderZeile(eintrag), MobileViews.ITEM_GAP);
+        }
+    }
+
+    /** Eine Zeile der Kalenderansicht - Uhrzeit, Titel, Folge und Fassung. */
+    private View kalenderZeile(Kalender.Eintrag eintrag) {
+        String unten = zusammen(eintrag.folgenText(), eintrag.sprache, eintrag.anbieterName);
+        return settingsCard(
+            (eintrag.uhrzeit.isEmpty() ? "" : eintrag.uhrzeit + "  ")
+                + (eintrag.titel.isEmpty() ? "Titel" : eintrag.titel),
+            unten, "Öffnen", () -> kalenderEintragOeffnen(eintrag));
+    }
+
+    /* --------------------------------------------------------- Der Rueckblick */
+
+    /**
+     * Die Reihe "Dein Rückblick" auf der Startseite.
+     *
+     * <p>Am Rechner ist der Rückblick ein Eintrag in der Seitenleiste und der
+     * Jahresrückblick ein dezenter Hinweis im Dezember. Auf dem Telefon gibt es
+     * keine Seitenleiste, also steht hier eine Karte - und zwar nur, wenn
+     * überhaupt etwas gemessen wurde. Eine Karte, die "0 Stunden" sagt, ist
+     * keine Einladung, sondern ein Vorwurf.
+     */
+    private void rueckblicksReihe(LinearLayout page) {
+        if (statistik == null || !zeigt(Startseite.RUECKBLICK) || !statistik.hatDaten()) return;
+        addSpacing(page, MobileViews.sectionHeader(this, "Dein Rückblick", "Alle Zahlen",
+            () -> zeigeRueckblick("alles")), MobileViews.SECTION_GAP);
+        addSpacing(page, settingsCard("Was du geschaut hast",
+            "Gemessene Wiedergabezeit, Folgen, Schautage und deine meistgesehenen Titel.",
+            "Öffnen", () -> zeigeRueckblick("alles")), MobileViews.ITEM_GAP);
+    }
+
+    /**
+     * Der Rückblick.
+     *
+     * <p>Er holt seine Zahlen bei jedem Aufruf frisch: die Auswertung läuft über
+     * alle Sitzungen und ist damit die eine Rechnung, die nicht gehalten werden
+     * sollte - eine Folge, die gerade lief, gehört sofort dazu.
+     */
+    private void zeigeRueckblick(String zeitraum) {
+        currentScreen = "rueckblick";
+        activeProvider = null;
+        rueckblickZeitraum = zeitraum == null ? "alles" : zeitraum;
+        content.removeAllViews();
+        updateBottomNav();
+
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "ELFIX"));
+        page.addView(MobileViews.heroTitle(this, "Rückblick"));
+
+        if (statistik == null || !statistik.hatDaten()) {
+            addSpacing(page, settingsCard("Noch nichts gemessen",
+                "ELFIX zählt die wirklich abgespielten Sekunden, sobald du etwas ansiehst. "
+                    + "Was hier steht, ist gemessen und nicht geschätzt - deshalb steht am Anfang "
+                    + "nichts.", null, null), MobileViews.SECTION_GAP);
+            return;
+        }
+
+        ArrayList<View> reiter = new ArrayList<>();
+        String[][] zeitraeume = {
+            {"7tage", "7 Tage"}, {"30tage", "30 Tage"}, {"jahr", "Dieses Jahr"}, {"alles", "Alles"}
+        };
+        for (String[] eintrag : zeitraeume) {
+            reiter.add(MobileViews.reiter(this, eintrag[1], null,
+                eintrag[0].equals(rueckblickZeitraum), () -> zeigeRueckblick(eintrag[0])));
+        }
+        reiheAnhaengen(page, MobileViews.reiterLeiste(this, reiter), MobileViews.ITEM_GAP);
+
+        LinearLayout platz = new LinearLayout(this);
+        platz.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, platz, MobileViews.ITEM_GAP);
+        addSpacing(platz, MobileViews.hinweis(this, "Zahlen werden zusammengestellt …", null, null), 0);
+
+        String angefragt = rueckblickZeitraum;
+        statistik.auswerten(angefragt, (daten, fehler) -> {
+            // Zwischenzeitlich woandershin? Dann gehoert die Antwort nirgends
+            // mehr hin - und der Platz, in den sie soll, ist abgehaengt.
+            if (!"rueckblick".equals(currentScreen) || !angefragt.equals(rueckblickZeitraum)) return;
+            platz.removeAllViews();
+            if (fehler != null || daten == null) {
+                platz.addView(MobileViews.hinweis(this,
+                    "Die Zahlen konnten nicht berechnet werden.", "Erneut versuchen",
+                    () -> zeigeRueckblick(angefragt)));
+                return;
+            }
+            int jahr = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+            addSpacing(platz, settingsCard("Jahresrückblick " + jahr,
+                "Dein Jahr als Geschichte - dieselben Zahlen, in Karten erzählt.",
+                "Ansehen", () -> zeigeWrapped(jahr)), MobileViews.ITEM_GAP);
+            for (View stueck : Rueckblick.statistik(this, daten)) {
+                addSpacing(platz, stueck, 0);
+            }
+        });
+    }
+
+    /**
+     * Der Jahresrückblick.
+     *
+     * <p>Karte für Karte, wie am Rechner. Weitergeblättert wird durch Tippen -
+     * das ist auf einem Telefon die Geste, die alle kennen; die Pfeiltasten des
+     * Rechners gibt es hier nicht.
+     */
+    private void zeigeWrapped(int jahr) {
+        currentScreen = "wrapped";
+        activeProvider = null;
+        wrappedJahr = jahr;
+        content.removeAllViews();
+        updateBottomNav();
+
+        LinearLayout page = mobilePage();
+        page.addView(MobileViews.eyebrow(this, "ELFIX Wrapped"));
+        page.addView(MobileViews.heroTitle(this, String.valueOf(jahr)));
+
+        if (statistik == null) return;
+        LinearLayout platz = new LinearLayout(this);
+        platz.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, platz, MobileViews.ITEM_GAP);
+        addSpacing(platz, MobileViews.hinweis(this, "Dein Jahr wird zusammengestellt …", null, null), 0);
+
+        statistik.auswerten(String.valueOf(jahr), (daten, fehler) -> {
+            if (!"wrapped".equals(currentScreen) || wrappedJahr != jahr) return;
+            platz.removeAllViews();
+            if (fehler != null || daten == null) {
+                platz.addView(MobileViews.hinweis(this,
+                    "Der Jahresrückblick konnte nicht gebaut werden.", "Erneut versuchen",
+                    () -> zeigeWrapped(jahr)));
+                return;
+            }
+            wrappedSeiten = Rueckblick.wrapped(this, daten, jahr);
+            if (wrappedStelle >= wrappedSeiten.size()) wrappedStelle = 0;
+            wrappedPlatz = platz;
+            wrappedZeichnen();
+        });
+    }
+
+    /**
+     * Eine Karte des Jahresrückblicks zeichnen - und nur sie.
+     *
+     * <p>Wie beim Titelhintergrund der Startseite: die Seite bleibt stehen, nur
+     * die Karte wechselt. Sonst würde jedes Weiterblättern die Auswertung neu
+     * anfordern.
+     */
+    private void wrappedZeichnen() {
+        if (wrappedPlatz == null || wrappedSeiten.isEmpty()) return;
+        wrappedPlatz.removeAllViews();
+        int stelle = Math.max(0, Math.min(wrappedStelle, wrappedSeiten.size() - 1));
+        View karte = wrappedSeiten.get(stelle);
+        if (karte.getParent() instanceof ViewGroup) {
+            ((ViewGroup) karte.getParent()).removeView(karte);
+        }
+        karte.setOnClickListener(v -> {
+            wrappedStelle = (wrappedStelle + 1) % wrappedSeiten.size();
+            wrappedZeichnen();
+        });
+        addSpacing(wrappedPlatz, karte, 0);
+        addSpacing(wrappedPlatz, Rueckblick.punkte(this, wrappedSeiten.size(), stelle),
+            MobileViews.ITEM_GAP);
+
+        LinearLayout knoepfe = new LinearLayout(this);
+        knoepfe.setOrientation(LinearLayout.HORIZONTAL);
+        if (stelle > 0) {
+            knoepfe.addView(MobileViews.secondaryButton(this, "Zurück", () -> {
+                wrappedStelle = stelle - 1;
+                wrappedZeichnen();
+            }), new LinearLayout.LayoutParams(0, dp(MobileViews.TOUCH_TARGET), 1));
+        }
+        boolean letzte = stelle >= wrappedSeiten.size() - 1;
+        LinearLayout.LayoutParams weiterParams =
+            new LinearLayout.LayoutParams(0, dp(MobileViews.TOUCH_TARGET), 1);
+        if (stelle > 0) weiterParams.leftMargin = dp(MobileViews.ITEM_GAP);
+        knoepfe.addView(MobileViews.primaryButton(this, letzte ? "Fertig" : "Weiter", () -> {
+            if (letzte) {
+                wrappedStelle = 0;
+                zeigeRueckblick(rueckblickZeitraum);
+                return;
+            }
+            wrappedStelle = stelle + 1;
+            wrappedZeichnen();
+        }), weiterParams);
+        addSpacing(wrappedPlatz, knoepfe, MobileViews.ITEM_GAP);
     }
 
     /* ------------------------------------------------- Der Titelhintergrund */
@@ -2019,19 +2511,46 @@ public class MainActivity extends Activity {
 
         List<JSONObject> eintraege = empfehlungen.eintraege(schluessel);
         String fehler = empfehlungen.fehler(schluessel);
-        // Fertig geholt, kein Fehler und trotzdem leer heisst: dazu gibt es
-        // gerade nichts. Dann steht die Reihe gar nicht erst da.
-        if (eintraege.isEmpty() && fehler.isEmpty()
-            && empfehlungen.geladen(schluessel) && !empfehlungen.laedt(schluessel)) {
+        boolean fertigUndLeer = eintraege.isEmpty() && fehler.isEmpty()
+            && empfehlungen.geladen(schluessel) && !empfehlungen.laedt(schluessel);
+        // Fertig geholt, kein Fehler und trotzdem leer heisst normalerweise:
+        // dazu gibt es gerade nichts. Dann steht die Reihe gar nicht erst da.
+        //
+        // Ohne Leitung heisst es etwas anderes. Der Lauf faengt einen
+        // gescheiterten Abruf ab und gibt eine leere Liste zurueck - richtig,
+        // denn ein Ausfall bei einem Anbieter soll nicht die ganze Reihe zum
+        // Fehler machen. Hier sah das aus wie "nichts gefunden", und auf einem
+        // Telefon ohne Empfang verschwand die halbe Startseite wortlos. Also
+        // wird gefragt, bevor entschieden wird.
+        if (fertigUndLeer && !Netz.vorhanden(this)) {
+            // Einmal sagen, nicht fuenfmal: der Hinweis gehoert an die erste
+            // Reihe, die ihn braucht, und die uebrigen fallen still weg.
+            if (!Empfehlungen.NEUES.equals(schluessel)) return;
+            addSpacing(page, MobileViews.sectionHeader(this, "Vorschläge", null, null),
+                MobileViews.SECTION_GAP);
+            addSpacing(page, MobileViews.hinweis(this,
+                "Keine Verbindung. Vorschläge brauchen die Seiten deiner Anbieter - sobald du "
+                    + "wieder online bist, stehen sie hier. Deine Mediathek und alles Angefangene "
+                    + "bleiben verfügbar.", "Erneut versuchen",
+                () -> {
+                    for (String art : new String[]{Empfehlungen.NEUES, Empfehlungen.FUER_DICH,
+                        Empfehlungen.ANIME, Empfehlungen.SERIE, Empfehlungen.FILM}) {
+                        empfehlungen.erneutVersuchen(art);
+                    }
+                    if ("home".equals(currentScreen)) empfehlungenGeaendert();
+                }), MobileViews.ITEM_GAP);
             return;
         }
+        if (fertigUndLeer) return;
 
         addSpacing(page, MobileViews.sectionHeader(this, titel,
             eintraege.isEmpty() ? null : aktion, beiAktion), MobileViews.SECTION_GAP);
 
         if (!fehler.isEmpty() && eintraege.isEmpty()) {
             addSpacing(page, MobileViews.hinweis(this,
-                "Diese Vorschläge konnten nicht geladen werden.", "Erneut versuchen",
+                "Diese Vorschläge konnten nicht geladen werden. Ohne Netz zeigt ELFIX hier den "
+                    + "letzten bekannten Stand - beim ersten Start gibt es noch keinen.",
+                "Erneut versuchen",
                 () -> {
                     empfehlungen.erneutVersuchen(schluessel);
                     if ("home".equals(currentScreen)) empfehlungenGeaendert();
@@ -2041,6 +2560,18 @@ public class MainActivity extends Activity {
         if (eintraege.isEmpty()) {
             reiheAnhaengen(page, MobileViews.reihenSkelett(this, breite, 5), MobileViews.ITEM_GAP);
             return;
+        }
+        // Ein Stand von der Platte steht mit seinem Alter da. Ihn wortlos zu
+        // zeigen waere schlimmer als ihn wegzulassen: er sieht aus wie frisch
+        // geholt, und wer sich fragt, warum nichts Neues kommt, findet keine
+        // Antwort.
+        if (empfehlungen.istAlt(schluessel)) {
+            addSpacing(page, MobileViews.hinweis(this, altHinweis(empfehlungen.alter(schluessel)),
+                "Erneut versuchen",
+                () -> {
+                    empfehlungen.erneutVersuchen(schluessel);
+                    if ("home".equals(currentScreen)) empfehlungenGeaendert();
+                }), 0);
         }
 
         ArrayList<View> karten = new ArrayList<>();
@@ -2751,6 +3282,8 @@ public class MainActivity extends Activity {
                 showSettings();
             }), MobileViews.ITEM_GAP);
 
+        startseitenEinstellungen(page);
+
         addSpacing(page, introKarte(false), MobileViews.ITEM_GAP);
 
         addSpacing(page, fassungsKarte(false), MobileViews.ITEM_GAP);
@@ -2764,6 +3297,33 @@ public class MainActivity extends Activity {
             "Alles neu laden", this::reloadAllWebViews), MobileViews.ITEM_GAP);
 
         addSpacing(page, aktualisierungsKarte(false), MobileViews.ITEM_GAP);
+    }
+
+    /**
+     * Welche Reihen die Startseite zeigt.
+     *
+     * <p>Am Rechner steht dasselbe unter {@code settings.home}: sechs Schalter,
+     * die je eine Reihe ein- und ausblenden. Auf dem Telefon gab es sie nicht -
+     * die Reihen standen fest, und wer die Vorschlaege nicht wollte, hatte
+     * keine Wahl. Die Schluessel sind absichtlich dieselben (siehe
+     * {@link Startseite}).
+     *
+     * <p>Der Kalender kommt dazu: er ist am Rechner eine eigene Seite in der
+     * Seitenleiste, hier eine Reihe - und dann gehoert er in dieselbe Liste.
+     */
+    private void startseitenEinstellungen(LinearLayout page) {
+        addSpacing(page, MobileViews.sectionHeader(this, "Startseite", null, null),
+            MobileViews.SECTION_GAP);
+        addSpacing(page, MobileViews.subtitle(this,
+            startseite.anzahlAn() + " von " + Startseite.REIHEN.size() + " Reihen sichtbar"), 0);
+        for (Startseite.Reihe reihe : Startseite.REIHEN) {
+            addSpacing(page, MobileViews.schalterZeile(this, reihe.titel, reihe.erklaerung,
+                startseite.zeigt(reihe.schluessel),
+                () -> {
+                    startseite.umschalten(reihe.schluessel);
+                    showSettings();
+                }), MobileViews.ITEM_GAP);
+        }
     }
 
     /**
@@ -4525,6 +5085,12 @@ public class MainActivity extends Activity {
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
         // Takt wieder auf.
         takt.removeCallbacksAndMessages(null);
+        // Was gemessen wurde, gehoert jetzt auf die Platte. Auf einem Telefon
+        // ist das kein Feinschliff: eine App im Hintergrund wird ohne Vorwarnung
+        // abgeraeumt, und ein onDestroy kommt dann nicht mehr. Nur schliessen -
+        // nicht die offene Sitzung beenden: wer kurz auf eine Nachricht schaut
+        // und zurueckkommt, hat nicht zweimal geschaut.
+        if (statistik != null) statistik.speichern();
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onPause();
     }
@@ -4550,6 +5116,13 @@ public class MainActivity extends Activity {
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
         takt.removeCallbacksAndMessages(null);
         if (messung != null) messung.anhalten();
+        // Die letzte Folge eines Abends zaehlt sonst nicht: sie steht als
+        // offene Sitzung im Speicher und stirbt mit dem Prozess.
+        if (statistik != null) {
+            statistik.schliessen(null);
+            statistik.speichern();
+        }
+        Pruefstand.abbauen(this, pruefumgebung);
         if (kern != null) kern.beenden();
         super.onDestroy();
     }
@@ -4660,6 +5233,26 @@ public class MainActivity extends Activity {
      * fertig wird, darf niemanden nach oben werfen.
      */
     private void empfehlungenGeaendert() {
+        if (!"home".equals(currentScreen)) return;
+        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+        showHome();
+        scrollStandHerstellen(stand);
+    }
+
+    /**
+     * Die Kalenderwoche ist da.
+     *
+     * <p>Dieselbe Vorsicht wie bei den Empfehlungen: die Startseite behaelt
+     * ihre Stelle. Steht die Kalenderansicht selbst offen, wird die neu
+     * gebaut - dort ist die Woche der ganze Inhalt.
+     */
+    private void kalenderGeaendert() {
+        if ("kalender".equals(currentScreen)) {
+            int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+            zeigeKalender();
+            scrollStandHerstellen(stand);
+            return;
+        }
         if (!"home".equals(currentScreen)) return;
         int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
         showHome();
@@ -4788,6 +5381,12 @@ public class MainActivity extends Activity {
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
+            return;
+        }
+        // Aus dem Jahresrueckblick zurueck in den Rueckblick und nicht ganz
+        // nach vorn: er ist von dort aus geoeffnet worden.
+        if ("wrapped".equals(currentScreen)) {
+            zeigeRueckblick(rueckblickZeitraum);
             return;
         }
         if (!"home".equals(currentScreen)) {

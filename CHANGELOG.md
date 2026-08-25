@@ -3,6 +3,159 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.42.0 — 25. August 2026
+
+Die vier letzten Unterschiede zur Startseite des Rechners sind weg: Kalender,
+Jahresrueckblick, YouTube-Reihe und die Schalter fuer sichtbare Reihen. Auf dem
+Weg dorthin kam wieder ein Fehler ans Licht, der schwerer wiegt als das Feature.
+
+### Eine Serie konnte auf Android nie abgeschlossen werden
+
+Nicht selten - nie. `seitendaten.js` liest laengst die Grenzen einer Serie:
+welche Staffel die letzte ist und welche Folge darin. `Titelbild` griff daraus
+nur das Bild und das Favicon heraus und warf den Rest weg. Damit erreichten
+`finalSeason` und `finalEpisode` die geteilte Regel nie. Die letzte Folge wurde
+abgehakt wie jede andere, der Eintrag blieb in "Weiterschauen" stehen und
+wartete auf eine Folge, die es nicht gibt - die Mediathek konnte auf diesem Weg
+gar nicht gefuellt werden.
+
+Die Auskunft der Seite laeuft jetzt durch `fortschritt.gepruefteSeitendaten` -
+dieselbe Pruefung, die der Rechner benutzt, und sie wirft weg, was zu einer
+anderen Adresse gehoert. Uebernommen werden Titel, Art, Staffelgrenzen und
+nicht spielbare Folgen. Mit denselben Messwerten in Node: ohne Grenzen
+`completed=false`, mit ihnen `completed=true`.
+
+### Der Kalender
+
+Die Runde um die beiden Parser stand in `main.js` und war damit an Electron
+gebunden - welche Adressen probiert werden, in welcher Reihenfolge, wie lange
+eine Antwort gilt und auf welche Woche gekuerzt wird. Sie steht jetzt in
+`src/kalender.js`; `discover.js` mit den Parsern war ohnehin schon geteilt.
+`main.js` wird dabei um 144 Zeilen leichter.
+
+Auf dem Telefon steht der Kalender als Reihe "Diese Woche" auf der Startseite,
+mit einer eigenen Ansicht dahinter: ein Reiter je Wochentag mit Eintragszahl,
+darunter die Folgen mit Fassung und Anbieter. Gemessen auf dem Emulator: 139
+Eintraege von S.to ueber `api/calendar`, 92 von AniWorld ueber `animekalender`,
+nach dem Wochenfilter 134.
+
+### Rueckblick und Jahresrueckblick
+
+Hier fehlte nicht die Ansicht, sondern die Datenbasis: **die Android-App hat nie
+eine Sekunde Wiedergabezeit aufgezeichnet.** Der Schritt von der Messung zur
+Sitzung stand in `main.js`. `statistik.js` lag zwar laengst im Kern, bekam dort
+aber nie eine Meldung; ein Rueckblick haette zwangslaeufig eine leere Bilanz
+gezeigt - schlimmer als keiner, weil eine Null wie eine Aussage aussieht.
+
+Der Schritt liegt jetzt in `src/sitzungslauf.js` und wird von beiden Geraeten
+gefahren, die Ablage in `Statistik.java` mit `sitzungen.json` im Format des
+Rechners. Geschrieben wird alle 30 Sekunden und beim Pausieren - auf einem
+Telefon wird eine App nicht beendet, sie verschwindet.
+
+Darauf sitzen zwei Ansichten. Der Rueckblick mit Zeitraeumen, Kennzahlen und
+Ranglisten; der Jahresrueckblick als Kartenfolge mit derselben Abfolge wie am
+Rechner - Auftakt, Watchtime, Folgen, Abschluesse je Gattung, Serie und Film des
+Jahres, Genre, Mix, Strecke, Wochentag, Rekordtag, laengste Sitzung,
+Tageszeit-Typ, Wiederholungen, Monat, erster und letzter Titel, Fakten, Finale.
+Jede Karte faellt weg, wenn ihre Zahl nicht belegt ist, und der Zeitraum steht
+ausdruecklich dabei: was vor der Messung liegt, wird nicht behauptet.
+
+### YouTube bekommt seine eigene Reihe
+
+Mit der Begruendung des Rechners: ein angefangenes Video und eine angefangene
+Serie sind zwei verschiedene Dinge. Gemischt schiebt das eine das andere aus der
+Reihe, und weil YouTube-Videos oft kommen und gehen, waeren es meist die Serien,
+die verdraengt werden. Die Namensliste kommt aus `youtube.js` im Kern; nur der
+dreizeilige Abgleich laeuft in Java, damit nicht je Eintrag und Zeichenlauf ein
+Aufruf in den Kern geht.
+
+### Sichtbare Startseitenreihen
+
+Sieben Schalter unter "Startseite" in den Einstellungen. Die Schluessel sind
+absichtlich dieselben wie am Rechner (`showHero`, `showFavorites`,
+`showYoutube`, `showPersonal`, `showCategories`, `showReview`), damit sie
+spaeter ueber denselben Geraeteabgleich wandern koennen; `showCalendar` kommt
+dazu, weil der Kalender hier eine Reihe ist und keine Seite in der Seitenleiste.
+Sind alle Reihen aus, steht der Weg zurueck auf der Startseite selbst - dort, wo
+der Mangel auffaellt, und nicht in einer Einstellung, die man erst suchen muss.
+
+### Ohne Netz verschwindet nichts mehr wortlos
+
+Der Empfehlungslauf faengt einen gescheiterten Abruf ab und gibt eine leere
+Liste zurueck. Das ist richtig - ein Ausfall bei einem Anbieter soll nicht die
+ganze Reihe zum Fehler machen. Die Oberflaeche las "leer und fertig geholt" als
+"dazu gibt es nichts" und liess die Reihe ganz weg; auf einem Telefon ohne
+Empfang verschwand damit die halbe Startseite kommentarlos.
+
+Jetzt unterscheidet `Netz.vorhanden()` die beiden Faelle. Dazu ein
+Zwischenspeicher, der die fuenf Vorschlagsreihen und die Kalenderwoche als
+Ergebnis auf die Platte legt und beim Start *vor* dem Lauf einliest: ein Start
+ohne Netz zeigt den letzten bekannten Stand samt seinem Alter ("Ohne Netz -
+Stand vor 2 Minuten") und einen Knopf. Ist gar nichts da, steht ein erklaerter
+Offline-Zustand mit "Erneut versuchen" - einmal fuer alle Vorschlagsreihen, und
+die oertlichen Bereiche bleiben unangetastet.
+
+Ein alter Stand bekommt eine kuerzere Frist als ein frischer (eine Minute statt
+einer Viertelstunde), damit die Rueckkehr des Netzes schnell auffaellt. Und
+"Ohne Netz" steht nur da, wenn wirklich keine Leitung da ist; sonst heisst es
+"Gerade nicht erreichbar" - eine Zeile behauptet nichts ueber einen Zustand, den
+sie nicht kennt.
+
+### Der Pruefstand
+
+Die Fortschrittsregel haengt an Schwellen, die in echter Zeit gemessen werden:
+2:30 Wiedergabe, 90 Prozent, 60 Sekunden fuer den Rueckweg. `messung.js`
+deckelt den Zuwachs bewusst auf die wirklich verstrichene Zeit - ein schnell
+durchgezogenes Video zaehlt nicht. Eine Pruefung aller Faelle dauerte damit
+Stunden.
+
+Abgekuerzt wird deshalb nicht die Regel, sondern das Video. Der Pruefstand
+liefert genau das, was das Messskript aus der Seite gelesen haette, und
+uebergibt es `Messung.verbuchen`; ab dieser Zeile ist alles unveraendert die
+Strecke einer echten Wiedergabe. Er liegt in `app/src/debug/java` - der
+Release-Bau uebersetzt einen leeren Rumpf ohne Empfaenger, ohne Aktion und ohne
+einen einzigen Zugriff auf die Ablage. Es fehlt dort also nicht der Schalter,
+sondern der Code.
+
+### Kleinigkeiten
+
+- Beim Verlassen einer Anbieterseite wird die offene Sitzung geschlossen; ohne
+  das bliebe die letzte Folge eines Abends ungezaehlt.
+- Ein vorgeladener Stand loeste beim Einbau eine Abrufschleife aus - sechs
+  Abrufe derselben Reihe in drei Sekunden. Jetzt entscheidet der Zeitpunkt und
+  nicht die Herkunft, und er wird auch dann gesetzt, wenn nichts hereinkam.
+- Der Pruefstand haengt sich an die App, die ihn eingerichtet hat. Beim
+  Neuaufbau leben zwei Ansichten kurz nebeneinander, und das `onDestroy` der
+  alten meldete den Empfaenger der neuen ab.
+
+### Geprueft
+
+Neu: 33 Unit-Pruefungen und 17 Pruefungen auf dem Geraet
+(`FortschrittGeraeteTest`, `StartseiteGeraeteTest`), dazu drei Faelle mehr im
+`rueckblicktest` (78/78). Alle Suiten des Rechners bestanden, Lint und Typecheck
+sauber, `assembleDebug` und `lintDebug` erfolgreich.
+
+Gefahren auf einem eigens angelegten Emulator (AVD `elfix_pruef_api35`, Pixel 6,
+Android 15 / API 35, 1080x2400 bei 420 dpi): alle elf Wiedergabefaelle - vor
+2:30, ueber 2:30, 75 Prozent, Folgenwechsel, Sprung nach vorn, letzte
+Serienfolge, Film, Watchlist zu Mediathek, App-Neustart, Prozessabbruch und die
+Frage nach Doppelten. Dieselbe Abfolge wurde anschliessend Schritt fuer Schritt
+durch `fortschritt.medienStandVerbuchen` in Node nachgefahren; jeder Wert stimmt
+ueberein.
+
+Dazu Hoch- und Querformat, 720x1280 und 1440x3120, Prozessneustart nach
+Rotation, Offline-Start mit und ohne Cache, langsames Netz (EDGE mit
+UMTS-Verzoegerung), fehlende Bilder, schnelles Scrollen, mehrfaches Antippen,
+Watchlist und Weiterschauen, Zuruecknavigation, Hintergrund und Fortsetzen. Der
+Speicher steigt beim Scrollen nicht (233 MB vor, 161 MB nach vierzig Wischen),
+und nach dem Start steht je Reihe genau ein Abruf - auch nach zwanzig
+Bildschirmwechseln.
+
+Nicht uebernommen und einzeln begruendet: die Kalenderfilter nach Art und
+Fassung, die Genre-Aufteilung im Rueckblick (sie kommt aus dem Geschmacks-Cache
+des Empfehlungslaufs), `providerCardMeta`, `librarySort` und das
+Erscheinungsbild des Rechners.
+
 ## 1.41.0 — 25. August 2026
 
 Die Startseite des Telefons zeigt jetzt dasselbe wie die des Rechners. Auf dem

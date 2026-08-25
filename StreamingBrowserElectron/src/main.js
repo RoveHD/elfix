@@ -16,11 +16,15 @@ const {
   extractPagination,
   seitenAdresse,
   seitenStichprobe,
-  extractReleaseDate,
-  extractCalendarEntries,
-  extractCalendarJson
+  extractReleaseDate
 } = require("./discover");
 const taste = require("./taste");
+// Der Anbieterkalender. Eigenes Modul, damit die Android-App dieselbe Runde
+// faehrt statt einer zweiten - die Parser dazu stehen in discover.js.
+const kalender = require("./kalender");
+// Der Schritt von der Messung zur Sitzung. Eigenes Modul, damit das Telefon
+// dieselbe Wiedergabezeit zaehlt und nicht gar keine.
+const sitzungslauf = require("./sitzungslauf");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
 // Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
@@ -5070,85 +5074,22 @@ async function searchProviderAjax(provider, query, searchUrl) {
 
 // Empfehlungen: von jeder aktiven Anbieterseite ein paar Titel von der
 // Startseite lesen und abwechselnd mischen, damit jede Seite vorkommt.
-// Der Kalender der Anbieter - zwei Bauarten.
+// Der Kalender der Anbieter.
 //
-// AniWorld liefert fertiges HTML unter /animekalender. S.to laedt seinen
-// Kalender per JavaScript nach; die Daten liegen unter /api/calendar und sind
-// nach Datum geordnet. Probiert wird deshalb erst die Schnittstelle, dann die
-// Seite - was zuerst etwas hergibt, gewinnt.
-const KALENDER_QUELLEN = [
-  { pfad: "api/calendar", art: "json" },
-  { pfad: "animekalender", art: "html" },
-  { pfad: "serienkalender", art: "html" },
-  { pfad: "kalender", art: "html" }
-];
-const KALENDER_CACHE_MS = 30 * 60 * 1000;
-let kalenderCache = null;
+// Die Rechnung steht in `kalender.js` - zusammen mit den beiden Parsern in
+// `discover.js` ist das derselbe Kalender, den auch die Android-App zeigt.
+// Hier bleibt nur die eine Bindung an Electron: der Abruf einer Anbieterseite
+// samt ihrer Kekse.
+const kalenderLauf = kalender.erstellen({
+  holen: (adresse) => fetchProviderHtml(adresse),
+  anbieter: () => enabledProviders(),
+  protokoll: (zeile) => console.log(`[ELFIX KALENDER] ${zeile}`)
+});
 
 async function ladeKalender(refresh) {
-  if (!refresh && kalenderCache && Date.now() - kalenderCache.at < KALENDER_CACHE_MS) {
-    return kalenderCache.daten;
-  }
-
-  const anbieter = enabledProviders();
-  const listen = await Promise.all(anbieter.map(async (provider) => {
-    const basis = providerModel.normalizeUrl(provider.startUrl || "");
-    if (!basis) return [];
-    for (const quelle of KALENDER_QUELLEN) {
-      try {
-        const adresse = new URL(quelle.pfad, basis).href;
-        // fetchProviderHtml liefert { html, url } - und null, wenn die Seite
-        // nicht antwortet. Beides muss hier ausgepackt werden, sonst sieht der
-        // Parser "[object Object]" und findet nie etwas.
-        const antwort = await fetchProviderHtml(adresse);
-        if (!antwort?.html) continue;
-        const eintraege = quelle.art === "json"
-          ? extractCalendarJson(antwort.html)
-          : extractCalendarEntries(antwort.html);
-        if (!eintraege.length) continue;
-        console.log(`[ELFIX KALENDER] ${provider.name}: ${eintraege.length} Eintraege aus ${quelle.pfad}`);
-        return eintraege.map((eintrag) => ({
-          ...eintrag,
-          url: absoluteHttpUrl(eintrag.url, basis),
-          // Die Cover stehen relativ zur Anbieterseite.
-          image: eintrag.image ? absoluteHttpUrl(eintrag.image, basis) : "",
-          providerId: provider.id,
-          providerName: provider.name || ""
-        }));
-      } catch {
-        // Diese Quelle kennt der Anbieter nicht - die naechste ist dran.
-      }
-    }
-    return [];
-  }));
-
-  // Nur die kommende Woche. S.to liefert ueber die Schnittstelle knapp drei
-  // Wochen am Stueck - dann stuenden unter "Montag" gleich drei verschiedene
-  // Montage untereinander.
-  const heute = new Date();
-  heute.setHours(0, 0, 0, 0);
-  const grenze = new Date(heute);
-  grenze.setDate(grenze.getDate() + 7);
-  const inDerWoche = (eintrag) => {
-    if (!eintrag.date) return true;
-    const wann = new Date(`${eintrag.date}T00:00:00`);
-    return wann >= heute && wann < grenze;
-  };
-
-  const eintraege = listen.flat().filter(inDerWoche);
-  // Welches Datum gehoert zu welchem Wochentag? Kommt aus den Eintraegen
-  // selbst, damit die Reiter dasselbe zeigen wie die Karten darunter.
-  const datumJeTag = {};
-  for (const eintrag of eintraege) {
-    if (eintrag.date && !datumJeTag[eintrag.day]) datumJeTag[eintrag.day] = eintrag.date;
-  }
-
-  const daten = { days: WOCHENTAGE_LISTE, dates: datumJeTag, entries: eintraege };
-  kalenderCache = { at: Date.now(), daten };
-  return daten;
+  return kalenderLauf.laden(Boolean(refresh));
 }
 
-const WOCHENTAGE_LISTE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 
 // --- Watchparty --------------------------------------------------------------
 // Gemeinsam an einer Serie dranbleiben. Nichts wird von selbst geteilt: jemand
@@ -7751,61 +7692,30 @@ function sitzungVerwerfen(id) {
   }
 }
 
-// Ob diese Folge schon einmal zu Ende gesehen wurde. Genau das macht ein
-// erneutes Anschauen zur Wiederholung - und eine Wiederholung zaehlt nicht als
-// weitere Folge, sonst stuenden am Ende mehr Folgen da, als es gibt.
-function istWiederholung(entry, url) {
-  if (!entry) return false;
-  const identity = episodeIdentity(url);
-  if (identity?.episode) {
-    // Derselbe Schluessel, den appendCompletedEpisode vergibt - sonst faende
-    // man den vorhandenen Abschluss nie wieder.
-    const schluessel = `${identity.key}:s${identity.season}:e${identity.episode}`;
-    return (entry.completedEpisodes || []).some((eintrag) => eintrag.key === schluessel);
-  }
-  return Boolean(entry.completed);
-}
-
+// Der Schritt von der Messung zur Sitzung steht in sitzungslauf.js - dieselbe
+// Entscheidung, die die Android-App trifft. Hier bleibt nur, was Electron
+// angeht: welche Sitzung offen ist und wann geschrieben wird.
 function sitzungMelden(provider, url, entry, progress) {
   if (!provider || !entry) return;
-  const identity = episodeIdentity(url);
   const jetzt = Date.now();
   const vorher = offeneSitzungen.get(provider.id) || null;
 
-  const ergebnis = statistik.meldungEinarbeiten(vorher, {
-    favoriteId: entry.id,
-    url,
-    titel: entry.title || "",
-    providerId: provider.id,
-    providerName: provider.name || "",
-    type: entry.type || "",
-    season: identity?.season || entry.season || 0,
-    episode: identity?.episode || entry.episode || 0,
-    sekunden: Number(progress?.playedSeconds) || 0,
-    position: Number(progress?.currentTime) || 0,
-    laufzeit: Number(progress?.duration) || 0,
-    abgeschlossen: Boolean(progress?.ended)
-      || mediaProgressPercent(progress?.currentTime, progress?.duration) >= COMPLETED_PROGRESS_PERCENT,
-    // Zum Zeitpunkt des Beginns gefragt, nicht am Ende: waehrend dieser Sitzung
-    // wird die Folge ja gerade abgeschlossen, und danach saehe jede
-    // Erstansicht wie eine Wiederholung aus.
-    wiederholung: vorher && vorher.url === url ? vorher.wiederholung : istWiederholung(entry, url)
-  }, jetzt);
+  const ergebnis = sitzungslauf.schritt(vorher, { provider, url, entry, fortschritt: progress || {} }, jetzt);
 
   if (ergebnis.geschlossen) sitzungBeenden(ergebnis.geschlossen);
   offeneSitzungen.set(provider.id, ergebnis.offen);
 
   if (ergebnis.offen) {
-    const stand = statistik.sitzungSchliessen(ergebnis.offen);
-    if (statistik.sitzungLohnt(stand)) sitzungAblegen(stand);
+    if (ergebnis.ablegen) sitzungAblegen(ergebnis.ablegen);
     if (jetzt - sitzungenZuletztGespeichert >= SITZUNG_SICHERN_MS) saveSitzungen();
   }
 }
 
 function sitzungBeenden(stand) {
   if (!stand) return;
-  if (statistik.sitzungLohnt(stand)) sitzungAblegen(stand);
-  else sitzungVerwerfen(stand.id);
+  const urteil = sitzungslauf.beenden(stand);
+  if (urteil.ablegen) sitzungAblegen(urteil.ablegen);
+  else if (urteil.verwerfen) sitzungVerwerfen(urteil.verwerfen);
   saveSitzungen();
 }
 
@@ -7817,7 +7727,7 @@ function sitzungenSchliessen(providerId) {
   for (const id of betroffen) {
     const offen = offeneSitzungen.get(id);
     offeneSitzungen.delete(id);
-    if (offen) sitzungBeenden(statistik.sitzungSchliessen(offen));
+    if (offen) sitzungBeenden(offen);
   }
 }
 
