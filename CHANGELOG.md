@@ -3,6 +3,109 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.47.0 — 26. August 2026
+
+Zwei Sachen in einer Version, und beide fangen an derselben Stelle an: etwas
+war gebaut, hiess ueberall gleich und meinte trotzdem nicht dasselbe.
+
+### Android und der Rechner schauen endlich dieselbe Runde
+
+Auf dem Telefon tauchte niemand in der Runde des Rechners auf, eine Pause vom
+Handy kam drueben nie an, im Player fehlte die Teilnehmerleiste, und ein Tipp
+auf Weiterschauen oeffnete ein Vollbild, in dem nichts lief. Vier Meldungen, im
+Kern zwei Missverstaendnisse.
+
+**Der Titelschluessel lief auseinander.** Der Rechner fuehrt einen Titel als
+`serie:bleach`, gebildet aus Art und Titel; Android bildete ihn aus der
+Serienadresse. Dieselbe Runde, derselbe Anime, zwei Schluessel - und alles, was
+daran haengt, fand einander nie: die Mitgliedschaft im Titel, die Standmeldung,
+jeder Steuerbefehl, die Hostwahl, die Leiste. Android bildet ihn jetzt nicht
+mehr selbst, sondern fragt den Kern, und der benutzt dieselbe Regel wie der
+Rechner. Den Rueckweg vom Raumschluessel in die eigene Ablage uebersetzt eine
+zweite Auskunft: die Ablage kennt Adressen, der Raum kennt Titel.
+
+**Und die Anwesenheit hing am laufenden Video.** Alles, was das Relay darueber
+wusste, kam vom Horcher im Player - und der braucht Medien-Ereignisse eines
+`<video>` mit Laufzeit. Bei VOE gibt es die erst nach dem Klick auf die
+Ueberlagerung des Hosters. Kein Video, keine Meldung; keine Meldung, keine
+Sitzung; keine Sitzung, kein Host; kein Host, keine Antwort auf den Abgleich;
+keine Antwort, kein Start - und damit nie ein Video. Ein geschlossener Kreis,
+und er stand auf dem Telefon als vier Versuche ohne Antwort und einem stehenden
+Bild. Jetzt meldet sich ein Geraet beim Einklinken selbst an, und wer die Runde
+fuehrt, wartet nicht auf einen Hostzustand - er ist einer.
+
+### Weiterschauen schaut wirklich weiter
+
+Die Kette endete bisher im Vollbild, und zwar mit Absicht: ein blinder Tipp auf
+eine fremde Seite kann auch pausieren. Fuer eine Fernbedienung war das
+Zurueckhaltung, fuer einen Tipp auf Weiterschauen war es der gemeldete Fehler -
+Vollbild da, Folge steht.
+
+Der Ablauf, der einen VOE-Player wirklich startet, steht seit 1.46.0 im
+Folgen-Autostart und hing nur an einer Runde: Ueberlagerung klicken, auf die
+Quelle warten, Stelle setzen, starten, nachsehen, ob die Stelle weiterlaeuft.
+Er gilt jetzt auch ohne Runde - mit dem gespeicherten Stand statt dem des
+Hosts. Das Vollbild kommt erst, wenn der Player gemeldet hat, dass es wirklich
+laeuft; startet er nicht, gibt es eine Ansage statt einer schwarzen Flaeche.
+Mehrfaches schnelles Tippen auf denselben Eintrag ist ein Tipp.
+
+### Die Teilnehmerleiste im Player
+
+Am Rechner steht waehrend des Schauens oben, wer mitschaut. Auf Android gab es
+das nur auf der Watchparty-Seite - also genau dort, wo man beim Schauen nicht
+ist. Jetzt liegt der Streifen im Vollbild ueber dem Video: Raum, Host,
+Mitschauer, Stand, und aufgeklappt die Aktionen.
+
+Er kommt und geht mit den Bedienelementen des Players, und deren Zustand wird
+gemessen und nicht geraten. JW Player, den VOE fuehrt, laesst `.jw-controls`
+deckend stehen und blendet `.jw-controlbar` aus - wer den Rahmen misst, meldet
+immer "sichtbar" und der Streifen verschwindet nie. Findet sich keine Leiste,
+zaehlt die Regung.
+
+### Drei Regeln, die einen Bestand gekostet haben
+
+In der Nacht davor verschwanden 67 Eintraege in derselben Sekunde - Mediathek,
+Weiterschauen, Verlauf. Nicht durch einen Absturz: durch Regeln, die einzeln
+vertretbar aussahen.
+
+Der Watchparty-Aufraeumer loeschte den *ganzen* Eintrag, sobald ein Favorit
+einen Raum trug, dem dieses Geraet gerade nicht beigetreten war. "Ich bin in
+dieser Runde nicht mehr dabei" heisst aber nicht, dass es den Titel nie gab -
+was jemand gesehen hat, gehoert ihm und nicht dem Raum. Es faellt jetzt nur die
+Bindung.
+
+Der Geraeteabgleich uebergeht raumgebundene Titel, weil ihr Stand der Runde
+gehoert - und leitete zugleich aus dem, was in seiner Liste *fehlt*, ab, was
+hier geloescht wurde. Zurueckgehalten sah damit aus wie weggeworfen, und der
+Grabstein ging an alle Geraete. Beides sind jetzt zwei verschiedene Auskuenfte.
+
+Die letzte Staffel einer Serie wurde aus allen `/staffel-N`-Links der Seite
+gebildet - auch aus denen fremder Serien in der Randspalte. "Die Legende von
+Korra" hat vier Buecher und stand auf sechzehn; danach zaehlte die Regel nach
+der letzten Folge brav auf Staffel 5 Folge 1 weiter, die Serie liess sich nie
+abschliessen, und in Weiterschauen stand eine Folge, die es nicht gibt. Es
+zaehlen jetzt nur die Staffeln der eigenen Serie.
+
+Und "die naechste Folge steht an" faellt erst weg, wenn an ihr wirklich etwas
+gelaufen ist. Vorher genuegte das blosse Oeffnen: die Folge hatte keinen
+Fortschritt, die vorige war abgehakt, und der Titel war aus Weiterschauen
+verschwunden - genau in dem Augenblick, in dem man weiterschauen wollte.
+
+### Geprueft
+
+Am Telefon gegen den Rechner: Weiterschauen startet bei 5:13 und 10:12
+wirklich, das Handy erscheint drueben als "Handy (Host) @391s laeuft", Pause in
+beide Richtungen, Sprung, Folgenwechsel, App in den Hintergrund und zurueck,
+Player verlassen, dreifaches Tippen ergibt einen Start. Dazu 30 Pruefungen an
+einem echten Relay, in denen der Titelschluessel nirgends vorgegeben wird -
+jede Seite bildet ihn so, wie sie es im Betrieb tut - und 23 Pruefungen, die
+festhalten, dass ein Bestand eine Runde ueberlebt, die endet.
+
+Nicht geprueft: Android TV, mangels Geraet.
+
+Bekannt und nicht behoben: Android kann einen Titel weiterhin nicht selbst in
+einen Raum einstellen - der Schluessel dafuer stimmt jetzt, der Knopf fehlt.
+
 ## 1.46.0 — 25. August 2026
 
 Vier Fehler, drei davon am selben Punkt: gebaut war alles, aber der letzte
