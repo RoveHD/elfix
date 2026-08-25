@@ -3,6 +3,157 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.45.0 — 25. August 2026
+
+Zwei Dinge, die zusammengehoeren und beide dasselbe Muster hatten: gebaut war
+alles, nur die Leitung dorthin fehlte. Der Rueckblick zaehlte auf jedem Geraet
+fuer sich, und die Watchparty lief auf Android, ohne dass man sie sah oder sie
+mitkam.
+
+### Der Rueckblick zaehlt endlich ueber alle Geraete
+
+PC drei Stunden, Handy zwei, Fernseher vier - und jedes Geraet zeigte seine
+eigene Zahl. Der Geraeteabgleich war dafuer laengst eingerichtet: `sitzungen.json`
+traegt auf beiden Seiten dasselbe Format, `statistik.vereinen` legt zwei Listen
+zusammen, und das Relay reicht Sitzungen wie Staende weiter.
+
+Nur reichte Android die Sitzungen genau einmal in die Bruecke - beim Start der
+App. Alles, was an dem Abend gemessen wurde, kannte der Abgleich bis zum
+naechsten Start nicht. Und was von einem anderen Geraet hereinkam, ging direkt
+in die Datei, waehrend das laufende `Statistik` seine alte Liste im Speicher
+behielt: ein Rueckblick, den man danach oeffnete, rechnete mit den Zahlen von
+vorhin, und beim naechsten Sichern schrieb `Statistik` seinen alten Stand
+darueber. Zwei Schreiber auf einer Datei.
+
+Jetzt meldet jedes Sichern der Statistik den neuen Stand, gebuendelt mit
+denselben drei Sekunden wie am Rechner. Die Liste kommt aus dem
+`Statistik`-Objekt und nicht aus der Datei - dieselbe Ueberlegung wie beim
+Bestand: wer daneben die Datei liest, liest im ungluecklichen Augenblick den
+Stand von vorhin. Die laufende Sitzung reist als "offen" gekennzeichnet mit und
+bleibt beim Abgleich draussen; sie waechst noch, und was von ihr hinausginge,
+stuende auf dem anderen Geraet fuer immer als abgeschlossener Satz da. Umgekehrt
+reicht die Bruecke nur noch den Zuwachs nach Java statt der ganzen Liste - eine
+abgeschlossene Sitzung ist ein Ereignis, und Ereignisse addieren sich, waehrend
+bei einer ganzen Liste die Reihenfolge zweier Nachrichten darueber entschied,
+ob eine gerade gemessene Sitzung ueberlebt.
+
+Entdoppelt wird ueber die Kennung, an drei Stellen mit derselben Regel: der
+Spiegel schickt jede Sitzung genau einmal hinaus, die Bruecke fragt
+`statistik.vereinen`, und `Sitzungen.vereinen` in Java tut dasselbe fuer den
+Weg hinein. Ueberschrieben wird nie - zwei Geraete koennen denselben Satz nicht
+verschieden wissen. Aus 3 + 2 + 4 werden neun Stunden, nicht achtzehn und nicht
+drei. Ein offener Rueckblick und ein offenes Wrapped rechnen sofort neu, ohne
+Neustart.
+
+### Die Watchparty kommt auf Android wirklich mit
+
+Wechselte die Runde auf Folge 5, oeffnete Android zwar die Seite - aber ohne
+Autostart. Der Gast sass vor einer Folgenuebersicht ohne Player, waehrend die
+anderen weiterschauten.
+
+Dazu ein zweiter Fehler an derselben Stelle: der Stand der Runde wurde
+anderthalb Sekunden nach dem Seitenende angefordert. Auf dem Telefon gibt es
+dann noch kein Videoelement - der Hoster wird erst danach angeklickt, und das
+dauert Sekunden. Die Antwort traf auf ein Dokument ohne Video, das Skript
+meldete "kein-video", und der Gast startete bei 0:00, waehrend die anderen bei
+0:12 standen.
+
+Der Folgenwechsel macht den Autostart jetzt scharf, und gefragt wird erst, wenn
+sich wirklich ein Rahmen mit Video meldet - einmal je Raum, Titel und Folge, wie
+`watchpartyAngeklinkt` am Rechner. Die Zielzeit rechnet danach das Player-Skript
+selbst aus, im Augenblick der Anwendung: die Ladezeit steht damit in der
+Rechnung. Play bei 12,0 Sekunden und fuenf Sekunden Laden ergeben 17,0. Haelt
+der Host waehrenddessen an, wird nicht hochgerechnet und der Gast kommt pausiert
+und auf der Stelle des Hosts an. Ohne gemessenen Uhrversatz wird gar nicht
+hochgerechnet, und nach oben ist es auf dreissig Sekunden gedeckelt.
+
+Ebenso verlorengegangen war der Watchparty-Kontext beim Hosterwechsel.
+`Mitschauen` fragte den WebView nach seiner Adresse; nach "Video oeffnen" steht
+dort vidmoly.biz, und damit gehoerte die Seite zu keiner Runde mehr - kein Raum,
+kein Schluessel, keine Steuerung. Es zaehlt jetzt dieselbe Folgenadresse wie bei
+der Messung.
+
+### Der Live-Streifen ueber dem Bild
+
+Am Rechner steht waehrend des Schauens oben, dass diese Folge live mitlaeuft:
+Raum, wer fuehrt, wer angehalten hat, ob die Verbindung steht - und daneben je
+Geraet ein Zeichen, ein Name und eine Uhr. Auf Android gab es davon nichts. Der
+einzige Ort mit einer Auskunft ueber die Runde war die Watchparty-Seite, also
+genau die Seite, auf der man beim Schauen nicht ist.
+
+Jetzt steht dort ein Streifen: zusammengeklappt eine Zeile, auf Tippen oder OK
+klappt er Teilnehmer und Aktionen aus und faellt nach kurzer Ruhe von selbst
+wieder zusammen. Im Vollbild zieht er in den Vollbild-Rahmen um - deckend, oben,
+schmal. Aufgefrischt wird im Sekundentakt, aber ohne Neuaufbau: die Textfelder
+bleiben stehen und bekommen neue Texte, und die Teilnehmerzeilen werden nur neu
+gebaut, wenn sich die Besetzung wirklich aendert. Auf einem Fernseher ist das
+der Unterschied zwischen "der Fokus steht" und "der Fokus faengt jede Sekunde
+von vorn an". Mit der Fernbedienung fuehrt D-Pad hoch aus dem Vollbild in den
+Streifen, OK klappt auf, Zurueck schliesst die Details und nicht die Folge.
+
+`Livestand.java` rechnet dabei dasselbe wie `renderWatchpartyStand` und
+`watchpartyHostText` am Rechner, mit der Frischegrenze aus `Mitschaustand`: wer
+eine halbe Minute nichts gemeldet hat, verschwindet, statt fuer immer als
+"schaut gerade" dazustehen. Genau daran krankte auch die Karte auf der
+Watchparty-Seite - dort stand bisher jedes Mitglied, das je gemeldet hatte, und
+die Uhr stimmte eine Sekunde nach dem Empfang schon nicht mehr.
+
+### Abgleichen, weitergeben, privat schauen
+
+Die drei Aktionen des Rechners gab es auf Android nirgends. "Mit Host
+abgleichen" laesst alle anhalten, auf die Stelle des Hosts springen und startet
+sie gemeinsam - im Streifen und zusaetzlich im Menue jeder Karte, damit man
+abgleichen kann, ohne die Folge erst zu oeffnen. Wer bei der falschen Folge
+steht, wechselt dabei zuerst dorthin: ein `syncprepare` wird nicht mehr als
+"andere Folge" abgewiesen, dieselbe Reihenfolge wie `prepareWatchpartySync` am
+Rechner. Der Takt laesst sich weitergeben; das Relay prueft nach, ob der
+Empfaenger wirklich bei derselben Folge sitzt.
+
+Und "Live verlassen" beendet ausdruecklich nur die Teilnahme an dieser Folge.
+Der Titel bleibt im Raum, die Mitgliedschaft bleibt bestehen, der gemessene
+Fortschritt bleibt stehen und zaehlt wieder allein fuer dieses Geraet.
+"Live beitreten" holt einen zurueck. Der Merker haengt am Raum, damit man in
+einer Runde live sein kann und in der anderen nicht - auch beim selben Anime.
+
+Nebenbei zwei Stellen, die noch auf "es gibt kein Live-Mitschauen auf Android"
+standen: die Fortschrittsregel weiss jetzt, wann die Runde die Folge vorgibt,
+und Intromarken werden waehrend einer laufenden Runde nicht mehr gelernt - ein
+Sprung, den die Runde ausgeloest hat, ist keine Gewohnheit dessen, der hier
+sitzt. Und `Watchparty.java` legt `pausedBy` und `lastAction` jetzt nach Titel
+und Raum ab statt nur die letzte Meldung: in einem Raum mit drei Serien galt
+"Angehalten von Elias" sonst allen dreien.
+
+### Geprueft
+
+2341 Einzelpruefungen in 64 Suiten, dazu Typecheck und Lint. Neu sind zwei
+Suiten an einem echt laufenden Relay:
+
+`sitzungentest` 20/20 - drei Geraete nebeneinander, davon zwei echte
+Android-Bruecken. Die Zahlen aus der Aufgabe auf die Sekunde: 10800 + 7200 +
+14400 = 32400, also neun Stunden, auf allen drei Geraeten. Vier weitere
+Abgleiche bringen keine einzige Uebernahme mehr. Die laufende Sitzung bleibt
+lokal und geht erst abgeschlossen hinaus, mit ihrer wirklichen Dauer.
+
+`watchpartymatrixtest` 52/52 - zwei Android-Geraete gegeneinander, ohne Rechner
+dazwischen, der etwas ausgleichen koennte: Einstieg nach einem Folgenwechsel,
+Pause waehrend des Ladens, Drift bei zwei und bei sechseinhalb Sekunden,
+Hostwechsel, Wiederanschluss, drei Titel in einem Raum.
+
+Dazu 119 JUnit-Faelle - neu die Zusammenfuehrung der Sitzungen und die
+Rechnung des Live-Streifens. `android/jvmprobe/lauf.sh` laesst sie ohne
+Android-SDK laufen und uebersetzt dabei beide Bau-Varianten der App vollstaendig
+mit; ein Tippfehler in `MainActivity` faellt damit vor dem Release auf und nicht
+darin.
+
+Ein Geraet stand wieder nicht zur Verfuegung, und diesmal war auch kein
+Android-SDK erreichbar. Der Live-Streifen ist als gezeichnete Ansicht nicht
+belegt: nicht auf einem schmalen Display, nicht im Quermodus, nicht im
+Vollbild, und der D-Pad-Durchlauf auf einem Fernseher ebenso wenig. Die
+Autostart-Kette auf einer echten Anbieterseite ist ausdruecklich "best effort" -
+diese Seiten verbrauchen den ersten Klick oft auf ein Popunder. Die
+Zielzeit-Rechnung ist am echten Relay gemessen, aber gegen ein nachgebautes
+Video und nicht gegen einen Hoster-Player.
+
 ## 1.44.0 — 25. August 2026
 
 Die Watchparty auf Android hatte alles ausser einem Weg hinein: man sah, dass
