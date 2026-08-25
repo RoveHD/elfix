@@ -3,6 +3,132 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.43.0 — 25. August 2026
+
+Zwei Dinge, die es auf dem Fernseher gar nicht gab: eine Startseite, die dem
+Rechner entspricht, und eine Watchparty, die wirklich mitschaut. Dazu die
+Werbung, die auf dem Foto oben rechts stand.
+
+### Werbung auf den Anbieterseiten
+
+Die beiden Karten auf AniWorld - "Wir sind fuer dich da" und "The file is ready
+to download" - kamen durch drei Luecken zugleich. `isPageCriticalRequest` laesst
+Bilder, Stilblaetter und Schriften ungeprueft durch, damit keine Seite am Filter
+zerbricht; genau daraus bestehen diese Karten. Der `Werbefilter` mit den vollen
+AdGuard-Regeln laeuft laut `geraetTraegt` erst ab drei Gigabyte und damit auf
+keinem Fernseh-Stick. Und die `Kosmetik` fragt nur, was den Player zudeckt, und
+fragt es erst nach dem Seitenende - eine Karte in der Ecke faellt gar nicht in
+ihre Frage, und selbst wenn, haette sie vorher aufgeblitzt.
+
+`Fernsehwerbung.java` schliesst alle drei. Ein Stilblatt geht ueber
+`addDocumentStartJavaScript` in jedes Dokument, bevor dessen eigene Skripte
+laufen - was benannt ist, ist nie sichtbar. Was nicht benannt ist, entscheidet
+eine Punktevergabe mit der Schwelle vier, und keine einzelne Beobachtung gibt
+vier: "Banner", "Popup" oder "Overlay" allein reichen konstruktiv nie. Ein
+begrenzter MutationObserver holt das Nachgereichte, mit hartem Deckel bei 4000
+geprueften Elementen je Dokument.
+
+Geschuetzt sind Video, Formular, Anmeldung, Captcha und jeder Rahmen mit
+unbekanntem fremdem Wirt - dort laeuft der Player, und die Hoster liefern ihn
+von wechselnden Wegwerf-Adressen. Iframes werden nie pauschal entfernt.
+Nirgends steht eine Bildschirmstelle: eine unsichtbare Klickflaeche wird daran
+erkannt, dass sie durchsichtig und inhaltsleer ist, nicht daran, wo sie liegt.
+Das Skript geht ausdruecklich nicht in den Rahmen des Hosters - VOE zaehlt mit,
+was auf seiner Seite fehlt.
+
+Auf der Anfrageseite prueft `istKernWerbeAnfrage` die kuratierten Kernlisten
+jetzt *vor* der Ausnahme fuer Seitenbestandteile. Nur auf dem Fernseher, und
+nicht im Hosterrahmen.
+
+### Die Sperrmeldungen sind weg
+
+"Popup blockiert", "Weiterleitung blockiert", "Externer Link blockiert" und
+"Provider-Wechsel blockiert" - alle vier. Sie waren als Erklaerung gedacht und
+kamen als Stoerung an: eine Werbekette versucht es in Schueben, und auf einem
+Fernseher stand die Meldung quer ueber dem laufenden Bild. Gesperrt wird
+unveraendert weiter; was geschehen ist, steht im Debug-Bau in der Spur.
+
+### Die Startseite des Fernsehers
+
+Sie zeigte drei Reihen zu je fuenf Kacheln. Jetzt zeigt sie, was der Rechner
+zeigt: Titelhintergrund mit Bild, Folge, Fortschritt und zwei Aktionen, Wechsel
+durch die zuletzt angefangenen Titel, Weiterschauen, Watchlist, Mediathek, Neue
+Folgen, "Neu bei deinen Anbietern", "Empfohlen fuer dich", Anime, Serien und
+Filme je einzeln mit ihren ausformulierten Gruenden, "Mehr anzeigen" und die
+Entdeckungsseiten mit Nachladen. Gerechnet wird nichts davon dort: es sind
+dieselben Klassen wie auf Telefon und Rechner.
+
+Bedient wird sie mit der Fernbedienung: jedes Ziel traegt seinen Fokuszustand,
+jede Reihe legt nach, bevor der Fokus ihr Ende erreicht, und der Platz wird je
+Seite gemerkt. Der Titelhintergrund haelt an, sobald jemand in ihm navigiert.
+In der Anbieteransicht erreicht das Steuerkreuz jetzt auch Sprachwahl und
+Hosterliste - auf AniWorld sind das `<img>`- und `<li>`-Elemente, die keine
+Auswahl nach Links und Knoepfen findet.
+
+### Die Watchparty schaut auf Android wirklich mit
+
+Bis hierher war sie auf Telefon und Fernseher ein Fortschrittsabgleich:
+derselbe Raumcode, derselbe Weiterschauen-Stand - aber wer Pause drueckte,
+drueckte allein. Gefehlt hat dabei keine Fachlogik. Verbindung,
+Wiederanschluss, Uhrenabgleich, Raeume, Zielzeit und Driftgrenze standen von
+Anfang an in den geteilten Modulen; wer Host ist, entscheidet ohnehin das
+Relay. Gefehlt hat die Verkabelung zum Video im WebView - und ein Stueck, das
+nur der Rechner hatte.
+
+Dieses Stueck ist der Horcher am Player. Er stand in `main.js` und ist jetzt
+`watchparty-sync.beobachterScript()`: woertlich dasselbe Skript auf beiden
+Geraeten. Dazu kommt `steuerungEntscheiden()` - was mit einem eingehenden
+Befehl zu geschehen hat, entschied bisher `main.js` allein. Beide Seiten fragen
+jetzt dieselbe Funktion; `main.js` ist um ihre Kopie leichter geworden.
+
+`Mitschauen.java` entscheidet nichts: was zu tun ist, fragt es ueber die
+Bruecke im Kern, und was es in den Player einsetzt, ist das Skript, das der
+Rechner dort einsetzt. Play, Pause, Sprung, Folgenwechsel und
+Beitrittsabgleich laufen damit in beide Richtungen.
+
+Dass es einen Folgenwechsel ueberlebt, haengt an drei Dingen: der Horcher
+haengt am Dokument in der Abfangphase und nicht an einem Videoelement, er wird
+bei jeder Rahmenmeldung nachgereicht - also auch nach Hoster- und
+Sprachwechsel, nicht nur am Seitenende -, und der Zustand der alten Folge wird
+verworfen, sonst wiese die Veraltungspruefung die ersten Befehle der neuen
+Folge als Nachzuegler ab.
+
+Keine Schleife: `applyScript` meldet vor jeder Anwendung an, was der eigene
+Player gleich zurueckmelden wird, und der Horcher verschluckt genau dieses eine
+Echo. Wer waehrend eines eingehenden Play selbst Pause drueckt, kommt weiterhin
+durch. Kein Zeitgeber.
+
+Kein Host, der keiner mehr ist: beim Verlassen der Anbieterseite und beim
+Wechsel in den Hintergrund meldet sich das Geraet sofort ab. Im Hintergrund
+geht ausserdem keine Tat mehr hinaus - ein von Android angehaltener Player ist
+keine Entscheidung des Zuschauers.
+
+Die Medientasten der Fernbedienung gehen jetzt in den Rahmen des Hosters.
+Vorher liefen sie ueber `evaluateJavascript` und erreichten nur das
+Hauptdokument - bei AniWorld und s.to liegt das Video woanders, und die Taste
+tat schlicht nichts. Play und Pause sind getrennt statt Umschalter.
+
+### Der 502 im Playerkasten
+
+Ein Serverfehler im Rahmen blieb als fremde Fehlerseite stehen, weil
+`onReceivedError` nur den Hauptrahmen sieht und `onReceivedHttpError` gar nicht
+ueberschrieben war. Jetzt wird der Rahmen einmal nachgeladen und beim zweiten
+Mal durch einen eigenen Satz ersetzt - nur der Rahmen; Folgenliste, Sprachwahl
+und Hosterliste bleiben unberuehrt.
+
+### Geprueft
+
+Die neue Suite `mitschauentest` faehrt die echte Android-Bruecke gegen ein
+echtes Relay: Play, Pause, Sprung in beide Richtungen, Folgenwechsel von beiden
+Seiten, Hoster- und Sprachwechsel, Hostwechsel beim Verlassen, Beitrittsabgleich,
+Reconnect und zehn Tastendruecke, die zehn Ereignisse ergeben (31/31).
+`playertest` prueft den Horcher gegen ein nachgebautes Video samt Loop-Schutz
+und Austausch des Videoelements (32/32). Dazu 43 JUnit-Faelle fuer die
+Regellisten der Werbeentfernung und die Folgenerkennung.
+
+**Nicht geprueft:** Es stand kein Android-TV-Emulator zur Verfuegung. Kein
+Gerätetest, kein Logcat, keine Screenshots.
+
 ## 1.42.0 — 25. August 2026
 
 Die vier letzten Unterschiede zur Startseite des Rechners sind weg: Kalender,
