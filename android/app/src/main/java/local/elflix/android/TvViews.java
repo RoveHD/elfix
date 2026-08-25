@@ -8,9 +8,12 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import java.util.List;
 
 /**
  * Android TV view building blocks.
@@ -317,5 +320,609 @@ final class TvViews {
             card.addView(action, params);
         }
         return card;
+    }
+
+    /* ======================================================================
+     * Die Bausteine der Startseite.
+     *
+     * Sie stehen hier und nicht in MobileViews, obwohl beide Seiten dieselben
+     * Reihen zeigen: was sie unterscheidet, ist nichts, was sich mit einem
+     * Groessenfaktor erledigen liesse. Auf dem Telefon fuehrt ein Daumen ueber
+     * eine Flaeche und trifft, was er sieht; auf dem Fernseher springt ein
+     * Fokus von Kasten zu Kasten, und jeder Kasten muss von zwei Metern aus
+     * sagen, ob er gerade dran ist. Deshalb traegt hier jedes Ziel seinen
+     * Fokuszustand, und deshalb ist hier nichts vom Telefon uebernommen ausser
+     * dem, was wirklich dasselbe ist - der Bildkasten und der
+     * Fortschrittsbalken kommen aus MobileViews.
+     * ==================================================================== */
+
+    /** Wie breit eine Kachel in einer Reihe ist - gut fuenf davon nebeneinander. */
+    static int kachelBreiteDp(Context context) {
+        int breite = context.getResources().getConfiguration().screenWidthDp;
+        return Math.max(150, Math.min(240,
+            Math.round((breite - 2f * SCREEN_PADDING) / 5.4f)));
+    }
+
+    /**
+     * Wie hoch der Titelhintergrund sein darf.
+     *
+     * <p>Knapp die Haelfte des Bildes und nicht mehr: darunter muss die erste
+     * Reihe noch anfangen, sonst weiss niemand, dass es weitergeht. Gerechnet
+     * und nicht festgelegt - ein 720p-Panel meldet eine andere Hoehe in dp als
+     * ein 4K-Panel, und eine feste Zahl waere auf einem der beiden falsch.
+     */
+    static int heroHoeheDp(Context context) {
+        int hoehe = context.getResources().getConfiguration().screenHeightDp;
+        return Math.max(210, Math.min(330, Math.round(hoehe * 0.42f)));
+    }
+
+    /**
+     * Die Ueberschrift einer Reihe, rechts davon der Weg zu mehr.
+     *
+     * <p>Der Knopf ist ein eigenes Fokusziel und liegt <em>vor</em> der Reihe
+     * in der Reihenfolge: wer von oben herunterkommt, landet zuerst auf der
+     * Ueberschrift und geht mit rechts zu "Mehr anzeigen", mit unten in die
+     * Kacheln. Umgekehrt waere der Knopf nur ueber die Kacheln erreichbar.
+     */
+    static LinearLayout sectionHeader(Context context, String titel, String aktion,
+                                      Runnable beiAktion) {
+        LinearLayout reihe = new LinearLayout(context);
+        reihe.setOrientation(LinearLayout.HORIZONTAL);
+        reihe.setGravity(Gravity.CENTER_VERTICAL);
+        reihe.setClipChildren(false);
+        reihe.setClipToPadding(false);
+
+        TextView ueberschrift = sectionTitle(context, titel);
+        reihe.addView(ueberschrift, new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        if (aktion != null && !aktion.isEmpty() && beiAktion != null) {
+            reihe.addView(pillButton(context, aktion, beiAktion));
+        }
+        return reihe;
+    }
+
+    /** Ein flacher Knopf mit Fokusrand - fuer "Mehr anzeigen", "Erneut versuchen" und dergleichen. */
+    static TextView pillButton(Context context, String label, Runnable beiKlick) {
+        TextView knopf = new TextView(context);
+        knopf.setText(label);
+        knopf.setTextColor(Theme.TEXT_PRIMARY);
+        knopf.setTextSize(16);
+        knopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        knopf.setGravity(Gravity.CENTER);
+        knopf.setMaxLines(1);
+        knopf.setPadding(dp(context, 20), dp(context, 10), dp(context, 20), dp(context, 10));
+        applyFocus(knopf,
+            shape(context, Theme.SURFACE_ELEVATED, 24, Theme.BORDER, 1),
+            shape(context, Theme.PRIMARY_MUTED, 24, Theme.PRIMARY, 2));
+        knopf.setOnClickListener(v -> beiKlick.run());
+        return knopf;
+    }
+
+    /**
+     * Eine waagerechte Reihe.
+     *
+     * <p>Sie scrollt nicht mit dem Finger, sondern mit dem Fokus: eine
+     * ScrollView schiebt von sich aus so weit, dass ihr fokussiertes Kind ganz
+     * zu sehen ist. Das ist der Grund, warum hier {@code clipToPadding=false}
+     * und ein Rand von einer halben Kachelbreite stehen - ohne beides endete
+     * die fokussierte Kachel genau an der Kante, und der um fuenf Prozent
+     * vergroesserte Fokusrahmen waere abgeschnitten.
+     */
+    static HorizontalScrollView reihe(Context context, List<View> karten) {
+        HorizontalScrollView scroll = new HorizontalScrollView(context);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
+        scroll.setClipChildren(false);
+        // Der eigene Rand ist der Ueberstand des Fokusrahmens, nicht der
+        // Seitenrand: der steht schon an der Seite.
+        int luft = dp(context, 10);
+        scroll.setPadding(0, luft, dp(context, SCREEN_PADDING), luft);
+        LinearLayout leiste = new LinearLayout(context);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        leiste.setClipChildren(false);
+        leiste.setClipToPadding(false);
+        for (int i = 0; i < karten.size(); i += 1) {
+            View karte = karten.get(i);
+            LinearLayout.LayoutParams params = karte.getLayoutParams() instanceof LinearLayout.LayoutParams
+                ? (LinearLayout.LayoutParams) karte.getLayoutParams()
+                : new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
+            leiste.addView(karte, params);
+        }
+        scroll.addView(leiste, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return scroll;
+    }
+
+    /** Die Leiste einer Reihe - fuer das Nachlegen weiterer Kacheln ohne Neuaufbau. */
+    static LinearLayout leisteVon(HorizontalScrollView reihe) {
+        View kind = reihe == null ? null : reihe.getChildAt(0);
+        return kind instanceof LinearLayout ? (LinearLayout) kind : null;
+    }
+
+    /** Eine Kachel an eine bestehende Reihe anhaengen - ohne die Reihe neu zu bauen. */
+    static void kachelAnhaengen(HorizontalScrollView reihe, View karte) {
+        LinearLayout leiste = leisteVon(reihe);
+        if (leiste == null) return;
+        LinearLayout.LayoutParams params = karte.getLayoutParams() instanceof LinearLayout.LayoutParams
+            ? (LinearLayout.LayoutParams) karte.getLayoutParams()
+            : new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (leiste.getChildCount() > 0) params.leftMargin = dp(reihe.getContext(), ITEM_GAP);
+        leiste.addView(karte, params);
+    }
+
+    /**
+     * Eine Kachel: Poster oben, Text darunter.
+     *
+     * <p>Hochkant, weil Titelbilder Poster sind, und mit dem Fortschritt im
+     * Bild - dieselbe Anordnung wie auf dem Telefon und am Rechner, damit
+     * dieselbe Serie auf allen drei Geraeten gleich aussieht.
+     *
+     * @param fahne     ein Aufkleber oben ("Neue Folge"), leer erlaubt
+     * @param prozent   Fortschritt, 0 laesst den Balken weg
+     * @param onMenu    das lange Druecken auf der Fernbedienung
+     */
+    static View kachel(Context context, Provider provider, String titel, String unterzeile,
+                       String bildUrl, int prozent, String fahne, int breiteDp,
+                       Bilder.Sichtfenster fenster, Runnable beiKlick, View.OnClickListener onMenu) {
+        LinearLayout karte = new LinearLayout(context);
+        karte.setOrientation(LinearLayout.VERTICAL);
+        karte.setClipChildren(false);
+        karte.setClipToPadding(false);
+        int rand = dp(context, 8);
+        karte.setPadding(rand, rand, rand, dp(context, 12));
+        applyFocus(karte,
+            shape(context, Color.TRANSPARENT, CARD_RADIUS, Color.TRANSPARENT, 0),
+            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 3));
+
+        int posterHoehe = Math.round(breiteDp * 1.42f);
+        FrameLayout poster = MobileViews.poster(context, provider, titel, bildUrl, prozent,
+            breiteDp, posterHoehe, 30, 6, fenster);
+        karte.addView(poster, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(context, posterHoehe)));
+
+        if (fahne != null && !fahne.isEmpty()) {
+            TextView aufkleber = new TextView(context);
+            aufkleber.setText(fahne);
+            aufkleber.setTextColor(Color.WHITE);
+            aufkleber.setTextSize(12);
+            aufkleber.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            aufkleber.setPadding(dp(context, 8), dp(context, 3), dp(context, 8), dp(context, 3));
+            aufkleber.setBackground(shape(context, Theme.PRIMARY, 8, Color.TRANSPARENT, 0));
+            FrameLayout.LayoutParams fahnenPlatz = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            fahnenPlatz.gravity = Gravity.TOP | Gravity.START;
+            fahnenPlatz.setMargins(dp(context, 6), dp(context, 6), 0, 0);
+            poster.addView(aufkleber, fahnenPlatz);
+        }
+
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(16);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setPadding(0, dp(context, 9), 0, 0);
+        karte.addView(name);
+
+        if (unterzeile != null && !unterzeile.isEmpty()) {
+            TextView zeile = new TextView(context);
+            zeile.setText(unterzeile);
+            zeile.setTextColor(Theme.TEXT_SECONDARY);
+            zeile.setTextSize(14);
+            zeile.setMaxLines(1);
+            zeile.setEllipsize(TextUtils.TruncateAt.END);
+            zeile.setPadding(0, dp(context, 3), 0, 0);
+            karte.addView(zeile);
+        }
+
+        karte.setOnClickListener(v -> beiKlick.run());
+        if (onMenu != null) {
+            karte.setOnLongClickListener(v -> {
+                onMenu.onClick(karte);
+                return true;
+            });
+        }
+        karte.setLayoutParams(new LinearLayout.LayoutParams(
+            dp(context, breiteDp + 16), ViewGroup.LayoutParams.WRAP_CONTENT));
+        return karte;
+    }
+
+    /**
+     * Eine Vorschlagskarte - wie die Kachel, aber mit dem Grund darunter.
+     *
+     * <p>Der Grund ist der Unterschied zwischen einem Vorschlag und einer
+     * Behauptung: "Weil du Attack on Titan gesehen hast" sagt, woher er kommt.
+     * Ausformuliert wird er im Empfehlungslauf, also im geteilten Kern - hier
+     * steht er nur.
+     */
+    static View vorschlag(Context context, Provider provider, String titel, String grund,
+                          String zusatz, String bildUrl, int breiteDp, Bilder.Sichtfenster fenster,
+                          Runnable beiKlick, View.OnClickListener onMenu) {
+        LinearLayout karte = new LinearLayout(context);
+        karte.setOrientation(LinearLayout.VERTICAL);
+        karte.setClipChildren(false);
+        karte.setClipToPadding(false);
+        int rand = dp(context, 8);
+        karte.setPadding(rand, rand, rand, dp(context, 12));
+        applyFocus(karte,
+            shape(context, Color.TRANSPARENT, CARD_RADIUS, Color.TRANSPARENT, 0),
+            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 3));
+
+        int posterHoehe = Math.round(breiteDp * 1.42f);
+        karte.addView(MobileViews.poster(context, provider, titel, bildUrl, 0,
+                breiteDp, posterHoehe, 30, 0, fenster),
+            new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(context, posterHoehe)));
+
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(16);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setPadding(0, dp(context, 9), 0, 0);
+        karte.addView(name);
+
+        if (grund != null && !grund.isEmpty()) {
+            TextView satz = new TextView(context);
+            satz.setText(grund);
+            satz.setTextColor(Theme.PRIMARY);
+            satz.setTextSize(13);
+            satz.setMaxLines(2);
+            satz.setEllipsize(TextUtils.TruncateAt.END);
+            satz.setLineSpacing(0, 1.05f);
+            satz.setPadding(0, dp(context, 4), 0, 0);
+            karte.addView(satz);
+        }
+
+        if (zusatz != null && !zusatz.isEmpty()) {
+            TextView zeile = new TextView(context);
+            zeile.setText(zusatz);
+            zeile.setTextColor(Theme.TEXT_DISABLED);
+            zeile.setTextSize(13);
+            zeile.setMaxLines(1);
+            zeile.setEllipsize(TextUtils.TruncateAt.END);
+            zeile.setPadding(0, dp(context, 3), 0, 0);
+            karte.addView(zeile);
+        }
+
+        karte.setOnClickListener(v -> beiKlick.run());
+        if (onMenu != null) {
+            karte.setOnLongClickListener(v -> {
+                onMenu.onClick(karte);
+                return true;
+            });
+        }
+        karte.setLayoutParams(new LinearLayout.LayoutParams(
+            dp(context, breiteDp + 16), ViewGroup.LayoutParams.WRAP_CONTENT));
+        return karte;
+    }
+
+    /**
+     * Die letzte Karte einer Reihe: der Weg zur ganzen Liste.
+     *
+     * <p>Sie steht am Ende und nicht nur als Knopf ueber der Reihe, weil das
+     * Steuerkreuz am Ende der Reihe ankommt und dort weiterwollen wird. Ein
+     * Knopf, den man nur durch Zurueckfahren erreicht, wird nicht gedrueckt.
+     */
+    static View mehrKarte(Context context, String label, int breiteDp, Runnable beiKlick) {
+        LinearLayout karte = new LinearLayout(context);
+        karte.setOrientation(LinearLayout.VERTICAL);
+        karte.setGravity(Gravity.CENTER);
+        int rand = dp(context, 8);
+        karte.setPadding(rand, rand, rand, dp(context, 12));
+        applyFocus(karte,
+            shape(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
+            shape(context, Theme.PRIMARY_MUTED, CARD_RADIUS, Theme.PRIMARY, 3));
+
+        TextView pfeil = new TextView(context);
+        pfeil.setText("›");
+        pfeil.setTextColor(Theme.PRIMARY);
+        pfeil.setTextSize(40);
+        pfeil.setGravity(Gravity.CENTER);
+        karte.addView(pfeil);
+
+        TextView text = new TextView(context);
+        text.setText(label);
+        text.setTextColor(Theme.TEXT_PRIMARY);
+        text.setTextSize(15);
+        text.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        text.setGravity(Gravity.CENTER);
+        text.setMaxLines(2);
+        karte.addView(text);
+
+        karte.setOnClickListener(v -> beiKlick.run());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            dp(context, breiteDp + 16), dp(context, Math.round(breiteDp * 1.42f)));
+        karte.setLayoutParams(params);
+        return karte;
+    }
+
+    /**
+     * Ein Satz mit einem Knopf daneben - fuer "ohne Netz", "geht gerade nicht",
+     * "Stand von gestern".
+     *
+     * <p>Vier Zustaende hat jede Vorschlagsreihe, und drei davon sind kein
+     * Inhalt. Sie wortlos wegzulassen waere das Schlechteste: dann fehlt die
+     * Reihe, und niemand weiss, warum.
+     */
+    static View hinweis(Context context, String text, String knopfText, Runnable beiKnopf) {
+        LinearLayout kasten = new LinearLayout(context);
+        kasten.setOrientation(LinearLayout.HORIZONTAL);
+        kasten.setGravity(Gravity.CENTER_VERTICAL);
+        kasten.setClipChildren(false);
+        kasten.setClipToPadding(false);
+        kasten.setPadding(dp(context, 20), dp(context, 16), dp(context, 20), dp(context, 16));
+        kasten.setBackground(shape(context, Theme.SURFACE, 14, Theme.BORDER, 1));
+
+        TextView satz = new TextView(context);
+        satz.setText(text);
+        satz.setTextColor(Theme.TEXT_SECONDARY);
+        satz.setTextSize(16);
+        satz.setLineSpacing(0, 1.2f);
+        kasten.addView(satz, new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        if (knopfText != null && !knopfText.isEmpty() && beiKnopf != null) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.leftMargin = dp(context, 16);
+            kasten.addView(pillButton(context, knopfText, beiKnopf), params);
+        }
+        return kasten;
+    }
+
+    /**
+     * Was dasteht, solange eine Reihe geholt wird.
+     *
+     * <p>Graue Kaesten in der Form der spaeteren Kacheln und nicht das Wort
+     * "laedt": die Seite behaelt so ihre Hoehe, und was danach kommt, springt
+     * nicht unter dem Fokus weg.
+     */
+    static View reihenSkelett(Context context, int breiteDp, int anzahl) {
+        LinearLayout leiste = new LinearLayout(context);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        int hoehe = Math.round(breiteDp * 1.42f);
+        for (int i = 0; i < anzahl; i += 1) {
+            View kasten = new View(context);
+            kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 12, Theme.BORDER, 1));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                dp(context, breiteDp), dp(context, hoehe));
+            if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
+            leiste.addView(kasten, params);
+        }
+        return leiste;
+    }
+
+    /** Der Kasten fuer "hier ist noch nichts" - mit Zeichen, Ueberschrift und Erklaerung. */
+    static View emptyState(Context context, int iconRes, String ueberschrift, String text) {
+        LinearLayout kasten = new LinearLayout(context);
+        kasten.setOrientation(LinearLayout.VERTICAL);
+        kasten.setGravity(Gravity.CENTER_HORIZONTAL);
+        kasten.setPadding(dp(context, 28), dp(context, 34), dp(context, 28), dp(context, 34));
+        kasten.setBackground(shape(context, Theme.SURFACE, 16, Theme.BORDER, 1));
+
+        ImageView zeichen = new ImageView(context);
+        zeichen.setImageResource(iconRes);
+        zeichen.setColorFilter(Theme.TEXT_DISABLED);
+        kasten.addView(zeichen, new LinearLayout.LayoutParams(dp(context, 44), dp(context, 44)));
+
+        TextView kopf = new TextView(context);
+        kopf.setText(ueberschrift);
+        kopf.setTextColor(Theme.TEXT_PRIMARY);
+        kopf.setTextSize(20);
+        kopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        kopf.setGravity(Gravity.CENTER);
+        kopf.setPadding(0, dp(context, 14), 0, 0);
+        kasten.addView(kopf);
+
+        TextView satz = new TextView(context);
+        satz.setText(text);
+        satz.setTextColor(Theme.TEXT_SECONDARY);
+        satz.setTextSize(16);
+        satz.setGravity(Gravity.CENTER);
+        satz.setLineSpacing(0, 1.2f);
+        satz.setPadding(0, dp(context, 8), 0, 0);
+        kasten.addView(satz);
+        return kasten;
+    }
+
+    /**
+     * Der Titelhintergrund.
+     *
+     * <p>Bild ganz hinten, darueber ein Verlauf, damit die Schrift lesbar
+     * bleibt, und erst darauf der Text - derselbe Aufbau wie am Rechner und
+     * auf dem Telefon. Der Unterschied ist die Bedienung: die beiden Knoepfe
+     * sind Fokusziele, und wer sie beruehrt, haelt den Wechsel an (siehe
+     * {@code beiFokus}).
+     *
+     * @param beiFokus wird mit {@code true} gerufen, sobald ein Bedienelement
+     *                 des Titelhintergrunds den Fokus hat, und mit
+     *                 {@code false}, wenn er ihn wieder verliert
+     */
+    static View hero(Context context, String augenbraue, String titel, String unterzeile,
+                     String bildUrl, int prozent, String aufruf, Runnable beiAufruf,
+                     String zweitText, Runnable beiZweit, View[] knoepfeAus,
+                     Umschalter beiFokus) {
+        FrameLayout kasten = new FrameLayout(context);
+        kasten.setClipChildren(false);
+        kasten.setClipToPadding(false);
+        kasten.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View ansicht, android.graphics.Outline umriss) {
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 20));
+            }
+        });
+        kasten.setClipToOutline(true);
+        kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 20, Theme.BORDER, 1));
+
+        ImageView bild = new ImageView(context);
+        bild.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        kasten.addView(bild, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Breiter als hoch angefordert: auf dem Fernseher ist das Titelbild ein
+        // Hintergrund und kein Poster.
+        Bilder.laden(bild, bildUrl, 640, 360, null);
+
+        View schleier = new View(context);
+        // Zwei Verlaeufe uebereinander: einer von links, damit der Text auf
+        // jedem Bild steht, und einer von unten, damit die Knoepfe es tun.
+        GradientDrawable quer = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[]{Color.argb(238, 7, 10, 18), Color.argb(170, 7, 10, 18), Color.argb(40, 7, 10, 18)});
+        schleier.setBackground(quer);
+        kasten.addView(schleier, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout text = new LinearLayout(context);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setClipChildren(false);
+        text.setClipToPadding(false);
+        text.setPadding(dp(context, 32), dp(context, 28), dp(context, 32), dp(context, 26));
+        text.addView(eyebrow(context, augenbraue));
+
+        TextView ueberschrift = new TextView(context);
+        ueberschrift.setText(titel);
+        ueberschrift.setTextColor(Theme.TEXT_PRIMARY);
+        ueberschrift.setTextSize(38);
+        ueberschrift.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
+        ueberschrift.setMaxLines(2);
+        ueberschrift.setEllipsize(TextUtils.TruncateAt.END);
+        ueberschrift.setPadding(0, dp(context, 6), 0, 0);
+        text.addView(ueberschrift);
+
+        if (unterzeile != null && !unterzeile.isEmpty()) {
+            TextView zeile = new TextView(context);
+            zeile.setText(unterzeile);
+            zeile.setTextColor(Theme.TEXT_SECONDARY);
+            zeile.setTextSize(17);
+            zeile.setMaxLines(1);
+            zeile.setEllipsize(TextUtils.TruncateAt.END);
+            zeile.setPadding(0, dp(context, 8), 0, 0);
+            text.addView(zeile);
+        }
+
+        if (prozent > 0) {
+            LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
+                dp(context, 340), ViewGroup.LayoutParams.WRAP_CONTENT);
+            balkenRand.topMargin = dp(context, 14);
+            text.addView(MobileViews.fortschrittsBalken(context, prozent, true), balkenRand);
+        }
+
+        LinearLayout knoepfe = new LinearLayout(context);
+        knoepfe.setOrientation(LinearLayout.HORIZONTAL);
+        knoepfe.setClipChildren(false);
+        knoepfe.setClipToPadding(false);
+        LinearLayout.LayoutParams knopfRand = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        knopfRand.topMargin = dp(context, 18);
+
+        View haupt = heroKnopf(context, aufruf, true, beiAufruf, beiFokus);
+        knoepfe.addView(haupt);
+        if (knoepfeAus != null && knoepfeAus.length > 0) knoepfeAus[0] = haupt;
+        if (zweitText != null && beiZweit != null) {
+            View zweit = heroKnopf(context, zweitText, false, beiZweit, beiFokus);
+            LinearLayout.LayoutParams zweitParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            zweitParams.leftMargin = dp(context, 14);
+            knoepfe.addView(zweit, zweitParams);
+            if (knoepfeAus != null && knoepfeAus.length > 1) knoepfeAus[1] = zweit;
+        }
+        text.addView(knoepfe, knopfRand);
+
+        FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        textParams.gravity = Gravity.BOTTOM;
+        kasten.addView(text, textParams);
+        return kasten;
+    }
+
+    /** Ein Knopf im Titelhintergrund: gross genug, dass er aus zwei Metern zu lesen ist. */
+    private static View heroKnopf(Context context, String label, boolean haupt, Runnable beiKlick,
+                                  Umschalter beiFokus) {
+        TextView knopf = new TextView(context);
+        knopf.setText(label);
+        knopf.setTextColor(Color.WHITE);
+        knopf.setTextSize(18);
+        knopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        knopf.setGravity(Gravity.CENTER);
+        knopf.setMaxLines(1);
+        knopf.setPadding(dp(context, 30), dp(context, 14), dp(context, 30), dp(context, 14));
+        applyFocus(knopf,
+            shape(context, haupt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 14,
+                haupt ? Theme.PRIMARY : Theme.BORDER, haupt ? 2 : 1),
+            shape(context, Theme.PRIMARY, 14, Color.WHITE, 3));
+        knopf.setOnClickListener(v -> beiKlick.run());
+        if (beiFokus != null) {
+            // Nicht ueberschreiben, was applyFocus gesetzt hat - beides wird
+            // gebraucht: der Fokusrahmen und die angehaltene Uhr.
+            View.OnFocusChangeListener vorher = knopf.getOnFocusChangeListener();
+            knopf.setOnFocusChangeListener((v, hat) -> {
+                if (vorher != null) vorher.onFocusChange(v, hat);
+                beiFokus.setze(hat);
+            });
+        }
+        return knopf;
+    }
+
+    /**
+     * Die Punkte unter dem Titelhintergrund.
+     *
+     * <p>Auf dem Telefon sind sie Tippflaechen, hier sind sie Fokusziele: mit
+     * links und rechts wandert man durch die zuletzt angefangenen Titel. Das
+     * ist der Ersatz fuer das Wischen, und es ist zugleich der Grund, warum
+     * der selbsttaetige Wechsel anhaelt, sobald einer von ihnen den Fokus hat -
+     * ein Bild, das unter dem Finger weiterspringt, ist nicht zu bedienen.
+     */
+    static View heroPunkte(Context context, int anzahl, int aktiv, MobileViews.IntVerbraucher beiWahl,
+                           Umschalter beiFokus) {
+        LinearLayout reihe = new LinearLayout(context);
+        reihe.setOrientation(LinearLayout.HORIZONTAL);
+        reihe.setGravity(Gravity.CENTER_VERTICAL);
+        reihe.setClipChildren(false);
+        reihe.setClipToPadding(false);
+        for (int i = 0; i < anzahl; i += 1) {
+            int stelle = i;
+            boolean gewaehlt = i == aktiv;
+            FrameLayout flaeche = new FrameLayout(context);
+            flaeche.setPadding(dp(context, 6), dp(context, 8), dp(context, 6), dp(context, 8));
+            applyFocus(flaeche,
+                shape(context, Color.TRANSPARENT, 10, Color.TRANSPARENT, 0),
+                shape(context, Theme.PRIMARY_MUTED, 10, Theme.PRIMARY, 2));
+            View punkt = new View(context);
+            punkt.setBackground(shape(context, gewaehlt ? Theme.PRIMARY : Theme.BORDER, 5,
+                Color.TRANSPARENT, 0));
+            FrameLayout.LayoutParams punktParams = new FrameLayout.LayoutParams(
+                dp(context, gewaehlt ? 26 : 10), dp(context, 10));
+            punktParams.gravity = Gravity.CENTER;
+            flaeche.addView(punkt, punktParams);
+            flaeche.setOnClickListener(v -> beiWahl.nimm(stelle));
+            flaeche.setContentDescription("Titel " + (i + 1) + " von " + anzahl);
+            if (beiFokus != null) {
+                View.OnFocusChangeListener vorher = flaeche.getOnFocusChangeListener();
+                flaeche.setOnFocusChangeListener((v, hat) -> {
+                    if (vorher != null) vorher.onFocusChange(v, hat);
+                    beiFokus.setze(hat);
+                    // Der Fokus auf einem Punkt *ist* die Auswahl: sonst
+                    // muesste man auf jedem Punkt noch einmal OK druecken, um
+                    // zu sehen, was dahintersteckt.
+                    if (hat) beiWahl.nimm(stelle);
+                });
+            }
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            if (i > 0) params.leftMargin = dp(context, 4);
+            reihe.addView(flaeche, params);
+        }
+        return reihe;
+    }
+
+    /** Ein Ja/Nein, das jemand entgegennimmt - fuer den Fokus des Titelhintergrunds. */
+    interface Umschalter {
+        void setze(boolean wert);
     }
 }

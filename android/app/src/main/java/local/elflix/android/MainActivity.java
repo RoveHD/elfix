@@ -87,6 +87,16 @@ public class MainActivity extends Activity {
     private Watchparty watchparty;
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
     private Kosmetik kosmetik;
+    /**
+     * Die kosmetische Werbeentfernung des Fernsehers. Siehe Fernsehwerbung.java.
+     *
+     * <p>Nur dort: auf dem Telefon filtert weiter, was vorher filterte. Der
+     * Fernseher ist der Fall, in dem die uebrigen drei Instanzen eine Luecke
+     * lassen - der {@link Werbefilter} laeuft auf einem Stick gar nicht, und
+     * die {@link Kosmetik} greift zu spaet und sieht nur, was den Player
+     * zudeckt.
+     */
+    private Fernsehwerbung fernsehwerbung;
     /** Die vollen AdGuard-Regeln, wo das Geraet sie traegt. Siehe Werbefilter.java. */
     private Werbefilter werbefilter;
     private Fassungen fassungen;
@@ -240,6 +250,51 @@ public class MainActivity extends Activity {
     private static final int ENTDECKUNG_STAPEL = 30;
     private List<Favorite> heroEintraege = new ArrayList<>();
     private int heroStelle;
+    /**
+     * Ob gerade ein Bedienelement des Titelhintergrunds den Fokus hat.
+     *
+     * <p>Solange das so ist, steht der Wechsel still. Ein Titelbild, das unter
+     * der Fernbedienung weiterspringt, ist nicht zu bedienen: man drueckt OK
+     * auf dem, was man gesehen hat, und bekommt das, was inzwischen dasteht.
+     */
+    private boolean heroFokus;
+    /**
+     * Der Fokus, an dem der Fernseher zuletzt stand - je Seite einer.
+     *
+     * <p>Je Seite und nicht einer fuer alles: wer aus der Entdeckungsseite auf
+     * die Startseite zurueckkommt, will dort stehen, wo er die Startseite
+     * verlassen hat, und nicht dort, wo er in der Entdeckungsseite war. Ein
+     * einziger Merker koennte das nicht unterscheiden und faende auf der
+     * anderen Seite ohnehin nichts.
+     */
+    private final Map<String, String> tvFokusJeSeite = new HashMap<>();
+    /**
+     * Die waagerechten Reihen der TV-Startseite und ihr Stand.
+     *
+     * <p>Sie halten mehr Eintraege, als sie zeigen. Der Rest kommt, wenn der
+     * Fokus sich dem Ende naehert - siehe {@link #tvNachlegen}. Beim Neuaufbau
+     * der Seite ist der Inhalt hinfaellig, deshalb wird die Karte dort geleert.
+     */
+    private final Map<String, TvReihe> tvReihen = new java.util.LinkedHashMap<>();
+    /** Wieviele Kacheln eine TV-Reihe zuerst zeigt. */
+    private static final int TV_REIHE_ERST = 8;
+    /** Und wieviele bei jedem Nachlegen dazukommen. */
+    private static final int TV_REIHE_SCHRITT = 6;
+    /** Wie nah der Fokus ans Ende kommen darf, bevor nachgelegt wird. */
+    private static final int TV_REIHE_VORLAUF = 3;
+
+    /** Was eine Kachel an ihrer Stelle baut. */
+    private interface TvKartenBauer {
+        View baue(int stelle);
+    }
+
+    /** Eine waagerechte Reihe auf dem Fernseher: was sie zeigt und was sie noch haette. */
+    private static final class TvReihe {
+        android.widget.HorizontalScrollView ansicht;
+        int vorrat;
+        int gezeigt;
+        TvKartenBauer bauer;
+    }
     /**
      * Der Taktgeber der gebauten Seiten.
      *
@@ -396,6 +451,10 @@ public class MainActivity extends Activity {
         kalender.vorladen();
         youtube = new Youtube(kern);
         kosmetik = new Kosmetik(kern, adblocker);
+        // Braucht weder Kern noch Netz: die Regeln stehen in der Klasse, und
+        // das Skript muss beim ersten Dokument schon dasein - auf den Kern zu
+        // warten hiesse, die erste Anbieterseite ungefiltert zu zeigen.
+        fernsehwerbung = new Fernsehwerbung(adblocker, istDebugBau());
         werbefilter = new Werbefilter(this, kern, () -> {
             // Der Aufbau dauert; steht die Seite gerade offen, soll sie es zeigen.
             if ("settings".equals(currentScreen)) showSettings();
@@ -607,6 +666,9 @@ public class MainActivity extends Activity {
 
         buildChrome();
         buildBottomNav();
+        // Einmal je Sitzung: der Merker, der den Fokus ueber einen Neuaufbau
+        // hinwegtraegt. Er haengt am content, nicht an einer gebauten Seite.
+        tvFokusBeobachten();
     }
 
     private void buildChrome() {
@@ -1068,55 +1130,559 @@ public class MainActivity extends Activity {
         row.addView(item, params);
     }
 
+    /**
+     * Die Startseite des Fernsehers.
+     *
+     * <p>Sie zeigt dasselbe wie die des Rechners und in derselben Reihenfolge -
+     * Titelhintergrund, was laeuft, was gemerkt ist, was vorgeschlagen wird.
+     * Und sie rechnet nichts davon selbst aus: der Verlauf kommt aus
+     * {@link Bestand}, die Vorschlaege aus {@link Empfehlungen}, und beide
+     * fragen denselben Kern wie Rechner und Telefon. Eine dritte Fachlogik
+     * "fuer den Fernseher" gibt es nicht und soll es nicht geben - sie waere
+     * die Stelle, an der die drei Geraete anfangen, verschiedene Dinge zu
+     * behaupten.
+     *
+     * <p>Was hier steht, ist ausschliesslich die Darstellung, und die ist
+     * wirklich anders: keine vergroesserte Telefonseite, sondern Reihen, durch
+     * die ein Fokus wandert. Jede Reihe zeigt zunaechst
+     * {@link #TV_REIHE_ERST} Kacheln und legt nach, bevor der Fokus ans Ende
+     * kommt ({@link #tvNachlegen}) - beim ersten Zeichnen fuenf Reihen mit je
+     * zwanzig Postern zu holen waere auf einem Fernseh-Stick eine halbe
+     * Minute schwarzer Bildschirm.
+     */
     private void renderTvHome() {
         LinearLayout page = tvPage();
-        page.addView(TvViews.eyebrow(this, "ELFIX"));
-        page.addView(TvViews.heroTitle(this, "Was möchtest du ansehen?"));
+        empfehlungenNachfuehren();
+        // Auch hier, obwohl der Fernseher (noch) keine Kalenderreihe zeigt:
+        // die Woche wird aus den Anbietern gerechnet, und ein Kalender ohne
+        // sie liefert eine leere Woche statt gar keiner.
+        if (kalender != null) kalender.anbieterSetzen(providers);
+        tvReihen.clear();
 
-        addSpacing(page, TvViews.sectionTitle(this, "Deine Anbieter"), TvViews.SECTION_GAP);
-        int cardWidth = tvCardWidthDp(230, 180);
-        LinearLayout providerRow = tvRow();
-        View firstCard = null;
+        List<Favorite> laufend = bestand.weiterschauen();
+        heroEintraege = new ArrayList<>(laufend.subList(0, Math.min(HERO_ANZAHL, laufend.size())));
+        if (heroStelle >= heroEintraege.size()) heroStelle = 0;
+
+        // Die Plaetze werden auch dann angelegt, wenn der Titelhintergrund
+        // abgeschaltet ist: der Wechseltakt zeichnet sie fuer sich neu und
+        // traefe sonst auf null.
+        heroPlatz = new FrameLayout(this);
+        heroPlatz.setClipChildren(false);
+        heroPlatz.setClipToPadding(false);
+        heroPunkte = new LinearLayout(this);
+        heroPunkte.setOrientation(LinearLayout.HORIZONTAL);
+        heroPunkte.setClipChildren(false);
+        heroPunkte.setClipToPadding(false);
+        if (zeigt(Startseite.HERO)) {
+            addSpacing(page, heroPlatz, 0);
+            addSpacing(page, heroPunkte, 6);
+            heroZeichnen();
+            heroWechselPlanen();
+        }
+
+        // Der Anbieterrost. Am Rechner steht er in der Seitenleiste; auf dem
+        // Fernseher gibt es keine, und die Anbieter sind der Weg zu allem, was
+        // ELFIX nicht selbst weiss.
+        addSpacing(page, TvViews.sectionHeader(this, "Deine Anbieter", null, null),
+            TvViews.SECTION_GAP);
+        int anbieterBreite = tvCardWidthDp(230, 180);
+        ArrayList<View> anbieterKarten = new ArrayList<>();
         for (int i = 0; i < providers.size(); i += 1) {
             Provider provider = providers.get(i);
-            View card = TvViews.providerCard(this, provider, providerTagline(provider), cardWidth,
+            View karte = TvViews.providerCard(this, provider, providerTagline(provider), anbieterBreite,
                 () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
                 () -> openProvider(provider, provider.startUrl));
-            addTvRowItem(providerRow, card, i == 0);
+            karte.setTag("tv:anbieter:" + i);
+            anbieterKarten.add(karte);
             providerButtons.remove(provider.id);
-            if (i == 0) firstCard = card;
         }
-        addSpacing(page, providerRow, TvViews.ITEM_GAP);
+        if (!anbieterKarten.isEmpty()) {
+            reiheAnhaengenTv(page, TvViews.reihe(this, anbieterKarten), TvViews.ITEM_GAP);
+        }
 
-        // Dieselben Reihen wie auf dem Telefon und am Rechner. Leere bleiben
-        // weg: eine Ueberschrift ohne Kacheln kostet auf dem Fernseher eine
-        // ganze Bildschirmhoehe.
-        tvStartseitenReihe(page, Bibliothek.WEITERSCHAUEN, 5);
-        tvStartseitenReihe(page, Bibliothek.WATCHLIST, 5);
-        tvStartseitenReihe(page, Bibliothek.MEDIATHEK, 5);
+        // Ab hier dieselbe Reihenfolge wie am Rechner und auf dem Telefon.
+        boolean etwasGezeigt = tvNeueFolgenReihe(page);
 
-        // Give the remote something focused to start from, so the first D-pad press is predictable.
-        if (firstCard != null) {
-            View target = firstCard;
-            target.post(target::requestFocus);
+        List<Favorite> privat = new ArrayList<>();
+        List<Favorite> gemeinsam = new ArrayList<>();
+        List<Favorite> videos = new ArrayList<>();
+        for (Favorite eintrag : laufend) {
+            if (youtube != null && youtube.istYoutube(eintrag)) videos.add(eintrag);
+            else if (eintrag.watchpartyRaum().isEmpty()) privat.add(eintrag);
+            else gemeinsam.add(eintrag);
+        }
+        if (zeigt(Startseite.WEITERSCHAUEN)) {
+            etwasGezeigt |= tvKachelReihe(page, "weiterschauen", "Weiterschauen", privat,
+                Bibliothek.WEITERSCHAUEN);
+            etwasGezeigt |= tvKachelReihe(page, "gemeinsam", "Gemeinsam weiterschauen", gemeinsam,
+                Bibliothek.WEITERSCHAUEN);
+        }
+        if (zeigt(Startseite.YOUTUBE)) {
+            etwasGezeigt |= tvKachelReihe(page, "youtube", "YouTube weiterschauen", videos,
+                Bibliothek.WEITERSCHAUEN);
+        }
+        if (zeigt(Startseite.WEITERSCHAUEN)) {
+            etwasGezeigt |= tvKachelReihe(page, "watchlist", Bibliothek.WATCHLIST.titel,
+                bestand.watchlist(), Bibliothek.WATCHLIST);
+            etwasGezeigt |= tvKachelReihe(page, "mediathek", Bibliothek.MEDIATHEK.titel,
+                bestand.mediathek(), Bibliothek.MEDIATHEK);
+        }
+        if (!etwasGezeigt && zeigt(Startseite.WEITERSCHAUEN)) {
+            addSpacing(page, TvViews.sectionHeader(this, "Weiterschauen", null, null),
+                TvViews.SECTION_GAP);
+            addSpacing(page, TvViews.emptyState(this, R.drawable.ic_play, "Noch nichts angefangen",
+                "Öffne einen Anbieter und sieh dir etwas an. ELFIX merkt sich die Folge und die "
+                    + "Stelle und schlägt sie dir hier wieder vor."), TvViews.ITEM_GAP);
+        }
+
+        if (zeigt(Startseite.PERSOENLICH)) {
+            tvVorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
+            tvVorschlagsReihe(page, Empfehlungen.FUER_DICH, "Empfohlen für dich",
+                "Neu berechnen", () -> {
+                    empfehlungen.neuBerechnen();
+                    showToast("Empfehlungen werden neu berechnet");
+                });
+        }
+        if (zeigt(Startseite.KATEGORIEN)) {
+            tvVorschlagsReihe(page, Empfehlungen.ANIME, "Anime für dich", "Mehr anzeigen",
+                () -> zeigeEntdeckung(Empfehlungen.ANIME));
+            tvVorschlagsReihe(page, Empfehlungen.SERIE, "Serien für dich", "Mehr anzeigen",
+                () -> zeigeEntdeckung(Empfehlungen.SERIE));
+            tvVorschlagsReihe(page, Empfehlungen.FILM, "Filme für dich", "Mehr anzeigen",
+                () -> zeigeEntdeckung(Empfehlungen.FILM));
+        }
+        // Ist alles abgeschaltet, steht sonst nur der Anbieterrost da und die
+        // Seite sieht kaputt aus. Der Weg zurueck gehoert dorthin, wo der
+        // Mangel auffaellt - nicht in eine Einstellung, die man erst sucht.
+        if (startseite != null && startseite.anzahlAn() == 0) {
+            addSpacing(page, TvViews.hinweis(this,
+                "Alle Reihen der Startseite sind ausgeblendet.", "Reihen einblenden",
+                () -> {
+                    startseite.zuruecksetzen();
+                    showHome();
+                }), TvViews.SECTION_GAP);
+        }
+
+        tvFokusHerstellen(page);
+    }
+
+    /**
+     * Eine Reihe in die Seite haengen - mit negativem Rand nach rechts.
+     *
+     * <p>Die Seite hat links und rechts ihren ueberscan-sicheren Rand, die
+     * Reihe soll aber bis an die Kante laufen. Sonst endete die letzte
+     * sichtbare Kachel mitten im Bild, und nichts deutete darauf hin, dass
+     * dahinter noch etwas kommt. Links bleibt der Rand stehen: dort faengt der
+     * Blick an, und dort gehoert er hin.
+     */
+    private void reiheAnhaengenTv(LinearLayout page, View reihe, int obenDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(obenDp);
+        params.rightMargin = -dp(TvViews.SCREEN_PADDING);
+        page.addView(reihe, params);
+    }
+
+    /* ------------------------------------------------- Die Reihen des Fernsehers */
+
+    /**
+     * Eine Reihe aus Eintraegen der Ablage.
+     *
+     * @param schluessel woran die Reihe beim Nachlegen wiederzuerkennen ist
+     * @return ob sie ueberhaupt etwas zu zeigen hatte
+     */
+    private boolean tvKachelReihe(LinearLayout page, String schluessel, String titel,
+                                  List<Favorite> eintraege, Bibliothek liste) {
+        if (eintraege.isEmpty()) return false;
+        addSpacing(page, TvViews.sectionHeader(this, titel, "Alle anzeigen",
+            () -> zeigeBibliothek(liste)), TvViews.SECTION_GAP);
+
+        int breite = TvViews.kachelBreiteDp(this);
+        List<Favorite> vorrat = new ArrayList<>(eintraege);
+        TvKartenBauer bauer = stelle -> {
+            Favorite eintrag = vorrat.get(stelle);
+            String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            if (name.isEmpty()) name = "Titel";
+            String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen"
+                : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
+                : eintrag.folgenText();
+            View karte = TvViews.kachel(this, providerForFavorite(eintrag), name, hinweis,
+                eintrag.bild(),
+                liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
+                    ? eintrag.fortschrittProzent() : 0,
+                "", breite, null,
+                () -> openFavorite(eintrag),
+                anker -> eintragsMenue(anker, eintrag, liste));
+            karte.setTag("tv:" + schluessel + ":" + stelle);
+            return karte;
+        };
+        reiheAnlegen(page, schluessel, vorrat.size(), bauer);
+        return true;
+    }
+
+    /**
+     * Die Reihe "Neue Folgen".
+     *
+     * <p>Sie steht ganz oben, weil sie das Einzige ist, was von selbst
+     * dazukommt: eine Serie, die man durch hatte, hat Nachschub bekommen.
+     * Dieselbe Reihe an derselben Stelle wie am Rechner.
+     */
+    private boolean tvNeueFolgenReihe(LinearLayout page) {
+        ArrayList<Favorite> neue = new ArrayList<>();
+        for (Favorite eintrag : bestand.alle()) {
+            if (!eintrag.neueFolgeAm().isEmpty()) neue.add(eintrag);
+        }
+        if (neue.isEmpty()) return false;
+        java.util.Collections.sort(neue,
+            java.util.Comparator.comparing(Favorite::neueFolgeAm).reversed());
+
+        addSpacing(page, TvViews.sectionHeader(this, "Neue Folgen", "Alle anzeigen",
+            () -> zeigeBibliothek(Bibliothek.WATCHLIST)), TvViews.SECTION_GAP);
+        int breite = TvViews.kachelBreiteDp(this);
+        TvKartenBauer bauer = stelle -> {
+            Favorite eintrag = neue.get(stelle);
+            String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            if (name.isEmpty()) name = "Titel";
+            View karte = TvViews.kachel(this, providerForFavorite(eintrag), name,
+                eintrag.providerName(), eintrag.bild(), 0, eintrag.neueFolgeText(), breite, null,
+                () -> openFavorite(eintrag),
+                anker -> eintragsMenue(anker, eintrag, Bibliothek.WATCHLIST));
+            karte.setTag("tv:neuefolgen:" + stelle);
+            return karte;
+        };
+        reiheAnlegen(page, "neuefolgen", neue.size(), bauer);
+        return true;
+    }
+
+    /**
+     * Eine Vorschlagsreihe.
+     *
+     * <p>Vier Zustaende, und jeder sagt etwas anderes: gefuellt, wird geholt,
+     * geht nicht, und "dazu gibt es nichts". Nur der letzte laesst die Reihe
+     * ganz verschwinden - eine Ueberschrift ueber nichts ist schlimmer als
+     * eine fehlende Reihe, und auf einem Fernseher kostet sie eine
+     * Bildschirmhoehe.
+     *
+     * <p>Die Unterscheidung ist Wort fuer Wort dieselbe wie auf dem Telefon,
+     * denn sie kommt aus derselben Quelle: {@link Empfehlungen} weiss, ob eine
+     * Reihe laeuft, geladen ist, alt ist oder gescheitert ist. Was hier steht,
+     * ist nur, wie das aussieht.
+     */
+    private void tvVorschlagsReihe(LinearLayout page, String schluessel, String titel,
+                                   String aktion, Runnable beiAktion) {
+        if (empfehlungen == null) return;
+        int breite = TvViews.kachelBreiteDp(this);
+
+        // Der Lauf ist gar nicht erst hochgekommen. Das einmal sagen, nicht
+        // fuenfmal - deshalb nur bei der ersten Reihe.
+        if (!empfehlungen.istBereit() && !empfehlungen.startFehler().isEmpty()) {
+            if (!Empfehlungen.NEUES.equals(schluessel)) return;
+            addSpacing(page, TvViews.sectionHeader(this, "Vorschläge", null, null),
+                TvViews.SECTION_GAP);
+            addSpacing(page, TvViews.hinweis(this,
+                "Die Vorschläge konnten nicht vorbereitet werden. Ohne sie funktioniert alles "
+                    + "Übrige weiter.", "Erneut versuchen",
+                () -> {
+                    empfehlungen.erneutStarten(watchparty == null ? "" : watchparty.serverUrl());
+                    showToast("Vorschläge werden erneut vorbereitet");
+                }), TvViews.ITEM_GAP);
+            return;
+        }
+
+        int anzahl = Empfehlungen.NEUES.equals(schluessel) ? 8 : 20;
+        empfehlungen.anfordern(schluessel, anzahl);
+
+        List<JSONObject> eintraege = empfehlungen.eintraege(schluessel);
+        String fehler = empfehlungen.fehler(schluessel);
+        boolean fertigUndLeer = eintraege.isEmpty() && fehler.isEmpty()
+            && empfehlungen.geladen(schluessel) && !empfehlungen.laedt(schluessel);
+        // Fertig geholt, kein Fehler und trotzdem leer heisst normalerweise:
+        // dazu gibt es gerade nichts. Ohne Leitung heisst es etwas anderes -
+        // der Lauf faengt einen gescheiterten Abruf ab und gibt eine leere
+        // Liste zurueck. Also wird gefragt, bevor entschieden wird.
+        if (fertigUndLeer && !Netz.vorhanden(this)) {
+            if (!Empfehlungen.NEUES.equals(schluessel)) return;
+            addSpacing(page, TvViews.sectionHeader(this, "Vorschläge", null, null),
+                TvViews.SECTION_GAP);
+            addSpacing(page, TvViews.hinweis(this,
+                "Keine Verbindung. Vorschläge brauchen die Seiten deiner Anbieter - sobald du "
+                    + "wieder online bist, stehen sie hier. Deine Mediathek und alles Angefangene "
+                    + "bleiben verfügbar.", "Erneut versuchen",
+                () -> {
+                    for (String art : new String[]{Empfehlungen.NEUES, Empfehlungen.FUER_DICH,
+                        Empfehlungen.ANIME, Empfehlungen.SERIE, Empfehlungen.FILM}) {
+                        empfehlungen.erneutVersuchen(art);
+                    }
+                    if ("home".equals(currentScreen)) empfehlungenGeaendert();
+                }), TvViews.ITEM_GAP);
+            return;
+        }
+        if (fertigUndLeer) return;
+
+        addSpacing(page, TvViews.sectionHeader(this, titel,
+            eintraege.isEmpty() ? null : aktion, beiAktion), TvViews.SECTION_GAP);
+
+        if (!fehler.isEmpty() && eintraege.isEmpty()) {
+            addSpacing(page, TvViews.hinweis(this,
+                "Diese Vorschläge konnten nicht geladen werden. Ohne Netz zeigt ELFIX hier den "
+                    + "letzten bekannten Stand - beim ersten Start gibt es noch keinen.",
+                "Erneut versuchen",
+                () -> {
+                    empfehlungen.erneutVersuchen(schluessel);
+                    if ("home".equals(currentScreen)) empfehlungenGeaendert();
+                }), TvViews.ITEM_GAP);
+            return;
+        }
+        if (eintraege.isEmpty()) {
+            reiheAnhaengenTv(page, TvViews.reihenSkelett(this, breite, 6), TvViews.ITEM_GAP);
+            return;
+        }
+        // Ein Stand von der Platte steht mit seinem Alter da. Ihn wortlos zu
+        // zeigen waere schlimmer als ihn wegzulassen: er saehe aus wie frisch
+        // geholt, und wer sich fragt, warum nichts Neues kommt, faende keine
+        // Antwort.
+        if (empfehlungen.istAlt(schluessel)) {
+            addSpacing(page, TvViews.hinweis(this, altHinweis(empfehlungen.alter(schluessel)),
+                "Erneut versuchen",
+                () -> {
+                    empfehlungen.erneutVersuchen(schluessel);
+                    if ("home".equals(currentScreen)) empfehlungenGeaendert();
+                }), 0);
+        }
+
+        String reihenName = schluessel.isEmpty() ? "fuerdich" : schluessel;
+        List<JSONObject> vorrat = new ArrayList<>(eintraege);
+        boolean mitEntdeckung = Empfehlungen.ANIME.equals(schluessel)
+            || Empfehlungen.SERIE.equals(schluessel) || Empfehlungen.FILM.equals(schluessel);
+        TvKartenBauer bauer = stelle -> {
+            // Die letzte Karte einer Kategoriereihe ist der Weg zur ganzen
+            // Liste. Sie liegt am Ende, weil der Fokus dort ankommt.
+            if (mitEntdeckung && stelle >= vorrat.size()) {
+                View mehr = TvViews.mehrKarte(this, "Mehr anzeigen", breite,
+                    () -> zeigeEntdeckung(schluessel));
+                mehr.setTag("tv:" + reihenName + ":" + stelle);
+                return mehr;
+            }
+            View karte = tvVorschlagsKarte(vorrat.get(stelle), breite);
+            karte.setTag("tv:" + reihenName + ":" + stelle);
+            return karte;
+        };
+        reiheAnlegen(page, reihenName, vorrat.size() + (mitEntdeckung ? 1 : 0), bauer);
+    }
+
+    /** Eine einzelne Vorschlagskarte - in der Reihe wie im Raster dieselbe. */
+    private View tvVorschlagsKarte(JSONObject item, int breiteDp) {
+        return tvVorschlagsKarte(item, breiteDp, null);
+    }
+
+    private View tvVorschlagsKarte(JSONObject item, int breiteDp, Bilder.Sichtfenster fenster) {
+        String titel = item.optString("title", "");
+        if (titel.isEmpty()) titel = "Titel";
+        // Der Grund ist der Unterschied zwischen einem Vorschlag und einer
+        // Behauptung. Ausformuliert hat ihn der Empfehlungslauf im Kern -
+        // derselbe Satz wie am Rechner.
+        String grund = item.optString("grundText", "");
+        String datum = erscheinungsdatum(item.optString("releasedAt", ""));
+        String zusatz = datum.isEmpty() ? item.optString("providerName", "") : datum;
+        return TvViews.vorschlag(this, providerMitId(item.optString("providerId", "")),
+            titel, grund, zusatz, item.optString("image", ""), breiteDp, fenster,
+            () -> vorschlagOeffnen(item),
+            anker -> vorschlagsMenue(anker, item));
+    }
+
+    /**
+     * Eine Reihe anlegen und ihre ersten Kacheln bauen.
+     *
+     * <p>Der Rest bleibt liegen. Das ist der Unterschied zum Telefon, und er
+     * ist gemessen und nicht geraten: fuenf Vorschlagsreihen mit je zwanzig
+     * Kacheln sind hundert Poster, die alle gleichzeitig geholt und skaliert
+     * werden wollen - auf einem Fernseh-Stick ist das der Grund, warum die
+     * Startseite eine halbe Minute schwarz bleibt. Sichtbar sind ohnehin
+     * hoechstens sechs davon.
+     */
+    private void reiheAnlegen(LinearLayout page, String schluessel, int vorrat, TvKartenBauer bauer) {
+        TvReihe reihe = new TvReihe();
+        reihe.vorrat = vorrat;
+        reihe.bauer = bauer;
+        reihe.gezeigt = Math.min(TV_REIHE_ERST, vorrat);
+        ArrayList<View> karten = new ArrayList<>();
+        for (int i = 0; i < reihe.gezeigt; i += 1) karten.add(bauer.baue(i));
+        reihe.ansicht = TvViews.reihe(this, karten);
+        tvReihen.put(schluessel, reihe);
+        reiheAnhaengenTv(page, reihe.ansicht, TvViews.ITEM_GAP);
+    }
+
+    /**
+     * Nachlegen, bevor der Fokus das Ende erreicht.
+     *
+     * <p>"Bevor" ist der ganze Punkt. Wer erst nachlegt, wenn die letzte
+     * Kachel den Fokus hat, laesst die Fernbedienung einmal ins Leere laufen -
+     * und ein Steuerkreuz, das einmal nicht reagiert, wird ein zweites Mal
+     * gedrueckt. {@link #TV_REIHE_VORLAUF} Kacheln Vorlauf reichen dafuer aus.
+     */
+    private void tvNachlegen(String schluessel, int stelle) {
+        TvReihe reihe = tvReihen.get(schluessel);
+        if (reihe == null || reihe.ansicht == null || reihe.gezeigt >= reihe.vorrat) return;
+        if (stelle < reihe.gezeigt - TV_REIHE_VORLAUF) return;
+        int bis = Math.min(reihe.vorrat, reihe.gezeigt + TV_REIHE_SCHRITT);
+        for (int i = reihe.gezeigt; i < bis; i += 1) {
+            TvViews.kachelAnhaengen(reihe.ansicht, reihe.bauer.baue(i));
+        }
+        reihe.gezeigt = bis;
+    }
+
+    /* --------------------------------------------------- Der Fokus des Fernsehers */
+
+    /**
+     * Wer den Fokus hat, wird gemerkt - und beim naechsten Aufbau gesucht.
+     *
+     * <p>Die Startseite wird oefter neu gebaut, als es aussieht: eine fertige
+     * Vorschlagsreihe, ein Fortschritt vom Telefon, ein Handgriff im
+     * Kachelmenue - jedes Mal steht eine neue Seite da. Auf dem Telefon
+     * genuegt es, die Scrollstelle zu halten. Auf dem Fernseher nicht: dort
+     * ist der Fokus die Stelle, und ohne diesen Merker faengt die
+     * Fernbedienung nach jedem Neuaufbau wieder ganz oben an.
+     *
+     * <p>Angemeldet wird einmal fuer die ganze Sitzung, am {@code content}, der
+     * die Activity ueberdauert - ein Horcher je gebauter Seite waere ein
+     * Horcher je gebauter Seite.
+     */
+    private void tvFokusBeobachten() {
+        if (content == null || !isTelevision()) return;
+        content.getViewTreeObserver().addOnGlobalFocusChangeListener((alt, neu) -> {
+            if (neu == null) return;
+            Object marke = neu.getTag();
+            if (!(marke instanceof String)) return;
+            String schluessel = (String) marke;
+            if (!schluessel.startsWith("tv:")) return;
+            tvFokusJeSeite.put(currentScreen, schluessel);
+            // "tv:<reihe>:<stelle>" - daraus kommt das Nachlegen.
+            int letzter = schluessel.lastIndexOf(':');
+            if (letzter <= 3) return;
+            try {
+                tvNachlegen(schluessel.substring(3, letzter),
+                    Integer.parseInt(schluessel.substring(letzter + 1)));
+            } catch (NumberFormatException keineStelle) {
+                // Eine Marke ohne Stelle - dann gibt es dort nichts nachzulegen.
+            }
+        });
+    }
+
+    /**
+     * Den Fokus setzen, nachdem eine TV-Seite gebaut wurde.
+     *
+     * <p>Erst der gemerkte Platz, dann der Titelhintergrund, dann die erste
+     * Kachel ueberhaupt. Die Reihenfolge ist die Antwort auf zwei Wuensche
+     * zugleich: wer zurueckkommt, soll dort stehen, wo er war - und wer neu
+     * hereinkommt, soll nicht im Titelhintergrund festhaengen, sondern einen
+     * Platz haben, von dem aus jede Richtung etwas ergibt.
+     *
+     * <p>Ueber {@code post}, weil eine frisch gebaute Seite noch nicht
+     * vermessen ist: ein {@code requestFocus} auf einer Ansicht ohne Hoehe
+     * geht ins Leere.
+     */
+    private void tvFokusHerstellen(View seite) {
+        if (seite == null) return;
+        String gemerkt = tvFokusJeSeite.get(currentScreen);
+        seite.post(() -> {
+            if (gemerkt != null && !gemerkt.isEmpty()) {
+                View ziel = seite.findViewWithTag(gemerkt);
+                if (ziel != null && ziel.isFocusable()) {
+                    ziel.requestFocus();
+                    return;
+                }
+            }
+            for (String erst : new String[]{"tv:hero:0", "tv:anbieter:0", "tv:reiter:0",
+                "tv:entdeckung:0", "tv:liste:0"}) {
+                View ziel = seite.findViewWithTag(erst);
+                if (ziel != null) {
+                    ziel.requestFocus();
+                    return;
+                }
+            }
+        });
+    }
+
+    /**
+     * Der Titelhintergrund des Fernsehers.
+     *
+     * <p>Dasselbe wie auf dem Telefon - Bild, Titel, Folge, Fortschritt, zwei
+     * Aktionen -, nur breit statt hoch und mit Fokuszielen statt Tippflaechen.
+     * Und mit einem Unterschied, der keiner der Form ist: der Wechsel haelt
+     * an, sobald jemand hier navigiert (siehe {@link #heroFokusGeaendert}).
+     */
+    private void tvHeroZeichnen() {
+        if (heroPlatz == null) return;
+        heroPlatz.removeAllViews();
+        Favorite eintrag = heroEintraege.isEmpty() ? null
+            : heroEintraege.get(Math.min(heroStelle, heroEintraege.size() - 1));
+
+        View[] knoepfe = new View[2];
+        View kasten;
+        if (eintrag != null) {
+            String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            if (titel.isEmpty()) titel = "Titel";
+            String unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
+                    ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText(),
+                eintrag.providerName(), eintrag.standText());
+            kasten = TvViews.hero(this, "Fortsetzen", titel, unterzeile, eintrag.bild(),
+                eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent(),
+                "Weiter schauen", () -> openFavorite(eintrag),
+                "Meine Liste", () -> zeigeBibliothek(Bibliothek.WEITERSCHAUEN),
+                knoepfe, this::heroFokusGeaendert);
+        } else if (!providers.isEmpty()) {
+            Provider erster = activeProvider != null ? activeProvider : providers.get(0);
+            kasten = TvViews.hero(this, "ELFIX", "Was möchtest du ansehen?",
+                "Wähle einen Anbieter oder durchsuche alle auf einmal.", "", 0,
+                erster.name + " öffnen",
+                () -> openProvider(erster, erster.lastUrl.isEmpty() ? erster.startUrl : erster.lastUrl),
+                "Suchen", () -> showGlobalSearch(""),
+                knoepfe, this::heroFokusGeaendert);
+        } else {
+            kasten = TvViews.hero(this, "ELFIX", "Noch keine Anbieter",
+                "Ohne Anbieter gibt es nichts zu zeigen.", "", 0,
+                "Einstellungen öffnen", this::showSettings, null, null,
+                knoepfe, this::heroFokusGeaendert);
+        }
+        if (knoepfe[0] != null) knoepfe[0].setTag("tv:hero:0");
+        if (knoepfe[1] != null) knoepfe[1].setTag("tv:hero:1");
+        kasten.setMinimumHeight(dp(TvViews.heroHoeheDp(this)));
+        heroPlatz.addView(kasten, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        if (heroPunkte == null) return;
+        heroPunkte.removeAllViews();
+        heroPunkte.setVisibility(heroEintraege.size() > 1 ? View.VISIBLE : View.GONE);
+        if (heroEintraege.size() > 1) {
+            heroPunkte.addView(TvViews.heroPunkte(this, heroEintraege.size(), heroStelle,
+                stelle -> {
+                    if (stelle == heroStelle) return;
+                    heroStelle = stelle;
+                    // Nur den Kasten neu zeichnen und nicht die Seite: sonst
+                    // verloere der Punkt, auf dem der Fokus gerade steht,
+                    // seinen Platz - und mit ihm den Fokus.
+                    tvHeroNurBildNeu();
+                },
+                this::heroFokusGeaendert));
         }
     }
 
-    private void tvStartseitenReihe(LinearLayout page, Bibliothek liste, int hoechstens) {
-        List<Favorite> eintraege = liste.eintraege(bestand);
-        if (eintraege.isEmpty()) return;
-        addSpacing(page, TvViews.sectionTitle(this, liste.titel), TvViews.SECTION_GAP);
-        int breite = tvCardWidthDp(200, 160);
-        LinearLayout reihe = tvRow();
-        int gezeigt = Math.min(hoechstens, eintraege.size());
-        for (int i = 0; i < gezeigt; i += 1) {
-            addTvRowItem(reihe, tvEintragsKarte(eintraege.get(i), liste, breite), i == 0);
-        }
-        addSpacing(page, reihe, TvViews.ITEM_GAP);
-    }
-
-    private View tvFavoriteCard(Favorite favorite, int widthDp) {
-        return tvEintragsKarte(favorite, Bibliothek.WEITERSCHAUEN, widthDp);
+    /**
+     * Nur den Kasten des Titelhintergrunds erneuern, die Punkte stehenlassen.
+     *
+     * <p>Der Fokus steht beim Blaettern auf einem der Punkte. Wuerde die Reihe
+     * mit neu gebaut, verschwaende die Ansicht, die ihn haelt, und der Fokus
+     * fiele auf den Anfang der Seite zurueck - bei jedem Schritt nach rechts.
+     */
+    private void tvHeroNurBildNeu() {
+        if (heroPlatz == null || heroEintraege.isEmpty()) return;
+        boolean warHier = heroPunkte != null && heroPunkte.findFocus() != null;
+        tvHeroZeichnen();
+        if (!warHier || heroPunkte == null || heroPunkte.getChildCount() == 0) return;
+        View reihe = heroPunkte.getChildAt(0);
+        if (!(reihe instanceof ViewGroup)) return;
+        View punkt = ((ViewGroup) reihe).getChildAt(heroStelle);
+        if (punkt != null) punkt.requestFocus();
     }
 
     /**
@@ -1133,9 +1699,14 @@ public class MainActivity extends Activity {
         page.addView(TvViews.heroTitle(this, liste.titel));
         page.addView(TvViews.body(this, liste.untertitel));
 
+        // Die Bilder eines langen Rasters werden erst geholt, wenn ihre Karte
+        // in die Naehe des Bildschirms kommt. Eine Mediathek mit
+        // zweihundert Titeln waere sonst zweihundert Poster auf einmal.
+        Bilder.Sichtfenster fenster = new Bilder.Sichtfenster();
+
         LinearLayout reiter = tvRow();
         addSpacing(page, reiter, TvViews.ITEM_GAP);
-        View ersterReiter = null;
+        int reiterStelle = 0;
         for (Bibliothek eintrag : Bibliothek.values()) {
             int anzahl = eintrag.eintraege(bestand).size();
             Button knopf = textButton(anzahl > 0 ? eintrag.titel + "  " + anzahl : eintrag.titel);
@@ -1143,51 +1714,61 @@ public class MainActivity extends Activity {
             knopf.setTextColor(gewaehlt ? Color.WHITE : Theme.TEXT_SECONDARY);
             applyTvFocus(knopf, gewaehlt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, Theme.PRIMARY, 20);
             knopf.setOnClickListener(view -> zeigeBibliothek(eintrag));
-            addTvRowItem(reiter, knopf, ersterReiter == null);
-            if (gewaehlt) ersterReiter = knopf;
+            knopf.setTag("tv:reiter:" + reiterStelle);
+            addTvRowItem(reiter, knopf, reiterStelle == 0);
+            reiterStelle += 1;
         }
 
         List<Favorite> eintraege = liste.eintraege(bestand);
         if (eintraege.isEmpty()) {
-            addSpacing(page, TvViews.infoCard(this, liste.leerTitel, liste.leerText, null, null),
-                TvViews.SECTION_GAP);
-            if (ersterReiter != null) {
-                View ziel = ersterReiter;
-                ziel.post(ziel::requestFocus);
-            }
+            addSpacing(page, TvViews.emptyState(this, R.drawable.ic_nav_favorite,
+                liste.leerTitel, liste.leerText), TvViews.SECTION_GAP);
+            tvFokusHerstellen(page);
             return;
         }
 
-        int width = tvCardWidthDp(200, 160);
-        int perRow = Math.max(1, (getResources().getConfiguration().screenWidthDp - 2 * TvViews.SCREEN_PADDING
-            + TvViews.ITEM_GAP) / (width + TvViews.ITEM_GAP));
-        LinearLayout row = null;
-        View ersteKarte = null;
+        int breite = TvViews.kachelBreiteDp(this);
+        int proZeile = Math.max(1, (getResources().getConfiguration().screenWidthDp
+            - 2 * TvViews.SCREEN_PADDING + TvViews.ITEM_GAP) / (breite + 16 + TvViews.ITEM_GAP));
+        LinearLayout zeile = null;
         for (int i = 0; i < eintraege.size(); i += 1) {
-            if (i % perRow == 0) {
-                row = tvRow();
-                addSpacing(page, row, i == 0 ? TvViews.SECTION_GAP : TvViews.ITEM_GAP);
+            if (i % proZeile == 0) {
+                zeile = tvRow();
+                addSpacing(page, zeile, i == 0 ? TvViews.SECTION_GAP : TvViews.ITEM_GAP);
             }
-            View karte = tvEintragsKarte(eintraege.get(i), liste, width);
-            addTvRowItem(row, karte, i % perRow == 0);
-            if (ersteKarte == null) ersteKarte = karte;
+            View karte = tvEintragsKarte(eintraege.get(i), liste, breite, fenster);
+            karte.setTag("tv:liste:" + i);
+            addTvRowItem(zeile, karte, i % proZeile == 0);
         }
-        if (ersteKarte != null) {
-            View ziel = ersteKarte;
-            ziel.post(ziel::requestFocus);
-        }
+
+        ScrollView scroll = seitenScroll;
+        scroll.setOnScrollChangeListener((ansicht, x, y, altX, altY) -> {
+            if (seitenScroll != scroll) return;
+            fenster.pruefen(scroll);
+        });
+        scroll.post(() -> fenster.pruefen(scroll, true));
+        tvFokusHerstellen(page);
     }
 
-    private View tvEintragsKarte(Favorite eintrag, Bibliothek liste, int widthDp) {
+    /**
+     * Eine Kachel der vier Listen - dieselbe Form wie auf der Startseite.
+     *
+     * <p>Absichtlich dieselbe: derselbe Titel soll auf beiden Seiten gleich
+     * aussehen, sonst muss man ihn zweimal lernen.
+     */
+    private View tvEintragsKarte(Favorite eintrag, Bibliothek liste, int widthDp,
+                                 Bilder.Sichtfenster fenster) {
         String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
         if (titel.isEmpty()) titel = "Titel";
         String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
         if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
         }
-        return TvViews.favoriteCard(this, providerForFavorite(eintrag), titel, hinweis,
-            eintrag.providerName(), eintrag.bild(), widthDp,
-            liste.zeigtFortschritt() ? eintrag.progress() : 0,
+        return TvViews.kachel(this, providerForFavorite(eintrag), titel, hinweis,
+            eintrag.bild(),
+            liste.zeigtFortschritt() && !eintrag.wartetAufNaechsteFolge()
+                ? eintrag.fortschrittProzent() : 0,
+            eintrag.providerName(), widthDp, fenster,
             () -> openFavorite(eintrag),
             anker -> eintragsMenue(anker, eintrag, liste));
     }
@@ -2249,7 +2830,19 @@ public class MainActivity extends Activity {
      * jedes Mal die Scrollposition zu verlieren, jedes Bild neu anzufordern und
      * die Empfehlungsreihen erneut zu befragen.
      */
+    /**
+     * Der Titelhintergrund - je nach Geraet ein anderer Kasten, dieselbe Frage.
+     *
+     * <p>Was er zeigt, entscheidet keine der beiden Fassungen: es ist immer
+     * {@link Bestand#weiterschauen()}, dieselbe Liste wie am Rechner. Nur wie
+     * er es zeigt und wie man ihn bedient, ist verschieden.
+     */
     private void heroZeichnen() {
+        if (isTelevision()) tvHeroZeichnen();
+        else mobileHeroZeichnen();
+    }
+
+    private void mobileHeroZeichnen() {
         if (heroPlatz == null) return;
         heroPlatz.removeAllViews();
         Favorite eintrag = heroEintraege.isEmpty() ? null
@@ -2337,16 +2930,34 @@ public class MainActivity extends Activity {
     private void heroWechselPlanen() {
         takt.removeCallbacksAndMessages(null);
         if (heroEintraege.size() < 2) return;
+        // Solange die Fernbedienung im Titelhintergrund steht, wechselt er
+        // nicht. Der Takt wird deshalb gar nicht erst gestellt - und wieder
+        // gestellt, sobald der Fokus weiterzieht (siehe heroFokusGeaendert).
+        if (heroFokus) return;
         takt.postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (!"home".equals(currentScreen) || fullscreenView != null || heroPlatz == null) return;
-                if (heroEintraege.size() < 2) return;
+                if (heroEintraege.size() < 2 || heroFokus) return;
                 heroStelle = (heroStelle + 1) % heroEintraege.size();
                 heroZeichnen();
                 takt.postDelayed(this, HERO_TAKT_MS);
             }
         }, HERO_TAKT_MS);
+    }
+
+    /**
+     * Der Fokus hat den Titelhintergrund betreten oder verlassen.
+     *
+     * <p>Betreten haelt an, verlassen faengt von vorn an - nicht dort, wo die
+     * Uhr stehengeblieben ist. Wer gerade auf einem Titel stand, soll ihn noch
+     * die vollen fuenfzehn Sekunden sehen und nicht die eine, die uebrig war.
+     */
+    private void heroFokusGeaendert(boolean hat) {
+        if (heroFokus == hat) return;
+        heroFokus = hat;
+        if (hat) takt.removeCallbacksAndMessages(null);
+        else heroWechselPlanen();
     }
 
     /** Aus mehreren Angaben eine Zeile machen - leere fallen weg. */
@@ -2742,6 +3353,9 @@ public class MainActivity extends Activity {
      * Rechner.
      */
     private void zeigeEntdeckung(String art) {
+        // Dasselbe wie beim Wechsel der Liste: eine andere Art ist eine andere
+        // Seite, auch wenn sie denselben Namen im Bildschirmwechsel traegt.
+        if (!art.equals(entdeckungArt)) tvFokusJeSeite.remove("entdeckung");
         entdeckungArt = art;
         currentScreen = "entdeckung";
         mouseMode = false;
@@ -2779,7 +3393,81 @@ public class MainActivity extends Activity {
         return zustand;
     }
 
+    /**
+     * Die Entdeckungsseite - dieselbe Liste, zwei Zuschnitte.
+     *
+     * <p>Geholt, nachgefasst und gezaehlt wird in beiden Faellen von
+     * {@link #entdeckungLaden} und {@link #entdeckungNachfassen}: dieselbe
+     * Seitenzaehlung, dieselbe Doppelfilterung, dieselbe Wartestaffel. Was
+     * sich unterscheidet, ist die Zahl der Spalten, die Groesse der Karten und
+     * dass hier ein Fokus wandert statt eines Fingers.
+     */
     private void renderEntdeckung() {
+        if (isTelevision()) renderTvEntdeckung();
+        else renderMobileEntdeckung();
+    }
+
+    /**
+     * Die Entdeckungsseite auf dem Fernseher.
+     *
+     * <p>Ein Raster statt einer Reihe, weil hier alles zu einer Art gehoert
+     * und eine einzige Reihe von hundertfuenfzig Kacheln mit dem Steuerkreuz
+     * nicht zu durchqueren waere. Nachgeladen wird wie auf dem Telefon: am
+     * Scrollende, und zusaetzlich nach jedem Stapel von selbst - dreissig
+     * Karten fuellen einen Fernsehbildschirm samt Vorlauf nicht, es wird also
+     * gar nicht gescrollt, und ohne Scrollen faellt kein Ereignis.
+     */
+    private void renderTvEntdeckung() {
+        LinearLayout page = tvPage();
+        Entdeckung zustand = entdeckungsZustand();
+        entdeckungBilder = new Bilder.Sichtfenster();
+
+        page.addView(TvViews.eyebrow(this, "Für dich"));
+        page.addView(TvViews.heroTitle(this, entdeckungsTitel(entdeckungArt)));
+        TextView erklaerung = TvViews.body(this, entdeckungsText(entdeckungArt));
+        erklaerung.setMaxLines(2);
+        page.addView(erklaerung);
+
+        View zurueck = TvViews.pillButton(this, "Zurück zur Startseite", this::showHome);
+        zurueck.setTag("tv:zurueck");
+        LinearLayout.LayoutParams zurueckParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        zurueckParams.topMargin = dp(TvViews.ITEM_GAP);
+        page.addView(zurueck, zurueckParams);
+
+        entdeckungRaster = new LinearLayout(this);
+        entdeckungRaster.setOrientation(LinearLayout.VERTICAL);
+        entdeckungRaster.setClipChildren(false);
+        entdeckungRaster.setClipToPadding(false);
+        addSpacing(page, entdeckungRaster, TvViews.SECTION_GAP);
+
+        entdeckungFuss = new LinearLayout(this);
+        entdeckungFuss.setOrientation(LinearLayout.VERTICAL);
+        addSpacing(page, entdeckungFuss, TvViews.ITEM_GAP);
+
+        entdeckungKartenAnhaengen(0);
+        entdeckungFussZeichnen();
+
+        ScrollView scroll = seitenScroll;
+        scroll.setOnScrollChangeListener((ansicht, x, y, altX, altY) -> {
+            if (!"entdeckung".equals(currentScreen) || seitenScroll != scroll) return;
+            zustand.scroll = y;
+            if (entdeckungBilder != null) entdeckungBilder.pruefen(scroll);
+            entdeckungNachfassen();
+        });
+        scroll.post(() -> {
+            if (entdeckungBilder != null) entdeckungBilder.pruefen(scroll, true);
+            if (zustand.eintraege.isEmpty()) entdeckungLaden();
+            else entdeckungNachfassen();
+        });
+        // Der Fokus stellt die Scrollstelle selbst wieder her: eine ScrollView
+        // schiebt zu ihrem fokussierten Kind. Deshalb steht hier kein
+        // scrollTo - es waere der zweite Befehl an dieselbe Stelle, und die
+        // beiden kaemen sich in die Quere.
+        tvFokusHerstellen(page);
+    }
+
+    private void renderMobileEntdeckung() {
         LinearLayout page = mobilePage();
         Entdeckung zustand = entdeckungsZustand();
         // Die Bilder der vorigen Ansicht sind weg - ihre Ansichten auch.
@@ -2839,6 +3527,14 @@ public class MainActivity extends Activity {
     /** Wie viele Karten nebeneinander stehen - zwei auf dem Telefon, mehr auf breiten Geraeten. */
     private int entdeckungsSpalten() {
         int breite = getResources().getConfiguration().screenWidthDp;
+        if (isTelevision()) {
+            // Gerechnet aus der Kachelbreite, damit ein 720p-, ein 1080p- und
+            // ein 4K-Panel dieselbe Kachelgroesse und nicht dieselbe Spaltenzahl
+            // bekommen: auf 4K waeren vier Spalten vier riesige Poster.
+            int kachel = TvViews.kachelBreiteDp(this) + TvViews.ITEM_GAP;
+            return Math.max(3, Math.min(8,
+                (breite - 2 * TvViews.SCREEN_PADDING + TvViews.ITEM_GAP) / kachel));
+        }
         if (breite >= 840) return 4;
         return breite >= 600 ? 3 : 2;
     }
@@ -2854,10 +3550,13 @@ public class MainActivity extends Activity {
     private void entdeckungKartenAnhaengen(int abStelle) {
         if (entdeckungRaster == null) return;
         Entdeckung zustand = entdeckungsZustand();
+        boolean fernseher = isTelevision();
         int spalten = entdeckungsSpalten();
-        int abstand = dp(MobileViews.ITEM_GAP);
+        int rand = fernseher ? TvViews.SCREEN_PADDING : MobileViews.SCREEN_PADDING;
+        int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
+        int abstand = dp(luecke);
         int breite = Math.round((getResources().getConfiguration().screenWidthDp
-            - 2f * MobileViews.SCREEN_PADDING - (spalten - 1f) * MobileViews.ITEM_GAP) / spalten);
+            - 2f * rand - (spalten - 1f) * luecke) / spalten);
 
         // Die letzte Zeile kann halb gefuellt sein. Sie wird dann noch einmal
         // gebaut, damit die naechsten Karten in ihre Luecken kommen statt in
@@ -2876,8 +3575,13 @@ public class MainActivity extends Activity {
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
                 if (spalte > 0) zelle.leftMargin = abstand;
                 if (stelle < zustand.eintraege.size()) {
-                    zeile.addView(vorschlagsKarte(zustand.eintraege.get(stelle), breite,
-                        entdeckungBilder), zelle);
+                    View karte = fernseher
+                        ? tvVorschlagsKarte(zustand.eintraege.get(stelle), breite, entdeckungBilder)
+                        : vorschlagsKarte(zustand.eintraege.get(stelle), breite, entdeckungBilder);
+                    // Die TV-Karte bringt ihre eigene Breite mit; im Raster
+                    // gilt die der Zelle, die addView unten setzt.
+                    if (fernseher) karte.setTag("tv:entdeckung:" + stelle);
+                    zeile.addView(karte, zelle);
                 } else {
                     // Ein Platzhalter mit Hoehe 0: eine nackte View liefert bei
                     // WRAP_CONTENT die volle erlaubte Hoehe und schoebe alles
@@ -2887,9 +3591,11 @@ public class MainActivity extends Activity {
                     zeile.addView(new android.widget.Space(this), leer);
                 }
             }
+            zeile.setClipChildren(false);
+            zeile.setClipToPadding(false);
             LinearLayout.LayoutParams zeilenParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (entdeckungRaster.getChildCount() > 0) zeilenParams.topMargin = dp(18);
+            if (entdeckungRaster.getChildCount() > 0) zeilenParams.topMargin = dp(fernseher ? 22 : 18);
             entdeckungRaster.addView(zeile, zeilenParams);
         }
     }
@@ -2907,13 +3613,13 @@ public class MainActivity extends Activity {
         Entdeckung zustand = entdeckungsZustand();
         entdeckungFuss.removeAllViews();
         if (zustand.laeuft) {
-            entdeckungFuss.addView(MobileViews.hinweis(this, zustand.eintraege.isEmpty()
+            entdeckungFuss.addView(fussHinweis(zustand.eintraege.isEmpty()
                 ? "Vorschläge werden zusammengestellt …"
                 : "Weitere Vorschläge werden geladen …", null, null));
             return;
         }
         if (!zustand.fehler.isEmpty()) {
-            entdeckungFuss.addView(MobileViews.hinweis(this,
+            entdeckungFuss.addView(fussHinweis(
                 "Weitere Empfehlungen konnten nicht geladen werden.",
                 "Erneut versuchen", () -> {
                     entdeckungsZustand().fehler = "";
@@ -2922,20 +3628,27 @@ public class MainActivity extends Activity {
             return;
         }
         if (zustand.waechst && !zustand.fertig) {
-            entdeckungFuss.addView(MobileViews.hinweis(this,
-                "Weitere Vorschläge werden gesucht …", null, null));
+            entdeckungFuss.addView(fussHinweis("Weitere Vorschläge werden gesucht …", null, null));
             return;
         }
         if (zustand.fertig && !zustand.eintraege.isEmpty()) {
-            entdeckungFuss.addView(MobileViews.hinweis(this,
-                "Das war alles, was gerade dazu passt.", null, null));
+            entdeckungFuss.addView(fussHinweis("Das war alles, was gerade dazu passt.", null, null));
             return;
         }
         if (zustand.fertig && zustand.eintraege.isEmpty()) {
-            entdeckungFuss.addView(MobileViews.emptyState(this, R.drawable.ic_nav_favorite,
-                "Noch keine Vorschläge",
-                "ELFIX braucht ein paar angesehene Titel, bevor es etwas empfehlen kann."));
+            entdeckungFuss.addView(isTelevision()
+                ? TvViews.emptyState(this, R.drawable.ic_nav_favorite, "Noch keine Vorschläge",
+                    "ELFIX braucht ein paar angesehene Titel, bevor es etwas empfehlen kann.")
+                : MobileViews.emptyState(this, R.drawable.ic_nav_favorite, "Noch keine Vorschläge",
+                    "ELFIX braucht ein paar angesehene Titel, bevor es etwas empfehlen kann."));
         }
+    }
+
+    /** Derselbe Satz, der jeweils passende Kasten. */
+    private View fussHinweis(String text, String knopf, Runnable beiKnopf) {
+        return isTelevision()
+            ? TvViews.hinweis(this, text, knopf, beiKnopf)
+            : MobileViews.hinweis(this, text, knopf, beiKnopf);
     }
 
     /**
@@ -2954,7 +3667,10 @@ public class MainActivity extends Activity {
         View inhalt = seitenScroll.getChildAt(0);
         if (inhalt == null) return;
         int unten = inhalt.getHeight() - seitenScroll.getHeight() - seitenScroll.getScrollY();
-        if (unten <= dp(800)) entdeckungLaden();
+        // Auf dem Fernseher mit mehr Vorlauf: dort springt der Fokus in
+        // Zeilenschritten nach unten und ist schneller am Ende, als ein Finger
+        // es waere.
+        if (unten <= dp(isTelevision() ? 1400 : 800)) entdeckungLaden();
     }
 
     /** Den naechsten Abschnitt holen. */
@@ -4575,6 +5291,13 @@ public class MainActivity extends Activity {
      * andere keinen Raum. Welche Liste zuletzt offen war, bleibt gemerkt.
      */
     private void zeigeBibliothek(Bibliothek liste) {
+        // Ein Wechsel der Liste ist kein Zurueckkommen: der gemerkte Platz
+        // gehoert zur vorigen Liste und stuende hier an einer Kachel, die es
+        // nicht mehr gibt. Also faengt der Fokus auf dem Reiter an, den man
+        // gerade gewaehlt hat - dort, wo die Hand zuletzt war.
+        if (liste != offeneListe) {
+            tvFokusJeSeite.put("favorites", "tv:reiter:" + liste.ordinal());
+        }
         offeneListe = liste;
         currentScreen = "favorites";
         mouseMode = false;
@@ -4687,6 +5410,12 @@ public class MainActivity extends Activity {
         // Vor dem ersten Laden: das Startskript gilt erst ab dem naechsten
         // Dokument, spaeter angeschlossen bliebe die erste Seite ohne Rahmen.
         if (rahmen != null) rahmen.anschliessen(webView);
+        // Dasselbe Zeitfenster, anderer Grund: das Stilblatt gegen die Werbung
+        // muss vor den Skripten der Seite dastehen, sonst blitzt sie auf.
+        // Nur auf dem Fernseher - siehe das Feld.
+        if (isTelevision() && fernsehwerbung != null) {
+            fernsehwerbung.anschliessen(webView, provider);
+        }
         webView.setWebViewClient(new GuardedWebViewClient(provider));
         webView.setWebChromeClient(new GuardedChromeClient());
         // Ad frames on these sites try to push APKs and other files. ELFIX never downloads anything,
@@ -5271,6 +6000,11 @@ public class MainActivity extends Activity {
      * und wuerde auf null gekappt.
      */
     private void scrollStandHerstellen(int stand) {
+        // Auf dem Fernseher nicht: dort stellt der Fokus die Stelle wieder her
+        // (siehe tvFokusHerstellen), und eine ScrollView schiebt von sich aus
+        // zu ihrem fokussierten Kind. Beides zugleich waeren zwei Befehle an
+        // dieselbe Stelle - und sichtbar waere davon ein Sprung.
+        if (isTelevision()) return;
         if (stand <= 0 || seitenScroll == null) return;
         ScrollView scroll = seitenScroll;
         scroll.post(() -> scroll.scrollTo(0, stand));
@@ -6725,14 +7459,28 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Eine gesperrte Hauptnavigation melden - hoechstens so oft, wie es hilft.
+     * Eine gesperrte Hauptnavigation vermerken - ohne ein Wort auf dem Schirm.
      *
-     * <p>Eine Werbekette versucht es in Schueben; ohne die Bremse in der Wache
-     * staende die Meldung fuenfmal uebereinander.
+     * <p>Hier stand bis hierher ein Toast ("Weiterleitung blockiert", "Popup
+     * blockiert", "Externer Link blockiert"). Er war als Erklaerung gedacht
+     * und ist als Stoerung angekommen: eine Werbekette versucht es in
+     * Schueben, und auf einem Fernseher steht die Meldung dann quer ueber dem
+     * Bild, waehrend eine Folge laeuft. Erklaert hat sie nichts - wer sie
+     * liest, kann nichts damit anfangen, denn die Sperre ist genau das, was
+     * ELFIX tun soll.
+     *
+     * <p>Gesperrt wird deshalb unveraendert weiter; nur die Bekanntgabe ist
+     * weg. Was passiert ist, steht im Debug-Bau in {@link #spur} - mit Wirt,
+     * Art und Grund, und damit fuer eine Fehlersuche mehr wert als der Toast
+     * es je war. Die Bremse in der Wache
+     * ({@link Navigationswache#meldungFaellig}) bleibt fuer die Faelle, in
+     * denen eine <em>Zaehlung</em> gebraucht wird - sie bremst jetzt das
+     * Protokoll statt der Meldung, und das ist der Grund, warum eine gesperrte
+     * Werbekette das Logcat nicht mehr flutet.
      */
-    private void sperreMelden(WebView view, String url, Provider provider, String meldung) {
+    private void sperreMelden(WebView view, String url, Provider provider, String grund) {
         if (wache.meldungFaellig(safeHost(url), SystemClock.uptimeMillis())) {
-            showToast(meldung);
+            spur("main", url, "sperre", "blockiert", grund);
         }
         nachSperrePruefen(view, provider);
     }
@@ -6869,6 +7617,12 @@ public class MainActivity extends Activity {
                     view.postDelayed(() -> installAniWorldImageFix(view, provider), delay);
                 }
             }
+            // Der Rueckfall fuer WebViews ohne addDocumentStartJavaScript und
+            // fuer Seiten, die ihr Dokument per Skript austauschen. Frueher
+            // als hier geht es ueber diesen Weg nicht.
+            if (isTelevision() && fernsehwerbung != null) {
+                fernsehwerbung.einspielen(view, provider);
+            }
             super.onPageStarted(view, url, favicon);
         }
 
@@ -6885,9 +7639,6 @@ public class MainActivity extends Activity {
             String scheme = request.getUrl().getScheme();
             if (scheme != null && !"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
                 spur("main", url, "navigation", "blockiert", "fremdes schema " + scheme);
-                if (wache.meldungFaellig(scheme, SystemClock.uptimeMillis())) {
-                    showToast("Externer Link blockiert");
-                }
                 // Ein fremdes Schema hat nie ein Dokument bestaetigt; die Seite
                 // steht noch. Trotzdem nachsehen - es kostet nichts und deckt
                 // den Fall ab, dass die Werbung vorher schon umgezogen ist.
@@ -6900,9 +7651,6 @@ public class MainActivity extends Activity {
             }
             if (shouldBlockProviderNavigation(provider, url)) {
                 spur("main", url, "navigation", "blockiert", "anderer eingerichteter anbieter");
-                if (wache.meldungFaellig(safeHost(url), SystemClock.uptimeMillis())) {
-                    showToast("Provider-Wechsel blockiert");
-                }
                 nachSperrePruefen(view, provider);
                 return true;
             }
@@ -6920,7 +7668,7 @@ public class MainActivity extends Activity {
             if (!urteil.erlaubt) {
                 spur("main", url, request.isRedirect() ? "weiterleitung" : "navigation",
                     "blockiert", urteil.grund + ", von " + safeHost(mainFrameUrl));
-                sperreMelden(view, url, provider, "Weiterleitung blockiert");
+                sperreMelden(view, url, provider, urteil.grund);
                 return true;
             }
             // Und zuletzt die Filterlisten: auch eine formal zulaessige
@@ -6929,7 +7677,7 @@ public class MainActivity extends Activity {
             // stumm, ohne Meldung und ohne Blick darauf, was stehenbleibt.
             if (adblocker.shouldBlock(url, provider, Adblocker.isLikelyVideoPlayerUrl(view.getUrl()))) {
                 spur("main", url, "navigation", "blockiert", "filterliste");
-                sperreMelden(view, url, provider, "Weiterleitung blockiert");
+                sperreMelden(view, url, provider, "filterliste");
                 return true;
             }
             spur("main", url, request.isRedirect() ? "weiterleitung" : "navigation",
@@ -6958,6 +7706,28 @@ public class MainActivity extends Activity {
             if (Adblocker.isIntrusiveOverlayRequest(request.getUrl().toString())) {
                 spur("sub", request.getUrl().toString(), "anfrage", "blockiert",
                     "aufdringliche werbeschicht " + safePath(request.getUrl().toString()));
+                return blockedResourceResponse(request);
+            }
+            // Und dieselbe Frage an die kuratierten Kernlisten - ebenfalls
+            // *vor* der Ausnahme fuer Seitenbestandteile. Genau dort kamen die
+            // beiden Werbekarten oben rechts herein: ihr Bild und ihr
+            // Stilblatt sind formal Bild und Stilblatt, und die Ausnahme laesst
+            // beides ungeprueft durch, damit eine Seite nicht am Filter
+            // zerbricht. Nur auf dem Fernseher, und nur die kuratierten Listen
+            // - die grosse Liste hier vorzuziehen waere breit genug, um ein
+            // Titelbild des Anbieters mitzunehmen.
+            //
+            // Aber nicht im Rahmen des Hosters. Dort gilt weiterhin, was
+            // blockReason() begruendet: VOE zaehlt die Anfragen seiner eigenen
+            // Werbepartner mit und verweigert die Wiedergabe, wenn zu viele
+            // fehlen. Die vier ausdruecklich benannten Aufdringlichen oben
+            // sind die Ausnahme davon und bleiben es; diese breitere Regel
+            // wird es nicht - ein blockiertes Werbebild ist kein Grund, das
+            // Video zu verlieren.
+            if (isTelevision() && !isHosterFrameRequest(request)
+                && adblocker.istKernWerbeAnfrage(request.getUrl().toString(), provider)) {
+                spur("sub", request.getUrl().toString(), "anfrage", "blockiert",
+                    "werbenetz vor der seitenausnahme");
                 return blockedResourceResponse(request);
             }
             if (isPageCriticalRequest(request)) {
@@ -7028,6 +7798,12 @@ public class MainActivity extends Activity {
             // openProvider() setzt es zurueck, sobald ELFIX selbst navigiert.
             if (provider == activeProvider) hideProviderLoading();
             if (shouldBlockProviderNavigation(provider, url)) return;
+            // Vor der TV-Navigation: was Werbung ist, soll schon weg sein,
+            // wenn die Navigation ihre Ziele einsammelt. Sonst bekaeme eine
+            // Werbekarte den ersten Fokus.
+            if (isTelevision() && fernsehwerbung != null) {
+                fernsehwerbung.einspielen(view, provider);
+            }
             installTvWebNavigation(view);
             installStoPlayerFix(view, provider);
             installAniWorldImageFix(view, provider);
@@ -7128,7 +7904,7 @@ public class MainActivity extends Activity {
         if (webView == null) return;
         String script =
             "(function(){"
-                + "if(window.__elfixTvNavV8)return;window.__elfixTvNavV8=true;"
+                + "if(window.__elfixTvNavV9)return;window.__elfixTvNavV9=true;"
                 + "var style=document.createElement('style');"
                 + "style.textContent='*{-webkit-user-select:none!important;user-select:none!important}a:focus,button:focus,input:focus,select:focus,textarea:focus,video:focus,iframe:focus,[tabindex]:focus,[role=\"button\"]:focus{outline:4px solid #3D92FF!important;outline-offset:3px!important;border-radius:10px!important;box-shadow:0 0 0 6px rgba(61,146,255,.30),0 0 30px rgba(61,146,255,.55)!important}#__elfixCursor{display:none}';"
                 // AniWorld renders seasons and episodes as 33x33 number links -- unreadable and hard
@@ -7138,9 +7914,26 @@ public class MainActivity extends Activity {
                 + "a.watchEpisode{min-height:56px!important}';"
                 + "document.documentElement.appendChild(tvStyle);}"
                 + "document.documentElement.appendChild(style);"
-                + "var priority='#stream a, a.watchEpisode, a.alphabet-link, button.link-box, a.video-card, .provider-chip, button.provider-frame__play, iframe';"
+                // Was auf einer Anbieterseite wirklich zu bedienen ist:
+                // Folgen, Staffeln, Sprache, Hoster, Player. Die Sprachwahl
+                // und die Hosterleiste standen hier vorher nicht - auf
+                // AniWorld sind das <img>- und <li>-Elemente mit einem
+                // Klickhorcher, und die faellt die allgemeine Auswahl unten
+                // nicht auf, weil sie weder Link noch Knopf sind. Mit einer
+                // Fernbedienung waren sie damit unerreichbar.
+                + "var priority='#stream a, a.watchEpisode, a.alphabet-link, button.link-box,"
+                + " a.video-card, .provider-chip, button.provider-frame__play,"
+                + " .changeLanguageBox img, .changeLanguageBox li, .changeLanguageBox [data-lang-key],"
+                + " .hosterSiteDirectNav a, .hosterSiteDirectNav li,"
+                + " .episodeList a, .seasonEpisodesList a, iframe';"
                 + "var important='a[href],button,input,select,textarea,video,[role=\"button\"],[tabindex],.vjs-big-play-button,.jw-icon-playback,.plyr__control,[class*=\"play\"],[class*=\"Play\"],[class*=\"watch\"],[class*=\"Watch\"],[class*=\"stream\"],[class*=\"Stream\"]';"
-                + "function visible(el){var r=el.getBoundingClientRect();var s=getComputedStyle(el);"
+                // Was die Werbeentfernung ausgeblendet hat, ist kein Ziel -
+                // auch dann nicht, wenn die Seite es gleich wieder einblendet.
+                // Ohne diese Zeile bekaeme eine Werbekarte den Fokus, obwohl
+                // sie nicht zu sehen ist, und die Fernbedienung liefe ins
+                // Leere (siehe Fernsehwerbung.java).
+                + "function werbung(el){try{return !!(el.closest&&el.closest('[data-elfix-werbung],[aria-hidden=\"true\"]'));}catch(e){return false;}}"
+                + "function visible(el){if(werbung(el))return false;var r=el.getBoundingClientRect();var s=getComputedStyle(el);"
                 // Deliberately scroll-independent: an element counts as a target if it is rendered
                 // at all, not only if it happens to be on screen right now. Filtering by the current
                 // viewport made the candidate list change between key presses, which is what made
@@ -7157,7 +7950,10 @@ public class MainActivity extends Activity {
                 + "if((el.innerText||el.textContent||'').trim().length>0)return true;"
                 + "return !!el.querySelector('img,svg,picture,video');}"
                 + "function meaningful(el){if(!visible(el)||noise(el)||overlay(el)||!contentful(el))return false;var tag=el.tagName;var r=el.getBoundingClientRect();var cls=((el.className||'')+' '+(el.id||'')).toLowerCase();if(tag==='VIDEO'||tag==='IFRAME')return true;if(tag==='A'||tag==='BUTTON'||tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return true;if(el.getAttribute('role')==='button'||el.hasAttribute('tabindex'))return true;if(/play|watch|stream|start|episode|folge|staffel|film|movie|video|player/.test(cls))return true;return r.width*r.height>5000&&el.onclick;}"
-                + "function priorityItems(){return Array.prototype.slice.call(document.querySelectorAll(priority)).filter(function(el){return visible(el)&&!overlay(el)&&contentful(el);});}"
+                // Der tabIndex gehoert dazu: focus() auf einem <img> oder
+                // <li> ohne ihn tut nichts, und dann steht der Fokusrahmen
+                // nirgends, obwohl das Ziel gefunden wurde.
+                + "function priorityItems(){return Array.prototype.slice.call(document.querySelectorAll(priority)).filter(function(el){if(el.tabIndex<0)el.tabIndex=0;return visible(el)&&!overlay(el)&&contentful(el);});}"
                 + "function fallbackItems(){return Array.prototype.slice.call(document.querySelectorAll(important+', [onclick]')).filter(function(el){if(el.tabIndex<0)el.tabIndex=0;return meaningful(el);});}"
                 + "function items(){var p=priorityItems();return p.length?p:fallbackItems();}"
                 + "function docRect(el){var r=el.getBoundingClientRect();var sx=window.scrollX||window.pageXOffset||0;var sy=window.scrollY||window.pageYOffset||0;"
@@ -7182,6 +7978,13 @@ public class MainActivity extends Activity {
                 + "window.__elflixTvMouse=function(action,dx,dy){var c=cursor();if(action==='show'){c.style.display='block';paint();return true;}if(action==='hide'){c.style.display='none';return true;}if(action==='move'){c.style.display='block';cur.x=Math.max(8,Math.min(innerWidth-8,cur.x+(dx||0)));cur.y=Math.max(8,Math.min(innerHeight-8,cur.y+(dy||0)));if(cur.y<34&&dy<0)window.scrollBy({top:-120,behavior:'smooth'});if(cur.y>innerHeight-34&&dy>0)window.scrollBy({top:120,behavior:'smooth'});if(cur.x<28&&dx<0)window.scrollBy({left:-120,behavior:'smooth'});if(cur.x>innerWidth-28&&dx>0)window.scrollBy({left:120,behavior:'smooth'});paint();return true;}if(action==='click'){if(dx>0)cur.x=Math.max(8,Math.min(innerWidth-8,dx));if(dy>0)cur.y=Math.max(8,Math.min(innerHeight-8,dy));c.style.display='block';paint();var old=c.style.display;c.style.display='none';var el=document.elementFromPoint(cur.x,cur.y);c.style.display=old;var target=el&&el.closest&&el.closest(important+', [onclick]')||el;if(target){try{target.focus();}catch(e){}fire(target,cur.x,cur.y);}return true;}return false;};"
                 + "function describe(el){if(!el)return 'null';var r=el.getBoundingClientRect();return el.tagName+'#'+(el.id||'')+'.'+((''+(el.className||'')).split(' ')[0])+' '+Math.round(r.width)+'x'+Math.round(r.height)+'@'+Math.round(r.left)+','+Math.round(r.top);}"
                 + "window.__elfixReport=function(tag){try{console.log('ELFIX:'+tag+' active='+describe(document.activeElement)+' items='+items().length);}catch(e){}};"
+                // Der Rueckweg fuer die Werbeentfernung: verschwindet ein
+                // Element, in dem gerade der Fokus stand, bekommt die Seite
+                // hier einen neuen. Ohne das faellt der Fokus auf den Body,
+                // und das Steuerkreuz faengt bei jedem Werbeschub von vorn an.
+                + "window.__elfixTvNavErneut=function(){var el=first();if(!el)return false;"
+                + "try{el.focus();el.scrollIntoView({block:'center',inline:'center'});}catch(e){}"
+                + "window.__elfixReport('fokus-erneut');return true;};"
                 + "document.addEventListener('keydown',function(e){"
                 + "var ae=document.activeElement;"
                 // The hoster runs in a cross-origin iframe. Once it has focus we must NOT consume the
@@ -7335,14 +8138,17 @@ public class MainActivity extends Activity {
                     } else {
                         // Die Hauptseite bleibt, wie sie ist: das Popup hat ein
                         // eigenes, nie eingehaengtes WebView bekommen und
-                        // verschwindet gleich mit ihm. Nur die Meldung geht
-                        // hinaus, und auch die nur, wenn sie nicht gerade eben
-                        // schon dastand.
+                        // verschwindet gleich mit ihm.
+                        //
+                        // Und niemand erfaehrt davon. Hier stand ein Toast
+                        // ("Popup blockiert"); er ist weg, die Sperre nicht.
+                        // Ein geblocktes Popup ist kein Ereignis, das jemanden
+                        // etwas angeht - es ist der Normalfall auf diesen
+                        // Seiten, und auf einem Fernseher legte sich die
+                        // Meldung ueber das laufende Bild. Was geschehen ist,
+                        // steht im Debug-Bau in der Spur darueber.
                         Provider betroffen = provider;
                         view.post(() -> {
-                            if (wache.meldungFaellig(safeHost(url), SystemClock.uptimeMillis())) {
-                                showToast("Popup blockiert");
-                            }
                             // Ein Popup, das window.open() ohne Adresse aufmacht
                             // und erst danach umleitet, kann die Hauptseite auf
                             // about:blank stehenlassen. Nachsehen, nicht hoffen.

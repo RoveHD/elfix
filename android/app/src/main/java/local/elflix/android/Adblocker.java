@@ -146,6 +146,53 @@ public final class Adblocker {
     ));
 
     /**
+     * Die kuratierten Kernlisten als ein Satz Namen.
+     *
+     * <p>Fuer zwei Stellen, die dieselbe Frage anders brauchen als
+     * {@link #istWerbeHost}: die Anfrageprüfung vor der Ausnahme fuer
+     * Seitenbestandteile ({@link #istKernWerbeAnfrage}) und die kosmetische
+     * Filterung im Fernseher ({@link Fernsehwerbung}), die eine Liste
+     * <em>in die Seite</em> reichen muss und deshalb eine kurze braucht.
+     *
+     * <p>Ausdruecklich nur die kuratierten Listen und nicht die ~140.000
+     * Domains der AdGuard-Liste: die geht nicht durch eine
+     * {@code evaluateJavascript}-Grenze, und im Rahmen des Hosters ist sie aus
+     * gutem Grund ohnehin nicht in Kraft (siehe {@link #blockReason}).
+     */
+    public Set<String> kernWerbeWirte() {
+        Set<String> alle = new HashSet<>(adDomains.size() + trackers.size() + overlayAdDomains.size());
+        alle.addAll(adDomains);
+        alle.addAll(trackers);
+        alle.addAll(overlayAdDomains);
+        return Collections.unmodifiableSet(alle);
+    }
+
+    /**
+     * Ob diese Anfrage schon an den kuratierten Kernlisten scheitert.
+     *
+     * <p>Der Unterschied zu {@link #blockReason} ist die Stelle, an der
+     * gefragt wird: {@code isPageCriticalRequest} laesst Bilder, Stilblaetter
+     * und Schriften ungeprueft durch, damit eine Seite nicht daran
+     * zerbricht. Genau darin kamen die beiden Werbekarten oben rechts herein -
+     * ihr Bild und ihr Stilblatt sind formal Seitenbestandteile.
+     *
+     * <p>Deshalb hier dieselbe Frage vor jener Ausnahme, aber ausschliesslich
+     * gegen die kuratierten Listen: was dort steht, ist ein Werbenetz und
+     * kein Bestandteil einer Anbieterseite. Die grosse Liste bleibt draussen -
+     * sie ist breit genug, um ein Bild des Anbieters mitzunehmen.
+     */
+    public boolean istKernWerbeAnfrage(String url, Provider provider) {
+        if (provider == null || !provider.adblockEnabled) return false;
+        if (isChallengeOrVerificationUrl(url, provider)) return false;
+        String host = host(url);
+        if (host.isEmpty() || isFirstParty(host, provider)) return false;
+        if (isLikelyVideoPlayerUrl(url, host)) return false;
+        return matchesAny(host, adDomains)
+            || matchesAny(host, trackers)
+            || matchesAny(host, overlayAdDomains);
+    }
+
+    /**
      * True for the intrusive overlay creatives above. Matched by host and additionally by the ad
      * product's own path, so a rotated CDN domain is still caught.
      */
