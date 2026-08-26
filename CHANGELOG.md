@@ -3,6 +3,74 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.49.0 — 26. August 2026
+
+Zwei Meldungen von Android, und beide waren nicht das, wonach sie aussahen: die
+eine war kein Popup, die andere war nicht „unzuverlässig", sondern nie.
+
+### Die Karte oben rechts hatte ihre Merkmale hinter einer Dokumentgrenze
+
+Gemeldet als „Popups und Weiterleitungen" auf Android TV. Was da erscheint, ist
+weder das eine noch das andere: es ist ein Rahmen, den ein Werbeskript in die
+Seite hängt — ohne src, ohne id, ohne Klasse, das einzige Attribut ist der Stil.
+Er hängt an `<html>`, liegt fest in der Ecke und ganz vorn, und darin stehen
+zwei „BROWSER-UPDATE"-Karten. Auf dem Fernseher und auf dem Telefon
+gleichermaßen.
+
+Warum ihn keine der vier vorhandenen Schichten gesehen hat, ist bei allen vieren
+derselbe Grund: sie lesen das Element von außen, und von außen steht nichts
+darauf. Kein Name für die Werbekennungen, kein Text für die Textmuster — der
+Text liegt in seinem eigenen Dokument —, kein Ziel für die Domainlisten, und
+weil es für `about:blank` keine Anfrage gibt, auch nichts für den Anfragefilter.
+Die Punktevergabe kam auf zwei von vier, die geteilte Kosmetik verwarf ihn mit
+14 Prozent Deckung als „zu klein".
+
+Übrig bleibt genau ein Merkmal, das von außen sichtbar ist: der Rahmen hat keine
+Quelle. Ein Player wird immer von einer Adresse geholt — gemessen
+`aniworld.to/redirect/<id>` und `filmo.to/n/<id>`, beide mit src und beide im
+Textfluss ihres Kastens. Ein Rahmen ohne Adresse ist keiner. Liegt er zusätzlich
+fest und vor allem anderen, hat er keine andere Aufgabe, als auf der Seite zu
+liegen.
+
+Eng gehalten, damit die Regel den Player nicht mitnimmt: die Ebene muss
+vierstellig sein, der Rahmen muss Fläche haben, und wer fast den ganzen Schirm
+einnimmt, fällt heraus. Der Schutz steht unverändert davor — eine Verifizierung
+bleibt auch dann stehen, wenn sie diese Form hätte.
+
+Und ausdrücklich kosmetisch, nicht als Sperre: die Bilder kommen als
+Seitenbestandteile herein, und ein Anfragefilter davor wäre genau das, was VOE
+als Werbeblocker meldet. Was nie blockiert wird, kann kein Erkenner sehen — die
+Folge lief beim Nachmessen in 1080p weiter.
+
+### Weiterschauen funktionierte auf Android nicht selten, sondern nie
+
+Auf einem frisch eingerichteten Gerät entstand `favorites.json` überhaupt nicht.
+
+In `MainActivity` stand `messung.setzeRahmen(rahmen)` zweiundsiebzig Zeilen
+*vor* der Zeile, die das Feld belegt. Weitergereicht wurde also das noch leere
+Feld. Marken und Mitschauen, die weiter unten angelegt werden, bekamen den
+Rahmen richtig — die Messung als einzige nicht.
+
+Damit fragte sie nur noch das Hauptdokument. Bei AniWorld, s.to und filmo.to
+liegt dort nie ein Video: es liegt im Rahmen des Hosters. Kein Messwert, keine
+Buchung, kein Weiterschauen — und weil die früheste Rückgabe der Regel keine
+Diagnose trägt, stand darüber auch nichts im Protokoll.
+
+Zwei Zeilen, und die zweite ist die wichtigere: der Rahmen wird jetzt angelegt,
+bevor ihn jemand bekommt, und `setzeRahmen(null)` beschwert sich. Ein Feld, das
+später belegt wird, ist beim Weitergeben trotzdem null; ohne diese Zeile wäre
+derselbe Fehler wieder lautlos, und lautlos hat er die ganze Funktion gekostet.
+
+Nachgemessen auf Telefon und Fire TV Stick, die ganze Kette: der
+Fünfsekundentakt zählt, der Eintrag steht in `favorites.json`, die Startseite
+zeigt „Fortsetzen" mit Stelle und Prozent, ein Neustart ändert nichts, und
+„Weiter schauen" setzt an der gebuchten Stelle an statt bei null.
+
+Damit hat auch der Geräteabgleich zum ersten Mal etwas zu melden: gegen ein
+echtes Relay geprüft, meldet das Telefon seinen Geräteraum an und legt seinen
+Weiterschauen-Stand dort ab — verschlossen, nur mit dem eigenen Schlüssel wieder
+aufzumachen.
+
 ## 1.48.0 — 26. August 2026
 
 Auf dem Telefon und am Fernseher geht es endlich zur nächsten Folge weiter. Am
