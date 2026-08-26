@@ -206,7 +206,7 @@ const FILMO = { id: "filmo", name: "Filmo", startUrl: "https://filmo.co/", enabl
     tag: "DIV", id: "", klassen: "", position: "fixed", zIndex: 9999, deckung: 0.8,
     sichtbar: true, textProbe: "", linkHosts: [], iframeHosts: [],
     enthaeltVideo: false, enthaeltEingabe: false, enthaeltCaptcha: false,
-    istPlayer: false, nachgeladen: true, ...extra
+    istPlayer: false, quellenlos: false, nachgeladen: true, ...extra
   }, hilfen);
 
   const gewinnspiel = overlay({ textProbe: "Herzlichen Glueckwunsch! Sie sind der 1000. Besucher und haben gewonnen." });
@@ -234,6 +234,51 @@ const FILMO = { id: "filmo", name: "Filmo", startUrl: "https://filmo.co/", enabl
     !nurGross.entfernen, nurGross.grund);
   const cookie = overlay({ klassen: "cookie-consent", textProbe: "Wir verwenden Cookies" });
   pruefe("   Cookie-Hinweis bleibt", !cookie.entfernen, cookie.grund);
+
+  // Der Fall aus Issue #7, so gemessen wie er auf AniWorld steht: ein Rahmen
+  // ohne jedes Attribut ausser dem Stil, an <html> gehaengt, 420x170 in der
+  // Ecke. Von aussen ist an ihm nichts zu lesen - der Text steht in seinem
+  // eigenen Dokument -, und mit 14 Prozent Deckung faellt er durch jede
+  // Groessenfrage. Uebrig bleibt: er hat keine Quelle.
+  const werbeRahmen = overlay({
+    tag: "IFRAME", quellenlos: true, zIndex: 2147483647, deckung: 0.14, textProbe: ""
+  });
+  pruefe("   Rahmen ohne Quelle vor der Seite wird entfernt",
+    werbeRahmen.entfernen, werbeRahmen.grund);
+
+  // Und die andere Haelfte: was diese Regel niemals treffen darf. Der Player
+  // kommt von einer Adresse - gemessen aniworld.to/redirect/<id> und
+  // filmo.to/n/<id> - und liegt im Textfluss seines Kastens.
+  const playerRahmen = overlay({
+    tag: "IFRAME", quellenlos: false, zIndex: 2147483647, deckung: 0.14
+  });
+  pruefe("   Der Rahmen des Hosters bleibt (er hat eine Quelle)",
+    !playerRahmen.entfernen, playerRahmen.grund);
+  const flussRahmen = overlay({
+    tag: "IFRAME", quellenlos: true, position: "static", zIndex: 0, deckung: 0.5
+  });
+  pruefe("   Ein quellenloser Rahmen im Textfluss bleibt",
+    !flussRahmen.entfernen, flussRahmen.grund);
+  const flacherRahmen = overlay({
+    tag: "IFRAME", quellenlos: true, zIndex: 5, deckung: 0.14
+  });
+  pruefe("   Ein quellenloser Rahmen auf einer normalen Ebene bleibt",
+    !flacherRahmen.entfernen, flacherRahmen.grund);
+  const vollbildRahmen = overlay({
+    tag: "IFRAME", quellenlos: true, zIndex: 2147483647, deckung: 1
+  });
+  pruefe("   Ein quellenloser Rahmen ueber dem ganzen Schirm bleibt (Vollbildhuelle)",
+    !vollbildRahmen.entfernen, vollbildRahmen.grund);
+  const ohneFlaeche = overlay({
+    tag: "IFRAME", quellenlos: true, zIndex: 2147483647, deckung: 0
+  });
+  pruefe("   Ein quellenloser Rahmen ohne Flaeche bleibt",
+    !ohneFlaeche.entfernen, ohneFlaeche.grund);
+  const captchaRahmen = overlay({
+    tag: "IFRAME", quellenlos: true, zIndex: 2147483647, deckung: 0.14, enthaeltCaptcha: true
+  });
+  pruefe("   Der Schutz geht vor: eine Verifizierung bleibt auch als quellenloser Rahmen",
+    !captchaRahmen.entfernen, captchaRahmen.grund);
 
   // --- 7-9: Popups und Umleitungen ---------------------------------------
   console.log("\n-- Popups, Umleitungen, Rahmen --");

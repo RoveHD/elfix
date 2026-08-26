@@ -92,6 +92,46 @@ function istWerbeOverlay(kandidat, hilfen = {}) {
   if (k.enthaeltEingabe) return nein("enthaelt ein Eingabefeld");
   if (SCHUTZ_MUSTER.test(name)) return nein("geschuetzter Name");
   if (!k.sichtbar) return nein("nicht sichtbar");
+
+  // Der Rahmen ohne Quelle - die eine Form, die ohne Werbesignal auskommt.
+  //
+  // Gemessen am 26.08.2026 auf AniWorld, auf dem Fire TV und auf dem Telefon:
+  //
+  //   <iframe style="position:fixed !important;z-index:2147483647 !important;
+  //                  inset:0px 0px auto auto !important;max-width:420px;height:170px">
+  //
+  // direkt an <html> gehaengt, ohne src, ohne id, ohne Klasse - das einzige
+  // Attribut ist der Stil. Sein Inhalt ("[1] BROWSER-UPDATE", "Herunterladen
+  // und installieren", zwei Bilder von aichouphaugn.com) steht in seinem
+  // *eigenen* Dokument.
+  //
+  // Daran scheitert jede der Fragen darunter, und zwar aus demselben Grund:
+  // sie lesen alle das Element von aussen. Es gibt keinen Namen fuer
+  // WERBE_NAME_MUSTER, keinen Text fuer TEXT_MUSTER (innerText eines Rahmens
+  // ist leer), kein Ziel fuer istWerbeHost - und mit 420x170 auf einem
+  // Fernsehschirm auch keine 20 Prozent Deckung. Die Werbung hat ihre
+  // Merkmale hinter eine Dokumentgrenze gelegt.
+  //
+  // Bleibt das, was von aussen sichtbar ist: der Rahmen hat keine Quelle. Ein
+  // Player wird immer von einer Adresse geholt - gemessen aniworld.to/redirect/
+  // <id> und filmo.to/n/<id>, beide mit src und beide im Textfluss ihres
+  // Kastens. Ein Rahmen ohne Adresse ist keiner. Liegt er zusaetzlich fest und
+  // vor allem anderen, hat er keine andere Aufgabe, als auf der Seite zu
+  // liegen.
+  //
+  // Warum das hier oben steht und nicht als Punkt weiter unten: Punkte wiegen
+  // Beobachtungen gegeneinander ab, und hier gibt es nur eine einzige. Und
+  // warum es trotzdem kein Freibrief ist: die Ebene muss wirklich hoch sein
+  // (die eigenen Schichten dieser Seiten liegen zweistellig), der Rahmen muss
+  // Flaeche haben, und wer fast den ganzen Schirm einnimmt, faellt heraus -
+  // das waere eher eine Vollbildhuelle als eine Werbekarte.
+  if (String(k.tag || "") === "IFRAME" && k.quellenlos) {
+    const deckung = Number(k.deckung) || 0;
+    if (k.position === "fixed" && (Number(k.zIndex) || 0) >= 1000 && deckung > 0 && deckung <= 0.9) {
+      return { entfernen: true, grund: "Rahmen ohne Quelle liegt vor der Seite", punkte: 4 };
+    }
+  }
+
   if (!["fixed", "absolute", "sticky"].includes(String(k.position || ""))) return nein("liegt im Textfluss");
   if (!(Number(k.deckung) >= 0.2)) return nein("zu klein");
 
@@ -212,11 +252,22 @@ function seitenScript() {
     const position = stilWerte.position;
     if (position !== "fixed" && position !== "absolute" && position !== "sticky") return null;
 
+    // Ein Rahmen, dessen Quelle keine Adresse ist. Der Player kommt immer von
+    // einer - deshalb ist das die eine Form, die auch klein noch gemeldet wird
+    // (siehe istWerbeOverlay). "https?" und nicht "nicht leer": about:blank,
+    // javascript: und srcdoc sind alle keine Adresse.
+    const quellenlos = tag === "IFRAME"
+      && !/^https?:/i.test(String(el.getAttribute("src") || "").trim());
+
     const rechteck = el.getBoundingClientRect();
     const flaeche = Math.max(0, Math.min(rechteck.right, innerWidth) - Math.max(rechteck.left, 0))
       * Math.max(0, Math.min(rechteck.bottom, innerHeight) - Math.max(rechteck.top, 0));
     const deckung = innerWidth && innerHeight ? flaeche / (innerWidth * innerHeight) : 0;
-    if (deckung < 0.2) return null;
+    // Ein solcher Rahmen ohne Flaeche wird bewusst *nicht* gemeldet, sondern
+    // gar nicht beschrieben: wer beschrieben wird, landet in "gesehen" und
+    // wird nie wieder angesehen. Ein Werbeskript haengt seinen Rahmen aber
+    // gern ein, bevor er Groesse hat.
+    if (deckung < 0.2 && !(quellenlos && position === "fixed" && deckung > 0)) return null;
 
     const sichtbar = stilWerte.display !== "none" && stilWerte.visibility !== "hidden" && Number(stilWerte.opacity) > 0.1;
     if (!sichtbar) return null;
@@ -257,6 +308,7 @@ function seitenScript() {
       enthaeltEingabe: Boolean(el.querySelector("input,textarea,select")),
       enthaeltCaptcha: Boolean(el.querySelector('iframe[src*="captcha" i],iframe[src*="turnstile" i],iframe[src*="challenges.cloudflare" i],[class*="captcha" i],[id*="captcha" i]')),
       istPlayer: Boolean(el.closest('video,[class*="player" i],[id*="player" i],[class*="jwplayer" i],[class*="video-js" i]')),
+      quellenlos,
       nachgeladen: !ersterDurchgang
     };
   };
@@ -281,6 +333,20 @@ function seitenScript() {
       for (const el of mitte.slice(0, 4)) pruefe(el);
       const oben = document.elementsFromPoint(innerWidth / 2, Math.min(80, innerHeight / 4)) || [];
       for (const el of oben.slice(0, 3)) pruefe(el);
+    } catch (_) {}
+    // Und die Rahmen, jeder einzeln statt ueber einen Punkt auf dem Schirm.
+    // Die Werbekarte haengt in der Ecke; die beiden Punkte oben treffen sie
+    // nicht, und ihr Elternteil ist <html> - da gibt es nichts, worueber sie
+    // sich finden liesse. "beschreibe" wirft die Rahmen der Seite gleich
+    // wieder weg (sie liegen im Textfluss), das kostet also nur die Schleife.
+    try {
+      const rahmen = document.querySelectorAll("iframe");
+      for (let i = 0; i < rahmen.length && i < 20; i += 1) {
+        const el = rahmen[i];
+        if (gesehen.has(el)) continue;
+        const info = beschreibe(el);
+        if (info) { gesehen.add(el); gefunden.push(info); }
+      }
     } catch (_) {}
     for (const el of zusatz || []) pruefe(el);
     return gefunden.slice(0, 6);

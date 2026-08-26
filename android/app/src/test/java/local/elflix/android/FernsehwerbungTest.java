@@ -134,6 +134,42 @@ public class FernsehwerbungTest {
         assertTrue(Fernsehwerbung.skript("", null, true).contains("var MELDEN=true;"));
     }
 
+    /**
+     * Der Rahmen ohne Quelle - die Karte oben rechts aus Issue #7.
+     *
+     * <p>Gemessen am 26.08.2026 auf AniWorld, auf dem Fire TV und auf dem
+     * Telefon: ein {@code <iframe>} ohne src, ohne id, ohne Klasse, an
+     * {@code <html>} gehaengt, fest in der Ecke und auf Ebene 2147483647. Alles,
+     * woran die Punktevergabe ein Element erkennt - Name, Text, Ziel - steht in
+     * seinem <em>eigenen</em> Dokument und ist von aussen nicht zu lesen; er
+     * kam damit auf zwei von vier Punkten und blieb stehen.
+     *
+     * <p>Geprueft wird hier, dass die Frage im Skript steht und <em>vor</em> der
+     * Punktevergabe gestellt wird. Wie sie sich in einem echten Dokument
+     * verhaelt, kann diese Stelle nicht sagen - dafuer gibt es kein DOM. Das
+     * gehoert auf ein Geraet.
+     */
+    @Test
+    public void dasSkriptKenntDenRahmenOhneQuelle() {
+        String skript = Fernsehwerbung.skript(Fernsehwerbung.ANIWORLD, null, false);
+        assertTrue(skript.contains("function rahmenschicht(el)"));
+        assertTrue(skript.contains("function ohneQuelle(el)"));
+        // Die drei Bedingungen, ohne die die Regel den Player traefe.
+        assertTrue(skript.contains("el.tagName!=='IFRAME'"));
+        assertTrue(skript.contains("if(!ohneQuelle(el))return false;"));
+        assertTrue(skript.contains("var RAHMEN_EBENE=1000;"));
+        // about:blank ist keine Adresse - der haeufigste Fall in freier Wildbahn.
+        assertTrue(skript.contains("about:blank"));
+        // Vor der Punktevergabe, sonst waere die Regel wirkungslos: die
+        // Punktevergabe kommt an diesem Element nie ueber zwei.
+        int rahmen = skript.indexOf("if(rahmenschicht(el))");
+        int punkte = skript.indexOf("var urteil=punkte(el,spaet);");
+        assertTrue(rahmen > 0 && punkte > 0 && rahmen < punkte);
+        // Und nach dem Schutz: was geschuetzt ist, wird gar nicht erst gefragt.
+        int schutz = skript.indexOf("if(geschuetzt(el))return;");
+        assertTrue(schutz > 0 && schutz < rahmen);
+    }
+
     /** Ohne bekannte Wirte bleibt die Liste leer - und das Skript trotzdem lesbar. */
     @Test
     public void skriptOhneWirteBleibtGueltig() {

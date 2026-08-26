@@ -653,6 +653,63 @@ public final class Fernsehwerbung {
             + "return{summe:summe,gruende:gruende};"
         + "}"
 
+        // -------------------------------------------- Der Rahmen ohne Quelle
+        // Die Luecke, durch die die Karten oben rechts hereinkamen. Gemessen am
+        // 26.08.2026 auf AniWorld, auf dem Fernseher *und* auf dem Telefon:
+        //
+        //   <iframe style="position:fixed !important;z-index:2147483647 !important;
+        //                  inset:0px 0px auto auto !important;max-width:420px;height:170px">
+        //
+        // an <html> gehaengt - ohne src, ohne id, ohne Klasse, ohne ein
+        // einziges Attribut ausser dem Stil. Sein Inhalt ("[1] BROWSER-UPDATE",
+        // "Herunterladen und installieren", zwei Bilder von aichouphaugn.com)
+        // steht in seinem *eigenen* Dokument.
+        //
+        // Genau daran ist jede der bisherigen Fragen gescheitert: von aussen
+        // gibt es an diesem Element nichts zu lesen. Keine Kennung fuer NETZ
+        // oder MARKE, kein Text fuer TEXTE (innerText eines Rahmens ist leer),
+        // kein Ziel fuer verweistAufWerbung. Die Punktevergabe kommt auf zwei -
+        // 'freigestellt' und 'nachgereicht' - und laesst ihn stehen. Die
+        // Werbung versteckt ihre Merkmale hinter einer Dokumentgrenze.
+        //
+        // Woran er trotzdem zu erkennen ist: er hat keine Quelle. Ein Player
+        // wird immer von einer Adresse geholt - gemessen aniworld.to/redirect/
+        // <id> und filmo.to/n/<id>, beide mit src, beide im Textfluss ihres
+        // Kastens. Ein Rahmen ohne Adresse kann keiner sein. Zusammen mit
+        // "liegt fest und vor allem anderen" bleibt nichts uebrig, was diese
+        // Form sonst haben koennte.
+        //
+        // Deshalb steht das hier als eigene Frage und nicht als weiterer Punkt:
+        // Punkte sammelt man aus Beobachtungen, und hier gibt es nur eine.
+        //
+        // Zwei Grenzen bewusst eng: die Ebene muss wirklich hoch sein (die
+        // eigenen Schichten einer Anbieterseite liegen bei zweistelligen
+        // Werten), und ein Rahmen, der fast den ganzen Schirm einnimmt, faellt
+        // heraus - das waere eher eine Vollbildhuelle als eine Werbekarte.
+        + "var RAHMEN_EBENE=1000;"
+        + "function ohneQuelle(el){"
+            + "var quelle='';"
+            + "try{quelle=(el.getAttribute('src')||'').trim();}catch(e){quelle='';}"
+            + "if(!quelle)return true;"
+            + "var klein=quelle.toLowerCase();"
+            + "return klein==='about:blank'||klein.indexOf('javascript:')===0;"
+        + "}"
+        + "function rahmenschicht(el){"
+            + "if(!el||el.tagName!=='IFRAME'||!el.getBoundingClientRect)return false;"
+            + "if(!ohneQuelle(el))return false;"
+            + "var stilwert=null;"
+            + "try{stilwert=getComputedStyle(el);}catch(e){return false;}"
+            + "if(!stilwert)return false;"
+            + "if(stilwert.position!=='fixed'&&stilwert.position!=='sticky')return false;"
+            + "if((parseInt(stilwert.zIndex,10)||0)<RAHMEN_EBENE)return false;"
+            + "if(stilwert.display==='none'||stilwert.visibility==='hidden')return false;"
+            + "var r=el.getBoundingClientRect();"
+            + "if(r.width<1||r.height<1)return false;"
+            + "var schirm=(window.innerWidth||1)*(window.innerHeight||1);"
+            + "if(r.width*r.height>schirm*0.9)return false;"
+            + "return true;"
+        + "}"
+
         // ------------------------------------------- Unsichtbare Klickflaechen
         // Eine Flaeche, die nichts anzeigt, aber Klicks faengt. Erkannt daran,
         // dass sie leer und durchsichtig ist und trotzdem den groessten Teil
@@ -767,6 +824,7 @@ public final class Fernsehwerbung {
             + "gesehen.add(el);"
             + "geprueft+=1;"
             + "if(geschuetzt(el))return;"
+            + "if(rahmenschicht(el)){wegnehmen(el,'rahmen ohne quelle');return;}"
             + "if(klickfang(el)){wegnehmen(el,'klickfang');return;}"
             + "var urteil=punkte(el,spaet);"
             + "if(urteil.summe>=SCHWELLE)wegnehmen(el,urteil.gruende.join('+'));"
