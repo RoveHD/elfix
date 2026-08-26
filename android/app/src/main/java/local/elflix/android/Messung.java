@@ -112,7 +112,28 @@ public final class Messung {
         this.seite = seite;
     }
 
+    /**
+     * Den Weg in die Rahmen setzen - und sich beschweren, wenn keiner kommt.
+     *
+     * <p>Die Beschwerde ist der eigentliche Inhalt dieser Methode. Ohne
+     * Rahmenzugriff misst diese Klasse nur das Hauptdokument, und bei
+     * AniWorld, s.to und filmo.to liegt dort nie ein Video: es liegt im Rahmen
+     * des Hosters. Das Ergebnis ist kein Fehler, sondern Stille - kein
+     * Messwert, keine Buchung, kein Weiterschauen, und nichts im Protokoll,
+     * das darauf zeigt.
+     *
+     * <p>Genau so ist es passiert: {@code setzeRahmen} stand in
+     * {@code MainActivity} vor der Zeile, die das Feld belegt, und bekam
+     * {@code null}. Gemessen am 26.08.2026 auf dem Telefon - das Video lief,
+     * das Messskript lieferte im Rahmen saubere Werte
+     * ({@code duration: 1371.24}), und in den Rahmen ging trotzdem kein
+     * einziger Auftrag.
+     */
     public void setzeRahmen(Rahmen rahmen) {
+        if (rahmen == null) {
+            Log.e(TAG, "Messung ohne Rahmenzugriff - in einem Hoster-Rahmen "
+                + "wird dann nie ein Fortschritt gebucht");
+        }
         this.rahmen = rahmen;
     }
 

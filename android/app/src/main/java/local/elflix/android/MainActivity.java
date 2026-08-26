@@ -504,6 +504,17 @@ public class MainActivity extends Activity {
         kern.wennBereit(this::kernSelbsttest);
         bestand = new Bestand(this, kern, this::bestandGeaendert, this::showToast);
         bestand.laden();
+        // Der Weg in die Rahmen muss stehen, *bevor* ihn jemand bekommt.
+        //
+        // Er wurde bis hierher erst weiter unten angelegt, neben Marken und
+        // Mitschauen - die beiden bekamen ihn damit richtig. Die Messung nicht:
+        // ihr `setzeRahmen` steht ein paar Zeilen nach dieser Stelle und reichte
+        // das noch leere Feld weiter. Ein Feld, das spaeter belegt wird, ist
+        // beim Weitergeben trotzdem null, und der Fehler ist lautlos: die
+        // Messung fragt dann nur noch das Hauptdokument. Bei diesen Anbietern
+        // liegt das Video aber immer in einem Rahmen, also sah sie nie eines,
+        // buchte nie einen Fortschritt, und Weiterschauen konnte nichts finden.
+        rahmen = new Rahmen(this::rahmenMeldung);
         messung = new Messung(kern, bestand, new Messung.Seite() {
             @Override
             public Provider anbieter() {
@@ -618,7 +629,6 @@ public class MainActivity extends Activity {
             if ("settings".equals(currentScreen)) showSettings();
         });
         fassungen = new Fassungen(this, kern);
-        rahmen = new Rahmen(this::rahmenMeldung);
         marken = new Marken(this, kern, rahmen);
         mitschauen = new Mitschauen(kern, rahmen, watchparty, new Mitschauen.Umgebung() {
             @Override
