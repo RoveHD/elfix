@@ -124,6 +124,8 @@ public class MainActivity extends Activity {
      * Neuzeichnen derselben Liste ist es falsch.
      */
     private ScrollView seitenScroll;
+    /** Wie die Liste beim letzten Neuzeichnen aussah - siehe {@link #seitenbild}. */
+    private String letztesSeitenbild = "";
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -1609,27 +1611,12 @@ public class MainActivity extends Activity {
             heroWechselPlanen();
         }
 
-        // Der Anbieterrost. Am Rechner steht er in der Seitenleiste; auf dem
-        // Fernseher gibt es keine, und die Anbieter sind der Weg zu allem, was
-        // ELFIX nicht selbst weiss.
-        addSpacing(page, TvViews.sectionHeader(this, "Deine Anbieter", null, null),
-            TvViews.SECTION_GAP);
-        int anbieterBreite = tvCardWidthDp(230, 180);
-        ArrayList<View> anbieterKarten = new ArrayList<>();
-        for (int i = 0; i < providers.size(); i += 1) {
-            Provider provider = providers.get(i);
-            View karte = TvViews.providerCard(this, provider, providerTagline(provider), anbieterBreite,
-                () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
-                () -> openProvider(provider, provider.startUrl));
-            karte.setTag("tv:anbieter:" + i);
-            anbieterKarten.add(karte);
-            providerButtons.remove(provider.id);
-        }
-        if (!anbieterKarten.isEmpty()) {
-            reiheAnhaengenTv(page, TvViews.reihe(this, anbieterKarten), TvViews.ITEM_GAP);
-        }
-
-        // Ab hier dieselbe Reihenfolge wie am Rechner und auf dem Telefon.
+        // Dieselbe Reihenfolge wie am Rechner: Neue Folgen, Weiterschauen,
+        // Gemeinsam weiterschauen, YouTube - und erst danach der Anbieterrost.
+        // Er stand hier bisher davor, weil es am Fernseher keine Seitenleiste
+        // gibt und die Anbieter der Weg zu allem sind. Das bleibt richtig, nur
+        // nicht *vor* dem, was gerade laeuft: mit der Fernbedienung ist jede
+        // Reihe darueber ein Druck mehr, bevor man weiterschauen kann.
         boolean etwasGezeigt = tvNeueFolgenReihe(page);
 
         List<Favorite> privat = new ArrayList<>();
@@ -1649,6 +1636,23 @@ public class MainActivity extends Activity {
         if (zeigt(Startseite.YOUTUBE)) {
             etwasGezeigt |= tvKachelReihe(page, "youtube", "YouTube weiterschauen", videos,
                 Bibliothek.WEITERSCHAUEN);
+        }
+
+        addSpacing(page, TvViews.sectionHeader(this, "Deine Anbieter", null, null),
+            TvViews.SECTION_GAP);
+        int anbieterBreite = tvCardWidthDp(230, 180);
+        ArrayList<View> anbieterKarten = new ArrayList<>();
+        for (int i = 0; i < providers.size(); i += 1) {
+            Provider provider = providers.get(i);
+            View karte = TvViews.providerCard(this, provider, providerTagline(provider), anbieterBreite,
+                () -> openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl),
+                () -> openProvider(provider, provider.startUrl));
+            karte.setTag("tv:anbieter:" + i);
+            anbieterKarten.add(karte);
+            providerButtons.remove(provider.id);
+        }
+        if (!anbieterKarten.isEmpty()) {
+            reiheAnhaengenTv(page, TvViews.reihe(this, anbieterKarten), TvViews.ITEM_GAP);
         }
         if (zeigt(Startseite.WEITERSCHAUEN)) {
             etwasGezeigt |= tvKachelReihe(page, "watchlist", Bibliothek.WATCHLIST.titel,
@@ -2823,14 +2827,15 @@ public class MainActivity extends Activity {
         searchParams.topMargin = dp(zeigt(Startseite.HERO) ? 16 : 4);
         page.addView(search, searchParams);
 
-        addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
-        addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
-
-        // Erst was schon laeuft, dann was vorgeschlagen wird - dieselbe
-        // Reihenfolge wie am Rechner. Leere Reihen fallen weg statt als leerer
-        // Kasten dazustehen.
+        // Was schon laeuft, steht oben - dieselbe Reihenfolge wie am Rechner:
+        // Neue Folgen, Weiterschauen, Gemeinsam weiterschauen, YouTube. Der
+        // Anbieterrost stand hier bisher davor, weil es auf dem Telefon keine
+        // Seitenleiste gibt und die Anbieter der Weg zu allem sind. Das stimmt
+        // weiterhin - nur gehoert er nicht *vor* das, was man gerade schaut:
+        // wer weiterschauen will, sollte dafuer nicht an drei Reihen
+        // vorbeiblaettern muessen. Leere Reihen fallen ohnehin weg statt als
+        // leerer Kasten dazustehen.
         boolean etwasGezeigt = neueFolgenReihe(page);
-        kalenderReihe(page);
         List<Favorite> privat = new ArrayList<>();
         List<Favorite> gemeinsam = new ArrayList<>();
         List<Favorite> videos = new ArrayList<>();
@@ -2850,6 +2855,11 @@ public class MainActivity extends Activity {
             etwasGezeigt |= kachelReihe(page, "YouTube weiterschauen", videos,
                 Bibliothek.WEITERSCHAUEN, 8);
         }
+
+        addSpacing(page, MobileViews.sectionHeader(this, "Deine Anbieter", null, null), MobileViews.SECTION_GAP);
+        addSpacing(page, providerGrid(), MobileViews.ITEM_GAP);
+        kalenderReihe(page);
+
         if (zeigt(Startseite.WEITERSCHAUEN)) {
             etwasGezeigt |= kachelReihe(page, Bibliothek.WATCHLIST.titel,
                 bestand.watchlist(), Bibliothek.WATCHLIST, 12);
@@ -7413,15 +7423,69 @@ public class MainActivity extends Activity {
      * soll weiter oben anfangen - deshalb steht das hier und nicht in
      * {@code mobilePage()}.
      */
+    /**
+     * Woran zu erkennen ist, ob die Seite <em>anders aussaehe</em>.
+     *
+     * <p>Bewusst ohne Stelle und ohne Prozent. Genau das ist der Punkt: waehrend
+     * einer Folge meldet die Messung alle fuenf Sekunden einen neuen Stand, und
+     * beide Zahlen sind dann jedes Mal andere. Was sich dabei <em>nicht</em>
+     * aendert, ist die Seite selbst - dieselben Eintraege in derselben
+     * Reihenfolge mit denselben Beschriftungen.
+     *
+     * <p>Drin steht deshalb alles, was auf einer Kachel zu <em>sehen</em> ist
+     * und sich nicht im Sekundentakt bewegt: welche Eintraege es gibt und in
+     * welcher Ordnung, ihr Titel, Staffel und Folge (die ruecken beim
+     * Weiterblaettern), das Titelbild (es wird oft erst nachgereicht - ohne
+     * diesen Teil bliebe die Kachel bis zum naechsten Anlass ohne Bild), ob
+     * einer auf die naechste Folge wartet (das aendert seinen Text) und zu
+     * welcher Runde er gehoert (das entscheidet, in welcher der beiden Reihen
+     * er steht).
+     */
+    private String seitenbild() {
+        StringBuilder bild = new StringBuilder();
+        for (Favorite eintrag : bestand.weiterschauen()) {
+            bild.append(eintrag.id())
+                .append('#').append(eintrag.season()).append('/').append(eintrag.episode())
+                .append('#').append(eintrag.title())
+                .append('#').append(eintrag.bild())
+                .append(eintrag.wartetAufNaechsteFolge() ? '!' : '.')
+                .append(eintrag.watchpartyRaum())
+                .append('|');
+        }
+        return bild.toString();
+    }
+
     private void bestandGeaendert() {
         // Ein Eintrag, der aus der Watchparty geoeffnet wurde, entsteht erst,
         // wenn wirklich etwas laeuft. Hier taucht er zum ersten Mal auf - und
         // bekommt seinen Raum.
         raumbindungNachholen();
         boolean zeichnetNeu = "favorites".equals(currentScreen) || "home".equals(currentScreen);
+
+        // Neu zeichnen nur, wenn die Seite danach anders aussaehe.
+        //
+        // Bis hierher wurde bei *jeder* Meldung die ganze Seite neu gebaut. Das
+        // fiel nicht auf, solange Android ueberhaupt keinen Fortschritt buchte;
+        // seit es das wieder tut, kommt alle fuenf Sekunden eine Meldung, und
+        // wer dabei auf der Startseite steht, sieht sie jedes Mal zusammen- und
+        // wieder aufklappen. Gemeldet als "die App zuckt alle 5 Sekunden".
+        //
+        // Was die Meldung wirklich bringt, ist eine andere Stelle im laufenden
+        // Titel - kein anderer Titel, keine andere Reihenfolge, keine andere
+        // Reihe. Dafuer muss keine Seite entstehen. Der Balken und die Zeit auf
+        // der Kachel stehen dann bis zum naechsten echten Anlass still; das ist
+        // der Preis, und er ist kleiner als eine Seite, die im Fuenfsekundentakt
+        // springt.
+        String bild = seitenbild();
+        boolean gleichesBild = bild.equals(letztesSeitenbild);
+        letztesSeitenbild = bild;
+        zeichnetNeu = zeichnetNeu && !gleichesBild;
+
+        if (zeichnetNeu) spur(currentScreen, "", "seite", "neu gezeichnet", "bestand anders");
+
         int stand = zeichnetNeu && seitenScroll != null ? seitenScroll.getScrollY() : 0;
-        if ("favorites".equals(currentScreen)) showFavorites();
-        else if ("home".equals(currentScreen)) showHome();
+        if (zeichnetNeu && "favorites".equals(currentScreen)) showFavorites();
+        else if (zeichnetNeu && "home".equals(currentScreen)) showHome();
         // Nur wenn wirklich neu gezeichnet wurde. Waehrend einer Folge meldet
         // die Messung alle paar Sekunden einen Stand; dann steht hier keine
         // Liste, und `seitenScroll` zeigt auf eine laengst abgehaengte Seite.
