@@ -157,33 +157,33 @@ public class FolgenTest {
         assertEquals("(leer)", Folgen.kurz(null));
     }
 
-    /* ------------------------------------------ Wann die Leiste dasteht */
+    /* ------------------------------ Wie deutlich die Leiste dasteht */
 
     @Test
-    public void nebenDemBildStehtDieLeisteImmer() {
-        // Ausserhalb des Vollbilds verdeckt sie nichts - dort haengt sie allein
-        // daran, ob ueberhaupt eine Folge offen ist.
-        assertTrue(Spielerleiste.zeigen(true, false, false, false));
-        assertTrue(Spielerleiste.zeigen(true, false, true, false));
+    public void nebenDemBildStehtDieLeisteVollDa() {
+        // Ausserhalb des Vollbilds verdeckt sie nichts.
+        assertEquals(1f, Spielerleiste.deckkraft(false, false, false), 0.001f);
+        assertEquals(1f, Spielerleiste.deckkraft(false, true, false), 0.001f);
     }
 
     @Test
-    public void imVollbildGehtSieMitDenBedienelementen() {
-        assertTrue(Spielerleiste.zeigen(true, true, true, false));
-        assertFalse(Spielerleiste.zeigen(true, true, false, false));
+    public void imVollbildTrittSieNachDerRuheZurueck() {
+        assertEquals(1f, Spielerleiste.deckkraft(true, true, false), 0.001f);
+        assertTrue(Spielerleiste.deckkraft(true, false, false) < 1f);
     }
 
     @Test
-    public void einLaufenderZaehlerHaeltSieFest() {
+    public void aberSieVerschwindetNie() {
+        // Der gemeldete Fehler: hier stand View.GONE, und auf dem Telefon lief
+        // eine Folge bis zum Ende, ohne dass je ein Knopf zu sehen war. Der
+        // Rechner laesst seine Karte verblassen, nicht verschwinden.
+        assertTrue(Spielerleiste.deckkraft(true, false, false) > 0f);
+    }
+
+    @Test
+    public void einLaufenderZaehlerHoltSieVollZurueck() {
         // Ein Zaehler, den man nicht sieht, ist keine Ansage - und "Abbrechen"
         // waere ein Knopf, den es nur unsichtbar gibt.
-        assertTrue(Spielerleiste.zeigen(true, true, false, true));
-    }
-
-    @Test
-    public void ohneFolgeStehtSieNirgends() {
-        assertFalse(Spielerleiste.zeigen(false, false, true, false));
-        assertFalse(Spielerleiste.zeigen(false, true, true, false));
-        assertFalse(Spielerleiste.zeigen(false, true, false, true));
+        assertEquals(1f, Spielerleiste.deckkraft(true, false, true), 0.001f);
     }
 }

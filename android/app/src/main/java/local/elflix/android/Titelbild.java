@@ -29,8 +29,18 @@ import org.json.JSONObject;
  */
 public final class Titelbild {
     private static final String TAG = CrashReporter.TAG;
-    /** Wann noch einmal nachgesehen wird, wenn die Seite noch kein Bild hergab. */
-    private static final long[] NACHFASSEN_MS = {2500, 7000};
+    /**
+     * Wann noch einmal nachgesehen wird, wenn die Seite noch nichts hergab.
+     *
+     * <p>Frueher und oefter als bisher, und der Grund steht in
+     * {@code onPageStarted} der MainActivity: bei diesen Anbietern kommt
+     * {@code onPageFinished} erst, wenn auch die letzte Werbung geladen ist -
+     * gemessen auf einer gedrosselten Leitung nach 150 Sekunden noch nicht.
+     * Der Autostart klickt den Hoster aber schon nach zwoelf Sekunden an, und
+     * danach steht die Folgenseite nicht mehr im Hauptrahmen. Wer erst beim
+     * Seitenende liest, liest bei diesen Ladezeiten gar nicht.
+     */
+    private static final long[] NACHFASSEN_MS = {700, 1600, 3200, 6000, 9500};
 
     private final Kern kern;
     private final Bestand bestand;
@@ -63,13 +73,55 @@ public final class Titelbild {
         "unplayableSeason", "unplayableEpisodes"
     };
 
+    /** Was auf einer Seite gefunden wurde. */
+    private static final class Fund {
+        /** Die gepruefte Auskunft der Seite - siehe {@link #UEBERNOMMEN}. */
+        JSONObject seitendaten = new JSONObject();
+        String bild = "";
+        String favicon = "";
+    }
+
+    /**
+     * Wie viele Seiten im Gedaechtnis bleiben.
+     *
+     * <p>Zwei wuerden genuegen - die Folgenseite und die des Hosters -, vier
+     * sind der Puffer fuer eine Weiterleitungskette dazwischen.
+     */
+    private static final int GEDAECHTNIS = 4;
+
     private String skript;
-    /** Zu welcher Adresse das zuletzt Gefundene gehoert. */
+    /**
+     * Was auf welcher Seite gefunden wurde.
+     *
+     * <p><b>Warum ein Gedaechtnis und nicht ein Platz.</b> Hier stand bis
+     * hierher genau ein Satz Angaben, und jede neue Seite hat ihn geloescht.
+     * Am Rechner faellt das nicht auf: dort liegt der Hoster in einem Rahmen
+     * <em>innerhalb</em> der Anbieterseite, und der Hauptrahmen bleibt die
+     * ganze Wiedergabe ueber auf der Folge stehen.
+     *
+     * <p>Auf dem Telefon nimmt der Hoster den Hauptrahmen. Damit lief es so:
+     * Folgenseite gelesen, Grenzen der Serie gefunden - dann klickt der
+     * Autostart den Hoster an, {@code onPageFinished} kommt fuer voe.sx, und
+     * mit ihm war alles weg. Ab da lieferte {@link #angaben} zur Folgenadresse
+     * nur noch ein leeres Objekt. Die Folge: {@code finalSeason} erreichte
+     * weder den Eintrag noch die Regel, {@code nextEpisodeContinueUrl} gab
+     * nichts zurueck - und auf dem Telefon gab es nie eine naechste Folge.
+     *
+     * <p>Gespeichert wird deshalb je Adresse. Eine Auskunft wird nur zu genau
+     * der Adresse zurueckgegeben, von der sie gelesen wurde; die Angaben des
+     * Hosters koennen also nie an einer Folge landen.
+     */
+    private final java.util.LinkedHashMap<String, Fund> funde =
+        new java.util.LinkedHashMap<String, Fund>(8, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(java.util.Map.Entry<String, Fund> aeltester) {
+                return size() > GEDAECHTNIS;
+            }
+        };
+    /** Die Seite, die gerade gelesen wird. */
     private String adresse = "";
-    private String bild = "";
-    private String favicon = "";
-    /** Die gepruefte Auskunft der Seite - siehe {@link #UEBERNOMMEN}. */
-    private JSONObject seitendaten = new JSONObject();
+    /** Ob fuer sie schon eine Lesekette laeuft - eine je Seite genuegt. */
+    private boolean liest;
 
     public Titelbild(Kern kern, Bestand bestand) {
         this.kern = kern;
@@ -88,13 +140,24 @@ public final class Titelbild {
             || !seitenAdresse.startsWith("http")) {
             return;
         }
-        if (!seitenAdresse.equals(adresse)) {
-            // Eine neue Seite - was von der vorigen bekannt war, gilt hier nicht.
+        // Ohne Kern gibt es kein Skript und damit keine Lesekette. Dann hier
+        // aufhoeren, statt die Sperre zu setzen: sonst bliebe sie stehen, und
+        // der zweite Versuch beim Seitenende - wenn der Kern laengst steht -
+        // wuerde uebersprungen.
+        if (skript == null && (kern == null || !kern.istBereit())) return;
+        boolean andereSeite = !seitenAdresse.equals(adresse);
+        if (andereSeite) {
+            // Eine neue Seite. Was von der vorigen bekannt ist, bleibt stehen -
+            // es gehoert zu ihrer Adresse und wird nur zu ihr herausgegeben.
             adresse = seitenAdresse;
-            bild = "";
-            favicon = "";
-            seitendaten = new JSONObject();
+            liest = false;
         }
+        if (!funde.containsKey(seitenAdresse)) funde.put(seitenAdresse, new Fund());
+        // Eine Lesekette je Seite. Gerufen wird zweimal - beim Seitenanfang und
+        // beim Seitenende -, und ohne diese Sperre liefen danach zwei Ketten
+        // nebeneinander durch dieselbe Seite.
+        if (!andereSeite && liest) return;
+        liest = true;
         skriptHolen(() -> lesen(ansicht, anbieter, seitenAdresse, 0));
     }
 
@@ -107,15 +170,16 @@ public final class Titelbild {
      */
     public JSONObject angaben(String seitenAdresse) {
         JSONObject angaben = new JSONObject();
-        if (seitenAdresse == null || !seitenAdresse.equals(adresse)) return angaben;
+        Fund fund = seitenAdresse == null ? null : funde.get(seitenAdresse);
+        if (fund == null) return angaben;
         try {
             for (String name : UEBERNOMMEN) {
-                if (seitendaten.has(name)) angaben.put(name, seitendaten.get(name));
+                if (fund.seitendaten.has(name)) angaben.put(name, fund.seitendaten.get(name));
             }
             // Bild und Favicon koennen aus einem spaeteren Nachfassen stammen
             // und stehen dann nicht in den Seitendaten des ersten Blicks.
-            if (!bild.isEmpty()) angaben.put("thumbnail", bild);
-            if (!favicon.isEmpty()) angaben.put("favicon", favicon);
+            if (!fund.bild.isEmpty()) angaben.put("thumbnail", fund.bild);
+            if (!fund.favicon.isEmpty()) angaben.put("favicon", fund.favicon);
         } catch (Exception fehler) {
             Log.d(TAG, "Seitenangaben nicht gebaut: " + fehler);
         }
@@ -161,6 +225,8 @@ public final class Titelbild {
     }
 
     private void lesen(WebView ansicht, Provider anbieter, String seitenAdresse, int versuch) {
+        // Steht die Seite nicht mehr, endet die Kette. Was sie gefunden hat,
+        // bleibt unter ihrer Adresse liegen.
         if (skript == null || !seitenAdresse.equals(adresse)) return;
         ansicht.evaluateJavascript(skript, wert -> {
             if (!seitenAdresse.equals(adresse)) return;
@@ -199,17 +265,35 @@ public final class Titelbild {
 
     private void uebernehmen(WebView ansicht, Provider anbieter, String seitenAdresse,
                              int versuch, String gepruefterJson) {
+        Fund fund = funde.get(seitenAdresse);
+        if (fund == null) {
+            fund = new Fund();
+            funde.put(seitenAdresse, fund);
+        }
         try {
-            seitendaten = new JSONObject(gepruefterJson);
+            fund.seitendaten = new JSONObject(gepruefterJson);
         } catch (Exception fehler) {
             Log.d(TAG, "Gepruefte Seitendaten unlesbar: " + fehler);
-            seitendaten = new JSONObject();
+            fund.seitendaten = new JSONObject();
         }
-        String gefundenesFavicon = seitendaten.optString("favicon", "");
-        if (!gefundenesFavicon.isEmpty()) favicon = gefundenesFavicon;
-        String gefunden = seitendaten.optString("thumbnail", "");
+        // Damit sich am Geraet nachlesen laesst, ob die Folgenseite ihre
+        // Grenzen ueberhaupt hergegeben hat - ohne sie gibt es keine naechste
+        // Folge, und das ist von aussen nicht zu unterscheiden von "es gibt
+        // keine".
+        Log.i(TAG, "FOLGE seitendaten " + kurz(seitenAdresse)
+            + " finalSeason=" + fund.seitendaten.optInt("finalSeason", 0)
+            + " finalEpisode=" + fund.seitendaten.optInt("finalEpisode", 0)
+            + " seasonLastEpisode=" + fund.seitendaten.optInt("seasonLastEpisode", 0)
+            + " versuch=" + versuch);
+        String gefundenesFavicon = fund.seitendaten.optString("favicon", "");
+        if (!gefundenesFavicon.isEmpty()) fund.favicon = gefundenesFavicon;
+        String gefunden = fund.seitendaten.optString("thumbnail", "");
         if (!gefunden.isEmpty()) {
-            bild = gefunden;
+            fund.bild = gefunden;
+            // Die Kette ist fertig - aber nur die dieser Seite. Eine
+            // Nachzueglermeldung darf die Sperre der Seite, die inzwischen
+            // dasteht, nicht loesen.
+            if (seitenAdresse.equals(adresse)) liest = false;
             if (bestand != null) bestand.bildNachtragen(anbieter, seitenAdresse, gefunden);
             return;
         }
@@ -220,8 +304,16 @@ public final class Titelbild {
     }
 
     private void nachfassen(WebView ansicht, Provider anbieter, String seitenAdresse, int versuch) {
-        if (versuch >= NACHFASSEN_MS.length) return;
+        if (versuch >= NACHFASSEN_MS.length) {
+            if (seitenAdresse.equals(adresse)) liest = false;
+            return;
+        }
         haupt.postDelayed(() -> lesen(ansicht, anbieter, seitenAdresse, versuch + 1),
             NACHFASSEN_MS[versuch]);
+    }
+
+    /** Eine Adresse, so kurz, dass sie in eine Protokollzeile passt. */
+    private static String kurz(String url) {
+        return Folgen.kurz(url);
     }
 }

@@ -85,3 +85,27 @@ Expected APK path:
 ```text
 android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## Nächste Folge und Autoplay nachvollziehen
+
+Was der Player misst und was die Leiste daraus macht, steht im Protokoll. Alle
+Zeilen tragen `FOLGE`:
+
+```bash
+adb logcat -c && adb logcat -s ELFIX | grep FOLGE
+```
+
+Was dort in welcher Reihenfolge kommen muss, wenn eine Folge läuft:
+
+| Zeile | Bedeutung | Wenn sie fehlt |
+| --- | --- | --- |
+| `FOLGE seitendaten … finalSeason=N` | die Folgenseite wurde gelesen | ohne `finalSeason>0` gibt es nie eine nächste Folge |
+| `FOLGE mess … 2626/2680s = 98% … nah=true` | der Messtakt sieht das Video | kein `<video>` erreichbar (Rahmen/Hoster) |
+| `FOLGE abspielseite … = true` | die Adresse gilt als Wiedergabeseite | die Leiste bleibt ganz weg |
+| `FOLGE lage … finalSeason=N` | womit die geteilte Regel rechnet | steht hier 0, kommt kein Ziel |
+| `FOLGE ziel …` | die ermittelte nächste Folge | `keine naechste Folge` = die Regel gibt nichts her |
+| `FOLGE leiste sichtbar=true knopf=true` | was zu sehen sein müsste | `knopf=false` bei `nah=true` heißt: kein Ziel |
+| `FOLGE zaehler an/abgelaufen/abgebrochen` | der Fünf-Sekunden-Zähler | mit Grund, wenn er nicht anläuft |
+
+`FOLGE leiste` wird nur bei Änderung geschrieben, `FOLGE mess` in jedem
+Fünf-Sekunden-Takt.

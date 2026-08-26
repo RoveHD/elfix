@@ -290,6 +290,8 @@ public class MainActivity extends Activity {
     /** Der Folgenlink der Seite, wie ihn der Messtakt gelesen hat - und wozu er gehoert. */
     private String seitenLink = "";
     private String seitenLinkZu = "";
+    /** Das zuletzt protokollierte Ziel - damit im Protokoll nur Aenderungen stehen. */
+    private String letztesZiel = "";
     /**
      * Die Empfehlungen der Startseite.
      *
@@ -8389,6 +8391,7 @@ public class MainActivity extends Activity {
             folgen.abspielseite(laufend, ja -> {
                 abspielseiteFuer = laufend;
                 abspielseite = ja;
+                Log.i(TAG, "FOLGE abspielseite " + Folgen.kurz(laufend) + " = " + ja);
                 if (laufend.equals(laufendeFolgenAdresse(currentWebView()))) {
                     spielerleiste.setzeAmSchauen(ja);
                     if (!ja) spielerleiste.setzeZiel("");
@@ -8401,12 +8404,28 @@ public class MainActivity extends Activity {
                 return;
             }
         }
-        folgen.naechste(laufend, eintragFuerFolgen(laufend), seitenAngabenFuer(laufend),
+        JSONObject eintrag = eintragFuerFolgen(laufend);
+        JSONObject angaben = seitenAngabenFuer(laufend);
+        // Woraus die Regel ihre Antwort baut. Bleibt das Ziel leer, steht hier,
+        // woran es lag - fast immer an einer Serienlaenge, die nie ankam.
+        Log.i(TAG, "FOLGE lage " + Folgen.kurz(laufend)
+            + " eintrag=" + (eintrag == null ? "-" : "ja")
+            + " finalSeason=" + (eintrag == null ? 0 : eintrag.optInt("finalSeason", 0))
+            + " finalEpisode=" + (eintrag == null ? 0 : eintrag.optInt("finalEpisode", 0))
+            + " seasonLastEpisode=" + (angaben == null ? 0 : angaben.optInt("seasonLastEpisode", 0))
+            + " gesperrt=" + (angaben == null ? "-" : angaben.opt("unplayableEpisodes"))
+            + " seitenLink=" + (seitenLinkFuer(laufend).isEmpty() ? "-" : "ja"));
+        folgen.naechste(laufend, eintrag, angaben,
             seitenLinkFuer(laufend), url -> {
                 // Die Antwort kommt aus dem Kern und damit einen Augenblick
                 // spaeter. Steht inzwischen eine andere Folge da, gehoert sie
                 // zur Vergangenheit - der naechste Takt fragt neu.
                 if (!laufend.equals(laufendeFolgenAdresse(currentWebView()))) return;
+                if (!url.equals(letztesZiel)) {
+                    letztesZiel = url;
+                    Log.i(TAG, "FOLGE ziel " + (url.isEmpty()
+                        ? "keine naechste Folge" : Folgen.kurz(url)));
+                }
                 spielerleiste.setzeZiel(url);
             });
     }
@@ -8467,12 +8486,16 @@ public class MainActivity extends Activity {
             ziel -> {
                 if (ziel.isEmpty()) {
                     folgenwechselSeit = 0;
+                    Log.i(TAG, "FOLGE wechsel (" + anlass + ") abgebrochen - keine naechste Folge");
                     if (melden) showToast("Hier gibt es keine nächste Folge");
                     return;
                 }
                 folgen.pruefen(ziel, laufend, eintrag, erlaubt -> {
                     if (erlaubt.isEmpty()) {
                         folgenwechselSeit = 0;
+                        Log.i(TAG, "FOLGE wechsel (" + anlass + ") abgelehnt - "
+                            + Folgen.kurz(ziel) + " ist keine naechste Folge von "
+                            + Folgen.kurz(laufend));
                         if (melden) showToast("Das war nicht die nächste Folge");
                         return;
                     }
@@ -8525,8 +8548,8 @@ public class MainActivity extends Activity {
     }
 
     private void folgeWirklichOeffnen(Provider provider, String url, String anlass) {
-        Log.i(TAG, "Folgenwechsel (" + anlass + ") -> "
-            + Folgen.folgenText(url) + " " + safePath(url));
+        Log.i(TAG, "FOLGE wechsel (" + anlass + ") -> "
+            + Folgen.folgenText(url) + " " + Folgen.kurz(url));
         if (spielerleiste != null) spielerleiste.setzeZiel("");
         // preserveFavoriteProgress: der Eintrag bleibt derselbe, es ist nur
         // eine andere Folge davon. Ohne das faellt activeFavoriteId weg, und
@@ -8560,11 +8583,21 @@ public class MainActivity extends Activity {
             this.seitenLink = seitenLink;
             this.seitenLinkZu = adresse;
         }
+        boolean nah = Folgen.nahAmEnde(position, laufzeit, beendet);
+        boolean ende = Folgen.amEnde(position, laufzeit, beendet);
+        // Der Messwert, wie er hereinkommt. Ohne ihn laesst sich von aussen
+        // nicht unterscheiden, ob die Folge nicht weit genug ist, ob gar nicht
+        // gemessen wird oder ob die Leiste nur nicht zu sehen ist.
+        // Nachzusehen mit: adb logcat -s ELFIX | grep FOLGE
+        Log.i(TAG, "FOLGE mess " + Folgen.kurz(adresse)
+            + " " + Math.round(position) + "/" + Math.round(laufzeit) + "s"
+            + " = " + Folgen.prozent(position, laufzeit) + "%"
+            + " ended=" + beendet + " nah=" + nah + " ende=" + ende
+            + " seitenLink=" + (seitenLink == null || seitenLink.isEmpty()
+                ? "-" : Folgen.kurz(seitenLink)));
         naechsteFolgeBestimmen();
         if (spielerleiste == null) return;
-        spielerleiste.setzeFortschritt(
-            Folgen.nahAmEnde(position, laufzeit, beendet),
-            Folgen.amEnde(position, laufzeit, beendet));
+        spielerleiste.setzeFortschritt(nah, ende);
     }
 
     /**
@@ -9736,6 +9769,17 @@ public class MainActivity extends Activity {
             // Navigating anywhere other than the armed page means the request no longer refers to
             // what is about to appear, so it must not fire on whatever loads instead.
             if (isEpisodeUrl(url)) lastEpisodeUrl = url;
+            // Die Seitenangaben schon jetzt lesen und nicht erst beim
+            // Seitenende. Bei diesen Anbietern kommt onPageFinished erst mit
+            // der letzten Werbung - der Autostart klickt den Hoster aber nach
+            // zwoelf Sekunden an, und danach steht die Folgenseite nicht mehr
+            // im Hauptrahmen. Wer erst beim Seitenende liest, liest die
+            // Grenzen der Serie nie; ohne sie gibt es keine naechste Folge.
+            // Das Skript faengt mit einem leeren Dokument nichts an - es fasst
+            // von selbst nach (siehe Titelbild.NACHFASSEN_MS).
+            if (titelbild != null && provider == activeProvider) {
+                titelbild.suchen(view, provider, url);
+            }
             if (autoStartRequested && !isSameUrl(url, autoStartUrl)) {
                 disarmAutoStart("navigated to " + safePath(url));
             } else if (provider == activeProvider && autoStartArmedFor(url)) {

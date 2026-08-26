@@ -34,6 +34,7 @@ const HAUPT = fs.readFileSync(path.join(ANDROID, "MainActivity.java"), "utf8");
 const TITELBILD = fs.readFileSync(path.join(ANDROID, "Titelbild.java"), "utf8");
 const MESSUNG_JAVA = fs.readFileSync(path.join(ANDROID, "Messung.java"), "utf8");
 const LEISTE = fs.readFileSync(path.join(ANDROID, "Spielerleiste.java"), "utf8");
+const TITELBILD_JAVA = TITELBILD;
 
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
@@ -277,8 +278,41 @@ pruefe("Gezaehlt wird nur am Ende",
   /zaehlenSoll\s*=\s*hatZiel\s*&&\s*amEnde/.test(LEISTE));
 pruefe("Ein Abbruch gilt fuer diese Folge und laesst den Knopf stehen",
   LEISTE.includes("abgebrochenFuer = ziel") && LEISTE.includes("knopfAbbrechen"));
-pruefe("Ein laufender Zaehler nimmt die Leiste nicht weg",
-  LEISTE.includes("steuerungAn || zaehlt"));
+pruefe("Ein laufender Zaehler holt die Leiste voll zurueck",
+  /deckkraft[\s\S]{0,300}zaehlt \|\| steuerungAn/.test(LEISTE));
+
+/* --------------------------------------- Die beiden Fehler auf der Hardware */
+//
+// Beides ist auf einem echten Telefon aufgefallen und war an keiner Rechnung
+// zu sehen - deshalb steht es hier als Sperre gegen einen Rueckfall.
+
+// 1. Die Leiste verschwand. Sie uebernahm den Rueckfall des Livestreifens
+//    (View.GONE nach kurzer Ruhe), dessen Ausloeser aber nur existiert, wenn
+//    eine Watchparty laeuft: den Horcher setzt Mitschauen.anPlayer ein, und
+//    das tut es nur bei eingeschalteter Watchparty. Wer allein schaut, bekam
+//    nie eine Meldung - und die Leiste blieb weg.
+pruefe("Die Leiste verblasst, statt zu verschwinden",
+  /RUHE_DECKKRAFT\s*=\s*0?\.\d+f/.test(LEISTE) && LEISTE.includes("wurzel.setAlpha"));
+pruefe("Ihr Verschwinden haengt nur noch daran, ob ueberhaupt etwas laeuft",
+  LEISTE.includes("wurzel.setVisibility(amSchauen ? View.VISIBLE : View.GONE)"));
+pruefe("Der Horcher fuer die Player-Steuerung braucht weiterhin die Watchparty",
+  fs.readFileSync(path.join(ANDROID, "Mitschauen.java"), "utf8")
+    .includes("if (watchparty == null || !watchparty.istEingeschaltet()) return;"));
+
+// 2. Die Serienlaenge kam nie an. Titelbild hatte genau einen Platz, und auf
+//    dem Telefon nimmt der Hoster den Hauptrahmen: sein onPageFinished loeschte
+//    die Angaben der Folgenseite. Danach war finalSeason weg, und ohne
+//    finalSeason gibt nextEpisodeContinueUrl nichts zurueck - kein Knopf, nie.
+pruefe("Titelbild merkt sich die Angaben je Adresse",
+  TITELBILD_JAVA.includes("LinkedHashMap<String, Fund>")
+    && /angaben\(String seitenAdresse\)[\s\S]{0,200}funde\.get\(seitenAdresse\)/
+      .test(TITELBILD_JAVA));
+pruefe("und nicht mehr in einem Platz, den die naechste Seite loescht",
+  !/private JSONObject seitendaten = new JSONObject\(\);/.test(TITELBILD_JAVA));
+pruefe("Gelesen wird schon beim Seitenanfang",
+  /onPageStarted[\s\S]{0,3000}titelbild\.suchen\(view, provider, url\)/.test(HAUPT));
+pruefe("Ohne finalSeason gibt die Regel nichts zurueck - der gepruefte Fall",
+  fortschritt.nextEpisodeContinueUrl(folge(1, 3), "", {}, null) === "");
 
 // Der Schalter muss einen Neustart ueberstehen - sonst ist er keine
 // Einstellung, sondern eine Laune.

@@ -5,6 +5,7 @@ import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -72,6 +73,7 @@ import android.widget.TextView;
  * und ein Knopf ins Leere waere schlimmer als keiner.
  */
 final class Spielerleiste {
+    private static final String TAG = CrashReporter.TAG;
 
     /** Was die Leiste von der Oberflaeche braucht. */
     interface Umgebung {
@@ -102,8 +104,37 @@ final class Spielerleiste {
         boolean zaehlerErlaubt();
     }
 
-    /** Derselbe Rueckfall wie beim Livestreifen: ohne Meldung des Players nach kurzer Ruhe weg. */
-    private static final long RUECKFALL_RUHE_MS = 3500;
+    /**
+     * Wie lange die Leiste nach der letzten Regung voll dasteht.
+     *
+     * <p>Dieselben fuenf Sekunden, nach denen der Rechner seine Karte
+     * verblassen laesst.
+     */
+    private static final long RUHE_MS = 5000;
+    /**
+     * Wie durchsichtig sie danach wird - und ausdruecklich nicht "weg".
+     *
+     * <p><b>Der gemeldete Fehler.</b> Hier stand {@code View.GONE}, uebernommen
+     * vom {@link Livestreifen}. Der darf das: er zeigt an, wer mitschaut, und
+     * das ist verzichtbar. Diese Leiste traegt den einzigen Weg zur naechsten
+     * Folge - und sie verschwand im Vollbild nach dreieinhalb Sekunden und kam
+     * ohne Beruehrung nie zurueck. Auf dem Telefon lief eine Folge damit bis
+     * zum Ende, ohne dass je ein Knopf zu sehen war.
+     *
+     * <p>Dazu kam, dass ihr Ausloeser gar nicht existierte: ob die
+     * Bedienelemente des Players stehen, meldet der Horcher aus
+     * {@code watchparty-sync.beobachterScript()} - und {@code Mitschauen.anPlayer}
+     * setzt ihn nur ein, wenn die Watchparty eingeschaltet ist. Wer allein
+     * schaut, bekam also nie eine Meldung, und der Rueckfall bedeutete
+     * "unsichtbar, bis jemand das Bild antippt".
+     *
+     * <p>Der Rechner macht es anders und richtig: seine Karte geht nach fuenf
+     * Sekunden Ruhe auf {@code opacity: 0.12} - sie bleibt stehen, bleibt
+     * anklickbar und ist mit einer Mausbewegung sofort wieder da. Genau das
+     * steht jetzt hier. Der Wert ist hoeher als am Rechner, weil eine
+     * Beruehrung kein Zeiger ist: was man nicht sieht, tippt man auch nicht an.
+     */
+    private static final float RUHE_DECKKRAFT = 0.4f;
     /**
      * Wie oft der Zaehler nachsieht, wie viel noch bleibt.
      *
@@ -153,20 +184,26 @@ final class Spielerleiste {
      */
     private String zaehlerFuer = "";
     private String abgebrochenFuer = "";
+    /** Woran erkannt wird, dass sich am Zustand wirklich etwas geaendert hat. */
+    private String letztesProtokoll = "";
     private boolean imVollbild;
     private boolean steuerungAn = true;
     private boolean gemeldetAn = true;
     private boolean steuerungGemeldet;
 
-    private final Runnable rueckfallVerbergen = new Runnable() {
+    /**
+     * Nach der Ruhezeit zuruecktreten.
+     *
+     * <p>Zuruecktreten und nicht verschwinden - siehe {@link #RUHE_DECKKRAFT}.
+     * Solange der Fokus auf der Leiste steht oder ein Zaehler laeuft, bleibt
+     * sie voll da: das eine naehme der Fernbedienung den Platz, an dem sie
+     * steht, das andere waere eine Ansage, die sich wegduckt.
+     */
+    private final Runnable ruheEintreten = new Runnable() {
         @Override
         public void run() {
-            // Ein Knopf, der unter dem Fokus verschwindet, nimmt der
-            // Fernbedienung den Platz, an dem sie steht - danach landet der
-            // Fokus irgendwo. Solange er gehalten wird, bleibt die Leiste.
-            // Dasselbe gilt fuer einen laufenden Zaehler.
             if (wurzel.hasFocus() || zaehlt()) {
-                haupt.postDelayed(this, RUECKFALL_RUHE_MS);
+                haupt.postDelayed(this, RUHE_MS);
                 return;
             }
             boolean sollAn = steuerungGemeldet && gemeldetAn;
@@ -292,6 +329,7 @@ final class Spielerleiste {
         // Abbrechen haelt nur den Zaehler an. Der Knopf bleibt, damit man
         // trotzdem von Hand weiterspringen kann - dieselbe Aufteilung wie am
         // Rechner.
+        Log.i(TAG, "FOLGE zaehler abgebrochen -> " + Folgen.kurz(ziel));
         abgebrochenFuer = ziel;
         zaehlerAnhalten();
         anwenden();
@@ -325,6 +363,7 @@ final class Spielerleiste {
                 haupt.postDelayed(this, ZAEHLER_TAKT_MS);
                 return;
             }
+            Log.i(TAG, "FOLGE zaehler abgelaufen -> " + Folgen.kurz(ziel));
             zaehlerAnhalten();
             knopfNaechste.setText("Wird geladen …");
             knopfAbbrechen.setVisibility(View.GONE);
@@ -352,12 +391,18 @@ final class Spielerleiste {
             && umgebung.autoplayAn() && umgebung.zaehlerErlaubt();
 
         if (zaehlenSoll && !zaehlt()) {
+            Log.i(TAG, "FOLGE zaehler an -> " + Folgen.kurz(ziel));
             zaehlerBis = SystemClock.uptimeMillis() + Folgen.ZAEHLER_SEKUNDEN * 1000L;
             // Ein Zaehler ist eine Ansage - dafuer gehoert die Leiste sichtbar,
             // auch wenn der Player seine Bedienelemente gerade weggenommen hat.
             regung();
             haupt.post(zaehlerTakt);
         } else if (!zaehlenSoll && zaehlt()) {
+            Log.i(TAG, "FOLGE zaehler aus - " + (!hatZiel ? "kein Ziel"
+                : ziel.equals(abgebrochenFuer) ? "abgebrochen"
+                : ziel.equals(zaehlerFuer) ? "schon gefahren"
+                : !amEnde ? "nicht mehr am Ende"
+                : !umgebung.autoplayAn() ? "Autoplay aus" : "nicht erlaubt"));
             zaehlerAnhalten();
         }
 
@@ -369,8 +414,34 @@ final class Spielerleiste {
         if (!zaehlt() && knopfAbbrechen.hasFocus()) knopfAutoplay.requestFocus();
         knopfNaechste.setVisibility(knopfDa ? View.VISIBLE : View.GONE);
         knopfAbbrechen.setVisibility(zaehlt() ? View.VISIBLE : View.GONE);
-        wurzel.setVisibility(zeigen(amSchauen, imVollbild, steuerungAn, zaehlt())
-            ? View.VISIBLE : View.GONE);
+        wurzel.setVisibility(amSchauen ? View.VISIBLE : View.GONE);
+        wurzel.setAlpha(deckkraft(imVollbild, steuerungAn, zaehlt()));
+        protokoll(knopfDa);
+    }
+
+    /**
+     * Was die Leiste gerade zeigt - und warum.
+     *
+     * <p>Nur bei Aenderung. Der Messtakt ruft {@code anwenden()} alle fuenf
+     * Sekunden, und eine Zeile je Takt waere im Protokoll nicht mehr zu lesen.
+     * Nachzusehen mit: {@code adb logcat -s ELFIX | grep FOLGE}
+     */
+    private void protokoll(boolean knopfDa) {
+        String stand = "leiste sichtbar=" + amSchauen
+            + " deckkraft=" + deckkraft(imVollbild, steuerungAn, zaehlt())
+            + " knopf=" + knopfDa
+            + " zaehler=" + zaehlt()
+            + " ziel=" + (ziel.isEmpty() ? "-" : Folgen.kurz(ziel))
+            + " nah=" + nahAmEnde + " ende=" + amEnde
+            + " autoplay=" + umgebung.autoplayAn()
+            + " zaehlerErlaubt=" + umgebung.zaehlerErlaubt()
+            + " abgebrochen=" + (ziel.equals(abgebrochenFuer))
+            + " schonGefahren=" + (ziel.equals(zaehlerFuer))
+            + " vollbild=" + imVollbild
+            + " steuerung=" + steuerungAn + "/" + steuerungGemeldet;
+        if (stand.equals(letztesProtokoll)) return;
+        letztesProtokoll = stand;
+        Log.i(TAG, "FOLGE " + stand);
     }
 
     /* ------------------------------------- Im Vollbild: mit der Steuerung */
@@ -390,8 +461,8 @@ final class Spielerleiste {
         steuerungGemeldet = false;
         gemeldetAn = true;
         steuerungAn = true;
-        haupt.removeCallbacks(rueckfallVerbergen);
-        if (imVollbild) haupt.postDelayed(rueckfallVerbergen, RUECKFALL_RUHE_MS);
+        haupt.removeCallbacks(ruheEintreten);
+        if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
         anwenden();
     }
 
@@ -399,7 +470,7 @@ final class Spielerleiste {
     void steuerungSichtbar(boolean an) {
         steuerungGemeldet = true;
         gemeldetAn = an;
-        haupt.removeCallbacks(rueckfallVerbergen);
+        haupt.removeCallbacks(ruheEintreten);
         if (steuerungAn == an) return;
         steuerungAn = an;
         anwenden();
@@ -407,28 +478,31 @@ final class Spielerleiste {
 
     /** Jemand hat etwas getan - Beruehrung, D-Pad, Fernbedienung. */
     void regung() {
-        haupt.removeCallbacks(rueckfallVerbergen);
-        haupt.postDelayed(rueckfallVerbergen, RUECKFALL_RUHE_MS);
+        haupt.removeCallbacks(ruheEintreten);
+        haupt.postDelayed(ruheEintreten, RUHE_MS);
         if (steuerungAn) return;
         steuerungAn = true;
         anwenden();
     }
 
     /**
-     * Die Regel selbst - ohne Ansicht, damit sie sich pruefen laesst.
+     * Wie deutlich die Leiste dasteht - ohne Ansicht, damit es sich pruefen
+     * laesst.
      *
-     * <p>Ausserhalb des Vollbilds steht die Leiste neben dem Bild und verdeckt
-     * nichts; dort haengt sie allein daran, ob ueberhaupt eine Folge offen ist.
-     * Im Vollbild liegt sie auf dem Video - und dort gilt, was der Player ueber
-     * seine eigenen Bedienelemente sagt.
+     * <p>Ob sie ueberhaupt dasteht, entscheidet allein, ob gerade eine
+     * Wiedergabeseite offen ist. Sie wird nie unsichtbar: eine Leiste, die
+     * verschwindet, ist ein Weg zur naechsten Folge, den es nicht gibt.
      *
-     * <p>Mit einer Ausnahme: waehrend gezaehlt wird, bleibt sie stehen. Ein
-     * Zaehler, den man nicht sieht, ist keine Ansage - und "Abbrechen" waere
-     * ein Knopf, den es nur unsichtbar gibt.
+     * <p>Ausserhalb des Vollbilds liegt sie neben dem Bild und verdeckt nichts,
+     * also volle Deckkraft. Im Vollbild liegt sie auf dem Video und tritt nach
+     * kurzer Ruhe zurueck - so weit, dass sie nicht stoert, und so wenig, dass
+     * man sie noch findet. Waehrend gezaehlt wird, steht sie voll da: ein
+     * Zaehler, den man nicht sieht, ist keine Ansage, und "Abbrechen" waere ein
+     * Knopf, den es nur unsichtbar gibt.
      */
-    static boolean zeigen(boolean amSchauen, boolean imVollbild, boolean steuerungAn,
-                          boolean zaehlt) {
-        return amSchauen && (!imVollbild || steuerungAn || zaehlt);
+    static float deckkraft(boolean imVollbild, boolean steuerungAn, boolean zaehlt) {
+        if (!imVollbild || zaehlt || steuerungAn) return 1f;
+        return RUHE_DECKKRAFT;
     }
 
     /* ------------------------------------------------------- Der Umzug */
@@ -451,8 +525,8 @@ final class Spielerleiste {
         // in diesem Augenblick fast immer offen. Was danach gilt, sagt der
         // Player.
         steuerungAn = true;
-        haupt.removeCallbacks(rueckfallVerbergen);
-        if (imVollbild) haupt.postDelayed(rueckfallVerbergen, RUECKFALL_RUHE_MS);
+        haupt.removeCallbacks(ruheEintreten);
+        if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
         anwenden();
         if (rahmen != null) {
             boolean tv = umgebung.fernseher();
