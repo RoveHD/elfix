@@ -1024,6 +1024,10 @@ public class MainActivity extends Activity {
             }
         });
         spielerleiste.setzeZuhause(spielerHolder);
+        // Zwei Ansichten, weil es zwei Bedienelemente mit zwei Regeln sind:
+        // der Schalter oben, die Leiste darunter. Siehe Spielerleiste.
+        spielerHolder.addView(spielerleiste.autoplayAnsicht(), new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         spielerHolder.addView(spielerleiste.ansicht(), new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }

@@ -150,6 +150,17 @@ final class Spielerleiste {
     private final Handler haupt = new Handler(Looper.getMainLooper());
 
     private final LinearLayout wurzel;
+    /**
+     * Der Autoplay-Schalter, in einem eigenen Halter.
+     *
+     * <p>Er sass bis hierher in derselben Zeile wie "Naechste Folge" und teilte
+     * sich damit alles: Platz, Deckkraft, Sichtbarkeit. Das war der gemeldete
+     * Fehler - zwei Bedienelemente mit zwei Aufgaben und zwei Regeln koennen
+     * nicht ein Element sein. Der Knopf folgt weiter der Regel des Rechners
+     * (ab neunzig Prozent, unten rechts); der Schalter liegt oben links und
+     * kommt und geht mit der Bedienleiste des Players.
+     */
+    private final LinearLayout autoplayHalter;
     private final TextView knopfNaechste;
     private final TextView knopfAbbrechen;
     private final TextView knopfAutoplay;
@@ -202,7 +213,10 @@ final class Spielerleiste {
     private final Runnable ruheEintreten = new Runnable() {
         @Override
         public void run() {
-            if (wurzel.hasFocus() || zaehlt()) {
+            // Auch der Schalter haelt die Ruhe auf: steht der Fokus auf ihm und
+            // er verschwaende, naehme das der Fernbedienung mitten im Druck den
+            // Platz weg, an dem sie steht.
+            if (wurzel.hasFocus() || autoplayHalter.hasFocus() || zaehlt()) {
                 haupt.postDelayed(this, RUHE_MS);
                 return;
             }
@@ -235,14 +249,23 @@ final class Spielerleiste {
             ? TvViews.pillButton(context, autoplayText(), this::autoplayGedrueckt)
             : MobileViews.secondaryButton(context, autoplayText(), this::autoplayGedrueckt);
 
-        // Der Schalter steht links und bleibt stehen; rechts davon kommt das,
-        // was zur laufenden Folge gehoert. So wandert der Schalter nicht unter
-        // dem Finger weg, wenn der Knopf bei neunzig Prozent dazukommt.
-        wurzel.addView(knopfAutoplay, knopfMass(tv));
-        wurzel.addView(knopfAbbrechen, mitAbstand(knopfMass(tv)));
+        // In der Leiste steht nur noch, was zur laufenden Folge gehoert. Der
+        // Schalter hat seinen eigenen Halter und seinen eigenen Platz - so
+        // wandert der Knopf nicht unter dem Finger weg, wenn der Schalter mit
+        // der Bedienleiste des Players verschwindet, und umgekehrt.
+        wurzel.addView(knopfAbbrechen, knopfMass(tv));
         wurzel.addView(knopfNaechste, mitAbstand(knopfMass(tv)));
         knopfNaechste.setVisibility(View.GONE);
         knopfAbbrechen.setVisibility(View.GONE);
+
+        autoplayHalter = new LinearLayout(context);
+        autoplayHalter.setOrientation(LinearLayout.HORIZONTAL);
+        autoplayHalter.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        autoplayHalter.setClipChildren(false);
+        autoplayHalter.setClipToPadding(false);
+        autoplayHalter.setVisibility(View.GONE);
+        autoplayHalter.addView(knopfAutoplay, knopfMass(tv));
+
         aussehenAnwenden();
     }
 
@@ -259,6 +282,18 @@ final class Spielerleiste {
 
     View ansicht() {
         return wurzel;
+    }
+
+    /**
+     * Der Schalter als eigene Ansicht - er wird getrennt eingehaengt.
+     *
+     * <p>Getrennt, weil er getrennt verschwinden muss: {@code View.GONE} und
+     * nicht durchsichtig. Ein Element, das man nicht sieht, aber das Platz
+     * belegt, den Fokus annimmt und Beruehrungen abfaengt, ist schlimmer als
+     * eines, das dasteht.
+     */
+    View autoplayAnsicht() {
+        return autoplayHalter;
     }
 
     void setzeZuhause(ViewGroup halter) {
@@ -407,16 +442,40 @@ final class Spielerleiste {
         }
 
         if (!zaehlt()) knopfNaechste.setText(KNOPF_TEXT);
+
+        // Der Schalter: er steht, solange etwas laeuft *und* die Bedienleiste
+        // des Players dasteht - und sonst gar nicht. Nicht durchsichtig,
+        // sondern GONE: so belegt er keinen Platz, nimmt keinen Fokus an und
+        // faengt keine Beruehrung ab. Der Zaehler ist die eine Ausnahme, aus
+        // demselben Grund wie bei der Leiste: waehrend einer Ansage soll man
+        // den Automatismus abschalten koennen, ohne erst das Bild antippen zu
+        // muessen.
+        boolean autoplayDa = autoplaySichtbar(amSchauen, steuerungAn, zaehlt());
+        // Erst den Fokus retten, dann verschwinden. Andersherum faellt er ins
+        // Nichts, und die Fernbedienung steht irgendwo.
+        if (!autoplayDa && knopfAutoplay.hasFocus()) {
+            if (!(knopfDa && knopfNaechste.requestFocus())) knopfAutoplay.clearFocus();
+        }
+        autoplayHalter.setVisibility(autoplayDa ? View.VISIBLE : View.GONE);
+
         // Verschwindet ein Knopf, waehrend er den Fokus haelt, faellt der Fokus
         // ins Nichts und die Fernbedienung steht irgendwo. Er wird
-        // weitergereicht, bevor der Knopf geht.
-        if (!knopfDa && knopfNaechste.hasFocus()) knopfAutoplay.requestFocus();
-        if (!zaehlt() && knopfAbbrechen.hasFocus()) knopfAutoplay.requestFocus();
+        // weitergereicht, bevor der Knopf geht - an den Schalter, sofern der
+        // ueberhaupt dasteht.
+        if (!knopfDa && knopfNaechste.hasFocus() && !(autoplayDa && knopfAutoplay.requestFocus())) {
+            knopfNaechste.clearFocus();
+        }
+        if (!zaehlt() && knopfAbbrechen.hasFocus() && !(autoplayDa && knopfAutoplay.requestFocus())) {
+            knopfAbbrechen.clearFocus();
+        }
         knopfNaechste.setVisibility(knopfDa ? View.VISIBLE : View.GONE);
         knopfAbbrechen.setVisibility(zaehlt() ? View.VISIBLE : View.GONE);
+        // Die Leiste selbst folgt unveraendert ihrer bisherigen Regel: sie
+        // steht, solange eine Folge offen ist, und tritt im Vollbild nach
+        // kurzer Ruhe nur zurueck. Der Schalter oben hat damit nichts zu tun.
         wurzel.setVisibility(amSchauen ? View.VISIBLE : View.GONE);
         wurzel.setAlpha(deckkraft(imVollbild, steuerungAn, zaehlt()));
-        protokoll(knopfDa);
+        protokoll(knopfDa, autoplayDa);
     }
 
     /**
@@ -426,10 +485,11 @@ final class Spielerleiste {
      * Sekunden, und eine Zeile je Takt waere im Protokoll nicht mehr zu lesen.
      * Nachzusehen mit: {@code adb logcat -s ELFIX | grep FOLGE}
      */
-    private void protokoll(boolean knopfDa) {
+    private void protokoll(boolean knopfDa, boolean autoplayDa) {
         String stand = "leiste sichtbar=" + amSchauen
             + " deckkraft=" + deckkraft(imVollbild, steuerungAn, zaehlt())
             + " knopf=" + knopfDa
+            + " autoplaySichtbar=" + autoplayDa
             + " zaehler=" + zaehlt()
             + " ziel=" + (ziel.isEmpty() ? "-" : Folgen.kurz(ziel))
             + " nah=" + nahAmEnde + " ende=" + amEnde
@@ -505,6 +565,28 @@ final class Spielerleiste {
         return RUHE_DECKKRAFT;
     }
 
+    /**
+     * Ob der Autoplay-Schalter dasteht - ohne Ansicht, damit es sich pruefen
+     * laesst.
+     *
+     * <p>Bewusst eine andere Regel als {@link #deckkraft}, und das ist der
+     * ganze Punkt der Aenderung: die Leiste <em>tritt zurueck</em>, der
+     * Schalter <em>geht weg</em>. Sie traegt den einzigen Weg zur naechsten
+     * Folge und muss deshalb auffindbar bleiben; er ist eine Einstellung, und
+     * eine Einstellung, die auf dem Video klebt, verdeckt es nur.
+     *
+     * <p>Er haengt damit an der Bedienleiste des Players und an sonst nichts -
+     * insbesondere nicht daran, ob "Naechste Folge" gerade dasteht. Die beiden
+     * hingen bis hierher aneinander, weil sie eine Ansicht waren.
+     *
+     * <p>Die eine Ausnahme ist der Zaehler: waehrend einer Ansage soll man den
+     * Automatismus abschalten koennen, ohne erst das Bild antippen zu muessen.
+     */
+    static boolean autoplaySichtbar(boolean amSchauen, boolean steuerungAn, boolean zaehlt) {
+        if (!amSchauen) return false;
+        return steuerungAn || zaehlt;
+    }
+
     /* ------------------------------------------------------- Der Umzug */
 
     /**
@@ -518,6 +600,9 @@ final class Spielerleiste {
     void inVollbild(FrameLayout rahmen) {
         if (wurzel.getParent() instanceof ViewGroup) {
             ((ViewGroup) wurzel.getParent()).removeView(wurzel);
+        }
+        if (autoplayHalter.getParent() instanceof ViewGroup) {
+            ((ViewGroup) autoplayHalter.getParent()).removeView(autoplayHalter);
         }
         imVollbild = rahmen != null;
         aussehenAnwenden();
@@ -538,9 +623,26 @@ final class Spielerleiste {
             params.bottomMargin = dp(tv ? 96 : 64);
             rahmen.addView(wurzel, params);
             wurzel.bringToFront();
+
+            // Der Schalter oben links - so weit weg von "Naechste Folge" wie
+            // der Bildschirm hergibt. Unten liegt die Bedienleiste des Hosters
+            // und rechts daneben der Knopf; oben links ist die einzige Ecke,
+            // in der er weder etwas verdeckt noch selbst verdeckt wird.
+            FrameLayout.LayoutParams autoplayMass = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            autoplayMass.gravity = Gravity.TOP | Gravity.START;
+            autoplayMass.leftMargin = dp(tv ? TvViews.SCREEN_PADDING : 12);
+            autoplayMass.topMargin = dp(tv ? 24 : 12);
+            rahmen.addView(autoplayHalter, autoplayMass);
+            autoplayHalter.bringToFront();
             return;
         }
         if (zuhause != null) {
+            // Neben dem Bild: der Schalter in seiner eigenen Zeile darueber,
+            // linksbuendig. Die Leiste darunter behaelt ihre Zeile und damit
+            // ihren Platz - "Naechste Folge" steht, wo es immer stand.
+            zuhause.addView(autoplayHalter, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             zuhause.addView(wurzel, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
@@ -558,12 +660,17 @@ final class Spielerleiste {
         boolean tv = umgebung.fernseher();
         int rand = dp(tv ? 12 : 8);
         wurzel.setPadding(rand, rand, rand, rand);
+        autoplayHalter.setPadding(rand, rand, rand, rand);
         if (imVollbild) {
             wurzel.setBackground(MobileViews.shape(context,
+                Color.parseColor("#EC0B1220"), tv ? 18 : 14, Theme.BORDER, 1));
+            autoplayHalter.setBackground(MobileViews.shape(context,
                 Color.parseColor("#EC0B1220"), tv ? 18 : 14, Theme.BORDER, 1));
         } else {
             wurzel.setBackground(null);
             wurzel.setBackgroundColor(Theme.SURFACE);
+            autoplayHalter.setBackground(null);
+            autoplayHalter.setBackgroundColor(Theme.SURFACE);
         }
     }
 
@@ -579,14 +686,22 @@ final class Spielerleiste {
      * @return ob der Fokus wirklich dort angekommen ist
      */
     boolean fokussieren() {
-        if (wurzel.getVisibility() != View.VISIBLE) return false;
+        if (wurzel.getVisibility() != View.VISIBLE
+            && autoplayHalter.getVisibility() != View.VISIBLE) {
+            return false;
+        }
+        // Erst eine Regung: sie holt die Bedienelemente zurueck, und damit den
+        // Schalter. Sonst waere er genau in dem Augenblick nicht da, in dem die
+        // Fernbedienung ihn sucht.
         regung();
         if (knopfNaechste.getVisibility() == View.VISIBLE && knopfNaechste.requestFocus()) return true;
-        return knopfAutoplay.requestFocus();
+        if (autoplayHalter.getVisibility() == View.VISIBLE && knopfAutoplay.requestFocus()) return true;
+        return false;
     }
 
     boolean hatFokus() {
-        return wurzel.getVisibility() == View.VISIBLE && wurzel.hasFocus();
+        return (wurzel.getVisibility() == View.VISIBLE && wurzel.hasFocus())
+            || (autoplayHalter.getVisibility() == View.VISIBLE && autoplayHalter.hasFocus());
     }
 
     private int dp(int wert) {
