@@ -1,0 +1,433 @@
+name: Testbau ELFIX
+
+# Ein Bau zum Ausprobieren - und ausdruecklich kein Release.
+#
+# release.yml baut aus einem Tag und veroeffentlicht. Das ist der richtige Weg
+# fuer eine Fassung, die herausgeht, und der falsche fuer die Frage, um die es
+# hier geht: *laeuft das, was gerade auf diesem Zweig steht?* Dafuer einen Tag
+# zu vergeben hiesse, eine Versionsnummer zu verbrauchen und einen Eintrag in
+# der Release-Liste zu hinterlassen, den danach niemand mehr wegbekommt.
+#
+# Dieser Lauf legt nichts an und veroeffentlicht nichts. Er baut, haengt die
+# Dateien als Artefakte an den Lauf und schreibt in die Zusammenfassung, was
+# damit zu tun ist. Nach vierzehn Tagen raeumt GitHub sie von selbst weg.
+#
+# **Den Zweig waehlst du zweimal, und das ist Absicht.** Oben im Formular steht
+# GitHubs eigene Auswahl ("Use workflow from") - sie bestimmt, aus welchem Zweig
+# *diese Datei* kommt, und sie zeigt nur Zweige, auf denen es sie schon gibt.
+# Das Feld "zweig" darunter bestimmt, was wirklich gebaut wird. Damit laesst
+# sich auch ein Zweig bauen, der diesen Workflow noch gar nicht hat: Formular
+# aus main starten, Zweignamen eintragen.
+
+on:
+  workflow_dispatch:
+    inputs:
+      zweig:
+        description: "Welcher Zweig gebaut wird. Leer = der oben ausgewaehlte."
+        required: false
+        default: ""
+      ziel:
+        description: "Was gebaut wird"
+        required: true
+        default: beide
+        type: choice
+        options:
+          - beide
+          - windows
+          - android
+      apk:
+        description: "Android: 'release' legt sich ueber die installierte App (braucht den Schluessel), 'debug' installiert daneben"
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - debug
+          - beide
+      pruefungen:
+        description: "Vorher die Pruefungen laufen lassen"
+        required: true
+        default: true
+        type: boolean
+
+# Nur lesen. Dieser Lauf schreibt nichts ins Repository - kein Tag, kein
+# Release, kein Kommentar. Was er hinterlaesst, sind Artefakte am Lauf selbst.
+permissions:
+  contents: read
+
+# Ein zweiter Lauf auf demselben Zweig macht den ersten ueberfluessig. Wer
+# zweimal hintereinander drueckt, weil beim ersten Mal etwas fehlte, soll nicht
+# zwei Baeuten zusehen muessen.
+concurrency:
+  group: testbau-${{ inputs.zweig || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # Woher die Fassungsnummer kommt, steht an einer Stelle - beide Baeue holen
+  # sie hier ab. Sonst traegt die APK eine andere als der Installer, und beim
+  # Vergleichen zweier Testbaeue weiss niemand mehr, welcher welcher war.
+  fassung:
+    name: Fassung bestimmen
+    runs-on: ubuntu-latest
+    outputs:
+      zweig: ${{ steps.werte.outputs.zweig }}
+      kurz: ${{ steps.werte.outputs.kurz }}
+      name: ${{ steps.werte.outputs.name }}
+      code: ${{ steps.werte.outputs.code }}
+      marke: ${{ steps.werte.outputs.marke }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.zweig || github.ref }}
+
+      - name: Werte ableiten
+        id: werte
+        shell: bash
+        run: |
+          set -euo pipefail
+          zweig="${{ inputs.zweig || github.ref_name }}"
+          # Zweignamen enthalten Schraegstriche; Artefaktnamen duerfen das
+          # nicht. Alles, was kein Buchstabe, keine Ziffer und kein Bindestrich
+          # ist, wird zu einem Bindestrich.
+          kurz="$(printf '%s' "$zweig" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-60)"
+
+          # Die Fassung steht in package.json und nicht in einem Tag - es gibt
+          # hier keinen.
+          version="$(node -p "require('./StreamingBrowserElectron/package.json').version")"
+          if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            echo "::error::In package.json steht keine brauchbare Version: $version"
+            exit 1
+          fi
+          code=$(( ${BASH_REMATCH[1]} * 10000 + ${BASH_REMATCH[2]} * 100 + ${BASH_REMATCH[3]} ))
+
+          # Der Name traegt die Nummer des Laufs und nicht den Zweig: er steht
+          # in den App-Einstellungen, und dort ist "1.47.0-test.42" lesbar,
+          # "1.47.0-test.42+claude-elfix-backup-restore-pkrh1c" nicht. Die
+          # Nummer ist im Repository eindeutig - aus ihr findet sich der Lauf
+          # und damit Zweig und Commit. Der Zweig steht im Dateinamen.
+          #
+          # Der versionCode bleibt dagegen der der Fassung. Er entscheidet
+          # darueber, ob Android eine APK fuer neuer haelt, und ein kuenstlich
+          # hochgesetzter Testbau blockierte danach jedes echte Update: Android
+          # laesst keine niedrigere Nummer ueber eine hoehere.
+          marke="$version-test.${{ github.run_number }}"
+          echo "zweig=$zweig"   >> "$GITHUB_OUTPUT"
+          echo "kurz=$kurz"     >> "$GITHUB_OUTPUT"
+          echo "name=$marke"    >> "$GITHUB_OUTPUT"
+          echo "code=$code"     >> "$GITHUB_OUTPUT"
+          echo "marke=$version" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Testbau"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Zweig | \`$zweig\` |"
+            echo "| Commit | \`$(git rev-parse --short HEAD)\` |"
+            echo "| Fassung | \`$marke\` (versionCode \`$code\`) |"
+            echo "| Gebaut wird | ${{ inputs.ziel }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows
+    if: inputs.ziel == 'beide' || inputs.ziel == 'windows'
+    needs: fassung
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: StreamingBrowserElectron
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.zweig || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install relay dependencies
+        # Dreizehn Pruefungen starten ein echtes Relay - ohne dessen
+        # Abhaengigkeit werden sie uebersprungen und die Abdeckung faellt still
+        # weg. Auch bei einem Testbau: eine gruene Ausgabe, die die Haelfte
+        # verschwiegen hat, ist schlechter als gar keine.
+        if: inputs.pruefungen
+        working-directory: sync-server
+        run: npm ci --omit=dev
+
+      - name: Pruefungen
+        if: inputs.pruefungen
+        run: npm run lint && npm run test
+
+      # Kein --publish: dieser Lauf legt nichts an. electron-builder wuerde
+      # sonst versuchen, gegen die GitHub-Releases abzugleichen.
+      - name: Bauen
+        run: npm run make-icon && npx electron-builder --win nsis portable --publish never
+        env:
+          # Ein Testbau wird nicht signiert. Das Zertifikat gehoert an ein
+          # Release; hier wuerde es nur bei jedem Lauf angefasst, ohne dass
+          # jemand etwas davon hat. SmartScreen meldet sich dafuer beim ersten
+          # Start - bei einem Testbau ist das in Ordnung.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Ein Zettel in der Zip-Datei. Die Zusammenfassung des Laufs steht auf
+      # GitHub und ist nach vierzehn Tagen weg; die heruntergeladene Datei liegt
+      # dann noch im Downloadordner, und ihr sieht man nicht an, aus welchem
+      # Zweig sie kam - die Exe traegt nur die Fassungsnummer aus package.json.
+      - name: Beipackzettel schreiben
+        shell: bash
+        env:
+          ZWEIG: ${{ needs.fassung.outputs.zweig }}
+          MARKE: ${{ needs.fassung.outputs.marke }}
+        run: |
+          {
+            echo "ELFIX Testbau"
+            echo "============="
+            echo ""
+            echo "Zweig:    $ZWEIG"
+            echo "Commit:   $(git rev-parse HEAD)"
+            echo "Lauf:     ${{ github.run_number }} (${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "Fassung:  $MARKE"
+            echo "Gebaut:   $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "Das ist kein Release. Die Dateien sind nicht signiert - Windows zeigt"
+            echo "beim ersten Start eine SmartScreen-Warnung."
+            echo ""
+            echo "ELFIX-Portable-*.exe  startet ohne Installation."
+            echo "ELFIX-Setup-*.exe     legt sich ueber eine vorhandene Installation."
+            echo ""
+            echo "Beide benutzen denselben Datenordner wie eine installierte ELFIX"
+            echo "(%APPDATA%\\ELFIX). Wer seinen echten Bestand nicht anfassen will,"
+            echo "exportiert ihn vorher unter Einstellungen -> Daten & Backup."
+            echo ""
+            echo "Die Fassung ist dieselbe wie die aus package.json ($MARKE). Steht auf"
+            echo "GitHub ein neueres Release, holt dieser Testbau es sich beim Start von"
+            echo "selbst - dann ist er weg. Das ist dasselbe Verhalten wie bei einer"
+            echo "echten Installation und kein Fehler."
+          } > StreamingBrowserElectron/dist/TESTBAU.txt
+
+      - name: Artefakt anhaengen
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ needs.fassung.outputs.kurz }}-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            StreamingBrowserElectron/dist/*.exe
+            StreamingBrowserElectron/dist/*.blockmap
+            StreamingBrowserElectron/dist/TESTBAU.txt
+
+      # Die Zusammenfassung entsteht in bash und nicht in PowerShell: in einer
+      # PowerShell-Zeichenkette ist der Backtick das Fluchtzeichen, und
+      # Markdown besteht hier zur Haelfte aus Backticks.
+      - name: Zusammenfassung
+        if: always()
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
+
+          ### Windows
+
+          Im Artefakt liegen zwei Dateien:
+
+          - **`ELFIX-Portable-*.exe`** — startet ohne Installation und laesst eine vorhandene
+            ELFIX-Installation in Ruhe. Der Weg fuer ein schnelles Ausprobieren.
+          - **`ELFIX-Setup-*.exe`** — installiert nach `%LOCALAPPDATA%\Programs\ELFIX` und legt
+            sich damit **ueber eine vorhandene Installation**. Nur nehmen, wenn genau das
+            geprueft werden soll.
+
+          Beide sind **nicht signiert**: Windows zeigt beim ersten Start eine
+          SmartScreen-Warnung (*Weitere Informationen* -> *Trotzdem ausfuehren*).
+
+          > Beide teilen sich den Datenordner `%APPDATA%\ELFIX` mit einer installierten ELFIX.
+          > Wer seinen echten Bestand nicht anfassen will, sichert ihn vorher:
+          > Einstellungen -> Daten & Backup -> *Als Datei exportieren*.
+
+          > Die Fassung ist unveraendert die aus `package.json`. Steht auf GitHub ein
+          > **neueres** Release, holt der Testbau es sich beim Start von selbst und ist danach
+          > weg — dasselbe Verhalten wie bei einer echten Installation.
+          MD
+
+  android:
+    name: Android
+    if: inputs.ziel == 'beide' || inputs.ziel == 'android'
+    needs: fassung
+    # Dieselbe Umgebung wie im Release-Lauf, und das mit Absicht: ein Testbau,
+    # der woanders laeuft, kann durchgehen, wo das Release stehenbleibt. Genau
+    # das ist bei 1.38.0 passiert - lintVital gibt es nur fuer Release, und
+    # Debug lief durch.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.zweig || github.ref }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Der Werbeblocker der APK ist @adguard/tsurlfilter - dasselbe Paket wie
+      # am Rechner. Ohne Node gibt es kein Buendel, und der Bau bricht mit
+      # genau dieser Auskunft ab.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+
+      - name: Buendel-Abhaengigkeiten
+        working-directory: StreamingBrowserElectron
+        run: npm ci --ignore-scripts
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Gradle-Zwischenspeicher
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Unterschriftsschluessel auslegen
+        id: schluessel
+        shell: pwsh
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:KEYSTORE_BASE64)) {
+            Write-Host "::warning::Kein ANDROID_KEYSTORE_BASE64 hinterlegt - es kann nur eine Debug-APK gebaut werden. Sie installiert sich neben einer vorhandenen ELFIX, nicht darueber."
+            "da=nein" >> $env:GITHUB_OUTPUT
+          } else {
+            $pfad = Join-Path $env:RUNNER_TEMP "elfix.jks"
+            [IO.File]::WriteAllBytes($pfad, [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+            "pfad=$pfad" >> $env:GITHUB_OUTPUT
+            "da=ja" >> $env:GITHUB_OUTPUT
+          }
+
+      # Was wirklich gebaut wird. Ein "release" ohne Schluessel geht nicht -
+      # eine unsignierte APK laesst sich gar nicht erst installieren -, und
+      # stillschweigend auf Debug auszuweichen waere die schlechtere Antwort:
+      # sie traegt eine andere Paketkennung und legt sich eben *nicht* ueber
+      # die vorhandene App. Wer den Unterschied nicht kennt, wundert sich
+      # danach, warum sein Bestand fehlt.
+      - name: Varianten bestimmen
+        id: varianten
+        shell: pwsh
+        run: |
+          $wunsch = "${{ inputs.apk }}"
+          $schluessel = "${{ steps.schluessel.outputs.da }}"
+          if ($wunsch -ne "debug" -and $schluessel -ne "ja") {
+            Write-Host "::error::Fuer eine Release-APK braucht es ANDROID_KEYSTORE_BASE64 samt Passwoertern (siehe README, 'Android: Updates und der Unterschriftsschluessel'). Ohne sie waere die APK unsigniert und liesse sich nicht installieren. Starte den Lauf mit apk=debug, wenn du daneben installieren willst."
+            exit 1
+          }
+          "release=$(if ($wunsch -eq 'debug') { 'nein' } else { 'ja' })" >> $env:GITHUB_OUTPUT
+          "debug=$(if ($wunsch -eq 'release') { 'nein' } else { 'ja' })" >> $env:GITHUB_OUTPUT
+
+      # Die reinen Java-Pruefungen. Sie brauchen kein Geraet und dauern
+      # Sekunden - und sie halten die Regeln von Telefon und Rechner zusammen
+      # (sicherungsproben.json faehrt hier dieselben Faelle wie drueben).
+      - name: Pruefungen
+        if: inputs.pruefungen
+        working-directory: android
+        run: .\gradlew.bat :app:testDebugUnitTest "-PelfixFassung=${{ needs.fassung.outputs.name }}" "-PelfixFassungNummer=${{ needs.fassung.outputs.code }}"
+
+      - name: Release-APK bauen
+        if: steps.varianten.outputs.release == 'ja'
+        working-directory: android
+        env:
+          ELFIX_KEYSTORE: ${{ steps.schluessel.outputs.pfad }}
+          ELFIX_KEYSTORE_PASSWORT: ${{ secrets.ANDROID_KEYSTORE_PASSWORT }}
+          ELFIX_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ELFIX_KEY_PASSWORT: ${{ secrets.ANDROID_KEY_PASSWORT }}
+        run: .\gradlew.bat :app:assembleRelease "-PelfixFassung=${{ needs.fassung.outputs.name }}" "-PelfixFassungNummer=${{ needs.fassung.outputs.code }}"
+
+      - name: Debug-APK bauen
+        if: steps.varianten.outputs.debug == 'ja'
+        working-directory: android
+        run: .\gradlew.bat :app:assembleDebug "-PelfixFassung=${{ needs.fassung.outputs.name }}" "-PelfixFassungNummer=${{ needs.fassung.outputs.code }}"
+
+      - name: APKs benennen
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path apk | Out-Null
+          $marke = "${{ needs.fassung.outputs.marke }}-test${{ github.run_number }}-${{ needs.fassung.outputs.kurz }}"
+          if ("${{ steps.varianten.outputs.release }}" -eq "ja") {
+            Copy-Item "android\app\build\outputs\apk\release\app-release.apk" "apk\ELFIX-$marke.apk" -Force
+          }
+          if ("${{ steps.varianten.outputs.debug }}" -eq "ja") {
+            Copy-Item "android\app\build\outputs\apk\debug\app-debug.apk" "apk\ELFIX-$marke-debug.apk" -Force
+          }
+          Get-ChildItem apk | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length/1MB,1)) MB" }
+
+      - name: Artefakt anhaengen
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ needs.fassung.outputs.kurz }}-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: error
+          path: apk/*.apk
+
+      # Wenn die Pruefungen gelaufen sind, gehoert ihr Ergebnis auch dann
+      # heraus, wenn sie fehlgeschlagen sind - gerade dann.
+      - name: Pruefbericht anhaengen
+        if: always() && inputs.pruefungen
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-pruefbericht-${{ needs.fassung.outputs.kurz }}-${{ github.run_number }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: android/app/build/reports/tests/**
+
+      - name: Zusammenfassung
+        if: always()
+        shell: bash
+        env:
+          RELEASE_DA: ${{ steps.varianten.outputs.release }}
+          DEBUG_DA: ${{ steps.varianten.outputs.debug }}
+          FASSUNG: ${{ needs.fassung.outputs.name }}
+          CODE: ${{ needs.fassung.outputs.code }}
+        run: |
+          {
+            echo ""
+            echo "### Android"
+            echo ""
+            if [ "$RELEASE_DA" = "ja" ]; then
+              echo "- **\`ELFIX-*.apk\`** (Release, mit dem echten Schluessel unterschrieben) — legt sich"
+              echo "  **ueber eine vorhandene ELFIX**. Bestand, Einstellungen und Geraeteschluessel bleiben"
+              echo "  dabei stehen. Das ist die Fassung, mit der sich ein echtes Update pruefen laesst."
+            fi
+            if [ "$DEBUG_DA" = "ja" ]; then
+              echo "- **\`ELFIX-*-debug.apk\`** (Debug) — traegt die Paketkennung"
+              echo "  \`local.elflix.android.debug\` und installiert sich **daneben**, mit eigenen Daten."
+              echo "  Die Fassung zum gefahrlosen Ausprobieren."
+            fi
+            echo ""
+            echo "Installieren: Artefakt entpacken, APK auf das Geraet kopieren, antippen. Android"
+            echo "fragt einmal nach *Unbekannte Apps installieren*."
+            echo ""
+            echo "> Die Fassung heisst \`$FASSUNG\`, der versionCode ist \`$CODE\` — derselbe wie bei"
+            echo "> der Fassung, aus der dieser Zweig kommt. Damit blockiert ein Testbau kein spaeteres"
+            echo "> echtes Update. Umgekehrt heisst das: eine schon installierte, **neuere** ELFIX nimmt"
+            echo "> diese APK nicht an (\`INSTALL_FAILED_VERSION_DOWNGRADE\`) — dann vorher"
+            echo "> deinstallieren, und **vorher exportieren**: eine Deinstallation nimmt die App-Daten mit."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -562,6 +562,56 @@ git tag -a v<version> -m "Release ELFIX <version>"
 git push origin main --follow-tags
 ```
 
+## Testbau eines Zweigs
+
+Ein Bau zum Ausprobieren, ohne Tag und ohne Release: **Actions -> Testbau ELFIX
+-> Run workflow**.
+
+Den Zweig waehlst du dabei zweimal, und das ist Absicht. Oben steht GitHubs
+eigene Auswahl (*Use workflow from*) - sie bestimmt, aus welchem Zweig die
+Workflow-Datei kommt, und zeigt nur Zweige, auf denen es sie schon gibt. Das
+Feld **Zweig** darunter bestimmt, was wirklich gebaut wird. Damit laesst sich
+auch ein Zweig bauen, der den Workflow noch gar nicht hat: aus `main` starten,
+Zweignamen eintragen. Bleibt das Feld leer, gilt die Auswahl von oben.
+
+| Feld | Bedeutung |
+| --- | --- |
+| Zweig | Was gebaut wird. Leer = der oben ausgewaehlte. |
+| Ziel | `beide`, `windows` oder `android` |
+| APK | `release` legt sich ueber die installierte App (braucht den Schluessel), `debug` installiert daneben, `beide` baut beides |
+| Pruefungen | Vorher `npm run lint`, `npm test` und die Java-Unit-Tests laufen lassen |
+
+Die Dateien haengen danach als Artefakte am Lauf (vierzehn Tage, dann raeumt
+GitHub sie weg). Die Zusammenfassung des Laufs sagt, welche wofuer ist.
+
+**Windows.** Zwei Dateien. `ELFIX-Portable-*.exe` startet ohne Installation und
+laesst eine vorhandene ELFIX in Ruhe; `ELFIX-Setup-*.exe` legt sich darueber.
+Beide sind nicht signiert - SmartScreen meldet sich beim ersten Start. Die
+Fassung bleibt die aus `package.json`: steht auf GitHub ein neueres Release,
+holt der Testbau es sich beim Start von selbst und ist danach weg. Das ist
+dasselbe Verhalten wie bei einer echten Installation.
+
+**Android.** Die Release-APK ist mit demselben Schluessel unterschrieben wie ein
+echtes Release und legt sich deshalb ueber eine vorhandene ELFIX - Bestand,
+Einstellungen und Geraeteschluessel bleiben stehen. Das ist die Fassung, mit der
+sich ein echtes Update pruefen laesst. Die Debug-APK traegt die Kennung
+`local.elflix.android.debug` und installiert sich daneben, mit eigenen Daten.
+
+Die Fassung heisst `<version>-test.<laufnummer>`, der `versionCode` bleibt der
+der Fassung aus `package.json`. Beides zusammen ist der Grund, warum ein
+Testbau nichts kaputtmacht:
+
+- Gleicher `versionCode` heisst, dass sich der Testbau ueber dieselbe Fassung
+  legen laesst *und* kein spaeteres echtes Update blockiert - Android nimmt
+  keine niedrigere Nummer ueber eine hoehere.
+- Der Zusatz `-test.42` macht den Testbau fuer die eigene Update-Suche
+  *neuer* als das gleichnamige Release: ELFIX bietet dir nicht sofort an, ihn
+  gegen 1.47.0 zu tauschen. Ein echtes 1.47.1 oder 1.48.0 bietet es weiterhin an.
+
+Umgekehrt gilt: eine schon installierte, **neuere** ELFIX nimmt eine Testbau-APK
+nicht an (`INSTALL_FAILED_VERSION_DOWNGRADE`). Dann hilft nur Deinstallieren -
+und dabei gehen die App-Daten mit.
+
 ## Windows Defender / SmartScreen
 
 Damit Windows keine SmartScreen-Warnung fuer neue Installer zeigt, muss der Release-Build mit einem gueltigen Code-Signing-Zertifikat signiert werden. Der Workflow ist fuer Signing-Secrets vorbereitet:
