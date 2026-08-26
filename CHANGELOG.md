@@ -3,6 +3,39 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.51.0 — 27. August 2026
+
+Autoplay und „Nächste Folge" waren auf Android ein Element. Jetzt sind es zwei.
+
+Beide saßen in derselben Zeile derselben Ansicht und teilten sich damit
+zwangsläufig alles: Platz, Deckkraft, Sichtbarkeit. Zwei Bedienelemente mit zwei
+Aufgaben können aber nicht eine Regel haben.
+
+Sichtbar wurde es am Schalter. Die Leiste tritt im Vollbild nach fünf Sekunden
+Ruhe auf 40 Prozent Deckkraft zurück, statt zu verschwinden — mit gutem Grund:
+sie trägt den einzigen Weg zur nächsten Folge, und als sie das einmal nicht tat,
+lief eine Folge bis zum Ende, ohne dass je ein Knopf zu sehen war. Für eine
+*Einstellung* ist dieselbe Regel falsch. Halb durchsichtig auf dem Video ist sie
+nur im Weg, und „durchsichtig" heißt in Android weiterhin: belegt Platz, nimmt
+Fokus an, fängt Berührungen ab.
+
+**Der Knopf** bleibt unverändert, wo er war — unten rechts über der Bedienleiste
+des Hosters, ab neunzig Prozent, mit derselben Logik wie am Rechner. Er rührt den
+Schalter nicht an.
+
+**Der Schalter** liegt oben links und geht mit der Bedienleiste des Players:
+steht sie, steht er; ist sie weg, ist er wirklich weg — nicht durchsichtig,
+sondern aus dem Ansichtsbaum. Die eine Ausnahme ist der Zähler am Ende einer
+Folge: während einer Ansage soll man den Automatismus abschalten können, ohne
+erst das Bild antippen zu müssen.
+
+Auf Telefon und Fernseher durchgespielt: bei stehender Bedienleiste beide
+gleichzeitig, bei ausgeblendeter findet die Ansichtsprüfung „Autoplay" kein
+einziges Mal mehr, während „Nächste Folge" weiter dasteht. Eine Berührung
+beziehungsweise eine Taste holt beides zurück; umgeschaltet wird per Tipp und
+per D-Pad, und der Fokus erreicht den Schalter nur, solange er da ist, und fällt
+danach sauber ins Video zurück.
+
 ## 1.50.0 — 26. August 2026
 
 Die Startseite von Handy und Fernseher — sie zuckte, und sie zeigte das Falsche
