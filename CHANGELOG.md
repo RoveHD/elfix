@@ -3,6 +3,80 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.48.0 — 26. August 2026
+
+Auf dem Telefon und am Fernseher geht es endlich zur nächsten Folge weiter. Am
+Rechner gibt es beides seit Langem: einen Knopf „Nächste Folge“ und den
+Schalter, ob es am Ende von selbst weitergeht. Auf Android war weder das eine
+noch das andere zu haben — am Fernseher lag die nächste Folge auf der 9 der
+Fernbedienung und sonst nirgends, ein Knopf, den niemand sieht.
+
+### Die nächste Folge kommt aus derselben Regel wie am Rechner
+
+Android hatte diese Frage ein zweites Mal beantwortet: ein Textblock in
+`MainActivity` zählte die Folgennummer hoch und sprang, wenn die Seite dazu
+keinen Link hatte, in die nächste Staffel. Zwei Regeln für dieselbe Frage laufen
+auseinander, sobald nur eine gepflegt wird — und diese war die schlechtere: sie
+kannte weder das Ende einer Serie noch zusammengefasste Folgen
+(„[In E10 enthalten]“). Gefragt wird jetzt `fortschritt.nextEpisodeContinueUrl`
+im gemeinsamen Kern, und davor derselbe Torwächter `darfNaechsteFolgeSein`:
+dieselbe Serie, weiter vorn als die laufende Folge.
+
+Für den Staffelübergang fehlte der Regel eine Zahl — wo die *laufende* Staffel
+aufhört. Am Rechner kommt sie aus der nachgeladenen Staffelübersicht, die es auf
+dem Telefon nicht gibt; dort endete deshalb jede Staffel im Nichts. Die
+Folgenseite listet ihre eigene Staffel ohnehin: `seitendaten.js` meldet sie
+jetzt als `seasonLastEpisode`, aber nur, wenn die laufende Folge in dieser Liste
+steht — eine halb geladene Liste hieße sonst, mitten in der Staffel zu springen.
+
+### Drei Abschnitte statt eines Sprungs
+
+Unter neunzig Prozent steht nichts. Ab neunzig Prozent kommt „Nächste Folge ›“
+dazu — dieselbe Schwelle wie am Rechner. Am Ende der Folge zählt es von fünf,
+mit „Abbrechen“ daneben; ein Abbruch gilt für diese Folge, der Knopf bleibt
+danach stehen. Autoplay aus heißt: kein Zähler, aber der Knopf bleibt. Der
+Schalter selbst steht unabhängig davon da, solange etwas läuft — eine
+Einstellung, die man nur in den letzten zehn Prozent erreicht, ist keine.
+
+Ausgelöst wird am tatsächlichen Ende und nicht bei den neunzig Prozent, ab denen
+eine Folge als gesehen zählt. Wer bei 91 Prozent weiterschaut, sieht einen Knopf
+und wird nicht aus seiner Folge geworfen.
+
+### Zwei Dinge, die nur auf echter Hardware auffielen
+
+**Die Serienlänge kam nie an.** `Titelbild` hatte genau einen Platz für das, was
+eine Seite hergibt, und jede neue Seite hat ihn geleert. Am Rechner fällt das
+nicht auf — dort liegt der Hoster in einem Rahmen *innerhalb* der Anbieterseite,
+und der Hauptrahmen steht die ganze Wiedergabe über auf der Folge. Auf dem
+Telefon nimmt der Hoster den Hauptrahmen, und mit seinem Seitenende war die
+Auskunft der Folgenseite weg. Ohne `finalSeason` gibt die Regel nichts zurück:
+kein Ziel, kein Knopf, bei 98 Prozent so wenig wie bei 100. Gespeichert wird
+jetzt je Adresse, und gelesen wird schon beim Seitenanfang — bei diesen
+Anbietern kommt das Seitenende erst mit der letzten Werbung, der Autostart
+klickt den Hoster aber nach zwölf Sekunden an. Damit lässt sich eine Serie auf
+dem Telefon auch endlich abschließen.
+
+**Und die Leiste verschwand.** Sie hatte den Rückfall des Live-Streifens
+übernommen — nach kurzer Ruhe weg, zurück nur auf Berührung. Dessen Auslöser
+gibt es beim Alleinschauen aber gar nicht: ob die Bedienelemente des Players
+stehen, meldet der Horcher der Watchparty, und der wird ohne eingeschaltete
+Watchparty nie eingesetzt. Der Rechner lässt seine Karte verblassen statt
+verschwinden; genau das steht jetzt hier.
+
+### Am Fernseher
+
+D-Pad ab führt in die Leiste, auf zurück ins Bild, OK drückt den Knopf statt
+aufs Video zu tippen, und der Weg von der Kopfzeile nach unten geht durch die
+Leiste statt an ihr vorbei. Die 9 tut weiterhin, was der Knopf tut; die 8 legt
+den Schalter um. Zurück bleibt, wie es war.
+
+### Watchparty
+
+Ein Folgenwechsel geht durch dieselbe Kette wie jede andere Navigation und wird
+der Runde wie bisher gemeldet — keine zweite Meldung von der Leiste aus. Wer
+gerade einem Wechsel der Runde folgt, fängt gar nicht erst an zu zählen; der
+Knopf bleibt trotzdem bedienbar.
+
 ## 1.47.0 — 26. August 2026
 
 Zwei Sachen in einer Version, und beide fangen an derselben Stelle an: etwas
