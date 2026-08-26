@@ -3,6 +3,52 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.50.0 — 26. August 2026
+
+Die Startseite von Handy und Fernseher — sie zuckte, und sie zeigte das Falsche
+zuerst.
+
+### Alle fünf Sekunden ein Sprung
+
+Besonders, wenn man weiter unten gescrollt war. Das ist kein Zufall gewesen:
+`bestandGeaendert` hat bei *jeder* Meldung aus dem Bestand die ganze Seite neu
+gebaut und danach die Scrollstelle wiederhergestellt. Genau dieses Zusammen- und
+Wiederaufklappen sieht man — und es fällt erst auf, wenn man nicht ganz oben
+steht.
+
+Aufgefallen ist es jetzt, weil Android seit 1.49.0 überhaupt wieder Fortschritt
+bucht: der Messtakt meldet alle fünf Sekunden. Der Fehler ist älter, er hatte nur
+nichts, was ihn auslöst.
+
+Was so eine Meldung wirklich bringt, ist eine andere *Stelle* im laufenden
+Titel — kein anderer Titel, keine andere Reihenfolge, keine andere Reihe. Dafür
+muss keine Seite entstehen. Zusammengefasst wird jetzt, was auf den Kacheln zu
+sehen ist und sich nicht im Sekundentakt bewegt: Einträge und ihre Ordnung,
+Titel, Staffel und Folge, das Titelbild (es wird oft nachgereicht), ob einer auf
+die nächste Folge wartet, und zu welcher Runde er gehört. Ist das gleich
+geblieben, wird nicht neu gezeichnet.
+
+Am Gerät nachgemessen, auf der Startseite und nach unten gescrollt: bei
+derselben Folge nur weiter wird der Stand gebucht, ohne dass sich außerhalb der
+Statusleiste ein einziger Pixel ändert; bei einer anderen Folge zeichnet die
+Seite neu. Der Preis ist, dass Balken und Zeit auf der Kachel bis zum nächsten
+echten Anlass stillstehen — kleiner als eine Seite, die im Fünfsekundentakt
+springt, und die Kacheln einer Runde zieht ohnehin der Sekundentakt nach, ohne
+die Seite anzufassen.
+
+### Weiterschauen steht jetzt oben
+
+Am Rechner stehen Neue Folgen, Weiterschauen und Gemeinsam weiterschauen ganz
+oben; auf Telefon und Fernseher lagen sie hinter dem Anbieterrost und dem
+Kalender. Beide Reihen gab es also längst und getrennt — man kam nur an drei
+Reihen vorbei, bevor man weiterschauen konnte, und mit einer Fernbedienung ist
+das jedes Mal ein Druck mehr.
+
+Sie stehen jetzt direkt unter dem Titelbild, der Anbieterrost darunter. Er
+bleibt, wo er inhaltlich hingehört — auf Telefon und Fernseher gibt es keine
+Seitenleiste, und die Anbieter sind der Weg zu allem, was ELFIX nicht selbst
+weiß —, nur nicht mehr vor dem, was gerade läuft.
+
 ## 1.49.0 — 26. August 2026
 
 Zwei Meldungen von Android, und beide waren nicht das, wonach sie aussahen: die
