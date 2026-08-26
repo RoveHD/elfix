@@ -263,15 +263,6 @@ public class MainActivity extends Activity {
     private JSONObject folgenAngaben = new JSONObject();
     private String folgenAngabenUrl = "";
     /**
-     * Fuer welche Folge der automatische Wechsel schon ausgeloest wurde.
-     *
-     * <p>Der Messtakt laeuft alle fuenf Sekunden weiter, auch waehrend die
-     * naechste Seite laedt. Ohne diesen Merker ginge der Wechsel mehrfach
-     * hinaus - und in einer Runde entsprechend mehrfach als Folgenwechsel.
-     * Dasselbe tut {@code nextEpisodeAutostartState} am Rechner.
-     */
-    private String autoplayGefeuertFuer = "";
-    /**
      * Seit wann ein Folgenwechsel laeuft - gegen zweifaches Tippen und doppelte Takte.
      *
      * <p>Ein Zeitpunkt und kein Schalter: die Sperre faellt normalerweise mit
@@ -994,8 +985,8 @@ public class MainActivity extends Activity {
             }
 
             @Override
-            public void naechsteFolge() {
-                naechsteFolgeStarten("Knopf");
+            public void naechsteFolge(boolean vonHand) {
+                naechsteFolgeStarten(vonHand ? "Knopf" : "Zähler", vonHand);
             }
 
             @Override
@@ -1006,6 +997,16 @@ public class MainActivity extends Activity {
             @Override
             public boolean autoplayAn() {
                 return Folgen.autoplayAn(MainActivity.this);
+            }
+
+            @Override
+            public boolean zaehlerErlaubt() {
+                // Folgt dieses Geraet gerade der Runde, entscheidet die Runde.
+                // Ein eigener Wechsel daneben waere ein zweiter, und die Folgen
+                // liefen auseinander. Der Knopf bleibt trotzdem stehen.
+                if (mitschauen != null && mitschauen.folgtDerRunde()) return false;
+                // Und nicht, waehrend ohnehin schon eine Folge geladen wird.
+                return !folgenwechselLaeuft();
             }
         });
         spielerleiste.setzeZuhause(spielerHolder);
@@ -1031,10 +1032,9 @@ public class MainActivity extends Activity {
             ? "Nächste Folge startet von selbst"
             : "Nächste Folge startet nicht mehr von selbst");
         // Ein neu gesetzter Schalter gilt sofort - auch fuer die Folge, die
-        // gerade laeuft. Dasselbe tut der Rechner, wenn der Schalter in der
-        // Seite umgelegt wird: er wirft den Merker weg und entscheidet beim
-        // naechsten Takt neu.
-        autoplayGefeuertFuer = "";
+        // gerade laeuft: aus haelt einen laufenden Zaehler an, an laesst ihn am
+        // Ende wieder anfangen. Dasselbe tut der Rechner, wenn der Schalter in
+        // der Seite umgelegt wird.
         if (spielerleiste != null) spielerleiste.autoplayAuffrischen();
         if ("settings".equals(currentScreen)) showSettings();
     }
@@ -8527,8 +8527,6 @@ public class MainActivity extends Activity {
     private void folgeWirklichOeffnen(Provider provider, String url, String anlass) {
         Log.i(TAG, "Folgenwechsel (" + anlass + ") -> "
             + Folgen.folgenText(url) + " " + safePath(url));
-        // Kein zweiter automatischer Wechsel aus derselben Folge heraus.
-        autoplayGefeuertFuer = laufendeFolgenAdresse(currentWebView());
         if (spielerleiste != null) spielerleiste.setzeZiel("");
         // preserveFavoriteProgress: der Eintrag bleibt derselbe, es ist nur
         // eine andere Folge davon. Ohne das faellt activeFavoriteId weg, und
@@ -8540,13 +8538,18 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Ein Messwert ist da - die Leiste nachziehen und, wenn die Folge wirklich
-     * zu Ende ist, weiterschalten.
+     * Ein Messwert ist da - die Leiste nachziehen.
      *
-     * <p>Ausdruecklich nicht bei 90 Prozent: das ist die Schwelle, ab der eine
-     * Folge als gesehen zaehlt, und sie sagt nichts darueber, ob jemand noch
-     * zuschaut. Wer bei 91 Prozent weiterschaut, soll weiterschauen duerfen -
-     * genau diese Trennung steht am Rechner in {@code syncViewMediaProgress}.
+     * <p>Hier wird nicht mehr entschieden, ob gewechselt wird: die Leiste
+     * bekommt, wie weit die Folge ist, und macht daraus dreierlei - unter
+     * neunzig Prozent nichts, ab neunzig Prozent den Knopf, am Ende den
+     * Zaehler. Genau diese Staffelung hat der Rechner auch.
+     *
+     * <p>Die neunzig Prozent hier sind ausdruecklich <em>nicht</em> die
+     * Schwelle, ab der eine Folge als gesehen zaehlt. Die entscheidet die
+     * geteilte Regel, und sie schaltet nichts weiter: wer bei 91 Prozent
+     * weiterschaut, sieht nur einen Knopf und wird nicht aus seiner Folge
+     * geworfen.
      */
     private void spielstandGemessen(Provider anbieter, String adresse, double position,
                                     double laufzeit, boolean beendet, String seitenLink) {
@@ -8558,17 +8561,10 @@ public class MainActivity extends Activity {
             this.seitenLinkZu = adresse;
         }
         naechsteFolgeBestimmen();
-        if (!Folgen.amEnde(position, laufzeit, beendet)) return;
-        if (!Folgen.autoplayAn(this)) return;
-        if (folgenwechselLaeuft()) return;
-        if (adresse == null || adresse.equals(autoplayGefeuertFuer)) return;
-        // Folgt dieses Geraet gerade der Runde, entscheidet die Runde. Ein
-        // eigener Wechsel daneben waere ein zweiter, und die Folgen liefen
-        // auseinander.
-        if (mitschauen != null && mitschauen.folgtDerRunde()) return;
-        autoplayGefeuertFuer = adresse;
-        Log.i(TAG, "Autoplay: Folge zu Ende bei " + position + "/" + laufzeit);
-        naechsteFolgeStarten("Autoplay", false);
+        if (spielerleiste == null) return;
+        spielerleiste.setzeFortschritt(
+            Folgen.nahAmEnde(position, laufzeit, beendet),
+            Folgen.amEnde(position, laufzeit, beendet));
     }
 
     /**

@@ -20,9 +20,11 @@ import org.junit.Test;
  * - und nur daran haengt der automatische Wechsel. Dieselbe Trennung wie am
  * Rechner in {@code syncViewMediaProgress}.
  *
- * <p>Die Sichtbarkeit der Leiste steht daneben, weil sie dieselbe Frage aus
- * der anderen Richtung stellt: ein Knopf, der dauerhaft auf dem Video liegt,
- * verdeckt die Bedienelemente des Hosters.
+ * <p>Daneben die dritte Stufe, die dieselbe Achse in drei Abschnitte teilt:
+ * unter neunzig Prozent steht gar nichts, ab neunzig Prozent der Knopf
+ * ({@link Folgen#nahAmEnde}), am Ende der Zaehler. Und die Sichtbarkeit der
+ * Leiste, weil ein Knopf, der dauerhaft auf dem Video liegt, die
+ * Bedienelemente des Hosters verdeckt.
  */
 public class FolgenTest {
 
@@ -44,6 +46,62 @@ public class FolgenTest {
     @Test
     public void auchNeunzigProzentSindKeinEnde() {
         assertFalse(Folgen.amEnde(1260, 1400, false));
+    }
+
+    /* ------------------------------------------------- Ab wann der Knopf */
+
+    @Test
+    public void unterNeunzigProzentStehtKeinKnopfDa() {
+        assertFalse(Folgen.nahAmEnde(0, 1400, false));
+        assertFalse(Folgen.nahAmEnde(700, 1400, false));
+        // Auch 76 Prozent nicht - "gilt als gesehen" ist eine andere Frage.
+        assertFalse(Folgen.nahAmEnde(1064, 1400, false));
+        assertFalse(Folgen.nahAmEnde(1250, 1400, false));
+    }
+
+    @Test
+    public void gerundetWirdWieAmRechner() {
+        // mediaProgressPercent rundet kaufmaennisch; 89,5 Prozent sind damit
+        // neunzig. Steht hier, damit die Grenze nicht unbemerkt wandert.
+        assertEquals(89, Folgen.prozent(1250, 1400));
+        assertEquals(90, Folgen.prozent(1253, 1400));
+        assertTrue(Folgen.nahAmEnde(1253, 1400, false));
+    }
+
+    @Test
+    public void abNeunzigProzentSchon() {
+        assertTrue(Folgen.nahAmEnde(1260, 1400, false));
+        assertTrue(Folgen.nahAmEnde(1380, 1400, false));
+    }
+
+    @Test
+    public void amEndeIstEsNichtMehrNurNahDran() {
+        // Die beiden schliessen einander aus: dort greift der Zaehler, nicht
+        // der blosse Knopf.
+        assertTrue(Folgen.amEnde(1400, 1400, false));
+        assertFalse(Folgen.nahAmEnde(1400, 1400, false));
+        assertFalse(Folgen.nahAmEnde(12, 1400, true));
+    }
+
+    @Test
+    public void ohneLaufzeitGibtEsAuchKeinenKnopf() {
+        assertFalse(Folgen.nahAmEnde(0, 0, false));
+    }
+
+    @Test
+    public void dieProzentrechnungBleibtImRahmen() {
+        assertEquals(0, Folgen.prozent(0, 1400));
+        assertEquals(50, Folgen.prozent(700, 1400));
+        assertEquals(100, Folgen.prozent(1400, 1400));
+        // Manche Hoster melden eine Stelle hinter der Laufzeit.
+        assertEquals(100, Folgen.prozent(1402, 1400));
+        assertEquals(0, Folgen.prozent(5, 0));
+    }
+
+    @Test
+    public void dieSchwellenSindDieDesRechners() {
+        assertEquals(90, Folgen.KNOPF_AB_PROZENT);
+        assertEquals(5, Folgen.ZAEHLER_SEKUNDEN);
     }
 
     @Test
@@ -105,19 +163,27 @@ public class FolgenTest {
     public void nebenDemBildStehtDieLeisteImmer() {
         // Ausserhalb des Vollbilds verdeckt sie nichts - dort haengt sie allein
         // daran, ob ueberhaupt eine Folge offen ist.
-        assertTrue(Spielerleiste.zeigen(true, false, false));
-        assertTrue(Spielerleiste.zeigen(true, false, true));
+        assertTrue(Spielerleiste.zeigen(true, false, false, false));
+        assertTrue(Spielerleiste.zeigen(true, false, true, false));
     }
 
     @Test
     public void imVollbildGehtSieMitDenBedienelementen() {
-        assertTrue(Spielerleiste.zeigen(true, true, true));
-        assertFalse(Spielerleiste.zeigen(true, true, false));
+        assertTrue(Spielerleiste.zeigen(true, true, true, false));
+        assertFalse(Spielerleiste.zeigen(true, true, false, false));
+    }
+
+    @Test
+    public void einLaufenderZaehlerHaeltSieFest() {
+        // Ein Zaehler, den man nicht sieht, ist keine Ansage - und "Abbrechen"
+        // waere ein Knopf, den es nur unsichtbar gibt.
+        assertTrue(Spielerleiste.zeigen(true, true, false, true));
     }
 
     @Test
     public void ohneFolgeStehtSieNirgends() {
-        assertFalse(Spielerleiste.zeigen(false, false, true));
-        assertFalse(Spielerleiste.zeigen(false, true, true));
+        assertFalse(Spielerleiste.zeigen(false, false, true, false));
+        assertFalse(Spielerleiste.zeigen(false, true, true, false));
+        assertFalse(Spielerleiste.zeigen(false, true, false, true));
     }
 }

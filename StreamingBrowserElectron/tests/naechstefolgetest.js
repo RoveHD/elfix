@@ -27,11 +27,13 @@ const WURZEL = path.join(__dirname, "..");
 const fortschritt = require(path.join(WURZEL, "src/fortschritt.js"));
 const seitendaten = require(path.join(WURZEL, "src/seitendaten.js"));
 
+const MAIN = fs.readFileSync(path.join(WURZEL, "src/main.js"), "utf8");
 const ANDROID = path.join(WURZEL, "..", "android/app/src/main/java/local/elflix/android");
 const FOLGEN = fs.readFileSync(path.join(ANDROID, "Folgen.java"), "utf8");
 const HAUPT = fs.readFileSync(path.join(ANDROID, "MainActivity.java"), "utf8");
 const TITELBILD = fs.readFileSync(path.join(ANDROID, "Titelbild.java"), "utf8");
 const MESSUNG_JAVA = fs.readFileSync(path.join(ANDROID, "Messung.java"), "utf8");
+const LEISTE = fs.readFileSync(path.join(ANDROID, "Spielerleiste.java"), "utf8");
 
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
@@ -239,12 +241,44 @@ pruefe("MainActivity rechnet die naechste Folge nicht mehr selbst",
 pruefe("Das Telefon nimmt seasonLastEpisode von der Seite mit",
   TITELBILD.includes('"seasonLastEpisode"'));
 
-// Die Trennung, um die es geht: Autoplay haengt am Ende der Folge und nicht an
-// der Prozentschwelle, ab der sie als gesehen gilt.
-pruefe("Autoplay haengt am Ende der Folge",
-  HAUPT.includes("Folgen.amEnde(position, laufzeit, beendet)"));
-pruefe("und nicht an einer Prozentschwelle",
-  !/amEnde[\s\S]{0,400}prozent\s*>=/.test(HAUPT));
+// Die Trennung, um die es geht: der Zaehler haengt am Ende der Folge und nicht
+// an der Prozentschwelle, ab der sie als gesehen gilt.
+pruefe("Der Messtakt reicht beide Stufen an die Leiste",
+  HAUPT.includes("Folgen.nahAmEnde(position, laufzeit, beendet)")
+    && HAUPT.includes("Folgen.amEnde(position, laufzeit, beendet)"));
+pruefe("und entscheidet den Wechsel nicht mehr selbst",
+  !HAUPT.includes("naechsteFolgeStarten(\"Autoplay\""));
+
+// Die drei Abschnitte einer Folge - und dass es an beiden Geraeten dieselben
+// Zahlen sind. Eine Schwelle, die nur an einer Stelle gepflegt wird, ist die
+// naechste Stelle, an der Telefon und Rechner auseinanderlaufen.
+const desktopProzent = Number(
+  (MAIN.match(/NEXT_EPISODE_PROMPT_PERCENT\s*=\s*(\d+)/) || [])[1]);
+const desktopZaehler = Number(
+  (MAIN.match(/NEXT_EPISODE_COUNTDOWN_SECONDS\s*=\s*(\d+)/) || [])[1]);
+const androidProzent = Number(
+  (FOLGEN.match(/KNOPF_AB_PROZENT\s*=\s*(\d+)/) || [])[1]);
+const androidZaehler = Number(
+  (FOLGEN.match(/ZAEHLER_SEKUNDEN\s*=\s*(\d+)/) || [])[1]);
+
+pruefe("Der Knopf kommt am Telefon bei derselben Prozentzahl wie am Rechner",
+  desktopProzent === 90 && androidProzent === desktopProzent,
+  `Rechner ${desktopProzent}, Telefon ${androidProzent}`);
+pruefe("und der Zaehler laeuft gleich lang",
+  desktopZaehler === 5 && androidZaehler === desktopZaehler,
+  `Rechner ${desktopZaehler}s, Telefon ${androidZaehler}s`);
+
+// Und die Entkopplung: der Schalter haengt nicht am Knopf.
+pruefe("Der Knopf steht erst ab der Schwelle da",
+  LEISTE.includes("hatZiel && (nahAmEnde || amEnde)"));
+pruefe("Der Schalter dagegen steht, solange etwas laeuft",
+  !/knopfAutoplay\.setVisibility/.test(LEISTE));
+pruefe("Gezaehlt wird nur am Ende",
+  /zaehlenSoll\s*=\s*hatZiel\s*&&\s*amEnde/.test(LEISTE));
+pruefe("Ein Abbruch gilt fuer diese Folge und laesst den Knopf stehen",
+  LEISTE.includes("abgebrochenFuer = ziel") && LEISTE.includes("knopfAbbrechen"));
+pruefe("Ein laufender Zaehler nimmt die Leiste nicht weg",
+  LEISTE.includes("steuerungAn || zaehlt"));
 
 // Der Schalter muss einen Neustart ueberstehen - sonst ist er keine
 // Einstellung, sondern eine Laune.
@@ -259,8 +293,8 @@ pruefe("Der Autoplay haengt am Messtakt und nicht an einem eigenen",
 
 // In einer Runde entscheidet die Runde. Ein eigener Wechsel daneben waere
 // einer zu viel.
-pruefe("Wer der Runde folgt, wechselt nicht zusaetzlich selbst",
-  HAUPT.includes("mitschauen.folgtDerRunde()"));
+pruefe("Wer der Runde folgt, laesst den Zaehler gar nicht erst anfangen",
+  /zaehlerErlaubt[\s\S]{0,400}mitschauen\.folgtDerRunde\(\)/.test(HAUPT));
 
 const bestanden = pruefungen.filter(Boolean).length;
 console.log(`${bestanden}/${pruefungen.length} bestanden`);

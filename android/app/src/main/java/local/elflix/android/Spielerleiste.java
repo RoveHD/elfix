@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -38,6 +39,31 @@ import android.widget.TextView;
  *       irgendwann das, was man sehen will.
  * </ul>
  *
+ * <h2>Zwei Bedienelemente, zwei Regeln</h2>
+ *
+ * <p>Sie haengen ausdruecklich nicht aneinander:
+ *
+ * <ul>
+ *   <li><b>Der Autoplay-Schalter</b> steht, solange hier ueberhaupt etwas
+ *       laeuft. Eine Einstellung, die man nur in den letzten zehn Prozent
+ *       einer Folge erreicht, ist keine Einstellung.
+ *   <li><b>"Naechste Folge"</b> kommt erst ab neunzig Prozent dazu - dieselbe
+ *       Schwelle wie am Rechner. Vorher gibt es nichts zu ueberspringen, und
+ *       im Vollbild klebte sonst eine Stunde lang ein Kasten neben dem Bild.
+ * </ul>
+ *
+ * <h2>Der Zaehler</h2>
+ *
+ * <p>Am Ende der Folge - und nur dort - faengt bei eingeschaltetem Autoplay ein
+ * Zaehler von fuenf an, genau wie am Rechner. Er ist der Unterschied zwischen
+ * "es geht weiter" und "man wurde weitergeschoben": daneben steht "Abbrechen",
+ * und ein Abbruch gilt fuer diese Folge. Der Knopf bleibt danach stehen - wer
+ * es sich anders ueberlegt, kommt mit einem Druck weiter.
+ *
+ * <p>Solange gezaehlt wird, verschwindet die Leiste nicht mit den
+ * Bedienelementen des Players. Ein Zaehler, den man nicht sieht, ist keine
+ * Ansage, sondern eine Ueberraschung.
+ *
  * <h2>Was sie nicht tut</h2>
  *
  * <p>Rechnen. Ob es eine naechste Folge gibt und welche, entscheidet
@@ -51,18 +77,42 @@ final class Spielerleiste {
     interface Umgebung {
         boolean fernseher();
 
-        /** Der Knopf wurde gedrueckt. */
-        void naechsteFolge();
+        /**
+         * Zur naechsten Folge wechseln.
+         *
+         * @param vonHand ob jemand gedrueckt hat. Nur dann gehoert ein
+         *                Fehlschlag gesagt - das Ende einer Serie ist keine
+         *                Meldung wert, wenn niemand danach gefragt hat.
+         */
+        void naechsteFolge(boolean vonHand);
 
         /** Der Schalter wurde umgelegt. */
         void autoplaySetzen(boolean an);
 
         /** Wie der Schalter gerade steht. */
         boolean autoplayAn();
+
+        /**
+         * Ob der Zaehler ueberhaupt anfangen darf.
+         *
+         * <p>Mehr als nur der Schalter: wer gerade einem Folgenwechsel der
+         * Runde folgt, hat keinen eigenen zu machen. Der Knopf bleibt in
+         * diesem Fall trotzdem stehen - er ist eine Erlaubnis, kein Automat.
+         */
+        boolean zaehlerErlaubt();
     }
 
     /** Derselbe Rueckfall wie beim Livestreifen: ohne Meldung des Players nach kurzer Ruhe weg. */
     private static final long RUECKFALL_RUHE_MS = 3500;
+    /**
+     * Wie oft der Zaehler nachsieht, wie viel noch bleibt.
+     *
+     * <p>Feiner als eine Sekunde, damit die angezeigte Zahl nicht um bis zu
+     * eine Sekunde hinter der wirklichen Restzeit herlaeuft - dieselbe
+     * Aufloesung wie am Rechner.
+     */
+    private static final long ZAEHLER_TAKT_MS = 200;
+    private static final String KNOPF_TEXT = "Nächste Folge  ›";
 
     private final Context context;
     private final Umgebung umgebung;
@@ -70,6 +120,7 @@ final class Spielerleiste {
 
     private final LinearLayout wurzel;
     private final TextView knopfNaechste;
+    private final TextView knopfAbbrechen;
     private final TextView knopfAutoplay;
 
     /** Wo die Leiste im Normalbetrieb haengt. */
@@ -77,8 +128,31 @@ final class Spielerleiste {
 
     /** Die Adresse der naechsten Folge - leer heisst: es gibt keine. */
     private String ziel = "";
+    /** Ob die Folge die Neunzig-Prozent-Marke hinter sich hat. */
+    private boolean nahAmEnde;
+    /** Ob sie durchgelaufen ist. */
+    private boolean amEnde;
     /** Ob ueberhaupt gerade vor einer Folge gesessen wird. */
     private boolean amSchauen;
+    /* ----------------------------------------------------- Der Zaehler */
+    /**
+     * Wann der Zaehler ablaeuft - als Zeitpunkt und nicht als Restzahl.
+     *
+     * <p>Dieselbe Ueberlegung wie am Rechner: Zaehlschritte driften, und der
+     * Wechsel kaeme spuerbar spaeter als angekuendigt. Null heisst: es laeuft
+     * keiner.
+     */
+    private long zaehlerBis;
+    /**
+     * Zu welchem Ziel schon gewechselt wurde und zu welchem abgebrochen.
+     *
+     * <p>Beide als Adresse und nicht als Ja/Nein: die naechste Folge wird
+     * mehrfach neu bestimmt, und dazwischen steht sie kurz auf leer. Ein
+     * Merker, der an "hat sich geaendert" haengt, faellt bei jedem dieser
+     * Zwischenstaende um - einer, der an der Adresse haengt, nicht.
+     */
+    private String zaehlerFuer = "";
+    private String abgebrochenFuer = "";
     private boolean imVollbild;
     private boolean steuerungAn = true;
     private boolean gemeldetAn = true;
@@ -90,7 +164,8 @@ final class Spielerleiste {
             // Ein Knopf, der unter dem Fokus verschwindet, nimmt der
             // Fernbedienung den Platz, an dem sie steht - danach landet der
             // Fokus irgendwo. Solange er gehalten wird, bleibt die Leiste.
-            if (wurzel.hasFocus()) {
+            // Dasselbe gilt fuer einen laufenden Zaehler.
+            if (wurzel.hasFocus() || zaehlt()) {
                 haupt.postDelayed(this, RUECKFALL_RUHE_MS);
                 return;
             }
@@ -114,17 +189,29 @@ final class Spielerleiste {
         wurzel.setVisibility(View.GONE);
 
         knopfNaechste = tv
-            ? TvViews.hauptPillButton(context, "Nächste Folge  ›", this::naechsteGedrueckt)
-            : MobileViews.primaryButton(context, "Nächste Folge  ›", this::naechsteGedrueckt);
+            ? TvViews.hauptPillButton(context, KNOPF_TEXT, this::naechsteGedrueckt)
+            : MobileViews.primaryButton(context, KNOPF_TEXT, this::naechsteGedrueckt);
+        knopfAbbrechen = tv
+            ? TvViews.pillButton(context, "Abbrechen", this::abbrechenGedrueckt)
+            : MobileViews.secondaryButton(context, "Abbrechen", this::abbrechenGedrueckt);
         knopfAutoplay = tv
             ? TvViews.pillButton(context, autoplayText(), this::autoplayGedrueckt)
             : MobileViews.secondaryButton(context, autoplayText(), this::autoplayGedrueckt);
 
+        // Der Schalter steht links und bleibt stehen; rechts davon kommt das,
+        // was zur laufenden Folge gehoert. So wandert der Schalter nicht unter
+        // dem Finger weg, wenn der Knopf bei neunzig Prozent dazukommt.
         wurzel.addView(knopfAutoplay, knopfMass(tv));
-        LinearLayout.LayoutParams naechsteMass = knopfMass(tv);
-        naechsteMass.leftMargin = dp(8);
-        wurzel.addView(knopfNaechste, naechsteMass);
+        wurzel.addView(knopfAbbrechen, mitAbstand(knopfMass(tv)));
+        wurzel.addView(knopfNaechste, mitAbstand(knopfMass(tv)));
+        knopfNaechste.setVisibility(View.GONE);
+        knopfAbbrechen.setVisibility(View.GONE);
         aussehenAnwenden();
+    }
+
+    private LinearLayout.LayoutParams mitAbstand(LinearLayout.LayoutParams mass) {
+        mass.leftMargin = dp(8);
+        return mass;
     }
 
     private LinearLayout.LayoutParams knopfMass(boolean tv) {
@@ -160,18 +247,28 @@ final class Spielerleiste {
         String neu = url == null ? "" : url;
         if (neu.equals(ziel)) return;
         ziel = neu;
-        boolean weg = ziel.isEmpty();
-        // Verschwindet der Knopf, waehrend er den Fokus haelt, faellt der Fokus
-        // ins Nichts und die Fernbedienung steht irgendwo. Er wird
-        // weitergereicht, bevor der Knopf geht.
-        if (weg && knopfNaechste.hasFocus()) knopfAutoplay.requestFocus();
-        knopfNaechste.setVisibility(weg ? View.GONE : View.VISIBLE);
+        anwenden();
+    }
+
+    /**
+     * Wie weit die Folge ist.
+     *
+     * <p>Die beiden Angaben schliessen einander aus (siehe
+     * {@link Folgen#nahAmEnde}): erst der Knopf, dann der Zaehler.
+     */
+    void setzeFortschritt(boolean nah, boolean ende) {
+        if (nahAmEnde == nah && amEnde == ende) return;
+        nahAmEnde = nah;
+        amEnde = ende;
         anwenden();
     }
 
     /** Den Schalter nachziehen - nach dem Umlegen und beim Aufbau. */
     void autoplayAuffrischen() {
         knopfAutoplay.setText(autoplayText());
+        // Ein umgelegter Schalter gilt sofort: aus haelt einen laufenden
+        // Zaehler an, an laesst ihn am Ende der Folge wieder anfangen.
+        anwenden();
     }
 
     private String autoplayText() {
@@ -180,7 +277,24 @@ final class Spielerleiste {
 
     private void naechsteGedrueckt() {
         regung();
-        umgebung.naechsteFolge();
+        // Der Zaehler ist damit erledigt - gedrueckt ist gedrueckt. Der Merker
+        // {@code zaehlerFuer} wird hier ausdruecklich *nicht* gesetzt: geht der
+        // Wechsel schief, soll der Zaehler am Ende der Folge trotzdem noch
+        // anfangen duerfen.
+        zaehlerAnhalten();
+        knopfNaechste.setText("Wird geladen …");
+        knopfAbbrechen.setVisibility(View.GONE);
+        umgebung.naechsteFolge(true);
+    }
+
+    private void abbrechenGedrueckt() {
+        regung();
+        // Abbrechen haelt nur den Zaehler an. Der Knopf bleibt, damit man
+        // trotzdem von Hand weiterspringen kann - dieselbe Aufteilung wie am
+        // Rechner.
+        abgebrochenFuer = ziel;
+        zaehlerAnhalten();
+        anwenden();
     }
 
     private void autoplayGedrueckt() {
@@ -189,10 +303,90 @@ final class Spielerleiste {
         autoplayAuffrischen();
     }
 
+    /* ------------------------------------------------------- Der Zaehler */
+
+    /** Ob gerade gezaehlt wird - daran haengt auch, dass die Leiste stehen bleibt. */
+    boolean zaehlt() {
+        return zaehlerBis > 0;
+    }
+
+    private void zaehlerAnhalten() {
+        zaehlerBis = 0;
+        haupt.removeCallbacks(zaehlerTakt);
+    }
+
+    private final Runnable zaehlerTakt = new Runnable() {
+        @Override
+        public void run() {
+            if (zaehlerBis <= 0) return;
+            long rest = zaehlerBis - SystemClock.uptimeMillis();
+            if (rest > 0) {
+                knopfNaechste.setText("Nächste Folge in " + (int) Math.ceil(rest / 1000.0) + " …");
+                haupt.postDelayed(this, ZAEHLER_TAKT_MS);
+                return;
+            }
+            zaehlerAnhalten();
+            knopfNaechste.setText("Wird geladen …");
+            knopfAbbrechen.setVisibility(View.GONE);
+            // Gemerkt, bevor gefahren wird: der Messtakt laeuft weiter, und
+            // ohne diesen Merker finge der Zaehler beim naechsten Takt derselben
+            // Folge von vorn an.
+            zaehlerFuer = ziel;
+            umgebung.naechsteFolge(false);
+        }
+    };
+
+    /**
+     * Was gerade dastehen soll - Knoepfe, Zaehler und Sichtbarkeit in einem.
+     *
+     * <p>Eine Stelle, weil alle drei von denselben vier Angaben abhaengen
+     * (laeuft etwas, wie weit ist es, gibt es eine naechste Folge, ist der
+     * Automatismus erlaubt). Verteilt auf drei Setzer waeren es drei
+     * Gelegenheiten, einen Fall zu vergessen.
+     */
+    private void anwenden() {
+        boolean hatZiel = !ziel.isEmpty();
+        boolean knopfDa = hatZiel && (nahAmEnde || amEnde);
+        boolean zaehlenSoll = hatZiel && amEnde
+            && !ziel.equals(abgebrochenFuer) && !ziel.equals(zaehlerFuer)
+            && umgebung.autoplayAn() && umgebung.zaehlerErlaubt();
+
+        if (zaehlenSoll && !zaehlt()) {
+            zaehlerBis = SystemClock.uptimeMillis() + Folgen.ZAEHLER_SEKUNDEN * 1000L;
+            // Ein Zaehler ist eine Ansage - dafuer gehoert die Leiste sichtbar,
+            // auch wenn der Player seine Bedienelemente gerade weggenommen hat.
+            regung();
+            haupt.post(zaehlerTakt);
+        } else if (!zaehlenSoll && zaehlt()) {
+            zaehlerAnhalten();
+        }
+
+        if (!zaehlt()) knopfNaechste.setText(KNOPF_TEXT);
+        // Verschwindet ein Knopf, waehrend er den Fokus haelt, faellt der Fokus
+        // ins Nichts und die Fernbedienung steht irgendwo. Er wird
+        // weitergereicht, bevor der Knopf geht.
+        if (!knopfDa && knopfNaechste.hasFocus()) knopfAutoplay.requestFocus();
+        if (!zaehlt() && knopfAbbrechen.hasFocus()) knopfAutoplay.requestFocus();
+        knopfNaechste.setVisibility(knopfDa ? View.VISIBLE : View.GONE);
+        knopfAbbrechen.setVisibility(zaehlt() ? View.VISIBLE : View.GONE);
+        wurzel.setVisibility(zeigen(amSchauen, imVollbild, steuerungAn, zaehlt())
+            ? View.VISIBLE : View.GONE);
+    }
+
     /* ------------------------------------- Im Vollbild: mit der Steuerung */
 
-    /** Ein neuer Player - was der alte ueber seine Leiste gesagt hat, gilt nicht mehr. */
+    /**
+     * Ein neuer Player - was der alte gesagt hat, gilt nicht mehr.
+     *
+     * <p>Auch der Fortschritt. Ohne dieses Zuruecksetzen traegt die neue Seite
+     * das "durchgelaufen" der vorigen weiter, und sobald ihre naechste Folge
+     * feststeht, finge der Zaehler an - bei Sekunde null einer Folge, die
+     * gerade erst laedt.
+     */
     void playerNeu() {
+        nahAmEnde = false;
+        amEnde = false;
+        zaehlerAnhalten();
         steuerungGemeldet = false;
         gemeldetAn = true;
         steuerungAn = true;
@@ -227,13 +421,14 @@ final class Spielerleiste {
      * nichts; dort haengt sie allein daran, ob ueberhaupt eine Folge offen ist.
      * Im Vollbild liegt sie auf dem Video - und dort gilt, was der Player ueber
      * seine eigenen Bedienelemente sagt.
+     *
+     * <p>Mit einer Ausnahme: waehrend gezaehlt wird, bleibt sie stehen. Ein
+     * Zaehler, den man nicht sieht, ist keine Ansage - und "Abbrechen" waere
+     * ein Knopf, den es nur unsichtbar gibt.
      */
-    static boolean zeigen(boolean amSchauen, boolean imVollbild, boolean steuerungAn) {
-        return amSchauen && (!imVollbild || steuerungAn);
-    }
-
-    private void anwenden() {
-        wurzel.setVisibility(zeigen(amSchauen, imVollbild, steuerungAn) ? View.VISIBLE : View.GONE);
+    static boolean zeigen(boolean amSchauen, boolean imVollbild, boolean steuerungAn,
+                          boolean zaehlt) {
+        return amSchauen && (!imVollbild || steuerungAn || zaehlt);
     }
 
     /* ------------------------------------------------------- Der Umzug */

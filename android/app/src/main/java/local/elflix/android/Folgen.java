@@ -79,6 +79,24 @@ final class Folgen {
      */
     private static final double ENDE_TOLERANZ_S = 1.5;
 
+    /**
+     * Ab wo der Knopf "Naechste Folge" ueberhaupt dasteht.
+     *
+     * <p>Dieselbe Schwelle wie {@code NEXT_EPISODE_PROMPT_PERCENT} am Rechner.
+     * Frueher waere er ein Knopf fuer etwas, das noch gar nicht ansteht - und
+     * im Vollbild ein Kasten, der eine Stunde lang neben dem Bild klebt.
+     */
+    static final int KNOPF_AB_PROZENT = 90;
+
+    /**
+     * Wie lange der Zaehler laeuft, bevor die naechste Folge von selbst startet.
+     *
+     * <p>Dieselben fuenf Sekunden wie {@code NEXT_EPISODE_COUNTDOWN_SECONDS} am
+     * Rechner. Sie sind der Unterschied zwischen "es geht weiter" und "man
+     * wurde weitergeschoben": in fuenf Sekunden laesst sich abbrechen.
+     */
+    static final int ZAEHLER_SEKUNDEN = 5;
+
     /** Das Ergebnis der Suche: eine Adresse oder leer. */
     interface Antwort {
         void fertig(String url);
@@ -122,6 +140,37 @@ final class Folgen {
         if (beendet) return true;
         if (!(laufzeit > 0)) return false;
         return position >= laufzeit - ENDE_TOLERANZ_S;
+    }
+
+    /**
+     * Wie weit die Folge ist, in Prozent.
+     *
+     * <p>Dieselbe Rechnung wie {@code mediaProgressPercent} im geteilten Modul.
+     * Sie steht hier noch einmal, weil die Leiste sie in jedem Takt braucht und
+     * ein Weg ueber die Bruecke fuer eine Division zu viel des Guten waere -
+     * gerundet wird gleich, und geprueft wird es auch.
+     */
+    static int prozent(double position, double laufzeit) {
+        if (!(laufzeit > 0) || !(position >= 0)) return 0;
+        long wert = Math.round(position / laufzeit * 100);
+        return (int) Math.max(0, Math.min(100, wert));
+    }
+
+    /**
+     * Steht das Ende der Folge bevor?
+     *
+     * <p>Die Frage des <em>Knopfes</em>, nicht die des Zaehlers. Ab neunzig
+     * Prozent gehoert der Weg zur naechsten Folge sichtbar dazu - vorher waere
+     * er ein Angebot fuer etwas, das noch gar nicht ansteht.
+     *
+     * <p>Ausdruecklich {@code !amEnde}: am Ende gilt {@link #amEnde}, und dort
+     * faengt der Zaehler an. Die beiden schliessen einander aus, damit an jeder
+     * Stelle genau eine Regel greift - dieselbe Trennung wie zwischen
+     * {@code fastFertig} und {@code amEnde} am Rechner.
+     */
+    static boolean nahAmEnde(double position, double laufzeit, boolean beendet) {
+        if (amEnde(position, laufzeit, beendet)) return false;
+        return prozent(position, laufzeit) >= KNOPF_AB_PROZENT;
     }
 
     /**
