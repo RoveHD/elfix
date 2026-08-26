@@ -213,7 +213,7 @@ jobs:
             echo "GitHub ein neueres Release, holt dieser Testbau es sich beim Start von"
             echo "selbst - dann ist er weg. Das ist dasselbe Verhalten wie bei einer"
             echo "echten Installation und kein Fehler."
-          } > StreamingBrowserElectron/dist/TESTBAU.txt
+          } > dist/TESTBAU.txt
 
       - name: Artefakt anhaengen
         uses: actions/upload-artifact@v4
