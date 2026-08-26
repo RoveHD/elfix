@@ -141,6 +141,16 @@ public class MainActivity extends Activity {
      */
     private LinearLayout liveHolder;
     private Livestreifen liveStreifen;
+    /**
+     * Die Wiedergabeleiste und ihr Platz - "Naechste Folge" und Autoplay.
+     *
+     * <p>Derselbe Aufbau wie beim Live-Streifen und aus demselben Grund: sie
+     * gehoert zum Bild und nicht in die Chrome-Leiste, die auf dem Fernseher
+     * verschwindet, sobald die Fernbedienung an die Seite geht. Siehe
+     * {@link Spielerleiste}.
+     */
+    private LinearLayout spielerHolder;
+    private Spielerleiste spielerleiste;
     private LinearLayout providerRail;
     private View providerRailScroll;
     private View providerRailDivider;
@@ -237,7 +247,51 @@ public class MainActivity extends Activity {
         + "})();";
     /** Last provider page that was an episode, kept because playing takes the frame off it. */
     private String lastEpisodeUrl;
-    private boolean pendingNextEpisode;
+    /**
+     * Der Weg zur naechsten Folge - ueber die geteilte Regel. Siehe {@link Folgen}.
+     */
+    private Folgen folgen;
+    /**
+     * Was die Anbieterseite ueber die laufende Staffel gesagt hat.
+     *
+     * <p>Gemerkt, weil "Video oeffnen" auf dem Telefon den Hauptrahmen nimmt:
+     * danach steht dort der Hoster, und {@link Titelbild} liest dessen Seite.
+     * Die Auskunft der Folgenseite - wo die Staffel aufhoert und welche Folgen
+     * gar nicht spielbar sind - waere damit weg, und genau an ihr haengt der
+     * Staffeluebergang.
+     */
+    private JSONObject folgenAngaben = new JSONObject();
+    private String folgenAngabenUrl = "";
+    /**
+     * Seit wann ein Folgenwechsel laeuft - gegen zweifaches Tippen und doppelte Takte.
+     *
+     * <p>Ein Zeitpunkt und kein Schalter: die Sperre faellt normalerweise mit
+     * dem Seitenanfang der neuen Folge, aber eine Navigation, die nie
+     * ankommt - eine gesperrte Werbeweiterleitung, ein Anbieter ohne Antwort -,
+     * liesse einen Schalter fuer immer stehen, und danach taete der Knopf
+     * nichts mehr. Dieselbe Ueberlegung wie bei {@code START_SPERRE_MS}.
+     */
+    private long folgenwechselSeit;
+    /** So lange gilt ein angefangener Folgenwechsel als noch im Gange. */
+    private static final long FOLGENWECHSEL_SPERRE_MS = 30_000L;
+    /** Fuer welche Adresse zuletzt gefragt wurde, ob dort ueberhaupt etwas laeuft. */
+    private String abspielseiteFuer = "";
+    private boolean abspielseite;
+    /**
+     * Wann zuletzt nach der naechsten Folge gefragt wurde - und fuer welche Seite.
+     *
+     * <p>Der Messtakt meldet sich je Rahmen mit Video, also mehrfach je Takt.
+     * Ohne diese Bremse gingen daraus mehrere Anfragen an den Kern hinaus, die
+     * alle dieselbe Antwort haetten.
+     */
+    private String zielSucheFuer = "";
+    private long zielSucheAt;
+    private static final long ZIELSUCHE_RUHE_MS = 2_000L;
+    /** Der Folgenlink der Seite, wie ihn der Messtakt gelesen hat - und wozu er gehoert. */
+    private String seitenLink = "";
+    private String seitenLinkZu = "";
+    /** Das zuletzt protokollierte Ziel - damit im Protokoll nur Aenderungen stehen. */
+    private String letztesZiel = "";
     /**
      * Die Empfehlungen der Startseite.
      *
@@ -495,6 +549,12 @@ public class MainActivity extends Activity {
         messung.setzeRahmen(rahmen);
         titelbild = new Titelbild(kern, bestand);
         messung.setzeTitelbild(titelbild);
+        // Der Weg zur naechsten Folge - dieselbe Regel wie am Rechner.
+        folgen = new Folgen(kern);
+        // Und der Draht dorthin: derselbe Messtakt, der den Fortschritt bucht,
+        // sagt auch, ob die Folge zu Ende ist. Ein zweiter Takt daneben waere
+        // eine zweite Uhr - siehe Messung.Spielstand.
+        messung.setzeSpielstand(this::spielstandGemessen);
         watchparty = new Watchparty(this, kern, new Watchparty.Beobachter() {
             @Override
             public void watchpartyGeaendert() {
@@ -620,6 +680,10 @@ public class MainActivity extends Activity {
                 // dem Video und soll genau dann dastehen, wenn auch die
                 // Bedienelemente des Players dastehen.
                 if (liveStreifen != null) liveStreifen.steuerungSichtbar(sichtbar);
+                // Und an die Wiedergabeleiste, aus demselben Grund: sie liegt
+                // ueber der Bedienleiste des Hosters und gehoert weg, sobald
+                // die weg ist.
+                if (spielerleiste != null) spielerleiste.steuerungSichtbar(sichtbar);
             }
 
             @Override
@@ -806,6 +870,13 @@ public class MainActivity extends Activity {
         root.addView(liveHolder, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        // Die Wiedergabeleiste sitzt zwischen Streifen und Bild: ausserhalb des
+        // Vollbilds verdeckt sie damit nichts, im Vollbild zieht sie um.
+        spielerHolder = new LinearLayout(this);
+        spielerHolder.setOrientation(LinearLayout.VERTICAL);
+        root.addView(spielerHolder, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
@@ -854,6 +925,7 @@ public class MainActivity extends Activity {
 
         buildChrome();
         buildLiveStreifen();
+        buildSpielerleiste();
         buildBottomNav();
         // Einmal je Sitzung: der Merker, der den Fokus ueber einen Neuaufbau
         // hinwegtraegt. Er haengt am content, nicht an einer gebauten Seite.
@@ -897,6 +969,76 @@ public class MainActivity extends Activity {
         liveStreifen.setzeZuhause(liveHolder);
         liveHolder.addView(liveStreifen.ansicht(), new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /**
+     * Die Wiedergabeleiste anlegen.
+     *
+     * <p>Einmal je Sitzung, wie der Live-Streifen: sie haelt ihren eigenen
+     * Zustand (Ziel, Sichtbarkeit, Fokus), und ein Neuaufbau beim Drehen naehme
+     * dem Fernseher den Platz, an dem die Fernbedienung gerade steht.
+     */
+    private void buildSpielerleiste() {
+        if (spielerleiste != null || spielerHolder == null) return;
+        spielerleiste = new Spielerleiste(this, new Spielerleiste.Umgebung() {
+            @Override
+            public boolean fernseher() {
+                return isTelevision();
+            }
+
+            @Override
+            public void naechsteFolge(boolean vonHand) {
+                naechsteFolgeStarten(vonHand ? "Knopf" : "Zähler", vonHand);
+            }
+
+            @Override
+            public void autoplaySetzen(boolean an) {
+                MainActivity.this.autoplaySetzen(an);
+            }
+
+            @Override
+            public boolean autoplayAn() {
+                return Folgen.autoplayAn(MainActivity.this);
+            }
+
+            @Override
+            public boolean zaehlerErlaubt() {
+                // Folgt dieses Geraet gerade der Runde, entscheidet die Runde.
+                // Ein eigener Wechsel daneben waere ein zweiter, und die Folgen
+                // liefen auseinander. Der Knopf bleibt trotzdem stehen.
+                if (mitschauen != null && mitschauen.folgtDerRunde()) return false;
+                // Und nicht, waehrend ohnehin schon eine Folge geladen wird.
+                return !folgenwechselLaeuft();
+            }
+        });
+        spielerleiste.setzeZuhause(spielerHolder);
+        spielerHolder.addView(spielerleiste.ansicht(), new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** Den Schalter umlegen - von der Fernbedienung und aus den Einstellungen. */
+    private void autoplayUmschalten() {
+        autoplaySetzen(!Folgen.autoplayAn(this));
+    }
+
+    /**
+     * Den Autoplay-Schalter setzen.
+     *
+     * <p>Die eine Stelle dafuer: Leiste, Fernbedienung und Einstellungen legen
+     * denselben Schalter um, und alle drei sollen danach dasselbe zeigen.
+     */
+    private void autoplaySetzen(boolean an) {
+        Folgen.setzeAutoplayAn(this, an);
+        Log.i(TAG, "Autoplay " + (an ? "an" : "aus"));
+        showToast(an
+            ? "Nächste Folge startet von selbst"
+            : "Nächste Folge startet nicht mehr von selbst");
+        // Ein neu gesetzter Schalter gilt sofort - auch fuer die Folge, die
+        // gerade laeuft: aus haelt einen laufenden Zaehler an, an laesst ihn am
+        // Ende wieder anfangen. Dasselbe tut der Rechner, wenn der Schalter in
+        // der Seite umgelegt wird.
+        if (spielerleiste != null) spielerleiste.autoplayAuffrischen();
+        if ("settings".equals(currentScreen)) showSettings();
     }
 
     /**
@@ -1332,6 +1474,12 @@ public class MainActivity extends Activity {
         updateFavoriteButton();
         // Keine Anbieterseite mehr, also auch kein Live-Streifen und kein Takt.
         liveStreifenAuffrischen();
+        // Und keine Wiedergabeleiste: es laeuft nichts, wozu es eine naechste
+        // Folge gaebe.
+        if (spielerleiste != null) {
+            spielerleiste.setzeAmSchauen(false);
+            spielerleiste.setzeZiel("");
+        }
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -2489,6 +2637,8 @@ public class MainActivity extends Activity {
                 showToast("Gespeichert");
                 showSettings();
             }), TvViews.ITEM_GAP);
+
+        addSpacing(page, autoplayKarte(true), TvViews.ITEM_GAP);
 
         addSpacing(page, introKarte(true), TvViews.ITEM_GAP);
 
@@ -4283,6 +4433,25 @@ public class MainActivity extends Activity {
     }
 
     /** Settings rows as grouped cards instead of stacked headline/paragraph pairs. */
+    /**
+     * Der Autoplay-Schalter in den Einstellungen.
+     *
+     * <p>Derselbe Zustand wie der Knopf in der Wiedergabeleiste und wie die
+     * Zeile "Naechste Folge von selbst starten" am Rechner - ein Schalter,
+     * zwei Wege dorthin. Ein zweiter Zustand daneben waere die Stelle, an der
+     * Leiste und Einstellungen Verschiedenes behaupten.
+     */
+    private View autoplayKarte(boolean fernseher) {
+        boolean an = Folgen.autoplayAn(this);
+        return karte(fernseher, "Nächste Folge von selbst starten",
+            an
+                ? "Ein: Am Ende einer Folge geht es von selbst weiter. Der Knopf „Nächste Folge“ "
+                    + "steht trotzdem da."
+                : "Aus: Es geht nur weiter, wenn du „Nächste Folge“ drückst.",
+            an ? "Ausschalten" : "Einschalten",
+            this::autoplayUmschalten);
+    }
+
     private View settingsCard(String title, String body, String actionLabel, Runnable onAction) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -4351,6 +4520,8 @@ public class MainActivity extends Activity {
                 showToast("Gespeichert");
                 showSettings();
             }), MobileViews.ITEM_GAP);
+
+        addSpacing(page, autoplayKarte(false), MobileViews.ITEM_GAP);
 
         startseitenEinstellungen(page);
 
@@ -6721,6 +6892,16 @@ public class MainActivity extends Activity {
         // Der Live-Streifen gehoert zur Anbieterseite: hier faengt er an zu
         // ticken, und auf jeder anderen Seite hoert er wieder auf.
         liveStreifenAuffrischen();
+        // Dasselbe fuer die Wiedergabeleiste. Das Ziel der vorigen Folge gilt
+        // hier nicht mehr - es wird neu bestimmt, sobald die Seite steht.
+        if (spielerleiste != null) {
+            spielerleiste.setzeZiel("");
+            spielerleiste.autoplayAuffrischen();
+        }
+        // Hier noch nicht fragen: die neue Seite laedt gerade erst, und die
+        // Ansicht traegt bis zum Seitenanfang die vorige Adresse. Gefragt wird
+        // beim Seitenende - siehe zielNachfassen.
+        zielSucheFuer = "";
     }
 
     private void showProviderLoading(Provider provider) {
@@ -7655,8 +7836,9 @@ public class MainActivity extends Activity {
     @Override
     public boolean dispatchTouchEvent(android.view.MotionEvent event) {
         if (event.getActionMasked() == android.view.MotionEvent.ACTION_DOWN
-            && fullscreenView != null && liveStreifen != null) {
-            liveStreifen.regung();
+            && fullscreenView != null) {
+            if (liveStreifen != null) liveStreifen.regung();
+            if (spielerleiste != null) spielerleiste.regung();
         }
         return super.dispatchTouchEvent(event);
     }
@@ -7668,9 +7850,9 @@ public class MainActivity extends Activity {
         // auch die Bedienelemente des Players wieder einblendet. Sie bleibt
         // dabei der Rueckfall: sagt der Player selbst, was seine Leiste tut,
         // hat sein Wort das letzte.
-        if (event.getAction() == KeyEvent.ACTION_DOWN && fullscreenView != null
-            && liveStreifen != null) {
-            liveStreifen.regung();
+        if (event.getAction() == KeyEvent.ACTION_DOWN && fullscreenView != null) {
+            if (liveStreifen != null) liveStreifen.regung();
+            if (spielerleiste != null) spielerleiste.regung();
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && handleRemoteShortcut(event.getKeyCode())) {
             return true;
@@ -7702,6 +7884,12 @@ public class MainActivity extends Activity {
             }
             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && isChromeFocused()) {
                 setChromeCollapsed(true, false);
+                // Auf dem Weg nach unten liegt die Wiedergabeleiste. Sie zu
+                // ueberspringen hiesse, "Naechste Folge" und Autoplay
+                // ausserhalb des Vollbilds nur ueber die Zifferntasten
+                // erreichbar zu lassen - ein Knopf, den man sieht und nicht
+                // anwaehlen kann.
+                if (spielerleiste != null && spielerleiste.fokussieren()) return true;
                 return focusActiveWebView();
             }
         }
@@ -7802,7 +7990,14 @@ public class MainActivity extends Activity {
             case KeyEvent.KEYCODE_9:
             case KeyEvent.KEYCODE_PROG_YELLOW:
                 if (!onWebsite) return false;
-                openNextEpisode();
+                naechsteFolgeStarten("Fernbedienung");
+                return true;
+            // Der Autoplay-Schalter auf der Fernbedienung. Er tut, was der
+            // Knopf in der Leiste tut - und die Leiste zieht mit, weil sie
+            // ihren Text aus derselben Einstellung liest.
+            case KeyEvent.KEYCODE_8:
+                if (!onWebsite) return false;
+                autoplayUmschalten();
                 return true;
             case KeyEvent.KEYCODE_0:
             case KeyEvent.KEYCODE_INFO:
@@ -8103,63 +8298,306 @@ public class MainActivity extends Activity {
         focusActiveWebView();
     }
 
-    /**
-     * Jump to the next episode. AniWorld and s.to both address episodes as
-     * .../staffel-<n>/episode-<m>, so the next one is derived from the current URL -- but only after
-     * the page has confirmed that a link to it exists, otherwise the last episode of a season would
-     * navigate into a 404. When the season is exhausted the first episode of the next season is
-     * used, again only if the page offers that season at all.
+    /* ---------------------------------------------- Die naechste Folge */
+
+    /*
+     * Woher die naechste Folge kommt - und warum nicht mehr von hier.
+     *
+     * Bis hierher rechnete diese Klasse selbst: Folgennummer plus eins, und
+     * wenn die Seite dazu keinen Link hatte, Staffel plus eins. Das ist eine
+     * zweite Regel neben der des Rechners, und sie war die schlechtere - sie
+     * kannte weder das Ende einer Serie noch zusammengefasste Folgen, und die
+     * Staffelgrenze fand sie nur, wenn zufaellig ein passender Link dastand.
+     *
+     * Gefragt wird jetzt {@link Folgen} und damit derselbe Kern, den der
+     * Rechner fragt. Was hier bleibt, ist die Verkabelung: einsammeln, was die
+     * Regel braucht, und ausfuehren, was sie sagt.
      */
-    private void openNextEpisode() {
-        WebView webView = currentWebView();
-        if (webView == null || activeProvider == null) return;
-        final Provider provider = activeProvider;
-        // Opening a hoster can take the main frame off the episode page entirely -- measured after an
-        // autostart, the WebView was sitting on nicolehappyoutside.com/e/<id>. The episode list only
-        // exists back on the provider's page, so go there first and pick up where we left off.
-        if (!isEpisodeUrl(webView.getUrl())) {
-            if (lastEpisodeUrl == null) {
-                showToast("Keine Folgenseite");
-                return;
+
+    /**
+     * Was die Regel ueber die Serie wissen muss.
+     *
+     * <p>Der Eintrag traegt die Grenzen der Serie ({@code finalSeason},
+     * {@code finalEpisode}); solange es ihn noch nicht gibt - die ersten
+     * zweieinhalb Minuten einer neuen Serie -, kommen sie aus den Angaben der
+     * Seite. Beides zusammen, weil beides einzeln Luecken hat: der Eintrag
+     * kennt die Staffelgrenze nicht, die Seite kennt den Fortschritt nicht.
+     */
+    private JSONObject eintragFuerFolgen(String url) {
+        Favorite eintrag = bestand == null ? null : bestand.mitId(bestand.aktiverEintragId());
+        if (eintrag == null && bestand != null) eintrag = bestand.zuAdresse(url);
+        JSONObject roh = eintrag == null ? null : eintrag.roh;
+        JSONObject angaben = seitenAngabenFuer(url);
+        if (angaben == null) return roh;
+        try {
+            JSONObject zusammen = roh == null
+                ? new JSONObject()
+                : new JSONObject(roh.toString());
+            if (zusammen.optInt("finalSeason", 0) <= 0 && angaben.optInt("finalSeason", 0) > 0) {
+                zusammen.put("finalSeason", angaben.optInt("finalSeason"));
             }
-            Log.i(TAG, "Next episode: not on an episode page, returning to " + safePath(lastEpisodeUrl));
-            pendingNextEpisode = true;
-            openProvider(provider, lastEpisodeUrl, true);
+            if (zusammen.optInt("finalEpisode", 0) <= 0 && angaben.optInt("finalEpisode", 0) > 0) {
+                zusammen.put("finalEpisode", angaben.optInt("finalEpisode"));
+            }
+            return zusammen;
+        } catch (Exception fehler) {
+            Log.d(TAG, "Eintrag fuer die Folgenregel nicht gebaut: " + fehler);
+            return roh;
+        }
+    }
+
+    /**
+     * Die Angaben der Folgenseite - auch dann noch, wenn der Hoster den
+     * Hauptrahmen genommen hat.
+     */
+    private JSONObject seitenAngabenFuer(String url) {
+        if (url == null || url.isEmpty()) return null;
+        if (titelbild != null) {
+            JSONObject frisch = titelbild.angaben(url);
+            if (frisch != null && frisch.length() > 0) {
+                folgenAngaben = frisch;
+                folgenAngabenUrl = url;
+                return frisch;
+            }
+        }
+        return url.equals(folgenAngabenUrl) ? folgenAngaben : null;
+    }
+
+    /**
+     * Nachsehen, ob es eine naechste Folge gibt - und die Leiste nachziehen.
+     *
+     * <p>Gerufen beim Seitenende und in jedem Messtakt. Der Takt ist kein
+     * Luxus: die Grenzen der Serie stehen erst da, wenn die Seitenangaben
+     * gelesen und der Eintrag gefunden ist, und beides kommt Sekunden nach dem
+     * Seitenende. Ein einmaliger Blick beim Laden fiele genau in die Luecke.
+     *
+     */
+    private void naechsteFolgeBestimmen() {
+        if (spielerleiste == null) return;
+        final String laufend = laufendeFolgenAdresse(currentWebView());
+        if (folgen == null || !"provider".equals(currentScreen)
+            || laufend == null || !laufend.startsWith("http")) {
+            spielerleiste.setzeAmSchauen(false);
+            spielerleiste.setzeZiel("");
             return;
         }
-        webView.evaluateJavascript(
-            "(function(){"
-                + "var m=location.pathname.match(/^(.*)\\/staffel-(\\d+)\\/episode-(\\d+)\\/?$/);"
-                + "if(!m)return 'no-episode-page';"
-                + "var base=m[1],season=parseInt(m[2],10),episode=parseInt(m[3],10);"
-                + "function linked(path){return !!document.querySelector('a[href$=\"'+path+'\"]');}"
-                + "var sameSeason='/staffel-'+season+'/episode-'+(episode+1);"
-                + "if(linked(sameSeason))return location.origin+base+sameSeason;"
-                // The season picker links the season itself, not its first episode -- measured on
-                // AniWorld: /anime/stream/one-piece/staffel-2 with no /episode-1 suffix. Checking for
-                // the episode URL here would always miss and end the series at every season break.
-                // ("ends with" is safe against staffel-1 matching staffel-11.)
-                + "if(linked('/staffel-'+(season+1)))"
-                    + "return location.origin+base+'/staffel-'+(season+1)+'/episode-1';"
-                + "return 'end-of-series';"
-            + "})();",
-            value -> {
-                String url = value == null ? "" : value.replace("\"", "").trim();
-                Log.i(TAG, "Next episode resolved to " + url);
-                if (url.startsWith("http")) {
-                    // preserveFavoriteProgress: the two-argument openProvider() clears
-                    // activeFavoriteId, and updateActiveFavoriteProgress() does nothing without it --
-                    // so jumping onwards with 9 would silently leave the favourite on the old
-                    // episode. The step this key makes is exactly what the progress rule accepts
-                    // (next episode, or episode 1 of the next season).
-                    armAutoStart(url);
-                    openProvider(provider, url, true);
-                } else if ("end-of-series".equals(url)) {
-                    showToast("Keine weitere Folge gefunden");
-                } else {
-                    showToast("Keine Folgenseite");
+        long jetzt = SystemClock.uptimeMillis();
+        if (laufend.equals(zielSucheFuer) && jetzt - zielSucheAt < ZIELSUCHE_RUHE_MS) return;
+        zielSucheFuer = laufend;
+        zielSucheAt = jetzt;
+        // Ob hier ueberhaupt etwas laeuft, wird je Adresse einmal gefragt und
+        // dann behalten - es aendert sich nicht im Sekundentakt.
+        if (!laufend.equals(abspielseiteFuer)) {
+            folgen.abspielseite(laufend, ja -> {
+                abspielseiteFuer = laufend;
+                abspielseite = ja;
+                Log.i(TAG, "FOLGE abspielseite " + Folgen.kurz(laufend) + " = " + ja);
+                if (laufend.equals(laufendeFolgenAdresse(currentWebView()))) {
+                    spielerleiste.setzeAmSchauen(ja);
+                    if (!ja) spielerleiste.setzeZiel("");
                 }
             });
+        } else {
+            spielerleiste.setzeAmSchauen(abspielseite);
+            if (!abspielseite) {
+                spielerleiste.setzeZiel("");
+                return;
+            }
+        }
+        JSONObject eintrag = eintragFuerFolgen(laufend);
+        JSONObject angaben = seitenAngabenFuer(laufend);
+        // Woraus die Regel ihre Antwort baut. Bleibt das Ziel leer, steht hier,
+        // woran es lag - fast immer an einer Serienlaenge, die nie ankam.
+        Log.i(TAG, "FOLGE lage " + Folgen.kurz(laufend)
+            + " eintrag=" + (eintrag == null ? "-" : "ja")
+            + " finalSeason=" + (eintrag == null ? 0 : eintrag.optInt("finalSeason", 0))
+            + " finalEpisode=" + (eintrag == null ? 0 : eintrag.optInt("finalEpisode", 0))
+            + " seasonLastEpisode=" + (angaben == null ? 0 : angaben.optInt("seasonLastEpisode", 0))
+            + " gesperrt=" + (angaben == null ? "-" : angaben.opt("unplayableEpisodes"))
+            + " seitenLink=" + (seitenLinkFuer(laufend).isEmpty() ? "-" : "ja"));
+        folgen.naechste(laufend, eintrag, angaben,
+            seitenLinkFuer(laufend), url -> {
+                // Die Antwort kommt aus dem Kern und damit einen Augenblick
+                // spaeter. Steht inzwischen eine andere Folge da, gehoert sie
+                // zur Vergangenheit - der naechste Takt fragt neu.
+                if (!laufend.equals(laufendeFolgenAdresse(currentWebView()))) return;
+                if (!url.equals(letztesZiel)) {
+                    letztesZiel = url;
+                    Log.i(TAG, "FOLGE ziel " + (url.isEmpty()
+                        ? "keine naechste Folge" : Folgen.kurz(url)));
+                }
+                spielerleiste.setzeZiel(url);
+            });
+    }
+
+    /**
+     * Zur naechsten Folge wechseln.
+     *
+     * <p>Derselbe Ablauf wie {@code playNextEpisode} am Rechner, in derselben
+     * Reihenfolge:
+     *
+     * <ol>
+     *   <li>Den Stand der laufenden Folge buchen. Er entsteht im Messtakt
+     *       ohnehin, aber der naechste Takt kaeme womoeglich erst, wenn die
+     *       Seite schon eine andere ist.
+     *   <li>Die Adresse von der geteilten Regel holen.
+     *   <li>Sie vom Torwaechter pruefen lassen - dieselbe Serie, weiter vorn.
+     *   <li>Oeffnen, mit scharfem Autostart: dieselbe Kette wie aus
+     *       "Weiterschauen", damit die Folge nicht als Uebersicht ohne Player
+     *       dasteht.
+     * </ol>
+     *
+     * <p>Die Watchparty wird hier <em>nicht</em> gesondert bedient. Sie haengt
+     * an {@code Mitschauen.seiteFertig} und damit an jeder Navigation, die
+     * ELFIX macht - eine eigene Meldung von hier waere die zweite und ginge als
+     * doppelter Folgenwechsel in die Runde.
+     */
+    private void naechsteFolgeStarten(String anlass) {
+        naechsteFolgeStarten(anlass, true);
+    }
+
+    /**
+     * @param melden ob ein Fehlschlag gesagt werden soll. Beim Knopf ja - wer
+     *               drueckt, hat eine Antwort verdient. Beim Autoplay nein: das
+     *               Ende einer Serie ist kein Fehler, und "Hier gibt es keine
+     *               naechste Folge" waere dort eine Meldung auf etwas, das
+     *               niemand angefordert hat.
+     */
+    private void naechsteFolgeStarten(String anlass, boolean melden) {
+        if (folgen == null || activeProvider == null) return;
+        if (folgenwechselLaeuft()) {
+            Log.i(TAG, "Folgenwechsel laeuft bereits - " + anlass + " ignoriert");
+            return;
+        }
+        final Provider provider = activeProvider;
+        final String laufend = laufendeFolgenAdresse(currentWebView());
+        // Nicht ueber isEpisodeUrl: was als Folge gilt, entscheidet die
+        // geteilte Regel, und sie kennt mehr Schreibweisen als das Muster hier.
+        if (laufend == null || !laufend.startsWith("http")) {
+            if (melden) showToast("Keine Folgenseite");
+            return;
+        }
+        // Der Stand der laufenden Folge, bevor die Seite eine andere ist.
+        if (messung != null) messung.jetztMessen();
+
+        final JSONObject eintrag = eintragFuerFolgen(laufend);
+        folgenwechselSeit = SystemClock.uptimeMillis();
+        folgen.naechste(laufend, eintrag, seitenAngabenFuer(laufend), seitenLinkFuer(laufend),
+            ziel -> {
+                if (ziel.isEmpty()) {
+                    folgenwechselSeit = 0;
+                    Log.i(TAG, "FOLGE wechsel (" + anlass + ") abgebrochen - keine naechste Folge");
+                    if (melden) showToast("Hier gibt es keine nächste Folge");
+                    return;
+                }
+                folgen.pruefen(ziel, laufend, eintrag, erlaubt -> {
+                    if (erlaubt.isEmpty()) {
+                        folgenwechselSeit = 0;
+                        Log.i(TAG, "FOLGE wechsel (" + anlass + ") abgelehnt - "
+                            + Folgen.kurz(ziel) + " ist keine naechste Folge von "
+                            + Folgen.kurz(laufend));
+                        if (melden) showToast("Das war nicht die nächste Folge");
+                        return;
+                    }
+                    folgeWirklichOeffnen(provider, erlaubt, anlass);
+                });
+            });
+    }
+
+    /**
+     * Nach der naechsten Folge fragen - und zweimal nachfassen.
+     *
+     * <p>Beim Seitenende ist die Antwort meist noch leer: die Grenzen der Serie
+     * stehen erst, wenn {@link Titelbild} die Seite gelesen hat, und der
+     * Eintrag dazu wird ebenfalls erst gesucht. Beides kommt Sekunden spaeter,
+     * und Titelbild fasst aus demselben Grund selbst zweimal nach.
+     *
+     * <p>Der Messtakt hilft hier nicht: er meldet sich nur, wenn wirklich ein
+     * Video laeuft. Der Knopf soll aber schon dastehen, bevor jemand Play
+     * gedrueckt hat.
+     */
+    private void zielNachfassen(WebView ansicht) {
+        naechsteFolgeBestimmen();
+        if (ansicht == null) return;
+        for (long verzoegerung : new long[] {3000L, 8000L}) {
+            ansicht.postDelayed(() -> {
+                if (currentWebView() != ansicht) return;
+                naechsteFolgeBestimmen();
+            }, verzoegerung);
+        }
+    }
+
+    /**
+     * Der Folgenlink, den die Seite selbst anbietet.
+     *
+     * <p>Er kommt aus dem Messtakt ({@code messung.js} liest ihn beim Zaehlen
+     * mit) und wird zu seiner Adresse gemerkt. Gemerkt, weil er nur waehrend
+     * der Wiedergabe hereinkommt: der Knopf soll ihn auch dann noch benutzen
+     * koennen, wenn gerade kein Takt gelaufen ist.
+     *
+     * <p>Geglaubt wird er nicht - die geteilte Regel prueft ihn gegen die
+     * laufende Folge, bevor sie ihn nimmt.
+     */
+    private String seitenLinkFuer(String url) {
+        return url != null && url.equals(seitenLinkZu) ? seitenLink : "";
+    }
+
+    private boolean folgenwechselLaeuft() {
+        return folgenwechselSeit > 0
+            && SystemClock.uptimeMillis() - folgenwechselSeit < FOLGENWECHSEL_SPERRE_MS;
+    }
+
+    private void folgeWirklichOeffnen(Provider provider, String url, String anlass) {
+        Log.i(TAG, "FOLGE wechsel (" + anlass + ") -> "
+            + Folgen.folgenText(url) + " " + Folgen.kurz(url));
+        if (spielerleiste != null) spielerleiste.setzeZiel("");
+        // preserveFavoriteProgress: der Eintrag bleibt derselbe, es ist nur
+        // eine andere Folge davon. Ohne das faellt activeFavoriteId weg, und
+        // der Fortschritt liefe auf einen anderen Eintrag.
+        armAutoStart(url);
+        openProvider(provider, url, true);
+        // Die Sperre faellt erst mit dem naechsten Seitenende (onPageStarted),
+        // damit ein zweiter Tipp waehrend des Ladens nichts anrichtet.
+    }
+
+    /**
+     * Ein Messwert ist da - die Leiste nachziehen.
+     *
+     * <p>Hier wird nicht mehr entschieden, ob gewechselt wird: die Leiste
+     * bekommt, wie weit die Folge ist, und macht daraus dreierlei - unter
+     * neunzig Prozent nichts, ab neunzig Prozent den Knopf, am Ende den
+     * Zaehler. Genau diese Staffelung hat der Rechner auch.
+     *
+     * <p>Die neunzig Prozent hier sind ausdruecklich <em>nicht</em> die
+     * Schwelle, ab der eine Folge als gesehen zaehlt. Die entscheidet die
+     * geteilte Regel, und sie schaltet nichts weiter: wer bei 91 Prozent
+     * weiterschaut, sieht nur einen Knopf und wird nicht aus seiner Folge
+     * geworfen.
+     */
+    private void spielstandGemessen(Provider anbieter, String adresse, double position,
+                                    double laufzeit, boolean beendet, String seitenLink) {
+        if (anbieter != activeProvider) return;
+        // Erst merken, dann fragen: die Bremse in naechsteFolgeBestimmen darf
+        // einen frisch gelesenen Folgenlink nicht verschlucken.
+        if (seitenLink != null && !seitenLink.isEmpty() && adresse != null) {
+            this.seitenLink = seitenLink;
+            this.seitenLinkZu = adresse;
+        }
+        boolean nah = Folgen.nahAmEnde(position, laufzeit, beendet);
+        boolean ende = Folgen.amEnde(position, laufzeit, beendet);
+        // Der Messwert, wie er hereinkommt. Ohne ihn laesst sich von aussen
+        // nicht unterscheiden, ob die Folge nicht weit genug ist, ob gar nicht
+        // gemessen wird oder ob die Leiste nur nicht zu sehen ist.
+        // Nachzusehen mit: adb logcat -s ELFIX | grep FOLGE
+        Log.i(TAG, "FOLGE mess " + Folgen.kurz(adresse)
+            + " " + Math.round(position) + "/" + Math.round(laufzeit) + "s"
+            + " = " + Folgen.prozent(position, laufzeit) + "%"
+            + " ended=" + beendet + " nah=" + nah + " ende=" + ende
+            + " seitenLink=" + (seitenLink == null || seitenLink.isEmpty()
+                ? "-" : Folgen.kurz(seitenLink)));
+        naechsteFolgeBestimmen();
+        if (spielerleiste == null) return;
+        spielerleiste.setzeFortschritt(nah, ende);
     }
 
     /**
@@ -8238,7 +8676,23 @@ public class MainActivity extends Activity {
         // keine Runde laeuft: dann ist der Streifen unsichtbar und nimmt den
         // Fokus gar nicht erst an.
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP && !mouseMode
+            && spielerleiste != null && spielerleiste.hatFokus()) {
+            // Aus der Leiste heraus wieder ins Bild. Ohne diesen Rueckweg
+            // bliebe der Fokus unten haengen: die Knoepfe liegen auf der
+            // Fensterdekoration, das Video darunter, und die Fokussuche findet
+            // von einem zum anderen nicht von selbst.
+            focusFullscreenPlayer();
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP && !mouseMode
             && liveStreifen != null && !liveStreifen.istOffen() && liveStreifen.fokussieren()) {
+            return true;
+        }
+        // Nach unten zur Wiedergabeleiste - "Naechste Folge" und Autoplay. Der
+        // Gegenweg zu oben, und ebenso ohne Kosten: eine unsichtbare Leiste
+        // nimmt den Fokus gar nicht erst an.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN && !mouseMode
+            && spielerleiste != null && !spielerleiste.hatFokus() && spielerleiste.fokussieren()) {
             return true;
         }
         // Zurueck schliesst zuerst die ausgeklappten Details und nicht das
@@ -8253,8 +8707,12 @@ public class MainActivity extends Activity {
         if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER
             || keyCode == KeyEvent.KEYCODE_SPACE) && !mouseMode) {
             // Steht der Fokus auf dem Streifen, gehoert OK ihm - sonst liesse
-            // sich dort nichts oeffnen und nichts druecken.
+            // sich dort nichts oeffnen und nichts druecken. Dasselbe gilt fuer
+            // die Wiedergabeleiste: ohne das waere "Naechste Folge" auf dem
+            // Fernseher ein Knopf, den man zwar erreicht, aber nicht druecken
+            // kann.
             if (liveStreifen != null && liveStreifen.hatFokus()) return false;
+            if (spielerleiste != null && spielerleiste.hatFokus()) return false;
             tapFullscreenCentre();
             return true;
         }
@@ -8263,6 +8721,18 @@ public class MainActivity extends Activity {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Den Fokus zurueck auf das Video im Vollbild.
+     *
+     * <p>Der Gegenweg zu {@link Spielerleiste#fokussieren()}. Ohne ihn bliebe
+     * der Fokus in der Leiste stehen, und die Fernbedienung erreichte das Bild
+     * nicht mehr - ein Fokusfang genau dort, wo er am meisten stoert.
+     */
+    private void focusFullscreenPlayer() {
+        if (fullscreenView == null) return;
+        fullscreenView.requestFocus();
     }
 
     /**
@@ -8675,6 +9145,9 @@ public class MainActivity extends Activity {
         // der Oberflaeche haengen bleibt, waere schlicht nicht zu sehen - und
         // dann wuesste man ausgerechnet beim Schauen nicht mehr, wer mitschaut.
         if (liveStreifen != null) liveStreifen.inVollbild(fullscreenContainer);
+        // Und die Wiedergabeleiste. Sie liegt unten rechts ueber der
+        // Bedienleiste des Hosters und kommt und geht mit ihr.
+        if (spielerleiste != null) spielerleiste.inVollbild(fullscreenContainer);
         fullscreenContainer.bringToFront();
         view.requestFocus();
         // The cursor has to move up into the new container, otherwise it stays buried under the video.
@@ -8889,6 +9362,7 @@ public class MainActivity extends Activity {
         // Zuerst den Live-Streifen zurueckholen: gleich wird der Vollbild-Rahmen
         // samt allen Kindern abgeraeumt, und danach waere er weg.
         if (liveStreifen != null) liveStreifen.inVollbild(null);
+        if (spielerleiste != null) spielerleiste.inVollbild(null);
         if (fullscreenContainer != null) {
             fullscreenContainer.removeAllViews();
             if (fullscreenContainer.getParent() instanceof ViewGroup) {
@@ -9265,12 +9739,6 @@ public class MainActivity extends Activity {
             this.provider = provider;
         }
 
-        /** Runs on the episode page we came back to, so the normal path can take over again. */
-        private void resumeNextEpisode() {
-            if (provider != activeProvider) return;
-            openNextEpisode();
-        }
-
         @Override
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             mainFrameUrl = url == null ? "" : url;
@@ -9287,18 +9755,30 @@ public class MainActivity extends Activity {
             // Und was der Player der vorigen Seite ueber seine Bedienelemente
             // gesagt hat, gilt ab hier nicht mehr.
             if (liveStreifen != null && provider == activeProvider) liveStreifen.playerNeu();
+            if (spielerleiste != null && provider == activeProvider) spielerleiste.playerNeu();
+            // Die neue Seite ist da: ein Folgenwechsel ist damit vollzogen, und
+            // die Leiste zeigt nichts, solange das Ziel nicht neu bestimmt ist.
+            if (provider == activeProvider) {
+                folgenwechselSeit = 0;
+                zielSucheFuer = "";
+                if (spielerleiste != null) spielerleiste.setzeZiel("");
+            }
             // Eine neue Seite, neue Versuche: derselbe Hoster kann bei der
             // naechsten Folge durchaus antworten.
             rahmenVersuche.clear();
             // Navigating anywhere other than the armed page means the request no longer refers to
             // what is about to appear, so it must not fire on whatever loads instead.
-            if (isEpisodeUrl(url)) {
-                lastEpisodeUrl = url;
-                if (pendingNextEpisode) {
-                    // Back on the episode page after a detour through the hoster: resume the jump.
-                    pendingNextEpisode = false;
-                    view.postDelayed(this::resumeNextEpisode, 1200);
-                }
+            if (isEpisodeUrl(url)) lastEpisodeUrl = url;
+            // Die Seitenangaben schon jetzt lesen und nicht erst beim
+            // Seitenende. Bei diesen Anbietern kommt onPageFinished erst mit
+            // der letzten Werbung - der Autostart klickt den Hoster aber nach
+            // zwoelf Sekunden an, und danach steht die Folgenseite nicht mehr
+            // im Hauptrahmen. Wer erst beim Seitenende liest, liest die
+            // Grenzen der Serie nie; ohne sie gibt es keine naechste Folge.
+            // Das Skript faengt mit einem leeren Dokument nichts an - es fasst
+            // von selbst nach (siehe Titelbild.NACHFASSEN_MS).
+            if (titelbild != null && provider == activeProvider) {
+                titelbild.suchen(view, provider, url);
             }
             if (autoStartRequested && !isSameUrl(url, autoStartUrl)) {
                 disarmAutoStart("navigated to " + safePath(url));
@@ -9529,6 +10009,8 @@ public class MainActivity extends Activity {
             // eine Karte auf dem Telefon dasselbe Bild wie am Rechner, statt
             // der beiden Anfangsbuchstaben.
             if (titelbild != null) titelbild.suchen(view, provider, url);
+            // Und nachsehen, ob es eine naechste Folge gibt.
+            if (provider == activeProvider) zielNachfassen(view);
             super.onPageFinished(view, url);
         }
 

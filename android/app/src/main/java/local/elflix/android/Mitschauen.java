@@ -1588,6 +1588,18 @@ public final class Mitschauen {
     }
 
     /**
+     * Ob dieses Geraet gerade einem Folgenwechsel der Runde folgt.
+     *
+     * <p>Gefragt vom Autoplay: solange die Runde den Wechsel vorgibt, hat
+     * dieses Geraet keinen eigenen zu machen. Zwei Wechsel hintereinander
+     * waeren eine Folge zu weit - genau der Zustand, in dem Android weiter
+     * waere als der Rechner.
+     */
+    public boolean folgtDerRunde() {
+        return folgtDerRunde;
+    }
+
+    /**
      * Die Adresse, an der eine Nachricht gemessen wird.
      *
      * <p>Die des Absenders zuerst - sie folgt der aktuellen Folge. Erst danach
