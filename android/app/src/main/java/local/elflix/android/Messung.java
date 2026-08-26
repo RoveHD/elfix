@@ -26,6 +26,33 @@ public final class Messung {
     /** Derselbe Takt wie am Desktop. */
     private static final long TAKT_MS = 5000;
 
+    /**
+     * Wer erfahren will, was der Player gerade meldet.
+     *
+     * <p>Der Takt misst ohnehin - Stelle, Laufzeit, ob das Video zu Ende ist
+     * und welchen Folgenlink die Seite anbietet. Bis hierher ging all das
+     * ausschliesslich in den Bestand. Die Wiedergabeleiste und der Autoplay
+     * brauchen dieselben Zahlen, und ein zweiter Takt daneben waere eine zweite
+     * Uhr: er stuende ein paar Sekunden anders, und dann triebe der Wechsel zur
+     * naechsten Folge gegen die gebuchte Stelle.
+     *
+     * <p>Gemeldet wird <em>nach</em> dem Verbuchen. Das ist die Reihenfolge, an
+     * der der Autoplay haengt: erst steht der Stand der laufenden Folge fest,
+     * dann wird gewechselt.
+     */
+    public interface Spielstand {
+        /**
+         * @param anbieter der Anbieter, zu dem die Messung gehoert
+         * @param adresse  die Seite, auf die verbucht wurde
+         * @param position wo der Player steht, in Sekunden
+         * @param laufzeit wie lang die Folge ist, in Sekunden
+         * @param beendet  was der Player selbst sagt ({@code video.ended})
+         * @param naechste der Folgenlink, den die Seite anbietet - oder leer
+         */
+        void gemessen(Provider anbieter, String adresse, double position, double laufzeit,
+                      boolean beendet, String naechste);
+    }
+
     /** Woher die laufende Seite kommt - Anbieter und Adresse, im Augenblick des Takts. */
     public interface Seite {
         Provider anbieter();
@@ -73,6 +100,9 @@ public final class Messung {
      */
     private Titelbild titelbild;
 
+    /** Wer ausser dem Bestand noch erfahren will, was laeuft. Siehe {@link Spielstand}. */
+    private Spielstand spielstand;
+
     /** Der Meldekopf, an dem eine Antwort aus einem Rahmen zu erkennen ist. */
     public static final String MELDE_MESSUNG = "mess:";
 
@@ -88,6 +118,23 @@ public final class Messung {
 
     public void setzeTitelbild(Titelbild titelbild) {
         this.titelbild = titelbild;
+    }
+
+    public void setzeSpielstand(Spielstand spielstand) {
+        this.spielstand = spielstand;
+    }
+
+    /**
+     * Sofort messen, ohne auf den naechsten Takt zu warten.
+     *
+     * <p>Gebraucht beim Wechsel zur naechsten Folge von Hand: die Stelle der
+     * laufenden Folge gehoert gebucht, bevor die Seite eine andere ist. Bis zu
+     * fuenf Sekunden darauf zu warten hiesse, den Schluss der Folge zu
+     * verlieren.
+     */
+    public void jetztMessen() {
+        if (!laeuft) return;
+        skriptHolen(this::einmalMessen);
     }
 
     public void starten() {
@@ -261,5 +308,11 @@ public final class Messung {
         }
         bestand.verbuchen(anbieter, adresse, vollstaendig,
             seite == null ? false : seite.watchpartyFuehrt());
+        // Erst verbucht, dann gemeldet: der Autoplay haengt an dieser
+        // Reihenfolge - siehe {@link Spielstand}.
+        if (spielstand != null) {
+            spielstand.gemessen(anbieter, adresse, position, laufzeit, beendet,
+                gemessen.optString("nextUrl", ""));
+        }
     }
 }

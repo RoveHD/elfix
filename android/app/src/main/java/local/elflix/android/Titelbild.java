@@ -54,6 +54,12 @@ public final class Titelbild {
     private static final String[] UEBERNOMMEN = {
         "thumbnail", "favicon", "title", "type",
         "finalSeason", "finalEpisode", "finalEpisodeTrimmed",
+        // Wo die *laufende* Staffel aufhoert. Ohne sie endet jede Staffel im
+        // Nichts: die Regel zaehlt dann nur hoch und findet den Uebergang zur
+        // naechsten Staffel nie. Am Rechner kommt die Zahl aus der
+        // nachgeladenen Staffeluebersicht, hier von der Folgenseite selbst -
+        // dieselbe Regel, siehe seitendaten.js.
+        "seasonLastEpisode",
         "unplayableSeason", "unplayableEpisodes"
     };
 

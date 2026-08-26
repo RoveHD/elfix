@@ -247,10 +247,38 @@ function seitenSkript() {
         ? derStaffel.filter((link) => !unplayableEpisodes.has(link.episode))
         : derStaffel;
       const best = spielbar[0] || hoechste;
+
+      // Die letzte Folge *dieser* Staffel - nicht die der letzten Staffel.
+      //
+      // Daran haengt der Staffeluebergang: nur wer weiss, wo die laufende
+      // Staffel aufhoert, kann von ihrer letzten Folge auf Folge 1 der
+      // naechsten wechseln statt ins Leere weiterzuzaehlen. Am Rechner kam
+      // diese Zahl bisher allein aus der nachgeladenen Staffeluebersicht
+      // (siehe applySeasonPlaybackInfo in main.js); auf dem Telefon gibt es
+      // die nicht - und dort endete deshalb jede Staffel im Nichts.
+      //
+      // Die Folgenseite listet ihre eigene Staffel ohnehin. Genommen wird sie
+      // aber nur, wenn die *laufende* Folge in dieser Liste steht: fehlt sie,
+      // ist die Liste nicht vollstaendig geladen, und eine zu kleine Zahl
+      // hiesse, mitten in der Staffel in die naechste zu springen. Lieber
+      // keine Auskunft als eine falsche - ohne sie wird nur hochgezaehlt.
+      const pageEpisode = (() => {
+        const treffer = location.pathname.match(/\\/(?:episode|folge)-(\\d+)/i);
+        return treffer ? Number(treffer[1]) : 0;
+      })();
+      const dieserStaffel = links.filter((link) => link.season === pageSeason);
+      const nummern = dieserStaffel.map((link) => link.episode);
+      const spielbareNummern = nummern.filter((nummer) => !unplayableEpisodes.has(nummer));
+      const zaehlbar = spielbareNummern.length ? spielbareNummern : nummern;
+      const seasonLastEpisode = pageSeason && pageEpisode && nummern.includes(pageEpisode)
+        ? Math.max(0, ...zaehlbar)
+        : 0;
+
       return {
         finalSeason,
         finalEpisode: best?.episode || 0,
         finalEpisodeTrimmed: Boolean(best && hoechste && best.episode < hoechste.episode),
+        seasonLastEpisode,
         unplayableSeason: pageSeason,
         unplayableEpisodes: beurteilbar || pageSeason ? Array.from(unplayableEpisodes) : []
       };
