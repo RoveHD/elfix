@@ -3,6 +3,66 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.54.0 — 27. August 2026
+
+„4 Mal abgeschlossen" stand da, dabei war die Serie nur vier Mal eingeholt.
+
+Gemeldet an „BLACK TORCH": vier Serienabschlüsse, acht identische Zeilen für
+Folge 8, mehrere Zeilen derselben Folge innerhalb weniger Minuten und nackte
+„Abgeschlossen"-Einträge ohne jede Folgenangabe. In der echten Ablage standen
+dort dreiunddreißig Ereignisse für acht Folgen.
+
+**Die Duplikate.** Der Kasten hat nie einen Verlauf gezeigt, sondern ein
+Ereignisprotokoll. Dort landet jede Meldung des Players, jedes Neuladen, jedes
+erneute Öffnen; zusammengefasst wurde nur, wenn zwei gleiche Zeilen direkt
+hintereinander standen. Das trifft im Betrieb selten zu — zwischen zwei
+Meldungen zu Folge 8 liegt ein „Geöffnet", oder eine zweite Seite meldet
+dazwischen Folge 4, und schon ist es eine neue Zeile.
+
+Gezeigt wird jetzt, was daraus folgt: **je Staffel und Folge genau ein
+Eintrag**, mit dem neuesten Zeitpunkt, dem höchsten Fortschritt und dem
+Abschluss, falls diese Folge zu Ende lief. Staffel und Folge kommen dabei
+ausschließlich aus der Adresse des Ereignisses selbst — nie aus dem Zeiger des
+Eintrags, der längst woanders steht.
+
+**Die vier Abschlüsse.** Ein Titel galt als durch, sobald die laufende Folge die
+letzte war, die der Anbieter gerade hatte. Bei einer wöchentlich erscheinenden
+Serie ist das keine feste Grenze: erreicht nach Folge 3, dann nach Folge 6, dann
+zweimal nach Folge 8. Das waren keine vier Serienabschlüsse, sondern vier
+konkrete Folgenabschlüsse und ein neu berechneter Zustand.
+
+Der Zähler ist deshalb weg, ersatzlos. Aus diesen Daten lässt sich ein echtes
+Wiederschauen nicht belegen, und eine Zahl, die man nicht belegen kann, gehört
+nicht auf den Schirm. Ein Abschluss hängt jetzt immer an einer konkreten Staffel
+und Folge; nackte „Abgeschlossen"-Zeilen entstehen für Serien gar nicht mehr.
+
+Nebenbefund aus derselben Ecke: die **letzte Folge einer Serie** wurde nie als
+abgeschlossene Folge vermerkt. Den Eintrag legt nur der Schritt auf eine nächste
+Folge an, und den gibt es am Serienende nicht mehr. Bei BLACK TORCH standen
+deshalb Folge 2 bis 7 in der Ablage — und Folge 8, die gemeinte, nicht.
+
+**„Auf aktuellem Stand"** ist kein Ereignis, das man ablegen könnte. Es hängt
+daran, was der Anbieter gerade hat und was AniList beziehungsweise TMDB über die
+Serie sagen — und beides wusste ELFIX bisher nicht. Laufzustand, Folgenzahl und
+nächste Folge kommen jetzt mit. Ein endgültiger Abschluss wird nie behauptet,
+solange er nicht belegt ist: eine bekannte nächste Folge schlägt jeden
+Statuseintrag, und „beim Anbieter kommt gerade nichts mehr" ist kein Beleg,
+sondern der Normalzustand zwischen zwei Folgen. Fehlt die Auskunft ganz, steht
+dort „Auf aktuellem Stand" oder gar nichts — nie ein Abschluss.
+
+**Der Raum.** Der Fortschritt einer Runde landet im Eintrag, aber nie im
+persönlichen Verlauf. Wer bis Folge 8 dabei war, während der Raum bis Folge 10
+weiterschaute, hat Folge 8 im Verlauf und nicht Folge 10. War man dabei, steht
+der Raum bei der Folge.
+
+Der Kasten ist derselbe wie bisher, nur gegliedert: Staffeln als Überschrift,
+die beim Scrollen oben stehen bleibt, darunter je Folge eine Zeile mit „Folge 8
+· Abgeschlossen" oder „Folge 9 · 12:41 von 24:10". „An X Tagen geschaut" bleibt
+und zählt eindeutige Kalendertage mit tatsächlicher Wiedergabe.
+
+Migriert wird nichts und gelöscht wird nichts. Gerechnet wird bei jeder Anzeige
+neu, aus den unveränderten Rohdaten.
+
 ## 1.53.0 — 27. August 2026
 
 Ein dunkler Punkt klebte im Video, und der Knopf daneben ging nie ganz weg.
