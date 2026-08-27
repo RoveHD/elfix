@@ -275,10 +275,22 @@ final class Spielerleiste {
      */
     static Schritt naechsterSchritt(boolean fokusDrauf, boolean zaehlt, boolean playerLeiste,
                                     Stufe stufe) {
-        if (fokusDrauf || zaehlt) return Schritt.WARTEN;
+        if (zaehlt) return Schritt.WARTEN;
         if (playerLeiste) return Schritt.WARTEN;
         if (stufe == Stufe.VOLL) return Schritt.DIMMEN;
-        if (stufe == Stufe.GEDIMMT) return Schritt.VERSCHWINDEN;
+        // Der letzte Schritt nimmt die Ansicht wirklich weg. Haelt sie den
+        // Fokus, waere das der Fernbedienung der Boden unter den Fuessen -
+        // also bleibt sie stehen, nur zurueckgetreten.
+        //
+        // Zuruecktreten darf sie trotzdem, und genau daran lag der gemeldete
+        // Fehler. Der Fokus stand hier weiter oben und hielt *jeden* Schritt
+        // auf; auf dem Fernseher heisst das: fuer immer. Nachgestellt am
+        // 2026-08-28 im TV-Emulator an einer echten Folge - nach einem Druck
+        // auf das Steuerkreuz sass der Fokus auf "Autoplay: An", und der
+        // Kasten stand von da an bei voller Deckkraft ueber dem Video, bis
+        // wieder jemand eine Taste drueckte. Ohne Tastendruck also bis zum
+        // Ende der Folge.
+        if (stufe == Stufe.GEDIMMT) return fokusDrauf ? Schritt.WARTEN : Schritt.VERSCHWINDEN;
         return Schritt.WARTEN;
     }
 

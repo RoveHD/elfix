@@ -154,18 +154,36 @@ public class SpielerleisteTest {
             Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.GEDIMMT));
     }
 
-    /**
-     * Zwei Gruende halten den Takt ausserdem auf - beide unveraendert.
-     *
-     * <p>Der Fokus, weil eine Leiste, die unter der Fernbedienung verschwindet,
-     * ihr den Platz nimmt. Und ein laufender Zaehler, weil eine Ansage, die
-     * sich wegduckt, keine ist.
-     */
+    /** Ein laufender Zaehler haelt jeden Schritt auf - eine Ansage duckt sich nicht weg. */
     @Test
-    public void fokusUndZaehlerHaltenDenTaktAuf() {
-        assertEquals(Spielerleiste.Schritt.WARTEN,
-            Spielerleiste.naechsterSchritt(true, false, false, Spielerleiste.Stufe.VOLL));
+    public void derZaehlerHaeltDenTaktAuf() {
         assertEquals(Spielerleiste.Schritt.WARTEN,
             Spielerleiste.naechsterSchritt(false, true, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, true, false, Spielerleiste.Stufe.GEDIMMT));
+    }
+
+    /**
+     * Der Fokus haelt nur den letzten Schritt auf, nicht jeden.
+     *
+     * <p>Der zweite Teil der Meldung vom Fernseher, und im Emulator an einer
+     * echten Folge nachgestellt: nach einem Druck auf das Steuerkreuz sass der
+     * Fokus auf dem Autoplay-Schalter im Vollbild. Der Fokus hielt bis hierher
+     * *jeden* Schritt auf - der Kasten stand damit bei voller Deckkraft ueber
+     * dem Video, bis wieder jemand eine Taste drueckte. Auf einem Fernseher, wo
+     * man beim Schauen nichts drueckt, heisst das: bis zum Ende der Folge.
+     *
+     * <p>Zuruecktreten darf er also auch mit Fokus. Nur ganz verschwinden nicht -
+     * das naehme der Fernbedienung den Platz, an dem sie steht.
+     */
+    @Test
+    public void derFokusHaeltNurDenLetztenSchrittAuf() {
+        assertEquals(Spielerleiste.Schritt.DIMMEN,
+            Spielerleiste.naechsterSchritt(true, false, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(true, false, false, Spielerleiste.Stufe.GEDIMMT));
+        // Ohne Fokus geht sie den Weg zu Ende.
+        assertEquals(Spielerleiste.Schritt.VERSCHWINDEN,
+            Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.GEDIMMT));
     }
 }
