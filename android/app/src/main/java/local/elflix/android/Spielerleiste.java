@@ -248,7 +248,18 @@ final class Spielerleiste {
             }
             // Sagt der Player selbst, dass seine Bedienleiste steht, bleibt
             // auch die Leiste stehen - dann ist ohnehin gerade etwas zu sehen.
-            if (steuerungGemeldet && gemeldetAn) return;
+            //
+            // Aber nur aufgeschoben, nicht aufgehoben. Hier stand ein
+            // {@code return} ohne Fortsetzung, und das war eine Sackgasse: von
+            // da an lief kein Takt mehr, und die Leiste kam nur noch durch eine
+            // Beruehrung oder eine Meldung des Players zurueck in den Ablauf.
+            // Wer auf dem Fernseher zuschaut, tut beides nicht - dort blieb sie
+            // deshalb bis zum Ende der Folge stehen. Gemeldet als "die Leiste
+            // blendet sich nicht mehr aus".
+            if (steuerungGemeldet && gemeldetAn) {
+                haupt.postDelayed(this, RUHE_MS);
+                return;
+            }
             if (stufe == Stufe.VOLL) {
                 stufe = Stufe.GEDIMMT;
                 // Nur zurueckgetreten, noch nicht weg: der zweite Schritt

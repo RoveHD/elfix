@@ -126,6 +126,31 @@ public class MainActivity extends Activity {
     private ScrollView seitenScroll;
     /** Wie die Liste beim letzten Neuzeichnen aussah - siehe {@link #seitenbild}. */
     private String letztesSeitenbild = "";
+    /**
+     * Der Sammler fuer Neuzeichnungen.
+     *
+     * <p><b>Warum gebuendelt wird.</b> Gemessen am 2026-08-28 auf dem Handy-
+     * Emulator, erste siebzehn Sekunden nach dem Start: <em>acht komplette
+     * Neuaufbauten der Startseite</em>, fuenf davon in 3,4 Sekunden. Sie kamen
+     * nicht aus einer Schleife, sondern aus fuenf Vorschlagsreihen, dem
+     * Kalender und der Watchparty-Liste - jede meldet fuer sich, sobald sie
+     * fertig ist, und jede Meldung war eine ganze Seite. Wer in diesen
+     * Sekunden hinsieht, sieht die Seite fuenfmal zusammen- und aufklappen.
+     *
+     * <p>Zusammengefasst wird nur die Anforderung, nicht die Auskunft: was in
+     * einem Sammelfenster gemeldet wird, ergibt genau ein Zeichnen mit dem
+     * Stand am Ende des Fensters. Kein Melder verliert dabei etwas.
+     */
+    private final Handler zeichenSammler = new Handler(Looper.getMainLooper());
+    /**
+     * Wie lange gesammelt wird.
+     *
+     * <p>Kurz genug, dass eine einzelne Aenderung - ein Handgriff im
+     * Kachelmenue - sofort aussieht, und lang genug, dass die Reihen eines
+     * Starts in ein Fenster fallen.
+     */
+    private static final long SAMMELN_MS = 180L;
+    private boolean zeichnenAngemeldet;
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
@@ -369,6 +394,12 @@ public class MainActivity extends Activity {
     private static final int ENTDECKUNG_STAPEL = 30;
     private List<Favorite> heroEintraege = new ArrayList<>();
     private int heroStelle;
+    /** Wie die Punktereihe zuletzt aussah - "anzahl:stelle". */
+    private String heroPunkteStand = "";
+    /** Welche Abschnitte auf dieser Seite schon einmal dastanden. */
+    private final java.util.Set<String> gezeigteAbschnitte = new java.util.HashSet<>();
+    /** Zu welcher Seite die Buchfuehrung darueber gehoert. */
+    private String abschnitteSeite = "";
     /**
      * Ob gerade ein Bedienelement des Titelhintergrunds den Fokus hat.
      *
@@ -448,6 +479,8 @@ public class MainActivity extends Activity {
     private final List<LiveKachel> liveKacheln = new ArrayList<>();
     /** Welche Titel zuletzt in den Raeumen standen - siehe {@link #watchpartyGeaendert()}. */
     private String watchpartyEintragsStand = "";
+    /** Wie die Watchparty-Seite zuletzt aussah - siehe {@link #watchpartyBild}. */
+    private String watchpartyBildStand = "";
     /**
      * Woher die offene Anbieterseite geoeffnet wurde.
      *
@@ -727,7 +760,10 @@ public class MainActivity extends Activity {
             @Override
             public void anzeigeAuffrischen() {
                 liveStreifenAuffrischen();
-                if ("watchparty".equals(currentScreen)) zeigeWatchparty();
+                // Ueber denselben Vergleich wie jede andere Meldung der Runde.
+                // Der Streifen darueber zieht ohnehin an Ort nach; diese Seite
+                // gehoert nur neu gebaut, wenn sie danach anders aussaehe.
+                watchpartyGeaendert();
             }
 
             @Override
@@ -1539,6 +1575,7 @@ public class MainActivity extends Activity {
      */
     void showHome() {
         currentScreen = "home";
+        abschnitteFuer("home");
         if (activeProvider != null) {
             // Hier schaut niemand mehr zu: sofort aus der Runde abmelden, statt
             // still zu werden. Sonst steht dieses Geraet bei den anderen noch
@@ -1675,6 +1712,9 @@ public class MainActivity extends Activity {
         // Die Plaetze werden auch dann angelegt, wenn der Titelhintergrund
         // abgeschaltet ist: der Wechseltakt zeichnet sie fuer sich neu und
         // traefe sonst auf null.
+        // Eine neue Seite bringt einen neuen Platz - was ueber den alten
+        // gemerkt war, gilt darin nicht mehr.
+        heroPunkteStand = "";
         heroPlatz = new FrameLayout(this);
         heroPlatz.setClipChildren(false);
         heroPlatz.setClipToPadding(false);
@@ -2134,76 +2174,105 @@ public class MainActivity extends Activity {
      */
     private void tvHeroZeichnen() {
         if (heroPlatz == null) return;
-        heroPlatz.removeAllViews();
         Favorite eintrag = heroEintraege.isEmpty() ? null
             : heroEintraege.get(Math.min(heroStelle, heroEintraege.size() - 1));
 
-        View[] knoepfe = new View[2];
-        View kasten;
+        String augenbraue;
+        String titel;
+        String unterzeile;
+        String bildUrl;
+        int prozent;
+        String aufruf;
+        Runnable beiAufruf;
+        String zweitText;
+        Runnable beiZweit;
         if (eintrag != null) {
-            String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
-            if (titel.isEmpty()) titel = "Titel";
-            String unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
+            String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            augenbraue = "Fortsetzen";
+            titel = name.isEmpty() ? "Titel" : name;
+            unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
                     ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText(),
                 eintrag.providerName(), eintrag.standText());
-            kasten = TvViews.hero(this, "Fortsetzen", titel, unterzeile, eintrag.bild(),
-                eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent(),
-                "Weiter schauen", () -> openFavorite(eintrag),
-                "Meine Liste", () -> zeigeBibliothek(Bibliothek.WEITERSCHAUEN),
-                knoepfe, this::heroFokusGeaendert);
+            bildUrl = eintrag.bild();
+            prozent = eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent();
+            aufruf = "Weiter schauen";
+            beiAufruf = () -> openFavorite(eintrag);
+            zweitText = "Meine Liste";
+            beiZweit = () -> zeigeBibliothek(Bibliothek.WEITERSCHAUEN);
         } else if (!providers.isEmpty()) {
             Provider erster = activeProvider != null ? activeProvider : providers.get(0);
-            kasten = TvViews.hero(this, "ELFIX", "Was möchtest du ansehen?",
-                "Wähle einen Anbieter oder durchsuche alle auf einmal.", "", 0,
-                erster.name + " öffnen",
-                () -> openProvider(erster, erster.lastUrl.isEmpty() ? erster.startUrl : erster.lastUrl),
-                "Suchen", () -> showGlobalSearch(""),
-                knoepfe, this::heroFokusGeaendert);
+            augenbraue = "ELFIX";
+            titel = "Was möchtest du ansehen?";
+            unterzeile = "Wähle einen Anbieter oder durchsuche alle auf einmal.";
+            bildUrl = "";
+            prozent = 0;
+            aufruf = erster.name + " öffnen";
+            beiAufruf = () ->
+                openProvider(erster, erster.lastUrl.isEmpty() ? erster.startUrl : erster.lastUrl);
+            zweitText = "Suchen";
+            beiZweit = () -> showGlobalSearch("");
         } else {
-            kasten = TvViews.hero(this, "ELFIX", "Noch keine Anbieter",
-                "Ohne Anbieter gibt es nichts zu zeigen.", "", 0,
-                "Einstellungen öffnen", this::showSettings, null, null,
-                knoepfe, this::heroFokusGeaendert);
+            augenbraue = "ELFIX";
+            titel = "Noch keine Anbieter";
+            unterzeile = "Ohne Anbieter gibt es nichts zu zeigen.";
+            bildUrl = "";
+            prozent = 0;
+            aufruf = "Einstellungen öffnen";
+            beiAufruf = this::showSettings;
+            zweitText = null;
+            beiZweit = null;
+        }
+
+        View[] knoepfe = new View[2];
+        // Umschreiben statt neu bauen. Auf dem Fernseher haengt daran der Fokus:
+        // die beiden Knoepfe bleiben dieselben Ansichten, und das Steuerkreuz
+        // steht nach dem Wechsel dort, wo es vorher stand.
+        View kasten = heroPlatz.getChildCount() > 0 ? heroPlatz.getChildAt(0) : null;
+        boolean umgeschrieben = kasten != null && TvViews.heroAktualisieren(kasten,
+            augenbraue, titel, unterzeile, bildUrl, prozent, aufruf, beiAufruf,
+            zweitText, beiZweit, knoepfe);
+        if (!umgeschrieben) {
+            heroPlatz.removeAllViews();
+            kasten = TvViews.hero(this, augenbraue, titel, unterzeile, bildUrl, prozent,
+                aufruf, beiAufruf, zweitText, beiZweit, knoepfe, this::heroFokusGeaendert);
+            heroPlatz.addView(kasten, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
         if (knoepfe[0] != null) knoepfe[0].setTag("tv:hero:0");
         if (knoepfe[1] != null) knoepfe[1].setTag("tv:hero:1");
         kasten.setMinimumHeight(dp(TvViews.heroHoeheDp(this)));
-        heroPlatz.addView(kasten, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         if (heroPunkte == null) return;
-        heroPunkte.removeAllViews();
         heroPunkte.setVisibility(heroEintraege.size() > 1 ? View.VISIBLE : View.GONE);
         if (heroEintraege.size() > 1) {
-            heroPunkte.addView(TvViews.heroPunkte(this, heroEintraege.size(), heroStelle,
-                stelle -> {
-                    if (stelle == heroStelle) return;
-                    heroStelle = stelle;
-                    // Nur den Kasten neu zeichnen und nicht die Seite: sonst
-                    // verloere der Punkt, auf dem der Fokus gerade steht,
-                    // seinen Platz - und mit ihm den Fokus.
-                    tvHeroNurBildNeu();
-                },
-                this::heroFokusGeaendert));
+            String bild = heroEintraege.size() + ":" + heroStelle;
+            if (!bild.equals(heroPunkteStand)) {
+                heroPunkteStand = bild;
+                boolean warHier = heroPunkte.findFocus() != null;
+                heroPunkte.removeAllViews();
+                heroPunkte.addView(TvViews.heroPunkte(this, heroEintraege.size(), heroStelle,
+                    stelle -> {
+                        if (stelle == heroStelle) return;
+                        heroStelle = stelle;
+                        heroZeichnen();
+                        heroWechselPlanen();
+                    },
+                    this::heroFokusGeaendert));
+                // Die Punktereihe muss beim Blaettern doch neu entstehen - der
+                // gefuellte Punkt wandert. Dann gehoert der Fokus zurueck auf
+                // den, der jetzt gilt, sonst faellt er an den Anfang der Seite.
+                if (warHier) {
+                    View reihe = heroPunkte.getChildAt(0);
+                    if (reihe instanceof ViewGroup) {
+                        View punkt = ((ViewGroup) reihe).getChildAt(heroStelle);
+                        if (punkt != null) punkt.requestFocus();
+                    }
+                }
+            }
+        } else {
+            heroPunkteStand = "";
+            heroPunkte.removeAllViews();
         }
-    }
-
-    /**
-     * Nur den Kasten des Titelhintergrunds erneuern, die Punkte stehenlassen.
-     *
-     * <p>Der Fokus steht beim Blaettern auf einem der Punkte. Wuerde die Reihe
-     * mit neu gebaut, verschwaende die Ansicht, die ihn haelt, und der Fokus
-     * fiele auf den Anfang der Seite zurueck - bei jedem Schritt nach rechts.
-     */
-    private void tvHeroNurBildNeu() {
-        if (heroPlatz == null || heroEintraege.isEmpty()) return;
-        boolean warHier = heroPunkte != null && heroPunkte.findFocus() != null;
-        tvHeroZeichnen();
-        if (!warHier || heroPunkte == null || heroPunkte.getChildCount() == 0) return;
-        View reihe = heroPunkte.getChildAt(0);
-        if (!(reihe instanceof ViewGroup)) return;
-        View punkt = ((ViewGroup) reihe).getChildAt(heroStelle);
-        if (punkt != null) punkt.requestFocus();
     }
 
     /**
@@ -2887,6 +2956,9 @@ public class MainActivity extends Activity {
         // Das Titelbild laesst sich abschalten - wie am Rechner. Die Plaetze
         // werden trotzdem angelegt: der Wechseltakt zeichnet sie fuer sich neu
         // und traefe sonst auf null.
+        // Eine neue Seite bringt einen neuen Platz - was ueber den alten
+        // gemerkt war, gilt darin nicht mehr.
+        heroPunkteStand = "";
         heroPlatz = new FrameLayout(this);
         heroPunkte = new LinearLayout(this);
         heroPunkte.setOrientation(LinearLayout.HORIZONTAL);
@@ -3075,7 +3147,8 @@ public class MainActivity extends Activity {
         for (Kalender.Eintrag eintrag : ab.subList(0, Math.min(12, ab.size()))) {
             karten.add(kalenderKarte(eintrag, breite));
         }
-        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+        reiheAnhaengen(page, "kalender", MobileViews.reihe(this, karten, breite),
+            MobileViews.ITEM_GAP);
     }
 
     private View kalenderKarte(Kalender.Eintrag eintrag, int breite) {
@@ -3109,6 +3182,7 @@ public class MainActivity extends Activity {
      */
     void zeigeKalender() {
         currentScreen = "kalender";
+        abschnitteFuer("kalender");
         activeProvider = null;
         content.removeAllViews();
         updateBottomNav();
@@ -3223,6 +3297,7 @@ public class MainActivity extends Activity {
      */
     private void zeigeRueckblick(String zeitraum) {
         currentScreen = "rueckblick";
+        abschnitteFuer("rueckblick");
         activeProvider = null;
         rueckblickZeitraum = zeitraum == null ? "alles" : zeitraum;
         content.removeAllViews();
@@ -3286,6 +3361,7 @@ public class MainActivity extends Activity {
      */
     private void zeigeWrapped(int jahr) {
         currentScreen = "wrapped";
+        abschnitteFuer("wrapped");
         activeProvider = null;
         wrappedJahr = jahr;
         content.removeAllViews();
@@ -3407,62 +3483,109 @@ public class MainActivity extends Activity {
 
     private void mobileHeroZeichnen() {
         if (heroPlatz == null) return;
-        heroPlatz.removeAllViews();
         Favorite eintrag = heroEintraege.isEmpty() ? null
             : heroEintraege.get(Math.min(heroStelle, heroEintraege.size() - 1));
 
-        View kasten;
+        String augenbraue;
+        String titel;
+        String unterzeile;
+        String bildUrl;
+        int prozent;
+        String aufruf;
+        Runnable beiAufruf;
+        String zweitText;
+        Runnable beiZweit;
         if (eintrag != null) {
-            String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
-            if (titel.isEmpty()) titel = "Titel";
-            String unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
+            String name = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+            augenbraue = "Fortsetzen";
+            titel = name.isEmpty() ? "Titel" : name;
+            unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
                     ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText(),
                 eintrag.providerName(), eintrag.standText());
-            kasten = MobileViews.hero(this, "Fortsetzen", titel, unterzeile, eintrag.bild(),
-                eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent(),
-                "Weiter schauen", () -> openFavorite(eintrag),
-                // Am Rechner steht hier "Details", und der Knopf tut dasselbe
-                // wie der daneben. Zwei gleiche Knoepfe nebeneinander sind auf
-                // einem Telefon verschenkte Daumenbreite - dieser fuehrt
-                // deshalb dorthin, wo alles Angefangene steht.
-                "Meine Liste", () -> zeigeBibliothek(Bibliothek.WEITERSCHAUEN));
+            bildUrl = eintrag.bild();
+            prozent = eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent();
+            aufruf = "Weiter schauen";
+            beiAufruf = () -> openFavorite(eintrag);
+            // Am Rechner steht hier "Details", und der Knopf tut dasselbe wie
+            // der daneben. Zwei gleiche Knoepfe nebeneinander sind auf einem
+            // Telefon verschenkte Daumenbreite - dieser fuehrt deshalb dorthin,
+            // wo alles Angefangene steht.
+            zweitText = "Meine Liste";
+            beiZweit = () -> zeigeBibliothek(Bibliothek.WEITERSCHAUEN);
         } else if (!providers.isEmpty()) {
             Provider erster = activeProvider != null ? activeProvider : providers.get(0);
-            kasten = MobileViews.hero(this, "ELFIX", "Was möchtest du ansehen?",
-                "Wähle einen Anbieter oder durchsuche alle auf einmal.", "", 0,
-                erster.name + " öffnen",
-                () -> openProvider(erster, erster.lastUrl.isEmpty() ? erster.startUrl : erster.lastUrl),
-                "Suchen", () -> showGlobalSearch(""));
+            augenbraue = "ELFIX";
+            titel = "Was möchtest du ansehen?";
+            unterzeile = "Wähle einen Anbieter oder durchsuche alle auf einmal.";
+            bildUrl = "";
+            prozent = 0;
+            aufruf = erster.name + " öffnen";
+            beiAufruf = () ->
+                openProvider(erster, erster.lastUrl.isEmpty() ? erster.startUrl : erster.lastUrl);
+            zweitText = "Suchen";
+            beiZweit = () -> showGlobalSearch("");
         } else {
-            kasten = MobileViews.hero(this, "ELFIX", "Noch keine Anbieter",
-                "Ohne Anbieter gibt es nichts zu zeigen.", "", 0,
-                "Einstellungen öffnen", this::showSettings, null, null);
+            augenbraue = "ELFIX";
+            titel = "Noch keine Anbieter";
+            unterzeile = "Ohne Anbieter gibt es nichts zu zeigen.";
+            bildUrl = "";
+            prozent = 0;
+            aufruf = "Einstellungen öffnen";
+            beiAufruf = this::showSettings;
+            zweitText = null;
+            beiZweit = null;
         }
-        // Mindesthoehe statt fester Hoehe, und nur wo es ein Bild zu zeigen
-        // gibt. Der Textblock sitzt unten im Kasten; braucht er einmal mehr
-        // Platz - ein zweizeiliger Titel, eine lange Zeile mit Folge, Anbieter
-        // und Stand -, waechst der Kasten mit, statt oben abzuschneiden.
+
+        // Steht schon ein Kasten da, wird er umgeschrieben statt ersetzt. Das
+        // ist der ganze Unterschied zwischen einem Wechsel, den man liest, und
+        // einem, den man sieht: das Bild bleibt haengen, solange seine Adresse
+        // dieselbe ist, und die Schrift wechselt an Ort.
+        View kasten = heroPlatz.getChildCount() > 0 ? heroPlatz.getChildAt(0) : null;
+        boolean umgeschrieben = kasten != null && MobileViews.heroAktualisieren(kasten,
+            augenbraue, titel, unterzeile, bildUrl, prozent, aufruf, beiAufruf,
+            zweitText, beiZweit);
+        if (!umgeschrieben) {
+            heroPlatz.removeAllViews();
+            kasten = MobileViews.hero(this, augenbraue, titel, unterzeile, bildUrl, prozent,
+                aufruf, beiAufruf, zweitText, beiZweit);
+            heroPlatz.addView(kasten, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        // Mindesthoehe statt fester Hoehe. Der Textblock sitzt unten im Kasten;
+        // braucht er einmal mehr Platz - ein zweizeiliger Titel, eine lange
+        // Zeile mit Folge, Anbieter und Stand -, waechst der Kasten mit, statt
+        // oben abzuschneiden.
         //
-        // Ohne Eintrag gibt es kein Bild, und dann waere die Mindesthoehe
-        // nichts als eine leere Flaeche ueber der Schrift: beim ersten Start
-        // stand ein Drittel des Bildschirms leer, bevor ueberhaupt etwas kam.
-        if (eintrag != null) kasten.setMinimumHeight(dp(heroHoeheDp()));
-        heroPlatz.addView(kasten, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Sie steht jetzt immer, nicht nur wo ein Eintrag da ist. Vorher sprang
+        // beim ersten Start die halbe Seite nach unten, sobald der erste
+        // Eintrag aus der Ablage kam: der Kasten war bis dahin schrifthoch und
+        // wurde dann ein Drittel des Bildschirms hoch. Ein reservierter Platz,
+        // der einen Augenblick leer bleibt, ist besser als ein Sprung.
+        kasten.setMinimumHeight(dp(heroHoeheDp()));
 
         if (heroPunkte == null) return;
-        heroPunkte.removeAllViews();
         heroPunkte.setVisibility(heroEintraege.size() > 1 ? View.VISIBLE : View.GONE);
         if (heroEintraege.size() > 1) {
-            heroPunkte.addView(MobileViews.heroPunkte(this, heroEintraege.size(), heroStelle,
-                stelle -> {
-                    heroStelle = stelle;
-                    heroZeichnen();
-                    // Von Hand gewaehlt heisst: hier ist gerade Aufmerksamkeit.
-                    // Die Uhr faengt von vorn an, damit nicht eine Sekunde
-                    // spaeter weitergedreht wird.
-                    heroWechselPlanen();
-                }));
+            // Auch hier nur, wenn sich wirklich etwas geaendert hat: die Punkte
+            // sind Bedienelemente, und eines, das unter dem Finger neu entsteht,
+            // verschluckt den Tipp.
+            String bild = heroEintraege.size() + ":" + heroStelle;
+            if (!bild.equals(heroPunkteStand)) {
+                heroPunkteStand = bild;
+                heroPunkte.removeAllViews();
+                heroPunkte.addView(MobileViews.heroPunkte(this, heroEintraege.size(), heroStelle,
+                    stelle -> {
+                        heroStelle = stelle;
+                        heroZeichnen();
+                        // Von Hand gewaehlt heisst: hier ist gerade
+                        // Aufmerksamkeit. Die Uhr faengt von vorn an, damit nicht
+                        // eine Sekunde spaeter weitergedreht wird.
+                        heroWechselPlanen();
+                    }));
+            }
+        } else {
+            heroPunkteStand = "";
+            heroPunkte.removeAllViews();
         }
     }
 
@@ -3544,6 +3667,38 @@ public class MainActivity extends Activity {
      * laufen. Sonst endete die letzte sichtbare Kachel an einer Kante, und
      * nichts deutete darauf hin, dass dahinter noch etwas kommt.
      */
+    /**
+     * Eine Reihe anhaengen und sie einblenden, wenn sie neu ist.
+     *
+     * <p>"Neu" heisst: unter diesem Namen stand auf diesem Bildschirm noch
+     * keine. Eine Vorschlagsreihe, die nach acht Sekunden fertig wird, kommt
+     * damit sanft dazu - eine Reihe, die es schon gab und die nur wegen eines
+     * geloeschten Eintrags neu gebaut wurde, blitzt <em>nicht</em> noch einmal
+     * auf. Genau daran haengt der Unterschied zwischen einem Uebergang und
+     * einem Flackern.
+     */
+    private void reiheAnhaengen(LinearLayout page, String marke, View reihe, int obenDp) {
+        reiheAnhaengen(page, reihe, obenDp);
+        abschnittEinblenden(marke, reihe);
+    }
+
+    /** Ob dieser Abschnitt zum ersten Mal dasteht - dann blendet er ein. */
+    private void abschnittEinblenden(String marke, View ansicht) {
+        if (marke == null || marke.isEmpty() || ansicht == null) return;
+        if (!gezeigteAbschnitte.add(marke)) return;
+        Bewegung.einblenden(ansicht);
+    }
+
+    /**
+     * Beim Wechsel auf einen anderen Bildschirm faengt die Buchfuehrung ueber
+     * die gezeigten Abschnitte von vorn an - dort stehen andere.
+     */
+    private void abschnitteFuer(String seite) {
+        if (seite.equals(abschnitteSeite)) return;
+        abschnitteSeite = seite;
+        gezeigteAbschnitte.clear();
+    }
+
     private void reiheAnhaengen(LinearLayout page, View reihe, int obenDp) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -3602,7 +3757,8 @@ public class MainActivity extends Activity {
             }
             karten.add(karte);
         }
-        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+        reiheAnhaengen(page, "kachel:" + titel, MobileViews.reihe(this, karten, breite),
+            MobileViews.ITEM_GAP);
         return true;
     }
 
@@ -3664,7 +3820,8 @@ public class MainActivity extends Activity {
                 () -> openFavorite(eintrag),
                 anker -> eintragsMenue(anker, eintrag, Bibliothek.WATCHLIST)));
         }
-        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+        reiheAnhaengen(page, "neuefolgen", MobileViews.reihe(this, karten, breite),
+            MobileViews.ITEM_GAP);
         return true;
     }
 
@@ -3770,7 +3927,8 @@ public class MainActivity extends Activity {
             return;
         }
         if (eintraege.isEmpty()) {
-            reiheAnhaengen(page, MobileViews.reihenSkelett(this, breite, 5), MobileViews.ITEM_GAP);
+            reiheAnhaengen(page, "vorschlag:" + schluessel + ":skelett",
+                MobileViews.reihenSkelett(this, breite, 5), MobileViews.ITEM_GAP);
             return;
         }
         // Ein Stand von der Platte steht mit seinem Alter da. Ihn wortlos zu
@@ -3788,7 +3946,8 @@ public class MainActivity extends Activity {
 
         ArrayList<View> karten = new ArrayList<>();
         for (JSONObject item : eintraege) karten.add(vorschlagsKarte(item, breite, null));
-        reiheAnhaengen(page, MobileViews.reihe(this, karten, breite), MobileViews.ITEM_GAP);
+        reiheAnhaengen(page, "vorschlag:" + schluessel, MobileViews.reihe(this, karten, breite),
+            MobileViews.ITEM_GAP);
     }
 
     /** Eine einzelne Vorschlagskarte - in der Reihe wie im Raster dieselbe. */
@@ -3959,6 +4118,7 @@ public class MainActivity extends Activity {
         if (!art.equals(entdeckungArt)) tvFokusJeSeite.remove("entdeckung");
         entdeckungArt = art;
         currentScreen = "entdeckung";
+        abschnitteFuer("entdeckung");
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -4962,6 +5122,11 @@ public class MainActivity extends Activity {
      */
     private void eintragsMenue(View anker, Favorite eintrag, Bibliothek liste) {
         String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
+        // Die Karte, aus der das Menue aufgeht. Sie wird beim Wegnehmen erst
+        // ausgeblendet und zusammengezogen; erst danach aendert sich der
+        // Bestand und die Seite entsteht neu. Vorher verschwand an dieser
+        // Stelle die ganze Seite auf einmal.
+        View karte = karteZu(anker);
         android.widget.PopupMenu menue = new android.widget.PopupMenu(this, anker, Gravity.END);
         java.util.ArrayList<Runnable> aktionen = new java.util.ArrayList<>();
 
@@ -4970,17 +5135,17 @@ public class MainActivity extends Activity {
 
         if (liste == Bibliothek.WEITERSCHAUEN) {
             menue.getMenu().add("Aus Weiterschauen nehmen");
-            aktionen.add(() -> {
+            aktionen.add(() -> nimmtWeg(karte, () -> {
                 bestand.ausWeiterschauenNehmen(eintrag.id());
                 showToast("Aus Weiterschauen genommen");
-            });
+            }));
         }
         if (eintrag.istWatchlist()) {
             menue.getMenu().add("Von der Watchlist nehmen");
-            aktionen.add(() -> {
+            aktionen.add(() -> nimmtWeg(karte, () -> {
                 bestand.watchlistSetzen(eintrag.id(), false);
                 showToast("Von der Watchlist genommen");
-            });
+            }));
         } else if (!eintrag.istAbgeschlossen()) {
             menue.getMenu().add("Auf die Watchlist setzen");
             aktionen.add(() -> {
@@ -4992,10 +5157,10 @@ public class MainActivity extends Activity {
             menue.getMenu().add("Als abgeschlossen markieren");
             aktionen.add(() -> frage("Als abgeschlossen markieren?",
                 titel + " wandert damit in die Mediathek und verlässt die Watchlist.",
-                () -> {
+                () -> nimmtWeg(karte, () -> {
                     bestand.alsAbgeschlossenMarkieren(eintrag.id());
                     showToast("In die Mediathek verschoben");
-                }));
+                })));
         } else {
             menue.getMenu().add("Zurück auf die Watchlist");
             aktionen.add(() -> {
@@ -5007,10 +5172,10 @@ public class MainActivity extends Activity {
         menue.getMenu().add("Löschen");
         aktionen.add(() -> frage("Eintrag löschen?",
             titel + " wird vollständig entfernt - auch der Fortschritt.",
-            () -> {
+            () -> nimmtWeg(karte, () -> {
                 bestand.entfernen(eintrag.id());
                 showToast("Gelöscht");
-            }));
+            })));
 
         menue.setOnMenuItemClickListener(punkt -> {
             for (int i = 0; i < menue.getMenu().size(); i += 1) {
@@ -5022,6 +5187,44 @@ public class MainActivity extends Activity {
             return false;
         });
         menue.show();
+    }
+
+    /**
+     * Die Karte, aus deren Menue heraus gehandelt wird.
+     *
+     * <p>Gesucht wird am Anker aufwaerts nach der Marke, die jede Kachel und
+     * jede Listenzeile traegt. Ueber die Marke und nicht ueber eine feste
+     * Anzahl Ebenen: eine Kachel ist anders aufgebaut als eine Zeile, und der
+     * Fernseher anders als das Telefon.
+     */
+    private View karteZu(View anker) {
+        View lauf = anker;
+        while (lauf != null) {
+            if (Boolean.TRUE.equals(lauf.getTag(R.id.elfix_karte))) return lauf;
+            android.view.ViewParent eltern = lauf.getParent();
+            lauf = eltern instanceof View ? (View) eltern : null;
+        }
+        return null;
+    }
+
+    /**
+     * Etwas wegnehmen - erst sichtbar, dann wirklich.
+     *
+     * <p>Die Reihenfolge ist der ganze Punkt. Der Bestand meldet seine
+     * Aenderung sofort, und die Seite entsteht daraufhin neu; geschaehe beides
+     * zuerst, waere die Karte schon weg, bevor ueberhaupt etwas zu sehen
+     * gewesen waere - genau das abrupte Verschwinden, um das es hier geht.
+     * Also laeuft erst die Kachel aus, und was danach kommt, kommt danach.
+     *
+     * <p>Ohne Animationen auf dem Geraet faellt der Umweg weg: dann geschieht
+     * unveraendert das, was vorher geschah.
+     */
+    private void nimmtWeg(View karte, Runnable tun) {
+        if (karte == null || !Bewegung.an(this)) {
+            tun.run();
+            return;
+        }
+        Bewegung.ausblendenUndZusammenziehen(karte, tun);
     }
 
     /**
@@ -6030,6 +6233,7 @@ public class MainActivity extends Activity {
 
     private void showGlobalSearch(String query) {
         currentScreen = "search";
+        abschnitteFuer("search");
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -6067,6 +6271,11 @@ public class MainActivity extends Activity {
      */
     private void zeigeWatchparty() {
         currentScreen = "watchparty";
+        abschnitteFuer("watchparty");
+        // Die Seite entsteht gerade mit genau diesem Stand. Ihn hier zu setzen
+        // ist der Grund, warum die Meldung, die sie ausgeloest hat, sie nicht
+        // gleich noch einmal baut.
+        watchpartyBildStand = watchpartyBild();
         mitschauPlatz = null;
         mouseMode = false;
         setMouseCursorVisible(false);
@@ -6813,6 +7022,7 @@ public class MainActivity extends Activity {
         }
         offeneListe = liste;
         currentScreen = "favorites";
+        abschnitteFuer("favorites");
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -6888,6 +7098,7 @@ public class MainActivity extends Activity {
 
     private void showSettings() {
         currentScreen = "settings";
+        abschnitteFuer("settings");
         mouseMode = false;
         setMouseCursorVisible(false);
         setChromeCollapsed(false, false);
@@ -6950,6 +7161,7 @@ public class MainActivity extends Activity {
 
     private void openProvider(Provider provider, String url, boolean preserveFavoriteProgress) {
         currentScreen = "provider";
+        abschnitteFuer("provider");
         // A deliberate navigation ends any hoster chain that was still allowed to hop.
         wache.zuruecksetzen();
         // Switching provider while a video is fullscreen would otherwise strand the overlay: the
@@ -7634,14 +7846,26 @@ public class MainActivity extends Activity {
      */
     private String seitenbild() {
         StringBuilder bild = new StringBuilder();
-        for (Favorite eintrag : bestand.weiterschauen()) {
-            bild.append(eintrag.id())
-                .append('#').append(eintrag.season()).append('/').append(eintrag.episode())
-                .append('#').append(eintrag.title())
-                .append('#').append(eintrag.bild())
-                .append(eintrag.wartetAufNaechsteFolge() ? '!' : '.')
-                .append(eintrag.watchpartyRaum())
-                .append('|');
+        // Alle vier Listen, nicht nur "Weiterschauen".
+        //
+        // Hier stand bis hierher nur {@code bestand.weiterschauen()}, und das
+        // war in beide Richtungen falsch. Die Startseite zeigt auch Watchlist
+        // und Mediathek; die Bibliotheksseite zeigt je nach Reiter ausser
+        // Weiterschauen gar nichts davon. Wer einen Titel von der Watchlist
+        // nahm, aendert an "Weiterschauen" nichts - der Vergleich fand also
+        // "gleich", es wurde nicht gezeichnet, und der geloeschte Eintrag
+        // stand weiter da, bis irgendetwas anderes eine Seite erzwang.
+        for (Bibliothek liste : Bibliothek.values()) {
+            bild.append('§').append(liste.ordinal()).append('\n');
+            for (Favorite eintrag : liste.eintraege(bestand)) {
+                bild.append(eintrag.id())
+                    .append('#').append(eintrag.season()).append('/').append(eintrag.episode())
+                    .append('#').append(eintrag.title())
+                    .append('#').append(eintrag.bild())
+                    .append(eintrag.wartetAufNaechsteFolge() ? '!' : '.')
+                    .append(eintrag.watchpartyRaum())
+                    .append('|');
+            }
         }
         return bild.toString();
     }
@@ -7672,15 +7896,14 @@ public class MainActivity extends Activity {
         letztesSeitenbild = bild;
         zeichnetNeu = zeichnetNeu && !gleichesBild;
 
-        if (zeichnetNeu) spur(currentScreen, "", "seite", "neu gezeichnet", "bestand anders");
-
-        int stand = zeichnetNeu && seitenScroll != null ? seitenScroll.getScrollY() : 0;
-        if (zeichnetNeu && "favorites".equals(currentScreen)) showFavorites();
-        else if (zeichnetNeu && "home".equals(currentScreen)) showHome();
-        // Nur wenn wirklich neu gezeichnet wurde. Waehrend einer Folge meldet
-        // die Messung alle paar Sekunden einen Stand; dann steht hier keine
-        // Liste, und `seitenScroll` zeigt auf eine laengst abgehaengte Seite.
-        if (zeichnetNeu) scrollStandHerstellen(stand);
+        if (zeichnetNeu) {
+            spur(currentScreen, "", "seite", "neu gezeichnet", "bestand anders");
+            // Ueber den Sammler und nicht sofort: der Geraeteabgleich spielt
+            // eine Sicherung Eintrag fuer Eintrag ein, und jeder davon meldet
+            // sich hier. Ohne das Sammelfenster waeren das ebenso viele
+            // Seiten - die Scrollstelle uebersteht das, das Auge nicht.
+            seiteSammelnd();
+        }
         updateFavoriteButton();
         // Der eine Punkt, an dem sich am Bestand wirklich etwas geaendert hat.
         // Ihn zu nehmen statt der zwei Dutzend Stellen, die Staende anfassen,
@@ -7699,9 +7922,42 @@ public class MainActivity extends Activity {
      */
     private void empfehlungenGeaendert() {
         if (!"home".equals(currentScreen)) return;
-        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-        showHome();
-        scrollStandHerstellen(stand);
+        seiteSammelnd();
+    }
+
+    /**
+     * Die offene Seite neu zeichnen - aber erst, wenn eine Achtelsekunde lang
+     * niemand mehr etwas gemeldet hat.
+     *
+     * <p>Die Scrollstelle wird dabei nicht vorher gemerkt, sondern erst im
+     * Augenblick des Zeichnens gelesen. Wer waehrend des Sammelfensters
+     * scrollt, soll dort bleiben, wo er dann steht, und nicht dorthin
+     * zurueckspringen, wo er beim ersten Melder war.
+     */
+    private void seiteSammelnd() {
+        if (zeichnenAngemeldet) return;
+        zeichnenAngemeldet = true;
+        zeichenSammler.postDelayed(() -> {
+            zeichnenAngemeldet = false;
+            int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+            switch (currentScreen == null ? "" : currentScreen) {
+                case "home":
+                    showHome();
+                    break;
+                case "favorites":
+                    showFavorites();
+                    break;
+                case "kalender":
+                    zeigeKalender();
+                    break;
+                case "watchparty":
+                    zeigeWatchparty();
+                    break;
+                default:
+                    return;
+            }
+            scrollStandHerstellen(stand);
+        }, SAMMELN_MS);
     }
 
     /**
@@ -7712,16 +7968,8 @@ public class MainActivity extends Activity {
      * gebaut - dort ist die Woche der ganze Inhalt.
      */
     private void kalenderGeaendert() {
-        if ("kalender".equals(currentScreen)) {
-            int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-            zeigeKalender();
-            scrollStandHerstellen(stand);
-            return;
-        }
-        if (!"home".equals(currentScreen)) return;
-        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-        showHome();
-        scrollStandHerstellen(stand);
+        if (!"kalender".equals(currentScreen) && !"home".equals(currentScreen)) return;
+        seiteSammelnd();
     }
 
     /**
@@ -7803,7 +8051,16 @@ public class MainActivity extends Activity {
     /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
     private void watchpartyGeaendert() {
         if ("watchparty".equals(currentScreen)) {
-            zeigeWatchparty();
+            // Nicht bei jeder Meldung. Das Relay schickt eine, sobald irgendwer
+            // seinen Stand meldet - bei zwei Teilnehmern also alle paar
+            // Sekunden -, und bis hierher war jede davon eine ganze neue Seite:
+            // auf dem Fernseher sprang damit im selben Takt der Fokus nach
+            // oben. Der Stand selbst steht ohnehin nicht in dieser Seite,
+            // sondern wird ueber mitschauStandGeaendert() an Ort nachgezogen.
+            String jetzt = watchpartyBild();
+            if (jetzt.equals(watchpartyBildStand)) return;
+            watchpartyBildStand = jetzt;
+            seiteSammelnd();
             return;
         }
         // Die Startseite geht das auch etwas an: erst mit den eingestellten
@@ -7819,9 +8076,52 @@ public class MainActivity extends Activity {
         String jetzt = watchpartyEintragsListe();
         if (jetzt.equals(watchpartyEintragsStand)) return;
         watchpartyEintragsStand = jetzt;
-        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-        showHome();
-        scrollStandHerstellen(stand);
+        seiteSammelnd();
+    }
+
+    /**
+     * Wie die Watchparty-Seite aussaehe - als eine Zeile zum Vergleichen.
+     *
+     * <p>Alles, was die Seite wirklich zeigt: ob eine Leitung steht, welcher
+     * Fehler anliegt, welche Raeume es gibt, wer darin ist und welche Titel
+     * eingestellt sind. Ausdruecklich <em>nicht</em> dabei ist der Stand einer
+     * laufenden Folge - er wechselt jede Sekunde, steht in dieser Seite gar
+     * nicht und wuerde sie sonst jede Sekunde neu bauen.
+     */
+    private String watchpartyBild() {
+        if (watchparty == null) return "";
+        // Aus den Saetzen, die die Seite wirklich hinschreibt, und nicht aus
+        // den Rohfeldern dahinter. Das ist der Unterschied zwischen "hat sich
+        // etwas geaendert" und "sieht es anders aus" - und nur das zweite ist
+        // ein Grund, eine Seite neu zu bauen.
+        StringBuilder bild = new StringBuilder();
+        bild.append(watchparty.istEingeschaltet() ? '1' : '0')
+            .append(watchparty.serverUrl()).append('\n')
+            .append(watchpartyKopfzeile()).append('\n')
+            .append(watchpartyStatustext()).append('\n');
+        JSONArray raeume = watchparty.raeume();
+        for (int i = 0; i < raeume.length(); i += 1) {
+            JSONObject raum = raeume.optJSONObject(i);
+            if (raum == null) continue;
+            String code = raum.optString("room", "");
+            bild.append(code).append('#').append(raumStatus(code)).append('\n');
+        }
+        JSONArray eintraege = watchparty.eintraege();
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag == null) continue;
+            bild.append(eintrag.optString("key", "")).append('#')
+                .append(eintrag.optString("room", "")).append('#')
+                .append(eintrag.optString("title", "")).append('#')
+                .append(eintrag.optString("thumbnail", "")).append('#')
+                .append(eintrag.optString("providerId", "")).append('#')
+                .append(eintrag.optInt("season", 0)).append('/')
+                .append(eintrag.optInt("episode", 0)).append('#')
+                .append(eintrag.optBoolean("joined", false) ? '1' : '0')
+                .append(eintrag.optBoolean("mine", false) ? '1' : '0')
+                .append(eintrag.optBoolean("openable", false) ? '1' : '0').append('\n');
+        }
+        return bild.toString();
     }
 
     /** Welche Titel gerade in welchen Raeumen stehen - als eine Zeile zum Vergleichen. */

@@ -51,12 +51,23 @@ final class MobileViews {
         view.setBackground(idle);
         view.setOnTouchListener((v, event) -> {
             int action = event.getActionMasked();
-            if (action == MotionEvent.ACTION_DOWN) {
-                v.setBackground(pressed);
-                v.animate().scaleX(0.985f).scaleY(0.985f).setDuration(90).start();
-            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                v.setBackground(idle);
-                v.animate().scaleX(1f).scaleY(1f).setDuration(140).start();
+            boolean gedrueckt = action == MotionEvent.ACTION_DOWN;
+            if (!gedrueckt && action != MotionEvent.ACTION_UP
+                && action != MotionEvent.ACTION_CANCEL) {
+                return false;
+            }
+            v.setBackground(gedrueckt ? pressed : idle);
+            float ziel = gedrueckt ? 0.985f : 1f;
+            // Hinunter schneller als herauf: der Druck soll sofort quittiert
+            // sein, das Loslassen darf ausschwingen. Beides ueber
+            // Bewegung.dauer, damit ein Geraet ohne Animationen keine bekommt.
+            long dauer = Bewegung.dauer(v.getContext(), gedrueckt ? 90L : Bewegung.KURZ);
+            if (dauer > 0) {
+                v.animate().scaleX(ziel).scaleY(ziel).setDuration(dauer).start();
+            } else {
+                v.animate().cancel();
+                v.setScaleX(ziel);
+                v.setScaleY(ziel);
             }
             return false;
         });
@@ -367,6 +378,9 @@ final class MobileViews {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setPadding(dp(context, 10), dp(context, 10), dp(context, 12), dp(context, 10));
+        // Damit das Kachelmenue seine eigene Zeile wiederfindet - beim
+        // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
+        card.setTag(R.id.elfix_karte, Boolean.TRUE);
         addPressFeedback(card,
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
@@ -532,6 +546,23 @@ final class MobileViews {
      * @param aufruf    was auf dem grossen Knopf steht
      * @param zweitText Beschriftung des zweiten Knopfs, {@code null} laesst ihn weg
      */
+    /**
+     * Die Marken der Teile, die sich im Titelhintergrund aendern koennen.
+     *
+     * <p>Sie sind der Grund, warum der Wechsel alle fuenfzehn Sekunden keine
+     * neue Karte mehr baut: {@link #heroAktualisieren} findet die Teile daran
+     * wieder und schreibt sie um. Vorher wurde der ganze Kasten
+     * weggeworfen - samt dem {@link android.widget.ImageView}, dessen Bild
+     * damit jedes Mal von vorn anfing.
+     */
+    static final String HERO_BILD = "hero:bild";
+    static final String HERO_AUGENBRAUE = "hero:augenbraue";
+    static final String HERO_TITEL = "hero:titel";
+    static final String HERO_UNTERZEILE = "hero:unterzeile";
+    static final String HERO_BALKEN = "hero:balken";
+    static final String HERO_HAUPTKNOPF = "hero:haupt";
+    static final String HERO_ZWEITKNOPF = "hero:zweit";
+
     static View hero(Context context, String augenbraue, String titel, String unterzeile,
                      String bildUrl, int prozent, String aufruf, Runnable beiAufruf,
                      String zweitText, Runnable beiZweit) {
@@ -545,6 +576,9 @@ final class MobileViews {
         kasten.setClipToOutline(true);
         kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 18, Theme.BORDER, 1));
 
+        // Das erste Kind ist immer das Bild - {@link #heroBild} verlaesst sich
+        // darauf. Eine Marke geht hier nicht: {@link Bilder} benutzt den Tag
+        // des ImageView selbst, um Antworten ihren Auftraegen zuzuordnen.
         ImageView bild = new ImageView(context);
         bild.setScaleType(ImageView.ScaleType.CENTER_CROP);
         kasten.addView(bild, new FrameLayout.LayoutParams(
@@ -561,9 +595,12 @@ final class MobileViews {
         LinearLayout text = new LinearLayout(context);
         text.setOrientation(LinearLayout.VERTICAL);
         text.setPadding(dp(context, 16), dp(context, 18), dp(context, 16), dp(context, 16));
-        text.addView(eyebrow(context, augenbraue));
+        TextView augenbrauenZeile = eyebrow(context, augenbraue);
+        augenbrauenZeile.setTag(HERO_AUGENBRAUE);
+        text.addView(augenbrauenZeile);
 
         TextView ueberschrift = new TextView(context);
+        ueberschrift.setTag(HERO_TITEL);
         ueberschrift.setText(titel);
         ueberschrift.setTextColor(Theme.TEXT_PRIMARY);
         ueberschrift.setTextSize(24);
@@ -573,23 +610,26 @@ final class MobileViews {
         ueberschrift.setPadding(0, dp(context, 4), 0, 0);
         text.addView(ueberschrift);
 
-        if (unterzeile != null && !unterzeile.isEmpty()) {
-            TextView zeile = new TextView(context);
-            zeile.setText(unterzeile);
-            zeile.setTextColor(Theme.TEXT_SECONDARY);
-            zeile.setTextSize(13);
-            zeile.setMaxLines(1);
-            zeile.setEllipsize(TextUtils.TruncateAt.END);
-            zeile.setPadding(0, dp(context, 5), 0, 0);
-            text.addView(zeile);
-        }
+        // Beide Zeilen entstehen immer, auch wenn sie leer bleiben. Das ist der
+        // Unterschied zwischen "kann nachgezogen werden" und "muss neu gebaut
+        // werden": ein Titel ohne Unterzeile und einer mit haetten sonst
+        // verschiedene Kasten, und der Wechsel zwischen ihnen waere wieder ein
+        // Neuaufbau.
+        TextView zeile = new TextView(context);
+        zeile.setTag(HERO_UNTERZEILE);
+        zeile.setTextColor(Theme.TEXT_SECONDARY);
+        zeile.setTextSize(13);
+        zeile.setMaxLines(1);
+        zeile.setEllipsize(TextUtils.TruncateAt.END);
+        zeile.setPadding(0, dp(context, 5), 0, 0);
+        text.addView(zeile);
 
-        if (prozent > 0) {
-            LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            balkenRand.topMargin = dp(context, 12);
-            text.addView(fortschrittsBalken(context, prozent, true), balkenRand);
-        }
+        LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        balkenRand.topMargin = dp(context, 12);
+        View balken = fortschrittsBalken(context, prozent, true);
+        balken.setTag(HERO_BALKEN);
+        text.addView(balken, balkenRand);
 
         LinearLayout knoepfe = new LinearLayout(context);
         knoepfe.setOrientation(LinearLayout.HORIZONTAL);
@@ -597,23 +637,149 @@ final class MobileViews {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         knopfRand.topMargin = dp(context, 14);
         TextView haupt = primaryButton(context, aufruf, beiAufruf);
+        haupt.setTag(HERO_HAUPTKNOPF);
         LinearLayout.LayoutParams hauptParams =
             new LinearLayout.LayoutParams(0, dp(context, TOUCH_TARGET), 1);
         knoepfe.addView(haupt, hauptParams);
-        if (zweitText != null && beiZweit != null) {
-            TextView zweit = secondaryButton(context, zweitText, beiZweit);
-            LinearLayout.LayoutParams zweitParams =
-                new LinearLayout.LayoutParams(0, dp(context, TOUCH_TARGET), 1);
-            zweitParams.leftMargin = dp(context, 10);
-            knoepfe.addView(zweit, zweitParams);
-        }
+        TextView zweit = secondaryButton(context, zweitText == null ? "" : zweitText, beiZweit);
+        zweit.setTag(HERO_ZWEITKNOPF);
+        LinearLayout.LayoutParams zweitParams =
+            new LinearLayout.LayoutParams(0, dp(context, TOUCH_TARGET), 1);
+        zweitParams.leftMargin = dp(context, 10);
+        knoepfe.addView(zweit, zweitParams);
         text.addView(knoepfe, knopfRand);
 
         FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         textParams.gravity = Gravity.BOTTOM;
         kasten.addView(text, textParams);
+        heroTeileSetzen(kasten, augenbraue, titel, unterzeile, prozent,
+            aufruf, beiAufruf, zweitText, beiZweit);
         return kasten;
+    }
+
+    /**
+     * Denselben Kasten auf einen anderen Titel umschreiben.
+     *
+     * <p><b>Warum das der Kern der ganzen Sache ist.</b> Der Titelhintergrund
+     * wechselt alle fuenfzehn Sekunden durch die zuletzt geschauten Titel. Bis
+     * hierher wurde dafuer der ganze Kasten weggeworfen und neu gebaut - und
+     * mit ihm der {@link ImageView}. Das Bild fing damit jedes Mal bei nichts
+     * an: leerer Kasten, dann Bild. Auf einem Telefon im Mobilfunk sah man
+     * genau das, alle fuenfzehn Sekunden, ohne dass sich der Titel je geaendert
+     * haette.
+     *
+     * <p>Jetzt bleiben Kasten, Bild und Schrift stehen; es wird nur
+     * ueberschrieben, was anders ist. Das Bild wechselt ueber
+     * {@link Bilder#laden}, und das laesst ein Bild, dessen Adresse gleich
+     * bleibt, unangetastet.
+     *
+     * @return ob es geklappt hat. Ein {@code false} heisst: dieser Kasten ist
+     *         keiner von hier, und der Aufrufer soll neu bauen.
+     */
+    static boolean heroAktualisieren(View kasten, String augenbraue, String titel,
+                                     String unterzeile, String bildUrl, int prozent,
+                                     String aufruf, Runnable beiAufruf,
+                                     String zweitText, Runnable beiZweit) {
+        ImageView bild = heroBild(kasten);
+        if (bild == null || kasten.findViewWithTag(HERO_TITEL) == null) return false;
+        Bilder.laden(bild, bildUrl, 360, 260, null);
+        heroTeileSetzen(kasten, augenbraue, titel, unterzeile, prozent,
+            aufruf, beiAufruf, zweitText, beiZweit);
+        return true;
+    }
+
+    /** Das Bild eines Titelhintergrunds - immer sein erstes Kind, siehe {@link #hero}. */
+    private static ImageView heroBild(View kasten) {
+        if (!(kasten instanceof ViewGroup)) return null;
+        ViewGroup gruppe = (ViewGroup) kasten;
+        if (gruppe.getChildCount() == 0) return null;
+        View erstes = gruppe.getChildAt(0);
+        return erstes instanceof ImageView ? (ImageView) erstes : null;
+    }
+
+    /**
+     * Augenbraue, Titel, Unterzeile und Balken setzen.
+     *
+     * <p>Paketweit sichtbar, weil {@link TvViews} denselben Aufbau hat und
+     * dieselben Marken benutzt - nur die Knoepfe sind dort andere.
+     */
+    static void heroSchriftSetzen(View kasten, String augenbraue, String titel,
+                                  String unterzeile, int prozent) {
+        textSetzen(kasten.findViewWithTag(HERO_AUGENBRAUE), augenbraue);
+        textSetzen(kasten.findViewWithTag(HERO_TITEL), titel);
+        textSetzen(kasten.findViewWithTag(HERO_UNTERZEILE), unterzeile);
+
+        View balken = kasten.findViewWithTag(HERO_BALKEN);
+        if (balken != null) {
+            balken.setVisibility(prozent > 0 ? View.VISIBLE : View.GONE);
+            if (prozent > 0) balkenSetzen(balken, prozent);
+        }
+    }
+
+    /** Die Schrift und die Knoepfe - aus {@link #hero} und {@link #heroAktualisieren}. */
+    private static void heroTeileSetzen(View kasten, String augenbraue, String titel,
+                                        String unterzeile, int prozent,
+                                        String aufruf, Runnable beiAufruf,
+                                        String zweitText, Runnable beiZweit) {
+        heroSchriftSetzen(kasten, augenbraue, titel, unterzeile, prozent);
+
+        View haupt = kasten.findViewWithTag(HERO_HAUPTKNOPF);
+        if (haupt instanceof TextView) {
+            ((TextView) haupt).setText(aufruf == null ? "" : aufruf);
+            haupt.setOnClickListener(beiAufruf == null ? null : view -> beiAufruf.run());
+            haupt.setVisibility(aufruf == null || aufruf.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        View zweit = kasten.findViewWithTag(HERO_ZWEITKNOPF);
+        if (zweit instanceof TextView) {
+            boolean da = zweitText != null && !zweitText.isEmpty() && beiZweit != null;
+            ((TextView) zweit).setText(da ? zweitText : "");
+            zweit.setOnClickListener(da ? view -> beiZweit.run() : null);
+            zweit.setVisibility(da ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    /** Text setzen und die Zeile ausblenden, wenn keiner da ist. */
+    private static void textSetzen(View ansicht, String text) {
+        if (!(ansicht instanceof TextView)) return;
+        String wert = text == null ? "" : text;
+        // Nur schreiben, wenn es anders ist: {@code setText} mit demselben Text
+        // stoesst trotzdem eine neue Messung an.
+        if (!wert.contentEquals(((TextView) ansicht).getText())) {
+            ((TextView) ansicht).setText(wert);
+        }
+        ansicht.setVisibility(wert.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    /**
+     * Die Breite im Fortschrittsbalken nachziehen - samt der Zahl daneben.
+     *
+     * <p>Ohne Animation, und das mit Absicht: waehrend einer Folge kommt alle
+     * paar Sekunden ein neuer Stand, und ein Balken, der jedes Mal
+     * hinueberwandert, ist genau die Unruhe, um die es hier geht.
+     */
+    private static void balkenSetzen(View reihe, int prozent) {
+        if (!(reihe instanceof ViewGroup)) return;
+        ViewGroup gruppe = (ViewGroup) reihe;
+        int wert = Math.min(100, Math.max(0, prozent));
+        View erstes = gruppe.getChildCount() > 0 ? gruppe.getChildAt(0) : null;
+        if (erstes instanceof FrameLayout) {
+            FrameLayout spur = (FrameLayout) erstes;
+            View balken = spur.getChildCount() > 0 ? spur.getChildAt(0) : null;
+            if (balken != null) {
+                Runnable breite = () -> {
+                    ViewGroup.LayoutParams masse = balken.getLayoutParams();
+                    masse.width = Math.max(dp(spur.getContext(), 4), spur.getWidth() * wert / 100);
+                    balken.setLayoutParams(masse);
+                };
+                if (spur.getWidth() > 0) breite.run();
+                else spur.post(breite);
+            }
+        }
+        for (int i = 1; i < gruppe.getChildCount(); i += 1) {
+            View kind = gruppe.getChildAt(i);
+            if (kind instanceof TextView) ((TextView) kind).setText(wert + " %");
+        }
     }
 
     /**
@@ -750,6 +916,9 @@ final class MobileViews {
                        Runnable beiKlick, View.OnClickListener onMenu) {
         LinearLayout karte = new LinearLayout(context);
         karte.setOrientation(LinearLayout.VERTICAL);
+        // Damit das Kachelmenue seine eigene Karte wiederfindet - beim
+        // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
+        karte.setTag(R.id.elfix_karte, Boolean.TRUE);
 
         int hoehe = Math.round(breiteDp * 1.45f);
         FrameLayout bild = poster(context, provider, titel, bildUrl, prozent,

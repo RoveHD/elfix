@@ -299,9 +299,19 @@ public final class Empfehlungen {
         Map<String, Reihe> behalten = new HashMap<>();
         for (Map.Entry<String, Reihe> eintrag : reihen.entrySet()) {
             Reihe reihe = eintrag.getValue();
-            if (reihe != null && reihe.ausSpeicher && reihe.eintraege.length() > 0) {
-                // Nicht mehr als geholt zaehlen: der naechste Zeichenlauf soll
-                // fragen, aber die Karten bis dahin stehen lassen.
+            // Jede Reihe, in der etwas steht, bleibt stehen - nicht nur die von
+            // der Platte.
+            //
+            // Hier wurde bis hierher {@code ausSpeicher} verlangt, und das
+            // hiess: eine Reihe, die gerade frisch geholt worden war, flog
+            // weg. Auf dem Schirm sah das aus wie ein Ruecksetzer - fertige
+            // Karten wurden wieder zu Skeletten, obwohl die neuen Vorschlaege
+            // in aller Regel dieselben waren. Was der Kern meldet, ist "ich
+            // habe besser gerechnet", nicht "was du zeigst, ist falsch".
+            //
+            // Der naechste Zeichenlauf fragt trotzdem neu; bis die Antwort da
+            // ist, steht der letzte Stand.
+            if (reihe != null && reihe.eintraege.length() > 0) {
                 reihe.laeuft = false;
                 reihe.stand = 0;
                 behalten.put(eintrag.getKey(), reihe);

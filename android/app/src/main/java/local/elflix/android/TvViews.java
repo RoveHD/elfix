@@ -47,11 +47,19 @@ final class TvViews {
         view.setFocusable(true);
         view.setFocusableInTouchMode(true);
         view.setOnFocusChangeListener((v, hasFocus) -> {
-            v.animate()
-                .scaleX(hasFocus ? 1.05f : 1f)
-                .scaleY(hasFocus ? 1.05f : 1f)
-                .setDuration(FOCUS_MS)
-                .start();
+            // Ueber Bewegung.dauer und nicht mit fester Zahl: wer die
+            // Animationen des Geraets abgeschaltet hat, bekommt den
+            // Fokusrahmen sofort statt in Zeitlupe.
+            long dauer = Bewegung.dauer(v.getContext(), FOCUS_MS);
+            float ziel = hasFocus ? 1.05f : 1f;
+            if (dauer > 0) {
+                v.animate().scaleX(ziel).scaleY(ziel)
+                    .setDuration(dauer).setInterpolator(Bewegung.kurve()).start();
+            } else {
+                v.animate().cancel();
+                v.setScaleX(ziel);
+                v.setScaleY(ziel);
+            }
             v.setBackground(hasFocus ? focused : idle);
             v.setElevation(hasFocus ? dp(v.getContext(), 8) : 0);
         });
@@ -221,6 +229,9 @@ final class TvViews {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 14));
+        // Damit das Kachelmenue seine eigene Zeile wiederfindet - beim
+        // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
+        card.setTag(R.id.elfix_karte, Boolean.TRUE);
         applyFocus(card,
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 3));
@@ -505,6 +516,9 @@ final class TvViews {
         karte.setOrientation(LinearLayout.VERTICAL);
         karte.setClipChildren(false);
         karte.setClipToPadding(false);
+        // Damit das Kachelmenue seine eigene Karte wiederfindet - beim
+        // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
+        karte.setTag(R.id.elfix_karte, Boolean.TRUE);
         int rand = dp(context, 8);
         karte.setPadding(rand, rand, rand, dp(context, 12));
         applyFocus(karte,
@@ -842,9 +856,12 @@ final class TvViews {
         text.setClipChildren(false);
         text.setClipToPadding(false);
         text.setPadding(dp(context, 32), dp(context, 28), dp(context, 32), dp(context, 26));
-        text.addView(eyebrow(context, augenbraue));
+        TextView augenbrauenZeile = eyebrow(context, augenbraue);
+        augenbrauenZeile.setTag(MobileViews.HERO_AUGENBRAUE);
+        text.addView(augenbrauenZeile);
 
         TextView ueberschrift = new TextView(context);
+        ueberschrift.setTag(MobileViews.HERO_TITEL);
         ueberschrift.setText(titel);
         ueberschrift.setTextColor(Theme.TEXT_PRIMARY);
         ueberschrift.setTextSize(38);
@@ -854,23 +871,25 @@ final class TvViews {
         ueberschrift.setPadding(0, dp(context, 6), 0, 0);
         text.addView(ueberschrift);
 
-        if (unterzeile != null && !unterzeile.isEmpty()) {
-            TextView zeile = new TextView(context);
-            zeile.setText(unterzeile);
-            zeile.setTextColor(Theme.TEXT_SECONDARY);
-            zeile.setTextSize(17);
-            zeile.setMaxLines(1);
-            zeile.setEllipsize(TextUtils.TruncateAt.END);
-            zeile.setPadding(0, dp(context, 8), 0, 0);
-            text.addView(zeile);
-        }
+        // Wie auf dem Telefon: beide Zeilen und der Balken entstehen immer,
+        // damit ein Wechsel sie nur umschreiben muss. Auf dem Fernseher haengt
+        // daran mehr als die Ruhe - jeder Neuaufbau nimmt den beiden Knoepfen
+        // ihren Platz und damit dem Steuerkreuz den Fokus.
+        TextView zeile = new TextView(context);
+        zeile.setTag(MobileViews.HERO_UNTERZEILE);
+        zeile.setTextColor(Theme.TEXT_SECONDARY);
+        zeile.setTextSize(17);
+        zeile.setMaxLines(1);
+        zeile.setEllipsize(TextUtils.TruncateAt.END);
+        zeile.setPadding(0, dp(context, 8), 0, 0);
+        text.addView(zeile);
 
-        if (prozent > 0) {
-            LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
-                dp(context, 340), ViewGroup.LayoutParams.WRAP_CONTENT);
-            balkenRand.topMargin = dp(context, 14);
-            text.addView(MobileViews.fortschrittsBalken(context, prozent, true), balkenRand);
-        }
+        LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
+            dp(context, 340), ViewGroup.LayoutParams.WRAP_CONTENT);
+        balkenRand.topMargin = dp(context, 14);
+        View balken = MobileViews.fortschrittsBalken(context, prozent, true);
+        balken.setTag(MobileViews.HERO_BALKEN);
+        text.addView(balken, balkenRand);
 
         LinearLayout knoepfe = new LinearLayout(context);
         knoepfe.setOrientation(LinearLayout.HORIZONTAL);
@@ -882,22 +901,70 @@ final class TvViews {
 
         View haupt = heroKnopf(context, aufruf, true, beiAufruf, beiFokus);
         knoepfe.addView(haupt);
-        if (knoepfeAus != null && knoepfeAus.length > 0) knoepfeAus[0] = haupt;
-        if (zweitText != null && beiZweit != null) {
-            View zweit = heroKnopf(context, zweitText, false, beiZweit, beiFokus);
-            LinearLayout.LayoutParams zweitParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            zweitParams.leftMargin = dp(context, 14);
-            knoepfe.addView(zweit, zweitParams);
-            if (knoepfeAus != null && knoepfeAus.length > 1) knoepfeAus[1] = zweit;
-        }
+        View zweit = heroKnopf(context, zweitText == null ? "" : zweitText, false, beiZweit,
+            beiFokus);
+        LinearLayout.LayoutParams zweitParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        zweitParams.leftMargin = dp(context, 14);
+        knoepfe.addView(zweit, zweitParams);
         text.addView(knoepfe, knopfRand);
 
         FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         textParams.gravity = Gravity.BOTTOM;
         kasten.addView(text, textParams);
+        heroTeileSetzen(kasten, haupt, zweit, augenbraue, titel, unterzeile, prozent,
+            aufruf, beiAufruf, zweitText, beiZweit, knoepfeAus);
         return kasten;
+    }
+
+    /**
+     * Denselben Kasten auf einen anderen Titel umschreiben - die TV-Fassung von
+     * {@link MobileViews#heroAktualisieren}.
+     *
+     * <p>Die beiden Knoepfe werden ueber die Marken gefunden, die die Activity
+     * ihnen gibt ({@code tv:hero:0} und {@code tv:hero:1}). Sie bleiben damit
+     * dieselben Ansichten - und genau das ist der Punkt: der Fokus des
+     * Steuerkreuzes haengt an der Ansicht, nicht an ihrer Stelle.
+     */
+    static boolean heroAktualisieren(View kasten, String augenbraue, String titel,
+                                     String unterzeile, String bildUrl, int prozent,
+                                     String aufruf, Runnable beiAufruf,
+                                     String zweitText, Runnable beiZweit, View[] knoepfeAus) {
+        if (!(kasten instanceof ViewGroup)) return false;
+        ViewGroup gruppe = (ViewGroup) kasten;
+        View erstes = gruppe.getChildCount() > 0 ? gruppe.getChildAt(0) : null;
+        if (!(erstes instanceof ImageView)) return false;
+        View haupt = kasten.findViewWithTag("tv:hero:0");
+        View zweit = kasten.findViewWithTag("tv:hero:1");
+        if (haupt == null || zweit == null) return false;
+        Bilder.laden((ImageView) erstes, bildUrl, 640, 360, null);
+        heroTeileSetzen(kasten, haupt, zweit, augenbraue, titel, unterzeile, prozent,
+            aufruf, beiAufruf, zweitText, beiZweit, knoepfeAus);
+        return true;
+    }
+
+    private static void heroTeileSetzen(View kasten, View haupt, View zweit, String augenbraue,
+                                        String titel, String unterzeile, int prozent,
+                                        String aufruf, Runnable beiAufruf,
+                                        String zweitText, Runnable beiZweit, View[] knoepfeAus) {
+        MobileViews.heroSchriftSetzen(kasten, augenbraue, titel, unterzeile, prozent);
+        if (haupt instanceof TextView) {
+            ((TextView) haupt).setText(aufruf == null ? "" : aufruf);
+            haupt.setOnClickListener(beiAufruf == null ? null : v -> beiAufruf.run());
+            haupt.setVisibility(aufruf == null || aufruf.isEmpty() ? View.GONE : View.VISIBLE);
+        }
+        boolean zweiterDa = zweitText != null && !zweitText.isEmpty() && beiZweit != null;
+        if (zweit instanceof TextView) {
+            ((TextView) zweit).setText(zweiterDa ? zweitText : "");
+            zweit.setOnClickListener(zweiterDa ? v -> beiZweit.run() : null);
+            zweit.setVisibility(zweiterDa ? View.VISIBLE : View.GONE);
+        }
+        if (knoepfeAus != null && knoepfeAus.length > 0) knoepfeAus[0] = haupt;
+        // Ein ausgeblendeter zweiter Knopf ist kein Fokusziel und darf deshalb
+        // auch keine Marke bekommen - sonst suchte die Fokuswiederherstellung
+        // etwas, das man nicht erreichen kann.
+        if (knoepfeAus != null && knoepfeAus.length > 1) knoepfeAus[1] = zweiterDa ? zweit : null;
     }
 
     /** Ein Knopf im Titelhintergrund: gross genug, dass er aus zwei Metern zu lesen ist. */

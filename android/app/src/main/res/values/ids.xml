@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Marken, die neben dem gewoehnlichen Tag einer Ansicht Platz haben.
+
+  Der gewoehnliche Tag ist in dieser App schon zweifach vergeben: `Bilder`
+  legt dort den Schluessel des laufenden Bildauftrags ab, und der Fernseher
+  seine Fokusmarke ("tv:liste:3"). Eine dritte Bedeutung passt nicht mehr
+  hinein - deshalb dieser Schluessel, der neben beiden liegt.
+-->
+<resources>
+    <!-- Sitzt an der Wurzel einer Kachel oder Listenzeile, die zu einem
+         Eintrag gehoert. Daran findet das Kachelmenue die Karte wieder, die
+         es beim Loeschen ausblenden soll. -->
+    <item name="elfix_karte" type="id" />
+</resources>
