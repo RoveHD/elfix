@@ -3,6 +3,45 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.53.0 — 27. August 2026
+
+Ein dunkler Punkt klebte im Video, und der Knopf daneben ging nie ganz weg.
+
+Zwei Meldungen, eine Ursache: die Wiedergabeleiste war sichtbar, solange
+überhaupt eine Folge lief — auch dann, wenn beide Knöpfe darin verborgen waren.
+
+**Der Punkt.** Übrig blieb in diesem Fall ihr eigener Hintergrund: ein
+gerundeter Kasten ohne Inhalt, also ein dunkler Punkt unten rechts im Bild. Er
+stand dort die ersten neunzig Prozent jeder Folge und war das Einzige, was von
+der Leiste zu sehen war. Ein Behälter ohne Inhalt gehört nicht auf den Schirm —
+steht weder „Nächste Folge" noch „Abbrechen", ist die Leiste jetzt weg statt
+leer.
+
+**Der Knopf.** Und wenn sie Inhalt hat, geht sie in drei Schritten statt in
+zweien: voll da, nach fünf Sekunden zurückgetreten, nach zehn ganz weg.
+
+Hier stand einmal das Gegenteil, und beides aus gutem Grund. Nach dreieinhalb
+Sekunden ganz zu verschwinden war ein Fehler: auf dem Telefon lief eine Folge
+bis zum Ende, ohne dass je ein Knopf zu sehen war. Die Antwort darauf — „sie
+verschwindet nie", fest bei vierzig Prozent Deckkraft — war der nächste Fehler,
+nur ein leiserer: ein Kasten, der eine Stunde lang halb durchsichtig über dem
+Bild klebt, ist genau das, was beim Schauen stört.
+
+Der Unterschied zum ersten Anlauf ist nicht die Zeit, sondern der Rückweg.
+Damals gab es keinen. Heute holt jede Berührung und jede Taste die Leiste
+zurück — dieselbe Geste, mit der man auch die Bedienleiste des Hosters wieder
+hervorholt. Wer den Knopf sucht, tippt ohnehin ans Bild. Meldet der Player
+selbst, dass seine Überlagerung steht, fängt sie ebenfalls wieder bei voll an.
+
+Zwei Ausnahmen bleiben: während eines Zählers steht sie voll da (eine Ansage,
+die sich wegduckt, ist keine), und solange der Fokus auf ihr liegt, rücken die
+Schritte gar nicht erst weiter.
+
+Auf beiden Emulatoren nachgesehen — auf dem Telefon mit Knopf, auf dem
+Fernseher ohne: die drei Schritte kamen auf die Sekunde genau, an der Stelle des
+Punktes steht nur noch Bild, und aus dem letzten Schritt heraus holt ein Druck
+auf der Fernbedienung die Leiste zurück und setzt den Fokus hinein.
+
 ## 1.52.0 — 27. August 2026
 
 Auf dem Telefon sah man beim Start einer Folge alles, was man nicht sehen soll.
