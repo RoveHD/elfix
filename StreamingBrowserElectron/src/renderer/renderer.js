@@ -30,6 +30,21 @@ let letztesBestandsbild = "";
  */
 function bestandsbild(liste) {
   const teile = [];
+  // Zuerst die Reihenfolge, in der die Startseite sie zeigt.
+  //
+  // Sie haengt an Zeitstempeln (favoriteTimestamp), und die wandern bei jeder
+  // Meldung weiter, ohne dass sich unten am Eintrag etwas aendert. Wer nur die
+  // Eintraege vergliche, wuerde ein Umsortieren verschlafen und eine Kachel an
+  // der falschen Stelle stehen lassen. Verglichen wird deshalb das Ergebnis der
+  // Sortierung und nicht ihre Eingabe - so zaehlt eine neue Zeit nur dann, wenn
+  // sie wirklich etwas verschiebt.
+  try {
+    teile.push(sortedHomeFavorites().map((eintrag) => eintrag?.id).join(","));
+  } catch {
+    // Vor dem ersten Zeichnen kann die Sortierung noch nichts liefern. Dann
+    // entscheidet allein die Liste darunter - und die ist beim ersten Mal
+    // ohnehin anders als der leere Anfangswert.
+  }
   for (const eintrag of Array.isArray(liste) ? liste : []) {
     if (!eintrag) continue;
     const dauer = Number(eintrag.duration) || 0;
@@ -49,7 +64,10 @@ function bestandsbild(liste) {
       eintrag.hideFromContinue ? 1 : 0,
       eintrag.continuePending ? 1 : 0,
       eintrag.newEpisodeAt,
+      eintrag.newEpisodeLabel,
       eintrag.watchpartyRoom,
+      eintrag.providerName,
+      eintrag.watched ? 1 : 0,
       prozent
     ].join("#"));
   }

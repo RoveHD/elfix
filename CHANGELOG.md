@@ -3,6 +3,22 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.55.1 — 28. August 2026
+
+Nachtrag zu 1.55.0: die Startseite konnte in der falschen Reihenfolge
+stehenbleiben.
+
+Der Vergleich, der die dauernden Neuaufbauten beendet hat, sah auf die
+Einträge — aber nicht darauf, in welcher Reihenfolge die Startseite sie zeigt.
+Die hängt an Zeitstempeln, und die wandern weiter, ohne dass sich am Eintrag
+selbst etwas ändert. Eine Kachel, die nach vorn gehört hätte, blieb deshalb
+stehen, bis irgendetwas anderes ein Zeichnen erzwang.
+
+Verglichen wird jetzt das Ergebnis der Sortierung statt ihrer Eingabe: eine
+neue Zeit zählt nur, wenn sie wirklich etwas verschiebt. Dazu drei Felder, die
+auf den Karten stehen und im Vergleich fehlten — Anbietername, die Beschriftung
+neuer Folgen und die Gesehen-Marke.
+
 ## 1.55.0 — 28. August 2026
 
 Die Oberfläche baute sich ständig selbst neu — auf dem Telefon, am Fernseher
