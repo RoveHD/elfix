@@ -191,6 +191,23 @@ function leereNormalform(art) {
     bewertungStimmen: 0,
     beliebtheit: 0,
     altersfreigabe: null,
+    // Laeuft das noch? Drei Felder, die nichts mit dem Ranking zu tun haben und
+    // nur eine Frage beantworten: ist ein Titel wirklich zu Ende, oder wartet
+    // man bloss auf die naechste Folge. Der Verlaufs-Kasten der App
+    // unterscheidet daran "Auf aktuellem Stand" von "Staffel abgeschlossen" -
+    // und ohne diese Angaben duerfte er beides nicht behaupten.
+    //
+    // `laufStatus` bleibt absichtlich im Wortlaut der Quelle (AniList
+    // "RELEASING", TMDB "Returning Series"). Eine eigene Uebersetzung waere
+    // eine zweite Stelle, an der sich ein Irrtum einnisten koennte; die App
+    // kennt beide Woerterbuecher.
+    laufStatus: "",
+    // Bei AniList die Folgenzahl dieses Werks - und das ist dort die Staffel.
+    // Bei TMDB die Folgenzahl der ganzen Serie. Der Unterschied steht in
+    // `quelle` und wird von der App dort gelesen.
+    folgenGesamt: 0,
+    naechsteFolge: null,
+    staffeln: [],
     konfidenz: "UNMATCHED"
   };
 }
@@ -203,6 +220,7 @@ const ANILIST_FELDER = `
   synonyms format status
   seasonYear startDate { year } endDate { year }
   episodes countryOfOrigin isAdult
+  nextAiringEpisode { episode airingAt }
   genres
   tags { name rank isMediaSpoiler isGeneralSpoiler category }
   studios { edges { isMain node { name } } }
@@ -252,6 +270,18 @@ function anilistNormalform(m, konfidenz) {
   form.bewertungStimmen = 0;
   form.beliebtheit = m.popularity || 0;
   form.altersfreigabe = m.isAdult ? 18 : null;
+  form.laufStatus = m.status || "";
+  form.folgenGesamt = m.episodes || 0;
+  // `airingAt` sind Sekunden seit 1970 in UTC. Weitergereicht wird eine
+  // ISO-Zeit, damit die App sie nicht selbst deuten muss.
+  form.naechsteFolge = m.nextAiringEpisode
+    ? {
+      nummer: m.nextAiringEpisode.episode || 0,
+      zeit: m.nextAiringEpisode.airingAt
+        ? new Date(m.nextAiringEpisode.airingAt * 1000).toISOString()
+        : ""
+    }
+    : null;
   form.konfidenz = konfidenz;
   return form;
 }
@@ -308,6 +338,26 @@ function tmdbNormalform(roh, art, konfidenz) {
   form.bewertung = typeof roh.vote_average === "number" ? roh.vote_average : null;
   form.bewertungStimmen = roh.vote_count || 0;
   form.beliebtheit = roh.popularity || 0;
+  // Nur Serien laufen. Ein Film ist mit seinem Kinostart fertig, und ein
+  // "Released" dort waere kein Abschluss im Sinne eines Verlaufs.
+  if (!istFilm) {
+    form.laufStatus = roh.status || "";
+    form.folgenGesamt = roh.number_of_episodes || 0;
+    form.naechsteFolge = roh.next_episode_to_air
+      ? {
+        nummer: roh.next_episode_to_air.episode_number || 0,
+        zeit: roh.next_episode_to_air.air_date
+          ? new Date(roh.next_episode_to_air.air_date + "T00:00:00Z").toISOString()
+          : ""
+      }
+      : null;
+    // Staffel 0 ist bei TMDB der Sammelplatz fuer Specials und gehoert nicht
+    // in eine Folgenzaehlung.
+    form.staffeln = (roh.seasons || [])
+      .filter((s) => Number(s?.season_number) > 0)
+      .map((s) => ({ nummer: Number(s.season_number), folgen: Number(s.episode_count) || 0 }))
+      .slice(0, 60);
+  }
   form.konfidenz = konfidenz;
   return form;
 }

@@ -226,24 +226,16 @@ function rendererAbschnitt(anfang) {
   return zeilen.slice(von, bis + 1).join("\n");
 }
 
-const mediathek = { console };
+const mediathek = { console, Number, String, Array, Math, Date, Boolean, Object, Set };
 vm.createContext(mediathek);
-// NUR_GEOEFFNET ist eine Konstante, keine Funktion - rendererAbschnitt() holt
-// nur Funktionen, deshalb kommt sie hier einzeln dazu.
-const NUR_GEOEFFNET_QUELLE = (RENDERER.match(/^const NUR_GEOEFFNET = .*$/m) || [""])[0];
 vm.runInContext([
-  NUR_GEOEFFNET_QUELLE,
-  ...[
-    "function mediathekEntdoppeln",
-    "function istBessererMediathekEintrag",
-    "function istAbschluss",
-    "function verlaufListe",
-    "function abschlussListe",
-    "function verlaufTage",
-    "function gesehenAm",
-    "function datumKurz"
-  ].map(rendererAbschnitt)
-].join("\n\n"), mediathek);
+  "function mediathekEntdoppeln",
+  "function istBessererMediathekEintrag",
+  "function gesehenAm",
+  "function datumKurz",
+  "function verlaufZeitspanne",
+  "function verlaufFolgeStand"
+].map(rendererAbschnitt).join("\n\n"), mediathek);
 
 const PRIVAT = { id: "a", normalizedUrl: "https://filmo.to/movies/x", watchpartyRoom: "", libraryOrder: 39, createdAt: "2026-08-14T08:00:00.000Z" };
 const RUNDE = { id: "b", normalizedUrl: "https://filmo.to/movies/x", watchpartyRoom: "Bangus", createdAt: "2026-08-20T11:51:00.000Z" };
@@ -277,66 +269,52 @@ pruefe("Das Datum steht nur auf den Karten der Mediathek",
   /showWatchedDate: true,/.test(RENDERER)
   && /options\.showWatchedDate \? datumKurz\(gesehenAm\(favorite\)\) : ""/.test(RENDERER));
 
-// Der Verlauf im Menue.
-const VERLAUF = {
-  activity: [
-    { at: "2026-08-16T17:14:51.972Z", label: "Geöffnet" },
-    { at: "2026-08-16T17:39:39.397Z", label: "Staffel 2 Folge 9" },
-    { at: "2026-08-16T17:43:22.511Z", label: "Staffel 2 Folge 10" },
-    { at: "2026-08-18T20:01:00.000Z", label: "Staffel 2 Folge 11" },
-    { at: "kaputt", label: "Unsinn" }
-  ]
-};
-const liste = mediathek.verlaufListe(VERLAUF);
-pruefe("Der Verlauf laesst \"Geoeffnet\" weg - das sagt nichts ueber Geschautes",
-  liste.length === 3 && !liste.some((e) => /geöffnet/i.test(e.label)),
-  liste.map((e) => e.label).join(", "));
-// Der gemeldete Fall: ein dreimal geoeffneter Film stand als "3 Mal
-// geschaut" da. Das Label heisst bei Filmen "Film geöffnet", nicht
-// "Geöffnet" - der erste Filter traf es deshalb nicht.
-const NUR_AUF = { completedAt: "2026-08-16T11:55:14.522Z", activity: [
-  { at: "2026-08-16T13:49:00.000Z", label: "Film geöffnet" },
-  { at: "2026-08-16T22:06:00.000Z", label: "Film geöffnet" },
-  { at: "2026-08-17T11:07:00.000Z", label: "Film geöffnet" }
-] };
-pruefe("Dreimal geoeffnet ist nicht dreimal geschaut",
-  mediathek.verlaufListe(NUR_AUF).length === 0,
-  `${mediathek.verlaufListe(NUR_AUF).length} statt 0`);
-pruefe("Gezaehlt wird der Abschluss - und den gibt es hier genau einmal",
-  mediathek.abschlussListe(NUR_AUF).length === 1);
-pruefe("Der Abschluss kommt aus completedAt, wenn er nicht aufgezeichnet wurde",
-  mediathek.abschlussListe(NUR_AUF)[0].zeit.toISOString().startsWith("2026-08-16"));
-pruefe("Ein aufgezeichneter Abschluss wird nicht doppelt gezaehlt",
-  mediathek.abschlussListe({
-    completedAt: "2026-08-16T11:55:14.522Z",
-    activity: [{ at: "2026-08-16T11:55:20.000Z", label: "Abgeschlossen" }]
-  }).length === 1);
-pruefe("Zweimal wirklich durchgeschaut zaehlt zweimal",
-  mediathek.abschlussListe({
-    completedAt: "2026-08-20T10:00:00.000Z",
-    activity: [
-      { at: "2026-08-16T11:55:20.000Z", label: "Abgeschlossen" },
-      { at: "2026-08-20T10:00:05.000Z", label: "Abgeschlossen" }
-    ]
-  }).length === 2);
-pruefe("Ohne Abschluss bleibt die Zaehlung bei null",
-  mediathek.abschlussListe({ activity: [{ at: "2026-08-16T11:00:00.000Z", label: "Staffel 1 Folge 1" }] }).length === 0);
+// --- Der Verlaufs-Kasten in der Mediathek ------------------------------------
+//
+// Die Rechnung selbst steht in shared/verlauf.js und wird in
+// tests/verlauftest.js geprueft. Hier steht nur, dass die Oberflaeche sie
+// benutzt - und dass die drei Angaben, die frueher falsch waren, weg sind.
 
-pruefe("Kaputte Zeitangaben fliegen raus", !liste.some((e) => Number.isNaN(e.zeit.getTime())));
-pruefe("Neueste zuerst", liste[0].label === "Staffel 2 Folge 11");
-pruefe("Gezaehlt werden Tage, nicht Folgen",
-  mediathek.verlaufTage(liste) === 2, `${mediathek.verlaufTage(liste)} Tage bei 3 Eintraegen`);
-pruefe("Ohne Verlauf bleibt die Liste leer",
-  mediathek.verlaufListe({}).length === 0 && mediathek.verlaufListe({ activity: "kein Array" }).length === 0);
-pruefe("Der Menuepunkt erscheint nur, wo es mehr als den einen Abschluss gibt",
-  /verlauf\.length > 1 \|\| abschlussListe\(favorite\)\.length > 1/.test(RENDERER));
-pruefe("Der Kasten zaehlt Abschluesse, nicht Oeffnungen",
-  /Mal abgeschlossen/.test(RENDERER)
-  && /nurSchliessen: true/.test(RENDERER) && /mehrzeilig: true/.test(RENDERER));
-// Damit die Zaehlung kuenftig nicht mehr auf completedAt angewiesen ist.
-pruefe("Der Abschluss wird beim Uebergang aufgezeichnet",
-  /const warBereitsAbgeschlossen = Boolean\(existing\?\.completed\);/.test(QUELLE)
-  && /if \(entry\.completed && !warBereitsAbgeschlossen\) \{\n\s*appendMediaActivity\(entry, url, "Abgeschlossen"\);/.test(QUELLE));
+pruefe("Der Kasten rechnet mit dem gemeinsamen Modul",
+  /const verlaufModul = globalThis\.ELFIX_VERLAUF;/.test(RENDERER)
+  && /verlaufModul\.verlaufBauen\(favorites, favorite, \{ metadaten \}\)/.test(RENDERER));
+pruefe("Und die Oberflaeche laedt es auch",
+  /<script src="\.\.\/\.\.\/shared\/verlauf\.js"><\/script>/
+    .test(fs.readFileSync(path.join(WURZEL, "src/renderer/index.html"), "utf8")));
+
+// Der gemeldete Fall: "4 Mal abgeschlossen" bei einer laufenden Serie.
+pruefe("\"X Mal abgeschlossen\" steht nirgends mehr",
+  !/Mal abgeschlossen/.test(RENDERER),
+  "eine laufende Serie wird nicht mehrfach abgeschlossen, nur mehrfach eingeholt");
+pruefe("Der Kasten zaehlt keine Abschluesse mehr",
+  !/function abschlussListe/.test(RENDERER) && !/function verlaufTage\(/.test(RENDERER));
+pruefe("Das rohe Ereignisprotokoll wird nicht mehr Zeile fuer Zeile gezeigt",
+  !/function verlaufListe\(/.test(RENDERER));
+pruefe("Der Kasten bleibt der Kasten - ohne Abbrechen und mehrzeilig",
+  /nurSchliessen: true/.test(RENDERER) && /mehrzeilig: true/.test(RENDERER));
+pruefe("Der Menuepunkt haengt an Folgen, nicht an Ereignissen",
+  /const verlaufLohnt = \(verlaufModellBauen\(favorite\)\?\.folgen\?\.length \|\| 0\) > 1;/.test(RENDERER));
+
+// Wie eine Folgenzeile aussieht.
+pruefe("Eine abgeschlossene Folge sagt genau das",
+  mediathek.verlaufFolgeStand({ abgeschlossen: true, position: 800, dauer: 1400 }) === "Abgeschlossen",
+  "die Stelle spielt dann keine Rolle mehr");
+pruefe("Eine halb gesehene Folge nennt Stelle und Laufzeit",
+  mediathek.verlaufFolgeStand({ abgeschlossen: false, position: 761, dauer: 1450 }) === "12:41 von 24:10",
+  mediathek.verlaufFolgeStand({ abgeschlossen: false, position: 761, dauer: 1450 }));
+pruefe("Ohne Stelle wird nichts behauptet",
+  mediathek.verlaufFolgeStand({ abgeschlossen: false, position: 0, dauer: 0 }) === "Angesehen");
+pruefe("Lange Folgen bekommen ihre Stunde",
+  mediathek.verlaufZeitspanne(3761) === "1:02:41", mediathek.verlaufZeitspanne(3761));
+
+// Das Abschlussereignis ohne Folgenangabe war die Quelle der falschen Zaehlung.
+pruefe("Eine Serie schreibt keine generische Abschlusszeile mehr",
+  /if \(entry\.completed && !warBereitsAbgeschlossen && !identity\) \{\n\s*appendMediaActivity\(entry, url, "Abgeschlossen"\);/.test(QUELLE),
+  "nur noch Filme und YouTube - dort ist \"abgeschlossen\" eindeutig");
+pruefe("Die letzte Folge einer Serie wird als Folge vermerkt",
+  /if \(mediaEnded && identity && wholeItemCompleted\) \{\n\s*appendCompletedEpisode\(entry, identity, url, now\);/.test(QUELLE),
+  "sonst fehlt genau die Folge, um die es ging");
+
 // Ohne diese Regel blieb "Abbrechen" im Verlaufs-Kasten stehen: eine
 // allgemeine .is-hidden-Regel gibt es in dieser Datei nicht.
 const STIL = fs.readFileSync(path.join(WURZEL, "src/renderer/styles.css"), "utf8");

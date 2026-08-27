@@ -1186,6 +1186,16 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
     entry.position = entry.currentTime;
     entry.duration = sanitizePositiveNumber(meta.duration);
     entry.progress = progressPercent;
+    // Die letzte Folge einer Serie wurde nirgends als abgeschlossene Folge
+    // vermerkt: `shouldAdvanceEpisode` ist bei ihr falsch (es rueckt ja nichts
+    // mehr nach), und damit lief sie an `appendCompletedEpisode` vorbei. In der
+    // Ablage stand deshalb bei "BLACK TORCH" Folge 2 bis 7 unter
+    // `completedEpisodes` - und Folge 8, die eigentlich gemeinte, fehlte. Der
+    // Abschluss der Serie war zwar vermerkt, aber ohne Folgenangabe, und genau
+    // solche Zeilen sind hinterher nicht mehr zuzuordnen.
+    if (mediaEnded && identity && wholeItemCompleted) {
+      appendCompletedEpisode(entry, identity, url, now);
+    }
     if (shouldAdvanceEpisode) {
       appendCompletedEpisode(entry, identity, url, now);
       if (nextContinueUrl) {
@@ -1255,9 +1265,20 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
   // ueber die 90 Prozent oder von Hand fertig wird, nie.
   //
   // Der Uebergang wird deshalb hier vermerkt, und nur der Uebergang: wer einen
-  // fertigen Titel noch einmal oeffnet, erzeugt keinen zweiten Abschluss. Erst
-  // wenn er wieder anfaengt und erneut durchkommt, steht ein zweiter da.
-  if (entry.completed && !warBereitsAbgeschlossen) {
+  // fertigen Titel noch einmal oeffnet, erzeugt keinen zweiten Abschluss.
+  //
+  // Bei einer Serie steht diese Zeile inzwischen nicht mehr da. Sie war
+  // generisch - "Abgeschlossen", ohne Staffel und Folge -, und bei einer
+  // woechentlich erscheinenden Serie entstand sie jedes Mal neu, wenn der
+  // Nutzer die zu diesem Zeitpunkt letzte verfuegbare Folge erreichte. Bei
+  // "BLACK TORCH" lagen so vier davon in der Ablage (nach Folge 3, 6 und
+  // zweimal nach Folge 8), und der Verlaufs-Kasten las sie als vier
+  // Serienabschluesse. Der Abschluss der konkreten Folge steht jetzt weiter
+  // oben in `completedEpisodes`, wo er hingehoert - mit Staffel und Folge.
+  //
+  // Fuer alles ohne Folgenzaehlung - Filme, YouTube-Videos - bleibt sie: dort
+  // ist "abgeschlossen" eindeutig, weil es nur ein Werk gibt.
+  if (entry.completed && !warBereitsAbgeschlossen && !identity) {
     appendMediaActivity(entry, url, "Abgeschlossen");
   }
 

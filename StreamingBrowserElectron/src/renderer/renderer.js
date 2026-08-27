@@ -3,6 +3,9 @@ const api = window.streamingBrowser;
 // Hauptprozess beim Speichern - Vorschau, Anzeige und Ablage koennen sich
 // deshalb nicht widersprechen.
 const bildausschnittModul = globalThis.ELFIX_BILDAUSSCHNITT;
+// Die Regeln des persoenlichen Verlaufs. Sie stehen im gemeinsamen Modul,
+// damit der Kasten hier und jede Pruefung dieselbe Rechnung anstellen.
+const verlaufModul = globalThis.ELFIX_VERLAUF;
 
 let providers = [];
 let favorites = [];
@@ -162,6 +165,7 @@ const confirmModal = document.querySelector("#confirmModal");
 const confirmEyebrow = document.querySelector("#confirmEyebrow");
 const confirmTitle = document.querySelector("#confirmTitle");
 const confirmCopy = document.querySelector("#confirmCopy");
+const confirmBody = document.querySelector("#confirmBody");
 const confirmAccept = document.querySelector("#confirmAccept");
 const confirmCancel = document.querySelector("#confirmCancel");
 const cropModal = document.querySelector("#cropModal");
@@ -4548,39 +4552,171 @@ async function mediathekReihenfolgeSpeichern() {
   if (Array.isArray(gespeichert)) favorites = gespeichert;
 }
 
-// Der Verlauf eines Titels: wann und wie oft.
+// Der persoenliche Verlauf eines Titels.
 //
 // Gezeigt wird derselbe Kasten wie bei einer Rueckfrage, nur ohne zweite
 // Schaltflaeche - hier gibt es nichts zu entscheiden, nur etwas zu lesen.
-async function zeigeVerlauf(favorite, liste = verlaufListe(favorite)) {
-  const abschluesse = abschlussListe(favorite);
-  const zeilen = liste.slice(0, 40).map((eintrag) => {
-    const wann = eintrag.zeit.toLocaleString("de-DE", {
-      day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
-    });
-    return `${wann} · ${eintrag.label}`;
-  });
-  const rest = liste.length - zeilen.length;
-  if (rest > 0) zeilen.push(`… und ${rest} weitere`);
-
-  // Gezaehlt wird der Abschluss, nicht das Oeffnen - danach war gefragt.
-  const wieOft = abschluesse.length === 1 ? "Einmal abgeschlossen" : `${abschluesse.length} Mal abgeschlossen`;
-  const tage = verlaufTage(liste.length ? liste : abschluesse);
-  const kopf = abschluesse.length
-    ? `${wieOft} · an ${tage} ${tage === 1 ? "Tag" : "Tagen"} geschaut`
-    : `Noch nicht abgeschlossen · an ${tage} ${tage === 1 ? "Tag" : "Tagen"} geschaut`;
-
-  await confirmAction({
+//
+// Was der Kasten zeigt, entscheidet er nicht selbst: die Zusammenfassung der
+// Ereignisse zu Folgeneintraegen und die Statusrechnung stehen in
+// shared/verlauf.js. Hier steht nur, wie das Ergebnis aussieht.
+async function zeigeVerlauf(favorite) {
+  // Erst zeichnen, dann nachfragen: die Metadaten koennen einen Netzabruf
+  // kosten, und ein Kasten, der Sekunden auf sich warten laesst, ist kaputt.
+  // Der Status wird nachgetragen, sobald die Antwort da ist.
+  const modell = verlaufModellBauen(favorite);
+  const geschlossen = confirmAction({
     eyebrow: "Verlauf",
     title: displayFavoriteTitle(favorite),
-    copy: zeilen.length ? `${kopf}\n\n${zeilen.join("\n")}` : kopf,
+    copy: verlaufKopfText(modell),
+    inhalt: verlaufListeBauen(modell),
     confirmLabel: "Schließen",
     nurSchliessen: true,
     mehrzeilig: true
   });
+
+  const metadaten = await api.getLibraryMetadata?.(favorite.id).catch(() => null);
+  // Der Kasten kann zwischenzeitlich geschlossen worden sein - dann gehoert
+  // die Antwort niemandem mehr.
+  if (metadaten && confirmModal?.open) {
+    confirmCopy.textContent = verlaufKopfText(verlaufModellBauen(favorite, metadaten));
+  }
+  await geschlossen;
 }
 
-function confirmAction({ eyebrow = "ELFIX", title, copy = "", confirmLabel = "Löschen", cancelLabel = "Abbrechen", nurSchliessen = false, mehrzeilig = false }) {
+function verlaufModellBauen(favorite, metadaten = null) {
+  if (!verlaufModul) return null;
+  return verlaufModul.verlaufBauen(favorites, favorite, { metadaten });
+}
+
+const VERLAUF_STATUSTEXT = {
+  AUF_AKTUELLEM_STAND: "Auf aktuellem Stand",
+  STAFFEL_ABGESCHLOSSEN: "Staffel abgeschlossen",
+  SERIE_ABGESCHLOSSEN: "Serie abgeschlossen",
+  // Unbekannt bleibt unbeschriftet. Eine Zeile "Status unbekannt" waere fuer
+  // den Leser kein Gewinn - sie sagt nur, dass hier nichts steht.
+  STATUS_UNBEKANNT: ""
+};
+
+// Die Zusammenfassung ueber der Liste. Jede Zeile darf fehlen: was sich aus
+// den vorhandenen Daten nicht belegen laesst, steht nicht da.
+function verlaufKopfText(modell) {
+  if (!modell) return "";
+  const zeilen = [];
+
+  if (modell.istSerie) {
+    // "X von Y" nur, wenn Y wirklich bekannt ist. Bei mehreren Staffeln nennt
+    // der Anbieter keine Gesamtzahl, und eine geschaetzte waere erfunden.
+    zeilen.push(modell.verfuegbar
+      ? `${modell.gesehenGesamt} von ${modell.verfuegbar} aktuell verfügbaren Folgen gesehen`
+      : `${modell.gesehenGesamt} ${modell.gesehenGesamt === 1 ? "Folge" : "Folgen"} gesehen`);
+  } else if (modell.filmAbgeschlossen) {
+    zeilen.push("Abgeschlossen");
+  }
+
+  const status = VERLAUF_STATUSTEXT[modell.status] || "";
+  if (status) zeilen.push(status);
+
+  // Ein Datum wird nur genannt, wenn es eines gibt. Ohne verlaessliche Angabe
+  // steht hier nichts - erfunden wird keines.
+  if (modell.naechsteFolge?.zeit) {
+    zeilen.push(`Nächste Folge am ${datumKurz(new Date(modell.naechsteFolge.zeit))}`);
+  }
+
+  if (modell.zuletztGesehen) {
+    // In der Liste steht die Folge unter ihrer Staffelueberschrift, hier nicht.
+    // Bei mehreren Staffeln muss die Nummer deshalb mit - "Folge 1" allein
+    // waere bei vier Staffeln keine Auskunft.
+    const wo = modell.staffeln.length > 1
+      ? `Staffel ${modell.zuletztGesehen.staffel} ${folgeName(modell.zuletztGesehen)}`
+      : folgeName(modell.zuletztGesehen);
+    zeilen.push(`Zuletzt gesehen: ${wo} am ${datumKurz(new Date(modell.zuletztGesehen.zuletzt))}`);
+  } else if (!modell.istSerie && modell.filmZeit) {
+    zeilen.push(`Zuletzt gesehen: ${datumKurz(new Date(modell.filmZeit))}`);
+  }
+
+  if (modell.tage) {
+    zeilen.push(`An ${modell.tage} ${modell.tage === 1 ? "Tag" : "Tagen"} geschaut`);
+  }
+
+  return zeilen.join("\n");
+}
+
+function folgeName(satz) {
+  return `Folge ${satz.folge}`;
+}
+
+// "12:41" oder "1:02:41" - so, wie ein Player die Stelle schreibt.
+function verlaufZeitspanne(sekunden) {
+  const ganz = Math.max(0, Math.round(Number(sekunden) || 0));
+  const stunden = Math.floor(ganz / 3600);
+  const minuten = Math.floor((ganz % 3600) / 60);
+  const rest = ganz % 60;
+  const zwei = (wert) => String(wert).padStart(2, "0");
+  return stunden ? `${stunden}:${zwei(minuten)}:${zwei(rest)}` : `${minuten}:${zwei(rest)}`;
+}
+
+// Was eine Folge ueber sich sagt: abgeschlossen, oder wie weit sie lief.
+function verlaufFolgeStand(satz) {
+  if (satz.abgeschlossen) return "Abgeschlossen";
+  if (satz.position && satz.dauer) {
+    return `${verlaufZeitspanne(satz.position)} von ${verlaufZeitspanne(satz.dauer)}`;
+  }
+  // Der Verlauf belegt, dass die Folge lief, aber nicht wie weit. Das ist der
+  // Normalfall bei aelteren Eintraegen - "Angesehen" behauptet nicht mehr.
+  return "Angesehen";
+}
+
+// Die gegliederte Liste: Staffeln als Ueberschrift, darunter je Folge genau
+// eine Zeile. Sortiert wird hoehere Staffel und hoehere Folge zuerst; das
+// Datum steht dabei, ordnet aber nichts um.
+function verlaufListeBauen(modell) {
+  if (!modell?.staffeln?.length) return null;
+  const wurzel = document.createElement("div");
+  wurzel.className = "verlauf-liste";
+
+  for (const staffel of modell.staffeln) {
+    const block = document.createElement("section");
+    block.className = "verlauf-staffel";
+    const titel = document.createElement("h3");
+    titel.textContent = staffel.nummer ? `Staffel ${staffel.nummer}` : "Folgen";
+    block.append(titel);
+
+    for (const satz of staffel.folgen) {
+      const zeile = document.createElement("div");
+      zeile.className = "verlauf-folge";
+
+      const kopf = document.createElement("strong");
+      kopf.textContent = `${folgeName(satz)} · ${verlaufFolgeStand(satz)}`;
+      zeile.append(kopf);
+
+      if (satz.zuletzt) {
+        const wann = document.createElement("span");
+        wann.textContent = `Zuletzt gesehen: ${new Date(satz.zuletzt).toLocaleString("de-DE", {
+          day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
+        })}`;
+        zeile.append(wann);
+      }
+
+      // Der Raum steht nur dort, wo dieses Geraet die Folge wirklich in der
+      // Runde mitgeschaut hat - der Eintrag, aus dem die Folge stammt, gehoert
+      // dann zu ihr. Fremder Raumfortschritt kommt hier nie an: er landet im
+      // Eintrag, nicht im Verlauf.
+      if (satz.raum) {
+        const raum = document.createElement("span");
+        raum.className = "verlauf-raum";
+        raum.textContent = `Mit Raum „${satz.raum}“ angesehen`;
+        zeile.append(raum);
+      }
+
+      block.append(zeile);
+    }
+    wurzel.append(block);
+  }
+  return wurzel;
+}
+
+function confirmAction({ eyebrow = "ELFIX", title, copy = "", inhalt = null, confirmLabel = "Löschen", cancelLabel = "Abbrechen", nurSchliessen = false, mehrzeilig = false }) {
   if (!confirmModal?.showModal) return Promise.resolve(window.confirm(title));
   confirmEyebrow.textContent = eyebrow;
   confirmTitle.textContent = title;
@@ -4592,6 +4728,13 @@ function confirmAction({ eyebrow = "ELFIX", title, copy = "", confirmLabel = "L�
   // und ohne Abbrechen dastuende.
   confirmCopy.classList.toggle("is-mehrzeilig", Boolean(mehrzeilig));
   confirmCancel.classList.toggle("is-hidden", Boolean(nurSchliessen));
+  // Aus demselben Grund wird der Platz fuer eine gegliederte Liste bei jedem
+  // Aufruf geleert: sonst stuende der Verlauf des letzten Titels in der
+  // naechsten Loeschabfrage.
+  if (confirmBody) {
+    confirmBody.replaceChildren(...(inhalt ? [inhalt] : []));
+    confirmBody.classList.toggle("is-hidden", !inhalt);
+  }
   confirmAccept.textContent = confirmLabel;
   confirmCancel.textContent = cancelLabel;
   return new Promise((resolve) => {
@@ -5560,49 +5703,6 @@ function datumKurz(datum) {
   return datum.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-// "Geoeffnet" und "Film geoeffnet" sagen nur, dass die Seite auf war - nicht,
-// dass etwas lief. Genau daran lag es, dass ein dreimal geoeffneter Film als
-// "3 Mal geschaut" dastand.
-const NUR_GEOEFFNET = /ge(ö|oe)ffnet/i;
-
-function istAbschluss(label) {
-  return /^abgeschlossen$/i.test(String(label || "").trim());
-}
-
-// Der Verlauf eines Titels, neueste zuerst - nur was wirklich geschaut wurde:
-// abgeschlossene Durchlaeufe und einzelne Folgen.
-function verlaufListe(favorite) {
-  const roh = Array.isArray(favorite?.activity) ? favorite.activity : [];
-  return roh
-    .filter((eintrag) => eintrag && eintrag.at)
-    .map((eintrag) => ({ zeit: new Date(Date.parse(eintrag.at)), label: String(eintrag.label || "").trim() }))
-    .filter((eintrag) => eintrag.label && !NUR_GEOEFFNET.test(eintrag.label))
-    .filter((eintrag) => Number.isFinite(eintrag.zeit?.getTime?.()))
-    .sort((links, rechts) => rechts.zeit - links.zeit);
-}
-
-// Wie oft war der Titel wirklich durch?
-//
-// Aufgezeichnet wird das erst seit 1.27.1 - aeltere Eintraege haben nur
-// "completedAt", den Zeitpunkt des letzten Abschlusses. Der zaehlt deshalb
-// mit, solange er nicht ohnehin schon als Ereignis dasteht. So steht bei einem
-// Titel aus der Mediathek nie "null Mal abgeschlossen", obwohl er dort liegt.
-function abschlussListe(favorite) {
-  const ausVerlauf = verlaufListe(favorite).filter((eintrag) => istAbschluss(eintrag.label));
-  const bekannt = Date.parse(favorite?.completedAt || "");
-  if (!Number.isFinite(bekannt)) return ausVerlauf;
-  const schonDrin = ausVerlauf.some((eintrag) => Math.abs(eintrag.zeit.getTime() - bekannt) < 60000);
-  if (schonDrin) return ausVerlauf;
-  return [...ausVerlauf, { zeit: new Date(bekannt), label: "Abgeschlossen" }]
-    .sort((links, rechts) => rechts.zeit - links.zeit);
-}
-
-// An wie vielen Tagen wurde geschaut? Zwanzig Folgen an einem Abend sind ein
-// Abend, nicht zwanzig Male - danach fragt man, wenn man "wie oft" fragt.
-function verlaufTage(liste) {
-  return new Set(liste.map((eintrag) => eintrag.zeit.toDateString())).size;
-}
-
 function favoriteCardInhalt(favorite, options = {}) {
   const datum = options.showWatchedDate ? datumKurz(gesehenAm(favorite)) : "";
   return `
@@ -5785,20 +5885,21 @@ function favoriteCard(favorite, allowRemove, options = {}) {
     });
   }
 
-  // Der Verlauf steht nur dort, wo es auch einen gibt. Bei einem Titel, den
-  // man einmal durchgeschaut hat, waere ein Menuepunkt mit einer einzigen
-  // Zeile dahinter nur ein Klick ins Leere.
-  const verlauf = verlaufListe(favorite);
-  // Sichtbar, sobald es mehr als den einen offensichtlichen Abschluss gibt -
-  // das Datum steht ja schon auf der Karte.
-  const verlaufLohnt = verlauf.length > 1 || abschlussListe(favorite).length > 1;
+  // Der Verlauf steht nur dort, wo es auch einen gibt. Bei einem Titel, von dem
+  // eine einzige Folge bekannt ist, waere ein Menuepunkt mit einer Zeile
+  // dahinter nur ein Klick ins Leere - das Datum steht ja schon auf der Karte.
+  //
+  // Gezaehlt werden Folgen, nicht Ereignisse. Frueher entschied die Laenge des
+  // Ereignisprotokolls darueber, und damit oeffnete sich der Punkt schon, wenn
+  // sich der Player bei derselben Folge zweimal gemeldet hatte.
+  const verlaufLohnt = (verlaufModellBauen(favorite)?.folgen?.length || 0) > 1;
   if (options.allowLibraryRemove && verlaufLohnt) {
     eintraege.push({
       gruppe: "info",
       symbol: "◷",
       text: "Verlauf ansehen",
       tun: async () => {
-        await zeigeVerlauf(favorite, verlauf);
+        await zeigeVerlauf(favorite);
       }
     });
   }

@@ -257,6 +257,45 @@ function erstellen(umgebung) {
     }
   }
 
+  /*
+   * Was AniList beziehungsweise TMDB ueber genau diesen einen Titel sagen.
+   *
+   * Der Verlaufs-Kasten in der Mediathek fragt danach: ob eine Serie noch
+   * laeuft, entscheidet dort ueber "Auf aktuellem Stand" gegen "Staffel
+   * abgeschlossen", und das ist nichts, was in der eigenen Ablage stuende.
+   *
+   * Der Wunsch wird mit derselben Funktion gebaut wie im Anreicherungslauf -
+   * gefragt wird sonst unter einem anderen Schluessel, und der Cache, den der
+   * Lauf gerade gefuellt hat, waere fuer den Kasten leer.
+   *
+   * Ein Netzabruf ist erlaubt, aber nie Pflicht: liegt nichts im Cache und ist
+   * das Relay nicht erreichbar, kommt `null` zurueck und der Kasten rechnet
+   * ohne externe Angaben weiter.
+   */
+  async function titelMetadaten(name, url) {
+    const wunsch = metadatenWunsch(name, url, seitenMeta(url));
+    if (!wunsch) return null;
+    let client;
+    try {
+      client = umgebung.metadaten();
+    } catch {
+      return null;
+    }
+    const bekannt = client.ausCache(wunsch);
+    // Ein Eintrag aus der Zeit vor den Laufzeit-Feldern ist nicht falsch, nur
+    // unvollstaendig. Er wird deshalb nicht verworfen - dieser eine Titel wird
+    // frisch gefragt, und der naechste Aufruf findet ihn vollstaendig vor.
+    const unvollstaendig = bekannt && client.laufStatusFehlt(bekannt);
+    if (bekannt && !unvollstaendig) return bekannt;
+    if (!client.bereit() || client.gesperrt()) return bekannt || null;
+    try {
+      const ergebnisse = await client.nachschlagen([wunsch], { frisch: Boolean(unvollstaendig) });
+      return ergebnisse?.get(wunsch.schluessel) || bekannt || null;
+    } catch {
+      return bekannt || null;
+    }
+  }
+
   // Zu welchem Anbieter gehoert eine Adresse? Gebraucht, um eine Detailseite
   // nachzulesen, ohne den Kandidaten selbst mitschleppen zu muessen.
   function anbieterZuAdresse(url) {
@@ -1366,6 +1405,9 @@ function erstellen(umgebung) {
     entdeckungsSeite,
     // Wurde ein Vorschlag geoeffnet, faengt seine Muedigkeit von vorn an.
     vergissMuedigkeit: vergissEmpfehlungsMuedigkeit,
+    // Was AniList/TMDB ueber einen einzelnen Titel sagen - fuer den
+    // Verlaufs-Kasten der Mediathek.
+    titelMetadaten,
     // Der Pool ist veraltet - etwa weil der Wirt seinen Cache verworfen hat.
     poolVerwerfen() {
       personalCache = { at: 0, items: [], signatur: "", vollstaendig: false };

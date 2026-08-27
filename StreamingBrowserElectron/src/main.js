@@ -815,6 +815,21 @@ ipcMain.handle("discover:personal-page", async (_event, options = {}) => {
   return lauf.entdeckungsSeite(type, versatz, limit, Boolean(options?.refresh));
 });
 
+// Was AniList/TMDB ueber einen Titel der Mediathek sagen.
+//
+// Gefragt wird nur vom Verlaufs-Kasten, und der fragt nur, wenn ihn jemand
+// oeffnet. Antwortet niemand, kommt `null` zurueck: der Kasten rechnet dann
+// ohne externe Angaben weiter und behauptet keinen Abschluss.
+ipcMain.handle("library:metadata", async (_event, favoriteId) => {
+  const favorite = favorites.find((eintrag) => eintrag.id === favoriteId);
+  if (!favorite) return null;
+  try {
+    return await lauf.titelMetadaten(favorite.title, favorite.url);
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle("discover:recommendations", async (_event, options = {}) => {
   const proAnbieter = Math.max(2, Math.min(12, Number(options?.perProvider) || 6));
   return lauf.neuesVonAnbietern(proAnbieter, Boolean(options?.refresh));

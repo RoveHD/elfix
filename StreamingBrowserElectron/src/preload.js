@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),
   removeFavorite: (id) => ipcRenderer.invoke("favorites:remove", id),
   removeFromLibrary: (id) => ipcRenderer.invoke("library:remove", id),
+  // Fuer den Verlaufs-Kasten: laeuft die Serie noch, und wann kommt die
+  // naechste Folge. Steht nirgends in der eigenen Ablage.
+  getLibraryMetadata: (id) => ipcRenderer.invoke("library:metadata", id),
   clearNewEpisodeHint: (id) => ipcRenderer.invoke("favorites:clear-new", id),
   markFavoriteCompleted: (id) => ipcRenderer.invoke("favorites:mark-completed", id),
   setFavoriteWatchlist: (id, wert) => ipcRenderer.invoke("favorites:set-watchlist", id, wert),
