@@ -60,7 +60,29 @@ const LAEUFT = new Set(["RELEASING", "NOT_YET_RELEASED", "HIATUS",
   "RETURNING SERIES", "IN PRODUCTION", "PLANNED"]);
 const BEENDET = new Set(["FINISHED", "CANCELLED", "ENDED", "CANCELED"]);
 
-function zahl(wert) {
+/**
+ * Eine positive ganze Zahl oder null.
+ *
+ * <p><b>Warum der Name so sperrig ist.</b> Die Oberflaeche laedt die Dateien
+ * aus {@code shared/} als gewoehnliche Skripte, und die teilen sich <em>einen</em>
+ * globalen Namensraum - anders als im Hauptprozess, wo jede Datei ihr eigenes
+ * Modul ist. Hier hiess die Funktion {@code zahl}, in
+ * {@code shared/bildausschnitt.js} heisst sie ebenso, und die beiden bedeuten
+ * nicht dasselbe: dort ist es {@code zahl(wert, ersatz)} ohne Vorzeichenregel,
+ * hier {@code zahl(wert)} mit Abrunden und Null als Rueckfall.
+ *
+ * <p>Die Kollision war nicht theoretisch. Am {@code const schnittstelle} am
+ * Ende der Datei brach das Laden mit "Identifier 'schnittstelle' has already
+ * been declared" ab - die ganze Datei wurde nie ausgefuehrt, {@code
+ * globalThis.ELFIX_VERLAUF} blieb undefiniert, und in der Mediathek fehlte
+ * daraufhin bei <em>jedem</em> Titel der Menuepunkt "Verlauf ansehen". In den
+ * Pruefungen faellt das nicht auf: die laden dieselbe Datei als CommonJS, und
+ * dort hat sie ihren eigenen Namensraum.
+ *
+ * <p>Deshalb tragen die Namen auf oberster Ebene den Modulnamen. Dass keine
+ * zwei geteilten Module denselben vergeben, prueft {@code mediathektest.js}.
+ */
+function verlaufZahl(wert) {
   const n = Number(wert);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
@@ -167,8 +189,8 @@ function folgeDesEreignisses(eintrag) {
   if (ausAdresse) return { staffel: ausAdresse.staffel, folge: ausAdresse.folge };
   const treffer = String(eintrag?.label || "").trim().match(FOLGE_AUS_LABEL);
   if (!treffer) return null;
-  const folge = zahl(treffer[2]);
-  return folge ? { staffel: zahl(treffer[1]), folge } : null;
+  const folge = verlaufZahl(treffer[2]);
+  return folge ? { staffel: verlaufZahl(treffer[1]), folge } : null;
 }
 
 function istGenerischerAbschluss(label) {
@@ -180,7 +202,7 @@ function istNurGeoeffnet(label) {
 }
 
 function folgenSchluessel(staffel, folge) {
-  return `${zahl(staffel)}|${zahl(folge)}`;
+  return `${verlaufZahl(staffel)}|${verlaufZahl(folge)}`;
 }
 
 // --- Das Sammeln --------------------------------------------------------------
@@ -212,8 +234,8 @@ function folgenSammeln(favoriten) {
     let satz = folgen.get(schluessel);
     if (!satz) {
       satz = {
-        staffel: zahl(staffel),
-        folge: zahl(folge),
+        staffel: verlaufZahl(staffel),
+        folge: verlaufZahl(folge),
         abgeschlossen: false,
         zuletzt: 0,
         position: 0,
@@ -236,7 +258,7 @@ function folgenSammeln(favoriten) {
     // 1. Abgeschlossene Folgen. Die genaueste Quelle: sie tragen Nummer und
     //    Zeitpunkt und entstehen nur aus eigener Wiedergabe.
     for (const folge of Array.isArray(favorite.completedEpisodes) ? favorite.completedEpisodes : []) {
-      const nummer = zahl(folge?.episode);
+      const nummer = verlaufZahl(folge?.episode);
       if (!nummer) continue;
       const zeit = zeitpunkt(folge?.completedAt);
       const satz = nimm(folge?.season, nummer);
@@ -257,6 +279,20 @@ function folgenSammeln(favoriten) {
       // dass ein dreimal geoeffneter Film als dreimal gesehen dastand.
       if (istNurGeoeffnet(eintrag?.label)) continue;
 
+      // Der Tag zaehlt in jedem Fall - auch ohne Folgennummer.
+      //
+      // Ein Film hat keine Folgen; `folgeDesEreignisses` gibt fuer ihn immer
+      // null zurueck. Stuende der Tag erst hinter dem `continue` darunter,
+      // haette jeder Film "an 0 Tagen geschaut" - und weil der Menuepunkt
+      // "Verlauf ansehen" an dieser Zahl haengt, verschwand er bei
+      // neunundzwanzig von achtundvierzig Titeln der Mediathek. Gemessen an
+      // der echten Ablage am 2026-08-28.
+      //
+      // Was 1.54.0 richtig entfernt hat, waren *Zeilen* und *Abschluesse* ohne
+      // Zuordnung, nicht die Tage. Ein Tag, an dem etwas lief, ist belegt,
+      // ganz gleich ob sich die Folge benennen laesst.
+      tagMerken(zeit);
+
       const stelle = folgeDesEreignisses(eintrag);
       // Ohne eindeutige Zuordnung wird nicht geraten. Das betrifft vor allem
       // die alten generischen "Abgeschlossen"-Zeilen, die auf der Serienseite
@@ -267,7 +303,6 @@ function folgenSammeln(favoriten) {
       const satz = nimm(stelle.staffel, stelle.folge);
       if (zeit > satz.zuletzt) satz.zuletzt = zeit;
       if (raum && !satz.raum) satz.raum = raum;
-      tagMerken(zeit);
       // Eine generische Abschlusszeile mit eindeutiger Folgenadresse zaehlt
       // als Abschluss genau dieser Folge - mehr behauptet sie nicht, und als
       // eigene Zeile erscheint sie nirgends.
@@ -285,7 +320,7 @@ function folgenSammeln(favoriten) {
     //    bis Folge 10 weiterschaute, hat deshalb hier Folge 10 stehen - und
     //    genau die darf nicht in seinem Verlauf auftauchen.
     const zeiger = folgenkennung(favorite.url)
-      || (zahl(favorite.episode) ? { staffel: zahl(favorite.season), folge: zahl(favorite.episode) } : null);
+      || (verlaufZahl(favorite.episode) ? { staffel: verlaufZahl(favorite.season), folge: verlaufZahl(favorite.episode) } : null);
     const stelleSek = Number(favorite.currentTime) || Number(favorite.position) || 0;
     if (zeiger && stelleSek > 0 && eigene.has(folgenSchluessel(zeiger.staffel, zeiger.folge))) {
       const satz = nimm(zeiger.staffel, zeiger.folge);
@@ -312,7 +347,7 @@ function naechsteFolgeLesen(metadaten) {
   const roh = metadaten?.naechsteFolge;
   if (!roh) return null;
   const zeit = zeitpunkt(roh.zeit);
-  const nummer = zahl(roh.nummer);
+  const nummer = verlaufZahl(roh.nummer);
   if (!zeit && !nummer) return null;
   return { nummer, zeit };
 }
@@ -339,7 +374,7 @@ function statusBestimmen(angaben) {
 
   const lauf = normalisierterLaufStatus(metadaten);
   const naechste = naechsteFolgeLesen(metadaten);
-  const folgenGesamt = zahl(metadaten?.folgenGesamt);
+  const folgenGesamt = verlaufZahl(metadaten?.folgenGesamt);
   const quelle = String(metadaten?.quelle || "").toLowerCase();
 
   // Eine bekannte naechste Folge schlaegt jeden Statuseintrag: sie ist der
@@ -385,8 +420,8 @@ function verlaufBauen(favoriten, favorite, optionen = {}) {
   let istSerie = false;
   for (const eintrag of gruppe) {
     if (String(eintrag?.type || "") === "serie" || folgenkennung(eintrag?.url)) istSerie = true;
-    const staffel = zahl(eintrag?.finalSeason);
-    const folge = zahl(eintrag?.finalEpisode);
+    const staffel = verlaufZahl(eintrag?.finalSeason);
+    const folge = verlaufZahl(eintrag?.finalEpisode);
     if (!staffel || !folge) continue;
     if (staffel > letzteStaffel || (staffel === letzteStaffel && folge > letzteFolge)) {
       letzteStaffel = staffel;
@@ -449,7 +484,7 @@ function verlaufBauen(favoriten, favorite, optionen = {}) {
   };
 }
 
-const schnittstelle = {
+const verlaufSchnittstelle = {
   STATUS,
   NUR_GEOEFFNET,
   folgenkennung,
@@ -465,5 +500,5 @@ const schnittstelle = {
 // Zwei Verbraucher, ein Modul - wie bei shared/bildausschnitt.js: der
 // Hauptprozess und die Pruefungen laden es als CommonJS, die Oberflaeche als
 // gewoehnliches Skript.
-if (typeof module !== "undefined" && module.exports) module.exports = schnittstelle;
-if (typeof globalThis !== "undefined") globalThis.ELFIX_VERLAUF = schnittstelle;
+if (typeof module !== "undefined" && module.exports) module.exports = verlaufSchnittstelle;
+if (typeof globalThis !== "undefined") globalThis.ELFIX_VERLAUF = verlaufSchnittstelle;

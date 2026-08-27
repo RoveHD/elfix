@@ -5892,7 +5892,18 @@ function favoriteCard(favorite, allowRemove, options = {}) {
   // Gezaehlt werden Folgen, nicht Ereignisse. Frueher entschied die Laenge des
   // Ereignisprotokolls darueber, und damit oeffnete sich der Punkt schon, wenn
   // sich der Player bei derselben Folge zweimal gemeldet hatte.
-  const verlaufLohnt = (verlaufModellBauen(favorite)?.folgen?.length || 0) > 1;
+  //
+  // Fuer einen Film gilt das nicht: er hat keine Folgen, und die Bedingung
+  // "mehr als eine" war fuer ihn nie erfuellbar. Gemessen an der echten Ablage
+  // hiess das, dass neunundzwanzig von achtundvierzig Titeln der Mediathek den
+  // Punkt gar nicht mehr bekamen. Bei ihm zaehlt deshalb, woran man bei einem
+  // Film ueberhaupt etwas ablesen kann - an wie vielen Tagen er lief.
+  const verlaufModell = verlaufModellBauen(favorite);
+  const verlaufLohnt = verlaufModell
+    ? (verlaufModell.istSerie
+      ? (verlaufModell.folgen?.length || 0) > 1
+      : (verlaufModell.tage || 0) > 0)
+    : false;
   if (options.allowLibraryRemove && verlaufLohnt) {
     eintraege.push({
       gruppe: "info",
