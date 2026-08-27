@@ -3,6 +3,52 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.52.0 — 27. August 2026
+
+Auf dem Telefon sah man beim Start einer Folge alles, was man nicht sehen soll.
+
+Ein Tipp auf „Weiterschauen" hieß auf Android: die Anbieterseite baut sich auf,
+die Hosterliste erscheint, die Überlagerung des Players blitzt kurz, das Bild
+klappt ins Vollbild — und irgendwann läuft etwas. Am Rechner liegt vor genau
+dieser Strecke seit jeher ein Vorhang. Auf Android gab es nur einen Hinweis
+„Startet …".
+
+Jetzt liegt der Vorhang auf beiden Geräten, und er zeigt **echte Schritte**:
+*Folge wird geöffnet* (8 %), *Player wird geladen* (32 %), *Video wird
+vorbereitet* (58 %), *Zur gespeicherten Stelle* (78 %), *Vollbild wird gesetzt*
+(90 %), *Wiedergabe läuft*.
+
+**Der Balken zählt keine Zeit hoch.** Ein Ladebalken, der das tut, sieht bei
+einer Leitung, die dreißig Sekunden braucht, genauso aus wie bei einer, die drei
+braucht — er wäre gelogen. Er springt nur, wenn ein Schritt wirklich hinter der
+Startkette liegt, und steht sonst still. Rückwärts geht er nie. Ohne
+gespeicherten Stand fällt „Zur gespeicherten Stelle" aus der Liste, statt als
+Schritt dazustehen, den niemand je meldet.
+
+Welche Schritte es gibt, wie sie heißen, wie voll der Balken dabei ist und wie
+lange jeder dauern darf, steht **an einer Stelle** und gilt für Telefon,
+Fernseher und Rechner gleichermaßen. Der Rechner bekommt damit denselben Balken
+und dieselben Texte; sein Vorhang hatte bisher nur einen Spinner und einen Satz.
+
+**Der Vorhang geht erst auf, wenn das Video wirklich läuft** — nicht, wenn die
+Seite geladen ist. Er liegt über dem Seitenaufbau, über den Überlagerungen des
+Hosters und über dem Wechsel ins Vollbild, und solange er liegt, gehören ihm
+Finger und Fernbedienung: keine Taste erreicht ein Ziel, das man nicht sieht.
+
+**Und wenn nichts kommt,** bleibt er nicht ewig liegen. Jeder Schritt hat seine
+Frist, über allem steht ein Deckel von zweieinhalb Minuten. Läuft eine ab, wird
+aus dem Ladebildschirm eine Ansage mit zwei Wegen: „Erneut versuchen" fährt
+denselben Start noch einmal von vorn, „Zurück" gibt ihn auf. Der Text nennt den
+Schritt, an dem es hängt — wer liest, dass der Hoster keinen Player geliefert
+hat, weiß, dass ein zweiter Versuch etwas bringen kann.
+
+Auf beiden Emulatoren durchgespielt, Handy und Fernseher mit D-Pad:
+„Weiterschauen" startet die richtige Folge an der gespeicherten Stelle, beim
+Aufziehen läuft das Video bereits im Vollbild, „Nächste Folge" ebenso. Acht
+D-Pad-Tasten während des Vorhangs ließen den Bildschirm unverändert. Der
+Fehlerfall wurde mit abgeschaltetem Netz geprüft, das Zeitlimit griff nach
+genau neunzig Sekunden, und „Erneut versuchen" führte bis ins laufende Bild.
+
 ## 1.51.0 — 27. August 2026
 
 Autoplay und „Nächste Folge" waren auf Android ein Element. Jetzt sind es zwei.
