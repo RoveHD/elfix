@@ -128,4 +128,62 @@ public class SpielerleisteTest {
         assertTrue(Spielerleiste.leisteSichtbar(true, true, true,
             Spielerleiste.Stufe.GEDIMMT, false));
     }
+
+    /**
+     * Die Ausblendkette hat keine Sackgasse mehr.
+     *
+     * <p>Der gemeldete Fall vom Fernseher: "die Leiste blendet sich nicht mehr
+     * nach ein paar Sekunden aus". Meldete der Player, dass seine eigene
+     * Bedienleiste steht, endete der Takt hier ohne Fortsetzung - von da an
+     * lief keiner mehr, und die Leiste kam nur durch eine Beruehrung zurueck in
+     * den Ablauf. Wer auf dem Fernseher zuschaut, beruehrt nichts.
+     *
+     * <p>Richtig ist WARTEN und nicht Ende: aufgeschoben, nicht aufgehoben.
+     */
+    @Test
+    public void diePlayerleisteSchiebtAufUndHebtNichtAuf() {
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, false, true, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, false, true, Spielerleiste.Stufe.GEDIMMT));
+        // Und sobald der Player seine Leiste wegnimmt, ruecken die Schritte
+        // weiter - ohne dass jemand etwas tun muesste.
+        assertEquals(Spielerleiste.Schritt.DIMMEN,
+            Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.VERSCHWINDEN,
+            Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.GEDIMMT));
+    }
+
+    /** Ein laufender Zaehler haelt jeden Schritt auf - eine Ansage duckt sich nicht weg. */
+    @Test
+    public void derZaehlerHaeltDenTaktAuf() {
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, true, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, true, false, Spielerleiste.Stufe.GEDIMMT));
+    }
+
+    /**
+     * Der Fokus haelt nur den letzten Schritt auf, nicht jeden.
+     *
+     * <p>Der zweite Teil der Meldung vom Fernseher, und im Emulator an einer
+     * echten Folge nachgestellt: nach einem Druck auf das Steuerkreuz sass der
+     * Fokus auf dem Autoplay-Schalter im Vollbild. Der Fokus hielt bis hierher
+     * *jeden* Schritt auf - der Kasten stand damit bei voller Deckkraft ueber
+     * dem Video, bis wieder jemand eine Taste drueckte. Auf einem Fernseher, wo
+     * man beim Schauen nichts drueckt, heisst das: bis zum Ende der Folge.
+     *
+     * <p>Zuruecktreten darf er also auch mit Fokus. Nur ganz verschwinden nicht -
+     * das naehme der Fernbedienung den Platz, an dem sie steht.
+     */
+    @Test
+    public void derFokusHaeltNurDenLetztenSchrittAuf() {
+        assertEquals(Spielerleiste.Schritt.DIMMEN,
+            Spielerleiste.naechsterSchritt(true, false, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(true, false, false, Spielerleiste.Stufe.GEDIMMT));
+        // Ohne Fokus geht sie den Weg zu Ende.
+        assertEquals(Spielerleiste.Schritt.VERSCHWINDEN,
+            Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.GEDIMMT));
+    }
 }

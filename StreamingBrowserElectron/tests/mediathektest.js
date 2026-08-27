@@ -292,8 +292,55 @@ pruefe("Das rohe Ereignisprotokoll wird nicht mehr Zeile fuer Zeile gezeigt",
   !/function verlaufListe\(/.test(RENDERER));
 pruefe("Der Kasten bleibt der Kasten - ohne Abbrechen und mehrzeilig",
   /nurSchliessen: true/.test(RENDERER) && /mehrzeilig: true/.test(RENDERER));
-pruefe("Der Menuepunkt haengt an Folgen, nicht an Ereignissen",
-  /const verlaufLohnt = \(verlaufModellBauen\(favorite\)\?\.folgen\?\.length \|\| 0\) > 1;/.test(RENDERER));
+// Bei einer Serie zaehlen Folgen und nicht Ereignisse - sonst oeffnete sich
+// der Punkt schon, wenn sich der Player bei derselben Folge zweimal gemeldet
+// hat. Bei einem Film gibt es keine Folgen, und "mehr als eine" war fuer ihn
+// nie erfuellbar: an der echten Ablage gemessen fehlte der Punkt dadurch bei
+// neunundzwanzig von achtundvierzig Titeln der Mediathek.
+pruefe("Der Menuepunkt unterscheidet Serie und Film",
+  /verlaufModell\.istSerie[\s\S]{0,120}folgen\?\.length \|\| 0\) > 1[\s\S]{0,80}tage \|\| 0\) > 0/.test(RENDERER),
+  "Serie: mehr als eine Folge. Film: mindestens ein Tag");
+
+{
+  // Und dieselbe Regel an gerechneten Modellen, nicht nur am Quelltext.
+  const verlaufModul = require(path.join(WURZEL, "shared/verlauf.js"));
+  const lohnt = (favoriten, favorite) => {
+    const m = verlaufModul.verlaufBauen(favoriten, favorite, {});
+    return m ? (m.istSerie ? m.folgen.length > 1 : m.tage > 0) : false;
+  };
+  const heute = "2026-08-20T20:00:00.000Z";
+  const film = {
+    id: "f1", title: "Ein Film", type: "film", completed: true,
+    url: "https://filmo.example/film/ein-film",
+    activity: [{ at: heute, url: "https://filmo.example/film/ein-film", label: "Abgeschlossen" }]
+  };
+  pruefe("Ein gesehener Film bekommt den Punkt", lohnt([film], film));
+
+  const nurGeoeffnet = {
+    id: "f2", title: "Nur aufgemacht", type: "film", completed: true,
+    url: "https://filmo.example/film/nie-gesehen",
+    activity: [{ at: heute, url: "https://filmo.example/film/nie-gesehen", label: "Geöffnet" }]
+  };
+  pruefe("Ein nur geoeffneter Film bekommt ihn nicht", !lohnt([nurGeoeffnet], nurGeoeffnet),
+    "eine offene Seite ist keine Wiedergabe");
+
+  const eineFolge = {
+    id: "s1", title: "Serie", type: "serie", completed: true,
+    url: "https://aniworld.example/anime/stream/serie/staffel-1/episode-1",
+    completedEpisodes: [{ season: 1, episode: 1, completedAt: heute }]
+  };
+  pruefe("Eine Serie mit einer einzigen Folge bekommt ihn nicht", !lohnt([eineFolge], eineFolge),
+    "das Datum steht schon auf der Karte");
+
+  const zweiFolgen = {
+    ...eineFolge,
+    completedEpisodes: [
+      { season: 1, episode: 1, completedAt: heute },
+      { season: 1, episode: 2, completedAt: "2026-08-21T20:00:00.000Z" }
+    ]
+  };
+  pruefe("Eine Serie mit zwei Folgen bekommt ihn", lohnt([zweiFolgen], zweiFolgen));
+}
 
 // Wie eine Folgenzeile aussieht.
 pruefe("Eine abgeschlossene Folge sagt genau das",
@@ -325,6 +372,87 @@ pruefe("Der Kasten kann seinen Abbrechen-Knopf wirklich ausblenden",
 pruefe("Beide Merker werden bei jedem Aufruf neu gesetzt",
   /confirmCopy\.classList\.toggle\("is-mehrzeilig", Boolean\(mehrzeilig\)\);/.test(RENDERER)
   && /confirmCancel\.classList\.toggle\("is-hidden", Boolean\(nurSchliessen\)\);/.test(RENDERER));
+
+// --- Die geteilten Module im Namensraum der Oberflaeche -----------------------
+//
+// Der teuerste Fehler dieser Ecke, und einer, den keine der Pruefungen oben
+// sehen konnte.
+//
+// Die Oberflaeche laedt shared/bildausschnitt.js und shared/verlauf.js als
+// gewoehnliche <script>-Elemente. Klassische Skripte teilen sich *einen*
+// globalen Namensraum. Beide Dateien schlossen mit `const schnittstelle = {...}`,
+// und die zweite brach damit ab:
+//
+//   SyntaxError: Identifier 'schnittstelle' has already been declared
+//
+// Nicht die Zeile - die ganze Datei. shared/verlauf.js wurde nie ausgefuehrt,
+// globalThis.ELFIX_VERLAUF blieb undefiniert, verlaufModellBauen() gab null
+// zurueck, und in der Mediathek fehlte bei jedem einzelnen Titel der
+// Menuepunkt "Verlauf ansehen".
+//
+// Alle Pruefungen liefen dabei gruen, denn sie laden dieselben Dateien mit
+// require() - als CommonJS, wo jede Datei ihren eigenen Namensraum hat. Genau
+// diese Luecke schliesst der Block hier: die Dateien werden so ausgefuehrt, wie
+// die Oberflaeche sie laedt, hintereinander in einem Kontext.
+//
+// Die zweite Kollision war stiller und waere nach dem Beheben der ersten erst
+// aufgewacht: `zahl` heisst in beiden Dateien so und bedeutet nicht dasselbe -
+// zahl(wert, ersatz) beim Bildausschnitt, zahl(wert) mit Abrunden im Verlauf.
+// Wer zuletzt geladen wird, gewinnt, und der andere rechnet ab da falsch.
+const GETEILT_IN_DER_OBERFLAECHE = (() => {
+  const html = fs.readFileSync(path.join(WURZEL, "src/renderer/index.html"), "utf8");
+  return [...html.matchAll(/<script\s+src="\.\.\/\.\.\/(shared\/[\w.-]+\.js)"/g)].map((t) => t[1]);
+})();
+
+pruefe("Die Oberflaeche laedt ueberhaupt geteilte Module",
+  GETEILT_IN_DER_OBERFLAECHE.length >= 2, GETEILT_IN_DER_OBERFLAECHE.join(", "));
+
+{
+  // Ein Kontext, alle Dateien nacheinander - dieselbe Reihenfolge wie im HTML.
+  const namensraum = { console, URL, TextEncoder, TextDecoder };
+  namensraum.globalThis = namensraum;
+  const kontext = vm.createContext(namensraum);
+  let bruch = "";
+  for (const datei of GETEILT_IN_DER_OBERFLAECHE) {
+    try {
+      vm.runInContext(fs.readFileSync(path.join(WURZEL, datei), "utf8"), kontext,
+        { filename: datei });
+    } catch (fehler) {
+      bruch = `${datei}: ${fehler.message}`;
+      break;
+    }
+  }
+  pruefe("Die geteilten Module vertragen sich in einem Namensraum",
+    bruch === "", bruch || "keine Kollision");
+
+  // Und sie liefern danach wirklich, was die Oberflaeche von ihnen erwartet.
+  pruefe("Nach dem Laden steht ELFIX_VERLAUF bereit",
+    typeof namensraum.ELFIX_VERLAUF === "object" && namensraum.ELFIX_VERLAUF !== null
+      && typeof namensraum.ELFIX_VERLAUF.verlaufBauen === "function",
+    typeof namensraum.ELFIX_VERLAUF);
+  pruefe("Und ELFIX_BILDAUSSCHNITT ebenfalls",
+    typeof namensraum.ELFIX_BILDAUSSCHNITT === "object" && namensraum.ELFIX_BILDAUSSCHNITT !== null,
+    typeof namensraum.ELFIX_BILDAUSSCHNITT);
+}
+
+{
+  // Kein Name auf oberster Ebene darf zweimal vergeben sein - auch keiner, den
+  // JavaScript stillschweigend ueberschreiben wuerde (Funktionen tun das).
+  const vergeben = new Map();
+  const doppelt = [];
+  for (const datei of GETEILT_IN_DER_OBERFLAECHE) {
+    const text = fs.readFileSync(path.join(WURZEL, datei), "utf8");
+    for (const treffer of text.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+      const name = treffer[1];
+      if (vergeben.has(name) && vergeben.get(name) !== datei) {
+        doppelt.push(`${name} (${vergeben.get(name)} und ${datei})`);
+      }
+      vergeben.set(name, datei);
+    }
+  }
+  pruefe("Kein Name auf oberster Ebene ist zweimal vergeben",
+    doppelt.length === 0, doppelt.length ? doppelt.join("; ") : `${vergeben.size} Namen geprueft`);
+}
 
 const gut = pruefungen.filter(Boolean).length;
 console.log(`${gut}/${pruefungen.length} bestanden`);

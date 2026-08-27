@@ -6564,3 +6564,105 @@ input[type="color"] {
   font-weight: 700;
   cursor: pointer;
 }
+
+/* ============================================================================
+   Uebergaenge
+   ----------------------------------------------------------------------------
+   Erst kam die Ruhe, dann das hier - und das ist keine Reihenfolge aus
+   Bequemlichkeit. Gemessen am 2026-08-28 in der laufenden App, 45 Sekunden im
+   Leerlauf: 253 ersetzte Teilbaeume, jede Reihe der Startseite elfmal, im
+   Fuenfsekundentakt. Haette man Animationen darauf gelegt, waere jede davon
+   alle fuenf Sekunden neu angelaufen; aus einem Zucken waere ein Flimmern
+   geworden. Nachdem der Neuaufbau an einem Vergleich haengt, sind es 110.
+
+   Deshalb bewegt sich hier nur, was einen *Wechsel* bedeutet: eine Ansicht,
+   die aufgeht, eine Reihe, die zum ersten Mal etwas zu zeigen hat, ein Knopf
+   unter dem Finger. Nichts davon haengt an einem Takt, und nichts davon laeuft
+   erneut, wenn dieselbe Ansicht nur neu gezeichnet wird - die Traeger dieser
+   Animationen sind Elemente, die stehenbleiben.
+
+   Alles zusammen laesst sich am Ende der Datei mit einer Regel abschalten;
+   wer "Bewegung reduzieren" gesetzt hat, bekommt nichts davon.
+   ========================================================================== */
+
+@keyframes elfix-ansicht-auf {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Eine Ansicht, die aufgeht. Traeger ist die Ansicht selbst, und die
+   entsteht nicht neu, wenn ihr Inhalt neu gezeichnet wird - ein Neuaufbau
+   der Startseite loest das hier also nicht aus. */
+.home-view:not(.is-hidden),
+.global-search-view:not(.is-hidden),
+.favorites-view:not(.is-hidden) {
+  animation: elfix-ansicht-auf 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes elfix-reihe-auf {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Eine Reihe, die etwas bekommen hat.
+   Die Vorschlagsreihen der Startseite brauchen beim ersten Start ein paar
+   Sekunden; bis dahin sind sie .is-hidden. Genau der Augenblick, in dem sie
+   aufgehen, ist ein Uebergang und keine Stoerung - und weil die Reihe selbst
+   stehenbleibt, laeuft er kein zweites Mal. */
+.favorites-row:not(.is-hidden) {
+  animation: elfix-reihe-auf 200ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+/* Der Druck auf einen Knopf. Kurz und klein - eine Quittung, keine Geste. */
+button,
+.chrome-btn,
+.provider-card,
+.home-side-link {
+  transition: transform 150ms cubic-bezier(0.2, 0, 0, 1),
+              background-color 150ms ease,
+              border-color 150ms ease,
+              box-shadow 150ms ease;
+}
+
+button:active,
+.chrome-btn:active,
+.provider-card:active,
+.home-side-link:active {
+  transform: scale(0.985);
+}
+
+/* Und der Fokus mit der Tastatur - er darf genauso weich kommen wie die Maus,
+   aber er darf nie ausbleiben. */
+button:focus-visible,
+.chrome-btn:focus-visible,
+.provider-card:focus-visible,
+.home-side-link:focus-visible {
+  transition: none;
+}
+
+/* ----------------------------------------------------------------------------
+   Wer keine Bewegung will, bekommt keine.
+
+   Sammelnd und am Ende der Datei, damit es wirklich alles trifft: die Regeln
+   von oben, die aelteren Uebergaenge weiter oben in dieser Datei und jede, die
+   spaeter dazukommt. Ausgenommen bleibt nichts - auch nicht das Drehen des
+   Ladezeichens, das oben nur langsamer gestellt wird und hier ganz aufhoert.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Ein Ladezeichen, das steht, sagt nichts mehr. Es dreht sich weiter, nur
+     so langsam, dass es niemanden aus dem Augenwinkel holt. */
+  .chrome-btn.is-reloading::after,
+  .chrome-btn.is-busy::after {
+    animation-duration: 2400ms !important;
+    animation-iteration-count: infinite !important;
+  }
+}

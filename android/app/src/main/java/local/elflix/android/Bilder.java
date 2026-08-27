@@ -60,6 +60,37 @@ public final class Bilder {
     private static LruCache<String, Bitmap> speicher;
     private static boolean aufgeraeumt;
 
+    /**
+     * Wer gerade auf welches Bild wartet.
+     *
+     * <p><b>Warum es das gibt.</b> Gemessen am 2026-08-28 auf dem Handy-
+     * Emulator, erste 45 Sekunden nach dem Start: <em>569 Ladeauftraege fuer
+     * 108 verschiedene Bilder</em>, eines allein vierzehnmal. Der Grund war
+     * nicht der Speicher - der greift erst, wenn ein Auftrag fertig ist. Bis
+     * dahin lief jeder weitere Auftrag zu derselben Adresse an ihm vorbei und
+     * legte noch eine Datei-Lesung samt vollstaendiger Dekodierung auf die drei
+     * Threads. Die Karten, die gerade auf dem Schirm standen, warteten damit
+     * hinter der vierzehnten Kopie eines Bildes, das laengst unterwegs war.
+     *
+     * <p>Also wird je Schluessel genau einmal geholt. Wer in der Zwischenzeit
+     * dasselbe Bild will, haengt sich an und bekommt dieselbe Bitmap.
+     */
+    private static final java.util.HashMap<String, java.util.ArrayList<Wartender>> laufend =
+        new java.util.HashMap<>();
+
+    /** Ein Ziel, das auf ein Bild wartet - samt dem, was danach zu tun ist. */
+    private static final class Wartender {
+        final ImageView ziel;
+        final String schluessel;
+        final Runnable beiBild;
+
+        Wartender(ImageView ziel, String schluessel, Runnable beiBild) {
+            this.ziel = ziel;
+            this.schluessel = schluessel;
+            this.beiBild = beiBild;
+        }
+    }
+
     private Bilder() {
     }
 
@@ -72,6 +103,13 @@ public final class Bilder {
      * Adresse, Anbieter blockt), bleibt er einfach stehen; ein Loch entsteht
      * nicht.
      *
+     * <p><b>Steht schon das richtige Bild da, geschieht nichts.</b> Hier wurde
+     * bis hierher bei jedem Aufruf zuerst {@code setImageDrawable(null)} und
+     * {@code GONE} gesetzt - auch dann, wenn genau dieses Bild in genau dieser
+     * Groesse schon in genau diesem {@link ImageView} stand. Beim Titel-
+     * hintergrund, der sich alle fuenfzehn Sekunden neu zeichnet, war das der
+     * sichtbare Sprung: Bild weg, Platzhalter da, Bild wieder da.
+     *
      * @param ziel     wohin das Bild gehoert
      * @param adresse  die Bildadresse aus dem Eintrag, leer erlaubt
      * @param breiteDp Kartenmass, damit nicht groesser dekodiert wird als noetig
@@ -80,13 +118,12 @@ public final class Bilder {
     static void laden(ImageView ziel, String adresse, int breiteDp, int hoeheDp, Runnable beiBild) {
         if (ziel == null) return;
         String sauber = adresse == null ? "" : adresse.trim();
-        // Der Merker haengt am Ziel, nicht am Auftrag: Listen benutzen ihre
-        // Ansichten wieder, und die Antwort auf den vorigen Auftrag darf nicht
-        // im Bild des naechsten landen.
-        ziel.setTag(sauber);
-        ziel.setImageDrawable(null);
-        ziel.setVisibility(ImageView.GONE);
-        if (sauber.isEmpty()) return;
+        if (sauber.isEmpty()) {
+            ziel.setTag(null);
+            ziel.setImageDrawable(null);
+            ziel.setVisibility(ImageView.GONE);
+            return;
+        }
 
         Context context = ziel.getContext().getApplicationContext();
         float dichte = context.getResources().getDisplayMetrics().density;
@@ -94,16 +131,60 @@ public final class Bilder {
         int hoehe = Math.max(1, Math.round(hoeheDp * dichte));
         String schluessel = sauber + "@" + breite + "x" + hoehe;
 
-        Bitmap bekannt = speicher(context).get(schluessel);
-        if (bekannt != null) {
-            zeigen(ziel, sauber, bekannt, beiBild);
+        // Dasselbe Bild in derselben Groesse steht schon da. Nichts anfassen -
+        // aber die Karte erfaehrt es trotzdem, sonst blendet sie ihren
+        // Platzhalter wieder ein.
+        if (schluessel.equals(ziel.getTag()) && ziel.getDrawable() != null) {
+            if (beiBild != null) beiBild.run();
             return;
         }
+
+        // Ein anderes Bild als bisher: erst jetzt raeumen. Der Merker haengt am
+        // Ziel, nicht am Auftrag - Listen benutzen ihre Ansichten wieder, und
+        // die Antwort auf den vorigen Auftrag darf nicht im Bild des naechsten
+        // landen.
+        ziel.setTag(schluessel);
+        ziel.setImageDrawable(null);
+        ziel.setVisibility(ImageView.GONE);
+
+        Bitmap bekannt = speicher(context).get(schluessel);
+        if (bekannt != null) {
+            zeigen(ziel, schluessel, bekannt, beiBild, false);
+            return;
+        }
+        anstellen(context, sauber, schluessel, breite, hoehe,
+            new Wartender(ziel, schluessel, beiBild));
+    }
+
+    /**
+     * Einen Wartenden an den Auftrag zu diesem Schluessel haengen - und den
+     * Auftrag anlegen, falls er noch nicht laeuft.
+     */
+    private static void anstellen(Context context, String adresse, String schluessel,
+                                  int breite, int hoehe, Wartender wartender) {
+        synchronized (laufend) {
+            java.util.ArrayList<Wartender> warteschlange = laufend.get(schluessel);
+            if (warteschlange != null) {
+                warteschlange.add(wartender);
+                return;
+            }
+            warteschlange = new java.util.ArrayList<>();
+            warteschlange.add(wartender);
+            laufend.put(schluessel, warteschlange);
+        }
         netz.execute(() -> {
-            Bitmap bild = holen(context, sauber, breite, hoehe);
-            if (bild == null) return;
-            speicher(context).put(schluessel, bild);
-            haupt.post(() -> zeigen(ziel, sauber, bild, beiBild));
+            Bitmap bild = holen(context, adresse, breite, hoehe);
+            if (bild != null) speicher(context).put(schluessel, bild);
+            java.util.ArrayList<Wartender> fertig;
+            synchronized (laufend) {
+                fertig = laufend.remove(schluessel);
+            }
+            if (fertig == null || bild == null) return;
+            haupt.post(() -> {
+                for (Wartender einer : fertig) {
+                    zeigen(einer.ziel, einer.schluessel, bild, einer.beiBild, true);
+                }
+            });
         });
     }
 
@@ -227,19 +308,52 @@ public final class Bilder {
         }
     }
 
-    private static void zeigen(ImageView ziel, String adresse, Bitmap bild, Runnable beiBild) {
-        if (!adresse.equals(ziel.getTag())) return;
+    /**
+     * @param eingeblendet ob das Bild sanft aufkommen soll. Nur fuer Bilder, auf
+     *                     die wirklich gewartet wurde: was aus dem Speicher
+     *                     kommt, steht schon im ersten Bild der Seite da und
+     *                     duerfte nicht erst einblenden - das waere ein
+     *                     Flackern, wo vorher keins war.
+     */
+    private static void zeigen(ImageView ziel, String schluessel, Bitmap bild, Runnable beiBild,
+                               boolean eingeblendet) {
+        if (!schluessel.equals(ziel.getTag())) return;
         ziel.setImageBitmap(bild);
         ziel.setVisibility(ImageView.VISIBLE);
+        if (eingeblendet) {
+            long dauer = Bewegung.dauer(ziel.getContext(), Bewegung.MITTEL);
+            if (dauer > 0) {
+                ziel.setAlpha(0f);
+                ziel.animate().alpha(1f).setDuration(dauer).start();
+            } else {
+                ziel.setAlpha(1f);
+            }
+        } else {
+            ziel.setAlpha(1f);
+        }
         if (beiBild != null) beiBild.run();
     }
 
     private static synchronized LruCache<String, Bitmap> speicher(Context context) {
         if (speicher == null) {
-            // Ein Achtel des Heaps ist die uebliche Aufteilung: genug fuer die
-            // sichtbare Liste und weit weg von der Grenze, an der Android die
-            // App abraeumt.
-            int platz = (int) (Runtime.getRuntime().maxMemory() / 1024 / 8);
+            // Ein Viertel des Heaps.
+            //
+            // <p>Hier stand ein Achtel - die uebliche Faustregel, und fuer eine
+            // Liste, die man durchblaettert, die richtige. Fuer diese
+            // Startseite war sie zu klein. Gemessen am 2026-08-28 auf dem
+            // Handy-Emulator (192 MB Heap, also 24 MB Speicher): <em>279
+            // abgelegte Bilder, 235 davon wieder verdraengt</em>. Der
+            // Titelhintergrund allein wiegt schwer - er wird in Bildschirm-
+            // breite dekodiert, waehrend eine Kachel ein Sechstel davon
+            // braucht -, und fuenf davon reichen, um die uebrigen hundert
+            // hinauszudraengen.
+            //
+            // <p>Sichtbar wurde das als das gemeldete Flackern: jedes
+            // Neuzeichnen fand einen leeren Speicher vor und musste jedes Bild
+            // von der Platte neu dekodieren. Der Platzhalter stand also nicht
+            // deshalb da, weil ein Bild fehlte, sondern weil es zum wievielten
+            // Mal auch immer geholt wurde.
+            int platz = (int) (Runtime.getRuntime().maxMemory() / 1024 / 4);
             speicher = new LruCache<String, Bitmap>(Math.max(2048, platz)) {
                 @Override
                 protected int sizeOf(String schluessel, Bitmap wert) {
