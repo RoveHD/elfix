@@ -9,6 +9,52 @@ const verlaufModul = globalThis.ELFIX_VERLAUF;
 
 let providers = [];
 let favorites = [];
+/**
+ * Wie der Bestand beim letzten Zeichnen aussah - siehe {@link bestandsbild}.
+ */
+let letztesBestandsbild = "";
+
+/**
+ * Alles, was Startseite, Watchlist und Mediathek aus einem Eintrag wirklich
+ * zeigen - als eine Zeile zum Vergleichen.
+ *
+ * <p>Das Gegenstueck zu {@code seitenbild()} in der Android-Fassung, und aus
+ * demselben Grund: der Hauptprozess meldet seinen Stand im Fuenfsekundentakt,
+ * und ohne diesen Vergleich ist jede Meldung ein kompletter Neuaufbau.
+ *
+ * <p>Der Fortschritt geht auf ganze Prozent gerundet mit ein. Die Sekunde
+ * selbst waere zu fein - dann zeichnete jede Meldung neu, und der Vergleich
+ * brachte nichts. Ganz weglassen liesse den Balken stehen, waehrend auf einem
+ * anderen Geraet weitergeschaut wird. Ein Prozent einer Folge sind ungefaehr
+ * vierzehn Sekunden; so bleibt der Balken ehrlich und die Seite ruhig.
+ */
+function bestandsbild(liste) {
+  const teile = [];
+  for (const eintrag of Array.isArray(liste) ? liste : []) {
+    if (!eintrag) continue;
+    const dauer = Number(eintrag.duration) || 0;
+    const stelle = Number(eintrag.currentTime) || Number(eintrag.position) || 0;
+    const prozent = dauer > 0 ? Math.round((stelle / dauer) * 100) : 0;
+    teile.push([
+      eintrag.id,
+      eintrag.title,
+      eintrag.url,
+      eintrag.season,
+      eintrag.episode,
+      eintrag.thumbnail,
+      eintrag.customThumbnail,
+      eintrag.customThumbnailCrop && JSON.stringify(eintrag.customThumbnailCrop),
+      eintrag.favorite ? 1 : 0,
+      eintrag.completed ? 1 : 0,
+      eintrag.hideFromContinue ? 1 : 0,
+      eintrag.continuePending ? 1 : 0,
+      eintrag.newEpisodeAt,
+      eintrag.watchpartyRoom,
+      prozent
+    ].join("#"));
+  }
+  return teile.join("\n");
+}
 let settings = {};
 let appInfo = {};
 let updateState = {};
@@ -988,9 +1034,26 @@ function bindEvents() {
     currentUrl = state.url || "";
     if (Array.isArray(state.favorites)) {
       favorites = state.favorites;
-      renderFavorites();
-      renderHome();
-      renderLibraryViews();
+      // Nur zeichnen, wenn die Seiten danach anders aussaehen.
+      //
+      // Der Hauptprozess schickt seinen Stand im Fuenfsekundentakt, und bis
+      // hierher war jede Sendung ein kompletter Neuaufbau von Startseite,
+      // Watchlist und Mediathek. Gemessen am 2026-08-28 in der laufenden App,
+      // 45 Sekunden im Leerlauf, ohne dass irgendetwas geschah:
+      // 253 ersetzte Teilbaeume, jede Reihe der Startseite elfmal.
+      //
+      // Teuer war das kaum - keine einzige lange Aufgabe. Sichtbar aber schon:
+      // jedes Bild bekam ein neues <img>, jeder Uebergang fing von vorn an,
+      // und ein aufgeklapptes Kachelmenue haette keinen Anker mehr gehabt.
+      // Eine Oberflaeche, die sich alle fuenf Sekunden selbst ersetzt, kann
+      // nicht ruhig wirken, egal wie schnell sie das tut.
+      const bild = bestandsbild(favorites);
+      if (bild !== letztesBestandsbild) {
+        letztesBestandsbild = bild;
+        renderFavorites();
+        renderHome();
+        renderLibraryViews();
+      }
     }
     renderProviders();
     renderFavoriteToggle();
@@ -1093,13 +1156,31 @@ function showStartupError(error) {
   `;
 }
 
+/** Wie die Anbieterleiste zuletzt aussah - siehe {@link renderProviders}. */
+let letztesAnbieterbild = "";
+
 function renderProviders() {
   const enabled = providers.filter((provider) => provider.enabled !== false);
-  providerRail.replaceChildren(...enabled.map((provider) => providerCard(provider, false)));
-  if (!enabled.length) {
-    providerRail.append(emptyText("Keine Anbieter. Settings öffnen."));
+  // Dieselbe Vorsicht wie beim Bestand: der Hauptprozess meldet seinen Stand
+  // im Fuenfsekundentakt, und die Anbieterliste aendert sich dabei so gut wie
+  // nie. Sie trotzdem jedes Mal neu zu bauen hiess, alle paar Sekunden jedes
+  // Anbieterlogo durch ein frisches Element zu ersetzen.
+  //
+  // Welcher Anbieter gerade offen ist, gehoert mit ins Bild: providerCard
+  // backt die Klasse "is-active" beim Bauen ein, und renderRouteActiveState
+  // unten fasst nur die Seitenleiste an. Ohne ihn bliebe die Hervorhebung in
+  // der Leiste beim vorigen Anbieter stehen.
+  const bild = [activeProviderId, ...enabled
+    .map((provider) => [provider.id, provider.name, provider.logo, provider.startUrl].join("#"))]
+    .join("\n");
+  if (bild !== letztesAnbieterbild) {
+    letztesAnbieterbild = bild;
+    providerRail.replaceChildren(...enabled.map((provider) => providerCard(provider, false)));
+    if (!enabled.length) {
+      providerRail.append(emptyText("Keine Anbieter. Settings öffnen."));
+    }
+    renderSidebarProviders(enabled);
   }
-  renderSidebarProviders(enabled);
   renderRouteActiveState();
 }
 
