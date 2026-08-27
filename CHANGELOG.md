@@ -3,6 +3,65 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.55.0 — 28. August 2026
+
+Die Oberfläche baute sich ständig selbst neu — auf dem Telefon, am Fernseher
+und am Rechner.
+
+Gemeldet war das Zucken: Bereiche, die sich neu aufbauen, Bilder, die kurz
+verschwinden und wieder laden, springende Listen. Zuerst gemessen, dann
+geändert.
+
+**Auf dem Telefon**, erste 45 Sekunden nach dem Start: acht komplette
+Neuaufbauten der Startseite, fünf davon in 3,4 Sekunden. 569 Bild-Ladeaufträge
+für 108 verschiedene Bilder — eines allein vierzehnmal. Und 279 abgelegte
+Bilder, von denen 235 sofort wieder verdrängt wurden.
+
+Fünf Ursachen. Jede fertige Vorschlagsreihe baute die ganze Seite neu; jetzt
+werden Meldungen in einem Fenster von 180 ms gesammelt und ergeben ein
+Zeichnen. Die Watchparty-Seite entstand bei jeder Meldung des Relays neu — bei
+zwei Teilnehmern alle paar Sekunden; jetzt nur, wenn sie danach anders aussähe.
+Der Titelhintergrund warf alle fünfzehn Sekunden seinen ganzen Kasten weg,
+samt Bild; jetzt wird umgeschrieben, was anders ist. Ein Bild, das schon da
+steht, wird nicht mehr erst gelöscht und dann neu geholt. Und der Bildspeicher
+ist von einem Achtel auf ein Viertel gewachsen, weil er sich sonst selbst
+leerräumte.
+
+Danach: fünf Neuaufbauten statt acht — die übrigen sind echte neue Inhalte —
+und 182 Ladeaufträge statt 569.
+
+**Am Rechner** dasselbe Muster, anderer Takt: 253 ersetzte Bereiche in 45
+Sekunden Leerlauf, jede Reihe elfmal, im Fünfsekundentakt. Der Hauptprozess
+meldet seinen Stand, und jede Meldung war ein Neuaufbau — auch wenn sich an
+keinem Eintrag etwas geändert hatte. Jetzt 92.
+
+**Übergänge** gibt es erst danach, und das ist keine Reihenfolge aus
+Bequemlichkeit: auf einem Fünfsekundentakt wäre jede Animation alle fünf
+Sekunden neu angelaufen. Bewegt wird nur, was einen Wechsel bedeutet — eine
+Ansicht, die aufgeht, eine Reihe, die zum ersten Mal etwas zu zeigen hat, ein
+Knopf unter dem Finger. Beim Löschen blendet die Kachel aus und zieht sich
+zusammen, und *dann* ändert sich die Ablage; vorher war der Eintrag weg, bevor
+etwas zu sehen war. Wer „Bewegung reduzieren" eingestellt hat, bekommt nichts
+davon.
+
+**„Verlauf ansehen" fehlte** in der Mediathek bei jedem einzelnen Titel. Zwei
+geteilte Dateien vergaben denselben Namen auf oberster Ebene, und weil die
+Oberfläche sie als gewöhnliche Skripte lädt, brach die zweite beim Laden ab —
+nicht die Zeile, die ganze Datei. In den Prüfungen fiel das nie auf: die laden
+dieselben Dateien anders. Jetzt tun sie es so wie die Oberfläche. Filme bekommen
+den Punkt ebenfalls wieder; sie haben keine Folgen, und die Bedingung war für
+sie nie erfüllbar.
+
+**Am Fernseher** blendete sich die Wiedergabeleiste im Vollbild nicht mehr aus.
+Zwei Gründe, beide nachgestellt. Meldete der Player seine eigene Bedienleiste
+als sichtbar, endete die Ausblendkette und lief nie wieder an. Und der Fokus
+stand nach jedem Druck auf das Steuerkreuz auf dem Autoplay-Schalter — dem
+einzigen Fokusziel im Vollbild —, und der Schutz „solange der Fokus darauf
+steht, passiert nichts" hielt damit jeden Schritt auf. Beim Schauen drückt
+niemand eine Taste, also blieb der Kasten bis zum Ende der Folge über dem Bild.
+Jetzt tritt er auch mit Fokus zurück; ganz verschwinden darf er nur, wenn er
+den Fokus nicht hält.
+
 ## 1.54.0 — 27. August 2026
 
 „4 Mal abgeschlossen" stand da, dabei war die Serie nur vier Mal eingeholt.
