@@ -128,4 +128,44 @@ public class SpielerleisteTest {
         assertTrue(Spielerleiste.leisteSichtbar(true, true, true,
             Spielerleiste.Stufe.GEDIMMT, false));
     }
+
+    /**
+     * Die Ausblendkette hat keine Sackgasse mehr.
+     *
+     * <p>Der gemeldete Fall vom Fernseher: "die Leiste blendet sich nicht mehr
+     * nach ein paar Sekunden aus". Meldete der Player, dass seine eigene
+     * Bedienleiste steht, endete der Takt hier ohne Fortsetzung - von da an
+     * lief keiner mehr, und die Leiste kam nur durch eine Beruehrung zurueck in
+     * den Ablauf. Wer auf dem Fernseher zuschaut, beruehrt nichts.
+     *
+     * <p>Richtig ist WARTEN und nicht Ende: aufgeschoben, nicht aufgehoben.
+     */
+    @Test
+    public void diePlayerleisteSchiebtAufUndHebtNichtAuf() {
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, false, true, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, false, true, Spielerleiste.Stufe.GEDIMMT));
+        // Und sobald der Player seine Leiste wegnimmt, ruecken die Schritte
+        // weiter - ohne dass jemand etwas tun muesste.
+        assertEquals(Spielerleiste.Schritt.DIMMEN,
+            Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.VERSCHWINDEN,
+            Spielerleiste.naechsterSchritt(false, false, false, Spielerleiste.Stufe.GEDIMMT));
+    }
+
+    /**
+     * Zwei Gruende halten den Takt ausserdem auf - beide unveraendert.
+     *
+     * <p>Der Fokus, weil eine Leiste, die unter der Fernbedienung verschwindet,
+     * ihr den Platz nimmt. Und ein laufender Zaehler, weil eine Ansage, die
+     * sich wegduckt, keine ist.
+     */
+    @Test
+    public void fokusUndZaehlerHaltenDenTaktAuf() {
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(true, false, false, Spielerleiste.Stufe.VOLL));
+        assertEquals(Spielerleiste.Schritt.WARTEN,
+            Spielerleiste.naechsterSchritt(false, true, false, Spielerleiste.Stufe.VOLL));
+    }
 }

@@ -236,41 +236,83 @@ final class Spielerleiste {
      * sie voll da: das eine naehme der Fernbedienung den Platz, an dem sie
      * steht, das andere waere eine Ansage, die sich wegduckt.
      */
+    /**
+     * Was der Takt beim naechsten Schlag tut.
+     *
+     * <p>Eigener Typ, damit sich die Regel ohne Ansicht und ohne Handler
+     * pruefen laesst - dieselbe Ueberlegung wie bei {@link #leisteSichtbar}
+     * und {@link #deckkraft}.
+     */
+    enum Schritt {
+        /** Nichts aendern, aber wiederkommen. */
+        WARTEN,
+        /** Von voll auf zurueckgetreten. */
+        DIMMEN,
+        /** Von zurueckgetreten auf weg. Danach ist nichts mehr zu tun. */
+        VERSCHWINDEN
+    }
+
+    /**
+     * Der naechste Schritt der Ausblendkette.
+     *
+     * <p><b>Der Fehler, den diese Funktion pruefbar macht.</b> Meldete der
+     * Player, dass seine eigene Bedienleiste steht, endete die Kette hier mit
+     * einem {@code return} ohne Fortsetzung. Eine Sackgasse: von da an lief
+     * kein Takt mehr, und die Leiste kam nur noch durch eine Beruehrung oder
+     * eine erneute Meldung des Players in den Ablauf zurueck. Wer auf dem
+     * Fernseher zuschaut, tut beides nicht - dort blieb sie bis zum Ende der
+     * Folge stehen. Gemeldet als "die Leiste blendet sich nicht mehr aus".
+     *
+     * <p>Richtig ist {@link Schritt#WARTEN}: aufgeschoben, nicht aufgehoben.
+     * Solange die Bedienleiste des Players steht, ist ohnehin etwas zu sehen,
+     * und sobald sie geht, ruecken die Schritte weiter.
+     *
+     * @param fokusDrauf   die Fernbedienung steht auf der Leiste oder auf dem
+     *                     Schalter - sie darf ihr den Platz nicht wegnehmen
+     * @param zaehlt       ein Zaehler laeuft; eine Ansage duckt sich nicht weg
+     * @param playerLeiste der Player meldet seine eigene Bedienleiste als
+     *                     sichtbar
+     */
+    static Schritt naechsterSchritt(boolean fokusDrauf, boolean zaehlt, boolean playerLeiste,
+                                    Stufe stufe) {
+        if (fokusDrauf || zaehlt) return Schritt.WARTEN;
+        if (playerLeiste) return Schritt.WARTEN;
+        if (stufe == Stufe.VOLL) return Schritt.DIMMEN;
+        if (stufe == Stufe.GEDIMMT) return Schritt.VERSCHWINDEN;
+        return Schritt.WARTEN;
+    }
+
+    /**
+     * Nach der Ruhezeit zuruecktreten.
+     *
+     * <p>Zuruecktreten und nicht verschwinden - siehe {@link #RUHE_DECKKRAFT}.
+     * Solange der Fokus auf der Leiste steht oder ein Zaehler laeuft, bleibt
+     * sie voll da: das eine naehme der Fernbedienung den Platz, an dem sie
+     * steht, das andere waere eine Ansage, die sich wegduckt.
+     */
     private final Runnable ruheEintreten = new Runnable() {
         @Override
         public void run() {
-            // Auch der Schalter haelt die Ruhe auf: steht der Fokus auf ihm und
-            // er verschwaende, naehme das der Fernbedienung mitten im Druck den
-            // Platz weg, an dem sie steht.
-            if (wurzel.hasFocus() || autoplayHalter.hasFocus() || zaehlt()) {
-                haupt.postDelayed(this, RUHE_MS);
-                return;
-            }
-            // Sagt der Player selbst, dass seine Bedienleiste steht, bleibt
-            // auch die Leiste stehen - dann ist ohnehin gerade etwas zu sehen.
-            //
-            // Aber nur aufgeschoben, nicht aufgehoben. Hier stand ein
-            // {@code return} ohne Fortsetzung, und das war eine Sackgasse: von
-            // da an lief kein Takt mehr, und die Leiste kam nur noch durch eine
-            // Beruehrung oder eine Meldung des Players zurueck in den Ablauf.
-            // Wer auf dem Fernseher zuschaut, tut beides nicht - dort blieb sie
-            // deshalb bis zum Ende der Folge stehen. Gemeldet als "die Leiste
-            // blendet sich nicht mehr aus".
-            if (steuerungGemeldet && gemeldetAn) {
-                haupt.postDelayed(this, RUHE_MS);
-                return;
-            }
-            if (stufe == Stufe.VOLL) {
-                stufe = Stufe.GEDIMMT;
-                // Nur zurueckgetreten, noch nicht weg: der zweite Schritt
-                // kommt von selbst.
-                haupt.postDelayed(this, VERBLASSEN_MS);
-                anwenden();
-                return;
-            }
-            if (stufe == Stufe.GEDIMMT) {
-                stufe = Stufe.WEG;
-                anwenden();
+            Schritt schritt = naechsterSchritt(
+                wurzel.hasFocus() || autoplayHalter.hasFocus(),
+                zaehlt(),
+                steuerungGemeldet && gemeldetAn,
+                stufe);
+            switch (schritt) {
+                case WARTEN:
+                    haupt.postDelayed(this, RUHE_MS);
+                    return;
+                case DIMMEN:
+                    stufe = Stufe.GEDIMMT;
+                    // Nur zurueckgetreten, noch nicht weg: der zweite Schritt
+                    // kommt von selbst.
+                    haupt.postDelayed(this, VERBLASSEN_MS);
+                    anwenden();
+                    return;
+                case VERSCHWINDEN:
+                default:
+                    stufe = Stufe.WEG;
+                    anwenden();
             }
         }
     };
