@@ -34,6 +34,31 @@ const { zielZeitBerechnen, alsQuelltext } = require("./watchparty-sync");
 const MELDE_START = "__elfix:wp:start:";
 
 /**
+ * Womit eine Zwischenmeldung des Startskripts anfaengt.
+ *
+ * <p>Der Bericht kommt erst am Ende - gelungen oder gescheitert. Dazwischen
+ * liegen aber Sekunden, in denen etwas geschieht, und der Ladebildschirm soll
+ * es zeigen koennen, ohne zu raten: der Rahmen mit dem Video ist gefunden, und
+ * die Quelle ist hinter der Ueberlagerung wirklich geladen. Beides sind
+ * Tatsachen aus dem Player und keine hochgezaehlte Zeit.
+ *
+ * <p>Denselben Weg wie der Bericht: ueber die Konsole. Aus einem fremden
+ * Rahmen heraus ist das der einzige Kanal, den beide Geraete hoeren.
+ */
+const MELDE_PHASE = "__elfix:wp:phase:";
+
+/**
+ * Die Namen, die das Startskript dabei meldet.
+ *
+ * <p>Bewusst die Sprache des Players und nicht die des Ladebalkens: dass eine
+ * Quelle da ist, ist eine Beobachtung; ob daraus "Zur gespeicherten Stelle"
+ * oder "Video wird vorbereitet" wird, entscheidet der Aufrufer, weil nur er
+ * weiss, ob es ueberhaupt einen gespeicherten Stand gibt.
+ */
+const PHASE_RAHMEN = "spieler";
+const PHASE_QUELLE = "quelle";
+
+/**
  * Die Ueberlagerung, hinter der ein Hoster seine Quelle zurueckhaelt.
  *
  * <p>Dieselbe Liste, mit der der Rechner in `startPlaybackInView` seit jeher
@@ -198,6 +223,18 @@ function berichtVerarbeiten(auftrag, bericht) {
   return true;
 }
 
+/**
+ * Eine Zwischenmeldung zerlegen: `__elfix:wp:phase:<name>`.
+ *
+ * <p>Leer, wenn die Zeile keine ist. Der Name wird nicht uebersetzt - was
+ * daraus im Ladebalken wird, steht in `startphasen.js`.
+ */
+function phaseLesen(zeile) {
+  const text = String(zeile || "");
+  if (!text.startsWith(MELDE_PHASE)) return "";
+  return text.slice(MELDE_PHASE.length).trim();
+}
+
 /** Eine Berichtszeile zerlegen: `__elfix:wp:start:{...}`. */
 function berichtLesen(zeile) {
   const text = String(zeile || "");
@@ -229,6 +266,7 @@ function startScript(auftragId, ereignis, optionen = {}) {
   const waehler = JSON.stringify(UEBERLAGERUNG_WAEHLER);
   const sollLaufen = optionen.playing ? "true" : "false";
   const melde = JSON.stringify(MELDE_START);
+  const phaseMelder = JSON.stringify(MELDE_PHASE);
   return `(async () => {
     ${alsQuelltext(zielZeitBerechnen)}
 
@@ -251,10 +289,17 @@ function startScript(auftragId, ereignis, optionen = {}) {
       } catch (_) {}
     };
 
+    // Eine Zwischenmeldung fuer den Ladebildschirm. Sie sagt nur, was gerade
+    // wirklich geschehen ist - der Balken springt daran und nicht an einer Uhr.
+    const meldePhase = (name) => {
+      try { console.log(${phaseMelder} + String(name)); } catch (_) {}
+    };
+
     // Ein Rahmen ganz ohne Videoelement ist nicht der Player. Still bleiben:
     // hier wird nichts gesucht, nichts geklickt und nichts gemeldet.
     const alle = () => Array.from(document.querySelectorAll("video"));
     if (!alle().length) return "kein-player";
+    meldePhase(${JSON.stringify(PHASE_RAHMEN)});
 
     // Das groesste Video mit Laufzeit - und solange keins eine hat, irgendeins:
     // vor dem Klick auf die Ueberlagerung traegt es weder Quelle noch Dauer.
@@ -338,6 +383,8 @@ function startScript(auftragId, ereignis, optionen = {}) {
         return "keine-quelle";
       }
     }
+    // Die Quelle ist da - ab hier wird gesprungen und gestartet.
+    meldePhase(${JSON.stringify(PHASE_QUELLE)});
 
     try { if (media.playbackRate !== 1) media.playbackRate = 1; } catch (_) {}
 
@@ -431,6 +478,9 @@ function ereignisSaeubern(ereignis) {
 
 module.exports = {
   MELDE_START,
+  MELDE_PHASE,
+  PHASE_RAHMEN,
+  PHASE_QUELLE,
   UEBERLAGERUNG_WAEHLER,
   HOECHSTVERSUCHE,
   AUFTRAG_FRIST_MS,
@@ -442,5 +492,6 @@ module.exports = {
   versuchVermerken,
   berichtVerarbeiten,
   berichtLesen,
+  phaseLesen,
   startScript
 };

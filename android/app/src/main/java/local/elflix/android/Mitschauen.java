@@ -132,6 +132,17 @@ public final class Mitschauen {
          *               Hinweis statt einer schwarzen Flaeche.
          */
         void oertlicherStartFertig(boolean laeuft);
+
+        /**
+         * Eine Zwischenmeldung des Startskripts.
+         *
+         * <p>Der Bericht kommt erst am Ende; dazwischen liegen Sekunden, in
+         * denen der Ladebildschirm sonst nur raten koennte. Gemeldet wird, was
+         * der Player wirklich hergibt - der Rahmen mit dem Video ist gefunden
+         * ({@code spieler}), die Quelle ist hinter der Ueberlagerung geladen
+         * ({@code quelle}). Die Namen kommen aus dem geteilten Modul.
+         */
+        void startPhase(String name);
     }
 
     private final Kern kern;
@@ -264,6 +275,13 @@ public final class Mitschauen {
      * gehoert dem geteilten Modul, nicht dieser Klasse.
      */
     private String meldeStart = "__elfix:wp:start:";
+    /**
+     * Woran eine Zwischenmeldung des Startskripts zu erkennen ist.
+     *
+     * <p>Aus derselben Quelle wie {@link #meldeStart}. Sie traegt den
+     * Ladebalken des Vorhangs - siehe {@code Startvorhang}.
+     */
+    private String meldePhase = "__elfix:wp:phase:";
     /** Ob gerade ein Auftrag laeuft. Nur dann klopft der Takt an. */
     private boolean autostartLaeuft;
     /**
@@ -313,6 +331,7 @@ public final class Mitschauen {
             praefix("watchparty-bruecke.MELDE_STAND", wert -> meldeStand = wert);
             praefix("watchparty-bruecke.MELDE_SYNC", wert -> meldeSync = wert);
             praefix("watchparty-bruecke.MELDE_START", wert -> meldeStart = wert);
+            praefix("watchparty-bruecke.MELDE_PHASE", wert -> meldePhase = wert);
             praefix("watchparty-bruecke.MELDE_UI", wert -> meldeUi = wert);
         });
     }
@@ -485,6 +504,16 @@ public final class Mitschauen {
         // starten muss.
         if (zeile.startsWith(meldeStart)) {
             autostartBericht(zeile);
+            return;
+        }
+
+        // Eine Zwischenmeldung desselben Skripts. Sie geht nirgends hinaus und
+        // wird auch nicht beurteilt - sie sagt nur dem Ladebildschirm, wie weit
+        // der Player ist. Steht vor allem Uebrigen, weil sie sonst als Tat
+        // gelesen wuerde.
+        if (zeile.startsWith(meldePhase)) {
+            String name = zeile.substring(meldePhase.length()).trim();
+            if (!name.isEmpty()) umgebung.startPhase(name);
             return;
         }
 

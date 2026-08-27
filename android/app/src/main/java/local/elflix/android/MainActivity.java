@@ -210,6 +210,26 @@ public class MainActivity extends Activity {
     private double autoStartStelle;
     /** Die Stelle des gerade laufenden Versuchs - die Anfrage selbst ist dann schon abgeraeumt. */
     private double laufenderStart;
+    /**
+     * Die Ladephasen des Starts - die Tabelle des geteilten Moduls.
+     *
+     * <p>Sie sagt, welche Schritte es gibt, wie sie heissen, wie voll der
+     * Balken dabei ist und wie lange jeder dauern darf. Siehe Startphasen.java.
+     */
+    private Startphasen startphasen;
+    /**
+     * Der Vorhang, hinter dem eine Folge startet.
+     *
+     * <p>Er liegt vom Tipp auf "Weiterschauen" beziehungsweise "Naechste
+     * Folge" bis zu dem Augenblick, in dem das Video im Vollbild wirklich
+     * laeuft. Siehe Startvorhang.java.
+     */
+    private Startvorhang startvorhang;
+    /** Woraus der begleitete Start besteht - fuer "Erneut versuchen". */
+    private Provider startAnbieter;
+    private String startUrl = "";
+    private String startTitel = "";
+    private double startStelle;
     /** Welcher Eintrag zuletzt gestartet wurde und wann - gegen mehrfaches schnelles Tippen. */
     private String letzterStartEintrag = "";
     private long letzterStartAt;
@@ -230,6 +250,14 @@ public class MainActivity extends Activity {
     private static final long AUTOSTART_PLAYER_TIMEOUT_MS = 30_000L;
     /** Breathing room between "the player element exists" and touching it. */
     private static final long AUTOSTART_SETTLE_MS = 4_000L;
+    /**
+     * Wie lange der Vorhang nach dem Vollbild noch liegen bleibt.
+     *
+     * <p>Lang genug, dass der Vollbildrahmen ein Bild gezeichnet hat, kurz
+     * genug, dass es niemand als Warten empfindet. Ohne ihn geht der Vorhang
+     * auf einen noch schwarzen Rahmen auf.
+     */
+    private static final long VOLLBILD_NACHLAUF_MS = 450L;
     private static final long AUTOSTART_EMBEDDED_TIMEOUT_MS = 12_000L;
     /**
      * Finds the player: the largest iframe on the page, or -- when the hoster's own page became the
@@ -564,6 +592,27 @@ public class MainActivity extends Activity {
         messung.setzeTitelbild(titelbild);
         // Der Weg zur naechsten Folge - dieselbe Regel wie am Rechner.
         folgen = new Folgen(kern);
+        // Und die Ladephasen, mit denen ein Start begleitet wird. Die Tabelle
+        // kommt aus dem geteilten Modul; ohne sie gibt es keinen Vorhang und
+        // der Start laeuft wie vorher.
+        startphasen = new Startphasen(kern);
+        startphasen.vorbereiten();
+        startvorhang = new Startvorhang(this, startphasen, new Startvorhang.Umgebung() {
+            @Override
+            public void erneutVersuchen() {
+                startErneutVersuchen();
+            }
+
+            @Override
+            public void aufgeben(String grund) {
+                startAufgeben(grund);
+            }
+
+            @Override
+            public boolean fernseher() {
+                return isTelevision();
+            }
+        });
         // Und der Draht dorthin: derselbe Messtakt, der den Fortschritt bucht,
         // sagt auch, ob die Folge zu Ende ist. Ein zweiter Takt daneben waere
         // eine zweite Uhr - siehe Messung.Spielstand.
@@ -703,16 +752,41 @@ public class MainActivity extends Activity {
                 if (!laeuft) {
                     // Kein Vollbild auf ein stehendes Bild. Der Player ist da,
                     // er startet nur nicht von selbst - dann gehoert das gesagt.
+                    // Liegt der Vorhang, gehoert es dorthin: er hat zwei Wege
+                    // anzubieten, ein Hinweis nur eine Feststellung.
+                    if (startFehler("spieler")) return;
                     showToast("Startet nicht von selbst – bitte einmal Play drücken");
                     return;
                 }
                 // Jetzt erst. Es laeuft wirklich etwas: der Player hat gemeldet,
                 // dass die Stelle weiterwandert.
-                if (fullscreenView != null) return;
+                if (fullscreenView != null) {
+                    // Das Vollbild steht schon - dann fehlt nichts mehr.
+                    startPhaseMelden("laeuft");
+                    return;
+                }
                 WebView ansicht = currentWebView();
                 if (ansicht == null) return;
                 Log.i(TAG, "Oertlicher Start gelungen - Vollbild");
+                startPhaseMelden("vollbild");
                 handleRemoteShortcut(KeyEvent.KEYCODE_5);
+            }
+
+            /**
+             * Eine Zwischenmeldung des Startskripts.
+             *
+             * <p>Aus der Sprache des Players in die des Ladebalkens: dass die
+             * Quelle da ist, heisst nur dann "zur gespeicherten Stelle", wenn
+             * es ueberhaupt eine gibt. Sonst bleibt es beim Vorbereiten - die
+             * Phase gibt es in diesem Lauf gar nicht.
+             */
+            @Override
+            public void startPhase(String name) {
+                if ("quelle".equals(name)) {
+                    startPhaseMelden(startStelle > 0 ? "stelle" : "spieler");
+                    return;
+                }
+                startPhaseMelden(name);
             }
         });
         watchparty.setzeMitschauen(mitschauen);
@@ -6958,6 +7032,10 @@ public class MainActivity extends Activity {
     private void showProviderError(Provider provider, String message) {
         if (provider == null || provider != activeProvider || content == null) return;
         hideProviderLoading();
+        // Liegt ein Startvorhang davor, gehoert die Ansage dorthin: die
+        // Fehlerseite dahinter saehe sonst niemand, und der Ladebalken liefe
+        // gegen eine Seite weiter, die es gar nicht gibt.
+        if (startFehler("seite")) return;
         content.removeAllViews();
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -7031,8 +7109,117 @@ public class MainActivity extends Activity {
         // Picking a favourite means "watch this": die Seite oeffnet ihren
         // Player, springt auf den gespeicherten Stand, startet - und erst
         // danach kommt das Vollbild.
+        startBegleiten(provider, favorite.url(),
+            startTitelFuer(favorite.title(), favorite.url()), favorite.currentTime());
         armAutoStart(favorite.url(), favorite.currentTime());
         openProvider(provider, favorite.url(), true);
+    }
+
+    /**
+     * Einen Start hinter dem Vorhang fuehren.
+     *
+     * <p>Der eine Einstieg fuer beide Wege - "Weiterschauen" und "Naechste
+     * Folge". Er merkt sich, woraus der Start besteht (das braucht "Erneut
+     * versuchen"), und zieht den Vorhang zu. Kommt keiner zustande, weil die
+     * Phasentabelle fehlt, laeuft alles wie vorher weiter: der Vorhang ist eine
+     * Verkleidung des Ablaufs und keine Bedingung fuer ihn.
+     */
+    private void startBegleiten(Provider provider, String url, String titel, double stelle) {
+        startAnbieter = provider;
+        startUrl = url == null ? "" : url;
+        startTitel = titel == null ? "" : titel;
+        startStelle = Math.max(0, stelle);
+        if (startvorhang == null) return;
+        startvorhang.starten(startTitel, startStelle);
+    }
+
+    /**
+     * Was im Ladebildschirm gross dasteht.
+     *
+     * <p>Titel und Folge, so wie sie der Rechner in seinen Vorhang schreibt
+     * ({@code naechsteFolgeLabel}): "Attack on Titan · Staffel 2 Folge 5".
+     * Ohne erkennbare Folge bleibt es beim Titel, ohne Titel bei der Folge -
+     * und wenn nichts davon da ist, sagt der Vorhang nur "Wiedergabe".
+     */
+    private String startTitelFuer(String titel, String url) {
+        String name = titel == null ? "" : titel.trim();
+        String folge = Folgen.folgenText(url);
+        if (name.isEmpty()) return folge;
+        if (folge.isEmpty()) return name;
+        return name + " · " + folge;
+    }
+
+    /**
+     * Einen Schritt an den Vorhang melden.
+     *
+     * <p>Still, wenn keiner liegt: die Kette meldet ihre Schritte immer, auch
+     * wenn niemand sie begleitet - ein Start ueber die Fernbedienung etwa
+     * laeuft ohne Vorhang.
+     */
+    private void startPhaseMelden(String name) {
+        if (startvorhang == null || !startvorhang.laeuft()) return;
+        startvorhang.melden(name);
+    }
+
+    /**
+     * Der Start ist an dieser Stelle gescheitert.
+     *
+     * @return ob der Vorhang die Ansage uebernommen hat. Wenn nicht, gehoert
+     *         sie dem Aufrufer - sonst scheiterte ein Start voellig lautlos.
+     */
+    private boolean startFehler(String grund) {
+        if (startvorhang == null || !startvorhang.laeuft()) return false;
+        startvorhang.fehler(grund);
+        return true;
+    }
+
+    /**
+     * "Erneut versuchen" - denselben Start noch einmal von vorn.
+     *
+     * <p>Wirklich von vorn: die Seite wird neu geladen, der Autostart neu
+     * scharf gemacht, der Vorhang faengt bei der ersten Phase an. Ein
+     * Weitermachen an der Stelle, an der es haengengeblieben ist, gibt es
+     * nicht - haengengeblieben ist ja gerade der Zustand, aus dem heraus
+     * nichts mehr kam.
+     */
+    private void startErneutVersuchen() {
+        Provider provider = startAnbieter;
+        String url = startUrl;
+        double stelle = startStelle;
+        String titel = startTitel;
+        if (provider == null || url.isEmpty()) {
+            startAufgeben("nichts zu wiederholen");
+            return;
+        }
+        Log.i(TAG, "Start wird wiederholt: " + safePath(url));
+        if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("Start wird wiederholt");
+        disarmAutoStart("Start wird wiederholt");
+        startBegleiten(provider, url, titel, stelle);
+        armAutoStart(url, stelle);
+        openProvider(provider, url, true);
+    }
+
+    /**
+     * "Zurueck" - der Start wird aufgegeben.
+     *
+     * <p>Alles, was fuer ihn scharf steht, wird entschaerft: der Auftrag im
+     * Kern, die Anfrage in dieser Klasse, der Vollbildwunsch. Sonst startet
+     * eine halbe Minute spaeter eine Folge, die niemand mehr sehen will -
+     * dieselbe Regel wie beim Verlassen des Players.
+     */
+    private void startAufgeben(String grund) {
+        Log.i(TAG, "Start aufgegeben: " + grund);
+        if (mitschauen != null) {
+            mitschauen.oertlichenStartAbbrechen(grund);
+            mitschauen.vollbildwunschVerwerfen();
+        }
+        disarmAutoStart(grund);
+        startAnbieter = null;
+        startUrl = "";
+        startTitel = "";
+        startStelle = 0;
+        if (startvorhang != null) startvorhang.auf(grund);
+        onBackPressed();
     }
 
     /**
@@ -7877,6 +8064,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        // Ganz zuoberst der Startvorhang. Solange er liegt, ist "Zurueck" die
+        // Absage an den Start und nicht der Schritt in der Seite dahinter -
+        // die sieht ja gerade niemand.
+        if (startvorhang != null && startvorhang.zurueckTaste()) return;
         // Zurueck schliesst zuerst die ausgeklappten Watchparty-Details - und
         // nicht gleich das Vollbild oder die ganze Folge. Wer aufgeklappt hat,
         // um zu sehen, wer mitschaut, will genau das wieder schliessen.
@@ -7924,6 +8115,22 @@ public class MainActivity extends Activity {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         logRemoteKey(event);
+        // Solange der Startvorhang liegt, gehoert ihm die Fernbedienung.
+        //
+        // Ein Fokusfang in der Vorhangansicht reicht dafuer nicht: die
+        // Anbieterseite dahinter holt sich den Fokus beim Laden von selbst
+        // zurueck (openProvider ruft webView.requestFocus()), und danach
+        // wandert das Kreuz durch Ziele, die niemand sieht - auf dem Fernseher
+        // der sichere Weg, sich in einem Ladebildschirm zu verirren.
+        //
+        // Durchgelassen wird genau zweierlei: "Zurueck", weil das die Absage
+        // an den Start ist, und im Fehlerfall die Navigation zwischen den
+        // beiden Knoepfen, die dann wirklich dastehen.
+        if (startvorhang != null && startvorhang.laeuft()) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event);
+            if (startvorhang.tastenErlaubt()) return super.dispatchKeyEvent(event);
+            return true;
+        }
         // Jede Taste holt die Teilnehmerleiste zurueck - dieselbe Regung, die
         // auch die Bedienelemente des Players wieder einblendet. Sie bleibt
         // dabei der Rueckfall: sagt der Player selbst, was seine Leiste tut,
@@ -8146,6 +8353,10 @@ public class MainActivity extends Activity {
     }
 
     private void disarmAutoStart(String reason) {
+        // Und der Vorhang haengt am Anlauf: wer ihn entschaerft, meint auch die
+        // Folge nicht mehr, die dahinter starten sollte. Ohne diese Zeile bliebe
+        // ein Ladebildschirm ueber einer Seite liegen, auf die niemand mehr wartet.
+        if (startvorhang != null) startvorhang.auf(reason);
         // Der Anlauf haengt nicht an der Anfrage: er laeuft im Kern weiter,
         // auch wenn die Anfrage laengst verbraucht ist. Wer woandershin geht,
         // meint ihn nicht mehr - sonst startet eine halbe Minute spaeter eine
@@ -8209,7 +8420,11 @@ public class MainActivity extends Activity {
      */
     private void runAutoStart(WebView webView, String url) {
         Log.i(TAG, "Autostart begin url=" + safePath(url) + " stelle=" + Math.round(autoStartStelle));
-        showToast("Startet …");
+        // Die Seite ist da, gesucht wird jetzt der Player. Liegt der Vorhang,
+        // sagt er das - ein Toast daneben waere dieselbe Auskunft ein zweites
+        // Mal, und zwar quer ueber den Ladebildschirm.
+        if (startvorhang != null && startvorhang.laeuft()) startPhaseMelden("hoster");
+        else showToast("Startet …");
         laufenderStart = autoStartStelle;
         awaitPage(webView, url, PLAYER_PROBE_JS,
             SystemClock.uptimeMillis() + AUTOSTART_EMBEDDED_TIMEOUT_MS,
@@ -8260,6 +8475,7 @@ public class MainActivity extends Activity {
             },
             () -> {
                 Log.w(TAG, "Autostart: no hoster link within timeout");
+                if (startFehler("hoster")) return;
                 showToast("Kein Hoster gefunden");
             });
     }
@@ -8279,6 +8495,7 @@ public class MainActivity extends Activity {
             ready -> autoStartSpielen(webView, url),
             () -> {
                 Log.w(TAG, "Autostart: player frame did not appear within timeout");
+                if (startFehler("spieler")) return;
                 showToast("Player nicht bereit -- nochmal drücken");
             });
     }
@@ -8305,6 +8522,10 @@ public class MainActivity extends Activity {
      */
     private void autoStartSpielen(WebView webView, String url) {
         if (currentWebView() != webView) return;
+        // Der Player-Rahmen steht. Was jetzt kommt - Ueberlagerung klicken,
+        // Quelle abwarten, springen, starten - fuehrt Mitschauen, und von dort
+        // kommen auch die naechsten Schritte des Balkens.
+        startPhaseMelden("spieler");
         double stelle = laufenderStart;
         laufenderStart = 0;
         if (mitschauen != null && mitschauen.oertlichenStartAnfordern(url, stelle)) return;
@@ -8629,6 +8850,12 @@ public class MainActivity extends Activity {
         Log.i(TAG, "FOLGE wechsel (" + anlass + ") -> "
             + Folgen.folgenText(url) + " " + Folgen.kurz(url));
         if (spielerleiste != null) spielerleiste.setzeZiel("");
+        // Derselbe Vorhang wie bei "Weiterschauen" - der Rechner zieht ihn an
+        // dieser Stelle ebenfalls (playNextEpisode -> beginAutostart). Ohne
+        // gespeicherten Stand: die naechste Folge faengt vorn an.
+        Favorite eintragDazu = bestand == null ? null : bestand.mitId(bestand.aktiverEintragId());
+        startBegleiten(provider, url,
+            startTitelFuer(eintragDazu == null ? "" : eintragDazu.title(), url), 0);
         // preserveFavoriteProgress: der Eintrag bleibt derselbe, es ist nur
         // eine andere Folge davon. Ohne das faellt activeFavoriteId weg, und
         // der Fortschritt liefe auf einen anderen Eintrag.
@@ -9227,11 +9454,22 @@ public class MainActivity extends Activity {
         // Bedienleiste des Hosters und kommt und geht mit ihr.
         if (spielerleiste != null) spielerleiste.inVollbild(fullscreenContainer);
         fullscreenContainer.bringToFront();
+        // Und gleich danach der Vorhang wieder darueber. Beide haengen an der
+        // Fensterdekoration; wer zuletzt nach vorn geholt wird, liegt oben.
+        // Ohne diese Zeile waere ausgerechnet der Wechsel ins Vollbild das
+        // Einzige, was der Zuschauer vom ganzen Start zu sehen bekaeme.
+        if (startvorhang != null) startvorhang.hebe();
         view.requestFocus();
         // The cursor has to move up into the new container, otherwise it stays buried under the video.
         if (mouseMode) setMouseCursorVisible(true);
         view.post(() -> logLayoutState("afterEnter"));
         logFullscreenDimensions(view);
+        // Der letzte Schritt: das Vollbild steht, das Video laeuft schon (das
+        // war die Bedingung dafuer, ueberhaupt hierher zu kommen). Der kurze
+        // Nachlauf ist kein Zieren - der Rahmen ist erst nach dem naechsten
+        // Zeichnen wirklich gefuellt, und ohne ihn wuerde der Vorhang auf ein
+        // schwarzes Bild aufgehen.
+        view.postDelayed(() -> startPhaseMelden("laeuft"), VOLLBILD_NACHLAUF_MS);
     }
 
     /**

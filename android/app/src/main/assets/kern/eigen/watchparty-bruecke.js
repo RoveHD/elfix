@@ -694,6 +694,15 @@
   /** Woran Java einen Bericht des Startskripts erkennt. */
   const MELDE_START = autostart.MELDE_START;
 
+  /**
+   * Woran Java eine Zwischenmeldung des Startskripts erkennt.
+   *
+   * <p>Sie traegt den Ladebalken: der Rahmen mit dem Video ist gefunden, die
+   * Quelle ist geladen. Beides sind Beobachtungen aus dem Player - was daraus
+   * im Ladebildschirm wird, entscheidet `startphasen`.
+   */
+  const MELDE_PHASE = autostart.MELDE_PHASE;
+
   // Verwaltendes reicht direkt durch. Eine eigene Pruefung waere hier falsch:
   // was ein gueltiger Raumcode ist, weiss das geteilte Modul.
   const durchreiche = {
@@ -744,6 +753,8 @@
     autostartBericht,
     autostartVerwerfen,
     MELDE_START,
+    MELDE_PHASE,
+    phaseLesen: (zeile) => autostart.phaseLesen(zeile),
     // Der Horcher, der im Player Play, Pause und Sprung bemerkt. Woertlich
     // dasselbe Skript, das der Rechner einsetzt.
     beobachterSkript: () => sync.beobachterScript(),

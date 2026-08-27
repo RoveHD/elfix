@@ -28,6 +28,7 @@ const sitzungslauf = require("./sitzungslauf");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
 const watchpartyAutostart = require("./watchparty-autostart");
+const startphasen = require("./startphasen");
 // Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
 // die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
 // Schluessel, und Laptop und Rechner haben denselben Stand.
@@ -1261,7 +1262,13 @@ async function favoritOeffnen(favoriteId, options = {}) {
   }
   recordMediaActivity(provider, favorite.url, {}, { existing: favorite, label: "Geöffnet" });
   await repairFavoriteThumbnailIfNeeded(favorite, provider).catch(() => false);
-  if (options?.autoplay) await beginAutostart(provider.id, cleanTitle(favorite.title));
+  // Der gespeicherte Stand reist mit: nur wenn es einen gibt, hat der
+  // Ladebalken einen Schritt "Zur gespeicherten Stelle".
+  if (options?.autoplay) {
+    await beginAutostart(provider.id, cleanTitle(favorite.title), {
+      stelle: Number(favorite.position || favorite.currentTime) || 0
+    });
+  }
   await navigateProvider(provider, oeffnenAdresse(provider, favorite));
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
   return activeState();
@@ -3271,10 +3278,34 @@ async function beginAutostart(providerId, title, options = {}) {
   pendingAutostart = {
     providerId,
     startedAt: Date.now(),
+    // Der Ladebalken. Er zaehlt keine Zeit hoch, sondern die Schritte, die die
+    // Kette wirklich hinter sich hat - dieselbe Tabelle, die das Telefon
+    // benutzt (src/startphasen.js).
+    lauf: startphasen.starten({
+      titel: title,
+      stelle: Number(options.stelle) || 0,
+      jetzt: Date.now()
+    }),
     timer: setTimeout(() => handleAutostartTimeout(providerId), AUTOSTART_REVEAL_TIMEOUT_MS)
   };
   await showAutostartCurtain(title, options).catch(() => {});
   applyBrowserBounds();
+}
+
+/**
+ * Einen Schritt an den Vorhang melden.
+ *
+ * <p>Still, wenn keiner liegt. Rueckwaerts geht es nicht - das entscheidet das
+ * geteilte Modul, nicht diese Stelle.
+ */
+function autostartPhase(name) {
+  if (!pendingAutostart || !pendingAutostart.lauf) return;
+  const schritt = startphasen.melden(pendingAutostart.lauf, name, Date.now());
+  if (!schritt.geaendert || !curtainView || curtainView.webContents.isDestroyed()) return;
+  const nutzlast = JSON.stringify({ text: schritt.text, anteil: schritt.anteil });
+  curtainView.webContents
+    .executeJavaScript(`window.__elfixPhase && window.__elfixPhase(${nutzlast})`, true)
+    .catch(() => {});
 }
 
 async function showAutostartCurtain(title, options = {}) {
@@ -3305,19 +3336,43 @@ async function showAutostartCurtain(title, options = {}) {
   img { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .badge {
     position: fixed; left: 50%; bottom: 54px; transform: translateX(-50%);
-    display: flex; align-items: center; gap: 12px; padding: 13px 22px; border-radius: 999px;
+    width: min(520px, 76vw);
+    padding: 16px 22px 18px; border-radius: 18px;
     background: rgba(8, 12, 20, 0.88); color: #fff; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
-    font: 800 15px/1 system-ui, sans-serif;
+    font: 800 15px/1.3 system-ui, sans-serif;
   }
-  .dot {
-    width: 15px; height: 15px; border-radius: 50%;
-    border: 3px solid rgba(255, 255, 255, 0.25); border-top-color: #fff;
-    animation: spin 0.8s linear infinite;
+  .titel { display: block; }
+  /* Der Balken zeigt Schritte und keine Zeit: er springt, wenn wirklich etwas
+     geschehen ist, und steht sonst still. Der Uebergang ist nur dafuer da,
+     dass ein Sprung nicht als Ruck erscheint. */
+  .balken {
+    margin-top: 12px; height: 6px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16); overflow: hidden;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .balken > i {
+    display: block; height: 100%; width: 0; border-radius: 999px;
+    background: #3D92FF; transition: width 320ms ease;
+  }
+  .phase {
+    display: block; margin-top: 10px;
+    font: 600 13px/1.3 system-ui, sans-serif; color: rgba(255, 255, 255, 0.68);
+  }
 </style>
 ${snapshot}
-<div class="badge"><i class="dot"></i><span>${escapeHtmlText(title || "Wiedergabe")} wird gestartet …</span></div>`);
+<div class="badge">
+  <span class="titel">${escapeHtmlText(title || "Wiedergabe")}</span>
+  <div class="balken"><i id="balken"></i></div>
+  <span class="phase" id="phase">Folge wird geöffnet</span>
+</div>
+<script>
+  window.__elfixPhase = (schritt) => {
+    try {
+      document.getElementById("balken").style.width = Math.round((schritt.anteil || 0) * 100) + "%";
+      document.getElementById("phase").textContent = String(schritt.text || "");
+    } catch (_) {}
+  };
+  window.__elfixPhase({ text: "Folge wird geöffnet", anteil: ${startphasen.anteil(startphasen.ERSTE)} });
+</script>`);
 
   const view = new WebContentsView({ webPreferences: { contextIsolation: true, sandbox: true } });
   // Ohne das ist eine frische View bis zum ersten Paint weiss - das war der
@@ -3387,6 +3442,7 @@ function handleAutostartTimeout(providerId) {
 
 function finishAutostart(reason) {
   if (!pendingAutostart) return;
+  if (reason === "bereit" || reason === "laeuft") autostartPhase("laeuft");
   clearTimeout(pendingAutostart.timer);
   const seconds = ((Date.now() - pendingAutostart.startedAt) / 1000).toFixed(1);
   console.log(`[ELFIX AUTOSTART] umgeschaltet nach ${seconds}s (${reason})`);
@@ -3689,6 +3745,7 @@ function resumePendingProviderAutoplay(provider, view) {
       ? `Zielseite erreicht (${kurzeUrl(aktuell)}) - Autoplay startet`
       : `Zielseite nach 12s nicht erkannt (offen: ${kurzeUrl(aktuell)}) - Autoplay startet trotzdem`);
     request.expectUrl = "";
+    autostartPhase("hoster");
   }
   // Erst die Fassung, dann der Hoster. Die Anbieterseite zeigt nur die Hoster
   // der gewaehlten Fassung; ein Klick davor traefe die, die gerade noch
@@ -3707,6 +3764,9 @@ function resumePendingProviderAutoplay(provider, view) {
   if (request.busy && Date.now() < (request.busyUntil || 0)) return;
   request.busy = true;
   request.busyUntil = Date.now() + FRAME_SCRIPT_TIMEOUT_MS + 3000;
+  // Ohne expectUrl gibt es die Meldung oben nicht - dann faengt der Player hier
+  // an, und der Balken gehoert an dieselbe Stelle.
+  autostartPhase("hoster");
   startPlaybackInView(view, { mode: "play" }).then((results) => {
     request.busy = false;
     const values = Array.isArray(results) ? results : [];
@@ -3715,12 +3775,20 @@ function resumePendingProviderAutoplay(provider, view) {
     if (!isPlaying) {
       const warming = values.some((value) => /video-warming/i.test(String(value || "")));
       const clickedOverlay = values.some((value) => /overlay-geklickt/i.test(String(value || "")));
+      // Der Player ist gefunden und wird angefasst - das ist mehr als "die
+      // Seite laedt" und weniger als "es laeuft".
+      if (warming || clickedOverlay) autostartPhase("spieler");
       if (clickedOverlay) request.lastClickAt = Date.now();
       if (!warming && !clickedOverlay) clickPlayerCenterIfStalled(provider, request, view);
       return;
     }
 
     request.sawPlayback = true;
+    // Es laeuft. Was jetzt noch fehlt, ist das Vollbild - und wo ein
+    // gespeicherter Stand mitgereist ist, war der Sprung dorthin der Schritt
+    // davor.
+    autostartPhase("stelle");
+    autostartPhase("vollbild");
     if (request.fullscreen) {
       // Nur einmal pro Anfrage: sonst zieht ein spaeterer Retry den Nutzer
       // zurueck ins Vollbild, nachdem er es selbst verlassen hat.
