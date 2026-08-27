@@ -76,8 +76,8 @@
       "standAenderung": { "url": "https://aniworld.to/anime/stream/naruto/staffel-5/episode-20", "season": 5, "episode": 20 },
       "meta": { "currentTime": 1330, "duration": 1400, "watchedSeconds": 900, "finalSeason": 5, "finalEpisode": 20 },
       "mitStand": true,
-      "_hinweis": "folgen=0, weil beim Abschluss der ganzen Serie nicht mehr auf eine naechste Folge gerueckt wird - und nur dieser Schritt traegt eine Folge in completedEpisodes nach.",
-      "erwartet": "S5E20 abgeschlossen weiter=nein folgen=0"
+      "_hinweis": "folgen=1, weil die letzte Folge selbst als abgeschlossene Folge zaehlt. Frueher stand hier 0: nur der Schritt auf eine naechste Folge trug etwas in completedEpisodes nach, und den gibt es am Serienende nicht mehr. Genau diese Folge fehlte damit im Verlauf - bei BLACK TORCH standen Folge 2 bis 7 in der Ablage und Folge 8, die gemeinte, nicht.",
+      "erwartet": "S5E20 abgeschlossen weiter=nein folgen=1"
     },
     {
       "name": "zurueck unter einer Minute",

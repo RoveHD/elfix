@@ -1337,6 +1337,12 @@
       <p class="eyebrow" id="confirmEyebrow">ELFIX</p>
       <h2 id="confirmTitle">Bist du sicher?</h2>
       <p class="confirm-copy" id="confirmCopy"></p>
+      <!-- Der Verlauf eines Titels ist eine gegliederte Liste und kein
+           Fliesstext: Staffeln als Ueberschrift, darunter je Folge eine
+           Zeile. Der Kasten bleibt derselbe wie bei jeder Rueckfrage -
+           nur dieser Platz kommt dazu, und er ist leer, solange ihn
+           niemand fuellt. -->
+      <div class="confirm-body is-hidden" id="confirmBody"></div>
       <div class="confirm-actions">
         <button type="submit" value="cancel" class="soft-action" id="confirmCancel">Abbrechen</button>
         <button type="submit" value="confirm" class="danger-action" id="confirmAccept">Löschen</button>
@@ -1399,6 +1405,10 @@
   <div class="karten-menue is-hidden" id="kartenMenue" role="menu"></div>
 
   <script src="../../shared/bildausschnitt.js"></script>
+  <!-- Die Regeln des persoenlichen Verlaufs. Dasselbe Modul laesst sich
+       im Hauptprozess und in den Pruefungen laden - die Oberflaeche
+       rechnet damit nicht anders als der Rest. -->
+  <script src="../../shared/verlauf.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

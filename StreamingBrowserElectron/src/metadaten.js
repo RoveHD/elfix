@@ -253,8 +253,36 @@ function verdichten(form, art) {
     bewertungStimmen: Number(form?.bewertungStimmen) || 0,
     beliebtheit: Number(form?.beliebtheit) || 0,
     altersfreigabe: typeof form?.altersfreigabe === "number" ? form.altersfreigabe : null,
+    // Laeuft das noch? Die drei Felder tragen nichts zum Ranking bei und sind
+    // nur fuer den Verlaufs-Kasten der Mediathek da: ohne sie duerfte er nicht
+    // zwischen "Auf aktuellem Stand" und "abgeschlossen" unterscheiden.
+    //
+    // Sie stehen hier ausdruecklich und nicht bedingt - ein Eintrag aus der
+    // Zeit davor hat das Feld gar nicht, und genau daran erkennt
+    // `laufStatusFehlt`, dass er noch einmal gefragt werden muss.
+    laufStatus: String(form?.laufStatus || ""),
+    folgenGesamt: Number(form?.folgenGesamt) || 0,
+    naechsteFolge: form?.naechsteFolge && (form.naechsteFolge.nummer || form.naechsteFolge.zeit)
+      ? { nummer: Number(form.naechsteFolge.nummer) || 0, zeit: String(form.naechsteFolge.zeit || "") }
+      : null,
+    staffeln: (form?.staffeln || []).slice(0, 60)
+      .map((staffel) => ({ nummer: Number(staffel?.nummer) || 0, folgen: Number(staffel?.folgen) || 0 }))
+      .filter((staffel) => staffel.nummer > 0),
     konfidenz: String(form?.konfidenz || "UNMATCHED")
   };
+}
+
+/*
+ * Stammt dieser Cache-Eintrag noch aus der Zeit vor den Laufzeit-Feldern?
+ *
+ * Die Alternative waere gewesen, CACHE_VERSION zu erhoehen - dann waeren
+ * viertausend geprueft zugeordnete Titel auf einen Schlag weg gewesen, obwohl
+ * an ihrer Zuordnung nichts falsch ist. Stattdessen bleibt der Eintrag stehen,
+ * und nur der eine Titel, dessen Verlauf jemand tatsaechlich oeffnet, wird
+ * noch einmal gefragt.
+ */
+function laufStatusFehlt(form) {
+  return !form || !Object.prototype.hasOwnProperty.call(form, "laufStatus");
 }
 
 function leerform(art) {
@@ -620,16 +648,20 @@ function erstellen(optionen = {}) {
   // Bearbeitung: wer zuerst kommt, wird zuerst angereichert. Das ist die
   // ganze Priorisierung - sie gehoert dorthin, wo bekannt ist, was wichtig
   // ist, und nicht hierher.
-  async function nachschlagen(rohe) {
+  async function nachschlagen(rohe, optionen = {}) {
     laden();
     const ergebnisse = new Map();
     const wuensche = [];
     const gesehen = new Set();
+    // `frisch` uebergeht den Cache fuer genau diesen Aufruf. Gebraucht wird das
+    // an einer einzigen Stelle: wenn ein alter Eintrag zwar zugeordnet, aber
+    // ohne Laufzeit-Felder ist.
+    const frisch = Boolean(optionen.frisch);
     for (const roh of rohe || []) {
       const wunsch = roh?.schluessel ? roh : wunschBauen(roh);
       if (!wunsch || gesehen.has(wunsch.schluessel)) continue;
       gesehen.add(wunsch.schluessel);
-      const bekannt = ausCache(wunsch);
+      const bekannt = frisch ? null : ausCache(wunsch);
       if (bekannt) {
         zaehler.cacheTreffer += 1;
         ergebnisse.set(wunsch.schluessel, bekannt);
@@ -686,6 +718,7 @@ function erstellen(optionen = {}) {
     ausCache,
     fehltImCache,
     nachschlagen,
+    laufStatusFehlt,
     status,
     statistik,
     wunschBauen,
@@ -698,6 +731,7 @@ function erstellen(optionen = {}) {
 module.exports = {
   erstellen,
   wunschBauen,
+  laufStatusFehlt,
   namensDeckung,
   besteDeckung,
   kurzform,

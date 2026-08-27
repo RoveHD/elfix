@@ -402,6 +402,67 @@ const suchen = (titel) => ({ method: "POST", headers: { "content-type": "applica
     });
   }
 
+  // ======================================================== Laeuft das noch?
+  //
+  // Drei Felder, die nichts zum Ranking beitragen und trotzdem gebraucht
+  // werden: der Verlaufs-Kasten der App unterscheidet an ihnen "Auf aktuellem
+  // Stand" von "Staffel abgeschlossen". Ohne sie duerfte er beides nicht
+  // behaupten - und tat es vorher trotzdem, aus einem gespeicherten Ereignis
+  // heraus. Geprueft wird die Abbildung selbst, ohne Netz und ohne Server.
+  {
+    const fertig = M.anilistNormalform(ANILIST_NARUTO, "EXACT");
+    pruefe("AniList: der Laufzustand kommt im Wortlaut der Quelle mit",
+      fertig.laufStatus === "FINISHED" && fertig.folgenGesamt === 220,
+      `${fertig.laufStatus} / ${fertig.folgenGesamt}`);
+    pruefe("AniList: ohne naechste Folge steht dort null",
+      fertig.naechsteFolge === null, JSON.stringify(fertig.naechsteFolge));
+
+    const laufend = M.anilistNormalform({
+      ...ANILIST_NARUTO, status: "RELEASING", episodes: 12,
+      // AniList zaehlt Sekunden seit 1970 in UTC: 29.08.2026, 15:00 Uhr.
+      nextAiringEpisode: { episode: 9, airingAt: Math.floor(Date.UTC(2026, 7, 29, 15, 0) / 1000) }
+    }, "EXACT");
+    pruefe("AniList: die naechste Folge kommt mit Nummer und ISO-Zeit",
+      laufend.laufStatus === "RELEASING"
+      && laufend.naechsteFolge?.nummer === 9
+      && laufend.naechsteFolge?.zeit === "2026-08-29T15:00:00.000Z",
+      JSON.stringify(laufend.naechsteFolge));
+
+    const serie = M.tmdbNormalform({
+      id: 1399, name: "Game of Thrones", first_air_date: "2011-04-17", last_air_date: "2019-05-19",
+      status: "Ended", number_of_episodes: 73,
+      seasons: [
+        { season_number: 0, episode_count: 14 },
+        { season_number: 1, episode_count: 10 },
+        { season_number: 2, episode_count: 10 }
+      ],
+      genres: [], production_companies: [], vote_average: 8.4, vote_count: 20000, popularity: 300
+    }, "serie", "EXACT");
+    pruefe("TMDB: eine beendete Serie sagt das mit Folgenzahl",
+      serie.laufStatus === "Ended" && serie.folgenGesamt === 73,
+      `${serie.laufStatus} / ${serie.folgenGesamt}`);
+    pruefe("TMDB: Staffel 0 ist der Sammelplatz fuer Specials und zaehlt nicht mit",
+      serie.staffeln.length === 2 && serie.staffeln.every((s) => s.nummer > 0),
+      JSON.stringify(serie.staffeln));
+
+    const laufendeSerie = M.tmdbNormalform({
+      id: 1, name: "Laeuft noch", first_air_date: "2026-01-01",
+      status: "Returning Series", number_of_episodes: 8,
+      next_episode_to_air: { episode_number: 9, air_date: "2026-08-29" },
+      seasons: [], genres: [], production_companies: []
+    }, "serie", "EXACT");
+    pruefe("TMDB: die naechste Folge kommt mit Nummer und Datum",
+      laufendeSerie.naechsteFolge?.nummer === 9
+      && laufendeSerie.naechsteFolge?.zeit === "2026-08-29T00:00:00.000Z",
+      JSON.stringify(laufendeSerie.naechsteFolge));
+
+    // Ein Film ist mit seinem Start fertig. "Released" waere dort kein
+    // Abschluss im Sinne eines Verlaufs, sondern nur eine Veroeffentlichung.
+    const film = M.tmdbNormalform({ ...TMDB_IRONMAN, status: "Released" }, "film", "EXACT");
+    pruefe("TMDB: ein Film bekommt keinen Laufzustand",
+      film.laufStatus === "" && film.naechsteFolge === null && film.staffeln.length === 0);
+  }
+
   const gut = pruefungen.filter(Boolean).length;
   console.log(`${gut}/${pruefungen.length} bestanden`);
   process.exit(gut === pruefungen.length ? 0 : 1);

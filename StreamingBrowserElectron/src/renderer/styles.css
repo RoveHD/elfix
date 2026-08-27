@@ -2782,14 +2782,94 @@ h1 {
   line-height: 1.55;
 }
 
-/* Der Verlauf ist eine Liste, kein Fliesstext: die Zeilenumbrueche stehen im
-   Text und muessen erhalten bleiben. Bei vielen Abenden wird der Kasten sonst
-   laenger als der Bildschirm, deshalb scrollt er ab einer Hoehe. */
+/* Die Zusammenfassung ueber dem Verlauf ist eine Liste, kein Fliesstext: die
+   Zeilenumbrueche stehen im Text und muessen erhalten bleiben. Gescrollt wird
+   sie nicht mehr - sie sind hoechstens fuenf Zeilen, und sie sollen stehen
+   bleiben, waehrend die Folgenliste darunter laeuft. */
 .confirm-copy.is-mehrzeilig {
   white-space: pre-line;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Der Verlauf eines Titels: Staffeln als Ueberschrift, darunter je Folge eine
+   Zeile. Er scrollt fuer sich, damit der Kopf mit Titel und Zusammenfassung
+   stehen bleibt - bei einer Serie mit zwoelf Staffeln waere der Kasten sonst
+   laenger als der Bildschirm, und die Zusammenfassung stuende oben ausserhalb.
+
+   `overscroll-behavior` haelt das Rad in dieser Liste: ohne die Regel schiebt
+   ein Rad am unteren Ende die Seite dahinter weiter. */
+.confirm-body {
   max-height: 46vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  /* Eine eigene, deckende Flaeche - und zwar aus genau diesem Grund: der
+     Kasten selbst liegt auf einem Verlauf, und die Staffelzeile unten klebt
+     beim Scrollen oben fest. Waere ihr Hintergrund durchscheinend, liefen die
+     Folgen darunter durch; waere er deckend auf einem Verlauf, saesse dort ein
+     flacher Fleck. Auf einer eigenen Flaeche stellt sich die Frage nicht. */
+  background: color-mix(in srgb, var(--bg-settings), #000 20%);
   font-variant-numeric: tabular-nums;
+}
+
+.confirm-body.is-hidden {
+  display: none;
+}
+
+.verlauf-liste {
+  display: grid;
+  gap: 14px;
+}
+
+.verlauf-staffel {
+  display: grid;
+  gap: 8px;
+}
+
+/* Die Staffelzeile bleibt beim Scrollen oben stehen. Bei einer langen Staffel
+   sieht man sonst zwanzig Folgennummern ohne zu wissen, zu welcher Staffel
+   sie gehoeren. */
+.verlauf-staffel h3 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 6px 0 4px;
+  background: color-mix(in srgb, var(--bg-settings), #000 20%);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.verlauf-folge {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.verlauf-folge strong {
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.verlauf-folge span {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* Der Raum ist eine Randnotiz zur Folge, keine zweite Ueberschrift. */
+.verlauf-folge .verlauf-raum {
+  color: color-mix(in srgb, var(--accent), var(--muted) 45%);
 }
 
 .confirm-actions {
