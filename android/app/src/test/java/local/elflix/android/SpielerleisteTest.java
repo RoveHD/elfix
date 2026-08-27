@@ -40,34 +40,92 @@ public class SpielerleisteTest {
     }
 
     /**
-     * Die Leiste tritt zurueck, sie verschwindet nicht.
+     * Die Leiste geht in drei Schritten - voll, leiser, weg.
      *
-     * <p>Steht hier als Gegenstueck: waere das je gleich, waere der Weg zur
-     * naechsten Folge wieder unsichtbar - der Fehler, aus dem
-     * {@code RUHE_DECKKRAFT} ueberhaupt entstanden ist.
+     * <p>Hier stand einmal das Gegenteil ("verschwindet nie"), und zwar mit
+     * gutem Grund: davor war sie nach dreieinhalb Sekunden fort und kam nicht
+     * zurueck. Der Rueckweg ist inzwischen ein anderer - jede Beruehrung und
+     * jede Taste holt sie zurueck -, und ein Kasten, der eine Stunde lang halb
+     * durchsichtig ueber dem Bild klebt, war die naechste Beschwerde.
      */
     @Test
-    public void dieLeisteVerschwindetNie() {
-        assertEquals(1f, Spielerleiste.deckkraft(false, false, false), 0.0001f);
-        assertEquals(1f, Spielerleiste.deckkraft(true, true, false), 0.0001f);
-        assertEquals(1f, Spielerleiste.deckkraft(true, false, true), 0.0001f);
-        // Zurueckgetreten - aber nicht auf null.
-        float ruhe = Spielerleiste.deckkraft(true, false, false);
-        assertTrue("Die Leiste darf nie unsichtbar werden", ruhe > 0f);
-        assertTrue(ruhe < 1f);
+    public void dieLeisteGehtInDreiSchritten() {
+        assertEquals(1f, Spielerleiste.deckkraft(true, Spielerleiste.Stufe.VOLL, false), 0.0001f);
+        float leiser = Spielerleiste.deckkraft(true, Spielerleiste.Stufe.GEDIMMT, false);
+        assertTrue("Der mittlere Schritt ist leiser", leiser < 1f);
+        assertTrue("Aber noch auffindbar", leiser > 0f);
+        assertEquals(0f, Spielerleiste.deckkraft(true, Spielerleiste.Stufe.WEG, false), 0.0001f);
+    }
+
+    /**
+     * Ausserhalb des Vollbilds und waehrend des Zaehlers gilt kein Schritt.
+     *
+     * <p>Neben dem Bild verdeckt sie nichts, und ein Zaehler, der sich
+     * wegduckt, waere keine Ansage.
+     */
+    @Test
+    public void nebenDemBildUndImZaehlerStehtSieVollDa() {
+        for (Spielerleiste.Stufe stufe : Spielerleiste.Stufe.values()) {
+            assertEquals("neben dem Bild", 1f,
+                Spielerleiste.deckkraft(false, stufe, false), 0.0001f);
+            assertEquals("im Zaehler", 1f,
+                Spielerleiste.deckkraft(true, stufe, true), 0.0001f);
+            assertTrue("neben dem Bild sichtbar",
+                Spielerleiste.leisteSichtbar(true, true, false, stufe, false));
+            assertTrue("im Zaehler sichtbar",
+                Spielerleiste.leisteSichtbar(true, true, true, stufe, true));
+        }
+    }
+
+    /**
+     * Ein leerer Kasten gehoert nicht auf den Schirm.
+     *
+     * <p>Der gemeldete Fehler: die Leiste war sichtbar, solange eine Folge
+     * lief - auch mit beiden Knoepfen auf {@code GONE}. Uebrig blieb ihr
+     * eigener Hintergrund, ein dunkler Punkt unten rechts im Video, und der
+     * stand dort die ersten neunzig Prozent jeder Folge.
+     */
+    @Test
+    public void ohneInhaltWirdNichtsGezeichnet() {
+        assertFalse("kein Knopf, kein Kasten",
+            Spielerleiste.leisteSichtbar(true, false, true, Spielerleiste.Stufe.VOLL, false));
+        assertFalse("auch nicht neben dem Bild",
+            Spielerleiste.leisteSichtbar(true, false, false, Spielerleiste.Stufe.VOLL, false));
+        assertTrue("mit Knopf schon",
+            Spielerleiste.leisteSichtbar(true, true, true, Spielerleiste.Stufe.VOLL, false));
+    }
+
+    /** Laeuft gar nichts, steht auch nichts da. */
+    @Test
+    public void ohneFolgeStehtNichtsDa() {
+        assertFalse(Spielerleiste.leisteSichtbar(false, true, true, Spielerleiste.Stufe.VOLL, false));
+        assertFalse(Spielerleiste.autoplaySichtbar(false, true, false));
+    }
+
+    /**
+     * Im letzten Schritt ist sie wirklich weg - nicht nur durchsichtig.
+     *
+     * <p>Das ist der Unterschied, auf den es ankommt: eine Ansicht, die nur
+     * durchsichtig ist, belegt weiter Platz, nimmt Fokus an und faengt
+     * Beruehrungen ab.
+     */
+    @Test
+    public void derLetzteSchrittIstWirklichWeg() {
+        assertFalse(Spielerleiste.leisteSichtbar(true, true, true, Spielerleiste.Stufe.WEG, false));
+        assertTrue(Spielerleiste.leisteSichtbar(true, true, true, Spielerleiste.Stufe.GEDIMMT, false));
     }
 
     /**
      * Die beiden Regeln haengen nicht aneinander.
      *
      * <p>Der Fall aus der Meldung: die Bedienelemente des Players sind weg. Der
-     * Schalter ist dann fort, die Leiste steht weiter da - nur leiser.
+     * Schalter ist dann sofort fort, die Leiste tritt erst nur zurueck.
      */
     @Test
     public void schalterUndLeisteEntscheidenGetrennt() {
         boolean schalter = Spielerleiste.autoplaySichtbar(true, false, false);
-        float leiste = Spielerleiste.deckkraft(true, false, false);
         assertFalse(schalter);
-        assertTrue(leiste > 0f);
+        assertTrue(Spielerleiste.leisteSichtbar(true, true, true,
+            Spielerleiste.Stufe.GEDIMMT, false));
     }
 }

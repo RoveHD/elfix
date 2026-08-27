@@ -157,33 +157,11 @@ public class FolgenTest {
         assertEquals("(leer)", Folgen.kurz(null));
     }
 
-    /* ------------------------------ Wie deutlich die Leiste dasteht */
-
-    @Test
-    public void nebenDemBildStehtDieLeisteVollDa() {
-        // Ausserhalb des Vollbilds verdeckt sie nichts.
-        assertEquals(1f, Spielerleiste.deckkraft(false, false, false), 0.001f);
-        assertEquals(1f, Spielerleiste.deckkraft(false, true, false), 0.001f);
-    }
-
-    @Test
-    public void imVollbildTrittSieNachDerRuheZurueck() {
-        assertEquals(1f, Spielerleiste.deckkraft(true, true, false), 0.001f);
-        assertTrue(Spielerleiste.deckkraft(true, false, false) < 1f);
-    }
-
-    @Test
-    public void aberSieVerschwindetNie() {
-        // Der gemeldete Fehler: hier stand View.GONE, und auf dem Telefon lief
-        // eine Folge bis zum Ende, ohne dass je ein Knopf zu sehen war. Der
-        // Rechner laesst seine Karte verblassen, nicht verschwinden.
-        assertTrue(Spielerleiste.deckkraft(true, false, false) > 0f);
-    }
-
-    @Test
-    public void einLaufenderZaehlerHoltSieVollZurueck() {
-        // Ein Zaehler, den man nicht sieht, ist keine Ansage - und "Abbrechen"
-        // waere ein Knopf, den es nur unsichtbar gibt.
-        assertEquals(1f, Spielerleiste.deckkraft(true, false, true), 0.001f);
-    }
+    /*
+     * Wie deutlich die Leiste dasteht, stand bis hierher auch hier - vier
+     * Faelle, die sich mit denen in SpielerleisteTest ueberschnitten. Sie
+     * gehoeren dorthin: das ist die Klasse, deren Regel es ist, und seit die
+     * Leiste in drei Schritten geht, gibt es dort mehr zu pruefen als eine
+     * Deckkraft. Zwei Orte fuer eine Regel waeren zwei Wahrheiten.
+     */
 }

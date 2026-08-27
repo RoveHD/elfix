@@ -279,25 +279,43 @@ pruefe("Gezaehlt wird nur am Ende",
 pruefe("Ein Abbruch gilt fuer diese Folge und laesst den Knopf stehen",
   LEISTE.includes("abgebrochenFuer = ziel") && LEISTE.includes("knopfAbbrechen"));
 pruefe("Ein laufender Zaehler holt die Leiste voll zurueck",
-  /deckkraft[\s\S]{0,300}zaehlt \|\| steuerungAn/.test(LEISTE));
+  /deckkraft[\s\S]{0,300}!imVollbild \|\| zaehlt\) return 1f/.test(LEISTE));
 
 /* --------------------------------------- Die beiden Fehler auf der Hardware */
 //
 // Beides ist auf einem echten Telefon aufgefallen und war an keiner Rechnung
 // zu sehen - deshalb steht es hier als Sperre gegen einen Rueckfall.
 
-// 1. Die Leiste verschwand. Sie uebernahm den Rueckfall des Livestreifens
-//    (View.GONE nach kurzer Ruhe), dessen Ausloeser aber nur existiert, wenn
-//    eine Watchparty laeuft: den Horcher setzt Mitschauen.anPlayer ein, und
-//    das tut es nur bei eingeschalteter Watchparty. Wer allein schaut, bekam
-//    nie eine Meldung - und die Leiste blieb weg.
-pruefe("Die Leiste verblasst, statt zu verschwinden",
+// 1. Die Leiste verschwand - und kam nicht wieder. Sie uebernahm den Rueckfall
+//    des Livestreifens (View.GONE nach kurzer Ruhe), dessen Ausloeser aber nur
+//    existiert, wenn eine Watchparty laeuft: den Horcher setzt
+//    Mitschauen.anPlayer ein, und das tut es nur bei eingeschalteter
+//    Watchparty. Wer allein schaut, bekam nie eine Meldung.
+//
+//    Sie darf inzwischen wieder ganz verschwinden - aber nur, weil der
+//    Rueckweg ein anderer ist: jede Beruehrung und jede Taste holt sie zurueck.
+//    Genau das wird hier festgehalten, samt der drei Schritte dorthin.
+pruefe("Die Leiste geht in drei Schritten",
+  /enum Stufe \{[\s\S]{0,200}VOLL,[\s\S]{0,200}GEDIMMT,[\s\S]{0,200}WEG/.test(LEISTE));
+pruefe("Der mittlere Schritt ist ein Verblassen, kein Verschwinden",
   /RUHE_DECKKRAFT\s*=\s*0?\.\d+f/.test(LEISTE) && LEISTE.includes("wurzel.setAlpha"));
-pruefe("Ihr Verschwinden haengt nur noch daran, ob ueberhaupt etwas laeuft",
-  LEISTE.includes("wurzel.setVisibility(amSchauen ? View.VISIBLE : View.GONE)"));
+pruefe("Und zusammen sind es zehn Sekunden",
+  /RUHE_MS\s*=\s*5000/.test(LEISTE) && /VERBLASSEN_MS\s*=\s*5000/.test(LEISTE));
+pruefe("Der Rueckweg haengt an Beruehrung und Taste, nicht an der Watchparty",
+  HAUPT.includes("spielerleiste.regung()") && /void regung\(\)\s*\{\s*zeigen\(\);/.test(LEISTE));
 pruefe("Der Horcher fuer die Player-Steuerung braucht weiterhin die Watchparty",
   fs.readFileSync(path.join(ANDROID, "Mitschauen.java"), "utf8")
     .includes("if (watchparty == null || !watchparty.istEingeschaltet()) return;"));
+
+// 3. Der leere Kasten. Die Leiste war sichtbar, solange ueberhaupt eine Folge
+//    lief - auch mit beiden Knoepfen auf GONE. Uebrig blieb ihr eigener
+//    Hintergrund: ein dunkler Punkt unten rechts, der die ersten neunzig
+//    Prozent jeder Folge im Bild klebte.
+pruefe("Ohne Inhalt wird die Leiste gar nicht erst gezeichnet",
+  /boolean inhaltDa = knopfDa \|\| zaehlt\(\)/.test(LEISTE)
+    && /leisteSichtbar\(amSchauen, inhaltDa/.test(LEISTE));
+pruefe("Und die Regel dazu steht ohne Ansicht da, also pruefbar",
+  /static boolean leisteSichtbar\(/.test(LEISTE));
 
 // 2. Die Serienlaenge kam nie an. Titelbild hatte genau einen Platz, und auf
 //    dem Telefon nimmt der Hoster den Hauptrahmen: sein onPageFinished loeschte

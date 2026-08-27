@@ -112,29 +112,54 @@ final class Spielerleiste {
      */
     private static final long RUHE_MS = 5000;
     /**
-     * Wie durchsichtig sie danach wird - und ausdruecklich nicht "weg".
+     * Wie durchsichtig sie im mittleren Schritt wird.
      *
-     * <p><b>Der gemeldete Fehler.</b> Hier stand {@code View.GONE}, uebernommen
-     * vom {@link Livestreifen}. Der darf das: er zeigt an, wer mitschaut, und
-     * das ist verzichtbar. Diese Leiste traegt den einzigen Weg zur naechsten
-     * Folge - und sie verschwand im Vollbild nach dreieinhalb Sekunden und kam
-     * ohne Beruehrung nie zurueck. Auf dem Telefon lief eine Folge damit bis
-     * zum Ende, ohne dass je ein Knopf zu sehen war.
-     *
-     * <p>Dazu kam, dass ihr Ausloeser gar nicht existierte: ob die
-     * Bedienelemente des Players stehen, meldet der Horcher aus
-     * {@code watchparty-sync.beobachterScript()} - und {@code Mitschauen.anPlayer}
-     * setzt ihn nur ein, wenn die Watchparty eingeschaltet ist. Wer allein
-     * schaut, bekam also nie eine Meldung, und der Rueckfall bedeutete
-     * "unsichtbar, bis jemand das Bild antippt".
-     *
-     * <p>Der Rechner macht es anders und richtig: seine Karte geht nach fuenf
-     * Sekunden Ruhe auf {@code opacity: 0.12} - sie bleibt stehen, bleibt
-     * anklickbar und ist mit einer Mausbewegung sofort wieder da. Genau das
-     * steht jetzt hier. Der Wert ist hoeher als am Rechner, weil eine
+     * <p>Hoeher als die {@code opacity: 0.12} des Rechners, weil eine
      * Beruehrung kein Zeiger ist: was man nicht sieht, tippt man auch nicht an.
      */
     private static final float RUHE_DECKKRAFT = 0.4f;
+    /**
+     * Und wie lange sie danach noch bleibt, bevor sie ganz geht.
+     *
+     * <p>Zusammen mit {@link #RUHE_MS} sind das die zehn Sekunden, nach denen
+     * vom Knopf nichts mehr zu sehen ist.
+     */
+    private static final long VERBLASSEN_MS = 5000;
+
+    /**
+     * Die drei Schritte, in denen die Leiste im Vollbild zuruecktritt.
+     *
+     * <h2>Warum sie ueberhaupt ganz geht - und warum das diesmal richtig ist</h2>
+     *
+     * <p>Hier stand einmal {@code View.GONE} nach dreieinhalb Sekunden, und das
+     * war ein Fehler: auf dem Telefon lief eine Folge bis zum Ende, ohne dass je
+     * ein Knopf zu sehen war. Danach stand hier "sie verschwindet nie" und ein
+     * fester Wert von 0,4 - und das war der naechste Fehler, nur ein leiserer:
+     * ein Kasten, der eine Stunde lang halb durchsichtig ueber dem Bild klebt,
+     * ist genau das, was beim Schauen stoert.
+     *
+     * <p>Der Unterschied zum ersten Anlauf ist nicht die Zeit, sondern der
+     * Rueckweg. Damals gab es keinen: der Ausloeser zum Wiederkommen war die
+     * Meldung des Player-Horchers, und die kommt nur mit eingeschalteter
+     * Watchparty. Heute holt jede Beruehrung und jede Taste die Leiste zurueck
+     * ({@code regung()} haengt in {@code dispatchTouchEvent} und
+     * {@code dispatchKeyEvent}) - dieselbe Geste, mit der man auch die
+     * Bedienleiste des Hosters wieder hervorholt. Wer den Knopf sucht, tippt
+     * ohnehin ans Bild.
+     *
+     * <p>Zwei Ausnahmen bleiben: waehrend eines Zaehlers steht sie voll da (eine
+     * Ansage, die sich wegduckt, ist keine), und solange der Fokus auf ihr
+     * liegt, ruecken die Schritte gar nicht erst weiter - sonst naehme sie der
+     * Fernbedienung den Platz weg, an dem sie steht.
+     */
+    enum Stufe {
+        /** Voll da. */
+        VOLL,
+        /** Zurueckgetreten, aber auffindbar. */
+        GEDIMMT,
+        /** Weg - und zwar {@code GONE}, nicht durchsichtig. */
+        WEG
+    }
     /**
      * Wie oft der Zaehler nachsieht, wie viel noch bleibt.
      *
@@ -198,7 +223,8 @@ final class Spielerleiste {
     /** Woran erkannt wird, dass sich am Zustand wirklich etwas geaendert hat. */
     private String letztesProtokoll = "";
     private boolean imVollbild;
-    private boolean steuerungAn = true;
+    /** In welchem der drei Schritte die Leiste gerade steht. Siehe {@link Stufe}. */
+    private Stufe stufe = Stufe.VOLL;
     private boolean gemeldetAn = true;
     private boolean steuerungGemeldet;
 
@@ -220,10 +246,21 @@ final class Spielerleiste {
                 haupt.postDelayed(this, RUHE_MS);
                 return;
             }
-            boolean sollAn = steuerungGemeldet && gemeldetAn;
-            if (steuerungAn == sollAn) return;
-            steuerungAn = sollAn;
-            anwenden();
+            // Sagt der Player selbst, dass seine Bedienleiste steht, bleibt
+            // auch die Leiste stehen - dann ist ohnehin gerade etwas zu sehen.
+            if (steuerungGemeldet && gemeldetAn) return;
+            if (stufe == Stufe.VOLL) {
+                stufe = Stufe.GEDIMMT;
+                // Nur zurueckgetreten, noch nicht weg: der zweite Schritt
+                // kommt von selbst.
+                haupt.postDelayed(this, VERBLASSEN_MS);
+                anwenden();
+                return;
+            }
+            if (stufe == Stufe.GEDIMMT) {
+                stufe = Stufe.WEG;
+                anwenden();
+            }
         }
     };
 
@@ -450,7 +487,7 @@ final class Spielerleiste {
         // demselben Grund wie bei der Leiste: waehrend einer Ansage soll man
         // den Automatismus abschalten koennen, ohne erst das Bild antippen zu
         // muessen.
-        boolean autoplayDa = autoplaySichtbar(amSchauen, steuerungAn, zaehlt());
+        boolean autoplayDa = autoplaySichtbar(amSchauen, stufe == Stufe.VOLL, zaehlt());
         // Erst den Fokus retten, dann verschwinden. Andersherum faellt er ins
         // Nichts, und die Fernbedienung steht irgendwo.
         if (!autoplayDa && knopfAutoplay.hasFocus()) {
@@ -470,11 +507,18 @@ final class Spielerleiste {
         }
         knopfNaechste.setVisibility(knopfDa ? View.VISIBLE : View.GONE);
         knopfAbbrechen.setVisibility(zaehlt() ? View.VISIBLE : View.GONE);
-        // Die Leiste selbst folgt unveraendert ihrer bisherigen Regel: sie
-        // steht, solange eine Folge offen ist, und tritt im Vollbild nach
-        // kurzer Ruhe nur zurueck. Der Schalter oben hat damit nichts zu tun.
-        wurzel.setVisibility(amSchauen ? View.VISIBLE : View.GONE);
-        wurzel.setAlpha(deckkraft(imVollbild, steuerungAn, zaehlt()));
+        // Die Leiste selbst: nur mit Inhalt, und im Vollbild nur bis zum
+        // letzten der drei Schritte. Ein leerer Kasten ist ein Punkt auf dem
+        // Video und kein Bedienelement - siehe leisteSichtbar.
+        boolean inhaltDa = knopfDa || zaehlt();
+        boolean leisteDa = leisteSichtbar(amSchauen, inhaltDa, imVollbild, stufe, zaehlt());
+        // Erst den Fokus retten, dann verschwinden - dieselbe Reihenfolge wie
+        // bei den Knoepfen darin.
+        if (!leisteDa && wurzel.hasFocus() && !(autoplayDa && knopfAutoplay.requestFocus())) {
+            wurzel.clearFocus();
+        }
+        wurzel.setVisibility(leisteDa ? View.VISIBLE : View.GONE);
+        wurzel.setAlpha(deckkraft(imVollbild, stufe, zaehlt()));
         protokoll(knopfDa, autoplayDa);
     }
 
@@ -486,8 +530,9 @@ final class Spielerleiste {
      * Nachzusehen mit: {@code adb logcat -s ELFIX | grep FOLGE}
      */
     private void protokoll(boolean knopfDa, boolean autoplayDa) {
-        String stand = "leiste sichtbar=" + amSchauen
-            + " deckkraft=" + deckkraft(imVollbild, steuerungAn, zaehlt())
+        String stand = "leiste sichtbar=" + (wurzel.getVisibility() == View.VISIBLE)
+            + " stufe=" + stufe
+            + " deckkraft=" + deckkraft(imVollbild, stufe, zaehlt())
             + " knopf=" + knopfDa
             + " autoplaySichtbar=" + autoplayDa
             + " zaehler=" + zaehlt()
@@ -498,7 +543,7 @@ final class Spielerleiste {
             + " abgebrochen=" + (ziel.equals(abgebrochenFuer))
             + " schonGefahren=" + (ziel.equals(zaehlerFuer))
             + " vollbild=" + imVollbild
-            + " steuerung=" + steuerungAn + "/" + steuerungGemeldet;
+            + " steuerung=" + steuerungGemeldet + "/" + gemeldetAn;
         if (stand.equals(letztesProtokoll)) return;
         letztesProtokoll = stand;
         Log.i(TAG, "FOLGE " + stand);
@@ -520,28 +565,48 @@ final class Spielerleiste {
         zaehlerAnhalten();
         steuerungGemeldet = false;
         gemeldetAn = true;
-        steuerungAn = true;
+        stufe = Stufe.VOLL;
         haupt.removeCallbacks(ruheEintreten);
         if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
         anwenden();
     }
 
-    /** Der Player sagt, ob seine Bedienelemente zu sehen sind. */
+    /**
+     * Der Player sagt, ob seine Bedienelemente zu sehen sind.
+     *
+     * <p>Sind sie da - beim Pausieren, bei der Ueberlagerung des Hosters, bei
+     * jedem Antippen -, faengt die Leiste wieder bei voll an. Sind sie weg,
+     * laeuft der Takt von vorn los: erst zurueckgetreten, dann weg.
+     */
     void steuerungSichtbar(boolean an) {
         steuerungGemeldet = true;
         gemeldetAn = an;
         haupt.removeCallbacks(ruheEintreten);
-        if (steuerungAn == an) return;
-        steuerungAn = an;
-        anwenden();
+        if (an) {
+            zeigen();
+            return;
+        }
+        // Der Player hat seine Leiste weggenommen: von hier an zaehlt der Takt.
+        if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
     }
 
     /** Jemand hat etwas getan - Beruehrung, D-Pad, Fernbedienung. */
     void regung() {
+        zeigen();
+    }
+
+    /**
+     * Die Leiste wieder ganz nach vorn holen und den Takt neu anwerfen.
+     *
+     * <p>Der eine Weg zurueck - egal ob ihn eine Beruehrung, eine Taste oder
+     * der Player selbst ausloest. Ausserhalb des Vollbilds laeuft kein Takt:
+     * dort verdeckt die Leiste nichts und hat keinen Grund, sich zu ducken.
+     */
+    private void zeigen() {
         haupt.removeCallbacks(ruheEintreten);
-        haupt.postDelayed(ruheEintreten, RUHE_MS);
-        if (steuerungAn) return;
-        steuerungAn = true;
+        if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
+        if (stufe == Stufe.VOLL) return;
+        stufe = Stufe.VOLL;
         anwenden();
     }
 
@@ -549,20 +614,44 @@ final class Spielerleiste {
      * Wie deutlich die Leiste dasteht - ohne Ansicht, damit es sich pruefen
      * laesst.
      *
-     * <p>Ob sie ueberhaupt dasteht, entscheidet allein, ob gerade eine
-     * Wiedergabeseite offen ist. Sie wird nie unsichtbar: eine Leiste, die
-     * verschwindet, ist ein Weg zur naechsten Folge, den es nicht gibt.
-     *
      * <p>Ausserhalb des Vollbilds liegt sie neben dem Bild und verdeckt nichts,
-     * also volle Deckkraft. Im Vollbild liegt sie auf dem Video und tritt nach
-     * kurzer Ruhe zurueck - so weit, dass sie nicht stoert, und so wenig, dass
-     * man sie noch findet. Waehrend gezaehlt wird, steht sie voll da: ein
-     * Zaehler, den man nicht sieht, ist keine Ansage, und "Abbrechen" waere ein
-     * Knopf, den es nur unsichtbar gibt.
+     * also volle Deckkraft, egal welcher Schritt gerade gilt. Waehrend gezaehlt
+     * wird ebenso: ein Zaehler, den man nicht sieht, ist keine Ansage, und
+     * "Abbrechen" waere ein Knopf, den es nur unsichtbar gibt.
+     *
+     * <p>Im Vollbild folgt sie den drei Schritten. Der letzte gibt hier zwar
+     * null zurueck, gezeichnet wird er aber gar nicht mehr - dafuer sorgt
+     * {@link #leisteSichtbar}. Eine Ansicht, die nur durchsichtig ist, belegt
+     * weiter Platz, nimmt Fokus an und faengt Beruehrungen ab.
      */
-    static float deckkraft(boolean imVollbild, boolean steuerungAn, boolean zaehlt) {
-        if (!imVollbild || zaehlt || steuerungAn) return 1f;
-        return RUHE_DECKKRAFT;
+    static float deckkraft(boolean imVollbild, Stufe stufe, boolean zaehlt) {
+        if (!imVollbild || zaehlt) return 1f;
+        if (stufe == Stufe.GEDIMMT) return RUHE_DECKKRAFT;
+        if (stufe == Stufe.WEG) return 0f;
+        return 1f;
+    }
+
+    /**
+     * Ob die Leiste ueberhaupt gezeichnet wird - ohne Ansicht, damit es sich
+     * pruefen laesst.
+     *
+     * <h2>Der leere Kasten</h2>
+     *
+     * <p>{@code inhaltDa} ist der gemeldete Fehler: die Leiste war sichtbar,
+     * solange ueberhaupt eine Folge lief - auch dann, wenn beide Knoepfe darin
+     * {@code GONE} waren. Uebrig blieb ihr eigener Hintergrund: ein gerundeter
+     * Kasten von zweimal zwoelf dp Innenabstand, also ein dunkler Punkt, der
+     * unten rechts im Video klebte. Die ersten neunzig Prozent jeder Folge
+     * bestand die Leiste aus genau diesem Punkt und sonst nichts.
+     *
+     * <p>Ein Behaelter ohne Inhalt gehoert nicht auf den Schirm. Steht weder
+     * "Naechste Folge" noch "Abbrechen", ist die Leiste weg.
+     */
+    static boolean leisteSichtbar(boolean amSchauen, boolean inhaltDa, boolean imVollbild,
+            Stufe stufe, boolean zaehlt) {
+        if (!amSchauen || !inhaltDa) return false;
+        if (!imVollbild || zaehlt) return true;
+        return stufe != Stufe.WEG;
     }
 
     /**
@@ -608,8 +697,8 @@ final class Spielerleiste {
         aussehenAnwenden();
         // Beim Eintreten erst einmal da - die Bedienelemente des Players sind
         // in diesem Augenblick fast immer offen. Was danach gilt, sagt der
-        // Player.
-        steuerungAn = true;
+        // Player, und sonst der Takt.
+        stufe = Stufe.VOLL;
         haupt.removeCallbacks(ruheEintreten);
         if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
         anwenden();
@@ -686,14 +775,15 @@ final class Spielerleiste {
      * @return ob der Fokus wirklich dort angekommen ist
      */
     boolean fokussieren() {
+        // Erst die Regung, dann nachsehen. Andersherum war es falsch, seit die
+        // Leiste im letzten Schritt wirklich verschwindet: die Fernbedienung
+        // fragte nach etwas, das genau in diesem Augenblick nicht dastand, und
+        // bekam ein Nein - obwohl ein Tastendruck es hervorgeholt haette.
+        regung();
         if (wurzel.getVisibility() != View.VISIBLE
             && autoplayHalter.getVisibility() != View.VISIBLE) {
             return false;
         }
-        // Erst eine Regung: sie holt die Bedienelemente zurueck, und damit den
-        // Schalter. Sonst waere er genau in dem Augenblick nicht da, in dem die
-        // Fernbedienung ihn sucht.
-        regung();
         if (knopfNaechste.getVisibility() == View.VISIBLE && knopfNaechste.requestFocus()) return true;
         if (autoplayHalter.getVisibility() == View.VISIBLE && knopfAutoplay.requestFocus()) return true;
         return false;
