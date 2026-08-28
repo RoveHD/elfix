@@ -137,6 +137,17 @@ public class MainActivity extends Activity {
      * schlimmer als gar keine Gliederung.
      */
     private final java.util.Set<String> offeneAbschnitte = new java.util.HashSet<>();
+    /**
+     * Titelbilder, die fuer die Suche von einer Titelseite geholt wurden.
+     *
+     * <p>Ein leerer Wert heisst "dort war keins" und verhindert, dass dieselbe
+     * Seite bei jeder Suche erneut geholt wird.
+     */
+    private final Map<String, String> suchbilder = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Fuer wie viele Treffer je Suche hoechstens eine Titelseite geholt wird. */
+    private static final int TITELSEITEN_JE_SUCHE = 8;
+    /** Und wie viel davon gelesen wird - das Cover steht bei Byte 11500. */
+    private static final int TITELSEITE_BYTES = 24_000;
     /** Der Leser fuer die Seite vor der ersten Folge. */
     private Serienuebersicht serienuebersicht;
     /** Legt vor einem Update eine Sicherung an - siehe {@link Sicherung}. */
@@ -1400,6 +1411,14 @@ public class MainActivity extends Activity {
 
         appChrome.addView(brandLogoView(), new LinearLayout.LayoutParams(dp(150), dp(42)));
         appChrome.addView(new android.widget.Space(this), new LinearLayout.LayoutParams(0, 1, 1));
+        // Der Weg nach Hause. Er fehlte: die Kopfzeile trug Suche, Favoriten,
+        // Watchparty und Einstellungen - und aus keiner dieser Seiten fuehrte
+        // ein Knopf zurueck. Wer in den Einstellungen stand, kam nur ueber die
+        // Zurueck-Taste heraus, und die ist auf einer Fernbedienung nicht dort,
+        // wo man sie sucht. Auf dem Telefon steht "Home" seit jeher in der
+        // unteren Leiste; die wird am Fernseher ausgeblendet.
+        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_home, "Start",
+            this::showHome), headerSlot());
         appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_search, "Suche",
             () -> showGlobalSearch("")), headerSlot());
         appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_favorite, "Favoriten",
@@ -5842,13 +5861,123 @@ public class MainActivity extends Activity {
         if (!fehltEines) return;
 
         String html = holeTrefferseite(searchUrl);
-        if (html.isEmpty()) return;
-        Map<String, String> bilder = bilderZuAdressen(html, searchUrl);
-        if (bilder.isEmpty()) return;
+        if (!html.isEmpty()) {
+            Map<String, String> bilder = bilderZuAdressen(html, searchUrl);
+            for (SearchResult ergebnis : treffer) {
+                if (ergebnis.bild != null && !ergebnis.bild.isEmpty()) continue;
+                String bild = bilder.get(ergebnis.url);
+                if (bild != null) ergebnis.bild = bild;
+            }
+        }
+        titelseitenNachtragen(treffer);
+    }
+
+    /**
+     * Das Bild von der Titelseite des Treffers holen - der letzte Weg.
+     *
+     * <h2>Warum es ihn braucht</h2>
+     *
+     * <p>Gemeldet: bei der Suche fehlen manche Bilder, manche sind da. Gemessen
+     * am 2026-08-28 an "naruto": von Aniworld kam kein einziges, von S.to alle.
+     *
+     * <p>Der Grund liegt an der Seite des Anbieters, nicht an ELFIX. Aniworld
+     * beantwortet {@code /search?q=...} mit 18 KB Rahmen und <em>null</em>
+     * Serienlinks - die Treffer kommen dort erst per JavaScript nach. Der
+     * Nachtrag holte also eine Seite, auf der nichts steht. Die Antwort der
+     * Ajax-Suche selbst traegt nur Titel, Beschreibung und Adresse, und die
+     * Serienuebersicht mit ihren 2462 Eintraegen ist eine reine Textliste.
+     * Ein Bild gibt es bei diesem Anbieter nur auf der Titelseite selbst.
+     *
+     * <h2>Warum das trotzdem bezahlbar ist</h2>
+     *
+     * <p>Weil nur der Anfang der Seite gebraucht wird. Gemessen an drei Titeln
+     * steht das Cover bei Byte 11500, 11536 und 11580 - die Seiten selbst sind
+     * 63, 101 und 154 KB gross. Gelesen werden deshalb 24 KB und dann wird
+     * abgebrochen: ein Fuenftel bis ein Sechstel, und der Rest der Seite ist
+     * die Folgenliste, die hier niemanden angeht.
+     *
+     * <p>Und weil es einmal je Titel geschieht: was einmal gefunden wurde,
+     * bleibt gemerkt. Wer zweimal nach demselben sucht, laedt nichts nach.
+     *
+     * <p>Gesucht wird nur fuer die Treffer, die wirklich angezeigt werden -
+     * eine Suche ueber alle Anbieter bringt leicht siebzig, gezeigt wird eine
+     * Handvoll.
+     */
+    private void titelseitenNachtragen(ArrayList<SearchResult> treffer) {
+        ArrayList<SearchResult> offen = new ArrayList<>();
         for (SearchResult ergebnis : treffer) {
             if (ergebnis.bild != null && !ergebnis.bild.isEmpty()) continue;
-            String bild = bilder.get(ergebnis.url);
-            if (bild != null) ergebnis.bild = bild;
+            if (ergebnis.url == null || !ergebnis.url.startsWith("http")) continue;
+            String bekannt = suchbilder.get(ergebnis.url);
+            if (bekannt != null) {
+                // Auch ein leerer Eintrag zaehlt: er sagt "dort war keins", und
+                // das ist eine Auskunft, kein fehlendes Ergebnis.
+                if (!bekannt.isEmpty()) ergebnis.bild = bekannt;
+                continue;
+            }
+            if (offen.size() < TITELSEITEN_JE_SUCHE) offen.add(ergebnis);
+        }
+        if (offen.isEmpty()) return;
+
+        // Nebeneinander statt nacheinander: acht Seiten hintereinander waeren
+        // acht Wartezeiten, und die Suche laeuft ohnehin schon in einem eigenen
+        // Faden.
+        java.util.concurrent.ExecutorService pool =
+            java.util.concurrent.Executors.newFixedThreadPool(Math.min(4, offen.size()));
+        try {
+            java.util.List<java.util.concurrent.Future<?>> laeuft = new ArrayList<>();
+            for (SearchResult ergebnis : offen) {
+                laeuft.add(pool.submit(() -> {
+                    String kopf = seitenKopf(ergebnis.url, TITELSEITE_BYTES);
+                    String bild = kopf.isEmpty() ? "" : Trefferbild.ausMarkup(kopf, ergebnis.url);
+                    suchbilder.put(ergebnis.url, bild);
+                    if (!bild.isEmpty()) ergebnis.bild = bild;
+                }));
+            }
+            for (java.util.concurrent.Future<?> eines : laeuft) {
+                try {
+                    eines.get(9, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (Exception zuLange) {
+                    // Ein Treffer ohne Bild ist ein Treffer mit Platzhalter -
+                    // kein Grund, die ganze Suche warten zu lassen.
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Den Anfang einer Seite holen und dann abbrechen.
+     *
+     * <p>Der Unterschied zu {@link #holeTrefferseite} ist die Grenze: dort wird
+     * die ganze Seite gebraucht, hier steht das Gesuchte im ersten Zwoelftel.
+     */
+    private String seitenKopf(String adresse, int hoechstens) {
+        HttpURLConnection verbindung = null;
+        try {
+            verbindung = (HttpURLConnection) new URL(adresse).openConnection();
+            verbindung.setConnectTimeout(8000);
+            verbindung.setReadTimeout(8000);
+            verbindung.setInstanceFollowRedirects(true);
+            verbindung.setRequestProperty("Accept", "text/html,application/xhtml+xml");
+            verbindung.setRequestProperty("User-Agent", "Mozilla/5.0 ElflixAndroid/0.2");
+            int status = verbindung.getResponseCode();
+            if (status < 200 || status >= 400) return "";
+            StringBuilder text = new StringBuilder();
+            try (BufferedReader leser = new BufferedReader(
+                new InputStreamReader(verbindung.getInputStream(), StandardCharsets.UTF_8))) {
+                char[] block = new char[8192];
+                int gelesen;
+                while (text.length() < hoechstens && (gelesen = leser.read(block)) > 0) {
+                    text.append(block, 0, gelesen);
+                }
+            }
+            return text.toString();
+        } catch (Exception ignoriert) {
+            return "";
+        } finally {
+            if (verbindung != null) verbindung.disconnect();
         }
     }
 
