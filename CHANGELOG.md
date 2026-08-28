@@ -3,6 +3,55 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.67.0 — 28. August 2026
+
+Eine Runde auf einem echten Fire TV Stick — 1,7 GB RAM, 32 Bit, Android 9. Ein
+anderes Gerät als die Emulatoren, auf denen bisher geprüft wurde, und drei der
+fünf Befunde gibt es nur dort.
+
+**Der Start, der nie kam.** Gemeldet an COLORFUL STAGE! The Movie. Im Protokoll
+stand: Seite geladen, Player gefunden — und trotzdem nach neunzig Sekunden „Die
+Folgenseite lädt nicht. Prüfe deine Internetverbindung.“ Der Grund: der
+Autostart wird gezündet, wenn eine Seite zu *laden anfängt*. Steht sie schon,
+fängt nichts mehr an — das Ereignis kam nie, der Auftrag blieb scharf liegen,
+der Ladevorhang lief in seine Frist. Jetzt wird auch auf einer stehenden Seite
+gezündet: aus 90 Sekunden und einem Fehler werden **33,9 Sekunden und
+Vollbild**.
+
+**Zwei Abstürze.** Der erste stand im Absturzspeicher des Geräts: eine
+NullPointerException, sobald ein Watchparty-Beitritt von einem anderen Gerät
+übernommen wurde. Der zweite traf die ganze App: stirbt der WebView-Renderer —
+auf diesen Seiten Alltag —, fragt Android *jeden* WebView, ob er das behandelt;
+sagt einer nein, wird die App abgeschossen. Zwei sagten nein: das Popup-Fenster
+und der Schriftzug in der Kopfzeile — ein WebView für ein PNG, auf jedem
+Bildschirm. Der Schriftzug ist jetzt ein Bild und kann gar nicht mehr sterben.
+
+**Ein Drittel weniger Ruckeln.** Gemessen am Gerät, gleiche Bedienung:
+
+| | vorher | nachher |
+|---|---|---|
+| gezeichnete Bilder | 1856 | 427 |
+| davon zu spät | 612 (32,97 %) | 28 (6,56 %) |
+| 90. Perzentil | 21 ms | 11 ms |
+
+Der Unterschied ist der langsame Zoom auf dem Titelbild. Er ist die einzige
+Bewegung, die nie aufhört — die Startseite zeichnete dauernd, auch wenn niemand
+etwas tat. Auf kleinen Geräten fällt er weg; alle übrigen Bewegungen bleiben.
+Dazu: der Bildspeicher nimmt auf solchen Geräten höchstens 16 MB statt einem
+Viertel des Heaps, und unter Speicherdruck gibt die App freiwillig ab — alle
+Bilder und jede Anbieterseite, die gerade niemand ansieht.
+
+**Die Seite mit Staffeln und Folgen.** Sie steht am Fernseher, nur führte kein
+Weg dorthin, den man dort nimmt: ein Eintrag der Merkliste oder der Mediathek
+wird von dort aus zum ersten Mal angefangen und ging bisher geradewegs auf die
+Anbieterseite. Jetzt über die Übersicht — aber nur, wenn die Adresse auf eine
+Serie zeigt und nicht auf eine bestimmte Folge. Und eine Auswahl mit genau einem
+Eintrag ist keine Auswahl: Aniworld führt Filme als „Staffel 1 Folge 1“, und
+dafür gab es elf Sekunden Ladevorhang und eine Liste mit einer Zeile. Wo es nur
+eine Folge gibt, wird sie gestartet. Während die Übersicht steht, wird die
+Anbieterseite dahinter stumm gestellt — gemeldet als „im Hintergrund lief
+irgendwas anderes“.
+
 ## 1.66.0 — 28. August 2026
 
 **Die App bewegt sich jetzt.** Ein Durchgang durch die ganze Oberfläche, Handy
