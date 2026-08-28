@@ -188,6 +188,19 @@ public final class Pruefstand {
             case "sitzungen":
                 sitzungen(umgebung);
                 return;
+            case "oeffnen": {
+                // Genau der Weg, den ein Suchtreffer nimmt - samt der Frage,
+                // ob sich die Uebersicht mit Staffeln und Folgen lohnt.
+                Provider anbieter = umgebung.anbieter(text(absicht, "anbieter", "aniworld"));
+                String url = text(absicht, "url", "");
+                if (anbieter == null || url.isEmpty()) {
+                    Log.w(TAG, MARKE + " oeffnen: anbieter oder url fehlt");
+                    return;
+                }
+                Log.i(TAG, MARKE + " oeffnen " + url);
+                umgebung.serieOeffnen(anbieter, url, text(absicht, "titel", ""));
+                return;
+            }
             case "sichern":
                 if (umgebung.statistik() != null) {
                     umgebung.statistik().schliessen(null);

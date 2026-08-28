@@ -31,4 +31,16 @@ public interface Pruefumgebung {
 
     /** Den gerade offenen Bildschirm neu bauen. */
     void neuZeichnen();
+
+    /**
+     * Eine Serie oeffnen, so wie es ein Suchtreffer taete.
+     *
+     * <p>Nur fuer die Pruefung am Geraet. Eine Serie ueber die Oberflaeche zu
+     * oeffnen heisst auf einem Fernseher: mit dem Steuerkreuz in die Suche,
+     * einen Titel eintippen, den Treffer finden - und die Tastatur des Fire TV
+     * verschluckt dabei Leerzeichen. Das ist keine Pruefung mehr, das ist ein
+     * Geduldsspiel mit ungewissem Ausgang. Ueber diesen Weg steht in einer
+     * Zeile fest, welche Adresse geoeffnet wird.
+     */
+    void serieOeffnen(Provider anbieter, String url, String titel);
 }

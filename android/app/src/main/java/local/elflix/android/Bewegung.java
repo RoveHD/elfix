@@ -217,6 +217,37 @@ public final class Bewegung {
         return an(context);
     }
 
+    /**
+     * Ob das Geraet mit seinen Mitteln haushalten muss.
+     *
+     * <p>Ein Fernsehstick hat 1,7 GB fuer alles und rechnet mit 32 Bit. Was
+     * auf einem Telefon nicht auffaellt, ist dort die Halbe Miete. Einmal
+     * gefragt und gemerkt - die Antwort aendert sich nicht.
+     */
+    private static Boolean sparsamGemerkt;
+
+    public static boolean sparsam(Context context) {
+        if (sparsamGemerkt != null) return sparsamGemerkt;
+        if (context == null) return false;
+        boolean klein = false;
+        try {
+            android.app.ActivityManager verwalter = (android.app.ActivityManager)
+                context.getApplicationContext().getSystemService(Context.ACTIVITY_SERVICE);
+            if (verwalter != null) {
+                android.app.ActivityManager.MemoryInfo lage =
+                    new android.app.ActivityManager.MemoryInfo();
+                verwalter.getMemoryInfo(lage);
+                klein = verwalter.isLowRamDevice() || lage.totalMem / (1024 * 1024) < 2048;
+            }
+        } catch (Exception fehler) {
+            // Keine Auskunft heisst: nicht sparsam. Eine Einschraenkung, die
+            // man nicht begruenden kann, ist keine.
+            klein = false;
+        }
+        sparsamGemerkt = klein;
+        return klein;
+    }
+
     private static float dp(View ansicht, float wert) {
         return ansicht.getResources().getDisplayMetrics().density * wert;
     }
@@ -680,6 +711,17 @@ public final class Bewegung {
      */
     public static ValueAnimator kenBurns(final View bild) {
         if (bild == null || !weiteWege(bild.getContext())) return null;
+        // Auf kleinen Geraeten nicht.
+        //
+        // Der langsame Zoom ist die einzige Bewegung hier, die nie aufhoert -
+        // und eine Ansicht, die sich bewegt, wird in jedem Bild neu
+        // zusammengesetzt. Auf einem Fernsehstick heisst das: die Startseite
+        // zeichnet dauernd, auch wenn niemand etwas tut. Gemessen am Fire TV
+        // Stick (1,7 GB, 32 Bit): 1856 gezeichnete Bilder in zwanzig Sekunden
+        // Blaettern, ein Drittel davon zu spaet. Alle uebrigen Bewegungen sind
+        // kurz und haben einen Anlass; diese eine ist Zierde und faellt
+        // deshalb als erste weg.
+        if (sparsam(bild.getContext())) return null;
         ValueAnimator lauf = ValueAnimator.ofFloat(1f, 1.06f);
         lauf.setDuration(12000L);
         lauf.setRepeatCount(ValueAnimator.INFINITE);

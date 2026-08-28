@@ -372,6 +372,31 @@ public final class Bilder {
         if (beiBild != null) beiBild.run();
     }
 
+    /** Wie viel Arbeitsspeicher das ganze Geraet hat, in Megabyte. */
+    private static long geraeteSpeicherMb(android.app.ActivityManager verwalter) {
+        try {
+            android.app.ActivityManager.MemoryInfo lage = new android.app.ActivityManager.MemoryInfo();
+            verwalter.getMemoryInfo(lage);
+            return lage.totalMem / (1024 * 1024);
+        } catch (Exception fehler) {
+            // Keine Auskunft heisst: nicht klein. Ein Deckel, den man nicht
+            // begruenden kann, ist keiner.
+            return Long.MAX_VALUE;
+        }
+    }
+
+    /**
+     * Alle gemerkten Bilder hergeben - wenn das Geraet Speicher braucht.
+     *
+     * <p>Kein Verlust, nur Arbeit: jedes Bild liegt auf der Platte und ist von
+     * dort in Millisekunden wieder da. Was hier zaehlt, ist der Augenblick, in
+     * dem Android sonst den WebView-Renderer abschiesst.
+     */
+    static synchronized void speicherFreigeben() {
+        if (speicher == null) return;
+        speicher.evictAll();
+    }
+
     private static synchronized LruCache<String, Bitmap> speicher(Context context) {
         if (speicher == null) {
             // Ein Viertel des Heaps.
@@ -392,6 +417,24 @@ public final class Bilder {
             // deshalb da, weil ein Bild fehlte, sondern weil es zum wievielten
             // Mal auch immer geholt wurde.
             int platz = (int) (Runtime.getRuntime().maxMemory() / 1024 / 4);
+            // Ein Deckel fuer kleine Geraete.
+            //
+            // Das Viertel oben ist am Handy-Emulator gemessen, und dort stimmt
+            // es. Ein Fernsehstick rechnet anders: derselbe Heap, aber 1,7 GB
+            // fuer das ganze Geraet - und der WebView-Renderer, der die
+            // Anbieterseite traegt, ist ein *eigener* Prozess, der sich aus
+            // demselben Vorrat bedient. Ein Viertel Heap voller Bitmaps heisst
+            // dort: der Renderer wird abgeschossen, und das ist der Absturz.
+            //
+            // Also auf kleinen Geraeten hoechstens sechzehn Megabyte. Das
+            // reicht fuer die sichtbaren Kacheln und den Titelhintergrund; was
+            // darueber hinaus faellt, liegt auf der Platte und ist in
+            // Millisekunden wieder da.
+            android.app.ActivityManager verwalter =
+                (android.app.ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            boolean klein = verwalter != null
+                && (verwalter.isLowRamDevice() || geraeteSpeicherMb(verwalter) < 2048);
+            if (klein) platz = Math.min(platz, 16 * 1024);
             speicher = new LruCache<String, Bitmap>(Math.max(2048, platz)) {
                 @Override
                 protected int sizeOf(String schluessel, Bitmap wert) {

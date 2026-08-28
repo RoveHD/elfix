@@ -805,7 +805,7 @@ public final class Watchparty {
     public void beitreten(String key, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.beitreten", Kern.args(key, raum), (wert, fehler) -> {
             if (fehler == null && bestand != null) raumAmEintrag(key, raum, raum);
-            antwort.fertig(wert, fehler);
+            melde(antwort, wert, fehler);
         });
     }
 
@@ -813,8 +813,26 @@ public final class Watchparty {
     public void verlassen(String key, String raum, Kern.Antwort antwort) {
         kern.rufe("watchparty-bruecke.verlassen", Kern.args(key, raum), (wert, fehler) -> {
             if (fehler == null && bestand != null) raumAmEintrag(key, raum, "");
-            antwort.fertig(wert, fehler);
+            melde(antwort, wert, fehler);
         });
+    }
+
+    /**
+     * Eine Antwort weitergeben, sofern jemand darauf wartet.
+     *
+     * <p><b>Das war ein Absturz.</b> {@link #beitritteNachholen} traegt
+     * Beitritte nach, die von einem anderen Geraet uebernommen wurden - und
+     * sie interessiert das Ergebnis nicht, also uebergab sie {@code null}.
+     * Beide Wege oben riefen die Antwort trotzdem an, und der Fernseher fiel
+     * mit einer NullPointerException um, sobald ein Beitritt vom Telefon
+     * herueberkam. Belegt im Absturzspeicher des Fire TV
+     * (Watchparty.java:808, ELFIX 1.65.0, 28. August).
+     *
+     * <p>Eine Antwort ist eine Benachrichtigung und keine Pflicht: wer sie
+     * nicht braucht, darf sie weglassen.
+     */
+    private static void melde(Kern.Antwort antwort, String wert, String fehler) {
+        if (antwort != null) antwort.fertig(wert, fehler);
     }
 
     /**

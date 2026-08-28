@@ -1008,6 +1008,11 @@ public class MainActivity extends Activity {
             public void neuZeichnen() {
                 if ("home".equals(currentScreen)) seiteNeuZeichnen();
             }
+
+            @Override
+            public void serieOeffnen(Provider anbieter, String url, String titel) {
+                runOnUiThread(() -> MainActivity.this.serieOeffnen(anbieter, url, titel));
+            }
         };
         Pruefstand.einrichten(this, pruefumgebung);
     }
@@ -1328,7 +1333,7 @@ public class MainActivity extends Activity {
         chromeHolder.addView(appChrome, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(barHeight)));
 
-        WebView logo = brandLogoView();
+        View logo = brandLogoView();
         appChrome.addView(logo, new LinearLayout.LayoutParams(dp(96), dp(30)));
         appChrome.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
         appChrome.addView(MobileViews.iconButton(this, R.drawable.ic_nav_search,
@@ -1397,24 +1402,53 @@ public class MainActivity extends Activity {
         browserTitle.setText(activeProvider == null ? "ELFIX" : activeProvider.name);
     }
 
-    private WebView brandLogoView() {
-        WebView logo = new WebView(this);
+    /**
+     * Der Schriftzug in der Kopfzeile - ein Bild, kein Browser.
+     *
+     * <p><b>Hier stand ein WebView.</b> Fuer ein PNG. Er hing auf jedem
+     * Bildschirm der App, und das kostete zweierlei.
+     *
+     * <p>Erstens Speicher: ein WebView zieht den Renderer-Prozess an sich,
+     * und auf einem Fernsehstick mit 1,7 GB RAM ist jeder davon einer zu viel.
+     *
+     * <p>Zweitens - und das war der Absturz - hatte er den Vorgabe-Client.
+     * Stirbt der Renderer (auf diesen Seiten Alltag: fremde Werberahmen,
+     * kaputte Codecs, zu wenig Speicher), fragt Android <em>jeden</em> WebView
+     * der App, ob er das behandelt. Sagt auch nur einer nein, wird die ganze
+     * App abgeschossen. Genau das steht im Absturzspeicher des Fire TV vom
+     * 25. August: "Render process's crash wasn't handled by all associated
+     * webviews, triggering application crash." Die Anbieterseiten und der Kern
+     * behandeln es laengst; dieses Logo nicht.
+     *
+     * <p>Ein ImageView kann nicht sterben und braucht keinen Renderer. Der
+     * Zuschnitt entspricht dem alten CSS: {@code object-fit: contain} ist
+     * FIT_CENTER, und weil das Bild (3,25:1) breiter ist als sein Kasten
+     * (3,14:1), fuellt es ihn ohnehin in der Breite - das alte
+     * {@code object-position: left} macht dabei keinen Unterschied.
+     */
+    private View brandLogoView() {
+        ImageView logo = new ImageView(this);
         logo.setFocusable(false);
         logo.setFocusableInTouchMode(false);
-        logo.setBackgroundColor(Color.TRANSPARENT);
         logo.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        logo.getSettings().setJavaScriptEnabled(false);
-        logo.loadDataWithBaseURL(
-            "file:///android_asset/",
-            "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>" +
-                "<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}" +
-                "body{display:flex;align-items:center}img{width:100%;height:100%;object-fit:contain;object-position:left center}</style>" +
-                "</head><body><img src='elfix_schriftzug.png' alt='ELFIX'></body></html>",
-            "text/html",
-            "UTF-8",
-            null
-        );
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logo.setContentDescription("ELFIX");
+        android.graphics.Bitmap bild = schriftzug();
+        if (bild != null) logo.setImageBitmap(bild);
         return logo;
+    }
+
+    /** Das Schriftzugbild aus den Beigaben - einmal geladen, dann gehalten. */
+    private android.graphics.Bitmap schriftzugBild;
+
+    private android.graphics.Bitmap schriftzug() {
+        if (schriftzugBild != null) return schriftzugBild;
+        try (java.io.InputStream strom = getAssets().open("elfix_schriftzug.png")) {
+            schriftzugBild = android.graphics.BitmapFactory.decodeStream(strom);
+        } catch (Exception fehler) {
+            Log.w(TAG, "Schriftzug nicht lesbar: " + fehler);
+        }
+        return schriftzugBild;
     }
 
     /**
@@ -7659,8 +7693,32 @@ public class MainActivity extends Activity {
             uebersichtBestand = gelesen;
             if (uebersichtStaffel <= 0) uebersichtStaffel = gelesen.offeneStaffel;
             if (uebersichtTitel.isEmpty()) uebersichtTitel = gelesen.titel;
+
+            // Eine Auswahl mit genau einem Eintrag ist keine Auswahl.
+            //
+            // Aniworld fuehrt Filme als "Staffel 1 Folge 1". Die Uebersicht
+            // las das brav aus und zeigte eine Liste mit einer einzigen Zeile
+            // - gemessen am Fire TV: elf Sekunden Ladevorhang, um danach
+            // einmal OK zu druecken. Gemeldet als "ging nicht zum Starten"
+            // (COLORFUL STAGE! The Movie). Wo es nur eine Folge gibt, wird sie
+            // gestartet.
+            if (gelesen.staffeln.size() <= 1 && gelesen.folgen.size() == 1) {
+                Log.i(TAG, "Serienuebersicht: nur eine Folge - sie wird gleich gestartet");
+                uebersichtFolgeWaehlen(gelesen.folgen.get(0));
+                return;
+            }
             Log.i(TAG, "Serienuebersicht: " + gelesen.staffeln.size() + " Staffeln, "
                 + gelesen.folgen.size() + " Folgen");
+            // Und die Anbieterseite dahinter wird still gestellt.
+            //
+            // Sie ist geladen, sie steht hinter dem Vorhang, und manche
+            // Hosterrahmen fangen von selbst an zu spielen. Gehoert hat man
+            // das dann auch: gemeldet als "im Hintergrund irgendwas anderes
+            // abgespielt", waehrend vorne die Uebersicht stand. Wer erst noch
+            // eine Folge waehlt, hat noch nichts gestartet.
+            if (uebersichtAnbieter != null) {
+                rememberAndPauseMedia(uebersichtAnbieter.id, webViews.get(uebersichtAnbieter.id));
+            }
             // Der Vorhang geht auf und die Uebersicht steht da - die
             // Anbieterseite dahinter hat niemand gesehen.
             if (startvorhang != null) startvorhang.auf("uebersicht steht");
@@ -8131,6 +8189,32 @@ public class MainActivity extends Activity {
             webView.loadUrl(url);
         } else {
             resumeMediaIfNeeded(provider.id, webView);
+            // **Die Seite steht schon - und genau daran ist der Start
+            // gescheitert.**
+            //
+            // Der Autostart wird nicht hier gezuendet, sondern wenn eine Seite
+            // zu laden anfaengt (siehe onPageStarted). Steht sie aber bereits,
+            // faengt nichts mehr an: das Ereignis kommt nie, der Auftrag bleibt
+            // scharf liegen, und der Ladevorhang zaehlt neunzig Sekunden in der
+            // Phase "seite" herunter, bis er sagt, die Folgenseite lade nicht.
+            // Sie laedt sehr wohl - sie ist schon da.
+            //
+            // Gemessen am Fire TV am 28. August: Adresse geoeffnet, Player im
+            // Rahmen gefunden ("Rahmen mit Video"), und trotzdem nach 90 s
+            // "Die Folgenseite laedt nicht. Pruefe deine Internetverbindung."
+            // Gemeldet als "ging nicht zum Starten, im Hintergrund lief
+            // irgendwas anderes, und dann stand da, dass nichts gefunden
+            // wurde".
+            //
+            // Also hier zuenden. Ueber post, damit der Rahmen erst fertig
+            // eingehaengt ist - runAutoStart sucht sofort im Dokument.
+            final String ziel = url;
+            final WebView seite = webView;
+            if (autoStartArmedFor(ziel)) {
+                autoStartRequested = false;
+                autoStartUrl = null;
+                seite.post(() -> runAutoStart(seite, ziel));
+            }
         }
         setChromeCollapsed(true, false);
         if (mouseMode) setMouseCursorVisible(true);
@@ -8257,6 +8341,26 @@ public class MainActivity extends Activity {
         activeFavoriteId = favorite.id();
         // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
         if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+
+        // Eine Serie, die hier nur *steht* - auf der Watchlist, in der
+        // Mediathek -, wird von hier aus zum ersten Mal angefangen. Genau
+        // dafuer gibt es die Uebersicht mit Staffeln und Folgen, und genau
+        // hier fehlte sie: gemeldet vom Fernseher, wo die Merkliste der
+        // uebliche Weg ist.
+        //
+        // Zwei Bedingungen, und die zweite ist die wichtigere. Die Adresse
+        // muss auf eine *Serie* zeigen und nicht auf eine Folge: ein Eintrag
+        // mit "/staffel-1/episode-1" ist eine bestimmte Folge, und wer die
+        // waehlt, hat schon gewaehlt. Das gilt auch fuer einen Film, den der
+        // Anbieter als Staffel 1 Folge 1 fuehrt - er soll laufen und nicht
+        // erst eine Liste mit einem Eintrag zeigen. Und uebersichtLohnt sagt
+        // ohnehin nein, sobald schon ein Fortschritt daran haengt.
+        if (serienuebersicht != null && Folgen.folgenText(favorite.url()).isEmpty()
+            && uebersichtLohnt(favorite.url())) {
+            naechsterAuftritt = Auftritt.ZOOM;
+            serieOeffnen(provider, favorite.url(), favorite.title());
+            return;
+        }
         // Picking a favourite means "watch this": die Seite oeffnet ihren
         // Player, springt auf den gespeicherten Stand, startet - und erst
         // danach kommt das Vollbild.
@@ -8691,6 +8795,46 @@ public class MainActivity extends Activity {
         if (fullscreenView != null) {
             applyFullscreenSystemUi();
         }
+    }
+
+    /**
+     * Das Geraet hat zu wenig Speicher - hier ist, was ELFIX hergeben kann.
+     *
+     * <p><b>Warum das auf dem Fernsehstick zaehlt.</b> Ein Fire TV hat 1,7 GB
+     * fuer alles, und die App laeuft dort als 32-Bit-Prozess. Wenn es eng
+     * wird, holt sich Android den Speicher beim WebView-Renderer - und dessen
+     * Tod ist genau der Absturz, um den es hier geht. Wer vorher freiwillig
+     * abgibt, wird seltener geholt.
+     *
+     * <p>Zwei Dinge sind entbehrlich: die Bilder (sie stehen auf der Platte
+     * und sind in Millisekunden wieder da) und die Anbieterseiten, die gerade
+     * niemand ansieht (sie merken sich ihre Adresse und laden beim naechsten
+     * Oeffnen neu). Die <em>offene</em> Seite bleibt unangetastet - dort laeuft
+     * unter Umstaenden eine Folge.
+     */
+    @Override
+    public void onTrimMemory(int stufe) {
+        super.onTrimMemory(stufe);
+        if (stufe < TRIM_MEMORY_RUNNING_LOW) return;
+        Log.i(TAG, "Speicher wird knapp (Stufe " + stufe + ") - es wird abgegeben");
+        Bilder.speicherFreigeben();
+        int weg = 0;
+        java.util.Iterator<Map.Entry<String, WebView>> lauf = webViews.entrySet().iterator();
+        while (lauf.hasNext()) {
+            Map.Entry<String, WebView> eintrag = lauf.next();
+            if (activeProvider != null && activeProvider.id.equals(eintrag.getKey())) continue;
+            WebView ansicht = eintrag.getValue();
+            lauf.remove();
+            providerResumeState.remove(eintrag.getKey());
+            if (ansicht == null) continue;
+            if (ansicht.getParent() instanceof ViewGroup) {
+                ((ViewGroup) ansicht.getParent()).removeView(ansicht);
+            }
+            ansicht.stopLoading();
+            ansicht.destroy();
+            weg += 1;
+        }
+        if (weg > 0) Log.i(TAG, weg + " ruhende Anbieterseiten freigegeben");
     }
 
     @Override
@@ -12027,6 +12171,26 @@ public class MainActivity extends Activity {
             popup.getSettings().setJavaScriptEnabled(true);
             popup.setWebViewClient(new WebViewClient() {
                 private boolean handled = false;
+
+                /**
+                 * Auch dieses WebView muss den Tod des Renderers behandeln.
+                 *
+                 * <p>Android fragt <em>alle</em> WebViews der App; sagt einer
+                 * nein, faellt die ganze App um. Dieses hier ist nie
+                 * eingehaengt und traegt nur ein Popup - es kann bedenkenlos
+                 * verschwinden.
+                 */
+                @Override
+                public boolean onRenderProcessGone(WebView tot,
+                                                   android.webkit.RenderProcessGoneDetail hinweis) {
+                    Log.w(TAG, "Popup-WebView gestorben (abgestuerzt: "
+                        + (hinweis != null && hinweis.didCrash()) + ")");
+                    if (tot.getParent() instanceof ViewGroup) {
+                        ((ViewGroup) tot.getParent()).removeView(tot);
+                    }
+                    tot.destroy();
+                    return true;
+                }
 
                 private boolean handlePopupUrl(String url) {
                     if (url == null || url.trim().isEmpty() || url.startsWith("about:blank")) return false;
