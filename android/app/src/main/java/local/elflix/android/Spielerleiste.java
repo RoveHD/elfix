@@ -786,7 +786,18 @@ final class Spielerleiste {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             autoplayMass.gravity = Gravity.TOP | Gravity.START;
             autoplayMass.leftMargin = dp(tv ? TvViews.SCREEN_PADDING : 12);
-            autoplayMass.topMargin = dp(tv ? 24 : 12);
+            // Unter dem Live-Streifen, nicht darauf.
+            //
+            // Er liegt im selben Rahmen und ebenfalls oben, ueber die ganze
+            // Breite (siehe Livestreifen.inVollbild) - zugeklappt rund vierzig
+            // dp hoch. Mit vierundzwanzig dp Abstand lag der Schalter mitten
+            // darin, sobald eine Runde lief. Gemeldet als "das Autoplay-Overlay
+            // ueberschneidet sich mit der Watchparty-Leiste oben".
+            //
+            // Der Platz wird immer freigehalten, auch ohne Runde: der Schalter
+            // ein Stueck tiefer faellt niemandem auf, ein Schalter unter einer
+            // Leiste schon.
+            autoplayMass.topMargin = dp(tv ? 96 : 68);
             rahmen.addView(autoplayHalter, autoplayMass);
             autoplayHalter.bringToFront();
             return;
