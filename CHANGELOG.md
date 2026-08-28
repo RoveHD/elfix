@@ -3,6 +3,31 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.57.0 — 28. August 2026
+
+„Gemeinsam weiterschauen" blieb auf Android leer.
+
+Kein Anzeigefehler. Beide Seiten zeigen dieselbe Bedingung — Einträge, die zu
+einer Runde gehören —, aber einen solchen Eintrag hat auf Android nie jemand
+angelegt. Am Rechner entsteht er, sobald der Stand eines Mitglieds hereinkommt;
+die Regel dafür lag aber in einer Datei, die das Telefon nie sieht. Androids
+Gegenstück stieg an derselben Stelle wortlos aus. Füllen konnte die Reihe
+deshalb nur, wer einen Titel ausdrücklich über die Watchparty-Seite öffnete.
+
+Nachgestellt mit einem echten Relay und einem zweiten Mitglied, das im
+Sekundentakt meldet: Android trat dem Titel bei, das Relay leitete weiter — und
+nach zwanzig Sekunden stand in der Ablage kein einziger Eintrag mit Raum, der
+eingestellte Titel gar nicht.
+
+Die Regel steht jetzt im geteilten Modul, das beide Seiten benutzen. Sie sucht
+über Serie **und** Raum: ein Titel kann privat laufen und zugleich in zwei
+Runden stehen, und die drei Stände haben nichts miteinander zu tun. Der eigene
+Eintrag wird dabei nie angefasst — vorher hätte Android den fremden Stand in den
+privaten Verlauf geschrieben.
+
+Am Gerät nachgeprüft: der Eintrag entsteht, trägt seinen Raum, die richtige
+Folge und die Stelle des anderen — und die Reihe steht auf der Startseite.
+
 ## 1.56.0 — 28. August 2026
 
 YouTube zählte als Serie mit — und eine Zeile in der Statistik hatte kein Bild.
