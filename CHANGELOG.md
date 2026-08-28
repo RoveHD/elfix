@@ -3,6 +3,45 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.58.0 — 28. August 2026
+
+Wer denselben Schlüssel hat, bekommt auch die Räume — und die Oberfläche hält still.
+
+**Räume und Beitritte gehen mit.** Bisher glich der gemeinsame Schlüssel nur
+Stände und Sitzungen ab. Raumcodes musste man auf jedem Gerät einzeln eintippen
+und beitreten auf jedem einzeln, obwohl beide Geräte demselben Konto gehören.
+Sie laufen jetzt über denselben Kanal — über die Watchparty selbst ginge es
+nicht, denn ein Raumcode ist genau das, was man braucht, um überhaupt in einen
+Raum zu kommen.
+
+Ersetzt und nicht vereinigt: wer einen Raum entfernt oder eine Runde verlässt,
+schickt eine kürzere Liste, und die gilt. Nicht mitgeschickt werden die
+Serveradresse — sie kann je Gerät eine andere sein — und die Gerätekennung, denn
+zwei Geräte mit derselben gelten im Raum als eines.
+
+Mit zwei Geräten an einem echten Relay nachgeprüft: das zweite übernahm den Raum
+nach fünf Sekunden und den Beitritt nach zehn.
+
+**Die Einstellungen springen nicht mehr nach oben.** Jeder Schalter baute die
+ganze Seite neu auf und legte dabei eine neue Scrollfläche an — wer weit unten
+etwas umlegte, stand danach wieder ganz oben. Dazu bauten drei Melder von außen
+(Abgleich, Filterlisten, Fassungsprüfung) die Seite ungefragt neu, während man
+nur scrollte. Ein Handgriff behält jetzt die Stelle, und ein Melder von außen
+zeichnet überhaupt nur, wenn die Seite danach anders aussähe. Zwanzig
+Änderungen hintereinander: pixelgleich.
+
+**Der Fortschrittsbalken ist immer da**, auch bei null Prozent, und die Zeit
+daneben ebenso. Beide entstanden vorher erst ab einem Prozent — eine gerade
+begonnene Folge hatte deshalb keinen Balken, und wenn der Fortschritt nachzog,
+musste eine Ansicht nachgelegt werden. Eine Meldung, die sonst nichts ändert,
+zieht jetzt nur noch Balkenbreite und Zeit nach; gebaut wird dabei nichts.
+
+**Die Meldungen unten am Rand sind weg.** Vierundsiebzig Stellen sagten
+"Gelöscht", "Zur Watchlist hinzugefügt", "Empfehlungen werden neu berechnet" —
+einzeln harmlos, zusammen ein schwarzer Kasten, der beim Bedienen dauernd über
+der Leiste und der letzten Kachelreihe stand. Und fast jede sagte etwas, das
+ohnehin zu sehen war.
+
 ## 1.57.0 — 28. August 2026
 
 „Gemeinsam weiterschauen" blieb auf Android leer.
