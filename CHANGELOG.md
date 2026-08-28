@@ -3,6 +3,41 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.61.0 — 28. August 2026
+
+Die Sicherung ließ den Rückblick zurück — und vor einem Update gab es keine.
+
+**Was gefehlt hat.** Verglichen wurde die Sicherung mit dem, was im Datenordner
+wirklich liegt. Drei Dinge waren nicht dabei, und das teuerste davon still: die
+**gemessenen Wiedergabesitzungen**. Das ist der ganze Rückblick — beim Benutzer
+224 Sätze über siebzehn Stunden, gemessene Zeit, die nie wiederkommt. Wer eine
+Sicherung einlas, verlor sie vollständig, ohne dass irgendwo etwas davon stand.
+Dazu die gemerkten Sprachfassungen und die Intromarken; beides ist Handarbeit je
+Titel und ebenso wenig nachzubauen.
+
+Draußen bleiben weiterhin Filterlisten, Geschmacksprofil und der
+Metadaten-Zwischenspeicher: zusammen über zehn Megabyte, mehr als alles andere,
+und sie bauen sich von selbst wieder auf. Ebenso die Gerätekennung — zwei Geräte
+mit derselben gelten im Raum als eines.
+
+Eine ältere Sicherung bleibt lesbar. Was ihr fehlt, bleibt beim Einlesen stehen,
+statt geleert zu werden.
+
+**Vor einem Update entsteht jetzt von selbst eine.** Ein Update lässt den
+Bestand in aller Regel stehen — es wird darüber installiert, nicht neu. In aller
+Regel ist aber nicht immer, und der eine Fall, in dem es schiefgeht, ist genau
+der, in dem niemand eine Sicherung hat. Sie entsteht ohne Nachfrage, auf beiden
+Geräten, und hält ein Update nicht auf: schlägt sie fehl, wird trotzdem
+installiert.
+
+Sie liegen in einem eigenen Ordner, mit Anlass und Uhrzeit im Namen — zwei am
+selben Tag dürfen einander nicht überschreiben. Behalten wird die jüngste
+Handvoll; von Hand gespeicherte Sicherungen räumt niemand weg.
+
+**Android kannte überhaupt keine Sicherung.** Jetzt schon, und zwar dieselbe
+Datei wie am Rechner: eine auf dem Telefon gebaute lässt sich dort einlesen und
+umgekehrt.
+
 ## 1.60.0 — 28. August 2026
 
 Eine neue Serie fängt jetzt mit einer eigenen Seite an, nicht beim Anbieter.
