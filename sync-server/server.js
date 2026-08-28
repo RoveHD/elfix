@@ -45,9 +45,44 @@ const MAX_TITEL_JE_RAUM = 100;
 const RAUM_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_NACHRICHT = 256 * 1024;
 
-// systemd legt das Verzeichnis an (StateDirectory); ohne systemd liegt die
-// Datei neben dem Server.
-const STATE_DIR = process.env.STATE_DIRECTORY || __dirname;
+// Die Fassung dieses Relays.
+//
+// Beim Bauen der eigenstaendigen Datei hineingesetzt (siehe bauen.js); laeuft
+// es aus dem Quelltext, kommt sie aus package.json. Sie steht in der
+// Startzeile und ist das, woran die Selbstaktualisierung sich misst.
+const FASSUNG = process.env.ELFIX_RELAY_FASSUNG || (() => {
+  try {
+    return require("./package.json").version;
+  } catch {
+    return "0.0.0";
+  }
+})();
+
+// Ob dieses Relay eine gepackte Datei ist oder aus dem Quelltext laeuft.
+const GEPACKT = Boolean(process.pkg) || Boolean(require("node:sea")?.isSea?.());
+
+// Wo die Raeume liegen.
+//
+// systemd legt das Verzeichnis an (StateDirectory). Ohne systemd liegt die
+// Datei neben dem Server - bei einer gepackten Datei aber *nicht* neben der
+// Binaerdatei: die kann unter Programme oder /usr/bin liegen, wo ein Dienst
+// nicht schreiben darf. Dann gilt der uebliche Ort fuer Anwendungsdaten.
+const STATE_DIR = process.env.STATE_DIRECTORY || (GEPACKT ? datenOrdner() : __dirname);
+
+function datenOrdner() {
+  const heim = require("os").homedir();
+  const ordner = process.platform === "win32"
+    ? path.join(process.env.APPDATA || path.join(heim, "AppData", "Roaming"), "ELFIX-Relay")
+    : path.join(process.env.XDG_STATE_HOME || path.join(heim, ".local", "state"), "elfix-relay");
+  try {
+    fs.mkdirSync(ordner, { recursive: true });
+  } catch {
+    // Geht das nicht, bleibt es beim Ordner der Binaerdatei - schlimmstenfalls
+    // ohne Ablage, und dann muessen nach einem Neustart alle neu beitreten.
+    return path.dirname(process.execPath);
+  }
+  return ordner;
+}
 const STATE_FILE = path.join(STATE_DIR, "raeume.json");
 const SPEICHER_VERZOEGERUNG_MS = 1000;
 // Hoechstens so oft geht der Stand aller Geraete an die Runde.
@@ -1533,5 +1568,11 @@ setInterval(() => {
 
 zustandLaden();
 server.listen(PORT, () => {
-  console.log(`ELFIX Watchparty-Relay auf Port ${PORT} (Ablage: ${STATE_FILE})`);
+  console.log(`ELFIX Watchparty-Relay ${FASSUNG} auf Port ${PORT} (Ablage: ${STATE_FILE})`);
+  // Nur die gepackte Datei haelt sich selbst auf dem neuesten Stand. Wer aus
+  // dem Quelltext startet, hat ein Repository und aktualisiert mit git - ihm
+  // eine Binaerdatei darueberzulegen waere das Gegenteil von hilfreich.
+  if (GEPACKT) {
+    require("./aktualisierung").starten({ fassung: FASSUNG, pfad: process.execPath });
+  }
 });

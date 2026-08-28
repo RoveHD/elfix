@@ -257,11 +257,112 @@ jobs:
           name: android-release-assets
           path: ELFIX-Android-*.apk
 
+
+  # ---------------------------------------------------------------------------
+  # Das Watchparty-Relay als eigenstaendiges Programm.
+  #
+  # Bis hierher war es ein Ordner mit Quelltext: Node installieren, npm ci,
+  # systemd-Vorlage von Hand anpassen. Wer die Watchparty benutzen will, muss
+  # das Relay betreiben - und das war die Huerde.
+  #
+  # Gebaut wird auf beiden Plattformen dieselbe Sache (siehe sync-server/bauen.js):
+  # esbuild buendelt, Node macht daraus einen SEA-Blob, postject spritzt ihn in
+  # eine Kopie der Node-Binaerdatei. Heraus kommt eine Datei ohne Abhaengigkeiten.
+  #
+  # Die Fassung kommt aus dem Tag und wird hineingebacken - die
+  # Selbstaktualisierung misst sich daran.
+  # ---------------------------------------------------------------------------
+  relay-windows:
+    name: Relay (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+
+      # esbuild kommt aus den Abhaengigkeiten der Desktop-App - dieselbe
+      # Fassung, mit der auch der Android-Kern gebuendelt wird. --ignore-scripts
+      # spart den Electron-Download: gebraucht wird hier nur esbuild.
+      - name: Buendel-Abhaengigkeiten
+        working-directory: StreamingBrowserElectron
+        run: npm ci --ignore-scripts
+
+      - name: Fassung aus dem Tag ableiten
+        id: fassung
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          if ($tag -match '^v?(\d+\.\d+\.\d+)') { $name = $Matches[1] } else { $name = "0.0.0" }
+          "name=$name" >> $env:GITHUB_OUTPUT
+          Write-Host "Relay-Fassung $name"
+
+      - name: Relay bauen
+        working-directory: sync-server
+        run: node bauen.js --fassung ${{ steps.fassung.outputs.name }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-windows-assets
+          path: sync-server/dist/ELFIX-Relay-*.exe
+
+  relay-linux:
+    name: Relay (Linux)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+
+      - name: Buendel-Abhaengigkeiten
+        working-directory: StreamingBrowserElectron
+        run: npm ci --ignore-scripts
+
+      - name: Fassung aus dem Tag ableiten
+        id: fassung
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          NAME=$(echo "$TAG" | sed -nE 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+          [ -z "$NAME" ] && NAME="0.0.0"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Relay-Fassung $NAME"
+
+      # Mit --deb: dpkg-deb liegt auf jedem Ubuntu-Runner. Das Paket richtet
+      # den Dienst gleich ein und laeuft damit auf allem, was Debian-basiert
+      # ist - Debian, Ubuntu, Linux Mint.
+      - name: Relay und Paket bauen
+        working-directory: sync-server
+        run: node bauen.js --fassung ${{ steps.fassung.outputs.name }} --deb
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-linux-assets
+          path: |
+            sync-server/dist/ELFIX-Relay-*-linux-*
+            sync-server/dist/ELFIX-Relay-*.deb
+
   release:
     name: Publish GitHub release
     needs:
       - windows
       - android
+      - relay-windows
+      - relay-linux
     # Ein Tag-Push veroeffentlicht wie bisher. Von Hand gestartet nur dann, wenn
     # ein Tag mitgegeben wurde. Bei einem Push ist `inputs` leer, die zweite
     # Bedingung also falsch - der bisherige Weg bleibt unveraendert.
