@@ -294,6 +294,13 @@ jobs:
         working-directory: StreamingBrowserElectron
         run: npm ci --ignore-scripts
 
+      # Und die des Relays selbst: esbuild buendelt `ws` mit hinein und muss es
+      # dafuer finden. Oertlich lag es laengst da, auf einem frischen Runner
+      # nicht - der Bau brach mit "Could not resolve ws" ab.
+      - name: Relay-Abhaengigkeiten
+        working-directory: sync-server
+        run: npm ci --omit=dev
+
       - name: Fassung aus dem Tag ableiten
         id: fassung
         shell: pwsh
@@ -331,6 +338,13 @@ jobs:
       - name: Buendel-Abhaengigkeiten
         working-directory: StreamingBrowserElectron
         run: npm ci --ignore-scripts
+
+      # Und die des Relays selbst: esbuild buendelt `ws` mit hinein und muss es
+      # dafuer finden. Oertlich lag es laengst da, auf einem frischen Runner
+      # nicht - der Bau brach mit "Could not resolve ws" ab.
+      - name: Relay-Abhaengigkeiten
+        working-directory: sync-server
+        run: npm ci --omit=dev
 
       - name: Fassung aus dem Tag ableiten
         id: fassung
