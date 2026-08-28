@@ -480,9 +480,88 @@ public final class Bestand {
      * <p>Die Entscheidung faellt im geteilten Modul - dieselbe, die der Rechner
      * trifft. Hier wird sie nur angewandt und abgelegt.
      */
-    public void watchpartyStandUebernehmen(String serienUrl, JSONObject stand) {
+    /**
+     * Sorgt dafuer, dass es zu diesem Titel in dieser Runde einen Eintrag gibt.
+     *
+     * <p>Gerechnet wird nichts hier: gesucht und angelegt wird in
+     * {@code watchparty-bruecke.raumEintragSichern}, und die ruft ihrerseits
+     * {@code fortschritt.watchpartyEintragAnlegen} - dieselbe Regel, mit der
+     * der Rechner seinen Raum-Eintrag anlegt.
+     *
+     * @param nimm bekommt die Kennung des Eintrags, oder leer, wenn sich
+     *             keiner sicherstellen liess
+     */
+    public void raumEintragSichern(String key, String raum, JSONArray anbieter, JSONObject stand,
+                                   java.util.function.Consumer<String> nimm) {
+        if (kern == null || !kern.istBereit() || key == null || key.isEmpty()) {
+            nimm.accept("");
+            return;
+        }
+        JSONObject zustand = new JSONObject();
+        try {
+            zustand.put("favoriten", eintraege);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Raum-Eintrag liess sich nicht vorbereiten", fehler);
+            nimm.accept("");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.raumEintragSichern",
+            Kern.args(zustand, key, raum == null ? "" : raum,
+                anbieter == null ? new JSONArray() : anbieter,
+                stand == null ? new JSONObject() : stand),
+            (wert, fehler) -> {
+                if (fehler != null || wert == null) {
+                    Log.d(TAG, "Raum-Eintrag nicht sichergestellt: " + fehler);
+                    nimm.accept("");
+                    return;
+                }
+                try {
+                    JSONObject urteil = new JSONObject(wert);
+                    String id = urteil.optString("eintragId", "");
+                    if (id.isEmpty()) {
+                        nimm.accept("");
+                        return;
+                    }
+                    JSONArray neueListe = urteil.optJSONArray("favoriten");
+                    if (neueListe != null) eintraege = neueListe;
+                    if (urteil.optBoolean("neu", false)) {
+                        Log.i(TAG, "Aus der Watchparty uebernommen: " + key + " (Raum " + raum + ")");
+                        speichern();
+                        if (beobachter != null) beobachter.bestandGeaendert();
+                    }
+                    nimm.accept(id);
+                } catch (Exception ausnahme) {
+                    Log.e(TAG, "Antwort zum Raum-Eintrag unlesbar", ausnahme);
+                    nimm.accept("");
+                }
+            });
+    }
+
+    /**
+     * Den Eintrag zu einer Runde sicherstellen und dann den Stand uebernehmen.
+     *
+     * <p><b>Der gemeldete Fehler.</b> Hier stand zuerst {@code zuSerie(...)} und
+     * darunter {@code if (lokal == null) return;} - kam ein Stand zu einem
+     * Titel herein, den diese Ablage nicht kannte, geschah nichts. Angelegt hat
+     * ihn auch niemand sonst: die Regel dafuer lag am Rechner in {@code main.js}
+     * und damit an einem Ort, den das Telefon nie sieht. Ergebnis: "Gemeinsam
+     * weiterschauen" blieb auf Android leer, egal wie lange die Runde lief.
+     *
+     * <p>Am Geraet nachgestellt (Emulator, echtes Relay, ein zweites Mitglied,
+     * das im Sekundentakt meldet): Android trat dem Titel bei, das Relay
+     * leitete weiter - und nach zwanzig Sekunden standen zwei Eintraege in der
+     * Ablage, <em>keiner</em> mit Raum, der eingestellte Titel gar nicht.
+     *
+     * <p>{@code zuSerie} war ausserdem in die andere Richtung falsch: es findet
+     * <em>irgendeinen</em> Eintrag der Serie, auch den privaten. Der Stand der
+     * Runde waere damit in den eigenen Verlauf gelaufen. Gesucht wird jetzt
+     * nach Serie <em>und</em> Raum, und das tut die geteilte Regel.
+     *
+     * @param eintragId die Kennung, die {@code raumEintragSichern} zurueckgibt
+     */
+    public void watchpartyStandUebernehmen(String eintragId, JSONObject stand) {
         if (kern == null || !kern.istBereit() || stand == null) return;
-        Favorite lokal = zuSerie(serienUrl);
+        Favorite lokal = mitId(eintragId);
         if (lokal == null) return;
 
         kern.rufe("fortschritt.watchpartyStandUebernehmen",

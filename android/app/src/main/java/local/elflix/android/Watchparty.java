@@ -383,20 +383,23 @@ public final class Watchparty {
             return;
         }
         if (stand == null || key.isEmpty()) return;
-        // Der Schluessel des Relays ist kein Ort auf diesem Geraet.
+        // Erst den Eintrag dieser Runde sicherstellen, dann den Stand darauf.
         //
-        // Er war es einmal - solange Android die Serienadresse als Schluessel
-        // fuehrte, liess sich derselbe Wert unbesehen an {@code zuSerie}
-        // weiterreichen. Seit er wie am Rechner aus Art und Titel gebildet wird
-        // ("serie:bleach"), passt er auf keine Adresse mehr, und der Stand aus
-        // der Runde fand nie einen Eintrag. Uebersetzt wird deshalb im Kern:
-        // dort liegt der Raumzustand samt Adresse zu jedem Titel.
-        adresseZuSchluessel(key, raum, adresse -> {
-            if (adresse.isEmpty()) {
+        // Hier wurde bis hierher nur die Adresse zum Schluessel gesucht und der
+        // Stand an den erstbesten Eintrag der Serie gegeben. Zwei Fehler in
+        // einem: gab es keinen, geschah gar nichts - und gab es den *privaten*,
+        // lief der Stand der Runde in den eigenen Verlauf. Der Rechner legt an
+        // dieser Stelle einen eigenen Eintrag je Raum an; jetzt tut Android es
+        // ueber dieselbe Regel.
+        //
+        // Das ist der Grund, warum "Gemeinsam weiterschauen" auf Android leer
+        // blieb: die Reihe zeigt Eintraege mit Raum, und einer entstand nie.
+        bestand.raumEintragSichern(key, raum, anbieter, stand, eintragId -> {
+            if (eintragId.isEmpty()) {
                 Log.d(TAG, "Stand ohne bekannten Titel verworfen: " + key);
                 return;
             }
-            bestand.watchpartyStandUebernehmen(adresse, stand);
+            bestand.watchpartyStandUebernehmen(eintragId, stand);
         });
     }
 

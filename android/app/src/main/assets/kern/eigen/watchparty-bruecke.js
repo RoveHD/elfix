@@ -205,6 +205,50 @@
     return eintrag ? String(eintrag.url || "") : "";
   }
 
+  /**
+   * Den Eintrag zu einer Runde in der eigenen Ablage sicherstellen.
+   *
+   * <p>Das Gegenstueck zu `applyWatchpartyProgress` am Rechner - und die
+   * Antwort auf den gemeldeten Fehler, dass "Gemeinsam weiterschauen" auf
+   * Android leer blieb. Dort stieg die Uebernahme aus, sobald es zu einem
+   * hereinkommenden Stand noch keinen Eintrag gab; angelegt hat ihn nie
+   * jemand, weil die Regel dafuer in `main.js` stand.
+   *
+   * <p>Gerechnet wird nichts hier: gesucht und angelegt wird in
+   * `fortschritt.watchpartyEintragAnlegen`, also in demselben Modul, das der
+   * Rechner benutzt. Diese Bruecke besorgt nur, was die Regel braucht - den
+   * Eintrag des Raums und den passenden Anbieter.
+   *
+   * @param zustand  {{favoriten: Array}} die eigene Ablage
+   * @param anbieter die eingerichteten Anbieter
+   * @returns {{eintragId: string, favoriten: Array, neu: boolean}} - ohne
+   *          Treffer bleibt die Ablage unveraendert und eintragId leer
+   */
+  function raumEintragSichern(zustand, key, room, anbieter, stand) {
+    const leer = {
+      eintragId: "",
+      favoriten: (zustand && zustand.favoriten) || [],
+      neu: false
+    };
+    const eintrag = eintragImRaum(String(key || ""), room);
+    if (!eintrag) return leer;
+    const provider = geraeteStand.anbieterFinden(
+      anbieter || [], (stand && stand.url) || eintrag.url, eintrag.providerName);
+    if (!provider) return leer;
+    const ergebnis = fortschritt.watchpartyEintragAnlegen(
+      zustand || { favoriten: [] },
+      provider,
+      String(eintrag.room || room || ""),
+      eintrag,
+      stand || eintrag.progress || {});
+    if (!ergebnis.eintrag) return leer;
+    return {
+      eintragId: String(ergebnis.eintrag.id || ""),
+      favoriten: ergebnis.favoriten,
+      neu: Boolean(ergebnis.neu)
+    };
+  }
+
   /* --------------------------------------------------- Eintraege oeffnen */
 
   /*
@@ -738,6 +782,7 @@
     titelSchluessel,
     lageFuer,
     adresseZuSchluessel,
+    raumEintragSichern,
     // Eintraege oeffnen.
     oeffnungsZiel,
     eintraegeMitAnbieter,

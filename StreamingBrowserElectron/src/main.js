@@ -5750,45 +5750,30 @@ function applyWatchpartyProgress(key, stand, room) {
   if (urteil.folgestaendePruefen) repariereFolgestaendeSpaeter();
 }
 
-function createWatchpartyFavorite(key, eintrag, fortschritt, provider) {
-  const url = absoluteHttpUrl(fortschritt?.url || eintrag?.url || "", provider.startUrl || "");
-  if (!url) return null;
-  const identity = episodeIdentity(url);
-  return normalizeLoadedFavorite({
-    id: crypto.randomUUID(),
-    providerId: provider.id,
-    providerName: provider.name || eintrag?.providerName || "",
-    title: cleanTitle(eintrag?.title || url),
-    url,
-    normalizedUrl: normalizeFavoriteUrl(url),
-    favicon: "",
-    thumbnail: eintrag?.thumbnail || "",
-    // Ein eigenes Bild gehoert zum Titel: ein neu entstehender Raum-Eintrag
-    // uebernimmt es, statt wieder mit dem Bild des Anbieters anzufangen.
-    customThumbnail: bekanntesEigenesBild(url),
-    customThumbnailCrop: bekannterBildAusschnitt(url),
-    logo: provider.logo || "",
-    favorite: false,
-    watched: true,
-    completed: Boolean(fortschritt?.completed),
-    episodeCompleted: Boolean(fortschritt?.episodeCompleted),
-    continuePending: !fortschritt?.completed && !fortschritt?.episodeCompleted,
-    completedEpisodes: [],
-    hideFromContinueWatching: false,
-    progress: sanitizeProgress(fortschritt?.progress),
-    duration: sanitizePositiveNumber(fortschritt?.duration),
-    position: sanitizePositiveNumber(fortschritt?.position),
-    currentTime: sanitizePositiveNumber(fortschritt?.position),
-    type: normalizeMediaType(eintrag?.type || inferMediaType(url)),
-    season: identity?.season || fortschritt?.season || 0,
-    episode: identity?.episode || fortschritt?.episode || 0,
-    // Dieser Eintrag gehoert zu genau einer Runde. Derselbe Anime in einem
-    // zweiten Raum bekommt seinen eigenen.
-    watchpartyRoom: String(eintrag?.room || ""),
-    createdAt: new Date().toISOString(),
-    lastWatchedAt: fortschritt?.updatedAt || new Date().toISOString(),
-    activity: []
-  });
+// Der Parameter heisst "stand" und nicht "fortschritt": so hiess er frueher,
+// und damit verdeckte er das Modul gleichen Namens - der Aufruf darunter waere
+// ins Leere gegangen. Dieselbe Falle wie in applyWatchpartyProgress.
+function createWatchpartyFavorite(key, eintrag, stand, provider) {
+  // Die Regel steht im geteilten Modul, damit das Telefon einen Raum-Eintrag
+  // genauso anlegt wie der Rechner.
+  //
+  // Sie stand einmal hier, und genau daran lag der gemeldete Fehler: auf
+  // Android blieb "Gemeinsam weiterschauen" leer, weil dort niemand einen
+  // Eintrag anlegte, wenn der Stand eines Mitglieds hereinkam. Was in main.js
+  // steht, sieht das Telefon nie.
+  //
+  // Das eigene Bild kommt weiterhin von hier - es ist eine Sache dieser
+  // Ablage und keine Regel: ein neu entstehender Raum-Eintrag uebernimmt es,
+  // statt wieder mit dem Bild des Anbieters anzufangen.
+  const ergebnis = fortschritt.watchpartyEintragAnlegen(
+    { favoriten: [] }, provider, String(eintrag?.room || ""),
+    { ...eintrag, providerName: provider.name || eintrag?.providerName || "" },
+    stand || {});
+  if (!ergebnis.eintrag) return null;
+  const neu = ergebnis.eintrag;
+  neu.customThumbnail = bekanntesEigenesBild(neu.url);
+  neu.customThumbnailCrop = bekannterBildAusschnitt(neu.url);
+  return normalizeLoadedFavorite(neu);
 }
 
 // Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.

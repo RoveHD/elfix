@@ -1008,6 +1008,96 @@ function vonHandAnlegen(zustand, provider, url, angaben = {}) {
 }
 
 /**
+ * Den Eintrag zu einer Runde finden - und anlegen, wenn es ihn nicht gibt.
+ *
+ * <h2>Warum das hier steht und nicht im Hauptprozess</h2>
+ *
+ * <p>Am Rechner stand diese Regel als {@code createWatchpartyFavorite} in
+ * {@code main.js}, also an einem Ort, den das Telefon nie sieht. Die Folge war
+ * genau der gemeldete Fehler: auf Android blieb "Gemeinsam weiterschauen"
+ * leer, egal wie lange die Runde lief.
+ *
+ * <p>Am Geraet nachgestellt (Emulator, echtes Relay, ein zweites Mitglied, das
+ * Fortschritt meldet): Android trat dem Titel bei, das Relay leitete den Stand
+ * weiter - und {@code Bestand.watchpartyStandUebernehmen} stieg bei
+ * {@code lokal == null} wortlos aus. Nach zwanzig Sekunden standen zwei
+ * Eintraege in der Ablage, <em>keiner</em> mit Raum, und der eingestellte Titel
+ * gar nicht. Der Rechner haette an derselben Stelle einen Eintrag angelegt.
+ *
+ * <h2>Warum je Raum ein eigener Eintrag</h2>
+ *
+ * <p>Ein Titel kann privat laufen und zugleich in zwei Runden stehen, und die
+ * drei Staende haben nichts miteinander zu tun. Gesucht wird deshalb nach
+ * Serie <em>und</em> Raum. Der Eintrag ohne Raum ist der eigene und wird hier
+ * nie angefasst - sonst liefe der Stand der Runde in den privaten Verlauf.
+ *
+ * @param zustand   {{favoriten: Array}}
+ * @param provider  der Anbieter, dem die Adresse gehoert
+ * @param raum      der Raumcode; ohne ihn wird nichts angelegt
+ * @param eintrag   was der Raum ueber den Titel weiss (title, thumbnail, type, url)
+ * @param stand     der gemeldete Fortschritt, darf leer sein
+ * @returns {{eintrag: object|null, favoriten: Array, neu: boolean}}
+ */
+function watchpartyEintragAnlegen(zustand, provider, raum, eintrag = {}, stand = {}) {
+  const favoriten = Array.isArray(zustand?.favoriten) ? zustand.favoriten.slice() : [];
+  const leer = { eintrag: null, favoriten, neu: false };
+  const code = String(raum || "").trim();
+  if (!provider || !code) return leer;
+
+  const url = absoluteHttpUrl(stand?.url || eintrag?.url || "", provider.startUrl || "");
+  if (!url) return leer;
+
+  // Gesucht wird ueber die Serienkennung, nicht ueber die volle Adresse: der
+  // Raum steht bei Folge 4, der eigene Eintrag vielleicht noch bei Folge 2.
+  const serie = serienKennungAusUrl(url);
+  const vorhanden = favoriten.find((favorit) => (
+    String(favorit?.watchpartyRoom || "") === code
+    && serie && serienKennungAusUrl(favorit?.url) === serie
+  ));
+  if (vorhanden) return { eintrag: vorhanden, favoriten, neu: false };
+
+  const identity = episodeIdentity(url);
+  const jetzt = new Date().toISOString();
+  const neu = {
+    id: kennungErzeugen(),
+    providerId: provider.id,
+    providerName: provider.name || eintrag?.providerName || "",
+    title: cleanTitle(eintrag?.title || url),
+    url,
+    normalizedUrl: normalizeFavoriteUrl(url),
+    favicon: "",
+    thumbnail: String(eintrag?.thumbnail || ""),
+    logo: provider.logo || "",
+    favorite: false,
+    // Angesehen, aber nicht vorgemerkt: der Titel gehoert nach
+    // "Weiterschauen", nicht auf die Watchlist. Niemand hat ihn hier von Hand
+    // gemerkt - er kommt aus der Runde.
+    watched: true,
+    completed: Boolean(stand?.completed),
+    episodeCompleted: Boolean(stand?.episodeCompleted),
+    continuePending: !stand?.completed && !stand?.episodeCompleted,
+    completedEpisodes: [],
+    hideFromContinueWatching: false,
+    progress: Number(stand?.progress) > 0 ? Number(stand.progress) : 0,
+    duration: Number(stand?.duration) > 0 ? Number(stand.duration) : 0,
+    position: Number(stand?.position) > 0 ? Number(stand.position) : 0,
+    currentTime: Number(stand?.position) > 0 ? Number(stand.position) : 0,
+    type: normalizeMediaType(eintrag?.type || inferMediaType(url)),
+    season: identity?.season || Number(stand?.season) || Number(eintrag?.season) || 0,
+    episode: identity?.episode || Number(stand?.episode) || Number(eintrag?.episode) || 0,
+    // Dieser Eintrag gehoert zu genau einer Runde. Derselbe Titel in einem
+    // zweiten Raum bekommt seinen eigenen.
+    watchpartyRoom: code,
+    watchpartyFrom: String(stand?.from || ""),
+    watchpartyAt: String(stand?.updatedAt || ""),
+    createdAt: jetzt,
+    lastWatchedAt: String(stand?.updatedAt || jetzt),
+    activity: []
+  };
+  return { eintrag: neu, favoriten: [neu, ...favoriten], neu: true };
+}
+
+/**
  * Verbucht, was gerade lief - die Regel, nach der ELFIX Fortschritt zaehlt.
  *
  * Bekommt ihren Zustand herein und fasst nichts ausserhalb an: sie legt keine
@@ -1510,6 +1600,7 @@ module.exports = {
   applyFavoriteSeriesBounds,
   medienStandVerbuchen,
   vonHandAnlegen,
+  watchpartyEintragAnlegen,
   COMPLETED_PROGRESS_PERCENT,
   MIN_WATCH_TIME_SECONDS,
   BACKWARD_WATCH_TIME_SECONDS,

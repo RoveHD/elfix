@@ -280,6 +280,83 @@ pruefe("Kurze Folgen koennen trotzdem enden",
     ergebnisse.length >= 10, `${ergebnisse.length} Faelle`);
 }
 
+
+// --- Der Eintrag zu einer Runde ----------------------------------------------
+//
+// Gemeldet: auf Android bleibt "Gemeinsam weiterschauen" leer, waehrend die
+// Reihe am Rechner dasteht.
+//
+// Die Ursache war kein Anzeigefehler. Beide Seiten zeigen dieselbe Bedingung -
+// Eintraege mit `watchpartyRoom` -, aber angelegt hat einen solchen Eintrag nur
+// der Rechner: `createWatchpartyFavorite` stand in main.js, also an einem Ort,
+// den das Telefon nie sieht. Android stieg aus, sobald ein hereinkommender
+// Stand keinen Eintrag fand.
+//
+// Am Geraet nachgestellt (Emulator, echtes Relay, ein zweites Mitglied, das
+// meldet): nach zwanzig Sekunden zwei Eintraege in der Ablage, *keiner* mit
+// Raum, der eingestellte Titel gar nicht. Die Regel steht jetzt hier, und beide
+// Seiten rufen sie.
+{
+  const anbieter = {
+    id: "aniworld", name: "Aniworld", logo: "AN", startUrl: "https://aniworld.to/"
+  };
+  const raumEintrag = {
+    title: "BLACK TORCH", type: "serie", thumbnail: "cover.jpg",
+    url: "https://aniworld.to/anime/stream/black-torch/staffel-1/episode-4"
+  };
+  const stand = {
+    url: raumEintrag.url, season: 1, episode: 4,
+    position: 420, duration: 1400, progress: 30,
+    from: "Rechner", updatedAt: "2026-08-28T10:00:00.000Z"
+  };
+
+  const erst = fortschritt.watchpartyEintragAnlegen({ favoriten: [] }, anbieter, "Probe",
+    raumEintrag, stand);
+  pruefe("Ein Stand aus der Runde legt einen Eintrag an", erst.neu === true && Boolean(erst.eintrag));
+  pruefe("Und der traegt seinen Raum",
+    erst.eintrag.watchpartyRoom === "Probe", JSON.stringify(erst.eintrag.watchpartyRoom));
+  pruefe("Mit Folge und Stelle aus der Meldung",
+    erst.eintrag.season === 1 && erst.eintrag.episode === 4 && erst.eintrag.position === 420,
+    `S${erst.eintrag.season}E${erst.eintrag.episode} bei ${erst.eintrag.position}`);
+  pruefe("Angesehen, aber nicht vorgemerkt",
+    erst.eintrag.watched === true && erst.eintrag.favorite === false,
+    "er kommt aus der Runde, niemand hat ihn gemerkt");
+
+  const zustand = { favoriten: erst.favoriten };
+  const zweit = fortschritt.watchpartyEintragAnlegen(zustand, anbieter, "Probe", raumEintrag, stand);
+  pruefe("Der zweite Stand legt keinen zweiten Eintrag an",
+    zweit.neu === false && zweit.eintrag === erst.eintrag);
+
+  // Der Raum steht bei Folge 9, der Eintrag noch bei Folge 4 - gesucht wird
+  // ueber die Serie, nicht ueber die volle Adresse.
+  const spaeter = "https://aniworld.to/anime/stream/black-torch/staffel-1/episode-9";
+  const weiter = fortschritt.watchpartyEintragAnlegen(zustand, anbieter, "Probe",
+    { ...raumEintrag, url: spaeter }, { ...stand, url: spaeter, episode: 9 });
+  pruefe("Eine spaetere Folge findet denselben Eintrag", weiter.neu === false);
+
+  // Der eigene, private Eintrag darf nie der der Runde werden: sonst liefe der
+  // fremde Stand in den eigenen Verlauf. Genau das tat die Android-Fassung mit
+  // ihrem zuSerie(), das den Raum gar nicht ansah.
+  const privat = { id: "privat", url: raumEintrag.url, watchpartyRoom: "" };
+  const nebenPrivat = fortschritt.watchpartyEintragAnlegen({ favoriten: [privat] }, anbieter,
+    "Probe", raumEintrag, stand);
+  pruefe("Der private Eintrag wird nicht zum Eintrag der Runde",
+    nebenPrivat.neu === true && nebenPrivat.eintrag !== privat && privat.watchpartyRoom === "");
+
+  // Jeder Raum fuehrt seinen eigenen Stand.
+  const zweiterRaum = fortschritt.watchpartyEintragAnlegen({ favoriten: erst.favoriten }, anbieter,
+    "Anderer", raumEintrag, stand);
+  pruefe("Ein zweiter Raum bekommt einen eigenen Eintrag", zweiterRaum.neu === true);
+
+  // Ohne Raum gehoert nichts angelegt: der eigene Stand bleibt privat.
+  const ohneRaum = fortschritt.watchpartyEintragAnlegen({ favoriten: [] }, anbieter, "",
+    raumEintrag, stand);
+  pruefe("Ohne Raumcode entsteht kein Eintrag", ohneRaum.eintrag === null);
+  const ohneAnbieter = fortschritt.watchpartyEintragAnlegen({ favoriten: [] }, null, "Probe",
+    raumEintrag, stand);
+  pruefe("Und ohne Anbieter ebenfalls nicht", ohneAnbieter.eintrag === null);
+}
+
 const fehler = pruefungen.filter((x) => !x).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);
