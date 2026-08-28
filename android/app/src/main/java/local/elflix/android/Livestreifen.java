@@ -149,6 +149,14 @@ final class Livestreifen {
     };
     /** Woran erkannt wird, dass sich die Teilnehmer wirklich geaendert haben. */
     private String teilnehmerMarke = "";
+
+    /**
+     * Wer beim letzten Aufbau schon dabei war.
+     *
+     * <p>Der Unterschied zwischen "die Liste ist neu" und "es ist jemand
+     * dazugekommen". Nur der Dazugekommene bewegt sich.
+     */
+    private java.util.Set<String> letzteIds = new java.util.HashSet<>();
     private final List<Livestand.Marke> letzteMarken = new ArrayList<>();
 
     private final Runnable takt = new Runnable() {
@@ -468,8 +476,19 @@ final class Livestreifen {
     private void setzeOffen(boolean auf) {
         if (!sichtbar) auf = false;
         offen = auf;
-        pfeil.setText(auf ? "▴" : "▾");
-        details.setVisibility(auf ? View.VISIBLE : View.GONE);
+        // Ein Zeichen, das sich dreht, statt zweier, die sich abwechseln.
+        pfeil.setText("▾");
+        long dreh = Bewegung.dauer(context, Bewegung.LANG);
+        if (dreh > 0) {
+            pfeil.animate().rotation(auf ? 180f : 0f)
+                .setDuration(dreh).setInterpolator(Bewegung.feder(0.4f)).start();
+        } else {
+            pfeil.setRotation(auf ? 180f : 0f);
+        }
+        // Auf- und zuklappen statt erscheinen und verschwinden. Der Streifen
+        // sitzt ueber dem Video; was dort aufgeht, soll aufgehen und nicht
+        // dastehen.
+        Bewegung.klappen(details, auf, null);
         haupt.removeCallbacks(zuklappen);
         if (!auf) {
             teilnehmerMarke = "";
@@ -525,11 +544,18 @@ final class Livestreifen {
         }
         boolean neuBauen = !marke.toString().equals(teilnehmerMarke);
         teilnehmerMarke = marke.toString();
+        java.util.HashSet<String> jetzt = new java.util.HashSet<>();
+        for (Livestand.Marke person : marken) jetzt.add(person.id);
 
         if (neuBauen) {
             teilnehmer.removeAllViews();
             for (int i = 0; i < marken.size(); i += 1) {
+                // Wer schon dabei war, steht einfach da; wer dazugekommen ist,
+                // kommt mit einem Popp. Ohne diese Unterscheidung huepfte die
+                // ganze Besetzung, sobald ein einziges Geraet dazustoesst.
+                boolean neu = !letzteIds.contains(marken.get(i).id);
                 TextView text = new TextView(context);
+                if (neu) Bewegung.hereinPoppen(text);
                 text.setTextColor(marken.get(i).ich ? Theme.TEXT_PRIMARY : Theme.TEXT_SECONDARY);
                 text.setTextSize(umgebung.fernseher() ? 15 : 13);
                 text.setMaxLines(1);
@@ -547,6 +573,7 @@ final class Livestreifen {
             ((TextView) kind).setTextColor(person.hinterher ? Color.parseColor("#F5B84B")
                 : person.ich ? Theme.TEXT_PRIMARY : Theme.TEXT_SECONDARY);
         }
+        letzteIds = jetzt;
         if (marken.isEmpty() && teilnehmer.getChildCount() == 0) {
             TextView leer = new TextView(context);
             leer.setText(privat

@@ -12,4 +12,14 @@
          Eintrag gehoert. Daran findet das Kachelmenue die Karte wieder, die
          es beim Loeschen ausblenden soll. -->
     <item name="elfix_karte" type="id" />
+
+    <!-- Sitzt an jeder Ansicht, die ihren Auftritt schon hinter sich hat.
+         Sie ist der Grund, warum ein Neuzeichnen keine Animation wiederholt:
+         Bewegung.auftrittEinmal prueft sie und tut beim zweiten Mal nichts. -->
+    <item name="elfix_auftritt" type="id" />
+
+    <!-- Am Titelbild: der laufende Ken-Burns-Zoom. Er wird vor jedem Wechsel
+         angehalten und beim Abhaengen der Ansicht beendet - ein endloser Lauf
+         auf einer weggeworfenen Ansicht haelt die ganze alte Seite fest. -->
+    <item name="elfix_kenburns" type="id" />
 </resources>

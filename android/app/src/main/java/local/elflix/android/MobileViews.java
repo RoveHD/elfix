@@ -57,18 +57,16 @@ final class MobileViews {
                 return false;
             }
             v.setBackground(gedrueckt ? pressed : idle);
-            float ziel = gedrueckt ? 0.985f : 1f;
-            // Hinunter schneller als herauf: der Druck soll sofort quittiert
-            // sein, das Loslassen darf ausschwingen. Beides ueber
-            // Bewegung.dauer, damit ein Geraet ohne Animationen keine bekommt.
-            long dauer = Bewegung.dauer(v.getContext(), gedrueckt ? 90L : Bewegung.KURZ);
-            if (dauer > 0) {
-                v.animate().scaleX(ziel).scaleY(ziel).setDuration(dauer).start();
-            } else {
-                v.animate().cancel();
-                v.setScaleX(ziel);
-                v.setScaleY(ziel);
-            }
+            // Hinunter kurz und beschleunigend, herauf mit Feder - siehe
+            // Bewegung.druck. Der Ueberschwinger ist der ganze Unterschied
+            // zwischen "die Flaeche wird kleiner" und "die Flaeche gibt nach".
+            //
+            // 0.97 statt der frueheren 0.985: gefordert war spuerbares
+            // Feedback, und fuenfzehn Tausendstel sind auf einem Telefonarm
+            // Abstand nicht zu sehen. Tiefer geht es nicht: eine ganze Karte,
+            // die um mehr als drei Prozent einsinkt, zieht ihre Nachbarn
+            // optisch mit.
+            Bewegung.druck(v, gedrueckt, 0.97f);
             return false;
         });
     }
@@ -351,11 +349,21 @@ final class MobileViews {
             GradientDrawable balkenBg = new GradientDrawable();
             balkenBg.setColor(Theme.PRIMARY);
             balken.setBackground(balkenBg);
+            // Er liegt in voller Breite da und wird von links her
+            // zusammengeschoben. Warum nicht ueber die Breite: eine Breite
+            // laesst sich nur ueber die Layoutmasse aendern, und jede
+            // Aenderung daran misst die Karte neu - waehrend einer laufenden
+            // Folge, alle paar Sekunden, in jeder sichtbaren Kachel. Eine
+            // Skalierung ab der linken Kante sieht genauso aus und kostet die
+            // Grafikeinheit nichts.
+            balken.setPivotX(0f);
+            balken.setScaleX(0f);
             // Die Marke braucht der Sekundentakt: bei einer Kachel aus einer
             // Watchparty zeigt der Balken den Stand des Fuehrenden, und der
             // laeuft weiter, ohne dass die Seite neu gebaut wird.
             balken.setTag(Mitschaustand.MARKE_BALKEN);
-            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(0, dp(context, balkenDp));
+            FrameLayout.LayoutParams balkenParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, balkenDp));
             balkenParams.gravity = Gravity.BOTTOM;
             poster.addView(balken, balkenParams);
             // Die Breite steht erst fest, wenn der Kasten gemessen ist.
@@ -377,17 +385,26 @@ final class MobileViews {
     static void balkenBreiteSetzen(View poster, View balken, int prozent) {
         if (poster == null || balken == null) return;
         int wert = Math.min(100, Math.max(0, prozent));
-        ViewGroup.LayoutParams masse = balken.getLayoutParams();
-        if (masse == null) return;
         int breite = poster.getWidth();
         if (breite <= 0) {
             poster.post(() -> balkenBreiteSetzen(poster, balken, prozent));
             return;
         }
-        int neu = wert <= 0 ? 0 : Math.max(dp(poster.getContext(), 3), breite * wert / 100);
-        if (masse.width == neu) return;
-        masse.width = neu;
-        balken.setLayoutParams(masse);
+        balken.setPivotX(0f);
+        float ziel = wert <= 0 ? 0f
+            : Math.max(wert / 100f, dp(poster.getContext(), 3) / (float) breite);
+        // Ein halbes Prozent Unterschied ist ein halber Pixel - dafuer lohnt
+        // keine Bewegung, und ohne diese Schwelle liefe waehrend einer Folge
+        // dauernd eine.
+        if (Math.abs(balken.getScaleX() - ziel) < 0.005f) return;
+        long dauer = Bewegung.dauer(poster.getContext(), Bewegung.LANG);
+        if (dauer <= 0) {
+            balken.animate().cancel();
+            balken.setScaleX(ziel);
+            return;
+        }
+        balken.animate().scaleX(ziel).setDuration(dauer)
+            .setInterpolator(Bewegung.kurve()).start();
     }
 
     /**
@@ -519,8 +536,13 @@ final class MobileViews {
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
                 v.setBackground(shape(context, Theme.SURFACE_PRESSED, 12, Color.TRANSPARENT, 0));
+                // Ein Symbol ohne Beschriftung hat nichts ausser sich selbst,
+                // woran man den Druck sieht - deshalb hier tiefer als bei
+                // einer Karte.
+                Bewegung.druck(v, true, 0.86f);
             } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 v.setBackground(shape(context, Color.TRANSPARENT, 12, Color.TRANSPARENT, 0));
+                Bewegung.druck(v, false, 0.86f);
             }
             return false;
         });
@@ -591,6 +613,14 @@ final class MobileViews {
      * damit jedes Mal von vorn anfing.
      */
     static final String HERO_BILD = "hero:bild";
+    /**
+     * Der ganze Textblock - Augenbraue, Titel, Unterzeile, Balken, Knoepfe.
+     *
+     * <p>Er traegt eine eigene Marke, weil er sich beim Titelwechsel als
+     * Ganzes bewegt: die Knoepfe stehen darin und gehen deshalb mit, ohne dass
+     * sie einzeln angefasst werden muessten.
+     */
+    static final String HERO_TEXTE = "hero:texte";
     static final String HERO_AUGENBRAUE = "hero:augenbraue";
     static final String HERO_TITEL = "hero:titel";
     static final String HERO_UNTERZEILE = "hero:unterzeile";
@@ -619,6 +649,7 @@ final class MobileViews {
         kasten.addView(bild, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         Bilder.laden(bild, bildUrl, 360, 260, null);
+        heroBildBeleben(bild);
 
         View schleier = new View(context);
         GradientDrawable verlauf = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
@@ -628,6 +659,7 @@ final class MobileViews {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout text = new LinearLayout(context);
+        text.setTag(HERO_TEXTE);
         text.setOrientation(LinearLayout.VERTICAL);
         text.setPadding(dp(context, 16), dp(context, 18), dp(context, 16), dp(context, 16));
         TextView augenbrauenZeile = eyebrow(context, augenbraue);
@@ -719,10 +751,94 @@ final class MobileViews {
                                      String zweitText, Runnable beiZweit) {
         ImageView bild = heroBild(kasten);
         if (bild == null || kasten.findViewWithTag(HERO_TITEL) == null) return false;
-        Bilder.laden(bild, bildUrl, 360, 260, null);
-        heroTeileSetzen(kasten, augenbraue, titel, unterzeile, prozent,
-            aufruf, beiAufruf, zweitText, beiZweit);
+        heroWechsel(kasten, bild, heroAnderer(kasten, titel),
+            () -> Bilder.laden(bild, bildUrl, 360, 260, null),
+            () -> heroTeileSetzen(kasten, augenbraue, titel, unterzeile, prozent,
+                aufruf, beiAufruf, zweitText, beiZweit));
         return true;
+    }
+
+    /**
+     * Steht dort schon dieser Titel?
+     *
+     * <p>Die Frage entscheidet ueber Bewegung oder Ruhe. Der Titelhintergrund
+     * wird auch dann neu beschrieben, wenn sich nur der Fortschritt um eine
+     * Sekunde bewegt hat - und dabei darf nichts wegzoomen. Nur der Wechsel
+     * auf einen <em>anderen</em> Titel ist ein Wechsel.
+     */
+    static boolean heroAnderer(View kasten, String titel) {
+        View zeile = kasten.findViewWithTag(HERO_TITEL);
+        if (!(zeile instanceof TextView)) return false;
+        String jetzt = ((TextView) zeile).getText().toString();
+        return !jetzt.equals(titel == null ? "" : titel);
+    }
+
+    /**
+     * Der cineastische Wechsel des Titelhintergrunds.
+     *
+     * <p>Gefordert war ausdruecklich: nicht einfach den Hintergrund
+     * austauschen. Also vier Dinge nacheinander und nebeneinander - das alte
+     * Bild dunkelt ab und zoomt weg, das neue faengt groesser an und geht auf
+     * seine Groesse zurueck, der Textblock geht nach oben hinaus und kommt von
+     * unten nach, und der langsame Zoom faengt danach wieder von vorn an.
+     *
+     * <p>Ohne Wechsel passiert nichts davon: dann wird nur ueberschrieben, und
+     * zwar sofort. Das ist der haeufige Fall - der Fortschritt zieht im Takt
+     * nach, und ein Titelhintergrund, der dabei jedes Mal wegzoomt, waere die
+     * Unruhe, gegen die dieser ganze Kasten gebaut wurde.
+     *
+     * <p>Paketweit sichtbar, weil {@link TvViews} denselben Wechsel fuehrt.
+     */
+    static void heroWechsel(View kasten, final ImageView bild, boolean anders,
+                            final Runnable bildSetzen, final Runnable schriftSetzen) {
+        if (!anders || !Bewegung.weiteWege(kasten.getContext())) {
+            bildSetzen.run();
+            schriftSetzen.run();
+            return;
+        }
+        heroBildAnhalten(bild);
+        Bewegung.inhaltTausch(kasten.findViewWithTag(HERO_TEXTE), schriftSetzen);
+        Bewegung.bildTausch(bild, bildSetzen, () -> heroBildBeleben(bild));
+    }
+
+    /**
+     * Der langsame Zoom auf dem Titelbild - Ken Burns.
+     *
+     * <p>Ein stehendes Bild hinter einer Schrift sieht aus wie ein Bildschirm-
+     * foto; dasselbe Bild, das ueber zwoelf Sekunden um sechs Prozent waechst
+     * und wieder zurueckgeht, sieht aus wie eine Kamera. Der Weg ist zu klein,
+     * um als Bewegung gelesen zu werden - das ist genau der Punkt.
+     *
+     * <p>Der Lauf haengt am Bild und wird angehalten, sobald es aus dem Fenster
+     * genommen wird. Ohne das liefe er weiter und hielte die alte Seite fest -
+     * ein endloser Lauf auf einer weggeworfenen Ansicht ist ein Leck.
+     */
+    static void heroBildBeleben(final ImageView bild) {
+        if (bild == null) return;
+        heroBildAnhalten(bild);
+        android.animation.ValueAnimator lauf = Bewegung.kenBurns(bild);
+        if (lauf == null) return;
+        bild.setTag(R.id.elfix_kenburns, lauf);
+        bild.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View wer) {
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View wer) {
+                heroBildAnhalten(bild);
+            }
+        });
+    }
+
+    /** Den langsamen Zoom anhalten - vor einem Wechsel und beim Aufraeumen. */
+    static void heroBildAnhalten(ImageView bild) {
+        if (bild == null) return;
+        Object alt = bild.getTag(R.id.elfix_kenburns);
+        if (alt instanceof android.animation.ValueAnimator) {
+            ((android.animation.ValueAnimator) alt).cancel();
+        }
+        bild.setTag(R.id.elfix_kenburns, null);
     }
 
     /** Das Bild eines Titelhintergrunds - immer sein erstes Kind, siehe {@link #hero}. */
@@ -901,8 +1017,13 @@ final class MobileViews {
         scroll.setHorizontalScrollBarEnabled(false);
         scroll.setClipToPadding(false);
         scroll.setPadding(dp(context, SCREEN_PADDING), 0, dp(context, SCREEN_PADDING), 0);
+        // Ohne das schneidet die Reihe jede Kachel ab, die beim Druck oder im
+        // Auftritt ueber ihre Kante hinauswaechst.
+        scroll.setClipChildren(false);
         LinearLayout leiste = new LinearLayout(context);
         leiste.setOrientation(LinearLayout.HORIZONTAL);
+        leiste.setClipChildren(false);
+        leiste.setClipToPadding(false);
         for (int i = 0; i < karten.size(); i += 1) {
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 kartenBreiteDp > 0 ? dp(context, kartenBreiteDp) : ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -912,7 +1033,27 @@ final class MobileViews {
         }
         scroll.addView(leiste, new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        staffelnWennFrei(scroll, leiste, 0L);
         return scroll;
+    }
+
+    /**
+     * Die Kacheln einer Reihe nacheinander auftreten lassen - wenn sie duerfen.
+     *
+     * <p>Zwei Bedingungen, und beide werden <em>jetzt</em> geprueft, beim
+     * Bauen: ob die Seite ueberhaupt Auftritte bekommt (siehe
+     * {@link Bewegung#auftritteFrei}) und, spaeter im Lauf, welche Kacheln im
+     * Bild stehen. Die zweite Frage laesst sich erst nach dem Vermessen
+     * beantworten, deshalb der Umweg ueber {@code post}. Was rechts ausserhalb
+     * steht, bekommt keinen Auftritt: bis der Daumen dort ankommt, waere er
+     * laengst vorbei, und siebzehn Kacheln gegen eine Wand zu animieren kostet
+     * Bilder, die niemand sieht.
+     */
+    static void staffelnWennFrei(final HorizontalScrollView scroll, final LinearLayout leiste,
+                                 final long ab) {
+        if (!Bewegung.auftritteFrei()) return;
+        scroll.post(() -> Bewegung.staffelnWaagerecht(
+            leiste, scroll.getScrollX() + scroll.getWidth(), ab));
     }
 
     /**
@@ -1196,6 +1337,23 @@ final class MobileViews {
      */
     static View schalterZeile(Context context, String titel, String erklaerung,
                               boolean an, Runnable beiKlick) {
+        return schalterZeile(context, titel, erklaerung, an, null, beiKlick);
+    }
+
+    /**
+     * Derselbe Schalter, aber er weiss, wo er herkommt.
+     *
+     * <p>Die Einstellungsseite wird bei jedem Handgriff neu gebaut - der
+     * Schalter, den man gerade umgelegt hat, ist also nicht derselbe, der eben
+     * noch dastand, sondern ein neuer an derselben Stelle. Ohne diese Angabe
+     * koennte er nur springen. Mit ihr faengt der Daumen dort an, wo der alte
+     * aufgehoert hat, und laeuft mit einer Feder hinueber; die Bahn wechselt
+     * dabei ihre Farbe.
+     *
+     * @param vorher der zuletzt gezeichnete Stand, {@code null} beim ersten Mal
+     */
+    static View schalterZeile(Context context, String titel, String erklaerung,
+                              boolean an, Boolean vorher, Runnable beiKlick) {
         LinearLayout zeile = new LinearLayout(context);
         zeile.setOrientation(LinearLayout.HORIZONTAL);
         zeile.setGravity(Gravity.CENTER_VERTICAL);
@@ -1226,9 +1384,10 @@ final class MobileViews {
         // die dieselbe Aussage tragen wie ein Haken, aber auf einen Blick zu
         // erkennen sind - auch ohne die Zeile daneben zu lesen.
         FrameLayout bahn = new FrameLayout(context);
-        bahn.setBackground(shape(context, an ? Theme.PRIMARY : Theme.SURFACE_PRESSED, 11,
-            an ? Theme.PRIMARY : Theme.BORDER, 1));
-        View knopf = new View(context);
+        GradientDrawable bahnForm = shape(context, an ? Theme.PRIMARY : Theme.SURFACE_PRESSED, 11,
+            an ? Theme.PRIMARY : Theme.BORDER, 1);
+        bahn.setBackground(bahnForm);
+        final View knopf = new View(context);
         knopf.setBackground(shape(context, an ? Color.WHITE : Theme.TEXT_DISABLED, 9,
             Color.TRANSPARENT, 0));
         FrameLayout.LayoutParams knopfParams = new FrameLayout.LayoutParams(
@@ -1236,6 +1395,24 @@ final class MobileViews {
         knopfParams.gravity = Gravity.CENTER_VERTICAL | (an ? Gravity.END : Gravity.START);
         knopfParams.setMargins(dp(context, 2), 0, dp(context, 2), 0);
         bahn.addView(knopf, knopfParams);
+        if (vorher != null && vorher.booleanValue() != an) {
+            // Der Daumen steht schon an seinem Ziel - er faengt nur weiter
+            // links oder rechts an und laeuft mit einer Feder hinueber. Der
+            // Weg ist die Bahnbreite ohne den Daumen und die zwei Raender.
+            final float weg = dp(context, 44 - 18 - 4);
+            knopf.setTranslationX(an ? -weg : weg);
+            long dauer = Bewegung.dauer(context, Bewegung.LANG);
+            if (dauer <= 0) {
+                knopf.setTranslationX(0f);
+            } else {
+                knopf.animate().translationX(0f)
+                    .setDuration(dauer).setInterpolator(Bewegung.feder(0.6f)).start();
+                Bewegung.farbwechsel(bahnForm,
+                    an ? Theme.SURFACE_PRESSED : Theme.PRIMARY,
+                    an ? Theme.PRIMARY : Theme.SURFACE_PRESSED,
+                    Bewegung.MITTEL, context);
+            }
+        }
         LinearLayout.LayoutParams bahnParams = new LinearLayout.LayoutParams(
             dp(context, 44), dp(context, 22));
         bahnParams.leftMargin = dp(context, 12);
@@ -1364,6 +1541,17 @@ final class MobileViews {
             zusatz.setGravity(Gravity.CENTER);
             knopf.addView(zusatz);
         }
+        // Ein Reiter ohne Druckreaktion ist ein Wort auf einem Rechteck. Der
+        // Rahmen wechselt beim Druck nicht die Farbe - das taete er beim
+        // aktiven und beim ruhenden verschieden -, es bleibt beim Nachgeben.
+        knopf.setOnTouchListener((v, ereignis) -> {
+            int was = ereignis.getActionMasked();
+            if (was == MotionEvent.ACTION_DOWN) Bewegung.druck(v, true, 0.94f);
+            else if (was == MotionEvent.ACTION_UP || was == MotionEvent.ACTION_CANCEL) {
+                Bewegung.druck(v, false, 0.94f);
+            }
+            return false;
+        });
         knopf.setOnClickListener(v -> beiKlick.run());
         return knopf;
     }

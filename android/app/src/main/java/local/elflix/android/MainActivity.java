@@ -137,6 +137,30 @@ public class MainActivity extends Activity {
      * schlimmer als gar keine Gliederung.
      */
     private final java.util.Set<String> offeneAbschnitte = new java.util.HashSet<>();
+
+    /**
+     * Wie die naechste Seite hereinkommt.
+     *
+     * <p>Vorwaerts von rechts, zurueck von links, eine Detailseite als Zoom.
+     * Die Richtung wird vor dem Bauen gesetzt und beim Bauen verbraucht - so
+     * muss keine der zwei Dutzend Zeichenfunktionen davon wissen.
+     */
+    private enum Auftritt { VORWAERTS, ZURUECK, ZOOM }
+
+    private Auftritt naechsterAuftritt = Auftritt.VORWAERTS;
+
+    /**
+     * Welcher Einstellungsabschnitt gerade auf- oder zugeklappt wurde.
+     *
+     * <p>Die Einstellungsseite wird bei jedem Handgriff neu gebaut. Ohne diese
+     * Notiz wuesste die neue Seite nicht, was daran neu ist - und entweder
+     * animierte alles oder nichts. So bewegt sich genau der Abschnitt, den
+     * jemand angefasst hat.
+     */
+    private String zuletztGeklappt = "";
+
+    /** Der zuletzt gezeichnete Stand jedes Schalters - fuer den Daumen, der wandert. */
+    private final java.util.HashMap<String, Boolean> schalterVorher = new java.util.HashMap<>();
     /**
      * Titelbilder, die fuer die Suche von einer Titelseite geholt wurden.
      *
@@ -1552,6 +1576,15 @@ public class MainActivity extends Activity {
         tab.addView(text, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        tab.setOnTouchListener((v, ereignis) -> {
+            int was = ereignis.getActionMasked();
+            if (was == android.view.MotionEvent.ACTION_DOWN) Bewegung.druck(v, true, 0.9f);
+            else if (was == android.view.MotionEvent.ACTION_UP
+                || was == android.view.MotionEvent.ACTION_CANCEL) {
+                Bewegung.druck(v, false, 0.9f);
+            }
+            return false;
+        });
         tab.setOnClickListener(view -> onClick.run());
         bottomNavTabs.put(screen, tab);
         return tab;
@@ -1573,7 +1606,14 @@ public class MainActivity extends Activity {
             boolean selected = entry.getKey().equals(active);
             LinearLayout tab = entry.getValue();
             int tint = selected ? Theme.PRIMARY : Theme.TEXT_DISABLED;
-            ((ImageView) tab.getChildAt(0)).setColorFilter(tint);
+            ImageView icon = (ImageView) tab.getChildAt(0);
+            // Nur beim Wechsel, nicht bei jedem Aufruf: diese Zeile laeuft bei
+            // jedem Seitenwechsel im Browser mit, und ein Zeichen, das dabei
+            // jedes Mal aufpoppt, waere ein Zucken.
+            boolean warSchon = Boolean.TRUE.equals(icon.getTag(R.id.elfix_auftritt));
+            icon.setTag(R.id.elfix_auftritt, Boolean.valueOf(selected));
+            icon.setColorFilter(tint);
+            if (selected && !warSchon) Bewegung.gelungen(icon);
             TextView label = (TextView) tab.getChildAt(1);
             label.setTextColor(tint);
             label.setTypeface(selected ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
@@ -1763,6 +1803,7 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(scroll, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        seitenAuftritt(scroll);
         return page;
     }
 
@@ -2980,7 +3021,14 @@ public class MainActivity extends Activity {
                     // aber ein Titelbild, wenn die Trefferseite eines hergab.
                     addTvRowItem(row, TvViews.favoriteCard(this, result.provider, result.title, meta,
                         result.provider.name, result.bild, width, 0,
-                        () -> openProvider(result.provider, result.url), null),
+                    // Ueber serieOeffnen und nicht geradewegs auf die
+                    // Anbieterseite: ein Suchtreffer ist der haeufigste Weg,
+                    // eine *neue* Serie anzufangen - und genau dort fehlte die
+                    // Uebersicht mit Staffeln und Folgen. Sie stand bisher nur
+                    // hinter den Vorschlaegen und dem Kalender, also hinter den
+                    // zwei Wegen, die man selten nimmt. Gemeldet vom
+                    // Fernseher, wo die Suche fast der einzige Weg ist.
+                        () -> serieOeffnen(result.provider, result.url, result.title), null),
                         shown % perRow == 0);
                     shown += 1;
                 }
@@ -3001,14 +3049,63 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(scroll, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        seitenAuftritt(scroll);
         return page;
     }
 
+    /**
+     * Eine frisch gebaute Seite tritt auf - und der Staffelzaehler faengt von
+     * vorn an.
+     *
+     * <p>Die eine Stelle, an der ueber den Uebergang entschieden wird. Beide
+     * Seitengeruesten - Telefon und Fernseher - laufen hier durch, und damit
+     * bekommt jede Seite der App ihren Uebergang, ohne dass eine der zwei
+     * Dutzend Zeichenfunktionen etwas davon wissen muss.
+     */
+    private void seitenAuftritt(View scroll) {
+        Bewegung.versatzZuruecksetzen();
+        Auftritt art = naechsterAuftritt;
+        naechsterAuftritt = Auftritt.VORWAERTS;
+        if (!Bewegung.auftritteFrei()) return;
+        if (art == Auftritt.ZOOM) Bewegung.zoomAuftritt(scroll);
+        else Bewegung.seitenAuftritt(scroll, art == Auftritt.ZURUECK);
+    }
+
+    /**
+     * Diesen Neuaufbau still halten.
+     *
+     * <p>Fuer alles, was die offene Seite noch einmal zeichnet, ohne dass
+     * jemand irgendwohin gegangen waere - eine fertig gewordene
+     * Empfehlungsreihe, ein Melder des Geraeteabgleichs, ein umgelegter
+     * Schalter. Waehrend der Klammer bekommt nichts einen Auftritt; danach
+     * steht das Tor wieder so, wie es stand.
+     */
+    private void stillZeichnen(Runnable was) {
+        boolean vorher = Bewegung.auftritteFrei();
+        Bewegung.auftritteFreigeben(false);
+        try {
+            was.run();
+        } finally {
+            Bewegung.auftritteFreigeben(vorher);
+        }
+    }
+
+    /**
+     * Einen Abschnitt an die Seite haengen - mit seiner Stelle in der Staffel.
+     *
+     * <p>Waagerechte Reihen bekommen hier <em>keinen</em> Auftritt: sie
+     * staffeln ihre Kacheln selbst (siehe {@link MobileViews#reihe}), und zwei
+     * Bewegungen uebereinander - die Reihe faehrt herein, waehrend ihre
+     * Kacheln es auch tun - sind keine Gestaltung mehr, sondern Unruhe.
+     */
     private void addSpacing(LinearLayout page, View view, int topMarginDp) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(topMarginDp);
         page.addView(view, params);
+        if (!(view instanceof HorizontalScrollView)) {
+            Bewegung.auftrittEinmal(view, Bewegung.naechsterVersatz());
+        }
     }
 
     /**
@@ -4749,7 +4846,10 @@ public class MainActivity extends Activity {
                     // er sehr wohl, sofern die Trefferseite eines hergab.
                     View card = MobileViews.favoriteCard(this, result.provider, result.title, meta, null,
                         result.bild, 0, "Ansehen",
-                        () -> openProvider(result.provider, result.url), null);
+                        // Siehe die Suche am Fernseher: ein Treffer ist der
+                        // uebliche Weg zu einer neuen Serie, und dort gehoert
+                        // die Uebersicht hin.
+                        () -> serieOeffnen(result.provider, result.url, result.title), null);
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                     params.topMargin = dp(MobileViews.ITEM_GAP);
@@ -4970,8 +5070,12 @@ public class MainActivity extends Activity {
                     }), luecke);
                 continue;
             }
+            // Der zuletzt gezeichnete Stand - daran erkennt der Schalter, ob
+            // sein Daumen wandern soll oder einfach dastehen.
+            Boolean vorher = schalterVorher.put(reihe.schluessel,
+                Boolean.valueOf(startseite.zeigt(reihe.schluessel)));
             addSpacing(page, MobileViews.schalterZeile(this, reihe.titel, reihe.erklaerung,
-                startseite.zeigt(reihe.schluessel),
+                startseite.zeigt(reihe.schluessel), vorher,
                 () -> {
                     startseite.umschalten(reihe.schluessel);
                     settingsNeuZeichnen();
@@ -5237,6 +5341,7 @@ public class MainActivity extends Activity {
         // dass sich etwas eintippen liess.
         dialog.getWindow().setSoftInputMode(
             android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        Bewegung.dialogAuftritt(dialog);
         dialog.show();
         feld.requestFocus();
     }
@@ -5385,12 +5490,14 @@ public class MainActivity extends Activity {
      * zweiten Ja, und die Frage sagt, was genau verschwindet.
      */
     private void frage(String titel, String text, Runnable beiJa) {
-        new android.app.AlertDialog.Builder(this)
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
             .setTitle(titel)
             .setMessage(text)
             .setNegativeButton("Abbrechen", null)
-            .setPositiveButton("Ja", (dialog, welcher) -> beiJa.run())
-            .show();
+            .setPositiveButton("Ja", (welcher, was) -> beiJa.run())
+            .create();
+        Bewegung.dialogAuftritt(dialog);
+        dialog.show();
     }
 
     // --- Neue Fassungen ------------------------------------------------------
@@ -5458,15 +5565,17 @@ public class MainActivity extends Activity {
      */
     private void neueFassungAnbieten(String fassung) {
         if (isFinishing() || isDestroyed()) return;
-        new android.app.AlertDialog.Builder(this)
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
             .setTitle("ELFIX " + fassung + " ist da")
             .setMessage("Geladen ist sie schon. Beim Installieren bleibt alles stehen, was hier "
                 + "steht — Mediathek, Verlauf und Einstellungen inbegriffen.")
-            .setNegativeButton("Später", (dialog, welcher) -> {
+            .setNegativeButton("Später", (wer, welcher) -> {
                 if (aktualisierung != null) aktualisierung.ueberspringen();
             })
-            .setPositiveButton("Installieren", (dialog, welcher) -> neueFassungInstallieren())
-            .show();
+            .setPositiveButton("Installieren", (wer, welcher) -> neueFassungInstallieren())
+            .create();
+        Bewegung.dialogAuftritt(dialog);
+        dialog.show();
     }
 
     /**
@@ -5669,7 +5778,8 @@ public class MainActivity extends Activity {
                     button.setTextSize(16);
                     button.setFocusable(true);
                     applyTvFocus(button, Color.rgb(28, 36, 50), Color.rgb(58, 72, 96), 18);
-                    button.setOnClickListener(view -> openProvider(result.provider, result.url));
+                    button.setOnClickListener(view ->
+                        serieOeffnen(result.provider, result.url, result.title));
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78));
                     params.setMargins(0, 0, 0, dp(10));
                     results.addView(button, Math.min(results.getChildCount(), insertIndex + 1 + count), params);
@@ -7389,7 +7499,10 @@ public class MainActivity extends Activity {
     private void settingsNeuZeichnen() {
         if (!"settings".equals(currentScreen)) return;
         int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-        showSettings();
+        // Still: die Seite steht schon, und ein Schalter ist kein Ortswechsel.
+        // Was sich hier trotzdem bewegt, ist genau der Abschnitt, den jemand
+        // angefasst hat - siehe zuletztGeklappt in abschnitt().
+        stillZeichnen(this::showSettings);
         scrollStandHerstellen(stand);
     }
 
@@ -7551,6 +7664,10 @@ public class MainActivity extends Activity {
             // Der Vorhang geht auf und die Uebersicht steht da - die
             // Anbieterseite dahinter hat niemand gesehen.
             if (startvorhang != null) startvorhang.auf("uebersicht steht");
+            // Die Uebersicht ist eine Detailseite: sie waechst aus der Karte
+            // heraus, aus der sie geoeffnet wurde, statt von der Seite
+            // hereinzuschieben.
+            naechsterAuftritt = Auftritt.ZOOM;
             zeigeSerienuebersicht();
         });
     }
@@ -7775,14 +7892,36 @@ public class MainActivity extends Activity {
     private void abschnitt(LinearLayout page, boolean fernseher, String schluessel,
                            String titel, String kurz, Runnable inhalt) {
         boolean offen = offeneAbschnitte.contains(schluessel);
-        addSpacing(page, abschnittsKopf(fernseher, schluessel, titel, kurz, offen),
+        boolean geradeGeklappt = schluessel.equals(zuletztGeklappt);
+        addSpacing(page, abschnittsKopf(fernseher, schluessel, titel, kurz, offen, geradeGeklappt),
             fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP);
-        if (offen) inhalt.run();
+        if (!offen) {
+            if (geradeGeklappt) zuletztGeklappt = "";
+            return;
+        }
+        if (!geradeGeklappt) {
+            inhalt.run();
+            return;
+        }
+        // Genau dieser Abschnitt wurde gerade aufgeklappt: sein Inhalt tritt
+        // gestaffelt auf, obwohl die Seite drumherum still gezeichnet wird.
+        // Das ist der Unterschied zwischen "die Seite ist neu" und "hier ist
+        // etwas aufgegangen" - und der Grund, warum das Tor eine Klammer ist
+        // und kein Schalter.
+        zuletztGeklappt = "";
+        boolean vorher = Bewegung.auftritteFrei();
+        Bewegung.auftritteFreigeben(true);
+        Bewegung.versatzZuruecksetzen();
+        try {
+            inhalt.run();
+        } finally {
+            Bewegung.auftritteFreigeben(vorher);
+        }
     }
 
     /** Die Zeile, auf die man tippt. */
     private View abschnittsKopf(boolean fernseher, String schluessel, String titel,
-                                String kurz, boolean offen) {
+                                String kurz, boolean offen, boolean geradeGeklappt) {
         LinearLayout zeile = new LinearLayout(this);
         zeile.setOrientation(LinearLayout.HORIZONTAL);
         zeile.setGravity(Gravity.CENTER_VERTICAL);
@@ -7810,12 +7949,24 @@ public class MainActivity extends Activity {
 
         // Ein Zeichen statt eines Bildes: es dreht sich mit dem Zustand und
         // braucht keine Datei.
+        // Ein Zeichen, das sich dreht, statt zweier Zeichen, die sich
+        // abwechseln: gedreht wird ueber die Grafikeinheit, und der Weg
+        // dorthin ist zu sehen. Zwei Zeichen springen um.
         TextView pfeil = new TextView(this);
-        pfeil.setText(offen ? "\u2303" : "\u2304");
-        pfeil.setTextColor(Theme.TEXT_SECONDARY);
+        pfeil.setText("\u2304");
+        pfeil.setTextColor(offen ? Theme.PRIMARY : Theme.TEXT_SECONDARY);
         pfeil.setTextSize(fernseher ? 20 : 17);
         pfeil.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         pfeil.setPadding(dp(12), 0, 0, 0);
+        pfeil.setRotation(offen ? 180f : 0f);
+        if (geradeGeklappt) {
+            long dreh = Bewegung.dauer(this, Bewegung.LANG);
+            if (dreh > 0) {
+                pfeil.setRotation(offen ? 0f : 180f);
+                pfeil.animate().rotation(offen ? 180f : 0f)
+                    .setDuration(dreh).setInterpolator(Bewegung.feder(0.4f)).start();
+            }
+        }
         zeile.addView(pfeil);
 
         if (fernseher) {
@@ -7832,6 +7983,7 @@ public class MainActivity extends Activity {
         }
         zeile.setOnClickListener(view -> {
             if (!offeneAbschnitte.remove(schluessel)) offeneAbschnitte.add(schluessel);
+            zuletztGeklappt = schluessel;
             settingsNeuZeichnen();
         });
         return zeile;
@@ -8275,9 +8427,15 @@ public class MainActivity extends Activity {
         boolean saved = webView != null && webView.getUrl() != null
             && offen != null && offen.istWatchlist();
         if (browserFavoriteIcon != null) {
+            // Nur wenn sich das Zeichen wirklich aendert, schnappt es zu.
+            // Diese Zeile laeuft bei jedem Seitenwechsel im Browser mit, und
+            // ein Herz, das dabei jedes Mal aufpoppt, waere ein Zucken.
+            boolean anders = !Boolean.valueOf(saved).equals(browserFavoriteIcon.getTag(R.id.elfix_auftritt));
+            browserFavoriteIcon.setTag(R.id.elfix_auftritt, Boolean.valueOf(saved));
             browserFavoriteIcon.setImageResource(saved
                 ? R.drawable.ic_nav_favorite_filled : R.drawable.ic_nav_favorite);
             browserFavoriteIcon.setColorFilter(saved ? Theme.PRIMARY : Theme.TEXT_PRIMARY);
+            if (anders && saved) Bewegung.gelungen(browserFavoriteIcon);
         }
         if (favoriteButton != null) favoriteButton.setText(saved ? "♥" : "♡");
     }
@@ -8751,23 +8909,29 @@ public class MainActivity extends Activity {
         zeichenSammler.postDelayed(() -> {
             zeichnenAngemeldet = false;
             int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-            switch (currentScreen == null ? "" : currentScreen) {
-                case "home":
-                    showHome();
-                    break;
-                case "favorites":
-                    showFavorites();
-                    break;
-                case "kalender":
-                    zeigeKalender();
-                    break;
-                case "watchparty":
-                    zeigeWatchparty();
-                    break;
-                default:
-                    return;
-            }
-            scrollStandHerstellen(stand);
+            // Ohne Auftritt: hier ist niemand irgendwohin gegangen. Es ist im
+            // Hintergrund etwas fertig geworden, und wer gerade liest, will
+            // deswegen nicht die halbe Seite noch einmal hereinfahren sehen.
+            final boolean[] gezeichnet = {true};
+            stillZeichnen(() -> {
+                switch (currentScreen == null ? "" : currentScreen) {
+                    case "home":
+                        showHome();
+                        break;
+                    case "favorites":
+                        showFavorites();
+                        break;
+                    case "kalender":
+                        zeigeKalender();
+                        break;
+                    case "watchparty":
+                        zeigeWatchparty();
+                        break;
+                    default:
+                        gezeichnet[0] = false;
+                }
+            });
+            if (gezeichnet[0]) scrollStandHerstellen(stand);
         }, SAMMELN_MS);
     }
 
@@ -9088,15 +9252,12 @@ public class MainActivity extends Activity {
             }
 
             View balken = kachel.karte.findViewWithTag(Mitschaustand.MARKE_BALKEN);
-            if (kachel.dauer > 0 && balken != null && balken.getParent() instanceof View
-                && balken.getLayoutParams() instanceof FrameLayout.LayoutParams) {
-                int breite = ((View) balken.getParent()).getWidth();
-                if (breite > 0) {
-                    FrameLayout.LayoutParams masse = (FrameLayout.LayoutParams) balken.getLayoutParams();
-                    masse.width = Math.max(dp(3),
-                        breite * Mitschaustand.prozent(stelle, kachel.dauer) / 100);
-                    balken.setLayoutParams(masse);
-                }
+            if (kachel.dauer > 0 && balken != null && balken.getParent() instanceof View) {
+                // Ueber dieselbe Stelle wie ueberall sonst: sie schiebt den
+                // Balken ueber die Skalierung statt ueber die Masse und laesst
+                // ihn weich hinueberlaufen, statt ihn springen zu lassen.
+                MobileViews.balkenBreiteSetzen((View) balken.getParent(), balken,
+                    Mitschaustand.prozent(stelle, kachel.dauer));
             }
         }
         if (liveKacheln.isEmpty()) liveTakt.removeCallbacksAndMessages(null);
@@ -9191,6 +9352,7 @@ public class MainActivity extends Activity {
         // dahinter zwar im Speicher und koennte zurueckblaettern - sie war aber
         // nie zu sehen, und was man nicht gesehen hat, will man nicht zurueck.
         if ("uebersicht".equals(currentScreen)) {
+            naechsterAuftritt = Auftritt.ZURUECK;
             showHome();
             return;
         }
@@ -9202,6 +9364,7 @@ public class MainActivity extends Activity {
         // Aus dem Jahresrueckblick zurueck in den Rueckblick und nicht ganz
         // nach vorn: er ist von dort aus geoeffnet worden.
         if ("wrapped".equals(currentScreen)) {
+            naechsterAuftritt = Auftritt.ZURUECK;
             zeigeRueckblick(rueckblickZeitraum);
             return;
         }
@@ -9210,10 +9373,12 @@ public class MainActivity extends Activity {
         // danach wieder den Raum sehen - dort stehen die anderen Titel.
         if ("provider".equals(currentScreen) && "watchparty".equals(providerHerkunft)) {
             providerHerkunft = "";
+            naechsterAuftritt = Auftritt.ZURUECK;
             zeigeWatchparty();
             return;
         }
         if (!"home".equals(currentScreen)) {
+            naechsterAuftritt = Auftritt.ZURUECK;
             showHome();
             return;
         }

@@ -343,15 +343,31 @@ public final class Bilder {
         ziel.setImageBitmap(bild);
         ziel.setVisibility(ImageView.VISIBLE);
         if (eingeblendet) {
-            long dauer = Bewegung.dauer(ziel.getContext(), Bewegung.MITTEL);
+            long dauer = Bewegung.dauer(ziel.getContext(), Bewegung.AUFTRITT);
             if (dauer > 0) {
+                // Blende und ein Hauch Zoom: von 1.03 auf 1. Das Bild kommt
+                // damit aus der Tiefe statt aus dem Nichts - und weil der
+                // Platzhalter darunter dieselbe Flaeche fuellt, sieht man
+                // keinen Rand, waehrend es noch groesser ist.
                 ziel.setAlpha(0f);
-                ziel.animate().alpha(1f).setDuration(dauer).start();
+                boolean weit = Bewegung.weiteWege(ziel.getContext());
+                ziel.setScaleX(weit ? 1.03f : 1f);
+                ziel.setScaleY(weit ? 1.03f : 1f);
+                ziel.animate().alpha(1f).scaleX(1f).scaleY(1f)
+                    .setDuration(dauer).setInterpolator(Bewegung.hinein()).start();
             } else {
                 ziel.setAlpha(1f);
+                ziel.setScaleX(1f);
+                ziel.setScaleY(1f);
             }
         } else {
+            // Aus dem Speicher: es stand schon im ersten Bild der Seite da und
+            // darf nicht erst einblenden - das waere ein Flackern, wo vorher
+            // keins war.
+            ziel.animate().cancel();
             ziel.setAlpha(1f);
+            ziel.setScaleX(1f);
+            ziel.setScaleY(1f);
         }
         if (beiBild != null) beiBild.run();
     }

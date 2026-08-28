@@ -31,6 +31,16 @@ final class TvViews {
     static final int CARD_RADIUS = 16;
     static final int FOCUS_MS = 170;
 
+    /**
+     * Wie gross eine Karte im Fokus wird.
+     *
+     * <p>Frueher fuenf Prozent. Fuenf Prozent sind aus drei Metern Entfernung
+     * kein Unterschied, sondern ein Verdacht - gefordert waren acht bis zwoelf,
+     * und neun liegt in der Mitte und passt noch in den Rand, den eine Reihe
+     * fuer ihren Ueberstand freihaelt.
+     */
+    static final float FOKUS_GROSS = 1.09f;
+
     private TvViews() {
     }
 
@@ -43,25 +53,46 @@ final class TvViews {
      * elevation. Deliberately restrained -- readable from the couch without being jumpy.
      */
     static void applyFocus(View view, GradientDrawable idle, GradientDrawable focused) {
+        applyFocus(view, idle, focused, FOKUS_GROSS);
+    }
+
+    /**
+     * Dieselbe Behandlung, aber mit eigenem Mass.
+     *
+     * <p>Karten duerfen weit wachsen, Knoepfe in der Kopfzeile nicht: eine
+     * Kopfzeile, in der ein Knopf um neun Prozent waechst, schiebt ihre
+     * Nachbarn optisch beiseite, und das ist bei fuenf Knoepfen nebeneinander
+     * kein Effekt mehr, sondern ein Wackeln.
+     *
+     * <p>Drei Dinge zusammen ergeben das "kommt nach vorn": die Groesse ueber
+     * eine Feder (siehe {@link Bewegung#fokus}), die Hoehe ueber der Flaeche,
+     * die den Schatten wirft, und der hellere Rahmen. Dazu kommt der
+     * Tastendruck: ohne ihn ist ein Druck auf OK voellig unquittiert, bis die
+     * naechste Seite steht.
+     */
+    static void applyFocus(View view, final GradientDrawable idle, final GradientDrawable focused,
+                           final float gross) {
         view.setBackground(idle);
         view.setFocusable(true);
         view.setFocusableInTouchMode(true);
         view.setOnFocusChangeListener((v, hasFocus) -> {
-            // Ueber Bewegung.dauer und nicht mit fester Zahl: wer die
-            // Animationen des Geraets abgeschaltet hat, bekommt den
-            // Fokusrahmen sofort statt in Zeitlupe.
-            long dauer = Bewegung.dauer(v.getContext(), FOCUS_MS);
-            float ziel = hasFocus ? 1.05f : 1f;
-            if (dauer > 0) {
-                v.animate().scaleX(ziel).scaleY(ziel)
-                    .setDuration(dauer).setInterpolator(Bewegung.kurve()).start();
-            } else {
-                v.animate().cancel();
-                v.setScaleX(ziel);
-                v.setScaleY(ziel);
-            }
+            // Ueber Bewegung und nicht mit fester Zahl: wer die Animationen
+            // des Geraets abgeschaltet hat, bekommt den Fokusrahmen sofort
+            // statt in Zeitlupe.
+            Bewegung.fokus(v, hasFocus, gross, hasFocus ? 14f : 0f);
             v.setBackground(hasFocus ? focused : idle);
-            v.setElevation(hasFocus ? dp(v.getContext(), 8) : 0);
+        });
+        view.setOnKeyListener((v, code, ereignis) -> {
+            if (ereignis.getAction() == android.view.KeyEvent.ACTION_DOWN
+                && ereignis.getRepeatCount() == 0
+                && (code == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                    || code == android.view.KeyEvent.KEYCODE_ENTER
+                    || code == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                Bewegung.tastendruck(v, gross);
+            }
+            // Immer durchlassen: hier wird nur quittiert, entschieden wird
+            // woanders.
+            return false;
         });
     }
 
@@ -120,7 +151,8 @@ final class TvViews {
         pill.setPadding(dp(context, 14), dp(context, 10), dp(context, 16), dp(context, 10));
         applyFocus(pill,
             shape(context, Theme.SURFACE_ELEVATED, 26, Theme.BORDER, 1),
-            shape(context, Theme.PRIMARY_MUTED, 26, Theme.PRIMARY, 2));
+            shape(context, Theme.PRIMARY_MUTED, 26, Theme.PRIMARY, 2),
+            1.05f);
 
         ImageView icon = new ImageView(context);
         icon.setImageResource(iconRes);
@@ -470,6 +502,7 @@ final class TvViews {
         }
         scroll.addView(leiste, new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        MobileViews.staffelnWennFrei(scroll, leiste, 0L);
         return scroll;
     }
 
@@ -866,6 +899,7 @@ final class TvViews {
         // Breiter als hoch angefordert: auf dem Fernseher ist das Titelbild ein
         // Hintergrund und kein Poster.
         Bilder.laden(bild, bildUrl, 640, 360, null);
+        MobileViews.heroBildBeleben(bild);
 
         View schleier = new View(context);
         // Zwei Verlaeufe uebereinander: einer von links, damit der Text auf
@@ -877,6 +911,7 @@ final class TvViews {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout text = new LinearLayout(context);
+        text.setTag(MobileViews.HERO_TEXTE);
         text.setOrientation(LinearLayout.VERTICAL);
         text.setClipChildren(false);
         text.setClipToPadding(false);
@@ -964,9 +999,13 @@ final class TvViews {
         View haupt = kasten.findViewWithTag("tv:hero:0");
         View zweit = kasten.findViewWithTag("tv:hero:1");
         if (haupt == null || zweit == null) return false;
-        Bilder.laden((ImageView) erstes, bildUrl, 640, 360, null);
-        heroTeileSetzen(kasten, haupt, zweit, augenbraue, titel, unterzeile, prozent,
-            aufruf, beiAufruf, zweitText, beiZweit, knoepfeAus);
+        final ImageView bild = (ImageView) erstes;
+        // Derselbe Wechsel wie auf dem Telefon - er steht dort, weil beide
+        // Kasten denselben Aufbau und dieselben Marken haben.
+        MobileViews.heroWechsel(kasten, bild, MobileViews.heroAnderer(kasten, titel),
+            () -> Bilder.laden(bild, bildUrl, 640, 360, null),
+            () -> heroTeileSetzen(kasten, haupt, zweit, augenbraue, titel, unterzeile, prozent,
+                aufruf, beiAufruf, zweitText, beiZweit, knoepfeAus));
         return true;
     }
 

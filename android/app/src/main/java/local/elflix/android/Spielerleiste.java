@@ -485,9 +485,54 @@ final class Spielerleiste {
         return zaehlerBis > 0;
     }
 
+    /** Die Fuellung des Zaehlerknopfs - nur waehrend gezaehlt wird. */
+    private android.graphics.drawable.ClipDrawable zaehlerFuellung;
+
+    /** Der gewohnte Hintergrund des Knopfs, waehrend die Fuellung darauf liegt. */
+    private android.graphics.drawable.Drawable knopfHintergrund;
+
+    /** Die zuletzt angesagte Sekunde - damit je Sekunde genau ein Herzschlag kommt. */
+    private int letzteZaehlerSekunde = -1;
+
     private void zaehlerAnhalten() {
         zaehlerBis = 0;
+        letzteZaehlerSekunde = -1;
         haupt.removeCallbacks(zaehlerTakt);
+        zaehlerAnzeigeAus();
+    }
+
+    /**
+     * Die Fuellung des Zaehlerknopfs anlegen.
+     *
+     * <p>Zwei Schichten: die gewohnte Knopfform unten, darueber dieselbe Form
+     * in Hell, von links her aufgedeckt. Der gewohnte Hintergrund wird vorher
+     * beiseitegelegt und danach wieder eingesetzt - der Knopf soll nach dem
+     * Zaehler aussehen wie vorher.
+     */
+    private void zaehlerAnzeigeAn() {
+        if (zaehlerFuellung != null) return;
+        knopfHintergrund = knopfNaechste.getBackground();
+        int ecke = umgebung.fernseher() ? 26 : 12;
+        android.graphics.drawable.Drawable unten = MobileViews.shape(context,
+            Theme.PRIMARY_DEEP, ecke, Color.TRANSPARENT, 0);
+        android.graphics.drawable.Drawable oben = MobileViews.shape(context,
+            Theme.PRIMARY, ecke, Color.TRANSPARENT, 0);
+        zaehlerFuellung = new android.graphics.drawable.ClipDrawable(oben, Gravity.START,
+            android.graphics.drawable.ClipDrawable.HORIZONTAL);
+        zaehlerFuellung.setLevel(0);
+        knopfNaechste.setBackground(new android.graphics.drawable.LayerDrawable(
+            new android.graphics.drawable.Drawable[]{unten, zaehlerFuellung}));
+    }
+
+    /** Und wieder weg damit. */
+    private void zaehlerAnzeigeAus() {
+        if (zaehlerFuellung == null) return;
+        zaehlerFuellung = null;
+        if (knopfHintergrund != null) knopfNaechste.setBackground(knopfHintergrund);
+        knopfHintergrund = null;
+        knopfNaechste.animate().cancel();
+        knopfNaechste.setScaleX(1f);
+        knopfNaechste.setScaleY(1f);
     }
 
     private final Runnable zaehlerTakt = new Runnable() {
@@ -496,7 +541,23 @@ final class Spielerleiste {
             if (zaehlerBis <= 0) return;
             long rest = zaehlerBis - SystemClock.uptimeMillis();
             if (rest > 0) {
-                knopfNaechste.setText("Nächste Folge in " + (int) Math.ceil(rest / 1000.0) + " …");
+                int sekunden = (int) Math.ceil(rest / 1000.0);
+                knopfNaechste.setText("Nächste Folge in " + sekunden + " …");
+                // Der Knopf laeuft voll. Ueber die Fuellhoehe eines
+                // ClipDrawable und nicht ueber eine zweite Ansicht: so aendert
+                // sich nichts am Aufbau der Leiste, und ein Knopf, der sich
+                // fuellt, ist genau die Anzeige, die ein Countdown braucht.
+                long ganz = Folgen.ZAEHLER_SEKUNDEN * 1000L;
+                if (zaehlerFuellung != null && ganz > 0) {
+                    zaehlerFuellung.setLevel((int) (10000L * (ganz - rest) / ganz));
+                }
+                // Einmal je Sekunde ein Herzschlag - aber nicht, solange die
+                // Fernbedienung darauf steht: dort haelt der Fokus die Groesse,
+                // und zwei Kraefte an derselben Groesse ergeben ein Zittern.
+                if (sekunden != letzteZaehlerSekunde) {
+                    letzteZaehlerSekunde = sekunden;
+                    if (!knopfNaechste.hasFocus()) Bewegung.pochen(knopfNaechste, 1);
+                }
                 haupt.postDelayed(this, ZAEHLER_TAKT_MS);
                 return;
             }
@@ -530,6 +591,7 @@ final class Spielerleiste {
         if (zaehlenSoll && !zaehlt()) {
             Log.i(TAG, "FOLGE zaehler an -> " + Folgen.kurz(ziel));
             zaehlerBis = SystemClock.uptimeMillis() + Folgen.ZAEHLER_SEKUNDEN * 1000L;
+            zaehlerAnzeigeAn();
             // Ein Zaehler ist eine Ansage - dafuer gehoert die Leiste sichtbar,
             // auch wenn der Player seine Bedienelemente gerade weggenommen hat.
             regung();
@@ -570,8 +632,15 @@ final class Spielerleiste {
         if (!zaehlt() && knopfAbbrechen.hasFocus() && !(autoplayDa && knopfAutoplay.requestFocus())) {
             knopfAbbrechen.clearFocus();
         }
+        boolean naechsteWar = knopfNaechste.getVisibility() == View.VISIBLE;
+        boolean abbrechenWar = knopfAbbrechen.getVisibility() == View.VISIBLE;
         knopfNaechste.setVisibility(knopfDa ? View.VISIBLE : View.GONE);
         knopfAbbrechen.setVisibility(zaehlt() ? View.VISIBLE : View.GONE);
+        // Nur beim Erscheinen und nur beim wirklichen Wechsel: anwenden()
+        // laeuft alle fuenf Sekunden, und ein Knopf, der dabei jedes Mal
+        // aufpoppt, waere ein Zucken.
+        if (knopfDa && !naechsteWar) Bewegung.hereinPoppen(knopfNaechste);
+        if (zaehlt() && !abbrechenWar) Bewegung.hereinPoppen(knopfAbbrechen);
         // Die Leiste selbst: nur mit Inhalt, und im Vollbild nur bis zum
         // letzten der drei Schritte. Ein leerer Kasten ist ein Punkt auf dem
         // Video und kein Bedienelement - siehe leisteSichtbar.
@@ -582,9 +651,58 @@ final class Spielerleiste {
         if (!leisteDa && wurzel.hasFocus() && !(autoplayDa && knopfAutoplay.requestFocus())) {
             wurzel.clearFocus();
         }
-        wurzel.setVisibility(leisteDa ? View.VISIBLE : View.GONE);
-        wurzel.setAlpha(deckkraft(imVollbild, stufe, zaehlt()));
+        leisteZeigen(leisteDa, deckkraft(imVollbild, stufe, zaehlt()));
         protokoll(knopfDa, autoplayDa);
+    }
+
+    /**
+     * Die Leiste ein- oder ausfahren.
+     *
+     * <p>Sie haengt unten, also kommt sie von unten - der Weg ist ihre eigene
+     * Hoehe, damit sie wirklich hinter der Kante verschwindet und nicht bloss
+     * blass wird. Die Deckkraft bleibt dabei die des Ruhezustands: die Leiste
+     * tritt nach einer Weile zurueck, ohne zu gehen, und das ist eine andere
+     * Aussage als "weg".
+     *
+     * <p>Was hier <em>nicht</em> passiert: an der Entscheidung wird nichts
+     * geaendert. Wer den Fokus abgibt und wann, steht weiter oben und ist
+     * schon gelaufen, bevor diese Zeilen an die Reihe kommen.
+     */
+    private void leisteZeigen(boolean da, float deckkraft) {
+        boolean war = wurzel.getVisibility() == View.VISIBLE;
+        long dauer = Bewegung.dauer(context, Bewegung.LANG);
+        int hoehe = wurzel.getHeight();
+        if (da) {
+            wurzel.animate().cancel();
+            wurzel.setVisibility(View.VISIBLE);
+            wurzel.setAlpha(deckkraft);
+            if (!war && dauer > 0 && hoehe > 0) {
+                wurzel.setTranslationY(hoehe);
+                wurzel.animate().translationY(0f)
+                    .setDuration(dauer).setInterpolator(Bewegung.hinein()).withLayer().start();
+            } else {
+                wurzel.setTranslationY(0f);
+            }
+            return;
+        }
+        if (!war) {
+            wurzel.setVisibility(View.GONE);
+            wurzel.setTranslationY(0f);
+            return;
+        }
+        if (dauer <= 0 || hoehe <= 0) {
+            wurzel.setVisibility(View.GONE);
+            wurzel.setTranslationY(0f);
+            return;
+        }
+        wurzel.animate().translationY(hoehe).alpha(0f)
+            .setDuration(dauer).setInterpolator(Bewegung.hinaus()).withLayer()
+            .withEndAction(() -> {
+                wurzel.setVisibility(View.GONE);
+                wurzel.setTranslationY(0f);
+                wurzel.setAlpha(1f);
+            })
+            .start();
     }
 
     /**

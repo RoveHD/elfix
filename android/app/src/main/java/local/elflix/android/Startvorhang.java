@@ -423,8 +423,37 @@ final class Startvorhang {
         haupt.removeCallbacks(takt);
         liegt = false;
         phase = "";
-        if (wurzel != null && wurzel.getParent() instanceof ViewGroup) {
-            ((ViewGroup) wurzel.getParent()).removeView(wurzel);
+        // Der Vorhang geht auf, er wird nicht weggerissen.
+        //
+        // Dahinter laeuft das Video bereits - das war die Bedingung dafuer,
+        // ueberhaupt hierher zu kommen. Ihn in einem Bild zu entfernen war
+        // deshalb der einzige harte Schnitt, den der ganze Start noch hatte:
+        // Ladebild, und im naechsten Bild Film. Jetzt wird er blass und
+        // zugleich ein Stueck groesser, sodass das Bild dahinter aus ihm
+        // heraus aufgeht.
+        //
+        // Der Zustand ist vorher schon umgestellt: liegt steht auf false, und
+        // die Ansicht nimmt weder Tasten noch Beruehrungen mehr an. Was hier
+        // noch laeuft, ist reine Anzeige - keine Entscheidung haengt daran.
+        final View alt = wurzel;
+        if (alt != null && alt.getParent() instanceof ViewGroup) {
+            alt.setOnKeyListener(null);
+            alt.setFocusable(false);
+            alt.setFocusableInTouchMode(false);
+            alt.setClickable(false);
+            long dauer = Bewegung.dauer(alt.getContext(), Bewegung.LANG);
+            if (dauer <= 0) {
+                ((ViewGroup) alt.getParent()).removeView(alt);
+            } else {
+                alt.animate().alpha(0f).scaleX(1.04f).scaleY(1.04f)
+                    .setDuration(dauer).setInterpolator(Bewegung.hinaus()).withLayer()
+                    .withEndAction(() -> {
+                        if (alt.getParent() instanceof ViewGroup) {
+                            ((ViewGroup) alt.getParent()).removeView(alt);
+                        }
+                    })
+                    .start();
+            }
         }
         wurzel = null;
         ladeKasten = null;
