@@ -54,6 +54,28 @@ public final class Bilder {
     private static final String AGENT =
         "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36";
 
+    /**
+     * Mit wie vielen Bits je Bildpunkt ein Titelbild im Speicher liegt.
+     *
+     * <p><b>Zwei statt vier Byte.</b> Gemessen am 2026-08-28 auf dem Handy-
+     * Emulator, erste 45 Sekunden nach dem Start: <em>165 Verdraengungen</em>
+     * bei einem randvollen Speicher (46610 von 49152 KB). Genau das ist das
+     * gemeldete Flackern: was verdraengt wurde, faengt beim naechsten Zeichnen
+     * wieder beim Platzhalter an - und beim Start wird sechsmal gezeichnet.
+     *
+     * <p>Der Titelhintergrund allein wiegt schwer. Er wird in Bildschirmbreite
+     * dekodiert; ein Quellbild von 1280 mal 720 ergibt in ARGB_8888 3,7 MB, und
+     * fuenf davon sind ein Drittel des ganzen Speichers.
+     *
+     * <p>Ein Titelbild ist ein Foto ohne Transparenz - hinter ihm liegt der
+     * gestaltete Platzhalter, davor ein Verlauf. RGB_565 halbiert den Bedarf
+     * genau und ist an einem Foto dieser Groesse nicht zu unterscheiden. Was
+     * damit *nicht* geht, ist Transparenz: ein PNG mit durchsichtigen Stellen
+     * bekaeme Schwarz dahinter. Anbieter liefern Poster als JPEG oder WebP,
+     * und der Fall ist in dieser App keiner.
+     */
+    private static final Bitmap.Config FARBEN = Bitmap.Config.RGB_565;
+
     private static final ExecutorService netz = Executors.newFixedThreadPool(3);
     private static final Handler haupt = new Handler(Looper.getMainLooper());
 
@@ -453,6 +475,7 @@ public final class Bilder {
         BitmapFactory.decodeByteArray(roh, 0, roh.length, masse);
         BitmapFactory.Options einstellung = new BitmapFactory.Options();
         einstellung.inSampleSize = schrittweite(masse, breite, hoehe);
+        einstellung.inPreferredConfig = FARBEN;
         return BitmapFactory.decodeByteArray(roh, 0, roh.length, einstellung);
     }
 
@@ -463,6 +486,7 @@ public final class Bilder {
         if (masse.outWidth <= 0 || masse.outHeight <= 0) return null;
         BitmapFactory.Options einstellung = new BitmapFactory.Options();
         einstellung.inSampleSize = schrittweite(masse, breite, hoehe);
+        einstellung.inPreferredConfig = FARBEN;
         return BitmapFactory.decodeFile(datei.getAbsolutePath(), einstellung);
     }
 
