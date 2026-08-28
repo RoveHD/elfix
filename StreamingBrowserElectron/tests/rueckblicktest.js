@@ -555,6 +555,78 @@ pruefe("Der Zeitraum wird benannt, nicht behauptet",
   /tage >= 90 \? `Dein Jahr \$\{zeitraum\}` : `Dein ELFIX-Rückblick · \$\{zeitraum\}`/.test(RENDERER),
   "drei Wochen in einem Jahr sind kein Jahresrueckblick");
 
+
+// --- YouTube zaehlt eigens ---------------------------------------------------
+//
+// Gemeldet: "youtube videos muessen als extra statistik rein und duerfen nicht
+// normal reingerechnet werden". Sie wurden es: gattungBestimmen kannte nur
+// film/anime/serie, alles andere fiel auf "serie". An der echten Ablage waren
+// das 2 von 224 Sitzungen - aber eine von siebzehn Stunden, also fast sechs
+// Prozent der gemessenen Zeit, und das Video stand in "Deine meistgesehenen
+// Serien".
+{
+  const stunde = 3600;
+  const sitzung = (id, titel, url, anbieter, sekunden, tag) => ({
+    id, titel, url, anbieter, sekunden,
+    providerId: anbieter, favoriteId: id, season: 1, episode: 1,
+    qualitaet: "gemessen", abgeschlossen: true, wiederholung: false,
+    begonnenAm: `2026-08-${tag}T18:00:00.000Z`,
+    beendetAm: `2026-08-${tag}T19:00:00.000Z`,
+    gattung: statistik.gattungBestimmen({ url, providerName: anbieter })
+  });
+  const saetze = [
+    sitzung("a", "Eine Serie", "https://aniworld.to/anime/stream/x/staffel-1/episode-1", "Aniworld", stunde, "20"),
+    sitzung("b", "Ein Video", "https://www.youtube.com/watch?v=abc", "Youtube", stunde, "21")
+  ];
+  const aus = statistik.auswerten(saetze, {});
+
+  pruefe("YouTube faellt nicht mehr auf die Gattung Serie",
+    statistik.gattungBestimmen({ url: "https://www.youtube.com/watch?v=abc" }) === "youtube",
+    statistik.gattungBestimmen({ url: "https://www.youtube.com/watch?v=abc" }));
+  pruefe("Die Gesamtzeit enthaelt kein YouTube",
+    aus.sekunden === stunde, `${aus.sekunden} statt ${stunde}`);
+  pruefe("Ein Video steht nicht unter den Serien",
+    !aus.serien.some((eintrag) => /Video/.test(eintrag.titel)),
+    aus.serien.map((e) => e.titel).join(", ") || "(leer)");
+  pruefe("Es steht stattdessen unter den Videos",
+    aus.videos.videos === 1 && aus.videos.sekunden === stunde && aus.videos.liste[0].titel === "Ein Video",
+    JSON.stringify({ videos: aus.videos.videos, sekunden: aus.videos.sekunden }));
+  pruefe("Auch die Tage zaehlen ohne YouTube",
+    aus.tage === 1, `${aus.tage} statt 1`);
+  pruefe("Und der Zaehler der gemessenen Saetze ebenfalls",
+    aus.sekundenGesamt === 1, `${aus.sekundenGesamt} statt 1`);
+
+  // Der Grund, warum nicht die abgelegte Gattung gefragt wird: Saetze von vor
+  // dieser Aenderung tragen "serie". Sie muessen trotzdem als Video zaehlen -
+  // sonst bliebe jeder Rueckblick auf die Vergangenheit falsch.
+  const alt = { ...saetze[1], gattung: "serie" };
+  pruefe("Ein alter Satz mit gattung:serie zaehlt trotzdem als Video",
+    statistik.istVideoQuelle(alt) === true);
+  const ausAlt = statistik.auswerten([saetze[0], alt], {});
+  pruefe("Und faellt damit auch rueckwirkend aus der Gesamtzeit",
+    ausAlt.sekunden === stunde && ausAlt.videos.videos === 1,
+    JSON.stringify({ sekunden: ausAlt.sekunden, videos: ausAlt.videos.videos }));
+
+  // Ohne Videos darf die Anzeige nicht auf Sonderfaelle pruefen muessen.
+  const ohne = statistik.auswerten([saetze[0]], {});
+  pruefe("Ohne Videos steht dort trotzdem ein Objekt",
+    ohne.videos && ohne.videos.videos === 0 && Array.isArray(ohne.videos.liste));
+}
+
+// Der Bildplatz einer Statistikzeile steht immer - auch ohne Bild. Vorher
+// entstand ohne Bild gar kein Element, und die Zeile sah anders aus als alle
+// anderen ("Horse Camp": vier Sitzungen, aber kein Eintrag in der Ablage mehr,
+// also kein Bild).
+pruefe("Die Statistikzeile hat immer einen Bildplatz",
+  /zeile\.append\(reviewPoster\(eintrag\)\);/.test(RENDERER)
+  && /review-poster-leer/.test(RENDERER));
+pruefe("Ein kaputtes Bild faellt genau einmal auf den Platzhalter",
+  /removeEventListener\("error", beiFehler\)/.test(RENDERER),
+  "sonst koennte der Austausch sich selbst erneut ausloesen");
+pruefe("Der Rueckblick zeigt YouTube als eigenen Abschnitt",
+  /reviewTitelliste\("Deine YouTube-Videos"/.test(RENDERER)
+  && /in keiner Zahl oben enthalten/.test(RENDERER));
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

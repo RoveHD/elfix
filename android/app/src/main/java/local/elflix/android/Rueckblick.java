@@ -171,12 +171,39 @@ final class Rueckblick {
             daten.optJSONArray("serien"), zeit, "sekunden"));
         stuecke.addAll(titelliste(context, "Deine Filme",
             daten.optJSONArray("filme"), zeit, "sekunden"));
+        // YouTube steht fuer sich - und mit einem Satz dazu, warum.
+        //
+        // Ein Reaktionsvideo ist keine Serienfolge. Solange beides in einem Topf
+        // lief, verschob es jede Zahl daneben: Gesamtzeit, Genres, Folgen,
+        // staerkster Tag, Serie des Jahres. Ohne den Satz faende jemand seine
+        // Stunde YouTube in der Gesamtzeit nicht wieder und hielte die
+        // Statistik fuer kaputt.
+        JSONObject videos = daten.optJSONObject("videos");
+        if (videos != null && videos.optInt("videos", 0) > 0) {
+            stuecke.addAll(titelliste(context, "Deine YouTube-Videos",
+                videos.optJSONArray("liste"), zeit, "sekunden"));
+            stuecke.add(satz(context, videoFussnote(videos), Theme.TEXT_DISABLED, 11));
+        }
+
         JSONArray wiederholt = daten.optJSONArray("wiederholteste");
         if (wiederholt != null && wiederholt.length() > 0) {
             stuecke.addAll(titelliste(context, "Am häufigsten wiederholt",
                 wiederholt, zeit, "wiederholungen"));
         }
         return stuecke;
+    }
+
+    /** Der Satz unter den Videos - dieselben Worte wie am Rechner. */
+    private static String videoFussnote(JSONObject videos) {
+        int anzahl = videos.optInt("videos", 0);
+        int tage = videos.optInt("tage", 0);
+        double sekunden = videos.optDouble("sekunden", 0);
+        StringBuilder satz = new StringBuilder();
+        satz.append(anzahl).append(anzahl == 1 ? " Video" : " Videos");
+        if (tage > 0) satz.append(" an ").append(tage).append(tage == 1 ? " Tag" : " Tagen");
+        if (sekunden > 0) satz.append(", zusammen ").append(dauer(sekunden));
+        satz.append(". Zählt eigens und ist in keiner Zahl oben enthalten.");
+        return satz.toString();
     }
 
     private static String wochentag(int nummer) {
