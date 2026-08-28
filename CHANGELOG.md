@@ -3,6 +3,43 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.56.0 — 28. August 2026
+
+YouTube zählte als Serie mit — und eine Zeile in der Statistik hatte kein Bild.
+
+**YouTube.** Die Gattungsbestimmung kannte Film, Anime und Serie; alles andere
+fiel auf „Serie". Ein Reaktionsvideo von einer Stunde lief damit in dieselbe
+Rechnung wie eine Serienfolge. In echten Zahlen: 2 von 224 Sitzungen, aber eine
+von siebzehn Stunden — 5,9 % der gemessenen Zeit. Das Video stand in „Deine
+meistgesehenen Serien" und verschob Gesamtzeit, Genres, Folgenzahl, stärksten
+Tag und die Serie des Jahres.
+
+YouTube ist jetzt eine eigene Gattung und wird **vor** jeder Zählung
+herausgenommen, nicht erst bei der Anzeige. Was es betrifft, steht als eigener
+Abschnitt daneben: Zeit, Anzahl, Tage und eine kleine Bestenliste. Bewusst
+knapp — Genres, Strecken und ein „Video des Jahres" geben die Daten nicht her.
+Darunter steht ein Satz, dass diese Zeit in keiner Zahl darüber enthalten ist;
+sonst sucht man seine Stunde vergeblich und hält die Statistik für kaputt.
+
+Erkannt wird an Adresse und Anbieter, nicht an der abgelegten Gattung: alte
+Sitzungen tragen „serie" und zählen trotzdem als Video. Umgeschrieben wird
+nichts, es wird nur richtig gelesen. Aus 17,00 h werden damit 15,98 h regulär
+und 1,01 h YouTube daneben. Android bekommt dasselbe — es rechnet mit
+demselben Modul.
+
+**Das fehlende Bild.** Ohne Bild entstand gar kein Element, und die Zeile
+verlor ihren Bildplatz: Titel und Anbieter rutschten nach links und standen auf
+einer Linie. Der Grund ist harmloser, als er aussieht — die Zeile kommt aus den
+Sitzungen, das Bild aus der Ablage. Wer einen Titel aus der Mediathek löscht,
+behält seine Sitzungen; die Statistik vergisst nichts. Dann gibt es eben kein
+Bild mehr. Jetzt steht dort derselbe gestaltete Platzhalter wie auf den Karten,
+und ein Bild, das sich nicht laden lässt, fällt genau einmal darauf zurück.
+
+**Der Geräteabgleich** rechnet richtig zusammen — nachgesehen, nicht vermutet:
+keine doppelten Sitzungen, keine Überschneidungen. Eine Folge zählt einmal, auch
+wenn sie über zwei Geräte lief; die Zeit addiert sich, weil die Sätze
+verschiedene Stücke abdecken.
+
 ## 1.55.1 — 28. August 2026
 
 Nachtrag zu 1.55.0: die Startseite konnte in der falschen Reihenfolge
