@@ -3,6 +3,39 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.65.0 — 28. August 2026
+
+**In der App waren Wörter abgeschnitten.** Gemeldet und nachgesehen — es waren
+drei verschiedene Ursachen, keine davon ein Zufall.
+
+*Auf den Kacheln.* Die Unterzeile einer Kachel durfte genau eine Zeile hoch
+sein. Eine Kachel ist auf dem Telefon 137 dp breit, und dort stand
+„Nächste Folge: Staffel 1 Folge 4“ — das passt nicht in eine Zeile und wurde
+zu „Nächste Folge: Staffel 1 Folg…“. Genauso erging es dem Grund unter einem
+Vorschlag, der Folgenzeile in den Listen, dem Namen eines Anbieters und der
+Unterzeile des Titelbilds. Diese siebzehn Stellen dürfen jetzt zwei Zeilen
+hoch sein. Knöpfe, Reiter und die Zeitangabe bleiben einzeilig — ein Knopf, der
+umbricht, sprengt seine Reihe.
+
+*Bei den Titeln.* Zwei Zeilen reichen für einen Serientitel oft nicht:
+„Attack on Titan - Movie Teil 3: Gebrüll…“ und „A Herbivorous Dragon of 5,000
+Years…“. Kacheln und Vorschläge geben dem Titel jetzt drei Zeilen. Die dritte
+kostet nur dort Höhe, wo sie gebraucht wird.
+
+*In der Kopfzeile am Fernseher.* Dort stand „Einstellunge“. Seit die Zeile den
+Knopf „Start“ trägt, sind es fünf Knöpfe: gemessen auf 1920x1080 brauchten sie
+733 dp, das Logo 150 — zusammen 883, verfügbar waren 864. Was darüber
+hinausging, schnitt die Randbegrenzung ab, und das war das letzte Wort. Die
+Knöpfe sind schmaler geworden und das Logo kleiner, zusammen 805 dp. Dahinter
+liegt eine Sicherung: die Leiste steht jetzt in einem Schieber. Wird die
+Schrift des Geräts größer oder kommt ein Knopf dazu, wandert sie, statt ein
+Wort abzuschneiden — und das Steuerkreuz zieht den Knopf, auf dem der Fokus
+steht, von selbst in den sichtbaren Teil.
+
+Geprüft am Telefon und am Fernseher: die Kachelunterzeile bricht um, der lange
+Anime-Titel steht vollständig, „Einstellungen“ steht ganz da, und der Fokus
+erreicht alle fünf Knöpfe der Kopfzeile weiterhin.
+
 ## 1.64.0 — 28. August 2026
 
 Drei Meldungen aus der App.
