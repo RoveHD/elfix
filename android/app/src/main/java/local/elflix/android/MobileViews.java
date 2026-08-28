@@ -325,7 +325,15 @@ final class MobileViews {
         // Der Fortschrittsbalken sitzt im Bild, nicht darunter: unter dem Titel
         // waere er eine weitere Zeile, und die Liste soll auf einem Telefon so
         // viele Eintraege wie moeglich zeigen.
-        if (prozent > 0) {
+        //
+        // <p>Angelegt wird er immer, wo ueberhaupt einer vorgesehen ist
+        // ({@code balkenDp > 0}) - auch bei null Prozent. Vorher entstand er
+        // nur ab einem Prozent, und das hatte zwei sichtbare Folgen: eine
+        // gerade begonnene Folge hatte keinen Balken, und wenn der Fortschritt
+        // im Takt nachzog, musste eine Ansicht *nachgelegt* werden. Ein Takt,
+        // der Ansichten nachlegt, baut die Karte um - genau das, was hier nicht
+        // passieren soll. Jetzt steht die Spur da und nur ihre Breite wandert.
+        if (balkenDp > 0) {
             View spur = new View(context);
             GradientDrawable spurBg = new GradientDrawable();
             spurBg.setColor(Color.argb(150, 0, 0, 0));
@@ -347,13 +355,35 @@ final class MobileViews {
             balkenParams.gravity = Gravity.BOTTOM;
             poster.addView(balken, balkenParams);
             // Die Breite steht erst fest, wenn der Kasten gemessen ist.
-            poster.post(() -> {
-                FrameLayout.LayoutParams neu = (FrameLayout.LayoutParams) balken.getLayoutParams();
-                neu.width = Math.max(dp(context, 3), poster.getWidth() * Math.min(100, prozent) / 100);
-                balken.setLayoutParams(neu);
-            });
+            poster.post(() -> balkenBreiteSetzen(poster, balken, prozent));
         }
         return poster;
+    }
+
+    /**
+     * Die Breite des Fortschrittsbalkens im Bild setzen.
+     *
+     * <p>Ohne Animation, und mit Absicht: waehrend einer Folge kommt alle paar
+     * Sekunden ein neuer Stand. Ein Balken, der jedes Mal hinueberwandert,
+     * waere die Unruhe, die hier abgestellt werden soll.
+     *
+     * <p>Bei null Prozent bleibt er null breit - die Spur dahinter steht
+     * trotzdem, und die Karte behaelt ihre Masse.
+     */
+    static void balkenBreiteSetzen(View poster, View balken, int prozent) {
+        if (poster == null || balken == null) return;
+        int wert = Math.min(100, Math.max(0, prozent));
+        ViewGroup.LayoutParams masse = balken.getLayoutParams();
+        if (masse == null) return;
+        int breite = poster.getWidth();
+        if (breite <= 0) {
+            poster.post(() -> balkenBreiteSetzen(poster, balken, prozent));
+            return;
+        }
+        int neu = wert <= 0 ? 0 : Math.max(dp(poster.getContext(), 3), breite * wert / 100);
+        if (masse.width == neu) return;
+        masse.width = neu;
+        balken.setLayoutParams(masse);
     }
 
     /**
@@ -962,17 +992,20 @@ final class MobileViews {
             karte.addView(zeile);
         }
 
-        if (standText != null && !standText.isEmpty()) {
-            TextView stelle = new TextView(context);
-            stelle.setTag(Mitschaustand.MARKE_STAND);
-            stelle.setText(standText);
-            stelle.setTextColor(Theme.TEXT_DISABLED);
-            stelle.setTextSize(10);
-            stelle.setMaxLines(1);
-            stelle.setEllipsize(TextUtils.TruncateAt.END);
-            stelle.setPadding(0, dp(context, 2), 0, 0);
-            karte.addView(stelle);
-        }
+        // Angelegt wird sie immer, auch ohne Text - genau wie die Zeile
+        // darunter und aus demselben Grund: der Fortschritt zieht im Takt
+        // nach, und ein Takt, der Ansichten nachlegen muesste, waere ein Takt,
+        // der die Seite umbaut. Ohne Text nimmt sie keine Hoehe ein.
+        TextView stelle = new TextView(context);
+        stelle.setTag(Mitschaustand.MARKE_STAND);
+        stelle.setText(standText == null ? "" : standText);
+        stelle.setTextColor(Theme.TEXT_DISABLED);
+        stelle.setTextSize(10);
+        stelle.setMaxLines(1);
+        stelle.setEllipsize(TextUtils.TruncateAt.END);
+        stelle.setPadding(0, dp(context, 2), 0, 0);
+        stelle.setVisibility(standText == null || standText.isEmpty() ? View.GONE : View.VISIBLE);
+        karte.addView(stelle);
 
         // Angelegt wird sie auch leer: sie kommt und geht mit den Meldungen
         // der Runde, und der Takt haengt keine Ansichten nach - er schreibt

@@ -1851,6 +1851,7 @@ ipcMain.handle("geraete:jetzt-abgleichen", () => {
   geraete.vollAbgleichen();
   geraete.abgleichen(geraeteStaende(), geraeteZurueckgehalten());
   geraete.anhaengen(geraeteSitzungen());
+  geraete.watchpartySetzen(geraeteWatchparty());
   return geraete.status();
 });
 
@@ -5358,6 +5359,7 @@ const geraete = new Geraeteabgleich({
   onEintrag: (stand, at) => uebernimmGeraeteStand(stand, at),
   onWeg: (key) => entferneGeraeteEintrag(key),
   onSitzung: (sitzung) => uebernimmGeraeteSitzung(sitzung),
+  onWatchparty: (satz, at) => uebernimmGeraeteWatchparty(satz, at),
   // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
   onFertig: (anzahl) => {
     saveFavorites();
@@ -5464,6 +5466,81 @@ function geraeteSitzungen() {
   return liste;
 }
 
+// Die Watchparty-Einstellungen dieses Kontos, wie sie hinausgehen.
+//
+// Raeume und Beitritte, sonst nichts. Ausdruecklich *nicht* die Serveradresse:
+// sie kann je Geraet eine andere sein - der Rechner erreicht das Relay im
+// Heimnetz, das Telefon von draussen ueber einen anderen Namen -, und sie zu
+// ueberschreiben hiesse, ein funktionierendes Geraet abzuhaengen. Und
+// ausdruecklich nicht die Geraetekennung: die gehoert dem Geraet und nicht dem
+// Konto, sonst gelten zwei Geraete im Raum als eines.
+function geraeteWatchparty() {
+  const raeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  return {
+    rooms: raeume.map((code) => String(code || "").trim()).filter(Boolean),
+    joined: (watchpartyLokal.joined || []).map((eintrag) => ({
+      key: String(eintrag?.key || ""),
+      room: String(eintrag?.room || "")
+    })).filter((eintrag) => eintrag.key)
+  };
+}
+
+// Und wie sie hereinkommen.
+//
+// Der Kanal hat schon entschieden, dass dieser Satz neuer ist als der zuletzt
+// bekannte - hier wird nur noch uebernommen. Ersetzt und nicht vereinigt: wer
+// einen Raum entfernt oder eine Runde verlaesst, schickt eine kuerzere Liste,
+// und die soll gelten. Eine Vereinigung holte beides ewig zurueck.
+function uebernimmGeraeteWatchparty(satz, at) {
+  if (!satz || typeof satz !== "object") return false;
+  let geaendert = false;
+
+  const raeume = Array.isArray(satz.rooms)
+    ? satz.rooms.map((code) => String(code || "").trim()).filter(Boolean)
+    : null;
+  if (raeume) {
+    const bisher = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+    if (bisher.join(";") !== raeume.join(";")) {
+      settings.watchparty = { ...(settings.watchparty || {}), rooms: raeume };
+      saveSettings();
+      syncWatchparty();
+      geaendert = true;
+      console.log(`[ELFIX GERAETE] Raeume vom anderen Geraet uebernommen: ${raeume.join(", ") || "(keine)"}`);
+    }
+  }
+
+  const beitritte = Array.isArray(satz.joined)
+    ? satz.joined.map((eintrag) => ({
+      key: String(eintrag?.key || ""),
+      room: String(eintrag?.room || "")
+    })).filter((eintrag) => eintrag.key)
+    : null;
+  if (beitritte) {
+    const zeile = (liste) => liste.map((e) => `${e.room}|${e.key}`).sort().join(";");
+    if (zeile(watchpartyLokal.joined || []) !== zeile(beitritte)) {
+      watchpartyLokal = { ...watchpartyLokal, joined: beitritte };
+      saveWatchpartyLocal();
+      // Damit restoreWatchparty die Beitritte wirklich nachtraegt: es laeuft
+      // sonst nur einmal je Verbindung, und diese Verbindung steht laengst.
+      for (const raum of new Set(beitritte.map((e) => e.room))) {
+        watchpartyWiederhergestellt.delete(raum);
+      }
+      restoreWatchpartyJetzt();
+      geaendert = true;
+      console.log(`[ELFIX GERAETE] ${beitritte.length} Beitritt(e) vom anderen Geraet uebernommen`);
+    }
+  }
+  return geaendert;
+}
+
+// Die Beitritte fuer alle Raeume nachtragen, die gerade verbunden sind.
+function restoreWatchpartyJetzt() {
+  const eintraege = watchpartyShared || [];
+  for (const raum of new Set(eintraege.map((eintrag) => String(eintrag.room || "")))) {
+    if (raum) restoreWatchparty(eintraege, raum);
+  }
+}
+
 // Eine Sitzung von einem anderen Geraet. Sie kommt dazu oder sie ist schon da -
 // ueberschrieben wird nie: zwei Geraete koennen denselben Satz nicht
 // verschieden wissen.
@@ -5483,6 +5560,7 @@ function geraeteAbgleichSpaeter(verzoegerung = GERAETE_ABGLEICH_MS) {
     try {
       geraete.abgleichen(geraeteStaende(), geraeteZurueckgehalten());
       geraete.anhaengen(geraeteSitzungen());
+      geraete.watchpartySetzen(geraeteWatchparty());
     } catch (fehler) {
       console.log(`[ELFIX GERAETE] Abgleich fehlgeschlagen: ${fehler?.message || fehler}`);
     }
