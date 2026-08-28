@@ -3,6 +3,36 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.59.0 — 28. August 2026
+
+Die Bilder flackerten beim Start etwa fünfmal.
+
+Gemessen, erste 45 Sekunden nach dem Start: sechs komplette Neuaufbauten der
+Startseite in acht Sekunden, 280 Fehlgriffe im Bildspeicher gegen 399 Treffer —
+und **165 Verdrängungen** bei einem randvollen Speicher.
+
+Das ist die ganze Erklärung. Sechs Neuaufbauten allein flackern nicht: ein Bild
+aus dem Speicher steht im selben Zeichenlauf wieder da. Ein Bild aber, das
+zwischendurch verdrängt wurde, fängt beim nächsten Aufbau wieder beim
+Platzhalter an und muss neu von der Platte geholt werden — und das sieht man.
+
+Die Ursache war nicht die Zahl der Bilder, sondern ihr Gewicht: jedes lag mit
+vier Byte je Bildpunkt im Speicher. Der Titelhintergrund wird in
+Bildschirmbreite dekodiert und wiegt damit allein 3,7 MB; fünf davon sind ein
+Drittel des ganzen Speichers. Ein Titelbild ist aber ein Foto ohne Transparenz —
+hinter ihm liegt der gestaltete Platzhalter, davor ein Verlauf. Mit zwei Byte je
+Bildpunkt braucht es genau die Hälfte, und auf dem Schirm ist der Unterschied
+keiner.
+
+Danach: **null Verdrängungen**, 126 Fehlgriffe bei 126 verschiedenen Bildern —
+also genau ein Ladevorgang je Bild. Am Gerät nachgesehen: sechs Aufnahmen in
+Folge während der ersten Sekunden, alle bytegleich, während im Hintergrund
+weiter neu gezeichnet wurde.
+
+Die Neuaufbauten selbst bleiben — sie kommen von den Vorschlagsreihen, die
+nacheinander fertig werden, und jede bringt wirklich neuen Inhalt. Zu sehen
+sind sie jetzt nicht mehr.
+
 ## 1.58.0 — 28. August 2026
 
 Wer denselben Schlüssel hat, bekommt auch die Räume — und die Oberfläche hält still.
