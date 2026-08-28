@@ -1462,6 +1462,17 @@ public final class Mitschauen {
         return folgeAus(umgebung.adresse());
     }
 
+    /**
+     * Gibt dieses Geraet bei dem Titel, der hier offen steht, den Takt vor?
+     *
+     * <p>Gebraucht von den Intromarken: waehrend einer Runde wird nicht
+     * gelernt, weil der Player von aussen gefahren wird - beim Host aber
+     * schon, denn er ist derjenige, der ihn faehrt.
+     */
+    public boolean binHostHier() {
+        return binHost(schluessel());
+    }
+
     /* ------------------------------------------------------------- Hilfen */
 
     /** Der Titel, unter dem die offene Seite in der Runde bekannt ist. */

@@ -370,6 +370,87 @@ public class MainActivity extends Activity {
             + "target.scrollIntoView({block:'center'});"
             + "return 'ready';"
         + "})();";
+    /**
+     * Die Hosterliste anklicken - in den drei Formen, in denen sie vorkommt.
+     *
+     * <p>Bis hierher kannte diese Stelle genau eine: {@code a.watchEpisode},
+     * das Markup von AniWorld. Zwei Anbieter tragen es nicht (mehr):
+     *
+     * <ul>
+     *   <li><b>filmo.to</b> hat es nie getragen. Dort ist die Liste eine Reihe
+     *       von {@code [data-provider-chip]}, und der Player-Rahmen daneben
+     *       steht auf {@code d-none}, bis einer davon geklickt wurde. Der
+     *       Autostart fand also weder einen eingebetteten Player noch einen
+     *       Hosterlink und gab nach einer Minute auf ("Der Hoster hat keinen
+     *       Player geliefert") - auf dem Fernseher wie auf dem Telefon.
+     *   <li><b>s.to</b> hat im Sommer 2026 umgebaut. Die Liste sind jetzt
+     *       {@code button.link-box[data-play-url]}; {@code a.watchEpisode} und
+     *       {@code data-lang-key} gibt es dort nicht mehr. Aufgefallen ist das
+     *       nicht sofort, weil die neue Seite ihren Player gleich einbettet -
+     *       dieser Rueckfall wird also nur gebraucht, wenn das einmal
+     *       misslingt. Gefaehrlich war er trotzdem: er konnte nichts mehr.
+     * </ul>
+     *
+     * <p>Filmo braucht zwei Klicks und nicht einen. Der erste waehlt den
+     * Hoster aus - die Seite merkt ihn sich und schaltet den Rahmen auf
+     * "bereit", laedt aber noch nichts. Erst der zweite, auf den Abspielknopf
+     * in der Platzhalterflaeche, holt die Quelle und blendet den Rahmen ein.
+     * Gelesen am 2026-08-29 in {@code build/assets/app-*.js}: die beiden
+     * Schritte heissen dort {@code Mr()} und {@code Ar()}, und der zweite
+     * verlangt, dass der erste durch ist. Steht schon ein Hoster ausgewaehlt,
+     * faellt der erste Klick weg - ein zweites Mal denselben Chip zu treffen
+     * setzt den Rahmen zurueck.
+     *
+     * <p>Geklickt wird mit einer ganzen Zeigergeste und nicht mit
+     * {@code click()} allein: die Chips sind {@code <div role="button">} und
+     * haengen an einem Horcher weiter oben - dieselbe Ueberlegung wie bei der
+     * Fassungsvorwahl im Kern. AniWorlds Zweig bleibt beim blossen
+     * {@code click()}, weil genau das dort seit jeher funktioniert.
+     */
+    private static final String HOSTER_KLICK_JS =
+        "(function(){"
+            + "function visible(el){var r=el.getBoundingClientRect();return r.width>0&&r.height>0;}"
+            // Wie der Hoster heisst - je nach Anbieter steht es woanders.
+            + "function name(el){return ((el.getAttribute('data-provider-name')||'')+' '"
+                + "+(el.getAttribute('aria-label')||'')+' '+(el.textContent||'')).toLowerCase();}"
+            // Bevorzugt der Hoster, den ELFIX zu fuehren weiss: VOEs Player
+            // bringt die Bedienelemente mit, an denen der Rest dieser Kette
+            // haengt. Sonst der erste, der angeboten wird.
+            + "function voe(list){return list.filter(function(el){return /voe/.test(name(el));})[0]||list[0];}"
+            + "function tap(el){el.scrollIntoView({block:'center'});"
+                + "['pointerdown','mousedown','mouseup','click'].forEach(function(art){"
+                    + "try{el.dispatchEvent(new MouseEvent(art,{bubbles:true,cancelable:true,view:window}));}"
+                    + "catch(_){}"
+                + "});}"
+            // filmo.to: erst der Chip, dann sein Abspielknopf.
+            + "var rahmen=document.querySelector('[data-provider-frame]');"
+            + "if(rahmen){"
+                + "var chips=Array.prototype.slice.call(document.querySelectorAll('[data-provider-chip]'))"
+                    + ".filter(visible);"
+                + "if(!chips.length)return '';"
+                + "var aktiv=chips.filter(function(c){return /(^|\\s)is-active(\\s|$)/.test(c.className||'');})[0];"
+                + "if(!aktiv)tap(voe(chips));"
+                + "var knopf=rahmen.querySelector('[data-provider-frame-play]');"
+                + "if(!knopf)return '';"
+                + "tap(knopf);"
+                + "return aktiv?'filmo-play':'filmo-chip+play';"
+            + "}"
+            // s.to seit dem Umbau: ein Klick, die Seite tauscht die Quelle des
+            // Rahmens aus, den sie ohnehin schon dastehen hat.
+            + "var boxen=Array.prototype.slice.call(document.querySelectorAll('.link-box[data-play-url]'))"
+                + ".filter(visible);"
+            + "if(boxen.length){tap(voe(boxen));return 'linkbox';}"
+            // AniWorld.
+            + "var links=Array.prototype.slice.call(document.querySelectorAll('a.watchEpisode'))"
+                + ".filter(visible);"
+            + "if(!links.length)return '';"
+            + "var pick=links.filter(function(a){"
+                + "return /voe/i.test(a.querySelector('h4')?a.querySelector('h4').textContent:'');"
+            + "})[0]||links[0];"
+            + "pick.scrollIntoView({block:'center'});"
+            + "pick.click();"
+            + "return 'clicked';"
+        + "})();";
     /** Last provider page that was an episode, kept because playing takes the frame off it. */
     private String lastEpisodeUrl;
     /**
@@ -9140,14 +9221,20 @@ public class MainActivity extends Activity {
         // Einspielen kostet also nichts.
         if (mitschauen != null) mitschauen.anPlayer(ansicht);
         org.json.JSONArray eintraege = FavoriteStore.ladeRoh(this);
-        // Waehrend einer laufenden Watchparty wird nicht gelernt. Der Player
-        // wird dann von aussen gefahren, und ein Sprung, den die Runde
-        // ausgeloest hat, ist keine Entscheidung dessen, der hier sitzt -
+        // Waehrend einer laufenden Watchparty wird nicht gelernt - beim Gast.
+        // Der Player wird dann von aussen gefahren, und ein Sprung, den die
+        // Runde ausgeloest hat, ist keine Entscheidung dessen, der hier sitzt -
         // daraus eine Intromarke zu lernen hiesse, fremde Sekunden als eigene
-        // Gewohnheit zu merken. Dieselbe Bedingung wie am Rechner
-        // ({@code lernen = !watchpartyLiveKeyForUrl(url)}); sie stand hier auf
-        // "immer lernen", solange es auf Android kein Live-Mitschauen gab.
-        boolean lernen = mitschauen == null || !mitschauen.laeuftMit();
+        // Gewohnheit zu merken.
+        //
+        // Beim Host schon, und das war der gemeldete Fehler: wer eine Serie in
+        // einer Runde schaut und jede Folge das Intro wegspult, brachte ELFIX
+        // damit nichts bei. Die Bedingung unterschied nicht zwischen "mein
+        // Player wird gezogen" und "ich ziehe ihn". Der Host ist derjenige,
+        // nach dem sich alle richten; sein Sprung ist seine Entscheidung.
+        // Dieselbe Unterscheidung wie am Rechner.
+        boolean lernen = mitschauen == null || !mitschauen.laeuftMit()
+            || mitschauen.binHostHier();
         if (marken != null) marken.einspielen(ansicht, activeProvider, seite, eintraege, lernen);
         if (qualitaet != null) qualitaet.einspielen(ansicht);
     }
@@ -9802,6 +9889,41 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Eine Weiterleitung nimmt den Autostart mit.
+     *
+     * <p>Der Fall, der das noetig macht: s.to hat seine Adressen umgezogen -
+     * {@code /serie/stream/<slug>/staffel-N/episode-M} heisst jetzt
+     * {@code /serie/<slug>/staffel-N/episode-M}, und die alte Form antwortet
+     * mit einem 301. Jeder Eintrag in "Weiterschauen", der vor dem Umzug
+     * entstanden ist, traegt noch die alte Adresse. Geoeffnet wurde die Folge
+     * damit weiterhin - aber {@code onPageStarted} bekam eine andere Adresse
+     * zu sehen als die scharf gemachte und entschaerfte den Autostart:
+     * "navigated to /serie/silo/staffel-1/episode-1". Der Vorhang ging nach
+     * einer halben Sekunde wieder auf, die Folgenseite stand da, und nichts
+     * lief. Gemessen am 2026-08-28 am Fire TV Stick.
+     *
+     * <p>Gefragt wird der Server, nicht geraten: {@code isRedirect()} ist
+     * genau die Auskunft "diesen Sprung habe ich angesagt". Eine Seite, die
+     * sich selbst per Skript woandershin schickt - die Werbung - traegt das
+     * nicht, und fuer sie bleibt es beim Entschaerfen.
+     *
+     * <p>Zusaetzlich muss das Ziel zum Anbieter gehoeren. Eine Weiterleitung
+     * auf ein Werbenetz waere formal auch eine Weiterleitung; ihr zu folgen
+     * hiesse, den Autostart auf eine fremde Seite zu richten.
+     */
+    private void autoStartUmleiten(String ziel, boolean erstpartei) {
+        if (!autoStartRequested || ziel == null || ziel.isEmpty()) return;
+        if (isSameUrl(ziel, autoStartUrl)) return;
+        if (!erstpartei && !safeHost(ziel).equalsIgnoreCase(safeHost(autoStartUrl))) return;
+        Log.i(TAG, "Autostart folgt der Weiterleitung: " + safePath(autoStartUrl)
+            + " -> " + safePath(ziel));
+        // Und "Erneut versuchen" gleich mit: sonst laeuft der zweite Anlauf
+        // wieder ueber die alte Adresse.
+        if (isSameUrl(startUrl, autoStartUrl)) startUrl = ziel;
+        autoStartUrl = ziel;
+    }
+
+    /**
      * Poll the page until a probe answers, instead of guessing how long a step takes.
      *
      * Every step of the chain waits on something the page produces at its own pace -- the hoster
@@ -9880,21 +10002,7 @@ public class MainActivity extends Activity {
             }, FASSUNG_NACHFASSEN_MS);
             return;
         }
-        awaitPage(webView, url,
-            "(function(){"
-                + "function visible(el){var r=el.getBoundingClientRect();return r.width>0&&r.height>0;}"
-                + "var links=Array.prototype.slice.call(document.querySelectorAll('a.watchEpisode'))"
-                    + ".filter(visible);"
-                + "if(!links.length)return '';"
-                // Prefer the hoster ELFIX is known to drive: VOE's player exposes the controls the
-                // rest of this chain relies on. Otherwise just take the first one offered.
-                + "var pick=links.filter(function(a){"
-                    + "return /voe/i.test(a.querySelector('h4')?a.querySelector('h4').textContent:'');"
-                + "})[0]||links[0];"
-                + "pick.scrollIntoView({block:'center'});"
-                + "pick.click();"
-                + "return 'clicked';"
-            + "})();",
+        awaitPage(webView, url, HOSTER_KLICK_JS,
             SystemClock.uptimeMillis() + AUTOSTART_HOSTER_TIMEOUT_MS,
             result -> {
                 Log.i(TAG, "Autostart hoster " + result);
@@ -11605,6 +11713,11 @@ public class MainActivity extends Activity {
             }
             spur("main", url, request.isRedirect() ? "weiterleitung" : "navigation",
                 "erlaubt", urteil.grund);
+            // Eine angesagte Weiterleitung ist kein Ortswechsel, sondern
+            // derselbe Ort unter neuer Adresse - der Autostart geht mit.
+            if (request.isRedirect() && provider == activeProvider) {
+                autoStartUmleiten(url, isPopupFirstParty(provider, url));
+            }
             return false;
         }
 

@@ -21,7 +21,7 @@
 
 const {
   auftragAnlegen, auftragGilt, naechsterSchritt, versuchVermerken,
-  berichtVerarbeiten, berichtLesen, startScript,
+  berichtVerarbeiten, berichtLesen, startScript, standTraegtNichts,
   MELDE_START, HOECHSTVERSUCHE, AUFTRAG_FRIST_MS, BERICHT_FRIST_MS, ABSTAND_MS,
   UEBERLAGERUNG_WAEHLER
 } = require("../src/watchparty-autostart");
@@ -593,6 +593,37 @@ const ereignis = (felder) => ({
     pruefe("30b. Ein stehender Host wird nicht hochgerechnet", steht === 12, String(steht));
     pruefe("30c. Ohne Uhrabgleich ebenso wenig", ohneUhr === 12, String(ohneUhr));
     pruefe("30d. Und ein absurd alter Stempel wird gedeckelt", lange === 42, String(lange));
+  }
+
+  /* ======================== 5. Eine Pause bei null ist kein Befehl */
+
+  // Gemeldet und am 2026-08-29 am Fire TV Stick nachgestellt: "Folge öffnen"
+  // aus der Watchparty liess den Player im Vollbild bei 0:00 stehen. Im
+  // Protokoll "Autostart fertig: pausiert bei 0s", danach im Sekundentakt
+  // "wirklich gespielt 0.0s". Der Grund war kein Fehler im Ablauf, sondern
+  // seine Folgerichtigkeit: den Titel hatte in der Runde noch nie jemand
+  // gestartet, sein Stand war "pausiert bei 0", und genau das stellte das
+  // Startskript her. Damit wartete jedes Mitglied auf jedes andere.
+  {
+    const leer = { videoTime: 0, timestamp: 1, playing: false, hatUhr: false };
+    const angefangen = { videoTime: 97, timestamp: 1, playing: false, hatUhr: false };
+    const laufend = { videoTime: 0, timestamp: 1, playing: true, hatUhr: true };
+    pruefe("31. Pausiert bei null ist ein Stand, dem niemand folgen kann",
+      standTraegtNichts(leer) === true);
+    pruefe("31b. Mitten in der Folge angehalten ist eine echte Ansage",
+      standTraegtNichts(angefangen) === false);
+    pruefe("31c. Und wer laeuft, laeuft - auch bei null",
+      standTraegtNichts(laufend) === false);
+    pruefe("31d. Ein Antippen bei 0,3s zaehlt noch als nicht angefangen",
+      standTraegtNichts({ videoTime: 0.3, playing: false }) === true);
+
+    // Und das ist der Punkt: dasselbe Skript startet jetzt, statt anzuhalten.
+    const skriptLeer = startScript("a|k|s1e1|1", leer, { playing: false });
+    const skriptPause = startScript("a|k|s1e1|1", angefangen, { playing: false });
+    pruefe("31e. Beim leeren Stand geht das Startskript auf Wiedergabe",
+      /SOLL_LAUFEN = true/.test(skriptLeer));
+    pruefe("31f. Beim echten Pausenstand bleibt es beim Anhalten",
+      /SOLL_LAUFEN = false/.test(skriptPause));
   }
 
   const fehlgeschlagen = pruefungen.filter((p) => !p).length;

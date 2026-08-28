@@ -80,6 +80,43 @@ const UEBERLAGERUNG_WAEHLER = [
   "[title='Play']"
 ];
 
+/**
+ * Bis hierher gilt eine Stelle als "noch gar nicht angefangen".
+ *
+ * <p>Eine Sekunde und nicht null: ein Player, der kurz angetippt wurde, steht
+ * bei 0,3 - das ist derselbe Fall wie null und kein Stand, dem jemand folgen
+ * wollte.
+ */
+const LEERE_STELLE_S = 1;
+
+/**
+ * Ein Rundenstand, dem niemand folgen kann.
+ *
+ * <p>Der Fall, der das noetig macht - am 2026-08-29 am Fire TV Stick
+ * nachgestellt und im Protokoll belegt: In der Runde stand ein Titel, den noch
+ * niemand gestartet hatte. Sein Stand war damit "pausiert bei 0". Wer
+ * "Folge öffnen" drueckte, bekam den Player im Vollbild, die Ueberlagerung des
+ * Hosters wurde geklickt, die Quelle lud - und dann hielt das Startskript
+ * pflichtschuldig wieder an, weil der Stand der Runde nun einmal "pausiert"
+ * sagte. Im Protokoll: {@code Autostart fertig: pausiert bei 0s}, danach
+ * {@code Messung: 0% (0.0/1494.4s) wirklich gespielt 0.0s} im Sekundentakt.
+ *
+ * <p>Das ist eine Sackgasse und keine Synchronitaet: der Stand, dem gefolgt
+ * wird, ist der von <em>niemandem</em>. Jedes Mitglied oeffnet, spiegelt die
+ * Pause und wartet auf ein anderes Mitglied, das aus demselben Grund wartet.
+ * Beim zweiten Druck lief es sofort - da stand die Runde bei 97 Sekunden und
+ * "laeuft", also gab es endlich etwas zu spiegeln.
+ *
+ * <p>Deshalb: eine Pause bei null ist kein Befehl. Wer oeffnet, faengt an.
+ * Sobald wirklich jemand schaut - laufend, oder angehalten mitten in der
+ * Folge -, gilt wieder die Runde, und das ist der ganze Sinn der Sache.
+ */
+function standTraegtNichts(ereignis) {
+  if (!ereignis) return true;
+  if (ereignis.playing) return false;
+  return !(Number(ereignis.videoTime) > LEERE_STELLE_S);
+}
+
 /** Wie oft ein Auftrag hoechstens anklopft. Danach ist es ein Fehlschlag mit Begruendung. */
 const HOECHSTVERSUCHE = 4;
 /** Wie lange ein Auftrag ueberhaupt gilt - danach ist die Lage eine andere. */
@@ -264,7 +301,7 @@ function berichtLesen(zeile) {
 function startScript(auftragId, ereignis, optionen = {}) {
   const kennung = JSON.stringify(String(auftragId || ""));
   const waehler = JSON.stringify(UEBERLAGERUNG_WAEHLER);
-  const sollLaufen = optionen.playing ? "true" : "false";
+  const sollLaufen = (optionen.playing || standTraegtNichts(ereignis)) ? "true" : "false";
   const melde = JSON.stringify(MELDE_START);
   const phaseMelder = JSON.stringify(MELDE_PHASE);
   return `(async () => {
@@ -486,6 +523,8 @@ module.exports = {
   AUFTRAG_FRIST_MS,
   BERICHT_FRIST_MS,
   ABSTAND_MS,
+  LEERE_STELLE_S,
+  standTraegtNichts,
   auftragAnlegen,
   auftragGilt,
   naechsterSchritt,

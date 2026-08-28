@@ -149,8 +149,15 @@ function buehne(marke, optionen = {}) {
     }
   };
   const fenster = {};
+  // Eine Uhr, die nur auf Zuruf laeuft. Das Skript meldet einen Sprung erst,
+  // wenn das Spulen zur Ruhe gekommen ist - ohne steuerbare Uhr liesse sich
+  // weder pruefen, dass es wartet, noch dass es danach meldet.
+  let uhren = [];
+  let uhrNummer = 0;
   const kontext = {
     window: fenster, document: dokument, console: { log: (zeile) => meldungen.push(String(zeile)) },
+    setTimeout: (fn) => { uhrNummer += 1; uhren.push({ id: uhrNummer, fn }); return uhrNummer; },
+    clearTimeout: (id) => { uhren = uhren.filter((uhr) => uhr.id !== id); },
     Array, Number, Math, Date, JSON, String, Boolean, Object
   };
   kontext.globalThis = kontext;
@@ -160,13 +167,27 @@ function buehne(marke, optionen = {}) {
   const feuern = (name) => {
     for (const fn of horcher[name] || []) fn();
   };
+  // Die Ruhe nach dem Spulen: hier laeuft die Uhr ab, auf die das Skript
+  // wartet, bevor es einen Lauf als beendet ansieht.
+  const ruhen = () => {
+    const faellig = uhren;
+    uhren = [];
+    for (const uhr of faellig) uhr.fn();
+  };
+  const einmalSpulen = (nach) => { feuern("seeking"); video.currentTime = nach; feuern("seeked"); };
   return {
-    ergebnis, meldungen, video, fenster, kontext, koerper,
+    ergebnis, meldungen, video, fenster, kontext, koerper, ruhen,
     knopf: () => koerper.kinder[0] || null,
     // Ein Stueck weiterspielen: so, wie der Player es meldet.
     spielen: (bis) => { video.currentTime = bis; feuern("timeupdate"); },
-    // Von Hand spulen: erst seeking, dann steht die neue Stelle, dann seeked.
-    spulen: (nach) => { feuern("seeking"); video.currentTime = nach; feuern("seeked"); },
+    // Von Hand spulen und die Hand wieder wegnehmen.
+    spulen: (nach) => { einmalSpulen(nach); ruhen(); },
+    // Mehrere Spruenge ohne Pause dazwischen - Pfeiltasten, oder einmal zu
+    // weit und einmal zurueck. Erst am Ende kommt die Ruhe.
+    tippen: (...stellen) => { for (const stelle of stellen) einmalSpulen(stelle); ruhen(); },
+    // Spulen, ohne die Hand wegzunehmen - zum Pruefen, dass waehrenddessen
+    // noch nichts gemeldet wird.
+    spulenRoh: einmalSpulen,
     klicken: () => koerper.kinder[0].horcher.click({ preventDefault() {}, stopPropagation() {} }),
     nachreichen: (neu, lernen = true) => fenster.__elfixMarke.aktualisieren(neu, lernen),
     sichtbar: () => koerper.kinder[0]?.style.display === "block",
@@ -202,6 +223,66 @@ function buehne(marke, optionen = {}) {
   pruefe("Und nichts aus dem hinteren Teil der Folge",
     b.sprungMeldungen().length === 1,
     "dort wird Handlung uebersprungen, kein Intro");
+}
+
+// --- Ein Lauf aus mehreren Spruengen -------------------------------------------
+//
+// Gemeldet: "wenn der Host immer mit Pfeiltasten nach vorne skippt bis zum
+// Start der Folge" und "wenn man zu weit spult am Anfang und dann zurueck".
+// Beides war bisher keine Marke: zehn Spruenge zu je zehn Sekunden sind jeder
+// fuer sich kuerzer als MIN_DAUER_S, und beim Zurueckspulen wurde der
+// Ueberschuss gelernt statt der Stelle, an der die Folge wirklich anfaengt.
+{
+  const b = buehne(null);
+  b.spielen(4);
+  // Zehnmal die Pfeiltaste: 4 -> 14 -> 24 -> ... -> 94.
+  b.tippen(14, 24, 34, 44, 54, 64, 74, 84, 94);
+  pruefe("Pfeiltasten ergeben einen Sprung, nicht neun",
+    b.sprungMeldungen().length === 1,
+    b.sprungMeldungen().join(","));
+  pruefe("und zwar von dort, wo es losging, bis dorthin, wo es endete",
+    b.sprungMeldungen()[0] === "__elfix:sprung:4:94",
+    b.sprungMeldungen()[0]);
+}
+
+{
+  const b = buehne(null);
+  b.spielen(0);
+  // Zu weit gespult und wieder zurueck.
+  b.tippen(120, 95);
+  pruefe("Zu weit gespult und zurueck ergibt die Stelle, an der man landet",
+    b.sprungMeldungen()[0] === "__elfix:sprung:0:95",
+    b.sprungMeldungen().join(","));
+  pruefe("Der Ueberschuss wird nicht mitgelernt",
+    b.sprungMeldungen().length === 1,
+    "sonst stuende die Marke fuenfundzwanzig Sekunden zu weit hinten");
+}
+
+{
+  const b = buehne(null);
+  b.spielen(20);
+  b.tippen(110);
+  b.spielen(300);
+  b.tippen(340);
+  pruefe("Ein spaeterer Sprung bleibt eine eigene Bewegung",
+    b.sprungMeldungen().join(",") === "__elfix:sprung:20:110,__elfix:sprung:300:340",
+    "zwei Meldungen und keine zusammengezogene von 20 bis 340");
+}
+
+{
+  // Solange die Hand noch spult, wird nichts gemeldet - sonst waere jede
+  // Zwischenstation eines Laufs eine eigene Meldung.
+  const b = buehne(null);
+  b.spielen(4);
+  b.spulenRoh(40);
+  b.spulenRoh(80);
+  pruefe("Waehrend des Spulens wird noch nichts gemeldet",
+    b.sprungMeldungen().length === 0,
+    b.sprungMeldungen().join(","));
+  b.ruhen();
+  pruefe("Erst die Ruhe danach meldet den ganzen Lauf",
+    b.sprungMeldungen()[0] === "__elfix:sprung:4:80",
+    b.sprungMeldungen().join(","));
 }
 
 {
@@ -285,8 +366,13 @@ pruefe("Ausgeschaltet verschwindet der Knopf sofort",
   /if \(settings\.playback\?\.introSkip === false\) \{/.test(MAIN)
   && /window\.__elfixMarke && window\.__elfixMarke\.entfernen\(\)/.test(MAIN),
   "nicht erst bei der naechsten Folge");
-pruefe("Waehrend einer Watchparty wird nicht gelernt",
-  /const lernen = !watchpartyLiveKeyForUrl\(url\);/.test(MAIN));
+pruefe("Waehrend einer Watchparty lernt der Gast nicht",
+  /const lernen = !liveKey \|\| istWatchpartyHostFuer\(liveKey, url\);/.test(MAIN),
+  "sein Player wird gezogen - das ist nicht seine Entscheidung");
+pruefe("Der Host schon",
+  /function istWatchpartyHostFuer\(key, url\) \{/.test(MAIN)
+  && /return Boolean\(eintrag\?\.hostId\) && eintrag\.hostId === eintrag\.myId;/.test(MAIN),
+  "er ist derjenige, der den Player faehrt");
 pruefe("Die Marke haengt am Titel, nicht an der Adresse",
   /const titel = taste\.titelSchluessel\(eintrag\?\.title \|\| cleanBaseMediaTitle\("", url\)\);/.test(MAIN),
   "ein Anbieterumzug soll die gelernten Marken nicht mitnehmen muessen");

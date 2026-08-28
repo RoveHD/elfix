@@ -282,6 +282,44 @@ function rechner(name) {
     tv.lageFuer(zweiteFolge(1)).key === "",
     tv.lageFuer(zweiteFolge(1)).key);
 
+  /* ===== 2f. Der Beitritt allein genuegt fuer "Gemeinsam weiterschauen" ==== */
+  //
+  // Gemeldet: auf dem Fernseher gab es die Reihe gar nicht, auf dem Telefon
+  // schon, und auf keinem Geraet standen alle Runden darin. Die Reihe zeigt
+  // Eintraege der eigenen Ablage mit Raum - und einen solchen legte bisher nur
+  // ein *eingehender Fortschritt* an. Ein Titel, den in der Runde noch niemand
+  // angefangen hat, meldet nie einen; ein Geraet, das gerade nicht lief,
+  // verpasst ihn. Beigetreten war man trotzdem.
+  //
+  // Hier steht genau diese Lage: beigetreten, kein Fortschritt gemeldet. Java
+  // ruft nach jedem Raumzustand fuer jeden betretenen Titel
+  // `raumEintragSichern` - mit leerem Stand, weil es keinen gibt.
+  {
+    const anbieter = [{ id: "aniworld", name: "AniWorld", startUrl: "https://aniworld.to/" }];
+    const leer = tv.bruecke.raumEintragSichern({ favoriten: [] }, pcKey, RAUM, anbieter, {});
+    pruefe("2f. Ein betretener Titel ergibt einen Eintrag mit Raum",
+      Boolean(leer.eintragId) && leer.neu === true
+      && leer.favoriten.some((f) => f.watchpartyRoom === RAUM),
+      JSON.stringify({ id: leer.eintragId, neu: leer.neu, raeume: leer.favoriten.map((f) => f.watchpartyRoom) }));
+
+    // Und zweimal gerufen entsteht nicht zweimal etwas: Raumzustaende kommen
+    // oft, ein Eintrag je Titel und Raum reicht.
+    const nochmal = tv.bruecke.raumEintragSichern({ favoriten: leer.favoriten }, pcKey, RAUM, anbieter, {});
+    pruefe("2g. Ein zweiter Aufruf legt nichts Zweites an",
+      nochmal.neu === false && nochmal.favoriten.length === leer.favoriten.length,
+      `${nochmal.favoriten.length} Eintraege`);
+
+    // Der leere Stand darf den des Raums nicht verdecken. `{}` ist wahr - ohne
+    // die Unterscheidung faenge ein beim Beitritt entstehender Eintrag bei
+    // null Sekunden an, obwohl der Raum laengst eine Stelle kennt.
+    const mitStand = tv.bruecke.raumEintragSichern({ favoriten: [] }, pcKey, RAUM, anbieter, {});
+    const ausRaum = tv.bruecke.eintraege().find((e) => e.key === pcKey)?.progress;
+    const angelegt = mitStand.favoriten.find((f) => f.watchpartyRoom === RAUM);
+    pruefe("2h. Ein leerer Stand verdeckt den des Raums nicht",
+      !ausRaum || Math.round(angelegt.position || 0) === Math.round(ausRaum.position || 0),
+      `Raum ${ausRaum ? Math.round(ausRaum.position || 0) : "-"}s, Eintrag ${Math.round(angelegt.position || 0)}s`);
+  }
+
   /* ================= 3. Presence: wer steht auf welcher Seite ============= */
 
   pc.puls(pcKey, 0, true, folge(4));

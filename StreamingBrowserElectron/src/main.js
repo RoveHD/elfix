@@ -4732,11 +4732,30 @@ async function serienUmfangLaden(favorite) {
 // zurueck in die Watchlist, auf die erste neue Folge gesetzt und mit einem
 // Merker versehen, damit die Oberflaeche darauf hinweisen kann.
 async function pruefeNeueFolgen() {
+  // Reihum, und nicht immer dieselben.
+  //
+  // Hier stand die Sortierung nach `completedAt`: sechs Titel je Durchgang,
+  // und weil die Reihenfolge sich nie aendert, waren es *dieselben* sechs -
+  // bei jedem Durchgang, sechs Stunden lang, fuer immer. An der echten Ablage
+  // am 2026-08-29 nachgezaehlt: 18 abgeschlossene Serien mit bekannter
+  // Grenze, sechs davon geprueft, zwoelf **nie**. Fuer die konnte eine neue
+  // Staffel erscheinen, ohne dass ELFIX es je bemerkt haette - kein Hinweis,
+  // keine Rueckkehr in die Watchlist, keine Meldung.
+  //
+  // Sortiert wird deshalb nach dem letzten Blick auf den Titel. Wer noch nie
+  // geprueft wurde, steht vorn (kein Stempel = Zeitpunkt null), danach der
+  // aelteste Blick; bei Gleichstand entscheidet weiterhin, was zuletzt zu
+  // Ende geschaut wurde. Damit wandert die Portion durch den ganzen Bestand:
+  // achtzehn Titel bei sechs je sechs Stunden sind zwei Tage bis zur Runde.
+  const zuletztGeprueft = (favorite) => Date.parse(favorite?.newEpisodeCheckedAt || 0) || 0;
   const kandidaten = favorites
     .filter((favorite) => favorite.completed)
     .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
     .filter((favorite) => sanitizePositiveNumber(favorite.finalSeason) && episodeIdentity(favorite.url || ""))
-    .sort((links, rechts) => Date.parse(rechts.completedAt || 0) - Date.parse(links.completedAt || 0))
+    .sort((links, rechts) => (
+      zuletztGeprueft(links) - zuletztGeprueft(rechts)
+      || Date.parse(rechts.completedAt || 0) - Date.parse(links.completedAt || 0)
+    ))
     .slice(0, NEUE_FOLGEN_PRO_LAUF);
   if (!kandidaten.length) return;
 
@@ -4746,6 +4765,12 @@ async function pruefeNeueFolgen() {
   // wird, und von dort gemeldet kaeme dieselbe Meldung immer wieder.
   const gemeldet = [];
   for (const favorite of kandidaten) {
+    // Gestempelt wird der Versuch und nicht der Erfolg. Ein Titel, dessen
+    // Seite gerade nicht antwortet, stuende sonst beim naechsten Durchgang
+    // wieder ganz vorn und verstopfte die Runde fuer alle anderen - genau die
+    // Verstopfung, die diese Sortierung beheben soll.
+    favorite.newEpisodeCheckedAt = new Date().toISOString();
+    geaendert = true;
     const umfang = await serienUmfangLaden(favorite).catch(() => null);
     if (!umfang) continue;
 
@@ -5365,6 +5390,7 @@ const watchparty = new WatchpartyRaeume({
     watchpartyShared = eintraege;
     pushWatchpartyLiveState();
     restoreWatchparty(eintraege, raum);
+    raumEintraegeSichern(eintraege);
     // Aufraeumen und Merken erst, wenn der Zustand steht: die eben
     // verschickten Beitritte kommen erst mit dem naechsten Zustand zurueck.
     watchpartyZustandSichernSpaeter();
@@ -5941,6 +5967,40 @@ function createWatchpartyFavorite(key, eintrag, stand, provider) {
   neu.customThumbnail = bekanntesEigenesBild(neu.url);
   neu.customThumbnailCrop = bekannterBildAusschnitt(neu.url);
   return normalizeLoadedFavorite(neu);
+}
+
+// Zu jedem betretenen Titel einer Runde einen eigenen Eintrag sicherstellen.
+//
+// Der gemeldete Fehler: in "Gemeinsam weiterschauen" standen nicht alle
+// Runden. Kein Wunder - ein Raum-Eintrag entstand bisher an genau zwei
+// Stellen: wenn ein Mitglied Fortschritt meldete, und wenn man den Titel
+// selbst aus der Watchparty oeffnete. Ein Titel, den in der Runde noch niemand
+// angefangen hat, meldet nie etwas; eine Runde, in der gerade niemand schaut,
+// ebenso wenig. Beigetreten war man trotzdem, und genau das ist die
+// verlaessliche Auskunft - sie steht in jedem Raumzustand.
+//
+// Angelegt wird ueber dieselbe geteilte Regel wie sonst auch. Es gibt also
+// keine zweite Art von Raum-Eintrag, nur einen dritten Anlass.
+function raumEintraegeSichern(eintraege) {
+  if (!Array.isArray(eintraege)) return;
+  let geaendert = false;
+  for (const eintrag of eintraege) {
+    if (!eintrag?.joined) continue;
+    const key = String(eintrag.key || "");
+    const room = String(eintrag.room || "");
+    if (!key || !room) continue;
+    if (lokalerWatchpartyEintrag(key, room)) continue;
+    const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
+    if (!provider) continue;
+    const neu = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
+    if (!neu) continue;
+    favorites.unshift(neu);
+    geaendert = true;
+    console.log(`[ELFIX WATCHPARTY] Eintrag zur Runde angelegt: ${neu.title} (Raum ${room})`);
+  }
+  if (!geaendert) return;
+  saveFavorites();
+  sendActiveState();
 }
 
 // Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.
@@ -6536,6 +6596,19 @@ function watchpartySerieForUrl(url) {
 // Live anhat und irgendeine Folge dieser Serie offen hat, ist live - auch bei
 // pausiertem Player. Frueher haing das an der Folge des Raum-Eintrags, weshalb
 // "Live aus" stand, sobald man weiter war als der gespeicherte Stand.
+// Gibt dieses Geraet in dieser Runde den Takt vor?
+//
+// Dieselbe Frage, die die Live-Anzeige unter `host` beantwortet, und dieselbe
+// Rechnung: der Raumzustand nennt den Host und die eigene Kennung. Sie steht
+// hier als eigene Funktion, weil das Lernen der Intromarken sie ebenfalls
+// braucht - und zwei Auslegungen von "ich bin Host" waeren zwei Wahrheiten.
+function istWatchpartyHostFuer(key, url) {
+  const raum = watchpartyRaumForUrl(url);
+  if (!key || !raum) return false;
+  const eintrag = watchpartyEintrag(key, raum);
+  return Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId;
+}
+
 function watchpartyLiveKeyForUrl(url) {
   const key = watchpartySerieForUrl(url);
   const raum = watchpartyRaumForUrl(url);
@@ -7003,10 +7076,18 @@ async function installMarke(provider, view, url) {
   }
   const schluessel = markenSchluesselFuer(provider, url);
   if (!schluessel) return;
-  // Waehrend einer laufenden Watchparty wird nicht gelernt. Der Player wird
-  // dort staendig auf den Host gezogen, und diese Sprünge sind nicht die
-  // Entscheidung dessen, der hier sitzt.
-  const lernen = !watchpartyLiveKeyForUrl(url);
+  // Waehrend einer laufenden Watchparty wird nicht gelernt - beim Gast. Der
+  // Player wird dort staendig auf den Host gezogen, und diese Sprünge sind
+  // nicht die Entscheidung dessen, der hier sitzt.
+  //
+  // Beim Host schon. Genau das war der gemeldete Fehler: wer eine Serie in
+  // einer Runde schaut und jede Folge das Intro wegspult, brachte ELFIX damit
+  // nichts bei - die Regel machte keinen Unterschied zwischen "mein Player
+  // wird gezogen" und "ich ziehe ihn". Fuer den Host ist der Sprung seine
+  // eigene Entscheidung; er ist derjenige, an dem sich alle anderen
+  // orientieren.
+  const liveKey = watchpartyLiveKeyForUrl(url);
+  const lernen = !liveKey || istWatchpartyHostFuer(liveKey, url);
   await executeJavaScriptInMediaFrames(view,
     marken.markenScript(markeFuer(schluessel), { lernen })).catch(() => []);
 }

@@ -73,6 +73,12 @@ public final class Watchparty {
     /** Der zuletzt gemeldete Zustand - fuer die Anzeige, ohne den Kern zu fragen. */
     private JSONObject letzterStatus = new JSONObject();
     private JSONArray letzteEintraege = new JSONArray();
+    /**
+     * Wofuer in dieser Sitzung schon ein Raum-Eintrag sichergestellt wurde.
+     *
+     * <p>Schluessel ist {@code raum|titel}. Siehe {@link #raumEintraegeSichern}.
+     */
+    private final java.util.Set<String> raumEintraegeGesichert = new java.util.HashSet<>();
     /** Die letzte Standmeldung der Runde - wer steht wo, wer fuehrt, wer hat gedrueckt. */
     private String letzterMitschauStand = "";
     /**
@@ -565,9 +571,57 @@ public final class Watchparty {
             // vielleicht betreten - und ob dieses Geraet irgendwo dabei ist,
             // steht erst mit diesem Zustand fest.
             beitritteNachholen();
+            raumEintraegeSichern();
             if (kontoMelder != null) kontoMelder.run();
             if (beobachter != null) beobachter.watchpartyGeaendert();
         });
+    }
+
+    /**
+     * Zu jedem betretenen Titel einer Runde einen eigenen Eintrag sicherstellen.
+     *
+     * <p><b>Der gemeldete Fehler.</b> Auf dem Fernseher gab es die Reihe
+     * "Gemeinsam weiterschauen" ueberhaupt nicht, auf dem Telefon schon, und
+     * auf keinem Geraet standen alle Runden darin. Am 2026-08-29 am Fire TV
+     * Stick nachgesehen: der Watchparty-Bildschirm zeigte den Raum samt Titel
+     * und "3 dabei", die Startseite darunter nichts. Die Reihe zeigt naemlich
+     * Eintraege der eigenen Ablage mit Raum - und einen solchen legte bis
+     * hierher <em>nur</em> {@link #standUebernehmen} an, also erst, wenn ein
+     * Mitglied waehrend dieses Laufs wirklich Fortschritt meldete.
+     *
+     * <p>Damit hing eine Reihe der Startseite an einem Zufall: wer beitritt und
+     * dann die App neu startet, hat den Beitritt, aber keinen Eintrag; ein
+     * Titel, den in der Runde noch niemand angefangen hat, meldet nie etwas;
+     * und ein Geraet, das gerade nicht lief, verpasst die Meldung schlicht.
+     *
+     * <p>Der Beitritt selbst ist die verlaessliche Auskunft, und die steht in
+     * jedem Raumzustand. Angelegt wird ueber dieselbe geteilte Regel wie beim
+     * eingehenden Stand ({@code fortschritt.watchpartyEintragAnlegen}) - es
+     * gibt also keine zweite Art von Raum-Eintrag, nur einen zweiten Anlass.
+     *
+     * <p>Je Titel und Raum einmal: die Regel liefert einen vorhandenen Eintrag
+     * unveraendert zurueck, aber jeder Aufruf schiebt die ganze Ablage durch
+     * den Kern, und Raumzustaende kommen oft.
+     */
+    private void raumEintraegeSichern() {
+        if (bestand == null) return;
+        for (int i = 0; i < letzteEintraege.length(); i += 1) {
+            JSONObject eintrag = letzteEintraege.optJSONObject(i);
+            if (eintrag == null || !eintrag.optBoolean("joined", false)) continue;
+            String key = eintrag.optString("key", "");
+            String raum = eintrag.optString("room", "");
+            if (key.isEmpty() || raum.isEmpty()) continue;
+            String marke = raum + "|" + key;
+            if (!raumEintraegeGesichert.add(marke)) continue;
+            bestand.raumEintragSichern(key, raum, anbieter, null, eintragId -> {
+                if (eintragId.isEmpty()) {
+                    // Kein eingerichteter Anbieter, keine Adresse - dann gibt
+                    // es nichts anzulegen. Beim naechsten Raumzustand kann das
+                    // anders sein, also bleibt die Marke nicht stehen.
+                    raumEintraegeGesichert.remove(marke);
+                }
+            });
+        }
     }
 
     public boolean istVerbunden() {

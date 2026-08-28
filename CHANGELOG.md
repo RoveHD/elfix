@@ -3,6 +3,72 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.68.0 — 29. August 2026
+
+Sechs gemeldete Fehler, jeder am Gerät oder an der echten Ablage nachgestellt,
+bevor eine Zeile geändert wurde.
+
+**s.to ist umgezogen — und der Autostart blieb zurück.** Die Adressen heißen
+jetzt `/serie/<titel>/staffel-N/episode-M` statt `/serie/stream/…`; die alte
+Form antwortet mit einer Weiterleitung. Jeder Eintrag in „Weiterschauen“, der
+vor dem Umzug entstanden ist, trägt noch die alte. Geöffnet wurde die Folge
+damit weiterhin — aber ELFIX sah eine andere Adresse als die, für die es
+scharf gemacht war, und entschärfte den Autostart: Vorhang nach einer halben
+Sekunde auf, Folgenseite da, nichts läuft. Eine vom Server angesagte
+Weiterleitung nimmt den Autostart jetzt mit. Am Fire TV Stick belegt: aus
+`Autostart disarmed` wird `Autostart folgt der Weiterleitung`, und die Folge
+startet. Der Eintrag zieht die neue Adresse dabei von selbst nach.
+
+**Filmo konnte gar nicht starten.** Der Autostart kannte genau eine Bauform von
+Hosterliste — die von AniWorld. Filmo hat eine andere: eine Reihe von Chips,
+und der Player daneben ist ausgeblendet, bis einer davon geklickt wurde. Also
+fand ELFIX weder einen eingebetteten Player noch einen Hosterlink und gab nach
+einer Minute auf („Der Hoster hat keinen Player geliefert“) — auf dem
+Fernseher wie auf dem Telefon. Filmo braucht dabei zwei Klicks und nicht einen:
+der erste wählt den Hoster, erst der zweite holt die Quelle. Beides kann der
+Autostart jetzt, und die neue Bauform von s.to gleich mit.
+
+**„Folge öffnen“ ließ den Player stehen.** Aus der Watchparty geöffnet kam das
+Vollbild, die Überlagerung wurde geklickt, die Quelle lud — und dann hielt
+ELFIX pflichtschuldig wieder an. Der Stand der Runde sagte „pausiert bei 0“,
+weil den Titel dort noch nie jemand gestartet hatte. Das ist eine Sackgasse:
+jedes Mitglied spiegelt die Pause und wartet auf ein anderes, das aus demselben
+Grund wartet. Eine Pause bei null ist jetzt kein Befehl mehr — wer öffnet,
+fängt an. Sobald wirklich jemand schaut, gilt wieder die Runde.
+
+**„Gemeinsam weiterschauen“ zeigte nicht alle Runden — auf dem Fernseher gar
+keine.** Die Reihe lebt von Einträgen mit Raum, und einen solchen legte bisher
+nur ein *eingehender Fortschritt* an. Ein Titel, den in der Runde noch niemand
+angefangen hat, meldet nie einen; wer beitritt und die App neu startet, hat den
+Beitritt, aber keinen Eintrag. Der Beitritt selbst ist die verlässliche
+Auskunft, und die steht in jedem Raumzustand — daraus entsteht der Eintrag
+jetzt, auf beiden Geräten und über dieselbe geteilte Regel wie bisher.
+
+**Intro überspringen lernt endlich, wie man wirklich spult.** Wer sich mit den
+Pfeiltasten nach vorn tippt, macht zehn Sprünge zu je zehn Sekunden — jeder
+einzelne zu kurz, um als Intro zu gelten. Gelernt wurde also nie etwas, obwohl
+jede Folge gleich ablief. Und wer zu weit spult und zurückgeht, brachte ELFIX
+den Überschuss bei statt der Stelle, an der die Folge anfängt. Gezählt wird
+jetzt nicht der einzelne Sprung, sondern wo jemand losging und wo er zur Ruhe
+kam. Dazu: in einer Watchparty lernt der **Host** wieder mit. Sein Sprung ist
+seine Entscheidung — nur beim Gast wird der Player von außen gezogen.
+
+**Korra hatte eine Staffel 5.** Im Verlauf stand „Zuletzt gesehen: Staffel 5
+Folge 1“ — Korra hat vier Bücher. Das Ereignis lag dreihundert Millisekunden
+hinter dem Abschluss des Finales: der alte Staffelübergang, der über das Ende
+der Serie hinauszählte. Der Fehler ist längst behoben, seine Hinterlassenschaft
+stand in jeder Ablage, die damals lief. Eine Folge hinter dem Ende der Serie
+zählt jetzt beim Lesen nicht mehr mit — ohne Wanderung durch die Datei, also
+auch auf Geräten, die ihre Ablage nur über den Abgleich bekommen.
+
+**Neue Folgen wurden für zwölf von achtzehn Serien nie gesucht.** Der Suchlauf
+nimmt sechs abgeschlossene Serien je Durchgang und sortierte sie danach, was
+zuletzt zu Ende geschaut wurde — also immer *dieselben* sechs, alle sechs
+Stunden, für immer. Für den Rest konnte eine neue Staffel erscheinen, ohne dass
+ELFIX es je bemerkt hätte: kein Hinweis, keine Rückkehr in die Watchlist, keine
+Meldung. Sortiert wird jetzt nach dem letzten Blick auf den Titel, damit die
+Portion durch den ganzen Bestand wandert.
+
 ## 1.67.0 — 28. August 2026
 
 Eine Runde auf einem echten Fire TV Stick — 1,7 GB RAM, 32 Bit, Android 9. Ein

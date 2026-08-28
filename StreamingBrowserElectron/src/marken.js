@@ -46,6 +46,30 @@ const MAX_SPRUENGE = 12;
 // haben.
 const FENSTER_VOR_S = 4;
 const FENSTER_NACH_S = 25;
+/**
+ * Wie lange nach einem Sprung auf weitere gewartet wird.
+ *
+ * <p>Ein Intro wird selten mit einem einzigen Sprung weggeschafft. Zwei Faelle,
+ * beide gemeldet, und beide gingen bisher leer aus:
+ *
+ * <ul>
+ *   <li><b>Pfeiltasten.</b> Wer sich mit der Fernbedienung nach vorn tippt,
+ *       macht zehn Spruenge zu je fuenf oder zehn Sekunden. Jeder einzelne ist
+ *       kuerzer als {@code MIN_DAUER_S} - also galt keiner als Intro, und aus
+ *       einem Vorgehen, das jede Folge gleich ablaeuft, wurde nie eine Marke.
+ *   <li><b>Zu weit gespult.</b> Erst auf 0:120, dann zurueck auf 0:95. Gemeldet
+ *       wurde der erste Sprung (0 -> 120), der zweite lief rueckwaerts und fiel
+ *       durch die Pruefung. Gelernt wurde damit der Ueberschuss statt der
+ *       Stelle, an der die Folge wirklich anfaengt.
+ * </ul>
+ *
+ * <p>Beides ist dieselbe Sache: eine Bewegung, die aus mehreren Spruengen
+ * besteht. Gezaehlt wird deshalb nicht der einzelne Sprung, sondern wo jemand
+ * losging und wo er zur Ruhe kam. Zweieinhalb Sekunden sind lang genug fuer
+ * die naechste Tastenwiederholung und kurz genug, dass ein spaeterer Sprung
+ * mitten in der Folge eine eigene Bewegung bleibt.
+ */
+const LAUF_RUHE_MS = 2500;
 
 function zahl(wert) {
   const n = Number(wert);
@@ -187,7 +211,7 @@ function markenScript(marke, optionen = {}) {
     // Video wuerde jeden Sprung doppelt melden.
     if (window.__elfixMarke) return window.__elfixMarke.aktualisieren(marke, lernen);
 
-    const zustand = { stelle: 0, marke, lernen, knopf: null, media };
+    const zustand = { stelle: 0, marke, lernen, knopf: null, media, lauf: null, laufUhr: 0 };
 
     const knopfBauen = () => {
       const knopf = document.createElement("button");
@@ -253,22 +277,41 @@ function markenScript(marke, optionen = {}) {
       zeigen();
     });
 
+    // Ein Lauf ist alles, was ohne Pause zwischendurch gespult wird: zehnmal
+    // die Pfeiltaste, oder einmal zu weit und einmal zurueck. Gemeldet wird
+    // erst, wenn er zur Ruhe gekommen ist - und dann als eine Bewegung von
+    // dort, wo er anfing, nach dort, wo er endete.
+    const laufAbschliessen = () => {
+      const lauf = zustand.lauf;
+      zustand.lauf = null;
+      if (!lauf) return;
+      const von = Number(lauf.von) || 0;
+      const nach = Number(lauf.nach) || 0;
+      if (lauf.eigen || !zustand.lernen) return;
+      if (!sprungLohnt(von, nach)) return;
+      console.log(${JSON.stringify(MELDE_SPRUNG)} + Math.round(von) + ":" + Math.round(nach));
+    };
+
     media.addEventListener("seeking", () => {
       zustand.spult = true;
-      zustand.vonStelle = zustand.stelle;
+      // Nur der erste Sprung eines Laufs bestimmt, wo er losging. Die
+      // Zwischenstellen sind Stationen und kein Anfang.
+      if (!zustand.lauf) zustand.lauf = { von: Number(zustand.stelle) || 0, nach: 0, eigen: false };
     });
 
     media.addEventListener("seeked", () => {
       zustand.spult = false;
-      const von = Number(zustand.vonStelle) || 0;
       const nach = Number(media.currentTime) || 0;
       zustand.stelle = nach;
-      // Der eigene Sprung von eben zaehlt nicht.
+      // Der eigene Sprung von eben zaehlt nicht - und er verdirbt den ganzen
+      // Lauf, denn er ist ja gerade das Ergebnis einer schon gelernten Marke.
       const eigen = zustand.eigen && Date.now() - zustand.eigen < 2000;
       zustand.eigen = 0;
-      if (!eigen && zustand.lernen && sprungLohnt(von, nach)) {
-        console.log(${JSON.stringify(MELDE_SPRUNG)} + Math.round(von) + ":" + Math.round(nach));
-      }
+      if (!zustand.lauf) zustand.lauf = { von: nach, nach, eigen: false };
+      zustand.lauf.nach = nach;
+      if (eigen) zustand.lauf.eigen = true;
+      clearTimeout(zustand.laufUhr);
+      zustand.laufUhr = setTimeout(laufAbschliessen, ${LAUF_RUHE_MS});
       zeigen();
     });
 
@@ -300,6 +343,7 @@ module.exports = {
   MAX_SPRUENGE,
   FENSTER_VOR_S,
   FENSTER_NACH_S,
+  LAUF_RUHE_MS,
   MELDE_SPRUNG,
   MELDE_GENUTZT,
   sprungLohnt,

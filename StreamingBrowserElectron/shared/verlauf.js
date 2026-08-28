@@ -222,11 +222,46 @@ function folgenSchluessel(staffel, folge) {
  * Zeitpunkt - wer Folge 3 am Freitag anfaengt und am Sonntag zu Ende sieht,
  * haette den Freitag sonst verloren, obwohl er ein Abend war.
  */
-function folgenSammeln(favoriten) {
+function folgenSammeln(favoriten, grenze = {}) {
   const folgen = new Map();
   const tage = new Set();
   const tagMerken = (zeit) => {
     if (zeit) tage.add(new Date(zeit).toDateString());
+  };
+
+  /*
+   * Eine Folge, die es in dieser Serie nicht gibt.
+   *
+   * Gemeldet und in der echten Ablage nachgelesen: bei "Die Legende von Korra"
+   * stand im Verlauf "Zuletzt gesehen: Staffel 5 Folge 1 am 25.08.2026". Korra
+   * hat vier Buecher. Das Ereignis steht dort woertlich:
+   *
+   *   {"at":"2026-08-24T22:31:18.219Z", ".../staffel-5/episode-1",
+   *    "label":"Staffel 5 Folge 1","season":5,"episode":1}
+   *
+   * - dreihundert Millisekunden nach dem Abschluss von Staffel 4 Folge 13.
+   * Das war der alte Staffeluebergang, der ueber das Ende der Serie hinaus
+   * weiterzaehlte, statt sie abzuschliessen. Der Fehler ist behoben, seine
+   * Hinterlassenschaft steht aber in jeder Ablage, die damals lief.
+   *
+   * Aufgeraeumt wird beim Lesen und nicht per Wanderung durch die Datei: der
+   * Verlauf ist eine Ansicht auf Ereignisse, und ein Ereignis, das der Serie
+   * widerspricht, gehoert nicht hinein. Das heilt jedes Geraet von selbst,
+   * auch die, die ihre Ablage nur ueber den Abgleich bekommen.
+   *
+   * Widersprechen heisst: hinter dem, was der Anbieter ueberhaupt anbietet.
+   * Die Folgenzahl gilt dabei nur fuer die letzte Staffel - fuer frueherere
+   * nennt der Anbieter keine, und eine geratene Grenze wuerde echte Folgen
+   * verschlucken. Ohne bekannte Grenze wird nichts weggelassen.
+   */
+  const grenzStaffel = verlaufZahl(grenze.letzteStaffel);
+  const grenzFolge = verlaufZahl(grenze.letzteFolge);
+  const unmoeglich = (staffel, folge) => {
+    if (!grenzStaffel) return false;
+    const s = verlaufZahl(staffel);
+    const f = verlaufZahl(folge);
+    if (s > grenzStaffel) return true;
+    return Boolean(grenzFolge && s === grenzStaffel && f > grenzFolge);
   };
 
   const nimm = (staffel, folge) => {
@@ -260,6 +295,7 @@ function folgenSammeln(favoriten) {
     for (const folge of Array.isArray(favorite.completedEpisodes) ? favorite.completedEpisodes : []) {
       const nummer = verlaufZahl(folge?.episode);
       if (!nummer) continue;
+      if (unmoeglich(folge?.season, nummer)) continue;
       const zeit = zeitpunkt(folge?.completedAt);
       const satz = nimm(folge?.season, nummer);
       satz.abgeschlossen = true;
@@ -291,9 +327,14 @@ function folgenSammeln(favoriten) {
       // Was 1.54.0 richtig entfernt hat, waren *Zeilen* und *Abschluesse* ohne
       // Zuordnung, nicht die Tage. Ein Tag, an dem etwas lief, ist belegt,
       // ganz gleich ob sich die Folge benennen laesst.
+      const stelle = folgeDesEreignisses(eintrag);
+      // Eine Folge hinter dem Ende der Serie ist kein Abend, den jemand
+      // verbracht hat - sie ist ein Rechenfehler von damals. Deshalb steht
+      // dieser Sprung vor dem Tag und nicht dahinter.
+      if (stelle && unmoeglich(stelle.staffel, stelle.folge)) continue;
+
       tagMerken(zeit);
 
-      const stelle = folgeDesEreignisses(eintrag);
       // Ohne eindeutige Zuordnung wird nicht geraten. Das betrifft vor allem
       // die alten generischen "Abgeschlossen"-Zeilen, die auf der Serienseite
       // statt auf einer Folgenadresse entstanden sind: sie belegen, dass
@@ -406,15 +447,15 @@ function statusBestimmen(angaben) {
  */
 function verlaufBauen(favoriten, favorite, optionen = {}) {
   const gruppe = gruppeFinden(favoriten, favorite);
-  const { folgen, tage } = folgenSammeln(gruppe);
   const metadaten = optionen.metadaten || null;
-
-  const liste = [...folgen.values()].sort((links, rechts) => (
-    rechts.staffel - links.staffel || rechts.folge - links.folge
-  ));
 
   // Was der Anbieter gerade hat. Mehrere Eintraege desselben Titels koennen
   // verschieden alte Staende tragen - der weiteste zaehlt.
+  //
+  // Das steht vor dem Sammeln und nicht mehr dahinter: die Grenze der Serie
+  // entscheidet mit, welche Ereignisse ueberhaupt zaehlen. Siehe
+  // {@code unmoeglich} in folgenSammeln - eine Folge hinter dem Ende der
+  // Serie ist keine.
   let letzteStaffel = 0;
   let letzteFolge = 0;
   let istSerie = false;
@@ -428,6 +469,12 @@ function verlaufBauen(favoriten, favorite, optionen = {}) {
       letzteFolge = folge;
     }
   }
+
+  const { folgen, tage } = folgenSammeln(gruppe, { letzteStaffel, letzteFolge });
+
+  const liste = [...folgen.values()].sort((links, rechts) => (
+    rechts.staffel - links.staffel || rechts.folge - links.folge
+  ));
   if (liste.length) istSerie = true;
 
   // Auf dem Stand des Anbieters ist, wer dessen letzte verfuegbare Folge

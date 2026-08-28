@@ -235,12 +235,17 @@
     const provider = geraeteStand.anbieterFinden(
       anbieter || [], (stand && stand.url) || eintrag.url, eintrag.providerName);
     if (!provider) return leer;
+    // Ein leerer Stand ist kein Stand. Java schickt {} statt null, wenn es
+    // keinen eingehenden Stand gibt - und {} ist wahr. Ohne diese Zeile
+    // verdeckte das den Stand, den der Raum selbst schon kennt, und ein
+    // Eintrag, der beim Beitritt entsteht, faenge bei null Sekunden an.
+    const gemeldet = stand && Object.keys(stand).length ? stand : (eintrag.progress || {});
     const ergebnis = fortschritt.watchpartyEintragAnlegen(
       zustand || { favoriten: [] },
       provider,
       String(eintrag.room || room || ""),
       eintrag,
-      stand || eintrag.progress || {});
+      gemeldet);
     if (!ergebnis.eintrag) return leer;
     return {
       eintragId: String(ergebnis.eintrag.id || ""),
