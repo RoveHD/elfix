@@ -3,6 +3,54 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.66.0 — 28. August 2026
+
+**Die App bewegt sich jetzt.** Ein Durchgang durch die ganze Oberfläche, Handy
+und Fernseher — mit zwei Regeln, die den Unterschied zwischen Gestaltung und
+Unruhe ausmachen: jede Ansicht bekommt ihren Auftritt genau einmal, und ein
+Neuzeichnen im Hintergrund bekommt gar keinen. Wer im Gerät „Animationen
+entfernen“ gesetzt hat, bekommt weiterhin keine.
+
+*Die Startseite* baut sich von oben nach unten auf: Abschnitte im Abstand von
+55 ms, Kacheln im Abstand von 38 ms — und nur die, die wirklich im Bild stehen.
+Das Titelbild atmet: zwölf Sekunden von 1,00 auf 1,06 und zurück.
+
+*Der Titelwechsel* ist kein Austausch mehr. Das alte Bild dunkelt ab und zoomt
+weg, das neue fängt größer an und geht auf seine Größe zurück, und der Textblock
+geht nach oben hinaus und kommt von unten nach — die Knöpfe darin gehen mit.
+
+*Seiten* kommen vorwärts von rechts, zurück von links, die Serienübersicht als
+Zoom. Dialoge federn auf. Knöpfe geben unter dem Daumen nach und schnellen
+zurück. Der Schalter in den Einstellungen lässt seinen Daumen hinübergleiten,
+der Pfeil eines Abschnitts dreht sich, und nur der Abschnitt bewegt sich, den
+man gerade angefasst hat. Der Ladevorhang geht auf, statt weggerissen zu werden.
+
+*Am Fernseher* wächst die fokussierte Karte auf 1,09 statt 1,05, mit Feder
+hinein und ohne Überschwinger zurück, dazu ein Schatten, der sie aus der Reihe
+hebt. Die OK-Taste wird endlich quittiert — vorher sah man bis zur nächsten
+Seite überhaupt nichts.
+
+*Im Player* fährt die Leiste von unten herein und wieder hinaus, und der
+Countdown der nächsten Folge füllt seinen Knopf über die fünf Sekunden und
+schlägt einmal je Sekunde. Im Watchparty-Streifen klappen die Details auf und
+zu; wer neu dazustoßt, kommt mit einem Popp — wer schon dabei war, steht still.
+
+**Zwei Leistungsprobleme dabei gefunden.** Der Fortschrittsbalken auf einer
+Kachel setzte alle paar Sekunden seine Layoutmaße und ließ damit die ganze
+Karte neu vermessen — in jeder sichtbaren Kachel, während eine Folge läuft. Er
+liegt jetzt in voller Breite da und wird ab der linken Kante skaliert: das
+kostet nichts und läuft obendrein weich hinüber. Und eine Kachel, die rechts
+außerhalb der Reihe steht, animiert gar nicht mehr.
+
+**Die Seite mit Staffeln und Folgen fehlte nach der Suche.** Gemeldet vom
+Fernseher — und es lag nicht am Fernseher: die Übersicht hängt an einer
+Funktion, die nur von einer Vorschlagskarte und einem Kalendereintrag gerufen
+wurde. Alle drei Wege über die Suche gingen geradewegs auf die Anbieterseite.
+Am Telefon fällt das kaum auf; am Fernseher ist die Suche fast der einzige Weg
+zu einer Serie, die man noch nicht hat. Jetzt gehen alle drei Trefferlisten
+durch dieselbe Stelle: „naruto“ suchen, ersten Treffer öffnen — 4 Staffeln,
+52 Folgen.
+
 ## 1.65.0 — 28. August 2026
 
 **In der App waren Wörter abgeschnitten.** Gemeldet und nachgesehen — es waren
