@@ -128,6 +128,15 @@ public class MainActivity extends Activity {
     private String letztesSeitenbild = "";
     /** Und wie die Einstellungsseite aussah - siehe {@link #settingsBild}. */
     private String letztesSettingsBild = "";
+    /**
+     * Welche Abschnitte der Einstellungen gerade offen sind.
+     *
+     * <p>Er ueberlebt das Neuzeichnen, und das ist der ganze Grund, warum er
+     * hier steht und nicht in der Ansicht: jeder Handgriff in den Einstellungen
+     * baut die Seite neu, und ein Abschnitt, der sich dabei zuklappt, waere
+     * schlimmer als gar keine Gliederung.
+     */
+    private final java.util.Set<String> offeneAbschnitte = new java.util.HashSet<>();
     /** Der Leser fuer die Seite vor der ersten Folge. */
     private Serienuebersicht serienuebersicht;
     /** Legt vor einem Update eine Sicherung an - siehe {@link Sicherung}. */
@@ -2223,6 +2232,7 @@ public class MainActivity extends Activity {
             }
             for (String erst : new String[]{"tv:hero:0", "tv:anbieter:0", "tv:reiter:0",
                 "tv:entdeckung:0", "tv:liste:0", "tv:uebersicht:0", "tv:uebersichtstaffel:0",
+                "tv:einstellung:startseite",
                 "tv:wp:0:oeffnen", "tv:wp:einstellungen"}) {
                 View ziel = seite.findViewWithTag(erst);
                 if (ziel != null) {
@@ -2453,10 +2463,8 @@ public class MainActivity extends Activity {
         int abstand = fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP;
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
 
-        addSpacing(page, fernseher
-            ? TvViews.sectionTitle(this, "Meine Geräte")
-            : sectionTitle("Meine Geräte"), abstand);
-
+        // Keine Ueberschrift mehr: der Abschnitt traegt sie jetzt selbst, und
+        // zweimal "Meine Geraete" untereinander ist eine zu viel.
         addSpacing(page, karte(fernseher, "Wozu das gut ist",
             "Hält deine eigenen Geräte auf demselben Stand. Was du am Rechner schaust, steht "
                 + "auf dem Handy oder Fernseher in „Weiterschauen“ an derselben Stelle. "
@@ -2841,48 +2849,9 @@ public class MainActivity extends Activity {
         LinearLayout page = tvPage();
         page.addView(TvViews.eyebrow(this, "ELFIX"));
         page.addView(TvViews.heroTitle(this, "Einstellungen"));
-
-        addSpacing(page, TvViews.infoCard(this, "Werbeblocker",
-            "AdGuard-Filterlisten (Basis, Mobile Ads, Tracking-Schutz) sind aktiv. Innerhalb des "
-                + "Video-Hosters wird bewusst zurückhaltender gefiltert, damit die Wiedergabe startet.",
-            null, null), TvViews.SECTION_GAP);
-
-        addSpacing(page, TvViews.infoCard(this, "Volle Regeln",
-            werbefilter == null ? "" : werbefilter.standText(),
-            regelKnopf(), this::regelModusUmschalten), TvViews.ITEM_GAP);
-
-        addSpacing(page, TvViews.infoCard(this, "Filterlisten",
-            Filterlisten.standText(this),
-            "Jetzt aktualisieren", this::filterlistenLaden), TvViews.ITEM_GAP);
-
-        addSpacing(page, TvViews.infoCard(this, "Favoriten-Fortschritt",
-            folgeStatisch()
-                ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
-                : "Der Eintrag rückt mit, wenn du zur nächsten Folge blätterst.",
-            folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
-            () -> {
-                favoriteProgressMode = folgeStatisch() ? "sequential" : "static";
-                getSharedPreferences("elflix_settings", MODE_PRIVATE)
-                    .edit().putString("favorite_progress_mode", favoriteProgressMode).apply();
-                showToast("Gespeichert");
-                settingsNeuZeichnen();
-            }), TvViews.ITEM_GAP);
-
-        addSpacing(page, autoplayKarte(true), TvViews.ITEM_GAP);
-
-        addSpacing(page, introKarte(true), TvViews.ITEM_GAP);
-
-        addSpacing(page, fassungsKarte(true), TvViews.ITEM_GAP);
-
-        addSpacing(page, TvViews.infoCard(this, "Zwischenspeicher",
-            "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
-            "Alles neu laden", this::reloadAllWebViews), TvViews.ITEM_GAP);
-
-        watchpartyEinstellungen(page, true);
-
-        geraeteEinstellungen(page, true);
-
-        addSpacing(page, aktualisierungsKarte(true), TvViews.ITEM_GAP);
+        page.addView(TvViews.body(this, "OK klappt einen Abschnitt auf."));
+        einstellungsAbschnitte(page, true);
+        tvFokusHerstellen(page);
     }
 
     private void renderTvSearch(String query) {
@@ -4857,54 +4826,77 @@ public class MainActivity extends Activity {
         LinearLayout page = mobilePage();
         page.addView(MobileViews.eyebrow(this, "ELFIX"));
         page.addView(MobileViews.heroTitle(this, "Einstellungen"));
+        page.addView(MobileViews.subtitle(this,
+            "Tippe auf einen Abschnitt, um ihn aufzuklappen."));
+        einstellungsAbschnitte(page, false);
+    }
 
-        addSpacing(page, settingsCard("Werbeblocker",
-            "AdGuard-Filterlisten sind aktiv. Innerhalb des Video-Hosters wird bewusst zurückhaltender "
-                + "gefiltert, damit die Wiedergabe nicht blockiert wird. Schichten, die den Player "
-                + "zudecken, werden zusätzlich erkannt und ausgeblendet.",
-            null, null), 18);
+    /**
+     * Die Abschnitte der Einstellungen - auf dem Telefon und am Fernseher
+     * dieselben.
+     *
+     * <p>Sie standen einmal in zwei Methoden nebeneinander, und die eine kannte
+     * die Startseiten-Schalter nicht: am Fernseher liessen sich die Reihen der
+     * Startseite deshalb gar nicht abschalten. Zwei Fassungen derselben Seite
+     * sind zwei Gelegenheiten, eine davon zu vergessen.
+     *
+     * <p>Die Reihenfolge ist die, in der man danach sucht: was man taeglich
+     * sieht, dann was beim Schauen gilt, dann die Einrichtung, und ganz unten
+     * das, was man einmal im Jahr braucht.
+     */
+    private void einstellungsAbschnitte(LinearLayout page, boolean fernseher) {
+        int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
 
-        addSpacing(page, settingsCard("Volle Regeln",
-            werbefilter == null ? "" : werbefilter.standText(),
-            regelKnopf(), this::regelModusUmschalten), MobileViews.ITEM_GAP);
+        abschnitt(page, fernseher, "startseite", "Startseite", standStartseite(),
+            () -> startseitenEinstellungen(page, fernseher));
 
-        addSpacing(page, settingsCard("Filterlisten",
-            Filterlisten.standText(this),
-            "Jetzt aktualisieren",
-            this::filterlistenLaden), MobileViews.ITEM_GAP);
+        abschnitt(page, fernseher, "wiedergabe", "Wiedergabe", standWiedergabe(), () -> {
+            addSpacing(page, autoplayKarte(fernseher), luecke);
+            addSpacing(page, karte(fernseher, "Favoriten-Fortschritt",
+                folgeStatisch()
+                    ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
+                    : "Der Eintrag rückt mit, wenn du zur nächsten Folge blätterst.",
+                folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
+                () -> {
+                    favoriteProgressMode = folgeStatisch() ? "sequential" : "static";
+                    getSharedPreferences("elflix_settings", MODE_PRIVATE)
+                        .edit()
+                        .putString("favorite_progress_mode", favoriteProgressMode)
+                        .apply();
+                    settingsNeuZeichnen();
+                }), luecke);
+            addSpacing(page, introKarte(fernseher), luecke);
+            addSpacing(page, fassungsKarte(fernseher), luecke);
+        });
 
-        addSpacing(page, settingsCard("Favoriten-Fortschritt",
-            folgeStatisch()
-                ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
-                : "Der Eintrag rückt mit, wenn du zur nächsten Folge blätterst.",
-            folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
-            () -> {
-                favoriteProgressMode = folgeStatisch() ? "sequential" : "static";
-                getSharedPreferences("elflix_settings", MODE_PRIVATE)
-                    .edit()
-                    .putString("favorite_progress_mode", favoriteProgressMode)
-                    .apply();
-                showToast("Gespeichert");
-                settingsNeuZeichnen();
-            }), MobileViews.ITEM_GAP);
+        abschnitt(page, fernseher, "werbung", "Werbeblocker", standWerbung(), () -> {
+            addSpacing(page, karte(fernseher, "Wie gefiltert wird",
+                "AdGuard-Filterlisten sind aktiv. Innerhalb des Video-Hosters wird bewusst "
+                    + "zurückhaltender gefiltert, damit die Wiedergabe nicht blockiert wird. "
+                    + "Schichten, die den Player zudecken, werden zusätzlich erkannt und "
+                    + "ausgeblendet.",
+                null, null), luecke);
+            addSpacing(page, karte(fernseher, "Volle Regeln",
+                werbefilter == null ? "" : werbefilter.standText(),
+                regelKnopf(), this::regelModusUmschalten), luecke);
+            addSpacing(page, karte(fernseher, "Filterlisten",
+                Filterlisten.standText(this),
+                "Jetzt aktualisieren", this::filterlistenLaden), luecke);
+        });
 
-        addSpacing(page, autoplayKarte(false), MobileViews.ITEM_GAP);
+        abschnitt(page, fernseher, "watchparty", "Watchparty", standWatchparty(),
+            () -> watchpartyEinstellungen(page, fernseher));
 
-        startseitenEinstellungen(page);
+        abschnitt(page, fernseher, "geraete", "Meine Geräte", standGeraete(),
+            () -> geraeteEinstellungen(page, fernseher));
 
-        addSpacing(page, introKarte(false), MobileViews.ITEM_GAP);
-
-        addSpacing(page, fassungsKarte(false), MobileViews.ITEM_GAP);
-
-        watchpartyEinstellungen(page, false);
-
-        geraeteEinstellungen(page, false);
-
-        addSpacing(page, settingsCard("Zwischenspeicher",
-            "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben erhalten.",
-            "Alles neu laden", this::reloadAllWebViews), MobileViews.ITEM_GAP);
-
-        addSpacing(page, aktualisierungsKarte(false), MobileViews.ITEM_GAP);
+        abschnitt(page, fernseher, "app", "Über ELFIX", standApp(), () -> {
+            addSpacing(page, aktualisierungsKarte(fernseher), luecke);
+            addSpacing(page, karte(fernseher, "Zwischenspeicher",
+                "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben "
+                    + "erhalten.",
+                "Alles neu laden", this::reloadAllWebViews), luecke);
+        });
     }
 
     /**
@@ -4919,18 +4911,28 @@ public class MainActivity extends Activity {
      * <p>Der Kalender kommt dazu: er ist am Rechner eine eigene Seite in der
      * Seitenleiste, hier eine Reihe - und dann gehoert er in dieselbe Liste.
      */
-    private void startseitenEinstellungen(LinearLayout page) {
-        addSpacing(page, MobileViews.sectionHeader(this, "Startseite", null, null),
-            MobileViews.SECTION_GAP);
-        addSpacing(page, MobileViews.subtitle(this,
-            startseite.anzahlAn() + " von " + Startseite.REIHEN.size() + " Reihen sichtbar"), 0);
+    private void startseitenEinstellungen(LinearLayout page, boolean fernseher) {
+        if (startseite == null) return;
+        int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
         for (Startseite.Reihe reihe : Startseite.REIHEN) {
+            // Am Fernseher eine Karte mit Knopf statt eines Schalters: ein
+            // Schiebeschalter ist nichts, was sich mit einem Steuerkreuz
+            // bedienen liesse.
+            if (fernseher) {
+                addSpacing(page, karte(true, reihe.titel, reihe.erklaerung,
+                    startseite.zeigt(reihe.schluessel) ? "Ausblenden" : "Einblenden",
+                    () -> {
+                        startseite.umschalten(reihe.schluessel);
+                        settingsNeuZeichnen();
+                    }), luecke);
+                continue;
+            }
             addSpacing(page, MobileViews.schalterZeile(this, reihe.titel, reihe.erklaerung,
                 startseite.zeigt(reihe.schluessel),
                 () -> {
                     startseite.umschalten(reihe.schluessel);
                     settingsNeuZeichnen();
-                }), MobileViews.ITEM_GAP);
+                }), luecke);
         }
     }
 
@@ -4957,11 +4959,8 @@ public class MainActivity extends Activity {
         int abstand = fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP;
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
 
-        if (fernseher) {
-            addSpacing(page, TvViews.sectionTitle(this, "Watchparty"), abstand);
-        }
-
-        addSpacing(page, karte(fernseher, "Watchparty", watchpartyStandText(),
+        // Auch hier keine eigene Ueberschrift - siehe geraeteEinstellungen.
+        addSpacing(page, karte(fernseher, "Verbindung", watchpartyStandText(),
             watchparty.istEingeschaltet() ? "Ausschalten" : "Einschalten",
             () -> {
                 watchparty.setzeEingeschaltet(!watchparty.istEingeschaltet());
@@ -7595,6 +7594,140 @@ public class MainActivity extends Activity {
             zeile.setOnClickListener(view -> uebersichtFolgeWaehlen(folge));
         }
         return zeile;
+    }
+
+    /* ------------------------------------ Die Einstellungen, gegliedert */
+
+    /**
+     * Ein Abschnitt der Einstellungen - zugeklappt eine Zeile, aufgeklappt der
+     * Inhalt.
+     *
+     * <h2>Warum ueberhaupt</h2>
+     *
+     * <p>Die Seite bestand aus rund dreissig Karten in einer Reihe, mit genau
+     * zwei Ueberschriften darin. Wer den Raumcode aendern wollte, scrollte an
+     * Werbeblocker, Filterlisten, Fortschritt, Autoplay, sieben Startseiten-
+     * schaltern, Intromarken und Sprachfassung vorbei - und wusste unterwegs
+     * nie, wie weit es noch ist.
+     *
+     * <p>Jetzt stehen sechs Zeilen da, und jede sagt schon zugeklappt, wie es
+     * um sie steht: "4 von 7 Reihen sichtbar", "Verbunden - Raum Salon". Das
+     * ist der eigentliche Gewinn - die haeufigste Frage an eine
+     * Einstellungsseite ist nicht "was kann ich aendern", sondern "wie steht es
+     * gerade".
+     *
+     * @param kurz   der Zustand in einer Zeile; leer laesst sie weg
+     * @param inhalt zeichnet den aufgeklappten Abschnitt in dieselbe Seite
+     */
+    private void abschnitt(LinearLayout page, boolean fernseher, String schluessel,
+                           String titel, String kurz, Runnable inhalt) {
+        boolean offen = offeneAbschnitte.contains(schluessel);
+        addSpacing(page, abschnittsKopf(fernseher, schluessel, titel, kurz, offen),
+            fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP);
+        if (offen) inhalt.run();
+    }
+
+    /** Die Zeile, auf die man tippt. */
+    private View abschnittsKopf(boolean fernseher, String schluessel, String titel,
+                                String kurz, boolean offen) {
+        LinearLayout zeile = new LinearLayout(this);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(Gravity.CENTER_VERTICAL);
+        int rand = dp(fernseher ? 20 : 16);
+        zeile.setPadding(rand, rand, rand, rand);
+
+        LinearLayout texte = new LinearLayout(this);
+        texte.setOrientation(LinearLayout.VERTICAL);
+        TextView name = new TextView(this);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(fernseher ? 20 : 16);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        texte.addView(name);
+        if (kurz != null && !kurz.isEmpty()) {
+            TextView stand = new TextView(this);
+            stand.setText(kurz);
+            stand.setTextColor(Theme.TEXT_SECONDARY);
+            stand.setTextSize(fernseher ? 15 : 13);
+            stand.setPadding(0, dp(3), 0, 0);
+            texte.addView(stand);
+        }
+        zeile.addView(texte, new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        // Ein Zeichen statt eines Bildes: es dreht sich mit dem Zustand und
+        // braucht keine Datei.
+        TextView pfeil = new TextView(this);
+        pfeil.setText(offen ? "\u2303" : "\u2304");
+        pfeil.setTextColor(Theme.TEXT_SECONDARY);
+        pfeil.setTextSize(fernseher ? 20 : 17);
+        pfeil.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        pfeil.setPadding(dp(12), 0, 0, 0);
+        zeile.addView(pfeil);
+
+        if (fernseher) {
+            zeile.setTag("tv:einstellung:" + schluessel);
+            TvViews.applyFocus(zeile,
+                MobileViews.shape(this, Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS,
+                    offen ? Theme.PRIMARY : Theme.BORDER, offen ? 2 : 1),
+                MobileViews.shape(this, Theme.SURFACE_PRESSED, TvViews.CARD_RADIUS, Theme.PRIMARY, 3));
+        } else {
+            MobileViews.addPressFeedback(zeile,
+                MobileViews.shape(this, Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS,
+                    offen ? Theme.PRIMARY : Theme.BORDER, 1),
+                MobileViews.shape(this, Theme.SURFACE_PRESSED, MobileViews.CARD_RADIUS, Theme.PRIMARY, 1));
+        }
+        zeile.setOnClickListener(view -> {
+            if (!offeneAbschnitte.remove(schluessel)) offeneAbschnitte.add(schluessel);
+            settingsNeuZeichnen();
+        });
+        return zeile;
+    }
+
+    /* ------------------------------- Was ein Abschnitt zugeklappt verraet */
+
+    private String standStartseite() {
+        if (startseite == null) return "";
+        return startseite.anzahlAn() + " von " + Startseite.REIHEN.size() + " Reihen sichtbar";
+    }
+
+    private String standWiedergabe() {
+        java.util.List<String> teile = new java.util.ArrayList<>();
+        teile.add(Folgen.autoplayAn(this) ? "Autoplay an" : "Autoplay aus");
+        teile.add(folgeStatisch() ? "Folge bleibt stehen" : "Folge rückt mit");
+        return android.text.TextUtils.join("  ·  ", teile);
+    }
+
+    private String standWerbung() {
+        String modus = werbefilter == null ? "" : werbefilter.modus();
+        String wort = "aus".equals(modus) ? "Volle Regeln aus"
+            : "an".equals(modus) ? "Volle Regeln an" : "Das Gerät entscheidet";
+        return wort;
+    }
+
+    private String standWatchparty() {
+        if (watchparty == null || !watchparty.istEingeschaltet()) return "Ausgeschaltet";
+        List<String> codes = watchparty.raumcodes();
+        String raeume = codes.isEmpty() ? "kein Raum"
+            : (codes.size() == 1 ? "Raum " + codes.get(0) : codes.size() + " Räume");
+        return (watchparty.istVerbunden() ? "Verbunden" : "Nicht verbunden") + "  ·  " + raeume;
+    }
+
+    private String standGeraete() {
+        if (geraete == null || !geraete.eingeschaltet()) return "Ausgeschaltet";
+        JSONObject zustand = geraete.zustand();
+        if (zustand == null) return "Eingeschaltet";
+        int titel = zustand.optInt("titel", 0);
+        return (zustand.optBoolean("connected", false) ? "Verbunden" : "Nicht verbunden")
+            + "  ·  " + titel + (titel == 1 ? " Titel" : " Titel");
+    }
+
+    private String standApp() {
+        try {
+            return "ELFIX " + getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception fehler) {
+            return "";
+        }
     }
 
     private void showSettings() {
