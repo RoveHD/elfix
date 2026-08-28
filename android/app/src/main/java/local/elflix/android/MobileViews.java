@@ -100,7 +100,8 @@ final class MobileViews {
         view.setText(text);
         view.setTextColor(Theme.TEXT_SECONDARY);
         view.setTextSize(14);
-        view.setMaxLines(1);
+        // Zwei Zeilen statt einer: Untertitel einer Seite.
+        view.setMaxLines(2);
         view.setEllipsize(TextUtils.TruncateAt.END);
         view.setPadding(0, dp(context, 6), 0, 0);
         return view;
@@ -120,7 +121,8 @@ final class MobileViews {
         label.setTextColor(Theme.TEXT_PRIMARY);
         label.setTextSize(19);
         label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        label.setMaxLines(1);
+        // Zwei Zeilen statt einer: Ueberschrift eines Abschnitts.
+        label.setMaxLines(2);
         label.setEllipsize(TextUtils.TruncateAt.END);
         row.addView(label, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
@@ -230,14 +232,16 @@ final class MobileViews {
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(15);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        name.setMaxLines(1);
+        // Zwei Zeilen statt einer: Name des Anbieters.
+        name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         text.addView(name);
         TextView desc = new TextView(context);
         desc.setText(tagline);
         desc.setTextColor(Theme.TEXT_SECONDARY);
         desc.setTextSize(12);
-        desc.setMaxLines(1);
+        // Zwei Zeilen statt einer: Was der Anbieter anbietet.
+        desc.setMaxLines(2);
         desc.setEllipsize(TextUtils.TruncateAt.END);
         text.addView(desc);
         card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -439,7 +443,8 @@ final class MobileViews {
             episode.setText(episodeLine);
             episode.setTextColor(Theme.TEXT_SECONDARY);
             episode.setTextSize(13);
-            episode.setMaxLines(1);
+            // Zwei Zeilen statt einer: Die Folgenzeile einer Listenzeile.
+            episode.setMaxLines(2);
             episode.setEllipsize(TextUtils.TruncateAt.END);
             episode.setPadding(0, dp(context, 3), 0, 0);
             text.addView(episode);
@@ -649,7 +654,8 @@ final class MobileViews {
         zeile.setTag(HERO_UNTERZEILE);
         zeile.setTextColor(Theme.TEXT_SECONDARY);
         zeile.setTextSize(13);
-        zeile.setMaxLines(1);
+        // Zwei Zeilen statt einer: Die Unterzeile des Titelhintergrunds.
+        zeile.setMaxLines(2);
         zeile.setEllipsize(TextUtils.TruncateAt.END);
         zeile.setPadding(0, dp(context, 5), 0, 0);
         text.addView(zeile);
@@ -976,7 +982,14 @@ final class MobileViews {
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(13);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        name.setMaxLines(2);
+        // Drei Zeilen fuer den Titel.
+        //
+        // Eine Kachel ist schmal - auf dem Telefon hundertsiebenunddreissig dp -,
+        // und Serientitel sind lang. Bei zwei Zeilen stand dort "Attack on Titan -
+        // Movie Teil 3: Gebruell..." und "Suppose a Kid from the Last Dungeon B...".
+        // Die dritte Zeile kostet nur dort Hoehe, wo der Titel sie braucht; kurze
+        // Titel bleiben so hoch wie bisher.
+        name.setMaxLines(3);
         name.setEllipsize(TextUtils.TruncateAt.END);
         name.setPadding(0, dp(context, 7), 0, 0);
         karte.addView(name);
@@ -986,7 +999,8 @@ final class MobileViews {
             zeile.setText(unterzeile);
             zeile.setTextColor(Theme.TEXT_SECONDARY);
             zeile.setTextSize(11);
-            zeile.setMaxLines(1);
+            // Zwei Zeilen statt einer: Die Unterzeile einer Kachel.
+            zeile.setMaxLines(2);
             zeile.setEllipsize(TextUtils.TruncateAt.END);
             zeile.setPadding(0, dp(context, 2), 0, 0);
             karte.addView(zeile);
@@ -1069,7 +1083,14 @@ final class MobileViews {
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(13);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        name.setMaxLines(2);
+        // Drei Zeilen fuer den Titel.
+        //
+        // Eine Kachel ist schmal - auf dem Telefon hundertsiebenunddreissig dp -,
+        // und Serientitel sind lang. Bei zwei Zeilen stand dort "Attack on Titan -
+        // Movie Teil 3: Gebruell..." und "Suppose a Kid from the Last Dungeon B...".
+        // Die dritte Zeile kostet nur dort Hoehe, wo der Titel sie braucht; kurze
+        // Titel bleiben so hoch wie bisher.
+        name.setMaxLines(3);
         name.setEllipsize(TextUtils.TruncateAt.END);
         name.setPadding(0, dp(context, 7), 0, 0);
         karte.addView(name);
@@ -1091,7 +1112,8 @@ final class MobileViews {
             zeile.setText(zusatz);
             zeile.setTextColor(Theme.TEXT_DISABLED);
             zeile.setTextSize(11);
-            zeile.setMaxLines(1);
+            // Zwei Zeilen statt einer: Der Grund unter einem Vorschlag.
+            zeile.setMaxLines(2);
             zeile.setEllipsize(TextUtils.TruncateAt.END);
             zeile.setPadding(0, dp(context, 3), 0, 0);
             karte.addView(zeile);
@@ -1280,7 +1302,8 @@ final class MobileViews {
         name.setText(titel);
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(13);
-        name.setMaxLines(1);
+        // Zwei Zeilen statt einer: Der Titel eines Balkens in der Statistik.
+        name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         kopf.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         TextView zahl = new TextView(context);

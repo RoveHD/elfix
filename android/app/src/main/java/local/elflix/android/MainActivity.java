@@ -1409,28 +1409,52 @@ public class MainActivity extends Activity {
         chromeHolder.addView(appChrome, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        appChrome.addView(brandLogoView(), new LinearLayout.LayoutParams(dp(150), dp(42)));
+        appChrome.addView(brandLogoView(), new LinearLayout.LayoutParams(dp(132), dp(42)));
         appChrome.addView(new android.widget.Space(this), new LinearLayout.LayoutParams(0, 1, 1));
+
+        // Die Knoepfe stehen in einer eigenen Leiste, und die Leiste in einem
+        // Schieber.
+        //
+        // Gemessen auf 1920x1080, also 960 dp breit: zwischen den beiden
+        // Raendern liegen 864 dp, die fuenf Knoepfe brauchten 733 und das Logo
+        // 150 - zusammen 883. Was darueber hinausging, schnitt die
+        // Randbegrenzung der Kopfzeile weg, und weggeschnitten wurde das
+        // letzte Wort: am Fernseher stand "Einstellunge". Die schmaleren
+        // Knoepfe und das kleinere Logo bringen es auf 673 + 132 = 805 dp.
+        //
+        // Der Schieber ist die Sicherung dahinter: wird die Schrift des
+        // Geraets groesser oder kommt ein Knopf dazu, wandert die Leiste,
+        // statt ein Wort abzuschneiden - und das Steuerkreuz zieht den Knopf,
+        // auf dem der Fokus steht, von selbst in den sichtbaren Teil.
+        HorizontalScrollView kopfSchieber = new HorizontalScrollView(this);
+        kopfSchieber.setHorizontalScrollBarEnabled(false);
+        LinearLayout kopfLeiste = new LinearLayout(this);
+        kopfLeiste.setOrientation(LinearLayout.HORIZONTAL);
+        kopfLeiste.setGravity(Gravity.CENTER_VERTICAL);
+        kopfSchieber.addView(kopfLeiste, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        appChrome.addView(kopfSchieber, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         // Der Weg nach Hause. Er fehlte: die Kopfzeile trug Suche, Favoriten,
         // Watchparty und Einstellungen - und aus keiner dieser Seiten fuehrte
         // ein Knopf zurueck. Wer in den Einstellungen stand, kam nur ueber die
         // Zurueck-Taste heraus, und die ist auf einer Fernbedienung nicht dort,
         // wo man sie sucht. Auf dem Telefon steht "Home" seit jeher in der
         // unteren Leiste; die wird am Fernseher ausgeblendet.
-        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_home, "Start",
+        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_home, "Start",
             this::showHome), headerSlot());
-        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_search, "Suche",
+        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_search, "Suche",
             () -> showGlobalSearch("")), headerSlot());
-        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_favorite, "Favoriten",
+        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_favorite, "Favoriten",
             this::showFavorites), headerSlot());
         // Die Watchparty gehoert in die Kopfzeile, weil sie sonst am Fernseher
         // gar nicht erreichbar ist: die untere Leiste, in der sie auf dem
         // Telefon steht, wird hier ausgeblendet (siehe buildBottomNav). Es gab
         // die Seite also, aber keinen Weg zu ihr - und damit auf dem groessten
         // Bildschirm im Haus kein gemeinsames Schauen.
-        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_play, "Watchparty",
+        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_play, "Watchparty",
             this::zeigeWatchparty), headerSlot());
-        appChrome.addView(TvViews.headerButton(this, R.drawable.ic_nav_settings, "Einstellungen",
+        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_settings, "Einstellungen",
             this::showSettings), headerSlot());
 
         collapsedChrome = new LinearLayout(this);

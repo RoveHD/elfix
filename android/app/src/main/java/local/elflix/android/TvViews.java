@@ -100,7 +100,8 @@ final class TvViews {
         view.setText(text);
         view.setTextColor(Theme.TEXT_SECONDARY);
         view.setTextSize(17);
-        view.setMaxLines(1);
+        // Zwei Zeilen statt einer: Fliesstext.
+        view.setMaxLines(2);
         view.setEllipsize(TextUtils.TruncateAt.END);
         view.setPadding(0, dp(context, 8), 0, 0);
         return view;
@@ -111,7 +112,12 @@ final class TvViews {
         LinearLayout pill = new LinearLayout(context);
         pill.setOrientation(LinearLayout.HORIZONTAL);
         pill.setGravity(Gravity.CENTER_VERTICAL);
-        pill.setPadding(dp(context, 18), dp(context, 10), dp(context, 20), dp(context, 10));
+        // Schmaler als frueher: achtzehn und zwanzig dp Rand ergaben mit
+        // fuenf Knoepfen eine Kopfzeile, die breiter war als der Platz -
+        // "Einstellungen" wurde am Rand abgeschnitten. Vierzehn und sechzehn
+        // sparen zwoelf dp je Knopf, und der Knopf bleibt gross genug, dass
+        // man ihn aus drei Metern trifft.
+        pill.setPadding(dp(context, 14), dp(context, 10), dp(context, 16), dp(context, 10));
         applyFocus(pill,
             shape(context, Theme.SURFACE_ELEVATED, 26, Theme.BORDER, 1),
             shape(context, Theme.PRIMARY_MUTED, 26, Theme.PRIMARY, 2));
@@ -120,7 +126,7 @@ final class TvViews {
         icon.setImageResource(iconRes);
         icon.setColorFilter(Theme.TEXT_PRIMARY);
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(context, 22), dp(context, 22));
-        iconParams.rightMargin = dp(context, 10);
+        iconParams.rightMargin = dp(context, 8);
         pill.addView(icon, iconParams);
 
         TextView text = new TextView(context);
@@ -187,7 +193,8 @@ final class TvViews {
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(20);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        name.setMaxLines(1);
+        // Zwei Zeilen statt einer: Name des Anbieters.
+        name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         name.setPadding(0, dp(context, 14), 0, 0);
         card.addView(name);
@@ -196,7 +203,8 @@ final class TvViews {
         desc.setText(tagline);
         desc.setTextColor(Theme.TEXT_SECONDARY);
         desc.setTextSize(15);
-        desc.setMaxLines(1);
+        // Zwei Zeilen statt einer: Was der Anbieter anbietet.
+        desc.setMaxLines(2);
         desc.setEllipsize(TextUtils.TruncateAt.END);
         desc.setPadding(0, dp(context, 4), 0, 0);
         card.addView(desc);
@@ -260,7 +268,8 @@ final class TvViews {
             episode.setText(episodeLine);
             episode.setTextColor(Theme.TEXT_SECONDARY);
             episode.setTextSize(14);
-            episode.setMaxLines(1);
+            // Zwei Zeilen statt einer: Die Folgenzeile einer Karte.
+            episode.setMaxLines(2);
             episode.setEllipsize(TextUtils.TruncateAt.END);
             episode.setPadding(0, dp(context, 3), 0, 0);
             card.addView(episode);
@@ -551,7 +560,14 @@ final class TvViews {
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(16);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        name.setMaxLines(2);
+        // Drei Zeilen fuer den Titel.
+        //
+        // Eine Kachel ist schmal - auf dem Telefon hundertsiebenunddreissig dp -,
+        // und Serientitel sind lang. Bei zwei Zeilen stand dort "Attack on Titan -
+        // Movie Teil 3: Gebruell..." und "Suppose a Kid from the Last Dungeon B...".
+        // Die dritte Zeile kostet nur dort Hoehe, wo der Titel sie braucht; kurze
+        // Titel bleiben so hoch wie bisher.
+        name.setMaxLines(3);
         name.setEllipsize(TextUtils.TruncateAt.END);
         name.setPadding(0, dp(context, 9), 0, 0);
         karte.addView(name);
@@ -561,7 +577,8 @@ final class TvViews {
             zeile.setText(unterzeile);
             zeile.setTextColor(Theme.TEXT_SECONDARY);
             zeile.setTextSize(14);
-            zeile.setMaxLines(1);
+            // Zwei Zeilen statt einer: Die Unterzeile einer Kachel.
+            zeile.setMaxLines(2);
             zeile.setEllipsize(TextUtils.TruncateAt.END);
             zeile.setPadding(0, dp(context, 3), 0, 0);
             karte.addView(zeile);
@@ -636,7 +653,14 @@ final class TvViews {
         name.setTextColor(Theme.TEXT_PRIMARY);
         name.setTextSize(16);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        name.setMaxLines(2);
+        // Drei Zeilen fuer den Titel.
+        //
+        // Eine Kachel ist schmal - auf dem Telefon hundertsiebenunddreissig dp -,
+        // und Serientitel sind lang. Bei zwei Zeilen stand dort "Attack on Titan -
+        // Movie Teil 3: Gebruell..." und "Suppose a Kid from the Last Dungeon B...".
+        // Die dritte Zeile kostet nur dort Hoehe, wo der Titel sie braucht; kurze
+        // Titel bleiben so hoch wie bisher.
+        name.setMaxLines(3);
         name.setEllipsize(TextUtils.TruncateAt.END);
         name.setPadding(0, dp(context, 9), 0, 0);
         karte.addView(name);
@@ -658,7 +682,8 @@ final class TvViews {
             zeile.setText(zusatz);
             zeile.setTextColor(Theme.TEXT_DISABLED);
             zeile.setTextSize(13);
-            zeile.setMaxLines(1);
+            // Zwei Zeilen statt einer: Der Grund unter einem Vorschlag.
+            zeile.setMaxLines(2);
             zeile.setEllipsize(TextUtils.TruncateAt.END);
             zeile.setPadding(0, dp(context, 3), 0, 0);
             karte.addView(zeile);
@@ -879,7 +904,8 @@ final class TvViews {
         zeile.setTag(MobileViews.HERO_UNTERZEILE);
         zeile.setTextColor(Theme.TEXT_SECONDARY);
         zeile.setTextSize(17);
-        zeile.setMaxLines(1);
+        // Zwei Zeilen statt einer: Die Unterzeile des Titelhintergrunds.
+        zeile.setMaxLines(2);
         zeile.setEllipsize(TextUtils.TruncateAt.END);
         zeile.setPadding(0, dp(context, 8), 0, 0);
         text.addView(zeile);

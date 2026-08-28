@@ -806,7 +806,8 @@ final class Rueckblick {
         name.setText(label);
         name.setTextColor(Theme.TEXT_SECONDARY);
         name.setTextSize(12);
-        name.setMaxLines(1);
+        // Zwei Zeilen statt einer: Der Titel eines Balkens.
+        name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         block.addView(name);
         reihe.addView(block, new LinearLayout.LayoutParams(0,
