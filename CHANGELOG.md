@@ -3,6 +3,41 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.63.0 — 28. August 2026
+
+Die Einstellungen der App waren dreißig Karten am Stück — jetzt sind es sechs
+Zeilen.
+
+Wer den Raumcode ändern wollte, scrollte an Werbeblocker, Filterlisten,
+Favoriten-Fortschritt, Autoplay, sieben Startseiten-Schaltern, Intromarken und
+Sprachfassung vorbei — und wusste unterwegs nie, wie weit es noch ist. Zwei
+Überschriften gab es auf der ganzen Seite.
+
+Jetzt stehen sechs Abschnitte da, und die ganze Seite passt ohne Scrollen auf
+den Schirm:
+
+| | |
+|---|---|
+| Startseite | 6 von 7 Reihen sichtbar |
+| Wiedergabe | Autoplay an · Folge rückt mit |
+| Werbeblocker | Das Gerät entscheidet |
+| Watchparty | Nicht verbunden · Raum Salon |
+| Meine Geräte | Verbunden · 5 Titel |
+| Über ELFIX | ELFIX 1.63.0 |
+
+**Die Zustandszeile ist der eigentliche Gewinn**, nicht das Zuklappen: die
+häufigste Frage an eine Einstellungsseite ist nicht „was kann ich ändern",
+sondern „wie steht es gerade". Sie steht jetzt da, ohne dass man irgendwo
+hineingehen muss.
+
+Aufgeklappt wird mit einem Tipp, am Fernseher mit OK. Was offen ist, bleibt
+offen — auch wenn ein Handgriff die Seite neu zeichnet.
+
+**Nebenbefund:** am Fernseher ließen sich die Reihen der Startseite gar nicht
+abschalten. Die Einstellungen standen als zwei getrennte Seiten nebeneinander,
+und die eine hatte diesen Abschnitt nie bekommen. Es ist jetzt eine Seite für
+beide Geräte.
+
 ## 1.62.0 — 28. August 2026
 
 Das Watchparty-Relay ist jetzt ein Programm, kein Ordner mit Quelltext.
