@@ -3315,6 +3315,28 @@ function reviewAbschnitte(daten) {
 
   stuecke.push(...reviewTitelliste("Deine meistgesehenen Serien", daten.serien, zeitBekannt));
   stuecke.push(...reviewTitelliste("Deine Filme", daten.filme, zeitBekannt));
+
+  // YouTube steht fuer sich - und zwar mit einem Satz dazu, warum.
+  //
+  // Ohne ihn faende jemand seine Stunde YouTube in der Gesamtzeit nicht wieder
+  // und hielte die Statistik fuer kaputt. Sie ist es nicht: ein Reaktionsvideo
+  // ist keine Serienfolge, und beides in einem Topf verschiebt jede Zahl
+  // daneben - Genres, Folgen, staerkster Tag, Serie des Jahres.
+  const videos = daten.videos;
+  if (videos && videos.videos > 0) {
+    stuecke.push(...reviewTitelliste("Deine YouTube-Videos", videos.liste, zeitBekannt));
+    const fuss = document.createElement("p");
+    fuss.className = "review-note";
+    const dauer = videos.sekunden > 0 ? reviewDauer(videos.sekunden) : "";
+    const anzahl = `${videos.videos} ${videos.videos === 1 ? "Video" : "Videos"}`;
+    const tage = videos.tage > 0
+      ? ` an ${videos.tage} ${videos.tage === 1 ? "Tag" : "Tagen"}`
+      : "";
+    fuss.textContent = dauer
+      ? `${anzahl}${tage}, zusammen ${dauer}. Zählt eigens und ist in keiner Zahl oben enthalten.`
+      : `${anzahl}${tage}. Zählt eigens und ist in keiner Zahl oben enthalten.`;
+    stuecke.push(fuss);
+  }
   if (daten.wiederholteste.length) {
     stuecke.push(...reviewTitelliste("Am häufigsten wiederholt", daten.wiederholteste, zeitBekannt, "wiederholungen"));
   }
@@ -3387,6 +3409,54 @@ function reviewBalken(ueberschrift, werte, fussnote) {
   return stuecke;
 }
 
+/**
+ * Der Bildplatz einer Statistikzeile - immer da, auch ohne Bild.
+ *
+ * <p><b>Warum das ein Fehler war.</b> Hier stand {@code if (eintrag.bild)}, und
+ * ohne Bild entstand *gar kein* Element. Die Zeile verlor damit ihren
+ * Bildplatz, Titel und Anbieter rutschten nach links und standen auf einer
+ * Linie - eine Zeile, die anders aussieht als alle anderen, ohne dass ihr
+ * anzusehen waere, warum.
+ *
+ * <p>Und der Grund ist einer, der oefter vorkommt, als es scheint: das Bild
+ * kommt aus dem Eintrag der Ablage, die Zeile aus den Sitzungen. Wer einen
+ * Titel aus der Mediathek loescht, behaelt seine Sitzungen - so soll es sein,
+ * die Statistik vergisst nichts. Nur hat dieser Titel dann kein Bild mehr.
+ * "Horse Camp - Sommer der Abenteuer" war genau das: vier Sitzungen, kein
+ * Eintrag mehr.
+ *
+ * <p>Statt eines Lochs steht jetzt derselbe gestaltete Platzhalter wie auf den
+ * Karten - die Anfangsbuchstaben. Und ein Bild, das sich nicht laden laesst,
+ * faellt einmal auf ihn zurueck; ein zweites Mal kann es nicht, weil der
+ * Horcher sich dabei selbst abmeldet.
+ */
+function reviewPoster(eintrag) {
+  const kuerzel = String(eintrag?.titel || "?")
+    .replace(/[^\p{L}\p{N} ]/gu, " ")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((wort) => wort[0] || "")
+    .join("")
+    .toUpperCase() || "?";
+
+  const platzhalter = document.createElement("div");
+  platzhalter.className = "review-poster review-poster-leer";
+  platzhalter.textContent = kuerzel;
+  if (!eintrag?.bild) return platzhalter;
+
+  const bild = document.createElement("img");
+  bild.className = "review-poster";
+  bild.src = eintrag.bild;
+  bild.alt = "";
+  bild.loading = "lazy";
+  bild.addEventListener("error", function beiFehler() {
+    bild.removeEventListener("error", beiFehler);
+    bild.replaceWith(platzhalter);
+  });
+  return bild;
+}
+
 function reviewTitelliste(ueberschrift, eintraege, zeitBekannt, schluessel = "sekunden") {
   const brauchbar = (eintraege || []).filter((eintrag) => eintrag && eintrag.titel);
   if (!brauchbar.length) return [];
@@ -3399,14 +3469,7 @@ function reviewTitelliste(ueberschrift, eintraege, zeitBekannt, schluessel = "se
   for (const eintrag of brauchbar) {
     const zeile = document.createElement("div");
     zeile.className = "review-row";
-    if (eintrag.bild) {
-      const bild = document.createElement("img");
-      bild.className = "review-poster";
-      bild.src = eintrag.bild;
-      bild.alt = "";
-      bild.loading = "lazy";
-      zeile.append(bild);
-    }
+    zeile.append(reviewPoster(eintrag));
     const name = document.createElement("strong");
     name.textContent = eintrag.titel;
     const meta = document.createElement("span");

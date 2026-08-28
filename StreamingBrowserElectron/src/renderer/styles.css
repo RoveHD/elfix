@@ -5947,6 +5947,23 @@ input[type="color"] {
   border-radius: 6px;
   object-fit: cover;
   background: color-mix(in srgb, var(--text), transparent 90%);
+  flex: none;
+}
+
+/* Der Platzhalter, wenn es kein Bild gibt - siehe reviewPoster().
+   Er hat genau die Masse des Bildes, damit die Zeile gleich aussieht, ob nun
+   eines da ist oder nicht. */
+.review-poster-leer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, rgb(var(--accent-rgb)), var(--bg-card) 62%),
+    color-mix(in srgb, var(--bg-card-strong), transparent 4%));
+  color: color-mix(in srgb, var(--text), transparent 25%);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
 .review-tiles {

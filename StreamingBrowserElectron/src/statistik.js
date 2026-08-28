@@ -80,11 +80,33 @@ function tagesschluessel(zeit) {
 // Die Reihenfolge ist Absicht: eine AniList-Kennung ist ein Beleg, ein
 // Anbietername ein starkes Indiz, ein Pfadbestandteil ein schwaches.
 function gattungBestimmen(quelle = {}) {
+  if (istVideoQuelle(quelle)) return "youtube";
   if (String(quelle.type || "").toLowerCase() === "film") return "film";
   if (quelle.anilist) return "anime";
   if (/aniworld/i.test(text(quelle.providerName))) return "anime";
   if (/\/anime(?:\/|$)/i.test(text(quelle.url))) return "anime";
   return String(quelle.type || "").toLowerCase() === "serie" ? "serie" : "serie";
+}
+
+/**
+ * Ob das ein YouTube-Video ist.
+ *
+ * <p>An der Adresse und am Anbieternamen, nicht an einer gespeicherten
+ * Gattung. Das ist Absicht: Sitzungen, die vor dieser Aenderung entstanden
+ * sind, tragen `gattung: "serie"` - sie sind nie durch eine Regel gelaufen,
+ * die YouTube kannte. An der echten Ablage waren das 2 von 224 Sitzungen mit
+ * zusammen einer Stunde. Wer nur die abgelegte Gattung fragte, wuerde die
+ * weiter als Serien zaehlen, und der Rueckblick auf das Jahr bliebe falsch.
+ *
+ * <p>Nichts wird dafuer umgeschrieben. Wie ueberall hier gilt: die Rohdaten
+ * bleiben, sie werden nur richtig gelesen.
+ */
+function istVideoQuelle(quelle = {}) {
+  if (String(quelle.gattung || "").toLowerCase() === "youtube") return true;
+  if (/^youtube$/i.test(text(quelle.anbieter))) return true;
+  if (/^youtube$/i.test(text(quelle.providerName))) return true;
+  return /(?:^|\/\/|\.)(?:youtube\.com|youtu\.be|youtube-nocookie\.com)(?:\/|$)/i
+    .test(text(quelle.url));
 }
 
 // --- Die laufende Sitzung ----------------------------------------------------
@@ -370,6 +392,57 @@ function bestenliste(karte, schluessel = "sekunden", grenze = 10) {
 // `sitzungen` sind die gespeicherten Datensaetze, `titel` liefert zu einer
 // Adresse, was die vorhandenen Caches ueber den Titel wissen - Genres, Poster,
 // Kennungen. Nichts davon wird hier geholt: dieses Modul rechnet nur.
+/**
+ * Was von YouTube zu sagen ist - fuer sich, neben allem anderen.
+ *
+ * <p>Bewusst knapp und bewusst anders gezaehlt als der Rest. Bei einer Serie
+ * fragt man nach Folgen und Staffeln; bei Videos fragt man, wie viele es waren
+ * und wie lange sie zusammen liefen. Tage, Strecken, Genres und ein "Video des
+ * Jahres" gibt es hier nicht - dazu gaeben die Daten nichts her, und eine Zahl
+ * ohne Beleg gehoert nicht auf den Schirm.
+ *
+ * @return immer ein Objekt; ohne Videos steht dort null Zeit und eine leere
+ *         Liste, damit die Anzeige nicht auf Sonderfaelle pruefen muss
+ */
+function videoAuswerten(sitzungen, titelInfo = () => ({})) {
+  const liste = Array.isArray(sitzungen) ? sitzungen : [];
+  const gemessene = liste.filter((sitzung) => sitzung?.qualitaet !== REKONSTRUIERT);
+  const sekunden = gemessene.reduce((summe, sitzung) => summe + zahl(sitzung.sekunden), 0);
+  const titel = new Map();
+  const tage = new Set();
+  for (const sitzung of liste) {
+    const zeit = Date.parse(sitzung?.begonnenAm || "");
+    if (Number.isFinite(zeit)) tage.add(tagesschluessel(new Date(zeit)));
+    const info = titelInfo(sitzung) || {};
+    const name = sitzung.titel || info.titel || sitzung.url;
+    if (!name) continue;
+    const stand = titel.get(name) || {
+      titel: name,
+      gattung: "youtube",
+      anbieter: sitzung.anbieter,
+      bild: info.bild || "",
+      sekunden: 0,
+      folgen: 0,
+      wiederholungen: 0
+    };
+    stand.sekunden += zahl(sitzung.sekunden);
+    // Bei einem Video ist "Folge" schlicht: einmal angesehen ist einmal.
+    // Gezaehlt wird jede Sitzung, die keine Wiederholung ist - dieselbe Regel
+    // wie oben, nur ohne Staffel und Folge, die es hier nicht gibt.
+    if (sitzung.wiederholung) stand.wiederholungen += 1;
+    else stand.folgen += 1;
+    if (!stand.bild && info.bild) stand.bild = info.bild;
+    titel.set(name, stand);
+  }
+  return {
+    sekunden: Math.round(sekunden),
+    videos: titel.size,
+    sitzungen: liste.length,
+    tage: tage.size,
+    liste: bestenliste(titel, "sekunden", 5)
+  };
+}
+
 function auswerten(sitzungen, optionen = {}) {
   const von = Number.isFinite(optionen.von) ? optionen.von : Date.parse(optionen.von || "");
   const bis = Number.isFinite(optionen.bis) ? optionen.bis : Date.parse(optionen.bis || "");
@@ -382,9 +455,23 @@ function auswerten(sitzungen, optionen = {}) {
   // Folge, und seit die Saetze von mehreren Geraeten kommen, ist die
   // Reihenfolge in der Ablage die des Eintreffens - nicht die des Schauens. Ohne
   // diese Zeile haenge an ihr, welchem Tag eine Folge zugerechnet wird.
-  const gewaehlt = bereinigen(sitzungen)
+  const imZeitraumSortiert = bereinigen(sitzungen)
     .filter((sitzung) => imZeitraum(sitzung, von, bis))
     .sort((links, rechts) => Date.parse(links.begonnenAm) - Date.parse(rechts.begonnenAm));
+
+  // YouTube zaehlt eigens und geht in nichts anderes ein.
+  //
+  // Ein Reaktionsvideo von einer Stunde ist keine Serienfolge. Solange beides
+  // in einen Topf lief, verschob es alles: die Gesamtzeit, die Genres, die
+  // Folgenzahl, den staerksten Tag, die Serie des Jahres. An der echten Ablage
+  // waren es 2 von 224 Sitzungen - aber eine von siebzehn Stunden, also fast
+  // sechs Prozent der gemessenen Zeit, und das Video stand in "Deine
+  // meistgesehenen Serien".
+  //
+  // Herausgenommen wird deshalb vor jeder Zaehlung, nicht erst bei der
+  // Anzeige. Was YouTube betrifft, steht danach unter `videos` fuer sich.
+  const videositzungen = imZeitraumSortiert.filter(istVideoQuelle);
+  const gewaehlt = imZeitraumSortiert.filter((sitzung) => !istVideoQuelle(sitzung));
   const gemessene = gewaehlt.filter((sitzung) => sitzung.qualitaet !== REKONSTRUIERT);
 
   const sekunden = gemessene.reduce((summe, sitzung) => summe + zahl(sitzung.sekunden), 0);
@@ -584,6 +671,7 @@ function auswerten(sitzungen, optionen = {}) {
     titel: bestenliste(titel, "sekunden", 10),
     serien: bestenliste(new Map([...titel].filter(([, wert]) => wert.gattung !== "film")), "sekunden", 5),
     filme: bestenliste(new Map([...titel].filter(([, wert]) => wert.gattung === "film")), "sekunden", 5),
+    videos: videoAuswerten(videositzungen, titelInfo),
     wiederholteste: bestenliste(titel, "wiederholungen", 3).filter((eintrag) => eintrag.wiederholungen > 0),
     verlauf: [...jeTag.values()].sort((links, rechts) => links.tag.localeCompare(rechts.tag))
   };
@@ -597,6 +685,8 @@ module.exports = {
   REKONSTRUIERT,
   tagesschluessel,
   gattungBestimmen,
+  istVideoQuelle,
+  videoAuswerten,
   meldungEinarbeiten,
   sitzungSchliessen,
   sitzungLohnt,
