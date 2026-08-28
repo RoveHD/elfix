@@ -685,4 +685,171 @@ function seitenSkript() {
   })()`;
 }
 
-module.exports = { seitenSkript, staffelAusPfad };
+
+/**
+ * Das Skript fuer die Serienuebersicht.
+ *
+ * <h2>Wozu</h2>
+ *
+ * <p>Auf dem Telefon und am Fernseher soll man von der Anbieterseite so wenig
+ * wie moeglich sehen. Wer eine neue Serie anfaengt, bekommt deshalb erst eine
+ * eigene Seite: wie viele Staffeln, wie viele Folgen, und welche davon. Erst
+ * mit der Wahl geht es los, und die Seite des Anbieters bleibt hinter dem
+ * Ladevorhang.
+ *
+ * <h2>Warum getrennt von seitenSkript</h2>
+ *
+ * <p>Das andere Skript beantwortet die Frage "wo endet diese Serie" und gibt
+ * Zahlen zurueck. Hier werden die Adressen selbst gebraucht - jede Folge
+ * einzeln, mit Staffel, Nummer und Link.
+ *
+ * <h2>Warum hier kein einziger Backslash steht</h2>
+ *
+ * <p>Der Text geht durch ein Template-Literal, und dort frisst jede Ebene
+ * einen. Statt sie zu zaehlen, kommen die Muster ohne aus: [0-9] statt d,
+ * ein Leerzeichen statt s, und [[] fuer die eckige Klammer. Dieselbe
+ * Bedeutung, eine Fehlerquelle weniger.
+ *
+ * <h2>Was hier nicht steht</h2>
+ *
+ * <p>Staffeln ohne Link auf dieser Seite. Eine Anbieterseite listet die Folgen
+ * der gezeigten Staffel und die uebrigen Staffeln als Reiter; mehr ist nicht
+ * zu holen, ohne jede einzeln zu laden - und das waere genau die Wartezeit,
+ * die hier eingespart werden soll.
+ */
+function uebersichtSkript() {
+  return `(() => {
+    const abs = (wert) => {
+      try { return wert ? new URL(wert, location.href).href : ""; } catch (_) { return ""; }
+    };
+    const ZIFFERN = "([0-9]+)";
+    const reStaffel = new RegExp("^(?:staffel|season)-" + ZIFFERN + "$", "i");
+    const reFolge = new RegExp("^(?:episode|folge)-" + ZIFFERN + "$", "i");
+    const reFolgeIrgendwo = new RegExp("(?:episode|folge)-" + ZIFFERN, "i");
+    const reOffeneStaffel = new RegExp("/(?:staffel|season)-" + ZIFFERN, "i");
+    const reSammelfolge = new RegExp(
+      "[[] *in +(?:e|ep|episode|folge) *[0-9]+ +enthalten *]", "i");
+
+    const mediaSlug = (() => {
+      const teile = location.pathname.split("/").filter(Boolean);
+      for (let i = 0; i < teile.length; i += 1) {
+        const teil = teile[i].toLowerCase();
+        const naechstes = teile[i + 1] ? teile[i + 1].toLowerCase() : "";
+        if ((teil === "anime" || teil === "serie") && naechstes === "stream" && teile[i + 2]) {
+          return teile[i + 2].toLowerCase();
+        }
+        if (teil === "stream" && teile[i + 1]) return teile[i + 1].toLowerCase();
+      }
+      return "";
+    })();
+
+    // Die Staffelnummer einer Adresse - nur wenn sie zu dieser Serie gehoert.
+    // Dieselbe Regel wie staffelAusPfad im Modul; sie steht hier noch einmal,
+    // weil dieses Skript ohne Backslashes auskommen muss.
+    const staffelVon = (pfad) => {
+      const teile = String(pfad || "").split("/").filter(Boolean);
+      let gehoert = !mediaSlug;
+      let nummer = 0;
+      for (const teil of teile) {
+        if (mediaSlug && teil.toLowerCase() === mediaSlug) gehoert = true;
+        const treffer = teil.match(reStaffel);
+        if (treffer) nummer = Number(treffer[1]);
+      }
+      return gehoert ? nummer : 0;
+    };
+
+    const folgeAusLink = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        const teile = url.pathname.split("/").filter(Boolean);
+        let slug = "";
+        let staffel = 0;
+        let folge = 0;
+        for (let i = 0; i < teile.length; i += 1) {
+          const teil = teile[i].toLowerCase();
+          const naechstes = teile[i + 1] ? teile[i + 1].toLowerCase() : "";
+          if ((teil === "anime" || teil === "serie") && naechstes === "stream" && teile[i + 2]) {
+            slug = teile[i + 2].toLowerCase();
+          }
+          if ((teil === "serie" || teil === "stream") && teile[i + 1] && !slug) {
+            slug = teile[i + 1].toLowerCase();
+          }
+          const s = teil.match(reStaffel);
+          if (s) staffel = Number(s[1]);
+          const f = teil.match(reFolge);
+          if (f) folge = Number(f[1]);
+        }
+        if (!folge || !Number.isFinite(folge)) return null;
+        if (mediaSlug && slug && slug !== mediaSlug) return null;
+        return { staffel: staffel || 1, folge, url: url.href };
+      } catch (_) {
+        return null;
+      }
+    };
+
+    // Eine Folge, die dasteht, aber nicht laeuft - dieselbe Regel wie in
+    // seitenSkript: S.to fasst Doppelfolgen zusammen und laesst die uebrigen
+    // Zeilen ohne Hoster stehen.
+    const gesperrte = (() => {
+      const raus = new Set();
+      for (const zeile of Array.from(document.querySelectorAll("tr, li"))) {
+        const zelle = zeile.querySelector("[class*='episode-number']");
+        const ausZelle = Number(String((zelle && zelle.textContent) || "").trim());
+        const link = zeile.querySelector("a[href]");
+        const treffer = String(zeile.getAttribute("onclick") || "")
+          .concat(" ", (link && link.getAttribute("href")) || "")
+          .match(reFolgeIrgendwo);
+        const nummer = Number.isFinite(ausZelle) && ausZelle > 0
+          ? ausZelle : Number((treffer && treffer[1]) || 0);
+        if (!Number.isFinite(nummer) || nummer <= 0) continue;
+        const watchZelle = zeile.querySelector("[class*='watch-cell'], [class*='episode-watch']");
+        const ohneHoster = Boolean(watchZelle)
+          && !watchZelle.querySelector("img, svg, a, button, [class*='watch-link']");
+        if (reSammelfolge.test(String(zeile.textContent || "")) || ohneHoster) raus.add(nummer);
+      }
+      return raus;
+    })();
+
+    const anker = Array.from(document.querySelectorAll("a[href]"));
+
+    const staffeln = new Map();
+    for (const a of anker) {
+      const href = a.getAttribute("href");
+      if (!href) continue;
+      let pfad = "";
+      try { pfad = new URL(abs(href), location.href).pathname; } catch (_) { continue; }
+      const nummer = staffelVon(pfad);
+      if (!Number.isFinite(nummer) || nummer <= 0) continue;
+      if (!staffeln.has(nummer)) staffeln.set(nummer, abs(href));
+    }
+
+    const folgen = new Map();
+    for (const a of anker) {
+      const gefunden = folgeAusLink(a.getAttribute("href") || "");
+      if (!gefunden) continue;
+      const schluessel = gefunden.staffel + "x" + gefunden.folge;
+      if (folgen.has(schluessel)) continue;
+      folgen.set(schluessel, {
+        staffel: gefunden.staffel,
+        folge: gefunden.folge,
+        url: gefunden.url,
+        gesperrt: gesperrte.has(gefunden.folge)
+      });
+    }
+
+    const offen = location.pathname.match(reOffeneStaffel);
+    const kopf = document.querySelector("h1");
+
+    return {
+      titel: String((kopf && kopf.textContent) || document.title || "").trim().slice(0, 200),
+      staffeln: Array.from(staffeln.entries())
+        .map((paar) => ({ staffel: paar[0], url: paar[1] }))
+        .sort((a, b) => a.staffel - b.staffel),
+      offeneStaffel: offen ? Number(offen[1]) : 0,
+      folgen: Array.from(folgen.values())
+        .sort((a, b) => (a.staffel - b.staffel) || (a.folge - b.folge))
+    };
+  })()`;
+}
+
+module.exports = { seitenSkript, uebersichtSkript, staffelAusPfad };

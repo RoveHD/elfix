@@ -128,6 +128,28 @@ public class MainActivity extends Activity {
     private String letztesSeitenbild = "";
     /** Und wie die Einstellungsseite aussah - siehe {@link #settingsBild}. */
     private String letztesSettingsBild = "";
+    /** Der Leser fuer die Seite vor der ersten Folge. */
+    private Serienuebersicht serienuebersicht;
+    /** Ob die gerade ladende Seite fuer die Uebersicht gelesen werden soll. */
+    private boolean uebersichtErwartet;
+    private Provider uebersichtAnbieter;
+    private String uebersichtSerienUrl = "";
+    private String uebersichtTitel = "";
+    private Serienuebersicht.Bestand uebersichtBestand;
+    /** Welche Staffel die Uebersicht gerade zeigt. */
+    private int uebersichtStaffel;
+    /**
+     * Der Rueckfall, falls die Seite nie fertig wird.
+     *
+     * <p>Manche Anbieter melden {@code onPageFinished} erst, wenn auch die
+     * letzte Werbung geladen ist - gemessen auf einer gedrosselten Leitung nach
+     * 150 Sekunden noch nicht. So lange darf niemand vor einem Vorhang sitzen.
+     * Kommt bis dahin keine Uebersicht, wird die Anbieterseite gezeigt wie
+     * bisher. Ein Umweg, der nichts hergibt, ist kein Grund fuer eine
+     * Sackgasse.
+     */
+    private final Handler uebersichtTakt = new Handler(Looper.getMainLooper());
+    private static final long UEBERSICHT_GEDULD_MS = 12_000L;
     /**
      * Der Sammler fuer Neuzeichnungen.
      *
@@ -649,6 +671,7 @@ public class MainActivity extends Activity {
         });
         messung.setzeRahmen(rahmen);
         titelbild = new Titelbild(kern, bestand);
+        serienuebersicht = new Serienuebersicht(kern);
         messung.setzeTitelbild(titelbild);
         // Der Weg zur naechsten Folge - dieselbe Regel wie am Rechner.
         folgen = new Folgen(kern);
@@ -2189,7 +2212,8 @@ public class MainActivity extends Activity {
                 }
             }
             for (String erst : new String[]{"tv:hero:0", "tv:anbieter:0", "tv:reiter:0",
-                "tv:entdeckung:0", "tv:liste:0", "tv:wp:0:oeffnen", "tv:wp:einstellungen"}) {
+                "tv:entdeckung:0", "tv:liste:0", "tv:uebersicht:0", "tv:uebersichtstaffel:0",
+                "tv:wp:0:oeffnen", "tv:wp:einstellungen"}) {
                 View ziel = seite.findViewWithTag(erst);
                 if (ziel != null) {
                     ziel.requestFocus();
@@ -3237,7 +3261,7 @@ public class MainActivity extends Activity {
             showToast("Zu diesem Eintrag ist keine Seite bekannt");
             return;
         }
-        openProvider(provider, eintrag.url);
+        serieOeffnen(provider, eintrag.url, eintrag.titel);
     }
 
     /**
@@ -4090,7 +4114,7 @@ public class MainActivity extends Activity {
         if (empfehlungen != null) {
             empfehlungen.geoeffnet(url, item.optString("title", ""), "");
         }
-        openProvider(provider, url);
+        serieOeffnen(provider, url, item.optString("title", ""));
     }
 
     /**
@@ -7246,6 +7270,310 @@ public class MainActivity extends Activity {
         return bild.toString();
     }
 
+    /* ------------------------------------- Die Seite vor der ersten Folge */
+
+    /**
+     * Eine Serie anfangen - ueber die Uebersicht statt ueber die Anbieterseite.
+     *
+     * <p>Gemeldet als Wunsch: von der Seite des Anbieters soll man moeglichst
+     * wenig sehen. Wer hier landet, bekommt deshalb erst eine eigene Seite mit
+     * Staffeln und Folgen; die Anbieterseite laedt dahinter und bleibt hinter
+     * dem Ladevorhang.
+     *
+     * <p>Nur fuer Neuanfaenge. Wer weiterschaut, weiss laengst, welche Folge
+     * dran ist - ihn noch einmal waehlen zu lassen waere ein Schritt zu viel.
+     * Und nur fuer Serien: ein Film hat keine Folgen, und YouTube fuehrt
+     * ohnehin keine.
+     */
+    private void serieOeffnen(Provider provider, String url, String titel) {
+        if (provider == null || url == null || url.isEmpty()) return;
+        if (serienuebersicht == null || !uebersichtLohnt(url)) {
+            openProvider(provider, url);
+            return;
+        }
+        uebersichtAnbieter = provider;
+        uebersichtSerienUrl = url;
+        uebersichtTitel = titel == null ? "" : titel.trim();
+        uebersichtBestand = null;
+        uebersichtStaffel = 0;
+        uebersichtErwartet = true;
+        uebersichtGeduldStellen();
+        // Der Vorhang deckt die Anbieterseite zu, waehrend sie gelesen wird.
+        startBegleiten(provider, url, uebersichtTitel.isEmpty() ? "Serie" : uebersichtTitel, 0);
+        openProvider(provider, url);
+    }
+
+    /**
+     * Ob sich der Umweg ueber die Uebersicht fuer diese Adresse lohnt.
+     *
+     * <p>Kein Film, kein YouTube, und nichts, was hier schon angefangen ist.
+     * Bei allem anderen ist die Antwort ja - ob die Seite wirklich Folgen
+     * hergibt, entscheidet sie selbst, und ohne welche faellt der Umweg weg.
+     */
+    private boolean uebersichtLohnt(String url) {
+        if (youtube != null && youtube.istYoutube(url)) return false;
+        Favorite vorhanden = bestand == null ? null : bestand.zuAdresse(url);
+        if (vorhanden == null && bestand != null) vorhanden = bestand.zuSerie(url);
+        // Schon angefangen heisst: es gibt eine Folge, die dran ist. Wer
+        // weiterschaut, soll nicht noch einmal waehlen muessen.
+        if (vorhanden != null && (vorhanden.fortschrittProzent() > 0 || vorhanden.currentTime() > 0)) {
+            return false;
+        }
+        // Ein Film hat keine Folgen. Erkennbar an der Adresse: eine Serie
+        // traegt /staffel-N oder /episode-N, ein Film nicht.
+        return Folgen.folgenText(url).isEmpty() ? adresseSiehtNachSerieAus(url) : true;
+    }
+
+    /**
+     * Ob eine Adresse ueberhaupt zu einer Serie fuehren koennte.
+     *
+     * <p>Grob, und das genuegt: gibt die geladene Seite keine Folgen her,
+     * faellt der Umweg ohnehin weg. Diese Frage soll nur verhindern, dass ein
+     * Film erst geladen und dann verworfen wird.
+     */
+    private static boolean adresseSiehtNachSerieAus(String url) {
+        String klein = url == null ? "" : url.toLowerCase(java.util.Locale.ROOT);
+        if (klein.contains("/film") || klein.contains("/movie")) return false;
+        return klein.contains("/anime/") || klein.contains("/serie") || klein.contains("/stream/");
+    }
+
+    private void uebersichtGeduldStellen() {
+        uebersichtTakt.removeCallbacksAndMessages(null);
+        uebersichtTakt.postDelayed(() -> {
+            if (!uebersichtErwartet) return;
+            Log.i(TAG, "Serienuebersicht: die Seite gab nichts her - Anbieterseite bleibt");
+            uebersichtErwartet = false;
+            if (startvorhang != null) startvorhang.auf("uebersicht ohne folgen");
+        }, UEBERSICHT_GEDULD_MS);
+    }
+
+    /**
+     * Die geladene Seite auslesen und, wenn etwas dabei ist, die Uebersicht
+     * zeigen.
+     *
+     * <p>Gerufen am Seitenende. Gibt die Seite nichts her, geschieht genau
+     * nichts weiter: der Vorhang geht auf und die Anbieterseite steht da wie
+     * bisher.
+     */
+    private void uebersichtLesen(WebView ansicht) {
+        if (!uebersichtErwartet || serienuebersicht == null) return;
+        serienuebersicht.lesen(ansicht, gelesen -> {
+            if (!uebersichtErwartet) return;
+            if (!gelesen.taugt()) {
+                Log.i(TAG, "Serienuebersicht: keine Folgen auf der Seite - Anbieterseite bleibt");
+                uebersichtErwartet = false;
+                uebersichtTakt.removeCallbacksAndMessages(null);
+                if (startvorhang != null) startvorhang.auf("uebersicht ohne folgen");
+                return;
+            }
+            uebersichtErwartet = false;
+            uebersichtTakt.removeCallbacksAndMessages(null);
+            uebersichtBestand = gelesen;
+            if (uebersichtStaffel <= 0) uebersichtStaffel = gelesen.offeneStaffel;
+            if (uebersichtTitel.isEmpty()) uebersichtTitel = gelesen.titel;
+            Log.i(TAG, "Serienuebersicht: " + gelesen.staffeln.size() + " Staffeln, "
+                + gelesen.folgen.size() + " Folgen");
+            // Der Vorhang geht auf und die Uebersicht steht da - die
+            // Anbieterseite dahinter hat niemand gesehen.
+            if (startvorhang != null) startvorhang.auf("uebersicht steht");
+            zeigeSerienuebersicht();
+        });
+    }
+
+    /**
+     * Eine andere Staffel zeigen.
+     *
+     * <p>Die Folgen einer Staffel stehen nur auf deren eigener Seite - sie
+     * wird deshalb geladen und neu gelesen, wieder hinter dem Vorhang. Die
+     * Uebersicht bleibt dabei stehen, bis die neue Liste da ist: ein
+     * Bildschirm, der auf halbem Weg leer wird, sieht kaputt aus.
+     */
+    private void uebersichtStaffelWaehlen(Serienuebersicht.Staffel staffel) {
+        if (staffel == null || uebersichtAnbieter == null) return;
+        if (staffel.nummer == uebersichtStaffel) return;
+        uebersichtStaffel = staffel.nummer;
+        uebersichtErwartet = true;
+        uebersichtGeduldStellen();
+        startBegleiten(uebersichtAnbieter, staffel.url,
+            uebersichtTitel.isEmpty() ? "Serie" : uebersichtTitel + " · Staffel " + staffel.nummer, 0);
+        openProvider(uebersichtAnbieter, staffel.url);
+    }
+
+    /** Eine Folge waehlen - ab hier ist es der gewoehnliche Weg in die Wiedergabe. */
+    private void uebersichtFolgeWaehlen(Serienuebersicht.Folge folge) {
+        if (folge == null || folge.gesperrt || uebersichtAnbieter == null) return;
+        String titel = uebersichtTitel.isEmpty()
+            ? Folgen.folgenText(folge.url) : uebersichtTitel;
+        startBegleiten(uebersichtAnbieter, folge.url, startTitelFuer(titel, folge.url), 0);
+        armAutoStart(folge.url);
+        openProvider(uebersichtAnbieter, folge.url);
+    }
+
+    /**
+     * Die Uebersicht zeichnen.
+     *
+     * <p>Telefon und Fernseher teilen sich den Aufbau und unterscheiden sich in
+     * den Bauteilen - wie bei jedem anderen Bildschirm hier auch.
+     */
+    private void zeigeSerienuebersicht() {
+        if (uebersichtBestand == null) return;
+        currentScreen = "uebersicht";
+        abschnitteFuer("uebersicht");
+        mouseMode = false;
+        setMouseCursorVisible(false);
+        setChromeCollapsed(false, false);
+        content.removeAllViews();
+        updateBottomNav();
+
+        boolean fernseher = isTelevision();
+        LinearLayout page = fernseher ? tvPage() : mobilePage();
+        Serienuebersicht.Bestand daten = uebersichtBestand;
+
+        String titel = uebersichtTitel.isEmpty() ? daten.titel : uebersichtTitel;
+        if (fernseher) {
+            page.addView(TvViews.eyebrow(this, "Neu anfangen"));
+            page.addView(TvViews.heroTitle(this, titel.isEmpty() ? "Serie" : titel));
+            page.addView(TvViews.body(this, daten.kopfzeile()));
+        } else {
+            page.addView(MobileViews.eyebrow(this, "Neu anfangen"));
+            page.addView(MobileViews.heroTitle(this, titel.isEmpty() ? "Serie" : titel));
+            page.addView(MobileViews.subtitle(this, daten.kopfzeile()));
+        }
+
+        // Die Staffeln als Reiter - nur wo es mehr als eine gibt.
+        if (daten.staffeln.size() > 1) {
+            addSpacing(page, staffelLeiste(daten, fernseher), 16);
+        }
+
+        int stelle = 0;
+        for (Serienuebersicht.Folge folge : daten.folgen) {
+            addSpacing(page, folgenZeile(folge, fernseher, stelle),
+                fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP);
+            stelle += 1;
+        }
+
+        if (daten.spielbare() == 0) {
+            addSpacing(page, hinweisKarte(fernseher, "Keine spielbare Folge",
+                "Auf dieser Staffel steht keine Folge, die sich abspielen laesst.",
+                "Beim Anbieter ansehen",
+                () -> openProvider(uebersichtAnbieter, uebersichtSerienUrl),
+                "tv:uebersicht:anbieter"), MobileViews.SECTION_GAP);
+        } else {
+            // Der Weg auf die Anbieterseite bleibt - er steht nur nicht mehr am
+            // Anfang, sondern am Ende, und man muss ihn nicht gehen.
+            addSpacing(page, hinweisKarte(fernseher, "Lieber selbst suchen?",
+                "Die Seite des Anbieters hat mehr - Beschreibung, Sprachen, alle Staffeln.",
+                "Beim Anbieter ansehen",
+                () -> openProvider(uebersichtAnbieter, uebersichtSerienUrl),
+                "tv:uebersicht:anbieter"), MobileViews.SECTION_GAP);
+        }
+        if (fernseher) tvFokusHerstellen(page);
+    }
+
+    /** Die Reiterleiste der Staffeln. */
+    private View staffelLeiste(Serienuebersicht.Bestand daten, boolean fernseher) {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setClipChildren(false);
+        scroll.setClipToPadding(false);
+        LinearLayout leiste = new LinearLayout(this);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        scroll.addView(leiste, new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        int stelle = 0;
+        for (Serienuebersicht.Staffel staffel : daten.staffeln) {
+            boolean gewaehlt = staffel.nummer == uebersichtStaffel;
+            TextView reiter = new TextView(this);
+            reiter.setText("Staffel " + staffel.nummer);
+            reiter.setTextColor(gewaehlt ? Color.WHITE : Theme.TEXT_SECONDARY);
+            reiter.setTextSize(fernseher ? 17 : 14);
+            reiter.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            reiter.setGravity(Gravity.CENTER);
+            reiter.setPadding(dp(fernseher ? 22 : 16), dp(fernseher ? 14 : 11),
+                dp(fernseher ? 22 : 16), dp(fernseher ? 14 : 11));
+            reiter.setMinHeight(dp(MobileViews.TOUCH_TARGET));
+            if (fernseher) {
+                reiter.setTag("tv:uebersichtstaffel:" + stelle);
+                TvViews.applyFocus(reiter,
+                    MobileViews.shape(this, gewaehlt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED,
+                        22, gewaehlt ? Theme.PRIMARY : Theme.BORDER, gewaehlt ? 2 : 1),
+                    MobileViews.shape(this, Theme.PRIMARY, 22, Color.WHITE, 3));
+            } else {
+                reiter.setBackground(MobileViews.shape(this,
+                    gewaehlt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 22,
+                    gewaehlt ? Theme.PRIMARY : Theme.BORDER, 1));
+            }
+            reiter.setOnClickListener(view -> uebersichtStaffelWaehlen(staffel));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.rightMargin = dp(8);
+            leiste.addView(reiter, params);
+            stelle += 1;
+        }
+        return scroll;
+    }
+
+    /**
+     * Eine Zeile je Folge.
+     *
+     * <p>Eine gesperrte Folge steht mit da und ist nicht waehlbar. Sie
+     * wegzulassen waere die schlechtere Auskunft: dann fehlte in der Liste
+     * eine Nummer, und niemand wuesste, warum.
+     */
+    private View folgenZeile(Serienuebersicht.Folge folge, boolean fernseher, int stelle) {
+        LinearLayout zeile = new LinearLayout(this);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(Gravity.CENTER_VERTICAL);
+        int rand = dp(fernseher ? 18 : 14);
+        zeile.setPadding(rand, rand, rand, rand);
+
+        TextView nummer = new TextView(this);
+        nummer.setText(String.valueOf(folge.nummer));
+        nummer.setTextColor(folge.gesperrt ? Theme.TEXT_DISABLED : Theme.PRIMARY);
+        nummer.setTextSize(fernseher ? 22 : 18);
+        nummer.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        nummer.setGravity(Gravity.CENTER);
+        nummer.setMinWidth(dp(fernseher ? 52 : 40));
+        zeile.addView(nummer);
+
+        LinearLayout texte = new LinearLayout(this);
+        texte.setOrientation(LinearLayout.VERTICAL);
+        texte.setPadding(dp(14), 0, 0, 0);
+        TextView name = new TextView(this);
+        name.setText("Folge " + folge.nummer);
+        name.setTextColor(folge.gesperrt ? Theme.TEXT_DISABLED : Theme.TEXT_PRIMARY);
+        name.setTextSize(fernseher ? 19 : 16);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        texte.addView(name);
+        TextView unter = new TextView(this);
+        unter.setText(folge.gesperrt
+            ? "Beim Anbieter nicht einzeln abspielbar"
+            : "Staffel " + folge.staffel);
+        unter.setTextColor(Theme.TEXT_SECONDARY);
+        unter.setTextSize(fernseher ? 15 : 12);
+        texte.addView(unter);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        zeile.addView(texte, textParams);
+
+        if (fernseher) {
+            zeile.setTag("tv:uebersicht:" + stelle);
+            TvViews.applyFocus(zeile,
+                MobileViews.shape(this, Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS, Theme.BORDER, 1),
+                MobileViews.shape(this, Theme.SURFACE_PRESSED, TvViews.CARD_RADIUS, Theme.PRIMARY, 3));
+            zeile.setFocusable(!folge.gesperrt);
+        } else {
+            MobileViews.addPressFeedback(zeile,
+                MobileViews.shape(this, Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS, Theme.BORDER, 1),
+                MobileViews.shape(this, Theme.SURFACE_PRESSED, MobileViews.CARD_RADIUS, Theme.PRIMARY, 1));
+        }
+        if (!folge.gesperrt) {
+            zeile.setOnClickListener(view -> uebersichtFolgeWaehlen(folge));
+        }
+        return zeile;
+    }
+
     private void showSettings() {
         currentScreen = "settings";
         abschnitteFuer("settings");
@@ -8548,6 +8876,13 @@ public class MainActivity extends Activity {
         if (liveStreifen != null && liveStreifen.zurueck()) return;
         if (fullscreenView != null) {
             hideFullscreen();
+            return;
+        }
+        // Aus der Uebersicht fuehrt Zurueck nach Hause. Die Anbieterseite haengt
+        // dahinter zwar im Speicher und koennte zurueckblaettern - sie war aber
+        // nie zu sehen, und was man nicht gesehen hat, will man nicht zurueck.
+        if ("uebersicht".equals(currentScreen)) {
+            showHome();
             return;
         }
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
@@ -10779,6 +11114,9 @@ public class MainActivity extends Activity {
             // den Stand der Runde anfordern. Der eine Einstieg fuer alle sechs
             // Wege, auf denen ELFIX eine Folge oeffnet - siehe Mitschauen.
             if (mitschauen != null && provider == activeProvider) mitschauen.seiteFertig(view, url);
+            // Die Seite vor der ersten Folge. Sie liest nur; gibt die Seite
+            // nichts her, bleibt alles wie bisher.
+            if (provider == activeProvider) uebersichtLesen(view);
             installStoPlayerFix(view, provider);
             installAniWorldImageFix(view, provider);
             if (kosmetik != null) kosmetik.einspielen(view, provider);
