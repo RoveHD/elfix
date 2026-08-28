@@ -195,6 +195,16 @@ public final class Pruefstand {
                 }
                 Log.i(TAG, MARKE + " gesichert");
                 return;
+            case "sicherung":
+                // Die Sicherung ausloesen, ohne auf ein echtes Update zu warten.
+                // Sie ist dieselbe, die vor einer Installation entsteht.
+                if (umgebung.sicherung() != null) {
+                    umgebung.sicherung().anlegen("pruefung", pfad ->
+                        Log.i(TAG, MARKE + " sicherung " + (pfad.isEmpty() ? "FEHLGESCHLAGEN" : pfad)));
+                } else {
+                    Log.w(TAG, MARKE + " keine Sicherung eingerichtet");
+                }
+                return;
             default:
                 Log.w(TAG, MARKE + " unbekannter Befehl: " + befehl);
         }
