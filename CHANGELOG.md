@@ -3,6 +3,35 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.64.0 — 28. August 2026
+
+Drei Meldungen aus der App.
+
+**Bei der Suche fehlten manche Bilder.** Und zwar anbieterweise: von Aniworld kam
+kein einziges, von S.to alle. Der Grund liegt an der Seite des Anbieters —
+Aniworld beantwortet seine Suchadresse mit einem Rahmen ohne einen einzigen
+Serienlink, die Treffer kommen dort erst per JavaScript nach. Der Bildnachtrag
+holte damit eine Seite, auf der nichts steht.
+
+Drei Wege nachgesehen: die Ajax-Antwort trägt nur Titel, Beschreibung und
+Adresse; die Serienübersicht listet 2462 Serien und kein einziges Bild; das
+Cover steht nur auf der Titelseite selbst. Also von dort — und bezahlbar, weil
+nur ihr Anfang gebraucht wird: das Cover steht bei Byte 11500, gelesen werden
+24 KB und dann wird abgebrochen. Geholt wird nur für Treffer, die wirklich
+angezeigt werden, und was einmal gefunden wurde, bleibt gemerkt.
+
+**Der Autoplay-Schalter lag auf der Watchparty-Leiste.** Beide hängen im selben
+Vollbildrahmen und beide oben; der Schalter mit so wenig Abstand, dass er mitten
+in der Leiste saß, sobald eine Runde lief. Er rückt jetzt darunter — und zwar
+immer, auch ohne Runde: ein Schalter ein Stück weiter unten fällt niemandem
+auf, ein Schalter unter einer Leiste schon.
+
+**Am Fernseher fehlte der Weg nach Hause.** Die Kopfzeile trug Suche, Favoriten,
+Watchparty und Einstellungen — und aus keiner dieser Seiten führte ein Knopf
+zurück. Wer in den Einstellungen stand, kam nur über die Zurück-Taste heraus,
+und die ist auf einer Fernbedienung nicht dort, wo man sie sucht. **„Start"**
+steht jetzt als erster Knopf in der Kopfzeile.
+
 ## 1.63.0 — 28. August 2026
 
 Die Einstellungen der App waren dreißig Karten am Stück — jetzt sind es sechs
