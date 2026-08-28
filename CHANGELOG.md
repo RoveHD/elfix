@@ -3,6 +3,39 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.62.0 — 28. August 2026
+
+Das Watchparty-Relay ist jetzt ein Programm, kein Ordner mit Quelltext.
+
+Wer die Watchparty benutzen will, muss das Relay betreiben. Bis hierher hieß
+das: Node installieren, `npm ci`, `node server.js`, systemd-Vorlage von Hand
+anpassen. Für einen Server in Ordnung, für jeden anderen eine Hürde.
+
+**Es gibt es jetzt als fertige Datei** — mit eigener Laufzeit, Node muss nicht
+installiert sein:
+
+- `ELFIX-Relay-…-win-x64.exe` — herunterladen, starten, fertig
+- `ELFIX-Relay-…-linux-x64` — dasselbe für Linux
+- `ELFIX-Relay-…-amd64.deb` — `sudo apt install ./…deb`, und der Dienst läuft
+
+Das Paket legt einen eigenen Benutzer an, richtet den Dienst ein und startet
+ihn. Es passt auf alles Debian-basierte: **Debian, Ubuntu und Linux Mint.**
+
+**Es hält sich selbst auf dem neuesten Stand.** Einmal am Tag sieht es bei den
+Releases nach; ist dort etwas Neueres, holt es die passende Datei und tauscht
+sich aus. Unter systemd startet der Dienst danach von selbst neu.
+
+Zwei Dinge tut es dabei ausdrücklich nicht. Es holt **nie eine ältere Fassung** —
+sonst genügte ein zurückgezogenes Release, um jedes Relay im Netz
+zurückzudrehen. Und es tauscht sich **nicht unter `/usr/bin` aus**: wer über
+`apt` installiert hat, bekommt seine Aktualisierung von `apt`; eine Datei, die
+sich unter einem verwalteten Pfad selbst ersetzt, wäre ein Paket, das seiner
+Verwaltung widerspricht. Abschalten lässt es sich mit
+`ELFIX_RELAY_KEIN_UPDATE=1`.
+
+Aus dem Quelltext gestartet aktualisiert sich nichts — wer ein Repository hat,
+aktualisiert mit `git`. Die Anleitung steht in `sync-server/README.md`.
+
 ## 1.61.0 — 28. August 2026
 
 Die Sicherung ließ den Rückblick zurück — und vor einem Update gab es keine.
