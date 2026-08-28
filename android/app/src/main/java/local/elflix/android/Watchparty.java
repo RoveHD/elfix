@@ -65,6 +65,10 @@ public final class Watchparty {
     private String geraetName = "";
     private String geraetId = "";
     private final List<String> raumcodes = new ArrayList<>();
+    /** Beitritte, die von einem anderen Geraet kamen und noch nachzutragen sind. */
+    private final List<String[]> offeneBeitritte = new ArrayList<>();
+    /** Wird gerufen, wenn sich Raeume oder Beitritte geaendert haben. */
+    private Runnable kontoMelder;
 
     /** Der zuletzt gemeldete Zustand - fuer die Anzeige, ohne den Kern zu fragen. */
     private JSONObject letzterStatus = new JSONObject();
@@ -270,6 +274,7 @@ public final class Watchparty {
             if (!raumcodes.contains(sauber)) raumcodes.add(sauber);
             speichern();
             anwenden();
+            if (kontoMelder != null) kontoMelder.run();
             antwort.fertig(sauber, null);
         });
     }
@@ -278,6 +283,123 @@ public final class Watchparty {
         raumcodes.remove(code);
         speichern();
         anwenden();
+        if (kontoMelder != null) kontoMelder.run();
+    }
+
+    /* ------------------------------------------- Dasselbe Konto, zwei Geraete */
+
+    /**
+     * Was ueber den gemeinsamen Schluessel hinausgeht: Raeume und Beitritte.
+     *
+     * <p>Wer denselben Schluessel hat, ist dasselbe Konto - dann sollen auch
+     * die Raeume gelten und dieselben Runden mitlaufen. Ueber die Watchparty
+     * selbst ginge das nicht: ein Raumcode ist genau das, was man braucht, um
+     * ueberhaupt in einen Raum zu kommen.
+     *
+     * <p>Ausdruecklich nicht dabei: die Serveradresse (sie kann je Geraet eine
+     * andere sein - im Heimnetz eine andere als von draussen) und die
+     * Geraetekennung (sie gehoert dem Geraet; zwei Geraete mit derselben
+     * gelten im Raum als eines).
+     */
+    /** Wer erfahren will, dass sich Raeume oder Beitritte geaendert haben. */
+    public void setzeKontoMelder(Runnable melder) {
+        this.kontoMelder = melder;
+    }
+
+    public JSONObject kontoSatz() {
+        JSONObject satz = new JSONObject();
+        try {
+            JSONArray codes = new JSONArray();
+            for (String code : raumcodes) codes.put(code);
+            satz.put("rooms", codes);
+            JSONArray beitritte = new JSONArray();
+            JSONArray eintraege = eintraege();
+            for (int i = 0; i < eintraege.length(); i += 1) {
+                JSONObject eintrag = eintraege.optJSONObject(i);
+                if (eintrag == null || !eintrag.optBoolean("joined", false)) continue;
+                JSONObject dabei = new JSONObject();
+                dabei.put("key", eintrag.optString("key", ""));
+                dabei.put("room", eintrag.optString("room", ""));
+                if (!dabei.optString("key", "").isEmpty()) beitritte.put(dabei);
+            }
+            satz.put("joined", beitritte);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Kontosatz liess sich nicht bauen", fehler);
+        }
+        return satz;
+    }
+
+    /**
+     * Und was von einem anderen Geraet desselben Kontos hereinkommt.
+     *
+     * <p>Ersetzt und nicht vereinigt: wer einen Raum entfernt oder eine Runde
+     * verlaesst, schickt eine kuerzere Liste, und die soll gelten. Eine
+     * Vereinigung holte beides ewig zurueck. Dass dieser Satz der neuere ist,
+     * hat der Abgleich schon entschieden.
+     */
+    public void kontoSatzUebernehmen(JSONObject satz) {
+        if (satz == null) return;
+
+        JSONArray codes = satz.optJSONArray("rooms");
+        if (codes != null) {
+            List<String> neu = new ArrayList<>();
+            for (int i = 0; i < codes.length(); i += 1) {
+                String code = codes.optString(i, "").trim();
+                if (!code.isEmpty() && !neu.contains(code)) neu.add(code);
+            }
+            if (!neu.equals(raumcodes)) {
+                raumcodes.clear();
+                raumcodes.addAll(neu);
+                speichern();
+                anwenden();
+                Log.i(TAG, "Raeume vom anderen Geraet uebernommen: "
+                    + (neu.isEmpty() ? "(keine)" : String.join(", ", neu)));
+            }
+        }
+
+        JSONArray beitritte = satz.optJSONArray("joined");
+        if (beitritte == null) return;
+        // Beitreten kann nur, wer den Raum schon kennt und verbunden ist. Der
+        // Aufruf ist deshalb bewusst nachsichtig: was jetzt nicht geht, geht
+        // beim naechsten Raumzustand - dann steht der Titel da und dieselbe
+        // Liste wird noch einmal durchgegangen.
+        offeneBeitritte.clear();
+        for (int i = 0; i < beitritte.length(); i += 1) {
+            JSONObject dabei = beitritte.optJSONObject(i);
+            if (dabei == null) continue;
+            String key = dabei.optString("key", "");
+            if (key.isEmpty()) continue;
+            offeneBeitritte.add(new String[]{key, dabei.optString("room", "")});
+        }
+        beitritteNachholen();
+    }
+
+    /**
+     * Die uebernommenen Beitritte nachtragen, soweit es geht.
+     *
+     * <p>Wird nach jedem Raumzustand versucht: ein Titel, den das Relay noch
+     * nicht gemeldet hat, laesst sich nicht betreten. Was gelingt, faellt aus
+     * der Liste - der Rest wartet auf den naechsten Zustand.
+     */
+    void beitritteNachholen() {
+        if (offeneBeitritte.isEmpty() || kern == null || !kern.istBereit()) return;
+        JSONArray eintraege = eintraege();
+        java.util.Iterator<String[]> lauf = offeneBeitritte.iterator();
+        while (lauf.hasNext()) {
+            String[] offen = lauf.next();
+            for (int i = 0; i < eintraege.length(); i += 1) {
+                JSONObject eintrag = eintraege.optJSONObject(i);
+                if (eintrag == null) continue;
+                if (!offen[0].equals(eintrag.optString("key", ""))) continue;
+                if (!offen[1].equals(eintrag.optString("room", ""))) continue;
+                lauf.remove();
+                if (eintrag.optBoolean("joined", false)) break;
+                Log.i(TAG, "Beitritt vom anderen Geraet uebernommen: " + offen[0]
+                    + " (Raum " + offen[1] + ")");
+                beitreten(offen[0], offen[1], null);
+                break;
+            }
+        }
     }
 
     /* --------------------------------------------------------------- Betrieb */
@@ -439,6 +561,11 @@ public final class Watchparty {
                 Log.e(TAG, "Watchparty-Eintraege unlesbar", ausnahme);
                 return;
             }
+            // Ein Titel, der vorhin noch nicht dastand, laesst sich jetzt
+            // vielleicht betreten - und ob dieses Geraet irgendwo dabei ist,
+            // steht erst mit diesem Zustand fest.
+            beitritteNachholen();
+            if (kontoMelder != null) kontoMelder.run();
             if (beobachter != null) beobachter.watchpartyGeaendert();
         });
     }

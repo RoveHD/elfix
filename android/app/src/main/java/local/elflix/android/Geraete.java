@@ -83,6 +83,8 @@ public final class Geraete {
     private boolean geplant = false;
     /** Woran erkannt wird, dass die Sitzungsliste sich seit dem letzten Mal geaendert hat. */
     private String sitzungsAbdruck = "";
+    /** Woran erkannt wird, dass sich Raeume oder Beitritte wirklich geaendert haben. */
+    private String watchpartyAbdruck = "";
 
     public Geraete(Context context, Kern kern, Bestand bestand, Watchparty watchparty,
                    Horcher horcher) {
@@ -131,6 +133,7 @@ public final class Geraete {
         }
         bestandReichen();
         sitzungenReichen();
+        watchpartyReichen();
         kern.rufe("geraete-bruecke.konfigurieren", Kern.args(einstellungen), (wert, fehler) -> {
             if (fehler != null) {
                 Log.e(TAG, "Geraeteabgleich nicht eingerichtet: " + fehler);
@@ -197,6 +200,38 @@ public final class Geraete {
         JSONArray offene = new JSONArray();
         for (String id : offeneIds) offene.put(id);
         kern.rufe("geraete-bruecke.sitzungenSetzen", Kern.args(alle, offene), null);
+    }
+
+    /**
+     * Raeume und Beitritte dieses Kontos in den Kern reichen.
+     *
+     * <p>Sie gehen ueber denselben Kanal wie Staende und Sitzungen - der
+     * gemeinsame Schluessel ist ohnehin da, und was ihn hat, ist dasselbe
+     * Konto. Ueber die Watchparty selbst ginge es nicht: ein Raumcode ist
+     * genau das, was man braucht, um in einen Raum zu kommen.
+     *
+     * <p>Nur wenn sich wirklich etwas geaendert hat - der Abgleich sieht alle
+     * paar Sekunden nach, und derselbe Satz muss nicht jedes Mal verpackt
+     * werden.
+     */
+    private void watchpartyReichen() {
+        if (kern == null || !kern.istBereit() || watchparty == null) return;
+        JSONObject satz = watchparty.kontoSatz();
+        String abdruck = satz.toString();
+        if (abdruck.equals(watchpartyAbdruck)) return;
+        watchpartyAbdruck = abdruck;
+        kern.rufe("geraete-bruecke.watchpartySetzen", Kern.args(satz), null);
+    }
+
+    /**
+     * Hier haben sich Raeume oder Beitritte geaendert.
+     *
+     * <p>Der Gegenpart zu {@link #sitzungenGemeldet}: der eine Punkt, an dem
+     * die Watchparty sagt, dass ihr Satz jetzt anders aussieht.
+     */
+    public void watchpartyGemeldet() {
+        watchpartyReichen();
+        abgleichenSpaeter();
     }
 
     /**
@@ -306,6 +341,12 @@ public final class Geraete {
                     // addieren sich. Was schon da ist, faellt beim Entdoppeln
                     // ueber die Kennung heraus.
                     if (statistik != null) statistik.uebernehmen(new JSONArray(nutzlastJson));
+                    return true;
+                case "geraete:watchparty":
+                    // Raeume und Beitritte eines anderen Geraets desselben
+                    // Kontos. Angewandt wird das in der Watchparty, nicht
+                    // hier: nur sie kann Raumcodes schreiben und beitreten.
+                    if (watchparty != null) watchparty.kontoSatzUebernehmen(new JSONObject(nutzlastJson));
                     return true;
                 case "geraete:spiegel":
                     spiegelSchreiben(new JSONObject(nutzlastJson));

@@ -27,6 +27,8 @@
   const statistik = require("statistik");
 
   let abgleich = null;
+  /** Raeume und Beitritte dieses Kontos - siehe watchpartySetzen. */
+  let watchpartySatz = null;
   let letzterStatus = null;
   // Die Favoriten in genau der Form, die favorites.json traegt. Das Modul
   // aendert sie an Ort und Stelle - deshalb liegt hier die Liste selbst und
@@ -83,6 +85,15 @@
         if (!dazu) return false;
         sitzungen = vereint;
         sitzungenDazu.push(sitzung);
+        return true;
+      },
+      // Raeume und Beitritte eines anderen Geraets desselben Kontos. Ein
+      // Zustand, kein Ereignis: der neuere gilt, und Java entscheidet, was
+      // damit zu tun ist - Einstellungen schreiben und beitreten kann nur die
+      // App, nicht dieses Modul.
+      onWatchparty: (satz) => {
+        if (!satz || typeof satz !== "object") return false;
+        ereignis("geraete:watchparty", satz);
         return true;
       },
       // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
@@ -178,6 +189,30 @@
   }
 
   /**
+   * Die Watchparty-Einstellungen dieses Kontos, die hinausgehen sollen.
+   *
+   * <p>Raeume und Beitritte, sonst nichts - dieselbe Auswahl wie am Rechner
+   * (`geraeteWatchparty` in main.js). Die Serveradresse bleibt ausdruecklich
+   * draussen: sie kann je Geraet eine andere sein, und sie zu ueberschreiben
+   * hiesse, ein funktionierendes Geraet abzuhaengen. Die Geraetekennung
+   * ebenso - sie gehoert dem Geraet, nicht dem Konto.
+   */
+  function watchpartySetzen(satz) {
+    // Gemerkt und nicht durchgereicht.
+    //
+    // Java meldet den Satz einmal, beim Einrichten - und da ist der Abgleich
+    // noch nicht scharf: er hat weder Schluessel noch Verbindung und wirft
+    // alles weg, was vor "konfigurieren" hereinkommt. Der Satz waere damit
+    // fuer immer verloren, denn Java schickt denselben kein zweites Mal.
+    //
+    // Also liegt er hier, und jeder Abgleich reicht ihn erneut hinein - genau
+    // wie die Staende, die ebenfalls bei jedem Durchgang neu aus den Favoriten
+    // kommen. Ob wirklich etwas hinausgeht, entscheidet das Modul am Hash.
+    watchpartySatz = satz && typeof satz === "object" ? satz : null;
+    return watchpartySatz ? 1 : 0;
+  }
+
+  /**
    * Einmal nachsehen, ob etwas hinaus muss.
    *
    * <p>Staende und Sitzungen in einem Zug - genau wie am Rechner. Was davon
@@ -199,6 +234,9 @@
       if (abg.kennt(key)) continue;
       offene.push({ key, sitzung });
     }
+    // Raeume und Beitritte gehen bei jedem Durchgang mit - siehe
+    // watchpartySetzen.
+    if (watchpartySatz) abg.watchpartySetzen(watchpartySatz);
     return { staende: hinaus, sitzungen: abg.anhaengen(offene) };
   }
 
@@ -241,6 +279,7 @@
     spiegelSetzen,
     favoritenSetzen,
     sitzungenSetzen,
+    watchpartySetzen,
     anbieterSetzen,
     abgleichen,
     vollAbgleichen,

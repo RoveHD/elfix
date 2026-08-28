@@ -34,6 +34,19 @@ const { versatzAusProben } = require("./watchparty-sync");
 // Staende - fuer das Relay ist beides derselbe verschlossene Klumpen -, und der
 // Schluessel ist das Einzige, was sie hier auseinanderhaelt.
 const SITZUNG_PRAEFIX = "sitzung:";
+// Die Watchparty-Einstellungen dieses Kontos: welche Raeume eingerichtet sind
+// und welche Titel dieses Konto mitschaut.
+//
+// Warum ueber diesen Kanal und nicht ueber die Watchparty selbst: ein Raumcode
+// ist genau das, was man *braucht*, um in einen Raum zu kommen - ihn ueber den
+// Raum zu verteilen waere ein Zirkelschluss. Der gemeinsame Schluessel ist
+// dagegen schon da, und was ihn hat, ist dasselbe Konto.
+//
+// Ein einziger Schluessel, kein Eintrag je Raum: die Liste ist die Aussage.
+// Wer einen Raum entfernt, schickt eine kuerzere Liste, und die gilt - sonst
+// kaeme ein entfernter Raum vom anderen Geraet ewig zurueck.
+const WATCHPARTY_PRAEFIX = "wp:";
+const WATCHPARTY_SCHLUESSEL = `${WATCHPARTY_PRAEFIX}einstellungen`;
 
 const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 60000;
@@ -71,6 +84,10 @@ class Geraeteabgleich {
     // Deshalb wird hier nichts verglichen und nichts ueberschrieben - sie kommt
     // dazu oder sie ist schon da.
     this.aufSitzung = optionen.onSitzung || (() => false);
+    // Die Watchparty-Einstellungen eines anderen Geraets desselben Kontos:
+    // Raeume und Beitritte. Anders als eine Sitzung ist das ein *Zustand* - der
+    // neuere gilt, der aeltere wird verworfen.
+    this.aufWatchparty = optionen.onWatchparty || (() => false);
     // Anderswo geloescht. Bekommt den Titelschluessel, nicht die Kennung des
     // Relays - der Rest der App kennt nur den.
     this.aufWeg = optionen.onWeg || (() => false);
@@ -111,6 +128,8 @@ class Geraeteabgleich {
     // id -> { at, key } fuer alles, was noch auf seine Bestaetigung wartet.
     this.warteAuf = new Map();
     this.eigeneSitzungen = [];
+    /** Raeume und Beitritte dieses Kontos - siehe {@link watchpartySetzen}. */
+    this.eigeneWatchparty = null;
     // Bis hierher kennt dieses Geraet den Raum. Das Relay vergibt die Nummern;
     // sie sind das Einzige, woran sich "was fehlt mir noch?" verlaesslich
     // ablesen laesst.
@@ -227,7 +246,7 @@ class Geraeteabgleich {
   lebendeStaende() {
     let anzahl = 0;
     for (const eintrag of this.spiegel.values()) {
-      if (!eintrag.weg && eintrag.art !== "sitzung") anzahl += 1;
+      if (!eintrag.weg && eintrag.art !== "sitzung" && eintrag.art !== "watchparty") anzahl += 1;
     }
     return anzahl;
   }
@@ -266,7 +285,7 @@ class Geraeteabgleich {
         at: Number(eintrag.at) || 0,
         hash: String(eintrag.hash || ""),
         key: String(eintrag.key || ""),
-        art: eintrag.art === "sitzung" ? "sitzung" : "stand",
+        art: eintrag.art === "sitzung" || eintrag.art === "watchparty" ? eintrag.art : "stand",
         weg: Boolean(eintrag.weg)
       });
     }
@@ -461,6 +480,24 @@ class Geraeteabgleich {
     return this.hinausschicken();
   }
 
+  /**
+   * Die Watchparty-Einstellungen dieses Kontos setzen.
+   *
+   * <p>Raeume und Beitritte, als ein Satz. Verschickt wird nur, wenn er sich
+   * gegenueber dem letzten wirklich unterscheidet - der Takt kommt alle paar
+   * Sekunden, und eine unveraenderte Liste hinauszuschicken waere Arbeit fuer
+   * nichts.
+   */
+  watchpartySetzen(satz) {
+    if (!this.aktiv || !this.abgeleitet) return 0;
+    this.eigeneWatchparty = satz && typeof satz === "object" ? satz : null;
+    if (!this.verbunden || !this.offen) {
+      this.nachholen = true;
+      return 0;
+    }
+    return this.hinausschicken();
+  }
+
   hinausschicken() {
     const staende = this.eigeneStaende || [];
     const gesehen = new Set();
@@ -532,7 +569,13 @@ class Geraeteabgleich {
 
     if (frisch && !verloren) {
       for (const [id, eintrag] of this.spiegel) {
-        if (gesehen.has(id) || zurueck.has(id) || eintrag.weg || eintrag.art === "sitzung") continue;
+        // Sitzungen und die Watchparty-Einstellungen stehen nicht in der
+        // Standliste - ein Grabstein fuer sie waere das Gegenteil dessen, was
+        // hier gewollt ist.
+        if (gesehen.has(id) || zurueck.has(id) || eintrag.weg
+          || eintrag.art === "sitzung" || eintrag.art === "watchparty") {
+          continue;
+        }
         aufgaben.push({ id, key: eintrag.key, hash: "", stand: null });
       }
     } else if (verloren && !this.wiederholung) {
@@ -545,6 +588,26 @@ class Geraeteabgleich {
       this.wiederholung = true;
       this.vollAbgleichen();
       return 0;
+    }
+
+    // Die Watchparty-Einstellungen. Ein Zustand, kein Ereignis: verglichen
+    // wird ueber den Hash wie bei einem Stand, damit derselbe Satz nicht in
+    // jedem Takt erneut hinausgeht. Ein Grabstein entsteht dafuer nie (siehe
+    // die Schleife oben) - "keine Raeume" ist eine leere Liste und keine
+    // Loeschung.
+    if (this.eigeneWatchparty) {
+      const id = schluesselModul.eintragId(this.abgeleitet, WATCHPARTY_SCHLUESSEL);
+      const hash = schluesselModul.standHash(this.eigeneWatchparty);
+      const bekannt = this.spiegel.get(id);
+      if (id && (!bekannt || bekannt.hash !== hash)) {
+        aufgaben.push({
+          id,
+          key: WATCHPARTY_SCHLUESSEL,
+          hash,
+          stand: { key: WATCHPARTY_SCHLUESSEL, watchparty: this.eigeneWatchparty },
+          art: "watchparty"
+        });
+      }
     }
 
     // Und die Sitzungen. Sie werden nie verglichen und nie zurueckgenommen -
@@ -598,7 +661,10 @@ class Geraeteabgleich {
         this.unterwegs.add(eintrag.id);
         this.warteAuf.set(eintrag.id, { at, key: eintrag.key });
       } else if (eintrag.stand) {
-        this.merken(eintrag.id, { at, hash: eintrag.hash, key: eintrag.key, art: "stand" });
+        this.merken(eintrag.id, {
+          at, hash: eintrag.hash, key: eintrag.key,
+          art: eintrag.art === "watchparty" ? "watchparty" : "stand"
+        });
       } else {
         this.vergessen(eintrag.id);
       }
@@ -749,6 +815,20 @@ class Geraeteabgleich {
         continue;
       }
 
+      // Die Watchparty-Einstellungen eines anderen Geraets desselben Kontos.
+      // Ein Zustand: der neuere gilt. Dass er neuer ist, hat die Pruefung ganz
+      // oben schon entschieden (bekannt.at >= at).
+      if (String(inhalt.key).startsWith(WATCHPARTY_PRAEFIX)) {
+        if (this.aufWatchparty(inhalt.watchparty || null, at)) geaendert += 1;
+        this.merken(id, {
+          at,
+          hash: schluesselModul.standHash(inhalt.watchparty || {}),
+          key: String(inhalt.key),
+          art: "watchparty"
+        });
+        continue;
+      }
+
       // Eine Sitzung. Sie wird nicht verglichen und nicht zurueckgeschrieben -
       // sie kommt dazu. Steht sie schon da, war es dieselbe.
       if (String(inhalt.key).startsWith(SITZUNG_PRAEFIX)) {
@@ -776,4 +856,4 @@ class Geraeteabgleich {
   }
 }
 
-module.exports = { Geraeteabgleich, SITZUNG_PRAEFIX };
+module.exports = { Geraeteabgleich, SITZUNG_PRAEFIX, WATCHPARTY_SCHLUESSEL };

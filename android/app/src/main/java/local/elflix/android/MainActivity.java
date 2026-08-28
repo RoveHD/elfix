@@ -126,6 +126,8 @@ public class MainActivity extends Activity {
     private ScrollView seitenScroll;
     /** Wie die Liste beim letzten Neuzeichnen aussah - siehe {@link #seitenbild}. */
     private String letztesSeitenbild = "";
+    /** Und wie die Einstellungsseite aussah - siehe {@link #settingsBild}. */
+    private String letztesSettingsBild = "";
     /**
      * Der Sammler fuer Neuzeichnungen.
      *
@@ -477,6 +479,31 @@ public class MainActivity extends Activity {
      * Fernseher den Fokus.
      */
     private final List<LiveKachel> liveKacheln = new ArrayList<>();
+    /**
+     * Die Kacheln, deren Fortschritt im Takt nachzieht - der eigene.
+     *
+     * <p>Das Gegenstueck zu {@link #liveKacheln}, die den Stand einer Runde
+     * zeigen. Hier geht es um den eigenen: waehrend eine Folge laeuft, meldet
+     * die Messung alle paar Sekunden eine neue Stelle. Die Seite deswegen neu
+     * zu bauen war der gemeldete Fehler, gar nichts zu tun die Gegenreaktion -
+     * dann standen Balken und Zeit bis zum naechsten Anlass still.
+     *
+     * <p>Beides ist nicht noetig. Was sich aendert, ist die Breite eines
+     * Balkens und eine Zeile Text; beide stehen schon da und tragen ihre Marke.
+     * Nachgezogen wird deshalb an Ort, und sonst geschieht nichts.
+     */
+    private final List<FortschrittsKachel> fortschrittsKacheln = new ArrayList<>();
+
+    /** Eine Kachel und der Eintrag, dessen Stand sie zeigt. */
+    private static final class FortschrittsKachel {
+        final View karte;
+        final String eintragId;
+
+        FortschrittsKachel(View karte, String eintragId) {
+            this.karte = karte;
+            this.eintragId = eintragId;
+        }
+    }
     /** Welche Titel zuletzt in den Raeumen standen - siehe {@link #watchpartyGeaendert()}. */
     private String watchpartyEintragsStand = "";
     /** Wie die Watchparty-Seite zuletzt aussah - siehe {@link #watchpartyBild}. */
@@ -663,10 +690,16 @@ public class MainActivity extends Activity {
         });
         geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
             // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
-            if ("settings".equals(currentScreen)) showSettings();
+            settingsGeaendert();
         });
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
+        // Raeume und Beitritte gehen ueber den gemeinsamen Schluessel mit -
+        // wer denselben hat, ist dasselbe Konto und soll in denselben Runden
+        // sein, ohne jeden Code zweimal einzutippen.
+        watchparty.setzeKontoMelder(() -> {
+            if (geraete != null) geraete.watchpartyGemeldet();
+        });
         // Die Empfehlungen brauchen die Relay-Adresse: dieselbe Maschine wie
         // die Watchparty, nur das andere Protokoll - deshalb erst hier, nach
         // dem Anlegen der Watchparty.
@@ -710,7 +743,7 @@ public class MainActivity extends Activity {
         fernsehwerbung = new Fernsehwerbung(adblocker, istDebugBau());
         werbefilter = new Werbefilter(this, kern, () -> {
             // Der Aufbau dauert; steht die Seite gerade offen, soll sie es zeigen.
-            if ("settings".equals(currentScreen)) showSettings();
+            settingsGeaendert();
         });
         fassungen = new Fassungen(this, kern);
         marken = new Marken(this, kern, rahmen);
@@ -858,7 +891,7 @@ public class MainActivity extends Activity {
         // Sich selbst auf den neuesten Stand bringen. Haengt an keinem Kern und
         // an keinem Anbieter - nur an der Leitung.
         aktualisierung = new Aktualisierung(this, () -> {
-            if ("settings".equals(currentScreen)) showSettings();
+            settingsGeaendert();
         });
         aktualisierung.setzeFrager(this::neueFassungAnbieten);
         aktualisierung.nachsehen(false);
@@ -1164,7 +1197,9 @@ public class MainActivity extends Activity {
         // Ende wieder anfangen. Dasselbe tut der Rechner, wenn der Schalter in
         // der Seite umgelegt wird.
         if (spielerleiste != null) spielerleiste.autoplayAuffrischen();
-        if ("settings".equals(currentScreen)) showSettings();
+        // Ein Handgriff, kein Hintergrundmelder: hier wird gezeichnet, ohne zu
+        // fragen - die Karte sagt gleich etwas anderes.
+        settingsNeuZeichnen();
     }
 
     /**
@@ -2604,7 +2639,7 @@ public class MainActivity extends Activity {
                 return;
             }
             showToast("Schlüssel übernommen — wird abgeglichen");
-            showSettings();
+            settingsNeuZeichnen();
         });
     }
 
@@ -2629,7 +2664,7 @@ public class MainActivity extends Activity {
                     return;
                 }
                 showToast("Neuer Schlüssel erzeugt");
-                showSettings();
+                settingsNeuZeichnen();
             }));
     }
 
@@ -2665,7 +2700,7 @@ public class MainActivity extends Activity {
             () -> {
                 geraete.trennen();
                 showToast("Getrennt");
-                showSettings();
+                settingsNeuZeichnen();
             });
     }
 
@@ -2693,7 +2728,7 @@ public class MainActivity extends Activity {
         Runnable umschalten = () -> {
             if (marken == null) return;
             marken.einschalten(!marken.eingeschaltet());
-            showSettings();
+            settingsNeuZeichnen();
         };
         String knopf = moeglich ? (an ? "Ausschalten" : "Einschalten") : null;
         View karte = fernseher
@@ -2734,7 +2769,7 @@ public class MainActivity extends Activity {
         Runnable umschalten = () -> {
             if (fassungen == null) return;
             fassungen.einschalten(!fassungen.eingeschaltet());
-            showSettings();
+            settingsNeuZeichnen();
         };
         View karte = fernseher
             ? TvViews.infoCard(this, "Sprachfassung merken", text, an ? "Ausschalten" : "Einschalten", umschalten)
@@ -2796,7 +2831,7 @@ public class MainActivity extends Activity {
                 getSharedPreferences("elflix_settings", MODE_PRIVATE)
                     .edit().putString("favorite_progress_mode", favoriteProgressMode).apply();
                 showToast("Gespeichert");
-                showSettings();
+                settingsNeuZeichnen();
             }), TvViews.ITEM_GAP);
 
         addSpacing(page, autoplayKarte(true), TvViews.ITEM_GAP);
@@ -3065,6 +3100,40 @@ public class MainActivity extends Activity {
     private void liveKachelnZuruecksetzen() {
         liveTakt.removeCallbacksAndMessages(null);
         liveKacheln.clear();
+        fortschrittsKacheln.clear();
+    }
+
+    /**
+     * Balken und Zeit nachziehen - und sonst nichts.
+     *
+     * <p>Gerufen, wenn sich am Bestand etwas geaendert hat, das die Seite
+     * nicht anders aussehen laesst: eine neue Stelle in der laufenden Folge.
+     * Genau dafuer ist diese Stelle da, und genau deshalb steht hier kein
+     * einziges {@code addView} - was gezeichnet werden muesste, existiert
+     * schon.
+     */
+    private void fortschrittAuffrischen() {
+        if (fortschrittsKacheln.isEmpty()) return;
+        for (FortschrittsKachel kachel : fortschrittsKacheln) {
+            if (kachel.karte.getWindowToken() == null) continue;
+            Favorite eintrag = bestand.mitId(kachel.eintragId);
+            if (eintrag == null) continue;
+
+            View stand = kachel.karte.findViewWithTag(Mitschaustand.MARKE_STAND);
+            if (stand instanceof TextView) {
+                String text = eintrag.wartetAufNaechsteFolge() ? "" : eintrag.standText();
+                if (!text.contentEquals(((TextView) stand).getText())) {
+                    ((TextView) stand).setText(text);
+                }
+                stand.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+
+            View balken = kachel.karte.findViewWithTag(Mitschaustand.MARKE_BALKEN);
+            if (balken != null && balken.getParent() instanceof View) {
+                MobileViews.balkenBreiteSetzen((View) balken.getParent(), balken,
+                    eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent());
+            }
+        }
     }
 
     /** Ob diese Reihe der Startseite eingeschaltet ist. Ohne Einstellung: ja. */
@@ -3754,6 +3823,12 @@ public class MainActivity extends Activity {
             if (!schluessel.isEmpty()) {
                 liveKacheln.add(new LiveKachel(karte, schluessel, eintrag.duration(),
                     eintrag.watchpartyVon(), watchpartyZeit(eintrag)));
+            }
+            // Der eigene Fortschritt zieht ebenfalls nach - aber nur, wo ein
+            // Balken ueberhaupt etwas bedeutet. In Watchlist und Mediathek
+            // steht keiner.
+            if (liste.zeigtFortschritt()) {
+                fortschrittsKacheln.add(new FortschrittsKachel(karte, eintrag.id()));
             }
             karten.add(karte);
         }
@@ -4655,7 +4730,7 @@ public class MainActivity extends Activity {
                 showToast(anzahl + " Domains geladen");
                 if (werbefilter != null) werbefilter.neuBauen();
             }
-            showSettings();
+            settingsNeuZeichnen();
         });
     }
 
@@ -4687,7 +4762,7 @@ public class MainActivity extends Activity {
         werbefilter.setzeModus(neu);
         showToast("aus".equals(neu) ? "Volle Regeln aus"
             : ("an".equals(neu) ? "Volle Regeln an" : "Das Gerät entscheidet"));
-        showSettings();
+        settingsNeuZeichnen();
     }
 
     /** Settings rows as grouped cards instead of stacked headline/paragraph pairs. */
@@ -4776,7 +4851,7 @@ public class MainActivity extends Activity {
                     .putString("favorite_progress_mode", favoriteProgressMode)
                     .apply();
                 showToast("Gespeichert");
-                showSettings();
+                settingsNeuZeichnen();
             }), MobileViews.ITEM_GAP);
 
         addSpacing(page, autoplayKarte(false), MobileViews.ITEM_GAP);
@@ -4820,7 +4895,7 @@ public class MainActivity extends Activity {
                 startseite.zeigt(reihe.schluessel),
                 () -> {
                     startseite.umschalten(reihe.schluessel);
-                    showSettings();
+                    settingsNeuZeichnen();
                 }), MobileViews.ITEM_GAP);
         }
     }
@@ -4856,7 +4931,7 @@ public class MainActivity extends Activity {
             watchparty.istEingeschaltet() ? "Ausschalten" : "Einschalten",
             () -> {
                 watchparty.setzeEingeschaltet(!watchparty.istEingeschaltet());
-                showSettings();
+                settingsNeuZeichnen();
             }), fernseher ? luecke : abstand);
 
         addSpacing(page, serverKarte(fernseher), luecke);
@@ -4871,7 +4946,7 @@ public class MainActivity extends Activity {
                 watchparty.raumHinzufuegen(wert, (angenommen, fehler) -> {
                     if (fehler != null) showToast(fehler);
                     else showToast("Raum hinzugefügt");
-                    showSettings();
+                    settingsNeuZeichnen();
                 }))), luecke);
 
         for (String code : codes) {
@@ -4880,7 +4955,7 @@ public class MainActivity extends Activity {
                     "Der Stand aus diesem Raum verschwindet von diesem Gerät. Auf den anderen bleibt er.",
                     () -> {
                         watchparty.raumEntfernen(code);
-                        showSettings();
+                        settingsNeuZeichnen();
                     })), luecke);
         }
 
@@ -4891,7 +4966,7 @@ public class MainActivity extends Activity {
             () -> textFrage("Name dieses Geräts", fernseher ? "z. B. Fernseher" : "z. B. Handy",
                 watchparty.geraetName(), wert -> {
                     watchparty.setzeGeraetName(wert);
-                    showSettings();
+                    settingsNeuZeichnen();
                 })), luecke);
     }
 
@@ -5048,7 +5123,7 @@ public class MainActivity extends Activity {
             // wirkungslos, bis jemand die App neu startete.
             if (geraete != null) geraete.anwenden();
             if (empfehlungen != null) empfehlungen.erneutStarten(wert);
-            showSettings();
+            settingsNeuZeichnen();
         });
     }
 
@@ -7096,6 +7171,81 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
+    /**
+     * Die Einstellungsseite noch einmal zeichnen - an derselben Stelle.
+     *
+     * <p><b>Der gemeldete Fehler.</b> Jeder Handgriff hier rief {@code
+     * showSettings()}, und das faengt mit {@code content.removeAllViews()} an
+     * und legt eine neue ScrollView an. Wer weit unten einen Schalter umlegte,
+     * stand danach wieder ganz oben - bei jedem einzelnen Schalter.
+     *
+     * <p>Die Stelle wird deshalb gerettet und wiederhergestellt. Das ist der
+     * kleine Schritt; der grosse waere, die Seite gar nicht neu zu bauen. Er
+     * lohnt hier nicht: die Seite besteht aus zwei Dutzend Karten, deren Text
+     * sich mit fast jedem Schalter aendert, und ein Abgleich Karte fuer Karte
+     * waere mehr Regel als die Seite selbst hat. Was wirklich gestoert hat -
+     * ein Neuaufbau, waehrend man nur scrollt -, faellt eine Ebene hoeher weg
+     * (siehe {@link #settingsGeaendert}).
+     */
+    private void settingsNeuZeichnen() {
+        if (!"settings".equals(currentScreen)) return;
+        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
+        showSettings();
+        scrollStandHerstellen(stand);
+    }
+
+    /**
+     * Von aussen hat sich etwas geaendert - Abgleich, Filterlisten, eine neue
+     * Fassung, der Autoplay-Schalter.
+     *
+     * <p>Diese Melder kommen ungefragt: der Geraeteabgleich meldet seinen
+     * Zustand, sobald sich eine Zahl bewegt, der Filteraufbau meldet seinen
+     * Fortschritt, die Fassungspruefung meldet ihr Ergebnis. Bis hierher baute
+     * jede dieser Meldungen die ganze Seite neu - und wer gerade scrollte, sah
+     * die Seite unter dem Finger nach oben springen, ohne etwas getan zu haben.
+     *
+     * <p>Gezeichnet wird jetzt nur, wenn die Seite danach wirklich anders
+     * aussaehe. Verglichen wird an den Saetzen, die sie hinschreibt - nicht an
+     * den Zustaenden dahinter: ein Abgleich, der von "verbunden" auf
+     * "verbunden" meldet, hat nichts zu zeigen.
+     */
+    private void settingsGeaendert() {
+        if (!"settings".equals(currentScreen)) return;
+        String bild = settingsBild();
+        if (bild.equals(letztesSettingsBild)) return;
+        letztesSettingsBild = bild;
+        settingsNeuZeichnen();
+    }
+
+    /**
+     * Wie die Einstellungsseite aussaehe - als eine Zeile zum Vergleichen.
+     *
+     * <p>Nur das, was die Hintergrundmelder aendern koennen. Alles Uebrige
+     * aendert sich ausschliesslich durch einen Handgriff, und der zeichnet
+     * ohnehin.
+     */
+    private static final String TRENNER = System.lineSeparator();
+
+    private String settingsBild() {
+        StringBuilder bild = new StringBuilder();
+        // Der Abgleich: sein ganzer Zustand, so wie die Karte ihn liest.
+        if (geraete != null) {
+            org.json.JSONObject zustand = geraete.zustand();
+            bild.append(zustand == null ? "" : zustand.toString()).append(TRENNER);
+        }
+        if (werbefilter != null) {
+            bild.append(werbefilter.standText()).append(TRENNER);
+        }
+        if (aktualisierung != null) {
+            bild.append(aktualisierung.lage())
+                .append(aktualisierung.neueFassung())
+                .append(aktualisierung.fortschritt())
+                .append(aktualisierung.fehler())
+                .append(TRENNER);
+        }
+        return bild.toString();
+    }
+
     private void showSettings() {
         currentScreen = "settings";
         abschnitteFuer("settings");
@@ -7621,8 +7771,27 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    /**
+     * Eine Meldung - die nicht mehr auf dem Schirm erscheint.
+     *
+     * <p>Vierundsiebzig Stellen in dieser Datei melden hier etwas: "Gelöscht",
+     * "Zur Watchlist hinzugefügt", "Empfehlungen werden neu berechnet",
+     * "Konnte nicht gemerkt werden". Einzeln ist jede davon harmlos; zusammen
+     * ist es ein schwarzer Kasten, der beim Bedienen dauernd ueber dem unteren
+     * Bildschirmrand steht - genau dort, wo die Leiste und die letzte
+     * Kachelreihe liegen.
+     *
+     * <p>Und fast jede sagt etwas, das ohnehin zu sehen ist: der geloeschte
+     * Eintrag ist weg, das Herz ist gefuellt, die Reihe baut sich neu auf. Eine
+     * Bestaetigung fuer etwas, das man gerade selbst getan hat und dessen
+     * Wirkung dasteht, ist keine Auskunft, sondern eine Verdeckung.
+     *
+     * <p>Der Trichter bleibt bewusst stehen, statt die vierundsiebzig Aufrufe
+     * zu entfernen: was gemeldet wird, ist im Debug-Bau weiter nachzulesen,
+     * und eine Meldung wieder sichtbar zu machen ist damit eine Zeile.
+     */
     private void showToast(String message) {
-        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show();
+        if (istDebugBau()) Log.d(TAG, "Meldung (nicht gezeigt): " + message);
     }
 
     private void pauseMedia(WebView webView) {
@@ -7895,6 +8064,11 @@ public class MainActivity extends Activity {
         boolean gleichesBild = bild.equals(letztesSeitenbild);
         letztesSeitenbild = bild;
         zeichnetNeu = zeichnetNeu && !gleichesBild;
+
+        // Gleiches Bild heisst nicht "nichts geschehen": es heisst, dass sich
+        // nur der Stand bewegt hat. Genau dann gehoert der Balken nachgezogen
+        // und die Zeit daneben - und sonst nichts.
+        if (gleichesBild) fortschrittAuffrischen();
 
         if (zeichnetNeu) {
             spur(currentScreen, "", "seite", "neu gezeichnet", "bestand anders");
