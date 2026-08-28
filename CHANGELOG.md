@@ -3,6 +3,40 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.60.0 — 28. August 2026
+
+Eine neue Serie fängt jetzt mit einer eigenen Seite an, nicht beim Anbieter.
+
+Wer auf dem Telefon oder am Fernseher eine neue Serie öffnete, landete
+unvermittelt auf der Seite des Anbieters: fremde Gestaltung, fremde Navigation,
+Werbung — und irgendwo darin die Folgenliste. Stattdessen kommt jetzt eine
+eigene Seite: **wie viele Staffeln, wie viele Folgen, und welche davon.** Erst
+mit der Wahl geht es los, direkt in den Ladebalken.
+
+Die Anbieterseite wird dafür trotzdem geladen — anders kommt niemand an eine
+Folgenliste. Sie bleibt aber hinter dem Ladevorhang, der ohnehin schon da war,
+und was von ihr bleibt, sind Zahlen und Adressen.
+
+Der Umweg gilt nur für Neuanfänge. Wer weiterschaut, weiß längst, welche Folge
+dran ist; ihn noch einmal wählen zu lassen wäre ein Schritt zu viel. Filme und
+YouTube sind ausgenommen — sie haben keine Folgen.
+
+**Eine Sackgasse kann daraus nicht werden.** Gibt die Seite nichts her — ein
+Anbieter mit anderem Aufbau, eine Seite, die noch lädt —, steht die
+Anbieterseite da wie bisher. Dazu eine Geduld von zwölf Sekunden: manche
+Anbieter melden das Seitenende erst, wenn auch die letzte Werbung geladen ist,
+und so lange soll niemand vor einem Vorhang sitzen.
+
+Eine Folge, die der Anbieter zwar listet, aber nicht einzeln abspielt — S.to
+fasst Doppelfolgen zusammen —, steht mit da und ist nicht wählbar. Sie
+wegzulassen wäre die schlechtere Auskunft: dann fehlte in der Liste eine Nummer
+und niemand wüsste, warum.
+
+Die Folgenzahl ist die der gezeigten Staffel, nicht die der ganzen Serie. Nur
+das ist belegt: eine Anbieterseite listet die Folgen einer Staffel, die übrigen
+nur als Reiter. Eine Gesamtzahl wäre geschätzt, und geschätzte Zahlen stehen in
+ELFIX nicht auf dem Schirm.
+
 ## 1.59.0 — 28. August 2026
 
 Die Bilder flackerten beim Start etwa fünfmal.
