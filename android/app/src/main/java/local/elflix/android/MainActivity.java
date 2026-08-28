@@ -130,6 +130,8 @@ public class MainActivity extends Activity {
     private String letztesSettingsBild = "";
     /** Der Leser fuer die Seite vor der ersten Folge. */
     private Serienuebersicht serienuebersicht;
+    /** Legt vor einem Update eine Sicherung an - siehe {@link Sicherung}. */
+    private Sicherung sicherung;
     /** Ob die gerade ladende Seite fuer die Uebersicht gelesen werden soll. */
     private boolean uebersichtErwartet;
     private Provider uebersichtAnbieter;
@@ -733,6 +735,9 @@ public class MainActivity extends Activity {
         empfehlungen.vorladen();
         empfehlungen.vorbereiten(watchparty.serverUrl());
         statistik = new Statistik(this, kern);
+        // Die Sicherung braucht Bestand, Statistik und Watchparty - deshalb
+        // erst hier, nachdem alle drei stehen.
+        sicherung = new Sicherung(this, kern, bestand, statistik, watchparty);
         bestand.setzeSitzungsmelder((provider, url, eintrag, fortschritt) ->
             statistik.melden(provider, url, eintrag, fortschritt));
         // Die Leitung, die gefehlt hat. Ohne sie kannte der Geraeteabgleich nur
@@ -943,6 +948,11 @@ public class MainActivity extends Activity {
             @Override
             public Bestand bestand() {
                 return bestand;
+            }
+
+            @Override
+            public Sicherung sicherung() {
+                return sicherung;
             }
 
             @Override
@@ -5427,6 +5437,19 @@ public class MainActivity extends Activity {
      */
     private void neueFassungInstallieren() {
         if (aktualisierung == null) return;
+        // Erst die Rueckfahrkarte.
+        //
+        // Ein Update laesst den Bestand in aller Regel stehen - die APK wird
+        // darueber installiert, nicht neu. In aller Regel ist aber nicht immer,
+        // und der eine Fall, in dem es schiefgeht, ist genau der, in dem
+        // niemand eine Sicherung hat. Ohne Nachfrage und ohne Abbruch:
+        // schlaegt sie fehl, wird trotzdem installiert. Eine Sicherung soll
+        // ein Update begleiten, nicht verhindern.
+        if (sicherung != null) {
+            sicherung.anlegen("vor-update", pfad -> {
+                if (pfad.isEmpty()) Log.w(TAG, "Vor dem Update kam keine Sicherung zustande");
+            });
+        }
         boolean darf = aktualisierung.darfInstallieren();
         if (!aktualisierung.installieren()) {
             showToast("Die geladene Fassung ist nicht mehr da — bitte noch einmal nachsehen");

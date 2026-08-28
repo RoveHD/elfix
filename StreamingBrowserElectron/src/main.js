@@ -559,6 +559,18 @@ function setupAutoUpdater() {
       installing: true,
       error: ""
     });
+    // Die Rueckfahrkarte, bevor eine neue Fassung darueber installiert wird.
+    //
+    // Ein Update laesst den Bestand in aller Regel stehen - es wird darueber
+    // installiert, nicht neu. In aller Regel ist aber nicht immer, und der
+    // eine Fall, in dem es schiefgeht, ist genau der, in dem niemand eine
+    // Sicherung hat. Sie kostet einen Augenblick und ein paar hundert
+    // Kilobyte; sie zu haben und nicht zu brauchen ist der bessere Handel.
+    //
+    // Ohne Nachfrage und ohne Abbruch: schlaegt das Schreiben fehl, wird
+    // trotzdem installiert. Eine Sicherung soll ein Update begleiten, nicht
+    // verhindern.
+    selbstSichern("vor-update");
     setTimeout(() => {
       // Still installieren: ohne das erste Argument zeigt der Installer seine
       // Seiten ("Fuer wen soll installiert werden?") und wartet auf einen
@@ -1902,14 +1914,67 @@ ipcMain.handle("help:open-issues", async () => {
 //
 // Was hineingehoert und was nicht, entscheidet sicherung.js - dort steht auch,
 // warum die Geraetekennung draussen bleibt. Hier bleiben Dateien und Dialoge.
-function sicherungBauen() {
+function sicherungBauen(anlass = "hand") {
   return sicherung.bauen({
     settings: publicSettings(settings),
     favorites,
     providers,
     watchparty: watchpartyLokal,
-    programm: app.getVersion()
+    // Die Sitzungen sind gemessene Zeit und kommen nie wieder. Sie haben bis
+    // Fassung 2 gefehlt - siehe sicherung.js.
+    sitzungen: loadSitzungen(),
+    fassungen: leseJson(FASSUNGEN_FILE, null),
+    marken: leseJson(MARKEN_FILE, null),
+    programm: app.getVersion(),
+    anlass
   });
+}
+
+// Eine Datei lesen, ohne dass ein Fehler etwas kostet.
+//
+// Fehlt sie oder ist sie unlesbar, gehoert dieser Teil eben nicht in die
+// Sicherung - eine halbe Sicherung ist besser als keine.
+function leseJson(pfad, vorgabe) {
+  try {
+    if (!fs.existsSync(pfad)) return vorgabe;
+    return JSON.parse(fs.readFileSync(pfad, "utf8"));
+  } catch {
+    return vorgabe;
+  }
+}
+
+// --- Sicherungen, die die App selbst anlegt ----------------------------------
+//
+// Vor einem Update und vor dem Einlesen einer fremden Sicherung. Beides sind
+// Augenblicke, in denen ein Bestand verlorengehen kann, ohne dass jemand es
+// wollte - und beide kommen ohne Nachfrage, weil eine Rueckfrage vor einer
+// Sicherheitskopie nur im Weg steht.
+const SICHERUNGEN_DIR = path.join(DATA_DIR, "sicherungen");
+
+function selbstSichern(anlass) {
+  try {
+    ensureDataDir();
+    if (!fs.existsSync(SICHERUNGEN_DIR)) fs.mkdirSync(SICHERUNGEN_DIR, { recursive: true });
+    const name = sicherung.selbstName(anlass);
+    const ziel = path.join(SICHERUNGEN_DIR, name);
+    fs.writeFileSync(ziel, JSON.stringify(sicherungBauen(anlass), null, 2));
+    // Aufraeumen erst danach: geht das Schreiben schief, soll wenigstens die
+    // vorige stehenbleiben.
+    for (const alt of sicherung.altePutzen(fs.readdirSync(SICHERUNGEN_DIR))) {
+      try {
+        fs.unlinkSync(path.join(SICHERUNGEN_DIR, alt));
+      } catch {
+        // Eine, die nicht wegging, ist kein Grund aufzuhoeren.
+      }
+    }
+    console.log(`[ELFIX SICHERUNG] ${name} angelegt (${anlass})`);
+    return ziel;
+  } catch (fehler) {
+    // Ausdruecklich kein Abbruch. Eine Sicherung, die nicht geschrieben werden
+    // kann, darf ein Update nicht verhindern - sie soll es nur begleiten.
+    console.error("[ELFIX SICHERUNG] nicht angelegt:", fehler?.message || fehler);
+    return "";
+  }
 }
 
 ipcMain.handle("data:backup-export", async () => {
@@ -1973,8 +2038,7 @@ ipcMain.handle("data:backup-import", async () => {
     ensureDataDir();
     // Erst die Rueckfahrkarte. Wer die falsche Datei erwischt hat, soll nicht
     // seinen ganzen Stand verloren haben.
-    const vorher = path.join(DATA_DIR, `vor-dem-einlesen-${Date.now()}.elfix.json`);
-    fs.writeFileSync(vorher, JSON.stringify(sicherungBauen(), null, 2));
+    selbstSichern("vor-dem-einlesen");
 
     // Die eigene Kennung bleibt, was sie ist - sie gehoert zu diesem Rechner,
     // nicht zur Sicherung.
@@ -1991,6 +2055,25 @@ ipcMain.handle("data:backup-import", async () => {
     if (daten.watchparty) {
       fs.writeFileSync(WATCHPARTY_FILE, JSON.stringify(daten.watchparty));
     }
+    // Die drei aus Fassung 2. Geschrieben wird nur, was wirklich dabei ist:
+    // eine Sicherung der Fassung 1 kennt sie nicht, und dann soll stehen
+    // bleiben, was hier steht, statt geleert zu werden.
+    if (Array.isArray(daten.sitzungen)) {
+      // In der Form, die loadSitzungen erwartet - {version, sitzungen}. Ein
+      // nacktes Array laege zwar da, waere aber beim naechsten Start nicht zu
+      // lesen: genau die stille Art, auf die eine Sicherung ihren Zweck
+      // verfehlt.
+      fs.writeFileSync(SESSION_FILE, JSON.stringify({
+        version: SITZUNG_SCHEMA_VERSION,
+        sitzungen: daten.sitzungen
+      }, null, 2));
+    }
+    if (daten.fassungen && typeof daten.fassungen === "object") {
+      fs.writeFileSync(FASSUNGEN_FILE, JSON.stringify(daten.fassungen, null, 2));
+    }
+    if (daten.marken && typeof daten.marken === "object") {
+      fs.writeFileSync(MARKEN_FILE, JSON.stringify(daten.marken, null, 2));
+    }
 
     // Und jetzt einlesen wie beim Start. Damit laeuft alles durch dieselbe
     // Pruefung wie sonst auch - eine Sicherung von Hand bearbeitet oder aus
@@ -2001,6 +2084,11 @@ ipcMain.handle("data:backup-import", async () => {
     providers = loadProviders();
     favorites = loadFavorites();
     watchpartyLokal = loadWatchpartyLocal();
+    // Der Zwischenspeicher der Sitzungen muss weg, sonst schreibt der naechste
+    // Takt den alten Stand ueber den eben eingelesenen.
+    sitzungenSpeicher = null;
+    sitzungenSchmutzig = false;
+    loadSitzungen();
     watchpartyWiederhergestellt.clear();
     // Der Spiegel des Geraeteabgleichs gehoert nicht in die Sicherung: er
     // beschreibt, was zuletzt hinausging - und das passt nach dem Einlesen zu
@@ -2009,11 +2097,12 @@ ipcMain.handle("data:backup-import", async () => {
     // ueberschreibt aber nicht den neueren Stand des anderen Geraets.
     geraete.ablageSetzen(null);
 
-      syncWatchparty();
+    syncWatchparty();
     syncGeraete();
     syncFern();
     sendActiveState();
-    console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, Kopie vorher unter ${vorher}`);
+    console.log(`[ELFIX] Sicherung eingelesen: ${favorites.length} Eintraege, `
+      + `${loadSitzungen().length} Sitzungen - Kopie vorher im Ordner sicherungen`);
     return {
       restored: true,
       providers,

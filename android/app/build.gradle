@@ -48,6 +48,7 @@ def kernModule = [
     "src/geraete.js",
     "src/geraete-schluessel.js",
     "src/geraete-stand.js",
+    "src/sicherung.js",
     "shared/provider-model.js",
     "shared/bildausschnitt.js"
 ]

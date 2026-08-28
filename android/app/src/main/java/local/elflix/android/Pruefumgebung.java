@@ -26,6 +26,9 @@ public interface Pruefumgebung {
     /** Die gemessene Zeit - für den Zustandsbericht. */
     Statistik statistik();
 
+    /** Die Sicherung - um sie am Geraet ausloesen zu koennen. */
+    Sicherung sicherung();
+
     /** Den gerade offenen Bildschirm neu bauen. */
     void neuZeichnen();
 }

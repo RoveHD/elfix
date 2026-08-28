@@ -5,7 +5,10 @@
 // geprueft, dass alles mitkommt, sondern auch, was ausdruecklich nicht
 // mitkommen darf.
 
-const { bauen, pruefen, umfang, einstellungenUebernehmen, dateiname, KENNUNG } = require("../src/sicherung");
+const {
+  bauen, pruefen, umfang, fehlendeTeile, einstellungenUebernehmen,
+  dateiname, selbstName, altePutzen, KENNUNG, FASSUNG
+} = require("../src/sicherung");
 
 const pruefungen = [];
 const pruefe = (n, b, d) => { pruefungen.push(b); console.log(`${b ? "OK  " : "FAIL"}  ${n}${d ? "   -> " + d : ""}`); };
@@ -39,8 +42,10 @@ const voll = () => bauen({
 
 {
   const s = voll();
+  // Gegen die Konstante und nicht gegen eine Zahl: die Fassung steigt, wenn
+  // etwas dazukommt, und dann soll diese Pruefung mitwandern statt zu brechen.
   pruefe("1. Die Sicherung ist als solche erkennbar",
-    s.kennung === KENNUNG && s.fassung === 1 && s.programm === "1.21.0", `${s.kennung} v${s.fassung}`);
+    s.kennung === KENNUNG && s.fassung === FASSUNG && s.programm === "1.21.0", `${s.kennung} v${s.fassung}`);
   pruefe("1b. Watchlist samt Weiterschauen-Staenden ist drin",
     s.favorites.length === 3 && s.favorites[0].position === 412.5, `${s.favorites.length} Eintraege`);
   pruefe("1c. Die eigenen Bilder sind drin",
@@ -148,6 +153,91 @@ pruefe("5e. Ohne Einstellungen in der Sicherung wird nichts uebernommen",
 pruefe("7. Der Dateiname traegt das Datum",
   dateiname(new Date(2026, 7, 5)) === "ELFIX-Sicherung-2026-08-05.elfix.json",
   dateiname(new Date(2026, 7, 5)));
+
+
+// --- Was wirklich alles mitmuss ---------------------------------------------
+//
+// Gemeldet als Wunsch: "es soll wirklich alles vom Benutzer sichern".
+//
+// Drei Dinge fehlten, und das teuerste davon still: die gemessenen
+// Wiedergabesitzungen. Sie sind der ganze Rueckblick - beim Benutzer 224 Saetze
+// ueber siebzehn Stunden -, und wer eine Sicherung einlas, verlor sie
+// vollstaendig, ohne dass irgendwo etwas davon stand. Fassungen und Marken sind
+// Handarbeit je Titel und ebenso wenig nachzubauen.
+{
+  const voll = bauen({
+    settings: { watchparty: { deviceId: "hier", rooms: ["Salon"] } },
+    favorites: [{ id: "a", position: 30 }],
+    providers: [{ id: "p" }],
+    watchparty: { shared: [], joined: [] },
+    sitzungen: [{ id: "s1" }, { id: "s2" }, { id: "s3" }],
+    fassungen: { "aniworld:bleach": "Deutsch" },
+    marken: { "aniworld:bleach:1": { intro: 85 } },
+    programm: "1.61.0",
+    anlass: "vor-update"
+  });
+
+  pruefe("Die Wiedergabesitzungen sind dabei",
+    Array.isArray(voll.sitzungen) && voll.sitzungen.length === 3,
+    "sie sind gemessene Zeit und kommen nie wieder");
+  pruefe("Die gemerkten Sprachfassungen sind dabei",
+    voll.fassungen && voll.fassungen["aniworld:bleach"] === "Deutsch");
+  pruefe("Die Intromarken sind dabei",
+    voll.marken && voll.marken["aniworld:bleach:1"].intro === 85);
+  pruefe("Der Anlass steht in der Datei", voll.anlass === "vor-update", voll.anlass);
+  pruefe("Die Fassung ist auf 2 gestiegen", voll.fassung === 2 && FASSUNG === 2,
+    String(voll.fassung));
+  pruefe("Die Geraetekennung bleibt weiter draussen",
+    voll.settings.watchparty.deviceId === "",
+    "zwei Geraete mit derselben Kennung gelten im Raum als eines");
+
+  const gezaehlt = umfang(voll);
+  pruefe("Der Umfang nennt die Sitzungen", gezaehlt.sitzungen === 3, String(gezaehlt.sitzungen));
+  pruefe("Der Umfang nennt Fassungen und Marken",
+    gezaehlt.fassungen === 1 && gezaehlt.marken === 1,
+    JSON.stringify({ f: gezaehlt.fassungen, m: gezaehlt.marken }));
+  pruefe("Einer vollen Sicherung fehlt nichts", fehlendeTeile(voll).length === 0);
+}
+
+// Eine Sicherung der alten Fassung. Sie muss weiter lesbar sein - und ihr Fehlen
+// muss sich von einer leeren Liste unterscheiden lassen: was sie nicht kennt,
+// soll beim Einlesen stehenbleiben statt geleert zu werden.
+{
+  const alt = { kennung: KENNUNG, fassung: 1, settings: null, favorites: [{ id: "a" }], providers: [] };
+  pruefe("Eine Sicherung der Fassung 1 bleibt lesbar", pruefen(alt).ok === true);
+  const gezaehlt = umfang(alt);
+  pruefe("Ihre Sitzungen sind unbekannt und nicht null",
+    gezaehlt.sitzungen === null && gezaehlt.fassungen === null && gezaehlt.marken === null,
+    JSON.stringify(gezaehlt));
+  pruefe("Und es laesst sich benennen, was ihr fehlt",
+    fehlendeTeile(alt).join(", ") === "Wiedergabezeiten, gemerkte Sprachfassungen, Intromarken",
+    fehlendeTeile(alt).join(", "));
+}
+
+// --- Sicherungen, die die App selbst anlegt ---------------------------------
+{
+  const name = selbstName("vor-update", new Date(2026, 7, 28, 9, 5, 3));
+  pruefe("Der Name einer eigenen Sicherung traegt Anlass und Zeit",
+    name === "ELFIX-vor-update-20260828-090503.elfix.json", name);
+  pruefe("Zwei am selben Tag ueberschreiben einander nicht",
+    selbstName("vor-update", new Date(2026, 7, 28, 9, 5, 3))
+      !== selbstName("vor-update", new Date(2026, 7, 28, 9, 5, 4)),
+    "sonst waere die Rueckfahrkarte weg, sobald man sie zweimal braucht");
+
+  const sieben = [];
+  for (let tag = 1; tag <= 7; tag += 1) {
+    sieben.push(`ELFIX-vor-update-2026080${tag}-120000.elfix.json`);
+  }
+  const weg = altePutzen(sieben, 5);
+  pruefe("Von sieben eigenen bleiben fuenf", weg.length === 2, `${weg.length} weg`);
+  pruefe("Und zwar die aeltesten",
+    weg[0].includes("20260801") && weg[1].includes("20260802"), weg.join(", "));
+  pruefe("Fremde Dateien im Ordner bleiben unangetastet",
+    altePutzen([...sieben, "meine-eigene-sicherung.json", "ELFIX-Sicherung-2026-08-01.elfix.json"], 0)
+      .every((name) => /^ELFIX-[a-z-]+-\d{8}-\d{6}/.test(name)),
+    "eine von Hand gespeicherte Sicherung raeumt niemand weg");
+  pruefe("Weniger als die Grenze raeumt gar nichts weg", altePutzen(sieben.slice(0, 3), 5).length === 0);
+}
 
 const fehler = pruefungen.filter((p) => !p).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
