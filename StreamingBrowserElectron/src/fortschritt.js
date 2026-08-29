@@ -1579,8 +1579,36 @@ function watchpartyStandUebernehmen(lokal, stand) {
   };
 }
 
+/**
+ * Einen Raum-Eintrag nachziehen, der stehengeblieben ist.
+ *
+ * <p><b>Der gemeldete Fehler.</b> Ein Stand aus der Runde wird bisher nur
+ * uebernommen, wenn er als <em>Meldung</em> hereinkommt - also nur von einem
+ * Geraet, das gerade laeuft. Wer waehrenddessen aus war, behaelt seinen alten
+ * Eintrag: am 26.08.2026 wurde "Avatar Aang" am Rechner in der Runde "Bangus"
+ * zu Ende geschaut, und am Fernseher stand er drei Tage spaeter immer noch in
+ * "Gemeinsam weiterschauen".
+ *
+ * <p>Dabei weiss der Raum es laengst: sein Zustand traegt zu jedem Titel den
+ * zuletzt gemeldeten Stand, und der kommt bei jedem Verbinden mit. Er wird
+ * hier angewandt - aber nur, wenn er wirklich juenger ist als das, was hier
+ * zuletzt galt. Sonst ueberschriebe ein liegengebliebener Raumzustand den
+ * Stand eines Geraets, das gerade selbst weitergeschaut hat.
+ *
+ * @returns wie {@link watchpartyStandUebernehmen}
+ */
+function watchpartyEintragAbgleichen(lokal, stand) {
+  if (!lokal || !stand?.updatedAt) return { art: "nichts" };
+  const gemeldet = Date.parse(stand.updatedAt);
+  if (!Number.isFinite(gemeldet)) return { art: "nichts" };
+  const hier = Date.parse(lokal.watchpartyAt || lokal.lastWatchedAt || "");
+  if (Number.isFinite(hier) && gemeldet <= hier) return { art: "nichts" };
+  return watchpartyStandUebernehmen(lokal, stand);
+}
+
 module.exports = {
   watchpartyStandUebernehmen,
+  watchpartyEintragAbgleichen,
   watchpartyStand,
   eintragFinden,
   favoritNachziehen,

@@ -74,11 +74,16 @@ public final class Watchparty {
     private JSONObject letzterStatus = new JSONObject();
     private JSONArray letzteEintraege = new JSONArray();
     /**
-     * Wofuer in dieser Sitzung schon ein Raum-Eintrag sichergestellt wurde.
+     * Der Raumzustand, fuer den die Eintraege zuletzt sichergestellt wurden.
      *
-     * <p>Schluessel ist {@code raum|titel}. Siehe {@link #raumEintraegeSichern}.
+     * <p>Titel, Raum und der Zeitpunkt jedes Stands. Siehe
+     * {@link #raumzustandKennzeichen} und {@link #raumEintraegeSichern}.
      */
-    private final java.util.Set<String> raumEintraegeGesichert = new java.util.HashSet<>();
+    private String letztesRaumkennzeichen = "";
+    /** Ob gerade ein Lauf im Kern unterwegs ist - siehe {@link #raumEintraegeSichern}. */
+    private boolean raumEintraegeLaeuft;
+    /** Ob waehrenddessen ein neuer Raumzustand kam, der noch einen Lauf braucht. */
+    private boolean raumEintraegeNachholen;
     /** Die letzte Standmeldung der Runde - wer steht wo, wer fuehrt, wer hat gedrueckt. */
     private String letzterMitschauStand = "";
     /**
@@ -599,29 +604,70 @@ public final class Watchparty {
      * eingehenden Stand ({@code fortschritt.watchpartyEintragAnlegen}) - es
      * gibt also keine zweite Art von Raum-Eintrag, nur einen zweiten Anlass.
      *
-     * <p>Je Titel und Raum einmal: die Regel liefert einen vorhandenen Eintrag
-     * unveraendert zurueck, aber jeder Aufruf schiebt die ganze Ablage durch
-     * den Kern, und Raumzustaende kommen oft.
+     * <p>Je Raumzustand hoechstens einmal: jeder Aufruf schiebt die ganze
+     * Ablage durch den Kern, und Raumzustaende kommen oft. Was sich seit dem
+     * letzten Mal geaendert hat, sagt {@link #raumzustandKennzeichen}.
+     *
+     * <p><b>Und warum es ein einziger Aufruf ist.</b> Hier stand eine Schleife
+     * mit einem Aufruf je Titel. Jeder davon reicht die ganze Ablage in den
+     * Kern und bekommt eine neue Liste zurueck - aber erst spaeter, denn der
+     * Kern antwortet asynchron. Die Schleife war also durch, bevor die erste
+     * Antwort eintraf: alle Aufrufe trugen denselben Schnappschuss, und die
+     * letzte Antwort ueberschrieb die Ablage mit einer Liste, in der die
+     * anderen Neuzugaenge nie standen. Am 2026-08-29 am Fire TV Stick
+     * gemessen: vier Eintraege angelegt, Bestand 80 -> 81, drei davon beim
+     * naechsten Start wieder neu. Auf der Startseite kam damit je Start genau
+     * eine Runde dazu.
      */
     private void raumEintraegeSichern() {
         if (bestand == null) return;
+        String jetzt = raumzustandKennzeichen();
+        // Derselbe Raumzustand wie beim letzten Mal: dann bleibt die Ablage,
+        // wo sie ist. Ohne diese Frage ginge sie bei jedem Zustand durch den
+        // Kern, und Raumzustaende kommen oft. Im Kennzeichen steht auch der
+        // Zeitpunkt jedes Stands - ein Stand, der sich geaendert hat, fuehrt
+        // also wieder hierher, und der Eintrag wird nachgezogen.
+        if (jetzt.equals(letztesRaumkennzeichen)) return;
+        // Und nie zwei Laeufe nebeneinander. Jeder reicht die ganze Ablage in
+        // den Kern und bekommt sie zurueck; zwei ueberlappende trugen denselben
+        // Schnappschuss, und der zweite ueberschriebe, was der erste angelegt
+        // hat - genau der Fehler, der die Schleife hier gekostet hat. Vier
+        // eingerichtete Raeume melden ihren Zustand kurz hintereinander, also
+        // ist das der Normalfall und nicht der Ausnahmefall.
+        if (raumEintraegeLaeuft) {
+            raumEintraegeNachholen = true;
+            return;
+        }
+        letztesRaumkennzeichen = jetzt;
+        raumEintraegeLaeuft = true;
+        bestand.raumEintraegeSichern(anbieter, () -> {
+            raumEintraegeLaeuft = false;
+            if (!raumEintraegeNachholen) return;
+            raumEintraegeNachholen = false;
+            raumEintraegeSichern();
+        });
+    }
+
+    /**
+     * Woran ein Raumzustand zu erkennen ist, der Arbeit macht.
+     *
+     * <p>Titel, Raum und der Zeitpunkt des zuletzt gemeldeten Stands - mehr
+     * braucht es nicht: ein neuer Titel, ein Beitritt oder ein juengerer Stand
+     * aendern das Kennzeichen, alles andere nicht.
+     */
+    private String raumzustandKennzeichen() {
+        StringBuilder bau = new StringBuilder();
         for (int i = 0; i < letzteEintraege.length(); i += 1) {
             JSONObject eintrag = letzteEintraege.optJSONObject(i);
             if (eintrag == null || !eintrag.optBoolean("joined", false)) continue;
             String key = eintrag.optString("key", "");
             String raum = eintrag.optString("room", "");
             if (key.isEmpty() || raum.isEmpty()) continue;
-            String marke = raum + "|" + key;
-            if (!raumEintraegeGesichert.add(marke)) continue;
-            bestand.raumEintragSichern(key, raum, anbieter, null, eintragId -> {
-                if (eintragId.isEmpty()) {
-                    // Kein eingerichteter Anbieter, keine Adresse - dann gibt
-                    // es nichts anzulegen. Beim naechsten Raumzustand kann das
-                    // anders sein, also bleibt die Marke nicht stehen.
-                    raumEintraegeGesichert.remove(marke);
-                }
-            });
+            JSONObject stand = eintrag.optJSONObject("progress");
+            bau.append(raum).append('|').append(key).append('|')
+                .append(stand == null ? "" : stand.optString("updatedAt", "")).append('\n');
         }
+        return bau.toString();
     }
 
     public boolean istVerbunden() {
@@ -843,6 +889,10 @@ public final class Watchparty {
             }
         }
         this.anbieter = liste;
+        // Ein Titel ohne passenden Anbieter bekommt keinen Eintrag. Wird einer
+        // eingerichtet, kann derselbe Raumzustand ploetzlich mehr hergeben -
+        // also gilt er wieder als ungesehen.
+        letztesRaumkennzeichen = "";
     }
 
     /** Wer die Steuerbefehle der Runde am Player ausfuehrt. */

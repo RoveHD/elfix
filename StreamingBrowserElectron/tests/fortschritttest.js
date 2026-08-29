@@ -355,6 +355,34 @@ pruefe("Kurze Folgen koennen trotzdem enden",
   const ohneAnbieter = fortschritt.watchpartyEintragAnlegen({ favoriten: [] }, null, "Probe",
     raumEintrag, stand);
   pruefe("Und ohne Anbieter ebenfalls nicht", ohneAnbieter.eintrag === null);
+
+  /* --- Ein Eintrag, der stehengeblieben ist ------------------------------ */
+  //
+  // Gemeldet am 29.08.2026: "Avatar Aang" wurde am Rechner in der Runde
+  // "Bangus" zu Ende geschaut und stand am Fernseher drei Tage spaeter immer
+  // noch in "Gemeinsam weiterschauen". Kein Wunder - ein Stand aus der Runde
+  // wurde bisher nur uebernommen, wenn er als *Meldung* hereinkam, also nur
+  // von einem Geraet, das gerade lief. Der Raumzustand traegt ihn trotzdem
+  // mit, bei jedem Verbinden.
+  const alt = { ...erst.eintrag, watchpartyAt: "2026-08-28T10:00:00.000Z" };
+  const fertig = { ...stand, completed: true, progress: 100, position: 1400,
+    updatedAt: "2026-08-28T22:00:00.000Z" };
+  const nachgezogen = fortschritt.watchpartyEintragAbgleichen(alt, fertig);
+  pruefe("Ein juengerer Stand aus dem Raumzustand zieht den Eintrag nach",
+    nachgezogen.art === "aendern" && nachgezogen.aenderung.completed === true,
+    JSON.stringify(nachgezogen.art));
+
+  // Aber nur, wenn er wirklich juenger ist: sonst ueberschriebe ein
+  // liegengebliebener Raumzustand den Stand eines Geraets, das gerade selbst
+  // weitergeschaut hat.
+  const neuerHier = { ...erst.eintrag, watchpartyAt: "2026-08-29T09:00:00.000Z" };
+  pruefe("Ein aelterer Stand aendert nichts",
+    fortschritt.watchpartyEintragAbgleichen(neuerHier, fertig).art === "nichts");
+  pruefe("Und derselbe Zeitpunkt auch nicht",
+    fortschritt.watchpartyEintragAbgleichen(
+      { ...erst.eintrag, watchpartyAt: fertig.updatedAt }, fertig).art === "nichts");
+  pruefe("Ohne Zeitpunkt im Stand geschieht nichts",
+    fortschritt.watchpartyEintragAbgleichen(alt, { ...fertig, updatedAt: "" }).art === "nichts");
 }
 
 const fehler = pruefungen.filter((x) => !x).length;

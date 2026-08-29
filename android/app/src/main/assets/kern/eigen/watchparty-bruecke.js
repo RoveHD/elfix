@@ -254,6 +254,74 @@
     };
   }
 
+  /**
+   * Dasselbe fuer *alle* betretenen Titel - in einem einzigen Aufruf.
+   *
+   * <p><b>Der gemeldete Fehler.</b> Java rief bis hierher
+   * {@link raumEintragSichern} je Titel einmal, in einer Schleife. Jeder
+   * Aufruf reicht die ganze Ablage herein und bekommt eine neue Liste zurueck,
+   * und jeder wird ueber den Kern *asynchron* beantwortet: die Schleife war
+   * also durch, bevor die erste Antwort kam. Damit trugen alle Aufrufe
+   * denselben Schnappschuss, und die letzte Antwort ueberschrieb die Ablage
+   * mit einer Liste, in der die vorherigen Neuzugaenge nie standen.
+   *
+   * <p>Am 2026-08-29 am Fire TV Stick gemessen: vier Eintraege gemeldet
+   * ("Aus der Watchparty uebernommen" fuer tombraiderking, blacktorch,
+   * iparryeverything und loki), Bestand danach 80 -> <b>81</b>. Beim naechsten
+   * Start standen drei davon wieder als neu im Protokoll. Auf der Startseite
+   * kam so je Start genau eine Runde dazu - "Gemeinsam weiterschauen" zeigte
+   * am Fernseher drei von sechs.
+   *
+   * <p>Ein Aufruf, ein Schnappschuss, eine Antwort: die Schleife laeuft jetzt
+   * hier, wo sie ohne Umweg ueber den Kern durchlaeuft. Angelegt wird
+   * weiterhin ueber dieselbe geteilte Regel - es gibt keine zweite Art von
+   * Raum-Eintrag.
+   *
+   * @param zustand  {{favoriten: Array}} die eigene Ablage
+   * @param anbieter die eingerichteten Anbieter
+   * <p>Ein vorhandener Eintrag wird dabei nachgezogen. Ein Stand aus der Runde
+   * kam bisher nur als Meldung an, also nur bei einem Geraet, das gerade
+   * lief - wer aus war, behielt seinen alten Eintrag fuer immer: "Avatar Aang"
+   * war am Rechner zu Ende geschaut und stand am Fernseher drei Tage spaeter
+   * noch in "Gemeinsam weiterschauen". Der Raumzustand traegt den letzten
+   * Stand ohnehin mit; `fortschritt.watchpartyEintragAbgleichen` entscheidet,
+   * ob er juenger ist als das, was hier steht.
+   *
+   * @returns {{favoriten: Array, gesichert: string[], angelegt: number,
+   *           geaendert: boolean}} - `gesichert` traegt "raum|schluessel" fuer
+   *          jeden Titel, zu dem es jetzt einen Eintrag gibt; was fehlt, hat
+   *          keinen Anbieter und darf beim naechsten Raumzustand erneut
+   *          versucht werden.
+   */
+  function raumEintraegeSichern(zustand, anbieter) {
+    let favoriten = (zustand && zustand.favoriten) || [];
+    const gesichert = [];
+    let angelegt = 0;
+    let geaendert = false;
+    if (!raeume) return { favoriten, gesichert, angelegt, geaendert };
+    for (const eintrag of raeume.eintraege()) {
+      if (!eintrag || !eintrag.joined) continue;
+      const key = String(eintrag.key || "");
+      const room = String(eintrag.room || "");
+      if (!key || !room) continue;
+      const ergebnis = raumEintragSichern({ favoriten }, key, room, anbieter, null);
+      if (!ergebnis.eintragId) continue;
+      favoriten = ergebnis.favoriten;
+      gesichert.push(room + "|" + key);
+      if (ergebnis.neu) {
+        angelegt += 1;
+        geaendert = true;
+        continue;
+      }
+      const lokal = favoriten.find((favorit) => favorit && favorit.id === ergebnis.eintragId);
+      const urteil = fortschritt.watchpartyEintragAbgleichen(lokal, eintrag.progress || {});
+      if (urteil.art !== "aendern") continue;
+      Object.assign(lokal, urteil.aenderung);
+      geaendert = true;
+    }
+    return { favoriten, gesichert, angelegt, geaendert };
+  }
+
   /* --------------------------------------------------- Eintraege oeffnen */
 
   /*
@@ -788,6 +856,7 @@
     lageFuer,
     adresseZuSchluessel,
     raumEintragSichern,
+    raumEintraegeSichern,
     // Eintraege oeffnen.
     oeffnungsZiel,
     eintraegeMitAnbieter,

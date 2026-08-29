@@ -320,6 +320,52 @@ function rechner(name) {
       `Raum ${ausRaum ? Math.round(ausRaum.position || 0) : "-"}s, Eintrag ${Math.round(angelegt.position || 0)}s`);
   }
 
+  /* ===== 2i. Zwei Runden, ein Aufruf ====================================== */
+  //
+  // Der Fehler, den das hier festhaelt: Java rief `raumEintragSichern` je
+  // Titel einmal, in einer Schleife. Jeder Aufruf reicht die ganze Ablage in
+  // den Kern und bekommt eine neue Liste zurueck - aber erst spaeter, denn der
+  // Kern antwortet asynchron. Die Schleife war also durch, bevor die erste
+  // Antwort kam: alle Aufrufe trugen denselben Schnappschuss, und die letzte
+  // Antwort ueberschrieb die Ablage mit einer Liste, in der die anderen
+  // Neuzugaenge nie standen.
+  //
+  // Am 2026-08-29 am Fire TV Stick gemessen: vier Eintraege gemeldet, Bestand
+  // danach 80 -> 81, drei davon beim naechsten Start wieder neu. Auf der
+  // Startseite kam je Start genau eine Runde dazu.
+  //
+  // Deshalb laeuft die Schleife jetzt im Kern, und der Test fragt genau das:
+  // zwei betretene Titel, ein Aufruf, zwei Eintraege.
+  {
+    const anbieter = [
+      { id: "aniworld", name: "AniWorld", startUrl: "https://aniworld.to/" },
+      { id: "sto", name: "S.to", startUrl: "https://s.to/" }
+    ];
+    const zweiterKey = watchpartyKey({ title: "Dark", url: zweiteFolge(1), type: "serie" });
+    pc.raeume.teilen({
+      key: zweiterKey, url: zweiteFolge(1), title: "Dark", providerName: "S.to",
+      type: "serie", season: 2, episode: 1
+    }, RAUM);
+    await warteBis(() => tv.bruecke.eintraege().some((e) => e.key === zweiterKey),
+      "Android sieht die zweite Runde");
+    tv.bruecke.beitreten(zweiterKey, RAUM);
+    await warteBis(() => tv.bruecke.eintraege().find((e) => e.key === zweiterKey)?.joined,
+      "Android ist der zweiten Runde beigetreten");
+
+    const alle = tv.bruecke.raumEintraegeSichern({ favoriten: [] }, anbieter);
+    const raeumeDrin = alle.favoriten.filter((f) => f.watchpartyRoom === RAUM);
+    pruefe("2i. Ein Aufruf legt beide betretenen Runden an",
+      alle.angelegt === 2 && raeumeDrin.length === 2
+      && alle.gesichert.length === 2,
+      JSON.stringify({ angelegt: alle.angelegt, eintraege: raeumeDrin.map((f) => f.title) }));
+
+    // Und ein zweiter Durchgang auf derselben Liste legt nichts nach.
+    const wieder = tv.bruecke.raumEintraegeSichern({ favoriten: alle.favoriten }, anbieter);
+    pruefe("2j. Ein zweiter Durchgang legt nichts nach",
+      wieder.angelegt === 0 && wieder.favoriten.length === alle.favoriten.length,
+      `${wieder.favoriten.length} Eintraege`);
+  }
+
   /* ================= 3. Presence: wer steht auf welcher Seite ============= */
 
   pc.puls(pcKey, 0, true, folge(4));

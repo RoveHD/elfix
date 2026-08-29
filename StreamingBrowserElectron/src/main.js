@@ -4919,11 +4919,19 @@ function isStalledSeriesFavorite(favorite) {
 // Die zuletzt geschauten Serien - mehr muss beim Start nicht geprueft werden,
 // und jede Staffel kostet einen Seitenaufruf.
 function seriesRepairCandidates() {
+  // Wer eine abgehakte Folge traegt, steht vorn. Acht Plaetze sind schnell mit
+  // gesunden Eintraegen belegt - und dann faellt ausgerechnet der heraus, der
+  // die Reparatur braucht: am 29.08.2026 lagen zwei Pokémon-Eintraege auf
+  // Platz acht und neun, und der zweite kam nie an die Reihe. Der Seitenaufruf
+  // kostet dabei nichts doppelt: beide Eintraege derselben Staffel treffen
+  // denselben Zwischenspeicher.
+  const dringend = (favorite) => (favorite.episodeCompleted ? 0 : 1);
   return favorites
     .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
     .filter((favorite) => !favorite.completed && episodeIdentity(favorite.url || ""))
     .sort((links, rechts) => (
-      Date.parse(rechts.lastWatchedAt || rechts.openedAt || 0) - Date.parse(links.lastWatchedAt || links.openedAt || 0)
+      dringend(links) - dringend(rechts)
+      || Date.parse(rechts.lastWatchedAt || rechts.openedAt || 0) - Date.parse(links.lastWatchedAt || links.openedAt || 0)
     ))
     .slice(0, 8);
 }
@@ -4962,13 +4970,35 @@ async function repairStalledSeriesFavorites() {
     }
 
     const aufToterFolge = info.episodes.includes(identity.episode);
-    if (!aufToterFolge && !isStalledSeriesFavorite(favorite)) continue;
+    // Steht die abgehakte Folge vor der letzten spielbaren *dieser* Staffel,
+    // kommt sicher noch eine - dafuer muss niemand wissen, wie lang die Serie
+    // insgesamt ist. Genau daran scheiterte es bisher: ohne finalSeason sagt
+    // isStalledSeriesFavorite nein und nextEpisodeContinueUrl nichts, und ein
+    // Eintrag, dessen Folge zu Ende war, blieb fuer immer stehen - unsichtbar
+    // in "Weiterschauen", weil dort nach episodeCompleted gefiltert wird. Ein
+    // Raum-Eintrag hat diese Grenzen nie: er entsteht aus dem Stand der Runde
+    // und nicht aus einer gelesenen Staffeluebersicht ("Pokémon" in der Runde
+    // "Gummikäse", 29.08.2026).
+    const inDerStaffelGehtEsWeiter = !sanitizePositiveNumber(favorite.finalSeason)
+      && !favorite.completed
+      && Boolean(favorite.episodeCompleted)
+      && info.lastPlayable > identity.episode;
+    if (!aufToterFolge && !inDerStaffelGehtEsWeiter && !isStalledSeriesFavorite(favorite)) continue;
 
     let ziel = nextEpisodeContinueUrl(favorite.url, "", favorite, {
       unplayableSeason: identity.season,
       unplayableEpisodes: info.episodes,
       seasonLastEpisode: info.lastPlayable
     });
+    // Dieselbe Auswahl wie dort, nur ohne die Frage nach dem Serienende: die
+    // naechste spielbare Folge dieser Staffel.
+    if (!ziel && inDerStaffelGehtEsWeiter) {
+      let naechste = identity.episode + 1;
+      while (info.episodes.includes(naechste) && naechste <= info.lastPlayable) naechste += 1;
+      if (naechste <= info.lastPlayable) {
+        ziel = replaceEpisodeUrl(favorite.url, identity.season, naechste);
+      }
+    }
     // Auf einer toten Folge und nichts kommt mehr danach: dann gehoert der
     // Eintrag auf die letzte Folge, die sich wirklich abspielen laesst.
     if (!ziel && aufToterFolge && info.lastPlayable) {
@@ -4990,6 +5020,12 @@ async function repairStalledSeriesFavorites() {
     favorite.position = 0;
     favorite.duration = 0;
     geaendert = true;
+    // Gehoert der Eintrag zu einer Runde, gehoert das Nachruecken dorthin
+    // gemeldet. Sonst weiss nur dieses Geraet, dass es weitergeht: die anderen
+    // legen ihren Raum-Eintrag aus dem Stand der Runde an, und der stuende
+    // weiter auf der abgehakten Folge - unsichtbar in "Gemeinsam
+    // weiterschauen", genau der Fehler, der hier gerade behoben wird.
+    reportWatchpartyProgress(favorite);
   }
   if (geaendert) {
     saveFavorites();
@@ -5984,23 +6020,43 @@ function createWatchpartyFavorite(key, eintrag, stand, provider) {
 function raumEintraegeSichern(eintraege) {
   if (!Array.isArray(eintraege)) return;
   let geaendert = false;
+  let folgestaende = false;
   for (const eintrag of eintraege) {
     if (!eintrag?.joined) continue;
     const key = String(eintrag.key || "");
     const room = String(eintrag.room || "");
     if (!key || !room) continue;
-    if (lokalerWatchpartyEintrag(key, room)) continue;
+    const lokal = lokalerWatchpartyEintrag(key, room);
+    if (lokal) {
+      // Da, aber vielleicht stehengeblieben. Ein Stand aus der Runde kam
+      // bisher nur als Meldung an, also nur bei einem Geraet, das gerade
+      // lief - wer aus war, behielt seinen alten Eintrag fuer immer. Der
+      // Raumzustand traegt den letzten Stand ohnehin mit; er gilt, wenn er
+      // juenger ist als das, was hier steht.
+      const urteil = fortschritt.watchpartyEintragAbgleichen(lokal, eintrag.progress || {});
+      if (urteil.art !== "aendern") continue;
+      Object.assign(lokal, urteil.aenderung);
+      geaendert = true;
+      if (urteil.folgestaendePruefen) folgestaende = true;
+      console.log(`[ELFIX WATCHPARTY] Eintrag zur Runde nachgezogen: ${lokal.title} (Raum ${room})`);
+      continue;
+    }
     const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
     if (!provider) continue;
     const neu = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
     if (!neu) continue;
     favorites.unshift(neu);
     geaendert = true;
+    // Ein Eintrag, der auf einer abgehakten Folge entsteht, faellt sonst
+    // sofort aus der Reihe, fuer die er angelegt wurde - er gehoert auf die
+    // naechste Folge. Dieselbe Nachsorge wie bei einem eingehenden Stand.
+    if (neu.episodeCompleted && !neu.completed) folgestaende = true;
     console.log(`[ELFIX WATCHPARTY] Eintrag zur Runde angelegt: ${neu.title} (Raum ${room})`);
   }
   if (!geaendert) return;
   saveFavorites();
   sendActiveState();
+  if (folgestaende) repariereFolgestaendeSpaeter();
 }
 
 // Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.

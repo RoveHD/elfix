@@ -538,6 +538,66 @@ public final class Bestand {
     }
 
     /**
+     * Dasselbe fuer alle betretenen Titel - in einem einzigen Aufruf.
+     *
+     * <p><b>Der gemeldete Fehler.</b> {@link Watchparty} rief
+     * {@link #raumEintragSichern} je Titel einmal, in einer Schleife. Jeder
+     * Aufruf schickt die ganze Ablage in den Kern und bekommt eine neue Liste
+     * zurueck - und weil die Antwort erst spaeter kommt, war die Schleife
+     * durch, bevor die erste eintraf. Alle Aufrufe trugen damit denselben
+     * Schnappschuss, und die letzte Antwort setzte {@code eintraege} auf eine
+     * Liste, in der die vorherigen Neuzugaenge nie standen.
+     *
+     * <p>Am 2026-08-29 am Fire TV Stick gemessen: vier Eintraege angelegt,
+     * Bestand danach 80 -> 81. Beim naechsten Start standen drei davon wieder
+     * als neu im Protokoll. Auf der Startseite kam so je Start genau eine
+     * Runde dazu.
+     *
+     * @param danach laeuft, wenn dieser Lauf durch ist - erst dann steht die
+     *               neue Liste, und erst dann darf der naechste beginnen
+     */
+    public void raumEintraegeSichern(JSONArray anbieter, Runnable danach) {
+        if (kern == null || !kern.istBereit()) {
+            danach.run();
+            return;
+        }
+        JSONObject zustand = new JSONObject();
+        try {
+            zustand.put("favoriten", eintraege);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Raum-Eintraege liessen sich nicht vorbereiten", fehler);
+            danach.run();
+            return;
+        }
+        kern.rufe("watchparty-bruecke.raumEintraegeSichern",
+            Kern.args(zustand, anbieter == null ? new JSONArray() : anbieter),
+            (wert, fehler) -> {
+                // Erst die Antwort einarbeiten, dann melden: wer auf diesen
+                // Lauf gewartet hat, faenge sonst mit der alten Liste an.
+                try {
+                    if (fehler != null || wert == null) {
+                        Log.d(TAG, "Raum-Eintraege nicht sichergestellt: " + fehler);
+                        return;
+                    }
+                    JSONObject urteil = new JSONObject(wert);
+                    JSONArray neueListe = urteil.optJSONArray("favoriten");
+                    if (neueListe != null) eintraege = neueListe;
+                    if (!urteil.optBoolean("geaendert", false)) return;
+                    JSONArray gesichert = urteil.optJSONArray("gesichert");
+                    Log.i(TAG, "Aus der Watchparty uebernommen: "
+                        + urteil.optInt("angelegt", 0) + " angelegt, "
+                        + (gesichert == null ? 0 : gesichert.length()) + " Runden geprueft");
+                    speichern();
+                    if (beobachter != null) beobachter.bestandGeaendert();
+                } catch (Exception ausnahme) {
+                    Log.e(TAG, "Antwort zu den Raum-Eintraegen unlesbar", ausnahme);
+                } finally {
+                    danach.run();
+                }
+            });
+    }
+
+    /**
      * Den Eintrag zu einer Runde sicherstellen und dann den Stand uebernehmen.
      *
      * <p><b>Der gemeldete Fehler.</b> Hier stand zuerst {@code zuSerie(...)} und

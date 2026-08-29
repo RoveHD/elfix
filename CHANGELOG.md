@@ -3,6 +3,48 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.69.0 — 29. August 2026
+
+Drei Fehler in „Gemeinsam weiterschauen“ — alle drei aus derselben Reihe, die
+1.68.0 gerade erst zum Laufen gebracht hatte. Jeder am Fire TV Stick oder an
+der echten Ablage nachgestellt, bevor eine Zeile geändert wurde.
+
+**Am Fernseher kam je App-Start genau eine Runde dazu.** Gemeldet: die Reihe
+zeigte One Piece, Bleach und Avatar — Loki, I Parry Everything und Tomb Raider
+King fehlten, obwohl alle in denselben Räumen stehen. Im Protokoll des Sticks
+standen vier Einträge als angelegt, und der Bestand wuchs dabei von 80 auf
+**81**; beim nächsten Start wurden drei davon wieder als neu gemeldet. Der
+Grund: die Einträge wurden je Titel einzeln durch den Kern geschickt. Jeder
+Aufruf reicht die ganze Ablage hinein und bekommt sie neu zurück — aber erst
+später, denn der Kern antwortet asynchron. Die Schleife war also durch, bevor
+die erste Antwort eintraf: alle trugen denselben Schnappschuss, und die letzte
+Antwort überschrieb, was die anderen angelegt hatten. Jetzt läuft die Schleife
+im Kern, in einem einzigen Aufruf, und zwei Läufe überlappen nie — bei vier
+eingerichteten Räumen melden die Zustände kurz hintereinander, das ist der
+Normal- und nicht der Ausnahmefall.
+
+**Ein abgeschlossener Titel blieb am Fernseher stehen.** „Avatar Aang“ wurde am
+26.08. am Rechner in der Runde zu Ende geschaut und stand drei Tage später
+immer noch in „Gemeinsam weiterschauen“. Ein Stand aus der Runde wurde bis
+hierher nur übernommen, wenn er als *Meldung* hereinkam — also nur von einem
+Gerät, das gerade lief. Wer aus war, behielt seinen Eintrag für immer. Dabei
+trägt jeder Raumzustand den zuletzt gemeldeten Stand ohnehin mit. Er wird jetzt
+angewandt, aber nur, wenn er wirklich jünger ist als das, was hier steht: sonst
+überschriebe ein liegengebliebener Raumzustand ein Gerät, das gerade selbst
+weitergeschaut hat.
+
+**Ein Eintrag, der auf einer abgehakten Folge entsteht, war ab Geburt
+unsichtbar.** Gemeldet an „Pokémon“ in der Runde „Gummikäse“: die Runde stand
+bei Folge 11, fertig geschaut — und genau danach filtert die Reihe. Nachrücken
+auf Folge 12 hätte die Länge der Serie vorausgesetzt, und die kennt ein
+Raum-Eintrag nie: er entsteht aus dem Stand der Runde, nicht aus einer
+gelesenen Staffelübersicht. Steht die abgehakte Folge vor der letzten
+spielbaren *dieser* Staffel, kommt sicher noch eine — dafür muss niemand
+wissen, wie lang die Serie insgesamt ist. Dazu nimmt der Reparaturlauf jetzt
+abgehakte Einträge zuerst: er prüft acht je Durchgang, und die waren mit
+gesunden belegt. In der echten Ablage erreicht er damit vier stehengebliebene
+Einträge statt einem.
+
 ## 1.68.0 — 29. August 2026
 
 Sechs gemeldete Fehler, jeder am Gerät oder an der echten Ablage nachgestellt,
