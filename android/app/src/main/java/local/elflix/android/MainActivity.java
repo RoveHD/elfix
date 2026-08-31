@@ -515,6 +515,15 @@ public class MainActivity extends Activity {
     private Statistik statistik;
     /** Was diese Woche bei den Anbietern erscheint. Siehe {@link Kalender}. */
     private Kalender kalender;
+    /**
+     * Der Blick auf Nachschub zu abgeschlossenen Serien.
+     *
+     * <p>Er haengt am Bestand und nicht an einer Ansicht: was er findet, taucht
+     * in "Weiterschauen", auf der Watchlist und in "Gemeinsam weiterschauen"
+     * auf - und muss auch dann gefunden werden, wenn gerade keine dieser
+     * Reihen offen ist.
+     */
+    private Nachschub nachschub;
     /** Welche Reihen die Startseite zeigt. Siehe {@link Startseite}. */
     private Startseite startseite;
     /** Woran ein YouTube-Eintrag zu erkennen ist. Siehe {@link Youtube}. */
@@ -893,6 +902,11 @@ public class MainActivity extends Activity {
         });
         kalender = new Kalender(this, kern, this::kalenderGeaendert);
         kalender.vorladen();
+        // Der Nachschub-Takt. Er braucht den Kern nur mittelbar - die
+        // Entscheidung faellt dort, der Takt haengt am Bestand.
+        nachschub = new Nachschub(this, bestand);
+        nachschubTaktUebernehmen();
+        nachschub.starten();
         youtube = new Youtube(kern);
         kosmetik = new Kosmetik(kern, adblocker);
         // Braucht weder Kern noch Netz: die Regeln stehen in der Klasse, und
@@ -8983,6 +8997,7 @@ public class MainActivity extends Activity {
             statistik.schliessen(null);
             statistik.speichern();
         }
+        if (nachschub != null) nachschub.anhalten();
         Pruefstand.abbauen(this, pruefumgebung);
         if (kern != null) kern.beenden();
         super.onDestroy();
@@ -9220,6 +9235,31 @@ public class MainActivity extends Activity {
      * ihre Stelle. Steht die Kalenderansicht selbst offen, wird die neu
      * gebaut - dort ist die Woche der ganze Inhalt.
      */
+    /**
+     * Portion und Abstand des Nachschub-Takts aus dem Kern holen.
+     *
+     * <p>Sechs Titel je Durchgang, alle sechs Stunden - dieselben Zahlen wie am
+     * Rechner. Sie werden nicht hier hingeschrieben, sondern gefragt: sie
+     * stehen in {@code nachschub.js}, und eine zweite Stelle wäre eine, die
+     * beim nächsten Mal vergessen wird. Antwortet der Kern nicht (er ist beim
+     * Start noch nicht bereit), bleibt es bei den Rückfallwerten in
+     * {@link Nachschub} - dieselben Zahlen, aber ausdrücklich als Rückfall.
+     */
+    private void nachschubTaktUebernehmen() {
+        if (kern == null || nachschub == null) return;
+        kern.rufe("nachschub-bruecke.PRO_LAUF", (proLauf, fehler) -> {
+            if (fehler != null || proLauf == null) return;
+            kern.rufe("nachschub-bruecke.INTERVALL_MS", (takt, fehler2) -> {
+                if (fehler2 != null || takt == null) return;
+                try {
+                    nachschub.taktSetzen(Integer.parseInt(proLauf.trim()), Long.parseLong(takt.trim()));
+                } catch (Exception ausnahme) {
+                    Log.d(TAG, "Nachschub-Takt nicht uebernommen: " + ausnahme);
+                }
+            });
+        });
+    }
+
     private void kalenderGeaendert() {
         if (!"kalender".equals(currentScreen) && !"home".equals(currentScreen)) return;
         seiteSammelnd();

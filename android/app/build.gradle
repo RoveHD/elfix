@@ -20,6 +20,7 @@ def kernQuelle = file("$rootDir/../StreamingBrowserElectron")
 def kernModule = [
     "src/titel.js",
     "src/fortschritt.js",
+    "src/nachschub.js",
     "src/messung.js",
     "src/bildnachreichung.js",
     "src/seitendaten.js",

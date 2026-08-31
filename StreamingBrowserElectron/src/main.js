@@ -8,7 +8,6 @@ const {
   extractNewReleaseItems,
   extractHeroItem,
   extractUnplayableEpisodes,
-  extractSeriesBounds,
   extractGenres,
   extractCatalogItems,
   extractRelatedItems,
@@ -28,6 +27,10 @@ const sitzungslauf = require("./sitzungslauf");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
 const watchpartyAutostart = require("./watchparty-autostart");
+// Ob zu einer abgeschlossenen Serie Nachschub erschienen ist. Eigenes Modul,
+// damit das Telefon dieselbe Entscheidung trifft und nicht auf einen laufenden
+// Rechner warten muss - siehe den Kopf von nachschub.js.
+const nachschub = require("./nachschub");
 const startphasen = require("./startphasen");
 // Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
 // die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
@@ -4746,166 +4749,49 @@ function updateActiveFavoriteProgress(providerId, url) {
   if (urteil.meldung) sendToast(urteil.meldung);
 }
 
+// Die Staffeluebersicht zu einer Folgenadresse.
+//
 // Auf der Episodenseite steht die Folgenliste nicht - dort ist nicht zu sehen,
 // dass die hinteren Nummern nur Hinweise auf eine zusammengefasste Folge sind.
-// Die Staffeluebersicht weiss es und wird einmal je Staffel nachgeladen. Der
-// Abruf laeuft nebenher: der Fortschritts-Takt soll nicht darauf warten.
-function seasonPageUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    url.hash = "";
-    url.search = "";
-    const pfad = url.pathname.replace(/\/(?:episode|folge)-\d+\/?$/i, "");
-    if (pfad === url.pathname || !/\/(?:staffel|season)-\d+$/i.test(pfad)) return "";
-    url.pathname = pfad;
-    return url.href;
-  } catch {
-    return "";
-  }
-}
+// Die Uebersicht weiss es und wird einmal je Staffel nachgeladen; der Abruf
+// laeuft nebenher, der Fortschritts-Takt soll nicht darauf warten.
+//
+// Wie die Adresse gebildet wird, steht in nachschub.js: das Telefon braucht
+// dieselbe Rechnung, und zwei Auslegungen derselben Adresse waeren zwei
+// Fehlerquellen.
+const seasonPageUrl = nachschub.staffelSeiteUrl;
 
 // --- Neue Folgen zu abgeschlossenen Serien -----------------------------------
 // Eine Serie in der Mediathek ist nicht fuer immer zu Ende: es kommen neue
 // Staffeln und einzelne Folgen nach. Geprueft wird von Zeit zu Zeit im
 // Hintergrund, und zwar nur, was auch wirklich abgeschlossen ist.
+//
+// Die Auswahl der Titel, der Vergleich der Grenzen und die Frage, ob daraus
+// eine Reaktivierung folgt, stehen in nachschub.js. Das ist keine Aufteilung um
+// der Ordnung willen: hier stand alles zusammen, und weil main.js auf dem
+// Telefon nicht laeuft, hing "Black Torch ist wieder da" daran, dass irgendwann
+// ein Rechner angeht. Was hier bleibt, ist der Abruf - Electron holt die Seite,
+// Java holt sie drueben - und das, was danach in *dieser* App zu tun ist.
+const nachschubLauf = nachschub.erstellen({
+  holen: (adresse) => fetchProviderHtml(adresse),
+  protokoll: (zeile) => console.log(`[ELFIX NEU] ${zeile}`)
+});
 
-// Die Serienseite ohne Staffel und Folge - dort stehen alle Staffeln.
-function serienSeiteUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    url.hash = "";
-    url.search = "";
-    const pfad = url.pathname
-      .replace(/\/(?:episode|folge)-\d+\/?$/i, "")
-      .replace(/\/(?:staffel|season)-\d+\/?$/i, "");
-    if (pfad === url.pathname) return "";
-    url.pathname = pfad;
-    return url.href;
-  } catch {
-    return "";
-  }
-}
-
-// Was die Anbieterseite ueber den Umfang der Serie sagt: wie viele Staffeln,
-// und wie viele Folgen die letzte hat.
-async function serienUmfangLaden(favorite) {
-  const serienUrl = serienSeiteUrl(favorite.url);
-  if (!serienUrl) return null;
-  const seite = await fetchProviderHtml(serienUrl).catch(() => null);
-  if (!seite?.html) return null;
-
-  const grenzen = extractSeriesBounds(seite.html);
-  const staffeln = sanitizePositiveNumber(grenzen.seasons);
-  if (!staffeln) return null;
-
-  // Die Folgenzahl der letzten Staffel steht erst auf deren eigener Seite.
-  const letzteUrl = replaceEpisodeUrl(favorite.url, staffeln, 1);
-  const staffelSeite = letzteUrl ? await fetchProviderHtml(seasonPageUrl(letzteUrl) || letzteUrl).catch(() => null) : null;
-  const inStaffel = staffelSeite?.html ? extractSeriesBounds(staffelSeite.html, staffeln) : null;
-  const gelistet = staffelSeite?.html ? extractUnplayableEpisodes(staffelSeite.html) : null;
-  const folgen = sanitizePositiveNumber(gelistet?.lastPlayable)
-    || sanitizePositiveNumber(gelistet?.listed)
-    || sanitizePositiveNumber(inStaffel?.episodes);
-  return { seasons: staffeln, episodes: folgen };
-}
-
-// Kommt zu einer abgeschlossenen Serie etwas Neues, wird sie wieder geoeffnet:
-// zurueck in die Watchlist, auf die erste neue Folge gesetzt und mit einem
-// Merker versehen, damit die Oberflaeche darauf hinweisen kann.
 async function pruefeNeueFolgen() {
-  // Reihum, und nicht immer dieselben.
-  //
-  // Hier stand die Sortierung nach `completedAt`: sechs Titel je Durchgang,
-  // und weil die Reihenfolge sich nie aendert, waren es *dieselben* sechs -
-  // bei jedem Durchgang, sechs Stunden lang, fuer immer. An der echten Ablage
-  // am 2026-08-29 nachgezaehlt: 18 abgeschlossene Serien mit bekannter
-  // Grenze, sechs davon geprueft, zwoelf **nie**. Fuer die konnte eine neue
-  // Staffel erscheinen, ohne dass ELFIX es je bemerkt haette - kein Hinweis,
-  // keine Rueckkehr in die Watchlist, keine Meldung.
-  //
-  // Sortiert wird deshalb nach dem letzten Blick auf den Titel. Wer noch nie
-  // geprueft wurde, steht vorn (kein Stempel = Zeitpunkt null), danach der
-  // aelteste Blick; bei Gleichstand entscheidet weiterhin, was zuletzt zu
-  // Ende geschaut wurde. Damit wandert die Portion durch den ganzen Bestand:
-  // achtzehn Titel bei sechs je sechs Stunden sind zwei Tage bis zur Runde.
-  const zuletztGeprueft = (favorite) => Date.parse(favorite?.newEpisodeCheckedAt || 0) || 0;
-  const kandidaten = favorites
-    // Wer den Titel gerade wieder ansieht, steht auf einer fruehen Folge -
-    // fuer diese Pruefung saehe das aus wie eine Serie, die auf halber
-    // Strecke stehengeblieben ist, und sie wuerfe den Eintrag ans Ende
-    // vor. Nachschub faellt beim naechsten Durchgang auf.
-    .filter((favorite) => favorite.completed && !favorite.rewatching)
-    .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
-    .filter((favorite) => sanitizePositiveNumber(favorite.finalSeason) && episodeIdentity(favorite.url || ""))
-    .sort((links, rechts) => (
-      zuletztGeprueft(links) - zuletztGeprueft(rechts)
-      || Date.parse(rechts.completedAt || 0) - Date.parse(links.completedAt || 0)
-    ))
-    .slice(0, NEUE_FOLGEN_PRO_LAUF);
-  if (!kandidaten.length) return;
+  const ergebnis = await nachschubLauf.lauf(favorites, NEUE_FOLGEN_PRO_LAUF);
+  if (!ergebnis.geaendert) return;
 
-  let geaendert = false;
-  // Was in diesem Durchlauf neu dazukommt. Nur darueber wird eine Meldung
-  // geschickt - newEpisodeAt bleibt am Eintrag stehen, bis der Titel geoeffnet
-  // wird, und von dort gemeldet kaeme dieselbe Meldung immer wieder.
-  const gemeldet = [];
-  for (const favorite of kandidaten) {
-    // Gestempelt wird der Versuch und nicht der Erfolg. Ein Titel, dessen
-    // Seite gerade nicht antwortet, stuende sonst beim naechsten Durchgang
-    // wieder ganz vorn und verstopfte die Runde fuer alle anderen - genau die
-    // Verstopfung, die diese Sortierung beheben soll.
-    favorite.newEpisodeCheckedAt = new Date().toISOString();
-    geaendert = true;
-    const umfang = await serienUmfangLaden(favorite).catch(() => null);
-    if (!umfang) continue;
-
-    const bekannteStaffel = sanitizePositiveNumber(favorite.finalSeason);
-    const bekannteFolge = sanitizePositiveNumber(favorite.finalEpisode);
-    const neueStaffel = umfang.seasons > bekannteStaffel;
-    const neueFolge = umfang.seasons === bekannteStaffel
-      && umfang.episodes > bekannteFolge
-      && bekannteFolge > 0;
-    if (!neueStaffel && !neueFolge) continue;
-
-    // Auf die erste Folge, die noch nicht gesehen wurde.
-    const ziel = neueStaffel
-      ? replaceEpisodeUrl(favorite.url, bekannteStaffel + 1, 1)
-      : replaceEpisodeUrl(favorite.url, bekannteStaffel, bekannteFolge + 1);
-    if (!ziel) continue;
-
-    const identity = episodeIdentity(ziel);
-    favorite.url = ziel;
-    favorite.normalizedUrl = normalizeFavoriteUrl(ziel);
-    favorite.season = identity?.season || favorite.season || 0;
-    favorite.episode = identity?.episode || favorite.episode || 0;
-    favorite.finalSeason = umfang.seasons;
-    favorite.finalEpisode = umfang.episodes;
-    favorite.completed = false;
-    favorite.completedAt = "";
-    favorite.completedManually = false;
-    favorite.rewatching = false;
-    favorite.episodeCompleted = false;
-    favorite.continuePending = true;
-    favorite.hideFromContinueWatching = false;
-    favorite.progress = 0;
-    favorite.position = 0;
-    favorite.currentTime = 0;
-    favorite.duration = 0;
-    // Zurueck in die Watchlist, damit die Serie auffaellt.
-    favorite.favorite = true;
-    favorite.newEpisodeAt = new Date().toISOString();
-    favorite.newEpisodeLabel = neueStaffel
-      ? `Staffel ${bekannteStaffel + 1} ist da`
-      : `Folge ${bekannteFolge + 1} ist da`;
-    geaendert = true;
-    gemeldet.push(favorite);
-    console.log(`[ELFIX NEU] ${favorite.title}: ${favorite.newEpisodeLabel}`);
+  for (const favorite of ergebnis.gefunden) {
+    // Gehoert der Titel zu einer Runde, gehoert der Fund dorthin: dieses Geraet
+    // hat den Nachschub gefunden, und damit ist es an ihm, den archivierten
+    // Raumtitel wieder aktiv zu machen. Das Relay laesst die Meldung durch,
+    // weil sie eine *neuere* Folge nennt.
+    reportWatchpartyProgress(favorite);
   }
 
-  if (!geaendert) return;
   saveFavorites();
   sendActiveState();
-  meldeNeueFolgen(gemeldet);
+  meldeNeueFolgen(ergebnis.gefunden);
 }
 
 // Eine Windows-Benachrichtigung je neu gefundener Folge.
@@ -9676,6 +9562,12 @@ function loadFavorites() {
       // Hinweis auf Nachschub zu einer Serie, die schon abgeschlossen war.
       newEpisodeAt: String(favorite.newEpisodeAt || ""),
       newEpisodeLabel: String(favorite.newEpisodeLabel || ""),
+      // Wann zuletzt nachgesehen wurde, ob es Nachschub gibt. Ohne diese Zeile
+      // fiel der Stempel beim Laden weg - hier werden nur bekannte Felder
+      // uebernommen -, und damit war die faire Reihum-Sortierung in
+      // nachschub.kandidaten nach jedem Neustart wieder auf null: geprueft
+      // wurden dieselben sechs Titel, der Rest nie.
+      newEpisodeCheckedAt: String(favorite.newEpisodeCheckedAt || ""),
       activity: normalizeActivity(favorite.activity),
       createdAt: String(favorite.createdAt || new Date().toISOString()),
       openedAt: String(favorite.openedAt || ""),

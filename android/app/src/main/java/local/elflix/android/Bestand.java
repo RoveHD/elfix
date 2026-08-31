@@ -821,6 +821,87 @@ public final class Bestand {
             });
     }
 
+    /* ----------------------------------------------------------- Nachschub */
+
+    /**
+     * Einen Durchgang "gibt es zu abgeschlossenen Serien etwas Neues?" fahren.
+     *
+     * <p>Gerechnet wird nichts hier. Welche Titel drankommen, was aus den
+     * Anbieterseiten zu lesen ist und ob daraus eine Reaktivierung folgt, steht
+     * in {@code nachschub.js} - <em>demselben</em> Modul, das der Rechner
+     * fragt. Diese Methode reicht die Ablage hinein, nimmt sie zurueck und
+     * sagt weiter, was dabei herauskam.
+     *
+     * <p><b>Warum es das ueberhaupt gibt.</b> Der Vorgang stand vollstaendig in
+     * {@code main.js}, also an einem Ort, den das Telefon nie sieht. Eine
+     * archivierte Watchparty-Serie wurde damit erst wieder aktiv, wenn
+     * irgendwann ein Rechner lief - fuer wen der Fernseher das einzige Geraet
+     * ist, kam der Nachschub nie an.
+     *
+     * <p>Der Rueckweg zur Runde laeuft ueber denselben {@link StandMelder} wie
+     * jeder andere Stand: findet dieses Geraet die neue Folge, meldet es sie,
+     * und das Relay holt den archivierten Raumtitel zurueck.
+     *
+     * @param hoechstens wie viele Titel dieser Durchgang ansieht
+     * @param danach     bekommt die Zahl der gefundenen Titel; laeuft auch,
+     *                   wenn nichts gefunden wurde oder der Kern nicht bereit
+     *                   war
+     */
+    public void nachschubPruefen(int hoechstens, java.util.function.Consumer<Integer> danach) {
+        if (kern == null || !kern.istBereit()) {
+            danach.accept(0);
+            return;
+        }
+        JSONObject zustand = new JSONObject();
+        try {
+            zustand.put("favoriten", eintraege);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Nachschublauf liess sich nicht vorbereiten", fehler);
+            danach.accept(0);
+            return;
+        }
+        kern.rufe("nachschub-bruecke.lauf", Kern.args(zustand, hoechstens), (wert, fehler) -> {
+            int gefunden = 0;
+            try {
+                if (fehler != null || wert == null) {
+                    Log.d(TAG, "Nachschub nicht geprueft: " + fehler);
+                    return;
+                }
+                JSONObject urteil = new JSONObject(wert);
+                JSONArray neueListe = urteil.optJSONArray("favoriten");
+                if (neueListe != null) eintraege = neueListe;
+                // Gestempelt wird jeder Versuch, nicht nur der Fund - sonst
+                // stuenden dieselben Titel beim naechsten Durchgang wieder
+                // vorn. Deshalb wird auch dann gespeichert, wenn nichts
+                // Neues dabei war.
+                if (!urteil.optBoolean("geaendert", false)) return;
+                JSONArray funde = urteil.optJSONArray("gefunden");
+                gefunden = funde == null ? 0 : funde.length();
+                speichern();
+                for (int i = 0; i < gefunden; i += 1) {
+                    JSONObject fund = funde.optJSONObject(i);
+                    if (fund == null) continue;
+                    Log.i(TAG, "Nachschub: " + fund.optString("titel") + " - " + fund.optString("label"));
+                    if (melder != null) {
+                        melder.melde(fund.optString("titel") + ": " + fund.optString("label"));
+                    }
+                    // Gehoert der Titel zu einer Runde, gehoert der Fund
+                    // dorthin. Ohne diese Meldung wuesste nur dieses Geraet,
+                    // dass der archivierte Raumtitel wieder aktiv ist.
+                    JSONObject roh = fund.optString("raum").isEmpty()
+                        ? null
+                        : rohMitId(fund.optString("id"));
+                    if (roh != null && standMelder != null) standMelder.melde(roh);
+                }
+                if (beobachter != null) beobachter.bestandGeaendert();
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Antwort des Nachschublaufs unlesbar", ausnahme);
+            } finally {
+                danach.accept(gefunden);
+            }
+        });
+    }
+
     /* ------------------------------------------------ Aenderungen von Hand */
 
     /** Der Herz-Knopf: auf die Merkliste oder herunter. */

@@ -129,10 +129,14 @@ pruefe("Aus der Ablage zaehlt nur ein ausdrueckliches Ja",
 // Gemeldet wird die Liste, die der Durchlauf selbst gefuellt hat - nicht das,
 // was an den Eintraegen steht. Sonst kaeme dieselbe Meldung im Takt wieder.
 
+// Der Durchlauf selbst liegt seit dem Umzug in nachschub.js - dieselbe Datei,
+// die das Telefon fahrt. Die Zusage ist unveraendert: gemeldet wird die Liste,
+// die der Lauf gefuellt hat, und nicht das, was an den Eintraegen steht.
+const LAUF = fs.readFileSync(path.join(WURZEL, "src/nachschub.js"), "utf8").split("\r\n").join("\n");
 pruefe("Der Durchlauf sammelt seine eigenen Funde",
-  /const gemeldet = \[\];/.test(QUELLE) && /gemeldet\.push\(favorite\);/.test(QUELLE));
+  /const gefunden = \[\];/.test(LAUF) && /gefunden\.push\(favorit\);/.test(LAUF));
 pruefe("Gemeldet wird erst nach dem Speichern",
-  /saveFavorites\(\);\s*\n\s*sendActiveState\(\);\s*\n\s*meldeNeueFolgen\(gemeldet\);/.test(QUELLE));
+  /saveFavorites\(\);\s*\n\s*sendActiveState\(\);\s*\n\s*meldeNeueFolgen\(ergebnis\.gefunden\);/.test(QUELLE));
 pruefe("Und nur diese Liste, nicht die Eintraege mit newEpisodeAt",
   !/meldeNeueFolgen\(favorites/.test(QUELLE));
 
