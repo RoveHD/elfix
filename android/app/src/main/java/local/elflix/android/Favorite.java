@@ -153,6 +153,48 @@ public final class Favorite {
         return roh.optBoolean("hideFromContinueWatching", false);
     }
 
+    /**
+     * Laeuft dieser abgeschlossene Titel gerade wieder?
+     *
+     * <p>Der eine Fall, in dem "abgeschlossen" nicht aus "Weiterschauen"
+     * ausblendet. Ein Titel in der Mediathek ist gesehen, nicht erledigt - wer
+     * ihn noch einmal anfaengt, findet ihn dort wieder, wo jeder angefangene
+     * Titel steht, und behaelt ihn trotzdem in der Mediathek.
+     *
+     * <p>Gesetzt wird der Merker im geteilten Modul {@code fortschritt.js};
+     * hier wird er nur gelesen.
+     */
+    public boolean istWiederansehen() {
+        return istAbgeschlossen() && roh.optBoolean("rewatching", false);
+    }
+
+    /**
+     * Wie oft der Titel ganz durch ist.
+     *
+     * <p>Der erste Durchlauf steckt in {@code completed}, jeder weitere in
+     * {@code rewatchCount}. Ein gerade laufender zaehlt noch nicht mit: gezaehlt
+     * wird, was zu Ende gesehen wurde.
+     */
+    public int durchlaeufe() {
+        int weitere = Math.max(0, roh.optInt("rewatchCount", 0));
+        if (!istAbgeschlossen() && weitere == 0) return 0;
+        return 1 + weitere;
+    }
+
+    /**
+     * Der Hinweis auf der Kachel - oder ein leerer Text, wenn es keinen gibt.
+     *
+     * <p>Zwei Aussagen, die sich nicht vermischen duerfen: laeuft gerade ein
+     * weiterer Durchlauf, steht das da (sonst saehe eine gesehene Serie in
+     * "Weiterschauen" wie ein Fehler aus); sonst zaehlt die Kachel, wie oft der
+     * Titel ganz durch ist. Einmal ist der Normalfall und wird nicht beziffert.
+     */
+    public String durchlaufHinweis() {
+        if (istWiederansehen()) return "↻ " + (durchlaeufe() + 1) + ". Durchlauf";
+        int male = durchlaeufe();
+        return male >= 2 ? "↻ " + male + "× gesehen" : "";
+    }
+
     /** Zu welcher Watchparty-Runde der Stand gehoert; leer heisst: der eigene. */
     public String watchpartyRaum() {
         return roh.optString("watchpartyRoom", "");
@@ -198,7 +240,8 @@ public final class Favorite {
      * dazu haelt beide zusammen.
      */
     public boolean stehtInWeiterschauen() {
-        if (istAbgeschlossen() || folgeAbgeschlossen() || ausWeiterschauenEntfernt()) return false;
+        if (istAbgeschlossen() && !istWiederansehen()) return false;
+        if (folgeAbgeschlossen() || ausWeiterschauenEntfernt()) return false;
         if (wartetAufNaechsteFolge()) return true;
         double laufzeit = duration();
         double stand = currentTime();

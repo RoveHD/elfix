@@ -2628,9 +2628,16 @@ public class MainActivity extends Activity {
                                  Bilder.Sichtfenster fenster) {
         String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
         if (titel.isEmpty()) titel = "Titel";
-        String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
+        String hinweis = eintrag.istWiederansehen() ? eintrag.folgenText()
+            : eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
         if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
+        }
+        // Warum steht eine gesehene Serie hier? Weil sie gerade wieder laeuft.
+        // Ohne diesen Zusatz saehe das nach einem Fehler aus.
+        String durchlauf = eintrag.durchlaufHinweis();
+        if (!durchlauf.isEmpty()) {
+            hinweis = hinweis.isEmpty() ? durchlauf : hinweis + " · " + durchlauf;
         }
         return TvViews.kachel(this, providerForFavorite(eintrag), titel, hinweis,
             eintrag.bild(),
@@ -4104,9 +4111,13 @@ public class MainActivity extends Activity {
      * Rechner in {@code favoriteHerkunft} mit demselben Zeichen.
      */
     private static String kachelUnterzeile(Favorite eintrag) {
-        String folge = eintrag.istAbgeschlossen() ? "Abgeschlossen"
+        String folge = eintrag.istWiederansehen()
+            ? (eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText())
+            : eintrag.istAbgeschlossen() ? "Abgeschlossen"
             : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
             : eintrag.folgenText();
+        String durchlauf = eintrag.durchlaufHinweis();
+        if (!durchlauf.isEmpty()) folge = folge.isEmpty() ? durchlauf : folge + " · " + durchlauf;
         String raum = eintrag.watchpartyRaum();
         if (raum.isEmpty()) return folge;
         return folge.isEmpty() ? "⇄ " + raum : folge + " · ⇄ " + raum;
@@ -5472,9 +5483,16 @@ public class MainActivity extends Activity {
     private View eintragsKarte(Favorite eintrag, Bibliothek liste) {
         String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
         if (titel.isEmpty()) titel = "Titel";
-        String hinweis = eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
+        String hinweis = eintrag.istWiederansehen() ? eintrag.folgenText()
+            : eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
         if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
+        }
+        // Warum steht eine gesehene Serie hier? Weil sie gerade wieder laeuft.
+        // Ohne diesen Zusatz saehe das nach einem Fehler aus.
+        String durchlauf = eintrag.durchlaufHinweis();
+        if (!durchlauf.isEmpty()) {
+            hinweis = hinweis.isEmpty() ? durchlauf : hinweis + " · " + durchlauf;
         }
         return MobileViews.favoriteCard(this, providerForFavorite(eintrag), titel, hinweis,
             eintrag.providerName(), eintrag.bild(),
@@ -5509,6 +5527,23 @@ public class MainActivity extends Activity {
             aktionen.add(() -> nimmtWeg(karte, () -> {
                 bestand.ausWeiterschauenNehmen(eintrag.id());
                 showToast("Aus Weiterschauen genommen");
+            }));
+        }
+        // Ein Titel in der Mediathek ist gesehen, nicht erledigt. Die Kachel
+        // selbst oeffnet die gespeicherte Adresse - bei einer durchgeschauten
+        // Serie also die letzte Folge; dieser Punkt ist der Weg zum Anfang. Der
+        // Titel bleibt dabei in der Mediathek und steht zusaetzlich in
+        // "Weiterschauen".
+        if (eintrag.istAbgeschlossen()) {
+            menue.getMenu().add(eintrag.istWiederansehen()
+                ? "Wieder von vorn beginnen" : "Nochmal von vorn ansehen");
+            aktionen.add(() -> bestand.wiederansehenStarten(eintrag.id(), ziel -> {
+                showToast(titel + " läuft wieder — und bleibt in der Mediathek");
+                // Frisch aus dem Bestand: der Eintrag steht jetzt auf der
+                // ersten Folge, und geoeffnet gehoert diese - nicht die, die
+                // beim Aufklappen des Menues in der Hand lag.
+                Favorite frisch = bestand.mitId(eintrag.id());
+                openFavorite(frisch == null ? eintrag : frisch);
             }));
         }
         if (eintrag.istWatchlist()) {

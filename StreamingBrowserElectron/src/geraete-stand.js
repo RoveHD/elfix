@@ -126,6 +126,9 @@ function erzeugen(stand, provider, umgebung = {}) {
     episodeCompleted: Boolean(stand?.episodeCompleted),
     continuePending: Boolean(stand?.continuePending),
     hideFromContinueWatching: Boolean(stand?.hideFromContinueWatching),
+    rewatching: Boolean(stand?.rewatching && stand?.completed),
+    rewatchCount: fortschritt.sanitizePositiveNumber(stand?.rewatchCount),
+    rewatchedAt: String(stand?.rewatchedAt || ""),
     completedEpisodes: Array.isArray(stand?.completedEpisodes) ? stand.completedEpisodes : [],
     progress: fortschritt.sanitizeProgress(stand?.progress),
     duration: fortschritt.sanitizePositiveNumber(stand?.duration),
@@ -215,6 +218,15 @@ function uebernehmen(stand, umgebung = {}) {
   if (stand.completedAt) lokal.completedAt = stand.completedAt;
   lokal.hideFromContinueWatching = Boolean(stand.hideFromContinueWatching);
   lokal.continuePending = Boolean(stand.continuePending);
+  // Wie "von Hand abgehakt": der Merker gilt nur zusammen mit dem Abschluss.
+  lokal.rewatching = Boolean(stand.rewatching && stand.completed);
+  // Die Zahl der Durchlaeufe waechst nur. Sie ist auf beiden Geraeten dieselbe
+  // Geschichte, und ein Geraet, das eine Runde verpasst hat, darf sie nicht
+  // zurueckdrehen.
+  lokal.rewatchCount = Math.max(
+    fortschritt.sanitizePositiveNumber(lokal.rewatchCount),
+    fortschritt.sanitizePositiveNumber(stand.rewatchCount));
+  if (stand.rewatchedAt) lokal.rewatchedAt = stand.rewatchedAt;
   lokal.watched = Boolean(stand.watched) || lokal.watched;
   lokal.favorite = stand.favorite !== false;
   if (stand.finalSeason) lokal.finalSeason = stand.finalSeason;

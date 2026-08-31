@@ -103,6 +103,7 @@ const {
   cleanBaseMediaTitle,
   cleanTitle,
   compareEpisodeIdentity,
+  durchlaeufe,
   endeSchwelle,
   episodeIdentity,
   serienTitel,
@@ -140,6 +141,7 @@ const {
   titleFromPath,
   uebernahmeSchwelle,
   vonHandAnlegen,
+  wiederansehenBeginnen,
 } = fortschritt;
 
 // Einzige Ausnahme: ob die Runde gerade eine Folge vorgibt, weiss nur der
@@ -917,6 +919,8 @@ ipcMain.handle("favorites:toggle-current", async () => {
     completed: false,
     episodeCompleted: false,
     hideFromContinueWatching: false,
+    rewatching: false,
+    rewatchCount: 0,
     progress: 0,
     duration: 0,
     position: 0,
@@ -951,6 +955,10 @@ ipcMain.handle("favorites:toggle-current", async () => {
       completedManually: false,
       completedAt: "",
       episodeCompleted: false,
+      // Ohne Abschluss kein Wiederansehen. Die Zahl der Durchlaeufe bleibt -
+      // sie sagt, was war, nicht was gerade ist.
+      rewatching: false,
+      rewatchCount: sanitizePositiveNumber(existing.rewatchCount),
       hideFromContinueWatching: Boolean(existing.hideFromContinueWatching),
       progress: sanitizeProgress(existing.progress),
       duration: sanitizePositiveNumber(existing.duration),
@@ -1194,6 +1202,10 @@ ipcMain.handle("favorites:mark-completed", (_event, favoriteId) => {
   favorite.episodeCompleted = false;
   favorite.continuePending = false;
   favorite.hideFromContinueWatching = true;
+  // Von Hand abhaken heisst "ich bin damit durch" - auch mit einem gerade
+  // laufenden zweiten Durchlauf. Sonst stuende der Titel abgehakt in der
+  // Mediathek und trotzdem weiter in Weiterschauen.
+  favorite.rewatching = false;
   favorite.favorite = false;
   favorite.newEpisodeAt = "";
   favorite.newEpisodeLabel = "";
@@ -1224,6 +1236,7 @@ ipcMain.handle("favorites:set-watchlist", (_event, favoriteId, wert) => {
     favorite.completed = false;
     favorite.completedManually = false;
     favorite.completedAt = "";
+    favorite.rewatching = false;
   }
   favorite.updatedAt = new Date().toISOString();
   saveFavorites();
@@ -1244,6 +1257,32 @@ ipcMain.handle("favorites:clear-new", (_event, favoriteId) => {
   }
   if (geaendert) saveFavorites();
   return favorites;
+});
+
+// Von vorn ansehen - und dabei in der Mediathek bleiben.
+//
+// Der Weg dorthin fehlte bisher ganz. Eine Karte in der Mediathek oeffnet die
+// gespeicherte Adresse, und die ist bei einer durchgeschauten Serie die letzte
+// Folge: das Ende, nicht der Anfang. Wer wirklich von vorn wollte, musste den
+// Titel aus der Mediathek nehmen - also das aufgeben, was er behalten wollte.
+//
+// Hier bleibt `completed` unangetastet. Der Eintrag springt auf die erste
+// Folge, bekommt einen leeren Stand und meldet sich als laufender Durchlauf
+// zurueck; damit steht er ab sofort in beiden Listen. Ein Film hat keine erste
+// Folge - bei ihm genuegt der leere Stand.
+ipcMain.handle("library:rewatch", async (_event, favoriteId, options = {}) => {
+  const favorite = favorites.find((item) => item.id === String(favoriteId || ""));
+  if (!favorite) return { favorites, started: false };
+
+  // Die Regel steht im geteilten Modul - dieselbe, die das Telefon anwendet.
+  Object.assign(favorite, wiederansehenBeginnen(favorite));
+  appendMediaActivity(favorite, favorite.url, `${durchlaeufe(favorite) + 1}. Durchlauf begonnen`);
+  saveFavorites();
+  sendActiveState();
+  console.log(`[ELFIX] ${favorite.title}: ${durchlaeufe(favorite) + 1}. Durchlauf begonnen`);
+
+  if (options?.open !== false) await favoritOeffnen(favorite.id, options);
+  return { favorites, started: true, favorite };
 });
 
 ipcMain.handle("continue:hide", (_event, favoriteId) => {
@@ -4749,7 +4788,11 @@ async function pruefeNeueFolgen() {
   // achtzehn Titel bei sechs je sechs Stunden sind zwei Tage bis zur Runde.
   const zuletztGeprueft = (favorite) => Date.parse(favorite?.newEpisodeCheckedAt || 0) || 0;
   const kandidaten = favorites
-    .filter((favorite) => favorite.completed)
+    // Wer den Titel gerade wieder ansieht, steht auf einer fruehen Folge -
+    // fuer diese Pruefung saehe das aus wie eine Serie, die auf halber
+    // Strecke stehengeblieben ist, und sie wuerfe den Eintrag ans Ende
+    // vor. Nachschub faellt beim naechsten Durchgang auf.
+    .filter((favorite) => favorite.completed && !favorite.rewatching)
     .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
     .filter((favorite) => sanitizePositiveNumber(favorite.finalSeason) && episodeIdentity(favorite.url || ""))
     .sort((links, rechts) => (
@@ -4798,6 +4841,7 @@ async function pruefeNeueFolgen() {
     favorite.completed = false;
     favorite.completedAt = "";
     favorite.completedManually = false;
+    favorite.rewatching = false;
     favorite.episodeCompleted = false;
     favorite.continuePending = true;
     favorite.hideFromContinueWatching = false;
@@ -4904,7 +4948,9 @@ async function seasonPlaybackInfoAsync(url) {
 // Solche Faelle stammen aus der Zeit, als am Ende einer Staffel nicht in die
 // naechste gewechselt wurde - beim Start werden sie eingesammelt.
 function isStalledSeriesFavorite(favorite) {
-  if (!favorite || favorite.completed || !favorite.episodeCompleted) return false;
+  // Ein laufendes Wiederansehen zaehlt hier wie ein offener Titel: es steht
+  // mitten in der Serie und kann genauso am Staffelende haengenbleiben.
+  if (!favorite || (favorite.completed && !favorite.rewatching) || !favorite.episodeCompleted) return false;
   const identity = episodeIdentity(favorite.url || "");
   const finalSeason = sanitizePositiveNumber(favorite.finalSeason);
   const finalEpisode = sanitizePositiveNumber(favorite.finalEpisode);
@@ -4928,7 +4974,7 @@ function seriesRepairCandidates() {
   const dringend = (favorite) => (favorite.episodeCompleted ? 0 : 1);
   return favorites
     .filter((favorite) => (favorite.type || inferMediaType(favorite.url)) === "serie")
-    .filter((favorite) => !favorite.completed && episodeIdentity(favorite.url || ""))
+    .filter((favorite) => (!favorite.completed || favorite.rewatching) && episodeIdentity(favorite.url || ""))
     .sort((links, rechts) => (
       dringend(links) - dringend(rechts)
       || Date.parse(rechts.lastWatchedAt || rechts.openedAt || 0) - Date.parse(links.lastWatchedAt || links.openedAt || 0)
@@ -4980,7 +5026,7 @@ async function repairStalledSeriesFavorites() {
     // und nicht aus einer gelesenen Staffeluebersicht ("Pokémon" in der Runde
     // "Gummikäse", 29.08.2026).
     const inDerStaffelGehtEsWeiter = !sanitizePositiveNumber(favorite.finalSeason)
-      && !favorite.completed
+      && (!favorite.completed || favorite.rewatching)
       && Boolean(favorite.episodeCompleted)
       && info.lastPlayable > identity.episode;
     if (!aufToterFolge && !inDerStaffelGehtEsWeiter && !isStalledSeriesFavorite(favorite)) continue;
@@ -5160,6 +5206,7 @@ function resetContinueProgressToStart(favorite) {
   }
 
   favorite.completed = false;
+  favorite.rewatching = false;
   // Auf Anfang zuruecksetzen heisst: der Titel gilt nicht mehr als abgehakt.
   // Bliebe der Merker stehen, waere der Eintrag weder in der Mediathek noch
   // wieder dorthin zu bekommen - derselbe Widerspruch wie beim Vormerken.
@@ -9451,6 +9498,13 @@ function loadFavorites() {
       continuePending: Boolean(favorite.continuePending),
       completedEpisodes: normalizeCompletedEpisodes(favorite.completedEpisodes),
       hideFromContinueWatching: Boolean(favorite.hideFromContinueWatching),
+      // Wiederansehen. Der Merker gilt nur zusammen mit `completed` - ohne
+      // Abschluss ist der Titel schlicht offen, und ein stehengebliebenes
+      // `rewatching` waere dann die Behauptung eines zweiten Durchlaufs, den es
+      // nie gab. Die Zahl der Durchlaeufe ueberlebt das: sie ist Geschichte.
+      rewatching: Boolean(favorite.rewatching) && normalizeStoredCompletion(favorite),
+      rewatchCount: sanitizePositiveNumber(favorite.rewatchCount),
+      rewatchedAt: String(favorite.rewatchedAt || ""),
       progress: sanitizeProgress(favorite.progress),
       duration: sanitizePositiveNumber(favorite.duration),
       position: sanitizePositiveNumber(favorite.position),
@@ -9534,6 +9588,12 @@ function normalizeStoredCompletion(favorite) {
   const type = String(favorite?.type || inferMediaType(favorite?.url || ""));
   if (type === "film") return true;
   if (type !== "serie") return !episodeIdentity(favorite?.url || "");
+  // Bei einer Serie wird der Abschluss aus der Adresse hergeleitet: nur wer auf
+  // der letzten Folge steht, ist durch. Waehrend eines Wiederansehens steht der
+  // Eintrag aber mitten in der Serie und hat sie trotzdem ganz gesehen - die
+  // Adresse taugt dann nicht als Beleg. Ohne diese Zeile verlor ein laufender
+  // Durchlauf beim naechsten Start die Mediathek, und zwar lautlos.
+  if (favorite?.rewatching) return true;
   return isWholeMediaCompleted({
     type,
     finalSeason: favorite?.finalSeason,

@@ -662,6 +662,10 @@ public final class Bestand {
                 eintrag.put("completedManually", false);
                 eintrag.put("completedAt", "");
                 eintrag.put("hideFromContinueWatching", false);
+                // Ohne Abschluss kein Wiederansehen: der Titel ist jetzt
+                // schlicht offen. Die Zahl der Durchlaeufe bleibt stehen - sie
+                // sagt, was war, nicht was gerade ist.
+                eintrag.put("rewatching", false);
             }
         } catch (Exception fehler) {
             Log.e(TAG, "Watchlist liess sich nicht setzen", fehler);
@@ -682,6 +686,9 @@ public final class Bestand {
             eintrag.put("favorite", false);
             eintrag.put("hideFromContinueWatching", true);
             eintrag.put("continuePending", false);
+            // Von Hand abhaken heisst "ich bin damit durch" - auch mit einem
+            // gerade laufenden weiteren Durchlauf.
+            eintrag.put("rewatching", false);
             eintrag.put("progress", 100);
         } catch (Exception fehler) {
             Log.e(TAG, "Abschluss liess sich nicht setzen", fehler);
@@ -689,6 +696,48 @@ public final class Bestand {
         }
         speichern();
         if (beobachter != null) beobachter.bestandGeaendert();
+    }
+
+    /**
+     * Von vorn ansehen - und dabei in der Mediathek bleiben.
+     *
+     * <p>Das Gegenstueck zu {@code library:rewatch} am Rechner, und aus
+     * demselben Grund da: eine Kachel in der Mediathek oeffnet die gespeicherte
+     * Adresse, und die ist bei einer durchgeschauten Serie die letzte Folge -
+     * das Ende, nicht der Anfang. {@code completed} bleibt dabei unangetastet;
+     * der Eintrag steht danach in der Mediathek <em>und</em> in
+     * "Weiterschauen".
+     *
+     * <p>Die erste Folge wird ueber den geteilten Kern bestimmt, damit hier
+     * keine zweite Vorstellung davon entsteht, wie eine Folgenadresse aussieht.
+     *
+     * @param fertig bekommt die Adresse, mit der es weitergeht (nie {@code null})
+     */
+    public void wiederansehenStarten(String id, java.util.function.Consumer<String> fertig) {
+        JSONObject eintrag = rohMitId(id);
+        if (eintrag == null || kern == null || !kern.istBereit()) {
+            if (fertig != null) fertig.accept(eintrag == null ? "" : eintrag.optString("url", ""));
+            return;
+        }
+        JSONArray argumente = new JSONArray();
+        argumente.put(eintrag);
+        kern.rufe("fortschritt.wiederansehenBeginnen", argumente, (wert, fehler) -> {
+            if (fehler == null && wert != null) {
+                try {
+                    JSONObject aenderung = new JSONObject(wert);
+                    for (java.util.Iterator<String> namen = aenderung.keys(); namen.hasNext(); ) {
+                        String name = namen.next();
+                        eintrag.put(name, aenderung.get(name));
+                    }
+                    nachVorn(eintrag);
+                } catch (Exception ausnahme) {
+                    Log.e(TAG, "Wiederansehen liess sich nicht starten", ausnahme);
+                }
+            }
+            speichern();
+            if (beobachter != null) beobachter.bestandGeaendert();
+            if (fertig != null) fertig.accept(eintrag.optString("url", ""));
+        });
     }
 
     /**

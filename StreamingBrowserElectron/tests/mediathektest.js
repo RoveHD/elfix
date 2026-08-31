@@ -108,8 +108,20 @@ pruefe("Jede Zuweisung completed=false zieht completedManually nach",
 
 pruefe("Der Ausgleich laeuft vor jedem Schreiben",
   /function saveFavorites\(\) \{[\s\S]{0,200}?widersprucheGeraderichten\(\)/.test(QUELLE));
-pruefe("Der Ausgleich laeuft auch beim Laden",
-  /function loadFavorites\(\)[\s\S]{0,4000}?widersprucheGeraderichten\(geladen\)/.test(QUELLE));
+// Frueher stand hier ein Abstand in Zeichen ("hoechstens 4000 ab dem Anfang der
+// Funktion"). Das war ein Hilfsmass fuer die eigentliche Frage - laeuft der
+// Ausgleich, bevor die geladene Liste zurueckgeht? - und es ging jedes Mal
+// kaputt, wenn ein Eintrag ein Feld dazubekam: der Ausgleich stand dann nicht
+// spaeter, die Feldliste darueber war nur laenger. Gemessen wird deshalb, was
+// gemeint ist.
+{
+  const koerper = abschnitt("function loadFavorites() {");
+  const ausgleich = koerper.indexOf("widersprucheGeraderichten(geladen)");
+  const rueckgabe = koerper.indexOf("return geladen;");
+  pruefe("Der Ausgleich laeuft auch beim Laden",
+    ausgleich >= 0 && rueckgabe >= 0 && ausgleich < rueckgabe,
+    ausgleich < 0 ? "der Aufruf fehlt" : "vor der Rueckgabe");
+}
 
 // --- Die Sortierung der Mediathek --------------------------------------------
 //

@@ -3,6 +3,60 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.70.0 — 31. August 2026
+
+Die Mediathek war eine Sackgasse. Wer eine Serie durch hatte, konnte sie nicht
+mehr weiterschauen — sie stand dort richtig, aber sie stand nirgends sonst
+mehr.
+
+**Alles ist wieder ansehbar, und nichts verlässt dafür die Mediathek.** Gemeldet
+und an der echten Ablage nachgestellt: `completed` sperrte *jede*
+Weiterschauen-Liste — die Reihe auf der Startseite, die Liste fürs Handy, die
+Kacheln am Fernseher. Wer eine fertige Serie noch einmal anfing, sah den
+Fortschritt ins Leere laufen. Der einzige Weg zurück führte darüber, den Titel
+aus der Mediathek zu nehmen — also genau das aufzugeben, was man behalten
+wollte. Und beim Folgenwechsel geschah das sogar von selbst: `favoritNachziehen`
+löschte den Abschluss, sobald man während des zweiten Durchlaufs eine Folge
+weiterging.
+
+Neben `completed` steht jetzt ein zweiter Merker. Er sagt nur, dass gerade ein
+weiterer Durchlauf läuft, und rührt den Abschluss nicht an: solange er steht,
+zählt der Eintrag in **beide** Listen. Gesetzt wird er bei echtem Fortschritt
+auf einem fertigen Titel, gelöscht, sobald der Durchlauf wieder am Ende des
+ganzen Werks ankommt. Filme genauso wie Serien.
+
+**Drei Stellen hätten den Durchlauf sonst zerrissen.** Die Serienlängen-Prüfung
+und die nächtliche Suche nach neuen Folgen vergleichen die letzte bekannte Folge
+mit der, auf der der Eintrag steht — mitten im zweiten Durchlauf ist das Folge 1
+von 12, und das sah aus wie Nachschub: der Eintrag wäre bei jedem Takt ans
+Serienende geworfen worden, ohne Stand und ohne Mediathek. Und beim Neustart
+leitete die App den Abschluss einer Serie aus der Adresse her — Folge 1 von 3
+ist nicht durch, also wäre die Mediathek lautlos weg gewesen. Alle drei kennen
+den Durchlauf jetzt.
+
+**„Nochmal von vorn ansehen".** Eine Kachel in der Mediathek öffnete bisher die
+gespeicherte Adresse — bei einer durchgeschauten Serie also die letzte Folge,
+das Ende statt des Anfangs. Der neue Punkt im Kartenmenü springt auf Folge 1,
+leert den Stand und lässt den Titel trotzdem stehen, wo er steht. Die Regel dazu
+liegt im geteilten Modul; Rechner und Telefon wenden dieselbe an.
+
+**Man sieht jetzt, dass wiedergesehen wird.** In „Weiterschauen" steht „↻ 2.
+Durchlauf" auf der Karte — sonst sähe eine gesehene Serie dort wie ein Fehler
+aus. In der Mediathek steht „↻ 3× gesehen", und „Gesehen am" meint das letzte
+Mal statt des ersten. Am Telefon und am Fernseher dieselbe Zeile.
+
+**Der Rückblick bekommt endlich Futter.** Die Wiederholungs-Zählung gab es
+schon; sie lief nur ins Leere, weil der Fortschritt eines zweiten Durchlaufs gar
+nicht erst verbucht wurde. Dazu neu: **Titel wiedergesehen** neben
+**Wiederholungen** — dreißig Wiederholungen sind eine durchgeschaute
+Lieblingsserie oder dreißig einzelne Folgen aus dreißig Serien, und ohne die
+zweite Zahl ist die erste nicht zu lesen. Gezählt werden abgeschlossene
+Durchläufe als Übergang, nicht als Zustand: der Player meldet sein Ende
+sekundenlang weiter, und ein Zustand ließe sich so ein Dutzend Mal zählen.
+
+Der Geräteabgleich trägt beides mit — die Zahl der Durchläufe kann dabei nur
+wachsen, damit ein Gerät, das eine Runde verpasst hat, sie nicht zurückdreht.
+
 ## 1.69.0 — 29. August 2026
 
 Drei Fehler in „Gemeinsam weiterschauen“ — alle drei aus derselben Reihe, die

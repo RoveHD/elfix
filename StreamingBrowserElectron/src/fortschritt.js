@@ -44,14 +44,38 @@ const AKTIVITAET_ZUSAMMEN_MS = 60 * 60 * 1000;
 // Steht dieser Eintrag in "Weiterschauen"? Nur "gesehen" und "ausgeblendet"
 // nehmen ihn heraus - nicht die Prozentzahl. Eine Folge, die weit vorne steht,
 // aber mangels Wiedergabezeit nicht als gesehen zaehlt, ist weiter offen.
+//
+// Die eine Ausnahme zu "gesehen" ist das Wiederansehen: ein abgeschlossener
+// Titel, der gerade wieder laeuft, steht in der Mediathek *und* hier. Siehe
+// den Abschnitt "Wiederansehen" in medienStandVerbuchen.
 function hasContinueProgressRecord(entry) {
-  if (!entry || entry.completed || entry.episodeCompleted || entry.hideFromContinueWatching) return false;
+  if (!entry) return false;
+  if (entry.completed && !entry.rewatching) return false;
+  if (entry.episodeCompleted || entry.hideFromContinueWatching) return false;
   if (entry.continuePending) return true;
   const current = sanitizePositiveNumber(entry.currentTime || entry.position);
   const duration = sanitizePositiveNumber(entry.duration);
   if (duration > 0 && current > 0 && current <= duration + 3) return true;
   const progress = sanitizeProgress(entry.progress);
   return Boolean(entry.lastWatchedAt || entry.openedAt) && progress > 0;
+}
+
+// Laeuft dieser abgeschlossene Titel gerade wieder? Eine Zeile, aber sie steht
+// an fuenf Stellen - Karten, Listen, Diagnose - und soll ueberall dieselbe sein.
+function istWiederansehen(entry) {
+  return Boolean(entry && entry.completed && entry.rewatching);
+}
+
+// Wie oft der Titel ganz durch ist. Der erste Durchlauf steckt in `completed`,
+// jeder weitere in `rewatchCount` - zusammen ergibt das die Zahl, die auf der
+// Karte in der Mediathek steht ("3x gesehen").
+//
+// Ein laufendes Wiederansehen zaehlt ausdruecklich noch nicht mit: gezaehlt
+// wird, was zu Ende gesehen wurde, nicht was gerade begonnen hat.
+function durchlaeufe(entry) {
+  const weitere = sanitizePositiveNumber(entry?.rewatchCount);
+  if (!entry?.completed && !weitere) return 0;
+  return 1 + weitere;
 }
 
 function isWholeMediaCompleted(entry, url, mediaEnded) {
@@ -847,6 +871,9 @@ function favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized
 }
 
 function mediaDiagnosticDecisionText(entry, url, state) {
+  if (istWiederansehen(entry)) {
+    return `Medium abgeschlossen, laeuft aber wieder - ${durchlaeufe(entry) + 1}. Durchlauf, in Mediathek und Weiterschauen sichtbar`;
+  }
   if (entry.completed) return "Medium abgeschlossen, aus Watchlist/Weiterschauen entfernt und in Mediathek sichtbar";
   if (state.hasMediaProgress) {
     const target = entry?.type === "film" ? "Film" : favoriteProgressTargetLabel(url);
@@ -888,13 +915,21 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
     changed = true;
   }
 
-  if (favorite.completed && hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds)) {
+  // Ausdruecklich nicht waehrend eines Wiederansehens. Dort steht der Eintrag
+  // auf einer fruehen Folge, waehrend die letzte Folge der Serie laengst
+  // bekannt ist - und genau das sieht fuer hasNewEpisodeAfterCompletedFavorite
+  // aus wie Nachschub. Der Eintrag wuerde bei jeder Fortschrittsmeldung nach
+  // vorn geworfen: mitten im zweiten Durchlauf ploetzlich in der letzten
+  // Staffel, ohne Fortschritt und ohne Mediathek.
+  if (favorite.completed && !favorite.rewatching
+    && hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds)) {
     const nextUrl = nextEpisodeAfterFavoriteUrl(favorite, nextFinalSeason, nextFinalEpisode);
     favorite.completed = false;
     favorite.completedManually = false;
     favorite.episodeCompleted = false;
     favorite.favorite = true;
     favorite.hideFromContinueWatching = false;
+    favorite.rewatching = false;
     favorite.continuePending = true;
     favorite.completedAt = "";
     favorite.progress = 0;
@@ -966,6 +1001,10 @@ function vonHandAnlegen(zustand, provider, url, angaben = {}) {
       vorhanden.completedManually = false;
       vorhanden.completedAt = "";
       vorhanden.hideFromContinueWatching = false;
+      // Ohne Abschluss kein Wiederansehen: der Titel ist jetzt schlicht offen.
+      // Die Zahl der bisherigen Durchlaeufe bleibt stehen - sie ist Geschichte
+      // und keine Zustandsangabe.
+      vorhanden.rewatching = false;
     }
     vorhanden.updatedAt = jetzt;
     const ohne = favoriten.filter((favorit) => favorit !== vorhanden);
@@ -990,6 +1029,8 @@ function vonHandAnlegen(zustand, provider, url, angaben = {}) {
     continuePending: false,
     completedEpisodes: [],
     hideFromContinueWatching: false,
+    rewatching: false,
+    rewatchCount: 0,
     // Null, und das ist der Punkt: vorgemerkt ist nicht angefangen. Mit einem
     // Fortschritt stuende der Titel in derselben Sekunde auch in
     // "Weiterschauen", und dort gehoert er erst hin, wenn wirklich etwas lief.
@@ -1078,6 +1119,8 @@ function watchpartyEintragAnlegen(zustand, provider, raum, eintrag = {}, stand =
     continuePending: !stand?.completed && !stand?.episodeCompleted,
     completedEpisodes: [],
     hideFromContinueWatching: false,
+    rewatching: false,
+    rewatchCount: 0,
     progress: Number(stand?.progress) > 0 ? Number(stand.progress) : 0,
     duration: Number(stand?.duration) > 0 ? Number(stand.duration) : 0,
     position: Number(stand?.position) > 0 ? Number(stand.position) : 0,
@@ -1133,6 +1176,10 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
   // Vor jeder Aenderung festhalten: nur der Uebergang von "offen" auf "durch"
   // ist ein Abschluss. Danach gelesen waere es immer "war schon fertig".
   const warBereitsAbgeschlossen = Boolean(existing?.completed);
+  // Und ob schon ein weiterer Durchlauf lief. Ebenfalls vorher gelesen: der
+  // Merker wird gleich gesetzt, und danach saehe jeder erste Takt aus wie die
+  // Mitte eines Durchlaufs.
+  const warWiederansehen = Boolean(existing?.rewatching);
   const hasMediaProgress = isValidMediaProgress({
     currentTime: meta.currentTime || meta.position,
     duration: meta.duration
@@ -1220,6 +1267,10 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
     continuePending: false,
     completedEpisodes: [],
     hideFromContinueWatching: false,
+    // Wiederansehen: laeuft gerade ein weiterer Durchlauf, und wie viele davon
+    // schon zu Ende sind. Bei einem frischen Eintrag beides null.
+    rewatching: false,
+    rewatchCount: 0,
     progress: 0,
     duration: 0,
     position: 0,
@@ -1245,6 +1296,22 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
     entry.title = cleanTitle(meta.title);
   }
   entry.watched = true;
+
+  // --- Wiederansehen, erster Teil: der Merker ---------------------------------
+  //
+  // Er wird hier gesetzt und nicht weiter unten, und das ist keine Kosmetik.
+  // Die Adresse des Eintrags ist ein paar Zeilen darueber bereits auf die
+  // laufende Folge umgeschrieben worden, und applyFavoriteSeriesBounds
+  // vergleicht genau sie mit der letzten bekannten Folge der Serie. Wer eine
+  // fertige Serie von vorn ansieht, steht dort auf Folge 1 von 12 - und das
+  // sah bis dahin aus wie Nachschub: der Eintrag wurde ans Serienende
+  // geworfen, ohne Stand und ohne Mediathek, und zwar bei jedem Takt neu.
+  //
+  // Fortschritt auf einem Titel, der schon durch war, ist ein weiterer
+  // Durchlauf. Mehr sagt der Merker nicht - `completed` bleibt unangetastet,
+  // der Titel bleibt in der Mediathek.
+  if (warBereitsAbgeschlossen && hasMediaProgress) entry.rewatching = true;
+
   applyFavoriteSeriesBounds(entry, meta, url, meldungen);
   const wholeItemCompleted = isWholeMediaCompleted(entry, url, mediaEnded);
   const shouldAdvanceEpisode = Boolean(mediaEnded && !wholeItemCompleted && identity && (entry.type === "serie" || inferMediaType(url) === "serie"));
@@ -1271,6 +1338,34 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
   if (hasMediaProgress && youtube.istYoutubeUrl(url) && !entry.completedManually) {
     entry.completed = progressPercent >= COMPLETED_PROGRESS_PERCENT;
   }
+
+  // --- Wiederansehen, zweiter Teil: zaehlen und beenden ----------------------
+  //
+  // `rewatchCount` zaehlt die *abgeschlossenen* weiteren Durchlaeufe; der erste
+  // steckt in `completed`. Gezaehlt wird der Uebergang und nicht der Zustand:
+  // der Player meldet sein Ende sekundenlang weiter, und ein Zustand liesse
+  // sich so ein Dutzend Mal zaehlen. Deshalb `warWiederansehen` - der Merker,
+  // wie er *vor* diesem Takt stand.
+  //
+  // Ein einzelner Takt, der schon am Ende ankommt, ist damit ausdruecklich kein
+  // Durchlauf: ein Neustart bei 99 Prozent einer laengst fertigen Folge zaehlt
+  // nichts.
+  let durchlaufBeendet = false;
+  if (hasMediaProgress && entry.completed) {
+    if (wholeItemCompleted) {
+      // Wieder am Ende des ganzen Werks: der Durchlauf ist vorbei, der Eintrag
+      // ruht wieder allein in der Mediathek.
+      if (warWiederansehen) {
+        entry.rewatchCount = sanitizePositiveNumber(entry.rewatchCount) + 1;
+        entry.rewatchedAt = now;
+        durchlaufBeendet = true;
+      }
+      entry.rewatching = false;
+    }
+  } else if (!entry.completed) {
+    entry.rewatching = false;
+  }
+
   if (hasMediaProgress) {
     entry.currentTime = sanitizePositiveNumber(meta.currentTime || meta.position);
     entry.position = entry.currentTime;
@@ -1323,10 +1418,10 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
       const etwasGelaufen = sanitizePositiveNumber(entry.currentTime) > 0;
       entry.continuePending = Boolean(entry.continuePending) && !etwasGelaufen;
     }
-    if (!entry.completed && !entry.episodeCompleted) {
+    if ((!entry.completed || entry.rewatching) && !entry.episodeCompleted) {
       entry.hideFromContinueWatching = false;
     }
-  } else if (entry.completed) {
+  } else if (entry.completed && !entry.rewatching) {
     entry.progress = 100;
     entry.continuePending = false;
   } else {
@@ -1334,9 +1429,14 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
   }
   if (entry.completed) {
     entry.favorite = false;
-    entry.hideFromContinueWatching = true;
-    entry.continuePending = false;
     entry.completedAt = entry.completedAt || now;
+    // Waehrend eines Wiederansehens bleibt der Eintrag sichtbar. Ohne diese
+    // Bedingung setzte die naechste Fortschrittsmeldung den Titel in derselben
+    // Sekunde wieder auf unsichtbar, in der er sich zurueckgemeldet hat.
+    if (!entry.rewatching) {
+      entry.hideFromContinueWatching = true;
+      entry.continuePending = false;
+    }
   }
   if (hasMediaProgress || !existing) {
     entry.lastWatchedAt = now;
@@ -1370,6 +1470,14 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
   // ist "abgeschlossen" eindeutig, weil es nur ein Werk gibt.
   if (entry.completed && !warBereitsAbgeschlossen && !identity) {
     appendMediaActivity(entry, url, "Abgeschlossen");
+  }
+  // Ein weiterer Durchlauf dagegen bekommt seine Zeile immer - auch bei einer
+  // Serie. Er ist eindeutig datierbar (er endet an der letzten Folge), er
+  // kommt nicht woechentlich neu, und er ist genau das, was der Verlaufs-Kasten
+  // sonst nirgends hergibt: dass jemand denselben Titel ein zweites Mal ganz
+  // gesehen hat.
+  if (durchlaufBeendet) {
+    appendMediaActivity(entry, url, `${durchlaeufe(entry)}. Durchlauf abgeschlossen`);
   }
 
   if (!existing) {
@@ -1460,9 +1568,17 @@ function favoritNachziehen(eintrag, url, provider, folgemodus = "sequential") {
       providerName: provider.name,
       logo: provider.logo || eintrag.logo || "",
       watched: true,
-      // Von Hand abgehakte Serien bleiben in der Mediathek, auch wenn man sie
-      // noch einmal ansieht. Zurueck holt sie nur, was wirklich neu ist.
-      completed: eintrag.completedManually ? eintrag.completed : false,
+      // Abgeschlossene Serien bleiben in der Mediathek, auch wenn man sie noch
+      // einmal ansieht - fuer von Hand abgehakte galt das schon immer, fuer
+      // durchgeschaute bis 1.69.0 nicht: dort loeschte diese Zeile den
+      // Abschluss, sobald man beim Wiederansehen die Folge wechselte, und der
+      // Titel war aus der Mediathek verschwunden.
+      //
+      // Zurueck holt einen Abschluss nur, was wirklich neu ist (siehe
+      // applyFavoriteSeriesBounds). Der Folgenwechsel eroeffnet stattdessen
+      // einen weiteren Durchlauf.
+      completed: eintrag.completed,
+      rewatching: Boolean(eintrag.completed),
       progress: 0,
       currentTime: 0,
       position: 0,
@@ -1474,6 +1590,54 @@ function favoritNachziehen(eintrag, url, provider, folgemodus = "sequential") {
       episode: nachher.episode || eintrag.episode || 0
     }
   };
+}
+
+/**
+ * Von vorn ansehen - und dabei in der Mediathek bleiben.
+ *
+ * <p>Der Weg dorthin fehlte ganz. Eine Karte in der Mediathek oeffnet die
+ * gespeicherte Adresse, und die ist bei einer durchgeschauten Serie die letzte
+ * Folge: das Ende, nicht der Anfang. Wer wirklich von vorn wollte, musste den
+ * Titel aus der Mediathek nehmen - also genau das aufgeben, was er behalten
+ * wollte.
+ *
+ * <p>`completed` bleibt deshalb unangetastet. Zurueck kommt nur, was sich
+ * aendert; wer es anwendet, entscheidet der Aufrufer - am Rechner der
+ * Hauptprozess, auf dem Telefon {@code Bestand.wiederansehenStarten}. Dieselbe
+ * Bauart wie {@link favoritNachziehen}, und aus demselben Grund: eine zweite
+ * Vorstellung davon, wie ein Durchlauf beginnt, waere eine zweite Wahrheit.
+ *
+ * <p>Ein Film hat keine erste Folge. Bei ihm bleibt die Adresse, und es genuegt
+ * der leere Stand.
+ */
+function wiederansehenBeginnen(eintrag) {
+  const url = String(eintrag?.url || "");
+  const ziel = firstEpisodeUrl(url) || url;
+  const aenderung = {
+    progress: 0,
+    duration: 0,
+    position: 0,
+    currentTime: 0,
+    episodeCompleted: false,
+    // Die naechste Folge steht an, gelaufen ist sie noch nicht - derselbe
+    // Zustand wie nach einem Folgenwechsel. Ohne ihn haette der Eintrag weder
+    // Fortschritt noch Merker und faende sich in "Weiterschauen" nicht wieder.
+    continuePending: true,
+    hideFromContinueWatching: false,
+    // Nur ein abgeschlossener Titel kann wieder angesehen werden. Bei einem
+    // offenen ist "von vorn" schlicht ein Sprung an den Anfang.
+    rewatching: Boolean(eintrag?.completed),
+    updatedAt: new Date().toISOString()
+  };
+  if (!ziel || ziel === url) return aenderung;
+
+  const identity = episodeIdentity(ziel);
+  aenderung.url = ziel;
+  aenderung.normalizedUrl = normalizeFavoriteUrl(ziel);
+  aenderung.season = identity?.season || 1;
+  aenderung.episode = identity?.episode || 1;
+  aenderung.title = cleanBaseMediaTitle(eintrag?.title || "", ziel) || String(eintrag?.title || "");
+  return aenderung;
 }
 
 /**
@@ -1612,6 +1776,7 @@ module.exports = {
   watchpartyStand,
   eintragFinden,
   favoritNachziehen,
+  wiederansehenBeginnen,
   repairTrimmedSeriesTail,
   kennungErzeugen,
   nachVornHolen,
@@ -1665,6 +1830,8 @@ module.exports = {
   sanitizeProgress,
   isCompletedProgress,
   hasContinueProgressRecord,
+  istWiederansehen,
+  durchlaeufe,
   isWholeMediaCompleted,
   uebernahmeSchwelle,
   endeSchwelle,

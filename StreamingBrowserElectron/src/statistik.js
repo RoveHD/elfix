@@ -488,6 +488,11 @@ function auswerten(sitzungen, optionen = {}) {
   // nicht zwoelf.
   const fertigeTitel = new Map();
   let wiederholungen = 0;
+  // Wie viele *Titel* wiedergesehen wurden - nicht wie viele Folgen. Die
+  // beiden Zahlen erzaehlen Verschiedenes: dreissig Wiederholungen koennen eine
+  // durchgeschaute Lieblingsserie sein oder dreissig einzelne Folgen aus
+  // dreissig Serien. Ohne die zweite Zahl ist die erste nicht zu lesen.
+  const wiederholteTitel = new Set();
 
   // Welche Folgen schon gezaehlt wurden. Eine Folge zaehlt einmal - egal, ob sie
   // ueber zwei Sitzungen lief, ueber zwei Abende oder ueber zwei Geraete. Fuer
@@ -540,8 +545,13 @@ function auswerten(sitzungen, optionen = {}) {
 
     // Ein zweites Anschauen ist keine zweite Folge, sondern eine Wiederholung -
     // sonst stuenden am Ende mehr Folgen da, als es gibt.
-    if (sitzung.wiederholung) wiederholungen += 1;
-    else folgenSchluessel.add(kennung);
+    if (sitzung.wiederholung) {
+      wiederholungen += 1;
+      const wiederholt = titelKennung(sitzung);
+      if (wiederholt) wiederholteTitel.add(wiederholt);
+    } else {
+      folgenSchluessel.add(kennung);
+    }
     if (sitzung.abgeschlossen && !sitzung.wiederholung) {
       abgeschlosseneFolgen.add(kennung);
       // Nicht "titel" nennen: so heisst zwei Zeilen weiter die Sammlung der
@@ -629,6 +639,7 @@ function auswerten(sitzungen, optionen = {}) {
       anime: [...fertigeTitel.values()].filter((art) => art === "anime").length
     },
     wiederholungen,
+    wiederholteTitel: wiederholteTitel.size,
 
     tage: schautage.length,
     strecke: strecke(schautage),

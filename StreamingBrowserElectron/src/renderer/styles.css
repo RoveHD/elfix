@@ -2896,6 +2896,34 @@ h1 {
   display: none;
 }
 
+/* Der Durchlauf-Hinweis. Er steht ueber dem Fortschrittsbalken und beantwortet
+   die Frage, die eine Karte in "Weiterschauen" sonst offen laesst: warum steht
+   diese Serie hier, ich habe sie doch gesehen?
+
+   Waehrend ein Durchlauf laeuft, traegt er die Akzentfarbe - er ist dann eine
+   Zustandsangabe. Die blosse Zahl der Durchlaeufe in der Mediathek ist eine
+   Fussnote und bleibt still (.is-ruhig). */
+.favorite-card .favorite-rewatch {
+  position: relative;
+  z-index: 1;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.favorite-card .favorite-rewatch.is-ruhig {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.app-shell.hide-favorite-meta .favorite-card .favorite-rewatch.is-ruhig {
+  display: none;
+}
+
 .confirm-actions button {
   height: min(var(--button-height), 48px);
   border-radius: var(--button-radius);

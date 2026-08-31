@@ -61,6 +61,8 @@ function bestandsbild(liste) {
       eintrag.customThumbnailCrop && JSON.stringify(eintrag.customThumbnailCrop),
       eintrag.favorite ? 1 : 0,
       eintrag.completed ? 1 : 0,
+      eintrag.rewatching ? 1 : 0,
+      eintrag.rewatchCount,
       eintrag.hideFromContinue ? 1 : 0,
       eintrag.continuePending ? 1 : 0,
       eintrag.newEpisodeAt,
@@ -3284,6 +3286,12 @@ function reviewAbschnitte(daten) {
   }
   if (daten.wiederholungen > 0) {
     kacheln.append(reviewKachel(daten.wiederholungen, "Wiederholungen"));
+    // Die zweite Zahl daneben, weil die erste allein nicht zu lesen ist:
+    // dreissig Wiederholungen sind eine durchgeschaute Lieblingsserie oder
+    // dreissig einzelne Folgen aus dreissig Serien.
+    if (daten.wiederholteTitel > 1) {
+      kacheln.append(reviewKachel(daten.wiederholteTitel, "Titel wiedergesehen"));
+    }
   }
   if (zeitBekannt && daten.laengsteSitzung > 0) {
     kacheln.append(reviewKachel(reviewDauer(daten.laengsteSitzung), "längste Sitzung"));
@@ -3798,7 +3806,9 @@ function wrappedBauen(daten, jahr) {
     seiten.push(wrappedSeite("is-rewatch", [
       wrappedText("wrapped-lead", "Das kam dir bekannt vor …"),
       wrappedText("wrapped-title", oft.titel),
-      wrappedText("wrapped-sub", `${oft.wiederholungen}× noch einmal gesehen.`)
+      wrappedText("wrapped-sub", daten.wiederholteTitel > 1
+        ? `${oft.wiederholungen}× noch einmal gesehen — einer von ${daten.wiederholteTitel} Titeln, zu denen du zurückgekehrt bist.`
+        : `${oft.wiederholungen}× noch einmal gesehen.`)
     ], oft.bild));
   }
 
@@ -4550,6 +4560,7 @@ function renderLibraryViews() {
   const vonHand = sortierung === "manuell";
   libraryGrid?.replaceChildren(...libraryItems.map((favorite) => favoriteCard(favorite, false, {
     allowLibraryRemove: true,
+    allowRewatch: true,
     showWatchedDate: true,
     sortable: vonHand
   })));
@@ -5182,8 +5193,28 @@ function renderMediathekTabs(zahlen) {
 
 function continueEntries() {
   return favorites
-    .filter((item) => hasContinueActivity(item) && !item.completed && !item.episodeCompleted && !item.hideFromContinueWatching)
+    .filter((item) => hasContinueActivity(item)
+      && (!item.completed || istWiederansehen(item))
+      && !item.episodeCompleted
+      && !item.hideFromContinueWatching)
     .sort((left, right) => favoriteTimestamp(right) - favoriteTimestamp(left));
+}
+
+// Laeuft dieser abgeschlossene Titel gerade wieder?
+//
+// Wortgleich mit `istWiederansehen` in src/fortschritt.js. Die Oberflaeche
+// bekommt die Eintraege als einfache Objekte ueber die Bruecke und kann das
+// Modul nicht laden; aendert sich die Regel, ist das hier die zweite Stelle.
+function istWiederansehen(item) {
+  return Boolean(item && item.completed && item.rewatching);
+}
+
+// Wie oft der Titel ganz durch ist: der erste Durchlauf steckt in `completed`,
+// jeder weitere in `rewatchCount`. Ein gerade laufender zaehlt noch nicht mit.
+function durchlaeufe(item) {
+  const weitere = Math.max(0, Math.round(Number(item?.rewatchCount) || 0));
+  if (!item?.completed && !weitere) return 0;
+  return 1 + weitere;
 }
 
 function hasContinueActivity(item) {
@@ -5855,7 +5886,11 @@ function heroInhalt(favorite) {
 // Titel durch war - das ist die Angabe, die in der Mediathek zaehlt. Fehlt sie
 // bei aelteren Eintraegen, tut es der letzte Fortschritt.
 function gesehenAm(favorite) {
-  const roh = favorite?.completedAt || favorite?.lastWatchedAt || favorite?.openedAt || "";
+  // Nach einem weiteren Durchlauf zaehlt dessen Ende: "gesehen am" soll das
+  // letzte Mal meinen, nicht das erste. Ohne diese Zeile stuende in der
+  // Mediathek "3× gesehen" neben einem Datum von vor zwei Jahren.
+  const roh = favorite?.rewatchedAt || favorite?.completedAt
+    || favorite?.lastWatchedAt || favorite?.openedAt || "";
   const zeit = Date.parse(roh);
   return Number.isFinite(zeit) ? new Date(zeit) : null;
 }
@@ -5865,12 +5900,31 @@ function datumKurz(datum) {
   return datum.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// Was auf der Karte ueber die Durchlaeufe steht.
+//
+// Zwei verschiedene Aussagen, und sie duerfen sich nicht vermischen:
+//
+//   - laeuft gerade ein weiterer Durchlauf, steht das da. Das ist der Grund,
+//     warum ein Titel aus der Mediathek ueberhaupt wieder in "Weiterschauen"
+//     auftaucht - ohne die Zeile saehe das nach einem Fehler aus.
+//   - sonst zaehlt die Karte, wie oft der Titel ganz durch ist. Einmal ist der
+//     Normalfall und wird nicht beziffert; ab dem zweiten Mal schon.
+function wiederansehenMarkup(favorite) {
+  if (istWiederansehen(favorite)) {
+    return `<small class="favorite-rewatch">↻ ${durchlaeufe(favorite) + 1}. Durchlauf</small>`;
+  }
+  const male = durchlaeufe(favorite);
+  if (male < 2) return "";
+  return `<small class="favorite-rewatch is-ruhig">↻ ${male}× gesehen</small>`;
+}
+
 function favoriteCardInhalt(favorite, options = {}) {
   const datum = options.showWatchedDate ? datumKurz(gesehenAm(favorite)) : "";
   return `
     <strong>${escapeHtml(displayFavoriteTitle(favorite))}</strong>
     <span>${escapeHtml(favoriteHerkunft(favorite))}</span>
     ${datum ? `<small class="favorite-datum">Gesehen am ${escapeHtml(datum)}</small>` : ""}
+    ${wiederansehenMarkup(favorite)}
     ${progressMarkup(favorite, options)}
   `;
 }
@@ -5982,6 +6036,33 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${titel}“ ist jetzt in der Mediathek`);
+      }
+    });
+  }
+
+  // Ein Titel in der Mediathek ist nicht zu Ende, sondern gesehen - und
+  // Gesehenes sieht man wieder an. Die Karte selbst oeffnet die gespeicherte
+  // Adresse, und die ist bei einer durchgeschauten Serie die letzte Folge;
+  // dieser Punkt ist der Weg zum Anfang. Der Titel bleibt dabei in der
+  // Mediathek und steht zusaetzlich in "Weiterschauen".
+  if (options.allowRewatch && favorite.completed) {
+    eintraege.push({
+      gruppe: "vormerken",
+      symbol: "↻",
+      text: istWiederansehen(favorite) ? "Wieder von vorn beginnen" : "Nochmal von vorn ansehen",
+      tun: async () => {
+        const titel = displayFavoriteTitle(favorite);
+        const ergebnis = await api.rewatchFromStart?.(favorite.id).catch(() => null);
+        if (!ergebnis?.started) {
+          showToast("Konnte nicht gestartet werden");
+          return;
+        }
+        favorites = ergebnis.favorites || favorites;
+        renderFavorites();
+        renderHome();
+        renderLibraryViews();
+        renderFavoriteToggle();
+        showToast(`„${titel}“ läuft wieder — und bleibt in der Mediathek`);
       }
     });
   }

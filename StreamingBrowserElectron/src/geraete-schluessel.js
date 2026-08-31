@@ -200,6 +200,12 @@ function stand(favorit) {
     completedAt: zeichen(favorit?.completedAt, 40),
     continuePending: Boolean(favorit?.continuePending),
     hideFromContinueWatching: Boolean(favorit?.hideFromContinueWatching),
+    // Wiederansehen. Ohne diese beiden Felder saehe das andere Geraet einen
+    // abgeschlossenen Titel und blendete ihn aus "Weiterschauen" aus - mitten
+    // in einem Durchlauf, den es selbst gerade weiterschreibt.
+    rewatching: Boolean(favorit?.rewatching && favorit?.completed),
+    rewatchCount: zahl(favorit?.rewatchCount, 9999),
+    rewatchedAt: zeichen(favorit?.rewatchedAt, 40),
     watched: Boolean(favorit?.watched),
     favorite: favorit?.favorite !== false,
     finalSeason: zahl(favorit?.finalSeason, 999),

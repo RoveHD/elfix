@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),
   removeFavorite: (id) => ipcRenderer.invoke("favorites:remove", id),
   removeFromLibrary: (id) => ipcRenderer.invoke("library:remove", id),
+  // Von vorn ansehen, ohne die Mediathek zu verlassen.
+  rewatchFromStart: (id, optionen) => ipcRenderer.invoke("library:rewatch", id, optionen || {}),
   // Fuer den Verlaufs-Kasten: laeuft die Serie noch, und wann kommt die
   // naechste Folge. Steht nirgends in der eigenen Ablage.
   getLibraryMetadata: (id) => ipcRenderer.invoke("library:metadata", id),
