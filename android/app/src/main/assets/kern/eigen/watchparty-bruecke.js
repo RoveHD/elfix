@@ -246,6 +246,13 @@
     };
     const eintrag = eintragImRaum(String(key || ""), room);
     if (!eintrag) return leer;
+    // Aus einem archivierten Titel entsteht hier kein Eintrag - dieselbe Regel
+    // wie am Rechner (raumEintraegeSichern in main.js). Es gaebe nichts
+    // weiterzuschauen, und ein Telefon, das gerade erst dazukommt, holte damit
+    // einen abgeschlossenen Film wieder in die Runde. Erscheint eine neue
+    // Folge, wird der Titel im Raum wieder aktiv, und der Eintrag entsteht
+    // beim naechsten Zustand von selbst.
+    if (eintrag.archived) return leer;
     const provider = geraeteStand.anbieterFinden(
       anbieter || [], (stand && stand.url) || eintrag.url, eintrag.providerName);
     if (!provider) return leer;
@@ -266,6 +273,23 @@
       favoriten: ergebnis.favoriten,
       neu: Boolean(ergebnis.neu)
     };
+  }
+
+  /*
+   * Der Eintrag, der hier zu einem Titel dieser Runde gehoert - oder nichts.
+   *
+   * Gesucht wird wie in `fortschritt.watchpartyEintragAnlegen`: ueber Raum
+   * *und* Serienkennung, nicht ueber die volle Adresse. Der Raum steht bei
+   * Folge 4, der Eintrag hier vielleicht noch bei Folge 2, und der private
+   * Eintrag desselben Werks (ohne Raum) gehoert ausdruecklich nicht dazu.
+   */
+  function lokalerRaumEintrag(favoriten, room, eintrag) {
+    const adresse = (eintrag && ((eintrag.progress && eintrag.progress.url) || eintrag.url)) || "";
+    const serie = fortschritt.serienKennungAusUrl(adresse);
+    if (!serie) return null;
+    return (favoriten || []).find((favorit) => favorit
+      && String(favorit.watchpartyRoom || "") === room
+      && fortschritt.serienKennungAusUrl(favorit.url) === serie) || null;
   }
 
   /**
@@ -318,6 +342,21 @@
       const key = String(eintrag.key || "");
       const room = String(eintrag.room || "");
       if (!key || !room) continue;
+      // Ob die Runde mit dem Titel durch ist, steht im Raumzustand und nicht im
+      // Stand: ein Titel kann archiviert werden, ohne dass sich der
+      // Fortschritt noch einmal aendert. Deshalb erst der Merker - und zwar
+      // auch fuer einen archivierten Titel, zu dem es hier laengst einen
+      // Eintrag gibt. Der muss aus "Gemeinsam weiterschauen" heraus, sonst
+      // stuende der zu Ende geschaute Film auf dem Telefon weiter da, nur weil
+      // es beim Abschluss aus war.
+      const vorhanden = lokalerRaumEintrag(favoriten, room, eintrag);
+      if (vorhanden) {
+        const archiv = fortschritt.watchpartyArchivAbgleichen(vorhanden, eintrag.archived);
+        if (archiv.art === "aendern") {
+          Object.assign(vorhanden, archiv.aenderung);
+          geaendert = true;
+        }
+      }
       const ergebnis = raumEintragSichern({ favoriten }, key, room, anbieter, null);
       if (!ergebnis.eintragId) continue;
       favoriten = ergebnis.favoriten;
@@ -416,7 +455,11 @@
    */
   function eintraegeMitAnbieter(anbieter) {
     const liste = anbieter || [];
-    return eintraege().map((eintrag) => {
+    // Archivierte Titel sind kein aktiver Bestand der Runde - dieselbe Regel
+    // wie `watchpartyItems` am Rechner. Sie bleiben im Raum liegen, weil Raum,
+    // Mitgliedschaft und Werk gebraucht werden, sobald eine Folge erscheint;
+    // in der Liste der Runde stehen sie nicht.
+    return eintraege().filter((eintrag) => !(eintrag && eintrag.archived)).map((eintrag) => {
       const provider = geraeteStand.anbieterFinden(liste, eintrag.url, eintrag.providerName);
       const stand = eintrag.progress || null;
       return Object.assign({}, eintrag, {

@@ -50,6 +50,12 @@ const AKTIVITAET_ZUSAMMEN_MS = 60 * 60 * 1000;
 // den Abschnitt "Wiederansehen" in medienStandVerbuchen.
 function hasContinueProgressRecord(entry) {
   if (!entry) return false;
+  // Ein Raum-Eintrag, den die Runde hinter sich hat: der Film ist zu Ende, oder
+  // von der Serie gibt es gerade nichts Neues. Er bleibt liegen - Raum,
+  // Mitglieder und Werk werden gebraucht, sobald eine Folge erscheint -, aber
+  // er steht nicht mehr in "Gemeinsam weiterschauen". Private Eintraege tragen
+  // den Merker nie: sie gehoeren keinem Raum.
+  if (entry.watchpartyArchived) return false;
   if (entry.completed && !entry.rewatching) return false;
   if (entry.episodeCompleted || entry.hideFromContinueWatching) return false;
   if (entry.continuePending) return true;
@@ -924,10 +930,19 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
   if (favorite.completed && !favorite.rewatching
     && hasNewEpisodeAfterCompletedFavorite(favorite, previousBounds, nextBounds)) {
     const nextUrl = nextEpisodeAfterFavoriteUrl(favorite, nextFinalSeason, nextFinalEpisode);
+    const imRaum = Boolean(favorite.watchpartyRoom);
     favorite.completed = false;
     favorite.completedManually = false;
     favorite.episodeCompleted = false;
-    favorite.favorite = true;
+    // Auf die Merkliste kommt nur, was einem selbst gehoert. Ein Raum-Eintrag
+    // gehoert seiner Runde: er darf wieder aktiv werden, aber die private
+    // Watchlist entsteht nie aus einem Watchparty-Eintrag - sonst stuende
+    // derselbe Titel zweimal da, einmal als eigener Vorsatz und einmal als
+    // Verabredung, die man nie gefasst hat.
+    if (!imRaum) favorite.favorite = true;
+    // Und die Runde nimmt ihn aus dem Archiv zurueck: genau dafuer ist der
+    // Eintrag dort liegengeblieben.
+    if (imRaum) favorite.watchpartyArchived = false;
     favorite.hideFromContinueWatching = false;
     favorite.rewatching = false;
     favorite.continuePending = true;
@@ -943,7 +958,9 @@ function applyFavoriteSeriesBounds(favorite, meta = {}, currentUrl = favorite?.u
       favorite.season = nextIdentity?.season || favorite.season || 0;
       favorite.episode = nextIdentity?.episode || favorite.episode || 0;
     }
-    meldungen.push(`${cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "Serie"} ist wieder in der Watchlist: neue Folge erkannt`);
+    meldungen.push(imRaum
+      ? `${cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "Serie"} ist wieder in der Runde „${favorite.watchpartyRoom}“: neue Folge erkannt`
+      : `${cleanBaseMediaTitle(favorite.title, favorite.url) || favorite.title || "Serie"} ist wieder in der Watchlist: neue Folge erkannt`);
     changed = true;
   }
 
@@ -1147,6 +1164,7 @@ function watchpartyEintragAnlegen(zustand, provider, raum, eintrag = {}, stand =
     watchpartyRoom: code,
     watchpartyFrom: String(stand?.from || ""),
     watchpartyAt: String(stand?.updatedAt || ""),
+    watchpartyArchived: Boolean(stand?.archived),
     createdAt: jetzt,
     lastWatchedAt: String(stand?.updatedAt || jetzt),
     activity: []
@@ -1694,9 +1712,45 @@ function watchpartyStand(eintrag, geraetName = "") {
     progress: sanitizeProgress(eintrag?.progress),
     completed: Boolean(eintrag?.completed),
     episodeCompleted: Boolean(eintrag?.episodeCompleted),
+    // Ob die Runde mit diesem Titel durch ist.
+    //
+    // Das Relay kann das nicht selbst entscheiden: es kennt keine
+    // Seriengrenzen und weiss nicht, ob nach Folge 8 noch etwas kommt. Hier
+    // ist es dagegen bekannt - entweder weil das ganze Werk abgeschlossen ist
+    // (ein Film, ein Serienfinale), oder weil die Folgenpflege festgestellt
+    // hat, dass nach der abgehakten Folge nichts mehr kommt und deshalb
+    // `watchpartyArchived` gesetzt hat.
+    //
+    // Ein laufendes Wiederansehen zaehlt ausdruecklich nicht: da ist der Titel
+    // zwar abgeschlossen, die Runde aber gerade wieder unterwegs.
+    archived: Boolean(eintrag?.watchpartyArchived)
+      || (Boolean(eintrag?.completed) && !istWiederansehen(eintrag)),
     updatedAt: eintrag?.lastWatchedAt || new Date().toISOString(),
     from: geraetName || ""
   };
+}
+
+/**
+ * Ob ein Raum-Eintrag hier noch als aktiv gilt.
+ *
+ * <p>Die Gegenrichtung zu {@link watchpartyStand}: dort geht der Merker
+ * hinaus, hier kommt er zurueck. Aufgerufen wird das ueberall, wo ein
+ * Raumzustand ankommt - am Rechner in {@code raumEintraegeSichern}, auf dem
+ * Telefon in der gleichnamigen Bruecke. Beide fragen dieselbe Regel, damit ein
+ * Titel nicht auf dem einen Geraet in "Gemeinsam weiterschauen" steht und auf
+ * dem anderen nicht.
+ *
+ * <p>Angefasst wird ausdruecklich nur dieser eine Merker. Fortschritt, Folge
+ * und Verlauf bleiben, wie sie sind: ein archivierter Titel verschwindet aus
+ * der Reihe, aus der Mediathek verschwindet er nicht.
+ *
+ * @returns wie {@link watchpartyStandUebernehmen}
+ */
+function watchpartyArchivAbgleichen(lokal, archiviert) {
+  if (!lokal) return { art: "nichts" };
+  const jetzt = Boolean(archiviert);
+  if (Boolean(lokal.watchpartyArchived) === jetzt) return { art: "nichts" };
+  return { art: "aendern", aenderung: { watchpartyArchived: jetzt } };
 }
 
 /**
@@ -1733,7 +1787,12 @@ function watchpartyStandUebernehmen(lokal, stand) {
     lastWatchedAt: stand.updatedAt,
     // Fuer die Karte: wer gerade schaut und wann zuletzt gemeldet wurde.
     watchpartyFrom: stand.from || "",
-    watchpartyAt: stand.updatedAt
+    watchpartyAt: stand.updatedAt,
+    // Und ob die Runde mit dem Titel durch ist. Das Relay laesst nur einen
+    // Stand durch, der wirklich gilt - eine neue Folge weckt einen
+    // archivierten Titel, ein nachgereichter alter Stand nicht -, also gilt
+    // hier, was ankommt.
+    watchpartyArchived: Boolean(stand.archived)
   };
 
   if (ziel && ziel !== lokal.url) {
@@ -1743,7 +1802,7 @@ function watchpartyStandUebernehmen(lokal, stand) {
     aenderung.season = identity?.season || stand.season || lokal.season || 0;
     aenderung.episode = identity?.episode || stand.episode || lokal.episode || 0;
   }
-  if (!aenderung.completed && !aenderung.episodeCompleted) {
+  if (!aenderung.completed && !aenderung.episodeCompleted && !aenderung.watchpartyArchived) {
     aenderung.continuePending = true;
     aenderung.hideFromContinueWatching = false;
   }
@@ -1787,6 +1846,7 @@ function watchpartyEintragAbgleichen(lokal, stand) {
 module.exports = {
   watchpartyStandUebernehmen,
   watchpartyEintragAbgleichen,
+  watchpartyArchivAbgleichen,
   watchpartyStand,
   eintragFinden,
   favoritNachziehen,

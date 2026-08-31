@@ -679,9 +679,15 @@ public final class Watchparty {
     /**
      * Woran ein Raumzustand zu erkennen ist, der Arbeit macht.
      *
-     * <p>Titel, Raum und der Zeitpunkt des zuletzt gemeldeten Stands - mehr
-     * braucht es nicht: ein neuer Titel, ein Beitritt oder ein juengerer Stand
-     * aendern das Kennzeichen, alles andere nicht.
+     * <p>Titel, Raum, der Zeitpunkt des zuletzt gemeldeten Stands und ob die
+     * Runde mit dem Titel durch ist - mehr braucht es nicht: ein neuer Titel,
+     * ein Beitritt, ein juengerer Stand oder ein Wechsel zwischen aktiv und
+     * archiviert aendern das Kennzeichen, alles andere nicht.
+     *
+     * <p>{@code archived} gehoert ausdruecklich dazu, weil es sich auch ohne
+     * neuen Stand aendern kann: wer einen archivierten Titel von Hand wieder
+     * einstellt, schickt kein {@code progress}, und ohne diesen Buchstaben
+     * bliebe er auf dem Telefon aus "Gemeinsam weiterschauen" verschwunden.
      */
     private String raumzustandKennzeichen() {
         StringBuilder bau = new StringBuilder();
@@ -693,7 +699,8 @@ public final class Watchparty {
             if (key.isEmpty() || raum.isEmpty()) continue;
             JSONObject stand = eintrag.optJSONObject("progress");
             bau.append(raum).append('|').append(key).append('|')
-                .append(stand == null ? "" : stand.optString("updatedAt", "")).append('\n');
+                .append(stand == null ? "" : stand.optString("updatedAt", "")).append('|')
+                .append(eintrag.optBoolean("archived", false) ? "a" : "-").append('\n');
         }
         return bau.toString();
     }

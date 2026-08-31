@@ -217,6 +217,25 @@ public final class Favorite {
         return roh.optString("watchpartyAt", "");
     }
 
+    /**
+     * Ob die Runde mit diesem Titel durch ist.
+     *
+     * <p>Der Film ist zu Ende geschaut, oder von der Serie gibt es nach der
+     * letzten abgehakten Folge gerade nichts Neues. Der Eintrag bleibt
+     * liegen - im Raum wie hier: Raum, Mitgliedschaft und Werk werden
+     * gebraucht, sobald eine Folge erscheint, und in der Mediathek gehoert er
+     * ohnehin weiter hin. Er steht nur nicht mehr in "Gemeinsam
+     * weiterschauen".
+     *
+     * <p>Gesetzt wird der Merker nie hier: er kommt mit dem Raumzustand und
+     * geht durch dieselbe geteilte Regel wie am Rechner
+     * ({@code fortschritt.watchpartyArchivAbgleichen}). Ein privater Eintrag
+     * traegt ihn nicht - er gehoert keinem Raum.
+     */
+    public boolean istArchiviert() {
+        return roh.optBoolean("watchpartyArchived", false);
+    }
+
     public JSONArray abgeschlosseneFolgen() {
         JSONArray liste = roh.optJSONArray("completedEpisodes");
         return liste == null ? new JSONArray() : liste;
@@ -240,6 +259,7 @@ public final class Favorite {
      * dazu haelt beide zusammen.
      */
     public boolean stehtInWeiterschauen() {
+        if (istArchiviert()) return false;
         if (istAbgeschlossen() && !istWiederansehen()) return false;
         if (folgeAbgeschlossen() || ausWeiterschauenEntfernt()) return false;
         if (wartetAufNaechsteFolge()) return true;

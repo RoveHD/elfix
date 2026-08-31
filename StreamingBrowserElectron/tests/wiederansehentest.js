@@ -303,8 +303,12 @@ pruefe("istWiederansehen gilt nur mit Abschluss",
 
 {
   const RENDERER = lies("src/renderer/renderer.js");
+  // Das Fenster ist grosszuegig: in continueEntries steht inzwischen auch der
+  // Merker fuer archivierte Raum-Eintraege samt seiner Begruendung. Gemeint
+  // ist weiterhin dasselbe - die Ausnahme muss *in* dieser Funktion stehen und
+  // nicht irgendwo in der Datei.
   pruefe("Die Oberflaeche kennt die Ausnahme in Weiterschauen",
-    /function continueEntries\(\)[\s\S]{0,400}?!item\.completed \|\| istWiederansehen\(item\)/.test(RENDERER));
+    /function continueEntries\(\)[\s\S]{0,900}?!item\.completed \|\| istWiederansehen\(item\)/.test(RENDERER));
   pruefe("Die Mediathek filtert weiterhin allein auf completed",
     /function libraryEntries\([\s\S]{0,400}?\.filter\(\(item\) => item\.completed\)/.test(RENDERER),
     "sonst faellt ein laufender Durchlauf aus der Mediathek");

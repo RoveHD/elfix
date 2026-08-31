@@ -5256,6 +5256,12 @@ function renderMediathekTabs(zahlen) {
 function continueEntries() {
   return favorites
     .filter((item) => hasContinueActivity(item)
+      // Ein Raum-Eintrag, den die Runde hinter sich hat: der Film ist zu Ende,
+      // oder von der Serie gibt es gerade nichts Neues. Wortgleich mit
+      // `hasContinueProgressRecord` in src/fortschritt.js und
+      // `Favorite.stehtInWeiterschauen` auf Android - die Oberflaeche bekommt
+      // die Eintraege als einfache Objekte und kann das Modul nicht laden.
+      && !item.watchpartyArchived
       && (!item.completed || istWiederansehen(item))
       && !item.episodeCompleted
       && !item.hideFromContinueWatching)

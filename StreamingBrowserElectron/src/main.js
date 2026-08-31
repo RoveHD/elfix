@@ -5092,6 +5092,26 @@ async function repairStalledSeriesFavorites() {
     if (!ziel && aufToterFolge && info.lastPlayable) {
       ziel = replaceEpisodeUrl(favorite.url, identity.season, info.lastPlayable);
     }
+
+    // Nichts kommt mehr - und in einer Runde heisst das etwas anderes als
+    // allein.
+    //
+    // Im eigenen Bestand ist "Folge abgehakt, keine naechste" seit jeher ein
+    // stiller Wartezustand: der Eintrag faellt aus "Weiterschauen" und liegt
+    // da, bis der Anbieter nachlegt. Ein Raum-Eintrag wartet aber nicht still,
+    // er stuende weiter als aktiver Titel in der Runde - "Black Torch" bei
+    // Folge 8, obwohl alle durch sind und Folge 9 erst am Samstag kommt.
+    //
+    // Also wird er archiviert und die Runde erfaehrt es, ueber genau dieselbe
+    // Standmeldung wie jede andere. Geloescht wird nichts: der Eintrag im Raum
+    // behaelt Mitglieder und Werk, und sobald hier oben eine naechste Folge
+    // gefunden wird, geht er denselben Weg zurueck.
+    if (!ziel && favorite.watchpartyRoom && favorite.episodeCompleted && !favorite.watchpartyArchived) {
+      favorite.watchpartyArchived = true;
+      geaendert = true;
+      console.log(`[ELFIX WATCHPARTY] ${favorite.title}: nach dieser Folge kommt nichts - in „${favorite.watchpartyRoom}“ archiviert`);
+      reportWatchpartyProgress(favorite);
+    }
     if (!ziel || ziel === favorite.url) continue;
 
     const zielIdentity = episodeIdentity(ziel);
@@ -5103,6 +5123,11 @@ async function repairStalledSeriesFavorites() {
     favorite.episodeCompleted = false;
     favorite.continuePending = true;
     favorite.hideFromContinueWatching = false;
+    // Und aus dem Archiv zurueck: genau dafuer ist der Eintrag im Raum
+    // liegengeblieben. Die Meldung darunter traegt es weiter, das Relay laesst
+    // sie durch, weil sie eine *neuere* Folge nennt - und derselbe Raumtitel
+    // steht wieder in "Gemeinsam weiterschauen", mit denselben Mitgliedern.
+    favorite.watchpartyArchived = false;
     favorite.progress = 0;
     favorite.currentTime = 0;
     favorite.position = 0;
@@ -5221,6 +5246,14 @@ async function updateActiveFavoriteTitle(providerId, view) {
   }
   if (applyFavoriteSeriesBounds(favorite, meta, url)) {
     changed = true;
+    // Steht dieser Eintrag in einer Runde, gehoert die Erkenntnis dorthin.
+    //
+    // Die Seitengrenzen sind der zweite Weg, auf dem eine neue Folge auffaellt
+    // (der erste ist die Folgenpflege beim Start): hier wird ein Titel, den
+    // alle durchhatten, wieder aktiv - Legend of Korra, bei dem doch noch
+    // etwas nachkommt. Ohne diese Meldung wuesste das nur dieses Geraet, und
+    // im Raum bliebe er archiviert.
+    reportWatchpartyProgress(favorite);
   }
   if (changed) {
     saveFavorites();
@@ -6067,6 +6100,9 @@ function applyWatchpartyProgress(key, stand, room) {
   const lokal = lokalerWatchpartyEintrag(key, eintrag?.room || room);
 
   if (!lokal) {
+    // Dasselbe wie in raumEintraegeSichern: aus einem archivierten Stand
+    // entsteht hier kein Eintrag. Es gaebe nichts weiterzuschauen.
+    if (stand?.archived || eintrag?.archived) return;
     const provider = providerForWatchpartyUrl(stand.url || eintrag?.url || "", eintrag?.providerName);
     if (!provider) return;
     const neu = createWatchpartyFavorite(key, eintrag, stand, provider);
@@ -6142,6 +6178,17 @@ function raumEintraegeSichern(eintraege) {
     if (!key || !room) continue;
     const lokal = lokalerWatchpartyEintrag(key, room);
     if (lokal) {
+      // Ob die Runde mit dem Titel durch ist, steht im Raumzustand und nicht
+      // im Stand: ein Titel kann archiviert werden, ohne dass sich der
+      // Fortschritt noch einmal aendert. Deshalb zuerst der Merker, dann der
+      // Stand - und beides ueber die geteilte Regel, damit das Telefon
+      // dasselbe tut.
+      const archiv = fortschritt.watchpartyArchivAbgleichen(lokal, eintrag.archived);
+      if (archiv.art === "aendern") {
+        Object.assign(lokal, archiv.aenderung);
+        geaendert = true;
+        console.log(`[ELFIX WATCHPARTY] ${lokal.title} (Raum ${room}) ist ${lokal.watchpartyArchived ? "archiviert" : "wieder aktiv"}`);
+      }
       // Da, aber vielleicht stehengeblieben. Ein Stand aus der Runde kam
       // bisher nur als Meldung an, also nur bei einem Geraet, das gerade
       // lief - wer aus war, behielt seinen alten Eintrag fuer immer. Der
@@ -6155,6 +6202,13 @@ function raumEintraegeSichern(eintraege) {
       console.log(`[ELFIX WATCHPARTY] Eintrag zur Runde nachgezogen: ${lokal.title} (Raum ${room})`);
       continue;
     }
+    // Fuer einen archivierten Titel wird hier nichts angelegt. Es gaebe nichts
+    // weiterzuschauen, und ein frisch angelegter Eintrag waere genau das, was
+    // die Aufgabe verbietet: ein Geraet, das gerade erst dazukommt, holt einen
+    // abgeschlossenen Film wieder in die Runde. Erscheint eine neue Folge,
+    // wird der Titel im Raum wieder aktiv - und dann entsteht der Eintrag beim
+    // naechsten Zustand von selbst.
+    if (eintrag.archived) continue;
     const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
     if (!provider) continue;
     const neu = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
@@ -6175,7 +6229,11 @@ function raumEintraegeSichern(eintraege) {
 
 // Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.
 function watchpartyItems() {
-  return watchpartyShared.map((eintrag) => {
+  // Archivierte Titel sind kein aktiver Bestand der Runde. Sie bleiben im Raum
+  // liegen - Raum, Mitglieder und Werk werden gebraucht, sobald eine Folge
+  // erscheint -, aber sie stehen weder in der Watchparty-Liste noch in
+  // "Gemeinsam weiterschauen", und sie loesen kein Bildnachreichen mehr aus.
+  return watchpartyShared.filter((eintrag) => !eintrag?.archived).map((eintrag) => {
     // Hatte das einstellende Geraet kein Bild, ist im Raum keines hinterlegt.
     // Kennt dieses Geraet den Titel, wird das eigene Bild genommen - und dem
     // Raum gleich nachgereicht, damit auch die anderen es sehen.
@@ -6215,6 +6273,10 @@ function nachreichenWatchpartyBild(eintrag, bild) {
   const merker = `${eintrag.room || ""}|${eintrag.key}`;
   if (watchpartyBildNachgereicht.has(merker)) return;
   watchpartyBildNachgereicht.add(merker);
+  // Ausdruecklich als Nachtrag: ein Bild ist kein Wiedereinstellen. Ohne diese
+  // Kennzeichnung holte eine nachgereichte Kachel einen archivierten Titel
+  // zurueck in die Runde - "share" ohne Nachtrag ist die ausdrueckliche
+  // Ansage "den will ich hier wieder haben".
   watchparty.teilen({
     key: eintrag.key,
     url: eintrag.url,
@@ -6224,7 +6286,7 @@ function nachreichenWatchpartyBild(eintrag, bild) {
     type: eintrag.type,
     season: eintrag.season,
     episode: eintrag.episode
-  }, eintrag.room);
+  }, eintrag.room, true);
 }
 
 // Nach dem Verbinden traegt restoreWatchparty die Mitgliedschaften nach - die
@@ -6296,6 +6358,10 @@ function raeumeWatchpartyEintraegeAuf() {
     favorite.watchpartyRoom = "";
     favorite.watchpartyFrom = "";
     favorite.watchpartyAt = "";
+    // Der Archivmerker gehoert der Runde und geht mit ihr. Bliebe er stehen,
+    // waere der Eintrag ab jetzt privat und trotzdem aus "Weiterschauen"
+    // ausgeblendet - ein Zustand, den niemand mehr aufloesen koennte.
+    favorite.watchpartyArchived = false;
     geloest.push(`${favorite.title} (${raum})`);
   }
   if (!geloest.length) return;
@@ -6332,7 +6398,10 @@ function watchpartyRaumUebersicht() {
     connected: Boolean(raum.connected),
     error: raum.error || "",
     peers: (raum.peers || []).length,
-    items: watchpartyShared.filter((eintrag) => eintrag.room === raum.room).length
+    // Gezaehlt werden die aktiven Titel. Ein archivierter liegt im Raum und
+    // wartet auf Nachschub - "Bangus (3 Titel)" darf davon nicht zwei meinen,
+    // die niemand mehr sieht.
+    items: watchpartyShared.filter((eintrag) => eintrag.room === raum.room && !eintrag.archived).length
   }));
 }
 
@@ -9590,6 +9659,12 @@ function loadFavorites() {
         : null,
       // Zu welcher Watchparty dieser Eintrag gehoert. Leer heisst: der eigene.
       watchpartyRoom: String(favorite.watchpartyRoom || ""),
+      // Und ob die Runde mit ihm durch ist: der Film zu Ende, oder von der
+      // Serie kommt gerade nichts nach. Der Merker muss den Neustart
+      // ueberleben - sonst stuende ein archivierter Titel nach jedem Start
+      // wieder in "Gemeinsam weiterschauen", bis der naechste Raumzustand ihn
+      // wieder hinausnimmt. Ohne Raum gibt es ihn nicht.
+      watchpartyArchived: Boolean(favorite.watchpartyRoom) && Boolean(favorite.watchpartyArchived),
       // Selbst gewaehltes Bild - hat Vorrang vor dem der Anbieterseite.
       customThumbnail: String(favorite.customThumbnail || ""),
       // Wie dieses Bild im Banner sitzt. null heisst "wie immer": vollflaechig

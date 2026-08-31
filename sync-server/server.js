@@ -42,7 +42,21 @@ const metadatenDienst = metadaten.erstellen();
 
 const PORT = Number(process.env.PORT) || 8787;
 const MAX_TITEL_JE_RAUM = 100;
-const RAUM_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
+// Raeume verfallen nicht.
+//
+// Hier stand einmal RAUM_LEBENSDAUER_MS = 30 Tage, und aufraeumen() loeschte
+// jeden Raum, in dem so lange niemand war. Das war aus der Sicht des Relays
+// Ordnung und aus der Sicht der Leute ein Verlust: ein Raum ist kein
+// Zwischenspeicher, sondern eine Verabredung. "Bangus" gehoert denselben vier
+// Leuten, ob sie diese Woche zusammen geschaut haben oder ein halbes Jahr
+// nicht. Wer den Raum los sein will, nimmt seine Titel heraus und traegt ihn
+// aus seinen Einstellungen aus - das ist eine Entscheidung, und nur sie darf
+// einen Raum verschwinden lassen.
+//
+// Was aufraeumen() weiterhin tut, steht dort. Der Lebenslauf der *Titel* in
+// einem Raum haengt seither nicht mehr am Alter des Raums, sondern an
+// "archived" - siehe dort.
+
 // Wie lange ein herausgenommener Titel als Grabstein liegen bleibt.
 //
 // Ohne ihn kommt er wieder. Jedes Geraet merkt sich, was es selbst eingestellt
@@ -123,7 +137,12 @@ const DRIFT_RUHE_MS = 2000;
 // herausfaellt, schaut gerade nicht mit.
 const STAND_FRISCH_MS = 15000;
 
-// raumcode -> { titel: Map<key, eintrag>, at: number }
+// raumcode -> { titel: Map<key, eintrag>, graeber: Map<key, at>, at: number }
+//
+// "at" ist seit dem Wegfall von RAUM_LEBENSDAUER_MS nur noch eine Auskunft
+// ("wann war hier zuletzt jemand") und keine Frist mehr. Es bleibt stehen,
+// weil es in der Ablage liegt und nichts kostet - geloescht wird daraufhin
+// nichts.
 const raeume = new Map();
 let speicherTimer = null;
 
@@ -209,16 +228,16 @@ function zustandSpeichernSpaeter() {
   speicherTimer.unref?.();
 }
 
+// Was regelmaessig wegzuraeumen ist - und was ausdruecklich nicht.
+//
+// Raeume nicht. Ein Raum, in dem lange niemand war, ist kein Muell, sondern
+// eine Verabredung, die gerade ruht (siehe oben). Weg sind hier nur Dinge, die
+// ihren Zweck erfuellt haben: Grabsteine, die ihre Frist ueberstanden haben,
+// und der Kram der anderen Module.
 function aufraeumen() {
-  const grenze = Date.now() - RAUM_LEBENSDAUER_MS;
   const grabGrenze = Date.now() - GRAB_LEBENSDAUER_MS;
   let entfernt = false;
-  for (const [code, raum] of raeume) {
-    if (raum.at < grenze) {
-      raeume.delete(code);
-      entfernt = true;
-      continue;
-    }
+  for (const raum of raeume.values()) {
     for (const [key, at] of raum.graeber || new Map()) {
       if (at < grabGrenze) {
         raum.graeber.delete(key);
@@ -294,9 +313,31 @@ function fortschrittSaeubern(roh) {
     progress: zahl(roh.progress, 100),
     completed: Boolean(roh.completed),
     episodeCompleted: Boolean(roh.episodeCompleted),
+    // Ob die Runde mit diesem Titel durch ist - siehe folgeIstNeuer() und den
+    // Abschnitt "progress" weiter unten. Das Geraet rechnet es aus (es kennt
+    // die Seriengrenzen, das Relay nicht); hier wird es nur gefuehrt.
+    archived: Boolean(roh.archived),
     updatedAt: text(roh.updatedAt || new Date().toISOString(), 40),
     from: text(roh.from, 60)
   };
+}
+
+// Meldet dieser Stand eine Folge *nach* der, bei der der Titel gerade steht?
+//
+// Die eine Frage, an der die Wiederbelebung eines archivierten Titels haengt.
+// Sie ist absichtlich streng: ein Geraet, das eine Woche aus war, meldet beim
+// Start seinen alten Stand, und der darf einen archivierten Titel nicht
+// aufwecken - sonst stuende "Black Torch" nach jedem Handystart wieder bei
+// Folge 5 in "Gemeinsam weiterschauen". Ein Film hat keine naechste Folge und
+// kommt so nie zurueck; das ist gewollt.
+function folgeIstNeuer(eintrag, fortschritt) {
+  const alteStaffel = Number(eintrag?.progress?.season || eintrag?.season || 0);
+  const alteFolge = Number(eintrag?.progress?.episode || eintrag?.episode || 0);
+  const neueStaffel = Number(fortschritt?.season || 0);
+  const neueFolge = Number(fortschritt?.episode || 0);
+  if (!neueStaffel && !neueFolge) return false;
+  if (neueStaffel !== alteStaffel) return neueStaffel > alteStaffel;
+  return neueFolge > alteFolge;
 }
 
 function titelNachAussen(raumcode, eintrag, fuerGeraet) {
@@ -324,6 +365,12 @@ function titelNachAussen(raumcode, eintrag, fuerGeraet) {
     addedById: eintrag.addedById,
     addedByKonto: eintrag.addedByKonto || "",
     addedAt: eintrag.addedAt,
+    // Archiviert heisst: die Runde hat diesen Titel hinter sich - der Film ist
+    // zu Ende, oder von der Serie gibt es gerade nichts Neues. Der Eintrag
+    // bleibt trotzdem stehen, samt Raum, Mitgliedern und Werk: erscheint eine
+    // Folge, wird genau dieser Eintrag wieder aktiv, und niemand muss den
+    // Titel neu einstellen und alle neu beitreten lassen.
+    archived: Boolean(eintrag.archived),
     members: [...eintrag.members.values()],
     memberIds: [...eintrag.members.keys()],
     progress: eintrag.progress || null
@@ -1024,9 +1071,15 @@ wss.on("connection", (socket) => {
         addedByKonto: socket.konto || "",
         addedAt: new Date().toISOString(),
         members: new Map(),
+        archived: false,
         progress: null
       };
       if (bekannt) Object.assign(gespeichert, eintrag);
+      // Dieselbe Trennung wie beim Grabstein, eine Zeile darueber: ein
+      // Nachtrag laesst einen archivierten Titel archiviert - sonst holte ihn
+      // jedes Geraet, das sich verbindet, ungefragt zurueck in die Runde. Wer
+      // ihn dagegen von Hand wieder einstellt, meint genau das.
+      if (!nachricht.restore) gespeichert.archived = false;
       // Ein Titel, der ohne Konto eingestellt wurde, bekommt es nach, sobald
       // sein Einsteller mit Konto wiederkommt - sonst haetten die anderen
       // Geraete derselben Person nie Zugriff darauf.
@@ -1578,6 +1631,27 @@ wss.on("connection", (socket) => {
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const fortschritt = fortschrittSaeubern(nachricht.progress);
       if (!fortschritt) return;
+
+      // Der Lebenslauf eines Titels in der Runde.
+      //
+      // Aktiv, archiviert, wieder aktiv - und der Raum bleibt durch alles
+      // hindurch stehen. Archiviert wird, was die Runde hinter sich hat: ein
+      // zu Ende geschauter Film, eine Serie, deren letzte verfuegbare Folge
+      // abgehakt ist. Ausgerechnet hat das die App - nur sie kennt die
+      // Seriengrenzen und weiss, ob nach Folge 8 noch etwas kommt; das Relay
+      // fuehrt die Antwort bloss und sorgt dafuer, dass sie sich nicht
+      // rueckwaerts umstossen laesst.
+      //
+      // Deshalb steht hier ein Riegel und keine blosse Zuweisung: solange ein
+      // Titel archiviert ist, kommt nur eine *neue Folge* durch. Ein Handy,
+      // das eine Woche aus war, meldet beim Start seinen alten Stand - der
+      // wuerde den Titel sonst wieder aktiv machen und obendrein die Runde auf
+      // eine Folge zurueckdrehen, die alle laengst gesehen haben.
+      const weiter = folgeIstNeuer(eintrag, fortschritt);
+      if (eintrag.archived && !weiter) return;
+      const archivVorher = Boolean(eintrag.archived);
+      eintrag.archived = Boolean(fortschritt.archived);
+
       // Der Zeitpunkt kommt vom Server, nicht vom Geraet: gehen die Uhren
       // auseinander, wuerden die Meldungen des einen dauerhaft als "aelter"
       // verworfen und sein Stand kaeme nie an.
@@ -1592,6 +1666,11 @@ wss.on("connection", (socket) => {
       // hinterlassen hat.
       standSetzen(eintrag, socket.geraetId, socket.name, { position: fortschritt.position });
       standSenden(socket.raum, eintrag);
+      // Ein Wechsel zwischen aktiv und archiviert aendert die Karte selbst und
+      // nicht nur den Balken darunter - der ganze Zustand geht neu hinaus,
+      // damit jedes Geraet den Titel im selben Moment aus "Gemeinsam
+      // weiterschauen" nimmt oder zurueckholt.
+      if (archivVorher !== Boolean(eintrag.archived)) zustandSenden(socket.raum);
       zustandSpeichernSpaeter();
 
       const daten = JSON.stringify({ type: "progress", key: eintrag.key, progress: fortschritt });
@@ -1645,6 +1724,10 @@ setInterval(() => {
 }, 30000).unref?.();
 
 zustandLaden();
+// Einmal gleich nach dem Laden: ein Relay, das einen Monat aus war, traegt
+// abgelaufene Grabsteine mit herein, und die sollen nicht bis zur naechsten
+// vollen Stunde liegenbleiben. Raeume ruehrt das nicht an - siehe aufraeumen().
+aufraeumen();
 server.listen(PORT, () => {
   console.log(`ELFIX Watchparty-Relay ${FASSUNG} auf Port ${PORT} (Ablage: ${STATE_FILE})`);
   // Nur die gepackte Datei haelt sich selbst auf dem neuesten Stand. Wer aus

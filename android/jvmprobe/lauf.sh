@@ -101,6 +101,16 @@ JAVA
     done | sort -u
     echo "  }"
   done
+  # Die Marken aus res/values/ids.xml. Sie stehen nicht als Dateien im
+  # Ressourcenordner, sondern als <item type="id"> - ohne sie schlaegt der
+  # Uebersetzungslauf an jedem R.id.* fehl, obwohl die Kennung sauber
+  # deklariert ist.
+  echo "  public static final class id {"
+  for datei in "$APP"/main/res/values*/ids.xml; do
+    [ -e "$datei" ] || continue
+    sed -n 's/.*<item[[:space:]]\+name="\([a-zA-Z0-9_]*\)".*type="id".*/    public static final int \1 = 0;/p' "$datei"
+  done | sort -u
+  echo "  }"
   echo "  public static final class string { public static final int app_name = 0; }"
   echo "}"
 } > "$RUMPF/local/elflix/android/R.java"
