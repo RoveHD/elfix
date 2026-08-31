@@ -1074,7 +1074,26 @@ public class MainActivity extends Activity {
         lastConfigOrientation = config.orientation;
         lastConfigWidthDp = config.screenWidthDp;
         lastConfigHeightDp = config.screenHeightDp;
-        showHome();
+        // Die erste Seite bekommt keinen Auftritt.
+        //
+        // Der gemeldete Fehler: zwischen dem Startbild des Systems und der
+        // Startseite stand eine Weile nur Kopf- und Fussleiste und dazwischen
+        // nichts. An einer Aufnahme des Telefons gemessen sind es rund 130 ms
+        // voellig leerer Inhalt, dann kommt die ganze Seite auf einen Schlag.
+        // Gemeldet als "die App zuckt beim Starten".
+        //
+        // Der Grund steht in Bewegung.seitenAuftritt: die Seite wird sofort
+        // durchsichtig gestellt, und die Bewegung zurueck faengt erst an,
+        // wenn der Hauptfaden dazu kommt. Beim Start kommt er lange nicht
+        // dazu - er baut in dieser Zeit Kern, Ablage und Anbieter -, und so
+        // lange steht die fertige Seite unsichtbar da.
+        //
+        // Ein Auftritt gehoert ohnehin nicht hierher. Er sagt "du bist
+        // irgendwohin gegangen", und beim Start ist niemand irgendwohin
+        // gegangen; den Uebergang hat das Startbild des Systems schon gemacht.
+        // Die Seite soll dastehen, wenn es sich hebt, und nicht danach
+        // entstehen.
+        stillZeichnen(this::showHome);
         deepLinkOeffnen(getIntent());
         // Der Pruefstand. Im Release ist das ein leerer Aufruf: dort uebersetzt
         // Gradle die Fassung aus src/release/java, und die tut nichts.
@@ -2853,7 +2872,7 @@ public class MainActivity extends Activity {
         // "231 Titel" sagt, waehrend die Mediathek leer ist, schickt beim
         // Suchen in die falsche Richtung.
         int titel = zustand == null ? 0 : zustand.optInt("titel", zustand.optInt("entries", 0));
-        long zuletzt = zustand == null ? 0 : zustand.optLong("lastSync", 0);
+        CharSequence zuletzt = geraeteAbgleichZeit(zustand);
 
         String text;
         if (!an) {
@@ -2869,9 +2888,8 @@ public class MainActivity extends Activity {
         } else {
             StringBuilder bauen = new StringBuilder("Verbunden");
             bauen.append(titel == 1 ? ", 1 Titel" : ", " + titel + " Titel");
-            if (zuletzt > 0) {
-                bauen.append(", zuletzt abgeglichen ").append(
-                    android.text.format.DateFormat.format("HH:mm", zuletzt));
+            if (zuletzt.length() > 0) {
+                bauen.append(", zuletzt abgeglichen ").append(zuletzt);
             }
             bauen.append(".");
             text = bauen.toString();
@@ -7709,11 +7727,7 @@ public class MainActivity extends Activity {
 
     private String settingsBild() {
         StringBuilder bild = new StringBuilder();
-        // Der Abgleich: sein ganzer Zustand, so wie die Karte ihn liest.
-        if (geraete != null) {
-            org.json.JSONObject zustand = geraete.zustand();
-            bild.append(zustand == null ? "" : zustand.toString()).append(TRENNER);
-        }
+        bild.append(geraeteBild()).append(TRENNER);
         if (werbefilter != null) {
             bild.append(werbefilter.standText()).append(TRENNER);
         }
@@ -7725,6 +7739,55 @@ public class MainActivity extends Activity {
                 .append(TRENNER);
         }
         return bild.toString();
+    }
+
+    /**
+     * Was vom Abgleich auf der Seite steht - und nur das.
+     *
+     * <p><b>Der gemeldete Fehler.</b> Hier stand {@code zustand.toString()},
+     * also der ganze Zustand des Abgleichs als JSON. Darin steht
+     * {@code lastSync} in <em>Millisekunden</em>. Die Karte zeigt davon Stunde
+     * und Minute; die Zahl dahinter ist bei jeder Meldung eine andere. Der
+     * Vergleich in {@link #settingsGeaendert} fand deshalb <em>immer</em> einen
+     * Unterschied, und die Einstellungsseite wurde bei jeder Meldung des
+     * Abgleichs vollstaendig neu gebaut - waehrend eines Abgleichlaufs ein gutes
+     * Dutzend Mal in zwei Sekunden. Gemeldet als "die Einstellungen zucken".
+     *
+     * <p>Dazu kam ein zweiter, leiserer Grund: {@link JSONObject#toString}
+     * schreibt seine Schluessel in der Reihenfolge einer Hashtabelle. Zwei
+     * gleiche Zustaende koennen damit verschiedene Zeichenketten sein, und der
+     * Vergleich haette auch ohne Zeitstempel nicht verlaesslich getragen.
+     *
+     * <p>Verglichen wird jetzt an den Werten, die die Seite wirklich
+     * hinschreibt. Der Zeitpunkt geht dabei durch dieselbe Funktion wie beim
+     * Zeichnen ({@link #geraeteAbgleichZeit}) - so koennen Vergleich und
+     * Darstellung nicht auseinanderlaufen.
+     */
+    private String geraeteBild() {
+        if (geraete == null) return "";
+        StringBuilder bild = new StringBuilder();
+        bild.append(geraete.eingeschaltet()).append('#');
+        JSONObject zustand = geraete.zustand();
+        if (zustand == null) return bild.toString();
+        return bild.append(zustand.optBoolean("connected", false)).append('#')
+            .append(zustand.optString("error", "")).append('#')
+            .append(zustand.optInt("titel", zustand.optInt("entries", 0))).append('#')
+            .append(zustand.optString("key", "")).append('#')
+            .append(geraeteAbgleichZeit(zustand))
+            .toString();
+    }
+
+    /**
+     * Wann zuletzt abgeglichen wurde - auf die Minute, so wie es dasteht.
+     *
+     * <p>Die eine Stelle, an der aus dem Zeitstempel Text wird. Sie steht hier
+     * und nicht in der Karte, weil {@link #geraeteBild} dieselbe Antwort
+     * braucht: was verglichen wird, muss genau das sein, was zu sehen ist.
+     */
+    private CharSequence geraeteAbgleichZeit(JSONObject zustand) {
+        long zuletzt = zustand == null ? 0 : zustand.optLong("lastSync", 0);
+        if (zuletzt <= 0) return "";
+        return android.text.format.DateFormat.format("HH:mm", zuletzt);
     }
 
     /* ------------------------------------- Die Seite vor der ersten Folge */
