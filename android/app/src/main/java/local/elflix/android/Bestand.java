@@ -103,6 +103,42 @@ public final class Bestand {
         Log.i(TAG, "Bestand geladen: " + eintraege.length() + " Eintraege");
     }
 
+    /**
+     * Doppelte Eintraege desselben Werks zusammenfuehren.
+     *
+     * <p>Dieselbe Bereinigung, die der Rechner beim Laden faehrt, und
+     * ausdruecklich dieselbe Regel: sie steht in {@code src/watchlist.js} und
+     * laeuft hier im Kern. Ein Nachbau in Java waere eine zweite Vorstellung
+     * davon, wann zwei Eintraege denselben Titel meinen - und genau davon kamen
+     * die Doppelten.
+     *
+     * <p>Laeuft einmal nach dem Start, sobald der Kern bereit ist. Sie tut nur
+     * dann etwas, wenn wirklich zwei Eintraege dasselbe Werk meinen, und fuehrt
+     * dann zusammen statt zu loeschen: Verlauf, abgeschlossene Folgen, eigenes
+     * Bild und Serienlaenge gehen mit.
+     */
+    public void doppelteZusammenfuehren() {
+        if (kern == null || !kern.istBereit()) return;
+        JSONArray argumente = new JSONArray();
+        argumente.put(eintraege);
+        kern.rufe("watchlist.doppelteZusammenfuehren", argumente, (wert, fehler) -> {
+            if (fehler != null || wert == null) return;
+            try {
+                JSONObject urteil = new JSONObject(wert);
+                if (urteil.optInt("zusammengefuehrt", 0) <= 0) return;
+                JSONArray bereinigt = urteil.optJSONArray("favoriten");
+                if (bereinigt == null) return;
+                eintraege = bereinigt;
+                Log.i(TAG, "Bestand: " + urteil.optInt("zusammengefuehrt", 0)
+                    + " doppelte Eintraege zusammengefuehrt");
+                speichern();
+                if (beobachter != null) beobachter.bestandGeaendert();
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Zusammenfuehren fehlgeschlagen", ausnahme);
+            }
+        });
+    }
+
     public void speichern() {
         FavoriteStore.speichereRoh(context, eintraege);
     }
@@ -142,10 +178,23 @@ public final class Bestand {
         return liste;
     }
 
-    /** Die Merkliste: gemerkt, aber noch nicht durch. */
+    /**
+     * Die Merkliste: gemerkt, aber noch nicht durch - und je Werk einmal.
+     *
+     * <p>Nur private Eintraege. Ein Eintrag einer Watchparty-Runde gehoert dem
+     * Raum und nie der eigenen Merkliste; stand er trotzdem darauf (der
+     * Herz-Knopf konnte das, solange er den *aktiven* Eintrag vormerkte, und
+     * waehrend einer Runde ist das der des Raums), erschien derselbe Titel
+     * zweimal.
+     *
+     * <p>Die Entdoppelung darueber hinaus macht {@code watchlist.js} beim
+     * Laden. Hier wird nichts nach Namen gefiltert - zwei Titel koennen gleich
+     * heissen und verschiedene Werke sein.
+     */
     public List<Favorite> watchlist() {
         ArrayList<Favorite> liste = new ArrayList<>();
         for (Favorite eintrag : alle()) {
+            if (!eintrag.watchpartyRaum().isEmpty()) continue;
             if (eintrag.istWatchlist() && !eintrag.istAbgeschlossen()) liste.add(eintrag);
         }
         return liste;
@@ -673,6 +722,60 @@ public final class Bestand {
         }
         speichern();
         if (beobachter != null) beobachter.bestandGeaendert();
+    }
+
+    /**
+     * Der Herz-Knopf: die offene Adresse vormerken oder herunternehmen.
+     *
+     * <p>Ueber den kanonischen Schluessel aus {@code watchlist.js} und nicht
+     * ueber den aktiven Eintrag. Der Unterschied ist der gemeldete Fehler:
+     * waehrend einer Watchparty ist der aktive Eintrag der des Raums, und der
+     * gehoert nie auf die eigene Merkliste. Vorgemerkt wurde damit ein
+     * Eintrag, den die Watchlist gar nicht fuehrt.
+     *
+     * <p>Gebraucht wird nur die Adresse - der Schluessel kommt aus ihr.
+     *
+     * @param fertig bekommt {@code true}, wenn der Titel jetzt vorgemerkt ist,
+     *               und {@code null}, wenn es ihn hier noch gar nicht gibt;
+     *               dann ist {@link #anlegenUndMerken} zustaendig.
+     */
+    public void watchlistUmschalten(String url, String titel, String art,
+                                    java.util.function.Consumer<Boolean> fertig) {
+        if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) {
+            if (fertig != null) fertig.accept(null);
+            return;
+        }
+        JSONObject werk = new JSONObject();
+        try {
+            werk.put("title", titel == null ? "" : titel);
+            werk.put("url", url);
+            werk.put("type", art == null ? "" : art);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Watchlist liess sich nicht umschalten", fehler);
+            if (fertig != null) fertig.accept(null);
+            return;
+        }
+        kern.rufe("watchlist.umschalten", Kern.args(eintraege, werk), (wert, fehler) -> {
+            if (fehler != null || wert == null) {
+                if (fertig != null) fertig.accept(null);
+                return;
+            }
+            try {
+                JSONObject urteil = new JSONObject(wert);
+                if (!urteil.optBoolean("gefunden", false)) {
+                    if (fertig != null) fertig.accept(null);
+                    return;
+                }
+                JSONArray neu = urteil.optJSONArray("favoriten");
+                if (neu != null) eintraege = neu;
+                speichern();
+                if (beobachter != null) beobachter.bestandGeaendert();
+                if (fertig != null) fertig.accept(urteil.optBoolean("vorgemerkt", false));
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Watchlist liess sich nicht umschalten", ausnahme);
+                if (fertig != null) fertig.accept(null);
+            }
+        });
     }
 
     /** Von Hand abhaken: der Titel wandert in die Mediathek. */

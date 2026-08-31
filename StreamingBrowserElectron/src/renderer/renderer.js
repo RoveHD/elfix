@@ -4940,9 +4940,51 @@ async function clearHistory() {
   showToast("Verlauf und zuletzt gesuchte Begriffe gelöscht");
 }
 
+// Der kanonische Schluessel eines Werks - dieselbe Funktion, die auch der
+// Hauptprozess, der Geraeteabgleich und das Telefon fragen. Sie kommt ueber die
+// Bruecke herein (src/watchlist.js), damit hier keine fuenfte Vorstellung davon
+// entsteht, wann zwei Eintraege denselben Titel meinen.
+function werkSchluessel(item) {
+  return api.werkSchluessel?.(item?.title, item?.url, item?.type) || "";
+}
+
+/**
+ * Die Watchlist: je Werk genau eine Karte.
+ *
+ * <p>Und zwar die Karte des Eintrags, der das Werk vorgemerkt hat. Beides war
+ * kaputt, und beides haengt zusammen (gemeldet und an der echten Ablage vom
+ * 31.08.2026 nachgestellt):
+ *
+ * <p>Die Ablage trug drei private "Pokémon"-Eintraege, zwei davon vorgemerkt -
+ * also zwei Karten. Warum es sie gab, steht im Kopf von src/watchlist.js; hier
+ * wird je Werk nur noch eine gezeigt, auch wenn zwischen zwei Ladevorgaengen
+ * wieder eine zweite entstanden sein sollte.
+ *
+ * <p>Schlimmer war das zweite: `.map(weitesterStand)` ersetzte jede Karte durch
+ * einen *anderen* Eintrag - den weitesten, und das ist meist der einer
+ * Watchparty-Runde. Die Karte trug damit dessen Kennung, und "Aus Watchlist
+ * entfernen" traf einen Eintrag, der gar nicht auf der Watchlist stand. Beide
+ * Pokémon-Karten trugen dieselbe Kennung (die des Raums "Gummikäse"), sahen
+ * deshalb identisch aus und liessen sich nicht entfernen.
+ *
+ * <p>Der weiteste Stand wird weiterhin angezeigt - dafuer wurde er gebaut -,
+ * aber er gibt nur noch den Stand vor, nicht die Kennung.
+ */
 function favoriteEntries() {
-  return favorites
-    .filter((item) => item.favorite !== false && !item.completed)
+  const nachWerk = new Map();
+  const ohneSchluessel = [];
+  for (const item of favorites) {
+    if (item.favorite === false || item.completed) continue;
+    const schluessel = werkSchluessel(item);
+    // Ohne Schluessel wird nichts zusammengelegt: lieber eine Karte zu viel
+    // als zwei verschmolzene, die nichts miteinander zu tun haben.
+    if (!schluessel) { ohneSchluessel.push(item); continue; }
+    const bisher = nachWerk.get(schluessel);
+    if (!bisher || String(item.createdAt || "") < String(bisher.createdAt || "")) {
+      nachWerk.set(schluessel, item);
+    }
+  }
+  return [...nachWerk.values(), ...ohneSchluessel]
     .map((item) => weitesterStand(item))
     .sort((left, right) => favoriteTimestamp(right) - favoriteTimestamp(left));
 }
@@ -4953,13 +4995,44 @@ function favoriteEntries() {
 // der Stand, an dem man weitermacht. Vorher zeigte die Watchlist stur den
 // eigenen Eintrag und blieb damit hinter der Gruppe zurueck.
 function weitesterStand(favorite) {
+  // Auch hier der kanonische Schluessel und nicht mehr ein eigener Vergleich.
+  // Die Oberflaeche hatte dafuer ihre eigene Vorstellung von "dieselbe Serie"
+  // (Adresse ohne Staffel und Folge, sonst der bereinigte Titel) - die vierte
+  // im Haus, und jede weitere ist eine Gelegenheit, dass zwei davon
+  // auseinanderlaufen.
+  const schluessel = werkSchluessel(favorite);
   const gruppe = favorites.filter((anderer) => (
-    anderer.id === favorite.id || (!anderer.completed && istGleicheSerieLokal(anderer, favorite))
+    anderer.id === favorite.id
+      || (!anderer.completed && schluessel && werkSchluessel(anderer) === schluessel)
   ));
   if (gruppe.length < 2) return favorite;
-  return gruppe.reduce((bester, kandidat) => (
-    folgeVergleich(kandidat, bester) > 0 ? kandidat : bester
+  const bester = gruppe.reduce((kandidatBester, kandidat) => (
+    folgeVergleich(kandidat, kandidatBester) > 0 ? kandidat : kandidatBester
   ), favorite);
+  if (bester === favorite) return favorite;
+
+  // Der Stand des weitesten Eintrags, die Kennung des eigenen. Alles, woran
+  // eine Aktion haengt - Kennung, Merkliste, Abschluss, Raum, die gelegte
+  // Stelle, das eigene Bild -, bleibt beim Eintrag der Watchlist; uebernommen
+  // wird nur, was die Karte *zeigt*.
+  //
+  // `oeffnenId` ist die eine Ausnahme, und sie ist der Grund, warum diese
+  // Zusammenlegung ueberhaupt existiert: geoeffnet wird der weiteste Stand.
+  // Ohne sie stuende auf der Karte "Folge 16" und es startete Folge 12.
+  return {
+    ...favorite,
+    oeffnenId: bester.id,
+    url: bester.url,
+    season: bester.season,
+    episode: bester.episode,
+    progress: bester.progress,
+    currentTime: bester.currentTime,
+    position: bester.position,
+    duration: bester.duration,
+    continuePending: bester.continuePending,
+    lastWatchedAt: bester.lastWatchedAt || favorite.lastWatchedAt,
+    openedAt: bester.openedAt || favorite.openedAt
+  };
 }
 
 // Weiter heisst: hoehere Staffel, sonst hoehere Folge, sonst die spaetere
@@ -4972,31 +5045,6 @@ function folgeVergleich(links, rechts) {
   const folgeR = Number(rechts?.episode || 0);
   if (folgeL !== folgeR) return folgeL - folgeR;
   return Number(links?.position || 0) - Number(rechts?.position || 0);
-}
-
-// Zwei Eintraege derselben Serie: die Adresse ohne Staffel und Folge
-// entscheidet, sonst der bereinigte Titel.
-function istGleicheSerieLokal(links, rechts) {
-  const schluessel = (wert) => {
-    try {
-      const adresse = new URL(String(wert || ""));
-      const pfad = adresse.pathname
-        .replace(/\/(?:staffel|season)-\d+(?:\/(?:episode|folge)-\d+)?\/?$/i, "")
-        .replace(/\/+$/, "");
-      return `${adresse.host}${pfad}`.toLowerCase();
-    } catch {
-      return "";
-    }
-  };
-  const a = schluessel(links?.url);
-  const b = schluessel(rechts?.url);
-  if (a && b) return a === b;
-  return normalisierterTitel(basisTitel(links?.title)) === normalisierterTitel(basisTitel(rechts?.title));
-}
-
-// "Bleach - Staffel 3 Folge 14" -> "Bleach"
-function basisTitel(wert) {
-  return String(wert || "").replace(/\s*[·|-]?\s*staffel\s*\d+.*$/i, "").trim();
 }
 
 // Die Mediathek ist die Ablage fuer Serien und Filme, die man zu Ende gesehen
@@ -5443,7 +5491,7 @@ async function openFavoriteEntry(favorite, options = {}) {
     hideContentViews();
   }
 
-  const state = await api.openFavorite(favorite.id, options);
+  const state = await api.openFavorite(favorite.oeffnenId || favorite.id, options);
   activeProviderId = state?.activeProviderId || activeProviderId;
   favorites = state?.favorites || favorites;
   renderProviders();
@@ -6299,9 +6347,21 @@ async function toggleFavorite() {
   showToast(result.added ? "Zur Watchlist hinzugefügt" : "Aus Watchlist entfernt");
 }
 
+// Steht die offene Seite auf der Watchlist?
+//
+// Gefragt wird nach dem Werk und nicht nach der Adresse. Vorher verglich diese
+// Zeile die offene Adresse mit der Adresse der Karte - und die Karte zeigt den
+// weitesten Stand. Wer bei Folge 1 stand, waehrend die Karte Folge 16 trug,
+// bekam ein leeres Herz fuer einen Titel, der laengst vorgemerkt war; ein Druck
+// darauf legte dann einen zweiten Eintrag an, statt den vorhandenen
+// herunterzunehmen.
 function renderFavoriteToggle() {
   const button = document.querySelector("#favoriteButton");
-  const active = Boolean(currentUrl && favoriteEntries().some((favorite) => normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(currentUrl)));
+  const offen = currentUrl ? werkSchluessel({ url: currentUrl }) : "";
+  const active = Boolean(offen && favorites.some((favorite) => favorite.favorite !== false
+    && !favorite.completed
+    && !favorite.watchpartyRoom
+    && werkSchluessel(favorite) === offen));
   button.classList.toggle("is-active", active);
   button.textContent = active ? "♥" : "♡";
 }

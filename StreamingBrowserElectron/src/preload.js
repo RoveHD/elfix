@@ -1,4 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
+// Der kanonische Schluessel eines Werks. Die Oberflaeche braucht ihn beim
+// Zeichnen und kann kein Modul laden; ihn dort abzuschreiben waere die fuenfte
+// Antwort auf "welcher Titel ist das?" gewesen - und genau davon kamen die
+// doppelten Watchlist-Eintraege. Also geht die eine Antwort hier hinaus.
+const watchlist = require("./watchlist");
 
 contextBridge.exposeInMainWorld("streamingBrowser", {
   init: () => ipcRenderer.invoke("app:init"),
@@ -53,6 +58,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   browserCommand: (command) => ipcRenderer.invoke("browser:command", command),
   toggleCurrentFavorite: () => ipcRenderer.invoke("favorites:toggle-current"),
   removeFavorite: (id) => ipcRenderer.invoke("favorites:remove", id),
+  // Rein rechnend, ohne Hauptprozess: Titel, Adresse und Art hinein, der
+  // Schluessel heraus.
+  werkSchluessel: (titel, url, art) => watchlist.werkSchluessel(titel, url, art),
   removeFromLibrary: (id) => ipcRenderer.invoke("library:remove", id),
   // Von vorn ansehen, ohne die Mediathek zu verlassen.
   rewatchFromStart: (id, optionen) => ipcRenderer.invoke("library:rewatch", id, optionen || {}),

@@ -367,6 +367,11 @@ pruefe("Ohne Eintraege gibt es keinen Knopf",
       saveFavorites: () => { gespeichert.male += 1; },
       sendActiveState: () => { gespeichert.gemeldet += 1; },
       ipcMain: { handle: (_name, fn) => { umgebung.__fn = fn; } },
+      // Der Handler entscheidet nicht mehr selbst, welcher Titel gemeint ist -
+      // das tut die zentrale Watchlist-Regel. Sie kommt hier echt herein und
+      // nicht als Attrappe: eine nachgebaute Identitaet waere genau der
+      // Fehler, den sie beseitigt.
+      watchlist: require("../src/watchlist"),
       Date, String, Boolean, Object, Array
     };
     vm.createContext(umgebung);

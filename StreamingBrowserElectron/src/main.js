@@ -79,6 +79,10 @@ const bildausschnitt = require("../shared/bildausschnitt");
 // Kern laedt. Die Namen kommen unveraendert herein, damit jede Aufrufstelle
 // bleiben kann, wie sie war.
 const fortschritt = require("./fortschritt");
+// Die eine Antwort auf "welcher Titel ist das?" - und die Watchlist, die darauf
+// aufbaut. Siehe den Kopf von src/watchlist.js: vorher gab es vier Antworten,
+// und wo zwei davon aufeinandertrafen, entstanden doppelte Eintraege.
+const watchlist = require("./watchlist");
 const messung = require("./messung");
 const seitendaten = require("./seitendaten");
 const bildnachreichung = require("./bildnachreichung");
@@ -935,7 +939,18 @@ ipcMain.handle("favorites:toggle-current", async () => {
     createdAt: new Date().toISOString()
   };
 
-  const existingIndex = favorites.findIndex((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized));
+  // Zuerst die Regel des Fortschritts (Anbieter + Slug), dann der kanonische
+  // Schluessel. Der zweite Schritt ist neu und faengt genau die Faelle, in
+  // denen der Titel schon da ist, der Anbieter aber ein anderer heisst - sonst
+  // entstuende hier ein zweiter Eintrag desselben Werks.
+  const werk = watchlist.werkSchluessel(meta.title || activeView.webContents.getTitle(), url, meta.type);
+  const existingIndex = (() => {
+    const direkt = favorites.findIndex((favorite) => favoriteMatchesCurrentProviderTitle(favorite, provider, url, normalized));
+    if (direkt >= 0) return direkt;
+    if (!werk) return -1;
+    return favorites.findIndex((favorite) => watchlist.istPrivat(favorite)
+      && watchlist.schluesselVon(favorite) === werk);
+  })();
   if (existingIndex >= 0) {
     const existing = favorites[existingIndex];
     const favorite = {
@@ -985,18 +1000,37 @@ ipcMain.handle("favorites:toggle-current", async () => {
   return { favorites, favorite, added: true };
 });
 
+// Von der Watchlist nehmen.
+//
+// Ueber den kanonischen Schluessel und nicht ueber die gereichte Kennung. Der
+// Unterschied war der gemeldete Fehler: die Oberflaeche zeigt auf einer Karte
+// den *weitesten* Stand eines Titels, und das ist oft der Eintrag einer
+// Watchparty-Runde. Genau dessen Kennung kam hier an - ein Eintrag, der gar
+// nicht auf der Watchlist stand. Das Entfernen setzte dort ein `favorite`, das
+// schon false war, und die Karte blieb stehen. Nachgestellt an der echten
+// Ablage vom 31.08.2026: zwei Pokémon-Karten, beide mit der Kennung des
+// Raum-Eintrags "Gummikäse".
+//
+// Jetzt entscheidet das Werk: jeder Eintrag dazu verlaesst die Merkliste.
 ipcMain.handle("favorites:remove", (_event, favoriteId) => {
-  const index = favorites.findIndex((favorite) => favorite.id === favoriteId);
-  if (index < 0) return favorites;
-  const favorite = favorites[index];
-  if (favorite.watched || favorite.lastWatchedAt || Number(favorite.progress) > 0 || Array.isArray(favorite.activity) && favorite.activity.length) {
-    favorite.favorite = false;
-    favorite.updatedAt = new Date().toISOString();
-  } else {
-    favorites.splice(index, 1);
+  const kennung = String(favoriteId || "");
+  const urteil = watchlist.entfernen(favorites, kennung);
+  if (!urteil.geaendert) return favorites;
+
+  // Wer nichts hinterlassen hat, verschwindet ganz - er waere sonst eine
+  // Karteileiche ohne Verlauf, ohne Stand und ohne Liste, in der er stuende.
+  const leer = (favorite) => !favorite.watched && !favorite.lastWatchedAt
+    && !(Number(favorite.progress) > 0)
+    && !(Array.isArray(favorite.activity) && favorite.activity.length)
+    && !favorite.completed;
+  for (const favorite of urteil.entfernt.filter(leer)) {
+    const stelle = favorites.indexOf(favorite);
+    if (stelle >= 0) favorites.splice(stelle, 1);
+    if (activeFavoriteId === favorite.id) activeFavoriteId = null;
   }
-  if (activeFavoriteId === favoriteId) activeFavoriteId = null;
+  if (activeFavoriteId === kennung) activeFavoriteId = null;
   saveFavorites();
+  sendActiveState();
   return favorites;
 });
 
@@ -1223,22 +1257,20 @@ ipcMain.handle("favorites:mark-completed", (_event, favoriteId) => {
 // Das Gegenstueck zum Abhaken: dort wird der Merker geloescht, hier gesetzt.
 // Am Weiterschauen-Stand aendert sich nichts, die beiden Listen sind
 // unabhaengig voneinander.
+// Dasselbe Werk, dieselbe Entscheidung - und derselbe Schluessel wie beim
+// Entfernen. Die Regel (auch das Aufloesen des Widerspruchs zur Mediathek)
+// steht in src/watchlist.js, damit Vormerken, Entfernen und Nachfragen nicht
+// wieder drei verschiedene Identitaeten benutzen.
 ipcMain.handle("favorites:set-watchlist", (_event, favoriteId, wert) => {
-  const favorite = favorites.find((item) => item.id === String(favoriteId || ""));
-  if (!favorite) return { favorites, favorite: false, gefunden: false };
-
+  const kennung = String(favoriteId || "");
   const gemerkt = wert !== false;
-  if (favorite.favorite === gemerkt) return { favorites, favorite: gemerkt, gefunden: true };
-  favorite.favorite = gemerkt;
-  // Was auf der Watchlist steht, gilt nicht mehr als abgehakt - sonst stuende
-  // derselbe Titel gleichzeitig in der Mediathek und unter "will ich sehen".
-  if (gemerkt && favorite.completed) {
-    favorite.completed = false;
-    favorite.completedManually = false;
-    favorite.completedAt = "";
-    favorite.rewatching = false;
-  }
-  favorite.updatedAt = new Date().toISOString();
+  const urteil = gemerkt
+    ? watchlist.aufnehmen(favorites, kennung)
+    : watchlist.entfernen(favorites, kennung);
+  const gefunden = gemerkt ? Boolean(urteil.eintrag) : Boolean(watchlist.schluesselAus(favorites, kennung));
+  if (!gefunden) return { favorites, favorite: false, gefunden: false };
+  if (!urteil.geaendert) return { favorites, favorite: gemerkt, gefunden: true };
+
   saveFavorites();
   sendActiveState();
   return { favorites, favorite: gemerkt, gefunden: true };
@@ -9549,6 +9581,16 @@ function loadFavorites() {
     // beim Laden zurueck.
     const gerichtet = widersprucheGeraderichten(geladen);
     if (gerichtet) console.log(`[ELFIX] ${gerichtet} Titel in die Mediathek zurueckgeholt`);
+    // Doppelte Eintraege desselben Werks zusammenfuehren. Laeuft bei jedem
+    // Laden und tut nur dann etwas, wenn wirklich zwei Eintraege denselben
+    // Titel meinen - dann aber fuehrt es zusammen und loescht nicht: Verlauf,
+    // abgeschlossene Folgen, eigenes Bild, gelegte Stelle und Serienlaenge
+    // gehen mit. Warum es sie ueberhaupt gibt, steht im Kopf von watchlist.js.
+    const verschmolzen = watchlist.doppelteZusammenfuehren(geladen);
+    if (verschmolzen.zusammengefuehrt) {
+      console.log(`[ELFIX] ${verschmolzen.zusammengefuehrt} doppelte Eintraege zusammengefuehrt: `
+        + verschmolzen.berichte.map((bericht) => bericht.titel || bericht.schluessel).join(", "));
+    }
     // Steht bewusst hinter dem Ausgleich: mediathektest prueft, dass
     // widersprucheGeraderichten() beim Laden laeuft, und misst dafuer den
     // Abstand zum Anfang der Funktion. Alles, was nicht davor stehen muss,

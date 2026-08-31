@@ -3,6 +3,69 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.71.0 — 31. August 2026
+
+Die Watchlist hatte drei Fehler, und es war einer: ELFIX hatte keine
+einheitliche Antwort darauf, welcher Titel ein Eintrag ist.
+
+**„Pokémon · Staffel 1 Folge 16" stand zweimal da, ließ sich nicht entfernen
+und nicht hinzufügen.** An der echten Ablage nachgestellt, bevor eine Zeile
+geändert wurde. Für „derselbe Titel" gab es vier Antworten, je nachdem wer
+fragte: der Fortschritt nahm Anbieter und Slug aus der Adresse, der
+Geräteabgleich einen Schlüssel aus dem *Titel*, das eigene Bild eine dritte
+Regel, die Oberfläche eine vierte. Wo zwei davon aufeinandertreffen, entsteht
+ein zweiter Eintrag — und niemand führt ihn je wieder zusammen.
+
+Ausgelöst hat es die Titelnormalisierung: sie faltet ä, ö, ü und ß, streicht
+aber jeden anderen Akzent ersatzlos. „Pokémon" ergibt `pokmon`, „Pokemon"
+ergibt `pokemon`. Meldet ein Gerät die eine Schreibweise und das andere die
+andere, findet der Abgleich nichts und legt an. In der Ablage standen daraufhin
+**drei** private Pokémon-Einträge mit identischer Adresse, identischem Anbieter
+und identischem Slug; zwei davon vorgemerkt. Betroffen waren drei Titel:
+Pokémon, Tomb Raider King und Die Legende von Korra.
+
+**Entfernen lief ins Leere, weil die Karte einem fremden Eintrag gehörte.** Die
+Watchlist zeigte auf jeder Karte den *weitesten* Stand — und der gehört meist
+dem Eintrag einer Watchparty-Runde. Die Karte trug damit dessen Kennung, und
+„Aus Watchlist entfernen" setzte ein `favorite` auf `false`, das dort schon
+`false` war. Beide Pokémon-Karten trugen dieselbe Kennung (die des Raums
+„Gummikäse") und sahen deshalb bis auf den Pixel gleich aus. Aus demselben
+Grund zeigte das Herz in der Kopfzeile ein leeres Symbol für einen längst
+vorgemerkten Titel: es verglich die offene Adresse mit der Adresse der Karte,
+und die stand bei Folge 16, während man Folge 1 ansah. Ein Druck darauf legte
+dann an, statt herunterzunehmen.
+
+**Es gibt jetzt genau einen kanonischen Schlüssel**, und alle fragen ihn. Er
+kommt aus der Adresse und nicht aus dem Titel — eine Adresse schreibt niemand
+ab. Der Slug einer Serie ist auf jedem Gerät, in jeder Schreibweise und unter
+jedem Wirt derselbe; S.to läuft hier über eine IP und dort über seine Domain.
+Vormerken, Entfernen, Nachfragen, die Liste selbst und das Zusammenführen
+benutzen dieselbe Funktion, am Rechner wie auf dem Telefon und am Fernseher.
+Die vierte Identität in der Oberfläche ist ersatzlos entfallen.
+
+Ausdrücklich **nicht** angefasst: die Titelnormalisierung selbst und der
+Schlüssel des Geräteabgleichs. An ihnen hängen der Raumschlüssel der Watchparty
+und die Folgenkennung der Statistik — wer sie ändert, benennt laufende Runden
+um und zählt gesehene Folgen ein zweites Mal. Der Abgleich sucht stattdessen
+duldsam: geschrieben wird weiter der alte Schlüssel, gefunden wird zusätzlich
+über den kanonischen. Auf der Leitung ändert sich kein Byte.
+
+**Bestehende Doppelte werden beim Laden zusammengeführt, nicht gelöscht.**
+Leiteintrag ist der weiteste Stand; Verlauf, abgeschlossene Folgen, eigenes
+Bild samt Ausschnitt, die von Hand gelegte Stelle in der Mediathek, die
+Serienlänge, die Zahl der Durchläufe und das älteste Anlegedatum gehen mit.
+„Von Hand abgehakt" überlebt, Einträge einer Watchparty-Runde bleiben
+unberührt — sie sind bewusst eigene Stände. Zusammengeführt wird über den
+Schlüssel und nie über den sichtbaren Namen: zwei Titel können gleich heißen
+und verschiedene Werke sein.
+
+Die Karte behält damit die Kennung ihres eigenen Eintrags, zeigt aber weiterhin
+den weitesten Stand — und öffnet ihn auch. Vorher hätte auf ihr „Folge 16"
+gestanden und Folge 12 gestartet.
+
+Eine Serie ist dabei eine Serie: derselbe Titel bei zwei Anbietern ist ein
+Watchlist-Eintrag, nicht zwei.
+
 ## 1.70.0 — 31. August 2026
 
 Die Mediathek war eine Sackgasse. Wer eine Serie durch hatte, konnte sie nicht

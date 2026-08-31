@@ -988,8 +988,22 @@ function vonHandAnlegen(zustand, provider, url, angaben = {}) {
 
   const normalized = normalizeFavoriteUrl(url);
   const jetzt = new Date().toISOString();
+  // Zwei Fragen, in dieser Reihenfolge: kennt der Fortschritt diesen Eintrag
+  // (Anbieter + Slug), und - wenn nicht - kennt ihn die Watchlist unter ihrem
+  // kanonischen Schluessel? Die zweite Frage ist neu. Ohne sie legte ein
+  // zweites Vormerken desselben Werks einen zweiten Eintrag an, sobald sich
+  // der Anbieter nicht wiedererkennen liess; genau solche Doppelten standen in
+  // der Ablage.
+  //
+  // Das require steht hier und nicht oben: watchlist.js braucht dieses Modul,
+  // und ein gegenseitiges require auf oberster Ebene bekaeme die Haelfte der
+  // Exporte. Zum Zeitpunkt des Aufrufs ist beides fertig geladen.
+  const watchlistModul = require("./watchlist");
+  const werk = watchlistModul.werkSchluessel(angaben.title, url, angaben.type);
   const vorhanden = favoriten.find(
-    (favorit) => favoriteMatchesCurrentProviderTitle(favorit, provider, url, normalized));
+    (favorit) => favoriteMatchesCurrentProviderTitle(favorit, provider, url, normalized))
+    || (werk ? favoriten.find((favorit) => watchlistModul.istPrivat(favorit)
+      && watchlistModul.schluesselVon(favorit) === werk) : null);
   if (vorhanden) {
     const schonDabei = vorhanden.favorite !== false && !vorhanden.completed;
     vorhanden.favorite = true;

@@ -35,6 +35,7 @@ def kernModule = [
     "src/kalender.js",
     "src/discover.js",
     "src/taste.js",
+    "src/watchlist.js",
     "src/watchparty.js",
     "src/watchparty-sync.js",
     "src/watchparty-autostart.js",

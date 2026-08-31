@@ -743,6 +743,11 @@ public class MainActivity extends Activity {
         kern.wennBereit(this::kernSelbsttest);
         bestand = new Bestand(this, kern, this::bestandGeaendert, this::showToast);
         bestand.laden();
+        // Einmal nach dem Start doppelte Eintraege desselben Werks
+        // zusammenfuehren - dieselbe Bereinigung, die der Rechner beim Laden
+        // faehrt, und dieselbe Regel (src/watchlist.js im Kern). Sie braucht
+        // den Kern, deshalb erst hier und nicht in laden().
+        kern.wennBereit(() -> bestand.doppelteZusammenfuehren());
         // Der Weg in die Rahmen muss stehen, *bevor* ihn jemand bekommt.
         //
         // Er wurde bis hierher erst weiter unten angelegt, neben Marken und
@@ -8607,37 +8612,36 @@ public class MainActivity extends Activity {
         if (webView == null || webView.getUrl() == null || bestand == null) return;
         String url = webView.getUrl();
 
-        Favorite vorhanden = bestand.mitId(bestand.aktiverEintragId());
-        if (vorhanden != null && vorhanden.istWatchlist()) {
-            bestand.watchlistSetzen(vorhanden.id(), false);
-            showToast("Von der Watchlist genommen");
-            updateFavoriteButton();
-            return;
-        }
-        if (vorhanden != null) {
-            bestand.watchlistSetzen(vorhanden.id(), true);
-            showToast("Zur Watchlist hinzugefügt");
-            updateFavoriteButton();
-            return;
-        }
-
-        // Noch kein Eintrag: die Regel legt ihn an. "Geoeffnet" reicht als
-        // Anlass - Fortschritt kommt, sobald wirklich etwas laeuft.
         String titel = webView.getTitle() == null || webView.getTitle().isEmpty()
             ? activeProvider.name : webView.getTitle();
-        JSONObject meta = new JSONObject();
-        try {
-            meta.put("title", titel);
-            meta.put("vonHand", true);
-        } catch (Exception ignoriert) {
-            // Zwei Felder in einem frischen Objekt koennen nicht scheitern.
-        }
-        // Das Titelbild dieser Seite, falls es schon gefunden wurde: die
-        // geteilte Regel setzt es beim Anlegen und danach nicht mehr.
-        if (titelbild != null) meta = titelbild.ergaenzen(meta, url);
-        bestand.anlegenUndMerken(activeProvider, url, meta, () -> {
-            updateFavoriteButton();
-            showToast("Zur Watchlist hinzugefügt");
+
+        // Gefragt wird nach dem Werk, nicht nach dem aktiven Eintrag: waehrend
+        // einer Watchparty ist der aktive der des Raums, und der gehoert nie
+        // auf die eigene Merkliste. Die Regel steht in watchlist.js und laeuft
+        // im Kern - dieselbe, die der Rechner benutzt.
+        bestand.watchlistUmschalten(url, titel, "", vorgemerkt -> {
+            if (vorgemerkt != null) {
+                showToast(vorgemerkt ? "Zur Watchlist hinzugefügt" : "Von der Watchlist genommen");
+                updateFavoriteButton();
+                return;
+            }
+
+            // Noch kein Eintrag: die Regel legt ihn an. "Geoeffnet" reicht als
+            // Anlass - Fortschritt kommt, sobald wirklich etwas laeuft.
+            JSONObject meta = new JSONObject();
+            try {
+                meta.put("title", titel);
+                meta.put("vonHand", true);
+            } catch (Exception ignoriert) {
+                // Zwei Felder in einem frischen Objekt koennen nicht scheitern.
+            }
+            // Das Titelbild dieser Seite, falls es schon gefunden wurde: die
+            // geteilte Regel setzt es beim Anlegen und danach nicht mehr.
+            if (titelbild != null) meta = titelbild.ergaenzen(meta, url);
+            bestand.anlegenUndMerken(activeProvider, url, meta, () -> {
+                updateFavoriteButton();
+                showToast("Zur Watchlist hinzugefügt");
+            });
         });
     }
 

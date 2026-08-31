@@ -29,6 +29,7 @@ const fortschritt = require("./fortschritt");
 const providerModel = require("../shared/provider-model");
 const taste = require("./taste");
 const schluesselModul = require("./geraete-schluessel");
+const watchlist = require("./watchlist");
 
 /**
  * Der Schluessel, unter dem ein Titel auf jedem Geraet zu finden ist.
@@ -49,10 +50,39 @@ function titelSchluessel(favorit) {
  *
  * <p>Ausdruecklich ohne die der Watchparty: derselbe Anime kann in zwei Raeumen
  * und einmal privat dastehen, und nur der private gehoert diesem Abgleich.
+ *
+ * <p>Gesucht wird zweistufig, und die zweite Stufe ist eine Reparatur vom
+ * 31.08.2026. {@link titelSchluessel} entsteht aus dem *Titel*, und Titel
+ * werden abgeschrieben: `taste.titelSchluessel` faltet ä, ö, ü und ß, streicht
+ * aber jeden anderen Akzent ersatzlos. "Pokémon" ergibt damit `pokmon`,
+ * "Pokemon" dagegen `pokemon`. Meldete das eine Geraet die eine Schreibweise
+ * und das andere die andere, fand diese Suche nichts - und {@link uebernehmen}
+ * legte einen zweiten Eintrag an. In der echten Ablage standen so drei private
+ * "Pokémon"-Eintraege mit identischer Adresse, identischem Anbieter und
+ * identischem Slug. Die Watchlist zeigte den Titel zweimal, und Entfernen half
+ * nicht.
+ *
+ * <p>Die zweite Stufe fragt deshalb den kanonischen Schluessel aus
+ * watchlist.js. Der kommt aus der *Adresse* und nicht aus dem Titel, also gibt
+ * es ihn nur einmal - dafuer braucht sie den ganzen Stand und nicht nur seinen
+ * Schluessel. Ohne Stand bleibt es bei der ersten Stufe.
+ *
+ * <p>Geschrieben wird weiterhin {@link titelSchluessel}: an ihm haengt der
+ * Raumschluessel der Watchparty und die Kennung, unter der die Gegenseite
+ * sucht. Es aendert sich also nichts auf der Leitung - nur hier wird mehr
+ * gefunden.
+ *
+ * @param stand der eingegangene Stand, falls vorhanden - er traegt die Adresse
  */
-function eintragFinden(favoriten, key) {
-  return (favoriten || []).find((favorit) => !String(favorit?.watchpartyRoom || "")
-    && titelSchluessel(favorit) === key) || null;
+function eintragFinden(favoriten, key, stand = null) {
+  const liste = favoriten || [];
+  const privat = (favorit) => !String(favorit?.watchpartyRoom || "");
+  const direkt = liste.find((favorit) => privat(favorit) && titelSchluessel(favorit) === key);
+  if (direkt) return direkt;
+
+  const werk = stand ? watchlist.werkSchluessel(stand.title, stand.url, stand.type) : "";
+  if (!werk) return null;
+  return liste.find((favorit) => privat(favorit) && watchlist.schluesselVon(favorit) === werk) || null;
 }
 
 /**
@@ -163,7 +193,7 @@ function uebernehmen(stand, umgebung = {}) {
   const favoriten = umgebung.favoriten || [];
   const key = String(stand?.key || "");
   if (!key) return null;
-  const lokal = eintragFinden(favoriten, key);
+  const lokal = eintragFinden(favoriten, key, stand);
 
   if (!lokal) {
     // Ohne passenden Anbieter waere der Eintrag eine Karte, die sich nicht
@@ -282,7 +312,13 @@ function anbieterFinden(anbieter, url, providerName) {
     || null;
 }
 
+// Der kanonische Schluessel gehoert nicht hierher, sondern nach watchlist.js -
+// er steht hier nur als Weiterreichung, damit Aufrufer dieses Moduls nicht ein
+// zweites Modul kennen muessen.
+const werkSchluessel = watchlist.werkSchluessel;
+
 module.exports = {
+  werkSchluessel,
   titelSchluessel,
   zurueckgehalten,
   anbieterFinden,
