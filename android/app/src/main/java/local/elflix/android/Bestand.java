@@ -63,6 +63,35 @@ public final class Bestand {
     private JSONArray eintraege = new JSONArray();
     /** Welcher Eintrag gerade geoeffnet ist - entscheidet bei mehrfach vorhandenen Titeln. */
     private String aktiverEintragId = "";
+    /**
+     * Der kanonische Schluessel je Eintrag - Kennung auf Werk.
+     *
+     * <p>Die Listen werden synchron gezeichnet und koennen nicht je Zeile auf
+     * eine Antwort aus dem Kern warten. Gerechnet wird der Schluessel trotzdem
+     * dort ({@code watchlist.js}); hier liegt nur das Ergebnis. Ein Nachbau in
+     * Java waere die zweite Antwort auf "welcher Titel ist das?", und genau
+     * daran ist die Watchlist zerfallen.
+     */
+    private java.util.Map<String, String> werkeNachId = new java.util.HashMap<>();
+    /**
+     * Woran erkannt wird, dass sich die Zusammensetzung der Ablage geaendert
+     * hat.
+     *
+     * <p>Die Kennungen, aneinandergereiht - nicht der Inhalt. Fortschritt
+     * meldet sich im Sekundentakt und aendert Staende, aber keine Werke; nur
+     * wenn Eintraege dazukommen oder verschwinden, muss der Kern noch einmal
+     * gefragt werden.
+     */
+    private String werkeAbdruck = "";
+    /**
+     * Das Werk der gerade offenen Seite.
+     *
+     * <p>Beim Seitenwechsel einmal bestimmt, wie {@link #aktiverEintragId} -
+     * und getrennt von ihm. Der Fortschritt gehoert dem aktiven Eintrag, und
+     * das ist waehrend einer Watchparty der des Raums. Die Watchlist ist
+     * dagegen die private Liste, und der Herz-Knopf muss sie meinen.
+     */
+    private String offenesWerk = "";
     private StandMelder standMelder;
     private Sitzungsmelder sitzungsmelder;
     /**
@@ -101,6 +130,7 @@ public final class Bestand {
     public void laden() {
         eintraege = FavoriteStore.ladeRoh(context);
         Log.i(TAG, "Bestand geladen: " + eintraege.length() + " Eintraege");
+        werkeAuffrischen();
     }
 
     /**
@@ -132,6 +162,7 @@ public final class Bestand {
                 Log.i(TAG, "Bestand: " + urteil.optInt("zusammengefuehrt", 0)
                     + " doppelte Eintraege zusammengefuehrt");
                 speichern();
+                werkeAuffrischen();
                 if (beobachter != null) beobachter.bestandGeaendert();
             } catch (Exception ausnahme) {
                 Log.e(TAG, "Zusammenfuehren fehlgeschlagen", ausnahme);
@@ -141,6 +172,60 @@ public final class Bestand {
 
     public void speichern() {
         FavoriteStore.speichereRoh(context, eintraege);
+        // Kostet einen Zeichenvergleich; der Aufruf in den Kern geht nur
+        // hinaus, wenn wirklich Eintraege dazugekommen oder verschwunden sind.
+        werkeAuffrischen();
+    }
+
+    /** Die Kennungen aneinandergereiht - der Abdruck der Zusammensetzung. */
+    private String idsAbdruck() {
+        StringBuilder bau = new StringBuilder(eintraege.length() * 8);
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag != null) bau.append(eintrag.optString("id", "")).append(',');
+        }
+        return bau.toString();
+    }
+
+    /**
+     * Die Werkschluessel nachziehen, wenn sich die Ablage zusammengesetzt hat.
+     *
+     * <p>Ein Aufruf in den Kern, und nur dann, wenn wirklich Eintraege
+     * dazugekommen oder verschwunden sind. Waehrend der Wiedergabe aendern sich
+     * Staende, nicht Werke - dort passiert hier nichts.
+     */
+    public void werkeAuffrischen() {
+        if (kern == null || !kern.istBereit()) return;
+        String abdruck = idsAbdruck();
+        if (abdruck.equals(werkeAbdruck)) return;
+        werkeAbdruck = abdruck;
+        kern.rufe("watchlist.schluesselJeEintrag", Kern.args(eintraege), (wert, fehler) -> {
+            if (fehler != null || wert == null) return;
+            try {
+                JSONObject karte = new JSONObject(wert);
+                java.util.HashMap<String, String> neu = new java.util.HashMap<>();
+                for (java.util.Iterator<String> namen = karte.keys(); namen.hasNext(); ) {
+                    String id = namen.next();
+                    neu.put(id, karte.optString(id, ""));
+                }
+                werkeNachId = neu;
+                if (beobachter != null) beobachter.bestandGeaendert();
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Werkschluessel unlesbar", ausnahme);
+            }
+        });
+    }
+
+    /** Das Werk eines Eintrags, oder "" solange der Kern noch nicht geantwortet hat. */
+    public String werkVon(Favorite eintrag) {
+        if (eintrag == null) return "";
+        String schluessel = werkeNachId.get(eintrag.id());
+        return schluessel == null ? "" : schluessel;
+    }
+
+    /** Das Werk der offenen Seite - siehe {@link #offenesWerk}. */
+    public String offenesWerk() {
+        return offenesWerk;
     }
 
     public String aktiverEintragId() {
@@ -200,13 +285,44 @@ public final class Bestand {
         return liste;
     }
 
-    /** Die Mediathek: was durch ist. */
+    /**
+     * Die Mediathek: was durch ist - und je Werk einmal.
+     *
+     * <p>Denselben Titel gibt es absichtlich mehrfach: den eigenen Eintrag und
+     * je Watchparty-Runde einen. Auf der Startseite ist das getrennt, hier
+     * nicht: die Mediathek zeigt das Werk und nicht den Raum, in dem man es
+     * geschaut hat. Ohne diese Zusammenlegung stand derselbe Film zweimal da -
+     * am Rechner war das laengst behoben, hier nicht.
+     *
+     * <p>Uebrig bleibt der private Eintrag: er traegt die von Hand gelegte
+     * Stelle und die laengere Geschichte. Gibt es nur einen aus einer Runde,
+     * steht eben der da. Dieselbe Wahl wie in {@code istBessererMediathekEintrag}
+     * am Rechner.
+     */
     public List<Favorite> mediathek() {
-        ArrayList<Favorite> liste = new ArrayList<>();
+        java.util.LinkedHashMap<String, Favorite> nachWerk = new java.util.LinkedHashMap<>();
+        ArrayList<Favorite> ohneSchluessel = new ArrayList<>();
         for (Favorite eintrag : alle()) {
-            if (eintrag.istAbgeschlossen()) liste.add(eintrag);
+            if (!eintrag.istAbgeschlossen()) continue;
+            String werk = werkVon(eintrag);
+            // Ohne Schluessel wird nichts zusammengelegt - lieber eine Karte zu
+            // viel als zwei verschmolzene, die nichts miteinander zu tun haben.
+            if (werk.isEmpty()) { ohneSchluessel.add(eintrag); continue; }
+            Favorite bisher = nachWerk.get(werk);
+            if (bisher == null || istBesserFuerMediathek(eintrag, bisher)) nachWerk.put(werk, eintrag);
         }
+        ArrayList<Favorite> liste = new ArrayList<>(nachWerk.values());
+        liste.addAll(ohneSchluessel);
         return liste;
+    }
+
+    private static boolean istBesserFuerMediathek(Favorite neu, Favorite bisher) {
+        boolean neuPrivat = neu.watchpartyRaum().isEmpty();
+        boolean bisherPrivat = bisher.watchpartyRaum().isEmpty();
+        if (neuPrivat != bisherPrivat) return neuPrivat;
+        // Beide gleich privat: der aeltere hat die laengere Geschichte hinter
+        // sich.
+        return neu.createdAt().compareTo(bisher.createdAt()) < 0;
     }
 
     /** Der Verlauf: alles, in der Reihenfolge der Ablage - die ist bereits die zeitliche. */
@@ -384,9 +500,18 @@ public final class Bestand {
     public void aktuellenEintragBestimmen(Provider provider, String url, Runnable danach) {
         if (kern == null || !kern.istBereit() || provider == null || url == null) {
             aktiverEintragId = "";
+            offenesWerk = "";
             if (danach != null) danach.run();
             return;
         }
+        // Das Werk der offenen Seite - drei Zeichenketten hinein, eine heraus.
+        // Es haengt allein an der Adresse und nicht daran, welcher Eintrag
+        // gerade aktiv ist; genau deshalb kann der Herz-Knopf damit auch
+        // waehrend einer Watchparty die richtige Antwort geben.
+        kern.rufe("watchlist.werkSchluessel", Kern.args("", url, ""), (wert, fehler) -> {
+            offenesWerk = fehler == null ? Kern.text(wert) : "";
+            if (danach != null) danach.run();
+        });
         JSONArray argumente = new JSONArray();
         argumente.put(eintraege);
         argumente.put(provider.alsJson());

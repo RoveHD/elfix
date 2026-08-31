@@ -238,9 +238,18 @@ function rendererAbschnitt(anfang) {
   return zeilen.slice(von, bis + 1).join("\n");
 }
 
-const mediathek = { console, Number, String, Array, Math, Date, Boolean, Object, Set };
+// Die Entdoppelung fragt inzwischen den kanonischen Werkschluessel und nicht
+// mehr die Adresse. Er kommt hier echt herein - eine Attrappe waere die zweite
+// Antwort auf "welcher Titel ist das?", und genau davon kamen die Doppelten.
+// Die Eintraege unten tragen bewusst keine Adresse: dann greift der Rueckfall
+// auf die normalisierte Adresse, und genau der wird hier geprueft.
+const mediathek = {
+  console, Number, String, Array, Math, Date, Boolean, Object, Set,
+  api: { werkSchluessel: (titel, url, art) => require("../src/watchlist").werkSchluessel(titel, url, art) }
+};
 vm.createContext(mediathek);
 vm.runInContext([
+  "function werkSchluessel",
   "function mediathekEntdoppeln",
   "function istBessererMediathekEintrag",
   "function gesehenAm",

@@ -8647,9 +8647,23 @@ public class MainActivity extends Activity {
 
     private void updateFavoriteButton() {
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-        Favorite offen = bestand == null ? null : bestand.mitId(bestand.aktiverEintragId());
-        boolean saved = webView != null && webView.getUrl() != null
-            && offen != null && offen.istWatchlist();
+        // Gefragt wird nach dem Werk, nicht nach dem aktiven Eintrag. Waehrend
+        // einer Watchparty ist der aktive der des Raums, und der steht nie auf
+        // der eigenen Merkliste: das Herz blieb dann leer, obwohl der Titel
+        // laengst vorgemerkt war. Der Knopf selbst hat schon vorher richtig
+        // gehandelt - nur seine Anzeige log.
+        boolean saved = false;
+        if (webView != null && webView.getUrl() != null && bestand != null) {
+            String werk = bestand.offenesWerk();
+            if (werk.isEmpty()) {
+                Favorite offen = bestand.mitId(bestand.aktiverEintragId());
+                saved = offen != null && offen.istWatchlist();
+            } else {
+                for (Favorite eintrag : bestand.watchlist()) {
+                    if (werk.equals(bestand.werkVon(eintrag))) { saved = true; break; }
+                }
+            }
+        }
         if (browserFavoriteIcon != null) {
             // Nur wenn sich das Zeichen wirklich aendert, schnappt es zu.
             // Diese Zeile laeuft bei jedem Seitenwechsel im Browser mit, und

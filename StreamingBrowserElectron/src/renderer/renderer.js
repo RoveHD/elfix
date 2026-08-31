@@ -5146,7 +5146,15 @@ function mediathekSortieren(liste, sortierung) {
 function mediathekEntdoppeln(liste) {
   const nachWerk = new Map();
   for (const eintrag of liste) {
-    const schluessel = String(eintrag.normalizedUrl || eintrag.url || eintrag.id);
+    // Der kanonische Schluessel, dieselbe Antwort wie ueberall sonst. Vorher
+    // stand hier die normalisierte Adresse, und die trennt, was zusammengehoert:
+    // steht der private Eintrag auf der letzten Folge und der einer Runde auf
+    // einer anderen, sind das zwei Adressen und war es zwei Karten. Solange
+    // beide zufaellig gleich endeten, fiel es nicht auf.
+    //
+    // Ohne Schluessel bleibt die Adresse der Rueckfall: zusammengelegt wird nur,
+    // was sich sicher zuordnen laesst.
+    const schluessel = werkSchluessel(eintrag) || String(eintrag.normalizedUrl || eintrag.url || eintrag.id);
     const bisher = nachWerk.get(schluessel);
     if (!bisher) {
       nachWerk.set(schluessel, eintrag);

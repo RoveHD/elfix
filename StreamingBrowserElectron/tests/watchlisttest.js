@@ -374,6 +374,70 @@ pruefe("Ohne Titel und ohne Adresse gibt es keinen Schluessel",
     "der gehoert in die Mediathek");
 }
 
+/* --- Die Mediathek legt dasselbe Werk zusammen --------------------------- */
+//
+// Denselben Titel gibt es absichtlich mehrfach: den eigenen Eintrag und je
+// Watchparty-Runde einen. Die Mediathek zeigt das Werk und nicht den Raum -
+// entdoppelt hat sie aber ueber die normalisierte Adresse, und die trennt, was
+// zusammengehoert, sobald die beiden Eintraege auf verschiedenen Folgen enden.
+
+{
+  const vm = require("vm");
+  const src = lies("src/renderer/renderer.js");
+  const funktion = (name) => {
+    const von = src.indexOf(`function ${name}(`);
+    return src.slice(von, src.indexOf(String.fromCharCode(10) + "}", von) + 2);
+  };
+
+  const serie = (staffel, nummer) => `https://aniworld.to/anime/stream/bleach/staffel-${staffel}/episode-${nummer}`;
+  const probe = [
+    { id: "privat", title: "Bleach", url: serie(3, 14), normalizedUrl: serie(3, 14), type: "serie",
+      watchpartyRoom: "", completed: true, createdAt: "2026-08-01T00:00:00.000Z", libraryOrder: 2 },
+    { id: "raum", title: "Bleach", url: serie(3, 16), normalizedUrl: serie(3, 16), type: "serie",
+      watchpartyRoom: "Bangus", completed: true, createdAt: "2026-08-05T00:00:00.000Z" },
+    { id: "andere", title: "Naruto", url: "https://aniworld.to/anime/stream/naruto/staffel-1/episode-1",
+      normalizedUrl: "https://aniworld.to/anime/stream/naruto/staffel-1/episode-1", type: "serie",
+      watchpartyRoom: "", completed: true, createdAt: "2026-08-02T00:00:00.000Z" }
+  ];
+
+  const umgebung = {
+    favorites: probe, Number, String, Boolean, Math, URL, console,
+    api: { werkSchluessel: (titel, url, art) => watchlist.werkSchluessel(titel, url, art) }
+  };
+  vm.createContext(umgebung);
+  for (const name of ["werkSchluessel", "mediathekEntdoppeln", "istBessererMediathekEintrag"]) {
+    vm.runInContext(funktion(name), umgebung);
+  }
+  const karten = vm.runInContext("mediathekEntdoppeln(favorites)", umgebung);
+
+  // Was die alte Regel getan haette: nach normalisierter Adresse.
+  const nachAdresse = new Set(probe.map((eintrag) => String(eintrag.normalizedUrl || eintrag.url || eintrag.id)));
+  pruefe("Nach Adresse waeren es drei Karten gewesen", nachAdresse.size === 3,
+    "privat auf Folge 14, die Runde auf Folge 16 - zwei Adressen, ein Werk");
+  pruefe("Nach dem Werk sind es zwei", karten.length === 2, `${karten.length} Karten`);
+  pruefe("Uebrig bleibt der private Eintrag",
+    karten.some((eintrag) => eintrag.id === "privat") && !karten.some((eintrag) => eintrag.id === "raum"),
+    "er traegt die gelegte Stelle und die laengere Geschichte");
+  pruefe("Ein fremder Titel bleibt daneben stehen",
+    karten.some((eintrag) => eintrag.id === "andere"));
+}
+
+/* --- Die Schluesselkarte fuer das Telefon -------------------------------- */
+
+{
+  const probe = [
+    { id: "a", title: "Bleach", url: "https://aniworld.to/anime/stream/bleach/staffel-1/episode-1", type: "serie" },
+    { id: "b", title: "Bleach", url: "https://aniworld.to/anime/stream/bleach/staffel-3/episode-14", type: "serie" },
+    { id: "c", title: "", url: "", type: "" }
+  ];
+  const karte = watchlist.schluesselJeEintrag(probe);
+  pruefe("Zwei Folgen derselben Serie bekommen denselben Schluessel",
+    karte.a === karte.b && Boolean(karte.a), karte.a);
+  pruefe("Ein Eintrag ohne Schluessel fehlt in der Karte",
+    !("c" in karte),
+    "was keinen Schluessel hat, wird nirgends zusammengelegt");
+}
+
 /* --- Eine Identitaet, nicht vier ----------------------------------------- */
 
 {
@@ -424,8 +488,30 @@ pruefe("Ohne Titel und ohne Adresse gibt es keinen Schluessel",
   pruefe("Das Modul liegt im Kern der Android-App",
     /"src\/watchlist\.js"/.test(GRADLE),
     "sonst faende der Kern es nicht");
+  pruefe("Die Mediathek des Telefons legt dasselbe Werk zusammen",
+    /public List<Favorite> mediathek\(\)[\s\S]{0,900}?werkVon\(eintrag\)/.test(BESTAND)
+    && /istBesserFuerMediathek/.test(BESTAND),
+    "am Rechner war das laengst behoben, auf dem Telefon nicht");
+  pruefe("Die Schluessel kommen dafuer aus dem Kern",
+    /kern\.rufe\("watchlist\.schluesselJeEintrag"/.test(BESTAND)
+    && /kern\.rufe\("watchlist\.werkSchluessel"/.test(BESTAND));
+  pruefe("Und nur, wenn sich die Zusammensetzung geaendert hat",
+    /if \(abdruck\.equals\(werkeAbdruck\)\) return;/.test(BESTAND),
+    "waehrend der Wiedergabe aendern sich Staende, nicht Werke");
+  pruefe("Das Herz des Telefons fragt nach dem Werk",
+    /String werk = bestand\.offenesWerk\(\);/.test(ACTIVITY)
+    && /werk\.equals\(bestand\.werkVon\(eintrag\)\)/.test(ACTIVITY),
+    "der aktive Eintrag ist waehrend einer Runde der des Raums");
+  // Nennen darf Java den Schluessel - es ruft ihn ja im Kern ab. Was es nicht
+  // darf, ist ihn selbst ausrechnen: eine eigene Java-Methode dafuer waere die
+  // zweite Antwort auf dieselbe Frage.
+  // Eine Java-Methode, die den Schluessel liefert, hiesse "String
+  // werkSchluessel(...)". Ein Aufruf in den Kern sieht anders aus
+  // (kern.rufe("watchlist.werkSchluessel", ...)) und ist ausdruecklich erlaubt -
+  // nennen darf Java ihn, nur nicht selbst ausrechnen.
+  const baut = (quelle) => quelle.includes("String werkSchluessel");
   pruefe("Android baut den Schluessel nirgends selbst nach",
-    !/werkSchluessel/.test(BESTAND) && !/werkSchluessel/.test(ACTIVITY),
+    !baut(BESTAND) && !baut(ACTIVITY),
     "die Identitaet kommt ausschliesslich aus dem Kern");
 }
 

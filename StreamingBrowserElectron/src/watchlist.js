@@ -303,6 +303,33 @@ function entfernen(favoriten, was) {
 }
 
 /**
+ * Der Schluessel je Eintrag - fuer Listen, die synchron gezeichnet werden.
+ *
+ * <p>Fuer das Telefon. Es zeichnet seine Listen ohne den Kern (eine
+ * Bildlaufliste, die je Zeile eine Antwort abwartet, ruckelt), braucht den
+ * kanonischen Schluessel aber trotzdem - etwa um in der Mediathek den privaten
+ * Eintrag und den einer Runde als *ein* Werk zu erkennen.
+ *
+ * <p>Statt die Ableitung in Java nachzubauen, holt es sie hier einmal fuer die
+ * ganze Ablage und behaelt sie, solange sich deren Zusammensetzung nicht
+ * aendert. Ein Nachbau waere die zweite Antwort auf dieselbe Frage - und genau
+ * daran ist die Watchlist zerfallen.
+ *
+ * @returns {{[id: string]: string}} Kennung -> Schluessel; Eintraege ohne
+ *          Schluessel fehlen darin und werden nirgends zusammengelegt.
+ */
+function schluesselJeEintrag(favoriten) {
+  const karte = {};
+  for (const eintrag of favoriten || []) {
+    const id = String(eintrag?.id || "");
+    if (!id) continue;
+    const schluessel = schluesselVon(eintrag);
+    if (schluessel) karte[id] = schluessel;
+  }
+  return karte;
+}
+
+/**
  * Vormerken oder herunternehmen - je nachdem, was gerade gilt.
  *
  * <p>Fuer den Herz-Knopf. Er kennt die offene Adresse und sonst nichts, und
@@ -546,6 +573,7 @@ module.exports = {
   schluesselAus,
   steht,
   liste,
+  schluesselJeEintrag,
   aufnehmen,
   entfernen,
   umschalten,

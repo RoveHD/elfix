@@ -3,6 +3,39 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.73.0 — 31. August 2026
+
+Zwei Stellen nachgezogen, die nach dem Umbau der Watchlist offen geblieben
+waren — beide klein, beide von derselben Art: eine zweite Antwort auf die
+Frage, welcher Titel ein Eintrag ist.
+
+**Die Mediathek legt dasselbe Werk jetzt wirklich zusammen.** Am Rechner
+entdoppelte sie über die normalisierte Adresse. Die trennt aber, was
+zusammengehört: steht der private Eintrag auf Folge 14 und der aus einer
+Watchparty-Runde auf Folge 16, sind das zwei Adressen — und waren zwei Karten.
+Dass es bisher nicht auffiel, war Zufall; beide endeten meist auf derselben
+Folge. Jetzt entscheidet der kanonische Schlüssel, und die Adresse bleibt nur
+der Rückfall für Einträge, die keinen haben.
+
+**Am Telefon entdoppelte die Mediathek überhaupt nicht.** Der private Eintrag
+und der aus jeder Runde standen nebeneinander — dieselbe Sache, die am Rechner
+längst behoben war. Übrig bleibt der private: er trägt die von Hand gelegte
+Stelle und die längere Geschichte. Gerechnet wird der Schlüssel dabei nicht in
+Java, sondern einmal im Kern; behalten wird er, solange sich die
+Zusammensetzung der Ablage nicht ändert. Während der Wiedergabe ändern sich
+Stände, nicht Werke — dort geht kein einziger Aufruf hinaus.
+
+**Das Herz am Telefon zeigte während einer Watchparty das Falsche.** Es las den
+*aktiven* Eintrag, und das ist in einer Runde der des Raums; der steht nie auf
+der eigenen Merkliste, also blieb das Symbol leer, obwohl der Titel vorgemerkt
+war. Jetzt fragt es nach dem Werk der offenen Seite — beim Seitenwechsel einmal
+bestimmt, dann ohne Warten geprüft. Gehandelt hat der Knopf schon seit 1.72.0
+richtig; nur seine Anzeige log. Antwortet der Kern noch nicht, fällt er auf das
+bisherige Verhalten zurück, statt „nicht vorgemerkt" zu behaupten.
+
+Am Relay ändert sich nichts — wer 1.72.0 dort schon eingespielt hat, muss nichts
+tun.
+
 ## 1.72.0 — 31. August 2026
 
 Ein Titel ließ sich nicht aus der Watchparty nehmen — er kam immer wieder.
