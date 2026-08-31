@@ -93,6 +93,22 @@ public final class Geraete {
         this.bestand = bestand;
         this.watchparty = watchparty;
         this.horcher = horcher;
+        // Die Runde muss wissen, zu welchem Konto dieses Geraet gehoert - sonst
+        // gilt derselbe Mensch dort als zwei Fremde, und was das Telefon in die
+        // Runde gestellt hat, laesst sich am Fernseher nicht herausnehmen.
+        kontoMelden();
+    }
+
+    /**
+     * Sagt der Watchparty, zu welchem Abgleichskonto dieses Geraet gehoert.
+     *
+     * <p>Die Richtung ist Absicht: der Abgleich weiss es, die Runde nicht. Ein
+     * leerer Schluessel heisst "kein Abgleich" - dann entscheidet in der Runde
+     * wie bisher allein das Geraet.
+     */
+    private void kontoMelden() {
+        if (watchparty == null) return;
+        watchparty.setzeKontoSchluessel(eingeschaltet() ? schluessel() : "");
     }
 
     /** Woher die Sitzungen kommen und wohin die anderer Geraete gehen. */
@@ -495,6 +511,7 @@ public final class Geraete {
             kern.rufe("geraete-bruecke.spiegelSetzen", Kern.args(new JSONObject()), null);
             anwenden();
         }
+        kontoMelden();
     }
 
     private void schluesselSetzenRoh(String schluessel) {
@@ -509,6 +526,7 @@ public final class Geraete {
         if (kern != null && kern.istBereit()) {
             kern.rufe("geraete-bruecke.spiegelSetzen", Kern.args(new JSONObject()), null);
         }
+        kontoMelden();
     }
 
     public String schluessel() {

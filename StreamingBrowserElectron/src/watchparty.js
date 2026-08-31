@@ -94,9 +94,14 @@ class Watchparty {
       // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen. Ein
       // aelteres Relay kennt die Geraete-Kennung noch nicht - dann muss der
       // Name herhalten, sonst verschwindet der Knopf ganz.
-      mine: eintrag.addedById
-        ? eintrag.addedById === this.geraetId
-        : Boolean(eintrag.addedBy) && eintrag.addedBy === this.name
+      // Herausnehmen darf, wer eingestellt hat - und jedes andere Geraet
+      // desselben Kontos. Ein aelteres Relay kennt weder Konto noch
+      // Geraete-Kennung; dann muss der Name herhalten, sonst verschwindet der
+      // Knopf ganz.
+      mine: (Boolean(this.konto) && eintrag.addedByKonto === this.konto)
+        || (eintrag.addedById
+          ? eintrag.addedById === this.geraetId
+          : Boolean(eintrag.addedBy) && eintrag.addedBy === this.name)
     }));
   }
 
@@ -104,7 +109,11 @@ class Watchparty {
     return this.eintraege().some((eintrag) => eintrag.key === key && eintrag.joined);
   }
 
-  konfigurieren({ enabled, serverUrl, room, name, deviceId }) {
+  konfigurieren({ enabled, serverUrl, room, name, deviceId, konto }) {
+    // Das Konto: alle Geraete einer Person unter einer Kennung. Leer, solange
+    // der Geraeteabgleich aus ist - dann entscheidet allein das Geraet, wie
+    // bisher.
+    this.konto = String(konto || "").slice(0, 64);
     const neuerServer = String(serverUrl || "").trim();
     const neuerRaum = String(room || "").trim();
     const gleich = this.serverUrl === neuerServer && this.raum === neuerRaum && this.name === name;
@@ -148,7 +157,7 @@ class Watchparty {
     socket.onopen = () => {
       this.verbunden = true;
       this.versuche = 0;
-      this.senden({ type: "join", room: this.raum, name: this.name, deviceId: this.geraetId });
+      this.senden({ type: "join", room: this.raum, name: this.name, deviceId: this.geraetId, konto: this.konto || "" });
       this.melde();
       this.warteschlangeSenden();
       // Sofort messen: das erste Ereignis kann Millisekunden spaeter kommen,
@@ -405,8 +414,16 @@ class Watchparty {
     return true;
   }
 
-  teilen(item) {
-    this.senden({ type: "share", item });
+  /**
+   * Einen Titel in die Runde stellen.
+   *
+   * @param nachtrag `true`, wenn das kein Wunsch des Benutzers ist, sondern
+   *        das Nachtragen beim Verbinden. Das Relay laesst einen nachgetragenen
+   *        Titel liegen, wenn ihn jemand herausgenommen hat - sonst holte ihn
+   *        das naechste Geraet, das sich verbindet, jedes Mal zurueck.
+   */
+  teilen(item, nachtrag = false) {
+    this.senden({ type: "share", item, restore: Boolean(nachtrag) });
   }
 
   beitreten(key) {

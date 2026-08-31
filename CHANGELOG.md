@@ -3,6 +3,56 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.72.0 — 31. August 2026
+
+Ein Titel ließ sich nicht aus der Watchparty nehmen — er kam immer wieder.
+Dahinter lagen zwei Ursachen, und jede allein genügt für den Fehler.
+
+**Nur das einstellende Gerät durfte herausnehmen.** Das Relay verglich die
+Gerätekennung und schwieg, wenn sie nicht passte. Gemeldet an „Avatar Aang: Der
+Herr der Elemente" im Raum „Bangus": das Handy hatte den Film eingestellt, der
+Rechner drückte Entfernen, und es geschah nichts — ohne Fehlermeldung, ohne
+Hinweis. Wer den Geräteabgleich benutzt, hat aber kein „der Rechner" und „das
+Handy", sondern ein Konto; dass ein Titel sich nur dort herausnehmen ließ, wo er
+zufällig eingestellt wurde, war niemandem zu erklären.
+
+**Und jedes Gerät trug ihn beim Verbinden wieder nach.** Die App merkt sich, was
+sie selbst in eine Runde gestellt hat, und stellt es wieder ein, falls es dort
+fehlt — richtig nach einem Serverneustart, falsch nach einem Entfernen. Nimmt
+einer den Titel heraus, während das andere Gerät aus ist, kommt er beim nächsten
+Start zurück. Der Geräteabgleich hatte diese Lehre längst gezogen und legt
+Grabsteine an; der Watchparty fehlte sie.
+
+**Der Geräteabgleich wirkt in einer Runde jetzt als Konto.** Beim Beitreten geht
+eine Kontokennung mit; wer sie teilt, darf herausnehmen — Rechner, Handy oder
+Fernseher, unabhängig davon, wo der Titel eingestellt wurde. Am Telefon und am
+Fernseher gab es den Menüpunkt „Aus dem Raum nehmen" bereits, er war nur immer
+ausgegraut. Ohne Geräteabgleich bleibt alles wie bisher: dann entscheidet allein
+das Gerät.
+
+Hinaus geht dabei ausdrücklich **nicht** die Kennung des Abgleichs, sondern ein
+HMAC darüber. Das Relay kann damit zwei Verbindungen als dieselbe Person
+erkennen und trotzdem nicht auf deren Abgleichsraum schließen — die beiden
+Ableitungen haben nichts miteinander zu tun. Der Komfort kostet die Trennung
+nicht, auf der der Abgleich beruht.
+
+**Herausgenommenes bleibt draußen.** Ein Grabstein hält den Titel dreißig Tage
+lang aus dem Raum; ein Nachtrag beim Verbinden prallt daran ab. Wer ihn bewusst
+wieder einstellt, bekommt ihn zurück — ein Grabstein ist keine Sperre. Der
+Rechner räumt beim Entfernen zusätzlich sofort seine eigene Merkliste auf,
+statt auf die Antwort des Relays zu warten: kommt sie nicht an, stünde der
+Wunsch sonst nirgends.
+
+Dazu eine Unstimmigkeit aus 1.71.0: die Watchlist am Rechner ließ Einträge einer
+Watchparty-Runde zu, während das geteilte Modul und das Telefon sie richtig
+draußen ließen. Jetzt ziehen alle drei dieselbe Grenze, und ein Test hält sie
+zusammen — er vergleicht die Auswahl von Modul und Oberfläche an denselben
+Daten, statt Quelltext abzugleichen.
+
+**Wichtig:** der Kontoteil steckt im Relay. Solange dort eine ältere Fassung
+läuft, greift nur die Hälfte — das eigene Gerät kann entfernen, der Grabstein
+fehlt. Das Relay liegt dieser Version als `ELFIX-Relay-*` bei.
+
 ## 1.71.0 — 31. August 2026
 
 Die Watchlist hatte drei Fehler, und es war einer: ELFIX hatte keine

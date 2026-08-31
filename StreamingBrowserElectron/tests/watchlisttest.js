@@ -327,6 +327,53 @@ pruefe("Ohne Titel und ohne Adresse gibt es keinen Schluessel",
     "an ihm haengt der Raumschluessel der Watchparty");
 }
 
+/* --- Oberflaeche und Modul ziehen dieselbe Grenze ------------------------ */
+//
+// Nicht am Quelltext, sondern am Ergebnis: dieselben Eintraege durch
+// watchlist.liste() und durch favoriteEntries() der Oberflaeche, und es muss
+// dieselbe Auswahl herauskommen. Ein Regex haette die Frage nicht beantwortet.
+
+{
+  const vm = require("vm");
+  const src = lies("src/renderer/renderer.js");
+  const funktion = (name) => {
+    const von = src.indexOf(`function ${name}(`);
+    return src.slice(von, src.indexOf(String.fromCharCode(10) + "}", von) + 2);
+  };
+
+  const probe = [
+    { id: "privat", title: "Pokémon", url: folge(1, 1), type: "serie", watchpartyRoom: "",
+      favorite: true, completed: false, createdAt: "2026-08-01T00:00:00.000Z", season: 1, episode: 1 },
+    { id: "raum", title: "Pokémon", url: folge(1, 16), type: "serie", watchpartyRoom: "Gummikäse",
+      favorite: true, completed: false, createdAt: "2026-08-02T00:00:00.000Z", season: 1, episode: 16 },
+    { id: "fertig", title: "Loki", url: "https://aniworld.to/anime/stream/loki/staffel-1/episode-6",
+      type: "serie", watchpartyRoom: "", favorite: true, completed: true, createdAt: "2026-08-03T00:00:00.000Z" },
+    { id: "offen", title: "Bleach", url: "https://aniworld.to/anime/stream/bleach/staffel-1/episode-1",
+      type: "serie", watchpartyRoom: "", favorite: true, completed: false, createdAt: "2026-08-04T00:00:00.000Z" }
+  ];
+
+  const umgebung = {
+    favorites: probe, Number, String, Boolean, Math, URL, console,
+    api: { werkSchluessel: (titel, url, art) => watchlist.werkSchluessel(titel, url, art) }
+  };
+  vm.createContext(umgebung);
+  for (const name of ["werkSchluessel", "favoriteEntries", "weitesterStand", "folgeVergleich", "favoriteTimestamp"]) {
+    vm.runInContext(funktion(name), umgebung);
+  }
+  const ausOberflaeche = vm.runInContext("favoriteEntries()", umgebung).map((eintrag) => eintrag.id).sort();
+  const ausModul = watchlist.liste(probe).map((eintrag) => eintrag.id).sort();
+
+  pruefe("Oberflaeche und Modul waehlen dieselben Eintraege",
+    JSON.stringify(ausOberflaeche) === JSON.stringify(ausModul),
+    `Oberflaeche ${JSON.stringify(ausOberflaeche)} / Modul ${JSON.stringify(ausModul)}`);
+  pruefe("Ein vorgemerkter Raum-Eintrag steht in keiner von beiden",
+    !ausOberflaeche.includes("raum") && !ausModul.includes("raum"),
+    "die Watchlist ist die private Liste");
+  pruefe("Ein abgeschlossener Titel steht in keiner von beiden",
+    !ausOberflaeche.includes("fertig") && !ausModul.includes("fertig"),
+    "der gehoert in die Mediathek");
+}
+
 /* --- Eine Identitaet, nicht vier ----------------------------------------- */
 
 {

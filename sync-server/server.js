@@ -43,6 +43,19 @@ const metadatenDienst = metadaten.erstellen();
 const PORT = Number(process.env.PORT) || 8787;
 const MAX_TITEL_JE_RAUM = 100;
 const RAUM_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
+// Wie lange ein herausgenommener Titel als Grabstein liegen bleibt.
+//
+// Ohne ihn kommt er wieder. Jedes Geraet merkt sich, was es selbst eingestellt
+// hat, und traegt es beim naechsten Verbinden nach, falls es im Raum fehlt
+// (restoreWatchparty in der App). Nimmt einer den Titel heraus, waehrend das
+// andere Geraet aus ist, stellt dieses ihn beim naechsten Start wieder ein -
+// und fuer den Benutzer sieht es aus, als liesse er sich nicht entfernen.
+//
+// Der Geraeteabgleich hat dieselbe Lehre laengst gezogen (siehe
+// GRAB_LEBENSDAUER_MS in geraete.js); der Watchparty fehlte sie.
+const GRAB_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
+// Mehr Grabsteine als Titel braucht kein Raum. Der aelteste faellt heraus.
+const MAX_GRAEBER_JE_RAUM = 200;
 const MAX_NACHRICHT = 256 * 1024;
 
 // Die Fassung dieses Relays.
@@ -120,7 +133,7 @@ function raumHolen(code) {
     vorhanden.at = Date.now();
     return vorhanden;
   }
-  const neu = { titel: new Map(), at: Date.now() };
+  const neu = { titel: new Map(), graeber: new Map(), at: Date.now() };
   raeume.set(code, neu);
   return neu;
 }
@@ -146,7 +159,12 @@ function zustandLaden() {
         stand: new Map()
       });
     }
-    raeume.set(code, { titel, at: Number(raum?.at) || Date.now() });
+    const graeber = new Map();
+    for (const grab of raum?.graeber || []) {
+      if (!grab?.key) continue;
+      graeber.set(String(grab.key), Number(grab.at) || Date.now());
+    }
+    raeume.set(code, { titel, graeber, at: Number(raum?.at) || Date.now() });
   }
   geraete.zustandSetzen(roh?.geraete);
   console.log(`Zustand geladen: ${raeume.size} Raum/Raeume, ${geraete.anzahl()} Geraeteschluessel`);
@@ -160,6 +178,9 @@ function zustandSpeichernSpaeter() {
     for (const [code, raum] of raeume) {
       roh.raeume[code] = {
         at: raum.at,
+        // Grabsteine gehoeren auf die Platte: ihr ganzer Zweck ist, einen
+        // Neustart und ein Geraet zu ueberleben, das eine Woche aus war.
+        graeber: [...(raum.graeber || new Map()).entries()].map(([key, at]) => ({ key, at })),
         titel: [...raum.titel.values()].map((eintrag) => ({
           ...eintrag,
           // Laufender Abgleich, sein Zeitgeber und der Stand je Geraet sind
@@ -190,11 +211,19 @@ function zustandSpeichernSpaeter() {
 
 function aufraeumen() {
   const grenze = Date.now() - RAUM_LEBENSDAUER_MS;
+  const grabGrenze = Date.now() - GRAB_LEBENSDAUER_MS;
   let entfernt = false;
   for (const [code, raum] of raeume) {
     if (raum.at < grenze) {
       raeume.delete(code);
       entfernt = true;
+      continue;
+    }
+    for (const [key, at] of raum.graeber || new Map()) {
+      if (at < grabGrenze) {
+        raum.graeber.delete(key);
+        entfernt = true;
+      }
     }
   }
   if (entfernt) zustandSpeichernSpaeter();
@@ -293,6 +322,7 @@ function titelNachAussen(raumcode, eintrag, fuerGeraet) {
     live: eintrag.live || null,
     addedBy: eintrag.addedBy,
     addedById: eintrag.addedById,
+    addedByKonto: eintrag.addedByKonto || "",
     addedAt: eintrag.addedAt,
     members: [...eintrag.members.values()],
     memberIds: [...eintrag.members.keys()],
@@ -931,6 +961,14 @@ wss.on("connection", (socket) => {
       socket.raum = codeNormalisieren(nachricht.room);
       socket.name = text(nachricht.name, 40) || "Gerät";
       socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
+      // Das Konto - alle Geraete einer Person unter einer Kennung.
+      //
+      // Es ist nicht die Kennung des Geraeteabgleichs, sondern ein HMAC
+      // darueber: das Relay kann damit zwei Sockets als "dieselbe Person"
+      // erkennen, aber nicht auf den Abgleichsraum derselben Person schliessen.
+      // Wer den Abgleich nicht benutzt, schickt nichts - dann bleibt alles wie
+      // bisher, und es entscheidet allein das Geraet.
+      socket.konto = /^[0-9a-f]{32}$/.test(String(nachricht.konto || "")) ? String(nachricht.konto) : "";
       const raum = raumHolen(socket.raum);
       kennungUebernehmen(raum, socket.geraetId, socket.name);
       namenNachziehen(raum, socket.geraetId, socket.name);
@@ -964,16 +1002,37 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (raum.titel.size >= MAX_TITEL_JE_RAUM && !raum.titel.has(eintrag.key)) return;
 
+      // Nachgetragen wird nur, was niemand herausgenommen hat.
+      //
+      // Ein Geraet traegt beim Verbinden nach, was es selbst eingestellt hatte
+      // und im Raum vermisst - das ist richtig nach einem Serverneustart und
+      // falsch nach einem Entfernen. Es kann den Unterschied nicht kennen,
+      // also sagt es dazu, dass es nur nachtraegt; hier liegt das Wissen.
+      //
+      // Ein ausdrueckliches Einstellen dagegen hebt den Grabstein auf: wer
+      // einen Titel bewusst wieder in die Runde stellt, meint genau das.
+      if (raum.graeber?.has(eintrag.key)) {
+        if (nachricht.restore) return;
+        raum.graeber.delete(eintrag.key);
+      }
+
       const bekannt = raum.titel.get(eintrag.key);
       const gespeichert = bekannt || {
         ...eintrag,
         addedBy: socket.name,
         addedById: socket.geraetId,
+        addedByKonto: socket.konto || "",
         addedAt: new Date().toISOString(),
         members: new Map(),
         progress: null
       };
       if (bekannt) Object.assign(gespeichert, eintrag);
+      // Ein Titel, der ohne Konto eingestellt wurde, bekommt es nach, sobald
+      // sein Einsteller mit Konto wiederkommt - sonst haetten die anderen
+      // Geraete derselben Person nie Zugriff darauf.
+      if (!gespeichert.addedByKonto && socket.konto && gespeichert.addedById === socket.geraetId) {
+        gespeichert.addedByKonto = socket.konto;
+      }
       gespeichert.members.set(socket.geraetId, socket.name);
       raum.titel.set(eintrag.key, gespeichert);
       zustandSenden(socket.raum);
@@ -1485,11 +1544,30 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    // Herausnehmen darf, wer eingestellt hat - und jedes andere Geraet
+    // derselben Person. Wer den Geraeteabgleich benutzt, hat kein "der
+    // Rechner" und "das Handy", sondern ein Konto; dass ein Titel sich nur
+    // dort herausnehmen liess, wo er zufaellig eingestellt wurde, war fuer den
+    // Benutzer nicht zu erklaeren.
     if (nachricht.type === "unshare") {
       const key = text(nachricht.key, 300);
       const eintrag = raum.titel.get(key);
-      if (!eintrag || eintrag.addedById !== socket.geraetId) return;
+      if (!eintrag) return;
+      const eigenesGeraet = eintrag.addedById === socket.geraetId;
+      const eigenesKonto = Boolean(socket.konto) && eintrag.addedByKonto === socket.konto;
+      if (!eigenesGeraet && !eigenesKonto) return;
+
       raum.titel.delete(key);
+      // Der Grabstein haelt ihn draussen, bis ihn jemand bewusst wieder
+      // einstellt. Ohne ihn traegt das naechste Geraet, das sich verbindet, den
+      // Titel wieder nach - siehe GRAB_LEBENSDAUER_MS.
+      if (raum.graeber) {
+        raum.graeber.set(key, Date.now());
+        while (raum.graeber.size > MAX_GRAEBER_JE_RAUM) {
+          raum.graeber.delete(raum.graeber.keys().next().value);
+        }
+      }
+      zustandSpeichernSpaeter();
       zustandSenden(socket.raum);
       return;
     }

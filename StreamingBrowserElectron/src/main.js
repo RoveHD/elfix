@@ -1727,7 +1727,17 @@ ipcMain.handle("watchparty:leave", (_event, key, room) => {
 });
 
 ipcMain.handle("watchparty:remove", (_event, key, room) => {
-  watchparty.entfernen(String(key || ""), String(room || ""));
+  const schluessel = String(key || "");
+  const raum = String(room || "");
+  watchparty.entfernen(schluessel, raum);
+  // Und sofort aus der eigenen Merkliste. Sie ist die Vorlage fuer
+  // restoreWatchparty; bliebe der Titel darin stehen, traegt ihn dieses Geraet
+  // bei der naechsten Verbindung wieder nach. Auf die Antwort des Relays zu
+  // warten reicht nicht - kommt sie nicht an, steht der Wunsch nirgends.
+  const passt = (eintrag) => eintrag.key === schluessel && String(eintrag.room || "") === raum;
+  watchpartyLokal.shared = watchpartyLokal.shared.filter((eintrag) => !passt(eintrag));
+  watchpartyLokal.joined = watchpartyLokal.joined.filter((eintrag) => !passt(eintrag));
+  saveWatchpartyLocal();
   return true;
 });
 
@@ -5476,7 +5486,11 @@ function restoreWatchparty(eintraege, raum) {
   for (const eigen of watchpartyLokal.shared) {
     if (eigen.room !== raum) continue;
     if (imRaum.some((eintrag) => eintrag.key === eigen.key)) continue;
-    watchparty.teilen(eigen, raum);
+    // Ausdruecklich als Nachtrag: das Relay laesst einen Titel liegen, den
+    // jemand herausgenommen hat. Ohne diese Kennzeichnung holte genau diese
+    // Schleife ihn bei jeder Verbindung zurueck - auf dem Geraet, das beim
+    // Entfernen aus war, und damit fuer alle.
+    watchparty.teilen(eigen, raum, true);
     nachgetragen += 1;
   }
   for (const dabei of watchpartyLokal.joined) {
@@ -5551,6 +5565,26 @@ function watchpartySettings() {
   return settings.watchparty || {};
 }
 
+/**
+ * Die Kennung, unter der alle Geraete einer Person in einer Runde zusammen
+ * zaehlen.
+ *
+ * <p>Wer den Geraeteabgleich benutzt, hat kein "der Rechner" und "das Handy",
+ * sondern ein Konto. In der Watchparty galt das bisher nicht: ein Titel liess
+ * sich nur dort herausnehmen, wo er zufaellig eingestellt worden war.
+ *
+ * <p>Hinausgeht ausdruecklich <em>nicht</em> die Kennung des Abgleichs, sondern
+ * ein HMAC darueber. Das Relay kann damit zwei Verbindungen als dieselbe Person
+ * erkennen und trotzdem nicht auf deren Abgleichsraum schliessen - die beiden
+ * Ableitungen haben nichts miteinander zu tun. Ohne Abgleich bleibt sie leer,
+ * und dann entscheidet wie bisher allein das Geraet.
+ */
+function watchpartyKonto() {
+  const schluessel = settings.geraete?.enabled === true ? String(settings.geraete?.key || "") : "";
+  if (!schluessel) return "";
+  return geraeteSchluessel.watchpartyKonto(schluessel);
+}
+
 function syncWatchparty() {
   const konfiguration = watchpartySettings();
   watchparty.konfigurieren({
@@ -5558,7 +5592,8 @@ function syncWatchparty() {
     serverUrl: konfiguration.serverUrl || "",
     rooms: Array.isArray(konfiguration.rooms) ? konfiguration.rooms : [],
     name: konfiguration.deviceName || "ELFIX",
-    deviceId: konfiguration.deviceId || ""
+    deviceId: konfiguration.deviceId || "",
+    konto: watchpartyKonto()
   });
   youtubePartySync();
 }

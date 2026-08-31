@@ -130,6 +130,24 @@ function eintragId(abgeleitet, key) {
   return crypto.createHmac("sha256", abgeleitet.kennung).update(String(key)).digest("hex").slice(0, 32);
 }
 
+/**
+ * Die Kennung, unter der alle Geraete einer Person in einer Watchparty
+ * zusammen zaehlen.
+ *
+ * <p>Ausdruecklich nicht {@link ableiten}.raum: das ist der Raum des
+ * Abgleichs, und das Relay sieht ihn ohnehin. Wuerde er auch in der Runde
+ * stehen, koennte das Relay beides verbinden - "dieses Mitglied gehoert zu
+ * jenem Abgleichskonto". Ein eigener HMAC kostet nichts und laesst diese
+ * Verbindung nicht zu.
+ *
+ * <p>Eine Stelle fuer beide Geraete: der Rechner ruft sie in
+ * `watchpartyKonto()`, das Telefon in `watchparty-bruecke.konfigurieren`.
+ */
+function watchpartyKonto(schluessel) {
+  const abgeleitet = ableiten(schluessel);
+  return abgeleitet ? eintragId(abgeleitet, "watchparty-konto") : "";
+}
+
 // --- Verschluesseln ---------------------------------------------------------
 
 function verschluesseln(abgeleitet, wert) {
@@ -245,6 +263,7 @@ module.exports = {
   istGueltig,
   ableiten,
   eintragId,
+  watchpartyKonto,
   verschluesseln,
   entschluesseln,
   stand,

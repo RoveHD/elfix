@@ -126,6 +126,28 @@ public final class Watchparty {
     /** Die eingerichteten Anbieter, wie der Kern sie kennt. Siehe {@link #setzeAnbieter}. */
     private JSONArray anbieter = new JSONArray();
 
+    /**
+     * Der Schluessel des Geraeteabgleichs, falls einer eingerichtet ist.
+     *
+     * <p>Er steht hier nur, um ihn an den Kern weiterzureichen, der daraus das
+     * Konto ableitet. Gesetzt wird er von {@link Geraete} - die Watchparty
+     * fragt den Abgleich nicht, der Abgleich sagt Bescheid.
+     */
+    private String kontoSchluessel = "";
+
+    /**
+     * Sagt der Watchparty, zu welchem Abgleichskonto dieses Geraet gehoert.
+     *
+     * <p>Ein leerer Schluessel heisst "kein Abgleich": dann entscheidet in der
+     * Runde allein das Geraet, genau wie vorher.
+     */
+    public void setzeKontoSchluessel(String schluessel) {
+        String neu = schluessel == null ? "" : schluessel;
+        if (neu.equals(kontoSchluessel)) return;
+        kontoSchluessel = neu;
+        anwenden();
+    }
+
     public Watchparty(Context context, Kern kern, Beobachter beobachter) {
         this.context = context.getApplicationContext();
         this.kern = kern;
@@ -427,6 +449,12 @@ public final class Watchparty {
             einstellungen.put("rooms", codes);
             einstellungen.put("deviceName", geraetName);
             einstellungen.put("deviceId", geraetId);
+            // Der Schluessel des Geraeteabgleichs. Aus ihm leitet der Kern das
+            // Konto ab, unter dem alle Geraete einer Person in einer Runde
+            // zusammen zaehlen - gerechnet wird das dort und nicht hier, damit
+            // Telefon und Rechner dieselbe Ableitung benutzen. Er verlaesst
+            // das Geraet nicht: hinaus geht nur der abgeleitete HMAC.
+            einstellungen.put("geraeteSchluessel", kontoSchluessel);
         } catch (Exception fehler) {
             Log.e(TAG, "Watchparty-Einstellungen liessen sich nicht bauen", fehler);
             return;

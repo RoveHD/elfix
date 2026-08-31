@@ -95,12 +95,26 @@
     if (!(einstellungen && einstellungen.enabled) && !(auftrag && auftrag.oertlich)) {
       autostartVerwerfen();
     }
+    // Das Konto der Watchparty. Es wird hier abgeleitet und nicht in Java
+    // gerechnet: die Ableitung steht in geraete-schluessel.js, und der Rechner
+    // benutzt dieselbe. Ohne Abgleichsschluessel bleibt sie leer - dann
+    // entscheidet in der Runde wie bisher allein das Geraet.
+    var konto = "";
+    var schluessel = (einstellungen && einstellungen.geraeteSchluessel) || "";
+    if (schluessel) {
+      try {
+        konto = require("geraete-schluessel").watchpartyKonto(schluessel);
+      } catch (fehler) {
+        konto = "";
+      }
+    }
     wp.konfigurieren({
       enabled: Boolean(einstellungen && einstellungen.enabled),
       serverUrl: (einstellungen && einstellungen.serverUrl) || "",
       rooms: (einstellungen && einstellungen.rooms) || [],
       name: (einstellungen && einstellungen.deviceName) || "",
-      deviceId: (einstellungen && einstellungen.deviceId) || ""
+      deviceId: (einstellungen && einstellungen.deviceId) || "",
+      konto: konto
     });
     return wp.status();
   }

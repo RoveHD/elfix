@@ -4974,6 +4974,12 @@ function favoriteEntries() {
   const nachWerk = new Map();
   const ohneSchluessel = [];
   for (const item of favorites) {
+    // Nur Privates. Ein Eintrag einer Watchparty-Runde gehoert dem Raum und
+    // nie der eigenen Merkliste - dieselbe Grenze, die watchlist.liste() und
+    // Bestand.watchlist() ziehen. Vorgemerkt sein *kann* er trotzdem: der
+    // Herz-Knopf des Telefons hat das bis 1.71.0 getan, und ein solcher Stand
+    // kann ueber den Geraeteabgleich hier ankommen.
+    if (item.watchpartyRoom) continue;
     if (item.favorite === false || item.completed) continue;
     const schluessel = werkSchluessel(item);
     // Ohne Schluessel wird nichts zusammengelegt: lieber eine Karte zu viel

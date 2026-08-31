@@ -55,9 +55,12 @@ class WatchpartyRaeume {
     return [...this.raeume.keys()];
   }
 
-  konfigurieren({ enabled, serverUrl, rooms, room, name, deviceId }) {
+  konfigurieren({ enabled, serverUrl, rooms, room, name, deviceId, konto }) {
     this.serverUrl = String(serverUrl || "").trim();
     this.name = String(name || "").slice(0, 40);
+    // Ein Konto fuer alle Raeume: es sagt, wem ein Geraet gehoert, und das
+    // haengt nicht am Raum.
+    this.konto = String(konto || "").slice(0, 64);
     this.eingeschaltet = Boolean(enabled) && Boolean(this.serverUrl);
 
     // Alle Raeume brauchen dieselbe Kennung. Ohne eigene holt sich jede
@@ -92,7 +95,8 @@ class WatchpartyRaeume {
         serverUrl: this.serverUrl,
         room: code,
         name: this.name,
-        deviceId: this.geraetId
+        deviceId: this.geraetId,
+        konto: this.konto
       });
     }
 
@@ -202,10 +206,10 @@ class WatchpartyRaeume {
     return passend.filter((raum) => raum.raum === code);
   }
 
-  teilen(item, room) {
+  teilen(item, room, nachtrag = false) {
     const raum = this.raumZumTeilen(room);
     if (!raum) return false;
-    raum.teilen(item);
+    raum.teilen(item, nachtrag);
     return true;
   }
 
