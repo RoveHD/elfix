@@ -3,6 +3,84 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.74.0 — 31. August 2026
+
+Watchparty-Räume verschwanden nach dreißig Tagen von selbst, und die Titel
+darin verschwanden nie. Beides war verkehrt herum.
+
+**Ein Raum ist eine Verabredung und kein Zwischenspeicher.** Im Relay stand
+eine Lebensdauer von dreißig Tagen, und die Aufräumrunde löschte jeden Raum, in
+dem so lange niemand war — mit allen Mitgliedschaften und allen eingestellten
+Titeln. „Bangus" gehört aber denselben vier Leuten, ob sie diese Woche zusammen
+geschaut haben oder ein halbes Jahr nicht. Die Frist fällt weg; verschwinden
+darf ein Raum nur, wenn ihn jemand selbst entfernt. Die Grabsteine behalten ihre
+eigene Frist — sie ist es, die einen herausgenommenen Titel draußen hält —, und
+sie werden jetzt zusätzlich beim Start des Relays einmal geprüft statt erst zur
+nächsten vollen Stunde.
+
+**Ein Titel dagegen ist irgendwann durch.** Ein zu Ende geschauter Film stand
+dauerhaft unter „Gemeinsam weiterschauen", und eine Serie, deren letzte
+verfügbare Folge alle gesehen hatten, ebenso. Beides wird im Raum jetzt
+archiviert: der Eintrag bleibt liegen — Raum, Mitglieder und Werk werden
+gebraucht, sobald eine Folge erscheint —, er zählt nur nicht mehr zum aktiven
+Bestand der Runde. Gelöscht wird nichts. Mediathek, Verlauf und der eigene
+Fortschritt bleiben unangetastet, und die private Watchlist entsteht weiterhin
+nie aus einem Raumeintrag.
+
+Spider-Man in „Bangus" fertig geschaut: verschwindet aus der Reihe, der Raum
+bleibt. Black Torch bis Folge 8 durch: archiviert. Korra nach dem Finale:
+bleibt archiviert und stört niemanden. Und Black Torch in „Familie" läuft
+davon unberührt bei Folge 4 weiter — zwei Räume, zwei Stände.
+
+**Ob etwas nachkommt, entscheidet das Gerät und nicht das Relay.** Nur die App
+kennt die Seriengrenzen und weiß, ob nach Folge 8 noch etwas kommt; das Relay
+führt die Antwort bloß und sorgt dafür, dass sie sich nicht rückwärts umstoßen
+lässt. Solange ein Titel archiviert ist, kommt nur eine wirklich neue Folge
+durch. Ein Handy, das eine Woche aus war, meldet beim Start seinen alten Stand
+— der würde die Runde sonst auf eine Folge zurückdrehen, die alle längst
+gesehen haben. Wer einen Titel von Hand wieder einstellt, bekommt ihn zurück;
+dieselbe Trennung zwischen Nachtrag und Absicht wie beim Grabstein.
+
+**Das Telefon findet neue Folgen jetzt selbst.** Am Rechner sieht ELFIX seit
+jeher von Zeit zu Zeit nach, ob zu einer abgeschlossenen Serie Nachschub
+erschienen ist. Auf Android gab es das nicht — der ganze Vorgang lag an einer
+Stelle, die das Telefon nie sieht. Black Torch war am Samstag mit Folge 9 da,
+und am Fernseher blieb der Titel archiviert, bis irgendwann jemand den PC
+einschaltete; wer den Fernseher als einziges Gerät benutzt, bekam den Nachschub
+überhaupt nie zu sehen. Die Entscheidung steht jetzt in einem gemeinsamen
+Modul, das beide Geräte fragen. Verschieden bleibt nur die Leitung: der Rechner
+holt die Anbieterseite über Electron, das Telefon über Java.
+
+Auf Android läuft der Blick dreißig Sekunden nach dem Start und danach alle
+sechs Stunden, sechs Titel je Durchgang — dieselben Zahlen wie am Rechner. Die
+Reihenfolge wandert durch den ganzen Bestand, damit nicht immer dieselben
+drankommen, und der Zeitpunkt des letzten Durchgangs überlebt einen Neustart:
+ein Telefon wird zwanzigmal am Tag gestartet, und ohne diesen Stempel wäre
+jeder Start ein Durchgang.
+
+Reaktiviert wird nur, wenn der neue Umfang zuverlässig hinter dem
+abgeschlossenen Stand liegt — hinter der zuletzt bekannten Grenze *und* hinter
+der Folge, auf der der Titel abgehakt wurde. Leere Seite, halbe Antwort,
+Cloudflare-Zwischenseite, Netzfehler, geschrumpfte Folgenzahl: alles lässt den
+Eintrag, wie er ist. Ein laufendes Wiederansehen kommt gar nicht erst in den
+Durchgang. Ein falscher Nachschub ist teurer als ein verpasster — er reißt
+einen Titel aus der Mediathek und stellt eine archivierte Runde wieder auf
+aktiv.
+
+Findet Android den Nachschub zuerst, verteilt er sich wie jeder andere Stand:
+ein reaktivierter Raumtitel über die Runde, ein privater über den
+Geräteabgleich. Eine Desktop-Sonderstellung gibt es nicht mehr — wer es zuerst
+sieht, aktualisiert den gemeinsamen Stand.
+
+Nebenbei zwei alte Unstimmigkeiten: die Rückkehr einer abgeschlossenen Serie
+setzte auch Watchparty-Einträge auf die private Merkliste, und der Zeitstempel
+der Nachschub-Runde überlebte am Rechner keinen Neustart — geprüft wurden
+dadurch bei jedem Start dieselben sechs Titel, der Rest nie.
+
+**Wichtig:** der Raumteil steckt im Relay. Solange dort eine ältere Fassung
+läuft, verfallen Räume weiter nach dreißig Tagen und kein Titel wird je
+archiviert. Das Relay liegt dieser Version als `ELFIX-Relay-*` bei.
+
 ## 1.73.0 — 31. August 2026
 
 Zwei Stellen nachgezogen, die nach dem Umbau der Watchlist offen geblieben
