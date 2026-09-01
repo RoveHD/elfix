@@ -6242,7 +6242,21 @@ input[type="color"] {
      Bild deutlicher kommen; lesbar bleibt der Text durch den Schleier, nicht
      durch ein unsichtbares Bild. */
   opacity: 0.38;
-  filter: blur(14px) saturate(1.25);
+  /* Entsaettigt, nicht gesaettigt - und das ist der zweite Teil der Antwort
+     auf "sieht nicht einheitlich aus".
+
+     Der erste Teil ist, dass jetzt hinter jeder Karte dasselbe Bild liegt
+     (siehe wrappedStimmungsbild). Damit wechselt der Hintergrund beim
+     Blaettern nicht mehr. Er haengt aber immer noch daran, welches Poster
+     jemand zufaellig als Serie des Jahres hat: ein giftgruenes Anime-Poster
+     ergaebe eine giftgruene Buehne, ein sepiafarbener Film eine braune. Zwei
+     Leute saehen zwei verschiedene Apps.
+
+     Heruntergezogen auf 45 Prozent Saettigung traegt das Bild nur noch seine
+     Struktur bei - Helligkeiten, Formen -, und die Farbe kommt aus dem Theme,
+     wie ueberall sonst in ELFIX. Es war vorher 1.25, also verstaerkt: genau
+     die falsche Richtung. */
+  filter: blur(16px) saturate(0.45) brightness(0.95);
   transform: scale(1.06);
 }
 

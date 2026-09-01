@@ -3615,7 +3615,22 @@ function renderWrappedPunkte() {
 
 // --- Die Seiten --------------------------------------------------------------
 
-function wrappedSeite(art, teile, bild = "") {
+// Das eine Bild, das hinter dem ganzen Rueckblick liegt.
+//
+// Es war nicht eines, sondern neun: jede Karte, die von einem Titel handelte,
+// trug dessen Poster als Hintergrund, und die uebrigen zehn trugen gar nichts.
+// Beim Blaettern wechselte der Hintergrund damit staendig - Foto, leere
+// Flaeche, anderes Foto in anderer Farbe. Gemeldet als "Background sieht immer
+// unterschiedlich aus und nicht einheitlich", und das ist keine
+// Geschmacksfrage: neunzehn Karten mit neunzehn Hintergruenden sind neunzehn
+// Seiten und keine Geschichte.
+//
+// Jetzt steht hinter allen dasselbe. Wo ein bestimmter Titel gemeint ist,
+// steht der als Poster *auf* der Karte - das ist die Stelle, an die er
+// gehoert, und dort faellt er auch auf.
+let wrappedStimmungsbild = "";
+
+function wrappedSeite(art, teile, bild = wrappedStimmungsbild) {
   const knoten = document.createElement("div");
   knoten.className = "wrapped-card";
   if (bild) {
@@ -3664,6 +3679,7 @@ function wrappedBauen(daten, jahr) {
   const topSerie = daten.serien[0] || null;
   const topFilm = daten.filme[0] || null;
   const bild = topSerie?.bild || topFilm?.bild || daten.erster?.bild || "";
+  wrappedStimmungsbild = bild;
 
   // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
   // Einschraenkung, unter der alles Folgende gilt.
@@ -3672,7 +3688,7 @@ function wrappedBauen(daten, jahr) {
     wrappedText("wrapped-title", String(jahr)),
     wrappedText("wrapped-lead", wrappedAuftakt(daten, jahr)),
     wrappedZeitraumHinweis(daten, jahr)
-  ], bild));
+  ]));
 
   // 2 - Watchtime. Faellt aus, solange nichts gemessen wurde.
   if (zeitBekannt) {
@@ -3701,13 +3717,13 @@ function wrappedBauen(daten, jahr) {
     seiten.push(wrappedSeite("is-serien", [
       wrappedGrosseZahl(daten.abschluesse.serie, daten.abschluesse.serie === 1 ? "Serie" : "Serien"),
       wrappedText("wrapped-lead", "hast du abgeschlossen.")
-    ], topSerie?.bild || ""));
+    ]));
   }
   if (daten.abschluesse.film > 0) {
     seiten.push(wrappedSeite("is-filme", [
       wrappedGrosseZahl(daten.abschluesse.film, daten.abschluesse.film === 1 ? "Film" : "Filme"),
       wrappedText("wrapped-lead", "hast du abgeschlossen.")
-    ], topFilm?.bild || ""));
+    ]));
   }
   if (daten.abschluesse.anime > 0) {
     seiten.push(wrappedSeite("is-anime", [
@@ -3724,7 +3740,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(topSerie.bild),
       wrappedText("wrapped-title", topSerie.titel),
       wrappedText("wrapped-sub", wrappedTitelZahlen(topSerie, zeitBekannt))
-    ], topSerie.bild));
+    ]));
   }
   if (topFilm) {
     seiten.push(wrappedSeite("is-top", [
@@ -3732,7 +3748,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(topFilm.bild),
       wrappedText("wrapped-title", topFilm.titel),
       wrappedText("wrapped-sub", wrappedTitelZahlen(topFilm, zeitBekannt))
-    ], topFilm.bild));
+    ]));
   }
 
   // 8 - Genre des Jahres samt Verfolgerfeld.
@@ -3813,7 +3829,7 @@ function wrappedBauen(daten, jahr) {
       wrappedText("wrapped-sub", daten.wiederholteTitel > 1
         ? `${oft.wiederholungen}× noch einmal gesehen — einer von ${daten.wiederholteTitel} Titeln, zu denen du zurückgekehrt bist.`
         : `${oft.wiederholungen}× noch einmal gesehen.`)
-    ], oft.bild));
+    ]));
   }
 
   // 16 - Monat des Jahres, mit allen Monaten als kleine Reihe.
@@ -3835,7 +3851,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(daten.erster.bild),
       wrappedText("wrapped-title", daten.erster.titel),
       wrappedText("wrapped-sub", reviewDatum(String(daten.erster.wann).slice(0, 10)))
-    ], daten.erster.bild));
+    ]));
   }
   if (daten.letzter && daten.letzter.titel !== daten.erster?.titel) {
     const laeuftNoch = new Date().getFullYear() === Number(jahr);
@@ -3844,7 +3860,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(daten.letzter.bild),
       wrappedText("wrapped-title", daten.letzter.titel),
       wrappedText("wrapped-sub", reviewDatum(String(daten.letzter.wann).slice(0, 10)))
-    ], daten.letzter.bild));
+    ]));
   }
 
   // 18 - Was sonst noch auffiel. Nur Saetze, deren Zahl eindeutig ist.

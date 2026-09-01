@@ -405,7 +405,7 @@ pruefe("Das Theme wird durchgehend benutzt",
       "android", "MainActivity.java"), "utf8");
 
   pruefe("Die Karten des Telefons tragen ein Titelbild",
-    /private static View bildkarte\(Context context, String bildUrl[\s\S]{0,2000}?Bilder\.laden\(hintergrund, bildUrl/
+    /private static View bildkarte\(Context context, String bildUrl[\s\S]{0,3000}?Bilder\.laden\(hintergrund, bildUrl/
       .test(RUECKBLICK));
   pruefe("Darueber liegt ein Schleier, damit die Schrift lesbar bleibt",
     /rahmen\.addView\(schleier/.test(RUECKBLICK),
@@ -413,6 +413,16 @@ pruefe("Das Theme wird durchgehend benutzt",
   pruefe("Ohne Bild entfaellt beides",
     /if \(bildUrl != null && !bildUrl\.trim\(\)\.isEmpty\(\)\) \{/.test(RUECKBLICK),
     "eine gedimmte Flaeche ohne Bild waere nur dunkler");
+
+  pruefe("Auch auf dem Telefon liegt hinter jeder Karte dasselbe Bild",
+    /private static View karte\(Context context, String stimmung, View\.\.\. zeilen\)/
+      .test(RUECKBLICK)
+    && !/bildkarte\(context, bild\(/.test(RUECKBLICK),
+    "neunzehn Karten mit neunzehn Hintergruenden sind neunzehn Seiten");
+  pruefe("Und es wird dort genauso entsaettigt wie am Rechner",
+    /flau\.setSaturation\(0\.45f\)/.test(RUECKBLICK)
+    && /saturate\(0\.45\)/.test(CSS),
+    "sonst sehen zwei Geraete verschieden aus, obwohl beide dasselbe meinen");
 
   // Dieselbe Zahl wie im Stylesheet. Zwei Geraete, die dasselbe Bild
   // verschieden stark durchscheinen lassen, sind zwei Gestaltungen.
@@ -574,6 +584,26 @@ pruefe("Die Vignette liegt unter dem Text und nicht darueber",
   /\.wrapped-content \{[\s\S]{0,200}?z-index: 3;/.test(CSS)
   && /\.wrapped-stage::after \{[\s\S]{0,400}?z-index: 2;/.test(CSS),
   "sonst legt sie sich an den Raendern ueber die Fussnote");
+
+// --- Ein Hintergrund fuer den ganzen Rueckblick -------------------------------
+//
+// Gemeldet als "background sieht immer unterschiedlich aus und nicht
+// einheitlich". Es waren neunzehn Karten mit neunzehn Hintergruenden: neun
+// trugen das Poster des Titels, von dem sie handelten, zehn trugen gar nichts.
+// Beim Blaettern wechselte also staendig Foto, leere Flaeche, anderes Foto in
+// anderer Farbe - das sind neunzehn Seiten und keine Geschichte.
+
+pruefe("Hinter jeder Karte liegt dasselbe Bild",
+  /let wrappedStimmungsbild = "";/.test(RENDERER)
+  && /function wrappedSeite\(art, teile, bild = wrappedStimmungsbild\)/.test(RENDERER)
+  && /wrappedStimmungsbild = bild;/.test(RENDERER));
+pruefe("Keine Karte bringt mehr ihr eigenes mit",
+  !/\], topSerie\.bild\)\)|\], topFilm\.bild\)\)|\], oft\.bild\)\)|\], daten\.erster\.bild\)\)|\], daten\.letzter\.bild\)\)/
+    .test(RENDERER),
+  "wo ein Titel gemeint ist, steht er als Poster auf der Karte - dort faellt er auf");
+pruefe("Das Bild wird entsaettigt statt verstaerkt",
+  /\.wrapped-backdrop \{[\s\S]*?filter: blur\([\d]+px\) saturate\(0\.\d+\)/.test(CSS),
+  "sonst haengt die Farbe der Buehne daran, welches Poster jemand zufaellig hat");
 
 // --- Und der Hinweis, den man uebersah ---------------------------------------
 
