@@ -747,21 +747,30 @@ public final class Bewegung {
     public static void seitenAuftritt(final View seite, final boolean rueckwaerts) {
         if (seite == null) return;
         final long dauer = dauer(seite.getContext(), SEITE);
-        if (dauer <= 0) {
+        if (dauer <= 0 || !weiteWege(seite.getContext())) {
             endzustand(seite);
             return;
         }
-        seite.setAlpha(0f);
-        if (weiteWege(seite.getContext())) {
-            seite.post(() -> {
-                float weg = Math.max(dp(seite, 24f), seite.getWidth() * 0.05f);
-                seite.setTranslationX(rueckwaerts ? -weg : weg);
-                seite.animate().alpha(1f).translationX(0f)
-                    .setDuration(dauer).setInterpolator(hinein()).withLayer().start();
-            });
-        } else {
-            seite.animate().alpha(1f).setDuration(dauer).setInterpolator(kurve()).start();
-        }
+        // Sichtbar ab dem ersten gezeichneten Bild - und nur der Weg wird
+        // bewegt.
+        //
+        // <b>Der gemeldete Fehler.</b> Hier stand vorher
+        // {@code seite.setAlpha(0f)} und dahinter ein {@code post(...)}, das
+        // die Bewegung erst im naechsten Durchlauf des Hauptfadens anfing.
+        // Zwischen beidem liegt mindestens ein gezeichnetes Bild, und in dem
+        // steht die fertige Seite vollstaendig durchsichtig da: Kopf- und
+        // Fussleiste bleiben stehen, die Mitte ist leer. Kommt der Hauptfaden
+        // nicht sofort dazu - beim Aufbau einer Seite mit Bildern kommt er
+        // das nie -, sind es mehrere Bilder. Gemeldet als "Zucken beim
+        // Navigieren".
+        //
+        // Deckkraft ist deshalb aus dem Uebergang heraus. Was bleibt, ist ein
+        // Weg von 24 dp; er braucht keine Breite und damit auch keine Messung,
+        // also laesst er sich sofort setzen statt im naechsten Durchlauf.
+        endzustand(seite);
+        seite.setTranslationX(rueckwaerts ? -dp(seite, 24f) : dp(seite, 24f));
+        seite.animate().translationX(0f)
+            .setDuration(dauer).setInterpolator(hinein()).withLayer().start();
     }
 
     /**
@@ -780,10 +789,15 @@ public final class Bewegung {
             endzustand(seite);
             return;
         }
-        seite.setAlpha(0f);
-        seite.setScaleX(0.92f);
-        seite.setScaleY(0.92f);
-        seite.animate().alpha(1f).scaleX(1f).scaleY(1f)
+        // Auch hier ohne Deckkraft - aus demselben Grund wie bei
+        // {@link #seitenAuftritt}: eine Seite, die bei 0 anfaengt, ist im
+        // ersten gezeichneten Bild nicht da. Der Sprung von 0.92 auf 1 hat
+        // dieselbe Aussage und ist von Anfang an zu sehen; er faengt etwas
+        // spaeter an (0.96), weil ohne die Blende der Weg kuerzer wirken darf.
+        endzustand(seite);
+        seite.setScaleX(0.96f);
+        seite.setScaleY(0.96f);
+        seite.animate().scaleX(1f).scaleY(1f)
             .setDuration(dauer).setInterpolator(hinein()).withLayer().start();
     }
 

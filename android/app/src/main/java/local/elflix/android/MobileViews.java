@@ -1328,32 +1328,22 @@ final class MobileViews {
     }
 
     /**
-     * Eine Zeile mit einem Schalter.
+     * Eine Zeile mit einem Schalter - und sie bleibt dieselbe Zeile.
      *
-     * <p>Fuer die sichtbaren Startseitenreihen. Bewusst kein {@code Switch} aus
-     * dem Framework: die App baut ihre Oberflaeche von Hand und ohne Material,
-     * und ein einzelnes Framework-Bedienelement traegt seine eigene Farbwelt
-     * herein - auf einem dunklen Hintergrund faellt das sofort auf.
+     * <p><b>Was hier frueher stand.</b> Es gab eine zweite Ueberladung mit
+     * einem Parameter {@code vorher}: die Einstellungsseite wurde bei jedem
+     * Handgriff neu gebaut, der Schalter, den man gerade umgelegt hatte, war
+     * also ein <em>anderer</em> an derselben Stelle, und ohne die Angabe, wo
+     * der alte stand, konnte der Daumen nur springen.
+     *
+     * <p>Die Seite wird nicht mehr neu gebaut (siehe
+     * {@code MainActivity.einstellungenAuffrischen}). Damit ist der Schalter
+     * derselbe, er weiss selbst, wo sein Daumen steht, und
+     * {@link #schalterSetzen} laesst ihn von dort hinueberlaufen. Der Umweg
+     * ueber einen gemerkten Vorzustand faellt ersatzlos weg.
      */
     static View schalterZeile(Context context, String titel, String erklaerung,
                               boolean an, Runnable beiKlick) {
-        return schalterZeile(context, titel, erklaerung, an, null, beiKlick);
-    }
-
-    /**
-     * Derselbe Schalter, aber er weiss, wo er herkommt.
-     *
-     * <p>Die Einstellungsseite wird bei jedem Handgriff neu gebaut - der
-     * Schalter, den man gerade umgelegt hat, ist also nicht derselbe, der eben
-     * noch dastand, sondern ein neuer an derselben Stelle. Ohne diese Angabe
-     * koennte er nur springen. Mit ihr faengt der Daumen dort an, wo der alte
-     * aufgehoert hat, und laeuft mit einer Feder hinueber; die Bahn wechselt
-     * dabei ihre Farbe.
-     *
-     * @param vorher der zuletzt gezeichnete Stand, {@code null} beim ersten Mal
-     */
-    static View schalterZeile(Context context, String titel, String erklaerung,
-                              boolean an, Boolean vorher, Runnable beiKlick) {
         LinearLayout zeile = new LinearLayout(context);
         zeile.setOrientation(LinearLayout.HORIZONTAL);
         zeile.setGravity(Gravity.CENTER_VERTICAL);
@@ -1384,42 +1374,159 @@ final class MobileViews {
         // die dieselbe Aussage tragen wie ein Haken, aber auf einen Blick zu
         // erkennen sind - auch ohne die Zeile daneben zu lesen.
         FrameLayout bahn = new FrameLayout(context);
-        GradientDrawable bahnForm = shape(context, an ? Theme.PRIMARY : Theme.SURFACE_PRESSED, 11,
-            an ? Theme.PRIMARY : Theme.BORDER, 1);
-        bahn.setBackground(bahnForm);
-        final View knopf = new View(context);
-        knopf.setBackground(shape(context, an ? Color.WHITE : Theme.TEXT_DISABLED, 9,
-            Color.TRANSPARENT, 0));
+        bahn.setTag(SCHALTER_BAHN);
+        View knopf = new View(context);
+        knopf.setTag(SCHALTER_KNOPF);
         FrameLayout.LayoutParams knopfParams = new FrameLayout.LayoutParams(
             dp(context, 18), dp(context, 18));
-        knopfParams.gravity = Gravity.CENTER_VERTICAL | (an ? Gravity.END : Gravity.START);
+        knopfParams.gravity = Gravity.CENTER_VERTICAL | Gravity.START;
         knopfParams.setMargins(dp(context, 2), 0, dp(context, 2), 0);
         bahn.addView(knopf, knopfParams);
-        if (vorher != null && vorher.booleanValue() != an) {
-            // Der Daumen steht schon an seinem Ziel - er faengt nur weiter
-            // links oder rechts an und laeuft mit einer Feder hinueber. Der
-            // Weg ist die Bahnbreite ohne den Daumen und die zwei Raender.
-            final float weg = dp(context, 44 - 18 - 4);
-            knopf.setTranslationX(an ? -weg : weg);
-            long dauer = Bewegung.dauer(context, Bewegung.LANG);
-            if (dauer <= 0) {
-                knopf.setTranslationX(0f);
-            } else {
-                knopf.animate().translationX(0f)
-                    .setDuration(dauer).setInterpolator(Bewegung.feder(0.6f)).start();
-                Bewegung.farbwechsel(bahnForm,
-                    an ? Theme.SURFACE_PRESSED : Theme.PRIMARY,
-                    an ? Theme.PRIMARY : Theme.SURFACE_PRESSED,
-                    Bewegung.MITTEL, context);
-            }
-        }
         LinearLayout.LayoutParams bahnParams = new LinearLayout.LayoutParams(
             dp(context, 44), dp(context, 22));
         bahnParams.leftMargin = dp(context, 12);
         zeile.addView(bahn, bahnParams);
 
+        // Der Daumen sitzt immer links und wird nach rechts geschoben. Eine
+        // feste Ausgangslage plus ein Weg ist dasselbe Bild wie zwei
+        // Ausgangslagen - nur laesst es sich animieren, ohne dass jemand neu
+        // vermessen wird.
+        zeile.setTag(R.id.elfix_schalter, Boolean.valueOf(an));
+        schalterZeichnen(zeile, an, false);
+
         zeile.setOnClickListener(v -> beiKlick.run());
         return zeile;
+    }
+
+    /** Woran die Zeile ihre zwei beweglichen Teile wiederfindet. */
+    private static final String SCHALTER_BAHN = "schalter-bahn";
+    private static final String SCHALTER_KNOPF = "schalter-knopf";
+
+    /**
+     * Den Stand eines bestehenden Schalters fortschreiben.
+     *
+     * <p>Der Ersatz fuer "Zeile wegwerfen und neu bauen". Steht der Schalter
+     * schon so, geschieht nichts - sonst laeuft der Daumen mit einer Feder
+     * hinueber und die Bahn wechselt dabei ihre Farbe.
+     */
+    static void schalterSetzen(View zeile, boolean an) {
+        if (zeile == null) return;
+        Object vorher = zeile.getTag(R.id.elfix_schalter);
+        boolean warAn = vorher instanceof Boolean && (Boolean) vorher;
+        if (vorher != null && warAn == an) return;
+        zeile.setTag(R.id.elfix_schalter, Boolean.valueOf(an));
+        schalterZeichnen(zeile, an, vorher != null);
+    }
+
+    /** Bahn und Daumen auf den Stand bringen - bewegt oder sofort. */
+    private static void schalterZeichnen(View zeile, boolean an, boolean bewegt) {
+        View bahn = zeile.findViewWithTag(SCHALTER_BAHN);
+        View knopf = zeile.findViewWithTag(SCHALTER_KNOPF);
+        if (bahn == null || knopf == null) return;
+        Context context = zeile.getContext();
+        // Der Weg ist die Bahnbreite ohne den Daumen und die zwei Raender.
+        final float weg = dp(context, 44 - 18 - 4);
+        GradientDrawable bahnForm = shape(context, an ? Theme.PRIMARY : Theme.SURFACE_PRESSED, 11,
+            an ? Theme.PRIMARY : Theme.BORDER, 1);
+        knopf.setBackground(shape(context, an ? Color.WHITE : Theme.TEXT_DISABLED, 9,
+            Color.TRANSPARENT, 0));
+        long dauer = bewegt ? Bewegung.dauer(context, Bewegung.LANG) : 0;
+        if (dauer <= 0) {
+            bahn.setBackground(bahnForm);
+            knopf.animate().cancel();
+            knopf.setTranslationX(an ? weg : 0f);
+            return;
+        }
+        bahn.setBackground(bahnForm);
+        knopf.animate().translationX(an ? weg : 0f)
+            .setDuration(dauer).setInterpolator(Bewegung.feder(0.6f)).start();
+        Bewegung.farbwechsel(bahnForm,
+            an ? Theme.SURFACE_PRESSED : Theme.PRIMARY,
+            an ? Theme.PRIMARY : Theme.SURFACE_PRESSED,
+            Bewegung.MITTEL, context);
+    }
+
+    /**
+     * Der Platz des Titelhintergrunds - und man kann darin wischen.
+     *
+     * <p>Gefordert war, auf der Startseite nach links und rechts blaettern zu
+     * koennen. Die Punkte darunter konnten das schon, aber sie sind fuenf
+     * Ziele von je acht dp; die Geste ist der Weg, den man ohnehin nimmt.
+     *
+     * <p>Warum ein eigener Kasten und kein {@code OnTouchListener}: der Platz
+     * traegt zwei Knoepfe ("Weiter schauen", "Meine Liste"), und die
+     * verbrauchen ihre Beruehrungen selbst - ein Listener am Elternteil sieht
+     * sie nie. Abgefangen wird deshalb erst, wenn der Finger die Schwelle des
+     * Geraets waagerecht ueberschritten hat: bis dahin bleibt jeder Tipp beim
+     * Knopf, und danach ist es unmissverstaendlich eine Geste.
+     *
+     * <p>Dass die ScrollView darueber nicht dazwischenfaehrt, sagt der Kasten
+     * ihr ausdruecklich - sonst nimmt sie die senkrechte Haelfte der Bewegung
+     * fuer sich und die waagerechte bleibt liegen.
+     */
+    static FrameLayout wischPlatz(Context context, final java.util.function.IntConsumer beiWisch) {
+        final int schwelle = android.view.ViewConfiguration.get(context).getScaledTouchSlop();
+        return new FrameLayout(context) {
+            private float startX;
+            private float startY;
+            private boolean wischt;
+
+            @Override
+            public boolean onInterceptTouchEvent(MotionEvent ereignis) {
+                switch (ereignis.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        startX = ereignis.getX();
+                        startY = ereignis.getY();
+                        wischt = false;
+                        break;
+                    case MotionEvent.ACTION_MOVE:
+                        float quer = Math.abs(ereignis.getX() - startX);
+                        float hoch = Math.abs(ereignis.getY() - startY);
+                        // Waagerecht *und* deutlicher als senkrecht: sonst
+                        // faengt ein schraeg gefuehrter Daumen, der eigentlich
+                        // scrollen will, hier haengen.
+                        if (quer > schwelle && quer > hoch * 1.5f) {
+                            wischt = true;
+                            getParent().requestDisallowInterceptTouchEvent(true);
+                            return true;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+                return false;
+            }
+
+            @Override
+            public boolean onTouchEvent(MotionEvent ereignis) {
+                switch (ereignis.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        startX = ereignis.getX();
+                        startY = ereignis.getY();
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        // Immer annehmen: mitten in einer Geste "nicht
+                        // zustaendig" zu sagen, ist fuer die ScrollView
+                        // darueber kein sauberer Zustand. Faehrt sie
+                        // dazwischen, kommt ohnehin ein ACTION_CANCEL.
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (wischt) {
+                            float weg = ereignis.getX() - startX;
+                            // Nach links gewischt heisst "weiter" - der Inhalt
+                            // folgt der Hand, wie auf jeder anderen Karte.
+                            if (Math.abs(weg) > schwelle) beiWisch.accept(weg < 0 ? 1 : -1);
+                        }
+                        wischt = false;
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        wischt = false;
+                        return true;
+                    default:
+                        return super.onTouchEvent(ereignis);
+                }
+            }
+        };
     }
 
     /**

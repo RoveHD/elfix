@@ -366,6 +366,10 @@ final class TvViews {
                 shape(context, Theme.SURFACE_PRESSED, 12, Theme.BORDER, 1),
                 shape(context, Theme.PRIMARY_DEEP, 12, Theme.PRIMARY, 2));
             action.setOnClickListener(v -> onAction.run());
+            // Damit die Beschriftung spaeter fortgeschrieben werden kann, ohne
+            // dass die Karte neu entsteht - siehe MainActivity.kartenKnopf().
+            action.setTag("karten-knopf");
+            action.setVisibility(actionLabel.isEmpty() ? View.GONE : View.VISIBLE);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.topMargin = dp(context, 16);

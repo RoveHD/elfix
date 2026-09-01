@@ -126,17 +126,59 @@ public class MainActivity extends Activity {
     private ScrollView seitenScroll;
     /** Wie die Liste beim letzten Neuzeichnen aussah - siehe {@link #seitenbild}. */
     private String letztesSeitenbild = "";
-    /** Und wie die Einstellungsseite aussah - siehe {@link #settingsBild}. */
-    private String letztesSettingsBild = "";
     /**
      * Welche Abschnitte der Einstellungen gerade offen sind.
      *
-     * <p>Er ueberlebt das Neuzeichnen, und das ist der ganze Grund, warum er
-     * hier steht und nicht in der Ansicht: jeder Handgriff in den Einstellungen
-     * baut die Seite neu, und ein Abschnitt, der sich dabei zuklappt, waere
-     * schlimmer als gar keine Gliederung.
+     * <p>Er steht hier und nicht in der Ansicht, damit ein Wechsel auf eine
+     * andere Seite und zurueck dieselbe Gliederung wiederfindet.
      */
     private final java.util.Set<String> offeneAbschnitte = new java.util.HashSet<>();
+
+    /* --------------------------------------------- Die Einstellungsseite */
+
+    /**
+     * Die Einstellungsseite, einmal gebaut.
+     *
+     * <p><b>Der gemeldete Fehler und was daran wirklich falsch war.</b> Jeder
+     * Handgriff hier rief {@code showSettings()}, und das faengt mit
+     * {@code content.removeAllViews()} an: die ganze Seite - ScrollView,
+     * Karten, Texte, Schalter, Eingabefelder - wurde weggeworfen und neu
+     * gebaut, bei jedem umgelegten Schalter und bei jeder Meldung des
+     * Geraeteabgleichs. Die geretteten Scrollpositionen und der Vergleich an
+     * einem Fingerabdruck haben davon jeweils ein Symptom behandelt; der
+     * Neuaufbau selbst blieb, und mit ihm das Flackern, der verlorene Fokus
+     * und der Sprung im Layout.
+     *
+     * <p>Jetzt wird die Seite genau einmal gebaut. Was sich aendern kann,
+     * meldet sich beim Bauen mit einem Auffrischer an ({@link #auffrischen});
+     * eine Aenderung laeuft danach nur noch durch diese Liste und schreibt
+     * Text, Schalterstand und Sichtbarkeit an denselben Ansichten fort. Kein
+     * {@code removeAllViews}, keine neue ScrollView, keine
+     * wiederhergestellte Position - die alte steht ja noch.
+     */
+    private ScrollView einstellungenScroll;
+    private LinearLayout einstellungenSeite;
+    /** Fuer welche Geraeteart sie gebaut wurde - Fernseher und Telefon sind verschieden. */
+    private boolean einstellungenFernseher;
+    /** Je Abschnitt der Kasten, in dem sein Inhalt steht. */
+    private final java.util.HashMap<String, LinearLayout> abschnittsKoerper = new java.util.HashMap<>();
+    /** Je Abschnitt, was seinen Inhalt baut - beim ersten Aufklappen. */
+    private final java.util.HashMap<String, Abschnittsinhalt> abschnittsBauplan = new java.util.HashMap<>();
+    /** Je Abschnitt die Zeile, auf die man tippt, und das Zeichen darin. */
+    private final java.util.HashMap<String, View> abschnittsKopfZeile = new java.util.HashMap<>();
+    private final java.util.HashMap<String, TextView> abschnittsPfeil = new java.util.HashMap<>();
+    /**
+     * Alles, was sich an der stehenden Seite fortschreiben laesst.
+     *
+     * <p>Die Liste waechst beim Bauen und beim ersten Aufklappen eines
+     * Abschnitts. Sie ersetzt den Neuaufbau vollstaendig.
+     */
+    private final java.util.List<Runnable> einstellungenAuffrischer = new ArrayList<>();
+
+    /** Was den Inhalt eines Abschnitts in seinen eigenen Kasten baut. */
+    private interface Abschnittsinhalt {
+        void bauen(LinearLayout koerper);
+    }
 
     /**
      * Wie die naechste Seite hereinkommt.
@@ -149,18 +191,6 @@ public class MainActivity extends Activity {
 
     private Auftritt naechsterAuftritt = Auftritt.VORWAERTS;
 
-    /**
-     * Welcher Einstellungsabschnitt gerade auf- oder zugeklappt wurde.
-     *
-     * <p>Die Einstellungsseite wird bei jedem Handgriff neu gebaut. Ohne diese
-     * Notiz wuesste die neue Seite nicht, was daran neu ist - und entweder
-     * animierte alles oder nichts. So bewegt sich genau der Abschnitt, den
-     * jemand angefasst hat.
-     */
-    private String zuletztGeklappt = "";
-
-    /** Der zuletzt gezeichnete Stand jedes Schalters - fuer den Daumen, der wandert. */
-    private final java.util.HashMap<String, Boolean> schalterVorher = new java.util.HashMap<>();
     /**
      * Titelbilder, die fuer die Suche von einer Titelseite geholt wurden.
      *
@@ -1169,6 +1199,11 @@ public class MainActivity extends Activity {
         // Suche ebenfalls: sie ist eine senkrechte Liste ueber die ganze
         // Breite und braucht keinen Neuaufbau - er wuerde die Abfrage bei allen
         // Anbietern ein zweites Mal losschicken.
+        // Die Einstellungsseite bleibt sonst ueber das Drehen hinweg stehen -
+        // mit den Massen des alten Formats. Sie ist die einzige Seite, die
+        // ueber einen Wechsel hinweg gemerkt wird, also muss sie hier auch als
+        // einzige ausdruecklich weg.
+        einstellungenVerwerfen();
         if (!"provider".equals(currentScreen)) seiteNeuZeichnen();
     }
 
@@ -1194,8 +1229,10 @@ public class MainActivity extends Activity {
                 // alte Spaltenzahl und waere hier falsch.
                 return;
             case "settings":
+                // Sie ist gerade verworfen worden und entsteht neu; ihre
+                // Position ist damit ohnehin die des Seitenanfangs.
                 showSettings();
-                break;
+                return;
             case "watchparty":
                 zeigeWatchparty();
                 break;
@@ -1400,7 +1437,7 @@ public class MainActivity extends Activity {
         if (spielerleiste != null) spielerleiste.autoplayAuffrischen();
         // Ein Handgriff, kein Hintergrundmelder: hier wird gezeichnet, ohne zu
         // fragen - die Karte sagt gleich etwas anderes.
-        settingsNeuZeichnen();
+        einstellungenAuffrischen();
     }
 
     /**
@@ -2063,7 +2100,7 @@ public class MainActivity extends Activity {
             etwasGezeigt |= tvKachelReihe(page, "weiterschauen", "Weiterschauen", privat,
                 Bibliothek.WEITERSCHAUEN);
             etwasGezeigt |= tvKachelReihe(page, "gemeinsam", "Gemeinsam weiterschauen", gemeinsam,
-                Bibliothek.WEITERSCHAUEN);
+                Bibliothek.GEMEINSAM);
         }
         if (zeigt(Startseite.YOUTUBE)) {
             etwasGezeigt |= tvKachelReihe(page, "youtube", "YouTube weiterschauen", videos,
@@ -2668,7 +2705,7 @@ public class MainActivity extends Activity {
         if (titel.isEmpty()) titel = "Titel";
         String hinweis = eintrag.istWiederansehen() ? eintrag.folgenText()
             : eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
-        if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
+        if (liste.zeigtAngefangenes() && eintrag.wartetAufNaechsteFolge()) {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
         }
         // Warum steht eine gesehene Serie hier? Weil sie gerade wieder laeuft.
@@ -2703,42 +2740,37 @@ public class MainActivity extends Activity {
      * davon sieht. Wer das einmal gelesen hat, findet es auf dem zweiten Geraet
      * an derselben Stelle wieder.
      */
-    private void geraeteEinstellungen(LinearLayout page, boolean fernseher) {
-        int abstand = fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP;
+    private void geraeteEinstellungen(LinearLayout koerper, boolean fernseher) {
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
 
         // Keine Ueberschrift mehr: der Abschnitt traegt sie jetzt selbst, und
         // zweimal "Meine Geraete" untereinander ist eine zu viel.
-        addSpacing(page, karte(fernseher, "Wozu das gut ist",
+        festeKarte(koerper, fernseher, luecke, "Wozu das gut ist",
             "Hält deine eigenen Geräte auf demselben Stand. Was du am Rechner schaust, steht "
                 + "auf dem Handy oder Fernseher in „Weiterschauen“ an derselben Stelle. "
-                + "Kein Konto und kein Raum — ein Schlüssel, den nur deine Geräte kennen.",
-            null, null), luecke);
+                + "Kein Konto und kein Raum — ein Schlüssel, den nur deine Geräte kennen.");
 
-        addSpacing(page, schluesselKarte(fernseher), luecke);
-        addSpacing(page, geraeteStatusKarte(fernseher), luecke);
+        schluesselKarte(koerper, fernseher, luecke);
+        geraeteStatusKarte(koerper, fernseher, luecke);
 
-        addSpacing(page, karte(fernseher, "Server",
-            watchparty.serverUrl().isEmpty()
+        lebendeKarte(koerper, fernseher, luecke, "Server",
+            () -> watchparty.serverUrl().isEmpty()
                 ? "Noch keine Adresse eingetragen. Es ist dasselbe Relay wie bei der Watchparty — "
                     + "die Adresse steht dort. Die Watchparty selbst muss dafür nicht eingeschaltet sein."
                 : watchparty.serverUrl() + "\n\nDasselbe Relay wie bei der Watchparty. Die Watchparty "
-                    + "selbst muss dafür nicht eingeschaltet sein.",
-            null, null), luecke);
+                    + "selbst muss dafür nicht eingeschaltet sein.");
 
-        addSpacing(page, karte(fernseher, "Was abgeglichen wird",
+        festeKarte(koerper, fernseher, luecke, "Was abgeglichen wird",
             "Folge, Stelle, abgeschlossene Titel, die Reihenfolge in der Mediathek — und die "
                 + "gemessene Wiedergabezeit, damit der Rückblick auf jedem Gerät alles zusammenzählt "
                 + "statt nur die Hälfte.\n\n"
                 + "Nicht dabei: selbst gewählte Bilder und der Verlauf je Eintrag — die bleiben auf "
-                + "dem Gerät. Einträge einer Watchparty bleiben bei ihrem Raum.",
-            null, null), luecke);
+                + "dem Gerät. Einträge einer Watchparty bleiben bei ihrem Raum.");
 
-        addSpacing(page, karte(fernseher, "Was der Server sieht",
+        festeKarte(koerper, fernseher, luecke, "Was der Server sieht",
             "Nichts davon. Die Einträge sind mit deinem Schlüssel verschlossen, bevor sie das Gerät "
                 + "verlassen; der Schlüssel selbst geht nie hinaus. Sichtbar bleibt, wie viele "
-                + "Einträge es gibt und wann sie sich ändern.",
-            null, null), luecke);
+                + "Einträge es gibt und wann sie sich ändern.");
     }
 
     /** Eine Karte, die auf beiden Geraeten dasselbe sagt und verschieden aussieht. */
@@ -2755,7 +2787,7 @@ public class MainActivity extends Activity {
      * man genau einmal ab, und dabei will man sehen, was man schon hat - auf dem
      * Fernseher erst recht, wo jedes Zeichen einzeln erfahren wird.
      */
-    private View schluesselKarte(boolean fernseher) {
+    private void schluesselKarte(LinearLayout koerper, boolean fernseher, int luecke) {
         LinearLayout karte = new LinearLayout(this);
         karte.setOrientation(LinearLayout.VERTICAL);
         int rand = dp(fernseher ? 22 : 14);
@@ -2817,13 +2849,21 @@ public class MainActivity extends Activity {
             () -> schluesselUebernehmen(feld.getText().toString()));
         geraeteKnopf(knoepfe, fernseher, "Neuen Schlüssel erzeugen", false, this::schluesselNeuFragen);
         geraeteKnopf(knoepfe, fernseher, "Kopieren", false, this::schluesselKopieren);
-        if (geraete != null && geraete.eingeschaltet()) {
-            geraeteKnopf(knoepfe, fernseher, "Dieses Gerät trennen", false, this::geraetTrennenFragen);
-        }
-        return karte;
+        // Auch dieser Knopf steht immer da und wird nur ein- und ausgeblendet -
+        // siehe serverKarte.
+        View trennen = geraeteKnopf(knoepfe, fernseher, "Dieses Gerät trennen", false,
+            this::geraetTrennenFragen);
+
+        addSpacing(koerper, karte, luecke);
+        auffrischen(() -> {
+            trennen.setVisibility(geraete != null && geraete.eingeschaltet()
+                ? View.VISIBLE : View.GONE);
+            feldNachfuehren(feld, geraeteSchluesselAnzeige());
+        });
     }
 
-    private void geraeteKnopf(LinearLayout reihe, boolean fernseher, String text,
+    /** Ein Knopf in einer Karte - und er wird zurueckgegeben, damit man ihn spaeter noch erreicht. */
+    private View geraeteKnopf(LinearLayout reihe, boolean fernseher, String text,
                               boolean betont, Runnable beiKlick) {
         TextView knopf = new TextView(this);
         knopf.setText(text);
@@ -2852,6 +2892,7 @@ public class MainActivity extends Activity {
             else masse.topMargin = dp(8);
         }
         reihe.addView(knopf, masse);
+        return knopf;
     }
 
     /**
@@ -2862,7 +2903,22 @@ public class MainActivity extends Activity {
      * antwortet oder dass der Schluessel nicht passt. Jeder dieser Faelle
      * braucht einen anderen Handgriff, also steht auch jeder einzeln da.
      */
-    private View geraeteStatusKarte(boolean fernseher) {
+    private void geraeteStatusKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        lebendeKarte(koerper, fernseher, luecke, "Status", this::geraeteStatusText,
+            () -> geraete != null && geraete.eingeschaltet() ? "Jetzt abgleichen" : null,
+            () -> {
+                if (geraete == null || !geraete.eingeschaltet()) return;
+                showToast("Wird abgeglichen …");
+                // Derselbe Knopf tut dasselbe wie am Rechner: er holt den
+                // ganzen Raum noch einmal. Nur nachzusehen, ob etwas hinaus
+                // muss, hilft genau dem nicht, der ihn drueckt - wer ihn
+                // drueckt, vermisst etwas.
+                geraete.vollAbgleichen();
+            });
+    }
+
+    /** Was in der Statuskarte steht - eine Frage, die jederzeit neu gestellt werden darf. */
+    private String geraeteStatusText() {
         JSONObject zustand = geraete == null ? null : geraete.zustand();
         boolean an = geraete != null && geraete.eingeschaltet();
         boolean verbunden = zustand != null && zustand.optBoolean("connected", false);
@@ -2874,36 +2930,27 @@ public class MainActivity extends Activity {
         int titel = zustand == null ? 0 : zustand.optInt("titel", zustand.optInt("entries", 0));
         CharSequence zuletzt = geraeteAbgleichZeit(zustand);
 
-        String text;
         if (!an) {
-            text = "Nicht verbunden. Trag oben einen Schlüssel ein oder erzeug einen neuen.";
-        } else if (watchparty.serverUrl().isEmpty()) {
-            text = "Keine Server-Adresse. Sie steht bei der Watchparty — ohne sie gibt es nichts abzugleichen.";
-        } else if (!fehler.isEmpty()) {
-            text = "Abgleich fehlgeschlagen: " + fehler
-                + "\n\nEs wird von selbst weiter versucht. Dein Stand bleibt so lange hier.";
-        } else if (!verbunden) {
-            text = "Wird verbunden … Ist das Gerät offline oder das Relay nicht erreichbar, "
-                + "wartet ELFIX und versucht es erneut.";
-        } else {
-            StringBuilder bauen = new StringBuilder("Verbunden");
-            bauen.append(titel == 1 ? ", 1 Titel" : ", " + titel + " Titel");
-            if (zuletzt.length() > 0) {
-                bauen.append(", zuletzt abgeglichen ").append(zuletzt);
-            }
-            bauen.append(".");
-            text = bauen.toString();
+            return "Nicht verbunden. Trag oben einen Schlüssel ein oder erzeug einen neuen.";
         }
-        return karte(fernseher, "Status", text,
-            an ? "Jetzt abgleichen" : null,
-            an ? () -> {
-                showToast("Wird abgeglichen …");
-                // Derselbe Knopf tut dasselbe wie am Rechner: er holt den
-                // ganzen Raum noch einmal. Nur nachzusehen, ob etwas hinaus
-                // muss, hilft genau dem nicht, der ihn drueckt - wer ihn
-                // drueckt, vermisst etwas.
-                geraete.vollAbgleichen();
-            } : null);
+        if (watchparty.serverUrl().isEmpty()) {
+            return "Keine Server-Adresse. Sie steht bei der Watchparty — ohne sie gibt es nichts abzugleichen.";
+        }
+        if (!fehler.isEmpty()) {
+            return "Abgleich fehlgeschlagen: " + fehler
+                + "\n\nEs wird von selbst weiter versucht. Dein Stand bleibt so lange hier.";
+        }
+        if (!verbunden) {
+            return "Wird verbunden … Ist das Gerät offline oder das Relay nicht erreichbar, "
+                + "wartet ELFIX und versucht es erneut.";
+        }
+        StringBuilder bauen = new StringBuilder("Verbunden");
+        bauen.append(titel == 1 ? ", 1 Titel" : ", " + titel + " Titel");
+        if (zuletzt.length() > 0) {
+            bauen.append(", zuletzt abgeglichen ").append(zuletzt);
+        }
+        bauen.append(".");
+        return bauen.toString();
     }
 
     private String geraeteSchluesselAnzeige() {
@@ -2924,7 +2971,7 @@ public class MainActivity extends Activity {
                 return;
             }
             showToast("Schlüssel übernommen — wird abgeglichen");
-            settingsNeuZeichnen();
+            einstellungenAuffrischen();
         });
     }
 
@@ -2949,7 +2996,7 @@ public class MainActivity extends Activity {
                     return;
                 }
                 showToast("Neuer Schlüssel erzeugt");
-                settingsNeuZeichnen();
+                einstellungenAuffrischen();
             }));
     }
 
@@ -2985,7 +3032,7 @@ public class MainActivity extends Activity {
             () -> {
                 geraete.trennen();
                 showToast("Getrennt");
-                settingsNeuZeichnen();
+                einstellungenAuffrischen();
             });
     }
 
@@ -2997,43 +3044,58 @@ public class MainActivity extends Activity {
      * kaputt aus. Ohne Rahmenzugriff sagt sie das ebenfalls, statt einen
      * Schalter anzubieten, der nichts bewirkt.
      */
-    private View introKarte(boolean fernseher) {
+    private void introKarte(LinearLayout koerper, boolean fernseher, int luecke) {
         boolean moeglich = Rahmen.verfuegbar();
-        boolean an = moeglich && marken != null && marken.eingeschaltet();
-        String text;
-        if (!moeglich) {
-            text = "Auf diesem Gerät nicht möglich: die System-WebView ist zu alt, um in den "
-                + "Rahmen des Hosters zu sehen. Ein Update der Android System WebView genügt.";
-        } else if (an) {
-            text = "Spulst du das Intro zweimal an derselben Stelle weg, steht ab der nächsten "
-                + "Folge ein Knopf dafür da.";
-        } else {
-            text = "Aus. Es wird weder gelernt noch ein Knopf angeboten.";
-        }
-        Runnable umschalten = () -> {
-            if (marken == null) return;
-            marken.einschalten(!marken.eingeschaltet());
-            settingsNeuZeichnen();
-        };
-        String knopf = moeglich ? (an ? "Ausschalten" : "Einschalten") : null;
-        View karte = fernseher
-            ? TvViews.infoCard(this, "Intro überspringen", text, knopf, moeglich ? umschalten : null)
-            : settingsCard("Intro überspringen", text, knopf, moeglich ? umschalten : null);
-        if (an) introStandNachtragen(karte);
-        return karte;
+        lebendeKarte(koerper, fernseher, luecke, "Intro überspringen",
+            () -> introText(moeglich),
+            moeglich ? () -> (marken != null && marken.eingeschaltet() ? "Ausschalten" : "Einschalten") : null,
+            moeglich ? () -> {
+                if (marken == null) return;
+                marken.einschalten(!marken.eingeschaltet());
+                introGelernt = -1;
+                einstellungenAuffrischen();
+            } : null);
+        introStandHolen();
     }
 
-    /** Traegt nach, wie viel gelernt wurde, sobald der Kern geantwortet hat. */
-    private void introStandNachtragen(View karte) {
+    /**
+     * Wie viele Staffeln gelernt sind - {@code -1} heisst "noch nicht gefragt".
+     *
+     * <p>Die Zahl steht hier und nicht in der Karte, weil sie aus dem Kern
+     * kommt und erst nach der Antwort da ist. Frueher schrieb die Antwort
+     * geradewegs in die Ansicht; das ging nur, solange die Karte gleich
+     * darauf ohnehin neu gebaut wurde. Jetzt bleibt die Karte stehen, also
+     * gehoert die Auskunft an die Stelle, die ihren Text bestimmt.
+     */
+    private int introGelernt = -1;
+
+    private String introText(boolean moeglich) {
+        if (!moeglich) {
+            return "Auf diesem Gerät nicht möglich: die System-WebView ist zu alt, um in den "
+                + "Rahmen des Hosters zu sehen. Ein Update der Android System WebView genügt.";
+        }
+        if (marken == null || !marken.eingeschaltet()) {
+            return "Aus. Es wird weder gelernt noch ein Knopf angeboten.";
+        }
+        if (introGelernt == 1) {
+            return "Für eine Staffel gelernt. Der Knopf steht dort ab der nächsten Folge.";
+        }
+        if (introGelernt > 1) {
+            return "Für " + introGelernt + " Staffeln gelernt. Der Knopf steht dort ab der "
+                + "nächsten Folge.";
+        }
+        return "Spulst du das Intro zweimal an derselben Stelle weg, steht ab der nächsten "
+            + "Folge ein Knopf dafür da.";
+    }
+
+    /** Fragt den Kern, wie viel gelernt wurde - und schreibt die Karte danach fort. */
+    private void introStandHolen() {
+        if (marken == null || !marken.eingeschaltet()) return;
         marken.stand(bericht -> {
-            if (bericht == null || karte == null) return;
-            int gelernt = bericht.optInt("marken", 0);
-            if (gelernt <= 0) return;
-            TextView koerper = karte.findViewWithTag("karten-text");
-            if (koerper == null) return;
-            koerper.setText(gelernt == 1
-                ? "Für eine Staffel gelernt. Der Knopf steht dort ab der nächsten Folge."
-                : "Für " + gelernt + " Staffeln gelernt. Der Knopf steht dort ab der nächsten Folge.");
+            int gelernt = bericht == null ? 0 : bericht.optInt("marken", 0);
+            if (gelernt == introGelernt) return;
+            introGelernt = gelernt;
+            einstellungenAuffrischen();
         });
     }
 
@@ -3046,27 +3108,34 @@ public class MainActivity extends Activity {
      * Auskunft kommt aus dem Kern und damit aus demselben Bestand, der auch
      * vorwaehlt; deshalb wird die Karte nachtraeglich beschriftet.
      */
-    private View fassungsKarte(boolean fernseher) {
+    private void fassungsKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        lebendeKarte(koerper, fernseher, luecke, "Sprachfassung merken",
+            this::fassungsText,
+            () -> (fassungen != null && fassungen.eingeschaltet()) ? "Ausschalten" : "Einschalten",
+            () -> {
+                if (fassungen == null) return;
+                fassungen.einschalten(!fassungen.eingeschaltet());
+                fassungsStand = "";
+                einstellungenAuffrischen();
+            });
+        fassungsStandHolen();
+    }
+
+    /** Was der Kern ueber die gemerkten Fassungen sagt - leer heisst "noch nichts". */
+    private String fassungsStand = "";
+
+    private String fassungsText() {
         boolean an = fassungen != null && fassungen.eingeschaltet();
-        String text = an
-            ? "Womit du eine Serie angefangen hast, steht ab der zweiten Folge vorgewählt da."
-            : "Aus. Jede Folge startet in der Fassung, die der Anbieter vorgibt.";
-        Runnable umschalten = () -> {
-            if (fassungen == null) return;
-            fassungen.einschalten(!fassungen.eingeschaltet());
-            settingsNeuZeichnen();
-        };
-        View karte = fernseher
-            ? TvViews.infoCard(this, "Sprachfassung merken", text, an ? "Ausschalten" : "Einschalten", umschalten)
-            : settingsCard("Sprachfassung merken", text, an ? "Ausschalten" : "Einschalten", umschalten);
-        if (an && fassungen != null) fassungsStandNachtragen(karte);
-        return karte;
+        if (!an) return "Aus. Jede Folge startet in der Fassung, die der Anbieter vorgibt.";
+        if (!fassungsStand.isEmpty()) return fassungsStand;
+        return "Womit du eine Serie angefangen hast, steht ab der zweiten Folge vorgewählt da.";
     }
 
     /** Traegt nach, was gemerkt wurde, sobald der Kern geantwortet hat. */
-    private void fassungsStandNachtragen(View karte) {
+    private void fassungsStandHolen() {
+        if (fassungen == null || !fassungen.eingeschaltet()) return;
         fassungen.stand(bericht -> {
-            if (bericht == null || karte == null) return;
+            if (bericht == null) return;
             int titel = bericht.optInt("titel", 0);
             if (titel <= 0) return;
             org.json.JSONArray fassungsListe = bericht.optJSONArray("fassungen");
@@ -3083,13 +3152,15 @@ public class MainActivity extends Activity {
                 }
             }
             text.append(".");
-            TextView koerper = karte.findViewWithTag("karten-text");
-            if (koerper != null) koerper.setText(text.toString());
+            if (text.toString().equals(fassungsStand)) return;
+            fassungsStand = text.toString();
+            einstellungenAuffrischen();
         });
     }
 
     private void renderTvSettings() {
         LinearLayout page = tvPage();
+        einstellungenSeite = page;
         page.addView(TvViews.eyebrow(this, "ELFIX"));
         page.addView(TvViews.heroTitle(this, "Einstellungen"));
         page.addView(TvViews.body(this, "OK klappt einen Abschnitt auf."));
@@ -3226,6 +3297,26 @@ public class MainActivity extends Activity {
         Auftritt art = naechsterAuftritt;
         naechsterAuftritt = Auftritt.VORWAERTS;
         if (!Bewegung.auftritteFrei()) return;
+        // Die Seite bewegt sich - ihre Teile nicht.
+        //
+        // <b>Der zweite Teil des gemeldeten Zuckens.</b> Der Uebergang der
+        // Seite war nur die halbe Ursache. Die andere steht in addSpacing:
+        // jeder Abschnitt bekommt ueber {@link Bewegung#auftrittEinmal} seinen
+        // eigenen Auftritt, und der faengt bei Deckkraft null an, gestaffelt
+        // um bis zu acht Schritte. Waehrend dieser Staffel steht die Seite
+        // zwar da, aber jedes einzelne Stueck darin ist noch durchsichtig -
+        // der Inhaltsbereich ist leer, waehrend Kopf und Fuss stehen. Genau
+        // dieses Bild wurde als "Mitte wird leer" gemeldet.
+        //
+        // Zwei Bewegungen fuer einen Vorgang sind ohnehin eine zu viel: dass
+        // man woanders ist, sagt der Weg der Seite. Waehrend des Aufbaus wird
+        // das Tor deshalb zugehalten; die Teile bekommen ihren Endzustand
+        // sofort. Das post() ist kein Warten, sondern das Ende des Aufbaus:
+        // eine Seite wird in einem Durchgang gebaut, und was danach
+        // nachgereicht wird - eine fertig geladene Empfehlungsreihe - soll
+        // seinen Auftritt wieder haben.
+        Bewegung.auftritteFreigeben(false);
+        content.post(() -> Bewegung.auftritteFreigeben(true));
         if (art == Auftritt.ZOOM) Bewegung.zoomAuftritt(scroll);
         else Bewegung.seitenAuftritt(scroll, art == Auftritt.ZURUECK);
     }
@@ -3296,7 +3387,10 @@ public class MainActivity extends Activity {
         // Eine neue Seite bringt einen neuen Platz - was ueber den alten
         // gemerkt war, gilt darin nicht mehr.
         heroPunkteStand = "";
-        heroPlatz = new FrameLayout(this);
+        // Der Platz kann wischen - siehe MobileViews.wischPlatz. Am Fernseher
+        // nicht: dort blaettert das Steuerkreuz, und einen Finger gibt es
+        // nicht.
+        heroPlatz = MobileViews.wischPlatz(this, this::heroWeiter);
         heroPunkte = new LinearLayout(this);
         heroPunkte.setOrientation(LinearLayout.HORIZONTAL);
         heroPunkte.setGravity(Gravity.CENTER);
@@ -3335,8 +3429,10 @@ public class MainActivity extends Activity {
         }
         if (zeigt(Startseite.WEITERSCHAUEN)) {
             etwasGezeigt |= kachelReihe(page, "Weiterschauen", privat, Bibliothek.WEITERSCHAUEN, 8);
+            // Eigene Liste statt derselben wie daneben: "Alle anzeigen" fuehrt
+            // sonst in einen Reiter, in dem beides wieder zusammensteht.
             etwasGezeigt |= kachelReihe(page, "Gemeinsam weiterschauen", gemeinsam,
-                Bibliothek.WEITERSCHAUEN, 8);
+                Bibliothek.GEMEINSAM, 8);
         }
         if (zeigt(Startseite.YOUTUBE)) {
             etwasGezeigt |= kachelReihe(page, "YouTube weiterschauen", videos,
@@ -3975,6 +4071,23 @@ public class MainActivity extends Activity {
             return Math.max(170, Math.min(230, Math.round(hoehe * 0.55f)));
         }
         return Math.max(230, Math.min(360, Math.round(hoehe * 0.38f)));
+    }
+
+    /**
+     * Einen Titel weiter oder zurueck - von Hand.
+     *
+     * <p>Der Weg fuer die Wischgeste und dieselbe Bewegung wie beim Takt: der
+     * Kasten wird umgeschrieben, nicht ersetzt (siehe {@link #heroZeichnen}),
+     * also wechselt nur die Schrift und das Bild. Wer von Hand blaettert, hat
+     * gerade hingesehen - die Uhr faengt deshalb von vorn an, damit nicht eine
+     * Sekunde spaeter von selbst weitergedreht wird.
+     */
+    private void heroWeiter(int richtung) {
+        int anzahl = heroEintraege.size();
+        if (anzahl < 2) return;
+        heroStelle = ((heroStelle + richtung) % anzahl + anzahl) % anzahl;
+        heroZeichnen();
+        heroWechselPlanen();
     }
 
     /**
@@ -5039,7 +5152,7 @@ public class MainActivity extends Activity {
                 showToast(anzahl + " Domains geladen");
                 if (werbefilter != null) werbefilter.neuBauen();
             }
-            settingsNeuZeichnen();
+            einstellungenAuffrischen();
         });
     }
 
@@ -5071,7 +5184,7 @@ public class MainActivity extends Activity {
         werbefilter.setzeModus(neu);
         showToast("aus".equals(neu) ? "Volle Regeln aus"
             : ("an".equals(neu) ? "Volle Regeln an" : "Das Gerät entscheidet"));
-        settingsNeuZeichnen();
+        einstellungenAuffrischen();
     }
 
     /** Settings rows as grouped cards instead of stacked headline/paragraph pairs. */
@@ -5083,14 +5196,13 @@ public class MainActivity extends Activity {
      * zwei Wege dorthin. Ein zweiter Zustand daneben waere die Stelle, an der
      * Leiste und Einstellungen Verschiedenes behaupten.
      */
-    private View autoplayKarte(boolean fernseher) {
-        boolean an = Folgen.autoplayAn(this);
-        return karte(fernseher, "Nächste Folge von selbst starten",
-            an
+    private void autoplayKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        lebendeKarte(koerper, fernseher, luecke, "Nächste Folge von selbst starten",
+            () -> Folgen.autoplayAn(this)
                 ? "Ein: Am Ende einer Folge geht es von selbst weiter. Der Knopf „Nächste Folge“ "
                     + "steht trotzdem da."
                 : "Aus: Es geht nur weiter, wenn du „Nächste Folge“ drückst.",
-            an ? "Ausschalten" : "Einschalten",
+            () -> Folgen.autoplayAn(this) ? "Ausschalten" : "Einschalten",
             this::autoplayUmschalten);
     }
 
@@ -5120,6 +5232,10 @@ public class MainActivity extends Activity {
 
         if (actionLabel != null && onAction != null) {
             TextView action = MobileViews.secondaryButton(this, actionLabel, onAction);
+            // Damit die Beschriftung spaeter fortgeschrieben werden kann,
+            // ohne dass die Karte neu entsteht - siehe kartenKnopf().
+            action.setTag("karten-knopf");
+            action.setVisibility(actionLabel.isEmpty() ? View.GONE : View.VISIBLE);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, dp(MobileViews.TOUCH_TARGET));
             params.topMargin = dp(12);
@@ -5130,6 +5246,7 @@ public class MainActivity extends Activity {
 
     private void renderMobileSettings() {
         LinearLayout page = mobilePage();
+        einstellungenSeite = page;
         page.addView(MobileViews.eyebrow(this, "ELFIX"));
         page.addView(MobileViews.heroTitle(this, "Einstellungen"));
         page.addView(MobileViews.subtitle(this,
@@ -5153,55 +5270,54 @@ public class MainActivity extends Activity {
     private void einstellungsAbschnitte(LinearLayout page, boolean fernseher) {
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
 
-        abschnitt(page, fernseher, "startseite", "Startseite", standStartseite(),
-            () -> startseitenEinstellungen(page, fernseher));
+        abschnitt(page, fernseher, "startseite", "Startseite", this::standStartseite,
+            koerper -> startseitenEinstellungen(koerper, fernseher));
 
-        abschnitt(page, fernseher, "wiedergabe", "Wiedergabe", standWiedergabe(), () -> {
-            addSpacing(page, autoplayKarte(fernseher), luecke);
-            addSpacing(page, karte(fernseher, "Favoriten-Fortschritt",
-                folgeStatisch()
+        abschnitt(page, fernseher, "wiedergabe", "Wiedergabe", this::standWiedergabe, koerper -> {
+            autoplayKarte(koerper, fernseher, luecke);
+            lebendeKarte(koerper, fernseher, luecke, "Favoriten-Fortschritt",
+                () -> folgeStatisch()
                     ? "Der Eintrag bleibt auf der gespeicherten Folge stehen."
                     : "Der Eintrag rückt mit, wenn du zur nächsten Folge blätterst.",
-                folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
+                () -> folgeStatisch() ? "Mitrücken lassen" : "Stehen lassen",
                 () -> {
                     favoriteProgressMode = folgeStatisch() ? "sequential" : "static";
                     getSharedPreferences("elflix_settings", MODE_PRIVATE)
                         .edit()
                         .putString("favorite_progress_mode", favoriteProgressMode)
                         .apply();
-                    settingsNeuZeichnen();
-                }), luecke);
-            addSpacing(page, introKarte(fernseher), luecke);
-            addSpacing(page, fassungsKarte(fernseher), luecke);
+                    einstellungenAuffrischen();
+                });
+            introKarte(koerper, fernseher, luecke);
+            fassungsKarte(koerper, fernseher, luecke);
         });
 
-        abschnitt(page, fernseher, "werbung", "Werbeblocker", standWerbung(), () -> {
-            addSpacing(page, karte(fernseher, "Wie gefiltert wird",
+        abschnitt(page, fernseher, "werbung", "Werbeblocker", this::standWerbung, koerper -> {
+            festeKarte(koerper, fernseher, luecke, "Wie gefiltert wird",
                 "AdGuard-Filterlisten sind aktiv. Innerhalb des Video-Hosters wird bewusst "
                     + "zurückhaltender gefiltert, damit die Wiedergabe nicht blockiert wird. "
                     + "Schichten, die den Player zudecken, werden zusätzlich erkannt und "
-                    + "ausgeblendet.",
-                null, null), luecke);
-            addSpacing(page, karte(fernseher, "Volle Regeln",
-                werbefilter == null ? "" : werbefilter.standText(),
-                regelKnopf(), this::regelModusUmschalten), luecke);
-            addSpacing(page, karte(fernseher, "Filterlisten",
-                Filterlisten.standText(this),
-                "Jetzt aktualisieren", this::filterlistenLaden), luecke);
+                    + "ausgeblendet.");
+            lebendeKarte(koerper, fernseher, luecke, "Volle Regeln",
+                () -> werbefilter == null ? "" : werbefilter.standText(),
+                this::regelKnopf, this::regelModusUmschalten);
+            lebendeKarte(koerper, fernseher, luecke, "Filterlisten",
+                () -> Filterlisten.standText(this),
+                () -> "Jetzt aktualisieren", this::filterlistenLaden);
         });
 
-        abschnitt(page, fernseher, "watchparty", "Watchparty", standWatchparty(),
-            () -> watchpartyEinstellungen(page, fernseher));
+        abschnitt(page, fernseher, "watchparty", "Watchparty", this::standWatchparty,
+            koerper -> watchpartyEinstellungen(koerper, fernseher));
 
-        abschnitt(page, fernseher, "geraete", "Meine Geräte", standGeraete(),
-            () -> geraeteEinstellungen(page, fernseher));
+        abschnitt(page, fernseher, "geraete", "Meine Geräte", this::standGeraete,
+            koerper -> geraeteEinstellungen(koerper, fernseher));
 
-        abschnitt(page, fernseher, "app", "Über ELFIX", standApp(), () -> {
-            addSpacing(page, aktualisierungsKarte(fernseher), luecke);
-            addSpacing(page, karte(fernseher, "Zwischenspeicher",
-                "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben "
+        abschnitt(page, fernseher, "app", "Über ELFIX", this::standApp, koerper -> {
+            aktualisierungsKarte(koerper, fernseher, luecke);
+            lebendeKarte(koerper, fernseher, luecke, "Zwischenspeicher",
+                () -> "Lädt alle Anbieter neu und leert den Cache. Cookies und Anmeldungen bleiben "
                     + "erhalten.",
-                "Alles neu laden", this::reloadAllWebViews), luecke);
+                () -> "Alles neu laden", this::reloadAllWebViews);
         });
     }
 
@@ -5217,32 +5333,35 @@ public class MainActivity extends Activity {
      * <p>Der Kalender kommt dazu: er ist am Rechner eine eigene Seite in der
      * Seitenleiste, hier eine Reihe - und dann gehoert er in dieselbe Liste.
      */
-    private void startseitenEinstellungen(LinearLayout page, boolean fernseher) {
+    private void startseitenEinstellungen(LinearLayout koerper, boolean fernseher) {
         if (startseite == null) return;
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
         for (Startseite.Reihe reihe : Startseite.REIHEN) {
+            final String schluessel = reihe.schluessel;
             // Am Fernseher eine Karte mit Knopf statt eines Schalters: ein
             // Schiebeschalter ist nichts, was sich mit einem Steuerkreuz
             // bedienen liesse.
             if (fernseher) {
-                addSpacing(page, karte(true, reihe.titel, reihe.erklaerung,
-                    startseite.zeigt(reihe.schluessel) ? "Ausblenden" : "Einblenden",
+                lebendeKarte(koerper, true, luecke, reihe.titel,
+                    () -> reihe.erklaerung,
+                    () -> startseite.zeigt(schluessel) ? "Ausblenden" : "Einblenden",
                     () -> {
-                        startseite.umschalten(reihe.schluessel);
-                        settingsNeuZeichnen();
-                    }), luecke);
+                        startseite.umschalten(schluessel);
+                        einstellungenAuffrischen();
+                    });
                 continue;
             }
-            // Der zuletzt gezeichnete Stand - daran erkennt der Schalter, ob
-            // sein Daumen wandern soll oder einfach dastehen.
-            Boolean vorher = schalterVorher.put(reihe.schluessel,
-                Boolean.valueOf(startseite.zeigt(reihe.schluessel)));
-            addSpacing(page, MobileViews.schalterZeile(this, reihe.titel, reihe.erklaerung,
-                startseite.zeigt(reihe.schluessel), vorher,
+            View zeile = MobileViews.schalterZeile(this, reihe.titel, reihe.erklaerung,
+                startseite.zeigt(schluessel),
                 () -> {
-                    startseite.umschalten(reihe.schluessel);
-                    settingsNeuZeichnen();
-                }), luecke);
+                    startseite.umschalten(schluessel);
+                    einstellungenAuffrischen();
+                });
+            addSpacing(koerper, zeile, luecke);
+            // Der Schalter wird nicht neu gebaut, sondern umgestellt - der
+            // Daumen laeuft hinueber, die Zeile bleibt dieselbe Ansicht, und
+            // die Seite darunter ruehrt sich nicht.
+            auffrischen(() -> MobileViews.schalterSetzen(zeile, startseite.zeigt(schluessel)));
         }
     }
 
@@ -5265,52 +5384,75 @@ public class MainActivity extends Activity {
      * gespeichert wird, ist auf beiden Geräten dieselbe Zeile Code; nur der
      * Zuschnitt der Karten unterscheidet sich, so wie bei "Meine Geräte".
      */
-    private void watchpartyEinstellungen(LinearLayout page, boolean fernseher) {
+    private void watchpartyEinstellungen(LinearLayout koerper, boolean fernseher) {
         int abstand = fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP;
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
 
         // Auch hier keine eigene Ueberschrift - siehe geraeteEinstellungen.
-        addSpacing(page, karte(fernseher, "Verbindung", watchpartyStandText(),
-            watchparty.istEingeschaltet() ? "Ausschalten" : "Einschalten",
+        lebendeKarte(koerper, fernseher, fernseher ? luecke : abstand, "Verbindung",
+            this::watchpartyStandText,
+            () -> watchparty.istEingeschaltet() ? "Ausschalten" : "Einschalten",
             () -> {
                 watchparty.setzeEingeschaltet(!watchparty.istEingeschaltet());
-                settingsNeuZeichnen();
-            }), fernseher ? luecke : abstand);
+                einstellungenAuffrischen();
+            });
 
-        addSpacing(page, serverKarte(fernseher), luecke);
+        serverKarte(koerper, fernseher, luecke);
 
-        List<String> codes = watchparty.raumcodes();
-        addSpacing(page, karte(fernseher, "Raumcodes",
-            codes.isEmpty()
-                ? "Noch keiner. Derselbe Code auf allen Geräten, die zusammenlaufen sollen."
-                : android.text.TextUtils.join(", ", codes),
-            "Raum hinzufügen",
+        lebendeKarte(koerper, fernseher, luecke, "Raumcodes",
+            () -> {
+                List<String> codes = watchparty.raumcodes();
+                return codes.isEmpty()
+                    ? "Noch keiner. Derselbe Code auf allen Geräten, die zusammenlaufen sollen."
+                    : android.text.TextUtils.join(", ", codes);
+            },
+            () -> "Raum hinzufügen",
             () -> textFrage("Raumcode", "mindestens vier Zeichen", "", wert ->
                 watchparty.raumHinzufuegen(wert, (angenommen, fehler) -> {
                     if (fehler != null) showToast(fehler);
                     else showToast("Raum hinzugefügt");
-                    settingsNeuZeichnen();
-                }))), luecke);
+                    einstellungenAuffrischen();
+                })));
 
-        for (String code : codes) {
-            addSpacing(page, karte(fernseher, "Raum " + code, "Dieses Gerät gehört zu diesem Raum.",
-                "Entfernen", () -> frage("Raum entfernen?",
-                    "Der Stand aus diesem Raum verschwindet von diesem Gerät. Auf den anderen bleibt er.",
-                    () -> {
-                        watchparty.raumEntfernen(code);
-                        settingsNeuZeichnen();
-                    })), luecke);
-        }
+        // Die Raeume sind das einzige an dieser Seite, was wirklich seine
+        // Gestalt aendert: es koennen mehr oder weniger werden. Sie bekommen
+        // deshalb einen eigenen Kasten - und der wird auch nur dann neu
+        // gebaut, wenn sich die Liste selbst geaendert hat. Alles andere auf
+        // der Seite bleibt dabei unberuehrt.
+        LinearLayout raumListe = new LinearLayout(this);
+        raumListe.setOrientation(LinearLayout.VERTICAL);
+        koerper.addView(raumListe, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        Bewegung.auftrittVerbrauchen(raumListe);
+        final String[] gezeigteRaeume = {null};
+        auffrischen(() -> {
+            List<String> codes = watchparty.raumcodes();
+            String jetzt = android.text.TextUtils.join("\u001f", codes);
+            if (jetzt.equals(gezeigteRaeume[0])) return;
+            gezeigteRaeume[0] = jetzt;
+            raumListe.removeAllViews();
+            for (String code : codes) {
+                addSpacing(raumListe, karte(fernseher, "Raum " + code,
+                    "Dieses Gerät gehört zu diesem Raum.",
+                    "Entfernen", () -> frage("Raum entfernen?",
+                        "Der Stand aus diesem Raum verschwindet von diesem Gerät. Auf den anderen bleibt er.",
+                        () -> {
+                            watchparty.raumEntfernen(code);
+                            einstellungenAuffrischen();
+                        })), luecke);
+            }
+        });
 
-        addSpacing(page, karte(fernseher, "Name dieses Geräts",
-            watchparty.geraetName().isEmpty() ? "Nicht gesetzt - nur zur Anzeige bei den anderen."
+        lebendeKarte(koerper, fernseher, luecke, "Name dieses Geräts",
+            () -> watchparty.geraetName().isEmpty()
+                ? "Nicht gesetzt - nur zur Anzeige bei den anderen."
                 : watchparty.geraetName(),
-            "Ändern",
+            () -> "Ändern",
             () -> textFrage("Name dieses Geräts", fernseher ? "z. B. Fernseher" : "z. B. Handy",
                 watchparty.geraetName(), wert -> {
                     watchparty.setzeGeraetName(wert);
-                    settingsNeuZeichnen();
-                })), luecke);
+                    einstellungenAuffrischen();
+                }));
     }
 
     /**
@@ -5361,7 +5503,7 @@ public class MainActivity extends Activity {
      * mit demselben Wortlaut auf jedem Gerät. Siehe
      * {@link Watchparty#setzeServer(String, Kern.Antwort)}.
      */
-    private View serverKarte(boolean fernseher) {
+    private void serverKarte(LinearLayout koerper, boolean fernseher, int luecke) {
         LinearLayout karte = new LinearLayout(this);
         karte.setOrientation(LinearLayout.VERTICAL);
         int rand = dp(fernseher ? 22 : 14);
@@ -5407,12 +5549,6 @@ public class MainActivity extends Activity {
         karte.addView(feld, feldMasse);
 
         TextView hinweis = new TextView(this);
-        hinweis.setText(watchparty.serverUrl().isEmpty()
-            ? "Die volle Adresse deines Relays, mit http:// oder https:// davor. Ein Port darf "
-                + "dahinter stehen: http://192.168.1.10:8787. Ohne sie bleiben Watchparty und "
-                + "Geräteabgleich aus."
-            : "Die volle Adresse deines Relays, mit http:// oder https:// davor. Ein Port darf "
-                + "dahinter stehen. Dasselbe Relay benutzt auch „Meine Geräte“.");
         hinweis.setTextColor(Theme.TEXT_SECONDARY);
         hinweis.setTextSize(fernseher ? 15 : 13);
         hinweis.setLineSpacing(0, 1.15f);
@@ -5436,13 +5572,42 @@ public class MainActivity extends Activity {
             return true;
         });
         geraeteKnopf(knoepfe, fernseher, "Übernehmen", true, uebernehmen);
-        if (!watchparty.serverUrl().isEmpty()) {
-            geraeteKnopf(knoepfe, fernseher, "Löschen", false, () -> frage("Adresse löschen?",
+        // Der Loeschknopf steht immer da und wird nur aus- und eingeblendet.
+        // Ihn anzulegen und wieder zu entfernen hiesse, die Karte bei jeder
+        // Aenderung umzubauen - und genau davon soll die Seite wegkommen.
+        View loeschen = geraeteKnopf(knoepfe, fernseher, "Löschen", false,
+            () -> frage("Adresse löschen?",
                 "Ohne Server-Adresse bleiben Watchparty und Geräteabgleich aus. Deine Räume, "
                     + "dein Schlüssel und dein Stand bleiben erhalten.",
                 () -> serverUebernehmen("")));
-        }
-        return karte;
+
+        addSpacing(koerper, karte, luecke);
+        auffrischen(() -> {
+            String adresse = watchparty.serverUrl();
+            textSetzen(hinweis, adresse.isEmpty()
+                ? "Die volle Adresse deines Relays, mit http:// oder https:// davor. Ein Port darf "
+                    + "dahinter stehen: http://192.168.1.10:8787. Ohne sie bleiben Watchparty und "
+                    + "Geräteabgleich aus."
+                : "Die volle Adresse deines Relays, mit http:// oder https:// davor. Ein Port darf "
+                    + "dahinter stehen. Dasselbe Relay benutzt auch „Meine Geräte“.");
+            loeschen.setVisibility(adresse.isEmpty() ? View.GONE : View.VISIBLE);
+            feldNachfuehren(feld, adresse);
+        });
+    }
+
+    /**
+     * Ein Eingabefeld auf den gespeicherten Wert nachfuehren - aber nur, wenn
+     * gerade niemand darin schreibt.
+     *
+     * <p>Das ist der Unterschied zwischen "die Seite steht" und "die Seite
+     * wird neu gebaut": ein neu gebautes Feld nimmt jedem den Satz weg, den er
+     * gerade tippt, samt Fokus und Schreibmarke. Hier wird es nur angefasst,
+     * wenn es den Fokus nicht hat und wirklich etwas anderes darin steht.
+     */
+    private static void feldNachfuehren(EditText feld, String wert) {
+        if (feld == null || feld.hasFocus()) return;
+        if (android.text.TextUtils.equals(feld.getText(), wert)) return;
+        feld.setText(wert);
     }
 
     /**
@@ -5466,7 +5631,7 @@ public class MainActivity extends Activity {
             // wirkungslos, bis jemand die App neu startete.
             if (geraete != null) geraete.anwenden();
             if (empfehlungen != null) empfehlungen.erneutStarten(wert);
-            settingsNeuZeichnen();
+            einstellungenAuffrischen();
         });
     }
 
@@ -5522,7 +5687,7 @@ public class MainActivity extends Activity {
         if (titel.isEmpty()) titel = "Titel";
         String hinweis = eintrag.istWiederansehen() ? eintrag.folgenText()
             : eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
-        if (liste == Bibliothek.WEITERSCHAUEN && eintrag.wartetAufNaechsteFolge()) {
+        if (liste.zeigtAngefangenes() && eintrag.wartetAufNaechsteFolge()) {
             hinweis = "Nächste Folge: " + eintrag.folgenText();
         }
         // Warum steht eine gesehene Serie hier? Weil sie gerade wieder laeuft.
@@ -5559,7 +5724,7 @@ public class MainActivity extends Activity {
         menue.getMenu().add(liste.aufruf);
         aktionen.add(() -> openFavorite(eintrag));
 
-        if (liste == Bibliothek.WEITERSCHAUEN) {
+        if (liste.zeigtAngefangenes()) {
             menue.getMenu().add("Aus Weiterschauen nehmen");
             aktionen.add(() -> nimmtWeg(karte, () -> {
                 bestand.ausWeiterschauenNehmen(eintrag.id());
@@ -5697,51 +5862,65 @@ public class MainActivity extends Activity {
      * "Update" heisst und sonst nichts verraet, waere auf einem Geraet ohne
      * Laden zu wenig.
      */
-    private View aktualisierungsKarte(boolean fernseher) {
+    private void aktualisierungsKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        lebendeKarte(koerper, fernseher, luecke, "ELFIX aktualisieren",
+            this::aktualisierungsText, this::aktualisierungsKnopf,
+            // Ein Knopf, der je nach Lage etwas anderes tut - und deshalb ein
+            // einziger Empfaenger, der nachsieht, welche Lage gerade gilt.
+            // Frueher trug jede neu gebaute Karte ihre eigene Handlung; das
+            // ging nur, weil sie bei jeder Meldung neu gebaut wurde.
+            this::aktualisierungGedrueckt);
+    }
+
+    private String aktualisierungsText() {
         String eigene = aktualisierung == null ? "" : aktualisierung.eigeneFassung();
         String laeuft = eigene.isEmpty() ? "" : "ELFIX " + eigene + " läuft hier. ";
-        Aktualisierung.Lage lage = aktualisierung == null
-            ? Aktualisierung.Lage.RUHT : aktualisierung.lage();
-
-        String text;
-        String knopf = "Nach neuer Fassung sehen";
-        Runnable beiKlick = () -> {
-            if (aktualisierung != null) aktualisierung.nachsehen(true);
-        };
-
-        switch (lage) {
+        switch (aktualisierungsLage()) {
             case SUCHT:
-                text = laeuft + "Es wird nachgesehen …";
-                knopf = null;
-                beiKlick = null;
-                break;
+                return laeuft + "Es wird nachgesehen …";
             case LAEDT:
-                text = laeuft + "ELFIX " + aktualisierung.neueFassung() + " wird geladen — "
+                return laeuft + "ELFIX " + aktualisierung.neueFassung() + " wird geladen — "
                     + aktualisierung.fortschritt() + " %.";
-                knopf = null;
-                beiKlick = null;
-                break;
             case BEREIT:
-                text = laeuft + "ELFIX " + aktualisierung.neueFassung()
+                return laeuft + "ELFIX " + aktualisierung.neueFassung()
                     + " liegt bereit. Dein Bestand bleibt dabei stehen — es wird "
                     + "darüber installiert, nicht neu.";
-                knopf = "Jetzt installieren";
-                beiKlick = this::neueFassungInstallieren;
-                break;
             case AKTUELL:
-                text = laeuft + "Das ist die neueste Fassung.";
-                break;
+                return laeuft + "Das ist die neueste Fassung.";
             case FEHLER:
-                text = laeuft + "Nachsehen ging nicht: " + aktualisierung.fehler()
+                return laeuft + "Nachsehen ging nicht: " + aktualisierung.fehler()
                     + "\n\nOhne Leitung geht es nicht — es schadet aber auch nichts, "
                     + "es später noch einmal zu versuchen.";
-                break;
             default:
-                text = laeuft + "ELFIX kommt aus keinem Laden und sieht selbst nach neuen "
+                return laeuft + "ELFIX kommt aus keinem Laden und sieht selbst nach neuen "
                     + "Fassungen — beim Start, höchstens ein paar Mal am Tag.";
-                break;
         }
-        return karte(fernseher, "ELFIX aktualisieren", text, knopf, beiKlick);
+    }
+
+    private String aktualisierungsKnopf() {
+        switch (aktualisierungsLage()) {
+            // Waehrend gesucht und geladen wird, gibt es nichts zu druecken.
+            case SUCHT:
+            case LAEDT:
+                return null;
+            case BEREIT:
+                return "Jetzt installieren";
+            default:
+                return "Nach neuer Fassung sehen";
+        }
+    }
+
+    private void aktualisierungGedrueckt() {
+        if (aktualisierung == null) return;
+        if (aktualisierungsLage() == Aktualisierung.Lage.BEREIT) {
+            neueFassungInstallieren();
+            return;
+        }
+        aktualisierung.nachsehen(true);
+    }
+
+    private Aktualisierung.Lage aktualisierungsLage() {
+        return aktualisierung == null ? Aktualisierung.Lage.RUHT : aktualisierung.lage();
     }
 
     /**
@@ -7668,121 +7847,69 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Die Einstellungsseite noch einmal zeichnen - an derselben Stelle.
+     * Die Einstellungsseite fortschreiben - ohne sie anzufassen.
      *
-     * <p><b>Der gemeldete Fehler.</b> Jeder Handgriff hier rief {@code
-     * showSettings()}, und das faengt mit {@code content.removeAllViews()} an
-     * und legt eine neue ScrollView an. Wer weit unten einen Schalter umlegte,
-     * stand danach wieder ganz oben - bei jedem einzelnen Schalter.
+     * <p><b>Was hier vorher stand.</b> Zwei Fassungen dieses Fehlers sind
+     * schon behandelt worden, und beide waren Symptome:
      *
-     * <p>Die Stelle wird deshalb gerettet und wiederhergestellt. Das ist der
-     * kleine Schritt; der grosse waere, die Seite gar nicht neu zu bauen. Er
-     * lohnt hier nicht: die Seite besteht aus zwei Dutzend Karten, deren Text
-     * sich mit fast jedem Schalter aendert, und ein Abgleich Karte fuer Karte
-     * waere mehr Regel als die Seite selbst hat. Was wirklich gestoert hat -
-     * ein Neuaufbau, waehrend man nur scrollt -, faellt eine Ebene hoeher weg
-     * (siehe {@link #settingsGeaendert}).
+     * <ul>
+     *   <li>Die Scrollposition wurde gerettet und wiederhergestellt. Das half
+     *       gegen den Sprung nach oben - der Neuaufbau blieb, und mit ihm das
+     *       Flackern, der verlorene Fokus und der Satz Ansichten, den jeder
+     *       Handgriff wegwarf.</li>
+     *   <li>Ein Fingerabdruck der Seite verglich vorher und nachher, damit
+     *       eine Meldung ohne Neuigkeit gar nicht erst zeichnete. Das half
+     *       gegen das Zucken <em>waehrend</em> eines Abgleichlaufs - aber jede
+     *       Meldung, die wirklich etwas Neues brachte, baute weiter die ganze
+     *       Seite neu, und ein Fingerabdruck, der eine Stelle vergisst,
+     *       verschluckt Aenderungen still.</li>
+     * </ul>
+     *
+     * <p>Beides ist weg. Die Seite steht, und geaendert wird an ihr - Text,
+     * Schalterstand, Sichtbarkeit. Damit braucht es weder eine gerettete
+     * Position noch einen Vergleich vorweg: eine Ansicht, die dasselbe zeigen
+     * soll wie eben, wird gar nicht erst angefasst (siehe {@link #textSetzen}),
+     * und eine, die etwas anderes zeigen soll, tut das sofort.
      */
-    private void settingsNeuZeichnen() {
+    private void einstellungenAuffrischen() {
         if (!"settings".equals(currentScreen)) return;
-        int stand = seitenScroll == null ? 0 : seitenScroll.getScrollY();
-        // Still: die Seite steht schon, und ein Schalter ist kein Ortswechsel.
-        // Was sich hier trotzdem bewegt, ist genau der Abschnitt, den jemand
-        // angefasst hat - siehe zuletztGeklappt in abschnitt().
-        stillZeichnen(this::showSettings);
-        scrollStandHerstellen(stand);
+        if (einstellungenSeite == null) return;
+        for (int i = 0; i < einstellungenAuffrischer.size(); i += 1) {
+            einstellungenAuffrischer.get(i).run();
+        }
     }
 
     /**
      * Von aussen hat sich etwas geaendert - Abgleich, Filterlisten, eine neue
      * Fassung, der Autoplay-Schalter.
      *
-     * <p>Diese Melder kommen ungefragt: der Geraeteabgleich meldet seinen
-     * Zustand, sobald sich eine Zahl bewegt, der Filteraufbau meldet seinen
-     * Fortschritt, die Fassungspruefung meldet ihr Ergebnis. Bis hierher baute
-     * jede dieser Meldungen die ganze Seite neu - und wer gerade scrollte, sah
-     * die Seite unter dem Finger nach oben springen, ohne etwas getan zu haben.
-     *
-     * <p>Gezeichnet wird jetzt nur, wenn die Seite danach wirklich anders
-     * aussaehe. Verglichen wird an den Saetzen, die sie hinschreibt - nicht an
-     * den Zustaenden dahinter: ein Abgleich, der von "verbunden" auf
-     * "verbunden" meldet, hat nichts zu zeigen.
+     * <p>Diese Melder kommen ungefragt und oft: der Geraeteabgleich meldet
+     * seinen Zustand, sobald sich eine Zahl bewegt, der Filteraufbau seinen
+     * Fortschritt, die Fassungspruefung ihr Ergebnis. Sie duerfen das jetzt so
+     * oft sie wollen - der Weg dahinter schreibt nur noch Text fort und
+     * ruehrt keine Ansicht an, an der sich nichts geaendert hat.
      */
     private void settingsGeaendert() {
-        if (!"settings".equals(currentScreen)) return;
-        String bild = settingsBild();
-        if (bild.equals(letztesSettingsBild)) return;
-        letztesSettingsBild = bild;
-        settingsNeuZeichnen();
+        einstellungenAuffrischen();
     }
 
-    /**
-     * Wie die Einstellungsseite aussaehe - als eine Zeile zum Vergleichen.
-     *
-     * <p>Nur das, was die Hintergrundmelder aendern koennen. Alles Uebrige
-     * aendert sich ausschliesslich durch einen Handgriff, und der zeichnet
-     * ohnehin.
-     */
-    private static final String TRENNER = System.lineSeparator();
-
-    private String settingsBild() {
-        StringBuilder bild = new StringBuilder();
-        bild.append(geraeteBild()).append(TRENNER);
-        if (werbefilter != null) {
-            bild.append(werbefilter.standText()).append(TRENNER);
-        }
-        if (aktualisierung != null) {
-            bild.append(aktualisierung.lage())
-                .append(aktualisierung.neueFassung())
-                .append(aktualisierung.fortschritt())
-                .append(aktualisierung.fehler())
-                .append(TRENNER);
-        }
-        return bild.toString();
-    }
-
-    /**
-     * Was vom Abgleich auf der Seite steht - und nur das.
-     *
-     * <p><b>Der gemeldete Fehler.</b> Hier stand {@code zustand.toString()},
-     * also der ganze Zustand des Abgleichs als JSON. Darin steht
-     * {@code lastSync} in <em>Millisekunden</em>. Die Karte zeigt davon Stunde
-     * und Minute; die Zahl dahinter ist bei jeder Meldung eine andere. Der
-     * Vergleich in {@link #settingsGeaendert} fand deshalb <em>immer</em> einen
-     * Unterschied, und die Einstellungsseite wurde bei jeder Meldung des
-     * Abgleichs vollstaendig neu gebaut - waehrend eines Abgleichlaufs ein gutes
-     * Dutzend Mal in zwei Sekunden. Gemeldet als "die Einstellungen zucken".
-     *
-     * <p>Dazu kam ein zweiter, leiserer Grund: {@link JSONObject#toString}
-     * schreibt seine Schluessel in der Reihenfolge einer Hashtabelle. Zwei
-     * gleiche Zustaende koennen damit verschiedene Zeichenketten sein, und der
-     * Vergleich haette auch ohne Zeitstempel nicht verlaesslich getragen.
-     *
-     * <p>Verglichen wird jetzt an den Werten, die die Seite wirklich
-     * hinschreibt. Der Zeitpunkt geht dabei durch dieselbe Funktion wie beim
-     * Zeichnen ({@link #geraeteAbgleichZeit}) - so koennen Vergleich und
-     * Darstellung nicht auseinanderlaufen.
-     */
-    private String geraeteBild() {
-        if (geraete == null) return "";
-        StringBuilder bild = new StringBuilder();
-        bild.append(geraete.eingeschaltet()).append('#');
-        JSONObject zustand = geraete.zustand();
-        if (zustand == null) return bild.toString();
-        return bild.append(zustand.optBoolean("connected", false)).append('#')
-            .append(zustand.optString("error", "")).append('#')
-            .append(zustand.optInt("titel", zustand.optInt("entries", 0))).append('#')
-            .append(zustand.optString("key", "")).append('#')
-            .append(geraeteAbgleichZeit(zustand))
-            .toString();
+    /** Alles vergessen, was ueber die gebaute Einstellungsseite gemerkt ist. */
+    private void einstellungenVerwerfen() {
+        einstellungenScroll = null;
+        einstellungenSeite = null;
+        einstellungenAuffrischer.clear();
+        abschnittsKoerper.clear();
+        abschnittsBauplan.clear();
+        abschnittsKopfZeile.clear();
+        abschnittsPfeil.clear();
     }
 
     /**
      * Wann zuletzt abgeglichen wurde - auf die Minute, so wie es dasteht.
      *
-     * <p>Die eine Stelle, an der aus dem Zeitstempel Text wird. Sie steht hier
-     * und nicht in der Karte, weil {@link #geraeteBild} dieselbe Antwort
-     * braucht: was verglichen wird, muss genau das sein, was zu sehen ist.
+     * <p>Die eine Stelle, an der aus dem Zeitstempel Text wird - so koennen
+     * die Statuskarte und die Zeile ueber dem Abschnitt nicht auseinander
+     * laufen.
      */
     private CharSequence geraeteAbgleichZeit(JSONObject zustand) {
         long zuletzt = zustand == null ? 0 : zustand.optLong("lastSync", 0);
@@ -8146,38 +8273,130 @@ public class MainActivity extends Activity {
      * @param inhalt zeichnet den aufgeklappten Abschnitt in dieselbe Seite
      */
     private void abschnitt(LinearLayout page, boolean fernseher, String schluessel,
-                           String titel, String kurz, Runnable inhalt) {
+                           String titel, java.util.function.Supplier<String> stand,
+                           Abschnittsinhalt inhalt) {
         boolean offen = offeneAbschnitte.contains(schluessel);
-        boolean geradeGeklappt = schluessel.equals(zuletztGeklappt);
-        addSpacing(page, abschnittsKopf(fernseher, schluessel, titel, kurz, offen, geradeGeklappt),
-            fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP);
+
+        TextView standZeile = new TextView(this);
+        standZeile.setTextColor(Theme.TEXT_SECONDARY);
+        standZeile.setTextSize(fernseher ? 15 : 13);
+        standZeile.setPadding(0, dp(3), 0, 0);
+
+        View kopf = abschnittsKopf(fernseher, schluessel, titel, standZeile, offen);
+        addSpacing(page, kopf, fernseher ? TvViews.SECTION_GAP : MobileViews.SECTION_GAP);
+
+        // Der Kasten des Abschnitts. Er steht von Anfang an da und bleibt
+        // stehen - zugeklappt als GONE, und ein GONE-Kasten wird weder
+        // vermessen noch gezeichnet. Was einmal darin steht, bleibt darin:
+        // dieselben Ansichten, dieselben Schalter, derselbe Fokus.
+        LinearLayout koerper = new LinearLayout(this);
+        koerper.setOrientation(LinearLayout.VERTICAL);
+        koerper.setClipChildren(false);
+        koerper.setClipToPadding(false);
+        koerper.setVisibility(offen ? View.VISIBLE : View.GONE);
+        page.addView(koerper, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Der Kasten selbst tritt nie auf - seine Kinder tun es, wenn er zum
+        // ersten Mal aufgeht.
+        Bewegung.auftrittVerbrauchen(koerper);
+
+        abschnittsKoerper.put(schluessel, koerper);
+        abschnittsBauplan.put(schluessel, inhalt);
+        abschnittsKopfZeile.put(schluessel, kopf);
+
+        auffrischen(() -> {
+            String jetzt = stand.get();
+            textSetzen(standZeile, jetzt);
+            standZeile.setVisibility(jetzt == null || jetzt.isEmpty() ? View.GONE : View.VISIBLE);
+        });
+
+        if (offen) abschnittFuellen(schluessel);
+    }
+
+    /** Den Inhalt eines Abschnitts bauen - genau einmal, beim ersten Aufklappen. */
+    private void abschnittFuellen(String schluessel) {
+        LinearLayout koerper = abschnittsKoerper.get(schluessel);
+        Abschnittsinhalt bauplan = abschnittsBauplan.get(schluessel);
+        if (koerper == null || bauplan == null) return;
+        if (koerper.getChildCount() > 0) return;
+        bauplan.bauen(koerper);
+    }
+
+    /**
+     * Einen Abschnitt auf- oder zuklappen - ohne die Seite anzufassen.
+     *
+     * <p>Fruehe Fassung: {@code offeneAbschnitte} umstellen und die ganze
+     * Seite neu zeichnen. Jetzt bewegt sich genau das, was sich geaendert hat -
+     * das Zeichen dreht sich, der Kasten geht auf oder zu. Alles darueber und
+     * darunter bleibt buchstaeblich dieselbe Ansicht an derselben Stelle,
+     * also springt auch nichts.
+     */
+    private void abschnittUmschalten(String schluessel, boolean fernseher) {
+        LinearLayout koerper = abschnittsKoerper.get(schluessel);
+        if (koerper == null) return;
+        boolean offen = !offeneAbschnitte.remove(schluessel);
+        if (offen) offeneAbschnitte.add(schluessel);
+
+        TextView pfeil = abschnittsPfeil.get(schluessel);
+        if (pfeil != null) {
+            pfeil.setTextColor(offen ? Theme.PRIMARY : Theme.TEXT_SECONDARY);
+            long dreh = Bewegung.dauer(this, Bewegung.LANG);
+            if (dreh <= 0) {
+                pfeil.setRotation(offen ? 180f : 0f);
+            } else {
+                pfeil.animate().rotation(offen ? 180f : 0f)
+                    .setDuration(dreh).setInterpolator(Bewegung.feder(0.4f)).start();
+            }
+        }
+        View kopf = abschnittsKopfZeile.get(schluessel);
+        if (kopf != null) abschnittsKopfRand(kopf, fernseher, offen);
+
         if (!offen) {
-            if (geradeGeklappt) zuletztGeklappt = "";
+            koerper.setVisibility(View.GONE);
             return;
         }
-        if (!geradeGeklappt) {
-            inhalt.run();
-            return;
+        // Beim ersten Mal entsteht der Inhalt - und nur dann bekommt er seine
+        // Staffel. Wer denselben Abschnitt spaeter wieder aufklappt, findet
+        // ihn fertig vor; er soll dann dastehen und nicht noch einmal
+        // hereinfahren.
+        if (koerper.getChildCount() == 0) {
+            Bewegung.versatzZuruecksetzen();
+            abschnittFuellen(schluessel);
         }
-        // Genau dieser Abschnitt wurde gerade aufgeklappt: sein Inhalt tritt
-        // gestaffelt auf, obwohl die Seite drumherum still gezeichnet wird.
-        // Das ist der Unterschied zwischen "die Seite ist neu" und "hier ist
-        // etwas aufgegangen" - und der Grund, warum das Tor eine Klammer ist
-        // und kein Schalter.
-        zuletztGeklappt = "";
-        boolean vorher = Bewegung.auftritteFrei();
-        Bewegung.auftritteFreigeben(true);
-        Bewegung.versatzZuruecksetzen();
-        try {
-            inhalt.run();
-        } finally {
-            Bewegung.auftritteFreigeben(vorher);
+        koerper.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Der Rahmen der Kopfzeile sagt, ob der Abschnitt offen ist.
+     *
+     * <p>Wird beim Umschalten noch einmal aufgerufen, und genau dann steht der
+     * Fokus mit einiger Wahrscheinlichkeit auf dieser Zeile - am Fernseher
+     * immer, denn dort wurde sie gerade mit OK bestaetigt. {@code applyFocus}
+     * setzt den Ruhezustand als Hintergrund, also verschwaende der Fokusrahmen
+     * bis zum naechsten Sprung. Deshalb wird er hier gleich wieder aufgelegt.
+     */
+    private void abschnittsKopfRand(View zeile, boolean fernseher, boolean offen) {
+        GradientDrawable ruhe;
+        GradientDrawable wach;
+        if (fernseher) {
+            ruhe = MobileViews.shape(this, Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS,
+                offen ? Theme.PRIMARY : Theme.BORDER, offen ? 2 : 1);
+            wach = MobileViews.shape(this, Theme.SURFACE_PRESSED, TvViews.CARD_RADIUS,
+                Theme.PRIMARY, 3);
+            TvViews.applyFocus(zeile, ruhe, wach);
+        } else {
+            ruhe = MobileViews.shape(this, Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS,
+                offen ? Theme.PRIMARY : Theme.BORDER, 1);
+            wach = MobileViews.shape(this, Theme.SURFACE_PRESSED, MobileViews.CARD_RADIUS,
+                Theme.PRIMARY, 1);
+            MobileViews.addPressFeedback(zeile, ruhe, wach);
         }
+        if (zeile.isFocused()) zeile.setBackground(wach);
     }
 
     /** Die Zeile, auf die man tippt. */
     private View abschnittsKopf(boolean fernseher, String schluessel, String titel,
-                                String kurz, boolean offen, boolean geradeGeklappt) {
+                                TextView standZeile, boolean offen) {
         LinearLayout zeile = new LinearLayout(this);
         zeile.setOrientation(LinearLayout.HORIZONTAL);
         zeile.setGravity(Gravity.CENTER_VERTICAL);
@@ -8192,19 +8411,14 @@ public class MainActivity extends Activity {
         name.setTextSize(fernseher ? 20 : 16);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         texte.addView(name);
-        if (kurz != null && !kurz.isEmpty()) {
-            TextView stand = new TextView(this);
-            stand.setText(kurz);
-            stand.setTextColor(Theme.TEXT_SECONDARY);
-            stand.setTextSize(fernseher ? 15 : 13);
-            stand.setPadding(0, dp(3), 0, 0);
-            texte.addView(stand);
-        }
+        // Die Standzeile steht immer da, auch wenn sie gerade nichts zu sagen
+        // hat: sie wird spaeter beschriftet statt neu angelegt, und eine
+        // Ansicht, die erst entsteht, wenn ein Text kommt, verschiebt die
+        // ganze Seite unter dem Finger.
+        texte.addView(standZeile);
         zeile.addView(texte, new LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        // Ein Zeichen statt eines Bildes: es dreht sich mit dem Zustand und
-        // braucht keine Datei.
         // Ein Zeichen, das sich dreht, statt zweier Zeichen, die sich
         // abwechseln: gedreht wird ueber die Grafikeinheit, und der Weg
         // dorthin ist zu sehen. Zwei Zeichen springen um.
@@ -8215,34 +8429,108 @@ public class MainActivity extends Activity {
         pfeil.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         pfeil.setPadding(dp(12), 0, 0, 0);
         pfeil.setRotation(offen ? 180f : 0f);
-        if (geradeGeklappt) {
-            long dreh = Bewegung.dauer(this, Bewegung.LANG);
-            if (dreh > 0) {
-                pfeil.setRotation(offen ? 0f : 180f);
-                pfeil.animate().rotation(offen ? 180f : 0f)
-                    .setDuration(dreh).setInterpolator(Bewegung.feder(0.4f)).start();
-            }
-        }
         zeile.addView(pfeil);
+        abschnittsPfeil.put(schluessel, pfeil);
 
-        if (fernseher) {
-            zeile.setTag("tv:einstellung:" + schluessel);
-            TvViews.applyFocus(zeile,
-                MobileViews.shape(this, Theme.SURFACE_ELEVATED, TvViews.CARD_RADIUS,
-                    offen ? Theme.PRIMARY : Theme.BORDER, offen ? 2 : 1),
-                MobileViews.shape(this, Theme.SURFACE_PRESSED, TvViews.CARD_RADIUS, Theme.PRIMARY, 3));
-        } else {
-            MobileViews.addPressFeedback(zeile,
-                MobileViews.shape(this, Theme.SURFACE_ELEVATED, MobileViews.CARD_RADIUS,
-                    offen ? Theme.PRIMARY : Theme.BORDER, 1),
-                MobileViews.shape(this, Theme.SURFACE_PRESSED, MobileViews.CARD_RADIUS, Theme.PRIMARY, 1));
-        }
-        zeile.setOnClickListener(view -> {
-            if (!offeneAbschnitte.remove(schluessel)) offeneAbschnitte.add(schluessel);
-            zuletztGeklappt = schluessel;
-            settingsNeuZeichnen();
-        });
+        if (fernseher) zeile.setTag("tv:einstellung:" + schluessel);
+        abschnittsKopfRand(zeile, fernseher, offen);
+        zeile.setOnClickListener(view -> abschnittUmschalten(schluessel, fernseher));
         return zeile;
+    }
+
+    /* ------------------------------------- Fortschreiben statt neu bauen */
+
+    /**
+     * Etwas an der stehenden Einstellungsseite anmelden, das sich aendern kann.
+     *
+     * <p>Das ist der Ersatz fuer den Neuaufbau. Wer eine Karte baut, deren
+     * Text von einem Zustand abhaengt, meldet hier an, wie dieser Text
+     * spaeter neu geschrieben wird; {@link #einstellungenAuffrischen} laeuft
+     * die Liste durch. Der Aufwand ist derselbe wie beim Bauen - nur entsteht
+     * dabei keine einzige neue Ansicht.
+     */
+    private void auffrischen(Runnable was) {
+        einstellungenAuffrischer.add(was);
+        was.run();
+    }
+
+    /**
+     * Text setzen, aber nur wenn er sich unterscheidet.
+     *
+     * <p>{@link TextView#setText} misst und zeichnet neu, auch wenn derselbe
+     * Satz noch einmal hineingeschrieben wird. Waehrend eines Abgleichlaufs
+     * meldet sich der Geraeteabgleich ein gutes Dutzend Mal in zwei Sekunden;
+     * ohne diesen Vergleich waeren das ein gutes Dutzend vollstaendiger
+     * Messdurchlaeufe der Seite, an denen sich nichts geaendert hat. Genau
+     * die stehen in gfxinfo als Spitzen.
+     */
+    private static void textSetzen(TextView ansicht, CharSequence text) {
+        if (ansicht == null) return;
+        CharSequence neu = text == null ? "" : text;
+        if (android.text.TextUtils.equals(ansicht.getText(), neu)) return;
+        ansicht.setText(neu);
+    }
+
+    /** Den Fliesstext einer Karte fortschreiben. */
+    private static void kartenText(View karte, String text) {
+        if (karte == null) return;
+        TextView koerper = karte.findViewWithTag("karten-text");
+        textSetzen(koerper, text);
+    }
+
+    /**
+     * Die Beschriftung des Knopfes einer Karte fortschreiben.
+     *
+     * <p>{@code null} heisst "gerade kein Knopf" - dann wird er ausgeblendet
+     * statt entfernt. Entfernen hiesse, ihn spaeter wieder anzulegen, und
+     * damit waeren wir beim Neuaufbau, nur kleiner.
+     */
+    private static void kartenKnopf(View karte, String beschriftung) {
+        if (karte == null) return;
+        TextView knopf = karte.findViewWithTag("karten-knopf");
+        if (knopf == null) return;
+        if (beschriftung == null || beschriftung.isEmpty()) {
+            knopf.setVisibility(View.GONE);
+            return;
+        }
+        knopf.setVisibility(View.VISIBLE);
+        textSetzen(knopf, beschriftung);
+    }
+
+    /**
+     * Eine Karte, die stehen bleibt und sich fortschreiben laesst.
+     *
+     * <p>Gebaut wird sie einmal; was ihr Text und was auf ihrem Knopf steht,
+     * kommt danach aus den beiden Fragen. Der Knopf wird auch dann angelegt,
+     * wenn er gerade nicht gebraucht wird - er ist dann unsichtbar und kann
+     * spaeter wiederkommen, ohne dass die Karte neu entstehen muss.
+     */
+    private View lebendeKarte(LinearLayout koerper, boolean fernseher, int luecke, String titel,
+                              java.util.function.Supplier<String> text,
+                              java.util.function.Supplier<String> knopf, Runnable beiKlick) {
+        String ersteBeschriftung = knopf == null ? null : knopf.get();
+        boolean knopfMoeglich = knopf != null && beiKlick != null;
+        View karte = karte(fernseher, titel, text.get(),
+            knopfMoeglich ? (ersteBeschriftung == null ? "" : ersteBeschriftung) : null,
+            knopfMoeglich ? beiKlick : null);
+        addSpacing(koerper, karte, luecke);
+        auffrischen(() -> {
+            kartenText(karte, text.get());
+            if (knopfMoeglich) kartenKnopf(karte, knopf.get());
+        });
+        return karte;
+    }
+
+    /** Dieselbe Karte, aber ohne Knopf. */
+    private View lebendeKarte(LinearLayout koerper, boolean fernseher, int luecke, String titel,
+                              java.util.function.Supplier<String> text) {
+        return lebendeKarte(koerper, fernseher, luecke, titel, text, null, null);
+    }
+
+    /** Eine Karte, deren Text feststeht - sie meldet sich gar nicht erst an. */
+    private void festeKarte(LinearLayout koerper, boolean fernseher, int luecke,
+                            String titel, String text) {
+        addSpacing(koerper, karte(fernseher, titel, text, null, null), luecke);
     }
 
     /* ------------------------------- Was ein Abschnitt zugeklappt verraet */
@@ -8299,8 +8587,46 @@ public class MainActivity extends Activity {
         setChromeCollapsed(false, false);
         content.removeAllViews();
         updateBottomNav();
-        if (isTelevision()) renderTvSettings();
-        else renderMobileSettings();
+        einstellungenEinhaengen();
+    }
+
+    /**
+     * Die Einstellungsseite zeigen - gebaut wird sie hoechstens einmal.
+     *
+     * <p>Steht sie schon, wird dieselbe ScrollView wieder eingehaengt: mit
+     * ihren Karten, ihren Schaltern, ihren aufgeklappten Abschnitten und ihrer
+     * Position. Es gibt nichts wiederherzustellen, weil nichts verloren
+     * gegangen ist.
+     *
+     * <p>Weggeworfen wird sie nur, wenn sie wirklich nicht mehr passt: nach
+     * einem Wechsel der Geraeteart und beim Drehen, wo jede Breite neu
+     * gerechnet werden muss (siehe {@link #onConfigurationChanged}).
+     */
+    private void einstellungenEinhaengen() {
+        boolean fernseher = isTelevision();
+        if (einstellungenScroll != null && einstellungenFernseher != fernseher) {
+            einstellungenVerwerfen();
+        }
+        if (einstellungenScroll == null) {
+            einstellungenFernseher = fernseher;
+            if (fernseher) renderTvSettings();
+            else renderMobileSettings();
+            einstellungenScroll = seitenScroll;
+            return;
+        }
+        seitenScroll = einstellungenScroll;
+        ViewGroup eltern = (ViewGroup) einstellungenScroll.getParent();
+        if (eltern != null) eltern.removeView(einstellungenScroll);
+        content.addView(einstellungenScroll, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Erst auf den Stand bringen, dann auftreten - sonst waere im ersten
+        // Bild noch die Auskunft von vorhin zu lesen.
+        einstellungenAuffrischen();
+        // Am Fernseher gibt es keinen Zeiger: eine Seite ohne Fokus ist eine
+        // Seite ohne Bedienung. Beim Bauen erledigt das renderTvSettings; auf
+        // diesem Weg wird nichts gebaut, also hier.
+        if (fernseher && einstellungenSeite != null) tvFokusHerstellen(einstellungenSeite);
+        seitenAuftritt(einstellungenScroll);
     }
 
     @SuppressLint("SetJavaScriptEnabled")

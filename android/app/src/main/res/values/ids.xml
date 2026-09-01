@@ -18,6 +18,13 @@
          Bewegung.auftrittEinmal prueft sie und tut beim zweiten Mal nichts. -->
     <item name="elfix_auftritt" type="id" />
 
+    <!-- An einer Schalterzeile: ihr zuletzt gezeichneter Stand. Daran
+         erkennt MobileViews.schalterSetzen, ob der Daumen wandern soll oder
+         schon dasteht - und ohne einen eigenen Schluessel dafuer stuende hier
+         elfix_karte, was "das ist eine Kachel" heisst und das Kachelmenue in
+         die Irre fuehrte. -->
+    <item name="elfix_schalter" type="id" />
+
     <!-- Am Titelbild: der laufende Ken-Burns-Zoom. Er wird vor jedem Wechsel
          angehalten und beim Abhaengen der Ansicht beendet - ein endloser Lauf
          auf einer weggeworfenen Ansicht haelt die ganze alte Seite fest. -->
