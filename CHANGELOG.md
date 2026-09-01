@@ -3,6 +3,77 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.79.0 — 1. September 2026
+
+Der Kalender auf dem Telefon zeigte die falsche Woche, keine Bilder und eine
+Bandwurmzeile statt der Fassungen.
+
+**Das Datum war falsch, und zwar aus zwei Gründen übereinander.** Über der
+Liste stand „Montag, 7. September", während Dienstag, der 1. September war.
+Die Leiste stand fest auf Montag bis Sonntag, und das Datum dazu kam aus den
+*Einträgen*: genommen wurde das Datum des ersten Eintrags dieses Wochentags.
+Ein Anbieter kündigt aber nur nach vorn an — an einem Dienstag ist der nächste
+Montag der in sieben Tagen. Der 7. September war also völlig korrekt, nur die
+Antwort auf die falsche Frage. Dazu sprang die Auswahl auf den ersten Tag mit
+Inhalt statt auf heute.
+
+Die Woche wird jetzt gerechnet statt abgelesen: sie fängt heute an und läuft
+sieben Tage — genau das Fenster, das der geteilte Lauf holt. Der erste Reiter
+heißt „Heute" und ist vorausgewählt. Und weil derselbe Wochentagsname am
+siebten Tag wiederkommt, entscheidet jetzt das Datum und nicht mehr nur der
+Name, welche Einträge zu einem Tag gehören — eine Folge in einer Woche stand
+sonst unter „Heute".
+
+**Unter dem Wochentag stand die Anzahl der Einträge** — „Mo 22", „Di 16",
+„Mi 30". Das liest sich wie ein Datum und ist keines. Dort steht jetzt der Tag
+im Monat.
+
+**Es gab keine Bilder**, obwohl jeder Eintrag eines mitbringt: die Karte war
+eine Einstellungskarte, also Überschrift und Absatz. Sie hat jetzt ein Poster
+links wie in „Meine Liste", und der Text daneben ist gegliedert statt gereiht —
+Uhrzeit über dem Titel, Herkunft darunter, und jede Fassung auf einer eigenen
+Zeile. Vorher stand alles in einem Absatz („S1E10 · Japanisch, Deutsche
+Untertitel · Japanisch, Englische Untertitel · Aniworld") und brach mitten im
+Namen um; der Rechner setzt die Fassungen aus genau demselben Grund einzeln.
+
+**Und es lässt sich nach Fassung filtern, wie am Rechner.** Das ging bisher
+nicht einmal im Ansatz: Android las nur `language`, und das ist die mit „ · "
+zusammengeklebte Zeile — eine Zeichenkette ist keine Auswahl. Gelesen wird
+jetzt `languages`; wo ein Anbieter nur die eine Zeile liefert, wird sie
+zurückgedreht. Die Knöpfe stehen in der Ordnung des Rechners — deutsche
+Synchronfassung zuerst, dann deutsche, dann englische Untertitel — je mit
+Anzahl, und wer mehrere Fassungen trägt, steht unter jeder. Die Zeile erscheint
+nur, wenn es an diesem Tag überhaupt mehr als eine gibt.
+
+Die Wochenrechnung und die Fassungslogik stehen jetzt im Kalender-Modul statt
+in der Ansicht und werden dort geprüft. Ein Datum, das um eine Woche daneben
+liegt, fällt sonst erst dem auf, der es liest.
+
+**Und die Werbung über dem Video fällt jetzt auch auf dem Telefon.** Gemeldet
+mit einem Foto: ein Glücksspiel-Overlay mitten im laufenden Video, mit
+Countdown und „Fordern Sie Ihren Bonus an!" — in einer App mit drei
+Werbefiltern.
+
+Die drei erreichen verschiedene Tiefen, und genau dazwischen saß die Lücke.
+Der Adblocker sperrt Anfragen und kommt überall hin — aber hier gibt es nichts
+zu sperren: der Hoster baut die Schicht mit eigenem Skript und liefert das Bild
+vom eigenen Ursprung. Werbefilter und Kosmetik spielen über
+`evaluateJavascript` ein, und das erreicht nur das oberste Dokument — genau
+deshalb bringt ELFIX für die Spielerskripte überhaupt androidx.webkit mit. Die
+Schicht über dem Video sitzt aber im Rahmen des Hosters.
+
+Der einzige Weg auf Android, der in *jedes* Dokument einspielt, ist
+`addDocumentStartJavaScript`, und den benutzt genau eine Klasse. Sie stand
+hinter einer Fernseher-Abfrage, weil sie für den Fernsehstick geschrieben
+wurde: dort läuft der Werbefilter nicht, er braucht drei Gigabyte. Für das
+Telefon galt die Annahme, der Werbefilter decke es ab — und die stimmt nur
+für das oberste Dokument. Die Sperre fällt; die Punktevergabe, die Schwelle
+von vier Punkten und die geschützten Elemente (was ein Video, ein Captcha, ein
+Eingabefeld oder einen fremden Rahmen enthält, wird nie angefasst) bleiben
+unverändert.
+
+Am Relay und am Rechner ändert sich nichts.
+
 ## 1.78.0 — 1. September 2026
 
 Zwei Dinge: der Start am Rechner fragt jetzt zuerst nach Updates, und auf
