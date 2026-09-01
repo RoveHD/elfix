@@ -3,6 +3,88 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.76.0 — 1. September 2026
+
+Das Zucken auf Android war zweimal am Auslöser behoben worden und kam zweimal
+zurück. Diesmal ist der Neuaufbau selbst weg.
+
+**Die Einstellungen werden nicht mehr weggeworfen.** Achtzehn Handgriffe und
+drei Hintergrundmelder liefen über `settingsNeuZeichnen()`, und das ging über
+`showSettings()`, und das fängt mit `content.removeAllViews()` an: ScrollView,
+Karten, Texte, Schalter und Eingabefelder wurden bei jedem umgelegten Schalter
+verworfen und neu angelegt. 1.74.0 rettete die Scrollposition, 1.75.0 den
+Fingerabdruck — beide Male blieb der Neuaufbau stehen, und mit ihm das
+Flackern, der verlorene Fokus und der Sprung im Layout.
+
+Die Seite wird jetzt genau einmal gebaut. Was sich ändern kann, meldet sich
+beim Bauen mit einem Auffrischer an; eine Änderung schreibt danach nur noch
+Text, Schalterstand und Sichtbarkeit an denselben Ansichten fort. Eine
+TextView, die dasselbe zeigen soll wie eben, wird gar nicht erst angefasst —
+genau diese Messdurchläufe stehen sonst als Spitzen in `gfxinfo`. Der
+Fingerabdruck ist ersatzlos gelöscht: er verschluckte Änderungen, sobald er
+eine Stelle vergaß, und gebraucht wird er nicht mehr. Strukturell neu gebaut
+wird nur noch, was wirklich seine Gestalt ändert — die Raumliste der
+Watchparty, in ihrem eigenen Kasten. Knöpfe, die kommen und gehen („Löschen",
+„Dieses Gerät trennen"), stehen immer da und werden ein- und ausgeblendet. Ein
+Eingabefeld wird nur nachgeführt, wenn niemand darin schreibt. Scrollposition
+und Fokus überstehen einen Seitenwechsel, weil es dieselben Ansichten sind.
+
+**Und der zweite Teil, der bisher gar nicht angefasst war.**
+`Bewegung.seitenAuftritt` stellte die fertige Seite durchsichtig und fing die
+Bewegung erst im nächsten Durchlauf des Hauptfadens an — dazwischen liegt
+mindestens ein gezeichnetes Bild, in dem Kopf- und Fußleiste stehen und die
+Mitte leer ist. 1.75.0 hat das nur für die allererste Seite umgangen; jeder
+gewöhnliche Seitenwechsel lief weiter hindurch. Dazu kam die Staffel: jeder
+Abschnitt bekam seinen eigenen Auftritt ab Deckkraft null, 38 ms versetzt, bis
+zu acht Stufen — über 300 ms unvollständiger Inhalt.
+
+Deckkraft ist deshalb aus dem Seitenübergang heraus. Was bleibt, ist ein Weg
+von 24 dp; er braucht keine Breite und damit keine Messung, also lässt er sich
+sofort setzen statt im nächsten Durchlauf. Während eines Seitenaufbaus bekommen
+die Teile keinen eigenen Auftritt mehr — dass man woanders ist, sagt der Weg
+der Seite, und zwei Bewegungen für einen Vorgang sind eine zu viel. Die Regel
+„kein Seitenauftritt fängt bei Deckkraft null an" steht jetzt als Prüfung da,
+damit sie nicht ein drittes Mal zurückkommt.
+
+**Der Titelhintergrund lässt sich wischen.** Nach links weiter, nach rechts
+zurück. Abgefangen wird erst, wenn der Finger die Schwelle des Geräts
+waagerecht überschreitet und deutlicher quer als hoch fährt: bis dahin bleibt
+jeder Tipp bei „Weiter schauen" oder „Meine Liste", und das senkrechte Scrollen
+gehört weiter der Seite. Die Punkte darunter ziehen mit, und der
+Fünfzehn-Sekunden-Takt fängt von vorn an — wer von Hand blättert, hat gerade
+hingesehen.
+
+**„Gemeinsam weiterschauen" ist auch in „Meine Liste" eine eigene Liste.** Die
+Startseite trennt beides seit jeher in zwei Reihen; unter „Meine Liste" standen
+sie zusammen, und ein Titel, den man mit jemandem schaut, stand mitten zwischen
+den eigenen — mit einem Stand, der nicht der eigene ist. Geschieden wird am
+Watchparty-Raum, mit derselben Frage wie auf der Startseite, damit ein Titel
+nicht auf der einen Seite hier und auf der anderen dort steht. „Alle anzeigen"
+an der Startseiten-Reihe führt jetzt in den richtigen Reiter.
+
+Am Relay und am Rechner ändert sich nichts.
+
+## 1.75.0 — 31. August 2026
+
+Nachgetragen: der Eintrag hat beim Release gefehlt.
+
+Die Android-App zuckte an zwei Stellen, beim Starten und in den Einstellungen.
+Beim Starten lag zwischen dem Startbild des Systems und der Startseite eine
+Lücke, in der nur Kopf- und Fußleiste standen — am Telefon rund 130 ms, auf dem
+Emulator 700 ms. Die erste Seite bekommt seither keinen Auftritt mehr: beim
+Start ist niemand irgendwohin gegangen, den Übergang hat das Startbild schon
+gemacht.
+
+In den Einstellungen verglich der Wächter `geraete.zustand().toString()`, also
+den ganzen Abgleichzustand als JSON. Darin steht `lastSync` in Millisekunden,
+während die Karte davon Stunde und Minute zeigt — die Zahl war bei jeder
+Meldung eine andere, der Vergleich fand also immer einen Unterschied, und jede
+Meldung baute die Seite neu. Verglichen wurde danach an den Werten, die die
+Seite wirklich hinschreibt.
+
+Beides hat den jeweiligen Auslöser behoben und nicht den Neuaufbau; siehe
+1.76.0.
+
 ## 1.74.0 — 31. August 2026
 
 Watchparty-Räume verschwanden nach dreißig Tagen von selbst, und die Titel
