@@ -3,6 +3,54 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.77.0 — 1. September 2026
+
+Zwei Meldungen von der Startseite, zwei verschiedene Ursachen.
+
+**Das Zittern beim Laden der Vorschläge.** Fünf Vorschlagsreihen werden im
+Hintergrund geholt, und jede fertige Reihe meldete sich über
+`empfehlungenGeaendert()` — das ging auf `seiteSammelnd()`, und das baut die
+*ganze* Startseite neu: Titelbild, alle Kachelreihen, Anbieterrost, Kalender.
+Alles wurde weggeworfen und neu angelegt, nur weil unten eine Reihe fertig
+geworden war. Dazu die gerettete Scrollstelle, die erst einen Durchlauf später
+wieder gesetzt wird — dazwischen steht ein Bild an der falschen Stelle. Fünfmal
+hintereinander, während man draufschaut.
+
+Jede Reihe hat jetzt ihren eigenen Kasten in der Seite. Wird sie fertig, wird
+nur dieser Kasten gefüllt; alles darüber — und das ist alles, was man gerade
+ansieht — bleibt dieselbe Ansicht an derselben Stelle. Die Seite scrollt nicht,
+das Titelbild fängt seinen Wechseltakt nicht von vorn an, und die waagerechten
+Reihen behalten ihre Stelle.
+
+Gefüllt wird still. Dafür gehört auch `abschnittEinblenden` hinter dasselbe
+Tor wie die übrigen Auftritte: es fängt bei Deckkraft null an, und die
+abgelöste Reihe wäre sonst für ein Bild verschwunden — genau das Muster, das in
+1.76.0 aus den Seitenwechseln geflogen ist. Und der Kasten reicht selbst bis an
+den Bildschirmrand und holt sich den Seitenrand als Füllung zurück: sonst wäre
+er die Falle, die er verhindern soll, denn die Kachelreihen ziehen sich mit
+negativen Rändern bis an den Rand, und ein Kasten, der am Seitenrand endet,
+hätte genau das abgeschnitten.
+
+**Gewischt werden konnte nur auf der Schrift, nicht auf dem Bild.** Das lag
+nicht an der Erkennung, sondern daran, wo sie lief.
+`ViewGroup.dispatchTouchEvent` fragt `onInterceptTouchEvent` bei den Bewegungen
+nur dann weiter, wenn ein Kind das erste Niedergehen angenommen hat. Auf der
+Schrift tun das die Knöpfe „Weiter schauen" und „Meine Liste" — dort lief die
+Erkennung. Auf dem Bild nimmt niemand etwas an, die Gruppe bekommt die
+Bewegungen also selbst, und dort stand nur ein `return true`, das nichts
+geprüft hat: der Finger wischte, und beim Loslassen passierte nichts.
+
+Beide Wege laufen jetzt durch dieselben drei Schritte. Die Regel selbst steht
+als eigene Funktion daneben — weit genug zur Seite und deutlicher zur Seite als
+nach oben — und lässt sich damit ohne Finger prüfen. Die zweite Bedingung ist
+die wichtigere: ohne sie bliebe ein schräg geführter Daumen, der eigentlich
+scrollen will, am Titelbild hängen.
+
+Beide Regeln stehen als Prüfung da und sind mutationsgeprüft. Der Neuaufbau der
+Startseite und der leere Frame sind beide schon einmal zurückgekommen.
+
+Am Relay und am Rechner ändert sich nichts.
+
 ## 1.76.0 — 1. September 2026
 
 Das Zucken auf Android war zweimal am Auslöser behoben worden und kam zweimal
