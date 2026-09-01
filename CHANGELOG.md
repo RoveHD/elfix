@@ -3,6 +3,54 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.81.0 — 1. September 2026
+
+Am Fernseher starten jetzt auch Filme, und die Sprungtasten der Fernbedienung
+blättern durch die Folgen statt durch die Anbieter.
+
+**Filme starteten nicht.** Gemeldet vom Fernseher: AniWorld und s.to liefen,
+filmo.to nicht. Der Grund stand nicht am Anbieter, sondern an der Weiche davor.
+Wer einen Titel aus der Suche, den Vorschlägen, dem Kalender oder der
+Entdeckung wählt, bekommt erst die Serienübersicht — und von dort führt jede
+Folge in den begleiteten Start: Ladevorhang, Autostart, Vollbild. Ein Film hat
+keine Übersicht. Er fiel aus dieser Weiche heraus und landete auf der nackten
+Anbieterseite: kein Vorhang, kein Autostart, kein Vollbild. Den Hoster musste
+man sich von Hand suchen — auf einem Fernseher, mit einem Steuerkreuz.
+
+**Warum es so lange unauffällig blieb.** Die Startkette kann filmo.to längst;
+sie klickt dort erst den Hoster-Chip und dann seinen Abspielknopf. Nur wurde
+sie für einen Film nie scharf gemacht. Über „Weiterschauen" lief er trotzdem,
+weil dieser Weg den Start selbst anstößt — dort kommt nur nichts an, was man
+noch nie angefangen hat.
+
+Was keine Übersicht bekommt, wird deshalb jetzt gestartet statt ausgestellt:
+derselbe Vorhang, derselbe gespeicherte Stand wie bei „Weiterschauen". Die
+Grenze ist eng gezogen — eine bestimmte Folge oder ein Film ja, eine
+Serienseite ohne Folge nein (dort gibt es keinen Player, auf den zu warten sich
+lohnte), YouTube nein (es bringt seinen eigenen Weg mit).
+
+**Die Sprungtasten wechselten den Anbieter.** Das war die falsche Aufgabe für
+sie: der Anbieter steht ohnehin auf der Startseite in seinem Rost, also einen
+Druck entfernt. Die Folge davor dagegen war von der Fernbedienung aus gar nicht
+zu erreichen. Vor und Zurück blättern jetzt durch die Folgen.
+
+Vorwärts ist derselbe Weg wie die 9 und wie der Knopf in der Wiedergabeleiste.
+Rückwärts gab es bisher niemanden, der ihn kannte — die Regel dafür steht neu
+im geteilten Kern und nicht in Java: eine zweite Rechnung neben der ersten ist
+genau das, woran die alte Taste 9 gescheitert war.
+
+**Rückwärts ist die kürzere Regel.** Vorwärts muss geraten werden, wo eine
+Serie aufhört; rückwärts steht die Grenze in der Adresse und heißt Folge 1.
+Nicht abspielbare Nummern („[In E10 enthalten]") werden in beide Richtungen
+übersprungen. Über die Staffelgrenze geht es nicht zurück: wie viele Folgen die
+vorige Staffel hat, sagt keine der Auskünfte, die hier vorliegen — eine Zahl zu
+raten hieße, auf einer Adresse zu landen, die es nicht gibt. Und am Anfang
+einer Serie gibt es eine Auskunft und keinen Rauswurf: das Ende einer Serie ist
+ein Ende, ihr Anfang ist keins.
+
+**Auf dem Telefon ändert sich eins mit:** ein Film aus der Suche startet dort
+ebenfalls hinter dem Vorhang. Am Relay und am Rechner ändert sich nichts.
+
 ## 1.80.0 — 1. September 2026
 
 Am Fernseher ist die Anbieterseite ein Durchgang und kein Ort — jetzt auch,
