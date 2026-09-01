@@ -11171,6 +11171,7 @@ public class MainActivity extends Activity {
                     folgenwechselSeit = 0;
                     Log.i(TAG, "FOLGE wechsel (" + anlass + ") abgebrochen - keine naechste Folge");
                     if (melden) showToast("Hier gibt es keine nächste Folge");
+                    folgenendeAmFernseher();
                     return;
                 }
                 folgen.pruefen(ziel, laufend, eintrag, erlaubt -> {
@@ -11180,6 +11181,7 @@ public class MainActivity extends Activity {
                             + Folgen.kurz(ziel) + " ist keine naechste Folge von "
                             + Folgen.kurz(laufend));
                         if (melden) showToast("Das war nicht die nächste Folge");
+                        folgenendeAmFernseher();
                         return;
                     }
                     folgeWirklichOeffnen(provider, erlaubt, anlass);
@@ -12088,6 +12090,66 @@ public class MainActivity extends Activity {
         hideFullscreen();
         if (!isTelevision()) return;
         if (!"provider".equals(currentScreen)) return;
+        naechsterAuftritt = Auftritt.ZURUECK;
+        showHome();
+    }
+
+    /**
+     * Die Seite hat das Vollbild von sich aus verlassen - Video zu Ende, oder
+     * jemand hat den Ausstieg des Players getroffen.
+     *
+     * <p>Am Fernseher fuehrt auch das nach Hause, aus demselben Grund wie
+     * {@link #vollbildVerlassen}: die Anbieterseite ist dort ein Durchgang.
+     * Nur ist hier nicht jeder Ausstieg einer - deshalb die vier Fragen davor,
+     * und keine davon ist eine Frist.
+     *
+     * <ul>
+     *   <li><b>Ein Folgenwechsel laeuft.</b> Dann blaettert der Autostart
+     *       gerade weiter; das Vollbild geht aus und kommt gleich wieder.</li>
+     *   <li><b>Ein Start ist scharf.</b> Dasselbe, eine Stufe frueher.</li>
+     *   <li><b>Autoplay ist an.</b> Das ist die wichtigste. Die naechste Folge
+     *       kommt nicht ueber das Ende-Ereignis, sondern ueber den Zaehler in
+     *       der {@link Spielerleiste} - und der braucht seine Sekunden. Wer
+     *       hier nach Hause ginge, wuerde ihn abraeumen, denn
+     *       {@link #showHome} bricht den Autostart ab. Es bleibt ein
+     *       Zugestaendnis: laeuft der Zaehler ausserhalb des Vollbilds, ist
+     *       die Anbieterseite waehrenddessen zu sehen. Den Zaehler dafuer zu
+     *       toeten waere der schlechtere Handel.</li>
+     *   <li><b>Das Vollbild steht schon wieder.</b> Zwischen zwei Folgen kann
+     *       das neue da sein, bevor diese Frage drankommt.</li>
+     * </ul>
+     *
+     * <p>Bleibt der Fall, den Autoplay nicht abfaengt: die letzte Folge einer
+     * Serie. Dort meldet sich {@link #naechsteFolgeStarten} mit "keine
+     * naechste Folge" - und genau dort geht es dann nach Hause.
+     */
+    private void vollbildEndeVonSelbst() {
+        if (!isTelevision()) return;
+        if (fullscreenView != null) return;
+        if (!"provider".equals(currentScreen)) return;
+        if (folgenwechselLaeuft() || autoStartRequested) return;
+        if (Folgen.autoplayAn(this)) return;
+        Log.i(TAG, "Vollbild von selbst beendet - am Fernseher zurueck zur Startseite");
+        naechsterAuftritt = Auftritt.ZURUECK;
+        showHome();
+    }
+
+    /**
+     * Es kommt nichts mehr - am Fernseher also nach Hause.
+     *
+     * <p>Gerufen, wo der Folgenwechsel aufgibt. Das ist der Fall, den
+     * {@link #vollbildEndeVonSelbst} bewusst offen laesst: Autoplay ist an,
+     * das Video ist zu Ende, und es gibt keine naechste Folge. Erst hier steht
+     * das fest.
+     *
+     * <p>Nur wenn das Vollbild wirklich weg ist. Der Knopf "Naechste Folge"
+     * ruft denselben Weg, waehrend die Folge noch laeuft - wer ihn drueckt und
+     * am Ende der Serie steht, will eine Auskunft und keinen Rauswurf.
+     */
+    private void folgenendeAmFernseher() {
+        if (!isTelevision() || fullscreenView != null) return;
+        if (!"provider".equals(currentScreen)) return;
+        Log.i(TAG, "Keine naechste Folge und kein Vollbild - am Fernseher zurueck zur Startseite");
         naechsterAuftritt = Auftritt.ZURUECK;
         showHome();
     }
@@ -13298,6 +13360,7 @@ public class MainActivity extends Activity {
         @Override
         public void onHideCustomView() {
             hideFullscreen();
+            vollbildEndeVonSelbst();
         }
     }
 }

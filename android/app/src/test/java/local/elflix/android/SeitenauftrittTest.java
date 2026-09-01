@@ -307,6 +307,37 @@ public class SeitenauftrittTest {
             rumpf.contains("showHome"));
         assertFalse("onHideCustomView geht ueber vollbildVerlassen - dasselbe Problem",
             rumpf.contains("vollbildVerlassen"));
+
+        // Der Weg, den es stattdessen nimmt, muss die Fragen stellen, an denen
+        // Autoplay haengt. Ohne die waere er dasselbe wie ein Sprung nach
+        // Hause, nur mit einem anderen Namen.
+        String vonSelbst = rumpf(quelle, "private void vollbildEndeVonSelbst()");
+        assertTrue("Der Zaehler der naechsten Folge wird nicht mehr gefragt -"
+            + " das raeumt jedes Autoplay ab",
+            vonSelbst.contains("autoplayAn"));
+        assertTrue("Ein laufender Folgenwechsel wird nicht mehr gefragt",
+            vonSelbst.contains("folgenwechselLaeuft"));
+        assertTrue("Ein scharfer Autostart wird nicht mehr gefragt",
+            vonSelbst.contains("autoStartRequested"));
+        assertTrue("Und es gilt weiter nur am Fernseher", vonSelbst.contains("isTelevision"));
+    }
+
+    /**
+     * Das Ende einer Serie wirft nicht heraus, während noch etwas läuft.
+     *
+     * <p>Denselben Weg nimmt der Knopf „Nächste Folge" mitten in einer Folge.
+     * Wer ihn am Ende einer Serie drückt, will eine Auskunft und keinen
+     * Rauswurf — deshalb hängt der Sprung nach Hause daran, dass das Vollbild
+     * wirklich weg ist.
+     */
+    @Test
+    public void dasSerienendeWirftNurOhneVollbildHeraus() throws Exception {
+        String rumpf = rumpf(ohneErklaerungen(quelltext("MainActivity")),
+            "private void folgenendeAmFernseher()");
+        assertTrue("Es wird nicht mehr geprueft, ob das Vollbild weg ist",
+            rumpf.contains("fullscreenView"));
+        assertTrue("Und es gilt weiter nur am Fernseher", rumpf.contains("isTelevision"));
+        assertTrue("Nach Hause geht es trotzdem", rumpf.contains("showHome"));
     }
 
     private static int zaehlen(String text, String was) {
