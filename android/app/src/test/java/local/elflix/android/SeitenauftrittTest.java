@@ -199,6 +199,30 @@ public class SeitenauftrittTest {
         assertEquals(1, zaehlen(rumpf, "renderTvSettings()"));
     }
 
+    /**
+     * Eine fertig geholte Vorschlagsreihe baut nicht die Startseite neu.
+     *
+     * <p>Fünf Reihen werden im Hintergrund geholt, und jede meldete sich mit
+     * einem vollständigen Neuaufbau der Startseite — Titelbild, Kachelreihen,
+     * Anbieterrost, Kalender —, samt geretteter Scrollstelle, die erst einen
+     * Durchlauf später wieder gesetzt wurde. Das war das Zittern beim Laden
+     * der Vorschläge. Jede Reihe hat jetzt ihren eigenen Kasten.
+     */
+    @Test
+    public void vorschlaegeBauenNichtDieGanzeSeiteNeu() throws Exception {
+        String quelle = ohneErklaerungen(quelltext("MainActivity"));
+        String rumpf = rumpf(quelle, "private void empfehlungenGeaendert()");
+        assertFalse("Eine fertige Vorschlagsreihe zeichnet wieder die ganze Seite",
+            rumpf.contains("seiteSammelnd"));
+        assertTrue("Die Reihen werden nicht mehr einzeln aufgefrischt",
+            rumpf.contains("vorschlaegeAuffrischen"));
+
+        String auffrischen = rumpf(quelle, "private void vorschlaegeAuffrischen()");
+        assertFalse("Das Auffrischen zeichnet die Startseite", auffrischen.contains("showHome"));
+        assertFalse("Das Auffrischen sammelt wieder einen Neuaufbau an",
+            auffrischen.contains("seiteSammelnd"));
+    }
+
     private static int zaehlen(String text, String was) {
         int anzahl = 0;
         for (int i = text.indexOf(was); i >= 0; i = text.indexOf(was, i + was.length())) anzahl += 1;

@@ -134,6 +134,42 @@ public class MainActivity extends Activity {
      */
     private final java.util.Set<String> offeneAbschnitte = new java.util.HashSet<>();
 
+    /* ------------------------------------------------ Die Vorschlagsreihen */
+
+    /**
+     * Je Vorschlagsreihe ihr eigener Kasten - und was ihn fuellt.
+     *
+     * <p><b>Der gemeldete Fehler.</b> Die Vorschlaege werden im Hintergrund
+     * geholt, fuenf Reihen nacheinander, und jede fertige Reihe meldete sich
+     * ueber {@link #empfehlungenGeaendert}. Das ging bis hierher auf
+     * {@code seiteSammelnd()}, und das baut die <em>ganze</em> Startseite neu:
+     * Titelbild, alle Kachelreihen, Anbieterrost, Kalender - alles wurde
+     * weggeworfen und neu angelegt, nur weil unten eine Reihe fertig geworden
+     * war. Dazu kam die gerettete Scrollstelle, die erst ueber ein
+     * {@code post()} wieder gesetzt wird: dazwischen steht ein Bild an der
+     * falschen Stelle. Das ist das Zittern beim Laden der Vorschlaege.
+     *
+     * <p>Jetzt hat jede Reihe ihren eigenen Kasten in der Seite. Wird sie
+     * fertig, wird nur dieser Kasten gefuellt; alles darueber - und das ist
+     * alles, was man gerade ansieht - bleibt buchstaeblich dieselbe Ansicht an
+     * derselben Stelle. Die Seite scrollt nicht, das Titelbild faengt seinen
+     * Wechseltakt nicht von vorn an, und die waagerechten Reihen behalten ihre
+     * Stelle.
+     */
+    private final java.util.LinkedHashMap<String, Runnable> vorschlagsFueller =
+        new java.util.LinkedHashMap<>();
+    /**
+     * Was zuletzt in einer Reihe stand.
+     *
+     * <p>Nicht der Ersatz fuer den Fix - der ist der Kasten darueber -,
+     * sondern die Antwort auf "welche der fuenf Reihen hat sich gerade
+     * geaendert". Der Melder sagt es nicht, und ohne diese Frage wuerden bei
+     * jeder Meldung alle fuenf Reihen mit je zwanzig Kacheln neu entstehen.
+     * Das Alter einer Reihe steht ausdruecklich nicht darin: es laeuft
+     * weiter, und ein Vergleich, der sich staendig aendert, ist keiner.
+     */
+    private final java.util.HashMap<String, String> vorschlagsStand = new java.util.HashMap<>();
+
     /* --------------------------------------------- Die Einstellungsseite */
 
     /**
@@ -2050,6 +2086,7 @@ public class MainActivity extends Activity {
         LinearLayout page = tvPage();
         empfehlungenNachfuehren();
         liveKachelnZuruecksetzen();
+        vorschlaegeVergessen();
         // Auch hier, obwohl der Fernseher (noch) keine Kalenderreihe zeigt:
         // die Woche wird aus den Anbietern gerechnet, und ein Kalender ohne
         // sie liefert eine leere Woche statt gar keiner.
@@ -2283,15 +2320,23 @@ public class MainActivity extends Activity {
     private void tvVorschlagsReihe(LinearLayout page, String schluessel, String titel,
                                    String aktion, Runnable beiAktion) {
         if (empfehlungen == null) return;
+        vorschlagsReiheAnmelden(page, schluessel, true,
+            platz -> tvVorschlagsReiheBauen(platz, schluessel, titel, aktion, beiAktion));
+    }
+
+    /** Der Inhalt der Reihe - in ihren eigenen Kasten, nicht in die Seite. */
+    private void tvVorschlagsReiheBauen(LinearLayout platz, String schluessel, String titel,
+                                   String aktion, Runnable beiAktion) {
+        if (empfehlungen == null) return;
         int breite = TvViews.kachelBreiteDp(this);
 
         // Der Lauf ist gar nicht erst hochgekommen. Das einmal sagen, nicht
         // fuenfmal - deshalb nur bei der ersten Reihe.
         if (!empfehlungen.istBereit() && !empfehlungen.startFehler().isEmpty()) {
             if (!Empfehlungen.NEUES.equals(schluessel)) return;
-            addSpacing(page, TvViews.sectionHeader(this, "Vorschläge", null, null),
+            addSpacing(platz, TvViews.sectionHeader(this, "Vorschläge", null, null),
                 TvViews.SECTION_GAP);
-            addSpacing(page, TvViews.hinweis(this,
+            addSpacing(platz, TvViews.hinweis(this,
                 "Die Vorschläge konnten nicht vorbereitet werden. Ohne sie funktioniert alles "
                     + "Übrige weiter.", "Erneut versuchen",
                 () -> {
@@ -2314,9 +2359,9 @@ public class MainActivity extends Activity {
         // Liste zurueck. Also wird gefragt, bevor entschieden wird.
         if (fertigUndLeer && !Netz.vorhanden(this)) {
             if (!Empfehlungen.NEUES.equals(schluessel)) return;
-            addSpacing(page, TvViews.sectionHeader(this, "Vorschläge", null, null),
+            addSpacing(platz, TvViews.sectionHeader(this, "Vorschläge", null, null),
                 TvViews.SECTION_GAP);
-            addSpacing(page, TvViews.hinweis(this,
+            addSpacing(platz, TvViews.hinweis(this,
                 "Keine Verbindung. Vorschläge brauchen die Seiten deiner Anbieter - sobald du "
                     + "wieder online bist, stehen sie hier. Deine Mediathek und alles Angefangene "
                     + "bleiben verfügbar.", "Erneut versuchen",
@@ -2331,11 +2376,11 @@ public class MainActivity extends Activity {
         }
         if (fertigUndLeer) return;
 
-        addSpacing(page, TvViews.sectionHeader(this, titel,
+        addSpacing(platz, TvViews.sectionHeader(this, titel,
             eintraege.isEmpty() ? null : aktion, beiAktion), TvViews.SECTION_GAP);
 
         if (!fehler.isEmpty() && eintraege.isEmpty()) {
-            addSpacing(page, TvViews.hinweis(this,
+            addSpacing(platz, TvViews.hinweis(this,
                 "Diese Vorschläge konnten nicht geladen werden. Ohne Netz zeigt ELFIX hier den "
                     + "letzten bekannten Stand - beim ersten Start gibt es noch keinen.",
                 "Erneut versuchen",
@@ -2346,7 +2391,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (eintraege.isEmpty()) {
-            reiheAnhaengenTv(page, TvViews.reihenSkelett(this, breite, 6), TvViews.ITEM_GAP);
+            reiheAnhaengenTv(platz, TvViews.reihenSkelett(this, breite, 6), TvViews.ITEM_GAP);
             return;
         }
         // Ein Stand von der Platte steht mit seinem Alter da. Ihn wortlos zu
@@ -2354,7 +2399,7 @@ public class MainActivity extends Activity {
         // geholt, und wer sich fragt, warum nichts Neues kommt, faende keine
         // Antwort.
         if (empfehlungen.istAlt(schluessel)) {
-            addSpacing(page, TvViews.hinweis(this, altHinweis(empfehlungen.alter(schluessel)),
+            addSpacing(platz, TvViews.hinweis(this, altHinweis(empfehlungen.alter(schluessel)),
                 "Erneut versuchen",
                 () -> {
                     empfehlungen.erneutVersuchen(schluessel);
@@ -2379,7 +2424,7 @@ public class MainActivity extends Activity {
             karte.setTag("tv:" + reihenName + ":" + stelle);
             return karte;
         };
-        reiheAnlegen(page, reihenName, vorrat.size() + (mitEntdeckung ? 1 : 0), bauer);
+        reiheAnlegen(platz, reihenName, vorrat.size() + (mitEntdeckung ? 1 : 0), bauer);
     }
 
     /** Eine einzelne Vorschlagskarte - in der Reihe wie im Raster dieselbe. */
@@ -3375,6 +3420,7 @@ public class MainActivity extends Activity {
         LinearLayout page = mobilePage();
         empfehlungenNachfuehren();
         liveKachelnZuruecksetzen();
+        vorschlaegeVergessen();
         if (kalender != null) kalender.anbieterSetzen(providers);
 
         List<Favorite> laufend = bestand.weiterschauen();
@@ -4170,6 +4216,14 @@ public class MainActivity extends Activity {
     private void abschnittEinblenden(String marke, View ansicht) {
         if (marke == null || marke.isEmpty() || ansicht == null) return;
         if (!gezeigteAbschnitte.add(marke)) return;
+        // Auch dieser Auftritt faengt bei Deckkraft null an, und auch er
+        // gehoert deshalb hinter das Tor: waehrend eines stillen Zeichnens -
+        // etwa wenn eine Vorschlagsreihe im Hintergrund fertig wird und ihr
+        // Skelett abloest - wuerde die Reihe sonst fuer ein Bild verschwinden
+        // und danach aufblenden. Genau das ist als Zittern beim Laden der
+        // Vorschlaege gemeldet worden. Die Marke ist trotzdem verbraucht: der
+        // Auftritt gehoert nicht nachgeholt, sein Anlass ist vorbei.
+        if (!Bewegung.auftritteFrei()) return;
         Bewegung.einblenden(ansicht);
     }
 
@@ -4351,15 +4405,23 @@ public class MainActivity extends Activity {
     private void vorschlagsReihe(LinearLayout page, String schluessel, String titel,
                                  String aktion, Runnable beiAktion) {
         if (empfehlungen == null) return;
+        vorschlagsReiheAnmelden(page, schluessel, false,
+            platz -> vorschlagsReiheBauen(platz, schluessel, titel, aktion, beiAktion));
+    }
+
+    /** Der Inhalt der Reihe - in ihren eigenen Kasten, nicht in die Seite. */
+    private void vorschlagsReiheBauen(LinearLayout platz, String schluessel, String titel,
+                                 String aktion, Runnable beiAktion) {
+        if (empfehlungen == null) return;
         int breite = kachelBreiteDp();
 
         // Der Lauf ist gar nicht erst hochgekommen. Das einmal sagen, nicht
         // fuenfmal - deshalb nur bei der ersten Reihe.
         if (!empfehlungen.istBereit() && !empfehlungen.startFehler().isEmpty()) {
             if (!Empfehlungen.NEUES.equals(schluessel)) return;
-            addSpacing(page, MobileViews.sectionHeader(this, "Vorschläge", null, null),
+            addSpacing(platz, MobileViews.sectionHeader(this, "Vorschläge", null, null),
                 MobileViews.SECTION_GAP);
-            addSpacing(page, MobileViews.hinweis(this,
+            addSpacing(platz, MobileViews.hinweis(this,
                 "Die Vorschläge konnten nicht vorbereitet werden. Ohne sie funktioniert alles "
                     + "Übrige weiter.", "Erneut versuchen",
                 () -> {
@@ -4389,9 +4451,9 @@ public class MainActivity extends Activity {
             // Einmal sagen, nicht fuenfmal: der Hinweis gehoert an die erste
             // Reihe, die ihn braucht, und die uebrigen fallen still weg.
             if (!Empfehlungen.NEUES.equals(schluessel)) return;
-            addSpacing(page, MobileViews.sectionHeader(this, "Vorschläge", null, null),
+            addSpacing(platz, MobileViews.sectionHeader(this, "Vorschläge", null, null),
                 MobileViews.SECTION_GAP);
-            addSpacing(page, MobileViews.hinweis(this,
+            addSpacing(platz, MobileViews.hinweis(this,
                 "Keine Verbindung. Vorschläge brauchen die Seiten deiner Anbieter - sobald du "
                     + "wieder online bist, stehen sie hier. Deine Mediathek und alles Angefangene "
                     + "bleiben verfügbar.", "Erneut versuchen",
@@ -4406,11 +4468,11 @@ public class MainActivity extends Activity {
         }
         if (fertigUndLeer) return;
 
-        addSpacing(page, MobileViews.sectionHeader(this, titel,
+        addSpacing(platz, MobileViews.sectionHeader(this, titel,
             eintraege.isEmpty() ? null : aktion, beiAktion), MobileViews.SECTION_GAP);
 
         if (!fehler.isEmpty() && eintraege.isEmpty()) {
-            addSpacing(page, MobileViews.hinweis(this,
+            addSpacing(platz, MobileViews.hinweis(this,
                 "Diese Vorschläge konnten nicht geladen werden. Ohne Netz zeigt ELFIX hier den "
                     + "letzten bekannten Stand - beim ersten Start gibt es noch keinen.",
                 "Erneut versuchen",
@@ -4421,7 +4483,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (eintraege.isEmpty()) {
-            reiheAnhaengen(page, "vorschlag:" + schluessel + ":skelett",
+            reiheAnhaengen(platz, "vorschlag:" + schluessel + ":skelett",
                 MobileViews.reihenSkelett(this, breite, 5), MobileViews.ITEM_GAP);
             return;
         }
@@ -4430,7 +4492,7 @@ public class MainActivity extends Activity {
         // geholt, und wer sich fragt, warum nichts Neues kommt, findet keine
         // Antwort.
         if (empfehlungen.istAlt(schluessel)) {
-            addSpacing(page, MobileViews.hinweis(this, altHinweis(empfehlungen.alter(schluessel)),
+            addSpacing(platz, MobileViews.hinweis(this, altHinweis(empfehlungen.alter(schluessel)),
                 "Erneut versuchen",
                 () -> {
                     empfehlungen.erneutVersuchen(schluessel);
@@ -4440,7 +4502,7 @@ public class MainActivity extends Activity {
 
         ArrayList<View> karten = new ArrayList<>();
         for (JSONObject item : eintraege) karten.add(vorschlagsKarte(item, breite, null));
-        reiheAnhaengen(page, "vorschlag:" + schluessel, MobileViews.reihe(this, karten, breite),
+        reiheAnhaengen(platz, "vorschlag:" + schluessel, MobileViews.reihe(this, karten, breite),
             MobileViews.ITEM_GAP);
     }
 
@@ -9573,7 +9635,110 @@ public class MainActivity extends Activity {
      */
     private void empfehlungenGeaendert() {
         if (!"home".equals(currentScreen)) return;
-        seiteSammelnd();
+        vorschlaegeAuffrischen();
+    }
+
+    /**
+     * Die Vorschlagsreihen auf den Stand bringen - jede in ihrem Kasten.
+     *
+     * <p>Der Ersatz fuer den Neuaufbau der ganzen Startseite. Gefuellt wird
+     * nur, was sich wirklich geaendert hat, und still: ein Vorschlag, der im
+     * Hintergrund fertig wird, ist kein Ortswechsel, und die Seite soll
+     * deswegen nicht noch einmal hereinfahren. Was neu dasteht, blendet ueber
+     * die Marke in {@link #reiheAnhaengen} genau einmal auf.
+     */
+    private void vorschlaegeAuffrischen() {
+        if (vorschlagsFueller.isEmpty()) return;
+        stillZeichnen(() -> {
+            for (Runnable fuellen : new ArrayList<>(vorschlagsFueller.values())) fuellen.run();
+        });
+    }
+
+    /**
+     * Ein neuer Seitenaufbau bringt neue Kaesten - die alten gelten nicht mehr.
+     *
+     * <p>Ohne das zoege ein Melder Ansichten nach, die an keiner Seite mehr
+     * haengen, und die Liste wuechse mit jedem Zeichnen. Dieselbe Vorsicht wie
+     * bei {@code liveKachelnZuruecksetzen}.
+     */
+    private void vorschlaegeVergessen() {
+        vorschlagsFueller.clear();
+        vorschlagsStand.clear();
+    }
+
+    /**
+     * Der Kasten, in dem eine Vorschlagsreihe steht.
+     *
+     * <p>Er darf nicht zuschneiden: die waagerechten Reihen ziehen sich mit
+     * negativen Raendern bis an den Bildschirmrand (siehe
+     * {@link #reiheAnhaengen}), und ein Kasten, der bis zum Seitenrand geht,
+     * schnitte genau diesen Ueberstand wieder ab.
+     */
+    private LinearLayout vorschlagsPlatz(LinearLayout page, boolean fernseher) {
+        int rand = dp(fernseher ? TvViews.SCREEN_PADDING : MobileViews.SCREEN_PADDING);
+        LinearLayout platz = new LinearLayout(this);
+        platz.setOrientation(LinearLayout.VERTICAL);
+        // Der Kasten reicht selbst bis an den Bildschirmrand und holt sich den
+        // Seitenrand als eigene Fuellung zurueck.
+        //
+        // Sonst waere er genau die Falle, die er verhindern soll: eine
+        // waagerechte Reihe zieht sich mit negativen Raendern bis an den Rand
+        // (siehe reiheAnhaengen), und ein Kasten, der am Seitenrand endet,
+        // schnitte diesen Ueberstand ab - die Kachelreihen wuerden ploetzlich
+        // eingerueckt stehen. Ueberschriften und Hinweise darin bleiben durch
+        // die Fuellung genau dort, wo sie vorher standen. Am Fernseher gilt
+        // das nur nach rechts; dort faengt eine Reihe im sicheren Bereich an.
+        platz.setPadding(fernseher ? 0 : rand, 0, rand, 0);
+        LinearLayout.LayoutParams masse = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (!fernseher) masse.leftMargin = -rand;
+        masse.rightMargin = -rand;
+        page.addView(platz, masse);
+        Bewegung.auftrittVerbrauchen(platz);
+        return platz;
+    }
+
+    /**
+     * Eine Reihe anmelden: Kasten anlegen, Fueller merken, einmal fuellen.
+     *
+     * @param bauen zeichnet die Reihe in ihren eigenen Kasten
+     */
+    private void vorschlagsReiheAnmelden(LinearLayout page, String schluessel, boolean fernseher,
+                                         java.util.function.Consumer<LinearLayout> bauen) {
+        LinearLayout platz = vorschlagsPlatz(page, fernseher);
+        Runnable fueller = () -> {
+            if (vorschlagsBild(schluessel).equals(vorschlagsStand.get(schluessel))) return;
+            platz.removeAllViews();
+            bauen.accept(platz);
+            // Gemerkt wird der Stand *nach* dem Bauen: das Bauen fordert die
+            // Reihe an, und damit steht sie gleich darauf auf "wird geholt".
+            // Vorher gemerkt waere der Vergleich beim naechsten Melder
+            // zwangslaeufig verschieden und die Reihe entstuende ohne Not ein
+            // zweites Mal.
+            vorschlagsStand.put(schluessel, vorschlagsBild(schluessel));
+        };
+        vorschlagsFueller.put(schluessel, fueller);
+        fueller.run();
+    }
+
+    /** Woran zu erkennen ist, ob eine Vorschlagsreihe anders aussaehe. */
+    private String vorschlagsBild(String schluessel) {
+        if (empfehlungen == null) return "";
+        StringBuilder bild = new StringBuilder();
+        bild.append(empfehlungen.istBereit()).append('#')
+            .append(empfehlungen.startFehler()).append('#')
+            .append(empfehlungen.fehler(schluessel)).append('#')
+            .append(empfehlungen.laedt(schluessel)).append('#')
+            .append(empfehlungen.geladen(schluessel)).append('#')
+            .append(empfehlungen.istAlt(schluessel)).append('\n');
+        for (JSONObject eintrag : empfehlungen.eintraege(schluessel)) {
+            bild.append(eintrag.optString("title")).append('|')
+                .append(eintrag.optString("image")).append('|')
+                .append(eintrag.optString("providerId")).append('|')
+                .append(eintrag.optString("releasedAt")).append('|')
+                .append(eintrag.optString("grundText")).append('\n');
+        }
+        return bild.toString();
     }
 
     /**

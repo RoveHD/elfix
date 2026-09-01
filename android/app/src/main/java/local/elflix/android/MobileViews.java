@@ -1447,6 +1447,28 @@ final class MobileViews {
     }
 
     /**
+     * Ob aus einer Bewegung ein Wischen geworden ist - und wohin.
+     *
+     * <p>Die ganze Regel an einer Stelle, damit sie sich pruefen laesst, ohne
+     * dass ein Finger im Spiel ist. Zwei Bedingungen: weit genug zur Seite,
+     * und deutlicher zur Seite als nach oben oder unten. Die zweite ist die
+     * wichtigere - ohne sie bleibt ein schraeg gefuehrter Daumen, der
+     * eigentlich scrollen will, am Titelbild haengen.
+     *
+     * @param quer     Weg zur Seite in Pixeln, negativ heisst nach links
+     * @param hoch     Weg nach oben oder unten; 0 laesst die Frage weg
+     * @param schwelle die Schwelle des Geraets ({@code ViewConfiguration})
+     * @return {@code 1} fuer weiter, {@code -1} fuer zurueck, {@code 0} fuer
+     *         "das war kein Wischen". Nach links heisst weiter: der Inhalt
+     *         folgt der Hand, wie auf jeder anderen Karte.
+     */
+    static int wischRichtung(float quer, float hoch, int schwelle) {
+        if (Math.abs(quer) <= schwelle) return 0;
+        if (Math.abs(quer) <= Math.abs(hoch) * 1.5f) return 0;
+        return quer < 0 ? 1 : -1;
+    }
+
+    /**
      * Der Platz des Titelhintergrunds - und man kann darin wischen.
      *
      * <p>Gefordert war, auf der Startseite nach links und rechts blaettern zu
@@ -1471,53 +1493,90 @@ final class MobileViews {
             private float startY;
             private boolean wischt;
 
+            /**
+             * Anfang merken. Bei jedem Niedergehen, auf beiden Wegen.
+             */
+            private void anfang(MotionEvent ereignis) {
+                startX = ereignis.getX();
+                startY = ereignis.getY();
+                wischt = false;
+            }
+
+            /**
+             * Ist daraus inzwischen eine Wischbewegung geworden?
+             *
+             * <p>Waagerecht <em>und</em> deutlicher als senkrecht: sonst bleibt
+             * ein schraeg gefuehrter Daumen, der eigentlich scrollen will, hier
+             * haengen.
+             */
+            private boolean erkannt(MotionEvent ereignis) {
+                if (wischt) return true;
+                if (wischRichtung(ereignis.getX() - startX, ereignis.getY() - startY,
+                    schwelle) == 0) {
+                    return false;
+                }
+                wischt = true;
+                // Die ScrollView darueber soll die Bewegung jetzt nicht mehr
+                // an sich ziehen.
+                if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+                return true;
+            }
+
+            /** Am Ende: weit genug zur Seite? Dann blaettern. */
+            private void abschluss(MotionEvent ereignis) {
+                if (wischt) {
+                    // Am Ende zaehlt nur noch der Weg zur Seite: dass es ein
+                    // Wischen ist, steht schon fest, und ob der Finger dabei
+                    // zuletzt noch nach oben gewandert ist, aendert daran
+                    // nichts. Deshalb hier ohne senkrechten Anteil.
+                    int richtung = wischRichtung(ereignis.getX() - startX, 0f, schwelle);
+                    if (richtung != 0) beiWisch.accept(richtung);
+                }
+                wischt = false;
+            }
+
             @Override
             public boolean onInterceptTouchEvent(MotionEvent ereignis) {
                 switch (ereignis.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
-                        startX = ereignis.getX();
-                        startY = ereignis.getY();
-                        wischt = false;
-                        break;
+                        anfang(ereignis);
+                        return false;
                     case MotionEvent.ACTION_MOVE:
-                        float quer = Math.abs(ereignis.getX() - startX);
-                        float hoch = Math.abs(ereignis.getY() - startY);
-                        // Waagerecht *und* deutlicher als senkrecht: sonst
-                        // faengt ein schraeg gefuehrter Daumen, der eigentlich
-                        // scrollen will, hier haengen.
-                        if (quer > schwelle && quer > hoch * 1.5f) {
-                            wischt = true;
-                            getParent().requestDisallowInterceptTouchEvent(true);
-                            return true;
-                        }
-                        break;
+                        // Abfangen erst, wenn es eindeutig ist: bis dahin
+                        // gehoert jede Beruehrung den Knoepfen darin.
+                        return erkannt(ereignis);
                     default:
-                        break;
+                        return false;
                 }
-                return false;
             }
 
+            /**
+             * Derselbe Ablauf noch einmal - und das ist kein Versehen.
+             *
+             * <p><b>Der gemeldete Fehler.</b> Gewischt werden konnte nur auf
+             * der Schrift, nicht auf dem Bild. Der Grund ist eine Feinheit von
+             * {@code ViewGroup.dispatchTouchEvent}: {@code
+             * onInterceptTouchEvent} wird fuer die Bewegungen nur dann weiter
+             * gefragt, wenn ein Kind das erste Niedergehen angenommen hat.
+             * Auf der Schrift gibt es Knoepfe, die es annehmen - dort lief die
+             * Erkennung. Auf dem Bild nimmt niemand etwas an, die Gruppe
+             * bekommt die Bewegungen also selbst, und hier stand nur ein
+             * {@code return true}, das nichts geprueft hat.
+             *
+             * <p>Beide Wege fuehren jetzt durch dieselben drei Schritte.
+             */
             @Override
             public boolean onTouchEvent(MotionEvent ereignis) {
                 switch (ereignis.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
-                        startX = ereignis.getX();
-                        startY = ereignis.getY();
+                        anfang(ereignis);
+                        // Annehmen, sonst kommt keine weitere Bewegung an.
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        // Immer annehmen: mitten in einer Geste "nicht
-                        // zustaendig" zu sagen, ist fuer die ScrollView
-                        // darueber kein sauberer Zustand. Faehrt sie
-                        // dazwischen, kommt ohnehin ein ACTION_CANCEL.
+                        erkannt(ereignis);
                         return true;
                     case MotionEvent.ACTION_UP:
-                        if (wischt) {
-                            float weg = ereignis.getX() - startX;
-                            // Nach links gewischt heisst "weiter" - der Inhalt
-                            // folgt der Hand, wie auf jeder anderen Karte.
-                            if (Math.abs(weg) > schwelle) beiWisch.accept(weg < 0 ? 1 : -1);
-                        }
-                        wischt = false;
+                        abschluss(ereignis);
                         return true;
                     case MotionEvent.ACTION_CANCEL:
                         wischt = false;
