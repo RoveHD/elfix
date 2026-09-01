@@ -348,6 +348,62 @@ pruefe("Das Theme wird durchgehend benutzt",
   !/#[0-9a-f]{6}/i.test(CSS.slice(CSS.indexOf("--- ELFIX Wrapped"))),
   "keine festen Farben - Hell, Dunkel und eigene Akzente muessen weiter gelten");
 
+/* ------------------------------------------------- Und dasselbe auf dem Telefon */
+//
+// Gemeldet: "das Wrapped sieht in der APK echt schlecht aus, ohne Bilder und
+// so". Es stimmte. Am Rechner traegt jede Karte ein Titelbild - heruntergedimmt
+// und weich, damit es die Stimmung traegt und nicht die Aussage. Auf dem
+// Telefon stand ein grauer Kasten mit linksbuendigem Text, obwohl die Bilder
+// laengst in derselben Auswertung stehen, aus der die Zahlen kommen.
+{
+  const RUECKBLICK = fs.readFileSync(
+    path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
+      "android", "Rueckblick.java"), "utf8");
+  const HAUPT = fs.readFileSync(
+    path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
+      "android", "MainActivity.java"), "utf8");
+
+  pruefe("Die Karten des Telefons tragen ein Titelbild",
+    /private static View bildkarte\(Context context, String bildUrl[\s\S]{0,2000}?Bilder\.laden\(hintergrund, bildUrl/
+      .test(RUECKBLICK));
+  pruefe("Darueber liegt ein Schleier, damit die Schrift lesbar bleibt",
+    /rahmen\.addView\(schleier/.test(RUECKBLICK),
+    "sonst steht der Text auf einem beliebigen Bildausschnitt");
+  pruefe("Ohne Bild entfaellt beides",
+    /if \(bildUrl != null && !bildUrl\.trim\(\)\.isEmpty\(\)\) \{/.test(RUECKBLICK),
+    "eine gedimmte Flaeche ohne Bild waere nur dunkler");
+
+  // Dieselbe Zahl wie im Stylesheet. Zwei Geraete, die dasselbe Bild
+  // verschieden stark durchscheinen lassen, sind zwei Gestaltungen.
+  const cssDeckkraft = Number((CSS.match(/\.wrapped-backdrop \{[\s\S]*?opacity: ([\d.]+);/) || [])[1]);
+  const javaDeckkraft = Number(
+    (RUECKBLICK.match(/HINTERGRUND_DECKKRAFT = ([\d.]+)f;/) || [])[1]);
+  pruefe("Und zwar genauso stark wie am Rechner",
+    cssDeckkraft > 0 && cssDeckkraft === javaDeckkraft,
+    `Rechner ${cssDeckkraft}, Telefon ${javaDeckkraft}`);
+
+  pruefe("Das Stimmungsbild kommt in derselben Reihenfolge wie am Rechner",
+    /String stimmung = bild\(topSerie\);[\s\S]{0,200}?bild\(topFilm\)[\s\S]{0,200}?bild\(ersterTitel\)/
+      .test(RUECKBLICK),
+    "Serie des Jahres, sonst Film, sonst der erste Titel");
+  pruefe("Serie und Film des Jahres bekommen ihr Poster",
+    (RUECKBLICK.match(/poster\(context, top(Serie|Film)\.optString\("titel", ""\)/g) || []).length === 2);
+  pruefe("Und ohne Bild stehen dort die Anfangsbuchstaben",
+    /MobileViews\.poster\(context, null, titel, bildUrl/.test(RUECKBLICK),
+    "derselbe Rueckfall wie auf jeder Kachel - keine leere Flaeche");
+
+  pruefe("Die Karten haben eine feste Hoehe",
+    /KARTE_HOEHE_DP = \d+;/.test(RUECKBLICK)
+    && /rahmen\.setMinimumHeight\(MobileViews\.dp\(context, KARTE_HOEHE_DP\)\)/.test(RUECKBLICK),
+    "sonst springt die Karte beim Blaettern um die halbe Bildschirmhoehe");
+  pruefe("Der Text steht mittig wie am Rechner",
+    /private static void mittig\(View ansicht\)/.test(RUECKBLICK)
+    && /inhalt\.setGravity\(Gravity\.CENTER\)/.test(RUECKBLICK));
+  pruefe("Die Ueberschrift steht nicht zweimal uebereinander",
+    !/page\.addView\(MobileViews\.eyebrow\(this, "ELFIX Wrapped"\)\)/.test(HAUPT),
+    "die erste Karte sagt es ohnehin - der Seitenkopf nahm ihr nur die Hoehe");
+}
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

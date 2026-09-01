@@ -2,12 +2,18 @@ package local.elflix.android;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Outline;
+import android.graphics.Shader;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -42,6 +48,27 @@ final class Rueckblick {
     private static final String[] WOCHENTAGE = {
         "Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"
     };
+
+    /**
+     * Wie hoch eine Karte des Jahresrückblicks mindestens ist.
+     *
+     * <p>Hoch genug, dass eine Zahl darauf steht und nicht darin klemmt - und
+     * fest, damit die Karte beim Weiterblättern nicht die Höhe wechselt.
+     */
+    private static final int KARTE_HOEHE_DP = 380;
+
+    /**
+     * Wie stark das Titelbild hinter der Karte durchkommt.
+     *
+     * <p>Dieselben 22 Prozent wie am Rechner ({@code .wrapped-backdrop}). Mehr,
+     * und die Schrift steht auf einem Foto; weniger, und man fragt sich, wozu
+     * das Bild da ist.
+     */
+    private static final float HINTERGRUND_DECKKRAFT = 0.22f;
+
+    /** Breite und Höhe des Posters auf den beiden Karten "des Jahres". */
+    private static final int POSTER_BREITE_DP = 116;
+    private static final int POSTER_HOEHE_DP = 174;
 
     private Rueckblick() {
     }
@@ -291,12 +318,19 @@ final class Rueckblick {
         boolean zeit = zeitBekannt(daten);
         JSONObject topSerie = erstes(daten.optJSONArray("serien"));
         JSONObject topFilm = erstes(daten.optJSONArray("filme"));
+        JSONObject ersterTitel = daten.optJSONObject("erster");
+        // Das Bild, das die Karten ohne eigenes tragen: die Serie des Jahres,
+        // sonst der Film, sonst der Titel, mit dem das Jahr angefangen hat.
+        // Dieselbe Reihenfolge wie am Rechner.
+        String stimmung = bild(topSerie);
+        if (stimmung.isEmpty()) stimmung = bild(topFilm);
+        if (stimmung.isEmpty()) stimmung = bild(ersterTitel);
 
         // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
         // Einschränkung, unter der alles Folgende gilt.
-        seiten.add(karte(context,
-            zeile(context, "ELFIX Wrapped", 12, Theme.PRIMARY, true),
-            zeile(context, String.valueOf(jahr), 44, Theme.TEXT_PRIMARY, true),
+        seiten.add(bildkarte(context, stimmung,
+            augenbraue(context, "ELFIX Wrapped"),
+            zeile(context, String.valueOf(jahr), 56, Theme.TEXT_PRIMARY, true),
             zeile(context, auftakt(daten, jahr), 17, Theme.TEXT_SECONDARY, false),
             zeile(context, zeitraumHinweis(daten, jahr), 12, Theme.TEXT_DISABLED, false)));
 
@@ -327,22 +361,26 @@ final class Rueckblick {
         // 4/5/6 - Abgeschlossenes, je Gattung und nur wenn es etwas gibt.
         JSONObject abschluesse = daten.optJSONObject("abschluesse");
         if (abschluesse != null) {
-            abschlussKarte(context, seiten, abschluesse.optInt("serie", 0), "Serie", "Serien");
-            abschlussKarte(context, seiten, abschluesse.optInt("film", 0), "Film", "Filme");
-            abschlussKarte(context, seiten, abschluesse.optInt("anime", 0), "Anime", "Anime");
+            abschlussKarte(context, seiten, abschluesse.optInt("serie", 0), "Serie", "Serien",
+                bild(topSerie));
+            abschlussKarte(context, seiten, abschluesse.optInt("film", 0), "Film", "Filme",
+                bild(topFilm));
+            abschlussKarte(context, seiten, abschluesse.optInt("anime", 0), "Anime", "Anime", "");
         }
 
         // 7 - Serie und Film des Jahres. Ausgewählt nach geschauter Zeit, und
         // wo die fehlt, nach Folgen - nicht nach einer erfundenen Punktzahl.
         if (topSerie != null) {
-            seiten.add(karte(context,
-                zeile(context, "Deine Serie des Jahres", 12, Theme.PRIMARY, true),
+            seiten.add(bildkarte(context, bild(topSerie),
+                augenbraue(context, "Deine Serie des Jahres"),
+                poster(context, topSerie.optString("titel", ""), bild(topSerie)),
                 zeile(context, topSerie.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, titelZahlen(topSerie, zeit), 14, Theme.TEXT_SECONDARY, false)));
         }
         if (topFilm != null) {
-            seiten.add(karte(context,
-                zeile(context, "Dein Film des Jahres", 12, Theme.PRIMARY, true),
+            seiten.add(bildkarte(context, bild(topFilm),
+                augenbraue(context, "Dein Film des Jahres"),
+                poster(context, topFilm.optString("titel", ""), bild(topFilm)),
                 zeile(context, topFilm.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, titelZahlen(topFilm, zeit), 14, Theme.TEXT_SECONDARY, false)));
         }
@@ -381,7 +419,7 @@ final class Rueckblick {
                     prozent / 100f));
             }
             seiten.add(karte(context,
-                zeile(context, "Dein " + jahr + " Mix", 12, Theme.PRIMARY, true), kasten, null));
+                augenbraue(context, "Dein " + jahr + " Mix"), kasten, null));
         }
 
         // 10 - Strecke
@@ -409,7 +447,7 @@ final class Rueckblick {
         JSONObject besterTag = daten.optJSONObject("aktivsterTag");
         if (besterTag != null) {
             seiten.add(karte(context,
-                zeile(context, "Dein intensivster Tag", 12, Theme.PRIMARY, true),
+                augenbraue(context, "Dein intensivster Tag"),
                 zeile(context, datum(besterTag.optString("tag"), true), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterTag.optDouble("sekunden", 0) > 0
                     ? dauer(besterTag.optDouble("sekunden"))
@@ -438,8 +476,9 @@ final class Rueckblick {
         // 15 - Wiederholungen, nur wenn es welche gab.
         JSONObject oft = erstes(daten.optJSONArray("wiederholteste"));
         if (oft != null) {
-            seiten.add(karte(context,
+            seiten.add(bildkarte(context, bild(oft),
                 zeile(context, "Das kam dir bekannt vor …", 19, Theme.TEXT_SECONDARY, false),
+                poster(context, oft.optString("titel", ""), bild(oft)),
                 zeile(context, oft.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, oft.optInt("wiederholungen") + "× noch einmal gesehen.",
                     14, Theme.TEXT_SECONDARY, false)));
@@ -461,20 +500,22 @@ final class Rueckblick {
         // 17 - Anfang und Ende. Solange das Jahr läuft, ist der letzte Titel
         // nur der bisher letzte - alles andere wäre eine Behauptung über die
         // Zukunft.
-        JSONObject erster = daten.optJSONObject("erster");
+        JSONObject erster = ersterTitel;
         JSONObject letzter = daten.optJSONObject("letzter");
         if (erster != null) {
-            seiten.add(karte(context,
-                zeile(context, "So hat dein Jahr begonnen", 12, Theme.PRIMARY, true),
+            seiten.add(bildkarte(context, bild(erster),
+                augenbraue(context, "So hat dein Jahr begonnen"),
+                poster(context, erster.optString("titel", ""), bild(erster)),
                 zeile(context, erster.optString("titel", "—"), 24, Theme.TEXT_PRIMARY, true),
                 zeile(context, datum(erster.optString("wann"), true), 14, Theme.TEXT_SECONDARY, false)));
         }
         if (letzter != null && (erster == null
             || !letzter.optString("titel").equals(erster.optString("titel")))) {
             boolean laeuftNoch = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) == jahr;
-            seiten.add(karte(context,
-                zeile(context, laeuftNoch ? "Dein bisher letzter Titel"
-                    : "Und damit hast du das Jahr beendet", 12, Theme.PRIMARY, true),
+            seiten.add(bildkarte(context, bild(letzter),
+                augenbraue(context, laeuftNoch ? "Dein bisher letzter Titel"
+                    : "Und damit hast du das Jahr beendet"),
+                poster(context, letzter.optString("titel", ""), bild(letzter)),
                 zeile(context, letzter.optString("titel", "—"), 24, Theme.TEXT_PRIMARY, true),
                 zeile(context, datum(letzter.optString("wann"), true), 14, Theme.TEXT_SECONDARY, false)));
         }
@@ -488,7 +529,7 @@ final class Rueckblick {
                 liste.addView(zeile(context, "• " + satz, 15, Theme.TEXT_SECONDARY, false));
             }
             seiten.add(karte(context,
-                zeile(context, "Nebenbei", 12, Theme.PRIMARY, true), liste, null));
+                augenbraue(context, "Nebenbei"), liste, null));
         }
 
         // 19 - Das Finale.
@@ -502,18 +543,23 @@ final class Rueckblick {
         }
         schluss.addView(zeile(context, daten.optInt("tage", 0) + " Schautage",
             18, Theme.TEXT_PRIMARY, true));
-        seiten.add(karte(context,
-            zeile(context, "Dein ELFIX " + jahr, 12, Theme.PRIMARY, true), schluss,
+        seiten.add(bildkarte(context, stimmung,
+            augenbraue(context, "Dein ELFIX " + jahr), schluss,
             zeile(context, "Gemessen, nicht geschätzt.", 12, Theme.TEXT_DISABLED, false)));
         return seiten;
     }
 
     private static void abschlussKarte(Context context, List<View> seiten, int anzahl,
-                                       String einzahl, String mehrzahl) {
+                                       String einzahl, String mehrzahl, String bildUrl) {
         if (anzahl <= 0) return;
-        seiten.add(karte(context,
+        seiten.add(bildkarte(context, bildUrl,
             grosseZahl(context, String.valueOf(anzahl), anzahl == 1 ? einzahl : mehrzahl),
             zeile(context, "hast du abgeschlossen.", 17, Theme.TEXT_SECONDARY, false), null));
+    }
+
+    /** Das Titelbild eines Eintrags der Auswertung - leer, wenn keines dabei ist. */
+    private static String bild(JSONObject eintrag) {
+        return eintrag == null ? "" : eintrag.optString("bild", "");
     }
 
     static String auftakt(JSONObject daten, int jahr) {
@@ -750,30 +796,87 @@ final class Rueckblick {
         return view;
     }
 
+    /**
+     * Die grosse Zahl einer Wrapped-Karte.
+     *
+     * <p>Zwei Änderungen gegenüber der Statistikseite, und beide stehen so auch
+     * am Rechner: die Einheit steht <em>unter</em> der Zahl statt daneben (in
+     * einer Zeile bricht "Stunden" neben einer vierstelligen Zahl um), und die
+     * Zahl trägt einen Verlauf von der Textfarbe in die Akzentfarbe
+     * ({@code .wrapped-huge}).
+     *
+     * <p>Der Verlauf wird erst gesetzt, wenn die Zahl ihre Breite kennt: ein
+     * Farbverlauf ohne Ausdehnung ist eine Farbe. Deshalb hängt er an der
+     * Lage und nicht am Bau. {@code invalidate()} zeichnet nur neu und misst
+     * nicht - der Horcher ruft sich damit nicht selbst.
+     */
     private static View grosseZahl(Context context, String wert, String einheit) {
         LinearLayout kasten = new LinearLayout(context);
-        kasten.setOrientation(LinearLayout.HORIZONTAL);
-        kasten.setGravity(Gravity.BOTTOM);
-        TextView zahl = new TextView(context);
+        kasten.setOrientation(LinearLayout.VERTICAL);
+        kasten.setGravity(Gravity.CENTER_HORIZONTAL);
+        final TextView zahl = new TextView(context);
         zahl.setText(wert);
-        zahl.setTextColor(Theme.PRIMARY);
-        zahl.setTextSize(52);
+        zahl.setTextColor(Theme.TEXT_PRIMARY);
+        zahl.setTextSize(64);
+        zahl.setGravity(Gravity.CENTER_HORIZONTAL);
         zahl.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        zahl.addOnLayoutChangeListener((ansicht, links, oben, rechts, unten,
+                                        altLinks, altOben, altRechts, altUnten) -> {
+            int breite = rechts - links;
+            int hoehe = unten - oben;
+            if (breite <= 0 || hoehe <= 0) return;
+            zahl.getPaint().setShader(new LinearGradient(0, 0, breite, hoehe,
+                new int[]{Theme.TEXT_PRIMARY, Theme.PRIMARY}, null, Shader.TileMode.CLAMP));
+            zahl.invalidate();
+        });
         kasten.addView(zahl);
         if (einheit != null && !einheit.isEmpty()) {
             TextView name = new TextView(context);
-            name.setText(" " + einheit);
-            name.setTextColor(Theme.TEXT_PRIMARY);
-            name.setTextSize(20);
+            name.setText(einheit);
+            name.setTextColor(Theme.TEXT_SECONDARY);
+            name.setTextSize(18);
+            name.setGravity(Gravity.CENTER_HORIZONTAL);
             name.setTypeface(Typeface.DEFAULT_BOLD);
-            name.setPadding(0, 0, 0, MobileViews.dp(context, 8));
             kasten.addView(name);
         }
         return kasten;
     }
 
     /**
-     * Eine Karte des Jahresrückblicks.
+     * Die kleine Zeile über einer Karte - "Deine Serie des Jahres".
+     *
+     * <p>Versal und gesperrt wie am Rechner ({@code .wrapped-eyebrow}). Sie
+     * benennt, was folgt, und soll dabei nicht mit dem Titel darunter um die
+     * Aufmerksamkeit streiten.
+     */
+    private static TextView augenbraue(Context context, String text) {
+        TextView view = zeile(context, text == null ? "" : text.toUpperCase(Locale.GERMANY),
+            11, Theme.PRIMARY, true);
+        view.setLetterSpacing(0.18f);
+        return view;
+    }
+
+    /**
+     * Das Titelbild als Poster - auf den beiden Karten "des Jahres".
+     *
+     * <p>Derselbe Bildkasten wie auf jeder Kachel ({@link MobileViews#poster}),
+     * und damit auch derselbe Rückfall: ohne Bild stehen die Anfangsbuchstaben
+     * des Titels da statt einer leeren Fläche.
+     */
+    private static View poster(Context context, String titel, String bildUrl) {
+        FrameLayout bild = MobileViews.poster(context, null, titel, bildUrl, 0,
+            POSTER_BREITE_DP, POSTER_HOEHE_DP, 34f, 0);
+        LinearLayout kasten = new LinearLayout(context);
+        kasten.setOrientation(LinearLayout.VERTICAL);
+        kasten.setGravity(Gravity.CENTER_HORIZONTAL);
+        kasten.setPadding(0, MobileViews.dp(context, 4), 0, MobileViews.dp(context, 10));
+        kasten.addView(bild, new LinearLayout.LayoutParams(
+            MobileViews.dp(context, POSTER_BREITE_DP), MobileViews.dp(context, POSTER_HOEHE_DP)));
+        return kasten;
+    }
+
+    /**
+     * Eine Karte des Jahresrückblicks - ohne Bild.
      *
      * <p>Beliebig viele Zeilen, und {@code null} fällt weg. Genau das braucht
      * jede Karte hier: sie hat einen Platz für eine Zahl, die es vielleicht
@@ -781,16 +884,120 @@ final class Rueckblick {
      * erst recht keine Null.
      */
     private static View karte(Context context, View... zeilen) {
-        LinearLayout kasten = new LinearLayout(context);
-        kasten.setOrientation(LinearLayout.VERTICAL);
-        kasten.setBackground(MobileViews.shape(context, Theme.SURFACE_ELEVATED,
-            MobileViews.CARD_RADIUS, Theme.BORDER, 1));
-        kasten.setPadding(MobileViews.dp(context, 20), MobileViews.dp(context, 26),
-            MobileViews.dp(context, 20), MobileViews.dp(context, 26));
-        for (View zeile : zeilen) {
-            if (zeile != null) kasten.addView(zeile);
+        return bildkarte(context, "", zeilen);
+    }
+
+    /**
+     * Dieselbe Karte, mit dem Titelbild als Hintergrund.
+     *
+     * <p><b>Warum das Bild dazugehört.</b> Am Rechner trägt jede Wrapped-Karte
+     * ein Titelbild - weit heruntergedimmt und weich, damit es die Stimmung
+     * trägt und nicht die Aussage ({@code .wrapped-backdrop} im Stylesheet).
+     * Auf dem Telefon stand stattdessen ein grauer Kasten mit linksbündigem
+     * Text: dieselben Zahlen, aber nichts, was nach dem Jahr aussieht, das man
+     * hinter sich hat. Gemeldet als "sieht echt schlecht aus, ohne Bilder".
+     *
+     * <p>Das Bild steckt längst in der Auswertung: {@code statistik.auswerten}
+     * gibt zu jeder Serie, jedem Film und zum ersten wie letzten Titel das
+     * {@code bild} mit - dieselbe Adresse, die auch die Kacheln der Startseite
+     * benutzen. Geholt wird es über {@link Bilder}, also aus demselben Speicher
+     * wie dort; eine Karte kostet damit keinen zweiten Ladevorgang.
+     *
+     * <p>Drei Schichten, in dieser Reihenfolge: das Bild, ein Schleier darüber,
+     * der Text zuoberst. Ohne den Schleier stünde die Schrift auf einem
+     * beliebigen Bildausschnitt und wäre stellenweise unlesbar; ohne Bild
+     * entfallen beide, und die Karte behält ihren eigenen Verlauf.
+     *
+     * <p>Die Höhe steht fest. Karten mit einer Zeile und Karten mit einer
+     * Rangliste sprangen sonst zwischen zwei Fingertipps um die halbe
+     * Bildschirmhöhe, und die Punkte darunter sprangen mit.
+     */
+    private static View bildkarte(Context context, String bildUrl, View... zeilen) {
+        FrameLayout rahmen = new FrameLayout(context);
+        final int radius = MobileViews.dp(context, MobileViews.CARD_RADIUS);
+        rahmen.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View ansicht, Outline umriss) {
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), radius);
+            }
+        });
+        // Ohne den Zuschnitt stehen die Ecken des Bildes über den runden Ecken
+        // der Karte - derselbe Rand wie bei den Kacheln der Startseite.
+        rahmen.setClipToOutline(true);
+
+        GradientDrawable grund = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[]{
+                MobileViews.blend(Theme.SURFACE_ELEVATED, Theme.PRIMARY_DEEP, 0.16f),
+                Theme.SURFACE,
+                MobileViews.blend(Theme.SURFACE, Theme.BACKGROUND, 0.55f)});
+        grund.setCornerRadius(radius);
+        grund.setStroke(MobileViews.dp(context, 1), Theme.BORDER);
+        rahmen.setBackground(grund);
+        rahmen.setMinimumHeight(MobileViews.dp(context, KARTE_HOEHE_DP));
+
+        if (bildUrl != null && !bildUrl.trim().isEmpty()) {
+            ImageView hintergrund = new ImageView(context);
+            hintergrund.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            hintergrund.setAlpha(HINTERGRUND_DECKKRAFT);
+            rahmen.addView(hintergrund, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            Bilder.laden(hintergrund, bildUrl, 360, KARTE_HOEHE_DP, null);
+
+            View schleier = new View(context);
+            schleier.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{
+                    Color.argb(170, 7, 10, 18),
+                    Color.argb(70, 7, 10, 18),
+                    Color.argb(200, 7, 10, 18)}));
+            rahmen.addView(schleier, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
-        return kasten;
+
+        LinearLayout inhalt = new LinearLayout(context);
+        inhalt.setOrientation(LinearLayout.VERTICAL);
+        inhalt.setGravity(Gravity.CENTER);
+        inhalt.setPadding(MobileViews.dp(context, 24), MobileViews.dp(context, 30),
+            MobileViews.dp(context, 24), MobileViews.dp(context, 30));
+        for (View zeile : zeilen) {
+            if (zeile == null) continue;
+            mittig(zeile);
+            inhalt.addView(zeile, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        rahmen.addView(inhalt, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER));
+        return rahmen;
+    }
+
+    /**
+     * Eine Zeile der Karte mittig stellen.
+     *
+     * <p>Die Bausteine sind dieselben wie auf der Statistikseite, und dort
+     * stehen sie linksbündig - eine Tabelle liest man an ihrer linken Kante.
+     * Eine Wrapped-Karte ist keine Tabelle, sondern ein Satz mit einer Zahl;
+     * mittig ist dort die Form, die der Rechner auch benutzt.
+     *
+     * <p>Eine Ebene tief, nicht rekursiv: was hier hereinkommt, ist entweder
+     * ein Text oder ein Kasten mit Texten. Balken und Monatsreihen füllen die
+     * Breite und sollen von der Mitte nichts wissen.
+     */
+    private static void mittig(View ansicht) {
+        if (ansicht instanceof TextView) {
+            ((TextView) ansicht).setGravity(Gravity.CENTER_HORIZONTAL);
+            return;
+        }
+        if (!(ansicht instanceof LinearLayout)) return;
+        LinearLayout kasten = (LinearLayout) ansicht;
+        if (kasten.getOrientation() == LinearLayout.HORIZONTAL) {
+            kasten.setGravity(kasten.getGravity() | Gravity.CENTER_HORIZONTAL);
+            return;
+        }
+        kasten.setGravity(Gravity.CENTER_HORIZONTAL);
+        for (int i = 0; i < kasten.getChildCount(); i += 1) {
+            View kind = kasten.getChildAt(i);
+            if (kind instanceof TextView) ((TextView) kind).setGravity(Gravity.CENTER_HORIZONTAL);
+        }
     }
 
     private static void kopfZahl(Context context, LinearLayout reihe, String wert, String label) {

@@ -4035,9 +4035,11 @@ public class MainActivity extends Activity {
         updateBottomNav();
 
         LinearLayout page = mobilePage();
-        page.addView(MobileViews.eyebrow(this, "ELFIX Wrapped"));
-        page.addView(MobileViews.heroTitle(this, String.valueOf(jahr)));
-
+        // Ohne Seitenkopf: die erste Karte sagt "ELFIX Wrapped" und das Jahr
+        // ohnehin, und zweimal dieselbe Ueberschrift uebereinander nimmt der
+        // Karte genau die Hoehe, von der sie lebt. Waehrend gerechnet wird,
+        // steht der Hinweis darunter allein da - das ist der einzige Moment,
+        // in dem hier sonst nichts stuende.
         if (statistik == null) return;
         LinearLayout platz = new LinearLayout(this);
         platz.setOrientation(LinearLayout.VERTICAL);
