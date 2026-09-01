@@ -335,6 +335,38 @@ pruefe("istWiederansehen gilt nur mit Abschluss",
     /public int durchlaeufe\(\)[\s\S]{0,300}?return 1 \+ weitere;/.test(JAVA));
 }
 
+// Der Weg dorthin auf dem Telefon und am Fernseher: die Kachel selbst.
+//
+// Am Rechner steht er im Aktionsmenue, und mit einer Maus ist das ein
+// Rechtsklick. Mit einem Steuerkreuz sind es drei Schritte - und solange der
+// Tipp die gespeicherte Adresse oeffnete, landete er am *Ende* der Serie, die
+// man gerade durchgeschaut hatte.
+{
+  const HAUPT = fs.readFileSync(
+    path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
+      "android", "MainActivity.java"), "utf8");
+
+  pruefe("Ein Tipp auf einen durchgeschauten Titel faengt von vorn an",
+    /private void openFavorite\(Favorite favorite\)[\s\S]{0,1200}?bestand\.wiederansehenStarten\(favorite\.id\(\)/
+      .test(HAUPT));
+  pruefe("aber nur, solange kein Durchlauf laeuft",
+    /favorite\.istAbgeschlossen\(\) && !favorite\.istWiederansehen\(\)/.test(HAUPT),
+    "sonst setzte jeder Tipp in Weiterschauen die Serie wieder an den Anfang");
+  pruefe("Geoeffnet wird der frische Eintrag, nicht der aus der Hand",
+    /wiederansehenStarten\([\s\S]{0,400}?bestand\.mitId\(favorite\.id\(\)\)/.test(HAUPT),
+    "der in der Hand traegt noch die letzte Folge");
+  pruefe("Der Doppeltipp-Schutz haelt den eigenen zweiten Aufruf nicht auf",
+    /wiederansehenStarten\([\s\S]{0,500}?favoritOeffnen\(frisch/.test(HAUPT),
+    "ueber openFavorite liefe er in die Sperre, die der erste Tipp gerade gesetzt hat");
+
+  const BESTAND = fs.readFileSync(
+    path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
+      "android", "Bestand.java"), "utf8");
+  pruefe("Die Regel dahinter bleibt die geteilte",
+    /kern\.rufe\("fortschritt\.wiederansehenBeginnen"/.test(BESTAND),
+    "welche Folge die erste ist, entscheidet der Kern und nicht Java");
+}
+
 {
   const SCHLUESSEL = lies("src/geraete-schluessel.js");
   const STAND = lies("src/geraete-stand.js");

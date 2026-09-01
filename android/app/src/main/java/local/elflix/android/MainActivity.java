@@ -9137,16 +9137,30 @@ public class MainActivity extends Activity {
      * Player mitten im Anlauf, und in einer Runde gingen zwei Folgenwechsel
      * hinaus statt einem.
      */
+    /**
+     * Einen Eintrag oeffnen - und bei einem durchgeschauten von vorn anfangen.
+     *
+     * <p>Ein Titel in der Mediathek ist durch, und seine gespeicherte Adresse
+     * ist die <em>letzte</em> Folge. Ein Tipp darauf landete also am Ende einer
+     * Serie, die man gerade zu Ende gesehen hat - auf dem Fernseher der
+     * haeufigste Weg in eine Folge, die niemand sehen wollte. Der Weg zum
+     * Anfang stand bis hierher nur im Aktionsmenue ("Nochmal von vorn
+     * ansehen"), und ein Menue ist mit einem Steuerkreuz drei Schritte weit
+     * weg.
+     *
+     * <p>Deshalb tut der Tipp jetzt, was auf dem Knopf steht: "Nochmal
+     * ansehen" faengt bei Staffel 1, Folge 1 an und zaehlt als weiterer
+     * Durchlauf. Entschieden wird das im geteilten Kern
+     * ({@code fortschritt.wiederansehenBeginnen}) - dieselbe Stelle, die auch
+     * das Menue und der Rechner fragen.
+     *
+     * <p>Genau einmal, und nicht bei jedem Tipp: laeuft der zweite Durchlauf
+     * schon, ist der Eintrag ein angefangener wie jeder andere, und "weiter"
+     * heisst dann wieder weiter. Sonst wuerde ein Tipp in "Weiterschauen" die
+     * Serie jedes Mal an den Anfang zuruecksetzen.
+     */
     private void openFavorite(Favorite favorite) {
-        Provider provider = null;
-        for (Provider item : providers) {
-            if (item.id.equals(favorite.providerId())) {
-                provider = item;
-                break;
-            }
-        }
-        if (provider == null && !providers.isEmpty()) provider = providers.get(0);
-        if (provider == null) return;
+        if (providerFuerEintrag(favorite) == null) return;
 
         long jetzt = SystemClock.uptimeMillis();
         if (favorite.id().equals(letzterStartEintrag) && jetzt - letzterStartAt < START_SPERRE_MS) {
@@ -9155,6 +9169,37 @@ public class MainActivity extends Activity {
         }
         letzterStartEintrag = favorite.id();
         letzterStartAt = jetzt;
+
+        if (bestand != null && favorite.istAbgeschlossen() && !favorite.istWiederansehen()) {
+            Log.i(TAG, "Mediathek: " + Folgen.kurz(favorite.url()) + " faengt von vorn an");
+            bestand.wiederansehenStarten(favorite.id(), ziel -> {
+                // Frisch aus dem Bestand: dort steht jetzt die erste Folge.
+                // Der Eintrag in der Hand traegt noch die letzte.
+                Favorite frisch = bestand.mitId(favorite.id());
+                favoritOeffnen(frisch == null ? favorite : frisch);
+            });
+            return;
+        }
+        favoritOeffnen(favorite);
+    }
+
+    /**
+     * Der Anbieter zu einem Eintrag - und der erste, wenn keiner passt.
+     *
+     * <p>Der Unterschied zu {@link #providerForFavorite}: der hier antwortet
+     * mit dem, womit sich wirklich etwas oeffnen laesst. Ein Eintrag von einem
+     * Anbieter, den es nicht mehr gibt, soll nicht ins Leere fuehren.
+     */
+    private Provider providerFuerEintrag(Favorite favorite) {
+        Provider provider = providerForFavorite(favorite);
+        if (provider != null) return provider;
+        return providers.isEmpty() ? null : providers.get(0);
+    }
+
+    /** Der eigentliche Weg in die Folge - ohne die Frage, welche es ist. */
+    private void favoritOeffnen(Favorite favorite) {
+        Provider provider = providerFuerEintrag(favorite);
+        if (provider == null) return;
 
         providerHerkunft = "";
         activeFavoriteId = favorite.id();
