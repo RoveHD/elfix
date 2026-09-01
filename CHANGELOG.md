@@ -3,6 +3,55 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.80.0 — 1. September 2026
+
+Am Fernseher ist die Anbieterseite ein Durchgang und kein Ort — jetzt auch,
+wenn eine Folge zu Ende ist.
+
+**Warum das am Fernseher anders sein muss.** Auf dem Telefon ist die
+Anbieterseite ein Ort: man scrollt dort, wählt eine Folge, geht zurück. Am
+Fernseher kommt man von der Startseite, der Ladevorhang liegt davor, die Folge
+geht ins Vollbild — gesehen hat man die Seite dabei nie. Wer das Vollbild
+verließ, stand bis hierher trotzdem darauf: eine fremde Seite mit fremder
+Navigation, durch die sich ein Steuerkreuz mühsam bewegt und auf der die
+nächste Werbekarte ohnehin nur wartet.
+
+Sie fällt jetzt heraus, wie schon die Anbieterseite hinter der
+Serienübersicht: was man nicht gesehen hat, will man nicht zurück. Der Weg
+führt über dieselbe Stelle wie sonst auch, und die räumt alles Nötige ab —
+Runde abmelden, Autostart abbrechen, Wiedergabe anhalten, Zählung der Sitzung
+schließen.
+
+**Vier Wege führen nach Hause:** Zurück, Escape und der Vollbildschalter der
+Fernbedienung — und das Ende einer Folge selbst.
+
+**Der letzte ist der heikle.** Nicht jeder Ausstieg des Players ist ein Ende:
+zwischen zwei Folgen blättert der Autostart weiter, das Vollbild geht aus und
+kommt gleich wieder. Vor allem aber kommt die nächste Folge nicht über das
+Ende-Ereignis, sondern über den Zähler in der Wiedergabeleiste, und der
+braucht seine Sekunden — in denen kein Merker steht. Ein Sprung nach Hause
+hätte ihn abgeräumt. Gefragt wird deshalb vierfach, und keine der Fragen ist
+eine Frist: läuft ein Folgenwechsel, ist ein Start scharf, steht das Vollbild
+schon wieder, ist Autoplay an.
+
+Damit bleibt genau ein Fall, den Autoplay nicht abfängt: die letzte Folge
+einer Serie. Dort meldet sich der Folgenwechsel mit „keine nächste Folge", und
+erst dort steht fest, dass nichts mehr kommt — also geht es von dort nach
+Hause. Aber nur ohne Vollbild: denselben Weg nimmt der Knopf „Nächste Folge"
+mitten in einer Folge, und wer ihn am Serienende drückt, will eine Auskunft
+und keinen Rauswurf.
+
+Ein Zugeständnis bleibt und sei genannt: läuft der Autoplay-Zähler außerhalb
+des Vollbilds, ist die Anbieterseite währenddessen zu sehen. Den Zähler dafür
+zu töten wäre der schlechtere Handel.
+
+**Unberührt bleibt, was jemand absichtlich tut:** der Anbieterrost der
+Startseite, „Beim Anbieter ansehen" aus der Übersicht, und der gehobene
+Ladevorhang nach einem gescheiterten Start — dort muss etwas dastehen, sonst
+steht man vor nichts.
+
+Auf dem Telefon ändert sich nichts. Am Relay und am Rechner ebenso wenig.
+
 ## 1.79.0 — 1. September 2026
 
 Der Kalender auf dem Telefon zeigte die falsche Woche, keine Bilder und eine
