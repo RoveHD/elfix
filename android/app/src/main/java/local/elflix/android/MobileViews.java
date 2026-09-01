@@ -1744,6 +1744,129 @@ final class MobileViews {
     }
 
     /**
+     * Ein Knopf einer Filterzeile - Beschriftung und Anzahl.
+     *
+     * <p>Die Anzahl gehoert dazu: "Deutsch" allein sagt nicht, ob dahinter
+     * zwei Folgen stehen oder zwanzig, und ein Filter, der auf eine leere
+     * Liste fuehrt, ist eine Sackgasse. Am Rechner steht sie aus demselben
+     * Grund daneben ({@code kalenderFilterKnopf} in renderer.js).
+     *
+     * <p>Flacher als ein Wochentagsreiter und mit rundem Rand: eine Pille
+     * liest sich als Auswahl, ein Kaestchen als Reiter, und beides
+     * untereinander waeren zwei Reiterleisten.
+     */
+    static View filterKnopf(Context context, String titel, int anzahl, boolean aktiv,
+                            Runnable beiKlick) {
+        TextView knopf = new TextView(context);
+        knopf.setText(anzahl > 0 ? titel + "  " + anzahl : titel);
+        knopf.setTextColor(aktiv ? Color.WHITE : Theme.TEXT_SECONDARY);
+        knopf.setTextSize(12.5f);
+        knopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        knopf.setGravity(Gravity.CENTER);
+        knopf.setMaxLines(1);
+        knopf.setEllipsize(TextUtils.TruncateAt.END);
+        knopf.setPadding(dp(context, 14), dp(context, 9), dp(context, 14), dp(context, 9));
+        knopf.setMinHeight(dp(context, 38));
+        addPressFeedback(knopf,
+            shape(context, aktiv ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 19,
+                aktiv ? Theme.PRIMARY : Theme.BORDER, 1),
+            shape(context, Theme.SURFACE_PRESSED, 19, Theme.PRIMARY, 1));
+        knopf.setOnClickListener(v -> beiKlick.run());
+        return knopf;
+    }
+
+    /**
+     * Eine Karte des Kalenders: Bild, Zeitpunkt, Titel, Herkunft, Fassungen.
+     *
+     * <p><b>Was hier vorher stand.</b> Eine {@code settingsCard} - eine
+     * Ueberschrift und ein Absatz. Titel und Uhrzeit klebten in einer Zeile
+     * zusammen, Folge, Fassungen und Anbieter standen als Bandwurm
+     * dahinter ("S1E10 · Japanisch, Deutsche Untertitel · Japanisch,
+     * Englische Untertitel · Aniworld"), und ein Bild gab es nicht, obwohl
+     * jeder Eintrag eines mitbringt.
+     *
+     * <p>Jetzt liegt das Bild links, wie in "Meine Liste", und rechts stehen
+     * drei getrennte Dinge: wann und was, woher, und darunter jede Fassung
+     * auf einer eigenen Zeile. Der Rechner macht es genauso und aus demselben
+     * Grund - hintereinander gehaengt bricht der Text mitten im Namen um.
+     */
+    static View kalenderKarte(Context context, Provider provider, String titel, String zeit,
+                              String herkunft, java.util.List<String> fassungen,
+                              String bildUrl, Runnable beiKlick) {
+        LinearLayout karte = new LinearLayout(context);
+        karte.setOrientation(LinearLayout.HORIZONTAL);
+        karte.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12));
+        karte.setTag(R.id.elfix_karte, Boolean.TRUE);
+        addPressFeedback(karte,
+            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
+            shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
+
+        FrameLayout bild = poster(context, provider, titel, bildUrl, 0, 62, 84, 20, 0);
+        LinearLayout.LayoutParams bildMasse =
+            new LinearLayout.LayoutParams(dp(context, 62), dp(context, 84));
+        bildMasse.rightMargin = dp(context, 12);
+        karte.addView(bild, bildMasse);
+
+        LinearLayout text = new LinearLayout(context);
+        text.setOrientation(LinearLayout.VERTICAL);
+
+        // Die Uhrzeit steht ueber dem Titel und nicht davor: davor schob sie
+        // den Titel in die zweite Zeile, und dann stand die Uhrzeit allein
+        // oben und der halbe Titel darunter.
+        if (zeit != null && !zeit.isEmpty()) {
+            TextView wann = new TextView(context);
+            wann.setText(zeit);
+            wann.setTextColor(Theme.PRIMARY);
+            wann.setTextSize(12);
+            wann.setLetterSpacing(0.06f);
+            wann.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            text.addView(wann);
+        }
+
+        TextView name = new TextView(context);
+        name.setText(titel);
+        name.setTextColor(Theme.TEXT_PRIMARY);
+        name.setTextSize(15);
+        name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        name.setLineSpacing(0, 1.1f);
+        name.setPadding(0, dp(context, 2), 0, 0);
+        text.addView(name);
+
+        if (herkunft != null && !herkunft.isEmpty()) {
+            TextView woher = new TextView(context);
+            woher.setText(herkunft);
+            woher.setTextColor(Theme.TEXT_SECONDARY);
+            woher.setTextSize(12.5f);
+            woher.setMaxLines(1);
+            woher.setEllipsize(TextUtils.TruncateAt.END);
+            woher.setPadding(0, dp(context, 4), 0, 0);
+            text.addView(woher);
+        }
+
+        if (fassungen != null && !fassungen.isEmpty()) {
+            for (int i = 0; i < fassungen.size(); i += 1) {
+                TextView zeile = new TextView(context);
+                // Ein Punkt davor statt eines Trenners dahinter: er macht aus
+                // den Zeilen eine Liste, ohne dass die letzte anders aussieht.
+                zeile.setText("· " + fassungen.get(i));
+                zeile.setTextColor(Theme.TEXT_DISABLED);
+                zeile.setTextSize(11.5f);
+                zeile.setMaxLines(1);
+                zeile.setEllipsize(TextUtils.TruncateAt.END);
+                zeile.setPadding(0, dp(context, i == 0 ? 6 : 2), 0, 0);
+                text.addView(zeile);
+            }
+        }
+
+        karte.addView(text, new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        karte.setOnClickListener(v -> beiKlick.run());
+        return karte;
+    }
+
+    /**
      * Ein Reiter in einer waagerechten Leiste - fuer die Wochentage des
      * Kalenders und die Zeitraeume des Rueckblicks.
      */

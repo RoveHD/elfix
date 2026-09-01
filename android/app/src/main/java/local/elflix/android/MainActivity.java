@@ -604,6 +604,10 @@ public class MainActivity extends Activity {
     private Pruefumgebung pruefumgebung;
     /** Welcher Wochentag im Kalender offen ist. */
     private String kalenderTag = "";
+    /** Die gewaehlte Fassung im Kalender - leer heisst "alle". */
+    private String kalenderFassung = "";
+    /** Das Datum des gewaehlten Tages - "2026-09-01". */
+    private String kalenderDatum = "";
     private String kalenderDatumText = "";
     /** Welcher Zeitraum im Rueckblick gewaehlt ist. */
     private String rueckblickZeitraum = "alles";
@@ -3771,7 +3775,12 @@ public class MainActivity extends Activity {
     private View kalenderKarte(Kalender.Eintrag eintrag, int breite) {
         String fahne = eintrag.tag.isEmpty() ? "" : eintrag.tag.substring(0, 2);
         if (!eintrag.uhrzeit.isEmpty()) fahne = fahne + " " + eintrag.uhrzeit;
-        String unterzeile = zusammen(eintrag.folgenText(), eintrag.sprache);
+        // Nur die erste Fassung, und nur wenn Platz ist: unter einer Kachel
+        // steht eine Zeile, und "Japanisch, Deutsche Untertitel · Japanisch,
+        // Englische Untertitel" ist keine Zeile, sondern ein Absatz. Wer alle
+        // sehen will, oeffnet den Kalender - dort steht jede einzeln.
+        String erste = eintrag.fassungen.isEmpty() ? "" : eintrag.fassungen.get(0);
+        String unterzeile = zusammen(eintrag.folgenText(), erste);
         if (unterzeile.isEmpty()) unterzeile = eintrag.anbieterName;
         return MobileViews.kachel(this, providerMitId(eintrag.anbieterId),
             eintrag.titel.isEmpty() ? "Titel" : eintrag.titel, unterzeile, eintrag.bild, 0,
@@ -3840,49 +3849,90 @@ public class MainActivity extends Activity {
                 () -> kalender.erneutVersuchen()), MobileViews.ITEM_GAP);
         }
 
-        if (kalenderTag.isEmpty() || kalender.anTag(kalenderTag).isEmpty()) {
-            kalenderTag = kalender.ersterTagMitInhalt();
+        List<Kalender.Tag> woche = kalender.woche();
+        if (woche.isEmpty()) return;
+        // Voreingestellt ist heute - nicht der erste Tag mit Inhalt.
+        //
+        // Der gemeldete Fehler war beides zusammen: die Leiste stand fest auf
+        // Montag bis Sonntag mit dem Datum aus den Eintraegen, und die Auswahl
+        // sprang auf den ersten Tag, an dem etwas stand. Ueber der Liste las
+        // man dann "Montag, 7. September", waehrend Dienstag, der 1., war.
+        boolean bekannt = false;
+        for (Kalender.Tag tag : woche) {
+            if (tag.name.equals(kalenderTag)) bekannt = true;
         }
+        if (!bekannt) kalenderTag = woche.get(0).name;
+
         ArrayList<View> reiter = new ArrayList<>();
-        for (String tag : kalender.tage()) {
-            int anzahl = kalender.anTag(tag).size();
-            String datum = kalender.datumVon(tag);
-            reiter.add(MobileViews.reiter(this, tag.substring(0, 2),
-                anzahl > 0 ? String.valueOf(anzahl) : "–", tag.equals(kalenderTag),
+        for (Kalender.Tag tag : woche) {
+            final String name = tag.name;
+            reiter.add(MobileViews.reiter(this,
+                // Zwei Buchstaben reichen: "Mo", "Di". Heute traegt seinen
+                // Namen, damit man sich nicht durchzaehlen muss.
+                tag.heute ? "Heute" : name.substring(0, 2),
+                String.valueOf(tag.imMonat), name.equals(kalenderTag),
                 () -> {
-                    kalenderTag = tag;
+                    kalenderTag = name;
                     zeigeKalender();
                 }));
-            if (!datum.isEmpty() && tag.equals(kalenderTag)) {
-                // Das Datum steht unter der Leiste und nicht im Reiter: dort
-                // waere es auf einem schmalen Telefon nicht mehr zu lesen.
-                kalenderDatumText = Rueckblick.datum(datum, false);
+            if (name.equals(kalenderTag)) {
+                kalenderDatumText = Rueckblick.datum(tag.datum, false);
+                kalenderDatum = tag.datum;
             }
         }
         reiheAnhaengen(page, MobileViews.reiterLeiste(this, reiter), MobileViews.SECTION_GAP);
 
-        List<Kalender.Eintrag> desTages = kalender.anTag(kalenderTag);
+        List<Kalender.Eintrag> desTages = kalender.anTag(kalenderTag, kalenderDatum);
+
+        // Die Fassungen zur Auswahl - dieselbe Ordnung wie am Rechner:
+        // deutsche Synchronfassung zuerst, danach die Untertitelfassungen.
+        List<String> fassungen = Kalender.fassungsAuswahl(desTages);
+        if (!fassungen.contains(kalenderFassung)) kalenderFassung = "";
+        if (fassungen.size() > 1) {
+            ArrayList<View> knoepfe = new ArrayList<>();
+            knoepfe.add(MobileViews.filterKnopf(this, "Alle Fassungen", desTages.size(),
+                kalenderFassung.isEmpty(), () -> {
+                    kalenderFassung = "";
+                    zeigeKalender();
+                }));
+            for (String fassung : fassungen) {
+                final String wert = fassung;
+                knoepfe.add(MobileViews.filterKnopf(this, fassung,
+                    Kalender.nachFassung(desTages, wert).size(), wert.equals(kalenderFassung),
+                    () -> {
+                        kalenderFassung = wert;
+                        zeigeKalender();
+                    }));
+            }
+            reiheAnhaengen(page, MobileViews.reiterLeiste(this, knoepfe), MobileViews.ITEM_GAP);
+        }
+
+        List<Kalender.Eintrag> gezeigt = Kalender.nachFassung(desTages, kalenderFassung);
         addSpacing(page, MobileViews.sectionHeader(this,
             kalenderTag + (kalenderDatumText.isEmpty() ? "" : ", " + kalenderDatumText),
             null, null), MobileViews.SECTION_GAP);
-        if (desTages.isEmpty()) {
-            addSpacing(page, settingsCard("Nichts eingetragen",
-                "An diesem Tag kündigt keiner deiner Anbieter etwas an.", null, null),
-                MobileViews.ITEM_GAP);
+        if (gezeigt.isEmpty()) {
+            addSpacing(page, settingsCard(
+                kalenderFassung.isEmpty() ? "Nichts eingetragen" : "Nichts in dieser Fassung",
+                kalenderFassung.isEmpty()
+                    ? "An diesem Tag kündigt keiner deiner Anbieter etwas an."
+                    : "An diesem Tag kommt nichts in „" + kalenderFassung + "“.",
+                null, null), MobileViews.ITEM_GAP);
             return;
         }
-        for (Kalender.Eintrag eintrag : desTages) {
+        for (Kalender.Eintrag eintrag : gezeigt) {
             addSpacing(page, kalenderZeile(eintrag), MobileViews.ITEM_GAP);
         }
     }
 
-    /** Eine Zeile der Kalenderansicht - Uhrzeit, Titel, Folge und Fassung. */
+    /** Eine Zeile der Kalenderansicht - Bild, Zeitpunkt, Titel, Herkunft, Fassungen. */
     private View kalenderZeile(Kalender.Eintrag eintrag) {
-        String unten = zusammen(eintrag.folgenText(), eintrag.sprache, eintrag.anbieterName);
-        return settingsCard(
-            (eintrag.uhrzeit.isEmpty() ? "" : eintrag.uhrzeit + "  ")
-                + (eintrag.titel.isEmpty() ? "Titel" : eintrag.titel),
-            unten, "Öffnen", () -> kalenderEintragOeffnen(eintrag));
+        return MobileViews.kalenderKarte(this, providerMitId(eintrag.anbieterId),
+            eintrag.titel.isEmpty() ? "Titel" : eintrag.titel,
+            eintrag.uhrzeit.isEmpty() ? "" : eintrag.uhrzeit + " Uhr",
+            zusammen(eintrag.folgenText(), eintrag.anbieterName),
+            eintrag.fassungen, eintrag.bild,
+            () -> kalenderEintragOeffnen(eintrag));
     }
 
     /* --------------------------------------------------------- Der Rueckblick */
