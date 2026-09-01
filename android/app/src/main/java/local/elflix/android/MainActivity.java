@@ -10425,7 +10425,7 @@ public class MainActivity extends Activity {
         // um zu sehen, wer mitschaut, will genau das wieder schliessen.
         if (liveStreifen != null && liveStreifen.zurueck()) return;
         if (fullscreenView != null) {
-            hideFullscreen();
+            vollbildVerlassen();
             return;
         }
         // Aus der Uebersicht fuehrt Zurueck nach Hause. Die Anbieterseite haengt
@@ -10627,7 +10627,7 @@ public class MainActivity extends Activity {
                 return true;
             case KeyEvent.KEYCODE_5:
                 if (!onWebsite) return false;
-                if (fullscreen) hideFullscreen();
+                if (fullscreen) vollbildVerlassen();
                 else enterPlayerFullscreen();
                 return true;
             case KeyEvent.KEYCODE_7:
@@ -10669,7 +10669,7 @@ public class MainActivity extends Activity {
             case KeyEvent.KEYCODE_BACK:
             case KeyEvent.KEYCODE_ESCAPE:
                 if (!fullscreen) return false;
-                hideFullscreen();
+                vollbildVerlassen();
                 return true;
 
             default:
@@ -12053,6 +12053,43 @@ public class MainActivity extends Activity {
                     | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             );
         }
+    }
+
+    /**
+     * Das Vollbild verlassen - und am Fernseher heisst das: nach Hause.
+     *
+     * <p><b>Warum am Fernseher anders.</b> Auf dem Telefon ist die
+     * Anbieterseite ein Ort: man scrollt dort, waehlt eine Folge, geht
+     * zurueck. Am Fernseher ist sie ein Durchgang. Man kommt von der
+     * Startseite, der Ladevorhang liegt davor, die Folge geht ins Vollbild -
+     * gesehen hat man die Seite dabei nie. Wer das Vollbild verlaesst, stand
+     * bis hierher trotzdem darauf: eine fremde Seite mit fremder Navigation,
+     * durch die sich ein Steuerkreuz muehsam bewegt und auf der die naechste
+     * Werbekarte ohnehin nur wartet.
+     *
+     * <p>Deshalb faellt er hier heraus, wie schon aus der Serienuebersicht:
+     * "was man nicht gesehen hat, will man nicht zurueck".
+     *
+     * <p>{@link #showHome} raeumt dabei alles Noetige ab - es meldet die Runde
+     * ab, bricht einen scharfen Autostart, haelt die Wiedergabe an und
+     * schliesst die Zaehlung der Sitzung. Nichts davon muss hier noch einmal
+     * stehen.
+     *
+     * <p><b>Was ausdruecklich nicht hierher gehoert:</b>
+     * {@code onHideCustomView}. Das ist die Seite, die das Vollbild von sich
+     * aus verlaesst, und genau das tut sie auch zwischen zwei Folgen: der
+     * Autostart blaettert weiter, die alte Seite geht aus dem Vollbild, die
+     * neue kommt hinein. Wer dort nach Hause ginge, wuerde jedes Autoplay
+     * abwuergen - showHome bricht den Autostart ab. Nach Hause fuehren
+     * deshalb nur die drei Wege, die jemand selbst geht: Zurueck, Escape und
+     * der Vollbildschalter der Fernbedienung.
+     */
+    private void vollbildVerlassen() {
+        hideFullscreen();
+        if (!isTelevision()) return;
+        if (!"provider".equals(currentScreen)) return;
+        naechsterAuftritt = Auftritt.ZURUECK;
+        showHome();
     }
 
     private void hideFullscreen() {

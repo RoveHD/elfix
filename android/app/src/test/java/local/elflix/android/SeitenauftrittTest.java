@@ -273,6 +273,42 @@ public class SeitenauftrittTest {
             rumpf.contains("post("));
     }
 
+    /**
+     * Am Fernseher führt der Weg aus dem Vollbild nach Hause.
+     *
+     * <p>Auf dem Telefon ist die Anbieterseite ein Ort; am Fernseher ist sie
+     * ein Durchgang, den man nie zu sehen bekommt — Startseite, Ladevorhang,
+     * Vollbild. Wer das Vollbild verließ, stand bis hierher trotzdem darauf.
+     */
+    @Test
+    public void amFernseherFuehrtDasVollbildZurueckNachHause() throws Exception {
+        String quelle = ohneErklaerungen(quelltext("MainActivity"));
+        String rumpf = rumpf(quelle, "private void vollbildVerlassen()");
+        assertTrue("Der Weg aus dem Vollbild fuehrt nicht mehr nach Hause",
+            rumpf.contains("showHome"));
+        assertTrue("Er gilt wieder fuer jedes Geraet - auf dem Telefon ist die"
+            + " Anbieterseite ein Ort und kein Durchgang",
+            rumpf.contains("isTelevision"));
+    }
+
+    /**
+     * Aber nicht, wenn die Seite das Vollbild selbst verlässt.
+     *
+     * <p>Die Falle: {@code onHideCustomView} feuert auch <em>zwischen zwei
+     * Folgen</em> — der Autostart blättert weiter, die alte Seite geht aus dem
+     * Vollbild, die neue kommt hinein. Wer dort nach Hause ginge, würgte jedes
+     * Autoplay ab, denn {@code showHome} bricht den Autostart ab.
+     */
+    @Test
+    public void dieSeiteSelbstSchicktNiemandenNachHause() throws Exception {
+        String quelle = ohneErklaerungen(quelltext("MainActivity"));
+        String rumpf = rumpf(quelle, "public void onHideCustomView()");
+        assertFalse("onHideCustomView geht nach Hause - das wuergt jedes Autoplay ab",
+            rumpf.contains("showHome"));
+        assertFalse("onHideCustomView geht ueber vollbildVerlassen - dasselbe Problem",
+            rumpf.contains("vollbildVerlassen"));
+    }
+
     private static int zaehlen(String text, String was) {
         int anzahl = 0;
         for (int i = text.indexOf(was); i >= 0; i = text.indexOf(was, i + was.length())) anzahl += 1;
