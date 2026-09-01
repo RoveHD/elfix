@@ -50,3 +50,11 @@ Thumbs.db
 
 # Zwischenablage des Kern-Buendlers (scripts/kern-tsurlfilter.js)
 StreamingBrowserElectron/.kernbau-*/
+
+# Zwischenordner eines Release-Laufs.
+#
+# Einer davon ist einmal mitgewandert: _release_temp_1393 trug ein eigenes
+# .git und landete deshalb als Untermodul-Verweis in der Ablage - auf einen
+# Commit, den es nirgends gibt. Sichtbar wurde das erst in der Fassung, in der
+# jeder Bau vier Warnungen ausgab ("No url found for submodule path").
+_release_temp*/
