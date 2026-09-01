@@ -461,7 +461,21 @@ function ereignisAusSkript(skript) {
     pc.puls(0, true);
     await schlaf(300);
     pc.raeume.abgleichen(KEY, RAUM);
-    await warteBis(() => pc.steuerung.some((m) => m.resync), "W7: Antwort fuer den Nachzuegler");
+    // Gewartet wird auf die Pause und nicht auf irgendeine Antwort.
+    //
+    // Ein Nachzuegler bekommt unter Umstaenden zwei Nachrichten: erst ein
+    // "seek" auf die Stelle, gleich darauf das Urteil "pause". Wer auf die
+    // erste wartet und dann die letzte liest, liest auf einem langsamen
+    // Rechner die erste - dort liegen die beiden weit genug auseinander.
+    // Gefallen ist das auf einem Windows-Runner ("seek playing=false"),
+    // waehrend derselbe Stand oertlich fuenfmal hintereinander durchlief.
+    //
+    // Die Android-Haelfte gleich darunter wartet seit jeher richtig; hier
+    // stand die schwaechere Bedingung. Die Aussage bleibt dieselbe: kommt
+    // die Pause gar nicht, laeuft warteBis in seine Frist und die Pruefung
+    // schlaegt fehl, wie sie soll.
+    await warteBis(() => pc.steuerung.some((m) => m.resync && m.action === "pause"),
+      "W7: Antwort fuer den Nachzuegler");
     const beiPause = pc.steuerung.filter((m) => m.resync).pop();
     pruefe("W7. Haelt der Host an, meldet die Runde 'pause' und nicht 'play'",
       Boolean(beiPause) && beiPause.action === "pause" && beiPause.playing === false,
