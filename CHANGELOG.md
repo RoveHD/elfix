@@ -3,6 +3,64 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.78.0 — 1. September 2026
+
+Zwei Dinge: der Start am Rechner fragt jetzt zuerst nach Updates, und auf
+Android bleibt die Startseite beim Laden stehen.
+
+**Erst fragen, dann zeigen.** ELFIX startete am Rechner vollständig sichtbar,
+lud danach das Update, schloss sich und startete neu. Wer gerade angefangen
+hatte, etwas zu suchen, verlor es wieder. Die Reihenfolge ist jetzt umgekehrt:
+das Hauptfenster entsteht weiterhin zuerst — es soll während der Prüfung schon
+laden, sonst kostet das Warten Startzeit —, aber unsichtbar. Zu sehen ist es
+erst, wenn feststeht, dass dieser Start der bleibende ist. Nebenbei fällt ein
+alter Schönheitsfehler weg: bisher ging das Fenster in 1540×940 auf und sprang
+gleich darauf ins Maximum.
+
+Gibt es nichts Neues, erscheint das Fenster einfach — die Prüfung ist meist
+schneller beantwortet, als die Oberfläche fertig lädt. Gibt es ein Update,
+bleibt das Hauptfenster zu, ein kleiner Vorhang sagt „ELFIX 1.79.0 wird
+geladen … 42 %", danach wird gesichert, installiert und neu gestartet. Der
+Vorhang erscheint erst nach 400 ms: der häufigste Fall ist „kein Update", und
+dann blitzt gar nichts auf.
+
+Entschieden wird das in einem eigenen Modul, das sich ohne Fenster, ohne
+Updateserver und ohne Netz prüfen lässt. Es hält zwei Zusagen: was einmal
+offen ist, bleibt offen — ein Update, das nach dem Zeitablauf doch noch
+gefunden wird, kann das Fenster nicht mehr zumachen —, und es gibt kein Warten
+ohne Ende. Antwortet niemand, startet ELFIX trotzdem mit der installierten
+Fassung. Die Sicherung vor dem Update bleibt unverändert an ihrer Stelle,
+direkt vor der Installation.
+
+**Und auf Android blitzte die Startseite beim Laden noch kurz auf.** Zwei
+weitere Ursachen, und die zweite erklärt, warum ein *stiller* Neuaufbau
+überhaupt zu sehen ist.
+
+Ein Titelbild steht beim ersten Ansehen noch nicht in der Ablage; der Leser
+der Folgenseite trägt es Augenblicke später nach. Solange `bild()` im
+Vergleich der Seite stand, war jedes nachgereichte Cover eine „andere Seite" —
+und das hieß: ganze Startseite neu, während die Anbieterseiten luden also
+mehrfach hintereinander. Ein neues Bild ist aber kein neuer Aufbau. Jede
+Kachel merkt sich jetzt ihren Bildkasten samt Maßen, und das Cover wird in die
+Kachel geschrieben, die schon dasteht; steht dasselbe schon drin, geschieht
+gar nichts.
+
+Die zweite Ursache ist der eigentliche Fund: die gerettete Scrollstelle wurde
+über `post()` gesetzt, also erst im nächsten Durchlauf des Hauptfadens. Das
+erste gezeichnete Bild einer frisch gebauten Seite stand damit am
+Seitenanfang, erst das zweite an der gemerkten Stelle — wer weiter unten war,
+sah für ein Bild den Kopf der Seite, ganz ohne Animation. Gesetzt wird sie
+jetzt vor dem Zeichnen statt danach, und das gilt für jeden verbleibenden
+Neuaufbau.
+
+Dazu der Kalender: die Woche kommt beim Start ebenso nach und baute bis
+hierher die ganze Startseite neu, ohne jeden Vergleich. Sie bekommt denselben
+eigenen Kasten wie die Vorschlagsreihen.
+
+Was jetzt noch einen Neuaufbau auslöst, sind echte Änderungen am Bestand — ein
+Eintrag kommt dazu, verschwindet, rückt eine Folge weiter. Nicht mehr das
+Laden.
+
 ## 1.77.0 — 1. September 2026
 
 Zwei Meldungen von der Startseite, zwei verschiedene Ursachen.
