@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<!-- Nichts von aussen. Das eigene Skript unten muss aber laufen duerfen -
+     ohne script-src waere window.__elfixStart nie da, und der Vorhang stuende
+     stumm auf seinem ersten Satz. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>ELFIX</title>
+<style>
+  /*
+   * Der Vorhang vor dem Start. Bewusst winzig: er steht hoechstens ein paar
+   * Sekunden da, hat keinen Knopf und braucht weder Preload noch IPC - main.js
+   * schreibt ueber window.__elfixStart hinein, so wie der Ladevorhang der
+   * Wiedergabe es ueber window.__elfixPhase tut.
+   *
+   * Dieselbe Farbe wie das Hauptfenster (backgroundColor "#070a10"): geht der
+   * Vorhang zu und das Hauptfenster auf, wechselt dabei kein Ton.
+   */
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #070a10;
+    color: #f4f6fb;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    user-select: none;
+    cursor: default;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 18px;
+    padding: 0 34px;
+    box-sizing: border-box;
+    border: 1px solid #1d2536;
+    border-radius: 10px;
+  }
+  .marke {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #4c8dff;
+  }
+  .stand {
+    font-size: 13.5px;
+    line-height: 1.35;
+    color: #aab3c5;
+    min-height: 19px;
+  }
+  /* Die Bahn steht immer da und wird nur gefuellt. Eine, die erst mit dem
+     ersten Prozent entsteht, ruecke den Text darueber nach oben. */
+  .bahn {
+    height: 4px;
+    border-radius: 2px;
+    background: #18202f;
+    overflow: hidden;
+  }
+  .balken {
+    height: 100%;
+    width: 0;
+    border-radius: 2px;
+    background: #4c8dff;
+    transition: width 180ms linear;
+  }
+  .bahn[data-still="ja"] .balken {
+    /* Solange nichts zu zaehlen ist, wandert ein Streifen statt eines
+       erfundenen Fortschritts. Ein Balken, der bei 30 % steht, ohne dass
+       jemand 30 % geladen hat, ist gelogen. */
+    width: 34%;
+    animation: wandern 1.4s ease-in-out infinite;
+  }
+  @keyframes wandern {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(320%); }
+  }
+</style>
+</head>
+<body>
+  <div class="marke">ELFIX</div>
+  <div class="stand" id="stand">Suche nach Updates …</div>
+  <div class="bahn" id="bahn" data-still="ja"><div class="balken" id="balken"></div></div>
+<script>
+  // Der einzige Weg hinein. main.js ruft ihn ueber executeJavaScript auf.
+  window.__elfixStart = function (stand) {
+    var text = document.getElementById("stand");
+    var bahn = document.getElementById("bahn");
+    var balken = document.getElementById("balken");
+    if (!text || !bahn || !balken) return;
+    if (typeof stand.text === "string") text.textContent = stand.text;
+    var prozent = Number(stand.prozent);
+    if (!isFinite(prozent) || prozent <= 0) {
+      bahn.setAttribute("data-still", "ja");
+      balken.style.width = "";
+      return;
+    }
+    bahn.setAttribute("data-still", "nein");
+    balken.style.width = Math.min(100, Math.max(0, prozent)) + "%";
+  };
+</script>
+</body>
+</html>

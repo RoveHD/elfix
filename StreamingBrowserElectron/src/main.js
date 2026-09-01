@@ -32,6 +32,7 @@ const watchpartyAutostart = require("./watchparty-autostart");
 // Rechner warten muss - siehe den Kopf von nachschub.js.
 const nachschub = require("./nachschub");
 const startphasen = require("./startphasen");
+const startfreigabe = require("./startfreigabe");
 // Der Abgleich zwischen den eigenen Geraeten. Er faehrt zum selben Relay wie
 // die Watchparty, haengt aber an keinem Raum und an keinem Beitritt: ein
 // Schluessel, und Laptop und Rechner haben denselben Stand.
@@ -430,7 +431,12 @@ app.whenReady().then(async () => {
     await clearBrowserDataPreservingLogin();
   }
   installAdblock();
+  // Die Reihenfolge zaehlt: das Fenster entsteht zuerst (unsichtbar, es soll
+  // waehrend der Pruefung schon laden), dann faengt das Tor an zu messen, und
+  // erst dann laeuft die Pruefung los. Andersherum koennte eine sehr schnelle
+  // Antwort auf ein Tor treffen, das es noch nicht gibt.
   createMainWindow();
+  startTorBeginnen();
   setupAutoUpdater();
   syncWatchparty();
   // Erst den Spiegel, dann einrichten: ohne ihn haelt der Abgleich den ganzen
@@ -493,6 +499,12 @@ function createMainWindow() {
     minWidth: 1100,
     minHeight: 720,
     backgroundColor: "#070a10",
+    // Unsichtbar erzeugt - siehe startfreigabe.js. Das Fenster laedt waehrend
+    // der Updatepruefung schon, damit der Start dadurch nicht laenger dauert;
+    // zu sehen ist es erst, wenn feststeht, dass dieser Start der bleibende
+    // ist. Nebenbei faellt damit ein alter Schoenheitsfehler weg: bisher ging
+    // es in 1540x940 auf und sprang gleich darauf ins Maximum.
+    show: false,
     title: "ELFIX",
     icon: path.join(app.getAppPath(), "build", "icon.ico"),
     autoHideMenuBar: true,
@@ -509,6 +521,8 @@ function createMainWindow() {
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
       mainWindow.maximize();
     }
+    hauptfensterBereit = true;
+    hauptfensterZeigen();
   });
   mainWindow.on("resize", () => applyBrowserBounds());
   mainWindow.on("minimize", () => {
@@ -534,16 +548,198 @@ function createMainWindow() {
   });
 }
 
+/* ------------------------------------- Der Start hinter dem Updatetor */
+
+/**
+ * Der Draht zwischen Updater und Fenster.
+ *
+ * <p>Entschieden wird in {@link startfreigabe} - hier steht nur, was
+ * Electron dazu tun muss: ein Fenster zeigen, einen Vorhang aufstellen, eine
+ * Uhr stellen. Die Reihenfolge des Starts steht in {@code app.whenReady}:
+ * erst {@code createMainWindow()} (unsichtbar), dann {@code startTorBeginnen()},
+ * dann {@code setupAutoUpdater()}. Damit gibt es genau ein Hauptfenster und
+ * genau einen Satz Updater-Ereignisse.
+ */
+let startLauf = startfreigabe.neu();
+let startBeginn = 0;
+let startVerzugUhr = null;
+let startStilleUhr = null;
+let hauptfensterBereit = false;
+let vorhangFenster = null;
+let vorhangGeladen = false;
+
+/** Ab hier entscheidet das Tor, wann das Hauptfenster aufgeht. */
+function startTorBeginnen() {
+  startBeginn = Date.now();
+  startVerzugUhr = setTimeout(() => {
+    startVerzugUhr = null;
+    vorhangPruefen();
+  }, startfreigabe.VERZUG_MS);
+  startStilleUhrStellen();
+}
+
+/**
+ * Die Geduld neu stellen.
+ *
+ * <p>Sie misst die Pause zwischen zwei Meldungen, nicht den ganzen Vorgang:
+ * ein Download meldet laufend seinen Fortschritt und haelt sich damit selbst
+ * am Leben. Steht das Fenster schon oder wird gerade installiert, gibt es
+ * nichts mehr zu bewachen.
+ */
+function startStilleUhrStellen() {
+  clearTimeout(startStilleUhr);
+  startStilleUhr = null;
+  if (startfreigabe.darfZeigen(startLauf) || startfreigabe.installiert(startLauf)) return;
+  startStilleUhr = setTimeout(() => {
+    console.log("[ELFIX START] Der Updater antwortet nicht - ELFIX startet mit der installierten Fassung.");
+    startMelden("stille");
+  }, startfreigabe.STILLE_MS);
+  startStilleUhr.unref?.();
+}
+
+/** Ein Ereignis des Updaters an das Tor geben. */
+function startMelden(ereignis, wert) {
+  const vorher = startLauf;
+  startLauf = startfreigabe.melden(startLauf, ereignis, wert);
+  startStilleUhrStellen();
+  if (startLauf === vorher) return;
+  if (startfreigabe.darfZeigen(startLauf)) {
+    clearTimeout(startVerzugUhr);
+    startVerzugUhr = null;
+    vorhangSchliessen();
+    hauptfensterNotfalluhrStellen();
+    hauptfensterZeigen();
+    return;
+  }
+  vorhangPruefen();
+}
+
+/**
+ * Die letzte Sicherung gegen eine App, die gar nicht aufgeht.
+ *
+ * <p>Gezeigt wird sonst erst, wenn {@code ready-to-show} gefeuert hat - und
+ * das setzt voraus, dass die Oberflaeche wirklich geladen wird. Solange das
+ * Fenster von Anfang an sichtbar war, fiel ein Fehler dabei als leeres
+ * Fenster auf; jetzt faellt er als gar kein Fenster auf, und das ist der
+ * schlechtere Ausfall. Kommt die Meldung nicht, wird trotzdem gezeigt: ein
+ * leeres Fenster laesst sich schliessen, ein unsichtbares nicht.
+ */
+function hauptfensterNotfalluhrStellen() {
+  if (hauptfensterBereit) return;
+  const uhr = setTimeout(() => {
+    if (hauptfensterBereit) return;
+    console.log("[ELFIX START] Die Oberflaeche hat sich nicht gemeldet - das Fenster geht trotzdem auf.");
+    hauptfensterBereit = true;
+    hauptfensterZeigen();
+  }, 5000);
+  uhr.unref?.();
+}
+
+/** Das Hauptfenster zeigen - wenn es fertig ist und wenn es darf. */
+function hauptfensterZeigen() {
+  if (!hauptfensterBereit || !startfreigabe.darfZeigen(startLauf)) return;
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isVisible()) return;
+  if (!mainWindow.isMaximized()) mainWindow.maximize();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/** Gehoert jetzt ein Vorhang hin? Dann aufstellen und beschriften. */
+function vorhangPruefen() {
+  if (!startfreigabe.vorhangNoetig(startLauf, Date.now() - startBeginn)) return;
+  vorhangAufstellen();
+  vorhangBeschriften();
+}
+
+function vorhangAufstellen() {
+  if (vorhangFenster && !vorhangFenster.isDestroyed()) return;
+  vorhangGeladen = false;
+  vorhangFenster = new BrowserWindow({
+    width: 420,
+    height: 210,
+    show: false,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    center: true,
+    backgroundColor: "#070a10",
+    title: "ELFIX",
+    icon: path.join(app.getAppPath(), "build", "icon.ico"),
+    // Ausdruecklich nicht immer obenauf: ein Download von neunzig Megabyte
+    // kann Minuten dauern, und ein Fenster, das solange ueber allem klebt,
+    // ist keine Auskunft mehr, sondern eine Belaestigung.
+    alwaysOnTop: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  vorhangFenster.removeMenu?.();
+  vorhangFenster.loadFile(path.join(__dirname, "renderer", "start.html"));
+  vorhangFenster.once("ready-to-show", () => {
+    // Nur zeigen, wenn er inzwischen nicht ueberholt worden ist: die Antwort
+    // kann waehrend des Ladens gekommen sein, und dann darf er gar nicht
+    // erst aufblitzen.
+    if (!vorhangFenster || vorhangFenster.isDestroyed()) return;
+    if (startfreigabe.darfZeigen(startLauf)) {
+      vorhangSchliessen();
+      return;
+    }
+    vorhangFenster.show();
+  });
+  vorhangFenster.webContents.once("did-finish-load", () => {
+    vorhangGeladen = true;
+    vorhangBeschriften();
+  });
+  vorhangFenster.on("closed", () => {
+    vorhangFenster = null;
+    vorhangGeladen = false;
+  });
+}
+
+function vorhangBeschriften() {
+  if (!vorhangFenster || vorhangFenster.isDestroyed() || !vorhangGeladen) return;
+  const stand = JSON.stringify({ text: startLauf.text, prozent: startLauf.prozent });
+  vorhangFenster.webContents
+    .executeJavaScript(`window.__elfixStart(${stand})`)
+    .catch(() => {
+      // Ein Vorhang, der sich nicht beschriften laesst, ist kein Grund,
+      // den Start anzuhalten.
+    });
+}
+
+function vorhangSchliessen() {
+  clearTimeout(startVerzugUhr);
+  startVerzugUhr = null;
+  if (!vorhangFenster || vorhangFenster.isDestroyed()) {
+    vorhangFenster = null;
+    return;
+  }
+  const fenster = vorhangFenster;
+  vorhangFenster = null;
+  vorhangGeladen = false;
+  fenster.destroy();
+}
+
 function setupAutoUpdater() {
-  if (!app.isPackaged) return;
+  if (!app.isPackaged) {
+    // Ohne Paket gibt es keinen Updater. Ohne diese Meldung bliebe das Tor zu
+    // und "npm start" zeigte nie ein Fenster.
+    startMelden("unverpackt");
+    return;
+  }
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
 
-  autoUpdater.on("checking-for-update", () => setUpdateState({ status: "checking", message: "Suche beim Start nach ELFIX-Updates...", progress: 0, downloaded: false, installing: false, error: "" }));
+  autoUpdater.on("checking-for-update", () => {
+    startMelden("pruefung");
+    setUpdateState({ status: "checking", message: "Suche beim Start nach ELFIX-Updates...", progress: 0, downloaded: false, installing: false, error: "" });
+  });
   autoUpdater.on("update-available", (info) => {
+    // Das Hauptfenster bleibt zu, der Vorhang uebernimmt.
+    startMelden("update", info?.version || "");
     setUpdateState({
       status: "available",
       message: `Update ${info.version || ""} gefunden. Download und Installation laufen automatisch.`,
@@ -554,12 +750,22 @@ function setupAutoUpdater() {
       error: ""
     });
   });
-  autoUpdater.on("update-not-available", () => setUpdateState({ status: "current", message: "ELFIX ist aktuell.", progress: 100, error: "" }));
+  autoUpdater.on("update-not-available", () => {
+    // Der haeufigste Fall, und der Grund fuer den kurzen Vorsprung in
+    // startfreigabe.VERZUG_MS: hier ist das Hauptfenster meist schon fertig
+    // geladen und geht ohne jeden Vorhang auf.
+    startMelden("kein-update");
+    setUpdateState({ status: "current", message: "ELFIX ist aktuell.", progress: 100, error: "" });
+  });
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.round(progress.percent || 0);
+    startMelden("fortschritt", percent);
     setUpdateState({ status: "downloading", message: `Update wird geladen: ${percent}%`, progress: percent, error: "" }, [25, 50, 75, 100].includes(percent));
   });
   autoUpdater.on("update-downloaded", () => {
+    // Ab hier geht kein Hauptfenster mehr auf: gleich wird installiert und
+    // neu gestartet, und zu sehen bekommt der Benutzer erst die neue Fassung.
+    startMelden("geladen");
     setUpdateState({
       status: "installing",
       message: "Update geladen. ELFIX installiert es jetzt automatisch und startet neu.",
@@ -589,12 +795,20 @@ function setupAutoUpdater() {
     }, 1200);
   });
   autoUpdater.on("error", (error) => {
+    console.error("[ELFIX UPDATE] Fehler:", error?.message || error);
+    // Ein Fehler beim Update darf niemanden vom Starten abhalten. Steht das
+    // Fenster schon, aendert die Meldung nichts mehr (siehe startfreigabe).
+    startMelden("fehler");
     setUpdateState({ status: "error", message: "Update konnte nicht automatisch installiert werden.", progress: 0, installing: false, error: error?.message || "Unbekannt" });
   });
 
-  setTimeout(() => {
-    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
-  }, 2500);
+  // Sofort und nicht erst nach zweieinhalb Sekunden: das Hauptfenster wartet
+  // jetzt auf diese Antwort, also ist jede Verzoegerung hier eine Verzoegerung
+  // des Starts.
+  autoUpdater.checkForUpdatesAndNotify().catch((fehler) => {
+    console.error("[ELFIX UPDATE] Pruefung fehlgeschlagen:", fehler?.message || fehler);
+    startMelden("fehler");
+  });
 }
 
 function setUpdateState(next, toast = true) {
