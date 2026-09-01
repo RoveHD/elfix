@@ -156,7 +156,7 @@ public class MainActivity extends Activity {
      * Wechseltakt nicht von vorn an, und die waagerechten Reihen behalten ihre
      * Stelle.
      */
-    private final java.util.LinkedHashMap<String, Runnable> vorschlagsFueller =
+    private final java.util.LinkedHashMap<String, Runnable> nachladeFueller =
         new java.util.LinkedHashMap<>();
     /**
      * Was zuletzt in einer Reihe stand.
@@ -168,7 +168,7 @@ public class MainActivity extends Activity {
      * Das Alter einer Reihe steht ausdruecklich nicht darin: es laeuft
      * weiter, und ein Vergleich, der sich staendig aendert, ist keiner.
      */
-    private final java.util.HashMap<String, String> vorschlagsStand = new java.util.HashMap<>();
+    private final java.util.HashMap<String, String> nachladeStand = new java.util.HashMap<>();
 
     /* --------------------------------------------- Die Einstellungsseite */
 
@@ -719,6 +719,15 @@ public class MainActivity extends Activity {
     private final List<FortschrittsKachel> fortschrittsKacheln = new ArrayList<>();
 
     /** Eine Kachel und der Eintrag, dessen Stand sie zeigt. */
+    /**
+     * Jede Kachel, die zu einem Eintrag gehoert - fuer nachgereichte Bilder.
+     *
+     * <p>Getrennt von {@link #fortschrittsKacheln}: einen Balken gibt es nur,
+     * wo Fortschritt etwas heisst, ein Titelbild dagegen ueberall. Watchlist
+     * und Mediathek stehen deshalb hier drin und dort nicht.
+     */
+    private final java.util.List<FortschrittsKachel> bildKacheln = new ArrayList<>();
+
     private static final class FortschrittsKachel {
         final View karte;
         final String eintragId;
@@ -2013,6 +2022,10 @@ public class MainActivity extends Activity {
     // ---------------------------------------------------------------------------------------------
 
     private LinearLayout tvPage() {
+        // Eine neue Seite bringt neue Kacheln - die alten haengen an nichts
+        // mehr. Hier und nur hier, damit es keine zweite Stelle gibt, die man
+        // vergessen kann.
+        bildKacheln.clear();
         ScrollView scroll = new ScrollView(this);
         seitenScroll = scroll;
         scroll.setBackgroundColor(Theme.BACKGROUND);
@@ -2086,7 +2099,7 @@ public class MainActivity extends Activity {
         LinearLayout page = tvPage();
         empfehlungenNachfuehren();
         liveKachelnZuruecksetzen();
-        vorschlaegeVergessen();
+        nachladeReihenVergessen();
         // Auch hier, obwohl der Fernseher (noch) keine Kalenderreihe zeigt:
         // die Woche wird aus den Anbietern gerechnet, und ein Kalender ohne
         // sie liefert eine leere Woche statt gar keiner.
@@ -2254,6 +2267,7 @@ public class MainActivity extends Activity {
                 () -> openFavorite(eintrag),
                 anker -> eintragsMenue(anker, eintrag, liste));
             karte.setTag("tv:" + schluessel + ":" + stelle);
+            bildKacheln.add(new FortschrittsKachel(karte, eintrag.id()));
             if (!rundenSchluessel.isEmpty()) {
                 liveKacheln.add(new LiveKachel(karte, rundenSchluessel, eintrag.duration(),
                     eintrag.watchpartyVon(), watchpartyZeit(eintrag)));
@@ -2320,7 +2334,7 @@ public class MainActivity extends Activity {
     private void tvVorschlagsReihe(LinearLayout page, String schluessel, String titel,
                                    String aktion, Runnable beiAktion) {
         if (empfehlungen == null) return;
-        vorschlagsReiheAnmelden(page, schluessel, true,
+        nachladeReiheAnmelden(page, schluessel, true, () -> vorschlagsBild(schluessel),
             platz -> tvVorschlagsReiheBauen(platz, schluessel, titel, aktion, beiAktion));
     }
 
@@ -3313,6 +3327,10 @@ public class MainActivity extends Activity {
 
     /** Scrollable page shell with the shared mobile spacing already applied. */
     private LinearLayout mobilePage() {
+        // Eine neue Seite bringt neue Kacheln - die alten haengen an nichts
+        // mehr. Hier und nur hier, damit es keine zweite Stelle gibt, die man
+        // vergessen kann.
+        bildKacheln.clear();
         ScrollView scroll = new ScrollView(this);
         seitenScroll = scroll;
         scroll.setFillViewport(true);
@@ -3420,7 +3438,7 @@ public class MainActivity extends Activity {
         LinearLayout page = mobilePage();
         empfehlungenNachfuehren();
         liveKachelnZuruecksetzen();
-        vorschlaegeVergessen();
+        nachladeReihenVergessen();
         if (kalender != null) kalender.anbieterSetzen(providers);
 
         List<Favorite> laufend = bestand.weiterschauen();
@@ -3548,6 +3566,62 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Nachgereichte Titelbilder in die bestehenden Kacheln schreiben.
+     *
+     * <p><b>Der gemeldete Fehler.</b> Ein Titelbild steht beim ersten Ansehen
+     * noch nicht in der Ablage - der Leser der Folgenseite traegt es
+     * Augenblicke spaeter nach (siehe {@link Titelbild}, das ruft
+     * {@code bestand.bildNachtragen}). Bis hierher stand {@code bild()} mit im
+     * Vergleich von {@link #seitenbild}, ein nachgereichtes Bild war also eine
+     * Aenderung "an der Seite" - und das hiess: ganze Startseite neu. Waehrend
+     * die Anbieterseiten luden, geschah das mehrfach hintereinander.
+     *
+     * <p>Sichtbar war das als kurzes Aufblitzen, und daran ist auch der stille
+     * Neuaufbau schuld: die frische Seite wird im ersten Bild am
+     * <em>Seitenanfang</em> gezeichnet und erst im naechsten an die gemerkte
+     * Stelle geschoben. Wer weiter unten stand, sah fuer ein Bild den Kopf der
+     * Seite. Genau das ist gemeldet worden.
+     *
+     * <p>Ein neues Bild ist aber kein neuer Aufbau. Es gehoert in die Kachel,
+     * die schon dasteht - und wenn dort dasselbe schon haengt, geschieht gar
+     * nichts (siehe {@link Bilder#laden}).
+     */
+    private void bilderAuffrischen() {
+        if (bildKacheln.isEmpty()) return;
+        for (FortschrittsKachel kachel : bildKacheln) {
+            if (kachel.karte.getWindowToken() == null) continue;
+            Favorite eintrag = bestand.mitId(kachel.eintragId);
+            if (eintrag == null) continue;
+            MobileViews.posterNachziehen(kachel.karte, eintrag.bild());
+        }
+        titelbildAuffrischen();
+    }
+
+    /**
+     * Und dasselbe fuer den Titelhintergrund.
+     *
+     * <p>Er haelt seine Eintraege selbst ({@code heroEintraege}), und die sind
+     * der Stand von vorhin - ein nachgereichtes Bild steht dort noch nicht
+     * drin. Geholt wird es ueber die Kennung, damit Reihenfolge und Auswahl
+     * genau dieselben bleiben: was sich strukturell aendert, geht ohnehin
+     * einen anderen Weg und baut die Seite neu.
+     */
+    private void titelbildAuffrischen() {
+        if (heroEintraege.isEmpty() || heroPlatz == null) return;
+        boolean anders = false;
+        for (int i = 0; i < heroEintraege.size(); i += 1) {
+            Favorite frisch = bestand.mitId(heroEintraege.get(i).id());
+            if (frisch == null) continue;
+            if (frisch.bild().equals(heroEintraege.get(i).bild())) continue;
+            heroEintraege.set(i, frisch);
+            anders = true;
+        }
+        // Nur wenn wirklich ein Bild dazugekommen ist: heroZeichnen schreibt
+        // den Kasten um, und das ist zwar billig, aber nicht umsonst.
+        if (anders) heroZeichnen();
+    }
+
+    /**
      * Balken und Zeit nachziehen - und sonst nichts.
      *
      * <p>Gerufen, wenn sich am Bestand etwas geaendert hat, das die Seite
@@ -3614,6 +3688,36 @@ public class MainActivity extends Activity {
      */
     private void kalenderReihe(LinearLayout page) {
         if (kalender == null || !zeigt(Startseite.KALENDER)) return;
+        // Wie die Vorschlagsreihen: eigener Kasten, und wenn die Woche
+        // eintrifft, wird nur dieser gefuellt. Vorher meldete sich der
+        // Kalender ueber kalenderGeaendert(), und das baute die ganze
+        // Startseite neu - waehrend des Starts also genau dann, wenn man
+        // hinsieht.
+        nachladeReiheAnmelden(page, "kalender", false, this::kalenderStand,
+            this::kalenderReiheBauen);
+    }
+
+    /** Woran zu erkennen ist, ob die Kalenderreihe anders aussaehe. */
+    private String kalenderStand() {
+        if (kalender == null) return "";
+        StringBuilder bild = new StringBuilder();
+        bild.append(kalender.geladen()).append('#')
+            .append(kalender.laedt()).append('#')
+            .append(kalender.fehler()).append('#')
+            .append(kalender.istAlt()).append('\n');
+        // Das Alter selbst steht nicht darin: es laeuft weiter, und ein
+        // Vergleich, der sich staendig aendert, ist keiner.
+        for (Kalender.Eintrag eintrag : kalender.eintraege()) {
+            bild.append(eintrag.tag).append('|').append(eintrag.uhrzeit).append('|')
+                .append(eintrag.titel).append('|').append(eintrag.bild).append('|')
+                .append(eintrag.staffel).append('/').append(eintrag.folge).append('|')
+                .append(eintrag.anbieterName).append('\n');
+        }
+        return bild.toString();
+    }
+
+    private void kalenderReiheBauen(LinearLayout page) {
+        if (kalender == null) return;
         kalender.anfordern(false);
 
         List<Kalender.Eintrag> eintraege = kalender.eintraege();
@@ -4299,6 +4403,9 @@ public class MainActivity extends Activity {
             if (liste.zeigtFortschritt()) {
                 fortschrittsKacheln.add(new FortschrittsKachel(karte, eintrag.id()));
             }
+            // Ein Titelbild kommt oft erst nach - und soll dann in diese
+            // Kachel, nicht in eine neu gebaute Seite.
+            bildKacheln.add(new FortschrittsKachel(karte, eintrag.id()));
             karten.add(karte);
         }
         reiheAnhaengen(page, "kachel:" + titel, MobileViews.reihe(this, karten, breite),
@@ -4405,7 +4512,7 @@ public class MainActivity extends Activity {
     private void vorschlagsReihe(LinearLayout page, String schluessel, String titel,
                                  String aktion, Runnable beiAktion) {
         if (empfehlungen == null) return;
-        vorschlagsReiheAnmelden(page, schluessel, false,
+        nachladeReiheAnmelden(page, schluessel, false, () -> vorschlagsBild(schluessel),
             platz -> vorschlagsReiheBauen(platz, schluessel, titel, aktion, beiAktion));
     }
 
@@ -7861,7 +7968,9 @@ public class MainActivity extends Activity {
             return;
         }
         for (Favorite eintrag : eintraege) {
-            addSpacing(page, eintragsKarte(eintrag, liste), MobileViews.ITEM_GAP);
+            View karte = eintragsKarte(eintrag, liste);
+            bildKacheln.add(new FortschrittsKachel(karte, eintrag.id()));
+            addSpacing(page, karte, MobileViews.ITEM_GAP);
         }
         if (liste == Bibliothek.VERLAUF) {
             addSpacing(page, MobileViews.secondaryButton(this, "Verlauf leeren", () -> frage(
@@ -9569,7 +9678,6 @@ public class MainActivity extends Activity {
                 bild.append(eintrag.id())
                     .append('#').append(eintrag.season()).append('/').append(eintrag.episode())
                     .append('#').append(eintrag.title())
-                    .append('#').append(eintrag.bild())
                     .append(eintrag.wartetAufNaechsteFolge() ? '!' : '.')
                     .append(eintrag.watchpartyRaum())
                     .append('|');
@@ -9607,7 +9715,10 @@ public class MainActivity extends Activity {
         // Gleiches Bild heisst nicht "nichts geschehen": es heisst, dass sich
         // nur der Stand bewegt hat. Genau dann gehoert der Balken nachgezogen
         // und die Zeit daneben - und sonst nichts.
-        if (gleichesBild) fortschrittAuffrischen();
+        if (gleichesBild) {
+            fortschrittAuffrischen();
+            bilderAuffrischen();
+        }
 
         if (zeichnetNeu) {
             spur(currentScreen, "", "seite", "neu gezeichnet", "bestand anders");
@@ -9635,7 +9746,7 @@ public class MainActivity extends Activity {
      */
     private void empfehlungenGeaendert() {
         if (!"home".equals(currentScreen)) return;
-        vorschlaegeAuffrischen();
+        nachladeReihenAuffrischen();
     }
 
     /**
@@ -9647,10 +9758,10 @@ public class MainActivity extends Activity {
      * deswegen nicht noch einmal hereinfahren. Was neu dasteht, blendet ueber
      * die Marke in {@link #reiheAnhaengen} genau einmal auf.
      */
-    private void vorschlaegeAuffrischen() {
-        if (vorschlagsFueller.isEmpty()) return;
+    private void nachladeReihenAuffrischen() {
+        if (nachladeFueller.isEmpty()) return;
         stillZeichnen(() -> {
-            for (Runnable fuellen : new ArrayList<>(vorschlagsFueller.values())) fuellen.run();
+            for (Runnable fuellen : new ArrayList<>(nachladeFueller.values())) fuellen.run();
         });
     }
 
@@ -9661,9 +9772,9 @@ public class MainActivity extends Activity {
      * haengen, und die Liste wuechse mit jedem Zeichnen. Dieselbe Vorsicht wie
      * bei {@code liveKachelnZuruecksetzen}.
      */
-    private void vorschlaegeVergessen() {
-        vorschlagsFueller.clear();
-        vorschlagsStand.clear();
+    private void nachladeReihenVergessen() {
+        nachladeFueller.clear();
+        nachladeStand.clear();
     }
 
     /**
@@ -9674,7 +9785,7 @@ public class MainActivity extends Activity {
      * {@link #reiheAnhaengen}), und ein Kasten, der bis zum Seitenrand geht,
      * schnitte genau diesen Ueberstand wieder ab.
      */
-    private LinearLayout vorschlagsPlatz(LinearLayout page, boolean fernseher) {
+    private LinearLayout nachladePlatz(LinearLayout page, boolean fernseher) {
         int rand = dp(fernseher ? TvViews.SCREEN_PADDING : MobileViews.SCREEN_PADDING);
         LinearLayout platz = new LinearLayout(this);
         platz.setOrientation(LinearLayout.VERTICAL);
@@ -9703,11 +9814,12 @@ public class MainActivity extends Activity {
      *
      * @param bauen zeichnet die Reihe in ihren eigenen Kasten
      */
-    private void vorschlagsReiheAnmelden(LinearLayout page, String schluessel, boolean fernseher,
-                                         java.util.function.Consumer<LinearLayout> bauen) {
-        LinearLayout platz = vorschlagsPlatz(page, fernseher);
+    private void nachladeReiheAnmelden(LinearLayout page, String schluessel, boolean fernseher,
+                                       java.util.function.Supplier<String> stand,
+                                       java.util.function.Consumer<LinearLayout> bauen) {
+        LinearLayout platz = nachladePlatz(page, fernseher);
         Runnable fueller = () -> {
-            if (vorschlagsBild(schluessel).equals(vorschlagsStand.get(schluessel))) return;
+            if (stand.get().equals(nachladeStand.get(schluessel))) return;
             platz.removeAllViews();
             bauen.accept(platz);
             // Gemerkt wird der Stand *nach* dem Bauen: das Bauen fordert die
@@ -9715,9 +9827,9 @@ public class MainActivity extends Activity {
             // Vorher gemerkt waere der Vergleich beim naechsten Melder
             // zwangslaeufig verschieden und die Reihe entstuende ohne Not ein
             // zweites Mal.
-            vorschlagsStand.put(schluessel, vorschlagsBild(schluessel));
+            nachladeStand.put(schluessel, stand.get());
         };
-        vorschlagsFueller.put(schluessel, fueller);
+        nachladeFueller.put(schluessel, fueller);
         fueller.run();
     }
 
@@ -9815,8 +9927,16 @@ public class MainActivity extends Activity {
     }
 
     private void kalenderGeaendert() {
-        if (!"kalender".equals(currentScreen) && !"home".equals(currentScreen)) return;
-        seiteSammelnd();
+        // Die Kalenderseite selbst ist die Woche - dort ist ein Neuaufbau
+        // richtig, es gibt nichts anderes darauf.
+        if ("kalender".equals(currentScreen)) {
+            seiteSammelnd();
+            return;
+        }
+        // Auf der Startseite ist die Woche eine Reihe unter vielen, und die
+        // uebrigen haben mit ihr nichts zu tun.
+        if (!"home".equals(currentScreen)) return;
+        nachladeReihenAuffrischen();
     }
 
     /**
@@ -9837,8 +9957,28 @@ public class MainActivity extends Activity {
         // dieselbe Stelle - und sichtbar waere davon ein Sprung.
         if (isTelevision()) return;
         if (stand <= 0 || seitenScroll == null) return;
-        ScrollView scroll = seitenScroll;
-        scroll.post(() -> scroll.scrollTo(0, stand));
+        final ScrollView scroll = seitenScroll;
+        // Vor dem ersten Bild und nicht danach.
+        //
+        // <b>Der zweite Grund fuer das Aufblitzen.</b> Hier stand ein
+        // {@code post()}, und das setzt die Stelle erst im naechsten Durchlauf
+        // des Hauptfadens. Das erste gezeichnete Bild der frischen Seite stand
+        // damit am Seitenanfang, und erst das zweite an der gemerkten Stelle -
+        // wer weiter unten war, sah fuer ein Bild den Kopf der Seite. Genau
+        // das ist als "die Startseite ploppt kurz auf" gemeldet worden.
+        //
+        // onPreDraw ist der richtige Zeitpunkt: er liegt im selben Durchlauf
+        // hinter dem Vermessen - die Hoehen stehen also fest und die Stelle
+        // wird nicht auf null gekappt - und noch vor dem Zeichnen.
+        scroll.getViewTreeObserver().addOnPreDrawListener(
+            new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    scroll.getViewTreeObserver().removeOnPreDrawListener(this);
+                    scroll.scrollTo(0, stand);
+                    return true;
+                }
+            });
     }
 
     /** Was der Kern von sich aus meldet - bisher ausschliesslich die Watchparty. */

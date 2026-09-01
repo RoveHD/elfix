@@ -254,6 +254,64 @@ final class MobileViews {
         return card;
     }
 
+    /** Woran ein Bildkasten in einer fertigen Kachel wiederzufinden ist. */
+    private static final String POSTER = "kachel-poster";
+
+    /**
+     * Was ein Bildkasten braucht, um sein Bild spaeter noch einmal zu setzen.
+     *
+     * <p>Die Masse gehoeren dazu: {@link Bilder#laden} merkt sich Adresse
+     * <em>und</em> Groesse und laesst ein Bild, das beides schon hat,
+     * unangetastet. Mit den falschen Massen waere jeder Nachzug ein neuer
+     * Auftrag.
+     */
+    private static final class Posterbild {
+        final ImageView ansicht;
+        final TextView platzhalter;
+        final int breiteDp;
+        final int hoeheDp;
+        /** Kaesten mit Sichtfenster holen ihr Bild selbst, wenn sie ins Bild kommen. */
+        final boolean mitSichtfenster;
+
+        Posterbild(ImageView ansicht, TextView platzhalter, int breiteDp, int hoeheDp,
+                   boolean mitSichtfenster) {
+            this.ansicht = ansicht;
+            this.platzhalter = platzhalter;
+            this.breiteDp = breiteDp;
+            this.hoeheDp = hoeheDp;
+            this.mitSichtfenster = mitSichtfenster;
+        }
+    }
+
+    /**
+     * Ein nachgereichtes Titelbild in eine bestehende Kachel schreiben.
+     *
+     * <p><b>Warum das noetig wurde.</b> Titelbilder kommen nach: beim ersten
+     * Ansehen einer Folge steht in der Ablage noch keins, und der Leser der
+     * Seite traegt es Augenblicke spaeter nach. Bis hierher war das eine
+     * Aenderung am Bestand wie jede andere - und eine Aenderung am Bestand
+     * baute die ganze Startseite neu. Waehrend die Seiten luden, geschah das
+     * mehrfach hintereinander, und jedes Mal blitzte die Startseite kurz auf.
+     *
+     * <p>Ein neues Bild ist aber kein neuer Aufbau: es ist ein Bild in einer
+     * Kachel, die schon dasteht. Genau das tut diese Stelle - und sie tut
+     * nichts, wenn dasselbe Bild schon drin ist.
+     */
+    static void posterNachziehen(View wurzel, String bildUrl) {
+        if (wurzel == null || bildUrl == null || bildUrl.isEmpty()) return;
+        View kasten = wurzel.findViewWithTag(POSTER);
+        if (kasten == null) return;
+        Object marke = kasten.getTag(R.id.elfix_posterbild);
+        if (!(marke instanceof Posterbild)) return;
+        final Posterbild teil = (Posterbild) marke;
+        // Ein Kasten mit Sichtfenster holt sein Bild selbst, sobald er ins
+        // Bild kommt. Ihm hier eines aufzudraengen hiesse, genau die
+        // Sparsamkeit auszuhebeln, fuer die es das Sichtfenster gibt.
+        if (teil.mitSichtfenster) return;
+        Bilder.laden(teil.ansicht, bildUrl, teil.breiteDp, teil.hoeheDp,
+            () -> teil.platzhalter.setVisibility(View.GONE));
+    }
+
     /**
      * Der Bildkasten einer Karte.
      *
@@ -323,6 +381,13 @@ final class MobileViews {
                 () -> posterText.setVisibility(View.GONE),
                 () -> posterText.setVisibility(View.VISIBLE));
         }
+        // Damit ein nachgereichtes Titelbild spaeter in *diesen* Kasten
+        // geschrieben werden kann - siehe posterNachziehen. Der gewoehnliche
+        // Tag bleibt frei fuer die Fokusmarke des Fernsehers; gemerkt wird
+        // deshalb unter einem eigenen Schluessel.
+        poster.setTag(POSTER);
+        poster.setTag(R.id.elfix_posterbild,
+            new Posterbild(bild, posterText, breiteDp, hoeheDp, fenster != null));
 
         // Der Fortschrittsbalken sitzt im Bild, nicht darunter: unter dem Titel
         // waere er eine weitere Zeile, und die Liste soll auf einem Telefon so

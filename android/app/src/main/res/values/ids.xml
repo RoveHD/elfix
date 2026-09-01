@@ -18,6 +18,12 @@
          Bewegung.auftrittEinmal prueft sie und tut beim zweiten Mal nichts. -->
     <item name="elfix_auftritt" type="id" />
 
+    <!-- Am Bildkasten einer Kachel: seine Ansicht, sein Platzhalter und die
+         Masse, in denen sein Bild geholt wurde. Daran zieht
+         MainActivity.bilderAuffrischen ein nachgereichtes Titelbild in die
+         *bestehende* Kachel nach, statt die ganze Seite dafuer neu zu bauen. -->
+    <item name="elfix_posterbild" type="id" />
+
     <!-- An einer Schalterzeile: ihr zuletzt gezeichneter Stand. Daran
          erkennt MobileViews.schalterSetzen, ob der Daumen wandern soll oder
          schon dasteht - und ohne einen eigenen Schluessel dafuer stuende hier

@@ -215,12 +215,62 @@ public class SeitenauftrittTest {
         assertFalse("Eine fertige Vorschlagsreihe zeichnet wieder die ganze Seite",
             rumpf.contains("seiteSammelnd"));
         assertTrue("Die Reihen werden nicht mehr einzeln aufgefrischt",
-            rumpf.contains("vorschlaegeAuffrischen"));
+            rumpf.contains("nachladeReihenAuffrischen"));
 
-        String auffrischen = rumpf(quelle, "private void vorschlaegeAuffrischen()");
+        String auffrischen = rumpf(quelle, "private void nachladeReihenAuffrischen()");
         assertFalse("Das Auffrischen zeichnet die Startseite", auffrischen.contains("showHome"));
         assertFalse("Das Auffrischen sammelt wieder einen Neuaufbau an",
             auffrischen.contains("seiteSammelnd"));
+
+        // Derselbe Weg fuer die Kalenderwoche: sie kommt beim Start ebenso
+        // nach und baute bis hierher die ganze Startseite neu.
+        String kalender = rumpf(quelle, "private void kalenderGeaendert()");
+        assertTrue("Die Kalenderwoche frischt die Startseite nicht mehr reihenweise auf",
+            kalender.contains("nachladeReihenAuffrischen"));
+    }
+
+    /**
+     * Ein nachgereichtes Titelbild baut die Seite nicht neu.
+     *
+     * <p>Titelbilder kommen nach: beim ersten Ansehen steht in der Ablage noch
+     * keins, und der Leser der Folgenseite trägt es Augenblicke später nach.
+     * Solange {@code bild()} im Vergleich von {@code seitenbild()} stand, war
+     * jedes nachgereichte Bild eine „andere Seite" — und während die
+     * Anbieterseiten luden, hieß das mehrfach hintereinander: ganze Startseite
+     * neu.
+     */
+    @Test
+    public void nachgereichteBilderZeichnenDieSeiteNichtNeu() throws Exception {
+        String quelle = ohneErklaerungen(quelltext("MainActivity"));
+        String seitenbild = rumpf(quelle, "private String seitenbild()");
+        assertFalse("Das Titelbild steht wieder im Vergleich - jedes nachgereichte Bild"
+            + " baut damit die ganze Seite neu",
+            seitenbild.contains("bild()"));
+
+        String geaendert = rumpf(quelle, "private void bestandGeaendert()");
+        assertTrue("Nachgereichte Bilder werden nicht mehr an Ort nachgezogen",
+            geaendert.contains("bilderAuffrischen"));
+
+        String auffrischen = rumpf(quelle, "private void bilderAuffrischen()");
+        assertFalse("Das Nachziehen legt wieder Ansichten an", auffrischen.contains("addView"));
+        assertFalse("Das Nachziehen zeichnet wieder eine Seite", auffrischen.contains("showHome"));
+    }
+
+    /**
+     * Die gerettete Scrollstelle steht im ersten gezeichneten Bild.
+     *
+     * <p>Über {@code post()} wurde sie erst im nächsten Durchlauf gesetzt: das
+     * erste Bild der frischen Seite stand am Seitenanfang. Wer weiter unten
+     * war, sah ihn kurz aufblitzen.
+     */
+    @Test
+    public void dieScrollstelleStehtVorDemErstenBild() throws Exception {
+        String rumpf = rumpf(ohneErklaerungen(quelltext("MainActivity")),
+            "private void scrollStandHerstellen(int stand)");
+        assertTrue("Die Stelle wird nicht mehr vor dem Zeichnen gesetzt",
+            rumpf.contains("OnPreDrawListener"));
+        assertFalse("Die Stelle wird wieder erst im naechsten Durchlauf gesetzt",
+            rumpf.contains("post("));
     }
 
     private static int zaehlen(String text, String was) {
