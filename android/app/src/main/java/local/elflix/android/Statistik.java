@@ -425,6 +425,77 @@ public final class Statistik {
             });
     }
 
+    /** Welches Jahr gerade Saison hat - 0 heisst: keine. */
+    public interface Saison {
+        void fertig(int jahr);
+    }
+
+    /**
+     * Hat der Jahresrueckblick gerade Saison?
+     *
+     * <p>Die Frage, an der auf der Startseite haengt, ob der Weg dorthin von
+     * selbst dasteht. Entschieden wird sie im Kern - {@code statistik.wrappedJahrFuer}
+     * fuer das Fenster (1. Dezember bis 6. Januar) und {@code statistik.wrappedLage}
+     * dafuer, ob ueberhaupt genug zu erzaehlen ist. Dieselben zwei Funktionen
+     * fragt der Rechner; eine eigene Vorstellung davon, wann Dezember genug
+     * Dezember ist, gibt es hier nicht.
+     *
+     * <p>Ausserhalb des Fensters kostet das genau einen Aufruf und keine
+     * Auswertung: die Frist entscheidet sich am Datum, nicht an den Sitzungen.
+     * Elf Monate im Jahr ist das die ganze Rechnung.
+     */
+    public void wrappedSaison(Saison antwort) {
+        if (antwort == null) return;
+        if (kern == null || !kern.istBereit()) {
+            antwort.fertig(0);
+            return;
+        }
+        kern.rufe("statistik.wrappedJahrFuer", Kern.args(System.currentTimeMillis()),
+            (wert, fehler) -> {
+                int jahr = ganzeZahl(wert);
+                if (fehler != null || jahr <= 0) {
+                    antwort.fertig(0);
+                    return;
+                }
+                auswerten(String.valueOf(jahr), (daten, fehler2) -> {
+                    if (fehler2 != null || daten == null) {
+                        antwort.fertig(0);
+                        return;
+                    }
+                    JSONObject optionen = new JSONObject();
+                    try {
+                        optionen.put("jahrWunsch", jahr);
+                        optionen.put("jetzt", System.currentTimeMillis());
+                    } catch (Exception ausnahme) {
+                        antwort.fertig(0);
+                        return;
+                    }
+                    kern.rufe("statistik.wrappedLage", Kern.args(daten, optionen),
+                        (lageJson, fehler3) -> {
+                            if (fehler3 != null || lageJson == null) {
+                                antwort.fertig(0);
+                                return;
+                            }
+                            try {
+                                JSONObject lage = new JSONObject(lageJson);
+                                antwort.fertig(lage.optBoolean("saison", false) ? jahr : 0);
+                            } catch (Exception ausnahme) {
+                                antwort.fertig(0);
+                            }
+                        });
+                });
+            });
+    }
+
+    /** Eine Zahl aus einer Kern-Antwort. JSON liefert sie als blossen Text. */
+    private static int ganzeZahl(String wert) {
+        try {
+            return (int) Math.round(Double.parseDouble(wert == null ? "" : wert.trim()));
+        } catch (NumberFormatException fehler) {
+            return 0;
+        }
+    }
+
     /** Ob ueberhaupt schon etwas gemessen wurde - sonst hat ein Rueckblick nichts zu zeigen. */
     public boolean hatDaten() {
         return alle().length() > 0;

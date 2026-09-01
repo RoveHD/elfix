@@ -688,6 +688,88 @@ function auswerten(sitzungen, optionen = {}) {
   };
 }
 
+/* ======================================================================
+ * ELFIX Wrapped: wann er sich von selbst zeigt
+ * ====================================================================== */
+
+/**
+ * Das Fenster, in dem der Jahresrueckblick faellig ist.
+ *
+ * <p>Vom 1. Dezember bis zum 6. Januar. Der Januar gehoert dazu, weil sonst
+ * jeder leer ausgeht, der ELFIX im Dezember nicht oeffnet; in diesen Tagen
+ * zeigt es dann das vergangene Jahr.
+ */
+const WRAPPED_VON = { monat: 11, tag: 1 };
+const WRAPPED_BIS = { monat: 0, tag: 6 };
+
+/**
+ * Unter diesen Grenzen gibt es nichts zu feiern.
+ *
+ * <p>Wer ELFIX am 20. Dezember installiert, soll keinen Jahresrueckblick ueber
+ * vier Folgen bekommen - aufrufen kann er ihn trotzdem, er draengt sich nur
+ * nicht auf.
+ */
+const WRAPPED_MIN_FOLGEN = 10;
+const WRAPPED_MIN_TAGE = 3;
+
+/**
+ * Welches Jahr gerade an der Reihe ist - oder 0 ausserhalb des Fensters.
+ *
+ * <p>Null und nicht {@code null}: die Antwort reist ueber den Kern nach Java,
+ * und dort ist eine Zahl leichter zu lesen als ein fehlender Wert.
+ *
+ * @param jetzt ein Zeitstempel oder ein Datum; ohne Angabe die Uhr des Geraets
+ */
+function wrappedJahrFuer(jetzt = Date.now()) {
+  const zeit = jetzt instanceof Date ? jetzt : new Date(Number(jetzt) || Date.now());
+  if (!Number.isFinite(zeit.getTime())) return 0;
+  const monat = zeit.getMonth();
+  const tag = zeit.getDate();
+  if (monat === WRAPPED_VON.monat && tag >= WRAPPED_VON.tag) return zeit.getFullYear();
+  if (monat === WRAPPED_BIS.monat && tag <= WRAPPED_BIS.tag) return zeit.getFullYear() - 1;
+  return 0;
+}
+
+/**
+ * Ob und wie der Jahresrueckblick ansteht.
+ *
+ * <p>Drei Antworten, die nicht dasselbe sind:
+ *
+ * <ul>
+ *   <li>{@code genug} - es gibt ueberhaupt etwas zu erzaehlen.
+ *   <li>{@code saison} - es ist Dezember <em>und</em> es gibt genug. Daran
+ *       haengt, ob der Weg dorthin von selbst dasteht; das bleibt auch stehen,
+ *       nachdem man den Rueckblick angesehen hat - ein Eintrag, der mitten in
+ *       der Saison verschwindet, ist einer, den man sucht.
+ *   <li>{@code faellig} - dasselbe, aber noch nicht gesehen. Nur das ist ein
+ *       Grund, ihn jemandem vor die Nase zu setzen.
+ * </ul>
+ *
+ * <p>Rein gerechnet, ohne Ablage: die Zahlen kommen von {@link auswerten}, das
+ * gesehene Jahr aus den Einstellungen des Aufrufers. So gilt die Regel am
+ * Rechner und am Fernseher gleichermassen - und zwar genau einmal
+ * aufgeschrieben.
+ *
+ * @param daten    die Auswertung des Jahres ({@code folgen}, {@code tage})
+ * @param optionen {jahrWunsch, gesehenJahr, jetzt}
+ */
+function wrappedLage(daten, optionen = {}) {
+  const imFenster = wrappedJahrFuer(optionen.jetzt);
+  // Auf Wunsch jedes Jahr - der Knopf im Rueckblick soll auch im Juli gehen.
+  const jahr = Number(optionen.jahrWunsch) || imFenster;
+  if (!jahr) return { jahr: 0, imFenster: 0, genug: false, saison: false, faellig: false };
+  const genug = Number(daten?.folgen) >= WRAPPED_MIN_FOLGEN
+    && Number(daten?.tage) >= WRAPPED_MIN_TAGE;
+  const saison = Boolean(imFenster) && imFenster === jahr && genug;
+  return {
+    jahr,
+    imFenster,
+    genug,
+    saison,
+    faellig: saison && Number(optionen.gesehenJahr) !== jahr
+  };
+}
+
 module.exports = {
   SITZUNG_STILLE_MS,
   SITZUNG_LUECKE_MS,
@@ -709,5 +791,9 @@ module.exports = {
   titelKennung,
   bereinigen,
   vereinen,
-  auswerten
+  auswerten,
+  WRAPPED_MIN_FOLGEN,
+  WRAPPED_MIN_TAGE,
+  wrappedJahrFuer,
+  wrappedLage
 };

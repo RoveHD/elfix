@@ -616,6 +616,24 @@ public class MainActivity extends Activity {
     private int wrappedStelle;
     private int wrappedJahr;
     private LinearLayout wrappedPlatz;
+    /**
+     * Welches Jahr gerade Saison hat - 0 heisst: keine.
+     *
+     * <p>Gemerkt und nicht bei jedem Zeichnen gefragt: die Antwort haengt am
+     * Datum und an der Auswertung aller Sitzungen, und die Startseite baut sich
+     * oft neu. Elf Monate im Jahr ist die Antwort ohnehin dieselbe.
+     */
+    private int wrappedSaisonJahr;
+    private long wrappedSaisonGeprueft;
+    /** So lange gilt die Antwort auf die Saisonfrage. */
+    private static final long WRAPPED_SAISON_FRIST_MS = 30 * 60 * 1000L;
+    /**
+     * Wie breit eine Wrapped-Karte am Fernseher hoechstens ist.
+     *
+     * <p>Ein Fernseher ist breit, ein Satz ist es nicht: ueber die ganze Breite
+     * gezogen waere die Karte ein Band mit einem Wort in der Mitte.
+     */
+    private static final int WRAPPED_TV_BREITE_DP = 720;
     /** So viele Titel wechseln sich im Titelhintergrund ab - wie am Rechner. */
     private static final int HERO_ANZAHL = 5;
     /** Und so lange steht jeder. */
@@ -2190,6 +2208,8 @@ public class MainActivity extends Activity {
                 "Öffne einen Anbieter und sieh dir etwas an. ELFIX merkt sich die Folge und die "
                     + "Stelle und schlägt sie dir hier wieder vor."), TvViews.ITEM_GAP);
         }
+
+        tvRueckblicksReihe(page);
 
         if (zeigt(Startseite.PERSOENLICH)) {
             tvVorschlagsReihe(page, Empfehlungen.NEUES, "Neu bei deinen Anbietern", null, null);
@@ -3947,12 +3967,102 @@ public class MainActivity extends Activity {
      * keine Einladung, sondern ein Vorwurf.
      */
     private void rueckblicksReihe(LinearLayout page) {
-        if (statistik == null || !zeigt(Startseite.RUECKBLICK) || !statistik.hatDaten()) return;
+        if (statistik == null || !statistik.hatDaten()) return;
+        wrappedSaisonPruefen();
+        boolean saison = wrappedSaisonJahr > 0;
+        if (!zeigt(Startseite.RUECKBLICK) && !saison) return;
         addSpacing(page, MobileViews.sectionHeader(this, "Dein Rückblick", "Alle Zahlen",
             () -> zeigeRueckblick("alles")), MobileViews.SECTION_GAP);
+        if (saison) {
+            addSpacing(page, settingsCard("ELFIX Wrapped " + wrappedSaisonJahr,
+                "Dein Jahr als Geschichte - dieselben Zahlen, in Karten erzählt.",
+                "Ansehen", () -> zeigeWrapped(wrappedSaisonJahr)), MobileViews.ITEM_GAP);
+        }
         addSpacing(page, settingsCard("Was du geschaut hast",
             "Gemessene Wiedergabezeit, Folgen, Schautage und deine meistgesehenen Titel.",
             "Öffnen", () -> zeigeRueckblick("alles")), MobileViews.ITEM_GAP);
+    }
+
+    /**
+     * Der Rückblick am Fernseher.
+     *
+     * <p>Es gab ihn dort nicht. Die Reihe hing an der Startseite des Telefons,
+     * und damit war der Jahresrückblick am Fernseher schlicht nicht zu
+     * erreichen - gemeldet als Wunsch, ihn auch dort ansehen zu können.
+     *
+     * <p>Zwei Wege hinein, und der zweite ist der eigentliche:
+     *
+     * <ul>
+     *   <li><b>Die Einstellung.</b> Dieselbe wie auf dem Telefon
+     *       ({@code showReview} unter "Startseite"), und sie schaltet jetzt
+     *       beide Geräte. Wer den Rückblick immer dahaben will, schaltet sie an.
+     *   <li><b>Der Dezember.</b> Vom 1. Dezember bis zum 6. Januar steht der
+     *       Jahresrückblick von selbst da, auch wenn die Einstellung aus ist -
+     *       dieselbe Saison, die am Rechner den Eintrag in der Seitenleiste
+     *       einblendet. Ob sie läuft, entscheidet die geteilte Regel
+     *       ({@code statistik.wrappedLage}) und nicht diese Stelle.
+     * </ul>
+     *
+     * <p>Am Fernseher führt der Weg geradewegs in die Karten und nicht über die
+     * Statistikseite: die ist eine Tabelle mit Ranglisten, und eine Tabelle
+     * liest niemand aus drei Metern Entfernung.
+     */
+    private void tvRueckblicksReihe(LinearLayout page) {
+        if (statistik == null || !statistik.hatDaten()) return;
+        wrappedSaisonPruefen();
+        boolean saison = wrappedSaisonJahr > 0;
+        if (!zeigt(Startseite.RUECKBLICK) && !saison) return;
+        int jahr = wrappedJahrFuerAnsicht();
+        addSpacing(page, TvViews.sectionHeader(this, "Dein Rückblick", null, null),
+            TvViews.SECTION_GAP);
+        View karte = TvViews.infoCard(this, "ELFIX Wrapped " + jahr,
+            saison
+                ? "Dein Jahr als Geschichte - dieselben Zahlen, in Karten erzählt."
+                : "Dein Jahr als Geschichte. Im Dezember steht es hier von selbst.",
+            "Ansehen", () -> zeigeWrapped(jahr));
+        // Die Marke gehoert an den Knopf und nicht an die Karte: fokussierbar
+        // ist der Knopf, und nur was den Fokus bekommt, merkt sich die Seite.
+        View knopf = karte.findViewWithTag("karten-knopf");
+        if (knopf != null) knopf.setTag("tv:rueckblick");
+        addSpacing(page, karte, TvViews.ITEM_GAP);
+    }
+
+    /**
+     * Welches Jahr der Rückblick zeigt, wenn ihn jemand aufruft.
+     *
+     * <p>In der Saison das Jahr, um das es geht - Anfang Januar ist das noch
+     * das vergangene. Sonst das jüngste, zu dem es überhaupt Sätze gibt: im
+     * Juli auf das laufende Jahr zu zeigen wäre richtig und meistens leer.
+     */
+    private int wrappedJahrFuerAnsicht() {
+        if (wrappedSaisonJahr > 0) return wrappedSaisonJahr;
+        List<Integer> jahre = statistik == null
+            ? java.util.Collections.emptyList() : statistik.jahre();
+        if (!jahre.isEmpty()) return jahre.get(0);
+        return java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+    }
+
+    /**
+     * Nachsehen, ob der Jahresrückblick Saison hat.
+     *
+     * <p>Höchstens alle dreissig Minuten, und die Startseite baut sich danach
+     * nur neu, wenn sich die Antwort geändert hat. Ohne beides liefe bei jedem
+     * Zeichnen eine Auswertung über alle Sitzungen - und eine Seite, die sich
+     * selbst neu baut, baut sich sonst endlos neu.
+     */
+    private void wrappedSaisonPruefen() {
+        if (statistik == null) return;
+        long jetzt = SystemClock.uptimeMillis();
+        if (wrappedSaisonGeprueft > 0 && jetzt - wrappedSaisonGeprueft < WRAPPED_SAISON_FRIST_MS) {
+            return;
+        }
+        wrappedSaisonGeprueft = jetzt;
+        statistik.wrappedSaison(jahr -> runOnUiThread(() -> {
+            if (jahr == wrappedSaisonJahr) return;
+            Log.i(TAG, "Wrapped-Saison: " + (jahr > 0 ? String.valueOf(jahr) : "keine"));
+            wrappedSaisonJahr = jahr;
+            if ("home".equals(currentScreen)) seiteNeuZeichnen();
+        }));
     }
 
     /**
@@ -4034,7 +4144,12 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         updateBottomNav();
 
-        LinearLayout page = mobilePage();
+        // Am Fernseher dieselben Karten, aber die Seite des Fernsehers: der
+        // Rand ist groesser, und vor allem sind die Knoepfe darunter
+        // fokussierbar. Auf einer Telefonseite kaeme das Steuerkreuz nirgendwo
+        // an, und "Weiter" waere ein Knopf, den man sieht und nicht druecken
+        // kann.
+        LinearLayout page = isTelevision() ? tvPage() : mobilePage();
         // Ohne Seitenkopf: die erste Karte sagt "ELFIX Wrapped" und das Jahr
         // ohnehin, und zweimal dieselbe Ueberschrift uebereinander nimmt der
         // Karte genau die Hoehe, von der sie lebt. Waehrend gerechnet wird,
@@ -4089,7 +4204,9 @@ public class MainActivity extends Activity {
      */
     private void wrappedZeichnen() {
         if (wrappedPlatz == null || wrappedSeiten.isEmpty()) return;
+        boolean fernseher = isTelevision();
         wrappedPlatz.removeAllViews();
+        wrappedPlatz.setGravity(fernseher ? Gravity.CENTER_HORIZONTAL : Gravity.NO_GRAVITY);
         int stelle = Math.max(0, Math.min(wrappedStelle, wrappedSeiten.size() - 1));
         View karte = wrappedSeiten.get(stelle);
         if (karte.getParent() instanceof ViewGroup) {
@@ -4099,31 +4216,62 @@ public class MainActivity extends Activity {
             wrappedStelle = (wrappedStelle + 1) % wrappedSeiten.size();
             wrappedZeichnen();
         });
-        addSpacing(wrappedPlatz, karte, 0);
+        if (fernseher) {
+            // Ueber die ganze Breite gezogen waere die Karte ein Band mit einem
+            // Wort in der Mitte. Ein Fernseher ist breit, kein Text ist es.
+            LinearLayout.LayoutParams kartenParams = new LinearLayout.LayoutParams(
+                dp(WRAPPED_TV_BREITE_DP), ViewGroup.LayoutParams.WRAP_CONTENT);
+            wrappedPlatz.addView(karte, kartenParams);
+        } else {
+            addSpacing(wrappedPlatz, karte, 0);
+        }
         addSpacing(wrappedPlatz, Rueckblick.punkte(this, wrappedSeiten.size(), stelle),
             MobileViews.ITEM_GAP);
 
-        LinearLayout knoepfe = new LinearLayout(this);
-        knoepfe.setOrientation(LinearLayout.HORIZONTAL);
-        if (stelle > 0) {
-            knoepfe.addView(MobileViews.secondaryButton(this, "Zurück", () -> {
-                wrappedStelle = stelle - 1;
-                wrappedZeichnen();
-            }), new LinearLayout.LayoutParams(0, dp(MobileViews.TOUCH_TARGET), 1));
-        }
         boolean letzte = stelle >= wrappedSeiten.size() - 1;
-        LinearLayout.LayoutParams weiterParams =
-            new LinearLayout.LayoutParams(0, dp(MobileViews.TOUCH_TARGET), 1);
-        if (stelle > 0) weiterParams.leftMargin = dp(MobileViews.ITEM_GAP);
-        knoepfe.addView(MobileViews.primaryButton(this, letzte ? "Fertig" : "Weiter", () -> {
+        Runnable zurueck = () -> {
+            wrappedStelle = stelle - 1;
+            wrappedZeichnen();
+        };
+        Runnable weiter = () -> {
             if (letzte) {
                 wrappedStelle = 0;
-                zeigeRueckblick(rueckblickZeitraum);
+                if (isTelevision()) showHome();
+                else zeigeRueckblick(rueckblickZeitraum);
                 return;
             }
             wrappedStelle = stelle + 1;
             wrappedZeichnen();
-        }), weiterParams);
+        };
+
+        LinearLayout knoepfe = new LinearLayout(this);
+        knoepfe.setOrientation(LinearLayout.HORIZONTAL);
+        if (fernseher) {
+            // Fokussierbare Knoepfe statt Flaechen zum Tippen, und "Weiter"
+            // bekommt den Fokus: am Fernseher soll ein Druck auf OK genuegen,
+            // ohne dass sich vorher jemand mit dem Kreuz suchen muss.
+            knoepfe.setGravity(Gravity.CENTER_HORIZONTAL);
+            if (stelle > 0) {
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                params.rightMargin = dp(TvViews.ITEM_GAP);
+                knoepfe.addView(TvViews.pillButton(this, "Zurück", zurueck), params);
+            }
+            View vor = TvViews.hauptPillButton(this, letzte ? "Fertig" : "Weiter", weiter);
+            knoepfe.addView(vor, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            vor.post(vor::requestFocus);
+        } else {
+            if (stelle > 0) {
+                knoepfe.addView(MobileViews.secondaryButton(this, "Zurück", zurueck),
+                    new LinearLayout.LayoutParams(0, dp(MobileViews.TOUCH_TARGET), 1));
+            }
+            LinearLayout.LayoutParams weiterParams =
+                new LinearLayout.LayoutParams(0, dp(MobileViews.TOUCH_TARGET), 1);
+            if (stelle > 0) weiterParams.leftMargin = dp(MobileViews.ITEM_GAP);
+            knoepfe.addView(MobileViews.primaryButton(this, letzte ? "Fertig" : "Weiter", weiter),
+                weiterParams);
+        }
         addSpacing(wrappedPlatz, knoepfe, MobileViews.ITEM_GAP);
     }
 
@@ -10551,10 +10699,14 @@ public class MainActivity extends Activity {
             return;
         }
         // Aus dem Jahresrueckblick zurueck in den Rueckblick und nicht ganz
-        // nach vorn: er ist von dort aus geoeffnet worden.
+        // nach vorn: er ist von dort aus geoeffnet worden. Am Fernseher aber
+        // nicht - dort fuehrt der Weg von der Startseite geradewegs in die
+        // Karten, und die Statistikseite ist eine Tabelle, die dort niemand
+        // aufgeschlagen hat.
         if ("wrapped".equals(currentScreen)) {
             naechsterAuftritt = Auftritt.ZURUECK;
-            zeigeRueckblick(rueckblickZeitraum);
+            if (isTelevision()) showHome();
+            else zeigeRueckblick(rueckblickZeitraum);
             return;
         }
         // Aus der Watchparty geoeffnet: dorthin zurueck und nicht auf die

@@ -71,7 +71,9 @@ public final class Startseite {
         new Reihe(KATEGORIEN, "Anime, Serien und Filme",
             "Die drei Vorschlagsreihen nach Art.", true),
         new Reihe(RUECKBLICK, "Rückblick",
-            "Deine gemessene Zeit als Reihe auf der Startseite.", false)
+            "Deine gemessene Zeit und der Jahresrückblick auf der Startseite - "
+                + "am Telefon wie am Fernseher. Im Dezember steht der Jahresrückblick "
+                + "ohnehin da.", false)
     );
 
     private final SharedPreferences prefs;

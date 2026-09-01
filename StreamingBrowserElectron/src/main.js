@@ -9061,43 +9061,28 @@ function watchpartyChatZeigen(nachricht) {
 // Das Fenster reicht vom 1. Dezember bis zum 6. Januar. Der Januar gehoert
 // dazu, weil sonst jeder leer ausgeht, der ELFIX im Dezember nicht oeffnet; in
 // diesen Tagen zeigt es dann das vergangene Jahr.
-const WRAPPED_VON = { monat: 11, tag: 1 };
-const WRAPPED_BIS = { monat: 0, tag: 6 };
-
-// Unter diesen Grenzen gibt es nichts zu feiern. Wer ELFIX am 20. Dezember
-// installiert, soll keinen Jahresrueckblick ueber vier Folgen bekommen -
-// aufrufen kann er ihn trotzdem, er draengt sich nur nicht auf.
-const WRAPPED_MIN_FOLGEN = 10;
-const WRAPPED_MIN_TAGE = 3;
-
-// Welches Jahr gerade an der Reihe ist - oder null ausserhalb des Fensters.
-function wrappedJahrFuer(jetzt = new Date()) {
-  const monat = jetzt.getMonth();
-  const tag = jetzt.getDate();
-  if (monat === WRAPPED_VON.monat && tag >= WRAPPED_VON.tag) return jetzt.getFullYear();
-  if (monat === WRAPPED_BIS.monat && tag <= WRAPPED_BIS.tag) return jetzt.getFullYear() - 1;
-  return null;
-}
-
+// Die Regel selbst steht in src/statistik.js - dieselbe, die der Fernseher
+// fragt. Sie stand bis hierher nur hier, und damit haette Android eine zweite
+// bekommen muessen: zwei Vorstellungen davon, wann Dezember genug Dezember ist.
 function wrappedStatus(jahrWunsch) {
-  const imFenster = wrappedJahrFuer();
-  // Auf Wunsch jedes Jahr - der Knopf im Rueckblick soll auch im Juli gehen.
+  const imFenster = statistik.wrappedJahrFuer();
   const jahr = Number(jahrWunsch) || imFenster;
   if (!jahr) return { faellig: false, jahr: 0, daten: null };
 
   const daten = watchStatistik(String(jahr));
-  const genug = daten.folgen >= WRAPPED_MIN_FOLGEN && daten.tage >= WRAPPED_MIN_TAGE;
-  const schonGesehen = Number(settings.wrapped?.gesehenJahr) === jahr;
+  const lage = statistik.wrappedLage(daten, {
+    jahrWunsch: jahr,
+    gesehenJahr: settings.wrapped?.gesehenJahr
+  });
   return {
-    // "Faellig" heisst: von selbst zeigen. Alles drei muss stimmen.
-    faellig: Boolean(imFenster) && imFenster === jahr && genug && !schonGesehen,
-    // "Saison" heisst nur: es ist Dezember und es gibt genug zu erzaehlen.
-    // Anders als "faellig" bleibt das stehen, nachdem man den Rueckblick
-    // angesehen hat - daran haengt, ob der Eintrag in der Seitenleiste
-    // sichtbar ist, und der soll nicht mitten in der Saison verschwinden.
-    saison: Boolean(imFenster) && imFenster === jahr && genug,
+    // "Faellig" heisst: von selbst zeigen. "Saison" heisst nur, dass Dezember
+    // ist und es genug zu erzaehlen gibt - das bleibt stehen, nachdem man den
+    // Rueckblick angesehen hat, und daran haengt der Eintrag in der
+    // Seitenleiste. Er soll nicht mitten in der Saison verschwinden.
+    faellig: lage.faellig,
+    saison: lage.saison,
     jahr,
-    genug,
+    genug: lage.genug,
     daten: daten.sitzungen ? daten : null
   };
 }
@@ -9111,10 +9096,8 @@ ipcMain.handle("wrapped:jahre", () => {
   const jahre = [...new Set(loadSitzungen()
     .map((sitzung) => new Date(Date.parse(sitzung.begonnenAm)).getFullYear())
     .filter((jahr) => Number.isFinite(jahr)))].sort((links, rechts) => rechts - links);
-  return jahre.filter((jahr) => {
-    const daten = watchStatistik(String(jahr));
-    return daten.folgen >= WRAPPED_MIN_FOLGEN && daten.tage >= WRAPPED_MIN_TAGE;
-  });
+  return jahre.filter((jahr) => statistik.wrappedLage(watchStatistik(String(jahr)),
+    { jahrWunsch: jahr }).genug);
 });
 
 // Gesehen heisst gesehen: der Rueckblick draengt sich in diesem Jahr nicht noch

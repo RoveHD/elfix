@@ -41,12 +41,10 @@ function abschnitt(quelle, anfang, ende = "}") {
 
 // --- Wann der Rueckblick faellig ist ----------------------------------------
 
-const fenster = { console, Date, Number, String, Boolean, Math };
-vm.createContext(fenster);
-vm.runInContext(MAIN.match(/^const WRAPPED_VON = .+$/m)[0], fenster);
-vm.runInContext(MAIN.match(/^const WRAPPED_BIS = .+$/m)[0], fenster);
-vm.runInContext(abschnitt(MAIN, "function wrappedJahrFuer("), fenster);
-const jahrFuer = vm.runInContext("wrappedJahrFuer", fenster);
+// Die Regel steht seit dem Fernseher im geteilten Modul: dort fragt sie das
+// Telefon ueber den Kern, hier der Hauptprozess unmittelbar. Gefahren wird
+// deshalb die Funktion selbst und nicht mehr ein Textblock aus main.js.
+const jahrFuer = statistik.wrappedJahrFuer;
 
 pruefe("Am 1. Dezember ist das laufende Jahr an der Reihe",
   jahrFuer(new Date(2027, 11, 1)) === 2027);
@@ -58,24 +56,37 @@ pruefe("Anfang Januar zeigt er das vergangene Jahr",
   jahrFuer(new Date(2028, 0, 3)) === 2027,
   "wer ELFIX im Dezember nicht oeffnet, soll ihn nicht ganz verpassen");
 pruefe("Nach dem 6. Januar ist das Fenster zu",
-  jahrFuer(new Date(2028, 0, 7)) === null);
+  jahrFuer(new Date(2028, 0, 7)) === 0);
 pruefe("Im November noch nicht",
-  jahrFuer(new Date(2027, 10, 30)) === null);
+  jahrFuer(new Date(2027, 10, 30)) === 0);
 pruefe("Im Juli erst recht nicht",
-  jahrFuer(new Date(2027, 6, 15)) === null);
+  jahrFuer(new Date(2027, 6, 15)) === 0);
 
-const status = abschnitt(MAIN, "function wrappedStatus(");
+const genugDaten = { folgen: 40, tage: 12 };
+const dezember = new Date(2027, 11, 20);
 pruefe("Faellig ist er nur im Fenster, mit genug Daten und noch ungesehen",
-  /faellig: Boolean\(imFenster\) && imFenster === jahr && genug && !schonGesehen/.test(status),
+  statistik.wrappedLage(genugDaten, { jetzt: dezember }).faellig === true
+  && statistik.wrappedLage(genugDaten, { jetzt: new Date(2027, 6, 15) }).faellig === false
+  && statistik.wrappedLage({ folgen: 4, tage: 1 }, { jetzt: dezember }).faellig === false
+  && statistik.wrappedLage(genugDaten, { jetzt: dezember, gesehenJahr: 2027 }).faellig === false,
   "alle drei Bedingungen zusammen");
+pruefe("Die Saison bleibt stehen, auch wenn er schon gesehen ist",
+  statistik.wrappedLage(genugDaten, { jetzt: dezember, gesehenJahr: 2027 }).saison === true,
+  "sonst verschwaende der Weg dorthin genau dann, wenn man ihn wiederfinden will");
 pruefe("Auf Wunsch laesst er sich jederzeit oeffnen",
-  /const jahr = Number\(jahrWunsch\) \|\| imFenster;/.test(status),
+  statistik.wrappedLage(genugDaten, { jahrWunsch: 2025, jetzt: new Date(2027, 6, 15) }).jahr === 2025,
   "das Archiv soll auch im Juli funktionieren");
 pruefe("Zu wenig Daten heisst: draengt sich nicht auf",
-  /const genug = daten\.folgen >= WRAPPED_MIN_FOLGEN && daten\.tage >= WRAPPED_MIN_TAGE;/.test(status),
+  statistik.wrappedLage({ folgen: 9, tage: 12 }, { jetzt: dezember }).genug === false
+  && statistik.wrappedLage({ folgen: 40, tage: 2 }, { jetzt: dezember }).genug === false,
   "wer im Dezember installiert, bekommt keinen Jahresrueckblick ueber vier Folgen");
-pruefe("Einmal gesehen genuegt",
-  /const schonGesehen = Number\(settings\.wrapped\?\.gesehenJahr\) === jahr;/.test(status));
+
+const status = abschnitt(MAIN, "function wrappedStatus(");
+pruefe("Der Rechner rechnet das nicht selbst nach",
+  /statistik\.wrappedLage\(daten, \{/.test(status) && !/WRAPPED_MIN_FOLGEN/.test(MAIN),
+  "eine zweite Vorstellung davon, wann Dezember genug Dezember ist, waere die naechste Abweichung");
+pruefe("Und reicht das gesehene Jahr aus seinen Einstellungen hinein",
+  /gesehenJahr: settings\.wrapped\?\.gesehenJahr/.test(status));
 pruefe("Der Merker ueberlebt das Speichern der Einstellungen",
   /wrapped: \{\s*\n\s*gesehenJahr: Number\(raw\?\.wrapped\?\.gesehenJahr\) \|\| 0\s*\n\s*\}/.test(MAIN),
   "sonst meldete sich der Hinweis nach jeder Einstellungsaenderung erneut");
@@ -86,7 +97,7 @@ pruefe("Der Rueckblick rechnet nicht selbst, sondern fragt die Statistik",
   /const daten = watchStatistik\(String\(jahr\)\);/.test(status),
   "eine zweite Rechenart erzeugte irgendwann zwei verschiedene Folgenzahlen");
 pruefe("Das Archiv ebenso",
-  /const daten = watchStatistik\(String\(jahr\)\);/.test(abschnitt(MAIN, 'ipcMain.handle("wrapped:jahre"', "});")),
+  /watchStatistik\(String\(jahr\)\)/.test(abschnitt(MAIN, 'ipcMain.handle("wrapped:jahre"', "});")),
   "auch die Frage \"welche Jahre lohnen sich\" darf keine eigene Rechnung sein");
 pruefe("Ein Jahr ist genau ein Kalenderjahr, in Ortszeit",
   /return \{ von: new Date\(jahr, 0, 1\)\.getTime\(\), bis: new Date\(jahr \+ 1, 0, 1\)\.getTime\(\) - 1 \};/.test(MAIN),
@@ -318,9 +329,9 @@ pruefe("Eingeschaltet steht er da",
   /if \(settings\.home\?\.showReview === true\) \{[\s\S]{0,80}knopf\.classList\.remove\("is-hidden"\);/.test(RENDERER));
 pruefe("In der Wrapped-Saison ebenfalls, auch ohne die Einstellung",
   /knopf\.classList\.toggle\("is-hidden", !antwort\?\.saison\)/.test(RENDERER));
-pruefe("Die Saison endet nicht, weil man den Rueckblick schon gesehen hat",
-  /saison: Boolean\(imFenster\) && imFenster === jahr && genug,/.test(MAIN),
-  "sonst verschwaende der Weg dorthin genau dann, wenn man ihn wiederfinden will");
+pruefe("Die Sichtbarkeit haengt an der Saison und nicht am Faelligsein",
+  /saison: lage\.saison,/.test(MAIN),
+  "die Saison bleibt stehen, nachdem man den Rueckblick gesehen hat - siehe oben");
 pruefe("Die Sichtbarkeit wird beim Speichern der Einstellungen nachgezogen",
   (RENDERER.match(/renderRueckblickEintrag\(\)/g) || []).length >= 3,
   "sonst stuende der Punkt erst nach einem Neustart richtig da");
@@ -399,6 +410,50 @@ pruefe("Das Theme wird durchgehend benutzt",
   pruefe("Der Text steht mittig wie am Rechner",
     /private static void mittig\(View ansicht\)/.test(RUECKBLICK)
     && /inhalt\.setGravity\(Gravity\.CENTER\)/.test(RUECKBLICK));
+  // Der Weg hinein - am Fernseher gab es ihn nicht.
+  const STATISTIK_JAVA = fs.readFileSync(
+    path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
+      "android", "Statistik.java"), "utf8");
+  const STARTSEITE = fs.readFileSync(
+    path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
+      "android", "Startseite.java"), "utf8");
+
+  pruefe("Der Fernseher hat eine Reihe fuer den Rueckblick",
+    /private void tvRueckblicksReihe\(LinearLayout page\)/.test(HAUPT)
+    && /tvRueckblicksReihe\(page\);/.test(HAUPT));
+  pruefe("Sie steht da, wenn die Einstellung an ist oder Saison ist",
+    (HAUPT.match(/if \(!zeigt\(Startseite\.RUECKBLICK\) && !saison\) return;/g) || []).length === 2,
+    "dieselbe Bedingung am Telefon und am Fernseher");
+  pruefe("Und fuehrt geradewegs in die Karten",
+    /tvRueckblicksReihe[\s\S]{0,1200}?"Ansehen", \(\) -> zeigeWrapped\(jahr\)/.test(HAUPT),
+    "die Statistikseite ist eine Tabelle - die liest niemand aus drei Metern");
+
+  pruefe("Wann Saison ist, entscheidet die geteilte Regel",
+    /kern\.rufe\("statistik\.wrappedJahrFuer"/.test(STATISTIK_JAVA)
+    && /kern\.rufe\("statistik\.wrappedLage"/.test(STATISTIK_JAVA),
+    "Android rechnet das Fenster nicht selbst nach");
+  pruefe("Ausserhalb des Fensters wird nichts ausgewertet",
+    /int jahr = ganzeZahl\(wert\);[\s\S]{0,200}?if \(fehler != null \|\| jahr <= 0\) \{[\s\S]{0,80}?antwort\.fertig\(0\);/
+      .test(STATISTIK_JAVA),
+    "elf Monate im Jahr waere die Auswertung aller Sitzungen umsonst");
+  pruefe("Die Antwort wird gemerkt und nicht bei jedem Zeichnen geholt",
+    /WRAPPED_SAISON_FRIST_MS/.test(HAUPT)
+    && /if \(jahr == wrappedSaisonJahr\) return;/.test(HAUPT),
+    "sonst baut sich die Startseite endlos selbst neu");
+
+  pruefe("Am Fernseher steht die Wrapped-Seite auf einer Fernsehseite",
+    /LinearLayout page = isTelevision\(\) \? tvPage\(\) : mobilePage\(\);/.test(HAUPT));
+  pruefe("Mit fokussierbaren Knoepfen und Fokus auf \u201eWeiter\u201c",
+    /TvViews\.hauptPillButton\(this, letzte \? "Fertig" : "Weiter", weiter\)/.test(HAUPT)
+    && /vor\.post\(vor::requestFocus\)/.test(HAUPT),
+    "sonst sieht man einen Knopf, den das Steuerkreuz nie erreicht");
+  pruefe("Und Zurueck fuehrt dort nach Hause statt in die Tabelle",
+    /if \("wrapped"\.equals\(currentScreen\)\) \{[\s\S]{0,200}?if \(isTelevision\(\)\) showHome\(\);/
+      .test(HAUPT));
+  pruefe("Die Einstellung sagt, dass der Dezember sie ueberstimmt",
+    /Im Dezember steht der Jahresrückblick/.test(STARTSEITE),
+    "sonst wundert sich jemand, warum die Reihe dasteht, obwohl der Schalter aus ist");
+
   pruefe("Die Ueberschrift steht nicht zweimal uebereinander",
     !/page\.addView\(MobileViews\.eyebrow\(this, "ELFIX Wrapped"\)\)/.test(HAUPT),
     "die erste Karte sagt es ohnehin - der Seitenkopf nahm ihr nur die Hoehe");
