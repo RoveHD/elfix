@@ -3,6 +3,68 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.84.0 — 1. September 2026
+
+Drei Meldungen zum Jahresrückblick, alle aus derselben Runde wie 1.83.0 — und
+eine davon ist keine Politur, sondern ein Fehler, der nur manchmal auftrat.
+
+**Die Knöpfe waren nicht immer zu sehen.** „Zurück" und „Weiter" hingen unten am
+Inhalt: der Rückblick stand auf einer gewöhnlichen Seite, und die rollt. Bei
+einer kurzen Karte passte das gerade noch aufs Bild; bei einer langen — der Mix
+mit fünf Balken, die Monatsreihe, die Nebenbei-Liste — rutschten sie unter den
+Falz. Genau deshalb „nicht immer": es hing daran, auf welcher Karte man stand.
+
+Am Fernseher war es schlimmer als auf dem Telefon. Dort gibt es keinen Daumen
+zum Schieben; man kommt an einen Knopf nur über den Fokus, und einen Knopf, den
+man nicht sieht, sucht man nicht.
+
+Ein Jahresrückblick ist auch keine Seite zum Rollen — er ist eine Folge von
+Bildern, und da gehört die Bedienung jedes Mal an dieselbe Stelle. Jetzt nimmt
+die Karte den Platz, der übrig bleibt, Punkte und Knöpfe stehen fest darunter,
+und was in der Karte nicht aufgeht, rollt innerhalb der Karte.
+
+**Der Hintergrund wechselte von Karte zu Karte.** Nachgezählt: einundzwanzig
+Karten, davon zwölf ganz ohne Hintergrund und die übrigen mit fünf
+verschiedenen Bildern. Jede Karte, die von einem Titel handelte, trug dessen
+Poster; die mit bloßen Zahlen trugen nichts. Beim Blättern also Foto, leere
+Fläche, anderes Foto in anderer Farbe.
+
+Jetzt liegt hinter allen dasselbe Bild. Wo ein bestimmter Titel gemeint ist,
+steht er weiterhin als Poster *auf* der Karte — dort fällt er auch auf, während
+ihn als weichgezeichneten Hintergrund ohnehin niemand als „seinen" erkannt hat.
+Und das Bild wird jetzt entsättigt statt verstärkt: sonst hinge die Farbe der
+ganzen Bühne daran, welches Poster jemand zufällig als Serie des Jahres hat.
+Auf beiden Geräten dieselbe Zahl.
+
+**Und jedes Jahr sah aus wie das davor.** Beide Geräte bauten ihre Karten in
+der Reihenfolge, in der sie im Quelltext stehen, und zeigten sie auch so: 2027
+wie 2026, 2026 wie 2025 — dieselben Karten, dieselbe Folge, nur andere Zahlen
+darauf.
+
+Jetzt wird gemischt, mit der Jahreszahl als Saat. Das heißt beides zugleich:
+verschieden von Jahr zu Jahr, und innerhalb eines Jahres immer gleich — wäre es
+echter Zufall, sähe der Rückblick bei jedem Öffnen anders aus, und man könnte
+niemandem zeigen, was man gerade gesehen hat.
+
+Der Rahmen bleibt: der Auftakt eröffnet, das Finale schließt, und Zeit und
+Folgen stehen gleich danach, weil sie den Maßstab setzen. Serie und Film des
+Jahres fallen nie weg — sie wandern nur. Gezeigt werden höchstens acht der
+übrigen Karten, und darin liegt der Unterschied: acht von dreizehn möglichen
+sind eine Auswahl, dreizehn von dreizehn sind eine Liste. Wer wenig geschaut
+hat, verliert dabei nichts, und die vollständigen Zahlen stehen ohnehin weiter
+auf der Statistikseite.
+
+Erfunden wird nichts: die Regel darf kürzen und ordnen, nicht hinzufügen. Sie
+steht im geteilten Kern, und beide Geräte fragen sie — sonst erzählten zwei
+Geräte denselben Rückblick verschieden.
+
+Am Bau, nicht am Programm: ein Untermodul-Verweis auf einen Commit, den es
+nirgends gibt, ließ seit fünf Tagen jeden Lauf vier Warnungen ausgeben; die
+GitHub-Actions laufen wieder auf der Node-Fassung, die sie angeben; und der
+Gradle-Zwischenspeicher wird zum ersten Mal überhaupt gespeichert — ein
+zurückgelassener Daemon hielt die Sperrdateien offen, und das Archiv fiel
+jedes Mal ganz weg.
+
 ## 1.83.0 — 1. September 2026
 
 Eine Meldung, drei Punkte, alle zum Jahresrückblick — und einer davon deckte
