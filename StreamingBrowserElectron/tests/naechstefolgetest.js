@@ -114,6 +114,48 @@ pruefe("aber keine fremde Serie",
 pruefe("und keinen Ruecksprung",
   fortschritt.darfNaechsteFolgeSein(folge(1, 2), folge(1, 3), null) === false);
 
+/* ----------------------------------------------- 1b. Die andere Richtung */
+//
+// Eine Folge zurueck. Am Fernseher haengt sie an derselben Sprungtaste, die
+// vorher den Anbieter wechselte - und bis dahin gab es sie ueberhaupt nicht:
+// von einer laufenden Folge zurueck kam man nur ueber die Anbieterseite.
+//
+// Die Regel ist die kuerzere von beiden. Vorwaerts muss geraten werden, wo die
+// Serie aufhoert; rueckwaerts steht die Grenze fest, und sie heisst Folge 1.
+
+pruefe("Mitten in der Staffel kommt die Folge davor",
+  fortschritt.vorigeEpisodeUrl(folge(1, 4), null) === folge(1, 3));
+
+pruefe("Dafuer braucht es keine bekannte Serienlaenge",
+  fortschritt.vorigeEpisodeUrl(folge(3, 12), null) === folge(3, 11),
+  "die Grenze steht in der Adresse, nicht im Eintrag");
+
+pruefe("Vor Folge 1 kommt nichts",
+  fortschritt.vorigeEpisodeUrl(folge(1, 1), null) === "");
+
+// Ueber die Staffelgrenze geht es nicht zurueck: wie viele Folgen die *vorige*
+// Staffel hat, sagt keine der Auskuenfte, die hier vorliegen. Eine Zahl zu
+// raten hiesse, auf einer Adresse zu landen, die es nicht gibt.
+pruefe("Auch am Staffelanfang wird nicht in die vorige Staffel geraten",
+  fortschritt.vorigeEpisodeUrl(folge(2, 1), { seasonLastEpisode: 25 }) === "");
+
+pruefe("Gesperrte Folgen werden auch rueckwaerts uebersprungen",
+  fortschritt.vorigeEpisodeUrl(folge(1, 10),
+    { unplayableSeason: 1, unplayableEpisodes: [9] }) === folge(1, 8));
+
+pruefe("Sind alle davor gesperrt, gibt es keine vorige Folge",
+  fortschritt.vorigeEpisodeUrl(folge(1, 3),
+    { unplayableSeason: 1, unplayableEpisodes: [1, 2] }) === "");
+
+pruefe("Was keine Folge ist, hat auch keine davor",
+  fortschritt.vorigeEpisodeUrl(BASIS, null) === "");
+
+// Eine Adresse ohne Staffel im Pfad - replaceEpisodeUrl verlangt beides und
+// antwortet sonst mit nichts. Genau dafuer gibt es den Rueckfall.
+pruefe("Auch eine Adresse ohne Staffel zaehlt herunter",
+  fortschritt.vorigeEpisodeUrl("https://s.to/serie/tatort/folge-7", null)
+    === "https://s.to/serie/tatort/folge-6");
+
 /* ------------------------------------------------- 2. Die Zulieferung */
 
 /**
@@ -229,6 +271,9 @@ pruefe("Seite und Regel zusammen fuehren ueber die Staffelgrenze",
 
 pruefe("Android holt die naechste Folge aus der geteilten Regel",
   FOLGEN.includes("fortschritt.nextEpisodeContinueUrl"));
+pruefe("und die vorige aus derselben Datei",
+  FOLGEN.includes("fortschritt.vorigeEpisodeUrl"),
+  "sonst rechnete Android sie sich wieder selbst aus - genau daran ist die alte Taste 9 gescheitert");
 pruefe("und fragt denselben Torwaechter davor",
   FOLGEN.includes("fortschritt.darfNaechsteFolgeSein"));
 pruefe("und fragt die geteilte Regel, wo die Leiste ueberhaupt hingehoert",
@@ -347,6 +392,40 @@ pruefe("Der Autoplay haengt am Messtakt und nicht an einem eigenen",
 // einer zu viel.
 pruefe("Wer der Runde folgt, laesst den Zaehler gar nicht erst anfangen",
   /zaehlerErlaubt[\s\S]{0,400}mitschauen\.folgtDerRunde\(\)/.test(HAUPT));
+
+/* -------------------------------------- 4. Die Sprungtasten am Fernseher */
+//
+// Sie wechselten den Anbieter. Das war die falsche Aufgabe fuer sie: wer am
+// Fernseher eine Serie schaut, will die naechste Folge - der Anbieter steht
+// ohnehin einen Druck entfernt auf der Startseite. Die Folge davor dagegen war
+// von der Fernbedienung aus gar nicht zu erreichen.
+
+const sprungtasten = HAUPT.match(
+  /case KeyEvent\.KEYCODE_MEDIA_REWIND:[\s\S]{0,600}?case KeyEvent\.KEYCODE_MEDIA_PLAY_PAUSE:/);
+pruefe("Die Sprungtasten stehen noch in der Weiche", Boolean(sprungtasten));
+pruefe("Zurueck blaettert eine Folge zurueck",
+  Boolean(sprungtasten) && /KEYCODE_MEDIA_PREVIOUS:[\s\S]{0,200}?vorigeFolgeStarten\("Fernbedienung"\)/
+    .test(sprungtasten[0]));
+pruefe("Vor blaettert eine Folge weiter",
+  Boolean(sprungtasten) && /KEYCODE_MEDIA_NEXT:[\s\S]{0,200}?naechsteFolgeStarten\("Fernbedienung"\)/
+    .test(sprungtasten[0]));
+pruefe("und beide nur dort, wo eine Folge laufen kann",
+  Boolean(sprungtasten) && (sprungtasten[0].match(/if \(!onWebsite\) return false;/g) || []).length === 2,
+  "auf der Startseite gehoert die Taste der Oberflaeche");
+pruefe("Der Anbieterwechsel per Taste ist damit weg",
+  !HAUPT.includes("cycleProvider"),
+  "eine Weiche, die niemand mehr aufruft, waere nur noch eine Falle fuer den naechsten Leser");
+
+// Der Weg dahinter ist derselbe wie beim Knopf: Vorhang, Autostart, Vollbild.
+pruefe("Auch rueckwaerts wird die Folge begleitet gestartet",
+  /private void vorigeFolgeStarten\([\s\S]{0,1200}?folgeWirklichOeffnen\(provider, ziel, anlass\)/
+    .test(HAUPT));
+pruefe("Ein laufender Folgenwechsel schluckt den zweiten Druck",
+  /private void vorigeFolgeStarten\([\s\S]{0,300}?folgenwechselLaeuft\(\)/.test(HAUPT),
+  "sonst rauscht ein liegengebliebener Finger durch eine halbe Staffel");
+pruefe("Am Anfang der Serie gibt es eine Auskunft und keinen Rauswurf",
+  /vorigeFolgeStarten\([\s\S]{0,1200}?keine vorherige Folge[\s\S]{0,200}?\}/.test(HAUPT)
+    && !/vorigeFolgeStarten\([\s\S]{0,1200}?folgenendeAmFernseher\(\)/.test(HAUPT));
 
 const bestanden = pruefungen.filter(Boolean).length;
 console.log(`${bestanden}/${pruefungen.length} bestanden`);

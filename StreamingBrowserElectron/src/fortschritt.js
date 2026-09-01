@@ -806,6 +806,60 @@ function nextEpisodeContinueUrl(currentUrl, preferredUrl = "", entry = null, met
   return "";
 }
 
+/**
+ * Welche Folge <em>vor</em> dieser kommt.
+ *
+ * <p>Das Gegenstueck zu {@link nextEpisodeContinueUrl}, und bewusst die
+ * kuerzere Regel. Vorwaerts muss geraten werden, wo die Serie aufhoert -
+ * rueckwaerts steht die Grenze fest: Folge 1. Was es dazwischen zu wissen gibt,
+ * steht schon in den Angaben der Seite, naemlich welche Nummern sich nicht
+ * abspielen lassen ("[In E10 enthalten]"); die werden hier ebenso
+ * uebersprungen wie in der anderen Richtung.
+ *
+ * <p>Ueber die Staffelgrenze geht es nicht zurueck. Wie viele Folgen die
+ * <em>vorige</em> Staffel hat, sagt keine der Auskuenfte, die hier vorliegen -
+ * {@code seasonLastEpisode} gilt fuer die laufende. Eine Zahl zu raten hiesse,
+ * auf einer Adresse zu landen, die es nicht gibt; die ehrliche Antwort ist
+ * "keine".
+ *
+ * <p>Der Torwaechter {@link darfNaechsteFolgeSein} hat hier kein Gegenstueck
+ * und braucht auch keins: die Adresse entsteht aus der laufenden, nicht aus
+ * etwas, das die Anbieterseite gemeldet hat. Geprueft wird, was von aussen
+ * kommt - und von aussen kommt hier nichts.
+ */
+function vorigeEpisodeUrl(currentUrl, meta = null) {
+  const identity = episodeIdentity(currentUrl);
+  if (!identity) return "";
+  const gesperrt = unplayableEpisodeSet(meta, identity.season);
+  let vorige = identity.episode - 1;
+  while (vorige >= 1 && gesperrt.has(vorige)) vorige -= 1;
+  if (vorige < 1) return "";
+  return replaceEpisodeUrl(currentUrl, identity.season, vorige)
+    || setzeFolgenNummer(currentUrl, vorige);
+}
+
+/**
+ * Dieselbe Adresse mit einer anderen Folgennummer - auch ohne Staffel im Pfad.
+ *
+ * <p>{@link replaceEpisodeUrl} verlangt beides, Staffel und Folge, und
+ * antwortet sonst mit nichts. Fuer eine Adresse, die nur {@code /folge-7}
+ * traegt, ist das der Rueckfall - dieselbe Stelle, an der die andere Richtung
+ * {@link incrementEpisodeUrl} benutzt.
+ */
+function setzeFolgenNummer(value, episode) {
+  try {
+    const url = new URL(value);
+    let changed = false;
+    url.pathname = url.pathname.replace(/\/(episode|folge)-\d+(?=\/?$)/i, (_match, label) => {
+      changed = true;
+      return `/${label}-${episode}`;
+    });
+    return changed ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
 function appendMediaActivity(entry, url, label) {
   if (!entry) return;
   const activity = Array.isArray(entry.activity) ? entry.activity : [];
@@ -1857,6 +1911,7 @@ module.exports = {
   absoluteHttpUrl,
   unplayableEpisodeSet,
   nextEpisodeContinueUrl,
+  vorigeEpisodeUrl,
   darfNaechsteFolgeSein,
   appendMediaActivity,
   hasNewEpisodeAfterCompletedFavorite,
@@ -1893,6 +1948,7 @@ module.exports = {
   favoriteProgressTargetLabel,
   incrementEpisodeUrl,
   replaceEpisodeUrl,
+  setzeFolgenNummer,
   firstEpisodeUrl,
   isFavoriteProgressUrl,
   isTrackableMediaUrl,

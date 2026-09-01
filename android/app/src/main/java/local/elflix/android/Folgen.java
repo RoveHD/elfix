@@ -232,6 +232,40 @@ final class Folgen {
     }
 
     /**
+     * Welche Folge vor dieser kommt.
+     *
+     * <p>Dieselbe Zulieferung wie bei {@link #naechste}, nur eine Auskunft
+     * weniger: der Eintrag traegt die Grenzen der Serie, und die zaehlen nur
+     * vorwaerts. Rueckwaerts steht die Grenze in der Adresse selbst - vor
+     * Folge 1 kommt nichts.
+     *
+     * <p>Ein Torwaechter fehlt hier absichtlich. Die Adresse rechnet der Kern
+     * aus der laufenden Folge aus; sie stammt nicht von der Anbieterseite, und
+     * geprueft wird, was von dort kommt.
+     *
+     * @param laufend       die Folgenseite, bei der wir stehen
+     * @param seitenangaben was die Seite ueber die Staffel weiss (darf {@code null} sein)
+     */
+    void vorige(String laufend, JSONObject seitenangaben, Antwort antwort) {
+        if (antwort == null) return;
+        if (kern == null || !kern.istBereit() || laufend == null || !laufend.startsWith("http")) {
+            antwort.fertig("");
+            return;
+        }
+        JSONArray argumente = new JSONArray();
+        argumente.put(laufend);
+        argumente.put(seitenangaben == null ? JSONObject.NULL : seitenangaben);
+        kern.rufe("fortschritt.vorigeEpisodeUrl", argumente, (wert, fehler) -> {
+            if (fehler != null) {
+                Log.d(TAG, "Vorige Folge nicht bestimmt: " + fehler);
+                antwort.fertig("");
+                return;
+            }
+            antwort.fertig(text(wert));
+        });
+    }
+
+    /**
      * Gehoert die Wiedergabeleiste auf diese Seite?
      *
      * <p>Dieselbe Frage, die der Rechner mit {@code autoplaySchalterSeite}

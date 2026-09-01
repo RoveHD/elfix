@@ -8152,10 +8152,32 @@ public class MainActivity extends Activity {
      * dran ist - ihn noch einmal waehlen zu lassen waere ein Schritt zu viel.
      * Und nur fuer Serien: ein Film hat keine Folgen, und YouTube fuehrt
      * ohnehin keine.
+     *
+     * <p>Was hier keine Uebersicht bekommt, faellt deshalb nicht auf die
+     * Anbieterseite: ist die Adresse selbst abspielbar, geht es geradewegs in
+     * den begleiteten Start - Vorhang, Autostart, Vollbild. Genau das ist der
+     * Weg, auf dem Filme bisher verlorengingen.
      */
     private void serieOeffnen(Provider provider, String url, String titel) {
         if (provider == null || url == null || url.isEmpty()) return;
         if (serienuebersicht == null || !uebersichtLohnt(url)) {
+            // Kein Umweg ueber die Uebersicht - und dann ist die Frage, warum
+            // nicht. Ist die Adresse selbst schon abspielbar (ein Film, eine
+            // bestimmte Folge), gehoert sie gestartet und nicht ausgestellt.
+            //
+            // **Das war der Fehler bei Filmen.** Gemeldet vom Fernseher:
+            // AniWorld und s.to starteten, Filmo nicht. Die beiden ersten
+            // fuehren Serien, gehen also ueber die Uebersicht, und von dort
+            // fuehrt jede Folge in den begleiteten Start. Ein Film hat keine
+            // Uebersicht - er fiel hier heraus und landete stattdessen auf der
+            // nackten Anbieterseite: kein Ladevorhang, kein Autostart, kein
+            // Vollbild. Wer einen Film aus der Suche, aus den Vorschlaegen, aus
+            // dem Kalender oder aus der Entdeckung waehlte, musste sich den
+            // Hoster von Hand suchen.
+            if (direktStartLohnt(url)) {
+                direktStarten(provider, url, titel);
+                return;
+            }
             openProvider(provider, url);
             return;
         }
@@ -8190,6 +8212,46 @@ public class MainActivity extends Activity {
         // Ein Film hat keine Folgen. Erkennbar an der Adresse: eine Serie
         // traegt /staffel-N oder /episode-N, ein Film nicht.
         return Folgen.folgenText(url).isEmpty() ? adresseSiehtNachSerieAus(url) : true;
+    }
+
+    /**
+     * Ob diese Adresse fuer sich genommen schon etwas ist, das laufen kann.
+     *
+     * <p>Zweierlei zaehlt: eine bestimmte Folge (die Adresse traegt Staffel und
+     * Folge) und ein Film (sie sieht nach keiner Serie aus). Alles dazwischen -
+     * die Serienseite ohne Folge - ist kein Startpunkt: dort gibt es nichts
+     * abzuspielen, und ein Autostart darauf wartete neunzig Sekunden auf einen
+     * Player, den diese Seite gar nicht hat.
+     *
+     * <p>YouTube faellt heraus. Es bringt seinen eigenen Weg mit, und die Kette
+     * hier klickt Hosterlisten an, die es dort nicht gibt.
+     */
+    private boolean direktStartLohnt(String url) {
+        if (url == null || !url.startsWith("http")) return false;
+        if (youtube != null && youtube.istYoutube(url)) return false;
+        if (!Folgen.folgenText(url).isEmpty()) return true;
+        return !adresseSiehtNachSerieAus(url);
+    }
+
+    /**
+     * Eine Adresse hinter dem Vorhang starten - ohne Umweg.
+     *
+     * <p>Derselbe Ablauf wie bei "Weiterschauen" ({@code favoriteOeffnen}), nur
+     * kommt der Titel hier von dort, wo er angetippt wurde. Gibt es schon einen
+     * Eintrag zu dieser Adresse, wird sein Stand mitgenommen: ein Film, den man
+     * zur Haelfte gesehen hat, faengt nicht wieder vorn an.
+     */
+    private void direktStarten(Provider provider, String url, String titel) {
+        Favorite eintrag = bestand == null ? null : bestand.zuAdresse(url);
+        double stelle = eintrag == null ? 0 : eintrag.currentTime();
+        // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
+        if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+        if (eintrag != null) activeFavoriteId = eintrag.id();
+        startBegleiten(provider, url, startTitelFuer(titel, url), stelle);
+        armAutoStart(url, stelle);
+        // preserveFavoriteProgress nur mit Eintrag: ohne einen gibt es nichts
+        // zu bewahren, und der vorige duerfte den Fortschritt nicht bekommen.
+        openProvider(provider, url, eintrag != null);
     }
 
     /**
@@ -10588,14 +10650,24 @@ public class MainActivity extends Activity {
                 scrollActiveWebView(dp(360));
                 return true;
 
-            // Media transport: the two skip keys change ELFIX tab, the middle one drives the video.
+            // Die beiden Sprungtasten blaettern durch die Folgen. Bisher
+            // wechselten sie den Anbieter - und das war die falsche Aufgabe fuer
+            // sie: wer am Fernseher eine Serie schaut, will die naechste Folge
+            // und nicht eine andere Seite. Der Anbieter steht ohnehin auf der
+            // Startseite in seinem Rost (Taste 3), also einen Druck entfernt;
+            // die Folge davor war von hier aus gar nicht zu erreichen.
+            //
+            // Vorwaerts ist derselbe Weg wie die 9 und wie der Knopf in der
+            // Wiedergabeleiste - dieselbe geteilte Regel, derselbe Ladevorhang.
             case KeyEvent.KEYCODE_MEDIA_REWIND:
             case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
-                cycleProvider(-1);
+                if (!onWebsite) return false;
+                vorigeFolgeStarten("Fernbedienung");
                 return true;
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
             case KeyEvent.KEYCODE_MEDIA_NEXT:
-                cycleProvider(1);
+                if (!onWebsite) return false;
+                naechsteFolgeStarten("Fernbedienung");
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 if (fullscreen) tapFullscreenCentre();
@@ -11190,6 +11262,48 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Eine Folge zurueck.
+     *
+     * <p>Derselbe Weg wie {@link #naechsteFolgeStarten}, nur in die andere
+     * Richtung - und um zweierlei kuerzer:
+     *
+     * <ul>
+     *   <li>Kein Torwaechter. Die Adresse kommt aus dem Kern, gerechnet aus der
+     *       laufenden Folge; sie stammt nicht von der Anbieterseite. Geprueft
+     *       wird, was von dort gemeldet wird, und hier meldet niemand etwas.
+     *   <li>Kein Weg nach Hause. Das Ende einer Serie ist ein Ende; ihr Anfang
+     *       ist keins. Wer vor Folge 1 zurueckdrueckt, bekommt eine Auskunft
+     *       und bleibt, wo er ist.
+     * </ul>
+     */
+    private void vorigeFolgeStarten(String anlass) {
+        if (folgen == null || activeProvider == null) return;
+        if (folgenwechselLaeuft()) {
+            Log.i(TAG, "Folgenwechsel laeuft bereits - " + anlass + " ignoriert");
+            return;
+        }
+        final Provider provider = activeProvider;
+        final String laufend = laufendeFolgenAdresse(currentWebView());
+        if (laufend == null || !laufend.startsWith("http")) {
+            showToast("Keine Folgenseite");
+            return;
+        }
+        // Der Stand der laufenden Folge, bevor die Seite eine andere ist.
+        if (messung != null) messung.jetztMessen();
+
+        folgenwechselSeit = SystemClock.uptimeMillis();
+        folgen.vorige(laufend, seitenAngabenFuer(laufend), ziel -> {
+            if (ziel.isEmpty()) {
+                folgenwechselSeit = 0;
+                Log.i(TAG, "FOLGE zurueck (" + anlass + ") abgebrochen - keine vorige Folge");
+                showToast("Hier gibt es keine vorherige Folge");
+                return;
+            }
+            folgeWirklichOeffnen(provider, ziel, anlass);
+        });
+    }
+
+    /**
      * Nach der naechsten Folge fragen - und zweimal nachfassen.
      *
      * <p>Beim Seitenende ist die Antwort meist noch leer: die Grenzen der Serie
@@ -11755,15 +11869,6 @@ public class MainActivity extends Activity {
 
     private WebView currentWebView() {
         return activeProvider == null ? null : webViews.get(activeProvider.id);
-    }
-
-    private void cycleProvider(int direction) {
-        if (providers == null || providers.isEmpty()) return;
-        int index = activeProvider == null ? 0 : providers.indexOf(activeProvider);
-        if (index < 0) index = 0;
-        int nextIndex = (index + direction + providers.size()) % providers.size();
-        Provider provider = providers.get(nextIndex);
-        openProvider(provider, provider.lastUrl.isEmpty() ? provider.startUrl : provider.lastUrl);
     }
 
     private void showFullscreen(View view, WebChromeClient.CustomViewCallback callback) {

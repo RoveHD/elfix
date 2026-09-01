@@ -190,6 +190,49 @@ const SKRIPT = seitendaten.uebersichtSkript();
     "lieber keine Auskunft als eine erfundene");
 }
 
+/* ------------------------------- Und was keine Uebersicht bekommt ---------- */
+//
+// Der zweite Teil derselben Weiche, und der gemeldete Fehler sass hier: nicht
+// alles, was jemand antippt, ist eine Serie. Ein Film hat keine Staffeln, also
+// faellt er aus der Uebersicht heraus - und landete bisher auf der nackten
+// Anbieterseite, ohne Ladevorhang, ohne Autostart, ohne Vollbild. Gemeldet vom
+// Fernseher: AniWorld und s.to starteten, die Filme von filmo.to nicht.
+//
+// Geprueft am Quelltext, weil die Weiche in MainActivity steht und dort keine
+// reine Rechnung ist: sie oeffnet Ansichten.
+{
+  const fs2 = require("fs");
+  const path2 = require("path");
+  const HAUPT = fs2.readFileSync(
+    path2.join(__dirname, "..", "..", "android/app/src/main/java/local/elflix/android/MainActivity.java"),
+    "utf8");
+
+  pruefe("Ohne Uebersicht wird gestartet und nicht nur geoeffnet",
+    /!uebersichtLohnt\(url\)\) \{[\s\S]{0,1500}?if \(direktStartLohnt\(url\)\) \{\s*direktStarten\(provider, url, titel\);/
+      .test(HAUPT),
+    "sonst steht der Film auf der Anbieterseite und niemand hat ihn angefangen");
+
+  pruefe("Der direkte Start zieht denselben Vorhang wie Weiterschauen",
+    /private void direktStarten\([\s\S]{0,900}?startBegleiten\(provider, url,[\s\S]{0,300}?armAutoStart\(url, stelle\)/
+      .test(HAUPT));
+
+  pruefe("und nimmt einen gespeicherten Stand mit",
+    /private void direktStarten\([\s\S]{0,400}?bestand\.zuAdresse\(url\)[\s\S]{0,200}?currentTime\(\)/
+      .test(HAUPT),
+    "ein halb gesehener Film faengt nicht wieder vorn an");
+
+  // Die Grenze der neuen Weiche. Eine Serienseite ohne Folge ist kein
+  // Startpunkt - dort gibt es keinen Player, und der Autostart wartete
+  // neunzig Sekunden auf einen, den es nie geben wird.
+  pruefe("Eine Serienseite ohne Folge wird nicht gestartet",
+    /private boolean direktStartLohnt\(String url\) \{[\s\S]{0,600}?return !adresseSiehtNachSerieAus\(url\);/
+      .test(HAUPT));
+  pruefe("und YouTube ebenso wenig",
+    /private boolean direktStartLohnt\(String url\) \{[\s\S]{0,400}?youtube\.istYoutube\(url\)\) return false;/
+      .test(HAUPT),
+    "es bringt seinen eigenen Weg mit");
+}
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);
