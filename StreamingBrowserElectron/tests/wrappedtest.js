@@ -325,10 +325,40 @@ pruefe("Von Haus aus steht sie auf aus",
   /showReview: raw\?\.home\?\.showReview === true/.test(MAIN)
   && /showReview: false/.test(MAIN),
   "nur ein ausdrueckliches Ja blendet den Punkt ein");
-pruefe("Eingeschaltet steht er da",
-  /if \(settings\.home\?\.showReview === true\) \{[\s\S]{0,80}knopf\.classList\.remove\("is-hidden"\);/.test(RENDERER));
-pruefe("In der Wrapped-Saison ebenfalls, auch ohne die Einstellung",
-  /knopf\.classList\.toggle\("is-hidden", !antwort\?\.saison\)/.test(RENDERER));
+pruefe("Eingeschaltet steht er da - und in der Saison auch ohne die Einstellung",
+  /knopf\.classList\.toggle\("is-hidden", !saison && settings\.home\?\.showReview !== true\)/
+    .test(RENDERER));
+
+// --- Und im Dezember leuchtet er ---
+//
+// Der Dezember blendete den Eintrag bis hierher nur ein. Damit sass er als
+// neunter Punkt in einer Liste aus acht Punkten - dieselbe Farbe, dieselbe
+// Hoehe, dieselbe Schrift -, und einen neunten Punkt bemerkt niemand.
+//
+// Der Unterschied zur Einstellung ist Absicht und keine Doppelung: wer die
+// Statistik selbst einschaltet, will sie dahaben und nicht angesprochen werden.
+// Nur die Saison ist der Fall, in dem ELFIX von sich aus etwas anbietet.
+pruefe("In der Saison leuchtet der Eintrag",
+  /knopf\.classList\.toggle\("is-saison", saison\)/.test(RENDERER)
+  && /\.home-side-link\.is-saison \{[\s\S]*?animation: wrapped-pochen/.test(CSS),
+  "sonst ist er ein Punkt mehr in einer Liste, und den bemerkt niemand");
+pruefe("Eingeschaltet bleibt er unauffaellig",
+  !/settings\.home\?\.showReview === true[\s\S]{0,200}is-saison/.test(RENDERER),
+  "wer selbst danach gegriffen hat, will nicht angesprochen werden");
+pruefe("Die Jahreszahl steht daneben",
+  /marke\.textContent = String\(wrappedSaisonJahr\)/.test(RENDERER),
+  "Anfang Januar geht es noch um das vergangene Jahr");
+pruefe("Und der Klick fuehrt in der Saison geradewegs in die Karten",
+  /async function rueckblickOeffnen\(\)[\s\S]{0,400}wrappedOeffnen\(wrappedSaisonJahr\)/.test(RENDERER)
+  && /action === "review"\)[\s\S]{0,60}rueckblickOeffnen\(\)/.test(RENDERER),
+  "sonst liegt die Statistikseite mit Reitern und Ranglisten dazwischen");
+pruefe("Geht der Rueckblick nicht auf, bleibt die Statistikseite der Rueckfall",
+  /const geoeffnet = await wrappedOeffnen\(wrappedSaisonJahr\)[\s\S]{0,120}await showReview\(\)/
+    .test(RENDERER),
+  "ein Klick, der nichts tut, waere schlechter als einer, der woandershin fuehrt");
+pruefe("Ausserhalb der Saison bleibt es die Statistikseite",
+  /wrappedSaisonJahr = saison \? Number\(antwort\.jahr\) \|\| 0 : 0/.test(RENDERER),
+  "wer im Juli auf Rueckblick klickt, sucht die Zahlen");
 pruefe("Die Sichtbarkeit haengt an der Saison und nicht am Faelligsein",
   /saison: lage\.saison,/.test(MAIN),
   "die Saison bleibt stehen, nachdem man den Rueckblick gesehen hat - siehe oben");
@@ -545,6 +575,22 @@ pruefe("Die Vignette liegt unter dem Text und nicht darueber",
   && /\.wrapped-stage::after \{[\s\S]{0,400}?z-index: 2;/.test(CSS),
   "sonst legt sie sich an den Raendern ueber die Fussnote");
 
+// --- Und der Hinweis, den man uebersah ---------------------------------------
+
+pruefe("Der Hinweis auf der Startseite faellt auf",
+  /\.wrapped-hinweis \{[\s\S]*?border: 1px solid rgba\(var\(--accent-rgb\)/.test(CSS)
+  && /\.wrapped-hinweis::before \{[\s\S]*?animation: wrapped-schimmer/.test(CSS),
+  "als schmale Zeile sah er aus wie jede andere Karte und wurde ueberscrollt");
+pruefe("Er bleibt trotzdem ein Banner und wird kein Fenster",
+  /<div class="wrapped-hinweis is-hidden" id="wrappedHinweis">/.test(HTML),
+  "auffallen heisst gross und hell, nicht ungefragt im Weg");
+pruefe("Er sagt, warum er da ist",
+  /anlass\.textContent = "Nur im Dezember"/.test(RENDERER),
+  "sonst fragt man sich beim zweiten Mal, ob das jetzt so bleibt");
+pruefe("Und er nennt eine Zahl statt einer Aufforderung",
+  /function wrappedHinweisZeile\(daten, jahr\)/.test(RENDERER)
+  && /daten\?\.sekundenBekannt > 0 && daten\?\.sekunden > 0/.test(RENDERER),
+  "eine Aufforderung kann jeder schreiben, die Zahl kann nur ELFIX");
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);

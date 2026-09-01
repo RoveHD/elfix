@@ -4018,9 +4018,14 @@ public class MainActivity extends Activity {
         addSpacing(page, MobileViews.sectionHeader(this, "Dein Rückblick", "Alle Zahlen",
             () -> zeigeRueckblick("alles")), MobileViews.SECTION_GAP);
         if (saison) {
-            addSpacing(page, settingsCard("ELFIX Wrapped " + wrappedSaisonJahr,
-                "Dein Jahr als Geschichte - dieselben Zahlen, in Karten erzählt.",
-                "Ansehen", () -> zeigeWrapped(wrappedSaisonJahr)), MobileViews.ITEM_GAP);
+            // Im Dezember die auffaellige Fassung - und sie steht zuerst. Als
+            // gewoehnliche Karte sass sie in einer Startseite voller Karten als
+            // eine weitere und wurde ueberscrollt.
+            addSpacing(page, Rueckblick.saisonAnstrich(this,
+                settingsCard("ELFIX Wrapped " + wrappedSaisonJahr,
+                    "Dein Jahr als Geschichte - dieselben Zahlen, in Karten erzählt.",
+                    "Jetzt ansehen", () -> zeigeWrapped(wrappedSaisonJahr)),
+                "Nur im Dezember", MobileViews.CARD_RADIUS), MobileViews.ITEM_GAP);
         }
         addSpacing(page, settingsCard("Was du geschaut hast",
             "Gemessene Wiedergabezeit, Folgen, Schautage und deine meistgesehenen Titel.",
@@ -4063,7 +4068,11 @@ public class MainActivity extends Activity {
             saison
                 ? "Dein Jahr als Geschichte - dieselben Zahlen, in Karten erzählt."
                 : "Dein Jahr als Geschichte. Im Dezember steht es hier von selbst.",
-            "Ansehen", () -> zeigeWrapped(jahr));
+            saison ? "Jetzt ansehen" : "Ansehen", () -> zeigeWrapped(jahr));
+        // Aus drei Metern Entfernung faellt eine Karte, die aussieht wie die
+        // daneben, gar nicht auf. In der Saison bekommt sie deshalb den Akzent
+        // - der Knopf darin und sein Fokus bleiben unangetastet.
+        if (saison) Rueckblick.saisonAnstrich(this, karte, "Nur im Dezember", TvViews.CARD_RADIUS);
         // Die Marke gehoert an den Knopf und nicht an die Karte: fokussierbar
         // ist der Knopf, und nur was den Fokus bekommt, merkt sich die Seite.
         View knopf = karte.findViewWithTag("karten-knopf");

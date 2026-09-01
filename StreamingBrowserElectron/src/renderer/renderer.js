@@ -2234,7 +2234,7 @@ async function handleHomeAction(action) {
     return;
   }
   if (action === "review") {
-    await showReview();
+    await rueckblickOeffnen();
     return;
   }
   if (action === "help") {
@@ -3534,11 +3534,14 @@ function wrappedRuhig() {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
 }
 
+// Gibt zurueck, ob der Rueckblick wirklich aufgegangen ist. Daran haengt der
+// Eintrag in der Seitenleiste: geht er nicht auf, fuehrt der Klick auf die
+// Statistikseite statt ins Leere.
 async function wrappedOeffnen(jahr) {
   const antwort = await api.getWrapped?.(jahr).catch(() => null);
   if (!antwort?.daten) {
     showToast("Für dieses Jahr gibt es noch zu wenig zu erzählen");
-    return;
+    return false;
   }
   wrappedJahr = antwort.jahr;
   wrappedSeiten = wrappedBauen(antwort.daten, antwort.jahr);
@@ -3549,6 +3552,7 @@ async function wrappedOeffnen(jahr) {
   // Gesehen ist gesehen: der Hinweis auf der Startseite verschwindet, und im
   // Dezember draengt sich nichts ein zweites Mal auf.
   api.markWrappedSeen?.(antwort.jahr).then(() => renderWrappedHinweis()).catch(() => {});
+  return true;
 }
 
 function wrappedSchliessen() {
@@ -4084,25 +4088,78 @@ function wrappedFinale(daten, jahr, zeitBekannt, bild) {
   return wrappedSeite("is-finale", [karte, schluss], bild);
 }
 
-// Ob der Punkt "Rueckblick" in der Seitenleiste steht.
+// Welches Jahr gerade Saison hat - 0 heisst: keine.
 //
-// Von Haus aus nicht: eine Statistik ist etwas fuer den, der sie sucht, und
-// nicht fuer jeden, der die App oeffnet. Wer sie will, schaltet sie ein.
+// Steht hier, weil zwei Stellen es brauchen: der Eintrag in der Seitenleiste,
+// der im Dezember leuchtet, und der Klick darauf, der dann geradewegs in die
+// Karten fuehrt. Gesetzt wird der Wert von renderRueckblickEintrag; ohne
+// Saison bleibt er 0, und alles verhaelt sich wie im Rest des Jahres.
+let wrappedSaisonJahr = 0;
+
+// Ob der Punkt "Rueckblick" in der Seitenleiste steht - und wie.
 //
-// Im Dezember steht sie trotzdem da - dann aber wegen der Saison und nicht
-// wegen der Einstellung. Und ausdruecklich nicht nur, solange der
-// Jahresrueckblick noch ungesehen ist: er soll erreichbar bleiben, nachdem man
-// ihn einmal angesehen hat, sonst verschwindet der Weg dorthin genau in dem
-// Moment, in dem man ihn wiederfinden moechte.
+// Von Haus aus steht er nicht da: eine Statistik ist etwas fuer den, der sie
+// sucht, und nicht fuer jeden, der die App oeffnet. Wer sie will, schaltet sie
+// ein - und bekommt dann einen Eintrag wie jeden anderen. Das ist der Punkt:
+// wer selbst danach gegriffen hat, will nicht angesprochen werden.
+//
+// Im Dezember steht er trotzdem da - dann aber wegen der Saison und nicht wegen
+// der Einstellung, und deshalb sieht er auch anders aus. Bis hierher tat der
+// Dezember nur eines: er blendete den Eintrag ein. Damit sass er als neunter
+// Punkt in einer Liste aus acht, und einen neunten Punkt bemerkt niemand. Mit
+// `is-saison` bekommt er die Akzentfarbe, einen ruhigen Puls und die Jahreszahl
+// daneben - fuenf Wochen im Jahr, danach von selbst wieder wie vorher.
+//
+// Und ausdruecklich nicht nur, solange der Jahresrueckblick ungesehen ist: er
+// soll erreichbar bleiben, nachdem man ihn einmal angesehen hat, sonst
+// verschwindet der Weg dorthin genau in dem Moment, in dem man ihn
+// wiederfinden moechte.
 async function renderRueckblickEintrag() {
   const knopf = document.querySelector("#reviewSideLink");
   if (!knopf) return;
-  if (settings.home?.showReview === true) {
-    knopf.classList.remove("is-hidden");
-    return;
-  }
   const antwort = await api.getWrapped?.().catch(() => null);
-  knopf.classList.toggle("is-hidden", !antwort?.saison);
+  const saison = Boolean(antwort?.saison);
+  wrappedSaisonJahr = saison ? Number(antwort.jahr) || 0 : 0;
+
+  knopf.classList.toggle("is-hidden", !saison && settings.home?.showReview !== true);
+  knopf.classList.toggle("is-saison", saison);
+  knopf.title = saison ? `ELFIX Wrapped ${wrappedSaisonJahr} ansehen` : "Rückblick";
+
+  // Die Jahreszahl steht nur in der Saison da. Anfang Januar ist das noch das
+  // vergangene Jahr - ohne die Zahl waere genau dann unklar, worauf man klickt.
+  let marke = knopf.querySelector(".side-badge");
+  if (saison && wrappedSaisonJahr) {
+    if (!marke) {
+      marke = document.createElement("span");
+      marke.className = "side-badge";
+      knopf.append(marke);
+    }
+    marke.textContent = String(wrappedSaisonJahr);
+    marke.classList.remove("is-hidden");
+  } else if (marke) {
+    marke.remove();
+  }
+}
+
+// Wohin der Eintrag "Rueckblick" fuehrt.
+//
+// Ausserhalb der Saison auf die Statistikseite - dort stehen die Zahlen zum
+// Nachschlagen, und danach hat gesucht, wer im Juli auf "Rueckblick" klickt.
+//
+// In der Saison geradewegs in die Karten. Vorher lag dazwischen eine Seite mit
+// Reitern, Kacheln und Ranglisten, auf der man den Jahresrueckblick erst
+// finden musste - im Archiv, unter der Ueberschrift, als Jahreszahl in einer
+// Reihe. Der Weg war da, aber er war keiner, den man von selbst geht.
+//
+// Faellt der Rueckblick aus - zu wenig Daten, ein Fehler -, bleibt die
+// Statistikseite der Rueckfall. Ein Klick, der nichts tut, waere schlechter
+// als einer, der woandershin fuehrt.
+async function rueckblickOeffnen() {
+  if (wrappedSaisonJahr) {
+    const geoeffnet = await wrappedOeffnen(wrappedSaisonJahr).catch(() => false);
+    if (geoeffnet) return;
+  }
+  await showReview();
 }
 
 // Das Archiv auf der Statistikseite. Hier - und nicht in der Hauptnavigation -
@@ -4134,9 +4191,18 @@ async function renderWrappedArchiv() {
 
 // --- Der Hinweis auf der Startseite ------------------------------------------
 //
-// Dezent und nicht als Popup: der Rueckblick soll auffallen, nicht ueberfallen.
-// Er verschwindet, sobald er einmal geoeffnet wurde, und bleibt ueber das
-// Archiv erreichbar.
+// Kein Popup: der Rueckblick soll auffallen, nicht ueberfallen. Ein Fenster,
+// das sich beim Start vor die App legt, ist keine Einladung, sondern eine
+// Huerde - man klickt es weg, bevor man gelesen hat, was drinsteht.
+//
+// Auffallen muss er trotzdem, und das tat er nicht. Als schmale Zeile zwischen
+// den Reihen der Startseite sah er aus wie jede andere Karte und wurde
+// ueberscrollt. Jetzt ist er ein Banner mit eigener Hoehe, eigener Farbe und
+// einem Licht, das darueber wandert - dieselbe Stelle, dasselbe Verhalten, nur
+// nicht mehr zu uebersehen.
+//
+// Er verschwindet, sobald er einmal geoeffnet wurde, und bleibt ueber den
+// Eintrag in der Seitenleiste und das Archiv erreichbar.
 async function renderWrappedHinweis() {
   const kasten = document.querySelector("#wrappedHinweis");
   if (!kasten) return;
@@ -4147,19 +4213,41 @@ async function renderWrappedHinweis() {
   kasten.replaceChildren();
 
   const text = document.createElement("div");
+  // Warum das Banner ueberhaupt da ist. Ohne diese Zeile fragt man sich beim
+  // ersten Mal, was sich geaendert hat - und beim zweiten Mal, ob es bleibt.
+  const anlass = document.createElement("span");
+  anlass.className = "wrapped-hinweis-eyebrow";
+  anlass.textContent = "Nur im Dezember";
   const kopf = document.createElement("strong");
-  kopf.textContent = `✨ Dein ELFIX Wrapped ${antwort.jahr} ist da`;
+  kopf.textContent = `Dein ELFIX Wrapped ${antwort.jahr} ist da`;
   const unten = document.createElement("span");
-  unten.textContent = "Sieh dir dein Jahr an.";
-  text.append(kopf, unten);
+  unten.textContent = wrappedHinweisZeile(antwort.daten, antwort.jahr);
+  text.append(anlass, kopf, unten);
 
   const knopf = document.createElement("button");
   knopf.type = "button";
   knopf.className = "primary-action";
-  knopf.textContent = "Rückblick ansehen";
+  knopf.textContent = "Dein Jahr ansehen";
   knopf.addEventListener("click", () => { wrappedOeffnen(antwort.jahr).catch(() => {}); });
 
   kasten.append(text, knopf);
+}
+
+// Ein Satz mit einer Zahl darin statt "Sieh dir dein Jahr an".
+//
+// Der Unterschied ist nicht Kosmetik: eine Aufforderung kann jeder schreiben,
+// eine Zahl aus den eigenen Daten kann nur ELFIX. Wer "195 Folgen" liest,
+// weiss, dass dahinter etwas steht - und klickt aus einem anderen Grund.
+//
+// Gerechnet wird nichts: die Werte stehen bereits in der Auswertung, und was
+// nicht gemessen wurde, kommt hier auch nicht vor.
+function wrappedHinweisZeile(daten, jahr) {
+  const teile = [];
+  if (daten?.sekundenBekannt > 0 && daten?.sekunden > 0) teile.push(reviewDauer(daten.sekunden));
+  if (daten?.folgen > 0) teile.push(`${daten.folgen} ${daten.folgen === 1 ? "Folge" : "Folgen"}`);
+  if (daten?.tage > 0) teile.push(`${daten.tage} ${daten.tage === 1 ? "Tag" : "Tage"}`);
+  if (!teile.length) return `Dein ${jahr}, in Karten erzählt.`;
+  return `${teile.join(" · ")} — dein ${jahr}, in Karten erzählt.`;
 }
 
 

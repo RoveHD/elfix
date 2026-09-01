@@ -78,6 +78,60 @@ final class Rueckblick {
     private Rueckblick() {
     }
 
+    /* ------------------------------------------------------------ Im Dezember */
+
+    /**
+     * Der Dezember-Anstrich fuer die Karte, die in den Jahresrückblick führt.
+     *
+     * <p>Bis hierher tat die Saison nur eines: sie liess die Karte erscheinen.
+     * Damit stand sie in einer Startseite voller Karten als eine weitere -
+     * derselbe Rand, dieselbe Farbe, dieselbe Schrift. Gemeldet als "im
+     * Dezember muss das richtig aufleuchten": eine Karte, die aussieht wie
+     * jede andere, ist keine Einladung, sie ist eine Zeile.
+     *
+     * <p>Also der Akzent statt der Kartenfarbe, ein deutlicher Rand und eine
+     * Kopfzeile, die sagt, warum die Karte überhaupt da ist. Fünf Wochen im
+     * Jahr, danach von selbst wieder wie vorher - und ausdrücklich nur in der
+     * Saison: wer den Rückblick in den Einstellungen selbst eingeschaltet hat,
+     * will ihn dahaben und nicht angesprochen werden. Dieselbe Trennung wie am
+     * Rechner, wo der Eintrag in der Seitenleiste genau dann leuchtet.
+     *
+     * <p>Angefasst wird nur der Hintergrund und eine zusätzliche Zeile ganz
+     * oben. Was in der Karte steckt - beim Fernseher der fokussierbare Knopf -,
+     * bleibt, wie es ist; ein zweiter Kartenbau wäre eine zweite Gelegenheit,
+     * den Fokus zu verlieren.
+     *
+     * @param karte    eine Karte aus {@code settingsCard} oder {@code TvViews.infoCard}
+     * @param anlass    die Kopfzeile ganz oben; leer lässt sie weg
+     * @param radiusDp  der Eckenradius der Karte - am Fernseher ein anderer als
+     *                  auf dem Telefon, und ein Hintergrund mit fremdem Radius
+     *                  steht sichtbar über der Kante
+     * @return dieselbe Karte, damit sich der Aufruf einsetzen lässt
+     */
+    static View saisonAnstrich(Context context, View karte, String anlass, int radiusDp) {
+        int radius = MobileViews.dp(context, radiusDp);
+        GradientDrawable grund = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{
+                MobileViews.blend(Theme.SURFACE_ELEVATED, Theme.PRIMARY_DEEP, 0.55f),
+                MobileViews.blend(Theme.SURFACE_ELEVATED, Theme.PRIMARY_DEEP, 0.22f),
+                Theme.SURFACE_ELEVATED});
+        grund.setCornerRadius(radius);
+        grund.setStroke(MobileViews.dp(context, 1), Theme.PRIMARY);
+        karte.setBackground(grund);
+
+        if (anlass != null && !anlass.isEmpty() && karte instanceof LinearLayout) {
+            TextView kopf = new TextView(context);
+            kopf.setText(anlass.toUpperCase(Locale.GERMANY));
+            kopf.setTextColor(Theme.TEXT_PRIMARY);
+            kopf.setTextSize(11);
+            kopf.setLetterSpacing(0.18f);
+            kopf.setTypeface(Typeface.DEFAULT_BOLD);
+            kopf.setPadding(0, 0, 0, MobileViews.dp(context, 6));
+            ((LinearLayout) karte).addView(kopf, 0);
+        }
+        return karte;
+    }
+
     /* ------------------------------------------------------------- In Worte */
 
     /**

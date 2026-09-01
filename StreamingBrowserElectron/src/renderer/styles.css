@@ -6646,7 +6646,10 @@ input[type="color"] {
 .app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-backdrop,
 .app-shell.animations-off .wrapped-modal .wrapped-mix-fill,
 .app-shell.animations-off .wrapped-modal .wrapped-monat-balken,
-.app-shell.animations-off .wrapped-modal .wrapped-stage::before {
+.app-shell.animations-off .wrapped-modal .wrapped-stage::before,
+.app-shell.animations-off .home-side-link.is-saison,
+.app-shell.animations-off .home-side-link.is-saison .side-icon,
+.app-shell.animations-off .wrapped-hinweis::before {
   animation: none;
 }
 
@@ -6655,26 +6658,68 @@ input[type="color"] {
   .wrapped-card.is-da .wrapped-backdrop,
   .wrapped-mix-fill,
   .wrapped-monat-balken,
-  .wrapped-stage::before {
+  .wrapped-stage::before,
+  .home-side-link.is-saison,
+  .home-side-link.is-saison .side-icon,
+  .wrapped-hinweis::before {
     animation: none;
   }
 }
 
-/* Der Hinweis auf der Startseite. Eine Zeile, kein Fenster: der Rueckblick soll
-   auffallen, nicht ueberfallen. */
+/* Der Hinweis auf der Startseite.
+
+   Er war eine Zeile - "auffallen, nicht ueberfallen" -, und in einer Startseite
+   voller Reihen mit Kacheln fiel er dabei durch: derselbe Kartenrand, dieselbe
+   Hoehe, dieselbe Schrift wie alles andere. Einmal im Jahr, fuenf Wochen lang,
+   darf das anders sein. Der Rueckblick ist nicht die dreiundzwanzigste Reihe -
+   er ist das, wofuer man im Dezember die App aufmacht.
+
+   Was sich nicht geaendert hat: es bleibt ein Banner auf der Seite und wird
+   kein Fenster, das sich vor die App legt. Auffallen heisst gross und hell,
+   nicht ungefragt im Weg. */
 .wrapped-hinweis {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 24px;
   flex-wrap: wrap;
-  margin: 0 0 calc(18px * var(--spacing-scale));
-  padding: 16px 20px;
+  margin: calc(6px * var(--spacing-scale)) 0 calc(24px * var(--spacing-scale));
+  padding: clamp(22px, 3.2vw, 38px) clamp(22px, 3vw, 36px);
   border-radius: var(--card-radius);
-  background: linear-gradient(120deg,
-    color-mix(in srgb, rgb(var(--accent-rgb)), var(--bg-card) 72%),
-    color-mix(in srgb, var(--bg-card-strong), transparent 4%));
-  box-shadow: var(--shadow);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(var(--accent-rgb), 0.45), transparent 60%),
+    linear-gradient(120deg,
+      color-mix(in srgb, rgb(var(--accent-rgb)), var(--bg-card) 62%),
+      color-mix(in srgb, var(--bg-card-strong), transparent 4%));
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px rgba(var(--accent-rgb), 0.14),
+    0 24px 70px rgba(var(--accent-rgb), 0.22);
+}
+
+/* Das Licht, das darueber wandert. Einmal in acht Sekunden, weich und ohne
+   harte Kante - genug, damit das Auge im Vorbeiscrollen haengenbleibt, und
+   wenig genug, dass man daneben lesen kann. */
+.wrapped-hinweis::before {
+  content: "";
+  position: absolute;
+  inset: -60% -20%;
+  z-index: -1;
+  background: linear-gradient(105deg,
+    transparent 38%,
+    rgba(var(--accent-rgb), 0.32) 50%,
+    transparent 62%);
+  animation: wrapped-schimmer 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes wrapped-schimmer {
+  0%, 65%, 100% { transform: translate3d(-60%, 0, 0); }
+  32%           { transform: translate3d(60%, 0, 0); }
 }
 
 .wrapped-hinweis.is-hidden { display: none; }
@@ -6682,14 +6727,90 @@ input[type="color"] {
 .wrapped-hinweis > div {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
+  min-width: min(100%, 260px);
 }
 
-.wrapped-hinweis strong { font-size: 1.05rem; }
+/* Die Zeile ueber der Ueberschrift - "Nur im Dezember". Sie sagt, warum das
+   Banner ueberhaupt da ist, und beantwortet damit die Frage, die man sich
+   sonst stellt: seit wann steht das hier? */
+.wrapped-hinweis .wrapped-hinweis-eyebrow {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.22);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  color: color-mix(in srgb, var(--text), transparent 8%);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.wrapped-hinweis strong {
+  font-size: clamp(1.4rem, 2.6vw, 2.2rem);
+  font-weight: 850;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
 
 .wrapped-hinweis span {
-  color: color-mix(in srgb, var(--text), transparent 32%);
-  font-size: 0.9rem;
+  color: color-mix(in srgb, var(--text), transparent 22%);
+  font-size: 1rem;
+}
+
+/* Der Knopf traegt hier mehr Gewicht als sonst: er ist der Weg hinein, und es
+   gibt auf diesem Banner nichts anderes zu tun. */
+.wrapped-hinweis .primary-action {
+  padding: 14px 30px;
+  font-size: 1.02rem;
+  font-weight: 800;
+  box-shadow: 0 12px 34px rgba(var(--accent-rgb), 0.42);
+}
+
+/* --- Der Eintrag in der Seitenleiste, im Dezember ---------------------------
+
+   Bis hierher tat der Dezember nur eines: er blendete den Eintrag ein. Damit
+   sah er genauso aus wie "Verlauf" oder "Kalender" - ein Punkt mehr in einer
+   Liste aus acht Punkten, und niemand bemerkt einen neunten.
+
+   Der Unterschied zur Einstellung ist Absicht und keine Doppelung: wer die
+   Statistik in den Einstellungen einschaltet, will sie dahaben und nicht
+   angesprochen werden - dort bleibt der Eintrag ein Eintrag wie jeder andere.
+   Der Dezember ist der Fall, in dem ELFIX von sich aus etwas anbietet, und
+   dann soll man es auch sehen. */
+.home-side-link.is-saison {
+  background: linear-gradient(135deg,
+    rgba(var(--accent-rgb), var(--accent-strong-alpha)),
+    rgba(var(--accent-rgb), var(--accent-mid-alpha)));
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.5), 0 0 18px rgba(var(--accent-rgb), 0.35);
+  animation: wrapped-pochen 3.4s ease-in-out infinite;
+}
+
+/* Der Stern davor dreht sich einmal je Runde mit. Das Zeichen steht ohnehin
+   fuer den Rueckblick ("✦") - es bewegt sich, statt dass ein zweites Zeichen
+   danebengesetzt wird. */
+.home-side-link.is-saison .side-icon {
+  animation: wrapped-funkeln 3.4s ease-in-out infinite;
+}
+
+/* Die Jahreszahl am rechten Rand. Sie sagt, um welches Jahr es geht - Anfang
+   Januar ist das noch das vergangene, und ohne die Zahl waere genau dann
+   unklar, worauf man klickt. */
+.home-side-link.is-saison .side-badge {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+@keyframes wrapped-pochen {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.5), 0 0 16px rgba(var(--accent-rgb), 0.3); }
+  50%      { box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.7), 0 0 30px rgba(var(--accent-rgb), 0.62); }
+}
+
+@keyframes wrapped-funkeln {
+  0%, 72%, 100% { transform: rotate(0deg) scale(1); }
+  84%           { transform: rotate(18deg) scale(1.22); }
 }
 
 /* Das Archiv auf der Statistikseite - dort, wo die Zahlen ohnehin stehen, und
