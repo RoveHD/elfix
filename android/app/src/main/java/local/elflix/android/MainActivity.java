@@ -616,6 +616,8 @@ public class MainActivity extends Activity {
     private int wrappedStelle;
     private int wrappedJahr;
     private LinearLayout wrappedPlatz;
+    /** Die feste Leiste unter der Karte: Punkte und Knoepfe - siehe wrappedGeruest(). */
+    private LinearLayout wrappedLeiste;
     /**
      * Welches Jahr gerade Saison hat - 0 heisst: keine.
      *
@@ -4197,21 +4199,11 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         updateBottomNav();
 
-        // Am Fernseher dieselben Karten, aber die Seite des Fernsehers: der
-        // Rand ist groesser, und vor allem sind die Knoepfe darunter
-        // fokussierbar. Auf einer Telefonseite kaeme das Steuerkreuz nirgendwo
-        // an, und "Weiter" waere ein Knopf, den man sieht und nicht druecken
-        // kann.
-        LinearLayout page = isTelevision() ? tvPage() : mobilePage();
-        // Ohne Seitenkopf: die erste Karte sagt "ELFIX Wrapped" und das Jahr
-        // ohnehin, und zweimal dieselbe Ueberschrift uebereinander nimmt der
-        // Karte genau die Hoehe, von der sie lebt. Waehrend gerechnet wird,
-        // steht der Hinweis darunter allein da - das ist der einzige Moment,
-        // in dem hier sonst nichts stuende.
         if (statistik == null) return;
-        LinearLayout platz = new LinearLayout(this);
-        platz.setOrientation(LinearLayout.VERTICAL);
-        addSpacing(page, platz, MobileViews.ITEM_GAP);
+        // Kein Seitenkopf: die erste Karte sagt "ELFIX Wrapped" und das Jahr
+        // ohnehin, und zweimal dieselbe Ueberschrift uebereinander nimmt der
+        // Karte genau die Hoehe, von der sie lebt.
+        LinearLayout platz = wrappedGeruest();
         addSpacing(platz, MobileViews.hinweis(this, "Dein Jahr wird zusammengestellt …", null, null), 0);
 
         statistik.auswerten(String.valueOf(jahr), (daten, fehler) -> {
@@ -4249,6 +4241,71 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Das Gerüst des Jahresrückblicks: Karte oben, Bedienung fest unten.
+     *
+     * <p><b>Warum keine Seite wie jede andere.</b> Vorher stand das Wrapped auf
+     * {@code mobilePage()} beziehungsweise {@code tvPage()} - und beide sind
+     * ScrollViews. Damit hing die Bedienung unten am Inhalt: Karte, Punkte,
+     * „Zurück"/„Weiter", alles in einer Rolle. Bei einer kurzen Karte passte
+     * das; bei einer langen - der Mix mit fünf Balken, die Monatsreihe, die
+     * Nebenbei-Liste - rutschten die Knöpfe unter den Falz. Gemeldet als
+     * „Buttons sind nicht immer sichtbar", und das „nicht immer" ist genau der
+     * Punkt: es hing daran, auf welcher Karte man gerade stand.
+     *
+     * <p>Auf einem Fernseher war es schlimmer als auf dem Telefon. Dort gibt es
+     * keinen Daumen zum Schieben; man kommt an einen Knopf nur über den Fokus,
+     * und ein Knopf, den man nicht sieht, ist einer, von dem man nicht weiß,
+     * dass man ihn suchen muss.
+     *
+     * <p>Ein Jahresrückblick ist auch keine Seite zum Rollen. Er ist eine Folge
+     * von Bildern, und bei einer Folge von Bildern gehört die Bedienung an
+     * dieselbe Stelle - jedes Mal. Deshalb hier ein festes Gerüst: die Karte
+     * nimmt den Platz, der übrig ist ({@code weight 1}), die Leiste darunter
+     * steht fest am unteren Rand. Was in der Karte nicht aufgeht, rollt
+     * innerhalb der Karte; die Knöpfe bewegen sich nie.
+     *
+     * @return der Platz für die Karte - die Leiste hängt an {@link #wrappedLeiste}
+     */
+    private LinearLayout wrappedGeruest() {
+        boolean fernseher = isTelevision();
+        int rand = dp(fernseher ? TvViews.SCREEN_PADDING : MobileViews.SCREEN_PADDING);
+
+        // Dasselbe Aufraeumen wie in mobilePage() und tvPage(). Es steht hier
+        // ein zweites Mal, weil diese Seite keine von beiden mehr ist:
+        // vergaesse man es, hielte die Liste die Kacheln der vorigen Seite am
+        // Leben, und seitenScroll zeigte auf eine abgehaengte ScrollView.
+        bildKacheln.clear();
+        // Der Rueckblick rollt nicht als Ganzes - er hat also auch keine
+        // Rollposition, die beim Drehen zu retten waere.
+        seitenScroll = null;
+
+        LinearLayout rahmen = new LinearLayout(this);
+        rahmen.setOrientation(LinearLayout.VERTICAL);
+        rahmen.setBackgroundColor(Theme.BACKGROUND);
+        rahmen.setPadding(rand, dp(8), rand, dp(fernseher ? TvViews.SCREEN_PADDING : 16));
+
+        LinearLayout platz = new LinearLayout(this);
+        platz.setOrientation(LinearLayout.VERTICAL);
+        platz.setGravity(Gravity.CENTER);
+        // weight 1: die Karte bekommt, was nach der Leiste uebrig bleibt - und
+        // nicht umgekehrt. Die Hoehe 0 gehoert dazu; ohne sie rechnet
+        // LinearLayout die Wunschhoehe der Karte obendrauf.
+        rahmen.addView(platz, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+
+        LinearLayout leiste = new LinearLayout(this);
+        leiste.setOrientation(LinearLayout.VERTICAL);
+        rahmen.addView(leiste, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        wrappedLeiste = leiste;
+
+        content.addView(rahmen, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        seitenAuftritt(rahmen);
+        return platz;
+    }
+
+    /**
      * Eine Karte des Jahresrückblicks zeichnen - und nur sie.
      *
      * <p>Wie beim Titelhintergrund der Startseite: die Seite bleibt stehen, nur
@@ -4256,10 +4313,10 @@ public class MainActivity extends Activity {
      * anfordern.
      */
     private void wrappedZeichnen() {
-        if (wrappedPlatz == null || wrappedSeiten.isEmpty()) return;
+        if (wrappedPlatz == null || wrappedLeiste == null || wrappedSeiten.isEmpty()) return;
         boolean fernseher = isTelevision();
         wrappedPlatz.removeAllViews();
-        wrappedPlatz.setGravity(fernseher ? Gravity.CENTER_HORIZONTAL : Gravity.NO_GRAVITY);
+        wrappedLeiste.removeAllViews();
         int stelle = Math.max(0, Math.min(wrappedStelle, wrappedSeiten.size() - 1));
         View karte = wrappedSeiten.get(stelle);
         if (karte.getParent() instanceof ViewGroup) {
@@ -4269,16 +4326,15 @@ public class MainActivity extends Activity {
             wrappedStelle = (wrappedStelle + 1) % wrappedSeiten.size();
             wrappedZeichnen();
         });
-        if (fernseher) {
-            // Ueber die ganze Breite gezogen waere die Karte ein Band mit einem
-            // Wort in der Mitte. Ein Fernseher ist breit, kein Text ist es.
-            LinearLayout.LayoutParams kartenParams = new LinearLayout.LayoutParams(
-                dp(WRAPPED_TV_BREITE_DP), ViewGroup.LayoutParams.WRAP_CONTENT);
-            wrappedPlatz.addView(karte, kartenParams);
-        } else {
-            addSpacing(wrappedPlatz, karte, 0);
-        }
-        addSpacing(wrappedPlatz, Rueckblick.punkte(this, wrappedSeiten.size(), stelle),
+        // Die Karte fuellt den Platz, den das Geruest ihr laesst - sie ist das
+        // Bild dieser Seite und nicht eine Kachel darauf. Was darin nicht
+        // aufgeht, rollt innerhalb der Karte; die Leiste unten bleibt stehen.
+        LinearLayout.LayoutParams kartenParams = new LinearLayout.LayoutParams(
+            fernseher ? dp(WRAPPED_TV_BREITE_DP) : ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT);
+        wrappedPlatz.addView(karte, kartenParams);
+
+        addSpacing(wrappedLeiste, Rueckblick.punkte(this, wrappedSeiten.size(), stelle),
             MobileViews.ITEM_GAP);
 
         boolean letzte = stelle >= wrappedSeiten.size() - 1;
@@ -4325,7 +4381,7 @@ public class MainActivity extends Activity {
             knoepfe.addView(MobileViews.primaryButton(this, letzte ? "Fertig" : "Weiter", weiter),
                 weiterParams);
         }
-        addSpacing(wrappedPlatz, knoepfe, MobileViews.ITEM_GAP);
+        addSpacing(wrappedLeiste, knoepfe, MobileViews.ITEM_GAP);
     }
 
     /* ------------------------------------------------- Der Titelhintergrund */

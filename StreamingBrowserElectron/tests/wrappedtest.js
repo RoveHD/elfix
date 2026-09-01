@@ -443,10 +443,38 @@ pruefe("Das Theme wird durchgehend benutzt",
     /MobileViews\.poster\(context, null, titel, bildUrl/.test(RUECKBLICK),
     "derselbe Rueckfall wie auf jeder Kachel - keine leere Flaeche");
 
-  pruefe("Die Karten haben eine feste Hoehe",
-    /KARTE_HOEHE_DP = \d+;/.test(RUECKBLICK)
-    && /rahmen\.setMinimumHeight\(MobileViews\.dp\(context, KARTE_HOEHE_DP\)\)/.test(RUECKBLICK),
-    "sonst springt die Karte beim Blaettern um die halbe Bildschirmhoehe");
+  // --- Die Knoepfe, die man nicht immer sah ---
+  //
+  // Gemeldet als "buttons sind nicht immer sichtbar bei android". Das "nicht
+  // immer" war der Hinweis: das Wrapped stand auf mobilePage() bzw. tvPage(),
+  // und beide sind ScrollViews. Die Bedienung hing damit unten am Inhalt - bei
+  // einer kurzen Karte sah man sie, bei einer langen (Mix, Monatsreihe,
+  // Nebenbei-Liste) rutschte sie unter den Falz. Am Fernseher schlimmer als am
+  // Telefon: dort gibt es keinen Daumen zum Schieben, nur den Fokus.
+  pruefe("Die Karte fuellt, die Bedienung steht fest",
+    /private LinearLayout wrappedGeruest\(\)/.test(HAUPT)
+    && /rahmen\.addView\(platz, new LinearLayout\.LayoutParams\([\s\S]{0,80}?MATCH_PARENT, 0, 1\)\)/
+      .test(HAUPT),
+    "die Karte bekommt, was nach der Leiste uebrig bleibt - nicht umgekehrt");
+  pruefe("Punkte und Knoepfe gehen in die feste Leiste",
+    /addSpacing\(wrappedLeiste, Rueckblick\.punkte/.test(HAUPT)
+    && /addSpacing\(wrappedLeiste, knoepfe/.test(HAUPT)
+    && !/addSpacing\(wrappedPlatz, knoepfe/.test(HAUPT),
+    "sonst haengen sie wieder am Inhalt und wandern mit ihm");
+  pruefe("Und die Karte hat keine feste Hoehe mehr",
+    !/rahmen\.setMinimumHeight\(MobileViews\.dp\(context, KARTE_HOEHE_DP\)\)/.test(RUECKBLICK),
+    "auf einem kleinen Schirm schoebe sie genau die Knoepfe hinaus, um die es ging");
+  pruefe("Was nicht aufgeht, rollt in der Karte",
+    /ScrollView rolle = new android\.widget\.ScrollView\(context\)/.test(RUECKBLICK)
+    && /rolle\.setFillViewport\(true\)/.test(RUECKBLICK),
+    "fillViewport, damit eine kurze Karte trotzdem mittig steht");
+  pruefe("Das Geruest raeumt auf wie die Seiten, die es ersetzt",
+    /private LinearLayout wrappedGeruest\(\)[\s\S]{0,900}?bildKacheln\.clear\(\);[\s\S]{0,200}?seitenScroll = null;/
+      .test(HAUPT),
+    "sonst haelt die Liste die Kacheln der vorigen Seite am Leben");
+  pruefe("Die Rolle nimmt dem Steuerkreuz nicht den Fokus",
+    /rolle\.setFocusable\(false\)/.test(RUECKBLICK),
+    "sonst haengt das Kreuz in der Karte fest, statt auf \u201eWeiter\u201c zu gehen");
   pruefe("Der Text steht mittig wie am Rechner",
     /private static void mittig\(View ansicht\)/.test(RUECKBLICK)
     && /inhalt\.setGravity\(Gravity\.CENTER\)/.test(RUECKBLICK));
@@ -481,8 +509,11 @@ pruefe("Das Theme wird durchgehend benutzt",
     && /if \(jahr == wrappedSaisonJahr\) return;/.test(HAUPT),
     "sonst baut sich die Startseite endlos selbst neu");
 
-  pruefe("Am Fernseher steht die Wrapped-Seite auf einer Fernsehseite",
-    /LinearLayout page = isTelevision\(\) \? tvPage\(\) : mobilePage\(\);/.test(HAUPT));
+  pruefe("Am Fernseher traegt das Geruest den groesseren Rand",
+    /int rand = dp\(fernseher \? TvViews\.SCREEN_PADDING : MobileViews\.SCREEN_PADDING\)/.test(HAUPT));
+  pruefe("Und die Karte bleibt dort begrenzt",
+    /fernseher \? dp\(WRAPPED_TV_BREITE_DP\) : ViewGroup\.LayoutParams\.MATCH_PARENT/.test(HAUPT),
+    "ueber die ganze Breite gezogen waere sie ein Band mit einem Wort in der Mitte");
   pruefe("Mit fokussierbaren Knoepfen und Fokus auf \u201eWeiter\u201c",
     /TvViews\.hauptPillButton\(this, letzte \? "Fertig" : "Weiter", weiter\)/.test(HAUPT)
     && /vor\.post\(vor::requestFocus\)/.test(HAUPT),

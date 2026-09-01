@@ -50,10 +50,17 @@ final class Rueckblick {
     };
 
     /**
-     * Wie hoch eine Karte des Jahresrückblicks mindestens ist.
+     * Womit das Titelbild angefordert wird - keine Kartenhöhe mehr.
      *
-     * <p>Hoch genug, dass eine Zahl darauf steht und nicht darin klemmt - und
-     * fest, damit die Karte beim Weiterblättern nicht die Höhe wechselt.
+     * <p>Sie war einmal die feste Höhe jeder Karte: hoch genug für eine Zahl,
+     * und fest, damit die Karte beim Blättern nicht springt. Seit die Karte den
+     * Platz füllt, den ihr das Gerüst lässt ({@code MainActivity.wrappedGeruest}),
+     * springt ohnehin nichts mehr - und eine feste Höhe wäre jetzt schädlich:
+     * auf einem kleinen Schirm stünde sie über den unteren Rand hinaus und
+     * schöbe die Knöpfe hinaus, genau den Fehler, um den es ging.
+     *
+     * <p>Geblieben ist sie als Anhaltspunkt für {@link Bilder}, in welcher
+     * Größe das Titelbild geholt werden soll.
      */
     private static final int KARTE_HOEHE_DP = 380;
 
@@ -1008,7 +1015,6 @@ final class Rueckblick {
         grund.setCornerRadius(radius);
         grund.setStroke(MobileViews.dp(context, 1), Theme.BORDER);
         rahmen.setBackground(grund);
-        rahmen.setMinimumHeight(MobileViews.dp(context, KARTE_HOEHE_DP));
 
         if (bildUrl != null && !bildUrl.trim().isEmpty()) {
             ImageView hintergrund = new ImageView(context);
@@ -1048,9 +1054,26 @@ final class Rueckblick {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
-        rahmen.addView(inhalt, new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER));
+        // Was nicht aufgeht, rollt <em>in</em> der Karte.
+        //
+        // Vorher rollte die ganze Seite, und daran hingen die Knoepfe: bei
+        // einer langen Karte - der Mix, die Monatsreihe, die Nebenbei-Liste -
+        // standen "Zurueck" und "Weiter" unter dem Falz. Jetzt bleibt die
+        // Leiste stehen, und nur der Text darin bewegt sich.
+        //
+        // {@code setFillViewport} ist der Grund, warum eine kurze Karte
+        // trotzdem mittig steht: ohne das bekaeme der Inhalt nur seine eigene
+        // Hoehe, und die Zahl klebte oben an der Kante.
+        android.widget.ScrollView rolle = new android.widget.ScrollView(context);
+        rolle.setFillViewport(true);
+        // Am Fernseher zieht der Fokus die Rolle sonst an sich, und das
+        // Steuerkreuz haengt in der Karte fest, statt auf "Weiter" zu gehen.
+        rolle.setFocusable(false);
+        rolle.setVerticalScrollBarEnabled(false);
+        rolle.addView(inhalt, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        rahmen.addView(rolle, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         return rahmen;
     }
 
