@@ -3,6 +3,81 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.83.0 — 1. September 2026
+
+Eine Meldung, drei Punkte, alle zum Jahresrückblick — und einer davon deckte
+auf, dass die Bilder aus 1.82.0 nie angekommen sind.
+
+**Das Wrapped hatte auf dem Telefon und am Fernseher immer noch keine Bilder.**
+Die Karten konnten seit 1.82.0 eines tragen: drei Schichten liegen bereit, das
+Titelbild, ein Schleier darüber, der Text zuoberst. Nur war die Bedingung „wenn
+ein Bild da ist" nie wahr.
+
+Der Grund lag eine Ebene tiefer und war von außen nicht zu sehen. Am Rechner
+bekommt die Auswertung eine Nachschlagefunktion mitgereicht — dort läuft sie im
+selben Prozess wie die Favoriten. Android ruft dasselbe Modul über den Kern, und
+durch diese Brücke passt JSON, aber keine Funktion; hinüber ging also nur der
+Zeitraum, und jeder Titel kam ohne Bild zurück.
+
+Jetzt geht eine Titeltabelle mit, die durch die Brücke passt. Geschlüsselt wird
+sie im Kern und nicht in Java, mit derselben Normalisierung, mit der die
+Auswertung ohnehin zwei Schreibweisen desselben Titels zusammenbringt — ein
+zweiter Schlüssel wäre die Sorte Unterschied, die man erst ein Jahr später an
+einem fehlenden Poster bemerkt. Nachgeschlagen wird über den Titel und erst
+danach über die Kennung des Favoriten: seit die Geräte ihre Sätze austauschen,
+trägt eine Sitzung vom Rechner eine Kennung, die es auf dem Telefon gar nicht
+gibt. Die Bilder kommen aus denselben Favoriten wie die Kacheln der Startseite,
+also ohne einen einzigen zusätzlichen Abruf.
+
+**Am Rechner war die Bühne leer.** Sie war die flache Hintergrundfarbe, in der
+Mitte drei Zeilen Text, ringsum nichts — und die Seiten ohne Titelbild, der Mix,
+die Streak, die Nebenbei-Liste, hatten überhaupt keinen Hintergrund. Jetzt
+derselbe Aufbau wie auf der Startseite: die Grundfarbe, darauf zwei weiche
+Lichter in der Akzentfarbe, dahinter eine Schicht, die langsam driftet (26
+Sekunden für einen Durchlauf — man sieht es nicht, man merkt nur, dass das Bild
+nicht tot ist), darüber eine Vignette zur Mitte hin, wo die Zahl steht.
+
+Das Titelbild selbst kam zu schwach durch: 22 Prozent Deckkraft unter einem
+gleichmäßigen Schleier ergaben ein Grau, und ein Grau ist kein Bild — es ist nur
+eine dunklere Karte. Jetzt 38 Prozent, auf beiden Geräten, und der Schleier ist
+in der Mitte offen und nur zu den Rändern hin dicht. Dazu ein Schein hinter der
+großen Zahl und um das Poster, und die Jahreszahl des Auftakts in der Größe, die
+ihr zusteht — sie ist das Bild dieser Seite und stand da wie eine Zwischenzeile.
+
+**Im Dezember stand der Rückblick nur da, statt aufzufallen.** Der Dezember tat
+genau eines: er blendete den Eintrag in der Seitenleiste ein. Damit saß er als
+neunter Punkt in einer Liste aus acht — dieselbe Farbe, dieselbe Höhe, dieselbe
+Schrift wie „Verlauf" —, und einen neunten Punkt bemerkt niemand.
+
+Die Einstellung und die Saison sind ab jetzt nicht dasselbe, und das ist die
+Regel, nach der hier alles entschieden ist: wer die Statistik in den
+Einstellungen selbst einschaltet, hat danach gegriffen — der bekommt weiterhin
+einen Eintrag wie jeden anderen, der auf die Statistikseite führt. Nur der
+Dezember ist der Fall, in dem ELFIX von sich aus etwas anbietet.
+
+In der Saison trägt der Eintrag deshalb die Akzentfarbe, einen ruhigen Puls und
+die Jahreszahl daneben (Anfang Januar geht es noch um das vergangene Jahr — ohne
+sie wäre unklar, worauf man klickt), und der Klick führt geradewegs in die
+Karten statt über die Statistikseite mit ihren Reitern und Ranglisten. Geht der
+Rückblick nicht auf, bleibt sie der Rückfall.
+
+Der Hinweis auf der Startseite ist ein Banner statt einer Zeile. Er war „dezent"
+gemeint und wurde dadurch übersehen: derselbe Kartenrand wie die zwanzig Reihen
+darunter. Jetzt mit eigener Höhe, Akzentrand, einem Licht, das darüberwandert,
+einer Kopfzeile „Nur im Dezember" — und mit dem, was drinsteht, statt „Sieh dir
+dein Jahr an": „23 h 5 min · 195 Folgen · 17 Tage". Ein Popup wird er trotzdem
+nicht; auffallen heißt groß und hell, nicht ungefragt im Weg.
+
+Auf dem Telefon und am Fernseher dieselbe Trennung: die Karte, die in den
+Jahresrückblick führt, bekommt in der Saison den Akzent und dieselbe Kopfzeile.
+Angefasst wird nur der Hintergrund und eine Zeile ganz oben — was in der Karte
+steckt, am Fernseher der fokussierbare Knopf, bleibt unberührt.
+
+Wann Saison ist, entscheidet weiterhin die geteilte Regel (1. Dezember bis
+6. Januar) und nicht eine dieser Stellen. Die Zahlen ändern sich durch keine
+Zeile davon; gerechnet wird nach wie vor in derselben Auswertung, aus der auch
+die Statistikseite liest.
+
 ## 1.82.0 — 1. September 2026
 
 Vier Meldungen, und drei davon betreffen den Fernseher.
