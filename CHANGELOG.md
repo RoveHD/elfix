@@ -3,6 +3,58 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.82.0 — 1. September 2026
+
+Vier Meldungen, und drei davon betreffen den Fernseher.
+
+**Die Mediathek war eine Sackgasse.** Ein Titel dort ist durch, und seine
+gespeicherte Adresse ist die *letzte* Folge — ein Tipp darauf landete also am
+Ende einer Serie, die man gerade zu Ende gesehen hatte. Auf dem Knopf stand
+„Nochmal ansehen", und was kam, war der Abspann. Der Weg zum Anfang gab es
+längst, nur im Aktionsmenü: mit einer Maus ein Rechtsklick, mit einem
+Steuerkreuz drei Schritte.
+
+Jetzt tut der Tipp, was auf dem Knopf steht: Staffel 1, Folge 1, und der
+Eintrag zählt als weiterer Durchlauf. Er bleibt dabei in der Mediathek und
+steht zusätzlich in „Weiterschauen". Genau einmal, und nicht bei jedem Tipp —
+läuft der zweite Durchlauf schon, heißt „weiter" wieder weiter. Gezählt wird
+am Ende: erst wenn die letzte Folge wieder durch ist, steht auf der Kachel
+„2× gesehen".
+
+**Das Wrapped auf dem Telefon hatte keine Bilder.** Am Rechner trägt jede Karte
+ein Titelbild, heruntergedimmt und weich; auf dem Telefon stand ein grauer
+Kasten mit linksbündigem Text. Dabei fehlten die Bilder nie — sie stehen in
+derselben Auswertung, aus der die Zahlen kommen, es hat sie nur niemand geholt.
+
+Jetzt: das Titelbild als Hintergrund (bei denselben 22 Prozent wie am Rechner,
+mit einem Schleier darüber, damit die Schrift lesbar bleibt), ein Poster auf
+jeder Karte, die von einem Titel handelt, mittig statt linksbündig, feste
+Kartenhöhe statt Karten, die beim Blättern um die halbe Bildschirmhöhe
+springen, und die große Zahl über ihrer Einheit statt daneben.
+
+**Am Fernseher gab es den Jahresrückblick überhaupt nicht.** Er hing an der
+Startseite des Telefons und war dort schlicht nicht aufzurufen. Zwei Wege
+hinein: die Einstellung *Startseite → Rückblick*, die jetzt beide Geräte
+schaltet — und der Dezember. Vom 1. Dezember bis zum 6. Januar steht der
+Jahresrückblick von selbst da, auch wenn die Einstellung aus ist; dieselbe
+Saison, die am Rechner den Eintrag in der Seitenleiste einblendet. Die Regel
+dafür stand bisher nur im Hauptprozess und ist jetzt geteilt, damit „Dezember"
+auf beiden Geräten dasselbe heißt.
+
+Am Fernseher führt der Weg geradewegs in die Karten und nicht über die
+Statistikseite: die ist eine Tabelle mit Ranglisten, und eine Tabelle liest
+niemand aus drei Metern Entfernung. Die Knöpfe darunter sind fokussierbar,
+„Weiter" hat den Fokus, und die Karte ist begrenzt — über die ganze Breite
+gezogen wäre sie ein Band mit einem Wort in der Mitte.
+
+**Beim Start am Rechner stand das Hauptfenster neben dem Updatefenster.** Das
+Tor dafür gibt es seit 1.78.0 und es entschied auch richtig — umgangen wurde es
+eine Zeile darüber: `ready-to-show` maximierte das Fenster, bevor jemand
+gefragt hatte, ob es aufgehen darf, und `maximize()` zeigt ein verstecktes
+Fenster mit. Maximiert wird jetzt erst unmittelbar vor dem Anzeigen. Der
+Schönheitsfehler, dessentwegen früh maximiert wurde, bleibt trotzdem weg:
+dazwischen liegt kein Bild.
+
 ## 1.81.0 — 1. September 2026
 
 Am Fernseher starten jetzt auch Filme, und die Sprungtasten der Fernbedienung
