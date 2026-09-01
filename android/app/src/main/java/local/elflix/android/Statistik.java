@@ -481,6 +481,51 @@ public final class Statistik {
             });
     }
 
+    /** Was in welcher Folge gezeigt wird. Leer heisst: wie gebaut. */
+    public interface Reihenfolge {
+        void fertig(java.util.List<String> schluessel);
+    }
+
+    /**
+     * In welcher Reihenfolge der Jahresrueckblick seine Karten zeigt.
+     *
+     * <p>Entschieden wird das im Kern ({@code statistik.wrappedReihenfolge}) -
+     * derselben Regel, die auch der Rechner fragt. Eine zweite hier waere
+     * genau die Sorte Unterschied, die man erst bemerkt, wenn zwei Geraete
+     * denselben Rueckblick verschieden erzaehlen.
+     *
+     * <p>Faellt der Aufruf aus, kommt eine leere Liste zurueck und der
+     * Rueckblick bleibt in der Reihenfolge, in der er gebaut wurde. Immer
+     * dieselbe Folge ist schlechter als eine wechselnde, aber besser als gar
+     * kein Rueckblick.
+     */
+    public void wrappedReihenfolge(java.util.List<String> schluessel, int jahr,
+                                   Reihenfolge antwort) {
+        if (antwort == null) return;
+        if (kern == null || !kern.istBereit() || schluessel == null || schluessel.isEmpty()) {
+            antwort.fertig(java.util.Collections.emptyList());
+            return;
+        }
+        JSONArray liste = new JSONArray();
+        for (String eintrag : schluessel) liste.put(eintrag);
+        kern.rufe("statistik.wrappedReihenfolge", Kern.args(liste, jahr), (wert, fehler) -> {
+            java.util.ArrayList<String> ordnung = new java.util.ArrayList<>();
+            if (fehler == null && wert != null) {
+                try {
+                    JSONArray roh = new JSONArray(wert);
+                    for (int i = 0; i < roh.length(); i += 1) {
+                        String eintrag = roh.optString(i, "");
+                        if (!eintrag.isEmpty()) ordnung.add(eintrag);
+                    }
+                } catch (Exception ausnahme) {
+                    Log.e(TAG, "Reihenfolge unlesbar", ausnahme);
+                    ordnung.clear();
+                }
+            }
+            antwort.fertig(ordnung);
+        });
+    }
+
     /** Welches Jahr gerade Saison hat - 0 heisst: keine. */
     public interface Saison {
         void fertig(int jahr);

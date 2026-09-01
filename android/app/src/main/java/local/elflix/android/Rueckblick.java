@@ -85,6 +85,29 @@ final class Rueckblick {
     private Rueckblick() {
     }
 
+    /**
+     * Eine Karte des Jahresrückblicks - und wofür sie steht.
+     *
+     * <p>Der Schlüssel ist neu und der Grund für diese Klasse. Gebaut werden
+     * die Karten in der Reihenfolge, in der sie hier im Quelltext stehen, und
+     * genau so wurden sie bisher auch gezeigt: 2027 sah aus wie 2026 und 2026
+     * wie 2025 - dieselben Karten, dieselbe Folge, nur andere Zahlen darauf.
+     *
+     * <p>Welche Karte in welchem Jahr an welcher Stelle kommt, entscheidet
+     * jetzt {@code statistik.wrappedReihenfolge} im Kern - dieselbe Regel, die
+     * auch der Rechner fragt. Damit die Antwort hier ankommt, muss jede Karte
+     * sagen können, welche sie ist; eine {@link View} allein kann das nicht.
+     */
+    static final class Karte {
+        final String schluessel;
+        final View ansicht;
+
+        Karte(String schluessel, View ansicht) {
+            this.schluessel = schluessel;
+            this.ansicht = ansicht;
+        }
+    }
+
     /* ------------------------------------------------------------ Im Dezember */
 
     /**
@@ -379,8 +402,8 @@ final class Rueckblick {
      * <p>Jede Karte fällt weg, wenn ihre Zahl nicht belegt ist. Deshalb hat ein
      * Jahr mit drei Abenden zwei Karten und keine achtzehn leeren.
      */
-    static List<View> wrapped(Context context, JSONObject daten, int jahr) {
-        ArrayList<View> seiten = new ArrayList<>();
+    static List<Karte> wrapped(Context context, JSONObject daten, int jahr) {
+        ArrayList<Karte> seiten = new ArrayList<>();
         boolean zeit = zeitBekannt(daten);
         JSONObject topSerie = erstes(daten.optJSONArray("serien"));
         JSONObject topFilm = erstes(daten.optJSONArray("filme"));
@@ -394,61 +417,62 @@ final class Rueckblick {
 
         // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
         // Einschränkung, unter der alles Folgende gilt.
-        seiten.add(bildkarte(context, stimmung,
+        seiten.add(new Karte("auftakt", bildkarte(context, stimmung,
             augenbraue(context, "ELFIX Wrapped"),
             zeile(context, String.valueOf(jahr), 56, Theme.TEXT_PRIMARY, true),
             zeile(context, auftakt(daten, jahr), 17, Theme.TEXT_SECONDARY, false),
-            zeile(context, zeitraumHinweis(daten, jahr), 12, Theme.TEXT_DISABLED, false)));
+            zeile(context, zeitraumHinweis(daten, jahr), 12, Theme.TEXT_DISABLED, false))));
 
         // 2 - Watchtime. Fällt aus, solange nichts gemessen wurde.
         if (zeit) {
             long stunden = Math.round(daten.optDouble("sekunden") / 3600);
             double tage = Math.round(daten.optDouble("sekunden") / 86400 * 10) / 10.0;
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("zeit", karte(context, stimmung,
                 grosseZahl(context, String.valueOf(stunden), "Stunden"),
                 zeile(context, "hast du dieses Jahr mit ELFIX geschaut.", 17, Theme.TEXT_SECONDARY, false),
                 tage >= 1
                     ? zeile(context, "Das sind " + zahl(tage) + " Tage am Stück.", 13, Theme.TEXT_DISABLED, false)
-                    : null));
+                    : null)));
         }
 
         // 3 - Folgen
         int folgen = daten.optInt("folgen", 0);
         if (folgen > 0) {
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("folgen", karte(context, stimmung,
                 grosseZahl(context, String.valueOf(folgen), folgen == 1 ? "Folge" : "Folgen"),
                 zeile(context, "hast du " + jahr + " angesehen.", 17, Theme.TEXT_SECONDARY, false),
                 daten.optDouble("folgenJeTag", 0) > 0
                     ? zeile(context, "Im Schnitt " + zahl(daten.optDouble("folgenJeTag"))
                         + " an jedem Schautag.", 13, Theme.TEXT_DISABLED, false)
-                    : null));
+                    : null)));
         }
 
         // 4/5/6 - Abgeschlossenes, je Gattung und nur wenn es etwas gibt.
         JSONObject abschluesse = daten.optJSONObject("abschluesse");
         if (abschluesse != null) {
             abschlussKarte(context, seiten, abschluesse.optInt("serie", 0), "Serie", "Serien",
-                stimmung);
+                stimmung, "serien");
             abschlussKarte(context, seiten, abschluesse.optInt("film", 0), "Film", "Filme",
-                stimmung);
-            abschlussKarte(context, seiten, abschluesse.optInt("anime", 0), "Anime", "Anime", "");
+                stimmung, "filme");
+            abschlussKarte(context, seiten, abschluesse.optInt("anime", 0), "Anime", "Anime",
+                stimmung, "anime");
         }
 
         // 7 - Serie und Film des Jahres. Ausgewählt nach geschauter Zeit, und
         // wo die fehlt, nach Folgen - nicht nach einer erfundenen Punktzahl.
         if (topSerie != null) {
-            seiten.add(bildkarte(context, stimmung,
+            seiten.add(new Karte("top-serie", bildkarte(context, stimmung,
                 augenbraue(context, "Deine Serie des Jahres"),
                 poster(context, topSerie.optString("titel", ""), bild(topSerie)),
                 zeile(context, topSerie.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
-                zeile(context, titelZahlen(topSerie, zeit), 14, Theme.TEXT_SECONDARY, false)));
+                zeile(context, titelZahlen(topSerie, zeit), 14, Theme.TEXT_SECONDARY, false))));
         }
         if (topFilm != null) {
-            seiten.add(bildkarte(context, stimmung,
+            seiten.add(new Karte("top-film", bildkarte(context, stimmung,
                 augenbraue(context, "Dein Film des Jahres"),
                 poster(context, topFilm.optString("titel", ""), bild(topFilm)),
                 zeile(context, topFilm.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
-                zeile(context, titelZahlen(topFilm, zeit), 14, Theme.TEXT_SECONDARY, false)));
+                zeile(context, titelZahlen(topFilm, zeit), 14, Theme.TEXT_SECONDARY, false))));
         }
 
         // 8 - Genre des Jahres samt Verfolgerfeld.
@@ -463,11 +487,11 @@ final class Rueckblick {
                 liste.addView(zeile(context, (i + 1) + ". " + genre.optString("label", "—"),
                     16, i == 0 ? Theme.TEXT_PRIMARY : Theme.TEXT_SECONDARY, i == 0));
             }
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("genre", karte(context, stimmung,
                 zeile(context, "Du warst dieses Jahr eindeutig auf "
                     + (erste == null ? "—" : erste.optString("label", "—")) + ".",
                     19, Theme.TEXT_PRIMARY, false),
-                liste, null));
+                liste, null)));
         }
 
         // 9 - Der Mix in Prozent. Nur wo Zeit gemessen wurde: eine
@@ -484,18 +508,18 @@ final class Rueckblick {
                 kasten.addView(MobileViews.balken(context, mixNamen.get(i), prozent + " %",
                     prozent / 100f));
             }
-            seiten.add(karte(context, stimmung,
-                augenbraue(context, "Dein " + jahr + " Mix"), kasten, null));
+            seiten.add(new Karte("mix", karte(context, stimmung,
+                augenbraue(context, "Dein " + jahr + " Mix"), kasten, null)));
         }
 
         // 10 - Strecke
         JSONObject strecke = daten.optJSONObject("strecke");
         if (strecke != null && strecke.optInt("tage", 0) >= 2) {
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("streak", karte(context, stimmung,
                 zeile(context, "Du konntest " + strecke.optInt("tage")
                     + " Tage nicht aufhören.", 19, Theme.TEXT_PRIMARY, false),
                 grosseZahl(context, String.valueOf(strecke.optInt("tage")), "Tage am Stück"),
-                zeile(context, "Deine längste Strecke ohne Pause.", 13, Theme.TEXT_DISABLED, false)));
+                zeile(context, "Deine längste Strecke ohne Pause.", 13, Theme.TEXT_DISABLED, false))));
         }
 
         // 11 und 12 - Wochentag und Rekordtag sind zwei verschiedene Dinge und
@@ -503,64 +527,64 @@ final class Rueckblick {
         JSONObject besterWochentag = daten.optJSONObject("aktivsterWochentag");
         if (besterWochentag != null) {
             String tag = wochentag(besterWochentag.optInt("tag", -1));
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("wochentag", karte(context, stimmung,
                 zeile(context, tag + " war dein Tag.", 22, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterWochentag.optDouble("sekunden", 0) > 0
                     ? "Insgesamt " + dauer(besterWochentag.optDouble("sekunden")) + " an " + tag + "en."
                     : besterWochentag.optInt("folgen") + " Folgen an " + tag + "en.",
-                    14, Theme.TEXT_SECONDARY, false), null));
+                    14, Theme.TEXT_SECONDARY, false), null)));
         }
         JSONObject besterTag = daten.optJSONObject("aktivsterTag");
         if (besterTag != null) {
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("rekordtag", karte(context, stimmung,
                 augenbraue(context, "Dein intensivster Tag"),
                 zeile(context, datum(besterTag.optString("tag"), true), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterTag.optDouble("sekunden", 0) > 0
                     ? dauer(besterTag.optDouble("sekunden"))
-                    : besterTag.optInt("folgen") + " Folgen", 14, Theme.TEXT_SECONDARY, false)));
+                    : besterTag.optInt("folgen") + " Folgen", 14, Theme.TEXT_SECONDARY, false))));
         }
 
         // 13 - Längste Sitzung
         if (zeit && daten.optDouble("laengsteSitzung", 0) >= 1800) {
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("session", karte(context, stimmung,
                 zeile(context, "Nur noch eine Folge?", 19, Theme.TEXT_PRIMARY, false),
                 grosseZahl(context, dauer(daten.optDouble("laengsteSitzung")), ""),
-                zeile(context, "Deine längste Sitzung am Stück.", 13, Theme.TEXT_DISABLED, false)));
+                zeile(context, "Deine längste Sitzung am Stück.", 13, Theme.TEXT_DISABLED, false))));
         }
 
         // 14 - Tageszeit. Nur bei gemessener Zeit und genug Sitzungen: aus fünf
         // Abenden folgt kein Typ.
         String[] tageszeit = tageszeit(daten, zeit);
         if (tageszeit != null) {
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("tageszeit", karte(context, stimmung,
                 zeile(context, "Du bist " + tageszeit[0] + " " + tageszeit[1] + ".",
                     22, Theme.TEXT_PRIMARY, true),
                 grosseZahl(context, tageszeit[2], "%"),
-                zeile(context, "deiner Zeit lagen " + tageszeit[3] + ".", 13, Theme.TEXT_DISABLED, false)));
+                zeile(context, "deiner Zeit lagen " + tageszeit[3] + ".", 13, Theme.TEXT_DISABLED, false))));
         }
 
         // 15 - Wiederholungen, nur wenn es welche gab.
         JSONObject oft = erstes(daten.optJSONArray("wiederholteste"));
         if (oft != null) {
-            seiten.add(bildkarte(context, stimmung,
+            seiten.add(new Karte("rewatch", bildkarte(context, stimmung,
                 zeile(context, "Das kam dir bekannt vor …", 19, Theme.TEXT_SECONDARY, false),
                 poster(context, oft.optString("titel", ""), bild(oft)),
                 zeile(context, oft.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, oft.optInt("wiederholungen") + "× noch einmal gesehen.",
-                    14, Theme.TEXT_SECONDARY, false)));
+                    14, Theme.TEXT_SECONDARY, false))));
         }
 
         // 16 - Monat des Jahres.
         JSONObject besterMonat = daten.optJSONObject("aktivsterMonat");
         JSONArray monate = daten.optJSONArray("monate");
         if (besterMonat != null && monate != null && monate.length() >= 2) {
-            seiten.add(karte(context, stimmung,
+            seiten.add(new Karte("monat", karte(context, stimmung,
                 zeile(context, monatName(besterMonat.optString("monat"))
                     + " war dein stärkster Monat.", 20, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterMonat.optDouble("sekunden", 0) > 0
                     ? dauer(besterMonat.optDouble("sekunden"))
                     : besterMonat.optInt("folgen") + " Folgen", 14, Theme.TEXT_SECONDARY, false),
-                monatsreihe(context, monate)));
+                monatsreihe(context, monate))));
         }
 
         // 17 - Anfang und Ende. Solange das Jahr läuft, ist der letzte Titel
@@ -569,21 +593,21 @@ final class Rueckblick {
         JSONObject erster = ersterTitel;
         JSONObject letzter = daten.optJSONObject("letzter");
         if (erster != null) {
-            seiten.add(bildkarte(context, stimmung,
+            seiten.add(new Karte("erster", bildkarte(context, stimmung,
                 augenbraue(context, "So hat dein Jahr begonnen"),
                 poster(context, erster.optString("titel", ""), bild(erster)),
                 zeile(context, erster.optString("titel", "—"), 24, Theme.TEXT_PRIMARY, true),
-                zeile(context, datum(erster.optString("wann"), true), 14, Theme.TEXT_SECONDARY, false)));
+                zeile(context, datum(erster.optString("wann"), true), 14, Theme.TEXT_SECONDARY, false))));
         }
         if (letzter != null && (erster == null
             || !letzter.optString("titel").equals(erster.optString("titel")))) {
             boolean laeuftNoch = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) == jahr;
-            seiten.add(bildkarte(context, stimmung,
+            seiten.add(new Karte("letzter", bildkarte(context, stimmung,
                 augenbraue(context, laeuftNoch ? "Dein bisher letzter Titel"
                     : "Und damit hast du das Jahr beendet"),
                 poster(context, letzter.optString("titel", ""), bild(letzter)),
                 zeile(context, letzter.optString("titel", "—"), 24, Theme.TEXT_PRIMARY, true),
-                zeile(context, datum(letzter.optString("wann"), true), 14, Theme.TEXT_SECONDARY, false)));
+                zeile(context, datum(letzter.optString("wann"), true), 14, Theme.TEXT_SECONDARY, false))));
         }
 
         // 18 - Was sonst noch auffiel. Nur Sätze, deren Zahl eindeutig ist.
@@ -594,8 +618,8 @@ final class Rueckblick {
             for (String satz : fakten) {
                 liste.addView(zeile(context, "• " + satz, 15, Theme.TEXT_SECONDARY, false));
             }
-            seiten.add(karte(context, stimmung,
-                augenbraue(context, "Nebenbei"), liste, null));
+            seiten.add(new Karte("fakten", karte(context, stimmung,
+                augenbraue(context, "Nebenbei"), liste, null)));
         }
 
         // 19 - Das Finale.
@@ -609,18 +633,19 @@ final class Rueckblick {
         }
         schluss.addView(zeile(context, daten.optInt("tage", 0) + " Schautage",
             18, Theme.TEXT_PRIMARY, true));
-        seiten.add(bildkarte(context, stimmung,
+        seiten.add(new Karte("finale", bildkarte(context, stimmung,
             augenbraue(context, "Dein ELFIX " + jahr), schluss,
-            zeile(context, "Gemessen, nicht geschätzt.", 12, Theme.TEXT_DISABLED, false)));
+            zeile(context, "Gemessen, nicht geschätzt.", 12, Theme.TEXT_DISABLED, false))));
         return seiten;
     }
 
-    private static void abschlussKarte(Context context, List<View> seiten, int anzahl,
-                                       String einzahl, String mehrzahl, String stimmung) {
+    private static void abschlussKarte(Context context, List<Karte> seiten, int anzahl,
+                                       String einzahl, String mehrzahl, String stimmung,
+                                       String schluessel) {
         if (anzahl <= 0) return;
-        seiten.add(bildkarte(context, stimmung,
+        seiten.add(new Karte(schluessel, bildkarte(context, stimmung,
             grosseZahl(context, String.valueOf(anzahl), anzahl == 1 ? einzahl : mehrzahl),
-            zeile(context, "hast du abgeschlossen.", 17, Theme.TEXT_SECONDARY, false), null));
+            zeile(context, "hast du abgeschlossen.", 17, Theme.TEXT_SECONDARY, false), null)));
     }
 
     /** Das Titelbild eines Eintrags der Auswertung - leer, wenn keines dabei ist. */

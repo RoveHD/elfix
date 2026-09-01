@@ -3544,7 +3544,7 @@ async function wrappedOeffnen(jahr) {
     return false;
   }
   wrappedJahr = antwort.jahr;
-  wrappedSeiten = wrappedBauen(antwort.daten, antwort.jahr);
+  wrappedSeiten = await wrappedSortieren(wrappedBauen(antwort.daten, antwort.jahr), antwort.jahr);
   wrappedStelle = 0;
   await api.setWrappedOpen?.(true);
   wrappedModal?.showModal();
@@ -3553,6 +3553,28 @@ async function wrappedOeffnen(jahr) {
   // Dezember draengt sich nichts ein zweites Mal auf.
   api.markWrappedSeen?.(antwort.jahr).then(() => renderWrappedHinweis()).catch(() => {});
   return true;
+}
+
+// Die Karten in die Reihenfolge dieses Jahres bringen.
+//
+// Gebaut werden sie in der Folge, in der sie im Quelltext stehen - und genau
+// das war das Problem: damit sah 2027 aus wie 2026 und 2026 wie 2025.
+// Dieselben Karten, dieselbe Folge, nur andere Zahlen darauf; einen
+// Jahresrueckblick, den man schon kennt, bevor man ihn aufmacht, macht man
+// kein zweites Mal auf.
+//
+// Welche Karten in welcher Folge kommen, entscheidet die geteilte Regel im
+// Kern (statistik.wrappedReihenfolge) und nicht diese Stelle - der Fernseher
+// fragt dieselbe. Faellt sie aus, bleibt es bei der gebauten Reihenfolge: ein
+// Rueckblick in immer derselben Folge ist schlechter als einer, aber besser
+// als keiner.
+async function wrappedSortieren(seiten, jahr) {
+  const schluessel = seiten.map((seite) => seite.schluessel).filter(Boolean);
+  const ordnung = await api.getWrappedReihenfolge?.(schluessel, jahr).catch(() => null);
+  if (!Array.isArray(ordnung) || !ordnung.length) return seiten;
+  const nachSchluessel = new Map(seiten.map((seite) => [seite.schluessel, seite]));
+  const sortiert = ordnung.map((k) => nachSchluessel.get(k)).filter(Boolean);
+  return sortiert.length ? sortiert : seiten;
 }
 
 function wrappedSchliessen() {
@@ -3630,7 +3652,7 @@ function renderWrappedPunkte() {
 // gehoert, und dort faellt er auch auf.
 let wrappedStimmungsbild = "";
 
-function wrappedSeite(art, teile, bild = wrappedStimmungsbild) {
+function wrappedSeite(schluessel, art, teile, bild = wrappedStimmungsbild) {
   const knoten = document.createElement("div");
   knoten.className = "wrapped-card";
   if (bild) {
@@ -3643,7 +3665,7 @@ function wrappedSeite(art, teile, bild = wrappedStimmungsbild) {
   inhalt.className = "wrapped-content";
   inhalt.append(...teile.filter(Boolean));
   knoten.append(inhalt);
-  return { art, knoten };
+  return { schluessel, art, knoten };
 }
 
 function wrappedText(klasse, inhalt) {
@@ -3683,7 +3705,7 @@ function wrappedBauen(daten, jahr) {
 
   // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
   // Einschraenkung, unter der alles Folgende gilt.
-  seiten.push(wrappedSeite("is-auftakt", [
+  seiten.push(wrappedSeite("auftakt", "is-auftakt", [
     wrappedText("wrapped-eyebrow", "ELFIX Wrapped"),
     wrappedText("wrapped-title", String(jahr)),
     wrappedText("wrapped-lead", wrappedAuftakt(daten, jahr)),
@@ -3694,7 +3716,7 @@ function wrappedBauen(daten, jahr) {
   if (zeitBekannt) {
     const stunden = Math.round(daten.sekunden / 3600);
     const tage = Math.round(daten.sekunden / 86400 * 10) / 10;
-    seiten.push(wrappedSeite("is-zeit", [
+    seiten.push(wrappedSeite("zeit", "is-zeit", [
       wrappedGrosseZahl(stunden, "Stunden"),
       wrappedText("wrapped-lead", "hast du dieses Jahr mit ELFIX geschaut."),
       tage >= 1 ? wrappedText("wrapped-sub", `Das sind ${String(tage).replace(".", ",")} Tage am Stück.`) : null
@@ -3703,7 +3725,7 @@ function wrappedBauen(daten, jahr) {
 
   // 3 - Folgen
   if (daten.folgen > 0) {
-    seiten.push(wrappedSeite("is-folgen", [
+    seiten.push(wrappedSeite("folgen", "is-folgen", [
       wrappedGrosseZahl(daten.folgen, daten.folgen === 1 ? "Folge" : "Folgen"),
       wrappedText("wrapped-lead", `hast du ${jahr} angesehen.`),
       daten.folgenJeTag > 0
@@ -3714,19 +3736,19 @@ function wrappedBauen(daten, jahr) {
 
   // 4/5/6 - Abgeschlossenes, je Gattung und nur wenn es etwas gibt.
   if (daten.abschluesse.serie > 0) {
-    seiten.push(wrappedSeite("is-serien", [
+    seiten.push(wrappedSeite("serien", "is-serien", [
       wrappedGrosseZahl(daten.abschluesse.serie, daten.abschluesse.serie === 1 ? "Serie" : "Serien"),
       wrappedText("wrapped-lead", "hast du abgeschlossen.")
     ]));
   }
   if (daten.abschluesse.film > 0) {
-    seiten.push(wrappedSeite("is-filme", [
+    seiten.push(wrappedSeite("filme", "is-filme", [
       wrappedGrosseZahl(daten.abschluesse.film, daten.abschluesse.film === 1 ? "Film" : "Filme"),
       wrappedText("wrapped-lead", "hast du abgeschlossen.")
     ]));
   }
   if (daten.abschluesse.anime > 0) {
-    seiten.push(wrappedSeite("is-anime", [
+    seiten.push(wrappedSeite("anime", "is-anime", [
       wrappedGrosseZahl(daten.abschluesse.anime, daten.abschluesse.anime === 1 ? "Anime" : "Anime"),
       wrappedText("wrapped-lead", "hast du abgeschlossen.")
     ]));
@@ -3735,7 +3757,7 @@ function wrappedBauen(daten, jahr) {
   // 7 - Serie des Jahres. Ausgewaehlt nach geschauter Zeit, und wo die fehlt,
   // nach Folgen - nicht nach einer erfundenen Punktzahl.
   if (topSerie) {
-    seiten.push(wrappedSeite("is-top", [
+    seiten.push(wrappedSeite("top-serie", "is-top", [
       wrappedText("wrapped-eyebrow", "Deine Serie des Jahres"),
       wrappedPoster(topSerie.bild),
       wrappedText("wrapped-title", topSerie.titel),
@@ -3743,7 +3765,7 @@ function wrappedBauen(daten, jahr) {
     ]));
   }
   if (topFilm) {
-    seiten.push(wrappedSeite("is-top", [
+    seiten.push(wrappedSeite("top-film", "is-top", [
       wrappedText("wrapped-eyebrow", "Dein Film des Jahres"),
       wrappedPoster(topFilm.bild),
       wrappedText("wrapped-title", topFilm.titel),
@@ -3754,7 +3776,7 @@ function wrappedBauen(daten, jahr) {
   // 8 - Genre des Jahres samt Verfolgerfeld.
   if (daten.genres.length) {
     const erste = daten.genres[0];
-    seiten.push(wrappedSeite("is-genre", [
+    seiten.push(wrappedSeite("genre", "is-genre", [
       wrappedText("wrapped-lead", `Du warst dieses Jahr eindeutig auf ${erste.label}.`),
       wrappedRangliste(daten.genres.slice(0, 3))
     ]));
@@ -3764,7 +3786,7 @@ function wrappedBauen(daten, jahr) {
   // Titelzahlen waere eine andere Aussage, die genauso aussieht.
   const mix = wrappedMix(daten, zeitBekannt);
   if (mix.length >= 2) {
-    seiten.push(wrappedSeite("is-mix", [
+    seiten.push(wrappedSeite("mix", "is-mix", [
       wrappedText("wrapped-eyebrow", `Dein ${jahr} Mix`),
       wrappedMixBalken(mix)
     ]));
@@ -3772,7 +3794,7 @@ function wrappedBauen(daten, jahr) {
 
   // 10 - Streak
   if (daten.strecke.tage >= 2) {
-    seiten.push(wrappedSeite("is-streak", [
+    seiten.push(wrappedSeite("streak", "is-streak", [
       wrappedText("wrapped-lead", `Du konntest ${daten.strecke.tage} Tage nicht aufhören.`),
       wrappedGrosseZahl(daten.strecke.tage, "Tage am Stück"),
       wrappedText("wrapped-sub", "Deine längste Strecke ohne Pause.")
@@ -3783,7 +3805,7 @@ function wrappedBauen(daten, jahr) {
   // deshalb auf zwei Seiten.
   if (daten.aktivsterWochentag) {
     const tag = WOCHENTAGE[daten.aktivsterWochentag.tag] || "";
-    seiten.push(wrappedSeite("is-tag", [
+    seiten.push(wrappedSeite("wochentag", "is-tag", [
       wrappedText("wrapped-lead", `${tag} war dein Tag.`),
       wrappedText("wrapped-sub", daten.aktivsterWochentag.sekunden > 0
         ? `Insgesamt ${reviewDauer(daten.aktivsterWochentag.sekunden)} an ${tag}en.`
@@ -3791,7 +3813,7 @@ function wrappedBauen(daten, jahr) {
     ]));
   }
   if (daten.aktivsterTag) {
-    seiten.push(wrappedSeite("is-tag", [
+    seiten.push(wrappedSeite("rekordtag", "is-tag", [
       wrappedText("wrapped-eyebrow", "Dein intensivster Tag"),
       wrappedText("wrapped-title", reviewDatum(daten.aktivsterTag.tag)),
       wrappedText("wrapped-sub", daten.aktivsterTag.sekunden > 0
@@ -3802,7 +3824,7 @@ function wrappedBauen(daten, jahr) {
 
   // 13 - Laengste Sitzung
   if (zeitBekannt && daten.laengsteSitzung >= 1800) {
-    seiten.push(wrappedSeite("is-session", [
+    seiten.push(wrappedSeite("session", "is-session", [
       wrappedText("wrapped-lead", "Nur noch eine Folge?"),
       wrappedGrosseZahl(reviewDauer(daten.laengsteSitzung)),
       wrappedText("wrapped-sub", "Deine längste Sitzung am Stück.")
@@ -3813,7 +3835,7 @@ function wrappedBauen(daten, jahr) {
   // Abenden folgt kein Typ.
   const zeitfach = wrappedTageszeit(daten, zeitBekannt);
   if (zeitfach) {
-    seiten.push(wrappedSeite("is-nacht", [
+    seiten.push(wrappedSeite("tageszeit", "is-nacht", [
       wrappedText("wrapped-lead", `Du bist ${zeitfach.artikel} ${zeitfach.name}.`),
       wrappedGrosseZahl(zeitfach.prozent, "%"),
       wrappedText("wrapped-sub", `deiner Zeit lagen ${zeitfach.satz}.`)
@@ -3823,7 +3845,7 @@ function wrappedBauen(daten, jahr) {
   // 15 - Wiederholungen, nur wenn es welche gab.
   if (daten.wiederholteste.length) {
     const oft = daten.wiederholteste[0];
-    seiten.push(wrappedSeite("is-rewatch", [
+    seiten.push(wrappedSeite("rewatch", "is-rewatch", [
       wrappedText("wrapped-lead", "Das kam dir bekannt vor …"),
       wrappedText("wrapped-title", oft.titel),
       wrappedText("wrapped-sub", daten.wiederholteTitel > 1
@@ -3834,7 +3856,7 @@ function wrappedBauen(daten, jahr) {
 
   // 16 - Monat des Jahres, mit allen Monaten als kleine Reihe.
   if (daten.aktivsterMonat && daten.monate.length >= 2) {
-    seiten.push(wrappedSeite("is-monat", [
+    seiten.push(wrappedSeite("monat", "is-monat", [
       wrappedText("wrapped-lead", `${wrappedMonatName(daten.aktivsterMonat.monat)} war dein stärkster Monat.`),
       wrappedText("wrapped-sub", daten.aktivsterMonat.sekunden > 0
         ? reviewDauer(daten.aktivsterMonat.sekunden)
@@ -3846,7 +3868,7 @@ function wrappedBauen(daten, jahr) {
   // 17 - Anfang und Ende. Solange das Jahr laeuft, ist der letzte Titel nur der
   // bisher letzte - alles andere waere eine Behauptung ueber die Zukunft.
   if (daten.erster) {
-    seiten.push(wrappedSeite("is-erster", [
+    seiten.push(wrappedSeite("erster", "is-erster", [
       wrappedText("wrapped-eyebrow", "So hat dein Jahr begonnen"),
       wrappedPoster(daten.erster.bild),
       wrappedText("wrapped-title", daten.erster.titel),
@@ -3855,7 +3877,7 @@ function wrappedBauen(daten, jahr) {
   }
   if (daten.letzter && daten.letzter.titel !== daten.erster?.titel) {
     const laeuftNoch = new Date().getFullYear() === Number(jahr);
-    seiten.push(wrappedSeite("is-letzter", [
+    seiten.push(wrappedSeite("letzter", "is-letzter", [
       wrappedText("wrapped-eyebrow", laeuftNoch ? "Dein bisher letzter Titel" : "Und damit hast du das Jahr beendet"),
       wrappedPoster(daten.letzter.bild),
       wrappedText("wrapped-title", daten.letzter.titel),
@@ -3866,7 +3888,7 @@ function wrappedBauen(daten, jahr) {
   // 18 - Was sonst noch auffiel. Nur Saetze, deren Zahl eindeutig ist.
   const fakten = wrappedFakten(daten, zeitBekannt);
   if (fakten.length) {
-    seiten.push(wrappedSeite("is-fakten", [
+    seiten.push(wrappedSeite("fakten", "is-fakten", [
       wrappedText("wrapped-eyebrow", "Nebenbei"),
       wrappedFaktenListe(fakten)
     ]));
@@ -4101,7 +4123,7 @@ function wrappedFinale(daten, jahr, zeitBekannt, bild) {
     showReview().catch(() => {});
   });
 
-  return wrappedSeite("is-finale", [karte, schluss], bild);
+  return wrappedSeite("finale", "is-finale", [karte, schluss], bild);
 }
 
 // Welches Jahr gerade Saison hat - 0 heisst: keine.

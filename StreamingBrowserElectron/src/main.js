@@ -9119,6 +9119,15 @@ ipcMain.handle("wrapped:gesehen", (_event, jahr) => {
   return true;
 });
 
+// In welcher Reihenfolge der Rueckblick seine Karten zeigt.
+//
+// Entschieden wird das in src/statistik.js - derselben Regel, die auch der
+// Fernseher fragt. Hier steht nur die Leitung dorthin: die Oberflaeche weiss,
+// welche Karten sie zu diesem Jahr bauen konnte, und bekommt zurueck, welche
+// davon in welcher Folge gezeigt werden.
+ipcMain.handle("wrapped:reihenfolge", (_event, schluessel, jahr) =>
+  statistik.wrappedReihenfolge(schluessel, jahr));
+
 ipcMain.handle("wrapped:set-open", (_event, offen) => {
   setOverlayOpen("wrapped", Boolean(offen));
   return true;

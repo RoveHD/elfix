@@ -612,7 +612,7 @@ public class MainActivity extends Activity {
     /** Welcher Zeitraum im Rueckblick gewaehlt ist. */
     private String rueckblickZeitraum = "alles";
     /** Der Jahresrueckblick: die gebauten Karten, die offene und ihr Platz. */
-    private List<View> wrappedSeiten = new ArrayList<>();
+    private List<Rueckblick.Karte> wrappedSeiten = new ArrayList<>();
     private int wrappedStelle;
     private int wrappedJahr;
     private LinearLayout wrappedPlatz;
@@ -4215,10 +4215,20 @@ public class MainActivity extends Activity {
                     () -> zeigeWrapped(jahr)));
                 return;
             }
-            wrappedSeiten = Rueckblick.wrapped(this, daten, jahr);
-            if (wrappedStelle >= wrappedSeiten.size()) wrappedStelle = 0;
-            wrappedPlatz = platz;
-            wrappedZeichnen();
+            List<Rueckblick.Karte> gebaut = Rueckblick.wrapped(this, daten, jahr);
+            // In welcher Folge sie kommen, entscheidet die geteilte Regel im
+            // Kern - dieselbe, die der Rechner fragt. Sie mischt mit der
+            // Jahreszahl als Saat und kuerzt: dadurch sieht 2027 anders aus
+            // als 2026, ohne dass eine einzige Zahl anders waere.
+            ArrayList<String> schluessel = new ArrayList<>();
+            for (Rueckblick.Karte karte : gebaut) schluessel.add(karte.schluessel);
+            statistik.wrappedReihenfolge(schluessel, jahr, ordnung -> {
+                if (!"wrapped".equals(currentScreen) || wrappedJahr != jahr) return;
+                wrappedSeiten = wrappedOrdnen(gebaut, ordnung);
+                if (wrappedStelle >= wrappedSeiten.size()) wrappedStelle = 0;
+                wrappedPlatz = platz;
+                wrappedZeichnen();
+            });
         });
     }
 
@@ -4238,6 +4248,30 @@ public class MainActivity extends Activity {
             return;
         }
         if ("wrapped".equals(currentScreen)) zeigeWrapped(wrappedJahr);
+    }
+
+    /**
+     * Die gebauten Karten in die Reihenfolge dieses Jahres bringen.
+     *
+     * <p>Was der Kern nicht nennt, faellt weg - das ist die Kuerzung, und sie
+     * ist der Punkt: acht von dreizehn moeglichen Karten sind eine Auswahl,
+     * dreizehn von dreizehn sind eine Liste.
+     *
+     * <p>Kommt gar keine Ordnung zurueck, bleibt es bei der gebauten. Ein
+     * Rueckblick in immer derselben Folge ist schlechter als einer, aber
+     * besser als keiner.
+     */
+    private List<Rueckblick.Karte> wrappedOrdnen(List<Rueckblick.Karte> gebaut,
+                                                 List<String> ordnung) {
+        if (ordnung == null || ordnung.isEmpty()) return gebaut;
+        java.util.HashMap<String, Rueckblick.Karte> nachSchluessel = new java.util.HashMap<>();
+        for (Rueckblick.Karte karte : gebaut) nachSchluessel.put(karte.schluessel, karte);
+        ArrayList<Rueckblick.Karte> sortiert = new ArrayList<>();
+        for (String eintrag : ordnung) {
+            Rueckblick.Karte karte = nachSchluessel.get(eintrag);
+            if (karte != null) sortiert.add(karte);
+        }
+        return sortiert.isEmpty() ? gebaut : sortiert;
     }
 
     /**
@@ -4318,7 +4352,7 @@ public class MainActivity extends Activity {
         wrappedPlatz.removeAllViews();
         wrappedLeiste.removeAllViews();
         int stelle = Math.max(0, Math.min(wrappedStelle, wrappedSeiten.size() - 1));
-        View karte = wrappedSeiten.get(stelle);
+        View karte = wrappedSeiten.get(stelle).ansicht;
         if (karte.getParent() instanceof ViewGroup) {
             ((ViewGroup) karte.getParent()).removeView(karte);
         }

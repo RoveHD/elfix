@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getReview: (jahr) => ipcRenderer.invoke("review:data", jahr),
   getWrapped: (jahr) => ipcRenderer.invoke("wrapped:status", jahr),
   getWrappedJahre: () => ipcRenderer.invoke("wrapped:jahre"),
+  getWrappedReihenfolge: (schluessel, jahr) =>
+    ipcRenderer.invoke("wrapped:reihenfolge", schluessel, jahr),
   markWrappedSeen: (jahr) => ipcRenderer.invoke("wrapped:gesehen", jahr),
   setWrappedOpen: (offen) => ipcRenderer.invoke("wrapped:set-open", offen),
   saveProviders: (providers) => ipcRenderer.invoke("provider:save-all", providers),

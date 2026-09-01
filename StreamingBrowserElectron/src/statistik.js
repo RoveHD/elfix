@@ -820,6 +820,140 @@ function wrappedLage(daten, optionen = {}) {
   };
 }
 
+/**
+ * Die Karten des Jahresrueckblicks, in ihrer natuerlichen Reihenfolge.
+ *
+ * <p>Eine feste Liste und keine, die aus den Daten entsteht - daran haengt,
+ * dass die Reihenfolge eines Jahres stabil bleibt. Wuerde nur das gemischt,
+ * was gerade vorhanden ist, saehe der Rueckblick nach jeder neuen Folge anders
+ * aus: eine Karte mehr im Topf, und Fisher-Yates wirft alles neu. So wird
+ * einmal die ganze Liste gemischt und erst danach auf das gekuerzt, was es
+ * wirklich gibt - eine Karte, die im Laufe des Jahres dazukommt, setzt sich an
+ * ihren Platz, statt alles zu verschieben.
+ */
+const WRAPPED_KARTEN = [
+  "auftakt", "zeit", "folgen",
+  "serien", "filme", "anime", "top-serie", "top-film",
+  "genre", "mix", "streak", "wochentag", "rekordtag", "session",
+  "tageszeit", "rewatch", "monat", "erster", "letzter", "fakten",
+  "finale"
+];
+
+/**
+ * Was immer an derselben Stelle steht.
+ *
+ * <p>Der Auftakt eroeffnet, das Finale schliesst - das ist keine Karte unter
+ * anderen, sondern der Rahmen. Und Zeit und Folgen stehen gleich danach, weil
+ * sie den Massstab setzen: ein Rueckblick, der mit "Montag war dein Tag"
+ * anfaengt, bevor er gesagt hat, wie viel ueberhaupt lief, erzaehlt die
+ * Pointe vor dem Witz.
+ */
+const WRAPPED_KOPF = ["auftakt", "zeit", "folgen"];
+const WRAPPED_SCHLUSS = ["finale"];
+
+/**
+ * Die zwei Karten, die nie wegfallen duerfen.
+ *
+ * <p>Sie sind der Grund, warum jemand den Rueckblick ueberhaupt aufmacht. Alles
+ * andere ist schoen; "deine Serie des Jahres" ist die Frage.
+ */
+const WRAPPED_GESETZT = ["top-serie", "top-film"];
+
+/**
+ * So viele Kuer-Karten hoechstens.
+ *
+ * <p>Der eigentliche Punkt der ganzen Uebung: ohne eine Grenze zeigte jedes
+ * Jahr alles, was da ist, und zwei Jahre nebeneinander waeren dieselbe Folge
+ * in derselben Reihenfolge. Mit ihr sieht 2027 anders aus als 2026, ohne dass
+ * eine einzige Zahl anders waere.
+ *
+ * <p>Wer wenig hat, verliert dadurch nichts - gekuerzt wird nur, wo mehr
+ * Kandidaten da sind als Plaetze. Und nichts geht verloren: die vollstaendigen
+ * Zahlen stehen weiterhin auf der Statistikseite, die genau dafuer da ist.
+ */
+const WRAPPED_KUER_MAX = 8;
+
+/**
+ * Ein Zufall, der jedes Jahr ein anderer und innerhalb eines Jahres immer
+ * derselbe ist.
+ *
+ * <p>Beides gehoert zusammen. Waere er wirklich zufaellig, saehe der Rueckblick
+ * bei jedem Oeffnen anders aus - man koennte niemandem etwas zeigen, das man
+ * gerade gesehen hat. Waere er es gar nicht, saehe jedes Jahr gleich aus.
+ * Gesaet wird deshalb aus der Jahreszahl und sonst nichts.
+ *
+ * <p>Mulberry32, weil es kurz ist und ueberall dasselbe herausbekommt. Auf die
+ * Guete kommt es hier nicht an - es soll mischen, nicht verschluesseln.
+ */
+function wrappedMischer(saat) {
+  let zustand = (Number(saat) || 0) >>> 0;
+  return () => {
+    zustand = (zustand + 0x6d2b79f5) >>> 0;
+    let t = zustand;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t = (t ^ (t + Math.imul(t ^ (t >>> 7), t | 61))) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * In welcher Reihenfolge der Jahresrueckblick seine Karten zeigt.
+ *
+ * <p>Bis hierher gab es keine: beide Geraete bauten ihre Karten in der
+ * Reihenfolge, in der sie im Quelltext stehen. Damit sah 2027 aus wie 2026 und
+ * 2026 wie 2025 - dieselben Karten, dieselbe Folge, nur andere Zahlen darauf.
+ * Ein Jahresrueckblick, den man schon kennt, bevor man ihn aufmacht.
+ *
+ * <p>Der Rahmen bleibt: Auftakt vorn, dann Zeit und Folgen, Finale hinten.
+ * Dazwischen wird gemischt - mit der Jahreszahl als Saat, also jedes Jahr
+ * anders und innerhalb eines Jahres immer gleich. Und es wird gekuerzt, denn
+ * darin liegt der Unterschied: acht von dreizehn moeglichen Karten sind eine
+ * Auswahl, dreizehn von dreizehn sind eine Liste.
+ *
+ * <p>Gerechnet wird hier nichts und behauptet erst recht nichts. Diese Funktion
+ * bekommt die Schluessel der Karten, die es zu diesem Jahr wirklich gibt, und
+ * gibt eine Teilmenge davon zurueck - sie kann nichts erfinden, was die Daten
+ * nicht hergeben.
+ *
+ * @param vorhanden die Schluessel der baubaren Karten, in beliebiger Folge
+ * @param jahr      die Jahreszahl - sie ist die Saat
+ * @param optionen  {hoechstens} nur fuer die Pruefungen
+ * @return dieselben Schluessel, geordnet und gekuerzt
+ */
+function wrappedReihenfolge(vorhanden, jahr, optionen = {}) {
+  const da = new Set((Array.isArray(vorhanden) ? vorhanden : []).map(text).filter(Boolean));
+  if (!da.size) return [];
+  const grenze = Number.isFinite(optionen.hoechstens) ? optionen.hoechstens : WRAPPED_KUER_MAX;
+
+  const kopf = WRAPPED_KOPF.filter((karte) => da.has(karte));
+  const schluss = WRAPPED_SCHLUSS.filter((karte) => da.has(karte));
+  const fest = new Set([...WRAPPED_KOPF, ...WRAPPED_SCHLUSS]);
+
+  // Gemischt wird die ganze Liste, nicht das Vorhandene - siehe WRAPPED_KARTEN.
+  const topf = WRAPPED_KARTEN.filter((karte) => !fest.has(karte));
+  const wuerfel = wrappedMischer(Number(jahr) || 0);
+  for (let i = topf.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(wuerfel() * (i + 1));
+    [topf[i], topf[j]] = [topf[j], topf[i]];
+  }
+
+  const kuer = topf.filter((karte) => da.has(karte));
+  const gewaehlt = kuer.slice(0, Math.max(0, grenze));
+  // Was gesetzt ist, faellt auch dann nicht weg, wenn das Mischen es nach
+  // hinten geworfen hat: es verdraengt die letzte Karte, die nicht gesetzt ist.
+  for (const karte of WRAPPED_GESETZT) {
+    if (!da.has(karte) || gewaehlt.includes(karte)) continue;
+    const raus = gewaehlt.map((k) => WRAPPED_GESETZT.includes(k)).lastIndexOf(false);
+    if (raus < 0) gewaehlt.push(karte);
+    else gewaehlt[raus] = karte;
+  }
+  // Nach dem Tausch steht die gesetzte Karte an einer beliebigen Stelle - die
+  // Reihenfolge des Mischens gilt weiter, damit sie nicht immer hinten landet.
+  gewaehlt.sort((links, rechts) => topf.indexOf(links) - topf.indexOf(rechts));
+
+  return [...kopf, ...gewaehlt, ...schluss];
+}
+
 module.exports = {
   SITZUNG_STILLE_MS,
   SITZUNG_LUECKE_MS,
@@ -846,5 +980,8 @@ module.exports = {
   WRAPPED_MIN_FOLGEN,
   WRAPPED_MIN_TAGE,
   wrappedJahrFuer,
-  wrappedLage
+  wrappedLage,
+  WRAPPED_KARTEN,
+  WRAPPED_KUER_MAX,
+  wrappedReihenfolge
 };

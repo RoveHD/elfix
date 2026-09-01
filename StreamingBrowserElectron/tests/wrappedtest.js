@@ -496,6 +496,17 @@ pruefe("Das Theme wird durchgehend benutzt",
     /tvRueckblicksReihe[\s\S]{0,1200}?"Ansehen", \(\) -> zeigeWrapped\(jahr\)/.test(HAUPT),
     "die Statistikseite ist eine Tabelle - die liest niemand aus drei Metern");
 
+  pruefe("Auch das Telefon fragt die geteilte Regel nach der Reihenfolge",
+    /kern\.rufe\("statistik\.wrappedReihenfolge"/.test(STATISTIK_JAVA)
+    && /statistik\.wrappedReihenfolge\(schluessel, jahr, ordnung ->/.test(HAUPT),
+    "eine zweite Regel hiesse: zwei Geraete erzaehlen denselben Rueckblick verschieden");
+  pruefe("Dafuer sagt auch dort jede Karte, welche sie ist",
+    /static final class Karte \{/.test(RUECKBLICK)
+    && /static List<Karte> wrapped\(Context context, JSONObject daten, int jahr\)/.test(RUECKBLICK),
+    "eine View allein kann das nicht");
+  pruefe("Faellt der Aufruf aus, bleibt auch dort die gebaute Folge",
+    /if \(ordnung == null \|\| ordnung\.isEmpty\(\)\) return gebaut;/.test(HAUPT));
+
   pruefe("Wann Saison ist, entscheidet die geteilte Regel",
     /kern\.rufe\("statistik\.wrappedJahrFuer"/.test(STATISTIK_JAVA)
     && /kern\.rufe\("statistik\.wrappedLage"/.test(STATISTIK_JAVA),
@@ -616,6 +627,90 @@ pruefe("Die Vignette liegt unter dem Text und nicht darueber",
   && /\.wrapped-stage::after \{[\s\S]{0,400}?z-index: 2;/.test(CSS),
   "sonst legt sie sich an den Raendern ueber die Fussnote");
 
+// --- Jedes Jahr eine andere Folge ------------------------------------------
+//
+// Gemeldet als "und jedes jahr andere sachen zeigen beim wrapped". Bis hierher
+// bauten beide Geraete ihre Karten in der Reihenfolge, in der sie im Quelltext
+// stehen - und zeigten sie auch so. Damit sah 2027 aus wie 2026 und 2026 wie
+// 2025: dieselben Karten, dieselbe Folge, nur andere Zahlen darauf.
+//
+// Zwei Eigenschaften muessen zugleich gelten, und sie widersprechen sich fast:
+// verschieden von Jahr zu Jahr, und innerhalb eines Jahres immer gleich. Ohne
+// die zweite koennte man niemandem zeigen, was man gerade gesehen hat.
+{
+  const alle = statistik.WRAPPED_KARTEN;
+
+  pruefe("Ein Jahr sieht immer gleich aus",
+    statistik.wrappedReihenfolge(alle, 2026).join() === statistik.wrappedReihenfolge(alle, 2026).join(),
+    "sonst koennte man niemandem zeigen, was man gerade gesehen hat");
+  pruefe("Zwei Jahre sehen verschieden aus",
+    statistik.wrappedReihenfolge(alle, 2026).join() !== statistik.wrappedReihenfolge(alle, 2027).join());
+
+  // Der Rahmen bleibt: der Auftakt eroeffnet, das Finale schliesst, und Zeit
+  // und Folgen stehen gleich danach - sie setzen den Massstab. Ein Rueckblick,
+  // der mit "Montag war dein Tag" anfaengt, bevor er gesagt hat, wie viel
+  // ueberhaupt lief, erzaehlt die Pointe vor dem Witz.
+  let verstoesse = 0;
+  let ohneGesetzte = 0;
+  let laengen = new Set();
+  for (let jahr = 2000; jahr < 2200; jahr += 1) {
+    const r = statistik.wrappedReihenfolge(alle, jahr);
+    if (r[0] !== "auftakt" || r[r.length - 1] !== "finale") verstoesse += 1;
+    if (r[1] !== "zeit" || r[2] !== "folgen") verstoesse += 1;
+    if (!r.includes("top-serie") || !r.includes("top-film")) ohneGesetzte += 1;
+    if (new Set(r).size !== r.length) verstoesse += 1;
+    laengen.add(r.length);
+  }
+  pruefe("Der Rahmen steht in jedem Jahr", verstoesse === 0,
+    "Auftakt, Zeit, Folgen vorn - Finale hinten, und keine Karte doppelt");
+  pruefe("Serie und Film des Jahres fallen nie weg", ohneGesetzte === 0,
+    "sie sind der Grund, warum jemand den Rueckblick ueberhaupt aufmacht");
+  pruefe("Und es sind jedes Jahr gleich viele", laengen.size === 1,
+    `sonst waere ein Jahr laenger als das andere - ${[...laengen].join("/")}`);
+
+  // Gekuerzt wird nur, wo es mehr Kandidaten gibt als Plaetze. Wer wenig
+  // geschaut hat, verliert nichts.
+  const wenig = ["auftakt", "zeit", "folgen", "top-serie", "genre", "streak", "finale"];
+  pruefe("Wer wenig hat, verliert nichts",
+    statistik.wrappedReihenfolge(wenig, 2026).length === wenig.length);
+  pruefe("Wer viel hat, sieht eine Auswahl",
+    statistik.wrappedReihenfolge(alle, 2026).length < alle.length,
+    "acht von dreizehn sind eine Auswahl, dreizehn von dreizehn sind eine Liste");
+
+  // Und die Ordnung haelt, waehrend das Jahr laeuft. Gemischt wird die ganze
+  // Liste und erst danach auf das Vorhandene gekuerzt - wuerde nur das
+  // Vorhandene gemischt, saehe der Rueckblick nach jeder neuen Folge anders
+  // aus, weil eine Karte mehr im Topf alles neu wirft.
+  const mehr = [...wenig, "mix", "rewatch", "monat"];
+  const vorher = statistik.wrappedReihenfolge(wenig, 2026);
+  const nachher = statistik.wrappedReihenfolge(mehr, 2026).filter((k) => wenig.includes(k));
+  pruefe("Eine Karte, die im Laufe des Jahres dazukommt, wirft nichts um",
+    vorher.join() === nachher.join(),
+    "sonst saehe der Rueckblick nach jeder neuen Folge anders aus");
+
+  pruefe("Erfunden wird dabei nichts",
+    statistik.wrappedReihenfolge(wenig, 2026).every((k) => wenig.includes(k)),
+    "die Regel darf kuerzen und ordnen - nicht hinzufuegen");
+  pruefe("Ohne Karten keine Reihenfolge",
+    statistik.wrappedReihenfolge([], 2026).length === 0
+    && statistik.wrappedReihenfolge(null, 2026).length === 0);
+}
+
+// Und beide Geraete fragen dieselbe Regel - eine zweite waere die Sorte
+// Unterschied, die man erst bemerkt, wenn zwei Geraete denselben Rueckblick
+// verschieden erzaehlen.
+pruefe("Der Rechner holt die Reihenfolge aus dem Kern",
+  /ipcMain\.handle\("wrapped:reihenfolge"[\s\S]{0,140}?statistik\.wrappedReihenfolge/.test(MAIN)
+  && /async function wrappedSortieren\(seiten, jahr\)/.test(RENDERER)
+  && /wrappedSeiten = await wrappedSortieren\(wrappedBauen\(/.test(RENDERER));
+pruefe("Und jede Karte sagt, welche sie ist",
+  /function wrappedSeite\(schluessel, art, teile/.test(RENDERER)
+  && /return \{ schluessel, art, knoten \};/.test(RENDERER),
+  "zwei Karten teilen sich dieselbe Art - is-top und is-tag gibt es je zweimal");
+pruefe("Faellt die Regel aus, bleibt die gebaute Folge",
+  /if \(!Array\.isArray\(ordnung\) \|\| !ordnung\.length\) return seiten;/.test(RENDERER),
+  "immer dieselbe Folge ist schlechter als eine wechselnde, aber besser als keine");
+
 // --- Ein Hintergrund fuer den ganzen Rueckblick -------------------------------
 //
 // Gemeldet als "background sieht immer unterschiedlich aus und nicht
@@ -626,7 +721,7 @@ pruefe("Die Vignette liegt unter dem Text und nicht darueber",
 
 pruefe("Hinter jeder Karte liegt dasselbe Bild",
   /let wrappedStimmungsbild = "";/.test(RENDERER)
-  && /function wrappedSeite\(art, teile, bild = wrappedStimmungsbild\)/.test(RENDERER)
+  && /function wrappedSeite\(schluessel, art, teile, bild = wrappedStimmungsbild\)/.test(RENDERER)
   && /wrappedStimmungsbild = bild;/.test(RENDERER));
 pruefe("Keine Karte bringt mehr ihr eigenes mit",
   !/\], topSerie\.bild\)\)|\], topFilm\.bild\)\)|\], oft\.bild\)\)|\], daten\.erster\.bild\)\)|\], daten\.letzter\.bild\)\)/
