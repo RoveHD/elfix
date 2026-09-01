@@ -25,28 +25,28 @@ import java.util.Set;
  * bewusst in einer einzigen Zeichenkette gebaut, die sich herausziehen und
  * gegen eine nachgebaute Seite laufen lassen laesst.
  */
-public class FernsehwerbungTest {
+public class WerbeschichtenTest {
 
     @Test
     public void erkenntDieAnbieterAmNamenUndAnDerAdresse() {
-        assertEquals(Fernsehwerbung.ANIWORLD,
-            Fernsehwerbung.kennung("AniWorld", "https://aniworld.to/"));
+        assertEquals(Werbeschichten.ANIWORLD,
+            Werbeschichten.kennung("AniWorld", "https://aniworld.to/"));
         // Der Anbieter zieht um; der Name bleibt.
-        assertEquals(Fernsehwerbung.ANIWORLD,
-            Fernsehwerbung.kennung("AniWorld", "https://186.2.175.5/"));
+        assertEquals(Werbeschichten.ANIWORLD,
+            Werbeschichten.kennung("AniWorld", "https://186.2.175.5/"));
         // Und umgekehrt: der Name ist frei gewaehlt, die Adresse nicht.
-        assertEquals(Fernsehwerbung.ANIWORLD,
-            Fernsehwerbung.kennung("Anime", "https://aniworld.to/animes"));
-        assertEquals(Fernsehwerbung.STO, Fernsehwerbung.kennung("s.to", "https://s.to/"));
-        assertEquals(Fernsehwerbung.FILMO, Fernsehwerbung.kennung("Filmo", "https://filmo.to/"));
-        assertEquals("", Fernsehwerbung.kennung("Irgendwer", "https://beispiel.de/"));
-        assertEquals("", Fernsehwerbung.kennung(null, null));
+        assertEquals(Werbeschichten.ANIWORLD,
+            Werbeschichten.kennung("Anime", "https://aniworld.to/animes"));
+        assertEquals(Werbeschichten.STO, Werbeschichten.kennung("s.to", "https://s.to/"));
+        assertEquals(Werbeschichten.FILMO, Werbeschichten.kennung("Filmo", "https://filmo.to/"));
+        assertEquals("", Werbeschichten.kennung("Irgendwer", "https://beispiel.de/"));
+        assertEquals("", Werbeschichten.kennung(null, null));
     }
 
     @Test
     public void jedeSeiteBekommtNurIhreEigenenRegeln() {
-        String aniworld = Fernsehwerbung.schutzRegeln(Fernsehwerbung.ANIWORLD);
-        String filmo = Fernsehwerbung.schutzRegeln(Fernsehwerbung.FILMO);
+        String aniworld = Werbeschichten.schutzRegeln(Werbeschichten.ANIWORLD);
+        String filmo = Werbeschichten.schutzRegeln(Werbeschichten.FILMO);
         // Was AniWorld schuetzt, kennt filmo.to nicht - und umgekehrt. Eine
         // gemeinsame Liste waere der Weg, auf dem eine Regel des einen
         // Anbieters beim anderen etwas trifft.
@@ -61,9 +61,9 @@ public class FernsehwerbungTest {
 
     @Test
     public void derSchutzHaeltPlayerCaptchaUndAnmeldungFest() {
-        for (String kennung : new String[]{Fernsehwerbung.ANIWORLD, Fernsehwerbung.STO,
-            Fernsehwerbung.FILMO, ""}) {
-            String schutz = Fernsehwerbung.schutzRegeln(kennung);
+        for (String kennung : new String[]{Werbeschichten.ANIWORLD, Werbeschichten.STO,
+            Werbeschichten.FILMO, ""}) {
+            String schutz = Werbeschichten.schutzRegeln(kennung);
             assertTrue(kennung + ": Video", schutz.contains("video"));
             assertTrue(kennung + ": Formular", schutz.contains("form"));
             assertTrue(kennung + ": Captcha", schutz.contains("captcha"));
@@ -74,7 +74,7 @@ public class FernsehwerbungTest {
 
     @Test
     public void aniworldSchuetztFolgenSpracheUndHoster() {
-        String schutz = Fernsehwerbung.schutzRegeln(Fernsehwerbung.ANIWORLD);
+        String schutz = Werbeschichten.schutzRegeln(Werbeschichten.ANIWORLD);
         for (String noetig : new String[]{"#stream", ".hosterSiteVideo", ".hosterSiteDirectNav",
             ".inSiteWebStream", ".changeLanguageBox", ".watchEpisode", ".episodeList"}) {
             assertTrue("fehlt: " + noetig, schutz.contains(noetig));
@@ -95,9 +95,9 @@ public class FernsehwerbungTest {
             ".banner", "#banner", ".popup", "#popup", ".overlay", "#overlay",
             ".ad", "#ad", ".ads", "#ads", ".werbung-container", ".modal", "#modal",
             ".notification", "#notification", ".sticky", "#sticky", "iframe", "div"));
-        for (String kennung : new String[]{Fernsehwerbung.ANIWORLD, Fernsehwerbung.STO,
-            Fernsehwerbung.FILMO, ""}) {
-            for (String regel : Fernsehwerbung.versteckRegeln(kennung).split(",")) {
+        for (String kennung : new String[]{Werbeschichten.ANIWORLD, Werbeschichten.STO,
+            Werbeschichten.FILMO, ""}) {
+            for (String regel : Werbeschichten.versteckRegeln(kennung).split(",")) {
                 assertFalse("zu allgemein: " + regel + " (" + kennung + ")",
                     verboten.contains(regel.trim()));
             }
@@ -107,23 +107,23 @@ public class FernsehwerbungTest {
     /** Kein Anbietersatz darf leerlaufen, und keiner darf den anderen enthalten. */
     @Test
     public void anbietersaetzeStehenGetrennt() {
-        List<String> aniworld = Fernsehwerbung.anbieterSchuetzen(Fernsehwerbung.ANIWORLD);
-        List<String> filmo = Fernsehwerbung.anbieterSchuetzen(Fernsehwerbung.FILMO);
+        List<String> aniworld = Werbeschichten.anbieterSchuetzen(Werbeschichten.ANIWORLD);
+        List<String> filmo = Werbeschichten.anbieterSchuetzen(Werbeschichten.FILMO);
         assertFalse(aniworld.isEmpty());
         assertFalse(filmo.isEmpty());
         assertTrue(java.util.Collections.disjoint(aniworld, filmo));
-        assertTrue(Fernsehwerbung.anbieterSchuetzen("unbekannt").isEmpty());
-        assertTrue(Fernsehwerbung.anbieterVerstecken("unbekannt").isEmpty());
+        assertTrue(Werbeschichten.anbieterSchuetzen("unbekannt").isEmpty());
+        assertTrue(Werbeschichten.anbieterVerstecken("unbekannt").isEmpty());
     }
 
     @Test
     public void dasSkriptTraegtRegelnWirteUndSchwelle() {
-        String skript = Fernsehwerbung.skript(Fernsehwerbung.ANIWORLD,
+        String skript = Werbeschichten.skript(Werbeschichten.ANIWORLD,
             Arrays.asList("doubleclick.net", "popads.net"), false);
         assertTrue(skript.contains("\"doubleclick.net\""));
         assertTrue(skript.contains("\"popads.net\""));
-        assertTrue(skript.contains("var SCHWELLE=" + Fernsehwerbung.SCHWELLE + ";"));
-        assertTrue(skript.contains("var HOECHST=" + Fernsehwerbung.HOECHSTPRUEFUNGEN + ";"));
+        assertTrue(skript.contains("var SCHWELLE=" + Werbeschichten.SCHWELLE + ";"));
+        assertTrue(skript.contains("var HOECHST=" + Werbeschichten.HOECHSTPRUEFUNGEN + ";"));
         assertTrue(skript.contains("#stream"));
         assertTrue(skript.contains("MutationObserver"));
         // Die Wache gegen mehrfaches Einspielen - sonst haengen nach drei
@@ -131,7 +131,7 @@ public class FernsehwerbungTest {
         assertTrue(skript.contains("__elfixTvWerbungV1"));
         // Im Release schreibt es nichts in die Konsole.
         assertTrue(skript.contains("var MELDEN=false;"));
-        assertTrue(Fernsehwerbung.skript("", null, true).contains("var MELDEN=true;"));
+        assertTrue(Werbeschichten.skript("", null, true).contains("var MELDEN=true;"));
     }
 
     /**
@@ -151,7 +151,7 @@ public class FernsehwerbungTest {
      */
     @Test
     public void dasSkriptKenntDenRahmenOhneQuelle() {
-        String skript = Fernsehwerbung.skript(Fernsehwerbung.ANIWORLD, null, false);
+        String skript = Werbeschichten.skript(Werbeschichten.ANIWORLD, null, false);
         assertTrue(skript.contains("function rahmenschicht(el)"));
         assertTrue(skript.contains("function ohneQuelle(el)"));
         // Die drei Bedingungen, ohne die die Regel den Player traefe.
@@ -173,7 +173,7 @@ public class FernsehwerbungTest {
     /** Ohne bekannte Wirte bleibt die Liste leer - und das Skript trotzdem lesbar. */
     @Test
     public void skriptOhneWirteBleibtGueltig() {
-        String skript = Fernsehwerbung.skript("", null, false);
+        String skript = Werbeschichten.skript("", null, false);
         assertTrue(skript.contains("var WIRTE=[];"));
         assertTrue(skript.startsWith("(function(){"));
         assertTrue(skript.endsWith("})();"));
@@ -189,7 +189,7 @@ public class FernsehwerbungTest {
     public void dasSkriptGehtNurAufDieSeiteDesAnbieters() {
         Provider aniworld = new Provider();
         aniworld.startUrl = "https://aniworld.to/";
-        Set<String> regeln = Fernsehwerbung.wirtRegeln(aniworld);
+        Set<String> regeln = Werbeschichten.wirtRegeln(aniworld);
         assertTrue(regeln.contains("https://aniworld.to"));
         assertTrue(regeln.contains("https://*.aniworld.to"));
         assertEquals(2, regeln.size());
@@ -197,28 +197,28 @@ public class FernsehwerbungTest {
         assertFalse(regeln.contains("*"));
 
         // Ein Port gehoert nicht in die Regel, eine Anmeldung erst recht nicht.
-        assertTrue(Fernsehwerbung.wirtRegeln("https://s.to:8443/serie/stream")
+        assertTrue(Werbeschichten.wirtRegeln("https://s.to:8443/serie/stream")
             .contains("https://s.to"));
-        assertTrue(Fernsehwerbung.wirtRegeln("https://wer:was@filmo.to/")
+        assertTrue(Werbeschichten.wirtRegeln("https://wer:was@filmo.to/")
             .contains("https://filmo.to"));
 
         Provider ohne = new Provider();
         ohne.startUrl = "";
-        assertTrue(Fernsehwerbung.wirtRegeln(ohne).isEmpty());
-        assertTrue(Fernsehwerbung.wirtRegeln((Provider) null).isEmpty());
-        assertTrue(Fernsehwerbung.wirtRegeln((String) null).isEmpty());
+        assertTrue(Werbeschichten.wirtRegeln(ohne).isEmpty());
+        assertTrue(Werbeschichten.wirtRegeln((Provider) null).isEmpty());
+        assertTrue(Werbeschichten.wirtRegeln((String) null).isEmpty());
         // Alles, was kein http(s) ist, bekommt gar keine Regel - ein
         // Platzhalter durch die Hintertuer waere genau der Rahmen des Hosters.
-        assertTrue(Fernsehwerbung.wirtRegeln("file:///android_asset/x.html").isEmpty());
-        assertTrue(Fernsehwerbung.wirtRegeln("aniworld.to").isEmpty());
-        assertTrue(Fernsehwerbung.wirtRegeln("https://*/").isEmpty());
+        assertTrue(Werbeschichten.wirtRegeln("file:///android_asset/x.html").isEmpty());
+        assertTrue(Werbeschichten.wirtRegeln("aniworld.to").isEmpty());
+        assertTrue(Werbeschichten.wirtRegeln("https://*/").isEmpty());
     }
 
     @Test
     public void zeichenkettenGehenUnbeschadetInsSkript() {
-        assertEquals("\"a,b\"", Fernsehwerbung.jsText("a,b"));
-        assertEquals("\"[id^=\\\"ad_\\\"]\"", Fernsehwerbung.jsText("[id^=\"ad_\"]"));
-        assertEquals("\"a\\\\b\"", Fernsehwerbung.jsText("a\\b"));
-        assertEquals("\"\"", Fernsehwerbung.jsText(null));
+        assertEquals("\"a,b\"", Werbeschichten.jsText("a,b"));
+        assertEquals("\"[id^=\\\"ad_\\\"]\"", Werbeschichten.jsText("[id^=\"ad_\"]"));
+        assertEquals("\"a\\\\b\"", Werbeschichten.jsText("a\\b"));
+        assertEquals("\"\"", Werbeschichten.jsText(null));
     }
 }

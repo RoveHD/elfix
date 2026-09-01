@@ -98,7 +98,7 @@ public class MainActivity extends Activity {
     /** Blendet aus, was den Player zudeckt. Siehe Kosmetik.java. */
     private Kosmetik kosmetik;
     /**
-     * Die kosmetische Werbeentfernung des Fernsehers. Siehe Fernsehwerbung.java.
+     * Die kosmetische Werbeentfernung des Fernsehers. Siehe Werbeschichten.java.
      *
      * <p>Nur dort: auf dem Telefon filtert weiter, was vorher filterte. Der
      * Fernseher ist der Fall, in dem die uebrigen drei Instanzen eine Luecke
@@ -106,7 +106,7 @@ public class MainActivity extends Activity {
      * die {@link Kosmetik} greift zu spaet und sieht nur, was den Player
      * zudeckt.
      */
-    private Fernsehwerbung fernsehwerbung;
+    private Werbeschichten werbeschichten;
     /** Die vollen AdGuard-Regeln, wo das Geraet sie traegt. Siehe Werbefilter.java. */
     private Werbefilter werbefilter;
     private Fassungen fassungen;
@@ -991,7 +991,7 @@ public class MainActivity extends Activity {
         // Braucht weder Kern noch Netz: die Regeln stehen in der Klasse, und
         // das Skript muss beim ersten Dokument schon dasein - auf den Kern zu
         // warten hiesse, die erste Anbieterseite ungefiltert zu zeigen.
-        fernsehwerbung = new Fernsehwerbung(adblocker, istDebugBau());
+        werbeschichten = new Werbeschichten(adblocker, istDebugBau());
         werbefilter = new Werbefilter(this, kern, () -> {
             // Der Aufbau dauert; steht die Seite gerade offen, soll sie es zeigen.
             settingsGeaendert();
@@ -8878,9 +8878,21 @@ public class MainActivity extends Activity {
         if (rahmen != null) rahmen.anschliessen(webView);
         // Dasselbe Zeitfenster, anderer Grund: das Stilblatt gegen die Werbung
         // muss vor den Skripten der Seite dastehen, sonst blitzt sie auf.
-        // Nur auf dem Fernseher - siehe das Feld.
-        if (isTelevision() && fernsehwerbung != null) {
-            fernsehwerbung.anschliessen(webView, provider);
+        //
+        // <b>Und das gilt auf jedem Geraet.</b> Bis hierher stand hier ein
+        // isTelevision(): die Klasse war fuer den Fernsehstick geschrieben,
+        // weil dort der Werbefilter nicht laeuft, und fuer das Telefon galt
+        // die Annahme, der Werbefilter decke es ab. Die Annahme stimmt nur
+        // fuer das Hauptdokument. Werbefilter und Kosmetik spielen ueber
+        // evaluateJavascript ein, und das erreicht nur das oberste Dokument -
+        // genau deshalb gibt es fuer die Spielerskripte ueberhaupt
+        // androidx.webkit. Die Schicht ueber dem Video sitzt aber im Rahmen
+        // des Hosters, und dorthin kam auf dem Telefon nichts. Gemeldet mit
+        // einem Foto: ein Gluecksspiel-Overlay mitten im laufenden Video.
+        //
+        // Das hier ist der einzige Weg, der in *jedes* Dokument einspielt.
+        if (werbeschichten != null) {
+            werbeschichten.anschliessen(webView, provider);
         }
         webView.setWebViewClient(new GuardedWebViewClient(provider));
         webView.setWebChromeClient(new GuardedChromeClient());
@@ -12488,8 +12500,8 @@ public class MainActivity extends Activity {
             // Der Rueckfall fuer WebViews ohne addDocumentStartJavaScript und
             // fuer Seiten, die ihr Dokument per Skript austauschen. Frueher
             // als hier geht es ueber diesen Weg nicht.
-            if (isTelevision() && fernsehwerbung != null) {
-                fernsehwerbung.einspielen(view, provider);
+            if (werbeschichten != null) {
+                werbeschichten.einspielen(view, provider);
             }
             super.onPageStarted(view, url, favicon);
         }
@@ -12674,8 +12686,14 @@ public class MainActivity extends Activity {
             // Vor der TV-Navigation: was Werbung ist, soll schon weg sein,
             // wenn die Navigation ihre Ziele einsammelt. Sonst bekaeme eine
             // Werbekarte den ersten Fokus.
-            if (isTelevision() && fernsehwerbung != null) {
-                fernsehwerbung.einspielen(view, provider);
+            //
+            // Diese eine Stelle bleibt beim Fernseher, und das ist kein
+            // Ueberbleibsel: sie steht hier wegen der Fokusreihenfolge des
+            // Steuerkreuzes, und die gibt es nur dort. Eingespielt ist die
+            // Schicht auf jedem Geraet laengst - beim Anschliessen des
+            // WebViews und beim Seitenanfang.
+            if (isTelevision() && werbeschichten != null) {
+                werbeschichten.einspielen(view, provider);
             }
             installTvWebNavigation(view);
             // Die Watchparty: Horcher einsetzen, einen Folgenwechsel melden und
@@ -12926,7 +12944,7 @@ public class MainActivity extends Activity {
                 // auch dann nicht, wenn die Seite es gleich wieder einblendet.
                 // Ohne diese Zeile bekaeme eine Werbekarte den Fokus, obwohl
                 // sie nicht zu sehen ist, und die Fernbedienung liefe ins
-                // Leere (siehe Fernsehwerbung.java).
+                // Leere (siehe Werbeschichten.java).
                 + "function werbung(el){try{return !!(el.closest&&el.closest('[data-elfix-werbung],[aria-hidden=\"true\"]'));}catch(e){return false;}}"
                 + "function visible(el){if(werbung(el))return false;var r=el.getBoundingClientRect();var s=getComputedStyle(el);"
                 // Deliberately scroll-independent: an element counts as a target if it is rendered

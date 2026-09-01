@@ -14,7 +14,23 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Die kosmetische Werbeentfernung des Fernsehers.
+ * Was ueber dem Video liegt - auf jedem Geraet und in jedem Rahmen.
+ *
+ * <p><b>Sie hiess einmal Fernsehwerbung, und das war zu eng.</b> Geschrieben
+ * wurde sie fuer den Fernsehstick, weil dort der {@link Werbefilter} nicht
+ * laeuft; fuer das Telefon galt die Annahme, der Werbefilter decke es ab.
+ * Die Annahme stimmt nur fuer das oberste Dokument. {@link Werbefilter} und
+ * {@link Kosmetik} spielen ueber {@code evaluateJavascript} ein, und das
+ * erreicht keinen Unterrahmen - genau deshalb bringt ELFIX fuer die
+ * Spielerskripte ueberhaupt androidx.webkit mit. Die Schicht ueber dem Video
+ * sitzt aber im Rahmen des Hosters, und dorthin kam auf dem Telefon nichts.
+ * Gemeldet mit einem Foto: ein Gluecksspiel-Overlay mitten im laufenden
+ * Video, mit Countdown und "Fordern Sie Ihren Bonus an!".
+ *
+ * <p>Diese Klasse ist der einzige Weg auf Android, der in <em>jedes</em>
+ * Dokument einspielt. Sie laeuft deshalb ueberall. Nur der dritte Aufruf in
+ * MainActivity bleibt beim Fernseher, und zwar aus einem anderen Grund: dort
+ * geht es um die Fokusreihenfolge des Steuerkreuzes.
  *
  * <p>Warum ueberhaupt noch eine Stelle, wo es {@link Adblocker},
  * {@link Werbefilter} und {@link Kosmetik} schon gibt? Weil die drei je eine
@@ -31,8 +47,9 @@ import java.util.Set;
  *   <li>Der {@link Werbefilter} bringt die kosmetischen Regeln der
  *       Filterlisten mit - aber er laeuft nur auf Geraeten mit genug Speicher,
  *       und ein Fernseh-Stick ist keines davon (siehe
- *       {@link Werbefilter#geraetTraegt}). Auf dem Fernseher, also genau dort,
- *       wo das Foto entstanden ist, war er nie in Kraft.</li>
+ *       {@link Werbefilter#geraetTraegt}). Auf dem Fernseher war er nie in
+ *       Kraft. Und wo er laeuft, erreicht er nur das oberste Dokument - im
+ *       Rahmen des Hosters, wo der Player sitzt, hilft er nicht.</li>
  *   <li>Die {@link Kosmetik} beurteilt Schichten <em>ueber dem Player</em> und
  *       tut das ueber zwei Runden durch den Kern. Sie greift erst nach
  *       {@code onPageFinished} und ist damit sichtbar zu spaet - die Werbung
@@ -82,7 +99,7 @@ import java.util.Set;
  * nie den eines anderen Anbieters. Das ist nicht Ordnungsliebe - eine Regel,
  * die auf AniWorld richtig ist, kann auf filmo.to das Episodenmenue treffen.
  */
-public final class Fernsehwerbung {
+public final class Werbeschichten {
     private static final String TAG = CrashReporter.TAG;
 
     /** Ab wieviel Punkten ein Element als Werbung gilt. Dieselbe Schwelle wie in adblock-kosmetik.js. */
@@ -333,7 +350,7 @@ public final class Fernsehwerbung {
      *               niemand liest, und auf einer werbelastigen Seite eine, die
      *               das Protokoll zuschuettet.
      */
-    public Fernsehwerbung(Adblocker adblocker, boolean melden) {
+    public Werbeschichten(Adblocker adblocker, boolean melden) {
         this.adblocker = adblocker;
         this.melden = melden;
     }
@@ -376,7 +393,7 @@ public final class Fernsehwerbung {
             // Ein WebView, der das nicht mitmacht, ist kein Grund zum Absturz.
             // Dann filtert eben erst onPageStarted, und die Werbung blitzt
             // einmal auf - immer noch besser als gar keine Filterung.
-            Log.w(TAG, "Fernsehwerbung nicht angeschlossen", fehler);
+            Log.w(TAG, "Werbeschichten nicht angeschlossen", fehler);
             return false;
         }
     }
@@ -461,7 +478,7 @@ public final class Fernsehwerbung {
         try {
             ansicht.evaluateJavascript(skript(anbieter), null);
         } catch (Exception fehler) {
-            Log.w(TAG, "Fernsehwerbung nicht eingespielt", fehler);
+            Log.w(TAG, "Werbeschichten nicht eingespielt", fehler);
         }
     }
 

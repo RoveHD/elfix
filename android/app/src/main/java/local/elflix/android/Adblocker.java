@@ -151,7 +151,7 @@ public final class Adblocker {
      * <p>Fuer zwei Stellen, die dieselbe Frage anders brauchen als
      * {@link #istWerbeHost}: die Anfrageprüfung vor der Ausnahme fuer
      * Seitenbestandteile ({@link #istKernWerbeAnfrage}) und die kosmetische
-     * Filterung im Fernseher ({@link Fernsehwerbung}), die eine Liste
+     * Filterung im Fernseher ({@link Werbeschichten}), die eine Liste
      * <em>in die Seite</em> reichen muss und deshalb eine kurze braucht.
      *
      * <p>Ausdruecklich nur die kuratierten Listen und nicht die ~140.000
