@@ -60,11 +60,16 @@ final class Rueckblick {
     /**
      * Wie stark das Titelbild hinter der Karte durchkommt.
      *
-     * <p>Dieselben 22 Prozent wie am Rechner ({@code .wrapped-backdrop}). Mehr,
+     * <p>Dieselben 38 Prozent wie am Rechner ({@code .wrapped-backdrop}). Mehr,
      * und die Schrift steht auf einem Foto; weniger, und man fragt sich, wozu
      * das Bild da ist.
+     *
+     * <p>Es waren 22 Prozent, auf beiden Geraeten. Aufgefallen ist der
+     * Unterschied erst, als hier ueberhaupt Bilder ankamen: zusammen mit dem
+     * Schleier darueber blieb vom Poster ein Grau, und eine graue Flaeche ist
+     * kein Bild - sie ist nur eine dunklere Karte.
      */
-    private static final float HINTERGRUND_DECKKRAFT = 0.22f;
+    private static final float HINTERGRUND_DECKKRAFT = 0.38f;
 
     /** Breite und Höhe des Posters auf den beiden Karten "des Jahres". */
     private static final int POSTER_BREITE_DP = 116;

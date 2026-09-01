@@ -6140,7 +6140,19 @@ input[type="color"] {
   max-height: 100vh;
   padding: 0;
   border: 0;
-  background: var(--bg-app);
+  /* Nicht die flache Hintergrundfarbe. Sie war es, die den Rueckblick am
+     Rechner leer aussehen liess: eine schwarze Flaeche, in der Mitte drei
+     Zeilen Text, ringsum nichts. Am Telefon faellt das nicht auf - dort ist
+     der Schirm so gross wie die Karte. An einem Bildschirm mit 27 Zoll sind
+     achtzig Prozent der Flaeche schlicht unbenutzt.
+
+     Also derselbe Aufbau wie auf der Startseite von ELFIX: die Grundfarbe,
+     darueber zwei weiche Lichter in der Akzentfarbe. Das kostet nichts, ist
+     Teil des Themes und macht aus der Flaeche einen Raum. */
+  background:
+    radial-gradient(circle at 18% -6%, rgba(var(--accent-rgb), calc(var(--accent-soft-alpha) * 1.9)), transparent 48rem),
+    radial-gradient(circle at 88% 106%, rgba(var(--accent-rgb), calc(var(--accent-soft-alpha) * 1.5)), transparent 46rem),
+    var(--bg-app);
   color: var(--text);
   overflow: hidden;
 }
@@ -6157,6 +6169,54 @@ input[type="color"] {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+/* Das Licht, das sich bewegt.
+
+   Eine Seite ohne Bild - "Dein Mix", die Streak, die Nebenbei-Liste - hatte
+   bis hierher gar keinen Hintergrund: der Verlauf oben liegt am Fenster und
+   steht still, und darauf stand Text im Nichts. Diese Schicht liegt hinter
+   jeder Karte und driftet langsam. Langsam ist hier das Entscheidende: 26
+   Sekunden fuer einen Durchlauf sieht man nicht, man merkt nur, dass das Bild
+   nicht tot ist. Schneller waere es eine Animation, die vom Text ablenkt -
+   und der Text ist der Punkt.
+
+   Wer keine Bewegung will, bekommt keine: die Sammelregel am Ende der Datei
+   und der Schalter in den Einstellungen greifen hier wie ueberall. */
+.wrapped-stage::before {
+  content: "";
+  position: absolute;
+  inset: -25%;
+  background:
+    radial-gradient(circle at 26% 26%, rgba(var(--accent-rgb), 0.46), transparent 40%),
+    radial-gradient(circle at 76% 58%, rgba(var(--accent-rgb), 0.34), transparent 42%),
+    radial-gradient(circle at 48% 92%, rgba(var(--accent-rgb), 0.26), transparent 46%),
+    radial-gradient(circle at 92% 12%, rgba(var(--accent-rgb), 0.20), transparent 34%);
+  filter: blur(56px);
+  opacity: 0.95;
+  pointer-events: none;
+  animation: wrapped-schweben 26s ease-in-out infinite alternate;
+}
+
+/* Und die Vignette darueber. Sie zieht den Blick zur Mitte, wo die Zahl steht,
+   und nimmt den Raendern das Grelle - ohne sie liegt das Licht von oben bis an
+   die Kanten und die Karte hat keinen Rand mehr. */
+.wrapped-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 45%,
+    transparent 38%,
+    color-mix(in srgb, var(--bg-app), transparent 68%) 76%,
+    color-mix(in srgb, var(--bg-app), transparent 30%) 100%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes wrapped-schweben {
+  0%   { transform: translate3d(-3%, -2%, 0) scale(1.04); }
+  50%  { transform: translate3d(2%, 3%, 0) scale(1.12); }
+  100% { transform: translate3d(4%, -3%, 0) scale(1.06); }
 }
 
 .wrapped-card {
@@ -6176,8 +6236,13 @@ input[type="color"] {
   inset: -6%;
   background-size: cover;
   background-position: center;
-  opacity: 0.22;
-  filter: blur(12px) saturate(1.2);
+  /* War 0.22 - zusammen mit dem Schleier darunter blieb vom Poster ein Grau.
+     Auf dem Telefon steht dieselbe Zahl, dort aber ohne den zweiten Verlauf
+     und auf einer Karte statt auf einem ganzen Bildschirm. Am Rechner darf das
+     Bild deutlicher kommen; lesbar bleibt der Text durch den Schleier, nicht
+     durch ein unsichtbares Bild. */
+  opacity: 0.38;
+  filter: blur(14px) saturate(1.25);
   transform: scale(1.06);
 }
 
@@ -6185,15 +6250,21 @@ input[type="color"] {
   content: "";
   position: absolute;
   inset: 0;
+  /* In der Mitte offen, zu den Raendern hin dicht: dort steht der Text, hier
+     soll das Bild durchkommen. Der frueher gleichmaessige Schleier ueber der
+     ganzen Flaeche nahm dem Poster genau das, wofuer es da war. */
   background:
-    radial-gradient(circle at 50% 45%, transparent 20%, color-mix(in srgb, var(--bg-app), transparent 25%) 75%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-app), transparent 45%), color-mix(in srgb, var(--bg-app), transparent 5%));
+    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--bg-app), transparent 30%) 8%, transparent 46%),
+    radial-gradient(circle at 50% 45%, transparent 42%, color-mix(in srgb, var(--bg-app), transparent 42%) 88%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-app), transparent 55%), transparent 30%, color-mix(in srgb, var(--bg-app), transparent 25%));
   pointer-events: none;
 }
 
 .wrapped-content {
   position: relative;
-  z-index: 1;
+  /* Ueber der Vignette der Buehne (z-index 2) - sonst legt sie sich an den
+     Raendern ueber die Fussnote. */
+  z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -6213,10 +6284,41 @@ input[type="color"] {
 }
 
 .wrapped-huge {
+  position: relative;
   font-size: clamp(3.4rem, 13vw, 9rem);
   line-height: 0.94;
   font-weight: 850;
   letter-spacing: -0.03em;
+  background: linear-gradient(135deg, var(--text), rgb(var(--accent-rgb)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Ein Schein hinter der Zahl. Ein Verlauf im Text laesst sich nicht leuchten
+   lassen - `text-shadow` faellt hinter `background-clip: text` aus -, also
+   liegt das Licht als eigene Flaeche dahinter. */
+.wrapped-huge::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 130%;
+  height: 130%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.24), transparent 68%);
+  filter: blur(30px);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Der Auftakt traegt nur eine Jahreszahl. Als gewoehnliche Ueberschrift stand
+   sie da wie eine Zwischenzeile - sie ist aber das Bild dieser Seite. */
+.wrapped-stage.is-auftakt .wrapped-title {
+  font-size: clamp(3.2rem, 12vw, 8rem);
+  font-weight: 850;
+  letter-spacing: -0.04em;
+  line-height: 0.94;
   background: linear-gradient(135deg, var(--text), rgb(var(--accent-rgb)));
   -webkit-background-clip: text;
   background-clip: text;
@@ -6265,7 +6367,12 @@ input[type="color"] {
   aspect-ratio: 2 / 3;
   object-fit: cover;
   border-radius: 12px;
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.6);
+  /* Schatten nach unten und ein Schein in der Akzentfarbe darum: das Poster
+     soll auf der Buehne stehen und nicht auf ihr kleben. */
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.6),
+    0 0 0 1px color-mix(in srgb, var(--text), transparent 88%),
+    0 0 70px rgba(var(--accent-rgb), 0.28);
 }
 
 .wrapped-rang {
@@ -6538,7 +6645,8 @@ input[type="color"] {
 .app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-content > *,
 .app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-backdrop,
 .app-shell.animations-off .wrapped-modal .wrapped-mix-fill,
-.app-shell.animations-off .wrapped-modal .wrapped-monat-balken {
+.app-shell.animations-off .wrapped-modal .wrapped-monat-balken,
+.app-shell.animations-off .wrapped-modal .wrapped-stage::before {
   animation: none;
 }
 
@@ -6546,7 +6654,8 @@ input[type="color"] {
   .wrapped-card.is-da .wrapped-content > *,
   .wrapped-card.is-da .wrapped-backdrop,
   .wrapped-mix-fill,
-  .wrapped-monat-balken {
+  .wrapped-monat-balken,
+  .wrapped-stage::before {
     animation: none;
   }
 }

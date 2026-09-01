@@ -443,11 +443,61 @@ function videoAuswerten(sitzungen, titelInfo = () => ({})) {
   };
 }
 
+// Der Titel-Nachschlag als Tabelle statt als Funktion.
+//
+// Am Rechner reicht `optionen.titel`: dort laeuft die Auswertung im selben
+// Prozess wie die Favoriten, und eine Funktion ist die kuerzeste Verbindung.
+// Android ruft dasselbe Modul ueber den Kern - und durch diese Bruecke geht
+// JSON und keine Funktion. Ohne einen zweiten Weg hinein blieb `bild` dort
+// bei jedem Titel leer, und der Jahresrueckblick stand auf dem Telefon und am
+// Fernseher ohne ein einziges Bild da.
+//
+// Erwartet wird eine Liste von Eintraegen `{id, titel, bild, genres, jahr}` -
+// also genau das, was ein Favorit ohnehin weiss. Geschluesselt wird hier und
+// nicht beim Aufrufer: `taste.titelSchluessel` ist die eine Normalisierung,
+// die ELFIX benutzt, und sie in Java ein zweites Mal aufzuschreiben waere die
+// Sorte Unterschied, die erst an einem fehlenden Poster auffaellt.
+function titelNachschlag(eintraege) {
+  const nachTitel = new Map();
+  const nachId = new Map();
+  for (const eintrag of Array.isArray(eintraege) ? eintraege : []) {
+    const stand = {
+      genres: (Array.isArray(eintrag?.genres) ? eintrag.genres : [])
+        .map((genre) => ({ key: text(genre?.key), label: text(genre?.label || genre?.key) }))
+        .filter((genre) => genre.key),
+      bild: text(eintrag?.bild),
+      jahr: zahl(eintrag?.jahr)
+    };
+    const id = text(eintrag?.id);
+    if (id && !nachId.has(id)) nachId.set(id, stand);
+    const schluessel = taste.titelSchluessel(eintrag?.titel);
+    // Der erste gewinnt nicht - der mit Bild gewinnt. Dieselbe Serie liegt bei
+    // zwei Anbietern zweimal vor, und nur einer der beiden Favoriten hat ein
+    // Poster geholt.
+    if (schluessel && (!nachTitel.has(schluessel) || (stand.bild && !nachTitel.get(schluessel).bild))) {
+      nachTitel.set(schluessel, stand);
+    }
+  }
+  if (!nachTitel.size && !nachId.size) return null;
+  // Der Titel zuerst, die Kennung des Favoriten danach: seit die Geraete ihre
+  // Saetze austauschen, traegt eine Sitzung vom Rechner eine Kennung, die es
+  // auf dem Telefon nicht gibt. Der Titel gilt auf beiden.
+  return (sitzung) => {
+    const ausTitel = nachTitel.get(taste.titelSchluessel(sitzung?.titel));
+    const ausId = nachId.get(text(sitzung?.favoriteId));
+    if (ausTitel?.bild) return ausTitel;
+    if (ausId?.bild) return ausId;
+    return ausTitel || ausId || {};
+  };
+}
+
 function auswerten(sitzungen, optionen = {}) {
   const von = Number.isFinite(optionen.von) ? optionen.von : Date.parse(optionen.von || "");
   const bis = Number.isFinite(optionen.bis) ? optionen.bis : Date.parse(optionen.bis || "");
   const heute = optionen.heute || tagesschluessel(new Date());
-  const titelInfo = typeof optionen.titel === "function" ? optionen.titel : () => ({});
+  const titelInfo = typeof optionen.titel === "function"
+    ? optionen.titel
+    : (titelNachschlag(optionen.titelKarte) || (() => ({})));
 
   // Bereinigt und nach Zeit sortiert, bevor irgendetwas gezaehlt wird.
   //
@@ -791,6 +841,7 @@ module.exports = {
   titelKennung,
   bereinigen,
   vereinen,
+  titelNachschlag,
   auswerten,
   WRAPPED_MIN_FOLGEN,
   WRAPPED_MIN_TAGE,

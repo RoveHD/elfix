@@ -87,8 +87,35 @@ public final class Statistik {
         }
     }
 
+    /**
+     * Woher die Auswertung erfaehrt, wie ein Titel aussieht.
+     *
+     * <p>Genau das fehlte, und daran hing ein sichtbarer Fehler: der
+     * Jahresrueckblick stand auf dem Telefon und am Fernseher <em>ohne ein
+     * einziges Bild</em> da. Die Karten koennen laengst eines tragen
+     * ({@link Rueckblick} laedt es ueber {@link Bilder}), nur kam in der
+     * Auswertung nie eines an.
+     *
+     * <p>Der Grund lag eine Ebene tiefer. Am Rechner bekommt
+     * {@code statistik.auswerten} eine Nachschlagefunktion mitgereicht; hier
+     * geht der Aufruf ueber den Kern, und durch diese Bruecke passt JSON,
+     * aber keine Funktion. Es wanderte also nur der Zeitraum hinueber - und
+     * jeder Titel kam ohne {@code bild} zurueck.
+     *
+     * <p>Deshalb eine Tabelle statt einer Funktion: eine Liste aus
+     * {@code {id, titel, bild}}, die der Kern schluesselt. Geliefert wird sie
+     * vom Bestand, also aus denselben Favoriten, aus denen auch die Kacheln
+     * der Startseite ihr Bild nehmen - kein einziger zusaetzlicher Abruf.
+     */
+    public interface Titelquelle {
+        JSONArray titel();
+    }
+
     private final Context context;
     private final Kern kern;
+
+    /** Der Titel-Nachschlag; ohne ihn rechnet die Auswertung wie bisher. */
+    private Titelquelle titelquelle;
 
     /** Je Anbieter genau eine offene Sitzung - mehr kann es nicht geben. */
     private final Map<String, JSONObject> offene = new HashMap<>();
@@ -106,6 +133,29 @@ public final class Statistik {
     /** Wer von Aenderungen erfaehrt - der Geraeteabgleich und die Oberflaeche. */
     public void setzeBeobachter(Beobachter beobachter) {
         this.beobachter = beobachter;
+    }
+
+    /** Woher die Auswertung die Titelbilder nimmt - siehe {@link Titelquelle}. */
+    public void setzeTitelquelle(Titelquelle titelquelle) {
+        this.titelquelle = titelquelle;
+    }
+
+    /**
+     * Die Titeltabelle fuer die Auswertung - {@code null}, wenn es keine gibt.
+     *
+     * <p>Ein Fehler beim Zusammenstellen kostet hoechstens die Bilder und nie
+     * die Zahlen: die Auswertung laeuft dann wie vorher, nur ohne Poster.
+     */
+    private JSONArray titeltabelle() {
+        Titelquelle quelle = titelquelle;
+        if (quelle == null) return null;
+        try {
+            JSONArray tabelle = quelle.titel();
+            return tabelle != null && tabelle.length() > 0 ? tabelle : null;
+        } catch (Exception fehler) {
+            Log.e(TAG, "Titeltabelle nicht lesbar", fehler);
+            return null;
+        }
     }
 
     /* ------------------------------------------------------------- Ablage */
@@ -378,11 +428,14 @@ public final class Statistik {
      * Die Bilanz eines Zeitraums.
      *
      * <p>Gerechnet wird im Kern, mit {@code statistik.auswerten} - derselben
-     * Funktion, aus der auch die Statistikseite des Rechners kommt. Ohne den
-     * Titel-Nachschlag des Rechners: dessen Genres stehen im Geschmacks-Cache
-     * des Empfehlungslaufs, und der ist hier ein eigener Zustand im Kern. Was
-     * fehlt, ist die Genre-Aufteilung; alles Uebrige - Zeit, Folgen, Titel,
-     * Abende, Strecken - steht in den Sitzungen selbst.
+     * Funktion, aus der auch die Statistikseite des Rechners kommt.
+     *
+     * <p>Den Titel-Nachschlag bekommt sie als Tabelle mitgereicht (siehe
+     * {@link Titelquelle}) - daher stammen die Titelbilder der Karten. Was
+     * weiterhin fehlt, ist die Genre-Aufteilung: die Genres stehen am Rechner
+     * im Geschmacks-Cache des Empfehlungslaufs, und der ist hier ein eigener
+     * Zustand im Kern. Alles Uebrige - Zeit, Folgen, Titel, Abende, Strecken -
+     * steht in den Sitzungen selbst.
      *
      * @param zeitraum "7tage", "30tage", "monat", "jahr", "alles" oder eine
      *                 Jahreszahl
@@ -407,6 +460,9 @@ public final class Statistik {
                     double von = grenzen.optDouble("von", 0);
                     optionen.put("von", Double.isInfinite(von) || Double.isNaN(von) ? 0 : von);
                     optionen.put("bis", grenzen.optDouble("bis", System.currentTimeMillis()));
+                    // Damit die Karten des Jahresrueckblicks ein Bild haben.
+                    JSONArray tabelle = titeltabelle();
+                    if (tabelle != null) optionen.put("titelKarte", tabelle);
                 } catch (Exception ausnahme) {
                     antwort.fertig(null, "Zeitraum unlesbar");
                     return;

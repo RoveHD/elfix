@@ -971,6 +971,12 @@ public class MainActivity extends Activity {
         empfehlungen.vorladen();
         empfehlungen.vorbereiten(watchparty.serverUrl());
         statistik = new Statistik(this, kern);
+        // Woher die Auswertung die Titelbilder nimmt. Ohne diese Leitung kam
+        // in den Karten des Jahresrueckblicks nie ein Bild an - am Rechner
+        // reicht dort eine Funktion durch, hier geht der Aufruf ueber den Kern
+        // und damit durch JSON. Gelesen wird bei jedem Aufruf frisch: ein
+        // Poster, das gerade erst nachgereicht wurde, gehoert sofort dazu.
+        statistik.setzeTitelquelle(this::titeltabelle);
         // Die Sicherung braucht Bestand, Statistik und Watchparty - deshalb
         // erst hier, nachdem alle drei stehen.
         sicherung = new Sicherung(this, kern, bestand, statistik, watchparty);
@@ -3956,6 +3962,44 @@ public class MainActivity extends Activity {
     }
 
     /* --------------------------------------------------------- Der Rueckblick */
+
+    /**
+     * Was die Auswertung ueber die Titel wissen muss - aus den Favoriten.
+     *
+     * <p>Dieselbe Quelle, aus der die Kacheln der Startseite ihr Bild nehmen
+     * ({@link Favorite#bild()}: das selbst gesetzte zuerst, sonst das vom
+     * Anbieter). Kein zusaetzlicher Abruf, keine zweite Vorstellung davon,
+     * welches Bild zu einem Titel gehoert.
+     *
+     * <p>Geschluesselt wird nicht hier, sondern im Kern - mit derselben
+     * Normalisierung, mit der die Auswertung ohnehin zwei Schreibweisen
+     * desselben Titels zusammenbringt. Ein zweiter Schluessel in Java waere
+     * genau die Sorte Unterschied, die man erst an einem fehlenden Poster
+     * bemerkt.
+     *
+     * <p>Titel ohne Bild bleiben draussen: sie kosten nur Platz in der
+     * Tabelle, die durch den Kern geht.
+     */
+    private JSONArray titeltabelle() {
+        JSONArray tabelle = new JSONArray();
+        if (bestand == null) return tabelle;
+        for (Favorite eintrag : bestand.alle()) {
+            String bild = eintrag.bild();
+            if (bild == null || bild.trim().isEmpty()) continue;
+            try {
+                JSONObject zeile = new JSONObject();
+                zeile.put("id", eintrag.id());
+                zeile.put("titel", eintrag.title());
+                zeile.put("bild", bild);
+                tabelle.put(zeile);
+            } catch (Exception fehler) {
+                // Ein Titel ohne brauchbaren Eintrag kostet ein Bild, nicht die
+                // Auswertung.
+                Log.e(TAG, "Titelzeile nicht gebaut", fehler);
+            }
+        }
+        return tabelle;
+    }
 
     /**
      * Die Reihe "Dein Rückblick" auf der Startseite.

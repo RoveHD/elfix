@@ -457,7 +457,94 @@ pruefe("Das Theme wird durchgehend benutzt",
   pruefe("Die Ueberschrift steht nicht zweimal uebereinander",
     !/page\.addView\(MobileViews\.eyebrow\(this, "ELFIX Wrapped"\)\)/.test(HAUPT),
     "die erste Karte sagt es ohnehin - der Seitenkopf nahm ihr nur die Hoehe");
+
+  // --- Und wo die Bilder blieben ---
+  //
+  // Die Karten konnten laengst eines tragen (siehe oben), nur kam nie eines an:
+  // gemeldet als "wrapped sieht am Handy und am Fernseher noch ohne Bilder".
+  //
+  // Der Grund lag eine Ebene tiefer und war unsichtbar. Am Rechner bekommt
+  // `statistik.auswerten` eine Nachschlagefunktion mitgereicht - dort laeuft
+  // sie im selben Prozess wie die Favoriten. Android ruft dasselbe Modul ueber
+  // den Kern, und durch diese Bruecke passt JSON, aber keine Funktion.
+  // Hinueber ging also nur der Zeitraum, und jeder Titel kam ohne `bild`
+  // zurueck - auf beiden Geraeten, seit es den Rueckblick dort gibt.
+  pruefe("Die Auswertung nimmt den Titel-Nachschlag auch als Tabelle",
+    typeof statistik.titelNachschlag === "function",
+    "durch den Kern passt JSON, aber keine Funktion");
+  {
+    const sitzungen = [
+      { id: "a", titel: "Attack on Titan", favoriteId: "hier-1", season: 1, episode: 1,
+        sekunden: 1400, begonnenAm: "2026-08-14T20:00:00.000Z", qualitaet: statistik.GEMESSEN,
+        gattung: "anime" },
+      // Derselbe Titel, anders geschrieben, und mit der Kennung eines fremden
+      // Geraets: genau der Fall, den der Abgleich seit dem Austausch erzeugt.
+      { id: "b", titel: "attack on titan!", favoriteId: "fremd-9", season: 1, episode: 2,
+        sekunden: 1400, begonnenAm: "2026-08-15T20:00:00.000Z", qualitaet: statistik.GEMESSEN,
+        gattung: "anime" }
+    ];
+    const karte = [{ id: "hier-1", titel: "Attack on Titan", bild: "https://elfix.test/poster.jpg" }];
+    const mitKarte = statistik.auswerten(sitzungen, { von: 0, bis: Date.now(), titelKarte: karte });
+    const ohneKarte = statistik.auswerten(sitzungen, { von: 0, bis: Date.now() });
+
+    pruefe("Damit tragen die Titel der Auswertung ein Bild",
+      mitKarte.serien.every((eintrag) => eintrag.bild === "https://elfix.test/poster.jpg"),
+      "das Stimmungsbild jeder Karte kommt von hier");
+    pruefe("Auch der erste Titel des Jahres",
+      mitKarte.erster?.bild === "https://elfix.test/poster.jpg");
+    pruefe("Und zwar ueber den Titel, nicht ueber die Kennung des Favoriten",
+      mitKarte.serien.length === 2,
+      "eine Sitzung vom Rechner traegt eine Kennung, die es auf dem Telefon nicht gibt");
+    pruefe("Ohne Tabelle rechnet sie wie vorher",
+      ohneKarte.folgen === mitKarte.folgen && ohneKarte.sekunden === mitKarte.sekunden
+      && ohneKarte.serien.every((eintrag) => eintrag.bild === ""),
+      "die Bilder sind eine Zugabe und keine Bedingung");
+  }
+  pruefe("Android reicht sie mit der Auswertung hinueber",
+    /optionen\.put\("titelKarte", tabelle\)/.test(STATISTIK_JAVA)
+    && /public interface Titelquelle \{/.test(STATISTIK_JAVA));
+  pruefe("Und sie kommt aus den Favoriten - ohne einen einzigen Abruf",
+    /private JSONArray titeltabelle\(\)[\s\S]{0,900}?for \(Favorite eintrag : bestand\.alle\(\)\)/
+      .test(HAUPT)
+    && /statistik\.setzeTitelquelle\(this::titeltabelle\)/.test(HAUPT),
+    "dieselbe Quelle, aus der die Kacheln der Startseite ihr Bild nehmen");
+  pruefe("Geschluesselt wird im Kern und nicht ein zweites Mal in Java",
+    !/titelSchluessel/.test(HAUPT) && /taste\.titelSchluessel\(eintrag\?\.titel\)/
+      .test(fs.readFileSync(path.join(WURZEL, "src/statistik.js"), "utf8")),
+    "zwei Normalisierungen sind zwei Wahrheiten");
+  pruefe("Ein Fehler dabei kostet die Bilder und nicht die Zahlen",
+    /catch \(Exception fehler\) \{[\s\S]{0,160}?Log\.e\(TAG, "Titeltabelle nicht lesbar", fehler\);[\s\S]{0,40}?return null;/
+      .test(STATISTIK_JAVA));
 }
+
+// --- Die Buehne am Rechner ---------------------------------------------------
+//
+// Gemeldet als "am PC bisschen Hintergrund rein, sieht so leer aus". Es stimmte:
+// die Buehne war die flache Hintergrundfarbe, in der Mitte drei Zeilen Text,
+// ringsum nichts. Am Telefon faellt das nicht auf - dort ist der Schirm so gross
+// wie die Karte. An einem Bildschirm mit 27 Zoll sind achtzig Prozent der
+// Flaeche schlicht unbenutzt, und die Seiten ohne Titelbild - der Mix, die
+// Streak, die Nebenbei-Liste - hatten ueberhaupt keinen Hintergrund.
+
+pruefe("Die Buehne traegt einen Verlauf statt einer flachen Farbe",
+  /\.wrapped-modal \{[\s\S]{0,900}?background:\s*\n?\s*radial-gradient\([^;]*rgba\(var\(--accent-rgb\)[^;]*var\(--bg-app\);/
+    .test(CSS),
+  "derselbe Aufbau wie auf der Startseite von ELFIX");
+pruefe("Und ein Licht, das sich bewegt",
+  /\.wrapped-stage::before \{[\s\S]*?animation: wrapped-schweben/.test(CSS)
+  && /@keyframes wrapped-schweben/.test(CSS),
+  "auch die Seiten ohne Titelbild sollen einen Hintergrund haben");
+pruefe("Langsam genug, dass es vom Text nicht ablenkt",
+  Number((CSS.match(/animation: wrapped-schweben (\d+)s/) || [])[1]) >= 20,
+  "schneller waere es eine Animation, die den Blick von der Zahl holt");
+pruefe("Wer keine Bewegung will, bekommt auch hier keine",
+  /animations-off[\s\S]{0,400}?\.wrapped-stage::before/.test(CSS)
+  && /prefers-reduced-motion[\s\S]{0,400}?\.wrapped-stage::before/.test(CSS));
+pruefe("Die Vignette liegt unter dem Text und nicht darueber",
+  /\.wrapped-content \{[\s\S]{0,200}?z-index: 3;/.test(CSS)
+  && /\.wrapped-stage::after \{[\s\S]{0,400}?z-index: 2;/.test(CSS),
+  "sonst legt sie sich an den Raendern ueber die Fussnote");
+
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
