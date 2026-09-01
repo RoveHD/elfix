@@ -299,12 +299,19 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
+      # Die Sperrdateien bleiben draussen.
+      #
+      # Sie gehoeren einem laufenden Gradle und nicht dem Zwischenspeicher:
+      # zurueckgespielt sagen sie einer frischen Maschine, etwas sei belegt,
+      # was es dort nie gab. Und sie waren der Grund, warum hier ueberhaupt nie
+      # etwas gespeichert wurde - siehe den Schritt "Gradle-Daemon beenden".
       - name: Gradle-Zwischenspeicher
         uses: actions/cache@v5
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
+            !~/.gradle/caches/**/*.lock
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
@@ -365,6 +372,34 @@ jobs:
         if: steps.varianten.outputs.debug == 'ja'
         working-directory: android
         run: .\gradlew.bat :app:assembleDebug "-PelfixFassung=${{ needs.fassung.outputs.name }}" "-PelfixFassungNummer=${{ needs.fassung.outputs.code }}"
+
+      # Ohne das wurde der Zwischenspeicher nie gespeichert.
+      #
+      # Gradle laesst nach dem Bauen einen Daemon zurueck - am Ende des Laufs
+      # stand dafuer "Terminate orphan process: java". Der haelt die
+      # Sperrdateien unter ~/.gradle/caches offen, und der Cache-Schritt
+      # laeuft, solange er noch lebt: tar kam an modules-2.lock und
+      # journal-1.lock nicht heran ("Device or resource busy"), brach mit 2 ab,
+      # und damit fiel das ganze Archiv weg.
+      #
+      # Zu sehen war davon nur eine Zeile, die nach etwas anderem aussah:
+      #
+      #   Failed to save: "C:\Program failed with error: The process
+      #   'C:\Program Files\Git\usr\bin\tar.exe' failed with exit code 2
+      #
+      # Das abgeschnittene "C:\Program liest sich wie ein Pfad mit Leerzeichen,
+      # an dem etwas zerreisst - es ist aber nur die Formatierung der Meldung.
+      # Der Fehler stand darueber, und der Bau lief ja durch: seit Bestehen
+      # dieses Workflows hat der Zwischenspeicher schlicht nie gegriffen, und
+      # jeder Android-Testbau hat die Abhaengigkeiten neu geholt.
+      #
+      # `always()`, damit auch ein fehlgeschlagener Bau den Daemon loswird -
+      # sonst steht die Warnung genau dann noch da, wenn man das Protokoll
+      # ohnehin schon aus einem anderen Grund liest.
+      - name: Gradle-Daemon beenden
+        if: always()
+        working-directory: android
+        run: .\gradlew.bat --stop
 
       - name: APKs benennen
         shell: pwsh
