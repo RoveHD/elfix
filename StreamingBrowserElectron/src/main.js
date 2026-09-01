@@ -517,10 +517,19 @@ function createMainWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // **Hier wird nicht maximiert.** Das sah nach einer Kleinigkeit aus und war
+  // der Grund, warum das Hauptfenster neben dem Updatefenster stand:
+  // `maximize()` zeigt ein verstecktes Fenster mit an - so steht es in der
+  // Dokumentation von Electron ("This will also show (but not focus) the
+  // window if it isn't being displayed already"), und damit war das ganze Tor
+  // umgangen. Zu sehen waren zwei Fenster: der Ladevorhang des Updates und
+  // dahinter die fertige Oberflaeche, auf die niemand klicken sollte.
+  //
+  // Maximiert wird deshalb erst in hauptfensterZeigen(), unmittelbar vor dem
+  // show() - dieselbe Stelle, an der auch entschieden wird, ob es ueberhaupt
+  // aufgehen darf. Der alte Schoenheitsfehler bleibt trotzdem weg: zwischen
+  // maximize() und show() liegt kein Bild.
   mainWindow.once("ready-to-show", () => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
-      mainWindow.maximize();
-    }
     hauptfensterBereit = true;
     hauptfensterZeigen();
   });

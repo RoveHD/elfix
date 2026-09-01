@@ -20,7 +20,11 @@
 //
 // Dazu die Frist: antwortet niemand, startet ELFIX trotzdem.
 
+const fs = require("fs");
+const path = require("path");
 const startfreigabe = require("../src/startfreigabe");
+const MAIN = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8")
+  .split("\r\n").join("\n");
 
 const pruefungen = [];
 const pruefe = (n, b, d) => {
@@ -124,6 +128,36 @@ for (const spaet of ["update", "kein-update", "fehler", "stille", "unverpackt"])
 pruefe("Insbesondere macht kein Ereignis waehrend der Installation ein Fenster auf",
   ["update", "kein-update", "fehler", "stille", "unverpackt", "geladen"]
     .every((e) => !startfreigabe.darfZeigen(startfreigabe.melden(geladen, e))));
+
+/* ------------------------------- Und was das Tor von aussen umgehen kann */
+//
+// Die Entscheidung hier oben kann noch so richtig sein - sie nuetzt nichts,
+// wenn das Fenster auf einem anderen Weg sichtbar wird. Genau das war der Fall:
+// `ready-to-show` maximierte das Hauptfenster, und `maximize()` zeigt ein
+// verstecktes Fenster mit ("This will also show (but not focus) the window if
+// it isn't being displayed already", Electron-Dokumentation). Zu sehen waren
+// zwei Fenster nebeneinander - der Ladevorhang des Updates und dahinter die
+// fertige Oberflaeche, die es noch gar nicht geben durfte.
+
+const bereitBlock = (MAIN.match(/mainWindow\.once\("ready-to-show"[\s\S]*?\n  \}\);/) || [""])[0];
+pruefe("Beim ready-to-show wird nur gemeldet, nicht gezeigt",
+  /hauptfensterBereit = true;/.test(bereitBlock)
+  && /hauptfensterZeigen\(\);/.test(bereitBlock),
+  "die Meldung ist die halbe Wahrheit - zeigen darf nur das Tor");
+pruefe("Und dort wird nicht maximiert",
+  !/maximize\(\)/.test(bereitBlock),
+  "maximize() zeigt ein verstecktes Fenster mit und umgeht damit das ganze Tor");
+
+const zeigenBlock = (MAIN.match(/function hauptfensterZeigen\(\)[\s\S]*?\n\}/) || [""])[0];
+pruefe("Maximiert wird erst unmittelbar vor dem show()",
+  /if \(!mainWindow\.isMaximized\(\)\) mainWindow\.maximize\(\);\s*\n\s*mainWindow\.show\(\);/
+    .test(zeigenBlock),
+  "so bleibt der alte Schoenheitsfehler weg: zwischen beiden liegt kein Bild");
+pruefe("Und nur, wenn das Tor es erlaubt",
+  /if \(!hauptfensterBereit \|\| !startfreigabe\.darfZeigen\(startLauf\)\) return;/.test(zeigenBlock));
+pruefe("Sonst maximiert niemand im Hauptprozess",
+  (MAIN.match(/mainWindow\.maximize\(\)/g) || []).length === 1,
+  "jede weitere Stelle waere ein zweiter Weg an dem Tor vorbei");
 
 /* ------------------------------------------------------- Unveraenderlich */
 
