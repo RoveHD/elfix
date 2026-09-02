@@ -1264,14 +1264,32 @@ function renderHome() {
     .slice(0, 8);
   const partyItems = continueItems.filter((favorite) => favorite.watchpartyRoom).slice(0, 8);
 
-  favoritesHomeRow?.classList.toggle("is-hidden", privateItems.length === 0 || homeSettings.showFavorites === false);
-  homeFavorites.replaceChildren(...privateItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
+  // Was niemand sieht, wird auch nicht gebaut.
+  //
+  // Die drei Reihen wurden bisher immer gefuellt und danach gegebenenfalls
+  // ausgeblendet. Wer "Weiterschauen" oder die YouTube-Reihe in den
+  // Einstellungen abgeschaltet hat, liess damit bei jedem Aufbau der
+  // Startseite bis zu vierundzwanzig Kacheln bauen, die er nie zu Gesicht
+  // bekommt - und jede davon ist ein innerHTML, also ein HTML-Parser-Lauf,
+  // plus eine Bildebene.
+  //
+  // Nebenbei standen sie auch weiterhin im Dokument: unsichtbar, aber mit
+  // ihren Bildern und Zuhoerern. Eine leere Reihe ist nicht nur billiger zu
+  // bauen, sie haelt auch nichts fest.
+  const reiheFuellen = (reihe, kasten, eintraege, sichtbar) => {
+    reihe?.classList.toggle("is-hidden", !sichtbar);
+    if (!kasten) return;
+    kasten.replaceChildren(...(sichtbar
+      ? eintraege.map((favorite) => favoriteCard(favorite, false, kartenOptionen))
+      : []));
+  };
 
-  watchpartyHomeRow?.classList.toggle("is-hidden", partyItems.length === 0 || homeSettings.showFavorites === false);
-  homeWatchpartyContinue?.replaceChildren(...partyItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
-
-  youtubeHomeRow?.classList.toggle("is-hidden", youtubeItems.length === 0 || homeSettings.showYoutube === false);
-  homeYoutubeContinue?.replaceChildren(...youtubeItems.map((favorite) => favoriteCard(favorite, false, kartenOptionen)));
+  reiheFuellen(favoritesHomeRow, homeFavorites, privateItems,
+    privateItems.length > 0 && homeSettings.showFavorites !== false);
+  reiheFuellen(watchpartyHomeRow, homeWatchpartyContinue, partyItems,
+    partyItems.length > 0 && homeSettings.showFavorites !== false);
+  reiheFuellen(youtubeHomeRow, homeYoutubeContinue, youtubeItems,
+    youtubeItems.length > 0 && homeSettings.showYoutube !== false);
 
   renderRecommendations();
   invalidatePicksIfWatchChanged();

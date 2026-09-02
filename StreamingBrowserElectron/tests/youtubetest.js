@@ -286,7 +286,11 @@ pruefe("YouTube faellt aus der normalen Weiterschauen-Reihe heraus",
   /\.filter\(\(favorite\) => !favorite\.watchpartyRoom && !istYoutubeEintrag\(favorite\)\)/.test(renderer));
 pruefe("Die YouTube-Reihe wird aus denselben Eintraegen gefuellt",
   /const youtubeItems = continueItems\.filter\(\(favorite\) => istYoutubeEintrag\(favorite\)\)/.test(renderer)
-  && /youtubeHomeRow\?\.classList\.toggle\("is-hidden", youtubeItems\.length === 0 \|\| homeSettings\.showYoutube === false\)/.test(renderer));
+  && /reiheFuellen\(youtubeHomeRow, homeYoutubeContinue, youtubeItems,\s*\n\s*youtubeItems\.length > 0 && homeSettings\.showYoutube !== false\)/
+    .test(renderer));
+pruefe("Abgeschaltet baut sie gar nichts erst",
+  /kasten\.replaceChildren\(\.\.\.\(sichtbar\s*\n?\s*\? eintraege\.map/.test(renderer),
+  "eine ausgeblendete Reihe hielt sonst ihre Kacheln samt Bildern im Dokument");
 pruefe("Die Reihe hat ihren eigenen Schalter, Voreinstellung an",
   /id="showHomeYoutube" type="checkbox"/.test(html)
   && /showYoutube: raw\?\.home\?\.showYoutube \?\? defaults\.home\.showYoutube/.test(main)
