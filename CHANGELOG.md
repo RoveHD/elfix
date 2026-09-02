@@ -3,6 +3,43 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.88.0 — 2. September 2026
+
+**SponsorBlock: bezahlte Einschübe in YouTube-Videos werden übersprungen.**
+
+Erkannt wird nichts. Was ein Sponsorenblock ist, haben andere gemeldet; ELFIX
+holt das fertige Ergebnis aus dem offenen Katalog von sponsor.ajay.app und
+springt. Ein eigener Erkenner wäre ein anderes Programm — und ein schlechteres,
+denn er sähe nur dieses eine Video, während dort Tausende dasselbe längst
+eingetragen haben.
+
+Gefragt wird nur bei YouTube, und nur mit den ersten vier Zeichen eines
+Kürzels: die Antwort umfasst dann tausende Videos, und der Dienst erfährt
+nicht, welches gerade läuft. Bei jedem anderen Anbieter kommt gar kein Skript
+in die Seite. Geht etwas schief — kein Netz, keine Antwort, nichts eingetragen
+—, läuft das Video weiter, als gäbe es SponsorBlock nicht.
+
+Sieben Schalter unter Einstellungen › Wiedergabe, auf Rechner, Telefon und
+Fernseher dieselben: SponsorBlock aktivieren, Sponsoren, Eigenwerbung,
+Interaktionen, Intros, Outros, Meldung anzeigen. Übersprungen werden von Haus
+aus die ersten drei — ein Intro ist keine Werbung. Beim Sprung erscheint kurz
+„Sponsor übersprungen · 27 Sek." mit „Rückgängig"; wer zurückspult, wird nicht
+wieder weggeschoben, und auf dem Fernseher nimmt die Einblendung der
+Fernbedienung nie den Fokus weg.
+
+**Und in der YouTube-Runde darf man jetzt stöbern.**
+
+Wer während einer laufenden Runde auf die Startseite ging — das nächste Video
+suchen, in den Abos nachsehen —, wurde sofort ins Video zurückgeholt. Dieses
+Zurückholen lud die Seite neu, der Player lief an und meldete Stelle und
+Laufzustand: ein Blick auf die Startseite riss die ganze Runde mit.
+
+Beides ist weg. Wer ein Video verlässt, stöbert: die Runde läuft ohne ihn
+weiter, holt ihn nicht zurück, und er zieht auch niemanden mit. Öffnet er ein
+Video, wird es wie bisher das Video der Runde — so sucht man gemeinsam das
+nächste aus. Wer nur schauen wollte, kommt über „Zum Video" zurück. Die
+Statuszeile sagt, was gerade gilt.
+
 ## 1.87.2 — 2. September 2026
 
 **Zu einer Serie ohne Anime-Gegenstück läuft jetzt gar nichts statt irgendwas.**
