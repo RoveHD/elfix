@@ -3,6 +3,45 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.86.0 — 2. September 2026
+
+Der Jahresrückblick verrät seine Pointe nicht mehr — und hat dafür Musik
+bekommen.
+
+**Das Titelbild hinter den Karten ist weg.** Es gab zwei Anläufe, und beide
+waren falsch. Zuerst trug jede Karte das Poster des Titels, von dem sie
+handelte, und die Karten mit bloßen Zahlen gar keines — unruhig, gemeldet als
+„sieht immer unterschiedlich aus". Dann trugen alle dasselbe, nämlich das der
+Serie des Jahres. Einheitlich war es damit, und es verriet auf Karte eins,
+worauf der ganze Rückblick hinausläuft: „dann weiß man ja schon, was man als
+Serie hat."
+
+Die Karte „Deine Serie des Jahres" ist die Pointe. Wer eine Serie geschaut hat,
+erkennt sie auch weichgezeichnet. Zurück auf den ersten Zustand ist keine
+Lösung — der war ja der Anlass für den zweiten. Einheitlich *und* ohne Verrat
+geht nur ohne Titelbild: die Bühne trägt jetzt nur noch ihren eigenen Verlauf,
+auf jeder Karte denselben. Die Poster stehen weiterhin auf den Karten, die von
+einem Titel handeln, und fallen dort mehr auf als vorher, weil nichts mehr
+dagegen anläuft.
+
+**Und zur Serie des Jahres läuft ihr Opening.** Bei Anime — für Serien und
+Filme gibt es keinen vergleichbaren Katalog, dort wird gar nicht erst gefragt.
+Geholt wird es bei animethemes.moe; mitgeliefert wird nichts, und versteckt bei
+YouTube abgespielt auch nicht.
+
+Sie fängt genau dann an, wenn die Serie auf dem Schirm steht, und nicht früher.
+Das ist derselbe Gedanke wie beim Titelbild: Musik verrät dieselbe Pointe, nur
+akustisch — wer sein Lieblings-Opening nach zwei Takten erkennt, braucht die
+Karte nicht mehr. Ein Knopf oben rechts schaltet sie ab, eine Einstellung
+schaltet sie ganz aus (und verhindert dann schon die Anfrage), das Schließen
+des Rückblicks beendet sie. Am Knopf steht, was läuft und aus welchem Anime —
+die Zuordnung ist eine Heuristik, und ein Fehlgriff soll sichtbar sein statt
+rätselhaft.
+
+Findet sich nichts — kein Anime, kein Netz, kein Eintrag im Katalog —, bleibt
+der Rückblick stumm und läuft weiter. Das ist genau der Zustand, den es vorher
+gab; ein Rückblick ohne Musik ist kein Fehler.
+
 ## 1.85.0 — 1. September 2026
 
 Nichts Neues zu sehen — die App rechnet nur weniger. Die Zahlen bleiben, wo sie
