@@ -1083,14 +1083,28 @@ ipcMain.handle("library:metadata", async (_event, favoriteId) => {
 // der Startseite hat keine. Gefragt wird hier deshalb mit dem, was jede Kachel
 // traegt: Titel und Adresse. Zurueck kommt nur der Trailer und nicht der ganze
 // Datensatz - mehr braucht die Oberflaeche dafuer nicht.
+// Zurueck kommt der Trailer - und wenn es keinen gibt, warum.
+//
+// "Kein Trailer hinterlegt" war als Auskunft falsch, sobald es einen gab: zu
+// "Spider-Man: Brand New Day" fuehrt TMDB einen deutschen Trailer, und die App
+// sagte trotzdem, es gebe keinen. Die Ursachen sind vier verschiedene, und drei
+// davon kann man beheben - aber nur, wenn dasteht, welche es ist.
 ipcMain.handle("titel:trailer", async (_event, titel, url) => {
+  if (!metadatenAdresse()) return { trailer: null, grund: "kein-dienst" };
   try {
     const form = await lauf.titelMetadaten(String(titel || ""), String(url || ""));
-    return form?.trailer || null;
+    if (form?.trailer) return { trailer: form.trailer, grund: "" };
+    if (!form || form.konfidenz === "UNMATCHED") {
+      return { trailer: null, grund: "nicht-zugeordnet" };
+    }
+    // Der Datensatz ist da, kennt das Feld aber nicht: dann ist der
+    // Metadaten-Dienst aelter als diese Funktion. Das ist der haeufigste Fall
+    // gleich nach einem Update - die App liegt auf dem Rechner, das Relay
+    // laeuft irgendwo anders weiter.
+    if (metadatenModul.trailerFehlt(form)) return { trailer: null, grund: "dienst-zu-alt" };
+    return { trailer: null, grund: "kein-trailer" };
   } catch {
-    // Kein Gateway, kein Treffer, kein Netz: alles dasselbe Ergebnis, und die
-    // Oberflaeche sagt dann, dass es keinen gibt.
-    return null;
+    return { trailer: null, grund: "fehler" };
   }
 });
 

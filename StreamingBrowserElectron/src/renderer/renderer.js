@@ -5209,11 +5209,31 @@ function trailerSchliessen() {
  */
 async function trailerZeigen(titel, url) {
   const name = String(titel || "");
-  const trailer = await api.getTrailer?.(name, url).catch(() => null);
-  if (trailerOeffnen(trailer, name)) return;
-  // Kein Trailer ist ein normaler Zustand: nicht zu jedem Titel gibt es einen,
-  // und ohne zugeordnete Metadaten gibt es gar keinen.
-  showToast(`Zu „${name}“ ist kein Trailer hinterlegt`);
+  const antwort = await api.getTrailer?.(name, url).catch(() => null);
+  if (trailerOeffnen(antwort?.trailer, name)) return;
+  showToast(trailerGrundText(antwort?.grund, name));
+}
+
+// Warum keiner kommt - und was man dagegen tun kann.
+//
+// "Kein Trailer hinterlegt" war als einzige Auskunft falsch: gemeldet wurde ein
+// Film, zu dem TMDB einen deutschen Trailer fuehrt. Der Grund lag woanders, und
+// eine Meldung, die den falschen Grund nennt, schickt den Leser in die Irre.
+function trailerGrundText(grund, name) {
+  if (grund === "kein-dienst") {
+    return "Für Trailer braucht ELFIX den Metadaten-Dienst — trage ihn in den Einstellungen unter Watchparty ein";
+  }
+  if (grund === "dienst-zu-alt") {
+    return "Dein Metadaten-Dienst kennt noch keine Trailer — Relay auf 1.89.1 aktualisieren und neu starten";
+  }
+  if (grund === "nicht-zugeordnet") {
+    return `„${name}“ ließ sich keinem Werk zuordnen — deshalb auch kein Trailer`;
+  }
+  if (grund === "fehler") {
+    return `Der Trailer zu „${name}“ ließ sich gerade nicht holen`;
+  }
+  // Und der ehrliche Rest: es gibt wirklich keinen.
+  return `Zu „${name}“ ist kein Trailer hinterlegt`;
 }
 
 function trailerZuEintragZeigen(favorite) {

@@ -128,12 +128,24 @@ const voll = geraet.verdichten({
 }, "film");
 pruefe("Der Trailer ueberlebt das Verdichten",
   voll.trailer?.schluessel === "dQw4w9WgXcQ" && voll.trailer?.name === "Offizieller Trailer");
+// Der Fehler, der gemeldet wurde: zu einem Film mit deutschem Trailer bei TMDB
+// sagte ELFIX "kein Trailer hinterlegt". Der Dienst des Benutzers war aelter
+// als die Funktion und schickte das Feld gar nicht - eingetragen wurde
+// trotzdem "keiner", und weil das Feld damit dastand, wurde nie neu gefragt.
+pruefe("Ein Dienst, der das Feld nicht kennt, hinterlaesst kein \"keiner\"",
+  !("trailer" in geraet.verdichten({ titel: "X" }, "film"))
+  && geraet.trailerFehlt(geraet.verdichten({ titel: "X" }, "film")) === true,
+  "sonst stuende \"es gibt keinen\" fuer immer im Zwischenspeicher");
+pruefe("Ein Dienst, der ihn kennt und keinen findet, bleibt dabei",
+  geraet.verdichten({ trailer: null }, "film").trailer === null
+  && geraet.trailerFehlt(geraet.verdichten({ trailer: null }, "film")) === false,
+  "das ist eine Antwort und keine Luecke");
 pruefe("Eine unbrauchbare Kennung nicht",
   ["", "kurz", "javascript:alert(1)", "abc/def", "<script>", null, 42]
     .every((wert) => geraet.verdichten({ trailer: { schluessel: wert } }, "film").trailer === null));
-pruefe("Ohne Trailer steht dort null",
-  geraet.verdichten({}, "film").trailer === null,
-  "kein Trailer ist ein normaler Zustand");
+pruefe("Ohne Angabe steht dort gar nichts",
+  geraet.verdichten({}, "film").trailer === undefined,
+  "unbekannt ist keine Antwort - es wird noch einmal gefragt");
 pruefe("Ein Eintrag von vor dem Trailer wird noch einmal gefragt",
   geraet.trailerFehlt({}) === true && geraet.trailerFehlt(voll) === false
   && /client\.trailerFehlt\?\.\(bekannt\)/.test(LAUF),
@@ -191,20 +203,27 @@ pruefe("Vor allem die Vorschlaege",
   "ein Vorschlag ist ein Titel, den man nicht kennt - genau da fragt man danach");
 pruefe("Gefragt wird mit Titel und Adresse, nicht mit einer Kennung",
   /async function trailerZeigen\(titel, url\)/.test(RENDERER)
-  && /const trailer = await api\.getTrailer\?\.\(name, url\)/.test(RENDERER)
+  && /const antwort = await api\.getTrailer\?\.\(name, url\)/.test(RENDERER)
   && /getTrailer: \(titel, url\) => ipcRenderer\.invoke\("titel:trailer", titel, url\)/
     .test(lies("src/preload.js")),
   "ein Vorschlag auf der Startseite hat keinen Eintrag in der Mediathek");
 pruefe("Und erst beim Klick",
   !/getTrailer\?\.\([^)]*\)[^;]*;[\s\S]{0,80}?forEach/.test(RENDERER),
   "die Metadaten jeder Kachel vorab zu holen waere ein Abruf je Kachel");
-pruefe("Der Hauptprozess antwortet auch ohne Gateway",
-  /ipcMain\.handle\("titel:trailer"[\s\S]{0,420}?catch \{[\s\S]{0,220}?return null;/
+pruefe("Der Hauptprozess antwortet auch ohne Dienst und ohne Netz",
+  /ipcMain\.handle\("titel:trailer"[\s\S]{0,1200}?catch \{\s*\n\s*return \{ trailer: null, grund: "fehler" \};/
     .test(lies("src/main.js")),
-  "kein Gateway, kein Treffer, kein Netz - alles dasselbe Ergebnis");
-pruefe("Gibt es keinen, sagt das eine Zeile",
-  /ist kein Trailer hinterlegt/.test(RENDERER),
-  "nicht zu jedem Titel gibt es einen");
+  "eine Ausnahme darf die Kachel nicht stehenlassen");
+pruefe("Gibt es keinen, sagt das eine Zeile - und welchen Grund",
+  /function trailerGrundText\(grund, name\)/.test(RENDERER)
+  && /kein-dienst/.test(RENDERER) && /dienst-zu-alt/.test(RENDERER)
+  && /nicht-zugeordnet/.test(RENDERER) && /ist kein Trailer hinterlegt/.test(RENDERER),
+  "vier Ursachen, drei davon behebbar - aber nur, wenn dasteht, welche es ist");
+pruefe("Und der Hauptprozess nennt ihn",
+  /return \{ trailer: null, grund: "kein-dienst" \};/.test(lies("src/main.js"))
+  && /if \(metadatenModul\.trailerFehlt\(form\)\) return \{ trailer: null, grund: "dienst-zu-alt" \};/
+    .test(lies("src/main.js")),
+  "ein zu alter Metadaten-Dienst ist der haeufigste Fall nach einem Update");
 pruefe("Und im Titelkasten steht die Knopfreihe",
   /function titelAktionen\(favorite\)/.test(RENDERER)
   && /"▶ Abspielen"/.test(RENDERER) && /"♡ Auf die Watchlist"/.test(RENDERER));

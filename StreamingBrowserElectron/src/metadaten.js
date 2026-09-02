@@ -217,6 +217,10 @@ function kurzform(titel) {
 // Weggelassen wird, was das Ranking nicht benutzt (Rollennamen, Tag-Kategorien),
 // damit die Ablage nicht ins Uferlose waechst.
 function verdichten(form, art) {
+  return mitTrailer(verdichtetOhneTrailer(form, art), form);
+}
+
+function verdichtetOhneTrailer(form, art) {
   return {
     quelle: String(form?.quelle || ""),
     externeIds: form?.externeIds && typeof form.externeIds === "object" ? form.externeIds : {},
@@ -268,13 +272,34 @@ function verdichten(form, art) {
     staffeln: (form?.staffeln || []).slice(0, 60)
       .map((staffel) => ({ nummer: Number(staffel?.nummer) || 0, folgen: Number(staffel?.folgen) || 0 }))
       .filter((staffel) => staffel.nummer > 0),
-    // Der Trailer, und zwar streng gelesen: eine Videokennung besteht aus
-    // Buchstaben, Ziffern, Strich und Unterstrich. Was hier durchkommt, wird
-    // gleich darauf zu einer Adresse zusammengesetzt - eine Zeichenkette aus
-    // einer fremden Antwort hat darin nichts verloren.
-    trailer: trailerLesen(form?.trailer),
     konfidenz: String(form?.konfidenz || "UNMATCHED")
   };
+}
+
+/**
+ * Denselben Datensatz noch einmal, mit dem Trailer.
+ *
+ * <p><b>Und hier steckt der Unterschied, an dem die erste Fassung gescheitert
+ * ist:</b> "kein Trailer" und "von Trailern noch nie gehoert" sind zwei
+ * verschiedene Antworten. Ein Dienst, der aelter ist als diese Funktion,
+ * schickt das Feld gar nicht - traegt man dann {@code null} ein, steht im
+ * Zwischenspeicher "es gibt keinen", und zwar fuer immer: geprueft wird auf das
+ * Vorhandensein des Feldes, und das waere ja da.
+ *
+ * <p>Genau so war es gemeldet - TMDB fuehrt zu "Spider-Man: Brand New Day"
+ * einen deutschen Trailer, ELFIX sagte trotzdem "kein Trailer hinterlegt".
+ * Deshalb kommt das Feld nur mit, wenn die Antwort es wirklich enthaelt.
+ * Fehlt es, bleibt der Eintrag unvollstaendig und wird beim naechsten Oeffnen
+ * neu gefragt - dann mit einem Dienst, der es kennt.
+ */
+function mitTrailer(aus, form) {
+  if (form && Object.prototype.hasOwnProperty.call(form, "trailer")) {
+    // Streng gelesen: eine Videokennung besteht aus Buchstaben, Ziffern,
+    // Strich und Unterstrich. Was hier durchkommt, wird gleich darauf zu einer
+    // Adresse zusammengesetzt.
+    aus.trailer = trailerLesen(form.trailer);
+  }
+  return aus;
 }
 
 /*
