@@ -4832,6 +4832,15 @@ function vorschlagEintraege(item) {
     text: "Als gesehen abhaken",
     tun: () => vorschlagAbhaken(item)
   });
+  // Der Trailer gehoert vor allem hierhin. Ein Vorschlag ist ein Titel, den man
+  // nicht kennt - und die erste Frage dazu ist nicht "vormerken oder nicht",
+  // sondern "was ist das ueberhaupt?". Genau die beantwortet der Trailer.
+  eintraege.push({
+    gruppe: "info",
+    symbol: "▷",
+    text: "Trailer ansehen",
+    tun: () => trailerZeigen(item.title, item.url)
+  });
   return eintraege;
 }
 
@@ -5187,19 +5196,28 @@ function trailerSchliessen() {
 }
 
 /**
- * Den Trailer zu einem Eintrag suchen und abspielen.
+ * Den Trailer zu einem Titel suchen und abspielen.
  *
- * <p>Gefragt wird erst beim Klick. Die Metadaten aller Karten vorab zu holen,
+ * <p>Gefragt wird mit Titel und Adresse und nicht mit einer Kennung aus der
+ * Mediathek: ein Vorschlag auf der Startseite hat keine, und gerade dort wird
+ * der Trailer gebraucht - er ist die Frage, die man zu einem unbekannten Titel
+ * hat ("was ist das?"), waehrend man den eigenen laengst kennt.
+ *
+ * <p>Gefragt wird erst beim Klick. Die Metadaten aller Kacheln vorab zu holen,
  * nur damit ein Menuepunkt vielleicht dasteht, waere ein Abruf je Kachel - und
  * die allermeisten davon fuer einen Knopf, den niemand drueckt.
  */
-async function trailerZuEintragZeigen(favorite) {
-  const titel = displayFavoriteTitle(favorite);
-  const metadaten = await api.getLibraryMetadata?.(favorite.id).catch(() => null);
-  if (trailerOeffnen(metadaten?.trailer, titel)) return;
+async function trailerZeigen(titel, url) {
+  const name = String(titel || "");
+  const trailer = await api.getTrailer?.(name, url).catch(() => null);
+  if (trailerOeffnen(trailer, name)) return;
   // Kein Trailer ist ein normaler Zustand: nicht zu jedem Titel gibt es einen,
   // und ohne zugeordnete Metadaten gibt es gar keinen.
-  showToast(`Zu „${titel}“ ist kein Trailer hinterlegt`);
+  showToast(`Zu „${name}“ ist kein Trailer hinterlegt`);
+}
+
+function trailerZuEintragZeigen(favorite) {
+  return trailerZeigen(displayFavoriteTitle(favorite), favorite?.url);
 }
 
 // Der persoenliche Verlauf eines Titels.

@@ -1076,6 +1076,24 @@ ipcMain.handle("library:metadata", async (_event, favoriteId) => {
   }
 });
 
+// Der Trailer zu einem Titel - fuer jede Kachel, auch fuer eine, die noch
+// keinen Eintrag hat.
+//
+// "library:metadata" braucht eine Kennung aus der Mediathek; ein Vorschlag auf
+// der Startseite hat keine. Gefragt wird hier deshalb mit dem, was jede Kachel
+// traegt: Titel und Adresse. Zurueck kommt nur der Trailer und nicht der ganze
+// Datensatz - mehr braucht die Oberflaeche dafuer nicht.
+ipcMain.handle("titel:trailer", async (_event, titel, url) => {
+  try {
+    const form = await lauf.titelMetadaten(String(titel || ""), String(url || ""));
+    return form?.trailer || null;
+  } catch {
+    // Kein Gateway, kein Treffer, kein Netz: alles dasselbe Ergebnis, und die
+    // Oberflaeche sagt dann, dass es keinen gibt.
+    return null;
+  }
+});
+
 ipcMain.handle("discover:recommendations", async (_event, options = {}) => {
   const proAnbieter = Math.max(2, Math.min(12, Number(options?.perProvider) || 6));
   return lauf.neuesVonAnbietern(proAnbieter, Boolean(options?.refresh));

@@ -183,11 +183,25 @@ pruefe("Der Kasten hat das Seitenverhaeltnis eines Videos",
 // --- Und wie man hinkommt ---------------------------------------------------
 
 pruefe("Jede Karte bietet ihn an",
-  /text: "Trailer ansehen"/.test(RENDERER) && /symbol: "▷"/.test(RENDERER));
-pruefe("Gefragt wird erst beim Klick",
-  /async function trailerZuEintragZeigen\(favorite\)/.test(RENDERER)
-  && /const metadaten = await api\.getLibraryMetadata\?\.\(favorite\.id\)/.test(RENDERER),
+  (RENDERER.match(/text: "Trailer ansehen"/g) || []).length === 2
+  && /symbol: "▷"/.test(RENDERER),
+  "die eigenen Kacheln und die Vorschlaege - zwei Menues, zwei Eintraege");
+pruefe("Vor allem die Vorschlaege",
+  /tun: \(\) => trailerZeigen\(item\.title, item\.url\)/.test(RENDERER),
+  "ein Vorschlag ist ein Titel, den man nicht kennt - genau da fragt man danach");
+pruefe("Gefragt wird mit Titel und Adresse, nicht mit einer Kennung",
+  /async function trailerZeigen\(titel, url\)/.test(RENDERER)
+  && /const trailer = await api\.getTrailer\?\.\(name, url\)/.test(RENDERER)
+  && /getTrailer: \(titel, url\) => ipcRenderer\.invoke\("titel:trailer", titel, url\)/
+    .test(lies("src/preload.js")),
+  "ein Vorschlag auf der Startseite hat keinen Eintrag in der Mediathek");
+pruefe("Und erst beim Klick",
+  !/getTrailer\?\.\([^)]*\)[^;]*;[\s\S]{0,80}?forEach/.test(RENDERER),
   "die Metadaten jeder Kachel vorab zu holen waere ein Abruf je Kachel");
+pruefe("Der Hauptprozess antwortet auch ohne Gateway",
+  /ipcMain\.handle\("titel:trailer"[\s\S]{0,420}?catch \{[\s\S]{0,220}?return null;/
+    .test(lies("src/main.js")),
+  "kein Gateway, kein Treffer, kein Netz - alles dasselbe Ergebnis");
 pruefe("Gibt es keinen, sagt das eine Zeile",
   /ist kein Trailer hinterlegt/.test(RENDERER),
   "nicht zu jedem Titel gibt es einen");
