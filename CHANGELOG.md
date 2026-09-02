@@ -3,6 +3,25 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.87.2 — 2. September 2026
+
+**Zu einer Serie ohne Anime-Gegenstück läuft jetzt gar nichts statt irgendwas.**
+
+Seit 1.87.1 wurde zu jeder Serie nach einem Opening gesucht, und wo der Titel
+nicht traf, nahm ELFIX, was die Suche eben ausgeworfen hatte. Zu „Prison
+Break" liefert eine Anime-Suche trotzdem Anime — und darunter lief dann ein
+völlig fremdes Lied. Das war als Preis für die Musik zu jeder Serie angesetzt
+und ist keiner: eine Serie, zu der es im Katalog nichts gibt, hat kein
+Opening.
+
+Der Grund fürs Raten fällt weg, weil die Zweitnamen jetzt mitgeholt werden.
+Der Katalog führt die Serie als „Shingeki no Kyojin" und „Attack on Titan"
+als Zweitnamen; gefragt wurde bisher nur nach dem Namen, und deshalb traf der
+englische Titel nie. Verglichen wird jetzt gegen Name und Zweitnamen — trifft
+keiner, bleibt es still. Als dieselbe Serie zählt noch die erkennbare
+Fortsetzung („Shingeki no Kyojin Season 2"), nicht aber ein bloß angehängtes
+Wort („Naruto Shippuuden" ist nicht „Naruto").
+
 ## 1.87.1 — 2. September 2026
 
 Drei Fehler im Jahresrückblick, alle drei gemeldet und alle drei sichtbar.
