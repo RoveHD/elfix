@@ -3,6 +3,27 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.89.2 — 2. September 2026
+
+**„Kein Trailer hinterlegt" war die falsche Auskunft.** Zu einem Film, zu dem
+TMDB einen deutschen Trailer führt, sagte ELFIX trotzdem, es gebe keinen.
+
+Die Ursache lag zwischen App und Dienst: die Metadaten kommen vom eigenen
+Relay (Einstellungen › Watchparty), und dort lief noch eine Fassung ohne
+Trailer. Die App trug daraufhin „keiner" ein — und weil damit ein Wert
+dastand, wurde nie wieder gefragt. Ein Relay-Update hätte nichts geändert.
+
+Jetzt gilt: „kein Trailer" und „von Trailern noch nie gehört" sind zwei
+verschiedene Antworten. Fehlt das Feld, bleibt der Eintrag unvollständig und
+wird beim nächsten Öffnen neu gefragt.
+
+Und die Meldung nennt den Grund: kein Metadaten-Dienst eingetragen, Dienst zu
+alt (Relay aktualisieren), Titel nicht zugeordnet — oder es gibt wirklich
+keinen.
+
+**Wichtig:** Für Trailer muss auch das Relay auf 1.89.1 oder neuer laufen und
+neu gestartet sein. Der TMDB-Zugang liegt dort, nicht in der App.
+
 ## 1.89.1 — 2. September 2026
 
 **Der Trailer steht jetzt auch bei den Vorschlägen.** In „Filme für dich" und
