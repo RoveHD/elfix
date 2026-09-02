@@ -348,9 +348,17 @@ function isTrackableMediaUrl(url, provider) {
 // der Autoplay-Schalter dann ueber der Serienuebersicht.
 function istAbspielseite(url) {
   if (!providerModel.isHttpUrl(url)) return false;
-  // Shorts laufen in einer Schleife - eine naechste Folge gibt es dort nicht.
-  if (youtube.istShortsUrl(url)) return false;
-  if (youtube.istYoutubeUrl(url)) return Boolean(youtube.videoKennung(url));
+  // YouTube ueberhaupt nicht - auch nicht auf einem Video.
+  //
+  // Was an dieser Frage haengt, heisst "naechste Folge von selbst starten" und
+  // "Naechste Folge". Beides gibt es dort nicht: was nach einem Video kommt,
+  // entscheidet YouTube, und es hat dafuer seinen eigenen Schalter im eigenen
+  // Player. Zwei Schalter fuer dieselbe Sache, von denen einer nichts tut,
+  // sind schlechter als einer - und dieser eine klebte dazu ueber dem Bild.
+  //
+  // Frueher stand hier das Gegenteil: ein Video ja, Shorts nein. Der
+  // Unterschied war schon damals keiner, der sich erklaeren laesst.
+  if (youtube.istYoutubeUrl(url)) return false;
   return Boolean(episodeIdentity(url)) || isExplicitFilmUrl(url);
 }
 

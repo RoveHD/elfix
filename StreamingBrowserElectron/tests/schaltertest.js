@@ -182,8 +182,13 @@ const seiten = [
   ["Film", "https://filmo.to/film/beispiel", true],
   ["YouTube-Startseite", "https://www.youtube.com/", false],
   ["YouTube-Suche", "https://www.youtube.com/results?search_query=reacher", false],
-  ["YouTube-Video", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", true],
-  ["YouTube-Shorts", "https://www.youtube.com/shorts/abcdefghijk", false]
+  // Auf YouTube nirgends. Der Schalter heisst "naechste Folge von selbst
+  // starten", und die gibt es dort nicht - YouTube entscheidet selbst, was
+  // nach einem Video kommt, und hat seinen eigenen Schalter dafuer.
+  ["YouTube-Video", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", false],
+  ["YouTube-Shorts", "https://www.youtube.com/shorts/abcdefghijk", false],
+  ["YouTube-Video ueber youtu.be", "https://youtu.be/dQw4w9WgXcQ", false],
+  ["Eingebettetes YouTube-Video", "https://www.youtube.com/embed/dQw4w9WgXcQ", false]
 ];
 for (const [name, url, erwartet] of seiten) {
   pruefe(`${erwartet ? "Dort gehoert er hin" : "Dort nicht"}: ${name}`,
