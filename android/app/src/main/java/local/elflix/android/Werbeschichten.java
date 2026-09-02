@@ -92,6 +92,26 @@ import java.util.Set;
  *
  * <p><b>Kein eigenes HTML.</b> Die Anbieterseite bleibt die Anbieterseite.
  *
+ * <h2>Zwei Skripte, nicht eines</h2>
+ *
+ * <p>Das volle Skript geht nur in die Dokumente des Anbieters
+ * ({@link #wirtRegeln}), und dabei bleibt es: es bringt ein Stilblatt mit, und
+ * ein Stilblatt, das {@code .adsbygoogle} ausblendet, ist genau das, woran die
+ * Erkennungsskripte der Hoster einen Werbeblocker messen - sie legen ein
+ * solches Element als Koeder aus und sehen nach, ob es noch Hoehe hat.
+ *
+ * <p>Die beiden am 2.9.2026 vom Fernseher gemeldeten Schichten sassen aber
+ * genau dort, wo dieses Skript nicht hinkommt: im Rahmen des Hosters. Dagegen
+ * steht {@link #fremdSkript} - dasselbe Einspielverfahren, aber ein anderes,
+ * viel engeres Skript fuer <em>jedes</em> fremde Dokument: ohne Stilblatt,
+ * ohne Punktevergabe, ohne eine einzige gesperrte Anfrage, und mit dem Player
+ * als unantastbar. Es kennt drei Formen - die falsche Pruefung, den Lockruf
+ * ueber allem und das fremde Fenster ueber dem Video.
+ *
+ * <p>Weil es dort laeuft, wo ein Fehlurteil das Video kostet, laesst es sich
+ * ohne Geraet gegen ein nachgebautes Dokument pruefen:
+ * {@code android/schichtprobe/lauf.sh}.
+ *
  * <h2>Anbieter</h2>
  *
  * <p>Die anbieterbezogenen Regeln stehen getrennt und werden getrennt
@@ -187,6 +207,81 @@ public final class Werbeschichten {
         // Der Kasten, den ein Werbeskript ueber document.write hinterlaesst.
         "[data-elfix-werbung]"
     );
+
+    /* --------------------------------------------- Die Schicht ueber dem Video */
+
+    /**
+     * Der Lockruf - woran ein aufdringliches Werbestueck sich selbst nennt.
+     *
+     * <p>Zwei Fotos vom Fernseher, dieselbe Herkunft: einmal ein Kasten neben
+     * dem laufenden Film ("Herzlichen Glueckwunsch!", ein Zaehler auf 00:22,
+     * "Fordern Sie Ihren Bonus an!"), einmal eine ganze Flaeche ueber dem Film
+     * ("BESTAETIGEN SIE, DASS SIE KEIN ROBOTER SIND", ein nachgemaltes
+     * reCAPTCHA, "Weiter"). Beide sassen im Rahmen des Hosters, und beide kamen
+     * von Adressen, die {@link Adblocker#isIntrusiveOverlayRequest} nicht mehr
+     * kannte: die vier dort benannten Wirte waren umgezogen.
+     *
+     * <p>Deshalb hier kein weiterer Wirt, sondern das, was das Werbestueck
+     * nicht wechseln kann, ohne aufzuhoeren zu wirken - seine eigene Ansage.
+     * Ein Gluecksspielbanner ohne Bonus wirbt nicht, und ein falsches Captcha
+     * ohne "Roboter" fragt nichts.
+     *
+     * <p>Ein Eintrag allein entfernt nichts. Im Dokument des Anbieters gibt er
+     * zwei Punkte wie jeder andere Text (dort heisst die Liste {@code TEXTE}),
+     * im fremden Rahmen zaehlt er nur zusammen mit "liegt frei ueber allem".
+     * Die einzige Ausnahme ist die falsche Pruefung, und die hat ihren eigenen,
+     * engeren Grund (unten).
+     */
+    static final List<String> LOCKRUFE = Arrays.asList(
+        // Das falsche Captcha. Beide Sprachen, beide Schreibweisen.
+        "/(ich\\s+bin\\s+)?kein(en)?\\s+roboter/i",
+        "/\\bnot\\s+a\\s+robot/i",
+        "/\\brobot\\s+check\\b/i",
+        // Der Gluecksspielkasten.
+        "/fordern\\s+sie\\s+ihren\\s+bonus/i",
+        "/\\bbonus\\s+(jetzt\\s+)?(sichern|anfordern|abholen|erhalten)/i",
+        "/\\bclaim\\s+(your\\s+)?(bonus|prize|reward)/i",
+        "/herzlichen\\s+gl(\\u00fc|ue)ckwunsch/i",
+        "/\\bcongratulations\\b/i",
+        "/\\bsie\\s+haben\\s+(gewonnen|einen\\s+preis|gewinn)/i",
+        "/\\byou\\s+(have\\s+)?won\\b/i",
+        "/\\b(freispiele|freispiel|jackpot|gewinnspiel|einzahlungsbonus|wettbonus)\\b/i",
+        // Die Schreckmeldung ueber das Geraet.
+        "/(ihr|dein)\\s+(telefon|ger(\\u00e4|ae)t|smartphone|android|akku)\\s+(ist|wurde)\\s+"
+            + "(infiziert|verseucht|besch(\\u00e4|ae)digt|gehackt|langsam)/i",
+        "/\\bvir(us|en)\\s+(gefunden|erkannt|entdeckt)/i",
+        "/\\byour\\s+(phone|device|battery)\\s+(is|has\\s+been)\\s+"
+            + "(infected|damaged|hacked|slow)/i",
+        "/\\bclean\\s+your\\s+(phone|device)/i"
+    );
+
+    /**
+     * Woran eine <em>echte</em> Pruefung zu erkennen ist: an ihrem Fenster.
+     *
+     * <p>Der Unterschied, auf dem die ganze Regel steht. Ein echtes reCAPTCHA
+     * malt sein "Ich bin kein Roboter" nicht in die Seite, sondern in einen
+     * Rahmen von {@code google.com}; dasselbe gilt fuer hCaptcha und fuer
+     * Cloudflares Turnstile. {@code innerText} geht nicht ueber eine
+     * Dokumentgrenze - was ein Dokument selbst als "kein Roboter" anzeigt,
+     * kann deshalb keine echte Pruefung sein, sondern nur ein Bild davon.
+     */
+    static final String ECHTE_PRUEFUNG =
+        "iframe[src*=\"recaptcha\"],iframe[src*=\"hcaptcha\"],"
+        + "iframe[src*=\"challenges.cloudflare.com\"],iframe[src*=\"turnstile\"],"
+        + "iframe[title*=\"recaptcha\"],iframe[title*=\"captcha\"]";
+
+    /** Ab welcher Ebene eine Schicht im fremden Rahmen als freigestellt gilt. */
+    static final int SCHICHT_EBENE = 100;
+
+    /** Die Lockrufe so, wie JavaScript sie als Feld liest. */
+    static String lockrufListe() {
+        StringBuilder feld = new StringBuilder("[");
+        for (String ruf : LOCKRUFE) {
+            if (feld.length() > 1) feld.append(',');
+            feld.append(ruf);
+        }
+        return feld.append(']').toString();
+    }
 
     /**
      * Was diese Klasse auf keiner Seite anfasst.
@@ -343,6 +438,16 @@ public final class Werbeschichten {
     private final boolean melden;
     /** Je Anbieter einmal gebaut - die Zeichenkette ist gut zwoelf Kilobyte gross. */
     private final java.util.Map<String, String> gebaut = new java.util.HashMap<>();
+    /** Dasselbe fuer das kurze Skript der fremden Rahmen. */
+    private final java.util.Map<String, String> gebautFremd = new java.util.HashMap<>();
+
+    /**
+     * Der Platzhalter fuer <em>jedes</em> Dokument.
+     *
+     * <p>Nur fuer {@link #FREMD}. Das volle Skript bekommt ihn nicht und soll
+     * ihn nie bekommen - siehe {@link #wirtRegeln}.
+     */
+    private static final Set<String> ALLE_WIRTE = java.util.Collections.singleton("*");
 
     /**
      * @param melden ob das Skript Zeilen in die Konsole schreibt. Nur im
@@ -365,6 +470,16 @@ public final class Werbeschichten {
         return fertig;
     }
 
+    /** Das kurze Skript fuer die fremden Rahmen dieses Anbieters. */
+    public String fremdSkript(Provider anbieter) {
+        String wirt = hauptwirt(anbieter == null ? null : anbieter.startUrl);
+        String fertig = gebautFremd.get(wirt);
+        if (fertig != null) return fertig;
+        fertig = fremdSkript(wirt, melden);
+        gebautFremd.put(wirt, fertig);
+        return fertig;
+    }
+
     /**
      * Den frisch angelegten WebView anschliessen - der Weg ohne Aufblitzen.
      *
@@ -384,18 +499,28 @@ public final class Werbeschichten {
         if (ansicht == null) return false;
         if (anbieter != null && !anbieter.adblockEnabled) return false;
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return false;
+        boolean voll = false;
         java.util.Set<String> wirte = wirtRegeln(anbieter);
-        if (wirte.isEmpty()) return false;
-        try {
-            WebViewCompat.addDocumentStartJavaScript(ansicht, skript(anbieter), wirte);
-            return true;
-        } catch (Exception fehler) {
-            // Ein WebView, der das nicht mitmacht, ist kein Grund zum Absturz.
-            // Dann filtert eben erst onPageStarted, und die Werbung blitzt
-            // einmal auf - immer noch besser als gar keine Filterung.
-            Log.w(TAG, "Werbeschichten nicht angeschlossen", fehler);
-            return false;
+        if (!wirte.isEmpty()) {
+            try {
+                WebViewCompat.addDocumentStartJavaScript(ansicht, skript(anbieter), wirte);
+                voll = true;
+            } catch (Exception fehler) {
+                // Ein WebView, der das nicht mitmacht, ist kein Grund zum Absturz.
+                // Dann filtert eben erst onPageStarted, und die Werbung blitzt
+                // einmal auf - immer noch besser als gar keine Filterung.
+                Log.w(TAG, "Werbeschichten nicht angeschlossen", fehler);
+            }
         }
+        // Und das kurze Skript in jeden fremden Rahmen. Getrennt registriert,
+        // damit ein Fehlschlag des einen den anderen nicht mitnimmt - und weil
+        // die beiden verschiedene Wirtsregeln brauchen.
+        try {
+            WebViewCompat.addDocumentStartJavaScript(ansicht, fremdSkript(anbieter), ALLE_WIRTE);
+        } catch (Exception fehler) {
+            Log.w(TAG, "Schicht ueber dem Video nicht angeschlossen", fehler);
+        }
+        return voll;
     }
 
     /**
@@ -461,6 +586,23 @@ public final class Werbeschichten {
     }
 
     /**
+     * Der blosse Wirt einer Startadresse - ohne Schema, Port und Anmeldung.
+     *
+     * <p>Von Hand zerlegt, aus demselben Grund wie {@link #wirtRegeln}: im
+     * Unit-Test ist {@code android.net.Uri} nur ein Rumpf.
+     */
+    static String hauptwirt(String startUrl) {
+        for (String regel : wirtRegeln(startUrl)) {
+            int schemaEnde = regel.indexOf("://");
+            if (schemaEnde < 0) continue;
+            String wirt = regel.substring(schemaEnde + 3);
+            if (wirt.startsWith("*.")) continue;
+            return wirt;
+        }
+        return "";
+    }
+
+    /**
      * Einspielen, nachdem die Seite steht.
      *
      * <p>Das ist der zweite Weg und nicht der erste: der erste ist
@@ -507,6 +649,8 @@ public final class Werbeschichten {
             + "var VERSTECK=" + jsText(versteckRegeln(kennung)) + ";"
             + "var WIRTE=[" + wirte + "];"
             + "var MELDEN=" + (melden ? "true" : "false") + ";"
+            + "var LOCKRUF=" + lockrufListe() + ";"
+            + "var ECHT=" + jsText(ECHTE_PRUEFUNG) + ";"
             + "var SCHWELLE=" + SCHWELLE + ";"
             + "var HOECHST=" + HOECHSTPRUEFUNGEN + ";"
             + "var STAPEL=" + STAPEL + ";"
@@ -623,6 +767,10 @@ public final class Werbeschichten {
             + "/\\bcontinue\\s+to\\s+download\\b/i,"
             + "/\\bdownload\\s+now\\b/i"
         + "];"
+        // Die Lockrufe der aufdringlichen Schichten zaehlen hier wie jeder
+        // andere Werbetext: zwei Punkte, nie allein genug. Nur die falsche
+        // Pruefung unten steht ausserhalb der Punktevergabe.
+        + "TEXTE=TEXTE.concat(LOCKRUF);"
         + "function kennungText(el){"
             + "var teile=(el.id||'')+' '+(typeof el.className==='string'?el.className:'');"
             + "var namen=['data-ad','data-ads','data-advert','data-zone','data-banner-id'];"
@@ -668,6 +816,48 @@ public final class Werbeschichten {
             + "if(spaet){summe+=1;gruende.push('nachgereicht');}"
             + "if(el.parentElement===document.body){summe+=1;gruende.push('am dokument');}"
             + "return{summe:summe,gruende:gruende};"
+        + "}"
+
+        // ------------------------------------------------ Die falsche Pruefung
+        // Das zweite Foto: eine ganze Flaeche ueber dem Film, "BESTAETIGEN SIE,
+        // DASS SIE KEIN ROBOTER SIND", darunter ein nachgemaltes reCAPTCHA und
+        // ein "Weiter". Wer darauf klickt, ist in der Werbekette.
+        //
+        // Diese eine Regel steht *vor* dem Schutz, und das ist sonst nirgends
+        // so. Der Grund ist, dass der Schutz sie sonst selbst aufheben wuerde:
+        // in SCHUTZ_ALLGEMEIN stehen [class*="captcha"] und [id*="captcha"],
+        // damit eine echte Pruefung nie verschwindet - ein Werbestueck, das
+        // sich "captcha-box" nennt, waere damit unantastbar. Es reicht also
+        // nicht, das falsche Captcha zu erkennen; es muss auch an seinem
+        // eigenen Namen vorbeikommen.
+        //
+        // Sicher ist das nur wegen ECHT: ein echtes reCAPTCHA malt sein "Ich
+        // bin kein Roboter" nicht in die Seite, sondern in einen Rahmen von
+        // google.com - dasselbe bei hCaptcha und Turnstile. innerText geht
+        // nicht ueber eine Dokumentgrenze. Was ein Dokument *selbst* als "kein
+        // Roboter" anzeigt und wozu es keinen solchen Rahmen hat, kann keine
+        // Pruefung sein. Ein Element, das einen hat, faellt heraus - auch dann
+        // noch, wenn der Rahmen erst gleich laedt: solange er fehlt, steht dort
+        // auch kein Text, und ohne Text greift die Regel nicht.
+        + "function echtePruefung(el){"
+            + "try{if(el.matches&&el.matches(ECHT))return true;}catch(e){}"
+            + "try{if(el.querySelector&&el.querySelector(ECHT))return true;}catch(e){}"
+            + "return false;"
+        + "}"
+        + "function textVon(el){"
+            + "try{return (el.innerText||el.textContent||'').trim();}catch(e){return '';}"
+        + "}"
+        + "var ROBOTER=/(ich\\s+bin\\s+)?kein(en)?\\s+roboter|\\bnot\\s+a\\s+robot|\\brobot\\s+check\\b/i;"
+        + "function falschePruefung(el){"
+            + "if(!el||!el.tagName)return false;"
+            + "if(el===document.body||el===document.documentElement)return false;"
+            // Was ein Video enthaelt, ist der Player. Diese Regel hebt den
+            // Schutz auf; sie darf ihn nicht dort aufheben, wo er zaehlt.
+            + "if(drin(el,'video,audio,object,embed'))return false;"
+            + "if(echtePruefung(el))return false;"
+            + "var text=textVon(el);"
+            + "if(text.length<8||text.length>400)return false;"
+            + "return ROBOTER.test(text);"
         + "}"
 
         // -------------------------------------------- Der Rahmen ohne Quelle
@@ -840,6 +1030,9 @@ public final class Werbeschichten {
             + "if(gesehen.has(el))return;"
             + "gesehen.add(el);"
             + "geprueft+=1;"
+            // Vor dem Schutz - und nur diese eine. Warum, steht oben bei
+            // falschePruefung().
+            + "if(falschePruefung(el)){wegnehmen(el,'falsche pruefung');return;}"
             + "if(geschuetzt(el))return;"
             + "if(rahmenschicht(el)){wegnehmen(el,'rahmen ohne quelle');return;}"
             + "if(klickfang(el)){wegnehmen(el,'klickfang');return;}"
@@ -938,5 +1131,266 @@ public final class Werbeschichten {
         + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf(true);}},2500);"
         + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf(true);}},7000);"
         + "window.__elfixTvWerbungStand=function(){return{entfernt:entfernt,geprueft:geprueft};};"
+    + "})();";
+
+    /* ----------------------------------------------- Das Skript der Rahmen */
+
+    /**
+     * Das kurze Skript fuer jedes Dokument, das nicht dem Anbieter gehoert.
+     *
+     * <p>Vor allem fuer den Rahmen des Hosters, denn dort sitzen beide
+     * gemeldeten Schichten - der Gluecksspielkasten neben dem Film und das
+     * falsche Captcha darueber. Das volle Skript kommt dort bewusst nicht hin
+     * ({@link #wirtRegeln}), und daran aendert sich nichts: es bringt ein
+     * Stilblatt mit, und ein Stilblatt, das {@code .adsbygoogle} ausblendet,
+     * ist genau das, woran die Erkennungsskripte der Hoster einen Werbeblocker
+     * messen - sie legen ein solches Element als Koeder aus und sehen nach, ob
+     * es noch Hoehe hat. Am Ende steht dann "Ad blockers are not allowed"
+     * statt eines Videos.
+     *
+     * <p>Dieses Skript hier ist deshalb <b>ein anderes und ein viel engeres</b>:
+     *
+     * <ul>
+     *   <li><b>Kein Stilblatt.</b> Nichts wird pauschal ausgeblendet, kein
+     *       Koeder wird angefasst.</li>
+     *   <li><b>Keine Anfrage wird gesperrt.</b> Der Hoster zaehlt die Anfragen
+     *       seiner Werbepartner mit (siehe {@link Adblocker#blockReason}); sie
+     *       gehen alle hinaus wie bisher. Was hier passiert, passiert erst
+     *       danach und nur am fertigen Dokument.</li>
+     *   <li><b>Keine Punktevergabe.</b> Drei benannte Formen, sonst nichts -
+     *       und jede von ihnen verlangt mehr als eine Beobachtung.</li>
+     *   <li><b>Der Player bleibt unantastbar.</b> Was ein Video enthaelt oder
+     *       das Video der Seite umschliesst, wird nie angefasst.</li>
+     * </ul>
+     *
+     * <p>Was es erkennt:
+     *
+     * <ol>
+     *   <li><b>Die falsche Pruefung.</b> Ein Element, das selbst "kein
+     *       Roboter" anzeigt und keinen Rahmen einer echten Pruefung enthaelt
+     *       ({@link #ECHTE_PRUEFUNG}). Ein echtes reCAPTCHA malt diesen Satz
+     *       in einen Rahmen von google.com, und {@code innerText} liest nicht
+     *       ueber eine Dokumentgrenze.</li>
+     *   <li><b>Den Lockruf ueber allem.</b> Ein freigestelltes Element auf
+     *       hoher Ebene, das einen der {@link #LOCKRUFE} traegt - der Kasten
+     *       aus dem Foto sagt "Fordern Sie Ihren Bonus an!".</li>
+     *   <li><b>Das fremde Fenster ueber dem Video.</b> Ein {@code iframe} von
+     *       einem anderen Wirt, freigestellt und auf hoher Ebene, in einem
+     *       Dokument, das sein Video <em>selbst</em> traegt. Der Player ist
+     *       dort das {@code video}; ein Rahmen darueber ist keiner. Die Frage
+     *       nach dem eigenen Video ist die Sicherung: eine Zwischenseite der
+     *       Hosterkette, die den Player erst einbettet, hat keines und faellt
+     *       damit ganz heraus.</li>
+     * </ol>
+     *
+     * @param wirt   der Wirt des Anbieters; in dessen Dokumenten haelt sich
+     *               dieses Skript heraus, weil dort das volle laeuft
+     * @param melden ob es Zeilen in die Konsole schreibt (nur im Debug-Bau)
+     */
+    static String fremdSkript(String wirt, boolean melden) {
+        return "(function(){"
+            + "if(window.__elfixSchichtV1)return;window.__elfixSchichtV1=true;"
+            + "var WIRT=" + jsText(wirt == null ? "" : wirt.trim().toLowerCase()) + ";"
+            + "var LOCKRUF=" + lockrufListe() + ";"
+            + "var ECHT=" + jsText(ECHTE_PRUEFUNG) + ";"
+            + "var MELDEN=" + (melden ? "true" : "false") + ";"
+            + "var EBENE=" + SCHICHT_EBENE + ";"
+            + "var HOECHST=" + HOECHSTPRUEFUNGEN + ";"
+            + "var STAPEL=" + STAPEL + ";"
+            + "var PAUSE=" + PAUSE_MS + ";"
+            + FREMD;
+    }
+
+    /** Der unveraenderliche Teil des Rahmenskripts. Siehe {@link #fremdSkript}. */
+    private static final String FREMD =
+        // Im Dokument des Anbieters arbeitet das volle Skript. Zwei Skripte auf
+        // derselben Seite waeren zwei Urteile ueber dasselbe Element.
+        "var HIER=(location.hostname||'').toLowerCase();"
+        + "function gleicherWirt(a,b){"
+            + "if(!a||!b)return false;"
+            + "return a===b||a.slice(-(b.length+1))==='.'+b||b.slice(-(a.length+1))==='.'+a;"
+        + "}"
+        + "if(WIRT&&gleicherWirt(HIER,WIRT))return;"
+
+        // ------------------------------------------------------------ Hilfen
+        + "function drin(el,auswahl){try{return !!(el.querySelector&&el.querySelector(auswahl));}catch(e){return false;}}"
+        + "function textVon(el){try{return (el.innerText||el.textContent||'').trim();}catch(e){return '';}}"
+        + "function echtePruefung(el){"
+            + "try{if(el.matches&&el.matches(ECHT))return true;}catch(e){}"
+            + "try{if(el.querySelector&&el.querySelector(ECHT))return true;}catch(e){}"
+            + "return false;"
+        + "}"
+        + "var ROBOTER=/(ich\\s+bin\\s+)?kein(en)?\\s+roboter|\\bnot\\s+a\\s+robot|\\brobot\\s+check\\b/i;"
+        + "function lockruf(text){"
+            + "for(var i=0;i<LOCKRUF.length;i++){if(LOCKRUF[i].test(text))return true;}"
+            + "return false;"
+        + "}"
+
+        // Liegt das Element frei ueber allem? Wieder eine Eigenschaft und
+        // keine Bildschirmstelle: gefragt ist, ob es aus dem Textfluss
+        // herausgenommen und nach vorn gelegt wurde, nicht wo es liegt.
+        + "function freigestellt(el){"
+            + "var s=null;try{s=getComputedStyle(el);}catch(e){return false;}"
+            + "if(!s)return false;"
+            + "if(s.display==='none'||s.visibility==='hidden')return false;"
+            + "if(parseFloat(s.opacity||'1')<0.05)return false;"
+            + "if(s.position!=='fixed'&&s.position!=='absolute'&&s.position!=='sticky')return false;"
+            + "if((parseInt(s.zIndex,10)||0)<EBENE)return false;"
+            + "var r=null;try{r=el.getBoundingClientRect();}catch(e){return false;}"
+            + "return !!r&&r.width>=40&&r.height>=24;"
+        + "}"
+
+        // Der Player. Er wird nie angefasst - weder das Video selbst noch
+        // irgendetwas, das es umschliesst.
+        + "function dasVideo(){try{return document.querySelector('video,audio');}catch(e){return null;}}"
+        + "function amPlayer(el){"
+            + "if(drin(el,'video,audio,object,embed'))return true;"
+            + "var v=dasVideo();"
+            + "return !!(v&&el.contains&&el.contains(v));"
+        + "}"
+
+        // Ein Fenster von einem anderen Wirt.
+        + "function fremderRahmen(el){"
+            + "if(!el||el.tagName!=='IFRAME')return false;"
+            + "var quelle='';try{quelle=(el.getAttribute('src')||'').trim();}catch(e){quelle='';}"
+            + "if(!quelle)return false;"
+            + "var w='';try{w=new URL(quelle,location.href).hostname.toLowerCase();}catch(e){w='';}"
+            + "if(!w||gleicherWirt(w,HIER))return false;"
+            // Der Anbieter selbst ist hier nie fremd: filmo.to setzt seinen
+            // Hoster in einen Rahmen und den wieder in einen eigenen.
+            + "if(WIRT&&gleicherWirt(w,WIRT))return false;"
+            + "return true;"
+        + "}"
+
+        // ---------------------------------------------------- Das Entfernen
+        + "var entfernt=0;var geprueft=0;var gesehen=new WeakSet();"
+        + "function wegnehmen(el,grund){"
+            + "if(!el||!el.setAttribute)return;"
+            + "if(el.hasAttribute('data-elfix-schicht'))return;"
+            + "el.setAttribute('data-elfix-schicht','');"
+            + "el.setAttribute('aria-hidden','true');"
+            + "try{el.setAttribute('tabindex','-1');}catch(e){}"
+            // Ausblenden statt herausnehmen: manche Werbeskripte bauen ihr
+            // Element sofort neu auf, und dann laeuft der Beobachter im Kreis.
+            + "try{el.style.setProperty('display','none','important');}catch(e){}"
+            + "try{el.style.setProperty('pointer-events','none','important');}catch(e){}"
+            + "entfernt+=1;"
+            + "if(MELDEN){try{console.log('ELFIX:schicht '+grund+' entfernt='+entfernt"
+                + "+' wirt='+HIER);}catch(e){}}"
+            // Steht das Werbestueck in einem eigenen Dokument, bleibt sein
+            // Fenster als leere Flaeche stehen und faengt weiter Klicks. Ein
+            // Dokument ohne eigenes Video ist kein Player - dort darf alles
+            // durchlaessig werden.
+            + "if(!dasVideo())entschaerfen();"
+        + "}"
+        + "function entschaerfen(){"
+            + "var wurzel=document.documentElement;"
+            + "if(!wurzel)return;"
+            + "try{wurzel.style.setProperty('pointer-events','none','important');}catch(e){}"
+            + "try{wurzel.style.setProperty('background','transparent','important');}catch(e){}"
+            + "if(document.body){"
+                + "try{document.body.style.setProperty('pointer-events','none','important');}catch(e){}"
+                + "try{document.body.style.setProperty('background','transparent','important');}catch(e){}"
+            + "}"
+        + "}"
+
+        // ------------------------------------------------------- Das Urteil
+        + "function urteil(el){"
+            + "if(!el||el.nodeType!==1||!el.tagName)return '';"
+            + "var tag=el.tagName;"
+            + "if(tag==='HTML'||tag==='BODY'||tag==='HEAD'||tag==='SCRIPT'||tag==='STYLE'||tag==='LINK')return '';"
+            + "if(el===document.body||el===document.documentElement)return '';"
+            + "if(amPlayer(el))return '';"
+            // Eine echte Pruefung wird nie angefasst - und zwar vor jeder
+            // Frage, nicht nur vor der ersten. Das Fenster von google.com,
+            // hCaptcha oder Cloudflare steht dabei fuer die ganze Umgebung, in
+            // der es haengt: der Kasten darum traegt die Aufschrift ("Ich bin
+            // kein Roboter"), und ohne diese Zeile faengt ihn der Lockruf
+            // gleich danach wieder ein.
+            + "if(echtePruefung(el))return '';"
+            + "var text=textVon(el);"
+            + "var lesbar=text.length>7&&text.length<400;"
+            // 1. Die falsche Pruefung. Ohne "freigestellt", weil sie oft das
+            //    ganze Dokument ihres Fensters ausfuellt und dann gar nichts
+            //    zu positionieren braucht.
+            + "if(lesbar&&ROBOTER.test(text))return 'falsche pruefung';"
+            // 2. Der Lockruf ueber allem.
+            + "if(lesbar&&lockruf(text)&&freigestellt(el))return 'lockruf';"
+            // 3. Das fremde Fenster ueber dem Video.
+            + "if(fremderRahmen(el)&&freigestellt(el)&&dasVideo())return 'fremdes fenster';"
+            + "return '';"
+        + "}"
+
+        // ----------------------------------------------------- Der Durchgang
+        + "function pruefen(el){"
+            + "if(!el||el.nodeType!==1)return;"
+            + "if(gesehen.has(el))return;"
+            + "gesehen.add(el);"
+            + "geprueft+=1;"
+            + "var grund=urteil(el);"
+            + "if(grund)wegnehmen(el,grund);"
+        + "}"
+        // Die Anwaerter: was unmittelbar am Dokument haengt, die Rahmen, und
+        // was sich selbst einen Stil mitbringt - Werbestuecke setzen ihre Lage
+        // fast immer inline, weil sie sich auf kein Stilblatt der Seite
+        // verlassen koennen. Kein Lauf ueber querySelectorAll('*'): auf einem
+        // Fernseh-Stick kostet getComputedStyle je Element genug, dass das
+        // Bild stehenbleibt.
+        + "var ANWAERTER='iframe,[style*=\"fixed\"],[style*=\"absolute\"],[style*=\"z-index\"]';"
+        + "function ersterLauf(){"
+            + "var liste=[];"
+            + "function dazu(satz){if(!satz)return;for(var i=0;i<satz.length;i++)liste.push(satz[i]);}"
+            + "try{dazu(document.body&&document.body.children);}catch(e){}"
+            + "try{dazu(document.querySelectorAll(ANWAERTER));}catch(e){}"
+            + "for(var i=0;i<liste.length&&geprueft<HOECHST;i++){"
+                + "pruefen(liste[i]);"
+                // Ein Werbeskript haengt seinen Kasten gern in einen leeren
+                // Behaelter. Eine Kindebene tief, nicht mehr.
+                + "var kinder=liste[i].children||[];"
+                + "for(var k=0;k<kinder.length&&k<12;k++)pruefen(kinder[k]);"
+            + "}"
+        + "}"
+
+        // ---------------------------------------------------- Der Beobachter
+        // Mit demselben Deckel wie das volle Skript.
+        + "var wartend=[];var uhr=null;var wache=null;"
+        + "function anstossen(){"
+            + "if(uhr)return;"
+            + "uhr=setTimeout(function(){"
+                + "uhr=null;"
+                + "var stapel=wartend;wartend=[];"
+                + "if(geprueft>=HOECHST){try{if(wache)wache.disconnect();}catch(e){}wache=null;return;}"
+                + "for(var i=0;i<stapel.length&&i<STAPEL;i++){"
+                    + "pruefen(stapel[i]);"
+                    + "var kinder=stapel[i].children||[];"
+                    + "for(var k=0;k<kinder.length&&k<12;k++)pruefen(kinder[k]);"
+                + "}"
+            + "},PAUSE);"
+        + "}"
+        + "function beobachten(){"
+            + "if(wache||!document.documentElement)return;"
+            + "try{"
+                + "wache=new MutationObserver(function(eintraege){"
+                    + "for(var i=0;i<eintraege.length&&wartend.length<STAPEL*4;i++){"
+                        + "var neu=eintraege[i].addedNodes;"
+                        + "for(var k=0;k<neu.length;k++){"
+                            + "if(neu[k].nodeType===1)wartend.push(neu[k]);"
+                        + "}"
+                    + "}"
+                    + "if(wartend.length)anstossen();"
+                + "});"
+                + "wache.observe(document.documentElement,{childList:true,subtree:true});"
+            + "}catch(e){wache=null;}"
+        + "}"
+        + "function anlaufen(){ersterLauf();beobachten();}"
+        + "if(document.readyState==='loading'){"
+            + "document.addEventListener('DOMContentLoaded',anlaufen);"
+        + "}else{anlaufen();}"
+        // Die Schicht kommt nachgereicht - beim Gluecksspielkasten erst, als
+        // der Film schon lief. Zwei Nachschauen, mehr nicht: alles Weitere
+        // sieht der Beobachter.
+        + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf();}},3000);"
+        + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf();}},9000);"
+        + "window.__elfixSchichtStand=function(){return{entfernt:entfernt,geprueft:geprueft};};"
     + "})();";
 }

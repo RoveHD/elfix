@@ -214,6 +214,114 @@ public class WerbeschichtenTest {
         assertTrue(Werbeschichten.wirtRegeln("https://*/").isEmpty());
     }
 
+    /**
+     * Die falsche Pruefung - das zweite Foto vom 2.9.2026.
+     *
+     * <p>Eine Flaeche ueber dem Film, "BESTAETIGEN SIE, DASS SIE KEIN ROBOTER
+     * SIND", darunter ein nachgemaltes reCAPTCHA und ein "Weiter". Geprueft
+     * wird hier die Reihenfolge, denn an ihr haengt die ganze Regel: sie steht
+     * <em>vor</em> dem Schutz. Sonst wuerde {@code [class*="captcha"]} aus
+     * SCHUTZ_ALLGEMEIN - da, damit eine echte Pruefung nie verschwindet - jedes
+     * Werbestueck unantastbar machen, das sich "captcha-box" nennt.
+     *
+     * <p>Erlaubt ist das nur, weil {@link Werbeschichten#ECHTE_PRUEFUNG}
+     * danebensteht: ein echtes reCAPTCHA malt diesen Satz in einen Rahmen von
+     * google.com, und innerText liest nicht ueber eine Dokumentgrenze.
+     */
+    @Test
+    public void dasSkriptKenntDieFalschePruefung() {
+        String skript = Werbeschichten.skript(Werbeschichten.ANIWORLD, null, false);
+        assertTrue(skript.contains("function falschePruefung(el)"));
+        assertTrue(skript.contains("function echtePruefung(el)"));
+        assertTrue(skript.contains("recaptcha"));
+        assertTrue(skript.contains("challenges.cloudflare.com"));
+        // Vor dem Schutz - und als einzige Frage.
+        int falsch = skript.indexOf("if(falschePruefung(el))");
+        int schutz = skript.indexOf("if(geschuetzt(el))return;");
+        assertTrue(falsch > 0 && schutz > 0 && falsch < schutz);
+        // Und sie faellt aus, sobald ein Rahmen einer echten Pruefung dasteht.
+        assertTrue(skript.contains("if(echtePruefung(el))return false;"));
+        // Was ein Video enthaelt, bleibt auch hier unantastbar.
+        assertTrue(skript.contains("if(drin(el,'video,audio,object,embed'))return false;"));
+    }
+
+    /**
+     * Der Lockruf steht in beiden Skripten - und nirgends allein.
+     *
+     * <p>Im Dokument des Anbieters zaehlt er wie jeder andere Werbetext: zwei
+     * von vier Punkten. Ein Kasten verschwindet also nicht, weil "Bonus" darin
+     * steht.
+     */
+    @Test
+    public void dieLockrufeStehenInBeidenSkripten() {
+        assertFalse(Werbeschichten.LOCKRUFE.isEmpty());
+        String voll = Werbeschichten.skript(Werbeschichten.ANIWORLD, null, false);
+        String fremd = Werbeschichten.fremdSkript("aniworld.to", false);
+        for (String skript : new String[]{voll, fremd}) {
+            assertTrue(skript.contains("roboter"));
+            assertTrue(skript.contains("bonus"));
+            assertTrue(skript.contains("gl(\\u00fc|ue)ckwunsch"));
+        }
+        // Im vollen Skript gehen sie in die Punktevergabe ein, nicht an ihr
+        // vorbei - die Schwelle bleibt bei vier.
+        assertTrue(voll.contains("TEXTE=TEXTE.concat(LOCKRUF);"));
+        assertTrue(voll.contains("var SCHWELLE=" + Werbeschichten.SCHWELLE + ";"));
+    }
+
+    /**
+     * Das Rahmenskript - und warum es anders aussieht als das volle.
+     *
+     * <p>Es geht in <em>jedes</em> Dokument, also auch in den Rahmen des
+     * Hosters. Dort ist ein Stilblatt, das {@code .adsbygoogle} ausblendet,
+     * genau das, woran ein Hoster einen Werbeblocker misst: er legt ein
+     * solches Element als Koeder aus und sieht nach, ob es noch Hoehe hat.
+     * Deshalb bringt dieses Skript keines mit, und deshalb steht das hier als
+     * Pruefung.
+     */
+    @Test
+    public void dasRahmenskriptBringtKeinStilblattMit() {
+        String fremd = Werbeschichten.fremdSkript("aniworld.to", false);
+        assertFalse(fremd.contains("createElement('style')"));
+        assertFalse(fremd.contains("adsbygoogle"));
+        assertFalse(fremd.contains("VERSTECK"));
+        // Auch keine Punktevergabe: drei benannte Formen, sonst nichts.
+        assertFalse(fremd.contains("function punkte("));
+        // Der Player ist unantastbar.
+        assertTrue(fremd.contains("function amPlayer(el)"));
+        assertTrue(fremd.contains("if(amPlayer(el))return '';"));
+        // Die echte Pruefung faellt vor jeder Frage heraus, nicht nur vor der
+        // ersten - sonst finge der Lockruf ("Ich bin kein Roboter") sie gleich
+        // danach wieder ein.
+        int echt = fremd.indexOf("if(echtePruefung(el))return '';");
+        int roboter = fremd.indexOf("ROBOTER.test(text)");
+        assertTrue(echt > 0 && roboter > 0 && echt < roboter);
+        assertTrue(fremd.startsWith("(function(){"));
+        assertTrue(fremd.endsWith("})();"));
+    }
+
+    /**
+     * Im Dokument des Anbieters haelt sich das Rahmenskript heraus.
+     *
+     * <p>Dort arbeitet das volle. Zwei Skripte auf derselben Seite waeren zwei
+     * Urteile ueber dasselbe Element.
+     */
+    @Test
+    public void dasRahmenskriptKenntDenWirtDesAnbieters() {
+        assertTrue(Werbeschichten.fremdSkript("aniworld.to", false)
+            .contains("var WIRT=\"aniworld.to\";"));
+        assertTrue(Werbeschichten.fremdSkript("aniworld.to", false)
+            .contains("if(WIRT&&gleicherWirt(HIER,WIRT))return;"));
+        // Ohne bekannten Wirt bleibt das Skript gueltig und filtert ueberall.
+        assertTrue(Werbeschichten.fremdSkript("", false).contains("var WIRT=\"\";"));
+        assertTrue(Werbeschichten.fremdSkript(null, false).contains("var WIRT=\"\";"));
+
+        assertEquals("aniworld.to", Werbeschichten.hauptwirt("https://aniworld.to/anime"));
+        assertEquals("s.to", Werbeschichten.hauptwirt("https://s.to:8443/serie"));
+        assertEquals("filmo.to", Werbeschichten.hauptwirt("https://wer:was@filmo.to/"));
+        assertEquals("", Werbeschichten.hauptwirt("aniworld.to"));
+        assertEquals("", Werbeschichten.hauptwirt(null));
+    }
+
     @Test
     public void zeichenkettenGehenUnbeschadetInsSkript() {
         assertEquals("\"a,b\"", Werbeschichten.jsText("a,b"));
