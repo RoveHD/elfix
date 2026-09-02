@@ -362,6 +362,50 @@ function client() {
   pruefe("Die Auskunft sammelt erst und setzt dann ein",
     fernSeite.SEITE.includes("$(\"installPruefung\").replaceChildren(...zeilen)"),
     "zwei Laeufe nebeneinander schrieben sonst jede Zeile doppelt");
+
+  // --- Der Verweis aufs Manifest, und warum er eine eigene Zeile bekommt ------
+  //
+  // Gemessen an einem Galaxy S24 (Android 16, Chrome 152), an dem die
+  // Fernbedienung sich in keinem der drei Browser installieren liess: die
+  // Selbstauskunft stand vollstaendig auf gruen - https, Service Worker aktiv,
+  // Manifest per fetch mit 200, beide Symbole erreichbar - und trotzdem kam
+  // kein "beforeinstallprompt". Chromium meldete ueber das DevTools-Protokoll
+  // ein leeres Manifest (Page.getAppManifest: url "", display kUndefined).
+  //
+  // Der Grund stand im ausgelieferten HTML: das <link rel="manifest"> fehlte
+  // dort. Ein systemweiter Inhaltsfilter hatte es unterwegs entfernt und sein
+  // eigenes Skript eingesetzt (dieselbe Adresse vom PC geholt: 18921 Zeichen
+  // mit Verweis, am Telefon 19392 ohne). Von Hand wieder eingesetzt, las
+  // Chromium das Manifest sofort vollstaendig.
+  //
+  // Ein Abruf per fetch beweist also nur, dass die Datei erreichbar ist. Ob
+  // der Browser ein Manifest kennt, entscheidet der Verweis im Dokument - und
+  // das ist das Einzige an diesem Fall, was sich aus der Seite heraus
+  // ueberhaupt feststellen laesst.
+  pruefe("Die Auskunft fragt, ob das Dokument aufs Manifest verweist",
+    fernSeite.SEITE.includes("link[rel~=\\\"manifest\\\" i]")
+    || fernSeite.SEITE.includes('link[rel~="manifest" i]'),
+    "ein erreichbares Manifest ist nicht dasselbe wie ein Manifest, das der Browser kennt");
+  pruefe("Und zwar bevor sie es holt",
+    fernSeite.SEITE.indexOf('link[rel~="manifest" i]')
+      < fernSeite.SEITE.indexOf('fetch("manifest.webmanifest"'),
+    "sonst steht die Folge vor der Ursache");
+  pruefe("Fehlt er, nennt die Zeile den Filter als Grund",
+    /fehlt der Verweis aufs Manifest/.test(fernSeite.SEITE)
+    && /Filter/.test(fernSeite.SEITE),
+    "die Seite liefert ihn mit - wer ihn wegnimmt, sitzt auf dem Geraet");
+  pruefe("Auch die sichtbare Meldung sagt es, ohne dass man aufklappt",
+    /if \(!document\.querySelector\('link\[rel~="manifest" i\]'\)\) \{/.test(fernSeite.SEITE),
+    "\"Chrome prueft noch\" waere hier schlicht falsch - es ist entschieden");
+  // Und die Schlusszeile bleibt bei dem, was sie belegen kann. Geprueft wird
+  // der Text, den sie ausgibt - nicht die Datei, in der auch Kommentare stehen.
+  const schluss = fernSeite.SEITE.slice(
+    fernSeite.SEITE.indexOf('zeile(Boolean(angebot)'),
+    fernSeite.SEITE.indexOf('zeile(Boolean(angebot)') + 600);
+  pruefe("Und die Schlusszeile behauptet nichts, was sie nicht weiss",
+    /Chrome bietet es \(noch\) nicht an/.test(schluss)
+    && !/Engagement|zu selten|schon installiert|WebAPK/i.test(schluss),
+    "wie oft die Seite benutzt wurde oder ob es die App schon gibt, ist aus der Seite heraus nicht feststellbar");
   pruefe("Sie traegt die Angabe, nach der Chrome fragt",
     fernSeite.SEITE.includes('name="mobile-web-app-capable"'),
     "die Apple-Fassung allein ist veraltet und Chrome sagt das auch");

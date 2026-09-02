@@ -345,6 +345,15 @@ const SEITE = `<!doctype html>
       feld.className = "zustand fehler";
       return;
     }
+    // Fehlt der Verweis aufs Manifest im Dokument, ist es nicht "noch nicht
+    // geprueft", sondern entschieden: ohne ihn holt kein Browser ein Manifest
+    // und bietet nichts an. Das kommt nicht von dieser Seite - sie liefert den
+    // Verweis mit -, sondern von etwas, das ihn unterwegs entfernt.
+    if (!document.querySelector('link[rel~="manifest" i]')) {
+      feld.textContent = "Im Dokument fehlt der Verweis aufs Manifest — meist entfernt ihn ein Werbe- oder Inhaltsfilter. Schalte ihn für diese Seite ab und lade neu.";
+      feld.className = "zustand fehler";
+      return;
+    }
     // Chrome prueft die Bedingungen erst, wenn der Service Worker steht - beim
     // allerersten Oeffnen ist das oft noch nicht so.
     feld.textContent = "Chrome prüft noch, ob es installieren kann. Meist erscheint der Knopf beim nächsten Öffnen.";
@@ -397,6 +406,30 @@ const SEITE = `<!doctype html>
           : "Service Worker läuft nicht" + (swFehler ? " (" + swFehler + ")" : ""));
     }
 
+    // Steht im Dokument ueberhaupt ein Verweis aufs Manifest?
+    //
+    // Diese Zeile sieht ueberfluessig aus, weil die naechste das Manifest holt.
+    // Sie ist es nicht: die naechste beweist nur, dass die Datei erreichbar
+    // ist, und das ist etwas anderes als "der Browser kennt ein Manifest".
+    // Ohne den Verweis im Dokument holt er es nie, prueft nichts und bietet
+    // nichts an - waehrend ein Abruf von Hand tadellos gelingt.
+    //
+    // Gemessen an einem Geraet, an dem genau das passierte: jede andere Zeile
+    // hier stand auf gruen, das Manifest kam per fetch mit 200 an, und
+    // trotzdem war die Seite nicht installierbar. Im ausgelieferten HTML
+    // fehlte das Link-Tag - ein systemweiter Inhaltsfilter hatte es unterwegs
+    // entfernt und sein eigenes Skript eingesetzt. Auf anderen Geraeten
+    // derselben Adresse war es da.
+    //
+    // Deshalb steht die Frage jetzt vor der anderen: sie unterscheidet
+    // "Manifest erreichbar" von "Browser sieht ein Manifest", und nur die
+    // zweite entscheidet ueber das Installieren.
+    const verweis = document.querySelector('link[rel~="manifest" i]');
+    zeile(Boolean(verweis),
+      verweis
+        ? "Die Seite verweist auf ihr Manifest"
+        : "Im Dokument fehlt der Verweis aufs Manifest — meist entfernt ihn ein Werbe- oder Inhaltsfilter (etwa AdGuard, Blokada, ein Browser-Zusatz oder ein VPN mit Filterung). Ohne ihn bietet kein Browser das Installieren an. Filter für diese Seite abschalten und neu laden");
+
     try {
       const antwort = await fetch("manifest.webmanifest", { cache: "no-store" });
       const manifest = await antwort.json();
@@ -413,10 +446,18 @@ const SEITE = `<!doctype html>
       zeile(false, "Manifest nicht lesbar: " + String(fehler && fehler.message || fehler));
     }
 
+    // Bleibt das Angebot aus, sagt der Browser nirgends, warum. Zwei Faelle
+    // lassen sich hier trotzdem auseinanderhalten: fehlt der Verweis oben,
+    // ist der Grund bekannt und steht schon da. Sonst bleibt es bei der
+    // allgemeinen Auskunft - was Chrome sonst noch abwaegt (wie oft die Seite
+    // benutzt wurde, ob es die App schon gibt), ist aus der Seite heraus nicht
+    // feststellbar, und dazu wird hier nichts behauptet.
     zeile(Boolean(angebot),
       angebot
         ? "Chrome bietet das Installieren an"
-        : "Chrome bietet es (noch) nicht an — bei erfülltem Rest hilft: Seite neu laden");
+        : verweis
+          ? "Chrome bietet es (noch) nicht an — bei erfülltem Rest hilft: Seite neu laden"
+          : "Chrome bietet es nicht an — es fehlt der Verweis aufs Manifest, siehe oben");
 
     $("installPruefung").replaceChildren(...zeilen);
   };
