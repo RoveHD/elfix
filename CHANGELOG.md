@@ -3,6 +3,52 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.90.0 — 2. September 2026
+
+**Man sieht dem Relay jetzt an, dass es läuft.** Bisher gab es dafür drei Wege,
+und alle drei setzten voraus, dass man an die Maschine herankommt und weiß,
+wonach man sucht: `systemctl status`, `curl /health` samt JSON lesen, oder das
+Protokollfenster unter Windows. Wer die Adresse in den Browser tippte, bekam
+eine Zeile Text.
+
+**Eine Statusseite.** Neu unter `/status` und — für Browser — schon unter `/`:
+Zustand, Fassung, Laufzeit, Räume, Verbindungen, YouTube-Runden,
+Geräteschlüssel, Fernbedienungen, Port, der Stand des Metadaten-Tors und die
+Adresse, die in die App gehört, samt Knopf zum Kopieren und Weg zur
+Fernbedienung. Sie fragt alle drei Sekunden nach; bleibt das Relay stehen, sagt
+sie das und legt die alten Zahlen blass — sie stehen noch da, denn wer hinsieht,
+will wissen, wobei es aufgehört hat, aber sie sehen nicht mehr wie aktuelle aus.
+
+Was nicht daraufsteht: keine Raumcodes, keine Titel, keine Namen, kein Pfad zur
+Ablage. Die Seite ist so öffentlich wie das Relay selbst.
+
+**Ein Punkt in der Statusleiste.** Grün, solange das Relay antwortet, rot, wenn
+nicht — unter Windows aus der Datei selbst heraus, unter Linux aus dem
+`.deb`-Paket, das ihn bei jeder Anmeldung startet. Doppelklick öffnet die
+Statusseite, Rechtsklick zeigt ein Menü. Dafür kam keine einzige neue
+Abhängigkeit dazu: unter Windows PowerShell, unter Linux python3 mit GTK — was
+auf diesen Maschinen ohnehin liegt. Fehlt es, fehlt der Punkt und sonst nichts.
+
+**Beim allerersten Start geht die Seite von selbst auf.** Einmal, damit man
+sieht, dass es läuft; danach nicht mehr. Abschalten lässt sich beides mit
+`ELFIX_RELAY_LEISTE=0` und `ELFIX_RELAY_SEITE=0`.
+
+**Im Linux-Paket** außerdem: ein Menüeintrag *ELFIX Relay*, der die Statusseite
+öffnet, und eine Rückmeldung nach dem Installieren, ob der Dienst läuft. Beide
+sehen den Port nach, statt 8787 zu raten.
+
+**In der App** steht unter *Einstellungen › Watchparty* jetzt ein Knopf
+*Statusseite öffnen*. Er beantwortet die Frage, die „Nicht verbunden" offen
+lässt: liegt es am Relay oder an dieser Seite?
+
+`/health` bleibt unverändert die Auskunft für Programme und nennt zusätzlich
+`fassung`, `port`, `gepackt`, `laeuftSeitS` und `verbindungen`; unter `features`
+steht `status`. `curl` auf `/` bekommt weiterhin seine Zeile Text.
+
+**Zum Nachziehen:** Das Relay besteht aus mehreren `.js`-Dateien, und es sind
+zwei dazugekommen (`status-seite.js`, `statusleiste.js`, `seite-zeigen.js`).
+Wer aus dem Quelltext betreibt, kopiert wie immer alle.
+
 ## 1.89.2 — 2. September 2026
 
 **„Kein Trailer hinterlegt" war die falsche Auskunft.** Zu einem Film, zu dem
