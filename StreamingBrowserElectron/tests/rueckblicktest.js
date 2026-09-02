@@ -627,6 +627,103 @@ pruefe("Der Rueckblick zeigt YouTube als eigenen Abschnitt",
   /reviewTitelliste\("Deine YouTube-Videos"/.test(RENDERER)
   && /in keiner Zahl oben enthalten/.test(RENDERER));
 
+// --- Der Rueckblick rechnet nicht mehr, als er muss --------------------------
+//
+// Die Reiterleiste des Rueckblicks bot nur Zeitraeume an, in denen wirklich
+// etwas liegt - und rechnete dafuer jeden einzeln durch: vier feste, einen je
+// Jahr, und danach noch einmal den gewaehlten. Bei drei Jahren acht
+// vollstaendige Auswertungen ueber alle Sitzungen, fuer eine Frage, die mit
+// "ja" oder "nein" zu beantworten ist. Gemessen: 14 ms bei 250 Sitzungen,
+// 214 ms bei 5000 - im Hauptprozess, der solange nichts anderes tut, und bei
+// jedem Klick auf einen Reiter erneut.
+//
+// Hier wird nicht der Quelltext verglichen, sondern gezaehlt: wie oft laeuft
+// die Auswertung wirklich? Ein Quelltextvergleich haette den Rueckfall nicht
+// bemerkt.
+{
+  const kontext = { Date, Number, String, Math, Array, Object, JSON, console };
+  vm.createContext(kontext);
+  vm.runInContext(abschnitt("function zeitraumGrenzen("), kontext);
+  const grenzenFuer = kontext.zeitraumGrenzen;
+
+  const heute = Date.now();
+  const sitzungen = [];
+  for (let i = 0; i < 200; i += 1) {
+    // Ueber drei Jahre verteilt, ein Teil davon aus den letzten Tagen.
+    const alter = i % 4 === 0 ? i * 3600000 : i * 5 * 86400000;
+    const t = new Date(heute - alter);
+    sitzungen.push({
+      id: "s" + i, favoriteId: "f" + (i % 10), url: "u" + (i % 10),
+      titel: "Serie " + (i % 10), anbieter: "S.to", gattung: "serie",
+      season: 1, episode: 1 + (i % 12), sekunden: 1500, abgeschlossen: true,
+      wiederholung: false, qualitaet: statistik.GEMESSEN,
+      begonnenAm: t.toISOString(), beendetAm: new Date(t.getTime() + 1.5e6).toISOString()
+    });
+  }
+
+  // Die Auswertung mitzaehlen, ohne sie zu veraendern.
+  let laeufe = 0;
+  const echt = statistik.auswerten;
+  const zaehlend = (liste, optionen) => { laeufe += 1; return echt(liste, optionen); };
+
+  const jahre = [...new Set(sitzungen
+    .map((eintrag) => new Date(Date.parse(eintrag.begonnenAm)).getFullYear()))]
+    .sort((links, rechts) => rechts - links);
+  const werte = ["7tage", "30tage", "monat", ...jahre.map(String), "alles"];
+  const auswerten = (wert) => {
+    const g = grenzenFuer(wert);
+    return zaehlend(sitzungen, { von: g.von, bis: g.bis, titel: () => ({}) });
+  };
+
+  // So lief es vorher: jeder Zeitraum einzeln, danach der gewaehlte.
+  laeufe = 0;
+  const vorher = werte.filter((wert) => auswerten(wert).sitzungen > 0);
+  auswerten("alles");
+  const laeufeVorher = laeufe;
+
+  // Und so jetzt: eine Auswertung, danach entscheidet `verlauf`.
+  laeufe = 0;
+  const gesamt = auswerten("alles");
+  const tage = (gesamt.verlauf || []).map((eintrag) => eintrag.tag);
+  const nachher = werte.filter((wert) => {
+    if (!tage.length) return false;
+    const g = grenzenFuer(wert);
+    const vonTag = Number.isFinite(g.von) ? statistik.tagesschluessel(new Date(g.von)) : "";
+    const bisTag = statistik.tagesschluessel(new Date(g.bis));
+    return tage.some((tag) => tag >= vonTag && tag <= bisTag);
+  });
+  const laeufeNachher = laeufe;
+
+  pruefe("Es kommen dieselben Reiter heraus",
+    vorher.join(",") === nachher.join(","),
+    `${vorher.join(",")} vs ${nachher.join(",")}`);
+  pruefe("Aber mit einer einzigen Auswertung statt einer je Reiter",
+    laeufeNachher === 1 && laeufeVorher > laeufeNachher,
+    `${laeufeVorher} Auswertungen vorher, ${laeufeNachher} jetzt`);
+  pruefe("Die Auskunft dafuer steht in derselben Rechnung",
+    Array.isArray(gesamt.verlauf) && gesamt.verlauf.length > 0,
+    "verlauf nennt jeden Tag, an dem etwas lief - bereinigt und ohne YouTube");
+
+  // Und der Hauptprozess macht es wirklich so.
+  const daten = abschnitt('ipcMain.handle("review:data"', "});");
+  pruefe("Und der Hauptprozess rechnet auch so",
+    /const gesamt = watchStatistik\("alles"\);/.test(daten)
+    && /\.filter\(\(eintrag\) => hatEtwas\(eintrag\.wert\)\)/.test(daten)
+    && !/watchStatistik\(eintrag\.wert\)/.test(daten));
+  pruefe("Und liefert \u201eGesamt\u201c nicht ein zweites Mal",
+    /gewaehlt === "alles" \? gesamt : watchStatistik\(gewaehlt\)/.test(daten));
+}
+
+// --- Der Nachschlag je Sitzung ----------------------------------------------
+//
+// sitzungTitelInfo suchte fuer *jede* Sitzung linear durch *alle* Favoriten.
+// Bei 5000 Sitzungen und 600 Favoriten sind das drei Millionen Vergleiche je
+// Auswertung; gemessen 1,5-fache Laufzeit gegenueber einer Karte.
+pruefe("Die Favoriten werden ueber eine Karte nachgeschlagen",
+  /const nachId = new Map\(favorites\.map\(\(eintrag\) => \[eintrag\.id, eintrag\]\)\);/.test(MAIN)
+  && /nachId\s*\n?\s*\? nachId\.get\(sitzung\?\.favoriteId\)/.test(MAIN),
+  "und die Karte einmal je Auswertung, nicht einmal je Sitzung");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

@@ -1285,8 +1285,40 @@ ipcMain.handle("review:data", (_event, zeitraum) => {
   if (!sitzungen.length) return { zeitraeume: [], gewaehlt: "", daten: null };
 
   // Welche Zeitraeume ueberhaupt etwas hergeben. Ein Reiter, hinter dem nichts
-  // steht, ist eine Enttaeuschung mit Vorankuendigung - deshalb wird jeder
-  // durchgerechnet und nur angeboten, wenn Sitzungen darin liegen.
+  // steht, ist eine Enttaeuschung mit Vorankuendigung - angeboten wird deshalb
+  // nur, worin auch Sitzungen liegen.
+  //
+  // Frueher wurde dafuer jeder Zeitraum einzeln durchgerechnet: vier feste plus
+  // einer je Jahr, und danach noch einmal der gewaehlte. Bei drei Jahren sind
+  // das acht vollstaendige Auswertungen ueber *alle* Sitzungen - fuer eine
+  // Frage, die mit "ja" oder "nein" zu beantworten ist. Gemessen: 3,8 ms je
+  // Auswertung bei 250 Sitzungen, 42 ms bei 5000. Acht davon sind eine
+  // Dreihundertstelsekunde beim einen und eine Drittelsekunde beim anderen -
+  // und zwar im Hauptprozess, der solange nichts anderes tut. Bei jedem
+  // Oeffnen des Rueckblicks und bei jedem Klick auf einen Reiter.
+  //
+  // Gebraucht wird dafuer keine zweite Rechnung, sondern eine, die schon da
+  // ist: `verlauf` steht in jeder Auswertung und nennt jeden Tag, an dem etwas
+  // lief - bereinigt und ohne YouTube, also nach genau denselben Regeln, nach
+  // denen auch `sitzungen` gezaehlt wird. Ein Zeitraum gibt etwas her, wenn
+  // einer dieser Tage hineinfaellt.
+  //
+  // Damit bleibt es bei einer einzigen Auswertung, und die ist ohnehin noetig:
+  // es ist dieselbe, die unten als "Gesamt" ausgeliefert wird.
+  const gesamt = watchStatistik("alles");
+  const tage = (gesamt.verlauf || []).map((eintrag) => eintrag.tag);
+  const hatEtwas = (wert) => {
+    if (!tage.length) return false;
+    const grenzen = zeitraumGrenzen(wert);
+    // Verglichen wird als Tagesschluessel und nicht als Zeitstempel: `verlauf`
+    // ist nach Tagen geschluesselt, und die Grenzen liegen ohnehin auf
+    // Tagesanfang und Jetzt. So gibt es keine Sommerzeitkante.
+    const vonTag = Number.isFinite(grenzen.von)
+      ? statistik.tagesschluessel(new Date(grenzen.von)) : "";
+    const bisTag = statistik.tagesschluessel(new Date(grenzen.bis));
+    return tage.some((tag) => tag >= vonTag && tag <= bisTag);
+  };
+
   const jahre = [...new Set(sitzungen
     .map((sitzung) => new Date(Date.parse(sitzung.begonnenAm)).getFullYear())
     .filter((jahr) => Number.isFinite(jahr)))].sort((links, rechts) => rechts - links);
@@ -1296,14 +1328,17 @@ ipcMain.handle("review:data", (_event, zeitraum) => {
     { wert: "monat", titel: "Dieser Monat" },
     ...jahre.map((jahr) => ({ wert: String(jahr), titel: String(jahr) })),
     { wert: "alles", titel: "Gesamt" }
-  ].filter((eintrag) => watchStatistik(eintrag.wert).sitzungen > 0);
+  ].filter((eintrag) => hatEtwas(eintrag.wert));
 
   // Ohne Wahl der Gesamtzeitraum: er hat immer etwas zu zeigen, ein leerer
   // "diese Woche" waere ein schlechter erster Eindruck.
   const gewaehlt = angebot.some((eintrag) => eintrag.wert === zeitraum)
     ? zeitraum
     : (angebot[angebot.length - 1]?.wert || "alles");
-  return { zeitraeume: angebot, gewaehlt, daten: watchStatistik(gewaehlt) };
+  // "Gesamt" ist schon gerechnet - noch einmal dasselbe waere die neunte
+  // Auswertung fuer dieselbe Antwort.
+  const daten = gewaehlt === "alles" ? gesamt : watchStatistik(gewaehlt);
+  return { zeitraeume: angebot, gewaehlt, daten };
 });
 
 ipcMain.handle("library:reorder", (_event, ids) => {
@@ -8359,8 +8394,15 @@ function sitzungenSchliessen(providerId) {
 
 // Was die Auswertung ueber einen Titel wissen muss - aus den Caches, die
 // ohnehin gefuellt sind. Kein einziger zusaetzlicher Abruf.
-function sitzungTitelInfo(sitzung, seiten = {}) {
-  const favorite = favorites.find((eintrag) => eintrag.id === sitzung?.favoriteId);
+// `nachId` ist die Favoritenliste als Karte. Ohne sie suchte diese Funktion
+// fuer *jede* Sitzung linear durch *alle* Favoriten - bei 5000 Sitzungen und
+// 600 Favoriten sind das drei Millionen Vergleiche je Auswertung, und gemessen
+// waren es 1,5-fache Laufzeit gegenueber dem Nachschlag ueber eine Karte.
+// Gebaut wird sie einmal je Auswertung, nicht einmal je Sitzung.
+function sitzungTitelInfo(sitzung, seiten = {}, nachId = null) {
+  const favorite = nachId
+    ? nachId.get(sitzung?.favoriteId)
+    : favorites.find((eintrag) => eintrag.id === sitzung?.favoriteId);
   // Nachgesehen wird unter der Adresse des Titels, nicht der der Folge: der
   // Geschmack-Cache kennt Serienseiten, und eine Folgenadresse steht dort nie.
   // Genau daran fielen anfangs alle Genres aus.
@@ -8615,10 +8657,13 @@ function watchStatistik(zeitraum = "alles") {
   const grenzen = zeitraumGrenzen(zeitraum);
   let seiten = {};
   try { seiten = loadTasteCache()?.pages || {}; } catch { seiten = {}; }
+  // Einmal je Auswertung statt einer linearen Suche je Sitzung - siehe
+  // sitzungTitelInfo.
+  const nachId = new Map(favorites.map((eintrag) => [eintrag.id, eintrag]));
   return statistik.auswerten(sitzungen, {
     von: grenzen.von,
     bis: grenzen.bis,
-    titel: (sitzung) => sitzungTitelInfo(sitzung, seiten)
+    titel: (sitzung) => sitzungTitelInfo(sitzung, seiten, nachId)
   });
 }
 

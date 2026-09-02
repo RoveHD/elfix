@@ -1230,8 +1230,15 @@ function renderHome() {
 
   // Der Jahresrueckblick meldet sich hier - dezent und nur im Dezember, nicht
   // als Fenster, das sich vor die App stellt.
-  renderWrappedHinweis().catch(() => {});
-  renderRueckblickEintrag().catch(() => {});
+  //
+  // Einmal fragen, zweimal benutzen. Beide Stellen wollen dieselbe Auskunft,
+  // und beide holten sie sich einzeln - im Dezember waren das zwei
+  // vollstaendige Auswertungen ueber alle Sitzungen je Aufbau der Startseite,
+  // und die Startseite baut sich bei jedem Anbieterwechsel, jeder Aenderung am
+  // Bestand und jedem Zuruecknavigieren neu. Ausserhalb der Saison kostet der
+  // Aufruf ohnehin nichts: dann faellt die Antwort am Datum, ohne dass etwas
+  // gerechnet wird.
+  wrappedLageZeigen().catch(() => {});
 
   renderNewEpisodes();
 
@@ -4152,10 +4159,10 @@ let wrappedSaisonJahr = 0;
 // soll erreichbar bleiben, nachdem man ihn einmal angesehen hat, sonst
 // verschwindet der Weg dorthin genau in dem Moment, in dem man ihn
 // wiederfinden moechte.
-async function renderRueckblickEintrag() {
+async function renderRueckblickEintrag(lage) {
   const knopf = document.querySelector("#reviewSideLink");
   if (!knopf) return;
-  const antwort = await api.getWrapped?.().catch(() => null);
+  const antwort = lage !== undefined ? lage : await api.getWrapped?.().catch(() => null);
   const saison = Boolean(antwort?.saison);
   wrappedSaisonJahr = saison ? Number(antwort.jahr) || 0 : 0;
 
@@ -4177,6 +4184,14 @@ async function renderRueckblickEintrag() {
   } else if (marke) {
     marke.remove();
   }
+}
+
+// Die eine Abfrage fuer beide Stellen: das Banner auf der Startseite und den
+// Eintrag in der Seitenleiste.
+async function wrappedLageZeigen() {
+  const antwort = await api.getWrapped?.().catch(() => null);
+  await renderWrappedHinweis(antwort);
+  await renderRueckblickEintrag(antwort);
 }
 
 // Wohin der Eintrag "Rueckblick" fuehrt.
@@ -4241,10 +4256,10 @@ async function renderWrappedArchiv() {
 //
 // Er verschwindet, sobald er einmal geoeffnet wurde, und bleibt ueber den
 // Eintrag in der Seitenleiste und das Archiv erreichbar.
-async function renderWrappedHinweis() {
+async function renderWrappedHinweis(lage) {
   const kasten = document.querySelector("#wrappedHinweis");
   if (!kasten) return;
-  const antwort = await api.getWrapped?.().catch(() => null);
+  const antwort = lage !== undefined ? lage : await api.getWrapped?.().catch(() => null);
   const zeigen = Boolean(antwort?.faellig && antwort?.daten);
   kasten.classList.toggle("is-hidden", !zeigen);
   if (!zeigen) return;

@@ -363,8 +363,12 @@ pruefe("Die Sichtbarkeit haengt an der Saison und nicht am Faelligsein",
   /saison: lage\.saison,/.test(MAIN),
   "die Saison bleibt stehen, nachdem man den Rueckblick gesehen hat - siehe oben");
 pruefe("Die Sichtbarkeit wird beim Speichern der Einstellungen nachgezogen",
-  (RENDERER.match(/renderRueckblickEintrag\(\)/g) || []).length >= 3,
+  (RENDERER.match(/renderRueckblickEintrag\(|wrappedLageZeigen\(/g) || []).length >= 4,
   "sonst stuende der Punkt erst nach einem Neustart richtig da");
+pruefe("Startseite und Seitenleiste fragen dafuer nur einmal",
+  /async function wrappedLageZeigen\(\)[\s\S]{0,260}?const antwort = await api\.getWrapped[\s\S]{0,200}?renderWrappedHinweis\(antwort\)[\s\S]{0,80}?renderRueckblickEintrag\(antwort\)/
+    .test(RENDERER),
+  "im Dezember waren das sonst zwei volle Auswertungen je Aufbau der Startseite");
 pruefe("Die Suche in den Einstellungen findet sie",
   /\["home", "Statistik in der Seitenleiste"/.test(RENDERER));
 
