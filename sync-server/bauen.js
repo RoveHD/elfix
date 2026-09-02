@@ -44,6 +44,12 @@ const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
 
+// Der Helfer fuer die Statusleiste und seine beiden Symbole. Im Paket liegen
+// sie als Dateien: unter systemd laeuft das Relay ohne Sitzung und kann sie
+// nicht selbst hinlegen - das Symbol gehoert in die Leiste des angemeldeten
+// Benutzers, nicht in die des Dienstkontos.
+const statusleiste = require("./statusleiste");
+
 const WURZEL = __dirname;
 const DIST = path.join(WURZEL, "dist");
 
@@ -186,6 +192,9 @@ function debBauen(fassung, binaer) {
   legen("DEBIAN");
   legen("usr/bin");
   legen("lib/systemd/system");
+  legen("usr/lib/elfix-relay");
+  legen("usr/share/applications");
+  legen("etc/xdg/autostart");
 
   fs.copyFileSync(binaer, path.join(bau, "usr/bin/elfix-relay"));
   fs.chmodSync(path.join(bau, "usr/bin/elfix-relay"), 0o755);
@@ -224,6 +233,100 @@ function debBauen(fassung, binaer) {
     ""
   ].join("\n"));
 
+  // Auf welchem Port das Relay lauscht - die Frage stellt sich zweimal, fuer
+  // den Menueeintrag und fuer das Symbol in der Leiste, und beide Male darf die
+  // Antwort nicht einfach 8787 lauten. Wer den Port in /etc/elfix-relay.env
+  // geaendert hat, bekaeme sonst eine Seite, die es nicht gibt.
+  //
+  // Die Datei selbst gehoert root und ist 0600 - ein angemeldeter Benutzer kann
+  // sie also gar nicht lesen. Deshalb zuerst der Dienst: `systemctl show` darf
+  // jeder, und es kennt die Umgebung, mit der die Einheit wirklich laeuft.
+  fs.writeFileSync(path.join(bau, "usr/lib/elfix-relay/port.sh"), [
+    "#!/bin/sh",
+    "# Gibt den Port des Relays aus. Erst der laufende Dienst, dann die",
+    "# Umgebungsdatei, sonst der Vorgabewert.",
+    "aus_dienst=$(systemctl show elfix-relay -p Environment --value 2>/dev/null \\",
+    "  | tr ' ' '\\n' | sed -n 's/^PORT=//p' | tail -n 1)",
+    "if [ -n \"$aus_dienst\" ]; then",
+    "  echo \"$aus_dienst\"",
+    "  exit 0",
+    "fi",
+    "if [ -r /etc/elfix-relay.env ]; then",
+    "  aus_datei=$(sed -n 's/^ *PORT=//p' /etc/elfix-relay.env | tr -d '\"' | tail -n 1)",
+    "  if [ -n \"$aus_datei\" ]; then",
+    "    echo \"$aus_datei\"",
+    "    exit 0",
+    "  fi",
+    "fi",
+    "echo 8787",
+    ""
+  ].join("\n"));
+  fs.chmodSync(path.join(bau, "usr/lib/elfix-relay/port.sh"), 0o755);
+
+  // Nachsehen, ob es laeuft - der Weg fuer Leute, die kein Terminal aufmachen
+  // wollen.
+  fs.writeFileSync(path.join(bau, "usr/bin/elfix-relay-status"), [
+    "#!/bin/sh",
+    "# Oeffnet die Statusseite des Relays im Browser.",
+    "port=$(/usr/lib/elfix-relay/port.sh)",
+    "exec xdg-open \"http://localhost:${port}/status\"",
+    ""
+  ].join("\n"));
+  fs.chmodSync(path.join(bau, "usr/bin/elfix-relay-status"), 0o755);
+
+  // Der Helfer fuer die Statusleiste, samt seinen beiden Punkten.
+  fs.writeFileSync(path.join(bau, "usr/lib/elfix-relay/leiste.py"), statusleiste.PYTHON);
+  fs.writeFileSync(path.join(bau, "usr/lib/elfix-relay/leiste-gruen.png"), statusleiste.symbol([98, 209, 154]));
+  fs.writeFileSync(path.join(bau, "usr/lib/elfix-relay/leiste-rot.png"), statusleiste.symbol([255, 138, 138]));
+
+  // Und der Starter dazu. Er steht hier und nicht in der Autostart-Datei, weil
+  // der Port erst nachgesehen werden muss - eine Desktop-Datei kann das nicht.
+  fs.writeFileSync(path.join(bau, "usr/lib/elfix-relay/leiste-starten"), [
+    "#!/bin/sh",
+    "# Startet das Symbol in der Statusleiste. Ohne --pid: es haengt an keinem",
+    "# Prozess, sondern fragt /health - der Dienst laeuft unter systemd und",
+    "# ueberdauert jede Sitzung.",
+    "port=$(/usr/lib/elfix-relay/port.sh)",
+    "exec /usr/bin/python3 /usr/lib/elfix-relay/leiste.py \\",
+    "  --port \"$port\" \\",
+    "  --gruen /usr/lib/elfix-relay/leiste-gruen.png \\",
+    "  --rot /usr/lib/elfix-relay/leiste-rot.png",
+    ""
+  ].join("\n"));
+  fs.chmodSync(path.join(bau, "usr/lib/elfix-relay/leiste-starten"), 0o755);
+
+  // Im Anwendungsmenue, damit "laeuft es?" eine Antwort hat, die man anklicken
+  // kann.
+  fs.writeFileSync(path.join(bau, "usr/share/applications/elfix-relay.desktop"), [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Name=ELFIX Relay",
+    "Comment=Zeigt, ob das Relay laeuft",
+    "Exec=/usr/bin/elfix-relay-status",
+    "Icon=/usr/lib/elfix-relay/leiste-gruen.png",
+    "Terminal=false",
+    "Categories=Network;Utility;",
+    "Keywords=ELFIX;Watchparty;Relay;",
+    ""
+  ].join("\n"));
+
+  // Und in der Statusleiste jeder Sitzung.
+  //
+  // Der Aufruf haelt selbst still, wenn python3-gi fehlt: dann gibt es kein
+  // Symbol und sonst nichts.
+  fs.writeFileSync(path.join(bau, "etc/xdg/autostart/elfix-relay-leiste.desktop"), [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Name=ELFIX Relay (Statusleiste)",
+    "Comment=Zeigt in der Leiste, ob das Relay laeuft",
+    "Exec=/usr/lib/elfix-relay/leiste-starten",
+    "Icon=/usr/lib/elfix-relay/leiste-gruen.png",
+    "Terminal=false",
+    "NoDisplay=true",
+    "X-GNOME-Autostart-enabled=true",
+    ""
+  ].join("\n"));
+
   fs.writeFileSync(path.join(bau, "DEBIAN/control"), [
     "Package: elfix-relay",
     `Version: ${fassung}`,
@@ -247,6 +350,22 @@ function debBauen(fassung, binaer) {
     "fi",
     "systemctl daemon-reload || true",
     "systemctl enable --now elfix-relay || true",
+    "# Und sagen, was daraus geworden ist. Wer ein Paket installiert, bekommt",
+    "# sonst nur \"Entpacken...\" zu lesen und weiss nicht, ob der Dienst laeuft.",
+    "sleep 1",
+    "if systemctl is-active --quiet elfix-relay; then",
+    "  echo \"\"",
+    "  echo \"ELFIX Relay laeuft.\"",
+    "  echo \"  Nachsehen:      http://localhost:8787/status\"",
+    "  echo \"  Im Menue:       ELFIX Relay\"",
+    "  echo \"  In der Leiste:  ab der naechsten Anmeldung ein Punkt - gruen heisst laeuft\"",
+    "  echo \"\"",
+    "else",
+    "  echo \"\"",
+    "  echo \"ELFIX Relay wurde eingerichtet, laeuft aber noch nicht.\"",
+    "  echo \"  Nachsehen: systemctl status elfix-relay\"",
+    "  echo \"\"",
+    "fi",
     "exit 0",
     ""
   ].join("\n"));
@@ -277,4 +396,7 @@ if (require.main === module) {
   }
 }
 
-module.exports = { plattform };
+// debBauen ist ausgestellt, damit die Pruefungen das Paket wirklich bauen und
+// hineinsehen koennen - ob Menueeintrag, Autostart und Helfer darin liegen,
+// sieht man einem Quelltext nicht an.
+module.exports = { plattform, debBauen };

@@ -20,7 +20,17 @@ sudo apt install ./ELFIX-Relay-<fassung>-amd64.deb
 
 Das war alles. Das Paket legt einen eigenen Benutzer an, richtet den Dienst
 ein und startet ihn — er läuft ab sofort auf Port 8787 und kommt nach jedem
-Neustart von selbst wieder.
+Neustart von selbst wieder. Zum Schluss sagt es, ob er läuft, und wo man
+nachsieht.
+
+Danach gibt es das Relay an drei Stellen zu sehen:
+
+- **In der Statusleiste** ein Punkt — grün heißt läuft, rot heißt es antwortet
+  nicht. Er erscheint ab der nächsten Anmeldung, ein Klick zeigt das Menü, ein
+  Doppelklick die Statusseite. (Braucht `python3-gi`, das auf Mint, Ubuntu und
+  Fedora ohnehin liegt. Fehlt es, fehlt nur der Punkt.)
+- **Im Anwendungsmenü** unter *ELFIX Relay* — öffnet dieselbe Seite.
+- **Im Browser** unter der Adresse des Relays.
 
 Nachsehen, ob er läuft — im Browser:
 
@@ -61,14 +71,37 @@ sudo systemctl restart elfix-relay
 ### Windows
 
 `ELFIX-Relay-<fassung>-win-x64.exe` herunterladen und starten. Sie öffnet ein
-Fenster mit dem Protokoll und lauscht auf Port 8787. In der zweiten Zeile steht
-die Adresse der Statusseite — `http://localhost:8787/status` im Browser
-geöffnet, und man sieht, was der Dienst gerade tut.
+Fenster mit dem Protokoll und lauscht auf Port 8787.
+
+Beim **allerersten Start** geht die Statusseite von selbst im Browser auf —
+einmal, damit man sieht, dass es läuft. Danach nicht mehr; wer sie jedes Mal
+will, setzt `ELFIX_RELAY_SEITE=1`.
+
+Dauerhaft steht das Relay **unten in der Statusleiste**, neben Uhr und
+Lautstärke: ein grüner Punkt, solange es läuft, ein roter, wenn es nicht mehr
+antwortet. Doppelklick öffnet die Statusseite, Rechtsklick zeigt ein Menü —
+*Statusseite öffnen*, *Relay beenden*, *Symbol ausblenden*. Wer den Punkt nicht
+will: `ELFIX_RELAY_LEISTE=0`.
 
 Soll sie beim Anmelden von selbst starten, eine Verknüpfung in den
 Autostart-Ordner legen (`Win+R` → `shell:startup`).
 
 Die Räume liegen unter `%APPDATA%\ELFIX-Relay`.
+
+### Ohne Statusleiste, ohne Seite
+
+Beides lässt sich abschalten — für Maschinen, auf denen nur der Dienst laufen
+soll:
+
+```bash
+ELFIX_RELAY_LEISTE=0 ./ELFIX-Relay-...     # kein Symbol in der Leiste
+ELFIX_RELAY_SEITE=0 ./ELFIX-Relay-...      # die Seite geht nie von selbst auf
+```
+
+Unter systemd passiert ohnehin nichts von beidem: dort läuft der Dienst unter
+einem eigenen Konto ohne Sitzung, und ein Symbol in der Leiste hätte niemanden,
+dem es etwas zeigen könnte. Das Symbol für den systemd-Fall startet das Paket
+getrennt, in der Sitzung des angemeldeten Benutzers.
 
 ### Anderer Port
 
@@ -111,7 +144,10 @@ node server.js
 ```
 
 Aus dem Quelltext gestartet aktualisiert sich das Relay **nicht** selbst — wer
-ein Repository hat, aktualisiert mit `git`.
+ein Repository hat, aktualisiert mit `git`. Aus demselben Grund gibt es dabei
+weder ein Symbol in der Leiste noch eine Seite, die von selbst aufgeht: beim
+Entwickeln und in den Prüfungen wäre beides im Weg. Die Seite selbst gibt es
+natürlich, unter `/status`.
 
 Die Vorlage `elfix-watchparty.service` richtet den Dienst dafür von Hand ein;
 sie ist der Weg für alle, die den Quelltext betreiben wollen.

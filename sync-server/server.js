@@ -36,6 +36,10 @@ const fernIcon = require("./fern-icon");
 // Maschine. Sie haengt an keiner Watchparty - sie liest nur, was /health
 // ohnehin sagt.
 const statusSeite = require("./status-seite");
+// Und die beiden Wege, auf denen das Relay von sich aus zeigt, dass es laeuft:
+// das Symbol in der Statusleiste und die Seite beim allerersten Start.
+const statusleiste = require("./statusleiste");
+const seiteZeigen = require("./seite-zeigen");
 
 // Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
 // Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
@@ -1806,4 +1810,12 @@ server.listen(PORT, () => {
   if (GEPACKT) {
     require("./aktualisierung").starten({ fassung: FASSUNG, pfad: process.execPath });
   }
+
+  // Das Symbol in der Statusleiste - gruen, solange es laeuft. Wer das Relay
+  // gerade installiert hat, sieht damit ohne einen einzigen Handgriff, dass es
+  // da ist. Wo keine Leiste ist (systemd, Server, Quelltext), erscheint keins;
+  // das entscheidet nicht diese Stelle, sondern das Modul.
+  statusleiste.starten({ gepackt: GEPACKT, ordner: STATE_DIR, port: PORT });
+  // Und beim allerersten Start einmal die Seite selbst.
+  seiteZeigen.vielleichtZeigen({ gepackt: GEPACKT, ordner: STATE_DIR, port: PORT });
 });

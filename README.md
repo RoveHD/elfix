@@ -391,7 +391,8 @@ Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
 inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor,
 `youtube-party.js` fuer die YouTube-Watchparty, `geraete.js` fuer den Abgleich
 der eigenen Geraete, `fern.js` samt `fern-seite.js` und `fern-icon.js` fuer
-die Fernbedienung und `status-seite.js` fuer die Statusseite.
+die Fernbedienung, `status-seite.js` fuer die Statusseite und
+`statusleiste.js` samt `seite-zeigen.js` fuer den Punkt in der Leiste.
 Wird nur `server.js` uebertragen, startet der Dienst gar nicht mehr - ihm fehlt
 dann ein Modul.
 
@@ -403,13 +404,21 @@ Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
 Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
 `cd /opt/elfix-watchparty && sudo npm ci --omit=dev`.
 
-**Läuft es noch?** Die Adresse des Relays im Browser aufrufen — unter `/` (und
+**Laeuft es noch?** Wer das Relay als fertige Datei installiert hat, sieht es
+unten in der Statusleiste: ein gruener Punkt, solange es laeuft, ein roter,
+wenn es nicht mehr antwortet - unter Windows aus der Datei selbst heraus, unter
+Linux aus dem `.deb`, das ihn beim Anmelden startet. Klick oder Doppelklick
+darauf oeffnet die Statusseite; im Anwendungsmenue steht sie unter *ELFIX
+Relay*. Und beim allerersten Start unter Windows geht sie einmal von selbst
+auf. Wer das nicht will: `ELFIX_RELAY_LEISTE=0` und `ELFIX_RELAY_SEITE=0`.
+
+Sonst: die Adresse des Relays im Browser aufrufen - unter `/` (und
 unter `/status`) steht eine Seite, die genau das beantwortet: Zustand, Fassung,
-Laufzeit, Räume, Verbindungen, TMDB-Schlüssel und die Adresse für die App. Sie
+Laufzeit, Raeume, Verbindungen, TMDB-Schluessel und die Adresse fuer die App. Sie
 fragt alle drei Sekunden nach und meldet es, wenn keine Antwort mehr kommt.
-Raumcodes, Titel und Namen stehen dort nicht — die Seite ist so öffentlich wie
+Raumcodes, Titel und Namen stehen dort nicht - die Seite ist so oeffentlich wie
 das Relay. `curl` auf `/` bekommt weiterhin seine eine Zeile Text, und
-`/health` bleibt die Auskunft für Programme.
+`/health` bleibt die Auskunft fuer Programme.
 
 Die Antwort von `/health` nennt unter `features`, was die laufende Fassung kann.
 Steht dort `youtube`, beherrscht das Relay die YouTube-Watchparty; `youtubeRaeume`
