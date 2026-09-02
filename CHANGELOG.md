@@ -3,6 +3,31 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.90.1 — 2. September 2026
+
+**Der fehlende TMDB-Schlüssel nennt sich jetzt selbst — und blockiert nicht
+mehr nach, wenn er nachgetragen wird.** Zwei Meldungen nannten bisher eine
+Folge statt der Ursache: „ließ sich keinem Werk zuordnen" und „Dein
+Metadaten-Dienst kennt noch keine Trailer — Relay aktualisieren". Beide traten
+auf, wenn dem Relay schlicht der TMDB-Zugang fehlte: ohne ihn kommt es an Filme
+und Serien gar nicht heran, findet kein Werk und liefert keinen Trailer. Wer
+der Meldung folgte, aktualisierte ein Relay, das längst die neueste Fassung
+hatte.
+
+Das Relay sagt seinen Zustand in jeder Antwort mit; die App merkt ihn sich
+jetzt und meldet stattdessen den Schlüssel — mit dem Hinweis auf die
+Statusseite, wo dasselbe steht. Nur wenn sie es wirklich weiß: ohne Auskunft
+vom Relay wird nichts behauptet. Anime bleibt außen vor, das kommt von AniList.
+
+**Und der Nachlauf.** Ohne Schlüssel antwortet das Relay auf jedes Werk mit
+„nicht gefunden", und das merkt sich die App fünf Tage lang. Wer den Schlüssel
+danach einträgt, saß deshalb knapp eine Woche auf lauter Absagen, während die
+Statusseite schon „eingetragen" sagte. Ein „nicht gefunden" ohne TMDB ist aber
+kein Ergebnis, sondern eine fehlende Quelle: solche Einträge gelten jetzt als
+hinfällig, sobald ein Schlüssel da ist, und werden einmal neu gefragt. Das gilt
+auch für alles, was vor dieser Fassung gemerkt wurde — gerade wer den Fehler
+erlebt hat, soll etwas davon haben.
+
 ## 1.90.0 — 2. September 2026
 
 **Man sieht dem Relay jetzt an, dass es läuft.** Bisher gab es dafür drei Wege,
