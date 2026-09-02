@@ -171,7 +171,14 @@ if (python.status !== 0) {
 
   const laufen = (args) => spawnSync("python3", [gelegt.skript, ...args], {
     encoding: "utf8",
-    env: { ...process.env, PYTHONPATH: path.join(ablage, "attrappe") }
+    env: {
+      ...process.env,
+      PYTHONPATH: path.join(ablage, "attrappe"),
+      // Sonst schreibt Python unter Windows in der Codepage der Konsole, und
+      // aus "Laeuft" wird auf dem Weg hierher Buchstabensalat. Der Helfer
+      // selbst ist davon nicht betroffen - er schreibt nichts, er zeigt an.
+      PYTHONIOENCODING: "utf-8"
+    }
   });
 
   const uebersetzt = spawnSync("python3", ["-m", "py_compile", gelegt.skript], { encoding: "utf8" });
@@ -183,9 +190,20 @@ if (python.status !== 0) {
   pruefe("Am laufenden Relay zeigt er gruen",
     gruenProtokoll.includes("gruen.png") && !gruenProtokoll.includes("rot.png"),
     gruenProtokoll.trim().slice(0, 80));
+  // Auf den Inhalt geprueft und nicht auf den Wortlaut: was hier ankommt, ist
+  // durch Pythons Ausgabe und Nodes Lesart gegangen, und ein Umlaut mehr oder
+  // weniger auf diesem Weg sagt nichts ueber den Helfer.
+  let letzteZeile = "";
+  try {
+    const eintraege = JSON.parse(gruenProtokoll.trim().split("\n").pop());
+    letzteZeile = (eintraege.filter(([art]) => art === "label").pop() || [])[1] || "";
+  } catch {
+    // Bleibt leer - dann faellt die Pruefung darunter, und zwar mit dem, was
+    // wirklich ankam.
+  }
   pruefe("Und schreibt die Zahlen daneben",
-    /L\u00e4uft/.test(gruenProtokoll) && gruenProtokoll.includes("Verbindungen"),
-    "ein Punkt ohne Auskunft beantwortet nur die halbe Frage");
+    /\d+ Verbindungen/.test(letzteZeile) && letzteZeile.includes(String(PORT)),
+    letzteZeile || gruenProtokoll.trim().slice(0, 80));
 
   // Ein Port, auf dem nichts lauscht - genau die Lage, wegen der es das Symbol
   // gibt.
