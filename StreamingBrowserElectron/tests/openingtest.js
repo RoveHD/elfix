@@ -1,16 +1,23 @@
 "use strict";
 // Das Opening zur Serie des Jahres.
 //
-// Diese Datei ist aus einem besonderen Grund ausfuehrlicher als noetig:
-// geschrieben wurde die Anbindung gegen eine Schnittstelle, die aus der
-// Entwicklungsumgebung *nicht erreichbar* war - api.animethemes.moe ist dort
-// von der Netzrichtlinie gesperrt. Kein einziger echter Aufruf war moeglich.
+// Geschrieben wurde die Anbindung blind: api.animethemes.moe ist aus der
+// Entwicklungsumgebung gesperrt, kein einziger Aufruf war moeglich. Und sie war
+// falsch - herausgekommen ist das erst, als eine *echte* Antwort vorlag.
 //
-// Was hier also geprueft wird, ist nicht "die Antwort wird richtig gelesen" -
-// das kann nur ein echter Aufruf zeigen. Geprueft wird das, worauf es bei einer
-// blind geschriebenen Anbindung wirklich ankommt: **dass sie bei jeder
-// denkbaren Antwort still bleibt statt zu stoeren.** Findet sie nichts, bleibt
-// der Rueckblick stumm und laeuft weiter - genau wie vorher.
+// Sie liegt jetzt in proben/animethemes-shingeki.json und ist die Grundlage
+// dieser Datei. Zwei Dinge hat sie aufgedeckt, die kein noch so vorsichtiger
+// Leser haette erraten koennen:
+//
+//   Der Titelvergleich war zu streng. Die Anbieter nennen die Serie "Attack on
+//   Titan", der Katalog fuehrt sie als "Shingeki no Kyojin" - kein Treffer,
+//   keine Musik, und zwar bei so ziemlich jedem Anime mit englischem Titel.
+//
+//   `sequence` ist oft null. Die Nummer steht dann nur im slug ("OP1", "OP2").
+//   Ohne Rueckfall darauf waeren alle Openings gleichauf.
+//
+// Der zweite Teil bleibt, was er war: dass die Anbindung bei jeder unerwarteten
+// Antwort still bleibt statt zu stoeren.
 
 const path = require("path");
 const openings = require(path.join(__dirname, "..", "src", "openings.js"));
@@ -51,54 +58,62 @@ pruefe("Leeres passt auf nichts",
 
 // --- Die Antwort ---
 
-// So stellt sich die Anbindung die Antwort vor. Ob sie wirklich so aussieht,
-// weiss erst der erste echte Aufruf - deshalb steht darunter dieselbe Probe in
-// mehreren anderen Formen.
-const antwort = {
-  search: {
-    anime: [{
-      name: "Attack on Titan",
-      animethemes: [
-        { type: "ED", sequence: 1, song: { title: "Utsukushiki Zankoku na Sekai" },
-          animethemeentries: [{ videos: [{ audio: { link: "https://a.animethemes.moe/ed1.ogg" } }] }] },
-        { type: "OP", sequence: 2, song: { title: "Jiyuu no Tsubasa" },
-          animethemeentries: [{ videos: [{ audio: { link: "https://a.animethemes.moe/op2.ogg" } }] }] },
-        { type: "OP", sequence: 1, song: { title: "Guren no Yumiya" },
-          animethemeentries: [{ videos: [{ audio: { link: "https://a.animethemes.moe/op1.ogg" } }] }] }
-      ]
-    }]
-  }
-};
+// --- Gegen die echte Antwort ---
 
-const gefunden = openings.openingAus(antwort, "Attack on Titan");
-pruefe("Das erste Opening gewinnt",
-  gefunden?.url === "https://a.animethemes.moe/op1.ogg",
-  gefunden?.url || "nichts");
-pruefe("Und der Liedname kommt mit",
-  gefunden?.lied === "Guren no Yumiya", gefunden?.lied || "nichts");
-pruefe("Der Vorspann schlaegt den Abspann",
-  !gefunden?.url.includes("ed"), "OP vor ED, kleine Nummer vor grosser");
+const echt = require(path.join(__dirname, "proben", "animethemes-shingeki.json"));
+const aot = openings.openingAus(echt, "Attack on Titan");
 
-pruefe("Ein fremder Titel gewinnt nicht",
-  openings.openingAus(antwort, "One Piece") === null,
-  "die Suche liefert auch Aehnliches");
+pruefe("Der englische Titel findet die japanische Serie",
+  aot !== null,
+  "die Anbieter sagen \"Attack on Titan\", der Katalog \"Shingeki no Kyojin\"");
+pruefe("Und zwar das erste Opening der Grundserie",
+  aot?.lied === "Guren no Yumiya", aot?.lied || "nichts");
+pruefe("Aus der Fernsehfassung, nicht aus dem Recap-Film",
+  aot?.anime === "Shingeki no Kyojin", aot?.anime || "nichts");
+pruefe("Die Adresse zeigt auf die Tonspur",
+  aot?.url === "https://a.animethemes.moe/ShingekiNoKyojin-OP1.ogg", aot?.url || "nichts");
 
-// Dieselben Daten, anders verschachtelt: flach, ohne search-Kasten, mit der
-// Tonspur direkt am Video. Der Leser sucht nach Namen und nicht nach Pfaden -
-// genau dafuer.
-pruefe("Auch ohne den search-Kasten",
-  openings.openingAus({ anime: antwort.search.anime }, "Attack on Titan")?.url
-    === "https://a.animethemes.moe/op1.ogg");
-pruefe("Auch mit der Adresse direkt am Video",
-  openings.openingAus({
-    anime: [{ name: "Naruto", animethemes: [{ type: "OP", sequence: 1,
-      animethemeentries: [{ videos: [{ link: "https://v.animethemes.moe/naruto-op1.webm" }] }] }] }]
-  }, "Naruto")?.url === "https://v.animethemes.moe/naruto-op1.webm");
-pruefe("Auch wenn der Name des Anime unter title steht",
-  openings.openingAus({
-    anime: [{ title: "Bleach", animethemes: [{ type: "OP", sequence: 1,
-      animethemeentries: [{ videos: [{ audio: { link: "https://a.animethemes.moe/b.ogg" } }] }] }] }]
-  }, "Bleach")?.url === "https://a.animethemes.moe/b.ogg");
+// Das waere der naheliegende Fehler gewesen: der erste Treffer der Suche ist
+// "Shingeki no Kyojin: Chronicle", ein Zusammenschnitt, dessen einziges Stueck
+// ein Abspann ist - und den der Katalog selbst als Spoiler kennzeichnet.
+pruefe("Der erste Treffer der Suche gewinnt nicht einfach",
+  echt.search.anime[0].name === "Shingeki no Kyojin: Chronicle"
+  && aot?.anime !== "Shingeki no Kyojin: Chronicle",
+  "ein Recap-Film mit einem Abspann ist nicht das Opening der Serie");
+pruefe("Die Schulparodie auch nicht",
+  aot?.lied !== "Seishun wa Hanabi no You ni",
+  "Shingeki! Kyojin Chuugakkou ist eine andere Serie");
+pruefe("Und die Fortsetzungen ebenfalls nicht",
+  aot?.lied !== "Shinzou wo Sasageyo!" && aot?.lied !== "Boku no Sensou",
+  "zwischen Grundserie und fuenf Fortsetzungen ist die aelteste gemeint");
+
+pruefe("Der genaue Titel bleibt die erste Wahl",
+  openings.openingAus(echt, "Shingeki no Kyojin")?.lied === "Guren no Yumiya",
+  "wo er trifft, ist er unbestechlich");
+
+// sequence ist in der echten Antwort oft null - die Nummer steht im slug.
+pruefe("Die Nummer kommt notfalls aus dem slug",
+  openings.nummerAus({ sequence: null, slug: "OP2" }) === 2
+  && openings.nummerAus({ sequence: 1, slug: "OP1" }) === 1
+  && openings.nummerAus({ sequence: null, slug: "OP1-TV" }) === 1
+  && openings.nummerAus({}) === 1);
+pruefe("Bei gleicher Nummer schlaegt der Vorspann den Abspann",
+  openings.openingAus({ anime: [{ name: "X", media_format: "TV", animethemes: [
+    { type: "ED", slug: "ED1", song: { title: "Abspann" }, animethemeentries: [
+      { videos: [{ audio: { link: "https://a/ed.ogg" } }] }] },
+    { type: "OP", slug: "OP1", song: { title: "Vorspann" }, animethemeentries: [
+      { videos: [{ audio: { link: "https://a/op.ogg" } }] }] }
+  ] }] }, "X")?.lied === "Vorspann");
+
+// Der Katalog kennzeichnet Stuecke, die das Ende verraten. Ein Rueckblick, der
+// seine eigene Pointe schuetzt, sollte nicht die der Serie ausplaudern.
+pruefe("Ein als Spoiler gekennzeichnetes Stueck kommt zuletzt",
+  openings.openingAus({ anime: [{ name: "X", media_format: "TV", animethemes: [
+    { type: "OP", slug: "OP1", song: { title: "Verraet das Ende" }, animethemeentries: [
+      { spoiler: true, videos: [{ audio: { link: "https://a/spoiler.ogg" } }] }] },
+    { type: "ED", slug: "ED1", song: { title: "Harmlos" }, animethemeentries: [
+      { spoiler: false, videos: [{ audio: { link: "https://a/ok.ogg" } }] }] }
+  ] }] }, "X")?.lied === "Harmlos");
 
 // --- Und jetzt der eigentliche Punkt: nichts davon darf werfen ---
 

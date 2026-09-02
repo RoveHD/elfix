@@ -3641,6 +3641,7 @@ function wrappedSchliessen() {
 // vorher gab.
 let wrappedTonLaeuft = false;
 let wrappedSerieDesJahres = null;
+let wrappedTonTreffer = null;
 
 function wrappedTonElement() {
   return document.querySelector("#wrappedTon");
@@ -3654,18 +3655,26 @@ function wrappedTonBeenden() {
     ton.load();
   }
   wrappedTonLaeuft = false;
+  wrappedTonTreffer = null;
   document.querySelector("#wrappedTonKnopf")?.classList.add("is-hidden");
 }
 
-function wrappedTonKnopfZeigen(an, lied) {
+// Am Knopf steht, was laeuft - und aus welchem Anime.
+//
+// Der Anime gehoert dazu, weil die Auswahl eine Heuristik ist: der Katalog
+// fuehrt "Attack on Titan" als "Shingeki no Kyojin", ein genauer Titelvergleich
+// trifft also selten, und gewaehlt wird dann die aelteste Fernsehfassung unter
+// den Suchtreffern. Das geht meistens gut und manchmal daneben. Wer hier etwas
+// anderes liest, als er erwartet hat, sieht sofort, dass danebengegriffen
+// wurde - statt sich ueber ein fremdes Lied zu wundern.
+function wrappedTonKnopfZeigen(an, treffer) {
   const knopf = document.querySelector("#wrappedTonKnopf");
   if (!knopf) return;
   knopf.classList.remove("is-hidden");
   knopf.classList.toggle("is-aus", !an);
   knopf.textContent = an ? "♪" : "✕";
-  knopf.title = an
-    ? (lied ? `${lied} — Musik aus` : "Musik aus")
-    : "Musik an";
+  const stueck = [treffer?.lied, treffer?.anime].filter(Boolean).join(" — ");
+  knopf.title = [stueck, an ? "Musik aus" : "Musik an"].filter(Boolean).join(" · ");
   knopf.setAttribute("aria-label", knopf.title);
 }
 
@@ -3684,18 +3693,19 @@ async function wrappedTonStarten(seite) {
   // Musik nirgends mehr hin.
   if (!treffer?.url || !wrappedModal?.open) return;
   wrappedTonLaeuft = true;
+  wrappedTonTreffer = treffer;
   ton.src = treffer.url;
   ton.loop = true;
   ton.volume = 0.45;
   try {
     await ton.play();
-    wrappedTonKnopfZeigen(true, treffer.lied);
+    wrappedTonKnopfZeigen(true, treffer);
   } catch {
     // Chromium laesst Ton ohne Zutun des Benutzers nicht immer zu. Dann steht
     // der Knopf da und wartet - besser als ein Rueckblick, der still bleibt,
     // ohne zu sagen, dass es etwas zu hoeren gaebe.
     wrappedTonLaeuft = false;
-    wrappedTonKnopfZeigen(false, treffer.lied);
+    wrappedTonKnopfZeigen(false, treffer);
   }
 }
 
@@ -3706,12 +3716,12 @@ async function wrappedTonUmschalten() {
     try {
       await ton.play();
       wrappedTonLaeuft = true;
-      wrappedTonKnopfZeigen(true);
+      wrappedTonKnopfZeigen(true, wrappedTonTreffer);
     } catch { /* Bleibt eben aus. */ }
   } else {
     ton.pause();
     wrappedTonLaeuft = false;
-    wrappedTonKnopfZeigen(false);
+    wrappedTonKnopfZeigen(false, wrappedTonTreffer);
   }
 }
 

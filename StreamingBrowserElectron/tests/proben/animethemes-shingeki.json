@@ -1,0 +1,103 @@
+{
+  "_hinweis": "Echte Antwort von api.animethemes.moe, aufgezeichnet am 2026-09-02 fuer die Suche nach 'Attack on Titan'. Gekuerzt auf die Eintraege, die etwas Eigenes zeigen - die uebrigen acht sind Varianten davon. Aus der Entwicklungsumgebung ist der Host gesperrt; das hier ist die einzige Quelle der Wahrheit ueber die Form dieser Antwort.",
+  "search": {
+    "anime": [
+      {
+        "id": 3815, "name": "Shingeki no Kyojin: Chronicle", "media_format": "Movie",
+        "season": "Summer", "slug": "shingeki_no_kyojin_chronicle", "year": 2020,
+        "animethemes": [
+          { "id": 11561, "sequence": null, "slug": "ED1", "type": "ED",
+            "song": { "id": 11562, "title": "AOT2013-2019" },
+            "animethemeentries": [
+              { "id": 13437, "spoiler": true, "version": 1,
+                "videos": [
+                  { "id": 14226, "basename": "ShingekiNoKyojinChronicle-ED1.webm",
+                    "link": "https://v.animethemes.moe/ShingekiNoKyojinChronicle-ED1.webm",
+                    "audio": { "id": 9004, "link": "https://a.animethemes.moe/ShingekiNoKyojinChronicle-ED1.ogg" } }
+                ] }
+            ] }
+        ]
+      },
+      {
+        "id": 2611, "name": "Shingeki no Kyojin", "media_format": "TV",
+        "season": "Spring", "slug": "shingeki_no_kyojin", "year": 2013,
+        "animethemes": [
+          { "id": 5279, "sequence": 1, "slug": "OP1", "type": "OP",
+            "song": { "id": 5279, "title": "Guren no Yumiya" },
+            "animethemeentries": [
+              { "id": 6043, "episodes": "1-13", "spoiler": false, "version": 1,
+                "videos": [
+                  { "id": 4744, "link": "https://v.animethemes.moe/ShingekiNoKyojin-OP1.webm",
+                    "audio": { "id": 4302, "link": "https://a.animethemes.moe/ShingekiNoKyojin-OP1.ogg" } }
+                ] }
+            ] },
+          { "id": 5280, "sequence": 2, "slug": "OP2", "type": "OP",
+            "song": { "id": 5280, "title": "Jiyuu no Tsubasa" },
+            "animethemeentries": [
+              { "id": 6044, "episodes": "14-25", "spoiler": false, "version": 1,
+                "videos": [
+                  { "id": 4745, "link": "https://v.animethemes.moe/ShingekiNoKyojin-OP2.webm",
+                    "audio": { "id": 4303, "link": "https://a.animethemes.moe/ShingekiNoKyojin-OP2.ogg" } }
+                ] }
+            ] },
+          { "id": 5281, "sequence": 1, "slug": "ED1", "type": "ED",
+            "song": { "id": 5281, "title": "Utsukushiki Zankoku na Sekai" },
+            "animethemeentries": [
+              { "id": 6045, "episodes": "1-13", "spoiler": false, "version": 1,
+                "videos": [
+                  { "id": 4742, "link": "https://v.animethemes.moe/ShingekiNoKyojin-ED1.webm",
+                    "audio": { "id": 4300, "link": "https://a.animethemes.moe/ShingekiNoKyojin-ED1.ogg" } }
+                ] }
+            ] }
+        ]
+      },
+      {
+        "id": 2608, "name": "Shingeki! Kyojin Chuugakkou", "media_format": "TV",
+        "season": "Fall", "slug": "shingeki_kyojin_chuugakkou", "year": 2015,
+        "animethemes": [
+          { "id": 6125, "sequence": null, "slug": "OP1", "type": "OP",
+            "song": { "id": 6125, "title": "Seishun wa Hanabi no You ni" },
+            "animethemeentries": [
+              { "id": 7075, "episodes": "1-12", "spoiler": false, "version": 1,
+                "videos": [
+                  { "id": 6000, "link": "https://v.animethemes.moe/ShingekiKyojinChuugakkou-OP1.webm",
+                    "audio": { "id": 5294, "link": "https://a.animethemes.moe/ShingekiKyojinChuugakkou-OP1.ogg" } }
+                ] }
+            ] }
+        ]
+      },
+      {
+        "id": 2616, "name": "Shingeki no Kyojin Season 2", "media_format": "TV",
+        "season": "Spring", "slug": "shingeki_no_kyojin_season_2", "year": 2017,
+        "animethemes": [
+          { "id": 7773, "sequence": null, "slug": "OP1", "type": "OP",
+            "song": { "id": 7774, "title": "Shinzou wo Sasageyo!" },
+            "animethemeentries": [
+              { "id": 9112, "episodes": null, "spoiler": false, "version": 1,
+                "videos": [
+                  { "id": 8185, "link": "https://v.animethemes.moe/ShingekiNoKyojinS2-OP1-NCBD1080.webm",
+                    "audio": { "id": 6782, "link": "https://a.animethemes.moe/ShingekiNoKyojinS2-OP1-NCBD1080.ogg" } },
+                  { "id": 8186, "link": "https://v.animethemes.moe/ShingekiNoKyojinS2-OP1.webm",
+                    "audio": { "id": 6782, "link": "https://a.animethemes.moe/ShingekiNoKyojinS2-OP1-NCBD1080.ogg" } }
+                ] }
+            ] }
+        ]
+      },
+      {
+        "id": 2620, "name": "Shingeki no Kyojin: The Final Season", "media_format": "TV",
+        "season": "Fall", "slug": "shingeki_no_kyojin_the_final_season", "year": 2020,
+        "animethemes": [
+          { "id": 9523, "sequence": null, "slug": "OP1", "type": "OP",
+            "song": { "id": 9524, "title": "Boku no Sensou" },
+            "animethemeentries": [
+              { "id": 11195, "episodes": null, "spoiler": false, "version": 1,
+                "videos": [
+                  { "id": 11453, "link": "https://v.animethemes.moe/ShingekiNoKyojinS4-OP1.webm",
+                    "audio": { "id": 8721, "link": "https://a.animethemes.moe/ShingekiNoKyojinS4-OP1-NCBD1080.ogg" } }
+                ] }
+            ] }
+        ]
+      }
+    ]
+  }
+}

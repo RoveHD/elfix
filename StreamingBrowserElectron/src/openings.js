@@ -70,14 +70,8 @@ function text(wert) {
 }
 
 /**
- * Ob zwei Titel denselben Anime meinen.
- *
- * <p>Mit derselben Normalisierung wie ueberall sonst in ELFIX - eine zweite
- * waere eine zweite Wahrheit. Der Vergleich ist streng, und das mit Absicht:
- * eine Suche liefert auch Aehnliches, und das Opening der falschen Serie ist
- * schlechter als gar keins. Wer "Naruto" geschaut hat, will nicht das Opening
- * von "Naruto Shippuden" hoeren und sich fragen, ob ELFIX seine Zahlen
- * genauso sorgfaeltig behandelt.
+ * Ob zwei Titel denselben Anime meinen - mit derselben Normalisierung wie
+ * ueberall sonst in ELFIX.
  */
 function passt(gesucht, gefunden) {
   const links = taste.titelSchluessel(gesucht);
@@ -86,48 +80,100 @@ function passt(gesucht, gefunden) {
 }
 
 /**
+ * Die Nummer eines Vor- oder Abspanns.
+ *
+ * <p>Steht meistens in {@code sequence} - aber eben nur meistens. In der
+ * aufgezeichneten Antwort ist sie bei acht von dreizehn Themen {@code null},
+ * und die Nummer steht dann nur im {@code slug}: "OP1", "OP2", "OP1-TV".
+ * Ohne diesen Rueckfall waeren alle gleichauf, und welches Opening gewinnt,
+ * haenge an der Reihenfolge der Antwort.
+ */
+function nummerAus(thema) {
+  const roh = Number(thema?.sequence);
+  if (Number.isFinite(roh) && roh > 0) return roh;
+  const ausSlug = String(thema?.slug || "").match(/(\d+)/);
+  return ausSlug ? Number(ausSlug[1]) : 1;
+}
+
+/**
+ * Welcher Anime von den gefundenen gemeint ist.
+ *
+ * <p><b>Hier waere die Anbindung gescheitert.</b> Geschrieben war sie auf einen
+ * genauen Titelvergleich - und der trifft in der Praxis fast nie: die Anbieter
+ * nennen die Serie "Attack on Titan", der Katalog fuehrt sie unter "Shingeki no
+ * Kyojin". Kein Treffer, keine Musik, und zwar bei so ziemlich jedem Anime mit
+ * englischem Titel. Aufgefallen ist das erst an einer echten Antwort.
+ *
+ * <p>Der genaue Vergleich bleibt trotzdem die erste Wahl - wo er trifft
+ * ("Naruto"), ist er unbestechlich. Trifft er nicht, entscheidet, was die
+ * Antwort selbst hergibt:
+ *
+ * <ul>
+ *   <li><b>Fernsehfassung vor allem anderen.</b> Unter den fuenfzehn Treffern
+ *       zu "Attack on Titan" sind Filme, OVAs, Specials und
+ *       Zusammenschnitte - der erste davon ist ein Recap-Film, dessen einziges
+ *       Stueck ein Abspann ist. Wer die Serie geschaut hat, meint die Serie.
+ *   <li><b>Das aelteste Jahr.</b> Zwischen "Shingeki no Kyojin" (2013) und
+ *       seinen fuenf Fortsetzungen ist die Grundserie gemeint; sie ist die
+ *       aelteste. Nebenbei faellt damit auch die Schulparodie von 2015 weg.
+ * </ul>
+ *
+ * <p>Das ist eine Heuristik und keine Gewissheit - deshalb nennt der
+ * Rueckblick den Namen des gewaehlten Anime am Knopf. Wer dort etwas anderes
+ * liest, als er erwartet hat, sieht sofort, dass danebengegriffen wurde,
+ * statt sich ueber ein fremdes Lied zu wundern.
+ */
+function besterAnime(kandidaten, titel) {
+  const brauchbar = kandidaten.filter((eintrag) => eintrag && typeof eintrag === "object");
+  const genau = brauchbar.filter((eintrag) => {
+    const namen = [eintrag.name, ...sammle(eintrag, ["title"]).map(text)];
+    return namen.some((name) => passt(titel, name));
+  });
+  if (genau.length) return genau;
+  const fernsehen = brauchbar.filter(
+    (eintrag) => text(eintrag.media_format).toUpperCase() === "TV");
+  const feld = fernsehen.length ? fernsehen : brauchbar;
+  return [...feld]
+    .sort((links, rechts) => (Number(links.year) || 9999) - (Number(rechts.year) || 9999))
+    .slice(0, 1);
+}
+
+/**
  * Die Tonspur des Openings aus einer Antwort - oder null.
  *
  * <p>Bevorzugt wird der Vorspann ({@code OP}) mit der kleinsten Nummer, also
- * das erste Opening der Serie. Gibt es keinen, faellt die Wahl auf irgendeine
- * gefundene Tonspur des passenden Titels; ein Abspann ist besser als Stille.
+ * das erste Opening. Gibt es keinen, ist ein Abspann besser als Stille.
+ *
+ * <p>Eintraege, die der Katalog selbst als {@code spoiler} kennzeichnet, kommen
+ * zuletzt - das sind die Abspaenne, die das Ende verraten. Ein Rueckblick, der
+ * seine eigene Pointe schuetzt, sollte nicht die der Serie ausplaudern.
  *
  * @param antwort das geparste JSON - beliebig geformt, auch Unsinn
- * @param titel   der Titel, um den es geht; nur er darf gewinnen
+ * @param titel   der Titel, um den es geht
  * @return {{url, lied, anime}} oder null
  */
 function openingAus(antwort, titel) {
   if (!antwort || typeof antwort !== "object") return null;
-
-  // Die Anime-Eintraege koennen unter "anime" oder in einem "search"-Kasten
-  // liegen. Gesammelt wird beides und danach entschieden.
   const kandidaten = sammle(antwort, ["anime"]).flat().filter(Boolean);
-  const treffer = kandidaten.filter((eintrag) => {
-    if (!eintrag || typeof eintrag !== "object") return false;
-    const namen = [eintrag.name, ...sammle(eintrag, ["title"]).map(text)];
-    return namen.some((name) => passt(titel, name));
-  });
+  const treffer = besterAnime(kandidaten, titel);
   if (!treffer.length) return null;
 
   let bestes = null;
   for (const anime of treffer) {
     for (const thema of sammle(anime, ["animethemes"]).flat().filter(Boolean)) {
-      const art = text(thema?.type).toUpperCase();
-      const nummer = Number(thema?.sequence) || 1;
+      if (!thema || typeof thema !== "object") continue;
+      const art = text(thema.type).toUpperCase();
+      const eintraege = sammle(thema, ["animethemeentries"]).flat().filter(Boolean);
+      const verraet = eintraege.length > 0 && eintraege.every((eintrag) => eintrag?.spoiler === true);
       const adressen = [
-        ...sammle(thema, ["audio"]).flatMap((a) => sammle(a, ["link"])),
-        ...sammle(thema, ["videos"]).flat().flatMap((v) => sammle(v, ["link"]))
+        ...sammle(thema, ["audio"]).flatMap((wert) => sammle(wert, ["link"])),
+        ...sammle(thema, ["videos"]).flat().flatMap((wert) => sammle(wert, ["link"]))
       ].map(text).filter((adresse) => /^https?:\/\//.test(adresse));
       if (!adressen.length) continue;
-      // Rang: Vorspann vor Abspann, kleine Nummer vor grosser.
-      const rang = (art === "OP" ? 0 : 1) * 1000 + nummer;
+      // Rang, in dieser Ordnung: kein Spoiler, Vorspann, kleine Nummer.
+      const rang = (verraet ? 1 : 0) * 10000 + (art === "OP" ? 0 : 1) * 100 + nummerAus(thema);
       if (!bestes || rang < bestes.rang) {
-        bestes = {
-          rang,
-          url: adressen[0],
-          lied: text(thema?.song?.title),
-          anime: text(anime?.name)
-        };
+        bestes = { rang, url: adressen[0], lied: text(thema.song?.title), anime: text(anime.name) };
       }
     }
   }
@@ -135,4 +181,4 @@ function openingAus(antwort, titel) {
   return { url: bestes.url, lied: bestes.lied, anime: bestes.anime };
 }
 
-module.exports = { WIRT, anfrageUrl, sammle, passt, openingAus };
+module.exports = { WIRT, anfrageUrl, sammle, passt, nummerAus, besterAnime, openingAus };
