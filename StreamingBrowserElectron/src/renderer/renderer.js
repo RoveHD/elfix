@@ -821,8 +821,13 @@ function bindEvents() {
     if (event.key === "ArrowLeft") { event.preventDefault(); wrappedZeigen(wrappedStelle - 1); }
   });
   // Escape schliesst den Dialog von selbst - die Anbieteransicht muss trotzdem
-  // zurueckkommen.
-  wrappedModal?.addEventListener("close", () => { api.setWrappedOpen?.(false); });
+  // zurueckkommen, und die Musik muss aufhoeren. Sie hing bisher allein am
+  // Schliessknopf: wer den Rueckblick mit Escape verliess, hoerte sein Opening
+  // weiter, ohne noch einen Knopf zu haben, der es abstellt.
+  wrappedModal?.addEventListener("close", () => {
+    wrappedTonBeenden();
+    api.setWrappedOpen?.(false);
+  });
 
   document.querySelector("#deleteProviderButton").addEventListener("click", deleteSelectedProvider);
   document.querySelector("#relocateProviderButton")?.addEventListener("click", relocateSelectedProvider);
@@ -3883,15 +3888,26 @@ function wrappedText(klasse, inhalt) {
 
 // Eine grosse Zahl, die hochlaeuft. Der Wert steht im Datenfeld, damit die
 // Animation ihn kennt und der Text auch ohne sie stimmt.
+// Die Zahl steht in einem eigenen Feld, und das ist kein Schoenheitsfehler,
+// sondern der Grund, warum ueberhaupt etwas dastand:
+//
+// Die Zaehlanimation schreibt bei jedem Bild den Textinhalt ihres Knotens neu.
+// Trug derselbe Knoten auch die Einheit, war die nach dem ersten Bild weg -
+// auf dem Schirm stand "25" statt "25 Stunden" und "200" statt "200 Folgen",
+// und die Karte behauptete nicht mehr, wovon sie handelt. Sichtbar war das nur
+// mit Animation; wer sie aus hat, sah die Einheit weiterhin.
 function wrappedGrosseZahl(wert, einheit = "") {
   const knoten = document.createElement("strong");
   knoten.className = "wrapped-huge";
+  const zahl = document.createElement("span");
+  zahl.className = "wrapped-wert";
   if (typeof wert === "number") {
-    knoten.dataset.zaehl = String(wert);
-    knoten.textContent = wrappedZahl(wert);
+    zahl.dataset.zaehl = String(wert);
+    zahl.textContent = wrappedZahl(wert);
   } else {
-    knoten.textContent = String(wert);
+    zahl.textContent = String(wert);
   }
+  knoten.append(zahl);
   if (einheit) {
     const klein = document.createElement("span");
     klein.className = "wrapped-unit";
@@ -3923,7 +3939,10 @@ function wrappedBauen(daten, jahr) {
     seiten.push(wrappedSeite("zeit", "is-zeit", [
       wrappedGrosseZahl(stunden, "Stunden"),
       wrappedText("wrapped-lead", "hast du dieses Jahr mit ELFIX geschaut."),
-      tage >= 1 ? wrappedText("wrapped-sub", `Das sind ${String(tage).replace(".", ",")} Tage am Stück.`) : null
+      tage >= 1
+        ? wrappedText("wrapped-sub",
+          `Das sind ${String(tage).replace(".", ",")} ${tage === 1 ? "Tag" : "Tage"} am Stück.`)
+        : null
     ]));
   }
 

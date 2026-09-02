@@ -741,6 +741,25 @@ pruefe("Und die Poster stehen weiter auf den Karten, die von einem Titel handeln
   (RENDERER.match(/wrappedPoster\(/g) || []).length >= 4,
   "dort fallen sie auf, ohne etwas vorwegzunehmen");
 
+// --- Die Einheit unter der grossen Zahl --------------------------------------
+//
+// "25" stand da, wo "25 Stunden" stehen sollte, und "200" statt "200 Folgen" -
+// die Karte behauptete nicht mehr, wovon sie handelt. Schuld war die
+// Zaehlanimation: sie schreibt bei jedem Bild den Textinhalt ihres Knotens neu,
+// und die Einheit lag im selben Knoten. Sichtbar war der Fehler nur mit
+// Animation, weshalb er die Pruefung ueberstanden hat.
+
+pruefe("Die Zahl hat ein eigenes Feld",
+  /zahl\.className = "wrapped-wert";/.test(RENDERER)
+  && /zahl\.dataset\.zaehl = String\(wert\);/.test(RENDERER),
+  "sonst raeumt die Animation die Einheit mit ab");
+pruefe("Und die Animation fasst nur dieses Feld an",
+  /for \(const knoten of wurzel\.querySelectorAll\?\.\("\[data-zaehl\]"\)/.test(RENDERER)
+  && !/knoten\.dataset\.zaehl = String\(wert\);/.test(RENDERER));
+pruefe("Aus einem Tag werden keine Tage",
+  /\$\{tage === 1 \? "Tag" : "Tage"\} am Stück/.test(RENDERER),
+  "\"Das sind 1 Tage am Stueck\" stand wirklich da");
+
 // --- Musik zu den Karten ----------------------------------------------------
 //
 // Der Rueckblick war stumm. Geholt wird das Opening jetzt bei animethemes.moe -
@@ -786,15 +805,25 @@ pruefe("Ein Filmtitel bekommt kein fremdes Opening untergelegt",
   /eintrag\.gattung === "film"\) return null;/.test(RENDERER),
   "der Katalog kennt nur Anime");
 pruefe("Zu einem Film wird gar nicht erst gefragt",
-  /if \(!name \|\| art === "film"\) return null;/.test(MAIN));
-pruefe("Bei allem ausser Anime zaehlt nur der genaue Titel",
-  /openings\.openingAus\(await antwort\.json\(\), name, art === "anime"\)/.test(MAIN),
-  "die Anbieter fuehren Anime oft als Serie - eine Krimiserie ist trotzdem keiner");
+  /if \(!name \|\| String\(gattung \|\| ""\) === "film"\) return null;/.test(MAIN));
+pruefe("Zu jeder Serie dagegen schon",
+  /openings\.openingAus\(await antwort\.json\(\), name\);/.test(MAIN)
+  && !/!== "anime"\) return null;/.test(MAIN),
+  "die Anbieter fuehren einen guten Teil ihrer Anime als gewoehnliche Serie");
+pruefe("Und die Staffel steht der Suche nicht im Weg",
+  /const schluessel = openings\.suchTitel\(name\);/.test(MAIN),
+  "\"One Piece Staffel 21\" und \"One Piece\" sind dieselbe Anfrage");
 pruefe("Die Einstellung verhindert schon die Anfrage",
   /if \(settings\.wrapped\?\.musik === false \|\| wrappedTonAus\) return;/.test(RENDERER),
   "wer sie aus hat, soll auch keinen fremden Dienst befragen");
 pruefe("Schliessen beendet den Ton",
   /function wrappedSchliessen\(\) \{\s*\n\s*wrappedTonBeenden\(\);/.test(RENDERER));
+// Und zwar jedes Schliessen. Der Ton hing am Schliessknopf; Escape schliesst
+// den Dialog aber von selbst, und dann lief die Musik weiter - ohne dass es
+// noch einen Knopf gegeben haette, der sie abstellt.
+pruefe("Auch mit Escape statt mit dem Knopf",
+  /addEventListener\("close", \(\) => \{\s*\n\s*wrappedTonBeenden\(\);/.test(RENDERER),
+  "der Dialog schliesst sich auch ohne Zutun von wrappedSchliessen");
 pruefe("Der Knopf blaettert nicht zugleich weiter",
   /wrappedTonKnopf"\)\?\.addEventListener\("click", \(event\) => \{[\s\S]{0,220}?event\.stopPropagation\(\);/
     .test(RENDERER),

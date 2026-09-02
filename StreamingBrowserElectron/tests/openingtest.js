@@ -91,18 +91,19 @@ pruefe("Der genaue Titel bleibt die erste Wahl",
   openings.openingAus(echt, "Shingeki no Kyojin")?.lied === "Guren no Yumiya",
   "wo er trifft, ist er unbestechlich");
 
-// Gefragt wird der Katalog inzwischen auch zu Titeln, die die Anbieter als
-// gewoehnliche Serie fuehren - darunter sind reichlich Anime. Fuer die faellt
-// aber die Nachsicht der Suche weg: raten darf sie nur, wo Anime draufsteht.
-pruefe("Ohne Anime als Gattung wird nicht geraten",
-  openings.openingAus(echt, "Attack on Titan", false) === null,
-  "eine Krimiserie bekaeme sonst das Opening des aehnlichsten Anime");
-pruefe("Der genaue Treffer zaehlt trotzdem",
-  openings.openingAus(echt, "Shingeki no Kyojin", false)?.lied === "Guren no Yumiya",
-  "so bekommt der als Serie gefuehrte Anime seine Musik doch");
-pruefe("Und geraten wird nur ohne genauen Treffer",
-  openings.besterAnime([{ name: "Naruto", media_format: "TV", year: 2002 }], "Naruto", false).length === 1
-  && openings.besterAnime([{ name: "Bleach", media_format: "TV", year: 2004 }], "Naruto", false).length === 0);
+// Gesucht wird ohne Staffelangabe. Die Anbieter haengen an, um welchen Teil es
+// geht; der Katalog fuehrt die Serie unter ihrem Namen, und mit dem Anhang
+// findet die Suche nichts oder das Falsche.
+pruefe("Die Staffel faellt aus dem Suchtitel",
+  openings.suchTitel("One Piece Staffel 21") === "One Piece"
+  && openings.suchTitel("Vinland Saga Season 2") === "Vinland Saga"
+  && openings.suchTitel("Demon Slayer - Teil 3") === "Demon Slayer");
+pruefe("Ein Titel ohne Anhang bleibt, wie er ist",
+  openings.suchTitel("Attack on Titan") === "Attack on Titan"
+  && openings.suchTitel("Dr. Stone") === "Dr. Stone",
+  "abgeschnitten wird nur, was erkennbar eine Fortsetzung bezeichnet");
+pruefe("Und der Anhang stoert auch den Treffer nicht mehr",
+  openings.openingAus(echt, "Attack on Titan Staffel 2")?.lied === "Guren no Yumiya");
 
 // sequence ist in der echten Antwort oft null - die Nummer steht im slug.
 pruefe("Die Nummer kommt notfalls aus dem slug",

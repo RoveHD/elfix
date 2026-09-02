@@ -9180,13 +9180,17 @@ ipcMain.handle("wrapped:reihenfolge", (_event, schluessel, jahr) =>
 // Abspaenne von Anime. Nur dafuer gibt es so etwas; zu einem Film wird deshalb
 // gar nicht erst gefragt.
 //
-// Gefragt wird dagegen auch bei Gattung "serie", und zwar aus einem
-// praktischen Grund: die Anbieter fuehren einen guten Teil ihrer Anime als
-// gewoehnliche Serie, und der Rueckblick haette dort ohne Not geschwiegen. Was
-// dabei aber wegfaellt, ist die Nachsicht der Suche - fuer alles, was nicht
-// ausdruecklich Anime ist, zaehlt nur der genaue Titeltreffer. Sonst legte die
-// Suche einer amerikanischen Krimiserie das Opening irgendeines Anime unter,
-// den sie fuer aehnlich haelt, und das waere schlimmer als Stille.
+// Gefragt wird dagegen zu jeder Serie, gleich welche Gattung die Anbieter ihr
+// geben. Zuerst galt das nur fuer Anime, dann fuer Serien mit genauem
+// Titeltreffer - und beides blieb in der Praxis stumm: die Anbieter fuehren
+// einen guten Teil ihrer Anime als gewoehnliche Serie, und ein genauer
+// Titelvergleich trifft aus denselben Gruenden selten wie eh und je ("Attack
+// on Titan" gegen "Shingeki no Kyojin").
+//
+// Der Preis steht fest und ist in Kauf genommen: eine Serie, zu der es im
+// Katalog nichts gibt, bekommt das Opening dessen, was die Suche fuer aehnlich
+// haelt. Am Knopf steht, was laeuft und aus welchem Anime - ein Fehlgriff ist
+// damit sichtbar und nicht raetselhaft.
 //
 // Gelesen wird die Antwort in src/openings.js, und zwar bewusst dort: dieses
 // Modul kennt kein Netz und laesst sich deshalb pruefen. Was hier steht, ist
@@ -9205,11 +9209,10 @@ const OPENING_FRIST_MS = 4000;
 
 async function openingFuer(titel, gattung) {
   const name = String(titel || "").trim();
-  const art = String(gattung || "");
-  if (!name || art === "film") return null;
-  // Die Gattung gehoert in den Schluessel: sie entscheidet mit, wie streng
-  // gesucht wird, und damit auch ueber das Ergebnis.
-  const schluessel = `${art}|${name}`;
+  if (!name || String(gattung || "") === "film") return null;
+  // Gesucht wird ohne Staffelangabe, und der Schluessel folgt der Suche: "One
+  // Piece Staffel 21" und "One Piece" sind dieselbe Anfrage.
+  const schluessel = openings.suchTitel(name);
   if (openingCache.has(schluessel)) return openingCache.get(schluessel);
 
   let gefunden = null;
@@ -9220,14 +9223,20 @@ async function openingFuer(titel, gattung) {
         cache: "no-store",
         signal: AbortSignal.timeout(OPENING_FRIST_MS)
       });
-      if (antwort.ok) {
-        gefunden = openings.openingAus(await antwort.json(), name, art === "anime");
-      }
+      if (antwort.ok) gefunden = openings.openingAus(await antwort.json(), name);
+      else console.log(`[ELFIX MUSIK] ${schluessel}: der Katalog antwortet mit ${antwort.status}`);
     }
-  } catch {
+    // Bleibt es still, soll wenigstens im Protokoll stehen, woran es lag.
+    // Zwischen "nicht gefragt", "nichts gefunden" und "kein Netz" ist von
+    // aussen sonst nicht zu unterscheiden - und genau das war die Lage, als
+    // gemeldet wurde, dass gar keine Musik kommt.
+    if (!gefunden) console.log(`[ELFIX MUSIK] ${schluessel}: kein Opening im Katalog`);
+    else console.log(`[ELFIX MUSIK] ${schluessel}: ${gefunden.lied || "?"} (${gefunden.anime || "?"})`);
+  } catch (fehler) {
     // Kein Netz, kein Treffer, eine Antwort in unerwarteter Form: alles
     // dasselbe Ergebnis. Der Rueckblick bleibt stumm und laeuft weiter -
     // das ist genau der Zustand, den es vorher gab.
+    console.log(`[ELFIX MUSIK] ${schluessel}: ${fehler?.message || fehler}`);
   }
   openingCache.set(schluessel, gefunden);
   return gefunden;

@@ -40,8 +40,25 @@ const WIRT = "https://api.animethemes.moe";
  * "Shingeki no Kyojin", mal mit angehaengter Staffel. Ein exakter Filter
  * traefe davon genau eine Schreibweise.
  */
+/**
+ * Der Titel, mit dem gesucht wird.
+ *
+ * <p>Die Anbieter haengen an, um welchen Teil es geht: "One Piece Staffel 21",
+ * "Vinland Saga Season 2", "Demon Slayer - Teil 3". Der Katalog fuehrt die
+ * Serie unter ihrem Namen, und die Suche findet mit dem Anhang nichts oder das
+ * Falsche. Abgeschnitten wird deshalb, was erkennbar eine Fortsetzung
+ * bezeichnet - und nur das: aus "Attack on Titan" wird nichts, denn dort steht
+ * keine Nummer.
+ */
+function suchTitel(titel) {
+  return String(titel || "")
+    .replace(/[\s:,\-–—]*\(?\b(?:staffel|season|teil|part|cour|vol\.?|volume)\b[\s.]*\d+\)?\s*$/i, "")
+    .replace(/[\s:,\-–—]+$/, "")
+    .trim();
+}
+
 function anfrageUrl(titel) {
-  const name = String(titel || "").trim();
+  const name = suchTitel(titel);
   if (!name) return "";
   const felder = [
     "q=" + encodeURIComponent(name),
@@ -123,23 +140,22 @@ function nummerAus(thema) {
  * liest, als er erwartet hat, sieht sofort, dass danebengegriffen wurde,
  * statt sich ueber ein fremdes Lied zu wundern.
  *
- * <p><b>Und deshalb ist sie abschaltbar.</b> Gefragt wird der Katalog auch zu
- * Titeln, die die Anbieter als gewoehnliche Serie fuehren - darunter sind
- * reichlich Anime, aber eben auch alles andere. Fuer die gilt {@code
- * ungenauErlaubt = false}: trifft der Titel nicht genau, gibt es nichts. Eine
- * Krimiserie bekaeme sonst das Opening irgendeines Anime, den die Suche fuer
- * aehnlich haelt.
- *
- * @param ungenauErlaubt ob ohne genauen Titeltreffer geraten werden darf
+ * <p><b>Sie gilt fuer jede Gattung, die ueberhaupt gefragt wird.</b> Eine
+ * Zeitlang galt sie nur fuer Anime, und alles, was die Anbieter als
+ * gewoehnliche Serie fuehren, brauchte einen genauen Titeltreffer. Damit blieb
+ * fast jede Serie stumm: "One Piece" steht bei den Anbietern als Serie, und
+ * ein genauer Vergleich trifft aus denselben Gruenden selten wie oben. Der
+ * Preis ist bekannt und in Kauf genommen - eine Serie ohne Gegenstueck im
+ * Katalog bekommt das Opening dessen, was die Suche fuer aehnlich haelt. Am
+ * Knopf steht, was laeuft und woher; ein Fehlgriff ist damit sichtbar.
  */
-function besterAnime(kandidaten, titel, ungenauErlaubt = true) {
+function besterAnime(kandidaten, titel) {
   const brauchbar = kandidaten.filter((eintrag) => eintrag && typeof eintrag === "object");
   const genau = brauchbar.filter((eintrag) => {
     const namen = [eintrag.name, ...sammle(eintrag, ["title"]).map(text)];
     return namen.some((name) => passt(titel, name));
   });
   if (genau.length) return genau;
-  if (!ungenauErlaubt) return [];
   const fernsehen = brauchbar.filter(
     (eintrag) => text(eintrag.media_format).toUpperCase() === "TV");
   const feld = fernsehen.length ? fernsehen : brauchbar;
@@ -160,14 +176,13 @@ function besterAnime(kandidaten, titel, ungenauErlaubt = true) {
  *
  * @param antwort das geparste JSON - beliebig geformt, auch Unsinn
  * @param titel   der Titel, um den es geht
- * @param ungenauErlaubt ob ohne genauen Titeltreffer geraten werden darf; bei
- *                       Anime ja, bei allem anderen nicht
  * @return {{url, lied, anime}} oder null
  */
-function openingAus(antwort, titel, ungenauErlaubt = true) {
+function openingAus(antwort, titel) {
   if (!antwort || typeof antwort !== "object") return null;
+  const name = suchTitel(titel);
   const kandidaten = sammle(antwort, ["anime"]).flat().filter(Boolean);
-  const treffer = besterAnime(kandidaten, titel, ungenauErlaubt);
+  const treffer = besterAnime(kandidaten, name);
   if (!treffer.length) return null;
 
   let bestes = null;
@@ -193,4 +208,4 @@ function openingAus(antwort, titel, ungenauErlaubt = true) {
   return { url: bestes.url, lied: bestes.lied, anime: bestes.anime };
 }
 
-module.exports = { WIRT, anfrageUrl, sammle, passt, nummerAus, besterAnime, openingAus };
+module.exports = { WIRT, suchTitel, anfrageUrl, sammle, passt, nummerAus, besterAnime, openingAus };
