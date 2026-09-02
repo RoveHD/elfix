@@ -13,7 +13,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -49,34 +48,7 @@ final class Rueckblick {
         "Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"
     };
 
-    /**
-     * Womit das Titelbild angefordert wird - keine Kartenhöhe mehr.
-     *
-     * <p>Sie war einmal die feste Höhe jeder Karte: hoch genug für eine Zahl,
-     * und fest, damit die Karte beim Blättern nicht springt. Seit die Karte den
-     * Platz füllt, den ihr das Gerüst lässt ({@code MainActivity.wrappedGeruest}),
-     * springt ohnehin nichts mehr - und eine feste Höhe wäre jetzt schädlich:
-     * auf einem kleinen Schirm stünde sie über den unteren Rand hinaus und
-     * schöbe die Knöpfe hinaus, genau den Fehler, um den es ging.
-     *
-     * <p>Geblieben ist sie als Anhaltspunkt für {@link Bilder}, in welcher
-     * Größe das Titelbild geholt werden soll.
-     */
-    private static final int KARTE_HOEHE_DP = 380;
 
-    /**
-     * Wie stark das Titelbild hinter der Karte durchkommt.
-     *
-     * <p>Dieselben 38 Prozent wie am Rechner ({@code .wrapped-backdrop}). Mehr,
-     * und die Schrift steht auf einem Foto; weniger, und man fragt sich, wozu
-     * das Bild da ist.
-     *
-     * <p>Es waren 22 Prozent, auf beiden Geraeten. Aufgefallen ist der
-     * Unterschied erst, als hier ueberhaupt Bilder ankamen: zusammen mit dem
-     * Schleier darueber blieb vom Poster ein Grau, und eine graue Flaeche ist
-     * kein Bild - sie ist nur eine dunklere Karte.
-     */
-    private static final float HINTERGRUND_DECKKRAFT = 0.38f;
 
     /** Breite und Höhe des Posters auf den beiden Karten "des Jahres". */
     private static final int POSTER_BREITE_DP = 116;
@@ -408,16 +380,9 @@ final class Rueckblick {
         JSONObject topSerie = erstes(daten.optJSONArray("serien"));
         JSONObject topFilm = erstes(daten.optJSONArray("filme"));
         JSONObject ersterTitel = daten.optJSONObject("erster");
-        // Das Bild, das die Karten ohne eigenes tragen: die Serie des Jahres,
-        // sonst der Film, sonst der Titel, mit dem das Jahr angefangen hat.
-        // Dieselbe Reihenfolge wie am Rechner.
-        String stimmung = bild(topSerie);
-        if (stimmung.isEmpty()) stimmung = bild(topFilm);
-        if (stimmung.isEmpty()) stimmung = bild(ersterTitel);
-
         // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
         // Einschränkung, unter der alles Folgende gilt.
-        seiten.add(new Karte("auftakt", bildkarte(context, stimmung,
+        seiten.add(new Karte("auftakt", karte(context,
             augenbraue(context, "ELFIX Wrapped"),
             zeile(context, String.valueOf(jahr), 56, Theme.TEXT_PRIMARY, true),
             zeile(context, auftakt(daten, jahr), 17, Theme.TEXT_SECONDARY, false),
@@ -427,7 +392,7 @@ final class Rueckblick {
         if (zeit) {
             long stunden = Math.round(daten.optDouble("sekunden") / 3600);
             double tage = Math.round(daten.optDouble("sekunden") / 86400 * 10) / 10.0;
-            seiten.add(new Karte("zeit", karte(context, stimmung,
+            seiten.add(new Karte("zeit", karte(context,
                 grosseZahl(context, String.valueOf(stunden), "Stunden"),
                 zeile(context, "hast du dieses Jahr mit ELFIX geschaut.", 17, Theme.TEXT_SECONDARY, false),
                 tage >= 1
@@ -438,7 +403,7 @@ final class Rueckblick {
         // 3 - Folgen
         int folgen = daten.optInt("folgen", 0);
         if (folgen > 0) {
-            seiten.add(new Karte("folgen", karte(context, stimmung,
+            seiten.add(new Karte("folgen", karte(context,
                 grosseZahl(context, String.valueOf(folgen), folgen == 1 ? "Folge" : "Folgen"),
                 zeile(context, "hast du " + jahr + " angesehen.", 17, Theme.TEXT_SECONDARY, false),
                 daten.optDouble("folgenJeTag", 0) > 0
@@ -451,24 +416,24 @@ final class Rueckblick {
         JSONObject abschluesse = daten.optJSONObject("abschluesse");
         if (abschluesse != null) {
             abschlussKarte(context, seiten, abschluesse.optInt("serie", 0), "Serie", "Serien",
-                stimmung, "serien");
+                "serien");
             abschlussKarte(context, seiten, abschluesse.optInt("film", 0), "Film", "Filme",
-                stimmung, "filme");
+                "filme");
             abschlussKarte(context, seiten, abschluesse.optInt("anime", 0), "Anime", "Anime",
-                stimmung, "anime");
+                "anime");
         }
 
         // 7 - Serie und Film des Jahres. Ausgewählt nach geschauter Zeit, und
         // wo die fehlt, nach Folgen - nicht nach einer erfundenen Punktzahl.
         if (topSerie != null) {
-            seiten.add(new Karte("top-serie", bildkarte(context, stimmung,
+            seiten.add(new Karte("top-serie", karte(context,
                 augenbraue(context, "Deine Serie des Jahres"),
                 poster(context, topSerie.optString("titel", ""), bild(topSerie)),
                 zeile(context, topSerie.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, titelZahlen(topSerie, zeit), 14, Theme.TEXT_SECONDARY, false))));
         }
         if (topFilm != null) {
-            seiten.add(new Karte("top-film", bildkarte(context, stimmung,
+            seiten.add(new Karte("top-film", karte(context,
                 augenbraue(context, "Dein Film des Jahres"),
                 poster(context, topFilm.optString("titel", ""), bild(topFilm)),
                 zeile(context, topFilm.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
@@ -487,7 +452,7 @@ final class Rueckblick {
                 liste.addView(zeile(context, (i + 1) + ". " + genre.optString("label", "—"),
                     16, i == 0 ? Theme.TEXT_PRIMARY : Theme.TEXT_SECONDARY, i == 0));
             }
-            seiten.add(new Karte("genre", karte(context, stimmung,
+            seiten.add(new Karte("genre", karte(context,
                 zeile(context, "Du warst dieses Jahr eindeutig auf "
                     + (erste == null ? "—" : erste.optString("label", "—")) + ".",
                     19, Theme.TEXT_PRIMARY, false),
@@ -508,14 +473,14 @@ final class Rueckblick {
                 kasten.addView(MobileViews.balken(context, mixNamen.get(i), prozent + " %",
                     prozent / 100f));
             }
-            seiten.add(new Karte("mix", karte(context, stimmung,
+            seiten.add(new Karte("mix", karte(context,
                 augenbraue(context, "Dein " + jahr + " Mix"), kasten, null)));
         }
 
         // 10 - Strecke
         JSONObject strecke = daten.optJSONObject("strecke");
         if (strecke != null && strecke.optInt("tage", 0) >= 2) {
-            seiten.add(new Karte("streak", karte(context, stimmung,
+            seiten.add(new Karte("streak", karte(context,
                 zeile(context, "Du konntest " + strecke.optInt("tage")
                     + " Tage nicht aufhören.", 19, Theme.TEXT_PRIMARY, false),
                 grosseZahl(context, String.valueOf(strecke.optInt("tage")), "Tage am Stück"),
@@ -527,7 +492,7 @@ final class Rueckblick {
         JSONObject besterWochentag = daten.optJSONObject("aktivsterWochentag");
         if (besterWochentag != null) {
             String tag = wochentag(besterWochentag.optInt("tag", -1));
-            seiten.add(new Karte("wochentag", karte(context, stimmung,
+            seiten.add(new Karte("wochentag", karte(context,
                 zeile(context, tag + " war dein Tag.", 22, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterWochentag.optDouble("sekunden", 0) > 0
                     ? "Insgesamt " + dauer(besterWochentag.optDouble("sekunden")) + " an " + tag + "en."
@@ -536,7 +501,7 @@ final class Rueckblick {
         }
         JSONObject besterTag = daten.optJSONObject("aktivsterTag");
         if (besterTag != null) {
-            seiten.add(new Karte("rekordtag", karte(context, stimmung,
+            seiten.add(new Karte("rekordtag", karte(context,
                 augenbraue(context, "Dein intensivster Tag"),
                 zeile(context, datum(besterTag.optString("tag"), true), 26, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterTag.optDouble("sekunden", 0) > 0
@@ -546,7 +511,7 @@ final class Rueckblick {
 
         // 13 - Längste Sitzung
         if (zeit && daten.optDouble("laengsteSitzung", 0) >= 1800) {
-            seiten.add(new Karte("session", karte(context, stimmung,
+            seiten.add(new Karte("session", karte(context,
                 zeile(context, "Nur noch eine Folge?", 19, Theme.TEXT_PRIMARY, false),
                 grosseZahl(context, dauer(daten.optDouble("laengsteSitzung")), ""),
                 zeile(context, "Deine längste Sitzung am Stück.", 13, Theme.TEXT_DISABLED, false))));
@@ -556,7 +521,7 @@ final class Rueckblick {
         // Abenden folgt kein Typ.
         String[] tageszeit = tageszeit(daten, zeit);
         if (tageszeit != null) {
-            seiten.add(new Karte("tageszeit", karte(context, stimmung,
+            seiten.add(new Karte("tageszeit", karte(context,
                 zeile(context, "Du bist " + tageszeit[0] + " " + tageszeit[1] + ".",
                     22, Theme.TEXT_PRIMARY, true),
                 grosseZahl(context, tageszeit[2], "%"),
@@ -566,7 +531,7 @@ final class Rueckblick {
         // 15 - Wiederholungen, nur wenn es welche gab.
         JSONObject oft = erstes(daten.optJSONArray("wiederholteste"));
         if (oft != null) {
-            seiten.add(new Karte("rewatch", bildkarte(context, stimmung,
+            seiten.add(new Karte("rewatch", karte(context,
                 zeile(context, "Das kam dir bekannt vor …", 19, Theme.TEXT_SECONDARY, false),
                 poster(context, oft.optString("titel", ""), bild(oft)),
                 zeile(context, oft.optString("titel", "—"), 26, Theme.TEXT_PRIMARY, true),
@@ -578,7 +543,7 @@ final class Rueckblick {
         JSONObject besterMonat = daten.optJSONObject("aktivsterMonat");
         JSONArray monate = daten.optJSONArray("monate");
         if (besterMonat != null && monate != null && monate.length() >= 2) {
-            seiten.add(new Karte("monat", karte(context, stimmung,
+            seiten.add(new Karte("monat", karte(context,
                 zeile(context, monatName(besterMonat.optString("monat"))
                     + " war dein stärkster Monat.", 20, Theme.TEXT_PRIMARY, true),
                 zeile(context, besterMonat.optDouble("sekunden", 0) > 0
@@ -593,7 +558,7 @@ final class Rueckblick {
         JSONObject erster = ersterTitel;
         JSONObject letzter = daten.optJSONObject("letzter");
         if (erster != null) {
-            seiten.add(new Karte("erster", bildkarte(context, stimmung,
+            seiten.add(new Karte("erster", karte(context,
                 augenbraue(context, "So hat dein Jahr begonnen"),
                 poster(context, erster.optString("titel", ""), bild(erster)),
                 zeile(context, erster.optString("titel", "—"), 24, Theme.TEXT_PRIMARY, true),
@@ -602,7 +567,7 @@ final class Rueckblick {
         if (letzter != null && (erster == null
             || !letzter.optString("titel").equals(erster.optString("titel")))) {
             boolean laeuftNoch = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) == jahr;
-            seiten.add(new Karte("letzter", bildkarte(context, stimmung,
+            seiten.add(new Karte("letzter", karte(context,
                 augenbraue(context, laeuftNoch ? "Dein bisher letzter Titel"
                     : "Und damit hast du das Jahr beendet"),
                 poster(context, letzter.optString("titel", ""), bild(letzter)),
@@ -618,7 +583,7 @@ final class Rueckblick {
             for (String satz : fakten) {
                 liste.addView(zeile(context, "• " + satz, 15, Theme.TEXT_SECONDARY, false));
             }
-            seiten.add(new Karte("fakten", karte(context, stimmung,
+            seiten.add(new Karte("fakten", karte(context,
                 augenbraue(context, "Nebenbei"), liste, null)));
         }
 
@@ -633,17 +598,16 @@ final class Rueckblick {
         }
         schluss.addView(zeile(context, daten.optInt("tage", 0) + " Schautage",
             18, Theme.TEXT_PRIMARY, true));
-        seiten.add(new Karte("finale", bildkarte(context, stimmung,
+        seiten.add(new Karte("finale", karte(context,
             augenbraue(context, "Dein ELFIX " + jahr), schluss,
             zeile(context, "Gemessen, nicht geschätzt.", 12, Theme.TEXT_DISABLED, false))));
         return seiten;
     }
 
     private static void abschlussKarte(Context context, List<Karte> seiten, int anzahl,
-                                       String einzahl, String mehrzahl, String stimmung,
-                                       String schluessel) {
+                                       String einzahl, String mehrzahl, String schluessel) {
         if (anzahl <= 0) return;
-        seiten.add(new Karte(schluessel, bildkarte(context, stimmung,
+        seiten.add(new Karte(schluessel, karte(context,
             grosseZahl(context, String.valueOf(anzahl), anzahl == 1 ? einzahl : mehrzahl),
             zeile(context, "hast du abgeschlossen.", 17, Theme.TEXT_SECONDARY, false), null)));
     }
@@ -975,51 +939,30 @@ final class Rueckblick {
      * erst recht keine Null.
      */
     /**
-     * Eine Karte ohne eigenes Titelbild - sie traegt das Stimmungsbild.
+     * Eine Karte des Jahresrückblicks.
      *
-     * <p>Frueher trug sie gar keines, und genau das war der Fehler: von neunzehn
-     * Karten hatten neun ein Bild und zehn keines. Beim Durchblaettern wechselte
-     * der Hintergrund also staendig zwischen Foto und leerer Flaeche - gemeldet
-     * als "Background sieht immer unterschiedlich aus und nicht einheitlich".
+     * <p><b>Ohne Titelbild, und das ist der Punkt.</b> Hinter den Karten lag
+     * einmal je Karte ein anderes Poster, dann - gegen die Unruhe, die das
+     * machte - überall dasselbe: das der Serie des Jahres. Beides war falsch,
+     * und der zweite Versuch schlimmer als der erste.
      *
-     * <p>Jetzt liegt hinter jeder Karte dasselbe Bild. Welches, entscheidet
-     * {@code wrapped()} einmal fuer den ganzen Rueckblick: die Serie des
-     * Jahres, sonst der Film, sonst der Titel, mit dem das Jahr anfing. Ein
-     * Jahresrueckblick ist eine Geschichte und keine Sammlung von Kacheln -
-     * er darf durchgehend gleich aussehen. Wo ein bestimmter Titel gemeint ist,
-     * steht der als Poster <em>auf</em> der Karte; das ist die Stelle, an die
-     * er gehoert.
+     * <p>Gemeldet als „dann weiss man ja schon, was man als Serie hat". Die
+     * Karte „Deine Serie des Jahres" ist die Pointe des ganzen Rückblicks, und
+     * ein weichgezeichnetes Poster auf Karte eins nimmt sie vorweg. Wer eine
+     * Serie geschaut hat, erkennt sie auch verwaschen - das Bild war stark
+     * genug, um die Stimmung zu tragen, also stark genug, um zu verraten.
+     *
+     * <p>Geblieben ist der eigene Verlauf der Karte. Er ist auf jeder derselbe,
+     * kostet nichts und verrät nichts; die Poster stehen weiterhin auf den
+     * Karten, die von einem Titel handeln - dort, wo sie hingehören, und wo sie
+     * jetzt sogar mehr auffallen, weil nichts mehr dagegen anläuft.
+     *
+     * <p>Die Höhe steht nicht fest: die Karte füllt, was ihr das Gerüst lässt
+     * ({@code MainActivity.wrappedGeruest}), und was darin nicht aufgeht, rollt
+     * innerhalb der Karte.
      */
-    private static View karte(Context context, String stimmung, View... zeilen) {
-        return bildkarte(context, stimmung, zeilen);
-    }
 
-    /**
-     * Dieselbe Karte, mit dem Titelbild als Hintergrund.
-     *
-     * <p><b>Warum das Bild dazugehört.</b> Am Rechner trägt jede Wrapped-Karte
-     * ein Titelbild - weit heruntergedimmt und weich, damit es die Stimmung
-     * trägt und nicht die Aussage ({@code .wrapped-backdrop} im Stylesheet).
-     * Auf dem Telefon stand stattdessen ein grauer Kasten mit linksbündigem
-     * Text: dieselben Zahlen, aber nichts, was nach dem Jahr aussieht, das man
-     * hinter sich hat. Gemeldet als "sieht echt schlecht aus, ohne Bilder".
-     *
-     * <p>Das Bild steckt längst in der Auswertung: {@code statistik.auswerten}
-     * gibt zu jeder Serie, jedem Film und zum ersten wie letzten Titel das
-     * {@code bild} mit - dieselbe Adresse, die auch die Kacheln der Startseite
-     * benutzen. Geholt wird es über {@link Bilder}, also aus demselben Speicher
-     * wie dort; eine Karte kostet damit keinen zweiten Ladevorgang.
-     *
-     * <p>Drei Schichten, in dieser Reihenfolge: das Bild, ein Schleier darüber,
-     * der Text zuoberst. Ohne den Schleier stünde die Schrift auf einem
-     * beliebigen Bildausschnitt und wäre stellenweise unlesbar; ohne Bild
-     * entfallen beide, und die Karte behält ihren eigenen Verlauf.
-     *
-     * <p>Die Höhe steht fest. Karten mit einer Zeile und Karten mit einer
-     * Rangliste sprangen sonst zwischen zwei Fingertipps um die halbe
-     * Bildschirmhöhe, und die Punkte darunter sprangen mit.
-     */
-    private static View bildkarte(Context context, String bildUrl, View... zeilen) {
+    private static View karte(Context context, View... zeilen) {
         FrameLayout rahmen = new FrameLayout(context);
         final int radius = MobileViews.dp(context, MobileViews.CARD_RADIUS);
         rahmen.setOutlineProvider(new ViewOutlineProvider() {
@@ -1040,32 +983,6 @@ final class Rueckblick {
         grund.setCornerRadius(radius);
         grund.setStroke(MobileViews.dp(context, 1), Theme.BORDER);
         rahmen.setBackground(grund);
-
-        if (bildUrl != null && !bildUrl.trim().isEmpty()) {
-            ImageView hintergrund = new ImageView(context);
-            hintergrund.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            hintergrund.setAlpha(HINTERGRUND_DECKKRAFT);
-            // Entsaettigt wie am Rechner (dort `saturate(0.45)` auf
-            // .wrapped-backdrop). Sonst haengt die Farbe der ganzen Buehne
-            // daran, welches Poster jemand zufaellig als Serie des Jahres hat -
-            // ein giftgruenes ergaebe eine giftgruene Buehne. So traegt das
-            // Bild nur seine Struktur bei, und die Farbe kommt aus dem Theme.
-            android.graphics.ColorMatrix flau = new android.graphics.ColorMatrix();
-            flau.setSaturation(0.45f);
-            hintergrund.setColorFilter(new android.graphics.ColorMatrixColorFilter(flau));
-            rahmen.addView(hintergrund, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            Bilder.laden(hintergrund, bildUrl, 360, KARTE_HOEHE_DP, null);
-
-            View schleier = new View(context);
-            schleier.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{
-                    Color.argb(170, 7, 10, 18),
-                    Color.argb(70, 7, 10, 18),
-                    Color.argb(200, 7, 10, 18)}));
-            rahmen.addView(schleier, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        }
 
         LinearLayout inhalt = new LinearLayout(context);
         inhalt.setOrientation(LinearLayout.VERTICAL);

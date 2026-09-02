@@ -408,39 +408,34 @@ pruefe("Das Theme wird durchgehend benutzt",
     path.join(WURZEL, "..", "android", "app", "src", "main", "java", "local", "elflix",
       "android", "MainActivity.java"), "utf8");
 
-  pruefe("Die Karten des Telefons tragen ein Titelbild",
-    /private static View bildkarte\(Context context, String bildUrl[\s\S]{0,3000}?Bilder\.laden\(hintergrund, bildUrl/
-      .test(RUECKBLICK));
-  pruefe("Darueber liegt ein Schleier, damit die Schrift lesbar bleibt",
-    /rahmen\.addView\(schleier/.test(RUECKBLICK),
-    "sonst steht der Text auf einem beliebigen Bildausschnitt");
-  pruefe("Ohne Bild entfaellt beides",
-    /if \(bildUrl != null && !bildUrl\.trim\(\)\.isEmpty\(\)\) \{/.test(RUECKBLICK),
-    "eine gedimmte Flaeche ohne Bild waere nur dunkler");
-
-  pruefe("Auch auf dem Telefon liegt hinter jeder Karte dasselbe Bild",
-    /private static View karte\(Context context, String stimmung, View\.\.\. zeilen\)/
-      .test(RUECKBLICK)
-    && !/bildkarte\(context, bild\(/.test(RUECKBLICK),
-    "neunzehn Karten mit neunzehn Hintergruenden sind neunzehn Seiten");
-  pruefe("Und es wird dort genauso entsaettigt wie am Rechner",
-    /flau\.setSaturation\(0\.45f\)/.test(RUECKBLICK)
-    && /saturate\(0\.45\)/.test(CSS),
-    "sonst sehen zwei Geraete verschieden aus, obwohl beide dasselbe meinen");
-
-  // Dieselbe Zahl wie im Stylesheet. Zwei Geraete, die dasselbe Bild
-  // verschieden stark durchscheinen lassen, sind zwei Gestaltungen.
-  const cssDeckkraft = Number((CSS.match(/\.wrapped-backdrop \{[\s\S]*?opacity: ([\d.]+);/) || [])[1]);
-  const javaDeckkraft = Number(
-    (RUECKBLICK.match(/HINTERGRUND_DECKKRAFT = ([\d.]+)f;/) || [])[1]);
-  pruefe("Und zwar genauso stark wie am Rechner",
-    cssDeckkraft > 0 && cssDeckkraft === javaDeckkraft,
-    `Rechner ${cssDeckkraft}, Telefon ${javaDeckkraft}`);
-
-  pruefe("Das Stimmungsbild kommt in derselben Reihenfolge wie am Rechner",
-    /String stimmung = bild\(topSerie\);[\s\S]{0,200}?bild\(topFilm\)[\s\S]{0,200}?bild\(ersterTitel\)/
+  // --- Und warum jetzt gar keines mehr ---
+  //
+  // Erst trug jede Karte das Poster des Titels, von dem sie handelte, und die
+  // Karten mit blossen Zahlen gar keines - das war unruhig. Dann trugen alle
+  // dasselbe, naemlich das der Serie des Jahres - und das war schlimmer:
+  //
+  //   "dann weiss man ja schon was man als serie hat"
+  //
+  // Die Karte "Deine Serie des Jahres" ist die Pointe des ganzen Rueckblicks.
+  // Ein weichgezeichnetes Poster auf Karte eins nimmt sie vorweg; wer eine
+  // Serie geschaut hat, erkennt sie auch verwaschen. Das Bild war stark genug,
+  // um die Stimmung zu tragen - also stark genug, um zu verraten.
+  //
+  // Zurueck zum ersten Zustand ist keine Loesung: der war ja der Anlass fuer
+  // den zweiten. Einheitlich *und* ohne Verrat geht nur ohne Titelbild.
+  pruefe("Keine Karte des Telefons traegt ein Titelbild",
+    !/bildkarte/.test(RUECKBLICK)
+    && !/HINTERGRUND_DECKKRAFT/.test(RUECKBLICK)
+    && /private static View karte\(Context context, View\.\.\. zeilen\)/.test(RUECKBLICK),
+    "die Serie des Jahres darf nicht auf Karte eins stehen");
+  pruefe("Und es wird auch keines mehr geholt",
+    !/Bilder\.laden\(hintergrund/.test(RUECKBLICK),
+    "kein Bild, kein Ladevorgang");
+  pruefe("Die Karte behaelt ihren eigenen Verlauf",
+    /GradientDrawable grund = new GradientDrawable\(GradientDrawable\.Orientation\.TOP_BOTTOM/
       .test(RUECKBLICK),
-    "Serie des Jahres, sonst Film, sonst der erste Titel");
+    "einheitlich war ja richtig - nur nicht mit einem Poster");
+
   pruefe("Serie und Film des Jahres bekommen ihr Poster",
     (RUECKBLICK.match(/poster\(context, top(Serie|Film)\.optString\("titel", ""\)/g) || []).length === 2);
   pruefe("Und ohne Bild stehen dort die Anfangsbuchstaben",
@@ -715,25 +710,32 @@ pruefe("Faellt die Regel aus, bleibt die gebaute Folge",
   /if \(!Array\.isArray\(ordnung\) \|\| !ordnung\.length\) return seiten;/.test(RENDERER),
   "immer dieselbe Folge ist schlechter als eine wechselnde, aber besser als keine");
 
-// --- Ein Hintergrund fuer den ganzen Rueckblick -------------------------------
+// --- Ein Hintergrund, der nichts verraet ------------------------------------
 //
-// Gemeldet als "background sieht immer unterschiedlich aus und nicht
-// einheitlich". Es waren neunzehn Karten mit neunzehn Hintergruenden: neun
-// trugen das Poster des Titels, von dem sie handelten, zehn trugen gar nichts.
-// Beim Blaettern wechselte also staendig Foto, leere Flaeche, anderes Foto in
-// anderer Farbe - das sind neunzehn Seiten und keine Geschichte.
+// Zwei Anlaeufe, beide falsch. Erst trug jede Karte das Poster des Titels, von
+// dem sie handelte - unruhig, gemeldet als "background sieht immer
+// unterschiedlich aus". Dann trugen alle dasselbe, das der Serie des Jahres -
+// einheitlich, aber: "dann weiss man ja schon was man als serie hat".
+//
+// Die Karte "Deine Serie des Jahres" ist die Pointe. Einheitlich *und* ohne
+// Verrat geht nur ohne Titelbild: die Buehne traegt ihren eigenen Verlauf, und
+// der ist auf jeder Karte derselbe.
 
-pruefe("Hinter jeder Karte liegt dasselbe Bild",
-  /let wrappedStimmungsbild = "";/.test(RENDERER)
-  && /function wrappedSeite\(schluessel, art, teile, bild = wrappedStimmungsbild\)/.test(RENDERER)
-  && /wrappedStimmungsbild = bild;/.test(RENDERER));
-pruefe("Keine Karte bringt mehr ihr eigenes mit",
-  !/\], topSerie\.bild\)\)|\], topFilm\.bild\)\)|\], oft\.bild\)\)|\], daten\.erster\.bild\)\)|\], daten\.letzter\.bild\)\)/
-    .test(RENDERER),
-  "wo ein Titel gemeint ist, steht er als Poster auf der Karte - dort faellt er auf");
-pruefe("Das Bild wird entsaettigt statt verstaerkt",
-  /\.wrapped-backdrop \{[\s\S]*?filter: blur\([\d]+px\) saturate\(0\.\d+\)/.test(CSS),
-  "sonst haengt die Farbe der Buehne daran, welches Poster jemand zufaellig hat");
+pruefe("Keine Karte traegt ein Titelbild",
+  !/wrappedStimmungsbild/.test(RENDERER)
+  && !/wrapped-backdrop/.test(RENDERER)
+  && /function wrappedSeite\(schluessel, art, teile\) \{/.test(RENDERER),
+  "die Serie des Jahres darf nicht auf Karte eins stehen");
+pruefe("Auch nicht ueber das Stylesheet",
+  !/wrapped-backdrop/.test(CSS) && !/wrapped-heranziehen/.test(CSS),
+  "eine Regel ohne Element ist eine Falle fuer den naechsten");
+pruefe("Die Buehne bleibt trotzdem auf jeder Karte dieselbe",
+  /\.wrapped-stage::before \{[\s\S]*?animation: wrapped-schweben/.test(CSS)
+  && /\.wrapped-card::after \{/.test(CSS),
+  "einheitlich war ja richtig - nur nicht mit einem Poster");
+pruefe("Und die Poster stehen weiter auf den Karten, die von einem Titel handeln",
+  (RENDERER.match(/wrappedPoster\(/g) || []).length >= 4,
+  "dort fallen sie auf, ohne etwas vorwegzunehmen");
 
 // --- Und der Hinweis, den man uebersah ---------------------------------------
 

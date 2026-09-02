@@ -6228,49 +6228,19 @@ input[type="color"] {
   overflow: hidden;
 }
 
-/* Das Hintergrundbild traegt die Stimmung, nicht die Aussage - deshalb weit
-   heruntergedimmt und weich ausgelaufen. Ohne den Verlauf darueber stuende der
-   Text auf einem beliebigen Bildausschnitt und waere stellenweise unlesbar. */
-.wrapped-backdrop {
-  position: absolute;
-  inset: -6%;
-  background-size: cover;
-  background-position: center;
-  /* War 0.22 - zusammen mit dem Schleier darunter blieb vom Poster ein Grau.
-     Auf dem Telefon steht dieselbe Zahl, dort aber ohne den zweiten Verlauf
-     und auf einer Karte statt auf einem ganzen Bildschirm. Am Rechner darf das
-     Bild deutlicher kommen; lesbar bleibt der Text durch den Schleier, nicht
-     durch ein unsichtbares Bild. */
-  opacity: 0.38;
-  /* Entsaettigt, nicht gesaettigt - und das ist der zweite Teil der Antwort
-     auf "sieht nicht einheitlich aus".
+/* Der Schleier ueber dem Licht der Buehne.
 
-     Der erste Teil ist, dass jetzt hinter jeder Karte dasselbe Bild liegt
-     (siehe wrappedStimmungsbild). Damit wechselt der Hintergrund beim
-     Blaettern nicht mehr. Er haengt aber immer noch daran, welches Poster
-     jemand zufaellig als Serie des Jahres hat: ein giftgruenes Anime-Poster
-     ergaebe eine giftgruene Buehne, ein sepiafarbener Film eine braune. Zwei
-     Leute saehen zwei verschiedene Apps.
-
-     Heruntergezogen auf 45 Prozent Saettigung traegt das Bild nur noch seine
-     Struktur bei - Helligkeiten, Formen -, und die Farbe kommt aus dem Theme,
-     wie ueberall sonst in ELFIX. Es war vorher 1.25, also verstaerkt: genau
-     die falsche Richtung. */
-  filter: blur(16px) saturate(0.45) brightness(0.95);
-  transform: scale(1.06);
-}
-
+   Er lag einmal ueber einem Titelbild und musste es dosieren. Ein Titelbild
+   gibt es nicht mehr - siehe wrappedSeite -, und was bleibt, ist seine zweite
+   Aufgabe: dem Text in der Mitte einen ruhigen Grund geben, damit die grosse
+   Zahl nicht auf der hellsten Stelle des Verlaufs steht. */
 .wrapped-card::after {
   content: "";
   position: absolute;
   inset: 0;
-  /* In der Mitte offen, zu den Raendern hin dicht: dort steht der Text, hier
-     soll das Bild durchkommen. Der frueher gleichmaessige Schleier ueber der
-     ganzen Flaeche nahm dem Poster genau das, wofuer es da war. */
   background:
-    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--bg-app), transparent 30%) 8%, transparent 46%),
-    radial-gradient(circle at 50% 45%, transparent 42%, color-mix(in srgb, var(--bg-app), transparent 42%) 88%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-app), transparent 55%), transparent 30%, color-mix(in srgb, var(--bg-app), transparent 25%));
+    radial-gradient(ellipse at 50% 45%, color-mix(in srgb, var(--bg-app), transparent 45%) 10%, transparent 52%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-app), transparent 60%), transparent 34%, color-mix(in srgb, var(--bg-app), transparent 40%));
   pointer-events: none;
 }
 
@@ -6629,18 +6599,10 @@ input[type="color"] {
 .wrapped-card.is-da .wrapped-content > *:nth-child(3) { animation-delay: 210ms; }
 .wrapped-card.is-da .wrapped-content > *:nth-child(4) { animation-delay: 300ms; }
 
-.wrapped-card.is-da .wrapped-backdrop {
-  animation: wrapped-heranziehen 1400ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
 
 @keyframes wrapped-auftauchen {
   from { opacity: 0; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes wrapped-heranziehen {
-  from { opacity: 0; transform: scale(1.14); }
-  to { opacity: 0.22; transform: scale(1.06); }
 }
 
 @keyframes wrapped-wachsen {
@@ -6657,7 +6619,6 @@ input[type="color"] {
    der Systemvorgabe. Der Inhalt steht dann sofort und vollstaendig da; das
    Weglassen der Animation genuegt dafuer, weil nichts vorgehalten wird. */
 .app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-content > *,
-.app-shell.animations-off .wrapped-modal .wrapped-card.is-da .wrapped-backdrop,
 .app-shell.animations-off .wrapped-modal .wrapped-mix-fill,
 .app-shell.animations-off .wrapped-modal .wrapped-monat-balken,
 .app-shell.animations-off .wrapped-modal .wrapped-stage::before,
@@ -6669,7 +6630,6 @@ input[type="color"] {
 
 @media (prefers-reduced-motion: reduce) {
   .wrapped-card.is-da .wrapped-content > *,
-  .wrapped-card.is-da .wrapped-backdrop,
   .wrapped-mix-fill,
   .wrapped-monat-balken,
   .wrapped-stage::before,

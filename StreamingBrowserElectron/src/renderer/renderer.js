@@ -3662,30 +3662,27 @@ function renderWrappedPunkte() {
 
 // --- Die Seiten --------------------------------------------------------------
 
-// Das eine Bild, das hinter dem ganzen Rueckblick liegt.
+// Kein Titelbild hinter den Karten.
 //
-// Es war nicht eines, sondern neun: jede Karte, die von einem Titel handelte,
-// trug dessen Poster als Hintergrund, und die uebrigen zehn trugen gar nichts.
-// Beim Blaettern wechselte der Hintergrund damit staendig - Foto, leere
-// Flaeche, anderes Foto in anderer Farbe. Gemeldet als "Background sieht immer
-// unterschiedlich aus und nicht einheitlich", und das ist keine
-// Geschmacksfrage: neunzehn Karten mit neunzehn Hintergruenden sind neunzehn
-// Seiten und keine Geschichte.
+// Es lag einmal je Karte ein anderes dahinter, dann - gegen die Unruhe, die
+// das machte - ueberall dasselbe: das Poster der Serie des Jahres. Beides war
+// falsch, und der zweite Versuch schlimmer als der erste.
 //
-// Jetzt steht hinter allen dasselbe. Wo ein bestimmter Titel gemeint ist,
-// steht der als Poster *auf* der Karte - das ist die Stelle, an die er
-// gehoert, und dort faellt er auch auf.
-let wrappedStimmungsbild = "";
+// "Dann weiss man ja schon, was man als Serie hat." Die Karte "Deine Serie des
+// Jahres" ist die Pointe des ganzen Rueckblicks, und ein weichgezeichnetes
+// Poster auf Karte eins nimmt sie vorweg. Wer Attack on Titan geschaut hat,
+// erkennt Attack on Titan auch verwaschen - das Bild war stark genug, um die
+// Stimmung zu tragen, also stark genug, um zu verraten.
+//
+// Jetzt traegt die Buehne nur ihren eigenen Verlauf. Der ist auf jeder Karte
+// derselbe, kostet nichts und verraet nichts; die Poster stehen weiterhin auf
+// den Karten, die von einem Titel handeln - dort, wo sie hingehoeren, und wo
+// sie nach diesem Umbau sogar mehr auffallen, weil nichts mehr dagegen
+// anlaeuft.
 
-function wrappedSeite(schluessel, art, teile, bild = wrappedStimmungsbild) {
+function wrappedSeite(schluessel, art, teile) {
   const knoten = document.createElement("div");
   knoten.className = "wrapped-card";
-  if (bild) {
-    const hintergrund = document.createElement("div");
-    hintergrund.className = "wrapped-backdrop";
-    hintergrund.style.backgroundImage = `url("${bild.replace(/"/g, "%22")}")`;
-    knoten.append(hintergrund);
-  }
   const inhalt = document.createElement("div");
   inhalt.className = "wrapped-content";
   inhalt.append(...teile.filter(Boolean));
@@ -3725,8 +3722,6 @@ function wrappedBauen(daten, jahr) {
   const zeitBekannt = daten.sekundenBekannt > 0 && daten.sekunden > 0;
   const topSerie = daten.serien[0] || null;
   const topFilm = daten.filme[0] || null;
-  const bild = topSerie?.bild || topFilm?.bild || daten.erster?.bild || "";
-  wrappedStimmungsbild = bild;
 
   // 1 - Auftakt. Der Zeitraum steht hier und nirgends sonst: er ist die
   // Einschraenkung, unter der alles Folgende gilt.
@@ -3921,7 +3916,7 @@ function wrappedBauen(daten, jahr) {
 
   // 19 - Das Finale. Bewusst als eigener Block gebaut, damit sich daraus
   // spaeter ein Bild erzeugen laesst, ohne den Rest mitzunehmen.
-  seiten.push(wrappedFinale(daten, jahr, zeitBekannt, bild));
+  seiten.push(wrappedFinale(daten, jahr, zeitBekannt));
   return seiten;
 }
 
@@ -4093,7 +4088,7 @@ function wrappedFaktenListe(fakten) {
 // Die Abschlusskarte. Sie steht als eigener, in sich geschlossener Block mit
 // eigener Kennung - so laesst sich spaeter genau dieser Ausschnitt als Bild
 // ausgeben, ohne dass dafuer etwas umgebaut werden muesste.
-function wrappedFinale(daten, jahr, zeitBekannt, bild) {
+function wrappedFinale(daten, jahr, zeitBekannt) {
   const karte = document.createElement("div");
   karte.className = "wrapped-summary";
   karte.id = "wrappedSummary";
@@ -4148,7 +4143,7 @@ function wrappedFinale(daten, jahr, zeitBekannt, bild) {
     showReview().catch(() => {});
   });
 
-  return wrappedSeite("finale", "is-finale", [karte, schluss], bild);
+  return wrappedSeite("finale", "is-finale", [karte, schluss]);
 }
 
 // Welches Jahr gerade Saison hat - 0 heisst: keine.
