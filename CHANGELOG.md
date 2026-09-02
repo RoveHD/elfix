@@ -3,6 +3,47 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.0 — 2. September 2026
+
+**Der Host führt die Runde — und bleibt es.** Drei gemeldete Fehler, eine
+Wurzel: das Relay hat an mehreren Stellen etwas anderes geglaubt als den Host.
+
+**Ein Gast konnte die anderen wegspulen.** Ein Sprung ging an alle hinaus,
+gleich von wem er kam — den Stand der Runde änderte er aber nur beim Host. Wer
+beitrat und sich dabei zurechtruckelte, riss die halbe Runde kurz mit sich, und
+der nächste Ausgleich zog sie gleich wieder zurück. Jetzt bewegt nur der Host
+die Runde durch Spulen. Am eigenen Player darf jeder spulen, wohin er will; wo
+er steht, sehen die anderen wie bisher in der Leiste. Play und Pause von Gästen
+wirken unverändert für alle.
+
+**Der Fernseher blieb stehen, während alle liefen.** Ob ein pausiertes Gerät
+sein Play nachgereicht bekommt — und was ein beitretendes Gerät hört —, entschied
+der zuletzt verschickte Befehl. Der veraltet: die Pause eines Gasts wurde
+vermerkt, sein späteres Weiterlaufen nicht. Danach stand dort „pausiert",
+während der Host längst wieder lief, und ein Fernseher, der in dieser Lage
+beitrat oder stand, startete nie. Jetzt zählt der wirkliche Zustand des Hosts.
+
+**Und der Host wechselte bei jeder Folge.** Er war, wer die neue Folge zuerst
+geöffnet hatte — es entschied also, wessen Hoster schneller lädt. Ein
+Player-Neuladen oder ein Sprachwechsel reichte ebenfalls. Jetzt behält er die
+Rolle; gewählt wird nur, wenn keiner da ist. Abgegeben wird sie, wenn er die
+Folge oder den Titel verlässt, entfernt wird oder sie ausdrücklich übergibt.
+Ein kurzer Verbindungsabriss zählt nicht dazu — zwölf Sekunden lang bleibt er
+Host, danach rückt jemand nach, damit ein Gerät, das nicht wiederkommt, die
+Runde nicht blockiert.
+
+Geändert wurde allein das Relay. Damit gilt für Rechner, Handy und Fernseher
+dieselbe Regel, und alle sehen dieselbe Host-Kennung.
+
+**Die Fernbedienung sagt jetzt, wenn ein Filter ihr Manifest wegnimmt.** Auf
+einem Gerät ließ sie sich in keinem Browser installieren, während sie es auf
+allen anderen anbot — und die Selbstauskunft stand dabei vollständig auf grün.
+Sie holte das Manifest selbst und meldete „gelesen"; das beweist aber nur, dass
+die Datei erreichbar ist, und nicht, dass der Browser eines kennt. Ein
+systemweiter Inhaltsfilter hatte den Verweis darauf aus der Seite entfernt,
+bevor sie ankam. Geprüft wird jetzt zuerst der Verweis im Dokument, und die
+Meldung nennt den Filter als Ursache statt „Chrome prüft noch".
+
 ## 1.90.3 — 2. September 2026
 
 **Der Trailer läuft jetzt wirklich — 1.90.2 hat einen Fehler gegen den anderen
