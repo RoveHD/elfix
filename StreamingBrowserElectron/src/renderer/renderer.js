@@ -375,6 +375,7 @@ const rememberLanguage = document.querySelector("#rememberLanguage");
 const fassungenStand = document.querySelector("#fassungenStand");
 const fassungenVergessen = document.querySelector("#fassungenVergessen");
 const showReviewLink = document.querySelector("#showReviewLink");
+const wrappedMusik = document.querySelector("#wrappedMusik");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
 const pauseOnBlur = document.querySelector("#pauseOnBlur");
@@ -548,6 +549,7 @@ const SETTINGS_INDEX = [
   ["playback", "Weiterschauen-Fortschritt", "nächste Folge weiterrücken stehen bleiben"],
   ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
   ["home", "Statistik in der Seitenleiste", "Rückblick Statistik Wrapped Jahresrückblick einblenden ausblenden"],
+  ["home", "Musik im Jahresrückblick", "Wrapped Opening Anime Ton Musik Lied Intro stumm"],
   ["browser", "Werbung blockieren", "Adblock Popups Weiterleitungen Tracking Filterlisten"],
   ["browser", "Ausnahmen", "Whitelist Domain erlauben Seite funktioniert nicht"],
   ["browser", "Zwischenspeicher", "Cache Browserdaten löschen Start Reload"],
@@ -794,6 +796,12 @@ function bindEvents() {
   document.querySelector("#providerAddButton")?.addEventListener("click", () => { anbieterHinzufuegen().catch(() => {}); });
   // Der Jahresrueckblick: blaettern per Klick, Pfeiltasten und Punkten.
   document.querySelector("#wrappedClose")?.addEventListener("click", wrappedSchliessen);
+  document.querySelector("#wrappedTonKnopf")?.addEventListener("click", (event) => {
+    // Sonst blaettert der Klick zugleich eine Karte weiter - die Buehne
+    // horcht auf jeden Klick.
+    event.stopPropagation();
+    wrappedTonUmschalten().catch(() => {});
+  });
   document.querySelector("#wrappedNext")?.addEventListener("click", (event) => {
     event.stopPropagation();
     wrappedZeigen(wrappedStelle + 1);
@@ -1043,6 +1051,7 @@ function bindEvents() {
   rememberLanguage?.addEventListener("change", saveSettings);
   fassungenVergessen?.addEventListener("click", fassungenVergessenLassen);
   showReviewLink?.addEventListener("change", saveSettings);
+  wrappedMusik?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
   favoriteProgressMode.addEventListener("change", saveSettings);
   pauseOnMinimize.addEventListener("change", saveSettings);
@@ -3603,8 +3612,107 @@ async function wrappedSortieren(seiten, jahr) {
 }
 
 function wrappedSchliessen() {
+  wrappedTonBeenden();
   wrappedModal?.close();
   api.setWrappedOpen?.(false);
+}
+
+// --- Das Opening zur Serie des Jahres ---------------------------------------
+//
+// Der Rueckblick war stumm, und Musik dazu lag nahe. Zwei Entscheidungen
+// stecken darin, und die zweite ist die wichtigere.
+//
+// **Woher.** ELFIX hat keinen Ton: nichts im Paket, keine Tonspur ausser der
+// des Anbieters. Mitliefern scheidet aus, versteckt bei YouTube abspielen
+// hiesse Werbung vor dem Opening. Geholt wird es deshalb bei animethemes.moe -
+// nur fuer Anime, denn nur dafuer gibt es so einen Katalog.
+//
+// **Ab wann.** Nicht ab Karte eins. Das Titelbild hinter den Karten musste
+// genau deshalb weichen ("dann weiss man ja schon was man als serie hat"), und
+// Musik verraet dieselbe Pointe, nur akustisch: wer sein Lieblings-Opening
+// nach zwei Takten erkennt, braucht die Karte nicht mehr. Sie faengt deshalb
+// genau dann an, wenn die Serie des Jahres auf dem Schirm steht - und laeuft
+// von da an weiter, statt beim Weiterblaettern wieder abzubrechen.
+//
+// Der Ton kommt nie ungefragt und nie ohne Ausweg: der Knopf oben rechts
+// schaltet ihn ab, die Einstellung schaltet ihn ganz aus, und das Schliessen
+// des Rueckblicks beendet ihn. Bleibt die Suche ohne Treffer - kein Anime,
+// kein Netz, kein Eintrag im Katalog -, bleibt es beim Rueckblick, den es
+// vorher gab.
+let wrappedTonLaeuft = false;
+let wrappedSerieDesJahres = null;
+
+function wrappedTonElement() {
+  return document.querySelector("#wrappedTon");
+}
+
+function wrappedTonBeenden() {
+  const ton = wrappedTonElement();
+  if (ton) {
+    ton.pause();
+    ton.removeAttribute("src");
+    ton.load();
+  }
+  wrappedTonLaeuft = false;
+  document.querySelector("#wrappedTonKnopf")?.classList.add("is-hidden");
+}
+
+function wrappedTonKnopfZeigen(an, lied) {
+  const knopf = document.querySelector("#wrappedTonKnopf");
+  if (!knopf) return;
+  knopf.classList.remove("is-hidden");
+  knopf.classList.toggle("is-aus", !an);
+  knopf.textContent = an ? "♪" : "✕";
+  knopf.title = an
+    ? (lied ? `${lied} — Musik aus` : "Musik aus")
+    : "Musik an";
+  knopf.setAttribute("aria-label", knopf.title);
+}
+
+// Startet die Musik, wenn die Karte der Serie des Jahres aufgeht - und nur
+// dann. Laeuft sie schon, geschieht nichts: das Weiterblaettern soll sie nicht
+// von vorn anfangen lassen.
+async function wrappedTonStarten(seite) {
+  if (wrappedTonLaeuft || seite?.schluessel !== "top-serie") return;
+  if (settings.wrapped?.musik === false) return;
+  const ton = wrappedTonElement();
+  const serie = wrappedSerieDesJahres;
+  if (!ton || !serie?.titel) return;
+
+  const treffer = await api.getWrappedOpening?.(serie.titel, serie.gattung).catch(() => null);
+  // Zwischenzeitlich weitergeblaettert oder geschlossen? Dann gehoert die
+  // Musik nirgends mehr hin.
+  if (!treffer?.url || !wrappedModal?.open) return;
+  wrappedTonLaeuft = true;
+  ton.src = treffer.url;
+  ton.loop = true;
+  ton.volume = 0.45;
+  try {
+    await ton.play();
+    wrappedTonKnopfZeigen(true, treffer.lied);
+  } catch {
+    // Chromium laesst Ton ohne Zutun des Benutzers nicht immer zu. Dann steht
+    // der Knopf da und wartet - besser als ein Rueckblick, der still bleibt,
+    // ohne zu sagen, dass es etwas zu hoeren gaebe.
+    wrappedTonLaeuft = false;
+    wrappedTonKnopfZeigen(false, treffer.lied);
+  }
+}
+
+async function wrappedTonUmschalten() {
+  const ton = wrappedTonElement();
+  if (!ton || !ton.src) return;
+  if (ton.paused) {
+    try {
+      await ton.play();
+      wrappedTonLaeuft = true;
+      wrappedTonKnopfZeigen(true);
+    } catch { /* Bleibt eben aus. */ }
+  } else {
+    ton.pause();
+    wrappedTonLaeuft = false;
+    wrappedTonKnopfZeigen(false);
+  }
 }
 
 function wrappedZeigen(stelle) {
@@ -3624,6 +3732,7 @@ function wrappedZeigen(stelle) {
     seite.knoten.classList.add("is-da");
   }
   renderWrappedPunkte();
+  wrappedTonStarten(seite).catch(() => {});
 }
 
 // Zahlen laufen hoch. Kurz und ohne Bibliothek: eine Schleife ueber
@@ -3719,6 +3828,9 @@ function wrappedGrosseZahl(wert, einheit = "") {
 
 function wrappedBauen(daten, jahr) {
   const seiten = [];
+  // Fuer die Musik: welche Serie die des Jahres ist, weiss sonst nur die
+  // Karte, und die kennt ihren eigenen Titel nicht mehr, sobald sie gebaut ist.
+  wrappedSerieDesJahres = daten.serien[0] || null;
   const zeitBekannt = daten.sekundenBekannt > 0 && daten.sekunden > 0;
   const topSerie = daten.serien[0] || null;
   const topFilm = daten.filme[0] || null;
@@ -6815,6 +6927,7 @@ function renderSettings() {
   if (showHomePersonal) showHomePersonal.checked = home.showPersonal !== false;
   if (showHomeCategories) showHomeCategories.checked = home.showCategories !== false;
   if (showReviewLink) showReviewLink.checked = home.showReview === true;
+  if (wrappedMusik) wrappedMusik.checked = settings.wrapped?.musik !== false;
   const party = settings.watchparty || {};
   if (watchpartyEnabled) watchpartyEnabled.checked = party.enabled === true;
   if (watchpartyServer) watchpartyServer.value = party.serverUrl || "";
@@ -7047,6 +7160,12 @@ async function saveSettings() {
     // Zeile schriebe jedes Speichern sie auf "manuell" zurueck, denn hier wird
     // settings.home vollstaendig aus den Bedienelementen neu gebaut.
     librarySort: mediathekSortierung()
+  };
+  // Der Merker, welches Jahr schon gesehen wurde, gehoert nicht der
+  // Oberflaeche - er wuerde sonst bei jedem Speichern verlorengehen.
+  settings.wrapped = {
+    ...(settings.wrapped || {}),
+    musik: wrappedMusik ? wrappedMusik.checked : true
   };
   settings.watchparty = {
     enabled: watchpartyEnabled ? watchpartyEnabled.checked : false,

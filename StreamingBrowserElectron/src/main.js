@@ -56,6 +56,7 @@ const { AdblockEngine } = require("./adblock-engine");
 const kosmetik = require("./adblock-kosmetik");
 const verifizierungstor = require("./verifizierungstor");
 const youtube = require("./youtube");
+const openings = require("./openings");
 
 // Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
 // die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
@@ -9173,6 +9174,54 @@ ipcMain.handle("wrapped:gesehen", (_event, jahr) => {
 ipcMain.handle("wrapped:reihenfolge", (_event, schluessel, jahr) =>
   statistik.wrappedReihenfolge(schluessel, jahr));
 
+// Das Opening zur Serie des Jahres.
+//
+// Geholt wird es bei animethemes.moe, einem offenen Katalog der Vor- und
+// Abspaenne von Anime. Nur fuer Anime, denn nur dafuer gibt es so etwas -
+// gefragt wird deshalb erst gar nicht, wenn die Gattung eine andere ist.
+//
+// Gelesen wird die Antwort in src/openings.js, und zwar bewusst dort: dieses
+// Modul kennt kein Netz und laesst sich deshalb pruefen. Was hier steht, ist
+// nur die Leitung dorthin - plus zwei Vorsichtsmassnahmen, die es braucht,
+// weil auf der anderen Seite ein fremder Dienst haengt:
+//
+//   Ein Zeitlimit. Ein Rueckblick darf nicht darauf warten, dass jemand
+//   anderes antwortet; nach vier Sekunden bleibt er eben stumm.
+//
+//   Ein Gedaechtnis. Dieselbe Serie wird sonst bei jedem Oeffnen erneut
+//   gesucht, und ein oeffentlicher Dienst, den man im Sekundentakt fragt,
+//   sperrt einen zu Recht aus. Gemerkt wird auch das Nichtergebnis: eine
+//   Serie, die dort nicht steht, steht beim naechsten Mal auch nicht dort.
+const openingCache = new Map();
+const OPENING_FRIST_MS = 4000;
+
+async function openingFuer(titel, gattung) {
+  const name = String(titel || "").trim();
+  if (!name || String(gattung || "") !== "anime") return null;
+  if (openingCache.has(name)) return openingCache.get(name);
+
+  let gefunden = null;
+  try {
+    const adresse = openings.anfrageUrl(name);
+    if (adresse) {
+      const antwort = await net.fetch(adresse, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(OPENING_FRIST_MS)
+      });
+      if (antwort.ok) gefunden = openings.openingAus(await antwort.json(), name);
+    }
+  } catch {
+    // Kein Netz, kein Treffer, eine Antwort in unerwarteter Form: alles
+    // dasselbe Ergebnis. Der Rueckblick bleibt stumm und laeuft weiter -
+    // das ist genau der Zustand, den es vorher gab.
+  }
+  openingCache.set(name, gefunden);
+  return gefunden;
+}
+
+ipcMain.handle("wrapped:opening", (_event, titel, gattung) =>
+  openingFuer(titel, gattung).catch(() => null));
+
 ipcMain.handle("wrapped:set-open", (_event, offen) => {
   setOverlayOpen("wrapped", Boolean(offen));
   return true;
@@ -10629,6 +10678,7 @@ function normalizeSettings(raw) {
     // naechsten Speichern der Einstellungen heraus und der Jahresrueckblick
     // draengt sich erneut auf.
     wrapped: {
+      musik: raw?.wrapped?.musik !== false,
       gesehenJahr: Number(raw?.wrapped?.gesehenJahr) || 0
     },
     playback: {
@@ -10809,7 +10859,7 @@ function defaultSettings() {
     },
     // Eine frische Ablage bringt YouTube schon mit - fuer sie ist das
     // Nachtragen von vornherein erledigt.
-    wrapped: { gesehenJahr: 0 },
+    wrapped: { musik: true, gesehenJahr: 0 },
     migrations: {
       youtubeProvider: true,
       // Eine frische Ablage hat keinen Verlauf, aus dem etwas zu uebernehmen

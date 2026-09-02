@@ -88,8 +88,12 @@ pruefe("Der Rechner rechnet das nicht selbst nach",
 pruefe("Und reicht das gesehene Jahr aus seinen Einstellungen hinein",
   /gesehenJahr: settings\.wrapped\?\.gesehenJahr/.test(status));
 pruefe("Der Merker ueberlebt das Speichern der Einstellungen",
-  /wrapped: \{\s*\n\s*gesehenJahr: Number\(raw\?\.wrapped\?\.gesehenJahr\) \|\| 0\s*\n\s*\}/.test(MAIN),
+  /gesehenJahr: Number\(raw\?\.wrapped\?\.gesehenJahr\) \|\| 0/.test(MAIN)
+  && /settings\.wrapped = \{\s*\n\s*\.\.\.\(settings\.wrapped \|\| \{\}\),/.test(RENDERER),
   "sonst meldete sich der Hinweis nach jeder Einstellungsaenderung erneut");
+pruefe("Und der Musikschalter nimmt ihn nicht mit",
+  !/settings\.wrapped = \{\s*\n\s*musik:/.test(RENDERER),
+  "die Oberflaeche kennt das gesehene Jahr nicht - sie darf es nicht ueberschreiben");
 
 // --- Dieselbe Datenquelle ----------------------------------------------------
 
@@ -736,6 +740,48 @@ pruefe("Die Buehne bleibt trotzdem auf jeder Karte dieselbe",
 pruefe("Und die Poster stehen weiter auf den Karten, die von einem Titel handeln",
   (RENDERER.match(/wrappedPoster\(/g) || []).length >= 4,
   "dort fallen sie auf, ohne etwas vorwegzunehmen");
+
+// --- Musik zur Serie des Jahres ---------------------------------------------
+//
+// Der Rueckblick war stumm. Geholt wird das Opening jetzt bei animethemes.moe -
+// nur fuer Anime, denn nur dafuer gibt es so einen Katalog.
+//
+// Der Punkt, an dem es leicht schiefgegangen waere: **ab wann sie laeuft.** Das
+// Titelbild musste weichen, weil es die Serie des Jahres auf Karte eins
+// verriet - und Musik verraet dieselbe Pointe, nur akustisch. Wer sein
+// Lieblings-Opening nach zwei Takten erkennt, braucht die Karte nicht mehr.
+
+pruefe("Die Musik faengt erst auf der Karte an, die die Serie zeigt",
+  /if \(wrappedTonLaeuft \|\| seite\?\.schluessel !== "top-serie"\) return;/.test(RENDERER),
+  "sonst verraet der Ton, was das Bild nicht mehr verraet");
+pruefe("Und laeuft dann weiter, statt beim Blaettern abzubrechen",
+  /if \(wrappedTonLaeuft/.test(RENDERER) && /ton\.loop = true;/.test(RENDERER));
+pruefe("Gefragt wird nur bei Anime",
+  /String\(gattung \|\| ""\) !== "anime"\) return null;/.test(MAIN),
+  "fuer Serien und Filme gibt es keinen solchen Katalog");
+pruefe("Die Einstellung verhindert schon die Anfrage",
+  /if \(settings\.wrapped\?\.musik === false\) return;/.test(RENDERER),
+  "wer sie aus hat, soll auch keinen fremden Dienst befragen");
+pruefe("Schliessen beendet den Ton",
+  /function wrappedSchliessen\(\) \{\s*\n\s*wrappedTonBeenden\(\);/.test(RENDERER));
+pruefe("Der Knopf blaettert nicht zugleich weiter",
+  /wrappedTonKnopf"\)\?\.addEventListener\("click", \(event\) => \{[\s\S]{0,220}?event\.stopPropagation\(\);/
+    .test(RENDERER),
+  "die Buehne horcht auf jeden Klick");
+
+// Und die Vorsicht gegenueber einem fremden Dienst.
+pruefe("Die Anfrage hat ein Zeitlimit",
+  /AbortSignal\.timeout\(OPENING_FRIST_MS\)/.test(MAIN),
+  "ein Rueckblick darf nicht warten, bis jemand anderes antwortet");
+pruefe("Und ein Gedaechtnis, auch fuer das Nichtergebnis",
+  /openingCache\.has\(name\)/.test(MAIN) && /openingCache\.set\(name, gefunden\)/.test(MAIN),
+  "einen oeffentlichen Dienst im Sekundentakt zu fragen sperrt einen zu Recht aus");
+pruefe("Jeder Fehler endet als Stille",
+  /ipcMain\.handle\("wrapped:opening"[\s\S]{0,160}?catch\(\(\) => null\)/.test(MAIN),
+  "kein Netz, kein Treffer, unerwartete Antwort - alles dasselbe Ergebnis");
+pruefe("Gelesen wird die Antwort in einem Modul ohne Netz",
+  /const openings = require\("\.\/openings"\);/.test(MAIN),
+  "sonst liesse sich das Lesen nicht ohne die Schnittstelle pruefen");
 
 // --- Und der Hinweis, den man uebersah ---------------------------------------
 

@@ -6533,6 +6533,7 @@ input[type="color"] {
 /* Bedienung */
 
 .wrapped-close,
+.wrapped-ton,
 .wrapped-arrow {
   position: fixed;
   z-index: 3;
@@ -6543,6 +6544,24 @@ input[type="color"] {
   background: color-mix(in srgb, var(--text), transparent 88%);
   color: var(--text);
   cursor: pointer;
+}
+
+/* Der Knopf fuer die Musik - neben dem zum Schliessen, in derselben Form.
+
+   Er steht nur da, wenn es wirklich etwas zu hoeren gibt: ohne Treffer im
+   Katalog bleibt er weg, statt einen Ton zu versprechen, den es nicht gibt. */
+.wrapped-ton {
+  right: 76px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.wrapped-ton.is-hidden { display: none; }
+
+/* Aus heisst sichtbar aus - ein Knopf, der gleich aussieht, egal ob Ton
+   laeuft, ist kein Schalter, sondern ein Raetsel. */
+.wrapped-ton.is-aus {
+  color: color-mix(in srgb, var(--text), transparent 45%);
 }
 
 .wrapped-close {

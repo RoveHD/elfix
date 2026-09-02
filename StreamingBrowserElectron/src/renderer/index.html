@@ -334,6 +334,8 @@
       <dialog class="wrapped-modal" id="wrappedModal" aria-label="Jahresrückblick">
         <div class="wrapped-stage" id="wrappedStage"></div>
         <div class="wrapped-dots" id="wrappedDots"></div>
+        <audio id="wrappedTon" preload="none"></audio>
+        <button type="button" class="wrapped-ton is-hidden" id="wrappedTonKnopf" aria-label="Musik aus"></button>
         <button type="button" class="wrapped-close" id="wrappedClose" title="Schließen" aria-label="Schließen">×</button>
         <button type="button" class="wrapped-arrow is-prev" id="wrappedPrev" aria-label="Zurück">‹</button>
         <button type="button" class="wrapped-arrow is-next" id="wrappedNext" aria-label="Weiter">›</button>
@@ -629,6 +631,7 @@
             <label class="check setting-row"><input id="showHeroHome" type="checkbox"><span><strong>Großes Titelbild oben</strong><small>Zeigt den zuletzt gesehenen Titel mit „Weiter schauen“-Knopf.</small></span></label>
             <label class="check setting-row"><input id="showHomeFavorites" type="checkbox"><span><strong>Reihe „Weiterschauen“</strong><small>Angefangene Filme und Folgen direkt auf der Startseite.</small></span></label>
             <label class="check setting-row"><input id="showReviewLink" type="checkbox"><span><strong>Statistik in der Seitenleiste</strong><small>Aus: der Punkt „Rückblick“ ist nicht zu sehen. Im Dezember erscheint er trotzdem, solange dein Jahresrückblick verfügbar ist.</small></span></label>
+            <label class="check setting-row"><input id="wrappedMusik" type="checkbox"><span><strong>Musik im Jahresrückblick</strong><small>Bei Anime läuft das Opening deiner Serie des Jahres — ab der Karte, die sie zeigt, und nicht vorher. Gibt es keines, bleibt der Rückblick stumm.</small></span></label>
             <label class="check setting-row"><input id="showHomeYoutube" type="checkbox"><span><strong>Reihe „Weiterschauen auf YouTube“</strong><small>Angefangene YouTube-Videos in einer eigenen Reihe, getrennt von Serien und Filmen.</small></span></label>
             <label class="check setting-row"><input id="showHomePersonal" type="checkbox"><span><strong>Reihe „Empfohlen für dich“</strong><small>Vorschläge aus Genres und ähnlichen Titeln zu dem, was du geschaut hast.</small></span></label>
             <label class="check setting-row"><input id="showHomeCategories" type="checkbox"><span><strong>Reihen nach Kategorie</strong><small>Je eine Reihe mit Vorschlägen für Anime, Serien und Filme.</small></span></label>
