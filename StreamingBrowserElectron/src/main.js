@@ -9187,10 +9187,12 @@ ipcMain.handle("wrapped:reihenfolge", (_event, schluessel, jahr) =>
 // Titelvergleich trifft aus denselben Gruenden selten wie eh und je ("Attack
 // on Titan" gegen "Shingeki no Kyojin").
 //
-// Der Preis steht fest und ist in Kauf genommen: eine Serie, zu der es im
-// Katalog nichts gibt, bekommt das Opening dessen, was die Suche fuer aehnlich
-// haelt. Am Knopf steht, was laeuft und aus welchem Anime - ein Fehlgriff ist
-// damit sichtbar und nicht raetselhaft.
+// Geraten wird dabei nicht. Ein Zwischenstand hat es getan - ohne Titeltreffer
+// nahm er, was die Suche eben auswarf -, und unter "Prison Break" lief dann
+// irgendein Anime-Opening. Zugeordnet wird ueber den Namen und die Zweitnamen
+// des Katalogs ("Attack on Titan" steht bei "Shingeki no Kyojin"); trifft
+// keiner, bleibt es still. Eine Serie ohne Gegenstueck im Katalog hat kein
+// Opening, und Stille ist dann die richtige Antwort.
 //
 // Gelesen wird die Antwort in src/openings.js, und zwar bewusst dort: dieses
 // Modul kennt kein Netz und laesst sich deshalb pruefen. Was hier steht, ist

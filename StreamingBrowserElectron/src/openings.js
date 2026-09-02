@@ -63,7 +63,10 @@ function anfrageUrl(titel) {
   const felder = [
     "q=" + encodeURIComponent(name),
     "fields[search]=anime",
-    "include[anime]=animethemes.animethemeentries.videos.audio,animethemes.song"
+    // Die Zweitnamen gehoeren dazu und sind der ganze Grund, warum der
+    // englische Titel ueberhaupt etwas findet: der Katalog fuehrt die Serie
+    // als "Shingeki no Kyojin" und "Attack on Titan" als Zweitnamen.
+    "include[anime]=animethemes.animethemeentries.videos.audio,animethemes.song,animesynonyms"
   ];
   return `${WIRT}/search?${felder.join("&")}`;
 }
@@ -113,52 +116,66 @@ function nummerAus(thema) {
 }
 
 /**
- * Welcher Anime von den gefundenen gemeint ist.
+ * Die Namen, unter denen ein Eintrag des Katalogs laeuft.
  *
- * <p><b>Hier waere die Anbindung gescheitert.</b> Geschrieben war sie auf einen
- * genauen Titelvergleich - und der trifft in der Praxis fast nie: die Anbieter
- * nennen die Serie "Attack on Titan", der Katalog fuehrt sie unter "Shingeki no
- * Kyojin". Kein Treffer, keine Musik, und zwar bei so ziemlich jedem Anime mit
- * englischem Titel. Aufgefallen ist das erst an einer echten Antwort.
+ * <p>Der eigene und die Zweitnamen. Mehr nicht - insbesondere nicht die Titel
+ * der Lieder, die tiefer in demselben Baum stehen: eine Serie, die so heisst
+ * wie irgendein Opening, waere sonst ein Treffer.
+ */
+function namenVon(eintrag) {
+  const zweitnamen = sammle(eintrag, ["animesynonyms"]).flat().filter(Boolean)
+    .flatMap((eintrag) => [eintrag?.text, eintrag?.title]);
+  return [eintrag?.name, ...zweitnamen].map(text).filter(Boolean);
+}
+
+/**
+ * Ob der gefundene Name eine Fortsetzung des gesuchten Titels ist.
  *
- * <p>Der genaue Vergleich bleibt trotzdem die erste Wahl - wo er trifft
- * ("Naruto"), ist er unbestechlich. Trifft er nicht, entscheidet, was die
- * Antwort selbst hergibt:
+ * <p>"Shingeki no Kyojin Season 2" zu "Shingeki no Kyojin". Gemeint ist damit
+ * dieselbe Serie, und wo es die Grundserie im Katalog nicht gibt, ist ihr
+ * zweiter Teil richtiger als nichts. Angehaengt sein muss aber erkennbar eine
+ * Fortsetzung - "Naruto Shippuuden" ist keine zu "Naruto".
+ */
+function istFortsetzung(gesucht, gefunden) {
+  const links = taste.titelSchluessel(gesucht);
+  const rechts = taste.titelSchluessel(gefunden);
+  if (!links || !rechts || links === rechts || !rechts.startsWith(links)) return false;
+  return /^(?:season|staffel|teil|part|cour|s?\d)/.test(rechts.slice(links.length));
+}
+
+/**
+ * Welcher Anime von den gefundenen gemeint ist - oder keiner.
  *
- * <ul>
- *   <li><b>Fernsehfassung vor allem anderen.</b> Unter den fuenfzehn Treffern
- *       zu "Attack on Titan" sind Filme, OVAs, Specials und
- *       Zusammenschnitte - der erste davon ist ein Recap-Film, dessen einziges
- *       Stueck ein Abspann ist. Wer die Serie geschaut hat, meint die Serie.
- *   <li><b>Das aelteste Jahr.</b> Zwischen "Shingeki no Kyojin" (2013) und
- *       seinen fuenf Fortsetzungen ist die Grundserie gemeint; sie ist die
- *       aelteste. Nebenbei faellt damit auch die Schulparodie von 2015 weg.
- * </ul>
+ * <p><b>Hier ist die Anbindung zweimal gescheitert, in beide Richtungen.</b>
  *
- * <p>Das ist eine Heuristik und keine Gewissheit - deshalb nennt der
- * Rueckblick den Namen des gewaehlten Anime am Knopf. Wer dort etwas anderes
- * liest, als er erwartet hat, sieht sofort, dass danebengegriffen wurde,
- * statt sich ueber ein fremdes Lied zu wundern.
+ * <p>Zuerst war sie zu streng: verglichen wurde nur mit dem Namen, unter dem
+ * der Katalog die Serie fuehrt. Die Anbieter nennen sie "Attack on Titan", der
+ * Katalog "Shingeki no Kyojin" - kein Treffer, keine Musik, und zwar bei so
+ * ziemlich jedem Anime mit englischem Titel.
  *
- * <p><b>Sie gilt fuer jede Gattung, die ueberhaupt gefragt wird.</b> Eine
- * Zeitlang galt sie nur fuer Anime, und alles, was die Anbieter als
- * gewoehnliche Serie fuehren, brauchte einen genauen Titeltreffer. Damit blieb
- * fast jede Serie stumm: "One Piece" steht bei den Anbietern als Serie, und
- * ein genauer Vergleich trifft aus denselben Gruenden selten wie oben. Der
- * Preis ist bekannt und in Kauf genommen - eine Serie ohne Gegenstueck im
- * Katalog bekommt das Opening dessen, was die Suche fuer aehnlich haelt. Am
- * Knopf steht, was laeuft und woher; ein Fehlgriff ist damit sichtbar.
+ * <p>Dann war sie zu nachsichtig: ohne Treffer wurde genommen, was die Suche
+ * eben ausgeworfen hatte - die aelteste Fernsehfassung darunter. Zu "Prison
+ * Break" liefert eine Anime-Suche trotzdem Anime, und darunter lief dann
+ * irgendein fremdes Opening. Gemeldet als "spielt absolut falsche Musik", und
+ * das war es auch: eine Serie, zu der es nichts gibt, hat kein Opening.
+ *
+ * <p>Beides loesen die Zweitnamen, und deshalb werden sie mitgeholt. "Attack
+ * on Titan" steht bei "Shingeki no Kyojin" als Zweitname - der Vergleich
+ * trifft also, ohne dass irgendetwas geraten werden muesste. Wo er nicht
+ * trifft, bleibt es still.
+ *
+ * <p>Unter den Treffern entscheidet dann wie gehabt: Fernsehfassung vor Film,
+ * OVA und Zusammenschnitt, und unter denen die aelteste - zwischen der
+ * Grundserie und ihren Fortsetzungen ist die Grundserie gemeint.
  */
 function besterAnime(kandidaten, titel) {
   const brauchbar = kandidaten.filter((eintrag) => eintrag && typeof eintrag === "object");
-  const genau = brauchbar.filter((eintrag) => {
-    const namen = [eintrag.name, ...sammle(eintrag, ["title"]).map(text)];
-    return namen.some((name) => passt(titel, name));
-  });
-  if (genau.length) return genau;
-  const fernsehen = brauchbar.filter(
+  const gemeint = brauchbar.filter((eintrag) => namenVon(eintrag)
+    .some((name) => passt(titel, name) || istFortsetzung(titel, name)));
+  if (!gemeint.length) return [];
+  const fernsehen = gemeint.filter(
     (eintrag) => text(eintrag.media_format).toUpperCase() === "TV");
-  const feld = fernsehen.length ? fernsehen : brauchbar;
+  const feld = fernsehen.length ? fernsehen : gemeint;
   return [...feld]
     .sort((links, rechts) => (Number(links.year) || 9999) - (Number(rechts.year) || 9999))
     .slice(0, 1);
@@ -208,4 +225,4 @@ function openingAus(antwort, titel) {
   return { url: bestes.url, lied: bestes.lied, anime: bestes.anime };
 }
 
-module.exports = { WIRT, suchTitel, anfrageUrl, sammle, passt, nummerAus, besterAnime, openingAus };
+module.exports = { WIRT, suchTitel, anfrageUrl, sammle, passt, namenVon, istFortsetzung, nummerAus, besterAnime, openingAus };

@@ -3688,12 +3688,12 @@ function wrappedTonBeenden() {
 
 // Am Knopf steht, was laeuft - und aus welchem Anime.
 //
-// Der Anime gehoert dazu, weil die Auswahl eine Heuristik ist: der Katalog
-// fuehrt "Attack on Titan" als "Shingeki no Kyojin", ein genauer Titelvergleich
-// trifft also selten, und gewaehlt wird dann die aelteste Fernsehfassung unter
-// den Suchtreffern. Das geht meistens gut und manchmal daneben. Wer hier etwas
-// anderes liest, als er erwartet hat, sieht sofort, dass danebengegriffen
-// wurde - statt sich ueber ein fremdes Lied zu wundern.
+// Der Anime gehoert dazu, weil die Zuordnung nicht mit blossem Auge nachzuvoll-
+// ziehen ist: der Katalog fuehrt "Attack on Titan" als "Shingeki no Kyojin"
+// und den englischen Titel nur als Zweitnamen. Getroffen wird also ueber einen
+// Namen, der auf der Karte gar nicht steht. Wer am Knopf etwas anderes liest,
+// als er erwartet hat, sieht sofort, dass danebengegriffen wurde - statt sich
+// ueber ein fremdes Lied zu wundern.
 function wrappedTonKnopfZeigen(an, treffer) {
   const knopf = document.querySelector("#wrappedTonKnopf");
   if (!knopf) return;

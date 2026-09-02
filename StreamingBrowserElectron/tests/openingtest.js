@@ -12,6 +12,10 @@
 //   Der Titelvergleich war zu streng. Die Anbieter nennen die Serie "Attack on
 //   Titan", der Katalog fuehrt sie als "Shingeki no Kyojin" - kein Treffer,
 //   keine Musik, und zwar bei so ziemlich jedem Anime mit englischem Titel.
+//   Der Ausweg war zuerst falsch gewaehlt: ohne Treffer wurde genommen, was die
+//   Suche eben ausgeworfen hatte, und damit lief unter "Prison Break" irgendein
+//   Anime-Opening. Geholt werden jetzt die Zweitnamen, und ohne Treffer bleibt
+//   es still.
 //
 //   `sequence` ist oft null. Die Nummer steht dann nur im slug ("OP1", "OP2").
 //   Ohne Rueckfall darauf waeren alle Openings gleichauf.
@@ -61,49 +65,92 @@ pruefe("Leeres passt auf nichts",
 // --- Gegen die echte Antwort ---
 
 const echt = require(path.join(__dirname, "proben", "animethemes-shingeki.json"));
-const aot = openings.openingAus(echt, "Attack on Titan");
+const snk = openings.openingAus(echt, "Shingeki no Kyojin");
 
-pruefe("Der englische Titel findet die japanische Serie",
-  aot !== null,
-  "die Anbieter sagen \"Attack on Titan\", der Katalog \"Shingeki no Kyojin\"");
-pruefe("Und zwar das erste Opening der Grundserie",
-  aot?.lied === "Guren no Yumiya", aot?.lied || "nichts");
+pruefe("Aus der echten Antwort kommt das erste Opening der Grundserie",
+  snk?.lied === "Guren no Yumiya", snk?.lied || "nichts");
 pruefe("Aus der Fernsehfassung, nicht aus dem Recap-Film",
-  aot?.anime === "Shingeki no Kyojin", aot?.anime || "nichts");
+  snk?.anime === "Shingeki no Kyojin", snk?.anime || "nichts");
 pruefe("Die Adresse zeigt auf die Tonspur",
-  aot?.url === "https://a.animethemes.moe/ShingekiNoKyojin-OP1.ogg", aot?.url || "nichts");
+  snk?.url === "https://a.animethemes.moe/ShingekiNoKyojin-OP1.ogg", snk?.url || "nichts");
 
 // Das waere der naheliegende Fehler gewesen: der erste Treffer der Suche ist
 // "Shingeki no Kyojin: Chronicle", ein Zusammenschnitt, dessen einziges Stueck
 // ein Abspann ist - und den der Katalog selbst als Spoiler kennzeichnet.
 pruefe("Der erste Treffer der Suche gewinnt nicht einfach",
   echt.search.anime[0].name === "Shingeki no Kyojin: Chronicle"
-  && aot?.anime !== "Shingeki no Kyojin: Chronicle",
+  && snk?.anime !== "Shingeki no Kyojin: Chronicle",
   "ein Recap-Film mit einem Abspann ist nicht das Opening der Serie");
 pruefe("Die Schulparodie auch nicht",
-  aot?.lied !== "Seishun wa Hanabi no You ni",
+  snk?.lied !== "Seishun wa Hanabi no You ni",
   "Shingeki! Kyojin Chuugakkou ist eine andere Serie");
 pruefe("Und die Fortsetzungen ebenfalls nicht",
-  aot?.lied !== "Shinzou wo Sasageyo!" && aot?.lied !== "Boku no Sensou",
+  snk?.lied !== "Shinzou wo Sasageyo!" && snk?.lied !== "Boku no Sensou",
   "zwischen Grundserie und fuenf Fortsetzungen ist die aelteste gemeint");
+pruefe("Eine Fortsetzung zaehlt trotzdem als dieselbe Serie",
+  openings.istFortsetzung("Shingeki no Kyojin", "Shingeki no Kyojin Season 2")
+  && !openings.istFortsetzung("Naruto", "Naruto Shippuuden"),
+  "gaebe es die Grundserie nicht, waere ihr zweiter Teil richtiger als nichts");
 
-pruefe("Der genaue Titel bleibt die erste Wahl",
-  openings.openingAus(echt, "Shingeki no Kyojin")?.lied === "Guren no Yumiya",
-  "wo er trifft, ist er unbestechlich");
+// --- Und der Fehler in die andere Richtung -----------------------------------
+//
+// Zwischendurch wurde geraten: ohne Titeltreffer nahm der Leser, was die Suche
+// eben ausgeworfen hatte. Zu "Prison Break" liefert eine Anime-Suche trotzdem
+// Anime, und darunter lief dann irgendein fremdes Opening - gemeldet als
+// "spielt absolut falsche Musik". Eine Serie, zu der es nichts gibt, hat kein
+// Opening.
 
-// Gesucht wird ohne Staffelangabe. Die Anbieter haengen an, um welchen Teil es
-// geht; der Katalog fuehrt die Serie unter ihrem Namen, und mit dem Anhang
-// findet die Suche nichts oder das Falsche.
-pruefe("Die Staffel faellt aus dem Suchtitel",
-  openings.suchTitel("One Piece Staffel 21") === "One Piece"
-  && openings.suchTitel("Vinland Saga Season 2") === "Vinland Saga"
-  && openings.suchTitel("Demon Slayer - Teil 3") === "Demon Slayer");
-pruefe("Ein Titel ohne Anhang bleibt, wie er ist",
-  openings.suchTitel("Attack on Titan") === "Attack on Titan"
-  && openings.suchTitel("Dr. Stone") === "Dr. Stone",
-  "abgeschnitten wird nur, was erkennbar eine Fortsetzung bezeichnet");
-pruefe("Und der Anhang stoert auch den Treffer nicht mehr",
-  openings.openingAus(echt, "Attack on Titan Staffel 2")?.lied === "Guren no Yumiya");
+const fremd = {
+  search: {
+    anime: [
+      { name: "Break Blade", media_format: "TV", year: 2010, animethemes: [
+        { type: "OP", slug: "OP1", song: { title: "Fate" }, animethemeentries: [
+          { videos: [{ audio: { link: "https://a/fremd.ogg" } }] }] }] },
+      { name: "Prison School", media_format: "TV", year: 2015, animethemes: [
+        { type: "OP", slug: "OP1", song: { title: "Ai no Prison" }, animethemeentries: [
+          { videos: [{ audio: { link: "https://a/fremd2.ogg" } }] }] }] }
+    ]
+  }
+};
+pruefe("Ohne Titeltreffer bleibt es still",
+  openings.openingAus(fremd, "Prison Break") === null,
+  "lieber kein Opening als das einer fremden Serie");
+pruefe("Auch die echte Antwort gibt zu einem fremden Titel nichts her",
+  openings.openingAus(echt, "Prison Break") === null);
+
+// --- Die Zweitnamen ----------------------------------------------------------
+//
+// Und genau deshalb werden sie mitgeholt: der Katalog fuehrt die Serie als
+// "Shingeki no Kyojin" und "Attack on Titan" als Zweitnamen. Ohne sie muesste
+// zwischen "kein Treffer" und "irgendetwas nehmen" gewaehlt werden, und beides
+// war schon falsch.
+
+pruefe("Die Anfrage holt die Zweitnamen mit",
+  openings.anfrageUrl("Attack on Titan").includes("animesynonyms"),
+  "sonst findet der englische Titel die japanische Serie nicht");
+
+const mitZweitnamen = { anime: [{
+  name: "Shingeki no Kyojin", media_format: "TV", year: 2013,
+  animesynonyms: [{ text: "Attack on Titan" }],
+  animethemes: [{ type: "OP", slug: "OP1", song: { title: "Guren no Yumiya" },
+    animethemeentries: [{ videos: [{ audio: { link: "https://a/op.ogg" } }] }] }]
+}] };
+pruefe("Der englische Titel findet die japanische Serie ueber den Zweitnamen",
+  openings.openingAus(mitZweitnamen, "Attack on Titan")?.lied === "Guren no Yumiya",
+  "die Anbieter sagen \"Attack on Titan\", der Katalog \"Shingeki no Kyojin\"");
+pruefe("Ein fremder Titel trifft auch dort nicht",
+  openings.openingAus(mitZweitnamen, "Prison Break") === null);
+pruefe("Die Liedtitel zaehlen nicht als Name der Serie",
+  openings.namenVon(mitZweitnamen.anime[0]).join("|") === "Shingeki no Kyojin|Attack on Titan",
+  "eine Serie, die heisst wie irgendein Opening, waere sonst ein Treffer");
+
+// Die aufgezeichnete Antwort stammt aus der Zeit vor den Zweitnamen - die
+// Anfrage holte sie noch nicht. Sie kann den englischen Titel deshalb nicht
+// finden, und das steht hier, damit niemand daraus schliesst, es sei kaputt.
+pruefe("Die alte Aufzeichnung kennt keine Zweitnamen",
+  JSON.stringify(echt).includes("synonym") === false
+  && openings.openingAus(echt, "Attack on Titan") === null,
+  "sie wurde ohne include[anime]=animesynonyms geholt");
 
 // sequence ist in der echten Antwort oft null - die Nummer steht im slug.
 pruefe("Die Nummer kommt notfalls aus dem slug",
