@@ -3,6 +3,37 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.87.1 — 2. September 2026
+
+Drei Fehler im Jahresrückblick, alle drei gemeldet und alle drei sichtbar.
+
+**Unter der großen Zahl fehlte, worum es geht.** Da stand „25" und darunter
+„hast du dieses Jahr mit ELFIX geschaut" — 25 was? „200 hast du 2026
+angesehen" — 200 was? Die Einheit war da, bis die Zähl-Animation über die
+Zahl lief: die schreibt bei jedem Bild den Text ihres Feldes neu, und die
+Einheit lag im selben Feld. Sie hat jetzt ein eigenes, und wo ein Tag
+gemeint ist, steht auch „1 Tag" statt „1 Tage".
+
+**Zu Serien lief keine Musik.** Gefragt wurde nur, wo die Anbieter „Anime"
+schrieben — und die schreiben bei einem guten Teil ihrer Anime „Serie".
+Kurzzeitig durfte auch dort gefragt werden, aber nur mit genauem
+Titeltreffer, und der trifft aus demselben Grund selten wie eh und je
+(„Attack on Titan" gegen „Shingeki no Kyojin"). Jetzt wird zu jeder Serie
+gefragt, und die Staffelangabe fällt vorher weg: „One Piece Staffel 21"
+sucht nach „One Piece". Der Preis ist bekannt und in Kauf genommen — eine
+Serie ohne Gegenstück im Katalog bekommt das Opening dessen, was die Suche
+für ähnlich hält. Am Knopf steht, was läuft und aus welchem Anime; ein
+Fehlgriff ist damit sichtbar. Zu Filmen wird weiterhin gar nicht gefragt.
+
+**Und die Musik lief weiter, wenn man den Rückblick mit Escape verließ.**
+Sie hing am Schließknopf; der Dialog schließt sich aber auch von selbst, und
+dann spielte das Opening ohne Fenster und ohne Knopf, der es abstellt. Jetzt
+endet der Ton mit dem Fenster, auf welchem Weg es auch zugeht.
+
+Bleibt es trotzdem still, steht der Grund jetzt im Protokoll
+(`[ELFIX MUSIK] …`): nicht gefragt, nichts gefunden oder kein Netz waren von
+außen nicht zu unterscheiden.
+
 ## 1.87.0 — 2. September 2026
 
 Im Jahresrückblick läuft die Musik jetzt zu jeder Karte, die einen Titel zeigt.
