@@ -300,6 +300,7 @@ const watchpartyEnabled = document.querySelector("#watchpartyEnabled");
 const watchpartyServer = document.querySelector("#watchpartyServer");
 const watchpartyRoom = document.querySelector("#watchpartyRoom");
 const watchpartyRoomAdd = document.querySelector("#watchpartyRoomAdd");
+const watchpartyStatusseite = document.querySelector("#watchpartyStatusseite");
 const watchpartyRoomList = document.querySelector("#watchpartyRoomList");
 const watchpartyName = document.querySelector("#watchpartyName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
@@ -615,6 +616,7 @@ function bindEvents() {
   startDiscoverRefresh();
   document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
   watchpartyRoomAdd?.addEventListener("click", watchpartyRaumHinzufuegen);
+  watchpartyStatusseite?.addEventListener("click", relayStatusseiteOeffnen);
   watchpartyRoom?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     // Sonst schickt Enter das Einstellungsformular ab, statt den Raum zu setzen.
@@ -1558,6 +1560,21 @@ async function markenVergessenLassen() {
   renderMarkenStand();
   api.getFernStatus?.().then(renderFernStatus).catch(() => {});
   showToast("Gelernte Intros vergessen");
+}
+
+// Die Statusseite des Relays. Sie beantwortet die Frage, die "Nicht verbunden"
+// offen laesst: liegt es am Relay oder an dieser Seite? Geoeffnet wird sie im
+// richtigen Browser - die Adresse bildet der Hauptprozess aus den
+// Einstellungen, von hier geht keine mit.
+async function relayStatusseiteOeffnen() {
+  const ergebnis = await api.openRelayStatus?.();
+  if (ergebnis?.ok) {
+    showToast("Statusseite des Relays im Browser geöffnet");
+    return;
+  }
+  showToast(ergebnis?.grund === "keine-adresse"
+    ? "Erst die Server-Adresse eintragen — dann gibt es auch eine Statusseite"
+    : "Browser konnte nicht geöffnet werden");
 }
 
 // --- Fernbedienung ------------------------------------------------------------

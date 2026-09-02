@@ -32,6 +32,10 @@ const geraete = require("./geraete");
 const fern = require("./fern");
 const fernSeite = require("./fern-seite");
 const fernIcon = require("./fern-icon");
+// Die Statusseite: die Antwort auf "laeuft es ueberhaupt?" ohne Zugang zur
+// Maschine. Sie haengt an keiner Watchparty - sie liest nur, was /health
+// ohnehin sagt.
+const statusSeite = require("./status-seite");
 
 // Das Relay ist ausserdem das Tor zu TMDB und AniList. Der Grund ist nicht
 // Bequemlichkeit: der TMDB-Schluessel darf nicht auf die Geraete, und alles,
@@ -41,6 +45,9 @@ const fernIcon = require("./fern-icon");
 const metadatenDienst = metadaten.erstellen();
 
 const PORT = Number(process.env.PORT) || 8787;
+// Wann dieses Relay gestartet ist. Die Statusseite macht daraus die Laufzeit -
+// und die ist die eine Zahl, an der ein stiller Neustart auffaellt.
+const START_AT = Date.now();
 const MAX_TITEL_JE_RAUM = 100;
 // Raeume verfallen nicht.
 //
@@ -453,10 +460,27 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Die Statusseite. Fuer Menschen, waehrend /health fuer Programme bleibt -
+  // dieselben Zahlen, nur lesbar.
+  if (pfad === "/status") {
+    statusAusliefern(res);
+    return;
+  }
+
   if (pfad === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({
       ok: true,
+      // Die Fassung, die Laufzeit und die offenen Verbindungen. Sie stehen hier,
+      // weil die Statusseite sie zeigt - und weil "es antwortet" und "es laeuft
+      // seit dem Absturz vor zwei Minuten" zwei verschiedene Auskuenfte sind.
+      // Ein Pfad zur Ablage steht ausdruecklich nicht dabei: /health ist so
+      // oeffentlich wie das Relay, und was niemandem nuetzt, gehoert nicht hin.
+      fassung: FASSUNG,
+      port: PORT,
+      gepackt: GEPACKT,
+      laeuftSeitS: Math.round((Date.now() - START_AT) / 1000),
+      verbindungen: offeneVerbindungen(),
       raeume: raeume.size,
       youtubeRaeume: youtubeParty.anzahl(),
       geraeteRaeume: geraete.anzahl(),
@@ -486,16 +510,58 @@ const server = http.createServer((req, res) => {
         // legt davon nur eine Verknuepfung mit Browserleiste an. Das sieht man
         // der Seite nicht an, und darum steht es hier: die App fragt danach und
         // sagt es, statt den Nutzer raten zu lassen.
-        "fernapp"],
+        "fernapp",
+        // "status" heisst: dieses Relay liefert unter / und /status eine Seite
+        // aus, die seinen Zustand zeigt, und /health nennt Fassung, Laufzeit und
+        // offene Verbindungen. Ohne den Eintrag laeuft dort drueben eine
+        // aeltere Fassung, und wer die Adresse aufruft, bekommt nur eine Zeile
+        // Text.
+        "status"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
     }));
     return;
   }
+  // Die Wurzel bedient beide: ein Browser bekommt die Seite, alles andere die
+  // eine Zeile Text von frueher. Das ist keine Spielerei - `curl` auf die
+  // Wurzel steht in Anleitungen und in mancher Ueberwachung, und dort waere
+  // HTML eine Verschlechterung. Wer die Seite ausdruecklich will, ruft /status
+  // auf; dort gibt es sie immer.
+  if (willHtml(req)) {
+    statusAusliefern(res);
+    return;
+  }
+
   res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-  res.end("ELFIX Watchparty-Relay laeuft. Die App verbindet sich per WebSocket.\n");
+  res.end("ELFIX Watchparty-Relay laeuft. Die Statusseite steht unter /status, die App verbindet sich per WebSocket.\n");
 });
+
+// Ob der Aufrufer eine Seite erwartet oder eine Auskunft. Browser sagen das im
+// Accept-Kopf; curl und die Ueberwachung sagen dort nichts oder */*.
+function willHtml(req) {
+  return String(req.headers?.accept || "").includes("text/html");
+}
+
+function statusAusliefern(res) {
+  res.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    // Nicht zwischenspeichern: eine Statusseite aus dem Zwischenspeicher zeigt
+    // ein Relay, das es so vielleicht gar nicht mehr gibt.
+    "cache-control": "no-store"
+  });
+  res.end(statusSeite.SEITE);
+}
+
+// Wie viele Geraete gerade wirklich haengen. Nicht wss.clients.size: darin
+// stecken auch Verbindungen, die schon im Abbau sind.
+function offeneVerbindungen() {
+  let offen = 0;
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN) offen += 1;
+  }
+  return offen;
+}
 
 const wss = new WebSocketServer({ server, maxPayload: MAX_NACHRICHT });
 
@@ -1730,6 +1796,10 @@ zustandLaden();
 aufraeumen();
 server.listen(PORT, () => {
   console.log(`ELFIX Watchparty-Relay ${FASSUNG} auf Port ${PORT} (Ablage: ${STATE_FILE})`);
+  // Die Adresse zum Nachsehen gleich mit. Wer den Dienst gerade eingerichtet
+  // hat, will als Naechstes wissen, ob er laeuft - und soll dafuer nicht erst
+  // im README suchen muessen, wo das steht.
+  console.log(`Statusseite: http://localhost:${PORT}/status`);
   // Nur die gepackte Datei haelt sich selbst auf dem neuesten Stand. Wer aus
   // dem Quelltext startet, hat ein Repository und aktualisiert mit git - ihm
   // eine Binaerdatei darueberzulegen waere das Gegenteil von hilfreich.

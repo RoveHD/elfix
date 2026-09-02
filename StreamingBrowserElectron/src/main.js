@@ -2293,6 +2293,26 @@ ipcMain.handle("help:open-issues", async () => {
   }
 });
 
+// Die Statusseite des eigenen Relays - dieselbe Regel wie oben: der Renderer
+// gibt keine Adresse mit. Sie kommt aus den Einstellungen und wird hier
+// gebildet, und mehr als der feste Pfad /status kommt nicht dazu.
+//
+// Warum ueberhaupt aus der App heraus: das Relay laeuft auf einer Maschine, an
+// die niemand mehr denkt, und wer wissen will, ob es noch laeuft, hat bisher
+// nur die Zeile "Nicht verbunden" hier drin gehabt - die sagt, dass es hakt,
+// aber nicht, woran. Die Seite drueben sagt es.
+ipcMain.handle("watchparty:statusseite", async () => {
+  const adresse = webAdresse(settings.watchparty?.serverUrl || "");
+  if (!adresse) return { ok: false, grund: "keine-adresse" };
+  try {
+    await shell.openExternal(`${adresse}/status`);
+    return { ok: true, adresse: `${adresse}/status` };
+  } catch (error) {
+    console.warn("[watchparty] Statusseite konnte nicht geoeffnet werden:", error?.message || error);
+    return { ok: false, grund: "kein-browser" };
+  }
+});
+
 // --- Sicherung ---------------------------------------------------------------
 //
 // Was hineingehoert und was nicht, entscheidet sicherung.js - dort steht auch,

@@ -390,18 +390,26 @@ curl http://localhost:8787/health
 Kopiert werden alle `.js`-Dateien, nicht nur `server.js`. Das Relay besteht
 inzwischen aus mehreren: `metadaten.js` fuer das Metadaten-Tor,
 `youtube-party.js` fuer die YouTube-Watchparty, `geraete.js` fuer den Abgleich
-der eigenen Geraete und `fern.js` samt `fern-seite.js` und `fern-icon.js` fuer
-die Fernbedienung.
+der eigenen Geraete, `fern.js` samt `fern-seite.js` und `fern-icon.js` fuer
+die Fernbedienung und `status-seite.js` fuer die Statusseite.
 Wird nur `server.js` uebertragen, startet der Dienst gar nicht mehr - ihm fehlt
 dann ein Modul.
 
-Seite und Symbol der Fernbedienung stehen bewusst in `.js`-Dateien und nicht als
-`.html` und `.png` daneben: sonst waeren genau sie die Dateien, die beim
-Kopieren jedes Mal liegenblieben.
+Seite und Symbol der Fernbedienung und die Statusseite stehen bewusst in
+`.js`-Dateien und nicht als `.html` und `.png` daneben: sonst waeren genau sie
+die Dateien, die beim Kopieren jedes Mal liegenblieben.
 
 Neue Abhaengigkeiten gab es dabei bisher nie, `npm ci` ist also nicht noetig.
 Kaeme doch einmal eine dazu, faellt das im Journal auf, und dann hilft
 `cd /opt/elfix-watchparty && sudo npm ci --omit=dev`.
+
+**Läuft es noch?** Die Adresse des Relays im Browser aufrufen — unter `/` (und
+unter `/status`) steht eine Seite, die genau das beantwortet: Zustand, Fassung,
+Laufzeit, Räume, Verbindungen, TMDB-Schlüssel und die Adresse für die App. Sie
+fragt alle drei Sekunden nach und meldet es, wenn keine Antwort mehr kommt.
+Raumcodes, Titel und Namen stehen dort nicht — die Seite ist so öffentlich wie
+das Relay. `curl` auf `/` bekommt weiterhin seine eine Zeile Text, und
+`/health` bleibt die Auskunft für Programme.
 
 Die Antwort von `/health` nennt unter `features`, was die laufende Fassung kann.
 Steht dort `youtube`, beherrscht das Relay die YouTube-Watchparty; `youtubeRaeume`
@@ -409,10 +417,12 @@ sagt, wie viele davon gerade laufen. Steht dort `geraete`, kennt es den Abgleich
 der eigenen Geraete; `geraeteRaeume` sagt, wie viele Schluessel dort liegen.
 Steht dort `fern`, kennt es die Fernbedienung und liefert ihre Seite unter
 `/fern` aus; `fernbedienungen` sagt, wie viele Rechner gerade steuerbar sind.
-Steht dort ausserdem `fernapp`, bringt diese Seite Manifest, Symbole und
-Service Worker mit und laesst sich am Handy als App installieren - fehlt der
+Steht dort ausserdem `fernapp`, bringt die Seite der Fernbedienung Manifest,
+Symbole und Service Worker mit und laesst sich am Handy als App installieren - fehlt der
 Eintrag, gibt Chrome nur eine Verknuepfung her. ELFIX fragt genau danach und
 sagt es in den Einstellungen.
+Steht dort `status`, liefert das Relay die Statusseite aus, und `/health` nennt
+ausserdem `fassung`, `laeuftSeitS` und `verbindungen`.
 
 Achtung: Der Raumcode ist der einzige Zugangsschutz. Cloudflare Access davor zu
 setzen funktioniert nicht ohne Weiteres, weil die App keinen Browser-Login

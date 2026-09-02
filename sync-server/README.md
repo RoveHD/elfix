@@ -22,11 +22,32 @@ Das war alles. Das Paket legt einen eigenen Benutzer an, richtet den Dienst
 ein und startet ihn — er läuft ab sofort auf Port 8787 und kommt nach jedem
 Neustart von selbst wieder.
 
-Nachsehen, ob er läuft:
+Nachsehen, ob er läuft — im Browser:
+
+```
+http://localhost:8787/
+```
+
+Dort steht eine Seite: läuft es, seit wann, welche Fassung, wie viele Räume und
+Geräte gerade dranhängen, ob der TMDB-Schlüssel eingetragen ist, und die
+Adresse, die in die App gehört. Sie hält sich selbst frisch — bleibt das Relay
+stehen, sagt sie das, statt weiter alte Zahlen zu zeigen. Vom Handy aus geht
+dieselbe Seite über die Adresse des Relays im Netz.
+
+Wer lieber auf der Maschine selbst nachsieht:
 
 ```bash
 systemctl status elfix-relay
+curl http://localhost:8787/health     # dieselben Zahlen als JSON
 ```
+
+Die Seite gibt es unter `/` und unter `/status`. Auf `/` bekommt sie nur, wer
+sie auch anzeigen kann: `curl` und jede Überwachung bekommen dort weiterhin die
+eine Zeile Text von früher.
+
+Was auf der Seite steht, sind Zahlen und sonst nichts — keine Raumcodes, keine
+Titel, keine Namen, kein Pfad zur Ablage. Sie ist so öffentlich wie das Relay:
+wer die Adresse kennt, sieht sie.
 
 Der TMDB-Schlüssel ist freiwillig. Ohne ihn läuft alles außer Film- und
 Seriendaten:
@@ -40,7 +61,9 @@ sudo systemctl restart elfix-relay
 ### Windows
 
 `ELFIX-Relay-<fassung>-win-x64.exe` herunterladen und starten. Sie öffnet ein
-Fenster mit dem Protokoll und lauscht auf Port 8787.
+Fenster mit dem Protokoll und lauscht auf Port 8787. In der zweiten Zeile steht
+die Adresse der Statusseite — `http://localhost:8787/status` im Browser
+geöffnet, und man sieht, was der Dienst gerade tut.
 
 Soll sie beim Anmelden von selbst starten, eine Verknüpfung in den
 Autostart-Ordner legen (`Win+R` → `shell:startup`).
