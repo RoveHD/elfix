@@ -814,6 +814,15 @@ function bindEvents() {
   document.querySelector("#newProviderButton").addEventListener("click", clearProviderForm);
   document.querySelector("#providerAddButton")?.addEventListener("click", () => { anbieterHinzufuegen().catch(() => {}); });
   // Der Jahresrueckblick: blaettern per Klick, Pfeiltasten und Punkten.
+  document.querySelector("#trailerClose")?.addEventListener("click", trailerSchliessen);
+  // Escape schliesst den Dialog von selbst - der Rahmen muss trotzdem raus,
+  // sonst laeuft der Ton weiter.
+  trailerModal?.addEventListener("close", () => trailerRahmen?.replaceChildren());
+  // Ein Klick neben den Kasten schliesst ihn ebenfalls: bei einem Video ist das
+  // die Bewegung, die jeder kennt.
+  trailerModal?.addEventListener("click", (ereignis) => {
+    if (ereignis.target === trailerModal) trailerSchliessen();
+  });
   document.querySelector("#wrappedClose")?.addEventListener("click", wrappedSchliessen);
   document.querySelector("#wrappedTonKnopf")?.addEventListener("click", (event) => {
     // Sonst blaettert der Klick zugleich eine Karte weiter - die Buehne
@@ -5115,6 +5124,84 @@ async function mediathekReihenfolgeSpeichern() {
   if (Array.isArray(gespeichert)) favorites = gespeichert;
 }
 
+// --- Der Trailer -------------------------------------------------------------
+//
+// Ein Trailer ist kein Titel, den man schaut. Er zaehlt nicht fuer die
+// Statistik, gehoert in keine Watchparty, faengt keine Sitzung an und soll den
+// Verlauf nicht anfassen - deshalb laeuft er hier im Fenster der App und nicht
+// in der Anbieteransicht, in der all das haengt.
+//
+// Woher er kommt: aus den Metadaten, die ELFIX ohnehin zu jedem Titel holt.
+// TMDB fuehrt die Videos eines Werks, AniList die eines Anime; ausgewaehlt wird
+// im Kern (sync-server/metadaten.js, `trailerAus`) - hier steht nur, wie er
+// abgespielt wird.
+//
+// Die Adresse wird aus der Kennung zusammengesetzt und nicht uebernommen. Was
+// aus einer fremden Antwort kommt, ist die Kennung, und sie hat die Pruefung in
+// metadaten.js hinter sich; alles andere steht hier.
+const trailerModal = document.querySelector("#trailerModal");
+const trailerRahmen = document.querySelector("#trailerRahmen");
+const trailerTitel = document.querySelector("#trailerTitel");
+const trailerEyebrow = document.querySelector("#trailerEyebrow");
+
+function trailerAdresse(trailer) {
+  const schluessel = String(trailer?.schluessel || "");
+  if (!/^[A-Za-z0-9_-]{6,20}$/.test(schluessel)) return "";
+  const adresse = new URL(`https://www.youtube-nocookie.com/embed/${schluessel}`);
+  adresse.searchParams.set("autoplay", "1");
+  // Keine Vorschlaege eines fremden Kanals hinterher: nach dem Trailer ist der
+  // Trailer zu Ende.
+  adresse.searchParams.set("rel", "0");
+  adresse.searchParams.set("modestbranding", "1");
+  return adresse.href;
+}
+
+function trailerOeffnen(trailer, titel) {
+  const adresse = trailerAdresse(trailer);
+  if (!adresse || !trailerModal?.showModal) return false;
+  const rahmen = document.createElement("iframe");
+  rahmen.src = adresse;
+  // Ein fremdes Dokument im Fenster der App bekommt nur, was es zum Abspielen
+  // braucht: Skripte, den eigenen Ursprung und den Weg ins Vollbild. Kein
+  // Navigieren des Hauptfensters, keine Popups.
+  rahmen.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
+  rahmen.setAttribute("allow", "autoplay; encrypted-media; fullscreen; picture-in-picture");
+  rahmen.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+  rahmen.setAttribute("allowfullscreen", "");
+  rahmen.title = titel ? `Trailer zu ${titel}` : "Trailer";
+  trailerRahmen?.replaceChildren(rahmen);
+  if (trailerTitel) trailerTitel.textContent = titel || "Trailer";
+  if (trailerEyebrow) {
+    trailerEyebrow.textContent = trailer?.name ? `Trailer · ${trailer.name}` : "Trailer";
+  }
+  trailerModal.showModal();
+  return true;
+}
+
+// Ausraeumen und nicht bloss zumachen: ein Rahmen, der weiterhin im Dokument
+// steht, spielt weiter - man hoert dann einen Trailer, den man nicht mehr
+// sieht.
+function trailerSchliessen() {
+  trailerRahmen?.replaceChildren();
+  if (trailerModal?.open) trailerModal.close();
+}
+
+/**
+ * Den Trailer zu einem Eintrag suchen und abspielen.
+ *
+ * <p>Gefragt wird erst beim Klick. Die Metadaten aller Karten vorab zu holen,
+ * nur damit ein Menuepunkt vielleicht dasteht, waere ein Abruf je Kachel - und
+ * die allermeisten davon fuer einen Knopf, den niemand drueckt.
+ */
+async function trailerZuEintragZeigen(favorite) {
+  const titel = displayFavoriteTitle(favorite);
+  const metadaten = await api.getLibraryMetadata?.(favorite.id).catch(() => null);
+  if (trailerOeffnen(metadaten?.trailer, titel)) return;
+  // Kein Trailer ist ein normaler Zustand: nicht zu jedem Titel gibt es einen,
+  // und ohne zugeordnete Metadaten gibt es gar keinen.
+  showToast(`Zu „${titel}“ ist kein Trailer hinterlegt`);
+}
+
 // Der persoenliche Verlauf eines Titels.
 //
 // Gezeigt wird derselbe Kasten wie bei einer Rueckfrage, nur ohne zweite
@@ -5128,11 +5215,15 @@ async function zeigeVerlauf(favorite) {
   // kosten, und ein Kasten, der Sekunden auf sich warten laesst, ist kaputt.
   // Der Status wird nachgetragen, sobald die Antwort da ist.
   const modell = verlaufModellBauen(favorite);
+  const inhalt = document.createElement("div");
+  // Die Liste darf fehlen - zu einem Film gibt es keine Staffeln. Die
+  // Knopfreihe steht trotzdem da: sie haengt am Titel und nicht am Verlauf.
+  inhalt.append(...[titelAktionen(favorite), verlaufListeBauen(modell)].filter(Boolean));
   const geschlossen = confirmAction({
     eyebrow: "Verlauf",
     title: displayFavoriteTitle(favorite),
     copy: verlaufKopfText(modell),
-    inhalt: verlaufListeBauen(modell),
+    inhalt,
     confirmLabel: "Schließen",
     nurSchliessen: true,
     mehrzeilig: true
@@ -5143,8 +5234,77 @@ async function zeigeVerlauf(favorite) {
   // die Antwort niemandem mehr.
   if (metadaten && confirmModal?.open) {
     confirmCopy.textContent = verlaufKopfText(verlaufModellBauen(favorite, metadaten));
+    // Der Trailer kommt nach, sobald die Metadaten da sind. Er steht nicht von
+    // Anfang an da, weil erst die Antwort sagt, ob es ueberhaupt einen gibt -
+    // ein Knopf, der beim Druecken "nichts gefunden" sagt, ist ein schlechter
+    // Knopf.
+    trailerKnopfNachtragen(favorite, metadaten?.trailer);
   }
   await geschlossen;
+}
+
+/**
+ * Die Knopfreihe ueber dem Verlauf: abspielen, Trailer, vormerken.
+ *
+ * <p>Der Kasten ist das Naechste, was ELFIX an einer Detailseite hat - er
+ * traegt Titel, Stand und Verlauf. Was dort fehlte, war das, was man mit dem
+ * Titel tun will; drei Wege, die es laengst gibt, standen nur im Menue der
+ * Kachel dahinter.
+ */
+function titelAktionen(favorite) {
+  const reihe = document.createElement("div");
+  reihe.className = "titel-aktionen";
+
+  const knopf = (klasse, text, tun) => {
+    const feld = document.createElement("button");
+    // Ausdruecklich kein "submit": der Kasten steht in einem Formular, und ein
+    // gewoehnlicher Knopf darin schloesse ihn bei jedem Klick.
+    feld.type = "button";
+    feld.className = klasse;
+    feld.textContent = text;
+    feld.addEventListener("click", tun);
+    reihe.append(feld);
+    return feld;
+  };
+
+  knopf("primary-action", "▶ Abspielen", () => {
+    confirmModal?.close();
+    openFavoriteEntry(favorite).catch(() => {});
+  });
+
+  if (!favorite.favorite) {
+    knopf("soft-action", "♡ Auf die Watchlist", async (ereignis) => {
+      const ergebnis = await api.setFavoriteWatchlist?.(favorite.id, true).catch(() => null);
+      if (!ergebnis?.favorite) {
+        showToast("Konnte nicht vorgemerkt werden");
+        return;
+      }
+      favorites = ergebnis.favorites || favorites;
+      renderFavorites();
+      renderHome();
+      renderLibraryViews();
+      renderFavoriteToggle();
+      ereignis.currentTarget.remove();
+      showToast(`„${displayFavoriteTitle(favorite)}“ steht auf der Watchlist`);
+    });
+  }
+  return reihe;
+}
+
+// Den Trailer-Knopf in die Reihe haengen, sobald die Metadaten da sind.
+function trailerKnopfNachtragen(favorite, trailer) {
+  const reihe = confirmBody?.querySelector(".titel-aktionen");
+  if (!reihe || !trailerAdresse(trailer)) return;
+  const feld = document.createElement("button");
+  feld.type = "button";
+  feld.className = "soft-action";
+  feld.textContent = "▷ Trailer";
+  feld.addEventListener("click", () => {
+    trailerOeffnen(trailer, displayFavoriteTitle(favorite));
+  });
+  // Hinter "Abspielen", vor der Watchlist: erst das Werk, dann die Vorschau,
+  // dann das Vormerken.
+  reihe.insertBefore(feld, reihe.children[1] || null);
 }
 
 function verlaufModellBauen(favorite, metadaten = null) {
@@ -6605,6 +6765,20 @@ function favoriteCard(favorite, allowRemove, options = {}) {
       ? (verlaufModell.folgen?.length || 0) > 1
       : (verlaufModell.tage || 0) > 0)
     : false;
+  // Der Trailer. Er steht bei jedem Eintrag zur Wahl und nicht nur dort, wo
+  // einer bekannt ist: ob es einen gibt, weiss erst der Abruf, und dafuer die
+  // Metadaten jeder Kachel im Voraus zu holen waere ein Netzabruf je Kachel.
+  // Gibt es keinen, sagt das eine Zeile - das ist ehrlicher als ein Menue, in
+  // dem der Punkt mal da ist und mal nicht.
+  eintraege.push({
+    gruppe: "info",
+    symbol: "▷",
+    text: "Trailer ansehen",
+    tun: async () => {
+      await trailerZuEintragZeigen(favorite);
+    }
+  });
+
   if (options.allowLibraryRemove && verlaufLohnt) {
     eintraege.push({
       gruppe: "info",
@@ -6644,6 +6818,18 @@ function favoriteCard(favorite, allowRemove, options = {}) {
       }
     });
   }
+
+  // Die Gruppen am Stueck und in fester Reihenfolge. Gebaut werden die
+  // Eintraege in der Folge, in der die Bedingungen im Quelltext stehen, und
+  // die richtet sich nach der Sache und nicht nach der Anzeige: "Aus
+  // Weiterschauen entfernen" (weg) entsteht vor "Verlauf ansehen" (info).
+  // Ohne diese Ordnung stuenden zwei Gruppen zweimal da, und der Trennstrich
+  // im Menue traennte nichts mehr.
+  //
+  // Stabil sortiert: innerhalb einer Gruppe bleibt die gebaute Folge.
+  const gruppenFolge = ["vormerken", "bild", "info", "weg"];
+  eintraege.sort((links, rechts) =>
+    gruppenFolge.indexOf(links.gruppe) - gruppenFolge.indexOf(rechts.gruppe));
 
   if (eintraege.length) {
     const menu = document.createElement("button");

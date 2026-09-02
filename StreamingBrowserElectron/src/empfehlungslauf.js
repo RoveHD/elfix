@@ -285,7 +285,11 @@ function erstellen(umgebung) {
     // Ein Eintrag aus der Zeit vor den Laufzeit-Feldern ist nicht falsch, nur
     // unvollstaendig. Er wird deshalb nicht verworfen - dieser eine Titel wird
     // frisch gefragt, und der naechste Aufruf findet ihn vollstaendig vor.
-    const unvollstaendig = bekannt && client.laufStatusFehlt(bekannt);
+    // Dasselbe gilt fuer den Trailer: ein Eintrag aus der Zeit davor kennt das
+    // Feld nicht, und wer die Karte aufmacht, soll den Knopf sehen und nicht
+    // erst beim uebernaechsten Mal.
+    const unvollstaendig = bekannt
+      && (client.laufStatusFehlt(bekannt) || client.trailerFehlt?.(bekannt));
     if (bekannt && !unvollstaendig) return bekannt;
     if (!client.bereit() || client.gesperrt()) return bekannt || null;
     try {

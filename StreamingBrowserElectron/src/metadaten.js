@@ -268,6 +268,11 @@ function verdichten(form, art) {
     staffeln: (form?.staffeln || []).slice(0, 60)
       .map((staffel) => ({ nummer: Number(staffel?.nummer) || 0, folgen: Number(staffel?.folgen) || 0 }))
       .filter((staffel) => staffel.nummer > 0),
+    // Der Trailer, und zwar streng gelesen: eine Videokennung besteht aus
+    // Buchstaben, Ziffern, Strich und Unterstrich. Was hier durchkommt, wird
+    // gleich darauf zu einer Adresse zusammengesetzt - eine Zeichenkette aus
+    // einer fremden Antwort hat darin nichts verloren.
+    trailer: trailerLesen(form?.trailer),
     konfidenz: String(form?.konfidenz || "UNMATCHED")
   };
 }
@@ -281,6 +286,37 @@ function verdichten(form, art) {
  * und nur der eine Titel, dessen Verlauf jemand tatsaechlich oeffnet, wird
  * noch einmal gefragt.
  */
+/**
+ * Die Angaben zum Trailer - oder null.
+ *
+ * <p>Die Kennung ist das Einzige, was zaehlt, und sie wird gegen dieselbe
+ * Zeichenmenge geprueft, die YouTube verwendet. Name und Sprache sind
+ * Beiwerk fuer die Beschriftung; eine fertige Adresse kommt bewusst nicht
+ * ueber die Leitung, damit niemand sie ungeprueft weiterreicht.
+ */
+function trailerLesen(roh) {
+  const schluessel = String(roh?.schluessel || "");
+  if (!/^[A-Za-z0-9_-]{6,20}$/.test(schluessel)) return null;
+  return {
+    schluessel,
+    name: String(roh?.name || "").slice(0, 120),
+    sprache: String(roh?.sprache || "").slice(0, 8),
+    quelle: String(roh?.quelle || "").slice(0, 16)
+  };
+}
+
+/*
+ * Stammt dieser Eintrag noch aus der Zeit vor dem Trailer?
+ *
+ * Dieselbe Frage wie bei den Laufzeit-Feldern und aus demselben Grund: die
+ * Cache-Fassung zu erhoehen haette viertausend geprueft zugeordnete Titel
+ * weggeworfen, obwohl an ihrer Zuordnung nichts falsch ist. Stattdessen wird
+ * genau der eine Titel neu gefragt, den jemand wirklich aufmacht.
+ */
+function trailerFehlt(form) {
+  return !form || !Object.prototype.hasOwnProperty.call(form, "trailer");
+}
+
 function laufStatusFehlt(form) {
   return !form || !Object.prototype.hasOwnProperty.call(form, "laufStatus");
 }
@@ -719,6 +755,7 @@ function erstellen(optionen = {}) {
     fehltImCache,
     nachschlagen,
     laufStatusFehlt,
+    trailerFehlt,
     status,
     statistik,
     wunschBauen,
@@ -732,6 +769,8 @@ module.exports = {
   erstellen,
   wunschBauen,
   laufStatusFehlt,
+  trailerFehlt,
+  trailerLesen,
   namensDeckung,
   besteDeckung,
   kurzform,

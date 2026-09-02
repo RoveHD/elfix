@@ -146,15 +146,24 @@ pruefe("In der Watchlist-Reihe: kein Eintrag",
     gebaut.namen.join(" | "));
 }
 
-// Ohne einen einzigen Eintrag braucht es auch keinen Knopf.
-pruefe("Ohne Eintraege gibt es keinen Knopf",
-  !menue(OFFEN, { allowImage: false }).knopf);
+// Ohne einen einzigen Eintrag braucht es auch keinen Knopf. Der Fall selbst
+// kommt nicht mehr vor - seit es den Trailer gibt, hat jede Titelkachel
+// mindestens diesen einen Eintrag -, die Regel bleibt aber stehen: sie ist der
+// Grund, warum keine Kachel einen Knopf traegt, hinter dem nichts steht.
+pruefe("Ohne Eintraege gaebe es keinen Knopf",
+  /if \(eintraege\.length\) \{\s*\n\s*const menu = document\.createElement\("button"\);/
+    .test(renderer));
+pruefe("Und den Trailer bietet jede Kachel an",
+  menue(OFFEN, { allowImage: false }).namen.join(" | ") === "Trailer ansehen",
+  "ob es wirklich einen gibt, weiss erst der Abruf beim Klick");
 
 // Loeschen ist der einzige Eintrag, der als gefaehrlich zaehlt.
 {
   const mediathek = menue(OFFEN, { allowLibraryRemove: true, allowImage: false });
   pruefe("Aus der Mediathek loeschen ist als gefaehrlich gekennzeichnet",
-    mediathek.eintraege.length === 1 && mediathek.eintraege[0].gefahr === true,
+    mediathek.eintraege.at(-1).text === "Aus Mediathek löschen"
+    && mediathek.eintraege.at(-1).gefahr === true
+    && mediathek.eintraege.filter((e) => e.gefahr).length === 1,
     mediathek.namen.join(" | "));
   pruefe("Die uebrigen Eintraege sind es nicht",
     menue(OFFEN, WEITER).eintraege.every((e) => !e.gefahr));
@@ -164,7 +173,8 @@ pruefe("Ohne Eintraege gibt es keinen Knopf",
 //
 // Acht gleich aussehende Zeilen untereinander liest niemand. Jeder Eintrag
 // traegt deshalb ein Symbol, und die Eintraege stehen in drei Gruppen:
-// vormerken, Bild, wegnehmen - in dieser Reihenfolge, mit dem Wegnehmen unten.
+// vormerken, Bild, nachlesen, wegnehmen - in dieser Reihenfolge, mit dem
+// Wegnehmen unten.
 
 {
   const alles = menue(OFFEN, { showProgress: true, allowContinueRemove: true, allowComplete: true,
@@ -173,14 +183,17 @@ pruefe("Ohne Eintraege gibt es keinen Knopf",
     alles.eintraege.every((e) => typeof e.symbol === "string" && e.symbol.length > 0),
     alles.eintraege.map((e) => `${e.symbol} ${e.text}`).join(" | "));
   pruefe("Jeder Eintrag gehoert zu einer Gruppe",
-    alles.eintraege.every((e) => ["vormerken", "bild", "weg"].includes(e.gruppe)),
+    alles.eintraege.every((e) => ["vormerken", "bild", "info", "weg"].includes(e.gruppe)),
     alles.eintraege.map((e) => e.gruppe).join(" "));
 
   // Die Gruppen stehen am Stueck und in fester Reihenfolge - sonst braechte
   // der Trennstrich im Menue nichts.
   const folge = alles.eintraege.map((e) => e.gruppe).filter((g, i, a) => g !== a[i - 1]);
+  // "info" - Trailer und Verlauf - steht zwischen dem Bild und dem Wegnehmen.
+  // Gebaut werden die Eintraege in einer anderen Folge als sie dastehen sollen;
+  // dass beides zusammenfaellt, besorgt eine stabile Sortierung am Ende.
   pruefe("Die Gruppen stehen am Stueck und in fester Reihenfolge",
-    folge.join(">") === "vormerken>bild>weg", folge.join(">"));
+    folge.join(">") === "vormerken>bild>info>weg", folge.join(">"));
   pruefe("Das Wegnehmen steht unten",
     alles.eintraege.at(-1).gruppe === "weg" && alles.eintraege.at(-1).gefahr === true,
     alles.eintraege.at(-1).text);

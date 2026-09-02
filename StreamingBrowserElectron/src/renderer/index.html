@@ -1369,6 +1369,22 @@
     </form>
   </dialog>
 
+  <!-- Der Trailer.
+
+       Er laeuft in einem eingebetteten Player von YouTube und nicht in der
+       Anbieteransicht: ein Trailer ist kein Titel, den man schaut - er zaehlt
+       nicht fuer die Statistik, gehoert in keine Watchparty und soll den
+       Verlauf nicht anfassen. Der Rahmen wird beim Schliessen ausgeraeumt,
+       damit der Ton wirklich aufhoert. -->
+  <dialog class="trailer-modal" id="trailerModal" aria-label="Trailer">
+    <div class="trailer-shell">
+      <p class="eyebrow" id="trailerEyebrow">Trailer</p>
+      <h2 id="trailerTitel">Trailer</h2>
+      <div class="trailer-rahmen" id="trailerRahmen"></div>
+      <button type="button" class="modal-close" id="trailerClose" title="Schließen" aria-label="Schließen">×</button>
+    </div>
+  </dialog>
+
   <dialog class="crop-modal" id="cropModal">
     <div class="crop-shell">
       <p class="eyebrow">Titelhintergrund</p>

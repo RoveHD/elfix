@@ -208,6 +208,11 @@ function leereNormalform(art) {
     folgenGesamt: 0,
     naechsteFolge: null,
     staffeln: [],
+    // Der Trailer. Nur die Kennung des Videos und woher sie stammt - keine
+    // fertige Adresse: wie ein Trailer abgespielt wird, entscheidet das Geraet,
+    // und eine Adresse aus einer fremden Antwort waere genau das, was man
+    // nicht ungeprueft weiterreicht.
+    trailer: null,
     konfidenz: "UNMATCHED"
   };
 }
@@ -225,6 +230,7 @@ const ANILIST_FELDER = `
   tags { name rank isMediaSpoiler isGeneralSpoiler category }
   studios { edges { isMain node { name } } }
   popularity averageScore favourites
+  trailer { id site }
   relations { edges { relationType node { id type format seasonYear title { romaji english } } } }
 `;
 
@@ -271,6 +277,12 @@ function anilistNormalform(m, konfidenz) {
   form.beliebtheit = m.popularity || 0;
   form.altersfreigabe = m.isAdult ? 18 : null;
   form.laufStatus = m.status || "";
+  // AniList nennt den Trailer als Kennung samt Anbieter. Genommen wird nur
+  // YouTube - denselben Weg gibt es in ELFIX schon, fuer Dailymotion nicht.
+  form.trailer = String(m.trailer?.site || "").toLowerCase() === "youtube"
+    && /^[A-Za-z0-9_-]{6,20}$/.test(String(m.trailer?.id || ""))
+    ? { schluessel: String(m.trailer.id), name: "", sprache: "", quelle: "anilist" }
+    : null;
   form.folgenGesamt = m.episodes || 0;
   // `airingAt` sind Sekunden seit 1970 in UTC. Weitergereicht wird eine
   // ISO-Zeit, damit die App sie nicht selbst deuten muss.
@@ -297,6 +309,68 @@ function tmdbKopfUndParameter(schluessel) {
     return { kopf: { authorization: "Bearer " + schluessel }, parameter: {} };
   }
   return { kopf: {}, parameter: { api_key: schluessel } };
+}
+
+/**
+ * Welcher der Videoschnipsel bei TMDB der Trailer ist.
+ *
+ * <p>TMDB haengt an ein Werk alles an, was jemand hochgeladen hat: Trailer,
+ * Teaser, Clips, Interviews, "Behind the Scenes", Featurettes. Gemeint ist
+ * davon genau eines, und die Reihenfolge der Antwort sagt nichts darueber -
+ * der erste Eintrag ist regelmaessig ein Clip aus der Mitte des Films.
+ *
+ * <p>Gewaehlt wird deshalb nach vier Merkmalen, in dieser Ordnung:
+ *
+ * <ul>
+ *   <li><b>Art.</b> Ein Trailer vor einem Teaser; alles andere faellt aus. Ein
+ *       Clip ist kein Trailer, sondern eine Szene - und die verraet Handlung,
+ *       die man noch nicht kennen wollte.
+ *   <li><b>Sprache.</b> Deutsch vor Englisch. Die App ist deutsch, und ein
+ *       deutscher Trailer ist dort die bessere Antwort - gibt es keinen, ist
+ *       der englische besser als keiner.
+ *   <li><b>Offiziell.</b> Der Trailer des Studios vor dem eines Kanals, der
+ *       ihn nachgeladen hat.
+ *   <li><b>Alter.</b> Der neuere zuerst: zu einer Serie ist der Trailer der
+ *       laufenden Staffel gemeint und nicht der von 2013.
+ * </ul>
+ *
+ * <p>Nur YouTube. Bei TMDB steht auch Vimeo, und dafuer gibt es in ELFIX
+ * keinen Weg, der schon da waere - ein zweiter Abspielweg fuer den
+ * Ausnahmefall waere mehr Aufwand als der Fall wert ist.
+ */
+function trailerAus(videos, quelle = "tmdb") {
+  const liste = Array.isArray(videos?.results) ? videos.results : (Array.isArray(videos) ? videos : []);
+  const rang = (eintrag) => {
+    const art = String(eintrag?.type || "").toLowerCase();
+    if (art !== "trailer" && art !== "teaser") return null;
+    const seite = String(eintrag?.site || "").toLowerCase();
+    if (seite !== "youtube") return null;
+    const schluessel = String(eintrag?.key || "");
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(schluessel)) return null;
+    const sprache = String(eintrag?.iso_639_1 || "").toLowerCase();
+    return {
+      schluessel,
+      name: String(eintrag?.name || "").slice(0, 120),
+      sprache,
+      quelle,
+      punkte: [
+        art === "trailer" ? 0 : 1,
+        sprache === "de" ? 0 : (sprache === "en" ? 1 : 2),
+        eintrag?.official === false ? 1 : 0,
+        -Date.parse(String(eintrag?.published_at || "")) || 0
+      ]
+    };
+  };
+  const treffer = liste.map(rang).filter(Boolean)
+    .sort((links, rechts) => {
+      for (let i = 0; i < links.punkte.length; i += 1) {
+        if (links.punkte[i] !== rechts.punkte[i]) return links.punkte[i] - rechts.punkte[i];
+      }
+      return 0;
+    });
+  if (!treffer.length) return null;
+  const beste = treffer[0];
+  return { schluessel: beste.schluessel, name: beste.name, sprache: beste.sprache, quelle };
 }
 
 function tmdbNormalform(roh, art, konfidenz) {
@@ -335,6 +409,7 @@ function tmdbNormalform(roh, art, konfidenz) {
   form.aehnlich = (roh.recommendations?.results || []).slice(0, 12)
     .map((r) => ({ id: r.id, titel: r.title || r.name || "", art, quelle: "tmdb-empfehlung" }))
     .filter((r) => r.titel);
+  form.trailer = trailerAus(roh.videos, "tmdb");
   form.bewertung = typeof roh.vote_average === "number" ? roh.vote_average : null;
   form.bewertungStimmen = roh.vote_count || 0;
   form.beliebtheit = roh.popularity || 0;
@@ -502,7 +577,7 @@ function erstellen(optionen = {}) {
 
   // Alles, was ein Werk beschreibt, in einem Abruf. `append_to_response` haengt
   // die Unterabfragen an dieselbe Anfrage - ohne das waeren es fuenf.
-  const TMDB_ANHANG = "keywords,credits,recommendations,alternative_titles,external_ids";
+  const TMDB_ANHANG = "keywords,credits,recommendations,alternative_titles,external_ids,videos";
 
   async function tmdbWerk(art, id) {
     const pfad = (art === "film" ? "/movie/" : "/tv/") + encodeURIComponent(String(id));
@@ -883,5 +958,6 @@ module.exports = {
   leereNormalform,
   anilistNormalform,
   tmdbNormalform,
+  trailerAus,
   GRENZEN: { MAX_STAPEL, TAKT_ANFRAGEN, TAKT_TITEL, TAKT_FENSTER_MS, CACHE_MS, NEGATIV_CACHE_MS, ANFRAGE_TIMEOUT_MS }
 };
