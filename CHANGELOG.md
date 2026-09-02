@@ -3,6 +3,56 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.85.0 — 1. September 2026
+
+Nichts Neues zu sehen — die App rechnet nur weniger. Die Zahlen bleiben, wo sie
+waren; das ist der Punkt.
+
+**Der Rückblick rechnete neunmal, wo einmal reicht.** Die Reiterleiste bietet
+nur Zeiträume an, in denen wirklich etwas liegt — ein Reiter, hinter dem nichts
+steht, ist eine Enttäuschung mit Vorankündigung. Herausgefunden wurde das,
+indem jeder Zeitraum einzeln durchgerechnet wurde: vier feste, einer je Jahr,
+und danach noch einmal der gewählte.
+
+Bei drei Jahren sind das neun vollständige Auswertungen über *alle* Sitzungen —
+für eine Frage, die mit „ja" oder „nein" zu beantworten ist. Und zwar im
+Hauptprozess, der solange nichts anderes tut, bei jedem Öffnen des Rückblicks
+und bei jedem Klick auf einen Reiter erneut. Gemessen:
+
+| Ablage | vorher | jetzt |
+|---|---|---|
+| 250 Sitzungen, 7 Reiter | 14 ms | 3 ms |
+| 1000 Sitzungen, 8 Reiter | 42 ms | 12 ms |
+| 5000 Sitzungen, 9 Reiter | 214 ms | 66 ms |
+
+Gebraucht wird dafür keine zweite Rechnung, sondern eine, die schon da ist: die
+Auswertung nennt ohnehin jeden Tag, an dem etwas lief — bereinigt und ohne
+YouTube, nach genau denselben Regeln, nach denen auch gezählt wird. Ein
+Zeitraum gibt etwas her, wenn einer dieser Tage hineinfällt.
+
+Dass dabei dasselbe herauskommt, ist nicht behauptet, sondern gefahren: 1800
+zufällige Ablagen durch beide Fassungen, null Abweichungen.
+
+Zwei Kleinigkeiten aus derselben Ecke: der Favoritennachschlag lief für *jede*
+Sitzung linear durch *alle* Favoriten — bei 5000 Sitzungen und 600 Favoriten
+drei Millionen Vergleiche je Auswertung. Und das Dezember-Banner auf der
+Startseite und der Eintrag in der Seitenleiste holten dieselbe Auskunft
+getrennt, also zweimal dieselbe volle Auswertung je Aufbau der Startseite.
+
+**Und abgeschaltete Reihen der Startseite werden nicht mehr gebaut.** Die drei
+Weiterschauen-Reihen wurden immer gefüllt und danach gegebenenfalls
+ausgeblendet. Wer eine davon in den Einstellungen abgeschaltet hat, ließ bei
+jedem Aufbau der Startseite bis zu vierundzwanzig Kacheln bauen, die er nie zu
+sehen bekommt — und sie standen anschließend unsichtbar im Dokument, mit ihren
+Bildern und Zuhörern. Bei eingeschalteten Reihen ändert sich nichts.
+
+Zwei Dinge sind bewusst geblieben, wie sie sind, weil die Messung sie nicht
+rechtfertigt: der Wächter, der im Fünfsekundentakt prüft, ob sich am Bestand
+etwas geändert hat, kostet bei 500 Einträgen 1,6 Millisekunden. Und die
+Sitzungsdatei wird weiterhin eingerückt geschrieben — kompakt wäre doppelt so
+schnell, aber bei einer üblichen Ablage sind das eine Millisekunde alle dreißig
+Sekunden, und eine von Hand lesbare Datenablage ist mehr wert.
+
 ## 1.84.0 — 1. September 2026
 
 Drei Meldungen zum Jahresrückblick, alle aus derselben Runde wie 1.83.0 — und
