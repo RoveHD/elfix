@@ -3,6 +3,33 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.89.0 — 2. September 2026
+
+**Zu jedem Titel gibt es jetzt den Trailer.**
+
+ELFIX holt ohnehin Metadaten zu jedem Titel — Genres, Besetzung, Laufstatus.
+Der Trailer steht dort auch, bei TMDB zu jedem Werk und bei AniList zu jedem
+Anime; benutzt wurde er bisher nicht.
+
+Es muss dabei der Trailer sein und nicht irgendein Video: TMDB hängt an ein
+Werk alles an, was jemand hochgeladen hat — Clips, Interviews, Featurettes —,
+und der erste Eintrag der Antwort ist regelmäßig eine Szene aus der Mitte des
+Films, die Handlung verrät, die man noch nicht kennen wollte. Gewählt wird
+deshalb in vier Stufen: Trailer vor Teaser, deutsch vor englisch, der
+offizielle vor dem nachgeladenen, und bei gleicher Art der neuere — zu einer
+Serie ist die laufende Staffel gemeint und nicht die von 2013.
+
+Abgespielt wird er im Fenster der App und nicht in der Anbieteransicht. Ein
+Trailer ist kein Titel, den man schaut: er zählt nicht für die Statistik,
+gehört in keine Watchparty und rührt den Verlauf nicht an.
+
+Zu finden ist er an zwei Stellen: im Menü jeder Titelkachel („Trailer
+ansehen") und im Verlaufskasten eines Titels, der jetzt eine Knopfreihe trägt
+— **▶ Abspielen · ▷ Trailer · ♡ Auf die Watchlist**. Gibt es zu einem Titel
+keinen Trailer, sagt das eine Zeile.
+
+Nur am Rechner — auf Android fehlt er noch.
+
 ## 1.88.1 — 2. September 2026
 
 **Der Autoplay-Schalter klebte auf YouTube über dem Video.** Er heißt „nächste
