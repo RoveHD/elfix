@@ -1094,6 +1094,18 @@ ipcMain.handle("titel:trailer", async (_event, titel, url) => {
   try {
     const form = await lauf.titelMetadaten(String(titel || ""), String(url || ""));
     if (form?.trailer) return { trailer: form.trailer, grund: "" };
+    // Der fehlende TMDB-Schluessel zuerst, und zwar vor allen anderen Gruenden.
+    //
+    // Ohne ihn kommt das Relay an Filme und Serien gar nicht heran: es findet
+    // kein Werk (also "nicht zugeordnet") und liefert keinen Trailer (also
+    // scheinbar "Dienst zu alt"). Beide Meldungen stimmen dann nicht - sie
+    // nennen eine Folge und schicken den Leser hinter der falschen Ursache her,
+    // zur Zuordnung oder zum Aktualisieren eines Relays, das schon die neueste
+    // Fassung ist. Anime bleibt aussen vor: das kommt von AniList und braucht
+    // keinen Schluessel.
+    if (form?.art !== "anime" && metadatenClient().tmdbFehlt?.()) {
+      return { trailer: null, grund: "kein-tmdb" };
+    }
     if (!form || form.konfidenz === "UNMATCHED") {
       return { trailer: null, grund: "nicht-zugeordnet" };
     }

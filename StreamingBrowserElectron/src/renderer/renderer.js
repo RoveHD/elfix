@@ -5243,6 +5243,12 @@ function trailerGrundText(grund, name) {
   if (grund === "dienst-zu-alt") {
     return "Dein Metadaten-Dienst kennt noch keine Trailer — Relay auf 1.89.1 aktualisieren und neu starten";
   }
+  // Der haeufigste Grund von allen, und der einzige, der nichts mit dem Titel
+  // und nichts mit der Fassung zu tun hat: das Relay hat keinen TMDB-Zugang.
+  // Dann fehlen zu Filmen und Serien nicht nur Trailer, sondern alle Angaben.
+  if (grund === "kein-tmdb") {
+    return "Deinem Relay fehlt der TMDB-Schlüssel — ohne ihn gibt es zu Filmen und Serien weder Trailer noch Genres. Auf der Statusseite des Relays steht es auch";
+  }
   if (grund === "nicht-zugeordnet") {
     return `„${name}“ ließ sich keinem Werk zuordnen — deshalb auch kein Trailer`;
   }

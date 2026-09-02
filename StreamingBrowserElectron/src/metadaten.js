@@ -450,6 +450,14 @@ function erstellen(optionen = {}) {
   let geaendert = false;
   let ausfaelle = 0;
   let ausfallBis = 0;
+  // Was das Relay ueber seine eigenen Quellen sagt - zuletzt gesehen.
+  //
+  // Es steht in jeder Antwort auf /metadata/lookup und in /metadata/status,
+  // und bisher wurde es weggeworfen. Gebraucht wird es fuer eine einzige, aber
+  // wichtige Unterscheidung: ohne TMDB-Schluessel gibt es zu Filmen und Serien
+  // gar nichts zu holen. Wer das nicht weiss, sucht den Fehler bei der
+  // Zuordnung oder bei der Fassung des Relays - und findet ihn dort nie.
+  let letzteQuellen = null;
 
   const zaehler = {
     anfragen: 0, titel: 0,
@@ -570,10 +578,27 @@ function erstellen(optionen = {}) {
     }
   }
 
+  function quellenMerken(quellen) {
+    if (quellen && typeof quellen === "object") letzteQuellen = quellen;
+  }
+
+  /**
+   * Ob dem Metadaten-Dienst der TMDB-Schluessel fehlt.
+   *
+   * <p>Nur wenn es dasteht. Solange nichts vom Relay gekommen ist, ist die
+   * Antwort `false` und nicht "vielleicht": eine Meldung, die einen fehlenden
+   * Schluessel behauptet, ohne ihn geprueft zu haben, waere genau der Fehler,
+   * den sie beheben soll.
+   */
+  function tmdbFehlt() {
+    return Boolean(letzteQuellen) && letzteQuellen.tmdb !== "configured";
+  }
+
   async function status() {
     if (!bereit()) return { metadata: false, grund: "keine-adresse" };
     const antwort = await anfragen("/metadata/status", { method: "GET" }, STATUS_TIMEOUT_MS);
     if (antwort.fehler) return { metadata: false, grund: antwort.fehler };
+    quellenMerken(antwort.daten);
     return antwort.daten;
   }
 
@@ -601,6 +626,7 @@ function erstellen(optionen = {}) {
       })
     }, TIMEOUT_MS);
     if (antwort.fehler) return { fehler: antwort.fehler };
+    quellenMerken(antwort.daten?.quellen);
     const treffer = Array.isArray(antwort.daten.treffer) ? antwort.daten.treffer : [];
     const nach = new Map();
     for (const eintrag of treffer) {
@@ -781,6 +807,7 @@ function erstellen(optionen = {}) {
     nachschlagen,
     laufStatusFehlt,
     trailerFehlt,
+    tmdbFehlt,
     status,
     statistik,
     wunschBauen,

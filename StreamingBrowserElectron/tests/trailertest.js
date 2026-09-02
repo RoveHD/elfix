@@ -211,7 +211,9 @@ pruefe("Und erst beim Klick",
   !/getTrailer\?\.\([^)]*\)[^;]*;[\s\S]{0,80}?forEach/.test(RENDERER),
   "die Metadaten jeder Kachel vorab zu holen waere ein Abruf je Kachel");
 pruefe("Der Hauptprozess antwortet auch ohne Dienst und ohne Netz",
-  /ipcMain\.handle\("titel:trailer"[\s\S]{0,1200}?catch \{\s*\n\s*return \{ trailer: null, grund: "fehler" \};/
+  // Das Fenster ist gross genug fuer den Handler samt seiner Begruendungen -
+  // gesucht wird, dass am Ende ein catch steht, nicht wie kurz der Weg dahin ist.
+  /ipcMain\.handle\("titel:trailer"[\s\S]{0,2600}?catch \{\s*\n\s*return \{ trailer: null, grund: "fehler" \};/
     .test(lies("src/main.js")),
   "eine Ausnahme darf die Kachel nicht stehenlassen");
 pruefe("Gibt es keinen, sagt das eine Zeile - und welchen Grund",
@@ -224,6 +226,27 @@ pruefe("Und der Hauptprozess nennt ihn",
   && /if \(metadatenModul\.trailerFehlt\(form\)\) return \{ trailer: null, grund: "dienst-zu-alt" \};/
     .test(lies("src/main.js")),
   "ein zu alter Metadaten-Dienst ist der haeufigste Fall nach einem Update");
+// --- Der fehlende TMDB-Schluessel --------------------------------------------
+//
+// Ohne ihn kommt das Relay an Filme und Serien gar nicht heran. Was die App
+// davon sieht, ist ein Werk, das sich nicht zuordnen laesst, oder ein Datensatz
+// ohne Trailerfeld - und beide Meldungen dazu schickten den Leser hinter der
+// falschen Ursache her: zur Zuordnung oder zum Aktualisieren eines Relays, das
+// schon die neueste Fassung ist.
+
+const HAUPT = lies("src/main.js");
+
+pruefe("Der Grund steht vor den beiden, die er verursacht",
+  HAUPT.indexOf('grund: "kein-tmdb"') > 0
+  && HAUPT.indexOf('grund: "kein-tmdb"') < HAUPT.indexOf('grund: "nicht-zugeordnet"')
+  && HAUPT.indexOf('grund: "kein-tmdb"') < HAUPT.indexOf('grund: "dienst-zu-alt"'),
+  "sonst gewinnt die Folge gegen die Ursache");
+pruefe("Anime bleibt aussen vor",
+  /form\?\.art !== "anime" && metadatenClient\(\)\.tmdbFehlt\?\.\(\)/.test(HAUPT),
+  "das kommt von AniList und braucht keinen Schluessel");
+pruefe("Und die Zeile dazu nennt den Schluessel",
+  /grund === "kein-tmdb"/.test(RENDERER) && /TMDB-Schlüssel/.test(RENDERER));
+
 pruefe("Und im Titelkasten steht die Knopfreihe",
   /function titelAktionen\(favorite\)/.test(RENDERER)
   && /"▶ Abspielen"/.test(RENDERER) && /"♡ Auf die Watchlist"/.test(RENDERER));
@@ -236,6 +259,37 @@ pruefe("Die Knoepfe schliessen den Kasten nicht aus Versehen",
   || /feld\.type = "button";/.test(RENDERER),
   "der Kasten steht in einem Formular");
 
-const fehler = pruefungen.filter((ok) => !ok).length;
-console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
-process.exit(fehler ? 1 : 0);
+// Und woher die App das weiss: das Relay sagt es in jeder Antwort.
+const stand = { quellen: null };
+const client = geraet.erstellen({
+  basis: "http://relay.beispiel",
+  holen: async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      treffer: [{ id: "a", art: "film", konfidenz: "UNMATCHED", trailer: null }],
+      quellen: stand.quellen
+    })
+  }),
+  laden: () => ({}),
+  speichern: () => {}
+});
+
+pruefe("Ohne Auskunft wird nichts behauptet", !client.tmdbFehlt(),
+  "eine Meldung ueber einen fehlenden Schluessel, ohne ihn geprueft zu haben, waere derselbe Fehler");
+
+(async () => {
+  stand.quellen = { metadata: true, tmdb: "unavailable", anilist: "available" };
+  await client.nachschlagen([geraet.wunschBauen({ titel: "Spider-Man", art: "film" })]);
+  pruefe("Sagt das Relay, der Schluessel fehle, merkt die App es sich", client.tmdbFehlt());
+
+  stand.quellen = { metadata: true, tmdb: "configured", anilist: "available" };
+  await client.nachschlagen([geraet.wunschBauen({ titel: "Spider-Man 2", art: "film" })]);
+  pruefe("Und wenn er nachgetragen wird, verschwindet die Meldung wieder", !client.tmdbFehlt(),
+    "sonst bliebe die Zeile stehen, bis jemand die App neu startet");
+
+  const fehlerAnzahl = pruefungen.filter((ok) => !ok).length;
+  console.log(`\n${pruefungen.length - fehlerAnzahl}/${pruefungen.length} bestanden`);
+  process.exit(fehlerAnzahl ? 1 : 0);
+})();
+
