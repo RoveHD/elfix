@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.88.1 — 2. September 2026
+
+**Der Autoplay-Schalter klebte auf YouTube über dem Video.** Er heißt „nächste
+Folge von selbst starten", und die nächste Folge gibt es dort nicht — was nach
+einem Video kommt, entscheidet YouTube selbst und hat dafür seinen eigenen
+Schalter im eigenen Player. Er ist auf YouTube jetzt weg, am Rechner wie auf
+Telefon und Fernseher (dort die Leiste mit „Nächste Folge" und Autoplay).
+
+Gemessen und gemerkt wird davon unabhängig weiter: ein YouTube-Video zählt
+nach wie vor in „Weiterschauen" und in der Statistik.
+
 ## 1.88.0 — 2. September 2026
 
 **SponsorBlock: bezahlte Einschübe in YouTube-Videos werden übersprungen.**
