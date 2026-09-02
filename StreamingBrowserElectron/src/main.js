@@ -896,7 +896,9 @@ async function clearBrowserDataPreservingLogin() {
 // dort hat keinen Ursprung, den YouTube gelten laesst: der eingebettete Player
 // prueft die Herkunft, findet nichts und zeigt "Fehler bei der Konfiguration
 // des Videoplayers - Fehler 153". Also wird ihm gesagt, auf welcher Seite er
-// steht.
+// steht - und zwar auf einer fremden. "youtube.com" zu nennen hiesse, YouTube
+// bette sich selbst ein, und darauf antwortet der Player mit dem naechsten
+// Fehler statt mit dem Video. Welcher Name es ist, steht in youtube.js.
 //
 // Auf der Sitzung des Hauptfensters und nicht auf der der Anbieter: dort haengt
 // der Werbefilter, und diese beiden haben nichts miteinander zu tun. Der Filter

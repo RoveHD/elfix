@@ -259,13 +259,28 @@ pruefe("Die Knoepfe schliessen den Kasten nicht aus Versehen",
   || /feld\.type = "button";/.test(RENDERER),
   "der Kasten steht in einem Formular");
 
-// --- Fehler 153: der Rahmen und seine Herkunft --------------------------------
+// --- Der Rahmen und seine Herkunft -------------------------------------------
 //
 // Die Oberflaeche kommt von der Platte (file://), und ein Dokument von dort hat
 // keinen Ursprung, den YouTube gelten laesst. Der eingebettete Player prueft
 // die Herkunft, findet nichts und zeigt statt des Videos "Fehler bei der
 // Konfiguration des Videoplayers - Fehler 153". Also wird ihm gesagt, auf
 // welcher Seite er steht - und nur ihm.
+//
+// Welche Seite man nennt, entscheidet aber mit, und der naheliegende Wert war
+// der falsche. Nachgemessen in einem echten file://-Fenster (Electron, vier
+// Videos nebeneinander, darunter der gemeldete Trailer vwwIVikRA1I und ein
+// beliebig einbettbares Kontrollvideo):
+//
+//   ohne Herkunft                      Fehler 153
+//   Referer https://www.youtube.com/   "Dieses Video ist nicht verfuegbar
+//                                       - Fehlercode: 152 - 4"
+//   Referer https://elfix.local/       spielt, alle vier
+//
+// Mit "youtube.com" behauptet der Rahmen, YouTube bette sich selbst ein. Das
+// laesst YouTube nicht gelten - der zweite Fehler war also kein Rest des
+// ersten, sondern seine Folge. Es muss eine fremde Seite sein; dann taugt jede,
+// und ELFIX nennt sich selbst.
 
 const yt = require("../src/youtube.js");
 const HAUPT2 = lies("src/main.js");
@@ -284,12 +299,18 @@ pruefe("Und nichts Fremdes",
 
 const koepfe = yt.einbettungsKoepfe("https://www.youtube-nocookie.com/embed/ABCdef12345", { "User-Agent": "x" });
 pruefe("Der Rahmen bekommt eine Herkunft mit",
-  koepfe.Referer === "https://www.youtube.com/" && koepfe.Origin === "https://www.youtube.com"
-  && koepfe["User-Agent"] === "x",
+  koepfe.Referer === yt.EINBETTUNGS_HERKUNFT && koepfe["User-Agent"] === "x",
   "und behaelt, was sonst im Kopf steht");
+pruefe("Und es ist eine fremde Seite, nicht YouTube selbst",
+  !/(^|\.)youtube(-nocookie)?\.com/.test(new URL(yt.EINBETTUNGS_HERKUNFT).hostname)
+  && new URL(yt.EINBETTUNGS_HERKUNFT).protocol === "https:",
+  "genau das war Fehlercode 152 - 4: YouTube laesst sich nicht in sich selbst einbetten");
+pruefe("Ein Origin wird nicht erfunden",
+  !("Origin" in koepfe) && !("origin" in koepfe),
+  "zu einer Navigation schickt auch ein Browser keinen - und gemessen aendert er nichts");
 pruefe("Eine vorhandene Herkunft wird nicht ueberschrieben",
   yt.einbettungsKoepfe("https://www.youtube.com/embed/ABCdef12345",
-    { referer: "https://andere.de", Origin: "https://andere.de" }) === null);
+    { referer: "https://andere.de" }) === null);
 pruefe("Alles andere bleibt unangetastet",
   yt.einbettungsKoepfe("https://www.youtube.com/watch?v=ABCdef12345", {}) === null);
 

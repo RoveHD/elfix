@@ -408,7 +408,7 @@ function istShortsUrl(url) {
 }
 
 /*
- * Der eingebettete Player und sein "Fehler 153".
+ * Der eingebettete Player und seine Herkunft.
  *
  * Ein Trailer laeuft in einem Rahmen im Fenster der App. Die Oberflaeche der
  * App kommt aber von der Platte (file://), und ein Dokument von dort hat keinen
@@ -418,9 +418,42 @@ function istShortsUrl(url) {
  *
  * Es ist keine Sperre gegen ELFIX, sondern die Regel fuer jeden eingebetteten
  * Player: er will wissen, auf welcher Seite er steht. Also wird ihm das gesagt.
+ *
+ * Nur: welche Seite man nennt, entscheidet mit. Zuerst stand hier
+ * "https://www.youtube.com/" - der naheliegende Wert, und der falsche. Damit
+ * behauptet der Rahmen, YouTube bette sich selbst ein, und genau das laesst
+ * YouTube nicht gelten: aus Fehler 153 wurde "Dieses Video ist nicht verfuegbar
+ * - Fehlercode: 152 - 4". Ein Fehler gegen den anderen getauscht.
+ *
+ * Nachgemessen (tests/trailertest.js beschreibt den Aufbau, der Prueflauf lief
+ * mit vier Videos in einem echten file://-Fenster):
+ *
+ *   ohne Herkunft                          Fehler 153
+ *   Referer https://www.youtube.com/       Fehler 152 - 4
+ *   Referer https://elfix.local/           spielt
+ *
+ * Es muss also eine fremde Seite sein, und dann taugt jede. ELFIX nennt sich
+ * selbst - das ist die Wahrheit ueber den Rahmen: eine oertliche Anwendung
+ * namens ELFIX bettet dieses Video ein. Der Name einer echten fremden Seite
+ * waere eine Behauptung ueber jemand anderen.
+ *
+ * Ein "Origin" wird ausdruecklich nicht gesetzt. Ein Browser schickt zu einer
+ * Navigation - und der Rahmen geht mit einer auf - keinen mit; er gehoert zu
+ * Anfragen, die aus einer Seite heraus laufen. Gemessen spielt der Player mit
+ * und ohne, und was nichts bewirkt, wird auch nicht erfunden.
+ *
  * Betroffen ist genau die eine Anfrage, mit der der Rahmen aufgeht - nichts
  * sonst, und schon gar nicht die Anbieterseiten.
  */
+
+/**
+ * Die Seite, auf der der Rahmen steht.
+ *
+ * <p>Frei erfunden waere das falsche Wort: ".local" ist genau dafuer da, fuer
+ * Namen, die nie zu einem Rechner im Netz gehoeren. Der Rahmen sagt damit, was
+ * er ist, ohne den Namen einer fremden Seite zu tragen.
+ */
+const EINBETTUNGS_HERKUNFT = "https://elfix.local/";
 
 /** Ist das die Adresse eines eingebetteten YouTube-Players? */
 function istEinbettung(url) {
@@ -438,7 +471,7 @@ function istEinbettung(url) {
 /**
  * Die Koepfe, mit denen der Rahmen aufgeht.
  *
- * <p>Gesetzt wird nur, was fehlt - ein vorhandener Ursprung wird nicht
+ * <p>Gesetzt wird nur, was fehlt - eine vorhandene Herkunft wird nicht
  * ueberschrieben. Und nur fuer die Einbettung selbst: was danach an Video- und
  * Zaehldaten laeuft, geht den Player nichts an, was hier steht.
  *
@@ -447,15 +480,13 @@ function istEinbettung(url) {
 function einbettungsKoepfe(url, koepfe = {}) {
   if (!istEinbettung(url)) return null;
   const vorhanden = Object.keys(koepfe).map((name) => name.toLowerCase());
-  if (vorhanden.includes("referer") && vorhanden.includes("origin")) return null;
-  const neu = { ...koepfe };
-  if (!vorhanden.includes("referer")) neu.Referer = "https://www.youtube.com/";
-  if (!vorhanden.includes("origin")) neu.Origin = "https://www.youtube.com";
-  return neu;
+  if (vorhanden.includes("referer")) return null;
+  return { ...koepfe, Referer: EINBETTUNGS_HERKUNFT };
 }
 
 module.exports = {
   YOUTUBE_HOSTS,
+  EINBETTUNGS_HERKUNFT,
   istEinbettung,
   einbettungsKoepfe,
   MINDEST_SEKUNDEN,
