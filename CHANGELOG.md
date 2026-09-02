@@ -3,6 +3,42 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.87.0 — 2. September 2026
+
+Im Jahresrückblick läuft die Musik jetzt zu jeder Karte, die einen Titel zeigt.
+
+Bisher lief sie nur zur Serie des Jahres. Das war Vorsicht und keine Absicht:
+das Titelbild hinter den Karten musste weichen, weil es auf Karte eins verriet,
+worauf der ganze Rückblick hinausläuft — und Musik verrät dieselbe Pointe, nur
+akustisch. Diese Sorge trifft aber nur Musik zu einer Karte, die noch gar nicht
+dran ist. Aufgefallen ist das an „So hat dein Jahr begonnen": dort steht der
+Titel groß auf dem Schirm, und dazu blieb es still.
+
+Jede Karte spielt jetzt den Titel, den sie selbst zeigt — die Serie des Jahres,
+den ersten und den letzten Titel des Jahres, den am häufigsten wiederholten.
+Was zu hören ist, steht dabei gleichzeitig da; vorwegnehmen kann es nichts.
+
+**Karten mit bloßen Zahlen wechseln nichts.** Sie haben keinen Titel, und dort
+läuft weiter, was gerade läuft — sonst risse der Ton zwischen zwei Titelkarten
+jedes Mal ab, und der Rückblick klänge wie ein Sender, der ständig umschaltet.
+Aus demselben Grund fängt dieselbe Karte beim Zurückblättern nicht von vorn an,
+und zwei Karten, die dasselbe Stück meinen, lassen es durchlaufen. Ein Wechsel
+blendet über eine halbe Sekunde auf, statt zu knallen.
+
+**Gefragt wird jetzt auch bei Serien.** Die Anbieter führen einen guten Teil
+ihrer Anime als gewöhnliche Serie, und der Rückblick schwieg dort ohne Not. Was
+dabei wegfällt, ist die Nachsicht der Suche: für alles, was nicht ausdrücklich
+Anime ist, zählt nur der genaue Titeltreffer — sonst legte die Suche einer
+Krimiserie das Opening irgendeines Anime unter, den sie für ähnlich hält, und
+das wäre schlimmer als Stille. Zu einem Film wird weiterhin gar nicht erst
+gefragt; der Katalog kennt nur Anime.
+
+Der Ausweg bleibt und wird deutlicher: der Knopf oben rechts schaltet den Ton
+für den Rest des Rückblicks ab und nicht nur für die Karte, auf der er gedrückt
+wurde. Die Einstellung schaltet ihn ganz aus und verhindert schon die Anfrage,
+das Schließen beendet ihn. Bleibt eine Suche ohne Treffer, ist das kein Grund
+für Stille — dann läuft weiter, was schon lief.
+
 ## 1.86.0 — 2. September 2026
 
 Der Jahresrückblick verrät seine Pointe nicht mehr — und hat dafür Musik
