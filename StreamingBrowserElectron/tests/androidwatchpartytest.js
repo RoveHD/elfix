@@ -440,18 +440,27 @@ function rechner(name) {
     Boolean(urteil) && urteil.skript.includes("__elfixWpErwartet"),
     "sonst meldet der eigene Player das Echo als eigene Tat zurueck");
 
-  // Manueller Sprung von Android.
+  // Manueller Sprung von Android - und der bleibt jetzt bei Android.
+  //
+  // Der Rechner hat geteilt und ist Host. Frueher reichte das Relay den Sprung
+  // eines Gasts an alle weiter; der Host sprang mit und wurde vom naechsten
+  // Ausgleich wieder zurueckgeholt. Seit der Host-Autoritaet bewegt nur der
+  // Host die Runde durch Spulen. Android spult bei sich - wo es steht,
+  // erfahren die anderen mit dem naechsten Herzschlag.
   pc.steuerung.length = 0;
   tv.melden("seek", 640, folge(4));
-  await warteBis(() => pc.steuerung.some((m) => m.action === "seek"),
-    "Sprung von Android kommt am Rechner an");
-  pruefe("4e. Ein Sprung von Android kommt am Rechner an",
-    pc.steuerung.some((m) => m.action === "seek" && Math.abs(m.position - 640) < 2),
+  await new Promise((r) => setTimeout(r, 1200));
+  pruefe("4e. Ein Sprung von Android bewegt den Host nicht",
+    !pc.steuerung.some((m) => m.action === "seek"),
     JSON.stringify(pc.steuerung.map((m) => `${m.action}@${Math.round(m.position)}`)));
 
-  /* ================= 5. Android fuehrt, der Rechner folgt ================= */
+  /* ========== 5. Android geht voran - der Host bleibt trotzdem ========== */
 
   // Android geht eine Folge weiter und meldet sich dort zuerst an.
+  // Frueher wurde es damit Host: die Rolle hing daran, wer die Folge zuerst
+  // betreten hat, also gewann, wessen Hoster schneller laedt. Jetzt bleibt der
+  // Rechner Host - der Folgenwechsel allein ist keine Hostfrage. Play und Pause
+  // von Android wirken weiterhin (5c), nur Spulen nicht mehr.
   pc.steuerung.length = 0;
   tv.stillstehen();
   tv.neuerPlayer();
@@ -466,11 +475,10 @@ function rechner(name) {
   await schlaf(400);
   pc.stillstehen();
   pc.puls(pcKey, 0, false, folge(5));
-  await warteBis(() => mitgliederAus(pc.staende, pcKey).some((m) => m.host && m.name === "Handy"),
-    "Android fuehrt die neue Folge");
+  await schlaf(600);
   const neueRunde = mitgliederAus(pc.staende, pcKey);
-  pruefe("5b. Android wird Host und wird am Rechner auch so angezeigt",
-    neueRunde.find((m) => m.host)?.name === "Handy",
+  pruefe("5b. Wer die neue Folge schneller laedt, wird davon nicht Host",
+    neueRunde.find((m) => m.host)?.name === "Rechner",
     `Host laut Rechner: ${neueRunde.find((m) => m.host)?.name}`);
 
   pc.steuerung.length = 0;

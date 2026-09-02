@@ -333,13 +333,26 @@ function ereignisAusSkript(skript) {
       urteil ? urteil.tun : "kein Urteil");
   }
 
+  // Der Gast spult - und das bleibt bei ihm. Play und Pause oben kommen vom
+  // Fernseher, also vom Host, und gelten weiterhin fuer alle. Beim Spulen ist
+  // die Richtung entscheidend: es bewegt die Stelle der Runde, und die gehoert
+  // dem Host. Ein Sprung des Gasts riss den Fernseher frueher mit und wurde
+  // gleich darauf vom Ausgleich rueckgaengig gemacht.
   tv.ereignisse.length = 0;
   handy.melden("seek", 300);
-  await warteBis(() => tv.steuerung().some((m) => m.action === "seek"),
-    "W3: der Fernseher empfaengt den Sprung des Telefons");
-  pruefe("W3. Und ein Sprung des Gasts erreicht den Fernseher",
-    tv.steuerung().some((m) => m.action === "seek" && Math.abs(m.position - 300) < 1),
+  await schlaf(1200);
+  pruefe("W3. Ein Sprung des Gasts erreicht den Fernseher nicht",
+    !tv.steuerung().some((m) => m.action === "seek"),
     tv.steuerung().map((m) => `${m.action}@${Math.round(m.position)}`).join(","));
+
+  // Und die erlaubte Richtung, damit die Abdeckung nicht verlorengeht.
+  handy.ereignisse.length = 0;
+  tv.melden("seek", 320);
+  await warteBis(() => handy.steuerung().some((m) => m.action === "seek"),
+    "W3: das Telefon empfaengt den Sprung des Fernsehers");
+  pruefe("W3. Der Sprung des Hosts dagegen schon",
+    handy.steuerung().some((m) => m.action === "seek" && Math.abs(m.position - 320) < 1),
+    handy.steuerung().map((m) => `${m.action}@${Math.round(m.position)}`).join(","));
 
   /* --------------------------------------------------------------- W6 + W8 */
   // Der Host wechselt auf Folge 5 und laeuft dort weiter. Der Gast folgt,

@@ -296,11 +296,19 @@ function rechner(name, raum = RAUM) {
     cSeek ? `position=${cSeek.position}` : "nichts");
 
   /* ---------------------------------------------------------------- Test D */
+  // Umgekehrte Richtung - und hier gilt seit der Host-Autoritaet das Gegenteil
+  // von vorher. Der Rechner hat geteilt und ist Host; Android ist Gast.
+  //
+  // Frueher stand hier "der Rechner folgt dem Sprung von Android". Genau das
+  // war der gemeldete Fehler: ein Gast riss die anderen auf seine Stelle, und
+  // der naechste Ausgleich zog sie gleich wieder zum Host zurueck. Android
+  // darf bei sich spulen, soviel es will - ein Befehl an die Runde wird daraus
+  // nicht mehr. Test C darueber zeigt die erlaubte Richtung.
   pc.steuerung.length = 0;
   tv.melden("seek", 300, folge(4));
-  await warteBis(() => pc.steuerung.some((m) => m.action === "seek"), "D: Rechner empfaengt seek");
-  pruefe("D. Sprung von Android folgt der Rechner",
-    pc.steuerung.some((m) => m.action === "seek" && Math.abs(m.position - 300) < 1),
+  await new Promise((r) => setTimeout(r, 1200));
+  pruefe("D. Der Sprung eines Gasts bewegt den Host nicht",
+    !pc.steuerung.some((m) => m.action === "seek"),
     JSON.stringify(pc.steuerung.map((m) => `${m.action}@${m.position}`)));
 
   /* ------------------------------------------------------------ Test E + F */
@@ -364,11 +372,15 @@ function rechner(name, raum = RAUM) {
     pc.steuerung.some((m) => m.action === "play"),
     JSON.stringify(pc.steuerung.map((m) => m.action)));
 
+  // Ein Sprung dagegen nicht: der bewegt die Stelle der Runde, und die gehoert
+  // dem Host. Der Rechner hat geteilt und fuehrt auch nach dem Folgenwechsel
+  // weiter - Android spult bei sich.
   pc.steuerung.length = 0;
   tv.melden("seek", 200, folge(5));
-  await warteBis(() => pc.steuerung.some((m) => m.action === "seek"), "G: Seek zurueck zum Rechner");
-  pruefe("G4. Und ein Sprung ebenso",
-    pc.steuerung.some((m) => m.action === "seek" && Math.abs(m.position - 200) < 1));
+  await schlaf(1200);
+  pruefe("G4. Ein Sprung des Gasts dagegen nicht",
+    !pc.steuerung.some((m) => m.action === "seek"),
+    JSON.stringify(pc.steuerung.map((m) => m.action)));
 
   /* ---------------------------------------------------------------- Test H */
   pc.steuerung.length = 0;

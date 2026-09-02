@@ -92,23 +92,28 @@ const hostVon = (c) => c.zustand?.hostName || "";
   await schlaf(300);
   pruefe("1. Wer die Folge zuerst betrat, ist Host", hostVon(B) === "A", `Host=${hostVon(B) || "(keiner)"}`);
 
-  // --- 4-6. A wechselt auf Folge 2, B bleibt: B wird Host von Folge 1 ----
+  // --- 4-6. A wechselt auf Folge 2 - und bleibt Host ---------------------
+  //
+  // Frueher rueckte hier B nach, weil Host war, wer die jeweilige Folge zuerst
+  // betreten hatte. Ein Folgenwechsel ist aber keine Hostfrage: A ist da, A
+  // meldet sich, A fuehrt weiter. Nachgezogen mit der Host-Persistenz.
   A.send({ type: "control", key: KEY, action: "navigate", position: 0, url: folge(2) });
   schlagen(A, 2);
   await schlaf(300);
   schlagen(B, 1);
   await schlaf(300);
-  pruefe("6. A wechselt weg, B wird sofort Host seiner Folge", hostVon(B) === "B", `Host=${hostVon(B) || "(keiner)"}`);
-  pruefe("6b. A sieht sich selbst als Host seiner neuen Folge", hostVon(A) === "A", `Host=${hostVon(A) || "(keiner)"}`);
+  pruefe("6. Ein Folgenwechsel des Hosts loest keine neue Wahl aus",
+    hostVon(B) === "A", `Host=${hostVon(B) || "(keiner)"}`);
+  pruefe("6b. Und A sieht sich selbst genauso", hostVon(A) === "A", `Host=${hostVon(A) || "(keiner)"}`);
 
-  // --- 7-8. A kommt zurueck auf Folge 1: B bleibt Host -------------------
+  // --- 7-8. A kommt zurueck auf Folge 1: unveraendert A ------------------
   A.send({ type: "control", key: KEY, action: "navigate", position: 0, url: folge(1) });
   schlagen(A, 1, { sitzung: "geraet-a-e1-neu" });
   await schlaf(300);
   schlagen(B, 1);
   await schlaf(300);
-  pruefe("8. A kommt zurueck und wird nur Teilnehmer, B bleibt Host",
-    hostVon(A) === "B" && hostVon(B) === "B", `A sieht ${hostVon(A)}, B sieht ${hostVon(B)}`);
+  pruefe("8. Auch ein Neuladen unterwegs kostet ihn die Rolle nicht",
+    hostVon(A) === "A" && hostVon(B) === "A", `A sieht ${hostVon(A)}, B sieht ${hostVon(B)}`);
 
   // --- 11. Host laedt neu: neue Sitzung, er verliert den Host ------------
   B.send({ type: "control", key: KEY, action: "navigate", position: 0, url: folge(1) });

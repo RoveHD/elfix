@@ -756,17 +756,95 @@ function hostFuerFolge(raumcode, eintrag, season, episode) {
 
 // Der Host der Folge, auf der die Runde gerade steht. Daran richtet sich alles
 // aus, was den Raum als Ganzes betrifft - Abgleich, Pause, Nachreichen.
-function aktuellerHost(raumcode, eintrag) {
-  return hostFuerFolge(raumcode, eintrag, eintrag.season, eintrag.episode);
+// Wie lange ein Host seine Rolle nach einem Verbindungsabriss behaelt.
+//
+// Nur dafuer, und das ist der Unterschied: bei einem Abriss loescht das Relay
+// seinen Stand sofort, er waere also von einer Sekunde auf die andere weg -
+// obwohl ein Neuladen, ein Hosterwechsel oder ein kurzes Funkloch Sekunden
+// dauern. Ohne diese Frist rueckte bei jedem Wackeln jemand nach, und kam der
+// Host zurueck, wechselte es gleich noch einmal.
+//
+// Verstummt er dagegen bei offener Verbindung, gilt die gewoehnliche Regel:
+// nach STAND_FRISCH_MS ist er nicht mehr aktiv und damit auch nicht mehr Host.
+// Dort ist nichts zu ueberbruecken - er ist ja noch da und sagt nichts.
+const HOST_GNADE_MS = 12000;
+
+// Wer ist Host?
+//
+// Frueher: wer die laufende Folge zuerst betreten hat. Das hiess in der Praxis,
+// dass bei jeder neuen Folge neu gewuerfelt wurde und gewann, wessen Hoster
+// schneller laedt - der Host wechselte also staendig, ohne dass jemand die
+// Runde verlassen haette. Dasselbe beim Neuladen des Players: der Stempel, an
+// dem die Reihenfolge hing, wurde bei jeder neuen Player-Sitzung neu gesetzt.
+//
+// Jetzt haelt der Host seine Rolle, bis er sie wirklich abgibt. Gewaehlt wird
+// nur, wenn keiner da ist - und wer gewaehlt wurde, bleibt es dann auch ueber
+// Folgen hinweg.
+//
+// Abgegeben wird sie in genau vier Faellen, und alle vier stehen anderswo im
+// Code: der Host verlaesst die Folge ("bye"), verlaesst den Titel ("leave"),
+// wird entfernt ("kick") - oder uebergibt ausdruecklich ("handover"). Ein
+// Folgenwechsel gehoert nicht dazu, und ein Neuladen auch nicht.
+function aktuelleHostId(raumcode, eintrag) {
+  const gehalten = eintrag.hostId;
+  if (gehalten && eintrag.members.has(gehalten)) {
+    const wert = eintrag.stand?.get(gehalten);
+    if (wert && istAktiv(raumcode, eintrag, gehalten, wert)) {
+      eintrag.hostGesehen = Date.now();
+      return gehalten;
+    }
+    // Kurz weg ist nicht weg - aber nur, wenn er wirklich weg ist. Steht sein
+    // Stand noch da, ist die Verbindung offen und er meldet bloss nichts mehr:
+    // dann gilt die gewoehnliche Frist und niemand wird ueberbrueckt.
+    if (!wert && Date.now() - (eintrag.hostGesehen || 0) <= HOST_GNADE_MS) return gehalten;
+  }
+  const gewaehlt = hostFuerFolge(raumcode, eintrag, eintrag.season, eintrag.episode);
+  if (!gewaehlt) return "";
+  eintrag.hostId = gewaehlt.geraetId;
+  eintrag.hostGesehen = Date.now();
+  return gewaehlt.geraetId;
 }
 
-function aktuelleHostId(raumcode, eintrag) {
-  return aktuellerHost(raumcode, eintrag)?.geraetId || "";
+// Der Host als Zeitquelle - also mit Stelle und Pausenzustand.
+//
+// Bewusst getrennt von der Frage, wer Host *ist*: waehrend der Gnadenfrist
+// bleibt er Host, taugt aber nicht als Quelle, weil von ihm gerade nichts
+// Frisches vorliegt. Dann faellt hostZustandJetzt auf den Rundenstand zurueck,
+// statt alle auf eine erfundene Null zu ziehen.
+function aktuellerHost(raumcode, eintrag) {
+  const id = aktuelleHostId(raumcode, eintrag);
+  if (!id) return null;
+  const wert = eintrag.stand?.get(id);
+  if (!wert || !istAktiv(raumcode, eintrag, id, wert)) return null;
+  return { geraetId: id, ...wert };
+}
+
+// Gibt der Host die Rolle wirklich ab, wird sofort neu gewaehlt - ohne
+// Gnadenfrist, denn hier ist nichts unklar.
+function hostFreigeben(eintrag, geraetId) {
+  if (eintrag.hostId !== geraetId) return;
+  eintrag.hostId = "";
+  eintrag.hostGesehen = 0;
 }
 
 // Und der Host, der fuer genau dieses Geraet gilt: es zaehlt die Folge, die es
 // selbst offen hat. Wer eine Folge weiter ist, sieht dort seinen eigenen Host.
 function hostFuerGeraet(raumcode, eintrag, geraetId) {
+  // Der gehaltene Host gilt fuer alle - sonst zeigte die Leiste auf dem
+  // Fernseher jemand anderen als die Karte, sobald zwei Geraete kurz auf
+  // verschiedenen Folgen stehen. Desktop, Android und Fernseher sollen
+  // dieselbe Kennung sehen.
+  const id = aktuelleHostId(raumcode, eintrag);
+  if (id) {
+    // Auch ohne frischen Stand: waehrend eines kurzen Abrisses ist der Host
+    // weiterhin der Host, und die Karte soll ihn nennen. Hier zaehlt nur die
+    // Kennung und der Name - Stelle und Pausenzustand holt sich der Abgleich
+    // an anderer Stelle und merkt dort selbst, dass gerade nichts vorliegt.
+    const wert = eintrag.stand?.get(id);
+    return wert
+      ? { geraetId: id, ...wert }
+      : { geraetId: id, name: eintrag.members.get(id) || "Gerät" };
+  }
   const eigen = eintrag.stand?.get(geraetId);
   const season = eigen ? eigen.season : eintrag.season;
   const episode = eigen ? eigen.episode : eintrag.episode;
@@ -1193,6 +1271,7 @@ wss.on("connection", (socket) => {
         // Der Stand geht mit: wer draussen ist, zaehlt nicht mehr als aktiv
         // und kann damit auch nicht mehr Host sein.
         eintrag.stand?.delete(socket.geraetId);
+        hostFreigeben(eintrag, socket.geraetId);
       }
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
@@ -1207,7 +1286,7 @@ wss.on("connection", (socket) => {
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
       eintrag.stand?.delete(wen);
-      eintrag.stand?.delete(wen);
+      hostFreigeben(eintrag, wen);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
       return;
@@ -1226,6 +1305,25 @@ wss.on("connection", (socket) => {
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
       let neueFolge = false;
+
+      // Spulen bewegt die Runde - und das darf nur der Host.
+      //
+      // Vorher ging jedes "seek" an alle hinaus, gleich von wem. Der Stand der
+      // Runde (eintrag.live) aenderte sich dabei aber nur beim Host. Ein
+      // Nicht-Host riss die anderen also auf seine Stelle, und der naechste
+      // Ausgleich zog sie gleich wieder zum Host zurueck - der gemeldete
+      // Doppelsprung. Besonders beim Beitreten, wo der Neue sich erst
+      // zurechtruckelt.
+      //
+      // Sein Player darf selbstverstaendlich spulen, wohin er will; das ist
+      // seine Sache und bleibt bei ihm. Nur ein Befehl an die anderen wird
+      // daraus nicht mehr. Wo er steht, erfahren sie ohnehin - mit seinem
+      // naechsten Herzschlag, eine Sekunde spaeter.
+      //
+      // Hier und nicht im Client: die Regel muss dort stehen, wo sie niemand
+      // umgehen kann, und sie gilt damit fuer Desktop, Android und Fernseher
+      // gleichermassen, ohne dass drei Stellen sie einzeln kennen muessen.
+      if (aktion === "seek" && !istHost) return;
       // Ein Steuerbefehl gilt nur unter denen, die dieselbe Folge offen haben.
       // Der Folgenwechsel ist die Ausnahme - der muss gerade die erreichen,
       // die noch bei der alten Folge stehen.
@@ -1555,10 +1653,23 @@ wss.on("connection", (socket) => {
       // verloren gegangen oder es hat nach einem Neuladen nie eines bekommen.
       // Statt es stehen zu lassen, wird ihm der fehlende Befehl nachgereicht -
       // nur ihm, und nur wenn es bei derselben Folge steht.
+      // Ob die Runde laeuft, entscheidet der Host und nicht der letzte Befehl.
+      //
+      // Vorher stand hier `eintrag.live?.action === "play"`. Das ist der zuletzt
+      // an alle geschickte Befehl, und der veraltet: eine Pause eines
+      // Nicht-Hosts wird dort vermerkt, sein spaeteres Play aber nicht (weiter
+      // oben gilt `istHost || aktion === "pause"`). Nach einmal Pause und
+      // Weiter durch einen Nicht-Host stand dort also "pause", waehrend alle
+      // liefen - und ein Fernseher, der in dieser Lage stand, bekam sein Play
+      // nie nachgereicht. Genau der gemeldete Fall.
+      //
+      // hostZustandJetzt kennt den Unterschied: es nimmt die juengste Meldung,
+      // und die des Hosts aus seinem eigenen Player ist frischer als der alte
+      // Befehl. Pausiert der Host wirklich, bleibt es beim Stehen.
       const faellig = !zustand.geholt || Date.now() - zustand.geholt > NACHREICHEN_MS;
-      if (pausiert && gleicheFolge && faellig && !eintrag.sync && eintrag.live?.action === "play") {
+      if (pausiert && gleicheFolge && faellig && !eintrag.sync) {
         const stand = hostZustandJetzt(socket.raum, eintrag);
-        if (stand) {
+        if (stand && stand.laeuft) {
           zustand.geholt = Date.now();
           const jetzt = Date.now();
           senden({
@@ -1612,6 +1723,12 @@ wss.on("connection", (socket) => {
       const frueheste = Math.min(...runde.map((teilnehmer) => teilnehmer.seitFolge || 0));
       const ziel = eintrag.stand.get(wen);
       ziel.seitFolge = frueheste - 1;
+      // Und ausdruecklich: der Beschenkte haelt die Rolle jetzt, auch ueber
+      // Folgen hinweg. Die Vorreihung allein truege nur bis zur naechsten
+      // Folge - dort wuerde der Stempel neu gesetzt und die Uebergabe waere
+      // wieder vergessen.
+      eintrag.hostId = wen;
+      eintrag.hostGesehen = Date.now();
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
       return;
@@ -1620,6 +1737,9 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "bye") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag?.stand?.delete(socket.geraetId)) return;
+      // Wer die Folge verlaesst, gibt die Rolle ab - hier ist nichts unklar,
+      // also auch keine Gnadenfrist.
+      hostFreigeben(eintrag, socket.geraetId);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
       return;
@@ -1641,7 +1761,11 @@ wss.on("connection", (socket) => {
       // Nur wenn vom Host wirklich nichts bekannt ist, bleibt die Antwort aus.
       // Steht er am Anfang der Folge, ist 0 die richtige Auskunft.
       if (!stand) return;
-      const angehalten = eintrag.live?.action === "pause";
+      // Auch hier zaehlt der Host und nicht der letzte Befehl. Beitreten und
+      // Wiederverbinden laufen ueber diese Antwort - stand im Rundenstand noch
+      // eine alte Pause, startete ein neu dazugekommener Fernseher gar nicht
+      // erst, obwohl die Runde lief.
+      const angehalten = !stand.laeuft;
       const jetzt = Date.now();
       senden({
         type: "control",
