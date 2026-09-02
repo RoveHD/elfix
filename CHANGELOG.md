@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.89.1 — 2. September 2026
+
+**Der Trailer steht jetzt auch bei den Vorschlägen.** In „Filme für dich" und
+„Serien für dich" bot das Menü nur „Auf die Watchlist" und „Als gesehen
+abhaken" — dabei gehört er gerade dorthin: zu einem eigenen Titel ist die
+Frage „vormerken oder nicht", zu einem Vorschlag ist die erste Frage „was ist
+das überhaupt?".
+
+Gefragt wird dafür mit Titel und Adresse statt mit einer Kennung aus der
+Mediathek — ein Vorschlag hat keine. „Trailer ansehen" steht damit in beiden
+Menüs: auf den eigenen Kacheln und auf den Vorschlägen.
+
 ## 1.89.0 — 2. September 2026
 
 **Zu jedem Titel gibt es jetzt den Trailer.**
