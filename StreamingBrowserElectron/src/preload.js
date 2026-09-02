@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   clearCache: () => ipcRenderer.invoke("data:clear-cache"),
   openDataFolder: () => ipcRenderer.invoke("data:open-folder"),
   openHelpIssues: () => ipcRenderer.invoke("help:open-issues"),
+  // Der Ausweg aus dem Trailer-Rahmen: nur die Kennung des Videos, die
+  // Adresse baut der Hauptprozess.
+  openTrailerExtern: (schluessel) => ipcRenderer.invoke("titel:trailer-extern", schluessel),
   exportBackup: () => ipcRenderer.invoke("data:backup-export"),
   importBackup: () => ipcRenderer.invoke("data:backup-import"),
   resetData: () => ipcRenderer.invoke("data:confirm-reset"),

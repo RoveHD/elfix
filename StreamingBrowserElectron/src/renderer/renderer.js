@@ -817,6 +817,7 @@ function bindEvents() {
   document.querySelector("#providerAddButton")?.addEventListener("click", () => { anbieterHinzufuegen().catch(() => {}); });
   // Der Jahresrueckblick: blaettern per Klick, Pfeiltasten und Punkten.
   document.querySelector("#trailerClose")?.addEventListener("click", trailerSchliessen);
+  document.querySelector("#trailerExtern")?.addEventListener("click", trailerExternOeffnen);
   // Escape schliesst den Dialog von selbst - der Rahmen muss trotzdem raus,
   // sonst laeuft der Ton weiter.
   trailerModal?.addEventListener("close", () => trailerRahmen?.replaceChildren());
@@ -5182,6 +5183,10 @@ function trailerAdresse(trailer) {
   return adresse.href;
 }
 
+// Die Kennung des Videos, das gerade im Rahmen steht - fuer den Ausweg nach
+// YouTube. Mehr wird nicht aufgehoben: der Knopf braucht nichts weiter.
+let trailerSchluessel = "";
+
 function trailerOeffnen(trailer, titel) {
   const adresse = trailerAdresse(trailer);
   if (!adresse || !trailerModal?.showModal) return false;
@@ -5200,8 +5205,22 @@ function trailerOeffnen(trailer, titel) {
   if (trailerEyebrow) {
     trailerEyebrow.textContent = trailer?.name ? `Trailer · ${trailer.name}` : "Trailer";
   }
+  trailerSchluessel = String(trailer?.schluessel || "");
   trailerModal.showModal();
   return true;
+}
+
+// Und der Weg hinaus, wenn der Rahmen leer bleibt: das Video im richtigen
+// Browser. Die Adresse baut der Hauptprozess aus der Kennung - von hier geht
+// keine mit.
+async function trailerExternOeffnen() {
+  if (!trailerSchluessel) return;
+  const ergebnis = await api.openTrailerExtern?.(trailerSchluessel);
+  if (ergebnis?.ok) {
+    trailerSchliessen();
+    return;
+  }
+  showToast("YouTube ließ sich nicht öffnen");
 }
 
 // Ausraeumen und nicht bloss zumachen: ein Rahmen, der weiterhin im Dokument
@@ -5209,6 +5228,7 @@ function trailerOeffnen(trailer, titel) {
 // sieht.
 function trailerSchliessen() {
   trailerRahmen?.replaceChildren();
+  trailerSchluessel = "";
   if (trailerModal?.open) trailerModal.close();
 }
 

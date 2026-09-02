@@ -433,6 +433,7 @@ app.whenReady().then(async () => {
     await clearBrowserDataPreservingLogin();
   }
   installAdblock();
+  trailerRahmenErlauben();
   // Die Reihenfolge zaehlt: das Fenster entsteht zuerst (unsichtbar, es soll
   // waehrend der Pruefung schon laden), dann faengt das Tor an zu messen, und
   // erst dann laeuft die Pruefung los. Andersherum koennte eine sehr schnelle
@@ -889,6 +890,26 @@ async function clearBrowserDataPreservingLogin() {
   }).catch(() => {});
 }
 
+// Der Rahmen, in dem ein Trailer laeuft.
+//
+// Die Oberflaeche der App kommt von der Platte (file://), und ein Dokument von
+// dort hat keinen Ursprung, den YouTube gelten laesst: der eingebettete Player
+// prueft die Herkunft, findet nichts und zeigt "Fehler bei der Konfiguration
+// des Videoplayers - Fehler 153". Also wird ihm gesagt, auf welcher Seite er
+// steht.
+//
+// Auf der Sitzung des Hauptfensters und nicht auf der der Anbieter: dort haengt
+// der Werbefilter, und diese beiden haben nichts miteinander zu tun. Der Filter
+// unten faengt genau die eine Anfrage ab, mit der der Rahmen aufgeht - welche
+// das ist, entscheidet youtube.js und nicht diese Stelle.
+function trailerRahmenErlauben() {
+  const muster = { urls: ["https://*.youtube.com/embed/*", "https://*.youtube-nocookie.com/embed/*"] };
+  session.defaultSession.webRequest.onBeforeSendHeaders(muster, (details, callback) => {
+    const koepfe = youtube.einbettungsKoepfe(details.url, details.requestHeaders);
+    callback({ requestHeaders: koepfe || details.requestHeaders });
+  });
+}
+
 function installAdblock() {
   browserSession.webRequest.onBeforeRequest((details, callback) => {
     const providerId = webContentsProvider.get(details.webContentsId);
@@ -1117,6 +1138,28 @@ ipcMain.handle("titel:trailer", async (_event, titel, url) => {
     return { trailer: null, grund: "kein-trailer" };
   } catch {
     return { trailer: null, grund: "fehler" };
+  }
+});
+
+// Der Ausweg, wenn der Rahmen nicht will.
+//
+// Ein eingebetteter Player kann aus Gruenden nein sagen, die weder die App noch
+// der Titel zu verantworten hat - gesperrte Einbettung, Altersfreigabe, eine
+// Regel des Rechteinhabers. Dann soll wenigstens ein Knopf dastehen, statt dass
+// die Kachel mit einer Fehlermeldung von YouTube endet.
+//
+// Der Renderer gibt dabei keine Adresse mit, sondern nur die Kennung des
+// Videos - dieselbe Regel wie bei "Hilfe & Support" und der Statusseite. Was
+// daraus wird, entscheidet diese Datei.
+ipcMain.handle("titel:trailer-extern", async (_event, schluessel) => {
+  const kennung = String(schluessel || "");
+  if (!/^[A-Za-z0-9_-]{6,20}$/.test(kennung)) return { ok: false };
+  try {
+    await shell.openExternal(`https://www.youtube.com/watch?v=${kennung}`);
+    return { ok: true };
+  } catch (error) {
+    console.warn("[trailer] YouTube liess sich nicht oeffnen:", error?.message || error);
+    return { ok: false };
   }
 });
 

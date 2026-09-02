@@ -259,6 +259,66 @@ pruefe("Die Knoepfe schliessen den Kasten nicht aus Versehen",
   || /feld\.type = "button";/.test(RENDERER),
   "der Kasten steht in einem Formular");
 
+// --- Fehler 153: der Rahmen und seine Herkunft --------------------------------
+//
+// Die Oberflaeche kommt von der Platte (file://), und ein Dokument von dort hat
+// keinen Ursprung, den YouTube gelten laesst. Der eingebettete Player prueft
+// die Herkunft, findet nichts und zeigt statt des Videos "Fehler bei der
+// Konfiguration des Videoplayers - Fehler 153". Also wird ihm gesagt, auf
+// welcher Seite er steht - und nur ihm.
+
+const yt = require("../src/youtube.js");
+const HAUPT2 = lies("src/main.js");
+
+pruefe("Eine Einbettung wird als solche erkannt",
+  yt.istEinbettung("https://www.youtube-nocookie.com/embed/ABCdef12345?autoplay=1")
+  && yt.istEinbettung("https://www.youtube.com/embed/ABCdef12345"));
+pruefe("Eine gewoehnliche YouTube-Seite nicht",
+  !yt.istEinbettung("https://www.youtube.com/watch?v=ABCdef12345"),
+  "die laeuft in der Anbieteransicht und geht diesen Weg nichts an");
+pruefe("Und nichts Fremdes",
+  !yt.istEinbettung("https://beispiel.de/embed/ABCdef12345")
+  && !yt.istEinbettung("http://www.youtube.com/embed/ABCdef12345")
+  && !yt.istEinbettung("https://www.youtube.com/embed/../etwas"),
+  "kein http, kein fremder Wirt, kein Pfad, der wegfuehrt");
+
+const koepfe = yt.einbettungsKoepfe("https://www.youtube-nocookie.com/embed/ABCdef12345", { "User-Agent": "x" });
+pruefe("Der Rahmen bekommt eine Herkunft mit",
+  koepfe.Referer === "https://www.youtube.com/" && koepfe.Origin === "https://www.youtube.com"
+  && koepfe["User-Agent"] === "x",
+  "und behaelt, was sonst im Kopf steht");
+pruefe("Eine vorhandene Herkunft wird nicht ueberschrieben",
+  yt.einbettungsKoepfe("https://www.youtube.com/embed/ABCdef12345",
+    { referer: "https://andere.de", Origin: "https://andere.de" }) === null);
+pruefe("Alles andere bleibt unangetastet",
+  yt.einbettungsKoepfe("https://www.youtube.com/watch?v=ABCdef12345", {}) === null);
+
+pruefe("Der Hauptprozess haengt das an die Sitzung des Fensters",
+  /session\.defaultSession\.webRequest\.onBeforeSendHeaders\(muster/.test(HAUPT2)
+  && /youtube\.einbettungsKoepfe\(details\.url, details\.requestHeaders\)/.test(HAUPT2),
+  "nicht an die der Anbieter - dort haengt der Werbefilter, und die beiden haben nichts miteinander zu tun");
+pruefe("Und nur an Einbettungen",
+  /urls: \["https:\/\/\*\.youtube\.com\/embed\/\*", "https:\/\/\*\.youtube-nocookie\.com\/embed\/\*"\]/
+    .test(HAUPT2));
+
+// --- Und wenn der Player trotzdem nein sagt ----------------------------------
+
+pruefe("Unter dem Rahmen steht ein Ausweg",
+  HTML.includes('id="trailerExtern"') && /Auf YouTube ansehen/.test(HTML));
+pruefe("Er haengt an einer Funktion",
+  /#trailerExtern"\)\?\.addEventListener\("click", trailerExternOeffnen\)/.test(RENDERER));
+pruefe("Der Renderer gibt dabei nur die Kennung mit",
+  /api\.openTrailerExtern\?\.\(trailerSchluessel\)/.test(RENDERER)
+  && !/openTrailerExtern\?\.\(`/.test(RENDERER),
+  "die Adresse baut der Hauptprozess - sonst waere jede Stelle im Renderer eine moegliche Quelle einer fremden");
+pruefe("Der Hauptprozess prueft sie und baut die Adresse selbst",
+  /ipcMain\.handle\("titel:trailer-extern"/.test(HAUPT2)
+  && /\^\[A-Za-z0-9_-\]\{6,20\}\$/.test(HAUPT2)
+  && /shell\.openExternal\(`https:\/\/www\.youtube\.com\/watch\?v=\$\{kennung\}`\)/.test(HAUPT2));
+pruefe("Und der Rahmen vergisst die Kennung beim Schliessen",
+  /function trailerSchliessen\(\) \{[\s\S]{0,120}?trailerSchluessel = "";/.test(RENDERER),
+  "ein Knopf, der noch das Video von vorhin oeffnet, waere schlimmer als keiner");
+
 // Und woher die App das weiss: das Relay sagt es in jeder Antwort.
 
 // Ein Klient, dem man die Antwort des Relays vorgeben kann.

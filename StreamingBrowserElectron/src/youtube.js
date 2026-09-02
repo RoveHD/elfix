@@ -407,8 +407,57 @@ function istShortsUrl(url) {
   return videoKennung(url)?.kurz === true;
 }
 
+/*
+ * Der eingebettete Player und sein "Fehler 153".
+ *
+ * Ein Trailer laeuft in einem Rahmen im Fenster der App. Die Oberflaeche der
+ * App kommt aber von der Platte (file://), und ein Dokument von dort hat keinen
+ * Ursprung, den YouTube gelten laesst: der eingebettete Player prueft die
+ * Herkunft, findet nichts und zeigt statt des Videos "Fehler bei der
+ * Konfiguration des Videoplayers - Fehler 153".
+ *
+ * Es ist keine Sperre gegen ELFIX, sondern die Regel fuer jeden eingebetteten
+ * Player: er will wissen, auf welcher Seite er steht. Also wird ihm das gesagt.
+ * Betroffen ist genau die eine Anfrage, mit der der Rahmen aufgeht - nichts
+ * sonst, und schon gar nicht die Anbieterseiten.
+ */
+
+/** Ist das die Adresse eines eingebetteten YouTube-Players? */
+function istEinbettung(url) {
+  try {
+    const adresse = new URL(String(url || ""));
+    if (adresse.protocol !== "https:") return false;
+    const host = adresse.hostname.toLowerCase().replace(/^www\./, "");
+    if (!YOUTUBE_HOSTS.includes(host)) return false;
+    return /^\/embed\/[A-Za-z0-9_-]{6,20}$/.test(adresse.pathname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Die Koepfe, mit denen der Rahmen aufgeht.
+ *
+ * <p>Gesetzt wird nur, was fehlt - ein vorhandener Ursprung wird nicht
+ * ueberschrieben. Und nur fuer die Einbettung selbst: was danach an Video- und
+ * Zaehldaten laeuft, geht den Player nichts an, was hier steht.
+ *
+ * @returns {object|null} die geaenderten Koepfe, oder null wenn nichts zu tun ist
+ */
+function einbettungsKoepfe(url, koepfe = {}) {
+  if (!istEinbettung(url)) return null;
+  const vorhanden = Object.keys(koepfe).map((name) => name.toLowerCase());
+  if (vorhanden.includes("referer") && vorhanden.includes("origin")) return null;
+  const neu = { ...koepfe };
+  if (!vorhanden.includes("referer")) neu.Referer = "https://www.youtube.com/";
+  if (!vorhanden.includes("origin")) neu.Origin = "https://www.youtube.com";
+  return neu;
+}
+
 module.exports = {
   YOUTUBE_HOSTS,
+  istEinbettung,
+  einbettungsKoepfe,
   MINDEST_SEKUNDEN,
   ENDE_ANTEIL,
   istYoutubeUrl,
