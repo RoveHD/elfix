@@ -708,7 +708,7 @@ pruefe("Der Rechner holt die Reihenfolge aus dem Kern",
   && /wrappedSeiten = await wrappedSortieren\(wrappedBauen\(/.test(RENDERER));
 pruefe("Und jede Karte sagt, welche sie ist",
   /function wrappedSeite\(schluessel, art, teile/.test(RENDERER)
-  && /return \{ schluessel, art, knoten \};/.test(RENDERER),
+  && /return \{ schluessel, art, knoten, musik \};/.test(RENDERER),
   "zwei Karten teilen sich dieselbe Art - is-top und is-tag gibt es je zweimal");
 pruefe("Faellt die Regel aus, bleibt die gebaute Folge",
   /if \(!Array\.isArray\(ordnung\) \|\| !ordnung\.length\) return seiten;/.test(RENDERER),
@@ -728,7 +728,7 @@ pruefe("Faellt die Regel aus, bleibt die gebaute Folge",
 pruefe("Keine Karte traegt ein Titelbild",
   !/wrappedStimmungsbild/.test(RENDERER)
   && !/wrapped-backdrop/.test(RENDERER)
-  && /function wrappedSeite\(schluessel, art, teile\) \{/.test(RENDERER),
+  && /function wrappedSeite\(schluessel, art, teile, musik = null\) \{/.test(RENDERER),
   "die Serie des Jahres darf nicht auf Karte eins stehen");
 pruefe("Auch nicht ueber das Stylesheet",
   !/wrapped-backdrop/.test(CSS) && !/wrapped-heranziehen/.test(CSS),
@@ -741,26 +741,57 @@ pruefe("Und die Poster stehen weiter auf den Karten, die von einem Titel handeln
   (RENDERER.match(/wrappedPoster\(/g) || []).length >= 4,
   "dort fallen sie auf, ohne etwas vorwegzunehmen");
 
-// --- Musik zur Serie des Jahres ---------------------------------------------
+// --- Musik zu den Karten ----------------------------------------------------
 //
 // Der Rueckblick war stumm. Geholt wird das Opening jetzt bei animethemes.moe -
 // nur fuer Anime, denn nur dafuer gibt es so einen Katalog.
 //
-// Der Punkt, an dem es leicht schiefgegangen waere: **ab wann sie laeuft.** Das
-// Titelbild musste weichen, weil es die Serie des Jahres auf Karte eins
-// verriet - und Musik verraet dieselbe Pointe, nur akustisch. Wer sein
-// Lieblings-Opening nach zwei Takten erkennt, braucht die Karte nicht mehr.
+// Zuerst lief es nur zur Serie des Jahres, und zwar aus Sorge um die Pointe:
+// das Titelbild musste weichen, weil es sie auf Karte eins verriet, und Musik
+// verraet dieselbe Pointe, nur akustisch.
+//
+// Diese Sorge trifft aber nur Musik zu einer Karte, die noch gar nicht dran
+// ist. Jede Karte spielt deshalb den Titel, den sie selbst zeigt - was zu
+// hoeren ist, steht dann gleichzeitig gross auf dem Schirm und nimmt nichts
+// vorweg. Der Rest dieses Abschnitts haelt fest, was dabei nicht passieren
+// darf: kein Neuanfang beim Blaettern, keine Luecke auf den Zahlenkarten, kein
+// Lied gegen den Willen dessen, der den Knopf gedrueckt hat.
 
-pruefe("Die Musik faengt erst auf der Karte an, die die Serie zeigt",
-  /if \(wrappedTonLaeuft \|\| seite\?\.schluessel !== "top-serie"\) return;/.test(RENDERER),
-  "sonst verraet der Ton, was das Bild nicht mehr verraet");
-pruefe("Und laeuft dann weiter, statt beim Blaettern abzubrechen",
-  /if \(wrappedTonLaeuft/.test(RENDERER) && /ton\.loop = true;/.test(RENDERER));
-pruefe("Gefragt wird nur bei Anime",
-  /String\(gattung \|\| ""\) !== "anime"\) return null;/.test(MAIN),
-  "fuer Serien und Filme gibt es keinen solchen Katalog");
+pruefe("Die Musik haengt an der Karte und nicht mehr an einer einzigen",
+  /const quelle = seite\?\.musik;/.test(RENDERER)
+  && !/seite\?\.schluessel !== "top-serie"/.test(RENDERER),
+  "was laeuft, steht gleichzeitig auf dem Schirm");
+pruefe("Und zwar auf jeder Karte, die einen Titel zeigt",
+  (RENDERER.match(/wrappedMusikQuelle\(/g) || []).length >= 5,
+  "Serie des Jahres, erster, letzter, wiederholtester - und die Funktion selbst");
+pruefe("Eine Karte mit blossen Zahlen wechselt nichts",
+  /if \(!quelle\?\.titel\) return;/.test(RENDERER),
+  "sonst risse der Ton zwischen zwei Titelkarten jedes Mal ab");
+pruefe("Dieselbe Karte faengt nicht von vorn an",
+  /if \(quelle\.titel === wrappedTonGesucht\) return;/.test(RENDERER)
+  && /ton\.loop = true;/.test(RENDERER),
+  "beim Zurueckblaettern liefe sonst dasselbe Lied noch einmal an");
+pruefe("Beim schnellen Blaettern kommt nur die letzte Anfrage an",
+  /const nummer = \+\+wrappedTonWunsch;/.test(RENDERER)
+  && /if \(nummer !== wrappedTonWunsch/.test(RENDERER),
+  "sonst gewinnt, wer zufaellig zuerst antwortet");
+pruefe("Ohne Treffer bleibt es bei dem, was schon lief",
+  /if \(!treffer\?\.url\) return;/.test(RENDERER),
+  "kein Treffer ist kein Grund fuer Stille");
+pruefe("Der Knopf schaltet nicht nur diese eine Karte ab",
+  /wrappedTonAus = true;/.test(RENDERER)
+  && /settings\.wrapped\?\.musik === false \|\| wrappedTonAus\) return;/.test(RENDERER),
+  "wer ihn drueckt, meint nicht nur dieses Lied");
+pruefe("Ein Filmtitel bekommt kein fremdes Opening untergelegt",
+  /eintrag\.gattung === "film"\) return null;/.test(RENDERER),
+  "der Katalog kennt nur Anime");
+pruefe("Zu einem Film wird gar nicht erst gefragt",
+  /if \(!name \|\| art === "film"\) return null;/.test(MAIN));
+pruefe("Bei allem ausser Anime zaehlt nur der genaue Titel",
+  /openings\.openingAus\(await antwort\.json\(\), name, art === "anime"\)/.test(MAIN),
+  "die Anbieter fuehren Anime oft als Serie - eine Krimiserie ist trotzdem keiner");
 pruefe("Die Einstellung verhindert schon die Anfrage",
-  /if \(settings\.wrapped\?\.musik === false\) return;/.test(RENDERER),
+  /if \(settings\.wrapped\?\.musik === false \|\| wrappedTonAus\) return;/.test(RENDERER),
   "wer sie aus hat, soll auch keinen fremden Dienst befragen");
 pruefe("Schliessen beendet den Ton",
   /function wrappedSchliessen\(\) \{\s*\n\s*wrappedTonBeenden\(\);/.test(RENDERER));
@@ -774,7 +805,7 @@ pruefe("Die Anfrage hat ein Zeitlimit",
   /AbortSignal\.timeout\(OPENING_FRIST_MS\)/.test(MAIN),
   "ein Rueckblick darf nicht warten, bis jemand anderes antwortet");
 pruefe("Und ein Gedaechtnis, auch fuer das Nichtergebnis",
-  /openingCache\.has\(name\)/.test(MAIN) && /openingCache\.set\(name, gefunden\)/.test(MAIN),
+  /openingCache\.has\(schluessel\)/.test(MAIN) && /openingCache\.set\(schluessel, gefunden\)/.test(MAIN),
   "einen oeffentlichen Dienst im Sekundentakt zu fragen sperrt einen zu Recht aus");
 pruefe("Jeder Fehler endet als Stille",
   /ipcMain\.handle\("wrapped:opening"[\s\S]{0,160}?catch\(\(\) => null\)/.test(MAIN),

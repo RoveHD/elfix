@@ -3617,31 +3617,50 @@ function wrappedSchliessen() {
   api.setWrappedOpen?.(false);
 }
 
-// --- Das Opening zur Serie des Jahres ---------------------------------------
+// --- Die Musik zu den Karten ------------------------------------------------
 //
-// Der Rueckblick war stumm, und Musik dazu lag nahe. Zwei Entscheidungen
-// stecken darin, und die zweite ist die wichtigere.
+// Der Rueckblick war stumm. Zwei Entscheidungen stecken in der Musik, und die
+// zweite ist die wichtigere.
 //
 // **Woher.** ELFIX hat keinen Ton: nichts im Paket, keine Tonspur ausser der
 // des Anbieters. Mitliefern scheidet aus, versteckt bei YouTube abspielen
-// hiesse Werbung vor dem Opening. Geholt wird es deshalb bei animethemes.moe -
-// nur fuer Anime, denn nur dafuer gibt es so einen Katalog.
+// hiesse Werbung vor dem Opening. Geholt wird es deshalb bei animethemes.moe,
+// einem Katalog der Vor- und Abspaenne von Anime.
 //
-// **Ab wann.** Nicht ab Karte eins. Das Titelbild hinter den Karten musste
-// genau deshalb weichen ("dann weiss man ja schon was man als serie hat"), und
-// Musik verraet dieselbe Pointe, nur akustisch: wer sein Lieblings-Opening
-// nach zwei Takten erkennt, braucht die Karte nicht mehr. Sie faengt deshalb
-// genau dann an, wenn die Serie des Jahres auf dem Schirm steht - und laeuft
-// von da an weiter, statt beim Weiterblaettern wieder abzubrechen.
+// **Zu welcher Karte.** Zuerst lief sie nur zur Serie des Jahres, und zwar aus
+// Sorge um die Pointe: das Titelbild musste weichen, weil es auf Karte eins
+// verriet, worauf der ganze Rueckblick hinauslaeuft ("dann weiss man ja schon
+// was man als serie hat"), und Musik verraet dasselbe, nur akustisch.
+//
+// Diese Sorge trifft aber nur Musik zu einer Karte, die noch gar nicht dran
+// ist. Deshalb spielt jetzt jede Karte den Titel, von dem sie selbst handelt -
+// die Serie des Jahres, der erste und der letzte Titel des Jahres, der am
+// oeftesten wiederholte. Was zu hoeren ist, steht dabei gleichzeitig gross auf
+// dem Schirm; vorweg nehmen kann es also nichts.
+//
+// Karten mit blossen Zahlen haben keinen Titel und wechseln deshalb nichts:
+// dort laeuft weiter, was gerade laeuft. Sonst risse der Ton zwischen zwei
+// Titelkarten jedes Mal ab, und der Rueckblick klaenge wie ein Sender, der
+// staendig umschaltet.
 //
 // Der Ton kommt nie ungefragt und nie ohne Ausweg: der Knopf oben rechts
-// schaltet ihn ab, die Einstellung schaltet ihn ganz aus, und das Schliessen
-// des Rueckblicks beendet ihn. Bleibt die Suche ohne Treffer - kein Anime,
-// kein Netz, kein Eintrag im Katalog -, bleibt es beim Rueckblick, den es
-// vorher gab.
+// schaltet ihn ab - und dann bleibt er auch auf den folgenden Karten aus, denn
+// wer ihn abschaltet, meint nicht nur dieses eine Lied -, die Einstellung
+// schaltet ihn ganz aus, und das Schliessen des Rueckblicks beendet ihn.
+// Bleibt die Suche ohne Treffer - kein Anime, kein Netz, kein Eintrag im
+// Katalog -, bleibt es bei dem, was schon lief.
+const WRAPPED_TON_LAUT = 0.45;
 let wrappedTonLaeuft = false;
-let wrappedSerieDesJahres = null;
 let wrappedTonTreffer = null;
+// Der Titel, nach dem zuletzt gefragt wurde. Ohne ihn wuerde dieselbe Karte
+// beim Zurueckblaettern ihr Lied von vorn anfangen.
+let wrappedTonGesucht = "";
+// Vom Benutzer abgeschaltet. Gilt fuer den Rest des Rueckblicks und nicht nur
+// fuer die Karte, auf der er den Knopf gedrueckt hat.
+let wrappedTonAus = false;
+// Laufende Nummer der letzten Anfrage: wer schnell blaettert, hat mehrere
+// unterwegs, und ankommen darf nur die zur Karte, die jetzt dasteht.
+let wrappedTonWunsch = 0;
 
 function wrappedTonElement() {
   return document.querySelector("#wrappedTon");
@@ -3656,6 +3675,9 @@ function wrappedTonBeenden() {
   }
   wrappedTonLaeuft = false;
   wrappedTonTreffer = null;
+  wrappedTonGesucht = "";
+  wrappedTonAus = false;
+  wrappedTonWunsch += 1;
   document.querySelector("#wrappedTonKnopf")?.classList.add("is-hidden");
 }
 
@@ -3678,33 +3700,60 @@ function wrappedTonKnopfZeigen(an, treffer) {
   knopf.setAttribute("aria-label", knopf.title);
 }
 
-// Startet die Musik, wenn die Karte der Serie des Jahres aufgeht - und nur
-// dann. Laeuft sie schon, geschieht nichts: das Weiterblaettern soll sie nicht
-// von vorn anfangen lassen.
-async function wrappedTonStarten(seite) {
-  if (wrappedTonLaeuft || seite?.schluessel !== "top-serie") return;
-  if (settings.wrapped?.musik === false) return;
-  const ton = wrappedTonElement();
-  const serie = wrappedSerieDesJahres;
-  if (!ton || !serie?.titel) return;
+// Ein Wechsel mitten im Blaettern soll nicht knallen: das neue Stueck kommt
+// ueber eine halbe Sekunde herauf, statt sofort in voller Lautstaerke ueber
+// dem vorigen zu stehen.
+function wrappedTonAufblenden(ton) {
+  const start = performance.now();
+  ton.volume = 0;
+  const schritt = (jetzt) => {
+    if (ton.paused) { ton.volume = WRAPPED_TON_LAUT; return; }
+    const anteil = Math.min(1, (jetzt - start) / 500);
+    ton.volume = WRAPPED_TON_LAUT * anteil;
+    if (anteil < 1) requestAnimationFrame(schritt);
+  };
+  requestAnimationFrame(schritt);
+}
 
-  const treffer = await api.getWrappedOpening?.(serie.titel, serie.gattung).catch(() => null);
-  // Zwischenzeitlich weitergeblaettert oder geschlossen? Dann gehoert die
-  // Musik nirgends mehr hin.
-  if (!treffer?.url || !wrappedModal?.open) return;
+// Startet die Musik zu der Karte, die gerade aufgeht - und wechselt sie, wenn
+// die naechste Karte von einem anderen Titel handelt.
+async function wrappedTonStarten(seite) {
+  const quelle = seite?.musik;
+  // Eine Karte ohne Titel wechselt nichts.
+  if (!quelle?.titel) return;
+  if (settings.wrapped?.musik === false || wrappedTonAus) return;
+  const ton = wrappedTonElement();
+  if (!ton) return;
+  // Derselbe Titel wie zuletzt: nicht von vorn anfangen.
+  if (quelle.titel === wrappedTonGesucht) return;
+  wrappedTonGesucht = quelle.titel;
+  const nummer = ++wrappedTonWunsch;
+
+  const treffer = await api.getWrappedOpening?.(quelle.titel, quelle.gattung).catch(() => null);
+  // Zwischenzeitlich weitergeblaettert, abgeschaltet oder geschlossen? Dann
+  // gehoert dieses Stueck nirgends mehr hin.
+  if (nummer !== wrappedTonWunsch || wrappedTonAus || !wrappedModal?.open) return;
+  // Kein Treffer heisst nicht Stille: was lief, laeuft weiter.
+  if (!treffer?.url) return;
+  // Zwei Karten koennen dasselbe Stueck meinen - die Serie des Jahres ist oft
+  // auch die am oeftesten wiederholte. Dann laeuft es weiter.
+  if (wrappedTonLaeuft && treffer.url === wrappedTonTreffer?.url) return;
+
   wrappedTonLaeuft = true;
   wrappedTonTreffer = treffer;
   ton.src = treffer.url;
   ton.loop = true;
-  ton.volume = 0.45;
+  ton.volume = 0;
   try {
     await ton.play();
+    wrappedTonAufblenden(ton);
     wrappedTonKnopfZeigen(true, treffer);
   } catch {
     // Chromium laesst Ton ohne Zutun des Benutzers nicht immer zu. Dann steht
     // der Knopf da und wartet - besser als ein Rueckblick, der still bleibt,
     // ohne zu sagen, dass es etwas zu hoeren gaebe.
     wrappedTonLaeuft = false;
+    ton.volume = WRAPPED_TON_LAUT;
     wrappedTonKnopfZeigen(false, treffer);
   }
 }
@@ -3715,12 +3764,16 @@ async function wrappedTonUmschalten() {
   if (ton.paused) {
     try {
       await ton.play();
+      ton.volume = WRAPPED_TON_LAUT;
       wrappedTonLaeuft = true;
+      wrappedTonAus = false;
       wrappedTonKnopfZeigen(true, wrappedTonTreffer);
     } catch { /* Bleibt eben aus. */ }
   } else {
     ton.pause();
     wrappedTonLaeuft = false;
+    // Aus heisst aus: die naechste Karte faengt nicht ungefragt wieder an.
+    wrappedTonAus = true;
     wrappedTonKnopfZeigen(false, wrappedTonTreffer);
   }
 }
@@ -3799,14 +3852,26 @@ function renderWrappedPunkte() {
 // sie nach diesem Umbau sogar mehr auffallen, weil nichts mehr dagegen
 // anlaeuft.
 
-function wrappedSeite(schluessel, art, teile) {
+// `musik` ist der Titel, von dem die Karte handelt - daran haengt, was zu ihr
+// laeuft. Karten mit blossen Zahlen haben keinen und lassen den Ton in Ruhe.
+function wrappedSeite(schluessel, art, teile, musik = null) {
   const knoten = document.createElement("div");
   knoten.className = "wrapped-card";
   const inhalt = document.createElement("div");
   inhalt.className = "wrapped-content";
   inhalt.append(...teile.filter(Boolean));
   knoten.append(inhalt);
-  return { schluessel, art, knoten };
+  return { schluessel, art, knoten, musik };
+}
+
+// Woher die Musik einer Karte kommt: aus dem Titel, den sie zeigt.
+//
+// Filme bleiben aussen vor. Der Katalog dahinter kennt nur Anime, und zu einem
+// Film faende die Suche hoechstens etwas Fremdes - ein Opening, das mit dem
+// Film nichts zu tun hat, ist schlechter als Stille.
+function wrappedMusikQuelle(eintrag) {
+  if (!eintrag?.titel || eintrag.gattung === "film") return null;
+  return { titel: eintrag.titel, gattung: eintrag.gattung || "" };
 }
 
 function wrappedText(klasse, inhalt) {
@@ -3838,9 +3903,6 @@ function wrappedGrosseZahl(wert, einheit = "") {
 
 function wrappedBauen(daten, jahr) {
   const seiten = [];
-  // Fuer die Musik: welche Serie die des Jahres ist, weiss sonst nur die
-  // Karte, und die kennt ihren eigenen Titel nicht mehr, sobald sie gebaut ist.
-  wrappedSerieDesJahres = daten.serien[0] || null;
   const zeitBekannt = daten.sekundenBekannt > 0 && daten.sekunden > 0;
   const topSerie = daten.serien[0] || null;
   const topFilm = daten.filme[0] || null;
@@ -3904,7 +3966,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(topSerie.bild),
       wrappedText("wrapped-title", topSerie.titel),
       wrappedText("wrapped-sub", wrappedTitelZahlen(topSerie, zeitBekannt))
-    ]));
+    ], wrappedMusikQuelle(topSerie)));
   }
   if (topFilm) {
     seiten.push(wrappedSeite("top-film", "is-top", [
@@ -3993,7 +4055,7 @@ function wrappedBauen(daten, jahr) {
       wrappedText("wrapped-sub", daten.wiederholteTitel > 1
         ? `${oft.wiederholungen}× noch einmal gesehen — einer von ${daten.wiederholteTitel} Titeln, zu denen du zurückgekehrt bist.`
         : `${oft.wiederholungen}× noch einmal gesehen.`)
-    ]));
+    ], wrappedMusikQuelle(oft)));
   }
 
   // 16 - Monat des Jahres, mit allen Monaten als kleine Reihe.
@@ -4015,7 +4077,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(daten.erster.bild),
       wrappedText("wrapped-title", daten.erster.titel),
       wrappedText("wrapped-sub", reviewDatum(String(daten.erster.wann).slice(0, 10)))
-    ]));
+    ], wrappedMusikQuelle(daten.erster)));
   }
   if (daten.letzter && daten.letzter.titel !== daten.erster?.titel) {
     const laeuftNoch = new Date().getFullYear() === Number(jahr);
@@ -4024,7 +4086,7 @@ function wrappedBauen(daten, jahr) {
       wrappedPoster(daten.letzter.bild),
       wrappedText("wrapped-title", daten.letzter.titel),
       wrappedText("wrapped-sub", reviewDatum(String(daten.letzter.wann).slice(0, 10)))
-    ]));
+    ], wrappedMusikQuelle(daten.letzter)));
   }
 
   // 18 - Was sonst noch auffiel. Nur Saetze, deren Zahl eindeutig ist.

@@ -1,6 +1,6 @@
 "use strict";
 
-// Das Opening zur Serie des Jahres.
+// Das Opening zu einem Titel des Jahresrueckblicks.
 //
 // Der Jahresrueckblick war stumm. Musik dazu ist naheliegend - nur hat ELFIX
 // keine: kein Ton im Paket, keine Tonspur ausser der des Anbieters. Mitliefern
@@ -122,14 +122,24 @@ function nummerAus(thema) {
  * Rueckblick den Namen des gewaehlten Anime am Knopf. Wer dort etwas anderes
  * liest, als er erwartet hat, sieht sofort, dass danebengegriffen wurde,
  * statt sich ueber ein fremdes Lied zu wundern.
+ *
+ * <p><b>Und deshalb ist sie abschaltbar.</b> Gefragt wird der Katalog auch zu
+ * Titeln, die die Anbieter als gewoehnliche Serie fuehren - darunter sind
+ * reichlich Anime, aber eben auch alles andere. Fuer die gilt {@code
+ * ungenauErlaubt = false}: trifft der Titel nicht genau, gibt es nichts. Eine
+ * Krimiserie bekaeme sonst das Opening irgendeines Anime, den die Suche fuer
+ * aehnlich haelt.
+ *
+ * @param ungenauErlaubt ob ohne genauen Titeltreffer geraten werden darf
  */
-function besterAnime(kandidaten, titel) {
+function besterAnime(kandidaten, titel, ungenauErlaubt = true) {
   const brauchbar = kandidaten.filter((eintrag) => eintrag && typeof eintrag === "object");
   const genau = brauchbar.filter((eintrag) => {
     const namen = [eintrag.name, ...sammle(eintrag, ["title"]).map(text)];
     return namen.some((name) => passt(titel, name));
   });
   if (genau.length) return genau;
+  if (!ungenauErlaubt) return [];
   const fernsehen = brauchbar.filter(
     (eintrag) => text(eintrag.media_format).toUpperCase() === "TV");
   const feld = fernsehen.length ? fernsehen : brauchbar;
@@ -150,12 +160,14 @@ function besterAnime(kandidaten, titel) {
  *
  * @param antwort das geparste JSON - beliebig geformt, auch Unsinn
  * @param titel   der Titel, um den es geht
+ * @param ungenauErlaubt ob ohne genauen Titeltreffer geraten werden darf; bei
+ *                       Anime ja, bei allem anderen nicht
  * @return {{url, lied, anime}} oder null
  */
-function openingAus(antwort, titel) {
+function openingAus(antwort, titel, ungenauErlaubt = true) {
   if (!antwort || typeof antwort !== "object") return null;
   const kandidaten = sammle(antwort, ["anime"]).flat().filter(Boolean);
-  const treffer = besterAnime(kandidaten, titel);
+  const treffer = besterAnime(kandidaten, titel, ungenauErlaubt);
   if (!treffer.length) return null;
 
   let bestes = null;

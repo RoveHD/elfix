@@ -9174,11 +9174,19 @@ ipcMain.handle("wrapped:gesehen", (_event, jahr) => {
 ipcMain.handle("wrapped:reihenfolge", (_event, schluessel, jahr) =>
   statistik.wrappedReihenfolge(schluessel, jahr));
 
-// Das Opening zur Serie des Jahres.
+// Das Opening zu einem Titel des Rueckblicks.
 //
 // Geholt wird es bei animethemes.moe, einem offenen Katalog der Vor- und
-// Abspaenne von Anime. Nur fuer Anime, denn nur dafuer gibt es so etwas -
-// gefragt wird deshalb erst gar nicht, wenn die Gattung eine andere ist.
+// Abspaenne von Anime. Nur dafuer gibt es so etwas; zu einem Film wird deshalb
+// gar nicht erst gefragt.
+//
+// Gefragt wird dagegen auch bei Gattung "serie", und zwar aus einem
+// praktischen Grund: die Anbieter fuehren einen guten Teil ihrer Anime als
+// gewoehnliche Serie, und der Rueckblick haette dort ohne Not geschwiegen. Was
+// dabei aber wegfaellt, ist die Nachsicht der Suche - fuer alles, was nicht
+// ausdruecklich Anime ist, zaehlt nur der genaue Titeltreffer. Sonst legte die
+// Suche einer amerikanischen Krimiserie das Opening irgendeines Anime unter,
+// den sie fuer aehnlich haelt, und das waere schlimmer als Stille.
 //
 // Gelesen wird die Antwort in src/openings.js, und zwar bewusst dort: dieses
 // Modul kennt kein Netz und laesst sich deshalb pruefen. Was hier steht, ist
@@ -9197,8 +9205,12 @@ const OPENING_FRIST_MS = 4000;
 
 async function openingFuer(titel, gattung) {
   const name = String(titel || "").trim();
-  if (!name || String(gattung || "") !== "anime") return null;
-  if (openingCache.has(name)) return openingCache.get(name);
+  const art = String(gattung || "");
+  if (!name || art === "film") return null;
+  // Die Gattung gehoert in den Schluessel: sie entscheidet mit, wie streng
+  // gesucht wird, und damit auch ueber das Ergebnis.
+  const schluessel = `${art}|${name}`;
+  if (openingCache.has(schluessel)) return openingCache.get(schluessel);
 
   let gefunden = null;
   try {
@@ -9208,14 +9220,16 @@ async function openingFuer(titel, gattung) {
         cache: "no-store",
         signal: AbortSignal.timeout(OPENING_FRIST_MS)
       });
-      if (antwort.ok) gefunden = openings.openingAus(await antwort.json(), name);
+      if (antwort.ok) {
+        gefunden = openings.openingAus(await antwort.json(), name, art === "anime");
+      }
     }
   } catch {
     // Kein Netz, kein Treffer, eine Antwort in unerwarteter Form: alles
     // dasselbe Ergebnis. Der Rueckblick bleibt stumm und laeuft weiter -
     // das ist genau der Zustand, den es vorher gab.
   }
-  openingCache.set(name, gefunden);
+  openingCache.set(schluessel, gefunden);
   return gefunden;
 }
 

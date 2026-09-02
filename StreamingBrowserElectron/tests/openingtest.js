@@ -91,6 +91,19 @@ pruefe("Der genaue Titel bleibt die erste Wahl",
   openings.openingAus(echt, "Shingeki no Kyojin")?.lied === "Guren no Yumiya",
   "wo er trifft, ist er unbestechlich");
 
+// Gefragt wird der Katalog inzwischen auch zu Titeln, die die Anbieter als
+// gewoehnliche Serie fuehren - darunter sind reichlich Anime. Fuer die faellt
+// aber die Nachsicht der Suche weg: raten darf sie nur, wo Anime draufsteht.
+pruefe("Ohne Anime als Gattung wird nicht geraten",
+  openings.openingAus(echt, "Attack on Titan", false) === null,
+  "eine Krimiserie bekaeme sonst das Opening des aehnlichsten Anime");
+pruefe("Der genaue Treffer zaehlt trotzdem",
+  openings.openingAus(echt, "Shingeki no Kyojin", false)?.lied === "Guren no Yumiya",
+  "so bekommt der als Serie gefuehrte Anime seine Musik doch");
+pruefe("Und geraten wird nur ohne genauen Treffer",
+  openings.besterAnime([{ name: "Naruto", media_format: "TV", year: 2002 }], "Naruto", false).length === 1
+  && openings.besterAnime([{ name: "Bleach", media_format: "TV", year: 2004 }], "Naruto", false).length === 0);
+
 // sequence ist in der echten Antwort oft null - die Nummer steht im slug.
 pruefe("Die Nummer kommt notfalls aus dem slug",
   openings.nummerAus({ sequence: null, slug: "OP2" }) === 2
