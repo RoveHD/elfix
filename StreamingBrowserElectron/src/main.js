@@ -2123,6 +2123,7 @@ ipcMain.handle("youtubeparty:switch-context", async (_event, punkt) => {
 // nachgereicht.
 ipcMain.handle("youtubeparty:resync", async () => {
   youtubeParty.anfordern();
+  youtubeStoebernBeenden();
   await youtubeAnschluss("handbetrieb").catch(() => {});
   return youtubePartyStatus();
 });
@@ -2130,6 +2131,7 @@ ipcMain.handle("youtubeparty:resync", async () => {
 // Zum Video der Runde springen - ausdruecklich gewollt, deshalb hier auch dann,
 // wenn gerade ein anderer Anbieter vorn ist.
 ipcMain.handle("youtubeparty:open", async () => {
+  youtubeStoebernBeenden();
   const zustand = youtubeParty.stand;
   const provider = enabledProviders().find((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl));
   if (!zustand?.videoId || !provider) return activeState();
@@ -2808,6 +2810,7 @@ function getProviderView(provider) {
     meldeWatchpartyFolgenwechsel(url);
     // Ein anderes YouTube-Video ist kein Ende der Runde, sondern ihr
     // haeufigster Vorgang - die anderen ziehen mit.
+    youtubeStandortMerken(view, url);
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     pushWatchpartyLiveState(url);
     nextEpisodePromptState.delete(provider.id);
@@ -2825,6 +2828,7 @@ function getProviderView(provider) {
     // YouTube wechselt das Video, ohne die Seite neu zu laden: ein Klick auf
     // eine Empfehlung, ein Treffer aus der Suche, das naechste Video. Fuer die
     // Runde ist genau das ein Videowechsel.
+    youtubeStandortMerken(view, url);
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     installYoutubeWiedergabe(view, url).catch(() => {});
     installSponsorblock(view, url).catch(() => {});
@@ -8037,6 +8041,8 @@ function youtubePartySync() {
   const raum = (watchparty.status().rooms || []).find((eintrag) => eintrag.room === gewuenscht);
   if (!watchparty.aktiv || !gewuenscht || !raum) {
     youtubeParty.ausschalten();
+    youtubeStoebern = false;
+    youtubeLetzteId = "";
     return;
   }
   youtubeParty.einschalten(gewuenscht);
@@ -8055,6 +8061,83 @@ function youtubeAnsicht() {
 
 function youtubeVideoIdAus(url) {
   return youtube.videoKennung(url)?.id || "";
+}
+
+// --- Stoebern: auf YouTube herumgehen, ohne die Runde mitzunehmen ------------
+//
+// Der gemeldete Fall: waehrend die Runde laeuft, will jemand auf die
+// Startseite - das naechste Video suchen, in den Abos nachsehen, einen Kanal
+// aufmachen. Bisher ging das nicht. Er wurde beim naechsten Takt in das Video
+// der Runde zurueckgeholt, und weil dieses Zurueckholen die Seite neu laedt und
+// den Player anlaufen laesst, meldete sein Geraet gleich darauf Stelle und
+// Laufzustand - womit es die anderen mitzog. Ein Blick auf die Startseite riss
+// also die ganze Runde herum.
+//
+// Deshalb dieser Zustand. Er ist bewusst schmal:
+//
+//   Er entsteht, wenn jemand von einem Video weg auf eine YouTube-Seite ohne
+//   Video geht. "Von einem Video weg" ist die halbe Regel - wer YouTube frisch
+//   oeffnet, landet ebenfalls auf der Startseite, und der gehoert in die Runde
+//   geholt und nicht in Ruhe gelassen.
+//
+//   Er endet, sobald wieder ein Video offen ist. Das ist zugleich der Weg, ein
+//   anderes Video fuer alle auszuwaehlen: aufmachen genuegt, den Rest tut
+//   meldeYoutubeVideowechsel wie bisher.
+//
+//   Solange er gilt, wird nichts angewendet und nichts gemeldet. Beides, denn
+//   beide Richtungen waren gemeint: niemand zieht mich, ich ziehe niemanden.
+let youtubeStoebern = false;
+// Die zuletzt gesehene Videokennung in der YouTube-Ansicht. Sie unterscheidet
+// "kommt von einem Video" von "war noch nie bei einem".
+let youtubeLetzteId = "";
+
+// Nach jeder Navigation in der YouTube-Ansicht: wo steht dieses Geraet?
+function youtubeStandortMerken(view, url) {
+  const ziel = youtubeAnsicht();
+  if (!ziel || ziel.view !== view) return;
+  if (!youtubeParty.aktiv) {
+    youtubeStoebern = false;
+    youtubeLetzteId = "";
+    return;
+  }
+  // Ganz weg von YouTube ist kein Stoebern, sondern etwas anderes tun. Daran
+  // aendert sich hier nichts - die Ansicht steht dann ohnehin still.
+  if (!youtube.istYoutubeUrl(url)) return;
+
+  const videoId = youtubeVideoIdAus(url);
+  if (videoId) {
+    youtubeStoebern = false;
+    youtubeLetzteId = videoId;
+    return;
+  }
+  // Eine YouTube-Seite ohne Video: Startseite, Suche, Kanal, Abos.
+  if (youtubeLetzteId && !youtubeStoebern) {
+    youtubeStoebern = true;
+    sendYoutubePartyState();
+  }
+}
+
+// Ob dieses Geraet gerade stoebert - und die Runde es deshalb in Ruhe laesst.
+function youtubeStoebertGerade() {
+  if (!youtubeParty.aktiv || !youtubeStoebern) return false;
+  const ziel = youtubeAnsicht();
+  if (!ziel) {
+    youtubeStoebern = false;
+    return false;
+  }
+  // Steht doch wieder ein Video da, ist das Stoebern vorbei - auch ohne
+  // Navigationsereignis.
+  if (youtubeVideoIdAus(ziel.view.webContents.getURL())) {
+    youtubeStoebern = false;
+    return false;
+  }
+  return true;
+}
+
+// Zurueck in die Runde. Ausdruecklich gewollt heisst: das Stoebern endet hier
+// und nicht erst bei der naechsten Navigation.
+function youtubeStoebernBeenden() {
+  youtubeStoebern = false;
 }
 
 // Gehoert diese Adresse dem YouTube-Modus? Diese Frage entscheidet zugleich,
@@ -8077,6 +8160,9 @@ function youtubeVideotitel(view) {
 // ist, kommt hier gar nicht erst an.
 function meldeYoutubeAktion(view, aktion, position, pausiert) {
   if (!youtubeParty.aktiv) return;
+  // Wer stoebert, bewegt die Runde nicht. Das Pausieren beim Verlassen des
+  // Videos ist genau so eine Meldung - sie haette alle anderen angehalten.
+  if (youtubeStoebertGerade()) return;
   const ziel = youtubeAnsicht();
   if (!ziel || ziel.view !== view) return;
   const adresse = view.webContents.getURL();
@@ -8148,6 +8234,9 @@ async function applyYoutubeParty(zustand, hinweis) {
   // YouTube war in dieser Sitzung nie offen. Dann wird nichts erzwungen - beim
   // Oeffnen haengt sich die Runde von selbst an (installYoutubePartyControls).
   if (!ziel) return;
+  // Und wer gerade stoebert, wird nicht zurueckgeholt. Die Runde laeuft ohne
+  // ihn weiter; zurueck kommt er ueber "Zum Video der Runde".
+  if (youtubeStoebertGerade()) return;
 
   const offen = ziel.view.webContents.getURL();
   if (youtubeVideoIdAus(offen) !== zustand.videoId) {
@@ -8213,6 +8302,10 @@ async function youtubeAnschluss(grund) {
   if (!youtubeParty.aktiv || !zustand?.videoId) return;
   const ziel = youtubeAnsicht();
   if (!ziel) return;
+  // Von Hand angefordert ("Zum Video der Runde") gilt immer; von selbst nicht,
+  // solange gestoebert wird. Ohne diese Ausnahme holte der Takt nach jedem
+  // Seitenaufbau auf der Startseite zurueck - das war der gemeldete Fall.
+  if (grund !== "handbetrieb" && youtubeStoebertGerade()) return;
 
   const offen = ziel.view.webContents.getURL();
   if (!youtube.istYoutubeUrl(offen)) return;
@@ -8280,6 +8373,10 @@ function sendYoutubePartyState(status) {
 function youtubePartyStatus(status) {
   return {
     ...(status || youtubeParty.status()),
+    // Ob dieses Geraet gerade stoebert. Es steht im Status und nicht bloss in
+    // main.js, weil die Oberflaeche es sagen muss: eine Runde, die weiterlaeuft,
+    // waehrend man selbst die Startseite ansieht, sieht sonst kaputt aus.
+    browsing: youtubeStoebertGerade(),
     // Welche Raeume ueberhaupt in Frage kommen. Ohne Watchparty gibt es keine.
     rooms: watchparty.aktiv ? watchparty.codes : [],
     watchpartyEnabled: watchparty.aktiv

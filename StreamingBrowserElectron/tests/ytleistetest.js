@@ -213,6 +213,65 @@ pruefe("Die Oberflaeche uebernimmt die Antwort samt Einstellungen",
   && /if \(antwort\?\.settings\) settings = antwort\.settings;/.test(RENDERER),
   "sonst schriebe das naechste Speichern den Raum wieder heraus");
 
+// --- Stoebern: auf die Startseite duerfen -----------------------------------
+//
+// Gemeldet: waehrend die Runde laeuft, will jemand auf die Startseite - das
+// naechste Video suchen. Bisher ging das nicht. Er wurde in das Video der
+// Runde zurueckgeholt, und weil das Zurueckholen die Seite neu laedt und den
+// Player anlaufen laesst, meldete sein Geraet gleich darauf Stelle und
+// Laufzustand: ein Blick auf die Startseite riss die ganze Runde herum.
+//
+// Beide Richtungen waren gemeint, und beide stehen hier.
+
+pruefe("Von einem Video weg auf eine Seite ohne Video heisst stoebern",
+  /if \(youtubeLetzteId && !youtubeStoebern\) \{/.test(MAIN),
+  "wer YouTube frisch oeffnet, landet auch auf der Startseite - der gehoert geholt");
+pruefe("Wieder ein Video heisst: nicht mehr stoebern",
+  /if \(videoId\) \{\s*\n\s*youtubeStoebern = false;\s*\n\s*youtubeLetzteId = videoId;/.test(MAIN),
+  "und genau so waehlt man ein neues Video fuer alle aus");
+pruefe("Wer stoebert, wird nicht zurueckgeholt",
+  /if \(youtubeStoebertGerade\(\)\) return;/.test(MAIN)
+  && /if \(grund !== "handbetrieb" && youtubeStoebertGerade\(\)\) return;/.test(MAIN),
+  "weder beim Raumzustand noch beim Nachziehen nach dem Seitenaufbau");
+pruefe("Und zieht dabei auch niemanden mit",
+  /function meldeYoutubeAktion\(view, aktion, position, pausiert\) \{[^]{0,260}?if \(youtubeStoebertGerade\(\)\) return;/
+    .test(MAIN),
+  "das Pausieren beim Verlassen des Videos haette alle anderen angehalten");
+pruefe("Der Weg zurueck beendet es ausdruecklich",
+  /ipcMain\.handle\("youtubeparty:open", async \(\) => \{\s*\n\s*youtubeStoebernBeenden\(\);/.test(MAIN)
+  && /youtubeParty\.anfordern\(\);\s*\n\s*youtubeStoebernBeenden\(\);/.test(MAIN),
+  "\"Zum Video\" und \"Abgleichen\" sind der Ausweg");
+pruefe("Ein Raumwechsel raeumt den Merker weg",
+  /youtubeParty\.ausschalten\(\);\s*\n\s*youtubeStoebern = false;/.test(MAIN));
+pruefe("Und die Oberflaeche erfaehrt davon",
+  /browsing: youtubeStoebertGerade\(\),/.test(MAIN));
+
+// Die Statuszeile kommt aus derselben Funktion wie in der App - geschnitten
+// und in einem eigenen Sandkasten gefahren, weil sie nur formatClock braucht.
+function statusText(state) {
+  const sandkasten = {
+    formatClock: (sekunden) => `0:${String(Math.round(Number(sekunden) || 0)).padStart(2, "0")}`,
+    console, Math, Number, String, Boolean, Object, Array, JSON
+  };
+  vm.createContext(sandkasten);
+  vm.runInContext(abschnitt(RENDERER, "function youtubePartyText("), sandkasten);
+  return vm.runInContext("youtubePartyText", sandkasten)(state, state.rooms || []);
+}
+
+const stoebernd = { ...LAEUFT, browsing: true };
+pruefe("Die Statuszeile sagt, dass die Runde ohne einen weiterlaeuft",
+  /Du stöberst/.test(statusText(stoebernd)) && /Zum Video/.test(statusText(stoebernd)),
+  statusText(stoebernd));
+pruefe("Und nennt trotzdem, wo die Runde steht",
+  statusText(stoebernd).includes(LAEUFT.video.videoId)
+  || /0:12/.test(statusText(stoebernd)),
+  "sonst weiss man nicht, wohin man zurueckkaeme");
+pruefe("Das Band oben sagt es ebenfalls",
+  leiste("provider:yt", stoebernd).bannerText.textContent === "YouTube-Runde: du stöberst");
+pruefe("Ohne Stoebern bleibt alles wie vorher",
+  /Läuft bei/.test(statusText(LAEUFT))
+  && leiste("provider:yt", LAEUFT).bannerText.textContent === "YouTube-Runde: läuft · Elias");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

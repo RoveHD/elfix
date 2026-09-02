@@ -2792,6 +2792,13 @@ function youtubePartyText(state, raeume) {
   const titel = state.video.title || state.video.videoId;
   const wo = formatClock(Number(state.video.position) || 0);
   const wer = state.video.by ? ` — zuletzt: ${state.video.by}` : "";
+  // Stoebern muss dastehen, sonst sieht es nach einem Fehler aus: die Runde
+  // laeuft, dieses Fenster zeigt die Startseite, und niemand zieht den anderen.
+  // Genau so ist es gemeint - und der Weg zurueck steht gleich daneben.
+  if (state.browsing) {
+    return `Du stöberst — die Runde läuft ohne dich weiter (${titel}, ${wo}). `
+      + "Öffne ein Video, dann sehen es alle; oder geh mit „Zum Video“ zurück.";
+  }
   return `${state.video.playing ? "Läuft" : "Pausiert"} bei ${wo} · ${titel}${wer}`;
 }
 
@@ -2824,6 +2831,10 @@ function renderYoutubePartyBanner() {
   }
   if (!state.video?.videoId) {
     youtubePartyBannerText.textContent = `YouTube-Runde: ${state.room}`;
+    return;
+  }
+  if (state.browsing) {
+    youtubePartyBannerText.textContent = "YouTube-Runde: du stöberst";
     return;
   }
   const wer = state.video.by ? ` · ${state.video.by}` : "";
