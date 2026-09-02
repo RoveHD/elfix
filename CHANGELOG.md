@@ -3,6 +3,35 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.90.3 — 2. September 2026
+
+**Der Trailer läuft jetzt wirklich — 1.90.2 hat einen Fehler gegen den anderen
+getauscht.** Damit der eingebettete Player überhaupt lädt, bekommt er seit
+1.90.2 gesagt, auf welcher Seite er steht. Genannt wurde dafür `youtube.com` —
+der naheliegende Wert, und der falsche. Damit behauptet der Rahmen, YouTube
+bette sich selbst ein, und genau das lässt YouTube nicht gelten: Statt „Fehler
+153" stand nun „Dieses Video ist nicht verfügbar — Fehlercode: 152 - 4".
+
+Am Titel lag es nie. Nachgestellt wurde es mit einem Video, das jeder einbetten
+darf; derselbe Rahmen, nur die genannte Herkunft unterscheidet sich:
+
+| genannte Herkunft | Ergebnis |
+| --- | --- |
+| keine | Fehler 153 |
+| `https://www.youtube.com/` | Fehlercode 152 - 4 |
+| `https://elfix.local/` | spielt |
+
+Es muss also eine fremde Seite sein, und dann taugt jede. ELFIX nennt jetzt
+sich selbst — das ist die Wahrheit über den Rahmen, und `.local` ist genau für
+Namen da, die nie zu einem Rechner im Netz gehören. Der Name einer echten
+fremden Seite wäre eine Behauptung über jemand anderen.
+
+Nachgewiesen nicht am Bild — eine dunkle Szene sieht aus wie ein Fehler —,
+sondern daran, ob Videodaten fließen: mit der neuen Herkunft spielen alle fünf
+geprüften Trailer, mit der alten und ohne keiner. Darunter der gemeldete Titel
+sowie Trailer aus beiden Quellen, TMDB und AniList. Die Anbieteransichten
+laufen in einer eigenen Sitzung und sind davon unberührt.
+
 ## 1.90.2 — 2. September 2026
 
 **Der Trailer läuft jetzt auch wirklich.** Gefunden wurde er seit 1.90.1, im
