@@ -46,6 +46,7 @@ const voeQualitaet = require("./voe-qualitaet");
 // der Watchparty fuer Serien nur die Leitung.
 const { YoutubeWatchparty } = require("./youtube-watchparty");
 const youtubeSync = require("./youtube-sync");
+const sponsorblock = require("./sponsorblock");
 const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
@@ -2148,6 +2149,11 @@ ipcMain.handle("youtubeparty:open", async () => {
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   settings = normalizeSettings(nextSettings);
   saveSettings();
+  // Wer den Schalter mitten im Video umlegt, soll nicht bis zum naechsten
+  // warten muessen - weder auf das Ende noch auf den Anfang des Ueberspringens.
+  if (activeView) {
+    installSponsorblock(activeView, activeView.webContents.getURL()).catch(() => {});
+  }
   syncWatchparty();
   syncGeraete();
   syncFern();
@@ -2690,6 +2696,12 @@ function getProviderView(provider) {
       if (key) watchparty.chatSenden(key, chat[1]);
       return;
     }
+    // Ein uebersprungener Sponsorenblock. Die Einblendung steht in der Seite -
+    // hier wird nur mitgeschrieben, damit ein Fehlgriff nachvollziehbar ist.
+    if (String(nachricht || "").startsWith(sponsorblock.MELDE)) {
+      console.log(`[sponsorblock] ${String(nachricht).slice(sponsorblock.MELDE.length)}`);
+      return;
+    }
     // Der Rueckkanal der YouTube-Watchparty. Eigenes Praefix, eigener Weg -
     // damit kann keine Meldung des einen Modus im anderen landen.
     if (String(nachricht || "").startsWith("__elfix:yt:sync:")) {
@@ -2815,6 +2827,7 @@ function getProviderView(provider) {
     // Runde ist genau das ein Videowechsel.
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     installYoutubeWiedergabe(view, url).catch(() => {});
+    installSponsorblock(view, url).catch(() => {});
     // Ohne Neuladen gibt es kein dom-ready. Der Schalter muss trotzdem
     // mitkommen - beim Video dazu, auf der Startseite weg.
     installAutoplaySchalter(view).catch(() => {});
@@ -2846,6 +2859,7 @@ function getProviderView(provider) {
     installWatchpartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubePartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubeWiedergabe(view, view.webContents.getURL()).catch(() => {});
+    installSponsorblock(view, view.webContents.getURL()).catch(() => {});
     installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
     installHosterQualitaet(view).catch(() => {});
     installAutoplaySchalter(view).catch(() => {});
@@ -9252,6 +9266,83 @@ ipcMain.handle("wrapped:set-open", (_event, offen) => {
   return true;
 });
 
+// --- SponsorBlock ------------------------------------------------------------
+//
+// Geholt werden die Segmente bei sponsor.ajay.app, und zwar ueber das Praefix
+// des SHA-256 der Videokennung: die Antwort umfasst dann tausende Videos, und
+// der Dienst erfaehrt nicht, welches hier laeuft. Gelesen wird sie in
+// src/sponsorblock.js - einem Modul ohne Netz, das dieselbe Datei ist, die
+// Android benutzt.
+//
+// Drei Vorsichtsmassnahmen, weil auf der anderen Seite ein fremder Dienst
+// haengt, und eine Regel, die ueber allem steht: **ein Fehler darf die
+// Wiedergabe nie beruehren.** Keine Antwort, eine unerwartete Antwort, kein
+// Netz - alles endet als "keine Segmente", und das Video laeuft weiter, als
+// gaebe es SponsorBlock nicht.
+//
+//   Ein Zeitlimit. Vier Sekunden; danach laeuft das Video eben ohne.
+//   Ein Gedaechtnis, auch fuer das Nichtergebnis. Ein Video ohne Eintraege hat
+//   beim naechsten Aufruf immer noch keine, und ein oeffentlicher Dienst, den
+//   man bei jedem Takt fragt, sperrt einen zu Recht aus.
+//   Eine Frist darauf. Nach einer halben Stunde wird neu gefragt - in der Zeit
+//   kann jemand ein Segment eingetragen haben.
+const sponsorblockCache = new Map();
+const SPONSORBLOCK_FRIST_MS = 4000;
+const SPONSORBLOCK_ALTER_MS = 30 * 60 * 1000;
+
+async function sponsorblockSegmente(videoId) {
+  const kennung = String(videoId || "");
+  if (!kennung) return [];
+  const gemerkt = sponsorblockCache.get(kennung);
+  if (gemerkt && Date.now() - gemerkt.zeit < SPONSORBLOCK_ALTER_MS) return gemerkt.segmente;
+
+  let segmente = [];
+  try {
+    const adresse = sponsorblock.anfrageUrl(sponsorblock.hashPraefix(kennung));
+    if (adresse) {
+      const antwort = await net.fetch(adresse, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(SPONSORBLOCK_FRIST_MS)
+      });
+      // 404 heisst hier nicht Fehler, sondern "zu diesem Praefix nichts" - der
+      // Normalfall bei einem Video, das noch niemand bearbeitet hat.
+      if (antwort.ok) segmente = sponsorblock.segmenteAus(await antwort.json(), kennung);
+    }
+  } catch {
+    // Kein Netz, ein Zeitlimit, eine Antwort in unerwarteter Form: alles
+    // dasselbe Ergebnis. Gespeichert wird es trotzdem - sonst faellt bei
+    // jedem Takt eine neue Anfrage an, die genauso ausgeht.
+  }
+  sponsorblockCache.set(kennung, { segmente, zeit: Date.now() });
+  return segmente;
+}
+
+// Das Skript in die Seite bringen - und nur, wenn dort wirklich YouTube laeuft.
+async function installSponsorblock(view, url) {
+  if (!isLiveView(view) || !youtube.istYoutubeUrl(url)) return;
+  const einstellungen = sponsorblock.einstellungenLesen(settings.sponsorblock);
+  const kennung = youtube.videoKennung(url);
+  const kategorien = sponsorblock.kategorienAus(einstellungen);
+  // Ausgeschaltet, keine Kategorie gewaehlt oder kein einzelnes Video: dann
+  // wird nicht einmal gefragt - und ein Skript, das noch haengt, hoert auf.
+  if (!kennung?.id || !kategorien.length) {
+    await view.webContents.executeJavaScript(sponsorblock.abschaltenScript(), true).catch(() => {});
+    return;
+  }
+
+  const alle = await sponsorblockSegmente(kennung.id);
+  // Zwischenzeitlich weitergeklickt? Dann gehoeren diese Segmente zu einem
+  // Video, das hier nicht mehr laeuft.
+  if (!isLiveView(view)) return;
+  if (youtube.videoKennung(view.webContents.getURL())?.id !== kennung.id) return;
+
+  await view.webContents.executeJavaScript(
+    sponsorblock.skipScript(sponsorblock.gefiltert(alle, einstellungen), {
+      hinweis: einstellungen.hinweis,
+      videoId: kennung.id
+    }), true).catch(() => {});
+}
+
 // --- Empfohlen fuer dich -----------------------------------------------------
 // Baut aus dem Verlauf ein Geschmacksprofil (siehe taste.js) und sucht dazu
 // passende Titel: was die Anbieter selbst als aehnlich ausweisen, was in den
@@ -10685,6 +10776,10 @@ function normalizeSettings(raw) {
     notifications: {
       newEpisodes: raw?.notifications?.newEpisodes === true
     },
+    // SponsorBlock. Die Regel, was fehlende Werte bedeuten, steht in
+    // sponsorblock.js - hier waere sie ein zweites Mal, und die beiden liefen
+    // beim naechsten Schalter auseinander.
+    sponsorblock: sponsorblock.einstellungenLesen(raw?.sponsorblock),
     // Was einmalig schon geschehen ist. Diese Merker muessen hier stehen und
     // nicht bloss in der Datei: die Oberflaeche schickt beim Speichern den
     // ganzen Einstellungsblock, und was normalizeSettings nicht kennt, faellt
@@ -10885,6 +10980,7 @@ function defaultSettings() {
     // Eine frische Ablage bringt YouTube schon mit - fuer sie ist das
     // Nachtragen von vornherein erledigt.
     wrapped: { musik: true, gesehenJahr: 0 },
+    sponsorblock: { ...sponsorblock.STANDARD },
     migrations: {
       youtubeProvider: true,
       // Eine frische Ablage hat keinen Verlauf, aus dem etwas zu uebernehmen

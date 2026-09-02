@@ -290,7 +290,11 @@ pruefe("Nach Abbrechen bleibt der Zaehler auch dann aus",
 const umgebung = new Proxy({
   console: { log() {} }, crypto: require("crypto"),
   Boolean, String, Number, Array, Object, JSON, Math, Date,
-  geraeteSchluessel: require("../src/geraete-schluessel")
+  geraeteSchluessel: require("../src/geraete-schluessel"),
+  // normalizeSettings fragt das Modul nach dem Standard fuer SponsorBlock -
+  // eine zweite Antwort hier waere genau die Sorte Unterschied, die auffaellt,
+  // wenn ein Schalter irgendwann anders steht als er soll.
+  sponsorblock: require("../src/sponsorblock")
 }, {
   has: () => true,
   get: (ziel, name) => (name in ziel ? ziel[name] : (typeof name === "symbol" ? undefined : () => [])),

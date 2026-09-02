@@ -112,6 +112,7 @@ public class MainActivity extends Activity {
     private Fassungen fassungen;
     private Rahmen rahmen;
     private Marken marken;
+    private Sponsorblock sponsorblock;
     private Qualitaet qualitaet;
     private Geraete geraete;
     private Aktualisierung aktualisierung;
@@ -1024,6 +1025,7 @@ public class MainActivity extends Activity {
         });
         fassungen = new Fassungen(this, kern);
         marken = new Marken(this, kern, rahmen);
+        sponsorblock = new Sponsorblock(this, kern, rahmen);
         mitschauen = new Mitschauen(kern, rahmen, watchparty, new Mitschauen.Umgebung() {
             @Override
             public WebView spieler() {
@@ -1149,6 +1151,7 @@ public class MainActivity extends Activity {
         }
         kern.wennBereit(() -> {
             youtube.vorbereiten();
+            if (sponsorblock != null) sponsorblock.vorbereiten();
             messung.starten();
             watchparty.anwenden();
             kosmetik.vorbereiten();
@@ -3147,6 +3150,94 @@ public class MainActivity extends Activity {
                 einstellungenAuffrischen();
             } : null);
         introStandHolen();
+    }
+
+    /**
+     * SponsorBlock - eine Karte fuer das Ganze, dann die Kategorien.
+     *
+     * <p>Dieselben sieben Schalter wie am Rechner und in derselben Folge. Sie
+     * stehen auch dann da, wenn SponsorBlock aus ist: ein Schalter, der
+     * verschwindet, sobald man ihn braucht, ist schwerer zu finden als einer,
+     * der ohne Wirkung dasteht - und der Text sagt, dass gerade nichts
+     * geschieht.
+     *
+     * <p>Ohne Rahmenzugriff gibt es keine Schalter, sondern die Auskunft, warum:
+     * ein Skript, das nicht in den Rahmen des Players kommt, springt nirgends.
+     */
+    private void sponsorblockKarten(LinearLayout koerper, boolean fernseher, int luecke) {
+        boolean moeglich = Rahmen.verfuegbar();
+        if (!moeglich || sponsorblock == null) {
+            festeKarte(koerper, fernseher, luecke, "SponsorBlock",
+                "Auf diesem Gerät nicht möglich: die System-WebView ist zu alt, um in den "
+                    + "Rahmen des Players zu sehen. Ein Update der Android System WebView genügt.");
+            return;
+        }
+
+        lebendeKarte(koerper, fernseher, luecke, "SponsorBlock",
+            () -> sponsorblock.eingeschaltet()
+                ? "Bezahlte Einschübe in YouTube-Videos werden übersprungen — "
+                    + sponsorblock.gewaehlt() + " von 5 Arten. Die Segmente kommen aus dem "
+                    + "offenen Katalog von sponsor.ajay.app; gefragt wird nur bei YouTube und "
+                    + "nur mit einem Kürzel, aus dem sich das Video nicht ablesen lässt."
+                : "Aus. Es wird nicht einmal gefragt.",
+            () -> sponsorblock.eingeschaltet() ? "Ausschalten" : "Einschalten",
+            () -> {
+                sponsorblock.einschalten(!sponsorblock.eingeschaltet());
+                sponsorblockNachziehen();
+                einstellungenAuffrischen();
+            });
+
+        sponsorblockKategorie(koerper, fernseher, luecke, "sponsor",
+            "Sponsoren überspringen", "Bezahlte Werbung im Video.");
+        sponsorblockKategorie(koerper, fernseher, luecke, "selfpromo",
+            "Eigenwerbung überspringen", "Hinweise auf eigene Kanäle, Ware oder Mitgliedschaften.");
+        sponsorblockKategorie(koerper, fernseher, luecke, "interaction",
+            "Interaktionen überspringen", "„Abonniert und lasst ein Like da.“");
+        sponsorblockKategorie(koerper, fernseher, luecke, "intro",
+            "Intros überspringen", "Vorspann ohne Inhalt. Ein Intro ist keine Werbung.");
+        sponsorblockKategorie(koerper, fernseher, luecke, "outro",
+            "Outros überspringen", "Abspann mit Kacheln und Endkarten.");
+
+        lebendeKarte(koerper, fernseher, luecke, "Meldung beim Überspringen",
+            () -> sponsorblock.hinweis()
+                ? "Kurze Einblendung mit „Rückgängig“. Sie verschwindet von selbst und nimmt "
+                    + "der Fernbedienung nie den Fokus weg."
+                : "Es wird stumm übersprungen.",
+            () -> sponsorblock.hinweis() ? "Ausblenden" : "Einblenden",
+            () -> {
+                sponsorblock.hinweisUmschalten();
+                sponsorblockNachziehen();
+                einstellungenAuffrischen();
+            });
+    }
+
+    private void sponsorblockKategorie(LinearLayout koerper, boolean fernseher, int luecke,
+                                       String name, String titel, String erklaerung) {
+        lebendeKarte(koerper, fernseher, luecke, titel,
+            () -> erklaerung + (sponsorblock.kategorie(name)
+                ? " Wird übersprungen."
+                : " Bleibt stehen."),
+            () -> sponsorblock.kategorie(name) ? "Stehen lassen" : "Überspringen",
+            () -> {
+                sponsorblock.kategorieUmschalten(name);
+                sponsorblockNachziehen();
+                einstellungenAuffrischen();
+            });
+    }
+
+    /**
+     * Den Schalter sofort wirksam machen.
+     *
+     * <p>Wer ihn mitten im Video umlegt, soll nicht bis zum naechsten warten
+     * muessen - weder auf das Ende noch auf den Anfang des Ueberspringens.
+     */
+    private void sponsorblockNachziehen() {
+        if (sponsorblock == null || activeProvider == null) return;
+        WebView ansicht = webViews.get(activeProvider.id);
+        if (ansicht == null) return;
+        String seite = ansicht.getUrl();
+        if (youtube == null || !youtube.istYoutube(seite)) return;
+        sponsorblock.einspielen(ansicht, seite);
     }
 
     /**
@@ -5801,6 +5892,7 @@ public class MainActivity extends Activity {
                     einstellungenAuffrischen();
                 });
             introKarte(koerper, fernseher, luecke);
+            sponsorblockKarten(koerper, fernseher, luecke);
             fassungsKarte(koerper, fernseher, luecke);
         });
 
@@ -10485,6 +10577,14 @@ public class MainActivity extends Activity {
         boolean lernen = mitschauen == null || !mitschauen.laeuftMit()
             || mitschauen.binHostHier();
         if (marken != null) marken.einspielen(ansicht, activeProvider, seite, eintraege, lernen);
+        // Nur bei YouTube. Gefragt wird zweimal: hier mit der Namensliste des
+        // Kerns, damit fuer jede andere Seite gar kein Gang in den Kern
+        // anfaellt - und drueben noch einmal, weil dort die Videokennung
+        // gebraucht wird und eine Bedingung, die an zwei Stellen gilt, an
+        // beiden stehen muss.
+        if (sponsorblock != null && youtube != null && youtube.istYoutube(seite)) {
+            sponsorblock.einspielen(ansicht, seite);
+        }
         if (qualitaet != null) qualitaet.einspielen(ansicht);
     }
 
@@ -13208,6 +13308,19 @@ public class MainActivity extends Activity {
         }
 
         @Override
+        public void doUpdateVisitedHistory(WebView view, String url, boolean istNachladen) {
+            super.doUpdateVisitedHistory(view, url, istNachladen);
+            // YouTube wechselt das Video, ohne die Seite neu zu laden: ein Klick
+            // auf eine Empfehlung, ein Treffer aus der Suche, das naechste Video.
+            // Es gibt dann kein onPageFinished und keinen neuen Rahmen - nur
+            // diesen Ruf. Ohne ihn spraenge das Skript im neuen Video an den
+            // Sekunden des vorigen.
+            if (sponsorblock == null || provider != activeProvider) return;
+            if (youtube == null || !youtube.istYoutube(url)) return;
+            sponsorblock.einspielen(view, url);
+        }
+
+        @Override
         public void onPageFinished(WebView view, String url) {
             mainFrameUrl = url == null ? "" : url;
             // Ein about:blank darf nicht als sichtbare Ersatzseite stehenbleiben.
@@ -13649,6 +13762,12 @@ public class MainActivity extends Activity {
             // evaluateJavascript.
             if (mitschauen != null && mitschauen.istMeldung(text)) {
                 mitschauen.meldung(text);
+                return true;
+            }
+            // Ein uebersprungener Sponsorenblock. Die Einblendung steht in der
+            // Seite; hier wird nur mitgeschrieben.
+            if (sponsorblock != null && sponsorblock.istMeldung(text)) {
+                sponsorblock.meldung(text);
                 return true;
             }
             // Ein Sprung im Player - daraus wird vielleicht eine Intromarke.

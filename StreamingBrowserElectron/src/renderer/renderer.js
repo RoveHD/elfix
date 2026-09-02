@@ -369,6 +369,24 @@ const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
+// SponsorBlock. Ein Schalter fuer das Ganze, fuenf fuer die Kategorien, einer
+// fuer die Meldung - in derselben Reihenfolge wie in der Einstellungsseite.
+const sponsorblockFelder = {
+  enabled: document.querySelector("#sponsorblockEnabled"),
+  sponsor: document.querySelector("#sponsorblockSponsor"),
+  selfpromo: document.querySelector("#sponsorblockSelfpromo"),
+  interaction: document.querySelector("#sponsorblockInteraction"),
+  intro: document.querySelector("#sponsorblockIntro"),
+  outro: document.querySelector("#sponsorblockOutro"),
+  hinweis: document.querySelector("#sponsorblockHinweis")
+};
+// Was gilt, wenn nichts gespeichert ist. Dieselben Werte wie in
+// src/sponsorblock.js - die Oberflaeche kann das Modul nicht laden, also steht
+// hier nur, was ein frisches Kaestchen zeigen soll.
+const SPONSORBLOCK_STANDARD = {
+  enabled: true, sponsor: true, selfpromo: true, interaction: true,
+  intro: false, outro: false, hinweis: true
+};
 const markenStand = document.querySelector("#markenStand");
 const markenVergessen = document.querySelector("#markenVergessen");
 const rememberLanguage = document.querySelector("#rememberLanguage");
@@ -550,6 +568,7 @@ const SETTINGS_INDEX = [
   ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
   ["home", "Statistik in der Seitenleiste", "Rückblick Statistik Wrapped Jahresrückblick einblenden ausblenden"],
   ["home", "Musik im Jahresrückblick", "Wrapped Opening Anime Ton Musik Lied Intro stumm"],
+  ["playback", "SponsorBlock", "Sponsor Werbung überspringen YouTube Eigenwerbung Interaktion Intro Outro skip"],
   ["browser", "Werbung blockieren", "Adblock Popups Weiterleitungen Tracking Filterlisten"],
   ["browser", "Ausnahmen", "Whitelist Domain erlauben Seite funktioniert nicht"],
   ["browser", "Zwischenspeicher", "Cache Browserdaten löschen Start Reload"],
@@ -1052,6 +1071,9 @@ function bindEvents() {
   youtubeInMediathek?.addEventListener("change", saveSettings);
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
+  for (const feld of Object.values(sponsorblockFelder)) {
+    feld?.addEventListener("change", saveSettings);
+  }
   markenVergessen?.addEventListener("click", markenVergessenLassen);
   rememberLanguage?.addEventListener("change", saveSettings);
   fassungenVergessen?.addEventListener("click", fassungenVergessenLassen);
@@ -6975,6 +6997,9 @@ function renderSettings() {
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
+  for (const [name, feld] of Object.entries(sponsorblockFelder)) {
+    if (feld) feld.checked = settings.sponsorblock?.[name] ?? SPONSORBLOCK_STANDARD[name];
+  }
   renderMarkenStand();
   if (rememberLanguage) rememberLanguage.checked = settings.playback?.rememberLanguage !== false;
   renderFassungenStand();
@@ -7258,6 +7283,10 @@ async function saveSettings() {
     ...(settings.wrapped || {}),
     musik: wrappedMusik ? wrappedMusik.checked : true
   };
+  settings.sponsorblock = Object.fromEntries(Object.entries(sponsorblockFelder).map(
+    ([name, feld]) => [name, feld
+      ? feld.checked
+      : settings.sponsorblock?.[name] ?? SPONSORBLOCK_STANDARD[name]]));
   settings.watchparty = {
     enabled: watchpartyEnabled ? watchpartyEnabled.checked : false,
     serverUrl: watchpartyServer ? watchpartyServer.value.trim() : "",

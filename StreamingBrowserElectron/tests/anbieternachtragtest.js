@@ -145,7 +145,11 @@ pruefe("Wer YouTube danach loescht, behaelt es geloescht",
 // zurueckgibt, machte daraus stillschweigend "kein Schluessel".
 const roheUmgebung = {
   console: { log() {} }, crypto, Boolean, String, Number, Array, Object, JSON, Math, Date,
-  geraeteSchluessel: require("../src/geraete-schluessel")
+  geraeteSchluessel: require("../src/geraete-schluessel"),
+  // normalizeSettings fragt das Modul nach dem Standard fuer SponsorBlock -
+  // eine zweite Antwort hier waere genau die Sorte Unterschied, die auffaellt,
+  // wenn ein Schalter irgendwann anders steht als er soll.
+  sponsorblock: require("../src/sponsorblock")
 };
 const umgebung = new Proxy(roheUmgebung, {
   has: () => true,
