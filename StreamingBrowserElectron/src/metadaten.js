@@ -480,7 +480,22 @@ function erstellen(optionen = {}) {
     if (!roh || Number(roh.version) !== CACHE_VERSION || !roh.eintraege) return;
     for (const [schluessel, eintrag] of Object.entries(roh.eintraege)) {
       if (!eintrag?.form || !Number(eintrag.bis)) continue;
-      eintraege.set(schluessel, { form: eintrag.form, bis: Number(eintrag.bis) });
+      eintraege.set(schluessel, {
+        form: eintrag.form,
+        bis: Number(eintrag.bis),
+        // Siehe merken(): ein "nicht gefunden" aus der Zeit ohne TMDB-Zugang.
+        //
+        // Eintraege aus der Zeit vor dieser Marke tragen sie nicht - und
+        // ausgerechnet die sind der Anlass: wer den Schluessel nachtraegt,
+        // sitzt sonst fuenf Tage auf lauter "nicht gefunden", die nur daher
+        // kommen, dass damals niemand fragen konnte. Ein altes UNMATCHED zu
+        // einem Werk gilt deshalb als verdaechtig und wird einmal neu gefragt,
+        // sobald es einen Schluessel gibt. Anime bleibt aussen vor, das kam nie
+        // von TMDB.
+        ohneTmdb: eintrag.ohneTmdb === undefined
+          ? (eintrag.form?.konfidenz === "UNMATCHED" && eintrag.form?.art !== "anime")
+          : Boolean(eintrag.ohneTmdb)
+      });
     }
   }
 
@@ -491,7 +506,11 @@ function erstellen(optionen = {}) {
       optionen.speichern({
         version: CACHE_VERSION,
         eintraege: Object.fromEntries([...eintraege.entries()]
-          .map(([schluessel, eintrag]) => [schluessel, { form: eintrag.form, bis: eintrag.bis }]))
+          .map(([schluessel, eintrag]) => [schluessel, {
+            form: eintrag.form,
+            bis: eintrag.bis,
+            ohneTmdb: eintrag.ohneTmdb || undefined
+          }]))
       });
     } catch {
       // Ein nicht geschriebener Cache kostet beim naechsten Start Zeit, sonst
@@ -499,9 +518,20 @@ function erstellen(optionen = {}) {
     }
   }
 
-  function merken(schluessel, form, dauer) {
+  /**
+   * Einen Datensatz merken.
+   *
+   * <p>`ohneTmdb` heisst: dieses "nicht gefunden" ist kein Ergebnis, sondern
+   * eine fehlende Quelle. Ohne Schluessel kommt das Relay an Filme und Serien
+   * gar nicht heran und liefert zu jedem UNMATCHED - fuenf Tage lang gemerkt.
+   * Wer den Schluessel danach eintraegt, bekaeme trotzdem eine Woche lang
+   * "liess sich keinem Werk zuordnen" und haette keine Ahnung, warum. Die Marke
+   * sorgt dafuer, dass genau diese Eintraege noch einmal gefragt werden, sobald
+   * es einen Schluessel gibt (siehe ausCache).
+   */
+  function merken(schluessel, form, dauer, ohneTmdb = false) {
     eintraege.delete(schluessel);
-    eintraege.set(schluessel, { form, bis: jetztFn() + dauer });
+    eintraege.set(schluessel, { form, bis: jetztFn() + dauer, ohneTmdb });
     while (eintraege.size > CACHE_MAX) {
       const aeltester = eintraege.keys().next().value;
       eintraege.delete(aeltester);
@@ -518,6 +548,15 @@ function erstellen(optionen = {}) {
     const eintrag = eintraege.get(wunsch.schluessel);
     if (!eintrag) return null;
     if (jetztFn() > eintrag.bis) return null;
+    // Ein "nicht gefunden" von damals, und inzwischen gibt es einen Schluessel:
+    // dann ist der Eintrag hinfaellig und der Titel wird neu gefragt. Nur bei
+    // erwiesenem Schluessel - solange nichts vom Relay gekommen ist, bleibt
+    // alles, wie es ist.
+    if (eintrag.ohneTmdb && tmdbDa()) {
+      eintraege.delete(wunsch.schluessel);
+      geaendert = true;
+      return null;
+    }
     // Wer gelesen wird, rutscht ans Ende: beim Aufraeumen faellt zuerst, was
     // niemand mehr braucht.
     eintraege.delete(wunsch.schluessel);
@@ -594,6 +633,11 @@ function erstellen(optionen = {}) {
     return Boolean(letzteQuellen) && letzteQuellen.tmdb !== "configured";
   }
 
+  /** Und die Gegenrichtung: erwiesenermassen da. */
+  function tmdbDa() {
+    return Boolean(letzteQuellen) && letzteQuellen.tmdb === "configured";
+  }
+
   async function status() {
     if (!bereit()) return { metadata: false, grund: "keine-adresse" };
     const antwort = await anfragen("/metadata/status", { method: "GET" }, STATUS_TIMEOUT_MS);
@@ -638,7 +682,9 @@ function erstellen(optionen = {}) {
   function ergebnisMerken(wunsch, form) {
     const stufe = form.konfidenz;
     zaehler[stufe] = (zaehler[stufe] || 0) + 1;
-    merken(wunsch.schluessel, form, stufe === "UNMATCHED" ? NICHT_GEFUNDEN_MS : GUT_MS);
+    merken(wunsch.schluessel, form, stufe === "UNMATCHED" ? NICHT_GEFUNDEN_MS : GUT_MS,
+      // Nur bei Werken: Anime kommt von AniList und ist von TMDB unabhaengig.
+      stufe === "UNMATCHED" && wunsch.art !== "anime" && tmdbFehlt());
   }
 
   // Ein Durchgang ueber eine Liste von Wuenschen: Stapel bilden, holen,
@@ -808,6 +854,7 @@ function erstellen(optionen = {}) {
     laufStatusFehlt,
     trailerFehlt,
     tmdbFehlt,
+    tmdbDa,
     status,
     statistik,
     wunschBauen,

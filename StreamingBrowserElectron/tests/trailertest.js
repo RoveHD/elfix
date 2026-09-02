@@ -260,36 +260,95 @@ pruefe("Die Knoepfe schliessen den Kasten nicht aus Versehen",
   "der Kasten steht in einem Formular");
 
 // Und woher die App das weiss: das Relay sagt es in jeder Antwort.
-const stand = { quellen: null };
-const client = geraet.erstellen({
-  basis: "http://relay.beispiel",
-  holen: async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({
-      treffer: [{ id: "a", art: "film", konfidenz: "UNMATCHED", trailer: null }],
-      quellen: stand.quellen
-    })
-  }),
-  laden: () => ({}),
-  speichern: () => {}
-});
+
+// Ein Klient, dem man die Antwort des Relays vorgeben kann.
+function klientBauen(vorgabe, ablage = {}) {
+  return geraet.erstellen({
+    basis: "http://relay.beispiel",
+    holen: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => vorgabe.antwort
+    }),
+    laden: () => ablage.stand || {},
+    speichern: (daten) => { ablage.stand = daten; }
+  });
+}
+
+const vorgabe = {
+  antwort: {
+    treffer: [{ id: "a", art: "film", konfidenz: "UNMATCHED", trailer: null }],
+    quellen: null
+  }
+};
+const client = klientBauen(vorgabe);
 
 pruefe("Ohne Auskunft wird nichts behauptet", !client.tmdbFehlt(),
   "eine Meldung ueber einen fehlenden Schluessel, ohne ihn geprueft zu haben, waere derselbe Fehler");
 
 (async () => {
-  stand.quellen = { metadata: true, tmdb: "unavailable", anilist: "available" };
-  await client.nachschlagen([geraet.wunschBauen({ titel: "Spider-Man", art: "film" })]);
+  const werk = (titel, art = "film") => geraet.wunschBauen({ titel, art });
+
+  const ohne = { metadata: true, tmdb: "unavailable", anilist: "available" };
+  const mit = { metadata: true, tmdb: "configured", anilist: "available" };
+
+  vorgabe.antwort.quellen = ohne;
+  await client.nachschlagen([werk("Spider-Man")]);
   pruefe("Sagt das Relay, der Schluessel fehle, merkt die App es sich", client.tmdbFehlt());
 
-  stand.quellen = { metadata: true, tmdb: "configured", anilist: "available" };
-  await client.nachschlagen([geraet.wunschBauen({ titel: "Spider-Man 2", art: "film" })]);
-  pruefe("Und wenn er nachgetragen wird, verschwindet die Meldung wieder", !client.tmdbFehlt(),
+  vorgabe.antwort.quellen = mit;
+  await client.nachschlagen([werk("Spider-Man 2")]);
+  pruefe("Und wenn er nachgetragen wird, verschwindet die Meldung wieder",
+    !client.tmdbFehlt() && client.tmdbDa(),
     "sonst bliebe die Zeile stehen, bis jemand die App neu startet");
+
+  // --- Was der Schluessel an alten Eintraegen aendert -------------------------
+  //
+  // Ohne Schluessel ist jedes Werk "nicht gefunden", und das wird fuenf Tage
+  // gemerkt. Wer den Schluessel danach eintraegt, saesse eine knappe Woche auf
+  // lauter Absagen, die niemand mehr erklaeren kann.
+
+  const ablage = {};
+  const zweiter = klientBauen(vorgabe, ablage);
+  vorgabe.antwort.quellen = ohne;
+  vorgabe.antwort.treffer = [{ id: werk("Dune").schluessel, art: "film", konfidenz: "UNMATCHED" }];
+  await zweiter.nachschlagen([werk("Dune")]);
+
+  pruefe("Solange der Schluessel fehlt, bleibt das Nicht-Gefunden stehen",
+    Boolean(zweiter.ausCache(werk("Dune"))),
+    "sonst fragte jeder Durchlauf dieselben zweihundert Titel neu");
+
+  vorgabe.antwort.quellen = mit;
+  vorgabe.antwort.treffer = [{ id: werk("Irgendwas").schluessel, art: "film", konfidenz: "UNMATCHED" }];
+  await zweiter.nachschlagen([werk("Irgendwas")]);
+  pruefe("Ist der Schluessel da, gilt die alte Absage nicht mehr",
+    zweiter.ausCache(werk("Dune")) === null,
+    "genau das ist der Fall, in dem die App sonst tagelang bei ihrer falschen Auskunft bleibt");
+
+  const anime = { metadata: true, tmdb: "unavailable", anilist: "available" };
+  const dritter = klientBauen(vorgabe, {});
+  vorgabe.antwort.quellen = anime;
+  vorgabe.antwort.treffer = [{ id: werk("Kein Anime", "anime").schluessel, art: "anime", konfidenz: "UNMATCHED" }];
+  await dritter.nachschlagen([werk("Kein Anime", "anime")]);
+  vorgabe.antwort.quellen = mit;
+  vorgabe.antwort.treffer = [{ id: werk("Egal").schluessel, art: "film", konfidenz: "UNMATCHED" }];
+  await dritter.nachschlagen([werk("Egal")]);
+  pruefe("Anime bleibt davon unberuehrt",
+    Boolean(dritter.ausCache(werk("Kein Anime", "anime"))),
+    "das kam nie von TMDB, also aendert ein Schluessel daran nichts");
+
+  // Und der Fall, der den Anlass gab: Eintraege von vor dieser Marke.
+  const alt = { stand: JSON.parse(JSON.stringify(ablage.stand)) };
+  for (const eintrag of Object.values(alt.stand.eintraege)) delete eintrag.ohneTmdb;
+  const vierter = klientBauen(vorgabe, alt);
+  vorgabe.antwort.quellen = mit;
+  vorgabe.antwort.treffer = [{ id: werk("Noch was").schluessel, art: "film", konfidenz: "UNMATCHED" }];
+  await vierter.nachschlagen([werk("Noch was")]);
+  pruefe("Auch ein Eintrag von vor der Marke wird noch einmal gefragt",
+    vierter.ausCache(werk("Dune")) === null,
+    "sonst haette gerade der, der den Fehler erlebt hat, nichts davon");
 
   const fehlerAnzahl = pruefungen.filter((ok) => !ok).length;
   console.log(`\n${pruefungen.length - fehlerAnzahl}/${pruefungen.length} bestanden`);
   process.exit(fehlerAnzahl ? 1 : 0);
 })();
-
