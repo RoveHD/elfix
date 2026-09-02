@@ -3,6 +3,24 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.90.2 — 2. September 2026
+
+**Der Trailer läuft jetzt auch wirklich.** Gefunden wurde er seit 1.90.1, im
+Rahmen stand aber „Fehler bei der Konfiguration des Videoplayers — Fehler 153".
+Das lag weder am Titel noch am Relay: die Oberfläche von ELFIX kommt von der
+Platte, und ein Dokument von dort hat keinen Ursprung, den YouTube gelten lässt.
+Der eingebettete Player prüft, auf welcher Seite er steht, findet nichts und
+verweigert.
+
+Jetzt wird es ihm gesagt — für genau die eine Anfrage, mit der der Rahmen
+aufgeht, und nur auf der Sitzung des Fensters. Die Anbieteransichten sind davon
+unberührt.
+
+**Und ein Ausweg, falls ein Player trotzdem nein sagt.** Gesperrte Einbettung,
+Altersfreigabe, eine Regel des Rechteinhabers — Gründe, die keine App behebt.
+Unter dem Rahmen steht deshalb „Auf YouTube ansehen"; der Knopf in YouTubes
+eigener Fehlerseite kann nichts öffnen, weil der Rahmen abgeschottet ist.
+
 ## 1.90.1 — 2. September 2026
 
 **Der fehlende TMDB-Schlüssel nennt sich jetzt selbst — und blockiert nicht
