@@ -3,6 +3,50 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.1 — 3. September 2026
+
+**Die Werbung im Rahmen des Hosters — das falsche Captcha und der
+Bonuskasten.** Zwei Meldungen vom Fernseher, dieselbe Herkunft: neben dem
+laufenden Film ein Kasten mit „Herzlichen Glückwunsch!", einem Zähler auf 00:22
+und „Fordern Sie Ihren Bonus an!" — und über dem Film eine ganze Fläche mit
+„BESTÄTIGEN SIE, DASS SIE KEIN ROBOTER SIND", einem nachgemalten reCAPTCHA und
+einem „Weiter". Wer darauf klickt, ist in der Werbekette.
+
+Beide saßen im Rahmen des Hosters, und dorthin kam bisher nichts. Der
+Werbeblocker kannte diese Stücke nur an vier Adressen — die sind umgezogen. Und
+die kosmetische Filterung geht bewusst nur auf die Seiten des Anbieters: sie
+bringt ein Stilblatt mit, und ein Stilblatt, das Werbeplätze ausblendet, ist
+genau das, woran ein Hoster einen Werbeblocker misst. Er legt einen solchen
+Platz als Köder aus und sieht nach, ob er noch da ist; am Ende steht dann „Ad
+blockers are not allowed" statt eines Videos.
+
+Deshalb jetzt ein zweites, viel engeres Verfahren, das in jeden fremden Rahmen
+geht: kein Stilblatt, keine zusätzlich gesperrte Anfrage — der Hoster sieht
+alles, was er zählt —, und der Player bleibt unantastbar. Es kennt drei Formen.
+
+**Das falsche Captcha** erkennt es daran, dass die Seite den Satz „kein
+Roboter" selbst anzeigt. Ein echtes reCAPTCHA malt ihn nämlich nie in die
+Seite, sondern in ein eigenes Fenster von Google — dasselbe gilt für hCaptcha
+und Cloudflare. Was ein Dokument selbst behauptet und wozu es kein solches
+Fenster hat, ist keine Prüfung, sondern ein Bild davon. Echte Prüfungen bleiben
+unberührt, auch die auf den Anbieterseiten.
+
+**Den Kasten über allem** erkennt es an seiner eigenen Ansage: „Fordern Sie
+Ihren Bonus an!", „Sie haben gewonnen", „Ihr Gerät ist infiziert". Das ist das
+Einzige, was so ein Stück nicht wechseln kann, ohne aufzuhören zu wirken —
+Adressen wechselt es täglich. Ein Text allein reicht nie: er muss dazu
+freigestellt und vor allem anderen liegen. Auf den Anbieterseiten zählt er
+weiterhin nur als zwei von vier Punkten wie jeder andere Werbetext.
+
+**Und ein fremdes Fenster über dem Video** — aber nur dort, wo das Video
+wirklich auf der Seite selbst liegt. Eine Zwischenseite der Hosterkette, die
+den Player erst einbettet, hat keines; ihr Rahmen ist der Player und bleibt.
+
+Geprüft wurde beides ohne Fernseher, an einem nachgebauten Dokument: die
+Werbung muss verschwinden, und der Player, seine Bedienleiste, die
+Qualitätswahl, ein echtes reCAPTCHA, ein echtes Turnstile und der eingebettete
+Rahmen einer Zwischenseite müssen stehenbleiben.
+
 ## 1.91.0 — 2. September 2026
 
 **Der Host führt die Runde — und bleibt es.** Drei gemeldete Fehler, eine
