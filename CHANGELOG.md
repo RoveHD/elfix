@@ -3,6 +3,42 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.6 — 3. September 2026
+
+**Wer nicht Host ist, bewegt niemanden mehr.** Spulte ein Zuschauer von Hand
+an den Anfang, sprangen die anderen kurz mit und wurden gleich darauf wieder
+zum Host zurückgezogen. Und die Teilnehmerleiste zeigte alle paar Sekunden bei
+allen 0:00, dann wieder die richtige Zeit — auf dem Handy wie am Rechner.
+
+Beides war dieselbe Zeile. Der Sprung selbst war längst abgesichert, das
+**Play danach** nicht: es trug die Stelle dessen, der es ausgelöst hat, und
+ging so an alle. Dieselbe Zeile schrieb die Stelle eines einzelnen Geräts
+außerdem in die Anzeige **aller** Teilnehmer — ein Player, der beim Puffern
+kurz „bin bei 0" meldet, setzte damit die ganze Leiste auf null, bis jedes
+Gerät eine Sekunde später seinen eigenen Stand nachreichte.
+
+Die Regel jetzt: **den Zustand — läuft, hält an — darf jeder ändern, die
+Stelle kommt immer vom Host.** Eine Pause von einem beliebigen Gerät hält die
+Runde also weiterhin an, nur eben an der Stelle des Hosts. Beim Folgenwechsel
+gilt das nicht: eine neue Folge fängt bei null an.
+
+Dazu die Unterscheidung, die vorher fehlte. 0:00 ist eine völlig gültige
+Stelle — ein Player, der gerade lädt, meldet aber dieselbe Zahl. Die
+Standmeldung trägt deshalb jetzt die Laufzeit mit: fehlen Stelle **und**
+Laufzeit, während schon etwas Gültiges dastand, bleibt der bisherige Wert
+stehen.
+
+**Die Leiste wird erst ab drei Sekunden orange** statt ab zwei. Zwischen zwei
+Playern liegt beim Puffern regelmäßig eine Sekunde, und eine Warnung, die fast
+immer steht, sagt nichts mehr. Gemessen und ausgeglichen wird unverändert.
+
+**Und auf dem Handy steht kein „Nächste Folge:" mehr** über den Karten. Die
+vierzehn Zeichen schoben Staffel, Folge und Raum in den Umbruch; bei einem
+langen Titel blieb vom Raum nichts übrig. Jetzt steht dort
+„Staffel 23 Folge 16 · ⇄ Bangus".
+
+**Der Sync-Teil wirkt erst mit einem aktualisierten Relay.**
+
 ## 1.91.5 — 3. September 2026
 
 **Wer neu in eine Watchparty kommt, wirft sie nicht mehr zurück.** Gemeldet
