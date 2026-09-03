@@ -621,17 +621,25 @@ final class TvViews {
             karte.addView(zeile);
         }
 
-        if (standText != null && !standText.isEmpty()) {
-            TextView stelle = new TextView(context);
-            stelle.setTag(Mitschaustand.MARKE_STAND);
-            stelle.setText(standText);
-            stelle.setTextColor(Theme.TEXT_DISABLED);
-            stelle.setTextSize(13);
-            stelle.setMaxLines(1);
-            stelle.setEllipsize(TextUtils.TruncateAt.END);
-            stelle.setPadding(0, dp(context, 3), 0, 0);
-            karte.addView(stelle);
-        }
+        // Angelegt wird sie immer, auch ohne Text - wie in MobileViews und aus
+        // demselben Grund: der Sekundentakt der Runde schreibt hier die Stelle
+        // hinein, und ein Takt, der Ansichten nachlegen muesste, waere ein
+        // Takt, der die Kachel umbaut. Ohne Text nimmt sie keine Hoehe ein.
+        //
+        // Genau daran fehlte auf den Karten aus einer Runde die Zeit: dort
+        // wartet der Eintrag auf die naechste Folge, `kachelStandtext` liefert
+        // deshalb nichts, und die Zeile entstand gar nicht erst. Der Takt
+        // schrieb danach in eine Ansicht, die es nicht gab.
+        TextView stelle = new TextView(context);
+        stelle.setTag(Mitschaustand.MARKE_STAND);
+        stelle.setText(standText == null ? "" : standText);
+        stelle.setTextColor(Theme.TEXT_DISABLED);
+        stelle.setTextSize(13);
+        stelle.setMaxLines(1);
+        stelle.setEllipsize(TextUtils.TruncateAt.END);
+        stelle.setPadding(0, dp(context, 3), 0, 0);
+        stelle.setVisibility(standText == null || standText.isEmpty() ? View.GONE : View.VISIBLE);
+        karte.addView(stelle);
 
         if (liveText != null) {
             TextView live = new TextView(context);

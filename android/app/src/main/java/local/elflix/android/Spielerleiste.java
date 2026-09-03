@@ -110,7 +110,7 @@ final class Spielerleiste {
      * <p>Dieselben fuenf Sekunden, nach denen der Rechner seine Karte
      * verblassen laesst.
      */
-    private static final long RUHE_MS = 5000;
+    static final long RUHE_MS = 5000;
     /**
      * Wie durchsichtig sie im mittleren Schritt wird.
      *
@@ -125,6 +125,20 @@ final class Spielerleiste {
      * vom Knopf nichts mehr zu sehen ist.
      */
     private static final long VERBLASSEN_MS = 5000;
+    /**
+     * Wie lange der Autoplay-Schalter nach der letzten Regung dasteht.
+     *
+     * <p>Deutlich kuerzer als {@link #RUHE_MS}, und aus einem anderen Grund als
+     * die Leiste: die Leiste traegt den einzigen Weg zur naechsten Folge und
+     * muss auffindbar bleiben, der Schalter ist eine Einstellung. Fuenf
+     * Sekunden Einstellung auf dem Video sind vier zu viel - gemeldet als "das
+     * Autoplay bleibt viel zu lang sichtbar".
+     *
+     * <p>Der Fokus und ein laufender Zaehler halten ihn trotzdem: das eine
+     * naehme der Fernbedienung den Platz, an dem sie steht, das andere waere
+     * eine Ansage, die sich wegduckt.
+     */
+    static final long AUTOPLAY_RUHE_MS = 1200;
 
     /**
      * Die drei Schritte, in denen die Leiste im Vollbild zuruecktritt.
@@ -225,6 +239,8 @@ final class Spielerleiste {
     private boolean imVollbild;
     /** In welchem der drei Schritte die Leiste gerade steht. Siehe {@link Stufe}. */
     private Stufe stufe = Stufe.VOLL;
+    /** Ob der Schalter seine eigene, kurze Ruhezeit noch vor sich hat. */
+    private boolean autoplayVoll = true;
     private boolean gemeldetAn = true;
     private boolean steuerungGemeldet;
 
@@ -328,6 +344,32 @@ final class Spielerleiste {
             }
         }
     };
+
+    /**
+     * Den Schalter nach seiner kurzen Zeit wegnehmen.
+     *
+     * <p>Er verschwindet fuer sich, ohne die Leiste mitzunehmen: die beiden
+     * haben denselben Ausloeser, aber nicht dieselbe Aufgabe.
+     */
+    private final Runnable autoplayZurueck = new Runnable() {
+        @Override
+        public void run() {
+            if (autoplayBleibt(knopfAutoplay.hasFocus(), zaehlt())) {
+                haupt.postDelayed(this, AUTOPLAY_RUHE_MS);
+                return;
+            }
+            if (!autoplayVoll) return;
+            autoplayVoll = false;
+            anwenden();
+        }
+    };
+
+    /** Den Schalter wieder holen und seine kurze Zeit neu anwerfen. */
+    private void autoplayZeigen() {
+        haupt.removeCallbacks(autoplayZurueck);
+        if (imVollbild) haupt.postDelayed(autoplayZurueck, AUTOPLAY_RUHE_MS);
+        autoplayVoll = true;
+    }
 
     Spielerleiste(Context context, Umgebung umgebung) {
         this.context = context;
@@ -614,7 +656,8 @@ final class Spielerleiste {
         // demselben Grund wie bei der Leiste: waehrend einer Ansage soll man
         // den Automatismus abschalten koennen, ohne erst das Bild antippen zu
         // muessen.
-        boolean autoplayDa = autoplaySichtbar(amSchauen, stufe == Stufe.VOLL, zaehlt());
+        boolean autoplayDa = autoplaySichtbar(amSchauen, autoplayVoll && stufe == Stufe.VOLL,
+            zaehlt());
         // Erst den Fokus retten, dann verschwinden. Andersherum faellt er ins
         // Nichts, und die Fernbedienung steht irgendwo.
         if (!autoplayDa && knopfAutoplay.hasFocus()) {
@@ -751,6 +794,7 @@ final class Spielerleiste {
         stufe = Stufe.VOLL;
         haupt.removeCallbacks(ruheEintreten);
         if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
+        autoplayZeigen();
         anwenden();
     }
 
@@ -788,8 +832,13 @@ final class Spielerleiste {
     private void zeigen() {
         haupt.removeCallbacks(ruheEintreten);
         if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
-        if (stufe == Stufe.VOLL) return;
+        boolean warVoll = stufe == Stufe.VOLL;
+        boolean schalterWar = autoplayVoll;
+        autoplayZeigen();
         stufe = Stufe.VOLL;
+        // Nichts hat sich geaendert: dann auch nicht neu zeichnen. anwenden()
+        // laeuft ohnehin oft genug.
+        if (warVoll && schalterWar) return;
         anwenden();
     }
 
@@ -854,6 +903,18 @@ final class Spielerleiste {
      * <p>Die eine Ausnahme ist der Zaehler: waehrend einer Ansage soll man den
      * Automatismus abschalten koennen, ohne erst das Bild antippen zu muessen.
      */
+    /**
+     * Ob der Schalter seine kurze Zeit ueberspringt - ohne Ansicht, damit es
+     * sich pruefen laesst.
+     *
+     * <p>Zwei Gruende halten ihn: der Fokus steht auf ihm, dann naehme sein
+     * Verschwinden der Fernbedienung den Platz, an dem sie steht. Oder ein
+     * Zaehler laeuft, dann ist er der Weg, ihn abzubrechen.
+     */
+    static boolean autoplayBleibt(boolean fokusDrauf, boolean zaehlt) {
+        return fokusDrauf || zaehlt;
+    }
+
     static boolean autoplaySichtbar(boolean amSchauen, boolean steuerungAn, boolean zaehlt) {
         if (!amSchauen) return false;
         return steuerungAn || zaehlt;
@@ -884,6 +945,7 @@ final class Spielerleiste {
         stufe = Stufe.VOLL;
         haupt.removeCallbacks(ruheEintreten);
         if (imVollbild) haupt.postDelayed(ruheEintreten, RUHE_MS);
+        autoplayZeigen();
         anwenden();
         if (rahmen != null) {
             boolean tv = umgebung.fernseher();
@@ -896,26 +958,24 @@ final class Spielerleiste {
             rahmen.addView(wurzel, params);
             wurzel.bringToFront();
 
-            // Der Schalter oben links - so weit weg von "Naechste Folge" wie
-            // der Bildschirm hergibt. Unten liegt die Bedienleiste des Hosters
-            // und rechts daneben der Knopf; oben links ist die einzige Ecke,
-            // in der er weder etwas verdeckt noch selbst verdeckt wird.
+            // Der Schalter unten links - gegenueber von "Naechste Folge",
+            // auf derselben Hoehe ueber der Bedienleiste des Hosters.
+            //
+            // Er stand hier einmal oben links, unter dem Live-Streifen, und
+            // das ging genau so lange gut, wie der Streifen zugeklappt war.
+            // Klappt jemand die Teilnehmer auf, waechst der Streifen nach
+            // unten - und der Schalter lag mitten darin. Gemeldet als "das
+            // Hostfenster kann man nicht lesen, wenn es aufgeklappt ist".
+            //
+            // Ein fester Abstand kann das nicht loesen: die Hoehe des
+            // Streifens haengt daran, wie viele mitschauen. Unten gibt es
+            // nichts, das waechst - dort steht nur die Leiste, und die haelt
+            // die andere Seite.
             FrameLayout.LayoutParams autoplayMass = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            autoplayMass.gravity = Gravity.TOP | Gravity.START;
+            autoplayMass.gravity = Gravity.BOTTOM | Gravity.START;
             autoplayMass.leftMargin = dp(tv ? TvViews.SCREEN_PADDING : 12);
-            // Unter dem Live-Streifen, nicht darauf.
-            //
-            // Er liegt im selben Rahmen und ebenfalls oben, ueber die ganze
-            // Breite (siehe Livestreifen.inVollbild) - zugeklappt rund vierzig
-            // dp hoch. Mit vierundzwanzig dp Abstand lag der Schalter mitten
-            // darin, sobald eine Runde lief. Gemeldet als "das Autoplay-Overlay
-            // ueberschneidet sich mit der Watchparty-Leiste oben".
-            //
-            // Der Platz wird immer freigehalten, auch ohne Runde: der Schalter
-            // ein Stueck tiefer faellt niemandem auf, ein Schalter unter einer
-            // Leiste schon.
-            autoplayMass.topMargin = dp(tv ? 96 : 68);
+            autoplayMass.bottomMargin = dp(tv ? 96 : 64);
             rahmen.addView(autoplayHalter, autoplayMass);
             autoplayHalter.bringToFront();
             return;

@@ -643,18 +643,22 @@ function ereignisAusSkript(skript) {
       Boolean(vorbereiten) && String(vorbereiten.url || "").includes("episode-5"),
       "ohne die Adresse spraenge er auf eine Stelle der falschen Folge");
 
-    // Sind alle so weit, gibt die Runde gemeinsam das Startsignal.
+    // Und dabei bleibt es: der Knopf haelt an, er startet nicht nach.
+    //
+    // Frueher gab die Runde hier gemeinsam das Startsignal. Bis es kam, hatte
+    // jedes Geraet anders gepuffert, und die Runde lief prompt wieder
+    // auseinander - nur diesmal mit einem Ruck. Angehalten stehen alle exakt
+    // gleich; weiter geht es mit dem naechsten Play.
     clearInterval(handyPuls);
     syncStand(handy, syncFolge(5), 300, true);
     handy.ereignisse.length = 0;
     handy.bruecke.bereitZumStart(SYNC_KEY, RAUM);
     tv.bruecke.bereitZumStart(SYNC_KEY, RAUM);
     pc.raeume.bereitZumStart(SYNC_KEY, RAUM);
-    await warteBis(() => handy.steuerung().some((m) => m.action === "syncstart"),
-      "Sync: das gemeinsame Startsignal", 12000);
-    pruefe("Sync. Sind alle so weit, gibt die Runde das Startsignal",
-      handy.steuerung().some((m) => m.action === "syncstart"),
-      handy.steuerung().map((m) => m.action).join(","));
+    await schlaf(1500);
+    pruefe("Sync. Der Knopf haelt an und startet nicht nach",
+      !handy.steuerung().some((m) => m.action === "syncstart"),
+      handy.steuerung().map((m) => m.action).join(",") || "keine weiteren Befehle");
 
     clearInterval(tvPuls);
     // Der eigene Titel bleibt im Raum stehen - genau das prueft W16 gleich

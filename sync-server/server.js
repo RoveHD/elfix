@@ -1548,9 +1548,13 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    // Gemeinsam gleichziehen: erst halten alle an und springen auf dieselbe
-    // Stelle, dann startet der Server sie zusammen. Ohne diesen Umweg laufen
-    // die Geraete sofort wieder auseinander, weil jedes anders puffert.
+    // Gleichziehen heisst: alle halten an, auf der Stelle des Hosts.
+    //
+    // Frueher startete der Server sie danach wieder gemeinsam. Das war der
+    // Anspruch, aber nicht das, was gebraucht wird: bis der Start kam, hatte
+    // jeder anders gepuffert, und die Runde lief prompt wieder auseinander -
+    // nur diesmal mit einem Ruck. Angehalten stehen alle exakt gleich, und wer
+    // weiterschauen will, drueckt Play. Das ist die Aufgabe des Knopfes.
     if (nachricht.type === "syncall") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
@@ -1565,7 +1569,12 @@ wss.on("connection", (socket) => {
       const mitglieder = [...wss.clients].filter((client) => (
         client.raum === socket.raum && client.readyState === client.OPEN && eintrag.members.has(client.geraetId)
       ));
-      eintrag.sync = { ziel, wartetAuf: new Set(mitglieder.map((c) => c.geraetId)), at: Date.now() };
+      // Kein offener Gleichzieh-Vorgang mehr: es wird nichts nachgestartet,
+      // also wartet auch niemand auf eine Bereitmeldung. Ein stehengebliebenes
+      // `sync` haette ausserdem die Driftmessung dauerhaft abgeschaltet.
+      eintrag.sync = null;
+      clearTimeout(eintrag.syncTimer);
+      eintrag.syncTimer = null;
 
       // Beim Vorbereiten halten alle an und stellen sich auf dieselbe Stelle.
       // Es wird also nichts hochgerechnet - `playing` ist falsch, und die
@@ -1587,10 +1596,21 @@ wss.on("connection", (socket) => {
       });
       for (const client of mitglieder) client.send(vorbereiten);
 
-      // Auch wenn jemand nicht meldet, geht es nach kurzer Zeit los.
-      clearTimeout(eintrag.syncTimer);
-      eintrag.syncTimer = setTimeout(() => syncStarten(socket.raum, eintrag), 4000);
-      eintrag.syncTimer.unref?.();
+      // Und der Stand der Runde ist jetzt "angehalten bei dieser Stelle".
+      // Ohne das haette der naechste Abgleich den Stehenden ihr Play
+      // nachgereicht - der Knopf haette dann angehalten und sofort wieder
+      // gestartet.
+      eintrag.live = { action: "pause", position: ziel, url, at: Date.now() };
+      eintrag.pauseAusgerichtet = true;
+      eintrag.letzteAktion = {
+        type: "pause",
+        userId: socket.geraetId,
+        name: socket.name,
+        timestamp: Date.now()
+      };
+      standFuerAlle(eintrag, ziel, true);
+      standSenden(socket.raum, eintrag);
+      zustandSenden(socket.raum);
       return;
     }
 
@@ -1616,14 +1636,21 @@ wss.on("connection", (socket) => {
       //
       // `duration` kam spaeter dazu. Eine Gegenstelle, die sie gar nicht
       // schickt, kann darueber nichts sagen; fuer sie bleibt alles wie bisher.
+      // Und: gar keine Angabe ist etwas anderes als "bei null".
+      //
+      // Eine Anwesenheitsmeldung ("ich bin hier") laesst die Stelle jetzt weg
+      // - wo dieses Geraet steht, weiss sein Player und meldet es selbst.
+      // `zahl(undefined)` waere 0, und damit stuende in der Leiste wieder eine
+      // Null, die niemand behauptet hat.
       const kenntLaufzeit = nachricht.duration !== undefined;
+      const ohneAngabe = nachricht.position === undefined || nachricht.position === null;
       const stelle = zahl(nachricht.position, 100000);
       const unfertig = kenntLaufzeit
         && stelle <= 0
         && zahl(nachricht.duration, 100000) <= 0
         && Number(vorher?.position) > 0;
       const wachAuf = standSetzen(eintrag, socket.geraetId, socket.name, {
-        position: unfertig ? null : stelle,
+        position: ohneAngabe || unfertig ? null : stelle,
         paused: pausiert,
         season: zahl(nachricht.season, 999),
         episode: folge,
@@ -1671,7 +1698,10 @@ wss.on("connection", (socket) => {
       // Steuerung. Erst haelt jeder an, damit nichts wegdriftet, dann kommt
       // die genaue Stelle hinterher. Einmal je Pause, nicht bei jedem
       // Herzschlag.
-      if (socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
+      // Ohne Stelle keine Ausrichtung: eine Anwesenheitsmeldung traegt keine,
+      // und `zahl(undefined)` waere 0 - der Host wuerde damit die ganze Runde
+      // auf den Anfang ausrichten.
+      if (!ohneAngabe && socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
         && eintrag.live?.action === "pause" && !eintrag.pauseAusgerichtet) {
         eintrag.pauseAusgerichtet = true;
         const genau = zahl(nachricht.position, 100000);
@@ -2037,6 +2067,89 @@ wss.on("connection", (socket) => {
     else anRaumSenden(socket.raum, { type: "peers", peers: teilnehmer(socket.raum) });
   });
 });
+
+/**
+ * Wie oft nachgesehen wird, ob noch jemand bei einer anderen Folge steht.
+ */
+const NACHZIEHEN_TAKT_MS = 5000;
+/**
+ * Und wie lange ein Geraet danach in Ruhe gelassen wird.
+ *
+ * <p>Eine Folgenseite braucht auf einem langsamen Geraet mehr als fuenf
+ * Sekunden, bis der Player steht und die neue Folge gemeldet ist. Ohne diese
+ * Sperre kaeme im Takt ein zweites, drittes, viertes "navigate" hinterher, und
+ * jedes davon laedt die Seite neu - das Geraet kaeme nie an.
+ */
+const NACHZIEHEN_SPERRE_MS = 25000;
+
+/**
+ * Niemand bleibt auf einer anderen Folge sitzen.
+ *
+ * <p>Ein `navigate` erreicht nur die, die gerade verbunden sind und zuhoeren.
+ * Wer beim Wechsel offline war, wer eine Seite lud, wer den Befehl aus einem
+ * anderen Grund nicht ausfuehren konnte - der stand danach allein bei der alten
+ * Folge, und nichts holte ihn je wieder. Gemeldet als "das Mitziehen
+ * funktioniert echt schlecht".
+ *
+ * <p>Deshalb wird der Zustand regelmaessig verglichen statt einmalig
+ * verschickt: der Befehl ist nur der schnelle Weg, dieser Takt ist der sichere.
+ * Er schickt genau dem Geraet ein `navigate`, das woanders steht, und sonst
+ * niemandem.
+ *
+ * <p>Wer die Runde auf eine neue Folge zieht, darf jeder sein - `control
+ * navigate` ist nicht an den Host gebunden. Dieser Takt bringt dann alle
+ * uebrigen hinterher, gleich von wem der Wechsel kam.
+ */
+function nachzueglerHolen() {
+  const jetzt = Date.now();
+  for (const socket of wss.clients) {
+    if (socket.readyState !== socket.OPEN || !socket.raum || !socket.geraetId) continue;
+    const raum = raeume.get(socket.raum);
+    if (!raum || !raum.titel) continue;
+    for (const eintrag of raum.titel.values()) {
+      if (!eintrag.members?.has(socket.geraetId)) continue;
+      // Ohne Folge und ohne Adresse gibt es kein Ziel, auf das man ziehen
+      // koennte. Ein Film hat keine Folgennummer - da ist auch nichts zu tun.
+      if (!eintrag.episode || !eintrag.url) continue;
+      // Waehrend eines gemeinsamen Gleichziehens nicht dazwischenfunken: das
+      // schickt seine eigenen Wechsel und wartet auf Bereitmeldungen.
+      if (eintrag.sync) continue;
+      const wert = eintrag.stand?.get(socket.geraetId);
+      // Wer noch gar nichts gemeldet hat, schaut nicht - er sitzt vielleicht
+      // auf der Startseite. Ungefragt eine Folge aufreissen waere zu viel.
+      if (!wert || !wert.episode) continue;
+      if (Number(wert.episode) === Number(eintrag.episode)
+        && Number(wert.season || 0) === Number(eintrag.season || 0)) continue;
+
+      if (!eintrag.nachgezogen) eintrag.nachgezogen = new Map();
+      const ziel = folgenKennung(eintrag.season, eintrag.episode);
+      const vorher = eintrag.nachgezogen.get(socket.geraetId);
+      if (vorher && vorher.ziel === ziel && jetzt - vorher.at < NACHZIEHEN_SPERRE_MS) continue;
+      eintrag.nachgezogen.set(socket.geraetId, { ziel, at: jetzt });
+
+      console.log(`Nachziehen: ${socket.name || socket.geraetId} steht bei `
+        + `s${wert.season || 0}e${wert.episode}, die Runde bei ${ziel}`);
+      socket.send(JSON.stringify({
+        type: "control",
+        key: eintrag.key,
+        action: "navigate",
+        position: 0,
+        url: eintrag.url,
+        from: "Runde",
+        host: false,
+        at: jetzt,
+        videoTime: 0,
+        timestamp: jetzt,
+        playing: false,
+        sequenceId: naechsteNummer(eintrag),
+        episodeId: ziel,
+        hostId: aktuelleHostId(socket.raum, eintrag)
+      }));
+    }
+  }
+}
+
+setInterval(nachzueglerHolen, NACHZIEHEN_TAKT_MS).unref?.();
 
 setInterval(() => {
   for (const socket of wss.clients) {

@@ -44,7 +44,20 @@ const holen = (pfad, kopf) => fetch(BASIS + pfad, { headers: kopf || {} });
     status.status === 200 && String(status.headers.get("content-type")).includes("text/html"),
     `${status.status} ${status.headers.get("content-type")}`);
   pruefe("Es ist die Statusseite", seite.includes("<title>ELFIX Relay</title>"));
-  pruefe("Sie ist dieselbe, die im Relay steht", seite === statusSeite.SEITE,
+  // Ohne das, was ein lokaler Filter unterwegs hineingeschrieben hat.
+  //
+  // Auf einem Rechner mit AdGuard und eingeschaltetem HTTP-Filter kommt die
+  // Seite nicht so an, wie das Relay sie abgeschickt hat: der Filter haengt ein
+  // eigenes <script src="//local.adguard.org?..."> in den Kopf. Gemessen am
+  // 4.9.2026 - 10515 statt 9967 Zeichen, erste Abweichung hinter </style>.
+  //
+  // Das ist keine zweite Fassung der Seite, sondern ein Zwischenstueck auf dem
+  // Weg, und genau darum geht es der Pruefung nicht. Sie fragt, ob das Relay
+  // die Seite ausliefert, die im Quelltext steht - nicht, ob der Rechner des
+  // Entwicklers unterwegs etwas dazutut.
+  const ohneFilter = seite.replace(
+    /<script[^>]*\/\/local\.adguard\.org[^>]*><\/script>\s*/g, "");
+  pruefe("Sie ist dieselbe, die im Relay steht", ohneFilter === statusSeite.SEITE,
     "sonst liegt eine zweite Fassung irgendwo herum");
   pruefe("Sie wird nicht zwischengespeichert",
     String(status.headers.get("cache-control")).includes("no-store"),

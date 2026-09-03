@@ -430,10 +430,23 @@ public final class Mitschauen {
         String key = schluessel();
         String raum = raum();
         if (key.isEmpty() || raum.isEmpty()) return;
-        JSONObject eintrag = eintragZu(key);
         JSONObject stand = standRumpf();
         try {
-            stand.put("position", eintrag == null ? 0 : rundenStelle(eintrag));
+            // Ohne Stelle. Eine Anwesenheitsmeldung sagt "ich bin hier" und
+            // nicht "ich stehe dort".
+            //
+            // Bis hierher trug sie die Stelle der Runde. Die ist bei einem
+            // Geraet, das nicht fuehrt, oft gar nicht bekannt - dann stand da
+            // eine 0, und weil eine Anwesenheitsmeldung keine Laufzeit hat,
+            // ging sie am Relay als echter Stand durch. In der
+            // Teilnehmerleiste sprang dadurch alle paar Sekunden bei
+            // irgendwem 0:00 auf, bis eine Sekunde spaeter der Horcher des
+            // Players seine wirkliche Stelle nachschob.
+            //
+            // Fehlt die Angabe, laesst das Relay den bisherigen Wert stehen
+            // (siehe standSetzen). Genau das ist hier richtig: wo dieses
+            // Geraet steht, weiss sein Player und sagt es im Sekundentakt
+            // selbst.
             stand.put("paused", true);
         } catch (Exception fehler) {
             Log.e(TAG, "Anwesenheit nicht gebaut", fehler);

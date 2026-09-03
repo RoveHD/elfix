@@ -40,6 +40,32 @@ public class SpielerleisteTest {
     }
 
     /**
+     * Der Schalter hat seine eigene, kurze Zeit.
+     *
+     * <p>Gemeldet als "das Autoplay bleibt viel zu lang sichtbar - das muss
+     * nach einer Sekunde wieder weggehen". Vorher hing er an der Ruhezeit der
+     * Leiste und stand damit fuenf Sekunden auf dem Video. Die Leiste behaelt
+     * ihre fuenf: sie traegt den einzigen Weg zur naechsten Folge, er ist eine
+     * Einstellung.
+     */
+    @Test
+    public void derSchalterHatSeineEigeneKurzeZeit() {
+        assertTrue("Der Schalter geht deutlich frueher als die Leiste",
+            Spielerleiste.AUTOPLAY_RUHE_MS < Spielerleiste.RUHE_MS);
+        assertTrue("Und schnell genug, um nicht zu stoeren",
+            Spielerleiste.AUTOPLAY_RUHE_MS <= 1500);
+
+        // Der Normalfall: nichts haelt ihn, er geht.
+        assertFalse(Spielerleiste.autoplayBleibt(false, false));
+        // Der Fokus steht auf ihm - dann naehme sein Verschwinden der
+        // Fernbedienung den Platz, an dem sie steht.
+        assertTrue(Spielerleiste.autoplayBleibt(true, false));
+        // Ein Zaehler laeuft - er ist der Weg, ihn abzubrechen.
+        assertTrue(Spielerleiste.autoplayBleibt(false, true));
+        assertTrue(Spielerleiste.autoplayBleibt(true, true));
+    }
+
+    /**
      * Die Leiste geht in drei Schritten - voll, leiser, weg.
      *
      * <p>Hier stand einmal das Gegenteil ("verschwindet nie"), und zwar mit

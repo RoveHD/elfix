@@ -1137,6 +1137,16 @@ public class MainActivity extends Activity {
                 // weiterschauen. Derselbe Weg wie beim Oeffnen aus
                 // Weiterschauen und aus der Watchparty-Seite; am Rechner
                 // uebernimmt das scheduleProviderAutoplay.
+                //
+                // Und derselbe Vorhang wie bei jedem anderen Folgenstart. Er
+                // fehlte hier als Einziges: wer von der Runde mitgezogen wurde,
+                // sah die nackte Anbieterseite durchblitzen, waehrend die
+                // anderen schon liefen. Gemeldet als "immer mit Ladebalken
+                // mitziehen".
+                Favorite eintragDazu = bestand == null
+                    ? null : bestand.mitId(bestand.aktiverEintragId());
+                startBegleiten(anbieter, url,
+                    startTitelFuer(eintragDazu == null ? "" : eintragDazu.title(), url), 0);
                 armAutoStart(url);
                 // Mit preserveFavoriteProgress: der Eintrag bleibt derselbe,
                 // es ist nur eine andere Folge davon.
@@ -4908,7 +4918,13 @@ public class MainActivity extends Activity {
             // Der eigene Fortschritt zieht ebenfalls nach - aber nur, wo ein
             // Balken ueberhaupt etwas bedeutet. In Watchlist und Mediathek
             // steht keiner.
-            if (liste.zeigtFortschritt()) {
+            //
+            // Und nur, wo die Kachel nicht schon einer Runde gehoert. Sonst
+            // schreiben zwei Takte in dieselbe Zeile: der eine die Stelle der
+            // Runde, der andere - weil der Eintrag auf die naechste Folge
+            // wartet - eine leere Zeile und einen Balken auf null. Genau
+            // dieses Wechselspiel war das kurze Zurueckspringen auf 0.
+            if (eigenerTaktFuerKachel(liste.zeigtFortschritt(), !schluessel.isEmpty())) {
                 fortschrittsKacheln.add(new FortschrittsKachel(karte, eintrag.id()));
             }
             // Ein Titelbild kommt oft erst nach - und soll dann in diese
@@ -4954,6 +4970,23 @@ public class MainActivity extends Activity {
      * nur der Balken selbst, und wie viel eine halbe Kachelbreite in Minuten
      * ist, sieht man ihm nicht an.
      */
+    /**
+     * Ob der eigene Fortschritt diese Kachel nachzieht.
+     *
+     * <p>Eine Kachel gehoert genau einem Takt. Der eigene Fortschritt zieht dort
+     * nach, wo ein Balken den eigenen Stand meint; gehoert die Kachel einer
+     * Runde, meint er den Stand der Runde, und dann zieht die Runde nach.
+     *
+     * <p>Beides zusammen war der gemeldete Fehler: der Rundentakt schrieb die
+     * Stelle der Runde in die Zeile, der Fortschrittstakt schrieb sie eine
+     * Zehntelsekunde spaeter wieder weg - der Eintrag wartet ja auf die
+     * naechste Folge und hat selbst keinen Stand. Sichtbar als Balken, der
+     * staendig kurz auf 0 zurueckfaellt.
+     */
+    static boolean eigenerTaktFuerKachel(boolean listeZeigtFortschritt, boolean inRunde) {
+        return listeZeigtFortschritt && !inRunde;
+    }
+
     private static String kachelStandtext(Favorite eintrag, Bibliothek liste) {
         if (!liste.zeigtFortschritt() || eintrag.wartetAufNaechsteFolge()) return "";
         return eintrag.standText();
@@ -10907,7 +10940,14 @@ public class MainActivity extends Activity {
 
             View stand = kachel.karte.findViewWithTag(Mitschaustand.MARKE_STAND);
             if (stand instanceof TextView) {
-                ((TextView) stand).setText(Mitschaustand.standText(stelle, kachel.dauer));
+                // Sichtbarkeit mit: die Zeile wird leer und verborgen angelegt,
+                // weil eine Kachel aus einer Runde beim Bauen noch keine
+                // Stelle hat. Wer nur den Text setzt, schreibt in eine Ansicht,
+                // die auf GONE steht - genau deshalb stand unter diesen Karten
+                // nie eine Zeit.
+                String text = Mitschaustand.standText(stelle, kachel.dauer);
+                ((TextView) stand).setText(text);
+                stand.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
             }
 
             View balken = kachel.karte.findViewWithTag(Mitschaustand.MARKE_BALKEN);

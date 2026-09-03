@@ -267,6 +267,61 @@ const anDenAnfang = (m) => m.type === "control"
       bPause ? `${Math.round(bPause.position)}s` : "-");
   }
 
+  // --- Die Anwesenheitsmeldung traegt keine Stelle ------------------------
+  //
+   // Der zweite gemeldete Fall: "alle paar Sekunden steht bei irgendwem 0:00".
+  // Die Anwesenheitsmeldung ("ich bin hier") trug bis hierher die Stelle der
+  // Runde - bei einem Geraet, das nicht fuehrt, ist die oft gar nicht bekannt,
+  // und dann stand da eine 0. Ohne Laufzeit ging sie als echter Stand durch.
+  {
+    B.leeren();
+    A.stelle = 640;
+    A.send({ type: "here", key: KEY, position: 640, paused: false, duration: 1400,
+      season: 1, episode: 1, url: URL1, playerSessionId: "stelle-a-e1" });
+    await schlaf(400);
+
+    // Genau so meldet sich ein Geraet an: ohne Stelle, angehalten.
+    A.send({ type: "here", key: KEY, paused: true,
+      season: 1, episode: 1, url: URL1, playerSessionId: "stelle-a-e1" });
+    await schlaf(600);
+
+    const nachAnwesend = B.standVon("ViewerA");
+    pruefe("H. Eine Anwesenheitsmeldung ohne Stelle setzt nicht auf 0",
+      nachAnwesend && Number(nachAnwesend.position) > 600,
+      nachAnwesend ? `${Math.round(nachAnwesend.position)}s` : "kein Stand");
+  }
+
+  // --- Der Knopf haelt alle an - und startet sie nicht wieder -------------
+  {
+    // Erst laeuft wieder alles.
+    H.pausiert = false;
+    H.stelle = 1000;
+    H.send({ type: "control", key: KEY, action: "play", position: 1000, url: URL1 });
+    await schlaf(600);
+
+    B.leeren(); H.leeren();
+    B.send({ type: "syncall", key: KEY, position: B.stelle });
+
+    const halt = await B.erwarte((m) => m.type === "syncprepare", 1800);
+    pruefe("I. Der Knopf haelt alle an",
+      halt && halt.playing === false,
+      halt ? `playing=${halt.playing} bei ${Math.round(halt.position)}s` : "kein syncprepare");
+    pruefe("I2. Auf der Stelle des Hosts",
+      halt && Number(halt.position) > 900,
+      halt ? `${Math.round(halt.position)}s` : "-");
+    pruefe("I3. Und der Host bekommt es auch",
+      H.alle((m) => m.type === "syncprepare").length > 0,
+      `${H.alle((m) => m.type === "syncprepare").length} Meldungen`);
+
+    // Und es bleibt dabei: kein Start hinterher.
+    B.leeren(); H.leeren();
+    await schlaf(5000);
+    const start = B.alle((m) => m.type === "syncstart"
+      || (m.type === "control" && m.action === "play"));
+    pruefe("I4. Danach wird nichts wieder gestartet",
+      start.length === 0,
+      start.length ? start.map((m) => m.type + "/" + m.action).join(",") : "nichts");
+  }
   const fehler = pruefungen.filter((ok) => !ok).length;
   console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
   for (const t of pulse) clearInterval(t);

@@ -76,6 +76,26 @@ public class KachelZeileTest {
         assertFalse("kein Vorspann", zeile.contains("Nächste Folge"));
     }
 
+    /**
+     * Eine Kachel gehoert genau einem Takt.
+     *
+     * <p>Gemeldet als "bei der APK resettet sich der Fortschrittsbalken auch
+     * immer kurz auf 0". Ursache waren zwei Takte auf derselben Ansicht: der
+     * Rundentakt schrieb die Stelle der Runde hinein, der Fortschrittstakt
+     * gleich darauf wieder eine Null - der Eintrag wartet ja auf die naechste
+     * Folge und hat selbst keinen Stand.
+     */
+    @Test
+    public void eineKachelGehoertGenauEinemTakt() {
+        // Weiterschauen ohne Runde: der eigene Fortschritt zieht nach.
+        assertTrue(MainActivity.eigenerTaktFuerKachel(true, false));
+        // Dieselbe Reihe, aber die Kachel gehoert einer Runde: dann nicht.
+        assertFalse(MainActivity.eigenerTaktFuerKachel(true, true));
+        // Watchlist und Mediathek zeigen keinen Fortschritt - dort ohnehin nie.
+        assertFalse(MainActivity.eigenerTaktFuerKachel(false, false));
+        assertFalse(MainActivity.eigenerTaktFuerKachel(false, true));
+    }
+
     @Test
     public void einLangerTitelAendertDieZeileNicht() throws Exception {
         // Der gemeldete Fall: "I Parry Everything: What Do You Mean I'm the

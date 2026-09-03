@@ -157,7 +157,13 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   pruefe("Beide bekommen dieselbe Sekunde", Math.abs(pauseA.position - pauseB.position) < 0.001,
     `A=${pauseA.position.toFixed(2)} B=${pauseB.position.toFixed(2)}`);
 
-  // --- 3. Sync-Knopf: anhalten, gleiche Zeit, gemeinsam starten ----------
+  // --- 3. Sync-Knopf: anhalten, gleiche Zeit - und dabei bleibt es -------
+  //
+  // Der Knopf startete frueher alle gemeinsam wieder. Das war der Anspruch,
+  // aber nicht das, was gebraucht wird: bis der Start kam, hatte jeder anders
+  // gepuffert, und die Runde lief prompt wieder auseinander. Jetzt haelt er
+  // an - auf der Stelle des Hosts - und ueberlaesst das Weiterschauen dem
+  // naechsten Play.
   A.leeren(); B.leeren();
   B.send({ type: "syncall", key: KEY, position: 7 });
   const vorA = await hole(A, (m) => m.type === "syncprepare", "syncprepare A");
@@ -166,16 +172,25 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
     `A=${vorA.position.toFixed(2)} B=${vorB.position.toFixed(2)}`);
   pruefe("Sync nimmt die Host-Zeit, nicht die 7s des Ausloesers", vorA.position > 100,
     `position=${vorA.position.toFixed(2)}`);
+  pruefe("Und er haelt an, statt weiterzuspielen", vorA.playing === false,
+    `playing=${vorA.playing}`);
 
+  // Auch wer sich bereit meldet, wird nicht mehr gestartet.
+  A.leeren(); B.leeren();
   A.send({ type: "syncready", key: KEY });
   B.send({ type: "syncready", key: KEY });
-  const startA = await hole(A, (m) => m.type === "syncstart", "syncstart A");
-  const startB = await hole(B, (m) => m.type === "syncstart", "syncstart B");
-  pruefe("Beide bekommen den gemeinsamen Start", !startA.fehlt && !startB.fehlt, `position=${startA.position.toFixed(2)}`);
-  pruefe("Start liegt auf der vorbereiteten Stelle", Math.abs(startA.position - vorA.position) < 0.001,
-    `start=${startA.position.toFixed(2)} vorbereitet=${vorA.position.toFixed(2)}`);
-  pruefe("Startzeit ist fuer beide dieselbe", startA.position === startB.position, "");
+  const stillA = await A.still((m) => m.type === "syncstart", 1400);
+  const stillB = await B.still((m) => m.type === "syncstart", 200);
+  pruefe("Kein Startsignal hinterher - der Knopf haelt nur an",
+    stillA && stillB, `A still=${stillA} B still=${stillB}`);
 
+  // Weiter geht es mit einem gewoehnlichen Play des Hosts.
+  A.leeren(); B.leeren();
+  steuern(A, "play", vorA.position);
+  const weiterB = await hole(B, (m) => m.type === "control" && m.action === "play", "play an B");
+  pruefe("Ein Play des Hosts laesst die Runde weiterlaufen", !weiterB.fehlt,
+    `position=${Number(weiterB.position).toFixed(2)}`);
+  await schlaf(400);
   // --- 4. Folgenwechsel: Abgleich muss danach noch antworten -------------
   A.leeren(); B.leeren();
   A.send({ type: "control", key: KEY, action: "navigate", position: 0, url: URL2 });

@@ -611,13 +611,13 @@ final class Livestreifen {
         fussnote.setText("„Live verlassen“ beendet nur die Teilnahme an dieser Folge. "
             + "Der Titel bleibt im Raum, dein Fortschritt bleibt stehen.");
 
-        knopfAnhaengen("Mit Host abgleichen", true, () -> {
+        knopfAnhaengen("Alle anhalten", true, () -> {
             Livestand.Marke ich = mich();
             // Die eigene Stelle mitschicken, damit das Relay weiss, wo dieses
             // Geraet steht. Sie entscheidet nichts - der Host gibt das Ziel
-            // vor -, aber ohne sie faengt der gemeinsame Start bei null an.
+            // vor -, aber ohne sie faengt das Anhalten bei null an.
             mitschauen.gleichziehen(ich == null ? 0 : ich.sekunde);
-            umgebung.hinweis("Alle werden abgeglichen …");
+            umgebung.hinweis("Alle angehalten — mit Play geht es weiter");
             haupt.removeCallbacks(zuklappen);
             haupt.postDelayed(zuklappen, 2000);
         });

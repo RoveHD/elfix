@@ -482,6 +482,76 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
     }
   }
 
+  // --- 15. Der Nachlauf eines langsamen Geraets -----------------------------
+  //
+  // Gemeldet vom Fire TV: "meistens ne Sekunde hinten, weils noch laedt,
+  // waehrend die anderen schon schauen koennen." play() nimmt den Befehl an,
+  // und das Bild steht noch. Die Notbremse faengt das nicht - sie greift erst
+  // ab fuenf Sekunden, mit gutem Grund.
+  {
+    // Ein Video, das nach dem Start wirklich laeuft. Das ist der Unterschied
+    // zum Nachbau oben: dort steht die Zeit still, hier vergeht sie.
+    const laufendesVideo = (verzoegerung) => {
+      const m = {
+        duration: 1400, paused: true, readyState: 4, seeking: false,
+        playbackRate: 1, tempoGesetzt: [], spruenge: [], gestartet: 0, gestoppt: 0,
+        _zeit: 0, _losUm: 0
+      };
+      Object.defineProperty(m, "currentTime", {
+        configurable: true,
+        get: () => {
+          if (!m._losUm || m.paused || Date.now() < m._losUm) return m._zeit;
+          return m._zeit + (Date.now() - m._losUm) / 1000;
+        },
+        set: (wert) => {
+          m.spruenge.push(Number(wert));
+          m._zeit = Number(wert);
+          // Ein Sprung setzt die Uhr neu an: von hier laeuft es weiter.
+          if (m._losUm) m._losUm = Date.now();
+        }
+      });
+      m.play = () => {
+        m.gestartet += 1;
+        m.paused = false;
+        // Erst nach der Verzoegerung bewegt sich wirklich etwas - genau das,
+        // was ein langsames Geraet tut.
+        m._losUm = Date.now() + verzoegerung;
+        return Promise.resolve();
+      };
+      m.pause = () => { m.gestoppt += 1; m.paused = true; };
+      return m;
+    };
+
+    // Das Video braucht 900 ms, bis es wirklich losgeht - der Host laeuft in
+    // dieser Zeit weiter.
+    const m = laufendesVideo(900);
+    const start = Date.now();
+    await ausfuehren(
+      applyScript("play", ereignis({ videoTime: 100, timestamp: start, playing: true })), m);
+    const vorKorrektur = m.spruenge.length;
+    // Der Nachlauf laeuft *nach* der Antwort - genau darum geht es.
+    await new Promise((f) => setTimeout(f, 1400));
+    pruefe("15. Ein langsames Geraet holt nach dem Start selbst auf",
+      m.spruenge.length > vorKorrektur,
+      `${vorKorrektur} Spruenge vorher, ${m.spruenge.length} nachher`);
+    const letzter = m.spruenge[m.spruenge.length - 1];
+    pruefe("15b. Und zwar nach vorn, auf die Stelle der Runde",
+      letzter > 100 && nah(letzter, 100 + (Date.now() - start) / 1000, 0.5),
+      `${letzter?.toFixed(2)}`);
+
+    // Ein schnelles Geraet wird dagegen nicht angefasst: ein Sprung, den
+    // niemand braucht, ist ein Puffervorgang, den niemand braucht.
+    const flink = laufendesVideo(0);
+    const start2 = Date.now();
+    await ausfuehren(
+      applyScript("play", ereignis({ videoTime: 100, timestamp: start2, playing: true })), flink);
+    const vorher2 = flink.spruenge.length;
+    await new Promise((f) => setTimeout(f, 1400));
+    pruefe("15c. Ein schnelles Geraet bleibt unangetastet",
+      flink.spruenge.length === vorher2,
+      `${vorher2} -> ${flink.spruenge.length}`);
+  }
+
   const fehler = pruefungen.filter((p) => !p).length;
   console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
   process.exit(fehler ? 1 : 0);

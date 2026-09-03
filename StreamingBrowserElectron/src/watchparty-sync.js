@@ -442,6 +442,64 @@ function applyScript(action, ereignis, optionen = {}) {
         } catch (fehler) {
           abgelehnt = String((fehler && fehler.message) || fehler).slice(0, 120);
         }
+
+        // Der Nachlauf: was zwischen play() und dem ersten wirklich
+        // fortschreitenden Bild vergeht.
+        //
+        // Der smarte Start rechnet die Laufzeit der Nachricht heraus und den
+        // Puffervorgang davor - aber nicht das, was danach passiert. Auf einem
+        // langsamen Geraet nimmt play() den Befehl an, und das Video steht noch
+        // ein paar Zehntel, bevor es losgeht. Gemeldet vom Fire TV: "meistens
+        // ne Sekunde hinten, weils noch laedt, waehrend die anderen schon
+        // schauen koennen."
+        //
+        // Die Notbremse weiter unten faengt das nicht: sie greift erst ab fuenf
+        // Sekunden, und zwar mit Absicht - im laufenden Betrieb ist jeder
+        // Sprung teurer als der Versatz. Hier ist es umgekehrt. Der Player
+        // puffert in diesem Augenblick ohnehin, ein Sprung nach vorn kostet
+        // also nichts extra, und die halbe Sekunde bleibt sonst fuer den Rest
+        // der Folge stehen.
+        //
+        // Er wird *nicht* abgewartet. Die Antwort dieses Skripts sagt, ob der
+        // Befehl angekommen ist, und daran haengt beim gemeinsamen Gleichziehen
+        // die Bereitmeldung der ganzen Runde - eine Sekunde Warten auf ein
+        // Video, das vielleicht gar nicht mehr anlaeuft, waere dort eine
+        // Sekunde fuer alle. Der Nachlauf laeuft deshalb hinterher, im selben
+        // Rahmen, und korrigiert, wenn es so weit ist.
+        //
+        // Nur nach vorn. Zurueckzuspringen hiesse, etwas noch einmal zu zeigen,
+        // das man schon gesehen hat - das faellt auf, ein bisschen Vorsprung
+        // nicht. Und nur einmal: danach uebernimmt wieder die Notbremse.
+        if (springbar && !abgelehnt) {
+          const bis = Date.now() + 1500;
+          let vorher = Number(media.currentTime);
+          const sehen = () => {
+            const stelle = Number(media.currentTime);
+            const laeuft = !media.paused && !media.seeking
+              && media.readyState >= 3 && stelle > vorher;
+            if (!laeuft) {
+              vorher = stelle;
+              if (Date.now() < bis) setTimeout(sehen, 60);
+              return;
+            }
+            const soll = zielJetzt();
+            const rueckstand = soll - stelle;
+            // Untere Grenze: darunter sieht es niemand, und ein Sprung waere
+            // teurer als der Versatz. Obere Grenze: was so weit auseinander
+            // liegt, ist kein Nachlauf mehr, sondern ein anderer Fehler - und
+            // den behebt ein Sprung nicht.
+            if (rueckstand > 0.6 && rueckstand < 15 && soll < media.duration - 1) {
+              media.currentTime = soll;
+              // Das Echo dieses Sprungs gehoert weiter uns. Ohne das laeuft
+              // die Frist des Merkzettels waehrenddessen ab, der Horcher haelt
+              // die Korrektur fuer eine eigene Tat und meldet sie der Runde.
+              merken.ziel = soll;
+              merken.bis = Date.now() + 1500;
+              window.__elfixWpErwartet = merken;
+            }
+          };
+          setTimeout(sehen, 60);
+        }
       }
 
       if (!warten) {
