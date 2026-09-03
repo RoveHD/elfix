@@ -3,6 +3,19 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.2 — 2. September 2026
+
+**Das Relay sagt jetzt auch, ob es Trailer kann.** Dass es läuft, zeigt es
+seit 1.90.1 selbst. Offen blieb die Frage dahinter: zu einem Film, zu dem TMDB
+einen deutschen Trailer führt, sagte ELFIX „kein Trailer hinterlegt" — das
+Relay kannte das Feld nur nicht, und die App konnte das nicht wissen.
+
+Jetzt steht „trailer" in den Merkmalen des Relays, und unter Einstellungen ›
+Watchparty gibt es die Zeile **„Kann das Relay Trailer?"** mit einem Knopf.
+Die Antwort nennt jeden Fall beim Namen: keine Adresse eingetragen, nicht
+erreichbar, läuft mit Trailern, läuft ohne (dann fehlt ein Relay-Update), oder
+läuft mit dem Feld, aber ohne TMDB-Schlüssel.
+
 ## 1.91.1 — 3. September 2026
 
 **Die Werbung im Rahmen des Hosters — das falsche Captcha und der
