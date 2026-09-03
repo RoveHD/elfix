@@ -71,6 +71,15 @@ final class Startvorhang {
     /** Der Balken rechnet in Tausendsteln - Prozente sind zu grob fuer weiche Schritte. */
     private static final int BALKEN_MAX = 1000;
 
+    /**
+     * Ab wann eine Stelle als vorgerueckt gilt.
+     *
+     * <p>Nicht null: der Player meldet seine Stelle gerundet, und zwei
+     * Messungen desselben stehenden Bildes duerfen sich um ein Zehntel
+     * unterscheiden, ohne dass daraus "es laeuft" wird.
+     */
+    private static final double VORLAUF_S = 0.5;
+
     /** Was der Vorhang von der Oberflaeche braucht. */
     interface Umgebung {
         /** "Erneut versuchen" - denselben Start noch einmal von vorn. */
@@ -199,6 +208,33 @@ final class Startvorhang {
         abbauen();
     }
 
+    /**
+     * Ob die Fehleransage steht.
+     *
+     * <p>Der Vorhang liegt dann immer noch - er zeigt nur statt des Balkens
+     * zwei Knoepfe. Fuer alles, was den Fehler nachtraeglich widerlegen kann,
+     * ist das der Zustand, auf den es ankommt.
+     */
+    boolean imFehler() {
+        return liegt && fehlerKasten != null && fehlerKasten.getVisibility() == View.VISIBLE;
+    }
+
+    /**
+     * Sagt die Messung, dass wirklich gespielt wird?
+     *
+     * <p>Zwei Messungen derselben Seite, und die zweite steht weiter. Eine
+     * einzelne beantwortet die Frage nicht: ein stehendes Bild meldet seine
+     * Stelle genauso oft, nur immer dieselbe. Ohne vorherige Messung ({@code
+     * vorher < 0}) gibt es keinen Vergleich und damit keine Auskunft.
+     *
+     * <p>Reine Rechnung, damit sie ohne Geraet zu pruefen ist - siehe
+     * {@code StartvorhangTest}.
+     */
+    static boolean messungSagtLaeuft(double vorher, double jetzt) {
+        if (!(vorher >= 0)) return false;
+        return jetzt > vorher + VORLAUF_S;
+    }
+
     /** Der Start ist gescheitert - die Ansage statt des Balkens. */
     void fehler(String grund) {
         if (!liegt) return;
@@ -233,7 +269,7 @@ final class Startvorhang {
      * koennen.
      */
     boolean tastenErlaubt() {
-        return liegt && fehlerKasten != null && fehlerKasten.getVisibility() == View.VISIBLE;
+        return imFehler();
     }
 
     /**

@@ -627,6 +627,16 @@ public class MainActivity extends Activity {
     /** Der Folgenlink der Seite, wie ihn der Messtakt gelesen hat - und wozu er gehoert. */
     private String seitenLink = "";
     private String seitenLinkZu = "";
+    /**
+     * Die zuletzt gemessene Stelle - und zu welcher Seite sie gehoert.
+     *
+     * <p>Nur fuer die eine Frage, ob wirklich gespielt wird. Zwei Messungen
+     * derselben Seite beantworten sie, eine einzelne nicht. Beim Seitenwechsel
+     * faellt der Vergleich weg: die Stelle der einen Folge sagt nichts ueber
+     * die der naechsten.
+     */
+    private String letzteMessAdresse = "";
+    private double letzteMessStelle = -1;
     /** Das zuletzt protokollierte Ziel - damit im Protokoll nur Aenderungen stehen. */
     private String letztesZiel = "";
     /**
@@ -11957,9 +11967,46 @@ public class MainActivity extends Activity {
             + " ended=" + beendet + " nah=" + nah + " ende=" + ende
             + " seitenLink=" + (seitenLink == null || seitenLink.isEmpty()
                 ? "-" : Folgen.kurz(seitenLink)));
+        // Laeuft das Video wirklich, darf kein Ladebildschirm etwas anderes
+        // behaupten.
+        vorhangGegenMessung(adresse, position);
         naechsteFolgeBestimmen();
         if (spielerleiste == null) return;
         spielerleiste.setzeFortschritt(nah, ende);
+    }
+
+    /**
+     * Die Fehleransage des Vorhangs gegen das, was wirklich laeuft.
+     *
+     * <p>Der Autostart kann aufgeben, waehrend der Player doch noch anlaeuft.
+     * Gemessen am 3.9.2026 auf dem Fernseher (S.to, Prison Break Staffel 1
+     * Folge 7): der oertliche Start ging in vier Versuchen hinaus, die Rahmen
+     * entstanden dabei erst nach und nach - "in 2 Rahmen", dann 4, dann 5 -,
+     * nach dem vierten war Schluss, und die Rueckmeldung des Players kam vier
+     * Sekunden danach. Da gehoerte sie zu keinem Auftrag mehr ("Bericht eines
+     * anderen Auftrags verworfen"). Auf dem Schirm stand "Der Player hat kein
+     * Video geladen", waehrend der Film lief.
+     *
+     * <p>Dagegen hilft keine laengere Frist - die verschoebe den Fehler nur -,
+     * sondern eine zweite Quelle. Die Messung sieht den Player unabhaengig von
+     * der Startkette: rueckt die Stelle zwischen zwei Messungen vor, laeuft
+     * das Video, und dann hat die Ansage kein Recht mehr, stehenzubleiben.
+     *
+     * <p>Nur aus der Fehleransage heraus. Waehrend der Balken laeuft, gehoert
+     * der Vorhang der Kette: er geht auf, wenn auch das Vollbild sitzt, und
+     * keinen Augenblick frueher - sonst saehe man genau den Wechsel, den er
+     * verdecken soll.
+     */
+    private void vorhangGegenMessung(String adresse, double position) {
+        String seite = adresse == null ? "" : adresse;
+        double vorher = seite.equals(letzteMessAdresse) ? letzteMessStelle : -1;
+        letzteMessAdresse = seite;
+        letzteMessStelle = position;
+        if (startvorhang == null || !startvorhang.imFehler()) return;
+        if (!Startvorhang.messungSagtLaeuft(vorher, position)) return;
+        Log.i(TAG, "Startvorhang: die Messung sagt, es laeuft ("
+            + Math.round(vorher) + "s -> " + Math.round(position) + "s) - Ansage faellt");
+        startPhaseMelden("laeuft");
     }
 
     /**
