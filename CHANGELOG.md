@@ -3,6 +3,38 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.5 — 3. September 2026
+
+**Wer neu in eine Watchparty kommt, wirft sie nicht mehr zurück.** Gemeldet
+waren zwei Dinge, und sie hatten dieselbe Ursache: die Fortschrittsleiste am
+Handy sprang zwischen der richtigen Stelle und 0 hin und her, und wenn ein
+Handy einer laufenden Runde beitrat, sprangen manchmal die anderen Geräte an
+den Anfang.
+
+Dahinter stand ein einziger Wert. Den Stand einer Runde führte das Relay in
+*einem* Feld, und jedes Mitglied durfte es überschreiben — auch ein Gerät,
+dessen Player gerade erst lädt und dabei „Position 0, Länge 0" meldet. Dieser
+Wert ist aber nicht nur Anzeige: Er ist auch die Stelle, bei der ein Gerät
+einsteigt. Ein beitretendes Handy zog damit die ganze Runde auf null, und die
+anderen übernahmen das ungeprüft — bis ihr eigener Player eine Sekunde später
+die richtige Stelle zurückschrieb. Daher das Springen.
+
+Jetzt bestimmt **der Host** den Stand der Runde. Zwei Ausnahmen, beide nur nach
+vorn: eine wirklich neuere Folge darf jedes Gerät melden — daran hängt, dass
+eine abgehakte Serie zurückkommt —, und in einer Runde, in der gerade niemand
+führt, gibt es nichts zu schützen. Die Stelle jedes einzelnen Geräts bleibt
+davon unberührt; Teilnehmerleiste und Drifterkennung brauchen sie.
+
+Zwei kleinere Wege in dieselbe Richtung sind mit zu: Ein Gerät, das der
+laufenden Folge nur nachzog, galt als Folgenwechsel, sobald seine Adresse
+anders geschrieben war — und setzte die Runde damit auf null. Und eine Pause
+von einem Gerät, das nicht Host ist, schrieb dessen eigene Stelle als Stand der
+Runde, wenn die des Hosts gerade unbekannt war.
+
+Entschieden wird das im Relay und nicht in der App: so gilt dieselbe Regel für
+Rechner, Handy und Fernseher, und kein Gerät kann sie umgehen. **Die Änderung
+wirkt erst, wenn auch das Relay aktualisiert ist.**
+
 ## 1.91.4 — 3. September 2026
 
 **Der Ladebildschirm behauptet nicht mehr, was gar nicht stimmt.** Gemeldet vom
