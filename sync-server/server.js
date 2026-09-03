@@ -949,8 +949,17 @@ function standSetzen(eintrag, geraetId, name, werte) {
 }
 
 // Ein Befehl gilt fuer alle Beigetretenen - also stehen danach auch alle dort.
-function standFuerAlle(eintrag, position, paused) {
+/**
+ * @param ausser wessen Eintrag der Befehl nicht meint - oder leer fuer alle.
+ *               Gebraucht beim Play eines Nicht-Hosts: den Befehl bekommt er
+ *               selbst nicht zurueck (er hat ja gedrueckt), also rueckt er
+ *               auch nicht auf die Stelle des Hosts. Sein Eintrag mit ihr zu
+ *               fuellen behauptete, er stuende dort - er steht, wo er steht,
+ *               und sagt es mit seinem naechsten Herzschlag selbst.
+ */
+function standFuerAlle(eintrag, position, paused, ausser) {
   for (const geraetId of eintrag.members.keys()) {
+    if (ausser && geraetId === ausser) continue;
     standSetzen(eintrag, geraetId, eintrag.members.get(geraetId), { position, paused });
   }
 }
@@ -1392,11 +1401,26 @@ wss.on("connection", (socket) => {
         }
       }
 
-      // Bei einer Pause zaehlt die Zeit des Hosts: danach stehen alle exakt
-      // dort, auch wer selbst gedrueckt hat. Pausiert der Host, ist seine
-      // gemeldete Stelle genauer als jede Hochrechnung.
+      // Die Stelle eines Befehls kommt vom Host - bei *jeder* Aktion.
+      //
+      // Bis hierher galt das nur fuer die Pause. Play und Sprung eines
+      // Nicht-Hosts trugen dagegen seine eigene Stelle, und die ging an alle
+      // hinaus. Gemessen am 3.9.2026: ein Zuschauer spulte von Hand auf 0, sein
+      // Player meldete daraufhin "play bei 0", und das Relay schickte
+      //
+      //   control action=play position=0 playing=true from=ViewerA
+      //
+      // an den Host *und* an den zweiten Zuschauer. Beide sprangen auf 0 und
+      // wurden vom naechsten Ausgleich wieder zum Host gezogen - der gemeldete
+      // Doppelsprung. Der Sync-Pfad "Zuschauer -> Zuschauer" darf es nicht
+      // geben; was ein Nicht-Host druecken darf, ist der *Zustand* (laeuft,
+      // haelt an), niemals die Stelle.
+      //
+      // Der Folgenwechsel ist ausgenommen: eine neue Folge faengt bei null an,
+      // und die Stelle des Hosts aus der alten Folge waere dort falsch.
       const hostStand = hostStandJetzt(socket.raum, eintrag);
-      const gemeinsam = aktion === "pause" && !istHost && hostStand != null ? hostStand : eigen;
+      const stelleVomHost = aktion !== "navigate" && !istHost && hostStand != null;
+      const gemeinsam = stelleVomHost ? hostStand : eigen;
 
       // Der zuletzt an alle geschickte Befehl ist der Stand der Runde - egal,
       // von wem er kam. Nur so passt das, woran sich ein Abgleich orientiert,
@@ -1492,8 +1516,23 @@ wss.on("connection", (socket) => {
       }
 
       // Fuer die Leiste: nach einem Befehl stehen alle Beigetretenen dort.
-      if (aktion === "pause") standFuerAlle(eintrag, gemeinsam, true);
-      else if (aktion === "play") standFuerAlle(eintrag, gemeinsam, false);
+      //
+      // "Dort" gilt aber nur, wenn die Stelle ueberhaupt fuer alle gilt - also
+      // vom Host stammt. Sonst wurde hier die Stelle eines einzelnen Geraets
+      // in den Anzeigeeintrag *aller* geschrieben, auch in den des Hosts. Ein
+      // Zuschauer, dessen Player beim Puffern kurz "pause/play bei 0" meldete,
+      // setzte damit die ganze Leiste auf 0:00, bis jedes Geraet eine Sekunde
+      // spaeter seinen eigenen Stand wieder meldete. Genau das periodische
+      // Springen zwischen richtiger Zeit und null.
+      //
+      // Ohne autoritative Stelle wandert nur noch der Laufzustand mit; die
+      // Stellen bleiben stehen (standSetzen laesst sie bei `null` unberuehrt).
+      const stelleFuerAlle = istHost || hostStand != null ? gemeinsam : null;
+      // Die Pause bekommt der Ausloeser zurueck und rueckt mit; sein Play
+      // nicht - er laeuft ja schon.
+      const ohneAusloeser = istHost || aktion === "pause" ? "" : socket.geraetId;
+      if (aktion === "pause") standFuerAlle(eintrag, stelleFuerAlle, true);
+      else if (aktion === "play") standFuerAlle(eintrag, stelleFuerAlle, false, ohneAusloeser);
       else if (aktion === "seek") standFuerAlle(eintrag, gemeinsam, null);
       // Ein Wechsel faengt bei null an - aber nur ein echter. Wer der
       // laufenden Folge bloss nachzieht, darf die Leiste aller anderen nicht
@@ -1564,8 +1603,27 @@ wss.on("connection", (socket) => {
       const pausiert = Boolean(nachricht.paused);
       const folge = zahl(nachricht.episode, 9999);
       const hostVorher = aktuelleHostId(socket.raum, eintrag);
+
+      // Steht dieser Player wirklich bei 0:00 - oder ist er nur noch nicht da?
+      //
+      // Beides meldet dieselbe Zahl, und 0:00 ist eine voellig gueltige
+      // Stelle; ein pauschales "0 ignorieren" waere deshalb falsch. Was die
+      // beiden Faelle trennt, ist die Laufzeit: ein geladener Player kennt
+      // sie, ein Rahmen, dessen Quelle noch laedt, meldet 0. Kommt also weder
+      // Stelle noch Laufzeit, und stand hier schon einmal etwas Gueltiges,
+      // bleibt der bisherige Wert stehen - der Balken springt sonst auf null
+      // und beim naechsten Takt zurueck.
+      //
+      // `duration` kam spaeter dazu. Eine Gegenstelle, die sie gar nicht
+      // schickt, kann darueber nichts sagen; fuer sie bleibt alles wie bisher.
+      const kenntLaufzeit = nachricht.duration !== undefined;
+      const stelle = zahl(nachricht.position, 100000);
+      const unfertig = kenntLaufzeit
+        && stelle <= 0
+        && zahl(nachricht.duration, 100000) <= 0
+        && Number(vorher?.position) > 0;
       const wachAuf = standSetzen(eintrag, socket.geraetId, socket.name, {
-        position: zahl(nachricht.position, 100000),
+        position: unfertig ? null : stelle,
         paused: pausiert,
         season: zahl(nachricht.season, 999),
         episode: folge,

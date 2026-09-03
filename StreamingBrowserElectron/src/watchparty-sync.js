@@ -585,8 +585,16 @@ function aktionLesen(zeile) {
 
 // Eine Standmeldung zerlegen: "__elfix:wp:stand:123.45:0".
 function standLesen(zeile) {
-  const treffer = String(zeile || "").match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])$/);
-  return treffer ? { position: Number(treffer[1]), paused: treffer[2] === "1" } : null;
+  // Die Laufzeit kam spaeter dazu und ist deshalb wahlfrei: eine Zeile ohne
+  // sie stammt von einer aelteren Fassung und bleibt lesbar. `duration` ist
+  // dann undefined - und genau daran erkennt der Empfaenger, dass diese
+  // Gegenstelle ueber ihre Gueltigkeit nichts sagen kann.
+  const treffer = String(zeile || "")
+    .match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])(?::(\d+(?:\.\d+)?))?$/);
+  if (!treffer) return null;
+  const stand = { position: Number(treffer[1]), paused: treffer[2] === "1" };
+  if (treffer[3] !== undefined) stand.duration = Number(treffer[3]);
+  return stand;
 }
 
 // Eine Meldung ueber die Bedienelemente zerlegen: "__elfix:wp:ui:1".
@@ -657,8 +665,20 @@ function beobachterScript() {
       const jetzt = Date.now();
       if (!sofort && jetzt - letzteMeldung < 1000) return;
       letzteMeldung = jetzt;
+      // Die Laufzeit gehoert dazu, und zwar als dritter Teil.
+      //
+      // Sie ist die Auskunft, an der ein Empfaenger "steht wirklich bei 0:00"
+      // von "Player ist noch nicht bereit" unterscheiden kann: ein frisch
+      // geladenes Video meldet currentTime 0 *und* duration 0, ein Zuschauer
+      // am Anfang der Folge meldet 0 mit echter Laufzeit. Ohne sie ist beides
+      // dieselbe Zahl.
+      //
+      // Angehaengt und nicht eingeschoben: eine aeltere Gegenstelle liest die
+      // Zeile weiter mit ihrem alten Muster und ignoriert den Rest.
+      const laufzeit = Number(media.duration);
       console.log("__elfix:wp:stand:"
-        + (Number(media.currentTime) || 0).toFixed(2) + ":" + (media.paused ? 1 : 0));
+        + (Number(media.currentTime) || 0).toFixed(2) + ":" + (media.paused ? 1 : 0)
+        + ":" + (Number.isFinite(laufzeit) && laufzeit > 0 ? laufzeit.toFixed(2) : "0"));
     };
 
     // Am Dokument in der Abfangphase, nicht an einzelnen Videos: Medien-

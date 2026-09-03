@@ -36,11 +36,17 @@ final class Livestand {
     /**
      * Ab wann ein Unterschied auffaellt.
      *
-     * <p>Dieselben zwei Sekunden wie am Rechner. Es ist keine Korrektur - die
+     * <p>Ausdruecklich nur die <em>Anzeige</em>. Es ist keine Korrektur - die
      * faellt erst ueber fuenf Sekunden und erst nach drei Messungen - sondern
      * nur die Marke, an der man sieht, dass jemand hinterherhaengt.
+     *
+     * <p>Drei Sekunden und nicht zwei: bei zwei wurde die Leiste staendig
+     * orange, obwohl nichts zu tun war. Zwischen zwei Playern liegt beim
+     * Puffern regelmaessig eine Sekunde, und eine Warnung, die fast immer
+     * steht, sagt nichts mehr. Die Messung und die Korrektur darunter bleiben
+     * unveraendert - sie brauchen die feineren Werte.
      */
-    static final double DRIFT_S = 2;
+    static final double DRIFT_S = 3;
 
     /** Ein Teilnehmer, wie ihn der Streifen zeigt. */
     static final class Marke {
@@ -72,7 +78,9 @@ final class Livestand {
             this.andereFolge = andereFolge;
             this.sekunde = sekunde;
             this.abstand = abstand;
-            this.hinterher = !andereFolge && !pausiert && abstand > DRIFT_S;
+            // Ab drei Sekunden, nicht erst darueber: 2,9 bleibt normal, 3,0
+            // faellt auf.
+            this.hinterher = !andereFolge && !pausiert && abstand >= DRIFT_S;
             this.zeit = andereFolge ? folgeKurz(staffel, folge) : Mitschaustand.uhrzeit(sekunde);
         }
 

@@ -273,9 +273,20 @@ function rechner(name, raum = RAUM) {
   pruefe("B1. Android sendet ueberhaupt einen Steuerbefehl", Boolean(gesendet),
     gesendet ? `${gesendet.aktion}@${gesendet.position}` : "nichts gesendet");
   await warteBis(() => pc.steuerung.some((m) => m.action === "play"), "B: Rechner empfaengt play");
+  // Der Zustand kommt an - die Stelle nicht.
+  //
+  // Android ist hier Gast. Sein Play startet die Runde weiterhin, aber es
+  // traegt nicht mehr seine eigene Stelle: die kommt vom Host. Vorher ging
+  // "play bei 60" an alle hinaus, und wer gerade woanders stand, sprang
+  // dorthin - der Weg "Zuschauer -> Zuschauer", den es nicht geben darf
+  // (siehe nichthoststelletest).
+  const bPlay = pc.steuerung.find((m) => m.action === "play");
   pruefe("B2. Play von Android startet den Rechner",
-    pc.steuerung.some((m) => m.action === "play" && Math.abs(m.position - 60) < 1),
+    Boolean(bPlay),
     JSON.stringify(pc.steuerung.map((m) => m.action)));
+  pruefe("B2b. Aber mit der Stelle des Hosts, nicht der des Gasts",
+    Boolean(bPlay) && Math.abs(bPlay.position - 60) >= 1,
+    bPlay ? `position=${Math.round(bPlay.position)} (Gast stand bei 60)` : "kein Play");
 
   pc.steuerung.length = 0;
   tv.melden("pause", 75, folge(4));

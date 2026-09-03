@@ -78,9 +78,35 @@ public class LivestandTest {
             + "{\"id\":\"g\",\"name\":\"Gast\",\"position\":98}]");
         List<Livestand.Marke> marken = Livestand.marken(alle, 0, 0, 0);
         assertEquals(2, marken.size());
-        // Genau zwei Sekunden: die Grenze selbst zaehlt noch nicht.
+        // Zwei Sekunden sind kein Hinweis mehr: die Marke liegt bei drei.
         assertFalse(marken.get(1).hinterher);
         assertEquals(2.0, marken.get(1).abstand, 0.0001);
+    }
+
+    /**
+     * Die Schwelle der Warnfarbe - und nur sie.
+     *
+     * <p>Bei zwei Sekunden stand die Leiste staendig orange, obwohl nichts zu
+     * tun war: zwischen zwei Playern liegt beim Puffern regelmaessig eine
+     * Sekunde. Jetzt faellt es ab drei auf. Die Messung und die Korrektur
+     * darunter bleiben davon unberuehrt - die entscheidet das Relay.
+     */
+    @Test
+    public void w9b_dieWarnfarbeFaelltAbDreiSekunden() throws Exception {
+        // 2,9 s - noch normal.
+        JSONArray knapp = leute("[{\"id\":\"h\",\"name\":\"Host\",\"host\":true,\"position\":100},"
+            + "{\"id\":\"g\",\"name\":\"Gast\",\"position\":97.1}]");
+        assertFalse(Livestand.marken(knapp, 0, 0, 0).get(1).hinterher);
+
+        // Genau 3,0 s - die Grenze zaehlt mit.
+        JSONArray genau = leute("[{\"id\":\"h\",\"name\":\"Host\",\"host\":true,\"position\":100},"
+            + "{\"id\":\"g\",\"name\":\"Gast\",\"position\":97}]");
+        assertTrue(Livestand.marken(genau, 0, 0, 0).get(1).hinterher);
+
+        // 3,1 s - erst recht.
+        JSONArray darueber = leute("[{\"id\":\"h\",\"name\":\"Host\",\"host\":true,\"position\":100},"
+            + "{\"id\":\"g\",\"name\":\"Gast\",\"position\":96.9}]");
+        assertTrue(Livestand.marken(darueber, 0, 0, 0).get(1).hinterher);
     }
 
     @Test

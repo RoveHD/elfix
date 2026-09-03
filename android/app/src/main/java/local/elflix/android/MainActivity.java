@@ -4929,11 +4929,16 @@ public class MainActivity extends Activity {
      * der eigene Stand desselben Titels gleich aus, und genau das trennt der
      * Rechner in {@code favoriteHerkunft} mit demselben Zeichen.
      */
-    private static String kachelUnterzeile(Favorite eintrag) {
-        String folge = eintrag.istWiederansehen()
-            ? (eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText())
-            : eintrag.istAbgeschlossen() ? "Abgeschlossen"
-            : eintrag.wartetAufNaechsteFolge() ? "Nächste Folge: " + eintrag.folgenText()
+    static String kachelUnterzeile(Favorite eintrag) {
+        // Ohne "Nächste Folge:".
+        //
+        // Auf einer Kachel steht ohnehin nur eine Folge, und welche das ist,
+        // sagt der Balken darunter. Die vierzehn Zeichen kosteten dagegen die
+        // halbe Zeile: auf dem Telefon schob der Vorspann Staffel, Folge und
+        // Raum in den Umbruch, und bei einem langen Titel blieb vom Raum
+        // nichts mehr uebrig. Am Rechner steht er weiterhin - dort ist Platz.
+        String folge = eintrag.istAbgeschlossen() && !eintrag.istWiederansehen()
+            ? "Abgeschlossen"
             : eintrag.folgenText();
         String durchlauf = eintrag.durchlaufHinweis();
         if (!durchlauf.isEmpty()) folge = folge.isEmpty() ? durchlauf : folge + " · " + durchlauf;

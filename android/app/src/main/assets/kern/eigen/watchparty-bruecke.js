@@ -599,10 +599,15 @@
   function meldungStand(zeile, key, stand, room) {
     const wert = sync.standLesen(zeile);
     if (!wert || !raeume || !key) return null;
-    raeume.meldeStand(key, Object.assign({}, stand, {
+    // Die Laufzeit geht mit, wenn der Player sie kennt. Das Relay
+    // unterscheidet daran "steht bei 0:00" von "noch nicht bereit"; fehlt sie,
+    // sagt dieses Geraet darueber nichts und wird wie bisher behandelt.
+    const meldung = Object.assign({}, stand, {
       position: wert.position,
       paused: wert.paused
-    }), room);
+    });
+    if (wert.duration !== undefined) meldung.duration = wert.duration;
+    raeume.meldeStand(key, meldung, room);
     return wert;
   }
 
