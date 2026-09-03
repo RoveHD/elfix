@@ -129,6 +129,59 @@ function video() {
   pruefe('die Qualitaetswahl bleibt', false, wahl.entfernt());
 })();
 
+/* ------------------------------- 8. Das quellenlose Fenster ueber dem Video */
+//
+// Gemessen am 3.9.2026 auf dem Telefon, Filmo -> VOE: der Gluecksspielkasten
+// stand nicht im Dokument des Players, sondern in einem eigenen daneben -
+// einem iframe ohne src, fixed, z-index 2147483647, 832x384 am BODY des
+// Players, also genau bildschirmgross. Sein Inhalt bekam kein Startskript
+// (dort war __elfixSchichtV1 false, im Player daneben true), und
+// fremderRahmen() sah ihn nicht, weil es eine Quelle verlangt.
+(function () {
+  var spieler = new El('div', {}, {}, GROSS);
+  spieler.anhaengen(video());
+  // Genau die gemessene Groesse: bildschirmgross. Die Ausnahme fuer
+  // Vollbildhuellen im vollen Skript haette ihn hier stehen lassen.
+  var werbung = new El('iframe', {}, VORN, GROSS);
+  lauf(skript, 'tracylocalschool.com', [spieler, werbung]);
+  pruefe('das quellenlose Fenster ueber dem Video ist weg', true, werbung.entfernt());
+
+  // Und die Falle: eine Vollbildhuelle sieht genauso aus - nur enthaelt sie
+  // das Video, statt darauf zu liegen.
+  var huelle = new El('iframe', {}, VORN, GROSS);
+  huelle.anhaengen(video());
+  lauf(skript, 'tracylocalschool.com', [huelle]);
+  pruefe('eine Huelle, die das Video enthaelt, bleibt', false, huelle.entfernt());
+
+  // about:blank und javascript: zaehlen wie "ohne Quelle" - dieselbe
+  // Bestimmung wie im vollen Skript.
+  var leer = new El('iframe', { src: 'about:blank' }, VORN, { width: 420, height: 260 });
+  var spieler2 = new El('div', {}, {}, GROSS);
+  spieler2.anhaengen(video());
+  lauf(skript, 'tracylocalschool.com', [spieler2, leer]);
+  pruefe('ein about:blank-Fenster ueber dem Video ist weg', true, leer.entfernt());
+
+  // Ohne Video gibt es keine Schicht "ueber dem Video".
+  var ohneVideo = new El('iframe', {}, VORN, { width: 420, height: 260 });
+  lauf(skript, 'tracylocalschool.com', [ohneVideo]);
+  pruefe('ohne Video bleibt ein quellenloses Fenster unangetastet', false, ohneVideo.entfernt());
+
+  // Im Textfluss ist es keine Schicht, sondern Inhalt.
+  var imFluss = new El('iframe', {}, { position: 'static' }, { width: 420, height: 260 });
+  var spieler3 = new El('div', {}, {}, GROSS);
+  spieler3.anhaengen(video());
+  lauf(skript, 'tracylocalschool.com', [spieler3, imFluss]);
+  pruefe('ein quellenloses Fenster im Textfluss bleibt', false, imFluss.entfernt());
+
+  // Und ein srcdoc-Fenster bringt seinen Inhalt mit; das ist kein leerer
+  // Rahmen, den ein Skript von aussen gefuellt hat.
+  var mitInhalt = new El('iframe', { srcdoc: '<p>hallo</p>' }, VORN, { width: 420, height: 260 });
+  var spieler4 = new El('div', {}, {}, GROSS);
+  spieler4.anhaengen(video());
+  lauf(skript, 'tracylocalschool.com', [spieler4, mitInhalt]);
+  pruefe('ein srcdoc-Fenster bleibt', false, mitInhalt.entfernt());
+})();
+
 console.log('');
 console.log(fehler === 0 ? ('alle ' + gesamt + ' Pruefungen bestanden')
   : (fehler + ' von ' + gesamt + ' Pruefungen fehlgeschlagen'));

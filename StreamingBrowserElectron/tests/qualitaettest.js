@@ -8,7 +8,9 @@
 // Ruhe laesst, sieht man einem Quelltext nicht an.
 
 const vm = require("vm");
-const { hoechsteStufe, qualitaetScript } = require("../src/voe-qualitaet");
+const {
+  hoechsteStufe, anzeigeWegraeumen, qualitaetScript, ANZEIGE_KENNUNG, ANZEIGE_HOECHSTENS
+} = require("../src/voe-qualitaet");
 
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
@@ -60,7 +62,47 @@ pruefe("Eine Liste nur aus Auto ergibt keine Wahl",
 
 // --- Das Skript im Player ---------------------------------------------------
 
-function buehneBauen(anfangsStufen) {
+// Das Anzeigefeld von VOE, so weit das Skript es anfasst: ein Text, der
+// Aenderungen meldet (echte MutationObserver-Batches sind Mikrotasks; hier
+// genuegt synchron), und ein Stil, der ein "!important" annimmt.
+function feldBauen(text) {
+  const stil = { werte: {} };
+  stil.setProperty = (name, wert) => { stil.werte[name] = wert; };
+  const wachen = [];
+  let inhalt = text;
+  const feld = {
+    style: stil,
+    _wachen: wachen,
+    get textContent() { return inhalt; },
+    set textContent(neu) {
+      if (neu === inhalt) return;
+      inhalt = neu;
+      wachen.slice().forEach((fn) => fn());
+    }
+  };
+  return feld;
+}
+
+// Ein Dokument mit genau dem Ausschnitt an MutationObserver, den das Skript
+// braucht: ein Beobachter je Feld, der abschaltbar ist. Kein jsdom - die
+// Probe soll ohne node_modules laufen.
+function dokumentMit(felder) {
+  return {
+    getElementById: (kennung) => (felder && felder[kennung]) || null,
+    defaultView: {
+      MutationObserver: function (callback) {
+        let aktiv = false;
+        this.observe = (ziel) => {
+          aktiv = true;
+          if (ziel && ziel._wachen) ziel._wachen.push(() => { if (aktiv) callback(); });
+        };
+        this.disconnect = () => { aktiv = false; };
+      }
+    }
+  };
+}
+
+function buehneBauen(anfangsStufen, felder) {
   let stufen = anfangsStufen;
   const gesetzt = [];
   const horcher = {};
@@ -69,7 +111,10 @@ function buehneBauen(anfangsStufen) {
     setCurrentQuality: (i) => { gesetzt.push(i); },
     on: (name, fn) => { horcher[name] = fn; }
   };
-  const kontext = { window: { jwplayer: () => jw } };
+  const kontext = {
+    window: { jwplayer: () => jw },
+    document: felder === undefined ? undefined : dokumentMit(felder)
+  };
   vm.createContext(kontext);
   return {
     gesetzt,
@@ -142,6 +187,91 @@ vm.createContext(sperrig);
 pruefe("Ein Player, der die Liste verweigert, bringt nichts zum Absturz",
   vm.runInContext(qualitaetScript(), sperrig) === "keine-liste");
 
+// --- Die Anzeige, die der Player stehen laesst -------------------------------
+//
+// Gemessen am 2026-09-03 im laufenden VOE-Player: nach `setCurrentQuality`
+// steht "Quality: 1080p" in `#QualityText` und verschwindet nie wieder von
+// selbst. Geprueft wird deshalb beides - dass es weggeraeumt wird, und dass
+// ein Feld, dessen Text erst spaeter ankommt, auch noch erwischt wird.
+
+// Der Fall aus dem Player: das Feld steht schon da, wenn gesetzt wird.
+const feld = feldBauen("Quality: 1080p");
+const mitFeld = buehneBauen(wieBeiVoe, { [ANZEIGE_KENNUNG]: feld });
+mitFeld.lauf();
+pruefe("Die stehengebliebene Anzeige wird geleert",
+  feld.textContent === "",
+  `text="${feld.textContent}"`);
+pruefe("Und zusaetzlich verborgen, solange das haelt",
+  feld.style.werte.display === "none",
+  `display=${feld.style.werte.display}`);
+
+// Der gemessene Fall: VOE schreibt den Stil des Feldes als ganzen Block neu
+// und wischt das Verbergen dabei weg. Der leere Text muss das ueberleben -
+// daran haengt, ob im Bild etwas steht.
+pruefe("Wenn der Player den Stil zurueckschreibt, bleibt das Feld leer",
+  (() => {
+    feld.style.werte.display = "block";
+    return feld.textContent === "";
+  })(),
+  "ein leeres Feld ist unsichtbar, auch wenn es display:block traegt");
+
+// Der echte Ablauf: VOE schreibt den Text erst, wenn der Wechsel wirklich
+// greift - Sekunden spaeter, nicht Millisekunden. Ein Zeitfenster deckt das
+// nicht ab; ein Beobachter auf dem Feld selbst schon.
+const spaet = feldBauen("");
+const mitSpaetemFeld = buehneBauen(wieBeiVoe, { [ANZEIGE_KENNUNG]: spaet });
+mitSpaetemFeld.lauf();
+spaet.style.werte.display = "block";
+spaet.textContent = "Quality: 1080p";
+pruefe("Auch ein Text, der erst nach dem Umschalten ankommt, wird erwischt",
+  spaet.textContent === "",
+  "sonst greift man auf ein Feld zu, das noch leer ist");
+
+// Ein spaeterer Wechsel von Hand traegt eine andere Stufe im Text - der
+// Beobachter erkennt daran, dass er nicht mehr seine eigene Ansage sieht.
+spaet.textContent = "Quality: 720p";
+pruefe("Ein Wechsel von Hand behaelt seine Anzeige",
+  spaet.textContent === "Quality: 720p",
+  "der Beobachter kennt nur die Stufe, die er selbst gesetzt hat");
+
+// Der Deckel: ein Feld, das sich staendig wehrt, gewinnt den Streit nach
+// endlich vielen Runden - kein Beobachter, der fuer immer mitlaeuft.
+const streit = feldBauen("");
+const streitDok = dokumentMit({ [ANZEIGE_KENNUNG]: streit });
+anzeigeWegraeumen(streitDok, ANZEIGE_KENNUNG, "1080p", 3);
+for (let i = 0; i < 5; i += 1) streit.textContent = "Quality: 1080p";
+pruefe("Nach dem Deckel gewinnt ein Feld, das sich staendig wehrt",
+  streit.textContent === "Quality: 1080p",
+  `nach 5 Schreibvorgaengen: text="${streit.textContent}"`);
+
+// Die Wahl selbst darf davon nichts merken.
+pruefe("Die Stufe wird trotzdem gesetzt",
+  mitFeld.gesetzt.length === 1 && mitFeld.gesetzt[0] === 1,
+  mitFeld.gesetzt.join(","));
+
+// Und die Umgebungen, in denen es das Feld gar nicht gibt.
+pruefe("Ohne Dokument passiert nichts",
+  String(anzeigeWegraeumen(null, ANZEIGE_KENNUNG, "1080p", 20)) === "kein-dokument",
+  "das Skript geht in alle Frames");
+pruefe("Ohne Stufenname passiert nichts",
+  String(anzeigeWegraeumen(dokumentMit({}), ANZEIGE_KENNUNG, "", 20)) === "keine-stufe");
+let ohneFeldAntwort = "wirft";
+try {
+  ohneFeldAntwort = String(anzeigeWegraeumen(
+    { getElementById: () => null, defaultView: {} }, ANZEIGE_KENNUNG, "1080p", 20));
+} catch {
+  ohneFeldAntwort = "wirft";
+}
+pruefe("Ein Player ohne dieses Feld bringt nichts zum Absturz",
+  ohneFeldAntwort !== "wirft",
+  ohneFeldAntwort);
+const ohneFeld = buehneBauen(wieBeiVoe, {});
+ohneFeld.lauf();
+pruefe("Ein Player ohne diese Anzeige setzt die Stufe trotzdem",
+  ohneFeld.gesetzt.length === 1,
+  ohneFeld.gesetzt.join(","));
+
 const fehler = pruefungen.filter((ok) => !ok).length;
-console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
+console.log(`
+${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

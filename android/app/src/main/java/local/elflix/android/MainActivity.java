@@ -422,6 +422,23 @@ public class MainActivity extends Activity {
     private static final long VOLLBILD_NACHLAUF_MS = 450L;
     private static final long AUTOSTART_EMBEDDED_TIMEOUT_MS = 12_000L;
     /**
+     * Ab wann eine Seite ohne jeden Player-Ansatz als solche gilt.
+     *
+     * <p>Die zwoelf Sekunden darueber sind die Geduld fuer eine Seite, die
+     * ihren Player noch aufbaut. Eine Seite, die gar keinen aufbaut, wartet sie
+     * bisher trotzdem ab - gemessen am 2026-09-03 auf dem Telefon: bei Filmo
+     * lagen zwischen "Autostart begin" und "nothing embedded" 12,2 Sekunden,
+     * jedes Mal, weil dort grundsaetzlich erst ein Klick den Rahmen fuellt.
+     * Bei AniWorld dagegen stand der eingebettete Player nach 0,5 Sekunden.
+     *
+     * <p>Diese Schonfrist trennt beides. Sie ist mit dem Sechsfachen der
+     * gemessenen 0,5 Sekunden bewusst reichlich bemessen: die Messung ist
+     * <em>eine</em> auf einer guten Leitung, und ein Irrtum kostet hier den
+     * Klick, den diese Seiten gern an ein Popunder verlieren. Selbst so bleibt
+     * bei Filmo der groessere Teil der zwoelf Sekunden erspart.
+     */
+    private static final long AUTOSTART_EMBEDDED_GRACE_MS = 3_000L;
+    /**
      * Finds the player: the largest iframe on the page, or -- when the hoster's own page became the
      * page -- its video element. Returns an empty string while there is nothing yet, which is what
      * awaitPage() polls on.
@@ -436,6 +453,53 @@ public class MainActivity extends Activity {
             + "if(!target)return '';"
             + "target.scrollIntoView({block:'center'});"
             + "return 'ready';"
+        + "})();";
+    /**
+     * Sagt die Seite selbst, dass von ihr kein Player mehr kommt?
+     *
+     * <p>Die Frage ist nicht "ist schon einer da" - das beantwortet
+     * {@link #PLAYER_PROBE_JS} -, sondern "kann ueberhaupt noch einer kommen".
+     * Zwei Dinge muessen dafuer zusammentreffen:
+     *
+     * <ul>
+     *   <li><b>Kein Ansatz eines Players.</b> Nicht "keiner in Spielgroesse" -
+     *       das fragt {@link #PLAYER_PROBE_JS} mit 200x150 -, sondern keiner,
+     *       der auch nur nach einem aussieht. Die kleinere Schwelle ist
+     *       Absicht in beide Richtungen: ein Rahmen, der schon gross genug ist,
+     *       um ein Player zu werden, bedeutet "die Seite baut gerade, warte" -
+     *       und ein Zaehlpixel von 1x1, wie es auf diesen Seiten reichlich
+     *       gibt, bedeutet das ausdruecklich nicht. Ohne die Schwelle haette
+     *       ein einziges solches Pixel die Abkuerzung fuer immer verstellt.
+     *   <li><b>Aber eine Hosterliste.</b> Dieselben Auswahlen wie in
+     *       {@link #HOSTER_KLICK_JS}, nur ohne den Klick - was dort geklickt
+     *       wird, wird hier gezaehlt. Ohne diesen zweiten Teil waere die
+     *       Antwort auf einer noch leeren Seite dieselbe wie auf einer, die
+     *       ihre Auswahl schon anbietet.
+     * </ul>
+     *
+     * <p>Antwortet sie, gibt es nichts mehr abzuwarten - dann ist der Klick
+     * auf die Liste der naechste Schritt und nicht der Rueckfall nach einer
+     * Frist.
+     */
+    private static final String HOSTERLISTE_STATT_PLAYER_JS =
+        "(function(){"
+            + "function flaeche(el){var r=el.getBoundingClientRect();return r.width>0&&r.height>0;}"
+            // Irgendein Ansatz eines Players? Dann baut die Seite noch - warten.
+            + "var ansatz=document.querySelectorAll('iframe,video');"
+            + "for(var i=0;i<ansatz.length;i++){"
+                + "var r=ansatz[i].getBoundingClientRect();"
+                + "if(r.width>=120&&r.height>=80)return '';"
+            + "}"
+            // Keiner. Bietet sie dafuer eine Hosterliste an?
+            + "function hat(sel){"
+                + "var satz=document.querySelectorAll(sel);"
+                + "for(var i=0;i<satz.length;i++){if(flaeche(satz[i]))return true;}"
+                + "return false;"
+            + "}"
+            + "if(hat('[data-provider-chip]'))return 'chips';"
+            + "if(hat('.link-box[data-play-url]'))return 'linkbox';"
+            + "if(hat('a.watchEpisode'))return 'watchepisode';"
+            + "return '';"
         + "})();";
     /**
      * Die Hosterliste anklicken - in den drei Formen, in denen sie vorkommt.
@@ -11297,6 +11361,27 @@ public class MainActivity extends Activity {
      */
     private void awaitPage(WebView webView, String url, String probeJs, long deadlineAt,
             java.util.function.Consumer<String> onReady, Runnable onTimeout) {
+        awaitPage(webView, url, probeJs, deadlineAt, null, 0L, null, onReady, onTimeout);
+    }
+
+    /**
+     * Dasselbe Warten, aber mit einer Abkuerzung.
+     *
+     * <p>Eine Frist ist die Geduld fuer den Fall, dass es gleich doch noch
+     * klappt. Sie ist keine Geduld fuer den Fall, dass die Seite bereits
+     * gesagt hat, dass es nicht klappen wird - und manche sagen das. Die
+     * Abkuerzungsprobe fragt genau danach; antwortet sie, wird nicht weiter
+     * gewartet.
+     *
+     * <p>Sie greift fruehestens ab {@code abkuerzungAb}. Ohne diese Schonfrist
+     * wuerde eine Seite, die ihren Player erst noch aufbaut, im ersten
+     * Augenblick als "bringt keinen" gelesen - da steht naemlich weder das
+     * eine noch das andere.
+     */
+    private void awaitPage(WebView webView, String url, String probeJs, long deadlineAt,
+            String abkuerzungJs, long abkuerzungAb,
+            java.util.function.Consumer<String> onAbkuerzung,
+            java.util.function.Consumer<String> onReady, Runnable onTimeout) {
         // A null url means "wherever we end up is fine". Opening a hoster does not always build an
         // inline player: AniWorld also answers the click by sending the main frame to /redirect/...,
         // and then the player *is* the page. Insisting on the episode URL aborted exactly that case.
@@ -11305,8 +11390,8 @@ public class MainActivity extends Activity {
             return;
         }
         webView.evaluateJavascript(probeJs, value -> {
-            String result = value == null ? "" : value.replace("\"", "").trim();
-            if (!result.isEmpty() && !"null".equals(result)) {
+            String result = probeAntwort(value);
+            if (!result.isEmpty()) {
                 onReady.accept(result);
                 return;
             }
@@ -11314,10 +11399,30 @@ public class MainActivity extends Activity {
                 onTimeout.run();
                 return;
             }
-            webView.postDelayed(
-                () -> awaitPage(webView, url, probeJs, deadlineAt, onReady, onTimeout),
+            Runnable weiter = () -> webView.postDelayed(
+                () -> awaitPage(webView, url, probeJs, deadlineAt,
+                    abkuerzungJs, abkuerzungAb, onAbkuerzung, onReady, onTimeout),
                 AUTOSTART_POLL_MS);
+            if (abkuerzungJs == null || onAbkuerzung == null
+                    || SystemClock.uptimeMillis() < abkuerzungAb) {
+                weiter.run();
+                return;
+            }
+            webView.evaluateJavascript(abkuerzungJs, kurz -> {
+                String antwort = probeAntwort(kurz);
+                if (antwort.isEmpty()) {
+                    weiter.run();
+                    return;
+                }
+                onAbkuerzung.accept(antwort);
+            });
         });
+    }
+
+    /** Was eine Probe wirklich gesagt hat - {@code ""} heisst "noch nichts". */
+    private static String probeAntwort(String value) {
+        String result = value == null ? "" : value.replace("\"", "").trim();
+        return "null".equals(result) ? "" : result;
     }
 
     /**
@@ -11338,8 +11443,18 @@ public class MainActivity extends Activity {
         if (startvorhang != null && startvorhang.laeuft()) startPhaseMelden("hoster");
         else showToast("Startet …");
         laufenderStart = autoStartStelle;
+        long jetzt = SystemClock.uptimeMillis();
         awaitPage(webView, url, PLAYER_PROBE_JS,
-            SystemClock.uptimeMillis() + AUTOSTART_EMBEDDED_TIMEOUT_MS,
+            jetzt + AUTOSTART_EMBEDDED_TIMEOUT_MS,
+            // Und die Abkuerzung fuer Seiten, die von sich aus keinen Player
+            // bauen: bei ihnen ist die Frist oben reine Wartezeit vor dem
+            // Klick, der ohnehin kommen muss.
+            HOSTERLISTE_STATT_PLAYER_JS, jetzt + AUTOSTART_EMBEDDED_GRACE_MS,
+            liste -> {
+                Log.i(TAG, "Autostart: the page embeds no player but offers a hoster list ("
+                    + liste + ") - clicking now instead of waiting out the timeout");
+                clickHoster(webView, url);
+            },
             ready -> {
                 Log.i(TAG, "Autostart using the player the page already embeds");
                 autoStartSpielen(webView, url);

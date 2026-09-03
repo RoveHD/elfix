@@ -1249,6 +1249,40 @@ public final class Werbeschichten {
             + "return !!(v&&el.contains&&el.contains(v));"
         + "}"
 
+        // Ein Fenster ohne Quelle.
+        //
+        // Gemessen am 2026-09-03 auf dem Telefon, Filmo -> VOE: der
+        // Gluecksspielkasten stand nicht im Dokument des Players, sondern in
+        // einem eigenen daneben - einem {@code iframe} ohne {@code src},
+        // {@code position:fixed}, {@code z-index:2147483647}, 832x384 und
+        // damit genau ueber dem Video, unmittelbar am BODY des Players.
+        //
+        // Zwei Dinge machen ihn sonst unerreichbar. Sein Inhalt bekommt kein
+        // Startskript: {@code addDocumentStartJavaScript} laeuft in einem
+        // Dokument, das nie geladen wurde, nicht - im Mitschnitt stand dort
+        // {@code __elfixSchichtV1 === false}, waehrend es im Player daneben
+        // {@code true} war. Und {@code fremderRahmen()} sieht ihn nicht, weil
+        // es eine Quelle verlangt, an der es einen fremden Wirt ablesen
+        // koennte. Bleibt das Elterndokument, und dort laeuft dieses Skript.
+        //
+        // Warum nicht {@code rahmenschicht()} aus dem vollen Skript: das nimmt
+        // Rahmen ueber neunzig Prozent der Flaeche ausdruecklich aus, weil eine
+        // Vollbildhuelle genauso aussieht. Dieser Kasten war aber genau
+        // bildschirmgross - die Ausnahme haette ihn stehen lassen. Der
+        // Unterschied, der hier traegt, ist ein anderer und steht schon weiter
+        // oben: eine Huelle *enthaelt* das Video, eine Schicht liegt *darueber*.
+        // Das prueft {@code amPlayer()} vor jeder Frage, und deshalb genuegt
+        // hier die Quelle, die Freistellung und die Tatsache, dass in diesem
+        // Dokument ueberhaupt etwas spielt.
+        + "function quellenloserRahmen(el){"
+            + "if(!el||el.tagName!=='IFRAME')return false;"
+            + "if(el.hasAttribute&&el.hasAttribute('srcdoc'))return false;"
+            + "var quelle='';try{quelle=(el.getAttribute('src')||'').trim();}catch(e){quelle='';}"
+            + "if(!quelle)return true;"
+            + "var klein=quelle.toLowerCase();"
+            + "return klein==='about:blank'||klein.indexOf('javascript:')===0;"
+        + "}"
+
         // Ein Fenster von einem anderen Wirt.
         + "function fremderRahmen(el){"
             + "if(!el||el.tagName!=='IFRAME')return false;"
@@ -1318,6 +1352,10 @@ public final class Werbeschichten {
             + "if(lesbar&&lockruf(text)&&freigestellt(el))return 'lockruf';"
             // 3. Das fremde Fenster ueber dem Video.
             + "if(fremderRahmen(el)&&freigestellt(el)&&dasVideo())return 'fremdes fenster';"
+            // 4. Das quellenlose Fenster ueber dem Video - siehe oben. Nur wo
+            //    etwas spielt: ohne Video gibt es keine Schicht "ueber dem
+            //    Video", und dann bleibt ein solcher Rahmen unangetastet.
+            + "if(quellenloserRahmen(el)&&freigestellt(el)&&dasVideo())return 'rahmen ohne quelle';"
             + "return '';"
         + "}"
 
