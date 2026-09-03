@@ -3,6 +3,35 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.3 — 3. September 2026
+
+**Der Autostart wartet nicht mehr blind zwölf Sekunden.** Anbieter ohne
+eingebetteten Player — Filmo vor allem — ließen den Ladebalken bei „Player
+wird geladen" jedes Mal die volle Frist absitzen, bevor der Klick auf die
+Hosterliste kam. Gemessen: Filmo 12,2 Sekunden bis „nichts eingebettet",
+AniWorld 0,5 Sekunden bis zum fertigen Player. Eine kurze Schonfrist plus eine
+Probe, ob die Seite überhaupt noch einen Player bauen kann, kürzt den
+Wartelauf jetzt auf wenige Sekunden — ohne den frühen Klick zu riskieren, den
+diese Seiten gern an ein Popunder verlieren.
+
+**Und eine zweite Form der Werbung im Rahmen des Hosters fällt jetzt auch.**
+1.91.1 nahm das falsche Captcha und den Bonuskasten aus dem fremden Rahmen —
+diesmal traf es einen Gewinnspielkasten in einem `iframe` ganz ohne Quelle,
+bildschirmgroß, direkt über dem Video. Sein Inhalt bekommt kein Startskript,
+und die bisherige Regel für fremde Rahmen verlangte eine Quelle, an der sie
+einen fremden Wirt hätte ablesen können. Ein neuer Fall erkennt ihn jetzt an
+Quelle, Freistellung und daran, dass in diesem Dokument etwas spielt — eine
+echte Vollbildhülle bleibt unangetastet, denn die enthält das Video, statt
+darüber zu liegen.
+
+**Die Bildstufenwahl räumt ihre eigene Anzeige jetzt weg.** VOE quittierte das
+Setzen der höchsten Qualität mit „Quality: 1080p" über dem Bild und ließ es
+stehen, bis man die Bedienleiste zweimal antippte. VOE schreibt den Stil
+dieses Feldes bei jeder Gelegenheit neu, deshalb wird jetzt der Text selbst
+geleert statt nur die Sichtbarkeit — und über einen Beobachter statt eine
+feste Frist, weil VOE die Anzeige erst Sekunden nach dem Umschalten schreibt.
+Ein späterer Wechsel von Hand behält seine eigene Bestätigung.
+
 ## 1.91.2 — 2. September 2026
 
 **Das Relay sagt jetzt auch, ob es Trailer kann.** Dass es läuft, zeigt es
