@@ -3,6 +3,29 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.4 — 3. September 2026
+
+**Der Ladebildschirm behauptet nicht mehr, was gar nicht stimmt.** Gemeldet vom
+Fernseher: der Film lief, und darüber stand „Der Player hat kein Video
+geladen". Dahinter steckten zwei Dinge, und beide sind jetzt behoben.
+
+**Die Ursache:** Der Autostart schickt sein Startskript in alle Rahmen der
+Seite, und in einem Rahmen ohne Video bleibt es absichtlich still — dort ist
+nichts anzuklicken. Gezählt wurde ein solcher Anlauf trotzdem als Versuch, und
+danach wartete der Ablauf neun Sekunden auf eine Antwort, die es nie geben
+konnte. Vier davon, und die Geduld war weg. Genau das passiert regelmäßig: die
+Rahmen des Hosters entstehen nacheinander, im Protokoll „in 2 Rahmen", dann 4,
+dann 5 — die Versuche wurden an Rahmen verbraucht, in denen der Player noch gar
+nicht war. Jetzt zählt nur noch, worauf ein Player wirklich geantwortet hat.
+Stille Anläufe laufen daneben weiter, bis ein eigener, weiterer Deckel greift.
+
+**Und das Netz darunter:** Sollte die Ansage doch einmal erscheinen, während
+das Video läuft, verschwindet sie von selbst. Die Messung sieht den Player
+unabhängig vom Startablauf — rückt die Stelle zwischen zwei Messungen vor,
+läuft das Video, und dann hat die Ansage kein Recht mehr, stehenzubleiben. Nur
+aus der Fehleransage heraus: während der Balken läuft, geht der Vorhang erst
+auf, wenn auch das Vollbild sitzt.
+
 ## 1.91.3 — 3. September 2026
 
 **Der Autostart wartet nicht mehr blind zwölf Sekunden.** Anbieter ohne
