@@ -1112,6 +1112,44 @@ ipcMain.handle("library:metadata", async (_event, favoriteId) => {
 // "Spider-Man: Brand New Day" fuehrt TMDB einen deutschen Trailer, und die App
 // sagte trotzdem, es gebe keinen. Die Ursachen sind vier verschiedene, und drei
 // davon kann man beheben - aber nur, wenn dasteht, welche es ist.
+// --- Was kann mein Relay? ----------------------------------------------------
+//
+// Dass es laeuft, zeigt es seit 1.90.1 selbst: Symbol in der Statusleiste,
+// Seite unter seiner Adresse. Was die App darueber hinaus wissen will, ist
+// eine Frage weiter - kann dieses Relay das, was ich hier gerade brauche? Beim
+// Trailer war genau das die offene Stelle: die App wusste nur, dass nichts kam.
+//
+// Gefragt wird "/health", dieselbe Auskunft, die auch die Statusseite liest.
+const RELAY_FRIST_MS = 4000;
+
+ipcMain.handle("relay:status", async () => {
+  const adresse = metadatenAdresse();
+  if (!adresse) return { ok: false, grund: "keine-adresse" };
+  try {
+    const antwort = await net.fetch(`${adresse}/health`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(RELAY_FRIST_MS)
+    });
+    if (!antwort.ok) return { ok: false, grund: "antwortet-nicht", status: antwort.status };
+    const daten = await antwort.json();
+    const merkmale = Array.isArray(daten?.features) ? daten.features : [];
+    return {
+      ok: true,
+      adresse,
+      fassung: String(daten?.fassung || ""),
+      seitS: Number(daten?.laeuftSeitS) || 0,
+      verbindungen: Number(daten?.verbindungen) || 0,
+      // Dieselbe Merkmalsliste, an der schon Watchparty und Geraeteabgleich
+      // haengen - sie ist die einzige verlaessliche Auskunft darueber, welche
+      // Fassung dort wirklich laeuft.
+      trailer: merkmale.includes("trailer"),
+      tmdb: daten?.tmdb === "configured"
+    };
+  } catch {
+    return { ok: false, grund: "nicht-erreichbar" };
+  }
+});
+
 ipcMain.handle("titel:trailer", async (_event, titel, url) => {
   if (!metadatenAdresse()) return { trailer: null, grund: "kein-dienst" };
   try {

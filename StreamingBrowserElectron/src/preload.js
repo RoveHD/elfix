@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // naechste Folge. Steht nirgends in der eigenen Ablage.
   getLibraryMetadata: (id) => ipcRenderer.invoke("library:metadata", id),
   getTrailer: (titel, url) => ipcRenderer.invoke("titel:trailer", titel, url),
+  getRelayStatus: () => ipcRenderer.invoke("relay:status"),
   clearNewEpisodeHint: (id) => ipcRenderer.invoke("favorites:clear-new", id),
   markFavoriteCompleted: (id) => ipcRenderer.invoke("favorites:mark-completed", id),
   setFavoriteWatchlist: (id, wert) => ipcRenderer.invoke("favorites:set-watchlist", id, wert),

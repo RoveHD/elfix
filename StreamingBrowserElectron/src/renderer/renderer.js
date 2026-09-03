@@ -663,6 +663,7 @@ function bindEvents() {
   api.getWatchpartyStatus?.().then(renderWatchpartyStatus).catch(() => {});
   loadWatchpartyItems();
   api.onYoutubePartyState?.(renderYoutubeParty);
+  document.querySelector("#relayPruefen")?.addEventListener("click", relayStandHolen);
   youtubePartyRoom?.addEventListener("change", youtubePartyRaumWaehlen);
   document.querySelector("#youtubePartyResync")?.addEventListener("click", youtubePartyAbgleichen);
   document.querySelector("#youtubePartyOpen")?.addEventListener("click", youtubePartyOeffnen);
@@ -5149,6 +5150,44 @@ async function mediathekReihenfolgeSpeichern() {
   if (!ids.length) return;
   const gespeichert = await api.reorderLibrary?.(ids).catch(() => null);
   if (Array.isArray(gespeichert)) favorites = gespeichert;
+}
+
+// --- Was kann mein Relay? ----------------------------------------------------
+//
+// Dass es laeuft, zeigt es seit 1.90.1 selbst. Diese Zeile fragt eine Frage
+// weiter: welche Fassung laeuft dort, und kann sie, was die App gerade
+// braucht. Beim Trailer war das die offene Stelle - die App wusste nur, dass
+// nichts kam, und sagte deshalb das Falsche.
+async function relayStandHolen() {
+  const feld = document.querySelector("#relayStand");
+  if (!feld) return;
+  feld.textContent = "Wird gefragt …";
+  const stand = await api.getRelayStatus?.().catch(() => null);
+  feld.textContent = relayStandText(stand);
+}
+
+function relayStandText(stand) {
+  if (!stand || stand.grund === "keine-adresse") {
+    return "Keine Server-Adresse eingetragen — ohne sie gibt es weder Watchparty noch Metadaten.";
+  }
+  if (!stand.ok) {
+    return stand.grund === "antwortet-nicht"
+      ? `Antwortet, aber mit einem Fehler (${stand.status || "?"}). Läuft dort wirklich das Relay?`
+      : "Nicht erreichbar. Läuft es, und stimmen Adresse, Port und Freigabe?";
+  }
+  const teile = [`Läuft${stand.fassung ? ` — Fassung ${stand.fassung}` : ""}`];
+  if (stand.seitS > 0) teile.push(`seit ${relayDauer(stand.seitS)}`);
+  teile.push(stand.trailer
+    ? (stand.tmdb ? "Trailer: ja" : "Trailer: kennt es, aber ohne TMDB-Schlüssel")
+    : "Trailer: nein — diese Fassung kennt sie noch nicht, bitte aktualisieren");
+  return teile.join(" · ");
+}
+
+function relayDauer(sekunden) {
+  const s = Math.max(0, Math.round(Number(sekunden) || 0));
+  if (s >= 86400) return `${Math.floor(s / 86400)} Tagen`;
+  if (s >= 3600) return `${Math.floor(s / 3600)} Stunden`;
+  return `${Math.max(1, Math.floor(s / 60))} Minuten`;
 }
 
 // --- Der Trailer -------------------------------------------------------------

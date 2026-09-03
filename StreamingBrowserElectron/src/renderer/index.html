@@ -520,6 +520,13 @@
             <label>Server-Adresse<input id="watchpartyServer" placeholder="wss://mein-relay.example.com">
               <small>Adresse deines Relays aus <code>sync-server/</code>. <code>https://</code> wird automatisch zu <code>wss://</code>.</small>
             </label>
+            <!-- Und die Frage danach: kann dieses Relay das, was die App
+                 gerade braucht? Beim Trailer war genau das die offene Stelle -
+                 die App wusste nur, dass nichts kam. -->
+            <div class="setting-row">
+              <span><strong>Kann das Relay Trailer?</strong><small id="relayStand">Noch nicht geprüft.</small></span>
+              <button type="button" class="soft-action" id="relayPruefen">Prüfen</button>
+            </div>
             <div class="setting-block">
               <strong>Raumcodes</strong>
               <div class="room-add">

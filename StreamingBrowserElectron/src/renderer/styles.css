@@ -5634,6 +5634,13 @@ input[type="color"] {
   flex: 1 1 240px;
 }
 
+/* Zwei Knoepfe am Ende einer Einstellungszeile - pruefen und oeffnen. */
+.row-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 /* Die Knopfreihe ueber dem Verlauf: abspielen, Trailer, vormerken. */
 .titel-aktionen {
   display: flex;

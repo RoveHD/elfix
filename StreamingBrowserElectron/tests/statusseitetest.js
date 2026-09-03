@@ -138,6 +138,31 @@ const holen = (pfad, kopf) => fetch(BASIS + pfad, { headers: kopf || {} });
   pruefe("Ohne eingetragene Adresse sagt die App, was fehlt",
     /keine-adresse/.test(MAIN) && /keine-adresse/.test(RENDERER));
 
+  // --- Und die Frage danach: kann dieses Relay, was die App braucht? --------
+  //
+  // "Laeuft es" beantwortet die Seite. Offen blieb die Frage dahinter, und sie
+  // hat einen Abend gekostet: zu einem Film, zu dem TMDB einen deutschen
+  // Trailer fuehrt, sagte ELFIX "kein Trailer hinterlegt". Das Relay kannte
+  // das Feld nur nicht - und die App konnte es nicht wissen.
+
+  pruefe("/health weist auch die Trailer aus",
+    vorher.features.includes("trailer"),
+    "daran erkennt die App, ob dieses Relay sie ueberhaupt liefern kann");
+  pruefe("Die App fragt danach",
+    /ipcMain\.handle\("relay:status"/.test(MAIN)
+    && /\$\{adresse\}\/health/.test(MAIN)
+    && /AbortSignal\.timeout\(RELAY_FRIST_MS\)/.test(MAIN),
+    "dieselbe Auskunft, die auch die Statusseite liest");
+  pruefe("Die Bruecke dafuer gibt es",
+    /getRelayStatus: \(\) => ipcRenderer\.invoke\("relay:status"\)/.test(PRELOAD));
+  pruefe("Und die Einstellungen zeigen die Antwort",
+    /id="relayStand"/.test(HTML) && /id="relayPruefen"/.test(HTML)
+    && /function relayStandText\(stand\)/.test(RENDERER));
+  pruefe("Jeder Fall wird beim Namen genannt",
+    /Nicht erreichbar/.test(RENDERER) && /Trailer: ja/.test(RENDERER)
+    && /diese Fassung kennt sie noch nicht/.test(RENDERER),
+    "nicht erreichbar, laeuft mit Trailern, laeuft ohne");
+
   const fehlerAnzahl = pruefungen.filter((ok) => !ok).length;
   console.log(`\n${pruefungen.length - fehlerAnzahl}/${pruefungen.length} bestanden`);
   process.exit(fehlerAnzahl ? 1 : 0);

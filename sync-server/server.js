@@ -520,7 +520,14 @@ const server = http.createServer((req, res) => {
         // offene Verbindungen. Ohne den Eintrag laeuft dort drueben eine
         // aeltere Fassung, und wer die Adresse aufruft, bekommt nur eine Zeile
         // Text.
-        "status"],
+        "status",
+        // "trailer" heisst: die Metadaten dieses Relays tragen den Trailer zu
+        // einem Werk. Ohne den Eintrag laeuft dort eine aeltere Fassung - und
+        // die App kann das sagen, statt "kein Trailer hinterlegt" zu behaupten.
+        // Genau diese Auskunft war falsch und hat einen Abend gekostet: zu dem
+        // gemeldeten Film fuehrt TMDB einen deutschen Trailer, das Relay kannte
+        // das Feld nur nicht.
+        "trailer"],
       // Ob die Anreicherung bereitsteht - ohne den Schluessel selbst. Der
       // gehoert weder in eine Antwort noch ins Journal.
       ...metadatenDienst.zustand()
