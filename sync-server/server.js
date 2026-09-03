@@ -1312,6 +1312,9 @@ wss.on("connection", (socket) => {
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
       let neueFolge = false;
+      // Ob ein "navigate" nur nachzieht, was ohnehin schon laeuft. Steht hier
+      // oben, weil die Leiste weiter unten dieselbe Antwort braucht.
+      let nurNachgezogen = false;
 
       // Spulen bewegt die Runde - und das darf nur der Host.
       //
@@ -1347,7 +1350,22 @@ wss.on("connection", (socket) => {
         // Wer dem Wechsel nur nachzieht, meldet dieselbe Adresse zurueck. Das
         // ist keine neue Folge - sonst faellt der Stand bei jedem Nachzuegler
         // wieder auf null und die Runde faengt dreimal von vorn an.
-        const schonDort = Boolean(ziel) && eintrag.live?.url === ziel;
+        //
+        // Verglichen wird dabei nicht mehr die Zeichenkette allein. Sie taugt
+        // dafuer nicht: `httpAdresse` normalisiert nichts, und derselbe Titel
+        // steht je nach Geraet unter `http://186.2.175.5/serie/...` oder
+        // `https://s.to/serie/...`. Ein Handy, das der laufenden Folge nur
+        // beitrat, meldete damit einen "Wechsel" auf die Folge, bei der die
+        // Runde laengst stand - und setzte sie dabei auf null. Genau der
+        // gemeldete Rueckwurf. Massgeblich ist die Folge, nicht die Schreibung
+        // der Adresse.
+        const zielFolge = folgeAusAdresse(ziel);
+        const schonDort = Boolean(ziel) && (
+          eintrag.live?.url === ziel
+          || (zielFolge.episode
+            && zielFolge.episode === eintrag.episode
+            && (zielFolge.season || 0) === (eintrag.season || 0))
+        );
         if (ziel) {
           eintrag.url = ziel;
           // Auch die Folgenangabe: sie steckt in der Adresse, wurde hier aber
@@ -1361,6 +1379,7 @@ wss.on("connection", (socket) => {
             neueFolge = true;
           }
         }
+        nurNachgezogen = schonDort;
         if (!schonDort) {
           // Nicht "pause": eine neue Folge ist noch gar nichts: weder angehalten
           // noch laufend. Stand hier "pause", bekam jedes Geraet, das die neue
@@ -1405,7 +1424,14 @@ wss.on("connection", (socket) => {
         };
       }
 
-      if (aktion !== "navigate" && amRaumstand && (istHost || aktion === "pause")) {
+      // Eine Pause eines Nicht-Hosts ruecken alle auf die Stelle des Hosts -
+      // dafuer muss sie bekannt sein. Ist sie es nicht, stuende hier seine
+      // eigene: ein frisch beigetretenes Handy, dessen Player noch laedt,
+      // schriebe damit `position: 0` als Stand der Runde und schickte allen
+      // ein "pause bei 0". Dann gilt sein Befehl fuer ihn, und der Stand der
+      // Runde bleibt, was er war.
+      const pauseZaehlt = aktion === "pause" && (istHost || hostStand != null);
+      if (aktion !== "navigate" && amRaumstand && (istHost || pauseZaehlt)) {
         eintrag.live = {
           action: aktion,
           position: gemeinsam,
@@ -1443,7 +1469,15 @@ wss.on("connection", (socket) => {
         ),
         hostId: aktuelleHostId(socket.raum, eintrag)
       });
-      for (const client of wss.clients) {
+      // Ein Nachzieher bewegt niemanden.
+      //
+      // Wer meldet, er sei jetzt bei der Folge, bei der die Runde ohnehin
+      // steht, hat den anderen nichts zu sagen. Frueher ging der Befehl
+      // trotzdem hinaus - mit `position: 0` und mit *seiner* Adresse. Beides
+      // schadet: die anderen sprangen an den Anfang, und wer denselben Titel
+      // bei einem anderen Anbieter offen hatte, wurde auf dessen Adresse
+      // geschickt und lud seinen Player neu.
+      for (const client of nurNachgezogen ? [] : wss.clients) {
         if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
         if (!eintrag.members.has(client.geraetId)) continue;
         // Eine Pause geht auch an den, der sie ausgeloest hat: er soll auf
@@ -1461,7 +1495,10 @@ wss.on("connection", (socket) => {
       if (aktion === "pause") standFuerAlle(eintrag, gemeinsam, true);
       else if (aktion === "play") standFuerAlle(eintrag, gemeinsam, false);
       else if (aktion === "seek") standFuerAlle(eintrag, gemeinsam, null);
-      else if (aktion === "navigate") standFuerAlle(eintrag, 0, true);
+      // Ein Wechsel faengt bei null an - aber nur ein echter. Wer der
+      // laufenden Folge bloss nachzieht, darf die Leiste aller anderen nicht
+      // auf null stellen.
+      else if (aktion === "navigate" && !nurNachgezogen) standFuerAlle(eintrag, 0, true);
       standSenden(socket.raum, eintrag);
 
       // Steht die Runde jetzt auf einer anderen Folge, muessen es alle sehen -
@@ -1858,13 +1895,39 @@ wss.on("connection", (socket) => {
       // verworfen und sein Stand kaeme nie an.
       fortschritt.updatedAt = new Date().toISOString();
       fortschritt.from = fortschritt.from || socket.name;
-      eintrag.progress = fortschritt;
-      if (fortschritt.url) eintrag.url = fortschritt.url;
-      eintrag.season = fortschritt.season || eintrag.season;
-      eintrag.episode = fortschritt.episode || eintrag.episode;
-      // Die Stelle fuer die Leiste kommt hier laufend herein. Ob angehalten
-      // ist, sagt der Fortschritt nicht - das bleibt, wie der letzte Befehl es
-      // hinterlassen hat.
+
+      // Wessen Stelle der Stand der Runde ist.
+      //
+      // Bis hierher schrieb ihn jedes Mitglied. Der Slot ist aber einer, und
+      // er ist nicht nur Anzeige: `Mitschauen.rundenStelle()` liest ihn als
+      // Startstelle fuer den Autostart. Ein Handy, dessen Player gerade erst
+      // laedt, meldet dabei position=0 - und zog damit die Runde auf null,
+      // sichtbar als Balken, der zwischen der richtigen Stelle und 0 sprang,
+      // und als Geraet, das gleich darauf bei 0:00 einstieg.
+      //
+      // Der Host ist die Zeitquelle, also schreibt er ihn. Die eine Ausnahme
+      // ist der Weg nach *vorn*: eine echt neuere Folge darf jedes Geraet
+      // melden - daran haengt, dass ein archivierter Titel zurueckkommt und
+      // die Runde der naechsten Folge folgt (siehe folgeIstNeuer). Zurueck
+      // zieht damit niemand: `weiter` ist streng aufsteigend.
+      //
+      // Gibt es gar keinen aktiven Host, gibt es auch nichts zu schuetzen:
+      // dann meldet hier jemand einen Stand in eine Runde, die niemand fuehrt
+      // (ein Geraet, das nach dem Einschalten nachtraegt, ein Raum, in dem
+      // gerade niemand schaut). Der gehoert uebernommen - sonst bliebe der
+      // Titel fuer immer ohne Stand.
+      const hostId = aktuelleHostId(socket.raum, eintrag);
+      const istHost = socket.geraetId === hostId;
+      const fuehrt = istHost || !hostId || weiter;
+      if (fuehrt) {
+        eintrag.progress = fortschritt;
+        if (fortschritt.url) eintrag.url = fortschritt.url;
+        eintrag.season = fortschritt.season || eintrag.season;
+        eintrag.episode = fortschritt.episode || eintrag.episode;
+      }
+      // Die Stelle fuer die Leiste kommt hier laufend herein - von jedem
+      // Geraet. Sie steht je Geraet und zieht niemanden mit; genau dafuer ist
+      // sie da (Teilnehmerleiste, Driftmessung).
       standSetzen(eintrag, socket.geraetId, socket.name, { position: fortschritt.position });
       standSenden(socket.raum, eintrag);
       // Ein Wechsel zwischen aktiv und archiviert aendert die Karte selbst und
@@ -1874,6 +1937,10 @@ wss.on("connection", (socket) => {
       if (archivVorher !== Boolean(eintrag.archived)) zustandSenden(socket.raum);
       zustandSpeichernSpaeter();
 
+      // Und weitergesagt wird nur, was auch der Stand der Runde ist. Sonst
+      // uebernaehmen die anderen ueber `watchpartyStandUebernehmen` genau die
+      // Stelle, die hier gerade nicht gelten soll.
+      if (!fuehrt) return;
       const daten = JSON.stringify({ type: "progress", key: eintrag.key, progress: fortschritt });
       for (const client of wss.clients) {
         if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;

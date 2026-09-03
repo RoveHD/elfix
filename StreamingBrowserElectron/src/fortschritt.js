@@ -1816,6 +1816,22 @@ function watchpartyArchivAbgleichen(lokal, archiviert) {
 }
 
 /**
+ * Traegt dieser Stand ueberhaupt eine Stelle?
+ *
+ * <p>Ein Player, der gerade erst laedt, meldet {@code currentTime 0} und
+ * {@code duration 0} - das ist kein Stand, sondern der Zustand davor. Kommt
+ * so etwas herein, waehrend hier laengst eine Stelle steht, gehoert die eigene
+ * behalten: sonst springt der Balken auf null und beim naechsten eigenen
+ * Messwert wieder zurueck.
+ *
+ * <p>Nur wenn beides fehlt. Eine echte Null mit Laufzeit ("die Folge faengt
+ * an") ist eine gueltige Auskunft und wird uebernommen.
+ */
+function standOhneStelle(stand) {
+  return !(Number(stand?.position) > 0) && !(Number(stand?.duration) > 0);
+}
+
+/**
  * Uebernimmt einen Stand aus der Runde in den eigenen Eintrag.
  *
  * <p>Bewusst ohne Vergleich mit der eigenen Uhr: das Relay laesst ohnehin nur
@@ -1831,6 +1847,14 @@ function watchpartyArchivAbgleichen(lokal, archiviert) {
  */
 function watchpartyStandUebernehmen(lokal, stand) {
   if (!lokal || !stand?.updatedAt) return { art: "nichts" };
+  // Die zweite Sicherung neben der Regel im Relay (dort entscheidet der Host
+  // ueber den Stand der Runde). Sie greift auch dort, wo ein aelteres Relay
+  // laeuft oder der Stand aus dem Raumzustand nachgereicht wird.
+  const selbeFolge = Number(stand.season || 0) === Number(lokal.season || 0)
+    && Number(stand.episode || 0) === Number(lokal.episode || 0);
+  if (standOhneStelle(stand) && selbeFolge && Number(lokal.position) > 0) {
+    return { art: "nichts" };
+  }
 
   const gleicherAnbieter = providerModel.hostFromUrl(lokal.url).toLowerCase()
     === providerModel.hostFromUrl(stand.url || "").toLowerCase();
@@ -1906,6 +1930,7 @@ function watchpartyEintragAbgleichen(lokal, stand) {
 }
 
 module.exports = {
+  standOhneStelle,
   watchpartyStandUebernehmen,
   watchpartyEintragAbgleichen,
   watchpartyArchivAbgleichen,
