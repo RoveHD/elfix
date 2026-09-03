@@ -20,10 +20,10 @@
 // auf dem Telefon in den Rahmen des Hosters geht.
 
 const {
-  auftragAnlegen, auftragGilt, naechsterSchritt, versuchVermerken,
+  auftragAnlegen, auftragGilt, naechsterSchritt, versuchVermerken, versuchBeantwortet,
   berichtVerarbeiten, berichtLesen, startScript, standTraegtNichts,
-  MELDE_START, HOECHSTVERSUCHE, AUFTRAG_FRIST_MS, BERICHT_FRIST_MS, ABSTAND_MS,
-  UEBERLAGERUNG_WAEHLER
+  MELDE_START, HOECHSTVERSUCHE, HOECHSTANKLOPFEN, AUFTRAG_FRIST_MS, BERICHT_FRIST_MS,
+  ABSTAND_MS, UEBERLAGERUNG_WAEHLER
 } = require("../src/watchparty-autostart");
 const {
   serverNormalisieren, serverBeanstandung, websocketAdresse
@@ -438,14 +438,20 @@ const ereignis = (felder) => ({
       danach.tun === "anfordern", danach.tun);
   }
 
-  // 20. Keine Endlosschleife: nach den Versuchen ist Schluss, mit Begruendung.
+  // 20. Keine Endlosschleife: nach den *beantworteten* Versuchen ist Schluss,
+  //     mit Begruendung. Beantwortet heisst: ein Player hat gesagt, wie es
+  //     ausging.
   {
     const a = basis();
     let t = jetzt;
     for (let i = 0; i < HOECHSTVERSUCHE; i += 1) {
       t += 20000;
       const schritt = naechsterSchritt(a, { jetzt: t, generation: 3, raum: a.raum, key: a.key });
-      if (schritt.tun === "anfordern") versuchVermerken(a, t);
+      if (schritt.tun === "anfordern") {
+        versuchVermerken(a, t);
+        // Der Player hat geantwortet - erst damit ist es ein Versuch.
+        versuchBeantwortet(a);
+      }
     }
     const ende = naechsterSchritt(a, { jetzt: t + 20000, generation: 3, raum: a.raum, key: a.key });
     pruefe("20. Nach den erlaubten Versuchen wird aufgegeben",
@@ -454,6 +460,46 @@ const ereignis = (felder) => ({
     pruefe("20b. Und der Grund ist lesbar", ende.grund.length > 0, ende.grund);
   }
 
+  // 20c. Der gemeldete Fehler: ein Anlauf, der keinen Player findet, bleibt
+  //      still (startScript: "kein-player") und darf deshalb keinen Versuch
+  //      kosten. Gemessen am 3.9.2026 auf dem Fernseher, S.to: der erste
+  //      Anlauf ging "in 2 Rahmen", in keinem lag ein Video, und drei weitere
+  //      stille Anlaeufe spaeter war die Geduld weg - waehrend der Player
+  //      gerade erst entstand.
+  {
+    const a = basis();
+    let t = jetzt;
+    for (let i = 0; i < HOECHSTVERSUCHE + 2; i += 1) {
+      t += 20000;
+      const schritt = naechsterSchritt(a, { jetzt: t, generation: 3, raum: a.raum, key: a.key });
+      if (schritt.tun === "anfordern") versuchVermerken(a, t);
+    }
+    const weiter = naechsterSchritt(a, { jetzt: t + 20000, generation: 3, raum: a.raum, key: a.key });
+    pruefe("20c. Stille Anlaeufe kosten keinen Versuch",
+      weiter.tun === "anfordern" && a.versuche === 0,
+      `${weiter.tun}, versuche=${a.versuche}, angeklopft=${a.angeklopft}`);
+  }
+
+  // 20d. Aber endlos ist auch das nicht: kommt nie ein Player, greift der
+  //      aeussere Deckel. Sonst liefe der Auftrag bis zu seiner Frist, und der
+  //      Zuschauer bekaeme minutenlang keine Ansage.
+  {
+    const a = basis();
+    let t = jetzt;
+    // Realistischer Takt: ein stiller Anlauf wartet die Berichtsfrist ab
+    // (9 s) und geht dann weiter - nicht zwanzig Sekunden, sonst laeuft
+    // die Auftragsfrist ab, bevor der Deckel ueberhaupt greifen kann.
+    for (let i = 0; i < HOECHSTANKLOPFEN + 2; i += 1) {
+      t += 12000;
+      const schritt = naechsterSchritt(a, { jetzt: t, generation: 3, raum: a.raum, key: a.key });
+      if (schritt.tun === "anfordern") versuchVermerken(a, t);
+    }
+    const ende = naechsterSchritt(a, { jetzt: t + 20000, generation: 3, raum: a.raum, key: a.key });
+    pruefe("20d. Ohne jeden Player ist nach dem aeusseren Deckel Schluss",
+      ende.tun === "aufgeben" && a.angeklopft === HOECHSTANKLOPFEN,
+      `${ende.tun} nach ${a.angeklopft} Anlaeufen: ${ende.grund}`);
+    pruefe("20e. Und auch dieser Grund ist lesbar", ende.grund.length > 0, ende.grund);
+  }
   // 21. Ein Bericht aus einem anderen Auftrag wird abgewiesen - sonst meldete
   //     der Player der vorigen Folge diesen hier als erledigt.
   {

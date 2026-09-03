@@ -810,7 +810,15 @@
   function autostartBericht(zeile) {
     const bericht = autostart.berichtLesen(zeile);
     if (!bericht) return null;
+    // Ob ueberhaupt noch ein Anlauf auf Antwort wartet - vor dem Verarbeiten
+    // gelesen, weil es gleich zurueckgesetzt wird.
+    const warOffen = berichtOffenSeit !== 0;
     const passt = autostart.berichtVerarbeiten(auftrag, bericht);
+    // Erst jetzt wird aus dem Anlauf ein Versuch: ein Player hat geantwortet.
+    // Nur beim ersten Bericht - liegen in einem Dokument zwei Videorahmen,
+    // kaemen sonst zwei Antworten auf einen Anlauf, und die Geduld waere
+    // doppelt so schnell aufgebraucht.
+    if (passt && warOffen) autostart.versuchBeantwortet(auftrag);
     // Nur der eigene Bericht macht den Weg fuer den naechsten Versuch frei.
     // Der Player der vorigen Folge meldet sonst diesen Auftrag als erledigt.
     if (passt) berichtOffenSeit = 0;

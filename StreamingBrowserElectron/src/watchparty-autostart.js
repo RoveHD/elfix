@@ -117,8 +117,26 @@ function standTraegtNichts(ereignis) {
   return !(Number(ereignis.videoTime) > LEERE_STELLE_S);
 }
 
-/** Wie oft ein Auftrag hoechstens anklopft. Danach ist es ein Fehlschlag mit Begruendung. */
+/**
+ * Wie oft ein Auftrag hoechstens einen *beantworteten* Versuch machen darf.
+ *
+ * <p>Beantwortet heisst: das Startskript hat einen Player gefunden und gesagt,
+ * wie es ausging. Vier davon sind reichlich - wer viermal hintereinander
+ * blockiert wird, wird es beim fuenften Mal auch.
+ */
 const HOECHSTVERSUCHE = 4;
+/**
+ * Wie oft ueberhaupt angeklopft werden darf, beantwortet oder nicht.
+ *
+ * <p>Der aeussere Deckel. Er faengt den Fall, in dem nie ein Player auftaucht:
+ * dann bleibt jeder Anlauf still, keiner zaehlt als Versuch, und ohne diese
+ * Zahl liefe der Auftrag bis zu seiner Frist weiter.
+ *
+ * <p>Grosszuegig, weil ein stiller Anlauf nichts kostet ausser einem Skript in
+ * Rahmen, die es ohnehin ignorieren - und weil genau hier der gemeldete Fehler
+ * sass: die Rahmen des Hosters entstanden ueber eine halbe Minute hinweg.
+ */
+const HOECHSTANKLOPFEN = 10;
 /** Wie lange ein Auftrag ueberhaupt gilt - danach ist die Lage eine andere. */
 const AUFTRAG_FRIST_MS = 180000;
 /** Wie lange auf den Bericht eines Versuchs gewartet wird, bevor der naechste kommt. */
@@ -167,6 +185,14 @@ function auftragAnlegen(angaben = {}) {
     oertlich: Boolean(angaben.oertlich),
     stelle: Number(angaben.stelle) || 0,
     erstellt: Number(angaben.jetzt) || 0,
+    // Zwei Zahlen und nicht eine. `angeklopft` zaehlt, wie oft das Skript
+    // hinausging; `versuche` nur die Anlaeufe, auf die ein Player geantwortet
+    // hat. Der Unterschied ist der gemeldete Fehler: geht das Skript in Rahmen,
+    // in denen noch kein Video liegt, bleibt es dort still (siehe
+    // startScript: "kein-player"), und ein solcher Anlauf hat nie eine Chance
+    // gehabt. Ihn als Versuch zu zaehlen heisst, die Geduld an etwas zu
+    // verbrauchen, das noch gar nicht da war.
+    angeklopft: 0,
     versuche: 0,
     letzterVersuch: 0,
     fertig: false,
@@ -225,19 +251,47 @@ function naechsterSchritt(auftrag, lage = {}) {
   if (auftrag.versuche >= HOECHSTVERSUCHE) {
     return { tun: "aufgeben", grund: auftrag.grund || "kein start nach " + HOECHSTVERSUCHE + " Versuchen", wartenMs: 0 };
   }
+  // Der aeussere Deckel: nie ein Player, also nie eine Antwort, also nie ein
+  // gezaehlter Versuch. Ohne ihn liefe der Auftrag bis zu seiner Frist.
+  if (auftrag.angeklopft >= HOECHSTANKLOPFEN) {
+    return {
+      tun: "aufgeben",
+      grund: auftrag.grund || "kein Player nach " + HOECHSTANKLOPFEN + " Anlaeufen",
+      wartenMs: 0
+    };
+  }
 
-  const abstand = ABSTAND_MS[Math.min(auftrag.versuche, ABSTAND_MS.length - 1)];
+  const abstand = ABSTAND_MS[Math.min(auftrag.angeklopft, ABSTAND_MS.length - 1)];
   if (auftrag.letzterVersuch && jetzt - auftrag.letzterVersuch < abstand) {
     return { tun: "warten", grund: "abstand", wartenMs: abstand - (jetzt - auftrag.letzterVersuch) };
   }
-  return { tun: "anfordern", grund: "versuch " + (auftrag.versuche + 1), wartenMs: 0 };
+  return { tun: "anfordern", grund: "versuch " + (auftrag.angeklopft + 1), wartenMs: 0 };
 }
 
-/** Einen Versuch verbuchen. Der Auftrag wird dabei fortgeschrieben. */
+/**
+ * Einen Anlauf verbuchen - das Skript geht hinaus.
+ *
+ * <p>Ob daraus ein Versuch wird, entscheidet erst die Antwort; siehe
+ * {@link versuchBeantwortet}.
+ */
 function versuchVermerken(auftrag, jetzt) {
   if (!auftrag) return auftrag;
-  auftrag.versuche += 1;
+  auftrag.angeklopft += 1;
   auftrag.letzterVersuch = Number(jetzt) || 0;
+  return auftrag;
+}
+
+/**
+ * Aus einem Anlauf wird ein Versuch: ein Player hat geantwortet.
+ *
+ * <p>Genau einmal je Anlauf. Der Aufrufer stellt das sicher, indem er nur den
+ * ersten Bericht durchlaesst - in einem Dokument mit zwei Videorahmen kaemen
+ * sonst zwei Antworten auf einen Anlauf, und die Geduld waere doppelt so
+ * schnell aufgebraucht.
+ */
+function versuchBeantwortet(auftrag) {
+  if (!auftrag) return auftrag;
+  auftrag.versuche += 1;
   return auftrag;
 }
 
@@ -520,6 +574,7 @@ module.exports = {
   PHASE_QUELLE,
   UEBERLAGERUNG_WAEHLER,
   HOECHSTVERSUCHE,
+  HOECHSTANKLOPFEN,
   AUFTRAG_FRIST_MS,
   BERICHT_FRIST_MS,
   ABSTAND_MS,
@@ -529,6 +584,7 @@ module.exports = {
   auftragGilt,
   naechsterSchritt,
   versuchVermerken,
+  versuchBeantwortet,
   berichtVerarbeiten,
   berichtLesen,
   phaseLesen,
