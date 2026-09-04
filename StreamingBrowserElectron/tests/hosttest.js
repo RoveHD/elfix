@@ -171,16 +171,37 @@ const hostVon = (c) => c.zustand?.hostName || "";
   pruefe("Der Herzschlag des Hosts allein nimmt die Runde mit",
     A.zustand?.episode === 9, `vorher Folge ${vorher}, jetzt Folge ${A.zustand?.episode}`);
 
-  // Und ein Nicht-Host zieht die Runde nicht mit.
+  // Und ein Zuschauer ebenso - er darf die Runde mitnehmen.
+  //
+  // Hier stand einmal das Gegenteil: nur der Host nehme die Runde mit. Das war
+  // die Regel fuer den Herzschlag, nicht die der Watchparty - `control
+  // navigate` durfte schon immer jeder schicken ("es soll jeder jeden in ne
+  // neue Folge mitziehen koennen"). Damit hing alles an dieser einen Meldung,
+  // und blieb sie aus, blieb die Runde stehen: am Telefon eine Folge weiter,
+  // und Rechner und Fernseher ruehrten sich nicht. Was das Relay am
+  // Herzschlag wirklich sieht, ist der verlaesslichere Ausloeser.
   const D = client("D", "geraet-d");
   await beitreten(D);
   schlagen(D, 9, { sitzung: "geraet-d-e9" });
   await schlaf(300);
   schlagen(D, 12, { sitzung: "geraet-d-e12" });
   await schlaf(400);
-  pruefe("Ein Nicht-Host zieht die Runde nicht mit",
-    D.zustand?.episode === 9, `Runde steht auf Folge ${D.zustand?.episode}`);
+  pruefe("Auch ein Zuschauer nimmt die Runde auf seine neue Folge mit",
+    D.zustand?.episode === 12, `Runde steht auf Folge ${D.zustand?.episode}`);
   D.zu();
+  await schlaf(200);
+
+  // Wer aber ohnehin woanders stand, zieht niemanden mit: er war nicht dabei,
+  // also bestimmt er auch nicht, wohin es weitergeht.
+  const G = client("G", "geraet-g");
+  await beitreten(G);
+  schlagen(G, 3, { sitzung: "geraet-g-e3" });
+  await schlaf(300);
+  schlagen(G, 4, { sitzung: "geraet-g-e4" });
+  await schlaf(400);
+  pruefe("Wer woanders steht, zieht die Runde nicht zu sich",
+    G.zustand?.episode === 12, `Runde steht auf Folge ${G.zustand?.episode}`);
+  G.zu();
   await schlaf(200);
   // Danach meldet A wieder die Raum-Folge, damit der Ablauftest sauber startet.
   schlagen(A, 9, { sitzung: "geraet-a-e9" });

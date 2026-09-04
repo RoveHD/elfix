@@ -938,6 +938,11 @@ function standSetzen(eintrag, geraetId, name, werte) {
     // haemmert im Sekundentakt.
     geholt: vorher.geholt || 0,
     gerueckt: vorher.gerueckt || 0,
+    // Dasselbe fuer die Gegenrichtung: wann diesem Geraet zuletzt ein Pause
+    // nachgehalten wurde. Ohne den Uebertrag baut standSetzen den Eintrag bei
+    // jedem Herzschlag neu, der Stempel waere weg und die Bremse zwecklos -
+    // das Relay schickte im Sekundentakt Pausen hinterher.
+    gestoppt: vorher.gestoppt || 0,
     name: name || vorher.name || eintrag.members.get(geraetId) || "Gerät",
     position: werte.position == null ? (vorher.position || 0) : werte.position,
     paused: werte.paused == null ? Boolean(vorher.paused) : Boolean(werte.paused),
@@ -1678,7 +1683,38 @@ wss.on("connection", (socket) => {
       // neuen Folge und zaehlt fuer die alte nicht mehr mit - die Bedingung
       // war nie wahr, und der Raum folgte der Folge nur ueber den
       // Wechsel-Befehl. Blieb der aus, hing die Runde fest.
-      if (socket.geraetId === hostVorher && folge && folge !== eintrag.episode) {
+      //
+      // Und nicht nur die des Hosts: *jeder* Folgenwechsel, den das Relay an
+      // einem Geraet wirklich sieht, zieht die Runde nach.
+      //
+      // Der Grund ist der gemeldete Fall vom 4.9.2026: am Telefon eine Folge
+      // weiter, und Rechner und Fernseher ruehrten sich nicht. Der Weg dahin
+      // war bis hierher allein `control navigate` - eine einzige Meldung, die
+      // das Geraet selbst schicken muss. Schickt es sie nicht (die Bruecke
+      // haelt sich fuer einen Nachzieher, die Seite lud noch, die Leitung war
+      // gerade weg), erfaehrt die Runde von dem Wechsel nie: sie blieb bei der
+      // alten Folge, der Takt zog niemanden, und die Leiste zeigte
+      // stundenlang "2 woanders".
+      //
+      // Der Herzschlag dagegen kommt im Sekundentakt und traegt Folge und
+      // Adresse. Was sich darin aendert, ist keine Behauptung, sondern eine
+      // Beobachtung - und die ist der verlaesslichere Ausloeser.
+      //
+      // Drei Faelle bleiben ausdruecklich draussen:
+      //
+      //   - Wer neu dazukommt, hat kein "vorher" und wirft die Runde damit
+      //     nicht auf seine Folge zurueck (joinruecksturztest).
+      //   - Wer der Runde gerade folgt, meldet am Ende die Folge, bei der sie
+      //     ohnehin steht - dann ist nichts zu tun.
+      //   - Und wer ohnehin woanders stand, zieht niemanden: er war nicht
+      //     dabei, also bestimmt er auch nicht, wohin es weitergeht. Sonst
+      //     riesse ein Geraet, das noch bei Folge 1 haengt, die ganze Runde
+      //     von Folge 5 auf Folge 2, sobald dort jemand weiterblaettert.
+      //     Weiterziehen darf nur, wer mit der Runde zusammen dastand.
+      const eigenerWechsel = Boolean(vorher && vorher.episode)
+        && folge && folge !== vorher.episode
+        && (!eintrag.episode || vorher.episode === eintrag.episode);
+      if (folge && folge !== eintrag.episode && (socket.geraetId === hostVorher || eigenerWechsel)) {
         eintrag.episode = folge;
         eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
         const adresse = httpAdresse(nachricht.url);
@@ -1689,7 +1725,13 @@ wss.on("connection", (socket) => {
         eintrag.pauseAusgerichtet = false;
         eintrag.letzteAktion = null;
         fortschrittAufFolge(eintrag, zahl(nachricht.position, 100000), socket.name);
+        console.log(`Folge der Runde: ${socket.name || socket.geraetId} steht bei `
+          + `${folgenKennung(eintrag.season, eintrag.episode)} - die Runde zieht nach`);
         zustandSenden(socket.raum);
+        // Und die uebrigen gleich mit, statt bis zum naechsten Takt zu warten.
+        // Der Takt ist das Netz darunter; das Mitziehen soll sich anfuehlen
+        // wie ein Knopfdruck und nicht wie eine Wartezeit.
+        nachzueglerHolen();
       }
 
       // Bei jeder Pause ruecken alle exakt auf die Stelle des Hosts. Sein
@@ -1751,6 +1793,22 @@ wss.on("connection", (socket) => {
       const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
       const hostJetzt = aktuellerHost(socket.raum, eintrag);
 
+      // Die Folgenkennung fuer die drei Nachrichten, die gleich *nur an dieses
+      // eine Geraet* gehen: Messung, nachgereichtes Play, nachgehaltene Pause.
+      //
+      // Sie traegt, was das Geraet gerade selbst gemeldet hat, und nicht den
+      // Stand der Runde. Der Player drueben vergleicht sie mit der Folge, die
+      // bei ihm offen steht - und die ist die Quelle genau dieser Angabe.
+      // Nimmt man stattdessen die der Runde, faellt die Nachricht bei jeder
+      // Abweichung als "andere Folge" durch, obwohl beide dieselbe Folge
+      // meinen: der Raum kennt vielleicht keine Staffel (die Adresse traegt
+      // keine), das Geraet aber schon - oder umgekehrt. Dass wirklich dieselbe
+      // Folge gemeint ist, entscheidet `gleicheFolge` eine Zeile darueber; die
+      // Kennung sagt es dem Player nur in seiner eigenen Schreibweise.
+      const kennungFuerIhn = folge
+        ? folgenKennung(zahl(nachricht.season, 999), folge)
+        : folgenKennung(eintrag.season, eintrag.episode);
+
       if (hostJetzt && hostJetzt.geraetId !== socket.geraetId
         && !pausiert && !hostJetzt.paused && !eintrag.sync
         && gleicheFolge) {
@@ -1775,7 +1833,7 @@ wss.on("connection", (socket) => {
             timestamp: jetzt,
             playing: stand.laeuft,
             sequenceId: naechsteNummer(eintrag),
-            episodeId: folgenKennung(eintrag.season, eintrag.episode),
+            episodeId: kennungFuerIhn,
             hostId: hostJetzt.geraetId
           });
         }
@@ -1818,10 +1876,74 @@ wss.on("connection", (socket) => {
             timestamp: jetzt,
             playing: stand.laeuft,
             sequenceId: naechsteNummer(eintrag),
-            episodeId: folgenKennung(eintrag.season, eintrag.episode),
+            episodeId: kennungFuerIhn,
             hostId: aktuelleHostId(socket.raum, eintrag)
           });
         }
+      }
+
+      // Und dasselbe andersherum: die Runde steht, dieses Geraet laeuft.
+      //
+      // Genau das war gemeldet - "am Fernseher spielt es weiter, am Handy und
+      // am PC ist pausiert". Fuer diese Richtung gab es bis hierher nichts:
+      //
+      //   - Die Driftmessung oben verlangt, dass *beide* laufen. Steht der
+      //     Host, misst sie nichts.
+      //   - Das Nachreichen darunter gilt nur dem, der selbst steht.
+      //   - Und `control pause` geht einmal hinaus. Wer ihn verpasst - weil
+      //     sein Player gerade neu lud, weil er kurz bei einer anderen Folge
+      //     stand, weil die Leitung zuckte -, lief danach fuer immer allein
+      //     weiter. Nichts hat ihn je wieder angehalten.
+      //
+      // Deshalb hier die Gegenrichtung, nach denselben Regeln: nur bei
+      // derselben Folge, nur an den Einzelnen, und hoechstens alle paar
+      // Sekunden.
+      //
+      // Massgeblich ist ausschliesslich der Host, wie er sich *selbst* gerade
+      // meldet - nicht `eintrag.live`. Der ist der zuletzt an alle geschickte
+      // Befehl und veraltet: nach dem Play eines Nicht-Hosts steht dort noch
+      // "pause", waehrend laengst alle laufen. Wer danach ginge, hielte die
+      // Runde bei jedem Herzschlag wieder an, obwohl gerade jemand Play
+      // gedrueckt hat. Der frische Stand des Hosts kann das nicht: druecken
+      // die anderen Play, laeuft auch sein Player Sekundenbruchteile spaeter
+      // an, und ab da meldet er sich als laufend.
+      //
+      // Ein frisches Play der Runde ist trotzdem tabu. Drueckt ein Zuschauer
+      // Play, laeuft der Player des Hosts nicht in derselben Millisekunde an -
+      // er puffert erst, und bis dahin meldet er sich weiter als angehalten.
+      // Ohne diese Frist bekaeme genau in dieser Luecke jeder, der schon
+      // laeuft, eine Pause hinterher, und das Weiterschauen faenge mit einem
+      // Ruck an. Nach ein paar Sekunden zaehlt wieder allein, was der Host
+      // wirklich meldet - ein Play, dem kein laufender Player folgt, haelt die
+      // Runde nicht dauerhaft offen.
+      const frischesPlay = eintrag.letzteAktion?.type === "play"
+        && Date.now() - (eintrag.letzteAktion.timestamp || 0) < NACHREICHEN_MS;
+      const stoppFaellig = !zustand.gestoppt || Date.now() - zustand.gestoppt > NACHREICHEN_MS;
+      if (!pausiert && gleicheFolge && stoppFaellig && !eintrag.sync && !frischesPlay
+        && hostJetzt && hostJetzt.geraetId !== socket.geraetId && hostJetzt.paused) {
+        zustand.gestoppt = Date.now();
+        const jetzt = Date.now();
+        console.log(`Nachhalten: ${socket.name || socket.geraetId} laeuft, `
+          + `${hostJetzt.name || "der Host"} steht bei ${Math.round(hostJetzt.position)}s`);
+        senden({
+          type: "control",
+          key: eintrag.key,
+          action: "pause",
+          // Der Host steht - seine Stelle ist exakt und wird nicht
+          // hochgerechnet. Genau darauf soll dieses Geraet ruecken.
+          position: hostJetzt.position,
+          url: eintrag.live?.url || eintrag.url,
+          from: hostJetzt.name || "Host",
+          host: false,
+          resync: true,
+          at: jetzt,
+          videoTime: hostJetzt.position,
+          timestamp: jetzt,
+          playing: false,
+          sequenceId: naechsteNummer(eintrag),
+          episodeId: kennungFuerIhn,
+          hostId: hostJetzt.geraetId
+        });
       }
 
       // Der Host haengt an den lebenden Meldungen: wechselt jemand die Folge
