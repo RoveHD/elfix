@@ -775,7 +775,24 @@ public final class Mitschauen {
         int[] folge = folgeAus(url);
         // Ohne Folgenangabe ist es keine Folgenseite - ein Film oder eine
         // Uebersicht. Dann gibt es nichts zu melden und nichts abzugleichen.
-        if (folge[1] <= 0) return;
+        //
+        // Der Merker faellt hier trotzdem, und das ist der Punkt: er sagt „ich
+        // folge gerade einem Wechsel der Runde" und schaltet damit die Meldung
+        // eigener Wechsel ab. Blieb er an einer Seite ohne Folgennummer stehen
+        // - der Uebersicht, von der aus man die naechste Folge waehlt -, dann
+        // war er von da an dauerhaft an: jeder eigene Folgenwechsel danach
+        // wurde verschluckt, und die Runde erfuhr nie davon. Genau der
+        // gemeldete Fall „ich geh am Handy eine Folge weiter, PC und Fernseher
+        // machen nichts".
+        //
+        // Eine zu frueh geloeschte Marke kostet dagegen nichts: welche Folge
+        // als naechstes aufgeht, hat {@link #folgen} vorher in
+        // {@code gemeldeteFolge} eingetragen - sie gilt dort als bekannt und
+        // geht nicht noch einmal als eigener Wechsel hinaus.
+        if (folge[1] <= 0) {
+            folgtDerRunde = false;
+            return;
+        }
         String marke = serienTeil(url) + "#s" + folge[0] + "e" + folge[1];
 
         if (!marke.equals(gemeldeteFolge)) {
