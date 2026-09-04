@@ -117,7 +117,14 @@ Object.defineProperty(El.prototype, 'textContent', {
 El.prototype.getBoundingClientRect = function () { return this.rechteck; };
 El.prototype.entfernt = function () { return this.hasAttribute('data-elfix-schicht'); };
 
-/** Baut die Umgebung, in der ein Skript laufen kann, und laesst es laufen. */
+/**
+ * Baut die Umgebung, in der ein Skript laufen kann, und laesst es laufen.
+ *
+ * <p>Die Zeitgeber laufen hier nicht von selbst - sie kaemen in eine Umgebung,
+ * die es dann nicht mehr gibt. Sie werden gesammelt, und `vorspulen(ms)` laesst
+ * sie laufen: einmal fuer setTimeout, so oft wie faellig fuer setInterval.
+ * Damit laesst sich die Nachschau pruefen, die erst Minuten spaeter greift.
+ */
 function lauf(skript, wirt, body) {
   var wurzel = new El('html');
   var koerper = new El('body');
@@ -132,27 +139,72 @@ function lauf(skript, wirt, body) {
     querySelector: function (a) { return wurzel.querySelector(a); },
     querySelectorAll: function (a) { return wurzel.querySelectorAll(a); }
   };
-  var fenster = {};
+  var fenster = { innerWidth: 1280, innerHeight: 720 };
   var alt = {
     window: global.window, document: global.document, location: global.location,
     getComputedStyle: global.getComputedStyle, MutationObserver: global.MutationObserver,
-    console: global.console, setTimeout: global.setTimeout
+    console: global.console, setTimeout: global.setTimeout,
+    setInterval: global.setInterval, clearInterval: global.clearInterval
   };
-  global.window = fenster;
-  global.document = dokument;
-  global.location = { hostname: wirt, href: 'https://' + wirt + '/' };
-  global.getComputedStyle = function (el) { return el && el.berechnet; };
-  global.MutationObserver = function () { this.observe = function () {}; this.disconnect = function () {}; };
-  global.console = { log: function () {} };
-  // Die beiden Nachschauen des Skripts laufen hier nicht: sie wuerden in eine
-  // Umgebung fallen, die es dann nicht mehr gibt. Geprueft wird der erste Lauf.
-  global.setTimeout = function () { return 0; };
+  var uhr = 0;
+  var zeitgeber = [];
+
+  function einsetzen() {
+    global.window = fenster;
+    global.document = dokument;
+    global.location = { hostname: wirt, href: 'https://' + wirt + '/' };
+    global.getComputedStyle = function (el) { return el && el.berechnet; };
+    global.MutationObserver = function () { this.observe = function () {}; this.disconnect = function () {}; };
+    global.console = { log: function () {} };
+    global.setTimeout = function (fn, ms) {
+      zeitgeber.push({ fn: fn, faellig: uhr + (Number(ms) || 0), takt: 0 });
+      return zeitgeber.length;
+    };
+    global.setInterval = function (fn, ms) {
+      var takt = Math.max(1, Number(ms) || 0);
+      zeitgeber.push({ fn: fn, faellig: uhr + takt, takt: takt });
+      return zeitgeber.length;
+    };
+    global.clearInterval = function () {};
+  }
+  function zurueck() {
+    Object.keys(alt).forEach(function (name) { global[name] = alt[name]; });
+  }
+
+  einsetzen();
   try {
     (0, eval)(skript);
   } finally {
-    Object.keys(alt).forEach(function (name) { global[name] = alt[name]; });
+    zurueck();
   }
-  return { wurzel: wurzel, body: koerper, fenster: fenster };
+
+  // Die Uhr weiterdrehen und alles laufen lassen, was dabei faellig wird.
+  // Hoechstens 500 Ausloesungen: ein Zeitgeber, der sich selbst nachlegt,
+  // soll die Probe nicht haengen lassen.
+  function vorspulen(ms) {
+    var bis = uhr + (Number(ms) || 0);
+    einsetzen();
+    try {
+      for (var runde = 0; runde < 500; runde += 1) {
+        var naechster = null;
+        for (var i = 0; i < zeitgeber.length; i++) {
+          var z = zeitgeber[i];
+          if (z.erledigt || z.faellig > bis) continue;
+          if (!naechster || z.faellig < naechster.faellig) naechster = z;
+        }
+        if (!naechster) break;
+        uhr = naechster.faellig;
+        if (naechster.takt) naechster.faellig = uhr + naechster.takt;
+        else naechster.erledigt = true;
+        naechster.fn();
+      }
+      uhr = bis;
+    } finally {
+      zurueck();
+    }
+  }
+
+  return { wurzel: wurzel, body: koerper, fenster: fenster, vorspulen: vorspulen };
 }
 
 module.exports = { El: El, lauf: lauf };

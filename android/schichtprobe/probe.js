@@ -182,6 +182,46 @@ function video() {
   pruefe('ein srcdoc-Fenster bleibt', false, mitInhalt.entfernt());
 })();
 
+/* ------------------------------------ 8. Die Schicht, die spaeter erscheint */
+//
+// Der Fall, den der Beobachter bauartbedingt nicht sehen kann: der Kasten
+// steht beim Laden schon im Dokument, nur unsichtbar. Eingehaengt wird nie
+// etwas, also meldet der Beobachter nie etwas - das Werbeskript schaltet ihn
+// irgendwann in der zwanzigsten Minute nur sichtbar. Gemeldet als "am
+// Fernseher sind manchmal noch Werbung-Overlays ueber dem Video".
+(function () {
+  var spieler = new El('div', { class: 'player-wrap' }, { position: 'absolute', zIndex: '1000' }, GROSS);
+  spieler.anhaengen(video());
+  var spaet = new El('div', { class: 'x9c1',
+    text: 'Herzlichen Glueckwunsch! 00:19 Fordern Sie Ihren Bonus an!' },
+    { position: 'fixed', zIndex: '2147483647', display: 'none' }, { width: 640, height: 420 });
+  var leiste = new El('div', { class: 'controls', text: 'Abspielen Pause 12:03 / 23:40 Vollbild' },
+    VORN, { width: 1280, height: 60 });
+  var welt = lauf(skript, 'voe-spieler.example', [spieler, spaet, leiste]);
+
+  // Erst die beiden Nachschauen der ersten Sekunden vorbeiziehen lassen -
+  // solange der Kasten unsichtbar ist, wird er nicht angefasst.
+  welt.vorspulen(20000);
+  pruefe('unsichtbar bleibt sie unangetastet', false, spaet.entfernt());
+
+  // Und jetzt schaltet das Werbeskript sie sichtbar. Kein neuer Knoten, nur
+  // ein anderer Stil.
+  spaet.berechnet.display = 'block';
+  welt.vorspulen(30000);
+  pruefe('die spaeter eingeblendete Schicht ist weg', true, spaet.entfernt());
+  pruefe('der Player bleibt', false, spieler.entfernt());
+  pruefe('die Bedienleiste bleibt', false, leiste.entfernt());
+
+  // Und der Takt laeuft weiter, nicht nur einmal: eine zweite Schicht, die
+  // eine Viertelstunde spaeter auftaucht, faellt genauso.
+  var zweite = new El('div', { class: 'x9c2',
+    text: 'Ihr Geraet ist infiziert - jetzt bereinigen' },
+    { position: 'fixed', zIndex: '999999' }, { width: 500, height: 300 });
+  welt.body.anhaengen(zweite);
+  welt.vorspulen(15 * 60 * 1000);
+  pruefe('auch nach einer Viertelstunde wird noch nachgesehen', true, zweite.entfernt());
+})();
+
 console.log('');
 console.log(fehler === 0 ? ('alle ' + gesamt + ' Pruefungen bestanden')
   : (fehler + ' von ' + gesamt + ' Pruefungen fehlgeschlagen'));

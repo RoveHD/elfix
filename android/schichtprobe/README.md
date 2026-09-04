@@ -12,11 +12,13 @@ Fernseher ausprobieren kann, wird nicht ausprobiert.
 
 Zwei Schritte, beide ohne Netz und ohne SDK:
 
-1. **Das Skript herausschreiben.** `Werbeschichten.java` wird mit `javac` gegen
-   einen handgeschriebenen Android-Rumpf uebersetzt (vier Namen reichen), und
-   ein kurzes Hauptprogramm legt das fertige Skript als Datei ab. `node --check`
-   sagt danach, dass es ueberhaupt gueltiges JavaScript ist - im WebView eines
-   guenstigen Fernseh-Sticks waere ein Syntaxfehler still.
+1. **Die Skripte herausschreiben.** `Werbeschichten.java` wird mit `javac`
+   gegen einen handgeschriebenen Android-Rumpf uebersetzt (vier Namen reichen),
+   und ein kurzes Hauptprogramm legt beide fertigen Skripte als Datei ab - das
+   der Rahmen und das der Anbieterseite. `node --check` sagt danach, dass sie
+   ueberhaupt gueltiges JavaScript sind - im WebView eines guenstigen
+   Fernseh-Sticks waere ein Syntaxfehler still. Gelaufen wird nur das Skript
+   der Rahmen; das volle wird gelesen, nicht gefahren.
 2. **Es laufen lassen.** `probe.js` baut mit `dom.js` ein Dokument nach - so
    viel DOM, wie das Skript anfasst, mehr nicht - und prueft beide Haelften:
    die Werbung, die verschwinden muss, und den Player, der bleiben muss.
@@ -35,9 +37,17 @@ Player, seine Bedienleiste, die Qualitaetswahl, ein echtes reCAPTCHA, ein
 echtes Turnstile und der eingebettete Rahmen einer Zwischenseite der
 Hosterkette bleiben stehen.
 
+Und der Fall vom 4.9.2026 - "am Fernseher sind manchmal noch Werbung-Overlays
+ueber dem Video": eine Schicht, die beim Laden schon im Dokument steht und erst
+in der zwanzigsten Minute sichtbar geschaltet wird. Der Beobachter des Skripts
+kann sie bauartbedingt nicht sehen (es wird nie ein Knoten eingehaengt), und
+die beiden Nachschauen der ersten Sekunden sind laengst vorbei. Dafuer laeuft
+jetzt eine Nachschau im Takt weiter.
+
 ## Was es nicht ist
 
 Kein Ersatz fuer das Geraet. `dom.js` ist ein Nachbau, kein Browser: es kennt
-weder Layout noch Zeit, und die beiden Nachschauen des Skripts laufen hier gar
-nicht. Ein gruener Lauf sagt, dass die Entscheidungen stimmen - nicht, dass das
-Video laeuft.
+kein Layout, und was es von Zeit kennt, ist eine Uhr zum Drehen -
+`welt.vorspulen(ms)` laesst die Zeitgeber des Skripts laufen, damit sich die
+Nachschau ueberhaupt pruefen laesst. Ein gruener Lauf sagt, dass die
+Entscheidungen stimmen - nicht, dass das Video laeuft.

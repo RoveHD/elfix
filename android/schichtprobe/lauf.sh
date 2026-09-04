@@ -69,15 +69,22 @@ public final class SchichtSchreiben {
   public static void main(String[] args) throws Exception {
     java.nio.file.Files.write(java.nio.file.Paths.get(args[0]),
       Werbeschichten.fremdSkript("aniworld.to", false).getBytes("UTF-8"));
+    // Das volle Skript wird hier nicht gefahren, aber gelesen: ein
+    // Syntaxfehler darin heisst, dass auf der Anbieterseite gar nichts mehr
+    // filtert, und das faellt sonst erst auf dem Fernseher auf.
+    java.nio.file.Files.write(java.nio.file.Paths.get(args[1]),
+      Werbeschichten.skript(Werbeschichten.ANIWORLD,
+        java.util.Arrays.asList("doubleclick.net"), false).getBytes("UTF-8"));
   }
 }
 JAVA
 
-echo "--- Das Rahmenskript herausschreiben ---"
+echo "--- Die Skripte herausschreiben ---"
 javac -nowarn -proc:none -d "$BAU/klassen" $(find "$BAU/rumpf" "$BAU/quelle" -name '*.java')
-java -cp "$BAU/klassen" local.elflix.android.SchichtSchreiben "$BAU/fremd.js"
+java -cp "$BAU/klassen" local.elflix.android.SchichtSchreiben "$BAU/fremd.js" "$BAU/voll.js"
 node --check "$BAU/fremd.js"
-echo "ok ($(wc -c < "$BAU/fremd.js") Zeichen)"
+node --check "$BAU/voll.js"
+echo "ok (Rahmen $(wc -c < "$BAU/fremd.js") Zeichen, voll $(wc -c < "$BAU/voll.js") Zeichen)"
 
 echo
 echo "--- Gegen ein nachgebautes Dokument laufen lassen ---"
