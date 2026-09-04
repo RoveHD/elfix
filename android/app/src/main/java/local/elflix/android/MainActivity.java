@@ -8996,17 +8996,24 @@ public class MainActivity extends Activity {
         texte.setOrientation(LinearLayout.VERTICAL);
         texte.setPadding(dp(14), 0, 0, 0);
         TextView name = new TextView(this);
-        name.setText("Folge " + folge.nummer);
+        // Der Folgentitel, wenn der Anbieter einen fuehrt - sonst weiter die
+        // Nummer. Eine Staffel mit einundvierzig Zeilen "Folge 1 ... Folge 41"
+        // ist eine Liste, in der man nichts wiedererkennt.
+        name.setText(folge.ueberschrift());
         name.setTextColor(folge.gesperrt ? Theme.TEXT_DISABLED : Theme.TEXT_PRIMARY);
         name.setTextSize(fernseher ? 19 : 16);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        // Ein langer Titel darf die Zeile nicht auf drei Zeilen aufblaehen -
+        // in einer Liste zaehlt, dass alle gleich hoch sind.
+        name.setMaxLines(2);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texte.addView(name);
         TextView unter = new TextView(this);
-        unter.setText(folge.gesperrt
-            ? "Beim Anbieter nicht einzeln abspielbar"
-            : "Staffel " + folge.staffel);
+        unter.setText(folge.unterschrift());
         unter.setTextColor(Theme.TEXT_SECONDARY);
         unter.setTextSize(fernseher ? 15 : 12);
+        unter.setMaxLines(1);
+        unter.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texte.addView(unter);
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
