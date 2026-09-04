@@ -3,6 +3,63 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 1.91.9 — 4. September 2026
+
+**Wer weiterläuft, wird angehalten.** Am Fernseher lief der Film weiter,
+während Handy und PC pausiert waren — und nichts holte ihn je zurück. Für
+diese Richtung gab es bisher gar nichts: die Driftmessung verlangt, dass
+*beide* laufen (steht der Host, misst sie nicht), das Nachreichen gilt nur
+dem, der selbst steht, und `pause` geht genau einmal hinaus. Wer den einen
+Befehl verpasst — weil sein Player gerade neu lud oder die Leitung zuckte —,
+lief danach für immer allein weiter. Das Relay hält die Pause jetzt nach: auf
+die Stelle des Hosts, nur bei derselben Folge, nur an das eine Gerät und
+höchstens alle drei Sekunden. Ein frisches Play der Runde hat Vorfahrt, damit
+das Weiterschauen nicht mit einem Ruck anfängt, während der Player des Hosts
+noch puffert.
+
+**Und wer weiterblättert, nimmt alle mit.** „Ich geh am Handy eine Folge
+weiter, PC und Fernseher machen nix." Dass die Runde einem Folgenwechsel
+folgt, hing an einer einzigen Meldung, die das Gerät selbst schicken muss.
+Kommt sie nicht an, erfährt die Runde davon nie: sie bleibt bei der alten
+Folge, der Nachzügler-Takt zieht niemanden, und die Leiste zeigt „2 woanders".
+Der Herzschlag dagegen kommt im Sekundentakt und trägt Folge und Adresse — die
+Runde folgt jetzt ihm. Mitnehmen darf dabei jeder, nicht nur der Host. Wer neu
+dazukommt, wirft die Runde damit nicht zurück, und wer ohnehin woanders stand,
+zieht niemanden zu sich.
+
+Beides wirkt erst mit einem **aktualisierten Relay**.
+
+**Auch die Werbeschicht, die erst in der zwanzigsten Minute erscheint.** Am
+Fernseher lagen manchmal noch Werbe-Overlays über dem Video. Beide
+Werbeschichten-Skripte hängen an einem Beobachter, und der meldet nur *neue*
+Knoten: eine Schicht, die beim Laden schon dasteht und später bloß sichtbar
+geschaltet wird, hängt niemand ein. Nach den Nachschauen der ersten Sekunden
+hielt sie nichts mehr auf. Jetzt wird im Fünf-Sekunden-Takt weiter
+nachgesehen — und zwar billig zuerst: nur was gerade wirklich frei über allem
+liegt, kostet ein Urteil. Am Urteil selbst ändert sich nichts, es gibt nur
+einen zweiten Anlass hinzusehen.
+
+**Die Folge hat einen Namen.** In der Übersicht stand einundvierzigmal
+„Folge N" über „Staffel 1" — eine Liste aus Nummern, in der man nichts
+wiedererkennt. Der Anbieter kennt den Titel; er steht in derselben Zeile wie
+der Link. Jetzt steht er oben, die Nummer rückt in die zweite Zeile. Gelesen
+wird nur aus einer Zelle, die sich selbst als Folgentitel ausweist — führt ein
+Anbieter keinen, bleibt es bei „Folge N". Geraten wird nichts.
+
+## 1.91.7 und 1.91.8 — 4. September 2026
+
+Nachgetragen: zu diesen beiden Fassungen stand hier nichts. Der Code ist
+derselbe, 1.91.8 hat nur nachgebracht, was in der Werkbank gescheitert war.
+
+**Niemand bleibt auf einer alten Folge sitzen.** `navigate` geht einmal
+hinaus; wer ihn verpasste, stand danach allein bei der alten Folge. Das Relay
+vergleicht seitdem alle fünf Sekunden, wer wo steht, und schickt genau dem
+einen Wechselbefehl, der woanders ist — mit Sperre, damit ein langsames Gerät
+nicht im Takt eine neue Seite aufgerissen bekommt. Auslösen darf den Wechsel
+weiterhin jeder. Dazu der Vorhang beim Mitziehen (wer geholt wurde, sah die
+nackte Anbieterseite durchblitzen) und die Regel, dass ein Takt beobachtet und
+nicht entscheidet: der Nachzügler-Takt wählt keinen Host mehr.
+
 ## 1.91.6 — 3. September 2026
 
 **Wer nicht Host ist, bewegt niemanden mehr.** Spulte ein Zuschauer von Hand
