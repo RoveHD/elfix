@@ -60,7 +60,8 @@ class Knoten {
       if (teil === "a[href]") return this.tag === "a" && this.getAttribute("href") != null;
       if (teil === "tr, li" || teil === "tr" || teil === "li") return this.tag === "tr" || this.tag === "li";
       if (teil === "h1") return this.tag === "h1";
-      if (teil === "img" || teil === "svg" || teil === "a" || teil === "button") return this.tag === teil;
+      if (teil === "img" || teil === "svg" || teil === "a" || teil === "button"
+        || teil === "strong") return this.tag === teil;
       const klasse = teil.match(/^\[class\*='([^']+)'\]$/);
       if (klasse) return String(this.attribute.class || "").includes(klasse[1]);
       return false;
@@ -96,11 +97,23 @@ function staffelReiter(nummer) {
   return new Knoten("a", { href: `/anime/stream/${SLUG}/staffel-${nummer}` }, `Staffel ${nummer}`);
 }
 
-function folgenZeile(staffel, folge, { ohneHoster = false, sammelIn = 0 } = {}) {
+function folgenZeile(staffel, folge, { ohneHoster = false, sammelIn = 0,
+  titel = "", englisch = "" } = {}) {
+  const link = `/anime/stream/${SLUG}/staffel-${staffel}/episode-${folge}`;
   const kinder = [
     new Knoten("td", { class: "episode-number" }, String(folge)),
-    new Knoten("a", { href: `/anime/stream/${SLUG}/staffel-${staffel}/episode-${folge}` }, `Folge ${folge}`)
+    new Knoten("a", { href: link }, `Folge ${folge}`)
   ];
+  // So fuehren AniWorld und S.to den Folgentitel: eine eigene Zelle, darin ein
+  // Link, darin der deutsche Titel fett und der englische daneben.
+  if (titel) {
+    kinder.push(new Knoten("td", { class: "seasonEpisodeTitle" }, "", [
+      new Knoten("a", { href: link }, "", [
+        new Knoten("strong", {}, titel),
+        new Knoten("span", {}, englisch)
+      ])
+    ]));
+  }
   const watch = new Knoten("td", { class: "watch-cell" }, "",
     ohneHoster ? [] : [new Knoten("img", { src: "voe.png" })]);
   kinder.push(watch);
@@ -188,6 +201,73 @@ const SKRIPT = seitendaten.uebersichtSkript();
   pruefe("Eine leere Seite ergibt eine leere Uebersicht",
     ergebnis.staffeln.length === 0 && ergebnis.folgen.length === 0,
     "lieber keine Auskunft als eine erfundene");
+}
+
+/* -------------------------------------------------- Der Folgentitel -------- */
+//
+// Gemeldet mit einem Bild von "Super Dragonball Heroes": eine Staffel,
+// einundvierzig Zeilen, und in jeder steht "Folge N / Staffel 1". Der Anbieter
+// kennt den Titel - er steht in derselben Zeile wie der Link.
+{
+  const kinder = [new Knoten("h1", {}, "BLACK TORCH"), staffelReiter(1), staffelReiter(2)];
+  kinder.push(folgenZeile(1, 1, { titel: "Der Junge und der Wolf", englisch: "The Boy and the Wolf" }));
+  kinder.push(folgenZeile(1, 2, { titel: "Die Nacht der Klingen", englisch: "Night of Blades" }));
+  // Ohne Titelzelle - der Normalfall bei vielen Anbietern.
+  kinder.push(folgenZeile(1, 3));
+  // Eine Zelle, in der nur noch einmal die Nummer steht.
+  kinder.push(folgenZeile(1, 4, { titel: "Folge 4" }));
+  // Und die Doppelfolge, deren Zeile den Vermerk traegt.
+  kinder.push(folgenZeile(1, 5, { titel: "[In E4 enthalten]", sammelIn: 4, ohneHoster: true }));
+  // Dieselbe Nummer in einer anderen Staffel, mit eigenem Titel. Ginge die
+  // Zuordnung ueber die blosse Nummer, stuende dieser Titel gleich zweimal.
+  kinder.push(folgenZeile(2, 1, { titel: "Zweite Staffel, erste Folge" }));
+
+  const ergebnis = fahre(SKRIPT, new Knoten("body", {}, "", kinder),
+    `/anime/stream/${SLUG}/staffel-1/episode-1`);
+  const zu = (staffel, folge) => ergebnis.folgen.find((f) => f.staffel === staffel && f.folge === folge);
+
+  pruefe("Der Folgentitel steht in der Uebersicht",
+    zu(1, 1) && zu(1, 1).titel === "Der Junge und der Wolf",
+    zu(1, 1) ? zu(1, 1).titel : "(keine Folge 1)");
+  pruefe("Der englische Titel klebt nicht daran",
+    zu(1, 2) && zu(1, 2).titel === "Die Nacht der Klingen",
+    zu(1, 2) ? zu(1, 2).titel : "-");
+  pruefe("Ohne Titelzelle bleibt der Titel leer",
+    zu(1, 3) && zu(1, 3).titel === "",
+    zu(1, 3) ? `"${zu(1, 3).titel}"` : "-");
+  pruefe("Eine Zelle, die nur die Nummer wiederholt, ist kein Titel",
+    zu(1, 4) && zu(1, 4).titel === "",
+    zu(1, 4) ? `"${zu(1, 4).titel}"` : "-");
+  pruefe("Der Vermerk einer Doppelfolge ist kein Titel",
+    zu(1, 5) && zu(1, 5).titel === "" && zu(1, 5).gesperrt === true,
+    zu(1, 5) ? `"${zu(1, 5).titel}"` : "-");
+  pruefe("Der Titel gehoert zu seiner Staffel, nicht zu seiner Nummer",
+    zu(2, 1) && zu(2, 1).titel === "Zweite Staffel, erste Folge"
+      && zu(1, 1).titel === "Der Junge und der Wolf",
+    zu(2, 1) ? zu(2, 1).titel : "-");
+}
+
+// Und die Zeile selbst: steht oben der Titel, gehoert die Nummer darunter.
+{
+  const fs3 = require("fs");
+  const path3 = require("path");
+  const UEBERSICHT = fs3.readFileSync(
+    path3.join(__dirname, "..", "..", "android/app/src/main/java/local/elflix/android/Serienuebersicht.java"),
+    "utf8");
+  const HAUPT2 = fs3.readFileSync(
+    path3.join(__dirname, "..", "..", "android/app/src/main/java/local/elflix/android/MainActivity.java"),
+    "utf8");
+
+  pruefe("Ohne Titel steht weiter die Nummer oben",
+    /public String ueberschrift\(\) \{\s*return titel\.isEmpty\(\) \? "Folge " \+ nummer : titel;/
+      .test(UEBERSICHT),
+    "geraten wird nichts - lieber die Nummer als ein falscher Titel");
+  pruefe("Mit Titel rueckt die Folgennummer in die zweite Zeile",
+    /public String unterschrift\(\)[\s\S]{0,400}?return "Staffel " \+ staffel \+ "  ·  Folge " \+ nummer;/
+      .test(UEBERSICHT));
+  pruefe("Und die Liste zeichnet beides",
+    /name\.setText\(folge\.ueberschrift\(\)\)/.test(HAUPT2)
+      && /unter\.setText\(folge\.unterschrift\(\)\)/.test(HAUPT2));
 }
 
 /* ------------------------------- Und was keine Uebersicht bekommt ---------- */

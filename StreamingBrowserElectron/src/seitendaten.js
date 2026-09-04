@@ -810,6 +810,62 @@ function uebersichtSkript() {
       return raus;
     })();
 
+    // Wie die Folge heisst.
+    //
+    // Bis hierher stand in der Uebersicht "Folge 7 / Staffel 1" und sonst
+    // nichts - bei einundvierzig Folgen einer Staffel ist das eine Liste von
+    // Nummern, in der man nichts wiedererkennt. Der Anbieter kennt den Titel;
+    // er steht in der Zeile, in der auch der Link steht.
+    //
+    // Gelesen wird nur aus einer Zelle, die sich selbst als Folgentitel
+    // ausweist (AniWorld und S.to: "seasonEpisodeTitle"). Kein Rueckgriff auf
+    // "irgendein Text in der Zeile": dort steht bei anderen Anbietern die
+    // Laufzeit, ein "Jetzt ansehen" oder der Serienname, und ein falscher
+    // Titel ist schlechter als gar keiner - "Folge 7" ist wenigstens wahr.
+    //
+    // Zwei Titel je Zeile sind der Normalfall (deutsch im strong, englisch im
+    // span daneben). Genommen wird der erste: textContent klebt beide ohne
+    // Trennung aneinander, und "Der Junge und der WolfThe Boy and the Wolf"
+    // waere keine Auskunft.
+    const TITELZELLE = "[class*='seasonEpisodeTitle'], [class*='EpisodeTitle'],"
+      + " [class*='episodeTitle'], [class*='episode-title']";
+    // Leerraum ohne Backslash - dieses Skript kommt ohne aus, siehe oben.
+    const reLeerraum = new RegExp(
+      "[" + String.fromCharCode(9) + String.fromCharCode(10)
+      + String.fromCharCode(13) + " ]+", "g");
+    const reNurNummer = new RegExp("^(?:folge|episode|ep|e)? *[0-9]+$", "i");
+    const titelSauber = (roh) => {
+      const text = String(roh || "").replace(reLeerraum, " ").trim();
+      // Leer, nur die Nummer noch einmal, der Vermerk einer Sammelfolge, oder
+      // so lang, dass es kein Titel mehr ist, sondern die halbe Zeile.
+      if (!text || text.length > 120) return "";
+      if (reNurNummer.test(text) || reSammelfolge.test(text)) return "";
+      return text;
+    };
+
+    const titel = (() => {
+      const karte = new Map();
+      for (const zeile of Array.from(document.querySelectorAll("tr, li"))) {
+        const zelle = zeile.querySelector(TITELZELLE);
+        if (!zelle) continue;
+        // Zu welcher Folge die Zeile gehoert, sagt ihr eigener Link - dieselbe
+        // Regel wie unten fuer die Liste selbst. Ueber die blosse Nummer zu
+        // gehen waere falsch, sobald auf der Seite zwei Staffeln stehen.
+        let gehoert = null;
+        for (const a of Array.from(zeile.querySelectorAll("a[href]"))) {
+          gehoert = folgeAusLink(a.getAttribute("href") || "");
+          if (gehoert) break;
+        }
+        if (!gehoert) continue;
+        const stark = zelle.querySelector("strong");
+        const sauber = titelSauber((stark && stark.textContent) || zelle.textContent);
+        if (!sauber) continue;
+        const schluessel = gehoert.staffel + "x" + gehoert.folge;
+        if (!karte.has(schluessel)) karte.set(schluessel, sauber);
+      }
+      return karte;
+    })();
+
     const anker = Array.from(document.querySelectorAll("a[href]"));
 
     const staffeln = new Map();
@@ -833,6 +889,7 @@ function uebersichtSkript() {
         staffel: gefunden.staffel,
         folge: gefunden.folge,
         url: gefunden.url,
+        titel: titel.get(schluessel) || "",
         gesperrt: gesperrte.has(gefunden.folge)
       });
     }

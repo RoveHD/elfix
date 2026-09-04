@@ -56,6 +56,15 @@ public final class Serienuebersicht {
         public final int nummer;
         public final String url;
         /**
+         * Wie die Folge heisst - oder leer.
+         *
+         * <p>Leer ist der Normalfall und kein Fehler: nicht jeder Anbieter
+         * fuehrt einen Folgentitel, und geraten wird hier nichts. Wer keinen
+         * hat, bekommt in der Liste weiter "Folge 7" - das ist wenigstens
+         * wahr.
+         */
+        public final String titel;
+        /**
          * Steht auf der Seite, laesst sich aber nicht abspielen.
          *
          * <p>S.to fasst Doppelfolgen zusammen und laesst die uebrigen Zeilen
@@ -65,11 +74,30 @@ public final class Serienuebersicht {
          */
         public final boolean gesperrt;
 
-        Folge(int staffel, int nummer, String url, boolean gesperrt) {
+        Folge(int staffel, int nummer, String url, String titel, boolean gesperrt) {
             this.staffel = staffel;
             this.nummer = nummer;
             this.url = url;
+            this.titel = titel == null ? "" : titel.trim();
             this.gesperrt = gesperrt;
+        }
+
+        /** Die Zeile, die in der Liste oben steht. */
+        public String ueberschrift() {
+            return titel.isEmpty() ? "Folge " + nummer : titel;
+        }
+
+        /**
+         * Und die Zeile darunter.
+         *
+         * <p>Steht oben der Titel, gehoert die Nummer hierhin - sonst waere
+         * sie nur noch die kleine Ziffer am Rand, und in einer Liste mit
+         * einundvierzig Eintraegen sucht man sie dann.
+         */
+        public String unterschrift() {
+            if (gesperrt) return "Beim Anbieter nicht einzeln abspielbar";
+            if (titel.isEmpty()) return "Staffel " + staffel;
+            return "Staffel " + staffel + "  ·  Folge " + nummer;
         }
     }
 
@@ -223,6 +251,7 @@ public final class Serienuebersicht {
                 String url = eintrag.optString("url", "");
                 if (nummer <= 0 || url.isEmpty()) continue;
                 folgen.add(new Folge(eintrag.optInt("staffel", 1), nummer, url,
+                    eintrag.optString("titel", ""),
                     eintrag.optBoolean("gesperrt", false)));
             }
         }
