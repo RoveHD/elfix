@@ -130,6 +130,30 @@ public final class Werbeschichten {
     static final int STAPEL = 60;
     /** Wie lange nach einer Aenderung gewartet wird, bevor der Durchgang laeuft. */
     static final int PAUSE_MS = 250;
+    /**
+     * In welchem Abstand nachgesehen wird, ob inzwischen eine Schicht dasteht.
+     *
+     * <p>Der Beobachter sieht nur <em>neue</em> Knoten. Eine Werbeschicht, die
+     * beim Laden schon im Dokument steht und erst Minuten spaeter sichtbar
+     * geschaltet wird - {@code display:none} raus, {@code z-index} rauf -, ist
+     * fuer ihn kein Ereignis: sie wurde nie eingehaengt. Beurteilt wurde sie
+     * genau einmal, naemlich unsichtbar, und danach stand sie in der
+     * Merkliste. Genau das ist die gemeldete Werbung "manchmal" mitten im
+     * laufenden Film.
+     *
+     * <p>Deshalb dieser Takt. Er ersetzt den Beobachter nicht, er faengt nur
+     * das auf, was der Beobachter bauartbedingt nicht sehen kann.
+     */
+    static final int NACHSCHAU_MS = 5000;
+    /**
+     * Wieviele Anwaerter ein solcher Durchgang hoechstens ansieht.
+     *
+     * <p>Der Deckel steht hier und nicht in der Zeit: was der Durchgang
+     * kostet, haengt an der Zahl der Elemente, die er anfassen muss, und auf
+     * einem Fernseh-Stick kostet {@code getComputedStyle} je Element genug,
+     * dass man es sieht.
+     */
+    static final int NACHSCHAU_MAX = 200;
 
     /* ------------------------------------------------------- Anbieterkennung */
 
@@ -655,6 +679,9 @@ public final class Werbeschichten {
             + "var HOECHST=" + HOECHSTPRUEFUNGEN + ";"
             + "var STAPEL=" + STAPEL + ";"
             + "var PAUSE=" + PAUSE_MS + ";"
+            + "var NACHSCHAU=" + NACHSCHAU_MS + ";"
+            + "var NACHSCHAU_MAX=" + NACHSCHAU_MAX + ";"
+            + "var SCHICHT_EBENE=" + SCHICHT_EBENE + ";"
             + BASIS;
     }
 
@@ -1130,7 +1157,61 @@ public final class Werbeschichten {
         // weg, damit dieselben Elemente noch einmal beurteilt werden duerfen.
         + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf(true);}},2500);"
         + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf(true);}},7000);"
-        + "window.__elfixTvWerbungStand=function(){return{entfernt:entfernt,geprueft:geprueft};};"
+
+        // ------------------------------------------------------ Die Nachschau
+        //
+        // Dieselbe Luecke wie im Rahmenskript, dieselbe Antwort: der
+        // Beobachter meldet nur neue Knoten, und eine Schicht, die beim Laden
+        // schon dasteht und erst in der zwanzigsten Minute sichtbar geschaltet
+        // wird, haengt niemand ein. Nach sieben Sekunden hat sie bis hierher
+        // nichts mehr aufgehalten.
+        //
+        // Anders als der volle Lauf beurteilt dieser Durchgang aber nicht alle
+        // Anwaerter, sondern nur das, was gerade wirklich frei ueber allem
+        // liegt - die Form, die eine Schicht ueber dem Video hat. Die Frage
+        // danach ist ein getComputedStyle, das Urteil dahinter kostet ein
+        // Vielfaches; auf einem Fernseh-Stick ist das der Unterschied zwischen
+        // unbemerkt und Ruckeln. Und die Merkliste zaehlt hier nicht: dass ein
+        // Element vor zehn Minuten harmlos war, sagt ueber das, was es jetzt
+        // anzeigt, nichts.
+        + "function freiUeberAllem(el){"
+            + "var s=null;try{s=getComputedStyle(el);}catch(e){return false;}"
+            + "if(!s)return false;"
+            + "if(s.display==='none'||s.visibility==='hidden')return false;"
+            + "if(parseFloat(s.opacity||'1')<0.05)return false;"
+            + "if(s.position!=='fixed'&&s.position!=='absolute'&&s.position!=='sticky')return false;"
+            + "if((parseInt(s.zIndex,10)||0)<SCHICHT_EBENE)return false;"
+            + "var r=null;try{r=el.getBoundingClientRect();}catch(e){return false;}"
+            + "return !!r&&r.width>=40&&r.height>=24;"
+        + "}"
+        + "var nachgesehen=0;"
+        + "function nachschau(){"
+            // Der Deckel gehoert dem Beobachter, nicht diesem Durchgang. Er
+            // schuetzt vor einem Dokument, das ohne Ende Knoten nachwirft -
+            // die Nachschau dagegen ist von sich aus begrenzt: hoechstens
+            // NACHSCHAU_MAX Anwaerter, und ein Urteil nur fuer die wenigen,
+            // die gerade frei ueber allem liegen. Wuerde sie den Deckel
+            // mitverbrauchen, haette der Beobachter nach einer Stunde Film
+            // stillgelegen, weil jemand nachgesehen hat.
+            + "var stand=geprueft;"
+            + "var liste=anwaerter();"
+            + "for(var i=0;i<liste.length&&i<NACHSCHAU_MAX;i++){"
+                + "var el=liste[i];"
+                + "if(!el||el.nodeType!==1)continue;"
+                + "if(el.hasAttribute&&el.hasAttribute('data-elfix-werbung'))continue;"
+                + "if(!freiUeberAllem(el))continue;"
+                // Noch einmal beurteilen heisst: aus der Merkliste heraus. Der
+                // Weg dahinter ist derselbe wie sonst - samt Schutz, samt
+                // Reihenfolge. Es gibt kein zweites Urteil, nur einen zweiten
+                // Anlass.
+                + "try{gesehen.delete(el);}catch(e){}"
+                + "pruefen(el,true);"
+            + "}"
+            + "nachgesehen+=geprueft-stand;geprueft=stand;"
+        + "}"
+        + "try{setInterval(nachschau,NACHSCHAU);}catch(e){}"
+        + "window.__elfixTvWerbungStand=function(){"
+            + "return{entfernt:entfernt,geprueft:geprueft,nachgesehen:nachgesehen};};"
     + "})();";
 
     /* ----------------------------------------------- Das Skript der Rahmen */
@@ -1198,6 +1279,8 @@ public final class Werbeschichten {
             + "var HOECHST=" + HOECHSTPRUEFUNGEN + ";"
             + "var STAPEL=" + STAPEL + ";"
             + "var PAUSE=" + PAUSE_MS + ";"
+            + "var NACHSCHAU=" + NACHSCHAU_MS + ";"
+            + "var NACHSCHAU_MAX=" + NACHSCHAU_MAX + ";"
             + FREMD;
     }
 
@@ -1297,7 +1380,7 @@ public final class Werbeschichten {
         + "}"
 
         // ---------------------------------------------------- Das Entfernen
-        + "var entfernt=0;var geprueft=0;var gesehen=new WeakSet();"
+        + "var entfernt=0;var geprueft=0;var nachgesehen=0;var gesehen=new WeakSet();"
         + "function wegnehmen(el,grund){"
             + "if(!el||!el.setAttribute)return;"
             + "if(el.hasAttribute('data-elfix-schicht'))return;"
@@ -1425,10 +1508,52 @@ public final class Werbeschichten {
             + "document.addEventListener('DOMContentLoaded',anlaufen);"
         + "}else{anlaufen();}"
         // Die Schicht kommt nachgereicht - beim Gluecksspielkasten erst, als
-        // der Film schon lief. Zwei Nachschauen, mehr nicht: alles Weitere
-        // sieht der Beobachter.
+        // der Film schon lief. Zwei volle Nachschauen fuer die ersten
+        // Sekunden, in denen sich das Dokument noch aufbaut.
         + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf();}},3000);"
         + "setTimeout(function(){if(geprueft<HOECHST){gesehen=new WeakSet();ersterLauf();}},9000);"
-        + "window.__elfixSchichtStand=function(){return{entfernt:entfernt,geprueft:geprueft};};"
+
+        // ------------------------------------------------------ Die Nachschau
+        //
+        // Und danach im Takt weiter - der Teil, der bis hierher gefehlt hat.
+        //
+        // Der Beobachter meldet nur *neue* Knoten. Eine Schicht, die beim
+        // Laden schon im Dokument steht und erst in der zwanzigsten Minute
+        // sichtbar geschaltet wird, haengt niemand ein: sie war die ganze Zeit
+        // da, unsichtbar, einmal beurteilt und danach in der Merkliste. Nach
+        // der letzten Nachschau bei neun Sekunden hat sie nichts mehr
+        // aufgehalten - die gemeldete Werbung "manchmal" ueber dem laufenden
+        // Video.
+        //
+        // Der Durchgang ist deshalb anders gebaut als der erste: er fragt
+        // zuerst das Billige. Nur was gerade wirklich frei ueber allem liegt,
+        // kostet ein Urteil - und das sind auf einer Spielerseite eine
+        // Handvoll Elemente, nicht hundert. Die Merkliste zaehlt hier
+        // ausdruecklich nicht: dass ein Element vor zehn Minuten harmlos war,
+        // sagt ueber das, was es jetzt anzeigt, nichts.
+        + "function nachschau(){"
+            + "var liste=[];"
+            + "function dazu(satz){"
+                + "if(!satz)return;"
+                + "for(var i=0;i<satz.length&&liste.length<NACHSCHAU_MAX;i++)liste.push(satz[i]);"
+            + "}"
+            + "try{dazu(document.body&&document.body.children);}catch(e){}"
+            + "try{dazu(document.querySelectorAll(ANWAERTER));}catch(e){}"
+            + "for(var i=0;i<liste.length;i++){"
+                + "var el=liste[i];"
+                + "if(!el||el.nodeType!==1)continue;"
+                + "if(el.hasAttribute&&el.hasAttribute('data-elfix-schicht'))continue;"
+                // Billig zuerst. Eine Schicht ueber dem Video ist freigestellt
+                // und weit vorn; alles andere braucht gar nicht erst gelesen
+                // zu werden, und Lesen ist hier das Teure (innerText).
+                + "if(!freigestellt(el))continue;"
+                + "nachgesehen+=1;"
+                + "var grund=urteil(el);"
+                + "if(grund)wegnehmen(el,grund);"
+            + "}"
+        + "}"
+        + "try{setInterval(nachschau,NACHSCHAU);}catch(e){}"
+        + "window.__elfixSchichtStand=function(){"
+            + "return{entfernt:entfernt,geprueft:geprueft,nachgesehen:nachgesehen};};"
     + "})();";
 }
