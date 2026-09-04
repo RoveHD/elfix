@@ -211,7 +211,19 @@ async function teilEins() {
     env: { ...process.env, PORT: String(EIGENER_PORT), STATE_DIRECTORY: ablage },
     stdio: "ignore"
   });
+  // Diese Pruefung braucht ihr *eigenes* Relay: sie legt vorher eine Ablage an
+  // und will sehen, was daraus geladen wird. Liegt auf dem Port schon eines,
+  // beendet sich der frisch gestartete Prozess mit EADDRINUSE - und die
+  // Pruefung liefe gegen fremden Zustand, ohne dass es jemand merkt. Genau so
+  // kamen am 4.9.2026 Fehlschlaege zustande, die es im Quelltext nicht gab.
+  let gestorben = false;
+  server.on("exit", () => { gestorben = true; });
   await schlaf(1400);
+  if (gestorben) {
+    console.log(`FAIL  Eigenes Relay auf Port ${EIGENER_PORT}`
+      + "   -> dort laeuft schon eines; diese Pruefung braucht ihre eigene Ablage");
+    process.exit(1);
+  }
 
   const adresse = `ws://127.0.0.1:${EIGENER_PORT}`;
   const pc = geraet(adresse, "bangus", "Rechner", "geraet-neu");

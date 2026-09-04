@@ -2143,7 +2143,16 @@ function nachzueglerHolen() {
         playing: false,
         sequenceId: naechsteNummer(eintrag),
         episodeId: ziel,
-        hostId: aktuelleHostId(socket.raum, eintrag)
+        // Der gespeicherte Host, nicht der gewaehlte.
+        //
+        // `aktuelleHostId` waehlt bei Bedarf einen neuen und stempelt
+        // `hostGesehen` - das ist richtig an den Stellen, an denen jemand
+        // etwas tut, und falsch in einem Takt, der nur nachsieht. Alle fuenf
+        // Sekunden von aussen angestossen, uebersprang diese Wahl die
+        // Gnadenfrist eines kurz abgerissenen Hosts: hostbleibttest 4 sah
+        // danach den Nachrueckenden. Ein Takt beobachtet, er entscheidet
+        // nicht.
+        hostId: eintrag.hostId || ""
       }));
     }
   }

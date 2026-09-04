@@ -8,6 +8,7 @@
 // aus dem vorigen Durchlauf hineinredet.
 
 const { spawn, spawnSync } = require("child_process");
+const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -32,6 +33,37 @@ function laufen(datei, umgebung) {
   const letzte = zeilen[zeilen.length - 1] || "";
   const fehler = String(ergebnis.stdout || "").split("\n").filter((z) => z.startsWith("FAIL"));
   return { ok: ergebnis.status === 0, zusammenfassung: letzte, fehler, ausgabe: ergebnis.stdout };
+}
+
+/** Antwortet auf diesem Port ein Relay? Ohne Ausnahme nach aussen. */
+function gesund(port) {
+  return new Promise((fertig) => {
+    const anfrage = http.get({ host: "127.0.0.1", port, path: "/health", timeout: 500 }, (antwort) => {
+      antwort.resume();
+      fertig(antwort.statusCode === 200);
+    });
+    anfrage.on("error", () => fertig(false));
+    anfrage.on("timeout", () => { anfrage.destroy(); fertig(false); });
+  });
+}
+
+async function warteAufRelay(port, frist, abbruch) {
+  const bis = Date.now() + frist;
+  while (Date.now() < bis) {
+    if (abbruch && abbruch()) return false;
+    if (await gesund(port)) return true;
+    await schlaf(100);
+  }
+  return false;
+}
+
+async function warteAufStille(port, frist) {
+  const bis = Date.now() + frist;
+  while (Date.now() < bis) {
+    if (!(await gesund(port))) return true;
+    await schlaf(100);
+  }
+  return false;
 }
 
 (async () => {
@@ -63,12 +95,46 @@ function laufen(datei, umgebung) {
       env: { ...process.env, PORT: String(PORT), STATE_DIRECTORY: ablage },
       stdio: "ignore"
     });
-    await schlaf(1200);
+    // Ob es wirklich *dieses* Relay ist, das gleich antwortet.
+    //
+    // Liegt auf dem Port schon eines - ein liegengebliebenes aus einem
+    // abgebrochenen Lauf, ein von Hand gestartetes -, dann bekommt der frisch
+    // gestartete Prozess EADDRINUSE und beendet sich sofort. Die Pruefungen
+    // laufen danach klaglos weiter, nur eben gegen fremden Code und fremden
+    // Zustand. Genau so kamen am 4.9.2026 Fehlschlaege zustande, die es im
+    // Quelltext gar nicht gab: ein Relay von vor einer Stunde beantwortete
+    // Nachrichten nach den Regeln von vor einer Stunde.
+    //
+    // Ein toter Kindprozess ist der eindeutige Hinweis darauf. Er wird hier
+    // gemeldet und nicht verschwiegen: ein Lauf gegen ein fremdes Relay ist
+    // kein Lauf.
+    let gestorben = false;
+    server.on("exit", () => { gestorben = true; });
+    // Gewartet wird auf eine Antwort und nicht auf die Uhr.
+    //
+    // Hier stand eine feste Pause. Sie war mal zu lang und mal zu kurz: auf
+    // einer belasteten Maschine braucht das Relay laenger, und die ersten
+    // Nachrichten einer Suite liefen dann ins Leere - sichtbar als
+    // Fehlschlaege, die bei jedem Lauf woanders auftauchten und in der
+    // Einzelpruefung nie.
+    const antwortet = await warteAufRelay(PORT, 8000, () => gestorben);
+    if (gestorben || !antwortet) {
+      console.log(`FEHL  ${datei.padEnd(14)} Relay auf Port ${PORT} kam nicht hoch`);
+      console.log(gestorben
+        ? "        Dort laeuft schon eines. Beenden, sonst pruefen die Tests fremden Code."
+        : "        Es hat acht Sekunden lang nicht geantwortet.");
+      alleOk = false;
+      server.kill();
+      continue;
+    }
     // Die Ablage kommt mit: geraetetest sieht dort nach, was das Relay
     // wirklich auf die Platte schreibt - und vor allem, was nicht.
     const r = laufen(datei, { TESTPORT: String(PORT), STATE_DIRECTORY: ablage });
     server.kill();
-    await schlaf(200);
+    // Und beim Abraeumen ebenso: erst wenn der Port wieder still ist, darf die
+    // naechste Suite ihr eigenes Relay dorthin stellen. Sonst bekommt es
+    // EADDRINUSE, beendet sich - und die Suite prueft den Zustand der vorigen.
+    await warteAufStille(PORT, 8000);
     if (!r.ok) alleOk = false;
     console.log(`${r.ok ? "ok  " : "FEHL"}  ${datei.padEnd(14)} ${r.zusammenfassung}`);
     for (const zeile of r.fehler) console.log(`        ${zeile}`);

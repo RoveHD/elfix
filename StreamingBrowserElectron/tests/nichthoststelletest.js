@@ -203,6 +203,18 @@ const anDenAnfang = (m) => m.type === "control"
   // --- TEST D: ein echtes 0:00 bleibt ein echtes 0:00 ----------------------
   {
     B.leeren();
+    // Zuerst der Herzschlag, dann die Meldung.
+    //
+    // `puls(A)` schickt weiter alle 500 ms A's eigene Stelle. Wer nur die
+    // einzelne Meldung hier absetzt, prueft anschliessend gegen ein Rennen:
+    // liegt der naechste Herzschlag dazwischen, steht dort wieder 502s. Genau
+    // daran ist diese Pruefung in der Werkbank gescheitert, waehrend sie hier
+    // durchging - dieselbe Reihenfolge, andere Maschine.
+    //
+    // Ein Player, der wirklich an den Anfang gespult hat, meldet die Null auch
+    // im Herzschlag. Also wird sie hier auch dort gesetzt.
+    A.stelle = 0;
+    A.pausiert = false;
     // Gueltiger Player, bewusst an den Anfang gespult: Laufzeit steht.
     A.send({ type: "here", key: KEY, position: 0, paused: false, duration: 1400,
       season: 1, episode: 1, url: URL1, playerSessionId: "stelle-a-e1" });
@@ -211,7 +223,6 @@ const anDenAnfang = (m) => m.type === "control"
     pruefe("D. Ein echtes 0:00 mit gueltiger Laufzeit wird angezeigt",
       echt && Number(echt.position) < 60,
       echt ? `${Math.round(echt.position)}s` : "kein Stand");
-    A.stelle = 0;
   }
 
   // --- TEST F: ein neuer Zuschauer zieht niemanden mit ----------------------
