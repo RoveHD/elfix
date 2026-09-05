@@ -26,7 +26,7 @@
  */
 
 const bruecke = window.elfixSpieler || {
-  aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, stand() {},
+  aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
   fehler() {}, schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {},
   sprung() {}, takt() {}, aktion() {}
 };
@@ -41,6 +41,7 @@ const untertitelWahl = document.getElementById("untertitel");
 const knopfSpielen = document.getElementById("spielen");
 const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
+const knopfAuto = document.getElementById("autoKnopf");
 const knopfMarke = document.getElementById("marke");
 const anzeigeStelle = document.getElementById("stelle");
 const anzeigeDauer = document.getElementById("dauer");
@@ -612,6 +613,34 @@ function weiterAnbieten() {
   }, 1000);
 }
 
+/*
+ * Der Autoplay-Schalter.
+ *
+ * Er zeigt, was gilt, und schaltet um. Entschieden wird drueben - zurueck
+ * kommt der neue Zaehler, also dieselbe Zahl, nach der sich auch der Uebergang
+ * richtet. Null heisst aus.
+ */
+function autoZeigen() {
+  knopfAuto.classList.toggle("aus", weiterZaehler <= 0);
+  knopfAuto.title = weiterZaehler > 0
+    ? "Nächste Folge startet von selbst - zum Abschalten klicken"
+    : "Nächste Folge startet nicht von selbst - zum Einschalten klicken";
+}
+
+async function autoUmschalten() {
+  const neuerZaehler = await bruecke.autoplay(weiterZaehler <= 0);
+  weiterZaehler = Number(neuerZaehler) || 0;
+  if (weiterZaehler <= 0) weiterAbbrechen();
+  autoZeigen();
+}
+
+async function schlussUmschalten() {
+  const neuerZaehler = await bruecke.schlussNachFolge(true);
+  weiterZaehler = Number(neuerZaehler) || 0;
+  weiterAbbrechen();
+  autoZeigen();
+}
+
 function weiterAbbrechen() {
   if (weiterUhr) clearInterval(weiterUhr);
   weiterUhr = 0;
@@ -643,6 +672,8 @@ document.getElementById("weiterJetzt").addEventListener("click", () => {
   folgeWechseln(ziel);
 });
 document.getElementById("weiterAbbruch").addEventListener("click", weiterAbbrechen);
+document.getElementById("weiterSchluss").addEventListener("click", schlussUmschalten);
+knopfAuto.addEventListener("click", autoUmschalten);
 bild.addEventListener("click", spielenUmschalten);
 
 regler.addEventListener("input", () => {
@@ -714,6 +745,7 @@ bild.addEventListener("timeupdate", () => {
   markeZeigen(stelle);
   if (Number.isFinite(bild.duration) && bild.duration > 0) {
     regler.value = String(Math.round((stelle / bild.duration) * 1000));
+    reglerFaerben(stelle);
     // Der Uebergang faengt vor dem letzten Bild an - der Abspann laeuft weiter,
     // waehrend der Kasten schon dasteht. Wer ihn wegklickt, sieht ihn zu Ende.
     if (naechste && weiterZaehler > 0 && bild.duration - stelle <= weiterZaehler + 1) weiterAnbieten();
@@ -741,6 +773,8 @@ bild.addEventListener("pause", () => {
 });
 bild.addEventListener("waiting", () => { puffert = true; pufferZeigen(true); });
 bild.addEventListener("playing", () => { puffert = false; pufferZeigen(false); });
+// Der Puffer waechst auch, wenn die Stelle stillsteht - etwa in der Pause.
+bild.addEventListener("progress", () => reglerFaerben(bild.currentTime));
 bild.addEventListener("seeked", () => { vorigeStelle = bild.currentTime; standMelden(true); });
 bild.addEventListener("ended", () => {
   standMelden(true);
@@ -782,6 +816,30 @@ bild.addEventListener("loadedmetadata", () => {
     schichtenZeigen();
   });
 });
+
+/*
+ * Die drei Zonen des Balkens.
+ *
+ * Gespielt bis zur Stelle, geladen bis zum Ende des Puffers, dahinter die
+ * Spur. Genommen wird der Pufferbereich, in dem die Stelle gerade liegt - und
+ * nicht der letzte oder groesste: nach einem Sprung stehen mehrere in der
+ * Liste, und die anderen sagen ueber das, was jetzt laeuft, nichts.
+ */
+function reglerFaerben(stelle) {
+  const dauer = Number(bild.duration);
+  if (!Number.isFinite(dauer) || dauer <= 0) return;
+
+  let geladenBis = stelle;
+  for (let i = 0; i < bild.buffered.length; i += 1) {
+    if (bild.buffered.start(i) <= stelle && bild.buffered.end(i) >= stelle) {
+      geladenBis = bild.buffered.end(i);
+      break;
+    }
+  }
+  const anteil = (wert) => `${Math.max(0, Math.min(100, (wert / dauer) * 100))}%`;
+  regler.style.setProperty("--gespielt", anteil(stelle));
+  regler.style.setProperty("--geladen", anteil(geladenBis));
+}
 
 function beenden(grund) {
   standMelden(true);
@@ -908,6 +966,7 @@ function starten(neuerAuftrag) {
   weiterZaehler = Number.isFinite(Number(auftrag.weiterZaehler))
     ? Math.max(0, Number(auftrag.weiterZaehler))
     : WEITER_SEKUNDEN;
+  autoZeigen();
   marke = auftrag.marke || null;
   knopfMarke.hidden = true;
   inRunde = Boolean(auftrag.runde);

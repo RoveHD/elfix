@@ -30,6 +30,15 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
    * Die Staffel- und Folgenliste. Sie kostet einen Seitenaufruf, deshalb wird
    * sie erst geholt, wenn jemand sie aufklappt - und danach gemerkt.
    */
+  /*
+   * Der Autoplay-Schalter und das einmalige "Danach aufhören".
+   *
+   * Beide gehen an dieselbe Stelle, die es schon fuer die Anbieterseite gab:
+   * die Einstellung gilt dauerhaft, das Aufhoeren nur fuer diese Folge.
+   * Zurueck kommt der neue Zaehler, damit der Player nicht raten muss.
+   */
+  autoplay: (an) => ipcRenderer.invoke("spieler:autoplay", Boolean(an)),
+  schlussNachFolge: (an) => ipcRenderer.invoke("spieler:schluss", Boolean(an)),
   // `staffelUrl` waehlt eine andere Staffel; ohne sie gilt die laufende.
   folgen: (frisch = false, staffelUrl = "") =>
     ipcRenderer.invoke("spieler:folgen", Boolean(frisch), String(staffelUrl || "")),

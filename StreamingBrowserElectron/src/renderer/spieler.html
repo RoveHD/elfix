@@ -61,7 +61,29 @@
     -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
     background: #3D92FF; border: 0;
   }
-  #regler { flex: 1; }
+
+  /*
+   * Drei Zonen statt einer Farbe.
+   *
+   * Der Balken war durchgehend gleich hell - man sah weder, wie weit man ist,
+   * noch wieviel schon geladen wurde. Beides steht jetzt darin:
+   *
+   *   gespielt   der Weg hinter dem Knauf, in der Farbe des Knaufs
+   *   geladen    was der Puffer schon hat, heller als der Rest
+   *   Rest       die Spur
+   *
+   * Gezeichnet wird das als Verlauf im Hintergrund und nicht als drei
+   * Elemente: ein <input type="range"> bleibt damit ein Schieberegler, den man
+   * mit den Pfeiltasten bedienen kann. Die beiden Anteile setzt das Skript als
+   * Variablen (siehe reglerFaerben).
+   */
+  #regler {
+    flex: 1;
+    background:
+      linear-gradient(to right, #3D92FF 0 var(--gespielt, 0%), transparent var(--gespielt, 0%)),
+      linear-gradient(to right, rgba(255, 255, 255, 0.42) 0 var(--geladen, 0%), transparent var(--geladen, 0%)),
+      rgba(255, 255, 255, 0.22);
+  }
   #lautstaerke { width: 96px; }
 
   /*
@@ -80,6 +102,9 @@
   }
   select:hover { background: #27303C; }
   select:disabled { opacity: 0.4; }
+
+  /* Ein Schalter zeigt seinen Zustand, sonst ist er nur ein Wort. */
+  #autoKnopf.aus { opacity: 0.45; text-decoration: line-through; }
   select option {
     background: #1E242E;
     color: #fff;
@@ -195,6 +220,10 @@
       <select id="stufen" aria-label="Bildqualität" disabled>
         <option value="-1">Auto</option>
       </select>
+      <!-- Der Autoplay-Schalter gehoert in die Leiste und nicht in den
+           Uebergangskasten: der steht nur da, wenn Autoplay an ist - man
+           koennte es dort ausschalten und nie wieder ein. -->
+      <button id="autoKnopf" type="button" title="Nächste Folge von selbst starten">Auto</button>
       <button id="weiterKnopf" type="button" hidden title="Nächste Folge (N)">Nächste ›</button>
       <button id="gross" type="button" title="Vollbild (F)">⛶</button>
     </div>
@@ -220,6 +249,10 @@
     <div class="weiterKnoepfe">
       <button id="weiterJetzt" type="button" class="betont">Jetzt</button>
       <button id="weiterAbbruch" type="button">Abbrechen</button>
+      <!-- "Abbrechen" haelt diesen einen Zaehler an; "Danach aufhören" gilt
+           fuer die ganze Folge und ist danach wieder weg. Zwei verschiedene
+           Dinge, deshalb zwei Knoepfe. -->
+      <button id="weiterSchluss" type="button">Danach aufhören</button>
     </div>
   </div>
 

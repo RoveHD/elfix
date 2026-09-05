@@ -191,7 +191,8 @@ pruefe("Ein echter Fehler kommt weiterhin an",
 // aufhören" zu kennen. Beide enden im Hauptprozess bei derselben Zahl
 // (autoplayZaehler); der Player fuehrt sie nur aus.
 pruefe("Der Auftrag traegt den Zaehler zur naechsten Folge",
-  /weiterZaehler: autoplayZaehler\(/.test(haupt),
+  /weiterZaehler: spielerZaehler\(\)/.test(haupt)
+  && /function spielerZaehler\(\)[\s\S]{0,200}?autoplayZaehler\(/.test(haupt),
   "die Entscheidung faellt im Hauptprozess, nicht im Player");
 pruefe("Und autoplayZaehler kennt beide Wege zu 'gar nicht'",
   /autoplayNextEpisode === false\) return 0;/.test(haupt)
@@ -257,6 +258,40 @@ pruefe("Der Hauptprozess nimmt sie entgegen und prueft sie",
   /ipcMain\.handle\("spieler:folgen", async \(ereignis, frisch = false, staffelUrl = ""\)/.test(haupt)
   && /new URL\(absolut\)\.host === new URL\(url\)\.host/.test(haupt),
   "ein Player darf nicht jede beliebige Seite lesen lassen");
+
+/* ------------------------------------- Der Autoplay-Schalter und der Balken */
+
+pruefe("Der Autoplay-Schalter steht in der Leiste, nicht im Uebergangskasten",
+  /id="autoKnopf"/.test(seite)
+  && seite.indexOf('id="autoKnopf"') < seite.indexOf('id="weiter"'),
+  "im Kasten koennte man ihn ausschalten und nie wieder ein");
+pruefe("Er schreibt dieselbe Einstellung wie der in den Einstellungen",
+  /ipcMain\.handle\("spieler:autoplay"/.test(haupt)
+  && /autoplayNextEpisode: Boolean\(an\)/.test(haupt));
+pruefe("Und ein laufender Zaehler in der Anbieterseite spuert es auch",
+  /nextEpisodePromptState\.delete\(provider\.id\)[\s\S]{0,120}?nextEpisodeAutostartState\.delete\(provider\.id\)/.test(haupt),
+  "sonst zaehlt dort weiter, was hier gerade abgeschaltet wurde");
+pruefe("'Danach aufhoeren' gilt nur fuer diese Folge",
+  /ipcMain\.handle\("spieler:schluss"/.test(haupt)
+  && /stopNachFolge\.set\(provider\.id, spielerLauf\.url\)/.test(haupt),
+  "die Einstellung gilt dauerhaft, das hier ist danach wieder weg");
+pruefe("Beide Wege enden bei derselben Zahl",
+  /function spielerZaehler\(\)/.test(haupt)
+  && (haupt.match(/return spielerZaehler\(\);/g) || []).length >= 2,
+  "der Player soll die Regel nicht ein zweites Mal kennen");
+pruefe("Der Schalter zeigt seinen Zustand",
+  /knopfAuto\.classList\.toggle\("aus", weiterZaehler <= 0\)/.test(skript),
+  "ein Schalter ohne Zustand ist nur ein Wort");
+
+pruefe("Der Balken zeigt Gespieltes und Geladenes getrennt",
+  /--gespielt/.test(seite) && /--geladen/.test(seite)
+  && /function reglerFaerben\(stelle\)/.test(skript));
+pruefe("Genommen wird der Puffer, in dem die Stelle liegt",
+  /bild\.buffered\.start\(i\) <= stelle && bild\.buffered\.end\(i\) >= stelle/.test(skript),
+  "nach einem Sprung stehen mehrere in der Liste");
+pruefe("Der Balken bleibt ein Schieberegler",
+  /<input id="regler" type="range"/.test(seite),
+  "gefaerbt wird der Hintergrund - mit den Pfeiltasten bedienbar bleibt er");
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`

@@ -8353,10 +8353,7 @@ function spielerAuftrag() {
      * abgeschaltet hatte, bekam es trotzdem, und "Danach aufhören" war ganz
      * ohne Wirkung.
      */
-    weiterZaehler: autoplayZaehler(
-      enabledProviders().find((eintrag) => eintrag.id === spielerLauf.providerId) || activeProvider(),
-      spielerLauf.url
-    ),
+    weiterZaehler: spielerZaehler(),
     marke: spielerMarke(),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
@@ -8798,6 +8795,58 @@ ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "
   const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch) });
   return direktfolgen.fuerPlayer(stand, episodeIdentity(url));
 });
+
+/*
+ * Der Autoplay-Schalter aus dem Player.
+ *
+ * Er schreibt dieselbe Einstellung, die auch der Schalter in den Einstellungen
+ * setzt und die der alte Knopf in der Anbieterseite gesetzt hat - eine
+ * Einstellung, drei Wege dorthin. Zurueck kommt der neue Zaehler: der Player
+ * soll die Regel nicht ein zweites Mal kennen.
+ */
+ipcMain.handle("spieler:autoplay", (ereignis, an) => {
+  if (!vomSpieler(ereignis)) return 0;
+  settings.playback = { ...(settings.playback || {}), autoplayNextEpisode: Boolean(an) };
+  saveSettings();
+  // Ein Zaehler, der in der Anbieterseite gerade laeuft, muss die Ansage
+  // ebenfalls spueren - dieselben Merker wie beim alten Knopf.
+  const provider = spielerAnbieter();
+  if (provider) {
+    nextEpisodePromptState.delete(provider.id);
+    nextEpisodeAutostartState.delete(provider.id);
+  }
+  meldeEinstellungen();
+  sendToast(an
+    ? "Nächste Folge startet von selbst"
+    : "Nächste Folge startet nicht mehr von selbst");
+  return spielerZaehler();
+});
+
+/*
+ * "Danach aufhören" - fuer diese eine Folge.
+ *
+ * Nicht dasselbe wie der Schalter: die Einstellung gilt dauerhaft, das hier
+ * ist danach wieder weg. Beide enden bei `autoplayZaehler` und damit bei
+ * derselben Zahl.
+ */
+ipcMain.handle("spieler:schluss", (ereignis, an) => {
+  if (!vomSpieler(ereignis)) return 0;
+  const provider = spielerAnbieter();
+  if (!provider) return 0;
+  if (an) stopNachFolge.set(provider.id, spielerLauf.url);
+  else stopNachFolge.delete(provider.id);
+  sendToast(an ? "Nach dieser Folge ist Schluss" : "Es geht wieder von selbst weiter");
+  return spielerZaehler();
+});
+
+/** Wie lange bis zur naechsten Folge - die eine Antwort fuer alle Wege dorthin. */
+function spielerZaehler() {
+  if (!spielerLauf) return 0;
+  return autoplayZaehler(
+    enabledProviders().find((eintrag) => eintrag.id === spielerLauf.providerId) || activeProvider(),
+    spielerLauf.url
+  );
+}
 
 /** Eine andere Folge - dieselbe Kette wie beim ersten Start. */
 ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
