@@ -7912,7 +7912,11 @@ async function direktLinksLesen(provider, view) {
   let roh = "[]";
   try {
     roh = await view.webContents.executeJavaScript(direktlinks.hosterlinkScript(), true);
-  } catch {
+  } catch (fehler) {
+    // Nicht stillschweigend leer zurueckgeben: von aussen sieht das aus wie
+    // "diese Seite hat keine Hoster", und das ist etwas voellig anderes als
+    // "das Skript kam nicht durch".
+    console.log(`[ELFIX DIREKT] Kacheln nicht lesbar: ${fehler?.message || fehler}`);
     return [];
   }
   let liste = [];
@@ -7949,7 +7953,9 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   if (!isLiveView(view)) return { ok: false, grund: "Keine Folge geöffnet" };
 
   const seite = view.webContents.getURL();
-  const alle = await direktLinksLesen(provider, view);
+  const alle = optionen.links?.length
+    ? optionen.links
+    : await direktLinksLesen(provider, view);
   const links = optionen.nurDieser
     ? alle.filter((eintrag) => eintrag.adresse === optionen.nurDieser)
     : alle;
@@ -8620,7 +8626,16 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   if (!view) return { ok: false, grund: "Die Folgenseite lädt nicht" };
 
   const ergebnis = await direktQuelleFuerAnsicht(provider, view, {
-    nurDieser: optionen.hosterLink || ""
+    nurDieser: optionen.hosterLink || "",
+    // Schon gelesene Kacheln werden weitergereicht statt neu geholt.
+    //
+    // Das war der Grund, warum "Weiterschauen" in der Auswahl endete:
+    // `direktUebernehmen` liest die Kacheln (gemessen: 12), oeffnet damit den
+    // Player - und danach las `direktQuelleFuerAnsicht` dieselbe Seite noch
+    // einmal. Zu diesem Zeitpunkt liegt der Player davor, das Skript kommt
+    // nicht mehr durch, und heraus kam "Kein Hoster auf der Seite". Ein
+    // zweiter Lesevorgang war ohnehin nur verlorene Zeit.
+    links: Array.isArray(optionen.links) ? optionen.links : null
   });
   if (!ergebnis.ok) return { ok: false, grund: ergebnis.grund };
 
@@ -8709,6 +8724,11 @@ async function direktUebernehmen(provider, url) {
   // Adresse, landete er bei "keine Folge gefunden" statt im Player. Wo Hoster
   // stehen, gibt es etwas zu spielen; das gilt fuer beides.
   const links = await direktLinksLesen(provider, view);
+  // Welchen der drei Wege es nimmt, steht bisher nur im Ergebnis. Ohne diese
+  // Zeile sieht "der Player zeigt die Auswahl" von aussen genauso aus wie
+  // "die Quelle liess sich nicht lesen" - und beides hat verschiedene Gruende.
+  console.log(`[ELFIX DIREKT] ${kurzeUrl(view.webContents.getURL())}: `
+    + `${links.length} Hosterkachel(n)`);
 
   if (links.length) {
     // Erst den Player aufmachen, dann aufloesen. Die Aufloesung dauert ein paar
@@ -8719,10 +8739,11 @@ async function direktUebernehmen(provider, url) {
       ok: true, quelle: { adresse: "", typ: "", hoehe: 0 }, kopfzeilen: null,
       hoster: "", link: "", hosterliste: []
     }, { laden: true });
-    const ergebnis = await direktFolgeSpielen(provider, url);
+    const ergebnis = await direktFolgeSpielen(provider, url, { links });
     if (ergebnis.ok) return;
     // Keine Quelle: dann wenigstens die Auswahl, dort steht auch die
     // Hosterwahl. Und wenn selbst die nicht zu lesen ist, die Oberflaeche.
+    console.log(`[ELFIX DIREKT] keine Quelle (${ergebnis.grund}) - es bleibt bei der Auswahl`);
     const auswahl = await direktAuswahlOeffnen(provider, url);
     sendToast(`Keine direkte Quelle: ${ergebnis.grund}`);
     if (auswahl.ok) return;
@@ -8760,6 +8781,7 @@ async function direktUebernehmen(provider, url) {
       });
       if (ergebnis.ok) return;
     }
+    console.log("[ELFIX DIREKT] kein Hoster auf der Seite - es bleibt bei der Auswahl");
     await direktAuswahlOeffnen(provider, url);
     return;
   }

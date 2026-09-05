@@ -364,8 +364,33 @@ pruefe("Und zwar nur, wenn dort wirklich eine Folge steht",
 pruefe("Die gespeicherte Stelle reist mit",
   /startzeit: sanitizePositiveNumber\(weiter\.currentTime \|\| weiter\.position\)/.test(haupt));
 pruefe("Die Auswahl bleibt der Rueckfall",
-  /if \(ergebnis\.ok\) return;\s*\}\s*await direktAuswahlOeffnen\(provider, url\);/.test(haupt),
+  /if \(ergebnis\.ok\) return;\s*\}\s*console\.log\("\[ELFIX DIREKT\] kein Hoster[\s\S]{0,120}?await direktAuswahlOeffnen\(provider, url\);/.test(haupt),
   "ohne Eintrag, ohne Folgenadresse oder ohne Quelle");
+
+/* ------------------------------------------- Die Seite wird einmal gelesen */
+
+// Der Fehler, den erst der Lauf gegen die echte App zeigte: "Weiterschauen"
+// endete in der Auswahl, obwohl auf der Seite zwoelf Hosterkacheln standen.
+//
+//   [ELFIX DIREKT] .../staffel-4/episode-11: 12 Hosterkachel(n)
+//   [ELFIX DIREKT] keine Quelle (Kein Hoster auf der Seite) - Auswahl
+//
+// direktUebernehmen liest die Kacheln, oeffnet damit den Player - und danach
+// las direktQuelleFuerAnsicht dieselbe Seite noch einmal. Zu diesem Zeitpunkt
+// liegt der Player davor und das Skript kommt nicht mehr durch.
+pruefe("Gelesene Kacheln werden weitergereicht",
+  /direktFolgeSpielen\(provider, url, \{ links \}\)/.test(haupt),
+  "sonst liest die zweite Runde eine Seite, die niemand mehr sieht");
+pruefe("Und drueben auch benutzt",
+  /const alle = optionen\.links\?\.length[\s\S]{0,120}?: await direktLinksLesen\(provider, view\);/.test(haupt));
+pruefe("Ein misslungener Lesevorgang wird nicht als 'keine Hoster' getarnt",
+  /Kacheln nicht lesbar/.test(haupt),
+  "von aussen sah beides gleich aus");
+pruefe("Welchen Weg der Direktbetrieb nimmt, steht im Log",
+  /Hosterkachel\(n\)/.test(haupt)
+  && /kein Hoster auf der Seite - es bleibt bei der Auswahl/.test(haupt)
+  && /es bleibt bei der Auswahl/.test(haupt),
+  "drei Ausgaenge, die von aussen gleich aussahen");
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`

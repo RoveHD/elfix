@@ -108,8 +108,11 @@ pruefe("Und die Oberflaeche hoert darauf",
 
 const uebernahme = haupt.slice(haupt.indexOf("async function direktUebernehmen"));
 const uebernahmeBereich = uebernahme.slice(0, uebernahme.indexOf("\n}\n"));
+// Die gelesenen Kacheln gehen mit hinein: die Seite wird nur einmal gelesen.
+// Ohne das las die zweite Runde eine Seite, vor der inzwischen der Player
+// liegt - und meldete "Kein Hoster auf der Seite", obwohl zwoelf dastanden.
 pruefe("Eine Folge wird gespielt",
-  uebernahmeBereich.includes("direktFolgeSpielen(provider, url)"));
+  uebernahmeBereich.includes("direktFolgeSpielen(provider, url, { links })"));
 // Ein Film hat keine Folgennummer, nur eine Seite mit Hostern darauf. Ginge
 // die Entscheidung ueber die Adresse, landete er bei "keine Folge gefunden".
 pruefe("Ein Film auch - entschieden wird an den Hosterkacheln",
