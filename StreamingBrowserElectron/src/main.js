@@ -2680,16 +2680,24 @@ async function navigateProvider(provider, url) {
 
   applyBrowserBounds();
   if (pendingAutostart) raiseAutostartCurtain();
+  // Im Direktbetrieb ist die Navigation nur der halbe Weg: gesehen wird nicht
+  // die Seite, sondern was hinter ihr steht.
+  //
+  // Geladen wird dort auch - und zwar genau einmal. Hier selbst zu laden und
+  // die Uebernahme danach anzustossen sah harmlos aus, waere aber ein zweiter
+  // Ladevorgang gewesen: unmittelbar nach `loadURL` nennt `getURL()` noch die
+  // alte Adresse, und die Werkbank haette dieselbe Seite noch einmal geholt.
+  // Das kostet nichts an Richtigkeit und alles an Zeit bis zum ersten Bild.
+  if (direktModus(target)) {
+    direktUebernehmen(provider, target).catch(() => {});
+    return;
+  }
+
   if (target && view.webContents.getURL() !== target) {
     view.webContents.loadURL(target);
   } else {
     resumeProviderAfterSwitch(provider.id, view);
   }
-
-  // Im Direktbetrieb ist die Navigation nur der halbe Weg: gesehen wird nicht
-  // die Seite, sondern was hinter ihr steht. Das laeuft nebenher weiter -
-  // diese Funktion soll die Oberflaeche nicht warten lassen.
-  if (direktModus(target)) direktUebernehmen(provider, target).catch(() => {});
 }
 
 async function enterHomeMode() {

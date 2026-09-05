@@ -70,8 +70,13 @@ pruefe("Die Anbieteransicht wird im Direktbetrieb nicht eingehaengt",
   /overlayReasons\.size === 0 && !direktModus\(target\)/.test(navBereich),
   "sonst liegt die Seite sichtbar im Fenster");
 pruefe("Nach jeder Navigation uebernimmt der Direktbetrieb",
-  navBereich.includes("if (direktModus(target)) direktUebernehmen(provider, target)"),
+  /if \(direktModus\(target\)\) \{\s*\n\s*direktUebernehmen\(provider, target\)/.test(navBereich),
   "sonst bliebe eine leere Flaeche stehen");
+// Und sie laedt die Seite selbst - hier zu laden hiesse, sie zweimal zu laden:
+// unmittelbar nach loadURL nennt getURL() noch die alte Adresse.
+pruefe("Geladen wird die Seite genau einmal",
+  navBereich.indexOf("direktUebernehmen(provider, target)") < navBereich.indexOf("view.webContents.loadURL(target)"),
+  "die Werkbank laedt, nicht die Navigation davor");
 // YouTube ist ausgenommen: dort gehoert der Player zur Seite - Vorschlaege,
 // Kommentare, die eigene Runde, das Ueberspringen bezahlter Einschuebe. Sie zu
 // verstecken hiesse, YouTube abzuschaffen.
