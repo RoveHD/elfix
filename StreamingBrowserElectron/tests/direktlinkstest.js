@@ -75,7 +75,12 @@ function passt(node, auswahl) {
       return attribute.every((name) => node.getAttribute(name) !== null);
     }
     const mitAttribut = /^([\w.-]+)\[([\w-]+)\]$/.exec(teil);
-    if (mitAttribut) return node.getAttribute(mitAttribut[2]) !== null;
+    if (mitAttribut) {
+      const wieTag = mitAttribut[1].startsWith(".")
+        ? klassen.includes(mitAttribut[1].slice(1))
+        : node.tagName === mitAttribut[1].toUpperCase();
+      return wieTag && node.getAttribute(mitAttribut[2]) !== null;
+    }
     const href = /^([a-z]+)\[href\*='([^']+)'\]$/i.exec(teil);
     if (href) {
       return node.tagName === href[1].toUpperCase()
@@ -83,8 +88,11 @@ function passt(node, auswahl) {
     }
     const mitKlasse = /^([a-z]+)\.([\w-]+)$/i.exec(teil);
     if (mitKlasse) return node.tagName === mitKlasse[1].toUpperCase() && klassen.includes(mitKlasse[2]);
-    if (teil.startsWith(".")) return klassen.includes(teil.slice(1));
+    // Der Nachfahren-Auswahl zuerst: ".changeLanguageBox img[data-lang-key]"
+    // faengt mit einem Punkt an, ist aber kein Klassenname - vorher schluckte
+    // ihn die Zeile darunter und die Sprachleiste blieb ungelesen.
     if (teil.includes(" ")) return passt(node, teil.split(" ").pop());
+    if (teil.startsWith(".")) return klassen.includes(teil.slice(1));
     return node.tagName === teil.toUpperCase();
   });
 }
@@ -104,7 +112,20 @@ function seite({ aktiv = "1" } = {}) {
       ]));
     }
   }
-  const wurzel = element("body", {}, [element("ul", { class: "hosterSiteVideo" }, kacheln)]);
+  // Die Sprachleiste - dieselbe, die AniWorld ueber die Hosterkacheln stellt.
+  // Sie steht hier nicht der Vollstaendigkeit halber: das Skript liest sie, und
+  // ein Fehler in genau diesem Zweig faellt sonst erst an der echten Seite auf.
+  // Beim Einbauen war der regulaere Ausdruck zerbrochen ("//img/..." wurde zum
+  // Zeilenkommentar) - das Skript uebersetzte sich sauber und warf beim
+  // Ausfuehren "Cannot access 'treffer' before initialization".
+  const sprachleiste = element("div", { class: "changeLanguageBox" }, [
+    element("img", { "data-lang-key": "1", src: "/public/img/german.svg", title: "Deutsch" }),
+    element("img", { "data-lang-key": "3", src: "/public/img/japanese-german.svg", title: "mit Untertitel Deutsch" })
+  ]);
+  const wurzel = element("body", {}, [
+    sprachleiste,
+    element("ul", { class: "hosterSiteVideo" }, kacheln)
+  ]);
 
   return lesen(wurzel, "https://anbieter.example/anime/stream/serie/staffel-1/episode-1");
 }
@@ -136,6 +157,19 @@ async function lesen(wurzel, adresse, fenster = {}) {
   return JSON.parse(await vm.runInContext(direktlinks.hosterlinkScript(), kontext));
 }
 
+/* ------------------------------------------- Uebersetzt sich das Skript ueberhaupt? */
+
+// Das Kachelskript ist eine Zeichenkette. `node --check src/direktlinks.js`
+// sieht darin nichts - ein `continue` in einem forEach, eine fehlende Klammer,
+// ein falsch entkommenes Zeichen faellt erst auf, wenn die Seite offen ist und
+// nichts passiert. Genau das ist beim Einbauen der Sprachleiste passiert.
+try {
+  new Function(`return ${direktlinks.hosterlinkScript()}`);
+  pruefe("Das Kachelskript uebersetzt sich", true);
+} catch (fehler) {
+  pruefe("Das Kachelskript uebersetzt sich", false, fehler.message);
+}
+
 /* ------------------------------------------------------------ Das Auslesen */
 
 (async () => {
@@ -153,6 +187,14 @@ pruefe("Derselbe Link wird nicht zweimal gemeldet",
 pruefe("Die Adressen sind vollstaendig, nicht halb",
   gelesen.every((eintrag) => eintrag.adresse.startsWith("https://anbieter.example/redirect/")),
   gelesen[0]?.adresse);
+pruefe("Aus der Sprachleiste wird das Wort zur Zahl",
+  gelesen.every((eintrag) => (eintrag.sprache === "1" ? eintrag.spracheRoh === "german" : true))
+  && gelesen.some((eintrag) => eintrag.spracheRoh === "japanese-german"),
+  gelesen.map((e) => `${e.sprache}=${e.spracheRoh}`).join(" "));
+pruefe("Und dieses Wort ergibt dieselbe Bezeichnung wie ueberall sonst",
+  require("../src/fassung").bezeichnung("german") === "Deutsch"
+  && require("../src/fassung").bezeichnung("japanese-german") === "Japanisch, Deutsche Untertitel",
+  "sonst stuende im Player 'Fassung 1'");
 pruefe("Sichtbar ist nur die gewaehlte Fassung",
   gelesen.filter((eintrag) => eintrag.sichtbar).length === 3
   && gelesen.filter((eintrag) => eintrag.sichtbar).every((eintrag) => eintrag.sprache === "1"),

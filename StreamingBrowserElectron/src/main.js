@@ -3674,12 +3674,31 @@ async function playNextEpisode(provider, view, url) {
   logNextEpisode(provider, "Autoplay beauftragt (Vollbild an, 45s Fenster)");
 }
 
+/*
+ * Die Beschriftung einer Folge - und seit dem eigenen Player auch die eines
+ * Films.
+ *
+ * Der Eintrag wird ueber die Folgenidentitaet gesucht. Ein Film hat keine, und
+ * genau daran hing ein Fehler, den man erst am laufenden Bild sieht: verglichen
+ * wurde `episodeIdentity(favorit.url)?.key === identity?.key`, und bei einem
+ * Film sind beide Seiten `undefined`. Damit passte der ERSTE Film dieses
+ * Anbieters auf jeden anderen - ueber "Prey" stand "Inception", ueber jedem
+ * Film derselbe fremde Titel.
+ *
+ * Deshalb zwei Wege: eine Folge ueber ihre Identitaet, ein Film ueber seine
+ * Adresse. Und findet sich gar nichts, wird der Titel aus der Adresse gelesen
+ * statt "Naechste Folge" zu behaupten - der Player zeigt ihn als Ueberschrift,
+ * und dort waere das schlicht falsch.
+ */
 function naechsteFolgeLabel(provider, url) {
   const identity = episodeIdentity(url);
-  const eintrag = favorites.find((favorite) => (
-    favorite.providerId === provider?.id && episodeIdentity(favorite.url)?.key === identity?.key
-  ));
-  const titel = cleanBaseMediaTitle(eintrag?.title || "", url);
+  const eintrag = favorites.find((favorite) => {
+    if (favorite.providerId !== provider?.id) return false;
+    if (identity) return episodeIdentity(favorite.url)?.key === identity.key;
+    return normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(url);
+  });
+  const titel = cleanBaseMediaTitle(eintrag?.title || "", url)
+    || cleanTitle(titelAusSlug(mediaSlugFromUrl(url)) || "");
   const folge = identity
     ? (identity.season > 0 ? `Staffel ${identity.season} Folge ${identity.episode}` : `Folge ${identity.episode}`)
     : "";
@@ -8261,6 +8280,12 @@ function spielerAuftrag() {
       adresse: eintrag.adresse,
       hoster: eintrag.hoster,
       sprache: eintrag.sprache,
+      // Das Wort zur Fassung, und zwar dasselbe wie ueberall sonst in ELFIX.
+      // `fassung.bezeichnung` ist die eine Stelle, die entscheidet, wie eine
+      // Fassung heisst - ein zweites Vokabular im Player waeren zwei
+      // Wahrheiten in einer App. Ohne das stand dort "Fassung 1".
+      fassung: fassung.bezeichnung(eintrag.spracheRoh || eintrag.sprache)
+        || String(eintrag.spracheRoh || eintrag.sprache || ""),
       sichtbar: eintrag.sichtbar
     })),
     naechste: spielerLauf.naechste || null,

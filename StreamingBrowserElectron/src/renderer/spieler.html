@@ -64,11 +64,27 @@
   #regler { flex: 1; }
   #lautstaerke { width: 96px; }
 
+  /*
+   * Das aufgeklappte Menue kommt vom Betriebssystem, nicht von dieser Seite.
+   *
+   * Mit `background: rgba(255,255,255,.12)` und `color: #fff` sah der
+   * geschlossene Knopf richtig aus - und das aufgeklappte Menue war weisse
+   * Schrift auf weissem Grund, weil die halbdurchsichtige Farbe dort auf
+   * Weiss faellt. `color-scheme: dark` sagt dem System, in welcher Welt es
+   * zeichnen soll; die deckenden Farben an `option` sind der Guertel dazu.
+   */
   select {
-    background: rgba(255, 255, 255, 0.12); color: #fff; border: 0;
+    background: #1E242E; color: #fff; border: 0;
     padding: 6px 8px; border-radius: 10px; font: inherit;
+    color-scheme: dark;
   }
+  select:hover { background: #27303C; }
   select:disabled { opacity: 0.4; }
+  select option {
+    background: #1E242E;
+    color: #fff;
+  }
+  select option:checked { background: #3D92FF; color: #fff; }
 
   /* Die Mitte: Puffern und Fehler. Beide liegen an derselben Stelle, weil sie
      dasselbe beantworten - "warum sehe ich nichts?" */
@@ -167,7 +183,10 @@
       <button id="marke" type="button" class="betont" hidden title="Intro überspringen">Intro überspringen</button>
       <span class="luecke"></span>
       <button id="folgenKnopf" type="button" title="Staffeln und Folgen (E)">Folgen</button>
-      <select id="hosterWahl" aria-label="Fassung und Hoster" title="Fassung und Hoster" disabled>
+      <select id="fassungWahl" aria-label="Sprachfassung" title="Sprachfassung" disabled>
+        <option value="">Fassung</option>
+      </select>
+      <select id="hosterWahl" aria-label="Hoster" title="Hoster" disabled>
         <option value="">Hoster</option>
       </select>
       <select id="untertitel" aria-label="Untertitel" title="Untertitel" disabled>

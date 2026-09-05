@@ -41,7 +41,7 @@
  * Kleingeschrieben, verglichen wird als Teilzeichenkette - "VOE.SX" und
  * "Voe" sind derselbe Hoster.
  */
-const HOSTER_REIHE = ["voe", "vidoza", "streamtape", "filemoon", "luluvdo", "doodstream", "dood"];
+const HOSTER_REIHE = ["voe", "vidmoly", "vidoza", "streamtape", "filemoon", "luluvdo", "doodstream", "dood"];
 
 /** Der Rang eines Hosters; unbekannte kommen nach den bekannten. */
 function hosterRang(name) {
@@ -65,6 +65,11 @@ function eintragNormalisieren(roh) {
     adresse,
     hoster: String(roh?.hoster || "").trim().slice(0, 40),
     sprache: String(roh?.sprache || "").trim().slice(0, 20),
+    // Das Wort zur Fassung, wenn die Seite eines nennt. AniWorld schreibt an
+    // die Kachel nur eine Zahl; was sie bedeutet, steht in der Sprachleiste
+    // darueber. Ohne das stand im Player "Fassung 1" - eine Angabe, die
+    // niemandem sagt, ob er Deutsch oder Japanisch bekommt.
+    spracheRoh: String(roh?.spracheRoh || "").trim().slice(0, 60),
     sichtbar: Boolean(roh?.sichtbar)
   };
 }
@@ -106,8 +111,10 @@ function linksOrdnen(liste, wunschSprache = "") {
     .filter(Boolean);
   const passt = (eintrag) => {
     if (woerter.length === 0) return true;
-    const sprache = String(eintrag.sprache || "").trim().toLowerCase();
-    return sprache ? woerter.includes(sprache) : false;
+    const eigene = [eintrag.sprache, eintrag.spracheRoh]
+      .map((wert) => String(wert || "").trim().toLowerCase())
+      .filter(Boolean);
+    return eigene.length ? eigene.some((wert) => woerter.includes(wert)) : false;
   };
   const punkte = (eintrag) => (eintrag.sichtbar ? 0 : 2) + (passt(eintrag) ? 0 : 1);
 
@@ -171,10 +178,45 @@ function hosterlinkScript() {
   return `(async () => {
     const raus = [];
     const gesehen = new Set();
+
+    /*
+     * Wofuer die Zahlen an den Kacheln stehen.
+     *
+     * AniWorld schreibt an den Hoster nur \`data-lang-key="1"\`. Was das
+     * bedeutet, steht in der Sprachleiste darueber, wo jede Flagge ihre Zahl
+     * und ihr Wort traegt:
+     *
+     *   <img src="/public/img/german.svg" data-lang-key="1" title="Deutsch">
+     *
+     * Genommen wird der Dateiname der Flagge - genau das Wort, das fassung.js
+     * ohnehin kennt. Ohne diese Zuordnung stand im Player "Fassung 1", und das
+     * sagt niemandem, ob er Deutsch oder Japanisch bekommt.
+     */
+    const sprachWort = new Map();
+    document.querySelectorAll(".changeLanguageBox img[data-lang-key]").forEach((flagge) => {
+      const schluessel = flagge.getAttribute("data-lang-key") || "";
+      if (!schluessel) return;
+      // Ohne regulaeren Ausdruck: er muesste hier doppelt entkommen werden,
+      // und genau daran ist er einmal zerbrochen - aus dem Muster wurde
+      // "//img/..." und damit ein Zeilenkommentar, der die Zuweisung
+      // verschluckte. Der Dateiname genuegt.
+      const datei = String(flagge.getAttribute("src") || "").split("/").pop() || "";
+      const wort = datei.toLowerCase().endsWith(".svg") ? datei.slice(0, -4) : "";
+      sprachWort.set(schluessel, wort || flagge.getAttribute("title") || "");
+    });
     const nimm = (knoten, adresse, zusatz) => {
       if (!adresse || gesehen.has(adresse)) return;
       gesehen.add(adresse);
       const kachel = knoten.closest("li, .generateInlinePlayer, .hosterSiteVideo li, .link-box, .provider-chip") || knoten;
+      // Die Fassung steht nicht immer an derselben Kachel. closest() nimmt den
+      // naechsten Vorfahren, der irgendeine Bedingung erfuellt - und bei
+      // AniWorld liegt um manche Hoster noch ein .generateInlinePlayer, um
+      // andere nicht. Gemessen am 2026-09-05 an Naruto S01E01: Filemoon und
+      // Vidmoly brachten ihre Fassung mit, VOE und Doodstream nicht. Das war
+      // nicht nur eine fehlende Anzeige - ein Eintrag ohne Fassung passt auf
+      // keine gemerkte Fassung und faellt in der Reihenfolge zurueck. Deshalb
+      // lief Vidmoly, obwohl VOE oben stehen sollte.
+      const sprachKnoten = knoten.closest("[data-lang-key], [data-language-label]") || kachel;
       const name = kachel.querySelector("h4, .hoster, .provider-chip__name, [class*='oster']");
       const beschriftung = String(
         (zusatz && zusatz.hoster)
@@ -192,8 +234,14 @@ function hosterlinkScript() {
         hoster: beschriftung.slice(0, 40),
         sprache: String(
           (zusatz && zusatz.sprache)
-          || kachel.getAttribute("data-lang-key")
-          || kachel.getAttribute("data-language-label")
+          || sprachKnoten.getAttribute("data-lang-key")
+          || sprachKnoten.getAttribute("data-language-label")
+          || ""
+        ),
+        spracheRoh: String(
+          (zusatz && zusatz.spracheRoh)
+          || sprachWort.get(String(sprachKnoten.getAttribute("data-lang-key") || ""))
+          || sprachKnoten.getAttribute("data-language-label")
           || ""
         ),
         sichtbar: Boolean(kachel.offsetParent) || kachel.getClientRects().length > 0
@@ -250,7 +298,8 @@ function hosterlinkScript() {
           if (!daten || !daten.x) continue;
           nimm(chip, mint.replace(/\\/+$/, "") + "/" + encodeURIComponent(daten.x), {
             hoster: nameKnoten ? nameKnoten.textContent : "",
-            sprache: spracheKnoten ? spracheKnoten.textContent.trim() : ""
+            sprache: spracheKnoten ? spracheKnoten.textContent.trim() : "",
+            spracheRoh: spracheKnoten ? spracheKnoten.textContent.trim() : ""
           });
         } catch (_) { /* diese Kachel eben nicht - die anderen stehen trotzdem */ }
       }

@@ -36,6 +36,7 @@ const regler = document.getElementById("regler");
 const lautstaerke = document.getElementById("lautstaerke");
 const stufenWahl = document.getElementById("stufen");
 const hosterWahl = document.getElementById("hosterWahl");
+const fassungWahl = document.getElementById("fassungWahl");
 const untertitelWahl = document.getElementById("untertitel");
 const knopfSpielen = document.getElementById("spielen");
 const knopfTon = document.getElementById("ton");
@@ -312,27 +313,103 @@ async function folgeWechseln(url) {
 
 /* ------------------------------------------------- Hoster, Fassung, Untertitel */
 
+/*
+ * Zwei Fragen, zwei Felder.
+ *
+ * Vorher stand beides in einem: "Vidmoly · Fassung 1". Das beantwortete keine
+ * der beiden Fragen gut - wer die Sprache wechseln wollte, musste sich durch
+ * eine Liste arbeiten, in der jede Sprache so oft vorkam, wie es Hoster gibt.
+ * Jetzt waehlt das eine Feld die Fassung und das andere den Hoster; das
+ * Hosterfeld zeigt nur, was es zu dieser Fassung ueberhaupt gibt.
+ */
+
+/** Alles, was gerade zur Wahl steht - der Player behaelt es zwischen den Klicks. */
+let hosterBestand = [];
+
+/** Wie eine Fassung an dieser Kachel heisst. Das Wort schlaegt die Zahl. */
+function fassungVon(eintrag) {
+  return String(eintrag?.fassung || eintrag?.sprache || "").trim();
+}
+
 /**
- * Die Hosterliste in das Auswahlfeld.
+ * VOE zuerst.
+ *
+ * Nicht Geschmack, sondern Erfahrung: VOEs Block laesst sich auspacken, er
+ * liefert mehrere Stufen und die laengste Laufzeit. Steht er zur Wahl, ist er
+ * die Vorgabe - bei der ersten Folge wie nach jedem Fassungswechsel.
+ */
+function bestenNehmen(eintraege) {
+  const voe = eintraege.find((eintrag) => /voe/i.test(eintrag.hoster || ""));
+  return voe || eintraege[0] || null;
+}
+
+function fassungSetzen(liste, laufender) {
+  const eintraege = Array.isArray(liste) ? liste : [];
+  const namen = [];
+  for (const eintrag of eintraege) {
+    const name = fassungVon(eintrag);
+    if (name && !namen.includes(name)) namen.push(name);
+  }
+  fassungWahl.textContent = "";
+  for (const name of namen) {
+    const zeile = document.createElement("option");
+    zeile.value = name;
+    zeile.textContent = name;
+    fassungWahl.appendChild(zeile);
+  }
+  // Eine einzige Fassung ist keine Wahl - dann steht sie nur da.
+  fassungWahl.disabled = namen.length < 2;
+  fassungWahl.hidden = namen.length === 0;
+  const laufendeFassung = fassungVon(eintraege.find((eintrag) => eintrag.adresse === laufender));
+  if (laufendeFassung) fassungWahl.value = laufendeFassung;
+  else if (namen.length) fassungWahl.value = namen[0];
+  return fassungWahl.value;
+}
+
+/**
+ * Die Hosterliste in das Auswahlfeld - nur die zur gewaehlten Fassung.
  *
  * Beschriftet wird mit dem, was der Zuschauer wiedererkennt: dem Namen des
- * Hosters. Die Fassung steht dahinter, aber nur, wenn es ueberhaupt mehr als
- * eine gibt - sonst waere es eine Angabe, die nie etwas unterscheidet.
+ * Hosters. Die Fassung steht nicht mehr dahinter; sie hat ihr eigenes Feld.
  */
 function hosterSetzen(liste, laufender) {
-  const eintraege = Array.isArray(liste) ? liste : [];
-  const sprachen = new Set(eintraege.map((eintrag) => eintrag.sprache).filter(Boolean));
+  hosterBestand = Array.isArray(liste) ? liste : [];
+  const fassung = fassungSetzen(hosterBestand, laufender);
+  const passend = fassung
+    ? hosterBestand.filter((eintrag) => fassungVon(eintrag) === fassung)
+    : hosterBestand;
+
   hosterWahl.textContent = "";
-  for (const eintrag of eintraege) {
+  for (const eintrag of passend) {
     const zeile = document.createElement("option");
     zeile.value = eintrag.adresse;
-    const teile = [eintrag.hoster || "Hoster"];
-    if (sprachen.size > 1 && eintrag.sprache) teile.push(`Fassung ${eintrag.sprache}`);
-    zeile.textContent = teile.join(" · ");
+    zeile.textContent = eintrag.hoster || "Hoster";
     hosterWahl.appendChild(zeile);
   }
-  hosterWahl.disabled = eintraege.length < 2;
-  if (laufender) hosterWahl.value = laufender;
+  hosterWahl.disabled = passend.length < 2;
+  if (laufender && passend.some((eintrag) => eintrag.adresse === laufender)) {
+    hosterWahl.value = laufender;
+  } else {
+    const bester = bestenNehmen(passend);
+    if (bester) hosterWahl.value = bester.adresse;
+  }
+}
+
+/**
+ * Die Fassung wechseln.
+ *
+ * Genommen wird derselbe Hoster in der neuen Fassung, wenn es ihn dort gibt -
+ * wer bei VOE war, bleibt bei VOE. Sonst der beste, den diese Fassung hergibt.
+ */
+function fassungWechseln(name) {
+  const passend = hosterBestand.filter((eintrag) => fassungVon(eintrag) === name);
+  if (!passend.length) return;
+  const jetzige = hosterBestand.find((eintrag) => eintrag.adresse === hosterWahl.value);
+  const gleicher = jetzige
+    ? passend.find((eintrag) => (eintrag.hoster || "").toLowerCase() === (jetzige.hoster || "").toLowerCase())
+    : null;
+  const ziel = gleicher || bestenNehmen(passend);
+  if (ziel) hosterWechseln(ziel.adresse);
 }
 
 async function hosterWechseln(link) {
@@ -480,6 +557,7 @@ stufenWahl.addEventListener("change", () => {
   hls.currentLevel = Number(stufenWahl.value);
 });
 hosterWahl.addEventListener("change", () => hosterWechseln(hosterWahl.value));
+fassungWahl.addEventListener("change", () => fassungWechseln(fassungWahl.value));
 untertitelWahl.addEventListener("change", () => {
   const nummer = Number(untertitelWahl.value);
   if (hls) {
