@@ -8079,6 +8079,29 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
 }
 
 /**
+ * Die gelernte Intro-Marke fuer die laufende Folge - fertig zum Vergleichen.
+ *
+ * Der Player bekommt keine Regel, sondern Zahlen: ab wann der Knopf zu sehen
+ * ist, bis wann, und wohin er springt. Die Regel selbst bleibt in marken.js -
+ * sie an zwei Stellen zu haben hiesse, sie zweimal zu aendern.
+ */
+function spielerMarke() {
+  if (!spielerLauf) return null;
+  if (settings.playback?.introSkip === false) return null;
+  const provider = spielerAnbieter();
+  if (!provider) return null;
+  const marke = markeFuer(markenSchluesselFuer(provider, spielerLauf.url));
+  if (!marke) return null;
+  return {
+    von: Number(marke.von) || 0,
+    dauer: Number(marke.dauer) || 0,
+    ab: Math.max(0, (Number(marke.von) || 0) - marken.FENSTER_VOR_S),
+    bis: (Number(marke.von) || 0) + marken.FENSTER_NACH_S,
+    ziel: (Number(marke.von) || 0) + (Number(marke.dauer) || 0)
+  };
+}
+
+/**
  * Der Auftrag, wie die Seite ihn bekommt.
  *
  * Die Folgenliste kommt bewusst *nicht* mit: sie braucht einen Seitenaufruf,
@@ -8101,7 +8124,11 @@ function spielerAuftrag() {
       sprache: eintrag.sprache,
       sichtbar: eintrag.sichtbar
     })),
-    naechste: spielerLauf.naechste || null
+    naechste: spielerLauf.naechste || null,
+    marke: spielerMarke(),
+    // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
+    // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
+    runde: Boolean(spielerRunde())
   };
 }
 
@@ -8265,6 +8292,31 @@ ipcMain.on("spieler:stand", (ereignis, stand) => {
   });
 });
 
+/**
+ * Ein Sprung im eigenen Player.
+ *
+ * Daraus wird das Intro gelernt - nach genau derselben Regel wie aus einem
+ * Sprung im Rahmen des Hosters: zwei uebereinstimmende Sprünge in zwei
+ * verschiedenen Folgen ergeben eine Marke.
+ *
+ * Der Sprung des Intro-Knopfes selbst zaehlt nicht mit. Er ist keine
+ * Entscheidung ueber die Stelle, sondern das Einloesen einer bereits
+ * gelernten - wer ihn mitzaehlte, bestaetigte der Marke immer nur sich selbst.
+ */
+ipcMain.on("spieler:sprung", (ereignis, von, nach, genutzt) => {
+  if (!vomSpieler(ereignis)) return;
+  if (genutzt) return;
+  if (settings.playback?.introSkip === false) return;
+  const provider = spielerAnbieter();
+  if (!provider) return;
+  markeLernen(provider, spielerLauf.url, sanitizePositiveNumber(von), sanitizePositiveNumber(nach));
+  // Wurde daraus gerade eine Marke, soll der Knopf nicht erst bei der
+  // uebernaechsten Folge dastehen.
+  if (spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:marke", spielerMarke());
+  }
+});
+
 ipcMain.on("spieler:fehler", (ereignis, text) => {
   if (!spielerView || ereignis.sender !== spielerView.webContents) return;
   console.log(`[ELFIX DIREKT] Player meldet: ${String(text || "").slice(0, 200)}`);
@@ -8303,19 +8355,6 @@ ipcMain.on("spieler:vollbild", (ereignis) => {
 async function direktFolgeSpielen(provider, url, optionen = {}) {
   if (!provider || !providerModel.isHttpUrl(url)) {
     return { ok: false, grund: "Kein Titel geöffnet" };
-  }
-
-  // In einer laufenden Runde nicht.
-  //
-  // Die Watchparty greift in den Player des Hosters: sie liest seinen Stand,
-  // haelt ihn an, springt an eine Stelle - alles ueber Skripte in den Rahmen
-  // der Anbieterseite (watchparty-sync.js). Der eigene Player steht in keinem
-  // dieser Rahmen. Wer hier direkt abspielt, saehe seinen Film, waehrend die
-  // anderen glauben, er sei bei Minute null stehengeblieben; angehalten wuerde
-  // er auch nicht mehr. Ein halb angeschlossener Zuschauer ist schlimmer als
-  // einer, der den Hoster benutzt - also sagt es das lieber deutlich.
-  if (watchpartyRaumForUrl(url) || watchpartyGibtFolgeVor(url)) {
-    return { ok: false, grund: "In der Watchparty läuft die Folge weiter über den Hoster" };
   }
 
   const view = await werkbankAn(provider, url);
@@ -8472,6 +8511,172 @@ function watchpartyLaeuftDanach(nachricht) {
   return nachricht.action === "play" || nachricht.action === "syncstart";
 }
 
+/* ------------------------------------------- Die Runde am eigenen Player
+ *
+ * Bisher lief die Watchparty durch den Rahmen des Hosters: ein Skript las dort
+ * den Stand, ein zweites setzte ihn, und beide mussten sich gegen einen fremden
+ * Player behaupten - der beim Setzen der Stelle neu pufferte, seine eigene
+ * Ueberlagerung dazwischenschob und beim Folgenwechsel verschwand.
+ *
+ * Mit dem eigenen Player faellt das alles weg. Das Video gehoert uns; ein
+ * Befehl ist eine Zahl und kein eingespielter Quelltext. Was bleibt, sind die
+ * Entscheidungen - und die stehen weiter in watchparty-sync.js, damit Rechner
+ * und Telefon sie gleich treffen: `zielZeitBerechnen` rechnet die Laufzeit der
+ * Nachricht auf, `driftEntscheiden` sagt, ob ein Versatz ueberhaupt einen
+ * Sprung wert ist.
+ */
+
+/** Der Zustand der Driftmessung. Er gehoert zum Player, nicht zur Nachricht. */
+let spielerDrift = { bestaetigt: 0, letzteMessung: 0, seitSprung: 0 };
+
+/** Der zuletzt gemeldete Stand des eigenen Players. */
+let spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+
+/** Die Runde, in der der eigene Player gerade laeuft - falls es eine gibt. */
+function spielerRunde() {
+  if (!spielerLauf) return null;
+  const adresse = spielerLauf.url;
+  const key = watchpartyLiveKeyForUrl(adresse);
+  const raum = watchpartyRaumForUrl(adresse);
+  return key && raum ? { key, raum, adresse } : null;
+}
+
+/** Ein Befehl an den Player. Ohne Player kostet er nichts. */
+function spielerBefehl(befehl) {
+  if (!spielerView || spielerView.webContents.isDestroyed()) return false;
+  spielerView.webContents.send("spieler:steuern", befehl);
+  return true;
+}
+
+/**
+ * Den Stand des eigenen Players in die Runde melden.
+ *
+ * Dieselben Angaben wie aus der Seite (meldeWatchpartyStandAusSeite), nur dass
+ * die Adresse nicht aus einer Ansicht kommt, sondern aus dem laufenden Auftrag.
+ * Das ist der Punkt: die Anbieteransicht steht laengst woanders - auf einer
+ * Staffelseite, die gerade gelesen wurde -, waehrend hier eine Folge laeuft.
+ */
+function meldeWatchpartyStandAusSpieler(position, pausiert) {
+  const runde = spielerRunde();
+  if (!watchparty.aktiv || !runde) return;
+  const identity = episodeIdentity(runde.adresse);
+  watchparty.meldeStand(runde.key, {
+    position: Number(position) || 0,
+    paused: Boolean(pausiert),
+    url: runde.adresse,
+    season: identity?.season || 0,
+    episode: identity?.episode || 0,
+    playerSessionId: watchpartySitzungFuer(spielerLauf.providerId)
+  }, runde.raum);
+}
+
+/**
+ * Ein Befehl der Runde am eigenen Player.
+ *
+ * Gibt `true` zurueck, wenn der Befehl hier erledigt ist - dann geht er nicht
+ * zusaetzlich in die Anbieteransichten. Passt er nicht zu dem, was gerade
+ * laeuft, bleibt es bei `false` und der alte Weg entscheidet.
+ */
+async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
+  if (!spielerLauf) return false;
+  const adresse = spielerLauf.url;
+  const gemeint = nachricht.url || eintrag.live?.url || eintrag.url;
+
+  // Der Folgenwechsel richtet sich gerade an die, bei denen die alte Folge
+  // steht - er wird deshalb vor der Folgenpruefung beantwortet.
+  if (urteil.tun === "navigate") {
+    if (!nachricht.url || istGleicheFolge(nachricht.url, adresse)) return true;
+    // Nur innerhalb derselben Serie: niemand soll ungefragt woanders landen.
+    if (taste.urlSchluessel(nachricht.url) !== taste.urlSchluessel(adresse)) return false;
+    const provider = spielerAnbieter();
+    if (!provider) return false;
+    await direktFolgeSpielen(provider, nachricht.url, { startzeit: 0 });
+    return true;
+  }
+
+  if (!istGleicheFolge(gemeint, adresse)) return false;
+  if (!watchpartyPasstZurFolge(nachricht.episodeId, adresse)) return false;
+
+  const ereignis = watchpartyEreignis(nachricht, watchpartyLaeuftDanach(nachricht));
+
+  // Gleichziehen: anhalten, genau auf die Stelle des Hosts. Der Host haelt nur
+  // an, wo er ohnehin steht - seine Stelle ist ja das Ziel.
+  if (urteil.tun === "syncprepare") {
+    spielerBefehl({
+      tun: "stelle",
+      stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
+      laufen: false,
+      springen: !binHost
+    });
+    return false;
+  }
+
+  // Die laufende Messung des Hosts. Sie ist keine Korrektur - meistens folgt
+  // nichts daraus, und genau das ist der Sinn: jeder Sprung ruckelt.
+  if (urteil.tun === "drift") {
+    const ziel = watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room));
+    const jetzt = Date.now();
+    // Der eigene Stand altert zwischen zwei Takten. Ohne das Weiterrechnen
+    // waere die Messung um bis zu eine Sekunde daneben - und die Grenze liegt
+    // bei fuenf.
+    const eigene = spielerTakt.laeuft
+      ? spielerTakt.stelle + Math.max(0, (jetzt - spielerTakt.at) / 1000)
+      : spielerTakt.stelle;
+    const urteilDrift = watchpartySync.driftEntscheiden(spielerDrift, {
+      jetzt,
+      drift: eigene - ziel,
+      laeuft: spielerTakt.laeuft && ereignis.playing,
+      puffert: spielerTakt.puffert
+    });
+    if (urteilDrift === "springen") {
+      console.log(`[watchparty-sync] {"player":"direkt","drift":${(eigene - ziel).toFixed(1)},"tun":"springen"}`);
+      spielerBefehl({ tun: "stelle", stelle: ziel, laufen: true, springen: true });
+    }
+    return true;
+  }
+
+  if (urteil.tun === "pause") {
+    spielerBefehl({ tun: "stelle", stelle: ereignis.videoTime, laufen: false, springen: true });
+    return true;
+  }
+  if (urteil.tun === "play" || urteil.tun === "seek" || urteil.tun === "syncstart") {
+    spielerBefehl({
+      tun: "stelle",
+      stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
+      laufen: watchpartyLaeuftDanach(nachricht),
+      springen: true
+    });
+    return true;
+  }
+  return false;
+}
+
+/** Der Takt des eigenen Players - einmal je Sekunde, solange eine Runde laeuft. */
+ipcMain.on("spieler:takt", (ereignis, takt) => {
+  if (!vomSpieler(ereignis)) return;
+  spielerTakt = {
+    stelle: sanitizePositiveNumber(takt?.stelle),
+    laeuft: Boolean(takt?.laeuft),
+    puffert: Boolean(takt?.puffert),
+    at: Date.now()
+  };
+  meldeWatchpartyStandAusSpieler(spielerTakt.stelle, !spielerTakt.laeuft);
+});
+
+/**
+ * Pause, Weiter und Sprung des Zuschauers - sofort an die anderen.
+ *
+ * Nur, was der Mensch hier getan hat. Was aus der Runde kam, kommt nicht
+ * zurueck: sonst haette jede Pause eine Antwort, und die Antwort eine Antwort.
+ */
+ipcMain.on("spieler:aktion", (ereignis, aktion, stelle) => {
+  if (!vomSpieler(ereignis)) return;
+  const runde = spielerRunde();
+  if (!runde) return;
+  watchparty.steuernMitAdresse(runde.key, String(aktion || ""), sanitizePositiveNumber(stelle),
+    runde.adresse, runde.raum);
+});
+
 async function applyWatchpartyControl(nachricht) {
   // Nur die Runde steuert, in der dieses Geraet gerade schaut. Sonst wuerde
   // eine Pause aus der einen Watchparty die andere mit anhalten, obwohl dort
@@ -8508,6 +8713,10 @@ async function applyWatchpartyControl(nachricht) {
   }
 
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
+
+  // Laeuft der eigene Player, gehoert der Befehl ihm. Er bekommt ihn als Zahl
+  // und nicht als eingespieltes Skript - das Video gehoert uns.
+  if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost)) return;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
   // derselben Serie, damit niemand ungefragt woanders landet.

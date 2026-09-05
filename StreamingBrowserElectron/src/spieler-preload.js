@@ -36,5 +36,23 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   /** Ein anderer Hoster fuer dieselbe Folge - an derselben Stelle weiter. */
   hoster: (link, stelle) => ipcRenderer.invoke("spieler:hoster", String(link || ""), Number(stelle) || 0),
   /** Die naechste Folge wird nachgereicht: sie steht erst nach einem Abruf fest. */
-  aufNaechste: (rueckruf) => ipcRenderer.on("spieler:naechste", (_ereignis, naechste) => rueckruf(naechste))
+  aufNaechste: (rueckruf) => ipcRenderer.on("spieler:naechste", (_ereignis, naechste) => rueckruf(naechste)),
+  /**
+   * Ein Sprung des Zuschauers. Daraus lernt ELFIX das Intro.
+   *
+   * `genutzt` heisst: das war der Intro-Knopf selbst. Er darf nicht mitzaehlen,
+   * sonst bestaetigt die Marke immer nur sich selbst.
+   */
+  sprung: (von, nach, genutzt = false) =>
+    ipcRenderer.send("spieler:sprung", Number(von) || 0, Number(nach) || 0, Boolean(genutzt)),
+  /** Eine frisch gelernte Marke wird nachgereicht. */
+  aufMarke: (rueckruf) => ipcRenderer.on("spieler:marke", (_ereignis, marke) => rueckruf(marke)),
+  /**
+   * Die Watchparty. Drei Dinge, mehr braucht sie nicht:
+   * der Takt (wo stehe ich), die eigene Tat (was habe ich getan) und der
+   * Befehl der Runde (wohin soll ich).
+   */
+  takt: (takt) => ipcRenderer.send("spieler:takt", takt),
+  aktion: (aktion, stelle) => ipcRenderer.send("spieler:aktion", String(aktion || ""), Number(stelle) || 0),
+  aufSteuern: (rueckruf) => ipcRenderer.on("spieler:steuern", (_ereignis, befehl) => rueckruf(befehl))
 });

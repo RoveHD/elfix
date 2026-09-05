@@ -26,8 +26,9 @@
  */
 
 const bruecke = window.elfixSpieler || {
-  aufAuftrag() {}, aufNaechste() {}, bereit() {}, stand() {}, fehler() {},
-  schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {}
+  aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, stand() {},
+  fehler() {}, schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {},
+  sprung() {}, takt() {}, aktion() {}
 };
 
 const bild = document.getElementById("bild");
@@ -39,6 +40,7 @@ const untertitelWahl = document.getElementById("untertitel");
 const knopfSpielen = document.getElementById("spielen");
 const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
+const knopfMarke = document.getElementById("marke");
 const anzeigeStelle = document.getElementById("stelle");
 const anzeigeDauer = document.getElementById("dauer");
 const puffer = document.getElementById("puffer");
@@ -68,6 +70,21 @@ let vorigeStelle = 0;
 let gerettet = { netz: false, medium: false };
 /** Die naechste Folge, sobald der Hauptprozess sie kennt. */
 let naechste = null;
+/** Die gelernte Intro-Marke dieser Staffel, falls es eine gibt. */
+let marke = null;
+/** Laeuft zu dieser Folge eine Watchparty? Dann geht der Takt hinaus. */
+let inRunde = false;
+/** Puffert das Video gerade? Eine Messung waehrend des Puffern taugt nichts. */
+let puffert = false;
+/**
+ * Bis wann eine Aenderung als "kam von der Runde" gilt.
+ *
+ * Ohne diese Frist antwortete jede Pause der Runde mit einer eigenen Pause an
+ * die Runde - und die naechste Antwort auf die Antwort. Die Frist ist knapp
+ * gehalten: sie soll das Echo abfangen und nicht eine echte Tat verschlucken,
+ * die eine Sekunde spaeter kommt.
+ */
+let ausRundeBis = 0;
 /** Die gelesene Staffel- und Folgenliste. */
 let folgenStand = null;
 /** Welche Staffel im Panel gerade aufgeschlagen ist. */
@@ -136,8 +153,62 @@ function spielenUmschalten() {
 
 function springen(sekunden) {
   if (!Number.isFinite(bild.duration) || bild.duration <= 0) return;
-  bild.currentTime = Math.min(Math.max(0, bild.currentTime + sekunden), bild.duration - 0.5);
+  const von = bild.currentTime;
+  bild.currentTime = Math.min(Math.max(0, von + sekunden), bild.duration - 0.5);
+  bruecke.sprung(von, bild.currentTime, false);
+  tatMelden("seek");
   schichtenZeigen();
+}
+
+/**
+ * Das Intro ueberspringen.
+ *
+ * Ein Knopf, kein Automatismus - derselbe Grund wie in marken.js: ein Skript,
+ * das ungefragt springt, ist eine Bevormundung, und ein falscher Sprung kostet
+ * neunzig Sekunden Handlung, die man erst wiederfinden muss.
+ */
+function markeNutzen() {
+  if (!marke) return;
+  const von = bild.currentTime;
+  bild.currentTime = Math.max(von + 1, marke.ziel);
+  vorigeStelle = bild.currentTime;
+  bruecke.sprung(von, bild.currentTime, true);
+  knopfMarke.hidden = true;
+}
+
+/** Der Knopf steht nur in seinem Fenster - davor und danach waere er im Weg. */
+function markeZeigen(stelle) {
+  knopfMarke.hidden = !(marke && stelle >= marke.ab && stelle <= marke.bis);
+}
+
+/** Kam die letzte Aenderung aus der Runde? */
+function ausRunde() {
+  return Date.now() < ausRundeBis;
+}
+
+/**
+ * Ein Befehl der Runde.
+ *
+ * `springen` ist falsch fuer den Host beim Gleichziehen: er steht schon dort,
+ * wo alle hinsollen, und ein Sprung auf die eigene Stelle laesst nur neu
+ * puffern.
+ */
+function steuernAusRunde(befehl) {
+  if (!befehl) return;
+  ausRundeBis = Date.now() + 900;
+  const stelle = Number(befehl.stelle);
+  if (befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0) {
+    bild.currentTime = stelle;
+    vorigeStelle = stelle;
+  }
+  if (befehl.laufen) bild.play().catch(() => {});
+  else bild.pause();
+}
+
+/** Die eigene Tat an die Runde - aber nur, wenn es die eigene war. */
+function tatMelden(aktion) {
+  if (!inRunde || ausRunde()) return;
+  bruecke.aktion(aktion, Number(bild.currentTime) || 0);
 }
 
 function tonUmschalten() {
@@ -380,6 +451,7 @@ document.getElementById("folgenKnopf").addEventListener("click", () => {
 });
 document.getElementById("folgenZu").addEventListener("click", () => { folgenPanel.hidden = true; });
 knopfWeiter.addEventListener("click", () => folgeWechseln(naechste?.url || ""));
+knopfMarke.addEventListener("click", markeNutzen);
 document.getElementById("weiterJetzt").addEventListener("click", () => {
   const ziel = naechste?.url || "";
   weiterAbbrechen();
@@ -390,10 +462,13 @@ bild.addEventListener("click", spielenUmschalten);
 
 regler.addEventListener("input", () => {
   if (!Number.isFinite(bild.duration) || bild.duration <= 0) return;
+  const von = bild.currentTime;
   bild.currentTime = (Number(regler.value) / 1000) * bild.duration;
   // Die Zaehlung darf einen Sprung nicht mitzaehlen - sonst waere der Regler
   // eine Abkuerzung zum "geschaut" der ganzen Serie.
   vorigeStelle = bild.currentTime;
+  bruecke.sprung(von, bild.currentTime, false);
+  tatMelden("seek");
 });
 lautstaerke.addEventListener("input", () => {
   bild.volume = Number(lautstaerke.value) / 100;
@@ -432,6 +507,7 @@ document.addEventListener("keydown", (ereignis) => {
   else if (taste === "f") bruecke.vollbild(true);
   else if (taste === "e") { if (folgenPanel.hidden) folgenZeigen(); else folgenPanel.hidden = true; }
   else if (taste === "n" && naechste) folgeWechseln(naechste.url);
+  else if (taste === "s") markeNutzen();
   else if (taste === "Escape") {
     // Erst die Liste, dann der Player: Escape schliesst, was offen ist.
     if (!folgenPanel.hidden) folgenPanel.hidden = true;
@@ -449,6 +525,7 @@ bild.addEventListener("timeupdate", () => {
   vorigeStelle = stelle;
 
   anzeigeStelle.textContent = zeit(stelle);
+  markeZeigen(stelle);
   if (Number.isFinite(bild.duration) && bild.duration > 0) {
     regler.value = String(Math.round((stelle / bild.duration) * 1000));
     // Der Uebergang faengt vor dem letzten Bild an - der Abspann laeuft weiter,
@@ -465,15 +542,19 @@ bild.addEventListener("play", () => {
   knopfSpielen.textContent = "⏸";
   pufferZeigen(false);
   standMelden(true);
+  tatMelden("play");
   schichtenZeigen();
 });
 bild.addEventListener("pause", () => {
   knopfSpielen.textContent = "▶";
   standMelden(true);
+  // Das Ende ist keine Pause, die man an die anderen meldet - sie kommen von
+  // selbst dorthin, und der Uebergang zur naechsten Folge macht den Rest.
+  if (!bild.ended) tatMelden("pause");
   schichtenZeigen();
 });
-bild.addEventListener("waiting", () => pufferZeigen(true));
-bild.addEventListener("playing", () => pufferZeigen(false));
+bild.addEventListener("waiting", () => { puffert = true; pufferZeigen(true); });
+bild.addEventListener("playing", () => { puffert = false; pufferZeigen(false); });
 bild.addEventListener("seeked", () => { vorigeStelle = bild.currentTime; standMelden(true); });
 bild.addEventListener("ended", () => {
   standMelden(true);
@@ -638,6 +719,11 @@ function starten(neuerAuftrag) {
   hosterSetzen(auftrag.hosterliste, auftrag.link);
   untertitelSetzen([]);
   naechsteSetzen(auftrag.naechste);
+  marke = auftrag.marke || null;
+  knopfMarke.hidden = true;
+  inRunde = Boolean(auftrag.runde);
+  ausRundeBis = 0;
+  puffert = false;
   // Die Liste bleibt, ihre Markierung nicht: welche Folge laeuft, steht im
   // Stand und nicht im Auftrag - also wird sie beim naechsten Aufklappen neu
   // geholt.
@@ -656,4 +742,22 @@ function starten(neuerAuftrag) {
 
 bruecke.aufAuftrag(starten);
 bruecke.aufNaechste(naechsteSetzen);
+bruecke.aufMarke((neue) => { marke = neue || null; });
+bruecke.aufSteuern(steuernAusRunde);
+
+/**
+ * Der Takt der Runde.
+ *
+ * Einmal je Sekunde, und nur wenn ueberhaupt eine Runde laeuft. Er ist die
+ * Grundlage der Driftmessung drueben: ohne ihn wuesste niemand, wo dieses
+ * Geraet steht, und die Leiste zeigte "woanders".
+ */
+setInterval(() => {
+  if (!inRunde) return;
+  bruecke.takt({
+    stelle: Number(bild.currentTime) || 0,
+    laeuft: !bild.paused && !bild.ended,
+    puffert
+  });
+}, 1000);
 bruecke.bereit();

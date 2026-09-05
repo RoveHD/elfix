@@ -111,17 +111,37 @@ pruefe("Es gibt Empfaenger fuer die Meldungen des Players",
 const abschnitt = haupt.slice(haupt.indexOf('ipcMain.on("spieler:bereit"'));
 const bereich = abschnitt.slice(0, abschnitt.indexOf('ipcMain.handle("direkt:starten"'));
 const empfaenger = bereich.split('ipcMain.on("spieler:').slice(1);
+// Geprueft wird entweder von Hand oder ueber `vomSpieler` - und dass dieser
+// Pruefer wirklich den Absender vergleicht, steht gleich darunter. Ohne beides
+// koennte jede beliebige Seite der App Fortschritt verbuchen; eine
+// Anbieterseite ist fremder Code.
+const bewacht = (teil) => teil.includes("ereignis.sender !== spielerView.webContents")
+  || teil.includes("vomSpieler(ereignis)");
 pruefe("Jeder von ihnen prueft, dass die Meldung wirklich vom Player kommt",
-  empfaenger.length > 0
-  && empfaenger.every((teil) => teil.includes("ereignis.sender !== spielerView.webContents")),
+  empfaenger.length > 0 && empfaenger.every(bewacht),
   `${empfaenger.length} Empfänger`);
+pruefe("Und der gemeinsame Pruefer vergleicht wirklich den Absender",
+  /function vomSpieler\(ereignis\) \{[\s\S]*?ereignis\.sender === spielerView\.webContents/.test(haupt));
+const nachgefragt = haupt.split('ipcMain.handle("spieler:').slice(1);
+pruefe("Auch jede Nachfrage wird auf ihren Absender geprueft",
+  nachgefragt.length > 0 && nachgefragt.every((teil) => teil.includes("vomSpieler(ereignis)")),
+  `${nachgefragt.length} Nachfragen`);
 
-// Die Watchparty steuert den Player des Hosters ueber Skripte in dessen
-// Rahmen. Der eigene Player steht in keinem davon - er waere ein Zuschauer,
-// den die Runde nicht mehr anhalten kann.
-pruefe("In einer laufenden Runde faengt der eigene Player gar nicht erst an",
-  haupt.includes("watchpartyRaumForUrl(url) || watchpartyGibtFolgeVor(url)")
-  && haupt.includes("In der Watchparty läuft die Folge weiter über den Hoster"));
+// Die Watchparty laeuft jetzt gegen den eigenen Player: er meldet seinen Takt,
+// meldet seine Taten und nimmt Befehle entgegen. Die Entscheidungen dahinter
+// bleiben in watchparty-sync.js - dieselben, die auf dem Telefon fallen.
+pruefe("Der Player meldet seinen Takt und seine Taten in die Runde",
+  haupt.includes('ipcMain.on("spieler:takt"') && haupt.includes('ipcMain.on("spieler:aktion"')
+  && haupt.includes("meldeWatchpartyStandAusSpieler"));
+pruefe("Befehle der Runde erreichen ihn, bevor sie in die Ansichten gehen",
+  haupt.includes("if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost)) return;"));
+pruefe("Gerechnet wird mit den Regeln der Runde und nicht mit eigenen",
+  haupt.includes("watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room))")
+  && haupt.includes("watchpartySync.driftEntscheiden(spielerDrift"),
+  "sonst entschiede der Rechner anders als das Telefon");
+pruefe("Was aus der Runde kam, geht nicht als eigene Tat zurueck",
+  skript.includes("if (!inRunde || ausRunde()) return;"),
+  "sonst haette jede Pause eine Antwort und die Antwort eine Antwort");
 
 pruefe("Der Player wird geschlossen, wenn die Folge verlassen wird",
   haupt.includes('direktSpielerSchliessen("navigation")')
