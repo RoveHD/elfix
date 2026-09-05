@@ -47,7 +47,10 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   /** Ein anderer Hoster fuer dieselbe Folge - an derselben Stelle weiter. */
   hoster: (link, stelle) => ipcRenderer.invoke("spieler:hoster", String(link || ""), Number(stelle) || 0),
   /** Die naechste Folge wird nachgereicht: sie steht erst nach einem Abruf fest. */
-  aufNaechste: (rueckruf) => ipcRenderer.on("spieler:naechste", (_ereignis, naechste) => rueckruf(naechste)),
+  // Der Folgentitel reist mit: er kommt aus derselben Liste wie die naechste
+  // Folge, und beides trifft zusammen ein.
+  aufNaechste: (rueckruf) =>
+    ipcRenderer.on("spieler:naechste", (_ereignis, naechste, folgentitel) => rueckruf(naechste, folgentitel)),
   /**
    * Ein Sprung des Zuschauers. Daraus lernt ELFIX das Intro.
    *

@@ -55,7 +55,15 @@ const staffelReiter = document.getElementById("staffelReiter");
 const weiterKasten = document.getElementById("weiter");
 const weiterZahl = document.getElementById("weiterZahl");
 const weiterTitel = document.getElementById("weiterTitel");
-const schichten = [document.getElementById("kopf"), document.getElementById("leiste")];
+const schichten = [
+  document.getElementById("kopf"),
+  document.getElementById("leiste"),
+  // Die Karte zur naechsten Folge geht mit: sie steht ueber dem Bild, und ein
+  // Knopf, der ueber einem laufenden Film dauerhaft stehenbleibt, stoert genau
+  // so wie eine Leiste. Sichtbar wird sie beim Erreichen der Schwelle - danach
+  // immer dann, wenn sich die Maus regt.
+  document.getElementById("weiterKnopf")
+];
 
 /**
  * So lange laeuft der Countdown zur naechsten Folge - und ob ueberhaupt.
@@ -552,7 +560,17 @@ function untertitelSetzen(spuren) {
     zeile.textContent = spur.name || spur.lang || `Spur ${nummer + 1}`;
     untertitelWahl.appendChild(zeile);
   });
-  untertitelWahl.disabled = !(spuren || []).length;
+  /*
+   * Kein Feld, wo es nichts zu waehlen gibt.
+   *
+   * Vorher stand "Untertitel aus" auch dann da, wenn die Quelle gar keine
+   * Spuren mitbringt - nur blass. Ein abgeblendetes Feld sieht aus wie eines,
+   * das gerade nicht geht; tatsaechlich gibt es dort nie etwas. Es ganz
+   * wegzulassen ist ehrlicher und macht die Leiste kuerzer.
+   */
+  const hatSpuren = Boolean((spuren || []).length);
+  untertitelWahl.hidden = !hatSpuren;
+  untertitelWahl.disabled = !hatSpuren;
   untertitelWahl.value = "-1";
 }
 
@@ -581,10 +599,65 @@ function standMelden(sofort = false) {
 
 /* ------------------------------------------------------- Die naechste Folge */
 
+/*
+ * Ab wann der Knopf zur naechsten Folge dasteht.
+ *
+ * Nicht von Sekunde eins an: am alten Knopf in der Anbieterseite erschien er
+ * ab neunzig Prozent (NEXT_EPISODE_PROMPT_PERCENT) und blieb bis zum Ende
+ * stehen. Der Player zeigte ihn die ganze Folge lang - eine Einladung, in der
+ * dritten Minute versehentlich weiterzuspringen.
+ *
+ * Die Zahl kommt aus dem Auftrag, damit sie nicht an zwei Stellen steht.
+ */
+let weiterAbProzent = 90;
+
+function weiterKnopfZeigen() {
+  if (!naechste) {
+    knopfWeiter.hidden = true;
+    return;
+  }
+  const dauer = Number(bild.duration);
+  const prozent = Number.isFinite(dauer) && dauer > 0
+    ? (bild.currentTime / dauer) * 100
+    : 0;
+  // Ohne obere Grenze: sonst verschwindet er in den letzten Sekunden wieder,
+  // bevor der Uebergang greift. Dieselbe Ueberlegung wie drueben.
+  const dran = prozent >= weiterAbProzent;
+  if (dran && knopfWeiter.hidden) {
+    // Einmal, beim Erreichen der Schwelle: die Karte soll auffallen, auch wenn
+    // die Leiste gerade weg ist. Danach richtet sie sich nach den Schichten.
+    knopfWeiter.hidden = false;
+    schichtenZeigen();
+  } else if (!dran) {
+    knopfWeiter.hidden = true;
+  }
+}
+
+/*
+ * Was oben steht.
+ *
+ * "Attack on Titan · Staffel 4 Folge 13" sagt, wo man ist - aber nicht, was
+ * man sieht. Der Name der Folge steht in der Folgenliste und kommt mit ihr
+ * nach; bis dahin bleibt die Zeile eben kuerzer. Nachgeschoben wird nur, was
+ * wirklich ankommt: ein leerer Name aendert nichts.
+ */
+let kopfBasis = "";
+
+function kopfTitelSetzen(basis, folgentitel) {
+  if (basis) kopfBasis = basis;
+  const name = String(folgentitel || "").trim();
+  document.getElementById("titel").textContent = name
+    ? `${kopfBasis} · ${name}`
+    : kopfBasis;
+}
+
 function naechsteSetzen(wert) {
   naechste = wert && wert.url ? wert : null;
-  knopfWeiter.hidden = !naechste;
-  if (naechste) knopfWeiter.title = `Nächste Folge: ${naechste.beschriftung || ""}`;
+  weiterKnopfZeigen();
+  if (naechste) {
+    knopfWeiter.title = `Nächste Folge: ${naechste.beschriftung || ""}`;
+    document.getElementById("weiterKnopfTitel").textContent = naechste.beschriftung || "";
+  }
 }
 
 /**
@@ -621,8 +694,14 @@ function weiterAnbieten() {
  * richtet. Null heisst aus.
  */
 function autoZeigen() {
-  knopfAuto.classList.toggle("aus", weiterZaehler <= 0);
-  knopfAuto.title = weiterZaehler > 0
+  const an = weiterZaehler > 0;
+  knopfAuto.classList.toggle("aus", !an);
+  // Der Zustand steht im Wort und nicht nur in der Farbe: "Autoplay an" ist
+  // ohne Nachdenken zu lesen, ein blasses "Auto" nicht - erst recht nicht
+  // neben der Qualitaetswahl, die ebenfalls "Automatisch" anbietet.
+  knopfAuto.textContent = an ? "Autoplay an" : "Autoplay aus";
+  knopfAuto.setAttribute("aria-pressed", an ? "true" : "false");
+  knopfAuto.title = an
     ? "Nächste Folge startet von selbst - zum Abschalten klicken"
     : "Nächste Folge startet nicht von selbst - zum Einschalten klicken";
 }
@@ -746,6 +825,7 @@ bild.addEventListener("timeupdate", () => {
   if (Number.isFinite(bild.duration) && bild.duration > 0) {
     regler.value = String(Math.round((stelle / bild.duration) * 1000));
     reglerFaerben(stelle);
+    weiterKnopfZeigen();
     // Der Uebergang faengt vor dem letzten Bild an - der Abspann laeuft weiter,
     // waehrend der Kasten schon dasteht. Wer ihn wegklickt, sieht ihn zu Ende.
     if (naechste && weiterZaehler > 0 && bild.duration - stelle <= weiterZaehler + 1) weiterAnbieten();
@@ -853,7 +933,9 @@ function stufenSetzen(stufen) {
   stufenWahl.textContent = "";
   const auto = document.createElement("option");
   auto.value = "-1";
-  auto.textContent = "Auto";
+  // "Automatisch" und nicht "Auto": daneben sitzt der Autoplay-Schalter, und
+  // zweimal "Auto" nebeneinander erklaert keines von beiden.
+  auto.textContent = "Automatisch";
   stufenWahl.appendChild(auto);
   stufen.forEach((stufe, nummer) => {
     const eintrag = document.createElement("option");
@@ -956,13 +1038,16 @@ function starten(neuerAuftrag) {
   bild.removeAttribute("src");
   bild.load();
 
-  document.getElementById("titel").textContent = auftrag.titel || "Wiedergabe";
+  kopfTitelSetzen(auftrag.titel || "Wiedergabe", auftrag.folgentitel || "");
   document.getElementById("hoster").textContent = [auftrag.hoster, auftrag.stufe].filter(Boolean).join(" · ");
   fehlerKasten.hidden = true;
   pufferZeigen(true);
   hosterSetzen(auftrag.hosterliste, auftrag.link);
   untertitelSetzen([]);
   naechsteSetzen(auftrag.naechste);
+  weiterAbProzent = Number.isFinite(Number(auftrag.weiterAbProzent))
+    ? Number(auftrag.weiterAbProzent)
+    : 90;
   weiterZaehler = Number.isFinite(Number(auftrag.weiterZaehler))
     ? Math.max(0, Number(auftrag.weiterZaehler))
     : WEITER_SEKUNDEN;
@@ -1008,7 +1093,11 @@ function starten(neuerAuftrag) {
 }
 
 bruecke.aufAuftrag(starten);
-bruecke.aufNaechste(naechsteSetzen);
+bruecke.aufNaechste((wert, folgentitel) => {
+  naechsteSetzen(wert);
+  // Der Name der Folge kommt mit derselben Nachricht - die Liste kennt beides.
+  if (folgentitel) kopfTitelSetzen("", folgentitel);
+});
 bruecke.aufMarke((neue) => { marke = neue || null; });
 bruecke.aufSteuern(steuernAusRunde);
 

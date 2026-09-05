@@ -8322,6 +8322,7 @@ function spielerAuftrag() {
     adresse: spielerLauf.quelle.adresse,
     typ: spielerLauf.quelle.typ,
     titel: spielerLauf.titel,
+    folgentitel: spielerLauf.folgentitel || "",
     hoster: spielerLauf.hoster,
     link: spielerLauf.link,
     stufe: spielerLauf.quelle.hoehe ? `${spielerLauf.quelle.hoehe}p` : "",
@@ -8354,6 +8355,10 @@ function spielerAuftrag() {
      * ohne Wirkung.
      */
     weiterZaehler: spielerZaehler(),
+    // Ab wann der Knopf zur naechsten Folge ueberhaupt dasteht. Dieselbe
+    // Schwelle wie am alten Knopf in der Anbieterseite - die Zahl steht an
+    // einer Stelle, damit beide Wege nicht auseinanderlaufen.
+    weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT,
     marke: spielerMarke(),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
@@ -8373,12 +8378,25 @@ function spielerAuftrag() {
 async function spielerNaechsteNachtragen(provider, url) {
   const stand = await folgenlisteLesen(provider, url).catch(() => null);
   if (!spielerLauf || spielerLauf.url !== url) return;
-  const naechste = direktfolgen.naechste(stand, episodeIdentity(url));
+  const kennung = episodeIdentity(url);
+  const naechste = direktfolgen.naechste(stand, kennung);
   spielerLauf.naechste = naechste
     ? { url: naechste.url, beschriftung: direktfolgen.beschriftung(naechste) }
     : null;
+
+  /*
+   * Der Name der laufenden Folge - er steht in derselben Liste.
+   *
+   * Oben im Player stand bisher nur "Serie · Staffel 4 Folge 13". Wie die
+   * Folge heisst, wusste die Liste im Folgen-Kasten, der Kopf aber nicht. Es
+   * kostet nichts, ihn hier mitzunehmen: die Liste wird ohnehin geholt.
+   */
+  const laufend = (stand?.folgen || [])
+    .find((eintrag) => direktfolgen.istLaufende(eintrag, kennung));
+  spielerLauf.folgentitel = String(laufend?.titel || "");
+
   if (spielerView && !spielerView.webContents.isDestroyed()) {
-    spielerView.webContents.send("spieler:naechste", spielerLauf.naechste);
+    spielerView.webContents.send("spieler:naechste", spielerLauf.naechste, spielerLauf.folgentitel);
   }
 }
 
@@ -8713,9 +8731,35 @@ async function direktUebernehmen(provider, url) {
   }
 
   // Keine Hoster, aber vielleicht eine Folgenliste: die Serien- oder
-  // Staffelseite. Daraus wird die Auswahl.
+  // Staffelseite.
   const stand = await folgenlisteLesen(provider, url).catch(() => null);
   if (stand) {
+    /*
+     * Beim Weiterschauen wird nicht gefragt.
+     *
+     * Wer auf "Weiterschauen" tippt, hat schon entschieden - er will die Folge
+     * sehen, bei der er stehengeblieben ist, und nicht eine Liste, aus der er
+     * sie heraussucht. Bisher landete genau dieser Weg in der Auswahl, sobald
+     * die gespeicherte Adresse eine Serien- oder Staffelseite war (was sie bei
+     * Filmen und bei manchen Eintraegen aus der Suche ist).
+     *
+     * Gesucht wird der Eintrag zu *diesem Werk* - ueber denselben Schluessel,
+     * nach dem auch die Watchparty entscheidet, ob zwei Adressen dieselbe
+     * Serie meinen. Steht dort eine Folgenadresse, wird sie gespielt.
+     *
+     * Die Auswahl bleibt der Rueckfall: ohne Eintrag, ohne Folgenadresse, oder
+     * wenn sich dahinter keine Quelle findet.
+     */
+    const schluessel = taste.urlSchluessel(url);
+    const weiter = favorites.find((favorite) => favorite.providerId === provider.id
+      && taste.urlSchluessel(favorite.url) === schluessel
+      && episodeIdentity(favorite.url));
+    if (weiter && normalizeFavoriteUrl(weiter.url) !== normalizeFavoriteUrl(url)) {
+      const ergebnis = await direktFolgeSpielen(provider, weiter.url, {
+        startzeit: sanitizePositiveNumber(weiter.currentTime || weiter.position)
+      });
+      if (ergebnis.ok) return;
+    }
     await direktAuswahlOeffnen(provider, url);
     return;
   }

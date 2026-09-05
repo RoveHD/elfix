@@ -103,8 +103,50 @@
   select:hover { background: #27303C; }
   select:disabled { opacity: 0.4; }
 
-  /* Ein Schalter zeigt seinen Zustand, sonst ist er nur ein Wort. */
-  #autoKnopf.aus { opacity: 0.45; text-decoration: line-through; }
+  /* Der Strich zwischen "diese Folge" und "die naechste". */
+  .trenner {
+    width: 1px; height: 22px; margin: 0 6px;
+    background: rgba(255, 255, 255, 0.2);
+    flex: 0 0 auto;
+  }
+
+  /*
+   * Ein Schalter zeigt seinen Zustand - und zwar im Wort.
+   *
+   * Die Farbe allein genuegt nicht: sie sagt nur "irgendwie anders", nicht
+   * "aus". Deshalb steht "Autoplay an" oder "Autoplay aus" darin, und der
+   * blasse Grund kommt als zweites Zeichen dazu.
+   */
+  /*
+   * Die Karte zur naechsten Folge - so gross, dass man sie trifft, und so
+   * weit rechts, dass sie nichts verdeckt, worauf es ankommt.
+   */
+  #weiterKnopf {
+    position: fixed; right: 26px; bottom: 104px; z-index: 30;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    min-width: 190px; max-width: 340px;
+    padding: 12px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 12px;
+    background: rgba(12, 16, 24, 0.86);
+    color: #fff; text-align: left; cursor: pointer;
+    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
+    transition: opacity .22s ease, transform .22s ease, background .14s ease;
+  }
+  #weiterKnopf:hover { background: rgba(24, 32, 46, 0.94); }
+  #weiterKnopf[hidden] { display: none; }
+  .weiterKnopfOben { font: 800 15px/1.2 system-ui, sans-serif; }
+  .weiterKnopfTitel {
+    font: 500 12px/1.3 system-ui, sans-serif;
+    color: rgba(255, 255, 255, 0.72);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%;
+  }
+  /* Sie geht mit der Leiste - dieselbe Klasse, dieselbe Bewegung. */
+  #weiterKnopf.weg { opacity: 0; pointer-events: none; transform: translateY(8px); }
+
+  #autoKnopf { font-weight: 700; }
+  #autoKnopf.aus { opacity: 0.5; font-weight: 400; }
   select option {
     background: #1E242E;
     color: #fff;
@@ -220,11 +262,16 @@
       <select id="stufen" aria-label="Bildqualität" disabled>
         <option value="-1">Auto</option>
       </select>
+      <!-- Ab hier geht es um die naechste Folge und nicht mehr um diese. Der
+           Strich davor ist kein Schmuck: links davon stehen vier Auswahlfelder,
+           und eines davon bietet "Automatisch" an. Ohne Trennung standen
+           "Automatisch" und der Autoplay-Schalter direkt nebeneinander und
+           erklaerten einander gegenseitig weg. -->
+      <span class="trenner" aria-hidden="true"></span>
       <!-- Der Autoplay-Schalter gehoert in die Leiste und nicht in den
            Uebergangskasten: der steht nur da, wenn Autoplay an ist - man
            koennte es dort ausschalten und nie wieder ein. -->
-      <button id="autoKnopf" type="button" title="Nächste Folge von selbst starten">Auto</button>
-      <button id="weiterKnopf" type="button" hidden title="Nächste Folge (N)">Nächste ›</button>
+      <button id="autoKnopf" type="button" title="Nächste Folge von selbst starten">Autoplay an</button>
       <button id="gross" type="button" title="Vollbild (F)">⛶</button>
     </div>
   </div>
@@ -243,6 +290,16 @@
 
   <!-- Der Übergang zur nächsten Folge. Er zählt sichtbar herunter, damit ein
        Abbruch möglich bleibt - wer den Abspann sehen will, soll ihn sehen. -->
+  <!-- Die Karte zur naechsten Folge.
+       Sie sitzt ueber der Leiste rechts und gehoert zu den Schichten: sie geht
+       mit ihnen weg, wenn nichts geschieht, und kommt mit ihnen zurueck, sobald
+       die Maus sich regt. Ein Knopf, der ueber einem laufenden Film dauerhaft
+       stehenbleibt, stoert genau so wie eine Leiste. -->
+  <button id="weiterKnopf" type="button" hidden title="Nächste Folge (N)">
+    <span class="weiterKnopfOben">Nächste Folge</span>
+    <span class="weiterKnopfTitel" id="weiterKnopfTitel"></span>
+  </button>
+
   <div id="weiter" hidden>
     <div class="weiterText">Nächste Folge in <span id="weiterZahl">8</span> s</div>
     <div class="weiterTitel" id="weiterTitel"></div>

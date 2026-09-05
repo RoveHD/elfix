@@ -207,8 +207,15 @@ pruefe("Der Uebergang faengt so frueh an, wie der Zaehler lang ist",
   /bild\.duration - stelle <= weiterZaehler \+ 1/.test(skript),
   "sonst zaehlt er fuenf und beginnt nach acht");
 pruefe("Der Knopf zur naechsten Folge haengt nicht am Zaehler",
-  /knopfWeiter\.hidden = !naechste;/.test(skript),
-  "er steht auch dann da, wenn Autoplay aus ist");
+  /function weiterKnopfZeigen\(\)[\s\S]{0,700}?const dran = prozent >= weiterAbProzent;/.test(skript)
+  && !/knopfWeiter\.hidden = weiterZaehler/.test(skript),
+  "er steht auch dann da, wenn Autoplay aus ist - er haengt an der Stelle, nicht am Zaehler");
+pruefe("Und er erscheint erst gegen Ende, wie der alte",
+  /weiterAbProzent = Number\.isFinite\(Number\(auftrag\.weiterAbProzent\)\)/.test(skript)
+  && /weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT/.test(haupt),
+  "dieselbe Schwelle wie am Knopf in der Anbieterseite, und sie steht nur einmal");
+pruefe("Die Schwelle ist die alte",
+  /const NEXT_EPISODE_PROMPT_PERCENT = 90;/.test(haupt));
 
 /* --------------------------------- Was am Hoster-Rahmen hing und jetzt fehlte */
 
@@ -280,8 +287,17 @@ pruefe("Beide Wege enden bei derselben Zahl",
   && (haupt.match(/return spielerZaehler\(\);/g) || []).length >= 2,
   "der Player soll die Regel nicht ein zweites Mal kennen");
 pruefe("Der Schalter zeigt seinen Zustand",
-  /knopfAuto\.classList\.toggle\("aus", weiterZaehler <= 0\)/.test(skript),
-  "ein Schalter ohne Zustand ist nur ein Wort");
+  /knopfAuto\.classList\.toggle\("aus", !an\)/.test(skript)
+  && /knopfAuto\.textContent = an \? "Autoplay an" : "Autoplay aus"/.test(skript),
+  "Farbe allein sagt nur 'irgendwie anders', nicht 'aus'");
+pruefe("Und er heisst nicht wie die Qualitaetswahl",
+  /auto\.textContent = "Automatisch";/.test(skript)
+  && !/knopfAuto\.textContent = "Auto"/.test(skript),
+  "zweimal 'Auto' nebeneinander erklaert keines von beiden");
+pruefe("Zwischen beiden Gruppen steht ein Strich",
+  /class="trenner"/.test(seite)
+  && seite.indexOf('class="trenner"') < seite.indexOf('id="autoKnopf"'),
+  "links die laufende Folge, rechts die naechste");
 
 pruefe("Der Balken zeigt Gespieltes und Geladenes getrennt",
   /--gespielt/.test(seite) && /--geladen/.test(seite)
@@ -292,6 +308,64 @@ pruefe("Genommen wird der Puffer, in dem die Stelle liegt",
 pruefe("Der Balken bleibt ein Schieberegler",
   /<input id="regler" type="range"/.test(seite),
   "gefaerbt wird der Hintergrund - mit den Pfeiltasten bedienbar bleibt er");
+
+/* ------------------------------------------- Die Karte zur naechsten Folge */
+
+pruefe("Sie ist eine Karte ueber dem Bild, kein Knopf in der Leiste",
+  /#weiterKnopf \{[\s\S]{0,120}?position: fixed;/.test(seite)
+  && !/id="weiterKnopf"[^>]*>\s*Nächste ›/.test(seite),
+  "wie beim alten ELFIX und bei Netflix");
+pruefe("Sie nennt die Folge, um die es geht",
+  /id="weiterKnopfTitel"/.test(seite)
+  && /getElementById\("weiterKnopfTitel"\)\.textContent = naechste\.beschriftung/.test(skript));
+pruefe("Sie geht mit den Schichten weg und kommt mit ihnen wieder",
+  /schichten = \[[\s\S]{0,600}?getElementById\("weiterKnopf"\)/.test(skript),
+  "ein Knopf, der ueber einem laufenden Film stehenbleibt, stoert wie eine Leiste");
+pruefe("Beim Erreichen der Schwelle zeigt sie sich einmal von selbst",
+  /if \(dran && knopfWeiter\.hidden\) \{[\s\S]{0,260}?schichtenZeigen\(\);/.test(skript),
+  "danach richtet sie sich nach der Maus");
+
+pruefe("Ohne Untertitelspuren steht kein Untertitelfeld da",
+  /untertitelWahl\.hidden = !hatSpuren;/.test(skript),
+  "ein abgeblendetes Feld sieht aus wie eines, das gerade nicht geht");
+
+/* -------------------------------------------------- Der Name der Folge oben */
+
+// Oben stand nur "Serie · Staffel 4 Folge 13" - wo man ist, aber nicht, was
+// man sieht. Der Name steht in der Folgenliste, die ohnehin im Hintergrund
+// geholt wird; er kostet keinen zusaetzlichen Seitenaufruf.
+pruefe("Der Folgentitel wird aus der Liste genommen",
+  /direktfolgen\.istLaufende\(eintrag, kennung\)/.test(haupt)
+  && /spielerLauf\.folgentitel = String\(laufend\?\.titel \|\| ""\)/.test(haupt));
+pruefe("Er reist mit der naechsten Folge zusammen",
+  /send\("spieler:naechste", spielerLauf\.naechste, spielerLauf\.folgentitel\)/.test(haupt)
+  && /\(_ereignis, naechste, folgentitel\) => rueckruf\(naechste, folgentitel\)/.test(bruecke));
+pruefe("Und steht auch im Auftrag, falls der Player neu laedt",
+  /folgentitel: spielerLauf\.folgentitel \|\| ""/.test(haupt));
+pruefe("Der Kopf setzt ihn hinter Serie und Folge",
+  /function kopfTitelSetzen\(basis, folgentitel\)/.test(skript)
+  && /\$\{kopfBasis\} · \$\{name\}/.test(skript));
+pruefe("Ein leerer Name aendert die Zeile nicht",
+  /if \(folgentitel\) kopfTitelSetzen\("", folgentitel\);/.test(skript),
+  "bis die Liste da ist, bleibt die Zeile eben kuerzer");
+
+/* ------------------------------------------------- Weiterschauen ohne Frage */
+
+// Wer auf "Weiterschauen" tippt, hat schon entschieden. Bisher landete genau
+// dieser Weg in der Auswahl, sobald die gespeicherte Adresse eine Serien- oder
+// Staffelseite war - und dann musste man die Folge heraussuchen, bei der man
+// ohnehin stehengeblieben war.
+pruefe("Ohne Hoster wird zuerst der eigene Stand gesucht",
+  /const schluessel = taste\.urlSchluessel\(url\);[\s\S]{0,420}?direktFolgeSpielen\(provider, weiter\.url/.test(haupt),
+  "derselbe Schluessel, nach dem auch die Watchparty zwei Adressen vergleicht");
+pruefe("Und zwar nur, wenn dort wirklich eine Folge steht",
+  /&& episodeIdentity\(favorite\.url\)/.test(haupt),
+  "eine Serienseite als Ziel waere dieselbe Sackgasse noch einmal");
+pruefe("Die gespeicherte Stelle reist mit",
+  /startzeit: sanitizePositiveNumber\(weiter\.currentTime \|\| weiter\.position\)/.test(haupt));
+pruefe("Die Auswahl bleibt der Rueckfall",
+  /if \(ergebnis\.ok\) return;\s*\}\s*await direktAuswahlOeffnen\(provider, url\);/.test(haupt),
+  "ohne Eintrag, ohne Folgenadresse oder ohne Quelle");
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`
