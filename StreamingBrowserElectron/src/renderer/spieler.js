@@ -147,9 +147,42 @@ function schichtenZeigen() {
   }, 2800);
 }
 
+/*
+ * Zwei abgelehnte play()-Aufrufe, die keine Fehler sind.
+ *
+ * `play()` gibt ein Versprechen zurueck, und das wird abgelehnt, sobald vor
+ * seiner Einloesung etwas anderes am Video passiert:
+ *
+ *   AbortError       "The play() request was interrupted by a call to
+ *                    pause()." Wer auf Abspielen und gleich darauf auf Pause
+ *                    tippt, loest genau das aus - und beides ist geschehen wie
+ *                    gewollt. Dasselbe beim Hosterwechsel, wo mitten im
+ *                    Anlaufen eine neue Quelle gesetzt wird.
+ *   NotAllowedError  Der Browser laesst ohne Zutun keinen Ton zu. Die richtige
+ *                    Antwort ist die Leiste mit dem Abspielknopf, nicht ein
+ *                    Kasten, der behauptet, die Quelle sei kaputt.
+ *
+ * Gemeldet wurde bisher beides als "Die Quelle spielt nicht" - mitten in einer
+ * Folge, die sichtbar lief. Ein Fehlerkasten ueber einem laufenden Bild ist
+ * schlimmer als keiner: er sagt, man solle einen anderen Hoster nehmen,
+ * obwohl dieser gerade tut, was er soll.
+ */
+const HARMLOSE_ABLEHNUNG = ["AbortError", "NotAllowedError"];
+
 function spielenUmschalten() {
-  if (bild.paused) bild.play().catch((fehler) => aufgeben(String(fehler?.message || fehler), "play"));
-  else bild.pause();
+  if (!bild.paused) {
+    bild.pause();
+    return;
+  }
+  bild.play().catch((fehler) => {
+    if (HARMLOSE_ABLEHNUNG.includes(String(fehler?.name || ""))) {
+      // Nichts melden - nur zeigen, was jetzt zu tun ist.
+      pufferZeigen(false);
+      schichtenZeigen();
+      return;
+    }
+    aufgeben(String(fehler?.message || fehler), "play");
+  });
 }
 
 function springen(sekunden) {

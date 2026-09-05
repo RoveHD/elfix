@@ -166,6 +166,24 @@ pruefe("Der Player laeuft in einer eigenen Sitzung",
   && haupt.includes("spielerSessionHolen()"),
   "die Kopfzeilen der Quelle haben in der Sitzung der Anbieter nichts zu suchen");
 
+/* --------------------------------------------- Was kein Fehler sein darf */
+
+// `play()` wird abgelehnt, sobald vor der Einloesung etwas anderes am Video
+// passiert - beim Tippen auf Pause, beim Hosterwechsel, und wenn der Browser
+// ohne Zutun keinen Ton zulaesst. Beides ist kein Fehlschlag der Quelle.
+// Vorher stand deshalb "Die Quelle spielt nicht" ueber einer sichtbar
+// laufenden Folge, mit dem Rat, einen anderen Hoster zu nehmen.
+pruefe("Ein abgebrochenes play() gilt nicht als kaputte Quelle",
+  /HARMLOSE_ABLEHNUNG\s*=\s*\[[^\]]*"AbortError"/.test(skript)
+  && /HARMLOSE_ABLEHNUNG\s*=\s*\[[^\]]*"NotAllowedError"/.test(skript),
+  "AbortError und NotAllowedError");
+pruefe("Und die Ablehnung wird wirklich vor dem Aufgeben geprueft",
+  /HARMLOSE_ABLEHNUNG\.includes\(String\(fehler\?\.name[\s\S]{0,220}?aufgeben\(/.test(skript),
+  "sonst stuende die Pruefung da und der Kasten trotzdem");
+pruefe("Ein echter Fehler kommt weiterhin an",
+  /aufgeben\(String\(fehler\?\.message \|\| fehler\), "play"\)/.test(skript),
+  "entschaerfen heisst nicht verschlucken");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`
 ${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
