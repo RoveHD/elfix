@@ -2655,10 +2655,18 @@ async function navigateProvider(provider, url) {
   activeView = view;
   view.webContents.setAudioMuted(false);
 
+  // Wohin es geht, steht vor der Frage, ob es zu sehen ist: der Direktbetrieb
+  // gilt nicht fuer YouTube, und das entscheidet die Adresse.
+  let target = providerModel.normalizeUrl(url || provider.startUrl);
+  if (shouldBlockProviderNavigation(target, provider)) {
+    logBlockedUrl(target, provider, "site-lock:programmatic", "navigation");
+    target = provider.startUrl;
+  }
+
   // Bei offenem Overlay (Einstellungen, Oberflaeche) bleibt die View abgehaengt.
   // Im Direktbetrieb bleibt sie es immer: sie ist dann Werkbank und nicht
   // Fenster.
-  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0 && !direktModus()) {
+  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0 && !direktModus(target)) {
     mainWindow.contentView.addChildView(view);
     attachedProviderViews.add(provider.id);
   }
@@ -2672,11 +2680,6 @@ async function navigateProvider(provider, url) {
 
   applyBrowserBounds();
   if (pendingAutostart) raiseAutostartCurtain();
-  let target = providerModel.normalizeUrl(url || provider.startUrl);
-  if (shouldBlockProviderNavigation(target, provider)) {
-    logBlockedUrl(target, provider, "site-lock:programmatic", "navigation");
-    target = provider.startUrl;
-  }
   if (target && view.webContents.getURL() !== target) {
     view.webContents.loadURL(target);
   } else {
@@ -2686,7 +2689,7 @@ async function navigateProvider(provider, url) {
   // Im Direktbetrieb ist die Navigation nur der halbe Weg: gesehen wird nicht
   // die Seite, sondern was hinter ihr steht. Das laeuft nebenher weiter -
   // diese Funktion soll die Oberflaeche nicht warten lassen.
-  if (direktModus()) direktUebernehmen(provider, target).catch(() => {});
+  if (direktModus(target)) direktUebernehmen(provider, target).catch(() => {});
 }
 
 async function enterHomeMode() {
@@ -3895,7 +3898,7 @@ function restoreActiveViewAfterOverlay() {
   // Im Direktbetrieb gibt es nichts wiederherzustellen: die Anbieteransicht war
   // nie zu sehen. Wer die Einstellungen zumacht, soll nicht ploetzlich auf
   // einer Anbieterseite stehen.
-  if (direktModus()) {
+  if (direktModus(activeView.webContents.getURL())) {
     spielerLageSetzen();
     return;
   }
@@ -3915,7 +3918,11 @@ async function beginAutostart(providerId, title, options = {}) {
   // Wiedergabe faengt nicht in der Anbieteransicht an, sondern im eigenen
   // Player - und der bringt seine eigene Anzeige mit. Ein Vorhang, der auf ein
   // Ereignis wartet, das nie kommt, bliebe bis zum Zeitlimit stehen.
-  if (direktModus()) return;
+  //
+  // Gefragt wird nach dem Anbieter und nicht nach der offenen Adresse: hier
+  // steht die Ansicht noch auf der vorigen Seite. Auf YouTube laeuft alles
+  // weiter wie bisher, also auch der Vorhang.
+  if (direktModus(providers.find((item) => item.id === providerId)?.startUrl || "")) return;
   // Bewusst ohne finishAutostart(): ein zweiter Klick waehrend des Startens soll
   // weder umschalten noch den Vorhang kurz aufziehen.
   if (pendingAutostart) clearTimeout(pendingAutostart.timer);
@@ -8432,14 +8439,18 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
  * die eigene Oberflaeche von ELFIX, die dafuer laengst da ist.
  */
 
-/** Laeuft ELFIX im Direktbetrieb? */
-function direktModus() {
-  return settings.playback?.direktModus !== false;
-}
-
-/** Zeigt diese Adresse auf eine einzelne Folge? */
-function istFolgenAdresse(url) {
-  return Boolean(episodeIdentity(url));
+/**
+ * Laeuft ELFIX im Direktbetrieb?
+ *
+ * Nicht auf YouTube. Dort gibt es keinen Hoster, hinter dem eine Adresse
+ * liegt, sondern einen Player, der dazugehoert: Vorschlaege, Kommentare, die
+ * eigene Runde, das Ueberspringen bezahlter Einschuebe - all das haengt an der
+ * Seite selbst. Sie zu verstecken hiesse, YouTube abzuschaffen und nicht, es
+ * zu verbessern.
+ */
+function direktModus(adresse = "") {
+  if (settings.playback?.direktModus === false) return false;
+  return !(adresse && youtube.istYoutubeUrl(adresse));
 }
 
 /**
@@ -8471,13 +8482,27 @@ async function direktAuswahlOeffnen(provider, url) {
  * leerer schwarzer Bereich, hinter dem unsichtbar eine Anbieterseite steht.
  */
 async function direktUebernehmen(provider, url) {
-  if (!direktModus() || !providerModel.isHttpUrl(url)) return;
+  if (!direktModus(url) || !providerModel.isHttpUrl(url)) return;
 
-  if (istFolgenAdresse(url)) {
+  const view = await werkbankAn(provider, url);
+  if (!view) {
+    await direktZurueckZurOberflaeche("Die Seite des Anbieters lädt nicht");
+    return;
+  }
+
+  // Entschieden wird an den Hosterkacheln und nicht an der Adresse.
+  //
+  // Eine Folge erkennt man an "/staffel-1/episode-3" - ein Film nicht. Der hat
+  // keine Nummer, nur eine Seite mit Hostern darauf, und ginge er ueber die
+  // Adresse, landete er bei "keine Folge gefunden" statt im Player. Wo Hoster
+  // stehen, gibt es etwas zu spielen; das gilt fuer beides.
+  const links = await direktLinksLesen(provider, view);
+
+  if (links.length) {
     // Erst den Player aufmachen, dann aufloesen. Die Aufloesung dauert ein paar
-    // Sekunden - Seite laden, Weiterleitungen gehen, Quelle lesen -, und in
-    // dieser Zeit stuende sonst eine leere dunkle Flaeche da, hinter der
-    // scheinbar nichts passiert.
+    // Sekunden - Weiterleitungen gehen, Quelle lesen -, und in dieser Zeit
+    // stuende sonst eine leere dunkle Flaeche da, hinter der scheinbar nichts
+    // passiert.
     await direktSpielerOeffnen(provider, url, {
       ok: true, quelle: { adresse: "", typ: "", hoehe: 0 }, kopfzeilen: null,
       hoster: "", link: "", hosterliste: []
@@ -8493,7 +8518,8 @@ async function direktUebernehmen(provider, url) {
     return;
   }
 
-  // Eine Serien- oder Staffelseite: daraus wird die Auswahl.
+  // Keine Hoster, aber vielleicht eine Folgenliste: die Serien- oder
+  // Staffelseite. Daraus wird die Auswahl.
   const stand = await folgenlisteLesen(provider, url).catch(() => null);
   if (stand) {
     await direktAuswahlOeffnen(provider, url);

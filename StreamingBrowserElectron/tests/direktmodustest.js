@@ -46,15 +46,21 @@ pruefe("Es gibt nicht mehr Stellen zum Einhaengen als bekannt",
 const navigation = haupt.slice(haupt.indexOf("async function navigateProvider"));
 const navBereich = navigation.slice(0, navigation.indexOf("\n}\n"));
 pruefe("Die Anbieteransicht wird im Direktbetrieb nicht eingehaengt",
-  /overlayReasons\.size === 0 && !direktModus\(\)/.test(navBereich),
+  /overlayReasons\.size === 0 && !direktModus\(target\)/.test(navBereich),
   "sonst liegt die Seite sichtbar im Fenster");
 pruefe("Nach jeder Navigation uebernimmt der Direktbetrieb",
-  navBereich.includes("if (direktModus()) direktUebernehmen(provider, target)"),
+  navBereich.includes("if (direktModus(target)) direktUebernehmen(provider, target)"),
   "sonst bliebe eine leere Flaeche stehen");
+// YouTube ist ausgenommen: dort gehoert der Player zur Seite - Vorschlaege,
+// Kommentare, die eigene Runde, das Ueberspringen bezahlter Einschuebe. Sie zu
+// verstecken hiesse, YouTube abzuschaffen.
+pruefe("YouTube bleibt sichtbar",
+  /function direktModus\(adresse = ""\)[\s\S]{0,320}youtube\.istYoutubeUrl\(adresse\)/.test(haupt),
+  "der Direktbetrieb entscheidet an der Adresse, nicht nur am Schalter");
 
 const rueckkehr = haupt.slice(haupt.indexOf("function restoreActiveViewAfterOverlay"));
 pruefe("Auch nach einem Overlay kommt sie nicht zurueck",
-  rueckkehr.slice(0, 400).includes("direktModus()"),
+  rueckkehr.slice(0, 500).includes("direktModus(activeView.webContents.getURL())"),
   "Einstellungen zumachen darf die Seite nicht hervorholen");
 
 /* ------------------------------------------------- Der Weg fuehrt nicht zurueck */
@@ -78,6 +84,12 @@ const uebernahme = haupt.slice(haupt.indexOf("async function direktUebernehmen")
 const uebernahmeBereich = uebernahme.slice(0, uebernahme.indexOf("\n}\n"));
 pruefe("Eine Folge wird gespielt",
   uebernahmeBereich.includes("direktFolgeSpielen(provider, url)"));
+// Ein Film hat keine Folgennummer, nur eine Seite mit Hostern darauf. Ginge
+// die Entscheidung ueber die Adresse, landete er bei "keine Folge gefunden".
+pruefe("Ein Film auch - entschieden wird an den Hosterkacheln",
+  uebernahmeBereich.includes("const links = await direktLinksLesen(provider, view);")
+  && uebernahmeBereich.indexOf("direktLinksLesen") < uebernahmeBereich.indexOf("folgenlisteLesen"),
+  "nicht an der Adresse");
 pruefe("Eine Serie wird zur Auswahl",
   uebernahmeBereich.includes("direktAuswahlOeffnen(provider, url)"));
 pruefe("Alles andere endet in der eigenen Oberflaeche",
@@ -91,7 +103,7 @@ pruefe("Und waehrend der Aufloesung steht der Player schon da",
 /* --------------------------------------------------------------- Der Vorhang */
 
 pruefe("Der Ladevorhang der Anbieterseite bleibt im Direktbetrieb aus",
-  /async function beginAutostart[\s\S]{0,600}?if \(direktModus\(\)\) return;/.test(haupt),
+  /async function beginAutostart[\s\S]{0,900}?if \(direktModus\([\s\S]{0,120}?\)\) return;/.test(haupt),
   "er wartet auf Wiedergabe in einer Ansicht, in der nichts mehr laeuft");
 
 /* ---------------------------------------------------------- Der Schalter */
