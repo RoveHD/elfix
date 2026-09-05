@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>ELFIX Player</title>
+<!-- Keine eigene Inhaltsregel im Kopf. Die Seite laedt zwei Dateien von der
+     Platte (hls.js und ihr eigenes Skript) und danach ein Video von einer
+     Adresse, die erst zur Laufzeit feststeht - eine Regel, die beides
+     abdecken soll, deckt am Ende alles ab und sagt nichts mehr. Enger sitzt
+     die Ansicht selbst: sie laeuft mit contextIsolation, ohne Node und mit
+     einer Bruecke, die genau fuenf Dinge kann (spieler-preload.js). -->
+
+<style>
+  /* Der eigene Player. Dunkel, weil davor ein Film laeuft, und ohne jede
+     Verzierung: alles, was hier steht, ist entweder eine Angabe oder ein
+     Knopf. Die Farbe ist die der Oberflaeche (#3D92FF). */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #05070c; color: #fff;
+    font: 500 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+    user-select: none; cursor: default;
+  }
+  #buehne { position: fixed; inset: 0; }
+  video { width: 100%; height: 100%; background: #05070c; outline: none; }
+
+  /* Kopf und Leiste blenden sich zusammen aus - sie gehoeren zur Bedienung,
+     nicht zum Film. */
+  .schicht {
+    position: fixed; left: 0; right: 0; padding: 14px 18px;
+    transition: opacity 220ms ease;
+  }
+  .schicht.weg { opacity: 0; pointer-events: none; }
+  #kopf {
+    top: 0; display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  }
+  #titel { font-weight: 700; font-size: 15px; }
+  #hoster { color: rgba(255, 255, 255, 0.6); font-size: 12px; }
+  #leiste {
+    bottom: 0; display: flex; flex-direction: column; gap: 8px;
+    background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.82));
+  }
+  .reihe { display: flex; align-items: center; gap: 12px; }
+  .luecke { flex: 1; }
+
+  button {
+    border: 0; background: transparent; color: #fff; cursor: pointer;
+    font: inherit; padding: 6px 10px; border-radius: 10px;
+  }
+  button:hover { background: rgba(255, 255, 255, 0.14); }
+  button:focus-visible { outline: 2px solid #3D92FF; }
+  #zu { margin-left: auto; }
+
+  .zeit { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.8); font-size: 13px; }
+
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22); cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: #3D92FF; border: 0;
+  }
+  #regler { flex: 1; }
+  #lautstaerke { width: 96px; }
+
+  select {
+    background: rgba(255, 255, 255, 0.12); color: #fff; border: 0;
+    padding: 6px 8px; border-radius: 10px; font: inherit;
+  }
+  select:disabled { opacity: 0.4; }
+
+  /* Die Mitte: Puffern und Fehler. Beide liegen an derselben Stelle, weil sie
+     dasselbe beantworten - "warum sehe ich nichts?" */
+  #mitte {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  #puffer {
+    width: 46px; height: 46px; border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.22); border-top-color: #3D92FF;
+    animation: dreh 900ms linear infinite;
+  }
+  @keyframes dreh { to { transform: rotate(360deg); } }
+  #fehler {
+    pointer-events: auto; max-width: 460px; padding: 22px 24px; border-radius: 18px;
+    background: rgba(10, 14, 22, 0.94); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    text-align: center;
+  }
+  #fehler h2 { margin: 0 0 8px; font-size: 17px; }
+  #fehler p { margin: 0 0 16px; color: rgba(255, 255, 255, 0.72); font-size: 13px; }
+  #fehler button {
+    background: #3D92FF; font-weight: 700; padding: 10px 16px;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div id="buehne">
+    <video id="bild" playsinline preload="metadata"></video>
+  </div>
+
+  <div id="mitte">
+    <div id="puffer"></div>
+    <div id="fehler" hidden>
+      <h2 id="fehlerTitel">Die Quelle spielt nicht</h2>
+      <p id="fehlerText"></p>
+      <button id="zurueckZumHoster" type="button">Beim Hoster öffnen</button>
+    </div>
+  </div>
+
+  <div id="kopf" class="schicht">
+    <div>
+      <div id="titel">Wiedergabe</div>
+      <div id="hoster"></div>
+    </div>
+    <button id="zu" type="button" title="Schließen (Esc)">Schließen</button>
+  </div>
+
+  <div id="leiste" class="schicht">
+    <div class="reihe">
+      <span id="stelle" class="zeit">0:00</span>
+      <input id="regler" type="range" min="0" max="1000" value="0" step="1" aria-label="Stelle">
+      <span id="dauer" class="zeit">0:00</span>
+    </div>
+    <div class="reihe">
+      <button id="spielen" type="button" title="Abspielen (Leertaste)">▶</button>
+      <button id="zurueck" type="button" title="10 Sekunden zurück">−10 s</button>
+      <button id="vor" type="button" title="10 Sekunden vor">+10 s</button>
+      <button id="ton" type="button" title="Ton aus (M)">🔊</button>
+      <input id="lautstaerke" type="range" min="0" max="100" value="100" step="1" aria-label="Lautstärke">
+      <span class="luecke"></span>
+      <select id="stufen" aria-label="Bildqualität" disabled>
+        <option value="-1">Auto</option>
+      </select>
+      <button id="gross" type="button" title="Vollbild (F)">⛶</button>
+    </div>
+  </div>
+
+  <script src="../../node_modules/hls.js/dist/hls.min.js"></script>
+  <script src="spieler.js"></script>
+</body>
+</html>

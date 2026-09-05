@@ -123,6 +123,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Die Adresse hinter dem Hoster zur gerade offenen Folge. Eine Auskunft:
   // sie spielt nichts ab, sie sagt, ob es etwas abzuspielen gibt.
   getDirektQuelle: () => ipcRenderer.invoke("direkt:quelle"),
+  // Und dasselbe, aber mit Folgen: aufloesen und im eigenen Player abspielen.
+  startDirekt: () => ipcRenderer.invoke("direkt:starten"),
+  stopDirekt: () => ipcRenderer.invoke("direkt:beenden"),
   exportBackup: () => ipcRenderer.invoke("data:backup-export"),
   importBackup: () => ipcRenderer.invoke("data:backup-import"),
   resetData: () => ipcRenderer.invoke("data:confirm-reset"),

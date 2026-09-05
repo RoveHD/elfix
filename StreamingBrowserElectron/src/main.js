@@ -2682,6 +2682,9 @@ async function navigateProvider(provider, url) {
 }
 
 async function enterHomeMode() {
+  // Zurueck in die Oberflaeche heisst: weg von der Folge. Der eigene Player
+  // zeigt eine, also geht er mit.
+  direktSpielerSchliessen("startseite");
   if (mainWindow) {
     for (const [providerId, view] of providerViews.entries()) {
       const provider = providers.find((item) => item.id === providerId);
@@ -3843,6 +3846,9 @@ function installStoPlayerFix(provider, view) {
 }
 
 function applyBrowserBounds() {
+  // Der eigene Player liegt ueber der Anbieteransicht und teilt ihren Platz -
+  // auch dann, wenn es gerade gar keine Anbieteransicht gibt.
+  spielerLageSetzen();
   if (!isLiveView(activeView) || !mainWindow) return;
   if (pendingAutostart) {
     // Waehrend des Autostarts laeuft die View ganz normal sichtbar - nur der
@@ -7844,12 +7850,272 @@ async function direktQuelleFuerAnsicht(provider, view) {
   return { ok: false, grund: gescheitert[0] || "Keine Quelle", versuche: gescheitert };
 }
 
-// Die Auskunft fuer die Oberflaeche. Sie spielt (noch) nichts ab - sie sagt,
-// ob es etwas abzuspielen gibt.
+// Die reine Auskunft: was liegt hinter dieser Folge? Sie spielt nichts ab und
+// ist deshalb das, was sich gefahrlos aus der Oberflaeche heraus fragen laesst.
 ipcMain.handle("direkt:quelle", async () => {
   const provider = activeProvider();
   if (!provider || !activeView) return { ok: false, grund: "Kein Titel geöffnet" };
   return direktQuelleFuerAnsicht(provider, activeView);
+});
+
+/* ------------------------------------------------------------- Der Player
+ *
+ * Eine eigene Ansicht mit einer eigenen Seite (renderer/spieler.html), die
+ * genau ein Video zeigt. Sie liegt ueber der Anbieteransicht, nicht an ihrer
+ * Stelle: die Folgenseite bleibt geladen, und damit bleibt alles, was an ihr
+ * haengt - die Adresse, unter der der Fortschritt verbucht wird, die Angaben
+ * der Seite, der Link zur naechsten Folge.
+ *
+ * Eigene Sitzung, und zwar aus einem Grund: die Auslieferung der Hoster prueft
+ * den Referer. Die Adresse, die im Player laeuft, liefert nackt abgerufen ein
+ * 403. Also traegt jede Anfrage dieser Ansicht die Kopfzeilen, die
+ * direktlauf.js zurueckgegeben hat. Ein zweiter Horcher auf der Sitzung der
+ * Anbieter waere dafuer der falsche Ort - dort haengt der Werbefilter, und
+ * beide haetten nichts miteinander zu tun.
+ */
+
+const SPIELER_PARTITION = "persist:elfix-spieler";
+
+let spielerSession = null;
+let spielerView = null;
+/** Was gerade laeuft: Anbieter, Folgenadresse, Quelle, Titel. */
+let spielerLauf = null;
+/** Die Kopfzeilen, unter denen die laufende Quelle geholt werden darf. */
+let spielerKopfzeilen = null;
+
+function spielerSessionHolen() {
+  if (spielerSession) return spielerSession;
+  spielerSession = session.fromPartition(SPIELER_PARTITION, { cache: true });
+  spielerSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    // Die eigene Seite kommt von der Platte und braucht nichts davon.
+    if (!spielerKopfzeilen || !/^https?:/i.test(details.url || "")) {
+      callback({ requestHeaders: details.requestHeaders });
+      return;
+    }
+    callback({
+      requestHeaders: {
+        ...details.requestHeaders,
+        Referer: spielerKopfzeilen.referer,
+        Origin: spielerKopfzeilen.origin,
+        "User-Agent": spielerKopfzeilen["user-agent"]
+      }
+    });
+  });
+  return spielerSession;
+}
+
+/** Der Platz des Players - derselbe wie der der Anbieteransicht. */
+function spielerLageSetzen() {
+  if (!spielerView || !mainWindow || mainWindow.isDestroyed()) return;
+  const size = mainWindow.getContentSize();
+  if (isContentFullscreen) {
+    spielerView.setBounds({ x: 0, y: 0, width: size[0], height: size[1] });
+    return;
+  }
+  spielerView.setBounds({
+    x: clamp(browserBounds.x, 0, size[0]),
+    y: clamp(browserBounds.y, 0, size[1]),
+    width: clamp(browserBounds.width, 1, size[0]),
+    height: clamp(browserBounds.height, 1, size[1])
+  });
+}
+
+/**
+ * Den Player aufmachen.
+ *
+ * Erst laden, dann einhaengen - sonst blitzt die leere Ansicht durch. Den
+ * Auftrag bekommt die Seite nicht beim Laden, sondern wenn sie sich meldet:
+ * eine Seite, die noch nicht steht, kann ihn nicht annehmen.
+ */
+async function direktSpielerOeffnen(provider, url, ergebnis) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  direktSpielerSchliessen("neustart");
+
+  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
+    && episodeIdentity(favorite.url)?.key === episodeIdentity(url)?.key);
+
+  spielerKopfzeilen = ergebnis.kopfzeilen;
+  spielerLauf = {
+    providerId: provider.id,
+    url,
+    quelle: ergebnis.quelle,
+    hoster: ergebnis.hoster || "",
+    titel: naechsteFolgeLabel(provider, url),
+    startzeit: sanitizePositiveNumber(eintrag?.currentTime || eintrag?.position)
+  };
+
+  const view = new WebContentsView({
+    webPreferences: {
+      session: spielerSessionHolen(),
+      preload: path.join(__dirname, "spieler-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // Die eine Ausnahme - und sie ist der Grund, warum der Player eine eigene
+      // Ansicht mit eigener Sitzung hat.
+      //
+      // Die Seite kommt von der Platte (file://) und holt ihr Video von einem
+      // fremden Auslieferungsserver. Der antwortet ohne
+      // Access-Control-Allow-Origin, denn er kennt nur den Player des Hosters
+      // und dessen eigene Seite. Mit der ueblichen Pruefung waere hier Schluss:
+      // die Playlist kaeme an und duerfte nicht gelesen werden. Kopfzeilen
+      // nachtragen hilft dagegen nicht - eine Vorabfrage, die der Server nicht
+      // beantwortet, laesst sich nicht nachtraeglich beantworten.
+      //
+      // Was diese Ausnahme kostet, ist eingegrenzt: in dieser Ansicht laeuft
+      // genau eine Seite, und die ist unsere eigene. Kein Node, kein Zugriff
+      // ausser den fuenf Dingen der Bruecke, keine fremde Seite, die je darin
+      // geoeffnet wuerde (die Anbieterseiten laufen in ihrer eigenen Sitzung
+      // mit ihrem Werbefilter). Eine Playlist ist Text; sie wird gelesen, nicht
+      // ausgefuehrt.
+      webSecurity: false,
+      autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false
+    }
+  });
+  // Und diese Ansicht bleibt bei ihrer Seite: was nicht die eigene Datei ist,
+  // wird hier nicht geoeffnet. Ohne Webpruefung ist das die zweite Haelfte der
+  // Eingrenzung oben.
+  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  view.webContents.on("will-navigate", (ereignis, ziel) => {
+    if (!String(ziel || "").startsWith("file://")) ereignis.preventDefault();
+  });
+  view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
+  spielerView = view;
+
+  // Waehrend der eigene Player laeuft, hat die Seite dahinter zu schweigen.
+  // Sie ist nicht zu sehen, aber ein Werbevideo im Hintergrund waere zu hoeren.
+  if (isLiveView(activeView)) activeView.webContents.setAudioMuted(true);
+  // Und wer die Folge verlaesst, verlaesst auch den Player: was er zeigt,
+  // gehoert zu der Seite, die gerade weggeht.
+  if (isLiveView(activeView)) {
+    activeView.webContents.once("will-navigate", () => direktSpielerSchliessen("navigation"));
+  }
+
+  await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(() => {});
+  if (spielerView !== view) return false;
+  mainWindow.contentView.addChildView(view);
+  spielerLageSetzen();
+  view.webContents.focus();
+  return true;
+}
+
+/** Zu. Ohne laufenden Player kostet das nichts. */
+function direktSpielerSchliessen(grund = "") {
+  if (!spielerView) return;
+  const view = spielerView;
+  spielerView = null;
+  spielerLauf = null;
+  spielerKopfzeilen = null;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
+  try {
+    view.webContents.close();
+  } catch {
+    // Schon zu.
+  }
+  if (isLiveView(activeView)) activeView.webContents.setAudioMuted(false);
+  if (grund && grund !== "neustart") console.log(`[ELFIX DIREKT] Player zu (${grund})`);
+}
+
+ipcMain.on("spieler:bereit", (ereignis) => {
+  if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
+  ereignis.sender.send("spieler:auftrag", {
+    adresse: spielerLauf.quelle.adresse,
+    typ: spielerLauf.quelle.typ,
+    titel: spielerLauf.titel,
+    hoster: spielerLauf.hoster,
+    stufe: spielerLauf.quelle.hoehe ? `${spielerLauf.quelle.hoehe}p` : "",
+    startzeit: spielerLauf.startzeit
+  });
+});
+
+/**
+ * Der Stand aus dem eigenen Player - verbucht wie jeder andere auch.
+ *
+ * Dieselbe Rechnung, dieselbe Ablage, derselbe Rueckblick: fuer den Fortschritt
+ * einer Folge ist es ohne Belang, ob sie im Rahmen des Hosters lief oder hier.
+ * Verbucht wird unter der Adresse der Folgenseite, denn die ist die Folge - die
+ * Adresse der Quelle gilt nur fuer eine Stunde und gehoert in keinen Eintrag.
+ */
+ipcMain.on("spieler:stand", (ereignis, stand) => {
+  if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
+  const provider = enabledProviders().find((item) => item.id === spielerLauf.providerId);
+  if (!provider) return;
+
+  const stelle = sanitizePositiveNumber(stand?.stelle);
+  const dauer = sanitizePositiveNumber(stand?.dauer);
+  if (!dauer) return;
+
+  const prozent = mediaProgressPercent(stelle, dauer);
+  const eintrag = recordMediaActivity(provider, spielerLauf.url, {
+    currentTime: stelle,
+    position: stelle,
+    duration: dauer,
+    watchedSeconds: sanitizePositiveNumber(stand?.gelaufen),
+    progress: prozent,
+    completed: Boolean(stand?.beendet) || prozent >= COMPLETED_PROGRESS_PERCENT
+  }, {
+    label: stand?.beendet ? "Abgeschlossen" : undefined,
+    updateFavoriteUrl: false
+  });
+  if (!eintrag) return;
+  sitzungMelden(provider, spielerLauf.url, eintrag, {
+    currentTime: stelle,
+    duration: dauer,
+    playedSeconds: sanitizePositiveNumber(stand?.gelaufen),
+    ended: Boolean(stand?.beendet)
+  });
+});
+
+ipcMain.on("spieler:fehler", (ereignis, text) => {
+  if (!spielerView || ereignis.sender !== spielerView.webContents) return;
+  console.log(`[ELFIX DIREKT] Player meldet: ${String(text || "").slice(0, 200)}`);
+});
+
+ipcMain.on("spieler:schliessen", (ereignis, grund) => {
+  if (!spielerView || ereignis.sender !== spielerView.webContents) return;
+  const zumHoster = String(grund || "") === "hoster";
+  direktSpielerSchliessen(String(grund || "knopf"));
+  // "Beim Hoster oeffnen" ist der Ausweg aus einer Quelle, die nicht spielt.
+  // Die Folgenseite liegt darunter und wartet - mehr ist dafuer nicht noetig,
+  // der Zuschauer klickt seinen Hoster wie eh und je.
+  if (zumHoster) sendToast("Zurück zur Anbieterseite — dort läuft der Hoster wie bisher");
+});
+
+ipcMain.on("spieler:vollbild", (ereignis) => {
+  if (!spielerView || ereignis.sender !== spielerView.webContents) return;
+  if (isContentFullscreen) leaveContentFullscreen();
+  else enterContentFullscreen();
+  spielerLageSetzen();
+});
+
+/**
+ * Der Knopf: aufloesen und, wenn etwas da ist, abspielen.
+ *
+ * Zwei Antworten reichen der Oberflaeche - es laeuft, oder es laeuft nicht und
+ * warum. Der Weg dazwischen steht im Protokoll.
+ */
+ipcMain.handle("direkt:starten", async () => {
+  const provider = activeProvider();
+  if (!provider || !isLiveView(activeView)) return { ok: false, grund: "Kein Titel geöffnet" };
+  const url = activeView.webContents.getURL();
+
+  const ergebnis = await direktQuelleFuerAnsicht(provider, activeView);
+  if (!ergebnis.ok) return { ok: false, grund: ergebnis.grund };
+
+  const offen = await direktSpielerOeffnen(provider, url, ergebnis);
+  if (!offen) return { ok: false, grund: "Player ließ sich nicht öffnen" };
+  return {
+    ok: true,
+    hoster: ergebnis.hoster,
+    typ: ergebnis.quelle.typ,
+    hoehe: ergebnis.quelle.hoehe
+  };
+});
+
+ipcMain.handle("direkt:beenden", () => {
+  direktSpielerSchliessen("oberflaeche");
+  return { ok: true };
 });
 
 async function installWatchpartyControls(provider, view, url) {

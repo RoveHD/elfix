@@ -787,6 +787,7 @@ function bindEvents() {
     window.setTimeout(syncBrowserBounds, 0);
     showToast("Alles neu geladen");
   });
+  document.querySelector("#direktButton").addEventListener("click", direktAbspielen);
   document.querySelector("#stopButton").addEventListener("click", () => api.browserCommand("stop"));
   document.querySelector("#homeButton").addEventListener("click", () => api.browserCommand("home"));
   document.querySelector("#favoriteButton").addEventListener("click", toggleFavorite);
@@ -7053,6 +7054,36 @@ function isValidAniWorldThumbnail(value) {
   }
 }
 
+/**
+ * Die Folge ohne den Player des Hosters abspielen.
+ *
+ * Der Knopf tut nichts, was sich nicht rueckgaengig machen liesse: gelingt die
+ * Aufloesung nicht, steht die Anbieterseite unveraendert da und der Hoster
+ * laeuft wie eh und je. Deshalb genuegt hier eine Meldung mit dem Grund - eine
+ * Rueckfrage waere eine Rueckfrage zu viel.
+ */
+async function direktAbspielen() {
+  const knopf = document.querySelector("#direktButton");
+  if (!knopf || knopf.disabled) return;
+  const beschriftung = knopf.textContent;
+  knopf.disabled = true;
+  knopf.textContent = "sucht …";
+  try {
+    const ergebnis = await api.startDirekt();
+    if (ergebnis?.ok) {
+      const stufe = ergebnis.hoehe ? ` in ${ergebnis.hoehe}p` : "";
+      showToast(`Läuft direkt${stufe}${ergebnis.hoster ? ` (${ergebnis.hoster})` : ""}`);
+    } else {
+      showToast(`Keine direkte Quelle: ${ergebnis?.grund || "unbekannt"}`);
+    }
+  } catch (fehler) {
+    showToast(`Direktes Abspielen ging nicht: ${fehler?.message || fehler}`);
+  } finally {
+    knopf.disabled = false;
+    knopf.textContent = beschriftung;
+  }
+}
+
 async function toggleFavorite() {
   const result = await api.toggleCurrentFavorite();
   favorites = result.favorites || favorites;
@@ -7131,7 +7162,7 @@ function setCurrentRoute(route) {
 // beziehen koennten - dort sind sie weg.
 function renderChromeButtons() {
   const aufSeite = String(currentRoute || "").startsWith("provider:");
-  for (const auswahl of ["#favoriteButton", "#watchpartyShareButton", "#stopButton", "#fullscreenButton"]) {
+  for (const auswahl of ["#favoriteButton", "#watchpartyShareButton", "#direktButton", "#stopButton", "#fullscreenButton"]) {
     document.querySelector(auswahl)?.classList.toggle("is-hidden", !aufSeite);
   }
   // Auf YouTube faellt der ⇄ Knopf weg: er stellt einen Titel in einen Raum,
