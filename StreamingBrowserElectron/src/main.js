@@ -8473,6 +8473,9 @@ function direktSpielerSchliessen(grund = "") {
   spielerView = null;
   spielerLauf = null;
   spielerLetzterStand = null;
+  // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
+  // Folge, bis der erste neue Takt kommt.
+  spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
   spielerKopfzeilen = null;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
   try {
@@ -8766,12 +8769,33 @@ function vomSpieler(ereignis) {
  * hervorheben koennen, ohne selbst aus einer Adresse eine Nummer zu rechnen.
  * Diese Rechnung gibt es einmal (episodeIdentity), und sie steht hier.
  */
-ipcMain.handle("spieler:folgen", async (ereignis, frisch = false) => {
+/*
+ * Die Folgenliste - wahlweise die der laufenden Staffel oder einer anderen.
+ *
+ * `staffelUrl` ist der Unterschied zwischen "zeig mir, wo ich bin" und "zeig
+ * mir Staffel 3". Die Folgen einer anderen Staffel stehen auf ihrer eigenen
+ * Seite und muessen dort gelesen werden; die Staffelliste selbst kommt von
+ * jeder dieser Seiten mit, also bleibt die Reiterzeile vollstaendig.
+ *
+ * Geprueft wird die Adresse gegen die Serie: ein Player darf nicht jede
+ * beliebige Seite lesen lassen, nur weil er danach fragt.
+ */
+ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "") => {
   if (!vomSpieler(ereignis)) return null;
   const provider = spielerAnbieter();
   if (!provider) return null;
   const url = spielerLauf.url;
-  const stand = await folgenlisteLesen(provider, url, { frisch: Boolean(frisch) });
+
+  let ziel = url;
+  const gewuenscht = String(staffelUrl || "").trim();
+  if (gewuenscht) {
+    const absolut = absoluteHttpUrl(gewuenscht, url);
+    if (providerModel.isHttpUrl(absolut) && new URL(absolut).host === new URL(url).host) {
+      ziel = absolut;
+    }
+  }
+
+  const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch) });
   return direktfolgen.fuerPlayer(stand, episodeIdentity(url));
 });
 

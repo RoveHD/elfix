@@ -107,6 +107,37 @@ pruefe("Gesperrte bleiben in der Liste, aber als gesperrt",
 pruefe("Ohne Stand gibt es keine Liste",
   direktfolgen.fuerPlayer(null, bei(1, 1)) === null);
 
+/* ------------------------------------------------------------ Die Staffeln */
+
+// Die Reiterzeile im Player wurde frueher aus den *Folgen* gebildet - und die
+// stammen alle von einer Seite. Also gab es nie mehr als eine Staffel, die
+// Zeile blendete sich weg, und man kam aus der laufenden Staffel nicht heraus.
+// Die Uebersicht kennt die Staffeln; sie muessen nur mitgehen.
+const mitStaffeln = direktfolgen.fuerPlayer({
+  titel: "Attack on Titan",
+  staffeln: [
+    { staffel: 2, url: "https://a.example/serie/aot/staffel-2" },
+    { staffel: 1, url: "https://a.example/serie/aot/staffel-1" },
+    { staffel: 0, url: "https://a.example/serie/aot/staffel-0" },
+    { staffel: 3, url: "" }
+  ],
+  folgen: [{ staffel: 1, folge: 1, url: "https://a.example/serie/aot/staffel-1/episode-1" }]
+}, { season: 1, episode: 1 });
+
+pruefe("Die Staffeln reisen zum Player mit",
+  mitStaffeln.staffeln.length === 2,
+  JSON.stringify(mitStaffeln.staffeln.map((e) => e.staffel)));
+pruefe("Und zwar der Reihe nach",
+  mitStaffeln.staffeln[0].staffel === 1 && mitStaffeln.staffeln[1].staffel === 2);
+pruefe("Ohne Adresse ist eine Staffel nicht zu oeffnen",
+  mitStaffeln.staffeln.every((eintrag) => eintrag.url),
+  "ein Reiter, der nichts laedt, ist schlimmer als keiner");
+pruefe("Staffel 0 zaehlt nicht",
+  mitStaffeln.staffeln.every((eintrag) => eintrag.staffel > 0));
+pruefe("Ohne Staffelangabe bleibt die Liste leer statt undefiniert",
+  Array.isArray(direktfolgen.fuerPlayer({ titel: "X", folgen: [] }, null).staffeln),
+  "der Player laeuft sonst in einen Fehler beim Zeichnen");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`
 ${pruefungen.length - fehler}/${pruefungen.length} bestanden`);

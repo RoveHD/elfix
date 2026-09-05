@@ -290,13 +290,72 @@ async function folgenZeigen() {
   folgenZeichnen();
 }
 
+/*
+ * Eine Staffel oeffnen.
+ *
+ * Sind ihre Folgen schon da, wird nur umgeschaltet. Sonst wird die Seite dieser
+ * Staffel gelesen - das dauert einen Augenblick, deshalb sagt die Liste
+ * solange, was sie tut. Die Staffelliste selbst kommt von jeder Staffelseite
+ * mit, die Reiterzeile bleibt also vollstaendig.
+ */
+async function staffelOeffnen(staffel) {
+  offeneStaffel = staffel;
+  if (folgenStand?.folgen?.some((eintrag) => eintrag.staffel === staffel)) {
+    folgenZeichnen();
+    return;
+  }
+  const ziel = (folgenStand?.staffeln || []).find((eintrag) => eintrag.staffel === staffel);
+  if (!ziel) {
+    folgenZeichnen();
+    return;
+  }
+  folgenListe.textContent = "";
+  folgenLeer.hidden = false;
+  folgenLeer.textContent = `Staffel ${staffel} wird gelesen …`;
+  folgenZeichnen();
+  const stand = await bruecke.folgen(false, ziel.url);
+  if (!stand || !Array.isArray(stand.folgen) || !stand.folgen.length) {
+    folgenLeer.hidden = false;
+    folgenLeer.textContent = `Staffel ${staffel} ließ sich nicht lesen.`;
+    return;
+  }
+  // Die gelesenen Folgen kommen dazu, die alten bleiben - wer hin und her
+  // schaltet, soll nicht jedes Mal warten.
+  const vorhanden = new Set((folgenStand.folgen || []).map((eintrag) => eintrag.url));
+  folgenStand = {
+    ...stand,
+    staffeln: stand.staffeln?.length ? stand.staffeln : folgenStand.staffeln,
+    folgen: [
+      ...(folgenStand.folgen || []),
+      ...stand.folgen.filter((eintrag) => !vorhanden.has(eintrag.url))
+    ].sort((links, rechts) => (links.staffel - rechts.staffel) || (links.folge - rechts.folge))
+  };
+  folgenZeichnen();
+}
+
 function folgenZeichnen() {
   if (!folgenStand) return;
-  folgenLeer.hidden = true;
+  // Der Hinweis wird hier NICHT pauschal ausgeblendet: waehrend eine Staffel
+  // nachgelesen wird, steht dort "Staffel 3 wird gelesen ...", und diese
+  // Funktion laeuft dazwischen, um die Reiterzeile schon umzustellen.
+  // Ausgeblendet wird er unten, sobald wirklich Folgen dastehen.
   document.getElementById("folgenTitel").textContent = folgenStand.titel || "Folgen";
 
-  const staffeln = [...new Set(folgenStand.folgen.map((eintrag) => eintrag.staffel))]
+  /*
+   * Die Reiterzeile kommt aus der Staffelliste, nicht aus den Folgen.
+   *
+   * Vorher wurden die Reiter aus den geladenen *Folgen* gebildet - und die
+   * stammen alle von einer Seite. Also gab es nie mehr als eine Staffel, die
+   * Zeile blendete sich weg, und man kam aus der laufenden Staffel nicht
+   * heraus. Die Serie kennt ihre Staffeln aber (`folgenStand.staffeln`), auch
+   * wenn deren Folgen noch nicht gelesen sind; die holt der Klick nach.
+   */
+  const bekannte = Array.isArray(folgenStand.staffeln) ? folgenStand.staffeln : [];
+  const ausFolgen = [...new Set(folgenStand.folgen.map((eintrag) => eintrag.staffel))];
+  const staffeln = [...new Set([...bekannte.map((eintrag) => eintrag.staffel), ...ausFolgen])]
+    .filter((staffel) => Number.isFinite(staffel))
     .sort((links, rechts) => links - rechts);
+
   staffelReiter.textContent = "";
   // Bei einer einzigen Staffel waere eine Reiterzeile mit genau einem Reiter
   // eine Zeile, die nichts entscheidet.
@@ -306,15 +365,16 @@ function folgenZeichnen() {
     knopf.type = "button";
     knopf.textContent = staffel > 0 ? `Staffel ${staffel}` : "Filme";
     knopf.className = staffel === offeneStaffel ? "aktiv" : "";
-    knopf.addEventListener("click", () => {
-      offeneStaffel = staffel;
-      folgenZeichnen();
-    });
+    knopf.addEventListener("click", () => staffelOeffnen(staffel));
     staffelReiter.appendChild(knopf);
   }
 
   folgenListe.textContent = "";
-  for (const eintrag of folgenStand.folgen.filter((wert) => wert.staffel === offeneStaffel)) {
+  const sichtbare = folgenStand.folgen.filter((wert) => wert.staffel === offeneStaffel);
+  // Steht die Staffel im Reiter, sind ihre Folgen aber noch nicht gelesen,
+  // bleibt der Hinweis von staffelOeffnen stehen.
+  if (sichtbare.length) folgenLeer.hidden = true;
+  for (const eintrag of sichtbare) {
     const knopf = document.createElement("button");
     knopf.type = "button";
     knopf.className = eintrag.laeuft ? "laeuft" : "";

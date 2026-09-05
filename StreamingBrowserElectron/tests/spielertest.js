@@ -239,6 +239,25 @@ pruefe("Ein Fassungswechsel im Player merkt sich auch das Wort",
   /roh: gewaehlt\.spracheRoh \|\| ""/.test(haupt),
   "ohne es stuende die gemerkte Fassung ohne Namen da");
 
+/* -------------------------------------------------------- Staffeln wechseln */
+
+pruefe("Die Reiterzeile kommt aus der Staffelliste, nicht aus den Folgen",
+  /folgenStand\.staffeln/.test(skript)
+  && /const bekannte = Array\.isArray\(folgenStand\.staffeln\)/.test(skript),
+  "aus den Folgen gebildet gab es nie mehr als eine Staffel");
+pruefe("Ein Klick auf eine ungelesene Staffel holt sie nach",
+  /async function staffelOeffnen\(staffel\)/.test(skript)
+  && /bruecke\.folgen\(false, ziel\.url\)/.test(skript));
+pruefe("Schon gelesene Staffeln werden nicht noch einmal geholt",
+  /folgenStand\?\.folgen\?\.some\(\(eintrag\) => eintrag\.staffel === staffel\)/.test(skript),
+  "wer hin und her schaltet, soll nicht jedes Mal warten");
+pruefe("Die Bruecke reicht die Staffel durch",
+  /folgen: \(frisch = false, staffelUrl = ""\)/.test(bruecke));
+pruefe("Der Hauptprozess nimmt sie entgegen und prueft sie",
+  /ipcMain\.handle\("spieler:folgen", async \(ereignis, frisch = false, staffelUrl = ""\)/.test(haupt)
+  && /new URL\(absolut\)\.host === new URL\(url\)\.host/.test(haupt),
+  "ein Player darf nicht jede beliebige Seite lesen lassen");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`
 ${pruefungen.length - fehler}/${pruefungen.length} bestanden`);

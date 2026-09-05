@@ -30,7 +30,9 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
    * Die Staffel- und Folgenliste. Sie kostet einen Seitenaufruf, deshalb wird
    * sie erst geholt, wenn jemand sie aufklappt - und danach gemerkt.
    */
-  folgen: (frisch = false) => ipcRenderer.invoke("spieler:folgen", Boolean(frisch)),
+  // `staffelUrl` waehlt eine andere Staffel; ohne sie gilt die laufende.
+  folgen: (frisch = false, staffelUrl = "") =>
+    ipcRenderer.invoke("spieler:folgen", Boolean(frisch), String(staffelUrl || "")),
   /** Zu einer anderen Folge. Die Kette dahinter ist dieselbe wie beim Start. */
   wechseln: (url) => ipcRenderer.invoke("spieler:wechseln", String(url || "")),
   /** Ein anderer Hoster fuer dieselbe Folge - an derselben Stelle weiter. */

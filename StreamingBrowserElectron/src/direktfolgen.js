@@ -88,6 +88,25 @@ function fuerPlayer(stand, jetzt) {
   if (!stand) return null;
   return {
     titel: String(stand.titel || ""),
+    /*
+     * Die Staffeln der Serie - nicht nur die eine, deren Seite gelesen wurde.
+     *
+     * Die Uebersicht nennt sie ohnehin (`seitendaten.uebersichtSkript` sammelt
+     * sie aus den "/staffel-N"-Links dieser Serie). Sie hier wegzulassen war
+     * der Grund, warum die Reiterzeile im Player leer blieb: sie wurde aus den
+     * *Folgen* gebildet, und die stammen alle von einer Seite - also gab es nie
+     * mehr als eine Staffel und die Zeile blendete sich aus.
+     *
+     * Die Adresse geht mit, weil die Folgen einer anderen Staffel erst gelesen
+     * werden muessen; sie stehen auf ihrer eigenen Seite.
+     */
+    staffeln: (Array.isArray(stand.staffeln) ? stand.staffeln : [])
+      .map((eintrag) => ({
+        staffel: Number(eintrag?.staffel) || 0,
+        url: String(eintrag?.url || "")
+      }))
+      .filter((eintrag) => eintrag.staffel > 0 && eintrag.url)
+      .sort((links, rechts) => links.staffel - rechts.staffel),
     folgen: geordnet(stand.folgen).map((eintrag) => ({
       staffel: Number(eintrag.staffel) || 0,
       folge: Number(eintrag.folge) || 0,
