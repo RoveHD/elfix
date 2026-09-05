@@ -2656,7 +2656,9 @@ async function navigateProvider(provider, url) {
   view.webContents.setAudioMuted(false);
 
   // Bei offenem Overlay (Einstellungen, Oberflaeche) bleibt die View abgehaengt.
-  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0) {
+  // Im Direktbetrieb bleibt sie es immer: sie ist dann Werkbank und nicht
+  // Fenster.
+  if (!attachedProviderViews.has(provider.id) && overlayReasons.size === 0 && !direktModus()) {
     mainWindow.contentView.addChildView(view);
     attachedProviderViews.add(provider.id);
   }
@@ -2680,6 +2682,11 @@ async function navigateProvider(provider, url) {
   } else {
     resumeProviderAfterSwitch(provider.id, view);
   }
+
+  // Im Direktbetrieb ist die Navigation nur der halbe Weg: gesehen wird nicht
+  // die Seite, sondern was hinter ihr steht. Das laeuft nebenher weiter -
+  // diese Funktion soll die Oberflaeche nicht warten lassen.
+  if (direktModus()) direktUebernehmen(provider, target).catch(() => {});
 }
 
 async function enterHomeMode() {
@@ -3885,6 +3892,13 @@ function hideActiveViewForOverlay() {
 
 function restoreActiveViewAfterOverlay() {
   if (!mainWindow || !activeView || !activeProviderId) return;
+  // Im Direktbetrieb gibt es nichts wiederherzustellen: die Anbieteransicht war
+  // nie zu sehen. Wer die Einstellungen zumacht, soll nicht ploetzlich auf
+  // einer Anbieterseite stehen.
+  if (direktModus()) {
+    spielerLageSetzen();
+    return;
+  }
   if (!attachedProviderViews.has(activeProviderId)) {
     mainWindow.contentView.addChildView(activeView);
     attachedProviderViews.add(activeProviderId);
@@ -3897,6 +3911,11 @@ function restoreActiveViewAfterOverlay() {
 // (abhaengen, verschieben, komplett verdecken) macht die Seite fuer Chromium
 // unsichtbar und drosselt sie auf ~1 Timer-Tick pro Sekunde ohne jedes Frame.
 async function beginAutostart(providerId, title, options = {}) {
+  // Im Direktbetrieb gibt es nichts, worauf dieser Vorhang warten koennte: die
+  // Wiedergabe faengt nicht in der Anbieteransicht an, sondern im eigenen
+  // Player - und der bringt seine eigene Anzeige mit. Ein Vorhang, der auf ein
+  // Ereignis wartet, das nie kommt, bliebe bis zum Zeitlimit stehen.
+  if (direktModus()) return;
   // Bewusst ohne finishAutostart(): ein zweiter Klick waehrend des Startens soll
   // weder umschalten noch den Vorhang kurz aufziehen.
   if (pendingAutostart) clearTimeout(pendingAutostart.timer);
@@ -7903,7 +7922,7 @@ function seiteGleich(links, rechts) {
  *
  * Ohne Ausnahme nach aussen: ein Fehlschlag ist ein `false`, kein Wurf.
  */
-function seiteLaden(view, adresse, frist = 25000) {
+function warteAufSeite(view, frist = 25000, laden = null) {
   return new Promise((fertig) => {
     if (!isLiveView(view)) {
       fertig(false);
@@ -7928,7 +7947,13 @@ function seiteLaden(view, adresse, frist = 25000) {
     const uhr = setTimeout(() => schluss(false), frist);
     inhalt.on("dom-ready", aufFertig);
     inhalt.on("did-fail-load", aufFehler);
-    inhalt.loadURL(adresse).catch(() => schluss(false));
+    if (laden) laden(schluss);
+  });
+}
+
+function seiteLaden(view, adresse, frist = 25000) {
+  return warteAufSeite(view, frist, (schluss) => {
+    view.webContents.loadURL(adresse).catch(() => schluss(false));
   });
 }
 
@@ -7937,7 +7962,14 @@ async function werkbankAn(provider, adresse) {
   if (!providerModel.isHttpUrl(adresse)) return null;
   const view = getProviderView(provider);
   if (!isLiveView(view)) return null;
-  if (seiteGleich(view.webContents.getURL(), adresse)) return view;
+  // Schon dort - aber vielleicht noch mitten im Laden. Die Adresse steht ab
+  // dem Augenblick, in dem die Navigation angenommen wird; der Inhalt steht
+  // erst danach. Wer hier nicht wartet, liest eine leere Seite und meldet
+  // "kein Hoster gefunden".
+  if (seiteGleich(view.webContents.getURL(), adresse)) {
+    if (!view.webContents.isLoading()) return view;
+    return (await warteAufSeite(view)) ? view : null;
+  }
   const geladen = await seiteLaden(view, adresse);
   return geladen ? view : null;
 }
@@ -7953,8 +7985,11 @@ async function werkbankAn(provider, adresse) {
  * sonst neu laden.
  */
 async function folgenlisteLesen(provider, adresse, optionen = {}) {
-  const staffelUrl = nachschub.staffelSeiteUrl(adresse) || "";
-  if (!staffelUrl) return null;
+  // Bei einer Folgenadresse die Staffelseite darueber, sonst die Adresse
+  // selbst: wer eine Serie oeffnet, steht schon auf der Seite mit der Liste.
+  const staffelUrl = nachschub.staffelSeiteUrl(adresse)
+    || (episodeIdentity(adresse) ? "" : String(adresse || ""));
+  if (!providerModel.isHttpUrl(staffelUrl)) return null;
   const schluessel = `${provider.id}|${staffelUrl}`;
   const gemerkt = folgenSpeicher.get(schluessel);
   if (!optionen.frisch && gemerkt && Date.now() - gemerkt.zeit < FOLGEN_FRISCHE_MS) {
@@ -8073,7 +8108,12 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
     // darf der Aufrufer sie vorgeben.
     startzeit: Number.isFinite(optionen.startzeit)
       ? Math.max(0, optionen.startzeit)
-      : sanitizePositiveNumber(eintrag?.currentTime || eintrag?.position)
+      : sanitizePositiveNumber(eintrag?.currentTime || eintrag?.position),
+    // Der Player ohne Video: er zeigt die Folgenliste und wartet auf eine Wahl.
+    auswahl: Boolean(optionen.auswahl),
+    // Der Player vor dem Video: er steht schon da, waehrend noch aufgeloest
+    // wird.
+    laden: Boolean(optionen.laden)
   };
   return spielerLauf;
 }
@@ -8128,7 +8168,9 @@ function spielerAuftrag() {
     marke: spielerMarke(),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
-    runde: Boolean(spielerRunde())
+    runde: Boolean(spielerRunde()),
+    auswahl: Boolean(spielerLauf.auswahl),
+    laden: Boolean(spielerLauf.laden)
   };
 }
 
@@ -8324,12 +8366,10 @@ ipcMain.on("spieler:fehler", (ereignis, text) => {
 
 ipcMain.on("spieler:schliessen", (ereignis, grund) => {
   if (!spielerView || ereignis.sender !== spielerView.webContents) return;
-  const zumHoster = String(grund || "") === "hoster";
   direktSpielerSchliessen(String(grund || "knopf"));
-  // "Beim Hoster oeffnen" ist der Ausweg aus einer Quelle, die nicht spielt.
-  // Die Folgenseite liegt darunter und wartet - mehr ist dafuer nicht noetig,
-  // der Zuschauer klickt seinen Hoster wie eh und je.
-  if (zumHoster) sendToast("Zurück zur Anbieterseite — dort läuft der Hoster wie bisher");
+  // Hinter dem Player liegt im Direktbetrieb nichts, was man ansehen koennte -
+  // nur eine Werkbank. Also zurueck in die eigene Oberflaeche.
+  if (direktModus()) direktZurueckZurOberflaeche("").catch(() => {});
 });
 
 ipcMain.on("spieler:vollbild", (ereignis) => {
@@ -8373,6 +8413,104 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
     typ: ergebnis.quelle.typ,
     hoehe: ergebnis.quelle.hoehe
   };
+}
+
+/* ------------------------------------------------------- Der Direktbetrieb
+ *
+ * Von hier an ist die Anbieterseite unsichtbar. Sie wird geladen, gelesen und
+ * wieder verlassen - gesehen wird sie nicht mehr.
+ *
+ * Der Grund ist nicht Geschmack. Auf diesen Seiten liegt das Video unter
+ * Werbeschichten, falschen Abspielknoepfen, Popups und Zaehlpixeln; ELFIX
+ * verbringt seit Fassungen die halbe Arbeit damit, dagegen anzuraeumen. Was
+ * gebraucht wird, sind zwei Dinge: die Liste der Folgen und die Adresse hinter
+ * dem Hoster. Beides laesst sich lesen, ohne es herzuzeigen.
+ *
+ * Was der Zuschauer stattdessen sieht: den eigenen Player - mit Folgenliste,
+ * Fassungs- und Hosterwahl, Intro-Knopf, Untertiteln und Watchparty. Und wo
+ * gar keine Folge dahintersteht (Startseite, Katalog, Suche des Anbieters),
+ * die eigene Oberflaeche von ELFIX, die dafuer laengst da ist.
+ */
+
+/** Laeuft ELFIX im Direktbetrieb? */
+function direktModus() {
+  return settings.playback?.direktModus !== false;
+}
+
+/** Zeigt diese Adresse auf eine einzelne Folge? */
+function istFolgenAdresse(url) {
+  return Boolean(episodeIdentity(url));
+}
+
+/**
+ * Der Player ohne Video: die Auswahl.
+ *
+ * Wer eine Serie oeffnet, steht nicht in einer Folge - er sucht sich eine. Das
+ * war bisher die Aufgabe der Anbieterseite. Jetzt macht es der Player: er geht
+ * auf, zeigt die Folgenliste und wartet. Ein eigener Serienschirm daneben waere
+ * dieselbe Liste ein zweites Mal.
+ */
+async function direktAuswahlOeffnen(provider, url) {
+  const leer = {
+    ok: true,
+    quelle: { adresse: "", typ: "", hoehe: 0 },
+    kopfzeilen: null,
+    hoster: "",
+    link: "",
+    hosterliste: []
+  };
+  const offen = await direktSpielerOeffnen(provider, url, leer, { startzeit: 0, auswahl: true });
+  return offen ? { ok: true, auswahl: true } : { ok: false, grund: "Player ließ sich nicht öffnen" };
+}
+
+/**
+ * Was nach einer Navigation geschieht - im Direktbetrieb.
+ *
+ * Drei Faelle, und alle drei enden sichtbar: eine Folge laeuft, eine Auswahl
+ * steht da, oder die eigene Oberflaeche kommt zurueck. Was nicht passiert: ein
+ * leerer schwarzer Bereich, hinter dem unsichtbar eine Anbieterseite steht.
+ */
+async function direktUebernehmen(provider, url) {
+  if (!direktModus() || !providerModel.isHttpUrl(url)) return;
+
+  if (istFolgenAdresse(url)) {
+    // Erst den Player aufmachen, dann aufloesen. Die Aufloesung dauert ein paar
+    // Sekunden - Seite laden, Weiterleitungen gehen, Quelle lesen -, und in
+    // dieser Zeit stuende sonst eine leere dunkle Flaeche da, hinter der
+    // scheinbar nichts passiert.
+    await direktSpielerOeffnen(provider, url, {
+      ok: true, quelle: { adresse: "", typ: "", hoehe: 0 }, kopfzeilen: null,
+      hoster: "", link: "", hosterliste: []
+    }, { laden: true });
+    const ergebnis = await direktFolgeSpielen(provider, url);
+    if (ergebnis.ok) return;
+    // Keine Quelle: dann wenigstens die Auswahl, dort steht auch die
+    // Hosterwahl. Und wenn selbst die nicht zu lesen ist, die Oberflaeche.
+    const auswahl = await direktAuswahlOeffnen(provider, url);
+    sendToast(`Keine direkte Quelle: ${ergebnis.grund}`);
+    if (auswahl.ok) return;
+    await direktZurueckZurOberflaeche("");
+    return;
+  }
+
+  // Eine Serien- oder Staffelseite: daraus wird die Auswahl.
+  const stand = await folgenlisteLesen(provider, url).catch(() => null);
+  if (stand) {
+    await direktAuswahlOeffnen(provider, url);
+    return;
+  }
+
+  // Startseite, Katalog, Suche des Anbieters - dafuer gibt es die eigene
+  // Oberflaeche, und die ist besser.
+  await direktZurueckZurOberflaeche("Die Anbieterseite bleibt im Hintergrund — hier geht es weiter");
+}
+
+/** Zurueck in die eigene Oberflaeche, mit einem Wort dazu. */
+async function direktZurueckZurOberflaeche(hinweis) {
+  direktSpielerSchliessen("keine folge");
+  await enterHomeMode().catch(() => {});
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("app:zeige-start");
+  if (hinweis) sendToast(hinweis);
 }
 
 ipcMain.handle("direkt:starten", async () => {
@@ -11942,7 +12080,12 @@ function normalizeSettings(raw) {
       // Ebenfalls von Haus aus an. Vorgewaehlt wird nur, was jemand fuer
       // dieselbe Serie schon einmal selbst angeklickt hat - eine eigene
       // Meinung zur richtigen Fassung hat ELFIX nicht.
-      rememberLanguage: raw?.playback?.rememberLanguage !== false
+      rememberLanguage: raw?.playback?.rememberLanguage !== false,
+      // Der eigene Player statt der Anbieterseite. Von Haus aus an: die Seite
+      // des Anbieters ist Werbeflaeche mit einem Video darin, und alles, was
+      // man dort tut, geht hier auch - Folgen waehlen, Fassung, Hoster,
+      // Intro, Watchparty. Wer sie doch sehen will, schaltet hier ab.
+      direktModus: raw?.playback?.direktModus !== false
     },
     browser: {
       cacheMode: sanitizeChoice(raw?.browser?.cacheMode, ["normal", "clearOnStart", "aggressive"], defaults.browser.cacheMode)
@@ -12114,6 +12257,7 @@ function defaultSettings() {
     playback: {
       introSkip: true,
       rememberLanguage: true,
+      direktModus: true,
       pauseOnProviderSwitch: true,
       favoriteProgressMode: "sequential",
       pauseOnMinimize: false,

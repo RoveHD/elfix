@@ -370,6 +370,7 @@ const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
+const direktModus = document.querySelector("#direktModus");
 // SponsorBlock. Ein Schalter fuer das Ganze, fuenf fuer die Kategorien, einer
 // fuer die Meldung - in derselben Reihenfolge wie in der Einstellungsseite.
 const sponsorblockFelder = {
@@ -1085,6 +1086,7 @@ function bindEvents() {
   youtubeInMediathek?.addEventListener("change", saveSettings);
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
+  direktModus?.addEventListener("change", saveSettings);
   for (const feld of Object.values(sponsorblockFelder)) {
     feld?.addEventListener("change", saveSettings);
   }
@@ -1127,6 +1129,16 @@ function bindEvents() {
     }
     renderProviders();
     renderFavoriteToggle();
+  });
+
+  // Im Direktbetrieb gibt es hinter dem Player nichts zu sehen - der
+  // Hauptprozess schickt die Oberflaeche deshalb selbst zurueck.
+  api.onShowHome?.(() => {
+    hideContentViews();
+    homeView.classList.remove("is-hidden");
+    setCurrentRoute("start");
+    renderChromeButtons();
+    renderHome();
   });
 
   api.onBlocked((items) => {
@@ -7165,6 +7177,11 @@ function renderChromeButtons() {
   for (const auswahl of ["#favoriteButton", "#watchpartyShareButton", "#direktButton", "#stopButton", "#fullscreenButton"]) {
     document.querySelector(auswahl)?.classList.toggle("is-hidden", !aufSeite);
   }
+  // Im Direktbetrieb ist jede Folge ohnehin im eigenen Player - dann waere der
+  // Knopf ein zweiter Weg zu dem, was gerade laeuft. Er bleibt fuer den, der
+  // die Anbieterseite ausdruecklich wieder eingeschaltet hat.
+  document.querySelector("#direktButton")?.classList
+    .toggle("is-hidden", !aufSeite || settings.playback?.direktModus !== false);
   // Auf YouTube faellt der ⇄ Knopf weg: er stellt einen Titel in einen Raum,
   // und ein YouTube-Video ist keiner. Dort fuehrt der einzige Weg in die Runde
   // ueber deren eigene Anzeige, die im selben Zug mitgezogen wird.
@@ -7345,6 +7362,7 @@ function renderSettings() {
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
+  if (direktModus) direktModus.checked = settings.playback?.direktModus !== false;
   for (const [name, feld] of Object.entries(sponsorblockFelder)) {
     if (feld) feld.checked = settings.sponsorblock?.[name] ?? SPONSORBLOCK_STANDARD[name];
   }
@@ -7606,6 +7624,7 @@ async function saveSettings() {
     // Fehlt das Kaestchen, gilt weiter, was gespeichert ist - nicht "aus".
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
+    direktModus: direktModus ? direktModus.checked : settings.playback?.direktModus !== false,
     rememberLanguage: rememberLanguage ? rememberLanguage.checked : settings.playback?.rememberLanguage !== false,
     favoriteProgressMode: favoriteProgressMode.value,
     pauseOnMinimize: pauseOnMinimize.checked,

@@ -729,6 +729,25 @@ function starten(neuerAuftrag) {
   // geholt.
   folgenStand = null;
 
+  // Der Player vor dem Video: die Quelle wird noch gesucht. Er steht schon da,
+  // damit die Flaeche nicht leer bleibt, waehrend im Hintergrund die Seite
+  // geladen und die Adresse aufgeloest wird.
+  if (auftrag.laden) {
+    pufferZeigen(true);
+    document.getElementById("hoster").textContent = "Quelle wird gesucht …";
+    return;
+  }
+
+  // Der Player ohne Video: eine Serie ist geoeffnet, aber keine Folge gewaehlt.
+  // Das ist kein Fehler, sondern der Anfang - also steht die Liste offen da
+  // statt einer Fehlermeldung.
+  if (auftrag.auswahl) {
+    pufferZeigen(false);
+    document.getElementById("hoster").textContent = "Folge wählen";
+    folgenZeigen();
+    return;
+  }
+
   if (!auftrag.adresse) {
     aufgeben("Es kam keine Adresse an.", "ohne-adresse");
     return;

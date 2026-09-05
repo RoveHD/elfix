@@ -129,6 +129,10 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   exportBackup: () => ipcRenderer.invoke("data:backup-export"),
   importBackup: () => ipcRenderer.invoke("data:backup-import"),
   resetData: () => ipcRenderer.invoke("data:confirm-reset"),
+  // Der Direktbetrieb schickt die Oberflaeche zurueck auf die Startseite: hinter
+  // dem geschlossenen Player liegt keine Anbieterseite mehr, die man ansehen
+  // koennte.
+  onShowHome: (callback) => ipcRenderer.on("app:zeige-start", () => callback()),
   onBrowserState: (callback) => ipcRenderer.on("browser:state", (_event, state) => callback(state)),
   onBlocked: (callback) => ipcRenderer.on("adblock:blocked", (_event, items) => callback(items)),
   onMediaDiagnostics: (callback) => ipcRenderer.on("media:diagnostics", (_event, items) => callback(items)),
