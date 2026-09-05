@@ -85,6 +85,15 @@ pruefe("Und was die Bruecke erwartet, schickt der Hauptprozess auch",
   empfangen.every((kanal) => haupt.includes(`send("${kanal}"`)),
   empfangen.join(", "));
 
+// Die Nachfragen des Players (Folgenliste, Wechsel, Hoster) gehen ueber
+// invoke und brauchen drueben ein handle. Ein fehlendes handle faellt zur
+// Laufzeit als abgewiesenes Versprechen auf - also hier.
+const gefragt = [...new Set(alle(bruecke, /ipcRenderer\.invoke\("([^"]+)"/g))];
+const unbeantwortet = gefragt.filter((kanal) => !haupt.includes(`ipcMain.handle("${kanal}"`));
+pruefe("Jede Nachfrage des Players wird im Hauptprozess beantwortet",
+  unbeantwortet.length === 0,
+  unbeantwortet.join(", ") || gefragt.join(", "));
+
 pruefe("Die Oberflaeche kann den Player starten und beenden",
   /startDirekt:/.test(lies("src/preload.js"))
   && haupt.includes('ipcMain.handle("direkt:starten"')

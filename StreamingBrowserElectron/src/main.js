@@ -46,6 +46,7 @@ const voeQualitaet = require("./voe-qualitaet");
 // pruefbar bleibt: die Kacheln der Folgenseite (direktlinks), der Weg durch die
 // Weiterleitungen (direktlauf) und das Lesen des Quelltexts (direktquelle).
 const direktlinks = require("./direktlinks");
+const direktfolgen = require("./direktfolgen");
 const direktlauf = require("./direktlauf");
 // Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
 // der Watchparty fuer Serien nur die Leitung.
@@ -7826,29 +7827,156 @@ async function direktLinksLesen(provider, view) {
  * Hoster einer Folge ist oft der, der gerade nicht will - abgelaufener Link,
  * geloeschte Datei, Wartung. Ein zweiter Versuch kostet einen Abruf, ein
  * Zuschauer vor einem schwarzen Bild kostet den Abend.
+ *
+ * `nurDieser` haelt sich an genau einen Hoster - das ist der Fall, in dem der
+ * Zuschauer im Player selbst einen gewaehlt hat. Dann waere ein stiller
+ * Ausweichversuch auf den naechsten keine Hilfe, sondern die Missachtung einer
+ * Entscheidung.
  */
-async function direktQuelleFuerAnsicht(provider, view) {
+async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   const aufloeser = direktAufloeserHolen();
   if (!aufloeser) return { ok: false, grund: "Sitzung nicht bereit" };
   if (!isLiveView(view)) return { ok: false, grund: "Keine Folge geöffnet" };
 
   const seite = view.webContents.getURL();
-  const links = await direktLinksLesen(provider, view);
+  const alle = await direktLinksLesen(provider, view);
+  const links = optionen.nurDieser
+    ? alle.filter((eintrag) => eintrag.adresse === optionen.nurDieser)
+    : alle;
   if (!links.length) return { ok: false, grund: "Kein Hoster auf der Seite" };
 
   const gescheitert = [];
-  for (const eintrag of links.slice(0, DIREKT_HOECHSTVERSUCHE)) {
+  for (const eintrag of links.slice(0, optionen.nurDieser ? 1 : DIREKT_HOECHSTVERSUCHE)) {
     const ergebnis = await aufloeser.aufloesen(eintrag.adresse, seite);
     if (ergebnis.ok) {
       console.log(`[ELFIX DIREKT] ${eintrag.hoster || "?"}: ${ergebnis.quelle.typ} `
         + `${ergebnis.quelle.hoehe || "?"}p ueber ${ergebnis.stationen.length} Station(en)`);
-      return { ...ergebnis, hoster: eintrag.hoster, link: eintrag.adresse };
+      return { ...ergebnis, hoster: eintrag.hoster, link: eintrag.adresse, hosterliste: alle };
     }
     gescheitert.push(`${eintrag.hoster || "?"}: ${ergebnis.grund}`);
   }
   console.log(`[ELFIX DIREKT] nichts gefunden - ${gescheitert.join(" | ")}`);
-  return { ok: false, grund: gescheitert[0] || "Keine Quelle", versuche: gescheitert };
+  return { ok: false, grund: gescheitert[0] || "Keine Quelle", versuche: gescheitert, hosterliste: alle };
 }
+
+/* --------------------------------------------------------------- Die Werkbank
+ *
+ * Die Anbieteransicht zeigt nichts mehr - sie arbeitet. Sie laedt die Seiten,
+ * aus denen ELFIX seine Angaben liest: die Hosterkacheln einer Folge, die
+ * Staffel- und Folgenliste einer Serie, die Angaben zum Titel. Gesehen wird
+ * davon nichts; was der Zuschauer sieht, ist der eigene Player.
+ *
+ * Warum ueberhaupt noch eine Ansicht und nicht einfach ein Abruf? Weil diese
+ * Seiten ihre Listen zum Teil erst im Browser zusammensetzen, und weil die
+ * Skripte, die sie lesen (seitendaten.js, direktlinks.js), ein DOM brauchen.
+ * Ein zweites Verfahren daneben waere ein zweites Verfahren, das auseinander
+ * laeuft - auf dem Telefon liest genau derselbe Quelltext in genau demselben
+ * WebView.
+ */
+
+/** Wie lange eine gelesene Folgenliste gilt, bevor sie neu geholt wird. */
+const FOLGEN_FRISCHE_MS = 10 * 60 * 1000;
+
+/** Gelesene Folgenlisten je Staffelseite. */
+const folgenSpeicher = new Map();
+
+/** Zwei Adressen meinen dieselbe Seite, wenn nur die Sprungmarke sich unterscheidet. */
+function seiteGleich(links, rechts) {
+  try {
+    const a = new URL(String(links || ""));
+    const b = new URL(String(rechts || ""));
+    a.hash = "";
+    b.hash = "";
+    return a.href === b.href;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Eine Seite laden und warten, bis sie steht.
+ *
+ * Gewartet wird auf `dom-ready` und nicht auf `did-finish-load`: die Anbieter
+ * laden nach dem fertigen Dokument noch minutenlang Werbung nach (gemessen
+ * wurde in startphasen.js ueber 150 Sekunden bis zum letzten Bild), und die
+ * Listen, um die es hier geht, stehen laengst vorher da.
+ *
+ * Ohne Ausnahme nach aussen: ein Fehlschlag ist ein `false`, kein Wurf.
+ */
+function seiteLaden(view, adresse, frist = 25000) {
+  return new Promise((fertig) => {
+    if (!isLiveView(view)) {
+      fertig(false);
+      return;
+    }
+    let erledigt = false;
+    const inhalt = view.webContents;
+    const schluss = (ok) => {
+      if (erledigt) return;
+      erledigt = true;
+      clearTimeout(uhr);
+      inhalt.off("dom-ready", aufFertig);
+      inhalt.off("did-fail-load", aufFehler);
+      fertig(ok);
+    };
+    const aufFertig = () => schluss(true);
+    // Unterrahmen scheitern staendig - Werbenetze, die der Filter abweist.
+    // Nur das Scheitern des Hauptrahmens ist das Scheitern der Seite.
+    const aufFehler = (_ereignis, _code, _text, _url, hauptrahmen) => {
+      if (hauptrahmen) schluss(false);
+    };
+    const uhr = setTimeout(() => schluss(false), frist);
+    inhalt.on("dom-ready", aufFertig);
+    inhalt.on("did-fail-load", aufFehler);
+    inhalt.loadURL(adresse).catch(() => schluss(false));
+  });
+}
+
+/** Die Werkbank auf eine Seite stellen - und sie dort auch wirklich vorfinden. */
+async function werkbankAn(provider, adresse) {
+  if (!providerModel.isHttpUrl(adresse)) return null;
+  const view = getProviderView(provider);
+  if (!isLiveView(view)) return null;
+  if (seiteGleich(view.webContents.getURL(), adresse)) return view;
+  const geladen = await seiteLaden(view, adresse);
+  return geladen ? view : null;
+}
+
+/**
+ * Die Staffeln und Folgen einer Serie.
+ *
+ * Gelesen wird die Staffelseite, nicht die Folgenseite: auf der Folgenseite
+ * steht die Liste nicht vollstaendig, und vor allem steht dort nicht, welche
+ * Nummern nur Hinweise auf eine Doppelfolge sind (siehe uebersichtSkript in
+ * seitendaten.js). Gemerkt wird sie zehn Minuten - eine Staffel bekommt nicht
+ * waehrend des Schauens neue Folgen, und jeder Folgenwechsel wuerde die Seite
+ * sonst neu laden.
+ */
+async function folgenlisteLesen(provider, adresse, optionen = {}) {
+  const staffelUrl = nachschub.staffelSeiteUrl(adresse) || "";
+  if (!staffelUrl) return null;
+  const schluessel = `${provider.id}|${staffelUrl}`;
+  const gemerkt = folgenSpeicher.get(schluessel);
+  if (!optionen.frisch && gemerkt && Date.now() - gemerkt.zeit < FOLGEN_FRISCHE_MS) {
+    return gemerkt.stand;
+  }
+
+  const view = await werkbankAn(provider, staffelUrl);
+  if (!view) return gemerkt?.stand || null;
+  let stand = null;
+  try {
+    stand = await view.webContents.executeJavaScript(seitendaten.uebersichtSkript(), true);
+  } catch {
+    return gemerkt?.stand || null;
+  }
+  if (!stand || !Array.isArray(stand.folgen) || !stand.folgen.length) {
+    return gemerkt?.stand || null;
+  }
+  folgenSpeicher.set(schluessel, { stand, zeit: Date.now() });
+  return stand;
+}
+
+
 
 // Die reine Auskunft: was liegt hinter dieser Folge? Sie spielt nichts ab und
 // ist deshalb das, was sich gefahrlos aus der Oberflaeche heraus fragen laesst.
@@ -7921,16 +8049,13 @@ function spielerLageSetzen() {
 }
 
 /**
- * Den Player aufmachen.
+ * Was gerade laeuft, in einem Stueck.
  *
- * Erst laden, dann einhaengen - sonst blitzt die leere Ansicht durch. Den
- * Auftrag bekommt die Seite nicht beim Laden, sondern wenn sie sich meldet:
- * eine Seite, die noch nicht steht, kann ihn nicht annehmen.
+ * Der Auftrag entsteht an drei Stellen - beim Aufmachen, beim Folgenwechsel und
+ * beim Hosterwechsel - und muss jedes Mal derselbe sein. Also entsteht er hier
+ * und nur hier.
  */
-async function direktSpielerOeffnen(provider, url, ergebnis) {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  direktSpielerSchliessen("neustart");
-
+function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
   const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
     && episodeIdentity(favorite.url)?.key === episodeIdentity(url)?.key);
 
@@ -7940,9 +8065,88 @@ async function direktSpielerOeffnen(provider, url, ergebnis) {
     url,
     quelle: ergebnis.quelle,
     hoster: ergebnis.hoster || "",
+    link: ergebnis.link || "",
+    hosterliste: Array.isArray(ergebnis.hosterliste) ? ergebnis.hosterliste : [],
     titel: naechsteFolgeLabel(provider, url),
-    startzeit: sanitizePositiveNumber(eintrag?.currentTime || eintrag?.position)
+    // Die gespeicherte Stelle gilt fuer die Folge. Wer den Hoster wechselt,
+    // will nicht an den Anfang, sondern dorthin, wo er gerade war - deshalb
+    // darf der Aufrufer sie vorgeben.
+    startzeit: Number.isFinite(optionen.startzeit)
+      ? Math.max(0, optionen.startzeit)
+      : sanitizePositiveNumber(eintrag?.currentTime || eintrag?.position)
   };
+  return spielerLauf;
+}
+
+/**
+ * Der Auftrag, wie die Seite ihn bekommt.
+ *
+ * Die Folgenliste kommt bewusst *nicht* mit: sie braucht einen Seitenaufruf,
+ * und der Player soll nicht auf sie warten, bevor das erste Bild steht. Er
+ * fragt sie nach, wenn jemand die Folgenliste aufklappt.
+ */
+function spielerAuftrag() {
+  if (!spielerLauf) return null;
+  return {
+    adresse: spielerLauf.quelle.adresse,
+    typ: spielerLauf.quelle.typ,
+    titel: spielerLauf.titel,
+    hoster: spielerLauf.hoster,
+    link: spielerLauf.link,
+    stufe: spielerLauf.quelle.hoehe ? `${spielerLauf.quelle.hoehe}p` : "",
+    startzeit: spielerLauf.startzeit,
+    hosterliste: spielerLauf.hosterliste.map((eintrag) => ({
+      adresse: eintrag.adresse,
+      hoster: eintrag.hoster,
+      sprache: eintrag.sprache,
+      sichtbar: eintrag.sichtbar
+    })),
+    naechste: spielerLauf.naechste || null
+  };
+}
+
+/**
+ * Die naechste Folge nachtragen - im Hintergrund.
+ *
+ * Sie steht in der Staffelliste, und die will geholt werden. Das darf dauern;
+ * gebraucht wird sie erst am Ende der Folge. Deshalb laeuft es nebenher und
+ * schickt nach, statt den Start aufzuhalten.
+ */
+async function spielerNaechsteNachtragen(provider, url) {
+  const stand = await folgenlisteLesen(provider, url).catch(() => null);
+  if (!spielerLauf || spielerLauf.url !== url) return;
+  const naechste = direktfolgen.naechste(stand, episodeIdentity(url));
+  spielerLauf.naechste = naechste
+    ? { url: naechste.url, beschriftung: direktfolgen.beschriftung(naechste) }
+    : null;
+  if (spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:naechste", spielerLauf.naechste);
+  }
+}
+
+/**
+ * Den Player aufmachen.
+ *
+ * Erst laden, dann einhaengen - sonst blitzt die leere Ansicht durch. Den
+ * Auftrag bekommt die Seite nicht beim Laden, sondern wenn sie sich meldet:
+ * eine Seite, die noch nicht steht, kann ihn nicht annehmen.
+ *
+ * Laeuft schon einer, wird er nicht neu gebaut. Eine neue Ansicht je Folge
+ * hiesse: schwarzes Bild, neuer Prozess, neues Laden der Seite - bei jedem
+ * Folgenwechsel. Der Player kann eine neue Quelle annehmen, also bekommt er
+ * eine.
+ */
+async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+  if (spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerLaufSetzen(provider, url, ergebnis, optionen);
+    spielerView.webContents.send("spieler:auftrag", spielerAuftrag());
+    spielerNaechsteNachtragen(provider, url).catch(() => {});
+    return true;
+  }
+
+  spielerLaufSetzen(provider, url, ergebnis, optionen);
 
   const view = new WebContentsView({
     webPreferences: {
@@ -7997,6 +8201,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis) {
   mainWindow.contentView.addChildView(view);
   spielerLageSetzen();
   view.webContents.focus();
+  spielerNaechsteNachtragen(provider, url).catch(() => {});
   return true;
 }
 
@@ -8019,14 +8224,7 @@ function direktSpielerSchliessen(grund = "") {
 
 ipcMain.on("spieler:bereit", (ereignis) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
-  ereignis.sender.send("spieler:auftrag", {
-    adresse: spielerLauf.quelle.adresse,
-    typ: spielerLauf.quelle.typ,
-    titel: spielerLauf.titel,
-    hoster: spielerLauf.hoster,
-    stufe: spielerLauf.quelle.hoehe ? `${spielerLauf.quelle.hoehe}p` : "",
-    startzeit: spielerLauf.startzeit
-  });
+  ereignis.sender.send("spieler:auftrag", spielerAuftrag());
 });
 
 /**
@@ -8095,10 +8293,17 @@ ipcMain.on("spieler:vollbild", (ereignis) => {
  * Zwei Antworten reichen der Oberflaeche - es laeuft, oder es laeuft nicht und
  * warum. Der Weg dazwischen steht im Protokoll.
  */
-ipcMain.handle("direkt:starten", async () => {
-  const provider = activeProvider();
-  if (!provider || !isLiveView(activeView)) return { ok: false, grund: "Kein Titel geöffnet" };
-  const url = activeView.webContents.getURL();
+/**
+ * Eine Folge spielen - der eine Weg, den alles nimmt.
+ *
+ * Knopf, Folgenwechsel, Hosterwechsel und der Weg aus der Oberflaeche enden
+ * hier. Die Schritte sind immer dieselben: die Werkbank auf die Folgenseite
+ * stellen, die Quelle aufloesen, den Player damit versorgen.
+ */
+async function direktFolgeSpielen(provider, url, optionen = {}) {
+  if (!provider || !providerModel.isHttpUrl(url)) {
+    return { ok: false, grund: "Kein Titel geöffnet" };
+  }
 
   // In einer laufenden Runde nicht.
   //
@@ -8113,10 +8318,15 @@ ipcMain.handle("direkt:starten", async () => {
     return { ok: false, grund: "In der Watchparty läuft die Folge weiter über den Hoster" };
   }
 
-  const ergebnis = await direktQuelleFuerAnsicht(provider, activeView);
+  const view = await werkbankAn(provider, url);
+  if (!view) return { ok: false, grund: "Die Folgenseite lädt nicht" };
+
+  const ergebnis = await direktQuelleFuerAnsicht(provider, view, {
+    nurDieser: optionen.hosterLink || ""
+  });
   if (!ergebnis.ok) return { ok: false, grund: ergebnis.grund };
 
-  const offen = await direktSpielerOeffnen(provider, url, ergebnis);
+  const offen = await direktSpielerOeffnen(provider, url, ergebnis, optionen);
   if (!offen) return { ok: false, grund: "Player ließ sich nicht öffnen" };
   return {
     ok: true,
@@ -8124,6 +8334,80 @@ ipcMain.handle("direkt:starten", async () => {
     typ: ergebnis.quelle.typ,
     hoehe: ergebnis.quelle.hoehe
   };
+}
+
+ipcMain.handle("direkt:starten", async () => {
+  const provider = activeProvider();
+  if (!provider || !isLiveView(activeView)) return { ok: false, grund: "Kein Titel geöffnet" };
+  return direktFolgeSpielen(provider, activeView.webContents.getURL());
+});
+
+/* -------------------------------------------------- Was der Player nachfragt */
+
+/** Der laufende Anbieter - jede Nachfrage des Players bezieht sich auf ihn. */
+function spielerAnbieter() {
+  if (!spielerLauf) return null;
+  return enabledProviders().find((item) => item.id === spielerLauf.providerId) || null;
+}
+
+/** Kommt diese Nachfrage wirklich aus dem Player? */
+function vomSpieler(ereignis) {
+  return Boolean(spielerLauf && spielerView && !spielerView.webContents.isDestroyed()
+    && ereignis.sender === spielerView.webContents);
+}
+
+/**
+ * Die Folgenliste, wie der Player sie zeigt.
+ *
+ * Mitgeliefert wird, welche Folge gerade laeuft - der Player soll sie
+ * hervorheben koennen, ohne selbst aus einer Adresse eine Nummer zu rechnen.
+ * Diese Rechnung gibt es einmal (episodeIdentity), und sie steht hier.
+ */
+ipcMain.handle("spieler:folgen", async (ereignis, frisch = false) => {
+  if (!vomSpieler(ereignis)) return null;
+  const provider = spielerAnbieter();
+  if (!provider) return null;
+  const url = spielerLauf.url;
+  const stand = await folgenlisteLesen(provider, url, { frisch: Boolean(frisch) });
+  return direktfolgen.fuerPlayer(stand, episodeIdentity(url));
+});
+
+/** Eine andere Folge - dieselbe Kette wie beim ersten Start. */
+ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
+  if (!vomSpieler(ereignis)) return { ok: false, grund: "Kein Player" };
+  const provider = spielerAnbieter();
+  if (!provider) return { ok: false, grund: "Anbieter fort" };
+  const ziel = absoluteHttpUrl(String(zielUrl || ""), spielerLauf.url);
+  if (!providerModel.isHttpUrl(ziel)) return { ok: false, grund: "Adresse nicht erkannt" };
+  // Der Stand der alten Folge ist gemeldet, bevor gewechselt wird - der Player
+  // schickt ihn mit dem letzten `stand`. Ab hier gilt die neue.
+  return direktFolgeSpielen(provider, ziel, { startzeit: 0 });
+});
+
+/**
+ * Ein anderer Hoster fuer dieselbe Folge.
+ *
+ * An derselben Stelle weiter: wer wechselt, tut das, weil das Bild stockt oder
+ * die Fassung nicht stimmt - nicht, weil er die Folge noch einmal von vorn
+ * sehen will.
+ */
+ipcMain.handle("spieler:hoster", async (ereignis, link, stelle) => {
+  if (!vomSpieler(ereignis)) return { ok: false, grund: "Kein Player" };
+  const provider = spielerAnbieter();
+  if (!provider) return { ok: false, grund: "Anbieter fort" };
+  const gewaehlt = spielerLauf.hosterliste.find((eintrag) => eintrag.adresse === String(link || ""));
+  if (!gewaehlt) return { ok: false, grund: "Hoster nicht in der Liste" };
+
+  // Ein Hosterwechsel ist eine Entscheidung ueber die Fassung, wenn der
+  // gewaehlte Eintrag zu einer anderen Sprache gehoert. Gelernt wird sie nach
+  // derselben Regel wie ein Klick auf die Flagge der Anbieterseite.
+  if (gewaehlt.sprache) {
+    fassungMelden(provider, spielerLauf.url, "wahl", { key: gewaehlt.sprache, roh: "" });
+  }
+  return direktFolgeSpielen(provider, spielerLauf.url, {
+    hosterLink: gewaehlt.adresse,
+    startzeit: sanitizePositiveNumber(stelle)
+  });
 });
 
 ipcMain.handle("direkt:beenden", () => {
