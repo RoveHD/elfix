@@ -3202,7 +3202,7 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
 // zur naechsten Folge bleibt, allein das Von-selbst faellt aus.
 function autoplayZaehler(provider, url) {
   if (settings.playback?.autoplayNextEpisode === false) return 0;
-  if (stopNachFolge.get(provider.id) === url) return 0;
+  if (stopNachFolge.get(provider?.id) === url) return 0;
   return NEXT_EPISODE_COUNTDOWN_SECONDS;
 }
 
@@ -3690,13 +3690,28 @@ async function playNextEpisode(provider, view, url) {
  * statt "Naechste Folge" zu behaupten - der Player zeigt ihn als Ueberschrift,
  * und dort waere das schlicht falsch.
  */
-function naechsteFolgeLabel(provider, url) {
+/*
+ * Der Eintrag zu einer Adresse.
+ *
+ * Eine Folge wird ueber ihre Identitaet gefunden, ein Film ueber seine
+ * Adresse. Das ist keine Feinheit: `episodeIdentity` gibt bei einem Film
+ * `null` zurueck, und wer dann `identity?.key` mit `identity?.key` vergleicht,
+ * vergleicht `undefined` mit `undefined` - womit der ERSTE Film dieses
+ * Anbieters auf jeden anderen passt. Genau so stand ueber "Prey" der Titel
+ * "Inception", und dieselbe Zeile stand an zwei Stellen.
+ */
+function favoritZuAdresse(provider, url) {
   const identity = episodeIdentity(url);
-  const eintrag = favorites.find((favorite) => {
+  return favorites.find((favorite) => {
     if (favorite.providerId !== provider?.id) return false;
     if (identity) return episodeIdentity(favorite.url)?.key === identity.key;
     return normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(url);
-  });
+  }) || null;
+}
+
+function naechsteFolgeLabel(provider, url) {
+  const identity = episodeIdentity(url);
+  const eintrag = favoritZuAdresse(provider, url);
   const titel = cleanBaseMediaTitle(eintrag?.title || "", url)
     || cleanTitle(titelAusSlug(mediaSlugFromUrl(url)) || "");
   const folge = identity
@@ -7570,6 +7585,42 @@ async function vorherigeFolge(provider, view) {
 // geaendert hat - darum kuemmert sich das Modul.
 async function fernStandMelden() {
   if (!fernbedienung.aktiv || !fernbedienung.verbunden) return;
+
+  /*
+   * Laeuft der eigene Player, steht dort das Bild - und nicht in der
+   * Anbieteransicht.
+   *
+   * Bis hierher las diese Funktion ausschliesslich `activeView` und schoss
+   * dafuer ein Skript in die Anbieterseite. Seit der Direktwiedergabe liegt
+   * dort nichts mehr: die Fernbedienung zeigte einen leeren Stand, waehrend
+   * auf dem Schirm eine Folge lief. Der Player meldet seinen Takt ohnehin
+   * (siehe `spieler:takt`) - der wird hier nur weitergereicht.
+   */
+  if (spielerLauf) {
+    const anbieter = spielerAnbieter();
+    const eintragImPlayer = favoritZuAdresse(anbieter, spielerLauf.url);
+    const kennung = episodeIdentity(spielerLauf.url);
+    // Der Takt ist genauer, kommt aber nur in einer Runde; sonst gilt der
+    // regulaere Stand. Was juenger ist, gewinnt.
+    const kandidaten = [spielerTakt, spielerLetzterStand]
+      .filter((wert) => wert && Date.now() - wert.at < 15000)
+      .sort((links, rechts) => rechts.at - links.at);
+    const stand = kandidaten[0] || null;
+    fernbedienung.standMelden({
+      titel: cleanBaseMediaTitle(eintragImPlayer?.title || "", spielerLauf.url)
+        || eintragImPlayer?.title || anbieter?.name || "",
+      folge: kennung
+        ? (kennung.season > 0 ? `Staffel ${kennung.season} · Folge ${kennung.episode}` : `Folge ${kennung.episode}`)
+        : "",
+      laeuft: Boolean(stand && stand.laeuft),
+      position: stand ? stand.stelle : 0,
+      dauer: sanitizePositiveNumber(stand?.dauer)
+        || sanitizePositiveNumber(spielerLetzterStand?.dauer)
+        || sanitizePositiveNumber(eintragImPlayer?.duration)
+    });
+    return;
+  }
+
   if (!isLiveView(activeView)) {
     fernbedienung.standMelden({ titel: "", folge: "", laeuft: false, position: 0, dauer: 0 });
     return;
@@ -7577,8 +7628,7 @@ async function fernStandMelden() {
   const url = activeView.webContents.getURL();
   const provider = activeProvider();
   const identity = episodeIdentity(url);
-  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
-    && episodeIdentity(favorite.url)?.key === identity?.key);
+  const eintrag = favoritZuAdresse(provider, url);
   const progress = await readBestMediaProgress(activeView, fernStandScript()).catch(() => null);
   fernbedienung.standMelden({
     titel: cleanBaseMediaTitle(eintrag?.title || "", url) || eintrag?.title || provider?.name || "",
@@ -8289,6 +8339,24 @@ function spielerAuftrag() {
       sichtbar: eintrag.sichtbar
     })),
     naechste: spielerLauf.naechste || null,
+    /*
+     * Wie lange bis zur naechsten Folge - und ob ueberhaupt.
+     *
+     * Entschieden wird das nicht im Player, sondern von `autoplayZaehler`:
+     * derselben Funktion, die es schon fuer den Knopf in der Anbieterseite
+     * entschieden hat. Sie kennt beide Wege zu "gar nicht": die Einstellung
+     * "Nächste Folge von selbst starten" (gilt dauerhaft) und "Danach
+     * aufhören" (gilt fuer diese eine Folge). Null heisst: kein Zaehler, nur
+     * der Knopf.
+     *
+     * Der Player zaehlte vorher immer und ohne zu fragen - wer Autoplay
+     * abgeschaltet hatte, bekam es trotzdem, und "Danach aufhören" war ganz
+     * ohne Wirkung.
+     */
+    weiterZaehler: autoplayZaehler(
+      enabledProviders().find((eintrag) => eintrag.id === spielerLauf.providerId) || activeProvider(),
+      spielerLauf.url
+    ),
     marke: spielerMarke(),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
@@ -8404,6 +8472,7 @@ function direktSpielerSchliessen(grund = "") {
   const view = spielerView;
   spielerView = null;
   spielerLauf = null;
+  spielerLetzterStand = null;
   spielerKopfzeilen = null;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
   try {
@@ -8430,6 +8499,14 @@ ipcMain.on("spieler:bereit", (ereignis) => {
  */
 ipcMain.on("spieler:stand", (ereignis, stand) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
+  // Fuer die Fernbedienung: sie braucht Stelle und Dauer auch ausserhalb einer
+  // Watchparty, und `spieler:takt` laeuft nur in einer Runde.
+  spielerLetzterStand = {
+    stelle: sanitizePositiveNumber(stand?.stelle),
+    dauer: sanitizePositiveNumber(stand?.dauer),
+    laeuft: stand?.beendet ? false : true,
+    at: Date.now()
+  };
   const provider = enabledProviders().find((item) => item.id === spielerLauf.providerId);
   if (!provider) return;
 
@@ -8728,7 +8805,14 @@ ipcMain.handle("spieler:hoster", async (ereignis, link, stelle) => {
   // gewaehlte Eintrag zu einer anderen Sprache gehoert. Gelernt wird sie nach
   // derselben Regel wie ein Klick auf die Flagge der Anbieterseite.
   if (gewaehlt.sprache) {
-    fassungMelden(provider, spielerLauf.url, "wahl", { key: gewaehlt.sprache, roh: "" });
+    // Die Rohangabe geht mit: aus ihr macht `fassung.bezeichnung` das Wort.
+    // Ohne sie stuende die gemerkte Fassung ohne Namen da - und bei S.to und
+    // Filmo, die keine Zahlen vergeben, waere sie beim naechsten Mal nicht
+    // wiederzuerkennen.
+    fassungMelden(provider, spielerLauf.url, "wahl", {
+      key: gewaehlt.sprache,
+      roh: gewaehlt.spracheRoh || ""
+    });
   }
   return direktFolgeSpielen(provider, spielerLauf.url, {
     hosterLink: gewaehlt.adresse,
@@ -8943,6 +9027,9 @@ ipcMain.on("spieler:takt", (ereignis, takt) => {
   if (!vomSpieler(ereignis)) return;
   spielerTakt = {
     stelle: sanitizePositiveNumber(takt?.stelle),
+    // Die Dauer geht mit: die Fernbedienung zeigt einen Balken, und ein Balken
+    // ohne Laenge ist keiner.
+    dauer: sanitizePositiveNumber(takt?.dauer),
     laeuft: Boolean(takt?.laeuft),
     puffert: Boolean(takt?.puffert),
     at: Date.now()

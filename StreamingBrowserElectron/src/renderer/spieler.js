@@ -56,7 +56,20 @@ const weiterZahl = document.getElementById("weiterZahl");
 const weiterTitel = document.getElementById("weiterTitel");
 const schichten = [document.getElementById("kopf"), document.getElementById("leiste")];
 
-/** So lange laeuft der Countdown zur naechsten Folge. */
+/**
+ * So lange laeuft der Countdown zur naechsten Folge - und ob ueberhaupt.
+ *
+ * Der Wert kommt aus dem Auftrag und wird nicht hier entschieden: der
+ * Hauptprozess kennt die Einstellung "Nächste Folge von selbst starten" und
+ * das einmalige "Danach aufhören", und beide enden bei derselben Zahl. Null
+ * heisst: kein Zaehler, nur der Knopf.
+ *
+ * Vorher stand hier eine feste 8, ohne zu fragen. Wer Autoplay abgeschaltet
+ * hatte, bekam es trotzdem.
+ */
+let weiterZaehler = 0;
+
+/** Der Rueckfall, falls ein Auftrag ohne Angabe kommt. */
 const WEITER_SEKUNDEN = 8;
 
 /** Der laufende Auftrag - Adresse, Titel, Startzeit, Hosterliste. */
@@ -521,8 +534,10 @@ function naechsteSetzen(wert) {
  * nichts: das Ende einer Serie ist kein Fehler.
  */
 function weiterAnbieten() {
-  if (!naechste || weiterUhr) return;
-  weiterRest = WEITER_SEKUNDEN;
+  // Ohne Zaehler passiert nichts von selbst - der Knopf "Nächste ›" steht
+  // trotzdem da, genau wie es die Einstellung verspricht.
+  if (!naechste || weiterUhr || weiterZaehler <= 0) return;
+  weiterRest = weiterZaehler;
   weiterTitel.textContent = naechste.beschriftung || "";
   weiterZahl.textContent = String(weiterRest);
   weiterKasten.hidden = false;
@@ -641,7 +656,7 @@ bild.addEventListener("timeupdate", () => {
     regler.value = String(Math.round((stelle / bild.duration) * 1000));
     // Der Uebergang faengt vor dem letzten Bild an - der Abspann laeuft weiter,
     // waehrend der Kasten schon dasteht. Wer ihn wegklickt, sieht ihn zu Ende.
-    if (naechste && bild.duration - stelle <= WEITER_SEKUNDEN + 1) weiterAnbieten();
+    if (naechste && weiterZaehler > 0 && bild.duration - stelle <= weiterZaehler + 1) weiterAnbieten();
   }
   standMelden();
 });
@@ -830,6 +845,9 @@ function starten(neuerAuftrag) {
   hosterSetzen(auftrag.hosterliste, auftrag.link);
   untertitelSetzen([]);
   naechsteSetzen(auftrag.naechste);
+  weiterZaehler = Number.isFinite(Number(auftrag.weiterZaehler))
+    ? Math.max(0, Number(auftrag.weiterZaehler))
+    : WEITER_SEKUNDEN;
   marke = auftrag.marke || null;
   knopfMarke.hidden = true;
   inRunde = Boolean(auftrag.runde);

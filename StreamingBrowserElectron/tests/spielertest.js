@@ -184,6 +184,61 @@ pruefe("Ein echter Fehler kommt weiterhin an",
   /aufgeben\(String\(fehler\?\.message \|\| fehler\), "play"\)/.test(skript),
   "entschaerfen heisst nicht verschlucken");
 
+/* ------------------------------------------------ Nächste Folge und Autoplay */
+
+// Der Player zaehlte bis zum letzten Stand immer herunter und schaltete um -
+// ohne die Einstellung "Nächste Folge von selbst starten" und ohne "Danach
+// aufhören" zu kennen. Beide enden im Hauptprozess bei derselben Zahl
+// (autoplayZaehler); der Player fuehrt sie nur aus.
+pruefe("Der Auftrag traegt den Zaehler zur naechsten Folge",
+  /weiterZaehler: autoplayZaehler\(/.test(haupt),
+  "die Entscheidung faellt im Hauptprozess, nicht im Player");
+pruefe("Und autoplayZaehler kennt beide Wege zu 'gar nicht'",
+  /autoplayNextEpisode === false\) return 0;/.test(haupt)
+  && /stopNachFolge\.get\(provider\?\.id\) === url\) return 0;/.test(haupt),
+  "die Einstellung gilt dauerhaft, 'Danach aufhören' fuer eine Folge");
+pruefe("Der Player liest den Zaehler aus dem Auftrag",
+  /weiterZaehler = Number\.isFinite\(Number\(auftrag\.weiterZaehler\)\)/.test(skript));
+pruefe("Ohne Zaehler laeuft nichts von selbst",
+  /if \(!naechste \|\| weiterUhr \|\| weiterZaehler <= 0\) return;/.test(skript),
+  "aber der Knopf bleibt - so steht es auch in den Einstellungen");
+pruefe("Der Uebergang faengt so frueh an, wie der Zaehler lang ist",
+  /bild\.duration - stelle <= weiterZaehler \+ 1/.test(skript),
+  "sonst zaehlt er fuenf und beginnt nach acht");
+pruefe("Der Knopf zur naechsten Folge haengt nicht am Zaehler",
+  /knopfWeiter\.hidden = !naechste;/.test(skript),
+  "er steht auch dann da, wenn Autoplay aus ist");
+
+/* --------------------------------- Was am Hoster-Rahmen hing und jetzt fehlte */
+
+// Zwei Funktionen liefen frueher ueber die Anbieteransicht und waren mit dem
+// eigenen Player still ausgefallen.
+
+pruefe("Die Fernbedienung sieht den eigenen Player",
+  /if \(spielerLauf\) \{[\s\S]{0,900}?fernbedienung\.standMelden\(/.test(haupt),
+  "vorher las sie nur activeView - und dort laeuft seit der Direktwiedergabe nichts");
+pruefe("Und sie bekommt Stelle und Dauer auch ohne Watchparty",
+  /spielerLetzterStand = \{/.test(haupt) && /spieler:stand/.test(haupt),
+  "spieler:takt laeuft nur in einer Runde");
+pruefe("Der Stand des Players wird beim Schliessen vergessen",
+  /spielerLauf = null;\s+spielerLetzterStand = null;/.test(haupt),
+  "sonst zeigte die Fernbedienung eine Folge, die nicht mehr laeuft");
+
+// Ein Film hat keine Folgenidentitaet. Wer zwei davon vergleicht, vergleicht
+// undefined mit undefined - und der erste Film des Anbieters passt auf jeden
+// anderen. So stand ueber "Prey" der Titel "Inception".
+pruefe("Der Eintrag zu einer Adresse wird an einer Stelle gesucht",
+  /function favoritZuAdresse\(provider, url\)/.test(haupt));
+pruefe("Eine Folge ueber ihre Identitaet, ein Film ueber seine Adresse",
+  /if \(identity\) return episodeIdentity\(favorite\.url\)\?\.key === identity\.key;[\s\S]{0,160}?normalizeFavoriteUrl\(favorite\.url\) === normalizeFavoriteUrl\(url\)/.test(haupt));
+pruefe("Und niemand vergleicht mehr zwei fehlende Identitaeten",
+  !/episodeIdentity\(favorite\.url\)\?\.key === identity\?\.key/.test(haupt),
+  "genau diese Zeile stand an zwei Stellen");
+
+pruefe("Ein Fassungswechsel im Player merkt sich auch das Wort",
+  /roh: gewaehlt\.spracheRoh \|\| ""/.test(haupt),
+  "ohne es stuende die gemerkte Fassung ohne Namen da");
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`
 ${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
