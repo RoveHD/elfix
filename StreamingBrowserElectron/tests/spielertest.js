@@ -107,6 +107,13 @@ pruefe("Jeder von ihnen prueft, dass die Meldung wirklich vom Player kommt",
   && empfaenger.every((teil) => teil.includes("ereignis.sender !== spielerView.webContents")),
   `${empfaenger.length} Empfänger`);
 
+// Die Watchparty steuert den Player des Hosters ueber Skripte in dessen
+// Rahmen. Der eigene Player steht in keinem davon - er waere ein Zuschauer,
+// den die Runde nicht mehr anhalten kann.
+pruefe("In einer laufenden Runde faengt der eigene Player gar nicht erst an",
+  haupt.includes("watchpartyRaumForUrl(url) || watchpartyGibtFolgeVor(url)")
+  && haupt.includes("In der Watchparty läuft die Folge weiter über den Hoster"));
+
 pruefe("Der Player wird geschlossen, wenn die Folge verlassen wird",
   haupt.includes('direktSpielerSchliessen("navigation")')
   && haupt.includes('direktSpielerSchliessen("startseite")'));

@@ -8100,6 +8100,19 @@ ipcMain.handle("direkt:starten", async () => {
   if (!provider || !isLiveView(activeView)) return { ok: false, grund: "Kein Titel geöffnet" };
   const url = activeView.webContents.getURL();
 
+  // In einer laufenden Runde nicht.
+  //
+  // Die Watchparty greift in den Player des Hosters: sie liest seinen Stand,
+  // haelt ihn an, springt an eine Stelle - alles ueber Skripte in den Rahmen
+  // der Anbieterseite (watchparty-sync.js). Der eigene Player steht in keinem
+  // dieser Rahmen. Wer hier direkt abspielt, saehe seinen Film, waehrend die
+  // anderen glauben, er sei bei Minute null stehengeblieben; angehalten wuerde
+  // er auch nicht mehr. Ein halb angeschlossener Zuschauer ist schlimmer als
+  // einer, der den Hoster benutzt - also sagt es das lieber deutlich.
+  if (watchpartyRaumForUrl(url) || watchpartyGibtFolgeVor(url)) {
+    return { ok: false, grund: "In der Watchparty läuft die Folge weiter über den Hoster" };
+  }
+
   const ergebnis = await direktQuelleFuerAnsicht(provider, activeView);
   if (!ergebnis.ok) return { ok: false, grund: ergebnis.grund };
 
