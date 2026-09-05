@@ -120,6 +120,9 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Der Ausweg aus dem Trailer-Rahmen: nur die Kennung des Videos, die
   // Adresse baut der Hauptprozess.
   openTrailerExtern: (schluessel) => ipcRenderer.invoke("titel:trailer-extern", schluessel),
+  // Die Adresse hinter dem Hoster zur gerade offenen Folge. Eine Auskunft:
+  // sie spielt nichts ab, sie sagt, ob es etwas abzuspielen gibt.
+  getDirektQuelle: () => ipcRenderer.invoke("direkt:quelle"),
   exportBackup: () => ipcRenderer.invoke("data:backup-export"),
   importBackup: () => ipcRenderer.invoke("data:backup-import"),
   resetData: () => ipcRenderer.invoke("data:confirm-reset"),

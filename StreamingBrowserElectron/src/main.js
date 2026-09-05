@@ -42,6 +42,11 @@ const geraeteStand = require("./geraete-stand");
 // Die beste Bildstufe beim Hoster. Eigenes Modul, damit die Auswahl gegen
 // nachgebaute Stufenlisten pruefbar bleibt statt nur als Zeichenkette zu reisen.
 const voeQualitaet = require("./voe-qualitaet");
+// Die Adresse hinter dem Hoster. Drei Module, damit jeder Schritt fuer sich
+// pruefbar bleibt: die Kacheln der Folgenseite (direktlinks), der Weg durch die
+// Weiterleitungen (direktlauf) und das Lesen des Quelltexts (direktquelle).
+const direktlinks = require("./direktlinks");
+const direktlauf = require("./direktlauf");
 // Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
 // der Watchparty fuer Serien nur die Leitung.
 const { YoutubeWatchparty } = require("./youtube-watchparty");
@@ -7745,6 +7750,107 @@ async function installHosterQualitaet(view) {
   if (!isLiveView(view)) return;
   await executeJavaScriptInMediaFrames(view, voeQualitaet.qualitaetScript()).catch(() => []);
 }
+
+/* ------------------------------------------------------- Die Direktaufloesung
+ *
+ * Alles darueber ist Arbeit *gegen* den Player des Hosters: seine Werbeschicht
+ * wegraeumen, seine Qualitaetswahl uebersteuern, seine Stelle setzen, ohne dass
+ * er neu puffert. Hier faengt der andere Weg an - die Adresse holen, die hinter
+ * dem Player liegt, und den Rahmen weglassen.
+ *
+ * Gerechnet wird in drei Modulen, damit jedes ohne Netz und ohne Fenster
+ * prueffbar bleibt: direktlinks.js liest die Kacheln der Folgenseite,
+ * direktlauf.js geht den Weg durch die Weiterleitungen, direktquelle.js liest
+ * die Adresse aus dem Quelltext. Hier steht nur, was ohne Electron nicht geht.
+ *
+ * Und was hier steht, aendert von sich aus nichts: die Antwort ist eine
+ * Auskunft. Findet sich keine Quelle, laeuft die Folge weiter so, wie sie
+ * bisher lief.
+ */
+
+/** So viele Hoster einer Folge werden hoechstens durchprobiert. */
+const DIREKT_HOECHSTVERSUCHE = 3;
+
+/**
+ * Der Aufloeser - erst dann gebaut, wenn er gebraucht wird.
+ *
+ * Vorher gibt es die Browser-Sitzung noch nicht, und genau die ist der Punkt:
+ * geholt wird ueber ihr Netz, mit ihren Cookies und unter ihrer Kennung. Eine
+ * Anfrage, die sich anders ausgibt als die Ansicht daneben, bekommt vom Hoster
+ * auch eine andere Antwort.
+ */
+let direktAufloeser = null;
+function direktAufloeserHolen() {
+  if (direktAufloeser) return direktAufloeser;
+  if (!browserSession) return null;
+  direktAufloeser = direktlauf.erstellen({
+    holen: (adresse, aufbau) => browserSession.fetch(adresse, aufbau),
+    kennung: browserSession.getUserAgent()
+  });
+  return direktAufloeser;
+}
+
+/** Die Hosterkacheln der Folgenseite, geordnet nach dem, was uns nuetzt. */
+async function direktLinksLesen(provider, view) {
+  const seite = view?.webContents?.getURL() || "";
+  if (!providerModel.isHttpUrl(seite)) return [];
+  let roh = "[]";
+  try {
+    roh = await view.webContents.executeJavaScript(direktlinks.hosterlinkScript(), true);
+  } catch {
+    return [];
+  }
+  let liste = [];
+  try {
+    liste = JSON.parse(String(roh || "[]"));
+  } catch {
+    return [];
+  }
+  // Die gemerkte Fassung ist die Auskunft darueber, was der Zuschauer sehen
+  // will - dieselbe, nach der auch der Autostart vorwaehlt.
+  const schluessel = fassungSchluesselFuer(provider, seite);
+  const gewuenscht = schluessel ? fassung.lesen(loadFassungen(), schluessel) : null;
+  return direktlinks.linksOrdnen(liste, gewuenscht?.key || "");
+}
+
+/**
+ * Die Quelle zur Folge, die gerade offen ist.
+ *
+ * Probiert wird der Reihe nach, hoechstens dreimal. Das ist Absicht: der erste
+ * Hoster einer Folge ist oft der, der gerade nicht will - abgelaufener Link,
+ * geloeschte Datei, Wartung. Ein zweiter Versuch kostet einen Abruf, ein
+ * Zuschauer vor einem schwarzen Bild kostet den Abend.
+ */
+async function direktQuelleFuerAnsicht(provider, view) {
+  const aufloeser = direktAufloeserHolen();
+  if (!aufloeser) return { ok: false, grund: "Sitzung nicht bereit" };
+  if (!isLiveView(view)) return { ok: false, grund: "Keine Folge geöffnet" };
+
+  const seite = view.webContents.getURL();
+  const links = await direktLinksLesen(provider, view);
+  if (!links.length) return { ok: false, grund: "Kein Hoster auf der Seite" };
+
+  const gescheitert = [];
+  for (const eintrag of links.slice(0, DIREKT_HOECHSTVERSUCHE)) {
+    const ergebnis = await aufloeser.aufloesen(eintrag.adresse, seite);
+    if (ergebnis.ok) {
+      console.log(`[ELFIX DIREKT] ${eintrag.hoster || "?"}: ${ergebnis.quelle.typ} `
+        + `${ergebnis.quelle.hoehe || "?"}p ueber ${ergebnis.stationen.length} Station(en)`);
+      return { ...ergebnis, hoster: eintrag.hoster, link: eintrag.adresse };
+    }
+    gescheitert.push(`${eintrag.hoster || "?"}: ${ergebnis.grund}`);
+  }
+  console.log(`[ELFIX DIREKT] nichts gefunden - ${gescheitert.join(" | ")}`);
+  return { ok: false, grund: gescheitert[0] || "Keine Quelle", versuche: gescheitert };
+}
+
+// Die Auskunft fuer die Oberflaeche. Sie spielt (noch) nichts ab - sie sagt,
+// ob es etwas abzuspielen gibt.
+ipcMain.handle("direkt:quelle", async () => {
+  const provider = activeProvider();
+  if (!provider || !activeView) return { ok: false, grund: "Kein Titel geöffnet" };
+  return direktQuelleFuerAnsicht(provider, activeView);
+});
 
 async function installWatchpartyControls(provider, view, url) {
   const key = pushWatchpartyLiveState(url);
