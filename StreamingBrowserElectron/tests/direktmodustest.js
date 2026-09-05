@@ -33,15 +33,36 @@ const pruefe = (name, bedingung, detail = "") => {
 
 /* --------------------------------------------------- Die Ansicht bleibt weg */
 
-// Es gibt genau vier Stellen, an denen ueberhaupt eine Ansicht eingehaengt
-// wird: die Anbieteransicht, ihre Rueckkehr aus einem Overlay, der
-// Ladevorhang und der eigene Player. Die ersten beiden gehoeren der
-// Anbieterseite - und beide muessen den Direktbetrieb kennen.
-const anbieterAnhaengen = [...haupt.matchAll(/[^\n]*contentView\.addChildView\((\w+)\)[^\n]*/g)]
-  .map((treffer) => treffer[0]);
-pruefe("Es gibt nicht mehr Stellen zum Einhaengen als bekannt",
-  anbieterAnhaengen.length === 4,
-  String(anbieterAnhaengen.length));
+// Eine Ansicht wird nur an bekannten Stellen eingehaengt. Kommt eine neue
+// hinzu, faellt sie hier auf - und zwar mit Namen, nicht als Zahl. Genau das
+// ist der Fall, in dem die Anbieterseite unbemerkt wieder sichtbar wuerde.
+//
+// Erlaubt sind fuenf, und jede aus einem eigenen Grund:
+//   navigateProvider            die Anbieterseite - nur ausserhalb des Direktbetriebs
+//   restoreActiveViewAfterOverlay  dieselbe nach einem Overlay - ebenso
+//   raiseAutostartCurtain       der Ladevorhang
+//   direktSpielerOeffnen        der eigene Player
+//   menschentorLoesenLassen     die Abfrage des Wachdienstes, samt Rueckkehr
+//                               des Players darueber
+const zeilen = haupt.split("\n");
+const einhaengeStellen = new Set();
+zeilen.forEach((zeile, nummer) => {
+  if (!zeile.includes("contentView.addChildView(")) return;
+  for (let lauf = nummer; lauf >= 0; lauf -= 1) {
+    const treffer = /^(?:async )?function (\w+)\(/.exec(zeilen[lauf]);
+    if (treffer) {
+      einhaengeStellen.add(treffer[1]);
+      return;
+    }
+  }
+  einhaengeStellen.add(`unbekannt:${nummer + 1}`);
+});
+const erlaubt = ["navigateProvider", "restoreActiveViewAfterOverlay", "raiseAutostartCurtain",
+  "direktSpielerOeffnen", "menschentorLoesenLassen"];
+const fremde = [...einhaengeStellen].filter((name) => !erlaubt.includes(name));
+pruefe("Eine Ansicht wird nur an bekannten Stellen eingehaengt",
+  fremde.length === 0,
+  fremde.join(", ") || [...einhaengeStellen].join(", "));
 
 const navigation = haupt.slice(haupt.indexOf("async function navigateProvider"));
 const navBereich = navigation.slice(0, navigation.indexOf("\n}\n"));
@@ -106,6 +127,24 @@ pruefe("Der Ladevorhang der Anbieterseite bleibt im Direktbetrieb aus",
   /async function beginAutostart[\s\S]{0,900}?if \(direktModus\([\s\S]{0,120}?\)\) return;/.test(haupt),
   "er wartet auf Wiedergabe in einer Ansicht, in der nichts mehr laeuft");
 
+/* ------------------------------------------------------- Die eine Ausnahme */
+
+// Fragt der Wachdienst des Anbieters, ob ein Mensch davorsitzt, muss man die
+// Frage sehen koennen - niemand setzt ein Haekchen, das er nicht sieht. Danach
+// verschwindet sie wieder, und der Player kommt zurueck nach oben.
+pruefe("Eine Bestaetigungsabfrage wird sichtbar gemacht",
+  haupt.includes("async function menschentorLoesenLassen")
+  && haupt.includes("Der Anbieter fragt nach einer Bestätigung"),
+  "sonst endet jede Cloudflare-Abfrage als 'kein Hoster auf der Seite'");
+pruefe("Erkannt wird sie am Inhalt, nicht an der Adresse",
+  /function menschentorErkennen[\s\S]{0,700}challenges\.cloudflare\.com/.test(haupt),
+  "die Abfrage kommt unter derselben Adresse zurueck, die man angefragt hat");
+pruefe("Danach liegt der Player wieder oben",
+  /menschentorLoesenLassen[\s\S]{0,1400}addChildView\(spielerView\)/.test(haupt));
+pruefe("Und jede Werkbankseite geht durch diese Pruefung",
+  /async function werkbankAn[\s\S]{0,900}?menschentorErkennen\(view\)/.test(haupt),
+  "nicht nur der erste Aufruf");
+
 /* ---------------------------------------------------------- Der Schalter */
 
 pruefe("Der Direktbetrieb ist von Haus aus an",
@@ -117,8 +156,16 @@ pruefe("Er laesst sich in den Einstellungen abschalten",
   && oberflaeche.includes("direktModus: direktModus ? direktModus.checked"),
   "wer die Anbieterseite doch sehen will, soll sie sehen duerfen");
 pruefe("Und dann kommt auch der Direkt-Knopf wieder",
-  oberflaeche.includes('.toggle("is-hidden", !aufSeite || settings.playback?.direktModus !== false)'),
+  oberflaeche.includes('#direktButton")?.classList.toggle("is-hidden", !aufSeite || direkt)'),
   "im Direktbetrieb waere er ein zweiter Weg zu dem, was ohnehin laeuft");
+// Zurueck, Vor, Neu laden und Stop bedienen die Anbieterseite. Ist keine zu
+// sehen, ist ein solcher Knopf ein Versprechen ohne Deckung - auf YouTube
+// dagegen bleibt alles, wie es war.
+pruefe("Die Knoepfe fuer die Seite verschwinden mit ihr",
+  /for \(const auswahl of \["#backButton", "#forwardButton", "#reloadButton"\]\)[\s\S]{0,160}toggle\("is-hidden", direkt\)/.test(oberflaeche));
+pruefe("Auf YouTube bleiben sie",
+  oberflaeche.includes("settings.playback?.direktModus !== false && !aufYoutubeSeite()"),
+  "dort gehoert der Player zur Seite");
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`

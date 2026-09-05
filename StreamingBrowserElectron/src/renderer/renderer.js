@@ -7180,8 +7180,18 @@ function renderChromeButtons() {
   // Im Direktbetrieb ist jede Folge ohnehin im eigenen Player - dann waere der
   // Knopf ein zweiter Weg zu dem, was gerade laeuft. Er bleibt fuer den, der
   // die Anbieterseite ausdruecklich wieder eingeschaltet hat.
-  document.querySelector("#direktButton")?.classList
-    .toggle("is-hidden", !aufSeite || settings.playback?.direktModus !== false);
+  // Auf YouTube bleibt alles, wie es war: dort gehoert der Player zur Seite,
+  // und die Seite bleibt sichtbar. Der Direktbetrieb gilt fuer die Anbieter mit
+  // Hostern dahinter.
+  const direkt = settings.playback?.direktModus !== false && !aufYoutubeSeite();
+  document.querySelector("#direktButton")?.classList.toggle("is-hidden", !aufSeite || direkt);
+  // Zurueck, Vor, Neu laden und Stop bedienen die Anbieterseite. Im
+  // Direktbetrieb gibt es keine zu bedienen - ein Knopf, der auf eine
+  // unsichtbare Seite wirkt, ist ein Versprechen ohne Deckung.
+  for (const auswahl of ["#backButton", "#forwardButton", "#reloadButton"]) {
+    document.querySelector(auswahl)?.classList.toggle("is-hidden", direkt);
+  }
+  document.querySelector("#stopButton")?.classList.toggle("is-hidden", !aufSeite || direkt);
   // Auf YouTube faellt der ⇄ Knopf weg: er stellt einen Titel in einen Raum,
   // und ein YouTube-Video ist keiner. Dort fuehrt der einzige Weg in die Runde
   // ueber deren eigene Anzeige, die im selben Zug mitgezogen wird.

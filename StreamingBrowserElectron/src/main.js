@@ -4273,6 +4273,11 @@ function installContentFullscreenExitOverlay(view) {
 
 function scheduleProviderAutoplay(provider, view, options = {}) {
   if (!provider || !isLiveView(view)) return;
+  // Im Direktbetrieb faengt die Wiedergabe im eigenen Player an. Diese Runde
+  // sucht dagegen in der Anbieterseite nach einem Video, klickt
+  // Ueberlagerungen weg und wartet auf Bild - alles an einer Seite, die
+  // niemand sieht und in der nichts laufen soll.
+  if (direktModus(provider.startUrl || "")) return;
   stopAutoplayRequest(provider.id);
   const request = {
     ...options,
@@ -7964,6 +7969,76 @@ function seiteLaden(view, adresse, frist = 25000) {
   });
 }
 
+/**
+ * Fragt die Seite gerade, ob ein Mensch davorsitzt?
+ *
+ * Cloudflare und die Captcha-Dienste stellen diese Frage, und sie ist die eine
+ * Stelle, an der eine unsichtbare Seite nicht weiterkommt: niemand kann ein
+ * Haekchen setzen, das er nicht sieht. Ohne diese Pruefung endete jeder solche
+ * Fall als "kein Hoster auf der Seite" - eine Auskunft, die stimmt und nichts
+ * erklaert.
+ *
+ * Erkannt wird an dem, was dasteht, nicht an der Adresse: die Abfrage kommt
+ * unter derselben Adresse zurueck, die man angefragt hat.
+ */
+function menschentorErkennen(view) {
+  if (!isLiveView(view)) return Promise.resolve(false);
+  return view.webContents.executeJavaScript(`(() => {
+    const knoten = document.querySelector(
+      "#challenge-form, #challenge-running, .cf-turnstile, #cf-please-wait,"
+      + " iframe[src*='challenges.cloudflare.com'], iframe[src*='hcaptcha.com'],"
+      + " iframe[src*='recaptcha']");
+    if (knoten) return true;
+    const titel = String(document.title || "").toLowerCase();
+    return /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/.test(titel);
+  })()`, true).catch(() => false);
+}
+
+/** So lange darf eine Bestaetigung dauern, bevor ELFIX aufgibt. */
+const MENSCHENTOR_FRIST_MS = 120000;
+
+/**
+ * Die Abfrage zeigen, bis sie beantwortet ist.
+ *
+ * Das ist die eine Ausnahme von "die Anbieterseite bleibt unsichtbar", und sie
+ * ist keine: was hier zu sehen ist, ist nicht die Seite des Anbieters, sondern
+ * die Frage seines Wachdienstes. Ohne sie kommt niemand weiter - auch nicht
+ * mit dem Player des Hosters.
+ *
+ * Danach verschwindet sie wieder, und der Player kommt zurueck nach oben.
+ */
+async function menschentorLoesenLassen(provider, view) {
+  if (!mainWindow || mainWindow.isDestroyed() || !isLiveView(view)) return false;
+  sendToast("Der Anbieter fragt nach einer Bestätigung — bitte einmal bestätigen");
+  console.log("[ELFIX DIREKT] Menschentor sichtbar gemacht");
+
+  mainWindow.contentView.addChildView(view);
+  attachedProviderViews.add(provider.id);
+  applyBrowserBounds();
+  view.webContents.focus();
+
+  const bis = Date.now() + MENSCHENTOR_FRIST_MS;
+  let offen = true;
+  while (offen && Date.now() < bis) {
+    // Gewartet wird auf die naechste Seite. Kommt keine, wird noch einmal
+    // nachgesehen: manche Abfragen tauschen nur ihren Inhalt aus, ohne dass
+    // eine Navigation stattfindet.
+    await warteAufSeite(view, 5000);
+    offen = await menschentorErkennen(view);
+  }
+
+  mainWindow.contentView.removeChildView(view);
+  attachedProviderViews.delete(provider.id);
+  // Der Player lag darunter - ein zweites addChildView schiebt ihn zurueck
+  // nach oben.
+  if (spielerView && !spielerView.webContents.isDestroyed()) {
+    mainWindow.contentView.addChildView(spielerView);
+    spielerLageSetzen();
+  }
+  if (offen) sendToast("Die Bestätigung kam nicht durch");
+  return !offen;
+}
+
 /** Die Werkbank auf eine Seite stellen - und sie dort auch wirklich vorfinden. */
 async function werkbankAn(provider, adresse) {
   if (!providerModel.isHttpUrl(adresse)) return null;
@@ -7978,7 +8053,14 @@ async function werkbankAn(provider, adresse) {
     return (await warteAufSeite(view)) ? view : null;
   }
   const geladen = await seiteLaden(view, adresse);
-  return geladen ? view : null;
+  if (!geladen) return null;
+  // Steht davor eine Abfrage des Wachdienstes, muss sie beantwortet werden -
+  // und dafuer muss man sie sehen.
+  if (direktModus(adresse) && await menschentorErkennen(view)) {
+    const geloest = await menschentorLoesenLassen(provider, view);
+    if (!geloest) return null;
+  }
+  return view;
 }
 
 /**
@@ -8531,10 +8613,16 @@ async function direktUebernehmen(provider, url) {
   await direktZurueckZurOberflaeche("Die Anbieterseite bleibt im Hintergrund — hier geht es weiter");
 }
 
-/** Zurueck in die eigene Oberflaeche, mit einem Wort dazu. */
+/**
+ * Zurueck in die eigene Oberflaeche, mit einem Wort dazu.
+ *
+ * Bewusst ohne `enterHomeMode`: das schliesst alle Anbieteransichten und raeumt
+ * die Browserdaten auf. Beides ist richtig, wenn jemand die Anbieter wirklich
+ * verlaesst - und falsch nach jeder Folge. Die Werkbank soll stehen bleiben,
+ * sonst faengt die naechste Folge wieder bei "Seite laden" an.
+ */
 async function direktZurueckZurOberflaeche(hinweis) {
   direktSpielerSchliessen("keine folge");
-  await enterHomeMode().catch(() => {});
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("app:zeige-start");
   if (hinweis) sendToast(hinweis);
 }
