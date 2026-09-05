@@ -67,8 +67,15 @@ function unten(node) {
 function passt(node, auswahl) {
   return String(auswahl).split(",").map((teil) => teil.trim()).filter(Boolean).some((teil) => {
     const klassen = String(node.className || "").split(/\s+/).filter(Boolean);
-    if (teil === "[data-link-target]") return node.getAttribute("data-link-target") !== null;
     if (teil === "[class*='oster']") return klassen.some((name) => name.includes("oster"));
+    // Ein oder zwei Attributbedingungen: "[data-link-target]" und
+    // "[data-provider-chip][data-p]" - mehr braucht das Skript nicht.
+    const attribute = [...String(teil).matchAll(/\[([\w-]+)\]/g)].map((treffer) => treffer[1]);
+    if (attribute.length && attribute.length === (teil.match(/\[/g) || []).length && teil.startsWith("[")) {
+      return attribute.every((name) => node.getAttribute(name) !== null);
+    }
+    const mitAttribut = /^([\w.-]+)\[([\w-]+)\]$/.exec(teil);
+    if (mitAttribut) return node.getAttribute(mitAttribut[2]) !== null;
     const href = /^([a-z]+)\[href\*='([^']+)'\]$/i.exec(teil);
     if (href) {
       return node.tagName === href[1].toUpperCase()
@@ -99,20 +106,41 @@ function seite({ aktiv = "1" } = {}) {
   }
   const wurzel = element("body", {}, [element("ul", { class: "hosterSiteVideo" }, kacheln)]);
 
+  return lesen(wurzel, "https://anbieter.example/anime/stream/serie/staffel-1/episode-1");
+}
+
+/*
+ * Das Skript in einem nachgebauten Fenster laufen lassen.
+ *
+ * Es ist seit Filmo asynchron: dessen Kacheln tragen keine Adresse, sondern nur
+ * eine verschluesselte Nutzlast, aus der sich die Seite erst eine Marke
+ * ausstellen laesst. Das muss in der Seite passieren - Keks und CSRF-Marke
+ * muessen aus derselben Abholung stammen, von aussen antwortet Filmo mit 419.
+ *
+ * `fenster` reicht herein, was die jeweilige Seite mitbringt: bei AniWorld und
+ * S.to nichts, bei Filmo `window.filmoLibrary`, die Marke im <meta> und ein
+ * `fetch`, das mitschreibt, was gefragt wurde.
+ */
+async function lesen(wurzel, adresse, fenster = {}) {
   const kontext = {
     document: {
-      querySelectorAll: (auswahl) => unten(wurzel).filter((node) => passt(node, auswahl))
+      querySelectorAll: (auswahl) => unten(wurzel).filter((node) => passt(node, auswahl)),
+      querySelector: (auswahl) => unten(wurzel).find((node) => passt(node, auswahl)) || fenster.meta || null
     },
-    location: { href: "https://anbieter.example/anime/stream/serie/staffel-1/episode-1" },
-    URL, JSON, String, Boolean, Array, Object, Set
+    location: { href: adresse },
+    window: fenster.window || {},
+    fetch: fenster.fetch || (() => Promise.reject(new Error("kein Netz"))),
+    URL, JSON, String, Boolean, Array, Object, Set, Promise, Error, encodeURIComponent
   };
   vm.createContext(kontext);
-  return JSON.parse(vm.runInContext(direktlinks.hosterlinkScript(), kontext));
+  return JSON.parse(await vm.runInContext(direktlinks.hosterlinkScript(), kontext));
 }
 
 /* ------------------------------------------------------------ Das Auslesen */
 
-const gelesen = seite({ aktiv: "1" });
+(async () => {
+
+const gelesen = await seite({ aktiv: "1" });
 pruefe("Alle Kacheln werden gefunden, auch die verborgenen",
   gelesen.length === 6,
   String(gelesen.length));
@@ -149,7 +177,7 @@ pruefe("Es bleibt bei allen - die Reihenfolge ordnet, sie wirft nichts weg",
   geordnet.length === gelesen.length,
   `${geordnet.length}/${gelesen.length}`);
 
-const mitWunsch = direktlinks.linksOrdnen(seite({ aktiv: "3" }), "3");
+const mitWunsch = direktlinks.linksOrdnen(await seite({ aktiv: "3" }), "3");
 pruefe("Steht die japanische Fassung auf dem Schirm, wird sie auch geholt",
   mitWunsch[0].sprache === "3" && mitWunsch[0].hoster === "VOE",
   `${mitWunsch[0].hoster}/${mitWunsch[0].sprache}`);
@@ -174,7 +202,124 @@ pruefe("Ohne Kacheln gibt es keinen Link",
 pruefe("Ein Eintrag ohne Adresse ist keiner",
   direktlinks.linksOrdnen([{ hoster: "VOE", sichtbar: true }]).length === 0);
 
+/* ------------------------------------------- Das neue S.to und das neue Filmo */
+
+// Beide Anbieter haben ihr Markup umgebaut, und beide wurden dadurch unsichtbar:
+// wer nur nach "/redirect/" und "data-link-target" sucht, findet auf ihren
+// Seiten seit dem Umbau nichts und meldet "kein Hoster auf der Seite". Am
+// 2026-09-05 an beiden Seiten nachgesehen und hier nachgebaut.
+
+// S.to legt sein Ziel jetzt in `data-play-url` und nennt Hoster und Fassung in
+// eigenen Feldern statt in einer Ueberschrift.
+const stoSeite = element("body", {}, [
+  element("div", {
+    class: "link-box",
+    "data-link-id": "19318900",
+    "data-play-url": "/r?t=eyJpdiI6IkFsNE9M",
+    "data-provider-name": "VOE",
+    "data-language-label": "Deutsch"
+  }),
+  element("div", {
+    class: "link-box",
+    "data-link-id": "16345465",
+    "data-play-url": "/r?t=eyJpdiI6InpMMkpV",
+    "data-provider-name": "Vidmoly",
+    "data-language-label": "Englisch",
+    sichtbar: false
+  })
+]);
+
+  const ausSto = await lesen(stoSeite, "http://186.2.175.5/serie/breaking-bad/staffel-1/episode-1");
+  pruefe("S.to: beide Kacheln werden gefunden",
+    ausSto.length === 2, String(ausSto.length));
+  pruefe("S.to: die Adresse wird vervollstaendigt",
+    ausSto[0].adresse === "http://186.2.175.5/r?t=eyJpdiI6IkFsNE9M",
+    ausSto[0].adresse);
+  pruefe("S.to: Hoster und Fassung stehen in eigenen Feldern",
+    ausSto[0].hoster === "VOE" && ausSto[0].sprache === "Deutsch"
+    && ausSto[1].hoster === "Vidmoly" && ausSto[1].sprache === "Englisch",
+    ausSto.map((e) => `${e.hoster}/${e.sprache}`).join(" "));
+  pruefe("S.to: verborgen bleibt verborgen",
+    ausSto[0].sichtbar === true && ausSto[1].sichtbar === false);
+
+  /* --------------------------------------------------------------- Filmo */
+
+  // Filmo gibt gar keine Adresse preis. Jede Kachel traegt eine verschluesselte
+  // Nutzlast; die Adresse muss man sich damit ausstellen lassen. Das geschieht
+  // in der Seite, weil Keks und CSRF-Marke aus derselben Abholung stammen
+  // muessen - von aussen antwortet Filmo mit 419.
+  const gefragt = [];
+  const filmoSeite = element("body", {}, [
+    element("div", { class: "provider-row" }, [
+      element("span", { class: "provider-row__lang", text: "Deutsch" }),
+      element("div", { class: "provider-chip", "data-provider-chip": "", "data-p": "NUTZLAST-A" }, [
+        element("span", { class: "provider-chip__name", text: "VOE" })
+      ])
+    ]),
+    element("div", { class: "provider-row" }, [
+      element("span", { class: "provider-row__lang", text: "English" }),
+      element("div", { class: "provider-chip", "data-provider-chip": "", "data-p": "NUTZLAST-B" }, [
+        element("span", { class: "provider-chip__name", text: "Byse" })
+      ])
+    ])
+  ]);
+  const filmoFenster = {
+    window: { filmoLibrary: { urls: { openMint: "https://filmo.to/n" } } },
+    meta: { content: "CSRF-MARKE" },
+    fetch: (adresse, aufbau) => {
+      gefragt.push({ adresse, ...aufbau });
+      const nutzlast = JSON.parse(aufbau.body).p;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ x: `marke-fuer-${nutzlast}` })
+      });
+    }
+  };
+
+  const ausFilmo = await lesen(filmoSeite, "https://filmo.to/movies/matrix-reloaded", filmoFenster);
+  pruefe("Filmo: aus jeder Kachel wird eine Adresse",
+    ausFilmo.length === 2, String(ausFilmo.length));
+  pruefe("Filmo: die Marke wird bei openMint geholt",
+    gefragt.length === 2 && gefragt[0].adresse === "https://filmo.to/n" && gefragt[0].method === "POST",
+    gefragt.map((g) => g.adresse).join(" "));
+  pruefe("Filmo: die CSRF-Marke reist mit",
+    gefragt[0].headers["x-csrf-token"] === "CSRF-MARKE",
+    "ohne sie antwortet Filmo mit 419");
+  pruefe("Filmo: die Kekse der Seite gehen mit",
+    gefragt[0].credentials === "same-origin",
+    "Marke und Sitzung muessen zusammenpassen");
+  pruefe("Filmo: die ausgestellte Marke wird zur Adresse",
+    ausFilmo[0].adresse === "https://filmo.to/n/marke-fuer-NUTZLAST-A",
+    ausFilmo[0].adresse);
+  pruefe("Filmo: der Name kommt aus dem Chip",
+    ausFilmo[0].hoster === "VOE" && ausFilmo[1].hoster === "Byse",
+    ausFilmo.map((e) => e.hoster).join(" "));
+  pruefe("Filmo: die Fassung steht in der Zeile darueber",
+    ausFilmo[0].sprache === "Deutsch" && ausFilmo[1].sprache === "English",
+    "Filmo ordnet nach Fassung, nicht nach Hoster");
+
+  // Und wenn das Ausstellen scheitert, faellt nur diese eine Kachel weg.
+  const halbFenster = {
+    ...filmoFenster,
+    fetch: (adresse, aufbau) => (JSON.parse(aufbau.body).p === "NUTZLAST-A"
+      ? Promise.reject(new Error("nein"))
+      : Promise.resolve({ ok: true, json: () => Promise.resolve({ x: "marke-B" }) }))
+  };
+  const halb = await lesen(filmoSeite, "https://filmo.to/movies/matrix-reloaded", halbFenster);
+  pruefe("Filmo: eine abgelehnte Marke reisst die anderen nicht mit",
+    halb.length === 1 && halb[0].hoster === "Byse",
+    halb.map((e) => e.hoster).join(" "));
+
+  // Ohne die Angaben der Seite wird gar nicht erst gefragt.
+  const ohne = await lesen(filmoSeite, "https://filmo.to/movies/matrix-reloaded", {});
+  pruefe("Filmo: ohne openMint und Marke wird nichts angefordert",
+    ohne.length === 0,
+    "lieber keine Kachel als eine Anfrage, die sicher abgelehnt wird");
+
+
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`
 ${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);
+
+})();

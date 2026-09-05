@@ -89,8 +89,27 @@ function linksOrdnen(liste, wunschSprache = "") {
     return true;
   });
 
-  const wunsch = String(wunschSprache || "").trim();
-  const punkte = (eintrag) => (eintrag.sichtbar ? 0 : 2) + (wunsch && eintrag.sprache !== wunsch ? 1 : 0);
+  /*
+   * Die gewuenschte Fassung - in allen Worten, unter denen sie auftreten kann.
+   *
+   * AniWorld nennt sie als Zahl (`data-lang-key="1"`), S.to als Wort
+   * ("Deutsch"), Filmo als Ueberschrift der Kachelreihe ("English"). Was
+   * `fassung.js` gemerkt hat, traegt beides: den Schluessel und die Rohangabe.
+   * Verglichen wird deshalb gegen alle, und ohne Ruecksicht auf Gross- und
+   * Kleinschreibung - sonst greift die gemerkte Fassung genau bei den zwei
+   * Anbietern nicht, die keine Zahlen vergeben.
+   */
+  const woerter = (typeof wunschSprache === "object" && wunschSprache
+    ? [wunschSprache.key, wunschSprache.roh, wunschSprache.name]
+    : [wunschSprache])
+    .map((wert) => String(wert || "").trim().toLowerCase())
+    .filter(Boolean);
+  const passt = (eintrag) => {
+    if (woerter.length === 0) return true;
+    const sprache = String(eintrag.sprache || "").trim().toLowerCase();
+    return sprache ? woerter.includes(sprache) : false;
+  };
+  const punkte = (eintrag) => (eintrag.sichtbar ? 0 : 2) + (passt(eintrag) ? 0 : 1);
 
   return einmalig
     .map((eintrag, stelle) => ({ eintrag, stelle }))
@@ -110,27 +129,60 @@ function besterLink(liste, wunschSprache = "") {
 }
 
 /**
+ * So viele Kacheln laesst sich Filmo hoechstens eine Marke ausstellen.
+ *
+ * Filmo gibt seine Adressen nicht im Markup preis - jede muss einzeln
+ * angefordert werden (siehe unten). Das ist je Kachel eine Anfrage, also wird
+ * es begrenzt: eine Filmseite hat drei bis fuenf, und mehr als die besten
+ * werden ohnehin nie probiert.
+ */
+const FILMO_HOECHSTENS = 6;
+
+/**
  * Das Skript, das die Liste aus der Folgenseite holt.
  *
  * Es laeuft im Hauptdokument des Anbieters, nicht im Rahmen des Hosters - dort
- * stehen die Kaecheln. Gesucht wird an zwei Stellen, weil die Anbieter es
- * unterschiedlich halten: der Link selbst (`/redirect/…`) und die Kachel, die
- * ihr Ziel als Attribut traegt.
+ * stehen die Kaecheln. Gesucht wird an vier Stellen, weil die drei Anbieter es
+ * verschieden halten - alle drei am 2026-09-05 nachgesehen:
+ *
+ *   AniWorld  der Link selbst (`/redirect/<id>`) und `data-link-target`.
+ *   S.to      hat im Sommer 2026 umgebaut: `data-play-url="/r?t=<token>"`,
+ *             daneben `data-provider-name` und `data-language-label`. Wer nur
+ *             nach `/redirect/` sucht, findet dort seit dem Umbau nichts und
+ *             meldet "kein Hoster auf der Seite".
+ *   Filmo     gibt gar keine Adresse preis. Jede Kachel traegt ein
+ *             verschluesseltes `data-p`; wer die Adresse will, laesst sich
+ *             damit erst eine Marke ausstellen (POST auf `openMint`) und ruft
+ *             sie dann ab. Das ist der "zweite Klick", den Filmo verlangt.
+ *
+ * Die Marke wird hier in der Seite geholt und nicht im Hauptprozess, und das
+ * ist der Punkt: Sitzungskeks und CSRF-Marke muessen aus derselben Abholung
+ * stammen. Von aussen angefragt antwortet Filmo mit 419.
+ *
+ * Das Skript gibt deshalb ein Versprechen zurueck - `executeJavaScript` wartet
+ * darauf. Geht das Ausstellen schief, fehlt genau diese Kachel und der Rest
+ * steht trotzdem da.
  *
  * "Sichtbar" wird an `offsetParent` gemessen und nicht an einer Klasse: wie
  * eine Seite ihre nicht gewaehlte Fassung wegblendet, ist ihre Sache, aber
  * weggeblendet ist weggeblendet.
  */
 function hosterlinkScript() {
-  return `(() => {
+  return `(async () => {
     const raus = [];
     const gesehen = new Set();
-    const nimm = (knoten, adresse) => {
+    const nimm = (knoten, adresse, zusatz) => {
       if (!adresse || gesehen.has(adresse)) return;
       gesehen.add(adresse);
-      const kachel = knoten.closest("li, .generateInlinePlayer, .hosterSiteVideo li") || knoten;
-      const name = kachel.querySelector("h4, .hoster, [class*='oster']");
-      const beschriftung = String((name && name.textContent) || kachel.getAttribute("title") || "").trim();
+      const kachel = knoten.closest("li, .generateInlinePlayer, .hosterSiteVideo li, .link-box, .provider-chip") || knoten;
+      const name = kachel.querySelector("h4, .hoster, .provider-chip__name, [class*='oster']");
+      const beschriftung = String(
+        (zusatz && zusatz.hoster)
+        || (name && name.textContent)
+        || kachel.getAttribute("data-provider-name")
+        || kachel.getAttribute("title")
+        || ""
+      ).trim();
       // Der Hostername steht als Ueberschrift in der Kachel. Fehlt er, taugt
       // die Adresse selbst als Auskunft - aber nur die des Anbieters, denn
       // "/redirect/123" nennt keinen Hoster. Dann bleibt es leer, und die
@@ -138,10 +190,17 @@ function hosterlinkScript() {
       raus.push({
         adresse,
         hoster: beschriftung.slice(0, 40),
-        sprache: String(kachel.getAttribute("data-lang-key") || ""),
+        sprache: String(
+          (zusatz && zusatz.sprache)
+          || kachel.getAttribute("data-lang-key")
+          || kachel.getAttribute("data-language-label")
+          || ""
+        ),
         sichtbar: Boolean(kachel.offsetParent) || kachel.getClientRects().length > 0
       });
     };
+
+    // AniWorld und das alte S.to.
     document.querySelectorAll("a[href*='/redirect/'], a.watchEpisode").forEach((knoten) => {
       nimm(knoten, knoten.href || "");
     });
@@ -150,6 +209,53 @@ function hosterlinkScript() {
       if (!ziel) return;
       try { nimm(knoten, new URL(ziel, location.href).href); } catch (_) {}
     });
+
+    // Das neue S.to.
+    document.querySelectorAll("[data-play-url]").forEach((knoten) => {
+      const ziel = knoten.getAttribute("data-play-url") || "";
+      if (!ziel) return;
+      try { nimm(knoten, new URL(ziel, location.href).href); } catch (_) {}
+    });
+
+    // Filmo: erst eine Marke, dann die Adresse.
+    const mint = (() => {
+      try { return (window.filmoLibrary && window.filmoLibrary.urls && window.filmoLibrary.urls.openMint) || ""; }
+      catch (_) { return ""; }
+    })();
+    const marke = (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+    if (mint && marke) {
+      const chips = Array.from(document.querySelectorAll("[data-provider-chip][data-p]")).slice(0, ${FILMO_HOECHSTENS});
+      for (const chip of chips) {
+        const nutzlast = chip.getAttribute("data-p") || "";
+        if (!nutzlast) continue;
+        // Die Fassung steht eine Ebene hoeher, in der Ueberschrift der Reihe -
+        // Filmo ordnet nach Fassung und nicht nach Hoster.
+        const reihe = chip.closest(".provider-row");
+        const spracheKnoten = reihe && reihe.querySelector(".provider-row__lang");
+        const nameKnoten = chip.querySelector(".provider-chip__name");
+        try {
+          const antwort = await fetch(mint, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "accept": "application/json",
+              "x-csrf-token": marke,
+              "x-requested-with": "XMLHttpRequest"
+            },
+            body: JSON.stringify({ p: nutzlast }),
+            credentials: "same-origin"
+          });
+          if (!antwort.ok) continue;
+          const daten = await antwort.json();
+          if (!daten || !daten.x) continue;
+          nimm(chip, mint.replace(/\\/+$/, "") + "/" + encodeURIComponent(daten.x), {
+            hoster: nameKnoten ? nameKnoten.textContent : "",
+            sprache: spracheKnoten ? spracheKnoten.textContent.trim() : ""
+          });
+        } catch (_) { /* diese Kachel eben nicht - die anderen stehen trotzdem */ }
+      }
+    }
+
     return JSON.stringify(raus.slice(0, 40));
   })()`;
 }

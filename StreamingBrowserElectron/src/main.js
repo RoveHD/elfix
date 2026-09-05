@@ -7856,7 +7856,9 @@ async function direktLinksLesen(provider, view) {
   // will - dieselbe, nach der auch der Autostart vorwaehlt.
   const schluessel = fassungSchluesselFuer(provider, seite);
   const gewuenscht = schluessel ? fassung.lesen(loadFassungen(), schluessel) : null;
-  return direktlinks.linksOrdnen(liste, gewuenscht?.key || "");
+  // Der ganze Eintrag und nicht nur sein Schluessel: S.to und Filmo vergeben
+  // keine Zahlen, dort steht die Fassung als Wort auf der Kachel.
+  return direktlinks.linksOrdnen(liste, gewuenscht || "");
 }
 
 /**

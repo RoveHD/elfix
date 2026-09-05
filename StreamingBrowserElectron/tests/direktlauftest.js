@@ -79,12 +79,23 @@ const spielerSeite = `<html><body><script>jwplayer("p").setup({ sources: [
   pruefe("Die erste Station bekommt die Folgenseite als Referer",
     drei.protokoll[0].referer === "https://anbieter.example/anime/stream/serie/staffel-1/episode-1",
     drei.protokoll[0].referer);
-  pruefe("Jede weitere Station bekommt die vorige",
-    drei.protokoll[1].referer === "https://anbieter.example/redirect/12345"
-    && drei.protokoll[2].referer === "https://hoster.example/e/abc",
+  // Ueber eine Ursprungsgrenze hinweg nur der Ursprung - so haelt es ein
+  // Browser seit `strict-origin-when-cross-origin`, und daran haengt hier mehr
+  // als Hoeflichkeit.
+  //
+  // Vorher stand hier "jede weitere Station bekommt die vorige", also der ganze
+  // Pfad. Am 2026-09-05 gegen das echte Netz gemessen, dreimal wiederholt: mit
+  // `https://aniworld.to/redirect/2626179` als Referer antwortet VOEs
+  // Tagesadresse mit ERR_BLOCKED_BY_CLIENT, mit `https://aniworld.to/` mit
+  // HTTP 200 und 125 kB - im selben Prozess, in derselben Sitzung. Der
+  // Pruefstand meldete deshalb "0/1 Folgen mit abgenommener Quelle", obwohl an
+  // der Aufloesung selbst nichts fehlte.
+  pruefe("Ueber die Ursprungsgrenze geht nur der Ursprung mit",
+    drei.protokoll[1].referer === "https://anbieter.example/"
+    && drei.protokoll[2].referer === "https://hoster.example/",
     drei.protokoll.map((e) => e.referer).join(" | "));
-  pruefe("Zurueck kommt der Referer, unter dem die Quelle wirklich laeuft",
-    gefunden.kopfzeilen.referer === "https://tages.example/e/abc"
+  pruefe("Zurueck kommt der Ursprung, unter dem die Quelle wirklich laeuft",
+    gefunden.kopfzeilen.referer === "https://tages.example/"
     && gefunden.kopfzeilen.origin === "https://tages.example",
     JSON.stringify(gefunden.kopfzeilen));
   pruefe("Die Kennung geht mit hinaus und kommt mit zurueck",
@@ -158,7 +169,7 @@ const spielerSeite = `<html><body><script>jwplayer("p").setup({ sources: [
   const nachUmleitung = await direktlauf.erstellen({ holen: umgeleitet.holen }).aufloesen("https://h.example/e/6");
   pruefe("Leitet der Server selbst um, gilt die Adresse, bei der man ankam",
     nachUmleitung.ok && nachUmleitung.seite === "https://tages.example/e/6"
-    && nachUmleitung.kopfzeilen.referer === "https://tages.example/e/6",
+    && nachUmleitung.kopfzeilen.referer === "https://tages.example/",
     nachUmleitung.seite);
 
   const fehler = pruefungen.filter((ok) => !ok).length;

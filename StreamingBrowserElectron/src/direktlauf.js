@@ -86,7 +86,11 @@ function kopfzeilenFuer(seite, kennung) {
     herkunft = "";
   }
   return {
-    referer: seite,
+    // Nur der Ursprung, nicht der ganze Pfad - der Grund steht bei
+    // refererFuer(). Die Quelle liegt immer auf einer anderen Adresse als die
+    // Spielerseite, dieser Abruf geht also grundsaetzlich ueber die
+    // Ursprungsgrenze.
+    referer: herkunft ? `${herkunft}/` : seite,
     origin: herkunft,
     "user-agent": kennung
   };
@@ -122,6 +126,35 @@ function erstellen(umgebung = {}) {
    * und nichts hergibt. Das sind zwei verschiedene Fehler mit zwei
    * verschiedenen Aussichten auf einen zweiten Versuch.
    */
+  /*
+   * Der Referer fuer die naechste Station.
+   *
+   * Innerhalb desselben Ursprungs die volle Vorstation, darueber hinaus nur
+   * der Ursprung. Genau so haelt es ein Browser seit
+   * `strict-origin-when-cross-origin`, und genau daran haengt hier mehr als
+   * Hoeflichkeit.
+   *
+   * Gemessen am 2026-09-05 auf einem Rechner mit laufendem AdGuard, dreimal
+   * wiederholt: derselbe Abruf auf VOEs Tagesadresse geht mit
+   * `https://aniworld.to/` durch (HTTP 200, 125 kB) und wird mit
+   * `https://aniworld.to/redirect/2626179` als ERR_BLOCKED_BY_CLIENT
+   * abgewiesen. Im selben Prozess, in derselben Sitzung. Der volle Pfad war
+   * damit der Grund, warum VOE im Pruefstand ueberhaupt nicht auftauchte -
+   * "0/1 Folgen mit abgenommener Quelle", obwohl an der Auflösung nichts fehlte.
+   *
+   * Nebenbei ist es auch das Richtige: der ganze Pfad verraet der Gegenstelle,
+   * welche Folge jemand sieht. Der Ursprung genuegt ihr.
+   */
+  function refererFuer(vorstation, ziel) {
+    try {
+      const von = new URL(vorstation);
+      const nach = new URL(ziel);
+      return von.origin === nach.origin ? vorstation : `${von.origin}/`;
+    } catch {
+      return "";
+    }
+  }
+
   async function seiteHolen(adresse, referer) {
     let antwort = null;
     try {
@@ -196,7 +229,7 @@ function erstellen(umgebung = {}) {
       if (!gelesen.weiter) {
         return ergebnis({ stationen: weg, grund: gelesen.grund || "keine Quelle" });
       }
-      woher = geholt.adresse;
+      woher = refererFuer(geholt.adresse, gelesen.weiter);
       adresse = gelesen.weiter;
     }
 
