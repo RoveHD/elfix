@@ -296,6 +296,33 @@
   font-size: 12px;
 }
 
+.continue-delete-particles {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.continue-delete-particles i {
+  position: absolute;
+  width: 6px;
+  height: 12px;
+  border-radius: 3px;
+  background: #8acbff;
+  box-shadow: 0 0 14px #409cff, 0 0 30px #409cff80;
+}
+
+.continue-delete-particles i:nth-child(3n) {
+  width: 4px;
+  height: 4px;
+  background: #fff;
+}
+
+.favorite-card[data-removing="true"] {
+  pointer-events: none;
+}
+
 .home-dashboard-hero {
   position: relative;
   isolation: isolate;

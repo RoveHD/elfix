@@ -4847,6 +4847,7 @@ function searchResultCard(result, provider, suche = "") {
       herz.textContent = "♥";
       herz.classList.add("is-active");
       herz.title = "Steht auf der Watchlist";
+      if (!ergebnis.already) posterHinzufuegenEffekt(card);
       renderFavorites();
       renderHome();
       showToast(ergebnis.already
@@ -4906,6 +4907,8 @@ async function vorschlagVormerken(item) {
   favorites = ergebnis.favorites || favorites;
   listenNeuZeichnen();
   const titel = ergebnis.title || item.title;
+  if (!ergebnis.already) posterTitelHinzugefuegt(ergebnis.favorite?.id
+    || favorites.find((favorite) => gleicheAdresse(favorite.url, item.url))?.id);
   showToast(ergebnis.already
     ? `„${titel}“ steht schon auf der Watchlist`
     : `„${titel}“ steht auf der Watchlist`);
@@ -4944,6 +4947,7 @@ async function vorschlagAbhaken(item) {
   }
   favorites = ergebnis.favorites || favorites;
   listenNeuZeichnen();
+  posterTitelHinzugefuegt(kennung);
   showToast(`„${angelegt.title || titel}“ ist jetzt in der Mediathek`);
   return true;
 }
@@ -6812,6 +6816,77 @@ function favoriteCardInhalt(favorite, options = {}) {
   `;
 }
 
+// Der Effekt beginnt erst nach erfolgreichem Speichern. Ein Neuzeichnen der
+// Liste darf ihn jederzeit abbrechen; die Partikel werden trotzdem entfernt.
+async function weiterschauenEntfernenEffekt(karte) {
+  if (!karte?.isConnected || wrappedRuhig() || !karte.animate) return;
+  const rect = karte.getBoundingClientRect();
+  if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > window.innerHeight) return;
+  const funken = document.createElement("div");
+  funken.className = "continue-delete-particles";
+  funken.setAttribute("aria-hidden", "true");
+  document.body.append(funken);
+  const animationen = [];
+  try {
+    for (let i = 0; i < 24; i += 1) {
+      const partikel = document.createElement("i");
+      const winkel = (i / 24) * Math.PI * 2;
+      const radius = 65 + (i % 5) * 22;
+      partikel.style.cssText = `left:${rect.left + rect.width / 2}px;top:${rect.top + rect.height * 0.48}px;`;
+      funken.append(partikel);
+      animationen.push(partikel.animate([
+        { transform: "translate(-50%, -50%) scale(0)", opacity: 0 },
+        { transform: "translate(-50%, -50%) scale(1)", opacity: 1, offset: 0.18 },
+        { transform: `translate(${Math.cos(winkel) * radius}px, ${Math.sin(winkel) * radius}px) rotate(${i * 37}deg) scale(0)`, opacity: 0 }
+      ], { duration: 640, delay: 100 + (i % 4) * 20, easing: "cubic-bezier(.16,1,.3,1)", fill: "both" }));
+    }
+    animationen.push(karte.animate([
+      { transform: "scale(1)", filter: "brightness(1)", opacity: 1, clipPath: "inset(0 round 18px)" },
+      { transform: "scale(1.045) rotate(-2deg)", filter: "brightness(1.5)", opacity: 1, clipPath: "inset(0 round 22px)", offset: 0.2 },
+      { transform: "scale(.88) rotate(4deg)", filter: "brightness(1.1) blur(2px)", opacity: .8, clipPath: "inset(12% 8% round 40px)", offset: 0.48 },
+      { transform: "scale(.25) rotate(12deg)", filter: "brightness(1) blur(12px)", opacity: 0, clipPath: "inset(50% round 50%)" }
+    ], { duration: 680, easing: "cubic-bezier(.65,0,.35,1)", fill: "forwards" }));
+    await Promise.allSettled(animationen.map((animation) => animation.finished));
+  } finally {
+    funken.remove();
+    animationen.forEach((animation) => animation.cancel());
+  }
+}
+
+function posterHinzufuegenEffekt(karte) {
+  if (!karte?.isConnected || wrappedRuhig() || !karte.animate) return;
+  const rect = karte.getBoundingClientRect();
+  if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > window.innerHeight) return;
+  const effekt = karte.animate([
+    { opacity: 0, transform: "translateY(28px) scale(.72) rotate(-5deg)", filter: "brightness(1.7) blur(6px)" },
+    { opacity: 1, transform: "translateY(-5px) scale(1.04) rotate(1deg)", filter: "brightness(1.2) blur(0)", offset: .65 },
+    { opacity: 1, transform: "translateY(0) scale(1) rotate(0)", filter: "brightness(1) blur(0)" }
+  ], { duration: 560, easing: "cubic-bezier(.16,1,.3,1)" });
+  void effekt.finished.catch(() => {});
+}
+
+function posterZuTitel(id) {
+  return [...document.querySelectorAll(".favorite-card[data-favorite-id]")]
+    .filter((karte) => karte.dataset.favoriteId === String(id) && karte.getClientRects().length);
+}
+
+function posterTitelHinzugefuegt(id) {
+  if (!id) return;
+  // Erst nach dem Neuzeichnen: nur die fertigen, sichtbaren Karten bewegen.
+  for (const karte of posterZuTitel(id)) posterHinzufuegenEffekt(karte);
+  const favorite = favorites.find((item) => String(item.id) === String(id));
+  if (!favorite) return;
+  for (const knopf of document.querySelectorAll(".favorite-menu[data-menue-fuer]")) {
+    if (knopf.dataset.menueFuer === `vorschlag:${favorite.url}`) {
+      posterHinzufuegenEffekt(knopf.closest(".favorite-card, .result-card"));
+    }
+  }
+}
+
+async function posterTitelEntfernen(id) {
+  await Promise.allSettled(posterZuTitel(id).map(weiterschauenEntfernenEffekt));
+}
+
 function favoriteCard(favorite, allowRemove, options = {}) {
   const card = document.createElement("div");
   card.className = "favorite-card";
@@ -6903,6 +6978,7 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${displayFavoriteTitle(favorite)}“ steht auf der Watchlist`);
+        posterTitelHinzugefuegt(favorite.id);
       }
     });
   }
@@ -6928,12 +7004,14 @@ function favoriteCard(favorite, allowRemove, options = {}) {
           showToast("Konnte nicht abgehakt werden");
           return;
         }
+        await weiterschauenEntfernenEffekt(card);
         favorites = ergebnis.favorites || favorites;
         renderFavorites();
         renderHome();
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${titel}“ ist jetzt in der Mediathek`);
+        posterTitelHinzugefuegt(favorite.id);
       }
     });
   }
@@ -6961,6 +7039,7 @@ function favoriteCard(favorite, allowRemove, options = {}) {
         renderLibraryViews();
         renderFavoriteToggle();
         showToast(`„${titel}“ läuft wieder — und bleibt in der Mediathek`);
+        posterTitelHinzugefuegt(favorite.id);
       }
     });
   }
@@ -6999,10 +7078,23 @@ function favoriteCard(favorite, allowRemove, options = {}) {
       symbol: "−",
       text: "Aus Weiterschauen entfernen",
       tun: async () => {
-        favorites = await api.hideFromContinue(favorite.id);
-        renderHome();
-        renderLibraryViews();
-        showToast("Weiterschauen auf Anfang zurueckgesetzt");
+        if (card.dataset.removing === "true") return;
+        card.dataset.removing = "true";
+        try {
+          favorites = await api.hideFromContinue(favorite.id);
+        } catch {
+          delete card.dataset.removing;
+          showToast("Konnte nicht aus Weiterschauen entfernt werden");
+          return;
+        }
+        try {
+          await weiterschauenEntfernenEffekt(card);
+        } finally {
+          renderHome();
+          renderLibraryViews();
+          delete card.dataset.removing;
+        }
+        showToast("Aus Weiterschauen entfernt");
       }
     });
   }
@@ -7017,6 +7109,7 @@ function favoriteCard(favorite, allowRemove, options = {}) {
       text: "Aus Watchlist entfernen",
       tun: async () => {
         favorites = await api.removeFavorite(favorite.id);
+        await weiterschauenEntfernenEffekt(card);
         renderFavorites();
         renderHome();
         renderLibraryViews();
@@ -7089,6 +7182,7 @@ function favoriteCard(favorite, allowRemove, options = {}) {
           showToast("Konnte nicht gelöscht werden");
           return;
         }
+        await weiterschauenEntfernenEffekt(card);
         favorites = ergebnis.favorites || favorites;
         renderFavorites();
         renderHome();
@@ -7244,13 +7338,20 @@ async function direktAbspielen() {
 }
 
 async function toggleFavorite() {
+  const vorher = new Set(favorites.filter((item) => item.favorite).map((item) => item.id));
   const result = await api.toggleCurrentFavorite();
+  const danach = result.favorites || favorites;
+  const geaendert = result.added
+    ? danach.find((item) => item.favorite && !vorher.has(item.id))
+    : favorites.find((item) => item.favorite && !danach.some((neu) => neu.id === item.id && neu.favorite));
+  if (!result.added && geaendert) await posterTitelEntfernen(geaendert.id);
   favorites = result.favorites || favorites;
   renderFavorites();
   renderHome();
   renderLibraryViews();
   renderFavoriteToggle();
   showToast(result.added ? "Zur Watchlist hinzugefügt" : "Aus Watchlist entfernt");
+  if (result.added && geaendert) posterTitelHinzugefuegt(geaendert.id);
 }
 
 // Steht die offene Seite auf der Watchlist?
@@ -9251,6 +9352,7 @@ async function eigenesBildSetzen(favorite) {
   renderLibraryViews();
   // Das Bild haengt am Titel, nicht an der Kachel - steht der Titel auch in
   // einer Watchparty, gilt es dort genauso.
+  posterTitelHinzugefuegt(favorite.id);
   showToast(Number(ergebnis.entries) > 1
     ? "Eigenes Bild gesetzt — gilt überall für diesen Titel"
     : "Eigenes Bild gesetzt");
@@ -9289,11 +9391,13 @@ async function bildAusschnittBearbeiten(favorite) {
 async function eigenesBildEntfernen(favorite) {
   const ergebnis = await api.setFavoriteImage?.(favorite.id, "").catch(() => null);
   if (!ergebnis?.saved) return;
+  await posterTitelEntfernen(favorite.id);
   favorites = ergebnis.favorites || favorites;
   renderFavorites();
   renderHome();
   renderLibraryViews();
   showToast("Eigenes Bild entfernt — es gilt wieder das vom Anbieter");
+  posterTitelHinzugefuegt(favorite.id);
 }
 
 // Unter dem Titel steht der Anbieter - und, wenn der Eintrag zu einer
