@@ -36,6 +36,22 @@ const filmB = "https://filmo.example/film/b";
 const folge = (nummer, staffel = 1) => `https://aniworld.to/anime/stream/test/staffel-${staffel}/episode-${nummer}`;
 const quelle = { ok: true, quelle: { adresse: "https://cdn.example/v.mp4", typ: "datei" }, stationen: [] };
 
+pruefe("Weiterschauen schaltet den spielbaren eigenen Player automatisch ins Vollbild", () => {
+  const getan = [];
+  const c = kontext({
+    spielerLauf: { quelle: { adresse: "https://cdn.example/folge.m3u8" } },
+    isContentFullscreen: false,
+    enterContentFullscreen: () => { getan.push("vollbild"); c.isContentFullscreen = true; },
+    spielerLageSetzen: () => getan.push("lage")
+  }, ["direktVollbildAnwenden"]);
+  c.direktVollbildAnwenden({ fullscreen: true });
+  assert.deepEqual(getan, ["vollbild", "lage"]);
+
+  getan.length = 0;
+  c.direktVollbildAnwenden({ fullscreen: true, laden: true });
+  assert.deepEqual(getan, []);
+});
+
 pruefe("Filme und Folgen erhalten nur ihren eigenen gespeicherten Stand", () => {
   const c = kontext({ favorites: [
     { id: "a", providerId: "p", url: filmA, currentTime: 1200 },

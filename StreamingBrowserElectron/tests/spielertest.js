@@ -379,7 +379,7 @@ pruefe("Die Auswahl bleibt der Rueckfall",
 // las direktQuelleFuerAnsicht dieselbe Seite noch einmal. Zu diesem Zeitpunkt
 // liegt der Player davor und das Skript kommt nicht mehr durch.
 pruefe("Gelesene Kacheln werden weitergereicht",
-  /direktFolgeSpielen\(provider, url, \{ links, signal \}\)/.test(haupt),
+  /direktFolgeSpielen\(provider, url, \{\s*links, signal, fullscreen: Boolean\(optionen\.fullscreen\)/.test(haupt),
   "sonst liest die zweite Runde eine Seite, die niemand mehr sieht");
 pruefe("Und drueben auch benutzt",
   /const alle = Array\.isArray\(optionen\.links\)[\s\S]{0,120}?: await direktLinksLesen\(provider, view\);/.test(haupt));

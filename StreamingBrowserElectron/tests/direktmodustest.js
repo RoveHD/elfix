@@ -70,12 +70,12 @@ pruefe("Die Anbieteransicht wird im Direktbetrieb nicht eingehaengt",
   /overlayReasons\.size === 0 && !direktModus\(target\)/.test(navBereich),
   "sonst liegt die Seite sichtbar im Fenster");
 pruefe("Nach jeder Navigation uebernimmt der Direktbetrieb",
-  /if \(direktModus\(target\)\) \{\s*\n\s*direktUebernehmen\(provider, target, signal\)/.test(navBereich),
+  /if \(direktModus\(target\)\) \{\s*\n\s*direktUebernehmen\(provider, target, signal, optionen\)/.test(navBereich),
   "sonst bliebe eine leere Flaeche stehen");
 // Und sie laedt die Seite selbst - hier zu laden hiesse, sie zweimal zu laden:
 // unmittelbar nach loadURL nennt getURL() noch die alte Adresse.
 pruefe("Geladen wird die Seite genau einmal",
-  navBereich.indexOf("direktUebernehmen(provider, target, signal)") < navBereich.indexOf("view.webContents.loadURL(target)"),
+  navBereich.indexOf("direktUebernehmen(provider, target, signal, optionen)") < navBereich.indexOf("view.webContents.loadURL(target)"),
   "die Werkbank laedt, nicht die Navigation davor");
 // YouTube ist ausgenommen: dort gehoert der Player zur Seite - Vorschlaege,
 // Kommentare, die eigene Runde, das Ueberspringen bezahlter Einschuebe. Sie zu
@@ -112,7 +112,7 @@ const uebernahmeBereich = uebernahme.slice(0, uebernahme.indexOf("\n}\n"));
 // Ohne das las die zweite Runde eine Seite, vor der inzwischen der Player
 // liegt - und meldete "Kein Hoster auf der Seite", obwohl zwoelf dastanden.
 pruefe("Eine Folge wird gespielt",
-  uebernahmeBereich.includes("direktFolgeSpielen(provider, url, { links, signal })"));
+  /direktFolgeSpielen\(provider, url, \{\s*links, signal, fullscreen: Boolean\(optionen\.fullscreen\)/.test(uebernahmeBereich));
 // Ein Film hat keine Folgennummer, nur eine Seite mit Hostern darauf. Ginge
 // die Entscheidung ueber die Adresse, landete er bei "keine Folge gefunden".
 pruefe("Ein Film auch - entschieden wird an den Hosterkacheln",
@@ -134,6 +134,12 @@ pruefe("Und waehrend der Aufloesung steht der Player schon da",
 pruefe("Der Ladevorhang der Anbieterseite bleibt im Direktbetrieb aus",
   /async function beginAutostart[\s\S]{0,900}?if \(direktModus\([\s\S]{0,120}?\)\) return;/.test(haupt),
   "er wartet auf Wiedergabe in einer Ansicht, in der nichts mehr laeuft");
+
+pruefe("Weiterschauen reicht seinen Vollbildwunsch bis zum eigenen Player",
+  /navigateProvider\(provider, oeffnenAdresse\(provider, favorite\), \{[\s\S]{0,520}?fullscreen: Boolean\(options\?\.autoplay && options\?\.fullscreen\)/.test(haupt)
+  && /function direktVollbildAnwenden[\s\S]{0,420}?enterContentFullscreen\(\)/.test(haupt)
+  && (haupt.match(/direktVollbildAnwenden\(optionen\);/g) || []).length === 2,
+  "erst mit spielbarer Quelle, sowohl im neuen als auch im schon offenen Player");
 
 /* ------------------------------------------------------- Die eine Ausnahme */
 

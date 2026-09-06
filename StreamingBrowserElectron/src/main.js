@@ -1772,7 +1772,12 @@ async function favoritOeffnen(favoriteId, options = {}) {
       stelle: Number(favorite.position || favorite.currentTime) || 0
     });
   }
-  await navigateProvider(provider, oeffnenAdresse(provider, favorite));
+  await navigateProvider(provider, oeffnenAdresse(provider, favorite), {
+    // "Weiterschauen" reicht Autoplay und Vollbild gemeinsam herein. Im
+    // Direktbetrieb gibt es keinen fremden Player, der den Vollbildwunsch
+    // spaeter ausfuehrt - deshalb muss er mit bis zum eigenen Player reisen.
+    fullscreen: Boolean(options?.autoplay && options?.fullscreen)
+  });
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
   return activeState();
 }
@@ -2648,7 +2653,7 @@ ipcMain.handle("data:confirm-reset", async () => {
   return null;
 });
 
-async function navigateProvider(provider, url) {
+async function navigateProvider(provider, url, optionen = {}) {
   direktSpielerSchliessen("navigation");
   const signal = direktAuftragBeginnen();
   if (pendingAutostart && pendingAutostart.providerId !== provider.id) {
@@ -2701,7 +2706,7 @@ async function navigateProvider(provider, url) {
   // alte Adresse, und die Werkbank haette dieselbe Seite noch einmal geholt.
   // Das kostet nichts an Richtigkeit und alles an Zeit bis zum ersten Bild.
   if (direktModus(target)) {
-    direktUebernehmen(provider, target, signal).catch(() => {});
+    direktUebernehmen(provider, target, signal, optionen).catch(() => {});
     return;
   }
 
@@ -8371,6 +8376,14 @@ function spielerLageSetzen() {
   });
 }
 
+/** Den Vollbildwunsch erst einloesen, wenn der eigene Player wirklich spielt. */
+function direktVollbildAnwenden(optionen = {}) {
+  if (!optionen.fullscreen || optionen.laden || optionen.auswahl || optionen.vorladen) return;
+  if (!spielerLauf?.quelle?.adresse) return;
+  if (!isContentFullscreen) enterContentFullscreen();
+  spielerLageSetzen();
+}
+
 /**
  * Was gerade laeuft, in einem Stueck.
  *
@@ -8562,6 +8575,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     spielerLaufSetzen(provider, url, ergebnis, optionen);
     spielerView.webContents.send("spieler:auftrag", spielerAuftrag());
+    direktVollbildAnwenden(optionen);
     if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
     return true;
   }
@@ -8631,6 +8645,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   if (spielerView !== view || optionen.signal?.aborted) return false;
   mainWindow.contentView.addChildView(view);
   spielerLageSetzen();
+  direktVollbildAnwenden(optionen);
   view.webContents.focus();
   if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
   return true;
@@ -8928,7 +8943,7 @@ async function ersteFolgeVorladen(provider, url, stand, signal = direktLaden.sig
  * steht da, oder die eigene Oberflaeche kommt zurueck. Was nicht passiert: ein
  * leerer schwarzer Bereich, hinter dem unsichtbar eine Anbieterseite steht.
  */
-async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()) {
+async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen(), optionen = {}) {
   if (!direktModus(url) || !providerModel.isHttpUrl(url)) return;
   const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view),
     () => !signal.aborted);
@@ -8960,7 +8975,9 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
       hoster: "", link: "", hosterliste: links
     }, { laden: true, signal });
     if (signal.aborted) return;
-    const ergebnis = await direktFolgeSpielen(provider, url, { links, signal });
+    const ergebnis = await direktFolgeSpielen(provider, url, {
+      links, signal, fullscreen: Boolean(optionen.fullscreen)
+    });
     if (signal.aborted) return;
     if (ergebnis.ok) return;
     // Keine Quelle: dann wenigstens die Auswahl, dort steht auch die
@@ -9001,7 +9018,9 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
       && episodeIdentity(favorite.url));
     if (weiter && normalizeFavoriteUrl(weiter.url) !== normalizeFavoriteUrl(url)) {
       const ergebnis = await direktFolgeSpielen(provider, weiter.url, {
-        startzeit: sanitizePositiveNumber(weiter.currentTime || weiter.position), signal
+        startzeit: sanitizePositiveNumber(weiter.currentTime || weiter.position),
+        signal,
+        fullscreen: Boolean(optionen.fullscreen)
       });
       if (signal.aborted) return;
       if (ergebnis.ok) return;
