@@ -153,6 +153,41 @@
   }
   select option:checked { background: #3D92FF; color: #fff; }
 
+  /*
+   * Die Teilnehmer der Runde - oben in der Mitte, ueber dem Bild.
+   *
+   * Dieselbe Leiste, die im Hoster-Rahmen eingespritzt wird
+   * (watchpartyLeisteScript in main.js): dort muss sie aus lauter einzelnen
+   * Stileigenschaften bestehen, weil viele Hoster eingebettete Stile
+   * verbieten. Hier ist es die eigene Seite, also steht sie hier, wo Stile
+   * hingehoeren - das Aussehen ist absichtlich dasselbe.
+   *
+   * Sie gehoert zu den Schichten: sie kommt und geht mit Kopf und Leiste. Ein
+   * Streifen, der ueber einem laufenden Film dauerhaft stehenbleibt, stoert
+   * genau so wie eine Bedienleiste.
+   */
+  #runde {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 6px; padding: 5px 8px; border-radius: 999px;
+    background: rgba(10, 14, 22, 0.82);
+    font: 500 12px/1.35 system-ui, sans-serif;
+    max-width: 92vw; overflow: hidden; pointer-events: none;
+    transition: opacity 220ms ease;
+  }
+  #runde.weg { opacity: 0; }
+  #runde[hidden] { display: none !important; }
+  .rundeMarke {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .rundeMarke.ich { background: rgba(255, 255, 255, 0.16); }
+  .rundeZeichen { font-size: 9px; color: #22c55e; }
+  .rundeMarke.haelt .rundeZeichen { color: #f5b84b; }
+  .rundeMarke.fuehrt .rundeName { font-weight: 700; }
+  .rundeHost { font-size: 9px; opacity: 0.8; }
+  .rundeUhr { opacity: 0.85; font-variant-numeric: tabular-nums; }
+
   /* Die Mitte: Puffern und Fehler. Beide liegen an derselben Stelle, weil sie
      dasselbe beantworten - "warum sehe ich nichts?" */
   #mitte {
@@ -226,6 +261,9 @@
       <button id="zurueckZumHoster" type="button">Andere Folge oder anderen Hoster wählen</button>
     </div>
   </div>
+
+  <!-- Wer sonst noch bei dieser Folge sitzt. Leer, solange man allein ist. -->
+  <div id="runde" hidden></div>
 
   <div id="kopf" class="schicht">
     <div>

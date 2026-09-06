@@ -115,7 +115,7 @@ pruefe("Ein abgebrochener Erstaufruf zeigt auch keine Fehler-Auswahl", async () 
 
 pruefe("Auch ein langsames Pausieren beim Anbieterwechsel kann eine neue Auswahl nicht verdraengen", async () => {
   const wartet = offen(); const navigationen = []; let pausen = 0;
-  const c = kontext({ direktLaden: new AbortController(), spielerView: null,
+  const c = kontext({ direktLaden: new AbortController(), spielerView: null, browserdatenFrei: null,
     pendingAutostart: null, setOverlayOpen() {}, activeView: {}, activeProviderId: "alt",
     settings: { playback: { pauseOnProviderSwitch: true } },
     pauseProviderForSwitch: () => ++pausen === 1 ? wartet.antwort : Promise.resolve(),
@@ -134,7 +134,7 @@ pruefe("Auch ein langsames Pausieren beim Anbieterwechsel kann eine neue Auswahl
 
 pruefe("Navigation und DOM-Lesen bleiben trotz paralleler Folgenliste zusammen", async () => {
   const wartet = offen(); const protokoll = [];
-  const c = kontext({ werkbankAuftraege: new Map(), werkbankAn: async (_p, url) => {
+  const c = kontext({ werkbankAuftraege: new Map(), browserdatenFrei: null, werkbankAn: async (_p, url) => {
     protokoll.push(`laden:${url}`); return { url };
   } }, ["werkbankLesen"]);
   const a = c.werkbankLesen(provider, "folge", async (view) => { await wartet.antwort; protokoll.push(`lesen:${view.url}`); });

@@ -9515,23 +9515,39 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
       laeuft: spielerTakt.laeuft && ereignis.playing,
       puffert: spielerTakt.puffert
     });
-    if (urteilDrift === "springen") {
+    // "hard-seek" heisst der einzige Fall, in dem gesprungen wird - so nennt
+    // ihn driftEntscheiden, so fragt das Skript im Hoster-Rahmen danach
+    // (watchparty-sync.js) und so die Bruecke auf Android. Hier stand
+    // "springen": ein Wort, das nie zurueckkommt. Damit hatte der eigene
+    // Player keine Notbremse - wer einmal fuenf Sekunden hinterherhing, blieb
+    // es fuer den Rest der Folge.
+    if (urteilDrift === "hard-seek") {
       console.log(`[watchparty-sync] {"player":"direkt","drift":${(eigene - ziel).toFixed(1)},"tun":"springen"}`);
       spielerBefehl({ tun: "stelle", stelle: ziel, laufen: true, springen: true });
     }
     return true;
   }
 
-  if (urteil.tun === "pause") {
-    spielerBefehl({ tun: "stelle", stelle: ereignis.videoTime, laufen: false, springen: true });
-    return true;
-  }
-  if (urteil.tun === "play" || urteil.tun === "seek" || urteil.tun === "syncstart") {
+  // Play, Pause und Sprung tragen alle dasselbe Urteil: "anwenden".
+  //
+  // Hier stand vorher eine Abfrage auf "pause", "play" und "seek" - drei
+  // Werte, die {@link watchpartySync.steuerungEntscheiden} nie zurueckgibt.
+  // Es benennt die Aktion nicht noch einmal, denn sie steht in der Nachricht;
+  // was es entscheidet, ist *ob* etwas zu tun ist. Damit fiel jede Pause und
+  // jedes Weiter aus der Runde durch bis zum `return false`, und von dort in
+  // den Weg fuer die Anbieteransichten - wo im Direktbetrieb kein Video
+  // laeuft, sondern die Werkbank auf einer Staffelseite steht. Am eigenen
+  // Player kam aus der Runde also nichts an ausser dem gemeinsamen Start.
+  if (urteil.tun === "anwenden" || urteil.tun === "syncstart") {
     spielerBefehl({
       tun: "stelle",
+      // Steht der Absender, ist seine Stelle die Antwort: zielZeitBerechnen
+      // schlaegt die Laufzeit der Nachricht nur auf, wenn danach etwas laeuft.
       stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
       laufen: watchpartyLaeuftDanach(nachricht),
-      springen: true
+      // Der Host springt nicht auf seine eigene Stelle - das laesst nur neu
+      // puffern. So steht es auch im Player (steuernAusRunde).
+      springen: !urteil.nichtSpringen
     });
     return true;
   }
@@ -9696,7 +9712,13 @@ function sendWatchpartyLive(info) {
 // Leiste die Sekunden einer Watchparty, die man gar nicht offen hat.
 function sendWatchpartyWatchstate(nachricht) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  const adresse = activeView?.webContents?.getURL() || "";
+  // Was hier "offen" ist, haengt daran, wo gerade gespielt wird.
+  //
+  // Laeuft der eigene Player, steht die Anbieteransicht laengst woanders - auf
+  // der Staffelseite, die zuletzt gelesen wurde. Ihre Adresse zu fragen hiesse,
+  // die Leiste ausgerechnet dort wegzulassen, wo das Bild ist. Dieselbe
+  // Ueberlegung wie in meldeWatchpartyStandAusSpieler.
+  const adresse = spielerLauf ? spielerLauf.url : (activeView?.webContents?.getURL() || "");
   const raum = watchpartyRaumForUrl(adresse);
   // Gilt diese Meldung der Seite, die gerade offen ist? Nur dann gehoert sie
   // in die Kopfzeile und in den Player. In die Karten gehoert sie immer -
@@ -9741,7 +9763,6 @@ function sendWatchpartyWatchstate(nachricht) {
 // Die Leiste im Player befuellen. Allein schaut man niemandem zu - dann bleibt
 // sie leer und damit unsichtbar.
 function zeigeLeisteImPlayer(mitglieder) {
-  if (!isLiveView(activeView)) return;
   const leute = mitglieder.length > 1
     ? mitglieder.map((mitglied) => ({
       name: mitglied.me ? "Du" : mitglied.name,
@@ -9751,6 +9772,15 @@ function zeigeLeisteImPlayer(mitglieder) {
       zeit: formatUhr(mitglied.position + (mitglied.paused ? 0 : mitglied.age))
     }))
     : [];
+  // Der eigene Player bekommt sie als Nachricht und zeichnet sie selbst: seine
+  // Seite gehoert uns, dort braucht es kein eingespritztes Skript und keine
+  // Stile in Einzelteilen. Dasselbe Aussehen hat sie trotzdem - siehe
+  // spieler.html.
+  if (spielerLauf && spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:leiste", leute);
+    return;
+  }
+  if (!isLiveView(activeView)) return;
   const script = `window.__elfixWpLeiste && window.__elfixWpLeiste(${JSON.stringify(leute)})`;
   executeJavaScriptInMediaFrames(activeView, script).catch(() => []);
 }

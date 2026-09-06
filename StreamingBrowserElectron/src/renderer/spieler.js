@@ -28,7 +28,7 @@
 const bruecke = window.elfixSpieler || {
   aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
   fehler() {}, schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {},
-  sprung() {}, takt() {}, aktion() {}
+  sprung() {}, takt() {}, aktion() {}, aufLeiste() {}
 };
 
 const bild = document.getElementById("bild");
@@ -55,9 +55,13 @@ const staffelReiter = document.getElementById("staffelReiter");
 const weiterKasten = document.getElementById("weiter");
 const weiterZahl = document.getElementById("weiterZahl");
 const weiterTitel = document.getElementById("weiterTitel");
+const rundeLeiste = document.getElementById("runde");
 const schichten = [
   document.getElementById("kopf"),
   document.getElementById("leiste"),
+  // Die Teilnehmerleiste geht mit: sie steht ueber dem Bild, gehoert zur
+  // Bedienung und nicht zum Film.
+  rundeLeiste,
   // Die Karte zur naechsten Folge geht mit: sie steht ueber dem Bild, und ein
   // Knopf, der ueber einem laufenden Film dauerhaft stehenbleibt, stoert genau
   // so wie eine Leiste. Sichtbar wird sie beim Erreichen der Schwelle - danach
@@ -1168,6 +1172,66 @@ bruecke.aufSteuern(steuernAusRunde);
  * Grundlage der Driftmessung drueben: ohne ihn wuesste niemand, wo dieses
  * Geraet steht, und die Leiste zeigte "woanders".
  */
+/**
+ * Wer sonst noch bei dieser Folge sitzt.
+ *
+ * Dieselben Marken wie im Hoster-Rahmen (watchpartyLeisteScript in main.js):
+ * Zeichen, Name, "HOST", Uhr. Der Hauptprozess schickt sie fertig - gerechnet
+ * wird hier nichts, damit nicht zwei Uhren gegeneinander laufen.
+ *
+ * Allein in der Runde bleibt sie weg: eine Leiste, auf der nur "Du" steht,
+ * beantwortet keine Frage.
+ */
+let rundeBild = "";
+
+function zeichneRunde(leute) {
+  if (!rundeLeiste) return;
+  const dabei = Array.isArray(leute) ? leute : [];
+  rundeLeiste.hidden = dabei.length < 2;
+  if (rundeLeiste.hidden) {
+    rundeLeiste.replaceChildren();
+    return;
+  }
+  rundeLeiste.replaceChildren(...dabei.map((person) => {
+    const marke = document.createElement("span");
+    marke.className = "rundeMarke";
+    marke.classList.toggle("ich", Boolean(person.me));
+    marke.classList.toggle("haelt", Boolean(person.paused));
+    marke.classList.toggle("fuehrt", Boolean(person.host));
+
+    const zeichen = document.createElement("span");
+    zeichen.className = "rundeZeichen";
+    zeichen.textContent = person.paused ? "❚❚" : "▶";
+
+    const name = document.createElement("span");
+    name.className = "rundeName";
+    name.textContent = person.name || "Gerät";
+    marke.append(zeichen, name);
+
+    if (person.host) {
+      const host = document.createElement("span");
+      host.className = "rundeHost";
+      host.textContent = "HOST";
+      marke.append(host);
+    }
+    const uhr = document.createElement("span");
+    uhr.className = "rundeUhr";
+    uhr.textContent = person.zeit || "";
+    marke.append(uhr);
+    return marke;
+  }));
+  // Wer dazukommt oder aussteigt, ist eine Neuigkeit - dann darf die Leiste
+  // sich von selbst zeigen. Der Sekundentakt der Uhren ist keine: wuerde er
+  // hier landen, ginge die Bedienleiste nie wieder weg.
+  const bild = dabei.map((person) => `${person.name}|${person.host ? 1 : 0}`).join(",");
+  if (bild !== rundeBild) {
+    rundeBild = bild;
+    schichtenZeigen();
+  }
+}
+
+bruecke.aufLeiste(zeichneRunde);
+
 setInterval(() => {
   if (!inRunde) return;
   bruecke.takt({

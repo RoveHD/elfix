@@ -68,5 +68,7 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
    */
   takt: (takt) => ipcRenderer.send("spieler:takt", takt),
   aktion: (aktion, stelle) => ipcRenderer.send("spieler:aktion", String(aktion || ""), Number(stelle) || 0),
-  aufSteuern: (rueckruf) => ipcRenderer.on("spieler:steuern", (_ereignis, befehl) => rueckruf(befehl))
+  aufSteuern: (rueckruf) => ipcRenderer.on("spieler:steuern", (_ereignis, befehl) => rueckruf(befehl)),
+  /** Wer sonst noch bei dieser Folge sitzt - Name, Zeichen, Uhr. */
+  aufLeiste: (rueckruf) => ipcRenderer.on("spieler:leiste", (_ereignis, leute) => rueckruf(leute))
 });
