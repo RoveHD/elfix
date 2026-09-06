@@ -186,14 +186,16 @@ function buehne(zustand = {}) {
 
 // --- Wo sie haengen -----------------------------------------------------------
 //
-// Zweimal, und das muss so sein: liegt die Anbieterseite vorn, bekommt das
-// Fenster den Tastendruck nie zu sehen.
+// Dreimal, und das muss so sein: liegen Anbieteransicht oder eigener Player
+// vorn, bekommt das Fenster den Tastendruck nie zu sehen. Gerade der Player
+// darf Escape im Vollbild nicht als "Player schliessen" behandeln - sonst
+// bleibt die dahinter ausgeblendete Oberflaeche schwarz.
 
 const stellen = MAIN.match(/before-input-event", \(event, input\) => \{\s*\n\s*if \(tastenkuerzel\(input\)\) event\.preventDefault\(\);/g) || [];
-pruefe("Die Kuerzel haengen am Fenster und an jeder Anbieteransicht",
-  stellen.length === 2,
+pruefe("Die Kuerzel haengen am Fenster, an jeder Anbieteransicht und am eigenen Player",
+  stellen.length === 3,
   `${stellen.length} Stellen`);
-pruefe("und beide rufen dieselbe Weiche",
+pruefe("und alle rufen dieselbe Weiche",
   !/if \(input\.key === "Escape" && isContentFullscreen\)/.test(MAIN),
   "vorher stand dieselbe Behandlung zweimal da");
 

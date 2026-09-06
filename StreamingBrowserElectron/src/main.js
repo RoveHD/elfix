@@ -3543,8 +3543,8 @@ async function readNextEpisodeLink(view) {
 //
 // Bleibt before-input-event: es sitzt zwischen Fenster und Seite, gilt fuer
 // jede View und laesst durch, was hier niemand haben will. Genau das machte
-// bisher schon das Escape aus dem Vollbild - an zwei Stellen, mit demselben
-// Code. Jetzt gibt es dafuer eine.
+// bisher schon das Escape aus dem Vollbild - in Fenster und Ansichten, mit
+// demselben Code. Jetzt gibt es dafuer eine.
 //
 // Drei Regeln, damit die Kuerzel niemandem im Weg stehen:
 //
@@ -8606,6 +8606,17 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   });
   view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
   spielerView = view;
+
+  // Der eigene Player ist ebenfalls eine eigene View. Ohne diesen Horcher
+  // erreicht Escape nur renderer/spieler.js und wird dort als "Player zu"
+  // verstanden. Im Vollbild blieb dadurch isContentFullscreen gesetzt, die
+  // Oberflaeche blieb ausgeblendet und nach dem Schliessen war alles schwarz.
+  // Hier nimmt zuerst dieselbe Weiche wie bei Fenster und Anbieteransicht die
+  // Taste an sich: Vollbild aus, Player bleibt offen. Ausserhalb des Vollbilds
+  // geht Escape weiter an den Player und schliesst ihn wie bisher.
+  view.webContents.on("before-input-event", (event, input) => {
+    if (tastenkuerzel(input)) event.preventDefault();
+  });
 
   // Waehrend der eigene Player laeuft, hat die Seite dahinter zu schweigen.
   // Sie ist nicht zu sehen, aber ein Werbevideo im Hintergrund waere zu hoeren.
