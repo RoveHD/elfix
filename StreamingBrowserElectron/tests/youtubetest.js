@@ -406,8 +406,10 @@ pruefe("Eine Pause an Video A trifft nicht mehr den, der Video B schaut",
 // Und dass oeffnenAdresse() ueberhaupt nur bei YouTube eingreift.
 pruefe("oeffnenAdresse steigt bei fremden Adressen sofort aus",
   /if \(!youtube\.istYoutubeUrl\(adresse\)\) return adresse;/.test(main));
+// Die Klammer bleibt offen: seit dem Vollbild fuer "Weiterschauen" reicht der
+// Aufruf noch Optionen nach. Geprueft ist die Stelle, nicht ihre Stelligkeit.
 pruefe("oeffnenAdresse haengt am Weiterschauen-Aufruf",
-  /await navigateProvider\(provider, oeffnenAdresse\(provider, favorite\)\);/.test(main));
+  /await navigateProvider\(provider, oeffnenAdresse\(provider, favorite\)[,)]/.test(main));
 
 const gut = pruefungen.filter(Boolean).length;
 console.log(`\n${gut}/${pruefungen.length} bestanden`);
