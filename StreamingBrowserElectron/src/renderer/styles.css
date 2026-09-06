@@ -2538,9 +2538,38 @@ h1 {
   outline: 0;
 }
 
+/* Ein Treffer traegt das Bild seines Anbieters. Es liegt als eigene Ebene in
+   der Karte (.karten-bild, z-index -1) - genau wie auf einer Kachel der
+   Watchlist, und aus demselben Grund braucht die Karte einen eigenen Stapel:
+   ohne ihn schlaegt die negative Zahl hinter die Karte durch.
+
+   Die Hoehe steht fest und haengt nicht am Bild. Sonst huepfte die ganze
+   Trefferliste, sobald die ersten Bilder da sind - und bei AniWorld kommen sie
+   nachtraeglich (siehe trefferbilderNachreichen). */
 .search-result-card.provider-result {
-  min-height: 106px;
+  min-height: 176px;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  align-content: end;
   background: linear-gradient(135deg, color-mix(in srgb, var(--bg-card-strong), white 4%), color-mix(in srgb, var(--bg-card), #000 14%));
+}
+
+/* Titel und Anbieter stehen ueber dem Bild, nicht darunter. */
+.search-result-card.provider-result strong,
+.search-result-card.provider-result span {
+  position: relative;
+  z-index: 1;
+}
+
+.search-result-card.provider-result.has-thumb strong,
+.search-result-card.provider-result.has-thumb span {
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.88);
+}
+
+/* Die Fundstelle bleibt auch auf einem hellen Bild lesbar. */
+.search-result-card.provider-result.has-thumb strong mark {
+  color: color-mix(in srgb, var(--accent, #6ea8fe) 74%, white);
 }
 
 .search-result-card.provider-result.is-muted {

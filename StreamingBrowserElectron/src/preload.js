@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   openProviderSearch: (id, query) => ipcRenderer.invoke("provider:search", id, query),
   openProviderUrl: (id, url) => ipcRenderer.invoke("provider:navigate", id, url),
   searchAll: (query) => ipcRenderer.invoke("search:all", query),
+  searchArtwork: (treffer) => ipcRenderer.invoke("search:artwork", treffer),
   loadCalendar: (refresh = false) => ipcRenderer.invoke("calendar:load", refresh),
   getRecommendations: (options = {}) => ipcRenderer.invoke("discover:recommendations", options),
   getPersonalRecommendations: (options = {}) => ipcRenderer.invoke("discover:personal", options),

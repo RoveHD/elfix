@@ -99,6 +99,7 @@ const watchlist = require("./watchlist");
 const messung = require("./messung");
 const seitendaten = require("./seitendaten");
 const bildnachreichung = require("./bildnachreichung");
+const trefferbild = require("./trefferbild");
 const {
   absoluteHttpUrl,
   appendMediaActivity,
@@ -1166,6 +1167,12 @@ ipcMain.handle("provider:navigate", async (_event, providerId, url) => {
 });
 
 ipcMain.handle("search:all", async (_event, query) => searchAllProviders(query));
+
+// Nur fuer Treffer, deren Anbieter kein Bild mitgeschickt hat - siehe
+// sucheTrefferbild. Die Suche selbst wartet darauf nicht.
+ipcMain.handle("search:artwork", async (_event, treffer = {}) => (
+  sucheTrefferbild(treffer?.providerId, treffer?.url, treffer?.title).catch(() => "")
+));
 
 ipcMain.handle("calendar:load", async (_event, refresh = false) => ladeKalender(Boolean(refresh)));
 
@@ -5925,10 +5932,62 @@ async function searchProviderAjax(provider, query, searchUrl) {
     const title = usableResultTitle(cleanAnchorText(item?.title || "")) || titleFromPath(href);
     if (!title || isNoiseTitle(title) || !matchesQuery(title, href, tokens)) continue;
     seen.add(href);
-    results.push({ title, url: href });
+    results.push({ title, url: href, image: "" });
     if (results.length >= 16) break;
   }
   return results;
+}
+
+// --- Das Bild eines Treffers, wenn die Trefferliste keines hergab ------------
+//
+// Der Normalfall ist der andere: das Bild steht im Verweis, den die Suche
+// ohnehin ausliest, und kostet keinen einzigen Abruf (src/trefferbild.js).
+//
+// AniWorld ist die Ausnahme. Dort beantwortet /search?q=... nur einen Rahmen
+// ohne Treffer - die Liste kommt per Ajax nach und traegt Titel, Beschreibung
+// und Adresse, sonst nichts. Ein Bild gibt es bei diesem Anbieter erst auf der
+// Titelseite.
+//
+// Deshalb wird es dort einzeln nachgeholt, und zwar nach der Suche: die Treffer
+// stehen sofort da, die Bilder kommen nach. Gefragt wird nur fuer die Karten,
+// die die Oberflaeche wirklich zeigt, und nur einmal je Adresse - auch ein
+// leeres Ergebnis wird gemerkt, denn "dort war keines" ist eine Auskunft.
+const suchbilder = new Map();
+const suchbilderLaufen = new Map();
+const SUCHBILDER_HOECHSTENS = 400;
+
+function suchbildMerken(adresse, bild) {
+  if (suchbilder.size >= SUCHBILDER_HOECHSTENS) {
+    suchbilder.delete(suchbilder.keys().next().value);
+  }
+  suchbilder.set(adresse, bild);
+  return bild;
+}
+
+async function sucheTrefferbild(providerId, url, title) {
+  const provider = enabledProviders().find((item) => item.id === providerId);
+  if (!provider) return "";
+  // Die Startseite des Anbieters als Grundlage - und ausdruecklich nicht der
+  // leere String: `new URL` zerbricht an einer leeren Grundlage, auch wenn die
+  // Adresse selbst vollstaendig ist. Genau daran kam bei AniWorld kein
+  // einziges Bild an, waehrend die anderen Anbieter ihre Bilder ohnehin schon
+  // in der Trefferliste mitschicken und den Weg hier nie brauchten.
+  const adresse = absoluteHttpUrl(url, provider.startUrl || url || "");
+  if (!adresse) return "";
+  if (suchbilder.has(adresse)) return suchbilder.get(adresse);
+  // Zwei Karten koennen dieselbe Adresse tragen; ein Abruf reicht fuer beide.
+  if (suchbilderLaufen.has(adresse)) return suchbilderLaufen.get(adresse);
+
+  const treffer = { url: adresse, title: String(title || ""), thumbnail: "" };
+  if (!isProviderWithSpecificArtwork(treffer, provider)) return "";
+
+  const lauf = (async () => {
+    const seite = favoriteArtworkPageUrl(treffer, provider);
+    const bild = await fetchProviderArtwork(seite, treffer, provider).catch(() => "");
+    return suchbildMerken(adresse, String(bild || ""));
+  })().finally(() => suchbilderLaufen.delete(adresse));
+  suchbilderLaufen.set(adresse, lauf);
+  return lauf;
 }
 
 // Empfehlungen: von jeder aktiven Anbieterseite ein paar Titel von der
@@ -11568,6 +11627,10 @@ function extractSearchLinks(html, baseUrl, query, provider) {
   const results = [];
   const seen = new Set();
   const tokens = queryTokens(query);
+  // Die Bilder der ganzen Seite, einmal vorab. Manche Anbieter setzen zwei
+  // Verweise je Treffer - einen um das Bild, einen um den Titel; die Suche
+  // nimmt den mit dem Titel. Ohne diese Karte bliebe das Bild dort liegen.
+  const bilder = trefferbild.bilderZuAdressen(html, baseUrl);
   const anchorPattern = /<a\b([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
   let match;
   while ((match = anchorPattern.exec(html)) && results.length < 16) {
@@ -11581,9 +11644,12 @@ function extractSearchLinks(html, baseUrl, query, provider) {
     if (!matchesQuery(title, href, tokens)) continue;
 
     seen.add(href);
-    results.push({ title, genre: cleaned.genre || "", url: href });
+    // Das Bild steht im Verweis selbst; nur wenn dort keines ist, zaehlt das
+    // der Seite. Nachgeschlagen wird nichts - siehe src/trefferbild.js.
+    const image = trefferbild.ausMarkup(match[0], baseUrl) || bilder.get(href) || "";
+    results.push({ title, genre: cleaned.genre || "", url: href, image });
   }
-  appendRawContentLinks(results, seen, html, baseUrl, tokens, provider);
+  appendRawContentLinks(results, seen, html, baseUrl, tokens, provider, bilder);
   return results;
 }
 
@@ -11645,7 +11711,7 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function appendRawContentLinks(results, seen, html, baseUrl, tokens, provider) {
+function appendRawContentLinks(results, seen, html, baseUrl, tokens, provider, bilder = new Map()) {
   const urlPattern = /(?:href|data-href|data-url)\s*=\s*["']([^"']+)["']/gi;
   let match;
   while ((match = urlPattern.exec(html)) && results.length < 16) {
@@ -11654,7 +11720,7 @@ function appendRawContentLinks(results, seen, html, baseUrl, tokens, provider) {
     const title = titleFromPath(href);
     if (!title || isNoiseTitle(title) || !matchesQuery(title, href, tokens)) continue;
     seen.add(href);
-    results.push({ title, url: href });
+    results.push({ title, url: href, image: bilder.get(href) || "" });
   }
 }
 

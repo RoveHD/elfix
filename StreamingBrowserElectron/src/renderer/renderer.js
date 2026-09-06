@@ -4804,6 +4804,10 @@ function searchResultCard(result, provider, suche = "") {
   const untertitel = document.createElement("span");
   untertitel.textContent = meta;
   card.append(titelMitFundstelle(result.title, suche), untertitel);
+  // Das Bild des Treffers - es kam mit der Trefferliste und kostete keinen
+  // eigenen Abruf. Ein Treffer hat keinen selbst gewaehlten Ausschnitt: das
+  // Bild gehoert dem Anbieter, nicht der Watchlist.
+  bildEbeneSetzen(card, result.image || result.thumbnail || "", null);
 
   const oeffnen = async () => {
     hideContentViews();
@@ -5032,6 +5036,7 @@ async function renderProviderResults(query, searchToken) {
   if (searchToken !== activeSearchToken) return;
 
   const resultNodes = [];
+  const ohneBild = [];
   let total = 0;
   for (const provider of response) {
     if (provider.results?.length) {
@@ -5041,7 +5046,14 @@ async function renderProviderResults(query, searchToken) {
       resultNodes.push(heading);
       for (const result of provider.results) {
         total += 1;
-        resultNodes.push(searchResultCard(result, provider, query));
+        const karte = searchResultCard(result, provider, query);
+        resultNodes.push(karte);
+        if (!result.image && !result.thumbnail && result.url) {
+          ohneBild.push({
+            karte,
+            treffer: { providerId: provider.providerId, url: result.url, title: result.title }
+          });
+        }
       }
     }
   }
@@ -5056,6 +5068,37 @@ async function renderProviderResults(query, searchToken) {
   document.querySelector("#searchCopy").textContent = total
     ? `${total} Treffer aus deinen Anbietern.`
     : "Keine direkten Treffer erkannt. Du kannst weiterhin jede Direktsuche öffnen.";
+  trefferbilderNachreichen(ohneBild, searchToken);
+}
+
+// Wo die Trefferliste des Anbieters kein Bild hergab, wird es einzeln
+// nachgeholt - erst jetzt, nach dem Zeichnen. Die Treffer stehen damit sofort
+// da, und die Bilder kommen nach.
+//
+// Der Fall ist AniWorld: dort steht in der Antwort der Schnellsuche nur Titel
+// und Adresse, das Bild erst auf der Titelseite. Deshalb hoechstens eine
+// Handvoll gleichzeitig und nicht fuer beliebig viele Karten - und im
+// Hauptprozess gemerkt, damit dieselbe Suche kein zweites Mal nachlaedt.
+const TREFFERBILD_GLEICHZEITIG = 4;
+const TREFFERBILD_HOECHSTENS = 16;
+
+async function trefferbilderNachreichen(offen, searchToken) {
+  if (!api.searchArtwork || !offen.length) return;
+  const liste = offen.slice(0, TREFFERBILD_HOECHSTENS);
+  let naechster = 0;
+  const arbeiten = async () => {
+    while (naechster < liste.length) {
+      // Eine neue Suche macht die alten Karten gegenstandslos.
+      if (searchToken !== activeSearchToken) return;
+      const eintrag = liste[naechster];
+      naechster += 1;
+      const bild = await api.searchArtwork(eintrag.treffer).catch(() => "");
+      if (!bild || searchToken !== activeSearchToken || !eintrag.karte.isConnected) continue;
+      bildEbeneSetzen(eintrag.karte, bild, null);
+    }
+  };
+  const faeden = Array.from({ length: Math.min(TREFFERBILD_GLEICHZEITIG, liste.length) }, arbeiten);
+  await Promise.allSettled(faeden);
 }
 
 function rememberSearch(query) {
