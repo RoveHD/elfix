@@ -72,6 +72,11 @@ function ladekontext(aufloesen) {
     providerModel: { isHttpUrl: () => true }, getProviderView: () => ({}),
     werkbankLesen: async () => ({ view: {}, links: [{ adresse: "hoster" }] }),
     direktQuelleFuerAnsicht: aufloesen,
+    // Ohne Runde gibt es keine Fassung, die von dort vorgegeben waere - hier
+    // geht es um den Ladeweg selbst.
+    rundenFassungFuer: () => null,
+    linkFuerFassung: () => null,
+    fassungsname: () => "",
     direktSpielerOeffnen: async (_provider, url) => { geoeffnet.push(url); return true; }
   }, ["direktAuftragBeginnen", "direktFolgeSpielen", "direktSpielerSchliessen"]);
   return { c, geoeffnet };

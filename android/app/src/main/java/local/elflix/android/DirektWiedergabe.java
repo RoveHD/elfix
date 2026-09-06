@@ -38,6 +38,14 @@ final class DirektWiedergabe {
         void sprung(double von, double nach);
         /** Die Bedienung des Players ist gekommen oder gegangen. */
         default void bedienung(boolean sichtbar) { }
+        /** Das Tempo dieses Geraets an die Runde - nur der Host kommt damit durch. */
+        default void tempo(double wert) { }
+        /** Darf hier am Tempo gedreht werden? In einer Runde nur als Host. */
+        default boolean darfTempo() { return true; }
+        /** Die Fassung dieser Runde an die anderen - ebenfalls nur als Host. */
+        default void fassungGewaehlt(String fassung, String hoster) { }
+        /** Was in der Runde als Fassung gilt - leer, wenn keine Runde laeuft. */
+        default JSONObject rundenFassung() { return new JSONObject(); }
     }
 
     private final Activity activity;
@@ -102,6 +110,9 @@ final class DirektWiedergabe {
             public void marke(Consumer<JSONObject> fertig) { umgebung.marke(fertig); }
             public void sprung(double von, double nach) { umgebung.sprung(von, nach); }
             public void bedienung(boolean sichtbar) { umgebung.bedienung(sichtbar); }
+            public void fassungWaehlen(String fassung, String hoster) { fassungAusRunde(fassung, hoster); }
+            public void tempo(double wert) { umgebung.tempo(wert); }
+            public boolean darfTempo() { return umgebung.darfTempo(); }
         });
         wurzel = spieler.ansicht;
         spieler.titel(titel);
@@ -243,7 +254,13 @@ final class DirektWiedergabe {
                         spieler.status("Keine Direktquelle gefunden. Unter Quellen erneut versuchen oder die Anbieterseite öffnen.");
                     } else if (!versucht) {
                         versucht = true;
-                        aufloesen(0, start, id, true);
+                        // In einer Runde gilt deren Fassung von der ersten
+                        // Sekunde an - nicht erst nach einem Wechsel. Sonst
+                        // startete jeder mit seiner gelernten Fassung, und der
+                        // Abgleich richtete danach zwei verschiedene Dateien
+                        // aufeinander aus.
+                        int rundenZeile = rundenFassungZeile();
+                        aufloesen(Math.max(0, rundenZeile), start, id, true);
                     } else quellenDialog();
                 });
             } catch (Exception e) { spieler.status("Die Quellenliste ist nicht lesbar. Unter Quellen erneut versuchen."); }
@@ -293,6 +310,8 @@ final class DirektWiedergabe {
         }
         letzteSprache = link.optString("sprache");
         laufenderHoster = hosterZeile(link);
+        // Als Host gilt die eigene Wahl fuer die ganze Runde.
+        umgebung.fassungGewaehlt(fassungVon(link), link.optString("hoster", ""));
         seiteFreigeben();
         // Woher das Bild kommt, steht im Kopf des Players - wie am Rechner.
         spieler.quelleBenannt(link.optString("hoster", ""),
@@ -427,6 +446,62 @@ final class DirektWiedergabe {
         }
         int nehmen = ziel >= 0 ? ziel : ersatz;
         if (nehmen < 0) return;
+        double stelle = spielt ? spieler.position() : start;
+        aufloesen(nehmen, stelle, ++auftrag, false);
+    }
+
+    /**
+     * Die Fassung der Runde uebernehmen.
+     *
+     * <p>Der Host hat sie gestellt, und sie gilt fuer alle - sonst schaut einer
+     * die deutsche Fassung und der andere die japanische. Gemessen an einer
+     * Folge bei Vidmoly sind zwei Fassungen 1371 und 1376 Sekunden lang:
+     * dieselbe Stelle ist dort nicht dasselbe Bild, und kein Abgleich bringt
+     * das zusammen.
+     *
+     * <p>Der Hoster zaehlt nur innerhalb der passenden Fassung. Gibt es ihn dort
+     * nicht, gilt die Fassung trotzdem - sie ist die Entscheidung, der Hoster
+     * ist die Gewohnheit.
+     */
+    /**
+     * Die Zeile, die zur Fassung der Runde gehoert - oder -1.
+     *
+     * <p>Gefragt wird die Umgebung, nicht das Relay: dort steht der Eintrag der
+     * Runde samt Fassung und Hoster, so wie ihn der Host gestellt hat.
+     */
+    private int rundenFassungZeile() {
+        JSONObject runde = umgebung.rundenFassung();
+        String fassung = runde == null ? "" : runde.optString("fassung", "");
+        if (fassung.isEmpty()) return -1;
+        String hosterName = runde.optString("hoster", "");
+        int ersatz = -1;
+        for (int i = 0; i < hoster.length(); i++) {
+            JSONObject link = hoster.optJSONObject(i);
+            if (!fassung.equalsIgnoreCase(fassungVon(link))) continue;
+            if (ersatz < 0) ersatz = i;
+            if (!hosterName.isEmpty() && hosterName.equalsIgnoreCase(link.optString("hoster", ""))) return i;
+        }
+        return ersatz;
+    }
+
+    private void fassungAusRunde(String fassung, String hosterName) {
+        if (geschlossen || fassung == null || fassung.trim().isEmpty()) return;
+        int ziel = -1;
+        int ersatz = -1;
+        for (int i = 0; i < hoster.length(); i++) {
+            JSONObject link = hoster.optJSONObject(i);
+            if (!fassung.equalsIgnoreCase(fassungVon(link))) continue;
+            if (ersatz < 0) ersatz = i;
+            if (hosterName != null && !hosterName.isEmpty()
+                && hosterName.equalsIgnoreCase(link.optString("hoster", ""))) {
+                ziel = i;
+                break;
+            }
+        }
+        int nehmen = ziel >= 0 ? ziel : ersatz;
+        // Schon dort? Dann nichts tun - ein Wechsel waere ein Neuladen ohne
+        // Anlass, und jede Meldung der Runde loeste eines aus.
+        if (nehmen < 0 || nehmen == laufenderHoster) return;
         double stelle = spielt ? spieler.position() : start;
         aufloesen(nehmen, stelle, ++auftrag, false);
     }

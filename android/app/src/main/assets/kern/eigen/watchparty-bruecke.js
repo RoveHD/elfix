@@ -924,6 +924,10 @@
     steuern: (key, action, position, room) => sicherstellen().steuern(key, action, position, room),
     steuernMitAdresse: (key, action, position, url, room) =>
       sicherstellen().steuernMitAdresse(key, action, position, url, room),
+    // Tempo und Fassung der Runde. Sie tragen keine Stelle, sondern eine
+    // Einstellung - und annehmen tut sie das Relay nur vom Host.
+    steuernMitEinstellung: (key, action, position, url, room, einstellung) =>
+      sicherstellen().steuernMitEinstellung(key, action, position, url, room, einstellung),
     gleichziehen: (key, position, room) => sicherstellen().gleichziehen(key, position, room),
     bereitZumStart: (key, room) => sicherstellen().bereitZumStart(key, room),
     abgleichen: (key, room) => sicherstellen().abgleichen(key, room),

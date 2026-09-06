@@ -1508,6 +1508,17 @@ final class DirektSpieler {
         if (geschlossen) return;
         String tun = urteil.optString("tun");
         if ("drift".equals(tun) || "nichts".equals(tun)) return;
+        // Tempo und Fassung stellen ein, sie steuern nicht: kein Anhalten, kein
+        // Sprung, keine Warteschlange. Sie gehen deshalb sofort durch und nicht
+        // ueber befehlPruefen.
+        if ("tempo".equals(tun)) {
+            tempoSetzen(urteil.optDouble("tempo", 1), false);
+            return;
+        }
+        if ("fassung".equals(tun)) {
+            umgebung.fassungWaehlen(urteil.optString("fassung", ""), urteil.optString("hoster", ""));
+            return;
+        }
         wartenderBefehl = new Befehl(urteil, bereit);
         befehlPruefen();
     }

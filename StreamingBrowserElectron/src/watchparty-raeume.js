@@ -241,6 +241,12 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.steuernMitAdresse(key, action, position, url);
   }
 
+  steuernMitEinstellung(key, action, position, url, room, einstellung) {
+    for (const raum of this.raeumeMitTitel(key, room)) {
+      raum.steuernMitEinstellung(key, action, position, url, einstellung);
+    }
+  }
+
   meldeStand(key, stand, room) {
     for (const raum of this.raeumeMitTitel(key, room)) raum.meldeStand(key, stand);
   }

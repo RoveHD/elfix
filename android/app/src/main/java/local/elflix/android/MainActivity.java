@@ -9654,6 +9654,28 @@ public class MainActivity extends Activity {
                     // dieselbe Regel wie im Hoster-Rahmen.
                     if (liveStreifen != null) liveStreifen.steuerungSichtbar(sichtbar);
                 }
+                public void tempo(double wert) {
+                    if (mitschauen == null) return;
+                    try {
+                        mitschauen.einstellungMelden("tempo", new JSONObject().put("tempo", wert));
+                    } catch (org.json.JSONException ignoriert) { }
+                }
+                public boolean darfTempo() {
+                    // Allein immer, in einer Runde nur als Host - dieselbe Regel
+                    // wie beim Spulen, und aus demselben Grund.
+                    return mitschauen == null || !mitschauen.laeuftMit() || mitschauen.binHostHier();
+                }
+                public void fassungGewaehlt(String fassungName, String hosterName) {
+                    if (mitschauen == null) return;
+                    try {
+                        mitschauen.einstellungMelden("fassung", new JSONObject()
+                            .put("fassung", fassungName == null ? "" : fassungName)
+                            .put("hoster", hosterName == null ? "" : hosterName));
+                    } catch (org.json.JSONException ignoriert) { }
+                }
+                public JSONObject rundenFassung() {
+                    return mitschauen == null ? new JSONObject() : mitschauen.rundenFassung();
+                }
             });
         // Der Live-Streifen zieht in den Player um: dessen Ansicht liegt auf der
         // Fensterdekoration, ein Streifen in der Oberflaeche waere dahinter.

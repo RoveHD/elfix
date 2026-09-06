@@ -45,10 +45,14 @@ function zielZeitBerechnen(ereignis, serverJetzt) {
 
   const vergangen = (jetzt - stempel) / 1000;
   if (!Number.isFinite(vergangen) || vergangen <= 0) return basis;
+  // Beim doppelten Tempo ist die Quelle in derselben Zeit doppelt so weit. Ohne
+  // diesen Faktor stiege jeder Nachzuegler bei 2x um die halbe Laufzeit der
+  // Nachricht zu frueh ein - und bei 0,5x um dieselbe Spanne zu spaet.
+  const tempo = Number(ereignis.tempo) > 0 ? Number(ereignis.tempo) : 1;
   // Nach oben gedeckelt: eine Nachricht, die eine halbe Minute unterwegs war,
   // ist kein Grund, eine halbe Minute weiterzuspringen - dann stimmt etwas
   // anderes nicht, und ein zu weiter Sprung waere die schlechtere Antwort.
-  return basis + Math.min(vergangen, 30);
+  return basis + Math.min(vergangen, 30) * tempo;
 }
 
 // --- 2. Laufender Betrieb: fast immer nichts tun -----------------------------
@@ -236,6 +240,24 @@ function steuerungEntscheiden(nachricht, lage = {}) {
     return { tun: "syncprepare", merken, genau: true, warten: true, nichtSpringen: binHost, grund: "gleichziehen" };
   }
 
+  // Tempo und Fassung sind Einstellungen der Runde, keine Stellen. Sie halten
+  // nichts an, springen nirgendwohin und laufen deshalb an der ganzen
+  // Stellenrechnung vorbei. Beides darf nur der Host setzen - das steht im
+  // Relay, wo es niemand umgehen kann.
+  if (aktion === "tempo") {
+    return {
+      tun: "tempo", merken, genau: false, warten: false, nichtSpringen: false,
+      tempo: tempoLesen(nachricht.tempo), grund: "tempo"
+    };
+  }
+  if (aktion === "fassung") {
+    return {
+      tun: "fassung", merken, genau: false, warten: false, nichtSpringen: false,
+      fassung: String(nachricht.fassung || ""), hoster: String(nachricht.hoster || ""),
+      grund: "fassung"
+    };
+  }
+
   // Die laufende Messung des Hosts. Sie ist keine Korrektur - der Player
   // entscheidet selbst, ob daraus etwas folgt, und meistens folgt nichts.
   if (aktion === "hostzeit") {
@@ -272,8 +294,32 @@ function ereignisFuerPlayer(nachricht, laeuft, versatz, hatUhr) {
     timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
     playing: Boolean(laeuft),
     hatUhr: Boolean(hatUhr),
-    versatz: Number(versatz) || 0
+    versatz: Number(versatz) || 0,
+    // Das Tempo der Runde reist mit jedem Ereignis mit: die Hochrechnung im
+    // Player braucht es, und dort steht sonst nichts darueber.
+    tempo: tempoLesen(nachricht.tempo)
   };
+}
+
+// --- Das Tempo der Runde -----------------------------------------------------
+//
+// Eine feste Leiter statt einer freien Zahl. Zwei Gruende: was hier hereinkommt,
+// kommt aus dem Netz und landet in einem Player - und eine Runde, in der einer
+// auf 1,03 steht, laeuft langsam auseinander, ohne dass jemand sagen koennte,
+// woran es liegt.
+const TEMPO_STUFEN = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/** Die naechstliegende Stufe. Alles Unbrauchbare wird zu 1 - dem Normalfall. */
+function tempoLesen(wert) {
+  const zahl = Number(wert);
+  if (!Number.isFinite(zahl) || zahl <= 0) return 1;
+  let beste = 1;
+  let abstand = Infinity;
+  for (const stufe of TEMPO_STUFEN) {
+    const weite = Math.abs(stufe - zahl);
+    if (weite < abstand) { abstand = weite; beste = stufe; }
+  }
+  return beste;
 }
 
 // Laeuft das Video an der Quelle nach diesem Ereignis weiter? Nur dann wird die
@@ -859,6 +905,28 @@ function beobachterScript() {
 // Messungen, die Ruhezeit und die Merker gehoeren zur Folge davor. Das Tempo
 // wird mit zurueckgesetzt: der Abgleich stellt zwar keins mehr ein, eine
 // aeltere Fassung oder die Seite selbst aber schon.
+/**
+ * Das Tempo der Runde in einen fremden Player tragen.
+ *
+ * Fuer die Anbieteransicht, in der kein eigenes Video haengt. `playbackRate` ist
+ * die eine Stelle, die jeder HTML-Player hat - ob der Hoster sie in seiner
+ * Bedienung anbietet oder nicht.
+ *
+ * Der Wert wird hier noch einmal auf die Leiter gezwungen: was im Skripttext
+ * landet, kommt aus einer Nachricht aus dem Netz.
+ */
+function tempoScript(tempo) {
+  const wert = tempoLesen(tempo);
+  return `(() => {
+    const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
+    if (!medien.length) return "kein-video";
+    for (const media of medien) {
+      try { media.playbackRate = ${wert}; } catch (_) {}
+    }
+    return "tempo:${wert}";
+  })()`;
+}
+
 function zuruecksetzenScript() {
   return `(() => {
     window.__elfixWpSync = { bestaetigt: 0, seitSprung: 0, letzteMessung: 0, gemeldet: 0 };
@@ -901,5 +969,8 @@ module.exports = {
   alsQuelltext,
   applyScript,
   driftScript,
-  zuruecksetzenScript
+  tempoScript,
+  zuruecksetzenScript,
+  TEMPO_STUFEN,
+  tempoLesen
 };

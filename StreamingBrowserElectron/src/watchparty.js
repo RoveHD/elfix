@@ -449,6 +449,14 @@ class Watchparty {
     this.senden({ type: "control", key, action, position, url });
   }
 
+  // Tempo und Fassung tragen keinen Ort, sondern eine Einstellung. Sie reisen
+  // deshalb als eigene Felder mit - das Relay nimmt nur die an, die es kennt,
+  // und nur vom Host.
+  steuernMitEinstellung(key, action, position, url, einstellung = {}) {
+    if (!this.aktiv || !key || !this.istBeigetreten(key)) return;
+    this.senden({ type: "control", key, action, position, url, ...einstellung });
+  }
+
   // Wo dieses Geraet gerade steht. Geht im Sekundentakt heraus und ist die
   // Grundlage fuer die Leiste bei den anderen - bewusst getrennt vom
   // Fortschritt, der an der Buchhaltung der Favoriten haengt und nach einem

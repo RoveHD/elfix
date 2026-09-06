@@ -8691,6 +8691,10 @@ function spielerAuftrag() {
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
     runde: Boolean(spielerRunde()),
+    // Und was in dieser Runde eingestellt ist: das Tempo gilt fuer alle, und
+    // stellen darf es nur der Host.
+    rundeTempo: spielerRundenEinstellung().tempo,
+    rundeHost: spielerRundenEinstellung().binHost,
     auswahl: Boolean(spielerLauf.auswahl),
     laden: Boolean(spielerLauf.laden),
     vorladen: Boolean(spielerLauf.vorladen)
@@ -8987,7 +8991,29 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   const view = gelesen?.view;
   if (!view) return { ok: false, grund: "Die Folgenseite lädt nicht" };
 
-  const ergebnis = await direktQuelleFuerAnsicht(provider, view, {
+  // In einer Runde gilt die Fassung der Runde - und zwar von der ersten
+  // Sekunde an, nicht erst nach einem Wechsel.
+  //
+  // Ohne das startete jeder mit seiner gelernten Fassung, und der Abgleich
+  // richtete danach zwei verschiedene Dateien aufeinander aus. Gemessen an
+  // einer Folge bei Vidmoly: zwei Fassungen derselben Folge sind 1371 und 1376
+  // Sekunden lang - dieselbe Stelle ist dort nicht dasselbe Bild, und keine
+  // Sync-Rechnung der Welt bringt das zusammen.
+  //
+  // Eine ausdrueckliche Wahl sticht: wer im Player selbst eine Fassung
+  // anklickt, meint sie auch (und meldet sie als Host gleich weiter).
+  const rundenFassung = optionen.hosterLink || optionen.hosterWahl
+    ? null
+    : rundenFassungFuer(url);
+  const rundenLink = rundenFassung
+    ? linkFuerFassung(gelesen.links, rundenFassung.fassung, rundenFassung.hoster)
+    : null;
+  if (rundenLink) {
+    console.log(`[ELFIX WATCHPARTY] Start in der Fassung der Runde: `
+      + `${fassungsname(rundenLink)} (${rundenLink.hoster || "?"})`);
+  }
+
+  const quellenOptionen = {
     nurDieser: optionen.hosterLink || "",
     hosterWahl: optionen.hosterWahl,
     signal,
@@ -9001,8 +9027,19 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
     // nicht mehr durch, und heraus kam "Kein Hoster auf der Seite". Ein
     // zweiter Lesevorgang war ohnehin nur verlorene Zeit.
     links: gelesen.links
-  });
+  };
+  let ergebnis = rundenLink
+    ? await direktQuelleFuerAnsicht(provider, view, { ...quellenOptionen, nurDieser: rundenLink.adresse })
+    : await direktQuelleFuerAnsicht(provider, view, quellenOptionen);
   if (signal.aborted) return { ok: false, abgebrochen: true };
+  // Gibt gerade dieser Hoster nichts her, ist eine fremde Fassung immer noch
+  // besser als ein schwarzes Bild. Der Abgleich zieht danach zurecht, was er
+  // kann - und der Zuschauer sieht in der Hosterliste, woran es lag.
+  if (!ergebnis.ok && rundenLink) {
+    console.log(`[ELFIX WATCHPARTY] Die Fassung der Runde gab nichts her - zurueck zur freien Wahl`);
+    ergebnis = await direktQuelleFuerAnsicht(provider, view, quellenOptionen);
+    if (signal.aborted) return { ok: false, abgebrochen: true };
+  }
   if (!ergebnis.ok) return { ...ergebnis, hosterliste: ergebnis.hosterliste || gelesen.links };
 
   const offen = await direktSpielerOeffnen(provider, url, ergebnis, { ...optionen, signal });
@@ -9388,6 +9425,10 @@ ipcMain.handle("spieler:hoster", async (ereignis, link, stelle) => {
       roh: gewaehlt.spracheRoh || ""
     });
   }
+  // Und in einer Runde gilt die Wahl des Hosts fuer alle: sonst schaut einer
+  // die deutsche Fassung und der andere die japanische, und die Stellen zweier
+  // verschiedener Dateien stimmen ohnehin nicht ueberein.
+  meldeFassungInDieRunde(gewaehlt);
   return direktFolgeSpielen(provider, spielerLauf.url, {
     hosterLink: gewaehlt.adresse,
     hosterWahl: gewaehlt,
@@ -9485,6 +9526,82 @@ function spielerRunde() {
   const key = watchpartyLiveKeyForUrl(adresse);
   const raum = watchpartyRaumForUrl(adresse);
   return key && raum ? { key, raum, adresse } : null;
+}
+
+/**
+ * Was der Host fuer diese Runde eingestellt hat.
+ *
+ * Tempo und Fassung gehoeren der Runde, nicht dem Geraet: das Relay fuehrt sie
+ * im Eintrag und schickt sie mit jeder Karte mit. Wer beitritt, uebernimmt sie
+ * damit, ohne jemanden fragen zu muessen.
+ */
+function spielerRundenEinstellung() {
+  const runde = spielerRunde();
+  if (!runde) return { tempo: 1, fassung: "", hoster: "", binHost: false, inRunde: false };
+  const eintrag = watchpartyEintrag(runde.key, runde.raum);
+  return {
+    tempo: watchpartySync.tempoLesen(eintrag?.tempo),
+    fassung: String(eintrag?.fassung || ""),
+    hoster: String(eintrag?.hoster || ""),
+    binHost: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId,
+    inRunde: true
+  };
+}
+
+/**
+ * Die Fassung, die fuer diese Folge in einer Runde gilt.
+ *
+ * Sie haengt an der Adresse und nicht am laufenden Player: gefragt wird beim
+ * Start, und da laeuft noch nichts.
+ */
+function rundenFassungFuer(url) {
+  const key = watchpartyLiveKeyForUrl(url);
+  const raum = watchpartyRaumForUrl(url);
+  if (!key || !raum) return null;
+  const eintrag = watchpartyEintrag(key, raum);
+  const name = String(eintrag?.fassung || "");
+  return name ? { fassung: name, hoster: String(eintrag?.hoster || "") } : null;
+}
+
+/** Der Name einer Fassung, so wie ihn die ganze App schreibt. */
+function fassungsname(link) {
+  if (!link) return "";
+  return fassung.bezeichnung(link.spracheRoh || link.sprache)
+    || String(link.spracheRoh || link.sprache || "");
+}
+
+/**
+ * Die Fassung dieser Runde melden - nur als Host.
+ *
+ * Das Relay lehnt sie von jedem anderen ohnehin ab; hier bleibt der Aufruf
+ * deshalb gleich ganz aus, statt eine Nachricht zu schicken, die verfaellt.
+ */
+function meldeFassungInDieRunde(link) {
+  const runde = spielerRunde();
+  const stand = spielerRundenEinstellung();
+  if (!runde || !stand.binHost || !link) return;
+  watchparty.steuernMitEinstellung(runde.key, "fassung", spielerTakt.stelle, runde.adresse, runde.raum, {
+    fassung: fassungsname(link),
+    hoster: String(link.hoster || "")
+  });
+}
+
+/**
+ * Den Link zur Fassung der Runde finden.
+ *
+ * Verglichen wird der *Name* der Fassung und nicht die Kennung des Anbieters:
+ * die Nummer hinter einer Flagge gehoert der Seite, auf der sie steht, und
+ * zwei Geraete koennen denselben Titel bei zwei Spiegeln offen haben. Der
+ * Hoster entscheidet nur noch innerhalb der passenden Fassung - gibt es ihn
+ * dort nicht, zaehlt die Fassung mehr als der Hoster.
+ */
+function linkFuerFassung(liste, fassungName, hosterName) {
+  const gesucht = String(fassungName || "").trim().toLowerCase();
+  if (!gesucht || !Array.isArray(liste)) return null;
+  const passend = liste.filter((eintrag) => fassungsname(eintrag).toLowerCase() === gesucht);
+  if (!passend.length) return null;
+  const hoster = String(hosterName || "").trim().toLowerCase();
+  return passend.find((eintrag) => String(eintrag.hoster || "").toLowerCase() === hoster) || passend[0];
 }
 
 /** Ein Befehl an den Player. Ohne Player kostet er nichts. */
@@ -9643,6 +9760,72 @@ ipcMain.on("spieler:aktion", (ereignis, aktion, stelle) => {
     runde.adresse, runde.raum);
 });
 
+/**
+ * Das Tempo, das der Host fuer die Runde stellt.
+ *
+ * Ohne Runde bleibt es eine Sache dieses Players - er hat es schon gesetzt,
+ * bevor er es hier meldet, und niemand sonst geht es etwas an.
+ */
+ipcMain.on("spieler:tempo", (ereignis, tempo) => {
+  if (!vomSpieler(ereignis)) return;
+  const runde = spielerRunde();
+  if (!runde) return;
+  watchparty.steuernMitEinstellung(runde.key, "tempo", spielerTakt.stelle, runde.adresse, runde.raum,
+    { tempo: watchpartySync.tempoLesen(tempo) });
+});
+
+/**
+ * Das Tempo der Runde hier anwenden.
+ *
+ * Zwei Wege, weil es zwei Player gibt: der eigene bekommt eine Zahl, die
+ * Anbieteransicht ein kleines Skript auf `playbackRate` - die eine Stelle, die
+ * jeder HTML-Player hat, ob seine Bedienung sie anbietet oder nicht.
+ */
+function tempoAusRundeSetzen(tempo) {
+  const wert = watchpartySync.tempoLesen(tempo);
+  if (spielerLauf && spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:rundentempo", wert, spielerRundenEinstellung().binHost);
+    return;
+  }
+  for (const [, view] of providerViews) {
+    if (!isLiveView(view)) continue;
+    executeJavaScriptInMediaFrames(view, watchpartySync.tempoScript(wert)).catch(() => []);
+  }
+}
+
+/**
+ * Die Fassung der Runde hier anwenden.
+ *
+ * Nur im eigenen Player: dort steht die Hosterliste, und ein Wechsel ist ein
+ * neuer Aufruf derselben Folge mit einem anderen Link. In der Anbieteransicht
+ * hiesse dasselbe, die Seite neu zu laden und blind eine Flagge zu treffen -
+ * das waere geraten, und ein falsch geratener Wechsel ist schlimmer als eine
+ * fremde Fassung.
+ *
+ * Wer die Fassung schon hat, ruehrt sich nicht: sonst laedt jede Meldung den
+ * Player neu.
+ */
+async function fassungAusRundeSetzen(fassungName, hosterName) {
+  if (!spielerLauf) return;
+  const ziel = linkFuerFassung(spielerLauf.hosterliste, fassungName, hosterName);
+  if (!ziel || ziel.adresse === spielerLauf.link) return;
+  // Schon in der richtigen Fassung, und der Hoster passt auch? Dann bleibt es
+  // dabei - ein Wechsel waere ein Neuladen ohne Anlass.
+  const laeuft = (spielerLauf.hosterliste || []).find((eintrag) => eintrag.adresse === spielerLauf.link);
+  if (laeuft && fassungsname(laeuft).toLowerCase() === fassungsname(ziel).toLowerCase()
+    && (!hosterName || String(spielerLauf.hoster || "").toLowerCase() === String(hosterName).toLowerCase())) {
+    return;
+  }
+  const provider = spielerAnbieter();
+  if (!provider) return;
+  console.log(`[ELFIX WATCHPARTY] Fassung der Runde: ${fassungsname(ziel)} (${ziel.hoster || "?"})`);
+  await direktFolgeSpielen(provider, spielerLauf.url, {
+    hosterLink: ziel.adresse,
+    hosterWahl: ziel,
+    startzeit: sanitizePositiveNumber(spielerTakt.stelle)
+  });
+}
+
 async function applyWatchpartyControl(nachricht) {
   // Nur die Runde steuert, in der dieses Geraet gerade schaut. Sonst wuerde
   // eine Pause aus der einen Watchparty die andere mit anhalten, obwohl dort
@@ -9679,6 +9862,17 @@ async function applyWatchpartyControl(nachricht) {
   }
 
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
+
+  // Tempo und Fassung halten nichts an und springen nirgendwohin - sie stellen
+  // ein. Deshalb laufen sie vor der ganzen Stellenrechnung heraus.
+  if (urteil.tun === "tempo") {
+    tempoAusRundeSetzen(urteil.tempo);
+    return;
+  }
+  if (urteil.tun === "fassung") {
+    await fassungAusRundeSetzen(urteil.fassung, urteil.hoster).catch(() => {});
+    return;
+  }
 
   // Laeuft der eigene Player, gehoert der Befehl ihm. Er bekommt ihn als Zahl
   // und nicht als eingespieltes Skript - das Video gehoert uns.

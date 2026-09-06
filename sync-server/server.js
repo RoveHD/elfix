@@ -297,6 +297,24 @@ function httpAdresse(value) {
   return /^https?:\/\//i.test(wert) ? wert : "";
 }
 
+/**
+ * Die Tempostufen der Runde - dieselbe Leiter wie in watchparty-sync.js.
+ *
+ * Sie steht hier ein zweites Mal, weil das Relay ohne die App laeuft: es hat
+ * kein `require` auf StreamingBrowserElectron und soll auch keines bekommen.
+ * Was hereinkommt, kommt aus dem Netz - also wird es auf eine der sechs Stufen
+ * gezwungen, bevor es der Runde gehoert.
+ */
+const TEMPO_STUFEN = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+function tempoStufe(wert) {
+  const n = Number(wert);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return TEMPO_STUFEN.reduce((beste, stufe) => (
+    Math.abs(stufe - n) < Math.abs(beste - n) ? stufe : beste
+  ), 1);
+}
+
 function titelSaeubern(roh) {
   const key = text(roh?.key, 300);
   const url = httpAdresse(roh?.url);
@@ -372,6 +390,11 @@ function titelNachAussen(raumcode, eintrag, fuerGeraet) {
     pausedBy: eintrag.letzteAktion?.type === "pause" ? eintrag.letzteAktion.name : "",
     lastAction: eintrag.letzteAktion || null,
     live: eintrag.live || null,
+    // Was der Host fuer die Runde eingestellt hat. Steht in der Karte, damit
+    // ein Beitretender es uebernehmen kann, ohne jemanden zu fragen.
+    tempo: eintrag.tempo || 1,
+    fassung: eintrag.fassung || "",
+    hoster: eintrag.hoster || "",
     addedBy: eintrag.addedBy,
     addedById: eintrag.addedById,
     addedByKonto: eintrag.addedByKonto || "",
@@ -505,6 +528,10 @@ const server = http.createServer((req, res) => {
       // Geraeten einer Person. Ohne den Eintrag laeuft dort drueben eine
       // aeltere Fassung, und die App wartet auf einen Zustand, der nie kommt.
       features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat", "geraete",
+        // "tempo" heisst: der Host stellt Geschwindigkeit und Fassung fuer die
+        // ganze Runde. Fehlt der Eintrag, laeuft drueben ein aelteres Relay -
+        // es wirft beide Befehle weg, und jeder bleibt bei seiner Einstellung.
+        "tempo",
         // "fern" heisst: dieses Relay koppelt Handy und Rechner und liefert die
         // Seite dafuer unter /fern aus.
         "fern",
@@ -1320,7 +1347,7 @@ wss.on("connection", (socket) => {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const aktion = text(nachricht.action, 10);
-      if (!["play", "pause", "seek", "navigate"].includes(aktion)) return;
+      if (!["play", "pause", "seek", "navigate", "tempo", "fassung"].includes(aktion)) return;
 
       const ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
@@ -1348,6 +1375,46 @@ wss.on("connection", (socket) => {
       // umgehen kann, und sie gilt damit fuer Desktop, Android und Fernseher
       // gleichermassen, ohne dass drei Stellen sie einzeln kennen muessen.
       if (aktion === "seek" && !istHost) return;
+
+      // Tempo und Fassung stellt der Host - fuer alle.
+      //
+      // Sie sind keine Stellen, sondern Einstellungen der Runde: sie halten
+      // nichts an und springen nirgendwohin. Deshalb laufen sie hier an der
+      // ganzen Stellenrechnung vorbei und gehen gleich hinaus. Und deshalb
+      // steht die Host-Regel hier oben und nicht im Client - wo sie stuende,
+      // muessten Rechner, Telefon und Fernseher sie einzeln kennen.
+      if (aktion === "tempo" || aktion === "fassung") {
+        if (!istHost) return;
+        if (aktion === "tempo") eintrag.tempo = tempoStufe(nachricht.tempo);
+        else {
+          eintrag.fassung = text(nachricht.fassung, 80);
+          eintrag.hoster = text(nachricht.hoster, 80);
+        }
+        const rundenDaten = JSON.stringify({
+          type: "control",
+          key: eintrag.key,
+          action: aktion,
+          position: eigen,
+          url: ziel || eintrag.live?.url || eintrag.url,
+          from: socket.name,
+          host: true,
+          at: Date.now(),
+          tempo: eintrag.tempo || 1,
+          fassung: eintrag.fassung || "",
+          hoster: eintrag.hoster || "",
+          sequenceId: naechsteNummer(eintrag),
+          episodeId: folgenKennung(eintrag.season, eintrag.episode),
+          hostId: socket.geraetId
+        });
+        for (const client of wss.clients) {
+          if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
+          if (!eintrag.members.has(client.geraetId) || client === socket) continue;
+          client.send(rundenDaten);
+        }
+        // In die Karten, damit ein Beitretender es ohne Nachfrage sieht.
+        zustandSenden(socket.raum);
+        return;
+      }
       // Ein Steuerbefehl gilt nur unter denen, die dieselbe Folge offen haben.
       // Der Folgenwechsel ist die Ausnahme - der muss gerade die erreichen,
       // die noch bei der alten Folge stehen.
@@ -1491,6 +1558,10 @@ wss.on("connection", (socket) => {
         videoTime: gemeinsam,
         timestamp: jetzt,
         playing: laeuftDanach,
+        // Das Tempo der Runde reist mit jedem Befehl mit: der Empfaenger
+        // rechnet die Laufzeit der Nachricht auf die Stelle auf, und bei 2x ist
+        // die Quelle in derselben Zeit doppelt so weit (zielZeitBerechnen).
+        tempo: eintrag.tempo || 1,
         sequenceId: naechsteNummer(eintrag),
         episodeId: folgenKennung(
           aktion === "navigate" ? eintrag.season : (eintrag.stand?.get(socket.geraetId)?.season || eintrag.season),

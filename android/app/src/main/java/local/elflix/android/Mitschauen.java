@@ -734,6 +734,32 @@ public final class Mitschauen {
     }
 
     /**
+     * Eine Einstellung fuer die ganze Runde - Tempo oder Fassung.
+     *
+     * <p>Sie tragen keine Stelle, sondern eine Wahl, und stellen darf sie nur
+     * der Host. Das Relay lehnt jede andere ohnehin ab; hier bleibt der Aufruf
+     * gleich ganz aus, statt eine Nachricht zu schicken, die verfaellt.
+     *
+     * @param aktion      "tempo" oder "fassung"
+     * @param einstellung die Felder dazu, so wie sie das Relay erwartet
+     */
+    public void einstellungMelden(String aktion, JSONObject einstellung) {
+        if (kern == null || !kern.istBereit() || aktion == null || einstellung == null) return;
+        if (watchparty == null || !watchparty.istEingeschaltet()) return;
+        String url = umgebung.adresse();
+        lageFuer(url, (key, raum) -> {
+            if (key.isEmpty() || raum.isEmpty() || !binHost(key)) return;
+            double stelle = umgebung.nativerSpieler()
+                ? umgebung.nativerStand().optDouble("position", 0) : 0;
+            kern.rufe("watchparty-bruecke.steuernMitEinstellung",
+                Kern.args(key, aktion, stelle, url, raum, einstellung),
+                (wert, fehler) -> {
+                    if (fehler != null) Log.d(TAG, "Einstellung nicht gemeldet: " + fehler);
+                });
+        });
+    }
+
+    /**
      * Die Leitung ist wieder offen.
      *
      * <p>Ein kurzer Verbindungsverlust darf die Runde nicht kosten. Der
@@ -1668,6 +1694,23 @@ public final class Mitschauen {
             if (eintrag != null && key.equals(eintrag.optString("key", ""))) return eintrag;
         }
         return null;
+    }
+
+    /**
+     * Was in dieser Runde als Fassung gilt - so wie der Host sie gestellt hat.
+     *
+     * <p>Leer, wenn keine Runde laeuft oder noch niemand eine Fassung gesetzt
+     * hat. Dann bleibt es bei der gelernten Wahl dieses Geraets.
+     */
+    public JSONObject rundenFassung() {
+        JSONObject eintrag = eintragZu(schluessel());
+        JSONObject antwort = new JSONObject();
+        if (eintrag == null) return antwort;
+        try {
+            antwort.put("fassung", eintrag.optString("fassung", ""));
+            antwort.put("hoster", eintrag.optString("hoster", ""));
+        } catch (org.json.JSONException ignoriert) { }
+        return antwort;
     }
 
     /**
