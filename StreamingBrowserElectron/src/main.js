@@ -385,11 +385,21 @@ const NEXT_EPISODE_COUNTDOWN_SECONDS = 5;
 const FRAME_SCRIPT_TIMEOUT_MS = 3000;
 const AUTOSTART_REVEAL_TIMEOUT_MS = 22000;
 const AUTOSTART_EXTRA_WAIT_MS = 8000;
+// Die Startlast: wie lange sie hoechstens wartet, wenn sich die Oberflaeche
+// nie meldet, und wie lange nach ihrer Meldung noch. Siehe startlastPlanen().
+const STARTLAST_NOTUHR_MS = 2500;
+/** So lange wartet ein Anbieteraufruf hoechstens auf das Leeren des Zwischenspeichers. */
+const BROWSERDATEN_FRIST_MS = 10000;
+const STARTLAST_RUHE_MS = 700;
 const CURTAIN_DIR = path.join(DATA_DIR, "curtain");
 const VIEW_BACKGROUND_COLOR = "#070a10";
 let pendingAutostart = null;
 let curtainView = null;
 const overlayReasons = new Set();
+// Steht auf dem Leeren des Anbieter-Zwischenspeichers, solange es laeuft. Wer
+// eine Anbieterseite laedt, wartet darauf: eine Seite, die waehrend des
+// Leerens laedt, verloere ihren Zwischenspeicher gleich wieder.
+let browserdatenFrei = Promise.resolve();
 let adblock;
 let updateState = {
   status: "idle",
@@ -437,7 +447,25 @@ app.whenReady().then(async () => {
   browserSession = session.fromPartition(SESSION_PARTITION, { cache: true });
   configureBrowserSession();
   if (settings.browser.cacheMode !== "normal") {
-    await clearBrowserDataPreservingLogin();
+    // Ohne await. Das Leeren betrifft die Anbietersitzung - je nach Stand ein
+    // paar hundert Megabyte, und es dauert Sekunden. Bisher stand es vor
+    // createMainWindow(): der ganze Start wartete auf eine Aufraeumarbeit, von
+    // der niemand etwas sieht, und erst danach fing die Oberflaeche ueberhaupt
+    // an zu laden.
+    //
+    // Warten muss nur, wer die Anbietersitzung wirklich benutzt - siehe
+    // browserdatenFrei. Die Startseite braucht sie nicht.
+    //
+    // Mit Frist, und das ist keine Vorsicht auf Verdacht: liegt der Ordner der
+    // Sitzung gesperrt da - eine zweite Instanz, ein haengender Vorgaenger,
+    // ein Virenscanner -, kommt aus clearStorageData nie eine Antwort. Ohne
+    // Frist wartete dann *jeder* Anbieteraufruf fuer immer, und die App saehe
+    // aus, als lade sie ewig. Der Riegel soll ein gleichzeitiges Leeren
+    // verhindern, nicht die Wiedergabe.
+    browserdatenFrei = Promise.race([
+      clearBrowserDataPreservingLogin().catch(() => {}),
+      new Promise((fertig) => { setTimeout(fertig, BROWSERDATEN_FRIST_MS).unref?.(); })
+    ]);
   }
   installAdblock();
   trailerRahmenErlauben();
@@ -454,17 +482,72 @@ app.whenReady().then(async () => {
   geraete.ablageSetzen(loadGeraeteSpiegel());
   syncGeraete();
   syncFern();
-  // Laeuft nebenher: fuer die Reparatur wird je Staffel eine Seite geladen.
-  repairStalledSeriesFavorites().catch(() => {});
   // Die Leiste lebt davon, dass jeder laufend sagt, wo er steht.
   setInterval(() => { meldeWatchpartyStand().catch(() => {}); }, WATCHPARTY_STAND_INTERVALL_MS).unref?.();
   // Die Notbremse der YouTube-Watchparty. Sie laeuft immer mit und steigt
   // sofort wieder aus, solange kein YouTube-Modus aktiv ist.
   setInterval(() => { youtubeAbgleichen().catch(() => {}); }, YOUTUBE_ABGLEICH_TAKT_MS).unref?.();
+  // Werbefilter und Reparatur laufen nicht mehr von hier los, sondern erst,
+  // wenn die Oberflaeche steht - siehe startlastPlanen().
+  startlastPlanen(STARTLAST_NOTUHR_MS);
+  // Abgeschlossene Serien auf neue Folgen pruefen - erst nach dem Start, damit
+  // das Fenster nicht darauf wartet, danach in ruhigem Takt.
+  setTimeout(() => pruefeNeueFolgen().catch(() => {}), 20000).unref?.();
+  setInterval(() => pruefeNeueFolgen().catch(() => {}), NEUE_FOLGEN_INTERVALL_MS).unref?.();
+});
+
+/* ------------------------------------------------------- Die Startlast */
+
+let startlastGelaufen = false;
+let startlastUhr = null;
+let startlastFaellig = 0;
+
+/**
+ * Was beim Start Rechenzeit kostet, aber im ersten Moment niemand braucht.
+ *
+ * <p>Zwei Dinge sind das: der Aufbau des Werbefilters - 22 MB Listentext von
+ * der Platte, danach rund vier Sekunden Rechnung fuer eine halbe Million
+ * Regeln - und die Reparatur haengengebliebener Serien, die je Kandidat eine
+ * Anbieterseite laedt.
+ *
+ * <p>Beides lief bisher in {@code whenReady} los, also genau dann, wenn das
+ * Fenster entsteht, die Oberflaeche ihr Skript liest und ihre ersten Anfragen
+ * stellt. Der Hauptprozess hat aber nur einen Faden: solange er Regeln baut,
+ * wartet jede Antwort an die Oberflaeche hinter ihm. Zu sehen war das als
+ * Hakeln in den ersten Sekunden - nicht als langsamer Aufbau, sondern als
+ * Oberflaeche, die auf Klicks erst mit Verzoegerung reagiert.
+ *
+ * <p>Jetzt wartet die Startlast auf die Oberflaeche: {@code shell:set-open}
+ * meldet, dass sie steht, danach vergeht noch {@link STARTLAST_RUHE_MS}, bevor
+ * gerechnet wird. Kommt diese Meldung nie - kaputte Oberflaeche, oder ELFIX
+ * startet ueber den Autostart direkt in eine Folge -, greift die Notuhr aus
+ * {@code whenReady}. Sie ist bewusst kurz: bis die Engine steht, filtert die
+ * eingebaute Notfallliste, und die tat es waehrend der vier Sekunden Aufbau
+ * ohnehin schon.
+ *
+ * @param verzug Millisekunden bis zum Beginn. Eine frueher faellige Planung
+ *   sticht eine spaetere - die Meldung der Oberflaeche holt die Notuhr also
+ *   nach vorn und nicht umgekehrt.
+ */
+function startlastPlanen(verzug) {
+  if (startlastGelaufen) return;
+  const faellig = Date.now() + verzug;
+  if (startlastUhr && faellig >= startlastFaellig) return;
+  clearTimeout(startlastUhr);
+  startlastFaellig = faellig;
+  startlastUhr = setTimeout(startlastBeginnen, verzug);
+  startlastUhr.unref?.();
+}
+
+function startlastBeginnen() {
+  if (startlastGelaufen) return;
+  startlastGelaufen = true;
+  clearTimeout(startlastUhr);
+  startlastUhr = null;
+
   // Werbefilter. Erst die Engine aus dem bauen, was auf der Platte liegt -
   // das geht ohne Netz und ist der Grund, warum ELFIX auch offline filtert.
-  // Danach nachsehen, ob die Listen zu alt sind. Beides nebenher: der Aufbau
-  // dauert Sekunden, und solange gilt die eingebaute Notfallliste.
+  // Danach nachsehen, ob die Listen zu alt sind.
   ladeFilterListenVonPlatte()
     .catch((fehler) => {
       console.log(`[ELFIX ADBLOCK] Aufbau fehlgeschlagen: ${fehler?.message || fehler}`);
@@ -474,11 +557,10 @@ app.whenReady().then(async () => {
     .catch((fehler) => {
       console.log(`[ELFIX ADBLOCK] Listen konnten nicht geholt werden: ${fehler?.message || fehler}`);
     });
-  // Abgeschlossene Serien auf neue Folgen pruefen - erst nach dem Start, damit
-  // das Fenster nicht darauf wartet, danach in ruhigem Takt.
-  setTimeout(() => pruefeNeueFolgen().catch(() => {}), 20000).unref?.();
-  setInterval(() => pruefeNeueFolgen().catch(() => {}), NEUE_FOLGEN_INTERVALL_MS).unref?.();
-});
+  // Erst danach: fuer die Reparatur wird je Staffel eine Seite geladen. Sie
+  // hat es nicht eilig und soll dem Aufbau nicht ins Gehege kommen.
+  setTimeout(() => { repairStalledSeriesFavorites().catch(() => {}); }, 6000).unref?.();
+}
 
 app.on("before-quit", () => {
   // Was in der Watchparty offen ist, gehoert vor dem Schliessen in die Ablage:
@@ -1048,8 +1130,13 @@ ipcMain.handle("settings:set-open", (_event, isOpen) => {
 });
 
 ipcMain.handle("shell:set-open", (_event, isOpen) => {
-  // Der Nutzer geht selbst zurueck in die Oberflaeche: kein Autostart-Warten mehr.
-  if (isOpen) finishAutostart("oberflaeche");
+  if (isOpen) {
+    // Der Nutzer geht selbst zurueck in die Oberflaeche: kein Autostart-Warten mehr.
+    finishAutostart("oberflaeche");
+    // Und die Oberflaeche steht: beim ersten Mal ist das der Startschuss fuer
+    // alles, was Rechenzeit kostet und warten kann (siehe startlastPlanen).
+    startlastPlanen(STARTLAST_RUHE_MS);
+  }
   setOverlayOpen("shell", isOpen);
   return true;
 });
@@ -2665,6 +2752,10 @@ async function navigateProvider(provider, url, optionen = {}) {
   if (previousView && previousProviderId !== provider.id && settings.playback.pauseOnProviderSwitch) {
     await pauseProviderForSwitch(previousProviderId, previousView, true);
   }
+  if (signal.aborted) return;
+  // Der erste Anbieteraufruf nach dem Start kann noch auf das Leeren des
+  // Zwischenspeichers treffen. Danach ist das hier ein erfuellter Ausdruck.
+  await browserdatenFrei;
   if (signal.aborted) return;
 
   activeProviderId = provider.id;
@@ -8117,6 +8208,10 @@ async function werkbankLesen(provider, adresse, lesen, gueltig = () => true) {
   const vorher = werkbankAuftraege.get(provider.id) || Promise.resolve();
   const auftrag = vorher.catch(() => {}).then(async () => {
     if (!gueltig()) return null;
+    // Wie in navigateProvider: nichts laden, solange der Zwischenspeicher der
+    // Anbieter geleert wird. Nach dem Start ist das ein erfuellter Ausdruck.
+    await browserdatenFrei;
+    if (!gueltig()) return null;
     const view = await werkbankAn(provider, adresse);
     if (!view || !gueltig()) return null;
     return lesen(view);
@@ -12575,11 +12670,18 @@ function filterListenDatei(liste) {
 
 // Die Rohtexte von der Platte. Fehlt eine Liste, fehlt sie eben - die anderen
 // ergeben trotzdem eine brauchbare Engine.
-function gespeicherteFilterListen() {
+//
+// Gelesen wird ausdruecklich nicht synchron: die vier Listen sind zusammen
+// rund 22 MB, und readFileSync haelt dafuer den ganzen Hauptprozess an -
+// samt Fenster, Menue und jeder Antwort an die Oberflaeche. Nacheinander
+// bleibt es trotzdem: gleichzeitig gelesen liegen kurz 22 MB Text doppelt im
+// Speicher (Puffer und Zeichenkette), und schneller ist es auf einer Platte,
+// die ohnehin am Stueck liest, nicht.
+async function gespeicherteFilterListen() {
   const listen = [];
   for (const liste of ADGUARD_FILTER_LISTS) {
     try {
-      const text = fs.readFileSync(filterListenDatei(liste), "utf8");
+      const text = await fs.promises.readFile(filterListenDatei(liste), "utf8");
       if (text.trim()) listen.push({ id: liste.id, name: liste.name, text });
     } catch {
       // Noch nie geholt oder von Hand geloescht.
@@ -12605,7 +12707,7 @@ async function ladeFilterListenVonPlatte() {
   } catch {
     // Wenn die alte Datei nicht weggeht, ist das kein Grund aufzuhoeren.
   }
-  const listen = gespeicherteFilterListen();
+  const listen = await gespeicherteFilterListen();
   if (!listen.length) {
     console.log("[ELFIX ADBLOCK] keine Listen auf der Platte - vorerst nur die eingebauten Regeln");
     return false;
@@ -12661,7 +12763,7 @@ async function updateFilterLists() {
 
   // Auch die Listen, die diesmal nicht durchkamen, aber noch vom letzten Mal
   // da sind. Sonst wuerde ein einzelner Netzfehler den Schutz verkleinern.
-  const vollstaendig = gespeicherteFilterListen();
+  const vollstaendig = await gespeicherteFilterListen();
   const quelle = vollstaendig.length >= listen.length ? vollstaendig : listen;
   if (!quelle.length) {
     throw new Error(`Keine Filterliste erreichbar: ${fehlend.join(", ")}`);

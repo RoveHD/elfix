@@ -52,6 +52,14 @@ let modulVersprechen = null;
 function ladeModul() {
   if (!modulVersprechen) {
     const gebuendelt = typeof globalThis !== "undefined" && globalThis.ELFIX_TSURLFILTER;
+    if (!gebuendelt && typeof process !== "undefined" && process.versions?.node) {
+      try {
+        modulVersprechen = Promise.resolve(require("../build/adblock-runtime.cjs"));
+        return modulVersprechen;
+      } catch (error) {
+        if (error.code !== "MODULE_NOT_FOUND") throw error;
+      }
+    }
     modulVersprechen = gebuendelt
       ? Promise.resolve(gebuendelt)
       : import("@adguard/tsurlfilter").catch(() => null);
@@ -282,7 +290,7 @@ class AdblockEngine {
     const modul = await ladeModul();
     if (!modul) return false;
     this.modul = modul;
-    this.ersatzDateiname = await ladeErsatzNamen();
+    this.ersatzDateiname = modul.getRedirectFilename || await ladeErsatzNamen();
 
     // Ohne diese Angabe haelt sich tsurlfilter fuer eine CoreLibs-Umgebung und
     // verwirft Regeln, die nur die Browsererweiterung kennt.
@@ -298,10 +306,21 @@ class AdblockEngine {
       // Voreinstellungen, und das ist kein Grund, ohne Engine dazustehen.
     }
 
-    const filters = (listen || [])
+    let filters = (listen || [])
       .filter((liste) => liste && String(liste.text || "").trim())
       .map((liste) => ({ id: Number(liste.id) || 0, content: String(liste.text) }));
     if (!filters.length) return false;
+
+    // Android benutzt den gebuendelten Kern ohne Node-Worker. Desktop nimmt
+    // vorbereitete FilterList-Objekte: deren Konstruktor ueberspringt mit
+    // Konvertierungsdaten den synchronen Parser fuer die kompletten Rohlisten.
+    if (typeof process !== "undefined" && process.versions?.node && modul.FilterList) {
+      const vorbereitet = await require("./adblock-vorbereitung").vorbereiten(filters);
+      filters = vorbereitet.map((filter) => ({
+        id: filter.id,
+        content: new modul.FilterList(filter.content, filter.id, filter.data)
+      }));
+    }
 
     // createAsync gibt zwischendurch den Ereignis-Takt frei. Der Aufbau dauert
     // gut drei Sekunden; synchron waere das ein eingefrorenes Fenster.

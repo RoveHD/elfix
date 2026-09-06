@@ -591,16 +591,97 @@ async function init() {
     updateState = state.updateState || {};
     filterLists = state.filterLists || [];
     activeProviderId = state.activeProviderId;
-    render();
+    // Nur das, was gleich zu sehen ist. Watchlist, Mediathek und
+    // Einstellungen liegen hinter geschlossenen Ansichten und kommen im
+    // Nachzug - siehe nachzugPlanen().
+    renderSichtbares();
+    // Die Sicherung fuer den Fall, dass es unten nicht bis nachzugPlanen()
+    // kommt - eine Antwort des Hauptprozesses, die ausbleibt, duerfte den
+    // Nachzug nicht auf ewig anhalten.
+    window.setTimeout(nachzugPlanen, 4000);
     bindEvents();
     applyAppearance();
     applySidebarState();
     syncBrowserBounds();
     await api.showHome();
     await api.setShellOpen(true);
+    nachzugPlanen();
   } catch (error) {
     showStartupError(error);
   }
+}
+
+/* --- Der Nachzug -----------------------------------------------------------
+ *
+ * Beim Start baute die Oberflaeche alles auf einmal: Startseite, Watchlist,
+ * Mediathek, Verlauf und das ganze Einstellungsformular - bei 132 Eintraegen
+ * einige hundert Kacheln, von denen genau die der Startseite jemand sieht.
+ * Jede Ansicht zeichnet sich beim Oeffnen ohnehin selbst neu (showFavorites,
+ * showLibrary, showContinue, showHistory, openSettings), der erste Aufbau war
+ * also Arbeit auf Vorrat - und zwar genau in der Sekunde, in der auch der
+ * Hauptprozess am meisten zu tun hat.
+ *
+ * Dasselbe gilt fuer die drei Vorschlagsreihen: sie rufen den
+ * Empfehlungslauf im Hauptprozess, und der rechnet und laedt Anbieterseiten.
+ * Bis die Oberflaeche steht, warten sie in `startWartende`.
+ *
+ * Einstellungen werden erst beim Oeffnen aufgebaut. saveSettings() sichert
+ * gesondert ab, dass das Formular vor dem ersten Auslesen gefuellt ist.
+ */
+let nachzugOffen = false;
+let startRuhe = false;
+let settingsFormBereit = false;
+const startWartende = [];
+
+function nachzugPlanen() {
+  if (nachzugOffen || startRuhe) return;
+  nachzugOffen = true;
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(nachzugJetzt, { timeout: 1500 });
+  } else {
+    window.setTimeout(nachzugJetzt, 300);
+  }
+}
+
+function nachzugJetzt() {
+  if (!nachzugOffen) return;
+  nachzugOffen = false;
+  startRuhe = true;
+  startArbeitenVerteilen(startWartende.splice(0));
+}
+
+// Ein Idle-Callback allein macht seinen Inhalt nicht billig. Zwischen zwei
+// Abfragen darf Chromium Eingaben und fertige Bilder verarbeiten; auch ihre
+// Antworten sollen nicht gleichzeitig ganze Vorschlagsreihen aufbauen.
+async function startArbeitenVerteilen(arbeiten) {
+  for (const arbeit of arbeiten) {
+    await new Promise((weiter) => {
+      window.setTimeout(() => {
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(weiter, { timeout: 1000 });
+        } else {
+          weiter();
+        }
+      }, 80);
+    });
+    try {
+      await arbeit();
+    } catch (error) {
+      console.warn("Start-Nachladen fehlgeschlagen", error);
+    }
+  }
+}
+
+/**
+ * Etwas, das den Hauptprozess beschaeftigt, bis nach dem Start zurueckstellen.
+ * Ist der Start durch, laeuft es sofort - dann ist das hier ein Aufruf.
+ */
+function nachStart(arbeit) {
+  if (startRuhe) {
+    arbeit();
+    return;
+  }
+  startWartende.push(arbeit);
 }
 
 function bindEvents() {
@@ -1122,9 +1203,16 @@ function bindEvents() {
       const bild = bestandsbild(favorites);
       if (bild !== letztesBestandsbild) {
         letztesBestandsbild = bild;
-        renderFavorites();
         renderHome();
-        renderLibraryViews();
+        // Watchlist und Mediathek nur, wenn der Start durch ist. Der erste
+        // Stand kommt Sekundenbruchteile nach dem Aufgehen des Fensters - er
+        // wuerde sonst genau den Aufbau nachholen, den der Nachzug eben erst
+        // verschoben hat. Verloren geht dabei nichts: der Nachzug zeichnet aus
+        // demselben Bestand, den dieser Melder gerade gesetzt hat.
+        if (startRuhe) {
+          renderFavorites();
+          renderLibraryViews();
+        }
       }
     }
     renderProviders();
@@ -1217,13 +1305,25 @@ function bindEvents() {
 }
 
 function render() {
+  renderSichtbares();
+  renderVerborgenes();
+}
+
+// Was beim Start sofort dasteht.
+function renderSichtbares() {
   renderProviders();
   renderHome();
+  renderUpdateInfo();
+  renderFavoriteToggle();
+}
+
+// Und was hinter einer geschlossenen Ansicht liegt. Jede dieser drei zeichnet
+// sich beim Oeffnen selbst noch einmal - hier stehen sie nur, damit ein
+// Wechsel dorthin nichts mehr zu tun findet.
+function renderVerborgenes() {
   renderFavorites();
   renderLibraryViews();
   renderSettings();
-  renderUpdateInfo();
-  renderFavoriteToggle();
 }
 
 function showStartupError(error) {
@@ -1377,7 +1477,7 @@ function renderRecommendations() {
   } else if (!recommendationsLoaded) {
     homeRecommendations.replaceChildren(emptyText("Vorschläge werden geladen …"));
   }
-  if (!recommendationsLoaded) loadRecommendations();
+  if (!recommendationsLoaded) nachStart(() => loadRecommendations());
 }
 
 async function loadRecommendations(refresh = false) {
@@ -1445,7 +1545,7 @@ function renderCategoryRows(homeSettings = settings.home || DEFAULT_HOME_SETTING
     } else if (!reihe.loaded) {
       reihe.rail.replaceChildren(emptyText("Vorschläge werden geladen …"));
     }
-    if (!reihe.loaded) loadCategoryRow(reihe);
+    if (!reihe.loaded) nachStart(() => loadCategoryRow(reihe));
   }
 }
 
@@ -1482,7 +1582,7 @@ function renderPersonalPicks(homeSettings = settings.home || DEFAULT_HOME_SETTIN
   } else if (!personalLoaded) {
     homePersonal.replaceChildren(emptyText("Empfehlungen werden berechnet …"));
   }
-  if (!personalLoaded) loadPersonalPicks();
+  if (!personalLoaded) nachStart(() => loadPersonalPicks());
 }
 
 async function loadPersonalPicks(refresh = false) {
@@ -2219,6 +2319,7 @@ function bildEbeneSetzen(kasten, bildUrl, ausschnitt, format = kartenFormat()) {
     neuesBild.alt = "";
     neuesBild.draggable = false;
     neuesBild.decoding = "async";
+    neuesBild.loading = format === "banner" ? "eager" : "lazy";
     ebene.append(neuesBild);
     // Ganz nach vorn in die Karte: Titel, Anbieter und Fortschritt stehen
     // danach im Aufbau und liegen damit ueber dem Bild.
@@ -4983,6 +5084,7 @@ function updateHistoryClearVisibility(historyCount = historyEntries().length) {
 }
 
 function renderFavorites() {
+  if (favoritesView?.classList.contains("is-hidden")) return;
   const items = favoriteEntries();
   favoritesGrid.replaceChildren(...items.map((favorite) => favoriteCard(favorite, true, {
     showProgress: hasContinueActivity(favorite),
@@ -4992,6 +5094,14 @@ function renderFavorites() {
 }
 
 function renderLibraryViews() {
+  // Jede Navigation blendet zuerst die Zielansicht ein und zeichnet danach.
+  // Verborgene Listen brauchen daher weder DOM-Aufbau noch Verlaufssortierung.
+  if (libraryView && !libraryView.classList.contains("is-hidden")) renderLibraryContent();
+  if (continueView && !continueView.classList.contains("is-hidden")) renderContinueContent();
+  if (historyView && !historyView.classList.contains("is-hidden")) renderHistoryContent();
+}
+
+function renderLibraryContent() {
   const sortierung = mediathekSortierung();
   const tab = mediathekAktiverTab();
   const libraryItems = mediathekTabEintraege(tab, sortierung);
@@ -5013,7 +5123,9 @@ function renderLibraryViews() {
   setzeMediathekLeermeldung(tab);
   renderMediathekSortierung(libraryItems.length);
   macheMediathekSortierbar();
+}
 
+function renderContinueContent() {
   const continueItems = continueEntries();
   const weiterOptionen = {
     showProgress: true, allowContinueRemove: true, allowComplete: true,
@@ -5026,7 +5138,9 @@ function renderLibraryViews() {
   continuePartyGrid?.replaceChildren(...partyOffen.map((favorite) => favoriteCard(favorite, false, weiterOptionen)));
   continuePartyGroup?.classList.toggle("is-hidden", partyOffen.length === 0);
   continueEmpty?.classList.toggle("is-hidden", continueItems.length > 0);
+}
 
+function renderHistoryContent() {
   const historyItems = historyEntries();
   const gezeigt = historyVerdichten(historyGefiltert(historyItems));
   renderHistoryFilters(historyItems);
@@ -7416,6 +7530,7 @@ function closeSettings() {
 }
 
 function renderSettings() {
+  settingsFormBereit = true;
   renderProviderSettingsList();
   renderProviderForm();
   const appearance = { ...DEFAULT_APPEARANCE_SETTINGS, ...(settings.appearance || {}) };
@@ -7669,6 +7784,8 @@ function clearProviderForm() {
 }
 
 async function saveSettings() {
+  // Das Formular wird erst bei Bedarf gefuellt, bevor es ausgelesen wird.
+  if (!settingsFormBereit) renderSettings();
   syncMirroredFavoriteControls();
   syncMirroredNavigationControls();
   syncMirroredAutoColorControls();

@@ -9,6 +9,9 @@
   },
   "main": "src/main.js",
   "scripts": {
+    "prestart": "node scripts/adblock-bundle.js",
+    "premake-icon": "node scripts/adblock-bundle.js",
+    "pretest": "node scripts/adblock-bundle.js",
     "start": "electron .",
     "typecheck": "node --check shared/provider-model.js && node --check shared/bildausschnitt.js && node --check shared/verlauf.js && node --check src/main.js && node --check src/adblock-engine.js && node --check src/adblock-kosmetik.js && node --check src/verifizierungstor.js && node --check src/youtube.js && node --check src/discover.js && node --check src/taste.js && node --check src/titel.js && node --check src/empfehlung.js && node --check src/metadaten.js && node --check src/statistik.js && node --check src/voe-qualitaet.js && node --check src/direktquelle.js && node --check src/direktlauf.js && node --check src/direktbeobachtung.js && node --check src/direktlinks.js && node --check src/direktfolgen.js && node --check src/manifest.js && node --check src/streamspur.js && node --check scripts/direktprobe.js && node --check src/spieler-preload.js && node --check src/renderer/spieler.js && node --check src/geraete.js && node --check src/geraete-stand.js && node --check src/geraete-schluessel.js && node --check src/watchparty.js && node --check src/watchparty-raeume.js && node --check src/watchparty-sync.js && node --check src/watchparty-autostart.js && node --check src/startphasen.js && node --check src/startfreigabe.js && node --check src/youtube-sync.js && node --check src/youtube-watchparty.js && node --check src/sicherung.js && node --check src/umzug.js && node --check src/marken.js && node --check src/fassung.js && node --check src/fernbedienung.js && node --check src/qr.js && node --check src/messung.js && node --check src/seitendaten.js && node --check src/bildnachreichung.js && node --check src/watchlist.js && node --check src/fortschritt.js && node --check src/nachschub.js && node --check src/fortschritt-proben.js && node --check src/preload.js && node --check src/renderer/renderer.js && node --check src/begruendung.js && node --check src/empfehlungslauf.js && node --check src/kalender.js && node --check src/sitzungslauf.js",
     "lint": "node scripts/lint.js",
@@ -31,6 +34,7 @@
       "shared/**/*",
       "src/**/*",
       "build/icon.ico",
+      "build/adblock-runtime.cjs",
       "package.json"
     ],
     "win": {

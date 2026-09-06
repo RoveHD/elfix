@@ -1,4 +1,5 @@
 node_modules/
+StreamingBrowserElectron/build/adblock-runtime.cjs
 npm-debug.log*
 
 # Electron build outputs
