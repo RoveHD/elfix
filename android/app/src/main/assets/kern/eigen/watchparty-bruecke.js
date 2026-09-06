@@ -495,6 +495,7 @@
 
   /** Der letzte angewendete Befehl je Raum und Titel - fuer die Veraltungspruefung. */
   const letzteEreignisse = new Map();
+  const nativeDrift = new Map();
 
   /**
    * Was mit einem eingehenden Steuerbefehl zu geschehen ist.
@@ -529,6 +530,22 @@
 
     if (urteil.tun === "navigate") {
       return { tun: "navigate", grund: urteil.grund, url: String(nachricht.url || ""), skript: "" };
+    }
+    if (lage && lage.nativ) {
+      const position = sync.zielZeitBerechnen(ereignis, Date.now() + ereignis.versatz);
+      if (urteil.tun === "drift") {
+        const zustand = nativeDrift.get(merker) || {};
+        nativeDrift.set(merker, zustand);
+        const lokal = lage.spielstand || {};
+        const tat = sync.driftEntscheiden(zustand, {
+          drift: position - (Number(lokal.position) || 0), jetzt: Date.now(),
+          puffert: lokal.puffert !== false, laeuft: ereignis.playing && lokal.paused === false
+        });
+        return { tun: tat === "hard-seek" ? "anwenden" : "nichts", nichtSpringen: false,
+          ereignis, position, grund: tat };
+      }
+      return { ...urteil, ereignis,
+        position };
     }
 
     // Steht fuer genau diesen Raum und Titel ein Autostart-Auftrag offen, ist
@@ -627,6 +644,8 @@
    * ersten Befehle der neuen Folge als "veraltet" ab.
    */
   function zuruecksetzen(key, room) {
+    if (key) nativeDrift.delete(`${room || ""}|${key}`);
+    else nativeDrift.clear();
     if (key) letzteEreignisse.delete(`${room || ""}|${key}`);
     else letzteEreignisse.clear();
     return sync.zuruecksetzenScript();

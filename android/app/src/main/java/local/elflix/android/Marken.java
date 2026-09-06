@@ -69,6 +69,18 @@ public final class Marken {
         });
     }
 
+    void nativeMarke(Provider anbieter, String url, JSONArray eintraege, java.util.function.Consumer<JSONObject> fertig) {
+        if (!eingeschaltet() || kern == null) { fertig.accept(null); return; }
+        kern.rufe("marken-bruecke.skript", Kern.args(eintraege, anbieter.alsJson(), url, false), (wert, fehler) -> {
+            try { fertig.accept(new JSONObject(wert).optJSONObject("marke")); }
+            catch (Exception e) { fertig.accept(null); }
+        });
+    }
+
+    void nativerSprung(Provider anbieter, String url, JSONArray eintraege, double von, double nach) {
+        meldung(anbieter, url, eintraege, meldeSprung + Math.round(von) + ":" + Math.round(nach), null);
+    }
+
     /**
      * Das Skript in die Rahmen bringen, in denen ein Video liegt.
      *

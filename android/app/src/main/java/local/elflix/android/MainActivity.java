@@ -72,6 +72,8 @@ public class MainActivity extends Activity {
     private final Adblocker adblocker = new Adblocker();
     /** Die gemeinsame Geschaeftslogik, dieselbe wie am Desktop. Siehe Kern.java. */
     private Kern kern;
+    private DirektWiedergabe direktWiedergabe;
+    private String direktBrowserAusnahme = "";
     private List<Provider> providers;
     /** Watchlist, Weiterschauen, Mediathek und Verlauf - eine Liste, vier Blicke. */
     private Bestand bestand;
@@ -950,7 +952,7 @@ public class MainActivity extends Activity {
 
             @Override
             public WebView ansicht() {
-                return activeProvider == null ? null : webViews.get(activeProvider.id);
+                return direktWiedergabe != null || activeProvider == null ? null : webViews.get(activeProvider.id);
             }
 
             /**
@@ -1101,9 +1103,17 @@ public class MainActivity extends Activity {
         marken = new Marken(this, kern, rahmen);
         sponsorblock = new Sponsorblock(this, kern, rahmen);
         mitschauen = new Mitschauen(kern, rahmen, watchparty, new Mitschauen.Umgebung() {
+            @Override public boolean nativerSpieler() { return direktWiedergabe != null; }
+            @Override public boolean nativWartet() { return direktWiedergabe != null && direktWiedergabe.wartetAufBefehl(); }
+            @Override public JSONObject nativerStand() {
+                return direktWiedergabe == null ? new JSONObject() : direktWiedergabe.liveStand();
+            }
+            @Override public void nativSteuern(JSONObject urteil, Runnable bereit) {
+                if (direktWiedergabe != null) direktWiedergabe.steuern(urteil, bereit);
+            }
             @Override
             public WebView spieler() {
-                return activeProvider == null ? null : webViews.get(activeProvider.id);
+                return direktWiedergabe != null || activeProvider == null ? null : webViews.get(activeProvider.id);
             }
 
             /**
@@ -1118,6 +1128,7 @@ public class MainActivity extends Activity {
              */
             @Override
             public String adresse() {
+                if (direktWiedergabe != null) return direktWiedergabe.adresse();
                 String url = laufendeFolgenAdresse(spieler());
                 return url == null ? "" : url;
             }
@@ -2086,6 +2097,7 @@ public class MainActivity extends Activity {
      * Menues tippen muss.
      */
     void showHome() {
+        direktSchliessen();
         currentScreen = "home";
         abschnitteFuer("home");
         if (activeProvider != null) {
@@ -8656,6 +8668,7 @@ public class MainActivity extends Activity {
      * Weg, auf dem Filme bisher verlorengingen.
      */
     private void serieOeffnen(Provider provider, String url, String titel) {
+        direktBrowserAusnahme = "";
         if (provider == null || url == null || url.isEmpty()) return;
         if (serienuebersicht == null || !uebersichtLohnt(url)) {
             // Kein Umweg ueber die Uebersicht - und dann ist die Frage, warum
@@ -9480,6 +9493,12 @@ public class MainActivity extends Activity {
     }
 
     private void openProvider(Provider provider, String url, boolean preserveFavoriteProgress) {
+        if (kern != null && DirektWiedergabe.passt(url) && !url.equals(direktBrowserAusnahme)) {
+            direktOeffnen(provider, url, preserveFavoriteProgress);
+            return;
+        }
+        direktSchliessen();
+        if (messung != null) messung.starten();
         currentScreen = "provider";
         abschnitteFuer("provider");
         // A deliberate navigation ends any hoster chain that was still allowed to hop.
@@ -9558,6 +9577,86 @@ public class MainActivity extends Activity {
         // Ansicht traegt bis zum Seitenanfang die vorige Adresse. Gefragt wird
         // beim Seitenende - siehe zielNachfassen.
         zielSucheFuer = "";
+    }
+
+    private void direktOeffnen(Provider provider, String url, boolean fortsetzen) {
+        direktSchliessen();
+        hideFullscreen();
+        disarmAutoStart("Eigener Player");
+        if (startvorhang != null) startvorhang.auf("Eigener Player");
+        hideProviderLoading();
+        uebersichtErwartet = false;
+        uebersichtTakt.removeCallbacksAndMessages(null);
+        if (messung != null) messung.anhalten();
+        for (WebView view : webViews.values()) {
+            pauseMedia(view);
+            view.stopLoading();
+            view.onPause();
+        }
+        if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("Eigener Player");
+        currentScreen = "direkt";
+        activeProvider = provider;
+        Favorite eintrag = bestand == null ? null : bestand.zuAdresse(url);
+        Favorite gewaehlt = bestand == null || !fortsetzen ? null : bestand.mitId(activeFavoriteId);
+        if (gewaehlt != null) {
+            String gespeichert = gewaehlt.url().replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
+            String ziel = url.replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
+            eintrag = gespeichert.equalsIgnoreCase(ziel) ? gewaehlt : null;
+        }
+        double stelle = eintrag == null ? 0 : eintrag.currentTime();
+        if (!fortsetzen) activeFavoriteId = eintrag == null ? null : eintrag.id();
+        if (bestand != null) bestand.setzeAktivenEintrag(activeFavoriteId);
+        String name = eintrag == null ? url.equals(startUrl) ? startTitel : "Wiedergabe" : eintrag.title();
+        direktWiedergabe = new DirektWiedergabe(this, kern, provider, url, name, stelle,
+            new DirektWiedergabe.Umgebung() {
+                public void geschlossen() { direktSchliessen(); showHome(); }
+                public void browser(Provider anbieter, String adresse) {
+                    direktSchliessen();
+                    direktBrowserAusnahme = adresse;
+                    armAutoStart(adresse);
+                    openProvider(anbieter, adresse, true);
+                }
+                public void stand(Provider anbieter, String adresse, JSONObject wert, JSONObject meta) {
+                    if (messung != null) messung.verbuchen(anbieter, adresse, wert, meta);
+                }
+                public void live(JSONObject wert, String aktion) {
+                    if (mitschauen != null) mitschauen.nativMelden(wert, aktion);
+                }
+                public void bereit(String adresse) {
+                    if (mitschauen != null) mitschauen.nativBereit(adresse);
+                }
+                public boolean darfAutoplay() {
+                    return mitschauen == null || !mitschauen.laeuftMit() || mitschauen.binHostHier();
+                }
+                public void marke(java.util.function.Consumer<JSONObject> fertig) {
+                    if (marken == null || bestand == null) fertig.accept(null);
+                    else marken.nativeMarke(provider, url, bestand.roh(), fertig);
+                }
+                public void sprung(double von, double nach) {
+                    if (marken != null && bestand != null && (mitschauen == null || !mitschauen.laeuftMit())) {
+                        marken.nativerSprung(provider, url, bestand.roh(), von, nach);
+                    }
+                }
+            });
+        direktWiedergabe.beimWechsel(ziel -> {
+            direktBrowserAusnahme = "";
+            direktOeffnen(provider, ziel, true);
+        });
+        applyFullscreenSystemUi();
+    }
+
+    private void direktSchliessen() {
+        if (direktWiedergabe == null) return;
+        DirektWiedergabe alt = direktWiedergabe;
+        if (mitschauen != null) mitschauen.abmelden();
+        // Keep the flag until the final progress report has been booked.
+        alt.schliessen();
+        direktWiedergabe = null;
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(true);
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) controller.show(WindowInsets.Type.systemBars());
+        } else getWindow().getDecorView().setSystemUiVisibility(0);
     }
 
     private void showProviderLoading(Provider provider) {
@@ -9702,6 +9801,7 @@ public class MainActivity extends Activity {
 
     /** Der eigentliche Weg in die Folge - ohne die Frage, welche es ist. */
     private void favoritOeffnen(Favorite favorite) {
+        direktBrowserAusnahme = "";
         Provider provider = providerFuerEintrag(favorite);
         if (provider == null) return;
 
@@ -10135,6 +10235,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (direktWiedergabe != null) direktWiedergabe.pause();
         // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
         // Takt wieder auf. Dasselbe gilt fuer die Kacheln einer Runde: was
@@ -10158,6 +10259,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (direktWiedergabe != null) {
+            direktWiedergabe.vordergrund();
+            applyFullscreenSystemUi();
+        }
         // Zurueck in der App: waehrend sie weg war, kann am Rechner etwas
         // gelaufen sein. Einmal nachsehen, nicht dauernd fragen.
         if (geraete != null) geraete.abgleichenSpaeter(500);
@@ -10165,7 +10270,7 @@ public class MainActivity extends Activity {
         // Pause und Weiter wieder als Entscheidung.
         if (mitschauen != null) mitschauen.vordergrund(true);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-        if (webView != null) webView.onResume();
+        if (webView != null && direktWiedergabe == null) webView.onResume();
         // Der Takt des Titelhintergrunds haengt an onPause. Steht die
         // Startseite, laeuft er wieder los - und mit ihm der der Kacheln.
         if ("home".equals(currentScreen)) {
@@ -10220,6 +10325,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        direktSchliessen();
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
         takt.removeCallbacksAndMessages(null);
         liveTakt.removeCallbacksAndMessages(null);
@@ -11042,6 +11148,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (direktWiedergabe != null) {
+            if (!direktWiedergabe.zurueck()) { direktSchliessen(); showHome(); }
+            return;
+        }
         // Ganz zuoberst der Startvorhang. Solange er liegt, ist "Zurueck" die
         // Absage an den Start und nicht der Schritt in der Seite dahinter -
         // die sieht ja gerade niemand.
@@ -11107,6 +11217,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (direktWiedergabe != null) return direktWiedergabe.taste(event) || super.dispatchKeyEvent(event);
         logRemoteKey(event);
         // Solange der Startvorhang liegt, gehoert ihm die Fernbedienung.
         //
@@ -11966,6 +12077,7 @@ public class MainActivity extends Activity {
     }
 
     private void folgeWirklichOeffnen(Provider provider, String url, String anlass) {
+        direktBrowserAusnahme = "";
         Log.i(TAG, "FOLGE wechsel (" + anlass + ") -> "
             + Folgen.folgenText(url) + " " + Folgen.kurz(url));
         if (spielerleiste != null) spielerleiste.setzeZiel("");
@@ -12000,6 +12112,7 @@ public class MainActivity extends Activity {
      */
     private void spielstandGemessen(Provider anbieter, String adresse, double position,
                                     double laufzeit, boolean beendet, String seitenLink) {
+        if (direktWiedergabe != null) return;
         if (anbieter != activeProvider) return;
         // Erst merken, dann fragen: die Bremse in naechsteFolgeBestimmen darf
         // einen frisch gelesenen Folgenlink nicht verschlucken.
@@ -12524,10 +12637,15 @@ public class MainActivity extends Activity {
     }
 
     private WebView currentWebView() {
+        if (direktWiedergabe != null) return null;
         return activeProvider == null ? null : webViews.get(activeProvider.id);
     }
 
     private void showFullscreen(View view, WebChromeClient.CustomViewCallback callback) {
+        if (direktWiedergabe != null) {
+            if (callback != null) callback.onCustomViewHidden();
+            return;
+        }
         // Idempotent: a second onShowCustomView() while already fullscreen must not stack views.
         if (fullscreenView != null) {
             Log.w(TAG, "Fullscreen requested while already fullscreen, rejecting duplicate");
@@ -13372,6 +13490,10 @@ public class MainActivity extends Activity {
                 return false;
             }
             String url = request.getUrl().toString();
+            if (request.hasGesture() && DirektWiedergabe.passt(url) && !url.equals(direktBrowserAusnahme)) {
+                direktOeffnen(provider, url, false);
+                return true;
+            }
             // Only http(s) is ever handed to the WebView. These sites push intent://, market://
             // and similar app-store/deeplink schemes through ad frames; forwarding those to
             // startActivity() is what produces ActivityNotFoundException, and letting the WebView

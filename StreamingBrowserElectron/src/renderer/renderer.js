@@ -5695,10 +5695,14 @@ function weitesterStand(favorite) {
       || (!anderer.completed && schluessel && werkSchluessel(anderer) === schluessel)
   ));
   if (gruppe.length < 2) return favorite;
+  const hinweis = gruppe.filter((eintrag) => eintrag.newEpisodeAt)
+    .sort((links, rechts) => Date.parse(rechts.newEpisodeAt) - Date.parse(links.newEpisodeAt))[0];
   const bester = gruppe.reduce((kandidatBester, kandidat) => (
     folgeVergleich(kandidat, kandidatBester) > 0 ? kandidat : kandidatBester
   ), favorite);
-  if (bester === favorite) return favorite;
+  if (bester === favorite) return hinweis
+    ? { ...favorite, newEpisodeAt: hinweis.newEpisodeAt, newEpisodeLabel: hinweis.newEpisodeLabel || "" }
+    : favorite;
 
   // Der Stand des weitesten Eintrags, die Kennung des eigenen. Alles, woran
   // eine Aktion haengt - Kennung, Merkliste, Abschluss, Raum, die gelegte
@@ -5720,7 +5724,13 @@ function weitesterStand(favorite) {
     duration: bester.duration,
     continuePending: bester.continuePending,
     lastWatchedAt: bester.lastWatchedAt || favorite.lastWatchedAt,
-    openedAt: bester.openedAt || favorite.openedAt
+    openedAt: bester.openedAt || favorite.openedAt,
+    // "Zu dieser Serie gibt es eine neue Folge" ist eine Auskunft ueber das
+    // Werk und nicht ueber einen Eintrag. Traegt sie einer der Gruppe, gilt
+    // sie fuer die Karte - sonst stuende der Hinweis in "Neue Folgen" und
+    // fehlte auf der Watchlist, weil ihn dort der andere Eintrag hat.
+    newEpisodeAt: hinweis?.newEpisodeAt || "",
+    newEpisodeLabel: hinweis?.newEpisodeLabel || ""
   };
 }
 
@@ -6356,20 +6366,27 @@ function aktualisiereLiveKarten() {
   }
 }
 
+/*
+ * Unter dem Balken steht die Zeit - immer, und nichts anderes.
+ *
+ * Bisher stand dort "Nächste Folge", sobald die naechste Folge bereitlag,
+ * und gar nichts, solange noch keine Sekunde gelaufen war. Beides beantwortet
+ * die Frage nicht, die man an dieser Stelle stellt: *wo* stehe ich. Dass es
+ * weitergeht, sagt schon der Titel der Karte mit seiner Folgennummer.
+ *
+ * Eine Folge, die noch nicht lief, steht bei 0:00 - das ist keine fehlende
+ * Auskunft, sondern die richtige. Kennt der Eintrag die Laenge noch nicht,
+ * bleibt es bei der Stelle allein; "0:00 / 0:00" waere eine erfundene Zahl.
+ */
 function progressMarkup(favorite, options = {}) {
   if (!options.showProgress) return "";
   const live = watchpartyHint(favorite);
-  if (favorite?.continuePending && !live) {
-    return `<i class="media-progress" title="Nächste Folge bereit"><b style="width:0%"></b></i><small class="media-progress-detail">Nächste Folge</small>`;
-  }
   const percent = favoriteProgressPercent(favorite);
   const current = Number(favorite?.currentTime || favorite?.position || 0);
   const duration = Number(favorite?.duration || 0);
-  const hasStartedPlayback = Number.isFinite(current) && Number.isFinite(duration) && duration > 0 && current > 0;
-  if (!Number.isFinite(percent) || (percent <= 0 && !hasStartedPlayback)) return "";
-  const width = percent > 0 ? percent : 1;
-  const detail = formatMediaTime(current, duration);
-  return `<i class="media-progress" title="${escapeHtml(detail)}"><b style="width:${width}%"></b></i>${detail ? `<small class="media-progress-detail">${escapeHtml(detail)}</small>` : ""}${live}`;
+  const width = Number.isFinite(percent) && percent > 0 ? Math.min(100, percent) : 0;
+  const detail = duration > 0 ? formatMediaTime(current, duration) : formatClock(current);
+  return `<i class="media-progress" title="${escapeHtml(detail)}"><b style="width:${width}%"></b></i><small class="media-progress-detail">${escapeHtml(detail)}</small>${live}`;
 }
 
 function formatMediaTime(currentTime, duration) {
@@ -6712,6 +6729,21 @@ function favoriteCard(favorite, allowRemove, options = {}) {
   // Die Kennung traegt jede Karte, nicht nur die ziehbaren: sie ist der einzige
   // Weg, eine bestimmte Karte spaeter wiederzufinden - etwa nach dem Klick auf
   // eine Benachrichtigung.
+  /*
+   * Der Hinweis auf Nachschub gehoert an die Karte und nicht an eine Reihe.
+   *
+   * Bisher haengte ihn nur "Neue Folgen" an - auf der Watchlist stand
+   * derselbe Titel ohne jedes Zeichen, obwohl daneben die Reihe sagte "Folge
+   * 10 ist da". Eine Karte, die es an einer Stelle weiss und an der anderen
+   * nicht, ist verwirrender als eine, die es nirgends weiss.
+   */
+  if (favorite?.newEpisodeAt) {
+    const fahne = document.createElement("span");
+    fahne.className = "new-episode-flag";
+    fahne.textContent = favorite.newEpisodeLabel || "Neue Folge";
+    card.append(fahne);
+  }
+
   card.dataset.favoriteId = favorite.id;
   if (options.sortable) {
     card.draggable = true;
@@ -7212,10 +7244,42 @@ function renderRouteActiveState() {
 }
 
 // Serien, zu denen seit dem Abschliessen etwas Neues erschienen ist.
+/*
+ * Die Serien, zu denen Nachschub gekommen ist - je Werk einmal.
+ *
+ * Denselben Titel gibt es mehrfach: den eigenen Eintrag und je einen pro
+ * Watchparty-Runde. Beide tragen den Hinweis, und beide standen bisher in der
+ * Reihe - "Black Torch · Staffel 1 Folge 10" zweimal nebeneinander, einmal
+ * "Aniworld" und einmal "Aniworld · Bangus".
+ *
+ * Zusammengelegt wird nach demselben Schluessel wie in `favoriteEntries` -
+ * eine Vorstellung von "dieselbe Serie" im Haus und nicht zwei. Anders als
+ * dort werden Runden aber nicht verworfen: eine Serie, die man nur in einer
+ * Runde verfolgt, hat auch neue Folgen. Gewinnt der eigene Eintrag, wenn es
+ * ihn gibt - er fuehrt beim Klick dorthin, wo man selbst steht.
+ */
 function neueFolgenEintraege() {
-  return favorites
-    .filter((favorite) => favorite.newEpisodeAt)
+  const nachWerk = new Map();
+  const ohneSchluessel = [];
+  for (const favorite of favorites) {
+    if (!favorite.newEpisodeAt) continue;
+    const schluessel = werkSchluessel(favorite);
+    // Ohne Schluessel wird nichts zusammengelegt: lieber eine Karte zu viel
+    // als zwei verschmolzene, die nichts miteinander zu tun haben.
+    if (!schluessel) { ohneSchluessel.push(favorite); continue; }
+    const bisher = nachWerk.get(schluessel);
+    if (!bisher || neueFolgeBesser(favorite, bisher)) nachWerk.set(schluessel, favorite);
+  }
+  return [...nachWerk.values(), ...ohneSchluessel]
     .sort((links, rechts) => Date.parse(rechts.newEpisodeAt || 0) - Date.parse(links.newEpisodeAt || 0));
+}
+
+/** Der eigene Eintrag schlaegt den einer Runde; sonst der juengere Hinweis. */
+function neueFolgeBesser(kandidat, bisher) {
+  const eigen = !kandidat.watchpartyRoom;
+  const bisherEigen = !bisher.watchpartyRoom;
+  if (eigen !== bisherEigen) return eigen;
+  return Date.parse(kandidat.newEpisodeAt || 0) > Date.parse(bisher.newEpisodeAt || 0);
 }
 
 // Auf der Startseite eine eigene Reihe, in der Seitenleiste eine Zahl an der
@@ -7223,14 +7287,8 @@ function neueFolgenEintraege() {
 function renderNewEpisodes() {
   const neue = neueFolgenEintraege();
   newEpisodeRow?.classList.toggle("is-hidden", neue.length === 0);
-  homeNewEpisodes?.replaceChildren(...neue.slice(0, 8).map((favorite) => {
-    const karte = favoriteCard(favorite, false, { autoplay: true, fullscreen: true });
-    const fahne = document.createElement("span");
-    fahne.className = "new-episode-flag";
-    fahne.textContent = favorite.newEpisodeLabel || "Neue Folge";
-    karte.append(fahne);
-    return karte;
-  }));
+  homeNewEpisodes?.replaceChildren(...neue.slice(0, 8)
+    .map((favorite) => favoriteCard(favorite, false, { autoplay: true, fullscreen: true })));
 
   if (watchlistBadge) {
     watchlistBadge.textContent = neue.length > 9 ? "9+" : String(neue.length);

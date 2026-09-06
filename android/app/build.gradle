@@ -18,6 +18,13 @@ plugins {
  */
 def kernQuelle = file("$rootDir/../StreamingBrowserElectron")
 def kernModule = [
+    "src/direktquelle.js",
+    "src/direktlauf.js",
+    "src/direktlinks.js",
+    "src/direktfolgen.js",
+    "src/direktbeobachtung.js",
+    "src/manifest.js",
+    "src/streamspur.js",
     "src/titel.js",
     "src/fortschritt.js",
     "src/nachschub.js",
@@ -383,6 +390,12 @@ androidComponents {
  * des Rechners auf Android schlicht nicht erreichbar.
  */
 dependencies {
+    implementation "androidx.media3:media3-exoplayer:1.5.1"
+    implementation "androidx.media3:media3-exoplayer-hls:1.5.1"
+    implementation "androidx.media3:media3-datasource-okhttp:1.5.1"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    testImplementation "com.squareup.okhttp3:mockwebserver:4.12.0"
+    implementation "androidx.media3:media3-ui:1.5.1"
     implementation "androidx.webkit:webkit:1.12.1"
     /*
      * Fuer den FileProvider.

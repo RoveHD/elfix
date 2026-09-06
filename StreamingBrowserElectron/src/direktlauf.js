@@ -155,7 +155,7 @@ function erstellen(umgebung = {}) {
     }
   }
 
-  async function seiteHolen(adresse, referer) {
+  async function seiteHolen(adresse, referer, signal) {
     let antwort = null;
     try {
       antwort = await holen(adresse, {
@@ -166,7 +166,7 @@ function erstellen(umgebung = {}) {
           ...(referer ? { referer } : {})
         },
         redirect: "follow",
-        signal: AbortSignal.timeout(frist)
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(frist)]) : AbortSignal.timeout(frist)
       });
     } catch (fehler) {
       return { fehler: String(fehler?.message || fehler || "nicht erreichbar") };
@@ -196,7 +196,7 @@ function erstellen(umgebung = {}) {
    * Anbieters. Die erste Station will sie sehen; ab da traegt jede Station die
    * vorige.
    */
-  async function aufloesen(start, referer = "") {
+  async function aufloesen(start, referer = "", optionen = {}) {
     if (!holen) return ergebnis({ grund: "kein Netzzugang gereicht" });
     let adresse = brauchbareAdresse(start);
     if (!adresse) return ergebnis({ grund: "keine brauchbare Adresse" });
@@ -206,13 +206,14 @@ function erstellen(umgebung = {}) {
     const gesehen = new Set();
 
     for (let schritt = 0; schritt < stationen; schritt += 1) {
+      if (optionen.signal?.aborted) return ergebnis({ grund: "abgebrochen" });
       if (gesehen.has(adresse)) {
         return ergebnis({ stationen: weg, grund: "Weiterleitung im Kreis" });
       }
       gesehen.add(adresse);
       weg.push(adresse);
 
-      const geholt = await seiteHolen(adresse, woher);
+      const geholt = await seiteHolen(adresse, woher, optionen.signal);
       if (geholt.fehler) return ergebnis({ stationen: weg, grund: geholt.fehler });
 
       const gelesen = direktquelle.aufloesen(geholt.text, geholt.adresse);
@@ -227,7 +228,7 @@ function erstellen(umgebung = {}) {
         });
       }
       if (!gelesen.weiter) {
-        return ergebnis({ stationen: weg, grund: gelesen.grund || "keine Quelle" });
+        return ergebnis({ stationen: weg, seite: geholt.adresse, grund: gelesen.grund || "keine Quelle" });
       }
       woher = refererFuer(geholt.adresse, gelesen.weiter);
       adresse = gelesen.weiter;

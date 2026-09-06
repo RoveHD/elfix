@@ -4,11 +4,33 @@ This is the native Android companion app for Elflix. It intentionally does not t
 
 ## Backend
 
+- Native Media3 player for direct HLS/MP4 sources on phones and Android TV, with
+  quality, audio/subtitle tracks, hoster selection, episodes and autoplay.
+- Shared desktop source resolution, bounded JavaScript-host observation and intro
+  learning. Watchparty commands wait for loading and seeking before acknowledging.
+- OkHttp transport obtains WebView cookies for each destination, including redirects.
 - Android `WebView`
 - persistent WebView cookies/storage handled by the system WebView profile
 - `WebChromeClient` custom-view fullscreen for HTML5 video
 - `WebViewClient.shouldInterceptRequest` for lightweight ad/tracker blocking
 - `WebChromeClient.onCreateWindow` returns `false` to block popup windows by default
+
+Direct playback opens for episode and movie pages. If no source can be resolved,
+the source menu offers retry and an explicit provider-page fallback. A new title
+selection returns to direct playback. Leaving the app pauses playback.
+
+Local debug build (installs separately from release):
+`gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug -PelfixFassung=1.91.9-direkt -PelfixFassungNummer=19109`
+
+The isolated device test `DirektSpielerGeraeteTest` uses a local media server and
+does not start provider sessions or join a Watchparty. It tests real decoding,
+pending/superseded commands, seek completion, media keys, focus and background pause.
+Its MP4/HLS test accepts `-e mediaBase http://127.0.0.1:8877` with an HTTP server
+serving `probe.mp4`, `probe.m3u8` and the playlist's segments (duration at least
+120 seconds, HTTP range support). Forward the port with `adb reverse tcp:8877
+tcp:8877`. Without this parameter the video test is explicitly skipped; the
+self-contained PCM playback test still runs. Screenshots are saved in the debug
+app's external files directory.
 
 ## TV behavior
 
@@ -72,12 +94,12 @@ because the JS/Java bridge carries every value as one single string.
 
 ## Build
 
-This workspace currently does not have Android SDK/Gradle tools installed in `PATH`.
-Once Android Studio or the Android command-line tools are installed:
+Use JDK 21 and configure the Android SDK in `local.properties` or
+`ANDROID_HOME`. The repository includes the Gradle wrapper:
 
 ```powershell
 cd android
-gradle :app:assembleDebug
+.\gradlew.bat :app:assembleDebug -PelfixFassung=1.91.9-direkt -PelfixFassungNummer=19109
 ```
 
 Expected APK path:

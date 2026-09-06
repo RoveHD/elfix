@@ -75,6 +75,10 @@ public final class Mitschauen {
 
     /** Was diese Klasse von der Oberflaeche braucht. */
     public interface Umgebung {
+        default boolean nativerSpieler() { return false; }
+        default void nativSteuern(JSONObject urteil, Runnable bereit) { }
+        default JSONObject nativerStand() { return new JSONObject(); }
+        default boolean nativWartet() { return false; }
         /** Der WebView, in dem gerade geschaut wird - oder {@code null}. */
         WebView spieler();
 
@@ -587,6 +591,31 @@ public final class Mitschauen {
             });
     }
 
+    public void nativMelden(JSONObject stand, String aktion) {
+        if (stand == null) return;
+        double position = Math.max(0, stand.optDouble("position", 0));
+        if (aktion == null || aktion.isEmpty()) {
+            meldung(meldeStand + position + ":" + (stand.optBoolean("paused", true) ? "1" : "0")
+                + ":" + Math.max(0, stand.optDouble("duration", 0)));
+        } else meldung(meldeAktion + aktion + ":" + position);
+    }
+
+    public void nativBereit(String url) {
+        zuruecksetzen(null);
+        lageFuer(url, (key, raum) -> {
+            if (!url.equals(umgebung.adresse()) || !umgebung.nativerSpieler()) return;
+            seiteFertig(null, url);
+            anwesendMelden();
+            if (nativeFolgeNachricht != null && gleicheFolge(nativeFolgeNachricht.optString("url"), url)) {
+                JSONObject nachricht = nativeFolgeNachricht;
+                JSONObject urteil = nativeFolgeUrteil;
+                nativeFolgeNachricht = null;
+                nativeFolgeUrteil = null;
+                umgebung.nativSteuern(urteil, () -> bereitMelden(nachricht));
+            } else if (!umgebung.nativWartet()) abgleichen();
+        });
+    }
+
     /**
      * Der Rumpf einer Standmeldung.
      *
@@ -861,6 +890,8 @@ public final class Mitschauen {
         boolean gleichziehen = "syncprepare".equals(nachricht.optString("action", ""));
         try {
             lage.put("binHost", binHost(key));
+            lage.put("nativ", umgebung.nativerSpieler());
+            if (umgebung.nativerSpieler()) lage.put("spielstand", umgebung.nativerStand());
             lage.put("hostId", hostId(key));
             // Ob ueberhaupt dieselbe Folge offen steht. Die Adresse des
             // Absenders zaehlt; steht keine dabei, die der Runde.
@@ -886,9 +917,13 @@ public final class Mitschauen {
                     Log.e(TAG, "Urteil unlesbar", ausnahme);
                     return;
                 }
+                if (umgebung.nativerSpieler() && !adresse.equals(umgebung.adresse())) return;
                 ausfuehren(ansicht, nachricht, urteil);
             });
     }
+
+    private JSONObject nativeFolgeNachricht;
+    private JSONObject nativeFolgeUrteil;
 
     private void ausfuehren(WebView ansicht, JSONObject nachricht, JSONObject urteil) {
         String tun = urteil.optString("tun", "nichts");
@@ -912,11 +947,19 @@ public final class Mitschauen {
                 // Gewechselt: die Bereitmeldung geht trotzdem sofort hinaus,
                 // sonst warten die anderen bis zum Zeitlimit auf ein Geraet,
                 // das gerade eine Seite laedt.
-                bereitMelden(nachricht);
+                if (umgebung.nativerSpieler()) {
+                    nativeFolgeNachricht = nachricht;
+                    nativeFolgeUrteil = urteil;
+                }
+                else bereitMelden(nachricht);
                 return;
             }
         }
         String skript = urteil.optString("skript", "");
+        if (umgebung.nativerSpieler()) {
+            umgebung.nativSteuern(urteil, "syncprepare".equals(tun) ? () -> bereitMelden(nachricht) : null);
+            return;
+        }
         if (skript.isEmpty() || ansicht == null || rahmen == null) return;
         // Der Autostart geht in *jeden* gemeldeten Rahmen, nicht nur in die mit
         // Video. Das ist der Punkt: solange die Quelle hinter der Ueberlagerung

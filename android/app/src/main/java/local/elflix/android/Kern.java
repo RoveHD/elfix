@@ -109,6 +109,9 @@ public final class Kern {
     private final ExecutorService netz = Executors.newFixedThreadPool(4);
     private final Map<String, Antwort> offeneAufrufe = new ConcurrentHashMap<>();
     private final AtomicLong zaehler = new AtomicLong();
+    private final okhttp3.OkHttpClient http = CookieNetz.erstellen();
+    private final Map<String, okhttp3.Call> verbindungen = new ConcurrentHashMap<>();
+    private final java.util.Set<String> netzWartend = ConcurrentHashMap.newKeySet();
     private final List<Runnable> nachStart = new ArrayList<>();
 
     private WebView webView;
@@ -376,6 +379,9 @@ public final class Kern {
     }
 
     public void beenden() {
+        netzWartend.clear();
+        for (okhttp3.Call verbindung : verbindungen.values()) verbindung.cancel();
+        verbindungen.clear();
         netz.shutdownNow();
         if (webView == null) return;
         webView.removeJavascriptInterface("AndroidKern");
@@ -608,7 +614,15 @@ public final class Kern {
 
         @JavascriptInterface
         public void netzStart(String id, String url, String optionenJson) {
+            netzWartend.add(id);
             netz.execute(() -> netzAusfuehren(id, url, optionenJson));
+        }
+
+        @JavascriptInterface
+        public void netzAbbrechen(String id) {
+            netzWartend.remove(id);
+            okhttp3.Call offen = verbindungen.remove(id);
+            if (offen != null) offen.cancel();
         }
     }
 
@@ -631,61 +645,41 @@ public final class Kern {
      * holt aus genau denselben Gruenden ueber die Sitzung des Anbieters.
      */
     private void netzAusfuehren(String id, String adresse, String optionenJson) {
+        if (!netzWartend.contains(id)) return;
         JSONObject antwort = new JSONObject();
-        HttpURLConnection verbindung = null;
+        okhttp3.Call verbindung = null;
         try {
             JSONObject optionen = new JSONObject(optionenJson == null ? "{}" : optionenJson);
-            URL url = new URL(adresse);
-            verbindung = (HttpURLConnection) url.openConnection();
-            verbindung.setRequestMethod(optionen.optString("methode", "GET"));
-            verbindung.setConnectTimeout(NETZ_TIMEOUT_MS);
-            verbindung.setReadTimeout(NETZ_TIMEOUT_MS);
-            verbindung.setInstanceFollowRedirects(true);
-            verbindung.setRequestProperty("User-Agent", NETZ_AGENT);
-            verbindung.setRequestProperty("Accept-Language", "de-DE,de;q=0.9,en;q=0.8");
-
-            String kekse = CookieManager.getInstance().getCookie(adresse);
-            if (kekse != null && !kekse.isEmpty()) verbindung.setRequestProperty("Cookie", kekse);
+            okhttp3.Request.Builder request = new okhttp3.Request.Builder().url(adresse)
+                .header("User-Agent", NETZ_AGENT).header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8");
 
             JSONObject kopf = optionen.optJSONObject("kopf");
             if (kopf != null) {
                 for (java.util.Iterator<String> namen = kopf.keys(); namen.hasNext(); ) {
                     String name = namen.next();
-                    verbindung.setRequestProperty(name, kopf.optString(name));
+                    if (!"cookie".equalsIgnoreCase(name)) request.header(name, kopf.optString(name));
                 }
             }
 
             String koerper = optionen.isNull("koerper") ? null : optionen.optString("koerper", null);
-            if (koerper != null) {
-                verbindung.setDoOutput(true);
-                try (OutputStream aus = verbindung.getOutputStream()) {
-                    aus.write(koerper.getBytes(StandardCharsets.UTF_8));
-                }
+            String methode = optionen.optString("methode", "GET");
+            okhttp3.RequestBody body = koerper == null && ("GET".equals(methode) || "HEAD".equals(methode)) ? null
+                : okhttp3.RequestBody.create(null, (koerper == null ? "" : koerper).getBytes(StandardCharsets.UTF_8));
+            verbindung = http.newCall(request.method(methode, body).build());
+            verbindungen.put(id, verbindung);
+            if (!netzWartend.contains(id)) { verbindung.cancel(); return; }
+            try (okhttp3.Response response = verbindung.execute()) {
+                JSONObject kopfzeilen = new JSONObject();
+                for (String name : response.headers().names()) kopfzeilen.put(name, response.header(name));
+                int grenze = optionen.optInt("maxBytes", 0);
+                String text = response.body() == null ? "" : stromLesen(response.body().byteStream(), grenze);
+                antwort.put("status", response.code());
+                antwort.put("statusText", response.message());
+                antwort.put("url", response.request().url().toString());
+                antwort.put("umgeleitet", !response.request().url().toString().equals(adresse));
+                antwort.put("kopf", kopfzeilen);
+                antwort.put("koerper", text);
             }
-
-            int status = verbindung.getResponseCode();
-            InputStream strom = status >= 400 ? verbindung.getErrorStream() : verbindung.getInputStream();
-            String text = strom == null ? "" : stromLesen(strom);
-
-            JSONObject kopfzeilen = new JSONObject();
-            for (Map.Entry<String, List<String>> eintrag : verbindung.getHeaderFields().entrySet()) {
-                if (eintrag.getKey() == null || eintrag.getValue() == null || eintrag.getValue().isEmpty()) continue;
-                kopfzeilen.put(eintrag.getKey(), eintrag.getValue().get(0));
-            }
-            // Was der Anbieter an Keksen setzt, gehoert in dieselbe Ablage, aus
-            // der die Anbieter-WebViews lesen - sonst laeuft die Sitzung des
-            // Kerns neben der des Browsers her.
-            List<String> gesetzt = verbindung.getHeaderFields().get("Set-Cookie");
-            if (gesetzt != null) {
-                for (String keks : gesetzt) CookieManager.getInstance().setCookie(adresse, keks);
-            }
-
-            antwort.put("status", status);
-            antwort.put("statusText", verbindung.getResponseMessage() == null ? "" : verbindung.getResponseMessage());
-            antwort.put("url", verbindung.getURL().toString());
-            antwort.put("umgeleitet", !verbindung.getURL().toString().equals(adresse));
-            antwort.put("kopf", kopfzeilen);
-            antwort.put("koerper", text);
         } catch (Exception fehler) {
             try {
                 antwort = new JSONObject().put("fehler", String.valueOf(fehler.getMessage() == null ? fehler : fehler.getMessage()));
@@ -693,7 +687,9 @@ public final class Kern {
                 // Ein JSONObject mit einem einzigen Textfeld kann nicht scheitern.
             }
         } finally {
-            if (verbindung != null) verbindung.disconnect();
+            verbindungen.remove(id);
+            netzWartend.remove(id);
+            if (verbindung != null) verbindung.cancel();
         }
         String nutzlast = antwort.toString();
         haupt.post(() -> {
@@ -704,11 +700,18 @@ public final class Kern {
     }
 
     private static String stromLesen(InputStream strom) throws Exception {
+        return stromLesen(strom, 0);
+    }
+
+    private static String stromLesen(InputStream strom, int grenze) throws Exception {
         try (InputStream offen = strom) {
             ByteArrayOutputStream puffer = new ByteArrayOutputStream(16384);
             byte[] block = new byte[8192];
             int gelesen;
-            while ((gelesen = offen.read(block)) > 0) puffer.write(block, 0, gelesen);
+            while ((gelesen = offen.read(block)) > 0) {
+                if (grenze > 0 && puffer.size() + gelesen > grenze) throw new java.io.IOException("Antwort zu gross");
+                puffer.write(block, 0, gelesen);
+            }
             return puffer.toString(StandardCharsets.UTF_8.name());
         }
     }

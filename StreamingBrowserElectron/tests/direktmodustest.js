@@ -70,12 +70,12 @@ pruefe("Die Anbieteransicht wird im Direktbetrieb nicht eingehaengt",
   /overlayReasons\.size === 0 && !direktModus\(target\)/.test(navBereich),
   "sonst liegt die Seite sichtbar im Fenster");
 pruefe("Nach jeder Navigation uebernimmt der Direktbetrieb",
-  /if \(direktModus\(target\)\) \{\s*\n\s*direktUebernehmen\(provider, target\)/.test(navBereich),
+  /if \(direktModus\(target\)\) \{\s*\n\s*direktUebernehmen\(provider, target, signal\)/.test(navBereich),
   "sonst bliebe eine leere Flaeche stehen");
 // Und sie laedt die Seite selbst - hier zu laden hiesse, sie zweimal zu laden:
 // unmittelbar nach loadURL nennt getURL() noch die alte Adresse.
 pruefe("Geladen wird die Seite genau einmal",
-  navBereich.indexOf("direktUebernehmen(provider, target)") < navBereich.indexOf("view.webContents.loadURL(target)"),
+  navBereich.indexOf("direktUebernehmen(provider, target, signal)") < navBereich.indexOf("view.webContents.loadURL(target)"),
   "die Werkbank laedt, nicht die Navigation davor");
 // YouTube ist ausgenommen: dort gehoert der Player zur Seite - Vorschlaege,
 // Kommentare, die eigene Runde, das Ueberspringen bezahlter Einschuebe. Sie zu
@@ -112,20 +112,20 @@ const uebernahmeBereich = uebernahme.slice(0, uebernahme.indexOf("\n}\n"));
 // Ohne das las die zweite Runde eine Seite, vor der inzwischen der Player
 // liegt - und meldete "Kein Hoster auf der Seite", obwohl zwoelf dastanden.
 pruefe("Eine Folge wird gespielt",
-  uebernahmeBereich.includes("direktFolgeSpielen(provider, url, { links })"));
+  uebernahmeBereich.includes("direktFolgeSpielen(provider, url, { links, signal })"));
 // Ein Film hat keine Folgennummer, nur eine Seite mit Hostern darauf. Ginge
 // die Entscheidung ueber die Adresse, landete er bei "keine Folge gefunden".
 pruefe("Ein Film auch - entschieden wird an den Hosterkacheln",
-  uebernahmeBereich.includes("const links = await direktLinksLesen(provider, view);")
+  uebernahmeBereich.includes("const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view)")
   && uebernahmeBereich.indexOf("direktLinksLesen") < uebernahmeBereich.indexOf("folgenlisteLesen"),
   "nicht an der Adresse");
 pruefe("Eine Serie wird zur Auswahl",
-  uebernahmeBereich.includes("direktAuswahlOeffnen(provider, url)"));
+  uebernahmeBereich.includes("direktAuswahlOeffnen(provider, url, { signal })"));
 pruefe("Alles andere endet in der eigenen Oberflaeche",
   uebernahmeBereich.includes("direktZurueckZurOberflaeche("),
   "Startseite, Katalog und Suche des Anbieters haben hier nichts zu suchen");
 pruefe("Und waehrend der Aufloesung steht der Player schon da",
-  uebernahmeBereich.includes("{ laden: true }")
+  uebernahmeBereich.includes("{ laden: true, signal }")
   && spielerSkript.includes("if (auftrag.laden)"),
   "sonst waere die Flaeche sekundenlang leer und stumm");
 

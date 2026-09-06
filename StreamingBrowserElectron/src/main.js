@@ -48,6 +48,7 @@ const voeQualitaet = require("./voe-qualitaet");
 const direktlinks = require("./direktlinks");
 const direktfolgen = require("./direktfolgen");
 const direktlauf = require("./direktlauf");
+const direktbeobachtung = require("./direktbeobachtung");
 // Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
 // der Watchparty fuer Serien nur die Leitung.
 const { YoutubeWatchparty } = require("./youtube-watchparty");
@@ -555,7 +556,7 @@ function createMainWindow() {
   });
   mainWindow.on("focus", () => {
     if (activeView) {
-      activeView.webContents.setAudioMuted(false);
+      activeView.webContents.setAudioMuted(Boolean(spielerLauf));
     }
   });
   mainWindow.webContents.on("before-input-event", (event, input) => {
@@ -850,12 +851,19 @@ function publicUpdateState() {
 }
 
 function configureBrowserSession() {
+  browserSession.webRequest.onResponseStarted((details) => {
+    if (details.statusCode < 200 || details.statusCode >= 400) return;
+    direktBeobachter.get(details.webContentsId)?.({
+      adresse: details.url, rahmen: frameQuelle(details)
+    });
+  });
   browserSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowed = ["fullscreen"].includes(permission);
     callback(allowed);
   });
 
-  browserSession.on("will-download", (_event, item) => {
+  browserSession.on("will-download", (event, item, inhalt) => {
+    if (direktBeobachter.has(inhalt?.id)) { event.preventDefault(); return; }
     const downloads = app.getPath("downloads");
     item.setSavePath(path.join(downloads, item.getFilename()));
   });
@@ -933,7 +941,8 @@ function installAdblock() {
       return;
     }
 
-    if (details.resourceType === "mainFrame" && shouldBlockProviderNavigation(details.url, provider)) {
+    if (details.resourceType === "mainFrame" && !direktBeobachter.has(details.webContentsId)
+      && shouldBlockProviderNavigation(details.url, provider)) {
       logBlockedUrl(details.url, provider, "site-lock", "navigation");
       callback({ cancel: true });
       return;
@@ -2640,6 +2649,8 @@ ipcMain.handle("data:confirm-reset", async () => {
 });
 
 async function navigateProvider(provider, url) {
+  direktSpielerSchliessen("navigation");
+  const signal = direktAuftragBeginnen();
   if (pendingAutostart && pendingAutostart.providerId !== provider.id) {
     finishAutostart("anbieterwechsel");
   }
@@ -2649,6 +2660,7 @@ async function navigateProvider(provider, url) {
   if (previousView && previousProviderId !== provider.id && settings.playback.pauseOnProviderSwitch) {
     await pauseProviderForSwitch(previousProviderId, previousView, true);
   }
+  if (signal.aborted) return;
 
   activeProviderId = provider.id;
   const view = getProviderView(provider);
@@ -2689,7 +2701,7 @@ async function navigateProvider(provider, url) {
   // alte Adresse, und die Werkbank haette dieselbe Seite noch einmal geholt.
   // Das kostet nichts an Richtigkeit und alles an Zeit bis zum ersten Bild.
   if (direktModus(target)) {
-    direktUebernehmen(provider, target).catch(() => {});
+    direktUebernehmen(provider, target, signal).catch(() => {});
     return;
   }
 
@@ -4162,6 +4174,7 @@ function setOverlayOpen(reason, isOpen) {
 }
 
 function pauseActivePlayback(mute) {
+  if (spielerLauf && spielerBefehl({ tun: "fern", befehl: "pause" })) return;
   if (activeView) {
     pauseViewPlayback(activeView, mute);
   }
@@ -7390,6 +7403,25 @@ function syncFern() {
 // Fernbedienung steuert, was zu sehen ist, und nicht eine Seite, die man
 // vorhin einmal offen hatte.
 async function fernBefehl(befehl) {
+  if (spielerLauf) {
+    if (befehl === "naechste" || befehl === "vorherige") {
+      const lauf = spielerLauf;
+      const anbieter = spielerAnbieter();
+      if (!anbieter) return;
+      const stand = await folgenlisteLesen(anbieter, lauf.url);
+      if (spielerLauf !== lauf) return;
+      const kennung = episodeIdentity(lauf.url);
+      const liste = direktfolgen.geordnet(stand?.folgen).filter(direktfolgen.spielbar);
+      const index = liste.findIndex((folge) => direktfolgen.istLaufende(folge, kennung));
+      if (befehl === "naechste" && !lauf.naechste) await spielerNaechsteNachtragen(anbieter, lauf.url);
+      if (spielerLauf !== lauf) return;
+      const ziel = befehl === "naechste" ? lauf.naechste?.url : (index > 0 ? liste[index - 1].url : "");
+      if (ziel) spielerBefehl({ tun: "fern", befehl: "folge", url: ziel });
+      return;
+    }
+    spielerBefehl({ tun: "fern", befehl, vor: FERN_VOR_S, zurueck: FERN_ZURUECK_S });
+    return;
+  }
   const provider = activeProvider();
   if (!isLiveView(activeView)) return;
 
@@ -7603,7 +7635,7 @@ async function fernStandMelden() {
     // Der Takt ist genauer, kommt aber nur in einer Runde; sonst gilt der
     // regulaere Stand. Was juenger ist, gewinnt.
     const kandidaten = [spielerTakt, spielerLetzterStand]
-      .filter((wert) => wert && Date.now() - wert.at < 15000)
+      .filter((wert) => wert && wert.at > 0)
       .sort((links, rechts) => rechts.at - links.at);
     const stand = kandidaten[0] || null;
     fernbedienung.standMelden({
@@ -7613,6 +7645,7 @@ async function fernStandMelden() {
         ? (kennung.season > 0 ? `Staffel ${kennung.season} · Folge ${kennung.episode}` : `Folge ${kennung.episode}`)
         : "",
       laeuft: Boolean(stand && stand.laeuft),
+      stumm: Boolean(spielerLetzterStand?.stumm),
       position: stand ? stand.stelle : 0,
       dauer: sanitizePositiveNumber(stand?.dauer)
         || sanitizePositiveNumber(spielerLetzterStand?.dauer)
@@ -7886,6 +7919,15 @@ async function installHosterQualitaet(view) {
 /** So viele Hoster einer Folge werden hoechstens durchprobiert. */
 const DIREKT_HOECHSTVERSUCHE = 3;
 
+let direktLaden = new AbortController();
+const direktBeobachter = new Map();
+
+function direktAuftragBeginnen() {
+  direktLaden.abort();
+  direktLaden = new AbortController();
+  return direktLaden.signal;
+}
+
 /**
  * Der Aufloeser - erst dann gebaut, wenn er gebraucht wird.
  *
@@ -7952,18 +7994,28 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   if (!aufloeser) return { ok: false, grund: "Sitzung nicht bereit" };
   if (!isLiveView(view)) return { ok: false, grund: "Keine Folge geöffnet" };
 
-  const seite = view.webContents.getURL();
-  const alle = optionen.links?.length
+  const seite = optionen.seite || view.webContents.getURL();
+  const alle = Array.isArray(optionen.links)
     ? optionen.links
     : await direktLinksLesen(provider, view);
-  const links = optionen.nurDieser
-    ? alle.filter((eintrag) => eintrag.adresse === optionen.nurDieser)
-    : alle;
+  // Filmo stellt bei jedem Lesen neue Marken aus. Die Auswahl bleibt deshalb
+  // ueber Hoster und Fassung erhalten, auch wenn die Adresse sich aendert.
+  const wahl = optionen.hosterWahl;
+  const genau = optionen.nurDieser && alle.find((eintrag) => eintrag.adresse === optionen.nurDieser);
+  const links = genau ? [genau] : wahl
+    ? alle.filter((eintrag) => eintrag.hoster === wahl.hoster
+      && eintrag.sprache === wahl.sprache && eintrag.spracheRoh === wahl.spracheRoh)
+    : optionen.nurDieser ? [] : alle;
   if (!links.length) return { ok: false, grund: "Kein Hoster auf der Seite" };
 
   const gescheitert = [];
-  for (const eintrag of links.slice(0, optionen.nurDieser ? 1 : DIREKT_HOECHSTVERSUCHE)) {
-    const ergebnis = await aufloeser.aufloesen(eintrag.adresse, seite);
+  for (const eintrag of links.slice(0, optionen.nurDieser || wahl ? 1 : DIREKT_HOECHSTVERSUCHE)) {
+    if (optionen.signal?.aborted) return { ok: false, abgebrochen: true };
+    let ergebnis = await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+    if (!ergebnis.ok && ergebnis.seite && !optionen.signal?.aborted) {
+      ergebnis = await direktQuelleBeobachten(provider, ergebnis.seite || eintrag.adresse, seite, optionen.signal)
+        .catch(() => ergebnis);
+    }
     if (ergebnis.ok) {
       console.log(`[ELFIX DIREKT] ${eintrag.hoster || "?"}: ${ergebnis.quelle.typ} `
         + `${ergebnis.quelle.hoehe || "?"}p ueber ${ergebnis.stationen.length} Station(en)`);
@@ -7973,6 +8025,48 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   }
   console.log(`[ELFIX DIREKT] nichts gefunden - ${gescheitert.join(" | ")}`);
   return { ok: false, grund: gescheitert[0] || "Keine Quelle", versuche: gescheitert, hosterliste: alle };
+}
+
+async function direktQuelleBeobachten(provider, adresse, referer, signal) {
+  return direktbeobachtung.beobachten({
+    kennung: browserSession.getUserAgent(),
+    holen: (url, optionen) => browserSession.fetch(url, optionen),
+    oeffnen: async (url, von, aufnehmen) => {
+      const view = new WebContentsView({ webPreferences: {
+        session: browserSession, contextIsolation: true, sandbox: true,
+        nodeIntegration: false, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required"
+      } });
+      const inhalt = view.webContents;
+      const id = inhalt.id;
+      direktBeobachter.set(id, aufnehmen);
+      webContentsProvider.set(id, provider.id);
+      inhalt.setAudioMuted(true);
+      inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
+      inhalt.on("will-navigate", (event, ziel) => {
+        if (!providerModel.isHttpUrl(ziel)) event.preventDefault();
+      });
+      inhalt.loadURL(url, { httpReferrer: von }).catch(() => {});
+      return {
+        lesen: async () => {
+          if (!isLiveView(view)) return {};
+          const ergebnisse = await executeJavaScriptInMediaFrames(view, `(() => {
+            const video = Array.from(document.querySelectorAll("video"))
+              .sort((a, b) => (Number(b.duration) || 0) - (Number(a.duration) || 0))[0];
+            if (video) { video.muted = true; video.play().catch(() => {}); }
+            else document.querySelector(".jw-icon-playback, .vjs-big-play-button, .plyr__control--overlaid")?.click();
+            return { currentSrc: video?.currentSrc || "", dauer: Number(video?.duration) || 0, seite: location.href };
+          })()`);
+          return ergebnisse.map((ergebnis) => ergebnis?.value || ergebnis || {})
+            .sort((a, b) => (b.dauer || 0) - (a.dauer || 0))[0] || { seite: inhalt.getURL() };
+        },
+        schliessen: () => {
+          direktBeobachter.delete(id);
+          webContentsProvider.delete(id);
+          if (!inhalt.isDestroyed()) inhalt.close();
+        }
+      };
+    }
+  }, adresse, referer, signal);
 }
 
 /* --------------------------------------------------------------- Die Werkbank
@@ -7995,6 +8089,25 @@ const FOLGEN_FRISCHE_MS = 10 * 60 * 1000;
 
 /** Gelesene Folgenlisten je Staffelseite. */
 const folgenSpeicher = new Map();
+const werkbankAuftraege = new Map();
+
+// Navigation und DOM-Lesen gehoeren zusammen. Die Folgenliste darf die Seite
+// nicht unter einem gleichzeitig laufenden Hoster-Lesevorgang austauschen.
+async function werkbankLesen(provider, adresse, lesen, gueltig = () => true) {
+  const vorher = werkbankAuftraege.get(provider.id) || Promise.resolve();
+  const auftrag = vorher.catch(() => {}).then(async () => {
+    if (!gueltig()) return null;
+    const view = await werkbankAn(provider, adresse);
+    if (!view || !gueltig()) return null;
+    return lesen(view);
+  });
+  werkbankAuftraege.set(provider.id, auftrag);
+  try {
+    return await auftrag;
+  } finally {
+    if (werkbankAuftraege.get(provider.id) === auftrag) werkbankAuftraege.delete(provider.id);
+  }
+}
 
 /** Zwei Adressen meinen dieselbe Seite, wenn nur die Sprungmarke sich unterscheidet. */
 function seiteGleich(links, rechts) {
@@ -8170,11 +8283,11 @@ async function folgenlisteLesen(provider, adresse, optionen = {}) {
     return gemerkt.stand;
   }
 
-  const view = await werkbankAn(provider, staffelUrl);
-  if (!view) return gemerkt?.stand || null;
   let stand = null;
   try {
-    stand = await view.webContents.executeJavaScript(seitendaten.uebersichtSkript(), true);
+    stand = await werkbankLesen(provider, staffelUrl,
+      (view) => view.webContents.executeJavaScript(seitendaten.uebersichtSkript(), true),
+      optionen.gueltig);
   } catch {
     return gemerkt?.stand || null;
   }
@@ -8217,6 +8330,7 @@ let spielerSession = null;
 let spielerView = null;
 /** Was gerade laeuft: Anbieter, Folgenadresse, Quelle, Titel. */
 let spielerLauf = null;
+let spielerAuftragId = 0;
 /** Die Kopfzeilen, unter denen die laufende Quelle geholt werden darf. */
 let spielerKopfzeilen = null;
 
@@ -8265,11 +8379,16 @@ function spielerLageSetzen() {
  * und nur hier.
  */
 function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
-  const eintrag = favorites.find((favorite) => favorite.providerId === provider?.id
-    && episodeIdentity(favorite.url)?.key === episodeIdentity(url)?.key);
+  const passend = favorites.filter((favorite) => favorite.providerId === provider?.id
+    && normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(url));
+  const eintrag = passend.find((favorite) => favorite.id === activeFavoriteId)
+    || passend.find((favorite) => !favorite.watchpartyRoom);
 
   spielerKopfzeilen = ergebnis.kopfzeilen;
+  spielerLetzterStand = null;
+  spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
   spielerLauf = {
+    id: ++spielerAuftragId,
     providerId: provider.id,
     url,
     quelle: ergebnis.quelle,
@@ -8287,7 +8406,10 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
     auswahl: Boolean(optionen.auswahl),
     // Der Player vor dem Video: er steht schon da, waehrend noch aufgeloest
     // wird.
-    laden: Boolean(optionen.laden)
+    laden: Boolean(optionen.laden),
+    // Die Folge liegt bereit, laeuft aber nicht: die Liste bleibt offen, und
+    // gestartet wird erst auf Knopfdruck. Siehe ersteFolgeVorladen().
+    vorladen: Boolean(optionen.vorladen)
   };
   return spielerLauf;
 }
@@ -8325,6 +8447,7 @@ function spielerMarke() {
 function spielerAuftrag() {
   if (!spielerLauf) return null;
   return {
+    id: spielerLauf.id,
     adresse: spielerLauf.quelle.adresse,
     typ: spielerLauf.quelle.typ,
     titel: spielerLauf.titel,
@@ -8370,7 +8493,8 @@ function spielerAuftrag() {
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
     runde: Boolean(spielerRunde()),
     auswahl: Boolean(spielerLauf.auswahl),
-    laden: Boolean(spielerLauf.laden)
+    laden: Boolean(spielerLauf.laden),
+    vorladen: Boolean(spielerLauf.vorladen)
   };
 }
 
@@ -8382,10 +8506,23 @@ function spielerAuftrag() {
  * schickt nach, statt den Start aufzuhalten.
  */
 async function spielerNaechsteNachtragen(provider, url) {
-  const stand = await folgenlisteLesen(provider, url).catch(() => null);
-  if (!spielerLauf || spielerLauf.url !== url) return;
+  const lauf = spielerLauf;
+  if (!lauf || lauf.url !== url) return;
+  const gueltig = () => spielerLauf === lauf;
+  const stand = await folgenlisteLesen(provider, url, { gueltig }).catch(() => null);
+  if (!gueltig()) return;
   const kennung = episodeIdentity(url);
-  const naechste = direktfolgen.naechste(stand, kennung);
+  let naechste = direktfolgen.naechste(stand, kennung);
+  if (!naechste && kennung) {
+    const staffeln = (stand?.staffeln || []).filter((staffel) => staffel.staffel > kennung.season)
+      .sort((links, rechts) => links.staffel - rechts.staffel);
+    for (const staffel of staffeln) {
+      const weitere = await folgenlisteLesen(provider, staffel.url, { gueltig }).catch(() => null);
+      if (!gueltig()) return;
+      naechste = direktfolgen.geordnet(weitere?.folgen).find(direktfolgen.spielbar) || null;
+      if (naechste) break;
+    }
+  }
   spielerLauf.naechste = naechste
     ? { url: naechste.url, beschriftung: direktfolgen.beschriftung(naechste) }
     : null;
@@ -8419,12 +8556,13 @@ async function spielerNaechsteNachtragen(provider, url) {
  * eine.
  */
 async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
+  if (optionen.signal?.aborted) return false;
   if (!mainWindow || mainWindow.isDestroyed()) return false;
 
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     spielerLaufSetzen(provider, url, ergebnis, optionen);
     spielerView.webContents.send("spieler:auftrag", spielerAuftrag());
-    spielerNaechsteNachtragen(provider, url).catch(() => {});
+    if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
     return true;
   }
 
@@ -8479,16 +8617,17 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   }
 
   await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(() => {});
-  if (spielerView !== view) return false;
+  if (spielerView !== view || optionen.signal?.aborted) return false;
   mainWindow.contentView.addChildView(view);
   spielerLageSetzen();
   view.webContents.focus();
-  spielerNaechsteNachtragen(provider, url).catch(() => {});
+  if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
   return true;
 }
 
 /** Zu. Ohne laufenden Player kostet das nichts. */
 function direktSpielerSchliessen(grund = "") {
+  direktLaden.abort();
   if (!spielerView) return;
   const view = spielerView;
   spielerView = null;
@@ -8523,14 +8662,17 @@ ipcMain.on("spieler:bereit", (ereignis) => {
  */
 ipcMain.on("spieler:stand", (ereignis, stand) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
+  if (stand?.auftragId !== spielerLauf.id) return;
   // Fuer die Fernbedienung: sie braucht Stelle und Dauer auch ausserhalb einer
   // Watchparty, und `spieler:takt` laeuft nur in einer Runde.
   spielerLetzterStand = {
     stelle: sanitizePositiveNumber(stand?.stelle),
     dauer: sanitizePositiveNumber(stand?.dauer),
-    laeuft: stand?.beendet ? false : true,
+    laeuft: Boolean(stand?.laeuft) && !stand?.beendet,
+    stumm: Boolean(stand?.stumm),
     at: Date.now()
   };
+  fernStandMelden().catch(() => {});
   const provider = enabledProviders().find((item) => item.id === spielerLauf.providerId);
   if (!provider) return;
 
@@ -8622,11 +8764,22 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
     return { ok: false, grund: "Kein Titel geöffnet" };
   }
 
-  const view = await werkbankAn(provider, url);
+  const signal = optionen.signal || direktAuftragBeginnen();
+  if (signal.aborted) return { ok: false, abgebrochen: true };
+  const gelesen = optionen.links?.length
+    ? { view: getProviderView(provider), links: optionen.links }
+    : await werkbankLesen(provider, url, async (view) => ({
+      view, links: await direktLinksLesen(provider, view)
+    }), () => !signal.aborted);
+  if (signal.aborted) return { ok: false, abgebrochen: true };
+  const view = gelesen?.view;
   if (!view) return { ok: false, grund: "Die Folgenseite lädt nicht" };
 
   const ergebnis = await direktQuelleFuerAnsicht(provider, view, {
     nurDieser: optionen.hosterLink || "",
+    hosterWahl: optionen.hosterWahl,
+    signal,
+    seite: url,
     // Schon gelesene Kacheln werden weitergereicht statt neu geholt.
     //
     // Das war der Grund, warum "Weiterschauen" in der Auswahl endete:
@@ -8635,11 +8788,12 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
     // einmal. Zu diesem Zeitpunkt liegt der Player davor, das Skript kommt
     // nicht mehr durch, und heraus kam "Kein Hoster auf der Seite". Ein
     // zweiter Lesevorgang war ohnehin nur verlorene Zeit.
-    links: Array.isArray(optionen.links) ? optionen.links : null
+    links: gelesen.links
   });
-  if (!ergebnis.ok) return { ok: false, grund: ergebnis.grund };
+  if (signal.aborted) return { ok: false, abgebrochen: true };
+  if (!ergebnis.ok) return { ...ergebnis, hosterliste: ergebnis.hosterliste || gelesen.links };
 
-  const offen = await direktSpielerOeffnen(provider, url, ergebnis, optionen);
+  const offen = await direktSpielerOeffnen(provider, url, ergebnis, { ...optionen, signal });
   if (!offen) return { ok: false, grund: "Player ließ sich nicht öffnen" };
   return {
     ok: true,
@@ -8688,17 +8842,72 @@ function direktModus(adresse = "") {
  * auf, zeigt die Folgenliste und wartet. Ein eigener Serienschirm daneben waere
  * dieselbe Liste ein zweites Mal.
  */
-async function direktAuswahlOeffnen(provider, url) {
+async function direktAuswahlOeffnen(provider, url, optionen = {}) {
   const leer = {
     ok: true,
     quelle: { adresse: "", typ: "", hoehe: 0 },
     kopfzeilen: null,
     hoster: "",
     link: "",
-    hosterliste: []
+    hosterliste: optionen.hosterliste || []
   };
-  const offen = await direktSpielerOeffnen(provider, url, leer, { startzeit: 0, auswahl: true });
+  const offen = await direktSpielerOeffnen(provider, url, leer, { ...optionen, startzeit: 0, auswahl: true });
   return offen ? { ok: true, auswahl: true } : { ok: false, grund: "Player ließ sich nicht öffnen" };
+}
+
+/**
+ * Steht die Auswahl zu dieser Serie noch da?
+ *
+ * Das Vorladen dauert ein paar Sekunden, und in dieser Zeit kann laengst eine
+ * Folge gewaehlt worden sein. Dann ist die vorgeladene erste Folge nicht mehr
+ * gefragt - sie wuerde die laufende verdraengen.
+ */
+function auswahlNochOffen(url) {
+  return Boolean(spielerLauf && spielerLauf.auswahl && spielerLauf.url === url);
+}
+
+/** Die erste spielbare Folge der Liste - niedrigste Staffel, niedrigste Nummer. */
+function ersteFolgeAus(stand, url) {
+  const liste = direktfolgen.geordnet(stand?.folgen).filter(direktfolgen.spielbar);
+  return String(liste[0]?.url || "") || firstEpisodeUrl(String(url || ""));
+}
+
+/**
+ * Die erste Folge bereitlegen, waehrend die Auswahl dasteht.
+ *
+ * Wer eine Serie zum ersten Mal aufmacht, waehlt seine Folge aus der Liste -
+ * und wartet danach noch einmal: Seite laden, Hoster lesen, Quelle aufloesen.
+ * Das sind dieselben Sekunden, die hier ungenutzt verstreichen, waehrend die
+ * Liste offen dasteht. Also laeuft die Aufloesung schon los, und zwar fuer die
+ * Folge, die fast immer gemeint ist - Staffel 1, Folge 1.
+ *
+ * Gespielt wird dabei nichts. Die Liste bleibt offen, das Video steht am
+ * Anfang und wartet; wer eine andere Folge nimmt, wirft nur eine fertige
+ * Aufloesung weg und keine begonnene Wiedergabe. Und wer wirklich mit Folge 1
+ * anfaengt, drueckt auf Start und sieht sofort ein Bild.
+ *
+ * Laeuft nebenher: der Rueckweg des Aufrufers wartet nicht darauf.
+ */
+async function ersteFolgeVorladen(provider, url, stand, signal = direktLaden.signal) {
+  const ziel = ersteFolgeAus(stand, url);
+  if (!ziel || !providerModel.isHttpUrl(ziel) || !auswahlNochOffen(url)) return;
+  // Dieselbe Seite: dann gibt es nichts vorzuladen - die Auswahl steht ja
+  // gerade deshalb da, weil hier keine Quelle zu finden war.
+  if (seiteGleich(ziel, url)) return;
+
+  const gueltig = () => !signal.aborted && auswahlNochOffen(url);
+  const gelesen = await werkbankLesen(provider, ziel, async (view) => ({
+    view, links: await direktLinksLesen(provider, view)
+  }), gueltig);
+  if (!gelesen || !gueltig()) return;
+  const ergebnis = await direktQuelleFuerAnsicht(provider, gelesen.view, { links: gelesen.links, seite: ziel, signal });
+  if (!ergebnis.ok) {
+    console.log(`[ELFIX DIREKT] Vorladen von ${kurzeUrl(ziel)} ohne Quelle (${ergebnis.grund})`);
+    return;
+  }
+  if (!gueltig()) return;
+  console.log(`[ELFIX DIREKT] erste Folge liegt bereit: ${kurzeUrl(ziel)} (${ergebnis.hoster})`);
+  await direktSpielerOeffnen(provider, ziel, ergebnis, { startzeit: 0, vorladen: true, signal });
 }
 
 /**
@@ -8708,11 +8917,12 @@ async function direktAuswahlOeffnen(provider, url) {
  * steht da, oder die eigene Oberflaeche kommt zurueck. Was nicht passiert: ein
  * leerer schwarzer Bereich, hinter dem unsichtbar eine Anbieterseite steht.
  */
-async function direktUebernehmen(provider, url) {
+async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()) {
   if (!direktModus(url) || !providerModel.isHttpUrl(url)) return;
-
-  const view = await werkbankAn(provider, url);
-  if (!view) {
+  const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view),
+    () => !signal.aborted);
+  if (signal.aborted) return;
+  if (!links) {
     await direktZurueckZurOberflaeche("Die Seite des Anbieters lädt nicht");
     return;
   }
@@ -8723,11 +8933,10 @@ async function direktUebernehmen(provider, url) {
   // keine Nummer, nur eine Seite mit Hostern darauf, und ginge er ueber die
   // Adresse, landete er bei "keine Folge gefunden" statt im Player. Wo Hoster
   // stehen, gibt es etwas zu spielen; das gilt fuer beides.
-  const links = await direktLinksLesen(provider, view);
   // Welchen der drei Wege es nimmt, steht bisher nur im Ergebnis. Ohne diese
   // Zeile sieht "der Player zeigt die Auswahl" von aussen genauso aus wie
   // "die Quelle liess sich nicht lesen" - und beides hat verschiedene Gruende.
-  console.log(`[ELFIX DIREKT] ${kurzeUrl(view.webContents.getURL())}: `
+  console.log(`[ELFIX DIREKT] ${kurzeUrl(url)}: `
     + `${links.length} Hosterkachel(n)`);
 
   if (links.length) {
@@ -8737,14 +8946,17 @@ async function direktUebernehmen(provider, url) {
     // passiert.
     await direktSpielerOeffnen(provider, url, {
       ok: true, quelle: { adresse: "", typ: "", hoehe: 0 }, kopfzeilen: null,
-      hoster: "", link: "", hosterliste: []
-    }, { laden: true });
-    const ergebnis = await direktFolgeSpielen(provider, url, { links });
+      hoster: "", link: "", hosterliste: links
+    }, { laden: true, signal });
+    if (signal.aborted) return;
+    const ergebnis = await direktFolgeSpielen(provider, url, { links, signal });
+    if (signal.aborted) return;
     if (ergebnis.ok) return;
     // Keine Quelle: dann wenigstens die Auswahl, dort steht auch die
     // Hosterwahl. Und wenn selbst die nicht zu lesen ist, die Oberflaeche.
     console.log(`[ELFIX DIREKT] keine Quelle (${ergebnis.grund}) - es bleibt bei der Auswahl`);
-    const auswahl = await direktAuswahlOeffnen(provider, url);
+    const auswahl = await direktAuswahlOeffnen(provider, url, { hosterliste: ergebnis.hosterliste || links, signal });
+    if (signal.aborted) return;
     sendToast(`Keine direkte Quelle: ${ergebnis.grund}`);
     if (auswahl.ok) return;
     await direktZurueckZurOberflaeche("");
@@ -8753,7 +8965,8 @@ async function direktUebernehmen(provider, url) {
 
   // Keine Hoster, aber vielleicht eine Folgenliste: die Serien- oder
   // Staffelseite.
-  const stand = await folgenlisteLesen(provider, url).catch(() => null);
+  const stand = await folgenlisteLesen(provider, url, { gueltig: () => !signal.aborted }).catch(() => null);
+  if (signal.aborted) return;
   if (stand) {
     /*
      * Beim Weiterschauen wird nicht gefragt.
@@ -8777,12 +8990,18 @@ async function direktUebernehmen(provider, url) {
       && episodeIdentity(favorite.url));
     if (weiter && normalizeFavoriteUrl(weiter.url) !== normalizeFavoriteUrl(url)) {
       const ergebnis = await direktFolgeSpielen(provider, weiter.url, {
-        startzeit: sanitizePositiveNumber(weiter.currentTime || weiter.position)
+        startzeit: sanitizePositiveNumber(weiter.currentTime || weiter.position), signal
       });
+      if (signal.aborted) return;
       if (ergebnis.ok) return;
     }
     console.log("[ELFIX DIREKT] kein Hoster auf der Seite - es bleibt bei der Auswahl");
-    await direktAuswahlOeffnen(provider, url);
+    await direktAuswahlOeffnen(provider, url, { signal });
+    if (signal.aborted) return;
+    // Neu angefangen: dann liegt die erste Folge gleich bereit. Nur ohne
+    // eigenen Stand - wer schon irgendwo steht, ist oben weitergelaufen, und
+    // ihm Folge 1 unterzuschieben waere ein Rueckschritt.
+    if (!weiter) ersteFolgeVorladen(provider, url, stand, signal).catch(() => {});
     return;
   }
 
@@ -8955,6 +9174,7 @@ ipcMain.handle("spieler:hoster", async (ereignis, link, stelle) => {
   }
   return direktFolgeSpielen(provider, spielerLauf.url, {
     hosterLink: gewaehlt.adresse,
+    hosterWahl: gewaehlt,
     startzeit: sanitizePositiveNumber(stelle)
   });
 });
@@ -9164,6 +9384,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
 /** Der Takt des eigenen Players - einmal je Sekunde, solange eine Runde laeuft. */
 ipcMain.on("spieler:takt", (ereignis, takt) => {
   if (!vomSpieler(ereignis)) return;
+  if (takt?.auftragId !== spielerLauf.id) return;
   spielerTakt = {
     stelle: sanitizePositiveNumber(takt?.stelle),
     // Die Dauer geht mit: die Fernbedienung zeigt einen Balken, und ein Balken

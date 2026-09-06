@@ -116,11 +116,21 @@ let offeneStaffel = 0;
 let wechselLaeuft = false;
 /** Ob die gespeicherte Stelle fuer diesen Auftrag schon angesprungen wurde. */
 let startGesetzt = false;
+/**
+ * Die Folge liegt bereit, gewaehlt ist sie nicht.
+ *
+ * Beim Aufmachen einer neuen Serie laedt ELFIX die erste Folge schon einmal
+ * vor, waehrend die Liste offen dasteht. Sie darf dabei nicht von selbst
+ * losgehen: gewaehlt wurde noch nichts, und ein Film, der ungefragt anfaengt,
+ * waere genau das, was der eigene Player abschaffen sollte.
+ */
+let vorgeladen = false;
 
 let zuletztGemeldet = 0;
 let ruheUhr = 0;
 let weiterUhr = 0;
 let weiterRest = 0;
+let weiterVerworfen = false;
 
 /* ------------------------------------------------------------- Kleinigkeiten */
 
@@ -251,6 +261,10 @@ function ausRunde() {
  */
 function steuernAusRunde(befehl) {
   if (!befehl) return;
+  if (befehl.tun === "fern") {
+    fernSteuern(befehl);
+    return;
+  }
   ausRundeBis = Date.now() + 900;
   const stelle = Number(befehl.stelle);
   if (befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0) {
@@ -259,6 +273,26 @@ function steuernAusRunde(befehl) {
   }
   if (befehl.laufen) bild.play().catch(() => {});
   else bild.pause();
+}
+
+function fernSteuern(auftragFern) {
+  const befehl = auftragFern.befehl;
+  if (befehl === "pause") bild.pause();
+  else if (befehl === "abspielen") bild.play().catch(() => {});
+  else if (befehl === "umschalten") spielenUmschalten();
+  else if (befehl === "stumm") tonUmschalten();
+  else if (befehl === "vollbild") bruecke.vollbild(true);
+  else if (befehl === "folge") { folgeWechseln(auftragFern.url); return; }
+  else if (befehl === "vor" || befehl === "zurueck") {
+    springen(befehl === "vor" ? Number(auftragFern.vor) || 30 : -(Number(auftragFern.zurueck) || 10));
+  } else if (befehl === "lauter" || befehl === "leiser") {
+    bild.volume = Math.max(0, Math.min(1, bild.volume + (befehl === "lauter" ? 0.1 : -0.1)));
+    if (befehl === "lauter") bild.muted = false;
+    lautstaerke.value = String(Math.round(bild.volume * 100));
+    knopfTon.textContent = bild.muted || bild.volume === 0 ? "🔇" : "🔊";
+  }
+  standMelden(true);
+  schichtenZeigen();
 }
 
 /** Die eigene Tat an die Runde - aber nur, wenn es die eigene war. */
@@ -495,18 +529,24 @@ function hosterSetzen(liste, laufender) {
     : hosterBestand;
 
   hosterWahl.textContent = "";
+  if (!laufender) {
+    const auswahl = document.createElement("option");
+    auswahl.value = "";
+    auswahl.textContent = "Hoster wählen";
+    auswahl.disabled = true;
+    hosterWahl.appendChild(auswahl);
+  }
   for (const eintrag of passend) {
     const zeile = document.createElement("option");
     zeile.value = eintrag.adresse;
     zeile.textContent = eintrag.hoster || "Hoster";
     hosterWahl.appendChild(zeile);
   }
-  hosterWahl.disabled = passend.length < 2;
+  hosterWahl.disabled = passend.length === 0 || (Boolean(laufender) && passend.length < 2);
   if (laufender && passend.some((eintrag) => eintrag.adresse === laufender)) {
     hosterWahl.value = laufender;
   } else {
-    const bester = bestenNehmen(passend);
-    if (bester) hosterWahl.value = bester.adresse;
+    hosterWahl.value = "";
   }
 }
 
@@ -589,10 +629,12 @@ function standMelden(sofort = false) {
   if (!sofort && jetzt - zuletztGemeldet < 5000) return;
   zuletztGemeldet = jetzt;
   bruecke.stand({
+    auftragId: auftrag?.id,
     stelle: Number(bild.currentTime) || 0,
     dauer: Number.isFinite(bild.duration) ? bild.duration : 0,
     gelaufen,
     laeuft: !bild.paused && !bild.ended,
+    stumm: bild.muted || bild.volume === 0,
     beendet: Boolean(bild.ended)
   });
 }
@@ -668,6 +710,7 @@ function naechsteSetzen(wert) {
  * nichts: das Ende einer Serie ist kein Fehler.
  */
 function weiterAnbieten() {
+  if (weiterVerworfen) return;
   // Ohne Zaehler passiert nichts von selbst - der Knopf "Nächste ›" steht
   // trotzdem da, genau wie es die Einstellung verspricht.
   if (!naechste || weiterUhr || weiterZaehler <= 0) return;
@@ -709,6 +752,7 @@ function autoZeigen() {
 async function autoUmschalten() {
   const neuerZaehler = await bruecke.autoplay(weiterZaehler <= 0);
   weiterZaehler = Number(neuerZaehler) || 0;
+  if (weiterZaehler > 0) weiterVerworfen = false;
   if (weiterZaehler <= 0) weiterAbbrechen();
   autoZeigen();
 }
@@ -750,7 +794,10 @@ document.getElementById("weiterJetzt").addEventListener("click", () => {
   weiterAbbrechen();
   folgeWechseln(ziel);
 });
-document.getElementById("weiterAbbruch").addEventListener("click", weiterAbbrechen);
+document.getElementById("weiterAbbruch").addEventListener("click", () => {
+  weiterVerworfen = true;
+  weiterAbbrechen();
+});
 document.getElementById("weiterSchluss").addEventListener("click", schlussUmschalten);
 knopfAuto.addEventListener("click", autoUmschalten);
 bild.addEventListener("click", spielenUmschalten);
@@ -889,6 +936,13 @@ bild.addEventListener("loadedmetadata", () => {
     bild.currentTime = start;
     vorigeStelle = start;
   }
+  // Eine vorgeladene Folge steht und wartet. Das Bild ist da, die Leiste zeigt
+  // die Laenge - es fehlt nur der Druck auf Start.
+  if (vorgeladen) {
+    pufferZeigen(false);
+    schichtenZeigen();
+    return;
+  }
   bild.play().catch(() => {
     // Ohne Zutun kein Ton: dann steht der Film eben und wartet auf einen
     // Klick. Ein Fehler ist das nicht.
@@ -1021,10 +1075,12 @@ function hlsStarten(adresse) {
 function starten(neuerAuftrag) {
   auftrag = neuerAuftrag || {};
   startGesetzt = false;
+  vorgeladen = Boolean(auftrag.vorladen);
   gelaufen = 0;
   vorigeStelle = 0;
   gerettet = { netz: false, medium: false };
   weiterAbbrechen();
+  weiterVerworfen = false;
 
   if (hls) {
     try {
@@ -1089,6 +1145,10 @@ function starten(neuerAuftrag) {
   if (auftrag.typ === "hls") hlsStarten(auftrag.adresse);
   else bild.src = auftrag.adresse;
 
+  // Vorgeladen: die Quelle haengt am Video, die Liste bleibt offen. Gestartet
+  // wird von Hand - oder gar nicht, wenn eine andere Folge gewaehlt wird.
+  if (vorgeladen) folgenZeigen();
+
   schichtenZeigen();
 }
 
@@ -1111,6 +1171,7 @@ bruecke.aufSteuern(steuernAusRunde);
 setInterval(() => {
   if (!inRunde) return;
   bruecke.takt({
+    auftragId: auftrag?.id,
     stelle: Number(bild.currentTime) || 0,
     laeuft: !bild.paused && !bild.ended,
     puffert

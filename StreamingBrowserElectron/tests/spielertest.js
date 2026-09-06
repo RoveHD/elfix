@@ -364,7 +364,7 @@ pruefe("Und zwar nur, wenn dort wirklich eine Folge steht",
 pruefe("Die gespeicherte Stelle reist mit",
   /startzeit: sanitizePositiveNumber\(weiter\.currentTime \|\| weiter\.position\)/.test(haupt));
 pruefe("Die Auswahl bleibt der Rueckfall",
-  /if \(ergebnis\.ok\) return;\s*\}\s*console\.log\("\[ELFIX DIREKT\] kein Hoster[\s\S]{0,120}?await direktAuswahlOeffnen\(provider, url\);/.test(haupt),
+  /if \(ergebnis\.ok\) return;\s*\}\s*console\.log\("\[ELFIX DIREKT\] kein Hoster[\s\S]{0,120}?await direktAuswahlOeffnen\(provider, url, \{ signal \}\);/.test(haupt),
   "ohne Eintrag, ohne Folgenadresse oder ohne Quelle");
 
 /* ------------------------------------------- Die Seite wird einmal gelesen */
@@ -379,10 +379,10 @@ pruefe("Die Auswahl bleibt der Rueckfall",
 // las direktQuelleFuerAnsicht dieselbe Seite noch einmal. Zu diesem Zeitpunkt
 // liegt der Player davor und das Skript kommt nicht mehr durch.
 pruefe("Gelesene Kacheln werden weitergereicht",
-  /direktFolgeSpielen\(provider, url, \{ links \}\)/.test(haupt),
+  /direktFolgeSpielen\(provider, url, \{ links, signal \}\)/.test(haupt),
   "sonst liest die zweite Runde eine Seite, die niemand mehr sieht");
 pruefe("Und drueben auch benutzt",
-  /const alle = optionen\.links\?\.length[\s\S]{0,120}?: await direktLinksLesen\(provider, view\);/.test(haupt));
+  /const alle = Array\.isArray\(optionen\.links\)[\s\S]{0,120}?: await direktLinksLesen\(provider, view\);/.test(haupt));
 pruefe("Ein misslungener Lesevorgang wird nicht als 'keine Hoster' getarnt",
   /Kacheln nicht lesbar/.test(haupt),
   "von aussen sah beides gleich aus");

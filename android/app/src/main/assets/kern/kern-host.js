@@ -125,14 +125,28 @@
     var nutzlast = {
       methode: String(einstellung.method || "GET").toUpperCase(),
       kopf: kopfzeilenAlsObjekt(einstellung.headers),
+      maxBytes: Number(einstellung.maxBytes) || 0,
       koerper: typeof einstellung.body === "string" ? einstellung.body : null
     };
     return new Promise(function (erfuellen, verwerfen) {
-      offeneAnfragen[id] = { erfuellen: erfuellen, verwerfen: verwerfen };
+      var signal = einstellung.signal;
+      function abbrechen() {
+        delete offeneAnfragen[id];
+        if (signal) signal.removeEventListener("abort", abbrechen);
+        if (typeof brief.netzAbbrechen === "function") brief.netzAbbrechen(id);
+        verwerfen(new Error("Abruf abgebrochen"));
+      }
+      if (signal && signal.aborted) { abbrechen(); return; }
+      if (signal) signal.addEventListener("abort", abbrechen, { once: true });
+      offeneAnfragen[id] = {
+        erfuellen: erfuellen, verwerfen: verwerfen,
+        aufraeumen: function () { if (signal) signal.removeEventListener("abort", abbrechen); }
+      };
       try {
         brief.netzStart(id, String(url), JSON.stringify(nutzlast));
       } catch (fehler) {
         delete offeneAnfragen[id];
+        if (signal) signal.removeEventListener("abort", abbrechen);
         verwerfen(fehler);
       }
     });
@@ -152,6 +166,7 @@
     var offen = offeneAnfragen[id];
     if (!offen) return;
     delete offeneAnfragen[id];
+    if (offen.aufraeumen) offen.aufraeumen();
     var antwort;
     try {
       antwort = typeof rohAntwort === "string" ? JSON.parse(rohAntwort) : rohAntwort;
