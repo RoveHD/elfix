@@ -2,20 +2,20 @@
 
 // Der sichtbare Ausschnitt eines eigenen Titelbildes.
 //
-// ELFIX zeigt ein eigenes Bild an vielen Stellen: als breites Banner auf der
-// Startseite und als Karte in "Gemeinsam weiterschauen", auf der Watchlist, in
-// der Mediathek und bei den Empfehlungen. Ueberall wurde es bisher mittig
+// ELFIX zeigt ein eigenes Bild an vielen Stellen: als Poster im Startbanner
+// und als Karte in "Gemeinsam weiterschauen", auf der Watchlist, in der
+// Mediathek und bei den Empfehlungen. Ueberall wurde es bisher mittig
 // gedeckt - vollflaechig, abgeschnitten wo es nicht passt. Das ist fuer die
 // meisten Bilder richtig und fuer manche falsch: ein Titelbild, dessen Logo
 // oben sitzt, wird auf einer Karte genau dort beschnitten.
 //
 // --- Je Form ein eigener Ausschnitt --------------------------------------------
 //
-// Ein Ausschnitt fuer alles genuegt nicht. Ein Hochkant-Poster (2:3) und das
-// sehr breite Startbanner (bis 5,5:1) zeigen bei derselben Lage voellig
-// verschiedene Teile des Bildes - was auf dem Poster gut sitzt, ist im Banner
-// schon wieder angeschnitten. Deshalb haelt ein Eintrag vier Lagen, eine je
-// Form, und jede laesst sich einzeln zoomen und verschieben:
+// Ein Ausschnitt fuer alles genuegt nicht. Selbst das Poster im Startbanner
+// kann einen anderen Ausschnitt brauchen als die kleineren Karten darunter:
+// dort steht Text daneben und das Bild ist der optische Anker. Deshalb haelt
+// ein Eintrag vier Lagen, eine je Einsatzort, und jede laesst sich einzeln
+// zoomen und verschieben:
 //
 //   {
 //     format: "medium",                              zuletzt bearbeitet
@@ -27,8 +27,8 @@
 //
 // `format` aendert nichts an der Darstellung. Es merkt sich nur, in welcher
 // Form der Editor beim naechsten Mal aufgehen soll. Welche Lage eine Karte
-// nimmt, entscheidet ihre eigene Form - eine Poster-Karte nimmt "poster", das
-// Startbanner "banner".
+// nimmt, entscheidet ihr Einsatzort - eine Poster-Karte nimmt "poster", das
+// Poster im Startbanner "banner".
 //
 // Eine Lage besteht aus drei Zahlen, alle als Verhaeltnis und keine in Pixeln:
 //
@@ -68,7 +68,7 @@
 
 // Die vier Formen. Ihre Seitenverhaeltnisse stehen nicht hier, sondern in der
 // Oberflaeche: sie kommen aus den echten Kartenmassen von ELFIX, und das
-// Banner wird am laufenden Fenster gemessen.
+// Poster im Banner wird am laufenden Fenster gemessen.
 const FORMATE = ["poster", "medium", "large", "banner"];
 
 // Kleiner als die Deckung darf es nicht werden - sonst blitzt der

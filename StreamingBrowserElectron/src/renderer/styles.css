@@ -302,7 +302,9 @@
   max-width: none;
   min-height: clamp(270px, 34vw, 420px);
   display: grid;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) clamp(132px, 14vw, 210px);
+  align-items: center;
+  gap: clamp(22px, 4vw, 64px);
   padding: clamp(22px, 3vw, 42px);
   overflow: hidden;
   border: 1px solid var(--line);
@@ -314,11 +316,35 @@
   box-shadow: var(--shadow);
 }
 
+/* Das Titelbild ist ein Poster und kein Banner. Auf die volle Breite gezogen
+   wird ein Hochformat weder schaerfer noch informativer: es verliert oben und
+   unten fast alles und sieht gedehnt aus. Der Banner behaelt deshalb seinen
+   ruhigen Theme-Hintergrund; das Bild steht rechts in seiner eigenen Form. */
+.home-dashboard-hero.has-thumb > .karten-bild {
+  position: relative;
+  inset: auto;
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 0;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  align-self: center;
+  justify-self: end;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: min(var(--card-radius), 18px);
+  background: color-mix(in srgb, var(--bg-card-strong), #000 12%);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.48);
+}
+
+.home-dashboard-hero:not(.has-thumb) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* --- Die Bildebene -----------------------------------------------------------
 
    Ein eigenes Titelbild erscheint an vielen Stellen: als Karte in "Gemeinsam
    weiterschauen", auf der Watchlist, in der Mediathek, bei den Empfehlungen -
-   und als breites Banner auf der Startseite. Alle benutzen diese eine
+   und als Poster im Startbanner. Alle benutzen diese eine
    Komponente, und die Live-Vorschau im Zuschneide-Editor benutzt sie auch.
    Nicht aus Sparsamkeit: zwei getrennte Regeln wuerden irgendwann auseinander
    laufen, und dann zeigte der Editor einen anderen Ausschnitt als die Karte.
@@ -398,11 +424,11 @@
   user-select: none;
 }
 
-/* Die Abdunklung liegt ueber dem Bild, damit Titel, Anbieter und Fortschritt
-   lesbar bleiben. Sie gehoert zur Bildebene und nicht zum Hintergrund der
+/* Die Abdunklung liegt ueber dem Bild, damit seine hellsten Stellen den Banner
+   nicht ueberstrahlen. Sie gehoert zur Bildebene und nicht zum Hintergrund der
    Karte: ein Hintergrund wird von jedem Kind ueberdeckt, und das Bild ist
    eines. Welcher Schleier es ist, entscheidet die Stelle - Karten dunkeln von
-   unten ab, das Banner zusaetzlich von links. */
+   unten staerker ab als das allein stehende Poster im Banner. */
 .karten-bild::after {
   content: "";
   position: absolute;
@@ -412,15 +438,15 @@
 
 .home-dashboard-hero,
 .crop-preview.is-banner {
-  --bild-schleier:
-    linear-gradient(90deg, rgba(5, 8, 13, 0.98) 0%, rgba(5, 8, 13, 0.66) 42%, rgba(5, 8, 13, 0.18) 100%),
-    linear-gradient(180deg, rgba(5, 8, 13, 0.05), rgba(5, 8, 13, 0.7));
+  --bild-schleier: linear-gradient(180deg, rgba(5, 8, 13, 0.01) 58%, rgba(5, 8, 13, 0.32));
 }
 
 .home-hero-content {
   position: relative;
   z-index: 1;
-  width: min(520px, 92%);
+  grid-column: 1;
+  grid-row: 1;
+  width: min(620px, 100%);
 }
 
 .home-dashboard-hero h1 {
@@ -494,11 +520,13 @@
 
 /* Sanfter Wechsel, wenn der Held auf den naechsten Titel springt. */
 .home-dashboard-hero.is-switching .home-hero-content,
+.home-dashboard-hero.is-switching > .karten-bild,
 .home-dashboard-hero.is-switching {
   transition: opacity calc(260ms * var(--animation-speed)) ease;
 }
 
-.home-dashboard-hero.is-switching .home-hero-content {
+.home-dashboard-hero.is-switching .home-hero-content,
+.home-dashboard-hero.is-switching > .karten-bild {
   opacity: 0;
 }
 
@@ -1257,6 +1285,11 @@
   .home-dashboard-hero {
     min-height: 360px;
     align-items: end;
+  }
+
+  .home-dashboard-hero.has-thumb {
+    grid-template-columns: minmax(0, 1fr) clamp(105px, 24vw, 138px);
+    gap: 16px;
   }
 
   .home-dashboard-hero h1 {

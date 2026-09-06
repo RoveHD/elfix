@@ -2155,19 +2155,20 @@ function renderHomeHero(favorite, provider, hasProviders) {
   setHeroArtwork("");
 }
 
-// Das Seitenverhaeltnis, das der Titelhintergrund gerade wirklich hat. Es
-// haengt an der Fenstergroesse (min-height clamp gegen die volle Breite), also
-// gibt es keine Konstante dafuer - es wird gemessen.
+// Das Seitenverhaeltnis, das das Poster im Titelbanner wirklich hat. Der
+// Banner selbst bleibt breit, das Bild darin steht aber im Hochformat rechts.
+// Gemessen wird die Bildebene, damit Ziehen und Zoomen im Editor genau diese
+// sichtbare Flaeche meinen.
 //
 // Gemerkt wird es, weil der Zuschneide-Editor auch dann das richtige Format
 // braucht, wenn die Startseite in dem Moment nicht sichtbar ist - etwa beim
 // Bearbeiten aus der Mediathek heraus. Der Rueckfallwert greift nur, solange
 // die Startseite in dieser Sitzung noch kein einziges Mal gezeichnet wurde.
-const BANNER_SEITE_RUECKFALL = 16 / 9;
+const BANNER_SEITE_RUECKFALL = 2 / 3;
 let letzteBannerSeite = 0;
 
 function bannerSeite() {
-  const kasten = homeHero?.getBoundingClientRect();
+  const kasten = homeHero?.querySelector(":scope > .karten-bild")?.getBoundingClientRect();
   if (kasten && kasten.width > 0 && kasten.height > 0) {
     letzteBannerSeite = kasten.width / kasten.height;
   }
@@ -2178,7 +2179,7 @@ function bannerSeite() {
 //
 // Eine einzige Stelle setzt jedes Titelbild: die Karten in "Gemeinsam
 // weiterschauen", auf der Watchlist, in der Mediathek, bei den Empfehlungen
-// und im Kalender - und das Banner der Startseite. Die Live-Vorschau im
+// und im Kalender - und das Poster im Startbanner. Die Live-Vorschau im
 // Zuschneide-Editor ruft dieselbe Funktion auf demselben Kartenaufbau auf.
 // Deshalb kann die Vorschau nichts anderes zeigen als die fertige Karte.
 //
@@ -8762,7 +8763,10 @@ function cropFormatMasse(format) {
 // gleich darauf. Das Rechteck traegt die Lupe bereits in sich - der Zeiger
 // bewegt sich in denselben Bildschirmpixeln, also passt beides zusammen.
 function cropMasse() {
-  const kasten = cropPreview.getBoundingClientRect();
+  const bildKasten = cropFormat() === "banner"
+    ? cropPreview.querySelector(":scope > .karten-bild")
+    : null;
+  const kasten = (bildKasten || cropPreview).getBoundingClientRect();
   return { breite: kasten.width || 1, hoehe: kasten.height || 1 };
 }
 

@@ -2,7 +2,7 @@
 // Der Ausschnitt des eigenen Titelhintergrunds.
 //
 // Der Anlass: ELFIX zeigte jedes eigene Bild mittig und vollflaechig - auf dem
-// Banner der Startseite genauso wie auf den schmalen Karten in "Gemeinsam
+// Poster im Startbanner genauso wie auf den schmalen Karten in "Gemeinsam
 // weiterschauen". Bei einem Titelbild, dessen Logo oben sitzt, schnitt es
 // genau das Logo weg, und es gab keine Handhabe dagegen.
 //
@@ -51,12 +51,12 @@ const rahmen = (roh, kasten, bild, format = "medium") => gerahmt(alsLage(roh, fo
 
 // Die Kartenformen, in denen ELFIX ein eigenes Bild wirklich zeigt: das
 // Hochformat der Poster-Karten, die gewoehnliche Karte, ein breites Backdrop
-// und das sehr breite Banner der Startseite.
+// und das eigene Hochformat-Poster im Startbanner.
 const KAESTEN = {
   poster: { b: 230, h: 330 },
   medium: { b: 290, h: 220 },
   large: { b: 462, h: 260 },
-  banner: { b: 1280, h: 240 }
+  banner: { b: 210, h: 315 }
 };
 
 // Die Bilder aus der Aufgabenstellung, mit echten Kantenlaengen.
@@ -100,7 +100,7 @@ for (const [name, bild] of Object.entries(BILDER)) {
 // "Das Bild darf keine leeren Bereiche innerhalb der Karte erzeugen." Weil der
 // Zoom nie unter 1 faellt und "cover" den vergroesserten Kasten immer fuellt,
 // gilt das ohne jede Fallunterscheidung - auch bei einem 600x3000 grossen Bild
-// auf einem 1280x240 breiten Banner.
+// auf dem 210x315 grossen Poster im Banner.
 
 for (const [name, bild] of Object.entries(BILDER)) {
   let deckt = true;
@@ -303,9 +303,9 @@ pruefe("Kein Ausschnitt bleibt kein Ausschnitt",
 
 // --- Jede Form fuer sich -----------------------------------------------------------
 //
-// Der Kern der Erweiterung: ein Zug im Poster darf das Banner nicht anfassen.
-// Ein Hochformat von 2:3 und ein Banner von 5:1 zeigen bei derselben Lage
-// voellig verschiedene Teile des Bildes - deshalb hat jede Form ihre eigene.
+// Der Kern der Erweiterung: ein Zug in einer Kartenform darf den eigenen
+// Ausschnitt des Startbanners nicht anfassen. Obwohl beides Hochformat sein
+// kann, darf der optische Anker im Hero anders sitzen als auf einer Karte.
 
 {
   const start = A.normalisieren({});
