@@ -3,6 +3,58 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.0 — 6. September 2026
+
+**ELFIX zeigt nur noch sich selbst.** Die Seiten von AniWorld, S.to und den
+anderen werden weiter geladen, gelesen und wieder verlassen — gesehen werden
+sie nicht mehr. Sie sind Werkbank, nicht Fenster. Gebraucht wird von dort
+zweierlei: die Folgenliste und die Adresse hinter dem Hoster, und beides lässt
+sich lesen, ohne es herzuzeigen. Aus der aufgelösten Adresse macht ein eigener
+Player ein Bild — kein Rahmen im Rahmen, keine Werbeschicht, kein
+Überlagerungsknopf, den erst ein Klick wegnimmt. HLS spielt hls.js, eine
+einzelne Datei spielt der Browser selbst. Jede Navigation endet jetzt sichtbar:
+eine Folge läuft, eine Serie wird zur Folgenauswahl, oder die eigene Oberfläche
+kommt zurück.
+
+**Der Player kann, was vorher der Anbieterseite gehörte.** Folgen, Hoster,
+Fassung und Untertitel stehen in seiner eigenen Bedienung, dazu der Intro-Knopf,
+die Karte zur nächsten Folge, ein Schalter für Autoplay und ein Fehlerkasten,
+der über der laufenden Folge steht, statt sie zu ersetzen. Der Fortschritt wird
+verbucht wie zuvor — dieselbe Rechnung, dieselbe Ablage, derselbe Rückblick —,
+und gezählt werden nur Sekunden, die wirklich gelaufen sind. Filme und YouTube
+behalten ihren bisherigen Weg.
+
+**Am Telefon spielt derselbe Weg nativ.** Der Direktspieler auf Android zeichnet
+seine Bedienung jetzt selbst, in den Farben und Abständen der App, statt drei
+fremde Gestaltungen übereinanderzulegen. Alles ist mit dem Steuerkreuz
+erreichbar, Fassung und Hoster stehen getrennt zur Wahl, und die Karte zur
+nächsten Folge kommt ab neunzig Prozent statt dauerhaft über dem Bild zu hängen.
+
+**Die Watchparty erreicht den eigenen Player.** Sie redete noch mit dem
+Hoster-Rahmen: sie fragte auf „play", „pause" und „seek" ab, zurück kommt aber
+für alle drei „anwenden", und sie sprang auf „springen" statt auf „hard-seek".
+Am Rechner kam damit aus der Runde nichts an außer dem gemeinsamen Start, und
+eine Notbremse gab es nicht. Die Teilnehmerleiste zeichnet der Player jetzt
+selbst — seine Seite gehört uns.
+
+**Der Start wartet nicht mehr auf den Werbefilter.** Dessen Aufbau lief bisher
+genau dann los, wenn das Fenster entsteht; der Hauptprozess hat aber nur einen
+Faden, und solange er Regeln baut, wartet jede Antwort an die Oberfläche hinter
+ihm. Die Umwandlung läuft jetzt in einem eigenen Faden, und die Startlast
+beginnt erst, wenn die Oberfläche steht. Auch das Leeren des
+Anbieter-Zwischenspeichers hält den Start nicht mehr auf — warten muss nur, wer
+die Anbietersitzung wirklich benutzt.
+
+**Kacheln kommen und gehen sichtbar,** statt lautlos in einer neu gezeichneten
+Liste zu erscheinen oder zu fehlen: ein vorgemerkter Titel fährt heran, ein aus
+dem Weiterschauen entfernter zerfällt in Funken — beides erst nach
+erfolgreichem Speichern.
+
+**Und die Suche zeigt Bilder.** Sie standen längst neben dem Titel, im selben
+Verweis, den die Suche ohnehin zerlegt; sie wurden nur nicht mitgenommen. Bei
+AniWorld liefert die Schnellsuche keines — dort wird es von der Titelseite
+nachgeholt, nach dem Zeichnen und je Adresse nur einmal.
+
 ## 1.91.9 — 4. September 2026
 
 **Wer weiterläuft, wird angehalten.** Am Fernseher lief der Film weiter,
