@@ -17,7 +17,8 @@ public class DirektProbeActivity extends Activity {
         kern.starten();
         spieler = new DirektSpieler(this, kern, new DirektSpieler.Umgebung() {
             public void schliessen() { finish(); }
-            public void quellen() { }
+            public void fassungen() { }
+            public void hoster() { }
             public void folgen() { }
             public void naechste() { }
             public void stand(JSONObject wert) { stand = wert; }

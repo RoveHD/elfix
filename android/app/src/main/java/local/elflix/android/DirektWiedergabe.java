@@ -2,7 +2,6 @@ package local.elflix.android;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,6 +36,8 @@ final class DirektWiedergabe {
         boolean darfAutoplay();
         void marke(Consumer<JSONObject> fertig);
         void sprung(double von, double nach);
+        /** Die Bedienung des Players ist gekommen oder gegangen. */
+        default void bedienung(boolean sichtbar) { }
     }
 
     private final Activity activity;
@@ -51,7 +52,8 @@ final class DirektWiedergabe {
     private final FrameLayout wurzel;
     private final String kennung;
     private WebView seite;
-    private AlertDialog dialog;
+    /** Welche Zeile der Quellenliste gerade spielt - die Blende hebt sie hervor. */
+    private int laufenderHoster = -1;
     private boolean geschlossen;
     private int auftrag;
     private JSONArray hoster = new JSONArray();
@@ -89,7 +91,8 @@ final class DirektWiedergabe {
         kennung = WebSettings.getDefaultUserAgent(activity);
         spieler = new DirektSpieler(activity, kern, new DirektSpieler.Umgebung() {
             public void schliessen() { umgebung.geschlossen(); }
-            public void quellen() { quellenZeigen(); }
+            public void fassungen() { fassungenZeigen(); }
+            public void hoster() { hosterZeigen(); }
             public void folgen() { folgenZeigen(folgen); }
             public void naechste() { if (naechste != null) wechseln(naechste.optString("url")); }
             public void stand(JSONObject wert) { umgebung.stand(anbieter, adresse, wert, meta); }
@@ -98,6 +101,7 @@ final class DirektWiedergabe {
             public boolean darfAutoplay() { return umgebung.darfAutoplay(); }
             public void marke(Consumer<JSONObject> fertig) { umgebung.marke(fertig); }
             public void sprung(double von, double nach) { umgebung.sprung(von, nach); }
+            public void bedienung(boolean sichtbar) { umgebung.bedienung(sichtbar); }
         });
         wurzel = spieler.ansicht;
         spieler.titel(titel);
@@ -288,7 +292,11 @@ final class DirektWiedergabe {
             kopf.put(key, headers.optString(key));
         }
         letzteSprache = link.optString("sprache");
+        laufenderHoster = hosterZeile(link);
         seiteFreigeben();
+        // Woher das Bild kommt, steht im Kopf des Players - wie am Rechner.
+        spieler.quelleBenannt(link.optString("hoster", ""),
+            link.optString("spracheRoh", link.optString("sprache", "")));
         spieler.quelle(url, quelle.optString("typ"), kopf, stelle);
         spielt = true;
         naechsteSuchen(id);
@@ -345,27 +353,128 @@ final class DirektWiedergabe {
 
     private void quellenZeigen() {
         if (geschlossen) return;
+        hosterZeigen();
+    }
+
+    /**
+     * Die Fassungen dieser Folge.
+     *
+     * <p>Getrennt vom Hoster, genau wie am Rechner (fassungSetzen in
+     * spieler.js): eine Fassung ist eine Sprache, ein Hoster ist ein Anbieter,
+     * und beides in einer Liste zu mischen ergab Zeilen wie
+     * "VOE - German Sub, Vidmoly - German Sub, VOE - Deutsch ...", in denen man
+     * beides suchen musste.
+     *
+     * <p>Beim Wechsel wird derselbe Hoster in der neuen Fassung genommen, wenn
+     * es ihn dort gibt - sonst der beste, den sie hat.
+     */
+    private void fassungenZeigen() {
+        if (geschlossen) return;
+        ArrayList<String> namen = new ArrayList<>();
+        ArrayList<Runnable> aktionen = new ArrayList<>();
+        int laufend = -1;
+        for (String fassung : fassungsnamen()) {
+            final String gewaehlt = fassung;
+            if (fassung.equalsIgnoreCase(letzteSprache)) laufend = namen.size();
+            namen.add(fassung);
+            aktionen.add(() -> fassungWechseln(gewaehlt));
+        }
+        if (namen.isEmpty()) {
+            spieler.status("Für diese Folge steht keine Fassung zur Wahl.");
+            return;
+        }
+        spieler.blende("Fassung", namen, aktionen, laufend);
+    }
+
+    /** Die Fassungen in der Reihenfolge, in der sie auf der Seite stehen. */
+    private ArrayList<String> fassungsnamen() {
+        ArrayList<String> namen = new ArrayList<>();
+        for (int i = 0; i < hoster.length(); i++) {
+            String name = fassungVon(hoster.optJSONObject(i));
+            if (!name.isEmpty() && !namen.contains(name)) namen.add(name);
+        }
+        return namen;
+    }
+
+    private static String fassungVon(JSONObject link) {
+        if (link == null) return "";
+        String roh = link.optString("spracheRoh", "").trim();
+        return roh.isEmpty() ? link.optString("sprache", "").trim() : roh;
+    }
+
+    /**
+     * Zur Fassung wechseln - mit demselben Hoster, wenn es ihn dort gibt.
+     *
+     * <p>Wie {@code fassungWechseln} am Rechner: der Hoster ist die Gewohnheit,
+     * die Fassung die Wahl. Wer VOE gewohnt ist, soll nach dem Wechsel nicht
+     * plotzlich bei einem anderen landen, nur weil der in der Liste weiter oben
+     * steht.
+     */
+    private void fassungWechseln(String fassung) {
+        if (geschlossen || fassung == null) return;
+        JSONObject laufender = hoster.optJSONObject(Math.max(0, laufenderHoster));
+        String gewohnt = laufender == null ? "" : laufender.optString("hoster", "");
+        int ziel = -1;
+        int ersatz = -1;
+        for (int i = 0; i < hoster.length(); i++) {
+            JSONObject link = hoster.optJSONObject(i);
+            if (!fassung.equalsIgnoreCase(fassungVon(link))) continue;
+            if (ersatz < 0) ersatz = i;
+            if (!gewohnt.isEmpty() && gewohnt.equalsIgnoreCase(link.optString("hoster", ""))) {
+                ziel = i;
+                break;
+            }
+        }
+        int nehmen = ziel >= 0 ? ziel : ersatz;
+        if (nehmen < 0) return;
+        double stelle = spielt ? spieler.position() : start;
+        aufloesen(nehmen, stelle, ++auftrag, false);
+    }
+
+    /** Die Hoster - nur die zur laufenden Fassung, wie drueben. */
+    private void hosterZeigen() {
+        if (geschlossen) return;
         quellenDialog();
     }
 
     private void quellenDialog() {
+        // Die Liste geht in die Blende des Players und nicht mehr in einen
+        // Systemdialog: derselbe Grund, dieselbe Schrift, dasselbe Steuerkreuz
+        // wie der Rest der Wiedergabe.
+        //
+        // Gezeigt werden die Hoster der laufenden Fassung. Steht keine fest -
+        // beim ersten Oeffnen, oder wenn die Seite keine Sprache nennt -, sind
+        // es alle: eine leere Liste waere die schlechtere Antwort.
+        String fassung = laufendeFassung();
         ArrayList<String> namen = new ArrayList<>();
+        ArrayList<Runnable> aktionen = new ArrayList<>();
+        int laufend = -1;
         for (int i = 0; i < hoster.length(); i++) {
             JSONObject link = hoster.optJSONObject(i);
-            namen.add(link.optString("hoster", "Hoster") + " · " + link.optString("spracheRoh", link.optString("sprache")));
-        }
-        namen.add("Quellen neu laden");
-        namen.add("Anbieterseite öffnen");
-        if (dialog != null) dialog.dismiss();
-        dialog = new AlertDialog.Builder(activity).setTitle("Quelle und Sprache")
-            .setItems(namen.toArray(new String[0]), (d, index) -> {
+            if (!fassung.isEmpty() && !fassung.equalsIgnoreCase(fassungVon(link))) continue;
+            if (i == laufenderHoster) laufend = namen.size();
+            namen.add(link.optString("hoster", "Hoster"));
+            final int index = i;
+            aktionen.add(() -> {
                 if (geschlossen) return;
-                if (index == hoster.length()) { laden(); return; }
-                if (index == hoster.length() + 1) { umgebung.browser(anbieter, adresse); return; }
                 double stelle = spielt ? spieler.position() : start;
                 // Tokens in this list are retained, not minted again before a click.
                 aufloesen(index, stelle, ++auftrag, false);
-            }).setNegativeButton("Zurück", null).show();
+            });
+        }
+        namen.add("Quellen neu laden");
+        aktionen.add(() -> { if (!geschlossen) laden(); });
+        namen.add("Anbieterseite öffnen");
+        aktionen.add(() -> { if (!geschlossen) umgebung.browser(anbieter, adresse); });
+        spieler.blende(fassung.isEmpty() ? "Hoster" : "Hoster · " + fassung,
+            namen, aktionen, laufend);
+    }
+
+    /** Die Fassung, die gerade spielt - oder nichts, solange keine feststeht. */
+    private String laufendeFassung() {
+        JSONObject laufender = laufenderHoster >= 0 ? hoster.optJSONObject(laufenderHoster) : null;
+        String name = fassungVon(laufender);
+        return name.isEmpty() ? letzteSprache.trim() : name;
     }
 
     private void naechsteSuchen(int id) {
@@ -373,6 +482,7 @@ final class DirektWiedergabe {
             if (!aktuell(id)) return;
             try { naechste = new JSONObject(wert); } catch (Exception ignoriert) { naechste = null; }
             spieler.naechsteVorhanden(naechste != null);
+            spieler.naechsterTitel(folgenName(naechste));
             if (naechste != null) return;
             kern.rufe("direkt-android.naechsteStaffel", Kern.args(folgen, adresse), (staffelWert, staffelFehler) -> {
                 if (!aktuell(id)) return;
@@ -386,6 +496,7 @@ final class DirektWiedergabe {
                     if (f != null && !f.optBoolean("gesperrt") && !f.optString("url").isEmpty()) {
                         naechste = f;
                         spieler.naechsteVorhanden(true);
+                        spieler.naechsterTitel(folgenName(f));
                         return;
                     }
                 }
@@ -422,10 +533,64 @@ final class DirektWiedergabe {
             aktionen.add(() -> wechseln(folge.optString("url")));
         }
         if (namen.isEmpty()) { spieler.status("Für diesen Titel ist keine Folgenliste vorhanden."); return; }
-        if (dialog != null) dialog.dismiss();
-        dialog = new AlertDialog.Builder(activity).setTitle("Staffeln und Folgen")
-            .setItems(namen.toArray(new String[0]), (d, index) -> aktionen.get(index).run())
-            .setNegativeButton("Zurück", null).show();
+        spieler.blende("Staffeln und Folgen", namen, aktionen, laufendeFolge(stand, namen));
+    }
+
+    /**
+     * Welche Zeile der Folgenliste gerade laeuft.
+     *
+     * <p>Die Blende hebt sie hervor - in einer Liste mit vierundzwanzig Folgen
+     * ist das die einzige Auskunft darueber, wo man ist. Gesucht wird ueber die
+     * Adresse und nicht ueber die Nummer: dieselbe Nummer gibt es in jeder
+     * Staffel, und die Blende zeigt gerade vielleicht eine andere.
+     */
+    private int laufendeFolge(JSONObject stand, ArrayList<String> namen) {
+        JSONArray liste = stand.optJSONArray("folgen");
+        if (liste == null) return -1;
+        int versatz = namen.size() - zaehlbareFolgen(liste);
+        int zeile = versatz;
+        for (int i = 0; i < liste.length(); i++) {
+            JSONObject folge = liste.optJSONObject(i);
+            if (folge == null || folge.optBoolean("gesperrt") || folge.optString("url").isEmpty()) continue;
+            if (gleicheSeite(folge.optString("url"), adresse)) return zeile;
+            zeile++;
+        }
+        return -1;
+    }
+
+    private static int zaehlbareFolgen(JSONArray liste) {
+        int zahl = 0;
+        for (int i = 0; i < liste.length(); i++) {
+            JSONObject folge = liste.optJSONObject(i);
+            if (folge == null || folge.optBoolean("gesperrt") || folge.optString("url").isEmpty()) continue;
+            zahl++;
+        }
+        return zahl;
+    }
+
+    private static boolean gleicheSeite(String links, String rechts) {
+        return kurz(links).equalsIgnoreCase(kurz(rechts));
+    }
+
+    private static String kurz(String url) {
+        return url == null ? "" : url.replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
+    }
+
+    /** Die Zeile dieses Hosters in der Quellenliste - fuer die Hervorhebung in der Blende. */
+    private int hosterZeile(JSONObject link) {
+        for (int i = 0; i < hoster.length(); i++) {
+            if (hoster.optJSONObject(i) == link) return i;
+        }
+        return -1;
+    }
+
+    /** "Folge 7 - Der Name", so weit bekannt. Steht auf der Karte und im Zaehler. */
+    private static String folgenName(JSONObject folge) {
+        if (folge == null) return "";
+        String titel = folge.optString("titel", "").trim();
+        int nummer = folge.optInt("folge");
+        if (nummer <= 0) return titel;
+        return titel.isEmpty() ? "Folge " + nummer : "Folge " + nummer + " · " + titel;
     }
 
     // The Activity keeps the native player on every episode navigation.
@@ -434,6 +599,9 @@ final class DirektWiedergabe {
         spieler.speichern();
         if (nachSeite != null) nachSeite.accept(url);
     }
+
+    /** Der Platz fuer den Live-Streifen im Player - siehe DirektSpieler. */
+    android.widget.FrameLayout streifenPlatz() { return spieler.streifenPlatz(); }
 
     void beimWechsel(Consumer<String> wechseln) { nachSeite = wechseln; }
     String adresse() { return adresse; }
@@ -462,7 +630,6 @@ final class DirektWiedergabe {
         auftrag++;
         kern.rufe("direkt-android.abbrechen", (w, f) -> { });
         handler.removeCallbacksAndMessages(null);
-        if (dialog != null) dialog.dismiss();
         spieler.schliessen();
         seiteFreigeben();
         if (wurzel.getParent() instanceof ViewGroup) ((ViewGroup) wurzel.getParent()).removeView(wurzel);

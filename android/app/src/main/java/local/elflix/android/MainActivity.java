@@ -329,6 +329,15 @@ public class MainActivity extends Activity {
     private boolean chromeBuiltCompact;
     private Boolean television;
     private int orientationBeforeFullscreen = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+    /**
+     * Die Lage vor dem eigenen Player.
+     *
+     * <p>Eigener Merker neben dem des Hoster-Vollbilds: die beiden Wege koennen
+     * sich ueberschneiden (ein Player, der aus einer Seite heraus aufgeht), und
+     * ein gemeinsamer Merker liesse das Telefon danach in der falschen Lage
+     * stehen.
+     */
+    private int orientationVorDirekt = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
     private EditText searchInput;
     private Button favoriteButton;
     private final Map<String, Button> providerButtons = new HashMap<>();
@@ -1519,7 +1528,10 @@ public class MainActivity extends Activity {
 
             @Override
             public boolean amSchauen() {
-                return activeProvider != null && "provider".equals(currentScreen);
+                // Auch der eigene Player ist "am Schauen". Ohne "direkt" waere
+                // der Streifen ausgerechnet dort weg, wo das Bild laeuft.
+                return activeProvider != null
+                    && ("provider".equals(currentScreen) || "direkt".equals(currentScreen));
             }
 
             @Override
@@ -9637,7 +9649,24 @@ public class MainActivity extends Activity {
                         marken.nativerSprung(provider, url, bestand.roh(), von, nach);
                     }
                 }
+                public void bedienung(boolean sichtbar) {
+                    // Der Streifen kommt und geht mit der Bedienung des Players -
+                    // dieselbe Regel wie im Hoster-Rahmen.
+                    if (liveStreifen != null) liveStreifen.steuerungSichtbar(sichtbar);
+                }
             });
+        // Der Live-Streifen zieht in den Player um: dessen Ansicht liegt auf der
+        // Fensterdekoration, ein Streifen in der Oberflaeche waere dahinter.
+        if (liveStreifen != null) liveStreifen.inVollbild(direktWiedergabe.streifenPlatz());
+        // Und quer: ein Film ist breiter als hoch, und im Hochformat bleibt vom
+        // Bild ein Streifen in der Mitte uebrig. SENSOR_LANDSCAPE und nicht
+        // LANDSCAPE - so darf man das Telefon weiter in beide Richtungen
+        // drehen. Dieselbe Behandlung wie beim Vollbild des Hosters; der
+        // Fernseher steht ohnehin quer und wird nicht angefasst.
+        if (!isTelevision()) {
+            orientationVorDirekt = getRequestedOrientation();
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        }
         direktWiedergabe.beimWechsel(ziel -> {
             direktBrowserAusnahme = "";
             direktOeffnen(provider, ziel, true);
@@ -9648,10 +9677,19 @@ public class MainActivity extends Activity {
     private void direktSchliessen() {
         if (direktWiedergabe == null) return;
         DirektWiedergabe alt = direktWiedergabe;
+        // Erst den Streifen herausholen, dann die Ansicht abraeumen - sonst
+        // faellt er mit ihr weg und findet nie wieder nach Hause.
+        if (liveStreifen != null) liveStreifen.inVollbild(null);
         if (mitschauen != null) mitschauen.abmelden();
         // Keep the flag until the final progress report has been booked.
         alt.schliessen();
         direktWiedergabe = null;
+        // Die Lage zuletzt freigeben: die Drehung, die daraus folgt, darf keinen
+        // halb abgeraeumten Player mehr vorfinden.
+        if (!isTelevision()) {
+            setRequestedOrientation(orientationVorDirekt);
+            orientationVorDirekt = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        }
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             getWindow().setDecorFitsSystemWindows(true);
             WindowInsetsController controller = getWindow().getInsetsController();
