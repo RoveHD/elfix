@@ -36,7 +36,9 @@ import androidx.media3.common.Player;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.Tracks;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.SeekParameters;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.ui.PlayerView;
 import java.util.ArrayList;
@@ -92,6 +94,21 @@ final class DirektSpieler {
          * stuende er entweder dauerhaft ueber dem Bild oder gar nicht.
          */
         default void bedienung(boolean sichtbar) { }
+
+        /** Die Fassung der Runde uebernehmen - der Host hat sie gestellt. */
+        default void fassungWaehlen(String fassung, String hoster) { }
+
+        /** Das Tempo dieses Geraets an die Runde melden. Ohne Runde tut es nichts. */
+        default void tempo(double wert) { }
+
+        /**
+         * Darf hier ueberhaupt am Tempo gedreht werden?
+         *
+         * <p>Allein: immer. In einer Runde: nur der Host - zwei Geraete mit
+         * verschiedenem Tempo laufen unweigerlich auseinander, und kein
+         * Abgleich holt das wieder ein.
+         */
+        default boolean darfTempo() { return true; }
     }
 
     /* --------------------------------------------------- Die Farben des Players */
@@ -107,6 +124,8 @@ final class DirektSpieler {
     private static final int SCHRIFT_STILL = 0x99FFFFFF;
     /** Knopf unter dem Finger beziehungsweise unter der Maus am Rechner. */
     private static final int KNOPF_DRUCK = 0x24FFFFFF;
+    /** Die Flaeche des Knopfs in der Mitte - dieselbe Tiefe wie drueben (0.58). */
+    private static final int MITTE_KNOPF = 0x940A0E16;
     /** Eine Zeile in einer Liste - dieselben sechs Prozent wie drueben. */
     private static final int ZEILE = 0x0FFFFFFF;
     private static final int ZEILE_DRUCK = 0x29FFFFFF;
@@ -116,6 +135,9 @@ final class DirektSpieler {
 
     /** Wie lange die Schichten stehenbleiben, wenn nichts geschieht. */
     private static final long RUHE_MS = 5000;
+
+    /** Ab welchem Abstand ein Befehl aus der Runde wirklich springt - siehe befehlPruefen. */
+    private static final double SPRUNG_AB_SEKUNDEN = 0.5;
     /**
      * Ab wann die Karte zur naechsten Folge dasteht.
      *
@@ -144,9 +166,13 @@ final class DirektSpieler {
     private final TextView spielen;
     private final ImageView ton;
     private final TextView automatisch;
+    /** Der Tempo-Knopf in der Leiste - er traegt die laufende Stufe als Beschriftung. */
+    private final TextView tempoText;
     private final TextView intro;
 
     private final LinearLayout mitte;
+    /** Abspielen und Pause in der Mitte - siehe {@link #mitteZeichnen()}. */
+    private final TextView mitteSpielen;
     private final ProgressBar puffer;
     private final LinearLayout kasten;
     private final TextView hinweis;
@@ -413,6 +439,7 @@ final class DirektSpieler {
         spielen = unten.findViewWithTag("spielen");
         ton = unten.findViewWithTag("ton");
         automatisch = unten.findViewWithTag("auto");
+        tempoText = unten.findViewWithTag("tempo");
         intro = unten.findViewWithTag("intro");
 
         // Kringel und Ansage stehen untereinander in einer Spalte, nicht
@@ -424,6 +451,19 @@ final class DirektSpieler {
         mitte.setOrientation(LinearLayout.VERTICAL);
         mitte.setGravity(Gravity.CENTER);
         mitte.setPadding(dp(24), 0, dp(24), 0);
+        // Der Knopf in der Mitte - derselbe wie am Rechner (#mitteSpielen in
+        // spieler.html). Er steht dort, wo der Blick ohnehin ist, und ist mit
+        // dem Steuerkreuz das Erste, was man findet. Wann er weichen muss,
+        // steht in mitteZeichnen().
+        mitteSpielen = new TextView(activity);
+        mitteSpielen.setText("▶");
+        mitteSpielen.setTextColor(SCHRIFT);
+        mitteSpielen.setTextSize(24);
+        mitteSpielen.setGravity(Gravity.CENTER);
+        mitteSpielen.setVisibility(View.GONE);
+        mitteSpielen.setBackground(flaeche(MITTE_KNOPF, 38, RAHMEN, 1));
+        anfassbar(mitteSpielen, 38, this::spielenUmschalten);
+        mitte.addView(mitteSpielen, new LinearLayout.LayoutParams(dp(76), dp(76)));
         puffer = new ProgressBar(activity);
         puffer.setIndeterminate(true);
         puffer.setIndeterminateTintList(ColorStateList.valueOf(Theme.PRIMARY));
@@ -596,6 +636,9 @@ final class DirektSpieler {
         knoepfe.addView(knopf("Hoster", umgebung::hoster));
         knoepfe.addView(knopf("Untertitel", () -> spuren(C.TRACK_TYPE_TEXT, "Untertitel")));
         knoepfe.addView(knopf("Qualität", () -> spuren(C.TRACK_TYPE_VIDEO, "Bildqualität")));
+        TextView tempoKnopf = knopf("1×", this::tempoWaehlen);
+        tempoKnopf.setTag("tempo");
+        knoepfe.addView(tempoKnopf);
         knoepfe.addView(trenner());
         TextView auto = knopf("Autoplay an", this::autoplayUmschalten);
         auto.setTag("auto");
@@ -895,6 +938,7 @@ final class DirektSpieler {
     private void schichtenSetzen(boolean an) {
         if (schichtenAn == an) return;
         schichtenAn = an;
+        mitteZeichnen();
         umgebung.bedienung(an);
         for (View schicht : new View[] { kopf, leiste, weiterKarte }) {
             if (schicht == weiterKarte && !(hatNaechste && zaehlerEnde == 0 && amEnde())) continue;
@@ -941,6 +985,7 @@ final class DirektSpieler {
         kastenKnoepfe.removeAllViews();
         kastenKnoepfe.setVisibility(View.GONE);
         kasten.setVisibility(View.VISIBLE);
+        mitteZeichnen();
         regung();
     }
 
@@ -954,6 +999,7 @@ final class DirektSpieler {
     private void kastenZu() {
         kasten.setVisibility(View.GONE);
         kastenKnoepfe.removeAllViews();
+        mitteZeichnen();
     }
 
     void naechsteVorhanden(boolean ja) {
@@ -999,6 +1045,86 @@ final class DirektSpieler {
     private void spielenZeichnen() {
         boolean laeuft = player != null && player.getPlayWhenReady();
         spielen.setText(laeuft ? "❚❚" : "▶");
+        mitteZeichnen();
+    }
+
+    /* ---------------------------------------------------------------- Das Tempo
+     *
+     * Dieselbe Leiter wie am Rechner (TEMPO_STUFEN in spieler.js) und dieselbe
+     * Regel: allein stellt sie jeder, in einer Runde nur der Host. Zwei Geraete
+     * mit verschiedenem Tempo laufen unweigerlich auseinander, und kein
+     * Abgleich holt das wieder ein.
+     */
+    private static final double[] TEMPO_STUFEN = {0.5, 0.75, 1, 1.25, 1.5, 2};
+
+    /** Das laufende Tempo. In einer Runde ist es das der Runde. */
+    private double tempo = 1;
+
+    private static String tempoName(double wert) {
+        String zahl = String.format(Locale.GERMANY, "%.2f", wert)
+            .replaceAll("0+$", "").replaceAll("[.,]$", "");
+        return zahl + "×";
+    }
+
+    /** Auf eine der Stufen zwingen - was hereinkommt, kommt aus einer Nachricht. */
+    private static double tempoStufe(double wert) {
+        if (!(wert > 0)) return 1;
+        double beste = 1;
+        for (double stufe : TEMPO_STUFEN) {
+            if (Math.abs(stufe - wert) < Math.abs(beste - wert)) beste = stufe;
+        }
+        return beste;
+    }
+
+    /**
+     * Das Tempo setzen.
+     *
+     * @param melden ob es an die Runde geht. Was von dort kam, geht nicht
+     *               zurueck - sonst haette jede Einstellung ein Echo.
+     */
+    private void tempoSetzen(double wert, boolean melden) {
+        tempo = tempoStufe(wert);
+        if (player != null) player.setPlaybackSpeed((float) tempo);
+        if (tempoText != null) tempoText.setText(tempoName(tempo));
+        if (melden) umgebung.tempo(tempo);
+    }
+
+    /** Die Auswahl in derselben Blende wie Fassung, Hoster und Qualitaet. */
+    private void tempoWaehlen() {
+        if (!umgebung.darfTempo()) {
+            status("In einer Runde stellt der Host das Tempo.");
+            return;
+        }
+        ArrayList<String> namen = new ArrayList<>();
+        ArrayList<Runnable> aktionen = new ArrayList<>();
+        int laufend = -1;
+        for (int i = 0; i < TEMPO_STUFEN.length; i++) {
+            final double stufe = TEMPO_STUFEN[i];
+            if (Math.abs(stufe - tempo) < 0.001) laufend = i;
+            namen.add(tempoName(stufe));
+            aktionen.add(() -> tempoSetzen(stufe, true));
+        }
+        blende("Tempo", namen, aktionen, laufend);
+    }
+
+    /**
+     * Der Knopf in der Mitte - er steht nur, wenn er dort allein steht.
+     *
+     * <p>In der Mitte liegen vier Dinge uebereinander: der Kringel des Puffers,
+     * der Kasten mit Ansage und Knoepfen, die Blende der Listen - und dieser
+     * Knopf. Sie beantworten verschiedene Fragen, und zwei davon gleichzeitig
+     * beantwortet keine. Der Knopf tritt deshalb zurueck, sobald eines der
+     * anderen dasteht, und ebenso mit der uebrigen Bedienung.
+     */
+    private void mitteZeichnen() {
+        boolean frei = schichtenAn && player != null
+            && puffer.getVisibility() != View.VISIBLE
+            && kasten.getVisibility() != View.VISIBLE
+            && blende.getVisibility() != View.VISIBLE;
+        mitteSpielen.setText(player != null && player.getPlayWhenReady() ? "❚❚" : "▶");
+        if (frei == (mitteSpielen.getVisibility() == View.VISIBLE)) return;
+        mitteSpielen.setVisibility(frei ? View.VISIBLE : View.GONE);
+        if (frei) Bewegung.einblenden(mitteSpielen);
     }
 
     private void springen(int sekunden) {
@@ -1099,6 +1225,7 @@ final class DirektSpieler {
         blende.getLayoutParams().width = Math.min(dp(420),
             Math.round(activity.getResources().getDisplayMetrics().widthPixels * 0.92f));
         blende.setVisibility(View.VISIBLE);
+        mitteZeichnen();
         blende.requestLayout();
         regung();
         // Der erste Eintrag ist der wahrscheinlichste - am Fernseher steht das
@@ -1111,6 +1238,7 @@ final class DirektSpieler {
         if (blende.getVisibility() != View.VISIBLE) return;
         blende.setVisibility(View.GONE);
         blendeListe.removeAllViews();
+        mitteZeichnen();
         regung();
     }
 
@@ -1120,6 +1248,36 @@ final class DirektSpieler {
 
     /* -------------------------------------------------------------- Die Quelle */
 
+    /**
+     * Wie weit vorgeladen wird - und wie weit zurueck behalten.
+     *
+     * <p>Dieselben Zahlen wie am Rechner (hlsStarten in spieler.js: 60 Sekunden
+     * voraus, 30 zurueck). ExoPlayer haelt von sich aus nichts hinter der
+     * Wiedergabestelle, und genau daran hing die gemeldete Zaeherei: <b>jedes</b>
+     * Pausieren und Starten aus einer Runde ist ein Sprung. Der Befehl aus der
+     * Watchparty setzt die Stelle des Absenders, und die liegt fast immer ein
+     * Stueck hinter der eigenen. Ohne Rueckpuffer wirft ExoPlayer dabei alles
+     * Geladene weg und holt das ganze Stueck neu - bei Vidmoly sind das
+     * 15-Sekunden-Stuecke, also Sekunden schwarzes Bild bei jedem Takt der
+     * Runde. Mit Rueckpuffer sitzt die Stelle im Geladenen und der Sprung
+     * kostet nichts.
+     *
+     * <p>Die zweite Zahl ist die Schwelle zum Weiterspielen: 1,5 Sekunden statt
+     * der voreingestellten 2,5, nach einem Nachladen 3 statt 5. Wer in einer
+     * Runde sitzt, wartet sonst laenger als alle anderen.
+     *
+     * <p>{@code setPrioritizeTimeOverSizeThresholds(true)}: die Zeit entscheidet,
+     * nicht die Menge. Eine hohe Stufe fuellt den Byte-Vorrat sonst lange vor
+     * den 60 Sekunden.
+     */
+    private DefaultLoadControl puffern() {
+        return new DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30_000, 60_000, 1_500, 3_000)
+            .setBackBuffer(30_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build();
+    }
+
     void quelle(String url, String typ, Map<String, String> kopfzeilen, double start) {
         freigeben();
         if (geschlossen) return;
@@ -1128,10 +1286,15 @@ final class DirektSpieler {
             .setDefaultRequestProperties(kopfzeilen);
         player = new ExoPlayer.Builder(activity)
             .setMediaSourceFactory(new DefaultMediaSourceFactory(netz))
+            .setLoadControl(puffern())
             .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(30000).build();
         player.setAudioAttributes(new AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
         player.setHandleAudioBecomingNoisy(true);
+        // Genau springen, nicht auf das naechste Schluesselbild davor. In einer
+        // Runde schauen alle auf dasselbe Bild - "ungefaehr dort" waere bei den
+        // 15-Sekunden-Stuecken der Hoster bis zu fuenfzehn Sekunden daneben.
+        player.setSeekParameters(SeekParameters.EXACT);
         bild.setPlayer(player);
         ExoPlayer lauf = player;
         lauf.addListener(new Player.Listener() {
@@ -1139,6 +1302,7 @@ final class DirektSpieler {
             @Override public void onPlaybackStateChanged(int state) {
                 if (geschlossen || player != lauf) return;
                 puffer.setVisibility(state == Player.STATE_BUFFERING ? View.VISIBLE : View.GONE);
+                mitteZeichnen();
                 if (state == Player.STATE_READY) {
                     quelleLaedt = false;
                     kastenZu();
@@ -1196,6 +1360,9 @@ final class DirektSpieler {
         if ("hls".equals(typ)) item.setMimeType(MimeTypes.APPLICATION_M3U8);
         lauf.setMediaItem(item.build(), Math.max(0, Math.round(start * 1000)));
         lauf.prepare();
+        // Ein neuer Player faengt bei einfachem Tempo an - auch mitten in einer
+        // Runde, die auf 2x laeuft. Der Hosterwechsel ist genau der Fall.
+        lauf.setPlaybackSpeed((float) tempo);
         lauf.setPlayWhenReady(aktiv);
         endeAbgesagt = false;
         zaehlerEnde = 0;
@@ -1366,7 +1533,23 @@ final class DirektSpieler {
                 erwartetBis = SystemClock.uptimeMillis() + 2000;
                 erwartetPlay = false;
                 player.pause();
-                if (!befehl.urteil.optBoolean("nichtSpringen")) {
+                // Springen - aber nicht um jeden Preis.
+                //
+                // Beim Anhalten schon: dann stehen alle auf demselben Bild, und
+                // genau darauf schaut man. Da zaehlt die Millisekunde, und ein
+                // Sprung kostet hier nichts, weil ohnehin niemand laeuft.
+                //
+                // Beim Weiterlaufen dagegen ist ein Sprung auf die Stelle, auf
+                // der man ohnehin steht, kein Sprung, sondern ein Aufsetzen: der
+                // Decoder wird geleert, und das Bild kommt vom Anfang des
+                // Stuecks zurueck. Ein halber Sekundenbruchteil sieht dort
+                // niemand - die Runde greift erst bei fuenf Sekunden ein.
+                boolean laeuftDanach = !befehl.urteil.optBoolean("warten")
+                    && befehl.urteil.optJSONObject("ereignis") != null
+                    && befehl.urteil.optJSONObject("ereignis").optBoolean("playing");
+                boolean nahGenug = laeuftDanach
+                    && Math.abs(position() - befehl.ziel) <= SPRUNG_AB_SEKUNDEN;
+                if (!befehl.urteil.optBoolean("nichtSpringen") && !nahGenug) {
                     erwartetSeek = befehl.ziel;
                     player.seekTo(Math.round(befehl.ziel * 1000));
                 }

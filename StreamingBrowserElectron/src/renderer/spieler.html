@@ -194,6 +194,21 @@
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     pointer-events: none;
   }
+  /* Der Knopf in der Mitte. Er geht mit den anderen Schichten weg (siehe
+     schichten in spieler.js) und tritt zurueck, sobald etwas Wichtigeres in der
+     Mitte steht: waehrend des Puffers und ueber einem Fehlerkasten. */
+  #mitteSpielen {
+    position: absolute; pointer-events: auto;
+    width: 76px; height: 76px; padding: 0; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 27px; line-height: 1;
+    background: rgba(10, 14, 22, 0.58);
+    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.45);
+    transition: opacity 220ms ease, background 160ms ease, transform 160ms ease;
+  }
+  #mitteSpielen:hover { background: rgba(10, 14, 22, 0.86); transform: scale(1.06); }
+  #mitteSpielen.weg { opacity: 0; pointer-events: none; }
+
   #puffer {
     width: 46px; height: 46px; border-radius: 50%;
     border: 3px solid rgba(255, 255, 255, 0.22); border-top-color: #3D92FF;
@@ -254,6 +269,9 @@
   </div>
 
   <div id="mitte">
+    <!-- Der Knopf in der Mitte. Er tut dasselbe wie der in der Leiste und ist
+         dort, wo der Blick ohnehin hinsieht - und wo die Maus schon steht. -->
+    <button id="mitteSpielen" type="button" title="Abspielen (Leertaste)">▶</button>
     <div id="puffer"></div>
     <div id="fehler" hidden>
       <h2 id="fehlerTitel">Die Quelle spielt nicht</h2>
@@ -299,6 +317,16 @@
       </select>
       <select id="stufen" aria-label="Bildqualität" disabled>
         <option value="-1">Auto</option>
+      </select>
+      <!-- Das Tempo. In einer Runde gehoert es dem Host: er stellt es fuer
+           alle, und bei den anderen steht es dann nur noch da. -->
+      <select id="tempo" aria-label="Tempo" title="Tempo (Shift + , und Shift + .)">
+        <option value="0.5">0,5×</option>
+        <option value="0.75">0,75×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.25">1,25×</option>
+        <option value="1.5">1,5×</option>
+        <option value="2">2×</option>
       </select>
       <!-- Ab hier geht es um die naechste Folge und nicht mehr um diese. Der
            Strich davor ist kein Schmuck: links davon stehen vier Auswahlfelder,

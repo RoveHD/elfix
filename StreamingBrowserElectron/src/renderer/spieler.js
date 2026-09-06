@@ -28,7 +28,7 @@
 const bruecke = window.elfixSpieler || {
   aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
   fehler() {}, schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {},
-  sprung() {}, takt() {}, aktion() {}, aufLeiste() {}
+  sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {}
 };
 
 const bild = document.getElementById("bild");
@@ -39,6 +39,8 @@ const hosterWahl = document.getElementById("hosterWahl");
 const fassungWahl = document.getElementById("fassungWahl");
 const untertitelWahl = document.getElementById("untertitel");
 const knopfSpielen = document.getElementById("spielen");
+const knopfMitte = document.getElementById("mitteSpielen");
+const tempoWahl = document.getElementById("tempo");
 const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
 const knopfAuto = document.getElementById("autoKnopf");
@@ -66,7 +68,9 @@ const schichten = [
   // Knopf, der ueber einem laufenden Film dauerhaft stehenbleibt, stoert genau
   // so wie eine Leiste. Sichtbar wird sie beim Erreichen der Schwelle - danach
   // immer dann, wenn sich die Maus regt.
-  document.getElementById("weiterKnopf")
+  document.getElementById("weiterKnopf"),
+  // Und der Knopf in der Mitte: er gehoert zur Bedienung, nicht zum Film.
+  knopfMitte
 ];
 
 /**
@@ -101,6 +105,10 @@ let naechste = null;
 let marke = null;
 /** Laeuft zu dieser Folge eine Watchparty? Dann geht der Takt hinaus. */
 let inRunde = false;
+/** Bin ich in dieser Runde der Host? Nur er stellt das Tempo fuer alle. */
+let binHost = false;
+/** Das laufende Tempo - in einer Runde das der Runde. */
+let tempo = 1;
 /** Puffert das Video gerade? Eine Messung waehrend des Puffern taugt nichts. */
 let puffert = false;
 /**
@@ -151,6 +159,24 @@ function zeit(sekunden) {
 
 function pufferZeigen(an) {
   puffer.hidden = !an || !fehlerKasten.hidden;
+  spielenZeichnen();
+}
+
+/**
+ * Die beiden Abspielknoepfe zeigen dasselbe: der in der Leiste und der in der
+ * Mitte.
+ *
+ * Der in der Mitte tritt zurueck, sobald etwas Wichtigeres dort steht - der
+ * Puffer oder ein Fehlerkasten. Beide liegen an derselben Stelle, und zwei
+ * Dinge uebereinander beantworten die Frage "warum sehe ich nichts?" schlechter
+ * als eines.
+ */
+function spielenZeichnen() {
+  const zeichen = bild.paused ? "▶" : "⏸";
+  knopfSpielen.textContent = zeichen;
+  knopfMitte.textContent = zeichen;
+  knopfMitte.title = bild.paused ? "Abspielen (Leertaste)" : "Pause (Leertaste)";
+  knopfMitte.hidden = !puffer.hidden || !fehlerKasten.hidden;
 }
 
 /**
@@ -310,6 +336,63 @@ function tonUmschalten() {
   knopfTon.textContent = bild.muted || bild.volume === 0 ? "🔇" : "🔊";
 }
 
+/* ------------------------------------------------------------------ Das Tempo
+ *
+ * Eine feste Leiter von 0,5× bis 2×. In einer Runde gehoert sie dem Host: er
+ * stellt sie fuer alle, bei den anderen steht sie nur noch da. Der Grund ist
+ * derselbe wie beim Spulen - zwei Geraete mit verschiedenem Tempo laufen
+ * unweigerlich auseinander, und kein Abgleich kann das einholen.
+ */
+const TEMPO_STUFEN = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/** Auf eine der Stufen zwingen. Was hereinkommt, kommt aus einer Nachricht. */
+function tempoStufe(wert) {
+  const zahl = Number(wert);
+  if (!Number.isFinite(zahl) || zahl <= 0) return 1;
+  return TEMPO_STUFEN.reduce((beste, stufe) => (
+    Math.abs(stufe - zahl) < Math.abs(beste - zahl) ? stufe : beste
+  ), 1);
+}
+
+/**
+ * Das Tempo setzen.
+ *
+ * `melden` unterscheidet die eigene Tat von der Anweisung der Runde: was von
+ * dort kam, geht nicht zurueck - sonst haette jede Einstellung ein Echo.
+ */
+function tempoSetzen(wert, melden) {
+  tempo = tempoStufe(wert);
+  bild.playbackRate = tempo;
+  bild.defaultPlaybackRate = tempo;
+  tempoWahl.value = String(tempo);
+  if (melden) bruecke.tempo(tempo);
+}
+
+/** Eine Stufe hoch oder runter - fuer die Tastatur. */
+function tempoSchieben(richtung) {
+  if (tempoWahl.disabled) return;
+  const jetzt = TEMPO_STUFEN.indexOf(tempoStufe(tempo));
+  const naechster = Math.max(0, Math.min(TEMPO_STUFEN.length - 1, jetzt + richtung));
+  if (naechster === jetzt) return;
+  tempoSetzen(TEMPO_STUFEN[naechster], true);
+  schichtenZeigen();
+}
+
+/**
+ * Wer das Tempo stellen darf.
+ *
+ * Allein: immer. In einer Runde: nur der Host. Abgeschaltet steht es trotzdem
+ * da - man soll sehen, womit die Runde laeuft, und warum man es nicht aendern
+ * kann.
+ */
+function tempoRechteSetzen() {
+  const gesperrt = inRunde && !binHost;
+  tempoWahl.disabled = gesperrt;
+  tempoWahl.title = gesperrt
+    ? "In einer Runde stellt der Host das Tempo"
+    : "Tempo (Shift + , und Shift + .)";
+}
+
 /* ------------------------------------------------------- Die Folgenliste */
 
 /**
@@ -451,8 +534,10 @@ async function folgeWechseln(url) {
   wechselLaeuft = true;
   weiterAbbrechen();
   standMelden(true);
-  pufferZeigen(true);
+  // Erst den Fehlerkasten weg, dann den Puffer zeigen: pufferZeigen richtet
+  // sich nach ihm (und der Knopf in der Mitte nach beiden).
   fehlerKasten.hidden = true;
+  pufferZeigen(true);
   const ergebnis = await bruecke.wechseln(url);
   wechselLaeuft = false;
   if (!ergebnis || !ergebnis.ok) {
@@ -576,8 +661,10 @@ async function hosterWechseln(link) {
   wechselLaeuft = true;
   const stelle = Number(bild.currentTime) || 0;
   standMelden(true);
-  pufferZeigen(true);
+  // Erst den Fehlerkasten weg, dann den Puffer zeigen: pufferZeigen richtet
+  // sich nach ihm (und der Knopf in der Mitte nach beiden).
   fehlerKasten.hidden = true;
+  pufferZeigen(true);
   const ergebnis = await bruecke.hoster(link, stelle);
   wechselLaeuft = false;
   if (!ergebnis || !ergebnis.ok) {
@@ -777,6 +864,7 @@ function weiterAbbrechen() {
 /* ------------------------------------------------------------- Die Horcher */
 
 document.getElementById("spielen").addEventListener("click", spielenUmschalten);
+knopfMitte.addEventListener("click", spielenUmschalten);
 document.getElementById("zurueck").addEventListener("click", () => springen(-10));
 document.getElementById("vor").addEventListener("click", () => springen(10));
 document.getElementById("ton").addEventListener("click", tonUmschalten);
@@ -784,6 +872,7 @@ document.getElementById("gross").addEventListener("click", () => bruecke.vollbil
 document.getElementById("zu").addEventListener("click", () => beenden("knopf"));
 document.getElementById("zurueckZumHoster").addEventListener("click", () => {
   fehlerKasten.hidden = true;
+  spielenZeichnen();
   folgenZeigen();
 });
 document.getElementById("folgenKnopf").addEventListener("click", () => {
@@ -825,6 +914,7 @@ stufenWahl.addEventListener("change", () => {
   if (!hls) return;
   hls.currentLevel = Number(stufenWahl.value);
 });
+tempoWahl.addEventListener("change", () => tempoSetzen(tempoWahl.value, true));
 hosterWahl.addEventListener("change", () => hosterWechseln(hosterWahl.value));
 fassungWahl.addEventListener("change", () => fassungWechseln(fassungWahl.value));
 untertitelWahl.addEventListener("change", () => {
@@ -850,6 +940,8 @@ document.addEventListener("keydown", (ereignis) => {
   else if (taste === "ArrowRight") springen(10);
   else if (taste === "ArrowUp") { lautstaerke.value = String(Math.min(100, Number(lautstaerke.value) + 5)); lautstaerke.dispatchEvent(new Event("input")); }
   else if (taste === "ArrowDown") { lautstaerke.value = String(Math.max(0, Number(lautstaerke.value) - 5)); lautstaerke.dispatchEvent(new Event("input")); }
+  else if (taste === "<" || taste === ",") tempoSchieben(-1);
+  else if (taste === ">" || taste === ".") tempoSchieben(1);
   else if (taste === "m") tonUmschalten();
   else if (taste === "f") bruecke.vollbild(true);
   else if (taste === "e") { if (folgenPanel.hidden) folgenZeigen(); else folgenPanel.hidden = true; }
@@ -888,14 +980,13 @@ bild.addEventListener("durationchange", () => {
   anzeigeDauer.textContent = zeit(bild.duration);
 });
 bild.addEventListener("play", () => {
-  knopfSpielen.textContent = "⏸";
   pufferZeigen(false);
   standMelden(true);
   tatMelden("play");
   schichtenZeigen();
 });
 bild.addEventListener("pause", () => {
-  knopfSpielen.textContent = "▶";
+  spielenZeichnen();
   standMelden(true);
   // Das Ende ist keine Pause, die man an die anderen meldet - sie kommen von
   // selbst dorthin, und der Uebergang zur naechsten Folge macht den Rest.
@@ -931,6 +1022,10 @@ bild.addEventListener("error", () => {
  */
 bild.addEventListener("loadedmetadata", () => {
   anzeigeDauer.textContent = zeit(bild.duration);
+  // Eine neue Quelle faengt bei einfachem Tempo an - auch mitten in einer
+  // Runde, die auf 2x laeuft. Also hier wieder daraufsetzen, und zwar bei
+  // *jedem* loadedmetadata: der Hosterwechsel ist genau der Fall.
+  if (bild.playbackRate !== tempo) tempoSetzen(tempo, false);
   if (startGesetzt) return;
   startGesetzt = true;
   // Nicht am Ende: wer eine Folge zu neunundneunzig Prozent gesehen hat, will
@@ -1115,6 +1210,11 @@ function starten(neuerAuftrag) {
   marke = auftrag.marke || null;
   knopfMarke.hidden = true;
   inRunde = Boolean(auftrag.runde);
+  binHost = Boolean(auftrag.rundeHost);
+  // Das Tempo der Runde gilt ab der ersten Sekunde - auch fuer den, der gerade
+  // erst dazukommt. Gemeldet wird es dabei nicht: es kam ja von dort.
+  tempoSetzen(inRunde ? auftrag.rundeTempo : tempo, false);
+  tempoRechteSetzen();
   ausRundeBis = 0;
   puffert = false;
   // Die Liste bleibt, ihre Markierung nicht: welche Folge laeuft, steht im
@@ -1164,6 +1264,12 @@ bruecke.aufNaechste((wert, folgentitel) => {
 });
 bruecke.aufMarke((neue) => { marke = neue || null; });
 bruecke.aufSteuern(steuernAusRunde);
+// Das Tempo der Runde: gesetzt wird es hier, gemeldet wird nichts zurueck.
+bruecke.aufTempo((wert, host) => {
+  binHost = Boolean(host);
+  tempoSetzen(wert, false);
+  tempoRechteSetzen();
+});
 
 /**
  * Der Takt der Runde.

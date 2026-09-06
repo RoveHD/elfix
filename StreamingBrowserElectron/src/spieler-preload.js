@@ -68,6 +68,10 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
    */
   takt: (takt) => ipcRenderer.send("spieler:takt", takt),
   aktion: (aktion, stelle) => ipcRenderer.send("spieler:aktion", String(aktion || ""), Number(stelle) || 0),
+  /** Das Tempo, das der Host fuer die ganze Runde stellt. */
+  tempo: (wert) => ipcRenderer.send("spieler:tempo", Number(wert) || 1),
+  /** Das Tempo der Runde, hereingereicht - der Player setzt es und zeigt es an. */
+  aufTempo: (rueckruf) => ipcRenderer.on("spieler:rundentempo", (_ereignis, wert, binHost) => rueckruf(wert, binHost)),
   aufSteuern: (rueckruf) => ipcRenderer.on("spieler:steuern", (_ereignis, befehl) => rueckruf(befehl)),
   /** Wer sonst noch bei dieser Folge sitzt - Name, Zeichen, Uhr. */
   aufLeiste: (rueckruf) => ipcRenderer.on("spieler:leiste", (_ereignis, leute) => rueckruf(leute))
