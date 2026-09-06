@@ -7,34 +7,55 @@ const spur = require("./streamspur");
 // begrenzt und stumm; eine kurze Werbung gilt auch dann nicht als Folge,
 // wenn sie vor dem eigentlichen Stream geladen wird.
 async function beobachten(umgebung, adresse, referer, signal) {
-  const fristSignal = AbortSignal.timeout(umgebung.frist || 20000);
-  signal = signal ? AbortSignal.any([signal, fristSignal]) : fristSignal;
+  const externesSignal = signal;
+  const frist = umgebung.frist || 20000;
+  let fristSignal = AbortSignal.timeout(frist);
+  let arbeitsSignal = externesSignal ? AbortSignal.any([externesSignal, fristSignal]) : fristSignal;
   let ansicht = null;
   let beobachtungen = [];
   const geprueft = new Map();
-  const ende = Date.now() + (umgebung.frist || 20000);
+  let ende = Date.now() + frist;
   const fehlschlag = { ok: false, grund: "Keine spielbare Quelle beobachtet" };
   try {
-    if (signal?.aborted) return fehlschlag;
+    if (arbeitsSignal.aborted) return fehlschlag;
     ansicht = await umgebung.oeffnen(adresse, referer, (eintrag) => {
       if (beobachtungen.length < 400) beobachtungen = spur.aufnehmen(beobachtungen, eintrag);
     });
     const schliessen = () => ansicht?.schliessen();
-    signal?.addEventListener("abort", schliessen, { once: true });
+    // Nur ein echter Abbruch schliesst die Ansicht. Die kurze Beobachtungsfrist
+    // darf waehrend einer sichtbaren Menschpruefung ablaufen: dafuer bekommt
+    // der Zuschauer bewusst mehr Zeit, danach beginnt die Beobachtung neu.
+    externesSignal?.addEventListener("abort", schliessen, { once: true });
     try {
-      while (!signal?.aborted && Date.now() < ende) {
+      while (!arbeitsSignal.aborted && Date.now() < ende) {
         const lage = await ansicht.lesen().catch(() => ({}));
-        if (signal?.aborted) break;
+        if (externesSignal?.aborted) break;
+        if (lage.menschentor) {
+          if (typeof ansicht.bestaetigen !== "function") {
+            return { ...fehlschlag, grund: "Bestätigung erforderlich" };
+          }
+          const bestaetigt = await ansicht.bestaetigen(externesSignal).catch(() => false);
+          if (!bestaetigt) {
+            return { ...fehlschlag, grund: "Bestätigung nicht abgeschlossen" };
+          }
+          // Nach der Bestätigung beginnt die eigentliche Beobachtungsfrist.
+          // Das alte Fristsignal kann inzwischen abgelaufen sein und darf den
+          // frisch freigegebenen Player nicht sofort wieder beenden.
+          fristSignal = AbortSignal.timeout(frist);
+          arbeitsSignal = externesSignal ? AbortSignal.any([externesSignal, fristSignal]) : fristSignal;
+          ende = Date.now() + frist;
+          continue;
+        }
         const seite = lage.seite || adresse;
         const origin = new URL(seite).origin;
         const kopfzeilen = { referer: `${origin}/`, origin, "user-agent": umgebung.kennung };
         const kandidaten = beobachtungen.filter((eintrag) =>
           !eintrag.vonWerbung && eintrag.art === "playlist" && /\.m3u8(?:[?#]|$)/i.test(eintrag.adresse));
         for (const kandidat of kandidaten.slice(0, 12)) {
-          if (signal?.aborted) break;
+          if (arbeitsSignal.aborted) break;
           if (!geprueft.has(kandidat.adresse)) {
             geprueft.set(kandidat.adresse,
-              await playlistPruefen(umgebung.holen, kandidat.adresse, kopfzeilen, signal).catch(() => 0));
+              await playlistPruefen(umgebung.holen, kandidat.adresse, kopfzeilen, arbeitsSignal).catch(() => 0));
           }
         }
         const laufzeiten = Object.fromEntries(geprueft);
@@ -45,7 +66,7 @@ async function beobachten(umgebung, adresse, referer, signal) {
         const wahl = spur.waehlen(brauchbar, {
           currentSrc: datei ? lage.currentSrc : "", rahmen: seite, laufzeiten
         });
-        if (wahl.quelle && !signal?.aborted) return {
+        if (wahl.quelle && !arbeitsSignal.aborted) return {
           ok: true,
           quelle: { adresse: wahl.quelle, typ: wahl.art === "playlist" ? "hls" : "datei", hoehe: 0 },
           kopfzeilen,
@@ -54,13 +75,13 @@ async function beobachten(umgebung, adresse, referer, signal) {
         };
         await new Promise((fertig) => {
           const aufAbbruch = () => { clearTimeout(uhr); fertig(); };
-          const uhr = setTimeout(() => { signal?.removeEventListener("abort", aufAbbruch); fertig(); }, 400);
-          if (signal?.aborted) aufAbbruch();
-          else signal?.addEventListener("abort", aufAbbruch, { once: true });
+          const uhr = setTimeout(() => { arbeitsSignal.removeEventListener("abort", aufAbbruch); fertig(); }, 400);
+          if (arbeitsSignal.aborted) aufAbbruch();
+          else arbeitsSignal.addEventListener("abort", aufAbbruch, { once: true });
         });
       }
     } finally {
-      signal?.removeEventListener("abort", schliessen);
+      externesSignal?.removeEventListener("abort", schliessen);
     }
     return fehlschlag;
   } finally {

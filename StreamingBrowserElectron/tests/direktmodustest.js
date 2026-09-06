@@ -148,16 +148,21 @@ pruefe("Weiterschauen reicht seinen Vollbildwunsch bis zum eigenen Player",
 // verschwindet sie wieder, und der Player kommt zurueck nach oben.
 pruefe("Eine Bestaetigungsabfrage wird sichtbar gemacht",
   haupt.includes("async function menschentorLoesenLassen")
-  && haupt.includes("Der Anbieter fragt nach einer Bestätigung"),
+  && haupt.includes("fragt nach einer Bestätigung — bitte einmal bestätigen"),
   "sonst endet jede Cloudflare-Abfrage als 'kein Hoster auf der Seite'");
 pruefe("Erkannt wird sie am Inhalt, nicht an der Adresse",
-  /function menschentorErkennen[\s\S]{0,700}challenges\.cloudflare\.com/.test(haupt),
+  /function menschentorSkript[\s\S]{0,700}challenges\.cloudflare\.com/.test(haupt)
+  && /function menschentorErkennen[\s\S]{0,180}?menschentorSkript\(\)/.test(haupt),
   "die Abfrage kommt unter derselben Adresse zurueck, die man angefragt hat");
 pruefe("Danach liegt der Player wieder oben",
-  /menschentorLoesenLassen[\s\S]{0,1400}addChildView\(spielerView\)/.test(haupt));
+  /menschentorLoesenLassen[\s\S]{0,2800}addChildView\(spielerView\)/.test(haupt));
 pruefe("Und jede Werkbankseite geht durch diese Pruefung",
   /async function werkbankAn[\s\S]{0,900}?menschentorErkennen\(view\)/.test(haupt),
   "nicht nur der erste Aufruf");
+pruefe("Auch eine Menschpruefung auf der Hoster-Seite wird sichtbar",
+  /bestaetigen: \(abbruch\) => menschentorLoesenLassen\(provider, view, \{[\s\S]{0,180}?voruebergehend: true/.test(haupt)
+  && /const menschentor = \$\{menschentorSkript\(\)\}/.test(haupt),
+  "sonst wartet der unsichtbare Quellen-Beobachter bis zum Zeitlimit");
 
 /* ---------------------------------------------------------- Der Schalter */
 

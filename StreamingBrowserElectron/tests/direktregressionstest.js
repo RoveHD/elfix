@@ -310,6 +310,28 @@ pruefe("Stream-Beobachtung verwirft Werbung und nimmt die lange Folge", async ()
   assert.equal(geschlossen, 1);
 });
 
+pruefe("Eine Cloudflare-Pruefung des Hosters wird sichtbar bestaetigt und danach weiter aufgeloest", async () => {
+  let bestaetigungen = 0; let lesen = 0;
+  const ergebnis = await beobachtung.beobachten({ kennung: "Test", frist: 10,
+    oeffnen: async () => ({
+      lesen: async () => (++lesen === 1
+        ? { seite: "https://hoster.example/challenge", menschentor: true }
+        : { seite: "https://hoster.example/player", currentSrc: "https://cdn.example/folge.mp4", dauer: 1400 }),
+      // Laenger als die normale Beobachtungsfrist: die sichtbare Bestaetigung
+      // bekommt ihre eigene Zeit und startet die Quellenfrist danach neu.
+      bestaetigen: async () => {
+        bestaetigungen++;
+        await new Promise((fertig) => setTimeout(fertig, 25));
+        return true;
+      },
+      schliessen() {}
+    })
+  }, "https://hoster.example/embed", "https://anbieter.example");
+  assert.equal(bestaetigungen, 1);
+  assert.equal(ergebnis.ok, true);
+  assert.equal(ergebnis.quelle.adresse, "https://cdn.example/folge.mp4");
+});
+
 pruefe("Abgebrochene Beobachtung schliesst ihre Ansicht ohne Quelle", async () => {
   const abbruch = new AbortController(); let geschlossen = 0;
   const ergebnis = await beobachtung.beobachten({ kennung: "Test",

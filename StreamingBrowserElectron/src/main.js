@@ -8055,15 +8055,30 @@ async function direktQuelleBeobachten(provider, adresse, referer, signal) {
         lesen: async () => {
           if (!isLiveView(view)) return {};
           const ergebnisse = await executeJavaScriptInMediaFrames(view, `(() => {
+            const menschentor = ${menschentorSkript()};
             const video = Array.from(document.querySelectorAll("video"))
               .sort((a, b) => (Number(b.duration) || 0) - (Number(a.duration) || 0))[0];
-            if (video) { video.muted = true; video.play().catch(() => {}); }
-            else document.querySelector(".jw-icon-playback, .vjs-big-play-button, .plyr__control--overlaid")?.click();
-            return { currentSrc: video?.currentSrc || "", dauer: Number(video?.duration) || 0, seite: location.href };
+            if (!menschentor && video) { video.muted = true; video.play().catch(() => {}); }
+            else if (!menschentor) {
+              document.querySelector(".jw-icon-playback, .vjs-big-play-button, .plyr__control--overlaid")?.click();
+            }
+            return { currentSrc: video?.currentSrc || "", dauer: Number(video?.duration) || 0,
+              seite: location.href, menschentor };
           })()`);
-          return ergebnisse.map((ergebnis) => ergebnis?.value || ergebnis || {})
-            .sort((a, b) => (b.dauer || 0) - (a.dauer || 0))[0] || { seite: inhalt.getURL() };
+          const lagen = ergebnisse.map((ergebnis) => ergebnis?.value || ergebnis || {});
+          const beste = lagen.sort((a, b) => (b.dauer || 0) - (a.dauer || 0))[0]
+            || { seite: inhalt.getURL() };
+          // Die Abfrage kann im Hauptrahmen stehen, waehrend ein Werberahmen
+          // schon ein kurzes Video meldet. Die Videowahl darf das Menschentor
+          // aus einem anderen Rahmen nicht verdecken.
+          return { ...beste, menschentor: lagen.some((lage) => lage.menschentor) };
         },
+        // Eine interaktive Cloudflare-Abfrage kann in einer unsichtbaren
+        // Beobachteransicht niemand loesen. Kurz nach vorn holen, danach mit
+        // derselben Ansicht und denselben Sitzungscookies weiterbeobachten.
+        bestaetigen: (abbruch) => menschentorLoesenLassen(provider, view, {
+          voruebergehend: true, signal: abbruch, wer: "Der Hoster"
+        }),
         schliessen: () => {
           direktBeobachter.delete(id);
           webContentsProvider.delete(id);
@@ -8184,9 +8199,8 @@ function seiteLaden(view, adresse, frist = 25000) {
  * Erkannt wird an dem, was dasteht, nicht an der Adresse: die Abfrage kommt
  * unter derselben Adresse zurueck, die man angefragt hat.
  */
-function menschentorErkennen(view) {
-  if (!isLiveView(view)) return Promise.resolve(false);
-  return view.webContents.executeJavaScript(`(() => {
+function menschentorSkript() {
+  return `(() => {
     const knoten = document.querySelector(
       "#challenge-form, #challenge-running, .cf-turnstile, #cf-please-wait,"
       + " iframe[src*='challenges.cloudflare.com'], iframe[src*='hcaptcha.com'],"
@@ -8194,7 +8208,12 @@ function menschentorErkennen(view) {
     if (knoten) return true;
     const titel = String(document.title || "").toLowerCase();
     return /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/.test(titel);
-  })()`, true).catch(() => false);
+  })()`;
+}
+
+function menschentorErkennen(view) {
+  if (!isLiveView(view)) return Promise.resolve(false);
+  return view.webContents.executeJavaScript(menschentorSkript(), true).catch(() => false);
 }
 
 /** So lange darf eine Bestaetigung dauern, bevor ELFIX aufgibt. */
@@ -8210,19 +8229,32 @@ const MENSCHENTOR_FRIST_MS = 120000;
  *
  * Danach verschwindet sie wieder, und der Player kommt zurueck nach oben.
  */
-async function menschentorLoesenLassen(provider, view) {
+async function menschentorLoesenLassen(provider, view, optionen = {}) {
   if (!mainWindow || mainWindow.isDestroyed() || !isLiveView(view)) return false;
-  sendToast("Der Anbieter fragt nach einer Bestätigung — bitte einmal bestätigen");
-  console.log("[ELFIX DIREKT] Menschentor sichtbar gemacht");
+  const wer = String(optionen.wer || "Der Anbieter");
+  sendToast(`${wer} fragt nach einer Bestätigung — bitte einmal bestätigen`);
+  console.log(`[ELFIX DIREKT] Menschentor sichtbar gemacht (${wer})`);
 
   mainWindow.contentView.addChildView(view);
-  attachedProviderViews.add(provider.id);
-  applyBrowserBounds();
+  if (!optionen.voruebergehend) attachedProviderViews.add(provider.id);
+  if (optionen.voruebergehend) {
+    const size = mainWindow.getContentSize();
+    view.setBounds(isContentFullscreen
+      ? { x: 0, y: 0, width: size[0], height: size[1] }
+      : {
+          x: clamp(browserBounds.x, 0, size[0]),
+          y: clamp(browserBounds.y, 0, size[1]),
+          width: clamp(browserBounds.width, 1, size[0]),
+          height: clamp(browserBounds.height, 1, size[1])
+        });
+  } else {
+    applyBrowserBounds();
+  }
   view.webContents.focus();
 
   const bis = Date.now() + MENSCHENTOR_FRIST_MS;
   let offen = true;
-  while (offen && Date.now() < bis) {
+  while (offen && Date.now() < bis && !optionen.signal?.aborted) {
     // Gewartet wird auf die naechste Seite. Kommt keine, wird noch einmal
     // nachgesehen: manche Abfragen tauschen nur ihren Inhalt aus, ohne dass
     // eine Navigation stattfindet.
@@ -8230,16 +8262,16 @@ async function menschentorLoesenLassen(provider, view) {
     offen = await menschentorErkennen(view);
   }
 
-  mainWindow.contentView.removeChildView(view);
-  attachedProviderViews.delete(provider.id);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
+  if (!optionen.voruebergehend) attachedProviderViews.delete(provider.id);
   // Der Player lag darunter - ein zweites addChildView schiebt ihn zurueck
   // nach oben.
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     mainWindow.contentView.addChildView(spielerView);
     spielerLageSetzen();
   }
-  if (offen) sendToast("Die Bestätigung kam nicht durch");
-  return !offen;
+  if (offen && !optionen.signal?.aborted) sendToast("Die Bestätigung kam nicht durch");
+  return !offen && !optionen.signal?.aborted;
 }
 
 /** Die Werkbank auf eine Seite stellen - und sie dort auch wirklich vorfinden. */
