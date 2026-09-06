@@ -3,6 +3,44 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.1 — 7. September 2026
+
+**Am Telefon wurde bei jedem Pausieren neu geladen.** Und weil in einer Runde
+jedes Pausieren und Starten ein Sprung ist — der Befehl trägt die Stelle des
+Absenders —, hieß das: bei jedem Takt der Runde ein paar Sekunden schwarzes
+Bild. Der Grund war eine Zahl, die der Rechner hat und Android nicht: dort
+werden seit jeher 60 Sekunden vorausgeladen und **30 Sekunden hinter der Stelle
+behalten**, ExoPlayer behält von sich aus nichts. Ohne diesen Rückpuffer wirft
+er beim Sprung alles Geladene weg und holt das ganze Stück neu — bei Vidmoly
+sind das 15-Sekunden-Stücke. Jetzt gelten am Telefon dieselben Zahlen wie am
+Rechner.
+
+**Beim Anhalten sitzt die Stelle jetzt auf die Millisekunde.** Der Befehl trug
+sie schon immer; gesprungen wird jetzt auch wirklich, und zwar genau — nicht
+auf das nächste Schlüsselbild davor, was bei diesen Stückgrößen bis zu fünfzehn
+Sekunden daneben liegen kann. Beim Weiterlaufen bleibt eine kleine Toleranz:
+dort kostet ein Sprung mehr, als er einbringt.
+
+**Abspielen und Pause stehen jetzt in der Mitte** — am Rechner und am Telefon,
+dort wo der Blick ohnehin ist. Der Knopf geht mit der übrigen Bedienung und
+tritt zurück, sobald der Ladekringel oder eine Meldung dort steht.
+
+**In einer Runde spielen jetzt alle dieselbe Fassung.** Das war keine
+Kleinigkeit: zwei Fassungen derselben Folge sind bei Vidmoly 1371 und 1376
+Sekunden lang. Dieselbe Stelle ist dort schlicht nicht dasselbe Bild, und kein
+Abgleich kann das einholen — wer verschiedene Dateien synchronisiert,
+synchronisiert Zahlen. Was der Host wählt, gilt jetzt für die Runde: wer
+beitritt, startet gleich damit, und wechselt der Host, ziehen die anderen nach.
+Gibt der Hoster in dieser Fassung nichts her, bleibt es trotzdem nicht schwarz.
+
+**Und das Tempo lässt sich einstellen — 0,5× bis 2×.** In einer Runde stellt es
+der Host, für alle; bei den anderen steht es da und ist nicht anfassbar. Zwei
+Geräte mit verschiedenem Tempo laufen unweigerlich auseinander. Die Rechnung
+für den Einstieg zählt es mit: bei doppeltem Tempo ist die Quelle in derselben
+Zeit doppelt so weit.
+
+Fassung und Tempo wirken erst mit einem **aktualisierten Relay**.
+
 ## 2.0.0 — 6. September 2026
 
 **ELFIX zeigt nur noch sich selbst.** Die Seiten von AniWorld, S.to und den
