@@ -3,6 +3,39 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.5 — 7. September 2026
+
+**In einer Runde fängt jetzt niemand mehr allein an.** Wer Play drückte, lief
+sofort los, und die anderen holten auf — der Rückstand war die Laufzeit der
+Nachricht plus Springen und Puffern, jedes Mal, und er blieb stehen, weil der
+laufende Ausgleich erst bei fünf Sekunden eingreift. Jetzt bleibt auch der
+Auslöser zunächst stehen: es wird ein gemeinsamer Zeitpunkt verabredet, alle
+springen hin und machen sich fertig, und dann lassen alle zum selben Augenblick
+los. Gemessen mit einer eingebauten Leitung von 12 gegen 95 Millisekunden je
+Richtung: **8,5 Millisekunden** Abweichung statt rund 95 — ein Fünftel Bild.
+
+**Beim Anhalten zeigten zwei Geräte dieselbe Sekunde und trotzdem ein anderes
+Bild.** Dahinter steckten zwei Dinge. Die Stelle ging auf zwei Nachkommastellen
+gerundet hinaus — aus 421,037 wurde 421,04, und zwar bevor die Zahl den Player
+überhaupt verlassen hatte. Und niemand hat nachgesehen, wo der Sprung wirklich
+gelandet ist: eine Stelle zu setzen ist kein Zuweisen, sondern der Anfang einer
+Suche, und wo sie endet, steht erst hinterher fest. Jetzt geht die volle Zahl
+hinaus, und der Empfänger misst nach und setzt bei mehr als zwanzig
+Millisekunden genau einmal nach. Am Telefon galt dort bisher eine Toleranz von
+anderthalb Sekunden — drei Dutzend Bilder.
+
+**Und am Telefon geht es ohne Umweg zum Player.** Wer eine Serie antippte, bekam
+erst einen eigenen Bildschirm: die Anbieterseite wurde hinter dem Ladebalken
+gelesen, daraus eine Übersicht gebaut, und erst ein Tipp darin führte zum
+Player. Am Fire TV waren das elf Sekunden Balken, um danach einmal OK zu
+drücken. Der Player führt seine Folgen- und Staffelliste inzwischen selbst — er
+steht jetzt sofort da, liest hinter seiner eigenen Anzeige und schlägt die Liste
+auf, sobald sie da ist. Der Ladevorhang fällt überall dort weg, wo der eigene
+Player übernimmt.
+
+An Driftgrenzen, laufendem Ausgleich, Hostzeit-Abgleich und Beitritt wurde
+nichts geändert.
+
 ## 2.0.4 — 7. September 2026
 
 **Die Startkarte zeigt, worum es geht.** Die Beschreibung reist jetzt die ganze
