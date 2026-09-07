@@ -9481,7 +9481,12 @@ function watchpartyEreignis(nachricht, laeuft) {
     timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
     playing: Boolean(laeuft),
     hatUhr: serverJetzt != null,
-    versatz: stand ? stand.versatz : 0
+    versatz: stand ? stand.versatz : 0,
+    // Der verabredete Startzeitpunkt und das Tempo der Runde. Beide standen
+    // hier nicht - und damit rechnete der eigene Player bei doppeltem Tempo
+    // mit einfachem und kannte keinen gemeinsamen Start.
+    startAt: Number(nachricht.startAt) || 0,
+    tempo: watchpartySync.tempoLesen(nachricht.tempo)
   };
 }
 
@@ -9735,7 +9740,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
     const plan = watchpartySync.startPlan(
       ereignis,
       watchparty.serverJetzt(eintrag.room),
-      laufen && springen ? watchpartySync.START_VORLAUF_MS : 0
+      laufen ? watchpartySync.START_VORLAUF_MS : 0
     );
     spielerBefehl({
       tun: "stelle",
@@ -9744,9 +9749,12 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
       stelle: plan.stelle,
       laufen,
       // Der Host springt nicht auf seine eigene Stelle - das laesst nur neu
-      // puffern. So steht es auch im Player (steuernAusRunde).
+      // puffern. So steht es auch im Player (steuernAusRunde). Auf den
+      // verabredeten Zeitpunkt wartet er trotzdem.
       springen,
-      wartenMs: plan.wartenMs
+      wartenMs: plan.wartenMs,
+      // Pause und gezielter Sprung muessen sitzen: der Empfaenger misst nach.
+      genau: urteil.genau
     });
     return true;
   }
@@ -9779,8 +9787,38 @@ ipcMain.on("spieler:aktion", (ereignis, aktion, stelle) => {
   if (!vomSpieler(ereignis)) return;
   const runde = spielerRunde();
   if (!runde) return;
-  watchparty.steuernMitAdresse(runde.key, String(aktion || ""), sanitizePositiveNumber(stelle),
-    runde.adresse, runde.raum);
+  const name = String(aktion || "");
+  const wo = sanitizePositiveNumber(stelle);
+
+  /*
+   * Play ist kein Losfahren mehr, sondern eine Verabredung.
+   *
+   * Wer drueckt, bleibt stehen. Der Zeitpunkt wird vorgeschlagen (die eigene
+   * Uhr kennt ihren Versatz zum Relay aus Ping/Pong), das Relay nimmt ihn an
+   * oder setzt einen eigenen, und alle - der Ausloeser eingeschlossen - fahren
+   * zu diesem Augenblick los. Vorher lief der Ausloeser sofort und die anderen
+   * holten auf; der Rueckstand war die Laufzeit der Nachricht plus Puffern.
+   */
+  if (name === "play") {
+    const jetzt = watchparty.serverJetzt(runde.raum);
+    const startAt = jetzt == null ? 0 : jetzt + watchpartySync.START_VORLAUF_MS;
+    watchparty.steuernMitEinstellung(runde.key, "play", wo, runde.adresse, runde.raum, { startAt });
+    // Und der eigene Player wartet denselben Augenblick ab. Ohne gemessene Uhr
+    // gibt es keinen gemeinsamen Augenblick - dann bleibt es beim Vorlauf, den
+    // auch das Relay setzt, und die Abweichung ist die Laufzeit der Nachricht.
+    spielerBefehl({
+      tun: "stelle",
+      stelle: wo,
+      laufen: true,
+      // Er steht schon dort, wo alle hinsollen - ein Sprung auf die eigene
+      // Stelle laesst nur neu puffern.
+      springen: false,
+      wartenMs: watchpartySync.START_VORLAUF_MS,
+      genau: false
+    });
+    return;
+  }
+  watchparty.steuernMitAdresse(runde.key, name, wo, runde.adresse, runde.raum);
 });
 
 /**

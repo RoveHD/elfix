@@ -8682,6 +8682,24 @@ public class MainActivity extends Activity {
     private void serieOeffnen(Provider provider, String url, String titel) {
         direktBrowserAusnahme = "";
         if (provider == null || url == null || url.isEmpty()) return;
+        /*
+         * Geradewegs in den Player - auch ohne gewaehlte Folge.
+         *
+         * <p>Vorher lag hier ein eigener Bildschirm dazwischen: die
+         * Anbieterseite wurde hinter dem Ladevorhang gelesen, daraus eine
+         * eigene Uebersicht gebaut, und erst ein Tipp darin fuehrte zum
+         * Player. Am Fire TV waren das elf Sekunden Balken, um danach einmal
+         * OK zu druecken.
+         *
+         * <p>Seit der Player seine eigene Folgen- und Staffelliste fuehrt, ist
+         * dieser Umweg keiner mehr: er steht sofort da, liest hinter seiner
+         * eigenen Anzeige und schlaegt die Liste auf, sobald sie da ist. Ein
+         * Ladebildschirm vor einem Ladebildschirm war einer zu viel.
+         */
+        if (kern != null && DirektWiedergabe.passt(url)) {
+            direktStarten(provider, url, titel);
+            return;
+        }
         if (serienuebersicht == null || !uebersichtLohnt(url)) {
             // Kein Umweg ueber die Uebersicht - und dann ist die Frage, warum
             // nicht. Ist die Adresse selbst schon abspielbar (ein Film, eine
@@ -9665,6 +9683,9 @@ public class MainActivity extends Activity {
                     // wie beim Spulen, und aus demselben Grund.
                     return mitschauen == null || !mitschauen.laeuftMit() || mitschauen.binHostHier();
                 }
+                public boolean inRunde() {
+                    return mitschauen != null && mitschauen.laeuftMit();
+                }
                 public void fassungGewaehlt(String fassungName, String hosterName) {
                     if (mitschauen == null) return;
                     try {
@@ -9912,6 +9933,21 @@ public class MainActivity extends Activity {
         startUrl = url == null ? "" : url;
         startTitel = titel == null ? "" : titel;
         startStelle = Math.max(0, stelle);
+        /*
+         * Kein Vorhang vor dem eigenen Player.
+         *
+         * <p>Er stammt aus der Zeit, in der eine fremde Seite mit einem fremden
+         * Player aufgebaut wurde - da gab es zwischen Tipp und Bild nichts zu
+         * sehen ausser Dingen, die niemand sehen will. Der eigene Player ist
+         * sofort da und sagt in seiner Mitte selbst, was er gerade tut: die
+         * Seite lesen, die Quelle aufloesen, puffern. Ein Vorhang davor waere
+         * ein zweiter Ladebildschirm vor einem Ladebildschirm - und weil der
+         * Player ihn im selben Zug wieder aufzieht, ein Aufblitzen dazu.
+         *
+         * <p>Die Angaben oben bleiben trotzdem stehen: "Erneut versuchen"
+         * braucht sie, und der Player nimmt den Titel von dort.
+         */
+        if (kern != null && DirektWiedergabe.passt(url)) return;
         if (startvorhang == null) return;
         startvorhang.starten(startTitel, startStelle);
     }

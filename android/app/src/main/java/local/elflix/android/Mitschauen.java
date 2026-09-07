@@ -586,8 +586,19 @@ public final class Mitschauen {
         letzteStandMeldung = 0;
         kern.rufe("watchparty-bruecke.meldungSenden",
             Kern.args(zeile, key, umgebung.adresse(), raum), (wert, fehler) -> {
-                if (fehler != null) Log.d(TAG, "Steuerbefehl nicht gesendet: " + fehler);
-                else if (wert != null && !"null".equals(wert)) Log.i(TAG, "Watchparty gesendet: " + wert);
+                if (fehler != null) { Log.d(TAG, "Steuerbefehl nicht gesendet: " + fehler); return; }
+                if (wert == null || "null".equals(wert)) return;
+                Log.i(TAG, "Watchparty gesendet: " + wert);
+                // Ein Play ist eine Verabredung: die Bruecke gibt ein Urteil
+                // zurueck, mit dem der eigene Player denselben Augenblick
+                // abwartet wie alle anderen. Ohne das liefe der Ausloeser
+                // sofort los und die anderen holten auf.
+                if (!umgebung.nativerSpieler()) return;
+                try {
+                    JSONObject antwort = new JSONObject(wert);
+                    JSONObject urteil = antwort.optJSONObject("urteil");
+                    if (urteil != null) umgebung.nativSteuern(urteil, null);
+                } catch (org.json.JSONException ignoriert) { }
             });
     }
 

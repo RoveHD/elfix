@@ -102,6 +102,14 @@ final class DirektSpieler {
         default void tempo(double wert) { }
 
         /**
+         * Laeuft hier gerade eine Runde mit?
+         *
+         * <p>Dann faengt dieser Player nicht allein an: Play meldet die Absicht,
+         * und losgefahren wird zu dem Zeitpunkt, den die Runde nennt.
+         */
+        default boolean inRunde() { return false; }
+
+        /**
          * Darf hier ueberhaupt am Tempo gedreht werden?
          *
          * <p>Allein: immer. In einer Runde: nur der Host - zwei Geraete mit
@@ -137,6 +145,16 @@ final class DirektSpieler {
 
     /** Ab welchem Abstand ein Befehl aus der Runde wirklich springt - siehe befehlPruefen. */
     private static final double SPRUNG_AB_SEKUNDEN = 0.5;
+
+    /**
+     * So nah muss eine genaue Stelle sitzen, damit es dasselbe Bild ist.
+     *
+     * <p>Zwanzig Millisekunden - dieselbe Schwelle wie am Rechner
+     * (SEEK_TOLERANZ_S in spieler.js). Ein Bild ist bei 24 Bildern je Sekunde
+     * rund 42 ms lang. ExoPlayer rechnet in Millisekunden, feiner geht es hier
+     * ohnehin nicht.
+     */
+    private static final double SEEK_TOLERANZ_S = 0.02;
     /**
      * Ab wann die Karte zur naechsten Folge dasteht.
      *
@@ -394,6 +412,8 @@ final class DirektSpieler {
         double ziel;
         /** Wann losgelassen wird - Uhrzeit des Geraets. 0: sobald es geht. */
         long startBei;
+        /** Ob schon einmal nachgesetzt wurde. Ein zweites Mal bringt nichts. */
+        boolean nachgesetzt;
         Befehl(JSONObject urteil, Runnable bereit) { this.urteil = urteil; this.bereit = bereit; }
     }
 
@@ -1074,6 +1094,20 @@ final class DirektSpieler {
         kastenKnoepfe.setVisibility(View.VISIBLE);
     }
 
+    /**
+     * Ob der Player gerade auf etwas wartet.
+     *
+     * <p>{@code false} raeumt Kringel und Ansage weg - fuer den Fall, in dem
+     * nichts mehr kommt, weil nichts mehr kommen soll: die Serienseite, auf der
+     * gewaehlt und nicht gespielt wird. Ohne das drehte sich hinter der
+     * offenen Folgenliste bis in alle Ewigkeit ein Ladekringel.
+     */
+    void warten(boolean ja) {
+        puffer.setVisibility(ja ? View.VISIBLE : View.GONE);
+        if (!ja) kastenZu();
+        mitteZeichnen();
+    }
+
     private void kastenZu() {
         kasten.setVisibility(View.GONE);
         kastenKnoepfe.removeAllViews();
@@ -1113,10 +1147,45 @@ final class DirektSpieler {
 
     /* ------------------------------------------------------------ Die Bedienung */
 
+    /**
+     * Abspielen und Pause.
+     *
+     * <p>In einer Runde faengt niemand allein an. Wer drueckt, bleibt stehen und
+     * meldet die Absicht; die Runde nennt einen Zeitpunkt, und dann fahren alle
+     * gemeinsam los (siehe {@code meldungSenden} in der Bruecke und
+     * {@code startPlan} im geteilten Modul). Vorher lief der Ausloeser sofort und
+     * die anderen holten auf - der Rueckstand war die Laufzeit der Nachricht
+     * plus Springen und Puffern, und er blieb, weil der laufende Ausgleich erst
+     * bei fuenf Sekunden eingreift.
+     */
     private void spielenUmschalten() {
         if (player == null) return;
         boolean laeuft = player.getPlayWhenReady();
+        if (!laeuft && umgebung.inRunde() && bereitGemeldet && wartenderBefehl == null) {
+            startAngefordert();
+            return;
+        }
         player.setPlayWhenReady(!laeuft);
+        spielenZeichnen();
+    }
+
+    /** Laeuft gerade ein Anlauf zum gemeinsamen Start? */
+    private final Runnable startNotbremse = this::startNotbremseZiehen;
+
+    private void startAngefordert() {
+        handler.removeCallbacks(startNotbremse);
+        liveMelden("play");
+        // Antwortet die Runde nicht - Relay weg, Verbindung tot -, faengt es
+        // trotzdem an. Ein Knopf, der nichts tut, waere das schlechtere Ende.
+        handler.postDelayed(startNotbremse, 1800);
+        regung();
+    }
+
+    private void startNotbremseZiehen() {
+        if (geschlossen || player == null || player.getPlayWhenReady() || wartenderBefehl != null) return;
+        erwartetBis = SystemClock.uptimeMillis() + 2000;
+        erwartetPlay = true;
+        player.setPlayWhenReady(true);
         spielenZeichnen();
     }
 
@@ -1708,6 +1777,7 @@ final class DirektSpieler {
             umgebung.fassungWaehlen(urteil.optString("fassung", ""), urteil.optString("hoster", ""));
             return;
         }
+        handler.removeCallbacks(startNotbremse);
         wartenderBefehl = new Befehl(urteil, bereit);
         befehlPruefen();
     }
@@ -1764,6 +1834,30 @@ final class DirektSpieler {
             return;
         }
         if (!befehl.urteil.optBoolean("nichtSpringen") && Math.abs(position() - befehl.ziel) > 1.5) return;
+
+        /*
+         * Nachmessen, wo der Sprung wirklich gelandet ist.
+         *
+         * <p>{@code seekTo} ist keine Zuweisung, sondern der Anfang eines
+         * Suchvorgangs - wo er endet, steht erst hinterher fest. Bei einer Pause
+         * schauen alle auf dasselbe Standbild, und da zaehlt der Bruchteil:
+         * bisher galt hier eine Toleranz von anderthalb Sekunden, und die reicht
+         * fuer drei Dutzend Bilder. Also einmal nachsetzen, wenn es daneben
+         * liegt - und nur einmal. Ein Player, der die Stelle zweimal verfehlt,
+         * trifft sie auch beim dritten Mal nicht, und eine Schleife am Video ist
+         * schlimmer als ein Hundertstel Abweichung.
+         */
+        if (befehl.urteil.optBoolean("genau") && !befehl.nachgesetzt
+            && !befehl.urteil.optBoolean("nichtSpringen")
+            && Math.abs(position() - befehl.ziel) > SEEK_TOLERANZ_S) {
+            befehl.nachgesetzt = true;
+            erwartetSeek = befehl.ziel;
+            erwartetBis = SystemClock.uptimeMillis() + 2000;
+            player.seekTo(Math.round(befehl.ziel * 1000));
+            handler.postDelayed(this::befehlPruefen, 100);
+            return;
+        }
+
         JSONObject ereignis = befehl.urteil.optJSONObject("ereignis");
         boolean play = !befehl.urteil.optBoolean("warten") && ereignis != null && ereignis.optBoolean("playing");
         /*

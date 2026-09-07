@@ -608,6 +608,49 @@
   function meldungSenden(zeile, key, url, room) {
     const tat = sync.aktionLesen(zeile);
     if (!tat || !raeume || !key) return null;
+
+    /*
+     * Play ist kein Losfahren, sondern eine Verabredung.
+     *
+     * Wer drueckt, schickt einen Zeitpunkt mit - seine eigene Uhr kennt ihren
+     * Versatz zum Relay aus Ping/Pong. Das Relay nimmt ihn an oder setzt einen
+     * eigenen, und alle fahren zu diesem Augenblick los. Zurueck geht ein
+     * Urteil fuer den eigenen Player: er wartet denselben Augenblick ab, statt
+     * sofort anzufangen und die anderen aufholen zu lassen.
+     *
+     * Der Zeitpunkt im Urteil steht in *oertlicher* Zeit (versatz 0). Damit
+     * rechnet der eigene Player ohne Umweg ueber die Serveruhr - er soll ja
+     * nicht wissen, wo der Server steht, sondern wie lange er noch wartet.
+     */
+    if (tat.aktion === "play") {
+      const jetzt = typeof raeume.serverJetzt === "function" ? raeume.serverJetzt(room) : null;
+      const vorlauf = sync.START_VORLAUF_MS;
+      const startAt = jetzt == null ? 0 : jetzt + vorlauf;
+      raeume.steuernMitEinstellung(key, "play", tat.position, String(url || ""), room, { startAt });
+      return {
+        ...tat,
+        startAt,
+        wartenMs: vorlauf,
+        urteil: {
+          tun: "anwenden",
+          genau: false,
+          warten: false,
+          // Er steht schon dort, wo alle hinsollen - ein Sprung auf die eigene
+          // Stelle laesst nur neu puffern.
+          nichtSpringen: true,
+          grund: "eigener start",
+          ereignis: {
+            videoTime: tat.position,
+            timestamp: 0,
+            playing: true,
+            hatUhr: true,
+            versatz: 0,
+            startAt: Date.now() + vorlauf,
+            tempo: 1
+          }
+        }
+      };
+    }
     raeume.steuernMitAdresse(key, tat.aktion, tat.position, String(url || ""), room);
     return tat;
   }

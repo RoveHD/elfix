@@ -224,12 +224,41 @@ function geraet(name) {
   pruefe("Die Pause traegt die Stelle des Hosts auf die Millisekunde",
     pause?.position === STELLE && pause?.videoTime === STELLE,
     `${pause?.position} / ${pause?.videoTime}`);
+  // Und zwar wirklich als Zahl, nicht als gerundete Naeherung: 421, 421.0 und
+  // 421.04 waeren alle "ungefaehr richtig" und alle das falsche Bild.
+  pruefe("Nichts auf dem Weg rundet sie",
+    pause?.position !== 421 && pause?.position !== 421.04
+    && Math.abs(pause?.position - STELLE) === 0, String(pause?.position));
+  pruefe("Eine Pause verabredet keinen Startzeitpunkt",
+    !pause?.startAt, String(pause?.startAt));
   pruefe("Und der Empfaenger springt genau dorthin - ohne Hochrechnung",
     sync.zielZeitBerechnen(sync.ereignisFuerPlayer(pause, sync.laeuftDanach(pause), 0, true),
       Date.now() + 5000) === STELLE);
   const urteil = sync.steuerungEntscheiden(pause, { gleicheAdresse: true, offen: { season: 1, episode: 4 } });
   pruefe("Das Urteil dazu lautet: genau anwenden",
     urteil.tun === "anwenden" && urteil.genau === true && urteil.nichtSpringen === false, urteil.tun);
+
+  // --- Der gemeinsame Start am echten Relay ---
+  const vorPlay = gast.steuerung.length;
+  host.raeume.steuernMitEinstellung(KEY, "play", STELLE, FOLGE, RAUM,
+    { startAt: Date.now() + sync.START_VORLAUF_MS });
+  await warteBis(() => gast.steuerung.length > vorPlay && gast.letzte("play"));
+  const losfahrt = gast.letzte("play");
+  pruefe("Ein Play traegt einen gemeinsamen Zeitpunkt",
+    Number(losfahrt?.startAt) > Date.now(), String(losfahrt?.startAt));
+  pruefe("Er liegt in der nahen Zukunft und nicht irgendwo",
+    Number(losfahrt?.startAt) - Date.now() <= 5000);
+  pruefe("Und die Stelle dazu ist die des Ausloesers, unveraendert",
+    losfahrt?.videoTime === STELLE, String(losfahrt?.videoTime));
+  // Derselbe Zeitpunkt, zwei Geraete: was jedes noch warten muss, endet im
+  // selben Augenblick. Genau das ist "gleichzeitig".
+  const alsHost = sync.startPlan(sync.ereignisFuerPlayer(losfahrt, true, 0, true), losfahrt.at);
+  const alsGast = sync.startPlan(sync.ereignisFuerPlayer(losfahrt, true, 0, true), losfahrt.at + 200);
+  pruefe("Beide zielen auf denselben Serverzeitpunkt",
+    losfahrt.at + alsHost.wartenMs === (losfahrt.at + 200) + alsGast.wartenMs,
+    `${alsHost.wartenMs} / ${alsGast.wartenMs}`);
+  pruefe("Und auf dieselbe Stelle",
+    alsHost.stelle === STELLE && alsGast.stelle === STELLE);
 
   host.raeume.trennen();
   gast.raeume.trennen();
@@ -243,8 +272,9 @@ function geraet(name) {
     && /watchpartySync\.tempoScript\(wert\)/.test(main));
   pruefe("Der Rechner verabredet den Start, statt sofort loszufahren",
     /watchpartySync\.startPlan\(/.test(main) && /wartenMs: plan\.wartenMs/.test(main));
-  pruefe("Der Host bekommt keinen Vorlauf - er ist die Vorlage",
-    /laufen && springen \? watchpartySync\.START_VORLAUF_MS : 0/.test(main));
+  pruefe("Auch der Ausloeser wartet den gemeinsamen Augenblick ab",
+    /laufen \? watchpartySync\.START_VORLAUF_MS : 0/.test(main)
+    && /watchparty\.steuernMitEinstellung\(runde\.key, "play", wo, runde\.adresse, runde\.raum, \{ startAt \}\)/.test(main));
   pruefe("Tempo und Fassung laufen an der Stellenrechnung vorbei",
     /if \(urteil\.tun === "tempo"\)[\s\S]{0,200}if \(urteil\.tun === "fassung"\)/.test(main));
   pruefe("Wer in einer Runde startet, nimmt deren Fassung",
@@ -264,8 +294,8 @@ function geraet(name) {
   pruefe("Eine neue Quelle bekommt das Tempo wieder aufgesetzt",
     /if \(bild\.playbackRate !== tempo\) tempoSetzen\(tempo, false\);/.test(spieler));
   pruefe("Der eigene Player wartet den verabredeten Zeitpunkt ab",
-    /async function startVerabredet\(stelle, wartenMs\)/.test(spieler)
-    && /await bereitFuerStart\(stelle, 2500\);/.test(spieler));
+    /async function startVerabredet\(stelle, wartenMs, springen = true\)/.test(spieler)
+    && /await bereitFuerStart\(springen \? stelle : Number\(bild\.currentTime\) \|\| 0, 2500\);/.test(spieler));
   pruefe("Wer zu spaet fertig wird, bekommt die Verspaetung an der Stelle gutgeschrieben",
     /const zuspaet = \(Date\.now\(\) - frist\) \/ 1000;/.test(spieler)
     && /bild\.currentTime = stelle \+ zuspaet \* tempo;/.test(spieler));

@@ -723,6 +723,42 @@ function hostStandJetzt(raumcode, eintrag) {
   return zustand ? zustand.position : null;
 }
 
+/**
+ * Wie weit im Voraus ein gemeinsamer Start verabredet wird.
+ *
+ * <p>800 Millisekunden. Sie sind kein Puffer gegen die Leitung, sondern die
+ * Zeit, die jeder Player zum Fertigmachen bekommt: springen, an der neuen
+ * Stelle puffern, den Startbefehl annehmen. Wer frueher fertig ist, wartet den
+ * Rest ab - und deshalb faengt niemand vor den anderen an.
+ */
+const START_VORLAUF_MS = 800;
+
+/**
+ * Der Zeitpunkt, zu dem alle gemeinsam losfahren - in Serverzeit.
+ *
+ * <p>Vorher gab es ihn nicht: wer Play drueckte, lief sofort los, und die
+ * anderen holten auf. Der Rueckstand war damit genau die Laufzeit der Nachricht
+ * plus die Zeit fuers Springen und Puffern - jedes Mal, und er blieb stehen,
+ * weil der laufende Ausgleich erst bei fuenf Sekunden eingreift.
+ *
+ * <p>Der Absender darf einen Zeitpunkt vorschlagen: er kennt seinen eigenen
+ * Uhrversatz aus Ping/Pong und stellt sich damit auf denselben Augenblick ein,
+ * ohne dass ihm das Relay etwas zurueckschicken muesste. Angenommen wird der
+ * Vorschlag nur, wenn er in der nahen Zukunft liegt - alles andere waere eine
+ * Uhr, der nicht zu trauen ist, oder ein Versuch, die Runde anzuhalten.
+ *
+ * @param laeuftDanach ob nach diesem Befehl ueberhaupt etwas laeuft
+ * @param jetzt        die Serverzeit in diesem Augenblick
+ * @param vorschlag    was der Absender vorgeschlagen hat, falls etwas
+ * @return der Zeitpunkt in Serverzeit, 0 wenn nichts zu starten ist
+ */
+function startZeitpunkt(laeuftDanach, jetzt, vorschlag) {
+  if (!laeuftDanach) return 0;
+  const wunsch = Number(vorschlag);
+  if (Number.isFinite(wunsch) && wunsch > jetzt && wunsch <= jetzt + 5000) return wunsch;
+  return jetzt + START_VORLAUF_MS;
+}
+
 // Die laufende Nummer je Titel. Sie ordnet alles, was das Relay an die Runde
 // schickt - der Player weist damit Nachzuegler ab, die sich unterwegs
 // ueberholt haben. Sie zaehlt im Arbeitsspeicher und faengt nach einem
@@ -1545,6 +1581,8 @@ wss.on("connection", (socket) => {
       const laeuftDanach = aktion === "play"
         || (aktion === "seek" && !(eintrag.stand?.get(socket.geraetId)?.paused ?? true));
       const jetzt = Date.now();
+      // Der gemeinsame Startzeitpunkt - siehe startZeitpunkt().
+      const startAt = startZeitpunkt(laeuftDanach, jetzt, nachricht.startAt);
       const daten = JSON.stringify({
         type: "control",
         key: eintrag.key,
@@ -1560,6 +1598,9 @@ wss.on("connection", (socket) => {
         videoTime: gemeinsam,
         timestamp: jetzt,
         playing: laeuftDanach,
+        // Wann alle gemeinsam losfahren. Null bei allem, was nichts startet -
+        // eine Pause hat keinen Zeitpunkt, sie hat eine Stelle.
+        startAt,
         // Das Tempo der Runde reist mit jedem Befehl mit: der Empfaenger
         // rechnet die Laufzeit der Nachricht auf die Stelle auf, und bei 2x ist
         // die Quelle in derselben Zeit doppelt so weit (zielZeitBerechnen).

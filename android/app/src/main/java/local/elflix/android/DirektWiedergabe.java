@@ -71,22 +71,64 @@ final class DirektWiedergabe {
     private JSONObject naechste;
     private JSONObject meta = new JSONObject();
     private final double start;
+    /**
+     * Diese Adresse ist eine Serienseite - es wird gewaehlt, nicht gespielt.
+     *
+     * <p>Dann laeuft die halbe Kette gar nicht erst an: keine Hosterliste, kein
+     * Aufloesen, keine Frist, nach der "keine Quellen" dasteht. Gelesen wird
+     * nur die Folgenliste, und die steht danach offen da.
+     */
+    private final boolean auswahl;
     private boolean spielt;
     private boolean versucht;
     private String letzteSprache = "";
     private Consumer<String> nachSeite;
 
+    /**
+     * Was der Player annimmt.
+     *
+     * <p>Drei Formen: eine bestimmte Folge, ein Film - und seit 2.0.5 auch die
+     * <b>Serienseite ohne Folge</b>. Die letzte spielt nichts ab; sie laesst
+     * waehlen. Vorher gab es dafuer einen eigenen Bildschirm davor: die
+     * Anbieterseite wurde hinter einem Ladevorhang gelesen, daraus eine eigene
+     * Uebersicht gebaut, und erst ein Tipp darin fuehrte zum Player. Am Fire TV
+     * waren das elf Sekunden Balken, um danach einmal OK zu druecken. Der
+     * Player fuehrt seine Folgen- und Staffelliste inzwischen selbst - also
+     * geht es direkt hierher, und gelesen wird hinter der eigenen Anzeige.
+     */
     static boolean passt(String adresse) {
-        if (adresse == null) return false;
+        return istFolge(adresse) || istSerienseite(adresse);
+    }
+
+    /** Eine Adresse, hinter der wirklich ein Bild liegt: eine Folge oder ein Film. */
+    static boolean istFolge(String adresse) {
+        String pfad = pfadVon(adresse);
+        return pfad != null && (pfad.matches(".*/(?:staffel|season)-[0-9]+/(?:episode|folge)-[0-9]+/?")
+            || pfad.matches("/(?:movies|movie|filme|film)/[^/]+/?"));
+    }
+
+    /**
+     * Die Serienseite - mit oder ohne Staffel, aber ohne Folge.
+     *
+     * <p>{@code /anime/stream/bleach} und {@code /serie/stream/dark/staffel-2}.
+     * Absichtlich eng: was hier faelschlich zutraefe, oeffnete den Player auf
+     * einer Seite, die kein Bild hergibt.
+     */
+    static boolean istSerienseite(String adresse) {
+        String pfad = pfadVon(adresse);
+        return pfad != null && pfad.matches(
+            "(?i)/(?:anime|serie|serien|series)/stream/[^/]+(?:/(?:staffel|season)-[0-9]+)?/?");
+    }
+
+    private static String pfadVon(String adresse) {
+        if (adresse == null) return null;
         try {
             Uri url = Uri.parse(adresse);
-            if (!"https".equals(url.getScheme()) && !"http".equals(url.getScheme())) return false;
+            if (!"https".equals(url.getScheme()) && !"http".equals(url.getScheme())) return null;
             String host = url.getHost();
-            if (host == null || host.equals("youtu.be") || host.endsWith("youtube.com")) return false;
-            String pfad = url.getPath();
-            return pfad != null && (pfad.matches(".*/(?:staffel|season)-[0-9]+/(?:episode|folge)-[0-9]+/?")
-                || pfad.matches("/(?:movies|movie|filme|film)/[^/]+/?"));
-        } catch (Exception ignoriert) { return false; }
+            if (host == null || host.equals("youtu.be") || host.endsWith("youtube.com")) return null;
+            return url.getPath();
+        } catch (Exception ignoriert) { return null; }
     }
 
     DirektWiedergabe(Activity activity, Kern kern, Provider anbieter, String adresse,
@@ -97,6 +139,7 @@ final class DirektWiedergabe {
         this.adresse = adresse;
         this.titel = titel;
         this.start = start;
+        this.auswahl = istSerienseite(adresse);
         this.umgebung = umgebung;
         kennung = WebSettings.getDefaultUserAgent(activity);
         spieler = new DirektSpieler(activity, kern, new DirektSpieler.Umgebung() {
@@ -125,7 +168,7 @@ final class DirektWiedergabe {
     private void laden() {
         final int id = ++auftrag;
         kern.rufe("direkt-android.abbrechen", (w, f) -> { });
-        spieler.status("Folgenseite wird gelesen …");
+        spieler.status(auswahl ? "Folgen werden gelesen …" : "Folgenseite wird gelesen …");
         seiteLaden(adresse, id, () -> lesen(id));
     }
 
@@ -183,6 +226,9 @@ final class DirektWiedergabe {
         wurzel.addView(view, 0, new FrameLayout.LayoutParams(1, 1));
         view.loadUrl(url);
         handler.postDelayed(() -> {
+            // Auf einer Serienseite gibt es keine Quellen, und das ist kein
+            // Fehler - dort wird gewaehlt.
+            if (auswahl) return;
             if (seite == view && aktuell(id) && hoster.length() == 0 && !spielt) {
                 spieler.status("Die Seite liefert noch keine Quellen. Unter Quellen erneut versuchen oder die Anbieterseite öffnen.");
             }
@@ -210,7 +256,16 @@ final class DirektWiedergabe {
                 try {
                     folgen = new JSONObject(wert);
                     String name = folgen.optString("titel", "");
-                    if (!name.isEmpty()) spieler.titel(name + " · " + Folgen.folgenText(adresse));
+                    if (!name.isEmpty()) {
+                        String folge = Folgen.folgenText(adresse);
+                        spieler.titel(folge.isEmpty() ? name : name + " · " + folge);
+                    }
+                    // Ohne Folge ist die Liste das Ziel und nicht ein Zwischen-
+                    // schritt: sie steht offen da, sobald sie gelesen ist.
+                    if (auswahl) {
+                        spieler.warten(false);
+                        folgenZeigen(folgen);
+                    }
                 } catch (Exception ignoriert) { }
             });
         });
@@ -223,6 +278,8 @@ final class DirektWiedergabe {
                 for (String feld : new String[] { "currentTime", "duration", "playedSeconds", "ended", "position", "progress" }) meta.remove(feld);
             });
         });
+        // Die Hosterkette bleibt auf einer Serienseite aus: dort gibt es keine.
+        if (auswahl) return;
         skript("direktlinks.hosterlinkScript", id, script -> {
             if (seite != view) return;
             String schluessel = "__elfixDirekt" + id;
@@ -612,10 +669,24 @@ final class DirektWiedergabe {
      */
     private void folgenZeigen(JSONObject stand) {
         folgenMerken(stand);
+        if (auswahl) {
+            spieler.warten(false);
+            // Ohne Folge steht in der Kopfzeile nicht, woher das Bild kommt -
+            // es gibt noch keines. Dort steht, was zu tun ist.
+            spieler.quelleBenannt("Folge wählen", "");
+        }
         JSONArray liste = folgen.optJSONArray("folgen");
         // Aufgeschlagen wird die laufende Staffel - und nur beim ersten Mal.
         // Danach gilt, was der Zuschauer gewaehlt hat.
         if (offeneStaffel < 0) offeneStaffel = laufendeStaffel(liste);
+        // Gibt die Seite Staffeln her, aber keine Folgen dazu, wird die erste
+        // gleich nachgelesen. Eine Reiterzeile ueber einer leeren Liste ist
+        // sonst das Erste, was man sieht.
+        if (!staffelDa(offeneStaffel)) {
+            JSONArray staffeln = folgen.optJSONArray("staffeln");
+            JSONObject erste = staffeln == null ? null : staffeln.optJSONObject(0);
+            if (erste != null) { staffelOeffnen(erste.optInt("staffel")); return; }
+        }
         folgenZeichnen("");
     }
 

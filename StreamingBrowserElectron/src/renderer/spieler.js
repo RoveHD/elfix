@@ -481,11 +481,44 @@ function schichtenZeigen() {
  */
 const HARMLOSE_ABLEHNUNG = ["AbortError", "NotAllowedError"];
 
+/**
+ * Abspielen und Pause.
+ *
+ * In einer Runde faengt niemand allein an. Wer drueckt, bleibt stehen und
+ * fragt die Runde nach einem Zeitpunkt; losgefahren wird dann gemeinsam. Vorher
+ * lief der Ausloeser sofort los und die anderen holten auf - der Rueckstand war
+ * die Laufzeit der Nachricht plus Springen und Puffern, und er blieb stehen.
+ */
 function spielenUmschalten() {
   if (!bild.paused) {
     bild.pause();
     return;
   }
+  if (inRunde && !ausRunde()) {
+    startAnfordern();
+    return;
+  }
+  spielenJetzt();
+}
+
+/** Wenn die Runde nicht antwortet, faengt es trotzdem an. */
+let startNotbremse = 0;
+
+function startAnfordern() {
+  clearTimeout(startNotbremse);
+  bruecke.aktion("play", Number(bild.currentTime) || 0);
+  // Kein Zeitpunkt, keine Runde, kein Relay - nach knapp zwei Sekunden gilt
+  // wieder das Einfache: dieser Player faengt an. Ein Knopf, der nichts tut,
+  // waere das schlechtere Ende.
+  startNotbremse = setTimeout(() => {
+    if (!bild.paused) return;
+    ausRundeBis = Date.now() + 900;
+    spielenJetzt();
+  }, 1800);
+  schichtenZeigen();
+}
+
+function spielenJetzt() {
   bild.play().catch((fehler) => {
     if (HARMLOSE_ABLEHNUNG.includes(String(fehler?.name || ""))) {
       // Nichts melden - nur zeigen, was jetzt zu tun ist.
@@ -545,24 +578,94 @@ function steuernAusRunde(befehl) {
     fernSteuern(befehl);
     return;
   }
+  // Die Runde antwortet - die Notbremse wird nicht mehr gebraucht.
+  clearTimeout(startNotbremse);
   ausRundeBis = Date.now() + 900;
   const stelle = Number(befehl.stelle);
   const warten = Number(befehl.wartenMs) || 0;
+  const springbar = befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0;
   // Ein verabredeter Start: springen, fertigmachen, und erst zum vereinbarten
-  // Zeitpunkt loslassen. Alles andere - jede Pause, jeder Sprung, der Host
-  // selbst - geht wie bisher sofort durch.
-  if (befehl.laufen && befehl.springen !== false && warten > 0
-    && Number.isFinite(stelle) && stelle >= 0) {
-    startVerabredet(stelle, warten);
+  // Zeitpunkt loslassen - Host wie Gast, zur selben Serverzeit. Der Ausloeser
+  // springt dabei nicht (er steht schon dort), wartet aber genauso.
+  if (befehl.laufen && warten > 0) {
+    startVerabredet(stelle, warten, springbar);
     return;
   }
-  startAuftrag += 1;
-  if (befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0) {
+  const meiner = ++startAuftrag;
+
+  // Anhalten. Erst stehen, dann genau auf die Stelle - in dieser Reihenfolge,
+  // sonst laeuft das Bild waehrend des Sprungs noch ein Stueck weiter.
+  if (!befehl.laufen) {
+    bild.pause();
+    if (springbar) genauSetzen(stelle, befehl.genau !== false, meiner);
+    return;
+  }
+
+  if (springbar) {
     bild.currentTime = stelle;
     vorigeStelle = stelle;
   }
-  if (befehl.laufen) bild.play().catch(() => {});
-  else bild.pause();
+  bild.play().catch(() => {});
+}
+
+/**
+ * So nah muss die Stelle sitzen, damit es dasselbe Bild ist.
+ *
+ * Zwanzig Millisekunden. Ein Bild ist bei 24 Bildern je Sekunde rund 42 ms
+ * lang, bei 60 noch 17 - die Schwelle liegt also unter einem Bild der
+ * ueblichen Fassungen und ueber dem, was ein Player beim Suchen von sich aus
+ * danebenliegt.
+ */
+const SEEK_TOLERANZ_S = 0.02;
+
+/**
+ * Genau auf eine Stelle - und nachsehen, ob es gesessen hat.
+ *
+ * `video.currentTime = x` ist keine Zuweisung, sondern der Anfang eines
+ * Suchvorgangs. Wo er endet, steht erst hinterher fest: manche Quellen setzen
+ * auf das naechste Schluesselbild auf, andere landen ein paar Hundertstel
+ * daneben. Bisher hat das niemand nachgemessen - deshalb standen zwei Geraete
+ * in derselben Sekunde und trotzdem auf verschiedenen Bildern.
+ *
+ * Also: setzen, das `seeked` abwarten, den wirklichen Wert lesen, und bei zu
+ * grosser Abweichung **einmal** nachsetzen. Kein zweites Mal: ein Player, der
+ * die Stelle zweimal verfehlt, trifft sie auch beim dritten Mal nicht, und
+ * eine Schleife am Video ist schlimmer als ein Hundertstel Abweichung.
+ */
+async function genauSetzen(ziel, genau, meiner) {
+  // Das Nachmessen dauert; solange gilt alles am Video als "kam von der Runde".
+  ausRundeBis = Math.max(ausRundeBis, Date.now() + 2500);
+  bild.currentTime = ziel;
+  vorigeStelle = ziel;
+  if (!genau) return;
+
+  await seekAbwarten();
+  if (meiner !== startAuftrag) return;
+  if (Math.abs(Number(bild.currentTime) - ziel) > SEEK_TOLERANZ_S) {
+    bild.currentTime = ziel;
+    await seekAbwarten();
+    if (meiner !== startAuftrag) return;
+  }
+  vorigeStelle = Number(bild.currentTime) || 0;
+  standMelden(true);
+}
+
+/** Auf das Ende eines Suchvorgangs warten - aber nicht ewig. */
+function seekAbwarten(hoechstens = 1200) {
+  return new Promise((fertig) => {
+    let erledigt = false;
+    const abschliessen = (gesessen) => {
+      if (erledigt) return;
+      erledigt = true;
+      bild.removeEventListener("seeked", beiSeeked);
+      clearTimeout(uhr);
+      fertig(gesessen);
+    };
+    const beiSeeked = () => abschliessen(true);
+    // Sass die Stelle schon, kommt gar kein `seeked` - dann entscheidet die Uhr.
+    bild.addEventListener("seeked", beiSeeked);
+    const uhr = setTimeout(() => abschliessen(false), hoechstens);
+  });
 }
 
 /**
@@ -581,17 +684,19 @@ function steuernAusRunde(befehl) {
  */
 let startAuftrag = 0;
 
-async function startVerabredet(stelle, wartenMs) {
+async function startVerabredet(stelle, wartenMs, springen = true) {
   const meiner = ++startAuftrag;
   // So lange gilt alles, was hier am Video geschieht, als "kam von der Runde" -
   // sonst meldete die Pause von gleich eine eigene Pause zurueck.
   ausRundeBis = Date.now() + wartenMs + 3200;
   const frist = Date.now() + wartenMs;
   bild.pause();
-  bild.currentTime = stelle;
-  vorigeStelle = stelle;
+  if (springen) {
+    bild.currentTime = stelle;
+    vorigeStelle = stelle;
+  }
 
-  await bereitFuerStart(stelle, 2500);
+  await bereitFuerStart(springen ? stelle : Number(bild.currentTime) || 0, 2500);
   if (meiner !== startAuftrag) return;
 
   const rest = frist - Date.now();
@@ -604,7 +709,7 @@ async function startVerabredet(stelle, wartenMs) {
   // beim doppelten Tempo doppelt so viel Film. Nur nach vorn: etwas noch
   // einmal zu zeigen faellt auf, ein bisschen Vorsprung nicht.
   const zuspaet = (Date.now() - frist) / 1000;
-  if (zuspaet > 0.15) {
+  if (springen && zuspaet > 0.15) {
     bild.currentTime = stelle + zuspaet * tempo;
     vorigeStelle = bild.currentTime;
   }
@@ -629,7 +734,7 @@ function bereitFuerStart(stelle, hoechstens) {
 function fernSteuern(auftragFern) {
   const befehl = auftragFern.befehl;
   if (befehl === "pause") bild.pause();
-  else if (befehl === "abspielen") bild.play().catch(() => {});
+  else if (befehl === "abspielen") { if (bild.paused) spielenUmschalten(); }
   else if (befehl === "umschalten") spielenUmschalten();
   else if (befehl === "stumm") tonUmschalten();
   else if (befehl === "vollbild") bruecke.vollbild(true);

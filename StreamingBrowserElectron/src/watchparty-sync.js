@@ -75,7 +75,7 @@ function zielZeitBerechnen(ereignis, serverJetzt) {
 //
 // Der Host verabredet nichts. Er laeuft schon; sein Bild ist die Vorlage, nach
 // der sich die anderen richten. Deshalb ruft ihn niemand mit einem Vorlauf auf.
-const START_VORLAUF_MS = 600;
+const START_VORLAUF_MS = 800;
 
 /**
  * Wohin springen und wie lange danach warten.
@@ -89,6 +89,32 @@ function startPlan(ereignis, serverJetzt, vorlaufMs) {
   const roh = Number(vorlaufMs);
   const vorlauf = Number.isFinite(roh) ? Math.max(0, Math.min(roh, 5000)) : START_VORLAUF_MS;
   const sofort = { stelle: zielZeitBerechnen(ereignis, serverJetzt), wartenMs: 0 };
+
+  /*
+   * Der verabredete Zeitpunkt schlaegt alles andere.
+   *
+   * Steht er im Ereignis, hat das Relay ihn festgelegt und an alle geschickt -
+   * an den, der Play gedrueckt hat, genauso wie an die anderen. `videoTime`
+   * ist dann die Stelle *zu diesem Zeitpunkt* und nicht die von jetzt: der
+   * Ausloeser bleibt bis dahin stehen, also aendert sie sich nicht. Deshalb
+   * wird hier auch nicht hochgerechnet - es gibt nichts hochzurechnen.
+   *
+   * Wer erst nach dem Zeitpunkt bereit wird, bekommt die verstrichene Zeit an
+   * der Stelle gutgeschrieben; bei doppeltem Tempo doppelt so viel Film.
+   */
+  const verabredet = Number(ereignis && ereignis.startAt);
+  if (ereignis && ereignis.playing && ereignis.hatUhr
+    && Number.isFinite(verabredet) && verabredet > 0 && Number.isFinite(Number(serverJetzt))) {
+    const basis = Number(ereignis.videoTime);
+    const stelle = Number.isFinite(basis) && basis > 0 ? basis : 0;
+    const warten = verabredet - Number(serverJetzt);
+    const tempo = Number(ereignis.tempo) > 0 ? Number(ereignis.tempo) : 1;
+    // Nach oben gedeckelt wie in zielZeitBerechnen: ein Zeitpunkt, der eine
+    // halbe Minute zurueckliegt, beschreibt keinen gemeinsamen Start mehr.
+    const zuspaet = Math.min(Math.max(0, -warten), 30000) / 1000;
+    return { stelle: stelle + zuspaet * tempo, wartenMs: Math.max(0, warten) };
+  }
+
   // Steht die Quelle, gibt es nichts zu verabreden: die Stelle des Absenders
   // ist die Antwort, und zwar auf die Millisekunde. Genau das ist der Fall
   // "Pause" - dort zaehlt das Bild, nicht der Zeitpunkt.
@@ -341,6 +367,9 @@ function ereignisFuerPlayer(nachricht, laeuft, versatz, hatUhr) {
     playing: Boolean(laeuft),
     hatUhr: Boolean(hatUhr),
     versatz: Number(versatz) || 0,
+    // Der gemeinsame Startzeitpunkt in Serverzeit. Null heisst: keiner
+    // verabredet - dann gilt die Hochrechnung aus timestamp wie bisher.
+    startAt: Number(nachricht.startAt) || 0,
     // Das Tempo der Runde reist mit jedem Ereignis mit: die Hochrechnung im
     // Player braucht es, und dort steht sonst nichts darueber.
     tempo: tempoLesen(nachricht.tempo)
@@ -376,6 +405,26 @@ function laeuftDanach(nachricht) {
   if (typeof nachricht.playing === "boolean") return nachricht.playing;
   if (nachricht.action === "hostzeit") return nachricht.hostPlaying !== false;
   return nachricht.action === "play" || nachricht.action === "syncstart";
+}
+
+/**
+ * Eine Stelle als Text, ohne Verlust.
+ *
+ * <p>Die Meldungen aus dem Hoster-Rahmen gehen als Konsolenzeile hinaus und
+ * werden drueben wieder gelesen. Die Zahl darf dabei nichts verlieren -
+ * `String(421.037)` ist "421.037" und `Number("421.037")` wieder 421.037.
+ *
+ * <p>Der einzige Fall, in dem `String` nicht taugt, ist die
+ * Exponentialschreibweise: `String(1e-7)` ergibt "1e-7", und das Muster auf der
+ * Gegenseite liest nur Ziffern und Punkt. Eine Videostelle unter einer
+ * Millionstelsekunde ist null, also wird sie es auch.
+ */
+function genaueZahl(wert) {
+  const zahl = Number(wert);
+  if (!Number.isFinite(zahl) || zahl <= 0) return "0";
+  if (zahl < 1e-6) return "0";
+  const text = String(zahl);
+  return /e/i.test(text) ? zahl.toFixed(6) : text;
 }
 
 // Der Quelltext einer dieser Funktionen, zum Einsetzen in ein Seiten-Skript.
@@ -768,12 +817,16 @@ function folgePasst(episodeId, season, episode) {
   return gemeint === `s${staffel}e${folge}`;
 }
 
+// Sie reist mit in den Rahmen: das Beobachterskript wird aus Quelltext
+// zusammengesetzt (siehe alsQuelltext), und was es ruft, muss dort stehen.
 function beobachterScript() {
   return `(() => {
     if (window.__elfixWpInstalled) return "schon-da";
     window.__elfixWpInstalled = true;
     window.__elfixWpErwartet = null;
     window.__elfixWpEcho = [];
+
+    ${alsQuelltext(genaueZahl)}
 
     const melden = (aktion, media) => {
       // Der eigene Player meldet eine eben ausgefuehrte fremde Anweisung als
@@ -800,9 +853,16 @@ function beobachterScript() {
           return;
         }
       }
-      // Auf zwei Nachkommastellen: gerundete Sekunden reichen nicht, wenn alle
-      // exakt auf derselben Stelle stehen sollen.
-      console.log("__elfix:wp:" + aktion + ":" + (Number(media.currentTime) || 0).toFixed(2));
+      // Die volle Zahl, nicht zwei Nachkommastellen.
+      //
+      // Hier stand toFixed(2). Das sind Hundertstelsekunden - und damit war
+      // die Stelle gerundet, *bevor* sie den Player verlassen hat: aus 421.037
+      // wurde 421.04. Bei vierundzwanzig Bildern je Sekunde ist ein Bild rund
+      // 42 Millisekunden lang; zehn Millisekunden Rundung treffen deshalb oft
+      // noch dasselbe Bild, aber eben nicht immer - und wo zwei Geraete
+      // gegenlaeufig runden, sind es zwanzig. Genau das war "dieselbe Sekunde,
+      // anderes Standbild".
+      console.log("__elfix:wp:" + aktion + ":" + genaueZahl(media.currentTime));
     };
 
     // Wo dieses Geraet steht - fuer die Leiste der anderen. Das haengt nicht am
@@ -827,8 +887,8 @@ function beobachterScript() {
       // Zeile weiter mit ihrem alten Muster und ignoriert den Rest.
       const laufzeit = Number(media.duration);
       console.log("__elfix:wp:stand:"
-        + (Number(media.currentTime) || 0).toFixed(2) + ":" + (media.paused ? 1 : 0)
-        + ":" + (Number.isFinite(laufzeit) && laufzeit > 0 ? laufzeit.toFixed(2) : "0"));
+        + genaueZahl(media.currentTime) + ":" + (media.paused ? 1 : 0)
+        + ":" + (Number.isFinite(laufzeit) && laufzeit > 0 ? genaueZahl(laufzeit) : "0"));
     };
 
     // Am Dokument in der Abfangphase, nicht an einzelnen Videos: Medien-
