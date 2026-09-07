@@ -3,6 +3,26 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.7 — 7. September 2026
+
+**Die Ausrichtung nach der Pause kam zur falschen Zeit — und danach gar nicht
+mehr.** Nach einer Pause rücken alle auf die genaue Stelle des Hosts; ausgelöst
+wird das von dessen Herzschlag. Seit dem gemeinsamen Start aus 2.0.5 bleibt der
+Host nach einem Play aber noch einen Moment stehen und meldet genau das — das
+Relay las darin eine Pause und schickte allen mitten in den Start hinein einen
+Sprungbefehl. Schlimmer noch: damit war die Ausrichtung für diese Runde
+verbraucht, und die danach folgende *echte* Pause richtete nie mehr aus.
+
+An zwei echten Geräten gemessen: Rechner und Telefon standen nach einer Pause
+**45,7 Millisekunden** auseinander — beide zeigten `2:45`, die Sekundenanzeige
+stimmte, das Bild nicht. Und der Abstand blieb stehen.
+
+Jetzt beginnt jede Pause wieder ihre eigene Ausrichtung, und während eine
+Startverabredung läuft, wird nicht ausgerichtet.
+
+**Das steckt im Relay** — auf den Geräten allein wirkt es nicht. Wer die
+Watchparty benutzt, muss das Relay aktualisieren.
+
 ## 2.0.6 — 7. September 2026
 
 **Beim Anhalten steht jetzt wirklich überall dasselbe Bild.** Die Stelle wurde
