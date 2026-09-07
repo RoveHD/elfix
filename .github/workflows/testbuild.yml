@@ -220,7 +220,7 @@ jobs:
           } > dist/TESTBAU.txt
 
       - name: Artefakt anhaengen
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-${{ needs.fassung.outputs.kurz }}-${{ github.run_number }}
           retention-days: 14
@@ -419,7 +419,7 @@ jobs:
           Get-ChildItem apk | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length/1MB,1)) MB" }
 
       - name: Artefakt anhaengen
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: android-${{ needs.fassung.outputs.kurz }}-${{ github.run_number }}
           retention-days: 14
@@ -430,7 +430,7 @@ jobs:
       # heraus, wenn sie fehlgeschlagen sind - gerade dann.
       - name: Pruefbericht anhaengen
         if: always() && inputs.pruefungen
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: android-pruefbericht-${{ needs.fassung.outputs.kurz }}-${{ github.run_number }}
           retention-days: 14

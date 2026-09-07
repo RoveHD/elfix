@@ -62,7 +62,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-release-assets
           path: |
@@ -258,7 +258,7 @@ jobs:
           Copy-Item -LiteralPath $quelle -Destination $ziel -Force
 
       - name: Upload Android artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: android-release-assets
           path: ELFIX-Android-*.apk
@@ -321,7 +321,7 @@ jobs:
         run: node bauen.js --fassung ${{ steps.fassung.outputs.name }}
 
       - name: Upload
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: relay-windows-assets
           path: sync-server/dist/ELFIX-Relay-*.exe
@@ -369,7 +369,7 @@ jobs:
         run: node bauen.js --fassung ${{ steps.fassung.outputs.name }} --deb
 
       - name: Upload
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: relay-linux-assets
           path: |
