@@ -1884,6 +1884,10 @@ wss.on("connection", (socket) => {
           episodeId: folgenKennung(eintrag.season, eintrag.episode),
           hostId: socket.geraetId
         });
+        // Der Host bekommt sie nicht: er steht schon auf dieser Stelle, und
+        // dass sein Bild trotzdem zu den anderen passt, besorgt sein Player
+        // selbst (steuernAusRunde in spieler.js - er setzt sich beim Anhalten
+        // auf dieselbe Stelle, damit er auf demselben Bild landet).
         for (const client of wss.clients) {
           if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
           if (!eintrag.members.has(client.geraetId)) continue;

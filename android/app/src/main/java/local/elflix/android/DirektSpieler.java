@@ -1751,6 +1751,28 @@ final class DirektSpieler {
         try {
             umgebung.live(liveStand(), aktion);
         } catch (org.json.JSONException ignoriert) { }
+        /*
+         * Beim Anhalten geht der Ausloeser denselben Weg wie alle anderen: er
+         * springt auf die Zahl, die er gerade verschickt hat.
+         *
+         * <p>Das klingt nach nichts und ist der Unterschied zwischen "dieselbe
+         * Sekunde" und "dasselbe Bild". Ein Video, das im Laufen angehalten
+         * wird, bleibt irgendwo zwischen zwei Bildern stehen; diese Zahl geht
+         * an alle, die springen darauf und landen auf dem Bild darunter - ein
+         * Video kann nur Bilder zeigen, die es gibt. Der Ausloeser bliebe als
+         * Einziger dazwischen. Gemessen am Rechner mit drei Playern an einem
+         * echten Relay (standbildtest.js): die Empfaenger waren untereinander
+         * bitgleich, der Ausloeser lag jedes Mal ein Bild daneben.
+         *
+         * <p>Beim stehenden Bild kostet der Sprung nichts, und er ist der
+         * einzige Weg, auf dem am Ende ueberall dasselbe steht - auch zwischen
+         * Telefon und Rechner, die verschiedene Player benutzen.
+         */
+        if (!"pause".equals(aktion) || !umgebung.inRunde()) return;
+        double stelle = position();
+        erwartetSeek = stelle;
+        erwartetBis = SystemClock.uptimeMillis() + 2000;
+        player.seekTo(Math.round(stelle * 1000));
     }
 
     JSONObject liveStand() throws org.json.JSONException {

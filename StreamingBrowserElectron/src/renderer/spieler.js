@@ -597,7 +597,28 @@ function steuernAusRunde(befehl) {
   // sonst laeuft das Bild waehrend des Sprungs noch ein Stueck weiter.
   if (!befehl.laufen) {
     bild.pause();
-    if (springbar) genauSetzen(stelle, befehl.genau !== false, meiner);
+    if (springbar) {
+      genauSetzen(stelle, befehl.genau !== false, meiner);
+    } else if (befehl.genau !== false) {
+      /*
+       * Der Host springt nicht auf die Stelle der Runde - er *ist* sie. Aber er
+       * setzt sich auf seine eigene.
+       *
+       * Das klingt nach nichts und ist der Unterschied zwischen "dieselbe
+       * Sekunde" und "dasselbe Bild". Ein Video, das im Laufen angehalten wird,
+       * bleibt irgendwo zwischen zwei Bildern stehen - bei 302.435 etwa. Diese
+       * Zahl geht an alle, die springen darauf und landen auf dem Bild
+       * darunter, bei 302.400: ein Video kann nur Bilder zeigen, die es gibt.
+       * Der Host bliebe als Einziger dazwischen.
+       *
+       * Gemessen mit drei Playern an einem echten Relay (standbildtest.js):
+       * die Gaeste waren untereinander bitgleich, der Ausloeser lag jedes Mal
+       * ein Bild daneben. Setzt er sich auf seine eigene Stelle, landet er auf
+       * demselben Raster wie alle anderen - und meldet von da an auch diese
+       * Zahl weiter.
+       */
+      genauSetzen(Number(bild.currentTime) || 0, true, meiner);
+    }
     return;
   }
 
@@ -632,9 +653,11 @@ const SEEK_TOLERANZ_S = 0.02;
  * die Stelle zweimal verfehlt, trifft sie auch beim dritten Mal nicht, und
  * eine Schleife am Video ist schlimmer als ein Hundertstel Abweichung.
  */
-async function genauSetzen(ziel, genau, meiner) {
+async function genauSetzen(ziel, genau, meiner, vonRunde = true) {
   // Das Nachmessen dauert; solange gilt alles am Video als "kam von der Runde".
-  ausRundeBis = Math.max(ausRundeBis, Date.now() + 2500);
+  // Nicht beim eigenen Anhalten: dort waere die Sperre eine Sperre gegen den
+  // naechsten Knopfdruck des Zuschauers, und der soll wieder die Runde fragen.
+  if (vonRunde) ausRundeBis = Math.max(ausRundeBis, Date.now() + 2500);
   bild.currentTime = ziel;
   vorigeStelle = ziel;
   if (!genau) return;
@@ -751,10 +774,28 @@ function fernSteuern(auftragFern) {
   schichtenZeigen();
 }
 
-/** Die eigene Tat an die Runde - aber nur, wenn es die eigene war. */
+/**
+ * Die eigene Tat an die Runde - aber nur, wenn es die eigene war.
+ *
+ * <h3>Warum der Ausloeser beim Anhalten selbst springt</h3>
+ *
+ * Weil er sonst als Einziger woanders steht. Gemessen mit drei Playern an einem
+ * echten Relay (tests/standbildtest.js): der Host haelt bei 302.438 an und
+ * schickt diese Zahl; alle anderen setzen sie und landen auf 302.400 - dem
+ * Bild darunter, denn ein Video kann nur Bilder zeigen, die es gibt. Die Gaeste
+ * waren dabei untereinander *bitgleich*; der Ausloeser war der Ausreisser, und
+ * zwar jedes Mal.
+ *
+ * Die Zahl allein macht also noch kein gemeinsames Bild - erst der Sprung
+ * darauf macht es. Wer die Zahl verschickt, geht deshalb denselben Weg wie
+ * alle, die sie empfangen: er springt auf sie. Beim stehenden Bild kostet das
+ * nichts, und es ist der einzige Weg, auf dem am Ende ueberall dasselbe steht.
+ */
 function tatMelden(aktion) {
   if (!inRunde || ausRunde()) return;
-  bruecke.aktion(aktion, Number(bild.currentTime) || 0);
+  const stelle = Number(bild.currentTime) || 0;
+  bruecke.aktion(aktion, stelle);
+  if (aktion === "pause") genauSetzen(stelle, true, ++startAuftrag, false);
 }
 
 function tonUmschalten() {
