@@ -3,6 +3,14 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.16 — 7. September 2026
+
+Enthält die Änderungen aus 2.0.14 und 2.0.15, deren Release-Prüfungen die
+Veröffentlichung gestoppt haben. Lokale Dateiadressen werden bei der
+IPC-Prüfung jetzt unabhängig von gleichwertiger URL-Kodierung verglichen.
+Windows-Kurzpfade mit `~` funktionieren damit auch dann, wenn Node `%7E`
+schreibt. Absender, Hauptframe und die erlaubte lokale Datei bleiben geprüft.
+
 ## 2.0.15 — 7. September 2026
 
 Enthält alle unten beschriebenen Änderungen aus 2.0.14. Dessen Veröffentlichung

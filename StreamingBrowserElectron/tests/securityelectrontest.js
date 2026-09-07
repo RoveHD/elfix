@@ -12,7 +12,11 @@ const timeout = setTimeout(() => app.exit(3), 25000);
 let server;
 app.whenReady().then(async () => {
   const csp = fs.readFileSync(path.join(__dirname, "../src/renderer/spieler.html"), "utf8").match(/<meta http-equiv="Content-Security-Policy"[^>]+>/)[0];
-  const file = path.join(root, "player.html");
+  // Chromium leaves `~` literal in senderFrame.url; pathToFileURL encodes it
+  // as `%7E`. Keep this spelling in every run instead of relying on the CI
+  // account's TEMP directory happening to use its Windows 8.3 alias.
+  const file = path.join(root, "RUNNER~1", "player.html");
+  fs.mkdirSync(path.dirname(file));
   fs.writeFileSync(file, `<html><head>${csp}</head><body><video id="video" muted></video></body></html>`);
   let outbound = [];
   const samples = Buffer.alloc(16000, 128);

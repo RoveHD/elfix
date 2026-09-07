@@ -1,13 +1,18 @@
 "use strict";
 
-const { pathToFileURL } = require("node:url");
+const { fileURLToPath, pathToFileURL } = require("node:url");
 
 function istLokaleSeite(adresse, datei) {
   try {
     const url = new URL(adresse);
+    if (url.protocol !== "file:") return false;
     url.search = "";
     url.hash = "";
-    return url.href === pathToFileURL(datei).href;
+    // Chromium serializes a tilde in a Windows 8.3 path literally, whereas
+    // pathToFileURL encodes it as %7E. Compare decoded OS paths so only those
+    // two URL spellings converge. Errors, non-file URLs and encoded path
+    // separators fail closed in fileURLToPath.
+    return fileURLToPath(url) === fileURLToPath(pathToFileURL(datei));
   } catch { return false; }
 }
 
