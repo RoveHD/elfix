@@ -24,6 +24,7 @@ const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest",
 OHNE_RELAY.push("watchpartyvorbereitungtest");
 OHNE_RELAY.push("androiddirekttest");
 OHNE_RELAY.push("ansichtsleistungtest");
+OHNE_RELAY.push("verlauflistungtest");
 OHNE_RELAY.push("uisoundtest");
 OHNE_RELAY.push("genautest");
 OHNE_RELAY.push("hlsankertest");

@@ -3,6 +3,13 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.11 — 7. September 2026
+
+**Der Verlauf am PC öffnet deutlich schneller.** Tageszähler werden in einem
+Durchlauf berechnet und Datumsformatierer wiederverwendet. Zeilen außerhalb
+des sichtbaren Bereichs werden erst beim Scrollen gezeichnet. Suche,
+Tagesgruppen und sämtliche Verlaufseinträge bleiben erhalten.
+
 ## 2.0.10 — 7. September 2026
 
 **Watchparty: gleiche Videozeit nach dem Spulen.** HLS-Streams mit ungenauen

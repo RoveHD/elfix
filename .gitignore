@@ -67,3 +67,4 @@ _release_temp*/
 /build/watchparty-tools/
 /build/watchparty-fixture*
 /watchparty-*.log
+/build/history-perf/

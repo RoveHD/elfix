@@ -6328,6 +6328,16 @@ function historyEntries() {
 
 // --- Verlauf: suchen, eingrenzen, nach Tagen sortiert ------------------------
 const historyFilter = { suche: "", zeitraum: "all", art: "", anbieter: "" };
+// Formatierer einmal anlegen: toLocale* mit Optionen baut sie bei jeder Zeile neu.
+const historyDatumsFormat = new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "long", year: "numeric" });
+const historyWochentagsFormat = new Intl.DateTimeFormat("de-DE", { weekday: "long" });
+const historyUhrzeitFormat = new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" });
+
+function historyTagesSchluessel(zeit) {
+  if (!zeit) return "ohne-datum";
+  const tag = new Date(zeit);
+  return `${tag.getFullYear()}-${tag.getMonth()}-${tag.getDate()}`;
+}
 
 function historyZeitgrenze(zeitraum) {
   const jetzt = new Date();
@@ -6379,8 +6389,8 @@ function historyTagesTitel(zeit) {
   if (gleicherTag(tag, heute)) return "Heute";
   if (gleicherTag(tag, gestern)) return "Gestern";
   const tageHer = Math.floor((heute - tag) / (24 * 60 * 60 * 1000));
-  if (tageHer < 7) return tag.toLocaleDateString("de-DE", { weekday: "long" });
-  return tag.toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
+  if (tageHer < 7) return historyWochentagsFormat.format(tag);
+  return historyDatumsFormat.format(tag);
 }
 
 // Die Auswahlmarken fuer Art und Anbieter entstehen aus dem, was wirklich im
@@ -6441,7 +6451,7 @@ function historyVerdichten(rows) {
     if (letzter
       && letzter.favorite.id === eintrag.favorite.id
       && letzter.label === label
-      && historyTagesTitel(letzter.bis) === historyTagesTitel(zeit)) {
+      && historyTagesSchluessel(letzter.bis) === historyTagesSchluessel(zeit)) {
       // Die Liste laeuft von neu nach alt: der spaetere Zeitpunkt steht schon.
       letzter.von = Math.min(letzter.von || zeit, zeit);
       letzter.anzahl += 1;
@@ -6456,16 +6466,20 @@ function historyVerdichten(rows) {
 // der man nicht sah, wo ein Tag aufhoert.
 function historyKinder(rows) {
   const kinder = [];
-  let letzterTitel = "";
-  for (const eintrag of rows) {
-    const titel = historyTagesTitel(eintrag.bis);
-    if (titel !== letzterTitel) {
-      letzterTitel = titel;
+  // Ein Durchlauf zum Zaehlen statt aller Zeilen fuer jede Tagesueberschrift.
+  const tage = rows.map((eintrag) => historyTagesSchluessel(eintrag.bis));
+  const tagesAnzahlen = new Map();
+  for (const tag of tage) tagesAnzahlen.set(tag, (tagesAnzahlen.get(tag) || 0) + 1);
+  let letzterTag = null;
+  for (const [index, eintrag] of rows.entries()) {
+    const tag = tage[index];
+    if (tag !== letzterTag) {
+      letzterTag = tag;
       const kopf = document.createElement("h2");
       kopf.className = "history-day";
-      kopf.textContent = titel;
+      kopf.textContent = historyTagesTitel(eintrag.bis);
       const anzahl = document.createElement("small");
-      const wieViele = rows.filter((item) => historyTagesTitel(item.bis) === titel).length;
+      const wieViele = tagesAnzahlen.get(tag);
       anzahl.textContent = wieViele === 1 ? "1 Eintrag" : `${wieViele} Einträge`;
       kopf.append(anzahl);
       kinder.push(kopf);
@@ -6479,7 +6493,7 @@ function historyRow(item) {
   const row = document.createElement("button");
   row.className = "history-row";
   row.type = "button";
-  const uhrzeit = (zeit) => new Date(zeit).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  const uhrzeit = (zeit) => historyUhrzeitFormat.format(new Date(zeit));
   // Innerhalb eines Tages genuegt die Uhrzeit - das Datum steht schon in der
   // Ueberschrift. Zog sich der Vorgang hin, steht die Spanne da.
   const zeitText = item.von && item.bis && item.bis - item.von >= 60000

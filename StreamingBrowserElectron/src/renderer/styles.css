@@ -2373,6 +2373,9 @@ h1 {
 .history-row {
   width: 100%;
   min-height: 70px;
+  /* Unsichtbare Zeilen erst beim Scrollen zeichnen; 42px + 28px Innenabstand. */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 42px;
   display: grid;
   /* Letzte Spalte fuer die Anzahl - sie bleibt leer, wenn es nur einmal war. */
   grid-template-columns: 118px minmax(0, 1fr) minmax(150px, 240px) auto;
