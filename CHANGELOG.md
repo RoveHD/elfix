@@ -3,6 +3,27 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.6 — 7. September 2026
+
+**Beim Anhalten steht jetzt wirklich überall dasselbe Bild.** Die Stelle wurde
+schon in 2.0.5 auf die Millisekunde genau übertragen — und trotzdem zeigten zwei
+Geräte verschiedene Bilder. Der Grund lag nicht an der Zahl: wer die Pause
+auslöste, sprang selbst nicht darauf. Sein Video blieb irgendwo zwischen zwei
+Bildern stehen, wo die Wiedergabe zufällig endete, diese Zahl ging hinaus, und
+alle anderen sprangen darauf und landeten auf dem Bild darunter — ein Video kann
+nur Bilder zeigen, die es gibt. Die Empfänger waren untereinander immer
+bitgleich; der Ausreißer war jedes Mal der, von dem die Zahl kam.
+
+Jetzt geht auch er denselben Weg: wer die Stelle verschickt, springt auf sie.
+Beim stehenden Bild kostet das nichts, und es ist der einzige Weg, auf dem am
+Ende überall dasselbe steht — am Rechner wie am Telefon, obwohl beide
+verschiedene Player benutzen.
+
+Nachgewiesen mit einem neuen Prüfstand, der drei echte Player an einem echten
+Relay laufen lässt, über einem Video, das seine Suchvorgänge ernst nimmt. Er
+verlangt **exakte Gleichheit** und keine Toleranz: ein Bild ist entweder dasselbe
+oder nicht.
+
 ## 2.0.5 — 7. September 2026
 
 **In einer Runde fängt jetzt niemand mehr allein an.** Wer Play drückte, lief
