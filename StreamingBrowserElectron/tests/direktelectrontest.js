@@ -43,6 +43,7 @@ app.whenReady().then(async () => {
   ipcMain.on("spieler:stand", (_event, stand) => meldungen.push(stand));
   ipcMain.on("spieler:fehler", (_event, text) => { throw Error(text); });
   ipcMain.handle("spieler:folgen", async () => null);
+  ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   fenster = new BrowserWindow({ show: false, webPreferences: {
     preload: path.join(__dirname, "../src/spieler-preload.js"),
     contextIsolation: true, sandbox: true, nodeIntegration: false,

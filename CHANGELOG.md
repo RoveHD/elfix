@@ -3,6 +3,14 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.17 — 7. September 2026
+
+Enthält alle Änderungen der zuvor durch Release-Prüfungen gestoppten Fassungen
+2.0.14 bis 2.0.16. Der Player-Chat zeigt Uhrzeiten unabhängig von der
+Systemsprache im deutschen 24-Stunden-Format. Der Chat-Test prüft Textschutz
+und Uhrzeit getrennt unter englischer Sprache. Player-Testumgebungen ohne
+Watchparty liefern einen inaktiven Chatstatus statt fehlender IPC-Handler.
+
 ## 2.0.16 — 7. September 2026
 
 Enthält die Änderungen aus 2.0.14 und 2.0.15, deren Release-Prüfungen die

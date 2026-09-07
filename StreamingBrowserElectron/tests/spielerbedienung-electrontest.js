@@ -48,6 +48,7 @@ app.whenReady().then(async () => {
   ipcMain.on("spieler:bereit", (ereignis) => ereignis.sender.send("spieler:auftrag", auftrag));
   ipcMain.on("spieler:fehler", (_ereignis, text) => { throw Error(text); });
   ipcMain.handle("spieler:folgen", async () => null);
+  ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:wechseln", async () => ({ ok: true }));
 
   fenster = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: {

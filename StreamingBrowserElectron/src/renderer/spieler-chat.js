@@ -66,7 +66,7 @@
     if (zeitstempel < 1e12) zeitstempel *= 1000;
     const datum = new Date(zeitstempel);
     if (!Number.isFinite(datum.getTime())) return "";
-    return datum.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return datum.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   }
 
   function istNaheAmEnde() {

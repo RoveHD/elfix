@@ -10,6 +10,7 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 
 const profil = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-spieler-chat-"));
+app.commandLine.appendSwitch("lang", "en-US");
 app.setPath("userData", profil);
 app.disableHardwareAcceleration();
 let fenster;
@@ -60,8 +61,18 @@ app.whenReady().then(async () => {
   await fenster.loadFile(path.join(__dirname, "../src/renderer/spieler.html"));
   const lesen = (code) => fenster.webContents.executeJavaScript(code);
   await warten(() => lesen("!chatKnopf.hidden && chatListe.children.length === 1"));
+  pruefe("Englische Runner-Sprache ist aktiv",
+    await lesen("[navigator.language, Intl.DateTimeFormat().resolvedOptions().locale.startsWith('en')]"),
+    ["en-US", true]);
   pruefe("Aktiver Livechat zeigt den Schalter", await lesen("[chatKnopf.hidden, chatKnopf.getAttribute('aria-expanded')]"), [false, "false"]);
-  pruefe("Chatnachrichten werden als Text statt HTML gerendert", await lesen("[chatListe.querySelector('.chatText').textContent, chatListe.querySelectorAll('b,script').length, /^\\d{2}:\\d{2}$/.test(chatListe.querySelector('.chatZeit').textContent)]"), ["<b>Nur Text</b>", 0, true]);
+  pruefe("Chatnachrichten werden als Text statt HTML gerendert", await lesen("[chatListe.querySelector('.chatText').textContent, chatListe.querySelectorAll('b,script').length]"), ["<b>Nur Text</b>", 0]);
+  const nachrichtenZeit = new Date(1735732800000);
+  const erwarteteZeit = [nachrichtenZeit.getHours(), nachrichtenZeit.getMinutes()]
+    .map((wert) => String(wert).padStart(2, "0")).join(":");
+  pruefe("Alte localeabhaengige Chatzeit reproduziert AM oder PM",
+    await lesen("/\\b(?:AM|PM)\\b/.test(new Date(1735732800000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))"), true);
+  pruefe("Chatzeit bleibt unter englischer Runner-Sprache deutsch und 24-stuendig",
+    await lesen("chatListe.querySelector('.chatZeit').textContent"), erwarteteZeit);
 
   await lesen("chatKnopf.click()");
   await warten(() => lesen("!chatPanel.hidden && document.activeElement === chatEingabe"));

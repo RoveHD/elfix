@@ -55,6 +55,7 @@ app.whenReady().then(async () => {
       ? [{ staffel: 0, folge: 1, titel: "Der Film", url: "https://fixture.test/film-1" }]
       : [{ staffel: 1, folge: 1, titel: "Die erste Folge", url: "https://fixture.test/episode-1", laeuft: true }]
   }));
+  ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:hoster", async (_event, link) => { hosterAufrufe.push(link); return { ok: true }; });
   ipcMain.handle("spieler:wechseln", async (_event, link) => { folgenAufrufe.push(link); return { ok: true }; });
   fenster = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: {
