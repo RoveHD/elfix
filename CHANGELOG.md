@@ -3,6 +3,24 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.3 — 7. September 2026
+
+**Die Oberfläche gibt jetzt kurze Töne.** Einen für den Klick, einen für den
+Dialog, einen für die Bestätigung — im Gerät erzeugt, nicht geladen. Der
+Tonkanal geht erst bei einer echten Benutzeraktion auf, und gehört wird nichts
+beim Überfahren, beim Tippen oder wenn das Fenster im Hintergrund liegt. In den
+Einstellungen stehen ein Schalter und eine Lautstärke; aus ist aus.
+
+**Die Startkarte hält lange Titel aus.** Sie bricht nicht mehr aus dem Rahmen,
+sie nennt die verbleibenden Minuten statt nur des Prozentsatzes, und hinter dem
+Poster liegt dessen eigene Farbe als Fläche. Der Knopf „Einstellungen" ist von
+dort verschwunden — er stand neben „Weiter schauen" und „Details" und gehörte
+nicht in dieselbe Reihe.
+
+**Und die Auftritte, die fehlten**: die Reihen der Startseite und die Karten der
+Einstellungen kommen gestaffelt, der Dialog hat eine eigene Bewegung, die
+Meldung unten ebenso.
+
 ## 2.0.2 — 7. September 2026
 
 **Die Geschwindigkeit ließ sich am Rechner nicht auswählen.** Der Grund lag
