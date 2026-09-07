@@ -60,6 +60,18 @@ let diagnostic = () => "";
   };
   const waitHost = (test, ms) => waitAt("host " + test.toString(), host.wait(test, ms));
   const waitGuest = (test, ms) => waitAt("guest " + test.toString(), guest.wait(test, ms));
+  let barrierNumber = 0;
+  const barrier = async () => {
+    // First prove that the host's preceding message was handled. Then send a
+    // ping through the guest connection: any relay message caused by that
+    // preceding host message must be queued before this guest acknowledgement.
+    const hostMark = `host-${++barrierNumber}`;
+    host.send({ type: "time", t0: hostMark });
+    await waitHost(m => m.type === "timeack" && m.t0 === hostMark);
+    const guestMark = `guest-${barrierNumber}`;
+    guest.send({ type: "time", t0: guestMark });
+    await waitGuest(m => m.type === "timeack" && m.t0 === guestMark);
+  };
   diagnostic = () => JSON.stringify({
     host: host.messages.slice(-6).map(m => ({ type: m.type, action: m.action, position: m.position, frameTime: m.frameTime, resync: m.resync })),
     guest: guest.messages.slice(-8).map(m => ({ type: m.type, action: m.action, position: m.position, frameTime: m.frameTime, resync: m.resync }))
@@ -83,18 +95,25 @@ let diagnostic = () => "";
     frameTime, duration: 1000, season: 1, episode: 1, url: URL,
     playerSessionId: `${id}-s1e1`
   });
+  // Heartbeats travel over independent sockets. Sending both back to back and
+  // sleeping does not define which one the relay sees first; whichever valid
+  // participant reports first becomes host. Establish and observe the
+  // intended authority before the guest reports its player state.
   stand(host, "seek-host", FRAME);
+  await waitHost(m => m.type === "watchstate" && m.key === KEY
+    && m.members?.some(member => member.id === "seek-host" && member.host));
   stand(guest, "seek-guest", FRAME);
-  await new Promise(resolve => setTimeout(resolve, 80));
+  await waitGuest(m => m.type === "watchstate" && m.key === KEY
+    && m.members?.some(member => member.id === "seek-guest"));
 
   host.send({ type: "control", key: KEY, action: "seek", position: POSITION,
     frameTime: FRAME, url: URL });
-  await new Promise(resolve => setTimeout(resolve, 80));
+  await waitGuest(m => m.type === "control" && m.action === "seek" && !m.resync);
 
   // The first heartbeat can arrive before the decoder has exposed the newly
   // rendered frame. It must not consume the alignment opportunity.
   stand(host, "seek-host");
-  await new Promise(resolve => setTimeout(resolve, 120));
+  await barrier();
   if (guest.messages.some(m => m.type === "control" && m.action === "seek" && m.resync)) {
     throw new Error("alignment was consumed before a valid host frame existed");
   }

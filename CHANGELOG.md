@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.15 — 7. September 2026
+
+Enthält alle unten beschriebenen Änderungen aus 2.0.14. Dessen Veröffentlichung
+wurde durch einen Fehler im Windows-Testlauf verhindert.
+
+Der Relay-Test zum Einzelbild-Abgleich bestätigt jetzt zuerst die Host-Rolle
+und wartet auf verarbeitete Nachrichten. Zuvor konnte die zufällige Reihenfolge
+zweier WebSocket-Verbindungen den Gast zum aktiven Host machen und den Test
+fehlschlagen lassen. Die Prüfung des exakten Bildabgleichs bleibt erhalten;
+die produktiven Host-Rechte werden nicht verändert.
+
 ## 2.0.14 — 7. September 2026
 
 **Watchparty wartet beim Folgenwechsel auf die Runde.** Auch Gäste dürfen die
