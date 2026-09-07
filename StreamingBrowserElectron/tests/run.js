@@ -26,6 +26,7 @@ OHNE_RELAY.push("androiddirekttest");
 OHNE_RELAY.push("ansichtsleistungtest");
 OHNE_RELAY.push("uisoundtest");
 OHNE_RELAY.push("genautest");
+OHNE_RELAY.push("hlsankertest");
 OHNE_RELAY.push("herodetailtest");
 OHNE_RELAY.push("herometadatentest");
 OHNE_RELAY.push("relaystarttest");
@@ -33,6 +34,7 @@ OHNE_RELAY.push("hostgnadetest");
 OHNE_RELAY.push("startnachladetest");
 OHNE_RELAY.push("adblockworkertest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
+MIT_RELAY.push("seekframealignmenttest");
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 

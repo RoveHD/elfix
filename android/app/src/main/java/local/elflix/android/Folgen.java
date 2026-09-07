@@ -194,6 +194,51 @@ final class Folgen {
         return "Staffel " + s + " Folge " + f;
     }
 
+    /**
+     * Ist eine konkrete Adresse die gespeicherte Folge dieses Eintrags?
+     *
+     * <p>Beim Weiterschauen kann der Eintrag noch die Serienseite als Adresse
+     * tragen. Der native Player liest daraus die Folgenliste und praezisiert
+     * sie auf die gespeicherte Staffel und Folge. Dieser Wechsel darf den
+     * Eintrag samt gespeicherter Sekunde nicht abwerfen.
+     *
+     * <p>Die Zahlen allein reichen nicht: Staffel 2 Folge 7 gibt es in vielen
+     * Serien. Deshalb muss auch der Teil der Anbieteradresse vor Staffel und
+     * Folge gleich sein.
+     */
+    static boolean istGespeicherteFolge(Favorite eintrag, String url) {
+        if (eintrag == null || eintrag.episode() <= 0 || url == null) return false;
+        int[] kennung = folgenKennung(url);
+        return kennung[0] == eintrag.season() && kennung[1] == eintrag.episode()
+            && serienTeil(url).equalsIgnoreCase(serienTeil(eintrag.url()));
+    }
+
+    /** Staffel und Folge einer Adresse; fehlende Teile bleiben 0. */
+    private static int[] folgenKennung(String url) {
+        String text = folgenText(url);
+        if (text.isEmpty()) return new int[] { 0, 0 };
+        java.util.regex.Matcher staffel = java.util.regex.Pattern
+            .compile("Staffel (\\d+)").matcher(text);
+        java.util.regex.Matcher folge = java.util.regex.Pattern
+            .compile("Folge (\\d+)").matcher(text);
+        return new int[] {
+            staffel.find() ? Integer.parseInt(staffel.group(1)) : 0,
+            folge.find() ? Integer.parseInt(folge.group(1)) : 0
+        };
+    }
+
+    /** Anbieter und Werkpfad ohne eine abschliessende Staffel oder Folge. */
+    private static String serienTeil(String url) {
+        String text = url == null ? "" : url.trim();
+        int frage = text.indexOf('?');
+        if (frage >= 0) text = text.substring(0, frage);
+        int raute = text.indexOf('#');
+        if (raute >= 0) text = text.substring(0, raute);
+        return text.replaceFirst("(?i)^https?://", "").replaceFirst(
+            "(?i)/(?:staffel|season)-\\d+(?:/(?:episode|folge)-\\d+)?/?$", "")
+            .replaceAll("/+$", "");
+    }
+
     /* ------------------------------------------------- Die naechste Adresse */
 
     /**

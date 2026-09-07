@@ -1496,18 +1496,39 @@ wss.on("connection", (socket) => {
       const aktion = text(nachricht.action, 10);
       if (!["play", "pause", "seek", "navigate", "tempo", "fassung"].includes(aktion)) return;
 
-      // Jede neue Bedienung ersetzt eine noch offene Startverabredung. Eine
-      // spaete Bereitmeldung traegt ihre syncId und kann den neuen Lauf damit
-      // nicht versehentlich starten.
-      if (eintrag.sync) {
-        clearTimeout(eintrag.syncTimer);
-        eintrag.sync = null;
-        eintrag.syncTimer = null;
-      }
-
       const ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
+      const offeneStartverabredungAbbrechen = (pauseSenden = false) => {
+        if (!eintrag.sync) return;
+        const offene = eintrag.sync;
+        clearTimeout(eintrag.syncTimer);
+        eintrag.sync = null;
+        eintrag.syncTimer = null;
+        if (!pauseSenden) return;
+
+        // Ein Fassungswechsel laedt die Quelle neu und macht jede bereits
+        // gemeldete Bereitschaft wertlos. Die normale Pause ist zugleich die
+        // sichtbare Absage an die Clients: sie widerruft alte Start-Timer und
+        // entfernt deren wartenden Play-Zustand. Nur den Relay-Timer zu loeschen
+        // liesse alle auf ein syncstart warten, das nie mehr kommen kann.
+        const jetzt = Date.now();
+        const pause = JSON.stringify({
+          type: "control", key: eintrag.key, action: "pause",
+          position: offene.ziel, videoTime: offene.ziel, playing: false,
+          frameTime: offene.frameTime,
+          url: eintrag.live?.url || eintrag.url, at: jetzt, timestamp: jetzt,
+          sequenceId: naechsteNummer(eintrag), syncId: offene.id,
+          episodeId: folgenKennung(eintrag.season, eintrag.episode),
+          hostId: aktuelleHostId(socket.raum, eintrag), reason: "fassung"
+        });
+        eintrag.startAt = 0;
+        for (const client of wss.clients) {
+          if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
+          if (!eintrag.members.has(client.geraetId)) continue;
+          client.send(pause);
+        }
+      };
       let neueFolge = false;
       // Ob ein "navigate" nur nachzieht, was ohnehin schon laeuft. Steht hier
       // oben, weil die Leiste weiter unten dieselbe Antwort braucht.
@@ -1545,6 +1566,7 @@ wss.on("connection", (socket) => {
         else {
           eintrag.fassung = text(nachricht.fassung, 80);
           eintrag.hoster = text(nachricht.hoster, 80);
+          offeneStartverabredungAbbrechen(true);
         }
         const rundenDaten = JSON.stringify({
           type: "control",
@@ -1571,15 +1593,26 @@ wss.on("connection", (socket) => {
         zustandSenden(socket.raum);
         return;
       }
+
       // Ein Steuerbefehl gilt nur unter denen, die dieselbe Folge offen haben.
       // Der Folgenwechsel ist die Ausnahme - der muss gerade die erreichen,
       // die noch bei der alten Folge stehen.
-      const absenderFolge = eintrag.stand?.get(socket.geraetId)?.episode || 0;
+      const absenderStand = eintrag.stand?.get(socket.geraetId);
+      const absenderFolge = absenderStand?.episode || 0;
+      const absenderStaffel = absenderStand?.season || 0;
       const nurGleicheFolge = aktion !== "navigate" && absenderFolge > 0;
       // Und nur wer bei der Folge der Runde steht, bewegt deren Zustand.
       // Sonst haette eine Pause aus einer anderen Folge die ganze Runde
       // formal angehalten, obwohl hier weiterlief.
-      const amRaumstand = !absenderFolge || !eintrag.episode || absenderFolge === eintrag.episode;
+      const amRaumstand = !absenderFolge || !eintrag.episode || (
+        absenderFolge === eintrag.episode
+        && (!absenderStaffel || !eintrag.season || absenderStaffel === eintrag.season)
+      );
+
+      // Nur ein Befehl fuer die laufende Folge ersetzt deren offene
+      // Startverabredung. Ein Geraet, das bewusst eine andere Folge schaut,
+      // darf dort steuern, ohne die vorbereiteten Player der Runde zu stranden.
+      if (aktion !== "navigate" && amRaumstand) offeneStartverabredungAbbrechen();
 
       // Neue Folge: der alte Stand gilt nicht mehr. Bliebe er stehen, zoege
       // der naechste Abgleich alle auf eine Stelle aus der Folge davor.
@@ -1608,24 +1641,26 @@ wss.on("connection", (socket) => {
           // Auch die Folgenangabe: sie steckt in der Adresse, wurde hier aber
           // nie ausgelesen - nur der Fortschritt hat sie je nachgezogen.
           const folge = folgeAusAdresse(ziel);
-          if (folge.episode && folge.episode !== eintrag.episode) {
+          const staffelGeaendert = folge.season > 0
+            && folge.season !== (eintrag.season || 0);
+          const folgeGeaendert = folge.episode && folge.episode !== eintrag.episode;
+          if (folge.episode && (staffelGeaendert || folgeGeaendert)) {
             eintrag.season = folge.season || eintrag.season;
             eintrag.episode = folge.episode;
-              fortschrittAufFolge(eintrag, 0, socket.name);
+            fortschrittAufFolge(eintrag, 0, socket.name);
             eintrag.letzteAktion = null;
             neueFolge = true;
           }
         }
         nurNachgezogen = schonDort;
         if (!schonDort) {
+          offeneStartverabredungAbbrechen();
           // Nicht "pause": eine neue Folge ist noch gar nichts: weder angehalten
           // noch laufend. Stand hier "pause", bekam jedes Geraet, das die neue
           // Folge oeffnet und den Stand abfragt, prompt eine Pause zurueck - die
           // Folge startete, lud und blieb dann stehen. Jetzt laeuft der Autostart
           // durch, und das erste echte Play gibt den Takt vor.
           eintrag.live = { action: "navigate", position: 0, url: ziel || eintrag.url, at: Date.now() };
-          eintrag.sync = null;
-          clearTimeout(eintrag.syncTimer);
         }
       }
 
@@ -1678,11 +1713,11 @@ wss.on("connection", (socket) => {
        * Jede Pause ist eine eigene Pause. Das Flag verhindert nur, dass
        * innerhalb *einer* Pause jeder Herzschlag erneut ausrichtet.
        */
-      eintrag.pauseAusgerichtet = false;
+      if (aktion === "navigate" || amRaumstand) eintrag.pauseAusgerichtet = false;
 
       // Nach einem Sprung darf der Ausgleich sofort greifen: dort laufen die
       // Geraete am ehesten auseinander, weil jeder Hoster anders puffert.
-      if (aktion === "seek") {
+      if (aktion === "seek" && amRaumstand) {
         for (const wert of (eintrag.stand || new Map()).values()) wert.gerueckt = 0;
       }
 
@@ -1711,6 +1746,11 @@ wss.on("connection", (socket) => {
         eintrag.live = {
           action: aktion,
           position: gemeinsam,
+          playing: aktion === "play"
+            || (aktion === "seek" && !(eintrag.stand?.get(socket.geraetId)?.paused ?? true)),
+          frameTime: typeof nachricht.frameTime === "number"
+            && Number.isFinite(nachricht.frameTime) && nachricht.frameTime >= 0
+            ? nachricht.frameTime : undefined,
           url: ziel || eintrag.live?.url || eintrag.url,
           at: Date.now()
         };
@@ -1728,7 +1768,7 @@ wss.on("connection", (socket) => {
       // Er wird gemerkt: die Ausrichtung weiter unten muss wissen, dass ein
       // Start laeuft und das "pausiert" des Hosts nur das Warten darauf ist.
       // Ein Anhalten macht jede Startverabredung gegenstandslos.
-      eintrag.startAt = startAt || 0;
+      if (aktion === "navigate" || amRaumstand) eintrag.startAt = startAt || 0;
       const daten = JSON.stringify({
         type: "control",
         key: eintrag.key,
@@ -1784,8 +1824,11 @@ wss.on("connection", (socket) => {
         // des Hosts: alle stellen sich auf dieselbe autoritative Stelle.
         if (client === socket && aktion !== "play" && aktion !== "pause") continue;
         if (nurGleicheFolge) {
-          const seins = eintrag.stand?.get(client.geraetId)?.episode || 0;
-          if (seins && seins !== absenderFolge) continue;
+          const seinStand = eintrag.stand?.get(client.geraetId);
+          const seineFolge = seinStand?.episode || 0;
+          const seineStaffel = seinStand?.season || 0;
+          if (seineFolge && (seineFolge !== absenderFolge
+            || (absenderStaffel && seineStaffel && seineStaffel !== absenderStaffel))) continue;
         }
         client.send(daten);
       }
@@ -1806,9 +1849,9 @@ wss.on("connection", (socket) => {
       // Die Pause bekommt der Ausloeser zurueck und rueckt mit; sein Play
       // nicht - er laeuft ja schon.
       const ohneAusloeser = istHost || aktion === "pause" ? "" : socket.geraetId;
-      if (aktion === "pause") standFuerAlle(eintrag, stelleFuerAlle, true);
-      else if (aktion === "play") standFuerAlle(eintrag, stelleFuerAlle, false, ohneAusloeser);
-      else if (aktion === "seek") standFuerAlle(eintrag, gemeinsam, null);
+      if (aktion === "pause" && amRaumstand) standFuerAlle(eintrag, stelleFuerAlle, true);
+      else if (aktion === "play" && amRaumstand) standFuerAlle(eintrag, stelleFuerAlle, false, ohneAusloeser);
+      else if (aktion === "seek" && amRaumstand) standFuerAlle(eintrag, gemeinsam, null);
       // Ein Wechsel faengt bei null an - aber nur ein echter. Wer der
       // laufenden Folge bloss nachzieht, darf die Leiste aller anderen nicht
       // auf null stellen.
@@ -1897,6 +1940,7 @@ wss.on("connection", (socket) => {
       const vorher = eintrag.stand?.get(socket.geraetId);
       const pausiert = Boolean(nachricht.paused);
       const folge = zahl(nachricht.episode, 9999);
+      const staffel = zahl(nachricht.season, 999);
       const hostVorher = aktuelleHostId(socket.raum, eintrag);
 
       // Steht dieser Player wirklich bei 0:00 - oder ist er nur noch nicht da?
@@ -1981,10 +2025,18 @@ wss.on("connection", (socket) => {
       //     riesse ein Geraet, das noch bei Folge 1 haengt, die ganze Runde
       //     von Folge 5 auf Folge 2, sobald dort jemand weiterblaettert.
       //     Weiterziehen darf nur, wer mit der Runde zusammen dastand.
+      const staffelGeaendert = Boolean(staffel)
+        && staffel !== (vorher?.season || 0);
+      const folgeGeaendert = Boolean(folge)
+        && folge !== (vorher?.episode || 0);
       const eigenerWechsel = Boolean(vorher && vorher.episode)
-        && folge && folge !== vorher.episode
-        && (!eintrag.episode || vorher.episode === eintrag.episode);
-      if (folge && folge !== eintrag.episode && (socket.geraetId === hostVorher || eigenerWechsel)) {
+        && folge && (staffelGeaendert || folgeGeaendert)
+        && (!eintrag.episode || (
+          vorher.episode === eintrag.episode
+          && (!eintrag.season || !vorher.season || vorher.season === eintrag.season)
+        ));
+      if (folge && (staffelGeaendert || folge !== eintrag.episode)
+        && (socket.geraetId === hostVorher || eigenerWechsel)) {
         eintrag.episode = folge;
         eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
         const adresse = httpAdresse(nachricht.url);
@@ -2027,8 +2079,18 @@ wss.on("connection", (socket) => {
       // Ausrichtung nach einer spaeteren Pause mitblockieren - genau das ist im
       // Pruefstand passiert (zweiter Durchgang, 40 ms Abstand).
       const startLaeuft = Number(eintrag.startAt) > 0 && Date.now() < Number(eintrag.startAt) + 250;
+      // Ein gezielter Seek kann ebenfalls im Stehen enden. Seine live.action
+      // bleibt dann "seek"; der frische Host-Heartbeat muss trotzdem den
+      // tatsächlich gerenderten Frame an alle verteilen.
+      const pausierterSeek = eintrag.live?.action === "seek"
+        && eintrag.live?.playing === false;
+      const frameTimeVorhanden = typeof nachricht.frameTime === "number"
+        && Number.isFinite(nachricht.frameTime)
+        && nachricht.frameTime >= 0
+        && Math.abs(nachricht.frameTime - zahl(nachricht.position, 100000)) < .25;
       if (!ohneAngabe && !startLaeuft && socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
-        && eintrag.live?.action === "pause" && !eintrag.pauseAusgerichtet) {
+        && (eintrag.live?.action === "pause" || (pausierterSeek && frameTimeVorhanden))
+        && !eintrag.pauseAusgerichtet) {
         eintrag.pauseAusgerichtet = true;
         const position = zahl(nachricht.position, 100000);
         const frameTime = typeof nachricht.frameTime === "number" && Number.isFinite(nachricht.frameTime)

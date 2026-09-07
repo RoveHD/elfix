@@ -285,7 +285,8 @@ const bild = document.getElementById("bild");
 // currentTime can sit between two frames. Keep the actual presented PTS so
 // Media3 and Chromium can select the same still image after pausing.
 let dargestelltesBild = null;
-if (typeof bild.requestVideoFrameCallback === "function") {
+const bildZeitMessbar = typeof bild.requestVideoFrameCallback === "function";
+if (bildZeitMessbar) {
   const merken = (_, metadata) => {
     dargestelltesBild = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : null;
     bild.requestVideoFrameCallback(merken);
@@ -305,6 +306,8 @@ const fassungWahl = new Wahl("fassungWahl", "Fassung");
 const untertitelWahl = new Wahl("untertitel", "Untertitel");
 const knopfSpielen = document.getElementById("spielen");
 const knopfMitte = document.getElementById("mitteSpielen");
+const knopfZurueck = document.getElementById("zurueck");
+const knopfVor = document.getElementById("vor");
 const tempoWahl = new Wahl("tempo", "Tempo");
 const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
@@ -358,6 +361,17 @@ const WEITER_SEKUNDEN = 8;
 let auftrag = null;
 /** Die Bibliothek fuer HLS, falls eine gebraucht wird. */
 let hls = null;
+/**
+ * Die erste HLS-Probe legt den Ursprung der Medienzeit fest.
+ *
+ * Beginnt hls.js direkt an einer gespeicherten Stelle, behandelt es den dort
+ * zuerst gelesenen TS-Zeitstempel als Ursprung. Derselbe Film bekommt dann je
+ * nach Einstieg eine andere Zeitachse. Darum wird Fragment null zuerst
+ * gelesen; bis dessen INIT_PTS_FOUND darf kein Sprung hls.js zu einem spaeteren
+ * Fragment schicken.
+ */
+let hlsAnker = null;
+const HLS_ANKER_FRIST_MS = 12000;
 /** Wirklich gelaufene Sekunden. Siehe oben: nicht dasselbe wie die Stelle. */
 let gelaufen = 0;
 /** Die Stelle der vorigen Meldung - Grundlage der Zaehlung. */
@@ -525,7 +539,9 @@ function spielenUmschalten() {
     bild.pause();
     return;
   }
-  if (inRunde && !ausRunde()) {
+  // Dieser Aufruf kommt vom Zuschauer. Die Echo-Sperre gilt nur fuer
+  // Medienereignisse, nicht fuer einen Play-Klick direkt nach einer Pause.
+  if (inRunde) {
     startAnfordern();
     return;
   }
@@ -571,11 +587,13 @@ function spielenJetzt() {
   });
 }
 
-function springen(sekunden) {
+async function springen(sekunden) {
+  if (!lokalesSpulenErlaubt()) return;
   if (!Number.isFinite(bild.duration) || bild.duration <= 0) return;
   const von = bild.currentTime;
-  bild.currentTime = Math.min(Math.max(0, von + sekunden), bild.duration - 0.5);
-  bruecke.sprung(von, bild.currentTime, false);
+  const ziel = Math.min(Math.max(0, von + sekunden), bild.duration - 0.5);
+  if (!await stelleSetzen(ziel)) return;
+  bruecke.sprung(von, ziel, false);
   tatMelden("seek");
   schichtenZeigen();
 }
@@ -587,12 +605,13 @@ function springen(sekunden) {
  * das ungefragt springt, ist eine Bevormundung, und ein falscher Sprung kostet
  * neunzig Sekunden Handlung, die man erst wiederfinden muss.
  */
-function markeNutzen() {
+async function markeNutzen() {
+  if (!lokalesSpulenErlaubt()) return;
   if (!marke) return;
   const von = bild.currentTime;
-  bild.currentTime = Math.max(von + 1, marke.ziel);
-  vorigeStelle = bild.currentTime;
-  bruecke.sprung(von, bild.currentTime, true);
+  const ziel = Math.max(von + 1, marke.ziel);
+  if (!await stelleSetzen(ziel)) return;
+  bruecke.sprung(von, ziel, true);
   knopfMarke.hidden = true;
 }
 
@@ -622,15 +641,25 @@ function steuernAusRunde(befehl) {
   // Die Runde antwortet - die Notbremse wird nicht mehr gebraucht.
   clearTimeout(startNotbremse);
   ausRundeBis = Date.now() + 900;
-  const stelle = Number(befehl.stelle);
+  let stelle = Number(befehl.stelle);
   const frist = Number(befehl.startLokal) || (Date.now() + (Number(befehl.wartenMs) || 0));
+  // Der Frame-Zeitstempel ist das sichtbare Standbild, currentTime kann
+  // zwischen Bildern liegen. Nach der Startfrist gilt dagegen bereits die
+  // um die Verspaetung erhoehte Wiedergabestelle.
+  let frameZiel = null;
+  if (typeof befehl.frameTime === "number" && Number.isFinite(befehl.frameTime)
+    && befehl.frameTime >= 0 && Math.abs(befehl.frameTime - stelle) < .25
+    && (!befehl.laufen || frist > Date.now())) {
+    frameZiel = befehl.frameTime;
+    stelle = frameZiel;
+  }
   const warten = Math.max(0, frist - Date.now());
   const springbar = befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0;
   // Ein verabredeter Start: springen, fertigmachen, und erst zum vereinbarten
   // Zeitpunkt loslassen - Host wie Gast, zur selben Serverzeit. Der Ausloeser
   // springt dabei nicht (er steht schon dort), wartet aber genauso.
   if (befehl.laufen && (befehl.startLokal || warten > 0)) {
-    startVerabredet(stelle, warten, springbar, frist);
+    startVerabredet(stelle, warten, springbar, frist, frameZiel);
     return;
   }
   const meiner = ++startAuftrag;
@@ -642,8 +671,9 @@ function steuernAusRunde(befehl) {
   if (!befehl.laufen) {
     bild.pause();
     if (springbar) {
-      const fertig = genauSetzen(stelle, befehl.genau !== false, meiner);
-      if (befehl.bereitId) fertig.then(async () => {
+      const fertig = genauSetzen(stelle, befehl.genau !== false, meiner, true, frameZiel);
+      if (befehl.bereitId) fertig.then(async (gesetzt) => {
+        if (!gesetzt) return;
         const bereit = await bereitFuerStart(stelle, 2500);
         if (bereit && meiner === startAuftrag) bruecke.syncBereit?.(befehl.bereitId);
       });
@@ -670,11 +700,13 @@ function steuernAusRunde(befehl) {
     return;
   }
 
-  if (springbar) {
-    bild.currentTime = stelle;
-    vorigeStelle = stelle;
-  }
-  bild.play().catch(() => {});
+  const gesetzt = springbar
+    ? genauSetzen(stelle, false, meiner, true, frameZiel)
+    : hlsAnkerAbwarten(meiner);
+  gesetzt.then((bereit) => {
+    if (!bereit || meiner !== startAuftrag) return;
+    bild.play().catch(() => {});
+  });
 }
 
 /**
@@ -699,24 +731,92 @@ const SEEK_TOLERANZ_S = 0.001;
  * die Stelle zweimal verfehlt, trifft sie auch beim dritten Mal nicht, und
  * eine Schleife am Video ist schlimmer als ein Hundertstel Abweichung.
  */
-async function genauSetzen(ziel, genau, meiner, vonRunde = true) {
+async function genauSetzen(ziel, genau, meiner, vonRunde = true, frameZiel = null) {
   // Das Nachmessen dauert; solange gilt alles am Video als "kam von der Runde".
   // Nicht beim eigenen Anhalten: dort waere die Sperre eine Sperre gegen den
   // naechsten Knopfdruck des Zuschauers, und der soll wieder die Runde fragen.
   if (vonRunde) ausRundeBis = Math.max(ausRundeBis, Date.now() + 2500);
-  bild.currentTime = ziel;
-  vorigeStelle = ziel;
-  if (!genau) return;
+  const hatFrame = typeof frameZiel === "number" && Number.isFinite(frameZiel) && frameZiel >= 0;
+  const sprungZiel = hatFrame ? frameSuchStelle(frameZiel) : ziel;
+  if (!await stelleSetzen(sprungZiel, meiner)) return genauAbbrechen(meiner);
+  if (!genau && !hatFrame) return true;
 
   await seekAbwarten();
-  if (meiner !== startAuftrag) return;
-  if (Math.abs(Number(bild.currentTime) - ziel) > SEEK_TOLERANZ_S) {
-    bild.currentTime = ziel;
+  if (meiner !== startAuftrag) return false;
+  if (Math.abs(Number(bild.currentTime) - sprungZiel) > SEEK_TOLERANZ_S) {
+    bild.currentTime = sprungZiel;
     await seekAbwarten();
-    if (meiner !== startAuftrag) return;
+    if (meiner !== startAuftrag) return false;
   }
+  if (hatFrame && !await dargestelltesBildAbwarten(frameZiel)) {
+    return genauAbbrechen(meiner);
+  }
+  if (meiner !== startAuftrag) return false;
   vorigeStelle = Number(bild.currentTime) || 0;
-  standMelden(true);
+  if (genau) standMelden(true);
+  return true;
+}
+
+/** Eine misslungene Genauigkeitspruefung laesst keinen Wartezustand zurueck. */
+function genauAbbrechen(meiner) {
+  // Ein neuerer Auftrag besitzt seinen Zustand selbst und darf von einem
+  // spaeten Ergebnis des alten nicht veraendert werden.
+  if (meiner === startAuftrag && startAusstehend) {
+    startAusstehend = false;
+    spielenZeichnen();
+  }
+  return false;
+}
+
+/** Chromium sucht intern auf Millisekunden; die naechste volle liegt im Frame. */
+function frameSuchStelle(frameZeit) {
+  // Das kleine Epsilon verhindert, dass 299.591 als 299.59100000000007
+  // versehentlich auf die darauffolgende Millisekunde aufgerundet wird.
+  return Math.ceil(frameZeit * 1000 - 0.000001) / 1000;
+}
+
+/** Ein genauer Befehl gilt erst, wenn Chromium wirklich diesen Frame zeigt. */
+function dargestelltesBildAbwarten(frameZeit, hoechstens = 800) {
+  if (!bildZeitMessbar) return Promise.resolve(true);
+  return new Promise((fertig) => {
+    const bis = Date.now() + hoechstens;
+    const pruefen = () => {
+      const rechenEpsilon = Number.EPSILON
+        * Math.max(1, Math.abs(dargestelltesBild || 0), Math.abs(frameZeit));
+      if (dargestelltesBild !== null
+        && Math.abs(dargestelltesBild - frameZeit) <= 0.000001 + rechenEpsilon) {
+        return fertig(true);
+      }
+      if (Date.now() >= bis) return fertig(false);
+      setTimeout(pruefen, 10);
+    };
+    pruefen();
+  });
+}
+
+/** Wartet nur bei hls.js; MP4-Spruenge bleiben synchrone Zuweisungen. */
+async function hlsAnkerAbwarten(meiner = null) {
+  const anker = hlsAnker;
+  if (!anker) return meiner === null || meiner === startAuftrag;
+  const bereit = await anker.bereit;
+  return bereit && anker.verankert && hlsAnker === anker
+    && (meiner === null || meiner === startAuftrag);
+}
+
+/** Setzt eine Stelle erst, wenn HLS seine Zeitachse an Fragment null kennt. */
+function stelleSetzen(ziel, meiner = null) {
+  if (!hlsAnker) {
+    if (meiner !== null && meiner !== startAuftrag) return Promise.resolve(false);
+    bild.currentTime = ziel;
+    vorigeStelle = ziel;
+    return Promise.resolve(true);
+  }
+  return hlsAnkerAbwarten(meiner).then((bereit) => {
+    if (!bereit) return false;
+    bild.currentTime = ziel;
+    vorigeStelle = ziel;
+    return true;
+  });
 }
 
 /** Auf das Ende eines Suchvorgangs warten - aber nicht ewig. */
@@ -754,7 +854,8 @@ function seekAbwarten(hoechstens = 1200) {
  */
 let startAuftrag = 0;
 
-async function startVerabredet(stelle, wartenMs, springen = true, startLokal = Date.now() + wartenMs) {
+async function startVerabredet(stelle, wartenMs, springen = true,
+  startLokal = Date.now() + wartenMs, frameZiel = null) {
   const meiner = ++startAuftrag;
   startAusstehend = true;
   spielenZeichnen();
@@ -763,9 +864,18 @@ async function startVerabredet(stelle, wartenMs, springen = true, startLokal = D
   ausRundeBis = Date.now() + wartenMs + 3200;
   const frist = startLokal;
   bild.pause();
-  if (springen && Math.abs(Number(bild.currentTime) - stelle) > SEEK_TOLERANZ_S) {
-    bild.currentTime = stelle;
-    vorigeStelle = stelle;
+  if (!await hlsAnkerAbwarten(meiner)) {
+    if (meiner === startAuftrag) {
+      startAusstehend = false;
+      spielenZeichnen();
+    }
+    return;
+  }
+  if (springen && (frameZiel !== null
+    || Math.abs(Number(bild.currentTime) - stelle) > SEEK_TOLERANZ_S)) {
+    if (frameZiel !== null) {
+      if (!await genauSetzen(stelle, true, meiner, true, frameZiel)) return;
+    } else if (!await stelleSetzen(stelle, meiner)) return;
   }
 
   const bereit = await bereitFuerStart(springen ? stelle : Number(bild.currentTime) || 0, 2500);
@@ -789,8 +899,7 @@ async function startVerabredet(stelle, wartenMs, springen = true, startLokal = D
   // einmal zu zeigen faellt auf, ein bisschen Vorsprung nicht.
   const zuspaet = (Date.now() - frist) / 1000;
   if (springen && zuspaet > 0.15) {
-    bild.currentTime = stelle + zuspaet * tempo;
-    vorigeStelle = bild.currentTime;
+    if (!await stelleSetzen(stelle + zuspaet * tempo, meiner)) return;
   }
   startAusstehend = false;
   ausRundeBis = Date.now() + 900;
@@ -820,7 +929,8 @@ function fernSteuern(auftragFern) {
   else if (befehl === "vollbild") bruecke.vollbild(true);
   else if (befehl === "folge") { folgeWechseln(auftragFern.url); return; }
   else if (befehl === "vor" || befehl === "zurueck") {
-    springen(befehl === "vor" ? Number(auftragFern.vor) || 30 : -(Number(auftragFern.zurueck) || 10));
+    springen(befehl === "vor" ? Number(auftragFern.vor) || 30
+      : -(Number(auftragFern.zurueck) || 10));
   } else if (befehl === "lauter" || befehl === "leiser") {
     bild.volume = Math.max(0, Math.min(1, bild.volume + (befehl === "lauter" ? 0.1 : -0.1)));
     if (befehl === "lauter") bild.muted = false;
@@ -931,6 +1041,25 @@ function tempoRechteSetzen() {
   tempoWahl.title = gesperrt
     ? "In einer Runde stellt der Host das Tempo"
     : "Tempo (Shift + , und Shift + .)";
+  spulenRechteSetzen();
+}
+
+/** Nur der Host veraendert in einer Runde die gemeinsame Wiedergabestelle. */
+function lokalesSpulenErlaubt() {
+  return !inRunde || binHost;
+}
+
+/** Zeigt Gaesten schon an den Bedienelementen, wem die Stelle gehoert. */
+function spulenRechteSetzen() {
+  const gesperrt = !lokalesSpulenErlaubt();
+  regler.disabled = gesperrt;
+  regler.title = gesperrt ? "Spulen steuert der Host" : "Stelle";
+  knopfZurueck.disabled = gesperrt;
+  knopfZurueck.title = gesperrt ? "Spulen steuert der Host" : "10 Sekunden zurück";
+  knopfVor.disabled = gesperrt;
+  knopfVor.title = gesperrt ? "Spulen steuert der Host" : "10 Sekunden vor";
+  knopfMarke.disabled = gesperrt;
+  knopfMarke.title = gesperrt ? "Spulen steuert der Host" : "Intro überspringen";
 }
 
 /* ------------------------------------------------------- Die Folgenliste */
@@ -1405,8 +1534,8 @@ function weiterAbbrechen() {
 
 document.getElementById("spielen").addEventListener("click", spielenUmschalten);
 knopfMitte.addEventListener("click", spielenUmschalten);
-document.getElementById("zurueck").addEventListener("click", () => springen(-10));
-document.getElementById("vor").addEventListener("click", () => springen(10));
+knopfZurueck.addEventListener("click", () => springen(-10));
+knopfVor.addEventListener("click", () => springen(10));
 document.getElementById("ton").addEventListener("click", tonUmschalten);
 document.getElementById("gross").addEventListener("click", () => bruecke.vollbild(true));
 document.getElementById("zu").addEventListener("click", () => beenden("knopf"));
@@ -1440,14 +1569,15 @@ bild.addEventListener("click", () => {
   spielenUmschalten();
 });
 
-regler.addEventListener("input", () => {
+regler.addEventListener("input", async () => {
+  if (!lokalesSpulenErlaubt()) return;
   if (!Number.isFinite(bild.duration) || bild.duration <= 0) return;
   const von = bild.currentTime;
-  bild.currentTime = (Number(regler.value) / 1000) * bild.duration;
+  const ziel = (Number(regler.value) / 1000) * bild.duration;
+  if (!await stelleSetzen(ziel)) return;
   // Die Zaehlung darf einen Sprung nicht mitzaehlen - sonst waere der Regler
   // eine Abkuerzung zum "geschaut" der ganzen Serie.
-  vorigeStelle = bild.currentTime;
-  bruecke.sprung(von, bild.currentTime, false);
+  bruecke.sprung(von, ziel, false);
   tatMelden("seek");
 });
 lautstaerke.addEventListener("input", () => {
@@ -1575,7 +1705,7 @@ bild.addEventListener("error", () => {
  * Je Auftrag einmal - sonst zoege ein zweites `loadedmetadata` (das kommt bei
  * einem Wechsel der Quelle) den Film wieder zurueck.
  */
-bild.addEventListener("loadedmetadata", () => {
+bild.addEventListener("loadedmetadata", async () => {
   anzeigeDauer.textContent = zeit(bild.duration);
   // Eine neue Quelle faengt bei einfachem Tempo an - auch mitten in einer
   // Runde, die auf 2x laeuft. Also hier wieder daraufsetzen, und zwar bei
@@ -1587,8 +1717,9 @@ bild.addEventListener("loadedmetadata", () => {
   // sie von vorn und nicht die letzten zehn Sekunden.
   const start = Number(auftrag?.startzeit) || 0;
   if (start > 5 && Number.isFinite(bild.duration) && start < bild.duration - 20) {
-    bild.currentTime = start;
-    vorigeStelle = start;
+    if (!await stelleSetzen(start)) return;
+  } else if (!await hlsAnkerAbwarten()) {
+    return;
   }
   // Eine vorgeladene Folge steht und wartet. Das Bild ist da, die Leiste zeigt
   // die Laenge - es fehlt nur der Druck auf Start.
@@ -1682,41 +1813,105 @@ function hlsStarten(adresse) {
     aufgeben("Für diese Playlist fehlt der Abspieler.", "hls-fehlt");
     return;
   }
-  hls = new Hls({
+  const instanz = new Hls({
+    // Der erste gelesene Medienzeitstempel muss immer aus Fragment null
+    // stammen. Sonst verschiebt ein Direkteinstieg die gesamte HLS-Zeitachse.
+    autoStartLoad: false,
+    startPosition: 0,
+    testBandwidth: false,
     // Grosszuegig puffern: die Auslieferung der Hoster ist unstet, und ein
     // Nachladen mitten im Satz faellt mehr auf als ein paar Megabyte mehr.
     maxBufferLength: 60,
     backBufferLength: 30,
     startLevel: -1
   });
-  hls.on(Hls.Events.MANIFEST_PARSED, (_ereignis, daten) => {
-    stufenSetzen(daten.levels || []);
-    untertitelSetzen(daten.subtitleTracks || hls.subtitleTracks || []);
+  hls = instanz;
+  const anker = hlsAnkerErzeugen(instanz);
+  instanz.on(Hls.Events.INIT_PTS_FOUND, (_ereignis, daten) => {
+    if (hls !== instanz || (daten?.id && daten.id !== "main")) return;
+    anker.beenden(true);
   });
-  hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_ereignis, daten) => {
+  instanz.on(Hls.Events.MANIFEST_PARSED, (_ereignis, daten) => {
+    if (hls !== instanz) return;
+    stufenSetzen(daten.levels || []);
+    untertitelSetzen(daten.subtitleTracks || instanz.subtitleTracks || []);
+    instanz.startLoad(0);
+  });
+  instanz.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_ereignis, daten) => {
+    if (hls !== instanz) return;
     untertitelSetzen(daten.subtitleTracks || []);
   });
-  hls.on(Hls.Events.LEVEL_SWITCHED, (_ereignis, daten) => {
+  instanz.on(Hls.Events.LEVEL_SWITCHED, (_ereignis, daten) => {
+    if (hls !== instanz) return;
     if (stufenWahl.value !== "-1") stufenWahl.value = String(daten.level);
   });
-  hls.on(Hls.Events.ERROR, (_ereignis, daten) => {
+  instanz.on(Hls.Events.ERROR, (_ereignis, daten) => {
+    if (hls !== instanz) return;
     if (!daten.fatal) return;
     // Ein Netzfehler und ein Medienfehler haben je einen Versuch. Der zweite
     // desselben Fehlers ist keiner mehr, sondern eine Schleife.
     if (daten.type === Hls.ErrorTypes.NETWORK_ERROR && !gerettet.netz) {
       gerettet.netz = true;
-      hls.startLoad();
+      instanz.startLoad(anker.verankert ? -1 : 0);
       return;
     }
     if (daten.type === Hls.ErrorTypes.MEDIA_ERROR && !gerettet.medium) {
       gerettet.medium = true;
-      hls.recoverMediaError();
+      instanz.recoverMediaError();
       return;
     }
+    anker.beenden(false);
+    // Auch ein bereits gesetzter Anker kann spaeter endgueltig scheitern.
+    // Laufende Vorbereitungen und Startuhren duerfen danach nicht aus einem
+    // Fehlerbild heraus doch noch play() aufrufen.
+    ++startAuftrag;
+    startAusstehend = false;
+    clearTimeout(startNotbremse);
+    spielenZeichnen();
     aufgeben("Die Playlist des Hosters bricht ab.", `hls-${daten.details || daten.type}`);
   });
-  hls.loadSource(adresse);
-  hls.attachMedia(bild);
+  instanz.loadSource(adresse);
+  instanz.attachMedia(bild);
+}
+
+/** Eine neue Quelle beendet alle Wartenden der alten, ohne spaeter zu springen. */
+function hlsAnkerZuruecksetzen() {
+  if (hlsAnker) hlsAnker.beenden(false);
+  hlsAnker = null;
+}
+
+/** Oeffnet die Schranke bis hls.js den ersten Hauptstream-Zeitstempel meldet. */
+function hlsAnkerErzeugen(instanz) {
+  hlsAnkerZuruecksetzen();
+  let fertig;
+  let erledigt = false;
+  let uhr = 0;
+  const anker = {
+    instanz,
+    verankert: false,
+    bereit: new Promise((resolve) => { fertig = resolve; }),
+    beenden(erfolg) {
+      // false widerruft auch einen bereits gemeldeten Erfolg. Das Versprechen
+      // ist dann zwar schon erfuellt, doch hlsAnkerAbwarten prueft zusaetzlich
+      // diesen Zustand und laufende Startauftraege werden invalidiert.
+      if (erledigt) {
+        if (!erfolg) anker.verankert = false;
+        return;
+      }
+      erledigt = true;
+      anker.verankert = Boolean(erfolg);
+      clearTimeout(uhr);
+      fertig(anker.verankert);
+    }
+  };
+  hlsAnker = anker;
+  uhr = setTimeout(() => {
+    if (hlsAnker !== anker || anker.verankert) return;
+    anker.beenden(false);
+    try { instanz.stopLoad(); } catch (_) {}
+    aufgeben("Die Zeitachse der Playlist konnte nicht gelesen werden.", "hls-zeitanker");
+  }, HLS_ANKER_FRIST_MS);
+  return anker;
 }
 
 /**
@@ -1735,6 +1930,7 @@ function starten(neuerAuftrag) {
   gerettet = { netz: false, medium: false };
   weiterAbbrechen();
   weiterVerworfen = false;
+  hlsAnkerZuruecksetzen();
 
   if (hls) {
     try {
@@ -1849,8 +2045,16 @@ bruecke.aufTempo((wert, host) => {
 let rundeBild = "";
 
 function zeichneRunde(leute) {
-  if (!rundeLeiste) return;
   const dabei = Array.isArray(leute) ? leute : [];
+  // Die Rollenmeldung kommt mit jedem Leistentakt, auch wenn nur eine Person
+  // im Raum ist und die Leiste deshalb unsichtbar bleibt. Ohne dieses Update
+  // behielte ein neuer Host bis zur naechsten Tempoaenderung die Gastrechte.
+  const ich = dabei.find((person) => person?.me);
+  if (inRunde && ich && binHost !== Boolean(ich.host)) {
+    binHost = Boolean(ich.host);
+    tempoRechteSetzen();
+  }
+  if (!rundeLeiste) return;
   rundeLeiste.hidden = dabei.length < 2;
   if (rundeLeiste.hidden) {
     rundeLeiste.replaceChildren();

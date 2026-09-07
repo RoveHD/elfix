@@ -3,6 +3,43 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.10 — 7. September 2026
+
+**Watchparty: gleiche Videozeit nach dem Spulen.** HLS-Streams mit ungenauen
+Segmentlängen bekamen bisher je nach Einstiegsstelle unterschiedliche Zeitachsen.
+Desktop und Android verankern unterstützte Streams jetzt am tatsächlichen
+Anfang. Android lädt bei einem neuen Sprung zusätzlich das vorherige Segment,
+damit das gewünschte Bild auch erreichbar ist. Abgebrochene Ladevorgänge
+vergiften diese Zeitreferenz nicht.
+
+Auch Spulen im pausierten Zustand wird am gerenderten Bild des Hosts
+ausgerichtet. Der Desktop berücksichtigt die Rundung an Bildgrenzen und
+bestätigt die Bereitschaft erst mit dem tatsächlich dargestellten Zielbild.
+Gäste können nicht mehr unbemerkt nur ihren eigenen Player
+versetzen; Spulbedienung und Host-Wechsel berücksichtigen die aktuelle Rolle.
+
+**Startabbruch nach dem Laden behoben.** Die vollständige Android-App reicht
+die Teilnahme jetzt bis zum nativen Player weiter. Play wartet dadurch auf
+den gemeinsamen Start. Alte Autostart-Versuche überschreiben keine neuen
+Befehle mehr. Abbruch und Ladefehler lösen den wartenden Playbutton wieder
+und verhindern einen verspäteten Start.
+
+Das Einlesen der Folgenliste im Hintergrund meldet keinen falschen
+Folgenwechsel mehr. Desktop und Relay schützen die Startvorbereitung auch
+vor Befehlen anderer Folgen und Einstellungsänderungen während des Ladens.
+Staffelwechsel mit gleicher Folgennummer werden korrekt erkannt.
+Schnelles Play direkt nach Pause nutzt ebenfalls den gemeinsamen Start.
+
+**Weiterschauen auf Android wählt die gespeicherte Folge automatisch.** Auch
+wenn am Favoriten nur die Serienadresse gespeichert ist, werden die passende
+Staffel und die konkrete Folge aus der Folgenliste geöffnet.
+
+Geräteprüfung mit den vollständigen Apps auf Windows und einem per USB
+angeschlossenen Galaxy S24 Ultra an AniWorld/VOE. Die Gerätetests von 2.0.9
+verwendeten dagegen einen isolierten Player-Prüfstand und erfassten diese
+Fehler der App-Anbindung nicht. Für den vollständigen Einzelbild-Abgleich
+muss auch das Relay auf 2.0.10 aktualisiert werden.
+
 ## 2.0.9 — 7. September 2026
 
 **Watchparty pausiert auf demselben Einzelbild und startet gemeinsam.** Desktop

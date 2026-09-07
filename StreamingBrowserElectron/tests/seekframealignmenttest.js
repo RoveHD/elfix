@@ -1,0 +1,101 @@
+"use strict";
+
+// Relay regression: a paused host seek must align the rendered frame after the
+// next real host heartbeat, just like an ordinary pause.
+const WS = require("../../sync-server/node_modules/ws");
+
+const PORT = Number(process.env.TESTPORT) || 8799;
+const URL = "https://s.to/serie/stream/frame-test/staffel-1/episode-1";
+const ROOM = `seek-frame-${Date.now()}`;
+const KEY = "serie:seek-frame-test";
+const FRAME = 299.590944;
+const POSITION = 299.631605;
+
+function client(name, id) {
+  const socket = new WS(`ws://127.0.0.1:${PORT}`);
+  const messages = [];
+  const waiters = [];
+  socket.on("message", raw => {
+    const message = JSON.parse(String(raw));
+    messages.push(message);
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      if (waiters[i].test(message)) {
+        waiters[i].resolve(message);
+        waiters.splice(i, 1);
+      }
+    }
+  });
+  return {
+    socket,
+    open: () => new Promise((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    }),
+    send: value => socket.send(JSON.stringify(value)),
+    messages,
+    wait: (test, ms = 1500) => new Promise((resolve, reject) => {
+      const found = messages.find(test);
+      if (found) return resolve(found);
+      const waiter = { test, resolve, reject };
+      waiters.push(waiter);
+      setTimeout(() => {
+        const index = waiters.indexOf(waiter);
+        if (index >= 0) waiters.splice(index, 1);
+        reject(new Error(`${name}: timeout`));
+      }, ms);
+    })
+  };
+}
+
+(async () => {
+  const host = client("host", "seek-host");
+  const guest = client("guest", "seek-guest");
+  await Promise.all([host.open(), guest.open()]);
+
+  host.send({ type: "join", room: ROOM, name: "Host", deviceId: "seek-host" });
+  await host.wait(m => m.type === "state");
+  host.send({ type: "share", item: {
+    key: KEY, url: URL, title: "Frame test", type: "serie", season: 1, episode: 1
+  }});
+  await host.wait(m => m.type === "state" && m.shared?.some(item => item.key === KEY));
+
+  guest.send({ type: "join", room: ROOM, name: "Guest", deviceId: "seek-guest" });
+  await guest.wait(m => m.type === "state" && m.shared?.some(item => item.key === KEY));
+  guest.send({ type: "enter", key: KEY });
+  await guest.wait(m => m.type === "state" && m.shared?.[0]?.memberIds?.includes("seek-guest"));
+
+  const stand = (client, id, frameTime) => client.send({
+    type: "here", key: KEY, position: POSITION, paused: true,
+    frameTime, duration: 1000, season: 1, episode: 1, url: URL,
+    playerSessionId: `${id}-s1e1`
+  });
+  stand(host, "seek-host", FRAME);
+  stand(guest, "seek-guest", FRAME);
+  await new Promise(resolve => setTimeout(resolve, 80));
+
+  host.send({ type: "control", key: KEY, action: "seek", position: POSITION,
+    frameTime: FRAME, url: URL });
+  await new Promise(resolve => setTimeout(resolve, 80));
+
+  // The first heartbeat can arrive before the decoder has exposed the newly
+  // rendered frame. It must not consume the alignment opportunity.
+  stand(host, "seek-host");
+  await new Promise(resolve => setTimeout(resolve, 120));
+  if (guest.messages.some(m => m.type === "control" && m.action === "seek" && m.resync)) {
+    throw new Error("alignment was consumed before a valid host frame existed");
+  }
+
+  // The next fresh host heartbeat is the authoritative rendered frame.
+  stand(host, "seek-host", FRAME);
+  const aligned = await guest.wait(m => m.type === "control" && m.action === "seek"
+    && m.resync && m.frameTime != null);
+  if (aligned.frameTime !== FRAME || aligned.position !== FRAME) {
+    throw new Error(`expected frame ${FRAME}, got position=${aligned.position} frame=${aligned.frameTime}`);
+  }
+  console.log("OK paused seek aligns the host rendered frame");
+  host.socket.close();
+  guest.socket.close();
+})().catch(error => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

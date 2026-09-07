@@ -8,6 +8,7 @@ const RAUM = "testraum";
 const KEY = "serie:theoffice";
 const URL1 = "https://s.to/serie/stream/the-office/staffel-1/episode-1";
 const URL2 = "https://s.to/serie/stream/the-office/staffel-1/episode-2";
+const URL_S2E1 = "https://s.to/serie/stream/the-office/staffel-2/episode-1";
 
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
@@ -58,8 +59,9 @@ const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 // Jeder Client pulst durchgehend, genau wie der echte Player. Ohne Herzschlag
 // gilt niemand als aktiv - und ohne aktive Teilnehmer gibt es keinen Host.
 const pulse = [];
-function pulsStarten(c, folgeNr, adresse) {
+function pulsStarten(c, folgeNr, adresse, staffelNr = 1) {
   c.folge = folgeNr;
+  c.staffel = staffelNr;
   c.adresse = adresse;
   c.zuletzt = Date.now();
   const schlag = () => {
@@ -71,18 +73,20 @@ function pulsStarten(c, folgeNr, adresse) {
       type: "here", key: KEY,
       position: c.stelle || 0,
       paused: Boolean(c.pausiert),
-      season: 1, episode: c.folge,
+      season: c.staffel, episode: c.folge,
       url: c.adresse,
-      playerSessionId: `${c.deviceId}-e${c.folge}`
+      playerSessionId: `${c.deviceId}-s${c.staffel}e${c.folge}`
     });
   };
   schlag();
   const timer = setInterval(schlag, 800);
   timer.unref?.();
   pulse.push(timer);
+  return timer;
 }
-function pulsFolge(c, folgeNr, adresse) {
+function pulsFolge(c, folgeNr, adresse, staffelNr = 1) {
   c.folge = folgeNr;
+  c.staffel = staffelNr;
   c.adresse = adresse;
   c.stelle = 0;
   melde(c, {});
@@ -105,13 +109,14 @@ function melde(c, werte) {
   if (werte.position != null) c.stelle = werte.position;
   if (werte.paused != null) c.pausiert = werte.paused;
   if (werte.episode != null) c.folge = werte.episode;
+  if (werte.season != null) c.staffel = werte.season;
   c.send({
     type: "here", key: KEY,
     position: c.stelle || 0,
     paused: Boolean(c.pausiert),
-    season: 1, episode: c.folge,
+    season: c.staffel, episode: c.folge,
     url: c.adresse,
-    playerSessionId: `${c.deviceId}-e${c.folge}`
+    playerSessionId: `${c.deviceId}-s${c.staffel}e${c.folge}`
   });
 }
 // Ausbleibende Nachricht ist ein Befund, kein Abbruch.
@@ -121,7 +126,8 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
 (async () => {
   const A = client("A/Host", "geraet-a");
   const B = client("B/Gast", "geraet-b");
-  await Promise.all([A.offen(), B.offen()]);
+  const C = client("C/andere Folge", "geraet-c");
+  await Promise.all([A.offen(), B.offen(), C.offen()]);
 
   A.send({ type: "join", room: RAUM, name: "A", deviceId: A.deviceId });
   await A.erwarte((m) => m.type === "state", "state A");
@@ -135,30 +141,58 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
 
   pulsStarten(A, 1, URL1);
   await schlaf(150);
-  pulsStarten(B, 1, URL1);
+  let bPuls = pulsStarten(B, 1, URL1);
   const stand = await B.erwarte((m) => m.type === "state" && m.shared[0]?.hostId, "host");
   pruefe("Host ist A", stand.shared[0].hostId === A.deviceId, `hostId=${stand.shared[0].hostId}`);
+
+  // C gehoert zur Runde, schaut aber bewusst dieselbe Folgennummer in einer
+  // anderen Staffel. Seine
+  // Bedienung darf die Vorbereitung von A und B nicht ersetzen.
+  C.send({ type: "join", room: RAUM, name: "C", deviceId: C.deviceId });
+  await C.erwarte((m) => m.type === "state", "state C");
+  C.send({ type: "enter", key: KEY });
+  await C.erwarte((m) => m.type === "state" && m.shared[0]?.memberIds.includes(C.deviceId), "enter C");
+  const cPuls = pulsStarten(C, 1, URL_S2E1, 2);
+  await schlaf(120);
 
   // --- 1. Host spielt bei 100 -------------------------------------------
   A.leeren(); B.leeren();
   steuern(A, "play", 100);
   const vorPlayA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung an Host");
   const vorPlayB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung an Gast");
+  A.pausiert = true; B.pausiert = true;
   pruefe("Play bereitet auch den Ausloeser vor",
     !vorPlayA.fehlt && vorPlayA.syncId === vorPlayB.syncId,
     vorPlayA.fehlt ? "kam nicht" : `sync=${vorPlayA.syncId}`);
   pruefe("Die Vorbereitung nimmt die Host-Position", Math.abs(vorPlayB.position - 100) < 0.01,
     `position=${vorPlayB.position}`);
+  // Tempo aendert die Rechnung des Starts, macht einen bereits vorbereiteten
+  // Player aber nicht unvorbereitet. Der folgende syncstart traegt den neuen
+  // Wert und muss dieselbe Verabredung abschliessen.
+  A.send({ type: "control", key: KEY, action: "tempo", position: 100, url: URL1, tempo: 1.5 });
+  const tempoB = await hole(B, (m) => m.type === "control" && m.action === "tempo", "Tempo an Gast");
+  pruefe("Host-Tempo laesst die offene Startverabredung bestehen",
+    tempoB.tempo === 1.5, `tempo=${tempoB.tempo}`);
+  // Ein lokaler Sprung des Gastes kann waehrend des Pufferns noch als
+  // Steuer-Echo eintreffen. Das Relay weist ihn ab; dabei muss die bereits
+  // laufende Startverabredung aber erhalten bleiben.
+  B.send({ type: "control", key: KEY, action: "seek", position: 999, url: URL1 });
   A.send({ type: "syncready", key: KEY, syncId: vorPlayA.syncId });
   B.send({ type: "syncready", key: KEY, syncId: vorPlayB.syncId });
   const playA = await hole(A, (m) => m.type === "syncstart", "Start an Host");
   const play = await B.erwarte((m) => m.type === "syncstart", "Start an B");
+  A.pausiert = false; B.pausiert = false;
   pruefe("Play startet nach dem Puffer-Vorlauf",
     Number(playA.startAt) >= Number(playA.timestamp) + 750,
     `startAt=${playA.startAt} timestamp=${playA.timestamp}`);
   pruefe("Alle bekommen fuer Play denselben Startzeitpunkt",
     playA.startAt === play.startAt && playA.syncId === vorPlayA.syncId,
     `A=${playA.startAt} B=${play.startAt}`);
+  pruefe("Ein abgewiesener Gast-Sprung beendet die Startverabredung nicht",
+    !playA.fehlt && play.syncId === vorPlayA.syncId,
+    playA.fehlt ? "Start kam nicht" : `sync=${play.syncId}`);
+  pruefe("Der vorbereitete Start uebernimmt das neue Tempo",
+    play.tempo === 1.5, `tempo=${play.tempo}`);
 
   // Bis zum verabredeten Zeitpunkt meldet ein vorbereiteter Player noch
   // "pausiert". Das Relay darf daraus kein eigenes Nachreich-Play ohne
@@ -176,11 +210,57 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   steuern(B, "pause", 50);
   const pauseA = await hole(A, (m) => m.type === "control" && m.action === "pause", "pause an A");
   const pauseB = await hole(B, (m) => m.type === "control" && m.action === "pause", "pause-Echo an B");
+  A.pausiert = true; B.pausiert = true;
   pruefe("Pause geht auch an den Ausloeser zurueck", !pauseB.fehlt, `position=${pauseB.position}`);
   pruefe("Pause nutzt Host-Zeit statt der 50s des Gastes", pauseA.position >= 100 && pauseA.position < 103,
     `position=${pauseA.position.toFixed(2)}`);
   pruefe("Beide bekommen dieselbe Sekunde", Math.abs(pauseA.position - pauseB.position) < 0.001,
     `A=${pauseA.position.toFixed(2)} B=${pauseB.position.toFixed(2)}`);
+
+  // Ein Fassungswechsel laedt die Quelle neu. Er muss die alte Verabredung
+  // deshalb sichtbar mit einer Pause absagen; eine spaete Bereitschaft fuer
+  // die vorige Quelle darf danach keinen Start mehr ausloesen.
+  A.leeren(); B.leeren();
+  steuern(A, "play", pauseA.position, URL1);
+  const fassungVorA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung vor Fassung A");
+  const fassungVorB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung vor Fassung B");
+  A.pausiert = true; B.pausiert = true;
+  A.leeren(); B.leeren();
+  A.send({ type: "control", key: KEY, action: "fassung", position: pauseA.position,
+    url: URL1, fassung: "Deutsch", hoster: "VOE" });
+  const fassungPauseA = await hole(A, (m) => m.type === "control" && m.reason === "fassung", "Fassungs-Pause A");
+  const fassungPauseB = await hole(B, (m) => m.type === "control" && m.reason === "fassung", "Fassungs-Pause B");
+  const fassungB = await hole(B, (m) => m.type === "control" && m.action === "fassung", "Fassung an B");
+  pruefe("Fassungswechsel sagt den wartenden Start auf allen Geraeten sichtbar ab",
+    !fassungPauseA.fehlt && !fassungPauseB.fehlt && fassungPauseA.syncId === fassungVorA.syncId,
+    `A=${fassungPauseA.reason} B=${fassungPauseB.reason}`);
+  pruefe("Die neue Fassung wird nach der Absage verteilt",
+    fassungB.fassung === "Deutsch" && fassungB.hoster === "VOE",
+    `${fassungB.fassung}/${fassungB.hoster}`);
+  A.leeren(); B.leeren();
+  A.send({ type: "syncready", key: KEY, syncId: fassungVorA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: fassungVorB.syncId });
+  const fassungWiederbelebt = await A.erwarte((m) => m.type === "syncstart", "alter Fassungs-Start", 300)
+    .catch(() => null);
+  pruefe("Spaete Bereitschaft der alten Fassung startet nichts mehr", !fassungWiederbelebt);
+
+  // C steht auf S2E1. Seine dort gueltige Pause darf die neue
+  // Startverabredung der Runde auf Folge 1 nicht loeschen.
+  A.leeren(); B.leeren();
+  steuern(A, "play", pauseA.position, URL1);
+  const fremdVorA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung vor Fremd-Pause A");
+  const fremdVorB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung vor Fremd-Pause B");
+  A.pausiert = true; B.pausiert = true;
+  C.send({ type: "control", key: KEY, action: "pause", position: 22, url: URL_S2E1 });
+  A.send({ type: "syncready", key: KEY, syncId: fremdVorA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: fremdVorB.syncId });
+  const fremdStart = await hole(A,
+    (m) => m.type === "syncstart" && m.syncId === fremdVorA.syncId, "Start nach Fremd-Pause");
+  pruefe("Dieselbe Folgennummer einer anderen Staffel beendet die Startverabredung nicht",
+    !fremdStart.fehlt, fremdStart.fehlt ? "kein Start" : `sync=${fremdStart.syncId}`);
+  A.pausiert = false; B.pausiert = false;
+  clearInterval(cPuls);
+  C.socket.close();
 
   // --- 3. Sync-Knopf: anhalten, gleiche Zeit - und dabei bleibt es -------
   //
@@ -301,6 +381,9 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
 
   // --- 7. Der Fall aus dem Screenshot ------------------------------------
   // A pausiert bei 79s und sagt das selbst; B laeuft bei 118s weiter.
+  // B's periodischer Puls darf den gezielten Wert nicht vor der gebuendelten
+  // Ausgabe ueberschreiben; im echten Player waere dies derselbe Messwert.
+  clearInterval(bPuls);
   A.leeren(); B.leeren();
   melde(A, { position: 79, paused: true, episode: 2 });
   melde(B, { position: 118, paused: false, episode: 2 });
@@ -321,6 +404,7 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
     wa ? `A.paused=${wa.paused} B.paused=${wb?.paused}` : "");
   pruefe("Die Folge steht am Geraet", wa?.episode === 2 && wb?.episode === 2,
     wa ? `A=S${wa.season}E${wa.episode} B=S${wb?.season}E${wb?.episode}` : "");
+  bPuls = pulsStarten(B, 2, URL2);
   void letzte;
 
   // --- 8. Folgenwechsel muss die Runde umstellen -------------------------
@@ -400,8 +484,12 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   const holenVorB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung B zum Nachreichen");
   A.send({ type: "syncready", key: KEY, syncId: holenVorA.syncId });
   B.send({ type: "syncready", key: KEY, syncId: holenVorB.syncId });
-  await hole(B, (m) => m.type === "syncstart", "Start zum Nachreichen");
-  await schlaf(200);
+  const holenStart = await hole(B, (m) => m.type === "syncstart", "Start zum Nachreichen");
+  // Bis startAt + 250 ms gilt ein pausierter Herzschlag absichtlich noch als
+  // Pufferzustand des gemeinsamen Starts. Erst danach pruefen wir ein Geraet,
+  // das wirklich stehen geblieben ist; sonst hing das Ergebnis zufaellig an
+  // der Phase des periodischen 800-ms-Herzschlags.
+  await schlaf(Math.max(0, Number(holenStart.startAt) - Date.now() + 300));
   B.leeren();
   melde(B, { position: 10, paused: true, episode: 4 });
   const geholt = await B.erwarte((m) => m.type === "control" && m.action === "play" && m.resync,
@@ -497,6 +585,22 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   B.send({ type: "syncready", key: KEY, syncId: timeoutPrep.syncId });
   const revived = await A.erwarte(m => m.type === "syncstart", "verspaetetes Bereit", 300).catch(() => null);
   pruefe("Bereitschaft nach Timeout startet die Runde nicht erneut", !revived);
+
+  // Staffelwechsel mit derselben Folgennummer muss die Staffel ebenfalls
+  // fortschreiben. Sonst bliebe die Runde bei S1E4, obwohl beide Player S2E4
+  // melden, und jede spaetere episodeId waere falsch.
+  const URL_S2E4 = "https://s.to/serie/stream/the-office/staffel-2/episode-4";
+  A.leeren(); B.leeren();
+  A.send({ type: "control", key: KEY, action: "navigate", position: 0, url: URL_S2E4 });
+  pulsFolge(A, 4, URL_S2E4, 2);
+  await schlaf(120);
+  pulsFolge(B, 4, URL_S2E4, 2);
+  const staffelWechsel = await B.erwarte((m) => m.type === "state"
+    && m.shared[0]?.season === 2 && m.shared[0]?.episode === 4,
+    "Zustand mit Staffel 2 Folge 4", 2000).catch(() => null);
+  pruefe("Ein Staffelwechsel mit gleicher Folgennummer wird erkannt",
+    Boolean(staffelWechsel),
+    staffelWechsel ? `S${staffelWechsel.shared[0].season}E${staffelWechsel.shared[0].episode}` : "Staffel blieb stehen");
 
   for (const timer of pulse) clearInterval(timer);
   A.socket.close();

@@ -9631,13 +9631,34 @@ public class MainActivity extends Activity {
         if (gewaehlt != null) {
             String gespeichert = gewaehlt.url().replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
             String ziel = url.replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
-            eintrag = gespeichert.equalsIgnoreCase(ziel) ? gewaehlt : null;
+            // Der automatische Sprung aus der Serienseite auf ihre gespeicherte
+            // Folge ist weiterhin derselbe Eintrag. Ohne diese zweite Form
+            // ginge beim anschliessenden Aufbau des Players die gespeicherte
+            // Sekunde verloren, nur weil sich die Adresse von der Eingangstuer
+            // auf die konkrete Folge praezisiert hat.
+            eintrag = gespeichert.equalsIgnoreCase(ziel)
+                || (gewaehlt.watchpartyRaum().isEmpty()
+                    && Folgen.istGespeicherteFolge(gewaehlt, url)) ? gewaehlt : null;
         }
         double stelle = eintrag == null ? 0 : eintrag.currentTime();
+        // Eine Serienseite ist im eigenen Player nur die Eingangstuer zur
+        // Folgenliste. Beim Weiterschauen ist die Wahl aber schon getroffen:
+        // Staffel und Folge stehen am Eintrag, auch wenn seine Adresse noch
+        // die Serienseite ist. Bis hierher ging nur die gespeicherte Sekunde
+        // weiter; ohne diese beiden Zahlen schlug der Player die Liste auf und
+        // liess den Zuschauer seine gespeicherte Folge selbst heraussuchen.
+        //
+        // Nur ein wirklicher Weiterschauen-Stand darf automatisch waehlen. Ein
+        // bloss vorgemerkter Titel kann dieselben Felder tragen, soll beim
+        // ersten Oeffnen aber weiterhin die Auswahl zeigen.
+        boolean eigenerFortsetzStand = istEigenerFortsetzStand(eintrag);
+        int fortsetzStaffel = eigenerFortsetzStand ? eintrag.season() : 0;
+        int fortsetzFolge = eigenerFortsetzStand ? eintrag.episode() : 0;
         if (!fortsetzen) activeFavoriteId = eintrag == null ? null : eintrag.id();
         if (bestand != null) bestand.setzeAktivenEintrag(activeFavoriteId);
         String name = eintrag == null ? url.equals(startUrl) ? startTitel : "Wiedergabe" : eintrag.title();
         direktWiedergabe = new DirektWiedergabe(this, kern, provider, url, name, stelle,
+            fortsetzStaffel, fortsetzFolge,
             new DirektWiedergabe.Umgebung() {
                 public void geschlossen() { direktSchliessen(); showHome(); }
                 public void browser(Provider anbieter, String adresse) {
@@ -9683,8 +9704,11 @@ public class MainActivity extends Activity {
                     // wie beim Spulen, und aus demselben Grund.
                     return mitschauen == null || !mitschauen.laeuftMit() || mitschauen.binHostHier();
                 }
-                public boolean inRunde() {
+                @Override public boolean inRunde() {
                     return mitschauen != null && mitschauen.laeuftMit();
+                }
+                @Override public boolean istRundenHost() {
+                    return mitschauen != null && mitschauen.binHostHier();
                 }
                 public void fassungGewaehlt(String fassungName, String hosterName) {
                     if (mitschauen == null) return;
@@ -9715,6 +9739,12 @@ public class MainActivity extends Activity {
             direktOeffnen(provider, ziel, true);
         });
         applyFullscreenSystemUi();
+    }
+
+    /** Nur die private Weiterschauen-Reihe waehlt ihre gespeicherte Folge selbst. */
+    static boolean istEigenerFortsetzStand(Favorite eintrag) {
+        return eintrag != null && eintrag.watchpartyRaum().isEmpty()
+            && eintrag.stehtInWeiterschauen() && eintrag.episode() > 0;
     }
 
     private void direktSchliessen() {

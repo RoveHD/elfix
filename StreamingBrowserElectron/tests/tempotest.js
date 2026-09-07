@@ -346,11 +346,11 @@ async function gemeinsamStarten(host, gast) {
   pruefe("Eine neue Quelle bekommt das Tempo wieder aufgesetzt",
     /if \(bild\.playbackRate !== tempo\) tempoSetzen\(tempo, false\);/.test(spieler));
   pruefe("Der eigene Player wartet den verabredeten Zeitpunkt ab",
-    /async function startVerabredet\(stelle, wartenMs, springen = true, startLokal = Date.now\(\) \+ wartenMs\)/.test(spieler)
+    /async function startVerabredet\(stelle, wartenMs, springen = true,[\s\S]{0,80}startLokal = Date.now\(\) \+ wartenMs, frameZiel = null\)/.test(spieler)
     && /await bereitFuerStart\(springen \? stelle : Number\(bild\.currentTime\) \|\| 0, 2500\);/.test(spieler));
   pruefe("Wer zu spaet fertig wird, bekommt die Verspaetung an der Stelle gutgeschrieben",
     /const zuspaet = \(Date\.now\(\) - frist\) \/ 1000;/.test(spieler)
-    && /bild\.currentTime = stelle \+ zuspaet \* tempo;/.test(spieler));
+    && /stelleSetzen\(stelle \+ zuspaet \* tempo, meiner\)/.test(spieler));
   const spielerSeite = lies("src/renderer/spieler.html");
   pruefe("Und das Tempo waehlt man nicht mehr in einem Systemmenue",
     /class Wahl \{/.test(spieler)

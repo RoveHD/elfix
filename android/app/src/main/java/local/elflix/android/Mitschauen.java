@@ -626,8 +626,10 @@ public final class Mitschauen {
         if (stand == null) return;
         double position = Math.max(0, stand.optDouble("position", 0));
         if (aktion == null || aktion.isEmpty()) {
+            double frame = stand.optDouble("frameTime", Double.NaN);
             meldung(meldeStand + position + ":" + (stand.optBoolean("paused", true) ? "1" : "0")
-                + ":" + Math.max(0, stand.optDouble("duration", 0)));
+                + ":" + Math.max(0, stand.optDouble("duration", 0))
+                + (Double.isFinite(frame) && frame >= 0 ? ":" + frame : ""));
         } else meldung(meldeAktion + aktion + ":" + position);
     }
 
@@ -637,7 +639,8 @@ public final class Mitschauen {
             if (!url.equals(umgebung.adresse()) || !umgebung.nativerSpieler()) return;
             seiteFertig(null, url);
             anwesendMelden();
-            if (nativeFolgeNachricht != null && gleicheFolge(nativeFolgeNachricht.optString("url"), url)) {
+            if (nativeFolgeNachricht != null
+                && gleicheNachrichtFolge(nativeFolgeNachricht, url)) {
                 JSONObject nachricht = nativeFolgeNachricht;
                 JSONObject urteil = nativeFolgeUrteil;
                 nativeFolgeNachricht = null;
@@ -1033,7 +1036,7 @@ public final class Mitschauen {
         // sich dort als bereit.
         if ("syncprepare".equals(tun)) {
             String ziel = nachricht.optString("url", "");
-            if (!ziel.isEmpty() && !gleicheFolge(ziel, umgebung.adresse())
+            if (!ziel.isEmpty() && !gleicheNachrichtFolge(nachricht, umgebung.adresse())
                 && folgen(ansicht, ziel)) {
                 // Gewechselt: die Vorbereitung bleibt liegen, bis der neue
                 // Player wirklich geladen, gesprungen und gepuffert ist.
@@ -1050,6 +1053,18 @@ public final class Mitschauen {
         }
         String skript = urteil.optString("skript", "");
         if (umgebung.nativerSpieler()) {
+            // Der native Player hat bereits eine Quelle. Sobald er den Stand
+            // der Runde uebernimmt, ist die Suche nach einem Web-Player vorbei.
+            // Sonst ueberschreibt ein alter Autostart-Takt das syncprepare und
+            // verschluckt waehrenddessen auch bewusste Play/Pause-Klicks.
+            if (autostartLaeuft && ("syncprepare".equals(tun)
+                || "syncstart".equals(tun) || "anwenden".equals(tun))) {
+                autostartLaeuft = false;
+                oertlicherStart = false;
+                haupt.removeCallbacks(autostartTakt);
+                kern.rufe("watchparty-bruecke.autostartVerwerfen", Kern.args(new JSONObject()), (w, f) -> { });
+                vollbildEinloesen(true);
+            }
             umgebung.nativSteuern(urteil, "syncprepare".equals(tun) ? () -> bereitMelden(nachricht) : null);
             return;
         }
@@ -1327,6 +1342,7 @@ public final class Mitschauen {
             return;
         }
         kern.rufe("watchparty-bruecke.autostartSchritt", Kern.args(lage), (wert, fehler) -> {
+            if (!autostartLaeuft) return;
             if (fehler != null || wert == null) {
                 Log.d(TAG, "Autostart-Schritt nicht beurteilt: " + fehler);
                 autostartLaeuft = false;
@@ -1868,6 +1884,35 @@ public final class Mitschauen {
         int[] b = folgeAus(rechts);
         if (a[1] != b[1] || a[0] != b[0]) return false;
         return serienTeil(links).equals(serienTeil(rechts));
+    }
+
+    /**
+     * Gehört eine Steuernachricht zum bereits laufenden Player?
+     *
+     * <p>Eine alte Direktbetriebsrunde kann noch die Serienseite als Adresse
+     * tragen, obwohl der Player schon die Folge geöffnet hat. In diesem einen
+     * Fall ist die explizite episodeId die verlässliche Ergänzung zur
+     * kanonischen Serienadresse. Eine Nachricht, die selbst eine andere
+     * konkrete Folge nennt, bleibt streng abgewiesen.
+     */
+    static boolean gleicheNachrichtFolge(JSONObject nachricht, String rechts) {
+        if (nachricht == null || rechts == null || rechts.isEmpty()) return false;
+        String links = nachricht.optString("url", "");
+        if (gleicheFolge(links, rechts)) return true;
+        if (links.isEmpty() || serienTeil(links).isEmpty()
+            || !serienTeil(links).equals(serienTeil(rechts))) return false;
+        int[] adresse = folgeAus(links);
+        int[] aktuell = folgeAus(rechts);
+        // Nur eine stale Serien-/Staffeladresse darf geheilt werden. Eine
+        // konkrete, abweichende Episodenadresse muss durchfallen.
+        if (adresse[1] != 0 || aktuell[1] == 0) return false;
+        java.util.regex.Matcher id = java.util.regex.Pattern
+            .compile("(?i)^s(\\d+)e(\\d+)$")
+            .matcher(nachricht.optString("episodeId", "").trim());
+        return id.matches()
+            && zahl(id.group(1)) == aktuell[0]
+            && zahl(id.group(2)) == aktuell[1]
+            && (adresse[0] == 0 || adresse[0] == aktuell[0]);
     }
 
     /** Staffel und Folge aus einer Adresse: {@code [staffel, folge]}, 0 wenn keine. */

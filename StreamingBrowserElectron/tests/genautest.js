@@ -46,10 +46,11 @@ const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
  * @param immer    wenn wahr, geht *jeder* Sprung daneben: ein Player, der die
  *                 Stelle nie trifft.
  */
-function videoBauen(danebenS = 0, immer = false) {
+function videoBauen(danebenS = 0, immer = false, frameRaster = null) {
   const horcher = {};
   const spuren = { ziele: [], spruenge: 0 };
   let stelle = 0;
+  let frameHorcher = null;
   const bild = {
     paused: true, ended: false, seeking: false, readyState: 4,
     duration: 1371, volume: 1, muted: false, playbackRate: 1, defaultPlaybackRate: 1,
@@ -70,6 +71,9 @@ function videoBauen(danebenS = 0, immer = false) {
     append() {}, appendChild() {}, replaceChildren() {},
     spuren
   };
+  if (frameRaster) {
+    bild.requestVideoFrameCallback = (fn) => { frameHorcher = fn; };
+  }
   Object.defineProperty(bild, "currentTime", {
     get() { return stelle; },
     set(wert) {
@@ -82,6 +86,14 @@ function videoBauen(danebenS = 0, immer = false) {
       setTimeout(() => {
         stelle = wert + daneben;
         bild.seeking = false;
+        if (frameRaster && frameHorcher) {
+          spuren.bild = frameRaster.trifft !== false
+            && wert >= Math.ceil(frameRaster.ziel * 1000) / 1000
+            ? frameRaster.ziel : frameRaster.vorher;
+          const fertig = frameHorcher;
+          frameHorcher = null;
+          fertig(Date.now(), { mediaTime: spuren.bild });
+        }
         bild.dispatchEvent({ type: "seeked" });
       }, 5);
     }
@@ -92,6 +104,8 @@ function videoBauen(danebenS = 0, immer = false) {
 function spielerKontext(bild) {
   const elemente = new Map();
   const meldungen = [];
+  const aktionen = [];
+  const bereite = [];
   function element(id) {
     if (id === "bild") return bild;
     if (elemente.has(id)) return elemente.get(id);
@@ -121,7 +135,9 @@ function spielerKontext(bild) {
     return el;
   }
   const bruecke = new Proxy(
-    { stand: (wert) => meldungen.push(wert), folgen: async () => null, wechseln: async () => ({ ok: true }) },
+    { stand: (wert) => meldungen.push(wert), aktion: (...werte) => aktionen.push(werte),
+      syncBereit: (id) => bereite.push(id),
+      folgen: async () => null, wechseln: async () => ({ ok: true }) },
     { get: (objekt, key) => objekt[key] || (() => {}) }
   );
   const still = { log() {}, warn() {}, error() {}, info() {} };
@@ -131,13 +147,37 @@ function spielerKontext(bild) {
     setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}
   });
   vm.runInContext(SPIELER, c);
-  return { c, element, meldungen };
+  return { c, element, meldungen, aktionen, bereite };
 }
 
 (async () => {
   /* --- 1. Die Pause sitzt auf die Millisekunde --------------------------- */
 
   const STELLE = 421.037;
+
+  {
+    const bild = videoBauen();
+    const { c, aktionen } = spielerKontext(bild);
+    vm.runInContext("inRunde = true; ausRundeBis = Date.now() + 900", c);
+    c.spielenUmschalten();
+    pruefe("Play direkt nach einer Runden-Pause wartet ebenfalls auf das Relay",
+      bild.paused && aktionen.length === 1 && aktionen[0][0] === "play");
+    c.pauseAnfordern();
+  }
+  {
+    const bild = videoBauen();
+    const { c } = spielerKontext(bild);
+    c.steuernAusRunde({ stelle: 120.453, frameTime: 120.428642,
+      laufen: false, springen: true, genau: true });
+    await schlaf(80);
+    pruefe("Runden-Pause waehlt den sichtbaren Frame statt der Uhr zwischen zwei Bildern",
+      bild.paused && bild.currentTime === 120.429);
+    c.steuernAusRunde({ stelle: 120.6, frameTime: 120.428642,
+      laufen: true, springen: true, startLokal: Date.now() - 100 });
+    await schlaf(100);
+    pruefe("Verspaeteter Start springt nicht auf den alten Pausenframe zurueck",
+      !bild.paused && bild.currentTime >= 120.6);
+  }
 
   {
     // Ein Player, der beim ersten Sprung 130 ms danebenlandet - drei Bilder.
@@ -260,6 +300,98 @@ function spielerKontext(bild) {
       bild.paused && Math.abs(bild.currentTime - 92.123) <= 0.001);
   }
 
+  /* --- 4. In einer Runde spult nur der Host ----------------------------- */
+
+  {
+    const bild = videoBauen(0);
+    const { c, element } = spielerKontext(bild);
+    bild.currentTime = 100;
+    await schlaf(20);
+    bild.spuren.ziele.length = 0;
+    bild.spuren.spruenge = 0;
+    vm.runInContext("inRunde = true; binHost = true; marke = { ziel: 140 }; tempoRechteSetzen()", c);
+    c.zeichneRunde([{ me: true, host: false, name: "Gast" }]);
+
+    pruefe("Auch eine unsichtbare Ein-Personen-Leiste aktualisiert die Gastrolle",
+      [element("regler"), element("zurueck"), element("vor"), element("marke")]
+        .every((steuerung) => steuerung.disabled && steuerung.title === "Spulen steuert der Host"));
+    await c.springen(10);
+    await c.markeNutzen();
+    element("regler").value = "700";
+    element("regler").dispatchEvent({ type: "input" });
+    element("vor").dispatchEvent({ type: "click" });
+    await schlaf(20);
+    pruefe("Lokale Gastaktionen veraendern die Wiedergabestelle nicht",
+      bild.spuren.spruenge === 0 && Math.abs(bild.currentTime - 100) < 0.001);
+
+    c.steuernAusRunde({ stelle: 125.375, laufen: false, springen: true, genau: true });
+    await schlaf(80);
+    pruefe("Ein kanonischer Sprung des Relays bleibt beim Gast wirksam",
+      Math.abs(bild.currentTime - 125.375) < 0.001);
+
+    bild.spuren.ziele.length = 0;
+    await c.fernSteuern({ befehl: "vor", vor: 30 });
+    await schlaf(20);
+    pruefe("Auch eine Fernbedienung darf den Gast nicht oertlich abspalten",
+      bild.spuren.ziele.length === 0 && Math.abs(bild.currentTime - 125.375) < 0.001,
+      JSON.stringify(bild.spuren.ziele));
+
+    c.zeichneRunde([{ me: true, host: true, name: "Host" }]);
+    pruefe("Die Leistenmeldung gibt einem neuen Host die Spulrechte sofort zurueck",
+      [element("regler"), element("zurueck"), element("vor"), element("marke")]
+        .every((steuerung) => !steuerung.disabled));
+    bild.spuren.ziele.length = 0;
+    await c.springen(-10);
+    pruefe("Der Host darf die Wiedergabestelle lokal veraendern",
+      bild.spuren.ziele[0] === 115.375, JSON.stringify(bild.spuren.ziele));
+  }
+
+  /* --- 5. Ein bekannter Frame liegt innerhalb seiner Millisekunde ------- */
+
+  {
+    const FRAME = 299.590944;
+    const VORHER = 299.549244;
+    const bild = videoBauen(0, false, { ziel: FRAME, vorher: VORHER });
+    const { c } = spielerKontext(bild);
+    bild.currentTime = FRAME + 0.000001;
+    await schlaf(20);
+    pruefe("Eine Mikrosekunde hinter den PTS zeigt noch den vorigen Frame",
+      bild.spuren.bild === VORHER, String(bild.spuren.bild));
+
+    bild.spuren.ziele.length = 0;
+    bild.spuren.spruenge = 0;
+    const sitzt = await c.genauSetzen(FRAME, true, 0, true, FRAME);
+    pruefe("Ein bekannter Frame wird auf der naechsten vollen Millisekunde gesucht",
+      sitzt && bild.spuren.ziele[0] === 299.591 && bild.spuren.bild === FRAME,
+      `${bild.spuren.ziele[0]} / ${bild.spuren.bild}`);
+  }
+
+  {
+    const FRAME = 299.590944;
+    const bild = videoBauen(0, false,
+      { ziel: FRAME, vorher: 299.549244, trifft: false });
+    const { c, bereite } = spielerKontext(bild);
+    c.steuernAusRunde({ stelle: FRAME, frameTime: FRAME, laufen: false,
+      springen: true, genau: true, bereitId: "frame-1" });
+    await schlaf(900);
+    pruefe("Der vorige dargestellte Frame wird nicht als bereit bestaetigt",
+      bereite.length === 0 && bild.spuren.bild === 299.549244
+      && vm.runInContext("startAusstehend", c) === false);
+  }
+
+  {
+    const FRAME = 299.590944;
+    const bild = videoBauen(0, false, { ziel: FRAME, vorher: 299.549244 });
+    const { c } = spielerKontext(bild);
+    c.steuernAusRunde({ stelle: FRAME, frameTime: FRAME, laufen: true,
+      springen: true, genau: true, startLokal: Date.now() + 180 });
+    await schlaf(70);
+    pruefe("Auch ein geplanter Start bereitet den kanonischen Frame innerhalb der Millisekunde vor",
+      bild.paused && bild.spuren.ziele[0] === 299.591 && bild.spuren.bild === FRAME);
+    await schlaf(180);
+    pruefe("Der vorbereitete Frame startet erst zum verabredeten Zeitpunkt", !bild.paused);
+  }
+
   const ereignis = (zusatz) => ({
     videoTime: STELLE, timestamp: 1000, playing: true, hatUhr: true, tempo: 1, ...zusatz
   });
@@ -299,7 +431,7 @@ function spielerKontext(bild) {
     sync.startPlan(ereignis({ startAt: 10_000, playing: false }), 9000).wartenMs === 0
     && sync.startPlan(ereignis({ startAt: 10_000, playing: false }), 9000).stelle === STELLE);
 
-  /* --- 4. Nichts rundet auf dem Weg -------------------------------------- */
+  /* --- 6. Nichts rundet auf dem Weg -------------------------------------- */
 
   pruefe("Das Ereignis fuer den Player traegt die volle Zahl",
     sync.ereignisFuerPlayer({ videoTime: STELLE, timestamp: 1, startAt: 7 }, false, 0, true).videoTime === STELLE);
@@ -318,16 +450,16 @@ function spielerKontext(bild) {
     /addEventListener\("seeked", beiSeeked\)/.test(spieler)
     && /await seekAbwarten\(\)/.test(spieler));
   pruefe("In einer Runde faengt niemand allein an",
-    /if \(inRunde && !ausRunde\(\)\) \{\s*\r?\n\s*startAnfordern\(\);/.test(spieler));
+    /if \(inRunde\) \{\s*\r?\n\s*startAnfordern\(\);/.test(spieler));
 
   const android = fs.readFileSync(
     path.join(WURZEL, "../android/app/src/main/java/local/elflix/android/DirektSpieler.java"), "utf8");
-  pruefe("Android wartet ebenso, trennt Play und Pause und misst millisekundengenau nach",
+  pruefe("Android trennt Play und Pause und prueft den dargestellten Frame vor der Bereitschaft",
     /private void abspielenAnfordern\(\)/.test(android)
     && /private void pauseAnfordern\(\)/.test(android)
     && /KEYCODE_MEDIA_PLAY_PAUSE[\s\S]*KEYCODE_MEDIA_PLAY[\s\S]*KEYCODE_MEDIA_PAUSE/.test(android)
-    && /SEEK_TOLERANZ_S\s*=\s*0\.001/.test(android)
-    && /abstand > SEEK_TOLERANZ_S/.test(android));
+    && /genauerFramePasst\(/.test(android)
+    && /if \(befehl\.bereit != null\) befehl\.bereit\.run\(\)/.test(android));
 
   const relay = fs.readFileSync(path.join(WURZEL, "../sync-server/server.js"), "utf8");
   pruefe("Das Relay legt den gemeinsamen Zeitpunkt fest",

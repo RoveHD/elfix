@@ -7244,6 +7244,17 @@ async function followWatchpartyEpisode(eintrag, nachricht) {
 // solange sie bei derselben Serie stehen und Live an ist.
 function meldeWatchpartyFolgenwechsel(url) {
   if (!watchparty.aktiv) return;
+  // Im Direktbetrieb ist die Anbieteransicht nur eine unsichtbare Werkbank.
+  // Der eigene Player kann Folge 6 zeigen, waehrend die Werkbank fuer seine
+  // Folgenliste auf die Staffelseite zurueckgeht. Diese Navigation ist kein
+  // Folgenwechsel: meldeten wir sie trotzdem, stand im Relay anschliessend
+  // `episodeId=s1e6`, aber als Adresse `/staffel-1`. Der naechste gemeinsame
+  // Start wurde vom echten Player deshalb als falsche Folge abgewiesen.
+  //
+  // Eine wirkliche neue Folgenadresse bleibt erlaubt. Darueber meldet der
+  // Direktspieler seinen Folgenwechsel, waehrend die Quelle aufgeloest wird.
+  if (spielerLauf && episodeIdentity(spielerLauf.url) && !episodeIdentity(url)
+    && taste.urlSchluessel(spielerLauf.url) === taste.urlSchluessel(url)) return;
   const key = watchpartySerieForUrl(url);
   const raum = watchpartyRaumForUrl(url);
   if (!key || !raum || !watchpartyLiveAktiv(key, raum)) return;
@@ -9478,6 +9489,9 @@ function watchpartyEreignis(nachricht, laeuft) {
   const raum = nachricht.room || aktiverWatchpartyRaum();
   const serverJetzt = watchparty.serverJetzt(raum);
   const stand = watchparty.uhrStand(raum);
+  const rohFrameTime = nachricht.frameTime;
+  const frameTime = typeof rohFrameTime === "number" && Number.isFinite(rohFrameTime)
+    && rohFrameTime >= 0 ? rohFrameTime : undefined;
   return {
     videoTime: Number(nachricht.videoTime ?? nachricht.position) || 0,
     timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
@@ -9488,7 +9502,11 @@ function watchpartyEreignis(nachricht, laeuft) {
     // hier nicht - und damit rechnete der eigene Player bei doppeltem Tempo
     // mit einfachem und kannte keinen gemeinsamen Start.
     startAt: Number(nachricht.startAt) || 0,
-    tempo: watchpartySync.tempoLesen(nachricht.tempo)
+    tempo: watchpartySync.tempoLesen(nachricht.tempo),
+    // Die Stelle des wirklich gezeichneten Bildes. currentTime kann zwischen
+    // zwei Bildern liegen; der eigene Player braucht fuer Pause und
+    // Startvorbereitung denselben kanonischen Frame wie Android.
+    frameTime
   };
 }
 
@@ -9499,6 +9517,33 @@ function watchpartyPasstZurFolge(episodeId, url) {
   const hier = episodeIdentity(url);
   if (!hier) return true;
   return watchpartySync.folgePasst(episodeId, hier.season, hier.episode);
+}
+
+/**
+ * Darf dieser Rundenbefehl den eigenen Player meinen?
+ *
+ * Normalerweise muessen Adresse und Folge beide passen. Einzige Ausnahme ist
+ * eine alte, durch die unsichtbare Werkbank verunreinigte Rundenadresse: sie
+ * hat keine Folge mehr, nennt aber dieselbe Serie und traegt die eindeutige
+ * episodeId des laufenden Players. Diese Ausnahme gilt fuer den ganzen
+ * Steuerablauf. Nur die Vorbereitung durchzulassen und den anschliessenden
+ * syncstart abzuweisen liesse den Player fuer immer vorbereitet stehen.
+ */
+function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
+  if (!spielerLauf) return false;
+  const adresse = spielerLauf.url;
+  if (urteil.tun === "navigate") {
+    return Boolean(nachricht.url)
+      && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse);
+  }
+
+  const gemeint = nachricht.url || eintrag.live?.url || eintrag.url;
+  const folgePasst = watchpartyPasstZurFolge(nachricht.episodeId, adresse);
+  const staleRundenAdresse = Boolean(nachricht.episodeId)
+    && !episodeIdentity(gemeint)
+    && taste.urlSchluessel(gemeint) === taste.urlSchluessel(adresse)
+    && folgePasst;
+  return folgePasst && (istGleicheFolge(gemeint, adresse) || staleRundenAdresse);
 }
 
 // Laeuft das Video an der Quelle nach diesem Ereignis weiter? Nur dann wird die
@@ -9664,7 +9709,6 @@ function meldeWatchpartyStandAusSpieler(position, pausiert, frameTime) {
 async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
   if (!spielerLauf) return false;
   const adresse = spielerLauf.url;
-  const gemeint = nachricht.url || eintrag.live?.url || eintrag.url;
 
   // Der Folgenwechsel richtet sich gerade an die, bei denen die alte Folge
   // steht - er wird deshalb vor der Folgenpruefung beantwortet.
@@ -9678,8 +9722,12 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
     return true;
   }
 
-  if (!istGleicheFolge(gemeint, adresse)) return false;
-  if (!watchpartyPasstZurFolge(nachricht.episodeId, adresse)) return false;
+  // Die Adresse bleibt die erste Schranke. Nur die beobachtete Altlast aus
+  // dem Direktbetrieb darf ueber die explizite Folgenkennung geheilt werden:
+  // gleiche Serie, Rundenadresse ohne Folge, episodeId passt zum Player.
+  // Sie gilt fuer Vorbereitung, Start und jede folgende Steuerung; sonst
+  // wuerde ausgerechnet die zweite Phase wieder an der alten Adresse scheitern.
+  if (!spielerRundenNachrichtPasst(eintrag, nachricht, urteil)) return false;
 
   const ereignis = watchpartyEreignis(nachricht, watchpartyLaeuftDanach(nachricht));
 
@@ -9692,6 +9740,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
     spielerBefehl({
       tun: "stelle",
       stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
+      frameTime: ereignis.frameTime,
       laufen: false,
       springen: true,
       genau: true,
@@ -9764,6 +9813,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
       // Steht der Absender, ist seine Stelle die Antwort: zielZeitBerechnen
       // schlaegt die Laufzeit der Nachricht nur auf, wenn danach etwas laeuft.
       stelle: plan.stelle,
+      frameTime: ereignis.frameTime,
       laufen,
       // Der Host springt nicht auf seine eigene Stelle - das laesst nur neu
       // puffern. So steht es auch im Player (steuernAusRunde). Auf den
@@ -9893,6 +9943,37 @@ async function fassungAusRundeSetzen(fassungName, hosterName) {
   });
 }
 
+/**
+ * Gibt es hier mindestens einen Player, fuer den das Ereignis bestimmt ist?
+ *
+ * Der Reihenfolgenmerker wird nur fuer angenommene Ereignisse fortgeschrieben.
+ * Geschieht das schon vor der Folgenpruefung, kann eine Nachricht fuer eine
+ * andere Folge eine noch laufende, gueltige Vorbereitung nach ihrem await
+ * unbemerkt abbrechen.
+ */
+function watchpartySteuerungHatZiel(eintrag, nachricht, urteil) {
+  if (urteil.tun === "tempo" || urteil.tun === "fassung") return true;
+  if (spielerRundenNachrichtPasst(eintrag, nachricht, urteil)) return true;
+
+  const gemeint = nachricht.url || eintrag.live?.url || eintrag.url;
+  for (const [, view] of providerViews) {
+    if (!isLiveView(view)) continue;
+    const offen = view.webContents.getURL();
+    if (urteil.tun === "navigate") {
+      if (nachricht.url
+        && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
+      continue;
+    }
+    // Eine Vorbereitung darf innerhalb derselben Serie erst zur Ziel-Folge
+    // navigieren. Alle uebrigen Befehle brauchen die bereits offene Folge.
+    if (urteil.tun === "syncprepare" && nachricht.url
+      && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
+    if (istGleicheFolge(gemeint, offen)
+      && watchpartyPasstZurFolge(nachricht.episodeId, offen)) return true;
+  }
+  return false;
+}
+
 async function applyWatchpartyControl(nachricht) {
   // Nur die Runde steuert, in der dieses Geraet gerade schaut. Sonst wuerde
   // eine Pause aus der einen Watchparty die andere mit anhalten, obwohl dort
@@ -9920,15 +10001,19 @@ async function applyWatchpartyControl(nachricht) {
     gleicheAdresse: true,
     offen: null
   });
-  if (urteil.merken) watchpartyLetztesEreignis.set(merker, urteil.merken);
-  const angenommen = watchpartyLetztesEreignis.get(merker);
-  const istAktuell = () => watchpartyLetztesEreignis.get(merker) === angenommen;
   if (urteil.tun === "nichts") {
     if (urteil.grund === "veraltet") {
       console.log(`[watchparty-sync] {"action":"stale","ignored":"${nachricht.action}"}`);
     }
     return;
   }
+
+  // Erst eine Nachricht, die mindestens einen wirklichen Player treffen kann,
+  // darf aeltere asynchrone Arbeit fuer diese Runde ungueltig machen.
+  if (!watchpartySteuerungHatZiel(eintrag, nachricht, urteil)) return;
+  if (urteil.merken) watchpartyLetztesEreignis.set(merker, urteil.merken);
+  const angenommen = watchpartyLetztesEreignis.get(merker);
+  const istAktuell = () => watchpartyLetztesEreignis.get(merker) === angenommen;
 
   const binHost = Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId;
 

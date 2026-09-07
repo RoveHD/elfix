@@ -260,7 +260,7 @@ function rechner(name) {
     episodeIdentity: (url) => {
       const staffel = nummer(url, "staffel");
       const folgeNr = nummer(url, "episode");
-      return staffel || folgeNr ? { season: staffel, episode: folgeNr } : null;
+      return folgeNr ? { season: staffel, episode: folgeNr } : null;
     },
     istGleicheFolge: gleicheFolge,
     spielerAnbieter: () => ({ id: "aniworld" }),
@@ -289,6 +289,7 @@ function rechner(name) {
     funktion("watchpartyEreignis"),
     funktion("watchpartyLaeuftDanach"),
     funktion("watchpartyPasstZurFolge"),
+    funktion("spielerRundenNachrichtPasst"),
     funktion("spielerSteuernAusRunde")
   ].join("\n"), zusammenhang);
 
@@ -577,6 +578,61 @@ function rechner(name) {
     pruefe("7d. Der Rechner laedt die neue Folge im eigenen Player",
       pc.player.url === uebernaechste, pc.player.url);
   }
+
+  /* -------- 8. Die unsichtbare Werkbank ist nicht der eigene Player ------- */
+
+  // Im Direktbetrieb darf die Anbieteransicht inzwischen wieder auf der
+  // Staffelseite stehen, obwohl der eigene Player Folge 6 zeigt. Genau diese
+  // echte Kombination schrieb vor 2.0.10 die Staffelseite in den Raum. Eine
+  // schon so verunreinigte syncprepare-Nachricht muss sich deshalb ueber ihre
+  // eindeutige episodeId noch dem laufenden Player zuordnen lassen.
+  const stale = {
+    type: "syncprepare", action: "syncprepare", key: KEY, room: RAUM,
+    url: `${SERIE}/staffel-1`, episodeId: "s1e6", syncId: "regression-stale-url",
+    position: 120.453, videoTime: 120.453, frameTime: 120.416,
+    timestamp: Date.now(), playing: false, sequenceId: 10000
+  };
+  const vorStale = pc.befehle.length;
+  const staleUrteil = await pc.empfangen(stale);
+  const staleBefehl = pc.befehle[pc.befehle.length - 1];
+  pruefe("8a. Eine Staffelseite mit passender episodeId erreicht den eigenen Player",
+    staleUrteil.erledigt === true && pc.befehle.length === vorStale + 1,
+    `erledigt=${staleUrteil.erledigt}`);
+  pruefe("8b. Der kanonische Bildzeitpunkt geht bis zum eigenen Player",
+    staleBefehl.frameTime === stale.frameTime,
+    `frameTime=${staleBefehl.frameTime}`);
+
+  const staleStart = await pc.empfangen({ ...stale,
+    type: "syncstart", action: "syncstart", sequenceId: 10001,
+    timestamp: Date.now(), playing: true, startAt: Date.now() + 800 });
+  pruefe("8c. Auch die zweite Phase der verunreinigten Runde erreicht den Player",
+    staleStart.erledigt === true && pc.player.laeuft,
+    `erledigt=${staleStart.erledigt} laeuft=${pc.player.laeuft}`);
+
+  const stalePause = await pc.empfangen({ ...stale,
+    type: "control", action: "pause", sequenceId: 10002,
+    timestamp: Date.now(), playing: false });
+  pruefe("8d. Eine spaetere Pause derselben Runde bleibt ebenfalls wirksam",
+    stalePause.erledigt === true && !pc.player.laeuft,
+    `erledigt=${stalePause.erledigt} laeuft=${pc.player.laeuft}`);
+
+  const staleWeiter = await pc.empfangen({ ...stale,
+    type: "control", action: "play", sequenceId: 10003,
+    timestamp: Date.now(), playing: true, startAt: 0 });
+  pruefe("8e. Auch das naechste Weiter bleibt an der alten Adresse wirksam",
+    staleWeiter.erledigt === true && pc.player.laeuft,
+    `erledigt=${staleWeiter.erledigt} laeuft=${pc.player.laeuft}`);
+
+  const falscheFolge = await pc.empfangen({ ...stale,
+    syncId: "regression-wrong-episode", episodeId: "s1e5", sequenceId: 10004 });
+  pruefe("8f. Eine falsche episodeId bleibt trotz Staffelseite gesperrt",
+    falscheFolge.erledigt === false, `erledigt=${falscheFolge.erledigt}`);
+
+  const fremdeSerie = await pc.empfangen({ ...stale,
+    syncId: "regression-wrong-series", url: "https://aniworld.to/anime/stream/naruto/staffel-1",
+    episodeId: "s1e6", sequenceId: 10005 });
+  pruefe("8g. Eine andere Serie bleibt trotz passender episodeId gesperrt",
+    fremdeSerie.erledigt === false, `erledigt=${fremdeSerie.erledigt}`);
 
   pc.stillstehen();
   tv.stillstehen();

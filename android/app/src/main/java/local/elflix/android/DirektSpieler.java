@@ -1,6 +1,7 @@
 package local.elflix.android;
 
 import android.app.Activity;
+import android.content.pm.ApplicationInfo;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -14,6 +15,7 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -73,6 +75,7 @@ import org.json.JSONObject;
  */
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 final class DirektSpieler {
+    private static final String FRAME_LOG = "ELFIXFrame";
     interface Umgebung {
         void schliessen();
         /** Die Fassungen dieser Folge - Deutsch, Untertitel-Fassung, ... */
@@ -109,6 +112,9 @@ final class DirektSpieler {
          * und losgefahren wird zu dem Zeitpunkt, den die Runde nennt.
          */
         default boolean inRunde() { return false; }
+
+        /** Gibt dieses Geraet in der laufenden Runde gerade den Takt vor? */
+        default boolean istRundenHost() { return false; }
 
         /**
          * Darf hier ueberhaupt am Tempo gedreht werden?
@@ -148,11 +154,11 @@ final class DirektSpieler {
     private static final double SPRUNG_AB_SEKUNDEN = 0.5;
 
     /**
-     * So nah muss eine genaue Stelle sitzen, damit es dasselbe Bild ist.
+     * So nah muss die gemeldete Player-Stelle am millisekundengenauen Ziel sitzen.
      *
-     * <p>Eine Millisekunde - dieselbe Genauigkeit, mit der ExoPlayer seine
-     * Wiedergabestelle annimmt und meldet. Erst dann ist ein vorbereiteter
-     * gemeinsamer Start wirklich bereit.
+     * <p>Der gerenderte Bild-PTS hat darunter seine eigene, aus der Bildrate
+     * berechnete Toleranz: verschiedene Qualitaetsstufen haben nicht zwingend
+     * dasselbe Frame-Raster.
      */
     private static final double SEEK_TOLERANZ_S = 0.001;
     /**
@@ -181,6 +187,8 @@ final class DirektSpieler {
     private final TextView dauerText;
     private final SeekBar regler;
     private final TextView spielen;
+    private final TextView zehnZurueck;
+    private final TextView zehnVor;
     private final ImageView ton;
     private final TextView automatisch;
     /** Der Tempo-Knopf in der Leiste - er traegt die laufende Stufe als Beschriftung. */
@@ -220,6 +228,8 @@ final class DirektSpieler {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
+    /** Feste MPEG-TS-Zeitnull der laufenden HLS-Quelle; null bei MP4. */
+    private KanonischesHls hlsZeit;
     private boolean geschlossen;
     private boolean aktiv = true;
     private boolean hatNaechste;
@@ -232,6 +242,10 @@ final class DirektSpieler {
     private boolean bereitGemeldet;
     /** PTS des zuletzt wirklich zur Anzeige freigegebenen Videobilds. */
     private double letzteBildZeit = Double.NaN;
+    /** Bildrate der Spur, aus deren Callback {@link #letzteBildZeit} stammt. */
+    private double letzteBildRate = Double.NaN;
+    /** Zaehlt wirklich freigegebene Bilder; ein genauer Sprung wartet auf ein neues. */
+    private long letzteBildFolge;
     /** Verhindert, dass ein alter, spaeter ausgefuehrter Freigabe-Callback zurueckschreibt. */
     private long letzteBildFreigabeNs = Long.MIN_VALUE;
     private Boolean erwartetPlay;
@@ -244,6 +258,10 @@ final class DirektSpieler {
     private double sprungNach;
     private long letzteMarkenFrage;
     private Befehl wartenderBefehl;
+    /** Laufende Nummer fuer zusammengehoerende Debug-Zeilen eines Rundenbefehls. */
+    private long frameDiagnoseBefehl;
+    /** Der normale Live-Takt darf im Debug-Protokoll hoechstens einmal je Sekunde stehen. */
+    private long letzteFrameDiagnose;
     /** Zwischen lokalem Play-Wunsch und dem autoritativen syncstart bleibt das Bild stehen. */
     private boolean gemeinsamerStartOffen;
 
@@ -411,6 +429,7 @@ final class DirektSpieler {
     }
 
     private static final class Befehl {
+        final long diagnoseId;
         JSONObject urteil;
         final Runnable bereit;
         boolean rechnet;
@@ -421,9 +440,82 @@ final class DirektSpieler {
         /** Bis wann ein genauer Sprung nachgemessen und hoechstens dreimal nachgesetzt wird. */
         long genauBis;
         int sprungVersuche;
+        boolean ungenauGemeldet;
+        /** Kleinste Callback-Folge, die nach dem letzten seekTo als frisch gilt. */
+        long erwarteteBildFolge;
         /** Kanonischer Bild-PTS; NaN, wenn der Befehl nur eine Laufzeit traegt. */
         double frameZiel = Double.NaN;
-        Befehl(JSONObject urteil, Runnable bereit) { this.urteil = urteil; this.bereit = bereit; }
+        Befehl(long diagnoseId, JSONObject urteil, Runnable bereit) {
+            this.diagnoseId = diagnoseId;
+            this.urteil = urteil;
+            this.bereit = bereit;
+        }
+    }
+
+    /** Nur Debug-Bauten: Zahlen, die den nativen Frame-Sprung erklaeren, ohne Quelladressen. */
+    private void frameDiagnose(String schritt, Befehl befehl, double eingangsFrame) {
+        if (!frameDiagnoseAktiv()) return;
+        ExoPlayer lauf = player;
+        Log.d(FRAME_LOG, String.format(Locale.US,
+            "%s id=%d tun=%s inputFrame=%.6f target=%.6f frameTarget=%.6f "
+                + "position=%.6f rawFrame=%.6f frameRate=%.3f frameTolerance=%.6f "
+                + "frameSerial=%d expectedSerial=%d state=%d ready=%s playing=%s attempts=%d "
+                + "hlsAnchor=%s",
+            schritt,
+            befehl == null ? 0 : befehl.diagnoseId,
+            befehl == null || befehl.urteil == null ? "" : befehl.urteil.optString("tun", ""),
+            eingangsFrame,
+            befehl == null ? Double.NaN : befehl.ziel,
+            befehl == null ? Double.NaN : befehl.frameZiel,
+            lauf == null ? Double.NaN : lauf.getCurrentPosition() / 1000.0,
+            letzteBildZeit,
+            letzteBildRate,
+            frameToleranz(letzteBildRate),
+            letzteBildFolge,
+            befehl == null ? 0 : befehl.erwarteteBildFolge,
+            lauf == null ? -1 : lauf.getPlaybackState(),
+            lauf != null && lauf.getPlaybackState() == Player.STATE_READY,
+            lauf != null && lauf.isPlaying(),
+            befehl == null ? 0 : befehl.sprungVersuche,
+            hlsZeit == null ? "none" : hlsZeit.zustand()));
+    }
+
+    private boolean frameDiagnoseAktiv() {
+        return (activity.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    }
+
+    private static double frameAus(JSONObject urteil) {
+        if (urteil == null) return Double.NaN;
+        JSONObject ereignis = urteil.optJSONObject("ereignis");
+        return ereignis == null
+            ? urteil.optDouble("frameTime", Double.NaN)
+            : ereignis.optDouble("frameTime", urteil.optDouble("frameTime", Double.NaN));
+    }
+
+    /** Ein Ziel zwischen zwei Bildern darf auf das naechste Bild dieser Spur fallen. */
+    static double frameToleranz(double bildrate) {
+        if (!Double.isFinite(bildrate) || bildrate <= 0) return SEEK_TOLERANZ_S;
+        return Math.max(SEEK_TOLERANZ_S, Math.min(0.1, 1.0 / bildrate + 0.002));
+    }
+
+    /** Reiner Teil der Bereitschaftsregel, damit ihre Grenzfaelle ohne Android pruefbar sind. */
+    static boolean genauerFramePasst(double position, double positionsZiel,
+        double bildZeit, double frameZiel, double bildrate,
+        long bildFolge, long erwarteteBildFolge) {
+        return Math.abs(position - positionsZiel) <= SEEK_TOLERANZ_S
+            && bildFolge >= erwarteteBildFolge
+            && Double.isFinite(bildZeit) && Double.isFinite(frameZiel)
+            && Math.abs(bildZeit - frameZiel) <= frameToleranz(bildrate);
+    }
+
+    /**
+     * Bei einem echten Sprung ist erst der naechste Callback frisch. Ist Stelle
+     * und sichtbares Bild schon passend, darf Media3 seekTo als No-op behandeln.
+     */
+    static long bildFolgeNachSeek(long bildFolge, double position, double positionsZiel,
+        double bildZeit, double frameZiel, double bildrate) {
+        return genauerFramePasst(position, positionsZiel, bildZeit, frameZiel, bildrate,
+            bildFolge, bildFolge) ? bildFolge : bildFolge + 1;
     }
 
     DirektSpieler(Activity activity, Kern kern, Umgebung umgebung) {
@@ -482,10 +574,13 @@ final class DirektSpieler {
         dauerText = unten.findViewWithTag("dauer");
         regler = unten.findViewWithTag("regler");
         spielen = unten.findViewWithTag("spielen");
+        zehnZurueck = unten.findViewWithTag("zehnZurueck");
+        zehnVor = unten.findViewWithTag("zehnVor");
         ton = unten.findViewWithTag("ton");
         automatisch = unten.findViewWithTag("auto");
         tempoText = unten.findViewWithTag("tempo");
         intro = unten.findViewWithTag("intro");
+        spulenZeichnen();
 
         // Kringel und Ansage stehen untereinander in einer Spalte, nicht
         // uebereinander in der Mitte: nebeneinandergelegt dreht sich der Kringel
@@ -669,8 +764,12 @@ final class DirektSpieler {
         TextView los = knopf("▶", this::spielenUmschalten);
         los.setTag("spielen");
         knoepfe.addView(los);
-        knoepfe.addView(knopf("−10 s", () -> springen(-10)));
-        knoepfe.addView(knopf("+10 s", () -> springen(10)));
+        TextView zurueck = knopf("−10 s", () -> springen(-10));
+        zurueck.setTag("zehnZurueck");
+        knoepfe.addView(zurueck);
+        TextView vor = knopf("+10 s", () -> springen(10));
+        vor.setTag("zehnVor");
+        knoepfe.addView(vor);
         // Knopf und Regler gehören zusammen und wandern zusammen: getrennt
         // umgebrochen stand der Regler allein am Zeilenanfang und sah aus wie
         // ein zweiter Fortschrittsbalken.
@@ -753,10 +852,7 @@ final class DirektSpieler {
                 reglerGefasst = false;
                 if (player == null || dauer() <= 0) return;
                 double ziel = wo.getProgress() / 1000.0 * dauer();
-                erwartetSeek = ziel;
-                erwartetBis = SystemClock.uptimeMillis() + 2000;
-                player.seekTo(Math.round(ziel * 1000));
-                liveMelden("seek");
+                stelleVomNutzerSetzen(ziel);
                 regung();
             }
         });
@@ -1320,10 +1416,49 @@ final class DirektSpieler {
         if (player == null) return;
         double ziel = Math.max(0, position() + sekunden);
         if (dauer() > 0) ziel = Math.min(ziel, dauer() - 0.5);
+        stelleVomNutzerSetzen(ziel);
+    }
+
+    /** Eine lokale Spulhandlung; Befehle der Runde laufen bewusst nicht hier hindurch. */
+    private boolean stelleVomNutzerSetzen(double ziel) {
+        if (player == null) return false;
+        if (!darfNutzerSpulen()) {
+            kurzeAnsage("Spulen steuert der Host.");
+            spulenZeichnen();
+            return false;
+        }
         erwartetSeek = ziel;
         erwartetBis = SystemClock.uptimeMillis() + 2000;
         player.seekTo(Math.round(ziel * 1000));
         liveMelden("seek");
+        return true;
+    }
+
+    static boolean darfNutzerSpulen(boolean inRunde, boolean istHost) {
+        return !inRunde || istHost;
+    }
+
+    private boolean darfNutzerSpulen() {
+        return !umgebung.inRunde() || umgebung.istRundenHost();
+    }
+
+    /** Die aktuelle Relay-Rolle wird bei jedem Takt neu gelesen, auch nach einer Hostuebergabe. */
+    private void spulenZeichnen() {
+        boolean frei = darfNutzerSpulen();
+        String gesperrt = "Spulen steuert der Host";
+        regler.setEnabled(frei);
+        regler.setAlpha(frei ? 1f : 0.42f);
+        regler.setContentDescription(frei ? "Wiedergabestelle" : gesperrt);
+        spulknopfZeichnen(zehnZurueck, frei, "10 Sekunden zurück", gesperrt);
+        spulknopfZeichnen(zehnVor, frei, "10 Sekunden vor", gesperrt);
+        spulknopfZeichnen(intro, frei, "Intro überspringen", gesperrt);
+    }
+
+    private static void spulknopfZeichnen(TextView knopf, boolean frei,
+        String beschreibung, String gesperrt) {
+        knopf.setEnabled(frei);
+        knopf.setAlpha(frei ? 1f : 0.42f);
+        knopf.setContentDescription(frei ? beschreibung : gesperrt);
     }
 
     private void tonUmschalten() {
@@ -1340,10 +1475,7 @@ final class DirektSpieler {
 
     private void introSpringen() {
         if (player == null || introZiel <= position()) return;
-        erwartetSeek = introZiel;
-        erwartetBis = SystemClock.uptimeMillis() + 2000;
-        player.seekTo(Math.round(introZiel * 1000));
-        liveMelden("seek");
+        stelleVomNutzerSetzen(introZiel);
     }
 
     private void autoplayText() {
@@ -1584,6 +1716,11 @@ final class DirektSpieler {
         quelleLaedt = true;
         OkHttpDataSource.Factory netz = new OkHttpDataSource.Factory(CookieNetz.erstellen())
             .setDefaultRequestProperties(kopfzeilen);
+        KanonischesHls hls = "hls".equals(typ)
+            ? new KanonischesHls(netz, meldung -> {
+                if (frameDiagnoseAktiv()) Log.d(FRAME_LOG, "hls-anchor " + meldung);
+            }) : null;
+        hlsZeit = hls;
         player = new ExoPlayer.Builder(activity)
             .setMediaSourceFactory(new DefaultMediaSourceFactory(netz))
             .setLoadControl(puffern())
@@ -1613,6 +1750,12 @@ final class DirektSpieler {
                         || releaseTimeNs < letzteBildFreigabeNs) return;
                     letzteBildFreigabeNs = releaseTimeNs;
                     letzteBildZeit = presentationTimeUs / 1_000_000.0;
+                    letzteBildRate = format == null ? Double.NaN : format.frameRate;
+                    letzteBildFolge += 1;
+                    Befehl befehl = wartenderBefehl;
+                    if (frameDiagnoseAktiv() && befehl != null && befehl.angewendet) {
+                        frameDiagnose("frame-callback", befehl, Double.NaN);
+                    }
                     befehlPruefen();
                 }, wartenMs);
             }
@@ -1678,7 +1821,9 @@ final class DirektSpieler {
         });
         MediaItem.Builder item = new MediaItem.Builder().setUri(Uri.parse(url));
         if ("hls".equals(typ)) item.setMimeType(MimeTypes.APPLICATION_M3U8);
-        lauf.setMediaItem(item.build(), Math.max(0, Math.round(start * 1000)));
+        long startMs = Math.max(0, Math.round(start * 1000));
+        if (hls != null) lauf.setMediaSource(hls.fabrik().createMediaSource(item.build()), startMs);
+        else lauf.setMediaItem(item.build(), startMs);
         lauf.prepare();
         // Ein neuer Player faengt bei einfachem Tempo an - auch mitten in einer
         // Runde, die auf 2x laeuft. Der Hosterwechsel ist genau der Fall.
@@ -1765,6 +1910,7 @@ final class DirektSpieler {
         @Override public void run() {
             if (geschlossen) return;
             long jetzt = SystemClock.elapsedRealtime();
+            spulenZeichnen();
             if (player != null) {
                 double position = position();
                 double delta = position - letztePosition;
@@ -1883,6 +2029,13 @@ final class DirektSpieler {
             .put("puffert", player == null || player.getPlaybackState() != Player.STATE_READY);
         double bildZeit = bildZeitNahe(stelle);
         if (pausiert && Double.isFinite(bildZeit)) stand.put("frameTime", bildZeit);
+        if (frameDiagnoseAktiv()) {
+            long jetzt = SystemClock.uptimeMillis();
+            if (jetzt - letzteFrameDiagnose >= 900) {
+                letzteFrameDiagnose = jetzt;
+                frameDiagnose("live", wartenderBefehl, Double.NaN);
+            }
+        }
         return stand;
     }
 
@@ -1929,7 +2082,8 @@ final class DirektSpieler {
         gemeinsamerStartOffen = "syncstart".equals(tun)
             || ("syncprepare".equals(tun) && !urteil.optString("syncId", "").isEmpty());
         handler.removeCallbacks(startNotbremse);
-        wartenderBefehl = new Befehl(urteil, bereit);
+        wartenderBefehl = new Befehl(++frameDiagnoseBefehl, urteil, bereit);
+        frameDiagnose("received", wartenderBefehl, frameAus(urteil));
         // syncprepare und ein Timeout-Pause-Echo veraendern bei bereits
         // stehendem Player keinen Media3-Zustand. Der Knopf muss trotzdem in
         // demselben UI-Takt auf Abbrechen beziehungsweise Abspielen wechseln.
@@ -1994,6 +2148,7 @@ final class DirektSpieler {
                 erwartetBis = SystemClock.uptimeMillis() + 2000;
                 erwartetPlay = false;
                 player.pause();
+                frameDiagnose("computed", befehl, frameTime);
                 // Springen - aber nicht um jeden Preis.
                 //
                 // Beim Anhalten schon: dann stehen alle auf demselben Bild, und
@@ -2013,16 +2168,42 @@ final class DirektSpieler {
                 if (!befehl.urteil.optBoolean("nichtSpringen") && !nahGenug) {
                     long zielMs = befehlSeekMillis(befehl);
                     erwartetSeek = zielMs / 1000.0;
+                    befehl.erwarteteBildFolge = bildFolgeNachSeek(letzteBildFolge,
+                        position(), zielMs / 1000.0, letzteBildZeit, befehl.frameZiel, letzteBildRate);
+                    frameDiagnose("seek", befehl, frameTime);
                     player.seekTo(zielMs);
                 }
                 handler.postDelayed(this::befehlPruefen, 100);
             });
             return;
         }
-        double abstand = Double.isFinite(befehl.frameZiel)
-            ? (Double.isFinite(letzteBildZeit) ? Math.abs(letzteBildZeit - befehl.frameZiel)
-                : Double.POSITIVE_INFINITY)
-            : Math.abs(position() - befehl.ziel);
+        boolean mitFrame = Double.isFinite(befehl.frameZiel);
+        double positionsZiel = mitFrame
+            ? frameSeekMillis(befehl.frameZiel) / 1000.0 : befehl.ziel;
+        double positionsAbstand = Math.abs(position() - positionsZiel);
+        double bildAbstand = mitFrame && Double.isFinite(letzteBildZeit)
+            ? Math.abs(letzteBildZeit - befehl.frameZiel) : Double.POSITIVE_INFINITY;
+        double abstand = mitFrame ? bildAbstand : positionsAbstand;
+        boolean ungenau = mitFrame
+            ? !genauerFramePasst(position(), positionsZiel, letzteBildZeit, befehl.frameZiel,
+                letzteBildRate, letzteBildFolge, befehl.erwarteteBildFolge)
+            : positionsAbstand > SEEK_TOLERANZ_S;
+
+        // Die Zeit einer erkannten TS-VOD ist nur dann geraeteuebergreifend exakt, wenn sie auf
+        // den wirklichen Zeitstempel ihres ersten Segments zurueckgefuehrt wurde. Scheitert dieser
+        // Preflight, darf die Wiedergabe weiterlaufen, bestaetigt der Runde aber keine falsche
+        // Frame-Bereitschaft. Andere HLS-Arten behalten aus Kompatibilitaet den Standardpfad.
+        if (befehl.urteil.optBoolean("genau") && hlsZeit != null
+            && hlsZeit.exaktBlockiert()) {
+            if (!befehl.ungenauGemeldet) {
+                befehl.ungenauGemeldet = true;
+                frameDiagnose("hls-anchor-unavailable", befehl, abstand);
+            }
+            wartenderBefehl = null;
+            gemeinsamerStartOffen = false;
+            spielenZeichnen();
+            return;
+        }
 
         /*
          * Nachmessen, wo der Sprung wirklich gelandet ist.
@@ -2035,7 +2216,7 @@ final class DirektSpieler {
          * eine endlose Suchschleife.
          */
         if (befehl.urteil.optBoolean("genau") && !befehl.urteil.optBoolean("nichtSpringen")
-            && abstand > SEEK_TOLERANZ_S) {
+            && ungenau) {
             // Eine Bereitmeldung darf erst nach einem wirklich sitzenden Seek
             // hinaus. Bis zur Frist wird hoechstens dreimal nachgesetzt; bleibt
             // der Player ungenau, laeuft der Server in seinen sicheren Timeout
@@ -2045,8 +2226,14 @@ final class DirektSpieler {
                 long zielMs = befehlSeekMillis(befehl);
                 erwartetSeek = zielMs / 1000.0;
                 erwartetBis = SystemClock.uptimeMillis() + 2000;
+                befehl.erwarteteBildFolge = bildFolgeNachSeek(letzteBildFolge,
+                    position(), zielMs / 1000.0, letzteBildZeit, befehl.frameZiel, letzteBildRate);
+                frameDiagnose("inaccurate-retry", befehl, abstand);
                 player.seekTo(zielMs);
                 handler.postDelayed(this::befehlPruefen, 100);
+            } else if (!befehl.ungenauGemeldet) {
+                befehl.ungenauGemeldet = true;
+                frameDiagnose("inaccurate-timeout", befehl, abstand);
             }
             return;
         }
@@ -2084,6 +2271,7 @@ final class DirektSpieler {
         if (play) gemeinsamerStartOffen = false;
         player.setPlayWhenReady(play);
         spielenZeichnen();
+        frameDiagnose("complete", befehl, abstand);
         if (befehl.bereit != null) befehl.bereit.run();
     }
 
@@ -2329,7 +2517,9 @@ final class DirektSpieler {
 
     private void freigeben() {
         letzteBildZeit = Double.NaN;
+        letzteBildRate = Double.NaN;
         letzteBildFreigabeNs = Long.MIN_VALUE;
+        hlsZeit = null;
         if (player == null) return;
         handler.removeCallbacks(sprungMelden);
         sprungMelden.run();

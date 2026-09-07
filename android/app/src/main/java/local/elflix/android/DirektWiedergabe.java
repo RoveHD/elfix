@@ -42,6 +42,10 @@ final class DirektWiedergabe {
         default void tempo(double wert) { }
         /** Darf hier am Tempo gedreht werden? In einer Runde nur als Host. */
         default boolean darfTempo() { return true; }
+        /** Muss bis zum Player durchgereicht werden: Play wartet dann auf die Runde. */
+        boolean inRunde();
+        /** Die Rolle bleibt dynamisch, damit eine Hostuebergabe sofort im Player ankommt. */
+        default boolean istRundenHost() { return false; }
         /** Die Fassung dieser Runde an die anderen - ebenfalls nur als Host. */
         default void fassungGewaehlt(String fassung, String hoster) { }
         /** Was in der Runde als Fassung gilt - leer, wenn keine Runde laeuft. */
@@ -79,6 +83,11 @@ final class DirektWiedergabe {
      * nur die Folgenliste, und die steht danach offen da.
      */
     private final boolean auswahl;
+    /** Gespeicherte Folge beim Einstieg ueber Weiterschauen; 0: frei waehlen. */
+    private final int fortsetzStaffel;
+    private final int fortsetzFolge;
+    /** Verhindert, dass zwei spaet eintreffende Listen dieselbe Folge zweimal oeffnen. */
+    private boolean fortsetzFolgeGeoeffnet;
     private boolean spielt;
     private boolean versucht;
     private String letzteSprache = "";
@@ -132,7 +141,8 @@ final class DirektWiedergabe {
     }
 
     DirektWiedergabe(Activity activity, Kern kern, Provider anbieter, String adresse,
-                     String titel, double start, Umgebung umgebung) {
+                     String titel, double start, int fortsetzStaffel, int fortsetzFolge,
+                     Umgebung umgebung) {
         this.activity = activity;
         this.kern = kern;
         this.anbieter = anbieter;
@@ -140,6 +150,8 @@ final class DirektWiedergabe {
         this.titel = titel;
         this.start = start;
         this.auswahl = istSerienseite(adresse);
+        this.fortsetzStaffel = Math.max(0, fortsetzStaffel);
+        this.fortsetzFolge = Math.max(0, fortsetzFolge);
         this.umgebung = umgebung;
         kennung = WebSettings.getDefaultUserAgent(activity);
         spieler = new DirektSpieler(activity, kern, new DirektSpieler.Umgebung() {
@@ -158,6 +170,8 @@ final class DirektWiedergabe {
             public void fassungWaehlen(String fassung, String hoster) { fassungAusRunde(fassung, hoster); }
             public void tempo(double wert) { umgebung.tempo(wert); }
             public boolean darfTempo() { return umgebung.darfTempo(); }
+            public boolean inRunde() { return umgebung.inRunde(); }
+            public boolean istRundenHost() { return umgebung.istRundenHost(); }
         });
         wurzel = spieler.ansicht;
         spieler.titel(titel);
@@ -260,10 +274,10 @@ final class DirektWiedergabe {
                         String folge = Folgen.folgenText(adresse);
                         spieler.titel(folge.isEmpty() ? name : name + " · " + folge);
                     }
-                    // Ohne Folge ist die Liste das Ziel und nicht ein Zwischen-
-                    // schritt: sie steht offen da, sobald sie gelesen ist.
+                    // Ohne gespeicherten Stand ist die Liste das Ziel. Beim
+                    // Weiterschauen ist sie nur der Weg zur bereits gewaehlten
+                    // Folge; folgenZeigen loest diese Kennung auf.
                     if (auswahl) {
-                        spieler.warten(false);
                         folgenZeigen(folgen);
                     }
                 } catch (Exception ignoriert) { }
@@ -669,6 +683,7 @@ final class DirektWiedergabe {
      */
     private void folgenZeigen(JSONObject stand) {
         folgenMerken(stand);
+        if (gespeicherteFolgeOeffnen()) return;
         if (auswahl) {
             spieler.warten(false);
             // Ohne Folge steht in der Kopfzeile nicht, woher das Bild kommt -
@@ -678,13 +693,16 @@ final class DirektWiedergabe {
         JSONArray liste = folgen.optJSONArray("folgen");
         // Aufgeschlagen wird die laufende Staffel - und nur beim ersten Mal.
         // Danach gilt, was der Zuschauer gewaehlt hat.
-        if (offeneStaffel < 0) offeneStaffel = laufendeStaffel(liste);
+        if (offeneStaffel < 0) {
+            offeneStaffel = fortsetzFolge > 0 ? fortsetzStaffel : laufendeStaffel(liste);
+        }
         // Gibt die Seite Staffeln her, aber keine Folgen dazu, wird die erste
         // gleich nachgelesen. Eine Reiterzeile ueber einer leeren Liste ist
         // sonst das Erste, was man sieht.
         if (!staffelDa(offeneStaffel)) {
             JSONArray staffeln = folgen.optJSONArray("staffeln");
-            JSONObject erste = staffeln == null ? null : staffeln.optJSONObject(0);
+            JSONObject ziel = fortsetzFolge > 0 ? staffelEintrag(fortsetzStaffel) : null;
+            JSONObject erste = ziel != null ? ziel : staffeln == null ? null : staffeln.optJSONObject(0);
             if (erste != null) { staffelOeffnen(erste.optInt("staffel")); return; }
         }
         folgenZeichnen("");
@@ -764,8 +782,46 @@ final class DirektWiedergabe {
                 return;
             }
             folgenMerken(gelesen);
+            if (gespeicherteFolgeOeffnen()) return;
             folgenZeichnen("");
         });
+    }
+
+    /**
+     * Oeffnet die gespeicherte Folge, sobald die gelesene Staffel sie kennt.
+     *
+     * <p>Die URL wird nicht aus einem Anbieter-Muster geraten. Die Seite selbst
+     * liefert die Folgenliste; daraus wird nur der Eintrag genommen, dessen
+     * Staffel und Nummer exakt zum gespeicherten Stand passen. Fehlt er oder
+     * ist er gesperrt, bleibt die normale Auswahl als Rueckfall stehen.
+     */
+    private boolean gespeicherteFolgeOeffnen() {
+        if (!auswahl || fortsetzFolgeGeoeffnet || fortsetzFolge <= 0 || folgen == null) return false;
+        String ziel = gespeicherteFolgenUrl(folgen.optJSONArray("folgen"),
+            fortsetzStaffel, fortsetzFolge);
+        if (ziel.isEmpty()) return false;
+        fortsetzFolgeGeoeffnet = true;
+        spieler.status("Gespeicherte Folge wird geöffnet …");
+        // Der Wechsel wird von MainActivity verdrahtet, unmittelbar nachdem
+        // der Player gebaut ist. Das Lesen ist asynchron; post haelt auch den
+        // kuenstlichen Sofortfall frei von einer Reihenfolgeabhaengigkeit.
+        handler.post(() -> wechseln(ziel));
+        return true;
+    }
+
+    /** Die exakt gespeicherte, abspielbare Folge aus einer gelesenen Liste. */
+    static String gespeicherteFolgenUrl(JSONArray liste, int staffel, int nummer) {
+        if (liste == null || nummer <= 0) return "";
+        for (int i = 0; i < liste.length(); i++) {
+            JSONObject folge = liste.optJSONObject(i);
+            if (folge == null
+                || folge.optInt("staffel") != staffel
+                || folge.optInt("folge") != nummer
+                || folge.optBoolean("gesperrt")) continue;
+            String url = folge.optString("url", "").trim();
+            if (!url.isEmpty()) return url;
+        }
+        return "";
     }
 
     private boolean staffelDa(int staffel) {
