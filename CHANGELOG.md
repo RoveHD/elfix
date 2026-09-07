@@ -3,6 +3,21 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.4 — 7. September 2026
+
+**Die Startkarte zeigt, worum es geht.** Die Beschreibung reist jetzt die ganze
+Strecke mit: AniList und TMDB liefern sie, und die Anbieterseiten halten sie im
+Attribut hinter „mehr anzeigen". Gefragt wird nur, was in den vorhandenen
+Zwischenspeichern ohnehin schon steht — kein zusätzlicher Abruf, kein Eingriff
+in Fortschritt oder Favoriten. Der Aufruf dafür war in 2.0.3 schon da, die
+Brücke dahinter fehlte noch.
+
+**Am Relay eine Lücke von wenigen Millisekunden.** Ein sich schließender Socket
+gilt bereits als getrennt, bevor sein Abschluss den Stand entfernt — ein
+Herzschlag eines Gastes genau in diesem Fenster ließ die Gnadenfrist
+überspringen und den Host wechseln, obwohl er nur kurz weg war. Jetzt zählt
+zusätzlich, ob die Verbindung wirklich noch steht.
+
 ## 2.0.3 — 7. September 2026
 
 **Die Oberfläche gibt jetzt kurze Töne.** Einen für den Klick, einen für den
