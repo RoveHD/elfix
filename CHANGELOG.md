@@ -3,7 +3,7 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
-## 2.0.8 — 7. September 2026
+## 2.0.9 — 7. September 2026
 
 **Watchparty pausiert auf demselben Einzelbild und startet gemeinsam.** Desktop
 und Android übertragen jetzt den Zeitstempel des tatsächlich dargestellten
@@ -27,6 +27,10 @@ Auf einem echten Windows-PC und Galaxy S24 Ultra mit Videos bei 25 und
 Starts mit zuletzt unter 10 ms gemessener Wiedergabeabweichung sowie Abbruch
 während der Startvorbereitung. 116 Testsuiten bestanden; die abschließenden
 Button-Änderungen wurden zusätzlich gezielt und auf den Geräten geprüft.
+
+2.0.8 wurde nicht veröffentlicht: Der neue Vorbereitungstest erkannte beim
+frischen Windows-Checkout die CRLF-Zeilenenden nicht. 2.0.9 korrigiert die
+Testauswertung für beide Zeilenenden; der getestete Anwendungscode bleibt gleich.
 
 **Desktop, APK und Relay aktualisieren.** Die neue Startvorbereitung benötigt
 das Relay aus dieser Version. Die Messungen gelten für dieselbe Videofassung

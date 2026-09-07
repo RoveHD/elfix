@@ -1,7 +1,7 @@
 "use strict";
 const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 const assert = require("node:assert/strict");
-const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8");
+const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
 const start = main.indexOf("async function prepareWatchpartySync(");
 const source = main.slice(start, main.indexOf("\n}\n", start) + 2);
 async function pruefen(phase) {
@@ -27,7 +27,7 @@ async function pruefen(phase) {
 (async () => {
   await pruefen("navigation");
   await pruefen("player");
-  const relay = fs.readFileSync(path.join(__dirname, "../../sync-server/server.js"), "utf8");
+  const relay = fs.readFileSync(path.join(__dirname, "../../sync-server/server.js"), "utf8").replace(/\r\n/g, "\n");
   const von = relay.indexOf("function hostZustandJetzt(");
   let host = { at: 1010, position: 100, paused: true };
   const r = vm.createContext({ aktuellerHost: () => host, Date: { now: () => 1800 } });
