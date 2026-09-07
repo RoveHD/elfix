@@ -3,6 +3,13 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.12 — 7. September 2026
+
+**Weiterschauen trennt auch unter „Alle anzeigen“ YouTube von Serien und
+Filmen.** Beide Bereiche haben eigene Reiter mit Anzahl. Die Startseiten-
+Buttons öffnen direkt den passenden Reiter; gemeinsame Einträge bleiben
+innerhalb ihrer Auswahl als Watchparty-Gruppe sichtbar.
+
 ## 2.0.11 — 7. September 2026
 
 **Der Verlauf am PC öffnet deutlich schneller.** Tageszähler werden in einem

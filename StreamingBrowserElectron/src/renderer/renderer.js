@@ -825,7 +825,7 @@ function bindEvents() {
   // Watchlist, also an einen anderen Ort als die Karten darunter.
   document.querySelector("#showAllFavorites").addEventListener("click", showContinue);
   document.querySelector("#showAllWatchpartyContinue")?.addEventListener("click", showContinue);
-  document.querySelector("#showAllYoutubeContinue")?.addEventListener("click", showContinue);
+  document.querySelector("#showAllYoutubeContinue")?.addEventListener("click", () => showContinue("youtube"));
   document.querySelector("#dismissNewEpisodes")?.addEventListener("click", dismissNewEpisodes);
   historySearch?.addEventListener("input", () => {
     historyFilter.suche = historySearch.value;
@@ -2972,7 +2972,8 @@ async function showLibrary() {
   window.setTimeout(syncBrowserBounds, 0);
 }
 
-async function showContinue() {
+async function showContinue(tab = "titel") {
+  weiterTab = tab === "youtube" ? "youtube" : "titel";
   await enterInternalMode();
   setCurrentRoute("continue");
   hideContentViews();
@@ -5311,7 +5312,9 @@ function renderLibraryContent() {
 }
 
 function renderContinueContent() {
-  const continueItems = continueEntries();
+  const alle = continueEntries();
+  const continueItems = alle.filter((favorite) => istYoutubeEintrag(favorite) === (weiterTab === "youtube"));
+  renderContinueTabs(alle);
   const weiterOptionen = {
     showProgress: true, allowContinueRemove: true, allowComplete: true,
     allowWatchlistAdd: true, autoplay: true, fullscreen: true
@@ -5323,6 +5326,37 @@ function renderContinueContent() {
   continuePartyGrid?.replaceChildren(...partyOffen.map((favorite) => favoriteCard(favorite, false, weiterOptionen)));
   continuePartyGroup?.classList.toggle("is-hidden", partyOffen.length === 0);
   continueEmpty?.classList.toggle("is-hidden", continueItems.length > 0);
+}
+
+let weiterTab = "titel";
+
+function renderContinueTabs(alle) {
+  const leiste = document.querySelector("#continueTabs");
+  const youtube = alle.filter(istYoutubeEintrag).length;
+  const arten = [
+    { wert: "titel", titel: "Serien & Filme", zahl: alle.length - youtube },
+    { wert: "youtube", titel: "YouTube", zahl: youtube }
+  ];
+  leiste?.replaceChildren(...arten.map((art) => {
+    const knopf = document.createElement("button");
+    knopf.type = "button";
+    knopf.className = `calendar-day${weiterTab === art.wert ? " is-active" : ""}`;
+    knopf.textContent = `${art.titel} (${art.zahl})`;
+    knopf.setAttribute("aria-pressed", String(weiterTab === art.wert));
+    knopf.addEventListener("click", () => {
+      weiterTab = art.wert;
+      renderContinueContent();
+    });
+    return knopf;
+  }));
+  const copy = document.querySelector("#continueCopy");
+  if (copy) copy.textContent = weiterTab === "youtube"
+    ? "Offene YouTube-Videos mit gespeichertem Fortschritt."
+    : "Offene Serien und Filme mit gespeichertem Fortschritt.";
+  const leer = document.querySelector("#continueEmptyCopy");
+  if (leer) leer.textContent = weiterTab === "youtube"
+    ? "Angefangene YouTube-Videos erscheinen automatisch hier."
+    : "Offene Filme und Serienfolgen erscheinen automatisch hier.";
 }
 
 function renderHistoryContent() {

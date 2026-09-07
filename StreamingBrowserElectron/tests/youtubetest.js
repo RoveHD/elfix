@@ -295,8 +295,8 @@ pruefe("Die Reihe hat ihren eigenen Schalter, Voreinstellung an",
   /id="showHomeYoutube" type="checkbox"/.test(html)
   && /showYoutube: raw\?\.home\?\.showYoutube \?\? defaults\.home\.showYoutube/.test(main)
   && /showYoutube: true/.test(main));
-pruefe("„Alle anzeigen\" der neuen Reihe fuehrt nach Weiterschauen",
-  /#showAllYoutubeContinue"\)\?\.addEventListener\("click", showContinue\)/.test(renderer));
+pruefe("„Alle anzeigen\" der YouTube-Reihe oeffnet den YouTube-Reiter",
+  /#showAllYoutubeContinue"\)\?\.addEventListener\("click", \(\) => showContinue\("youtube"\)\)/.test(renderer));
 // Wird ein Element geloescht, auf das renderHome() prueft, bleibt die ganze
 // Startseite leer. Genau das waere hier fast passiert.
 pruefe("renderHome prueft nicht mehr auf das geloeschte Anbieter-Element",
