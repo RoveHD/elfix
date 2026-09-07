@@ -330,6 +330,13 @@ const watchpartyLetztesEreignis = new Map();
 // Aufenthalt beginnt. Ohne das gaelte ein alter Player weiter als aktiv - und
 // jemand, der laengst woanders ist, bliebe Host.
 const watchpartySitzung = new Map();
+// Ein Folgenwechsel aus dem eigenen Player wird vor der unsichtbaren
+// Werkbank-Navigation gemeldet. Die Navigation selbst darf ihn danach nicht
+// ein zweites Mal senden; ein empfangener Wechsel soll ebenfalls kein Echo
+// erzeugen. Je Anbieter stehen hier alle gerade laufenden, ausdruecklich
+// stummen Zielaufrufe. Mehrere Wechsel koennen sich ueberlappen, waehrend die
+// Werkbank sie nacheinander laedt.
+const watchpartyFolgenwechselStumm = new Map();
 // Woran dieses Geraet zuletzt als anwesend gemeldet war. Verlaesst es die
 // Folge - Startseite darueber, andere Serie, auf privat gestellt -, wird das
 // ausdruecklich abgemeldet. Nur still zu werden reicht nicht: bis der
@@ -2408,6 +2415,15 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   return publicSettings(settings);
 });
 
+// Die Vorschau in den Einstellungen aendert fortlaufend nur ihr Aussehen.
+// Sie darf dabei keine Verbindungsdaten aus einem aelteren Renderer-Schnappschuss
+// zurueckschreiben oder die drei Dienste bei jedem Reglerzug neu verbinden.
+ipcMain.handle("settings:appearance-save", (_event, appearance) => {
+  settings = normalizeSettings({ ...settings, appearance });
+  saveSettings();
+  return publicSettings(settings);
+});
+
 // --- Meine Geraete: die Aufrufe aus der Oberflaeche --------------------------
 
 ipcMain.handle("geraete:status", () => geraete.status());
@@ -3101,7 +3117,7 @@ function getProviderView(provider) {
     // Neue Seite, neuer Player, neue Sitzung.
     watchpartySitzung.set(provider.id, crypto.randomUUID());
     executeJavaScriptInMediaFrames(view, watchpartySyncZuruecksetzenScript()).catch(() => []);
-    meldeWatchpartyFolgenwechsel(url);
+    meldeWatchpartyFolgenwechselAusNavigation(provider, url);
     // Ein anderes YouTube-Video ist kein Ende der Runde, sondern ihr
     // haeufigster Vorgang - die anderen ziehen mit.
     youtubeStandortMerken(view, url);
@@ -7264,6 +7280,34 @@ function meldeWatchpartyFolgenwechsel(url) {
   watchparty.steuernMitAdresse(key, "navigate", 0, url, raum);
 }
 
+// Meldet die Navigation einer sichtbaren Anbieterseite, laesst aber die
+// unsichtbare Werkbank in Ruhe, wenn der eigene Player den Wechsel bereits
+// ausdruecklich gemeldet hat oder gerade einem empfangenen Wechsel folgt.
+function meldeWatchpartyFolgenwechselAusNavigation(provider, url) {
+  const stille = watchpartyFolgenwechselStumm.get(provider?.id);
+  if (stille && [...stille.values()].some((ziel) => seiteGleich(ziel, url))) return;
+  meldeWatchpartyFolgenwechsel(url);
+}
+
+async function ohneWatchpartyFolgenwechselEcho(provider, url, arbeit) {
+  if (!provider?.id || typeof arbeit !== "function") return null;
+  const token = Symbol("watchparty-folgenwechsel");
+  let stille = watchpartyFolgenwechselStumm.get(provider.id);
+  if (!stille) {
+    stille = new Map();
+    watchpartyFolgenwechselStumm.set(provider.id, stille);
+  }
+  stille.set(token, url);
+  try {
+    return await arbeit();
+  } finally {
+    if (watchpartyFolgenwechselStumm.get(provider.id) === stille) {
+      stille.delete(token);
+      if (!stille.size) watchpartyFolgenwechselStumm.delete(provider.id);
+    }
+  }
+}
+
 // Live laesst sich je Runde abschalten, ohne die Watchparty zu verlassen: die
 // Mitgliedschaft (und damit der geteilte Fortschritt) bleibt bestehen. Der
 // Merker haengt am Raum, damit man in einer Runde live sein kann und in der
@@ -9413,7 +9457,14 @@ ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
   if (!providerModel.isHttpUrl(ziel)) return { ok: false, grund: "Adresse nicht erkannt" };
   // Der Stand der alten Folge ist gemeldet, bevor gewechselt wird - der Player
   // schickt ihn mit dem letzten `stand`. Ab hier gilt die neue.
-  return direktFolgeSpielen(provider, ziel, { startzeit: 0 });
+  //
+  // Die Runde gleich hier mitnehmen. Auf das `did-navigate` der unsichtbaren
+  // Werkbank zu warten war zufaellig: stand sie schon auf der Zielseite, gab es
+  // kein Ereignis und die anderen blieben in der alten Folge. Das gilt fuer
+  // jeden Teilnehmer; der Folgenwechsel ist bewusst keine Host-Entscheidung.
+  meldeWatchpartyFolgenwechsel(ziel);
+  return ohneWatchpartyFolgenwechselEcho(provider, ziel,
+    () => direktFolgeSpielen(provider, ziel, { startzeit: 0 }));
 });
 
 /**
@@ -9425,6 +9476,16 @@ ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
  */
 ipcMain.handle("spieler:hoster", async (ereignis, link, stelle) => {
   if (!vomSpieler(ereignis)) return { ok: false, grund: "Kein Player" };
+  // Die sichtbare Sperre im Player ist nur Bedienung. Diese Grenze steht im
+  // Hauptprozess, damit ein Gast dieselbe Aktion nicht direkt per IPC ausloesen
+  // und seine lokale Quelle damit von der Runde abkoppeln kann.
+  if (!spielerQuellenwechselErlaubt()) {
+    return {
+      ok: false,
+      grund: "Nur der Host kann Hoster und Fassung ändern",
+      nichtHost: true
+    };
+  }
   const provider = spielerAnbieter();
   if (!provider) return { ok: false, grund: "Anbieter fort" };
   const gewaehlt = spielerLauf.hosterliste.find((eintrag) => eintrag.adresse === String(link || ""));
@@ -9613,6 +9674,12 @@ function spielerRundenEinstellung() {
   };
 }
 
+/** Darf dieser Player seine Quelle selbst waehlen? Privat jeder, in der Runde nur der Host. */
+function spielerQuellenwechselErlaubt() {
+  const stand = spielerRundenEinstellung();
+  return !stand.inRunde || stand.binHost;
+}
+
 /**
  * Die Fassung, die fuer diese Folge in einer Runde gilt.
  *
@@ -9718,7 +9785,8 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
     if (taste.urlSchluessel(nachricht.url) !== taste.urlSchluessel(adresse)) return false;
     const provider = spielerAnbieter();
     if (!provider) return false;
-    await direktFolgeSpielen(provider, nachricht.url, { startzeit: 0 });
+    await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
+      () => direktFolgeSpielen(provider, nachricht.url, { startzeit: 0 }));
     return true;
   }
 

@@ -92,6 +92,13 @@ let currentUrl = "";
 let activeSearchToken = 0;
 let autostartPending = false;
 let lastSettingsTab = "appearance";
+let appearanceEditorSection = "design";
+let appearanceEditorBaseline = null;
+let appearancePreviewController = null;
+let settingsSaveRevision = 0;
+let settingsSavePending = false;
+let settingsExternalUpdate = null;
+let settingsSaveQueue = Promise.resolve();
 const HERO_ROTATION_COUNT = 5;
 const HERO_ROTATION_MS = 15000;
 let heroItems = [];
@@ -1055,6 +1062,57 @@ function bindEvents() {
       saveSettings();
     });
   }
+  for (const button of document.querySelectorAll("[data-appearance-section]")) {
+    button.addEventListener("click", () => activateAppearanceSection(button.dataset.appearanceSection));
+  }
+  document.querySelector("#appearanceRevert")?.addEventListener("click", async () => {
+    if (!appearanceEditorBaseline) return;
+    settings.appearance = JSON.parse(JSON.stringify(appearanceEditorBaseline));
+    renderSettings();
+    await saveSettings();
+  });
+  const appearanceEdit = (event) => {
+    const field = event.target;
+    if (!field.closest('[data-page="appearance"]') || !field.id || field.id === "designPresetInline") return;
+    markDesignCustom();
+    const layoutFields = ["cardSize", "favoriteSize", "favoriteLayout", "cardStyle", "spacingScale", "cardGap"];
+    if (layoutFields.includes(field.id)) settings.appearance.layoutStyle = "custom";
+    if (["uiScale", "spacingScale", "cardGap"].includes(field.id)) settings.appearance.densityMode = "custom";
+    if (field.id === "shadowStrength") shadowStyle.value = "standard";
+    if (["cardRadius", "buttonRadius", "inputRadius"].includes(field.id)) cornerStyle.value = "soft";
+    if (field.id === "cornerStyle") {
+      const radii = { sharp: [4, 4, 4], soft: [18, 16, 14], round: [28, 28, 26] }[field.value];
+      if (radii) ["cardRadius", "buttonRadius", "inputRadius"].forEach((key, i) => { appearanceControlMap[key].value = radii[i]; });
+      syncAdvancedAppearanceLabels();
+    }
+    if (field.id === "autoDeriveColorsInline") autoDeriveColors.checked = field.checked;
+    if (field.id === "appBackgroundColor" && themeMode.value === "system") themeMode.value = resolveThemeMode("system");
+  };
+  settingsModal.addEventListener("input", appearanceEdit, true);
+  settingsModal.addEventListener("change", appearanceEdit, true);
+  settingsModal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-theme-choice], [data-accent-choice], [data-layout-choice], [data-nav-choice], [data-density-choice]")) {
+      markDesignCustom();
+    }
+  }, true);
+  settingsModal.addEventListener("focusin", (event) => {
+    if (!event.target.closest('[data-page="appearance"]')) return;
+    if (["buttonRadius", "buttonHeight", "inputRadius", "focusColor", "successColor", "warningColor", "errorColor", "progressColor"].includes(event.target.id)) {
+      appearancePreviewController?.setScene("controls");
+    }
+  });
+  window.matchMedia?.("(prefers-color-scheme: light)")?.addEventListener?.("change", () => {
+    if (settings.appearance?.themeMode !== "system") return;
+    applyAppearance();
+    if (settingsModal.open) renderSettings();
+  });
+  animationMode.addEventListener("change", () => {
+    animationsEnabled.checked = animationMode.value !== "off";
+  }, true);
+  animationsEnabled.addEventListener("change", () => {
+    if (animationsEnabled.checked && animationMode.value === "off") animationMode.value = "full";
+    if (!animationsEnabled.checked) animationMode.value = "off";
+  }, true);
   for (const button of document.querySelectorAll("[data-theme-choice]")) {
     button.addEventListener("click", () => {
       const choice = button.dataset.themeChoice;
@@ -1070,6 +1128,7 @@ function bindEvents() {
         applyThemeBackground(themeMode.value);
       }
       saveSettings();
+      if (choice === "custom") activateAppearanceSection("colors");
     });
   }
   for (const button of document.querySelectorAll("[data-accent-choice]")) {
@@ -1274,7 +1333,10 @@ function bindEvents() {
   // wieder zurueckgedreht.
   api.onSettingsChanged((neu) => {
     if (!neu) return;
-    settings = neu;
+    if (settingsSavePending) {
+      settingsExternalUpdate = neu;
+      settings = { ...neu, appearance: settings.appearance };
+    } else settings = neu;
     if (autoplayNextEpisode) {
       autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
     }
@@ -7850,6 +7912,7 @@ function zeigeAnsicht(route) {
 }
 
 async function openSettings(route = "settings") {
+  if (!settingsModal.open) appearanceEditorBaseline = JSON.parse(JSON.stringify(settings.appearance || DEFAULT_APPEARANCE_SETTINGS));
   if (!settingsModal.open && currentRoute !== "settings" && currentRoute !== "add-provider") {
     routeBeforeSettings = currentRoute?.startsWith("provider:") ? "start" : currentRoute;
   }
@@ -7859,6 +7922,7 @@ async function openSettings(route = "settings") {
   if (!settingsModal.open) {
     await api.setSettingsOpen(true);
     settingsModal.showModal();
+    activateTab(lastSettingsTab);
     window.setTimeout(() => {
       const focusTarget = settingsModal.querySelector("input, select, button, textarea");
       focusTarget?.focus();
@@ -8125,7 +8189,9 @@ function clearProviderForm() {
   renderSettings();
 }
 
-async function saveSettings() {
+async function saveSettings(options = {}) {
+  const appearanceOnly = options?.all !== true && settingsModal.open
+    && Boolean(document.querySelector('[data-page="appearance"].is-active'));
   // Das Formular wird erst bei Bedarf gefuellt, bevor es ausgelesen wird.
   if (!settingsFormBereit) renderSettings();
   syncMirroredFavoriteControls();
@@ -8233,7 +8299,35 @@ async function saveSettings() {
     showFavoriteMeta: showFavoriteMeta.checked,
     animations: chosenAnimationMode !== "off"
   };
-  settings = await api.saveSettings(settings);
+  const revision = ++settingsSaveRevision;
+  const snapshot = JSON.parse(JSON.stringify(settings));
+  settingsSavePending = true;
+  // App und Vorschau reagieren sofort, bevor die Platte beschrieben wird.
+  applyAppearance();
+  syncChoiceCards(settings.appearance || DEFAULT_APPEARANCE_SETTINGS);
+  syncInlineLabels();
+  settingsSaveQueue = settingsSaveQueue.catch(() => {}).then(() => {
+    if (appearanceOnly && revision !== settingsSaveRevision) return null;
+    return appearanceOnly && api.saveAppearance
+      ? api.saveAppearance(snapshot.appearance)
+      : api.saveSettings(snapshot);
+  });
+  let gespeichert;
+  try {
+    gespeichert = await settingsSaveQueue;
+  } catch {
+    if (revision === settingsSaveRevision) {
+      settingsSavePending = false;
+      showToast("Die Änderung ist sichtbar, konnte aber nicht gespeichert werden. Bitte erneut versuchen.");
+    }
+    return;
+  }
+  if (revision !== settingsSaveRevision || !gespeichert) return;
+  settingsSavePending = false;
+  settings = settingsExternalUpdate && appearanceOnly
+    ? { ...gespeichert, ...settingsExternalUpdate, appearance: gespeichert.appearance }
+    : gespeichert;
+  settingsExternalUpdate = null;
   applyAppearance();
   syncChoiceCards(settings.appearance || DEFAULT_APPEARANCE_SETTINGS);
   syncInlineLabels();
@@ -8374,7 +8468,7 @@ async function resetAllSettings() {
   settings.home = { ...DEFAULT_HOME_SETTINGS };
   settings.appearance = { ...DEFAULT_APPEARANCE_SETTINGS };
   renderSettings();
-  await saveSettings();
+  await saveSettings({ all: true });
 }
 
 function renderBlocked() {
@@ -8398,9 +8492,30 @@ function renderBlocked() {
 }
 
 function activateTab(name) {
+  if (name === "advancedAppearance") {
+    name = "appearance";
+    appearanceEditorSection = "colors";
+  }
   if (name !== "settingsHome") lastSettingsTab = name;
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("is-active", tab.dataset.tab === name));
   document.querySelectorAll(".settings-page").forEach((page) => page.classList.toggle("is-active", page.dataset.page === name));
+  document.querySelector(".settings-shell")?.classList.toggle("is-appearance-editor", name === "appearance");
+  if (name === "appearance") activateAppearanceSection(appearanceEditorSection);
+}
+
+function activateAppearanceSection(section) {
+  const allowed = ["design", "cards", "navigation", "size", "colors", "motion"];
+  appearanceEditorSection = allowed.includes(section) ? section : "design";
+  for (const button of document.querySelectorAll("[data-appearance-section]")) {
+    const active = button.dataset.appearanceSection === appearanceEditorSection;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  for (const panel of document.querySelectorAll("[data-appearance-panel]")) {
+    panel.hidden = panel.dataset.appearancePanel !== appearanceEditorSection;
+  }
+  spiegeleModiInVorschau(document.querySelector(".app-shell"));
+  appearancePreviewController?.setScene(["cards", "size", "motion"].includes(appearanceEditorSection) ? "cards" : "home");
 }
 
 function renderSettingsSearch() {
@@ -8524,9 +8639,10 @@ function syncInlineLabels() {
 
 function syncChoiceCards(appearance) {
   const activeTheme = appearance.themeMode || "dark";
+  const customTheme = appearance.accentPreset === "custom" && appearance.autoDeriveColors === false;
   document.querySelectorAll("[data-theme-choice]").forEach((button) => {
     const value = button.dataset.themeChoice;
-    button.classList.toggle("is-selected", value === activeTheme || (value === "custom" && appearance.accentPreset === "custom" && appearance.autoDeriveColors === false));
+    button.classList.toggle("is-selected", customTheme ? value === "custom" : value === activeTheme);
   });
   document.querySelectorAll("[data-accent-choice]").forEach((button) => {
     button.classList.toggle("is-selected", button.dataset.accentChoice === (appearance.accentPreset || "blue"));
@@ -8752,9 +8868,14 @@ function derivedPalette(background, accent) {
 
 async function applyDesignPreset(name) {
   const preset = designPresets()[name] || designPresets().elfix;
+  const previous = { ...DEFAULT_APPEARANCE_SETTINGS, ...(settings.appearance || {}) };
   settings.appearance = {
     ...DEFAULT_APPEARANCE_SETTINGS,
-    ...(settings.appearance || {}),
+    ...(name === "custom" ? previous : {
+      uiSounds: previous.uiSounds, uiSoundVolume: previous.uiSoundVolume,
+      animations: previous.animations, animationMode: previous.animationMode,
+      animationSpeed: previous.animationSpeed, hoverZoom: previous.hoverZoom
+    }),
     ...preset,
     designPreset: name
   };
@@ -8779,7 +8900,9 @@ function designPresets() {
 }
 
 function markDesignCustom() {
+  if (settings.appearance) settings.appearance.designPreset = "custom";
   if (designPreset && designPreset.value !== "custom") designPreset.value = "custom";
+  if (designPresetInline) designPresetInline.value = "custom";
 }
 
 function exportAppearanceSettings() {
@@ -8853,7 +8976,9 @@ function applyAppearance() {
   document.documentElement.style.setProperty("--accent-mid-alpha", (0.18 + strength * 0.28).toFixed(3));
   document.documentElement.style.setProperty("--accent-strong-alpha", (0.36 + strength * 0.42).toFixed(3));
   document.documentElement.style.setProperty("--accent-glow-alpha", (0.1 + strength * 0.22).toFixed(3));
-  const appBackground = normalizeColor(appearance.backgroundColor || "#070a10", "#070a10");
+  const appBackground = appearance.themeMode === "system"
+    ? THEME_BACKGROUNDS[resolveThemeMode("system")]
+    : normalizeColor(appearance.backgroundColor || "#070a10", "#070a10");
   const autoColors = appearance.autoDeriveColors !== false;
   const palette = autoColors
     ? derivedPalette(appBackground, accent)
@@ -8949,17 +9074,29 @@ function applyAppearance() {
 // Vorschau Kartenstil, Ecken, Schatten, Navigationsstil und Anbieter-Kacheln
 // gar nicht an.
 function spiegeleModiInVorschau(shell) {
-  const vorschau = document.querySelector("#appPreview");
-  if (!vorschau) return;
-  const uebernehmen = [
-    "layout-", "cardstyle-", "shadow-", "corners-", "navstyle-", "providermeta-",
-    "density-", "cards-", "favart-", "theme-", "bg-"
-  ];
-  const eigene = [...vorschau.classList].filter((name) => !uebernehmen.some((teil) => name.startsWith(teil))
-    && name !== "hide-provider-strip" && name !== "hide-favorite-meta" && name !== "animations-off");
-  const vonHuelle = [...shell.classList].filter((name) => uebernehmen.some((teil) => name.startsWith(teil))
-    || name === "hide-provider-strip" || name === "hide-favorite-meta" || name === "animations-off");
-  vorschau.className = [...eigene, ...vonHuelle].join(" ");
+  if (!shell || !settingsModal.open || !document.querySelector(".settings-shell.is-appearance-editor")) return;
+  if (!appearancePreviewController && globalThis.ELFIX_APPEARANCE_PREVIEW) {
+    appearancePreviewController = globalThis.ELFIX_APPEARANCE_PREVIEW.create({
+      getShell: () => document.querySelector(".app-shell"),
+      getSceneContent: (scene) => {
+        if (scene === "home") return homeView;
+        if (scene === "cards") {
+          renderContinueContent();
+          return continueView;
+        }
+        return null;
+      },
+      onNavigate: (action) => action === "start" ? "home"
+        : ["favorites", "continue", "library"].includes(action) ? "cards" : undefined
+    });
+  }
+  appearancePreviewController?.update();
+  const revert = document.querySelector("#appearanceRevert");
+  if (revert) {
+    const current = { ...DEFAULT_APPEARANCE_SETTINGS, ...(settings.appearance || {}) };
+    const baseline = { ...DEFAULT_APPEARANCE_SETTINGS, ...(appearanceEditorBaseline || {}) };
+    revert.disabled = Object.keys(current).every((key) => current[key] === baseline[key]);
+  }
 }
 
 function setShellMode(shell, prefix, value, allowed) {

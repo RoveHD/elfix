@@ -3,6 +3,31 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.13 — 7. September 2026
+
+**Aussehen neu geordnet.** Darstellung und Feinschliff sind in einer gemeinsamen
+Ansicht mit verständlichen Kategorien und Erklärungen zusammengefasst. Die
+Live-Vorschau verwendet die echte Oberfläche. Änderungen lassen sich direkt
+vergleichen und rückgängig machen; Farbauswahl und eigene Farben sind übersichtlicher.
+
+**Watchparty-Quellen bleiben beim Host.** Nur der Host darf Hoster und Fassung
+ändern; alle angebotenen Sprachen bleiben für ihn verfügbar. Jeder Teilnehmer
+darf die nächste Folge wählen. Der Wechsel wird direkt an die Runde gemeldet,
+ohne doppelte Meldungen durch das Nachladen der Anbieterseite.
+
+**TV-Player mit direktem Play/Pause.** Die mittlere Fernbedienungstaste schaltet
+die Wiedergabe auch bei ausgeblendeter Leiste um. Play/Pause ist beim Öffnen
+ausgewählt; angewählte Knöpfe und Menüs bleiben mit OK bedienbar. Fokusmarkierungen
+sind deutlicher. Tonknopf und Lautstärkeregler entfallen am Fernseher, bleiben
+auf dem Handy aber erhalten. Der Mauszeiger verschwindet mit der Player-Bedienung.
+
+**Folgenlisten vervollständigt.** S.to zeigt Episodentitel auch bei klickbaren
+Tabellenzeilen ohne Titellink. AniWorld bietet den Filme-Reiter samt Filmtiteln;
+Android öffnet diese Filme weiterhin im nativen Player.
+
+Dieses Release enthält außerdem die Trennung von YouTube unter „Weiterschauen –
+Alle anzeigen“ aus der zuvor nicht veröffentlichten Version 2.0.12.
+
 ## 2.0.12 — 7. September 2026
 
 **Weiterschauen trennt auch unter „Alle anzeigen“ YouTube von Serien und

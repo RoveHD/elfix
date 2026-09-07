@@ -2197,6 +2197,13 @@ h1 {
   flex: 0 0 var(--favorite-card-min);
 }
 
+/* Cover liegen auch im hellen Design unter einer dunklen Bildblende. */
+.favorite-card:has(.karten-bild) {
+  --text: #f7f8fb;
+  --text-secondary: #d9e2ef;
+  --muted: #b8c4d6;
+}
+
 .favorite-card:hover,
 .favorite-card:focus-visible {
   transform: scale(var(--hover-zoom));
@@ -4296,21 +4303,25 @@ input[type="color"] {
 
 .color-control-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(160px, 220px);
-  gap: 18px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  margin-bottom: 20px;
 }
 
 .swatch-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(5, 40px);
+  gap: 12px;
+  margin-top: 12px;
+  padding: 4px;
 }
 
 .color-swatch {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -4333,6 +4344,45 @@ input[type="color"] {
 
 .color-swatch.is-selected span {
   display: block;
+}
+
+.color-swatch:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 4px;
+}
+
+.accent-custom-fields {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 14px;
+}
+
+.accent-custom-fields > label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accent-custom-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+}
+
+.accent-custom-fields > small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.settings-page[data-page="appearance"] input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.settings-page[data-page="appearance"] input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 7px;
 }
 
 .auto-color-button,
@@ -4585,13 +4635,8 @@ input[type="color"] {
   font-size: 12px;
 }
 
-.app-shell.layout-compact {
-  --card-gap: max(10px, calc(var(--card-gap) * .82));
-}
-
-.app-shell.layout-roomy {
-  --card-gap: max(18px, calc(var(--card-gap) * 1.18));
-}
+/* Layout-Vorlagen setzen cardGap im Renderer. Eine Variable darf sich hier
+   nicht selbst referenzieren, sonst wird der gesamte Abstand ungueltig. */
 
 /* Hier stand einmal eine eigene Kartengroesse fuer den Netflix-Stil - 320 auf
    250 Pixel, also liegend. Das war ein Widerspruch in sich: der Stil setzt in
@@ -5659,10 +5704,10 @@ input[type="color"] {
  * meint - eine Reihe hat ihren Titel als Hauptsache, nicht ihre Schaltflaeche.
  */
 .row-more {
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border-color);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
-  color: #dfe6f3;
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   min-height: 32px;
@@ -7186,6 +7231,37 @@ input[type="color"] {
   to   { opacity: 1; translate: 0 0; }
 }
 
+.auto-color-button.appearance-auto-color {
+  width: 100%;
+  border-radius: 12px;
+  padding: 12px;
+  white-space: normal;
+  align-items: flex-start;
+}
+
+.appearance-auto-color > input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.appearance-auto-color > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.appearance-auto-color strong {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.appearance-auto-color small {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: inherit;
+}
+
 :root {
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-fast: calc(160ms * var(--animation-speed));
@@ -7386,5 +7462,278 @@ button:focus-visible,
   :root body:has(.app-shell) .chrome-btn.is-busy::after {
     animation-duration: 2400ms !important;
     animation-iteration-count: infinite !important;
+  }
+}
+
+/* Aussehen: eine konzentrierte Arbeitsflaeche statt einer zweiten
+   "Detail"-Seite. Die Sonderaufteilung gilt nur, wenn der Renderer sie beim
+   geoeffneten Aussehen-Tab explizit an der Shell aktiviert. */
+.settings-shell:not(.is-appearance-editor) {
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.settings-shell:not(.is-appearance-editor) .settings-preview-pane {
+  display: none;
+}
+
+.settings-shell.is-appearance-editor {
+  grid-template-columns: 220px minmax(360px, 440px) minmax(0, 1fr);
+}
+
+.settings-shell.is-appearance-editor .settings-content {
+  min-width: 0;
+  padding: 20px 24px;
+}
+
+.settings-shell.is-appearance-editor .settings-tabs,
+.settings-shell.is-appearance-editor .settings-nav {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.settings-page[data-page="appearance"] > .settings-head {
+  display: block;
+}
+
+.settings-page[data-page="appearance"] > .settings-head p {
+  max-width: none;
+  line-height: 1.5;
+}
+
+.settings-page[data-page="appearance"] .appearance-head-actions {
+  justify-content: flex-start;
+  margin-top: 14px;
+}
+
+.appearance-head-actions button {
+  font: inherit;
+  font-size: 12px;
+  min-height: 34px;
+  padding: 8px 12px;
+}
+
+.settings-shell.is-appearance-editor .settings-preview-pane {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  padding: 20px 24px 24px 0;
+}
+
+.settings-shell.is-appearance-editor .settings-page[data-page="appearance"] {
+  max-width: 520px;
+  padding-inline: 0;
+}
+
+.appearance-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.appearance-section-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-card), #000 12%);
+}
+
+.appearance-section-nav button {
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.appearance-section-nav button span {
+  margin-right: 7px;
+  color: var(--accent);
+}
+
+.appearance-section-nav button:hover,
+.appearance-section-nav button.is-active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent), transparent 82%);
+  outline: 1px solid color-mix(in srgb, var(--accent), transparent 48%);
+}
+
+.settings-page[data-page="appearance"] .appearance-panel {
+  display: none;
+}
+
+.settings-page[data-page="appearance"] .appearance-panel.is-active {
+  display: block;
+}
+
+/* Der Renderer setzt hidden beim Wechsel zwischen den sechs Kategorien.
+   Das Attribut gewinnt auch dann, wenn eine fruehere Regel noch is-active
+   auf dem vorigen Bereich stehen hat. */
+.settings-page[data-page="appearance"] .appearance-panel[hidden] {
+  display: none !important;
+}
+
+.settings-page[data-page="appearance"] .appearance-panel:not([hidden]) {
+  display: block;
+}
+
+.settings-page[data-page="appearance"] .appearance-panel > .settings-group {
+  margin-top: 14px;
+}
+
+.settings-page[data-page="appearance"] .appearance-panel .settings-group {
+  background: color-mix(in srgb, var(--bg-input), transparent 54%);
+}
+
+.settings-preview-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(136px, auto) 40px;
+  align-items: end;
+  gap: 10px;
+  padding: 2px 0;
+  margin-right: 30px;
+}
+
+.settings-preview-toolbar strong,
+.settings-preview-toolbar span {
+  display: block;
+}
+
+.settings-preview-toolbar strong {
+  color: var(--text-primary);
+  font-size: 17px;
+}
+
+.settings-preview-toolbar span,
+.appearance-preview-hint,
+.appearance-preview-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-preview-toolbar label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.settings-preview-toolbar select {
+  min-height: 36px;
+  padding: 0 28px 0 10px;
+  font: inherit;
+  font-size: 12px;
+}
+
+#appearancePreviewExpand {
+  width: 40px;
+  min-width: 40px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 18px;
+}
+
+.appearance-preview-viewport {
+  position: sticky;
+  top: 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-app);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .24);
+}
+
+#appearancePreviewFrame {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: var(--bg-app);
+}
+
+.appearance-preview-status {
+  min-height: 17px;
+}
+
+@media (max-width: 1260px) {
+  .settings-shell.is-appearance-editor {
+    grid-template-columns: 190px minmax(340px, .9fr) minmax(0, 1fr);
+  }
+  .appearance-section-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.settings-shell.is-appearance-editor.is-preview-expanded {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-shell.is-preview-expanded > :not(.settings-preview-pane) {
+  display: none;
+}
+
+.settings-shell.is-appearance-editor.is-preview-expanded .settings-preview-pane {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 24px 48px;
+}
+
+.settings-shell.is-preview-expanded .appearance-preview-viewport {
+  width: min(100%, calc((100vh - 180px) * 1.6));
+  justify-self: center;
+}
+
+@media (max-width: 1100px) {
+  .settings-shell.is-appearance-editor:not(.is-preview-expanded) {
+    grid-template-columns: 170px 350px minmax(0, 1fr);
+  }
+
+  .settings-shell.is-appearance-editor:not(.is-preview-expanded) .settings-content {
+    padding-inline: 16px;
+  }
+}
+
+@media (max-width: 860px) {
+  .settings-shell.is-appearance-editor:not(.is-preview-expanded) {
+    grid-template-columns: 76px minmax(280px, 1fr) minmax(250px, 1fr);
+  }
+
+  .appearance-section-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-preview-toolbar {
+    grid-template-columns: minmax(0, 1fr) 40px;
+  }
+
+  .settings-preview-toolbar label {
+    grid-column: 1 / -1;
+  }
+
+  .settings-head:has(.appearance-head-actions) {
+    grid-template-columns: 1fr;
+  }
+
+  .appearance-head-actions {
+    justify-content: flex-start;
   }
 }

@@ -725,6 +725,7 @@ function uebersichtSkript() {
     const ZIFFERN = "([0-9]+)";
     const reStaffel = new RegExp("^(?:staffel|season)-" + ZIFFERN + "$", "i");
     const reFolge = new RegExp("^(?:episode|folge)-" + ZIFFERN + "$", "i");
+    const reFilm = new RegExp("^film-" + ZIFFERN + "$", "i");
     const reFolgeIrgendwo = new RegExp("(?:episode|folge)-" + ZIFFERN, "i");
     const reOffeneStaffel = new RegExp("/(?:staffel|season)-" + ZIFFERN, "i");
     const reSammelfolge = new RegExp(
@@ -749,13 +750,17 @@ function uebersichtSkript() {
     const staffelVon = (pfad) => {
       const teile = String(pfad || "").split("/").filter(Boolean);
       let gehoert = !mediaSlug;
-      let nummer = 0;
+      let nummer = null;
       for (const teil of teile) {
         if (mediaSlug && teil.toLowerCase() === mediaSlug) gehoert = true;
+        if (teil.toLowerCase() === "filme") nummer = 0;
         const treffer = teil.match(reStaffel);
         if (treffer) nummer = Number(treffer[1]);
       }
-      return gehoert ? nummer : 0;
+      // Staffel 0 ist bei AniWorld die eigene Filmsammlung einer Serie. Sie
+      // ist kein fehlender Treffer: null trennt sie von einem fremden oder
+      // unvollstaendigen Link.
+      return gehoert ? nummer : null;
     };
 
     const folgeAusLink = (href) => {
@@ -763,7 +768,7 @@ function uebersichtSkript() {
         const url = new URL(href, location.href);
         const teile = url.pathname.split("/").filter(Boolean);
         let slug = "";
-        let staffel = 0;
+        let staffel = null;
         let folge = 0;
         for (let i = 0; i < teile.length; i += 1) {
           const teil = teile[i].toLowerCase();
@@ -774,14 +779,17 @@ function uebersichtSkript() {
           if ((teil === "serie" || teil === "stream") && teile[i + 1] && !slug) {
             slug = teile[i + 1].toLowerCase();
           }
+          if (teil === "filme") staffel = 0;
           const s = teil.match(reStaffel);
           if (s) staffel = Number(s[1]);
           const f = teil.match(reFolge);
           if (f) folge = Number(f[1]);
+          const film = teil.match(reFilm);
+          if (film) { staffel = 0; folge = Number(film[1]); }
         }
         if (!folge || !Number.isFinite(folge)) return null;
         if (mediaSlug && slug && slug !== mediaSlug) return null;
-        return { staffel: staffel || 1, folge, url: url.href };
+        return { staffel: staffel === null ? 1 : staffel, folge, url: url.href };
       } catch (_) {
         return null;
       }
@@ -835,7 +843,11 @@ function uebersichtSkript() {
       + String.fromCharCode(13) + " ]+", "g");
     const reNurNummer = new RegExp("^(?:folge|episode|ep|e)? *[0-9]+$", "i");
     const titelSauber = (roh) => {
-      const text = String(roh || "").replace(reLeerraum, " ").trim();
+      let text = String(roh || "").replace(reLeerraum, " ").trim();
+      // Manche S.to-Zeilen haben eine hervorgehobene Folgenummer und den
+      // eigentlichen Namen daneben. Ist die Nummer nur ein Vorspann mit
+      // Trennzeichen, bleibt der Name trotzdem erhalten.
+      text = text.replace(/^(?:folge|episode|ep|e) *[0-9]+ *(?:[-:·]|\\u2013|\\u2014) */i, "");
       // Leer, nur die Nummer noch einmal, der Vermerk einer Sammelfolge, oder
       // so lang, dass es kein Titel mehr ist, sondern die halbe Zeile.
       if (!text || text.length > 120) return "";
@@ -845,23 +857,48 @@ function uebersichtSkript() {
 
     const titel = (() => {
       const karte = new Map();
+      const eintragen = (zelle, gehoert) => {
+        if (!zelle || !gehoert) return;
+        const stark = zelle.querySelector("strong");
+        // Ein leeres oder nur nummeriertes strong darf den Rest der Zelle
+        // nicht verschlucken; dort steht bei S.to der sichtbare Folgentitel.
+        const sauber = titelSauber((stark && stark.textContent)) || titelSauber(zelle.textContent);
+        if (!sauber) return;
+        const schluessel = gehoert.staffel + "x" + gehoert.folge;
+        if (!karte.has(schluessel)) karte.set(schluessel, sauber);
+      };
+      // Die normale Tabellen- bzw. Listenzeile bindet einen Titel sicher an
+      // ihre Folge, auch wenn derselbe Titelbaustein anderswo auf der Seite
+      // vorkommt.
       for (const zeile of Array.from(document.querySelectorAll("tr, li"))) {
         const zelle = zeile.querySelector(TITELZELLE);
         if (!zelle) continue;
-        // Zu welcher Folge die Zeile gehoert, sagt ihr eigener Link - dieselbe
-        // Regel wie unten fuer die Liste selbst. Ueber die blosse Nummer zu
-        // gehen waere falsch, sobald auf der Seite zwei Staffeln stehen.
         let gehoert = null;
         for (const a of Array.from(zeile.querySelectorAll("a[href]"))) {
           gehoert = folgeAusLink(a.getAttribute("href") || "");
           if (gehoert) break;
         }
-        if (!gehoert) continue;
-        const stark = zelle.querySelector("strong");
-        const sauber = titelSauber((stark && stark.textContent) || zelle.textContent);
-        if (!sauber) continue;
-        const schluessel = gehoert.staffel + "x" + gehoert.folge;
-        if (!karte.has(schluessel)) karte.set(schluessel, sauber);
+        // Das aktuelle S.to macht die ganze Tabellenzeile klickbar und legt
+        // die Folgenadresse in onclick ab; in der Titelzelle selbst ist kein
+        // Link mehr. Der Navigationsausdruck ist dennoch dieselbe konkrete
+        // Adresse, kein aus dem sichtbaren Text geratener Ersatz.
+        if (!gehoert) {
+          const treffer = String(zeile.getAttribute("onclick") || "")
+            .match(/(?:location|href) *= *['"]([^'"]+)/i);
+          gehoert = folgeAusLink((treffer && treffer[1]) || "");
+        }
+        eintragen(zelle, gehoert);
+      }
+      // S.to liefert dieselben seasonEpisodeTitle-Zellen je nach Vorlage auch
+      // ausserhalb einer Tabellenzeile. Dann traegt die Titelzelle selbst den
+      // Folgenlink; nur noch nicht bekannte Folgen werden ergänzt.
+      for (const zelle of Array.from(document.querySelectorAll(TITELZELLE))) {
+        let gehoert = folgeAusLink((zelle.getAttribute && zelle.getAttribute("href")) || "");
+        for (const a of Array.from(zelle.querySelectorAll("a[href]"))) {
+          if (gehoert) break;
+          gehoert = folgeAusLink(a.getAttribute("href") || "");
+        }
+        if (gehoert && !karte.has(gehoert.staffel + "x" + gehoert.folge)) eintragen(zelle, gehoert);
       }
       return karte;
     })();
@@ -875,7 +912,7 @@ function uebersichtSkript() {
       let pfad = "";
       try { pfad = new URL(abs(href), location.href).pathname; } catch (_) { continue; }
       const nummer = staffelVon(pfad);
-      if (!Number.isFinite(nummer) || nummer <= 0) continue;
+      if (!Number.isFinite(nummer) || nummer < 0) continue;
       if (!staffeln.has(nummer)) staffeln.set(nummer, abs(href));
     }
 

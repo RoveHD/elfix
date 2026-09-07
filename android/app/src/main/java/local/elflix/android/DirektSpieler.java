@@ -2,6 +2,7 @@ package local.elflix.android;
 
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
+import android.content.res.Configuration;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -116,6 +117,11 @@ final class DirektSpieler {
         /** Gibt dieses Geraet in der laufenden Runde gerade den Takt vor? */
         default boolean istRundenHost() { return false; }
 
+        /** Fassung und Hoster stellt in einer Runde ausschliesslich der Host. */
+        default boolean darfFassungUndHosterWaehlen() {
+            return !inRunde() || istRundenHost();
+        }
+
         /**
          * Darf hier ueberhaupt am Tempo gedreht werden?
          *
@@ -174,6 +180,8 @@ final class DirektSpieler {
     private final Activity activity;
     private final Kern kern;
     private final Umgebung umgebung;
+    /** Fernseher haben eine Systemlautstaerke an der Fernbedienung. */
+    private final boolean fernseher;
     final FrameLayout ansicht;
     private final PlayerView bild;
 
@@ -189,6 +197,8 @@ final class DirektSpieler {
     private final TextView spielen;
     private final TextView zehnZurueck;
     private final TextView zehnVor;
+    private TextView fassungKnopf;
+    private TextView hosterKnopf;
     private final ImageView ton;
     private final TextView automatisch;
     /** Der Tempo-Knopf in der Leiste - er traegt die laufende Stufe als Beschriftung. */
@@ -270,7 +280,14 @@ final class DirektSpieler {
     private boolean schichtenAn = true;
     private boolean reglerGefasst;
     private boolean warSichtbar;
+    private boolean tvMitteGedrueckt;
     private String naechsterTitel = "";
+
+    /** Nur die echte TV-Oberflaeche bekommt die Fernbedienungsvariante. */
+    static boolean istFernseher(Configuration konfiguration) {
+        return (konfiguration.uiMode & Configuration.UI_MODE_TYPE_MASK)
+            == Configuration.UI_MODE_TYPE_TELEVISION;
+    }
 
     /**
      * Eine Reihe, die umbricht, statt zu schieben.
@@ -522,6 +539,7 @@ final class DirektSpieler {
         this.activity = activity;
         this.kern = kern;
         this.umgebung = umgebung;
+        this.fernseher = istFernseher(activity.getResources().getConfiguration());
 
         // Jede Beruehrung haelt die Schichten wach - auch die auf einem Knopf.
         // Ueber dispatchTouchEvent und nicht ueber einen Zuhoerer je Knopf: die
@@ -576,6 +594,8 @@ final class DirektSpieler {
         spielen = unten.findViewWithTag("spielen");
         zehnZurueck = unten.findViewWithTag("zehnZurueck");
         zehnVor = unten.findViewWithTag("zehnVor");
+        fassungKnopf = unten.findViewWithTag("fassung");
+        hosterKnopf = unten.findViewWithTag("hoster");
         ton = unten.findViewWithTag("ton");
         automatisch = unten.findViewWithTag("auto");
         tempoText = unten.findViewWithTag("tempo");
@@ -677,6 +697,9 @@ final class DirektSpieler {
         handler.post(takt);
         handler.post(balken);
         regung();
+        if (fernseher) ansicht.post(() -> {
+            if (!geschlossen && !blendeOffen()) fokusAufSpielen();
+        });
     }
 
     /* ------------------------------------------------------------- Der Aufbau */
@@ -770,19 +793,25 @@ final class DirektSpieler {
         TextView vor = knopf("+10 s", () -> springen(10));
         vor.setTag("zehnVor");
         knoepfe.addView(vor);
-        // Knopf und Regler gehören zusammen und wandern zusammen: getrennt
-        // umgebrochen stand der Regler allein am Zeilenanfang und sah aus wie
-        // ein zweiter Fortschrittsbalken.
-        LinearLayout tonGruppe = new LinearLayout(activity);
-        tonGruppe.setOrientation(LinearLayout.HORIZONTAL);
-        tonGruppe.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView klang = tonKnopf();
-        klang.setTag("ton");
-        tonGruppe.addView(klang);
-        SeekBar lautstaerke = lautstaerkeBauen();
-        lautstaerke.setTag("lautstaerke");
-        tonGruppe.addView(lautstaerke);
-        knoepfe.addView(tonGruppe);
+        // Die Fernbedienung steuert die Systemlautstaerke. Auf einem Fernseher
+        // waere eine zweite Lautstaerke im Player nicht nur doppelt, sondern
+        // auch ein unnoetiger Stopp in der Steuerkreuz-Reihenfolge. Auf einem
+        // Telefon bleibt die gesamte Gruppe wie bisher erhalten.
+        if (!fernseher) {
+            // Knopf und Regler gehören zusammen und wandern zusammen: getrennt
+            // umgebrochen stand der Regler allein am Zeilenanfang und sah aus wie
+            // ein zweiter Fortschrittsbalken.
+            LinearLayout tonGruppe = new LinearLayout(activity);
+            tonGruppe.setOrientation(LinearLayout.HORIZONTAL);
+            tonGruppe.setGravity(Gravity.CENTER_VERTICAL);
+            ImageView klang = tonKnopf();
+            klang.setTag("ton");
+            tonGruppe.addView(klang);
+            SeekBar lautstaerke = lautstaerkeBauen();
+            lautstaerke.setTag("lautstaerke");
+            tonGruppe.addView(lautstaerke);
+            knoepfe.addView(tonGruppe);
+        }
         TextView marke = knopf("Intro überspringen", this::introSpringen, true);
         marke.setTag("intro");
         marke.setVisibility(View.GONE);
@@ -790,8 +819,12 @@ final class DirektSpieler {
 
         knoepfe.addView(trenner());
         knoepfe.addView(knopf("Folgen", umgebung::folgen));
-        knoepfe.addView(knopf("Fassung", umgebung::fassungen));
-        knoepfe.addView(knopf("Hoster", umgebung::hoster));
+        TextView fassung = knopf("Fassung", umgebung::fassungen);
+        fassung.setTag("fassung");
+        knoepfe.addView(fassung);
+        TextView hoster = knopf("Hoster", umgebung::hoster);
+        hoster.setTag("hoster");
+        knoepfe.addView(hoster);
         knoepfe.addView(knopf("Untertitel", () -> spuren(C.TRACK_TYPE_TEXT, "Untertitel")));
         knoepfe.addView(knopf("Qualität", () -> spuren(C.TRACK_TYPE_VIDEO, "Bildqualität")));
         TextView tempoKnopf = knopf("1×", this::tempoWaehlen);
@@ -839,6 +872,7 @@ final class DirektSpieler {
         bar.setThumb(knaufBauen());
         bar.setSplitTrack(false);
         bar.setPadding(dp(7), dp(14), dp(7), dp(14));
+        reglerFokus(bar);
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar wo, int wert, boolean vonHand) {
                 if (!vonHand || player == null) return;
@@ -874,6 +908,7 @@ final class DirektSpieler {
         bar.setThumb(knaufBauen());
         bar.setSplitTrack(false);
         bar.setPadding(dp(7), dp(14), dp(7), dp(14));
+        reglerFokus(bar);
         bar.setLayoutParams(new LinearLayout.LayoutParams(dp(72), ViewGroup.LayoutParams.WRAP_CONTENT));
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar wo, int wert, boolean vonHand) {
@@ -885,6 +920,19 @@ final class DirektSpieler {
             @Override public void onStopTrackingTouch(SeekBar wo) { regung(); }
         });
         return bar;
+    }
+
+    /** Auch ein mit Pfeilen bedienter Regler braucht einen eindeutigen TV-Fokus. */
+    private void reglerFokus(View regler) {
+        final Drawable grund = flaeche(Color.TRANSPARENT, 8, Color.TRANSPARENT, 0);
+        final Drawable fokus = flaeche(KNOPF_DRUCK, 8, Theme.PRIMARY, 2);
+        regler.setBackground(grund);
+        regler.setFocusable(true);
+        regler.setFocusableInTouchMode(false);
+        regler.setOnFocusChangeListener((view, hat) -> {
+            view.setBackground(hat ? fokus : grund);
+            if (hat) regung();
+        });
     }
 
     private FrameLayout blendeBauen() {
@@ -1095,6 +1143,51 @@ final class DirektSpieler {
         schichtenSetzen(true);
         handler.removeCallbacks(verbergen);
         handler.postDelayed(verbergen, RUHE_MS);
+    }
+
+    private static boolean istSteuerkreuz(int code) {
+        return code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
+            || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
+            || code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER;
+    }
+
+    /**
+     * Der erste Druck auf der Fernbedienung hat einen sichtbaren Anker.
+     *
+     * <p>Eine {@link LinearLayout}-Leiste selbst ist kein Bedienziel. Sie zu
+     * fokussieren liess Android deshalb je nach Geraet den Fokus im Bild
+     * behalten: die Leiste erschien, aber ohne Markierung. Play ist in jeder
+     * Lage vorhanden und der erwartete erste Schritt der Fernbedienung.
+     */
+    private void fokusAufSpielen() {
+        if (spielen.getVisibility() == View.VISIBLE && spielen.isEnabled()) {
+            spielen.requestFocus();
+        } else if (mitteSpielen.getVisibility() == View.VISIBLE && mitteSpielen.isEnabled()) {
+            mitteSpielen.requestFocus();
+        }
+    }
+
+    /** Der erste echte Steuerkreuzdruck beendet den Touch-Modus erst nach seinem Dispatch. */
+    private void fokusAufSpielenNachSteuerkreuz() {
+        handler.post(() -> {
+            if (schichtenAn && !hatSichtbarenBedienfokus()) fokusAufSpielen();
+        });
+    }
+
+    /** Liegt der Fokus wirklich auf einer sichtbaren Bedienung statt im Bild? */
+    private boolean hatSichtbarenBedienfokus() {
+        View fokus = ansicht.findFocus();
+        return schichtenAn && fokus != null && fokus.isShown()
+            && (istIn(fokus, kopf) || istIn(fokus, leiste) || istIn(fokus, weiterKarte));
+    }
+
+    private static boolean istIn(View kind, View wurzel) {
+        for (View aktuell = kind; aktuell != null; ) {
+            if (aktuell == wurzel) return true;
+            android.view.ViewParent eltern = aktuell.getParent();
+            aktuell = eltern instanceof View ? (View) eltern : null;
+        }
+        return false;
     }
 
     private final Runnable verbergen = this::vielleichtVerbergen;
@@ -1442,6 +1535,10 @@ final class DirektSpieler {
         return !umgebung.inRunde() || umgebung.istRundenHost();
     }
 
+    static boolean darfNutzerQuelleWaehlen(boolean inRunde, boolean istHost) {
+        return !inRunde || istHost;
+    }
+
     /** Die aktuelle Relay-Rolle wird bei jedem Takt neu gelesen, auch nach einer Hostuebergabe. */
     private void spulenZeichnen() {
         boolean frei = darfNutzerSpulen();
@@ -1461,6 +1558,22 @@ final class DirektSpieler {
         knopf.setContentDescription(frei ? beschreibung : gesperrt);
     }
 
+    /** Quelleinstellungen sind sichtbar, aber fuer Gaeste nicht bedienbar. */
+    void quellenZeichnen() {
+        boolean frei = umgebung.darfFassungUndHosterWaehlen();
+        String gesperrt = "Fassung und Hoster stellt der Host";
+        quellenknopfZeichnen(fassungKnopf, frei, "Fassung", gesperrt);
+        quellenknopfZeichnen(hosterKnopf, frei, "Hoster", gesperrt);
+    }
+
+    private static void quellenknopfZeichnen(TextView knopf, boolean frei,
+        String beschreibung, String gesperrt) {
+        if (knopf == null) return;
+        knopf.setEnabled(frei);
+        knopf.setAlpha(frei ? 1f : 0.42f);
+        knopf.setContentDescription(frei ? beschreibung : gesperrt);
+    }
+
     private void tonUmschalten() {
         if (player == null) return;
         boolean stumm = player.getVolume() <= 0.01f;
@@ -1469,6 +1582,7 @@ final class DirektSpieler {
     }
 
     private void tonZeichnen(boolean an) {
+        if (ton == null) return;
         ton.setImageDrawable(new Lautsprecher(dp(19), an));
         ton.setContentDescription(an ? "Ton an" : "Ton aus");
     }
@@ -1672,6 +1786,11 @@ final class DirektSpieler {
         blendeLeer.setVisibility(View.GONE);
         mitteZeichnen();
         regung();
+        // Die Blendenzeilen werden eben entfernt. Auf dem Fernseher darf der
+        // Fokus damit nicht im gerade verschwundenen Menue bleiben; sonst ist
+        // die Leiste zwar wieder da, aber ohne sichtbare Auswahl bis zur
+        // naechsten Taste.
+        if (fernseher) fokusAufSpielen();
     }
 
     boolean blendeOffen() {
@@ -1857,6 +1976,7 @@ final class DirektSpieler {
 
     void pause() {
         aktiv = false;
+        tvMitteGedrueckt = false;
         zaehlerEnde = 0;
         endeAbgesagt = true;
         // Auch ein noch nicht faelliger gemeinsamer Start ist damit veraltet.
@@ -1911,6 +2031,7 @@ final class DirektSpieler {
             if (geschlossen) return;
             long jetzt = SystemClock.elapsedRealtime();
             spulenZeichnen();
+            quellenZeichnen();
             if (player != null) {
                 double position = position();
                 double delta = position - letztePosition;
@@ -2406,14 +2527,19 @@ final class DirektSpieler {
      * Die Fernbedienung.
      *
      * <p>Ohne den mitgelieferten Bedienteil gibt es niemanden mehr, der die
-     * Medientasten deutet - das steht deshalb hier. Und: solange die Bedienung
-     * weg ist, weckt die erste Taste nur sie. Sonst spraenge ein Druck auf OK
-     * blind auf den Knopf, der zufaellig zuletzt den Fokus hatte.
+     * Medientasten deutet - das steht deshalb hier. Pfeile wecken zuerst die
+     * Bedienung. OK schaltet am Fernseher standardmaessig direkt Play/Pause;
+     * bewusst ausgewaehlte andere Knoepfe und Menues bleiben bestaetigbar.
      */
     boolean taste(KeyEvent event) {
         int code = event.getKeyCode();
         if (code == KeyEvent.KEYCODE_BACK) return false;
         boolean runter = event.getAction() == KeyEvent.ACTION_DOWN;
+        boolean mitteTaste = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER;
+        if (fernseher && mitteTaste && tvMitteGedrueckt) {
+            if (event.getAction() == KeyEvent.ACTION_UP) tvMitteGedrueckt = false;
+            return true; // Halten und Loslassen duerfen kein zweites Mal umschalten.
+        }
 
         if (code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
             if (runter) spielenUmschalten();
@@ -2456,48 +2582,33 @@ final class DirektSpieler {
             || code == KeyEvent.KEYCODE_GUIDE) {
             if (runter) {
                 regung();
-                leiste.requestFocus();
+                fokusAufSpielen();
             }
             return true;
         }
         if (blendeOffen()) return false;
-        if (!schichtenAn) {
-            // Erst wecken. Links und rechts springen dabei trotzdem - das ist
-            // die Geste, die man auf einer Fernbedienung erwartet.
-            if (runter) {
-                int weite = sprungFaktor(event);
-                if (code == KeyEvent.KEYCODE_DPAD_LEFT) springen(-10 * weite);
-                else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) springen(30 * weite);
-                else if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER) {
-                    spielenUmschalten();
-                }
+        if (fernseher && mitteTaste && runter) {
+            View fokus = ansicht.findFocus();
+            if (!schichtenAn || !hatSichtbarenBedienfokus()
+                || fokus == spielen || fokus == mitteSpielen || fokus == regler) {
+                tvMitteGedrueckt = true;
+                spielenUmschalten();
                 regung();
-                if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    leiste.requestFocus();
-                }
+                fokusAufSpielen();
+                return true;
             }
+        }
+        // Beim Aufwecken duerfen die Pfeile nicht zugleich blind spulen oder
+        // eine zufaellige Alt-Fokussierung ausloesen. Erst steht Play sichtbar
+        // unter dem Fokus; danach navigiert das Steuerkreuz normal weiter.
+        if (runter && istSteuerkreuz(code) && (!schichtenAn || !hatSichtbarenBedienfokus())) {
+            regung();
+            fokusAufSpielenNachSteuerkreuz();
             return true;
         }
         if (runter) handler.removeCallbacks(verbergen);
         if (event.getAction() == KeyEvent.ACTION_UP) regung();
         return false;
-    }
-
-    /**
-     * Gedrueckt halten spult weiter.
-     *
-     * <p>Eine Fernbedienung hat keinen Regler. Wer eine Dreiviertelstunde
-     * vorspulen will, drueckt sonst hundertmal - und jeder einzelne Druck ist
-     * ein eigener Sprung, den der Player puffern muss. Der Faktor waechst mit
-     * der Haltedauer: die ersten Druecke bleiben fein (10 bzw. 30 Sekunden),
-     * ab einer halben Sekunde geht es in Minuten, ab anderthalb in Schritten
-     * von drei bis fuenf.
-     */
-    private static int sprungFaktor(KeyEvent event) {
-        int gehalten = event.getRepeatCount();
-        if (gehalten >= 12) return 6;
-        if (gehalten >= 5) return 3;
-        return 1;
     }
 
     boolean zurueck() {

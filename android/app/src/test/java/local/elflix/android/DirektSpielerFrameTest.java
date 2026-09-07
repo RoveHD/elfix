@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.content.res.Configuration;
 import org.junit.Test;
 
 /** Die Bereitschaft des nativen Players bei verschiedenen Frame-Rastern. */
@@ -58,5 +59,33 @@ public class DirektSpielerFrameTest {
         assertTrue(DirektSpieler.darfNutzerSpulen(false, false));
         assertTrue(DirektSpieler.darfNutzerSpulen(true, true));
         assertFalse(DirektSpieler.darfNutzerSpulen(true, false));
+    }
+
+    @Test
+    public void fassungUndHosterDarfNurDerHostOderEinPrivaterPlayerWaehlen() {
+        assertTrue(DirektWiedergabe.darfFassungUndHosterWaehlen(false, false));
+        assertTrue(DirektWiedergabe.darfFassungUndHosterWaehlen(true, true));
+        assertFalse(DirektWiedergabe.darfFassungUndHosterWaehlen(true, false));
+    }
+
+    @Test
+    public void aniworldFilmeBleibenImNativenDirektplayer() {
+        String basis = "https://aniworld.to/anime/stream/demon-slayer";
+        assertTrue(DirektWiedergabe.istSerienseite(basis + "/filme"));
+        assertTrue(DirektWiedergabe.istFolge(basis + "/filme/film-1"));
+        assertTrue(DirektWiedergabe.passt(basis + "/filme"));
+        assertTrue(DirektWiedergabe.passt(basis + "/filme/film-1"));
+        assertFalse(DirektWiedergabe.istFolge(basis + "/filme"));
+    }
+
+    @Test
+    public void nurDieFernsehKonfigurationBekommtDieFernbedienungsLeiste() {
+        Configuration tv = new Configuration();
+        tv.uiMode = Configuration.UI_MODE_TYPE_TELEVISION;
+        assertTrue(DirektSpieler.istFernseher(tv));
+
+        Configuration telefon = new Configuration();
+        telefon.uiMode = Configuration.UI_MODE_TYPE_NORMAL;
+        assertFalse(DirektSpieler.istFernseher(telefon));
     }
 }

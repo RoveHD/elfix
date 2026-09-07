@@ -11,22 +11,32 @@ public class DirektProbeActivity extends Activity {
     volatile JSONObject stand = new JSONObject();
     volatile JSONObject marke;
     volatile int spruenge;
+    volatile boolean runde;
+    volatile boolean host;
+    volatile int fassungKlicks;
+    volatile int hosterKlicks;
+    volatile int naechsteKlicks;
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         kern = new Kern(this, null);
         kern.starten();
         spieler = new DirektSpieler(this, kern, new DirektSpieler.Umgebung() {
             public void schliessen() { finish(); }
-            public void fassungen() { }
-            public void hoster() { }
+            public void fassungen() { fassungKlicks += 1; }
+            public void hoster() { hosterKlicks += 1; }
             public void folgen() { }
-            public void naechste() { }
+            public void naechste() { naechsteKlicks += 1; }
             public void stand(JSONObject wert) { stand = wert; }
             public void live(JSONObject wert, String aktion) { }
             public void bereit() { }
             public boolean darfAutoplay() { return true; }
             public void marke(java.util.function.Consumer<JSONObject> fertig) { fertig.accept(marke); }
             public void sprung(double von, double nach) { spruenge++; }
+            public boolean inRunde() { return runde; }
+            public boolean istRundenHost() { return host; }
+            public boolean darfFassungUndHosterWaehlen() {
+                return DirektSpieler.darfNutzerQuelleWaehlen(runde, host);
+            }
         });
         setContentView(spieler.ansicht);
     }

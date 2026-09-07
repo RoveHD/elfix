@@ -2,9 +2,11 @@ package local.elflix.android;
 
 import static org.junit.Assert.*;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.net.ServerSocket;
@@ -16,6 +18,7 @@ import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -34,10 +37,142 @@ public class DirektSpielerGeraeteTest {
         }
         return null;
     }
+    private static TextView feld(View view, String tag) {
+        if (tag.equals(view.getTag()) && view instanceof TextView) return (TextView) view;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+            TextView found = feld(((ViewGroup) view).getChildAt(i), tag);
+            if (found != null) return found;
+        }
+        return null;
+    }
+    private static void tippen(View view) {
+        long zeit = android.os.SystemClock.uptimeMillis();
+        float x = Math.max(1, view.getWidth() / 2f);
+        float y = Math.max(1, view.getHeight() / 2f);
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit, MotionEvent.ACTION_DOWN, x, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit + 20, MotionEvent.ACTION_UP, x, y, 0));
+    }
+    private static View mitTag(View view, String tag) {
+        if (tag.equals(view.getTag())) return view;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+            View found = mitTag(((ViewGroup) view).getChildAt(i), tag);
+            if (found != null) return found;
+        }
+        return null;
+    }
+    private static String fokusZustand(DirektProbeActivity activity) {
+        View fokus = activity.spieler.ansicht.findFocus();
+        String ziel = fokus == null ? "kein Fokus" : fokus.getClass().getSimpleName()
+            + " tag=" + fokus.getTag() + " text=" + (fokus instanceof TextView
+                ? ((TextView) fokus).getText() : "") + " beschreibung=" + fokus.getContentDescription();
+        return "windowFocus=" + activity.hasWindowFocus() + " touchMode="
+            + activity.spieler.ansicht.isInTouchMode() + " " + ziel;
+    }
     private static JSONObject befehl(double zeit) throws Exception {
         return new JSONObject().put("tun", "syncprepare").put("position", zeit).put("warten", true)
             .put("ereignis", new JSONObject().put("videoTime", zeit).put("playing", false));
     }
+
+    @Test public void telefonBehaeltPlayerTonUndLautstaerke() throws Exception {
+        try (ActivityScenario<DirektProbeActivity> scenario = ActivityScenario.launch(DirektProbeActivity.class)) {
+            scenario.onActivity(a -> {
+                Assume.assumeFalse("Nur auf einem echten Telefon ausfuehren",
+                    DirektSpieler.istFernseher(a.getResources().getConfiguration()));
+                assertNotNull("Telefon behaelt den Player-Tonknopf", mitTag(a.spieler.ansicht, "ton"));
+                assertNotNull("Telefon behaelt den Player-Lautstaerkeregler", mitTag(a.spieler.ansicht, "lautstaerke"));
+            });
+        }
+    }
+
+    @Test public void fernseherHatKeineTonGruppeUndBeginntDpadAufPlay() throws Exception {
+        try (ActivityScenario<DirektProbeActivity> scenario = ActivityScenario.launch(DirektProbeActivity.class)) {
+            scenario.onActivity(a -> {
+                Assume.assumeTrue("Nur auf einem echten Fernseher ausfuehren",
+                    DirektSpieler.istFernseher(a.getResources().getConfiguration()));
+                assertNull("Fernseher nutzt die Systemlautstaerke statt Player-Ton",
+                    mitTag(a.spieler.ansicht, "ton"));
+                assertNull("Fernseher hat keinen Player-Lautstaerkeregler",
+                    mitTag(a.spieler.ansicht, "lautstaerke"));
+
+                a.spieler.ansicht.requestFocus();
+            });
+            androidx.test.uiautomator.UiDevice fernbedienung = androidx.test.uiautomator.UiDevice
+                .getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            java.io.File vorDpad = new java.io.File(androidx.test.platform.app.InstrumentationRegistry
+                .getInstrumentation().getTargetContext().getExternalFilesDir(null), "elfix-tv-before-dpad.png");
+            assertTrue("TV-Vorher-Screenshot konnte nicht geschrieben werden", fernbedienung.takeScreenshot(vorDpad));
+            assertEquals("Dpad würde nicht die Test-Activity erreichen", "local.elflix.android.debug",
+                fernbedienung.getCurrentPackageName());
+            scenario.onActivity(a -> assertTrue("Test-Activity hat vor Dpad keinen Fensterfokus: "
+                + fokusZustand(a), a.hasWindowFocus()));
+            assertTrue("Echter TV-Dpad-Down konnte nicht injiziert werden", fernbedienung.pressDPadDown());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(a -> {
+                TextView play = feld(a.spieler.ansicht, "spielen");
+                assertNotNull(play);
+                assertEquals(View.VISIBLE, play.getVisibility());
+                assertTrue("Der erste Steuerkreuzdruck markiert Play sichtbar: " + fokusZustand(a),
+                    play.hasFocus());
+            });
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            java.io.File screenshot = new java.io.File(androidx.test.platform.app.InstrumentationRegistry
+                .getInstrumentation().getTargetContext().getExternalFilesDir(null), "elfix-tv-dpad-play.png");
+            assertTrue("TV-Dpad-Fokus-Screenshot konnte nicht geschrieben werden",
+                fernbedienung.takeScreenshot(screenshot));
+
+            assertTrue("Echter TV-Dpad-Up konnte nicht injiziert werden", fernbedienung.pressDPadUp());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(a -> {
+                View fortschritt = mitTag(a.spieler.ansicht, "regler");
+                assertNotNull(fortschritt);
+                assertTrue("Steuerkreuz erreicht den sichtbar gerahmten Fortschrittsregler",
+                    fortschritt.hasFocus());
+            });
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            java.io.File seekScreenshot = new java.io.File(androidx.test.platform.app.InstrumentationRegistry
+                .getInstrumentation().getTargetContext().getExternalFilesDir(null), "elfix-tv-dpad-seek.png");
+            assertTrue("TV-Regler-Fokus-Screenshot konnte nicht geschrieben werden",
+                fernbedienung.takeScreenshot(seekScreenshot));
+
+            assertTrue("Echter TV-Dpad-Down zum Play konnte nicht injiziert werden",
+                fernbedienung.pressDPadDown());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(a -> {
+                TextView play = feld(a.spieler.ansicht, "spielen");
+                assertTrue("Dpad-Down kehrt vom Regler zu Play zurück", play.hasFocus());
+                TextView fassung = feld(a.spieler.ansicht, "fassung");
+                assertNotNull(fassung);
+            });
+            AtomicBoolean fassungFokus = new AtomicBoolean();
+            for (int i = 0; i < 8; i++) {
+                scenario.onActivity(a -> fassungFokus.set(feld(a.spieler.ansicht, "fassung").hasFocus()));
+                if (fassungFokus.get()) break;
+                assertTrue("Echter TV-Dpad-Right konnte nicht injiziert werden",
+                    fernbedienung.pressDPadRight());
+            }
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(a -> {
+                TextView play = feld(a.spieler.ansicht, "spielen");
+                TextView fassung = feld(a.spieler.ansicht, "fassung");
+                assertTrue("Steuerkreuz erreicht nachfolgende Player-Control", fassung.hasFocus());
+            });
+            assertTrue("Echter TV-OK konnte nicht injiziert werden", fernbedienung.pressDPadCenter());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(a -> {
+                TextView play = feld(a.spieler.ansicht, "spielen");
+                assertEquals("OK aktiviert die per Steuerkreuz erreichte Control", 1, a.fassungKlicks);
+
+                a.spieler.blende("TV-Testmenü", Collections.singletonList("Eintrag"),
+                    Collections.singletonList(() -> { }), -1);
+                assertTrue("Die Blende setzt einen sichtbaren Menüfokus", a.spieler.blendeOffen());
+                assertTrue(a.spieler.zurueck());
+                assertFalse(a.spieler.blendeOffen());
+                assertTrue("Zurück aus dem Menü markiert wieder Play", play.hasFocus());
+            });
+        }
+    }
+
     @Test public void mp4UndHlsDekodierenUndSpulen() throws Exception {
         String base = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("mediaBase");
         org.junit.Assume.assumeTrue("Lokaler MP4/HLS-Fixture-Server erforderlich", base != null);
@@ -155,6 +290,42 @@ public class DirektSpielerGeraeteTest {
                     assertEquals("Automatische Sprünge dürfen keine Intro-Belege erzeugen", 0, a.spruenge);
                 });
             } finally { running.set(false); }
+        }
+    }
+
+    @Test public void gastKannKeineQuelleWaehlenAberDieNaechsteFolgeAusloesen() throws Exception {
+        try (ActivityScenario<DirektProbeActivity> scenario = ActivityScenario.launch(DirektProbeActivity.class)) {
+            scenario.onActivity(a -> {
+                a.runde = true;
+                a.host = false;
+                a.spieler.quellenZeichnen();
+                TextView fassung = feld(a.spieler.ansicht, "fassung");
+                TextView hoster = feld(a.spieler.ansicht, "hoster");
+                assertNotNull(fassung);
+                assertNotNull(hoster);
+                assertFalse("Gast darf keine Fassung waehlen", fassung.isEnabled());
+                assertFalse("Gast darf keinen Hoster waehlen", hoster.isEnabled());
+                // performClick() ruft Androids Listener auch bei einer
+                // deaktivierten View direkt auf. Ein echter Tipp muss dagegen
+                // bereits vor dem Handler abgewiesen werden.
+                tippen(fassung);
+                tippen(hoster);
+                assertEquals("Deaktivierte Quellenknopfe reagieren nicht auf echte Tipps", 0,
+                    a.fassungKlicks + a.hosterKlicks);
+
+                a.spieler.naechsteVorhanden(true);
+                a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_NEXT));
+                assertEquals("Gaste duerfen weiter zur naechsten Folge", 1, a.naechsteKlicks);
+
+                a.host = true;
+                a.spieler.quellenZeichnen();
+                assertTrue("Der Host darf eine Fassung waehlen", fassung.isEnabled());
+                assertTrue("Der Host darf einen Hoster waehlen", hoster.isEnabled());
+                fassung.performClick();
+                hoster.performClick();
+                assertEquals(1, a.fassungKlicks);
+                assertEquals(1, a.hosterKlicks);
+            });
         }
     }
 }

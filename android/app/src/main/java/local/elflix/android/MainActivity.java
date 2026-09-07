@@ -1197,6 +1197,10 @@ public class MainActivity extends Activity {
                 // ueber der Bedienleiste des Hosters und gehoert weg, sobald
                 // die weg ist.
                 if (spielerleiste != null) spielerleiste.steuerungSichtbar(sichtbar);
+                // Im Mausmodus ist der Cursor Teil derselben Bedienung. Sobald
+                // der Player seine Leiste ausblendet, geht auch er weg und
+                // bleibt nicht als roter Punkt ueber dem Bild stehen.
+                if (mouseMode) setMouseCursorVisible(sichtbar);
             }
 
             @Override
@@ -8839,7 +8843,17 @@ public class MainActivity extends Activity {
             uebersichtErwartet = false;
             uebersichtTakt.removeCallbacksAndMessages(null);
             uebersichtBestand = gelesen;
-            if (uebersichtStaffel <= 0) uebersichtStaffel = gelesen.offeneStaffel;
+            // Staffel 0 ist die Filme-Registerkarte. Nur wenn die bisherige
+            // Auswahl in den frisch gelesenen Daten wirklich fehlt, auf die
+            // vom Anbieter geoeffnete Staffel wechseln.
+            boolean staffelDa = false;
+            for (Serienuebersicht.Folge folge : gelesen.folgen) {
+                if (folge.staffel == uebersichtStaffel) {
+                    staffelDa = true;
+                    break;
+                }
+            }
+            if (!staffelDa) uebersichtStaffel = gelesen.offeneStaffel;
             if (uebersichtTitel.isEmpty()) uebersichtTitel = gelesen.titel;
 
             // Eine Auswahl mit genau einem Eintrag ist keine Auswahl.
@@ -8893,7 +8907,8 @@ public class MainActivity extends Activity {
         uebersichtErwartet = true;
         uebersichtGeduldStellen();
         startBegleiten(uebersichtAnbieter, staffel.url,
-            uebersichtTitel.isEmpty() ? "Serie" : uebersichtTitel + " · Staffel " + staffel.nummer, 0);
+            uebersichtTitel.isEmpty() ? "Serie" : uebersichtTitel + " · "
+                + Serienuebersicht.staffelName(staffel.nummer), 0);
         openProvider(uebersichtAnbieter, staffel.url);
     }
 
@@ -8983,7 +8998,7 @@ public class MainActivity extends Activity {
         for (Serienuebersicht.Staffel staffel : daten.staffeln) {
             boolean gewaehlt = staffel.nummer == uebersichtStaffel;
             TextView reiter = new TextView(this);
-            reiter.setText("Staffel " + staffel.nummer);
+            reiter.setText(Serienuebersicht.staffelName(staffel.nummer));
             reiter.setTextColor(gewaehlt ? Color.WHITE : Theme.TEXT_SECONDARY);
             reiter.setTextSize(fernseher ? 17 : 14);
             reiter.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -9709,6 +9724,14 @@ public class MainActivity extends Activity {
                 }
                 @Override public boolean istRundenHost() {
                     return mitschauen != null && mitschauen.binHostHier();
+                }
+                @Override public boolean darfFassungUndHosterWaehlen() {
+                    boolean inRunde = mitschauen != null && mitschauen.laeuftMit();
+                    boolean istHost = mitschauen != null && mitschauen.binHostHier();
+                    return DirektWiedergabe.darfFassungUndHosterWaehlen(inRunde, istHost);
+                }
+                @Override public void folgenwechsel(String url) {
+                    if (mitschauen != null) mitschauen.folgenwechselMelden(url);
                 }
                 public void fassungGewaehlt(String fassungName, String hosterName) {
                     if (mitschauen == null) return;

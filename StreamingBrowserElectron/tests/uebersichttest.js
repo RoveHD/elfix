@@ -97,6 +97,10 @@ function staffelReiter(nummer) {
   return new Knoten("a", { href: `/anime/stream/${SLUG}/staffel-${nummer}` }, `Staffel ${nummer}`);
 }
 
+function filmReiter() {
+  return new Knoten("a", { href: `/anime/stream/${SLUG}/filme` }, "Filme");
+}
+
 function folgenZeile(staffel, folge, { ohneHoster = false, sammelIn = 0,
   titel = "", englisch = "" } = {}) {
   const link = `/anime/stream/${SLUG}/staffel-${staffel}/episode-${folge}`;
@@ -138,6 +142,28 @@ function seite({ staffeln = [1, 2, 3], offen = 1, folgen = 8, sonderfaelle = tru
 }
 
 const SKRIPT = seitendaten.uebersichtSkript();
+
+// AniWorld fasst die Filme einer Serie als Staffel 0. Sie ist eine echte,
+// oeffnbare Sammlung und darf nicht mit einem fremden Link verwechselt werden.
+{
+  const filmUrl = `/anime/stream/${SLUG}/filme/film-1`;
+  const kinder = [new Knoten("h1", {}, "BLACK TORCH"), filmReiter(),
+    new Knoten("tr", {}, "", [
+      new Knoten("td", { class: "season0EpisodeID" }, "", [new Knoten("a", { href: filmUrl }, "Film 1")]),
+      new Knoten("td", { class: "seasonEpisodeTitle" }, "", [new Knoten("a", { href: filmUrl }, "", [
+        new Knoten("strong", {}, "Der Film")
+      ])])
+    ])];
+  const ergebnis = fahre(SKRIPT, new Knoten("body", {}, "", kinder), `/anime/stream/${SLUG}/filme`);
+  pruefe("Die Filmsammlung Staffel 0 wird gelesen",
+    ergebnis.staffeln.map((s) => s.staffel).join(",") === "0" && ergebnis.staffeln[0]?.url.endsWith("/filme"),
+    JSON.stringify(ergebnis.staffeln));
+  pruefe("Filme bleiben in ihrer eigenen Sammlung",
+    ergebnis.folgen.length === 1 && ergebnis.folgen[0].staffel === 0
+      && ergebnis.folgen[0].folge === 1 && ergebnis.folgen[0].url.endsWith("/filme/film-1")
+      && ergebnis.folgen[0].titel === "Der Film",
+    JSON.stringify(ergebnis.folgen));
+}
 
 // --- Was dabei herauskommen muss --------------------------------------------
 
@@ -247,6 +273,44 @@ const SKRIPT = seitendaten.uebersichtSkript();
     zu(2, 1) ? zu(2, 1).titel : "-");
 }
 
+// S.to nutzt je nach Vorlage keine Tabellenzeile und hebt nur die Nummer
+// hervor. Der Name steht trotzdem in der eigenen Titelzelle.
+{
+  const link = `/anime/stream/${SLUG}/staffel-1/episode-1`;
+  const titelZelle = new Knoten("div", { class: "seasonEpisodeTitle" }, "", [
+    new Knoten("a", { href: link }, "", [
+      new Knoten("strong", {}, "Episode 1"),
+      new Knoten("span", {}, " · Der wahre Name")
+    ])
+  ]);
+  const ergebnis = fahre(SKRIPT, new Knoten("body", {}, "", [
+    new Knoten("h1", {}, "BLACK TORCH"), titelZelle
+  ]), `/anime/stream/${SLUG}/staffel-1/episode-1`, "s.to");
+  pruefe("S.to-Div-Titel werden auch ohne Tabellenzeile gelesen",
+    ergebnis.folgen[0]?.titel === "Der wahre Name",
+    ergebnis.folgen[0]?.titel || "(leer)");
+}
+
+// Live bei S.to am 2026-09-07: Die neue Tabelle hat keinen Link mehr in der
+// Titelzelle. Stattdessen traegt die klickbare Zeile `window.location` und die
+// Episodenleiste darueber den eigentlichen Link.
+{
+  const link = `/serie/${SLUG}/staffel-1/episode-1`;
+  const zeile = new Knoten("tr", { onclick: `window.location='${link}'` }, "", [
+    new Knoten("td", { class: "episode-title-cell" }, "", [
+      new Knoten("strong", { class: "episode-title-ger" }, "Der echte S.to-Titel")
+    ])
+  ]);
+  const ergebnis = fahre(SKRIPT, new Knoten("body", {}, "", [
+    new Knoten("h1", {}, "BLACK TORCH"),
+    new Knoten("a", { href: link }, "1"),
+    zeile
+  ]), `/serie/${SLUG}/staffel-1`, "186.2.175.5");
+  pruefe("S.to-Tabellenzeilen ordnen onclick-Titel ihrer Folge zu",
+    ergebnis.folgen[0]?.titel === "Der echte S.to-Titel",
+    ergebnis.folgen[0]?.titel || "(leer)");
+}
+
 // Und die Zeile selbst: steht oben der Titel, gehoert die Nummer darunter.
 {
   const fs3 = require("fs");
@@ -263,7 +327,7 @@ const SKRIPT = seitendaten.uebersichtSkript();
       .test(UEBERSICHT),
     "geraten wird nichts - lieber die Nummer als ein falscher Titel");
   pruefe("Mit Titel rueckt die Folgennummer in die zweite Zeile",
-    /public String unterschrift\(\)[\s\S]{0,400}?return "Staffel " \+ staffel \+ "  ·  Folge " \+ nummer;/
+    /public String unterschrift\(\)[\s\S]{0,400}?return staffelName\(staffel\) \+ "  ·  Folge " \+ nummer;/
       .test(UEBERSICHT));
   pruefe("Und die Liste zeichnet beides",
     /name\.setText\(folge\.ueberschrift\(\)\)/.test(HAUPT2)

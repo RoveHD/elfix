@@ -88,8 +88,13 @@ function staffelSeiteUrl(value) {
     const url = new URL(String(value || ""));
     url.hash = "";
     url.search = "";
-    const pfad = url.pathname.replace(/\/(?:episode|folge)-\d+\/?$/i, "");
-    if (pfad === url.pathname || !/\/(?:staffel|season)-\d+$/i.test(pfad)) return "";
+    const pfad = url.pathname
+      .replace(/\/(?:episode|folge)-\d+\/?$/i, "")
+      // AniWorld fuehrt die Filme einer Serie unter /filme/film-N. Nach der
+      // Auswahl ist nur die /filme-Seite wieder die vollstaendige Liste.
+      .replace(/\/filme\/film-\d+\/?$/i, "/filme");
+    if (pfad === url.pathname) return "";
+    if (!/\/(?:staffel|season)-\d+$|\/filme$/i.test(pfad)) return "";
     url.pathname = pfad;
     return url.href;
   } catch {

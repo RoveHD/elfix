@@ -751,6 +751,12 @@ public final class Mitschauen {
         if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) return;
         if (watchparty == null || !watchparty.istEingeschaltet()) return;
         if (folgtDerRunde) return;
+        // Der native Direkt-Spieler meldet den Wechsel schon vor dem erneuten
+        // Oeffnen der Folgenseite. Wenn deren Beobachter danach fertig wird,
+        // muss er dieselbe Folge wiedererkennen statt ein zweites navigate zu
+        // schicken.
+        int[] folge = folgeAus(url);
+        if (folge[1] > 0) gemeldeteFolge = serienTeil(url) + "#s" + folge[0] + "e" + folge[1];
         // Wer selbst weiterblaettert, meint den Auftrag von vorhin nicht mehr -
         // es sei denn, er zeigt genau auf diese Folge. Aus der Watchparty-Seite
         // geoeffnet ist beides dasselbe Ereignis.

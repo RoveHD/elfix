@@ -112,6 +112,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   onFernState: (callback) => ipcRenderer.on("fern:state", (_event, state) => callback(state)),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  saveAppearance: (appearance) => ipcRenderer.invoke("settings:appearance-save", appearance),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   updateFilters: () => ipcRenderer.invoke("adblock:update-filters"),
   getBlocked: () => ipcRenderer.invoke("adblock:blocked"),

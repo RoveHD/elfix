@@ -119,21 +119,26 @@ const mitStaffeln = direktfolgen.fuerPlayer({
     { staffel: 2, url: "https://a.example/serie/aot/staffel-2" },
     { staffel: 1, url: "https://a.example/serie/aot/staffel-1" },
     { staffel: 0, url: "https://a.example/serie/aot/staffel-0" },
-    { staffel: 3, url: "" }
+    { staffel: 3, url: "" },
+    { url: "https://a.example/serie/aot/ohne-staffel" },
+    { staffel: "", url: "https://a.example/serie/aot/leere-staffel" },
+    { staffel: "ungültig", url: "https://a.example/serie/aot/ungueltige-staffel" }
   ],
   folgen: [{ staffel: 1, folge: 1, url: "https://a.example/serie/aot/staffel-1/episode-1" }]
 }, { season: 1, episode: 1 });
 
-pruefe("Die Staffeln reisen zum Player mit",
-  mitStaffeln.staffeln.length === 2,
+pruefe("Die Staffeln und Filme reisen zum Player mit",
+  mitStaffeln.staffeln.length === 3,
   JSON.stringify(mitStaffeln.staffeln.map((e) => e.staffel)));
-pruefe("Und zwar der Reihe nach",
-  mitStaffeln.staffeln[0].staffel === 1 && mitStaffeln.staffeln[1].staffel === 2);
+pruefe("Und zwar der Reihe nach, mit Filmen vor den Staffeln",
+  mitStaffeln.staffeln.map((eintrag) => eintrag.staffel).join(",") === "0,1,2");
 pruefe("Ohne Adresse ist eine Staffel nicht zu oeffnen",
   mitStaffeln.staffeln.every((eintrag) => eintrag.url),
   "ein Reiter, der nichts laedt, ist schlimmer als keiner");
-pruefe("Staffel 0 zaehlt nicht",
-  mitStaffeln.staffeln.every((eintrag) => eintrag.staffel > 0));
+pruefe("Staffel 0 bleibt als Filmsammlung erhalten",
+  mitStaffeln.staffeln.some((eintrag) => eintrag.staffel === 0));
+pruefe("Eine fehlende oder ungueltige Staffel wird nicht als Filme ausgegeben",
+  !mitStaffeln.staffeln.some((eintrag) => /ohne-staffel|leere-staffel|ungueltige-staffel/.test(eintrag.url)));
 pruefe("Ohne Staffelangabe bleibt die Liste leer statt undefiniert",
   Array.isArray(direktfolgen.fuerPlayer({ titel: "X", folgen: [] }, null).staffeln),
   "der Player laeuft sonst in einen Fehler beim Zeichnen");

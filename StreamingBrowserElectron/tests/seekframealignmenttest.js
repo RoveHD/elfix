@@ -10,9 +10,11 @@ const ROOM = `seek-frame-${Date.now()}`;
 const KEY = "serie:seek-frame-test";
 const FRAME = 299.590944;
 const POSITION = 299.631605;
+const sockets = [];
 
 function client(name, id) {
   const socket = new WS(`ws://127.0.0.1:${PORT}`);
+  sockets.push(socket);
   const messages = [];
   const waiters = [];
   socket.on("message", raw => {
@@ -47,22 +49,34 @@ function client(name, id) {
   };
 }
 
+let stage = "initialization";
+let diagnostic = () => "";
 (async () => {
   const host = client("host", "seek-host");
   const guest = client("guest", "seek-guest");
+  const waitAt = async (label, promise) => {
+    stage = label;
+    return promise;
+  };
+  const waitHost = (test, ms) => waitAt("host " + test.toString(), host.wait(test, ms));
+  const waitGuest = (test, ms) => waitAt("guest " + test.toString(), guest.wait(test, ms));
+  diagnostic = () => JSON.stringify({
+    host: host.messages.slice(-6).map(m => ({ type: m.type, action: m.action, position: m.position, frameTime: m.frameTime, resync: m.resync })),
+    guest: guest.messages.slice(-8).map(m => ({ type: m.type, action: m.action, position: m.position, frameTime: m.frameTime, resync: m.resync }))
+  });
   await Promise.all([host.open(), guest.open()]);
 
   host.send({ type: "join", room: ROOM, name: "Host", deviceId: "seek-host" });
-  await host.wait(m => m.type === "state");
+  await waitHost(m => m.type === "state");
   host.send({ type: "share", item: {
     key: KEY, url: URL, title: "Frame test", type: "serie", season: 1, episode: 1
   }});
-  await host.wait(m => m.type === "state" && m.shared?.some(item => item.key === KEY));
+  await waitHost(m => m.type === "state" && m.shared?.some(item => item.key === KEY));
 
   guest.send({ type: "join", room: ROOM, name: "Guest", deviceId: "seek-guest" });
-  await guest.wait(m => m.type === "state" && m.shared?.some(item => item.key === KEY));
+  await waitGuest(m => m.type === "state" && m.shared?.some(item => item.key === KEY));
   guest.send({ type: "enter", key: KEY });
-  await guest.wait(m => m.type === "state" && m.shared?.[0]?.memberIds?.includes("seek-guest"));
+  await waitGuest(m => m.type === "state" && m.shared?.[0]?.memberIds?.includes("seek-guest"));
 
   const stand = (client, id, frameTime) => client.send({
     type: "here", key: KEY, position: POSITION, paused: true,
@@ -87,7 +101,7 @@ function client(name, id) {
 
   // The next fresh host heartbeat is the authoritative rendered frame.
   stand(host, "seek-host", FRAME);
-  const aligned = await guest.wait(m => m.type === "control" && m.action === "seek"
+  const aligned = await waitGuest(m => m.type === "control" && m.action === "seek"
     && m.resync && m.frameTime != null);
   if (aligned.frameTime !== FRAME || aligned.position !== FRAME) {
     throw new Error(`expected frame ${FRAME}, got position=${aligned.position} frame=${aligned.frameTime}`);
@@ -96,6 +110,8 @@ function client(name, id) {
   host.socket.close();
   guest.socket.close();
 })().catch(error => {
-  console.error(error.message);
+  console.error(`${error.message} [stage: ${stage}] ${diagnostic()}`);
   process.exitCode = 1;
+}).finally(() => {
+  for (const socket of sockets) socket.terminate();
 });

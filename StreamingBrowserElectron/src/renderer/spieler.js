@@ -1042,6 +1042,7 @@ function tempoRechteSetzen() {
     ? "In einer Runde stellt der Host das Tempo"
     : "Tempo (Shift + , und Shift + .)";
   spulenRechteSetzen();
+  quellenRechteSetzen();
 }
 
 /** Nur der Host veraendert in einer Runde die gemeinsame Wiedergabestelle. */
@@ -1110,12 +1111,12 @@ async function staffelOeffnen(staffel) {
   }
   folgenListe.textContent = "";
   folgenLeer.hidden = false;
-  folgenLeer.textContent = `Staffel ${staffel} wird gelesen …`;
+  folgenLeer.textContent = staffel === 0 ? "Filme werden gelesen …" : `Staffel ${staffel} wird gelesen …`;
   folgenZeichnen();
   const stand = await bruecke.folgen(false, ziel.url);
   if (!stand || !Array.isArray(stand.folgen) || !stand.folgen.length) {
     folgenLeer.hidden = false;
-    folgenLeer.textContent = `Staffel ${staffel} ließ sich nicht lesen.`;
+    folgenLeer.textContent = staffel === 0 ? "Die Filme ließen sich nicht lesen." : `Staffel ${staffel} ließ sich nicht lesen.`;
     return;
   }
   // Die gelesenen Folgen kommen dazu, die alten bleiben - wer hin und her
@@ -1183,7 +1184,7 @@ function folgenZeichnen() {
     knopf.disabled = Boolean(eintrag.gesperrt) || !eintrag.url;
     const nummer = document.createElement("span");
     nummer.className = "nummer";
-    nummer.textContent = `Folge ${eintrag.folge}`;
+    nummer.textContent = eintrag.staffel === 0 ? `Film ${eintrag.folge}` : `Folge ${eintrag.folge}`;
     const titel = document.createElement("span");
     titel.textContent = eintrag.titel || (eintrag.gesperrt ? "in einer anderen Folge enthalten" : "");
     knopf.append(nummer, titel);
@@ -1306,6 +1307,24 @@ function hosterSetzen(liste, laufender) {
   } else {
     hosterWahl.value = "";
   }
+  quellenRechteSetzen();
+}
+
+/** Die Quelle der Runde bestimmt der Host; allein bleibt jede Fassung frei. */
+function quellenWechselErlaubt() {
+  return !inRunde || binHost;
+}
+
+function quellenRechteSetzen() {
+  const gesperrt = !quellenWechselErlaubt();
+  const fassungen = new Set(hosterBestand.map(fassungVon).filter(Boolean));
+  const passend = fassungWahl.value
+    ? hosterBestand.filter((eintrag) => fassungVon(eintrag) === fassungWahl.value)
+    : hosterBestand;
+  fassungWahl.disabled = gesperrt || fassungen.size < 2;
+  hosterWahl.disabled = gesperrt || passend.length === 0 || (Boolean(hosterWahl.value) && passend.length < 2);
+  fassungWahl.title = gesperrt ? "Die Fassung legt der Host der Watchparty fest" : "Fassung wählen";
+  hosterWahl.title = gesperrt ? "Den Hoster legt der Host der Watchparty fest" : "Hoster wählen";
 }
 
 /**
@@ -1315,6 +1334,7 @@ function hosterSetzen(liste, laufender) {
  * wer bei VOE war, bleibt bei VOE. Sonst der beste, den diese Fassung hergibt.
  */
 function fassungWechseln(name) {
+  if (!quellenWechselErlaubt()) return;
   const passend = hosterBestand.filter((eintrag) => fassungVon(eintrag) === name);
   if (!passend.length) return;
   const jetzige = hosterBestand.find((eintrag) => eintrag.adresse === hosterWahl.value);
@@ -1326,7 +1346,7 @@ function fassungWechseln(name) {
 }
 
 async function hosterWechseln(link) {
-  if (!link || wechselLaeuft) return;
+  if (!quellenWechselErlaubt() || !link || wechselLaeuft) return;
   wechselLaeuft = true;
   const stelle = Number(bild.currentTime) || 0;
   standMelden(true);

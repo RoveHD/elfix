@@ -420,8 +420,7 @@
         <nav class="settings-nav">
           <button class="tab" data-tab="settingsHome"><span>⌕</span>Übersicht<small>Alle Bereiche auf einen Blick</small></button>
           <div class="settings-nav-section">Aussehen</div>
-          <button class="tab is-active" data-tab="appearance"><span>◈</span>Darstellung<small>Theme, Farben, Layout</small></button>
-          <button class="tab" data-tab="advancedAppearance"><span>◎</span>Feinschliff<small>Einzelne Farben & Maße</small></button>
+          <button class="tab is-active" data-tab="appearance"><span>◈</span>Aussehen<small>Design, Farben und Größe</small></button>
           <div class="settings-nav-section">Inhalte</div>
           <button class="tab" data-tab="homeSettings"><span>⌂</span>Startseite<small>Startseite & Karten</small></button>
           <button class="tab" data-tab="providers"><span>☰</span>Anbieter<small>Seiten verwalten</small></button>
@@ -458,8 +457,7 @@
           </div>
           <div class="settings-search-results" id="settingsSearchResults"></div>
           <div class="settings-home-grid">
-            <button class="settings-home-card" data-jump-tab="appearance"><strong>◈ Darstellung</strong><span>Hell oder dunkel, Akzentfarbe, Layout-Stil, Kartengröße und Animationen</span></button>
-            <button class="settings-home-card" data-jump-tab="advancedAppearance"><strong>◎ Feinschliff</strong><span>Jede einzelne Farbe, Abstände, Rundungen und Button-Maße — für Detailverliebte</span></button>
+            <button class="settings-home-card" data-jump-tab="appearance"><strong>◈ Aussehen</strong><span>Design, Farben, Layout, Karten und Bewegungen an einem Ort</span></button>
             <button class="settings-home-card" data-jump-tab="homeSettings"><strong>⌂ Startseite & Karten</strong><span>Welche Bereiche die Startseite zeigt und wie Watchlist-Karten aussehen</span></button>
             <button class="settings-home-card" data-jump-tab="providers"><strong>☰ Anbieter</strong><span>Streaming-Seiten anlegen, sortieren, ausblenden und Adblock pro Seite steuern</span></button>
             <button class="settings-home-card" data-jump-tab="playback"><strong>▷ Wiedergabe</strong><span>Wann automatisch pausiert wird und wie der Fortschritt gezählt wird</span></button>
@@ -811,20 +809,23 @@
         <div class="settings-page is-active" data-page="appearance">
           <div class="settings-head">
             <div>
-              <h3>Darstellung</h3>
-              <p>Passe das Aussehen von ELFIX an</p>
+              <h3>Aussehen</h3>
+              <p>Richte ELFIX so ein, dass es zu deinem Bildschirm und deinem Geschmack passt.</p>
             </div>
-            <button class="soft-action" data-reset-section="appearance">Bereich zurücksetzen</button>
+            <div class="appearance-head-actions">
+              <button class="soft-action" type="button" id="appearanceRevert">Änderungen zurücknehmen</button>
+              <button class="soft-action" data-reset-section="appearance">Auf Standard zurücksetzen</button>
+            </div>
           </div>
 
-          <div class="settings-preview" id="settingsPreview">
-            <div class="preview-topline"></div>
-            <div>
-              <strong>Live-Vorschau</strong>
-              <span>Button, Karte, Text, Rahmen und Akzent reagieren sofort auf jede Änderung.</span>
-            </div>
-            <button type="button">Aktion</button>
-          </div>
+          <nav class="appearance-section-nav" aria-label="Bereich in Aussehen wählen">
+            <button type="button" class="is-active" data-appearance-section="design"><span>◈</span>Design</button>
+            <button type="button" data-appearance-section="cards"><span>▣</span>Karten</button>
+            <button type="button" data-appearance-section="navigation"><span>☰</span>Navigation</button>
+            <button type="button" data-appearance-section="size"><span>↔</span>Größe</button>
+            <button type="button" data-appearance-section="colors"><span>●</span>Farben</button>
+            <button type="button" data-appearance-section="motion"><span>✦</span>Bewegung</button>
+          </nav>
 
           <!-- Zustand fuer Automatik und Umfang. Sichtbar stuenden sie doppelt:
                die Automatik hat oben ihren eigenen Schalter, einen einfachen
@@ -835,9 +836,29 @@
             <select id="settingsMode"><option value="advanced">Erweitert</option></select>
           </div>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel is-active" data-appearance-panel="design">
             <div class="settings-group-head">
-              <h4>1. Theme</h4>
+              <h4>Designvorlage</h4>
+              <p>Ein fertiges Gesamtbild aus Farben, Karten und Abständen. Danach kannst du alles einzeln anpassen.</p>
+            </div>
+            <label>Vorlage auswählen
+              <select id="designPresetInline">
+                <option value="elfix">ELFIX — Violett, dunkel</option>
+                <option value="cinema">Kino — Rot, Poster-Hintergrund</option>
+                <option value="oled">OLED — Blau auf echtem Schwarz</option>
+                <option value="glass">Glas — Türkis, transparente Karten</option>
+                <option value="minimal">Minimal — Blau, flache Karten</option>
+                <option value="compact">Kompakt — Kleine Karten, wenig Abstand</option>
+                <option value="colorful">Bunt — Kräftige Farben, runde Karten</option>
+                <option value="custom">Eigene Anpassungen</option>
+              </select>
+              <small>Ersetzt deine Farben und Layoutwerte. Bewegungstempo und Töne bleiben erhalten. Mit „Änderungen zurücknehmen“ kommst du zum Stand beim Öffnen zurück.</small>
+            </label>
+          </section>
+
+          <section class="settings-group appearance-panel" data-appearance-panel="design">
+            <div class="settings-group-head">
+              <h4>Grunddesign</h4>
               <p>Wähle den Grundstil für die gesamte Anwendung.</p>
             </div>
             <div class="choice-card-grid theme-choice-grid">
@@ -849,71 +870,56 @@
             </div>
           </section>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel" data-appearance-panel="colors">
             <div class="settings-group-head">
-              <h4>2. Farben</h4>
-              <p>Wähle eine Akzentfarbe oder ein komplettes Preset.</p>
+              <h4>Akzent und Farbwelt</h4>
+              <p>Die Akzentfarbe hebt aktive Elemente und wichtige Buttons hervor.</p>
             </div>
             <div class="color-control-row">
               <div>
                 <small>Akzentfarbe</small>
-                <div class="swatch-row">
-                  <button type="button" class="color-swatch" data-accent-choice="violet" style="--swatch:#7c3aed"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="blue" style="--swatch:#3b82f6"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="turquoise" style="--swatch:#06b6d4"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="green" style="--swatch:#22c55e"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="yellow" style="--swatch:#facc15"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="gold" style="--swatch:#f5b84b"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="orange" style="--swatch:#f97316"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="red" style="--swatch:#e50914"><span>✓</span></button>
-                  <button type="button" class="color-swatch" data-accent-choice="pink" style="--swatch:#ec4899"><span>✓</span></button>
+                <div class="swatch-row" role="group" aria-label="Akzentfarbe auswählen">
+                  <button type="button" class="color-swatch" data-accent-choice="violet" title="Violett" aria-label="Violett" style="--swatch:#7c3aed"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="blue" title="Blau" aria-label="Blau" style="--swatch:#3b82f6"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="turquoise" title="Türkis" aria-label="Türkis" style="--swatch:#06b6d4"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="green" title="Grün" aria-label="Grün" style="--swatch:#22c55e"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="yellow" title="Gelb" aria-label="Gelb" style="--swatch:#facc15"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="gold" title="Gold" aria-label="Gold" style="--swatch:#f5b84b"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="orange" title="Orange" aria-label="Orange" style="--swatch:#f97316"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="red" title="Rot" aria-label="Rot" style="--swatch:#e50914"><span>✓</span></button>
+                  <button type="button" class="color-swatch" data-accent-choice="pink" title="Pink" aria-label="Pink" style="--swatch:#ec4899"><span>✓</span></button>
                 </div>
               </div>
-              <label class="auto-color-button" title="Berechnet Flächen, Rahmen, Hover und Fokus passend zu Hintergrund und Akzentfarbe"><input id="autoDeriveColorsInline" type="checkbox"> ✨ Passend berechnen</label>
-              <label>Presets
-                <select id="designPresetInline">
-                  <option value="elfix">ELFIX Standard — Violett, dunkel</option>
-                  <option value="cinema">Kino — Rot, Poster-Hintergrund</option>
-                  <option value="oled">OLED — Blau auf echtem Schwarz</option>
-                  <option value="glass">Glas — Türkis, transparente Karten</option>
-                  <option value="minimal">Minimal — Blau, flach, ohne Schnörkel</option>
-                  <option value="compact">Kompakt — Blau, alles enger</option>
-                  <option value="colorful">Bunt — Violett, kräftig, große Rundungen</option>
-                  <option value="custom">Benutzerdefiniert</option>
-                </select>
-              </label>
+              <label class="auto-color-button appearance-auto-color"><input id="autoDeriveColorsInline" type="checkbox"><span><strong>Farben automatisch abstimmen</strong><small>Flächen und Kontraste passend zu Hintergrund und Akzentfarbe wählen.</small></span></label>
             </div>
-            <div class="custom-grid">
-              <label>Eigene Akzentfarbe<input id="accentColor" type="color" value="#e50914">
-                <small>Wählst du hier etwas aus, schaltet ELFIX automatisch auf „eigene Farbe“ um.</small>
-              </label>
-              <label>… oder als Hex-Wert<input id="accentHex" type="text" inputmode="text" maxlength="7" placeholder="#147eff">
-                <small>Zum Übernehmen einer Farbe aus einem anderen Programm, z.B. <code>#7c3aed</code>.</small>
-              </label>
+            <div class="accent-custom-fields">
+              <label>Eigene Farbe<input id="accentColor" type="color" value="#e50914"></label>
+              <label>Hex-Wert<input id="accentHex" type="text" inputmode="text" maxlength="7" placeholder="#147eff" spellcheck="false"></label>
+              <small>Wähle eine Farbe oder gib ihren Farbcode ein, z. B. #7c3aed.</small>
             </div>
           </section>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel" data-appearance-panel="design">
             <div class="settings-group-head">
-              <h4>3. Layout-Stil</h4>
+              <h4>Layout</h4>
               <p>Wie sollen Inhalte und Navigation angezeigt werden?</p>
             </div>
             <div class="choice-card-grid layout-choice-grid">
               <button type="button" class="choice-card" data-layout-choice="standard"><span>▰</span><strong>Standard</strong><small>Ausgewogen</small><i>✓</i></button>
               <button type="button" class="choice-card" data-layout-choice="compact"><span>▤</span><strong>Kompakt</strong><small>Mehr Inhalte</small><i>✓</i></button>
               <button type="button" class="choice-card" data-layout-choice="roomy"><span>▢</span><strong>Geräumig</strong><small>Mehr Platz</small><i>✓</i></button>
-              <button type="button" class="choice-card" data-layout-choice="netflix"><span>▣</span><strong>Netflix Style</strong><small>Große Poster</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-layout-choice="netflix"><span>▣</span><strong>Poster</strong><small>Große Titelbilder</small><i>✓</i></button>
               <button type="button" class="choice-card" data-layout-choice="minimal"><span>▱</span><strong>Minimal</strong><small>Reduziert</small><i>✓</i></button>
             </div>
           </section>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel" data-appearance-panel="navigation">
             <div class="settings-group-head">
-              <h4>4. Navigation</h4>
+              <h4>Navigation</h4>
               <p>Position und Verhalten der Navigation.</p>
             </div>
             <div class="choice-card-grid nav-choice-grid">
-              <button type="button" class="choice-card" data-nav-choice="top"><span>┬</span><strong>Keine Leiste</strong><small>Nur die Leiste oben</small><i>✓</i></button>
+              <button type="button" class="choice-card" data-nav-choice="top"><span>┬</span><strong>Oben</strong><small>Ohne Seitenleiste</small><i>✓</i></button>
               <button type="button" class="choice-card" data-nav-choice="sidebar"><span>▌</span><strong>Links</strong><small>Seitenleiste links</small><i>✓</i></button>
               <button type="button" class="choice-card" data-nav-choice="sidebarRight"><span>▐</span><strong>Rechts</strong><small>Seitenleiste rechts</small><i>✓</i></button>
               <button type="button" class="choice-card" data-nav-choice="compactSidebar"><span>◫</span><strong>Nur Symbole</strong><small>Schmale Leiste links</small><i>✓</i></button>
@@ -921,9 +927,9 @@
             <label class="toggle-row"><span><strong>Sidebar automatisch einklappen</strong><small>Bei schmaler Breite oder Inaktivität einklappen</small></span><input id="autoCollapseSidebar" type="checkbox"></label>
           </section>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel" data-appearance-panel="size">
             <div class="settings-group-head">
-              <h4>5. Dichte & Größe</h4>
+              <h4>Dichte und Größe</h4>
               <p>Bestimme, wie groß und luftig ELFIX wirken soll.</p>
             </div>
             <div class="density-buttons" role="group" aria-label="UI-Dichte">
@@ -933,13 +939,13 @@
               <button type="button" data-density-choice="custom">Benutzerdef.</button>
             </div>
             <div class="settings-slider-grid">
-              <div class="setting-card">Die Dichte setzt Größen und Abstände gemeinsam. Einzelne Werte — Skalierung, Abstand, Rundung — findest du unter <strong>Feinschliff</strong>.</div>
+              <div class="setting-card">Eine Dichte übernimmt passende Größen und Abstände gemeinsam. Eigene Werte darunter ersetzen diese Vorgabe wieder.</div>
             </div>
           </section>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel" data-appearance-panel="cards">
             <div class="settings-group-head">
-              <h4>6. Karten & Watchlist</h4>
+              <h4>Karten und Watchlist</h4>
               <p>Wie deine gespeicherten Titel und die Anbieter-Kacheln dargestellt werden.</p>
             </div>
             <div class="custom-grid">
@@ -950,12 +956,12 @@
                 </div>
                 <small>Betrifft die Kacheln in der Anbieter-Leiste und auf der Startseite.</small>
               </label>
-              <label class="range-setting">Größe der Watchlist-Karten
+              <label class="range-setting">Größe und Format der Titelkarten
                 <div class="range-row">
                   <input id="favoriteSize" type="range" min="0" max="3" step="1" value="1">
                   <span id="favoriteSizeValue">Mittel</span>
                 </div>
-                <small>Von klein bis Poster — größer zeigt mehr Bild, kleiner mehr Titel gleichzeitig.</small>
+                <small>Klein, Mittel und Groß ändern Breite und Höhe. Poster zeigt schmale, hohe Cover. In der Listenansicht bleiben die Zeilen kompakt.</small>
               </label>
               <label>Anordnung der Watchlist
                 <select id="favoriteLayout">
@@ -984,10 +990,10 @@
             <label class="check setting-row"><input id="showFavoriteMeta" type="checkbox"><span><strong>Herkunft auf den Karten zeigen</strong><small>Blendet unter jedem Titel ein, von welchem Anbieter er stammt.</small></span></label>
           </section>
 
-          <section class="settings-group">
+          <section class="settings-group appearance-panel" data-appearance-panel="motion">
             <div class="settings-group-head">
-              <h4>7. Stil & Details</h4>
-              <p>Feinheiten, die überall in der App wirken.</p>
+              <h4>Bewegung und Oberfläche</h4>
+              <p>Wie lebendig sich ELFIX anfühlt und wie die Bedienflächen gezeichnet sind.</p>
             </div>
             <div class="custom-grid">
               <label>Kartenstil
@@ -996,7 +1002,7 @@
                   <option value="flat">Flach — ohne Tiefe</option>
                   <option value="glass">Glas — durchscheinend</option>
                   <option value="outline">Umrandet — nur Linie</option>
-                  <option value="minimal">Minimal — fast unsichtbar</option>
+                  <option value="minimal">Minimal — zurückhaltend</option>
                 </select>
                 <small>Das Grundaussehen aller Kacheln.</small>
               </label>
@@ -1035,7 +1041,7 @@
                   <option value="reduced">Reduziert — nur das Nötigste</option>
                   <option value="off">Aus</option>
                 </select>
-                <small>Das Tempo stellst du unter Feinschliff ein.</small>
+                <small>Das genaue Tempo stellst du im Bereich Bewegung ein.</small>
               </label>
             </div>
             <label class="check setting-row"><input id="animationsEnabled" type="checkbox"><span><strong>Bewegungen aktivieren</strong><small>Sanfte Übergänge beim Öffnen und Überfahren. Aus wirkt schneller und ruhiger.</small></span></label>
@@ -1072,19 +1078,14 @@
             <input id="uiDensity" type="range" min="0" max="2" step="1" value="1">
             <span id="uiDensityValue">Normal</span>
           </div>
-          <div class="setting-card">Die Darstellung wird sofort angewendet und bleibt beim Neustart gespeichert.</div>
-        </div>
+          <div class="setting-card">Änderungen werden direkt übernommen und bleiben nach dem Neustart gespeichert.</div>
 
-        <div class="settings-page" data-page="advancedAppearance">
-          <div class="settings-head">
-            <div>
-              <h3>Feinschliff</h3>
-              <p>Hier sitzt jede einzelne Farbe und jedes Maß. Wenn du nur schnell etwas ändern willst, bist du unter <strong>Darstellung</strong> besser aufgehoben — im einfachen Modus zeigt diese Seite nur die wichtigsten Felder.</p>
+          <section class="settings-group appearance-panel" data-appearance-panel="colors">
+            <div class="settings-group-head">
+              <h4>Eigene Farben</h4>
+              <p>Lege einzelne Farben nur fest, wenn die automatische Abstimmung ausgeschaltet ist.</p>
             </div>
-            <button class="soft-action" data-reset-section="appearance">Bereich zurücksetzen</button>
-          </div>
-
-          <div class="setting-card auto-colors-note advanced-only is-hidden" id="autoColorsNote">
+          <div class="setting-card auto-colors-note is-hidden" id="autoColorsNote">
             <div>
               <strong>Die Einzelfarben werden gerade automatisch berechnet.</strong>
               <span>ELFIX leitet Flächen, Text, Linien und Signalfarben aus Hintergrund und Akzentfarbe ab — die Felder unten sind deshalb ohne Wirkung. Der Hintergrund selbst wirkt weiterhin.</span>
@@ -1107,19 +1108,19 @@
             </div>
           </section>
 
-          <section class="settings-group advanced-only">
+          <section class="settings-group">
             <div class="settings-group-head">
               <h4>Text</h4>
               <p>Drei Stufen — je blasser, desto nebensächlicher.</p>
             </div>
             <div class="custom-grid">
-              <label class="advanced-only">Überschriften<input class="appearance-control" id="primaryTextColor" type="color" value="#f7f8fb"><small>Titel und alles, was zuerst ins Auge fallen soll.</small></label>
+              <label class="advanced-only">Überschriften<input class="appearance-control" id="primaryTextColor" type="color" value="#f7f8fb"><small>Seitentitel und Überschriften. Text auf abgedunkelten Coverbildern bleibt zur besseren Lesbarkeit hell.</small></label>
               <label class="advanced-only">Fließtext<input class="appearance-control" id="secondaryTextColor" type="color" value="#d9e2ef"><small>Normale Beschreibungen und Bedienelemente.</small></label>
               <label class="advanced-only">Nebentext<input class="appearance-control" id="mutedTextColor" type="color" value="#a8b2c3"><small>Hinweise, Zeitangaben und Platzhalter.</small></label>
             </div>
           </section>
 
-          <section class="settings-group advanced-only">
+          <section class="settings-group">
             <div class="settings-group-head">
               <h4>Linien & Reaktionen</h4>
               <p>Was passiert, wenn du etwas berührst oder auswählst.</p>
@@ -1132,7 +1133,7 @@
             </div>
           </section>
 
-          <section class="settings-group advanced-only">
+          <section class="settings-group">
             <div class="settings-group-head">
               <h4>Signalfarben</h4>
               <p>Kurze Rückmeldungen der App.</p>
@@ -1146,7 +1147,13 @@
             </div>
           </section>
 
-          <div class="settings-subhead">Größen & Abstände</div>
+          </section>
+
+          <section class="settings-group appearance-panel" data-appearance-panel="size">
+          <div class="settings-group-head">
+            <h4>Eigene Größen und Abstände</h4>
+            <p>Diese Regler überschreiben eine gewählte Dichte dort, wo sie sich überschneiden.</p>
+          </div>
           <div class="custom-grid">
             <label class="range-setting">Schriftgröße
               <div class="range-row">
@@ -1204,10 +1211,11 @@
             </label>
             <label class="range-setting advanced-only">Tempo der Animationen
               <div class="range-row"><input class="appearance-control" id="animationSpeed" type="range" min="60" max="160" step="5" value="100"><span id="animationSpeedValue">100%</span></div>
-              <small>Kleinere Werte sind schneller. Ganz aus geht es unter Darstellung.</small>
+              <small>Kleinere Werte sind schneller. Ganz aus schaltest du Bewegung oben ab.</small>
             </label>
           </div>
-          <div class="setting-card">Akzentfarbe, Rahmen, Fokus, Hover, Buttons, Karten und Scrollbars nutzen diese Tokens direkt. Es sind keine Demo-Regler.</div>
+          <div class="setting-card">Diese Werte wirken direkt auf ELFIX. Die Vorschau rechts zeigt dieselbe Oberfläche in einem echten, abgeschirmten Dokument.</div>
+          </section>
         </div>
 
 <div class="settings-page" data-page="data">
@@ -1286,84 +1294,26 @@
 
 </section>
 
-      <aside class="settings-preview-pane">
-        <div class="preview-card">
-          <div class="preview-head">
-            <div>
-              <h3>Live-Vorschau</h3>
-              <p>So sieht ELFIX mit deinen Einstellungen aus.</p>
-            </div>
+      <aside class="settings-preview-pane" aria-label="Live-Vorschau">
+        <div class="settings-preview-toolbar">
+          <div>
+            <strong>Live-Vorschau</strong>
+            <span>Deine aktuellen Einstellungen</span>
           </div>
-          <div class="app-preview" id="appPreview">
-            <div class="preview-frame">
-              <!-- Die Seitenleiste folgt dem gewaehlten Navigationsstil:
-                   links, rechts, schmal oder ganz weg. -->
-              <aside class="preview-side">
-                <div class="preview-side-brand"><i></i><span>ELFIX</span></div>
-                <b><i>⌂</i><span>Startseite</span></b>
-                <em><i>⌕</i><span>Suche</span></em>
-                <em><i>♡</i><span>Watchlist</span><u>2</u></em>
-                <em><i>◷</i><span>Weiterschauen</span></em>
-                <em><i>▣</i><span>Mediathek</span></em>
-                <em><i>⇄</i><span>Watchparty</span></em>
-              </aside>
-
-              <div class="preview-main">
-                <div class="preview-app-top">
-                  <span>☰</span>
-                  <strong>ELFIX</strong>
-                  <nav><b>Startseite</b><span>Suche</span><span>Watchlist</span></nav>
-                  <i></i>
-                </div>
-
-                <section class="preview-hero">
-                  <small>Fortsetzen</small>
-                  <h4>Attack on Titan</h4>
-                  <p>S4 E21 · Von dir aus</p>
-                  <div class="preview-hero-actions">
-                    <button type="button">Weiter schauen</button>
-                    <button type="button" class="is-soft">Watchlist</button>
-                  </div>
-                </section>
-
-                <section class="preview-row preview-row-new">
-                  <div class="preview-row-head"><strong>Neue Folgen</strong><span>Gesehen</span></div>
-                  <div class="preview-posters">
-                    <article class="art-1"><div><u>Staffel 4 ist da</u></div><strong>Bleach</strong><small>Aniworld</small></article>
-                    <article class="art-2"><div><u>Folge 15 ist da</u></div><strong>Solo Leveling</strong><small>Aniworld</small></article>
-                  </div>
-                </section>
-
-                <section class="preview-row">
-                  <div class="preview-row-head"><strong>Weiterschauen</strong><span>Alle anzeigen</span></div>
-                  <div class="preview-posters">
-                    <article class="art-1"><div></div><strong>Attack on Titan</strong><small>Aniworld</small><span><i style="width:75%"></i></span></article>
-                    <article class="art-2"><div></div><strong>Demon Slayer</strong><small>Aniworld</small><span><i style="width:40%"></i></span></article>
-                    <article class="art-3"><div></div><strong>Jujutsu Kaisen</strong><small>S.to</small><span><i style="width:60%"></i></span></article>
-                    <article class="art-4"><div></div><strong>One Piece</strong><small>Filmo</small><span><i style="width:20%"></i></span></article>
-                  </div>
-                </section>
-
-                <section class="preview-row preview-row-party">
-                  <div class="preview-row-head"><strong>Gemeinsam weiterschauen</strong><span>Alle anzeigen</span></div>
-                  <div class="preview-posters">
-                    <article class="art-3"><div></div><strong>Pokémon</strong><small>Aniworld · ⇄ Bangus</small><span><i style="width:55%"></i></span></article>
-                    <article class="art-4"><div></div><strong>Die Legende von Korra</strong><small>S.to · ⇄ Familie</small><span><i style="width:30%"></i></span></article>
-                  </div>
-                </section>
-
-                <section class="preview-row preview-row-youtube">
-                  <div class="preview-row-head"><strong>Weiterschauen auf YouTube</strong><span>Alle anzeigen</span></div>
-                  <div class="preview-posters">
-                    <article class="art-1"><div></div><strong>Splatoon Raiders</strong><small>Youtube</small><span><i style="width:45%"></i></span></article>
-                    <article class="art-2"><div></div><strong>Avatar Analyse</strong><small>Youtube</small><span><i style="width:70%"></i></span></article>
-                  </div>
-                </section>
-              </div>
-            </div>
-            <div class="preview-bottom-nav"><b>⌂ Startseite</b><span>⌕ Suche</span><span>♥ Watchlist</span><span>⚙ Einstellungen</span></div>
-          </div>
+          <label>Ansicht
+            <select id="appearancePreviewScene" aria-label="Vorschauansicht">
+              <option value="home">Startseite</option>
+              <option value="cards">Karten</option>
+              <option value="controls">Bedienelemente</option>
+            </select>
+          </label>
+          <button class="soft-action" type="button" id="appearancePreviewExpand" aria-label="Vorschau vergrößern">⤢</button>
         </div>
+        <div class="appearance-preview-viewport" id="appearancePreviewViewport">
+          <iframe id="appearancePreviewFrame" sandbox="allow-same-origin" title="Vorschau des aktuellen Aussehens"></iframe>
+        </div>
+        <p class="appearance-preview-hint" id="appearancePreviewHint">Änderungen werden direkt in dieser Vorschau sichtbar.</p>
+        <p class="appearance-preview-status" id="appearancePreviewStatus" role="status" aria-live="polite">Vorschau wird vorbereitet …</p>
       </aside>
 
       <button class="modal-close" id="closeSettingsButton">×</button>
@@ -1468,6 +1418,7 @@
        rechnet damit nicht anders als der Rest. -->
   <script src="../../shared/verlauf.js"></script>
   <script src="./ui-sounds.js"></script>
+  <script src="./appearance-preview.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

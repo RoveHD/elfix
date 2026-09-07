@@ -37,6 +37,14 @@ const pruefe = (name, bedingung, detail) => {
 const SERIE = "https://aniworld.to/anime/stream/black-torch";
 const folge = (staffel, nummer) => `${SERIE}/staffel-${staffel}/episode-${nummer}`;
 
+/* Die Filmseite hat ihre eigene Listenadresse. Nach einer Filmauswahl darf
+ * der Player nicht wieder nur die einzelne Filmseite lesen. */
+pruefe("Eine AniWorld-Filmadresse fuehrt zur Filme-Uebersicht zurueck",
+  nachschub.staffelSeiteUrl(`${SERIE}/filme/film-1?fassung=de#oben`) === `${SERIE}/filme`,
+  nachschub.staffelSeiteUrl(`${SERIE}/filme/film-1`));
+pruefe("Eine fremde Filmform wird nicht als AniWorld-Filmliste geraten",
+  nachschub.staffelSeiteUrl(`${SERIE}/filme/anderes-format`) === "");
+
 /** Eine abgeschlossene Serie, wie sie in der Mediathek liegt. */
 function abgeschlossen(zusatz = {}) {
   return {

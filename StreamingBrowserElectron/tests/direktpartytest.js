@@ -264,6 +264,10 @@ function rechner(name) {
     },
     istGleicheFolge: gleicheFolge,
     spielerAnbieter: () => ({ id: "aniworld" }),
+    // Der echte Hauptprozess unterdrueckt waehrend eines empfangenen Wechsels
+    // das did-navigate-Echo der unsichtbaren Werkbank. Diese Probe baut keine
+    // WebContents-Navigation nach; fuer sie reicht dieselbe transparente Huelle.
+    ohneWatchpartyFolgenwechselEcho: async (_anbieter, _url, arbeit) => arbeit(),
     direktFolgeSpielen: async (anbieter, url) => {
       player.url = url;
       player.position = 0;

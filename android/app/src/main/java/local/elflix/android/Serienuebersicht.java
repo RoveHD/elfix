@@ -96,8 +96,8 @@ public final class Serienuebersicht {
          */
         public String unterschrift() {
             if (gesperrt) return "Beim Anbieter nicht einzeln abspielbar";
-            if (titel.isEmpty()) return "Staffel " + staffel;
-            return "Staffel " + staffel + "  ·  Folge " + nummer;
+            if (titel.isEmpty()) return staffelName(staffel);
+            return staffelName(staffel) + "  ·  Folge " + nummer;
         }
     }
 
@@ -158,6 +158,11 @@ public final class Serienuebersicht {
     /** Eine leere Auskunft - der Aufrufer macht dann weiter wie bisher. */
     public static final Bestand LEER =
         new Bestand("", 0, new ArrayList<>(), new ArrayList<>());
+
+    /** Staffel 0 ist bei AniWorld die eigene Filme-Registerkarte. */
+    static String staffelName(int nummer) {
+        return nummer > 0 ? "Staffel " + nummer : "Filme";
+    }
 
     /** Wird gerufen, sobald die Seite gelesen ist. */
     public interface Antwort {
@@ -221,7 +226,7 @@ public final class Serienuebersicht {
     }
 
     /** Was die Seite zurueckgegeben hat, in Java-Form. */
-    private static Bestand auswerten(String wert) {
+    static Bestand auswerten(String wert) {
         if (wert == null || "null".equals(wert)) return LEER;
         JSONObject roh;
         try {
@@ -238,7 +243,12 @@ public final class Serienuebersicht {
                 if (eintrag == null) continue;
                 int nummer = eintrag.optInt("staffel", 0);
                 String url = eintrag.optString("url", "");
-                if (nummer > 0 && !url.isEmpty()) staffeln.add(new Staffel(nummer, url));
+                // Staffel 0 ist keine fehlende Nummer: AniWorld benutzt sie
+                // fuer seine Filme-Registerkarte. Ein fehlendes Feld bleibt
+                // dagegen weiterhin keine belastbare Staffel.
+                if (eintrag.has("staffel") && nummer >= 0 && !url.isEmpty()) {
+                    staffeln.add(new Staffel(nummer, url));
+                }
             }
         }
         List<Folge> folgen = new ArrayList<>();

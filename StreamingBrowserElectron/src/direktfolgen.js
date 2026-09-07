@@ -101,11 +101,20 @@ function fuerPlayer(stand, jetzt) {
      * werden muessen; sie stehen auf ihrer eigenen Seite.
      */
     staffeln: (Array.isArray(stand.staffeln) ? stand.staffeln : [])
-      .map((eintrag) => ({
-        staffel: Number(eintrag?.staffel) || 0,
-        url: String(eintrag?.url || "")
-      }))
-      .filter((eintrag) => eintrag.staffel > 0 && eintrag.url)
+      .reduce((liste, eintrag) => {
+        const roh = eintrag?.staffel;
+        const staffel = Number(roh);
+        const url = String(eintrag?.url || "");
+        // Null, leer oder keine Zahl ist keine verkappte Filmsammlung. Nur
+        // eine ausdrücklich gelieferte, endliche Null steht fuer "Filme".
+        if (roh === null || roh === undefined || roh === ""
+          || !Number.isFinite(staffel) || staffel < 0 || !url) return liste;
+        liste.push({ staffel, url });
+        return liste;
+      }, [])
+      // Staffel 0 ist bei AniWorld die Filmsammlung einer Serie. Sie wird im
+      // Player als "Filme" bezeichnet und braucht dieselbe Adresse wie jede
+      // andere Staffel.
       .sort((links, rechts) => links.staffel - rechts.staffel),
     folgen: geordnet(stand.folgen).map((eintrag) => ({
       staffel: Number(eintrag.staffel) || 0,

@@ -46,10 +46,16 @@ final class DirektWiedergabe {
         boolean inRunde();
         /** Die Rolle bleibt dynamisch, damit eine Hostuebergabe sofort im Player ankommt. */
         default boolean istRundenHost() { return false; }
+        /** Privat und als Host darf dieses Geraet Fassung und Hoster selbst waehlen. */
+        default boolean darfFassungUndHosterWaehlen() {
+            return !inRunde() || istRundenHost();
+        }
         /** Die Fassung dieser Runde an die anderen - ebenfalls nur als Host. */
         default void fassungGewaehlt(String fassung, String hoster) { }
         /** Was in der Runde als Fassung gilt - leer, wenn keine Runde laeuft. */
         default JSONObject rundenFassung() { return new JSONObject(); }
+        /** Ein lokaler Folgenwechsel soll alle Mitglieder der Runde mitnehmen. */
+        default void folgenwechsel(String url) { }
     }
 
     private final Activity activity;
@@ -113,7 +119,8 @@ final class DirektWiedergabe {
     static boolean istFolge(String adresse) {
         String pfad = pfadVon(adresse);
         return pfad != null && (pfad.matches(".*/(?:staffel|season)-[0-9]+/(?:episode|folge)-[0-9]+/?")
-            || pfad.matches("/(?:movies|movie|filme|film)/[^/]+/?"));
+            || pfad.matches("/(?:movies|movie|filme|film)/[^/]+/?")
+            || pfad.matches("(?i)/(?:anime|serie|serien|series)/stream/[^/]+/filme/film-[0-9]+/?"));
     }
 
     /**
@@ -125,15 +132,18 @@ final class DirektWiedergabe {
      */
     static boolean istSerienseite(String adresse) {
         String pfad = pfadVon(adresse);
-        return pfad != null && pfad.matches(
-            "(?i)/(?:anime|serie|serien|series)/stream/[^/]+(?:/(?:staffel|season)-[0-9]+)?/?");
+        if (pfad == null) return false;
+        // AniWorld fuehrt Filme unter der Serienadresse, ohne Staffelnummer.
+        if (pfad.matches("(?i)/anime/stream/[^/]+/filme/?")) return true;
+        return pfad.matches("(?i)/(?:anime|serie|serien|series)/stream/[^/]+(?:/(?:staffel|season)-[0-9]+)?/?");
     }
 
     private static String pfadVon(String adresse) {
         if (adresse == null) return null;
         try {
-            Uri url = Uri.parse(adresse);
-            if (!"https".equals(url.getScheme()) && !"http".equals(url.getScheme())) return null;
+            java.net.URI url = new java.net.URI(adresse);
+            String schema = url.getScheme();
+            if (!"https".equalsIgnoreCase(schema) && !"http".equalsIgnoreCase(schema)) return null;
             String host = url.getHost();
             if (host == null || host.equals("youtu.be") || host.endsWith("youtube.com")) return null;
             return url.getPath();
@@ -172,6 +182,9 @@ final class DirektWiedergabe {
             public boolean darfTempo() { return umgebung.darfTempo(); }
             public boolean inRunde() { return umgebung.inRunde(); }
             public boolean istRundenHost() { return umgebung.istRundenHost(); }
+            public boolean darfFassungUndHosterWaehlen() {
+                return umgebung.darfFassungUndHosterWaehlen();
+            }
         });
         wurzel = spieler.ansicht;
         spieler.titel(titel);
@@ -462,6 +475,10 @@ final class DirektWiedergabe {
      */
     private void fassungenZeigen() {
         if (geschlossen) return;
+        if (!darfFassungUndHosterWaehlen()) {
+            spieler.kurzeAnsage("Fassung und Hoster stellt der Host.");
+            return;
+        }
         ArrayList<String> namen = new ArrayList<>();
         ArrayList<Runnable> aktionen = new ArrayList<>();
         int laufend = -1;
@@ -504,6 +521,11 @@ final class DirektWiedergabe {
      */
     private void fassungWechseln(String fassung) {
         if (geschlossen || fassung == null) return;
+        // Die Rolle kann sich zwischen geoeffneter Liste und Tippen aendern.
+        if (!darfFassungUndHosterWaehlen()) {
+            spieler.kurzeAnsage("Fassung und Hoster stellt der Host.");
+            return;
+        }
         JSONObject laufender = hoster.optJSONObject(Math.max(0, laufenderHoster));
         String gewohnt = laufender == null ? "" : laufender.optString("hoster", "");
         int ziel = -1;
@@ -582,6 +604,10 @@ final class DirektWiedergabe {
     /** Die Hoster - nur die zur laufenden Fassung, wie drueben. */
     private void hosterZeigen() {
         if (geschlossen) return;
+        if (!darfFassungUndHosterWaehlen()) {
+            spieler.kurzeAnsage("Fassung und Hoster stellt der Host.");
+            return;
+        }
         quellenDialog();
     }
 
@@ -605,6 +631,12 @@ final class DirektWiedergabe {
             final int index = i;
             aktionen.add(() -> {
                 if (geschlossen) return;
+                // Auch ein bereits gebauter Callback darf nach einer
+                // Hostuebergabe keine andere Quelle mehr laden.
+                if (!darfFassungUndHosterWaehlen()) {
+                    spieler.kurzeAnsage("Fassung und Hoster stellt der Host.");
+                    return;
+                }
                 double stelle = spielt ? spieler.position() : start;
                 // Tokens in this list are retained, not minted again before a click.
                 aufloesen(index, stelle, ++auftrag, false);
@@ -623,6 +655,14 @@ final class DirektWiedergabe {
         JSONObject laufender = laufenderHoster >= 0 ? hoster.optJSONObject(laufenderHoster) : null;
         String name = fassungVon(laufender);
         return name.isEmpty() ? letzteSprache.trim() : name;
+    }
+
+    static boolean darfFassungUndHosterWaehlen(boolean inRunde, boolean istHost) {
+        return DirektSpieler.darfNutzerQuelleWaehlen(inRunde, istHost);
+    }
+
+    private boolean darfFassungUndHosterWaehlen() {
+        return umgebung.darfFassungUndHosterWaehlen();
     }
 
     private void naechsteSuchen(int id) {
@@ -772,19 +812,26 @@ final class DirektWiedergabe {
         if (staffelDa(staffel)) { folgenZeichnen(""); return; }
         JSONObject ziel = staffelEintrag(staffel);
         if (ziel == null) { folgenZeichnen(""); return; }
-        folgenZeichnen("Staffel " + staffel + " wird gelesen …");
+        folgenZeichnen(staffelLadeText(staffel, false));
         final int id = auftrag;
         staffelLesen(ziel.optString("url"), id, gelesen -> {
             if (!aktuell(id) || geschlossen) return;
             JSONArray liste = gelesen == null ? null : gelesen.optJSONArray("folgen");
             if (liste == null || liste.length() == 0) {
-                folgenZeichnen("Staffel " + staffel + " ließ sich nicht lesen.");
+                folgenZeichnen(staffelLadeText(staffel, true));
                 return;
             }
             folgenMerken(gelesen);
             if (gespeicherteFolgeOeffnen()) return;
             folgenZeichnen("");
         });
+    }
+
+    private static String staffelLadeText(int staffel, boolean fehlgeschlagen) {
+        if (staffel <= 0) return fehlgeschlagen
+            ? "Filme ließen sich nicht lesen." : "Filme werden gelesen …";
+        String name = Serienuebersicht.staffelName(staffel);
+        return fehlgeschlagen ? name + " ließ sich nicht lesen." : name + " wird gelesen …";
     }
 
     /**
@@ -927,6 +974,12 @@ final class DirektWiedergabe {
     // The Activity keeps the native player on every episode navigation.
     private void wechseln(String url) {
         if (url == null || url.isEmpty() || geschlossen) return;
+        // Das Relay sendet navigate an die anderen Mitglieder, aber nicht an
+        // den Absender. Deshalb wird erst die Runde benachrichtigt und dieses
+        // Geraet wechselt anschliessend wie gewohnt selbst. Eingehende
+        // navigate-Befehle laufen ueber Mitschauen.folgeOeffnen und gelangen
+        // nicht hierher; dadurch entsteht kein Echo.
+        umgebung.folgenwechsel(url);
         spieler.speichern();
         if (nachSeite != null) nachSeite.accept(url);
     }
