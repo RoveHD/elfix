@@ -1535,8 +1535,21 @@ wss.on("connection", (socket) => {
       // Der zuletzt an alle geschickte Befehl ist der Stand der Runde - egal,
       // von wem er kam. Nur so passt das, woran sich ein Abgleich orientiert,
       // zu dem, was auf den Geraeten wirklich laeuft.
-      // Neue Pause, neue Ausrichtung - und beim Weiterlaufen faellt sie weg.
-      if (aktion !== "pause") eintrag.pauseAusgerichtet = false;
+      /*
+       * Neue Pause, neue Ausrichtung.
+       *
+       * Hier stand `if (aktion !== "pause")` - und damit war die Ausrichtung
+       * genau einmal moeglich und danach nie wieder, solange niemand etwas
+       * anderes als Pause drueckte. Gemessen am 7.9.2026 zwischen Rechner und
+       * Telefon an diesem Relay: die Ausrichtung feuerte einmal, verbrauchte
+       * das Flag, und die *naechste* Pause richtete nichts mehr aus - Rechner
+       * und Telefon standen 46 Millisekunden auseinander, dauerhaft, also auf
+       * verschiedenen Bildern.
+       *
+       * Jede Pause ist eine eigene Pause. Das Flag verhindert nur, dass
+       * innerhalb *einer* Pause jeder Herzschlag erneut ausrichtet.
+       */
+      eintrag.pauseAusgerichtet = false;
 
       // Nach einem Sprung darf der Ausgleich sofort greifen: dort laufen die
       // Geraete am ehesten auseinander, weil jeder Hoster anders puffert.
@@ -1583,6 +1596,10 @@ wss.on("connection", (socket) => {
       const jetzt = Date.now();
       // Der gemeinsame Startzeitpunkt - siehe startZeitpunkt().
       const startAt = startZeitpunkt(laeuftDanach, jetzt, nachricht.startAt);
+      // Er wird gemerkt: die Ausrichtung weiter unten muss wissen, dass ein
+      // Start laeuft und das "pausiert" des Hosts nur das Warten darauf ist.
+      // Ein Anhalten macht jede Startverabredung gegenstandslos.
+      eintrag.startAt = startAt || 0;
       const daten = JSON.stringify({
         type: "control",
         key: eintrag.key,
@@ -1857,7 +1874,21 @@ wss.on("connection", (socket) => {
       // Ohne Stelle keine Ausrichtung: eine Anwesenheitsmeldung traegt keine,
       // und `zahl(undefined)` waere 0 - der Host wuerde damit die ganze Runde
       // auf den Anfang ausrichten.
-      if (!ohneAngabe && socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
+      /*
+       * Nicht ausrichten, waehrend ein gemeinsamer Start verabredet ist.
+       *
+       * Seit dem verabredeten Start bleibt auch der Host nach einem Play noch
+       * einen Augenblick stehen - und meldet in diesem Fenster brav
+       * "pausiert". Ohne diese Schranke las das Relay darin eine Pause, die es
+       * auszurichten gilt, und schickte allen ein `seek playing:false` mitten
+       * in den Start hinein. Gemessen: 740 Millisekunden nach dem Play.
+       */
+      // Eng gefasst: der Host meldet "pausiert" nur *bis* zum verabredeten
+      // Augenblick, danach laeuft er. Ein breiteres Fenster wuerde die richtige
+      // Ausrichtung nach einer spaeteren Pause mitblockieren - genau das ist im
+      // Pruefstand passiert (zweiter Durchgang, 40 ms Abstand).
+      const startLaeuft = Number(eintrag.startAt) > 0 && Date.now() < Number(eintrag.startAt) + 250;
+      if (!ohneAngabe && !startLaeuft && socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
         && eintrag.live?.action === "pause" && !eintrag.pauseAusgerichtet) {
         eintrag.pauseAusgerichtet = true;
         const genau = zahl(nachricht.position, 100000);

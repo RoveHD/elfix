@@ -233,6 +233,18 @@ function geraet(name, raster) {
   player = spielerLaden(bild, bruecke);
   geraetObjekt.raeume = raeume;
   geraetObjekt.player = player;
+  /*
+   * Der Herzschlag im Sekundentakt - auch im Stehen.
+   *
+   * Genau den schickt main.js, solange eine Runde laeuft (spieler:takt), und
+   * genau an ihm haengt die Ausrichtung nach der Pause im Relay. Ohne ihn
+   * prueft dieser Pruefstand eine Welt, in der der gemeldete Fehler gar nicht
+   * vorkommen kann - er ist am 7.9.2026 zwischen Rechner und Telefon
+   * aufgetreten und hier zunaechst durchgerutscht.
+   */
+  geraetObjekt.takt = setInterval(() => {
+    try { player.standMelden(true); } catch (_) { }
+  }, 1000);
 
   /** Dieselbe Kette wie applyWatchpartyControl + spielerSteuernAusRunde. */
   function empfangen(nachricht) {
@@ -399,7 +411,28 @@ function geraet(name, raster) {
     alle.map((g) => `${g.name}=${g.bild.currentTime.toFixed(6)}`).join("  "));
   pruefe("Alle stehen", alle.every((g) => g.bild.paused));
 
-  for (const g of alle) { g.bild.aufraeumen(); g.raeume.trennen(); }
+  /* --- 3. Und noch einmal - der zweite Durchgang war der kaputte ---------- */
+
+  await schlaf(3000);
+  host.player.spielenUmschalten();
+  await warteBis(() => alle.every((g) => !g.bild.paused), 5000);
+  await schlaf(1500);
+  for (const g of alle) g.protokoll.length = 0;
+  gastA.player.spielenUmschalten();
+  await schlaf(3500);
+
+  const hostStand3 = host.bild.currentTime;
+  console.log("    Host steht bei " + hostStand3.toFixed(6));
+  for (const g of alle) {
+    console.log("    " + g.name.padEnd(6) + " " + g.bild.currentTime.toFixed(6)
+      + "   Abstand " + ((g.bild.currentTime - hostStand3) * 1000).toFixed(1) + " ms");
+  }
+  pruefe("Auch beim zweiten Mal - das war der gemeldete Fehler",
+    alle.every((g) => g.bild.currentTime === hostStand3),
+    alle.map((g) => `${g.name}=${g.bild.currentTime.toFixed(6)}`).join("  "));
+  pruefe("Und alle stehen", alle.every((g) => g.bild.paused));
+
+  for (const g of alle) { clearInterval(g.takt); g.bild.aufraeumen(); g.raeume.trennen(); }
   await schlaf(200);
 
   const gut = pruefungen.filter(Boolean).length;
