@@ -24,11 +24,45 @@ function funktion(name) {
 for (const [name, stand, erwartet] of [
   ["privat", { inRunde: false, binHost: false }, true],
   ["Host", { inRunde: true, binHost: true }, true],
+  ["Authentifiziert und noch ohne Host", { inRunde: true, binHost: false, quelleStartbar: true }, true],
   ["Gast", { inRunde: true, binHost: false }, false]
 ]) {
   const kontext = vm.createContext({ spielerRundenEinstellung: () => stand });
   vm.runInContext(funktion("spielerQuellenwechselErlaubt"), kontext);
   assert.equal(kontext.spielerQuellenwechselErlaubt(), erwartet, name);
+}
+
+// Eine einzelne Person braucht ihre Rollenmeldung genauso wie eine Gruppe.
+// Nur der Renderer darf danach die optische Teilnehmerleiste ausblenden.
+{
+  const gesendet = [];
+  const kontext = vm.createContext({
+    spielerLauf: {}, spielerView: { webContents: {
+      isDestroyed: () => false, send: (...args) => gesendet.push(args)
+    } }, formatUhr: () => "0:00"
+  });
+  vm.runInContext(funktion("zeigeLeisteImPlayer"), kontext);
+  kontext.zeigeLeisteImPlayer([{ name: "Ich", me: true, host: true, paused: true, position: 0, age: 0 }]);
+  assert.equal(gesendet[0][0], "spieler:leiste");
+  assert.equal(gesendet[0][1].length, 1, "Solo-Host wurde aus der Rechte-Meldung entfernt");
+  assert.equal(gesendet[0][1][0].host, true);
+}
+
+for (const [name, eintrag, verbunden, startbar] of [
+  ["Solo vor Playerstart", { joined: true, myId: "ich", hostId: "" }, true, true],
+  ["Anderer Host", { joined: true, myId: "ich", hostId: "andere" }, true, false],
+  ["Verbindung getrennt", { joined: true, myId: "ich", hostId: "" }, false, false],
+  ["Nicht beigetreten", { joined: false, myId: "ich", hostId: "" }, true, false],
+  ["Keine authentifizierte Kennung", { joined: true, myId: "", hostId: "" }, true, false]
+]) {
+  const kontext = vm.createContext({
+    spielerRunde: () => ({ key: "serie", raum: "raum" }),
+    watchpartyEintrag: () => eintrag,
+    watchpartySync: { tempoLesen: () => 1 },
+    watchparty: { status: () => ({ rooms: [{ room: "raum", connected: verbunden }] }) }
+  });
+  vm.runInContext(funktion("spielerRundenEinstellung"), kontext);
+  assert.equal(kontext.spielerRundenEinstellung().quelleStartbar, startbar, name);
 }
 
 // Der ausdrueckliche Wechsel aus dem eigenen Player und ein empfangener
@@ -144,6 +178,7 @@ const kontext = vm.createContext({
   },
   sanitizePositiveNumber: (wert) => Math.max(0, Number(wert) || 0),
   absoluteHttpUrl: (url) => url,
+  spielerRunde: () => null,
   providerModel: { isHttpUrl: () => true }
 });
 
@@ -181,6 +216,23 @@ vm.runInContext(main.slice(hosterStart, hosterEnd), kontext);
   assert.equal(folgenGestartet, 1);
   assert.equal(folgenGemeldet, 1);
   assert.equal(folgenOhneEcho, 1);
+
+  // In einer Runde schickt auch der Gast nur den Wunsch an das Relay. Die
+  // Quelle oeffnet sich erst nach dessen gemeinsamer Vorbereitung.
+  const wuensche = [];
+  kontext.spielerRunde = () => ({ key: "serie:bleach", raum: "probe" });
+  kontext.taste = require("../src/taste");
+  kontext.watchparty = {
+    status: () => ({ rooms: [{ room: "probe", connected: true }] }),
+    steuernMitAdresse: (...args) => wuensche.push(args)
+  };
+  const gemeinsam = await folgenHandler({ sender }, "https://aniworld.to/anime/stream/bleach/staffel-1/episode-5");
+  assert.equal(gemeinsam.ok, true);
+  assert.equal(gemeinsam.wartetAufRunde, true);
+  assert.equal(folgenGestartet, 1, "Gast darf nicht vor dem Relay lokal laden/starten");
+  assert.equal(wuensche.length, 1);
+  assert.equal(wuensche[0][1], "navigate");
+  assert.equal(wuensche[0][4], "probe");
 
   console.log("OK Watchparty-Quellenwahl: Host frei, Gast gesperrt, Folgenwechsel frei");
 })().catch((fehler) => {

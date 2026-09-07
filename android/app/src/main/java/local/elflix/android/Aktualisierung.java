@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -213,9 +215,21 @@ public final class Aktualisierung {
         // Schon geholt? Dann nicht noch einmal - etwa, weil beim letzten Mal
         // "Spaeter" gesagt wurde.
         if (fertig.isFile() && (umfang <= 0 || fertig.length() == umfang)) {
-            datei = fertig;
-            fertig(Lage.BEREIT, "");
-            fragenWennNoetig();
+            melde(Lage.LAEDT);
+            faden.execute(() -> {
+                String grund = apkBeanstandung(fertig);
+                haupt.post(() -> {
+                    if (!grund.isEmpty()) {
+                        if (!fertig.delete()) Log.w(TAG, "Unvertraute APK blieb im Cache");
+                        fertig(Lage.FEHLER, grund);
+                        return;
+                    }
+                    datei = fertig;
+                    fortschritt = 100;
+                    fertig(Lage.BEREIT, "");
+                    fragenWennNoetig();
+                });
+            });
             return;
         }
 
@@ -251,6 +265,11 @@ public final class Aktualisierung {
                 }
                 if (!zwischen.renameTo(fertig) && !(fertig.delete() && zwischen.renameTo(fertig))) {
                     throw new Exception("Die geladene Datei liess sich nicht ablegen");
+                }
+                String beanstandung = apkBeanstandung(fertig);
+                if (!beanstandung.isEmpty()) {
+                    if (!fertig.delete()) Log.w(TAG, "Unvertraute APK blieb im Cache");
+                    throw new Exception(beanstandung);
                 }
                 aeltereWegraeumen(fertig);
                 haupt.post(() -> {
@@ -313,6 +332,11 @@ public final class Aktualisierung {
      */
     public boolean installieren() {
         if (datei == null || !datei.isFile()) return false;
+        String beanstandung = apkBeanstandung(datei);
+        if (!beanstandung.isEmpty()) {
+            fertig(Lage.FEHLER, beanstandung);
+            return false;
+        }
         if (!darfInstallieren()) {
             // Erst muss ELFIX das Recht bekommen, ueberhaupt zu fragen. Der
             // Weg dahin ist eine Systemseite - hinschicken ist ehrlicher, als
@@ -394,6 +418,89 @@ public final class Aktualisierung {
             if (anhang.optString("name", "").toLowerCase().endsWith(".apk")) return anhang;
         }
         return null;
+    }
+
+    /**
+     * Prueft Identitaet und Android-Signierlinie, bevor die App einen Dialog
+     * fuer die Datei zeigt. Ein Dateiname oder eine HTTPS-Antwort ist kein
+     * Beweis dafuer, welches Paket in der APK steckt.
+     */
+    String apkBeanstandung(File apk) {
+        if (apk == null || !apk.isFile()) return "Update-Datei fehlt";
+        PackageManager pakete = context.getPackageManager();
+        // Fire OS 7 / Android 9 liefert fuer getPackageArchiveInfo trotz
+        // GET_SIGNING_CERTIFICATES gelegentlich kein signingInfo. Die alte
+        // Signaturansicht wird deshalb mit angefordert und dient nur dann als
+        // exakter Fallback; die Signing-Lineage bleibt auf funktionierenden
+        // API-28+-Implementierungen die erste Wahl.
+        int flags = android.os.Build.VERSION.SDK_INT >= 28
+            ? PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_SIGNATURES
+            : PackageManager.GET_SIGNATURES;
+        PackageInfo kandidat = pakete.getPackageArchiveInfo(apk.getAbsolutePath(), flags);
+        if (kandidat == null || kandidat.packageName == null) return "Die geladene Datei ist keine lesbare APK";
+
+        String eigen = context.getPackageName();
+        boolean istDebug = (context.getApplicationInfo().flags
+            & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        boolean debugBasis = istDebug && kandidat.packageName.equals(basisPaket(eigen));
+        if (!kandidat.packageName.equals(eigen) && !debugBasis) {
+            return "Die geladene APK gehoert nicht zu ELFIX";
+        }
+
+        PackageInfo installiert = null;
+        try {
+            installiert = pakete.getPackageInfo(kandidat.packageName, flags);
+        } catch (PackageManager.NameNotFoundException nichtInstalliert) {
+            // Ein als debuggable gebautes Paket darf die echte ELFIX-App erstmals daneben
+            // installieren. Diese Ausnahme existiert nur in BuildConfig.DEBUG;
+            // Release-Bauten verlangen immer das bereits installierte Paket.
+            if (!debugBasis) return "Das installierte ELFIX-Paket wurde nicht gefunden";
+        }
+        if (installiert != null && !signaturPasst(installiert, kandidat)) {
+            return "Die Signatur der geladenen APK gehoert nicht zur installierten ELFIX-App";
+        }
+        return "";
+    }
+
+    static String basisPaket(String paket) {
+        String wert = paket == null ? "" : paket;
+        return wert.endsWith(".debug") ? wert.substring(0, wert.length() - 6) : wert;
+    }
+
+    private static boolean signaturPasst(PackageInfo installiert, PackageInfo kandidat) {
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            if (installiert.signingInfo != null && kandidat.signingInfo != null) {
+                Signature[] altAktuell = installiert.signingInfo.getApkContentsSigners();
+                Signature[] neuAktuell = kandidat.signingInfo.getApkContentsSigners();
+                if (altAktuell != null && neuAktuell != null
+                    && altAktuell.length > 0 && neuAktuell.length > 0) {
+                    if (altAktuell.length > 1 || neuAktuell.length > 1) {
+                        if (gleicheSignaturen(altAktuell, neuAktuell)) return true;
+                    } else {
+                        Signature[] neueLinie = kandidat.signingInfo.hasPastSigningCertificates()
+                            ? kandidat.signingInfo.getSigningCertificateHistory() : neuAktuell;
+                        if (enthaelt(neueLinie, altAktuell[0])) return true;
+                    }
+                }
+            }
+            // OEM-Kompatibilitaet: weiterhin kryptografischer Gleichvergleich,
+            // keine Paketnamen- oder Debug-Ausnahme. Weil GET_SIGNATURES oben
+            // explizit gesetzt ist, sind diese Felder auf Fire OS vorhanden.
+            return gleicheSignaturen(installiert.signatures, kandidat.signatures);
+        }
+        return gleicheSignaturen(installiert.signatures, kandidat.signatures);
+    }
+
+    private static boolean gleicheSignaturen(Signature[] links, Signature[] rechts) {
+        if (links == null || rechts == null || links.length != rechts.length || links.length == 0) return false;
+        for (Signature signatur : links) if (!enthaelt(rechts, signatur)) return false;
+        return true;
+    }
+
+    private static boolean enthaelt(Signature[] signaturen, Signature gesucht) {
+        if (signaturen == null || gesucht == null) return false;
+        for (Signature signatur : signaturen) if (gesucht.equals(signatur)) return true;
+        return false;
     }
 
     private String holen(String von, String annehmen) throws Exception {

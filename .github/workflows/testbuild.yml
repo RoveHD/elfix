@@ -148,7 +148,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: StreamingBrowserElectron/package-lock.json
 
@@ -167,6 +167,10 @@ jobs:
       - name: Pruefungen
         if: inputs.pruefungen
         run: npm run lint && npm run test
+
+      - name: Electron-Pruefungen
+        if: inputs.pruefungen
+        run: npm run test:electron
 
       # Kein --publish: dieser Lauf legt nichts an. electron-builder wuerde
       # sonst versuchen, gegen die GitHub-Releases abzugleichen.
@@ -285,7 +289,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: StreamingBrowserElectron/package-lock.json
 

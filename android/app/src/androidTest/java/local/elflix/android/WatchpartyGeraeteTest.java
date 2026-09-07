@@ -82,6 +82,145 @@ public final class WatchpartyGeraeteTest {
         } catch (org.json.JSONException error) { throw new AssertionError(error); }
     }
 
+    private static JSONObject barrier(String tun, String syncId, boolean playing, long waitMs) {
+        try {
+            return new JSONObject().put("tun", tun).put("syncId", syncId)
+                .put("position", 0).put("genau", true).put("warten", !playing)
+                .put("wartenMs", waitMs)
+                .put("ereignis", new JSONObject().put("videoTime", 0)
+                    .put("playing", playing).put("hatUhr", true).put("versatz", 0)
+                    .put("startAt", playing ? System.currentTimeMillis() + waitMs : 0));
+        } catch (org.json.JSONException error) { throw new AssertionError(error); }
+    }
+
+    @Test public void timedOutBarrierBlocksLateSourceButNotNewPrivatePlayer() throws Exception {
+        try (WavServer wav = new WavServer()) {
+            try (ActivityScenario<DirektProbeActivity> probe =
+                     ActivityScenario.launch(DirektProbeActivity.class)) {
+                AtomicBoolean kernReady = new AtomicBoolean(false);
+                warten(() -> {
+                    probe.onActivity(a -> kernReady.set(a.kern.istBereit()));
+                    return kernReady.get();
+                }, "Android Kern wurde nicht bereit");
+
+                String syncId = "episode-timeout-before-source";
+                probe.onActivity(a -> {
+                    a.runde = true;
+                    a.spieler.folgenBarriereVorbereiten(syncId);
+                    a.spieler.folgenBarriereAbbrechen(syncId);
+                    // Simuliert den bereits laufenden DirektWiedergabe-Resolver,
+                    // dessen Media-URL erst nach dem Relay-Timeout zurueckkommt.
+                    a.spieler.quelle(wav.url(), "datei", Collections.emptyMap(), 0);
+                });
+                AtomicBoolean spaetPausiert = new AtomicBoolean(false);
+                warten(() -> {
+                    probe.onActivity(a -> {
+                        try {
+                            spaetPausiert.set(a.spieler.liveStand().optDouble("duration") > 120
+                                && a.spieler.liveStand().optBoolean("paused")
+                                && !a.spieler.wartetAufFolgenBarriere());
+                        } catch (Exception ignored) { }
+                    });
+                    return spaetPausiert.get();
+                }, "Spaete Quelle lief nach Timeout automatisch an");
+            }
+
+            // Ein bewusst neu geoeffneter privater Player traegt keine alte
+            // Resolver-Generation und behaelt den normalen Quellenstart.
+            try (ActivityScenario<DirektProbeActivity> privat =
+                     ActivityScenario.launch(DirektProbeActivity.class)) {
+                AtomicBoolean kernReady = new AtomicBoolean(false);
+                warten(() -> {
+                    privat.onActivity(a -> kernReady.set(a.kern.istBereit()));
+                    return kernReady.get();
+                }, "Privater Android Kern wurde nicht bereit");
+                privat.onActivity(a -> a.spieler.quelle(
+                    wav.url(), "datei", Collections.emptyMap(), 0));
+                AtomicBoolean laeuft = new AtomicBoolean(false);
+                warten(() -> {
+                    privat.onActivity(a -> {
+                        try {
+                            laeuft.set(!a.spieler.liveStand().optBoolean("paused")
+                                && a.spieler.position() > 0.18);
+                        } catch (Exception ignored) { }
+                    });
+                    return laeuft.get();
+                }, "Neuer privater Player erbte die alte Quellensperre");
+            }
+        }
+    }
+
+    @Test public void newEpisodeSourceWaitsForReadyAndMatchingSyncStart() throws Exception {
+        try (WavServer wav = new WavServer();
+             ActivityScenario<DirektProbeActivity> probe = ActivityScenario.launch(DirektProbeActivity.class)) {
+            AtomicBoolean kernReady = new AtomicBoolean(false);
+            warten(() -> {
+                probe.onActivity(a -> kernReady.set(a.kern.istBereit()));
+                return kernReady.get();
+            }, "Android Kern wurde nicht bereit");
+
+            String syncId = "episode-device-barrier-1";
+            probe.onActivity(a -> {
+                a.runde = true;
+                a.spieler.folgenBarriereVorbereiten(syncId);
+                a.spieler.quelle(wav.url(), "datei", Collections.emptyMap(), 0);
+            });
+            AtomicBoolean geladenUndGesperrt = new AtomicBoolean(false);
+            warten(() -> {
+                probe.onActivity(a -> {
+                    try {
+                        geladenUndGesperrt.set(a.spieler.liveStand().optDouble("duration") > 120
+                            && a.spieler.liveStand().optBoolean("paused")
+                            && a.spieler.wartetAufFolgenBarriere());
+                    } catch (Exception ignored) { }
+                });
+                return geladenUndGesperrt.get();
+            }, "Neue Media3-Quelle lief vor der Folgenbarriere an");
+
+            AtomicBoolean ready = new AtomicBoolean(false);
+            probe.onActivity(a -> a.spieler.steuern(
+                barrier("syncprepare", syncId, false, 0), () -> ready.set(true)));
+            warten(ready::get, "Neue Quelle meldete nach Pause/Seek nicht syncready");
+            probe.onActivity(a -> {
+                try {
+                    assertTrue("Quelle muss nach syncready gesperrt bleiben",
+                        a.spieler.wartetAufFolgenBarriere());
+                    assertTrue("Quelle muss nach syncready pausiert bleiben",
+                        a.spieler.liveStand().optBoolean("paused"));
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+
+            AtomicBoolean startAck = new AtomicBoolean(false);
+            probe.onActivity(a -> a.spieler.steuern(
+                barrier("syncstart", syncId, true, 800), () -> startAck.set(true)));
+            warten(startAck::get, "Passendes syncstart wurde nicht ausgefuehrt");
+            AtomicBoolean laeuft = new AtomicBoolean(false);
+            warten(() -> {
+                probe.onActivity(a -> laeuft.set(!a.spieler.wartetAufFolgenBarriere()
+                    && a.spieler.position() > 0.18));
+                return laeuft.get();
+            }, "Neue Folge lief nach gemeinsamem syncstart nicht an");
+
+            // Ein Timeout behaelt die alte Generation als Sperrgrund. Deren
+            // verspaeteter Start darf Media3 danach nicht wieder einschalten.
+            String veraltet = "episode-device-barrier-timeout";
+            probe.onActivity(a -> {
+                a.spieler.folgenBarriereVorbereiten(veraltet);
+                a.spieler.folgenBarriereAbbrechen(veraltet);
+                a.spieler.steuern(barrier("syncstart", veraltet, true, 300),
+                    () -> fail("Veraltetes syncstart durfte nicht bestaetigt werden"));
+            });
+            Thread.sleep(600);
+            probe.onActivity(a -> {
+                try {
+                    assertFalse(a.spieler.wartetAufFolgenBarriere());
+                    assertTrue("Veraltetes syncstart nach Timeout startete die Quelle",
+                        a.spieler.liveStand().optBoolean("paused"));
+                } catch (Exception failure) { throw new AssertionError(failure); }
+            });
+        }
+    }
+
     @Test public void pauseFrameAndScheduledStartRunOnRealPhonePlayer() throws Exception {
         try (WavServer wav = new WavServer(); ActivityScenario<DirektProbeActivity> probe = ActivityScenario.launch(DirektProbeActivity.class)) {
             AtomicBoolean kernReady = new AtomicBoolean(false);

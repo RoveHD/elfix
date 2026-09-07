@@ -5,7 +5,6 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -29,10 +28,11 @@ public class DirektSpielerGeraeteTest {
         while (!test.getAsBoolean() && System.currentTimeMillis() < ende) Thread.sleep(100);
         assertTrue("Bedingung nach 30 Sekunden nicht erfüllt", test.getAsBoolean());
     }
-    private static Button knopf(View view, String text) {
-        if (view instanceof Button && text.equals(((Button) view).getText().toString())) return (Button) view;
+    /** Die native Playerleiste benutzt fokussierbare TextViews, keine Android-Buttons. */
+    private static TextView knopf(View view, String text) {
+        if (view instanceof TextView && text.equals(((TextView) view).getText().toString())) return (TextView) view;
         if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
-            Button found = knopf(((ViewGroup) view).getChildAt(i), text);
+            TextView found = knopf(((ViewGroup) view).getChildAt(i), text);
             if (found != null) return found;
         }
         return null;
@@ -258,7 +258,7 @@ public class DirektSpielerGeraeteTest {
                     a.spieler.vordergrund();
                     try { assertTrue(a.spieler.liveStand().optBoolean("paused")); } catch (Exception e) { throw new AssertionError(e); }
                     a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU));
-                    Button auto = knopf(a.spieler.ansicht, Folgen.autoplayAn(a) ? "Autoplay: an" : "Autoplay: aus");
+                    TextView auto = knopf(a.spieler.ansicht, Folgen.autoplayAn(a) ? "Autoplay an" : "Autoplay aus");
                     assertNotNull(auto);
                     boolean before = Folgen.autoplayAn(a);
                     auto.performClick();

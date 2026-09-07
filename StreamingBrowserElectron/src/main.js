@@ -1,7 +1,12 @@
-const { app, BrowserWindow, Menu, WebContentsView, ipcMain, net, session, shell, dialog, webFrameMain, Notification } = require("electron");
+const { app, BrowserWindow, Menu, WebContentsView, ipcMain: nativeIpcMain, net, session, shell, dialog, webFrameMain, Notification } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("fs");
 const path = require("path");
+const ipcSchutz = require("./ipc-schutz");
+const spielerNetz = require("./spieler-netz");
+const ipcMain = ipcSchutz.absichern(nativeIpcMain, kanal => kanal.startsWith("spieler:")
+  ? { inhalt: spielerView?.webContents, datei: path.join(__dirname, "renderer", "spieler.html") }
+  : { inhalt: mainWindow?.webContents, datei: path.join(__dirname, "renderer", "index.html") });
 const {
   extractDiscoverItems,
   extractPosterFallbacks,
@@ -609,13 +614,16 @@ function createMainWindow() {
     icon: path.join(app.getAppPath(), "build", "icon.ico"),
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(app.getAppPath(), "build", "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 
+  ipcSchutz.lokaleNavigation(mainWindow.webContents, path.join(__dirname, "renderer", "index.html"), url => shell.openExternal(url));
+  mainWindow.webContents.session.setPermissionRequestHandler((_inhalt, _recht, antwort) => antwort(false));
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   // **Hier wird nicht maximiert.** Das sah nach einer Kleinigkeit aus und war
   // der Grund, warum das Hauptfenster neben dem Updatefenster stand:
@@ -2402,7 +2410,11 @@ ipcMain.handle("youtubeparty:open", async () => {
 });
 
 ipcMain.handle("settings:save", (_event, nextSettings) => {
-  settings = normalizeSettings(nextSettings);
+  settings = normalizeSettings({ ...nextSettings, watchparty: {
+    ...nextSettings?.watchparty,
+    deviceId: settings.watchparty?.deviceId,
+    deviceSecret: settings.watchparty?.deviceSecret
+  } });
   saveSettings();
   // Wer den Schalter mitten im Video umlegt, soll nicht bis zum naechsten
   // warten muessen - weder auf das Ende noch auf den Anfang des Ueberspringens.
@@ -2675,7 +2687,7 @@ ipcMain.handle("data:backup-import", async () => {
 
     // Die eigene Kennung bleibt, was sie ist - sie gehoert zu diesem Rechner,
     // nicht zur Sicherung.
-    const uebernommen = sicherung.einstellungenUebernehmen(daten.settings, settings?.watchparty?.deviceId);
+    const uebernommen = sicherung.einstellungenUebernehmen(daten.settings, settings?.watchparty?.deviceId, settings?.watchparty?.deviceSecret);
     if (uebernommen) {
       fs.writeFileSync(SETTINGS_FILE, JSON.stringify(normalizeSettings(uebernommen), null, 2));
     }
@@ -6122,15 +6134,17 @@ function restoreWatchparty(eintraege, raum) {
   }
 }
 
+// Nur im Arbeitsspeicher: der Player behaelt den Chat beim Folgenwechsel.
+const watchpartyChatNachrichten = new Map();
+let watchpartyChatNummer = 0;
 const watchparty = new WatchpartyRaeume({
-  onDeviceId: (kennung) => {
-    // Ohne eigene Kennung vergibt das Relay eine. Die wird uebernommen, sonst
-    // erkennt sich das Geraet nach jedem Start neu und faellt aus seinen
-    // Mitgliedschaften.
-    if (!kennung || settings.watchparty?.deviceId === kennung) return;
-    settings.watchparty = { ...(settings.watchparty || {}), deviceId: kennung };
+  onDeviceIdentity: ({ deviceId, deviceSecret }) => {
+    const vorher = settings.watchparty || {};
+    const kennung = deviceId || vorher.deviceId || "";
+    const geheimnis = deviceSecret || vorher.deviceSecret || "";
+    if (vorher.deviceId === kennung && vorher.deviceSecret === geheimnis) return;
+    settings.watchparty = { ...vorher, deviceId: kennung, deviceSecret: geheimnis };
     saveSettings();
-    console.log(`[ELFIX WATCHPARTY] Kennung vom Raum uebernommen: ${kennung}`);
   },
   onState: (eintraege, raum) => {
     watchpartyShared = eintraege;
@@ -6141,6 +6155,7 @@ const watchparty = new WatchpartyRaeume({
     // verschickten Beitritte kommen erst mit dem naechsten Zustand zurueck.
     watchpartyZustandSichernSpaeter();
     sendWatchpartyItems();
+    sendSpielerChatStatus();
   },
   onProgress: (key, fortschritt, raum) => applyWatchpartyProgress(key, fortschritt, raum),
   onControl: (nachricht) => applyWatchpartyControl(nachricht).catch(() => {}),
@@ -6152,6 +6167,7 @@ const watchparty = new WatchpartyRaeume({
   onChat: (nachricht) => watchpartyChatZeigen(nachricht),
   onConnection: (raum, offen) => youtubeParty.verbindung(raum, offen),
   onStatus: (status, raum) => {
+    sendSpielerChatStatus();
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt - je Raum getrennt.
     for (const eintrag of status.rooms || []) {
@@ -6210,6 +6226,7 @@ function syncWatchparty() {
     rooms: Array.isArray(konfiguration.rooms) ? konfiguration.rooms : [],
     name: konfiguration.deviceName || "ELFIX",
     deviceId: konfiguration.deviceId || "",
+    deviceSecret: konfiguration.deviceSecret || "",
     konto: watchpartyKonto()
   });
   youtubePartySync();
@@ -7189,12 +7206,14 @@ async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true
 
   // Steht die falsche Folge offen, erst dorthin wechseln.
   if (nachricht.url) {
-    await followWatchpartyEpisode(eintrag, { ...nachricht, action: "navigate" });
+    await followWatchpartyEpisode(eintrag, { ...nachricht, action: "navigate", vorbereiten: true });
     if (!istAktuell()) return;
   }
 
   let vorbereitet = false;
-  for (const [, view] of providerViews) {
+  const ladeFrist = Date.now() + (nachricht.reason === "episode-change" ? 60000 : 4500);
+  do {
+   for (const [, view] of providerViews) {
     if (!istAktuell()) return;
     if (!isLiveView(view)) continue;
     if (!istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
@@ -7210,7 +7229,12 @@ async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true
     ).catch(() => []);
     if (!istAktuell()) return;
     if (ergebnisse.some((ergebnis) => ergebnis === "bereit" || ergebnis?.value === "bereit" || ergebnis?.result === "bereit")) vorbereitet = true;
-  }
+   }
+   if (!vorbereitet && istAktuell() && Date.now() < ladeFrist) {
+     await new Promise(resolve => setTimeout(resolve, 350));
+   }
+  } while (!vorbereitet && istAktuell() && Date.now() < ladeFrist);
+  if (!istAktuell()) return;
   // Eine Bereitschaft bestaetigt einen vorbereiteten Player, keinen Empfang.
   if (vorbereitet) watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId);
   if (!vorbereitet) {
@@ -7239,11 +7263,12 @@ async function followWatchpartyEpisode(eintrag, nachricht) {
     // weiterschaltete, blieb im Vollbild, wer nur mitgezogen wurde, fiel
     // heraus.
     const warVollbild = isContentFullscreen;
+    if (nachricht.vorbereiten) stopAutoplayRequest(provider.id);
     // Tempo, Merker und Sperren gehoeren zur alten Folge.
     executeJavaScriptInMediaFrames(view, watchpartySyncZuruecksetzenScript()).catch(() => []);
     merkeWatchpartySprung(provider.id, { position: nachricht.position });
-    await navigateProvider(provider, ziel);
-    scheduleProviderAutoplay(provider, view, { fullscreen: warVollbild });
+    await ohneWatchpartyFolgenwechselEcho(provider, ziel, () => navigateProvider(provider, ziel));
+    if (!nachricht.vorbereiten) scheduleProviderAutoplay(provider, view, { fullscreen: warVollbild });
     logMediaDiagnostic(provider, ziel, "watchparty", `${nachricht.from || "Host"}: Folge gewechselt`, {});
     sendWatchpartyLive({
       active: true,
@@ -8590,6 +8615,7 @@ let spielerKopfzeilen = null;
 function spielerSessionHolen() {
   if (spielerSession) return spielerSession;
   spielerSession = session.fromPartition(SPIELER_PARTITION, { cache: true });
+  spielerNetz.einrichten(spielerSession);
   spielerSession.webRequest.onBeforeSendHeaders((details, callback) => {
     // Die eigene Seite kommt von der Platte und braucht nichts davon.
     if (!spielerKopfzeilen || !/^https?:/i.test(details.url || "")) {
@@ -8670,7 +8696,8 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
     laden: Boolean(optionen.laden),
     // Die Folge liegt bereit, laeuft aber nicht: die Liste bleibt offen, und
     // gestartet wird erst auf Knopfdruck. Siehe ersteFolgeVorladen().
-    vorladen: Boolean(optionen.vorladen)
+    vorladen: Boolean(optionen.vorladen),
+    rundeWarten: Boolean(optionen.rundeWarten)
   };
   return spielerLauf;
 }
@@ -8759,7 +8786,8 @@ function spielerAuftrag() {
     rundeHost: spielerRundenEinstellung().binHost,
     auswahl: Boolean(spielerLauf.auswahl),
     laden: Boolean(spielerLauf.laden),
-    vorladen: Boolean(spielerLauf.vorladen)
+    vorladen: Boolean(spielerLauf.vorladen),
+    rundeWarten: Boolean(spielerLauf.rundeWarten)
   };
 }
 
@@ -8821,7 +8849,7 @@ async function spielerNaechsteNachtragen(provider, url) {
  * eine.
  */
 async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
-  if (optionen.signal?.aborted) return false;
+  if (optionen.signal?.aborted || (optionen.istAktuell && !optionen.istAktuell())) return false;
   if (!mainWindow || mainWindow.isDestroyed()) return false;
 
   if (spielerView && !spielerView.webContents.isDestroyed()) {
@@ -8841,35 +8869,14 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // Die eine Ausnahme - und sie ist der Grund, warum der Player eine eigene
-      // Ansicht mit eigener Sitzung hat.
-      //
-      // Die Seite kommt von der Platte (file://) und holt ihr Video von einem
-      // fremden Auslieferungsserver. Der antwortet ohne
-      // Access-Control-Allow-Origin, denn er kennt nur den Player des Hosters
-      // und dessen eigene Seite. Mit der ueblichen Pruefung waere hier Schluss:
-      // die Playlist kaeme an und duerfte nicht gelesen werden. Kopfzeilen
-      // nachtragen hilft dagegen nicht - eine Vorabfrage, die der Server nicht
-      // beantwortet, laesst sich nicht nachtraeglich beantworten.
-      //
-      // Was diese Ausnahme kostet, ist eingegrenzt: in dieser Ansicht laeuft
-      // genau eine Seite, und die ist unsere eigene. Kein Node, kein Zugriff
-      // ausser den fuenf Dingen der Bruecke, keine fremde Seite, die je darin
-      // geoeffnet wuerde (die Anbieterseiten laufen in ihrer eigenen Sitzung
-      // mit ihrem Werbefilter). Eine Playlist ist Text; sie wird gelesen, nicht
-      // ausgefuehrt.
-      webSecurity: false,
+      // Medien-CORS behandelt spieler-netz gezielt in dieser eigenen Sitzung.
+      webSecurity: true,
       autoplayPolicy: "no-user-gesture-required",
       backgroundThrottling: false
     }
   });
-  // Und diese Ansicht bleibt bei ihrer Seite: was nicht die eigene Datei ist,
-  // wird hier nicht geoeffnet. Ohne Webpruefung ist das die zweite Haelfte der
-  // Eingrenzung oben.
-  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  view.webContents.on("will-navigate", (ereignis, ziel) => {
-    if (!String(ziel || "").startsWith("file://")) ereignis.preventDefault();
-  });
+  // Diese Ansicht bleibt bei ihrer eigenen lokalen Playerdatei.
+  ipcSchutz.lokaleNavigation(view.webContents, path.join(__dirname, "renderer", "spieler.html"));
   view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
   spielerView = view;
 
@@ -8928,7 +8935,36 @@ function direktSpielerSchliessen(grund = "") {
 ipcMain.on("spieler:bereit", (ereignis) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
   ereignis.sender.send("spieler:auftrag", spielerAuftrag());
+  sendSpielerChatStatus();
 });
+
+ipcMain.handle("spieler:chat-status", (ereignis) => vomSpieler(ereignis)
+  ? spielerChatStatus() : { active: false, connected: false, room: "", messages: [] });
+ipcMain.handle("spieler:chat-senden", (ereignis, text) => {
+  if (!vomSpieler(ereignis)) return { ok: false, error: "Kein aktiver Player." };
+  const runde = spielerRunde();
+  if (!runde) return { ok: false, error: "Du bist gerade in keiner Watchparty." };
+  const zeile = typeof text === "string" ? text.trim() : "";
+  if (!zeile || zeile.length > 500) return { ok: false, error: "Eine Nachricht darf 1 bis 500 Zeichen haben." };
+  const ok = watchparty.chatSenden(runde.key, zeile, runde.raum);
+  return { ok, error: ok ? "" : "Keine Verbindung. Deine Nachricht wurde nicht gesendet." };
+});
+
+function spielerChatStatus() {
+  const runde = spielerRunde();
+  const room = runde?.raum || "";
+  return {
+    active: Boolean(runde), room,
+    connected: Boolean(room && watchparty.status().rooms.some(eintrag => eintrag.room === room && eintrag.connected)),
+    messages: room ? (watchpartyChatNachrichten.get(room) || []) : []
+  };
+}
+
+function sendSpielerChatStatus() {
+  if (spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:chat", { type: "status", ...spielerChatStatus() });
+  }
+}
 
 /**
  * Der Stand aus dem eigenen Player - verbucht wie jeder andere auch.
@@ -9043,13 +9079,14 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   }
 
   const signal = optionen.signal || direktAuftragBeginnen();
-  if (signal.aborted) return { ok: false, abgebrochen: true };
+  const abgebrochen = () => signal.aborted || (optionen.istAktuell && !optionen.istAktuell());
+  if (abgebrochen()) return { ok: false, abgebrochen: true };
   const gelesen = optionen.links?.length
     ? { view: getProviderView(provider), links: optionen.links }
     : await werkbankLesen(provider, url, async (view) => ({
       view, links: await direktLinksLesen(provider, view)
-    }), () => !signal.aborted);
-  if (signal.aborted) return { ok: false, abgebrochen: true };
+    }), () => !abgebrochen());
+  if (abgebrochen()) return { ok: false, abgebrochen: true };
   const view = gelesen?.view;
   if (!view) return { ok: false, grund: "Die Folgenseite lädt nicht" };
 
@@ -9093,14 +9130,14 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   let ergebnis = rundenLink
     ? await direktQuelleFuerAnsicht(provider, view, { ...quellenOptionen, nurDieser: rundenLink.adresse })
     : await direktQuelleFuerAnsicht(provider, view, quellenOptionen);
-  if (signal.aborted) return { ok: false, abgebrochen: true };
+  if (abgebrochen()) return { ok: false, abgebrochen: true };
   // Gibt gerade dieser Hoster nichts her, ist eine fremde Fassung immer noch
   // besser als ein schwarzes Bild. Der Abgleich zieht danach zurecht, was er
   // kann - und der Zuschauer sieht in der Hosterliste, woran es lag.
   if (!ergebnis.ok && rundenLink) {
     console.log(`[ELFIX WATCHPARTY] Die Fassung der Runde gab nichts her - zurueck zur freien Wahl`);
     ergebnis = await direktQuelleFuerAnsicht(provider, view, quellenOptionen);
-    if (signal.aborted) return { ok: false, abgebrochen: true };
+    if (abgebrochen()) return { ok: false, abgebrochen: true };
   }
   if (!ergebnis.ok) return { ...ergebnis, hosterliste: ergebnis.hosterliste || gelesen.links };
 
@@ -9455,6 +9492,19 @@ ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
   if (!provider) return { ok: false, grund: "Anbieter fort" };
   const ziel = absoluteHttpUrl(String(zielUrl || ""), spielerLauf.url);
   if (!providerModel.isHttpUrl(ziel)) return { ok: false, grund: "Adresse nicht erkannt" };
+  const runde = spielerRunde();
+  if (runde) {
+    if (taste.urlSchluessel(ziel) !== taste.urlSchluessel(spielerLauf.url)) {
+      return { ok: false, grund: "Der gemeinsame Wechsel muss in derselben Serie bleiben." };
+    }
+    if (!watchparty.status().rooms.some(raum => raum.room === runde.raum && raum.connected)) {
+      return { ok: false, grund: "Keine Verbindung zur Watchparty." };
+    }
+    // Auch der Ausloeser folgt erst der Vorbereitung des Relays. Ein eigener
+    // paralleler Ladevorgang wuerde die gemeinsame Startschranke umgehen.
+    watchparty.steuernMitAdresse(runde.key, "navigate", 0, ziel, runde.raum);
+    return { ok: true, wartetAufRunde: true };
+  }
   // Der Stand der alten Folge ist gemeldet, bevor gewechselt wird - der Player
   // schickt ihn mit dem letzten `stand`. Ab hier gilt die neue.
   //
@@ -9592,8 +9642,11 @@ function watchpartyPasstZurFolge(episodeId, url) {
  */
 function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
   if (!spielerLauf) return false;
+  if (nachricht.reason === "sync-timeout" && spielerFolgenVorbereitung
+    && nachricht.syncId === spielerFolgenVorbereitung.syncId
+    && eintrag.room === spielerFolgenVorbereitung.room && eintrag.key === spielerFolgenVorbereitung.key) return true;
   const adresse = spielerLauf.url;
-  if (urteil.tun === "navigate") {
+  if (urteil.tun === "navigate" || (urteil.tun === "syncprepare" && nachricht.reason === "episode-change")) {
     return Boolean(nachricht.url)
       && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse);
   }
@@ -9637,6 +9690,7 @@ let spielerDrift = { bestaetigt: 0, letzteMessung: 0, seitSprung: 0 };
 /** Der zuletzt gemeldete Stand des eigenen Players. */
 let spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
 let spielerSyncBereit = null;
+let spielerFolgenVorbereitung = null;
 
 ipcMain.on("spieler:sync-bereit", (ereignis, id) => {
   const bereit = spielerSyncBereit;
@@ -9670,6 +9724,8 @@ function spielerRundenEinstellung() {
     fassung: String(eintrag?.fassung || ""),
     hoster: String(eintrag?.hoster || ""),
     binHost: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId,
+    quelleStartbar: Boolean(eintrag?.joined && eintrag.myId && !eintrag.hostId
+      && watchparty.status().rooms?.some((raum) => raum.room === runde.raum && raum.connected)),
     inRunde: true
   };
 }
@@ -9677,7 +9733,7 @@ function spielerRundenEinstellung() {
 /** Darf dieser Player seine Quelle selbst waehlen? Privat jeder, in der Runde nur der Host. */
 function spielerQuellenwechselErlaubt() {
   const stand = spielerRundenEinstellung();
-  return !stand.inRunde || stand.binHost;
+  return !stand.inRunde || stand.binHost || Boolean(stand.quelleStartbar);
 }
 
 /**
@@ -9773,9 +9829,43 @@ function meldeWatchpartyStandAusSpieler(position, pausiert, frameTime) {
  * zusaetzlich in die Anbieteransichten. Passt er nicht zu dem, was gerade
  * laeuft, bleibt es bei `false` und der alte Weg entscheidet.
  */
-async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
+async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell = () => true) {
   if (!spielerLauf) return false;
   const adresse = spielerLauf.url;
+
+  if (nachricht.reason === "sync-timeout" && spielerFolgenVorbereitung
+    && nachricht.syncId === spielerFolgenVorbereitung.syncId) {
+    spielerFolgenVorbereitung = null;
+    spielerSyncBereit = null;
+    spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
+    sendToast("Nicht alle Geräte wurden bereit. Die Runde bleibt pausiert.");
+    return true;
+  }
+
+  if (urteil.tun === "syncprepare" && nachricht.reason === "episode-change"
+    && nachricht.url && !istGleicheFolge(nachricht.url, adresse)) {
+    if (taste.urlSchluessel(nachricht.url) !== taste.urlSchluessel(adresse)) return false;
+    const provider = spielerAnbieter();
+    if (!provider) return false;
+    // Die alte Folge sofort anhalten; die neue darf vor syncready/syncstart
+    // weder automatisch spielen noch einen eigenen Play-Befehl ausloesen.
+    spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false, wartenAufFolge: true });
+    const vorbereitung = { syncId: nachricht.syncId, room: eintrag.room, key: eintrag.key };
+    spielerFolgenVorbereitung = vorbereitung;
+    let geladen;
+    try {
+      geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
+        () => direktFolgeSpielen(provider, nachricht.url, { startzeit: 0, rundeWarten: true, istAktuell }));
+    } finally {
+      if (spielerFolgenVorbereitung === vorbereitung) spielerFolgenVorbereitung = null;
+    }
+    if (!istAktuell()) return true;
+    if (!geladen?.ok) {
+      spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
+      sendToast(geladen?.grund || "Die nächste Folge konnte nicht vorbereitet werden.");
+      return true;
+    }
+  }
 
   // Der Folgenwechsel richtet sich gerade an die, bei denen die alte Folge
   // steht - er wird deshalb vor der Folgenpruefung beantwortet.
@@ -10098,7 +10188,7 @@ async function applyWatchpartyControl(nachricht) {
 
   // Laeuft der eigene Player, gehoert der Befehl ihm. Er bekommt ihn als Zahl
   // und nicht als eingespieltes Skript - das Video gehoert uns.
-  if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost)) return;
+  if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell)) return;
   if (!istAktuell()) return;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
@@ -10211,6 +10301,9 @@ function sendWatchpartyWatchstate(nachricht) {
     name: String(mitglied.name || "Gerät"),
     position: sanitizePositiveNumber(mitglied.position),
     paused: Boolean(mitglied.paused),
+    buffering: Boolean(mitglied.buffering),
+    playbackRate: Number(mitglied.playbackRate) > 0 ? Number(mitglied.playbackRate) : 1,
+    frameTime: Number.isFinite(mitglied.frameTime) ? mitglied.frameTime : null,
     host: Boolean(mitglied.host),
     season: sanitizePositiveNumber(mitglied.season),
     episode: sanitizePositiveNumber(mitglied.episode),
@@ -10236,18 +10329,16 @@ function sendWatchpartyWatchstate(nachricht) {
   });
 }
 
-// Die Leiste im Player befuellen. Allein schaut man niemandem zu - dann bleibt
-// sie leer und damit unsichtbar.
+// Auch allein muss die eigene Rolle den Player erreichen. Ob die Leiste
+// sichtbar ist, entscheidet der Renderer erst nach dem Rechte-Update.
 function zeigeLeisteImPlayer(mitglieder) {
-  const leute = mitglieder.length > 1
-    ? mitglieder.map((mitglied) => ({
+  const leute = mitglieder.map((mitglied) => ({
       name: mitglied.me ? "Du" : mitglied.name,
       paused: mitglied.paused,
       host: mitglied.host,
       me: mitglied.me,
       zeit: formatUhr(mitglied.position + (mitglied.paused ? 0 : mitglied.age))
-    }))
-    : [];
+    }));
   // Der eigene Player bekommt sie als Nachricht und zeichnet sie selbst: seine
   // Seite gehoert uns, dort braucht es kein eingespritztes Skript und keine
   // Stile in Einzelteilen. Dasselbe Aussehen hat sie trotzdem - siehe
@@ -11632,11 +11723,30 @@ async function installWatchpartyChat(provider, view, url) {
 // wo auch geschaut wird - eine Chatzeile auf einer Seite ohne Runde waere ein
 // Fremdkoerper.
 function watchpartyChatZeigen(nachricht) {
+  if (!nachricht || typeof nachricht.room !== "string" || typeof nachricht.text !== "string") return;
+  const room = nachricht.room;
+  const message = {
+    id: String(++watchpartyChatNummer),
+    name: typeof nachricht.from === "string" ? nachricht.from.slice(0, 40) : "Gerät",
+    text: nachricht.text.slice(0, 500),
+    at: Number.isFinite(nachricht.at) ? nachricht.at : Date.now(),
+    deviceId: typeof nachricht.deviceId === "string" ? nachricht.deviceId : ""
+  };
+  const history = watchpartyChatNachrichten.get(room) || [];
+  history.push(message);
+  watchpartyChatNachrichten.set(room, history.slice(-100));
+  // Verlassene Raeume halten weder einen Chat noch beliebig viel Speicher fest.
+  const raeume = new Set(watchparty.status().rooms.map(eintrag => eintrag.room));
+  for (const code of watchpartyChatNachrichten.keys()) if (!raeume.has(code)) watchpartyChatNachrichten.delete(code);
+  if (spielerRunde()?.raum === room && spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:chat", { type: "message", room, message });
+    return;
+  }
   const eintrag = [...providerViews.entries()].find(([, ansicht]) => isLiveView(ansicht));
   if (!eintrag) return;
   const [, view] = eintrag;
   const adresse = view.webContents.getURL();
-  if (!watchpartyChatLiveKeyForUrl(adresse)) return;
+  if (!watchpartyChatLiveKeyForUrl(adresse) || watchpartyRaumForUrl(adresse) !== room) return;
   executeJavaScriptInMediaFrames(view,
     `window.__elfixChat && window.__elfixChat.melden(${JSON.stringify(nachricht)})`).catch(() => []);
 }
@@ -13390,7 +13500,9 @@ function normalizeSettings(raw) {
       // Speichern eine frische heraus, waere das Geraet fuer die Raeume jedes
       // Mal ein anderes und muesste ueberall neu beitreten.
       deviceId: String(raw?.watchparty?.deviceId || settings?.watchparty?.deviceId || "").slice(0, 64)
-        || crypto.randomUUID()
+        || crypto.randomUUID(),
+      deviceSecret: /^[A-Za-z0-9_-]{43}$/.test(String(raw?.watchparty?.deviceSecret || settings?.watchparty?.deviceSecret || ""))
+        ? String(raw?.watchparty?.deviceSecret || settings?.watchparty?.deviceSecret) : ""
     },
     geraete: (() => {
       // Wie die Geraetekennung: der Schluessel gehoert nicht ins
@@ -13501,7 +13613,9 @@ function normalizeSettings(raw) {
 }
 
 function publicSettings(value) {
-  return JSON.parse(JSON.stringify(value));
+  const publicValue = JSON.parse(JSON.stringify(value));
+  if (publicValue.watchparty) delete publicValue.watchparty.deviceSecret;
+  return publicValue;
 }
 
 function defaultSettings() {

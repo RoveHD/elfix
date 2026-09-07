@@ -130,6 +130,11 @@ final class DirektSpieler {
          * Abgleich holt das wieder ein.
          */
         default boolean darfTempo() { return true; }
+
+        /** Der Chat wird wie die Player-Steuerung über die Android-Watchparty weitergereicht. */
+        default void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
+            if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
+        }
     }
 
     /* --------------------------------------------------- Die Farben des Players */
@@ -204,6 +209,7 @@ final class DirektSpieler {
     /** Der Tempo-Knopf in der Leiste - er traegt die laufende Stufe als Beschriftung. */
     private final TextView tempoText;
     private final TextView intro;
+    private final SpielerChat chat;
 
     private final LinearLayout mitte;
     /** Abspielen und Pause in der Mitte - siehe {@link #mitteZeichnen()}. */
@@ -274,6 +280,10 @@ final class DirektSpieler {
     private long letzteFrameDiagnose;
     /** Zwischen lokalem Play-Wunsch und dem autoritativen syncstart bleibt das Bild stehen. */
     private boolean gemeinsamerStartOffen;
+    /** Die Folgenquelle darf erst mit genau dieser Relay-Generation anlaufen. */
+    private String folgenBarriereSyncId = "";
+    /** Eine nach der Absage verspaetet eintreffende Freigabe bleibt wirkungslos. */
+    private String abgelaufeneFolgenBarriereSyncId = "";
 
     /** Schichten sichtbar? Steht hier und nicht an der Sichtbarkeit der Ansicht:
      *  waehrend des Ausblendens ist sie noch sichtbar und schon nicht mehr gemeint. */
@@ -575,6 +585,9 @@ final class DirektSpieler {
         // Oben stehen zwei Dinge untereinander: der Streifen der Runde (er
         // kommt von aussen, siehe streifenPlatz) und der Kopf des Players.
         // Uebereinander gelegt verdeckten sie sich gegenseitig.
+        chat = new SpielerChat(activity, umgebung::chatSenden);
+        ansicht.addView(chat.ansicht(), new FrameLayout.LayoutParams(-1, -1));
+
         LinearLayout oben = new LinearLayout(activity);
         oben.setOrientation(LinearLayout.VERTICAL);
         streifenPlatz = new FrameLayout(activity);
@@ -584,6 +597,7 @@ final class DirektSpieler {
         ansicht.addView(oben, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         titel = kopf.findViewWithTag("titel");
         quellenname = kopf.findViewWithTag("quelle");
+
 
         LinearLayout unten = leisteBauen();
         leiste = unten;
@@ -599,6 +613,16 @@ final class DirektSpieler {
         ton = unten.findViewWithTag("ton");
         automatisch = unten.findViewWithTag("auto");
         tempoText = unten.findViewWithTag("tempo");
+        if (fernseher) {
+            // Fliessreihe und der neue Chat im Kopf veraendern die geometrische
+            // Standardsuche je nach TV-Firmware. Der zentrale vertikale Weg
+            // bleibt deshalb explizit: Play hoch zum Regler, Regler runter zu
+            // Play. Seitliche Navigation innerhalb der Leiste bleibt frei.
+            if (regler.getId() == View.NO_ID) regler.setId(View.generateViewId());
+            if (spielen.getId() == View.NO_ID) spielen.setId(View.generateViewId());
+            regler.setNextFocusDownId(spielen.getId());
+            spielen.setNextFocusUpId(regler.getId());
+        }
         intro = unten.findViewWithTag("intro");
         spulenZeichnen();
 
@@ -734,6 +758,12 @@ final class DirektSpieler {
         LinearLayout.LayoutParams namenLage = new LinearLayout.LayoutParams(0, -2, 1f);
         reihe.addView(namen, namenLage);
 
+        TextView chatKnopf = chat == null ? null : chat.ausloeser();
+        if (chatKnopf != null) {
+            chatKnopf.setContentDescription("Livechat öffnen");
+            anfassbar(chatKnopf, 10, chat::oeffnen);
+            reihe.addView(chatKnopf);
+        }
         reihe.addView(knopf("Schließen", umgebung::schliessen));
         return reihe;
     }
@@ -1358,14 +1388,15 @@ final class DirektSpieler {
      */
     private void spielenUmschalten() {
         if (player == null) return;
-        if (player.getPlayWhenReady() || gemeinsamerStartOffen || wartenderBefehl != null) pauseAnfordern();
+        if (player.getPlayWhenReady() || gemeinsamerStartOffen
+            || !folgenBarriereSyncId.isEmpty() || wartenderBefehl != null) pauseAnfordern();
         else abspielenAnfordern();
     }
 
     /** PLAY ist kein Umschalter: laufend oder bereits angefordert bleibt laufend. */
     private void abspielenAnfordern() {
         if (player == null || player.getPlayWhenReady() || gemeinsamerStartOffen
-            || wartenderBefehl != null) return;
+            || !folgenBarriereSyncId.isEmpty() || wartenderBefehl != null) return;
         if (umgebung.inRunde() && bereitGemeldet) startAngefordert();
         else player.play();
         spielenZeichnen();
@@ -1378,7 +1409,10 @@ final class DirektSpieler {
     private void pauseAnfordern() {
         if (player == null) return;
         boolean melden = umgebung.inRunde() && bereitGemeldet;
-        gemeinsamerStartOffen = false;
+        // Waehrend eines Folgenwechsels beendet erst das Relay-Echo die
+        // Schranke. Lokal bleibt der Knopf bis dahin ein Abbrechen-Knopf und
+        // kann nicht durch einen zweiten Tipp zum vorzeitigen Play werden.
+        if (folgenBarriereSyncId.isEmpty()) gemeinsamerStartOffen = false;
         wartenderBefehl = null;
         handler.removeCallbacks(startNotbremse);
         erwartetPlay = false;
@@ -1484,7 +1518,8 @@ final class DirektSpieler {
      */
     private void mitteZeichnen() {
         boolean laeuft = player != null && player.getPlayWhenReady();
-        boolean startOffen = player != null && gemeinsamerStartOffen;
+        boolean startOffen = player != null
+            && (gemeinsamerStartOffen || !folgenBarriereSyncId.isEmpty());
         String zeichen = laeuft || startOffen ? "❚❚" : "▶";
         String beschreibung = startOffen ? "Gemeinsamen Start abbrechen"
             : laeuft ? "Pause" : "Abspielen";
@@ -1947,7 +1982,11 @@ final class DirektSpieler {
         // Ein neuer Player faengt bei einfachem Tempo an - auch mitten in einer
         // Runde, die auf 2x laeuft. Der Hosterwechsel ist genau der Fall.
         lauf.setPlaybackSpeed((float) tempo);
-        lauf.setPlayWhenReady(aktiv);
+        // aktiv beschreibt den Activity-Lebenszyklus, nicht die Erlaubnis der
+        // Runde. Eine neu aufgeloeste Folgenquelle bleibt deshalb trotz
+        // aktiv=true stehen, bis ihr exaktes syncstart eintrifft.
+        lauf.setPlayWhenReady(aktiv && folgenBarriereSyncId.isEmpty()
+            && abgelaufeneFolgenBarriereSyncId.isEmpty());
         endeAbgesagt = false;
         zaehlerEnde = 0;
         zuletzt = SystemClock.elapsedRealtime();
@@ -1990,6 +2029,52 @@ final class DirektSpieler {
     }
 
     void vordergrund() { aktiv = true; befehlPruefen(); }
+
+    /** Sperrt Quellenstart und Play-Bedienung fuer einen gemeinsamen Folgenwechsel. */
+    void folgenBarriereVorbereiten(String syncId) {
+        if (geschlossen || syncId == null || syncId.isEmpty()) return;
+        folgenBarriereSyncId = syncId;
+        abgelaufeneFolgenBarriereSyncId = "";
+        gemeinsamerStartOffen = true;
+        wartenderBefehl = null;
+        handler.removeCallbacks(startNotbremse);
+        erwartetPlay = false;
+        erwartetBis = SystemClock.uptimeMillis() + 2000;
+        if (player != null) player.pause();
+        spielenZeichnen();
+    }
+
+    /** Bricht nur die noch offene Generation ab und merkt sie gegen spaetes syncstart. */
+    void folgenBarriereAbbrechen(String syncId) {
+        if (geschlossen || syncId == null || syncId.isEmpty()
+            || !syncId.equals(folgenBarriereSyncId)) return;
+        folgenBarriereSyncId = "";
+        abgelaufeneFolgenBarriereSyncId = syncId;
+        gemeinsamerStartOffen = false;
+        wartenderBefehl = null;
+        handler.removeCallbacks(startNotbremse);
+        erwartetPlay = false;
+        erwartetBis = SystemClock.uptimeMillis() + 2000;
+        if (player != null) player.pause();
+        spielenZeichnen();
+    }
+
+    /**
+     * Merkt eine bereits abgesagte Generation fuer eine noch ausstehende
+     * Quellenauflosung. Die Bedienung bleibt frei; nur deren automatisches
+     * setPlayWhenReady wird unterdrueckt.
+     */
+    void abgelaufeneFolgenQuelleVormerken(String syncId) {
+        if (geschlossen || syncId == null || syncId.isEmpty()) return;
+        folgenBarriereSyncId = "";
+        abgelaufeneFolgenBarriereSyncId = syncId;
+        gemeinsamerStartOffen = false;
+        wartenderBefehl = null;
+        handler.removeCallbacks(startNotbremse);
+        spielenZeichnen();
+    }
+
+    boolean wartetAufFolgenBarriere() { return !folgenBarriereSyncId.isEmpty(); }
 
     /* ------------------------------------------------------------------ Der Takt */
 
@@ -2186,6 +2271,15 @@ final class DirektSpieler {
         if (geschlossen) return;
         String tun = urteil.optString("tun");
         if ("drift".equals(tun) || "nichts".equals(tun)) return;
+        String syncId = urteil.optString("syncId", "");
+        if ("syncstart".equals(tun) && !syncId.isEmpty()) {
+            // Ist noch eine Folgenquelle gesperrt, darf nur deren eigene
+            // Generation sie freigeben. Nach Timeout bleibt genau diese alte
+            // Freigabe ebenfalls verworfen.
+            if (!folgenBarriereSyncId.isEmpty() && !syncId.equals(folgenBarriereSyncId)) return;
+            if (folgenBarriereSyncId.isEmpty()
+                && syncId.equals(abgelaufeneFolgenBarriereSyncId)) return;
+        }
         // Tempo und Fassung stellen ein, sie steuern nicht: kein Anhalten, kein
         // Sprung, keine Warteschlange. Sie gehen deshalb sofort durch und nicht
         // ueber befehlPruefen.
@@ -2389,7 +2483,15 @@ final class DirektSpieler {
         erwartetBis = SystemClock.uptimeMillis() + 2000;
         erwartetPlay = play;
         wartenderBefehl = null;
-        if (play) gemeinsamerStartOffen = false;
+        if (play) {
+            gemeinsamerStartOffen = false;
+            String syncId = befehl.urteil.optString("syncId", "");
+            if ("syncstart".equals(befehl.urteil.optString("tun", ""))
+                && syncId.equals(folgenBarriereSyncId)) {
+                folgenBarriereSyncId = "";
+                abgelaufeneFolgenBarriereSyncId = "";
+            }
+        }
         player.setPlayWhenReady(play);
         spielenZeichnen();
         frameDiagnose("complete", befehl, abstand);
@@ -2532,6 +2634,9 @@ final class DirektSpieler {
      * bewusst ausgewaehlte andere Knoepfe und Menues bleiben bestaetigbar.
      */
     boolean taste(KeyEvent event) {
+        // Der offene Chat besitzt Steuerkreuz und OK vollständig. Die Activity reicht die Taste
+        // danach an seinen sichtbaren Fokus weiter, statt Play/Pause im Bild umzuschalten.
+        if (chat.istOffen()) return false;
         int code = event.getKeyCode();
         if (code == KeyEvent.KEYCODE_BACK) return false;
         boolean runter = event.getAction() == KeyEvent.ACTION_DOWN;
@@ -2612,6 +2717,7 @@ final class DirektSpieler {
     }
 
     boolean zurueck() {
+        if (chat.zurueck()) return true;
         if (blendeOffen()) {
             blendeZu();
             return true;
@@ -2625,6 +2731,9 @@ final class DirektSpieler {
         }
         return false;
     }
+
+    void chatKontext(String key, String raum, boolean verbunden) { chat.kontext(key, raum, verbunden); }
+    void chatEmpfangen(JSONObject zeile) { chat.empfangen(zeile); }
 
     private void freigeben() {
         letzteBildZeit = Double.NaN;

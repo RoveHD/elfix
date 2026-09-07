@@ -16,6 +16,7 @@ const net = require("net");
 
 const HIER = __dirname;
 const RELAY = path.join(HIER, "..", "..", "sync-server", "server.js");
+const RELAY_TEST_IDENTITAET = path.join(HIER, "relay-test-identitaet.js");
 const PORT = Number(process.env.TESTPORT) || 0;
 
 // Ohne Relay: reine Rechenpruefungen.
@@ -37,8 +38,11 @@ OHNE_RELAY.push("relaystarttest");
 OHNE_RELAY.push("hostgnadetest");
 OHNE_RELAY.push("startnachladetest");
 OHNE_RELAY.push("adblockworkertest");
+OHNE_RELAY.push("securitytest");
+OHNE_RELAY.push("folgenbarrieretest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");
+MIT_RELAY.push("relayidentitytest");
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -174,7 +178,16 @@ async function warteAufStille(port, frist) {
     }
     // Die Ablage kommt mit: geraetetest sieht dort nach, was das Relay
     // wirklich auf die Platte schreibt - und vor allem, was nicht.
-    const r = laufen(datei, { TESTPORT: String(port), STATE_DIRECTORY: ablage });
+    const testUmgebung = { TESTPORT: String(port), STATE_DIRECTORY: ablage };
+    const echteIdentitaetsUndBarriereTests = new Set([
+      "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest"
+    ]);
+    if (!echteIdentitaetsUndBarriereTests.has(datei)) {
+      const bootstrap = `./${path.relative(process.cwd(), RELAY_TEST_IDENTITAET).replace(/\\/g, "/")}`;
+      testUmgebung.NODE_OPTIONS = [process.env.NODE_OPTIONS || "", `--require=${bootstrap}`]
+        .filter(Boolean).join(" ");
+    }
+    const r = laufen(datei, testUmgebung);
     server.kill();
     // Und beim Abraeumen ebenso: erst wenn der Port wieder still ist, darf die
     // naechste Suite ihr eigenes Relay dorthin stellen. Sonst bekommt es

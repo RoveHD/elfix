@@ -129,6 +129,7 @@ function handy(name) {
 
   const api = {
     name, bruecke, player, angewendet, ereignisse,
+    kennungAktuell: () => bruecke.eintraege().find((e) => e.key === KEY)?.myId || "",
     get bereitZahl() { return bereitGemeldet; },
     // Das Relay schickt jeden Steuerbefehl auch an den Absender zurueck. Hier
     // zaehlt nur, was von drueben kommt.
@@ -156,6 +157,8 @@ function handy(name) {
       const urteil = bruecke.steuerungPruefen(nachricht, api.lage(nachricht));
       angewendet.push(urteil);
       if (urteil.tun === "nichts") return urteil;
+      if (urteil.tun === "syncprepare" && nachricht.reason === "episode-change"
+        && nachricht.url) player.offen = nachricht.url;
       if (urteil.tun === "navigate") {
         player.offen = urteil.url;
         player.position = 0;
@@ -249,6 +252,7 @@ function rechner(name) {
 
   const zusammenhang = vm.createContext({
     console: { log() {} }, Date, Math, Number, String, Boolean, Object, Array, JSON,
+    sendToast: () => {},
     watchpartySync: wpSync,
     watchparty: {
       aktiv: true,
@@ -272,6 +276,7 @@ function rechner(name) {
       player.url = url;
       player.position = 0;
       befehle.push({ tun: "folge", url });
+      return { ok: true };
     },
     // Was spieler.js aus dem Befehl macht: Stelle setzen, laufen oder nicht.
     spielerBefehl: (befehl) => {
@@ -300,6 +305,7 @@ function rechner(name) {
   const api = {
     name, raeume, steuerung, befehle, player,
     eintragVon: (key) => raeume.eintraege().find((e) => e.key === key) || null,
+    kennungAktuell: () => api.eintragVon(KEY)?.myId || raeume.geraetId || "",
 
     /** Der Weg aus applyWatchpartyControl: erst entscheiden, dann an den Player. */
     async empfangen(nachricht) {
@@ -387,7 +393,7 @@ function rechner(name) {
   await warteBis(() => (pc.eintragVon(KEY) || {}).hostId, "Host gewaehlt");
   const host = (pc.eintragVon(KEY) || {}).hostId;
   pruefe("2b. Das Relay waehlt einen Host", Boolean(host), `hostId=${host}`);
-  const pcIstHost = host === "Rechner-id";
+  const pcIstHost = host === pc.kennungAktuell();
 
   /* ---------------- 3. Der Rechner steuert, das Telefon folgt -------------- */
 
@@ -523,11 +529,11 @@ function rechner(name) {
   // Der Host ist die Zeitquelle und wird nie nachgeregelt (steuerungEntscheiden:
   // "selbst host"). Fuer diese Pruefung gehoert die Rolle also dem Telefon.
   if (pcIstHost) {
-    pc.raeume.hostUebergeben(KEY, "handy-id", RAUM);
-    await warteBis(() => (pc.eintragVon(KEY) || {}).hostId === "handy-id", "Telefon ist Host");
+    pc.raeume.hostUebergeben(KEY, tv.kennungAktuell(), RAUM);
+    await warteBis(() => (pc.eintragVon(KEY) || {}).hostId === tv.kennungAktuell(), "Telefon ist Host");
   }
   pruefe("6. Die Rolle des Hosts laesst sich uebergeben",
-    (pc.eintragVon(KEY) || {}).hostId === "handy-id",
+    (pc.eintragVon(KEY) || {}).hostId === tv.kennungAktuell(),
     `hostId=${(pc.eintragVon(KEY) || {}).hostId}`);
   pc.stillstehen();
   pc.player.laeuft = true;
@@ -561,27 +567,22 @@ function rechner(name) {
 
   const naechste = folge(5);
   pc.raeume.steuernMitAdresse(KEY, "navigate", 0, naechste, RAUM);
-  await warteBis(() => tv.steuerung().some((n) => n.action === "navigate" && n.url === naechste),
-    "Folgenwechsel am Telefon");
-  const wechsel = tv.steuerung().filter((n) => n.action === "navigate" && n.url === naechste).pop();
-  pruefe("7a. Der Folgenwechsel des Rechners erreicht das Telefon", Boolean(wechsel));
-  if (wechsel) {
-    tv.empfangen(wechsel);
-    pruefe("7b. Das Telefon steht auf der neuen Folge", tv.player.offen === naechste, tv.player.offen);
-  }
+  await warteBis(() => tv.steuerung().some((n) => n.action === "syncstart" && n.url === naechste),
+    "gemeinsamer Folgenstart am Telefon");
+  const wechsel = tv.steuerung().filter((n) => n.action === "syncstart" && n.url === naechste).pop();
+  pruefe("7a. Der Folgenwechsel des Rechners erreicht das Telefon nach der Barriere", Boolean(wechsel));
+  if (wechsel) tv.empfangen(wechsel);
+  pruefe("7b. Das Telefon steht auf der neuen Folge", tv.player.offen === naechste, tv.player.offen);
 
   // Und andersherum: das Telefon schaltet weiter, der Rechner zieht nach.
   const uebernaechste = folge(6);
   tv.bruecke.steuernMitAdresse(KEY, "navigate", 0, uebernaechste, RAUM);
-  await warteBis(() => pc.steuerung.some((n) => n.action === "navigate" && n.url === uebernaechste),
-    "Folgenwechsel am Rechner");
-  const pcWechsel = pc.steuerung.filter((n) => n.action === "navigate" && n.url === uebernaechste).pop();
-  pruefe("7c. Der Folgenwechsel des Telefons erreicht den Rechner", Boolean(pcWechsel));
-  if (pcWechsel) {
-    await pc.empfangen(pcWechsel);
-    pruefe("7d. Der Rechner laedt die neue Folge im eigenen Player",
-      pc.player.url === uebernaechste, pc.player.url);
-  }
+  await warteBis(() => pc.steuerung.some((n) => n.action === "syncstart" && n.url === uebernaechste),
+    "gemeinsamer Folgenstart am Rechner");
+  const pcWechsel = pc.steuerung.filter((n) => n.action === "syncstart" && n.url === uebernaechste).pop();
+  pruefe("7c. Der Folgenwechsel des Telefons erreicht den Rechner nach der Barriere", Boolean(pcWechsel));
+  pruefe("7d. Der Rechner laedt die neue Folge im eigenen Player",
+    pc.player.url === uebernaechste, pc.player.url);
 
   /* -------- 8. Die unsichtbare Werkbank ist nicht der eigene Player ------- */
 

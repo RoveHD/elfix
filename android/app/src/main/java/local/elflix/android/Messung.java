@@ -210,7 +210,7 @@ public final class Messung {
         // liefert ohnehin nichts.
         if (rahmen != null) {
             rahmen.anSpieler(ansicht,
-                "try{elfixRahmen.postMessage(\"" + MELDE_MESSUNG
+                "try{window.__elfixRahmenSenden('signal',\"" + MELDE_MESSUNG
                     + "\"+JSON.stringify(" + messSkript + "))}catch(e){}");
         }
         ansicht.evaluateJavascript(messSkript, wert -> {
@@ -241,7 +241,13 @@ public final class Messung {
         String adresse = seite.adresse();
         if (anbieter == null || adresse == null || !adresse.startsWith("http")) return;
         try {
-            verbuchen(anbieter, adresse, new JSONObject(roh));
+            JSONObject wert = new JSONObject(roh);
+            // Ein Folgenziel ist keine Player-Eigenschaft. Selbst der echte
+            // Hoster darf damit keine Navigation oder dauerhafte Ablage
+            // bestimmen; das Ziel wird aus den Anbieterdaten errechnet und
+            // unmittelbar vor dem Wechsel noch einmal geprueft.
+            wert.remove("nextUrl");
+            verbuchen(anbieter, adresse, wert);
         } catch (Exception fehler) {
             Log.d(TAG, "Messwert aus dem Rahmen unlesbar: " + fehler);
         }
@@ -278,8 +284,8 @@ public final class Messung {
     void verbuchen(Provider anbieter, String adresse, JSONObject gemessen, JSONObject zusatz) {
         double position = gemessen.optDouble("currentTime", 0);
         double laufzeit = gemessen.optDouble("duration", 0);
-        if (!(laufzeit > 0)) return;
         double gespielt = gemessen.optDouble("playedSeconds", 0);
+        if (!gueltigeZeitwerte(position, laufzeit, gespielt)) return;
         boolean beendet = gemessen.optBoolean("ended", false);
         int prozent = (int) Math.round(Math.max(0, Math.min(100, position / laufzeit * 100)));
 
@@ -335,5 +341,14 @@ public final class Messung {
             spielstand.gemessen(anbieter, adresse, position, laufzeit, beendet,
                 gemessen.optString("nextUrl", ""));
         }
+    }
+
+    /** Harte Grenzen fuer Werte aus Webseiten-Playern. */
+    static boolean gueltigeZeitwerte(double position, double laufzeit, double gespielt) {
+        final double MAX_LAUFZEIT = 24 * 60 * 60;
+        return Double.isFinite(position) && Double.isFinite(laufzeit) && Double.isFinite(gespielt)
+            && position >= 0 && laufzeit > 0 && laufzeit <= MAX_LAUFZEIT
+            && position <= laufzeit + 300
+            && gespielt >= 0 && gespielt <= laufzeit + 300;
     }
 }

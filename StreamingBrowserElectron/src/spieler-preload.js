@@ -75,5 +75,9 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   aufTempo: (rueckruf) => ipcRenderer.on("spieler:rundentempo", (_ereignis, wert, binHost) => rueckruf(wert, binHost)),
   aufSteuern: (rueckruf) => ipcRenderer.on("spieler:steuern", (_ereignis, befehl) => rueckruf(befehl)),
   /** Wer sonst noch bei dieser Folge sitzt - Name, Zeichen, Uhr. */
-  aufLeiste: (rueckruf) => ipcRenderer.on("spieler:leiste", (_ereignis, leute) => rueckruf(leute))
+  aufLeiste: (rueckruf) => ipcRenderer.on("spieler:leiste", (_ereignis, leute) => rueckruf(leute)),
+  /** Der Chat bleibt im Hauptprozess; die Playerseite bekommt nur Textzeilen. */
+  chatStatus: () => ipcRenderer.invoke("spieler:chat-status"),
+  chatSenden: (text) => ipcRenderer.invoke("spieler:chat-senden", String(text || "")),
+  aufChat: (rueckruf) => ipcRenderer.on("spieler:chat", (_ereignis, nachricht) => rueckruf(nachricht))
 });

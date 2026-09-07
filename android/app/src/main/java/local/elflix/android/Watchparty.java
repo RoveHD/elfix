@@ -32,6 +32,9 @@ public final class Watchparty {
     public interface Beobachter {
         void watchpartyGeaendert();
 
+        /** Eine neue, bereits vom Relay dem Raum zugeordnete Chatzeile. */
+        default void watchpartyChat(JSONObject zeile) { }
+
         /**
          * Nur der Stand der Runde hat sich geaendert - wer wo steht.
          *
@@ -64,6 +67,8 @@ public final class Watchparty {
     private String serverUrl = "";
     private String geraetName = "";
     private String geraetId = "";
+    /** Privater Besitznachweis des Relays; nie Anzeige-, Export- oder Abgleichsdaten. */
+    private String geraetGeheimnis = "";
     private final List<String> raumcodes = new ArrayList<>();
     /** Beitritte, die von einem anderen Geraet kamen und noch nachzutragen sind. */
     private final List<String[]> offeneBeitritte = new ArrayList<>();
@@ -163,6 +168,8 @@ public final class Watchparty {
         serverUrl = prefs.getString("serverUrl", "");
         geraetName = prefs.getString("deviceName", "");
         geraetId = prefs.getString("deviceId", "");
+        geraetGeheimnis = prefs.getString("deviceSecret", "");
+        if (!geraetGeheimnis.matches("[A-Za-z0-9_-]{43}")) geraetGeheimnis = "";
         if (geraetId.isEmpty()) {
             // Eine eigene Kennung, die bleibt. Ohne sie holt sich jede
             // Verbindung eine eigene vom Relay, und dann gilt dasselbe Geraet
@@ -191,6 +198,7 @@ public final class Watchparty {
             .putString("serverUrl", serverUrl)
             .putString("deviceName", geraetName)
             .putString("deviceId", geraetId)
+            .putString("deviceSecret", geraetGeheimnis)
             .putString("rooms", codes.toString())
             .apply();
     }
@@ -449,6 +457,7 @@ public final class Watchparty {
             einstellungen.put("rooms", codes);
             einstellungen.put("deviceName", geraetName);
             einstellungen.put("deviceId", geraetId);
+            einstellungen.put("deviceSecret", geraetGeheimnis);
             // Der Schluessel des Geraeteabgleichs. Aus ihm leitet der Kern das
             // Konto ab, unter dem alle Geraete einer Person in einer Runde
             // zusammen zaehlen - gerechnet wird das dort und nicht hier, damit
@@ -471,6 +480,9 @@ public final class Watchparty {
     /** Verarbeitet, was der Kern von sich aus meldet. */
     public void ereignis(String name, String nutzlastJson) {
         switch (name) {
+            case "watchparty:identitaet":
+                identitaetUebernehmen(nutzlastJson);
+                break;
             case "watchparty:status":
                 statusUebernehmen(nutzlastJson);
                 break;
@@ -508,6 +520,9 @@ public final class Watchparty {
                 letzterMitschauStand = standMerken(nutzlastJson);
                 if (beobachter != null) beobachter.watchpartyStandGeaendert();
                 break;
+            case "watchparty:chat":
+                chatUebernehmen(nutzlastJson);
+                break;
             case "watchparty:verbindung":
                 // Die Leitung ist wieder offen. Der Raumzustand kommt vom
                 // Relay von selbst; was hier fehlt, ist der Stand der
@@ -518,6 +533,39 @@ public final class Watchparty {
             default:
                 Log.d(TAG, "Watchparty-Ereignis " + name + ": " + nutzlastJson);
                 break;
+        }
+    }
+
+    /** Chat bleibt absichtlich nur im Speicher: weder Verlauf noch Raumdaten landen auf Platte. */
+    private void chatUebernehmen(String json) {
+        try {
+            JSONObject zeile = new JSONObject(json == null ? "{}" : json);
+            String raum = zeile.optString("room", "").trim();
+            String text = zeile.optString("text", zeile.optString("message", "")).trim();
+            if (raum.isEmpty() || text.isEmpty() || text.length() > 4000) return;
+            if (beobachter != null) beobachter.watchpartyChat(zeile);
+        } catch (Exception fehler) {
+            Log.e(TAG, "Watchparty-Chat unlesbar", fehler);
+        }
+    }
+
+    /** Speichert beide Identitaetsfelder in einem Editor und erhaelt fehlende Anfangswerte. */
+    private void identitaetUebernehmen(String nutzlastJson) {
+        try {
+            JSONObject identitaet = new JSONObject(nutzlastJson == null ? "{}" : nutzlastJson);
+            String neueId = identitaet.optString("deviceId", "").trim();
+            String neuesGeheimnis = identitaet.optString("deviceSecret", "").trim();
+            if (neueId.length() > 256) neueId = "";
+            if (!neuesGeheimnis.matches("[A-Za-z0-9_-]{43}")) neuesGeheimnis = "";
+            if (neueId.isEmpty() && neuesGeheimnis.isEmpty()) return;
+            if (!neueId.isEmpty()) geraetId = neueId;
+            if (!neuesGeheimnis.isEmpty()) geraetGeheimnis = neuesGeheimnis;
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("deviceId", geraetId)
+                .putString("deviceSecret", geraetGeheimnis)
+                .apply();
+        } catch (Exception fehler) {
+            Log.e(TAG, "Watchparty-Identitaet unlesbar", fehler);
         }
     }
 
@@ -1091,6 +1139,20 @@ public final class Watchparty {
             Kern.args(eintrag, geraetName), (wert, fehler) -> {
                 if (fehler != null) Log.e(TAG, "Stand nicht gemeldet: " + fehler);
             });
+    }
+
+    /** Eine Chatzeile an den aktiven Titelraum geben. Der Text bleibt bei Fehler beim Aufrufer. */
+    public void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
+        String sichererKey = key == null ? "" : key.trim();
+        String sichereZeile = text == null ? "" : text.trim();
+        String sichererRaum = raum == null ? "" : raum.trim();
+        if (kern == null || !kern.istBereit()) { melde(antwort, null, "Der Kern läuft noch nicht"); return; }
+        if (sichererKey.isEmpty() || sichererRaum.isEmpty() || sichereZeile.isEmpty()) {
+            melde(antwort, null, "Diese Folge läuft in keiner Runde mit"); return;
+        }
+        if (sichereZeile.length() > 4000) { melde(antwort, null, "Die Nachricht ist zu lang"); return; }
+        kern.rufe("watchparty-bruecke.chatSenden", Kern.args(sichererKey, sichereZeile, sichererRaum),
+            (wert, fehler) -> melde(antwort, wert, fehler));
     }
 
     private static String textAus(String jsonWert) {

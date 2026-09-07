@@ -120,16 +120,18 @@ function android(name) {
   let sitzung = 1;
   const api = {
     name, bruecke, ereignisse, steuerung, eintragVon,
+    kennungAktuell: () => eintragVon()?.myId || "",
     // Die Lage, wie Mitschauen.java sie zusammenstellt.
-    lage: (offen) => {
+    lage: (offen, nachricht = null) => {
       const eintrag = eintragVon();
       const treffer = String(offen || "").match(/episode-(\d+)/);
+      const folgtVorbereitung = nachricht?.action === "syncprepare";
       return {
         binHost: Boolean(eintrag && eintrag.hostId && eintrag.hostId === eintrag.myId),
         hostId: (eintrag && eintrag.hostId) || "",
         gleicheAdresse: true,
-        season: 1,
-        episode: treffer ? Number(treffer[1]) : 0
+        season: folgtVorbereitung ? 0 : 1,
+        episode: folgtVorbereitung ? 0 : (treffer ? Number(treffer[1]) : 0)
       };
     },
     // Was der Horcher im Player melden wuerde - woertlich dieselbe Zeile.
@@ -184,6 +186,7 @@ function rechner(name, raum = RAUM) {
   let lage = null;
   const api = {
     name, raeume, steuerung, staende, eintragVon,
+    kennungAktuell: () => eintragVon()?.myId || raeume.geraetId || "",
     stand: (position, pausiert, offen) => raeume.meldeStand(KEY, {
       position, paused: pausiert, url: offen,
       season: 1,
@@ -277,7 +280,7 @@ async function androidAlleinStart(tv, offen) {
   tv.puls(0, true, folge(4));
   await warteBis(() => tv.eintragVon()?.hostId, "ein Host steht fest");
   pruefe("Der Rechner fuehrt (er war zuerst an der Folge)",
-    tv.eintragVon()?.hostId === "Rechner-id",
+    tv.eintragVon()?.hostId === pc.kennungAktuell(),
     `hostId=${tv.eintragVon()?.hostId}`);
 
   /* ---------------------------------------------------------------- Test A */
@@ -389,11 +392,13 @@ async function androidAlleinStart(tv, offen) {
   pc.steuerung.length = 0;
   tv.ereignisse.length = 0;
   pc.melden("navigate", 0, folge(5));
-  await warteBis(() => tv.steuerung().some((m) => m.action === "navigate"), "G: TV empfaengt navigate");
-  const gNav = tv.steuerung().find((m) => m.action === "navigate");
-  const gUrteil = gNav ? tv.bruecke.steuerungPruefen(gNav, tv.lage(folge(4))) : null;
-  pruefe("G1. Folgenwechsel des Rechners kommt als Wechsel an",
-    Boolean(gUrteil) && gUrteil.tun === "navigate" && gUrteil.url === folge(5),
+  await warteBis(() => tv.steuerung().some((m) => m.action === "syncprepare" && m.url === folge(5)),
+    "G: TV bereitet Folgenwechsel vor");
+  const gNav = tv.steuerung().find((m) => m.action === "syncprepare" && m.url === folge(5));
+  const gUrteil = gNav ? tv.bruecke.steuerungPruefen(gNav, tv.lage(folge(4), gNav)) : null;
+  pruefe("G1. Folgenwechsel des Rechners kommt als gemeinsame Vorbereitung an",
+    Boolean(gUrteil) && gUrteil.tun === "syncprepare" && gNav.url === folge(5)
+      && gNav.reason === "episode-change",
     gUrteil ? `${gUrteil.tun} ${gUrteil.url}` : "kein Urteil");
 
   // Android folgt: es meldet sich an Folge 5 an - und der alte Zustand faellt.
@@ -401,7 +406,10 @@ async function androidAlleinStart(tv, offen) {
   tv.neuerPlayer();
   tv.puls(0, true, folge(5));
   pc.puls(0, true, folge(5));
-  await schlaf(400);
+  pc.raeume.bereitZumStart(KEY, RAUM, gNav.syncId);
+  tv.bruecke.bereitZumStart(KEY, RAUM, gNav.syncId);
+  await warteBis(() => tv.steuerung().some((m) => m.action === "syncstart" && m.syncId === gNav.syncId),
+    "G: gemeinsamer Folgenstart");
 
   // Und jetzt der gemeldete Fehler: wirkt Play/Pause danach noch?
   tv.ereignisse.length = 0;
@@ -434,18 +442,23 @@ async function androidAlleinStart(tv, offen) {
 
   /* ---------------------------------------------------------------- Test H */
   pc.steuerung.length = 0;
+  tv.ereignisse.length = 0;
   const hGesendet = tv.bruecke.folgenwechselMelden(KEY, folge(6), RAUM);
-  await warteBis(() => pc.steuerung.some((m) => m.action === "navigate" && m.url === folge(6)),
-    "H: Rechner empfaengt den Wechsel");
-  pruefe("H1. Folgenwechsel von Android meldet Android auch",
-    Boolean(hGesendet) && pc.steuerung.some((m) => m.action === "navigate" && m.url === folge(6)),
+  await warteBis(() => pc.steuerung.some((m) => m.action === "syncprepare" && m.url === folge(6)),
+    "H: Rechner bereitet den Wechsel vor");
+  const hVor = pc.steuerung.find((m) => m.action === "syncprepare" && m.url === folge(6));
+  pruefe("H1. Folgenwechsel von Android bereitet alle gemeinsam vor",
+    Boolean(hGesendet) && Boolean(hVor?.syncId) && hVor.reason === "episode-change",
     JSON.stringify(pc.steuerung.map((m) => `${m.action}:${m.url || ""}`)));
 
   tv.bruecke.zuruecksetzen(KEY, RAUM);
   tv.neuerPlayer();
   tv.puls(0, true, folge(6));
   pc.puls(0, true, folge(6));
-  await schlaf(400);
+  pc.raeume.bereitZumStart(KEY, RAUM, hVor.syncId);
+  tv.bruecke.bereitZumStart(KEY, RAUM, hVor.syncId);
+  await warteBis(() => pc.steuerung.some((m) => m.action === "syncstart" && m.syncId === hVor.syncId),
+    "H: gemeinsamer Folgenstart");
   tv.ereignisse.length = 0;
   pc.steuerung.length = 0;
   pc.melden("play", 5, folge(6));
@@ -484,9 +497,9 @@ async function androidAlleinStart(tv, offen) {
   // Der Rechner verlaesst die Folge. Danach darf er nicht mehr Host sein.
   pc.stillstehen();
   pc.raeume.verlasseStand(KEY, RAUM);
-  await warteBis(() => tv.eintragVon()?.hostId === "tv-id", "K: Android uebernimmt");
+  await warteBis(() => tv.eintragVon()?.hostId === tv.kennungAktuell(), "K: Android uebernimmt");
   pruefe("K. Verlaesst der Host die Folge, uebernimmt der naechste Aktive",
-    tv.eintragVon()?.hostId === "tv-id",
+    tv.eintragVon()?.hostId === tv.kennungAktuell(),
     `hostId=${tv.eintragVon()?.hostId}, hostName=${tv.eintragVon()?.hostName}`);
 
   /* ---------------------------------------------------------------- Test L */

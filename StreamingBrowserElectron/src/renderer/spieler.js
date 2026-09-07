@@ -28,7 +28,8 @@
 const bruecke = window.elfixSpieler || {
   aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
   fehler() {}, schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {},
-  sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {}
+  sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {},
+  chatStatus() { return Promise.resolve({ active: false, messages: [] }); }, chatSenden() { return Promise.resolve({ ok: false }); }, aufChat() {}
 };
 
 /* --------------------------------------------------------- Das Auswahlfeld
@@ -408,6 +409,14 @@ let wechselLaeuft = false;
 /** Ob die gespeicherte Stelle fuer diesen Auftrag schon angesprungen wurde. */
 let startGesetzt = false;
 /**
+ * Jede neue Quelle macht die asynchronen Schritte der vorherigen ungültig.
+ *
+ * `loadedmetadata` kann noch auf das Ende eines HLS-Ankers oder eines
+ * gespeicherten Sprungs warten, wenn schon der naechste Hoster gewaehlt wird.
+ * Der alte Horcher darf danach keinesfalls die neue Quelle starten.
+ */
+let quellenGeneration = 0;
+/**
  * Die Folge liegt bereit, gewaehlt ist sie nicht.
  *
  * Beim Aufmachen einer neuen Serie laedt ELFIX die erste Folge schon einmal
@@ -422,6 +431,12 @@ let ruheUhr = 0;
 let weiterUhr = 0;
 let weiterRest = 0;
 let weiterVerworfen = false;
+/** Die neue Folge ist geladen, startet aber erst gemeinsam mit der Runde. */
+let rundeWarten = false;
+/** Der Auftrag kam aus einem gemeinsamen Folgenwechsel und darf nie autostarten. */
+let rundeQuellenWarten = false;
+/** Eine syncprepare-Nachricht kann vor loadedmetadata eintreffen. */
+let rundenVorbereitung = null;
 
 /* ------------------------------------------------------------- Kleinigkeiten */
 
@@ -441,6 +456,10 @@ function pufferZeigen(an) {
   spielenZeichnen();
 }
 
+function rundeWartenZeigen() {
+  document.getElementById("warteAufAlle").hidden = !rundeWarten;
+}
+
 /**
  * Die beiden Abspielknoepfe zeigen dasselbe: der in der Leiste und der in der
  * Mitte.
@@ -453,7 +472,8 @@ function pufferZeigen(an) {
 function spielenZeichnen() {
   const pausiert = bild.paused && !startAusstehend;
   const zustand = pausiert ? "play" : "pause";
-  const beschreibung = startAusstehend ? "Gemeinsamen Start abbrechen (Leertaste)"
+  const beschreibung = rundeWarten ? "Warten auf alle …"
+    : startAusstehend ? "Gemeinsamen Start abbrechen (Leertaste)"
     : pausiert ? "Abspielen (Leertaste)" : "Pause (Leertaste)";
   for (const knopf of [knopfSpielen, knopfMitte]) {
     if (knopf.getAttribute("data-play-state") !== zustand) {
@@ -531,6 +551,12 @@ const HARMLOSE_ABLEHNUNG = ["AbortError", "NotAllowedError"];
  * die Laufzeit der Nachricht plus Springen und Puffern, und er blieb stehen.
  */
 function spielenUmschalten() {
+  // Nach dem gemeinsamen Folgenwechsel ist die Quelle nur vorbereitet. Ein
+  // eigener Tastendruck darf nicht einen Teilnehmer vor allen anderen starten.
+  if (rundeWarten) {
+    schichtenZeigen();
+    return;
+  }
   if (inRunde && (startAusstehend || !bild.paused)) {
     pauseAnfordern();
     return;
@@ -638,6 +664,14 @@ function steuernAusRunde(befehl) {
     fernSteuern(befehl);
     return;
   }
+  // syncstart ist der einzige Befehl, der die Schranke einer neuen Folge
+  // aufhebt. Er invalidiert zugleich eine noch laufende Vorbereitung.
+  if (befehl.laufen) {
+    rundeWarten = false;
+    rundeQuellenWarten = false;
+    rundenVorbereitung = null;
+    rundeWartenZeigen();
+  }
   // Die Runde antwortet - die Notbremse wird nicht mehr gebraucht.
   clearTimeout(startNotbremse);
   ausRundeBis = Date.now() + 900;
@@ -670,13 +704,37 @@ function steuernAusRunde(befehl) {
   // sonst laeuft das Bild waehrend des Sprungs noch ein Stueck weiter.
   if (!befehl.laufen) {
     bild.pause();
+    // Das Relay beendet eine abgelaufene Schranke mit einem normalen
+    // controlpause ohne bereitId. Damit wird die Bedienung wieder frei und
+    // eine wartende Vorbereitung generationssicher ungültig. Der
+    // Quellenauftrag bleibt trotzdem als Folgenwechsel markiert: ein erst
+    // danach eintreffendes loadedmetadata darf nicht selbst losspielen.
+    if (!befehl.bereitId && !befehl.wartenAufFolge && rundeWarten) {
+      rundeWarten = false;
+      rundenVorbereitung = null;
+      rundeWartenZeigen();
+      spielenZeichnen();
+    }
+    // Schon die alte Folge bleibt stehen, waehrend der Hauptprozess die
+    // Quelle der neuen aufloest. Dies ist noch keine Player-Bereitschaft.
+    if (befehl.wartenAufFolge) {
+      rundeWarten = true;
+      rundeWartenZeigen();
+      spielenZeichnen();
+      return;
+    }
+    // Eine neue Quelle hat oft noch keine Metadaten, wenn syncprepare
+    // ankommt. Den Auftrag merken wir deshalb statt auf einen kurzen
+    // Buffer-Timeout zu fallen; loadedmetadata setzt ihn fort.
+    if (befehl.bereitId) {
+      rundeWarten = true;
+      rundeWartenZeigen();
+      rundenVorbereitung = { befehl, meiner, generation: quellenGeneration, stelle, frameZiel };
+      rundenVorbereitungAusfuehren();
+      return;
+    }
     if (springbar) {
-      const fertig = genauSetzen(stelle, befehl.genau !== false, meiner, true, frameZiel);
-      if (befehl.bereitId) fertig.then(async (gesetzt) => {
-        if (!gesetzt) return;
-        const bereit = await bereitFuerStart(stelle, 2500);
-        if (bereit && meiner === startAuftrag) bruecke.syncBereit?.(befehl.bereitId);
-      });
+      genauSetzen(stelle, befehl.genau !== false, meiner, true, frameZiel);
     } else if (befehl.genau !== false) {
       /*
        * Der Host springt nicht auf die Stelle der Runde - er *ist* sie. Aber er
@@ -706,6 +764,46 @@ function steuernAusRunde(befehl) {
   gesetzt.then((bereit) => {
     if (!bereit || meiner !== startAuftrag) return;
     bild.play().catch(() => {});
+  });
+}
+
+/** Wartet bei einer neuen Folge auf Metadaten, HLS-Anker und echten Puffer. */
+async function rundenVorbereitungAusfuehren() {
+  const vorbereitet = rundenVorbereitung;
+  if (!vorbereitet || vorbereitet.generation !== quellenGeneration
+    || vorbereitet.meiner !== startAuftrag) return;
+  // Der Horcher ruft uns bei loadedmetadata erneut. Vorher gibt es keine
+  // belastbare Dauer, keinen HLS-Anker und auch keinen sinnvollen Seek.
+  if (bild.readyState < 1) return;
+  const { befehl, meiner, stelle, frameZiel } = vorbereitet;
+  if (!await hlsAnkerAbwarten(meiner)) return;
+  if (rundenVorbereitung !== vorbereitet || vorbereitet.generation !== quellenGeneration) return;
+  const gesetzt = await genauSetzen(stelle, befehl.genau !== false, meiner, true, frameZiel);
+  if (!gesetzt || rundenVorbereitung !== vorbereitet || vorbereitet.generation !== quellenGeneration) return;
+  if (!await barrierePufferAbwarten(stelle, meiner, vorbereitet.generation)) return;
+  if (rundenVorbereitung !== vorbereitet || vorbereitet.generation !== quellenGeneration
+    || meiner !== startAuftrag) return;
+  rundenVorbereitung = null;
+  startAusstehend = false;
+  spielenZeichnen();
+  bruecke.syncBereit?.(befehl.bereitId);
+}
+
+/**
+ * Anders als ein normaler manueller Start darf die gemeinsame Schranke nicht
+ * nach 2,5 Sekunden aufgeben: das Relay wartet auf diese bestaetigung und
+ * startet erst danach alle zusammen. Ein Quellenwechsel oder neuer Befehl
+ * beendet das Warten generationssicher.
+ */
+function barrierePufferAbwarten(stelle, meiner, generation) {
+  return new Promise((fertig) => {
+    const pruefen = () => {
+      if (meiner !== startAuftrag || generation !== quellenGeneration || !rundeWarten) return fertig(false);
+      const nah = Math.abs(Number(bild.currentTime) - stelle) <= SEEK_TOLERANZ_S;
+      if (nah && !bild.seeking && bild.readyState >= 3) return fertig(true);
+      setTimeout(pruefen, 40);
+    };
+    pruefen();
   });
 }
 
@@ -1491,6 +1589,10 @@ function naechsteSetzen(wert) {
  */
 function weiterAnbieten() {
   if (weiterVerworfen) return;
+  // Kurz vor dem Ende ist das Video noch nicht als beendet markiert. Ab dann
+  // gilt ein Pause- oder Pufferereignis dem Zuschauer, nicht dem Autoplay.
+  // Am echten Ende darf der Uebergang dagegen trotz `paused` beginnen.
+  if ((bild.paused && !bild.ended) || puffert) return;
   // Ohne Zaehler passiert nichts von selbst - der Knopf "Nächste ›" steht
   // trotzdem da, genau wie es die Einstellung verspricht.
   if (!naechste || weiterUhr || weiterZaehler <= 0) return;
@@ -1499,6 +1601,12 @@ function weiterAnbieten() {
   weiterZahl.textContent = String(weiterRest);
   weiterKasten.hidden = false;
   weiterUhr = setInterval(() => {
+    // `clearInterval` verhindert weitere Takte, ein bereits eingeplanter
+    // Takt darf aber ebenfalls nie waehrend Pause oder Puffer wechseln.
+    if ((bild.paused && !bild.ended) || puffert) {
+      weiterAbbrechen();
+      return;
+    }
     weiterRest -= 1;
     weiterZahl.textContent = String(Math.max(0, weiterRest));
     if (weiterRest <= 0) {
@@ -1631,6 +1739,15 @@ document.addEventListener("mousemove", schichtenZeigen);
 // es bliebe es stehen, bis man den Knopf noch einmal traefe.
 document.addEventListener("click", () => wahlAlleZu());
 document.addEventListener("keydown", (ereignis) => {
+  // Die nativen Tasten eines fokussierten Reglers gehoeren nur dem Regler.
+  // Sonst veraendert ein Pfeil zugleich die feine Range-Stufe und die grobe
+  // Player-Position bzw. Lautstaerke; Leertaste pausierte sogar den Film.
+  if (ereignis.target instanceof HTMLInputElement && ereignis.target.type === "range") return;
+  // Wer im Chat schreibt, bedient ein Textfeld und nicht den Film. Die
+  // Chat-Komponente behandelt Enter und Escape selbst; alle anderen
+  // Player-Shortcuts bleiben hier vollstaendig draussen.
+  if (ereignis.target instanceof HTMLInputElement || ereignis.target instanceof HTMLTextAreaElement
+    || ereignis.target.isContentEditable) return;
   schichtenZeigen();
   // Steht ein Menue offen, gehoeren die Tasten ihm. Pfeile, OK und Escape hat
   // es schon abgefangen (Wahl.taste); alles Uebrige - Leertaste, f, e - taete
@@ -1695,15 +1812,26 @@ bild.addEventListener("pause", () => {
   standMelden(true);
   // Das Ende ist keine Pause, die man an die anderen meldet - sie kommen von
   // selbst dorthin, und der Uebergang zur naechsten Folge macht den Rest.
-  if (!bild.ended) tatMelden("pause");
+  if (!bild.ended) {
+    weiterAbbrechen();
+    tatMelden("pause");
+  }
   schichtenZeigen();
 });
-bild.addEventListener("waiting", () => { puffert = true; pufferZeigen(true); });
+bild.addEventListener("waiting", () => {
+  puffert = true;
+  weiterAbbrechen();
+  pufferZeigen(true);
+});
 bild.addEventListener("playing", () => { puffert = false; pufferZeigen(false); });
 // Der Puffer waechst auch, wenn die Stelle stillsteht - etwa in der Pause.
 bild.addEventListener("progress", () => reglerFaerben(bild.currentTime));
 bild.addEventListener("seeked", () => { vorigeStelle = bild.currentTime; standMelden(true); });
 bild.addEventListener("ended", () => {
+  // Ein Pufferereignis kurz vor dem letzten Sample darf das reguläre Ende
+  // nicht vom Autoplay ausschliessen. Mit dem Ende ist diese Quelle fertig.
+  puffert = false;
+  pufferZeigen(false);
   standMelden(true);
   schichtenZeigen();
   // Der Uebergang kann schon laufen (siehe timeupdate). Steht er noch nicht,
@@ -1726,12 +1854,19 @@ bild.addEventListener("error", () => {
  * einem Wechsel der Quelle) den Film wieder zurueck.
  */
 bild.addEventListener("loadedmetadata", async () => {
+  const meineQuellenGeneration = quellenGeneration;
   anzeigeDauer.textContent = zeit(bild.duration);
   // Eine neue Quelle faengt bei einfachem Tempo an - auch mitten in einer
   // Runde, die auf 2x laeuft. Also hier wieder daraufsetzen, und zwar bei
   // *jedem* loadedmetadata: der Hosterwechsel ist genau der Fall.
   if (bild.playbackRate !== tempo) tempoSetzen(tempo, false);
-  if (startGesetzt) return;
+  // Ein prepare kann eintreffen, nachdem ein erstes Metadatenereignis schon
+  // den Startanker behandelt hat, aber bevor die Quelle wirklich puffert.
+  // Auch das nächste Ereignis muss deshalb die gemerkte Schranke fortsetzen.
+  if (startGesetzt) {
+    if (rundeWarten) rundenVorbereitungAusfuehren();
+    return;
+  }
   startGesetzt = true;
   // Nicht am Ende: wer eine Folge zu neunundneunzig Prozent gesehen hat, will
   // sie von vorn und nicht die letzten zehn Sekunden.
@@ -1739,6 +1874,17 @@ bild.addEventListener("loadedmetadata", async () => {
   if (start > 5 && Number.isFinite(bild.duration) && start < bild.duration - 20) {
     if (!await stelleSetzen(start)) return;
   } else if (!await hlsAnkerAbwarten()) {
+    return;
+  }
+  // Inzwischen kann ein Hoster- oder Folgenwechsel eine neue Quelle gesetzt
+  // haben. Der alte asynchrone Horcher darf sie nicht abspielen.
+  if (meineQuellenGeneration !== quellenGeneration) return;
+  // Die Vorbereitung kann vor den Metadaten angekommen sein. Sie hat ihren
+  // eigenen Seek und ihre eigene Bereitschaft; lokales Autoplay bleibt aus.
+  if (rundeWarten || rundeQuellenWarten) {
+    pufferZeigen(false);
+    schichtenZeigen();
+    rundenVorbereitungAusfuehren();
     return;
   }
   // Eine vorgeladene Folge steht und wartet. Das Bild ist da, die Leiste zeigt
@@ -1942,9 +2088,14 @@ function hlsAnkerErzeugen(instanz) {
  * alte Playlist munter weiter und schreibt in dasselbe <video>.
  */
 function starten(neuerAuftrag) {
+  ++quellenGeneration;
   auftrag = neuerAuftrag || {};
   startGesetzt = false;
   vorgeladen = Boolean(auftrag.vorladen);
+  rundeWarten = Boolean(auftrag.rundeWarten);
+  rundeQuellenWarten = Boolean(auftrag.rundeWarten);
+  rundenVorbereitung = null;
+  rundeWartenZeigen();
   gelaufen = 0;
   vorigeStelle = 0;
   gerettet = { netz: false, medium: false };

@@ -155,6 +155,11 @@ const STAND_FRISCH_MS = 15000;
 // weil es in der Ablage liegt und nichts kostet - geloescht wird daraufhin
 // nichts.
 const raeume = new Map();
+// Fingerabdruck eines servergebundenen, geraeteeigenen Nachweises ->
+// oeffentliche Geraetekennung. Der Nachweis selbst wird weder gespeichert noch an andere
+// Teilnehmer geschickt. Damit kann eine sichtbare Kennung nicht mehr einfach
+// beim Beitritt behauptet werden.
+const identitaeten = new Map();
 let speicherTimer = null;
 
 function raumHolen(code) {
@@ -196,6 +201,18 @@ function zustandLaden() {
     }
     raeume.set(code, { titel, graeber, at: Number(raum?.at) || Date.now() });
   }
+  for (const eintrag of Array.isArray(roh?.identitaeten) ? roh.identitaeten : []) {
+    const fingerabdruck = text(eintrag?.fingerabdruck, 64);
+    const geraetId = text(eintrag?.geraetId, 64);
+    if (!/^[0-9a-f]{64}$/.test(fingerabdruck) || !geraetId) continue;
+    identitaeten.set(fingerabdruck, {
+      geraetId,
+      // Konten sind ebenfalls geheime Nachweise. Auch davon liegt nur der
+      // Fingerabdruck auf der Platte.
+      konto: typeof eintrag?.konto === "string" && /^[0-9a-f]{64}$/.test(eintrag.konto)
+        ? eintrag.konto : ""
+    });
+  }
   geraete.zustandSetzen(roh?.geraete);
   console.log(`Zustand geladen: ${raeume.size} Raum/Raeume, ${geraete.anzahl()} Geraeteschluessel`);
 }
@@ -204,7 +221,15 @@ function zustandSpeichernSpaeter() {
   if (speicherTimer) return;
   speicherTimer = setTimeout(() => {
     speicherTimer = null;
-    const roh = { raeume: {}, geraete: geraete.zustandLesen() };
+    const roh = {
+      raeume: {},
+      geraete: geraete.zustandLesen(),
+      identitaeten: [...identitaeten].map(([fingerabdruck, eintrag]) => ({
+        fingerabdruck,
+        geraetId: eintrag.geraetId,
+        konto: eintrag.konto || ""
+      }))
+    };
     for (const [code, raum] of raeume) {
       roh.raeume[code] = {
         at: raum.at,
@@ -284,10 +309,83 @@ function istGueltigerCode(value) {
 }
 
 function text(value, laenge) {
-  return String(value == null ? "" : value).slice(0, laenge);
+  if (!["string", "number", "boolean"].includes(typeof value)) return "";
+  return String(value).slice(0, laenge);
+}
+
+function nachrichtIstObjekt(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+    && typeof value.type === "string" && /^[a-z][a-z0-9-]{0,31}$/.test(value.type);
+}
+
+function nachweisFingerabdruck(value) {
+  const nachweis = typeof value === "string" ? value : "";
+  if (!/^[A-Za-z0-9_-]{43}$/.test(nachweis)) return "";
+  return crypto.createHash("sha256").update(nachweis, "utf8").digest("hex");
+}
+
+function kontoFingerabdruck(value) {
+  const konto = typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : "";
+  return konto ? crypto.createHash("sha256").update(konto, "utf8").digest("hex") : "";
+}
+
+function neueGeraetId() {
+  let geraetId = "";
+  do {
+    geraetId = crypto.randomUUID();
+  } while ([...identitaeten.values()].some((eintrag) => eintrag.geraetId === geraetId));
+  return geraetId;
+}
+
+function kennungIstGeschuetzt(geraetId) {
+  if (!geraetId) return true;
+  if ([...identitaeten.values()].some((eintrag) => eintrag.geraetId === geraetId)) return true;
+  for (const raum of raeume.values()) {
+    for (const eintrag of raum.titel.values()) {
+      if (eintrag.addedById === geraetId || eintrag.members.has(geraetId)) return true;
+    }
+  }
+  if (typeof wss !== "undefined") {
+    for (const client of wss.clients) {
+      if (client.geraetId === geraetId) return true;
+    }
+  }
+  return false;
+}
+
+function identitaetFuer(nachricht) {
+  const fingerabdruck = nachweisFingerabdruck(nachricht.deviceProof);
+  if (!fingerabdruck) return null;
+  let eintrag = identitaeten.get(fingerabdruck);
+  if (!eintrag) {
+    // Eine frisch nachgewiesene Identitaet darf fuer alte lokale Test- und
+    // Anzeigeverweise ihre gewuenschte Kennung behalten, sofern daran noch
+    // keinerlei Zustand oder andere Identitaet haengt. Ein vorhandener Name
+    // oder eine vorhandene Kennung wird dadurch gerade nicht uebernommen.
+    const gewuenscht = typeof nachricht.deviceId === "string"
+      && /^[\p{L}\p{N}_.:-]{1,64}$/u.test(nachricht.deviceId)
+      && !kennungIstGeschuetzt(nachricht.deviceId)
+      ? nachricht.deviceId : "";
+    eintrag = {
+      geraetId: gewuenscht || neueGeraetId(),
+      konto: kontoFingerabdruck(nachricht.accountProof)
+    };
+    identitaeten.set(fingerabdruck, eintrag);
+    zustandSpeichernSpaeter();
+  } else if (!eintrag.konto) {
+    // Ein Konto darf einmal nachgetragen werden, wenn der Geraeteabgleich erst
+    // spaeter eingeschaltet wurde. Danach bleibt es an diesen Nachweis gebunden.
+    const konto = kontoFingerabdruck(nachricht.accountProof);
+    if (konto) {
+      eintrag.konto = konto;
+      zustandSpeichernSpaeter();
+    }
+  }
+  return eintrag;
 }
 
 function zahl(value, max) {
+  if (typeof value !== "number" && typeof value !== "string") return 0;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : 0;
 }
@@ -308,6 +406,7 @@ function httpAdresse(value) {
 const TEMPO_STUFEN = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 function tempoStufe(wert) {
+  if (typeof wert !== "number" && typeof wert !== "string") return 1;
   const n = Number(wert);
   if (!Number.isFinite(n) || n <= 0) return 1;
   return TEMPO_STUFEN.reduce((beste, stufe) => (
@@ -332,7 +431,7 @@ function titelSaeubern(roh) {
 }
 
 function fortschrittSaeubern(roh) {
-  if (!roh || typeof roh !== "object") return null;
+  if (!roh || typeof roh !== "object" || Array.isArray(roh)) return null;
   return {
     url: httpAdresse(roh.url),
     season: zahl(roh.season, 999),
@@ -369,7 +468,7 @@ function folgeIstNeuer(eintrag, fortschritt) {
   return neueFolge > alteFolge;
 }
 
-function titelNachAussen(raumcode, eintrag, fuerGeraet) {
+function titelNachAussen(raumcode, eintrag, fuerGeraet, fuerKonto) {
   // Kein aktiver Teilnehmer in dieser Folge, kein Host. Dann bleibt nur der
   // zuletzt bekannte Stand - und die Karte behauptet nicht laenger, jemand
   // fuehre die Runde, der gar nicht mehr dabei ist.
@@ -397,7 +496,10 @@ function titelNachAussen(raumcode, eintrag, fuerGeraet) {
     hoster: eintrag.hoster || "",
     addedBy: eintrag.addedBy,
     addedById: eintrag.addedById,
-    addedByKonto: eintrag.addedByKonto || "",
+    // Das Kontokennzeichen ist ein geheimer Besitznachweis und darf nicht im
+    // Raumzustand stehen. Der Empfaenger bekommt nur das fertige Ergebnis.
+    mine: eintrag.addedById === fuerGeraet
+      || (Boolean(fuerKonto) && eintrag.addedByKonto === fuerKonto),
     addedAt: eintrag.addedAt,
     // Archiviert heisst: die Runde hat diesen Titel hinter sich - der Film ist
     // zu Ende, oder von der Serie gibt es gerade nichts Neues. Der Eintrag
@@ -663,8 +765,15 @@ function zustandSenden(raumcode) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     // Der Host haengt an der Folge, die dieses Geraet offen hat - also wird
     // die Liste je Empfaenger gebaut.
-    const shared = [...raum.titel.values()].map((eintrag) => titelNachAussen(raumcode, eintrag, client.geraetId));
-    client.send(JSON.stringify({ type: "state", shared, peers, you: client.geraetId }));
+    const shared = [...raum.titel.values()].map((eintrag) =>
+      titelNachAussen(raumcode, eintrag, client.geraetId, client.konto));
+    client.send(JSON.stringify({
+      type: "state",
+      identityVersion: 2,
+      shared,
+      peers,
+      you: client.geraetId
+    }));
   }
   zustandSpeichernSpaeter();
 }
@@ -932,9 +1041,6 @@ function hostFuerGeraet(raumcode, eintrag, geraetId) {
   return hostFuerFolge(raumcode, eintrag, season, episode);
 }
 
-// Ein Geraet, das neu installiert wurde, meldet sich mit derselben Bezeichnung,
-// aber neuer Kennung. Ohne diese Uebernahme stuende es doppelt in der Liste und
-// muesste ueberall neu beitreten.
 // Benennt jemand sein Geraet um, bleibt es dasselbe Geraet: die Kennung ist
 // dieselbe, also wird ueberall nur der Name nachgezogen. Ohne das stand in den
 // Mitgliederlisten weiter der alte Name, und niemand wusste, wer gemeint ist.
@@ -948,31 +1054,6 @@ function namenNachziehen(raum, geraetId, name) {
     }
     if (eintrag.addedById === geraetId && eintrag.addedBy !== name) {
       eintrag.addedBy = name;
-      geaendert = true;
-    }
-  }
-  return geaendert;
-}
-
-function kennungUebernehmen(raum, geraetId, name) {
-  if (!name) return false;
-  let geaendert = false;
-  for (const eintrag of raum.titel.values()) {
-    for (const [alteId, alterName] of [...eintrag.members]) {
-      if (alteId === geraetId || alterName !== name) continue;
-      const stand = eintrag.stand?.get(alteId);
-      eintrag.members.delete(alteId);
-      eintrag.members.set(geraetId, name);
-      // Dasselbe Geraet mit neuer Kennung behaelt seinen Stand samt Sitzung -
-      // sonst gaelte es als frisch dazugekommen.
-      if (stand && eintrag.stand) {
-        eintrag.stand.delete(alteId);
-        eintrag.stand.set(geraetId, stand);
-      }
-      geaendert = true;
-    }
-    if (eintrag.addedBy === name && eintrag.addedById !== geraetId) {
-      eintrag.addedById = geraetId;
       geaendert = true;
     }
   }
@@ -1020,6 +1101,11 @@ function standSetzen(eintrag, geraetId, name, werte) {
     name: name || vorher.name || eintrag.members.get(geraetId) || "Gerät",
     position: werte.position == null ? (vorher.position || 0) : werte.position,
     paused: werte.paused == null ? Boolean(vorher.paused) : Boolean(werte.paused),
+    frameTime: Number.isFinite(werte.frameTime) && werte.frameTime >= 0
+      ? werte.frameTime : undefined,
+    playbackRate: Number.isFinite(werte.playbackRate) && werte.playbackRate > 0
+      ? Math.min(werte.playbackRate, 4) : undefined,
+    buffering: typeof werte.buffering === "boolean" ? werte.buffering : undefined,
     season: werte.season == null ? (vorher.season || 0) : werte.season,
     episode: werte.episode == null ? (vorher.episode || 0) : werte.episode,
     at: Date.now()
@@ -1058,6 +1144,9 @@ function standNachAussen(raumcode, eintrag, fuerGeraet) {
       name: wert.name,
       position: wert.position,
       paused: wert.paused,
+      ...(Number.isFinite(wert.frameTime) ? { frameTime: wert.frameTime } : {}),
+      ...(Number.isFinite(wert.playbackRate) ? { playbackRate: wert.playbackRate } : {}),
+      ...(typeof wert.buffering === "boolean" ? { buffering: wert.buffering } : {}),
       season: wert.season || 0,
       episode: wert.episode || 0,
       // Wie alt die Meldung ist, in Sekunden - und zwar hier gerechnet, mit
@@ -1081,6 +1170,7 @@ function standSenden(raumcode, eintrag) {
     client.send(JSON.stringify({
       type: "watchstate",
       key: eintrag.key,
+      tempo: eintrag.tempo || 1,
       members: standNachAussen(raumcode, eintrag, client.geraetId),
       pausedBy: eintrag.letzteAktion?.type === "pause" ? eintrag.letzteAktion.name : "",
       lastAction: eintrag.letzteAktion || null
@@ -1136,12 +1226,47 @@ function folgeAusAdresse(url) {
 }
 
 const SYNC_BEREIT_FRIST_MS = 5000;
+const FOLGENWECHSEL_BEREIT_FRIST_MS = 90000;
+
+// Eine Startschranke gehoert den aktuell offenen, eingetretenen Geraeten und
+// nicht den Socket-Objekten, die beim Anlegen zufaellig offen waren. Ein
+// Wiederanschluss bekommt dadurch dieselbe Vorbereitung; ein Timeout erreicht
+// den neuen Socket statt eines laengst geschlossenen alten.
+function offeneSyncTeilnehmer(raumcode, eintrag) {
+  return [...wss.clients].filter((client) => (
+    client.raum === raumcode && client.readyState === client.OPEN
+    && client.geraetId && eintrag.members.has(client.geraetId)
+  ));
+}
+
+function syncTeilnehmerNachtragen(raumcode, eintrag, socket) {
+  if (!eintrag?.sync || !eintrag.sync.vorbereitung
+    || socket.raum !== raumcode || socket.readyState !== socket.OPEN
+    || !socket.geraetId || !eintrag.members.has(socket.geraetId)) return false;
+  eintrag.sync.wartetAuf.add(socket.geraetId);
+  socket.send(eintrag.sync.vorbereitung);
+  return true;
+}
+
+function syncTeilnehmerEntfernen(raumcode, eintrag, geraetId, alterSocket = null) {
+  if (!eintrag?.sync || !geraetId) return;
+  const gleicheVerbindung = offeneSyncTeilnehmer(raumcode, eintrag)
+    .some((client) => client !== alterSocket && client.geraetId === geraetId);
+  if (gleicheVerbindung) return;
+  eintrag.sync.wartetAuf.delete(geraetId);
+  // Start nur, wenn mindestens ein eingetretener Teilnehmer noch wirklich
+  // verbunden ist. In einen leeren Raum startet das Relay kein Video.
+  if (!eintrag.sync.wartetAuf.size
+    && offeneSyncTeilnehmer(raumcode, eintrag).some((client) => client !== alterSocket)) {
+    syncStarten(raumcode, eintrag);
+  }
+}
 
 // Alle Teilnehmer auf derselben Stelle anhalten und erst nach ihren echten
 // Bereitmeldungen gemeinsam weiterlaufen lassen. Ein fehlendes "bereit" ist
 // kein stilles Einverstaendnis: bei Ablauf der Frist bleibt die Runde stehen,
 // damit kein noch pufferndes Geraet wieder allein loslaeuft.
-function syncVorbereiten(raumcode, eintrag, ziel, von, userId) {
+function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   const frameTime = eintrag.live?.action === "pause" && Number.isFinite(eintrag.live?.frameTime)
     && Math.abs(eintrag.live.frameTime - ziel) < .25 ? eintrag.live.frameTime : undefined;
   // Media3 adressiert Millisekunden. Dieselbe gemeinsame Zahl verhindert,
@@ -1154,25 +1279,22 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId) {
   // selbst zaehlt immer mit: sein Play ist der frische Beleg dafuer, dass sein
   // Player diese Folge hat, auch wenn sein naechster Herzschlag noch unterwegs
   // ist.
-  const aktiveIds = new Set(
-    aktiveTeilnehmer(raumcode, eintrag, eintrag.season, eintrag.episode)
-      .map((teilnehmer) => teilnehmer.geraetId)
-  );
+  const aktiveIds = optionen.alleVerbunden
+    ? new Set(eintrag.members.keys())
+    : new Set(
+      aktiveTeilnehmer(raumcode, eintrag, eintrag.season, eintrag.episode)
+        .map((teilnehmer) => teilnehmer.geraetId)
+    );
   aktiveIds.add(userId);
-  const mitglieder = [...wss.clients].filter((client) => (
-    client.raum === raumcode && client.readyState === client.OPEN && aktiveIds.has(client.geraetId)
-  ));
+  const mitglieder = offeneSyncTeilnehmer(raumcode, eintrag)
+    .filter((client) => aktiveIds.has(client.geraetId));
   const syncId = `sync-${naechsteNummer(eintrag)}`;
-  eintrag.sync = {
-    id: syncId,
-    ziel,
-    frameTime,
-    wartetAuf: new Set(mitglieder.map((client) => client.geraetId))
-  };
   eintrag.startAt = 0;
   eintrag.live = { action: "pause", position: ziel, frameTime, url: eintrag.live?.url || eintrag.url, at: Date.now() };
   eintrag.pauseAusgerichtet = true;
-  eintrag.letzteAktion = { type: "play", userId, name: von, timestamp: Date.now() };
+  eintrag.letzteAktion = {
+    type: optionen.aktion || "play", userId, name: von, timestamp: Date.now()
+  };
   standFuerAlle(eintrag, ziel, true);
 
   const jetzt = Date.now();
@@ -1188,11 +1310,19 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId) {
     videoTime: ziel,
     timestamp: jetzt,
     playing: false,
+    reason: optionen.grund || undefined,
     tempo: eintrag.tempo || 1,
     sequenceId: naechsteNummer(eintrag),
     episodeId: folgenKennung(eintrag.season, eintrag.episode),
     hostId: aktuelleHostId(raumcode, eintrag)
   });
+  eintrag.sync = {
+    id: syncId,
+    ziel,
+    frameTime,
+    vorbereitung: daten,
+    wartetAuf: new Set(mitglieder.map((client) => client.geraetId))
+  };
   for (const client of mitglieder) client.send(daten);
   standSenden(raumcode, eintrag);
   zustandSenden(raumcode);
@@ -1211,14 +1341,13 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId) {
       sequenceId: naechsteNummer(eintrag), syncId,
       episodeId: folgenKennung(eintrag.season, eintrag.episode),
       hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-timeout" });
-    for (const client of mitglieder) {
-      if (client.readyState === client.OPEN) {
-        // Clear pending start controls too, including clients still seeking.
-        client.send(pause);
-        client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId }));
-      }
+    for (const client of offeneSyncTeilnehmer(raumcode, eintrag)) {
+      // Clear pending start controls too, including clients that reconnected
+      // while this generation was seeking or loading.
+      client.send(pause);
+      client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId }));
     }
-  }, SYNC_BEREIT_FRIST_MS);
+  }, optionen.fristMs || SYNC_BEREIT_FRIST_MS);
   eintrag.syncTimer.unref?.();
 }
 
@@ -1295,6 +1424,14 @@ wss.on("connection", (socket) => {
     } catch {
       return;
     }
+    // JSON kann ebenso gut null, eine Zahl oder eine Liste enthalten. Erst ab
+    // hier darf irgendein Modul Eigenschaften der Nachricht lesen.
+    if (!nachrichtIstObjekt(nachricht)) return;
+
+    // Jedes weitere Feld kommt aus dem Netz. Die einzelnen Reiniger lehnen
+    // bereits Nicht-Skalare ab; diese Grenze verhindert zusaetzlich, dass ein
+    // Fehler in einem angebundenen Protokollmodul den Relay-Prozess beendet.
+    try {
 
     // Uhrabgleich. Bewusst ganz vorn und ohne Raumbindung: die Antwort haengt
     // an nichts, darf nichts blockieren und soll so schnell wie moeglich
@@ -1309,7 +1446,7 @@ wss.on("connection", (socket) => {
     // Das Handy als Fernbedienung. Wie der Geraeteabgleich vor der Raumpflicht:
     // eine Fernbedienung hat keinen Raumcode, und wer nur sein eigenes ELFIX
     // anhalten will, soll dafuer keine Watchparty betreten muessen.
-    if (String(nachricht?.type || "").startsWith("fn")) {
+    if (nachricht.type.startsWith("fn")) {
       fern.behandeln({
         nachricht,
         socket,
@@ -1324,7 +1461,7 @@ wss.on("connection", (socket) => {
     // "join" und vor der Raumpflicht darunter: er hat keinen Raumcode, und wer
     // nur seine eigenen Geraete zusammenhaelt, soll keine Watchparty betreten
     // muessen.
-    if (String(nachricht?.type || "").startsWith("gr")) {
+    if (nachricht.type.startsWith("gr")) {
       if (nachricht.type === "grhello") {
         if (!geraete.istKennung(nachricht.room)) {
           senden({ type: "grerror", message: "Ungueltiger Schluessel" });
@@ -1343,14 +1480,23 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    if (nachricht?.type === "join") {
+    if (nachricht.type === "join") {
       if (!istGueltigerCode(nachricht.room)) {
         senden({ type: "error", message: "Ungueltiger Raumcode" });
         return;
       }
+      const identitaet = identitaetFuer(nachricht);
+      if (!identitaet) {
+        senden({
+          type: "error",
+          code: "identity-required",
+          message: "Sicherer Gerätenachweis fehlt; ELFIX oder Relay aktualisieren"
+        });
+        return;
+      }
       socket.raum = codeNormalisieren(nachricht.room);
       socket.name = text(nachricht.name, 40) || "Gerät";
-      socket.geraetId = text(nachricht.deviceId, 64) || crypto.randomUUID();
+      socket.geraetId = identitaet.geraetId;
       // Das Konto - alle Geraete einer Person unter einer Kennung.
       //
       // Es ist nicht die Kennung des Geraeteabgleichs, sondern ein HMAC
@@ -1358,11 +1504,16 @@ wss.on("connection", (socket) => {
       // erkennen, aber nicht auf den Abgleichsraum derselben Person schliessen.
       // Wer den Abgleich nicht benutzt, schickt nichts - dann bleibt alles wie
       // bisher, und es entscheidet allein das Geraet.
-      socket.konto = /^[0-9a-f]{32}$/.test(String(nachricht.konto || "")) ? String(nachricht.konto) : "";
+      socket.konto = identitaet.konto || "";
       const raum = raumHolen(socket.raum);
-      kennungUebernehmen(raum, socket.geraetId, socket.name);
       namenNachziehen(raum, socket.geraetId, socket.name);
       zustandSenden(socket.raum);
+      // War dieses Geraet schon eingetreten, setzt ein Wiederanschluss genau
+      // die laufende Vorbereitung fort. Die Mitgliedschaft stammt aus dem
+      // Relayzustand, nicht aus einer Behauptung des neuen Sockets.
+      for (const eintrag of raum.titel.values()) {
+        syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
+      }
       return;
     }
 
@@ -1372,7 +1523,7 @@ wss.on("connection", (socket) => {
     // ihr eigenes Modul: eigener Zustand, eigene Ordnung, eigene Nachrichten.
     // Unterhalb dieser Zeile aendert sich fuer Serien und Filme nichts - was
     // hier abgefangen wird, hat die Titelverwaltung noch nie gesehen.
-    if (String(nachricht?.type || "").startsWith("yt")) {
+    if (nachricht.type.startsWith("yt")) {
       youtubeParty.behandeln({
         nachricht,
         raumcode: socket.raum,
@@ -1461,8 +1612,10 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (nachricht.type === "enter") {
         eintrag.members.set(socket.geraetId, socket.name);
+        syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
       } else {
         eintrag.members.delete(socket.geraetId);
+        syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId);
         // Der Stand geht mit: wer draussen ist, zaehlt nicht mehr als aktiv
         // und kann damit auch nicht mehr Host sein.
         eintrag.stand?.delete(socket.geraetId);
@@ -1480,6 +1633,7 @@ wss.on("connection", (socket) => {
       if (!eintrag || eintrag.addedById !== socket.geraetId || !wen) return;
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
+      syncTeilnehmerEntfernen(socket.raum, eintrag, wen);
       eintrag.stand?.delete(wen);
       hostFreigeben(eintrag, wen);
       zustandSenden(socket.raum);
@@ -1661,6 +1815,18 @@ wss.on("connection", (socket) => {
           // Folge startete, lud und blieb dann stehen. Jetzt laeuft der Autostart
           // durch, und das erste echte Play gibt den Takt vor.
           eintrag.live = { action: "navigate", position: 0, url: ziel || eintrag.url, at: Date.now() };
+          // Ein Folgenwechsel ist erst fertig, wenn jeder aktuell verbundene
+          // Teilnehmer den neuen Player geladen und gepuffert hat. Deshalb
+          // geht er als Vorbereitung hinaus; der gemeinsame Start folgt erst
+          // nach den bestaetigten Bereitschaften. Abgemeldete/offline
+          // Mitglieder kommen nicht in die Wartemenge.
+          syncVorbereiten(socket.raum, eintrag, 0, socket.name, socket.geraetId, {
+            alleVerbunden: true,
+            aktion: "navigate",
+            grund: "episode-change",
+            fristMs: FOLGENWECHSEL_BEREIT_FRIST_MS
+          });
+          return;
         }
       }
 
@@ -1971,6 +2137,13 @@ wss.on("connection", (socket) => {
       const wachAuf = standSetzen(eintrag, socket.geraetId, socket.name, {
         position: ohneAngabe || unfertig ? null : stelle,
         paused: pausiert,
+        frameTime: typeof nachricht.frameTime === "number" && Number.isFinite(nachricht.frameTime)
+          && nachricht.frameTime >= 0 ? Math.min(nachricht.frameTime, 100000) : undefined,
+        playbackRate: typeof nachricht.playbackRate === "number" && Number.isFinite(nachricht.playbackRate)
+          && nachricht.playbackRate > 0 ? nachricht.playbackRate : undefined,
+        buffering: typeof nachricht.buffering === "boolean"
+          ? nachricht.buffering
+          : (typeof nachricht.puffert === "boolean" ? nachricht.puffert : undefined),
         season: zahl(nachricht.season, 999),
         episode: folge,
         // Die Kennung des Players. Sie wechselt bei jeder neuen Folge und
@@ -2518,6 +2691,9 @@ wss.on("connection", (socket) => {
         client.send(daten);
       }
     }
+    } catch {
+      return;
+    }
   });
 
   socket.on("close", () => {
@@ -2538,6 +2714,7 @@ wss.on("connection", (socket) => {
     const raum = raeume.get(socket.raum);
     let gewechselt = false;
     for (const eintrag of raum?.titel.values() || []) {
+      syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId, socket);
       // Wer weg ist, steht auch nirgends mehr - sonst zeigt die Leiste eine
       // Sekunde von jemandem, der gar nicht mehr zuschaut.
       if (eintrag.stand?.delete(socket.geraetId)) standSenden(socket.raum, eintrag);

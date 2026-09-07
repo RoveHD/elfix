@@ -323,6 +323,16 @@ const GRADLE = lies("app/build.gradle");
 const BRUECKE = lies("app/src/main/assets/kern/eigen/sponsorblock-bruecke.js");
 const JAVA = lies("app/src/main/java/local/elflix/android/Sponsorblock.java");
 const ACTIVITY = lies("app/src/main/java/local/elflix/android/MainActivity.java");
+const rahmenMeldungAnfang = ACTIVITY.indexOf("private void rahmenMeldung(");
+const RAHMEN_MELDUNG = ACTIVITY.slice(
+  rahmenMeldungAnfang,
+  ACTIVITY.indexOf("\n    private ", rahmenMeldungAnfang + 1)
+);
+const konsoleAnfang = ACTIVITY.indexOf("public boolean onConsoleMessage(");
+const KONSOLE = ACTIVITY.slice(
+  konsoleAnfang,
+  ACTIVITY.indexOf("\n        @Override", konsoleAnfang + 1)
+);
 
 pruefe("Das Modul liegt im Paket der App",
   /"src\/sponsorblock\.js",/.test(GRADLE),
@@ -362,8 +372,11 @@ pruefe("Der Videowechsel ohne Neuladen wird auch dort mitgenommen",
   /public void doUpdateVisitedHistory\(WebView view, String url, boolean istNachladen\)/.test(ACTIVITY)
   && /sponsorblock\.einspielen\(view, url\);/.test(ACTIVITY),
   "es gibt dann kein onPageFinished und keinen neuen Rahmen");
-pruefe("Die Meldung wird gelesen wie am Rechner",
-  /sponsorblock\.istMeldung\(text\)/.test(ACTIVITY));
+pruefe("Die Meldung kommt nur aus dem bestaetigten Videorahmen",
+  rahmenMeldungAnfang >= 0
+  && /if \(!hatVideo\) return;[\s\S]*sponsorblock\.istMeldung\(nachricht\)[\s\S]*sponsorblock\.meldung\(nachricht\)/.test(RAHMEN_MELDUNG)
+  && !/sponsorblock\.istMeldung|sponsorblock\.meldung/.test(KONSOLE),
+  "die Seitenkonsole ist kein Steuerkanal");
 pruefe("Die sieben Schalter stehen auch auf dem Fernseher",
   /private void sponsorblockKarten\(LinearLayout koerper, boolean fernseher, int luecke\)/.test(ACTIVITY)
   && (ACTIVITY.match(/sponsorblockKategorie\(koerper/g) || []).length === 5,

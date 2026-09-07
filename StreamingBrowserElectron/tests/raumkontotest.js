@@ -105,8 +105,8 @@ const titel = { key: KEY, url: URL, title: "Avatar Aang: Der Herr der Elemente",
   pruefe("Der Rechner ist nicht das einstellende Geraet",
     amRechner.addedById === "geraet-handy",
     `eingestellt von ${amRechner.addedById}`);
-  pruefe("Aber beide tragen dasselbe Konto",
-    amRechner.addedByKonto === KONTO,
+  pruefe("Aber das Relay erkennt das gemeinsame Konto, ohne es preiszugeben",
+    amRechner.mine === true && !("addedByKonto" in amRechner),
     "wer den Abgleich benutzt, ist ein Konto und nicht zwei Geraete");
 
   rechner.send({ type: "unshare", key: KEY });

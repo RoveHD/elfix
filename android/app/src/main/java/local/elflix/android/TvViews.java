@@ -26,9 +26,9 @@ import java.util.List;
 final class TvViews {
     /** Overscan-safe screen margin: roughly 5% of the panel, the standard TV safe area. */
     static final int SCREEN_PADDING = 48;
-    static final int SECTION_GAP = 30;
-    static final int ITEM_GAP = 18;
-    static final int CARD_RADIUS = 16;
+    static final int SECTION_GAP = 36;
+    static final int ITEM_GAP = 20;
+    static final int CARD_RADIUS = 20;
     static final int FOCUS_MS = 170;
 
     /**
@@ -47,6 +47,15 @@ final class TvViews {
     static int dp(Context context, float value) {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
     }
+
+    /**
+     * Die Kopfzeile muss auch bei 960 dp fünf Ziele tragen können. Die Karten
+     * bleiben groß; nur die wiederholten Navigations-Pills verdichten sich.
+     */
+    static int kopfTextGroesseSp(int breiteDp) { return breiteDp < 1280 ? 15 : 17; }
+    static int kopfRandHorizontalDp(int breiteDp) { return breiteDp < 1280 ? 10 : 16; }
+    static int kopfRandVertikalDp(int breiteDp) { return breiteDp < 1280 ? 8 : 12; }
+    static int kopfIconDp(int breiteDp) { return breiteDp < 1280 ? 20 : 22; }
 
     /**
      * The single focus treatment used across every TV surface: a small lift, an accent outline and
@@ -111,7 +120,7 @@ final class TvViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.TEXT_PRIMARY);
-        view.setTextSize(34);
+        view.setTextSize(38);
         view.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
         view.setPadding(0, dp(context, 6), 0, 0);
         return view;
@@ -121,7 +130,7 @@ final class TvViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.TEXT_PRIMARY);
-        view.setTextSize(22);
+        view.setTextSize(24);
         view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         return view;
     }
@@ -143,12 +152,11 @@ final class TvViews {
         LinearLayout pill = new LinearLayout(context);
         pill.setOrientation(LinearLayout.HORIZONTAL);
         pill.setGravity(Gravity.CENTER_VERTICAL);
-        // Schmaler als frueher: achtzehn und zwanzig dp Rand ergaben mit
-        // fuenf Knoepfen eine Kopfzeile, die breiter war als der Platz -
-        // "Einstellungen" wurde am Rand abgeschnitten. Vierzehn und sechzehn
-        // sparen zwoelf dp je Knopf, und der Knopf bleibt gross genug, dass
-        // man ihn aus drei Metern trifft.
-        pill.setPadding(dp(context, 14), dp(context, 10), dp(context, 16), dp(context, 10));
+        int breite = context.getResources().getConfiguration().screenWidthDp;
+        int quer = kopfRandHorizontalDp(breite);
+        pill.setPadding(dp(context, quer), dp(context, kopfRandVertikalDp(breite)),
+            dp(context, quer + 2), dp(context, kopfRandVertikalDp(breite)));
+        pill.setMinimumHeight(dp(context, 48));
         applyFocus(pill,
             shape(context, Theme.SURFACE_ELEVATED, 26, Theme.BORDER, 1),
             shape(context, Theme.PRIMARY_MUTED, 26, Theme.PRIMARY, 2),
@@ -157,14 +165,15 @@ final class TvViews {
         ImageView icon = new ImageView(context);
         icon.setImageResource(iconRes);
         icon.setColorFilter(Theme.TEXT_PRIMARY);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(context, 22), dp(context, 22));
-        iconParams.rightMargin = dp(context, 8);
+        int iconGroesse = kopfIconDp(breite);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(context, iconGroesse), dp(context, iconGroesse));
+        iconParams.rightMargin = dp(context, breite < 1280 ? 5 : 8);
         pill.addView(icon, iconParams);
 
         TextView text = new TextView(context);
         text.setText(label);
         text.setTextColor(Theme.TEXT_PRIMARY);
-        text.setTextSize(16);
+        text.setTextSize(kopfTextGroesseSp(breite));
         text.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         text.setMaxLines(1);
         pill.addView(text);
@@ -199,7 +208,7 @@ final class TvViews {
                              Runnable onOpen, Runnable onOpenStart) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(context, 18), dp(context, 18), dp(context, 18), dp(context, 18));
+        card.setPadding(dp(context, 20), dp(context, 20), dp(context, 20), dp(context, 20));
         applyFocus(card,
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 3));
@@ -268,7 +277,7 @@ final class TvViews {
                              Runnable onOpen, View.OnClickListener onMenu) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 14));
+        card.setPadding(dp(context, 14), dp(context, 14), dp(context, 14), dp(context, 16));
         // Damit das Kachelmenue seine eigene Zeile wiederfindet - beim
         // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
         card.setTag(R.id.elfix_karte, Boolean.TRUE);
@@ -489,7 +498,7 @@ final class TvViews {
         scroll.setClipChildren(false);
         // Der eigene Rand ist der Ueberstand des Fokusrahmens, nicht der
         // Seitenrand: der steht schon an der Seite.
-        int luft = dp(context, 10);
+        int luft = dp(context, 14);
         scroll.setPadding(0, luft, dp(context, SCREEN_PADDING), luft);
         LinearLayout leiste = new LinearLayout(context);
         leiste.setOrientation(LinearLayout.HORIZONTAL);
@@ -565,10 +574,11 @@ final class TvViews {
         // Damit das Kachelmenue seine eigene Karte wiederfindet - beim
         // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
         karte.setTag(R.id.elfix_karte, Boolean.TRUE);
-        int rand = dp(context, 8);
+        karte.setContentDescription(titel + (unterzeile == null || unterzeile.isEmpty() ? "" : ", " + unterzeile));
+        int rand = dp(context, 10);
         karte.setPadding(rand, rand, rand, dp(context, 12));
         applyFocus(karte,
-            shape(context, Color.TRANSPARENT, CARD_RADIUS, Color.TRANSPARENT, 0),
+            shape(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 3));
 
         int posterHoehe = Math.round(breiteDp * 1.42f);
@@ -595,7 +605,7 @@ final class TvViews {
         TextView name = new TextView(context);
         name.setText(titel);
         name.setTextColor(Theme.TEXT_PRIMARY);
-        name.setTextSize(16);
+        name.setTextSize(18);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         // Drei Zeilen fuer den Titel.
         //
@@ -613,7 +623,7 @@ final class TvViews {
             TextView zeile = new TextView(context);
             zeile.setText(unterzeile);
             zeile.setTextColor(Theme.TEXT_SECONDARY);
-            zeile.setTextSize(14);
+            zeile.setTextSize(15);
             // Zwei Zeilen statt einer: Die Unterzeile einer Kachel.
             zeile.setMaxLines(2);
             zeile.setEllipsize(TextUtils.TruncateAt.END);
@@ -682,10 +692,11 @@ final class TvViews {
         karte.setOrientation(LinearLayout.VERTICAL);
         karte.setClipChildren(false);
         karte.setClipToPadding(false);
-        int rand = dp(context, 8);
+        int rand = dp(context, 10);
+        karte.setContentDescription(titel + (grund == null || grund.isEmpty() ? "" : ", " + grund));
         karte.setPadding(rand, rand, rand, dp(context, 12));
         applyFocus(karte,
-            shape(context, Color.TRANSPARENT, CARD_RADIUS, Color.TRANSPARENT, 0),
+            shape(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 3));
 
         int posterHoehe = Math.round(breiteDp * 1.42f);
@@ -696,7 +707,7 @@ final class TvViews {
         TextView name = new TextView(context);
         name.setText(titel);
         name.setTextColor(Theme.TEXT_PRIMARY);
-        name.setTextSize(16);
+        name.setTextSize(18);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         // Drei Zeilen fuer den Titel.
         //
@@ -920,6 +931,13 @@ final class TvViews {
             new int[]{Color.argb(238, 7, 10, 18), Color.argb(170, 7, 10, 18), Color.argb(40, 7, 10, 18)});
         schleier.setBackground(quer);
         kasten.addView(schleier, new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Die untere Lesefläche trennt Titel und Aktionen vom Motiv. Sie ist
+        // statisch und billig: kein Blur, keine Offscreen-Layer, kein Takt.
+        View untenSchleier = new View(context);
+        untenSchleier.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+            new int[] { Color.argb(238, 7, 10, 18), Color.argb(0, 7, 10, 18) }));
+        kasten.addView(untenSchleier, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout text = new LinearLayout(context);

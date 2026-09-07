@@ -1,14 +1,12 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: https: http:; connect-src https: http:; worker-src blob:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <title>ELFIX Player</title>
-<!-- Keine eigene Inhaltsregel im Kopf. Die Seite laedt zwei Dateien von der
-     Platte (hls.js und ihr eigenes Skript) und danach ein Video von einer
-     Adresse, die erst zur Laufzeit feststeht - eine Regel, die beides
-     abdecken soll, deckt am Ende alles ab und sagt nichts mehr. Enger sitzt
-     die Ansicht selbst: sie laeuft mit contextIsolation, ohne Node und mit
-     einer Bruecke, die genau fuenf Dinge kann (spieler-preload.js). -->
+<!-- Skripte kommen ausschliesslich aus der App. Fremde Adressen sind nur
+     fuer Medienabrufe erlaubt; Navigation, Unterfenster und IPC sind separat
+     auf die lokale Playerseite beschraenkt. -->
 
 <style>
   /* Der eigene Player. Dunkel, weil davor ein Film laeuft, und ohne jede
@@ -188,6 +186,44 @@
 
   #autoKnopf { font-weight: 700; }
   #autoKnopf.aus { opacity: 0.5; font-weight: 400; }
+
+  /* Der Chat ist eine linke Schublade wie bei einem Livestream. Er liegt ueber
+     dem Bild und verkleinert es nicht; auf schmalen Fenstern bleibt genug Bild
+     uebrig, weil die Schublade nur fast die ganze Breite einnimmt. */
+  #chatKnopf { position: relative; }
+  #chatKnopf[data-ungelesen]::after {
+    content: attr(data-ungelesen); position: absolute; top: -5px; right: -5px;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+    background: #3D92FF; color: #fff; font: 700 10px/16px system-ui, sans-serif;
+    text-align: center;
+  }
+  #chatPanel {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 50;
+    width: min(380px, 88vw); padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+    background: #080b12; box-shadow: 18px 0 54px rgba(0, 0, 0, .58);
+  }
+  .chatKopf { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .chatKopf strong { flex: 1; }
+  #chatStatus { color: rgba(255,255,255,.72); font-size: 12px; font-weight: 500; }
+  #chatListe {
+    flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 0; padding-right: 3px; user-select: text;
+  }
+  .chatNachricht { display: flex; align-items: baseline; gap: 6px; padding: 7px 2px; border-bottom: 1px solid rgba(255,255,255,.07); }
+  .chatName { color: #91c4ff; font-size: 12px; font-weight: 700; }
+  .chatText { flex: 1; min-width: 0; color: rgba(255,255,255,.92); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .chatZeit { flex: 0 0 auto; color: rgba(255,255,255,.5); font-size: 11px; font-variant-numeric: tabular-nums; }
+  #chatForm { display: flex; gap: 8px; margin: 0 -14px -14px; padding: 10px 14px 14px; border-top: 1px solid rgba(255,255,255,.13); background: #0b0f18; }
+  #chatEingabe {
+    flex: 1; min-width: 0; resize: none; min-height: 38px; max-height: 96px;
+    padding: 9px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 10px;
+    background: rgba(255,255,255,.09); color: #fff; font: inherit; user-select: text;
+  }
+  #chatEingabe:focus-visible { outline: 2px solid #3D92FF; outline-offset: 1px; }
+  #chatSenden { background: #3D92FF; font-weight: 700; }
+  #chatSenden[disabled] { opacity: .45; cursor: default; }
+  @media (max-width: 560px) { #chatPanel { width: min(100vw, 420px); } }
   /*
    * Die Teilnehmer der Runde - oben in der Mitte, ueber dem Bild.
    *
@@ -261,6 +297,11 @@
     border: 3px solid rgba(255, 255, 255, 0.22); border-top-color: #3D92FF;
     animation: dreh 900ms linear infinite;
   }
+  #warteAufAlle {
+    position: absolute; transform: translateY(54px); padding: 7px 11px; border-radius: 999px;
+    background: rgba(10, 14, 22, .86); color: rgba(255,255,255,.88); font-size: 13px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.36);
+  }
   @keyframes dreh { to { transform: rotate(360deg); } }
   #fehler {
     pointer-events: auto; max-width: 460px; padding: 22px 24px; border-radius: 18px;
@@ -320,6 +361,7 @@
          dort, wo der Blick ohnehin hinsieht - und wo die Maus schon steht. -->
     <button id="mitteSpielen" type="button" title="Abspielen (Leertaste)">▶</button>
     <div id="puffer"></div>
+    <div id="warteAufAlle" hidden>Warten auf alle …</div>
     <div id="fehler" hidden>
       <h2 id="fehlerTitel">Die Quelle spielt nicht</h2>
       <p id="fehlerText"></p>
@@ -375,9 +417,23 @@
            Uebergangskasten: der steht nur da, wenn Autoplay an ist - man
            koennte es dort ausschalten und nie wieder ein. -->
       <button id="autoKnopf" type="button" title="Nächste Folge von selbst starten">Autoplay an</button>
+      <button id="chatKnopf" type="button" hidden aria-expanded="false" title="Livechat öffnen">Chat</button>
       <button id="gross" type="button" title="Vollbild (F)">⛶</button>
     </div>
   </div>
+
+  <aside id="chatPanel" hidden aria-label="Livechat">
+    <div class="chatKopf">
+      <strong>Livechat</strong>
+      <button id="chatZu" type="button" title="Chat schließen">✕</button>
+    </div>
+    <div id="chatStatus" aria-live="polite"></div>
+    <div id="chatListe" aria-live="polite" aria-relevant="additions text"></div>
+    <form id="chatForm">
+      <textarea id="chatEingabe" rows="1" maxlength="500" placeholder="Nachricht schreiben" aria-label="Chatnachricht"></textarea>
+      <button id="chatSenden" type="submit">Senden</button>
+    </form>
+  </aside>
 
   <!-- Die Folgenliste. Sie liegt ueber dem Bild und nicht daneben: der Player
        fuellt die Flaeche, und eine Spalte daneben haette den Film verkleinert. -->
@@ -417,6 +473,7 @@
   </div>
 
   <script src="../../node_modules/hls.js/dist/hls.min.js"></script>
+  <script src="spieler-chat.js"></script>
   <script src="spieler.js"></script>
 </body>
 </html>

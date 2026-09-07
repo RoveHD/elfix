@@ -9,6 +9,7 @@
 // Das Modul kennt weder Electron noch die Ablage der Favoriten: es bekommt beim
 // Start Rueckrufe und ist dadurch ohne laufende App pruefbar.
 
+const crypto = require("crypto");
 const { versatzAusProben } = require("./watchparty-sync");
 
 const RECONNECT_MIN_MS = 2000;
@@ -27,12 +28,65 @@ const UHR_AUFFRISCHEN_MS = 30000;
 // lieber gar nicht hochgerechnet.
 const UHR_HALTBAR_MS = 180000;
 
+function datenObjekt(wert) {
+  return Boolean(wert) && typeof wert === "object" && !Array.isArray(wert);
+}
+
+function nachrichtenText(wert, laenge = 500) {
+  return typeof wert === "string" ? wert.slice(0, laenge) : "";
+}
+
+function nachrichtenZahl(wert, ersatz = 0) {
+  return typeof wert === "number" && Number.isFinite(wert) ? wert : ersatz;
+}
+
+// Relay-Zustand bleibt Datenmaterial: verschachtelte Objekte in Feldern, die
+// laut Protokoll Skalare sind, werden nicht spaeter bis in UI-Rueckrufe
+// getragen. Die drei echten Unterobjekte enthalten selbst nur Skalare.
+function flacheDaten(roh) {
+  if (!datenObjekt(roh)) return null;
+  const sauber = {};
+  for (const [key, wert] of Object.entries(roh).slice(0, 100)) {
+    if (typeof wert === "string" || typeof wert === "boolean"
+      || (typeof wert === "number" && Number.isFinite(wert)) || wert === null) {
+      sauber[key] = wert;
+    }
+  }
+  return sauber;
+}
+
+function geteilterEintrag(roh) {
+  if (!datenObjekt(roh) || typeof roh.key !== "string" || !roh.key) return null;
+  const sauber = flacheDaten(roh);
+  for (const feld of ["members", "memberIds"]) {
+    if (Array.isArray(roh[feld])) sauber[feld] = roh[feld]
+      .filter((wert) => typeof wert === "string").slice(0, 1000);
+  }
+  for (const feld of ["progress", "live", "lastAction"]) {
+    if (roh[feld] === null) sauber[feld] = null;
+    else {
+      const wert = flacheDaten(roh[feld]);
+      if (wert) sauber[feld] = wert;
+    }
+  }
+  return sauber;
+}
+
+function mitgliederListe(roh) {
+  return Array.isArray(roh) ? roh.map(flacheDaten).filter(Boolean).slice(0, 1000) : [];
+}
+
+function peerListe(roh) {
+  return Array.isArray(roh) ? roh.filter((wert) => typeof wert === "string").slice(0, 1000) : [];
+}
+
 class Watchparty {
   constructor(optionen = {}) {
     this.aufZustand = optionen.onState || (() => {});
     this.aufFortschritt = optionen.onProgress || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
     this.aufKennung = optionen.onDeviceId || (() => {});
+    this.aufIdentitaet = optionen.onDeviceIdentity || (() => {});
     this.aufSteuerung = optionen.onControl || (() => {});
     // Wer steht wo: fuer die Leiste, die zeigt, ob alle beieinander sind.
     this.aufStand = optionen.onWatchstate || (() => {});
@@ -52,6 +106,9 @@ class Watchparty {
     this.raum = "";
     this.name = "";
     this.geraetId = "";
+    this.deviceSecret = "";
+    this.identitaetBestaetigt = false;
+    this.unvereinbar = false;
     this.aktiv = false;
     this.verbunden = false;
     this.teilnehmer = [];
@@ -91,17 +148,9 @@ class Watchparty {
       // Mitgliederliste nicht zum Rauswerfen anzubieten.
       myId: this.geraetId,
       myName: this.name,
-      // Nur wer eine Serie eingestellt hat, darf sie wieder herausnehmen. Ein
-      // aelteres Relay kennt die Geraete-Kennung noch nicht - dann muss der
-      // Name herhalten, sonst verschwindet der Knopf ganz.
-      // Herausnehmen darf, wer eingestellt hat - und jedes andere Geraet
-      // desselben Kontos. Ein aelteres Relay kennt weder Konto noch
-      // Geraete-Kennung; dann muss der Name herhalten, sonst verschwindet der
-      // Knopf ganz.
-      mine: (Boolean(this.konto) && eintrag.addedByKonto === this.konto)
-        || (eintrag.addedById
-          ? eintrag.addedById === this.geraetId
-          : Boolean(eintrag.addedBy) && eintrag.addedBy === this.name)
+      // Besitzrechte entscheidet das Relay je Empfaenger. Geheime Konto- oder
+      // Geraetenachweise duerfen dafuer niemals im Raumzustand auftauchen.
+      mine: eintrag.mine === true
     }));
   }
 
@@ -109,20 +158,29 @@ class Watchparty {
     return this.eintraege().some((eintrag) => eintrag.key === key && eintrag.joined);
   }
 
-  konfigurieren({ enabled, serverUrl, room, name, deviceId, konto }) {
+  konfigurieren({ enabled, serverUrl, room, name, deviceId, deviceSecret, konto }) {
     // Das Konto: alle Geraete einer Person unter einer Kennung. Leer, solange
     // der Geraeteabgleich aus ist - dann entscheidet allein das Geraet, wie
     // bisher.
-    this.konto = String(konto || "").slice(0, 64);
+    const neuesKonto = String(konto || "").slice(0, 64);
     const neuerServer = String(serverUrl || "").trim();
     const neuerRaum = String(room || "").trim();
-    const gleich = this.serverUrl === neuerServer && this.raum === neuerRaum && this.name === name;
+    const neuerName = String(name || "").slice(0, 40);
+    const neueKennung = String(deviceId || "").slice(0, 64);
+    const neuerNachweis = /^[A-Za-z0-9_-]{43}$/.test(String(deviceSecret || ""))
+      ? String(deviceSecret) : "";
+    const gleich = this.serverUrl === neuerServer && this.raum === neuerRaum
+      && this.name === neuerName && this.deviceSecret === neuerNachweis
+      && this.konto === neuesKonto;
 
     this.serverUrl = neuerServer;
     this.raum = neuerRaum;
-    this.name = String(name || "").slice(0, 40);
-    this.geraetId = String(deviceId || "").slice(0, 64);
+    this.name = neuerName;
+    this.geraetId = neueKennung || this.geraetId;
+    this.deviceSecret = neuerNachweis;
+    this.konto = neuesKonto;
     this.aktiv = Boolean(enabled) && Boolean(neuerServer) && Boolean(neuerRaum);
+    if (!gleich) this.unvereinbar = false;
 
     if (!this.aktiv) {
       this.trennen();
@@ -143,9 +201,17 @@ class Watchparty {
     if (!this.aktiv || this.socket || !this.WebSocketKlasse) return;
     this.letzterFehler = "";
 
+    const adresse = this.websocketAdresse();
+    if (!istSichereWatchpartyAdresse(adresse)) {
+      this.unvereinbar = true;
+      this.letzterFehler = "Die Watchparty braucht außerhalb dieses Geräts eine verschlüsselte https://- oder wss://-Adresse";
+      this.melde();
+      return;
+    }
+
     let socket;
     try {
-      socket = new this.WebSocketKlasse(this.websocketAdresse());
+      socket = new this.WebSocketKlasse(adresse);
     } catch (fehler) {
       this.letzterFehler = String(fehler?.message || fehler);
       this.melde();
@@ -156,10 +222,19 @@ class Watchparty {
 
     socket.onopen = () => {
       this.verbunden = true;
+      this.identitaetBestaetigt = false;
       this.versuche = 0;
-      this.senden({ type: "join", room: this.raum, name: this.name, deviceId: this.geraetId, konto: this.konto || "" });
+      this.senden({
+        type: "join",
+        room: this.raum,
+        name: this.name,
+        // Der gespeicherte Wurzelnachweis verlaesst das Geraet nie. Jede
+        // Relay-Adresse bekommt ihren eigenen HMAC und kann damit keinen
+        // Nachweis gegen ein anderes Relay wiederverwenden.
+        deviceProof: geraeteNachweisFuerServer(this.deviceSecret, adresse),
+        accountProof: kontoNachweisFuerServer(this.konto, adresse)
+      });
       this.melde();
-      this.warteschlangeSenden();
       // Sofort messen: das erste Ereignis kann Millisekunden spaeter kommen,
       // und ohne Versatz steigt der smarte Start auf die alte Stelle ein.
       this.uhrMessen();
@@ -167,17 +242,18 @@ class Watchparty {
       // Uhrprobe. Das ist eingeplant: fuer diesen einen Fall schickt das Relay
       // die schon hochgerechnete Stelle mit, und der Fehler ist die Laufzeit
       // der Nachricht statt der Gang zweier Systemuhren.
-      this.aufVerbindung(true);
     };
     socket.onmessage = (ereignis) => this.nachrichtVerarbeiten(ereignis?.data);
     socket.onerror = (ereignis) => {
       this.letzterFehler = String(ereignis?.message || "Verbindung fehlgeschlagen");
     };
     socket.onclose = () => {
+      const warBestaetigt = this.identitaetBestaetigt;
       this.verbunden = false;
+      this.identitaetBestaetigt = false;
       this.socket = null;
       this.teilnehmer = [];
-      this.aufVerbindung(false);
+      if (warBestaetigt) this.aufVerbindung(false);
       this.uhrAnhalten();
       this.uhr = null;
       this.uhrProben = [];
@@ -229,8 +305,8 @@ class Watchparty {
   }
 
   uhrAntwort(nachricht) {
-    const t0 = Number(nachricht.t0);
-    const t1 = Number(nachricht.t1);
+    const t0 = nachrichtenZahl(nachricht.t0, NaN);
+    const t1 = nachrichtenZahl(nachricht.t1, NaN);
     if (!Number.isFinite(t0) || !Number.isFinite(t1)) return;
     this.uhrProben.push({ t0, t1, t2: Date.now() });
     if (this.uhrProben.length > UHR_PROBEN) this.uhrProben.shift();
@@ -269,9 +345,11 @@ class Watchparty {
     const socket = this.socket;
     this.socket = null;
     this.verbunden = false;
+    const warBestaetigt = this.identitaetBestaetigt;
+    this.identitaetBestaetigt = false;
     this.teilnehmer = [];
     if (!socket) return;
-    this.aufVerbindung(false);
+    if (warBestaetigt) this.aufVerbindung(false);
     socket.onopen = null;
     socket.onmessage = null;
     socket.onerror = null;
@@ -284,7 +362,7 @@ class Watchparty {
   }
 
   spaeterNeuVerbinden() {
-    if (!this.aktiv || this.reconnectTimer) return;
+    if (!this.aktiv || this.unvereinbar || this.reconnectTimer) return;
     this.versuche += 1;
     const wartezeit = Math.min(RECONNECT_MIN_MS * 2 ** (this.versuche - 1), RECONNECT_MAX_MS);
     this.reconnectTimer = setTimeout(() => {
@@ -301,17 +379,36 @@ class Watchparty {
     } catch {
       return;
     }
+    if (!nachricht || typeof nachricht !== "object" || Array.isArray(nachricht)) return;
+
+    // Auch ein kompromittiertes Relay darf mit falsch typisierten Feldern
+    // keinen Fehler aus dem WebSocket-Ereignis in den Hauptprozess tragen.
+    try {
+
+    // Erst der bestaetigte v2-Zustand bindet diese Leitung an die geheime
+    // Geraeteidentitaet. Ein altes Relay wuerde die sichtbare Kennung weiterhin
+    // ungeprueft annehmen; dagegen darf der neue Client nicht still weiterlaufen.
+    if (nachricht.type === "state" && nachricht.identityVersion !== 2) {
+      this.unvereinbar = true;
+      this.letzterFehler = "Das Watchparty-Relay muss für sichere Geräteidentitäten aktualisiert werden";
+      this.melde();
+      this.trennen();
+      return;
+    }
+
+    if (!this.identitaetBestaetigt
+      && !["state", "error", "timeack"].includes(nachricht.type)) return;
 
     // Die YouTube-Watchparty. Sie kommt vor allem anderen und wird nur
     // weitergereicht: ihr Zustand, ihre Ordnung und ihre Entscheidungen liegen
     // vollstaendig woanders. Nichts unterhalb dieser Zeile sieht sie je.
-    if (typeof nachricht?.type === "string" && nachricht.type.startsWith("yt")) {
+    if (this.identitaetBestaetigt && typeof nachricht.type === "string" && nachricht.type.startsWith("yt")) {
       this.aufYoutube(nachricht);
       return;
     }
 
     if (nachricht?.type === "error") {
-      this.letzterFehler = String(nachricht.message || "");
+      this.letzterFehler = nachrichtenText(nachricht.message);
       this.melde();
       return;
     }
@@ -320,16 +417,16 @@ class Watchparty {
     // Fehler in den Zustand schreiben.
     if (nachricht?.type === "chat") {
       this.aufChat({
-        text: String(nachricht.text || ""),
-        from: String(nachricht.from || ""),
-        deviceId: String(nachricht.deviceId || ""),
-        at: Number(nachricht.at) || Date.now(),
-        eigen: String(nachricht.deviceId || "") === String(this.geraetId || "")
+        text: nachrichtenText(nachricht.text),
+        from: nachrichtenText(nachricht.from, 40),
+        deviceId: nachrichtenText(nachricht.deviceId, 64),
+        at: nachrichtenZahl(nachricht.at, Date.now()),
+        eigen: nachrichtenText(nachricht.deviceId, 64) === this.geraetId
       });
       return;
     }
     if (nachricht?.type === "peers") {
-      this.teilnehmer = Array.isArray(nachricht.peers) ? nachricht.peers : [];
+      this.teilnehmer = peerListe(nachricht.peers);
       this.melde();
       return;
     }
@@ -339,29 +436,37 @@ class Watchparty {
       this.uhrAntwort(nachricht);
       return;
     }
-    // Ein Fehler beim Einarbeiten wuerde im Ereignis-Handler still
-    // verschwinden - deshalb hier festhalten statt verlieren.
-    try {
       if (nachricht?.type === "state") {
-        // Der Server sagt, unter welcher Kennung dieses Geraet gefuehrt wird.
-        // Hatte die App noch keine, ist das ab jetzt ihre - sonst erkennt sie
-        // sich in der Mitgliederliste nicht wieder.
-        if (nachricht.you && nachricht.you !== this.geraetId) {
-          this.geraetId = nachricht.you;
-          this.aufKennung(this.geraetId);
-        }
-        this.geteilt = Array.isArray(nachricht.shared) ? nachricht.shared : [];
-        if (Array.isArray(nachricht.peers)) this.teilnehmer = nachricht.peers;
+        const kennung = nachrichtenText(nachricht.you, 64);
+        if (!kennung || !this.deviceSecret) return;
+        const warBestaetigt = this.identitaetBestaetigt;
+        this.identitaetBestaetigt = true;
+        if (kennung !== this.geraetId) this.geraetId = kennung;
+        this.aufKennung(this.geraetId);
+        this.aufIdentitaet({ deviceId: this.geraetId, deviceSecret: this.deviceSecret });
+        this.geteilt = Array.isArray(nachricht.shared)
+          ? nachricht.shared.map(geteilterEintrag).filter(Boolean).slice(0, 1000) : [];
+        if (Array.isArray(nachricht.peers)) this.teilnehmer = peerListe(nachricht.peers);
         this.melde();
         this.aufZustand(this.eintraege());
+        if (!warBestaetigt) {
+          this.warteschlangeSenden();
+          this.aufVerbindung(true);
+        }
         return;
       }
+      if (!this.identitaetBestaetigt) return;
       if ((nachricht?.type === "syncprepare" || nachricht?.type === "syncstart") && nachricht.key) {
-        this.aufSteuerung({ ...nachricht, action: nachricht.type });
+        const steuerung = flacheDaten(nachricht);
+        if (!steuerung || typeof steuerung.key !== "string") return;
+        this.aufSteuerung({ ...steuerung, action: nachricht.type });
         return;
       }
       if (nachricht?.type === "control" && nachricht.key && nachricht.action) {
-        this.aufSteuerung(nachricht);
+        const steuerung = flacheDaten(nachricht);
+        if (!steuerung || typeof steuerung.key !== "string"
+          || typeof steuerung.action !== "string") return;
+        this.aufSteuerung(steuerung);
         return;
       }
       // Der Stand je Geraet. Ein aelteres Relay schickt das nicht - dann bleibt
@@ -373,10 +478,11 @@ class Watchparty {
         // frueher weggeworfen - und weiter oben gelesen, wo sie deshalb nie
         // ankamen.
         this.aufStand({
-          key: nachricht.key,
-          members: Array.isArray(nachricht.members) ? nachricht.members : [],
-          pausedBy: String(nachricht.pausedBy || ""),
-          lastAction: nachricht.lastAction || null
+          key: nachrichtenText(nachricht.key, 300),
+          tempo: nachrichtenZahl(nachricht.tempo, 1) > 0 ? nachrichtenZahl(nachricht.tempo, 1) : 1,
+          members: mitgliederListe(nachricht.members),
+          pausedBy: nachrichtenText(nachricht.pausedBy, 40),
+          lastAction: flacheDaten(nachricht.lastAction)
         });
         return;
       }
@@ -384,14 +490,17 @@ class Watchparty {
         // Der Fortschritt kommt getrennt vom Zustand. Ohne diese Uebernahme
         // zeigte die Karte weiter den Stand von vorhin - es wirkte, als
         // aktualisiere sich nur alle paar Minuten etwas.
-        const eintrag = this.geteilt.find((item) => item.key === nachricht.key);
+        const key = nachrichtenText(nachricht.key, 300);
+        const fortschritt = flacheDaten(nachricht.progress);
+        if (!key || !fortschritt) return;
+        const eintrag = this.geteilt.find((item) => item.key === key);
         if (eintrag) {
-          eintrag.progress = nachricht.progress;
-          if (nachricht.progress.season) eintrag.season = nachricht.progress.season;
-          if (nachricht.progress.episode) eintrag.episode = nachricht.progress.episode;
+          eintrag.progress = fortschritt;
+          if (fortschritt.season) eintrag.season = fortschritt.season;
+          if (fortschritt.episode) eintrag.episode = fortschritt.episode;
           this.aufZustand(this.eintraege());
         }
-        this.aufFortschritt(nachricht.key, nachricht.progress);
+        this.aufFortschritt(key, fortschritt);
       }
     } catch (fehler) {
       this.letzterFehler = String(fehler?.message || fehler);
@@ -522,6 +631,7 @@ class Watchparty {
 
   senden(nachricht) {
     if (!this.socket || this.socket.readyState !== 1) return;
+    if (!this.identitaetBestaetigt && !["join", "time"].includes(nachricht?.type)) return;
     try {
       this.socket.send(JSON.stringify(nachricht));
     } catch {
@@ -543,6 +653,42 @@ function websocketAdresse(wert) {
   if (/^https:\/\//i.test(roh)) return roh.replace(/^https:/i, "wss:");
   if (/^http:\/\//i.test(roh)) return roh.replace(/^http:/i, "ws:");
   return `wss://${roh}`;
+}
+
+function istSichereWatchpartyAdresse(wert) {
+  try {
+    const adresse = new URL(String(wert || ""));
+    if (adresse.protocol === "wss:") return true;
+    if (adresse.protocol !== "ws:") return false;
+    const host = adresse.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function geraeteNachweisFuerServer(deviceSecret, wert) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(String(deviceSecret || ""))) return "";
+  return serverGebundenerNachweis(deviceSecret, wert, "device");
+}
+
+function kontoNachweisFuerServer(konto, wert) {
+  if (!/^[0-9a-f]{32}$/.test(String(konto || ""))) return "";
+  return serverGebundenerNachweis(konto, wert, "account");
+}
+
+function serverGebundenerNachweis(geheimnis, wert, art) {
+  let adresse;
+  try {
+    adresse = new URL(websocketAdresse(wert));
+  } catch {
+    return "";
+  }
+  const gebunden = `elfix-watchparty-${art}-v2\0${adresse.href}`;
+  return crypto.createHmac("sha256", geheimnis).update(gebunden, "utf8").digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 // Die Adresse so, wie sie gespeichert gehoert.
@@ -612,4 +758,12 @@ function serverBeanstandung(wert) {
   return "";
 }
 
-module.exports = { Watchparty, websocketAdresse, serverNormalisieren, serverBeanstandung };
+module.exports = {
+  Watchparty,
+  websocketAdresse,
+  serverNormalisieren,
+  serverBeanstandung,
+  istSichereWatchpartyAdresse,
+  geraeteNachweisFuerServer,
+  kontoNachweisFuerServer
+};

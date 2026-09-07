@@ -25,11 +25,12 @@ import android.widget.TextView;
  */
 final class MobileViews {
     /** One spacing scale for every mobile screen, so gaps stay consistent. */
-    static final int SCREEN_PADDING = 16;
-    static final int SECTION_GAP = 26;
-    static final int ITEM_GAP = 12;
-    static final int CARD_RADIUS = 14;
-    static final int TOUCH_TARGET = 46;
+    static final int SCREEN_PADDING = 18;
+    static final int SECTION_GAP = 28;
+    static final int ITEM_GAP = 14;
+    static final int CARD_RADIUS = 16;
+    /** Minimum hit area for controls that are meant for a thumb. */
+    static final int TOUCH_TARGET = 48;
 
     private MobileViews() {
     }
@@ -67,6 +68,22 @@ final class MobileViews {
             // die um mehr als drei Prozent einsinkt, zieht ihre Nachbarn
             // optisch mit.
             Bewegung.druck(v, gedrueckt, 0.97f);
+            return false;
+        });
+    }
+
+    /**
+     * Small, compositor-only feedback for poster cards which intentionally have
+     * no solid card background. It keeps their artwork untouched and follows
+     * the system animation preference through {@link Bewegung#druck}.
+     */
+    static void addTapFeedback(View view) {
+        view.setOnTouchListener((v, event) -> {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) Bewegung.druck(v, true, 0.975f);
+            else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                Bewegung.druck(v, false, 0.975f);
+            }
             return false;
         });
     }
@@ -129,17 +146,23 @@ final class MobileViews {
             action.setOrientation(LinearLayout.HORIZONTAL);
             action.setGravity(Gravity.CENTER_VERTICAL);
             action.setPadding(dp(context, 8), dp(context, 6), dp(context, 4), dp(context, 6));
+            action.setMinimumHeight(dp(context, TOUCH_TARGET));
+            action.setMinimumWidth(dp(context, TOUCH_TARGET));
             TextView actionText = new TextView(context);
             actionText.setText(actionLabel);
             actionText.setTextColor(Theme.PRIMARY);
             actionText.setTextSize(13);
             actionText.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            actionText.setMaxLines(1);
+            actionText.setEllipsize(TextUtils.TruncateAt.END);
             action.addView(actionText);
             ImageView chevron = new ImageView(context);
             chevron.setImageResource(R.drawable.ic_chevron_right);
             chevron.setColorFilter(Theme.PRIMARY);
             action.addView(chevron, new LinearLayout.LayoutParams(dp(context, 16), dp(context, 16)));
             action.setOnClickListener(v -> onAction.run());
+            action.setContentDescription(actionLabel);
+            addTapFeedback(action);
             row.addView(action);
         }
         return row;
@@ -151,6 +174,7 @@ final class MobileViews {
         box.setOrientation(LinearLayout.HORIZONTAL);
         box.setGravity(Gravity.CENTER_VERTICAL);
         box.setPadding(dp(context, 14), 0, dp(context, 14), 0);
+        box.setMinimumHeight(dp(context, TOUCH_TARGET + 4));
         addPressFeedback(box,
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
@@ -245,6 +269,7 @@ final class MobileViews {
         card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         card.setOnClickListener(v -> onOpen.run());
+        card.setContentDescription(provider.name + " öffnen");
         if (onOpenStart != null) {
             card.setOnLongClickListener(v -> {
                 onOpenStart.run();
@@ -562,6 +587,8 @@ final class MobileViews {
         card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         card.setOnClickListener(v -> onOpen.run());
+        card.setContentDescription((title == null || title.isEmpty() ? "Titel" : title)
+            + ". " + (aufruf == null || aufruf.isEmpty() ? "Weiter ansehen" : aufruf));
         if (onMenu != null) {
             // Ein sichtbarer Knopf statt eines langen Drucks: was man nicht
             // sieht, findet auf einem Telefon niemand. Der lange Druck bleibt
@@ -619,8 +646,8 @@ final class MobileViews {
     static TextView primaryButton(Context context, String label, Runnable onClick) {
         TextView button = styledButton(context, label, Color.WHITE);
         addPressFeedback(button,
-            shape(context, Theme.PRIMARY_DEEP, 12, Color.TRANSPARENT, 0),
-            shape(context, Theme.PRIMARY, 12, Color.TRANSPARENT, 0));
+            shape(context, Theme.PRIMARY_DEEP, 14, Color.TRANSPARENT, 0),
+            shape(context, Theme.PRIMARY, 14, Color.TRANSPARENT, 0));
         button.setOnClickListener(v -> onClick.run());
         return button;
     }
@@ -629,8 +656,8 @@ final class MobileViews {
     static TextView secondaryButton(Context context, String label, Runnable onClick) {
         TextView button = styledButton(context, label, Theme.TEXT_PRIMARY);
         addPressFeedback(button,
-            shape(context, Theme.SURFACE_ELEVATED, 12, Theme.BORDER, 1),
-            shape(context, Theme.SURFACE_PRESSED, 12, Theme.PRIMARY, 1));
+            shape(context, Theme.SURFACE_ELEVATED, 14, Theme.BORDER, 1),
+            shape(context, Theme.SURFACE_PRESSED, 14, Theme.PRIMARY, 1));
         button.setOnClickListener(v -> onClick.run());
         return button;
     }
@@ -1245,6 +1272,8 @@ final class MobileViews {
         }
 
         karte.setOnClickListener(v -> beiKlick.run());
+        karte.setContentDescription((titel == null || titel.isEmpty() ? "Titel" : titel) + " öffnen");
+        addTapFeedback(karte);
         if (onMenu != null) {
             // Auf einer schmalen Kachel ist kein Platz fuer einen sichtbaren
             // Dreipunktknopf, ohne dass er das Bild verdeckt. Hier ist der
@@ -1326,6 +1355,8 @@ final class MobileViews {
         }
 
         karte.setOnClickListener(v -> beiKlick.run());
+        karte.setContentDescription((titel == null || titel.isEmpty() ? "Titel" : titel) + " öffnen");
+        addTapFeedback(karte);
         if (onMenu != null) {
             karte.setOnLongClickListener(v -> {
                 onMenu.onClick(karte);
@@ -1765,8 +1796,8 @@ final class MobileViews {
         knopf.setGravity(Gravity.CENTER);
         knopf.setMaxLines(1);
         knopf.setEllipsize(TextUtils.TruncateAt.END);
-        knopf.setPadding(dp(context, 14), dp(context, 9), dp(context, 14), dp(context, 9));
-        knopf.setMinHeight(dp(context, 38));
+        knopf.setPadding(dp(context, 16), dp(context, 10), dp(context, 16), dp(context, 10));
+        knopf.setMinHeight(dp(context, TOUCH_TARGET));
         addPressFeedback(knopf,
             shape(context, aktiv ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 19,
                 aktiv ? Theme.PRIMARY : Theme.BORDER, 1),
@@ -1875,9 +1906,10 @@ final class MobileViews {
         LinearLayout knopf = new LinearLayout(context);
         knopf.setOrientation(LinearLayout.VERTICAL);
         knopf.setGravity(Gravity.CENTER);
-        knopf.setPadding(dp(context, 14), dp(context, 8), dp(context, 14), dp(context, 8));
+        knopf.setPadding(dp(context, 16), dp(context, 9), dp(context, 16), dp(context, 9));
+        knopf.setMinimumHeight(dp(context, TOUCH_TARGET));
         knopf.setBackground(shape(context, aktiv ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED,
-            10, aktiv ? Theme.PRIMARY : Theme.BORDER, 1));
+            12, aktiv ? Theme.PRIMARY : Theme.BORDER, 1));
 
         TextView name = new TextView(context);
         name.setText(titel);
@@ -1896,16 +1928,9 @@ final class MobileViews {
             knopf.addView(zusatz);
         }
         // Ein Reiter ohne Druckreaktion ist ein Wort auf einem Rechteck. Der
-        // Rahmen wechselt beim Druck nicht die Farbe - das taete er beim
-        // aktiven und beim ruhenden verschieden -, es bleibt beim Nachgeben.
-        knopf.setOnTouchListener((v, ereignis) -> {
-            int was = ereignis.getActionMasked();
-            if (was == MotionEvent.ACTION_DOWN) Bewegung.druck(v, true, 0.94f);
-            else if (was == MotionEvent.ACTION_UP || was == MotionEvent.ACTION_CANCEL) {
-                Bewegung.druck(v, false, 0.94f);
-            }
-            return false;
-        });
+        // Rahmen bleibt beim Druck gleich, damit sich aktiv und inaktiv nicht
+        // unterschiedlich verhalten; nur die Fläche gibt kurz nach.
+        addTapFeedback(knopf);
         knopf.setOnClickListener(v -> beiKlick.run());
         return knopf;
     }
@@ -1951,6 +1976,8 @@ final class MobileViews {
         text.setTextColor(Theme.TEXT_SECONDARY);
         text.setTextSize(14);
         text.setGravity(Gravity.CENTER);
+        text.setMaxLines(4);
+        text.setEllipsize(TextUtils.TruncateAt.END);
         text.setPadding(0, dp(context, 6), 0, 0);
         box.addView(text);
         return box;

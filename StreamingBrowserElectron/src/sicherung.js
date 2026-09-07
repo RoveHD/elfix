@@ -53,12 +53,15 @@ const FASSUNG = 2;
 // Die Geraetekennung bleibt bewusst draussen. Sonst gaebe es nach dem Einlesen
 // auf einem zweiten Rechner zwei Geraete mit derselben Kennung, und das Relay
 // haelt sie fuer eines - Host-Wahl und Leiste waeren dahin. Ein
-// wiederhergestelltes Geraet erkennt das Relay ohnehin am Namen wieder und
-// zieht seinen Stand auf die neue Kennung um.
+// wiederhergestelltes Geraet behaelt ausschliesslich seine eigene Identitaet;
+// Anzeigenamen koennen keine Mitgliedschaft oder Besitzerrechte uebertragen.
 function bauen({ settings, favorites, providers, watchparty, sitzungen, fassungen, marken,
   programm, anlass } = {}) {
   const einstellungen = settings ? JSON.parse(JSON.stringify(settings)) : null;
-  if (einstellungen && einstellungen.watchparty) einstellungen.watchparty.deviceId = "";
+  if (einstellungen && einstellungen.watchparty) {
+    einstellungen.watchparty.deviceId = "";
+    delete einstellungen.watchparty.deviceSecret;
+  }
   return {
     kennung: KENNUNG,
     fassung: FASSUNG,
@@ -131,10 +134,12 @@ function fehlendeTeile(daten) {
 // Die Einstellungen, wie sie beim Einlesen gelten sollen: alles aus der
 // Sicherung, aber mit der Kennung dieses Rechners. Fehlt hier noch eine, bleibt
 // sie leer - dann vergibt die App beim naechsten Verbinden eine neue.
-function einstellungenUebernehmen(ausSicherung, eigeneKennung) {
+function einstellungenUebernehmen(ausSicherung, eigeneKennung, eigenesGeheimnis = "") {
   if (!ausSicherung) return null;
   const uebernommen = JSON.parse(JSON.stringify(ausSicherung));
   uebernommen.watchparty = { ...(uebernommen.watchparty || {}), deviceId: String(eigeneKennung || "") };
+  delete uebernommen.watchparty.deviceSecret;
+  if (eigenesGeheimnis) uebernommen.watchparty.deviceSecret = String(eigenesGeheimnis);
   return uebernommen;
 }
 

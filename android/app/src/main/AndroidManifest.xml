@@ -14,8 +14,14 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- Eigene Anbieter duerfen ausdruecklich HTTP/IP-Adressen sein (u. a.
+         s.to-Kompatibilitaet). Androids Netzregeln koennen benutzerdefinierte
+         Hosts nicht dynamisch freischalten; die Navigationswache begrenzt
+         sie deshalb auf die tatsaechlich eingerichteten Anbieter. -->
     <application
         android:allowBackup="true"
+        android:fullBackupContent="@xml/sicherungsregeln"
+        android:dataExtractionRules="@xml/datenextraktionsregeln"
         android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"

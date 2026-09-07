@@ -22,6 +22,7 @@ class WatchpartyRaeume {
     this.aufFortschritt = optionen.onProgress || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
     this.aufKennung = optionen.onDeviceId || (() => {});
+    this.aufIdentitaet = optionen.onDeviceIdentity || (() => {});
     this.aufSteuerung = optionen.onControl || (() => {});
     this.aufStand = optionen.onWatchstate || (() => {});
     // Der Chat geht wie der Stand je Raum heraus und herein. Er fehlte hier:
@@ -38,6 +39,7 @@ class WatchpartyRaeume {
     this.serverUrl = "";
     this.name = "";
     this.geraetId = "";
+    this.deviceSecret = "";
     this.eingeschaltet = false;
   }
 
@@ -55,7 +57,7 @@ class WatchpartyRaeume {
     return [...this.raeume.keys()];
   }
 
-  konfigurieren({ enabled, serverUrl, rooms, room, name, deviceId, konto }) {
+  konfigurieren({ enabled, serverUrl, rooms, room, name, deviceId, deviceSecret, konto }) {
     this.serverUrl = String(serverUrl || "").trim();
     this.name = String(name || "").slice(0, 40);
     // Ein Konto fuer alle Raeume: es sagt, wem ein Geraet gehoert, und das
@@ -63,17 +65,16 @@ class WatchpartyRaeume {
     this.konto = String(konto || "").slice(0, 64);
     this.eingeschaltet = Boolean(enabled) && Boolean(this.serverUrl);
 
-    // Alle Raeume brauchen dieselbe Kennung. Ohne eigene holt sich jede
-    // Verbindung eine vom Relay - und zwar jede eine andere. Dann gilt man in
-    // einem Raum als dabei und im naechsten als fremdes Geraet: der Beitritt
-    // im einen Raum warf einen aus dem anderen. Also lieber hier eine
-    // erzeugen und einmal nach oben melden, damit sie erhalten bleibt.
+    // Alle Raeume brauchen denselben geheimen Nachweis. Die oeffentliche
+    // Kennung vergibt das Relay; sie allein beweist keinen Besitz.
     const gewuenschteKennung = String(deviceId || "").slice(0, 64);
-    if (gewuenschteKennung) {
-      this.geraetId = gewuenschteKennung;
-    } else if (!this.geraetId) {
-      this.geraetId = crypto.randomUUID();
-      this.aufKennung(this.geraetId);
+    if (gewuenschteKennung) this.geraetId = gewuenschteKennung;
+    const gewuenschterNachweis = String(deviceSecret || "");
+    if (/^[A-Za-z0-9_-]{43}$/.test(gewuenschterNachweis)) {
+      this.deviceSecret = gewuenschterNachweis;
+    } else if (!/^[A-Za-z0-9_-]{43}$/.test(this.deviceSecret)) {
+      this.deviceSecret = neuerGeraeteNachweis();
+      this.aufIdentitaet({ deviceId: this.geraetId, deviceSecret: this.deviceSecret });
     }
 
     const gewuenscht = raumcodesAufraeumen(rooms?.length ? rooms : [room]);
@@ -96,6 +97,7 @@ class WatchpartyRaeume {
         room: code,
         name: this.name,
         deviceId: this.geraetId,
+        deviceSecret: this.deviceSecret,
         konto: this.konto
       });
     }
@@ -118,26 +120,36 @@ class WatchpartyRaeume {
       onYoutube: (nachricht) => this.aufYoutube({ ...nachricht, room: nachricht.room || code }),
       onConnection: (offen) => this.aufVerbindung(code, offen),
       onStatus: () => this.melde(code),
-      onDeviceId: (kennung) => this.kennungUebernehmen(kennung, code)
+      onDeviceIdentity: (identitaet) => this.identitaetUebernehmen(identitaet, code)
     };
     if (this.WebSocketKlasse) optionen.WebSocketKlasse = this.WebSocketKlasse;
     return new Watchparty(optionen);
   }
 
-  // Vergibt ein Raum eine Kennung, gilt sie fuer dieses Geraet insgesamt -
-  // sonst zaehlt dasselbe Geraet in jedem Raum als jemand anderes.
-  kennungUebernehmen(kennung, herkunft) {
-    if (!kennung || kennung === this.geraetId) return;
+  // Vergibt ein Raum die oeffentliche Kennung, gilt sie zusammen mit dem
+  // geheimen Nachweis fuer dieses Geraet insgesamt.
+  identitaetUebernehmen(identitaet, herkunft) {
+    const kennung = String(identitaet?.deviceId || "").slice(0, 64);
+    const nachweis = String(identitaet?.deviceSecret || "");
+    if (!kennung || !/^[A-Za-z0-9_-]{43}$/.test(nachweis)) return;
+    const geaendert = kennung !== this.geraetId || nachweis !== this.deviceSecret;
     this.geraetId = kennung;
-    this.aufKennung(kennung);
+    this.deviceSecret = nachweis;
+    if (geaendert) {
+      this.aufKennung(kennung);
+      this.aufIdentitaet({ deviceId: kennung, deviceSecret: nachweis });
+    }
     for (const [code, raum] of this.raeume) {
-      if (code === herkunft || raum.geraetId === kennung) continue;
+      if (code === herkunft
+        || (raum.geraetId === kennung && raum.deviceSecret === nachweis)) continue;
       raum.konfigurieren({
         enabled: this.eingeschaltet,
         serverUrl: this.serverUrl,
         room: code,
         name: this.name,
-        deviceId: kennung
+        deviceId: kennung,
+        deviceSecret: nachweis,
+        konto: this.konto
       });
     }
   }
@@ -331,6 +343,13 @@ function raumcodesAufraeumen(codes) {
   return sauber;
 }
 
+function neuerGeraeteNachweis() {
+  return crypto.randomBytes(32).toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 // Dieselbe Regel wie im Relay. Wird sie hier schon geprueft, steht die
 // Begruendung beim Eintragen statt spaeter als "Ungueltiger Raumcode".
 function codeBeanstandung(code) {
@@ -343,4 +362,4 @@ function codeBeanstandung(code) {
   return "";
 }
 
-module.exports = { WatchpartyRaeume, raumcodesAufraeumen, codeBeanstandung };
+module.exports = { WatchpartyRaeume, raumcodesAufraeumen, codeBeanstandung, neuerGeraeteNachweis };

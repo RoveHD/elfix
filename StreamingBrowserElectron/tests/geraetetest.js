@@ -438,7 +438,7 @@ function stand(key, extra = {}) {
     "ein vertippter Schluessel darf nichts hinterlassen");
 
   pruefe("Der Abgleich haengt an keinem Raumcode",
-    /if \(String\(nachricht\?\.type \|\| ""\)\.startsWith\("gr"\)\) \{/.test(SERVER)
+    /if \(nachricht\.type\.startsWith\("gr"\)\) \{/.test(SERVER)
     && SERVER.indexOf('startsWith("gr")') < SERVER.indexOf("if (!socket.raum) return;"),
     "wer nur seine eigenen Geraete zusammenhaelt, soll keine Watchparty betreten muessen");
 

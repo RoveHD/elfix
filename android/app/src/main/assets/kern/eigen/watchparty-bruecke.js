@@ -75,7 +75,7 @@
         letzterStatus = raeume.status();
         ereignis("watchparty:status", letzterStatus);
       },
-      onDeviceId: (kennung) => ereignis("watchparty:kennung", { kennung }),
+      onDeviceIdentity: (identitaet) => ereignis("watchparty:identitaet", identitaet),
       onControl: (steuerung) => ereignis("watchparty:steuerung", steuerung),
       onWatchstate: (stand) => ereignis("watchparty:stand", stand),
       onChat: (zeile) => ereignis("watchparty:chat", zeile),
@@ -134,6 +134,7 @@
       rooms: (einstellungen && einstellungen.rooms) || [],
       name: (einstellungen && einstellungen.deviceName) || "",
       deviceId: (einstellungen && einstellungen.deviceId) || "",
+      deviceSecret: (einstellungen && einstellungen.deviceSecret) || "",
       konto: konto
     });
     return wp.status();

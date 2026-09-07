@@ -160,12 +160,25 @@ public final class Kern {
         einstellungen.setJavaScriptEnabled(true);
         einstellungen.setDomStorageEnabled(true);
         einstellungen.setUserAgentString(NETZ_AGENT);
+        einstellungen.setAllowContentAccess(false);
+        einstellungen.setAllowFileAccessFromFileURLs(false);
+        einstellungen.setAllowUniversalAccessFromFileURLs(false);
         // Der Kern zeigt nichts an; er darf trotzdem nicht wegen fehlender
         // Groesse angehalten werden, deshalb bleibt er im Baum der Activity.
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
-                moduleEinspielen();
+                if (istKernSeite(url)) moduleEinspielen();
+                else startFehler = "Fremde Navigation des Kerns blockiert";
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest anfrage) {
+                if (anfrage == null || !anfrage.isForMainFrame()) return false;
+                boolean erlaubt = istKernSeite(anfrage.getUrl() == null
+                    ? "" : anfrage.getUrl().toString());
+                if (!erlaubt) Log.e(TAG, "Fremde Kern-Navigation blockiert");
+                return !erlaubt;
             }
 
             @Override
@@ -179,7 +192,17 @@ public final class Kern {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest anfrage) {
                 WebResourceResponse liste = listeAusliefern(anfrage);
-                return liste != null ? liste : zwischenAusliefern(anfrage);
+                if (liste != null) return liste;
+                WebResourceResponse zwischen = zwischenAusliefern(anfrage);
+                if (zwischen != null) return zwischen;
+                if (anfrage != null && anfrage.getUrl() != null) {
+                    String schema = anfrage.getUrl().getScheme();
+                    if ("http".equalsIgnoreCase(schema) || "https".equalsIgnoreCase(schema)) {
+                        return new WebResourceResponse("text/plain", "utf-8",
+                            new java.io.ByteArrayInputStream(new byte[0]));
+                    }
+                }
+                return null;
             }
 
             /**
@@ -214,6 +237,10 @@ public final class Kern {
         // einer Datei, keine Werte.
         webView.addJavascriptInterface(new Zwischenlager(), "AndroidEmpfehlung");
         webView.loadUrl(SEITE);
+    }
+
+    static boolean istKernSeite(String url) {
+        return SEITE.equals(url);
     }
 
     /**

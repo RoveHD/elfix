@@ -1,0 +1,47 @@
+name: Dependency security
+
+on:
+  pull_request:
+    paths:
+      - "StreamingBrowserElectron/package.json"
+      - "StreamingBrowserElectron/package-lock.json"
+      - "sync-server/package*.json"
+      - ".github/workflows/dependency-security.yml"
+  push:
+    branches:
+      - main
+      - direkt-alles
+    paths:
+      - "StreamingBrowserElectron/package.json"
+      - "StreamingBrowserElectron/package-lock.json"
+      - "sync-server/package*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: StreamingBrowserElectron
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+      # The lockfile is what we audit. Skipping lifecycle scripts avoids the
+      # Electron binary download while retaining the complete dependency tree.
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Audit dependencies
+        run: npm audit
+      - name: Install and audit relay dependencies
+        working-directory: sync-server
+        run: npm ci --ignore-scripts && npm audit

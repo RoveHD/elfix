@@ -165,7 +165,7 @@ function client(name, deviceId) {
     CLIENT.indexOf('nachricht?.type === "chat"') < CLIENT.indexOf('nachricht?.type === "state"'),
     "er darf nie einen Fehler in den Raumzustand schreiben");
   pruefe("Er erkennt die eigene Nachricht",
-    /eigen: String\(nachricht\.deviceId \|\| ""\) === String\(this\.geraetId \|\| ""\)/.test(CLIENT));
+    /eigen: nachrichtenText\(nachricht\.deviceId, 64\) === this\.geraetId/.test(CLIENT));
   pruefe("Leeres wird gar nicht erst gesendet",
     /const text = String\(zeile \|\| ""\)\.trim\(\)\.slice\(0, 500\);\s*\n\s*if \(!text\) return false;/.test(CLIENT));
 
@@ -289,7 +289,9 @@ function client(name, deviceId) {
   pruefe("Gesendet wird nur aus einer laufenden Runde",
     /const key = watchpartyChatLiveKeyForUrl\(view\.webContents\.getURL\(\)\);\s*\n\s*if \(key\) watchparty\.chatSenden\(key, chat\[1\]\);/.test(MAIN));
   pruefe("Empfangenes geht nur in eine Seite mit Runde",
-    /if \(!watchpartyChatLiveKeyForUrl\(adresse\)\) return;/.test(abschnitt(MAIN, "function watchpartyChatZeigen(")));
+    /spielerRunde\(\)\?\.raum === room/.test(abschnitt(MAIN, "function watchpartyChatZeigen("))
+    && /if \(!watchpartyChatLiveKeyForUrl\(adresse\) \|\| watchpartyRaumForUrl\(adresse\) !== room\) return;/.test(
+      abschnitt(MAIN, "function watchpartyChatZeigen(")));
   const hosterSchluessel = abschnitt(MAIN, "function aktiverWatchpartyChatKeyFuerHoster(");
   pruefe("Auf dem Hoster zaehlt der aktive Watchparty-Eintrag weiter",
     /isKnownVideoHosterUrl\(url\)/.test(hosterSchluessel)

@@ -54,8 +54,16 @@ final class DirektWiedergabe {
         default void fassungGewaehlt(String fassung, String hoster) { }
         /** Was in der Runde als Fassung gilt - leer, wenn keine Runde laeuft. */
         default JSONObject rundenFassung() { return new JSONObject(); }
-        /** Ein lokaler Folgenwechsel soll alle Mitglieder der Runde mitnehmen. */
-        default void folgenwechsel(String url) { }
+        /**
+         * Ein lokaler Folgenwechsel soll alle Mitglieder der Runde mitnehmen.
+         *
+         * @return {@code true}, wenn das Relay den Wechsel uebernommen hat und
+         *         dieses Geraet auf dessen {@code syncprepare} warten muss
+         */
+        default boolean folgenwechsel(String url) { return false; }
+        default void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
+            if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
+        }
     }
 
     private final Activity activity;
@@ -152,6 +160,7 @@ final class DirektWiedergabe {
 
     DirektWiedergabe(Activity activity, Kern kern, Provider anbieter, String adresse,
                      String titel, double start, int fortsetzStaffel, int fortsetzFolge,
+                     String folgenBarriereSyncId, String abgelaufeneFolgenQuelleSyncId,
                      Umgebung umgebung) {
         this.activity = activity;
         this.kern = kern;
@@ -185,7 +194,16 @@ final class DirektWiedergabe {
             public boolean darfFassungUndHosterWaehlen() {
                 return umgebung.darfFassungUndHosterWaehlen();
             }
+            public void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
+                umgebung.chatSenden(key, text, raum, antwort);
+            }
         });
+        // Die Schranke gehoert zur Relay-Generation und ueberlebt deshalb den
+        // Austausch des DirektWiedergabe-Objekts. Vor laden() muss sie bereits
+        // im Player stehen, damit auch eine sehr schnell aufgeloeste Quelle nie
+        // mit aktiv=true anlaufen kann.
+        spieler.folgenBarriereVorbereiten(folgenBarriereSyncId);
+        spieler.abgelaufeneFolgenQuelleVormerken(abgelaufeneFolgenQuelleSyncId);
         wurzel = spieler.ansicht;
         spieler.titel(titel);
         ((ViewGroup) activity.getWindow().getDecorView()).addView(wurzel, new ViewGroup.LayoutParams(-1, -1));
@@ -974,12 +992,10 @@ final class DirektWiedergabe {
     // The Activity keeps the native player on every episode navigation.
     private void wechseln(String url) {
         if (url == null || url.isEmpty() || geschlossen) return;
-        // Das Relay sendet navigate an die anderen Mitglieder, aber nicht an
-        // den Absender. Deshalb wird erst die Runde benachrichtigt und dieses
-        // Geraet wechselt anschliessend wie gewohnt selbst. Eingehende
-        // navigate-Befehle laufen ueber Mitschauen.folgeOeffnen und gelangen
-        // nicht hierher; dadurch entsteht kein Echo.
-        umgebung.folgenwechsel(url);
+        // In einer Runde ist auch der Ausloeser Empfaenger des autoritativen
+        // syncprepare. Ein lokaler Vorab-Wechsel wuerde die neue Media3-Quelle
+        // schon starten und koennte ausserdem als navigate-Echo zurueckgehen.
+        if (umgebung.folgenwechsel(url)) return;
         spieler.speichern();
         if (nachSeite != null) nachSeite.accept(url);
     }
@@ -990,6 +1006,8 @@ final class DirektWiedergabe {
     void beimWechsel(Consumer<String> wechseln) { nachSeite = wechseln; }
     String adresse() { return adresse; }
     void steuern(JSONObject urteil, Runnable bereit) { spieler.steuern(urteil, bereit); }
+    void folgenBarriereVorbereiten(String syncId) { spieler.folgenBarriereVorbereiten(syncId); }
+    void folgenBarriereAbbrechen(String syncId) { spieler.folgenBarriereAbbrechen(syncId); }
     boolean wartetAufBefehl() { return spieler.wartetAufBefehl(); }
     JSONObject liveStand() {
         try { return spieler.liveStand(); } catch (org.json.JSONException e) { return new JSONObject(); }
@@ -998,6 +1016,8 @@ final class DirektWiedergabe {
     void vordergrund() { spieler.vordergrund(); }
     boolean taste(KeyEvent event) { return spieler.taste(event); }
     boolean zurueck() { return spieler.zurueck(); }
+    void chatKontext(String key, String raum, boolean verbunden) { spieler.chatKontext(key, raum, verbunden); }
+    void chatEmpfangen(JSONObject zeile) { spieler.chatEmpfangen(zeile); }
 
     private void seiteFreigeben() {
         if (seite == null) return;

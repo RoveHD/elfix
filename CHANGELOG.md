@@ -3,6 +3,39 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.14 — 7. September 2026
+
+**Watchparty wartet beim Folgenwechsel auf die Runde.** Auch Gäste dürfen die
+nächste Folge wählen. Die verbundenen Teilnehmer wechseln gemeinsam, laden
+pausiert und starten erst nach ihren Bereitschaftsmeldungen. Abbruch, verspätete
+Quellen und Wiederverbindungen können keinen veralteten Start mehr auslösen.
+Die Host-Rolle wird auch bei nur einer Person zuverlässig an den Player gemeldet.
+
+**Livechat im Player.** Ein links ausklappbarer Chat steht im eigenen Player auf
+PC, Handy und TV bereit. Nachrichten und Entwürfe bleiben dem jeweiligen Raum
+zugeordnet; Lesen und Schreiben stören die Player-Tastatursteuerung nicht.
+
+**TV und Handy übersichtlicher.** TV-Karten, Kopfzeile und Fokusmarkierungen sind
+klarer; der Zeitregler besitzt einen eindeutigen Rückweg zu Play/Pause. Auf dem
+Handy gibt es größere Touchziele, einheitliche Abstände und dezente Animationen,
+die ausgeschaltete Systemanimationen respektieren.
+
+**Sicherheitsüberarbeitung.** Electron wurde aktualisiert, IPC und Navigation
+sind enger begrenzt, und Medien laufen mit aktivierter Websicherheit. Android
+prüft Player-Signale sowie Paket und Signatur heruntergeladener Updates.
+Watchparty-Geräte verwenden private, an den Relay-Endpunkt gebundene Nachweise;
+frei behauptete Kennungen oder gleiche Namen übertragen keine Rechte.
+
+**Updatehinweis:** Relay und Clients müssen gemeinsam aktualisiert werden.
+Alte Besitzrechte ohne privaten Nachweis werden nicht anhand des Anzeigenamens
+übernommen; bei alten Raumzuständen kann eine manuelle Bereinigung oder ein
+erneutes Einstellen des Titels nötig sein. Das öffentliche Relay wird separat
+vom Betreiber aktualisiert.
+
+Validiert: 125 Desktop-Testsuiten, 272 Android-Unit-Tests sowie echte Electron-
+Player- und Chatprüfungen. Die abschließende Handy-/TV-Geräteprüfung der letzten
+Korrekturen blieb wegen abgebrochener ADB-Verbindungen offen.
+
 ## 2.0.13 — 7. September 2026
 
 **Aussehen neu geordnet.** Darstellung und Feinschliff sind in einer gemeinsamen

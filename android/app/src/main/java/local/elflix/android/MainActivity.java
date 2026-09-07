@@ -73,6 +73,12 @@ public class MainActivity extends Activity {
     /** Die gemeinsame Geschaeftslogik, dieselbe wie am Desktop. Siehe Kern.java. */
     private Kern kern;
     private DirektWiedergabe direktWiedergabe;
+    /** Ueberlebt den Austausch des nativen Players waehrend eines Relay-Folgenwechsels. */
+    private String nativeFolgenBarriereSyncId = "";
+    /** Eine Timeout-Generation sperrt noch ihren bereits laufenden Resolver-Callback. */
+    private String nativeAbgelaufeneFolgenQuelleSyncId = "";
+    /** Nur dieser Folgenadresse darf ein aktiver oder abgesagter Marker folgen. */
+    private String nativeFolgenBarriereUrl = "";
     private String direktBrowserAusnahme = "";
     private List<Provider> providers;
     /** Watchlist, Weiterschauen, Mediathek und Verlauf - eine Liste, vier Blicke. */
@@ -465,6 +471,12 @@ public class MainActivity extends Activity {
             + "target.scrollIntoView({block:'center'});"
             + "return 'ready';"
         + "})();";
+    /** URL des groessten sichtbaren Player-Rahmens, vom aktiven Hauptdokument gelesen. */
+    private static final String PLAYER_FRAME_URL_JS =
+        "(function(){var a=Array.prototype.slice.call(document.querySelectorAll('iframe'))"
+            + ".map(function(e){var r=e.getBoundingClientRect();return {e:e,n:r.width*r.height,w:r.width,h:r.height};})"
+            + ".filter(function(x){return x.w>200&&x.h>150;}).sort(function(a,b){return b.n-a.n;});"
+            + "return a[0]&&a[0].e.src?String(a[0].e.src):'';})()";
     /**
      * Sagt die Seite selbst, dass von ihr kein Player mehr kommt?
      *
@@ -1036,6 +1048,11 @@ public class MainActivity extends Activity {
             public void watchpartyStandGeaendert() {
                 MainActivity.this.mitschauStandGeaendert();
             }
+
+            @Override
+            public void watchpartyChat(JSONObject zeile) {
+                if (direktWiedergabe != null) direktWiedergabe.chatEmpfangen(zeile);
+            }
         });
         geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
             // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
@@ -1119,6 +1136,29 @@ public class MainActivity extends Activity {
             }
             @Override public void nativSteuern(JSONObject urteil, Runnable bereit) {
                 if (direktWiedergabe != null) direktWiedergabe.steuern(urteil, bereit);
+            }
+            @Override public void nativeFolgenBarriereVorbereiten(String syncId, String url) {
+                if (syncId == null || syncId.isEmpty()) return;
+                nativeFolgenBarriereSyncId = syncId;
+                nativeAbgelaufeneFolgenQuelleSyncId = "";
+                nativeFolgenBarriereUrl = url == null ? "" : url;
+                if (direktWiedergabe != null) direktWiedergabe.folgenBarriereVorbereiten(syncId);
+            }
+            @Override public void nativeFolgenBarriereAbbrechen(String syncId) {
+                if (syncId == null || !syncId.equals(nativeFolgenBarriereSyncId)) return;
+                if (direktWiedergabe != null) direktWiedergabe.folgenBarriereAbbrechen(syncId);
+                nativeFolgenBarriereSyncId = "";
+                // Die laufende Seiten-/Hosterauflosung gehoert weiterhin zu
+                // dieser abgesagten Generation. Ihr spaeteres Ergebnis darf
+                // keine Quelle mehr automatisch starten.
+                nativeAbgelaufeneFolgenQuelleSyncId = syncId;
+            }
+            @Override public void nativeFolgenBarriereStartet(String syncId) {
+                if (syncId != null && syncId.equals(nativeFolgenBarriereSyncId)) {
+                    nativeFolgenBarriereSyncId = "";
+                    nativeAbgelaufeneFolgenQuelleSyncId = "";
+                    nativeFolgenBarriereUrl = "";
+                }
             }
             @Override
             public WebView spieler() {
@@ -7306,7 +7346,7 @@ public class MainActivity extends Activity {
         String name = provider == null || provider.name == null ? "" : provider.name.toLowerCase();
         try {
             String host = new URI(provider == null ? "" : provider.startUrl).getHost();
-            return name.contains("aniworld") || (host != null && host.toLowerCase().contains("aniworld"));
+            return name.contains("aniworld") || hostUnter(host, "aniworld.to");
         } catch (Exception ignored) {
             return name.contains("aniworld");
         }
@@ -7396,7 +7436,7 @@ public class MainActivity extends Activity {
         String name = provider == null || provider.name == null ? "" : provider.name.toLowerCase();
         try {
             String host = new URI(provider == null ? "" : provider.startUrl).getHost();
-            return name.contains("filmo") || (host != null && host.toLowerCase().contains("filmo"));
+            return name.contains("filmo") || hostUnter(host, "filmo.to");
         } catch (Exception ignored) {
             return name.contains("filmo");
         }
@@ -7500,9 +7540,9 @@ public class MainActivity extends Activity {
         if (target.equals(base) || (!providerHost.isEmpty() && target.equals(providerHost))) return true;
         if (target.endsWith("." + base) || base.endsWith("." + target)) return true;
         if (!providerHost.isEmpty() && (target.endsWith("." + providerHost) || providerHost.endsWith("." + target))) return true;
-        if (name.contains("aniworld")) return target.contains("aniworld");
+        if (name.contains("aniworld")) return hostUnter(target, "aniworld.to");
         if (name.equals("s.to") || name.contains("s.to")) return target.equals("s.to") || target.endsWith(".s.to") || target.matches("\\d{1,3}(\\.\\d{1,3}){3}");
-        if (name.contains("filmo")) return target.contains("filmo");
+        if (name.contains("filmo")) return hostUnter(target, "filmo.to");
         return false;
     }
 
@@ -7522,7 +7562,7 @@ public class MainActivity extends Activity {
         try {
             String host = new URI(provider == null ? "" : provider.startUrl).getHost();
             host = host == null ? "" : host.toLowerCase();
-            return name.contains("aniworld") || host.contains("aniworld");
+            return name.contains("aniworld") || hostUnter(host, "aniworld.to");
         } catch (Exception ignored) {
             return name.contains("aniworld");
         }
@@ -7535,13 +7575,13 @@ public class MainActivity extends Activity {
     private boolean isKnownContentPath(Provider provider, String pathName, String hostname) {
         String host = hostname == null ? "" : hostname.toLowerCase();
         String name = provider == null || provider.name == null ? "" : provider.name.toLowerCase();
-        if (host.contains("aniworld") || name.contains("aniworld")) {
+        if (hostUnter(host, "aniworld.to") || name.contains("aniworld")) {
             return pathName.matches("(?i)^/anime/stream/[^/]+/?$");
         }
         if (host.equals("s.to") || host.endsWith(".s.to") || name.equals("s.to") || host.matches("\\d{1,3}(\\.\\d{1,3}){3}")) {
             return pathName.matches("(?i)^/serie/(stream/)?[^/]+/?$");
         }
-        if (host.contains("filmo") || name.contains("filmo")) {
+        if (hostUnter(host, "filmo.to") || name.contains("filmo")) {
             return pathName.matches("(?i)^/(film|filme|movie|movies|stream)/[^/]+/?$")
                 || pathName.matches("(?i)^/[^/]*[a-z][^/]*-[^/]+/?$");
         }
@@ -9672,8 +9712,20 @@ public class MainActivity extends Activity {
         if (!fortsetzen) activeFavoriteId = eintrag == null ? null : eintrag.id();
         if (bestand != null) bestand.setzeAktivenEintrag(activeFavoriteId);
         String name = eintrag == null ? url.equals(startUrl) ? startTitel : "Wiedergabe" : eintrag.title();
+        boolean barrierenZiel = gleicheFolgenBarriereAdresse(url, nativeFolgenBarriereUrl);
+        if (!barrierenZiel && (!nativeFolgenBarriereSyncId.isEmpty()
+            || !nativeAbgelaufeneFolgenQuelleSyncId.isEmpty())) {
+            // Eine neue private Adresse darf keinen Marker eines abgebrochenen
+            // Relay-Wechsels erben.
+            nativeFolgenBarriereSyncId = "";
+            nativeAbgelaufeneFolgenQuelleSyncId = "";
+            nativeFolgenBarriereUrl = "";
+        }
+        String aktiveFolgenBarriere = barrierenZiel ? nativeFolgenBarriereSyncId : "";
+        String abgelaufeneFolgenQuelle = barrierenZiel
+            ? nativeAbgelaufeneFolgenQuelleSyncId : "";
         direktWiedergabe = new DirektWiedergabe(this, kern, provider, url, name, stelle,
-            fortsetzStaffel, fortsetzFolge,
+            fortsetzStaffel, fortsetzFolge, aktiveFolgenBarriere, abgelaufeneFolgenQuelle,
             new DirektWiedergabe.Umgebung() {
                 public void geschlossen() { direktSchliessen(); showHome(); }
                 public void browser(Provider anbieter, String adresse) {
@@ -9726,12 +9778,10 @@ public class MainActivity extends Activity {
                     return mitschauen != null && mitschauen.binHostHier();
                 }
                 @Override public boolean darfFassungUndHosterWaehlen() {
-                    boolean inRunde = mitschauen != null && mitschauen.laeuftMit();
-                    boolean istHost = mitschauen != null && mitschauen.binHostHier();
-                    return DirektWiedergabe.darfFassungUndHosterWaehlen(inRunde, istHost);
+                    return mitschauen == null || mitschauen.darfQuelleHierWaehlen();
                 }
-                @Override public void folgenwechsel(String url) {
-                    if (mitschauen != null) mitschauen.folgenwechselMelden(url);
+                @Override public boolean folgenwechsel(String url) {
+                    return mitschauen != null && mitschauen.folgenwechselMelden(url);
                 }
                 public void fassungGewaehlt(String fassungName, String hosterName) {
                     if (mitschauen == null) return;
@@ -9744,7 +9794,21 @@ public class MainActivity extends Activity {
                 public JSONObject rundenFassung() {
                     return mitschauen == null ? new JSONObject() : mitschauen.rundenFassung();
                 }
+                public void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
+                    if (watchparty == null) {
+                        antwort.fertig(null, "Watchparty ist nicht verfügbar");
+                        return;
+                    }
+                    watchparty.chatSenden(key, text, raum, antwort);
+                }
             });
+        // Eine abgesagte Generation ist jetzt im konkreten Player gebunden.
+        // MainActivity muss sie nicht an spaetere, unabhaengige Player tragen.
+        if (!abgelaufeneFolgenQuelle.isEmpty()) {
+            nativeAbgelaufeneFolgenQuelleSyncId = "";
+            nativeFolgenBarriereUrl = "";
+        }
+        spielerChatAktualisieren();
         // Der Live-Streifen zieht in den Player um: dessen Ansicht liegt auf der
         // Fensterdekoration, ein Streifen in der Oberflaeche waere dahinter.
         if (liveStreifen != null) liveStreifen.inVollbild(direktWiedergabe.streifenPlatz());
@@ -9770,9 +9834,26 @@ public class MainActivity extends Activity {
             && eintrag.stehtInWeiterschauen() && eintrag.episode() > 0;
     }
 
+    private static boolean gleicheFolgenBarriereAdresse(String links, String rechts) {
+        return Mitschauen.gleicheFolge(links, rechts);
+    }
+
     private void direktSchliessen() {
         if (direktWiedergabe == null) return;
         DirektWiedergabe alt = direktWiedergabe;
+        // Beim relaygesteuerten Austausch muss die Generation den alten Player
+        // ueberleben. Ein bewusstes Schliessen beendet sie dagegen, damit kein
+        // spaeter geoeffneter privater Player eine fremde alte Sperre erbt.
+        if ((!nativeFolgenBarriereSyncId.isEmpty()
+            || !nativeAbgelaufeneFolgenQuelleSyncId.isEmpty())
+            && (mitschauen == null || !mitschauen.folgtDerRunde())) {
+            if (!nativeFolgenBarriereSyncId.isEmpty()) {
+                alt.folgenBarriereAbbrechen(nativeFolgenBarriereSyncId);
+            }
+            nativeFolgenBarriereSyncId = "";
+            nativeAbgelaufeneFolgenQuelleSyncId = "";
+            nativeFolgenBarriereUrl = "";
+        }
         // Erst den Streifen herausholen, dann die Ansicht abraeumen - sonst
         // faellt er mit ihr weg und findet nie wieder nach Hause.
         if (liveStreifen != null) liveStreifen.inVollbild(null);
@@ -9791,6 +9872,14 @@ public class MainActivity extends Activity {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) controller.show(WindowInsets.Type.systemBars());
         } else getWindow().getDecorView().setSystemUiVisibility(0);
+    }
+
+    /** Der Chat folgt ausschließlich dem aktuell geöffneten Titelraum. */
+    private void spielerChatAktualisieren() {
+        if (direktWiedergabe == null) return;
+        String key = mitschauen == null ? "" : mitschauen.aktiverSchluessel();
+        String raum = mitschauen == null ? "" : mitschauen.aktiverRaum();
+        direktWiedergabe.chatKontext(key, raum, watchparty != null && watchparty.istVerbunden());
     }
 
     private void showProviderLoading(Provider provider) {
@@ -10294,10 +10383,18 @@ public class MainActivity extends Activity {
         String base = stripWww(baseHost);
         String name = provider == null || provider.name == null ? "" : provider.name.toLowerCase();
         if (!base.isEmpty() && (target.equals(base) || target.endsWith("." + base))) return true;
-        if (name.contains("aniworld")) return target.contains("aniworld");
+        if (name.contains("aniworld")) return hostUnter(target, "aniworld.to");
         if (isStoProvider(provider)) return target.equals("s.to") || target.endsWith(".s.to") || target.equals(base);
-        if (name.contains("filmo")) return target.contains("filmo");
+        if (name.contains("filmo")) return hostUnter(target, "filmo.to");
         return false;
+    }
+
+    static boolean hostUnter(String host, String wurzel) {
+        String ziel = host == null ? "" : host.toLowerCase(java.util.Locale.ROOT)
+            .replaceFirst("^www\\.", "");
+        String basis = wurzel == null ? "" : wurzel.toLowerCase(java.util.Locale.ROOT)
+            .replaceFirst("^www\\.", "");
+        return !basis.isEmpty() && (ziel.equals(basis) || ziel.endsWith("." + basis));
     }
 
     /**
@@ -10920,12 +11017,59 @@ public class MainActivity extends Activity {
      * <p>Am Rechner faellt dieser Schritt weg: dort spielt Electron in jeden
      * Rahmen ein, sobald die Seite steht.
      */
-    private void rahmenMeldung(WebView ansicht, String adresse, boolean hatVideo, String nachricht) {
-        if (nachricht != null && nachricht.startsWith(Messung.MELDE_MESSUNG)) {
-            if (messung != null) messung.ausRahmen(nachricht);
+    private void rahmenKandidatSuchen(WebView ansicht) {
+        if (rahmen == null || ansicht == null || ansicht != currentWebView()) return;
+        ansicht.evaluateJavascript(PLAYER_FRAME_URL_JS, wert -> {
+            if (ansicht != currentWebView() || wert == null || "null".equals(wert)) return;
+            try {
+                String adresse = new JSONArray("[" + wert + "]").getString(0);
+                if (!adresse.isEmpty()) {
+                    // Die Auswahl stammt aus dem aktiven Hauptdokument und
+                    // bezeichnet dessen groessten sichtbaren Rahmen. Das ist
+                    // der native Nachweis fuer rotierende Hoster-Domains, die
+                    // keine dauerhafte Namensliste sicher abbilden koennte.
+                    rahmen.rahmenNavigation(ansicht, adresse, ansicht.getUrl(), true);
+                }
+            } catch (Exception unlesbar) {
+                Log.d(TAG, "Player-Rahmenadresse unlesbar");
+            }
+        });
+    }
+
+    private void rahmenMeldung(WebView ansicht, String adresse, boolean hatVideo,
+                               boolean istHauptdokument, String nachricht) {
+        if (activeProvider == null || ansicht != webViews.get(activeProvider.id)) return;
+        if (nachricht != null && !nachricht.isEmpty()) {
+            if (hatVideo && nachricht.startsWith(Messung.MELDE_MESSUNG)) {
+                if (messung != null) messung.ausRahmen(nachricht);
+                return;
+            }
+            if (istHauptdokument && kosmetik != null && kosmetik.istMeldung(nachricht)) {
+                kosmetik.meldung(ansicht, activeProvider, nachricht);
+                return;
+            }
+            if (!hatVideo) return;
+            if (mitschauen != null && mitschauen.istMeldung(nachricht)) {
+                mitschauen.meldung(nachricht);
+                return;
+            }
+            if (sponsorblock != null && sponsorblock.istMeldung(nachricht)) {
+                sponsorblock.meldung(nachricht);
+                return;
+            }
+            String seite = ansicht.getUrl();
+            if (marken != null && marken.istMeldung(nachricht)) {
+                marken.meldung(activeProvider, seite,
+                    FavoriteStore.ladeRoh(this), nachricht, this::showToast);
+                return;
+            }
+            if (fassungen != null && fassungen.istMeldung(nachricht)) {
+                fassungen.meldung(activeProvider, seite,
+                    FavoriteStore.ladeRoh(this), nachricht, this::showToast);
+            }
             return;
         }
-        if (!hatVideo || activeProvider == null || ansicht != webViews.get(activeProvider.id)) return;
+        if (!hatVideo) return;
         String seite = ansicht.getUrl();
         if (seite == null || !seite.startsWith("http")) return;
         Log.i(TAG, "Rahmen mit Video: " + safeHost(adresse));
@@ -10979,6 +11123,7 @@ public class MainActivity extends Activity {
 
     /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
     private void watchpartyGeaendert() {
+        spielerChatAktualisieren();
         if ("watchparty".equals(currentScreen)) {
             // Nicht bei jeder Meldung. Das Relay schickt eine, sobald irgendwer
             // seinen Stand meldet - bei zwei Teilnehmern also alle paar
@@ -13571,7 +13716,10 @@ public class MainActivity extends Activity {
             mainFrameUrl = url == null ? "" : url;
             // Die Rahmen der vorigen Seite sind tot; ihre Kanaele wuerden
             // sonst mitgezaehlt und die Skripte gingen ins Leere.
-            if (rahmen != null) rahmen.vergessen(view);
+            if (rahmen != null) {
+                if (provider == activeProvider) rahmen.ladevorgang(view, url);
+                else rahmen.vergessen(view);
+            }
             // Und mit ihnen der Zustand der Watchparty an diesem Player: die
             // bestaetigten Driftmessungen und die zuletzt angewendete laufende
             // Nummer gehoeren zur Folge davor. Bliebe die Nummer stehen, wiese
@@ -13622,6 +13770,16 @@ public class MainActivity extends Activity {
             if (isAniWorldProvider(provider)) {
                 for (long delay : new long[] {700L, 1800L}) {
                     view.postDelayed(() -> installAniWorldImageFix(view, provider), delay);
+                }
+            }
+            if (provider == activeProvider) {
+                final String begonnenBei = url;
+                for (long delay : new long[] {500L, 1400L, 4200L}) {
+                    view.postDelayed(() -> {
+                        if (provider == activeProvider && isSameUrl(view.getUrl(), begonnenBei)) {
+                            rahmenKandidatSuchen(view);
+                        }
+                    }, delay);
                 }
             }
             // Der Rueckfall fuer WebViews ohne addDocumentStartJavaScript und
@@ -13774,6 +13932,10 @@ public class MainActivity extends Activity {
                     reason + ", von " + safeHost(refererOf(request)));
                 return blockedResourceResponse(request);
             }
+            if (rahmen != null && provider == activeProvider && isSubFrameDocument(request)) {
+                rahmen.rahmenNavigation(view, requestUrl, refererOf(request),
+                    Adblocker.isLikelyPlayerNavigation(requestUrl));
+            }
             return null;
         }
 
@@ -13826,6 +13988,7 @@ public class MainActivity extends Activity {
             // braucht. Es laeuft stattdessen ab und wird verbraucht, und
             // openProvider() setzt es zurueck, sobald ELFIX selbst navigiert.
             if (provider == activeProvider) hideProviderLoading();
+            if (provider == activeProvider) rahmenKandidatSuchen(view);
             if (shouldBlockProviderNavigation(provider, url)) return;
             // Vor der TV-Navigation: was Werbung ist, soll schon weg sein,
             // wenn die Navigation ihre Ziele einsammelt. Sonst bekaeme eine
@@ -14235,42 +14398,9 @@ public class MainActivity extends Activity {
             // Only our own diagnostics, so provider pages cannot flood logcat.
             String text = message.message() == null ? "" : message.message();
             if (text.startsWith("ELFIX:")) Log.i(TAG, "page " + text);
-            // Die kosmetische Filterung meldet ihre Kandidaten über die
-            // Konsole - das ist der Weg, den auch der Rechner benutzt, und
-            // damit derselbe Meldetext.
-            if (kosmetik != null && kosmetik.istMeldung(text)) {
-                WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
-                kosmetik.meldung(ansicht, activeProvider, text);
-            }
-            // Play, Pause, Sprung und Stand aus dem Player. Sie kommen aus dem
-            // Rahmen des Hosters; onConsoleMessage hoert dort mit, anders als
-            // evaluateJavascript.
-            if (mitschauen != null && mitschauen.istMeldung(text)) {
-                mitschauen.meldung(text);
-                return true;
-            }
-            // Ein uebersprungener Sponsorenblock. Die Einblendung steht in der
-            // Seite; hier wird nur mitgeschrieben.
-            if (sponsorblock != null && sponsorblock.istMeldung(text)) {
-                sponsorblock.meldung(text);
-                return true;
-            }
-            // Ein Sprung im Player - daraus wird vielleicht eine Intromarke.
-            // Die Meldung kommt aus dem Rahmen des Hosters; onConsoleMessage
-            // hoert dort mit, anders als evaluateJavascript.
-            if (marken != null && marken.istMeldung(text)) {
-                WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
-                String adresse = ansicht == null ? null : ansicht.getUrl();
-                marken.meldung(activeProvider, adresse,
-                    FavoriteStore.ladeRoh(MainActivity.this), text, MainActivity.this::showToast);
-            }
-            // Welche Fassung dasteht - und welche jemand angeklickt hat.
-            if (fassungen != null && fassungen.istMeldung(text)) {
-                WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
-                String adresse = ansicht == null ? null : ansicht.getUrl();
-                fassungen.meldung(activeProvider, adresse,
-                    FavoriteStore.ladeRoh(MainActivity.this), text, MainActivity.this::showToast);
-            }
+            // Die Konsole ist nur Diagnose. Interne Player-Signale kommen
+            // ueber Rahmen und sind dort an WebView, Ladevorgang, Origin und
+            // den aktiven ReplyProxy gebunden.
             return true;
         }
 

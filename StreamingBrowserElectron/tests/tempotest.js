@@ -222,11 +222,11 @@ async function gemeinsamStarten(host, gast) {
   // Beitrittsreihenfolge. Erst dessen Meldung verarbeiten lassen, dann den
   // zweiten Player melden; zwei gleichzeitige WebSocket-Pakete waeren kein
   // belastbarer Test dafuer, wer die Runde fuehrt.
-  await warteBis(() => host.eintrag()?.hostId === "Host-id");
+  await warteBis(() => host.eintrag()?.hostId === host.eintrag()?.myId);
   gast.raeume.meldeStand(KEY, { position: 300, paused: false, url: FOLGE, season: 1, episode: 4, playerSessionId: "gast-sitzung" }, RAUM);
   await schlaf(300);
 
-  const wirklichHost = host.eintrag()?.hostId === "Host-id";
+  const wirklichHost = host.eintrag()?.hostId === host.eintrag()?.myId;
   pruefe("Der Einsteller ist Host der Runde", wirklichHost, host.eintrag()?.hostName || "");
 
   // --- Das Tempo des Hosts gilt fuer alle ---

@@ -134,7 +134,7 @@ pruefe("Der Player meldet seinen Takt und seine Taten in die Runde",
   haupt.includes('ipcMain.on("spieler:takt"') && haupt.includes('ipcMain.on("spieler:aktion"')
   && haupt.includes("meldeWatchpartyStandAusSpieler"));
 pruefe("Befehle der Runde erreichen ihn, bevor sie in die Ansichten gehen",
-  haupt.includes("if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost)) return;"));
+  haupt.includes("if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell)) return;"));
 pruefe("Gerechnet wird mit den Regeln der Runde und nicht mit eigenen",
   haupt.includes("watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room))")
   && haupt.includes("watchpartySync.driftEntscheiden(spielerDrift"),
@@ -154,12 +154,14 @@ pruefe("Die Ansicht dahinter schweigt, solange der eigene Player laeuft",
 // Die Webpruefung faellt nur dort, wo sie fallen muss - und die Ansicht, in
 // der sie faellt, laesst nichts Fremdes herein. Beides gehoert zusammen: die
 // Ausnahme ist nur so viel wert wie ihre Eingrenzung.
-pruefe("Die Webpruefung faellt an genau einer Stelle",
-  (haupt.match(/webSecurity:\s*false/g) || []).length === 1,
-  String((haupt.match(/webSecurity:\s*false/g) || []).length));
+pruefe("Der Player behaelt die Webpruefung und richtet seinen Medienzugang gezielt ein",
+  (haupt.match(/webSecurity:\s*false/g) || []).length === 0
+  && /webSecurity:\s*true/.test(haupt)
+  && haupt.includes("spielerNetz.einrichten(spielerSession)"),
+  "CORS-Ausnahmen laufen nur ueber die eigene Player-Sitzung");
 pruefe("Und diese Ansicht bleibt bei ihrer eigenen Seite",
-  haupt.includes('if (!String(ziel || "").startsWith("file://")) ereignis.preventDefault();'),
-  "keine fremde Adresse in einer Ansicht ohne Webpruefung");
+  haupt.includes('ipcSchutz.lokaleNavigation(view.webContents, path.join(__dirname, "renderer", "spieler.html"));'),
+  "die gemeinsame Navigationserlaubnis prueft die exakte lokale Player-Datei");
 
 pruefe("Der Player laeuft in einer eigenen Sitzung",
   haupt.includes('const SPIELER_PARTITION = "persist:elfix-spieler"')
@@ -203,6 +205,11 @@ pruefe("Der Player liest den Zaehler aus dem Auftrag",
 pruefe("Ohne Zaehler laeuft nichts von selbst",
   /if \(!naechste \|\| weiterUhr \|\| weiterZaehler <= 0\) return;/.test(skript),
   "aber der Knopf bleibt - so steht es auch in den Einstellungen");
+pruefe("Pause und Puffer brechen einen laufenden Countdown ab",
+  /bild\.addEventListener\("pause", \(\) => \{[\s\S]{0,360}?weiterAbbrechen\(\)/.test(skript)
+  && /bild\.addEventListener\("waiting", \(\) => \{[\s\S]{0,160}?weiterAbbrechen\(\)/.test(skript)
+  && /if \(\(bild\.paused && !bild\.ended\) \|\| puffert\) \{\s*weiterAbbrechen\(\);\s*return;/.test(skript),
+  "das Medienende darf dagegen weiter automatisch anbieten");
 pruefe("Der Uebergang faengt so frueh an, wie der Zaehler lang ist",
   /bild\.duration - stelle <= weiterZaehler \+ 1/.test(skript),
   "sonst zaehlt er fuenf und beginnt nach acht");
@@ -308,6 +315,15 @@ pruefe("Genommen wird der Puffer, in dem die Stelle liegt",
 pruefe("Der Balken bleibt ein Schieberegler",
   /<input id="regler" type="range"/.test(seite),
   "gefaerbt wird der Hintergrund - mit den Pfeiltasten bedienbar bleibt er");
+pruefe("Fokussierte Schieberegler behalten ihre Tastatursteuerung",
+  /ereignis\.target instanceof HTMLInputElement && ereignis\.target\.type === "range"\) return;/.test(skript),
+  "Pfeile und Leertaste duerfen nicht zugleich globale Player-Shortcuts ausloesen");
+pruefe("Ein alter Metadaten-Horcher darf keine neue Quelle starten",
+  /let quellenGeneration = 0;/.test(skript)
+  && /const meineQuellenGeneration = quellenGeneration;/.test(skript)
+  && /if \(meineQuellenGeneration !== quellenGeneration\) return;/.test(skript)
+  && /function starten\(neuerAuftrag\) \{\s*\+\+quellenGeneration;/.test(skript),
+  "Hoster- und Folgenwechsel invalidieren wartende loadedmetadata-Schritte");
 
 /* ------------------------------------------- Die Karte zur naechsten Folge */
 

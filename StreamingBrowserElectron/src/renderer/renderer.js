@@ -10256,7 +10256,8 @@ function showWatchpartyStand(info) {
 // plus die Zeit, die seither vergangen ist - aber nur, wenn dort nicht
 // angehalten ist.
 function standSekunde(mitglied, seit) {
-  const gelaufen = mitglied.paused ? 0 : seit + Number(mitglied.age || 0);
+  const tempo = Number(mitglied.playbackRate) > 0 ? Number(mitglied.playbackRate) : 1;
+  const gelaufen = mitglied.paused || mitglied.buffering ? 0 : (seit + Number(mitglied.age || 0)) * tempo;
   return Math.max(0, Number(mitglied.position || 0) + gelaufen);
 }
 
@@ -10313,7 +10314,7 @@ function renderWatchpartyStand() {
     // es auch dann eindeutig bleibt, wenn eine Schrift das Zeichen nicht hat.
     const zeichen = document.createElement("span");
     zeichen.className = "stand-zeichen";
-    zeichen.textContent = mitglied.paused ? "❚❚" : "▶";
+    zeichen.textContent = mitglied.buffering ? "…" : mitglied.paused ? "❚❚" : "▶";
 
     const name = document.createElement("span");
     name.className = "stand-name";
@@ -10338,6 +10339,13 @@ function renderWatchpartyStand() {
         ? `bei Staffel ${mitglied.season || "?"} Folge ${mitglied.episode} — ${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`
         : `${mitglied.paused ? "pausiert" : "läuft"} bei ${formatClock(sekunde)}`
           + (!mitglied.paused && abstand > 2 ? ` — ${Math.round(abstand)} s Unterschied` : ""));
+    const zustand = mitglied.buffering ? "puffert" : mitglied.paused ? "pausiert" : "spielt";
+    chip.title += `\n${folgeKurz(mitglied)} · ${zustand} · ${Number(mitglied.playbackRate) || 1}×`;
+    if (!andereFolge && host && !mitglied.host) {
+      const deltaMs = Math.round((sekunde - bezug) * 1000);
+      chip.title += `\nGeschätzter Zeitversatz zum Host: ${deltaMs > 0 ? "+" : ""}${deltaMs} ms`;
+    }
+    if (Number.isFinite(mitglied.frameTime)) chip.title += `\nGemeldete Bildzeit: ${mitglied.frameTime.toFixed(3)} s`;
     return chip;
   }));
 }

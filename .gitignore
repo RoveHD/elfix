@@ -1,5 +1,6 @@
 node_modules/
 StreamingBrowserElectron/build/adblock-runtime.cjs
+StreamingBrowserElectron/build/preload.cjs
 npm-debug.log*
 
 # Electron build outputs
@@ -8,6 +9,7 @@ StreamingBrowserElectron/dist-*/
 
 # Android/Gradle build outputs and local SDK cache
 android/.gradle/
+android/.gradle-agent/
 android/build/
 android/app/build/
 android-sdk/

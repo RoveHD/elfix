@@ -1,0 +1,67 @@
+"use strict";
+const assert = require("node:assert/strict");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const { absichern, istLokaleSeite, lokaleNavigation } = require("../src/ipc-schutz");
+const { medienHandler } = require("../src/spieler-netz");
+const sicherung = require("../src/sicherung");
+
+(async () => {
+  const datei = path.resolve(__dirname, "../src/renderer/index.html");
+  const url = pathToFileURL(datei).href;
+  const frame = { url };
+  const inhalt = { mainFrame: frame, isDestroyed: () => false };
+  const handlers = new Map();
+  const sicher = absichern({ handle: (k, fn) => handlers.set(k, fn), on: (k, fn) => handlers.set(k, fn) },
+    () => ({ inhalt, datei }));
+  sicher.handle("test", () => "privat");
+  const send = handlers.get("test");
+  assert.equal(send({ sender: inhalt, senderFrame: frame }), "privat");
+  assert.throws(() => send({ sender: {}, senderFrame: frame }), /Absender/);
+  assert.throws(() => send({ sender: inhalt, senderFrame: { url } }), /Absender/);
+  frame.url = "https://example.invalid/";
+  assert.throws(() => send({ sender: inhalt, senderFrame: frame }), /Absender/);
+  frame.url = url;
+  assert.equal(istLokaleSeite(`${url}?preview=1#top`, datei), true);
+  assert.equal(istLokaleSeite(pathToFileURL(path.resolve(__dirname, "secret.html")).href, datei), false);
+  let calls = 0;
+  sicher.on("signal", () => calls++);
+  handlers.get("signal")({ sender: {}, senderFrame: frame });
+  assert.equal(calls, 0);
+  const events = {};
+  const links = [];
+  let popup;
+  lokaleNavigation({ on: (name, fn) => { events[name] = fn; }, setWindowOpenHandler: fn => { popup = fn; } }, datei, link => links.push(link));
+  let stopped = false;
+  events["will-navigate"]({ preventDefault: () => { stopped = true; } }, "https://example.invalid");
+  assert.equal(stopped, true);
+  assert.deepEqual(popup({ url: "https://github.com/RoveHD/elfix/releases" }), { action: "deny" });
+  popup({ url: "https://github.com.evil.invalid/RoveHD/elfix" });
+  popup({ url: "file:///test.exe" });
+  assert.equal(links.length, 1);
+
+  let loads = 0;
+  const media = medienHandler(async request => {
+    loads++;
+    return new Response(request.method === "HEAD" ? null : "segment", { status: 206,
+      headers: { "Content-Range": "bytes 0-6/7", "Content-Length": "7" } });
+  });
+  const request = (method, origin = "null") => new Request("https://cdn.example/video", { method, headers: { Origin: origin } });
+  assert.equal((await media(request("OPTIONS"))).status, 204);
+  assert.equal(loads, 0);
+  assert.equal((await media(request("POST"))).status, 403);
+  assert.equal((await media(request("GET", "https://foreign.invalid"))).status, 403);
+  const segment = await media(request("GET"));
+  assert.equal(segment.status, 206);
+  assert.equal(segment.headers.get("access-control-allow-origin"), "null");
+  assert.equal(segment.headers.get("content-range"), "bytes 0-6/7");
+  assert.equal(await segment.text(), "segment");
+  assert.equal(await (await media(request("HEAD"))).text(), "");
+  const badRedirect = medienHandler(async () => new Response(null, { status: 302, headers: { Location: "file:///private" } }));
+  assert.equal((await badRedirect(request("GET"))).status, 403);
+  const settings = { watchparty: { deviceId: "me", deviceSecret: "private-device-credential" } };
+  assert.equal(sicherung.bauen({ settings }).settings.watchparty.deviceSecret, undefined);
+  assert.equal(sicherung.einstellungenUebernehmen(settings, "own-id", "own-secret").watchparty.deviceSecret, "own-secret");
+  assert.equal(sicherung.einstellungenUebernehmen(settings, "own-id").watchparty.deviceSecret, undefined);
+  console.log("OK Sicherheitsgrenzen: IPC, Navigation, Medien-CORS und Identitaetssicherungen");
+})().catch(error => { console.error(error); process.exitCode = 1; });

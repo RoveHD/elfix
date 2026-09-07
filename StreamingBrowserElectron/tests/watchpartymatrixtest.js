@@ -131,6 +131,7 @@ function android(name, kennung) {
     ereignisse,
     steuerung,
     eintragVon,
+    kennungAktuell: () => eintragVon()?.myId || "",
     offene: () => offen,
     /**
      * Die Lage, wie Mitschauen.steuerung() sie zusammenstellt.
@@ -232,6 +233,7 @@ function rechner(name) {
   const eintragVon = () => raeume.eintraege().find((e) => e.key === KEY) || null;
   const api = {
     name, raeume, steuerung, staende, eintragVon,
+    kennungAktuell: () => eintragVon()?.myId || raeume.geraetId || "",
     offene: () => offen,
     oeffnen: (url) => { offen = url; },
     binHost: () => {
@@ -366,78 +368,60 @@ function ereignisAusSkript(skript) {
     handy.steuerung().map((m) => `${m.action}@${Math.round(m.position)}`).join(","));
 
   /* --------------------------------------------------------------- W6 + W8 */
-  // Der Host wechselt auf Folge 5 und laeuft dort weiter. Der Gast folgt,
-  // braucht aber Zeit zum Laden - und muss danach dort einsteigen, wo der Host
-  // *jetzt* steht.
+  // Der Host wechselt auf Folge 5. Alle verbundenen Teilnehmer laden und
+  // puffern erst; niemand startet, bevor auch der langsamste bereit ist.
 
   handy.ereignisse.length = 0;
   tv.oeffnen(folge(5));
   tv.bruecke.folgenwechselMelden(KEY, folge(5), RAUM);
   tv.puls(0, false);
-  await warteBis(() => handy.steuerung().some((m) => m.action === "navigate"),
-    "W6: das Telefon bekommt den Folgenwechsel");
-  {
-    const nav = handy.steuerung().find((m) => m.action === "navigate");
-    const urteil = nav ? handy.bruecke.steuerungPruefen(nav, handy.lage(nav)) : null;
-    pruefe("W6. Der Folgenwechsel kommt als Wechsel an, mit der neuen Adresse",
-      Boolean(urteil) && urteil.tun === "navigate" && urteil.url === folge(5),
-      urteil ? `${urteil.tun} ${urteil.url}` : "kein Urteil");
-  }
-
-  // Der Host laeuft weiter, waehrend der Gast laedt.
-  tv.puls(12, false);
-  await schlaf(300);
+  await warteBis(() => handy.steuerung().some((m) =>
+    m.action === "syncprepare" && m.reason === "episode-change" && m.url === folge(5)),
+  "W6: das Telefon bekommt die Vorbereitung");
+  const vorHandy = handy.steuerung().find((m) =>
+    m.action === "syncprepare" && m.reason === "episode-change" && m.url === folge(5));
+  const vorTv = tv.steuerung().find((m) => m.action === "syncprepare" && m.syncId === vorHandy?.syncId);
+  const vorPc = pc.steuerung.find((m) => m.action === "syncprepare" && m.syncId === vorHandy?.syncId);
+  const urteil = vorHandy ? handy.bruecke.steuerungPruefen(vorHandy, handy.lage(vorHandy)) : null;
+  pruefe("W6. Der Folgenwechsel kommt als gemeinsame Vorbereitung mit neuer Adresse an",
+    Boolean(urteil) && urteil.tun === "syncprepare" && vorHandy.url === folge(5),
+    urteil ? `${urteil.tun} ${vorHandy.url}` : "kein Urteil");
 
   // Das Telefon oeffnet Folge 5 - und der Player ist noch nicht da.
   handy.oeffnen(folge(5));
-  handy.ereignisse.length = 0;
-  // Fuenf Sekunden Ladezeit. Genau das Fenster, in dem der Host weiterlaeuft.
+  // Eine merkliche Ladezeit: waehrenddessen darf niemand schon starten.
   const geladenAb = Date.now();
   await schlaf(1200);
-  tv.puls(13.2, false);
-  await schlaf(300);
+  pruefe("W8. Waehrend ein Teilnehmer laedt, startet die Runde nicht",
+    ![pc.steuerung, tv.steuerung(), handy.steuerung()].flat()
+      .some((m) => m.action === "syncstart" && m.syncId === vorHandy?.syncId));
 
   // Jetzt steht der Player - erst hier klinkt sich das Telefon ein.
   const eingeklinkt = handy.playerDa();
   pruefe("W6. Der Gast klinkt sich erst ein, wenn sein Player wirklich da ist",
     eingeklinkt, "vorher lief die Anfrage ins Leere und der Gast startete bei 0:00");
-  await warteBis(() => handy.steuerung().some((m) => m.resync),
-    "W8: die Antwort der Runde kommt an");
-
-  const antwort = handy.steuerung().filter((m) => m.resync).pop();
-  pruefe("W8. Die Antwort traegt Folge, Stelle und Laufzustand des Hosts",
-    Boolean(antwort) && String(antwort.url || "").includes("episode-5")
-    && antwort.playing === true && Number(antwort.videoTime) > 10,
-    antwort ? `${antwort.action}@${Number(antwort.videoTime).toFixed(1)} playing=${antwort.playing}` : "nichts");
-
-  {
-    const urteil = antwort ? handy.bruecke.steuerungPruefen(antwort, handy.lage(antwort)) : null;
-    pruefe("W8. Der Gast wendet sie an, statt sie als andere Folge zu verwerfen",
-      Boolean(urteil) && urteil.tun === "anwenden",
-      urteil ? `${urteil.tun} (${urteil.grund})` : "kein Urteil");
-
-    const ereignis = urteil ? ereignisAusSkript(urteil.skript) : null;
-    pruefe("W8. Das Skript bekommt Stelle, Zeitstempel und Laufzustand mit",
-      Boolean(ereignis) && ereignis.playing === true
-      && Number(ereignis.timestamp) > 0 && Number(ereignis.videoTime) > 10,
-      ereignis ? JSON.stringify(ereignis) : "kein Ereignis im Skript");
-    pruefe("W8. Und rechnet die Zielzeit erst beim Anwenden aus - nicht beim Empfangen",
-      Boolean(urteil) && urteil.skript.includes("const zielJetzt = ()")
-      && urteil.skript.includes("zielZeitBerechnen"),
-      "genau das ist der smarte Start: die Ladezeit steht in der Rechnung drin");
-
-    // Und jetzt die Rechnung selbst, mit genauen Zahlen. Die Nachricht ist
-    // beim Anwenden fuenf Sekunden alt; der Host laeuft, also kommen sie dazu.
-    if (ereignis) {
-      const gerechnet = wpSync.zielZeitBerechnen(
-        { ...ereignis, hatUhr: true }, Number(ereignis.timestamp) + 5000);
-      pruefe("W8. Fuenf Sekunden Ladezeit ergeben fuenf Sekunden Vorlauf",
-        Math.abs(gerechnet - (Number(ereignis.videoTime) + 5)) < 0.001,
-        `${gerechnet.toFixed(2)} statt ${(Number(ereignis.videoTime) + 5).toFixed(2)}`);
-    }
-    pruefe("W8. Die Ladezeit war wirklich eine Wartezeit",
-      Date.now() - geladenAb > 1000, `${Date.now() - geladenAb} ms`);
-  }
+  pc.oeffnen(folge(5));
+  pc.puls(0, true);
+  pruefe("W8. Alle drei Teilnehmer bereiten dieselbe Generation vor",
+    Boolean(vorHandy?.syncId) && vorTv?.syncId === vorHandy.syncId && vorPc?.syncId === vorHandy.syncId);
+  handy.bruecke.bereitZumStart(KEY, RAUM, vorHandy.syncId);
+  tv.bruecke.bereitZumStart(KEY, RAUM, vorHandy.syncId);
+  await schlaf(200);
+  pruefe("W8. Auch zwei von drei Bereitschaften starten noch niemanden",
+    !handy.steuerung().some((m) => m.action === "syncstart" && m.syncId === vorHandy.syncId));
+  pc.raeume.bereitZumStart(KEY, RAUM, vorHandy.syncId);
+  await warteBis(() => handy.steuerung().some((m) =>
+    m.action === "syncstart" && m.syncId === vorHandy.syncId), "W8: gemeinsamer Start");
+  const gemeinsam = handy.steuerung().find((m) => m.action === "syncstart" && m.syncId === vorHandy.syncId);
+  pruefe("W8. Erst alle Bereitschaften ergeben einen gemeinsamen Folgenstart",
+    Boolean(gemeinsam) && gemeinsam.url === folge(5) && gemeinsam.episodeId === "s2e5"
+      && gemeinsam.playing === true && Number(gemeinsam.startAt) > Number(gemeinsam.timestamp),
+    gemeinsam ? `${gemeinsam.episodeId} @ ${gemeinsam.startAt}` : "kein Start");
+  pruefe("W8. Jedes Geraet bekommt genau denselben einen Start",
+    [pc.steuerung, tv.steuerung(), handy.steuerung()].every((liste) =>
+      liste.filter((m) => m.action === "syncstart" && m.syncId === vorHandy.syncId).length === 1));
+  pruefe("W8. Die Ladezeit war wirklich eine Wartezeit",
+    Date.now() - geladenAb > 1000, `${Date.now() - geladenAb} ms`);
 
   /* --------------------------------------------------- Die Rechnung selbst */
   // Das Beispiel aus der Aufgabe, an genauen Zahlen: Play bei 12,0 s, der Gast
@@ -604,9 +588,9 @@ function ereignisAusSkript(skript) {
     const tvPuls = setInterval(() => syncStand(tv, syncFolge(5), 300, false), 700);
     tvPuls.unref?.();
     syncStand(tv, syncFolge(5), 300, false);
-    await warteBis(() => syncEintrag(tv)?.hostId === "tv-id", "Sync: der Fernseher fuehrt");
+    await warteBis(() => syncEintrag(tv)?.hostId === tv.kennungAktuell(), "Sync: der Fernseher fuehrt");
     pruefe("Sync. Der Fernseher fuehrt bei Folge 5",
-      syncEintrag(tv)?.hostId === "tv-id", `hostId=${syncEintrag(tv)?.hostId}`);
+      syncEintrag(tv)?.hostId === tv.kennungAktuell(), `hostId=${syncEintrag(tv)?.hostId}`);
 
     // Und das Telefon steht bei Folge 4.
     const handyPuls = setInterval(() => syncStand(handy, syncFolge(4), 20, false), 700);
@@ -645,7 +629,7 @@ function ereignisAusSkript(skript) {
     // Gegenprobe pruefte gar nichts.
     const scharf = vorbereiten ? handy.bruecke.steuerungPruefen(
       { ...vorbereiten, sequenceId: Number(vorbereiten.sequenceId || 0) + 1 }, {
-        binHost: false, hostId: "tv-id", gleicheAdresse: true, season: 1, episode: 4
+        binHost: false, hostId: tv.kennungAktuell(), gleicheAdresse: true, season: 1, episode: 4
       }) : null;
     pruefe("Sync. Mit scharfer Folgenpruefung fiele er heraus - die Gegenprobe",
       Boolean(scharf) && scharf.tun === "nichts" && scharf.grund === "andere folge",
@@ -710,26 +694,27 @@ function ereignisAusSkript(skript) {
   // gerade" dastehen - das Relay laesst ihn aus der Liste fallen, und bis
   // dahin traegt seine Meldung ein wachsendes Alter.
   {
+    const handyId = handy.kennungAktuell();
     handy.stillstehen();
     pc.staende.length = 0;
     // Die Frischegrenze des Relays sind fuenfzehn Sekunden. Hier wird wirklich
     // so lange gewartet: ein Test, der frueher abbricht, prueft die Uhr und
     // nicht die Regel.
     await warteBis(() => pc.staende.some((s) =>
-      !(s.members || []).some((m) => m.id === "handy-id")),
+      !(s.members || []).some((m) => m.id === handyId)),
       "W14: das stille Geraet faellt aus der Liste", 25000);
     const nachher = pc.staende.pop();
     pruefe("W14. Wer nichts mehr meldet, verschwindet aus der Teilnehmerliste",
-      Boolean(nachher) && !(nachher.members || []).some((m) => m.id === "handy-id"),
+      Boolean(nachher) && !(nachher.members || []).some((m) => m.id === handyId),
       nachher ? nachher.members.map((m) => m.name).join(", ") : "keine Meldung");
     // Und die Anzeige rechnet zusaetzlich selbst: eine Meldung, die zu alt ist,
     // faellt heraus, auch wenn gar keine neue mehr kommt. Geprueft wird das in
     // LivestandTest (JVM) an genauen Zahlen.
     handy.puls(118, false);
     await warteBis(() => pc.staende.some((s) =>
-      (s.members || []).some((m) => m.id === "handy-id")), "W14: es meldet sich wieder");
+      (s.members || []).some((m) => m.id === handyId)), "W14: es meldet sich wieder");
     pruefe("W14. Und kommt zurueck, sobald es sich wieder meldet",
-      pc.staende.some((s) => (s.members || []).some((m) => m.id === "handy-id")));
+      pc.staende.some((s) => (s.members || []).some((m) => m.id === handyId)));
   }
 
   /* -------------------------------------------------------------------- W11 */
@@ -747,7 +732,7 @@ function ereignisAusSkript(skript) {
     await warteBis(() => handy.eintragVon()?.hostId, "W11: ein Host steht fest");
     const vorher = handy.eintragVon()?.hostId;
     const abtretend = [pc, tv, handy].find((geraet) =>
-      (geraet.kennung || `${geraet.name}-id`) === vorher);
+      geraet.kennungAktuell() === vorher);
     pruefe("W11. Vor dem Verlassen fuehrt genau ein Geraet",
       Boolean(abtretend), `hostId=${vorher}`);
 
@@ -766,7 +751,7 @@ function ereignisAusSkript(skript) {
     // Geister-Host, der die Folge laengst verlassen hat.
     const nochDa = [pc, tv, handy]
       .filter((geraet) => geraet !== abtretend)
-      .map((geraet) => geraet.kennung || `${geraet.name}-id`);
+      .map((geraet) => geraet.kennungAktuell());
     pruefe("W11. Und zwar jemand, der wirklich an dieser Folge mitschaut",
       nochDa.includes(neuerHost), `hostId=${neuerHost}, noch dabei: ${nochDa.join(", ")}`);
 
