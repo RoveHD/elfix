@@ -827,10 +827,12 @@ function aktuelleHostId(raumcode, eintrag) {
       eintrag.hostGesehen = Date.now();
       return gehalten;
     }
-    // Kurz weg ist nicht weg - aber nur, wenn er wirklich weg ist. Steht sein
-    // Stand noch da, ist die Verbindung offen und er meldet bloss nichts mehr:
-    // dann gilt die gewoehnliche Frist und niemand wird ueberbrueckt.
-    if (!wert && Date.now() - (eintrag.hostGesehen || 0) <= HOST_GNADE_MS) return gehalten;
+    // Ein schliessender Socket gilt bereits als getrennt, bevor sein close-
+    // Handler den Stand entfernt. Ein Gast-Herzschlag in diesem Zeitfenster
+    // darf die Gnadenfrist nicht ueberspringen. Bei offener Verbindung und
+    // veraltetem Stand gilt weiterhin die normale Aktivitaetsfrist.
+    if ((!wert || !istVerbunden(raumcode, gehalten))
+      && Date.now() - (eintrag.hostGesehen || 0) <= HOST_GNADE_MS) return gehalten;
   }
   const gewaehlt = hostFuerFolge(raumcode, eintrag, eintrag.season, eintrag.episode);
   if (!gewaehlt) return "";

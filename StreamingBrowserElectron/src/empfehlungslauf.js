@@ -257,6 +257,23 @@ function erstellen(umgebung) {
     }
   }
 
+  // Anzeigen duerfen sofort aus beiden vorhandenen Caches lesen. Kein Abruf,
+  // kein Cache-Reset und kein Eingriff in Fortschritt oder Favoritenstruktur.
+  function titelAnzeige(name, url) {
+    const seite = umgebung.cacheLesen().pages?.[seriesPageUrl(url)] || null;
+    const extern = metadatenAusCache(name, url);
+    const sicher = extern && ["EXACT", "HIGH"].includes(extern.konfidenz) ? extern : null;
+    const genres = (seite?.genres || []).map(genre => genre.label || genre.key).filter(Boolean);
+    return {
+      beschreibung: seite?.meta?.beschreibung || sicher?.beschreibung || "",
+      genres: genres.length ? genres : sicher?.genres || [],
+      bewertung: sicher?.bewertung ?? null,
+      bewertungStimmen: sicher?.bewertungStimmen || 0,
+      quelle: sicher?.quelle || "",
+      jahr: seite?.meta?.jahr || sicher?.jahr || 0
+    };
+  }
+
   /*
    * Was AniList beziehungsweise TMDB ueber genau diesen einen Titel sagen.
    *
@@ -289,7 +306,8 @@ function erstellen(umgebung) {
     // Feld nicht, und wer die Karte aufmacht, soll den Knopf sehen und nicht
     // erst beim uebernaechsten Mal.
     const unvollstaendig = bekannt
-      && (client.laufStatusFehlt(bekannt) || client.trailerFehlt?.(bekannt));
+      && (client.laufStatusFehlt(bekannt) || client.trailerFehlt?.(bekannt)
+        || !Object.prototype.hasOwnProperty.call(bekannt, "beschreibung"));
     if (bekannt && !unvollstaendig) return bekannt;
     if (!client.bereit() || client.gesperrt()) return bekannt || null;
     try {
@@ -1412,6 +1430,7 @@ function erstellen(umgebung) {
     // Was AniList/TMDB ueber einen einzelnen Titel sagen - fuer den
     // Verlaufs-Kasten der Mediathek.
     titelMetadaten,
+    titelAnzeige,
     // Der Pool ist veraltet - etwa weil der Wirt seinen Cache verworfen hat.
     poolVerwerfen() {
       personalCache = { at: 0, items: [], signatur: "", vollstaendig: false };

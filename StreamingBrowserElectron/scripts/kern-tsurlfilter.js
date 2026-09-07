@@ -51,30 +51,27 @@ if (!fs.existsSync(path.join(WURZEL, "node_modules/@adguard/tsurlfilter/package.
   process.exit(1);
 }
 
-// Der Einstiegspunkt existiert nur waehrend des Bauens. Er muss innerhalb des
-// Projekts liegen, sonst findet esbuild das node_modules daneben nicht.
-const zwischen = fs.mkdtempSync(path.join(WURZEL, ".kernbau-"));
-const eintrag = path.join(zwischen, "tsurlfilter-eintrag.js");
-fs.writeFileSync(eintrag, 'export * from "@adguard/tsurlfilter";\n');
-
-try {
-  fs.mkdirSync(path.dirname(ZIEL), { recursive: true });
-  const ergebnis = esbuild.buildSync({
-    entryPoints: [eintrag],
-    bundle: true,
-    format: "iife",
-    globalName: "ELFIX_TSURLFILTER",
-    platform: "browser",
-    target: "es2019",
-    minify: true,
-    legalComments: "none",
-    outfile: ZIEL,
-    logLevel: "warning"
-  });
-  if (ergebnis.errors && ergebnis.errors.length) process.exit(1);
-} finally {
-  fs.rmSync(zwischen, { recursive: true, force: true });
-}
+// resolveDir findet die Projekt-Abhaengigkeiten auch ohne temporaere Datei.
+// So braucht ein Build keine Schreibrechte im Quellverzeichnis.
+fs.mkdirSync(path.dirname(ZIEL), { recursive: true });
+const ergebnis = esbuild.buildSync({
+  stdin: {
+    contents: 'export * from "@adguard/tsurlfilter";',
+    resolveDir: WURZEL,
+    sourcefile: "tsurlfilter-eintrag.js",
+    loader: "js"
+  },
+  bundle: true,
+  format: "iife",
+  globalName: "ELFIX_TSURLFILTER",
+  platform: "browser",
+  target: "es2019",
+  minify: true,
+  legalComments: "none",
+  outfile: ZIEL,
+  logLevel: "warning"
+});
+if (ergebnis.errors && ergebnis.errors.length) process.exit(1);
 
 const fassung = require(path.join(WURZEL, "node_modules/@adguard/tsurlfilter/package.json")).version;
 const groesse = fs.statSync(ZIEL).size;

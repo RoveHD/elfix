@@ -225,6 +225,7 @@ function verdichtetOhneTrailer(form, art) {
     quelle: String(form?.quelle || ""),
     externeIds: form?.externeIds && typeof form.externeIds === "object" ? form.externeIds : {},
     titel: String(form?.titel || ""),
+    beschreibung: String(form?.beschreibung || "").slice(0, 20000),
     originalTitel: String(form?.originalTitel || ""),
     altTitel: (form?.altTitel || []).slice(0, 12).map(String),
     art: String(form?.art || art || ""),

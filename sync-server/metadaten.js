@@ -172,6 +172,7 @@ function leereNormalform(art) {
     quelle: "",
     externeIds: {},
     titel: "",
+    beschreibung: "",
     originalTitel: "",
     altTitel: [],
     art,
@@ -222,7 +223,7 @@ function leereNormalform(art) {
 const ANILIST_FELDER = `
   id idMal
   title { romaji english native }
-  synonyms format status
+  synonyms format status description(asHtml: false)
   seasonYear startDate { year } endDate { year }
   episodes countryOfOrigin isAdult
   nextAiringEpisode { episode airingAt }
@@ -250,6 +251,7 @@ function anilistNormalform(m, konfidenz) {
   form.quelle = "anilist";
   form.externeIds = { anilist: m.id, ...(m.idMal ? { mal: m.idMal } : {}) };
   form.titel = m.title?.english || m.title?.romaji || "";
+  form.beschreibung = String(m.description || "").slice(0, 20000);
   form.originalTitel = m.title?.native || m.title?.romaji || "";
   form.altTitel = [m.title?.romaji, m.title?.english, ...(m.synonyms || [])]
     .filter(Boolean).filter((wert, i, alle) => alle.indexOf(wert) === i).slice(0, 12);
@@ -380,6 +382,7 @@ function tmdbNormalform(roh, art, konfidenz) {
   form.externeIds = { tmdb: roh.id, ...(roh.imdb_id ? { imdb: roh.imdb_id } : {}),
     ...(roh.external_ids?.imdb_id ? { imdb: roh.external_ids.imdb_id } : {}) };
   form.titel = istFilm ? (roh.title || "") : (roh.name || "");
+  form.beschreibung = String(roh.overview || "").slice(0, 20000);
   form.originalTitel = istFilm ? (roh.original_title || "") : (roh.original_name || "");
   form.altTitel = (roh.alternative_titles?.titles || roh.alternative_titles?.results || [])
     .map((t) => t.title).filter(Boolean).slice(0, 12);

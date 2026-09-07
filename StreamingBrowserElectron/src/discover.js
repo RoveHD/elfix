@@ -404,6 +404,12 @@ function itemprops(html, name) {
 
 function extractTitleMeta(html, baseUrl) {
   const quelle = String(html || "");
+  // AniWorld/S.to halten die ganze Beschreibung oft im Attribut hinter
+  // "mehr anzeigen". Sie geht zusammen mit den ohnehin gelesenen Daten mit.
+  const vollTag = quelle.match(/<[^>]+\bdata-full-description\s*=\s*"[^"]*"[^>]*>/i)?.[0];
+  const absatz = quelle.match(/<(p|div)\b[^>]*(?:itemprop="description"|class="[^"]*\bseri_des\b[^"]*")[^>]*>([\s\S]*?)<\/\1>/i)?.[2];
+  const beschreibung = ohneTags(vollTag ? attribut(vollTag, "data-full-description") : absatz || "")
+    .replace(/\s*mehr anzeigen\s*$/i, "").slice(0, 20000);
 
   // IMDB: AniWorld schreibt sie als Attribut, S.to verlinkt sie.
   const imdb = (quelle.match(/data-imdb="(tt\d{6,})"/i)
@@ -444,6 +450,7 @@ function extractTitleMeta(html, baseUrl) {
 
   return {
     imdb,
+    beschreibung,
     fsk,
     jahr: jahr || 0,
     bis: bis && bis >= jahr ? bis : 0,

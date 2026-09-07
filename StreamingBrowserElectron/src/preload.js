@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   // Fuer den Verlaufs-Kasten: laeuft die Serie noch, und wann kommt die
   // naechste Folge. Steht nirgends in der eigenen Ablage.
   getLibraryMetadata: (id) => ipcRenderer.invoke("library:metadata", id),
+  getHeroMetadata: (id) => ipcRenderer.invoke("home:hero-metadata", id),
   getTrailer: (titel, url) => ipcRenderer.invoke("titel:trailer", titel, url),
   getRelayStatus: () => ipcRenderer.invoke("relay:status"),
   clearNewEpisodeHint: (id) => ipcRenderer.invoke("favorites:clear-new", id),
