@@ -94,6 +94,34 @@ pruefe("Eine Pause bleibt genau", pauseUrteil.tun === "anwenden" && pauseUrteil.
 pruefe("Der Host springt dabei nicht",
   sync.steuerungEntscheiden({ action: "pause", episodeId: "" }, { binHost: true }).nichtSpringen === true);
 
+// --- Der verabredete Start ---------------------------------------------------
+//
+// "Beim Anhalten auf die Millisekunde, beim Starten gleichzeitig." Das erste
+// steht weiter unten am echten Relay; das zweite ist diese Rechnung: nicht die
+// Stelle von *jetzt* und sofort losfahren, sondern die Stelle von *gleich* und
+// zum verabredeten Zeitpunkt loslassen. Die Spanne dazwischen ist die, in der
+// gesprungen und gepuffert wird - vorher lag sie als Rueckstand fest.
+const laufend = { videoTime: 100, timestamp: 1000, playing: true, hatUhr: true };
+const plan = sync.startPlan(laufend, 1000, 600);
+pruefe("Der Start wird verabredet, nicht sofort genommen",
+  plan.wartenMs === 600, String(plan.wartenMs));
+pruefe("Gesprungen wird dorthin, wo der Host beim Loslassen steht",
+  Math.abs(plan.stelle - 100.6) < 1e-9, String(plan.stelle));
+pruefe("Bei doppeltem Tempo ist das doppelt so weit",
+  Math.abs(sync.startPlan({ ...laufend, tempo: 2 }, 1000, 600).stelle - 101.2) < 1e-9);
+const halt = sync.startPlan({ ...laufend, playing: false }, 9000, 600);
+pruefe("Eine Pause verabredet nichts - ihre Stelle gilt sofort und genau",
+  halt.wartenMs === 0 && halt.stelle === 100, `${halt.wartenMs} / ${halt.stelle}`);
+pruefe("Ohne gemessene Uhr wird nichts verabredet",
+  sync.startPlan({ ...laufend, hatUhr: false }, 1000, 600).wartenMs === 0);
+pruefe("Und ohne Vorlauf - der Host - auch nicht",
+  sync.startPlan(laufend, 1000, 0).wartenMs === 0);
+pruefe("Der Vorlauf ist gedeckelt; was hereinkommt, kommt aus einer Nachricht",
+  sync.startPlan(laufend, 1000, 999999).wartenMs === 5000
+  && sync.startPlan(laufend, 1000, -5).wartenMs === 0);
+pruefe("Es gibt genau einen Vorlauf, und er steht im Modul",
+  sync.START_VORLAUF_MS > 0 && sync.START_VORLAUF_MS <= 2000, String(sync.START_VORLAUF_MS));
+
 const skript = sync.tempoScript(2);
 pruefe("Das Skript fuer fremde Player setzt playbackRate",
   /playbackRate = 2;/.test(skript) && /querySelectorAll\("video"\)/.test(skript));
@@ -132,9 +160,15 @@ function geraet(name) {
   await warteBis(() => host.eintrag() && gast.eintrag());
   // Wer einstellt, ist noch nicht dabei: Host wird, wer beitritt und die Folge
   // offen hat.
+  // Nacheinander und nicht gleichzeitig: Host der Runde wird, wer zuerst
+  // beitritt, und zwei Beitritte auf zwei Verbindungen koennen sich unterwegs
+  // ueberholen. Genau das liess diese Pruefung gelegentlich mit "Der Einsteller
+  // ist Host der Runde -> Gast" scheitern, ohne dass sich am Quelltext etwas
+  // geaendert haette.
   host.raeume.beitreten(KEY, RAUM);
+  await warteBis(() => host.eintrag()?.joined);
   gast.raeume.beitreten(KEY, RAUM);
-  await warteBis(() => host.eintrag()?.joined && gast.eintrag()?.joined);
+  await warteBis(() => gast.eintrag()?.joined);
   // Beide melden ihre Folge - ohne das gilt ein Befehl nur unter Gleichfolgigen.
   host.raeume.meldeStand(KEY, { position: 312.5, paused: false, url: FOLGE, season: 1, episode: 4, playerSessionId: "host-sitzung" }, RAUM);
   gast.raeume.meldeStand(KEY, { position: 300, paused: false, url: FOLGE, season: 1, episode: 4, playerSessionId: "gast-sitzung" }, RAUM);
@@ -207,6 +241,10 @@ function geraet(name) {
   pruefe("Der Rechner setzt das Tempo im eigenen Player und in fremden Rahmen",
     /spielerView\.webContents\.send\("spieler:rundentempo"/.test(main)
     && /watchpartySync\.tempoScript\(wert\)/.test(main));
+  pruefe("Der Rechner verabredet den Start, statt sofort loszufahren",
+    /watchpartySync\.startPlan\(/.test(main) && /wartenMs: plan\.wartenMs/.test(main));
+  pruefe("Der Host bekommt keinen Vorlauf - er ist die Vorlage",
+    /laufen && springen \? watchpartySync\.START_VORLAUF_MS : 0/.test(main));
   pruefe("Tempo und Fassung laufen an der Stellenrechnung vorbei",
     /if \(urteil\.tun === "tempo"\)[\s\S]{0,200}if \(urteil\.tun === "fassung"\)/.test(main));
   pruefe("Wer in einer Runde startet, nimmt deren Fassung",
@@ -225,6 +263,18 @@ function geraet(name) {
     /bruecke\.aufTempo\(\(wert, host\) => \{[\s\S]{0,200}tempoSetzen\(wert, false\)/.test(spieler));
   pruefe("Eine neue Quelle bekommt das Tempo wieder aufgesetzt",
     /if \(bild\.playbackRate !== tempo\) tempoSetzen\(tempo, false\);/.test(spieler));
+  pruefe("Der eigene Player wartet den verabredeten Zeitpunkt ab",
+    /async function startVerabredet\(stelle, wartenMs\)/.test(spieler)
+    && /await bereitFuerStart\(stelle, 2500\);/.test(spieler));
+  pruefe("Wer zu spaet fertig wird, bekommt die Verspaetung an der Stelle gutgeschrieben",
+    /const zuspaet = \(Date\.now\(\) - frist\) \/ 1000;/.test(spieler)
+    && /bild\.currentTime = stelle \+ zuspaet \* tempo;/.test(spieler));
+  const spielerSeite = lies("src/renderer/spieler.html");
+  pruefe("Und das Tempo waehlt man nicht mehr in einem Systemmenue",
+    /class Wahl \{/.test(spieler)
+    && /<div class="wahl" id="tempo"><\/div>/.test(spielerSeite)
+    && !/<\/select>/.test(spielerSeite),
+    "eigenes Auswahlfeld");
 
   const relay = lies("../sync-server/server.js");
   pruefe("Das Relay nimmt Tempo und Fassung nur vom Host",
@@ -235,6 +285,13 @@ function geraet(name) {
     /tempo: eintrag\.tempo \|\| 1,\s*\r?\n\s*fassung: eintrag\.fassung/.test(relay));
 
   const androidSpieler = lies("../android/app/src/main/java/local/elflix/android/DirektSpieler.java");
+  const androidKern = lies("../android/app/src/main/assets/kern/eigen/direkt-android.js");
+  pruefe("Android rechnet denselben Plan - im geteilten Kern",
+    /sync\.startPlan\(e, Date\.now\(\) \+ \(e\.versatz \|\| 0\), vorlauf\)/.test(androidKern)
+    && /!urteil\.nichtSpringen && !urteil\.warten && e\.playing/.test(androidKern));
+  pruefe("Android wartet den Zeitpunkt ab, statt sofort loszulassen",
+    /long rest = befehl\.startBei - SystemClock\.uptimeMillis\(\);/.test(
+      lies("../android/app/src/main/java/local/elflix/android/DirektSpieler.java")));
   pruefe("Android setzt das Tempo am Player",
     /player\.setPlaybackSpeed\(\(float\) tempo\)/.test(androidSpieler));
   pruefe("Android springt genau - nicht auf das Schluesselbild davor",

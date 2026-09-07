@@ -128,7 +128,6 @@ final class DirektSpieler {
     private static final int MITTE_KNOPF = 0x940A0E16;
     /** Eine Zeile in einer Liste - dieselben sechs Prozent wie drueben. */
     private static final int ZEILE = 0x0FFFFFFF;
-    private static final int ZEILE_DRUCK = 0x29FFFFFF;
     private static final int SPUR = 0x38FFFFFF;
     private static final int SPUR_GELADEN = 0x6BFFFFFF;
     private static final int RAHMEN = 0x47FFFFFF;
@@ -185,6 +184,21 @@ final class DirektSpieler {
     private final FrameLayout blende;
     private final TextView blendeTitel;
     private final LinearLayout blendeListe;
+    /** Die Reiterzeile der Blende - Staffeln, wie am Rechner. Leer bleibt sie weg. */
+    private final Fliessreihe blendeReiter;
+    /** Der Platz fuer "wird gelesen ..." und "nichts da" unter den Reitern. */
+    private final TextView blendeLeer;
+
+    /**
+     * Die kurze Ansage.
+     *
+     * <p>Ein Streifen oben, der von selbst wieder geht. Er ist nicht der Kasten
+     * in der Mitte: der beantwortet "warum sehe ich nichts?" und bleibt deshalb
+     * stehen, bis die Antwort da ist. Dieser hier sagt nur etwas ("in einer
+     * Runde stellt der Host das Tempo") - und was man nur zur Kenntnis nimmt,
+     * soll nicht stehenbleiben, bis man es wegdrueckt.
+     */
+    private final TextView ansage;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
@@ -378,6 +392,8 @@ final class DirektSpieler {
         boolean rechnet;
         boolean angewendet;
         double ziel;
+        /** Wann losgelassen wird - Uhrzeit des Geraets. 0: sobald es geht. */
+        long startBei;
         Befehl(JSONObject urteil, Runnable bereit) { this.urteil = urteil; this.bereit = bereit; }
     }
 
@@ -518,6 +534,20 @@ final class DirektSpieler {
         ansicht.addView(blende, new FrameLayout.LayoutParams(-2, -1, Gravity.END));
         blendeTitel = blende.findViewWithTag("titel");
         blendeListe = blende.findViewWithTag("liste");
+        blendeReiter = blende.findViewWithTag("reiter");
+        blendeLeer = blende.findViewWithTag("leer");
+
+        ansage = new TextView(activity);
+        ansage.setTextColor(SCHRIFT);
+        ansage.setTextSize(13);
+        ansage.setGravity(Gravity.CENTER);
+        ansage.setPadding(dp(16), dp(9), dp(16), dp(10));
+        ansage.setBackground(flaeche(Color.parseColor("#EE0A0E16"), 999, RAHMEN, 1));
+        ansage.setVisibility(View.GONE);
+        FrameLayout.LayoutParams ansageLage =
+            new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        ansageLage.topMargin = dp(86);
+        ansicht.addView(ansage, ansageLage);
 
         status("Direktquellen werden geladen …");
         handler.post(takt);
@@ -757,7 +787,26 @@ final class DirektSpieler {
         kopfzeile.addView(knopf("✕", this::blendeZu));
         spalte.addView(kopfzeile, new LinearLayout.LayoutParams(-1, -2));
 
+        // Die Reiterzeile - dieselbe wie am Rechner (#staffelReiter). Sie
+        // bleibt leer, wo es nichts zu blaettern gibt: eine Zeile mit einem
+        // einzigen Reiter entscheidet nichts.
+        Fliessreihe reiter = new Fliessreihe(activity, dp(3), dp(3));
+        reiter.setTag("reiter");
+        reiter.setVisibility(View.GONE);
+        LinearLayout.LayoutParams reiterLage = new LinearLayout.LayoutParams(-1, -2);
+        reiterLage.topMargin = dp(8);
+        spalte.addView(reiter, reiterLage);
+
+        TextView leer = new TextView(activity);
+        leer.setTag("leer");
+        leer.setTextColor(SCHRIFT_LEISE);
+        leer.setTextSize(13);
+        leer.setPadding(dp(4), dp(10), dp(4), dp(4));
+        leer.setVisibility(View.GONE);
+        spalte.addView(leer, new LinearLayout.LayoutParams(-1, -2));
+
         ScrollView schiene = new ScrollView(activity);
+        schiene.setTag("schiene");
         schiene.setVerticalScrollBarEnabled(false);
         LinearLayout liste = new LinearLayout(activity);
         liste.setTag("liste");
@@ -989,6 +1038,35 @@ final class DirektSpieler {
         regung();
     }
 
+    /**
+     * Eine Ansage, die von selbst wieder geht.
+     *
+     * <p>1,2 Sekunden - lang genug zum Lesen einer Zeile, kurz genug, dass
+     * niemand darauf wartet. Ein neuer Text stellt die Uhr zurueck, statt zwei
+     * Ansagen uebereinanderzulegen.
+     */
+    void kurzeAnsage(String text) {
+        handler.removeCallbacks(ansageWeg);
+        if (text == null || text.trim().isEmpty()) { ansageVerbergen(); return; }
+        ansage.setText(text);
+        if (ansage.getVisibility() != View.VISIBLE) {
+            ansage.setVisibility(View.VISIBLE);
+            Bewegung.einblenden(ansage);
+        }
+        handler.postDelayed(ansageWeg, ANSAGE_MS);
+        regung();
+    }
+
+    /** So lange steht eine kurze Ansage. */
+    private static final long ANSAGE_MS = 1200;
+
+    private final Runnable ansageWeg = this::ansageVerbergen;
+
+    private void ansageVerbergen() {
+        if (ansage.getVisibility() != View.VISIBLE) return;
+        ansage.setVisibility(View.GONE);
+    }
+
     private void kastenKnopf(String text, Runnable aktion) {
         // Der erste Knopf im Kasten ist der gemeinte - er traegt die Akzentflaeche.
         TextView knopf = knopf(text, aktion, kastenKnoepfe.getChildCount() == 0);
@@ -1092,7 +1170,7 @@ final class DirektSpieler {
     /** Die Auswahl in derselben Blende wie Fassung, Hoster und Qualitaet. */
     private void tempoWaehlen() {
         if (!umgebung.darfTempo()) {
-            status("In einer Runde stellt der Host das Tempo.");
+            kurzeAnsage("In einer Runde stellt der Host das Tempo.");
             return;
         }
         ArrayList<String> namen = new ArrayList<>();
@@ -1181,63 +1259,174 @@ final class DirektSpieler {
      *
      * @param laufend Zeile, die gerade gilt - sie bekommt die Akzentflaeche. -1 fuer keine.
      */
+    /**
+     * Eine Zeile der Blende.
+     *
+     * <p>Zwei Spalten und nicht eine: links die Nummer, rechts der Name -
+     * genau wie in der Folgenliste am Rechner ({@code .liste .nummer} in
+     * spieler.html). "Folge 7 - Der Name" in einer Zeile las sich als ein
+     * einziger langer Satz, und bei vierundzwanzig Folgen untereinander stand
+     * die Nummer jedes Mal woanders. Ohne Nummer bleibt die Spalte weg.
+     */
+    static final class Zeile {
+        final String nummer;
+        final String text;
+        final Runnable tun;
+        final boolean aus;
+
+        Zeile(String nummer, String text, Runnable tun, boolean aus) {
+            this.nummer = nummer == null ? "" : nummer;
+            this.text = text == null ? "" : text;
+            this.tun = tun;
+            this.aus = aus;
+        }
+
+        static Zeile schlicht(String text, Runnable tun) {
+            return new Zeile("", text, tun, false);
+        }
+    }
+
+    /**
+     * Eine Liste von rechts - Quellen, Spuren, Tempo.
+     *
+     * <p>Sie ersetzt die Systemdialoge, die vorher an drei Stellen aufgingen:
+     * die haben ihre eigene Gestaltung, ihre eigene Schrift und am Fernseher
+     * ihre eigene Bedienung. Eine Liste, die zur App gehoert, gehoert in die App.
+     *
+     * @param laufend Zeile, die gerade gilt - sie bekommt die Akzentflaeche. -1 fuer keine.
+     */
     void blende(String name, List<String> eintraege, List<Runnable> aktionen, int laufend) {
-        if (geschlossen) return;
-        blendeTitel.setText(name);
-        blendeListe.removeAllViews();
+        List<Zeile> zeilen = new ArrayList<>();
         for (int i = 0; i < eintraege.size(); i++) {
             final int index = i;
-            TextView zeile = new TextView(activity);
-            zeile.setText(eintraege.get(i));
-            zeile.setTextColor(SCHRIFT);
-            zeile.setTextSize(14);
-            zeile.setMinHeight(dp(48));
-            zeile.setGravity(Gravity.CENTER_VERTICAL);
-            zeile.setPadding(dp(12), dp(10), dp(12), dp(10));
-            LinearLayout.LayoutParams lage = new LinearLayout.LayoutParams(-1, -2);
-            lage.bottomMargin = dp(4);
-            zeile.setLayoutParams(lage);
-            if (i == laufend) {
-                zeile.setBackground(flaeche(Theme.PRIMARY_MUTED, 10, 0, 0));
-                zeile.setTypeface(Typeface.DEFAULT_BOLD);
-            } else {
-                zeile.setBackground(flaeche(ZEILE, 10, 0, 0));
-            }
-            final GradientDrawable grund = (GradientDrawable) zeile.getBackground();
-            final GradientDrawable fokus = flaeche(Theme.PRIMARY, 10, 0, 0);
-            final GradientDrawable druck = flaeche(ZEILE_DRUCK, 10, 0, 0);
-            zeile.setFocusable(true);
-            zeile.setOnFocusChangeListener((v, hat) -> v.setBackground(hat ? fokus : grund));
-            zeile.setOnTouchListener((v, ereignis) -> {
-                int was = ereignis.getActionMasked();
-                if (was == MotionEvent.ACTION_DOWN) v.setBackground(druck);
-                else if (was == MotionEvent.ACTION_UP || was == MotionEvent.ACTION_CANCEL) {
-                    v.setBackground(v.isFocused() ? fokus : grund);
-                }
-                return false;
-            });
-            zeile.setOnClickListener(v -> {
-                blendeZu();
-                if (index < aktionen.size()) aktionen.get(index).run();
-            });
-            blendeListe.addView(zeile);
+            zeilen.add(Zeile.schlicht(eintraege.get(i),
+                () -> { if (index < aktionen.size()) aktionen.get(index).run(); }));
         }
+        blende(name, null, -1, null, zeilen, laufend, "");
+    }
+
+    /**
+     * Dieselbe Blende mit Reiterzeile - die Staffeln.
+     *
+     * <p>Vorher standen die Staffeln als Zeilen *in* der Liste ("Staffel 2
+     * oeffnen"), oberhalb der Folgen. Am Rechner sind sie eine Reiterzeile, und
+     * das ist der Unterschied, den man sieht: Reiter sagen "hier waehlst du
+     * aus, welche Liste du siehst", Zeilen sagen "das gehoert zur Liste". Bei
+     * fuenf Staffeln und vierundzwanzig Folgen war die halbe erste Bildschirm-
+     * seite mit Staffeln gefuellt, bevor die erste Folge kam.
+     *
+     * @param reiter      Beschriftungen der Reiter, {@code null} fuer keine Zeile
+     * @param reiterAktiv welcher Reiter aufgeschlagen ist
+     * @param reiterWahl  was ein Reiter tut - die Blende bleibt dabei offen
+     * @param leerText    steht statt der Liste, wenn keine Zeile da ist
+     */
+    void blende(String name, List<String> reiter, int reiterAktiv,
+                java.util.function.IntConsumer reiterWahl,
+                List<Zeile> zeilen, int laufend, String leerText) {
+        if (geschlossen) return;
+        blendeTitel.setText(name);
+
+        blendeReiter.removeAllViews();
+        boolean hatReiter = reiter != null && reiter.size() > 1;
+        blendeReiter.setVisibility(hatReiter ? View.VISIBLE : View.GONE);
+        if (hatReiter) {
+            for (int i = 0; i < reiter.size(); i++) {
+                final int index = i;
+                blendeReiter.addView(reiterKnopf(reiter.get(i), i == reiterAktiv,
+                    () -> { if (reiterWahl != null) reiterWahl.accept(index); }));
+            }
+        }
+
+        blendeListe.removeAllViews();
+        for (int i = 0; i < zeilen.size(); i++) {
+            blendeListe.addView(blendeZeile(zeilen.get(i), i == laufend));
+        }
+        boolean leer = leerText != null && !leerText.isEmpty();
+        blendeLeer.setText(leer ? leerText : "");
+        blendeLeer.setVisibility(leer ? View.VISIBLE : View.GONE);
+
         blende.getLayoutParams().width = Math.min(dp(420),
             Math.round(activity.getResources().getDisplayMetrics().widthPixels * 0.92f));
+        boolean warOffen = blende.getVisibility() == View.VISIBLE;
         blende.setVisibility(View.VISIBLE);
         mitteZeichnen();
         blende.requestLayout();
         regung();
-        // Der erste Eintrag ist der wahrscheinlichste - am Fernseher steht das
-        // Steuerkreuz damit sofort auf etwas Sinnvollem.
-        if (blendeListe.getChildCount() > 0) blendeListe.getChildAt(0).requestFocus();
-        Bewegung.einblenden(blende);
+        // Die laufende Zeile ist die, von der aus man weitersucht - am
+        // Fernseher steht das Steuerkreuz damit sofort dort, wo man ist. Gibt
+        // es keine, ist der erste Eintrag der wahrscheinlichste.
+        View ziel = laufend >= 0 && laufend < blendeListe.getChildCount()
+            ? blendeListe.getChildAt(laufend)
+            : blendeListe.getChildCount() > 0 ? blendeListe.getChildAt(0) : null;
+        if (ziel != null) ziel.requestFocus();
+        else if (hatReiter && blendeReiter.getChildCount() > 0) blendeReiter.getChildAt(0).requestFocus();
+        // Beim Blaettern zwischen Staffeln steht sie schon da - ein zweites
+        // Einblenden waere ein Blinken ohne Anlass.
+        if (!warOffen) Bewegung.einblenden(blende);
+    }
+
+    /** Ein Reiter der Blende - aufgeschlagen traegt er die Akzentflaeche, wie {@code .reiter .aktiv}. */
+    private TextView reiterKnopf(String text, boolean aktiv, Runnable tun) {
+        TextView knopf = new TextView(activity);
+        knopf.setText(text);
+        knopf.setTextColor(SCHRIFT);
+        knopf.setTextSize(13);
+        knopf.setGravity(Gravity.CENTER);
+        knopf.setMinHeight(dp(40));
+        knopf.setPadding(dp(12), dp(8), dp(12), dp(8));
+        if (aktiv) knopf.setTypeface(Typeface.DEFAULT_BOLD);
+        knopf.setBackground(flaeche(aktiv ? Theme.PRIMARY : ZEILE, 9, 0, 0));
+        anfassbar(knopf, 9, tun);
+        return knopf;
+    }
+
+    /** Eine Zeile der Liste - Nummernspalte links, Name rechts. */
+    private View blendeZeile(Zeile eintrag, boolean laeuft) {
+        LinearLayout reihe = new LinearLayout(activity);
+        reihe.setOrientation(LinearLayout.HORIZONTAL);
+        reihe.setGravity(Gravity.CENTER_VERTICAL);
+        reihe.setMinimumHeight(dp(48));
+        reihe.setPadding(dp(12), dp(10), dp(12), dp(10));
+        LinearLayout.LayoutParams lage = new LinearLayout.LayoutParams(-1, -2);
+        lage.bottomMargin = dp(4);
+        reihe.setLayoutParams(lage);
+
+        if (!eintrag.nummer.isEmpty()) {
+            TextView nummer = new TextView(activity);
+            nummer.setText(eintrag.nummer);
+            nummer.setTextColor(SCHRIFT_LEISE);
+            nummer.setTextSize(14);
+            nummer.setMinWidth(dp(66));
+            reihe.addView(nummer);
+        }
+        TextView name = new TextView(activity);
+        name.setText(eintrag.text);
+        name.setTextColor(SCHRIFT);
+        name.setTextSize(14);
+        if (laeuft) name.setTypeface(Typeface.DEFAULT_BOLD);
+        reihe.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        reihe.setBackground(flaeche(laeuft ? Theme.PRIMARY_MUTED : ZEILE, 10, 0, 0));
+        if (eintrag.aus) {
+            // Gesperrt heisst: die Nummer steht in der Liste, aber dahinter
+            // liegt keine eigene Folge. Anklickbar waere sie ein Versprechen,
+            // das die Anbieterseite nicht haelt.
+            reihe.setAlpha(0.38f);
+            return reihe;
+        }
+        anfassbar(reihe, 10, () -> {
+            blendeZu();
+            if (eintrag.tun != null) eintrag.tun.run();
+        });
+        return reihe;
     }
 
     private void blendeZu() {
         if (blende.getVisibility() != View.VISIBLE) return;
         blende.setVisibility(View.GONE);
         blendeListe.removeAllViews();
+        blendeReiter.removeAllViews();
+        blendeLeer.setVisibility(View.GONE);
         mitteZeichnen();
         regung();
     }
@@ -1540,6 +1729,12 @@ final class DirektSpieler {
                 try { befehl.urteil = new JSONObject(wert); } catch (Exception e) { return; }
                 befehl.ziel = Math.max(0, befehl.urteil.optDouble("position", position()));
                 if (player.getDuration() > 0) befehl.ziel = Math.min(befehl.ziel, Math.max(0, player.getDuration() / 1000.0 - 0.1));
+                // Der verabredete Zeitpunkt. Er wird hier gesetzt und nicht
+                // beim Empfang der Nachricht: das Rechnen geht durch den Kern,
+                // und die Millisekunden dorthin und zurueck gehoeren in die
+                // Spanne, nicht davor.
+                long vorlauf = Math.max(0, befehl.urteil.optLong("wartenMs", 0));
+                befehl.startBei = vorlauf > 0 ? SystemClock.uptimeMillis() + vorlauf : 0;
                 befehl.angewendet = true;
                 erwartetBis = SystemClock.uptimeMillis() + 2000;
                 erwartetPlay = false;
@@ -1571,6 +1766,29 @@ final class DirektSpieler {
         if (!befehl.urteil.optBoolean("nichtSpringen") && Math.abs(position() - befehl.ziel) > 1.5) return;
         JSONObject ereignis = befehl.urteil.optJSONObject("ereignis");
         boolean play = !befehl.urteil.optBoolean("warten") && ereignis != null && ereignis.optBoolean("playing");
+        /*
+         * Der gemeinsame Start.
+         *
+         * Bis hierher steht das Bild auf der verabredeten Stelle und der
+         * Puffer ist gefuellt - beides gehoerte in die Spanne, die der Vorlauf
+         * bereitstellt. Wer frueher fertig ist, wartet den Rest ab, statt zu
+         * frueh loszufahren; wer laenger gebraucht hat, bekommt die
+         * Verspaetung an der Stelle gutgeschrieben, weil ein Rueckstand sonst
+         * fuer den Rest der Folge stehenbleibt (die Notbremse greift erst bei
+         * fuenf Sekunden).
+         */
+        if (play && befehl.startBei > 0) {
+            long rest = befehl.startBei - SystemClock.uptimeMillis();
+            if (rest > 4) { handler.postDelayed(this::befehlPruefen, rest); return; }
+            double zuspaet = (SystemClock.uptimeMillis() - befehl.startBei) / 1000.0;
+            if (zuspaet > 0.15) {
+                double nach = befehl.ziel + zuspaet * tempo;
+                if (dauer() > 0) nach = Math.min(nach, Math.max(0, dauer() - 0.1));
+                befehl.ziel = nach;
+                erwartetSeek = nach;
+                player.seekTo(Math.round(nach * 1000));
+            }
+        }
         erwartetBis = SystemClock.uptimeMillis() + 2000;
         erwartetPlay = play;
         wartenderBefehl = null;
@@ -1613,26 +1831,91 @@ final class DirektSpieler {
         namen.add(typ == C.TRACK_TYPE_TEXT ? "Aus" : "Automatisch");
         auswahl.add(null);
         int laufend = 0;
+        /*
+         * Eine Zeile je Stufe - nicht je Variante.
+         *
+         * Eine HLS-Playlist fuehrt dieselbe Hoehe oft mehrfach: einmal je
+         * Bitrate, je Codec, je Tonspur-Verbindung. ExoPlayer macht daraus
+         * ebenso viele Spuren, und in der Liste stand dann viermal "1080p",
+         * dreimal "720p" - Zeilen, die sich nicht unterscheiden lassen und
+         * zwischen denen niemand waehlen kann. Uebrig bleibt je Hoehe die mit
+         * der hoechsten Bitrate, und die Liste laeuft von oben nach unten.
+         *
+         * Zwei Stufen mit gleicher Hoehe und *unterschiedlicher* Bitrate sind
+         * damit auf eine zusammengefasst. Das ist Absicht: die zweite ist die
+         * schlechtere Fassung desselben Bildes.
+         */
+        java.util.LinkedHashMap<String, Integer> gesehen = new java.util.LinkedHashMap<>();
+        ArrayList<Integer> hoehen = new ArrayList<>();
+        ArrayList<Integer> raten = new ArrayList<>();
         for (Tracks.Group gruppe : player.getCurrentTracks().getGroups()) {
             if (gruppe.getType() != typ) continue;
             for (int i = 0; i < gruppe.length; i++) {
                 if (!gruppe.isTrackSupported(i)) continue;
                 Format format = gruppe.getTrackFormat(i);
-                String text = typ == C.TRACK_TYPE_VIDEO ? format.height + "p"
-                    : (format.label != null ? format.label : format.language != null ? format.language : "Spur " + (i + 1));
-                if (gruppe.isTrackSelected(i)) laufend = namen.size();
-                namen.add(text);
-                auswahl.add(new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i));
+                boolean gewaehlt = gruppe.isTrackSelected(i);
+                if (typ != C.TRACK_TYPE_VIDEO) {
+                    String text = format.label != null ? format.label
+                        : format.language != null ? format.language : "Spur " + (i + 1);
+                    if (gewaehlt) laufend = namen.size();
+                    namen.add(text);
+                    auswahl.add(new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i));
+                    continue;
+                }
+                int hoehe = format.height;
+                int rate = format.bitrate > 0 ? format.bitrate : format.averageBitrate;
+                String stufe = hoehe > 0 ? hoehe + "p"
+                    : rate > 0 ? Math.round(rate / 1000f) + " kbit/s" : "Spur " + (i + 1);
+                Integer schon = gesehen.get(stufe);
+                if (schon == null) {
+                    gesehen.put(stufe, namen.size());
+                    hoehen.add(hoehe);
+                    raten.add(rate);
+                    if (gewaehlt) laufend = namen.size();
+                    namen.add(stufe);
+                    auswahl.add(new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i));
+                    continue;
+                }
+                // Dieselbe Hoehe schon da: die hoehere Bitrate gewinnt, und die
+                // laufende Spur gewinnt immer - sonst zeigte die Liste auf eine
+                // Zeile, die gar nicht spielt.
+                boolean besser = rate > raten.get(schon - 1);
+                if (gewaehlt) laufend = schon;
+                if (!gewaehlt && !besser) continue;
+                raten.set(schon - 1, Math.max(rate, raten.get(schon - 1)));
+                auswahl.set(schon, new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i));
             }
         }
+        // Die hoechste Stufe zuerst - die Liste liest sich von "am besten" nach
+        // "am sparsamsten", und "Automatisch" bleibt oben.
+        if (typ == C.TRACK_TYPE_VIDEO && hoehen.size() > 1) {
+            Integer[] reihe = new Integer[hoehen.size()];
+            for (int i = 0; i < reihe.length; i++) reihe[i] = i;
+            java.util.Arrays.sort(reihe, (links, rechts) -> hoehen.get(rechts) - hoehen.get(links));
+            ArrayList<String> sortierteNamen = new ArrayList<>();
+            ArrayList<TrackSelectionOverride> sortierteAuswahl = new ArrayList<>();
+            sortierteNamen.add(namen.get(0));
+            sortierteAuswahl.add(null);
+            int neuLaufend = laufend == 0 ? 0 : -1;
+            for (int i = 0; i < reihe.length; i++) {
+                int alt = reihe[i] + 1;
+                if (alt == laufend) neuLaufend = sortierteNamen.size();
+                sortierteNamen.add(namen.get(alt));
+                sortierteAuswahl.add(auswahl.get(alt));
+            }
+            namen = sortierteNamen;
+            auswahl = sortierteAuswahl;
+            laufend = Math.max(0, neuLaufend);
+        }
         final ExoPlayer lauf = player;
+        final List<TrackSelectionOverride> gewaehlt = auswahl;
         for (int i = 0; i < namen.size(); i++) {
             final int index = i;
             aktionen.add(() -> {
                 if (player != lauf) return;
                 androidx.media3.common.TrackSelectionParameters.Builder params = lauf.getTrackSelectionParameters()
                     .buildUpon().clearOverridesOfType(typ).setTrackTypeDisabled(typ, typ == C.TRACK_TYPE_TEXT && index == 0);
-                if (auswahl.get(index) != null) params.setOverrideForType(auswahl.get(index));
+                if (gewaehlt.get(index) != null) params.setOverrideForType(gewaehlt.get(index));
                 lauf.setTrackSelectionParameters(params.build());
             });
         }
@@ -1667,11 +1950,25 @@ final class DirektSpieler {
             if (runter) { springen(-10); regung(); }
             return true;
         }
-        if (code == KeyEvent.KEYCODE_MEDIA_NEXT) {
+        if (code == KeyEvent.KEYCODE_MEDIA_NEXT || code == KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD) {
             if (runter && hatNaechste) umgebung.naechste();
             return true;
         }
-        if (code == KeyEvent.KEYCODE_MENU) {
+        // Aufhoeren heisst hier zumachen. Ein Player, der auf STOP nur anhaelt,
+        // laesst den Zuschauer vor einem stehenden Bild sitzen - und die
+        // Fernbedienung des Fernsehers hat keinen zweiten Knopf dafuer.
+        if (code == KeyEvent.KEYCODE_MEDIA_STOP || code == KeyEvent.KEYCODE_MEDIA_CLOSE) {
+            if (runter) umgebung.schliessen();
+            return true;
+        }
+        // Der Untertitelknopf der Fernbedienung. Ohne ihn muss man sich durch
+        // die halbe Leiste steuern, um eine Spur an- oder abzuschalten.
+        if (code == KeyEvent.KEYCODE_CAPTIONS) {
+            if (runter) spuren(C.TRACK_TYPE_TEXT, "Untertitel");
+            return true;
+        }
+        if (code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_INFO
+            || code == KeyEvent.KEYCODE_GUIDE) {
             if (runter) {
                 regung();
                 leiste.requestFocus();
@@ -1683,8 +1980,9 @@ final class DirektSpieler {
             // Erst wecken. Links und rechts springen dabei trotzdem - das ist
             // die Geste, die man auf einer Fernbedienung erwartet.
             if (runter) {
-                if (code == KeyEvent.KEYCODE_DPAD_LEFT) springen(-10);
-                else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) springen(30);
+                int weite = sprungFaktor(event);
+                if (code == KeyEvent.KEYCODE_DPAD_LEFT) springen(-10 * weite);
+                else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) springen(30 * weite);
                 else if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER) {
                     spielenUmschalten();
                 }
@@ -1698,6 +1996,23 @@ final class DirektSpieler {
         if (runter) handler.removeCallbacks(verbergen);
         if (event.getAction() == KeyEvent.ACTION_UP) regung();
         return false;
+    }
+
+    /**
+     * Gedrueckt halten spult weiter.
+     *
+     * <p>Eine Fernbedienung hat keinen Regler. Wer eine Dreiviertelstunde
+     * vorspulen will, drueckt sonst hundertmal - und jeder einzelne Druck ist
+     * ein eigener Sprung, den der Player puffern muss. Der Faktor waechst mit
+     * der Haltedauer: die ersten Druecke bleiben fein (10 bzw. 30 Sekunden),
+     * ab einer halben Sekunde geht es in Minuten, ab anderthalb in Schritten
+     * von drei bis fuenf.
+     */
+    private static int sprungFaktor(KeyEvent event) {
+        int gehalten = event.getRepeatCount();
+        if (gehalten >= 12) return 6;
+        if (gehalten >= 5) return 3;
+        return 1;
     }
 
     boolean zurueck() {

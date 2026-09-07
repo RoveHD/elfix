@@ -286,9 +286,13 @@ pruefe("Fernbedienung pausiert, spult und aendert den Ton im echten Player-Skrip
 pruefe("Auch ein einzelner Hoster ist im Fehlerfall waehlbar", () => {
   const { c, element } = playerKontext();
   c.hosterSetzen([{ adresse: "eins", hoster: "VOE", fassung: "Deutsch" }], "");
-  assert.equal(element("hosterWahl").disabled, false);
-  assert.equal(element("hosterWahl").value, "");
-  assert.equal(element("hosterWahl").children[1].value, "eins");
+  // Das Feld ist kein <select> mehr, sondern die Klasse Wahl - sie haengt am
+  // Platzhalter (siehe spieler.js). Gefragt wird dasselbe wie vorher: waehlbar,
+  // nichts gewaehlt, und der eine Hoster steht hinter dem Platzhaltereintrag.
+  const feld = element("hosterWahl").wahl;
+  assert.equal(feld.disabled, false);
+  assert.equal(feld.value, "");
+  assert.equal(feld.eintraege[1].wert, "eins");
 });
 
 pruefe("Der neue Hinweis erscheint auch bei bereits weitestem eigenen Eintrag", () => {

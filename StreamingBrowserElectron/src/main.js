@@ -9715,15 +9715,33 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
   // laeuft, sondern die Werkbank auf einer Staffelseite steht. Am eigenen
   // Player kam aus der Runde also nichts an ausser dem gemeinsamen Start.
   if (urteil.tun === "anwenden" || urteil.tun === "syncstart") {
+    const laufen = watchpartyLaeuftDanach(nachricht);
+    const springen = !urteil.nichtSpringen;
+    /*
+     * Nicht "so schnell du kannst", sondern "um 12:00:00,600".
+     *
+     * Der Host bekommt keinen Vorlauf: er laeuft schon, und sein Bild ist die
+     * Vorlage. Alle anderen springen auf die Stelle, an der er in einem halben
+     * Augenblick stehen wird, machen sich fertig - und lassen dann zusammen
+     * los. Vorher war es die Stelle von *jetzt* und ein sofortiges play(); die
+     * Zeit fuers Springen und Puffern lag danach also als Rueckstand fest, und
+     * die Notbremse greift erst bei fuenf Sekunden.
+     */
+    const plan = watchpartySync.startPlan(
+      ereignis,
+      watchparty.serverJetzt(eintrag.room),
+      laufen && springen ? watchpartySync.START_VORLAUF_MS : 0
+    );
     spielerBefehl({
       tun: "stelle",
       // Steht der Absender, ist seine Stelle die Antwort: zielZeitBerechnen
       // schlaegt die Laufzeit der Nachricht nur auf, wenn danach etwas laeuft.
-      stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
-      laufen: watchpartyLaeuftDanach(nachricht),
+      stelle: plan.stelle,
+      laufen,
       // Der Host springt nicht auf seine eigene Stelle - das laesst nur neu
       // puffern. So steht es auch im Player (steuernAusRunde).
-      springen: !urteil.nichtSpringen
+      springen,
+      wartenMs: plan.wartenMs
     });
     return true;
   }
@@ -13265,6 +13283,8 @@ function normalizeSettings(raw) {
       hoverBrightness: sanitizeNumber(raw?.appearance?.hoverBrightness, 95, 120, defaults.appearance.hoverBrightness),
       animationSpeed: sanitizeNumber(raw?.appearance?.animationSpeed, 60, 160, defaults.appearance.animationSpeed),
       animationMode: sanitizeChoice(raw?.appearance?.animationMode, ["full", "reduced", "off"], defaults.appearance.animationMode),
+      uiSounds: typeof raw?.appearance?.uiSounds === "boolean" ? raw.appearance.uiSounds : defaults.appearance.uiSounds,
+      uiSoundVolume: sanitizeNumber(raw?.appearance?.uiSoundVolume, 0, 100, defaults.appearance.uiSoundVolume),
       cardStyle: sanitizeChoice(raw?.appearance?.cardStyle, ["standard", "flat", "glass", "outline", "minimal"], defaults.appearance.cardStyle),
       shadowStyle: sanitizeChoice(raw?.appearance?.shadowStyle, ["none", "light", "standard", "strong"], defaults.appearance.shadowStyle),
       showProviderStrip: raw?.appearance?.showProviderStrip ?? defaults.appearance.showProviderStrip,
@@ -13404,6 +13424,8 @@ function defaultSettings() {
       hoverBrightness: 106,
       animationSpeed: 100,
       animationMode: "full",
+      uiSounds: true,
+      uiSoundVolume: 20,
       cardStyle: "standard",
       shadowStyle: "standard",
       showProviderStrip: true,

@@ -95,13 +95,52 @@
    * Weiss faellt. `color-scheme: dark` sagt dem System, in welcher Welt es
    * zeichnen soll; die deckenden Farben an `option` sind der Guertel dazu.
    */
-  select {
+  /*
+   * Das Auswahlfeld der Seite.
+   *
+   * Vorher stand hier ein <select>. Sein aufgeklapptes Menue zeichnet das
+   * System und nicht die Seite - in einer WebContentsView sass es daneben, es
+   * verschwand, sobald sich die Leiste ausblendete, und ein Steuerkreuz kam
+   * nie hinein. Dieses Menue gehoert der Seite: es haelt die Leiste wach,
+   * laesst sich mit den Pfeiltasten bedienen und sieht auf jedem Geraet gleich
+   * aus - wie die Blende auf Android.
+   */
+  .wahl { position: relative; flex: 0 0 auto; }
+  .wahlKnopf {
     background: #1E242E; color: #fff; border: 0;
-    padding: 6px 8px; border-radius: 10px; font: inherit;
-    color-scheme: dark;
+    padding: 6px 10px; border-radius: 10px; font: inherit;
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    max-width: 190px;
   }
-  select:hover { background: #27303C; }
-  select:disabled { opacity: 0.4; }
+  .wahlKnopf:hover { background: #27303C; }
+  .wahlKnopf:focus-visible { outline: 2px solid #3D92FF; }
+  .wahlText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wahlPfeil { font-size: 9px; opacity: 0.7; }
+  .wahl.auf .wahlKnopf { background: #27303C; }
+  .wahl.aus .wahlKnopf { opacity: 0.4; cursor: default; }
+  .wahlMenue {
+    position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 40;
+    min-width: 172px; max-width: min(320px, 80vw);
+    max-height: min(52vh, 420px); overflow-y: auto;
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 6px; border-radius: 12px;
+    background: rgba(8, 11, 18, 0.97);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+  }
+  .wahlKopf {
+    padding: 4px 10px 6px; font-size: 11px; letter-spacing: .04em;
+    text-transform: uppercase; color: rgba(255, 255, 255, 0.5);
+  }
+  .wahlMenue button {
+    display: flex; align-items: center; gap: 8px; text-align: left;
+    padding: 9px 10px; border-radius: 9px; background: rgba(255, 255, 255, 0.06);
+    white-space: nowrap;
+  }
+  .wahlMenue button:hover { background: rgba(255, 255, 255, 0.16); }
+  .wahlMenue button:focus-visible { outline: 2px solid #3D92FF; outline-offset: -2px; }
+  .wahlMenue button.laeuft { background: rgba(61, 146, 255, 0.3); font-weight: 700; }
+  .wahlMenue button[disabled] { opacity: 0.38; cursor: default; }
+  .wahlHaken { width: 12px; opacity: 0.9; }
 
   /* Der Strich zwischen "diese Folge" und "die naechste". */
   .trenner {
@@ -147,12 +186,6 @@
 
   #autoKnopf { font-weight: 700; }
   #autoKnopf.aus { opacity: 0.5; font-weight: 400; }
-  select option {
-    background: #1E242E;
-    color: #fff;
-  }
-  select option:checked { background: #3D92FF; color: #fff; }
-
   /*
    * Die Teilnehmer der Runde - oben in der Mitte, ueber dem Bild.
    *
@@ -306,28 +339,18 @@
       <button id="marke" type="button" class="betont" hidden title="Intro überspringen">Intro überspringen</button>
       <span class="luecke"></span>
       <button id="folgenKnopf" type="button" title="Staffeln und Folgen (E)">Folgen</button>
-      <select id="fassungWahl" aria-label="Sprachfassung" title="Sprachfassung" disabled>
-        <option value="">Fassung</option>
-      </select>
-      <select id="hosterWahl" aria-label="Hoster" title="Hoster" disabled>
-        <option value="">Hoster</option>
-      </select>
-      <select id="untertitel" aria-label="Untertitel" title="Untertitel" disabled>
-        <option value="-1">Untertitel aus</option>
-      </select>
-      <select id="stufen" aria-label="Bildqualität" disabled>
-        <option value="-1">Auto</option>
-      </select>
+      <!-- Fuenf Auswahlfelder, und keines davon ist ein <select>. Warum, steht
+           bei der Klasse Wahl in spieler.js: das aufgeklappte Menue eines
+           <select> ist ein Fenster des Systems, und in einer WebContentsView
+           war es mit der Maus nicht zu treffen und mit einer Fernbedienung
+           ueberhaupt nicht. Diese hier gehoeren der Seite. -->
+      <div class="wahl" id="fassungWahl" hidden></div>
+      <div class="wahl" id="hosterWahl"></div>
+      <div class="wahl" id="untertitel" hidden></div>
+      <div class="wahl" id="stufen"></div>
       <!-- Das Tempo. In einer Runde gehoert es dem Host: er stellt es fuer
            alle, und bei den anderen steht es dann nur noch da. -->
-      <select id="tempo" aria-label="Tempo" title="Tempo (Shift + , und Shift + .)">
-        <option value="0.5">0,5×</option>
-        <option value="0.75">0,75×</option>
-        <option value="1" selected>1×</option>
-        <option value="1.25">1,25×</option>
-        <option value="1.5">1,5×</option>
-        <option value="2">2×</option>
-      </select>
+      <div class="wahl" id="tempo"></div>
       <!-- Ab hier geht es um die naechste Folge und nicht mehr um diese. Der
            Strich davor ist kein Schmuck: links davon stehen vier Auswahlfelder,
            und eines davon bietet "Automatisch" an. Ohne Trennung standen

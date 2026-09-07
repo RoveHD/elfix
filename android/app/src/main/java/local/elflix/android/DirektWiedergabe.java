@@ -66,6 +66,8 @@ final class DirektWiedergabe {
     private int auftrag;
     private JSONArray hoster = new JSONArray();
     private JSONObject folgen = new JSONObject();
+    /** Welche Staffel in der Blende gerade aufgeschlagen ist. -1: noch keine. */
+    private int offeneStaffel = -1;
     private JSONObject naechste;
     private JSONObject meta = new JSONObject();
     private final double start;
@@ -399,7 +401,7 @@ final class DirektWiedergabe {
             aktionen.add(() -> fassungWechseln(gewaehlt));
         }
         if (namen.isEmpty()) {
-            spieler.status("Für diese Folge steht keine Fassung zur Wahl.");
+            spieler.kurzeAnsage("Für diese Folge steht keine Fassung zur Wahl.");
             return;
         }
         spieler.blende("Fassung", namen, aktionen, laufend);
@@ -590,57 +592,184 @@ final class DirektWiedergabe {
         }));
     }
 
+    /*
+     * ------------------------------------------------------- Staffeln und Folgen
+     *
+     * Dieselbe Liste wie am Rechner (folgenZeichnen in spieler.js), und zwar
+     * absichtlich Zeile fuer Zeile dieselbe: Reiter oben fuer die Staffeln,
+     * darunter die Folgen der aufgeschlagenen - Nummer links, Titel rechts,
+     * die laufende hervorgehoben.
+     *
+     * <p>Vorher war es eine einzige flache Liste: erst fuenf Zeilen "Staffel 2
+     * oeffnen", danach die Folgen. Wer eine Serie mit acht Staffeln aufmachte,
+     * sah zuerst eine Bildschirmseite Staffeln und musste scrollen, um zur
+     * ersten Folge zu kommen - und ob man in Staffel 1 oder 3 war, stand
+     * nirgends. Am Rechner war das nie so, und "am Handy sieht das anders aus"
+     * war genau dieser Unterschied.
+     *
+     * <p>Gelesene Staffeln bleiben liegen. Jede kostet einen Seitenaufruf; wer
+     * zwischen zweien hin und her blaettert, soll nicht zweimal warten.
+     */
     private void folgenZeigen(JSONObject stand) {
-        ArrayList<String> namen = new ArrayList<>();
-        ArrayList<Runnable> aktionen = new ArrayList<>();
-        JSONArray staffeln = stand.optJSONArray("staffeln");
-        if (staffeln != null) for (int i = 0; i < staffeln.length(); i++) {
-            JSONObject staffel = staffeln.optJSONObject(i);
-            if (staffel == null) continue;
-            namen.add("Staffel " + staffel.optInt("staffel") + " öffnen");
-            aktionen.add(() -> staffelLesen(staffel.optString("url"), auftrag, this::folgenZeigen));
-        }
-        JSONArray liste = stand.optJSONArray("folgen");
-        if (liste != null) for (int i = 0; i < liste.length(); i++) {
+        folgenMerken(stand);
+        JSONArray liste = folgen.optJSONArray("folgen");
+        // Aufgeschlagen wird die laufende Staffel - und nur beim ersten Mal.
+        // Danach gilt, was der Zuschauer gewaehlt hat.
+        if (offeneStaffel < 0) offeneStaffel = laufendeStaffel(liste);
+        folgenZeichnen("");
+    }
+
+    /** Die Staffel der laufenden Folge, sonst die erste, die dasteht. */
+    private int laufendeStaffel(JSONArray liste) {
+        if (liste == null) return 0;
+        for (int i = 0; i < liste.length(); i++) {
             JSONObject folge = liste.optJSONObject(i);
-            if (folge == null || folge.optBoolean("gesperrt") || folge.optString("url").isEmpty()) continue;
-            namen.add("Folge " + folge.optInt("folge") + " · " + folge.optString("titel"));
-            aktionen.add(() -> wechseln(folge.optString("url")));
+            if (folge != null && gleicheSeite(folge.optString("url"), adresse)) return folge.optInt("staffel");
         }
-        if (namen.isEmpty()) { spieler.status("Für diesen Titel ist keine Folgenliste vorhanden."); return; }
-        spieler.blende("Staffeln und Folgen", namen, aktionen, laufendeFolge(stand, namen));
+        JSONObject erste = liste.optJSONObject(0);
+        return erste == null ? 0 : erste.optInt("staffel");
     }
 
     /**
-     * Welche Zeile der Folgenliste gerade laeuft.
+     * Die gelesenen Folgen dazulegen, die alten behalten.
      *
-     * <p>Die Blende hebt sie hervor - in einer Liste mit vierundzwanzig Folgen
-     * ist das die einzige Auskunft darueber, wo man ist. Gesucht wird ueber die
-     * Adresse und nicht ueber die Nummer: dieselbe Nummer gibt es in jeder
-     * Staffel, und die Blende zeigt gerade vielleicht eine andere.
+     * <p>Jede Staffelseite bringt ihre eigenen Folgen mit und dazu die Liste
+     * aller Staffeln. Zusammengelegt steht am Ende die ganze Serie da, ohne
+     * dass eine Seite zweimal gelesen wird.
      */
-    private int laufendeFolge(JSONObject stand, ArrayList<String> namen) {
-        JSONArray liste = stand.optJSONArray("folgen");
-        if (liste == null) return -1;
-        int versatz = namen.size() - zaehlbareFolgen(liste);
-        int zeile = versatz;
-        for (int i = 0; i < liste.length(); i++) {
-            JSONObject folge = liste.optJSONObject(i);
-            if (folge == null || folge.optBoolean("gesperrt") || folge.optString("url").isEmpty()) continue;
-            if (gleicheSeite(folge.optString("url"), adresse)) return zeile;
-            zeile++;
+    private void folgenMerken(JSONObject stand) {
+        if (stand == null) return;
+        if (folgen == null || folgen.optJSONArray("folgen") == null) { folgen = stand; return; }
+        JSONArray hatte = folgen.optJSONArray("folgen");
+        JSONArray neue = stand.optJSONArray("folgen");
+        JSONArray zusammen = new JSONArray();
+        java.util.HashSet<String> gesehen = new java.util.HashSet<>();
+        for (JSONArray quelle : new JSONArray[] { hatte, neue }) {
+            if (quelle == null) continue;
+            for (int i = 0; i < quelle.length(); i++) {
+                JSONObject folge = quelle.optJSONObject(i);
+                if (folge == null) continue;
+                String schluessel = kurz(folge.optString("url"));
+                if (schluessel.isEmpty() || !gesehen.add(schluessel)) continue;
+                zusammen.put(folge);
+            }
         }
-        return -1;
+        try {
+            JSONObject gemischt = new JSONObject(stand.toString());
+            gemischt.put("folgen", zusammen);
+            // Die Staffelliste kommt von jeder Staffelseite mit; bringt eine
+            // Seite keine, bleibt die bekannte stehen.
+            JSONArray staffeln = stand.optJSONArray("staffeln");
+            if (staffeln == null || staffeln.length() == 0) {
+                JSONArray alte = folgen.optJSONArray("staffeln");
+                if (alte != null) gemischt.put("staffeln", alte);
+            }
+            String name = stand.optString("titel", "");
+            if (name.isEmpty()) gemischt.put("titel", folgen.optString("titel", ""));
+            folgen = gemischt;
+        } catch (Exception ignoriert) { }
     }
 
-    private static int zaehlbareFolgen(JSONArray liste) {
-        int zahl = 0;
+    /**
+     * Eine Staffel aufschlagen.
+     *
+     * <p>Sind ihre Folgen schon da, wird nur umgeschaltet. Sonst wird ihre
+     * Seite gelesen - das dauert einen Augenblick, und solange steht in der
+     * Blende, was gerade geschieht. Sie bleibt dabei offen: ein Menue, das sich
+     * beim Blaettern schliesst, muss man jedes Mal neu aufmachen.
+     */
+    private void staffelOeffnen(int staffel) {
+        offeneStaffel = staffel;
+        if (staffelDa(staffel)) { folgenZeichnen(""); return; }
+        JSONObject ziel = staffelEintrag(staffel);
+        if (ziel == null) { folgenZeichnen(""); return; }
+        folgenZeichnen("Staffel " + staffel + " wird gelesen …");
+        final int id = auftrag;
+        staffelLesen(ziel.optString("url"), id, gelesen -> {
+            if (!aktuell(id) || geschlossen) return;
+            JSONArray liste = gelesen == null ? null : gelesen.optJSONArray("folgen");
+            if (liste == null || liste.length() == 0) {
+                folgenZeichnen("Staffel " + staffel + " ließ sich nicht lesen.");
+                return;
+            }
+            folgenMerken(gelesen);
+            folgenZeichnen("");
+        });
+    }
+
+    private boolean staffelDa(int staffel) {
+        JSONArray liste = folgen.optJSONArray("folgen");
+        if (liste == null) return false;
         for (int i = 0; i < liste.length(); i++) {
             JSONObject folge = liste.optJSONObject(i);
-            if (folge == null || folge.optBoolean("gesperrt") || folge.optString("url").isEmpty()) continue;
-            zahl++;
+            if (folge != null && folge.optInt("staffel") == staffel) return true;
         }
-        return zahl;
+        return false;
+    }
+
+    private JSONObject staffelEintrag(int staffel) {
+        JSONArray liste = folgen.optJSONArray("staffeln");
+        if (liste == null) return null;
+        for (int i = 0; i < liste.length(); i++) {
+            JSONObject eintrag = liste.optJSONObject(i);
+            if (eintrag != null && eintrag.optInt("staffel") == staffel) return eintrag;
+        }
+        return null;
+    }
+
+    /**
+     * Die Reiterzeile und die Folgen der aufgeschlagenen Staffel.
+     *
+     * @param hinweis steht statt der Liste, solange eine Staffel gelesen wird
+     */
+    private void folgenZeichnen(String hinweis) {
+        JSONArray alle = folgen.optJSONArray("folgen");
+        JSONArray bekannte = folgen.optJSONArray("staffeln");
+        if ((alle == null || alle.length() == 0) && (bekannte == null || bekannte.length() == 0)) {
+            spieler.kurzeAnsage("Für diesen Titel ist keine Folgenliste vorhanden.");
+            return;
+        }
+
+        // Die Reiter kommen aus der Staffelliste *und* aus den gelesenen
+        // Folgen: die Serie kennt ihre Staffeln, auch wenn deren Folgen noch
+        // nicht gelesen sind - und umgekehrt gibt es Seiten ohne Staffelliste.
+        java.util.TreeSet<Integer> nummern = new java.util.TreeSet<>();
+        if (bekannte != null) for (int i = 0; i < bekannte.length(); i++) {
+            JSONObject eintrag = bekannte.optJSONObject(i);
+            if (eintrag != null) nummern.add(eintrag.optInt("staffel"));
+        }
+        if (alle != null) for (int i = 0; i < alle.length(); i++) {
+            JSONObject folge = alle.optJSONObject(i);
+            if (folge != null) nummern.add(folge.optInt("staffel"));
+        }
+        ArrayList<Integer> staffeln = new ArrayList<>(nummern);
+        ArrayList<String> reiter = new ArrayList<>();
+        int aktiv = -1;
+        for (int i = 0; i < staffeln.size(); i++) {
+            int nummer = staffeln.get(i);
+            reiter.add(nummer > 0 ? "Staffel " + nummer : "Filme");
+            if (nummer == offeneStaffel) aktiv = i;
+        }
+
+        ArrayList<DirektSpieler.Zeile> zeilen = new ArrayList<>();
+        int laufend = -1;
+        if (alle != null) for (int i = 0; i < alle.length(); i++) {
+            JSONObject folge = alle.optJSONObject(i);
+            if (folge == null || folge.optInt("staffel") != offeneStaffel) continue;
+            final String url = folge.optString("url");
+            boolean gesperrt = folge.optBoolean("gesperrt") || url.isEmpty();
+            String name = folge.optString("titel", "").trim();
+            if (name.isEmpty()) name = gesperrt ? "in einer anderen Folge enthalten" : "";
+            if (!gesperrt && gleicheSeite(url, adresse)) laufend = zeilen.size();
+            zeilen.add(new DirektSpieler.Zeile("Folge " + folge.optInt("folge"), name,
+                gesperrt ? null : () -> wechseln(url), gesperrt));
+        }
+
+        String titelZeile = folgen.optString("titel", "");
+        spieler.blende(titelZeile.isEmpty() ? "Folgen" : titelZeile,
+            reiter, aktiv, index -> staffelOeffnen(staffeln.get(index)),
+            zeilen, laufend, zeilen.isEmpty() && hinweis.isEmpty()
+                ? "Für diese Staffel steht keine Folge zur Wahl." : hinweis);
     }
 
     private static boolean gleicheSeite(String links, String rechts) {

@@ -66,9 +66,19 @@ async function pruefen(adresse, seite, kennung) {
     return ok >= 120 ? { ok: true, quelle: { adresse, typ: "hls" }, kopfzeilen } : { ok: false };
   } finally { if (offen === controller) offen = null; }
 }
+// Wohin springen - und wie lange danach warten, bevor losgelassen wird.
+//
+// Der Vorlauf ist der ganze Punkt: zwischen dem Sprung und dem ersten
+// bewegten Bild liegen Puffern und Anlaufen, und wer sofort losfaehrt, ist um
+// diese Spanne zu spaet. Der Host bekommt keinen (er laeuft schon und ist die
+// Vorlage), das Gleichziehen auch nicht (dort wird angehalten, nicht gestartet).
 function befehlJetzt(urteil) {
   const e = urteil.ereignis;
-  return { ...urteil, position: e ? require("./watchparty-sync").zielZeitBerechnen(e, Date.now() + (e.versatz || 0)) : urteil.position };
+  if (!e) return { ...urteil, wartenMs: 0 };
+  const sync = require("./watchparty-sync");
+  const vorlauf = !urteil.nichtSpringen && !urteil.warten && e.playing ? sync.START_VORLAUF_MS : 0;
+  const plan = sync.startPlan(e, Date.now() + (e.versatz || 0), vorlauf);
+  return { ...urteil, position: plan.stelle, wartenMs: plan.wartenMs };
 }
 function intro(marke, position) {
   const regeln = require("./marken");

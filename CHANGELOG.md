@@ -3,6 +3,62 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.2 — 7. September 2026
+
+**Die Geschwindigkeit ließ sich am Rechner nicht auswählen.** Der Grund lag
+nicht am Tempo, sondern am Auswahlfeld: das aufgeklappte Menü eines `<select>`
+zeichnet das Betriebssystem und nicht die Seite — und der Player läuft in einer
+Ansicht, die im Fenster verschoben sitzt, also landete das Menü daneben. Dazu
+kam ein zweites: Kopf und Leiste blenden sich nach knapp drei Sekunden aus, und
+solange ein Systemmenü offensteht, kommt keine Mausbewegung mehr in der Seite
+an. Die Leiste ging also weg, während man noch wählte, und nahm das Feld mit.
+
+Alle fünf Felder der Leiste — Fassung, Hoster, Untertitel, Bildqualität, Tempo —
+gehören jetzt der Seite. Sie halten die Leiste wach, solange sie offen sind, sie
+zeigen mit einem Haken, was gerade gilt, und sie lassen sich mit Pfeiltasten und
+OK bedienen. In ein Systemmenü kam ein Steuerkreuz nie hinein.
+
+**Damit geht das Tempo auch in die Runde.** Die Strecke vom Player über das
+Relay zu allen Geräten gab es seit 2.0.1 vollständig — sie wurde nur nie
+ausgelöst, weil die Wahl gar nicht erst ankam.
+
+**Gestartet wird jetzt gleichzeitig, nicht so schnell wie möglich.** Zwischen
+"die Nachricht ist da" und dem ersten bewegten Bild liegen der Sprung, das
+Puffern an der neuen Stelle und die Annahme des Befehls durch den Player — auf
+dem Telefon ein paar Zehntel, am Fernseher gern eine ganze Sekunde. Wer auf die
+Stelle von *jetzt* springt und sofort losfährt, ist um genau diese Spanne zu
+spät, jedes Mal, und es bleibt für den Rest der Folge stehen: die Notbremse
+greift erst ab fünf Sekunden. Jetzt wird ein Zeitpunkt verabredet: alle springen
+dorthin, wo der Host gleich stehen wird, machen sich in der Zwischenzeit fertig
+und lassen dann zusammen los. Wer zu spät fertig wird, bekommt die Verspätung an
+der Stelle gutgeschrieben. Der Host verabredet nichts — er läuft schon und ist
+die Vorlage.
+
+**Beim Anhalten bleibt es, wie es war**: sofort und auf die Millisekunde. Dort
+zählt das Bild und nicht der Zeitpunkt.
+
+**Am Telefon stand die Bildqualität mehrfach da.** Eine Playlist führt dieselbe
+Höhe oft mehrmals — einmal je Bitrate, je Codec —, und in der Liste standen dann
+viermal "1080p" untereinander, zwischen denen sich nicht wählen ließ. Jetzt eine
+Zeile je Stufe, die beste zuerst.
+
+**Und die Folgenliste am Telefon sieht aus wie die am Rechner.** Vorher war es
+eine einzige flache Liste: erst fünf Zeilen "Staffel 2 öffnen", dann die Folgen.
+Wer eine Serie mit acht Staffeln aufmachte, musste erst scrollen, um zur ersten
+Folge zu kommen, und wo man gerade war, stand nirgends. Jetzt eine Reiterzeile
+oben, darunter die Folgen mit Nummer und Titel, die laufende hervorgehoben.
+Gelesene Staffeln bleiben liegen — jede kostet einen Seitenaufruf.
+
+**Kurze Ansagen gehen von selbst wieder weg.** "In einer Runde stellt der Host
+das Tempo" ist nichts, was man wegdrücken muss; nach 1,2 Sekunden ist es weg.
+Der Kasten in der Mitte bleibt dem vorbehalten, was wirklich eine Antwort
+braucht.
+
+**Die Fernbedienung kann mehr.** Stopp schließt den Player, der
+Untertitelknopf öffnet die Spuren, Info weckt die Bedienleiste, und Links oder
+Rechts gedrückt zu halten spult schneller, statt hundert einzelne Sprünge zu
+machen. In jeder Liste steht das Steuerkreuz auf der Zeile, die gerade gilt.
+
 ## 2.0.1 — 7. September 2026
 
 **Am Telefon wurde bei jedem Pausieren neu geladen.** Und weil in einer Runde

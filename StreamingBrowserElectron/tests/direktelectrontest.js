@@ -67,8 +67,8 @@ app.whenReady().then(async () => {
 
   auftrag = { id: 2, auswahl: true, hosterliste: [{ adresse: "hoster", hoster: "VOE", fassung: "Deutsch" }], weiterZaehler: 0 };
   fenster.webContents.send("spieler:auftrag", auftrag);
-  await warten(() => lesen('document.getElementById("hosterWahl").options.length === 2'));
-  assert.equal(await lesen('document.getElementById("hosterWahl").disabled'), false);
+  await warten(() => lesen('document.getElementById("hosterWahl").wahl.eintraege.length === 2'));
+  assert.equal(await lesen('document.getElementById("hosterWahl").wahl.disabled'), false);
   console.log("OK    Fehler-Auswahl mit einem Hoster bleibt bedienbar");
 
   // Die Produktions-Beobachtung liest einen lokal nachgebauten Hoster, der

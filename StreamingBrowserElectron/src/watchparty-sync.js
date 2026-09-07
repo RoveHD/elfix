@@ -55,6 +55,52 @@ function zielZeitBerechnen(ereignis, serverJetzt) {
   return basis + Math.min(vergangen, 30) * tempo;
 }
 
+// --- 1b. Der verabredete Start -----------------------------------------------
+//
+// Der smarte Start oben beantwortet "wo steht der Host jetzt?". Er beantwortet
+// nicht die zweite Haelfte der Frage: "jetzt" ist der Augenblick, in dem die
+// Nachricht ankommt - und bis das Video wirklich laeuft, vergeht noch etwas.
+// Erst muss gesprungen werden, dann muss der Puffer an der neuen Stelle stehen,
+// dann nimmt play() den Befehl an, und dann kommt das erste Bild. Auf einem
+// Telefon sind das ein paar Zehntel, am Fernseher gern eine ganze Sekunde. Wer
+// auf "wo der Host jetzt steht" springt und dann losfaehrt, ist deshalb
+// grundsaetzlich um genau diese Spanne zu spaet - jedes Mal, und es bleibt fuer
+// den Rest der Folge stehen.
+//
+// Also wird nicht "sofort" gestartet, sondern zu einem verabredeten Zeitpunkt:
+// alle springen auf die Stelle, an der der Host in `vorlauf` Millisekunden
+// stehen wird, machen sich fertig - und lassen dann gleichzeitig los. Der
+// Vorlauf ist die Zeit, die das Fertigmachen bekommt; wer sie nicht braucht,
+// wartet den Rest ab, statt zu frueh anzufangen.
+//
+// Der Host verabredet nichts. Er laeuft schon; sein Bild ist die Vorlage, nach
+// der sich die anderen richten. Deshalb ruft ihn niemand mit einem Vorlauf auf.
+const START_VORLAUF_MS = 600;
+
+/**
+ * Wohin springen und wie lange danach warten.
+ *
+ * @param ereignis    das Ereignis des Relays, durch ereignisFuerPlayer gegangen
+ * @param serverJetzt die Serverzeit in diesem Augenblick
+ * @param vorlaufMs   wieviel Zeit das Fertigmachen bekommt; 0 heisst "sofort"
+ * @return { stelle, wartenMs }
+ */
+function startPlan(ereignis, serverJetzt, vorlaufMs) {
+  const roh = Number(vorlaufMs);
+  const vorlauf = Number.isFinite(roh) ? Math.max(0, Math.min(roh, 5000)) : START_VORLAUF_MS;
+  const sofort = { stelle: zielZeitBerechnen(ereignis, serverJetzt), wartenMs: 0 };
+  // Steht die Quelle, gibt es nichts zu verabreden: die Stelle des Absenders
+  // ist die Antwort, und zwar auf die Millisekunde. Genau das ist der Fall
+  // "Pause" - dort zaehlt das Bild, nicht der Zeitpunkt.
+  if (!ereignis || !ereignis.playing) return sofort;
+  // Ohne gemessenen Uhrversatz laesst sich kein gemeinsamer Zeitpunkt
+  // ausrechnen - dieselbe Notbremse wie in zielZeitBerechnen.
+  if (!ereignis.hatUhr || !vorlauf) return sofort;
+  const jetzt = Number(serverJetzt);
+  if (!Number.isFinite(jetzt)) return sofort;
+  return { stelle: zielZeitBerechnen(ereignis, jetzt + vorlauf), wartenMs: vorlauf };
+}
+
 // --- 2. Laufender Betrieb: fast immer nichts tun -----------------------------
 //
 // Waehrend beide laufen, wird der Player nicht angefasst. Kein Tempo, keine
@@ -966,6 +1012,8 @@ module.exports = {
   driftEntscheiden,
   istVeraltet,
   versatzAusProben,
+  startPlan,
+  START_VORLAUF_MS,
   alsQuelltext,
   applyScript,
   driftScript,

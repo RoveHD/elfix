@@ -31,16 +31,266 @@ const bruecke = window.elfixSpieler || {
   sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {}
 };
 
+/* --------------------------------------------------------- Das Auswahlfeld
+ *
+ * Fuenf Felder in der Leiste - Fassung, Hoster, Untertitel, Qualitaet, Tempo -
+ * waren bis hierher ganz gewoehnliche <select>. Drei Dinge sprachen dagegen,
+ * und alle drei waren zu sehen:
+ *
+ *   1. Das aufgeklappte Menue eines <select> ist ein Fenster des Systems und
+ *      nicht Teil der Seite. Der Player laeuft in einer WebContentsView, die
+ *      im Fenster verschoben sitzt - das Menue landete daneben, und "Tempo
+ *      auswaehlen" ging schlicht nicht.
+ *   2. Kopf und Leiste blenden sich nach 2,8 Sekunden aus. Solange ein
+ *      Systemmenue offensteht, kommt keine Mausbewegung mehr in der Seite an;
+ *      die Leiste ging also weg, waehrend man noch waehlte, und nahm das Feld
+ *      mit.
+ *   3. Am Fernseher gibt es keine Maus. In ein Systemmenue kommt ein
+ *      Steuerkreuz nicht hinein.
+ *
+ * Also ein eigenes Feld. Nach aussen sieht es aus wie ein <select> - `value`,
+ * `disabled`, `hidden`, `appendChild(option)`, `addEventListener("change")` -,
+ * damit die Stellen, die es fuellen, unveraendert bleiben konnten. Nach innen
+ * ist es ein Knopf mit einer Liste, die der Seite gehoert: sie haelt die
+ * Leiste wach, sie laesst sich mit Pfeiltasten und OK bedienen, und sie sieht
+ * aus wie die Blende auf Android.
+ */
+
+/** Alle offenen Menues - fuer die Frage, ob die Leiste stehenbleiben muss. */
+const wahlOffene = new Set();
+
+/** Steht gerade ein Menue offen? Dann ruehrt sich weder Leiste noch Tastatur. */
+function wahlOffen() {
+  return wahlOffene.size > 0;
+}
+
+function wahlAlleZu() {
+  for (const wahl of [...wahlOffene]) wahl.zu(false);
+}
+
+class Wahl {
+  /**
+   * @param id     die Kennung des Platzhalters in spieler.html
+   * @param titel  die Ueberschrift im Menue und der Text, wenn nichts gewaehlt ist
+   */
+  constructor(id, titel) {
+    this.wurzel = document.getElementById(id);
+    this.titelText = titel;
+    this.eintraege = [];
+    this._wert = "";
+    this._aus = false;
+    this.beiWechsel = [];
+
+    this.knopf = document.createElement("button");
+    this.knopf.type = "button";
+    this.knopf.className = "wahlKnopf";
+    this.text = document.createElement("span");
+    this.text.className = "wahlText";
+    const pfeil = document.createElement("span");
+    pfeil.className = "wahlPfeil";
+    pfeil.textContent = "\u25BE";
+    pfeil.setAttribute("aria-hidden", "true");
+    this.knopf.append(this.text, pfeil);
+
+    this.menue = document.createElement("div");
+    this.menue.className = "wahlMenue";
+    this.menue.hidden = true;
+    this.wurzel.append(this.knopf, this.menue);
+    // Der Rueckweg vom Platzhalter zum Feld. Er kostet nichts und macht das
+    // Feld von aussen sichtbar - die Pruefungen fassen es darueber an, so wie
+    // sie vorher das <select> selbst angefasst haben.
+    this.wurzel.wahl = this;
+
+    this.knopf.addEventListener("click", (ereignis) => {
+      ereignis.stopPropagation();
+      if (this._aus) return;
+      if (this.offen()) this.zu(true);
+      else this.auf();
+    });
+    // Pfeile und OK machen auf. Beides ausdruecklich und nicht ueber den
+    // Klick, den ein Knopf von selbst aus Enter macht: die Leertaste gehoert
+    // sonst dem Player (Abspielen), und am Fernseher kommt OK als Enter an.
+    this.knopf.addEventListener("keydown", (ereignis) => {
+      const auf = ereignis.key === "ArrowUp" || ereignis.key === "ArrowDown"
+        || ereignis.key === "Enter" || ereignis.key === " ";
+      if (!auf) return;
+      ereignis.preventDefault();
+      ereignis.stopPropagation();
+      if (!this._aus) this.auf();
+    });
+    this.beschriften();
+  }
+
+  /* --- Was die fuellenden Stellen von einem <select> erwarten --- */
+
+  set textContent(wert) {
+    if (String(wert) !== "") return;
+    this.eintraege = [];
+    this.beschriften();
+  }
+
+  appendChild(option) {
+    this.eintraege.push({
+      wert: String(option.value),
+      text: String(option.textContent || ""),
+      aus: Boolean(option.disabled)
+    });
+    this.beschriften();
+    return option;
+  }
+
+  get value() { return this._wert; }
+
+  set value(wert) {
+    const text = String(wert);
+    // Wie beim <select>: ein Wert, den es nicht gibt, waehlt nichts aus.
+    this._wert = this.eintraege.some((eintrag) => eintrag.wert === text) ? text : "";
+    this.beschriften();
+    if (this.offen()) this.zeichnen();
+  }
+
+  get disabled() { return this._aus; }
+
+  set disabled(wert) {
+    this._aus = Boolean(wert);
+    this.knopf.disabled = this._aus;
+    this.wurzel.classList.toggle("aus", this._aus);
+    if (this._aus) this.zu(false);
+  }
+
+  set hidden(wert) {
+    this.wurzel.hidden = Boolean(wert);
+    if (wert) this.zu(false);
+  }
+
+  get hidden() { return this.wurzel.hidden; }
+
+  set title(wert) { this.knopf.title = String(wert || ""); }
+
+  addEventListener(art, rueckruf) {
+    if (art === "change") this.beiWechsel.push(rueckruf);
+  }
+
+  /* --- Das Menue --- */
+
+  beschriften() {
+    const gewaehlt = this.eintraege.find((eintrag) => eintrag.wert === this._wert);
+    this.text.textContent = gewaehlt ? gewaehlt.text : this.titelText;
+    this.knopf.setAttribute("aria-label", this.titelText + ": " + this.text.textContent);
+  }
+
+  offen() { return !this.menue.hidden; }
+
+  auf() {
+    if (this._aus || this.wurzel.hidden) return;
+    wahlAlleZu();
+    this.zeichnen();
+    this.menue.hidden = false;
+    this.wurzel.classList.add("auf");
+    wahlOffene.add(this);
+    schichtenZeigen();
+    const laufend = this.menue.querySelector("button.laeuft:not([disabled])");
+    const erster = this.menue.querySelector("button:not([disabled])");
+    (laufend || erster)?.focus();
+  }
+
+  /** @param zurueck ob der Knopf den Fokus zurueckbekommt - nach einer Tat ja, beim Aufraeumen nein. */
+  zu(zurueck) {
+    if (!this.offen()) {
+      wahlOffene.delete(this);
+      return;
+    }
+    this.menue.hidden = true;
+    this.menue.replaceChildren();
+    this.wurzel.classList.remove("auf");
+    wahlOffene.delete(this);
+    if (zurueck) this.knopf.focus();
+    schichtenZeigen();
+  }
+
+  zeichnen() {
+    const kopf = document.createElement("div");
+    kopf.className = "wahlKopf";
+    kopf.textContent = this.titelText;
+    const stuecke = [kopf];
+    for (const eintrag of this.eintraege) {
+      const zeile = document.createElement("button");
+      zeile.type = "button";
+      const haken = document.createElement("span");
+      haken.className = "wahlHaken";
+      haken.textContent = eintrag.wert === this._wert ? "\u2713" : "";
+      const name = document.createElement("span");
+      name.textContent = eintrag.text;
+      zeile.append(haken, name);
+      if (eintrag.wert === this._wert) zeile.classList.add("laeuft");
+      if (eintrag.aus) zeile.disabled = true;
+      zeile.addEventListener("click", (ereignis) => {
+        ereignis.stopPropagation();
+        this.waehlen(eintrag.wert);
+      });
+      zeile.addEventListener("keydown", (ereignis) => this.taste(ereignis, eintrag.wert));
+      stuecke.push(zeile);
+    }
+    this.menue.replaceChildren(...stuecke);
+  }
+
+  waehlen(wert) {
+    const vorher = this._wert;
+    this.value = wert;
+    this.zu(true);
+    if (this._wert !== vorher) for (const rueckruf of this.beiWechsel) rueckruf();
+  }
+
+  /**
+   * Pfeile, OK, Escape.
+   *
+   * Das ist der ganze Grund, warum dieses Feld existiert: eine Fernbedienung
+   * kennt genau diese Tasten, und ein Systemmenue kennt sie nicht.
+   */
+  taste(ereignis, wert) {
+    // OK nimmt die Zeile. Ein <button> tut das von selbst, wenn Enter kommt -
+    // aber nur, wenn der Druck als Klick durchgeht; die Leertaste gehoert
+    // ausserdem dem Abspielen. Hier steht es deshalb ausgeschrieben.
+    if (ereignis.key === "Enter" || ereignis.key === " ") {
+      ereignis.preventDefault();
+      ereignis.stopPropagation();
+      this.waehlen(wert);
+      return;
+    }
+    const zeilen = [...this.menue.querySelectorAll("button:not([disabled])")];
+    const jetzt = zeilen.indexOf(document.activeElement);
+    if (ereignis.key === "ArrowDown" || ereignis.key === "ArrowUp") {
+      ereignis.preventDefault();
+      ereignis.stopPropagation();
+      const schritt = ereignis.key === "ArrowDown" ? 1 : -1;
+      const ziel = (jetzt + schritt + zeilen.length) % zeilen.length;
+      zeilen[ziel]?.focus();
+      return;
+    }
+    if (ereignis.key === "Home" || ereignis.key === "End") {
+      ereignis.preventDefault();
+      ereignis.stopPropagation();
+      (ereignis.key === "Home" ? zeilen[0] : zeilen[zeilen.length - 1])?.focus();
+      return;
+    }
+    if (ereignis.key === "Escape" || ereignis.key === "ArrowRight" || ereignis.key === "ArrowLeft") {
+      ereignis.preventDefault();
+      ereignis.stopPropagation();
+      this.zu(true);
+    }
+  }
+}
+
 const bild = document.getElementById("bild");
 const regler = document.getElementById("regler");
 const lautstaerke = document.getElementById("lautstaerke");
-const stufenWahl = document.getElementById("stufen");
-const hosterWahl = document.getElementById("hosterWahl");
-const fassungWahl = document.getElementById("fassungWahl");
-const untertitelWahl = document.getElementById("untertitel");
+const stufenWahl = new Wahl("stufen", "Bildqualit\u00e4t");
+const hosterWahl = new Wahl("hosterWahl", "Hoster");
+const fassungWahl = new Wahl("fassungWahl", "Fassung");
+const untertitelWahl = new Wahl("untertitel", "Untertitel");
 const knopfSpielen = document.getElementById("spielen");
 const knopfMitte = document.getElementById("mitteSpielen");
-const tempoWahl = document.getElementById("tempo");
+const tempoWahl = new Wahl("tempo", "Tempo");
 const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
 const knopfAuto = document.getElementById("autoKnopf");
@@ -200,10 +450,10 @@ function aufgeben(text, grund) {
 function schichtenZeigen() {
   for (const schicht of schichten) schicht.classList.remove("weg");
   clearTimeout(ruheUhr);
-  // Waehrend Pause, offener Liste oder Fehler bleibt die Leiste stehen: wer
-  // pausiert, will etwas tun.
+  // Waehrend Pause, offener Liste, offenem Menue oder Fehler bleibt die Leiste
+  // stehen: wer pausiert oder gerade waehlt, will etwas tun.
   ruheUhr = setTimeout(() => {
-    if (!bild.paused && fehlerKasten.hidden && folgenPanel.hidden) {
+    if (!bild.paused && fehlerKasten.hidden && folgenPanel.hidden && !wahlOffen()) {
       for (const schicht of schichten) schicht.classList.add("weg");
     }
   }, 2800);
@@ -297,12 +547,83 @@ function steuernAusRunde(befehl) {
   }
   ausRundeBis = Date.now() + 900;
   const stelle = Number(befehl.stelle);
+  const warten = Number(befehl.wartenMs) || 0;
+  // Ein verabredeter Start: springen, fertigmachen, und erst zum vereinbarten
+  // Zeitpunkt loslassen. Alles andere - jede Pause, jeder Sprung, der Host
+  // selbst - geht wie bisher sofort durch.
+  if (befehl.laufen && befehl.springen !== false && warten > 0
+    && Number.isFinite(stelle) && stelle >= 0) {
+    startVerabredet(stelle, warten);
+    return;
+  }
+  startAuftrag += 1;
   if (befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0) {
     bild.currentTime = stelle;
     vorigeStelle = stelle;
   }
   if (befehl.laufen) bild.play().catch(() => {});
   else bild.pause();
+}
+
+/**
+ * Der gemeinsame Start.
+ *
+ * Zwischen "die Nachricht ist da" und "das erste Bild bewegt sich" liegen der
+ * Sprung, das Puffern an der neuen Stelle und die Annahme von play(). Wer
+ * sofort losfaehrt, ist um genau diese Spanne zu spaet - und bleibt es, denn
+ * die Notbremse greift erst bei fuenf Sekunden Versatz.
+ *
+ * Deshalb: auf die Stelle springen, an der der Host in `wartenMs` stehen wird,
+ * das Fertigmachen in diese Spanne legen und dann zum verabredeten Zeitpunkt
+ * loslassen. Wer frueher fertig ist, wartet den Rest ab. Wer laenger braucht,
+ * bekommt die Verspaetung an der Stelle gutgeschrieben - das ist billiger als
+ * ein Rueckstand, der bleibt.
+ */
+let startAuftrag = 0;
+
+async function startVerabredet(stelle, wartenMs) {
+  const meiner = ++startAuftrag;
+  // So lange gilt alles, was hier am Video geschieht, als "kam von der Runde" -
+  // sonst meldete die Pause von gleich eine eigene Pause zurueck.
+  ausRundeBis = Date.now() + wartenMs + 3200;
+  const frist = Date.now() + wartenMs;
+  bild.pause();
+  bild.currentTime = stelle;
+  vorigeStelle = stelle;
+
+  await bereitFuerStart(stelle, 2500);
+  if (meiner !== startAuftrag) return;
+
+  const rest = frist - Date.now();
+  if (rest > 0) {
+    await new Promise((fertig) => setTimeout(fertig, rest));
+    if (meiner !== startAuftrag) return;
+  }
+
+  // Zu spaet fertig geworden? Dann fehlt genau die Verspaetung an der Stelle -
+  // beim doppelten Tempo doppelt so viel Film. Nur nach vorn: etwas noch
+  // einmal zu zeigen faellt auf, ein bisschen Vorsprung nicht.
+  const zuspaet = (Date.now() - frist) / 1000;
+  if (zuspaet > 0.15) {
+    bild.currentTime = stelle + zuspaet * tempo;
+    vorigeStelle = bild.currentTime;
+  }
+  ausRundeBis = Date.now() + 900;
+  bild.play().catch(() => {});
+}
+
+/** Sitzt der Sprung, und ist genug geladen? Hoechstens so lange wird gewartet. */
+function bereitFuerStart(stelle, hoechstens) {
+  return new Promise((fertig) => {
+    const bis = Date.now() + hoechstens;
+    const pruefen = () => {
+      const nah = Math.abs(Number(bild.currentTime) - stelle) <= 0.4;
+      if (nah && !bild.seeking && bild.readyState >= 3) return fertig(true);
+      if (Date.now() > bis) return fertig(false);
+      setTimeout(pruefen, 40);
+    };
+    pruefen();
+  });
 }
 
 function fernSteuern(auftragFern) {
@@ -344,6 +665,22 @@ function tonUmschalten() {
  * unweigerlich auseinander, und kein Abgleich kann das einholen.
  */
 const TEMPO_STUFEN = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/** "0,5x" bis "2x" - mit Komma, weil die Oberflaeche deutsch ist. */
+function tempoName(stufe) {
+  return String(stufe).replace(".", ",") + "×";
+}
+
+// Die Leiter steht einmal im Feld und aendert sich nie. Frueher stand sie in
+// spieler.html; seit das Feld der Seite gehoert, steht sie dort, wo auch die
+// Stufen stehen - zwei Listen, die auseinanderlaufen koennen, waren es vorher.
+for (const stufe of TEMPO_STUFEN) {
+  const eintrag = document.createElement("option");
+  eintrag.value = String(stufe);
+  eintrag.textContent = tempoName(stufe);
+  tempoWahl.appendChild(eintrag);
+}
+tempoWahl.value = "1";
 
 /** Auf eine der Stufen zwingen. Was hereinkommt, kommt aus einer Nachricht. */
 function tempoStufe(wert) {
@@ -893,7 +1230,12 @@ document.getElementById("weiterAbbruch").addEventListener("click", () => {
 });
 document.getElementById("weiterSchluss").addEventListener("click", schlussUmschalten);
 knopfAuto.addEventListener("click", autoUmschalten);
-bild.addEventListener("click", spielenUmschalten);
+bild.addEventListener("click", () => {
+  // Ein Klick, der nur ein offenes Menue wegnehmen soll, haelt nicht auch noch
+  // den Film an. Das Menue geht weg, mehr nicht - der naechste Klick spielt.
+  if (wahlOffen()) { wahlAlleZu(); return; }
+  spielenUmschalten();
+});
 
 regler.addEventListener("input", () => {
   if (!Number.isFinite(bild.duration) || bild.duration <= 0) return;
@@ -932,8 +1274,18 @@ untertitelWahl.addEventListener("change", () => {
 });
 
 document.addEventListener("mousemove", schichtenZeigen);
+// Ein Klick daneben macht das offene Menue zu - das erwartet jeder, und ohne
+// es bliebe es stehen, bis man den Knopf noch einmal traefe.
+document.addEventListener("click", () => wahlAlleZu());
 document.addEventListener("keydown", (ereignis) => {
   schichtenZeigen();
+  // Steht ein Menue offen, gehoeren die Tasten ihm. Pfeile, OK und Escape hat
+  // es schon abgefangen (Wahl.taste); alles Uebrige - Leertaste, f, e - taete
+  // hinter dem Menue etwas, das gerade niemand sehen kann.
+  if (wahlOffen()) {
+    if (ereignis.key === "Escape") wahlAlleZu();
+    return;
+  }
   const taste = ereignis.key;
   if (taste === " " || taste === "k") { ereignis.preventDefault(); spielenUmschalten(); }
   else if (taste === "ArrowLeft") springen(-10);
@@ -1099,11 +1451,11 @@ function stufenSetzen(stufen) {
   stufenWahl.disabled = stufen.length < 2;
   // Die hoechste Stufe von Anfang an - derselbe Grund wie bei voe-qualitaet.js:
   // "Auto" regelt einmal nach unten und kommt von selbst oft nicht wieder hoch.
-  if (stufen.length > 1 && hls) {
+  if (stufen.length > 1) {
     const beste = stufen.reduce((bester, stufe, nummer) => (
       (stufe.height || 0) > (stufen[bester].height || 0) ? nummer : bester
     ), 0);
-    hls.currentLevel = beste;
+    if (hls) hls.currentLevel = beste;
     stufenWahl.value = String(beste);
   }
 }
