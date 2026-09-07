@@ -3,6 +3,35 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.8 — 7. September 2026
+
+**Watchparty pausiert auf demselben Einzelbild und startet gemeinsam.** Desktop
+und Android übertragen jetzt den Zeitstempel des tatsächlich dargestellten
+Bildes. Dadurch wählen Chromium und Media3 auch bei Bildraten wie 23,976 fps
+dasselbe Standbild, statt trotz gleicher Zeitanzeige benachbarte Bilder zu zeigen.
+
+Beim Weiterlaufen wartet das Relay auf die bestätigte Bereitschaft der Player
+und gibt anschließend einen gemeinsamen Startzeitpunkt vor. Eine Pause bricht
+auch einen noch vorbereiteten Start ab. Verspätete Bereitmeldungen, alte Befehle
+nach einem Folgenwechsel und Statusmeldungen aus der Vorbereitung können die
+Wiedergabe nicht erneut starten oder auf die alte Startposition zurücksetzen.
+
+**Die Playbuttons zeigen einen einheitlichen Zustand.** Desktop verwendet
+zentrierte, einfarbige Symbole und einen abbrechbaren Wartezustand. Auf Android
+zeigen der große Button und der Button in der Leiste dieselbe Aktion; Play und
+Pause auf der Fernbedienung werden getrennt behandelt. Auch die Zeitanzeige
+rundet auf beiden Plattformen gleich.
+
+Auf einem echten Windows-PC und Galaxy S24 Ultra mit Videos bei 25 und
+23,976 fps geprüft: zehn Pausen auf demselben Einzelbild, acht gemeinsame
+Starts mit zuletzt unter 10 ms gemessener Wiedergabeabweichung sowie Abbruch
+während der Startvorbereitung. 116 Testsuiten bestanden; die abschließenden
+Button-Änderungen wurden zusätzlich gezielt und auf den Geräten geprüft.
+
+**Desktop, APK und Relay aktualisieren.** Die neue Startvorbereitung benötigt
+das Relay aus dieser Version. Die Messungen gelten für dieselbe Videofassung
+auf beiden Geräten; sie messen keine physische Display-Latenz.
+
 ## 2.0.7 — 7. September 2026
 
 **Die Ausrichtung nach der Pause kam zur falschen Zeit — und danach gar nicht

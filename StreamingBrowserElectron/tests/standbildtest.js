@@ -61,10 +61,10 @@ async function warteBis(bedingung, hoechstens = 6000) {
 /**
  * Ein Video, das seine Suchvorgaenge ernst nimmt.
  *
- * @param raster auf welches Gitter der Sprung aufsetzt, in Sekunden. 0 heisst
- *               "trifft genau"; 0.04 ist ein Bild bei 25 Bildern je Sekunde,
- *               und so verhalten sich Quellen, die auf Schluesselbilder
- *               aufsetzen.
+ * @param raster optionale, künstliche Rasterung. Der Standard ist exakt: ein
+ *               HTMLMediaElement meldet seine `currentTime` nicht zwangsweise
+ *               auf 40 ms gerundet zurück. Eine solche Rundung würde die
+ *               produktive 1-ms-Readiness-Schleife als Mock-Artefakt blockieren.
  */
 function videoBauen(raster = 0) {
   const horcher = {};
@@ -201,16 +201,14 @@ function geraet(name, raster) {
         const jetzt = raeume.serverJetzt(RAUM);
         const startAt = jetzt == null ? 0 : jetzt + sync.START_VORLAUF_MS;
         raeume.steuernMitEinstellung(KEY, "play", stelle, FOLGE, RAUM, { startAt });
-        // Wie main.js: der Ausloeser wartet denselben Augenblick ab.
-        player.steuernAusRunde({
-          tun: "stelle", stelle, laufen: true, springen: false,
-          wartenMs: sync.START_VORLAUF_MS, genau: false
-        });
+        // Der Ausloeser bleibt bis zu seinem eigenen Relay-Echo stehen. Erst
+        // syncprepare bestätigt die Bereitschaft, syncstart lässt alle los.
         return;
       }
       raeume.steuernMitAdresse(KEY, aktion, stelle, FOLGE, RAUM);
     }
   };
+  bruecke.syncBereit = (syncId) => raeume.bereitZumStart(KEY, RAUM, syncId);
 
   const geraetObjekt = {
     name, bild, zustand: [], protokoll: [],
@@ -258,7 +256,7 @@ function geraet(name, raster) {
       offen: { season: 1, episode: 4 }
     });
     if (urteil.merken) letzte.ereignis = urteil.merken;
-    if (urteil.tun !== "anwenden" && urteil.tun !== "syncstart") return;
+    if (urteil.tun !== "anwenden" && urteil.tun !== "syncprepare" && urteil.tun !== "syncstart") return;
     const stand = raeume.uhrStand(RAUM);
     const ereignis = sync.ereignisFuerPlayer(
       nachricht, sync.laeuftDanach(nachricht), stand ? stand.versatz : 0,
@@ -272,7 +270,8 @@ function geraet(name, raster) {
       laufen,
       springen: !urteil.nichtSpringen,
       wartenMs: plan.wartenMs,
-      genau: urteil.genau
+      genau: urteil.genau,
+      bereitId: urteil.tun === "syncprepare" ? String(nachricht.syncId || "") : ""
     };
     geraetObjekt.protokoll.push({
       aktion: nachricht.action,
@@ -295,7 +294,7 @@ function geraet(name, raster) {
   // Drei Geraete mit *verschiedenem* Suchverhalten - so ist es in Wirklichkeit
   // auch: der eine Hoster liefert feine Bruchstuecke, der andere setzt auf
   // Schluesselbilder auf.
-  const raster = Number(process.env.RASTER ?? 0.04);
+  const raster = Number(process.env.RASTER ?? 0);
   const host = geraet("Host", raster);
   const gastA = geraet("GastA", raster);
   const gastB = geraet("GastB", raster);

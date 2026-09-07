@@ -485,8 +485,8 @@ class Watchparty {
     this.senden({ type: "syncall", key, position });
   }
 
-  bereitZumStart(key) {
-    this.senden({ type: "syncready", key });
+  bereitZumStart(key, syncId) {
+    this.senden({ type: "syncready", key, syncId: String(syncId || "") });
   }
 
   // Den Host an ein anderes Geraet weitergeben.

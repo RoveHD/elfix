@@ -282,6 +282,21 @@ class Wahl {
 }
 
 const bild = document.getElementById("bild");
+// currentTime can sit between two frames. Keep the actual presented PTS so
+// Media3 and Chromium can select the same still image after pausing.
+let dargestelltesBild = null;
+if (typeof bild.requestVideoFrameCallback === "function") {
+  const merken = (_, metadata) => {
+    dargestelltesBild = Number.isFinite(metadata.mediaTime) ? metadata.mediaTime : null;
+    bild.requestVideoFrameCallback(merken);
+  };
+  bild.requestVideoFrameCallback(merken);
+  bild.addEventListener("emptied", () => { dargestelltesBild = null; });
+}
+function pausiertesBild() {
+  return bild.paused && !bild.seeking && dargestelltesBild != null
+    && Math.abs(dargestelltesBild - bild.currentTime) < .25 ? dargestelltesBild : undefined;
+}
 const regler = document.getElementById("regler");
 const lautstaerke = document.getElementById("lautstaerke");
 const stufenWahl = new Wahl("stufen", "Bildqualit\u00e4t");
@@ -422,10 +437,22 @@ function pufferZeigen(an) {
  * als eines.
  */
 function spielenZeichnen() {
-  const zeichen = bild.paused ? "▶" : "⏸";
-  knopfSpielen.textContent = zeichen;
-  knopfMitte.textContent = zeichen;
-  knopfMitte.title = bild.paused ? "Abspielen (Leertaste)" : "Pause (Leertaste)";
+  const pausiert = bild.paused && !startAusstehend;
+  const zustand = pausiert ? "play" : "pause";
+  const beschreibung = startAusstehend ? "Gemeinsamen Start abbrechen (Leertaste)"
+    : pausiert ? "Abspielen (Leertaste)" : "Pause (Leertaste)";
+  for (const knopf of [knopfSpielen, knopfMitte]) {
+    if (knopf.getAttribute("data-play-state") !== zustand) {
+      knopf.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+        + (pausiert ? '<path d="M8 5v14l11-7z"/>'
+          : '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>')
+        + '</svg>';
+      knopf.setAttribute("data-play-state", zustand);
+    }
+    knopf.title = beschreibung;
+    knopf.setAttribute("aria-label", beschreibung);
+    knopf.setAttribute("aria-busy", String(startAusstehend));
+  }
   knopfMitte.hidden = !puffer.hidden || !fehlerKasten.hidden;
 }
 
@@ -490,6 +517,10 @@ const HARMLOSE_ABLEHNUNG = ["AbortError", "NotAllowedError"];
  * die Laufzeit der Nachricht plus Springen und Puffern, und er blieb stehen.
  */
 function spielenUmschalten() {
+  if (inRunde && (startAusstehend || !bild.paused)) {
+    pauseAnfordern();
+    return;
+  }
   if (!bild.paused) {
     bild.pause();
     return;
@@ -501,20 +532,30 @@ function spielenUmschalten() {
   spielenJetzt();
 }
 
-/** Wenn die Runde nicht antwortet, faengt es trotzdem an. */
+/** Ohne bestaetigten Zeitpunkt bleibt die Runde angehalten. */
 let startNotbremse = 0;
+let startAusstehend = false;
+
+function pauseAnfordern() {
+  ++startAuftrag;
+  startAusstehend = false;
+  clearTimeout(startNotbremse);
+  ausRundeBis = Date.now() + 900;
+  bild.pause();
+  bruecke.aktion("pause", Number(bild.currentTime) || 0);
+  spielenZeichnen();
+}
 
 function startAnfordern() {
   clearTimeout(startNotbremse);
+  startAusstehend = true;
+  spielenZeichnen();
   bruecke.aktion("play", Number(bild.currentTime) || 0);
-  // Kein Zeitpunkt, keine Runde, kein Relay - nach knapp zwei Sekunden gilt
-  // wieder das Einfache: dieser Player faengt an. Ein Knopf, der nichts tut,
-  // waere das schlechtere Ende.
+  // Ein Verbindungsproblem darf keinen einzelnen Zuschauer starten lassen.
   startNotbremse = setTimeout(() => {
-    if (!bild.paused) return;
-    ausRundeBis = Date.now() + 900;
-    spielenJetzt();
-  }, 1800);
+    startAusstehend = false;
+    spielenZeichnen();
+  }, 10000);
   schichtenZeigen();
 }
 
@@ -582,23 +623,30 @@ function steuernAusRunde(befehl) {
   clearTimeout(startNotbremse);
   ausRundeBis = Date.now() + 900;
   const stelle = Number(befehl.stelle);
-  const warten = Number(befehl.wartenMs) || 0;
+  const frist = Number(befehl.startLokal) || (Date.now() + (Number(befehl.wartenMs) || 0));
+  const warten = Math.max(0, frist - Date.now());
   const springbar = befehl.springen !== false && Number.isFinite(stelle) && stelle >= 0;
   // Ein verabredeter Start: springen, fertigmachen, und erst zum vereinbarten
   // Zeitpunkt loslassen - Host wie Gast, zur selben Serverzeit. Der Ausloeser
   // springt dabei nicht (er steht schon dort), wartet aber genauso.
-  if (befehl.laufen && warten > 0) {
-    startVerabredet(stelle, warten, springbar);
+  if (befehl.laufen && (befehl.startLokal || warten > 0)) {
+    startVerabredet(stelle, warten, springbar, frist);
     return;
   }
   const meiner = ++startAuftrag;
+  startAusstehend = Boolean(befehl.bereitId);
+  spielenZeichnen();
 
   // Anhalten. Erst stehen, dann genau auf die Stelle - in dieser Reihenfolge,
   // sonst laeuft das Bild waehrend des Sprungs noch ein Stueck weiter.
   if (!befehl.laufen) {
     bild.pause();
     if (springbar) {
-      genauSetzen(stelle, befehl.genau !== false, meiner);
+      const fertig = genauSetzen(stelle, befehl.genau !== false, meiner);
+      if (befehl.bereitId) fertig.then(async () => {
+        const bereit = await bereitFuerStart(stelle, 2500);
+        if (bereit && meiner === startAuftrag) bruecke.syncBereit?.(befehl.bereitId);
+      });
     } else if (befehl.genau !== false) {
       /*
        * Der Host springt nicht auf die Stelle der Runde - er *ist* sie. Aber er
@@ -632,12 +680,10 @@ function steuernAusRunde(befehl) {
 /**
  * So nah muss die Stelle sitzen, damit es dasselbe Bild ist.
  *
- * Zwanzig Millisekunden. Ein Bild ist bei 24 Bildern je Sekunde rund 42 ms
- * lang, bei 60 noch 17 - die Schwelle liegt also unter einem Bild der
- * ueblichen Fassungen und ueber dem, was ein Player beim Suchen von sich aus
- * danebenliegt.
+ * Eine Millisekunde entspricht der Zeitaufloesung des nativen Players.
+ * Fuer das gemeinsame Standbild wird zusaetzlich der echte Frame-PTS benutzt.
  */
-const SEEK_TOLERANZ_S = 0.02;
+const SEEK_TOLERANZ_S = 0.001;
 
 /**
  * Genau auf eine Stelle - und nachsehen, ob es gesessen hat.
@@ -675,6 +721,7 @@ async function genauSetzen(ziel, genau, meiner, vonRunde = true) {
 
 /** Auf das Ende eines Suchvorgangs warten - aber nicht ewig. */
 function seekAbwarten(hoechstens = 1200) {
+  if (!bild.seeking) return Promise.resolve(true);
   return new Promise((fertig) => {
     let erledigt = false;
     const abschliessen = (gesessen) => {
@@ -707,20 +754,29 @@ function seekAbwarten(hoechstens = 1200) {
  */
 let startAuftrag = 0;
 
-async function startVerabredet(stelle, wartenMs, springen = true) {
+async function startVerabredet(stelle, wartenMs, springen = true, startLokal = Date.now() + wartenMs) {
   const meiner = ++startAuftrag;
+  startAusstehend = true;
+  spielenZeichnen();
   // So lange gilt alles, was hier am Video geschieht, als "kam von der Runde" -
   // sonst meldete die Pause von gleich eine eigene Pause zurueck.
   ausRundeBis = Date.now() + wartenMs + 3200;
-  const frist = Date.now() + wartenMs;
+  const frist = startLokal;
   bild.pause();
-  if (springen) {
+  if (springen && Math.abs(Number(bild.currentTime) - stelle) > SEEK_TOLERANZ_S) {
     bild.currentTime = stelle;
     vorigeStelle = stelle;
   }
 
-  await bereitFuerStart(springen ? stelle : Number(bild.currentTime) || 0, 2500);
+  const bereit = await bereitFuerStart(springen ? stelle : Number(bild.currentTime) || 0, 2500);
   if (meiner !== startAuftrag) return;
+  if (!bereit) {
+    // A source can lose its buffer after acknowledging preparation. Pause the
+    // round instead of letting this player start alone when buffering ends.
+    if (inRunde) pauseAnfordern();
+    else startAusstehend = false;
+    return;
+  }
 
   const rest = frist - Date.now();
   if (rest > 0) {
@@ -736,6 +792,7 @@ async function startVerabredet(stelle, wartenMs, springen = true) {
     bild.currentTime = stelle + zuspaet * tempo;
     vorigeStelle = bild.currentTime;
   }
+  startAusstehend = false;
   ausRundeBis = Date.now() + 900;
   bild.play().catch(() => {});
 }
@@ -745,7 +802,7 @@ function bereitFuerStart(stelle, hoechstens) {
   return new Promise((fertig) => {
     const bis = Date.now() + hoechstens;
     const pruefen = () => {
-      const nah = Math.abs(Number(bild.currentTime) - stelle) <= 0.4;
+      const nah = Math.abs(Number(bild.currentTime) - stelle) <= SEEK_TOLERANZ_S;
       if (nah && !bild.seeking && bild.readyState >= 3) return fertig(true);
       if (Date.now() > bis) return fertig(false);
       setTimeout(pruefen, 40);
@@ -756,7 +813,7 @@ function bereitFuerStart(stelle, hoechstens) {
 
 function fernSteuern(auftragFern) {
   const befehl = auftragFern.befehl;
-  if (befehl === "pause") bild.pause();
+  if (befehl === "pause") { if (inRunde) pauseAnfordern(); else bild.pause(); }
   else if (befehl === "abspielen") { if (bild.paused) spielenUmschalten(); }
   else if (befehl === "umschalten") spielenUmschalten();
   else if (befehl === "stumm") tonUmschalten();
@@ -1708,6 +1765,9 @@ function starten(neuerAuftrag) {
   marke = auftrag.marke || null;
   knopfMarke.hidden = true;
   inRunde = Boolean(auftrag.runde);
+  ++startAuftrag;
+  startAusstehend = false;
+  clearTimeout(startNotbremse);
   binHost = Boolean(auftrag.rundeHost);
   // Das Tempo der Runde gilt ab der ersten Sekunde - auch fuer den, der gerade
   // erst dazukommt. Gemeldet wird es dabei nicht: es kam ja von dort.
@@ -1841,6 +1901,7 @@ setInterval(() => {
   bruecke.takt({
     auftragId: auftrag?.id,
     stelle: Number(bild.currentTime) || 0,
+    frameTime: pausiertesBild(),
     laeuft: !bild.paused && !bild.ended,
     puffert
   });

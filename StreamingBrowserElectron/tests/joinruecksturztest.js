@@ -293,9 +293,14 @@ function rundenstand(c) {
     const bPause = await B.erwarte((m) => m.type === "control" && m.action === "pause", 1800);
     pruefe("6c. Pause des Hosts kommt an", Boolean(bPause), bPause ? "ja" : "nein");
     A.pausiert = false;
-    B.leeren();
+    A.leeren(); B.leeren(); C.leeren();
     A.send({ type: "control", key: KEY, action: "play", position: A.stelle, url: URL1 });
-    const bPlay = await B.erwarte((m) => m.type === "control" && m.action === "play", 1800);
+    const [vorA, vorB, vorC] = await Promise.all([A, B, C]
+      .map((c) => c.erwarte((m) => m.type === "syncprepare", 1800)));
+    for (const [c, vor] of [[A, vorA], [B, vorB], [C, vorC]]) {
+      if (vor?.syncId) c.send({ type: "syncready", key: KEY, syncId: vor.syncId });
+    }
+    const bPlay = await B.erwarte((m) => m.type === "syncstart", 1800);
     pruefe("6d. Und Play ebenso", Boolean(bPlay), bPlay ? "ja" : "nein");
     await schlaf(300);
   }

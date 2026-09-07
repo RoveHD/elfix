@@ -212,6 +212,26 @@ function rechner(name) {
   return api;
 }
 
+async function startSchranke(pc, tv, key, offen) {
+  await warteBis(() => pc.steuerung.some((m) => m.action === "syncprepare")
+    && tv.steuerung().some((m) => m.action === "syncprepare"), "beide bereiten den Start vor");
+  const pcVor = pc.steuerung.filter((m) => m.action === "syncprepare").pop();
+  const tvVor = tv.steuerung().filter((m) => m.action === "syncprepare").pop();
+  const urteil = tvVor ? tv.bruecke.steuerungPruefen(tvVor, {
+    binHost: false, hostId: "Rechner-id", gleicheAdresse: true, season: 1, episode: 4
+  }) : null;
+  pruefe("4b. Beide bereiten denselben syncId-Start wirklich vor",
+    Boolean(tvVor?.syncId) && tvVor.syncId === pcVor?.syncId
+      && urteil?.tun === "syncprepare" && urteil.skript.includes("abwarten")
+      && urteil.skript.includes("media.pause()"),
+    `${tvVor?.syncId || ""} / ${urteil?.tun || ""}`);
+  pc.raeume.bereitZumStart(key, RAUM, pcVor.syncId);
+  tv.bruecke.bereitZumStart(key, RAUM, tvVor.syncId);
+  await warteBis(() => pc.steuerung.some((m) => m.action === "syncstart")
+    && tv.steuerung().some((m) => m.action === "syncstart"), "beide bekommen syncstart");
+  return tv.steuerung().filter((m) => m.action === "syncstart").pop();
+}
+
 (async () => {
   /* ============================ 1. Der Schluessel ========================= */
 
@@ -422,21 +442,20 @@ function rechner(name) {
     JSON.stringify(pc.steuerung.map((m) => m.action)));
 
   tv.ereignisse.length = 0;
+  pc.steuerung.length = 0;
   pc.melden(pcKey, "play", 90, folge(4));
-  await warteBis(() => tv.steuerung().some((m) => m.action === "play"),
-    "Play vom Rechner kommt auf Android an");
-  const spielen = tv.steuerung().find((m) => m.action === "play");
-  pruefe("4b. Play vom Rechner kommt auf Android an", Boolean(spielen));
+  const spielen = await startSchranke(pc, tv, pcKey, folge(4));
+  pruefe("4c. Play vom Rechner kommt nach der Startschranke auf Android an", Boolean(spielen));
   const urteil = spielen ? tv.bruecke.steuerungPruefen(spielen, {
     binHost: false, hostId: "Rechner-id", gleicheAdresse: true, season: 1, episode: 4
   }) : null;
-  pruefe("4c. Android wendet es auf den Player an",
-    Boolean(urteil) && urteil.tun === "anwenden" && urteil.skript.includes("media.play()"),
+  pruefe("4d. Android wendet syncstart im Player an",
+    Boolean(urteil) && urteil.tun === "syncstart" && urteil.skript.includes("media.play()"),
     urteil ? urteil.tun : "kein Urteil");
 
   // Keine Schleife: der angewendete Befehl darf nicht als eigene Tat
   // zurueckgehen. Das Skript setzt dafuer den Erwartungsmerker im Player.
-  pruefe("4d. Der angewendete Befehl traegt den Echo-Schutz",
+  pruefe("4e. Der angewendete Befehl traegt den Echo-Schutz",
     Boolean(urteil) && urteil.skript.includes("__elfixWpErwartet"),
     "sonst meldet der eigene Player das Echo als eigene Tat zurueck");
 

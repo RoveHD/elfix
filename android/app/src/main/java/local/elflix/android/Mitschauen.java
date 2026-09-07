@@ -160,6 +160,7 @@ public final class Mitschauen {
     private String meldeStand = "__elfix:wp:stand:";
     private String meldeSync = "__elfix:wp:sync:";
     private String meldeUi = "__elfix:wp:ui:";
+    private String meldeBereit = "__elfix:wp:bereit:";
 
     /* ------------------------------------------------ Titel und Raum hier */
 
@@ -255,6 +256,10 @@ public final class Mitschauen {
      * 0:00, waehrend die anderen bei 0:12 standen.
      */
     private final java.util.Set<String> angeklinkt = new java.util.HashSet<>();
+    /** Der aktuelle Zwei-Phasen-Start je Raum und Titel. */
+    private final java.util.Map<String, String> startVorbereitungen = new java.util.HashMap<>();
+    /** Die Relay-Nachricht zum eindeutigen Zwei-Phasen-Start. */
+    private final java.util.Map<String, JSONObject> startNachrichten = new java.util.HashMap<>();
 
     /**
      * Wo das Live-Schauen abgeschaltet ist - je Raum und Titel.
@@ -337,6 +342,7 @@ public final class Mitschauen {
             praefix("watchparty-bruecke.MELDE_START", wert -> meldeStart = wert);
             praefix("watchparty-bruecke.MELDE_PHASE", wert -> meldePhase = wert);
             praefix("watchparty-bruecke.MELDE_UI", wert -> meldeUi = wert);
+            praefix("watchparty-bruecke.MELDE_BEREIT", wert -> meldeBereit = wert);
         });
     }
 
@@ -368,6 +374,17 @@ public final class Mitschauen {
         if (erreicht <= 0) return;
         Log.d(TAG, "Watchparty-Horcher in " + erreicht + " Rahmen");
         einklinken();
+        // Kam syncprepare waehrend des Folgenwechsels oder noch vor dem ersten
+        // Player-Rahmen an, wird es erst jetzt ausgefuehrt. Eine Bereitschaft
+        // ohne geladenen Player wuerde den Rest der Runde zu frueh freigeben.
+        if (webFolgeNachricht != null && gleicheFolge(
+            webFolgeNachricht.optString("url", ""), umgebung.adresse())) {
+            JSONObject nachricht = webFolgeNachricht;
+            JSONObject urteil = webFolgeUrteil;
+            webFolgeNachricht = null;
+            webFolgeUrteil = null;
+            ausfuehren(ansicht, nachricht, urteil);
+        }
     }
 
     /**
@@ -536,6 +553,11 @@ public final class Mitschauen {
 
         if (watchparty == null || !watchparty.istEingeschaltet()) return;
         if (!imVordergrund) return;
+        if (zeile.startsWith(meldeBereit)) {
+            JSONObject nachricht = startNachrichten.get(zeile.substring(meldeBereit.length()).trim());
+            if (nachricht != null) bereitMelden(nachricht);
+            return;
+        }
         if (zeile.startsWith(meldeSync)) {
             // Nur im Debug-Bau und nur eine Zeile: die Messung laeuft im
             // Zwei-Sekunden-Takt, und das Skript meldet ohnehin nur, wenn
@@ -589,16 +611,14 @@ public final class Mitschauen {
                 if (fehler != null) { Log.d(TAG, "Steuerbefehl nicht gesendet: " + fehler); return; }
                 if (wert == null || "null".equals(wert)) return;
                 Log.i(TAG, "Watchparty gesendet: " + wert);
-                // Ein Play ist eine Verabredung: die Bruecke gibt ein Urteil
-                // zurueck, mit dem der eigene Player denselben Augenblick
-                // abwartet wie alle anderen. Ohne das liefe der Ausloeser
-                // sofort los und die anderen holten auf.
-                if (!umgebung.nativerSpieler()) return;
-                try {
-                    JSONObject antwort = new JSONObject(wert);
-                    JSONObject urteil = antwort.optJSONObject("urteil");
-                    if (urteil != null) umgebung.nativSteuern(urteil, null);
-                } catch (org.json.JSONException ignoriert) { }
+                // Der Aufruf beantwortet nur das Senden. Er ist nicht der
+                // autoritative Steuerbefehl: das Relay kann die Stelle (bei
+                // Pause) und den gemeinsamen Startzeitpunkt (bei Play) noch
+                // korrigieren. Den lokalen Spieler hier schon anzufassen
+                // erzeugt deshalb einen optimistischen Start auf der Uhr des
+                // Kernels, waehrend die anderen auf den Echo-Befehl warten.
+                // Der Relay-Echo wird ueber steuerung() ausgefuehrt und ist
+                // fuer alle Geraete einschliesslich des Absenders gleich.
             });
     }
 
@@ -961,12 +981,46 @@ public final class Mitschauen {
 
     private JSONObject nativeFolgeNachricht;
     private JSONObject nativeFolgeUrteil;
+    private JSONObject webFolgeNachricht;
+    private JSONObject webFolgeUrteil;
 
     private void ausfuehren(WebView ansicht, JSONObject nachricht, JSONObject urteil) {
         String tun = urteil.optString("tun", "nichts");
         if ("nichts".equals(tun)) {
             Log.d(TAG, "Watchparty-Befehl verworfen: " + urteil.optString("grund", ""));
             return;
+        }
+        String startMarke = startMarke(nachricht);
+        String syncId = nachricht.optString("syncId", "");
+        String aktion = nachricht.optString("action", "");
+        if ("syncprepare".equals(tun)) {
+            // Nur diese Generation darf spaeter "bereit" melden. Ein zweites
+            // Play ersetzt den ersten Anlauf noch waehrend dessen Seek laeuft.
+            // Ein manuelles syncall aelterer Relays hat keine syncId: dessen
+            // Vorbereitung wird weiterhin angewendet, benoetigt aber keine
+            // Bereitschaft fuer eine Startschranke.
+            if (!syncId.isEmpty()) {
+                String alt = startVorbereitungen.put(startMarke, syncId);
+                if (alt != null) startNachrichten.remove(alt);
+                startNachrichten.put(syncId, nachricht);
+            }
+        } else if ("syncstart".equals(tun) || "pause".equals(aktion)
+            || "seek".equals(aktion) || "play".equals(aktion) || "navigate".equals(aktion)) {
+            String offen = startVorbereitungen.get(startMarke);
+            if (!"syncstart".equals(tun) || offen == null || offen.equals(syncId)) {
+                startVorbereitungen.remove(startMarke);
+                if (offen != null) startNachrichten.remove(offen);
+            }
+            // Ein zwischengespeichertes syncprepare darf nach einer Absage oder
+            // einem neueren Start nicht beim spaeteren Player-Aufbau aufleben.
+            if (nativeFolgeNachricht != null && startMarke.equals(startMarke(nativeFolgeNachricht))) {
+                nativeFolgeNachricht = null;
+                nativeFolgeUrteil = null;
+            }
+            if (webFolgeNachricht != null && startMarke.equals(startMarke(webFolgeNachricht))) {
+                webFolgeNachricht = null;
+                webFolgeUrteil = null;
+            }
         }
         if ("navigate".equals(tun)) {
             folgen(ansicht, urteil.optString("url", ""));
@@ -981,14 +1035,16 @@ public final class Mitschauen {
             String ziel = nachricht.optString("url", "");
             if (!ziel.isEmpty() && !gleicheFolge(ziel, umgebung.adresse())
                 && folgen(ansicht, ziel)) {
-                // Gewechselt: die Bereitmeldung geht trotzdem sofort hinaus,
-                // sonst warten die anderen bis zum Zeitlimit auf ein Geraet,
-                // das gerade eine Seite laedt.
+                // Gewechselt: die Vorbereitung bleibt liegen, bis der neue
+                // Player wirklich geladen, gesprungen und gepuffert ist.
                 if (umgebung.nativerSpieler()) {
                     nativeFolgeNachricht = nachricht;
                     nativeFolgeUrteil = urteil;
                 }
-                else bereitMelden(nachricht);
+                else {
+                    webFolgeNachricht = nachricht;
+                    webFolgeUrteil = urteil;
+                }
                 return;
             }
         }
@@ -1005,24 +1061,40 @@ public final class Mitschauen {
         // "mit Video" gemeldet hat, waere sonst nie erreichbar. Ein Werberahmen
         // bleibt trotzdem still: das Skript kehrt ohne jedes <video> sofort um.
         boolean istAutostart = "autostart".equals(tun);
-        int erreicht = istAutostart
-            ? rahmen.anAlle(ansicht, skript)
-            : rahmen.anSpieler(ansicht, skript);
+        int erreicht;
+        if (istAutostart) erreicht = rahmen.anAlle(ansicht, skript);
+        else erreicht = rahmen.anSpieler(ansicht, skript);
         Log.i(TAG, "Watchparty " + tun + " (" + urteil.optString("grund", "")
             + ") in " + erreicht + " Rahmen");
         if (istAutostart) return;
-        // Beim gemeinsamen Gleichziehen wartet die Runde auf die Bereitmeldung.
-        // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten
-        // die anderen unnoetig bis zum Zeitlimit.
-        if ("syncprepare".equals(tun)) bereitMelden(nachricht);
+        if ("syncprepare".equals(tun) && erreicht == 0) {
+            // Der Player kann innerhalb desselben Dokuments kurz spaeter
+            // erscheinen. anPlayer() nimmt den Auftrag dann wieder auf.
+            webFolgeNachricht = nachricht;
+            webFolgeUrteil = urteil;
+        }
         umgebung.anzeigeAuffrischen();
+    }
+
+    private static String startMarke(JSONObject nachricht) {
+        return nachricht.optString("room", "") + "|" + nachricht.optString("key", "");
     }
 
     private void bereitMelden(JSONObject nachricht) {
         String key = nachricht.optString("key", "");
         if (key.isEmpty() || kern == null || !kern.istBereit()) return;
         String raum = nachricht.optString("room", raum());
-        kern.rufe("watchparty-bruecke.bereitZumStart", Kern.args(key, raum), (wert, fehler) -> { });
+        // syncId bindet die Bereitschaft an genau diesen Play-Versuch. Ohne
+        // sie konnte eine spaete Antwort eines alten Anlaufs den naechsten
+        // gemeinsamen Start freigeben.
+        String syncId = nachricht.optString("syncId", "");
+        String marke = startMarke(nachricht);
+        if (syncId.isEmpty() || !syncId.equals(startVorbereitungen.get(marke))) return;
+        // Pro Geraet und Generation genau eine Bereitmeldung. Mehrere gemeldete
+        // Video-Rahmen koennen dasselbe Promise beenden.
+        startVorbereitungen.remove(marke);
+        startNachrichten.remove(syncId);
+        kern.rufe("watchparty-bruecke.bereitZumStart", Kern.args(key, raum, syncId), (wert, fehler) -> { });
     }
 
     /**

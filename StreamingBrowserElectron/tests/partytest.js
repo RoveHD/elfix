@@ -96,6 +96,25 @@ async function beitreten(c, teilen = false) {
   await c.erwarte((m) => m.type === "state" && m.shared?.some((x) => x.memberIds?.includes(c.deviceId)), "beigetreten");
 }
 
+// Play ist ein gemeinsamer Zwei-Phasen-Start: alle richten sich erst aus und
+// bestaetigen die gepufferte Stelle, danach kommt ein einzelnes syncstart.
+// Die Testhelfer vollziehen genau diesen Protokollweg statt ein altes
+// `control play` als Erfolg zu zaehlen.
+async function gemeinsamStarten(ausloeser, teilnehmer, position, url) {
+  ausloeser.send({ type: "control", key: KEY, action: "play", position, url });
+  const vorbereitet = await Promise.all(teilnehmer.map((c) =>
+    c.erwarte((m) => m.type === "syncprepare", `Vorbereitung ${c.name}`)
+  ));
+  if (vorbereitet.some((m) => !m) || vorbereitet.some((m, i) => m.syncId !== vorbereitet[i].syncId)) return null;
+  for (let i = 0; i < teilnehmer.length; i += 1) {
+    teilnehmer[i].send({ type: "syncready", key: KEY, syncId: vorbereitet[i].syncId });
+  }
+  const gestartet = await Promise.all(teilnehmer.map((c) =>
+    c.erwarte((m) => m.type === "syncstart" && m.syncId === vorbereitet[0].syncId, `Start ${c.name}`)
+  ));
+  return gestartet.some((m) => !m) ? null : gestartet;
+}
+
 (async () => {
   const A = client("A", "geraet-a");
   const B = client("B", "geraet-b");
@@ -113,8 +132,8 @@ async function beitreten(c, teilen = false) {
 
   // --- 2. A spielt Folge 1, B sieht Folge 1 ------------------------------
   A.leeren(); B.leeren();
-  A.send({ type: "control", key: KEY, action: "play", position: 12, url: folge(1) });
-  const play1 = await B.erwarte((m) => m.type === "control" && m.action === "play", "play");
+  const start1 = await gemeinsamStarten(A, [A, B], 12, folge(1));
+  const play1 = start1 && start1[1];
   pruefe("2. B bekommt Folge 1 mit der richtigen Adresse",
     play1 && play1.url === folge(1), play1 ? play1.url : "kam nicht");
 
@@ -145,8 +164,8 @@ async function beitreten(c, teilen = false) {
 
   // --- 5. B startet wieder -> A wird mitgenommen -------------------------
   A.leeren(); B.leeren();
-  B.send({ type: "control", key: KEY, action: "play", position: 20, url: folge(2) });
-  const zurueck = await A.erwarte((m) => m.type === "control" && m.action === "play", "play an A");
+  const start2 = await gemeinsamStarten(B, [A, B], 20, folge(2));
+  const zurueck = start2 && start2[0];
   pruefe("5. B startet, A wird mitgenommen", Boolean(zurueck),
     zurueck ? `position=${zurueck.position.toFixed(2)}` : "kam nicht");
 
@@ -165,8 +184,8 @@ async function beitreten(c, teilen = false) {
     A.leeren(); B.leeren();
     A.send({ type: "control", key: KEY, action: "pause", position: 8, url: folge(n) });
     const p = await B.erwarte((m) => m.type === "control" && m.action === "pause", "pause");
-    A.send({ type: "control", key: KEY, action: "play", position: 8, url: folge(n) });
-    const w = await B.erwarte((m) => m.type === "control" && m.action === "play", "play");
+    const start = await gemeinsamStarten(A, [A, B], 8, folge(n));
+    const w = start && start[1];
     A.send({ type: "control", key: KEY, action: "seek", position: 60, url: folge(n) });
     const sp = await B.erwarte((m) => m.type === "control" && m.action === "seek", "seek");
     const raum = letzterEintrag(B);
@@ -235,13 +254,12 @@ async function beitreten(c, teilen = false) {
   pruefe("11. Ein neuer Teilnehmer aendert den Host nicht",
     letzterEintrag(D)?.hostId === B2.deviceId, `hostId=${letzterEintrag(D)?.hostId}`);
 
-  // --- 12. Kein Echo an den Absender -------------------------------------
+  // --- 12. Der Ausloeser bereitet sich selbst mit vor --------------------
   B2.leeren();
   B2.send({ type: "control", key: KEY, action: "play", position: 90, url: folge(6) });
-  await schlaf(400);
-  const echo = B2.eingang.filter((m) => m.type === "control" && m.action === "play");
-  pruefe("12. Ein eigener Befehl kommt nicht als Echo zurueck", echo.length === 0,
-    `${echo.length} Echos`);
+  const echo = await B2.erwarte((m) => m.type === "syncprepare", "eigene Vorbereitung");
+  pruefe("12. Ein eigener Start bekommt die gemeinsame Vorbereitung", Boolean(echo?.syncId),
+    echo?.syncId || "kam nicht");
 
   for (const t of pulse) clearInterval(t);
   for (const c of [A, B2, C, D]) c.zu();

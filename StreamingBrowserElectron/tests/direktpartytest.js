@@ -110,7 +110,12 @@ function handy(name) {
   const bruecke = androidModul("watchparty-bruecke.js", {
     window: {
       crypto: { randomUUID: () => `${name}-${Math.random().toString(16).slice(2)}` },
-      ElfixKern: { ereignis: (art, nutzlast) => ereignisse.push({ art, nutzlast }) },
+      ElfixKern: { ereignis: (art, nutzlast) => {
+        ereignisse.push({ art, nutzlast });
+        if (art !== "watchparty:steuerung") return;
+        const n = typeof nutzlast === "string" ? JSON.parse(nutzlast) : nutzlast;
+        if (art === "watchparty:steuerung" && n.action === "syncprepare" && n.syncId) api.empfangen(n);
+      } },
       WebSocket: WS
     },
     WebSocket: WS,
@@ -164,7 +169,7 @@ function handy(name) {
       player.laeuft = !gerechnet.warten && Boolean(ereignis && ereignis.playing);
       if (nachricht.action === "syncprepare") {
         bereitGemeldet += 1;
-        bruecke.bereitZumStart(nachricht.key, nachricht.room);
+        bruecke.bereitZumStart(nachricht.key, nachricht.room, nachricht.syncId);
       }
       return urteil;
     },
@@ -227,7 +232,10 @@ function rechner(name) {
     // Auch die eigenen Echos: das Relay schickt jeden Steuerbefehl an alle,
     // und der Anstoss zum Gleichziehen kommt beim Absender genauso an wie bei
     // den anderen - applyWatchpartyControl behandelt ihn dort ebenso.
-    onControl: (nachricht) => steuerung.push(nachricht),
+    onControl: (nachricht) => {
+      steuerung.push(nachricht);
+      if (nachricht.action === "syncprepare" && nachricht.syncId) api.empfangen(nachricht);
+    },
     onWatchstate: () => {}
   });
   raeume.konfigurieren({
@@ -274,7 +282,8 @@ function rechner(name) {
     get spielerTakt() {
       return { stelle: player.position, laeuft: player.laeuft, puffert: player.puffert, at: Date.now() };
     },
-    spielerDrift: driftStand
+    spielerDrift: driftStand,
+    spielerSyncBereit: null
   });
   vm.runInContext([
     funktion("watchpartyEreignis"),
@@ -305,7 +314,7 @@ function rechner(name) {
       // Beim Gleichziehen meldet prepareWatchpartySync die Bereitschaft. Sie
       // haengt nicht am Player - auch wer die Folge gar nicht offen hat, meldet
       // sich, sonst warten die anderen bis zum Zeitlimit.
-      if (urteil.tun === "syncprepare") raeume.bereitZumStart(eintrag.key, eintrag.room || RAUM);
+      if (urteil.tun === "syncprepare") raeume.bereitZumStart(eintrag.key, eintrag.room || RAUM, nachricht.syncId);
       return { ...urteil, erledigt };
     },
 
@@ -389,9 +398,11 @@ function rechner(name) {
       `laeuft=${tv.player.laeuft} stelle=${tv.player.position.toFixed(2)} soll=${pause.position}`);
   }
 
+  const vorPlay = tv.steuerung().length;
   pc.melden("play", 300);
-  await warteBis(() => tv.steuerung().some((n) => n.action === "play" && n.from === "Rechner"), "Play am Telefon");
-  const play = tv.steuerung().find((n) => n.action === "play" && n.from === "Rechner");
+  await warteBis(() => tv.steuerung().slice(vorPlay).some((n) => n.action === "syncstart"), "Start am Telefon");
+  const play = tv.steuerung().slice(vorPlay).find((n) => n.action === "syncstart");
+  pruefe("3c0. Erst nach beiden Bereitmeldungen kommt der Start", Boolean(play && play.startAt));
   if (play) {
     tv.empfangen(play);
     pruefe("3c. Das Telefon laeuft weiter, mit der Laufzeit der Nachricht",
@@ -440,14 +451,16 @@ function rechner(name) {
       `laeuft=${pc.player.laeuft} befehle=${pc.befehle.length - vorPause}`);
     // Der Host springt nicht auf seine eigene Stelle - das laesst nur neu puffern.
     const letzter = pc.befehle[pc.befehle.length - 1];
-    pruefe("4d. Dem Host wird kein Sprung aufgedraengt",
-      pcIstHost ? letzter.springen === false : letzter.springen === true,
+    pruefe("4d. Auch der Host uebernimmt die bestaetigte Pausenposition",
+      letzter.springen === true,
       `host=${pcIstHost} springen=${letzter.springen}`);
   }
 
+  const vorHandyPlay = pc.steuerung.length;
   tv.melden("play", 640);
-  await warteBis(() => pc.steuerung.some((n) => n.action === "play" && n.from === "Handy"), "Play am Rechner");
-  const pcPlay = pc.steuerung.find((n) => n.action === "play" && n.from === "Handy");
+  await warteBis(() => pc.steuerung.slice(vorHandyPlay).some((n) => n.action === "syncstart"), "Start am Rechner");
+  const pcPlay = pc.steuerung.slice(vorHandyPlay).find((n) => n.action === "syncstart");
+  pruefe("4e0. Auch ein Handy-Start wartet auf die Bereitschaft", Boolean(pcPlay && pcPlay.startAt));
   if (pcPlay) {
     await pc.empfangen(pcPlay);
     pruefe("4e. Der Rechner laeuft wieder", pc.player.laeuft,
@@ -458,8 +471,8 @@ function rechner(name) {
 
   const vorher = tv.bereitZahl;
   pc.raeume.gleichziehen(KEY, pc.player.position, RAUM);
-  await warteBis(() => tv.steuerung().some((n) => n.action === "syncprepare"), "syncprepare am Telefon");
-  const vorbereiten = tv.steuerung().find((n) => n.action === "syncprepare");
+  await warteBis(() => tv.steuerung().some((n) => n.action === "syncprepare" && !n.syncId), "syncprepare am Telefon");
+  const vorbereiten = tv.steuerung().find((n) => n.action === "syncprepare" && !n.syncId);
   pruefe("5a. Das Gleichziehen erreicht das Telefon", Boolean(vorbereiten));
   if (vorbereiten) {
     tv.empfangen(vorbereiten);
@@ -467,7 +480,7 @@ function rechner(name) {
       !tv.player.laeuft && tv.bereitZahl === vorher + 1,
       `laeuft=${tv.player.laeuft} bereit=${tv.bereitZahl}`);
   }
-  const pcVorbereiten = pc.steuerung.find((n) => n.action === "syncprepare");
+  const pcVorbereiten = pc.steuerung.find((n) => n.action === "syncprepare" && !n.syncId);
   if (pcVorbereiten) {
     const urteilPc = await pc.empfangen(pcVorbereiten);
     pruefe("5c. Auch der Rechner haelt zum Gleichziehen an",
@@ -483,11 +496,11 @@ function rechner(name) {
     Math.abs(tv.player.position - pc.player.position) < 1.5,
     `Telefon=${tv.player.position.toFixed(2)} Rechner=${pc.player.position.toFixed(2)}`);
 
-  const vorWeiter = tv.steuerung().filter((n) => n.action === "play").length;
+  const vorWeiter = tv.steuerung().filter((n) => n.action === "syncstart").length;
   pc.melden("play", pc.player.position);
-  await warteBis(() => tv.steuerung().filter((n) => n.action === "play").length > vorWeiter,
+  await warteBis(() => tv.steuerung().filter((n) => n.action === "syncstart").length > vorWeiter,
     "Weiterlaufen am Telefon");
-  const weiter = tv.steuerung().filter((n) => n.action === "play" && n.from === "Rechner").pop();
+  const weiter = tv.steuerung().filter((n) => n.action === "syncstart").pop();
   if (weiter) {
     tv.empfangen(weiter);
     pruefe("5e. Ein Play danach laesst beide gemeinsam weiterlaufen",

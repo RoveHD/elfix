@@ -278,6 +278,9 @@ async function teilZwei() {
 
   pc.send({ type: "share", item: titel(FILM_KEY, FILM, "film", 0, 0, "Spider-Man") });
   pc.send({ type: "share", item: titel(SERIEN_KEY, folge(1, 8), "serie", 1, 8, "Black Torch") });
+  // Separate sockets have no ordering guarantee: enter must follow the share
+  // being visible to this client, otherwise it can reach the relay first.
+  await warteBis(() => handy.aktive().length === 2, "Handy hat beide geteilten Titel erhalten");
   handy.send({ type: "enter", key: FILM_KEY });
   handy.send({ type: "enter", key: SERIEN_KEY });
   await warteBis(() => pc.aktive().length === 2 && handy.aktive().length === 2, "beide Titel im Raum");

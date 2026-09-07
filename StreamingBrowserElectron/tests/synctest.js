@@ -142,8 +142,33 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   // --- 1. Host spielt bei 100 -------------------------------------------
   A.leeren(); B.leeren();
   steuern(A, "play", 100);
-  const play = await B.erwarte((m) => m.type === "control" && m.action === "play", "play an B");
-  pruefe("Gast bekommt play mit Host-Position", Math.abs(play.position - 100) < 0.01, `position=${play.position}`);
+  const vorPlayA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung an Host");
+  const vorPlayB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung an Gast");
+  pruefe("Play bereitet auch den Ausloeser vor",
+    !vorPlayA.fehlt && vorPlayA.syncId === vorPlayB.syncId,
+    vorPlayA.fehlt ? "kam nicht" : `sync=${vorPlayA.syncId}`);
+  pruefe("Die Vorbereitung nimmt die Host-Position", Math.abs(vorPlayB.position - 100) < 0.01,
+    `position=${vorPlayB.position}`);
+  A.send({ type: "syncready", key: KEY, syncId: vorPlayA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: vorPlayB.syncId });
+  const playA = await hole(A, (m) => m.type === "syncstart", "Start an Host");
+  const play = await B.erwarte((m) => m.type === "syncstart", "Start an B");
+  pruefe("Play startet nach dem Puffer-Vorlauf",
+    Number(playA.startAt) >= Number(playA.timestamp) + 750,
+    `startAt=${playA.startAt} timestamp=${playA.timestamp}`);
+  pruefe("Alle bekommen fuer Play denselben Startzeitpunkt",
+    playA.startAt === play.startAt && playA.syncId === vorPlayA.syncId,
+    `A=${playA.startAt} B=${play.startAt}`);
+
+  // Bis zum verabredeten Zeitpunkt meldet ein vorbereiteter Player noch
+  // "pausiert". Das Relay darf daraus kein eigenes Nachreich-Play ohne
+  // startAt bauen, sonst wird der gemeinsame Start sofort ueberschrieben.
+  B.leeren();
+  B.send({ type: "here", key: KEY, position: 100, paused: true, season: 1, episode: 1,
+    url: URL1, playerSessionId: `${B.deviceId}-e1` });
+  const voreilig = await B.still((m) => m.type === "control" && m.action === "play" && m.resync, 300);
+  pruefe("Ein pausierter Herzschlag vor startAt bekommt kein Ersatz-Play", voreilig,
+    voreilig ? "ruhig" : "vorzeitiges Play");
 
   // --- 2. Gast pausiert: alle muessen auf die Host-Zeit ------------------
   await schlaf(700);
@@ -152,7 +177,7 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   const pauseA = await hole(A, (m) => m.type === "control" && m.action === "pause", "pause an A");
   const pauseB = await hole(B, (m) => m.type === "control" && m.action === "pause", "pause-Echo an B");
   pruefe("Pause geht auch an den Ausloeser zurueck", !pauseB.fehlt, `position=${pauseB.position}`);
-  pruefe("Pause nutzt Host-Zeit statt der 50s des Gastes", pauseA.position > 100 && pauseA.position < 103,
+  pruefe("Pause nutzt Host-Zeit statt der 50s des Gastes", pauseA.position >= 100 && pauseA.position < 103,
     `position=${pauseA.position.toFixed(2)}`);
   pruefe("Beide bekommen dieselbe Sekunde", Math.abs(pauseA.position - pauseB.position) < 0.001,
     `A=${pauseA.position.toFixed(2)} B=${pauseB.position.toFixed(2)}`);
@@ -170,7 +195,7 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   const vorB = await hole(B, (m) => m.type === "syncprepare", "syncprepare B");
   pruefe("Sync bereitet beide auf dieselbe Stelle vor", Math.abs(vorA.position - vorB.position) < 0.001,
     `A=${vorA.position.toFixed(2)} B=${vorB.position.toFixed(2)}`);
-  pruefe("Sync nimmt die Host-Zeit, nicht die 7s des Ausloesers", vorA.position > 100,
+  pruefe("Sync nimmt die Host-Zeit, nicht die 7s des Ausloesers", vorA.position >= 100,
     `position=${vorA.position.toFixed(2)}`);
   pruefe("Und er haelt an, statt weiterzuspielen", vorA.playing === false,
     `playing=${vorA.playing}`);
@@ -187,8 +212,12 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   // Weiter geht es mit einem gewoehnlichen Play des Hosts.
   A.leeren(); B.leeren();
   steuern(A, "play", vorA.position);
-  const weiterB = await hole(B, (m) => m.type === "control" && m.action === "play", "play an B");
-  pruefe("Ein Play des Hosts laesst die Runde weiterlaufen", !weiterB.fehlt,
+  const weiterVorA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung A");
+  const weiterVorB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung B");
+  A.send({ type: "syncready", key: KEY, syncId: weiterVorA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: weiterVorB.syncId });
+  const weiterB = await hole(B, (m) => m.type === "syncstart", "Start an B");
+  pruefe("Ein Play des Hosts laesst die Runde gemeinsam weiterlaufen", !weiterB.fehlt,
     `position=${Number(weiterB.position).toFixed(2)}`);
   await schlaf(400);
   // --- 4. Folgenwechsel: Abgleich muss danach noch antworten -------------
@@ -367,6 +396,11 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   // Die Runde laeuft (Host spielt), B meldet sich als pausiert.
   A.leeren(); B.leeren();
   steuern(A, "play", 10);
+  const holenVorA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung A zum Nachreichen");
+  const holenVorB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung B zum Nachreichen");
+  A.send({ type: "syncready", key: KEY, syncId: holenVorA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: holenVorB.syncId });
+  await hole(B, (m) => m.type === "syncstart", "Start zum Nachreichen");
   await schlaf(200);
   B.leeren();
   melde(B, { position: 10, paused: true, episode: 4 });
@@ -388,7 +422,14 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   // beim Host, sondern alle zu ihm.
   A.leeren(); B.leeren();
   steuern(A, "play", 600);
-  await schlaf(250);
+  const hostVorA = await hole(A, (m) => m.type === "syncprepare", "Vorbereitung A vor Host-Stand");
+  const hostVorB = await hole(B, (m) => m.type === "syncprepare", "Vorbereitung B vor Host-Stand");
+  A.send({ type: "syncready", key: KEY, syncId: hostVorA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: hostVorB.syncId });
+  await hole(B, (m) => m.type === "syncstart", "Start vor Host-Stand");
+  // Erst nach dem gemeinsamen Zeitpunkt ist die nachfolgende Player-Meldung
+  // die juengste Quelle, nicht mehr das geplante syncstart-Ereignis.
+  await schlaf(900);
   melde(A, { position: 640, paused: false, episode: 4 });
   await schlaf(250);
   B.leeren();
@@ -420,10 +461,12 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
     genau && Math.abs(genau.position - 800.42) < 0.001,
     genau ? `position=${genau.position}` : "keine Ausrichtung");
 
-  // Der Host selbst bekommt keinen Sprungbefehl.
+  // Der Host bekommt denselben finalen Sprung. Erst dadurch ist sein Bild
+  // nach dem lokalen Pause-Ereignis exakt mit den anderen ausgerichtet.
   const anHost = await A.erwarte((m) => m.type === "control" && m.action === "seek", "Sprung an Host", 700)
     .catch(() => null);
-  pruefe("Der Host bekommt dabei keinen Sprung", !anHost, anHost ? "er wurde gesprungen" : "bleibt stehen");
+  pruefe("Der Host bekommt dieselbe exakte Stelle", anHost && Math.abs(anHost.position - 800.42) < 0.001,
+    anHost ? `position=${anHost.position}` : "kein Sprung");
 
   // Und nur einmal je Pause, nicht bei jedem Herzschlag.
   B.leeren();
@@ -431,6 +474,29 @@ const hole = (c, passt, was, ms = 1500) => c.erwarte(passt, was, ms).catch(() =>
   const nochmalGenau = await B.erwarte((m) => m.type === "control" && m.action === "seek", "zweite Ausrichtung", 800)
     .catch(() => null);
   pruefe("Ausgerichtet wird einmal je Pause", !nochmalGenau, nochmalGenau ? "kam erneut" : "nur einmal");
+
+  // Missing readiness must cancel the pending UI operation as well as keep
+  // playback paused. A delayed acknowledgement must not revive that start.
+  A.leeren(); B.leeren();
+  A.send({ type: "control", key: KEY, action: "pause", position: 800.42 });
+  A.send({ type: "here", key: KEY, position: 800.42, paused: true, frameTime: 800.416667,
+    url: URL4, season: 1, episode: 4, playerSessionId: "frame-test" });
+  const frameSeek = await hole(B, m => m.type === "control" && m.action === "seek" && m.frameTime != null, "Bildzeit des Hosts");
+  pruefe("Die Ausrichtung traegt den echten Bildzeitstempel ohne Millisekunden-Rundung",
+    frameSeek.position === 800.416667 && frameSeek.frameTime === 800.416667);
+  A.leeren(); B.leeren();
+  A.send({ type: "control", key: KEY, action: "play", position: 800.42 });
+  const timeoutPrep = await hole(A, (m) => m.type === "syncprepare", "Start vor Timeout");
+  pruefe("Der naechste Start behaelt dasselbe vorbereitete Einzelbild",
+    timeoutPrep.position === 800.416667 && timeoutPrep.frameTime === 800.416667);
+  const timeoutPause = await A.erwarte(m => m.type === "control" && m.reason === "sync-timeout", "Timeout-Pause", 6500).catch(() => null);
+  pruefe("Fehlende Bereitschaft beendet den Start mit einer autoritativen Pause",
+    timeoutPause?.action === "pause" && timeoutPause?.position === timeoutPrep?.position);
+  A.leeren(); B.leeren();
+  A.send({ type: "syncready", key: KEY, syncId: timeoutPrep.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: timeoutPrep.syncId });
+  const revived = await A.erwarte(m => m.type === "syncstart", "verspaetetes Bereit", 300).catch(() => null);
+  pruefe("Bereitschaft nach Timeout startet die Runde nicht erneut", !revived);
 
   for (const timer of pulse) clearInterval(timer);
   A.socket.close();

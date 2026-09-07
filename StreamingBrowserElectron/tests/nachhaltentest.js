@@ -45,6 +45,15 @@ function client(name, id, stur) {
         const m = JSON.parse(String(roh));
         eingang.push(m);
         if (m.type === "control" && !api.stur) api.befolgen(m);
+        // Ein normaler Start ist nun erst eine Vorbereitung. Das Testgeraet
+        // bestaetigt sie nur, nachdem es wirklich angehalten und die Stelle
+        // uebernommen hat; ein stures Geraet beantwortet sie absichtlich nie.
+        if (m.type === "syncprepare" && !api.stur) {
+          api.pausiert = true;
+          api.stelle = Number(m.position) || api.stelle;
+          api.send({ type: "syncready", key: KEY, syncId: m.syncId });
+        }
+        if (m.type === "syncstart" && !api.stur) api.befolgen({ ...m, action: "play" });
         for (let i = warten.length - 1; i >= 0; i -= 1) {
           if (warten[i].passt(m)) { warten[i].resolve(m); warten.splice(i, 1); }
         }
@@ -222,11 +231,12 @@ function rundenFolge(c) {
     pruefe("D3. Waehrend der Host puffert, wird niemand zurueckgestoppt",
       Handy.alle(nachgehalten).length === 0, `${Handy.alle(nachgehalten).length} Pausen`);
 
-    // Laeuft er auch danach nicht an, gilt wieder allein sein Stand: er ist
-    // die Zeitquelle, und wer laeuft, waehrend er steht, wird angehalten.
+    // Meldet der Host seine Vorbereitung nicht bereit, bleibt der gemeinsame
+    // Start aus. Damit laeuft niemand voraus und es braucht auch keine spaete
+    // nachgehaltene Pause mehr.
     const spaeter = await Handy.erwarte(nachgehalten, 4000);
-    pruefe("D4. Bleibt er stehen, gilt danach wieder sein Stand",
-      Boolean(spaeter), spaeter ? "pause" : "keine Pause");
+    pruefe("D4. Ohne Bereitmeldung bleibt die Runde stehen",
+      !spaeter && Handy.pausiert, spaeter ? "unerwartete Pause" : `Handy pausiert=${Handy.pausiert}`);
 
     H.stur = false;
     H.pausiert = false;

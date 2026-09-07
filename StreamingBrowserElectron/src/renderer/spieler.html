@@ -241,6 +241,18 @@
   }
   #mitteSpielen:hover { background: rgba(10, 14, 22, 0.86); transform: scale(1.06); }
   #mitteSpielen.weg { opacity: 0; pointer-events: none; }
+  #spielen { position: relative; width: 40px; min-width: 40px; height: 36px; padding: 0; display: grid; place-items: center; }
+  #spielen svg, #mitteSpielen svg { display: block; width: 20px; height: 20px; fill: currentColor; pointer-events: none; }
+  #mitteSpielen svg { width: 32px; height: 32px; }
+  #spielen[aria-busy="true"]::after, #mitteSpielen[aria-busy="true"]::after {
+    content: ""; position: absolute; width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.2); border-top-color: #3D92FF;
+    animation: dreh 900ms linear infinite; pointer-events: none;
+  }
+  #mitteSpielen[aria-busy="true"]::after { width: 54px; height: 54px; }
+  @media (prefers-reduced-motion: reduce) {
+    #spielen[aria-busy="true"]::after, #mitteSpielen[aria-busy="true"]::after { animation: none; }
+  }
 
   #puffer {
     width: 46px; height: 46px; border-radius: 50%;

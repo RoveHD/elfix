@@ -271,8 +271,8 @@ function versatzAusProben(proben) {
 //      erreichen, die noch bei der alten Folge stehen.
 //   3. Erst danach die Frage, ob ueberhaupt dieselbe Folge offen ist. Wer eine
 //      Folge zurueckliegt, wird nicht mitpausiert.
-//   4. Der Host springt nie. Er gibt den Takt vor; Anhalten und Weiterlaufen
-//      macht er trotzdem mit, sonst liefe er waehrend eines Abgleichs davon.
+//   4. Die Stelle des Relays ist verbindlich. Auch der Ausloeser folgt ihr bei
+//      Pause, Sprung, Gleichziehen und geplantem Start.
 //
 // @param nachricht  das Ereignis des Relays
 // @param lage       { letzter, binHost, hostId, offen: {season, episode}|null,
@@ -309,7 +309,7 @@ function steuerungEntscheiden(nachricht, lage = {}) {
   if (!passt) return { ...nichts("andere folge"), merken };
 
   if (aktion === "syncprepare") {
-    return { tun: "syncprepare", merken, genau: true, warten: true, nichtSpringen: binHost, grund: "gleichziehen" };
+    return { tun: "syncprepare", merken, genau: true, warten: true, nichtSpringen: false, grund: "gleichziehen" };
   }
 
   // Tempo und Fassung sind Einstellungen der Runde, keine Stellen. Sie halten
@@ -351,8 +351,10 @@ function steuerungEntscheiden(nachricht, lage = {}) {
     merken,
     genau,
     warten: false,
-    // Der Host springt nie - die anderen kommen zu ihm.
-    nichtSpringen: binHost,
+    // Das Relay hat die autoritative Stelle festgelegt. Auch der Ausloeser
+    // folgt ihr bei Pause, Seek und geplantem Play, damit kein lokaler Stand
+    // als zweite Zeitquelle übrig bleibt.
+    nichtSpringen: false,
     grund: aktion
   };
 }
@@ -361,7 +363,10 @@ function steuerungEntscheiden(nachricht, lage = {}) {
 // und der gemessene Uhrversatz - mehr braucht dort niemand, und mehr soll dort
 // auch nicht ankommen.
 function ereignisFuerPlayer(nachricht, laeuft, versatz, hatUhr) {
-  return {
+  const roheFrameTime = nachricht && nachricht.frameTime;
+  const frameTime = typeof roheFrameTime === "number" && Number.isFinite(roheFrameTime)
+    && roheFrameTime >= 0 ? roheFrameTime : NaN;
+  const ereignis = {
     videoTime: Number(nachricht.videoTime ?? nachricht.position) || 0,
     timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
     playing: Boolean(laeuft),
@@ -374,6 +379,10 @@ function ereignisFuerPlayer(nachricht, laeuft, versatz, hatUhr) {
     // Player braucht es, und dort steht sonst nichts darueber.
     tempo: tempoLesen(nachricht.tempo)
   };
+  // `0` ist ein gueltiger erster Frame. Fehlt die Metadatenangabe hingegen,
+  // darf sie nicht durch Number(null) als erfundene 0:00 weiterreisen.
+  if (Number.isFinite(frameTime)) ereignis.frameTime = frameTime;
+  return ereignis;
 }
 
 // --- Das Tempo der Runde -----------------------------------------------------
@@ -458,12 +467,8 @@ function applyScript(action, ereignis, optionen = {}) {
   const sicher = erlaubt.includes(String(action)) ? String(action) : "seek";
   const genau = optionen.genau ? "true" : "false";
   const warten = optionen.warten ? "true" : "false";
-  // Der Host springt nie. Er gibt den Takt vor - alle anderen richten sich nach
-  // ihm, nicht umgekehrt. Anhalten und Weiterlaufen gelten fuer ihn trotzdem,
-  // sonst liefe er waehrend eines Abgleichs davon.
-  const nichtSpringen = optionen.nichtSpringen ? "true" : "false";
   return `(async () => {
-    ${alsQuelltext(zielZeitBerechnen)}
+    ${alsQuelltext(zielZeitBerechnen, startPlan)}
 
     const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
     const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
@@ -472,7 +477,6 @@ function applyScript(action, ereignis, optionen = {}) {
     const aktion = "${sicher}";
     const genau = ${genau};
     const warten = ${warten};
-    const nichtSpringen = ${nichtSpringen};
     const anhalten = aktion === "pause" || aktion === "syncprepare";
     // Womit play() abgelehnt hat, falls es das tat. Siehe unten: die Antwort
     // dieses Skripts soll den Unterschied zwischen "laeuft" und "abgelehnt"
@@ -486,12 +490,27 @@ function applyScript(action, ereignis, optionen = {}) {
     // und dem Augenblick, in dem das Video wirklich anlaeuft, vergeht Zeit.
     const E = ${JSON.stringify(ereignisSaeubern(ereignis))};
     const versatz = ${Number(ereignis && ereignis.versatz) || 0};
-    const zielJetzt = () => zielZeitBerechnen(E, Date.now() + versatz);
-
-    // Tempo gehoert nicht zu dieser Architektur. Steht noch eines von einer
-    // aelteren Fassung oder von der Seite selbst, kommt es hier weg.
-    try { if (media.playbackRate !== 1) media.playbackRate = 1; } catch (_) {}
-
+    const serverJetzt = () => Date.now() + versatz;
+    const planJetzt = () => startPlan(E, serverJetzt(), 0);
+    // currentTime kann zwischen zwei Bildern liegen. Fuer eine Pause und den
+    // vorbereiteten gemeinsamen Start ist die rVFC-Medienzeit das sichtbare
+    // Bild und damit die maßgebliche Stelle; das Relay setzt videoTime dazu
+    // ebenfalls auf denselben Wert.
+    const frameZiel = Number(E.frameTime);
+    const hatFrameZiel = Number.isFinite(frameZiel) && frameZiel >= 0;
+    const zielJetzt = () => {
+      // Nach der gemeinsamen Startlinie beschreibt videoTime bereits die
+      // kanonische laufende Stelle. frameTime war das Standbild beim
+      // Vorbereiten und darf dann nicht die Verspätung abschneiden.
+      const geplant = Number(E.startAt);
+      const nochVorStart = laufen && Number.isFinite(geplant) && geplant > serverJetzt();
+      return (hatFrameZiel && (anhalten || nochVorStart)) ? frameZiel : planJetzt().stelle;
+    };
+    // Jede neue Anweisung macht alle noch wartenden Teile der vorherigen
+    // ungültig. Das schließt ein lokales Pause/Seek aus dem Beobachter ein.
+    const generation = (Number(window.__elfixWpGeneration) || 0) + 1;
+    window.__elfixWpGeneration = generation;
+    const aktuell = () => window.__elfixWpGeneration === generation;
     const ziel = zielJetzt();
     // Was der eigene Player gleich von sich aus melden wird, ist nur das Echo
     // dieser Anweisung. Nur genau das wird verschluckt - eine Gegenrichtung
@@ -518,52 +537,76 @@ function applyScript(action, ereignis, optionen = {}) {
       .concat([merken])
       .slice(-6);
 
-    // Warten, bis der Sprung wirklich sitzt und genug geladen ist. Wer zu
-    // frueh weitermacht, startet mitten im Nachladen und liegt sofort wieder
-    // hinter den anderen.
-    const abwarten = (stelle, frist) => new Promise((fertig) => {
+    // Warten, bis der Sprung wirklich sitzt und genug geladen ist. Bei Pause
+    // und gezieltem Seek ist ein Millisekunden-Bild die Vorgabe, nicht eine
+    // grobe Naeherung.
+    const abwarten = (stelle, frist, toleranz) => new Promise((fertig) => {
       const bis = Date.now() + frist;
       const pruefen = () => {
-        const nah = stelle == null || Math.abs(Number(media.currentTime) - stelle) <= 0.5;
+        if (!aktuell()) return fertig(false);
+        const nah = stelle == null || Math.abs(Number(media.currentTime) - stelle) <= toleranz;
         if (nah && !media.seeking && media.readyState >= 3) return fertig(true);
-        if (Date.now() > bis) return fertig(nah);
-        setTimeout(pruefen, 80);
+        if (Date.now() > bis) return fertig(nah && !media.seeking && media.readyState >= 3);
+        setTimeout(pruefen, 25);
       };
       pruefen();
     });
 
-    try {
-      // Bei einer Pause und beim Gleichziehen sitzt jeder auf derselben Stelle
-      // wie der Host - da zaehlt der Bruchteil. Sonst reicht eine halbe
-      // Sekunde: naeher heranzuspringen kostet einen Puffervorgang und bringt
-      // weniger, als er stoert.
-      const toleranz = genau ? 0.05 : 0.5;
-      const springbar = !nichtSpringen && ziel >= 0 && ziel < media.duration - 1 && (genau || ziel > 0);
-      if (springbar && Math.abs(Number(media.currentTime) - ziel) > toleranz) {
-        media.currentTime = ziel;
+    const sprungSitzen = async (stelle, genau) => {
+      const toleranz = genau ? 0.001 : 0.35;
+      // Manche Hoster verwerfen den ersten Seek, solange sie noch laden.
+      // Drei kurze, begrenzte Versuche sind genug; danach bleibt das Ergebnis
+      // sichtbar als "ungenau", statt eine alte Aktion endlos fortzusetzen.
+      for (let versuch = 0; versuch < 3 && aktuell(); versuch += 1) {
+        if (Math.abs(Number(media.currentTime) - stelle) > toleranz) media.currentTime = stelle;
+        if (await abwarten(stelle, 450, toleranz)) return true;
       }
-      if (anhalten) media.pause();
+      return Math.abs(Number(media.currentTime) - stelle) <= toleranz
+        && !media.seeking && media.readyState >= 3;
+    };
+
+    const bisZeitpunkt = (ms) => new Promise((fertig) => {
+      const warten = () => {
+        if (!aktuell() || Date.now() >= ms) return fertig(aktuell());
+        setTimeout(warten, Math.min(25, Math.max(1, ms - Date.now())));
+      };
+      warten();
+    });
+
+    const fremdPausieren = () => {
+      const pauseEcho = { aktion: "pause", ziel: Number(media.currentTime), bis: Date.now() + 1500 };
+      window.__elfixWpEcho = (Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [])
+        .concat([pauseEcho]).slice(-6);
+      media.pause();
+    };
+
+    try {
+      const praezise = genau || anhalten || aktion === "seek";
+      const springbar = ziel >= 0 && ziel <= media.duration && (praezise || ziel > 0);
+      // Beim Anhalten muss erst das laufende Bild stehen. Ein asynchroner Seek
+      // auf einem noch laufenden Video verschiebt sonst gerade die Stelle, die
+      // als gemeinsames Standbild gelten soll. Auch ein geplanter Start hält
+      // vor dem Vorbereiten an.
+      if (anhalten || laufen) fremdPausieren();
+      if (springbar) await sprungSitzen(ziel, praezise);
+      if (!aktuell()) return "abgebrochen";
 
       if (laufen) {
-        // Der smarte Start. Erst dorthin, wo der Host beim Absenden war plus
-        // die Laufzeit der Nachricht - dann abwarten, bis genug gepuffert ist,
-        // und unmittelbar vor dem play() noch einmal nachrechnen. Der Host hat
-        // waehrend des Puffems ja weitergeschaut.
-        if (springbar) {
-          await abwarten(ziel, 2500);
-          const nachgerechnet = zielJetzt();
-          // Die Schwelle liegt bewusst niedrig. Was hier fehlt, ist genau die
-          // Pufferzeit von eben - und der zweite Sprung geht ein Stueck nach
-          // vorn in den Bereich, der gerade geladen wurde, kostet also im
-          // Regelfall keinen zweiten Puffervorgang. Bei 0,75 blieb der
-          // uebliche Fall von einer halben Sekunde unkorrigiert stehen.
-          if (Math.abs(Number(media.currentTime) - nachgerechnet) > 0.35) {
-            media.currentTime = nachgerechnet;
-            // Kuerzer und ohne Anspruch auf volle Pufferung: ein zweites
-            // langes Warten wuerde das Ergebnis wieder veralten lassen.
-            await abwarten(nachgerechnet, 900);
-          }
-          window.__elfixWpErwartet.ziel = zielJetzt();
+        // Der Serverzeitpunkt ist die gemeinsame Startlinie. Bis dahin bleibt
+        // auch der Ausloeser stehen; ältere asynchrone Plays verlieren hier
+        // gegen jedes spätere Pause/Seek.
+        const plan = planJetzt();
+        if (plan.wartenMs > 0 && !(await bisZeitpunkt(Date.now() + plan.wartenMs))) return "abgebrochen";
+        if (!aktuell()) return "abgebrochen";
+        const nachgerechnet = zielJetzt();
+        // Nach der Deadline wird nicht noch auf einen millisekundengenauen
+        // Seek gewartet: das würde gerade den gemeinsamen Start verpassen.
+        // Ein nennenswerter später Timer wird einmal direkt korrigiert.
+        if (nachgerechnet >= 0 && nachgerechnet <= media.duration
+          && Math.abs(Number(media.currentTime) - nachgerechnet) > 0.02) {
+          media.currentTime = nachgerechnet;
+          merken.ziel = nachgerechnet;
+          window.__elfixWpErwartet = merken;
         }
         // Das Versprechen von play() wird ausgewertet und nicht weggefangen.
         // Es still zu verschlucken war der Grund, warum ein abgelehntes play()
@@ -571,6 +614,7 @@ function applyScript(action, ereignis, optionen = {}) {
         // waehrend das Bild stand. Gewartet wird nur kurz - ein Player, der
         // sein Versprechen gar nicht einloest, soll den Befehl nicht aufhalten.
         try {
+          if (!aktuell()) return "abgebrochen";
           const p = media.play();
           if (p && typeof p.then === "function") {
             await Promise.race([
@@ -584,70 +628,40 @@ function applyScript(action, ereignis, optionen = {}) {
           abgelehnt = String((fehler && fehler.message) || fehler).slice(0, 120);
         }
 
-        // Der Nachlauf: was zwischen play() und dem ersten wirklich
-        // fortschreitenden Bild vergeht.
-        //
-        // Der smarte Start rechnet die Laufzeit der Nachricht heraus und den
-        // Puffervorgang davor - aber nicht das, was danach passiert. Auf einem
-        // langsamen Geraet nimmt play() den Befehl an, und das Video steht noch
-        // ein paar Zehntel, bevor es losgeht. Gemeldet vom Fire TV: "meistens
-        // ne Sekunde hinten, weils noch laedt, waehrend die anderen schon
-        // schauen koennen."
-        //
-        // Die Notbremse weiter unten faengt das nicht: sie greift erst ab fuenf
-        // Sekunden, und zwar mit Absicht - im laufenden Betrieb ist jeder
-        // Sprung teurer als der Versatz. Hier ist es umgekehrt. Der Player
-        // puffert in diesem Augenblick ohnehin, ein Sprung nach vorn kostet
-        // also nichts extra, und die halbe Sekunde bleibt sonst fuer den Rest
-        // der Folge stehen.
-        //
-        // Er wird *nicht* abgewartet. Die Antwort dieses Skripts sagt, ob der
-        // Befehl angekommen ist, und daran haengt beim gemeinsamen Gleichziehen
-        // die Bereitmeldung der ganzen Runde - eine Sekunde Warten auf ein
-        // Video, das vielleicht gar nicht mehr anlaeuft, waere dort eine
-        // Sekunde fuer alle. Der Nachlauf laeuft deshalb hinterher, im selben
-        // Rahmen, und korrigiert, wenn es so weit ist.
-        //
-        // Nur nach vorn. Zurueckzuspringen hiesse, etwas noch einmal zu zeigen,
-        // das man schon gesehen hat - das faellt auf, ein bisschen Vorsprung
-        // nicht. Und nur einmal: danach uebernimmt wieder die Notbremse.
-        if (springbar && !abgelehnt) {
+        // Nimmt ein langsamer Player play() an, bewegt sein erstes Bild sich
+        // manchmal erst deutlich später. Ein einmaliger Sprung nach vorn holt
+        // nur diesen Startnachlauf auf; jede spätere Korrektur bleibt weiter
+        // der konservativen Driftregel vorbehalten.
+        if (!abgelehnt && aktuell()) {
           const bis = Date.now() + 1500;
           let vorher = Number(media.currentTime);
-          const sehen = () => {
+          const nachlauf = () => {
+            if (!aktuell()) return;
             const stelle = Number(media.currentTime);
-            const laeuft = !media.paused && !media.seeking
-              && media.readyState >= 3 && stelle > vorher;
-            if (!laeuft) {
+            if (media.paused || media.seeking || media.readyState < 3 || stelle <= vorher) {
               vorher = stelle;
-              if (Date.now() < bis) setTimeout(sehen, 60);
+              if (Date.now() < bis) setTimeout(nachlauf, 50);
               return;
             }
             const soll = zielJetzt();
             const rueckstand = soll - stelle;
-            // Untere Grenze: darunter sieht es niemand, und ein Sprung waere
-            // teurer als der Versatz. Obere Grenze: was so weit auseinander
-            // liegt, ist kein Nachlauf mehr, sondern ein anderer Fehler - und
-            // den behebt ein Sprung nicht.
-            if (rueckstand > 0.6 && rueckstand < 15 && soll < media.duration - 1) {
+            if (rueckstand > 0.6 && rueckstand < 15 && soll >= 0 && soll <= media.duration) {
               media.currentTime = soll;
-              // Das Echo dieses Sprungs gehoert weiter uns. Ohne das laeuft
-              // die Frist des Merkzettels waehrenddessen ab, der Horcher haelt
-              // die Korrektur fuer eine eigene Tat und meldet sie der Runde.
               merken.ziel = soll;
               merken.bis = Date.now() + 1500;
               window.__elfixWpErwartet = merken;
             }
           };
-          setTimeout(sehen, 60);
+          setTimeout(nachlauf, 50);
         }
+
       }
 
       if (!warten) {
         if (laufen && abgelehnt) return "play-abgelehnt:" + abgelehnt;
         return anhalten ? "pausiert" : (laufen ? "laeuft" : "gesprungen");
       }
-      const bereit = await abwarten(nichtSpringen ? null : ziel, 2200);
+      const bereit = await abwarten(anhalten ? ziel : null, 2200, anhalten ? 0.001 : 0.35);
       return bereit ? "bereit" : "ungenau";
     } catch (_) {
       return "fehlgeschlagen";
@@ -686,12 +700,6 @@ function driftScript(ereignis) {
     const E = ${JSON.stringify(ereignisSaeubern(ereignis))};
     const versatz = ${Number(ereignis && ereignis.versatz) || 0};
     const zielJetzt = () => zielZeitBerechnen(E, Date.now() + versatz);
-
-    // Ein Tempo aus einer aelteren Fassung koennte noch stehen - dieses Skript
-    // stellt keins mehr ein, raeumt ein fremdes aber weg.
-    if (typeof media.playbackRate === "number" && media.playbackRate !== 1) {
-      try { media.playbackRate = 1; } catch (_) {}
-    }
 
     const stelle = Number(media.currentTime) || 0;
     const drift = zielJetzt() - stelle;
@@ -789,10 +797,11 @@ function standLesen(zeile) {
   // dann undefined - und genau daran erkennt der Empfaenger, dass diese
   // Gegenstelle ueber ihre Gueltigkeit nichts sagen kann.
   const treffer = String(zeile || "")
-    .match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])(?::(\d+(?:\.\d+)?))?$/);
+    .match(/^__elfix:wp:stand:(\d+(?:\.\d+)?):([01])(?::(\d+(?:\.\d+)?))?(?::(\d+(?:\.\d+)?))?$/);
   if (!treffer) return null;
   const stand = { position: Number(treffer[1]), paused: treffer[2] === "1" };
   if (treffer[3] !== undefined) stand.duration = Number(treffer[3]);
+  if (treffer[4] !== undefined) stand.frameTime = Number(treffer[4]);
   return stand;
 }
 
@@ -828,6 +837,43 @@ function beobachterScript() {
 
     ${alsQuelltext(genaueZahl)}
 
+    // requestVideoFrameCallback liefert die Medienzeit des tatsächlich
+    // gezeichneten Frames. currentTime kann dazwischen liegen und beschreibt
+    // dann auf Android und Chromium verschiedene Nachbarbilder.
+    const frames = new WeakMap();
+    const rahmenBeobachten = (media) => {
+      if (!media || typeof media.requestVideoFrameCallback !== "function") return;
+      let zustand = frames.get(media);
+      if (!zustand) {
+        zustand = { frameTime: null, gueltig: true, wartet: false };
+        frames.set(media, zustand);
+      }
+      if (zustand.wartet) return;
+      zustand.wartet = true;
+      try {
+        media.requestVideoFrameCallback((_, meta) => {
+          zustand.wartet = false;
+          if (!zustand.gueltig || frames.get(media) !== zustand) return;
+          const zeit = meta && meta.mediaTime;
+          zustand.frameTime = typeof zeit === "number" && Number.isFinite(zeit) && zeit >= 0 ? zeit : null;
+          rahmenBeobachten(media);
+        });
+      } catch (_) { zustand.wartet = false; }
+    };
+    const frameZeit = (media) => {
+      rahmenBeobachten(media);
+      const wert = frames.get(media)?.frameTime;
+      const stelle = Number(media.currentTime);
+      return media.paused && !media.seeking && typeof wert === "number" && Number.isFinite(wert)
+        && Number.isFinite(stelle) && Math.abs(wert - stelle) < 0.25 ? wert : null;
+    };
+    const frameVergessen = (media) => {
+      const zustand = frames.get(media);
+      if (zustand) zustand.gueltig = false;
+      frames.delete(media);
+      rahmenBeobachten(media);
+    };
+
     const melden = (aktion, media) => {
       // Der eigene Player meldet eine eben ausgefuehrte fremde Anweisung als
       // eigenes Ereignis zurueck - sonst schaukeln sich zwei Player auf. Genau
@@ -841,15 +887,22 @@ function beobachterScript() {
       const liste = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
       const einzeln = window.__elfixWpErwartet;
       const offen = einzeln && liste.indexOf(einzeln) < 0 ? liste.concat([einzeln]) : liste;
-      for (const erwartet of offen) {
+      for (let index = 0; index < offen.length; index += 1) {
+        const erwartet = offen[index];
         if (!erwartet || Date.now() >= erwartet.bis) continue;
         // Beim Sprung entscheidet die Stelle: nur der Sprung auf genau das
         // erwartete Ziel ist das Echo. Wer waehrenddessen selbst woandershin
         // spult, meint das ernst - vorher verschluckte diese Pruefung jeden
         // zweiten Sprung, weil sie nur auf die Art schaute.
         if (aktion === "seek") {
-          if (Math.abs(Number(media.currentTime) - erwartet.ziel) < 2) return;
+          if (Math.abs(Number(media.currentTime) - erwartet.ziel) <= 0.001) {
+            window.__elfixWpEcho = offen.filter((eintrag, i) => i !== index && eintrag && Date.now() < eintrag.bis);
+            if (window.__elfixWpErwartet === erwartet) window.__elfixWpErwartet = null;
+            return;
+          }
         } else if (aktion === erwartet.aktion) {
+          window.__elfixWpEcho = offen.filter((eintrag, i) => i !== index && eintrag && Date.now() < eintrag.bis);
+          if (window.__elfixWpErwartet === erwartet) window.__elfixWpErwartet = null;
           return;
         }
       }
@@ -886,9 +939,11 @@ function beobachterScript() {
       // Angehaengt und nicht eingeschoben: eine aeltere Gegenstelle liest die
       // Zeile weiter mit ihrem alten Muster und ignoriert den Rest.
       const laufzeit = Number(media.duration);
+      const frame = frameZeit(media);
       console.log("__elfix:wp:stand:"
         + genaueZahl(media.currentTime) + ":" + (media.paused ? 1 : 0)
-        + ":" + (Number.isFinite(laufzeit) && laufzeit > 0 ? genaueZahl(laufzeit) : "0"));
+        + ":" + (Number.isFinite(laufzeit) && laufzeit > 0 ? genaueZahl(laufzeit) : "0")
+        + (frame == null ? "" : ":" + genaueZahl(frame)));
     };
 
     // Am Dokument in der Abfangphase, nicht an einzelnen Videos: Medien-
@@ -905,9 +960,43 @@ function beobachterScript() {
       if (passt(ereignis.target)) tun(ereignis.target);
     }, true);
 
-    horchen("play", (media) => { melden("play", media); standMelden(media, true); });
-    horchen("pause", (media) => { melden("pause", media); standMelden(media, true); });
-    horchen("seeked", (media) => { melden("seek", media); standMelden(media, true); });
+    horchen("play", (media) => {
+      // Ein lokales Weiter darf nicht vor der Relay-Antwort loslaufen. Es
+      // meldet den Wunsch, hält sofort wieder an und wartet auf den
+      // autoritativen geplanten Play-Befehl, der auch zum Auslöser zurückgeht.
+      const liste = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
+      const intern = liste.some((eintrag) => eintrag && Date.now() < eintrag.bis
+        && eintrag.aktion === "play");
+      if (!intern) {
+        window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
+        const pause = { aktion: "pause", ziel: Number(media.currentTime), bis: Date.now() + 1500 };
+        window.__elfixWpErwartet = pause;
+        window.__elfixWpEcho = liste.concat([pause]).slice(-6);
+        melden("play", media);
+        try { media.pause(); } catch (_) {}
+      } else {
+        melden("play", media);
+      }
+      standMelden(media, true);
+    });
+    horchen("pause", (media) => {
+      const liste = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
+      const intern = liste.some((eintrag) => eintrag && Date.now() < eintrag.bis
+        && eintrag.aktion === "pause");
+      if (!intern) window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
+      melden("pause", media); standMelden(media, true);
+    });
+    horchen("seeked", (media) => {
+      const liste = Array.isArray(window.__elfixWpEcho) ? window.__elfixWpEcho : [];
+      const intern = liste.some((eintrag) => eintrag && Date.now() < eintrag.bis
+        && Math.abs(Number(media.currentTime) - Number(eintrag.ziel)) < 0.001);
+      if (!intern) window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
+      melden("seek", media); standMelden(media, true);
+    });
+    // Ein neuer Source darf niemals die Framezeit der vorherigen Folge
+    // mitsenden. Der neue Callback wird sofort wieder scharf gemacht.
+    horchen("loadstart", frameVergessen);
+    horchen("emptied", frameVergessen);
     // Puffern ist keine Pause, sieht fuer die anderen aber genauso aus:
     // die Stelle bleibt stehen. Also sofort melden, wenn es stockt.
     horchen("waiting", (media) => standMelden(media, true));
@@ -1036,9 +1125,7 @@ function tempoScript(tempo) {
 function zuruecksetzenScript() {
   return `(() => {
     window.__elfixWpSync = { bestaetigt: 0, seitSprung: 0, letzteMessung: 0, gemeldet: 0 };
-    for (const media of document.querySelectorAll("video")) {
-      try { if (typeof media.playbackRate === "number") media.playbackRate = 1; } catch (_) {}
-    }
+    window.__elfixWpGeneration = (Number(window.__elfixWpGeneration) || 0) + 1;
     return "zurueckgesetzt";
   })()`;
 }
@@ -1046,12 +1133,19 @@ function zuruecksetzenScript() {
 // Nur die vier Angaben, mit denen im Player gerechnet wird - und nichts, was
 // eine Zeichenkette aus dem Netz in das Skript tragen koennte.
 function ereignisSaeubern(ereignis) {
-  return {
+  const roheFrameTime = ereignis && ereignis.frameTime;
+  const frameTime = typeof roheFrameTime === "number" && Number.isFinite(roheFrameTime)
+    && roheFrameTime >= 0 ? roheFrameTime : NaN;
+  const sauber = {
     videoTime: Number(ereignis && ereignis.videoTime) || 0,
     timestamp: Number(ereignis && ereignis.timestamp) || 0,
     playing: Boolean(ereignis && ereignis.playing),
-    hatUhr: Boolean(ereignis && ereignis.hatUhr)
+    hatUhr: Boolean(ereignis && ereignis.hatUhr),
+    startAt: Number(ereignis && ereignis.startAt) || 0,
+    tempo: tempoLesen(ereignis && ereignis.tempo)
   };
+  if (Number.isFinite(frameTime)) sauber.frameTime = frameTime;
+  return sauber;
 }
 
 module.exports = {
@@ -1080,5 +1174,6 @@ module.exports = {
   tempoScript,
   zuruecksetzenScript,
   TEMPO_STUFEN,
-  tempoLesen
+  tempoLesen,
+  ereignisSaeubern
 };

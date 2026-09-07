@@ -309,15 +309,22 @@ function ereignisAusSkript(skript) {
     tv.binHost() && !handy.binHost(),
     `hostId=${tv.eintragVon()?.hostId}`);
 
+  tv.ereignisse.length = 0;
   handy.ereignisse.length = 0;
   tv.melden("play", 30);
-  await warteBis(() => handy.steuerung().some((m) => m.action === "play"),
-    "W3: das Telefon empfaengt play");
+  await warteBis(() => tv.steuerung().some((m) => m.action === "syncprepare")
+    && handy.steuerung().some((m) => m.action === "syncprepare"), "W3: beide bereiten Play vor");
   {
-    const play = handy.steuerung().find((m) => m.action === "play");
+    const vorTv = tv.steuerung().find((m) => m.action === "syncprepare");
+    const vorHandy = handy.steuerung().find((m) => m.action === "syncprepare");
+    if (vorTv?.syncId) tv.bruecke.bereitZumStart(KEY, RAUM, vorTv.syncId);
+    if (vorHandy?.syncId) handy.bruecke.bereitZumStart(KEY, RAUM, vorHandy.syncId);
+    await warteBis(() => handy.steuerung().some((m) => m.action === "syncstart"),
+      "W3: das Telefon empfaengt gemeinsamen Start");
+    const play = handy.steuerung().find((m) => m.action === "syncstart");
     const urteil = play ? handy.bruecke.steuerungPruefen(play, handy.lage(play)) : null;
     pruefe("W3. Play vom Fernseher startet das Telefon",
-      Boolean(urteil) && urteil.tun === "anwenden" && urteil.skript.includes("media.play()"),
+      Boolean(urteil) && urteil.tun === "syncstart" && urteil.skript.includes("media.play()"),
       urteil ? `${urteil.tun} (${urteil.grund})` : "kein Urteil");
   }
 
@@ -332,6 +339,10 @@ function ereignisAusSkript(skript) {
       Boolean(urteil) && urteil.tun === "anwenden" && urteil.skript.includes("media.pause()"),
       urteil ? urteil.tun : "kein Urteil");
   }
+
+  // Die genaue Pause-Ausrichtung kann noch einen letzten autoritativen Seek
+  // nachreichen. Erst danach beginnt die Gegenprobe fuer den Gast-Sprung.
+  await schlaf(400);
 
   // Der Gast spult - und das bleibt bei ihm. Play und Pause oben kommen vom
   // Fernseher, also vom Host, und gelten weiterhin fuer alle. Beim Spulen ist

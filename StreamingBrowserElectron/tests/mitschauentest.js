@@ -211,6 +211,43 @@ function rechner(name, raum = RAUM) {
   return api;
 }
 
+// Play durchläuft die echte Startschranke. Die Android-Seite darf erst dann
+// `syncready` senden, wenn ihre Steuerentscheidung wirklich ein wartendes
+// syncprepare-Skript erzeugt hat; danach muss das Relay beiden dasselbe
+// syncstart schicken.
+async function startSchranke(pc, tv, offen) {
+  await warteBis(() => pc.steuerung.some((m) => m.action === "syncprepare")
+    && tv.steuerung().some((m) => m.action === "syncprepare"), "beide bereiten vor");
+  const pcVor = pc.steuerung.filter((m) => m.action === "syncprepare").pop();
+  const tvVor = tv.steuerung().filter((m) => m.action === "syncprepare").pop();
+  const urteil = tvVor ? tv.bruecke.steuerungPruefen(tvVor, tv.lage(offen)) : null;
+  pruefe("Die Android-Bereitmeldung folgt einem echten Prepare-Skript",
+    Boolean(tvVor?.syncId) && tvVor.syncId === pcVor?.syncId
+      && urteil?.tun === "syncprepare" && urteil.warten !== false
+      && /\.pause\(\)/.test(urteil.skript) && /readyState\s*>=\s*3/.test(urteil.skript),
+    `${tvVor?.syncId || ""} / ${urteil?.tun || ""}`);
+  pc.raeume.bereitZumStart(KEY, RAUM, pcVor.syncId);
+  tv.bruecke.bereitZumStart(KEY, RAUM, tvVor.syncId);
+  await warteBis(() => pc.steuerung.some((m) => m.action === "syncstart")
+    && tv.steuerung().some((m) => m.action === "syncstart"), "beide starten nach der Schranke");
+  return {
+    pc: pc.steuerung.filter((m) => m.action === "syncstart").pop(),
+    tv: tv.steuerung().filter((m) => m.action === "syncstart").pop()
+  };
+}
+
+async function androidAlleinStart(tv, offen) {
+  await warteBis(() => tv.steuerung().some((m) => m.action === "syncprepare"), "Android bereitet vor");
+  const vor = tv.steuerung().filter((m) => m.action === "syncprepare").pop();
+  const urteil = vor ? tv.bruecke.steuerungPruefen(vor, tv.lage(offen)) : null;
+  pruefe("Auch ein einzelner aktiver Android-Player bestätigt erst nach Prepare",
+    Boolean(vor?.syncId) && urteil?.tun === "syncprepare" && urteil.skript.includes("abwarten"),
+    `${vor?.syncId || ""} / ${urteil?.tun || ""}`);
+  tv.bruecke.bereitZumStart(KEY, RAUM, vor.syncId);
+  await warteBis(() => tv.steuerung().some((m) => m.action === "syncstart"), "Android syncstart");
+  return tv.steuerung().filter((m) => m.action === "syncstart").pop();
+}
+
 (async () => {
   const pc = rechner("Rechner");
   const tv = android("AndroidTV");
@@ -247,13 +284,13 @@ function rechner(name, raum = RAUM) {
   pc.steuerung.length = 0;
   tv.ereignisse.length = 0;
   pc.melden("play", 30, folge(4));
-  await warteBis(() => tv.steuerung().some((m) => m.action === "play"), "A: TV empfaengt play");
-  const aPlay = tv.steuerung().find((m) => m.action === "play");
-  pruefe("A1. Play vom Rechner kommt auf Android an", Boolean(aPlay),
+  const aStart = await startSchranke(pc, tv, folge(4));
+  const aPlay = aStart.tv;
+  pruefe("A1. Play vom Rechner kommt nach der Startschranke auf Android an", Boolean(aPlay),
     aPlay ? `position=${aPlay.position}` : "nichts empfangen");
   const aUrteil = aPlay ? tv.bruecke.steuerungPruefen(aPlay, tv.lage(folge(4))) : null;
   pruefe("A2. Android wendet es auf den Player an",
-    Boolean(aUrteil) && aUrteil.tun === "anwenden" && aUrteil.skript.includes("media.play()"),
+    Boolean(aUrteil) && aUrteil.tun === "syncstart" && aUrteil.skript.includes("media.play()"),
     aUrteil ? aUrteil.tun : "kein Urteil");
 
   tv.ereignisse.length = 0;
@@ -269,10 +306,11 @@ function rechner(name, raum = RAUM) {
   /* ---------------------------------------------------------------- Test B */
   // Android fuehrt: es meldet sich zuerst an einer neuen Folge an.
   pc.steuerung.length = 0;
+  tv.ereignisse.length = 0;
   const gesendet = tv.melden("play", 60, folge(4));
   pruefe("B1. Android sendet ueberhaupt einen Steuerbefehl", Boolean(gesendet),
     gesendet ? `${gesendet.aktion}@${gesendet.position}` : "nichts gesendet");
-  await warteBis(() => pc.steuerung.some((m) => m.action === "play"), "B: Rechner empfaengt play");
+  const bStart = await startSchranke(pc, tv, folge(4));
   // Der Zustand kommt an - die Stelle nicht.
   //
   // Android ist hier Gast. Sein Play startet die Runde weiterhin, aber es
@@ -280,7 +318,7 @@ function rechner(name, raum = RAUM) {
   // "play bei 60" an alle hinaus, und wer gerade woanders stand, sprang
   // dorthin - der Weg "Zuschauer -> Zuschauer", den es nicht geben darf
   // (siehe nichthoststelletest).
-  const bPlay = pc.steuerung.find((m) => m.action === "play");
+  const bPlay = bStart.pc;
   pruefe("B2. Play von Android startet den Rechner",
     Boolean(bPlay),
     JSON.stringify(pc.steuerung.map((m) => m.action)));
@@ -377,10 +415,11 @@ function rechner(name, raum = RAUM) {
     gPauseUrteil ? `${gPauseUrteil.tun} (${gPauseUrteil.grund})` : "kein Urteil");
 
   pc.steuerung.length = 0;
+  tv.ereignisse.length = 0;
   tv.melden("play", 20, folge(5));
-  await warteBis(() => pc.steuerung.some((m) => m.action === "play"), "G: Play zurueck zum Rechner");
+  await startSchranke(pc, tv, folge(5));
   pruefe("G3. Und Play von Android kommt weiterhin an",
-    pc.steuerung.some((m) => m.action === "play"),
+    pc.steuerung.some((m) => m.action === "syncstart"),
     JSON.stringify(pc.steuerung.map((m) => m.action)));
 
   // Ein Sprung dagegen nicht: der bewegt die Stelle der Runde, und die gehoert
@@ -408,13 +447,13 @@ function rechner(name, raum = RAUM) {
   pc.puls(0, true, folge(6));
   await schlaf(400);
   tv.ereignisse.length = 0;
+  pc.steuerung.length = 0;
   pc.melden("play", 5, folge(6));
-  await warteBis(() => tv.steuerung().some((m) => m.action === "play" && m.url === folge(6)),
-    "H: Play auf Folge 6");
-  const hPlay = tv.steuerung().filter((m) => m.action === "play").pop();
+  const hStart = await startSchranke(pc, tv, folge(6));
+  const hPlay = hStart.tv;
   const hUrteil = hPlay ? tv.bruecke.steuerungPruefen(hPlay, tv.lage(folge(6))) : null;
   pruefe("H2. Auch nach dem Wechsel durch Android laeuft die Steuerung",
-    Boolean(hUrteil) && hUrteil.tun === "anwenden",
+    Boolean(hUrteil) && hUrteil.tun === "syncstart",
     hUrteil ? hUrteil.tun : "kein Urteil");
 
   /* ---------------------------------------------------------- Test I und J */
@@ -454,8 +493,9 @@ function rechner(name, raum = RAUM) {
   // Ein neuer Teilnehmer kommt dazu und fragt den Stand ab.
   // Der Host laeuft wirklich - erst dann ist "laeuft" auch der Rundenzustand.
   tv.puls(757, false, folge(6));
+  tv.ereignisse.length = 0;
   tv.melden("play", 757, folge(6));
-  await schlaf(400);
+  await androidAlleinStart(tv, folge(6));
   const neu = rechner("Nachzuegler");
   await warteBis(() => neu.raeume.verbunden, "L: Nachzuegler verbunden");
   neu.raeume.beitreten(KEY, RAUM);
@@ -495,16 +535,27 @@ function rechner(name, raum = RAUM) {
     neu.steuerung.some((m) => m.action === "pause"));
 
   /* ---------------------------------------------------------------- Test N */
-  // Zehnmal Play/Pause: genau zehn Nachrichten, nicht dreissig.
+  // Zehn Nutzeraktionen: jedes Play führt erst durch Prepare/Ready/Start,
+  // jede Pause bleibt eine einzelne autoritative Steuerung.
   neu.steuerung.length = 0;
+  let nStarts = 0;
+  let nPausen = 0;
   for (let i = 0; i < 10; i += 1) {
-    tv.melden(i % 2 === 0 ? "play" : "pause", 800 + i, folge(6));
-    await schlaf(60);
+    if (i % 2 === 0) {
+      neu.steuerung.length = 0;
+      tv.ereignisse.length = 0;
+      tv.melden("play", 800 + i, folge(6));
+      await androidAlleinStart(tv, folge(6));
+      nStarts += 1;
+    } else {
+      tv.melden("pause", 800 + i, folge(6));
+      await warteBis(() => neu.steuerung.some((m) => m.action === "pause"), `N: Pause ${i}`);
+      nPausen += 1;
+    }
   }
-  await schlaf(600);
-  const nZaehler = neu.steuerung.filter((m) => m.action === "play" || m.action === "pause").length;
-  pruefe("N. Zehn Tastendruecke ergeben genau zehn Ereignisse",
-    nZaehler === 10, `${nZaehler} statt 10`);
+  pruefe("N. Fünf Pausen und fünf Startschranken bleiben einzeln",
+    nPausen === 5 && nStarts === 5,
+    `${nPausen} Pausen, ${nStarts} Startschranken`);
 
   /* -------------------------------------------- Der Loop-Schutz im Player */
   // Er sitzt im Beobachterskript und wird dort gegen ein nachgebautes Video

@@ -40,6 +40,7 @@ import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.SeekParameters;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener;
 import androidx.media3.ui.PlayerView;
 import java.util.ArrayList;
 import java.util.List;
@@ -149,12 +150,11 @@ final class DirektSpieler {
     /**
      * So nah muss eine genaue Stelle sitzen, damit es dasselbe Bild ist.
      *
-     * <p>Zwanzig Millisekunden - dieselbe Schwelle wie am Rechner
-     * (SEEK_TOLERANZ_S in spieler.js). Ein Bild ist bei 24 Bildern je Sekunde
-     * rund 42 ms lang. ExoPlayer rechnet in Millisekunden, feiner geht es hier
-     * ohnehin nicht.
+     * <p>Eine Millisekunde - dieselbe Genauigkeit, mit der ExoPlayer seine
+     * Wiedergabestelle annimmt und meldet. Erst dann ist ein vorbereiteter
+     * gemeinsamer Start wirklich bereit.
      */
-    private static final double SEEK_TOLERANZ_S = 0.02;
+    private static final double SEEK_TOLERANZ_S = 0.001;
     /**
      * Ab wann die Karte zur naechsten Folge dasteht.
      *
@@ -230,6 +230,10 @@ final class DirektSpieler {
     private double letztePosition;
     private long letztesSpeichern;
     private boolean bereitGemeldet;
+    /** PTS des zuletzt wirklich zur Anzeige freigegebenen Videobilds. */
+    private double letzteBildZeit = Double.NaN;
+    /** Verhindert, dass ein alter, spaeter ausgefuehrter Freigabe-Callback zurueckschreibt. */
+    private long letzteBildFreigabeNs = Long.MIN_VALUE;
     private Boolean erwartetPlay;
     private double erwartetSeek = -1;
     private long erwartetBis;
@@ -240,6 +244,8 @@ final class DirektSpieler {
     private double sprungNach;
     private long letzteMarkenFrage;
     private Befehl wartenderBefehl;
+    /** Zwischen lokalem Play-Wunsch und dem autoritativen syncstart bleibt das Bild stehen. */
+    private boolean gemeinsamerStartOffen;
 
     /** Schichten sichtbar? Steht hier und nicht an der Sichtbarkeit der Ansicht:
      *  waehrend des Ausblendens ist sie noch sichtbar und schon nicht mehr gemeint. */
@@ -412,8 +418,11 @@ final class DirektSpieler {
         double ziel;
         /** Wann losgelassen wird - Uhrzeit des Geraets. 0: sobald es geht. */
         long startBei;
-        /** Ob schon einmal nachgesetzt wurde. Ein zweites Mal bringt nichts. */
-        boolean nachgesetzt;
+        /** Bis wann ein genauer Sprung nachgemessen und hoechstens dreimal nachgesetzt wird. */
+        long genauBis;
+        int sprungVersuche;
+        /** Kanonischer Bild-PTS; NaN, wenn der Befehl nur eine Laufzeit traegt. */
+        double frameZiel = Double.NaN;
         Befehl(JSONObject urteil, Runnable bereit) { this.urteil = urteil; this.bereit = bereit; }
     }
 
@@ -1160,13 +1169,35 @@ final class DirektSpieler {
      */
     private void spielenUmschalten() {
         if (player == null) return;
-        boolean laeuft = player.getPlayWhenReady();
-        if (!laeuft && umgebung.inRunde() && bereitGemeldet && wartenderBefehl == null) {
-            startAngefordert();
-            return;
-        }
-        player.setPlayWhenReady(!laeuft);
+        if (player.getPlayWhenReady() || gemeinsamerStartOffen || wartenderBefehl != null) pauseAnfordern();
+        else abspielenAnfordern();
+    }
+
+    /** PLAY ist kein Umschalter: laufend oder bereits angefordert bleibt laufend. */
+    private void abspielenAnfordern() {
+        if (player == null || player.getPlayWhenReady() || gemeinsamerStartOffen
+            || wartenderBefehl != null) return;
+        if (umgebung.inRunde() && bereitGemeldet) startAngefordert();
+        else player.play();
         spielenZeichnen();
+    }
+
+    /**
+     * PAUSE geht auch dann ausdruecklich ans Relay, wenn der lokale Player fuer
+     * die Startschranke oder durch den Lebenszyklus bereits angehalten ist.
+     */
+    private void pauseAnfordern() {
+        if (player == null) return;
+        boolean melden = umgebung.inRunde() && bereitGemeldet;
+        gemeinsamerStartOffen = false;
+        wartenderBefehl = null;
+        handler.removeCallbacks(startNotbremse);
+        erwartetPlay = false;
+        erwartetBis = SystemClock.uptimeMillis() + 2000;
+        player.pause();
+        if (melden) liveMelden("pause");
+        spielenZeichnen();
+        regung();
     }
 
     /** Laeuft gerade ein Anlauf zum gemeinsamen Start? */
@@ -1174,24 +1205,23 @@ final class DirektSpieler {
 
     private void startAngefordert() {
         handler.removeCallbacks(startNotbremse);
+        gemeinsamerStartOffen = true;
+        spielenZeichnen();
         liveMelden("play");
-        // Antwortet die Runde nicht - Relay weg, Verbindung tot -, faengt es
-        // trotzdem an. Ein Knopf, der nichts tut, waere das schlechtere Ende.
-        handler.postDelayed(startNotbremse, 1800);
+        // Antwortet die Runde nicht, darf dieses Geraet nicht allein anfangen.
+        // Nach Ablauf wird nur der Knopf wieder freigegeben, damit ein neuer
+        // Versuch moeglich ist.
+        handler.postDelayed(startNotbremse, 5500);
         regung();
     }
 
     private void startNotbremseZiehen() {
         if (geschlossen || player == null || player.getPlayWhenReady() || wartenderBefehl != null) return;
-        erwartetBis = SystemClock.uptimeMillis() + 2000;
-        erwartetPlay = true;
-        player.setPlayWhenReady(true);
+        gemeinsamerStartOffen = false;
         spielenZeichnen();
     }
 
     private void spielenZeichnen() {
-        boolean laeuft = player != null && player.getPlayWhenReady();
-        spielen.setText(laeuft ? "❚❚" : "▶");
         mitteZeichnen();
     }
 
@@ -1264,11 +1294,23 @@ final class DirektSpieler {
      * anderen dasteht, und ebenso mit der uebrigen Bedienung.
      */
     private void mitteZeichnen() {
+        boolean laeuft = player != null && player.getPlayWhenReady();
+        boolean startOffen = player != null && gemeinsamerStartOffen;
+        String zeichen = laeuft || startOffen ? "❚❚" : "▶";
+        String beschreibung = startOffen ? "Gemeinsamen Start abbrechen"
+            : laeuft ? "Pause" : "Abspielen";
+        // Leiste und Mitte sind zwei Ansichten desselben Befehls. Beide
+        // muessen deshalb denselben Zustand aus genau derselben Rechnung
+        // zeigen, gerade waehrend Media3 fuer den gemeinsamen Start noch
+        // angehalten bleibt und selbst kein Zustandsereignis ausloest.
+        spielen.setText(zeichen);
+        spielen.setContentDescription(beschreibung);
+        mitteSpielen.setText(zeichen);
+        mitteSpielen.setContentDescription(beschreibung);
         boolean frei = schichtenAn && player != null
             && puffer.getVisibility() != View.VISIBLE
             && kasten.getVisibility() != View.VISIBLE
             && blende.getVisibility() != View.VISIBLE;
-        mitteSpielen.setText(player != null && player.getPlayWhenReady() ? "❚❚" : "▶");
         if (frei == (mitteSpielen.getVisibility() == View.VISIBLE)) return;
         mitteSpielen.setVisibility(frei ? View.VISIBLE : View.GONE);
         if (frei) Bewegung.einblenden(mitteSpielen);
@@ -1555,6 +1597,26 @@ final class DirektSpieler {
         player.setSeekParameters(SeekParameters.EXACT);
         bild.setPlayer(player);
         ExoPlayer lauf = player;
+        lauf.setVideoFrameMetadataListener(new VideoFrameMetadataListener() {
+            @Override public void onVideoFrameAboutToBeRendered(long presentationTimeUs,
+                long releaseTimeNs, Format format, android.media.MediaFormat mediaFormat) {
+                // Der Horcher wird kurz vor der Ausgabe gerufen. Erst zur von
+                // Media3 genannten Freigabezeit gilt der PTS als das sichtbare
+                // Bild; vorher duerfte eine Bereitschaft den Start zu frueh
+                // freigeben. Alte Callbacks einer vorigen Quelle werden durch
+                // die Player-Identitaet verworfen.
+                long wartenNs = releaseTimeNs > 0
+                    ? Math.max(0, releaseTimeNs - System.nanoTime()) : 0;
+                long wartenMs = Math.min(1000, (wartenNs + 999_999) / 1_000_000);
+                handler.postDelayed(() -> {
+                    if (geschlossen || player != lauf || presentationTimeUs < 0
+                        || releaseTimeNs < letzteBildFreigabeNs) return;
+                    letzteBildFreigabeNs = releaseTimeNs;
+                    letzteBildZeit = presentationTimeUs / 1_000_000.0;
+                    befehlPruefen();
+                }, wartenMs);
+            }
+        });
         lauf.addListener(new Player.Listener() {
             private boolean startGeprueft;
             @Override public void onPlaybackStateChanged(int state) {
@@ -1639,6 +1701,12 @@ final class DirektSpieler {
 
     void wechselPause() {
         quelleLaedt = true;
+        // Ein gemeinsamer Start darf nicht mehr spaeter aus einer bereits
+        // eingeplanten Runnable loslaufen, wenn der Player inzwischen den
+        // Anbieter wechselt oder angehalten wurde.
+        wartenderBefehl = null;
+        gemeinsamerStartOffen = false;
+        handler.removeCallbacks(startNotbremse);
         if (player != null) { erwartetPlay = false; erwartetBis = SystemClock.uptimeMillis() + 2000; player.pause(); }
     }
 
@@ -1646,6 +1714,12 @@ final class DirektSpieler {
         aktiv = false;
         zaehlerEnde = 0;
         endeAbgesagt = true;
+        // Auch ein noch nicht faelliger gemeinsamer Start ist damit veraltet.
+        // Ohne das blieb der Befehl bis zum Echo im Fach und konnte nach einem
+        // kurzen Vordergrundwechsel wieder loslaufen.
+        wartenderBefehl = null;
+        gemeinsamerStartOffen = false;
+        handler.removeCallbacks(startNotbremse);
         if (player != null) player.pause();
         speichern();
     }
@@ -1678,7 +1752,7 @@ final class DirektSpieler {
 
     private static String uhr(double sekunden) {
         if (!(sekunden > 0)) return "0:00";
-        long ganz = Math.round(sekunden);
+        long ganz = (long) Math.floor(sekunden);
         long stunden = ganz / 3600;
         long minuten = (ganz % 3600) / 60;
         long rest = ganz % 60;
@@ -1751,6 +1825,28 @@ final class DirektSpieler {
         try {
             umgebung.live(liveStand(), aktion);
         } catch (org.json.JSONException ignoriert) { }
+        // Der lokale Play-Ereignishorcher wird erst aufgerufen, nachdem
+        // ExoPlayer bereits auf playWhenReady=true gesetzt hat. In einer
+        // Watchparty darf dieser kurze Vorsprung nicht zum Startzeitpunkt
+        // werden: das Relay schickt den kanonischen Play-Echo mit dem
+        // gemeinsamen startAt an alle, einschliesslich des Absenders. Bis
+        // dahin bleibt der Ausloeser stehen.
+        if ("play".equals(aktion) && umgebung.inRunde()) {
+            gemeinsamerStartOffen = true;
+            erwartetPlay = false;
+            erwartetBis = SystemClock.uptimeMillis() + 2000;
+            player.pause();
+            spielenZeichnen();
+        }
+        if ("pause".equals(aktion) && umgebung.inRunde()) {
+            // Ein Pause-Klick waehrend der Vorbereitungsphase widerruft auch
+            // den noch nicht faelligen Startbefehl. Sonst koennte dessen
+            // delayed callback nach dem Pause-Echo wieder play setzen.
+            wartenderBefehl = null;
+            gemeinsamerStartOffen = false;
+            handler.removeCallbacks(startNotbremse);
+            spielenZeichnen();
+        }
         /*
          * Beim Anhalten geht der Ausloeser denselben Weg wie alle anderen: er
          * springt auf die Zahl, die er gerade verschickt hat.
@@ -1770,16 +1866,44 @@ final class DirektSpieler {
          */
         if (!"pause".equals(aktion) || !umgebung.inRunde()) return;
         double stelle = position();
-        erwartetSeek = stelle;
+        double bildZeit = bildZeitNahe(stelle);
+        long zielMs = Double.isFinite(bildZeit)
+            ? frameSeekMillis(bildZeit) : Math.round(stelle * 1000);
+        erwartetSeek = zielMs / 1000.0;
         erwartetBis = SystemClock.uptimeMillis() + 2000;
-        player.seekTo(Math.round(stelle * 1000));
+        player.seekTo(zielMs);
     }
 
     JSONObject liveStand() throws org.json.JSONException {
-        return new JSONObject().put("position", position())
+        double stelle = position();
+        boolean pausiert = player == null || !player.getPlayWhenReady();
+        JSONObject stand = new JSONObject().put("position", stelle)
             .put("duration", player == null ? 0 : Math.max(0, player.getDuration()) / 1000.0)
-            .put("paused", player == null || !player.getPlayWhenReady())
+            .put("paused", pausiert)
             .put("puffert", player == null || player.getPlaybackState() != Player.STATE_READY);
+        double bildZeit = bildZeitNahe(stelle);
+        if (pausiert && Double.isFinite(bildZeit)) stand.put("frameTime", bildZeit);
+        return stand;
+    }
+
+    /** Nur ein PTS aus der Naehe kann zum gegenwaertig sichtbaren Bild gehoeren. */
+    private double bildZeitNahe(double stelle) {
+        return Double.isFinite(letzteBildZeit) && Math.abs(letzteBildZeit - stelle) <= 0.25
+            ? letzteBildZeit : Double.NaN;
+    }
+
+    /**
+     * Media3 zeigt beim genauen Sprung das erste Bild ab der Zielmillisekunde.
+     * Der kanonische Bild-PTS wird deshalb abgerundet; das winzige Epsilon
+     * gleicht nur die binaere Darstellung einer glatten Millisekunde aus.
+     */
+    private static long frameSeekMillis(double frameTime) {
+        return Math.max(0, (long) Math.floor(frameTime * 1000.0 + 0.000001));
+    }
+
+    private static long befehlSeekMillis(Befehl befehl) {
+        return Double.isFinite(befehl.frameZiel)
+            ? frameSeekMillis(befehl.frameZiel) : Math.max(0, Math.round(befehl.ziel * 1000));
     }
 
     /* ------------------------------------------------------------- Die Watchparty */
@@ -1799,8 +1923,17 @@ final class DirektSpieler {
             umgebung.fassungWaehlen(urteil.optString("fassung", ""), urteil.optString("hoster", ""));
             return;
         }
+        // Eine Vorbereitung ohne syncId ist das manuelle, reine Gleichziehen:
+        // danach bleibt das Bild stehen und der Knopf bietet wieder Play an.
+        // Nur die Barrier-Runde wartet wirklich auf ein spaeteres syncstart.
+        gemeinsamerStartOffen = "syncstart".equals(tun)
+            || ("syncprepare".equals(tun) && !urteil.optString("syncId", "").isEmpty());
         handler.removeCallbacks(startNotbremse);
         wartenderBefehl = new Befehl(urteil, bereit);
+        // syncprepare und ein Timeout-Pause-Echo veraendern bei bereits
+        // stehendem Player keinen Media3-Zustand. Der Knopf muss trotzdem in
+        // demselben UI-Takt auf Abbrechen beziehungsweise Abspielen wechseln.
+        spielenZeichnen();
         befehlPruefen();
     }
 
@@ -1826,7 +1959,37 @@ final class DirektSpieler {
                 // und die Millisekunden dorthin und zurueck gehoeren in die
                 // Spanne, nicht davor.
                 long vorlauf = Math.max(0, befehl.urteil.optLong("wartenMs", 0));
+                // Relay-Steuerungen tragen startAt in der gemeinsamen
+                // Serverzeit. wartenMs aus einer lokalen Antwort waere hier
+                // falsch: zwischen WebSocket, Kern und UI vergeht bereits
+                // ein Teil des Vorlaufs. Mit dem mitgereichten Uhrversatz
+                // wird die Frist auf die lokale Wanduhr und danach auf die
+                // monotone Player-Uhr umgerechnet.
+                JSONObject ereignis = befehl.urteil.optJSONObject("ereignis");
+                long startAt = ereignis == null ? 0 : ereignis.optLong("startAt", 0);
+                if (startAt <= 0) startAt = befehl.urteil.optLong("startAt", 0);
+                double frameTime = ereignis == null
+                    ? befehl.urteil.optDouble("frameTime", Double.NaN)
+                    : ereignis.optDouble("frameTime", befehl.urteil.optDouble("frameTime", Double.NaN));
+                String tun = befehl.urteil.optString("tun", "");
+                boolean frameBefehl = "syncprepare".equals(tun) || startAt > 0
+                    || (ereignis != null && !ereignis.optBoolean("playing", false));
+                if (frameBefehl && Double.isFinite(frameTime)) befehl.frameZiel = Math.max(0, frameTime);
+                boolean hatUhr = ereignis != null && ereignis.optBoolean("hatUhr", false);
+                long versatz = ereignis == null ? befehl.urteil.optLong("versatz", 0)
+                    : ereignis.optLong("versatz", befehl.urteil.optLong("versatz", 0));
+                long serverJetzt = System.currentTimeMillis() + versatz;
+                // Ist ein geplanter Start bereits vorbei, traegt position die
+                // nachgeholte Laufzeit. Der alte Startframe waere dann ein
+                // Ruecksprung und darf die kompensierte Stelle nicht ersetzen.
+                if (startAt > 0 && hatUhr && startAt < serverJetzt - 1) {
+                    befehl.frameZiel = Double.NaN;
+                }
+                if (startAt > 0 && hatUhr) {
+                    vorlauf = Math.max(0, startAt - serverJetzt);
+                }
                 befehl.startBei = vorlauf > 0 ? SystemClock.uptimeMillis() + vorlauf : 0;
+                befehl.genauBis = SystemClock.uptimeMillis() + 2200;
                 befehl.angewendet = true;
                 erwartetBis = SystemClock.uptimeMillis() + 2000;
                 erwartetPlay = false;
@@ -1845,17 +2008,21 @@ final class DirektSpieler {
                 boolean laeuftDanach = !befehl.urteil.optBoolean("warten")
                     && befehl.urteil.optJSONObject("ereignis") != null
                     && befehl.urteil.optJSONObject("ereignis").optBoolean("playing");
-                boolean nahGenug = laeuftDanach
+                boolean nahGenug = laeuftDanach && !Double.isFinite(befehl.frameZiel)
                     && Math.abs(position() - befehl.ziel) <= SPRUNG_AB_SEKUNDEN;
                 if (!befehl.urteil.optBoolean("nichtSpringen") && !nahGenug) {
-                    erwartetSeek = befehl.ziel;
-                    player.seekTo(Math.round(befehl.ziel * 1000));
+                    long zielMs = befehlSeekMillis(befehl);
+                    erwartetSeek = zielMs / 1000.0;
+                    player.seekTo(zielMs);
                 }
                 handler.postDelayed(this::befehlPruefen, 100);
             });
             return;
         }
-        if (!befehl.urteil.optBoolean("nichtSpringen") && Math.abs(position() - befehl.ziel) > 1.5) return;
+        double abstand = Double.isFinite(befehl.frameZiel)
+            ? (Double.isFinite(letzteBildZeit) ? Math.abs(letzteBildZeit - befehl.frameZiel)
+                : Double.POSITIVE_INFINITY)
+            : Math.abs(position() - befehl.ziel);
 
         /*
          * Nachmessen, wo der Sprung wirklich gelandet ist.
@@ -1863,22 +2030,27 @@ final class DirektSpieler {
          * <p>{@code seekTo} ist keine Zuweisung, sondern der Anfang eines
          * Suchvorgangs - wo er endet, steht erst hinterher fest. Bei einer Pause
          * schauen alle auf dasselbe Standbild, und da zaehlt der Bruchteil:
-         * bisher galt hier eine Toleranz von anderthalb Sekunden, und die reicht
-         * fuer drei Dutzend Bilder. Also einmal nachsetzen, wenn es daneben
-         * liegt - und nur einmal. Ein Player, der die Stelle zweimal verfehlt,
-         * trifft sie auch beim dritten Mal nicht, und eine Schleife am Video ist
-         * schlimmer als ein Hundertstel Abweichung.
+         * eine grobe Toleranz von anderthalb Sekunden reicht dafuer nicht. Drei
+         * begrenzte Versuche verhindern sowohl ein falsches "bereit" als auch
+         * eine endlose Suchschleife.
          */
-        if (befehl.urteil.optBoolean("genau") && !befehl.nachgesetzt
-            && !befehl.urteil.optBoolean("nichtSpringen")
-            && Math.abs(position() - befehl.ziel) > SEEK_TOLERANZ_S) {
-            befehl.nachgesetzt = true;
-            erwartetSeek = befehl.ziel;
-            erwartetBis = SystemClock.uptimeMillis() + 2000;
-            player.seekTo(Math.round(befehl.ziel * 1000));
-            handler.postDelayed(this::befehlPruefen, 100);
+        if (befehl.urteil.optBoolean("genau") && !befehl.urteil.optBoolean("nichtSpringen")
+            && abstand > SEEK_TOLERANZ_S) {
+            // Eine Bereitmeldung darf erst nach einem wirklich sitzenden Seek
+            // hinaus. Bis zur Frist wird hoechstens dreimal nachgesetzt; bleibt
+            // der Player ungenau, laeuft der Server in seinen sicheren Timeout
+            // und startet niemanden allein.
+            if (SystemClock.uptimeMillis() <= befehl.genauBis && befehl.sprungVersuche < 3) {
+                befehl.sprungVersuche += 1;
+                long zielMs = befehlSeekMillis(befehl);
+                erwartetSeek = zielMs / 1000.0;
+                erwartetBis = SystemClock.uptimeMillis() + 2000;
+                player.seekTo(zielMs);
+                handler.postDelayed(this::befehlPruefen, 100);
+            }
             return;
         }
+        if (!befehl.urteil.optBoolean("nichtSpringen") && abstand > 1.5) return;
 
         JSONObject ereignis = befehl.urteil.optJSONObject("ereignis");
         boolean play = !befehl.urteil.optBoolean("warten") && ereignis != null && ereignis.optBoolean("playing");
@@ -1901,6 +2073,7 @@ final class DirektSpieler {
                 double nach = befehl.ziel + zuspaet * tempo;
                 if (dauer() > 0) nach = Math.min(nach, Math.max(0, dauer() - 0.1));
                 befehl.ziel = nach;
+                befehl.frameZiel = Double.NaN;
                 erwartetSeek = nach;
                 player.seekTo(Math.round(nach * 1000));
             }
@@ -1908,6 +2081,7 @@ final class DirektSpieler {
         erwartetBis = SystemClock.uptimeMillis() + 2000;
         erwartetPlay = play;
         wartenderBefehl = null;
+        if (play) gemeinsamerStartOffen = false;
         player.setPlayWhenReady(play);
         spielenZeichnen();
         if (befehl.bereit != null) befehl.bereit.run();
@@ -2053,9 +2227,16 @@ final class DirektSpieler {
         if (code == KeyEvent.KEYCODE_BACK) return false;
         boolean runter = event.getAction() == KeyEvent.ACTION_DOWN;
 
-        if (code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || code == KeyEvent.KEYCODE_MEDIA_PLAY
-            || code == KeyEvent.KEYCODE_MEDIA_PAUSE) {
-            if (runter) { spielenUmschalten(); regung(); }
+        if (code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
+            if (runter) spielenUmschalten();
+            return true;
+        }
+        if (code == KeyEvent.KEYCODE_MEDIA_PLAY) {
+            if (runter) { abspielenAnfordern(); regung(); }
+            return true;
+        }
+        if (code == KeyEvent.KEYCODE_MEDIA_PAUSE) {
+            if (runter) pauseAnfordern();
             return true;
         }
         if (code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
@@ -2147,6 +2328,8 @@ final class DirektSpieler {
     }
 
     private void freigeben() {
+        letzteBildZeit = Double.NaN;
+        letzteBildFreigabeNs = Long.MIN_VALUE;
         if (player == null) return;
         handler.removeCallbacks(sprungMelden);
         sprungMelden.run();

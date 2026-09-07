@@ -52,6 +52,8 @@
 
   let raeume = null;
   let letzterStatus = null;
+  /** Das Player-Promise meldet damit erst nach Seek und Pufferung Bereitschaft. */
+  const MELDE_BEREIT = "__elfix:wp:bereit:";
 
   // Jede Rueckmeldung der Raeume geht unter ihrem Namen nach Java. Dort
   // entscheidet die Oberflaeche, was davon sie zeigt.
@@ -80,6 +82,24 @@
       onConnection: (info) => ereignis("watchparty:verbindung", info)
     });
     return raeume;
+  }
+
+  /**
+   * Zielstelle fuer den nativen Player.
+   *
+   * Bei einem geplanten Start bezeichnet videoTime die Stelle an startAt.
+   * Vor dieser Frist darf die Nachrichtenlaufzeit deshalb nicht noch einmal
+   * daraufgerechnet werden. Nach der Frist holt startPlan dagegen genau die
+   * wirkliche Verspaetung auf. Ohne verlässlichen Uhrabgleich bleibt die
+   * bisherige konservative Zielzeitrechnung erhalten.
+   */
+  function nativeZielBerechnen(ereignis, serverJetzt) {
+    const startAt = Number(ereignis && ereignis.startAt);
+    if (ereignis && ereignis.playing && ereignis.hatUhr
+      && Number.isFinite(startAt) && startAt > 0) {
+      return sync.startPlan(ereignis, serverJetzt, 0).stelle;
+    }
+    return sync.zielZeitBerechnen(ereignis, serverJetzt);
   }
 
   /**
@@ -532,7 +552,7 @@
       return { tun: "navigate", grund: urteil.grund, url: String(nachricht.url || ""), skript: "" };
     }
     if (lage && lage.nativ) {
-      const position = sync.zielZeitBerechnen(ereignis, Date.now() + ereignis.versatz);
+      const position = nativeZielBerechnen(ereignis, Date.now() + ereignis.versatz);
       if (urteil.tun === "drift") {
         const zustand = nativeDrift.get(merker) || {};
         nativeDrift.set(merker, zustand);
@@ -544,7 +564,7 @@
         return { tun: tat === "hard-seek" ? "anwenden" : "nichts", nichtSpringen: false,
           ereignis, position, grund: tat };
       }
-      return { ...urteil, ereignis,
+      return { ...urteil, ereignis, syncId: String(nachricht.syncId || ""),
         position };
     }
 
@@ -584,14 +604,25 @@
     // Befehl - nur mit anderen Flaggen. Beim Vorbereiten wartet das Skript,
     // bis der Sprung wirklich sitzt; erst dann meldet Java "bereit".
     const aktion = urteil.tun === "syncprepare" ? "syncprepare" : String(nachricht.action);
+    const anwenden = sync.applyScript(aktion, ereignis, {
+      genau: urteil.genau,
+      warten: urteil.warten,
+      nichtSpringen: urteil.nichtSpringen
+    });
+    // Der Android-Rahmenkanal verschickt Skripte absichtlich ohne direkten
+    // Rueckgabekanal. Das Promise des geteilten applyScript weiss aber exakt,
+    // wann der Seek sitzt und der Player gepuffert ist. Nur dieses Ergebnis
+    // wird zusammen mit der eindeutigen syncId ueber die Rahmenkonsole nach
+    // Java gemeldet; ein abgebrochener alter Lauf bleibt still.
+    const skript = urteil.tun === "syncprepare"
+      ? `Promise.resolve(${anwenden}).then((wert) => {`
+        + `if (wert === "bereit") console.log(${JSON.stringify(MELDE_BEREIT + String(nachricht.syncId || ""))});`
+        + "return wert;})"
+      : anwenden;
     return {
       tun: urteil.tun,
       grund: urteil.grund,
-      skript: sync.applyScript(aktion, ereignis, {
-        genau: urteil.genau,
-        warten: urteil.warten,
-        nichtSpringen: urteil.nichtSpringen
-      })
+      skript
     };
   }
 
@@ -667,6 +698,7 @@
       paused: wert.paused
     });
     if (wert.duration !== undefined) meldung.duration = wert.duration;
+    if (wert.frameTime !== undefined) meldung.frameTime = wert.frameTime;
     raeume.meldeStand(key, meldung, room);
     return wert;
   }
@@ -972,7 +1004,7 @@
     steuernMitEinstellung: (key, action, position, url, room, einstellung) =>
       sicherstellen().steuernMitEinstellung(key, action, position, url, room, einstellung),
     gleichziehen: (key, position, room) => sicherstellen().gleichziehen(key, position, room),
-    bereitZumStart: (key, room) => sicherstellen().bereitZumStart(key, room),
+    bereitZumStart: (key, room, syncId) => sicherstellen().bereitZumStart(key, room, syncId),
     abgleichen: (key, room) => sicherstellen().abgleichen(key, room),
     meldeStand: (key, stand, room) => sicherstellen().meldeStand(key, stand, room),
     verlasseStand: (key, room) => sicherstellen().verlasseStand(key, room),
@@ -998,6 +1030,7 @@
     eintraegeMitAnbieter,
     // Das Mitschauen.
     steuerungPruefen,
+    nativeZielBerechnen,
     meldungSenden,
     meldungStand,
     folgenwechselMelden,
@@ -1009,6 +1042,7 @@
     autostartVerwerfen,
     MELDE_START,
     MELDE_PHASE,
+    MELDE_BEREIT,
     phaseLesen: (zeile) => autostart.phaseLesen(zeile),
     // Der Horcher, der im Player Play, Pause und Sprung bemerkt. Woertlich
     // dasselbe Skript, das der Rechner einsetzt.

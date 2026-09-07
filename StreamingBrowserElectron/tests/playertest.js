@@ -30,6 +30,7 @@ function video(start = 0, optionen = {}) {
     _zeit: start
   };
   Object.defineProperty(m, "currentTime", {
+    configurable: true,
     get: () => m._zeit,
     set: (wert) => {
       m.spruenge.push(Number(wert));
@@ -126,6 +127,26 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       m.spruenge.every((s) => nah(s, 240, 0.001)), m.spruenge.join(", "));
   }
 
+  {
+    // Die Stelle eines laufenden Videos wandert bei jedem Lesen. Der Test
+    // bewacht die Reihenfolge: erst anhalten, dann der exakte Seek. Sonst
+    // könnte zwischen Zielrechnung und Seek ein anderes Standbild entstehen.
+    const m = video(250, { paused: false });
+    const gelesen = Object.getOwnPropertyDescriptor(m, "currentTime");
+    const start = Date.now();
+    let liefBeimSeek = null;
+    Object.defineProperty(m, "currentTime", {
+      configurable: true,
+      get: () => m.paused ? m._zeit : m._zeit + (Date.now() - start) / 1000,
+      set: (wert) => { liefBeimSeek = !m.paused; gelesen.set.call(m, wert); }
+    });
+    await ausfuehren(
+      applyScript("pause", ereignis({ videoTime: 242.222, playing: false }), { genau: true }), m);
+    pruefe("3c. Ein laufendes Video wird vor dem exakten Pause-Seek angehalten",
+      liefBeimSeek === false && m.paused && nah(m.currentTime, 242.222, 0.001),
+      `lief beim Seek=${liefBeimSeek}`);
+  }
+
   // --- 4. Manueller Sprung des Hosts ---------------------------------------
   {
     // Von 120 auf 500, waehrend er laeuft: der Client muss direkt dorthin.
@@ -137,14 +158,15 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       `auf ${m.spruenge[0]?.toFixed(3)}`);
   }
 
-  // --- 5. Der Host selbst rueckt nie ---------------------------------------
+  // --- 5. Die Relay-Stelle gilt auch für den Auslöser -----------------------
   {
     const m = video(300, { paused: false });
     const { ergebnis } = await ausfuehren(
       applyScript("play", ereignis({ videoTime: 999, timestamp: Date.now(), playing: true }),
         { nichtSpringen: true }), m);
-    pruefe("5. Der Host springt nie, laeuft aber mit",
-      m.spruenge.length === 0 && m.gestartet === 1, `${ergebnis}, ${m.spruenge.length} Spruenge`);
+    pruefe("5. Ein autoritatives Play zieht auch den Auslöser auf die Relay-Stelle",
+      m.spruenge.length >= 1 && nah(m.spruenge[0], 999, 0.01) && m.gestartet === 1,
+      `${ergebnis}, ${m.spruenge.length} Spruenge`);
   }
 
   // --- 6. Ohne Uhrmessung wird nicht hochgerechnet --------------------------
@@ -228,20 +250,19 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
 
   // --- 11. Nirgends wird am Tempo gedreht ----------------------------------
   {
-    // Ein Player, an dem eine aeltere Fassung noch 1,02 stehen liess.
+    // Ein Player, an dem die Runde bereits 1,02 eingestellt hat.
     const m = video(300, { paused: false, playbackRate: 1.02 });
     await ausfuehren(driftScript(ereignis({ videoTime: 300, timestamp: Date.now(), playing: true })), m);
     const n = video(100);
     await ausfuehren(applyScript("play", ereignis({ videoTime: 100, timestamp: Date.now(), playing: true })), n);
-    pruefe("11. Ein fremdes Tempo wird auf 1 zurueckgestellt",
-      m.tempoGesetzt.length === 1 && m.tempoGesetzt[0] === 1, m.tempoGesetzt.join(", ") || "gar nicht");
-    pruefe("11b. Und sonst wird es nie angefasst",
+    pruefe("11. Drift lässt das Tempo der Runde unverändert",
+      m.tempoGesetzt.length === 0 && m.playbackRate === 1.02, m.tempoGesetzt.join(", ") || "nie");
+    pruefe("11b. Auch Steuerungen erhalten das eingestellte Tempo",
       n.tempoGesetzt.length === 0, n.tempoGesetzt.join(", ") || "nie");
   }
 
   {
-    // Der harte Nachweis: in keinem der Skripte steht ein Zuweisen von
-    // playbackRate auf etwas anderes als 1.
+    // Der harte Nachweis: die Sync-Skripte besitzen das Tempo nicht.
     const alle = [
       applyScript("play", ereignis({ playing: true })),
       applyScript("pause", ereignis({})),
@@ -249,8 +270,8 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       zuruecksetzenScript()
     ].join("\n");
     const zuweisungen = alle.match(/playbackRate\s*=\s*[^;]+/g) || [];
-    pruefe("11c. Kein Skript setzt playbackRate je auf etwas anderes als 1",
-      zuweisungen.every((z) => /=\s*1\b/.test(z)), zuweisungen.join(" | ") || "keine Zuweisung");
+    pruefe("11c. Kein Sync-Skript setzt playbackRate",
+      zuweisungen.length === 0, zuweisungen.join(" | ") || "keine Zuweisung");
   }
 
   // --- 11d. Aus dem Netz kommt nichts in den Skript-Text -------------------
@@ -278,9 +299,9 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
   {
     const m = video(500, { paused: false, playbackRate: 1.02 });
     const { ergebnis, fenster } = await ausfuehren(zuruecksetzenScript(), m);
-    pruefe("13. Der Folgenwechsel setzt Zaehlung und Tempo zurueck",
+    pruefe("13. Der Folgenwechsel setzt Zaehlung zurück und erhält das Tempo",
       ergebnis === "zurueckgesetzt" && fenster.__elfixWpSync.bestaetigt === 0
-        && fenster.__elfixWpSync.seitSprung === 0 && m.tempoGesetzt[0] === 1,
+        && fenster.__elfixWpSync.seitSprung === 0 && m.tempoGesetzt.length === 0,
       JSON.stringify(fenster.__elfixWpSync));
   }
 
@@ -344,10 +365,15 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       const welt = seite([m]);
       const erst = laufen(welt, beobachterScript());
       welt.feuern("play", m);
+      // Das sofortige Pause nach einem lokalen Play ist der eigene
+      // Sperrriegel bis zum Relay-Echo und darf nicht nochmals gesendet werden.
+      welt.feuern("pause", m);
+      welt.fenster.__elfixWpEcho = [];
+      welt.fenster.__elfixWpErwartet = null;
       welt.feuern("pause", m);
       welt.feuern("seeked", m);
       const taten = welt.logs.map(aktionLesen).filter(Boolean).map((t) => t.aktion);
-      pruefe("14a. Der Horcher meldet Play, Pause und Sprung",
+      pruefe("14a. Der Horcher meldet Play, echte Pause und Sprung",
         erst === "installiert" && taten.join(",") === "play,pause,seek",
         taten.join(",") || "nichts gemeldet");
       const staende = welt.logs.map(standLesen).filter(Boolean);
@@ -551,6 +577,14 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       flink.spruenge.length === vorher2,
       `${vorher2} -> ${flink.spruenge.length}`);
   }
+
+  const frameStand = standLesen("__elfix:wp:stand:421.037:1:1371:421.000000");
+  pruefe("16. Die Standmeldung kann die sichtbare Framezeit tragen",
+    frameStand?.paused === true && frameStand.position === 421.037
+      && frameStand.duration === 1371 && frameStand.frameTime === 421,
+    JSON.stringify(frameStand));
+  pruefe("16b. Das bisherige Standformat bleibt lesbar",
+    standLesen("__elfix:wp:stand:421.037:1:1371")?.frameTime === undefined);
 
   const fehler = pruefungen.filter((p) => !p).length;
   console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);

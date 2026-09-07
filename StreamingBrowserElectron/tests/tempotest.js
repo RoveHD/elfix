@@ -41,6 +41,7 @@ function pruefe(name, bedingung, detail) {
 }
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 async function warteBis(bedingung, hoechstens = 6000) {
+  if (typeof hoechstens !== "number") hoechstens = 6000;
   const bis = Date.now() + hoechstens;
   while (Date.now() < bis) {
     let erfuellt = false;
@@ -91,8 +92,8 @@ pruefe("Und beide halten nichts an",
 // springen, auch wenn es nur eine Sekunde ist.
 const pauseUrteil = sync.steuerungEntscheiden({ action: "pause", episodeId: "" }, {});
 pruefe("Eine Pause bleibt genau", pauseUrteil.tun === "anwenden" && pauseUrteil.genau === true);
-pruefe("Der Host springt dabei nicht",
-  sync.steuerungEntscheiden({ action: "pause", episodeId: "" }, { binHost: true }).nichtSpringen === true);
+pruefe("Auch der Auslöser folgt der autoritativen Pause",
+  sync.steuerungEntscheiden({ action: "pause", episodeId: "" }, { binHost: true }).nichtSpringen === false);
 
 // --- Der verabredete Start ---------------------------------------------------
 //
@@ -132,6 +133,9 @@ pruefe("Und es zwingt den Wert auf eine Stufe",
 
 function geraet(name) {
   const steuerung = [];
+  const gesendet = [];
+  const nachrichten = [];
+  const eingang = [];
   let zustand = [];
   const raeume = new WatchpartyRaeume({
     WebSocketKlasse: WS,
@@ -142,11 +146,54 @@ function geraet(name) {
   raeume.konfigurieren({
     enabled: true, serverUrl: ADRESSE, rooms: [RAUM], name, deviceId: `${name}-id`
   });
+  for (const raum of raeume.raeume.values()) {
+    const verarbeiten = raum.nachrichtVerarbeiten.bind(raum);
+    raum.nachrichtVerarbeiten = (roh) => {
+      try { eingang.push(JSON.parse(String(roh))); } catch { /* ungueltig */ }
+      return verarbeiten(roh);
+    };
+    const senden = raum.senden.bind(raum);
+    raum.senden = (nachricht) => {
+      nachrichten.push({ ...nachricht });
+      if (nachricht?.type === "syncready") gesendet.push({ ...nachricht });
+      return senden(nachricht);
+    };
+  }
   return {
-    name, raeume, steuerung,
+    name, raeume, steuerung, gesendet, nachrichten, eingang,
     eintrag: () => zustand.find((wert) => wert.key === KEY) || null,
     letzte: (aktion) => [...steuerung].reverse().find((wert) => wert.action === aktion) || null
   };
+}
+
+// Ein Play ist jetzt eine Schranke: beide Player müssen die vom Relay
+// angeordnete Pause/den Seek wirklich vorbereitet haben. Diese Helferfunktion
+// bestätigt deshalb nicht blind, sondern verlangt auf beiden Seiten denselben
+// syncId-tragenden `syncprepare` und wartet danach auf `syncstart`.
+async function gemeinsamStarten(host, gast) {
+  await warteBis(() => host.letzte("syncprepare") && gast.letzte("syncprepare"), "syncprepare fuer beide");
+  const vorHost = host.letzte("syncprepare");
+  const vorGast = gast.letzte("syncprepare");
+  const syncId = String(vorHost?.syncId || "");
+  const vorSendenHost = host.nachrichten.length;
+  const vorSendenGast = gast.nachrichten.length;
+  const vorEingangHost = host.eingang.length;
+  const vorEingangGast = gast.eingang.length;
+  pruefe("Beide bereiten denselben Start vor",
+    Boolean(syncId) && syncId === String(vorGast?.syncId || "")
+      && vorHost.playing === false && vorGast.playing === false,
+    `${syncId} / ${vorGast?.syncId || ""}`);
+  host.raeume.bereitZumStart(KEY, RAUM, syncId);
+  gast.raeume.bereitZumStart(KEY, RAUM, syncId);
+  const gestartet = await warteBis(() => host.letzte("syncstart") && gast.letzte("syncstart"), "syncstart fuer beide");
+  pruefe("Nach beiden echten Bereitmeldungen kommt syncstart für beide", gestartet,
+    `${host.letzte("syncstart")?.syncId || "-"} / ${gast.letzte("syncstart")?.syncId || "-"}; `
+      + `ready=${host.gesendet.at(-1)?.syncId || "-"}/${gast.gesendet.at(-1)?.syncId || "-"}; `
+      + `nachher=${host.nachrichten.slice(vorSendenHost).map((n) => n.type).join(",")}`
+      + `/${gast.nachrichten.slice(vorSendenGast).map((n) => n.type).join(",")}; `
+      + `eingang=${host.eingang.slice(vorEingangHost).map((n) => `${n.type}:${n.syncId || ""}`).join(",")}`
+      + `/${gast.eingang.slice(vorEingangGast).map((n) => `${n.type}:${n.syncId || ""}`).join(",")}`);
+  return { vorHost, vorGast, startHost: host.letzte("syncstart"), startGast: gast.letzte("syncstart") };
 }
 
 (async () => {
@@ -171,6 +218,11 @@ function geraet(name) {
   await warteBis(() => gast.eintrag()?.joined);
   // Beide melden ihre Folge - ohne das gilt ein Befehl nur unter Gleichfolgigen.
   host.raeume.meldeStand(KEY, { position: 312.5, paused: false, url: FOLGE, season: 1, episode: 4, playerSessionId: "host-sitzung" }, RAUM);
+  // Die Hostwahl folgt dem ersten aktiven Player, nicht bloss der
+  // Beitrittsreihenfolge. Erst dessen Meldung verarbeiten lassen, dann den
+  // zweiten Player melden; zwei gleichzeitige WebSocket-Pakete waeren kein
+  // belastbarer Test dafuer, wer die Runde fuehrt.
+  await warteBis(() => host.eintrag()?.hostId === "Host-id");
   gast.raeume.meldeStand(KEY, { position: 300, paused: false, url: FOLGE, season: 1, episode: 4, playerSessionId: "gast-sitzung" }, RAUM);
   await schlaf(300);
 
@@ -194,12 +246,6 @@ function geraet(name) {
   pruefe("Ein Gast stellt das Tempo der Runde nicht",
     gast.eintrag()?.tempo === vorher && host.letzte("tempo") === null,
     String(gast.eintrag()?.tempo));
-
-  // --- Jeder Befehl traegt das Tempo der Runde ---
-  host.raeume.steuern(KEY, "play", 320, RAUM);
-  await warteBis(() => gast.letzte("play"));
-  pruefe("Auch ein Play traegt das Tempo der Runde mit",
-    gast.letzte("play")?.tempo === 2, String(gast.letzte("play")?.tempo));
 
   // --- Die Fassung ---
   host.raeume.steuernMitEinstellung(KEY, "fassung", 320, FOLGE, RAUM,
@@ -239,11 +285,16 @@ function geraet(name) {
     urteil.tun === "anwenden" && urteil.genau === true && urteil.nichtSpringen === false, urteil.tun);
 
   // --- Der gemeinsame Start am echten Relay ---
+  host.steuerung.length = 0;
+  gast.steuerung.length = 0;
   const vorPlay = gast.steuerung.length;
   host.raeume.steuernMitEinstellung(KEY, "play", STELLE, FOLGE, RAUM,
     { startAt: Date.now() + sync.START_VORLAUF_MS });
-  await warteBis(() => gast.steuerung.length > vorPlay && gast.letzte("play"));
-  const losfahrt = gast.letzte("play");
+  await warteBis(() => gast.steuerung.length > vorPlay && gast.letzte("syncprepare"));
+  const start = await gemeinsamStarten(host, gast);
+  const losfahrt = start.startGast;
+  pruefe("Auch der gemeinsame Start traegt das Tempo der Runde mit",
+    losfahrt?.tempo === 2, String(losfahrt?.tempo));
   pruefe("Ein Play traegt einen gemeinsamen Zeitpunkt",
     Number(losfahrt?.startAt) > Date.now(), String(losfahrt?.startAt));
   pruefe("Er liegt in der nahen Zukunft und nicht irgendwo",
@@ -252,13 +303,14 @@ function geraet(name) {
     losfahrt?.videoTime === STELLE, String(losfahrt?.videoTime));
   // Derselbe Zeitpunkt, zwei Geraete: was jedes noch warten muss, endet im
   // selben Augenblick. Genau das ist "gleichzeitig".
-  const alsHost = sync.startPlan(sync.ereignisFuerPlayer(losfahrt, true, 0, true), losfahrt.at);
-  const alsGast = sync.startPlan(sync.ereignisFuerPlayer(losfahrt, true, 0, true), losfahrt.at + 200);
+  const startEreignis = losfahrt ? sync.ereignisFuerPlayer(losfahrt, true, 0, true) : null;
+  const alsHost = startEreignis ? sync.startPlan(startEreignis, losfahrt.at) : null;
+  const alsGast = startEreignis ? sync.startPlan(startEreignis, losfahrt.at + 200) : null;
   pruefe("Beide zielen auf denselben Serverzeitpunkt",
-    losfahrt.at + alsHost.wartenMs === (losfahrt.at + 200) + alsGast.wartenMs,
-    `${alsHost.wartenMs} / ${alsGast.wartenMs}`);
+    Boolean(losfahrt) && losfahrt.at + alsHost.wartenMs === (losfahrt.at + 200) + alsGast.wartenMs,
+    `${alsHost?.wartenMs} / ${alsGast?.wartenMs}`);
   pruefe("Und auf dieselbe Stelle",
-    alsHost.stelle === STELLE && alsGast.stelle === STELLE);
+    alsHost?.stelle === STELLE && alsGast?.stelle === STELLE);
 
   host.raeume.trennen();
   gast.raeume.trennen();
@@ -294,7 +346,7 @@ function geraet(name) {
   pruefe("Eine neue Quelle bekommt das Tempo wieder aufgesetzt",
     /if \(bild\.playbackRate !== tempo\) tempoSetzen\(tempo, false\);/.test(spieler));
   pruefe("Der eigene Player wartet den verabredeten Zeitpunkt ab",
-    /async function startVerabredet\(stelle, wartenMs, springen = true\)/.test(spieler)
+    /async function startVerabredet\(stelle, wartenMs, springen = true, startLokal = Date.now\(\) \+ wartenMs\)/.test(spieler)
     && /await bereitFuerStart\(springen \? stelle : Number\(bild\.currentTime\) \|\| 0, 2500\);/.test(spieler));
   pruefe("Wer zu spaet fertig wird, bekommt die Verspaetung an der Stelle gutgeschrieben",
     /const zuspaet = \(Date\.now\(\) - frist\) \/ 1000;/.test(spieler)
@@ -327,7 +379,7 @@ function geraet(name) {
   pruefe("Android springt genau - nicht auf das Schluesselbild davor",
     /SeekParameters\.EXACT/.test(androidSpieler));
   pruefe("Beim Anhalten wird ohne Toleranz gesprungen",
-    /boolean nahGenug = laeuftDanach\s*\r?\n\s*&& Math\.abs\(position\(\) - befehl\.ziel\) <= SPRUNG_AB_SEKUNDEN;/.test(androidSpieler));
+    /boolean nahGenug = laeuftDanach && !Double\.isFinite\(befehl\.frameZiel\)\s*\r?\n\s*&& Math\.abs\(position\(\) - befehl\.ziel\) <= SPRUNG_AB_SEKUNDEN;/.test(androidSpieler));
   pruefe("Und der Puffer haelt hinter der Stelle etwas vor",
     /setBackBuffer\(30_000, true\)/.test(androidSpieler));
 

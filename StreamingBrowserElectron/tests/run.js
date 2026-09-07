@@ -19,8 +19,9 @@ const RELAY = path.join(HIER, "..", "..", "sync-server", "server.js");
 const PORT = Number(process.env.TESTPORT) || 0;
 
 // Ohne Relay: reine Rechenpruefungen.
-const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "empfehlungslauftest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "wiederansehentest", "watchlisttest", "verlauftest", "suchetest", "trefferbildtest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "naechstefolgetest", "rueckblicktest", "wrappedtest", "openingtest", "sponsorblocktest", "trailertest", "qualitaettest", "direktquelletest", "direktlauftest", "direktlinkstest", "direktfolgentest", "spielertest", "direktmodustest", "manifesttest", "streamspurtest", "direktprobetest", "direktregressionstest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest", "titelbildtest", "werbefiltertest", "folgenlinktest", "folgentiteltest", "uebersichttest", "relaytest", "bildnachreichungtest", "bildfallbacktest", "startknopftest", "hosterplayertest", "autostarttest", "startphasentest", "startfreigabetest", "bestandschutztest", "raumarchivtest", "nachschubtest"];
+const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "watchparty-praezisiontest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "empfehlungslauftest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "wiederansehentest", "watchlisttest", "verlauftest", "suchetest", "trefferbildtest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "naechstefolgetest", "rueckblicktest", "wrappedtest", "openingtest", "sponsorblocktest", "trailertest", "qualitaettest", "direktquelletest", "direktlauftest", "direktlinkstest", "direktfolgentest", "spielertest", "direktmodustest", "manifesttest", "streamspurtest", "direktprobetest", "direktregressionstest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest", "titelbildtest", "werbefiltertest", "folgenlinktest", "folgentiteltest", "uebersichttest", "relaytest", "bildnachreichungtest", "bildfallbacktest", "startknopftest", "hosterplayertest", "autostarttest", "startphasentest", "startfreigabetest", "bestandschutztest", "raumarchivtest", "nachschubtest"];
 // Mit Relay: das Zusammenspiel.
+OHNE_RELAY.push("watchpartyvorbereitungtest");
 OHNE_RELAY.push("androiddirekttest");
 OHNE_RELAY.push("ansichtsleistungtest");
 OHNE_RELAY.push("uisoundtest");
@@ -43,6 +44,7 @@ function laufen(datei, umgebung) {
   const zeilen = String(ergebnis.stdout || "").trim().split("\n");
   const letzte = zeilen[zeilen.length - 1] || "";
   const fehler = String(ergebnis.stdout || "").split("\n").filter((z) => z.startsWith("FAIL"));
+  if (ergebnis.status !== 0 && ergebnis.stderr) fehler.push(String(ergebnis.stderr).trim());
   return { ok: ergebnis.status === 0, zusammenfassung: letzte, fehler, ausgabe: ergebnis.stdout };
 }
 
@@ -89,10 +91,12 @@ async function warteAufStille(port, frist) {
 }
 
 (async () => {
+  const auswahl = new Set(process.argv.slice(2));
+  const gewaehlt = (name) => !auswahl.size || auswahl.has(name);
   const ablage = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-tests-"));
   let alleOk = true;
 
-  for (const datei of OHNE_RELAY) {
+  for (const datei of OHNE_RELAY.filter(gewaehlt)) {
     const r = laufen(datei, {});
     if (!r.ok) alleOk = false;
     console.log(`${r.ok ? "ok  " : "FEHL"}  ${datei.padEnd(14)} ${r.zusammenfassung}`);
@@ -110,7 +114,7 @@ async function warteAufStille(port, frist) {
     console.log("  Einmalig einrichten:  cd sync-server && npm ci");
   }
 
-  for (const datei of relayDa ? MIT_RELAY : []) {
+  for (const datei of relayDa ? MIT_RELAY.filter(gewaehlt) : []) {
     // Parallele Testlaeufe duerfen niemals dieselben Raeume benutzen.
     const port = PORT || await freierPort();
     // Frischer Server je Suite - sonst faerbt der Zustand des vorigen ab.

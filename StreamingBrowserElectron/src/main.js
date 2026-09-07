@@ -3013,7 +3013,7 @@ function getProviderView(provider) {
     // die Zeile zusammensetzt, und dieselbe, aus der Android sie liest.
     const stand = watchpartySync.standLesen(nachricht);
     if (stand) {
-      meldeWatchpartyStandAusSeite(view, stand.position, stand.paused);
+      meldeWatchpartyStandAusSeite(view, stand.position, stand.paused, stand.frameTime);
       return;
     }
     // Live zuschauen: Pause, Weiter und Springen sofort an die anderen melden.
@@ -7159,7 +7159,8 @@ function watchpartyApplyScript(action, ereignis, optionen) {
 // Erster Teil des gemeinsamen Gleichziehens: anhalten und auf die Zielstelle
 // springen. Erst wenn alle so weit sind, gibt der Server das Startsignal -
 // sonst laufen die Geraete sofort wieder auseinander.
-async function prepareWatchpartySync(eintrag, nachricht) {
+async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true) {
+  if (!istAktuell()) return;
   sendWatchpartyLive({
     active: true,
     live: true,
@@ -7173,28 +7174,29 @@ async function prepareWatchpartySync(eintrag, nachricht) {
   // Steht die falsche Folge offen, erst dorthin wechseln.
   if (nachricht.url) {
     await followWatchpartyEpisode(eintrag, { ...nachricht, action: "navigate" });
+    if (!istAktuell()) return;
   }
 
   let vorbereitet = false;
   for (const [, view] of providerViews) {
+    if (!istAktuell()) return;
     if (!isLiveView(view)) continue;
     if (!istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
     // Anhalten, exakt auf die Stelle des Hosts, und erst zurueckmelden, wenn
-    // der Sprung wirklich sitzt und genug gepuffert ist. Der Host haelt nur an,
-    // wo er ohnehin steht - seine Stelle ist ja das Ziel.
-    await executeJavaScriptInMediaFrames(
+    // der Sprung wirklich sitzt und genug gepuffert ist, auch beim Host.
+    const ergebnisse = await executeJavaScriptInMediaFrames(
       view,
       watchpartyApplyScript("syncprepare", watchpartyEreignis(nachricht, false), {
         genau: true,
         warten: true,
-        nichtSpringen: Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId
+        nichtSpringen: false
       })
     ).catch(() => []);
-    vorbereitet = true;
+    if (!istAktuell()) return;
+    if (ergebnisse.some((ergebnis) => ergebnis === "bereit" || ergebnis?.value === "bereit" || ergebnis?.result === "bereit")) vorbereitet = true;
   }
-  // Auch wer die Folge gerade nicht offen hat, meldet sich - sonst warten die
-  // anderen unnoetig bis zum Zeitlimit.
-  watchparty.bereitZumStart(eintrag.key, eintrag.room);
+  // Eine Bereitschaft bestaetigt einen vorbereiteten Player, keinen Empfang.
+  if (vorbereitet) watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId);
   if (!vorbereitet) {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
   }
@@ -9528,6 +9530,14 @@ let spielerDrift = { bestaetigt: 0, letzteMessung: 0, seitSprung: 0 };
 
 /** Der zuletzt gemeldete Stand des eigenen Players. */
 let spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+let spielerSyncBereit = null;
+
+ipcMain.on("spieler:sync-bereit", (ereignis, id) => {
+  const bereit = spielerSyncBereit;
+  if (!vomSpieler(ereignis) || !bereit || bereit.id !== id || bereit.auftragId !== spielerLauf?.id) return;
+  spielerSyncBereit = null;
+  watchparty.bereitZumStart(bereit.key, bereit.raum, bereit.syncId);
+});
 
 /** Die Runde, in der der eigene Player gerade laeuft - falls es eine gibt. */
 function spielerRunde() {
@@ -9629,13 +9639,14 @@ function spielerBefehl(befehl) {
  * Das ist der Punkt: die Anbieteransicht steht laengst woanders - auf einer
  * Staffelseite, die gerade gelesen wurde -, waehrend hier eine Folge laeuft.
  */
-function meldeWatchpartyStandAusSpieler(position, pausiert) {
+function meldeWatchpartyStandAusSpieler(position, pausiert, frameTime) {
   const runde = spielerRunde();
   if (!watchparty.aktiv || !runde) return;
   const identity = episodeIdentity(runde.adresse);
   watchparty.meldeStand(runde.key, {
     position: Number(position) || 0,
     paused: Boolean(pausiert),
+    frameTime,
     url: runde.adresse,
     season: identity?.season || 0,
     episode: identity?.episode || 0,
@@ -9675,13 +9686,18 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
   // Gleichziehen: anhalten, genau auf die Stelle des Hosts. Der Host haelt nur
   // an, wo er ohnehin steht - seine Stelle ist ja das Ziel.
   if (urteil.tun === "syncprepare") {
+    const bereitId = `${eintrag.room}:${nachricht.key}:${nachricht.syncId || nachricht.sequenceId}`;
+    spielerSyncBereit = { id: bereitId, key: eintrag.key, raum: eintrag.room,
+      syncId: nachricht.syncId, auftragId: spielerLauf.id };
     spielerBefehl({
       tun: "stelle",
       stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
       laufen: false,
-      springen: !binHost
+      springen: true,
+      genau: true,
+      bereitId
     });
-    return false;
+    return true;
   }
 
   // Die laufende Messung des Hosts. Sie ist keine Korrektur - meistens folgt
@@ -9725,6 +9741,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
   // laeuft, sondern die Werkbank auf einer Staffelseite steht. Am eigenen
   // Player kam aus der Runde also nichts an ausser dem gemeinsamen Start.
   if (urteil.tun === "anwenden" || urteil.tun === "syncstart") {
+    spielerSyncBereit = null;
     const laufen = watchpartyLaeuftDanach(nachricht);
     const springen = !urteil.nichtSpringen;
     /*
@@ -9753,6 +9770,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost) {
       // verabredeten Zeitpunkt wartet er trotzdem.
       springen,
       wartenMs: plan.wartenMs,
+      startLokal: laufen ? Date.now() + plan.wartenMs : 0,
       // Pause und gezielter Sprung muessen sitzen: der Empfaenger misst nach.
       genau: urteil.genau
     });
@@ -9774,7 +9792,7 @@ ipcMain.on("spieler:takt", (ereignis, takt) => {
     puffert: Boolean(takt?.puffert),
     at: Date.now()
   };
-  meldeWatchpartyStandAusSpieler(spielerTakt.stelle, !spielerTakt.laeuft);
+  meldeWatchpartyStandAusSpieler(spielerTakt.stelle, !spielerTakt.laeuft, takt?.frameTime);
 });
 
 /**
@@ -9803,19 +9821,7 @@ ipcMain.on("spieler:aktion", (ereignis, aktion, stelle) => {
     const jetzt = watchparty.serverJetzt(runde.raum);
     const startAt = jetzt == null ? 0 : jetzt + watchpartySync.START_VORLAUF_MS;
     watchparty.steuernMitEinstellung(runde.key, "play", wo, runde.adresse, runde.raum, { startAt });
-    // Und der eigene Player wartet denselben Augenblick ab. Ohne gemessene Uhr
-    // gibt es keinen gemeinsamen Augenblick - dann bleibt es beim Vorlauf, den
-    // auch das Relay setzt, und die Abweichung ist die Laufzeit der Nachricht.
-    spielerBefehl({
-      tun: "stelle",
-      stelle: wo,
-      laufen: true,
-      // Er steht schon dort, wo alle hinsollen - ein Sprung auf die eigene
-      // Stelle laesst nur neu puffern.
-      springen: false,
-      wartenMs: watchpartySync.START_VORLAUF_MS,
-      genau: false
-    });
+    // Der Absender wartet auf dieselbe bestaetigte Verabredung wie alle anderen.
     return;
   }
   watchparty.steuernMitAdresse(runde.key, name, wo, runde.adresse, runde.raum);
@@ -9915,6 +9921,8 @@ async function applyWatchpartyControl(nachricht) {
     offen: null
   });
   if (urteil.merken) watchpartyLetztesEreignis.set(merker, urteil.merken);
+  const angenommen = watchpartyLetztesEreignis.get(merker);
+  const istAktuell = () => watchpartyLetztesEreignis.get(merker) === angenommen;
   if (urteil.tun === "nichts") {
     if (urteil.grund === "veraltet") {
       console.log(`[watchparty-sync] {"action":"stale","ignored":"${nachricht.action}"}`);
@@ -9938,6 +9946,7 @@ async function applyWatchpartyControl(nachricht) {
   // Laeuft der eigene Player, gehoert der Befehl ihm. Er bekommt ihn als Zahl
   // und nicht als eingespieltes Skript - das Video gehoert uns.
   if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost)) return;
+  if (!istAktuell()) return;
 
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
   // derselben Serie, damit niemand ungefragt woanders landet.
@@ -9948,7 +9957,7 @@ async function applyWatchpartyControl(nachricht) {
 
   // Gemeinsam gleichziehen: anhalten, auf dieselbe Stelle, Bereitmeldung.
   if (urteil.tun === "syncprepare") {
-    await prepareWatchpartySync(eintrag, nachricht);
+    await prepareWatchpartySync(eintrag, nachricht, istAktuell);
     return;
   }
   if (urteil.tun === "syncstart") {
@@ -9996,7 +10005,7 @@ async function applyWatchpartyControl(nachricht) {
     // zaehlt auch die Zeit mit, die das Puffern gekostet hat.
     await executeJavaScriptInMediaFrames(
       view,
-      watchpartyApplyScript(nachricht.action, ereignis, { genau, nichtSpringen: binHost })
+      watchpartyApplyScript(nachricht.action, ereignis, { genau, nichtSpringen: urteil.nichtSpringen })
     ).catch(() => []);
     if (provider) {
       logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
@@ -10118,7 +10127,7 @@ function watchpartySitzungFuer(providerId) {
 // Der Weg, den es im Normalfall geht: die Seite meldet von selbst, sobald sich
 // etwas tut. Kein Zeitgeber, kein Abfragen aller Frames - und damit ohne die
 // Verzoegerung, die eine Umfrage zwangslaeufig hat.
-function meldeWatchpartyStandAusSeite(view, position, pausiert) {
+function meldeWatchpartyStandAusSeite(view, position, pausiert, frameTime) {
   if (!watchparty.aktiv || !isLiveView(view) || view !== activeView) return;
   // Liegt die Startseite oder eine andere Ansicht darueber, schaut hier
   // niemand mehr zu - dann gehoert dieses Geraet auch nicht in die Leiste.
@@ -10132,6 +10141,7 @@ function meldeWatchpartyStandAusSeite(view, position, pausiert) {
   watchparty.meldeStand(key, {
     position: Number(position) || 0,
     paused: Boolean(pausiert),
+    frameTime,
     url: adresse,
     season: identity?.season || 0,
     episode: identity?.episode || 0,

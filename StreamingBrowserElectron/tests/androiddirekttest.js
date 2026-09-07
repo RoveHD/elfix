@@ -98,11 +98,21 @@ async function main() {
     const wp = context.ElfixKern.require("watchparty-bruecke");
     const result = wp.steuerungPruefen({ key: "serie:test", room: "r", action: "pause", position: 40,
       sequenceId: 1, episodeId: "s1e1" }, { nativ: true, binHost: true, gleicheAdresse: true, season: 1, episode: 1 });
-    assert.equal(result.nichtSpringen, true);
+    assert.equal(result.nichtSpringen, false);
     assert.equal(result.position, 40);
     assert.equal(result.ereignis.playing, false);
     assert.equal(wp.steuerungPruefen({ key: "serie:test", room: "r", action: "play", position: 12,
       sequenceId: 0, episodeId: "s1e2" }, { nativ: true, gleicheAdresse: false, season: 1, episode: 1 }).tun, "nichts");
+  });
+  await test("Native syncstart keeps the agreed position until startAt and only catches up lateness", () => {
+    const wp = context.ElfixKern.require("watchparty-bruecke");
+    const ereignis = {
+      videoTime: 42, timestamp: 9000, playing: true, hatUhr: true,
+      versatz: 0, startAt: 10_000, tempo: 2
+    };
+    assert.equal(wp.nativeZielBerechnen(ereignis, 9500), 42);
+    assert.equal(wp.nativeZielBerechnen(ereignis, 10_000), 42);
+    assert.equal(wp.nativeZielBerechnen(ereignis, 10_500), 43);
   });
   await test("Intro learning and button timing use the shared rules", () => {
     const marken = context.ElfixKern.require("marken-bruecke");

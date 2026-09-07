@@ -206,9 +206,14 @@ function puls(c) {
     pause && pause.playing === false, pause ? `playing=${pause.playing}` : "kam nicht");
 
   B.leeren();
+  A.leeren();
   A.pausiert = false;
   A.send({ type: "control", key: KEY, action: "play", position: A.stelle, url: URL1 });
-  const weiter = await B.erwarte((m) => m.type === "control" && m.action === "play", 2000);
+  const vorbereitenA = await A.erwarte((m) => m.type === "syncprepare", 2000);
+  const vorbereitenB = await B.erwarte((m) => m.type === "syncprepare", 2000);
+  if (vorbereitenA?.syncId) A.send({ type: "syncready", key: KEY, syncId: vorbereitenA.syncId });
+  if (vorbereitenB?.syncId) B.send({ type: "syncready", key: KEY, syncId: vorbereitenB.syncId });
+  const weiter = await B.erwarte((m) => m.type === "syncstart", 2000);
   pruefe("9b. Ein Play ist als laufend gekennzeichnet",
     weiter && weiter.playing === true, weiter ? `playing=${weiter.playing}` : "kam nicht");
   pruefe("9c. Die Nummern der Ereignisse steigen streng",

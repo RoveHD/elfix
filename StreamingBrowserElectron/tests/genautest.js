@@ -96,6 +96,7 @@ function spielerKontext(bild) {
     if (id === "bild") return bild;
     if (elemente.has(id)) return elemente.get(id);
     const horcher = {};
+    const attribute = new Map();
     const el = {
       hidden: true, value: "", children: [], disabled: false,
       style: { setProperty() {} },
@@ -107,7 +108,9 @@ function spielerKontext(bild) {
       append(...kinder) { this.children.push(...kinder); },
       replaceChildren(...kinder) { this.children = kinder; },
       querySelector() { return null; }, querySelectorAll() { return []; },
-      setAttribute() {}, getAttribute() { return ""; }, removeAttribute() {},
+      setAttribute(name, value) { attribute.set(name, String(value)); },
+      getAttribute(name) { return attribute.get(name) ?? null; },
+      removeAttribute(name) { attribute.delete(name); },
       focus() {}, requestLayout() {}
     };
     Object.defineProperty(el, "textContent", {
@@ -185,6 +188,22 @@ function spielerKontext(bild) {
   /* --- 2. Der gemeinsame Start ------------------------------------------- */
 
   {
+    const { c, element } = spielerKontext(videoBauen());
+    vm.runInContext("inRunde = true", c);
+    c.startAnfordern();
+    pruefe("Beide Playbuttons zeigen denselben abbrechbaren Wartezustand",
+      [element("spielen"), element("mitteSpielen")].every(button =>
+        button.getAttribute("aria-busy") === "true"
+        && button.getAttribute("data-play-state") === "pause"
+        && button.getAttribute("aria-label").includes("abbrechen")));
+    c.pauseAnfordern();
+    pruefe("Abbrechen setzt beide Buttons unmittelbar auf Play zurueck",
+      [element("spielen"), element("mitteSpielen")].every(button =>
+        button.getAttribute("aria-busy") === "false"
+        && button.getAttribute("data-play-state") === "play"));
+  }
+
+  {
     const bild = videoBauen(0);
     const { c } = spielerKontext(bild);
     bild.currentTime = 100;
@@ -201,6 +220,45 @@ function spielerKontext(bild) {
   }
 
   /* --- 3. Die Rechnung dahinter, fuer beide Geraete dieselbe ------------- */
+
+  {
+    const bild = videoBauen(0);
+    const { c, meldungen } = spielerKontext(bild);
+    vm.runInContext("inRunde = true", c);
+    bild.readyState = 2;
+    c.steuernAusRunde({ stelle: 70, laufen: true, wartenMs: 100 });
+    await schlaf(2700);
+    pruefe("Ein verlorener Puffer startet nach Fristablauf nicht allein", bild.paused);
+  }
+
+  {
+    const bild = videoBauen(0);
+    const { c } = spielerKontext(bild);
+    const frist = Date.now() + 200;
+    c.steuernAusRunde({ stelle: 80.123, laufen: true, startLokal: frist, wartenMs: 600 });
+    await schlaf(320);
+    pruefe("IPC-Verzoegerung verschiebt den absoluten Startzeitpunkt nicht", !bild.paused);
+  }
+  {
+    const bild = videoBauen(0);
+    const { c } = spielerKontext(bild);
+    vm.runInContext("inRunde = true", c);
+    c.steuernAusRunde({ stelle: 90.321, laufen: true, startLokal: Date.now() + 200 });
+    await schlaf(50);
+    c.spielenUmschalten();
+    await schlaf(300);
+    pruefe("Pause waehrend eines verabredeten Starts widerruft den Start", bild.paused);
+  }
+  {
+    const bild = videoBauen(0);
+    const { c } = spielerKontext(bild);
+    c.steuernAusRunde({ stelle: 90.321, laufen: true, wartenMs: 200 });
+    await schlaf(40);
+    c.steuernAusRunde({ stelle: 92.123, laufen: false, genau: true });
+    await schlaf(300);
+    pruefe("Ein neuer Pausenbefehl gewinnt gegen den alten Starttimer",
+      bild.paused && Math.abs(bild.currentTime - 92.123) <= 0.001);
+  }
 
   const ereignis = (zusatz) => ({
     videoTime: STELLE, timestamp: 1000, playing: true, hatUhr: true, tempo: 1, ...zusatz
@@ -264,9 +322,12 @@ function spielerKontext(bild) {
 
   const android = fs.readFileSync(
     path.join(WURZEL, "../android/app/src/main/java/local/elflix/android/DirektSpieler.java"), "utf8");
-  pruefe("Android ebenso - und es misst nach dem Sprung nach",
-    /umgebung\.inRunde\(\) && bereitGemeldet/.test(android)
-    && /Math\.abs\(position\(\) - befehl\.ziel\) > SEEK_TOLERANZ_S/.test(android));
+  pruefe("Android wartet ebenso, trennt Play und Pause und misst millisekundengenau nach",
+    /private void abspielenAnfordern\(\)/.test(android)
+    && /private void pauseAnfordern\(\)/.test(android)
+    && /KEYCODE_MEDIA_PLAY_PAUSE[\s\S]*KEYCODE_MEDIA_PLAY[\s\S]*KEYCODE_MEDIA_PAUSE/.test(android)
+    && /SEEK_TOLERANZ_S\s*=\s*0\.001/.test(android)
+    && /abstand > SEEK_TOLERANZ_S/.test(android));
 
   const relay = fs.readFileSync(path.join(WURZEL, "../sync-server/server.js"), "utf8");
   pruefe("Das Relay legt den gemeinsamen Zeitpunkt fest",

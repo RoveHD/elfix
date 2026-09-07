@@ -684,7 +684,12 @@ function hostZustandJetzt(raumcode, eintrag) {
   // hat: hoechstens eine Sekunde alt, mit echtem Pausenzustand. Weil der Host
   // nie springt, muessen sich die anderen genau darauf ausrichten.
   const eigen = aktuellerHost(raumcode, eintrag);
-  if (eigen) {
+  // A paused heartbeat captured during the scheduled start can arrive just
+  // after its deadline. It describes preparation, not a later user pause;
+  // otherwise the next guest pause rewinds everyone to the starting frame.
+  const vorbereitungsStand = eigen?.paused && eintrag.live?.action === "play"
+    && Number(eintrag.startAt) > 0 && eigen.at <= Number(eintrag.startAt) + 250;
+  if (eigen && !vorbereitungsStand) {
     kandidaten.push({ at: eigen.at, position: eigen.position, laeuft: !eigen.paused });
   }
   if (eintrag.live) {
@@ -755,7 +760,11 @@ const START_VORLAUF_MS = 800;
 function startZeitpunkt(laeuftDanach, jetzt, vorschlag) {
   if (!laeuftDanach) return 0;
   const wunsch = Number(vorschlag);
-  if (Number.isFinite(wunsch) && wunsch > jetzt && wunsch <= jetzt + 5000) return wunsch;
+  // Ein Vorschlag, der beim Relay schon fast faellig ist, hilft keinem
+  // Geraet beim Puffern. Er wuerde den Ausloeser frueher starten lassen als
+  // die Empfaenger, obwohl alle dieselbe Serveruhr benutzen. Deshalb gilt ein
+  // uebernommener Zeitpunkt nur, wenn der volle Vorlauf noch vor ihm liegt.
+  if (Number.isFinite(wunsch) && wunsch >= jetzt + START_VORLAUF_MS && wunsch <= jetzt + 5000) return wunsch;
   return jetzt + START_VORLAUF_MS;
 }
 
@@ -1126,29 +1135,129 @@ function folgeAusAdresse(url) {
   };
 }
 
-// Alle zusammen anlaufen lassen. Wer sich nicht gemeldet hat, bekommt den
-// Startbefehl trotzdem - besser leicht versetzt als gar nicht.
+const SYNC_BEREIT_FRIST_MS = 5000;
+
+// Alle Teilnehmer auf derselben Stelle anhalten und erst nach ihren echten
+// Bereitmeldungen gemeinsam weiterlaufen lassen. Ein fehlendes "bereit" ist
+// kein stilles Einverstaendnis: bei Ablauf der Frist bleibt die Runde stehen,
+// damit kein noch pufferndes Geraet wieder allein loslaeuft.
+function syncVorbereiten(raumcode, eintrag, ziel, von, userId) {
+  const frameTime = eintrag.live?.action === "pause" && Number.isFinite(eintrag.live?.frameTime)
+    && Math.abs(eintrag.live.frameTime - ziel) < .25 ? eintrag.live.frameTime : undefined;
+  // Media3 adressiert Millisekunden. Dieselbe gemeinsame Zahl verhindert,
+  // dass nur Android einen Bruchteil auf ein benachbartes Bild rundet.
+  ziel = frameTime ?? Math.round(ziel * 1000) / 1000;
+  clearTimeout(eintrag.syncTimer);
+  // Nur wer diese Folge gerade wirklich im Player hat, kann sie fuer den
+  // Start vorbereiten. Ein verbundenes Handy im Menue oder auf einer anderen
+  // Folge darf die Runde nicht fuenf Sekunden lang blockieren. Der Ausloeser
+  // selbst zaehlt immer mit: sein Play ist der frische Beleg dafuer, dass sein
+  // Player diese Folge hat, auch wenn sein naechster Herzschlag noch unterwegs
+  // ist.
+  const aktiveIds = new Set(
+    aktiveTeilnehmer(raumcode, eintrag, eintrag.season, eintrag.episode)
+      .map((teilnehmer) => teilnehmer.geraetId)
+  );
+  aktiveIds.add(userId);
+  const mitglieder = [...wss.clients].filter((client) => (
+    client.raum === raumcode && client.readyState === client.OPEN && aktiveIds.has(client.geraetId)
+  ));
+  const syncId = `sync-${naechsteNummer(eintrag)}`;
+  eintrag.sync = {
+    id: syncId,
+    ziel,
+    frameTime,
+    wartetAuf: new Set(mitglieder.map((client) => client.geraetId))
+  };
+  eintrag.startAt = 0;
+  eintrag.live = { action: "pause", position: ziel, frameTime, url: eintrag.live?.url || eintrag.url, at: Date.now() };
+  eintrag.pauseAusgerichtet = true;
+  eintrag.letzteAktion = { type: "play", userId, name: von, timestamp: Date.now() };
+  standFuerAlle(eintrag, ziel, true);
+
+  const jetzt = Date.now();
+  const daten = JSON.stringify({
+    type: "syncprepare",
+    key: eintrag.key,
+    syncId,
+    position: ziel,
+    frameTime,
+    url: eintrag.live.url,
+    from: von,
+    at: jetzt,
+    videoTime: ziel,
+    timestamp: jetzt,
+    playing: false,
+    tempo: eintrag.tempo || 1,
+    sequenceId: naechsteNummer(eintrag),
+    episodeId: folgenKennung(eintrag.season, eintrag.episode),
+    hostId: aktuelleHostId(raumcode, eintrag)
+  });
+  for (const client of mitglieder) client.send(daten);
+  standSenden(raumcode, eintrag);
+  zustandSenden(raumcode);
+
+  // Ein Verbindungsabbruch waehrend des Pufferns ist kein Grund, die uebrigen
+  // unvorbereitet loszuschicken. Der naechste Play startet einen frischen Lauf.
+  eintrag.syncTimer = setTimeout(() => {
+    if (!eintrag.sync || eintrag.sync.id !== syncId) return;
+    eintrag.sync = null;
+    eintrag.syncTimer = null;
+    const jetzt = Date.now();
+    const pause = JSON.stringify({ type: "control", key: eintrag.key,
+      action: "pause", position: ziel, videoTime: ziel, playing: false,
+      frameTime,
+      url: eintrag.live?.url || eintrag.url, at: jetzt, timestamp: jetzt,
+      sequenceId: naechsteNummer(eintrag), syncId,
+      episodeId: folgenKennung(eintrag.season, eintrag.episode),
+      hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-timeout" });
+    for (const client of mitglieder) {
+      if (client.readyState === client.OPEN) {
+        // Clear pending start controls too, including clients still seeking.
+        client.send(pause);
+        client.send(JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId }));
+      }
+    }
+  }, SYNC_BEREIT_FRIST_MS);
+  eintrag.syncTimer.unref?.();
+}
+
+// Alle zusammen anlaufen lassen, nachdem jedes Geraet seine Bereitmeldung
+// abgegeben hat.
 function syncStarten(raumcode, eintrag) {
   if (!eintrag?.sync) return;
+  const syncId = eintrag.sync.id;
   const ziel = eintrag.sync.ziel;
+  const frameTime = eintrag.sync.frameTime;
   clearTimeout(eintrag.syncTimer);
   eintrag.sync = null;
-  eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: Date.now() };
+  // Nach dem letzten "bereit" braucht jeder noch denselben kurzen Vorlauf,
+  // damit der letzte Empfaenger nicht erst beim Eintreffen von syncstart
+  // losfaehrt. Der Zeitpunkt ist Serverzeit und wird vom Player ueber den
+  // gemessenen Uhrversatz in seine lokale Wartezeit umgesetzt.
+  const jetzt = Date.now();
+  const startAt = jetzt + START_VORLAUF_MS;
+  eintrag.startAt = startAt;
+  eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: startAt };
   eintrag.pauseAusgerichtet = false;
 
   // Auch hier gilt die eine Regel: die Nachricht ist unterschiedlich lange
   // unterwegs, und wer spaeter einsteigt, muss weiter vorn einsteigen. Sonst
   // waeren nach dem gemeinsamen Start genau die Millisekunden Unterschied
   // drin, die dieses Verfahren beseitigen soll.
-  const jetzt = Date.now();
   const daten = JSON.stringify({
     type: "syncstart",
     key: eintrag.key,
+    syncId,
     position: ziel,
+    frameTime,
+    url: eintrag.live?.url || eintrag.url,
     at: jetzt,
     videoTime: ziel,
     timestamp: jetzt,
     playing: true,
+    startAt,
+    tempo: eintrag.tempo || 1,
     sequenceId: naechsteNummer(eintrag),
     episodeId: folgenKennung(eintrag.season, eintrag.episode),
     hostId: aktuelleHostId(raumcode, eintrag)
@@ -1387,6 +1496,15 @@ wss.on("connection", (socket) => {
       const aktion = text(nachricht.action, 10);
       if (!["play", "pause", "seek", "navigate", "tempo", "fassung"].includes(aktion)) return;
 
+      // Jede neue Bedienung ersetzt eine noch offene Startverabredung. Eine
+      // spaete Bereitmeldung traegt ihre syncId und kann den neuen Lauf damit
+      // nicht versehentlich starten.
+      if (eintrag.sync) {
+        clearTimeout(eintrag.syncTimer);
+        eintrag.sync = null;
+        eintrag.syncTimer = null;
+      }
+
       const ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
@@ -1530,7 +1648,18 @@ wss.on("connection", (socket) => {
       // und die Stelle des Hosts aus der alten Folge waere dort falsch.
       const hostStand = hostStandJetzt(socket.raum, eintrag);
       const stelleVomHost = aktion !== "navigate" && !istHost && hostStand != null;
-      const gemeinsam = stelleVomHost ? hostStand : eigen;
+      const quelle = stelleVomHost ? hostStand : eigen;
+      const gemeinsam = aktion === "pause" ? Math.round(quelle * 1000) / 1000 : quelle;
+
+      // Weiterlaufen ist ein Zwei-Phasen-Ablauf: erst halten alle auf der
+      // gemeinsamen Stelle und bestaetigen, dass der Sprung gepuffert ist;
+      // dann gibt es ein einziges syncstart mit einem zukuenftigen Zeitpunkt.
+      // Das gilt auch fuer den Ausloeser. Sein lokaler Vorschlag ist nur eine
+      // Bitte und darf keinen Vorsprung vor Android oder dem Desktop bekommen.
+      if (aktion === "play" && amRaumstand) {
+        syncVorbereiten(socket.raum, eintrag, gemeinsam, socket.name, socket.geraetId);
+        return;
+      }
 
       // Der zuletzt an alle geschickte Befehl ist der Stand der Runde - egal,
       // von wem er kam. Nur so passt das, woran sich ein Abgleich orientiert,
@@ -1640,10 +1769,20 @@ wss.on("connection", (socket) => {
       for (const client of nurNachgezogen ? [] : wss.clients) {
         if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
         if (!eintrag.members.has(client.geraetId)) continue;
-        // Eine Pause geht auch an den, der sie ausgeloest hat: er soll auf
-        // dieselbe Sekunde ruecken wie alle anderen. Bei allem anderen waere
-        // das nur ein Echo der eigenen Tat.
-        if (client === socket && !(aktion === "pause" && !istHost)) continue;
+        // Pause und Play gehen auch an den Ausloeser zurueck.
+        //
+        // Bei einer Pause braucht er die autoritative Stelle des Hosts. Beim
+        // Play braucht er den vom Relay bestaetigten `startAt`: der Absender
+        // kann zwar einen Zeitpunkt vorschlagen, das Relay darf ihn aber
+        // korrigieren. Bliebe der Befehl bei ihm aus, startete er nach seinem
+        // lokalen Vorschlag, waehrend alle anderen nach dem Serverzeitpunkt
+        // losfahren. Damit konnten Rechner und Android trotz desselben Play
+        // sichtbar versetzt beginnen.
+        //
+        // Ein eigener Sprung und ein eigener Folgenwechsel bleiben lokal. Eine
+        // Pause dagegen geht immer auch an ihren Ausloeser, einschliesslich
+        // des Hosts: alle stellen sich auf dieselbe autoritative Stelle.
+        if (client === socket && aktion !== "play" && aktion !== "pause") continue;
         if (nurGleicheFolge) {
           const seins = eintrag.stand?.get(client.geraetId)?.episode || 0;
           if (seins && seins !== absenderFolge) continue;
@@ -1891,8 +2030,13 @@ wss.on("connection", (socket) => {
       if (!ohneAngabe && !startLaeuft && socket.geraetId === aktuelleHostId(socket.raum, eintrag) && pausiert
         && eintrag.live?.action === "pause" && !eintrag.pauseAusgerichtet) {
         eintrag.pauseAusgerichtet = true;
-        const genau = zahl(nachricht.position, 100000);
+        const position = zahl(nachricht.position, 100000);
+        const frameTime = typeof nachricht.frameTime === "number" && Number.isFinite(nachricht.frameTime)
+          && nachricht.frameTime >= 0 && Math.abs(nachricht.frameTime - position) < .25
+          ? nachricht.frameTime : undefined;
+        const genau = frameTime ?? Math.round(position * 1000) / 1000;
         eintrag.live.position = genau;
+        eintrag.live.frameTime = frameTime;
         eintrag.live.at = Date.now();
         standFuerAlle(eintrag, genau, true);
         const jetzt = Date.now();
@@ -1901,6 +2045,7 @@ wss.on("connection", (socket) => {
           key: eintrag.key,
           action: "seek",
           position: genau,
+          frameTime,
           url: eintrag.live?.url || eintrag.url,
           from: aktuellerHost(socket.raum, eintrag)?.name || "Host",
           host: true,
@@ -1915,12 +2060,12 @@ wss.on("connection", (socket) => {
           episodeId: folgenKennung(eintrag.season, eintrag.episode),
           hostId: socket.geraetId
         });
-        // Der Host bekommt sie nicht: er steht schon auf dieser Stelle, und
-        // dass sein Bild trotzdem zu den anderen passt, besorgt sein Player
-        // selbst (steuernAusRunde in spieler.js - er setzt sich beim Anhalten
-        // auf dieselbe Stelle, damit er auf demselben Bild landet).
+        // Auch der Host bekommt die nachgereichte exakte Stelle. Sein erstes
+        // Pause-Ereignis und die Zeit, zu der die anderen es erhalten, liegen
+        // ein paar Millisekunden auseinander; ohne diesen zweiten gemeinsamen
+        // Sprung blieb er auf einem benachbarten Bild stehen.
         for (const client of wss.clients) {
-          if (client === socket || client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
+          if (client.raum !== socket.raum || client.readyState !== client.OPEN) continue;
           if (!eintrag.members.has(client.geraetId)) continue;
           // Nur wer bei derselben Folge steht - alle anderen geht die Stelle
           // des Hosts nichts an.
@@ -1959,7 +2104,7 @@ wss.on("connection", (socket) => {
         : folgenKennung(eintrag.season, eintrag.episode);
 
       if (hostJetzt && hostJetzt.geraetId !== socket.geraetId
-        && !pausiert && !hostJetzt.paused && !eintrag.sync
+        && !pausiert && !hostJetzt.paused && !eintrag.sync && !startLaeuft
         && gleicheFolge) {
         const stand = hostZustandJetzt(socket.raum, eintrag);
         const ziel = stand ? stand.position : null;
@@ -2006,7 +2151,7 @@ wss.on("connection", (socket) => {
       // und die des Hosts aus seinem eigenen Player ist frischer als der alte
       // Befehl. Pausiert der Host wirklich, bleibt es beim Stehen.
       const faellig = !zustand.geholt || Date.now() - zustand.geholt > NACHREICHEN_MS;
-      if (pausiert && gleicheFolge && faellig && !eintrag.sync) {
+      if (pausiert && gleicheFolge && faellig && !eintrag.sync && !startLaeuft) {
         const stand = hostZustandJetzt(socket.raum, eintrag);
         if (stand && stand.laeuft) {
           zustand.geholt = Date.now();
@@ -2151,6 +2296,10 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "syncready") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag?.sync) return;
+      // Eine Bereitmeldung aus dem abgebrochenen oder vorherigen Lauf darf
+      // keinen neuen Start ausloesen. Die Kennung wird mit syncprepare
+      // ausgegeben und mit syncstart wiederholt.
+      if (text(nachricht.syncId, 80) !== eintrag.sync.id) return;
       eintrag.sync.wartetAuf.delete(socket.geraetId);
       if (!eintrag.sync.wartetAuf.size) syncStarten(socket.raum, eintrag);
       return;

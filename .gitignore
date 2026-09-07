@@ -61,3 +61,9 @@ StreamingBrowserElectron/.kernbau-*/
 # Commit, den es nirgends gibt. Sichtbar wurde das erst in der Fassung, in der
 # jeder Bau vier Warnungen ausgab ("No url found for submodule path").
 _release_temp*/
+
+# Local watchparty device fixtures, reports and test logs
+/build/watchparty-device*/
+/build/watchparty-tools/
+/build/watchparty-fixture*
+/watchparty-*.log
