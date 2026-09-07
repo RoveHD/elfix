@@ -102,6 +102,7 @@
                 <p class="eyebrow" id="heroEyebrow">Fortsetzen</p>
                 <h1 id="heroTitle">Alles an einem Ort</h1>
                 <p id="heroCopy">Deine Streaming-Websites in einer Oberfläche.</p>
+                <div class="hero-extra" id="heroExtra" hidden></div>
                 <div class="hero-progress" id="heroProgress">
                   <div><span id="heroProgressFill"></span></div>
                   <strong id="heroProgressText"></strong>
@@ -109,8 +110,8 @@
                 <div class="hero-actions">
                   <button class="primary-action" id="heroWatch">Weiter schauen</button>
                   <button class="secondary-action" id="heroDetails">Details</button>
-                  <button class="secondary-action" id="heroSettings">Einstellungen</button>
                 </div>
+                <p class="hero-synopsis" id="heroSynopsis" hidden></p>
               </div>
               <div class="hero-dots" id="heroDots" role="tablist" aria-label="Zuletzt geschaut"></div>
             </div>
@@ -1037,6 +1038,10 @@
               </label>
             </div>
             <label class="check setting-row"><input id="animationsEnabled" type="checkbox"><span><strong>Bewegungen aktivieren</strong><small>Sanfte Übergänge beim Öffnen und Überfahren. Aus wirkt schneller und ruhiger.</small></span></label>
+            <label class="check setting-row"><input id="uiSounds" type="checkbox"><span><strong>UI-Sounds</strong><small>Dezente Töne für Klicks, Dialoge und Bestätigungen. Keine Hover-Sounds und keine Töne im Hintergrund.</small></span></label>
+            <label>Lautstärke der UI-Sounds
+              <div class="range-row"><input class="appearance-control" id="uiSoundVolume" type="range" min="0" max="100" step="5" value="20"><span id="uiSoundVolumeValue">20%</span></div>
+            </label>
             <label class="check setting-row"><input id="compactHeader" type="checkbox"><span><strong>Schmale Leiste oben</strong><small>Macht die obere Leiste flacher, damit mehr Inhalt auf den Bildschirm passt.</small></span></label>
             <label class="check setting-row"><input id="showProviderStrip" type="checkbox"><span><strong>Anbieter-Leiste anzeigen</strong><small>Die Reihe mit deinen Streaming-Seiten direkt unter der Suchleiste.</small></span></label>
           </section>
@@ -1461,6 +1466,7 @@
        im Hauptprozess und in den Pruefungen laden - die Oberflaeche
        rechnet damit nicht anders als der Rest. -->
   <script src="../../shared/verlauf.js"></script>
+  <script src="./ui-sounds.js"></script>
   <script src="./renderer.js"></script>
 </body>
 </html>

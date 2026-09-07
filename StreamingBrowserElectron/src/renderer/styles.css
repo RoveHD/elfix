@@ -324,6 +324,11 @@
 }
 
 .home-dashboard-hero {
+  /* Der Hero bleibt auch bei einer hellen App-Palette dunkel. */
+  --text: #f7f8fb;
+  --text-primary: #f7f8fb;
+  --text-secondary: #d9e2ef;
+  color: var(--text-primary);
   position: relative;
   isolation: isolate;
   max-width: none;
@@ -343,10 +348,34 @@
   box-shadow: var(--shadow);
 }
 
-/* Das Titelbild ist ein Poster und kein Banner. Auf die volle Breite gezogen
-   wird ein Hochformat weder schaerfer noch informativer: es verliert oben und
-   unten fast alles und sieht gedehnt aus. Der Banner behaelt deshalb seinen
-   ruhigen Theme-Hintergrund; das Bild steht rechts in seiner eigenen Form. */
+/* Nur die abstrakte Ambient-Ebene wird vergroessert. Das scharfe Poster
+   behaelt seine bisherige Groesse und seinen gespeicherten Ausschnitt. */
+.home-dashboard-hero.has-thumb {
+  background: #05080d;
+}
+
+.home-dashboard-hero.has-thumb::before {
+  content: "";
+  position: absolute;
+  inset: -25% -12% -25% 28%;
+  z-index: -2;
+  pointer-events: none;
+  background: var(--hero-poster) center / cover no-repeat;
+  filter: blur(90px) brightness(0.65) saturate(1.2);
+  opacity: 0.48;
+}
+
+.home-dashboard-hero.has-thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, #05080d 0%, rgba(5, 8, 13, 0.94) 22%, rgba(5, 8, 13, 0.65) 48%, rgba(5, 8, 13, 0.12) 100%),
+    linear-gradient(180deg, rgba(5, 8, 13, 0.4), transparent 28%, transparent 65%, rgba(5, 8, 13, 0.65));
+}
+
 .home-dashboard-hero.has-thumb > .karten-bild {
   position: relative;
   inset: auto;
@@ -473,7 +502,7 @@
   z-index: 1;
   grid-column: 1;
   grid-row: 1;
-  width: min(620px, 100%);
+  width: min(900px, 100%);
 }
 
 .home-dashboard-hero h1 {
@@ -481,6 +510,115 @@
   font-size: clamp(34px, 4.4vw, 58px);
   line-height: 1.02;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.home-dashboard-hero.has-long-title h1 {
+  font-size: clamp(28px, 3.2vw, 44px);
+  line-height: 1.12;
+}
+
+.home-dashboard-hero.has-very-long-title h1 {
+  font-size: clamp(24px, 2.6vw, 36px);
+}
+
+.home-dashboard-hero .eyebrow {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--accent), white 52%);
+}
+
+.home-dashboard-hero #heroCopy {
+  max-width: 100%;
+  font-size: 14px;
+}
+
+.hero-extra,
+.titel-details-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.titel-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.home-dashboard-hero .hero-synopsis {
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.hero-extra[hidden],
+.home-dashboard-hero .hero-synopsis[hidden],
+.titel-details[hidden] {
+  display: none;
+}
+
+.titel-details {
+  margin: 18px 0;
+}
+
+.titel-details-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 16px 0;
+  font-size: 13px;
+}
+
+.titel-details-facts dt { color: var(--muted); }
+.titel-details-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.confirm-modal.is-title-details { width: min(760px, calc(100vw - 32px)); }
+.confirm-modal.is-title-details .confirm-shell { max-height: 90vh; overflow-y: auto; }
+
+.titel-details h3 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+}
+
+.titel-details p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.home-dashboard-hero .hero-actions {
+  margin-top: 20px;
+}
+
+.home-dashboard-hero #heroWatch::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 14px;
+  margin-right: 10px;
+  vertical-align: -2px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+.home-dashboard-hero #heroWatch {
+  box-shadow: none;
 }
 
 .home-dashboard-hero p {
@@ -493,6 +631,7 @@
   display: flex;
   align-items: center;
   gap: 18px;
+  flex-wrap: wrap;
   margin: 20px 0 22px;
 }
 
@@ -518,6 +657,7 @@
 
 .hero-dots {
   position: absolute;
+  z-index: 1;
   right: 28px;
   bottom: 24px;
   display: flex;
@@ -548,11 +688,13 @@
 /* Sanfter Wechsel, wenn der Held auf den naechsten Titel springt. */
 .home-dashboard-hero.is-switching .home-hero-content,
 .home-dashboard-hero.is-switching > .karten-bild,
+.home-dashboard-hero.has-thumb::before,
 .home-dashboard-hero.is-switching {
   transition: opacity calc(260ms * var(--animation-speed)) ease;
 }
 
 .home-dashboard-hero.is-switching .home-hero-content,
+.home-dashboard-hero.is-switching::before,
 .home-dashboard-hero.is-switching > .karten-bild {
   opacity: 0;
 }
@@ -7037,8 +7179,14 @@ input[type="color"] {
    ========================================================================== */
 
 @keyframes elfix-ansicht-auf {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: none; }
+  from { opacity: 0; translate: 0 10px; }
+  to   { opacity: 1; translate: 0 0; }
+}
+
+:root {
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-fast: calc(160ms * var(--animation-speed));
+  --motion-enter: calc(360ms * var(--animation-speed));
 }
 
 /* Eine Ansicht, die aufgeht. Traeger ist die Ansicht selbst, und die
@@ -7047,12 +7195,12 @@ input[type="color"] {
 .home-view:not(.is-hidden),
 .global-search-view:not(.is-hidden),
 .favorites-view:not(.is-hidden) {
-  animation: elfix-ansicht-auf 220ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation: elfix-ansicht-auf var(--motion-enter) var(--motion-ease) backwards;
 }
 
 @keyframes elfix-reihe-auf {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: none; }
+  from { opacity: 0; translate: 0 12px; }
+  to   { opacity: 1; translate: 0 0; }
 }
 
 /* Eine Reihe, die etwas bekommen hat.
@@ -7060,19 +7208,25 @@ input[type="color"] {
    Sekunden; bis dahin sind sie .is-hidden. Genau der Augenblick, in dem sie
    aufgehen, ist ein Uebergang und keine Stoerung - und weil die Reihe selbst
    stehenbleibt, laeuft er kein zweites Mal. */
-.favorites-row:not(.is-hidden) {
-  animation: elfix-reihe-auf 200ms cubic-bezier(0.2, 0, 0, 1) both;
+.home-row:not(.is-hidden) {
+  animation: elfix-reihe-auf var(--motion-enter) var(--motion-ease) backwards;
+  animation-delay: calc(40ms * var(--animation-speed));
 }
+
+.home-row:nth-of-type(2) { animation-delay: calc(70ms * var(--animation-speed)); }
+.home-row:nth-of-type(3) { animation-delay: calc(100ms * var(--animation-speed)); }
+.home-row:nth-of-type(n + 4) { animation-delay: calc(130ms * var(--animation-speed)); }
 
 /* Der Druck auf einen Knopf. Kurz und klein - eine Quittung, keine Geste. */
 button,
 .chrome-btn,
 .provider-card,
 .home-side-link {
-  transition: transform 150ms cubic-bezier(0.2, 0, 0, 1),
-              background-color 150ms ease,
-              border-color 150ms ease,
-              box-shadow 150ms ease;
+  transition: transform var(--motion-fast) var(--motion-ease),
+              translate var(--motion-fast) var(--motion-ease),
+              background-color var(--motion-fast) ease,
+              border-color var(--motion-fast) ease,
+              box-shadow var(--motion-fast) ease;
 }
 
 button:active,
@@ -7080,6 +7234,113 @@ button:active,
 .provider-card:active,
 .home-side-link:active {
   transform: scale(0.985);
+}
+
+/* Karten behalten ihr vorhandenes Hover-Zoom. translate ist davon getrennt;
+   kein Neuaufbau der Karten und kein zweiter Effekt auf Fortschrittsmeldungen. */
+.favorite-card:not(.crop-preview),
+.search-result-card,
+.provider-card,
+.settings-home-card {
+  transition: transform calc(240ms * var(--animation-speed)) var(--motion-ease),
+              translate calc(240ms * var(--animation-speed)) var(--motion-ease),
+              filter var(--motion-fast) ease,
+              background-color var(--motion-fast) ease,
+              box-shadow calc(240ms * var(--animation-speed)) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :is(.favorite-card, .search-result-card, .provider-card, .settings-home-card):not(.crop-preview):hover {
+    translate: 0 -3px;
+  }
+
+  :is(.primary-action, .secondary-action, .soft-action, .row-more):not(:disabled):hover {
+    translate: 0 -2px;
+  }
+
+  .home-side-link:hover .side-icon,
+  .tab:hover .tab-icon {
+    translate: 2px 0;
+  }
+}
+
+.home-side-link .side-icon,
+.tab .tab-icon {
+  transition: translate var(--motion-fast) var(--motion-ease);
+}
+
+:is(.favorite-card, .search-result-card, .provider-card, .settings-home-card):not(.crop-preview):active,
+:is(.primary-action, .secondary-action, .soft-action, .row-more):not(:disabled):active {
+  translate: 0 0;
+  transform: scale(0.98);
+  transition-duration: calc(80ms * var(--animation-speed));
+}
+
+/* Die Einstellungen haben langlebige Seiten; nur der Tabwechsel startet sie.
+   Statische Kategorie-Karten duerfen dabei leicht versetzt erscheinen. */
+.settings-page.is-active {
+  animation: elfix-ansicht-auf var(--motion-enter) var(--motion-ease) backwards;
+}
+
+.settings-page.is-active .settings-home-card {
+  animation: elfix-reihe-auf var(--motion-enter) var(--motion-ease) backwards;
+}
+
+.settings-page.is-active .settings-home-card:nth-child(2) { animation-delay: calc(35ms * var(--animation-speed)); }
+.settings-page.is-active .settings-home-card:nth-child(3) { animation-delay: calc(70ms * var(--animation-speed)); }
+.settings-page.is-active .settings-home-card:nth-child(n + 4) { animation-delay: calc(105ms * var(--animation-speed)); }
+
+@keyframes elfix-dialog-auf {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+:is(.settings-modal, .confirm-modal, .crop-modal, .trailer-modal)[open] {
+  animation: elfix-dialog-auf calc(220ms * var(--animation-speed)) ease-out;
+}
+
+dialog[open]::backdrop {
+  animation: elfix-dialog-auf calc(220ms * var(--animation-speed)) ease-out;
+}
+
+.settings-shell {
+  animation-duration: var(--motion-enter);
+  animation-timing-function: var(--motion-ease);
+}
+
+.toast {
+  animation-duration: calc(260ms * var(--animation-speed));
+  animation-timing-function: var(--motion-ease);
+}
+
+:is(.omnibox, .settings-search, input[type="search"], input[type="text"], select) {
+  transition: border-color var(--motion-fast) ease,
+              box-shadow var(--motion-fast) ease,
+              background-color var(--motion-fast) ease;
+}
+
+/* Dialoge und Kartenmenue stehen ausserhalb der App-Huelle. Die bestehende
+   Animationseinstellung muss auch dort gelten, inklusive Verzoegerungen. */
+body:has(.app-shell.animations-off) *,
+body:has(.app-shell.animations-off) *::before,
+body:has(.app-shell.animations-off) *::after,
+body:has(.app-shell.animations-off) dialog::backdrop {
+  animation: none !important;
+  transition: none !important;
+}
+
+body:has(.app-shell.animations-reduced) *,
+body:has(.app-shell.animations-reduced) *::before,
+body:has(.app-shell.animations-reduced) *::after,
+body:has(.app-shell.animations-reduced) dialog::backdrop {
+  animation-duration: 120ms !important;
+  animation-delay: 0ms !important;
+  transition-duration: 80ms !important;
+  transition-delay: 0ms !important;
+}
+
+body:has(.app-shell:is(.animations-off, .animations-reduced)) :is(.favorite-card, .search-result-card, .provider-card, .settings-home-card, .primary-action, .secondary-action, .soft-action, .row-more, .side-icon, .tab-icon) {
+  translate: none !important;
 }
 
 /* Und der Fokus mit der Tastatur - er darf genauso weich kommen wie die Maus,
@@ -7100,19 +7361,26 @@ button:focus-visible,
    Ladezeichens, das oben nur langsamer gestellt wird und hier ganz aufhoert.
    -------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root body:has(.app-shell) *,
+  :root body:has(.app-shell) *::before,
+  :root body:has(.app-shell) *::after,
+  :root body:has(.app-shell) dialog::backdrop {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
+  }
+
+  :is(.favorite-card, .search-result-card, .provider-card, .settings-home-card, .primary-action, .secondary-action, .soft-action, .row-more, .side-icon, .tab-icon) {
+    translate: none !important;
   }
 
   /* Ein Ladezeichen, das steht, sagt nichts mehr. Es dreht sich weiter, nur
      so langsam, dass es niemanden aus dem Augenwinkel holt. */
-  .chrome-btn.is-reloading::after,
-  .chrome-btn.is-busy::after {
+  :root body:has(.app-shell) .chrome-btn.is-reloading::after,
+  :root body:has(.app-shell) .chrome-btn.is-busy::after {
     animation-duration: 2400ms !important;
     animation-iteration-count: infinite !important;
   }

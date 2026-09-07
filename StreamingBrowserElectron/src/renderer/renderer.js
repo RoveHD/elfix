@@ -8,6 +8,7 @@ const bildausschnittModul = globalThis.ELFIX_BILDAUSSCHNITT;
 const verlaufModul = globalThis.ELFIX_VERLAUF;
 
 let providers = [];
+let uiSoundsController = null;
 let favorites = [];
 /**
  * Wie der Bestand beim letzten Zeichnen aussah - siehe {@link bestandsbild}.
@@ -97,6 +98,8 @@ let heroItems = [];
 let heroIndex = 0;
 let heroTimer = 0;
 let heroPaused = false;
+const heroMetadataCache = new Map();
+const heroMetadataPending = new Set();
 let recommendations = [];
 let recommendationsLoaded = false;
 let recommendationsPending = false;
@@ -201,6 +204,8 @@ const youtubeHomeRow = document.querySelector("#youtubeHomeRow");
 const favoritesHomeRow = document.querySelector("#favoritesHomeRow");
 const heroTitle = document.querySelector("#heroTitle");
 const heroCopy = document.querySelector("#heroCopy");
+const heroExtra = document.querySelector("#heroExtra");
+const heroSynopsis = document.querySelector("#heroSynopsis");
 const searchTitle = document.querySelector("#searchTitle");
 const searchHistoryNode = document.querySelector("#searchHistory");
 const globalSearchGrid = document.querySelector("#globalSearchGrid");
@@ -358,6 +363,7 @@ const watchpartyStandKarten = new Map();
 const providerCardMeta = document.querySelector("#providerCardMeta");
 const showFavoriteMeta = document.querySelector("#showFavoriteMeta");
 const animationsEnabled = document.querySelector("#animationsEnabled");
+const uiSounds = document.querySelector("#uiSounds");
 const favoriteLayoutMirror = document.querySelector("#favoriteLayoutMirror");
 const favoriteSizeMirror = document.querySelector("#favoriteSizeMirror");
 const favoriteSizeMirrorValue = document.querySelector("#favoriteSizeMirrorValue");
@@ -542,6 +548,8 @@ const DEFAULT_APPEARANCE_SETTINGS = {
   hoverBrightness: 106,
   animationSpeed: 100,
   animationMode: "full",
+  uiSounds: true,
+  uiSoundVolume: 20,
   cardStyle: "standard",
   shadowStyle: "standard",
   showProviderStrip: true,
@@ -550,6 +558,7 @@ const DEFAULT_APPEARANCE_SETTINGS = {
 };
 
 const SETTINGS_INDEX = [
+  ["appearance", "UI-Sounds", "Sound Audio Töne Klick Lautstärke stumm"],
     ["appearance", "Design sichern", "Export Import Backup Datei laden speichern"],
   ["appearance", "Hell oder dunkel", "Theme System OLED Schwarz Modus"],
   ["appearance", "Akzentfarbe", "Farbe Preset Hex Stärke violett blau rot"],
@@ -685,6 +694,10 @@ function nachStart(arbeit) {
 }
 
 function bindEvents() {
+  uiSoundsController = globalThis.ELFIX_UI_SOUNDS?.erstellen({
+    getSettings: () => settings.appearance || DEFAULT_APPEARANCE_SETTINGS,
+    isQuiet: () => String(currentRoute || "").startsWith("provider:") && !document.querySelector("dialog[open]")
+  });
   window.addEventListener("resize", syncBrowserBounds);
   window.addEventListener("resize", () => window.setTimeout(syncBrowserBounds, 200));
   new ResizeObserver(syncBrowserBounds).observe(browserFrame);
@@ -773,7 +786,6 @@ function bindEvents() {
     }
     renderCategoryRows();
   });
-  document.querySelector("#heroSettings").addEventListener("click", openSettings);
   // Ueber den waagerechten Reihen scrollt das Mausrad seitwaerts. Am Ende der
   // Reihe wird das Ereignis durchgelassen, damit die Seite normal weiterscrollt.
   for (const rail of document.querySelectorAll(".favorite-rail, .home-provider-grid")) {
@@ -797,7 +809,7 @@ function bindEvents() {
     });
   }
   document.querySelector("#heroWatch").addEventListener("click", openHeroTarget);
-  heroDetails?.addEventListener("click", openHeroTarget);
+  heroDetails?.addEventListener("click", openHeroDetails);
   // Anhalten, solange die Maus auf dem Held liegt - sonst wechselt er einem
   // unter dem Zeiger weg.
   homeHero?.addEventListener("mouseenter", () => {
@@ -1025,7 +1037,8 @@ function bindEvents() {
     providerCardMeta,
     showFavoriteMeta,
     showFavoriteMetaMirror,
-    animationsEnabled
+    animationsEnabled,
+    uiSounds
   ]) {
     if (!control) continue;
     control.addEventListener("change", saveSettings);
@@ -2223,17 +2236,29 @@ function renderHomeHero(favorite, provider, hasProviders) {
   const target = favorite ? { type: "favorite", id: favorite.id } : provider ? { type: "provider", id: provider.id } : null;
   homeHero.dataset.targetType = target?.type || "";
   homeHero.dataset.targetId = target?.id || "";
+  homeHero.classList.remove("has-long-title", "has-very-long-title");
+  heroMetadatenZeigen(favorite);
 
   if (favorite) {
     const title = cleanFavoriteTitle(favorite.title, favorite.url) || displayFavoriteTitle(favorite);
-    const episode = favoriteEpisodeLabel(favorite.url);
+    const episode = favoriteEpisodeLabel(favorite.url).replace("Staffel ", "S").replace(" Folge ", " · F").replace(/^Folge /, "F");
     const progress = favoriteProgressPercent(favorite);
+    const duration = Number(favorite.duration);
+    const hasDuration = Number.isFinite(duration) && duration > 0;
+    const current = Number(favorite.currentTime || favorite.position || 0);
+    const remaining = hasDuration && Number.isFinite(current) && current > 0 && current < duration
+      ? Math.ceil((duration - current) / 60) : 0;
     if (heroEyebrow) heroEyebrow.textContent = "Fortsetzen";
     heroTitle.textContent = title;
-    heroCopy.textContent = [episode, favorite.providerName].filter(Boolean).join(" - ") || "Gespeicherter Favorit";
+    heroTitle.title = title;
+    homeHero.classList.toggle("has-long-title", title.length > 55);
+    homeHero.classList.toggle("has-very-long-title", title.length > 100);
+    heroCopy.textContent = [episode, favorite.providerName, hasDuration ? `${Math.round(duration / 60)} Min.` : ""]
+      .filter(Boolean).join(" · ") || "Gespeicherter Favorit";
     heroProgress?.classList.toggle("is-hidden", progress <= 0);
     if (heroProgressFill) heroProgressFill.style.width = `${progress}%`;
-    if (heroProgressText) heroProgressText.textContent = progress > 0 ? `${progress}%` : "";
+    if (heroProgressText) heroProgressText.textContent = progress > 0
+      ? `${progress} %${remaining ? ` · Noch ${remaining} Min.` : ""}` : "";
     const watchButton = document.querySelector("#heroWatch");
     if (watchButton) watchButton.textContent = "Weiter schauen";
     heroDetails?.classList.remove("is-hidden");
@@ -2243,6 +2268,7 @@ function renderHomeHero(favorite, provider, hasProviders) {
 
   if (heroEyebrow) heroEyebrow.textContent = "ELFIX";
   heroTitle.textContent = provider?.name || "Alles an einem Ort";
+  heroTitle.title = heroTitle.textContent;
   heroCopy.textContent = hasProviders
     ? "Wähle einen Anbieter oder nutze die globale Suche."
     : "Füge Websites in den Einstellungen hinzu und wechsle danach direkt hier zwischen ihnen.";
@@ -2251,7 +2277,7 @@ function renderHomeHero(favorite, provider, hasProviders) {
   if (heroProgressText) heroProgressText.textContent = "";
   const watchButton = document.querySelector("#heroWatch");
   if (watchButton) watchButton.textContent = provider ? "Anbieter öffnen" : "Anbieter hinzufügen";
-  heroDetails?.classList.toggle("is-hidden", !provider);
+  heroDetails?.classList.add("is-hidden");
   setHeroArtwork("");
 }
 
@@ -2348,6 +2374,13 @@ function bildEbeneSetzen(kasten, bildUrl, ausschnitt, format = kartenFormat()) {
 // deshalb auch nicht der eingestellten Kartengroesse.
 function setHeroArtwork(value, ausschnitt = null) {
   bildEbeneSetzen(homeHero, value, ausschnitt, "banner");
+  // Dieselbe Posteradresse, nur als abstrakte Farbe. Bei Ladefehlern blendet
+  // .has-thumb die Ambient-Ebene zusammen mit dem vorhandenen Poster aus.
+  if (homeHero?.classList.contains("has-thumb")) {
+    homeHero.style.setProperty("--hero-poster", `url(${JSON.stringify(String(value).trim())})`);
+  } else {
+    homeHero?.style.removeProperty("--hero-poster");
+  }
 }
 
 // Der Ausschnitt gilt nur fuer ein selbst gewaehltes Bild. Das Bild der
@@ -2462,6 +2495,111 @@ async function openProviderFromHome(providerId) {
   setCurrentRoute(`provider:${activeProviderId}`);
   renderProviders();
   renderHome();
+}
+
+async function openHeroDetails() {
+  if (homeHero.dataset.targetType !== "favorite") return;
+  const favorite = favorites.find((item) => item.id === homeHero.dataset.targetId);
+  // Die ganze Beschreibung und Titelaktionen, ohne die Wiedergabe zu starten.
+  if (favorite) await zeigeVerlauf(favorite, true, heroMetadataCache.get(favorite.id)?.daten);
+}
+
+function beschreibungText(wert) {
+  const feld = document.createElement("textarea");
+  feld.innerHTML = String(wert || "").slice(0, 20000)
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<br\s*\/?\s*>|<\/p\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "");
+  return feld.value.replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n/g, "\n\n").trim();
+}
+
+function titelGenres(daten) {
+  const genres = Array.isArray(daten?.genres) ? daten.genres : [];
+  return [...new Set(genres.map(genre => String(typeof genre === "string" ? genre : genre?.label || genre?.name || "").trim())
+    .filter(genre => genre && genre.length <= 60 && !/^(?:ger|eng|engsub|gersub|dub|sub|deutsch|english|german|\+\d+)$/i.test(genre)))];
+}
+
+function titelBewertung(daten) {
+  const wert = daten?.bewertung;
+  const quelle = daten?.quelle === "tmdb" ? "TMDB" : daten?.quelle === "anilist" ? "AniList" : "";
+  if (!quelle || typeof wert !== "number" || !Number.isFinite(wert) || wert <= 0 || wert > 10) return "";
+  if (quelle === "TMDB" && Number(daten.bewertungStimmen) <= 0) return "";
+  return `★ ${wert.toFixed(1)} / 10 (${quelle})`;
+}
+
+function titelMetadatenChips(daten, limit = Infinity) {
+  const texte = [titelBewertung(daten), ...titelGenres(daten).slice(0, limit)].filter(Boolean);
+  return texte.map(text => {
+    const chip = document.createElement("span");
+    chip.className = "titel-chip";
+    chip.textContent = text;
+    return chip;
+  });
+}
+
+function heroMetadatenSetzen(daten) {
+  if (!heroExtra || !heroSynopsis) return;
+  const chips = titelMetadatenChips(daten, 3);
+  heroExtra.replaceChildren(...chips);
+  heroExtra.hidden = !chips.length;
+  heroSynopsis.textContent = beschreibungText(daten?.beschreibung);
+  heroSynopsis.hidden = !heroSynopsis.textContent;
+}
+
+function heroMetadatenZeigen(favorite) {
+  const id = favorite?.id;
+  const bekannt = heroMetadataCache.get(id);
+  heroMetadatenSetzen(id ? bekannt?.daten : null);
+  if (!id || !api.getHeroMetadata || heroMetadataPending.has(id)
+    || bekannt && Date.now() - bekannt.at < 30000) return;
+  heroMetadataCache.set(id, { daten: bekannt?.daten, at: Date.now() });
+  while (heroMetadataCache.size > 20) heroMetadataCache.delete(heroMetadataCache.keys().next().value);
+  heroMetadataPending.add(id);
+  // Lokales IPC liest nur den Cache. Kein eigener Netzabruf fuer den Hero.
+  Promise.resolve().then(() => api.getHeroMetadata(id)).then(daten => {
+    heroMetadataCache.set(id, { daten, at: Date.now() });
+    if (homeHero.dataset.targetType === "favorite" && homeHero.dataset.targetId === id) heroMetadatenSetzen(daten);
+  }).catch(() => {}).finally(() => heroMetadataPending.delete(id));
+}
+
+function titelDetailsBauen(daten) {
+  const bereich = document.createElement("section");
+  bereich.className = "titel-details";
+  const chips = titelMetadatenChips(daten);
+  if (chips.length) {
+    const zeile = document.createElement("div");
+    zeile.className = "titel-details-meta";
+    zeile.append(...chips);
+    bereich.append(zeile);
+  }
+  const fakten = [
+    ["Jahr", daten?.jahr || ""],
+    ["Originaltitel", daten?.originalTitel || ""],
+    ["Studio", Array.isArray(daten?.studios) ? daten.studios.join(", ") : ""],
+    ["Regie", Array.isArray(daten?.regie) ? daten.regie.join(", ") : ""]
+  ].filter(([, wert]) => wert);
+  if (fakten.length) {
+    const liste = document.createElement("dl");
+    liste.className = "titel-details-facts";
+    for (const [name, wert] of fakten) {
+      const label = document.createElement("dt");
+      label.textContent = name;
+      const text = document.createElement("dd");
+      text.textContent = String(wert);
+      liste.append(label, text);
+    }
+    bereich.append(liste);
+  }
+  const beschreibung = beschreibungText(daten?.beschreibung);
+  if (beschreibung) {
+    const titel = document.createElement("h3");
+    titel.textContent = "Handlung";
+    const text = document.createElement("p");
+    text.textContent = beschreibung;
+    bereich.append(titel, text);
+  }
+  bereich.hidden = !chips.length && !beschreibung && !fakten.length;
+  return bereich;
 }
 
 async function openHeroTarget() {
@@ -5505,17 +5643,19 @@ function trailerZuEintragZeigen(favorite) {
 // Was der Kasten zeigt, entscheidet er nicht selbst: die Zusammenfassung der
 // Ereignisse zu Folgeneintraegen und die Statusrechnung stehen in
 // shared/verlauf.js. Hier steht nur, wie das Ergebnis aussieht.
-async function zeigeVerlauf(favorite) {
+async function zeigeVerlauf(favorite, nachladen = true, anzeige = null) {
   // Erst zeichnen, dann nachfragen: die Metadaten koennen einen Netzabruf
   // kosten, und ein Kasten, der Sekunden auf sich warten laesst, ist kaputt.
   // Der Status wird nachgetragen, sobald die Antwort da ist.
   const modell = verlaufModellBauen(favorite);
   const inhalt = document.createElement("div");
+  inhalt.className = "titel-detail-inhalt";
+  const details = titelDetailsBauen(anzeige || heroMetadataCache.get(favorite.id)?.daten);
   // Die Liste darf fehlen - zu einem Film gibt es keine Staffeln. Die
   // Knopfreihe steht trotzdem da: sie haengt am Titel und nicht am Verlauf.
-  inhalt.append(...[titelAktionen(favorite), verlaufListeBauen(modell)].filter(Boolean));
+  inhalt.append(...[titelAktionen(favorite), details, verlaufListeBauen(modell)].filter(Boolean));
   const geschlossen = confirmAction({
-    eyebrow: "Verlauf",
+    eyebrow: "Details",
     title: displayFavoriteTitle(favorite),
     copy: verlaufKopfText(modell),
     inhalt,
@@ -5524,10 +5664,16 @@ async function zeigeVerlauf(favorite) {
     mehrzeilig: true
   });
 
-  const metadaten = await api.getLibraryMetadata?.(favorite.id).catch(() => null);
+  const metadaten = nachladen ? await api.getLibraryMetadata?.(favorite.id).catch(() => null) : null;
   // Der Kasten kann zwischenzeitlich geschlossen worden sein - dann gehoert
   // die Antwort niemandem mehr.
-  if (metadaten && confirmModal?.open) {
+  if (metadaten && confirmModal?.open && confirmModal.contains(inhalt)) {
+    const bekannt = anzeige || heroMetadataCache.get(favorite.id)?.daten;
+    const daten = { ...metadaten, beschreibung: bekannt?.beschreibung || metadaten.beschreibung,
+      genres: bekannt?.genres?.length ? bekannt.genres : metadaten.genres };
+    details.replaceWith(titelDetailsBauen(daten));
+    heroMetadataCache.set(favorite.id, { daten, at: Date.now() });
+    if (homeHero?.dataset.targetType === "favorite" && homeHero.dataset.targetId === favorite.id) heroMetadatenSetzen(daten);
     confirmCopy.textContent = verlaufKopfText(verlaufModellBauen(favorite, metadaten));
     // Der Trailer kommt nach, sobald die Metadaten da sind. Er steht nicht von
     // Anfang an da, weil erst die Antwort sagt, ob es ueberhaupt einen gibt -
@@ -5569,6 +5715,7 @@ function titelAktionen(favorite) {
 
   if (!favorite.favorite) {
     knopf("soft-action", "♡ Auf die Watchlist", async (ereignis) => {
+      const ausloeser = ereignis.currentTarget;
       const ergebnis = await api.setFavoriteWatchlist?.(favorite.id, true).catch(() => null);
       if (!ergebnis?.favorite) {
         showToast("Konnte nicht vorgemerkt werden");
@@ -5579,7 +5726,7 @@ function titelAktionen(favorite) {
       renderHome();
       renderLibraryViews();
       renderFavoriteToggle();
-      ereignis.currentTarget.remove();
+      ausloeser.remove();
       showToast(`„${displayFavoriteTitle(favorite)}“ steht auf der Watchlist`);
     });
   }
@@ -5736,6 +5883,7 @@ function verlaufListeBauen(modell) {
 
 function confirmAction({ eyebrow = "ELFIX", title, copy = "", inhalt = null, confirmLabel = "Löschen", cancelLabel = "Abbrechen", nurSchliessen = false, mehrzeilig = false }) {
   if (!confirmModal?.showModal) return Promise.resolve(window.confirm(title));
+  confirmModal.classList.toggle("is-title-details", Boolean(inhalt?.classList.contains("titel-detail-inhalt")));
   confirmEyebrow.textContent = eyebrow;
   confirmTitle.textContent = title;
   confirmCopy.textContent = copy;
@@ -5763,7 +5911,7 @@ function confirmAction({ eyebrow = "ELFIX", title, copy = "", inhalt = null, con
     confirmModal.addEventListener("close", onClose);
     confirmModal.returnValue = "cancel";
     confirmModal.showModal();
-    window.setTimeout(() => confirmCancel.focus(), 0);
+    window.setTimeout(() => (nurSchliessen ? confirmAccept : confirmCancel).focus(), 0);
   });
 }
 
@@ -7417,6 +7565,7 @@ function renderFavoriteToggle() {
 }
 
 function showToast(message) {
+  uiSoundsController?.notice();
   const toast = document.createElement("div");
   toast.className = "toast";
   toast.textContent = message;
@@ -7748,6 +7897,7 @@ function renderSettings() {
   providerCardMeta.value = home.providerCardMeta || "logoName";
   showFavoriteMeta.checked = appearance.showFavoriteMeta !== false;
   animationsEnabled.checked = appearance.animations !== false && animationMode.value !== "off";
+  uiSounds.checked = appearance.uiSounds !== false;
   filterStatus.textContent = settings.adblock?.lastUpdated ? `Letztes Update: ${settings.adblock.lastUpdated}` : "";
   filterListNames.replaceChildren(...filterLists.map((list) => {
     const row = document.createElement("div");
@@ -8028,6 +8178,7 @@ async function saveSettings() {
     ...readAdvancedAppearanceControls(),
     fontScale: Number(fontScale.value),
     animationMode: chosenAnimationMode,
+    uiSounds: uiSounds.checked,
     cardStyle: cardStyle.value,
     shadowStyle: shadowStyle.value,
     showProviderStrip: showProviderStrip.checked,
@@ -8436,7 +8587,8 @@ const ADVANCED_NUMBER_KEYS = {
   shadowStrength: [0, 100, "%"],
   hoverZoom: [100, 106, "%"],
   hoverBrightness: [95, 120, "%"],
-  animationSpeed: [60, 160, "%"]
+  animationSpeed: [60, 160, "%"],
+  uiSoundVolume: [0, 100, "%"]
 };
 
 function setAdvancedAppearanceControls(appearance) {
@@ -8720,6 +8872,7 @@ function applyAppearance() {
   document.querySelector(".settings-shell")?.classList.toggle("is-advanced-settings", appearance.settingsMode === "advanced");
   shell.classList.toggle("hide-provider-strip", appearance.showProviderStrip === false);
   shell.classList.toggle("animations-off", appearance.animations === false || appearance.animationMode === "off");
+  uiSoundsController?.sync();
   shell.classList.toggle("animations-reduced", appearance.animationMode === "reduced");
   setShellMode(shell, "density", appearance.uiDensity || "comfortable", ["compact", "comfortable", "roomy"]);
   setShellMode(shell, "cards", appearance.cardSize || "medium", ["small", "medium", "large"]);

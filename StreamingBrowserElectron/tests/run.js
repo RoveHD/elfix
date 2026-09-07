@@ -12,16 +12,22 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const net = require("net");
 
 const HIER = __dirname;
 const RELAY = path.join(HIER, "..", "..", "sync-server", "server.js");
-const PORT = Number(process.env.TESTPORT) || 8791;
+const PORT = Number(process.env.TESTPORT) || 0;
 
 // Ohne Relay: reine Rechenpruefungen.
 const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "empfehlungslauftest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "wiederansehentest", "watchlisttest", "verlauftest", "suchetest", "trefferbildtest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "naechstefolgetest", "rueckblicktest", "wrappedtest", "openingtest", "sponsorblocktest", "trailertest", "qualitaettest", "direktquelletest", "direktlauftest", "direktlinkstest", "direktfolgentest", "spielertest", "direktmodustest", "manifesttest", "streamspurtest", "direktprobetest", "direktregressionstest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest", "titelbildtest", "werbefiltertest", "folgenlinktest", "folgentiteltest", "uebersichttest", "relaytest", "bildnachreichungtest", "bildfallbacktest", "startknopftest", "hosterplayertest", "autostarttest", "startphasentest", "startfreigabetest", "bestandschutztest", "raumarchivtest", "nachschubtest"];
 // Mit Relay: das Zusammenspiel.
 OHNE_RELAY.push("androiddirekttest");
 OHNE_RELAY.push("ansichtsleistungtest");
+OHNE_RELAY.push("uisoundtest");
+OHNE_RELAY.push("herodetailtest");
+OHNE_RELAY.push("herometadatentest");
+OHNE_RELAY.push("relaystarttest");
+OHNE_RELAY.push("hostgnadetest");
 OHNE_RELAY.push("startnachladetest");
 OHNE_RELAY.push("adblockworkertest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest"];
@@ -51,11 +57,22 @@ function gesund(port) {
   });
 }
 
-async function warteAufRelay(port, frist, abbruch) {
+async function freierPort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const port = probe.address().port;
+      probe.close(error => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+async function warteAufRelay(port, frist, abbruch, bereit) {
   const bis = Date.now() + frist;
   while (Date.now() < bis) {
     if (abbruch && abbruch()) return false;
-    if (await gesund(port)) return true;
+    if (bereit() && await gesund(port)) return true;
     await schlaf(100);
   }
   return false;
@@ -93,11 +110,13 @@ async function warteAufStille(port, frist) {
   }
 
   for (const datei of relayDa ? MIT_RELAY : []) {
+    // Parallele Testlaeufe duerfen niemals dieselben Raeume benutzen.
+    const port = PORT || await freierPort();
     // Frischer Server je Suite - sonst faerbt der Zustand des vorigen ab.
     for (const rest of fs.readdirSync(ablage)) fs.rmSync(path.join(ablage, rest), { force: true });
     const server = spawn(process.execPath, [RELAY], {
-      env: { ...process.env, PORT: String(PORT), STATE_DIRECTORY: ablage },
-      stdio: "ignore"
+      env: { ...process.env, PORT: String(port), STATE_DIRECTORY: ablage },
+      stdio: ["ignore", "pipe", "pipe"]
     });
     // Ob es wirklich *dieses* Relay ist, das gleich antwortet.
     //
@@ -113,6 +132,17 @@ async function warteAufStille(port, frist) {
     // gemeldet und nicht verschwiegen: ein Lauf gegen ein fremdes Relay ist
     // kein Lauf.
     let gestorben = false;
+    let gestartet = false;
+    let ausgabe = "";
+    let startFehler = "";
+    // /health allein reicht nicht: spawnSync blockiert spaeter das exit-Event,
+    // waehrend ein fremdes Relay auf einem belegten Port schon antwortet.
+    server.stdout.on("data", data => {
+      ausgabe = (ausgabe + String(data)).slice(-4096);
+      if (ausgabe.includes(`auf Port ${port} (Ablage:`)) gestartet = true;
+    });
+    server.stderr.on("data", data => { startFehler = (startFehler + String(data)).slice(-2048); });
+    server.on("error", error => { gestorben = true; startFehler = error.message; });
     server.on("exit", () => { gestorben = true; });
     // Gewartet wird auf eine Antwort und nicht auf die Uhr.
     //
@@ -121,11 +151,11 @@ async function warteAufStille(port, frist) {
     // Nachrichten einer Suite liefen dann ins Leere - sichtbar als
     // Fehlschlaege, die bei jedem Lauf woanders auftauchten und in der
     // Einzelpruefung nie.
-    const antwortet = await warteAufRelay(PORT, 8000, () => gestorben);
+    const antwortet = await warteAufRelay(port, 8000, () => gestorben, () => gestartet);
     if (gestorben || !antwortet) {
-      console.log(`FEHL  ${datei.padEnd(14)} Relay auf Port ${PORT} kam nicht hoch`);
+      console.log(`FEHL  ${datei.padEnd(14)} Relay auf Port ${port} kam nicht hoch`);
       console.log(gestorben
-        ? "        Dort laeuft schon eines. Beenden, sonst pruefen die Tests fremden Code."
+        ? `        Eigener Relay-Prozess beendet: ${startFehler.trim().split("\n").slice(0, 3).join(" ")}`
         : "        Es hat acht Sekunden lang nicht geantwortet.");
       alleOk = false;
       server.kill();
@@ -133,12 +163,12 @@ async function warteAufStille(port, frist) {
     }
     // Die Ablage kommt mit: geraetetest sieht dort nach, was das Relay
     // wirklich auf die Platte schreibt - und vor allem, was nicht.
-    const r = laufen(datei, { TESTPORT: String(PORT), STATE_DIRECTORY: ablage });
+    const r = laufen(datei, { TESTPORT: String(port), STATE_DIRECTORY: ablage });
     server.kill();
     // Und beim Abraeumen ebenso: erst wenn der Port wieder still ist, darf die
     // naechste Suite ihr eigenes Relay dorthin stellen. Sonst bekommt es
     // EADDRINUSE, beendet sich - und die Suite prueft den Zustand der vorigen.
-    await warteAufStille(PORT, 8000);
+    await warteAufStille(port, 8000);
     if (!r.ok) alleOk = false;
     console.log(`${r.ok ? "ok  " : "FEHL"}  ${datei.padEnd(14)} ${r.zusammenfassung}`);
     for (const zeile of r.fehler) console.log(`        ${zeile}`);
