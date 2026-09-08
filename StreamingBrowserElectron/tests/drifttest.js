@@ -2,6 +2,8 @@
 // Spulen - und die Frage, wann ein auseinandergelaufenes Geraet ueberhaupt noch
 // zurueckgeholt wird. Seit dem Umstieg auf reinen Ereignis-Abgleich lautet die
 // Antwort: erst bei weitem Versatz, sonst nie.
+const fs = require("fs");
+const path = require("path");
 const WS = require("../../sync-server/node_modules/ws");
 const PORT = Number(process.env.TESTPORT) || 8799;
 const RAUM = "driftraum";
@@ -81,9 +83,31 @@ function puls(c) {
     antwort ? `nach ${umlauf} ms` : "keine Antwort");
   pruefe("0b. Und reicht die eigene Marke unveraendert zurueck",
     antwort && antwort.t0 === losgeschickt, antwort ? `t0=${antwort.t0}` : "-");
-  pruefe("0c. Die Serverzeit liegt zwischen Absenden und Empfang",
-    antwort && antwort.t1 >= losgeschickt - 1 && antwort.t1 <= Date.now() + 1,
+  // t1 gehoert zur Uhr des Relays. Sie darf gegenueber der Client-Uhr vor-
+  // oder nachgehen; genau diesen Versatz ermittelt die App aus der Probe.
+  // Deshalb pruefen wir hier den echten Drahtvertrag statt die Reihenfolge
+  // zweier verschiedener Systemuhren. Die Offset-Rechnung mit festen Uhren
+  // prueft synclogiktest deterministisch.
+  pruefe("0c. Das Relay liefert eine verwendbare eigene Zeitmarke",
+    antwort && Number.isSafeInteger(antwort.t1) && antwort.t1 > 0,
     antwort ? `t1=${antwort.t1}` : "-");
+  // Der echte Handler wird mit einer festen Relay-Uhr ausgefuehrt. So bleibt
+  // geprueft, dass t1 beim Bearbeiten entsteht, ohne Relay- und Client-Uhr als
+  // dieselbe Uhr zu behandeln.
+  const relayQuelle = fs.readFileSync(path.join(__dirname, "../../sync-server/server.js"), "utf8");
+  const zeitZweig = relayQuelle.match(/if \(nachricht\?\.type === "time"\) \{\s*senden\(\{ type: "timeack", t0: nachricht\.t0, t1: Date\.now\(\) \}\);\s*return;\s*\}/)?.[0];
+  let festeAntwort = null;
+  if (zeitZweig) {
+    // eslint-disable-next-line no-new-func
+    new Function("nachricht", "senden", "Date", zeitZweig)(
+      { type: "time", t0: 123456 },
+      (wert) => { festeAntwort = wert; },
+      { now: () => 1788876208082 }
+    );
+  }
+  pruefe("0d. Der Relay-Handler stempelt seine eigene aktuelle Uhr",
+    festeAntwort?.t0 === 123456 && festeAntwort?.t1 === 1788876208082,
+    festeAntwort ? `t0=${festeAntwort.t0} t1=${festeAntwort.t1}` : "Handler nicht gefunden");
 
   // --- 1. Spulen erreicht den anderen exakt ------------------------------
   A.leeren(); B.leeren();

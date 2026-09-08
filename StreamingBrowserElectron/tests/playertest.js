@@ -520,7 +520,7 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
     const laufendesVideo = (verzoegerung) => {
       const m = {
         duration: 1400, paused: true, readyState: 4, seeking: false,
-        playbackRate: 1, tempoGesetzt: [], spruenge: [], gestartet: 0, gestoppt: 0,
+        playbackRate: 1, tempoGesetzt: [], spruenge: [], sprungZeiten: [], gestartet: 0, gestoppt: 0,
         _zeit: 0, _losUm: 0
       };
       Object.defineProperty(m, "currentTime", {
@@ -531,6 +531,11 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
         },
         set: (wert) => {
           m.spruenge.push(Number(wert));
+          // Ziel und Zeitpunkt gehoeren zusammen. Der Test wartet absichtlich
+          // noch weiter, nachdem der Nachlauf gesprungen ist; Date.now() erst
+          // nach dieser Wartezeit wuerde eine spaetere Sollstelle mit einem
+          // frueher gesetzten Ziel vergleichen.
+          m.sprungZeiten.push(Date.now());
           m._zeit = Number(wert);
           // Ein Sprung setzt die Uhr neu an: von hier laeuft es weiter.
           if (m._losUm) m._losUm = Date.now();
@@ -561,9 +566,10 @@ const ereignis = (felder) => ({ videoTime: 0, timestamp: Date.now(), playing: fa
       m.spruenge.length > vorKorrektur,
       `${vorKorrektur} Spruenge vorher, ${m.spruenge.length} nachher`);
     const letzter = m.spruenge[m.spruenge.length - 1];
+    const letzterZeitpunkt = m.sprungZeiten[m.sprungZeiten.length - 1];
     pruefe("15b. Und zwar nach vorn, auf die Stelle der Runde",
-      letzter > 100 && nah(letzter, 100 + (Date.now() - start) / 1000, 0.5),
-      `${letzter?.toFixed(2)}`);
+      letzter > 100 && nah(letzter, 100 + (letzterZeitpunkt - start) / 1000, 0.1),
+      `${letzter?.toFixed(2)} bei +${letzterZeitpunkt - start} ms`);
 
     // Ein schnelles Geraet wird dagegen nicht angefasst: ein Sprung, den
     // niemand braucht, ist ein Puffervorgang, den niemand braucht.
