@@ -100,6 +100,10 @@ app.whenReady().then(async () => {
   pruefe("Medienende startet Queue trotz ausgeschaltetem Folgen-Autoplay genau einmal", queueAufrufe, 1);
   pruefe("Queue-Ende loest keinen zusaetzlichen Folgenwechsel aus", folgenAufrufe.length, 0);
   const screenshot = path.resolve(__dirname, "../../build/history-perf/player-spoilerschutz.png");
+  // build/history-perf ist nicht versioniert. Auf einem frischen Checkout gibt
+  // es das Verzeichnis also nicht, und diese Pruefung laeuft vor der, die es
+  // bisher nebenbei angelegt hat.
+  fs.mkdirSync(path.dirname(screenshot), { recursive: true });
   await lesen("folgenZeigen()");
   fs.writeFileSync(screenshot, (await fenster.webContents.capturePage()).toPNG());
   pruefe("Kein Playerfehler", fehler, []);
