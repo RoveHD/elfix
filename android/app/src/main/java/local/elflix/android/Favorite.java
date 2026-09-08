@@ -241,6 +241,12 @@ public final class Favorite {
         return liste == null ? new JSONArray() : liste;
     }
 
+    /** Haken, die jemand ausdruecklich wieder entfernt hat. */
+    public JSONArray zurueckgenommeneFolgen() {
+        JSONArray liste = roh.optJSONArray("unwatchedEpisodes");
+        return liste == null ? new JSONArray() : liste;
+    }
+
     public JSONArray verlauf() {
         JSONArray liste = roh.optJSONArray("activity");
         return liste == null ? new JSONArray() : liste;

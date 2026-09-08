@@ -429,6 +429,11 @@ const folgenPanel = document.getElementById("folgenPanel");
 const folgenListe = document.getElementById("folgenListe");
 const folgenLeer = document.getElementById("folgenLeer");
 const staffelReiter = document.getElementById("staffelReiter");
+const staffelGesehen = document.getElementById("staffelGesehen");
+const staffelUngesehen = document.getElementById("staffelUngesehen");
+const spoilerEnabled = document.getElementById("spoilerEnabled");
+const spoilerRoomMinimum = document.getElementById("spoilerRoomMinimum");
+const spoilerShare = document.getElementById("spoilerShare");
 const weiterKasten = document.getElementById("weiter");
 const weiterZahl = document.getElementById("weiterZahl");
 const weiterTitel = document.getElementById("weiterTitel");
@@ -1439,6 +1444,7 @@ async function folgenZeigen() {
     return;
   }
   folgenStand = stand;
+  spoilerSchalterZeichnen(stand.spoilerRegel);
   const laufend = stand.folgen.find((eintrag) => eintrag.laeuft);
   offeneStaffel = laufend ? laufend.staffel : (stand.folgen[0]?.staffel || 0);
   folgenZeichnen();
@@ -1529,9 +1535,11 @@ function folgenZeichnen() {
   // bleibt der Hinweis von staffelOeffnen stehen.
   if (sichtbare.length) folgenLeer.hidden = true;
   for (const eintrag of sichtbare) {
+    const zeile = document.createElement("div");
+    zeile.className = "zeile";
     const knopf = document.createElement("button");
     knopf.type = "button";
-    knopf.className = eintrag.laeuft ? "laeuft" : "";
+    knopf.className = eintrag.laeuft ? "folge laeuft" : "folge";
     // Gesperrt heisst: die Nummer steht in der Liste, aber dahinter liegt keine
     // eigene Folge (sie ist in einer anderen enthalten). Anklickbar waere sie
     // ein Versprechen, das die Anbieterseite nicht haelt.
@@ -1542,14 +1550,46 @@ function folgenZeichnen() {
     const titel = document.createElement("span");
     titel.textContent = eintrag.titel || (eintrag.gesperrt ? "in einer anderen Folge enthalten" : "");
     knopf.append(nummer, titel);
-    if (eintrag.seen) {
-      const gesehen = document.createElement("span");
-      gesehen.className = "folge-gesehen";
-      gesehen.textContent = "✓ Gesehen";
-      knopf.appendChild(gesehen);
-    }
     knopf.addEventListener("click", () => folgeWechseln(eintrag.url));
-    folgenListe.appendChild(knopf);
+    zeile.appendChild(knopf);
+
+    // Der Haken von Hand. Was ELFIX nicht selbst mitbekommen hat - alles vor
+    // der ersten eigenen Wiedergabe, alles von woanders -, steht sonst
+    // dauerhaft als ungesehen da, und keine Ableitung kann es zurueckholen.
+    const haken = document.createElement("button");
+    haken.type = "button";
+    haken.className = eintrag.seen ? "hakenKnopf an" : "hakenKnopf";
+    // Er ist zugleich die Anzeige: eine zweite Marke "✓ Gesehen" in der Zeile
+    // sagte dasselbe noch einmal und nahm langen Folgentiteln den Platz.
+    haken.textContent = eintrag.seen ? "✓ Gesehen" : "○";
+    haken.title = eintrag.seen ? "Als nicht gesehen markieren" : "Als gesehen markieren";
+    haken.setAttribute("aria-label", haken.title);
+    haken.setAttribute("aria-pressed", eintrag.seen ? "true" : "false");
+    haken.addEventListener("click", () => gesehenSetzen([eintrag], !eintrag.seen));
+    zeile.appendChild(haken);
+    folgenListe.appendChild(zeile);
+  }
+}
+
+/**
+ * Den Haken setzen. Die Liste danach neu zu holen ist nicht Sache dieser
+ * Funktion: der Hauptprozess meldet den geaenderten Spoilerstand ohnehin, und
+ * dieser eine Weg baut die Liste neu auf. Zwei Abrufe nebeneinander koennten
+ * sich gegenseitig ueberholen und auf der falschen Staffel landen.
+ */
+async function gesehenSetzen(folgen, an) {
+  const liste = folgen.map((eintrag) => ({ season: eintrag.staffel, episode: eintrag.folge }))
+    .filter((eintrag) => eintrag.episode > 0);
+  if (liste.length) await bruecke.gesehen?.(liste, an);
+}
+
+/** Die drei Schalter unter der Liste auf den gemeldeten Stand bringen. */
+function spoilerSchalterZeichnen(regel) {
+  if (!regel) return;
+  const felder = [[spoilerEnabled, "enabled"], [spoilerRoomMinimum, "roomMinimum"],
+    [spoilerShare, "shareWatchedWithRoom"]];
+  for (const [feld, name] of felder) {
+    if (feld) feld.checked = regel[name] === true;
   }
 }
 
@@ -2598,9 +2638,31 @@ bruecke.aufQueue?.((an) => { queueAktiv = Boolean(an); if (queueAktiv) weiterAbb
 bruecke.aufSpoiler?.((wert) => {
   kopfTitelSetzen("", wert?.folgentitel);
   naechsteSetzen(wert?.naechste);
+  spoilerSchalterZeichnen(wert?.regel);
+  // Welche Staffel gerade offen ist, gehoert dem Zuschauer und nicht dem
+  // Anlass der Meldung. Ohne diese Zeile sprang die Liste beim Abhaken einer
+  // fremden Staffel zurueck auf die laufende.
+  const offen = folgenStand ? offeneStaffel : null;
   folgenStand = null;
-  if (!folgenPanel.hidden) folgenZeigen();
+  if (folgenPanel.hidden) return;
+  folgenZeigen().then(() => {
+    if (offen !== null && offen !== offeneStaffel) staffelOeffnen(offen);
+  });
 });
+for (const [feld, name] of [[spoilerEnabled, "enabled"], [spoilerRoomMinimum, "roomMinimum"],
+  [spoilerShare, "shareWatchedWithRoom"]]) {
+  feld?.addEventListener("change", async () => {
+    spoilerSchalterZeichnen(await bruecke.spoilerSchalter?.(name, feld.checked));
+  });
+}
+// Die ganze Staffel auf einmal - der Grund, aus dem es diesen Weg gibt: wer
+// zwanzig Folgen woanders gesehen hat, hakt sie nicht einzeln ab.
+staffelGesehen?.addEventListener("click", () => staffelSetzen(true));
+staffelUngesehen?.addEventListener("click", () => staffelSetzen(false));
+function staffelSetzen(an) {
+  const sichtbare = (folgenStand?.folgen || []).filter((wert) => wert.staffel === offeneStaffel);
+  if (sichtbare.length) gesehenSetzen(sichtbare, an);
+}
 bruecke.aufMarke((neue) => { marke = neue || null; });
 bruecke.aufSkipEinstellung?.((an) => {
   skipAn = Boolean(an);

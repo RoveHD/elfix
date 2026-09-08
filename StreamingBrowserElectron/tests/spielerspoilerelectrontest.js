@@ -52,13 +52,35 @@ app.whenReady().then(async () => {
   ipcMain.on("spieler:bereit", event => event.sender.send("spieler:auftrag", auftrag));
   ipcMain.on("spieler:fehler", (_event, text) => fehler.push(text));
   const staffeln = [{ staffel: 0, url: "https://fixture.test/filme" }, { staffel: 1, url: "https://fixture.test/staffel-1" }];
+  // Wie im Hauptprozess: der Gesehen-Stand ist veraenderlich, und die Regel
+  // reist mit, damit die Schalter unter der Liste beim Aufklappen stimmen.
+  let gesehen = [{ season: 1, episode: 1 }];
+  const regel = { enabled: false, roomMinimum: true, shareWatchedWithRoom: true };
+  const gesehenAufrufe = [];
+  const schalterAufrufe = [];
   ipcMain.handle("spieler:folgen", async (_event, _frisch, url) => ({
-    titel: "Folgen und Filme", staffeln,
+    titel: "Folgen und Filme", staffeln, spoilerRegel: { ...regel, enabled: schutz },
     folgen: [
       { staffel: 1, folge: 1, titel: "Bekannte Folge", url: "https://fixture.test/episode-1", laeuft: true },
       { staffel: 1, folge: 2, titel: "Die geheime Wendung", url: "https://fixture.test/episode-2" }
-    ].map(e => protectEpisode(e, { enabled: schutz, completedEpisodes: [{ season: 1, episode: 1 }] }))
+    ].map(e => protectEpisode(e, { enabled: schutz, completedEpisodes: gesehen }))
   }));
+  ipcMain.handle("spieler:gesehen", (_event, folgen, an) => {
+    gesehenAufrufe.push({ folgen, an });
+    for (const folge of folgen) {
+      gesehen = gesehen.filter(w => !(w.season === folge.season && w.episode === folge.episode));
+      if (an) gesehen.push({ season: folge.season, episode: folge.episode });
+    }
+    // Derselbe Weg wie echt: der Hauptprozess meldet den neuen Stand, und der
+    // Player baut die Liste daraufhin neu auf.
+    fenster.webContents.send("spieler:spoiler", { folgentitel: "", naechste: auftrag.naechste });
+    return true;
+  });
+  ipcMain.handle("spieler:spoiler-einstellung", (_event, feld, an) => {
+    schalterAufrufe.push({ feld, an });
+    regel[feld] = an;
+    return { ...regel, enabled: schutz };
+  });
   ipcMain.handle("spieler:queue-weiter", () => { queueAufrufe++; return { ok: true }; });
   ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:hoster", async (_event, link) => { hosterAufrufe.push(link); return { ok: true }; });
@@ -74,7 +96,7 @@ app.whenReady().then(async () => {
   await warten(() => lesen("bild.readyState >= 2"));
 
   await lesen("ausRundeBis=Date.now()+60000;bild.pause();folgenZeigen()");
-  pruefe("Gesehen-Markierung ohne eingeschalteten Schutz", await lesen("folgenListe.querySelectorAll('.folge-gesehen').length"), 1);
+  pruefe("Gesehen-Markierung ohne eingeschalteten Schutz", await lesen("folgenListe.querySelectorAll('.hakenKnopf.an').length"), 1);
   pruefe("Ungesehener Name bei ausgeschaltetem Schutz sichtbar", await lesen("folgenListe.textContent.includes('Die geheime Wendung')"), true);
   schutz = true;
   fenster.webContents.send("spieler:spoiler", { folgentitel: "", naechste: auftrag.naechste });
@@ -99,12 +121,60 @@ app.whenReady().then(async () => {
   await pause(1200);
   pruefe("Medienende startet Queue trotz ausgeschaltetem Folgen-Autoplay genau einmal", queueAufrufe, 1);
   pruefe("Queue-Ende loest keinen zusaetzlichen Folgenwechsel aus", folgenAufrufe.length, 0);
+  // --- Der Haken von Hand ----------------------------------------------------
+  //
+  // Der Anlass: eine Staffel, die man laengst gesehen hat, stand vollstaendig
+  // als "Noch nicht gesehen" da, weil ELFIX von damals keine Zeile hat.
+  schutz = true;
+  await lesen("folgenStand=null; folgenPanel.hidden=false; folgenZeigen()");
+  await warten(() => lesen("folgenListe.querySelectorAll('.hakenKnopf').length === 2"));
+  pruefe("Jede Folge hat ihren eigenen Haken", await lesen(
+    "[...folgenListe.querySelectorAll('.hakenKnopf')].map(k=>k.textContent)"), ["✓ Gesehen", "○"]);
+  pruefe("Der Folgenknopf bleibt ein eigener Knopf", await lesen(
+    "[...folgenListe.children].every(z=>z.classList.contains('zeile') && z.querySelector('button.folge'))"), true);
+
+  await lesen("folgenListe.querySelectorAll('.hakenKnopf')[1].click()");
+  await warten(() => lesen("folgenListe.textContent.includes('Die geheime Wendung')"));
+  pruefe("Ein Haken meldet genau seine Folge", gesehenAufrufe.at(-1),
+    { folgen: [{ season: 1, episode: 2 }], an: true });
+  pruefe("Und die Folge gibt danach ihren Namen frei", await lesen(
+    "folgenListe.textContent.includes('Die geheime Wendung')"), true);
+
+  await lesen("folgenListe.querySelectorAll('.hakenKnopf')[1].click()");
+  await warten(() => lesen("!folgenListe.textContent.includes('Die geheime Wendung')"));
+  pruefe("Derselbe Haken nimmt die Markierung wieder zurueck", gesehenAufrufe.at(-1),
+    { folgen: [{ season: 1, episode: 2 }], an: false });
+
+  await lesen("staffelGesehen.click()");
+  await warten(() => lesen("folgenListe.textContent.includes('Die geheime Wendung')"));
+  pruefe("Die ganze Staffel geht in einem Zug", gesehenAufrufe.at(-1),
+    { folgen: [{ season: 1, episode: 1 }, { season: 1, episode: 2 }], an: true });
+  await lesen("staffelUngesehen.click()");
+  await warten(() => lesen("!folgenListe.textContent.includes('Die geheime Wendung')"));
+  pruefe("Und laesst sich genauso zuruecknehmen", gesehenAufrufe.at(-1).an, false);
+
+  // --- Die drei Schalter -----------------------------------------------------
+  pruefe("Die Schalter stehen beim Aufklappen schon richtig", await lesen(
+    "[spoilerEnabled.checked, spoilerRoomMinimum.checked, spoilerShare.checked]"), [true, true, true]);
+  await lesen("spoilerShare.checked=false; spoilerShare.dispatchEvent(new Event('change'))");
+  await warten(() => schalterAufrufe.length === 1);
+  pruefe("Ein Schalter meldet Feld und Zustand", schalterAufrufe.at(-1),
+    { feld: "shareWatchedWithRoom", an: false });
+  pruefe("Und die Antwort setzt die Anzeige", await lesen("spoilerShare.checked"), false);
+
+  await lesen("staffelGesehen.click()");
+  await warten(() => lesen("folgenListe.textContent.includes('Die geheime Wendung')"));
   const screenshot = path.resolve(__dirname, "../../build/history-perf/player-spoilerschutz.png");
   // build/history-perf ist nicht versioniert. Auf einem frischen Checkout gibt
   // es das Verzeichnis also nicht, und diese Pruefung laeuft vor der, die es
   // bisher nebenbei angelegt hat.
   fs.mkdirSync(path.dirname(screenshot), { recursive: true });
   await lesen("folgenZeigen()");
+  // Das Bild soll die Liste zeigen und nicht den Moment davor: erst auf das
+  // offene Panel warten, dann auf ein gezeichnetes Bild.
+  await warten(() => lesen("!folgenPanel.hidden && folgenListe.children.length > 0"));
+  await lesen("spoilerSchutzBox.open = true");
+  await lesen("new Promise(f => requestAnimationFrame(() => requestAnimationFrame(f)))");
   fs.writeFileSync(screenshot, (await fenster.webContents.capturePage()).toPNG());
   pruefe("Kein Playerfehler", fehler, []);
   console.log(anzahl + "/" + anzahl + " bestanden");

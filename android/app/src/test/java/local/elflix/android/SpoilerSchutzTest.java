@@ -1,5 +1,6 @@
 package local.elflix.android;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -63,5 +64,50 @@ public class SpoilerSchutzTest {
         assertTrue(SpoilerSchutz.enthaelt(komplett, 1, 2));
         assertFalse("fractional ids must not be truncated into seen", SpoilerSchutz.enthaelt(komplett, 2, 3));
         assertFalse(SpoilerSchutz.enthaelt(komplett, 1, 9));
+    }
+
+    /*
+     * Gemeldet mit einem Bildschirmfoto: einundzwanzig Zeilen "Noch nicht
+     * gesehen", obwohl die Mediathek fuer die Haelfte davon Zeilen fuehrt.
+     * `completedEpisodes` entsteht nur beim eigenen Durchlaufen; der Verlauf
+     * ist der zweite Beleg und zaehlt jetzt mit.
+     */
+    @Test public void historyCountsAsWatched() throws Exception {
+        JSONArray verlauf = new JSONArray()
+            .put(new JSONObject().put("url", "https://x/serie/stream/test/staffel-3/episode-17")
+                .put("label", "Staffel 3 Folge 17"))
+            .put(new JSONObject().put("url", "https://x/serie/stream/test/staffel-3/episode-18")
+                .put("label", "Geöffnet"))
+            .put(new JSONObject().put("label", "ohne Folge"));
+        Favorite eintrag = new Favorite(new JSONObject()
+            .put("url", "https://x/serie/stream/test/staffel-3/episode-22")
+            .put("completedEpisodes", new JSONArray().put(new JSONArray().put(3).put(20)))
+            .put("activity", verlauf));
+        JSONArray komplett = SpoilerSchutz.abgeschlosseneFolgen(
+            java.util.Collections.singletonList(eintrag), eintrag);
+        assertTrue("der Abschluss zaehlt", SpoilerSchutz.enthaelt(komplett, 3, 20));
+        assertTrue("und der Verlauf ebenso", SpoilerSchutz.enthaelt(komplett, 3, 17));
+        assertFalse("eine bloss geoeffnete Seite ist keine Wiedergabe",
+            SpoilerSchutz.enthaelt(komplett, 3, 18));
+        assertEquals("ohne eindeutige Folge wird nicht geraten", 2, komplett.length());
+    }
+
+    /*
+     * Und ein Haken, den jemand ausdruecklich entfernt hat, haelt - sonst
+     * liesse sich genau die aus dem Verlauf abgeleitete Folge nicht abwaehlen.
+     */
+    @Test public void manualUnmarkOutweighsDerivedEvidence() throws Exception {
+        Favorite eintrag = new Favorite(new JSONObject()
+            .put("url", "https://x/serie/stream/test/staffel-3/episode-22")
+            .put("completedEpisodes", new JSONArray().put(new JSONArray().put(3).put(20)))
+            .put("activity", new JSONArray().put(new JSONObject()
+                .put("url", "https://x/serie/stream/test/staffel-3/episode-17")
+                .put("label", "Staffel 3 Folge 17")))
+            .put("unwatchedEpisodes", new JSONArray()
+                .put(new JSONArray().put(3).put(17))
+                .put(new JSONArray().put(3).put(20))));
+        JSONArray komplett = SpoilerSchutz.abgeschlosseneFolgen(
+            java.util.Collections.singletonList(eintrag), eintrag);
+        assertEquals(0, komplett.length());
     }
 }

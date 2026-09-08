@@ -112,4 +112,36 @@ pruefe("Ohne aktive Runde gilt weiter nur der persoenliche Abschluss", !schutz.f
   const result = schutz.protectEpisodes(episodes,{enabled:true,completedEpisodes:completed});
   pruefe("Grosse Folgenliste normalisiert Abschluesse nur einmal", gelesen === 500 && result.every(e => e.seen));
 }
+// --- Was der Verlauf schon weiss ---------------------------------------------
+//
+// Gemeldet mit einem Bildschirmfoto: einundzwanzig Folgen "Noch nicht gesehen",
+// obwohl die Mediathek fuer die Haelfte davon Zeilen fuehrt. `completedEpisodes`
+// entsteht nur beim eigenen Durchlaufen; der Verlauf ist der zweite Beleg.
+{
+  const ereignis = (episode, label, staffel = 3) => ({
+    url: `https://aniworld.to/anime/stream/bleach/staffel-${staffel}/episode-${episode}`, label
+  });
+  const aus = schutz.ausVerlauf([
+    ereignis(14, "Staffel 3 Folge 14"),
+    ereignis(14, "Staffel 3 Folge 14"),
+    ereignis(15, "Geöffnet"),
+    ereignis(16, "Abgeschlossen"),
+    { label: "Geöffnet" },
+    { label: "Irgendwas ohne Folge" },
+    null
+  ]);
+  const schluessel = aus.map((wert) => schutz.episodenSchluessel(wert)).sort();
+  pruefe("Der Verlauf belegt gesehene Folgen", schluessel.join(",") === "3|14,3|16", schluessel.join(","));
+  pruefe("Eine bloss geoeffnete Seite ist keine Wiedergabe",
+    !schluessel.includes("3|15"));
+  pruefe("Ohne eindeutige Folge wird nicht geraten", aus.length === 2, String(aus.length));
+  pruefe("Dieselbe Folge zaehlt einmal",
+    aus.filter((wert) => wert.episode === 14).length === 1);
+  pruefe("Und die Folge des Verlaufs gibt ihre Angaben frei", !schutz.folgeVerbergen({
+    enabled: true, episode: folge(14, 3), completedEpisodes: aus
+  }));
+  pruefe("Ohne Verlauf bleibt es beim leeren Ergebnis",
+    schutz.ausVerlauf(null).length === 0 && schutz.ausVerlauf("nein").length === 0);
+}
+
 if (pruefungen.some((ergebnis) => !ergebnis)) process.exitCode = 1;

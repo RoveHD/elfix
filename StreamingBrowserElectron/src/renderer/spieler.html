@@ -343,15 +343,42 @@
   .reiter { display: flex; flex-wrap: wrap; gap: 6px; }
   .reiter button { padding: 5px 10px; background: rgba(255, 255, 255, 0.1); font-size: 13px; }
   .reiter button.aktiv { background: #3D92FF; font-weight: 700; }
-  .liste { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
-  .liste button {
-    display: flex; gap: 10px; align-items: baseline; text-align: left;
+  /* `overflow-y` setzt das automatische Mindestmass auf null. Ohne die feste
+     Untergrenze schob die aufgeklappte Spoiler-Box die Folgenliste auf die
+     Hoehe null - man sah die Schalter und keine einzige Folge mehr. */
+  .liste { flex: 1 1 auto; min-height: 132px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .liste .zeile { display: flex; align-items: stretch; gap: 4px; }
+  .liste .zeile > button.folge {
+    flex: 1; display: flex; gap: 10px; align-items: baseline; text-align: left;
     padding: 9px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.06);
   }
-  .liste button:hover { background: rgba(255, 255, 255, 0.16); }
-  .liste button.laeuft { background: rgba(61, 146, 255, 0.28); }
-  .liste button[disabled] { opacity: 0.38; cursor: default; }
+  .liste .zeile > button.folge:hover { background: rgba(255, 255, 255, 0.16); }
+  .liste .zeile > button.folge.laeuft { background: rgba(61, 146, 255, 0.28); }
+  .liste .zeile > button.folge[disabled] { opacity: 0.38; cursor: default; }
+  /* Der Haken ist ein eigener Knopf und darf deshalb nicht im Folgenknopf
+     stehen - ein Knopf im Knopf ist keiner. */
+  .hakenKnopf {
+    flex: 0 0 auto; padding: 0 11px; border-radius: 10px; font-size: 13px;
+    background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.45);
+  }
+  .hakenKnopf:hover { background: rgba(255, 255, 255, 0.16); color: rgba(255, 255, 255, 0.85); }
+  .hakenKnopf.an { color: #9de4bc; }
   .folge-gesehen { margin-left: auto; color: #9de4bc; font-size: 12px; white-space: nowrap; }
+  .staffelAktion { display: flex; gap: 6px; }
+  .staffelAktion button {
+    padding: 5px 10px; font-size: 12px; background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.78);
+  }
+  .staffelAktion button:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  .spoilerBox {
+    flex: 0 1 auto; max-height: 46%; overflow-y: auto;
+    border-top: 1px solid rgba(255, 255, 255, 0.12); padding-top: 8px; font-size: 13px;
+  }
+  .spoilerBox > summary { cursor: pointer; color: rgba(255, 255, 255, 0.78); padding: 2px 0; }
+  .spoilerZeile { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; }
+  .spoilerZeile input { margin-top: 3px; flex: 0 0 auto; }
+  .spoilerZeile strong { display: block; font-size: 13px; }
+  .spoilerZeile small { display: block; color: rgba(255, 255, 255, 0.6); font-size: 12px; line-height: 1.45; }
   .liste .nummer { color: rgba(255, 255, 255, 0.62); font-variant-numeric: tabular-nums; min-width: 58px; }
   .leer { color: rgba(255, 255, 255, 0.6); font-size: 13px; }
 
@@ -465,8 +492,35 @@
       <button id="folgenZu" type="button" title="Schließen">✕</button>
     </div>
     <div id="staffelReiter" class="reiter"></div>
+    <div class="staffelAktion">
+      <button id="staffelGesehen" type="button">Ganze Staffel als gesehen</button>
+      <button id="staffelUngesehen" type="button">Zurücknehmen</button>
+    </div>
     <div id="folgenListe" class="liste"></div>
     <div id="folgenLeer" class="leer" hidden>Die Folgenliste ließ sich nicht lesen.</div>
+    <!-- Die drei Schalter des Spoiler-Schutzes. Sie stehen hier, weil hier
+         auffaellt, dass zu viel verdeckt ist - eingeklappt, damit sie die
+         Folgenliste nicht verdraengen. -->
+    <details id="spoilerSchutzBox" class="spoilerBox">
+      <summary>Spoiler-Schutz</summary>
+      <label class="spoilerZeile">
+        <input id="spoilerEnabled" type="checkbox">
+        <span><strong>Spoiler-Schutz aktivieren</strong>
+          <small>ELFIX blendet Hinweise auf spätere Folgen aus, solange du sie noch nicht gesehen hast.</small></span>
+      </label>
+      <label class="spoilerZeile">
+        <input id="spoilerRoomMinimum" type="checkbox">
+        <span><strong>Im Raum den gemeinsamen Mindeststand verwenden</strong>
+          <small>Relevant für Watchpartys. ELFIX schaut, wie weit alle aktuell Mitschauenden sind. Eine Folge gilt für den Spoilerschutz erst als gesehen, wenn jeder in der Runde sie bereits gesehen hat.<br>
+          Beispiel: Du bis Folge 10, Freund A bis Folge 8, Freund B bis Folge 6 → gemeinsamer Stand = Folge 6. Details ab Folge 7 werden geschützt.</small></span>
+      </label>
+      <label class="spoilerZeile">
+        <input id="spoilerShare" type="checkbox">
+        <span><strong>Gesehene Folgen mit der Runde teilen</strong>
+          <small>Damit erlaubst du anderen in der Watchparty, deinen gesehenen Stand für diesen gemeinsam geöffneten Titel zu berücksichtigen.<br>
+          Aus: Die Runde weiß nicht, welche Folgen du schon gesehen hast. An: Dein Stand kann für den gemeinsamen Spoilerschutz verwendet werden.</small></span>
+      </label>
+    </details>
   </div>
 
   <!-- Der Übergang zur nächsten Folge. Er zählt sichtbar herunter, damit ein

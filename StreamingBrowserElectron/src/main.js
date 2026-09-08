@@ -9559,14 +9559,83 @@ function spielerMarke() {
 // Geteilte Wiedereinstiege sind kein persoenlicher Gesehen-Nachweis.
 function spoilerAbgeschlosseneFolgen(url) {
   const folgen = new Map();
+  const zurueckgenommen = new Set();
   for (const item of favorites) {
     if (!istGleicheSerie(item.url, url)) continue;
     for (const episode of item.completedEpisodes || []) {
       const key = spoilerschutz.episodenSchluessel(episode);
       if (key) folgen.set(key, episode);
     }
+    // Und was der Verlauf ohnehin schon weiss. Die Mediathek zeigt diese
+    // Folgen laengst als geschaut an; sie hier nicht zu zaehlen hiess, dass
+    // eine nachweislich gesehene Folge im Player "Noch nicht gesehen" hiess.
+    for (const episode of spoilerschutz.ausVerlauf(item.activity)) {
+      const key = spoilerschutz.episodenSchluessel(episode);
+      if (key && !folgen.has(key)) folgen.set(key, episode);
+    }
+    // Ein Haken, den jemand ausdruecklich wieder entfernt hat, wiegt schwerer
+    // als jeder abgeleitete Beleg - sonst liesse sich die Markierung einer aus
+    // dem Verlauf stammenden Folge nicht zuruecknehmen.
+    for (const episode of item.unwatchedEpisodes || []) {
+      const key = spoilerschutz.episodenSchluessel(episode);
+      if (key) zurueckgenommen.add(key);
+    }
   }
+  for (const key of zurueckgenommen) folgen.delete(key);
   return [...folgen.values()];
+}
+
+/**
+ * Eine Folge von Hand als gesehen setzen oder die Markierung zuruecknehmen.
+ *
+ * Der Verlauf kann nur belegen, was ELFIX selbst mitbekommen hat. Wer eine
+ * Serie vorher woanders geschaut hat, hat davon keine einzige Zeile - und ohne
+ * diesen Weg bliebe seine halbe Staffel dauerhaft "Noch nicht gesehen".
+ * Gespeichert wird in denselben `completedEpisodes`, aus denen auch der Player
+ * liest; `manual` haelt nur fest, woher der Eintrag kommt.
+ */
+function spoilerFolgenMarkieren(url, folgen, an) {
+  const passende = favorites.filter((item) => istGleicheSerie(item.url, url));
+  if (!passende.length) return false;
+  const ziel = passende[0];
+  let geaendert = false;
+  for (const folge of Array.isArray(folgen) ? folgen : []) {
+    const staffel = sanitizePositiveNumber(folge?.season ?? folge?.staffel);
+    const nummer = sanitizePositiveNumber(folge?.episode ?? folge?.folge);
+    const key = spoilerschutz.episodenSchluessel({ season: staffel, episode: nummer });
+    if (!key) continue;
+    const passt = (wert) => spoilerschutz.episodenSchluessel(wert) === key;
+    for (const item of passende) {
+      const vorher = (item.unwatchedEpisodes || []).length;
+      item.unwatchedEpisodes = (item.unwatchedEpisodes || []).filter((wert) => !passt(wert));
+      if (item.unwatchedEpisodes.length !== vorher) geaendert = true;
+      if (!item.unwatchedEpisodes.length) delete item.unwatchedEpisodes;
+    }
+    if (an) {
+      if (passende.some((item) => (item.completedEpisodes || []).some(passt))) continue;
+      ziel.completedEpisodes = [...(ziel.completedEpisodes || []), {
+        key: `${taste.urlSchluessel(ziel.url)}:s${staffel}:e${nummer}`,
+        season: staffel,
+        episode: nummer,
+        url: "",
+        manual: true,
+        completedAt: new Date().toISOString()
+      }].slice(-500);
+      geaendert = true;
+      continue;
+    }
+    for (const item of passende) {
+      const vorher = (item.completedEpisodes || []).length;
+      item.completedEpisodes = (item.completedEpisodes || []).filter((wert) => !passt(wert));
+      if (item.completedEpisodes.length !== vorher) geaendert = true;
+    }
+    // Der Verlauf bleibt, wie er ist - er ist ein Protokoll und wird nicht
+    // umgeschrieben. Die Ruecknahme steht deshalb als eigener Vermerk daneben.
+    ziel.unwatchedEpisodes = [...(ziel.unwatchedEpisodes || []),
+      { season: staffel, episode: nummer }].slice(-500);
+    geaendert = true;
+  }
+  return geaendert;
 }
 function spoilerOptionen(provider, url) {
   const key = watchpartyLiveKeyForUrl(url);
@@ -10399,7 +10468,47 @@ ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "
 
   const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch) });
   const liste = direktfolgen.fuerPlayer(stand, episodeIdentity(url));
-  return liste ? { ...liste, folgen: spoilerschutz.protectEpisodes(liste.folgen, spoilerOptionen(provider, url)) } : liste;
+  // Die Regel reist mit: die Schalter unter der Liste sollen beim Aufklappen
+  // schon stimmen und nicht erst, wenn sich zufaellig etwas am Stand aendert.
+  return liste ? { ...liste, spoilerRegel: { ...settings.playback?.spoilerProtection },
+    folgen: spoilerschutz.protectEpisodes(liste.folgen, spoilerOptionen(provider, url)) } : liste;
+});
+
+/*
+ * Der Haken "Gesehen" aus der Folgenliste.
+ *
+ * Eine Folge oder gleich eine ganze Staffel - der Player schickt die Folgen
+ * mit, die er gerade zeigt, damit hier keine zweite Liste gelesen werden muss.
+ * Zurueck geht nichts: der Player holt die Liste danach neu, und erst dabei
+ * kommen die freigegebenen Titel wieder mit.
+ */
+ipcMain.handle("spieler:gesehen", (ereignis, folgen, an) => {
+  if (!vomSpieler(ereignis) || !spielerLauf) return false;
+  if (!spoilerFolgenMarkieren(spielerLauf.url, folgen, an === true)) return false;
+  // saveFavorites meldet den neuen Stand von sich aus an Player, Runde und
+  // Geraeteabgleich; die Mediathek bekommt ihn mit dem Bestand.
+  saveFavorites();
+  sendActiveState();
+  return true;
+});
+
+/*
+ * Die drei Schalter des Spoiler-Schutzes, bedienbar aus der Folgenliste.
+ *
+ * Dieselbe Einstellung wie in den Einstellungen - wer die Liste offen hat und
+ * merkt, dass zu viel verdeckt ist, soll sie nicht erst suchen muessen.
+ */
+ipcMain.handle("spieler:spoiler-einstellung", (ereignis, feld, an) => {
+  if (!vomSpieler(ereignis)) return null;
+  const erlaubt = ["enabled", "roomMinimum", "shareWatchedWithRoom"];
+  if (!erlaubt.includes(String(feld))) return null;
+  settings.playback = { ...(settings.playback || {}),
+    spoilerProtection: { ...(settings.playback?.spoilerProtection || {}), [String(feld)]: an === true } };
+  saveSettings();
+  meldeEinstellungen();
+  spielerSpoilerAktualisieren();
+  spoilerAbschluesseMelden();
+  return { ...settings.playback.spoilerProtection };
 });
 
 /*
@@ -14634,7 +14743,11 @@ function normalizeSettings(raw) {
       // zweimal selbst gezeigt hat - und er springt nie von allein.
       introSkip: raw?.playback?.introSkip !== false,
       skipSegments: raw?.playback?.skipSegments !== false,
-      spoilerProtection: { enabled: raw?.playback?.spoilerProtection?.enabled === true, roomMinimum: raw?.playback?.spoilerProtection?.roomMinimum === true, shareWatchedWithRoom: raw?.playback?.spoilerProtection?.shareWatchedWithRoom === true },
+      // Der Schutz selbst bleibt eine bewusste Entscheidung. Seine beiden
+      // Rundenregeln dagegen gelten, sobald er an ist: ein Schutz, der die
+      // Folge aufdeckt, sobald einer in der Runde weiter ist, waere keiner,
+      // und ohne geteilten Stand koennte die Runde ihn gar nicht anwenden.
+      spoilerProtection: { enabled: raw?.playback?.spoilerProtection?.enabled === true, roomMinimum: raw?.playback?.spoilerProtection?.roomMinimum !== false, shareWatchedWithRoom: raw?.playback?.spoilerProtection?.shareWatchedWithRoom !== false },
       untertitel: untertitelwahl.normalisieren(raw?.playback?.untertitel),
       // Ebenfalls von Haus aus an. Vorgewaehlt wird nur, was jemand fuer
       // dieselbe Serie schon einmal selbst angeklickt hat - eine eigene
@@ -14823,7 +14936,7 @@ function defaultSettings() {
     playback: {
       introSkip: true,
       skipSegments: true,
-      spoilerProtection: { enabled: false, roomMinimum: false, shareWatchedWithRoom: false },
+      spoilerProtection: { enabled: false, roomMinimum: true, shareWatchedWithRoom: true },
       untertitel: untertitelwahl.normalisieren(null),
       rememberLanguage: true,
       direktModus: true,

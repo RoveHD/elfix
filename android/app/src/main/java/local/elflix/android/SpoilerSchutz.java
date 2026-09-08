@@ -7,6 +7,8 @@ import org.json.JSONObject;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Read-only presentation rule for episode spoilers.
@@ -88,11 +90,75 @@ final class SpoilerSchutz {
         JSONArray aus = new JSONArray();
         if (ziel == null || alle == null) return aus;
         String serie = serienKennung(ziel.url());
-        if (serie.isEmpty()) return normalisiert(ziel.abgeschlosseneFolgen());
+        if (serie.isEmpty()) return ohneZurueckgenommene(zusammen(ziel), ziel.zurueckgenommeneFolgen());
+        JSONArray zurueck = new JSONArray();
         for (Favorite eintrag : alle) {
             if (eintrag == null || !serie.equals(serienKennung(eintrag.url()))) continue;
-            JSONArray jeweils = normalisiert(eintrag.abgeschlosseneFolgen());
+            JSONArray jeweils = zusammen(eintrag);
             for (int i = 0; i < jeweils.length(); i += 1) aus.put(jeweils.opt(i));
+            JSONArray weg = normalisiert(eintrag.zurueckgenommeneFolgen());
+            for (int i = 0; i < weg.length(); i += 1) zurueck.put(weg.opt(i));
+        }
+        return ohneZurueckgenommene(normalisiert(aus), zurueck);
+    }
+
+    /** Abschluss und Verlauf eines Eintrags - beide belegen dasselbe. */
+    private static JSONArray zusammen(Favorite eintrag) {
+        JSONArray aus = new JSONArray();
+        JSONArray abgeschlossen = normalisiert(eintrag.abgeschlosseneFolgen());
+        for (int i = 0; i < abgeschlossen.length(); i += 1) aus.put(abgeschlossen.opt(i));
+        JSONArray verlauf = ausVerlauf(eintrag.verlauf());
+        for (int i = 0; i < verlauf.length(); i += 1) aus.put(verlauf.opt(i));
+        return normalisiert(aus);
+    }
+
+    /**
+     * Ein Haken, den jemand ausdruecklich wieder entfernt hat, wiegt schwerer
+     * als jeder abgeleitete Beleg - sonst liesse sich die Markierung einer aus
+     * dem Verlauf stammenden Folge nicht zuruecknehmen.
+     */
+    private static JSONArray ohneZurueckgenommene(JSONArray folgen, JSONArray zurueck) {
+        JSONArray weg = normalisiert(zurueck);
+        if (weg.length() == 0) return normalisiert(folgen);
+        JSONArray aus = new JSONArray();
+        JSONArray alle = normalisiert(folgen);
+        for (int i = 0; i < alle.length(); i += 1) {
+            JSONArray paar = alle.optJSONArray(i);
+            if (paar == null) continue;
+            if (enthaelt(weg, ganzeZahl(paar.opt(0), -1), ganzeZahl(paar.opt(1), -1))) continue;
+            aus.put(paar);
+        }
+        return aus;
+    }
+
+    /** Nur geoeffnet ist keine Wiedergabe - dieselbe Grenze wie in der Mediathek. */
+    private static final Pattern NUR_GEOEFFNET = Pattern.compile("ge(ö|oe)ffnet", Pattern.CASE_INSENSITIVE);
+    private static final Pattern STAFFEL_AUS_URL = Pattern.compile("(?i)/(?:staffel|season)-([0-9]+)");
+    private static final Pattern FOLGE_AUS_URL = Pattern.compile("(?i)/(?:episode|folge)-([0-9]+)");
+
+    /**
+     * Gesehene Folgen aus dem Verlauf eines Titels.
+     *
+     * <p>{@code completedEpisodes} entsteht nur, wenn eine Folge hier zu Ende
+     * gespielt wurde. Der Verlauf weiss mehr, und die Mediathek zeigt es
+     * laengst: welche Folge wann wirklich lief. Diese Zeilen nicht zu zaehlen
+     * hiess, dass eine nachweislich gesehene Folge in der Uebersicht weiter
+     * "Noch nicht gesehen" hiess.
+     */
+    static JSONArray ausVerlauf(JSONArray verlauf) {
+        JSONArray aus = new JSONArray();
+        if (verlauf == null) return aus;
+        for (int i = 0; i < verlauf.length(); i += 1) {
+            JSONObject eintrag = verlauf.optJSONObject(i);
+            if (eintrag == null) continue;
+            if (NUR_GEOEFFNET.matcher(eintrag.optString("label", "")).find()) continue;
+            String url = eintrag.optString("url", "");
+            Matcher folge = FOLGE_AUS_URL.matcher(url);
+            if (!folge.find()) continue;
+            Matcher staffel = STAFFEL_AUS_URL.matcher(url);
+            aus.put(new JSONArray()
+                .put(staffel.find() ? Integer.parseInt(staffel.group(1)) : 0)
+                .put(Integer.parseInt(folge.group(1))));
         }
         return normalisiert(aus);
     }

@@ -46,6 +46,18 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   // `staffelUrl` waehlt eine andere Staffel; ohne sie gilt die laufende.
   folgen: (frisch = false, staffelUrl = "") =>
     ipcRenderer.invoke("spieler:folgen", Boolean(frisch), String(staffelUrl || "")),
+  /**
+   * Den Haken "Gesehen" setzen oder zuruecknehmen - fuer eine Folge oder
+   * gleich fuer alle, die die Liste gerade zeigt.
+   */
+  gesehen: (folgen, an) => ipcRenderer.invoke("spieler:gesehen",
+    (Array.isArray(folgen) ? folgen : []).map((wert) => ({
+      season: Number(wert?.season ?? wert?.staffel) || 0,
+      episode: Number(wert?.episode ?? wert?.folge) || 0
+    })), Boolean(an)),
+  /** Einer der drei Schalter des Spoiler-Schutzes, aus der Folgenliste heraus. */
+  spoilerSchalter: (feld, an) =>
+    ipcRenderer.invoke("spieler:spoiler-einstellung", String(feld || ""), Boolean(an)),
   /** Zu einer anderen Folge. Die Kette dahinter ist dieselbe wie beim Start. */
   wechseln: (url) => ipcRenderer.invoke("spieler:wechseln", String(url || "")),
   /** Ein anderer Hoster fuer dieselbe Folge - an derselben Stelle weiter. */
