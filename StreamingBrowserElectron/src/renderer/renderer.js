@@ -93,6 +93,7 @@ let filterLists = [];
 let searchHistory = JSON.parse(localStorage.getItem("elflix-search-history") || "[]");
 let currentUrl = "";
 let activeSearchToken = 0;
+let activeSearchQuery = "";
 let autostartPending = false;
 let lastSettingsTab = "appearance";
 let appearanceEditorSection = "design";
@@ -914,6 +915,21 @@ function bindEvents() {
   omnibox.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       navigateFromOmnibox();
+    }
+  });
+  // Eine neue Eingabe macht die sichtbare alte Ergebnisliste sofort ungueltig,
+  // auch wenn der Nutzer noch tippt und Enter erst danach drueckt. So wartet
+  // weder der Renderer noch der Hauptprozess auf eine veraltete Providerseite.
+  omnibox.addEventListener("input", () => {
+    // Auch eine noch verborgene Suche kann gerade auf enterInternalMode warten.
+    // Jede neue Eingabe macht sie bereits vor dem Sichtbarwerden ungueltig.
+    if (globalSearchView.classList.contains("is-hidden") && !activeSearchQuery) return;
+    invalidateGlobalSearch();
+    if (!omnibox.value.trim()) {
+      document.querySelectorAll(".search-loading").forEach((node) => node.remove());
+      searchTitle.textContent = "Suchen";
+      document.querySelector("#searchCopy").textContent = "Wähle einen Anbieter aus, um dessen Direktsuche zu öffnen.";
+      globalSearchGrid.replaceChildren(emptyText("Suchbegriff oben eingeben und Enter drücken."));
     }
   });
 
@@ -2839,6 +2855,9 @@ async function enterInternalMode() {
 }
 
 async function showHome() {
+  // Auch waehrend showHome noch auf den Hauptprozess wartet darf eine zuvor
+  // gestartete Suche ihre Ansicht nicht wieder hervorholen.
+  invalidateGlobalSearch();
   await enterInternalMode();
   setCurrentRoute("start");
   hideContentViews();
@@ -4944,11 +4963,18 @@ function wrappedHinweisZeile(daten, jahr) {
 
 
 async function showGlobalSearch(query) {
+  const queryValue = String(query || "").trim();
   const searchToken = ++activeSearchToken;
+  // Das Ausgeben des Tokens geschieht vor dem await: kommt eine zweite Suche
+  // schneller aus dem Hauptprozess zurueck, erkennt die erste ihren alten
+  // Token und zeichnet nichts mehr.
+  if (queryValue !== activeSearchQuery) api.cancelSearch?.().catch(() => {});
+  activeSearchQuery = queryValue;
   await enterInternalMode();
+  if (searchToken !== activeSearchToken) return;
   setCurrentRoute("search");
-  if (query.trim()) rememberSearch(query);
-  hideContentViews();
+  if (queryValue) rememberSearch(query);
+  hideContentViews({ preserveSearch: true });
   globalSearchView.classList.remove("is-hidden");
   window.setTimeout(syncBrowserBounds, 0);
   searchTitle.textContent = query.trim() ? `${query} suchen` : "Suchen";
@@ -6753,7 +6779,8 @@ async function openFavoriteEntry(favorite, options = {}) {
 // Eine einzige Stelle, an der alle internen Ansichten verschwinden. Frueher
 // zaehlte jede Ansicht die anderen selbst auf - eine neu hinzugekommene wurde
 // dabei zwangslaeufig vergessen und blieb sichtbar.
-function hideContentViews() {
+function hideContentViews(options = {}) {
+  const searchWasOpen = globalSearchView && !globalSearchView.classList.contains("is-hidden");
   homeView.classList.add("is-hidden");
   globalSearchView.classList.add("is-hidden");
   favoritesView.classList.add("is-hidden");
@@ -6770,6 +6797,18 @@ function hideContentViews() {
     entdeckungBeobachter?.disconnect();
   }
   discoveryView?.classList.add("is-hidden");
+  // Der Hauptprozess kennt den Renderer als Besitzer. Beim Verlassen der
+  // Suchansicht darf er dessen verbliebene Netzwerkabrufe loslassen; eine
+  // gleichlautende Suche eines anderen Fensters bleibt dabei unangetastet.
+  // searchWasOpen deckt die sichtbare Ansicht ab; activeSearchQuery den kurzen
+  // Zeitraum davor, in dem showGlobalSearch noch auf den Hauptprozess wartet.
+  if (!options.preserveSearch && (searchWasOpen || activeSearchQuery)) invalidateGlobalSearch();
+}
+
+function invalidateGlobalSearch() {
+  activeSearchToken += 1;
+  activeSearchQuery = "";
+  api.cancelSearch?.().catch(() => {});
 }
 
 function switchToPlayerView() {

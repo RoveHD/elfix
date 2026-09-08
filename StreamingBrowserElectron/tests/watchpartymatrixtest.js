@@ -281,9 +281,13 @@ function ereignisAusSkript(skript) {
   tv.an();
   handy.an();
 
-  await warteBis(() => pc.raeume.verbunden, "Rechner verbunden");
-  await warteBis(() => tv.bruecke.status().connected, "Fernseher verbunden");
-  await warteBis(() => handy.bruecke.status().connected, "Telefon verbunden");
+  // Nicht bei socket-open teilen: die sichere v2-Identität wird erst mit dem
+  // folgenden state bestätigt und blockiert bis dahin Verwaltungsbefehle.
+  await warteBis(() => pc.raeume.raeume.get(RAUM)?.identitaetBestaetigt, "Rechner autorisiert");
+  await warteBis(() => tv.ereignisse.some((e) => e.art === "watchparty:verbindung" && e.nutzlast === true),
+    "Fernseher autorisiert");
+  await warteBis(() => handy.ereignisse.some((e) => e.art === "watchparty:verbindung" && e.nutzlast === true),
+    "Telefon autorisiert");
   pruefe("Alle drei Geraete sind am Relay",
     pc.raeume.verbunden && tv.bruecke.status().connected && handy.bruecke.status().connected);
 

@@ -67,6 +67,8 @@ final class DirektWiedergabe {
             if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
         }
         default void pip() { }
+        /** Tatsächliches Native-Playback; steuert Android-12-Auto-PiP. */
+        default void wiedergabe(boolean laeuft) { }
     }
 
     private final Activity activity;
@@ -202,6 +204,7 @@ final class DirektWiedergabe {
                 umgebung.chatSenden(key, text, raum, antwort);
             }
             public void pip() { umgebung.pip(); }
+            public void wiedergabe(boolean laeuft) { umgebung.wiedergabe(laeuft); }
         });
         // Die Schranke gehoert zur Relay-Generation und ueberlebt deshalb den
         // Austausch des DirektWiedergabe-Objekts. Vor laden() muss sie bereits

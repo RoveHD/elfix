@@ -363,8 +363,11 @@ function rechner(name) {
     enabled: true, serverUrl: ADRESSE, rooms: [RAUM], deviceName: "Handy", deviceId: "handy-id"
   });
 
-  await warteBis(() => pc.raeume.verbunden, "Rechner verbunden");
-  await warteBis(() => tv.bruecke.status().connected, "Android verbunden");
+  // Socket-open ist noch keine autorisierte Watchparty-Leitung. Erst die
+  // bestätigte v2-Identität macht Teilen und Beitreten sendbar.
+  await warteBis(() => pc.raeume.raeume.get(RAUM)?.identitaetBestaetigt, "Rechner autorisiert");
+  await warteBis(() => tv.ereignisse.some((e) => e.art === "watchparty:verbindung" && e.nutzlast === true),
+    "Android autorisiert");
   pruefe("1. Beide Geraete sind am Relay",
     pc.raeume.verbunden && tv.bruecke.status().connected);
 

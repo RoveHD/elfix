@@ -283,6 +283,28 @@ public final class Bilder {
             posten.clear();
         }
 
+        /** Entfernt nur Bilder abgehaengter Karten; ueberlappende Rasterzeilen bleiben unveraendert. */
+        public void behalten(java.util.List<? extends View> ansichten) {
+            java.util.HashSet<ImageView> behalten = new java.util.HashSet<>();
+            if (ansichten != null) for (View ansicht : ansichten) bilderDarunter(ansicht, behalten);
+            for (int i = posten.size() - 1; i >= 0; i -= 1) {
+                Posten eintrag = posten.get(i);
+                if (behalten.contains(eintrag.bild)) continue;
+                eintrag.bild.setImageDrawable(null);
+                eintrag.bild.setVisibility(View.GONE);
+                eintrag.bild.setTag(null);
+                if (eintrag.beiLeer != null) eintrag.beiLeer.run();
+                posten.remove(i);
+            }
+        }
+
+        private static void bilderDarunter(View ansicht, java.util.Set<ImageView> ziel) {
+            if (ansicht instanceof ImageView) ziel.add((ImageView) ansicht);
+            if (!(ansicht instanceof android.view.ViewGroup)) return;
+            android.view.ViewGroup gruppe = (android.view.ViewGroup) ansicht;
+            for (int i = 0; i < gruppe.getChildCount(); i += 1) bilderDarunter(gruppe.getChildAt(i), ziel);
+        }
+
         /**
          * Nachsehen, was jetzt in der Naehe ist.
          *

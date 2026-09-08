@@ -31,6 +31,7 @@ const kalender = require("./kalender");
 const sitzungslauf = require("./sitzungslauf");
 const { WatchpartyRaeume, raumcodesAufraeumen } = require("./watchparty-raeume");
 const watchpartySync = require("./watchparty-sync");
+const watchpartyAbfrage = require("./watchparty-abfrage").erstellen();
 const watchpartyAutostart = require("./watchparty-autostart");
 // Ob zu einer abgeschlossenen Serie Nachschub erschienen ist. Eigenes Modul,
 // damit das Telefon dieselbe Entscheidung trifft und nicht auf einen laufenden
@@ -74,6 +75,10 @@ const verifizierungstor = require("./verifizierungstor");
 const youtube = require("./youtube");
 const openings = require("./openings");
 const cacheSchreibaufschub = require("./cache-schreibaufschub");
+const cacheSchreibkanal = require("./cache-schreibkoordinator").erstellen();
+const { createSearchCoordinator } = require("./search-coordinator");
+const searchCoordinator = createSearchCoordinator({ ttlMs: 12000, maxEntries: 24 });
+const searchOwners = new WeakSet();
 
 // Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
 // die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
@@ -594,6 +599,7 @@ app.on("before-quit", () => {
   // die beiden Caches kam. Ein noch gestellter Timer wird dabei mit erledigt.
   tasteCacheAblage?.sofort();
   metadatenCacheAblage?.sofort();
+  cacheSchreibkanal.beendenSynchron();
   // Was in der Watchparty offen ist, gehoert vor dem Schliessen in die Ablage:
   // sonst geht eine Aenderung der letzten Sekunden verloren und nach dem
   // naechsten Start fehlen die gemeinsamen Staende.
@@ -661,14 +667,17 @@ function createMainWindow() {
   });
   mainWindow.on("resize", () => applyBrowserBounds());
   mainWindow.on("minimize", () => {
-    if (settings.playback.pauseOnMinimize && !spielerMiniAktiv) {
-      pauseActivePlayback(true);
-    }
+    spielerBeimMinimieren().catch(() => {});
   });
   mainWindow.on("blur", () => {
-    if (settings.playback.pauseOnBlur && !spielerMiniAktiv) {
-      pauseActivePlayback(true);
-    }
+    const fenster = mainWindow;
+    // Windows kann blur vor minimize melden. Erst nach dem Fensterwechsel
+    // entscheiden, damit Pause-bei-Fokusverlust Auto-PiP nicht verhindert.
+    setTimeout(() => {
+      if (mainWindow !== fenster || fenster.isDestroyed() || fenster.isFocused()) return;
+      if (settings.playback.pauseOnBlur && !spielerMiniAktiv && !spielerMiniVorbereitung
+        && !spielerAutoMiniAusstehend && !fenster.isMinimized()) pauseActivePlayback(true);
+    }, 100);
   });
   mainWindow.on("focus", () => {
     if (activeView) {
@@ -1199,7 +1208,36 @@ ipcMain.handle("provider:navigate", async (_event, providerId, url) => {
   return activeState();
 });
 
-ipcMain.handle("search:all", async (_event, query) => searchAllProviders(query));
+ipcMain.handle("search:all", async (event, query) => {
+  const owner = `webcontents:${event.sender.id}`;
+  const value = String(query || "").trim();
+  if (!value) { searchCoordinator.cancel(owner); return []; }
+  if (!searchOwners.has(event.sender)) {
+    searchOwners.add(event.sender);
+    event.sender.once("destroyed", () => searchCoordinator.cancel(owner));
+    event.sender.on("render-process-gone", () => searchCoordinator.cancel(owner));
+  }
+  const selected = enabledProviders().map(provider => ({ ...provider }));
+  try {
+    return await searchCoordinator.request({
+      key: JSON.stringify([value, selected]), owner,
+      execute: signal => searchAllProviders(value,
+        AbortSignal.any([signal, AbortSignal.timeout(12000)]), selected),
+      isCacheable: results => Array.isArray(results) && results.every(result => !result?.error)
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") return [];
+    if (error?.name === "TimeoutError") {
+      return selected.map(provider => providerSearchFailure(provider,
+        providerModel.buildSearchUrl(provider, value), "Zeitüberschreitung bei der Suche"));
+    }
+    throw error;
+  }
+});
+ipcMain.handle("search:cancel", event => {
+  searchCoordinator.cancel(`webcontents:${event.sender.id}`);
+  return true;
+});
 
 // Nur fuer Treffer, deren Anbieter kein Bild mitgeschickt hat - siehe
 // sucheTrefferbild. Die Suche selbst wartet darauf nicht.
@@ -2827,7 +2865,7 @@ ipcMain.handle("data:confirm-reset", async () => {
 });
 
 async function navigateProvider(provider, url, optionen = {}) {
-  direktSpielerSchliessen("navigation");
+  if (!spielerMiniBehalten()) direktSpielerSchliessen("navigation");
   const signal = direktAuftragBeginnen();
   if (pendingAutostart && pendingAutostart.providerId !== provider.id) {
     finishAutostart("anbieterwechsel");
@@ -2847,7 +2885,7 @@ async function navigateProvider(provider, url, optionen = {}) {
   activeProviderId = provider.id;
   const view = getProviderView(provider);
   activeView = view;
-  view.webContents.setAudioMuted(false);
+  view.webContents.setAudioMuted(Boolean(spielerLauf));
 
   // Wohin es geht, steht vor der Frage, ob es zu sehen ist: der Direktbetrieb
   // gilt nicht fuer YouTube, und das entscheidet die Adresse.
@@ -2895,6 +2933,24 @@ async function navigateProvider(provider, url, optionen = {}) {
 }
 
 async function enterHomeMode() {
+  if (spielerMiniBehalten()) {
+    // Stoebern ist kein Wiedergabeende. Die Werkbank und der eigene Player
+    // behalten Quelle, Header, Fortschritt und Watchparty-Sitzung.
+    for (const [providerId, view] of providerViews.entries()) {
+      if (isLiveView(view)) view.webContents.setAudioMuted(true);
+      if (attachedProviderViews.has(providerId)) {
+        mainWindow?.contentView.removeChildView(view);
+        attachedProviderViews.delete(providerId);
+      }
+    }
+    activeView = null;
+    activeProviderId = null;
+    activeFavoriteId = null;
+    overlayReasons.add("shell");
+    spielerLageSetzen();
+    sendActiveState();
+    return;
+  }
   // Zurueck in die Oberflaeche heisst: weg von der Folge. Der eigene Player
   // zeigt eine, also geht er mit.
   direktSpielerSchliessen("startseite");
@@ -3165,6 +3221,7 @@ function getProviderView(provider) {
   view.webContents.on("did-start-loading", () => sendActiveState());
   view.webContents.on("did-stop-loading", () => sendActiveState());
   view.webContents.on("did-navigate", (_event, url) => {
+    watchpartyAbfrage.verwerfen(view.webContents);
     rememberProviderUrl(provider.id, url);
     // Wer einen Titel wirklich oeffnet, hat ihn nicht ignoriert - die
     // Muedigkeitszaehlung dieses Werks faengt von vorn an.
@@ -3192,6 +3249,7 @@ function getProviderView(provider) {
     resumePendingProviderAutoplay(provider, view);
   });
   view.webContents.on("did-navigate-in-page", (_event, url) => {
+    watchpartyAbfrage.verwerfen(view.webContents);
     rememberProviderUrl(provider.id, url);
     // YouTube wechselt das Video, ohne die Seite neu zu laden: ein Klick auf
     // eine Empfehlung, ein Treffer aus der Suche, das naechste Video. Fuer die
@@ -5924,20 +5982,21 @@ function buildNavigationUrl(input, provider) {
   return providerModel.buildSearchUrl(provider, value);
 }
 
-async function searchAllProviders(query) {
+async function searchAllProviders(query, signal, selectedProviders = enabledProviders()) {
   const value = String(query || "").trim();
   if (!value) return [];
 
-  const targets = enabledProviders().map((provider) => searchProvider(provider, value));
+  const targets = selectedProviders.map((provider) => searchProvider(provider, value, signal));
 
   return Promise.all(targets);
 }
 
-async function searchProvider(provider, query) {
+async function searchProvider(provider, query, signal) {
   const variants = searchQueryVariants(query);
   let fallback = null;
   for (const variant of variants) {
-    const result = await searchProviderVariant(provider, variant);
+    signal?.throwIfAborted();
+    const result = await searchProviderVariant(provider, variant, signal);
     if (result.results.length) {
       return {
         ...result,
@@ -5950,10 +6009,15 @@ async function searchProvider(provider, query) {
   return fallback ? { ...fallback, queryVariants: variants } : providerSearchFailure(provider, providerModel.buildSearchUrl(provider, query), "Keine Suche");
 }
 
-async function searchProviderVariant(provider, query) {
+async function searchProviderVariant(provider, query, signal) {
   const searchUrl = providerModel.buildSearchUrl(provider, query);
   try {
-    const ajaxResults = await searchProviderAjax(provider, query, searchUrl).catch(() => []);
+    signal?.throwIfAborted();
+    const ajaxResults = await searchProviderAjax(provider, query, searchUrl, signal).catch(error => {
+      if (signal?.aborted || error?.name === "AbortError") throw error;
+      return [];
+    });
+    signal?.throwIfAborted();
     if (ajaxResults.length) {
       return {
         providerId: provider.id,
@@ -5968,6 +6032,7 @@ async function searchProviderVariant(provider, query) {
         "accept": "text/html,application/xhtml+xml",
         "user-agent": "Mozilla/5.0 ELFIX/0.2"
       },
+      signal,
       redirect: "follow"
     });
     if (!response.ok) {
@@ -5981,11 +6046,12 @@ async function searchProviderVariant(provider, query) {
       results: extractSearchLinks(html, searchUrl, query, provider)
     };
   } catch (error) {
+    if (signal?.aborted || error?.name === "AbortError") throw error;
     return providerSearchFailure(provider, searchUrl, error.message || "Nicht erreichbar");
   }
 }
 
-async function searchProviderAjax(provider, query, searchUrl) {
+async function searchProviderAjax(provider, query, searchUrl, signal) {
   if (!usesAniWorldAjaxSearch(provider)) return [];
   const endpoint = new URL("/ajax/search", provider.startUrl).href;
   const response = await fetch(endpoint, {
@@ -5997,11 +6063,13 @@ async function searchProviderAjax(provider, query, searchUrl) {
       "x-requested-with": "XMLHttpRequest",
       "referer": searchUrl
     },
+    signal,
     body: new URLSearchParams({ keyword: query }),
     redirect: "follow"
   });
   if (!response.ok) return [];
   const payload = await response.json().catch(() => []);
+  signal?.throwIfAborted();
   if (!Array.isArray(payload)) return [];
 
   const tokens = queryTokens(query);
@@ -9025,6 +9093,8 @@ let spielerAuftragId = 0;
 /** Die Kopfzeilen, unter denen die laufende Quelle geholt werden darf. */
 let spielerKopfzeilen = null;
 let spielerMiniAktiv = false;
+let spielerMiniVorbereitung = false;
+let spielerAutoMiniAusstehend = null;
 
 function spielerSessionHolen() {
   if (spielerSession) return spielerSession;
@@ -9048,9 +9118,38 @@ function spielerSessionHolen() {
   return spielerSession;
 }
 
+function spielerMiniBehalten() {
+  return Boolean(spielerMiniAktiv && spielerLauf && isLiveView(spielerView));
+}
+
+async function spielerBeimMinimieren() {
+  if (spielerMiniAktiv || spielerMiniVorbereitung || spielerAutoMiniAusstehend) return;
+  const fenster = mainWindow;
+  const view = spielerView;
+  const auftrag = spielerLauf;
+  if (auftrag && isLiveView(view)) {
+    // Erst im Renderer entscheiden: dessen Videozustand ist aktueller als der
+    // zuletzt gemeldete Takt. Die User-Geste erlaubt Chromium den PiP-Aufruf.
+    const anfrage = {};
+    spielerAutoMiniAusstehend = anfrage;
+    let erfolgreich = false;
+    try {
+      erfolgreich = await view.webContents.executeJavaScript("miniAutomatisch()", true) === true;
+    } catch { /* Nicht jeder Grafiktreiber erlaubt PiP. */ }
+    finally { if (spielerAutoMiniAusstehend === anfrage) spielerAutoMiniAusstehend = null; }
+    if (view !== spielerView || auftrag !== spielerLauf || erfolgreich || spielerMiniAktiv) return;
+  }
+  if (mainWindow === fenster && fenster && !fenster.isDestroyed() && fenster.isMinimized()
+    && settings.playback.pauseOnMinimize && !spielerMiniAktiv && !spielerMiniVorbereitung) {
+    pauseActivePlayback(true);
+  }
+}
+
 /** Der Platz des Players - derselbe wie der der Anbieteransicht. */
 function spielerLageSetzen() {
   if (!spielerView || !mainWindow || mainWindow.isDestroyed()) return;
+  spielerView.setVisible(!spielerMiniAktiv);
+  if (spielerMiniAktiv) return;
   const size = mainWindow.getContentSize();
   if (isContentFullscreen) {
     spielerView.setBounds({ x: 0, y: 0, width: size[0], height: size[1] });
@@ -9319,7 +9418,9 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   // Und wer die Folge verlaesst, verlaesst auch den Player: was er zeigt,
   // gehoert zu der Seite, die gerade weggeht.
   if (isLiveView(activeView)) {
-    activeView.webContents.once("will-navigate", () => direktSpielerSchliessen("navigation"));
+    activeView.webContents.once("will-navigate", () => {
+      if (!spielerMiniBehalten()) direktSpielerSchliessen("navigation");
+    });
   }
 
   await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(() => {});
@@ -9339,6 +9440,7 @@ function direktSpielerSchliessen(grund = "") {
   const view = spielerView;
   spielerView = null;
   spielerMiniAktiv = false;
+  spielerMiniVorbereitung = false;
   optionaleCachesNachMiniPlanen();
   spielerLauf = null;
   spielerLetzterStand = null;
@@ -9517,10 +9619,37 @@ ipcMain.on("spieler:vollbild", (ereignis) => {
   else enterContentFullscreen();
   spielerLageSetzen();
 });
-ipcMain.on("spieler:mini-status", (ereignis, aktiv) => {
+ipcMain.on("spieler:mini-status", (ereignis, aktiv, vorbereitung = false) => {
   if (!vomSpieler(ereignis)) return;
+  if (aktiv === true && vorbereitung === true) {
+    spielerMiniVorbereitung = true;
+    return;
+  }
+  const warMini = spielerMiniAktiv;
+  spielerMiniVorbereitung = false;
   spielerMiniAktiv = aktiv === true;
-  if (!spielerMiniAktiv) optionaleCachesNachMiniPlanen();
+  if (spielerMiniAktiv && !warMini) {
+    if (isContentFullscreen) {
+      if (mainWindow?.isMinimized()) {
+        // setFullScreen(false) stellt ein minimiertes Windows-Fenster wieder
+        // her. Erst bei der bewussten Rueckkehr die Navigation freigeben.
+        const fenster = mainWindow;
+        fenster.once("restore", () => {
+          if (mainWindow === fenster && !fenster.isDestroyed() && spielerMiniAktiv
+            && isContentFullscreen) leaveContentFullscreen();
+        });
+      } else leaveContentFullscreen();
+    }
+    enterHomeMode().catch(() => {});
+    mainWindow?.webContents.send("app:zeige-start");
+  } else if (!spielerMiniAktiv) {
+    optionaleCachesNachMiniPlanen();
+    if (warMini) {
+      setOverlayOpen("shell", false);
+      if (mainWindow?.isMinimized() && settings.playback.pauseOnMinimize) pauseActivePlayback(true);
+    }
+  }
+  spielerLageSetzen();
 });
 
 /**
@@ -9834,7 +9963,7 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
  * sonst faengt die naechste Folge wieder bei "Seite laden" an.
  */
 async function direktZurueckZurOberflaeche(hinweis) {
-  direktSpielerSchliessen("keine folge");
+  if (!spielerMiniBehalten()) direktSpielerSchliessen("keine folge");
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("app:zeige-start");
   if (hinweis) sendToast(hinweis);
 }
@@ -10835,6 +10964,7 @@ function watchpartySitzungFuer(providerId) {
 // etwas tut. Kein Zeitgeber, kein Abfragen aller Frames - und damit ohne die
 // Verzoegerung, die eine Umfrage zwangslaeufig hat.
 function meldeWatchpartyStandAusSeite(view, position, pausiert, frameTime) {
+  if (spielerLauf && isLiveView(spielerView)) return;
   if (!watchparty.aktiv || !isLiveView(view) || view !== activeView) return;
   // Liegt die Startseite oder eine andere Ansicht darueber, schaut hier
   // niemand mehr zu - dann gehoert dieses Geraet auch nicht in die Leiste.
@@ -10844,6 +10974,8 @@ function meldeWatchpartyStandAusSeite(view, position, pausiert, frameTime) {
   const raum = watchpartyRaumForUrl(adresse);
   if (!key || !raum) return;
 
+  const sitzung = watchpartySitzungFuer(webContentsProvider.get(view.webContents.id) || "");
+  watchpartyAbfrage.melden(view.webContents, JSON.stringify([adresse, key, raum, sitzung]));
   const identity = episodeIdentity(adresse);
   watchparty.meldeStand(key, {
     position: Number(position) || 0,
@@ -10861,6 +10993,8 @@ function meldeWatchpartyStandAusSeite(view, position, pausiert, frameTime) {
 // Abstand; im Normalfall hat die Seite laengst selbst gemeldet.
 async function meldeWatchpartyStand() {
   if (!watchparty.aktiv || !watchparty.verbunden) return;
+  // Der eigene Player meldet bereits direkt, auch im Miniplayer.
+  if (spielerLauf && isLiveView(spielerView)) return;
   if (overlayReasons.size > 0) return;
   const view = activeView;
   if (!isLiveView(view)) return;
@@ -10869,12 +11003,27 @@ async function meldeWatchpartyStand() {
   const raum = watchpartyRaumForUrl(adresse);
   if (!key || !raum) return;
 
-  const proben = await executeJavaScriptInMediaFrames(view, `(() => {
+  const sitzung = watchpartySitzungFuer(webContentsProvider.get(view.webContents.id) || "");
+  const kontext = JSON.stringify([adresse, key, raum, sitzung]);
+  const probe = watchpartyAbfrage.beginnen(view.webContents, kontext);
+  if (!probe) return;
+  let proben;
+  let aktuell = false;
+  try {
+    proben = await executeJavaScriptInMediaFrames(view, `(() => {
     const medien = Array.from(document.querySelectorAll("video")).filter((m) => Number(m.duration) > 0);
     const media = medien.sort((links, rechts) => rechts.duration - links.duration)[0];
     if (!media) return null;
     return { position: Number(media.currentTime) || 0, paused: Boolean(media.paused) };
   })()`).catch(() => []);
+  } finally {
+    aktuell = watchpartyAbfrage.beenden(view.webContents, kontext, probe);
+  }
+  if (!aktuell || !watchparty.aktiv || !watchparty.verbunden || !isLiveView(view)
+    || view !== activeView || overlayReasons.size > 0 || (spielerLauf && isLiveView(spielerView))
+    || view.webContents.getURL() !== adresse || watchpartyLiveKeyForUrl(adresse) !== key
+    || watchpartyRaumForUrl(adresse) !== raum
+    || watchpartySitzungFuer(webContentsProvider.get(view.webContents.id) || "") !== sitzung) return;
 
   const stand = (proben || [])
     .map((probe) => (probe && typeof probe === "object" && "value" in probe ? probe.value : probe))
@@ -12580,16 +12729,15 @@ function loadTasteCache() {
 
 // Der Cache wird nur verzoegert geschrieben, damit ein Durchlauf mit vielen
 // Seiten nicht dutzende Male dieselbe Datei anfasst. Im nativen Mini-Player
-// hat die Fensterbewegung Vorrang: JSON.stringify und writeFileSync blockieren
-// den Electron-Hauptthread, an dem unter Windows auch sein nativer Ziehpfad
-// haengt. Nach dem Mini-Player wird der juengste Speicherstand nachgeholt.
+// hat die Fensterbewegung Vorrang: auch das strukturierte Klonen zum Worker
+// kostet Hauptprozesszeit. JSON-Serialisierung und atomare Dateiarbeit laufen
+// dort im Hintergrund. Nach PiP wird der juengste Speicherstand nachgeholt.
 tasteCacheAblage = cacheSchreibaufschub.erstellen({
   wartenMs: 1500,
   gesperrt: () => spielerMiniAktiv,
   schreiben: () => {
     try {
-      ensureDataDir();
-      fs.writeFileSync(TASTE_FILE, JSON.stringify(loadTasteCache()));
+      cacheSchreibkanal.schreiben(TASTE_FILE, loadTasteCache());
     } catch {
       // Ein fehlender Cache kostet nur Zeit, keine Funktion.
     }
@@ -12649,8 +12797,7 @@ metadatenCacheAblage = cacheSchreibaufschub.erstellen({
   gesperrt: () => spielerMiniAktiv,
   schreiben: () => {
     try {
-      ensureDataDir();
-      if (metadatenStand) fs.writeFileSync(METADATEN_FILE, JSON.stringify(metadatenStand));
+      if (metadatenStand) cacheSchreibkanal.schreiben(METADATEN_FILE, metadatenStand);
     } catch {
       // Ohne Ablage kostet der naechste Start ein paar Abrufe mehr.
     }

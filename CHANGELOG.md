@@ -3,6 +3,25 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.20 — 8. September 2026
+
+- Der Windows-Miniplayer läuft beim Stöbern auf Startseite, Suche und Mediathek
+  weiter. Laufende Videos wechseln beim Minimieren automatisch hinein; Pause,
+  Fokusverlust und Vollbild werden dabei berücksichtigt.
+- Android-Handys aktivieren automatisches Bild-in-Bild beim Verlassen der App.
+  Der Übergang pausiert weder das native Video noch die Watchparty vorzeitig.
+- Große Entdeckungslisten auf Handy und TV halten nur ein begrenztes Fenster
+  von Karten bereit. TV-Fokus, Nachladen und Scrollposition bleiben erhalten.
+- Empfehlungs- und Metadaten-Caches werden im Hintergrund atomar geschrieben;
+  während PiP bleibt die Übergabe großer Daten aufgeschoben.
+- Überholte Suchanfragen werden abgebrochen, identische Abrufe zusammengelegt
+  und erfolgreiche Ergebnisse zwölf Sekunden zwischengespeichert.
+- Die Watchparty vermeidet zusätzliche Frame-Abfragen bei frischen Meldungen.
+  Beim Stöbern überschreibt keine Anbieterseite den laufenden Player-Status.
+- Videovorschauen aktualisieren sich auch bei fortlaufender Mausbewegung.
+- Geprüft mit 13 Electron-Suiten, 292 Android-Unit-Tests und drei echten
+  TV-Tests. Der erneute Handy-PiP-Gerätetest war durch die PIN-Sperre blockiert.
+
 ## 2.0.19 — 8. September 2026
 
 - Öffentliche Skip-Daten für Intro, Rückblick, Abspann und Vorschau werden

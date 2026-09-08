@@ -36,6 +36,13 @@ public class MainActivityPipGeraeteTest {
         methode.setAccessible(true);
         methode.invoke(ziel);
     }
+    private static void pipAutomatik(MainActivity activity, boolean laeuft) {
+        try {
+            Method methode = MainActivity.class.getDeclaredMethod("direktPipAutomatikSetzen", boolean.class);
+            methode.setAccessible(true);
+            methode.invoke(activity, laeuft);
+        } catch (Exception fehler) { throw new AssertionError(fehler); }
+    }
     private static void warten(java.util.function.BooleanSupplier zustand) throws Exception {
         long ende = System.currentTimeMillis() + 15000;
         while (!zustand.getAsBoolean() && System.currentTimeMillis() < ende) Thread.sleep(100);
@@ -72,6 +79,7 @@ public class MainActivityPipGeraeteTest {
                             public void stand(Provider p, String u, JSONObject s, JSONObject m) { }
                             public void live(JSONObject s, String aktion) { }
                             public void bereit(String u) { }
+                            public void wiedergabe(boolean laeuft) { pipAutomatik(a, laeuft); }
                             public boolean darfAutoplay() { return false; }
                             public void marke(java.util.function.Consumer<JSONObject> fertig) { fertig.accept(null); }
                             public void sprung(double von, double nach) { }
@@ -109,9 +117,14 @@ public class MainActivityPipGeraeteTest {
                 assertTrue("Rückkehr behält die Wiedergabe", player.get().laeuftFuerPip());
                 a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE));
                 assertFalse(player.get().laeuftFuerPip());
+                pipAutomatik(a, false);
                 // Explicitly finish the returned activity before Scenario cleanup.
-                a.finish();
             });
+            assertTrue("Home kann auch bei pausiertem Player gesendet werden", device.pressHome());
+            Thread.sleep(1000);
+            assertFalse("Ein pausierter Player darf nicht automatisch ins Mini-Fenster gehen",
+                activity.get().isInPictureInPictureMode());
+            scenario.onActivity(a -> a.finish());
         }
     }
 }

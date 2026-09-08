@@ -258,8 +258,11 @@ async function androidAlleinStart(tv, offen) {
     enabled: true, serverUrl: ADRESSE, rooms: [RAUM], deviceName: "AndroidTV", deviceId: "tv-id"
   });
 
-  await warteBis(() => pc.raeume.verbunden, "Rechner verbunden");
-  await warteBis(() => tv.bruecke.status().connected, "Android verbunden");
+  // `connected` wird schon beim nackten Socket-open gesetzt. Erst das v2-state
+  // bestaetigt die Geraeteidentitaet und erlaubt damit teilen()/beitreten().
+  await warteBis(() => pc.raeume.raeume.get(RAUM)?.identitaetBestaetigt, "Rechner autorisiert");
+  await warteBis(() => tv.ereignisse.some((e) => e.art === "watchparty:verbindung" && e.nutzlast === true),
+    "Android autorisiert");
   pruefe("Beide Geraete sind am Relay", pc.raeume.verbunden && tv.bruecke.status().connected);
 
   // Titel einstellen und beitreten.

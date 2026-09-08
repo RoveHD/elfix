@@ -26,7 +26,10 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   schliessen: (grund) => ipcRenderer.send("spieler:schliessen", String(grund || "")),
   /** Vollbild an oder aus - das Fenster gehoert dem Hauptprozess. */
   vollbild: (an) => ipcRenderer.send("spieler:vollbild", Boolean(an)),
-  miniStatus: (an) => ipcRenderer.send("spieler:mini-status", Boolean(an)),
+  // `vorbereiten` sperrt nur eine eventuelle Hintergrundpause. Sichtbar
+  // minimiert wird erst nach dem nativen enterpictureinpicture-Ereignis.
+  miniStatus: (an, vorbereiten = false) =>
+    ipcRenderer.send("spieler:mini-status", Boolean(an), Boolean(vorbereiten)),
   /**
    * Die Staffel- und Folgenliste. Sie kostet einen Seitenaufruf, deshalb wird
    * sie erst geholt, wenn jemand sie aufklappt - und danach gemerkt.

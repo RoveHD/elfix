@@ -21,7 +21,7 @@ function funktion(text, name) {
   return text.slice(start, text.indexOf("\n}", start) + 2);
 }
 function kontext(werte, namen, text = haupt) {
-  const stand = vm.createContext({ console: still, AbortController, AbortSignal, ...werte });
+  const stand = vm.createContext({ console: still, AbortController, AbortSignal, spielerMiniAktiv: false, spielerLauf: null, ...werte });
   vm.runInContext(namen.map((name) => funktion(text, name)).join("\n"), stand);
   return stand;
 }
@@ -129,7 +129,7 @@ pruefe("Auch ein langsames Pausieren beim Anbieterwechsel kann eine neue Auswahl
     attachedProviderViews: new Set(), overlayReasons: new Set(), direktModus: () => true,
     providerViews: new Map(), applyBrowserBounds() {},
     direktUebernehmen: async (p) => { navigationen.push(p.id); }
-  }, ["direktAuftragBeginnen", "direktSpielerSchliessen", "navigateProvider"]);
+  }, ["direktAuftragBeginnen", "direktSpielerSchliessen", "spielerMiniBehalten", "navigateProvider"]);
   const a = c.navigateProvider({ id: "eins" }, filmA);
   await c.navigateProvider({ id: "zwei" }, filmB);
   wartet.fertig(); await a;

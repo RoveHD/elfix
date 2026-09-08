@@ -746,6 +746,12 @@ public class MainActivity extends Activity {
     private static final long HERO_TAKT_MS = 15_000L;
     /** So viele Karten holt eine Entdeckungsseite je Stapel. */
     private static final int ENTDECKUNG_STAPEL = 30;
+    /** Ab dieser Groesse bleiben nur die Zeilen am Bildschirm als echte Views stehen. */
+    private static final int ENTDECKUNG_VIRTUAL_AB_KARTEN = 60;
+    /** Zwei Zeilen vor und nach dem Bildschirm erlauben flottes Weiterwischen. */
+    private static final int ENTDECKUNG_ZEILEN_VORLAUF = 2;
+    /** Auch auf einem 4K-TV waechst der Baum nie mit der Zahl der Empfehlungen. */
+    private static final int ENTDECKUNG_ZEILEN_MAXIMAL = 10;
     private List<Favorite> heroEintraege = new ArrayList<>();
     private int heroStelle;
     /** Wie die Punktereihe zuletzt aussah - "anzahl:stelle". */
@@ -908,6 +914,12 @@ public class MainActivity extends Activity {
     private String entdeckungArt = "";
     private Bilder.Sichtfenster entdeckungBilder;
     private LinearLayout entdeckungRaster;
+    private android.widget.Space entdeckungObererPlatz;
+    private LinearLayout entdeckungZeilen;
+    private android.widget.Space entdeckungUntererPlatz;
+    private int entdeckungErsteZeile = -1;
+    private int entdeckungLetzteZeile = -1;
+    private int entdeckungZeilenHoehe;
     private LinearLayout entdeckungFuss;
 
     private final Runnable cacheCleanupTask = new Runnable() {
@@ -5625,6 +5637,7 @@ public class MainActivity extends Activity {
         entdeckungRaster.setOrientation(LinearLayout.VERTICAL);
         entdeckungRaster.setClipChildren(false);
         entdeckungRaster.setClipToPadding(false);
+        entdeckungRasterVorbereiten();
         addSpacing(page, entdeckungRaster, TvViews.SECTION_GAP);
 
         entdeckungFuss = new LinearLayout(this);
@@ -5638,6 +5651,7 @@ public class MainActivity extends Activity {
         scroll.setOnScrollChangeListener((ansicht, x, y, altX, altY) -> {
             if (!"entdeckung".equals(currentScreen) || seitenScroll != scroll) return;
             zustand.scroll = y;
+            entdeckungFensterPruefen();
             if (entdeckungBilder != null) entdeckungBilder.pruefen(scroll);
             entdeckungNachfassen();
         });
@@ -5678,6 +5692,7 @@ public class MainActivity extends Activity {
 
         entdeckungRaster = new LinearLayout(this);
         entdeckungRaster.setOrientation(LinearLayout.VERTICAL);
+        entdeckungRasterVorbereiten();
         addSpacing(page, entdeckungRaster, MobileViews.SECTION_GAP);
 
         entdeckungFuss = new LinearLayout(this);
@@ -5695,6 +5710,7 @@ public class MainActivity extends Activity {
         scroll.setOnScrollChangeListener((ansicht, x, y, altX, altY) -> {
             if (!"entdeckung".equals(currentScreen) || seitenScroll != scroll) return;
             zustand.scroll = y;
+            entdeckungFensterPruefen();
             if (entdeckungBilder != null) entdeckungBilder.pruefen(scroll);
             entdeckungNachfassen();
         });
@@ -5725,40 +5741,186 @@ public class MainActivity extends Activity {
         return breite >= 600 ? 3 : 2;
     }
 
-    /**
-     * Die neuen Karten anhaengen.
-     *
-     * <p>Nur die neuen: die Liste waechst ausschliesslich am Ende, und ein
-     * vollstaendiger Neuaufbau wuerde bei mehreren hundert Karten ruckeln und
-     * nebenbei die Scrollposition verlieren. Dieselbe Ueberlegung wie in
-     * {@code renderDiscovery} am Rechner.
-     */
+    /** Baut das Raster einmal aus zwei Abstandshaltern und dem kleinen echten Sichtfenster. */
+    private void entdeckungRasterVorbereiten() {
+        entdeckungRaster.removeAllViews();
+        entdeckungObererPlatz = new android.widget.Space(this);
+        entdeckungZeilen = new LinearLayout(this);
+        entdeckungZeilen.setOrientation(LinearLayout.VERTICAL);
+        entdeckungZeilen.setClipChildren(false);
+        entdeckungZeilen.setClipToPadding(false);
+        entdeckungUntererPlatz = new android.widget.Space(this);
+        entdeckungRaster.addView(entdeckungObererPlatz, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        entdeckungRaster.addView(entdeckungZeilen, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        entdeckungRaster.addView(entdeckungUntererPlatz, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        entdeckungErsteZeile = -1;
+        entdeckungLetzteZeile = -1;
+        entdeckungZeilenHoehe = 0;
+    }
+
+    /** Die sichtbaren Karten bauen; die Datenliste bleibt davon unberuehrt vollstaendig. */
     private void entdeckungKartenAnhaengen(int abStelle) {
-        if (entdeckungRaster == null) return;
+        int spalten = entdeckungsSpalten();
+        // Ein Nachschlag weit unter dem sichtbaren Fenster ändert nur dessen
+        // unteren Platzhalter. Fokus und überlappende Karten bleiben dabei
+        // dieselben Views.
+        if (entdeckungZeilen != null && entdeckungLetzteZeile >= 0
+            && abStelle / spalten >= entdeckungLetzteZeile
+            // Auch bei einer zuvor vollen Zeile (Phone: 30 -> 60 Karten)
+            // muss das Erreichen der Schwelle den View-Baum begrenzen.
+            && !(abStelle < ENTDECKUNG_VIRTUAL_AB_KARTEN
+                && entdeckungsZustand().eintraege.size() >= ENTDECKUNG_VIRTUAL_AB_KARTEN)) {
+            Entdeckung zustand = entdeckungsZustand();
+            int zeilen = (zustand.eintraege.size() + spalten - 1) / spalten;
+            if (entdeckungUntererPlatz != null) {
+                entdeckungUntererPlatz.getLayoutParams().height = Math.max(0,
+                    zeilen - entdeckungLetzteZeile) * entdeckungsZeilenHoehe(spalten, isTelevision());
+                entdeckungUntererPlatz.requestLayout();
+            }
+            return;
+        }
+        // Der erste neue Eintrag kann den leeren Restplatz der letzten
+        // sichtbaren Reihe fuellen. Diese Reihe trägt noch einen Space statt
+        // der Karte; sie darf daher nicht aus dem Wiederverwendungsbestand
+        // kommen.
+        if (entdeckungZeilen != null) {
+            int betroffeneZeile = abStelle / spalten;
+            for (int i = entdeckungZeilen.getChildCount() - 1; i >= 0; i -= 1) {
+                View zeile = entdeckungZeilen.getChildAt(i);
+                if (Integer.valueOf(betroffeneZeile).equals(zeile.getTag())) {
+                    entdeckungZeilen.removeViewAt(i);
+                    break;
+                }
+            }
+        }
+        entdeckungFensterPruefen(true);
+    }
+
+    /** Beim Wischen verschiebt sich nur ein begrenztes Zeilenfenster statt der ganze View-Baum. */
+    private void entdeckungFensterPruefen() {
+        entdeckungFensterPruefen(false);
+    }
+
+    private void entdeckungFensterPruefen(boolean erzwingen) {
+        if (entdeckungRaster == null || entdeckungZeilen == null) return;
         Entdeckung zustand = entdeckungsZustand();
         boolean fernseher = isTelevision();
         int spalten = entdeckungsSpalten();
+        int zeilen = (zustand.eintraege.size() + spalten - 1) / spalten;
+        if (zeilen == 0) {
+            entdeckungFensterZeichnen(0, 0, spalten, fernseher, erzwingen);
+            return;
+        }
+        int zeilenHoehe = entdeckungsZeilenHoehe(spalten, fernseher);
+        int ersteSichtbar = 0;
+        int letzteSichtbar = Math.min(zeilen - 1, 4);
+        if (seitenScroll != null && seitenScroll.getHeight() > 0 && entdeckungRaster.getHeight() > 0) {
+            int y = Math.max(0, seitenScroll.getScrollY() - entdeckungRaster.getTop());
+            ersteSichtbar = Math.min(zeilen - 1, y / zeilenHoehe);
+            letzteSichtbar = Math.min(zeilen - 1,
+                (y + seitenScroll.getHeight()) / zeilenHoehe + 1);
+        }
+        EntdeckungsFenster.Bereich bereich;
+        if (zustand.eintraege.size() < ENTDECKUNG_VIRTUAL_AB_KARTEN) {
+            bereich = new EntdeckungsFenster.Bereich(0, zeilen);
+        } else {
+            bereich = EntdeckungsFenster.umSichtbareZeilen(zeilen, ersteSichtbar, letzteSichtbar,
+                ENTDECKUNG_ZEILEN_VORLAUF, ENTDECKUNG_ZEILEN_MAXIMAL);
+            // Nicht bei jedem Pixel eine ganze Fensterbreite neu bauen. Solange
+            // der sichtbare Bereich im inneren Puffer liegt, stehen dieselben
+            // Karten da; das hält Bildanmeldungen und insbesondere TV-Fokus
+            // ruhig, auch bei einem langen D-pad- oder Finger-Scroll.
+            if (!erzwingen && entdeckungErsteZeile >= 0
+                && ersteSichtbar >= entdeckungErsteZeile + 1
+                && letzteSichtbar <= entdeckungLetzteZeile - 2) return;
+        }
+        entdeckungFensterZeichnen(bereich.von, bereich.bis, spalten, fernseher, erzwingen);
+    }
+
+    /** Eine angeforderte TV-Zielkarte nachlegen, bevor das Steuerkreuz dort ankommt. */
+    private void entdeckungZeileSichtbarMachen(int zeile, int spalten, boolean fernseher) {
+        Entdeckung zustand = entdeckungsZustand();
+        int zeilen = (zustand.eintraege.size() + spalten - 1) / spalten;
+        if (zeile < 0 || zeile >= zeilen) return;
+        EntdeckungsFenster.Bereich bereich = EntdeckungsFenster.umSichtbareZeilen(zeilen,
+            zeile, zeile, ENTDECKUNG_ZEILEN_VORLAUF, ENTDECKUNG_ZEILEN_MAXIMAL);
+        entdeckungFensterZeichnen(bereich.von, bereich.bis, spalten, fernseher, false);
+    }
+
+    private int entdeckungsZeilenHoehe(int spalten, boolean fernseher) {
+        if (entdeckungZeilenHoehe > 0) return entdeckungZeilenHoehe;
+        int rand = fernseher ? TvViews.SCREEN_PADDING : MobileViews.SCREEN_PADDING;
+        int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
+        int breite = Math.round((getResources().getConfiguration().screenWidthDp
+            - 2f * rand - (spalten - 1f) * luecke) / spalten);
+        // Titel, Grund und Zusatz haben feste Zeilenobergrenzen. Eine Zeile
+        // bekommt deshalb eine feste, ausreichend hohe Zelle; die Platzhalter
+        // davor und dahinter bleiben exakt gleich hoch wie echte Zeilen.
+        float schriftSkala = Math.max(1f, getResources().getConfiguration().fontScale);
+        int inhalt = Math.round(breite * (fernseher ? 1.42f : 1.45f))
+            + Math.round((fernseher ? 170 : 112) * schriftSkala);
+        entdeckungZeilenHoehe = dp(inhalt + (fernseher ? 22 : 18));
+        return entdeckungZeilenHoehe;
+    }
+
+    private void entdeckungFensterZeichnen(int von, int bis, int spalten, boolean fernseher,
+                                           boolean erzwingen) {
+        if (!erzwingen && von == entdeckungErsteZeile && bis == entdeckungLetzteZeile) return;
+        Entdeckung zustand = entdeckungsZustand();
+        int zeilen = (zustand.eintraege.size() + spalten - 1) / spalten;
+        int zeilenHoehe = entdeckungsZeilenHoehe(spalten, fernseher);
+        String fokusMarke = "";
+        View fokus = getCurrentFocus();
+        Object fokusTag = fokus == null ? null : fokus.getTag();
+        if (fernseher && fokusTag instanceof String
+            && ((String) fokusTag).startsWith("tv:entdeckung:")) {
+            fokusMarke = (String) fokusTag;
+        }
+        entdeckungErsteZeile = von;
+        entdeckungLetzteZeile = bis;
+        java.util.HashMap<Integer, View> vorhandeneZeilen = new java.util.HashMap<>();
+        for (int i = 0; i < entdeckungZeilen.getChildCount(); i += 1) {
+            View zeile = entdeckungZeilen.getChildAt(i);
+            Object marke = zeile.getTag();
+            if (marke instanceof Integer) vorhandeneZeilen.put((Integer) marke, zeile);
+        }
+        java.util.ArrayList<View> behalteneZeilen = new java.util.ArrayList<>();
+        for (int stelle = von; stelle < bis; stelle += 1) {
+            View zeile = vorhandeneZeilen.get(stelle);
+            if (zeile != null) behalteneZeilen.add(zeile);
+        }
+        if (entdeckungBilder != null) entdeckungBilder.behalten(behalteneZeilen);
+        entdeckungZeilen.removeAllViews();
+        entdeckungObererPlatz.getLayoutParams().height = von * zeilenHoehe;
+        entdeckungObererPlatz.requestLayout();
+        entdeckungUntererPlatz.getLayoutParams().height = Math.max(0, zeilen - bis) * zeilenHoehe;
+        entdeckungUntererPlatz.requestLayout();
+
         int rand = fernseher ? TvViews.SCREEN_PADDING : MobileViews.SCREEN_PADDING;
         int luecke = fernseher ? TvViews.ITEM_GAP : MobileViews.ITEM_GAP;
         int abstand = dp(luecke);
         int breite = Math.round((getResources().getConfiguration().screenWidthDp
             - 2f * rand - (spalten - 1f) * luecke) / spalten);
-
-        // Die letzte Zeile kann halb gefuellt sein. Sie wird dann noch einmal
-        // gebaut, damit die naechsten Karten in ihre Luecken kommen statt in
-        // eine neue Zeile.
-        int vollstaendig = (abStelle / spalten) * spalten;
-        while (entdeckungRaster.getChildCount() > vollstaendig / spalten) {
-            entdeckungRaster.removeViewAt(entdeckungRaster.getChildCount() - 1);
-        }
-
-        for (int start = vollstaendig; start < zustand.eintraege.size(); start += spalten) {
+        int zeilenInhaltHoehe = zeilenHoehe - dp(fernseher ? 22 : 18);
+        for (int zeileStelle = von; zeileStelle < bis; zeileStelle += 1) {
+            View vorhanden = vorhandeneZeilen.get(zeileStelle);
+            LinearLayout.LayoutParams zeilenParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, zeilenInhaltHoehe);
+            if (zeileStelle > von) zeilenParams.topMargin = dp(fernseher ? 22 : 18);
+            if (vorhanden != null) {
+                entdeckungZeilen.addView(vorhanden, zeilenParams);
+                continue;
+            }
+            int start = zeileStelle * spalten;
             LinearLayout zeile = new LinearLayout(this);
+            zeile.setTag(zeileStelle);
             zeile.setOrientation(LinearLayout.HORIZONTAL);
             for (int spalte = 0; spalte < spalten; spalte += 1) {
                 int stelle = start + spalte;
-                LinearLayout.LayoutParams zelle = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+                LinearLayout.LayoutParams zelle = new LinearLayout.LayoutParams(0, zeilenInhaltHoehe, 1);
                 if (spalte > 0) zelle.leftMargin = abstand;
                 if (stelle < zustand.eintraege.size()) {
                     View karte = fernseher
@@ -5766,7 +5928,26 @@ public class MainActivity extends Activity {
                         : vorschlagsKarte(zustand.eintraege.get(stelle), breite, entdeckungBilder);
                     // Die TV-Karte bringt ihre eigene Breite mit; im Raster
                     // gilt die der Zelle, die addView unten setzt.
-                    if (fernseher) karte.setTag("tv:entdeckung:" + stelle);
+                    if (fernseher) {
+                        karte.setTag("tv:entdeckung:" + stelle);
+                        final int zielStelle = stelle;
+                        karte.setOnKeyListener((view, code, ereignis) -> {
+                            if (ereignis.getAction() != KeyEvent.ACTION_DOWN
+                                || (code != KeyEvent.KEYCODE_DPAD_DOWN && code != KeyEvent.KEYCODE_DPAD_UP)) {
+                                return false;
+                            }
+                            int ziel = zielStelle + (code == KeyEvent.KEYCODE_DPAD_DOWN ? spalten : -spalten);
+                            if (ziel < 0 || ziel >= zustand.eintraege.size()) return false;
+                            String marke = "tv:entdeckung:" + ziel;
+                            if (entdeckungZeilen.findViewWithTag(marke) == null) {
+                                entdeckungZeileSichtbarMachen(ziel / spalten, spalten, true);
+                                View naechste = entdeckungZeilen.findViewWithTag(marke);
+                                if (naechste != null) naechste.requestFocus();
+                                return naechste != null;
+                            }
+                            return false;
+                        });
+                    }
                     zeile.addView(karte, zelle);
                 } else {
                     // Ein Platzhalter mit Hoehe 0: eine nackte View liefert bei
@@ -5779,10 +5960,21 @@ public class MainActivity extends Activity {
             }
             zeile.setClipChildren(false);
             zeile.setClipToPadding(false);
-            LinearLayout.LayoutParams zeilenParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            if (entdeckungRaster.getChildCount() > 0) zeilenParams.topMargin = dp(fernseher ? 22 : 18);
-            entdeckungRaster.addView(zeile, zeilenParams);
+            // Der obere Platzhalter enthält die Lücke vor der ersten
+            // materialisierten Zeile bereits. Sie hier noch einmal zu setzen
+            // würde den Scrollbereich bei jedem Fensterwechsel verschieben.
+            entdeckungZeilen.addView(zeile, zeilenParams);
+        }
+        if (!fokusMarke.isEmpty()) {
+            final String wiederherstellen = fokusMarke;
+            entdeckungZeilen.post(() -> {
+                View aktuell = getCurrentFocus();
+                Object aktuelleMarke = aktuell == null ? null : aktuell.getTag();
+                if (aktuelleMarke instanceof String
+                    && ((String) aktuelleMarke).startsWith("tv:entdeckung:")) return;
+                View ziel = entdeckungZeilen.findViewWithTag(wiederherstellen);
+                if (ziel != null && ziel.isFocusable()) ziel.requestFocus();
+            });
         }
     }
 
@@ -9894,6 +10086,14 @@ public class MainActivity extends Activity {
                 public void bereit(String adresse) {
                     if (mitschauen != null) mitschauen.nativBereit(adresse);
                 }
+                @Override public void wiedergabe(boolean laeuft) {
+                    // Android 12 liest Auto-PiP vor dem Verlassen. Der
+                    // aktuelle Wrapper entscheidet selbst, damit ein spaeter
+                    // Callback eines geschlossenen Players keinen neuen
+                    // Player falsch markiert.
+                    direktPipAutomatikSetzen(direktWiedergabe != null
+                        && direktWiedergabe.laeuftFuerPip());
+                }
                 public boolean darfAutoplay() {
                     return mitschauen == null || !mitschauen.laeuftMit() || mitschauen.binHostHier();
                 }
@@ -10007,6 +10207,7 @@ public class MainActivity extends Activity {
 
     private void direktSchliessen() {
         if (direktWiedergabe == null) return;
+        direktPipAutomatikSetzen(false);
         DirektWiedergabe alt = direktWiedergabe;
         direktImPip = false;
         // Beim relaygesteuerten Austausch muss die Generation den alten Player
@@ -10042,16 +10243,34 @@ public class MainActivity extends Activity {
         } else getWindow().getDecorView().setSystemUiVisibility(0);
     }
 
-    /** Phone-only PiP; it is offered only while the native player is really playing. */
-    private void direktInPip() {
-        if (android.os.Build.VERSION.SDK_INT < 26 || isTelevision() || direktWiedergabe == null
-            || !direktWiedergabe.laeuftFuerPip()
-            || !getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return;
+    /** Die gemeinsamen Parameter fuer automatisches und bewusst angefordertes PiP. */
+    private PictureInPictureParams.Builder direktPipParameter() {
         PictureInPictureParams.Builder params = new PictureInPictureParams.Builder()
             .setAspectRatio(new Rational(16, 9));
         Rect sichtbar = new Rect();
         View decor = getWindow().getDecorView();
         if (decor.getGlobalVisibleRect(sichtbar) && !sichtbar.isEmpty()) params.setSourceRectHint(sichtbar);
+        return params;
+    }
+
+    private boolean direktPipUnterstuetzt() {
+        return android.os.Build.VERSION.SDK_INT >= 26 && !isTelevision()
+            && getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    /** Android 12 braucht den Zustand vor dem Verlassen, nicht erst in onUserLeaveHint. */
+    private void direktPipAutomatikSetzen(boolean laeuft) {
+        if (android.os.Build.VERSION.SDK_INT < 31 || !direktPipUnterstuetzt()) return;
+        PictureInPictureParams.Builder params = direktPipParameter();
+        params.setAutoEnterEnabled(laeuft);
+        setPictureInPictureParams(params.build());
+    }
+
+    /** Phone-only PiP; it is offered only while the native player is really playing. */
+    private void direktInPip() {
+        if (!direktPipUnterstuetzt() || direktWiedergabe == null || !direktWiedergabe.laeuftFuerPip()) return;
+        PictureInPictureParams.Builder params = direktPipParameter();
+        if (android.os.Build.VERSION.SDK_INT >= 31) params.setAutoEnterEnabled(true);
         try {
             direktImPip = enterPictureInPictureMode(params.build());
         } catch (IllegalArgumentException | IllegalStateException abgelehnt) {
@@ -10674,7 +10893,6 @@ public class MainActivity extends Activity {
         boolean pip = direktImPip || (android.os.Build.VERSION.SDK_INT >= 26
             && isInPictureInPictureMode());
         direktImPip = pip;
-        if (direktWiedergabe != null && !pip) direktWiedergabe.pause();
         // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
         // Takt wieder auf. Dasselbe gilt fuer die Kacheln einer Runde: was
@@ -10690,7 +10908,6 @@ public class MainActivity extends Activity {
         // Aus der Runde abmelden, aber nichts an sie senden: Android haelt
         // gleich den WebView an, und die Pause, die der Player daraufhin
         // meldet, ist keine Entscheidung des Zuschauers.
-        if (mitschauen != null && !pip) mitschauen.vordergrund(false);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onPause();
     }
@@ -10700,6 +10917,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (direktWiedergabe != null) {
             direktWiedergabe.vordergrund();
+            direktPipAutomatikSetzen(direktWiedergabe.laeuftFuerPip());
             applyFullscreenSystemUi();
         }
         // Zurueck in der App: waehrend sie weg war, kann am Rechner etwas
@@ -10726,7 +10944,7 @@ public class MainActivity extends Activity {
     protected void onUserLeaveHint() {
         // Vor Android 12 ist dies der offizielle Hintergrund-Hook. Der Check
         // verhindert PiP beim Öffnen anderer App-Bereiche oder bei Pause.
-        direktInPip();
+        if (android.os.Build.VERSION.SDK_INT < 31) direktInPip();
         super.onUserLeaveHint();
     }
 
@@ -10740,12 +10958,14 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
-        // onPause is the visible-PiP lifecycle boundary. Once onStop arrives,
-        // the activity has no visible video surface even if the PiP mode flag
-        // still lingers while its dismissal transition completes.
-        direktImPip = false;
-        if (direktWiedergabe != null) direktWiedergabe.pause();
-        if (mitschauen != null) mitschauen.vordergrund(false);
+        // Bei Auto-PiP kann onPause vor dem Modus-Callback kommen. Erst hier
+        // entscheiden wir mit dem echten Systemzustand, ob der Player und der
+        // Raum wirklich in den Hintergrund gehen.
+        boolean pip = direktImPip || (android.os.Build.VERSION.SDK_INT >= 26
+            && isInPictureInPictureMode());
+        direktImPip = pip;
+        if (direktWiedergabe != null && !pip) direktWiedergabe.pause();
+        if (mitschauen != null && !pip) mitschauen.vordergrund(false);
         super.onStop();
     }
 

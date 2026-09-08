@@ -146,6 +146,9 @@ final class DirektSpieler {
 
         /** Das Telefon kann die laufende native Wiedergabe in Android-PiP legen. */
         default void pip() { }
+
+        /** Der echte Playback-Zustand steuert Android-12-Auto-PiP. */
+        default void wiedergabe(boolean laeuft) { }
     }
 
     /* --------------------------------------------------- Die Farben des Players */
@@ -2204,6 +2207,7 @@ final class DirektSpieler {
                 zuletzt = SystemClock.elapsedRealtime();
                 letztePosition = lauf.getCurrentPosition() / 1000.0;
                 spielenZeichnen();
+                umgebung.wiedergabe(playing);
                 // Steht das Bild, bleibt die Bedienung stehen: es gibt gerade
                 // nichts zu sehen, was sie verdecken koennte.
                 if (!playing) regung();
@@ -2298,8 +2302,10 @@ final class DirektSpieler {
     void vordergrund() { aktiv = true; befehlPruefen(); }
 
     boolean laeuftFuerPip() {
-        return !geschlossen && player != null && player.getPlayWhenReady()
-            && player.getPlaybackState() != Player.STATE_ENDED;
+        // playWhenReady ist noch kein sichtbares Playback: es bleibt auch beim
+        // Laden oder nach einer unterbrochenen Quelle gesetzt. Android darf PiP
+        // nur fuer ein tatsaechlich laufendes Bild automatisch betreten.
+        return !geschlossen && player != null && player.isPlaying();
     }
 
     /** PiP zeigt ausschliesslich das Bild; beim Zurueckkehren lebt die Bedienung weiter. */

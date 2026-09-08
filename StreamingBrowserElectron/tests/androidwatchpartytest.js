@@ -266,8 +266,12 @@ async function startSchranke(pc, tv, key, offen) {
   tv.bruecke.konfigurieren({
     enabled: true, serverUrl: ADRESSE, rooms: [RAUM], deviceName: "Handy", deviceId: "handy-id"
   });
-  await warteBis(() => pc.raeume.verbunden, "Rechner verbunden");
-  await warteBis(() => tv.bruecke.status().connected, "Android verbunden");
+  // Der Socket ist vor der bestaetigten v2-Geraeteidentitaet offen. Teilen
+  // darf erst nach dem state-Callback, sonst wird der Auftrag absichtlich
+  // verworfen.
+  await warteBis(() => pc.raeume.raeume.get(RAUM)?.identitaetBestaetigt, "Rechner autorisiert");
+  await warteBis(() => tv.ereignisse.some((e) => e.art === "watchparty:verbindung" && e.nutzlast === true),
+    "Android autorisiert");
   pruefe("2a. Beide Geraete sind am Relay",
     pc.raeume.verbunden && tv.bruecke.status().connected);
 

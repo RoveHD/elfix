@@ -745,12 +745,43 @@ async function miniUmschalten() {
   if (knopfMini.disabled || knopfMini.hidden) return;
   // Vor dem nativen Fenster: ein Blur darf den ausdruecklichen Mini-Wunsch
   // nicht durch die optionale Hintergrund-Pause vereiteln.
-  bruecke.miniStatus?.(true);
+  bruecke.miniStatus?.(true, true);
   try {
     await bild.requestPictureInPicture();
   } catch {
     bruecke.miniStatus?.(false);
     knopfMini.title = "Mini-Player für diese Wiedergabe nicht verfügbar";
+  }
+}
+
+/**
+ * Der Hauptprozess darf den Mini-Player beim Minimieren anfordern. Anders als
+ * der sichtbare Knopf ist das kein Wunsch, eine Pause oder eine gerade
+ * ausgetauschte Quelle wieder zu starten: es wird ausschliesslich das aktuell
+ * wirklich spielende Bild uebernommen. Der Aufruf selbst kommt im Electron-
+ * Hauptprozess mit `userGesture`, weil Chromium PiP sonst je nach Plattform
+ * ablehnt.
+ *
+ * `pictureInPictureElement` kann auch ein fremdes Video sein. Dieses Fenster
+ * darf dessen ausdruecklichen Mini-Player nicht ersetzen.
+ */
+function spieltFuerAutoMini() {
+  return !bild.paused && !bild.ended && bild.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+}
+
+async function miniAutomatisch() {
+  if (document.pictureInPictureElement === bild) return true;
+  if (document.pictureInPictureElement || !spieltFuerAutoMini()
+    || !document.pictureInPictureEnabled || typeof bild.requestPictureInPicture !== "function") return false;
+  // Wie beim manuellen Knopf markiert der Status das laufende Uebergabefenster:
+  // `minimize` darf die Wiedergabe nicht zwischen Anfrage und PiP-Event pausieren.
+  bruecke.miniStatus?.(true, true);
+  try {
+    await bild.requestPictureInPicture();
+    return true;
+  } catch {
+    bruecke.miniStatus?.(false);
+    return false;
   }
 }
 
