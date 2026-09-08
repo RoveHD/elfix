@@ -3,6 +3,31 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.21 — 8. September 2026
+
+- Gemeinsame Warteschlange je Raum: jeder schlägt Titel vor, die Runde stimmt
+  ab, und der gewählte Titel läuft danach für alle. YouTube-Runden führen ihre
+  eigene Videoliste mit eigenem Zustand.
+- Der Start der Warteschlange läuft zweiphasig: erst laden alle die neue
+  Quelle, und erst wenn jedes Gerät sie bestätigt, wechselt die Runde. Meldet
+  eines einen Fehler, kommt der Vorschlag zurück in die Liste und der bisherige
+  Titel bleibt stehen.
+- Der Miniplayer wirft niemanden mehr aus der Watchparty. PiP, Vollbild und der
+  normale Player sind nur Darstellungen desselben Laufs: Raum, Geräte-ID,
+  Player-Sitzung, Herzschlag und Hostrolle bleiben erhalten.
+- „Nächste Folge · auf alle warten" bleibt nicht mehr hängen, wenn jemand seinen
+  Player schließt. Wer eine Folge verlässt, zählt sofort nicht mehr als
+  erwarteter Teilnehmer, und die Runde startet mit den übrigen.
+- Das Intro darf jeder überspringen, nicht nur der Host — so wie jeder die Folge
+  wechseln darf. Der Sprung läuft über dieselbe gemeinsame Startverabredung wie
+  das Weiterlaufen; freies Spulen bleibt beim Host.
+- Spoilerschutz für Folgentitel und Vorschauen auf Windows und Android, mit
+  Gesehen-Markierung in der Folgenliste.
+- Ein Gerät verliert beim Wechsel zwischen zwei Titeln derselben Runde nicht
+  mehr seinen Playerstand; „Abgleichen" richtet sich wieder am Host aus.
+- Geprüft mit der vollständigen Suite (157 Prüfungen inklusive Relay) und 17
+  Electron-Suiten, alle grün.
+
 ## 2.0.20 — 8. September 2026
 
 - Der Windows-Miniplayer läuft beim Stöbern auf Startseite, Suche und Mediathek
