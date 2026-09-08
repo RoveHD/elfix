@@ -74,7 +74,7 @@
     "esbuild": "^0.28.2"
   },
   "dependencies": {
-    "@adguard/tsurlfilter": "^6.0.2",
+    "@adguard/tsurlfilter": "^6.0.3",
     "electron-updater": "^6.8.9",
     "hls.js": "^1.7.2"
   },
