@@ -275,9 +275,22 @@ async function androidAlleinStart(tv, offen) {
     Boolean(pc.eintragVon()?.joined && tv.eintragVon()?.joined));
 
   // Beide melden sich an derselben Folge an - daran haengt die Hostwahl.
+  pc.staende.length = 0;
   pc.puls(0, true, folge(4));
   await schlaf(150);
   tv.puls(0, true, folge(4));
+  // `hostId` kann bereits aus der ersten (PC-)Standmeldung stammen. Das sagt
+  // noch nicht, dass das Relay auch den unmittelbar danach gesendeten
+  // Android-Stand verarbeitet hat. Wird Play genau in diesem Fenster gesendet,
+  // gehoert Android folgerichtig noch nicht zu den aktiven Teilnehmern der
+  // Startschranke und bekommt kein syncprepare. Der Test muss deshalb auf den
+  // ersten vom Relay bestaetigten Stand mit *beiden* Playern warten.
+  const beideAktiv = await warteBis(() => pc.staende.some((stand) => {
+    const ids = new Set((stand.members || []).map((mitglied) => mitglied.id));
+    return ids.has(pc.kennungAktuell()) && ids.has(tv.kennungAktuell());
+  }), "beide Player sind am Relay aktiv");
+  pruefe("Beide Player sind vor dem Startschrankentest wirklich aktiv", beideAktiv,
+    JSON.stringify((pc.staende.at(-1)?.members || []).map((mitglied) => mitglied.id)));
   await warteBis(() => tv.eintragVon()?.hostId, "ein Host steht fest");
   pruefe("Der Rechner fuehrt (er war zuerst an der Folge)",
     tv.eintragVon()?.hostId === pc.kennungAktuell(),
