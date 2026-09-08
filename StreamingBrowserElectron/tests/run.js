@@ -42,6 +42,7 @@ OHNE_RELAY.push("securitytest");
 OHNE_RELAY.push("spielerchatzustandtest");
 OHNE_RELAY.push("watchpartypersistenztest");
 OHNE_RELAY.push("youtubestarttest");
+OHNE_RELAY.push("youtubeteilnehmeranbindungtest");
 OHNE_RELAY.push("sponsorblockpartytest");
 OHNE_RELAY.push("youtubezusatzracentest");
 OHNE_RELAY.push("folgenbarrieretest");
@@ -52,14 +53,27 @@ OHNE_RELAY.push("searchgroupingtest");
 OHNE_RELAY.push("spielervorschautest");
 OHNE_RELAY.push("cache-schreibaufschubtest");
 OHNE_RELAY.push("watchpartyabfragetest");
+OHNE_RELAY.push("spoilerschutztest");
+OHNE_RELAY.push("raumqueuetest");
+OHNE_RELAY.push("raumqueueintegrationtest");
+OHNE_RELAY.push("raumwarteschlangetest");
+OHNE_RELAY.push("queueclienttest");
+OHNE_RELAY.push("queuefirsttitletest");
+OHNE_RELAY.push("queuecancellationtest");
+OHNE_RELAY.push("youtubequeueracetest");
 OHNE_RELAY.push("search-coordinatortest");
 OHNE_RELAY.push("searchintegrationtest");
 OHNE_RELAY.push("search-renderer-racetest");
 OHNE_RELAY.push("cache-schreibarbeitertest");
 OHNE_RELAY.push("autominispielertest");
+OHNE_RELAY.push("miniplayerpresencetest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");
 MIT_RELAY.push("relayidentitytest");
+MIT_RELAY.push("barrierleavetest");
+MIT_RELAY.push("barrierstarttest");
+MIT_RELAY.push("introskiptest");
+MIT_RELAY.push("queuerelaytest");
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -197,7 +211,8 @@ async function warteAufStille(port, frist) {
     // wirklich auf die Platte schreibt - und vor allem, was nicht.
     const testUmgebung = { TESTPORT: String(port), STATE_DIRECTORY: ablage };
     const echteIdentitaetsUndBarriereTests = new Set([
-      "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest"
+      "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest",
+      "barrierleavetest", "barrierstarttest"
     ]);
     if (!echteIdentitaetsUndBarriereTests.has(datei)) {
       const bootstrap = `./${path.relative(process.cwd(), RELAY_TEST_IDENTITAET).replace(/\\/g, "/")}`;

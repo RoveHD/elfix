@@ -20,12 +20,43 @@
 
 const youtubeSync = require("./youtube-sync");
 
+function queueVideo(roh) {
+  if (!roh || typeof roh !== "object" || Array.isArray(roh)) return null;
+  const videoId = String(roh.videoId || "").slice(0, 24);
+  const id = String(roh.id || "").slice(0, 64);
+  if (!id || !/^[A-Za-z0-9_-]{6,24}$/.test(videoId)) return null;
+  return {
+    id, kind: "youtube", videoId,
+    url: String(roh.url || "").slice(0, 400), title: String(roh.title || "").slice(0, 200),
+    proposedBy: String(roh.proposedBy || "").slice(0, 40),
+    proposedById: String(roh.proposedById || "").slice(0, 64),
+    proposedAt: Number(roh.proposedAt) || 0, votes: Math.max(0, Number(roh.votes) || 0),
+    voted: roh.voted === true, mine: roh.mine === true
+  };
+}
+
+function queueStand(roh, room) {
+  const pendingItem = queueVideo(roh?.pending?.item);
+  return {
+    room: String(roh?.room || room || "").slice(0, 64), rev: Math.max(0, Number(roh?.rev) || 0),
+    items: Array.isArray(roh?.items) ? roh.items.map(queueVideo).filter(Boolean).slice(0, 100) : [],
+    selectedId: String(roh?.selectedId || "").slice(0, 64),
+    reason: String(roh?.reason || "").slice(0, 80),
+    pending: pendingItem ? {
+      startId: String(roh.pending.startId || "").slice(0, 64), item: pendingItem,
+      fromVideoId: String(roh.pending.fromVideoId || "").slice(0, 24),
+      at: Number(roh.pending.at) || 0, expiresAt: Number(roh.pending.expiresAt) || 0
+    } : null
+  };
+}
+
 class YoutubeWatchparty {
   constructor(optionen = {}) {
     // Der Raumzustand hat sich geaendert und der Hauptprozess soll ihn auf den
     // Player bringen: (zustand, hinweis).
     this.aufZustand = optionen.onState || (() => {});
     this.aufStatus = optionen.onStatus || (() => {});
+    this.aufQueue = optionen.onQueue || (() => {});
     // Eine Nachricht an das Relay, in den Raum: (raum, nachricht).
     this.hinaus = optionen.senden || (() => {});
     // Die Serverzeit dieses Raums in Millisekunden - oder null, wenn kein
@@ -43,6 +74,7 @@ class YoutubeWatchparty {
     // nicht zwischen Server- und Geraetezeit springt.
     this.ordnung = null;
     this.mitglieder = [];
+    this.abstimmung = { room: "", rev: 0, items: [], selectedId: "", pending: null, reason: "" };
   }
 
   get aktiv() {
@@ -57,6 +89,7 @@ class YoutubeWatchparty {
       joined: this.beigetreten,
       error: this.fehler,
       members: this.mitglieder,
+      queue: this.queueStatus(),
       me: this.geraetId,
       sponsorblockAutomatic: this.darfSponsorblockAutomatisch(),
       video: this.stand
@@ -109,6 +142,7 @@ class YoutubeWatchparty {
     this.stand = null;
     this.ordnung = null;
     this.mitglieder = [];
+    this.abstimmung = { room: code, rev: 0, items: [], selectedId: "", pending: null, reason: "" };
     this.fehler = "";
     this.melde();
   }
@@ -122,6 +156,7 @@ class YoutubeWatchparty {
     this.stand = null;
     this.ordnung = null;
     this.mitglieder = [];
+    this.abstimmung = { room: "", rev: 0, items: [], selectedId: "", pending: null, reason: "" };
     this.fehler = "";
     this.melde();
   }
@@ -168,6 +203,34 @@ class YoutubeWatchparty {
     if (art === "yterror") {
       this.fehler = String(nachricht.message || "");
       this.melde();
+      return true;
+    }
+    if (art === "ytqueue:state") {
+      const stand = queueStand(nachricht, this.raum);
+      if (stand.rev < this.abstimmung.rev) return true;
+      this.abstimmung = stand;
+      this.aufQueue({ type: art, ...stand });
+      this.melde();
+      return true;
+    }
+    if (art === "ytqueue:start") {
+      const item = queueVideo(nachricht.item);
+      if (!item) return true;
+      this.aufQueue({
+        type: art, room: code || this.raum, startId: String(nachricht.startId || "").slice(0, 64),
+        item, fromVideoId: String(nachricht.fromVideoId || "").slice(0, 24),
+        at: Number(nachricht.at) || 0, expiresAt: Number(nachricht.expiresAt) || 0,
+        replay: nachricht.replay === true
+      });
+      return true;
+    }
+    if (art === "ytqueue:cancel") {
+      this.aufQueue({
+        type: art, room: code || this.raum,
+        startId: String(nachricht.startId || "").slice(0, 64),
+        reason: String(nachricht.reason || "").slice(0, 80),
+        fromVideoId: String(nachricht.fromVideoId || "").slice(0, 24)
+      });
       return true;
     }
     if (art !== "ytstate" && art !== "ytevent") return true;
@@ -257,6 +320,37 @@ class YoutubeWatchparty {
     if (typeof daten.playing === "boolean") nachricht.playing = daten.playing;
     this.hinaus(this.raum, nachricht);
     return true;
+  }
+
+  queueStatus() {
+    return { ...this.abstimmung, items: this.abstimmung.items.slice(),
+      pending: this.abstimmung.pending ? { ...this.abstimmung.pending } : null };
+  }
+
+  queuePropose(item) {
+    return Boolean(this.raum && this.verbunden && this.beigetreten
+      && this.hinaus(this.raum, { type: "ytqueue:propose", item }));
+  }
+
+  queueVote(id, value) {
+    return Boolean(this.raum && this.verbunden && this.beigetreten
+      && this.hinaus(this.raum, { type: "ytqueue:vote", id: String(id || ""), value: value !== false }));
+  }
+
+  queueRemove(id) {
+    return Boolean(this.raum && this.verbunden && this.beigetreten
+      && this.hinaus(this.raum, { type: "ytqueue:remove", id: String(id || "") }));
+  }
+
+  queueAdvance(expectedId, fromVideoId) {
+    return Boolean(this.raum && this.verbunden && this.beigetreten
+      && this.hinaus(this.raum, { type: "ytqueue:advance", expectedId: String(expectedId || ""),
+        fromVideoId: String(fromVideoId || "") }));
+  }
+
+  queueStarted(startId, ok) {
+    return Boolean(this.raum && this.verbunden && this.beigetreten
+      && this.hinaus(this.raum, { type: "ytqueue:started", startId: String(startId || ""), ok: ok !== false }));
   }
 
   melde() {

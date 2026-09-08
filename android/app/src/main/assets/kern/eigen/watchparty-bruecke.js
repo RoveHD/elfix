@@ -52,6 +52,8 @@
 
   let raeume = null;
   let letzterStatus = null;
+  let queueRoom = "";
+  let ytQueueRoom = "";
   /** Das Player-Promise meldet damit erst nach Seek und Pufferung Bereitschaft. */
   const MELDE_BEREIT = "__elfix:wp:bereit:";
 
@@ -79,6 +81,25 @@
       onControl: (steuerung) => ereignis("watchparty:steuerung", steuerung),
       onWatchstate: (stand) => ereignis("watchparty:stand", stand),
       onChat: (zeile) => ereignis("watchparty:chat", zeile),
+      onQueue: (nachricht) => {
+        queueRoom = String((nachricht && nachricht.room) || queueRoom || "");
+        ereignis(String((nachricht && nachricht.type) || "queue:state"), nachricht);
+      },
+      onSpoiler: (stand) => ereignis("watchparty:spoiler", stand),
+      // Android fuehrt den YouTube-Zustand nativ. Die gemeinsame Leitung gibt
+      // Queue-Ereignisse daher unter ihrem Wire-Namen weiter.
+      onYoutube: (nachricht) => {
+        if (!nachricht || typeof nachricht.type !== "string") return;
+        if (nachricht.type.startsWith("ytqueue:")) {
+          ytQueueRoom = String(nachricht.room || ytQueueRoom || "");
+          ereignis(nachricht.type, nachricht);
+        } else if (nachricht.type === "ytstate" || nachricht.type === "ytevent") {
+          ytQueueRoom = String(nachricht.room || ytQueueRoom || "");
+          ereignis("youtubeparty:state", nachricht);
+        } else if (nachricht.type === "yterror") {
+          ereignis("youtubeparty:error", nachricht);
+        }
+      },
       onConnection: (info) => ereignis("watchparty:verbindung", info)
     });
     return raeume;
@@ -187,6 +208,26 @@
    */
   function titelSchluessel(eintrag) {
     return geraeteStand.titelSchluessel(eintrag || {});
+  }
+
+  function youtubeQueueItem(item) {
+    const ergebnis = Object.assign({}, item || {});
+    if (/^[A-Za-z0-9_-]{6,24}$/.test(String(ergebnis.videoId || ""))) return ergebnis;
+    try {
+      const adresse = new URL(String(ergebnis.url || ""));
+      const host = adresse.hostname.toLowerCase().replace(/^(www|m|music)\./, "");
+      let id = "";
+      if (host === "youtu.be") id = adresse.pathname.split("/").filter(Boolean)[0] || "";
+      else if (host === "youtube.com" || host === "youtube-nocookie.com") {
+        id = adresse.searchParams.get("v") || "";
+        if (!id) {
+          const teile = adresse.pathname.split("/").filter(Boolean);
+          if (["embed", "shorts", "live"].includes(teile[0])) id = teile[1] || "";
+        }
+      }
+      if (/^[A-Za-z0-9_-]{6,24}$/.test(id)) ergebnis.videoId = id;
+    } catch {}
+    return ergebnis;
   }
 
   /**
@@ -420,7 +461,7 @@
   function eintragImRaum(key, room) {
     if (!raeume || !key) return null;
     const raum = String(room || "");
-    return raeume.eintraege().find((eintrag) => (
+    return eintraege().find((eintrag) => (
       eintrag.key === key && (!raum || String(eintrag.room || "") === raum)
     )) || null;
   }
@@ -1010,6 +1051,37 @@
     meldeStand: (key, stand, room) => sicherstellen().meldeStand(key, stand, room),
     verlasseStand: (key, room) => sicherstellen().verlasseStand(key, room),
     chatSenden: (key, zeile, room) => sicherstellen().chatSenden(key, zeile, room),
+    queueStatus: (room) => sicherstellen().queueStatus(room || queueRoom),
+    queuePropose: (item, room) => sicherstellen().queuePropose(
+      Object.assign({}, item, { key: (item && item.key) || titelSchluessel(item) }),
+      room || (item && item.room) || queueRoom),
+    queueVote: (id, value, room) => sicherstellen().queueVote(id, value, room || queueRoom),
+    queueRemove: (id, room) => sicherstellen().queueRemove(id, room || queueRoom),
+    queueAdvance: (expectedId, fromKey, room) =>
+      sicherstellen().queueAdvance(expectedId, fromKey, room || queueRoom),
+    queueStarted: (startId, ok, room) => sicherstellen().queueStarted(startId, ok, room || queueRoom),
+    spoilerMelden: (key, completed, room) => sicherstellen().spoilerMelden(key, completed, room || queueRoom),
+    youtubeBeitreten: (room) => {
+      const code = String(room || ytQueueRoom || "");
+      if (!code) return false;
+      ytQueueRoom = code;
+      return sicherstellen().youtubeSenden(code, { type: "ytjoin" });
+    },
+    youtubeVerlassen: (room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""), { type: "ytleave" }),
+    youtubeAbgleichen: (room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""), { type: "ytsync" }),
+    youtubeMelden: (action, daten, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
+      Object.assign({ type: "ytevent", action: String(action || "") }, daten || {})),
+    ytqueueStatus: () => ({ room: ytQueueRoom }),
+    ytqueuePropose: (item, room) => sicherstellen().youtubeSenden(String(room || (item && item.room) || ytQueueRoom || ""),
+      { type: "ytqueue:propose", item: youtubeQueueItem(item) }),
+    ytqueueVote: (id, value, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
+      { type: "ytqueue:vote", id: String(id || ""), value: value !== false }),
+    ytqueueRemove: (id, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
+      { type: "ytqueue:remove", id: String(id || "") }),
+    ytqueueAdvance: (expectedId, fromVideoId, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
+      { type: "ytqueue:advance", expectedId: String(expectedId || ""), fromVideoId: String(fromVideoId || "") }),
+    ytqueueStarted: (startId, ok, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
+      { type: "ytqueue:started", startId: String(startId || ""), ok: ok !== false }),
     istBeigetreten: (key) => Boolean(raeume && raeume.istBeigetreten(key)),
     trennen: () => { if (raeume) raeume.trennen(); }
   };

@@ -115,8 +115,89 @@ public class DirektSpielerGeraeteTest {
                 Assume.assumeFalse("Nur auf einem echten Telefon ausfuehren",
                     DirektSpieler.istFernseher(a.getResources().getConfiguration()));
                 assertNotNull("Telefon behaelt den Player-Tonknopf", mitTag(a.spieler.ansicht, "ton"));
-                assertNotNull("Telefon behaelt den Player-Lautstaerkeregler", mitTag(a.spieler.ansicht, "lautstaerke"));
+                View reihe = mitTag(a.spieler.ansicht, "handyPlayerAktionen");
+                assertNotNull("Telefon hat eine kompakte Aktionsreihe", reihe);
+                float dichte = a.getResources().getDisplayMetrics().density;
+                for (int breite : new int[] { 304, 360, 640, 960 }) {
+                    reihe.measure(View.MeasureSpec.makeMeasureSpec(Math.round(breite * dichte), View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(Math.round(48 * dichte), View.MeasureSpec.EXACTLY));
+                    reihe.layout(0, 0, reihe.getMeasuredWidth(), reihe.getMeasuredHeight());
+                    ViewGroup gruppe = (ViewGroup) reihe;
+                    for (int i = 0; i < gruppe.getChildCount(); i++) {
+                        View ziel = gruppe.getChildAt(i);
+                        if (!ziel.isClickable()) continue;
+                        assertEquals("Alle Aktionen bleiben in derselben Reihe", 0, ziel.getTop());
+                        assertTrue("Aktion liegt innerhalb der Breite " + breite, ziel.getRight() <= reihe.getWidth());
+                        assertTrue("Touchziel bleibt mindestens 48dp breit", ziel.getWidth() >= Math.round(48 * dichte));
+                        assertNotNull("Symbol hat eine lesbare Beschreibung", ziel.getContentDescription());
+                    }
+                }
+                reihe.requestLayout();
+                mitTag(a.spieler.ansicht, "playerEinstellungen").performClick();
+                assertNotNull("Telefon behaelt den Player-Lautstaerkeregler im Menue", mitTag(a.spieler.ansicht, "lautstaerke"));
+                for (String tag : new String[] { "fassung", "hoster", "qualitaet", "untertitel", "tempo", "auto", "miniplayer" }) {
+                    assertNotNull("Einstellung erreichbar: " + tag, mitTag(a.spieler.ansicht, tag));
+                }
+                boolean vorher = Folgen.autoplayAn(a);
+                try {
+                    mitTag(a.spieler.ansicht, "auto").performClick();
+                    assertEquals(!vorher, Folgen.autoplayAn(a));
+                    assertFalse("Auswahl schliesst das Menue", a.spieler.blendeOffen());
+                    mitTag(a.spieler.ansicht, "playerEinstellungen").performClick();
+                    assertEquals("Wiederholtes Oeffnen behaelt den aktuellen Zustand",
+                        !vorher ? "Autoplay an" : "Autoplay aus", feld(a.spieler.ansicht, "auto").getText().toString());
+                    assertNotNull(mitTag(a.spieler.ansicht, "lautstaerke"));
+                } finally { Folgen.setzeAutoplayAn(a, vorher); }
             });
+        }
+    }
+
+    @Test public void handyQuerformatZeigtEineReiheUndLesbareEinstellungen() throws Exception {
+        String base = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("mediaBase");
+        Assume.assumeNotNull(base);
+        try (ActivityScenario<DirektProbeActivity> scenario = ActivityScenario.launch(DirektProbeActivity.class)) {
+            scenario.onActivity(a -> {
+                Assume.assumeFalse(DirektSpieler.istFernseher(a.getResources().getConfiguration()));
+                a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+            });
+            AtomicBoolean bereit = new AtomicBoolean();
+            warten(() -> { scenario.onActivity(a -> bereit.set(a.kern.istBereit()
+                && a.spieler.ansicht.getWidth() > a.spieler.ansicht.getHeight())); return bereit.get(); });
+            scenario.onActivity(a -> {
+                a.spieler.titel("ELFIX · Player-Test");
+                a.spieler.quelleBenannt("Lokales Testvideo", "Deutsch");
+                a.spieler.quelle(base + "/probe.mp4", "datei", Collections.emptyMap(), 0);
+            });
+            warten(() -> { scenario.onActivity(a -> bereit.set(a.spieler.position() > 1)); return bereit.get(); });
+            scenario.onActivity(a -> {
+                a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE));
+                a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU));
+            });
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            androidx.test.uiautomator.UiDevice device = androidx.test.uiautomator.UiDevice.getInstance(
+                androidx.test.platform.app.InstrumentationRegistry.getInstrumentation());
+            java.io.File dir = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                .getTargetContext().getExternalFilesDir(null);
+            assertTrue(device.takeScreenshot(new java.io.File(dir, "handy-player-quer.png")));
+            scenario.onActivity(a -> mitTag(a.spieler.ansicht, "playerEinstellungen").performClick());
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(a -> {
+                View volume = mitTag(a.spieler.ansicht, "lautstaerke");
+                assertTrue("Lautstaerke sichtbar", volume.isShown());
+                assertTrue("Lautstaerke hat ausreichend Bedienflaeche",
+                    volume.getWidth() >= 96 * a.getResources().getDisplayMetrics().density);
+                assertTrue(a.spieler.blendeOffen());
+            });
+            warten(() -> { scenario.onActivity(a -> {
+                View view = mitTag(a.spieler.ansicht, "lautstaerke");
+                boolean gezeichnet = view != null && view.isShown();
+                while (view != null) {
+                    gezeichnet &= view.getAlpha() >= .99f && Math.abs(view.getTranslationY()) < 1;
+                    view = view.getParent() instanceof View ? (View) view.getParent() : null;
+                }
+                bereit.set(gezeichnet);
+            }); return bereit.get(); });
+            assertTrue(device.takeScreenshot(new java.io.File(dir, "handy-player-einstellungen.png")));
         }
     }
 
@@ -422,6 +503,8 @@ public class DirektSpielerGeraeteTest {
                 a.runde = true;
                 a.host = false;
                 a.spieler.quellenZeichnen();
+                View einstellungen = mitTag(a.spieler.ansicht, "playerEinstellungen");
+                if (einstellungen != null) einstellungen.performClick();
                 TextView fassung = feld(a.spieler.ansicht, "fassung");
                 TextView hoster = feld(a.spieler.ansicht, "hoster");
                 assertNotNull(fassung);

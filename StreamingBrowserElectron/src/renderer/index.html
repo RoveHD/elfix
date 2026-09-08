@@ -31,7 +31,9 @@
         <button class="chrome-btn watchparty-leave is-hidden" id="watchpartyHandover" title="Host an jemand anderen weitergeben">⇧ Host</button>
         <button class="chrome-btn watchparty-leave is-hidden" id="watchpartyResync" title="Alle anhalten - auf der Stelle des Hosts">⏸ Alle anhalten</button>
         <button class="chrome-btn watchparty-leave is-hidden" id="watchpartyLiveLeave" title="Watchparty live verlassen">Live verlassen</button>
-        <button class="chrome-btn" id="direktButton" title="Direkt abspielen — ohne den Player des Hosters">▶ Direkt</button>
+        <button class="chrome-btn is-hidden" id="direktButton" type="button" title="Im ELFIX-Player öffnen" aria-label="Im ELFIX-Player öffnen">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4Z" fill="currentColor" stroke="none"/></svg>
+        </button>
         <button class="chrome-btn" id="stopButton" title="Stop">×</button>
         <button class="chrome-btn" id="fullscreenButton" title="Cinema Fullscreen">⛶</button>
       </div>
@@ -326,6 +328,7 @@
             <p class="youtube-party-status" id="youtubePartyStatus">Wird geladen …</p>
             <p class="youtube-party-members" id="youtubePartyMembers"></p>
           </section>
+          <section class="raumqueue" id="roomQueue" aria-label="Gemeinsame Warteschlange"></section>
           <div class="favorite-grid" id="watchpartyGrid"></div>
           <div class="empty-state is-hidden" id="watchpartyEmpty">
             <div class="empty-icon">⇄</div>
@@ -803,6 +806,9 @@
               </label>
               <label class="check setting-row"><input id="direktModus" type="checkbox"><span><strong>Im eigenen Player abspielen</strong><small>ELFIX holt die Videoadresse selbst und spielt sie in seinem eigenen Player — mit Folgenliste, Fassungs- und Hosterwahl, Untertiteln und Watchparty. Die Seite des Anbieters wird dabei nur noch im Hintergrund gelesen und nicht mehr angezeigt. Ausgeschaltet läuft alles wie früher über den Player des Hosters.</small></span></label>
               <label class="check setting-row"><input id="skipSegments" type="checkbox"><span><strong>Verfügbare Abschnitte überspringen</strong><small>Zeigt im eigenen Player Knöpfe für Intro, Rückblick, Abspann und Vorschau. Öffentlich verfügbare Zeitmarken von AniSkip, SkipDB, IntroDB und TheIntroDB; keine Anmeldung nötig. ELFIX springt nur auf deinen Klick.</small></span></label>
+              <label class="check setting-row"><input id="spoilerProtectionEnabled" type="checkbox"><span><strong>Spoiler-Schutz aktivieren</strong><small>ELFIX blendet Hinweise auf spätere Folgen aus, solange du sie noch nicht gesehen hast.</small></span></label>
+              <label class="check setting-row"><input id="spoilerProtectionRoomMinimum" type="checkbox"><span><strong>Im Raum den gemeinsamen Mindeststand verwenden</strong><small>Zeigt Folgendetails nur, wenn alle gerade Mitschauenden die Folge bereits gesehen haben. Fehlende Angaben bleiben geschützt.</small></span></label>
+              <label class="check setting-row"><input id="spoilerProtectionShareWatchedWithRoom" type="checkbox"><span><strong>Gesehene Folgen mit der Runde teilen</strong><small>Nur für den gemeinsam geöffneten Titel. Damit kann die Runde Spoiler für ungesehene Folgen ausblenden. Ohne Freigabe bleiben diese Angaben unbekannt.</small></span></label>
               <label class="check setting-row"><input id="introSkip" type="checkbox"><span><strong>Gelernte Intros zusätzlich anbieten</strong><small>Wenn keine passende Intro-Zeitmarke vorliegt, verwendet ELFIX deine bisher gelernten Sprünge. Ab zwei passenden Folgen erscheint ein Knopf. Es wird nie automatisch gesprungen.</small></span></label>
               <div class="setting-row">
                 <span><strong>Gelernte Intros</strong><small id="markenStand">Noch nichts gelernt.</small></span>
@@ -1432,8 +1438,9 @@
        im Hauptprozess und in den Pruefungen laden - die Oberflaeche
        rechnet damit nicht anders als der Rest. -->
   <script src="../../shared/verlauf.js"></script>
-  <script src="./ui-sounds.js"></script>
-  <script src="./appearance-preview.js"></script>
-  <script src="./renderer.js"></script>
+<script src="./ui-sounds.js"></script>
+<script src="./appearance-preview.js"></script>
+<script src="./raumqueue.js"></script>
+<script src="./renderer.js"></script>
 </body>
 </html>

@@ -175,7 +175,7 @@ pruefe("Er laesst sich in den Einstellungen abschalten",
   && oberflaeche.includes("direktModus: direktModus ? direktModus.checked"),
   "wer die Anbieterseite doch sehen will, soll sie sehen duerfen");
 pruefe("Und dann kommt auch der Direkt-Knopf wieder",
-  oberflaeche.includes('#direktButton")?.classList.toggle("is-hidden", !aufSeite || direkt)'),
+  oberflaeche.includes('#direktButton")?.classList.toggle("is-hidden", !aufSeite || direkt || aufYoutubeSeite())'),
   "im Direktbetrieb waere er ein zweiter Weg zu dem, was ohnehin laeuft");
 // Zurueck, Vor, Neu laden und Stop bedienen die Anbieterseite. Ist keine zu
 // sehen, ist ein solcher Knopf ein Versprechen ohne Deckung - auf YouTube

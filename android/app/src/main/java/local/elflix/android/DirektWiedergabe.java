@@ -34,6 +34,8 @@ final class DirektWiedergabe {
         void live(JSONObject wert, String aktion);
         void bereit(String adresse);
         boolean darfAutoplay();
+        /** Relay queue takes priority at the real media end. */
+        default boolean queueWeiter() { return false; }
         void marke(Consumer<JSONObject> fertig);
         /** Cache-first Kennung fuer externe Vorspann- und Abspannsegmente. */
         default void skipKontext(Consumer<JSONObject> fertig) { fertig.accept(null); }
@@ -69,6 +71,8 @@ final class DirektWiedergabe {
         default void pip() { }
         /** Tatsächliches Native-Playback; steuert Android-12-Auto-PiP. */
         default void wiedergabe(boolean laeuft) { }
+        /** Text bound next to a native player's episode number. */
+        default String folgenAnzeige(int staffel, int folge, String titel) { return titel; }
     }
 
     private final Activity activity;
@@ -167,6 +171,14 @@ final class DirektWiedergabe {
                      String titel, double start, int fortsetzStaffel, int fortsetzFolge,
                      String folgenBarriereSyncId, String abgelaufeneFolgenQuelleSyncId,
                      Umgebung umgebung) {
+        this(activity, kern, anbieter, adresse, titel, start, fortsetzStaffel, fortsetzFolge,
+            folgenBarriereSyncId, abgelaufeneFolgenQuelleSyncId, false, umgebung);
+    }
+
+    DirektWiedergabe(Activity activity, Kern kern, Provider anbieter, String adresse,
+                     String titel, double start, int fortsetzStaffel, int fortsetzFolge,
+                     String folgenBarriereSyncId, String abgelaufeneFolgenQuelleSyncId,
+                     boolean pausiertStarten, Umgebung umgebung) {
         this.activity = activity;
         this.kern = kern;
         this.anbieter = anbieter;
@@ -188,6 +200,7 @@ final class DirektWiedergabe {
             public void live(JSONObject wert, String aktion) { umgebung.live(wert, aktion); }
             public void bereit() { umgebung.bereit(adresse); }
             public boolean darfAutoplay() { return umgebung.darfAutoplay(); }
+            public boolean queueWeiter() { return umgebung.queueWeiter(); }
             public void marke(Consumer<JSONObject> fertig) { umgebung.marke(fertig); }
             public void skipKontext(Consumer<JSONObject> fertig) { umgebung.skipKontext(fertig); }
             public void sprung(double von, double nach) { umgebung.sprung(von, nach); }
@@ -206,6 +219,7 @@ final class DirektWiedergabe {
             public void pip() { umgebung.pip(); }
             public void wiedergabe(boolean laeuft) { umgebung.wiedergabe(laeuft); }
         });
+        if (pausiertStarten) spieler.naechsteQuellePausiert();
         // Die Schranke gehoert zur Relay-Generation und ueberlebt deshalb den
         // Austausch des DirektWiedergabe-Objekts. Vor laden() muss sie bereits
         // im Player stehen, damit auch eine sehr schnell aufgeloeste Quelle nie
@@ -960,6 +974,8 @@ final class DirektWiedergabe {
             boolean gesperrt = folge.optBoolean("gesperrt") || url.isEmpty();
             String name = folge.optString("titel", "").trim();
             if (name.isEmpty()) name = gesperrt ? "in einer anderen Folge enthalten" : "";
+            if (!gesperrt) name = umgebung.folgenAnzeige(folge.optInt("staffel"),
+                folge.optInt("folge"), name);
             if (!gesperrt && gleicheSeite(url, adresse)) laufend = zeilen.size();
             zeilen.add(new DirektSpieler.Zeile("Folge " + folge.optInt("folge"), name,
                 gesperrt ? null : () -> wechseln(url), gesperrt));
@@ -1016,6 +1032,7 @@ final class DirektWiedergabe {
     void steuern(JSONObject urteil, Runnable bereit) { spieler.steuern(urteil, bereit); }
     void folgenBarriereVorbereiten(String syncId) { spieler.folgenBarriereVorbereiten(syncId); }
     void folgenBarriereAbbrechen(String syncId) { spieler.folgenBarriereAbbrechen(syncId); }
+    boolean wartetAufFolgenBarriere() { return spieler.wartetAufFolgenBarriere(); }
     boolean wartetAufBefehl() { return spieler.wartetAufBefehl(); }
     JSONObject liveStand() {
         try { return spieler.liveStand(); } catch (org.json.JSONException e) { return new JSONObject(); }

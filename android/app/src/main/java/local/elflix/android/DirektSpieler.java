@@ -95,6 +95,8 @@ final class DirektSpieler {
         void live(JSONObject wert, String aktion);
         void bereit();
         boolean darfAutoplay();
+        /** Relay queue takes priority at the real media end. */
+        default boolean queueWeiter() { return false; }
         void marke(Consumer<JSONObject> fertig);
         /** Cache-first Kennung fuer externe Vorspann- und Abspannsegmente. */
         default void skipKontext(Consumer<JSONObject> fertig) { fertig.accept(null); }
@@ -226,9 +228,10 @@ final class DirektSpieler {
     private TextView fassungKnopf;
     private TextView hosterKnopf;
     private final ImageView ton;
-    private final TextView automatisch;
+    private TextView automatisch;
+    private final List<View> handyEinstellungen = new ArrayList<>();
     /** Der Tempo-Knopf in der Leiste - er traegt die laufende Stufe als Beschriftung. */
-    private final TextView tempoText;
+    private TextView tempoText;
     private final TextView intro;
     private final SpielerChat chat;
 
@@ -284,6 +287,12 @@ final class DirektSpieler {
     private boolean hatNaechste;
     private boolean endeAbgesagt;
     private long zaehlerEnde;
+    /** Exactly one queue advance per resolved media source and real end. */
+    private boolean queueEndeGemeldet;
+    /** User explicitly chose to remain after this source; independent of autoplay preference. */
+    private boolean queueEndeAbgesagt;
+    /** A restored source after queue cancellation loads paused but remains operable. */
+    private boolean naechsteQuellePausiert;
     private long zuletzt;
     private double gespielt;
     private double letztePosition;
@@ -716,11 +725,13 @@ final class DirektSpieler {
         spielen = unten.findViewWithTag("spielen");
         zehnZurueck = unten.findViewWithTag("zehnZurueck");
         zehnVor = unten.findViewWithTag("zehnVor");
-        fassungKnopf = unten.findViewWithTag("fassung");
-        hosterKnopf = unten.findViewWithTag("hoster");
         ton = unten.findViewWithTag("ton");
-        automatisch = unten.findViewWithTag("auto");
-        tempoText = unten.findViewWithTag("tempo");
+        if (fernseher) {
+            fassungKnopf = unten.findViewWithTag("fassung");
+            hosterKnopf = unten.findViewWithTag("hoster");
+            automatisch = unten.findViewWithTag("auto");
+            tempoText = unten.findViewWithTag("tempo");
+        }
         if (fernseher) {
             // Fliessreihe und der neue Chat im Kopf veraendern die geometrische
             // Standardsuche je nach TV-Firmware. Der zentrale vertikale Weg
@@ -879,7 +890,8 @@ final class DirektSpieler {
     private LinearLayout leisteBauen() {
         LinearLayout spalte = new LinearLayout(activity);
         spalte.setOrientation(LinearLayout.VERTICAL);
-        spalte.setPadding(dp(18), dp(24), dp(18), dp(12));
+        spalte.setPadding(dp(fernseher ? 18 : 8), dp(fernseher ? 24 : 8),
+            dp(fernseher ? 18 : 8), dp(fernseher ? 12 : 4));
         spalte.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
             new int[] { 0x00000000, 0xD1000000 }));
 
@@ -900,15 +912,12 @@ final class DirektSpieler {
         oben.addView(dauer);
         spalte.addView(oben, new LinearLayout.LayoutParams(-1, -2));
 
-        // Die zweite Zeile bricht um, statt zu schieben.
-        //
-        // Vorher lag sie in einem HorizontalScrollView: auf einem Telefon
-        // standen damit die Haelfte der Knoepfe ausserhalb des Bildes, und wer
-        // "Qualitaet" wollte, musste erst wischen. Eine Bedienleiste, deren
-        // Inhalt man suchen muss, ist keine. Jetzt legt {@link Fliessreihe}
-        // um, was nicht mehr in die Zeile passt - am Rechner (breit) ist das
-        // eine Zeile, am Telefon sind es zwei oder drei, und zu sehen ist
-        // immer alles.
+        if (!fernseher) {
+            handyLeisteBauen(spalte);
+            return spalte;
+        }
+
+        // TV behaelt seine beschrifteten Aktionen und die gewohnte D-pad-Reihenfolge.
         Fliessreihe knoepfe = new Fliessreihe(activity, dp(2), dp(2));
         LinearLayout.LayoutParams reiheLage = new LinearLayout.LayoutParams(-1, -2);
         reiheLage.topMargin = dp(4);
@@ -974,6 +983,108 @@ final class DirektSpieler {
         auto.setTag("auto");
         knoepfe.addView(auto);
         return spalte;
+    }
+
+    /** Sechs feste Touchziele; Zusatzaktionen stehen in der vorhandenen Seitenblende. */
+    private void handyLeisteBauen(LinearLayout spalte) {
+        TextView skip = knopf("Intro überspringen", this::introSpringen, true);
+        skip.setTag("intro");
+        skip.setVisibility(View.GONE);
+        LinearLayout.LayoutParams skipLage = new LinearLayout.LayoutParams(-2, -2);
+        skipLage.gravity = Gravity.END;
+        skipLage.bottomMargin = dp(4);
+        spalte.addView(skip, 0, skipLage);
+
+        LinearLayout reihe = new LinearLayout(activity);
+        reihe.setTag("handyPlayerAktionen");
+        reihe.setOrientation(LinearLayout.HORIZONTAL);
+        reihe.setGravity(Gravity.CENTER_VERTICAL);
+        spalte.addView(reihe, new LinearLayout.LayoutParams(-1, dp(48)));
+        TextView los = handyTextKnopf("▶", "Wiedergabe pausieren oder fortsetzen", this::spielenUmschalten);
+        los.setTag("spielen");
+        reihe.addView(los);
+        TextView zurueck = handyTextKnopf("−10", "10 Sekunden zurück", () -> springen(-10));
+        zurueck.setTag("zehnZurueck");
+        reihe.addView(zurueck);
+        TextView vor = handyTextKnopf("+10", "10 Sekunden vor", () -> springen(10));
+        vor.setTag("zehnVor");
+        reihe.addView(vor);
+        ImageView klang = tonKnopf();
+        klang.setTag("ton");
+        klang.setLayoutParams(new LinearLayout.LayoutParams(dp(48), dp(48)));
+        reihe.addView(klang);
+        reihe.addView(new View(activity), new LinearLayout.LayoutParams(0, 1, 1f));
+        ImageView folgen = handySymbol(R.drawable.ic_player_episodes, "Folgen", umgebung::folgen);
+        folgen.setTag("folgen");
+        reihe.addView(folgen);
+        ImageView mehr = handySymbol(R.drawable.ic_nav_settings, "Player-Einstellungen", this::handyEinstellungenOeffnen);
+        mehr.setTag("playerEinstellungen");
+        reihe.addView(mehr);
+
+        LinearLayout laut = new LinearLayout(activity);
+        laut.setGravity(Gravity.CENTER_VERTICAL);
+        laut.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        TextView label = zeit("Lautstärke");
+        label.setTextSize(14);
+        laut.addView(label);
+        SeekBar regler = lautstaerkeBauen();
+        regler.setTag("lautstaerke");
+        regler.setContentDescription("Player-Lautstärke");
+        laut.addView(regler, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        handyEinstellungen.add(laut);
+        fassungKnopf = handyEinstellung("Fassung", "fassung", () -> {
+            if (umgebung.darfFassungUndHosterWaehlen()) umgebung.fassungen();
+        });
+        hosterKnopf = handyEinstellung("Hoster", "hoster", () -> {
+            if (umgebung.darfFassungUndHosterWaehlen()) umgebung.hoster();
+        });
+        handyEinstellung("Bildqualität", "qualitaet", () -> spuren(C.TRACK_TYPE_VIDEO, "Bildqualität"));
+        handyEinstellung("Untertitel", "untertitel", () -> spuren(C.TRACK_TYPE_TEXT, "Untertitel"));
+        tempoText = handyEinstellung("Geschwindigkeit · 1×", "tempo", this::tempoWaehlen);
+        automatisch = handyEinstellung("Autoplay an", "auto", this::autoplayUmschalten);
+        handyEinstellung("Mini-Player", "miniplayer", umgebung::pip);
+    }
+
+    private TextView handyTextKnopf(String text, String beschreibung, Runnable tun) {
+        TextView view = knopf(text, tun);
+        view.setSingleLine(true);
+        view.setPadding(0, 0, 0, 0);
+        view.setContentDescription(beschreibung);
+        view.setTooltipText(beschreibung);
+        view.setLayoutParams(new LinearLayout.LayoutParams(dp(48), dp(48)));
+        return view;
+    }
+
+    private ImageView handySymbol(int drawable, String beschreibung, Runnable tun) {
+        ImageView view = new ImageView(activity);
+        view.setImageResource(drawable);
+        view.setScaleType(ImageView.ScaleType.CENTER);
+        view.setContentDescription(beschreibung);
+        view.setTooltipText(beschreibung);
+        view.setLayoutParams(new LinearLayout.LayoutParams(dp(48), dp(48)));
+        anfassbar(view, 10, tun);
+        return view;
+    }
+
+    private TextView handyEinstellung(String text, String tag, Runnable tun) {
+        TextView view = knopf(text, () -> { blendeZu(); tun.run(); });
+        view.setTag(tag);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        view.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        handyEinstellungen.add(view);
+        return view;
+    }
+
+    private void handyEinstellungenOeffnen() {
+        blende("Player-Einstellungen", java.util.Collections.emptyList(), java.util.Collections.emptyList(), -1);
+        for (View view : handyEinstellungen) {
+            if (view.getParent() instanceof ViewGroup) ((ViewGroup) view.getParent()).removeView(view);
+            blendeListe.addView(view);
+        }
+        SeekBar laut = blendeListe.findViewWithTag("lautstaerke");
+        if (laut != null && player != null) laut.setProgress(Math.round(player.getVolume() * 100));
+        quellenZeichnen();
+        autoplayText();
     }
 
     /**
@@ -1266,6 +1377,8 @@ final class DirektSpieler {
     private ImageView tonKnopf() {
         ImageView bild = new ImageView(activity);
         bild.setImageDrawable(new Lautsprecher(dp(19), true));
+        bild.setContentDescription("Ton an");
+        bild.setTooltipText("Ton ein-/ausschalten");
         bild.setScaleType(ImageView.ScaleType.CENTER);
         bild.setMinimumHeight(dp(48));
         bild.setMinimumWidth(dp(44));
@@ -1720,7 +1833,7 @@ final class DirektSpieler {
     private void tempoSetzen(double wert, boolean melden) {
         tempo = tempoStufe(wert);
         if (player != null) player.setPlaybackSpeed((float) tempo);
-        if (tempoText != null) tempoText.setText(tempoName(tempo));
+        if (tempoText != null) tempoText.setText((fernseher ? "" : "Geschwindigkeit · ") + tempoName(tempo));
         if (melden) umgebung.tempo(tempo);
     }
 
@@ -1783,6 +1896,21 @@ final class DirektSpieler {
     }
 
     /** Eine lokale Spulhandlung; Befehle der Runde laufen bewusst nicht hier hindurch. */
+    /**
+     * Das Intro ueberspringen darf jeder - so wie jeder die Folge wechseln
+     * darf. Es geht deshalb an den Spulrechten vorbei und als eigene Aktion
+     * hinaus: das Relay macht daraus dieselbe gemeinsame Startverabredung wie
+     * beim Weiterlaufen, statt den Sprung eines Gastes zu verwerfen.
+     */
+    private boolean introStelleSetzen(double ziel) {
+        if (player == null) return false;
+        if (darfNutzerSpulen()) return stelleVomNutzerSetzen(ziel);
+        erwartetSeek = ziel;
+        erwartetBis = SystemClock.uptimeMillis() + 2000;
+        player.seekTo(Math.round(ziel * 1000));
+        liveMelden("skip");
+        return true;
+    }
     private boolean stelleVomNutzerSetzen(double ziel) {
         if (player == null) return false;
         if (!darfNutzerSpulen()) {
@@ -1818,7 +1946,8 @@ final class DirektSpieler {
         regler.setContentDescription(frei ? "Wiedergabestelle" : gesperrt);
         spulknopfZeichnen(zehnZurueck, frei, "10 Sekunden zurück", gesperrt);
         spulknopfZeichnen(zehnVor, frei, "10 Sekunden vor", gesperrt);
-        spulknopfZeichnen(intro, frei, String.valueOf(intro.getText()), gesperrt);
+        // Der Intro-Knopf gehoert nicht dazu: ihn darf jeder druecken.
+        spulknopfZeichnen(intro, true, String.valueOf(intro.getText()), gesperrt);
     }
 
     private static void spulknopfZeichnen(TextView knopf, boolean frei,
@@ -1870,7 +1999,7 @@ final class DirektSpieler {
             handler.removeCallbacks(sprungMelden);
             externerSprungOffen = true;
         }
-        if (!stelleVomNutzerSetzen(introZiel)) externerSprungOffen = false;
+        if (!introStelleSetzen(introZiel)) externerSprungOffen = false;
     }
 
     private void autoplayText() {
@@ -2189,7 +2318,16 @@ final class DirektSpieler {
                     if (!bereitGemeldet) { bereitGemeldet = true; umgebung.bereit(); }
                     befehlPruefen();
                 }
-                if (state == Player.STATE_ENDED) speichern();
+                if (state == Player.STATE_ENDED) {
+                    // The room queue is its own continuation flow. It is asked
+                    // only at Media3's real end, never at the outro threshold.
+                    if (!queueEndeAbgesagt && !queueEndeGemeldet && umgebung.queueWeiter()) {
+                        queueEndeGemeldet = true;
+                        endeAbgesagt = true;
+                        zaehlerEnde = 0;
+                    }
+                    speichern();
+                }
             }
             @Override public void onTracksChanged(Tracks tracks) {
                 if (player == lauf) subtitlePraeferenzAnwenden(lauf);
@@ -2255,10 +2393,13 @@ final class DirektSpieler {
         // aktiv beschreibt den Activity-Lebenszyklus, nicht die Erlaubnis der
         // Runde. Eine neu aufgeloeste Folgenquelle bleibt deshalb trotz
         // aktiv=true stehen, bis ihr exaktes syncstart eintrifft.
-        lauf.setPlayWhenReady(aktiv && folgenBarriereSyncId.isEmpty()
+        lauf.setPlayWhenReady(aktiv && !naechsteQuellePausiert && folgenBarriereSyncId.isEmpty()
             && abgelaufeneFolgenBarriereSyncId.isEmpty());
+        naechsteQuellePausiert = false;
         endeAbgesagt = false;
         zaehlerEnde = 0;
+        queueEndeGemeldet = false;
+        queueEndeAbgesagt = false;
         zuletzt = SystemClock.elapsedRealtime();
         autoplayText();
         spielenZeichnen();
@@ -2266,6 +2407,8 @@ final class DirektSpieler {
     }
 
     double position() { return player == null ? letztePosition : player.getCurrentPosition() / 1000.0; }
+
+    void naechsteQuellePausiert() { naechsteQuellePausiert = true; }
 
     private double dauer() {
         long wert = player == null ? 0 : player.getDuration();
@@ -2441,6 +2584,7 @@ final class DirektSpieler {
                         });
                         kastenKnopf("Hier bleiben", () -> {
                             endeAbgesagt = true;
+                            queueEndeAbgesagt = true;
                             zaehlerEnde = 0;
                             kastenZu();
                             naechsteVorhanden(hatNaechste);
@@ -3234,6 +3378,7 @@ final class DirektSpieler {
         }
         if (zaehlerEnde > 0 && !endeAbgesagt) {
             endeAbgesagt = true;
+            queueEndeAbgesagt = true;
             zaehlerEnde = 0;
             kastenZu();
             naechsteVorhanden(hatNaechste);

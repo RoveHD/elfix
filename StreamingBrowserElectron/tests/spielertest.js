@@ -356,16 +356,16 @@ pruefe("Der Folgentitel wird aus der Liste genommen",
   /direktfolgen\.istLaufende\(eintrag, kennung\)/.test(haupt)
   && /spielerLauf\.folgentitel = String\(laufend\?\.titel \|\| ""\)/.test(haupt));
 pruefe("Er reist mit der naechsten Folge zusammen",
-  /send\("spieler:naechste", spielerLauf\.naechste, spielerLauf\.folgentitel\)/.test(haupt)
+  /send\("spieler:naechste", spielerSpoilerNaechste\(\), spielerSpoilerTitel\(\)\)/.test(haupt)
   && /\(_ereignis, naechste, folgentitel\) => rueckruf\(naechste, folgentitel\)/.test(bruecke));
 pruefe("Und steht auch im Auftrag, falls der Player neu laedt",
-  /folgentitel: spielerLauf\.folgentitel \|\| ""/.test(haupt));
+  /folgentitel: spielerSpoilerTitel\(\)/.test(haupt));
 pruefe("Der Kopf setzt ihn hinter Serie und Folge",
   /function kopfTitelSetzen\(basis, folgentitel\)/.test(skript)
   && /\$\{kopfBasis\} · \$\{name\}/.test(skript));
-pruefe("Ein leerer Name aendert die Zeile nicht",
-  /if \(folgentitel\) kopfTitelSetzen\("", folgentitel\);/.test(skript),
-  "bis die Liste da ist, bleibt die Zeile eben kuerzer");
+pruefe("Ein geschuetzter leerer Name entfernt den vorherigen Folgentitel",
+  /kopfTitelSetzen\("", folgentitel\);/.test(skript),
+  "der echte Electron-Test prueft das Umschalten bei offenem Player");
 
 /* ------------------------------------------------- Weiterschauen ohne Frage */
 

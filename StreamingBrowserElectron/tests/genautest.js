@@ -318,8 +318,12 @@ function spielerKontext(bild) {
 
     pruefe("Auch eine unsichtbare Ein-Personen-Leiste aktualisiert die Gastrolle",
       element("regler").disabled && element("regler").title === "Zeitleiste · Spulen steuert der Host"
-      && [element("zurueck"), element("vor"), element("marke")]
+      && [element("zurueck"), element("vor")]
         .every((steuerung) => steuerung.disabled && steuerung.title === "Spulen steuert der Host"));
+    // Das Intro ueberspringen ist die eine Ausnahme: es duerfen alle, so wie
+    // alle die Folge wechseln duerfen.
+    pruefe("Der Intro-Knopf bleibt auch fuer Gaeste bedienbar",
+      !element("marke").disabled && element("marke").title === "Intro überspringen");
     await c.springen(10);
     await c.markeNutzen();
     element("regler").value = "700";

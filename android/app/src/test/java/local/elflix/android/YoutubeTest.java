@@ -73,4 +73,16 @@ public class YoutubeTest {
     public void eintragOhneAdresse() {
         assertFalse(youtube.istYoutube((Favorite) null));
     }
+
+    @Test
+    public void queueVideoKennungKommtNurAusEchtenYoutubeAdressen() {
+        assertEquals("AbCdEf_12-3", Youtube.videoId(
+            "https://www.youtube.com/watch?v=AbCdEf_12-3&t=40"));
+        assertEquals("AbCdEf_12-3", Youtube.videoId("https://youtu.be/AbCdEf_12-3?si=x"));
+        assertEquals("AbCdEf_12-3", Youtube.videoId("https://youtube.com/shorts/AbCdEf_12-3"));
+        assertEquals("", Youtube.videoId("https://example.org/watch?v=AbCdEf_12-3"));
+        assertEquals("", Youtube.videoId("https://youtube.com/watch?v=kurz"));
+        assertTrue(Youtube.gueltigeVideoId("AbCdEf_12-3"));
+        assertFalse(Youtube.gueltigeVideoId("ungueltig!"));
+    }
 }

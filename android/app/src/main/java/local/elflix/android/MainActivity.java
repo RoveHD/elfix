@@ -98,6 +98,43 @@ public class MainActivity extends Activity {
     private boolean aniworldBildNachreichungLaedt;
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
+    private RaumWarteschlange raumWarteschlange;
+    private final Handler raumQueueTakt = new Handler(Looper.getMainLooper());
+    private int raumQueueGeneration;
+    /** One-shot pause for restoring a source after a cancelled queue start. */
+    private boolean naechsterDirektStartPausiert;
+
+    private static final class RaumQueueVorbereitung {
+        final int generation;
+        final boolean youtube;
+        final String room;
+        final String startId;
+        final String targetId;
+        final Provider vorherAnbieter;
+        final String vorherUrl;
+        final String vorherFavoriteId;
+        final java.util.function.Consumer<Boolean> fertig;
+        String targetUrl = "";
+        boolean navigiert;
+        boolean bestaetigt;
+
+        RaumQueueVorbereitung(int generation, boolean youtube, String room, String startId,
+                              String targetId, Provider vorherAnbieter, String vorherUrl,
+                              String vorherFavoriteId,
+                              java.util.function.Consumer<Boolean> fertig) {
+            this.generation = generation;
+            this.youtube = youtube;
+            this.room = room;
+            this.startId = startId;
+            this.targetId = targetId;
+            this.vorherAnbieter = vorherAnbieter;
+            this.vorherUrl = vorherUrl;
+            this.vorherFavoriteId = vorherFavoriteId;
+            this.fertig = fertig;
+        }
+    }
+
+    private RaumQueueVorbereitung raumQueueVorbereitung;
     /**
      * Das Mitschauen: Play, Pause und Sprung zwischen den Geraeten. Siehe
      * Mitschauen.java.
@@ -306,6 +343,9 @@ public class MainActivity extends Activity {
     private String currentScreen = "home";
     private String activeFavoriteId;
     private String favoriteProgressMode;
+    /** Presentation-only preference; episode metadata itself remains untouched. */
+    private SpoilerSchutz.Einstellung spoilerProtection;
+    private final java.util.Map<String, JSONArray> spoilerAbschluesse = new java.util.HashMap<>();
     private LinearLayout appChrome;
     private LinearLayout collapsedChrome;
     private LinearLayout chromeHolder;
@@ -961,6 +1001,8 @@ public class MainActivity extends Activity {
         startseite = new Startseite(this);
         favoriteProgressMode = getSharedPreferences("elflix_settings", MODE_PRIVATE)
             .getString("favorite_progress_mode", "sequential");
+        spoilerProtection = SpoilerSchutz.laden(
+            getSharedPreferences("elflix_settings", MODE_PRIVATE));
         activeProvider = null;
         kern = new Kern(this, this::kernEreignis);
         kern.starten();
@@ -1072,6 +1114,23 @@ public class MainActivity extends Activity {
                 if (direktWiedergabe != null) direktWiedergabe.chatEmpfangen(zeile);
             }
         });
+        // Must exist before watchparty.anwenden() opens the relay connection;
+        // queue events can arrive before the settings screen was ever opened.
+        raumWarteschlange = new RaumWarteschlange(kern, new RaumWarteschlange.Beobachter() {
+            @Override public void geaendert() { watchpartyGeaendert(); }
+            @Override public void fehler(String text) { showToast(text); }
+        },
+            new RaumWarteschlange.Starter() {
+                @Override public void starten(boolean youtube, JSONObject auftrag,
+                                              boolean manuell,
+                                              java.util.function.Consumer<Boolean> fertig) {
+                    raumQueueStarten(youtube, auftrag, manuell, fertig);
+                }
+
+                @Override public void abbrechen(boolean youtube, JSONObject auftrag) {
+                    raumQueueAbbrechen(youtube, auftrag);
+                }
+            });
         geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
             // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
             settingsGeaendert();
@@ -1158,6 +1217,14 @@ public class MainActivity extends Activity {
             }
             @Override public void nativeFolgenBarriereVorbereiten(String syncId, String url) {
                 if (syncId == null || syncId.isEmpty()) return;
+                RaumQueueVorbereitung queue = raumQueueVorbereitung;
+                if (raumQueueIstAktuell(queue) && !queue.youtube && queue.bestaetigt
+                    && Mitschauen.gleicheFolge(queue.targetUrl, url)) {
+                    // The relay accepted every paused load. From here the
+                    // existing syncprepare/syncready/syncstart barrier owns it.
+                    raumQueueVorbereitung = null;
+                    raumQueueTakt.removeCallbacksAndMessages(null);
+                }
                 nativeFolgenBarriereSyncId = syncId;
                 nativeAbgelaufeneFolgenQuelleSyncId = "";
                 nativeFolgenBarriereUrl = url == null ? "" : url;
@@ -2466,7 +2533,8 @@ public class MainActivity extends Activity {
                 ? eintrag.fortschrittProzent() : 0;
             if (!rundenSchluessel.isEmpty()) prozent = Math.max(1, prozent);
             View karte = TvViews.kachel(this, providerForFavorite(eintrag), name,
-                kachelUnterzeile(eintrag), eintrag.bild(), prozent, "", breite,
+                kachelUnterzeile(eintrag, spoilerAbgeschlosseneFolgen(eintrag)),
+                eintrag.bild(), prozent, "", breite,
                 kachelStandtext(eintrag, liste),
                 rundenSchluessel.isEmpty() ? null : liveZeile(rundenSchluessel, eintrag), null,
                 () -> openFavorite(eintrag),
@@ -2808,7 +2876,7 @@ public class MainActivity extends Activity {
             augenbraue = "Fortsetzen";
             titel = name.isEmpty() ? "Titel" : name;
             unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
-                    ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText(),
+                    ? "Nächste Folge: " + folgenTextMitGesehen(eintrag) : folgenTextMitGesehen(eintrag),
                 eintrag.providerName(), eintrag.standText());
             bildUrl = eintrag.bild();
             prozent = eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent();
@@ -2967,10 +3035,10 @@ public class MainActivity extends Activity {
                                  Bilder.Sichtfenster fenster) {
         String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
         if (titel.isEmpty()) titel = "Titel";
-        String hinweis = eintrag.istWiederansehen() ? eintrag.folgenText()
-            : eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
+        String hinweis = eintrag.istWiederansehen() ? folgenTextMitGesehen(eintrag)
+            : eintrag.istAbgeschlossen() ? "Abgeschlossen" : folgenTextMitGesehen(eintrag);
         if (liste.zeigtAngefangenes() && eintrag.wartetAufNaechsteFolge()) {
-            hinweis = "Nächste Folge: " + eintrag.folgenText();
+            hinweis = "Nächste Folge: " + folgenTextMitGesehen(eintrag);
         }
         // Warum steht eine gesehene Serie hier? Weil sie gerade wieder laeuft.
         // Ohne diesen Zusatz saehe das nach einem Fehler aus.
@@ -4863,7 +4931,7 @@ public class MainActivity extends Activity {
             augenbraue = "Fortsetzen";
             titel = name.isEmpty() ? "Titel" : name;
             unterzeile = zusammen(eintrag.wartetAufNaechsteFolge()
-                    ? "Nächste Folge: " + eintrag.folgenText() : eintrag.folgenText(),
+                    ? "Nächste Folge: " + folgenTextMitGesehen(eintrag) : folgenTextMitGesehen(eintrag),
                 eintrag.providerName(), eintrag.standText());
             bildUrl = eintrag.bild();
             prozent = eintrag.wartetAufNaechsteFolge() ? 0 : eintrag.fortschrittProzent();
@@ -5134,7 +5202,8 @@ public class MainActivity extends Activity {
             // meldet jemand, und der Takt kann keine Ansicht nachlegen.
             if (!schluessel.isEmpty()) prozent = Math.max(1, prozent);
             View karte = MobileViews.kachel(this, providerForFavorite(eintrag), name,
-                kachelUnterzeile(eintrag), eintrag.bild(), prozent, "", breite,
+                kachelUnterzeile(eintrag, spoilerAbgeschlosseneFolgen(eintrag)),
+                eintrag.bild(), prozent, "", breite,
                 kachelStandtext(eintrag, liste),
                 schluessel.isEmpty() ? null : liveZeile(schluessel, eintrag),
                 () -> openFavorite(eintrag),
@@ -5174,6 +5243,11 @@ public class MainActivity extends Activity {
      * Rechner in {@code favoriteHerkunft} mit demselben Zeichen.
      */
     static String kachelUnterzeile(Favorite eintrag) {
+        return kachelUnterzeile(eintrag,
+            eintrag == null ? new JSONArray() : eintrag.abgeschlosseneFolgen());
+    }
+
+    private static String kachelUnterzeile(Favorite eintrag, JSONArray gesehen) {
         // Ohne "Nächste Folge:".
         //
         // Auf einer Kachel steht ohnehin nur eine Folge, und welche das ist,
@@ -5183,12 +5257,24 @@ public class MainActivity extends Activity {
         // nichts mehr uebrig. Am Rechner steht er weiterhin - dort ist Platz.
         String folge = eintrag.istAbgeschlossen() && !eintrag.istWiederansehen()
             ? "Abgeschlossen"
-            : eintrag.folgenText();
+            : folgenTextMitGesehen(eintrag, gesehen);
         String durchlauf = eintrag.durchlaufHinweis();
         if (!durchlauf.isEmpty()) folge = folge.isEmpty() ? durchlauf : folge + " · " + durchlauf;
         String raum = eintrag.watchpartyRaum();
         if (raum.isEmpty()) return folge;
         return folge.isEmpty() ? "⇄ " + raum : folge + " · ⇄ " + raum;
+    }
+
+    /** The marker is based solely on the local explicit completion set. */
+    private String folgenTextMitGesehen(Favorite eintrag) {
+        return folgenTextMitGesehen(eintrag, spoilerAbgeschlosseneFolgen(eintrag));
+    }
+
+    private static String folgenTextMitGesehen(Favorite eintrag, JSONArray gesehen) {
+        if (eintrag == null) return "";
+        String text = eintrag.folgenText();
+        return SpoilerSchutz.enthaelt(gesehen, eintrag.season(), eintrag.episode())
+            ? (text.isEmpty() ? "✓ Gesehen" : "✓ Gesehen · " + text) : text;
     }
 
     /**
@@ -6386,6 +6472,7 @@ public class MainActivity extends Activity {
             koerper -> startseitenEinstellungen(koerper, fernseher));
 
         abschnitt(page, fernseher, "wiedergabe", "Wiedergabe", this::standWiedergabe, koerper -> {
+            spoilerSchutzKarten(koerper, fernseher, luecke);
             autoplayKarte(koerper, fernseher, luecke);
             lebendeKarte(koerper, fernseher, luecke, "Favoriten-Fortschritt",
                 () -> folgeStatisch()
@@ -6406,7 +6493,6 @@ public class MainActivity extends Activity {
             youtubeDislikeKarte(koerper, fernseher, luecke);
             fassungsKarte(koerper, fernseher, luecke);
         });
-
         abschnitt(page, fernseher, "werbung", "Werbeblocker", this::standWerbung, koerper -> {
             festeKarte(koerper, fernseher, luecke, "Wie gefiltert wird",
                 "AdGuard-Filterlisten sind aktiv. Innerhalb des Video-Hosters wird bewusst "
@@ -6800,10 +6886,10 @@ public class MainActivity extends Activity {
     private View eintragsKarte(Favorite eintrag, Bibliothek liste) {
         String titel = cleanFavoriteTitle(eintrag.title(), eintrag.url());
         if (titel.isEmpty()) titel = "Titel";
-        String hinweis = eintrag.istWiederansehen() ? eintrag.folgenText()
-            : eintrag.istAbgeschlossen() ? "Abgeschlossen" : eintrag.folgenText();
+        String hinweis = eintrag.istWiederansehen() ? folgenTextMitGesehen(eintrag)
+            : eintrag.istAbgeschlossen() ? "Abgeschlossen" : folgenTextMitGesehen(eintrag);
         if (liste.zeigtAngefangenes() && eintrag.wartetAufNaechsteFolge()) {
-            hinweis = "Nächste Folge: " + eintrag.folgenText();
+            hinweis = "Nächste Folge: " + folgenTextMitGesehen(eintrag);
         }
         // Warum steht eine gesehene Serie hier? Weil sie gerade wieder laeuft.
         // Ohne diesen Zusatz saehe das nach einem Fehler aus.
@@ -8250,8 +8336,185 @@ public class MainActivity extends Activity {
                 addSpacing(page, watchpartyKarte(eintrag, stelle), MobileViews.ITEM_GAP);
                 stelle += 1;
             }
+            addSpacing(page, warteschlangenKarte(fernseher, raum), MobileViews.ITEM_GAP);
         }
         tvFokusHerstellen(page);
+    }
+
+    /** Relay-authoritative queue, shown inside every room on both form factors. */
+    private View warteschlangenKarte(boolean fernseher, String raum) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(14), dp(16), dp(14));
+        box.setBackground(MobileViews.shape(this, Theme.SURFACE_ELEVATED,
+            fernseher ? TvViews.CARD_RADIUS : MobileViews.CARD_RADIUS, Theme.BORDER, 1));
+        View title = fernseher ? TvViews.sectionTitle(this, "Warteschlange") : MobileViews.sectionHeader(this, "Warteschlange", null, null);
+        box.addView(title);
+        warteschlangenModus(box, fernseher, raum, false);
+        warteschlangenModus(box, fernseher, raum, true);
+        return box;
+    }
+
+    private void warteschlangenModus(LinearLayout box, boolean fernseher, String raum,
+                                     boolean yt) {
+        boolean erreichbar = raumVerbunden(raum);
+        TextView modus = fernseher ? TvViews.body(this, yt ? "YouTube" : "Serien und Filme")
+            : MobileViews.subtitle(this, yt ? "YouTube" : "Serien und Filme");
+        LinearLayout.LayoutParams modusLage = new LinearLayout.LayoutParams(-1, -2);
+        modusLage.topMargin = dp(yt ? 18 : 10);
+        box.addView(modus, modusLage);
+        JSONObject queueStand = raumWarteschlange == null
+            ? new JSONObject() : raumWarteschlange.stand(yt, raum);
+        JSONArray items = raumWarteschlange == null
+            ? new JSONArray() : raumWarteschlange.eintraege(yt, raum);
+        boolean etwas = false;
+        for (int i = 0; i < items.length(); i += 1) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            etwas = true;
+            String name = item.optString("title", "Titel");
+            String id = item.optString("id", "");
+            boolean mine = item.optBoolean("voted", false);
+            TextView vote = MobileViews.secondaryButton(this,
+                (mine ? "✓ Stimme" : "Stimmen") + " · " + name,
+                () -> raumWarteschlange.stimmen(yt, raum, id, !mine));
+            warteschlangenErreichbar(vote, erreichbar);
+            vote.setSingleLine(true);
+            vote.setEllipsize(TextUtils.TruncateAt.END);
+            box.addView(vote, new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+            if (item.optBoolean("mine", false)) {
+                TextView entfernen = MobileViews.secondaryButton(this, "Vorschlag entfernen",
+                    () -> raumWarteschlange.entfernen(yt, raum, id));
+                warteschlangenErreichbar(entfernen, erreichbar);
+                box.addView(entfernen,
+                    new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+            }
+        }
+        if (!etwas) box.addView(fernseher ? TvViews.body(this, "Noch keine Vorschläge.")
+            : MobileViews.subtitle(this, "Noch keine Vorschläge."));
+        if (yt) {
+            boolean aktiv = raumWarteschlange != null && raumWarteschlange.youtubeRaumAktiv(raum);
+            TextView beitreten = MobileViews.secondaryButton(this,
+                aktiv ? "YouTube-Runde verlassen" : "YouTube-Runde beitreten",
+                () -> {
+                    if (raumWarteschlange == null) return;
+                    if (aktiv) raumWarteschlange.youtubeVerlassen(raum);
+                    else raumWarteschlange.youtubeBeitreten(raum);
+                    watchpartyGeaendert();
+                });
+            warteschlangenErreichbar(beitreten, erreichbar);
+            box.addView(beitreten, new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+            TextView ytVorschlag = MobileViews.secondaryButton(this, "YouTube-Video vorschlagen", () ->
+                textFrage("YouTube-URL", "https://youtube.com/watch?v=…", "", url -> {
+                    String id = Youtube.videoId(url);
+                    if (id.isEmpty()) { showToast("Bitte einen gültigen YouTube-Link eingeben"); return; }
+                    try {
+                        raumWarteschlange.vorschlagen(true, raum, new JSONObject()
+                            .put("kind", "youtube").put("videoId", id)
+                            .put("url", url.trim()).put("title", url.trim()));
+                    } catch (Exception ignored) { }
+                }));
+            warteschlangenErreichbar(ytVorschlag, erreichbar && aktiv);
+            box.addView(ytVorschlag, new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+        } else {
+            TextView merkliste = MobileViews.secondaryButton(this, "Titel aus Merkliste vorschlagen",
+                () -> warteschlangenTitelWaehlen(raum));
+            warteschlangenErreichbar(merkliste, erreichbar);
+            box.addView(merkliste,
+                new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+            Favorite aktiv = bestand == null ? null : bestand.mitId(bestand.aktiverEintragId());
+            if (aktiv != null && DirektWiedergabe.istFolge(aktiv.url())) {
+                TextView aktuell = MobileViews.secondaryButton(this, "Aktuelle Folge vorschlagen",
+                    () -> warteschlangenTitelVorschlagen(raum, aktiv));
+                warteschlangenErreichbar(aktuell, erreichbar);
+                box.addView(aktuell,
+                    new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+            }
+        }
+        String selected = queueStand.optString("selectedId", "");
+        JSONObject pending = queueStand.optJSONObject("pending");
+        if (!selected.isEmpty() && (pending == null || pending.length() == 0)) {
+            TextView starten = MobileViews.secondaryButton(this, "Ausgewählten Titel starten",
+                () -> warteschlangeManuellStarten(yt, raum, selected));
+            warteschlangenErreichbar(starten, erreichbar && (!yt ||
+                raumWarteschlange.youtubeRaumAktiv(raum)));
+            box.addView(starten,
+                new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
+        }
+    }
+
+    private void warteschlangenErreichbar(View view, boolean erreichbar) {
+        view.setEnabled(erreichbar);
+        view.setAlpha(erreichbar ? 1f : .45f);
+    }
+
+    private boolean raumVerbunden(String code) {
+        if (watchparty == null || !watchparty.istVerbunden()) return false;
+        JSONArray raeume = watchparty.raeume();
+        for (int i = 0; i < raeume.length(); i += 1) {
+            JSONObject raum = raeume.optJSONObject(i);
+            if (raum != null && code.equals(raum.optString("room", ""))
+                && raum.optBoolean("connected", false)) return true;
+        }
+        return false;
+    }
+
+    private void warteschlangenTitelWaehlen(String raum) {
+        ArrayList<Favorite> kandidaten = new ArrayList<>();
+        if (bestand != null) for (Favorite eintrag : bestand.watchlist()) {
+            Provider provider = providerForFavorite(eintrag);
+            if (provider != null && DirektWiedergabe.istFolge(eintrag.url())
+                && (youtube == null || !youtube.istYoutube(eintrag))) kandidaten.add(eintrag);
+        }
+        if (kandidaten.isEmpty()) {
+            showToast("In der Merkliste liegt keine konkrete Folge oder kein Film");
+            return;
+        }
+        String[] namen = new String[kandidaten.size()];
+        for (int i = 0; i < kandidaten.size(); i += 1) {
+            Favorite eintrag = kandidaten.get(i);
+            namen[i] = zusammen(cleanFavoriteTitle(eintrag.title(), eintrag.url()),
+                eintrag.folgenText(), eintrag.providerName());
+        }
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+            .setTitle("Für die Warteschlange")
+            .setItems(namen, (welcher, stelle) -> warteschlangenTitelVorschlagen(raum,
+                kandidaten.get(stelle)))
+            .setNegativeButton("Abbrechen", null).create();
+        Bewegung.dialogAuftritt(dialog);
+        dialog.show();
+    }
+
+    private void warteschlangenTitelVorschlagen(String raum, Favorite eintrag) {
+        if (raumWarteschlange == null || eintrag == null || !DirektWiedergabe.istFolge(eintrag.url())) {
+            showToast("Wähle eine konkrete Folge oder einen Film");
+            return;
+        }
+        try {
+            JSONObject item = new JSONObject().put("kind", "title").put("url", eintrag.url())
+                .put("title", eintrag.title()).put("providerName", eintrag.providerName())
+                .put("thumbnail", eintrag.bild()).put("type", eintrag.type())
+                .put("season", eintrag.season()).put("episode", eintrag.episode());
+            raumWarteschlange.vorschlagen(false, raum, item);
+        } catch (Exception ignored) { }
+    }
+
+    private void warteschlangeManuellStarten(boolean yt, String raum, String selected) {
+        if (raumWarteschlange == null) return;
+        String from;
+        if (yt) {
+            WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
+            from = Youtube.videoId(ansicht == null ? "" : ansicht.getUrl());
+        } else {
+            from = mitschauen != null && raum.equals(mitschauen.aktiverRaum())
+                ? mitschauen.aktiverSchluessel() : "";
+        }
+        if (from.isEmpty()) {
+            showToast(yt ? "Öffne zuerst das laufende YouTube-Video dieser Runde"
+                : "Öffne zuerst den laufenden Titel dieser Runde");
+            return;
+        }
+        raumWarteschlange.weiter(yt, raum, selected, from, true);
     }
 
     /**
@@ -9440,7 +9703,8 @@ public class MainActivity extends Activity {
         // Der Folgentitel, wenn der Anbieter einen fuehrt - sonst weiter die
         // Nummer. Eine Staffel mit einundvierzig Zeilen "Folge 1 ... Folge 41"
         // ist eine Liste, in der man nichts wiedererkennt.
-        name.setText(folge.ueberschrift());
+        boolean sichtbar = spoilerFolgeSichtbar(folge);
+        name.setText(sichtbar ? folge.ueberschrift() : "Folge " + folge.nummer);
         name.setTextColor(folge.gesperrt ? Theme.TEXT_DISABLED : Theme.TEXT_PRIMARY);
         name.setTextSize(fernseher ? 19 : 16);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -9450,7 +9714,7 @@ public class MainActivity extends Activity {
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texte.addView(name);
         TextView unter = new TextView(this);
-        unter.setText(folge.unterschrift());
+        unter.setText(spoilerFolgeUntertitel(folge));
         unter.setTextColor(Theme.TEXT_SECONDARY);
         unter.setTextSize(fernseher ? 15 : 12);
         unter.setMaxLines(1);
@@ -9475,6 +9739,39 @@ public class MainActivity extends Activity {
             zeile.setOnClickListener(view -> uebersichtFolgeWaehlen(folge));
         }
         return zeile;
+    }
+
+    /**
+     * This is deliberately called while binding the row, never while reading
+     * provider metadata. A setting change therefore cannot overwrite titles,
+     * descriptions or images in the cached overview.
+     */
+    private JSONArray spoilerAbgeschlosseneFolgen(Favorite favorite) {
+        if (favorite == null || bestand == null) return new JSONArray();
+        String key = SpoilerSchutz.serienKennung(favorite.url());
+        JSONArray cached = spoilerAbschluesse.get(key);
+        if (cached == null) {
+            cached = SpoilerSchutz.abgeschlosseneFolgen(bestand.alle(), favorite);
+            spoilerAbschluesse.put(key, cached);
+        }
+        return cached;
+    }
+
+    private boolean spoilerFolgeSichtbar(Serienuebersicht.Folge folge) {
+        if (folge == null || spoilerProtection == null || !spoilerProtection.enabled) return true;
+        Favorite favorite = bestand == null ? null : bestand.zuSerie(uebersichtSerienUrl);
+        SpoilerSchutz.Raumstand raumstand = null;
+        // Room state is deliberately absent until a future explicitly opted-in
+        // relay report arrives. SpoilerSchutz treats that absence as unknown.
+        return SpoilerSchutz.sichtbar(spoilerProtection, favorite, spoilerAbgeschlosseneFolgen(favorite), folge.staffel, folge.nummer, raumstand);
+    }
+
+    private String spoilerFolgeUntertitel(Serienuebersicht.Folge folge) {
+        Favorite favorite = bestand == null ? null : bestand.zuSerie(uebersichtSerienUrl);
+        boolean gesehen = SpoilerSchutz.enthaelt(spoilerAbgeschlosseneFolgen(favorite),
+            folge.staffel, folge.nummer);
+        String basis = spoilerFolgeSichtbar(folge) ? folge.unterschrift() : "Details geschützt";
+        return gesehen ? (basis.isEmpty() ? "✓ Gesehen" : "✓ Gesehen · " + basis) : basis;
     }
 
     /* ------------------------------------ Die Einstellungen, gegliedert */
@@ -10067,8 +10364,11 @@ public class MainActivity extends Activity {
         String aktiveFolgenBarriere = barrierenZiel ? nativeFolgenBarriereSyncId : "";
         String abgelaufeneFolgenQuelle = barrierenZiel
             ? nativeAbgelaufeneFolgenQuelleSyncId : "";
+        boolean pausiertStarten = naechsterDirektStartPausiert;
+        naechsterDirektStartPausiert = false;
         direktWiedergabe = new DirektWiedergabe(this, kern, provider, url, name, stelle,
             fortsetzStaffel, fortsetzFolge, aktiveFolgenBarriere, abgelaufeneFolgenQuelle,
+            pausiertStarten,
             new DirektWiedergabe.Umgebung() {
                 public void geschlossen() { direktSchliessen(); showHome(); }
                 public void browser(Provider anbieter, String adresse) {
@@ -10085,7 +10385,9 @@ public class MainActivity extends Activity {
                 }
                 public void bereit(String adresse) {
                     if (mitschauen != null) mitschauen.nativBereit(adresse);
+                    raumQueueNativeBereit(adresse);
                 }
+                @Override public boolean queueWeiter() { return raumQueueAutomatischWeiter(); }
                 @Override public void wiedergabe(boolean laeuft) {
                     // Android 12 liest Auto-PiP vor dem Verlassen. Der
                     // aktuelle Wrapper entscheidet selbst, damit ein spaeter
@@ -10145,6 +10447,14 @@ public class MainActivity extends Activity {
                 }
                 @Override public boolean darfFassungUndHosterWaehlen() {
                     return mitschauen == null || mitschauen.darfQuelleHierWaehlen();
+                }
+                @Override public String folgenAnzeige(int staffel, int folge, String titel) {
+                    Favorite aktuell = bestand == null ? null : bestand.zuSerie(url);
+                    boolean sichtbar = SpoilerSchutz.sichtbar(spoilerProtection, aktuell, spoilerAbgeschlosseneFolgen(aktuell), staffel, folge, null);
+                    String anzeige = sichtbar ? titel : "Details geschützt";
+                    boolean gesehen = SpoilerSchutz.enthaelt(
+                        spoilerAbgeschlosseneFolgen(aktuell), staffel, folge);
+                    return gesehen ? (anzeige.isEmpty() ? "✓ Gesehen" : "✓ Gesehen · " + anzeige) : anzeige;
                 }
                 @Override public boolean folgenwechsel(String url) {
                     return mitschauen != null && mitschauen.folgenwechselMelden(url);
@@ -10251,6 +10561,27 @@ public class MainActivity extends Activity {
         View decor = getWindow().getDecorView();
         if (decor.getGlobalVisibleRect(sichtbar) && !sichtbar.isEmpty()) params.setSourceRectHint(sichtbar);
         return params;
+    }
+
+    /** Playback settings shared by phone and TV; their value never changes metadata. */
+    private void spoilerSchutzKarten(LinearLayout koerper, boolean fernseher, int luecke) {
+        lebendeKarte(koerper, fernseher, luecke, "Spoiler-Schutz",
+            () -> spoilerProtection.enabled
+                ? "Verbirgt Titel und Details ungesehener Folgen. Folgenzahlen und Navigation bleiben sichtbar."
+                : "Aus. Titel und Details aller Folgen werden angezeigt.",
+            () -> spoilerProtection.enabled ? "Ausschalten" : "Einschalten",
+            () -> spoilerSchutzSetzen(!spoilerProtection.enabled,
+                spoilerProtection.roomMinimum, spoilerProtection.shareWatchedWithRoom));
+        addSpacing(koerper, hinweisKarte(fernseher, "Gesehene Folgen mit der Runde teilen",
+            "Der gemeinsame Spoiler-Schutz ist hier noch nicht verfügbar. Bis dahin gilt dein persönlicher Gesehen-Stand.",
+            null, null, null), luecke);
+    }
+
+    private void spoilerSchutzSetzen(boolean enabled, boolean roomMinimum, boolean teilen) {
+        spoilerProtection = new SpoilerSchutz.Einstellung(enabled, false, false);
+        SpoilerSchutz.speichern(getSharedPreferences("elflix_settings", MODE_PRIVATE), spoilerProtection);
+        einstellungenAuffrischen();
+        if ("uebersicht".equals(currentScreen)) zeigeSerienuebersicht();
     }
 
     private boolean direktPipUnterstuetzt() {
@@ -11152,6 +11483,7 @@ public class MainActivity extends Activity {
     }
 
     private void bestandGeaendert() {
+        spoilerAbschluesse.clear();
         // Ein Eintrag, der aus der Watchparty geoeffnet wurde, entsteht erst,
         // wenn wirklich etwas laeuft. Hier taucht er zum ersten Mal auf - und
         // bekommt seinen Raum.
@@ -11549,7 +11881,231 @@ public class MainActivity extends Activity {
         if (qualitaet != null) qualitaet.einspielen(ansicht);
     }
 
+    /** Resolve and prepare one relay-authoritative queue start. */
+    private void raumQueueStarten(boolean yt, JSONObject auftrag, boolean manuell,
+                                  java.util.function.Consumer<Boolean> fertig) {
+        if (auftrag == null || fertig == null || raumWarteschlange == null) return;
+        String room = auftrag.optString("room", "").trim();
+        String startId = auftrag.optString("startId", "").trim();
+        JSONObject item = auftrag.optJSONObject("item");
+        String targetId = item == null ? "" : item.optString(yt ? "videoId" : "key", "").trim();
+        String from = auftrag.optString(yt ? "fromVideoId" : "fromKey", "").trim();
+        if (room.isEmpty() || startId.isEmpty() || item == null || targetId.isEmpty()
+            || raumQueueVorbereitung != null) {
+            fertig.accept(false);
+            return;
+        }
+
+        String aktiveAdresse = direktWiedergabe != null ? direktWiedergabe.adresse()
+            : activeProvider == null || webViews.get(activeProvider.id) == null ? ""
+                : webViews.get(activeProvider.id).getUrl();
+        boolean quellePasst;
+        if (yt) {
+            quellePasst = raumWarteschlange.youtubeRaumAktiv(room)
+                && from.equals(Youtube.videoId(aktiveAdresse));
+        } else {
+            quellePasst = mitschauen != null && room.equals(mitschauen.aktiverRaum())
+                && from.equals(mitschauen.aktiverSchluessel());
+        }
+        if (!quellePasst && !manuell) {
+            fertig.accept(false);
+            return;
+        }
+
+        RaumQueueVorbereitung lauf = new RaumQueueVorbereitung(++raumQueueGeneration, yt,
+            room, startId, targetId, activeProvider, aktiveAdresse, activeFavoriteId, fertig);
+        raumQueueVorbereitung = lauf;
+        long expiresAt = auftrag.optLong("expiresAt", 0);
+        long frist = expiresAt > 0 ? Math.max(1, expiresAt - System.currentTimeMillis()) : 60_000;
+        raumQueueTakt.postDelayed(() -> {
+            if (!raumQueueIstAktuell(lauf) || lauf.bestaetigt) return;
+            lauf.fertig.accept(false);
+            raumQueueWiederherstellen(lauf);
+        }, Math.min(60_000, frist));
+
+        if (yt) {
+            raumQueueYoutubeVorbereiten(lauf, item);
+            return;
+        }
+        raumQueueNormalVorbereiten(lauf, targetId);
+    }
+
+    private boolean raumQueueIstAktuell(RaumQueueVorbereitung lauf) {
+        return lauf != null && raumQueueVorbereitung == lauf
+            && lauf.generation == raumQueueGeneration;
+    }
+
+    private void raumQueueNormalVorbereiten(RaumQueueVorbereitung lauf, String targetKey) {
+        if (watchparty == null) {
+            lauf.fertig.accept(false);
+            raumQueueVorbereitung = null;
+            return;
+        }
+        watchparty.oeffnungsZiel(targetKey, lauf.room, (wert, fehler) -> {
+            if (!raumQueueIstAktuell(lauf)) return;
+            final JSONObject ziel;
+            try { ziel = fehler == null && wert != null && !"null".equals(wert)
+                ? new JSONObject(wert) : null; }
+            catch (Exception ignored) { lauf.fertig.accept(false); raumQueueVorbereitung = null; return; }
+            Provider anbieter = ziel == null ? null : providerMitId(ziel.optString("providerId", ""));
+            String url = ziel == null ? "" : ziel.optString("url", "");
+            // A room queue must name the exact episode/film. Resolving a series
+            // root independently on every client could select different targets.
+            if (anbieter == null || !DirektWiedergabe.istFolge(url)
+                || (youtube != null && youtube.istYoutube(url))) {
+                lauf.fertig.accept(false);
+                raumQueueVorbereitung = null;
+                return;
+            }
+            watchparty.raumEintragSichern(targetKey, lauf.room, eintragId -> {
+                if (!raumQueueIstAktuell(lauf)) return;
+                if (eintragId == null || eintragId.isEmpty()) {
+                    lauf.fertig.accept(false);
+                    raumQueueVorbereitung = null;
+                    return;
+                }
+                lauf.targetUrl = url;
+                lauf.navigiert = true;
+                activeFavoriteId = eintragId;
+                if (bestand != null) bestand.setzeAktivenEintrag(activeFavoriteId);
+                providerHerkunft = "watchparty";
+                nativeFolgenBarriereSyncId = "queue:" + lauf.startId;
+                nativeAbgelaufeneFolgenQuelleSyncId = "";
+                nativeFolgenBarriereUrl = url;
+                openProvider(anbieter, url, true);
+            });
+        });
+    }
+
+    private void raumQueueNativeBereit(String adresse) {
+        RaumQueueVorbereitung lauf = raumQueueVorbereitung;
+        if (!raumQueueIstAktuell(lauf) || lauf.youtube || lauf.bestaetigt
+            || direktWiedergabe == null || !Mitschauen.gleicheFolge(lauf.targetUrl, adresse)) return;
+        JSONObject stand = direktWiedergabe.liveStand();
+        if (!direktWiedergabe.wartetAufFolgenBarriere() || !stand.optBoolean("paused", true)) return;
+        lauf.bestaetigt = true;
+        lauf.fertig.accept(true);
+    }
+
+    private void raumQueueYoutubeVorbereiten(RaumQueueVorbereitung lauf, JSONObject item) {
+        String videoId = item.optString("videoId", "").trim();
+        String url = item.optString("url", "").trim();
+        if (!Youtube.gueltigeVideoId(videoId) || !videoId.equals(Youtube.videoId(url))) {
+            lauf.fertig.accept(false);
+            raumQueueVorbereitung = null;
+            return;
+        }
+        Provider anbieter = activeProvider;
+        if (anbieter == null || youtube == null || !youtube.istYoutube(anbieter.startUrl)) {
+            anbieter = null;
+            if (youtube != null) for (Provider kandidat : providers) {
+                if (youtube.istYoutube(kandidat.startUrl)) { anbieter = kandidat; break; }
+            }
+        }
+        if (anbieter == null) {
+            lauf.fertig.accept(false);
+            raumQueueVorbereitung = null;
+            return;
+        }
+        lauf.targetUrl = url;
+        lauf.navigiert = true;
+        openProvider(anbieter, url, true);
+        raumQueueYoutubeHalten(lauf);
+    }
+
+    /** Keep the selected YouTube video paused until the relay commits or cancels it. */
+    private void raumQueueYoutubeHalten(RaumQueueVorbereitung lauf) {
+        if (!raumQueueIstAktuell(lauf) || !lauf.youtube) return;
+        WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
+        if (ansicht != null && lauf.targetId.equals(Youtube.videoId(ansicht.getUrl()))) {
+            ansicht.evaluateJavascript("(()=>{const v=document.querySelector('video.html5-main-video')||document.querySelector('video');if(!v)return false;try{v.pause();if(Number(v.currentTime)>0.5)v.currentTime=0}catch(_){}return Boolean(v.paused&&Number(v.duration)>0&&v.readyState>=2)})()",
+                wert -> {
+                    if (!raumQueueIstAktuell(lauf)) return;
+                    if (!lauf.bestaetigt && "true".equals(wert)) {
+                        lauf.bestaetigt = true;
+                        lauf.fertig.accept(true);
+                    }
+                });
+        }
+        raumQueueTakt.postDelayed(() -> raumQueueYoutubeHalten(lauf), 250);
+    }
+
+    private void raumQueueAbbrechen(boolean yt, JSONObject auftrag) {
+        RaumQueueVorbereitung lauf = raumQueueVorbereitung;
+        if (!raumQueueIstAktuell(lauf) || lauf.youtube != yt || auftrag == null
+            || !lauf.room.equals(auftrag.optString("room", "").trim())
+            || !lauf.startId.equals(auftrag.optString("startId", "").trim())) return;
+        if (!lauf.bestaetigt) lauf.fertig.accept(false);
+        raumQueueWiederherstellen(lauf);
+    }
+
+    private void raumQueueWiederherstellen(RaumQueueVorbereitung lauf) {
+        if (!raumQueueIstAktuell(lauf)) return;
+        raumQueueGeneration += 1;
+        raumQueueVorbereitung = null;
+        raumQueueTakt.removeCallbacksAndMessages(null);
+        nativeFolgenBarriereSyncId = "";
+        nativeAbgelaufeneFolgenQuelleSyncId = "";
+        nativeFolgenBarriereUrl = "";
+        activeFavoriteId = lauf.vorherFavoriteId;
+        if (bestand != null) bestand.setzeAktivenEintrag(activeFavoriteId);
+        if (!lauf.navigiert || lauf.vorherAnbieter == null || lauf.vorherUrl == null
+            || lauf.vorherUrl.isEmpty()) return;
+        if (!lauf.youtube && DirektWiedergabe.passt(lauf.vorherUrl)) {
+            naechsterDirektStartPausiert = true;
+        }
+        openProvider(lauf.vorherAnbieter, lauf.vorherUrl, true);
+        if (lauf.youtube) raumQueueTakt.postDelayed(() -> {
+            WebView ansicht = webViews.get(lauf.vorherAnbieter.id);
+            if (ansicht != null) pauseMedia(ansicht);
+        }, 500);
+    }
+
+    private boolean raumQueueAutomatischWeiter() {
+        if (raumWarteschlange == null || mitschauen == null) return false;
+        String room = mitschauen.aktiverRaum();
+        String key = mitschauen.aktiverSchluessel();
+        return !room.isEmpty() && !key.isEmpty() && raumWarteschlange.automatischWeiter(room, key);
+    }
+
+    private void raumQueueYoutubeCommit(String json) {
+        RaumQueueVorbereitung lauf = raumQueueVorbereitung;
+        if (!raumQueueIstAktuell(lauf) || !lauf.youtube) return;
+        final JSONObject stand;
+        try { stand = new JSONObject(json == null ? "{}" : json); }
+        catch (Exception ignored) { return; }
+        if (!lauf.room.equals(stand.optString("room", ""))
+            || !lauf.startId.equals(stand.optString("startId", ""))
+            || !"video".equals(stand.optString("action", ""))
+            || !lauf.targetId.equals(stand.optString("videoId", ""))) return;
+        raumQueueVorbereitung = null;
+        raumQueueTakt.removeCallbacksAndMessages(null);
+        WebView ansicht = activeProvider == null ? null : webViews.get(activeProvider.id);
+        if (ansicht == null || kern == null) return;
+        try {
+            JSONObject optionen = new JSONObject().put("aktion", "video").put("versatz", 0);
+            kern.rufe("youtube-sync.anwendenScript", Kern.args(stand, optionen), (wert, fehler) -> {
+                if (fehler != null || wert == null) return;
+                String skript = wert;
+                try {
+                    Object gelesen = new org.json.JSONTokener(wert).nextValue();
+                    if (gelesen instanceof String) skript = (String) gelesen;
+                } catch (Exception ignored) { }
+                ansicht.evaluateJavascript(skript, null);
+            });
+        } catch (Exception ignored) { }
+    }
+
     private void kernEreignis(String name, String nutzlastJson) {
+        if ("youtubeparty:state".equals(name)) {
+            raumQueueYoutubeCommit(nutzlastJson);
+            return;
+        }
+        if (name != null && (name.startsWith("queue:") || name.startsWith("ytqueue:"))
+            && raumWarteschlange != null) {
+            raumWarteschlange.ereignis(name, nutzlastJson);
+            return;
+        }
         if (name != null && name.startsWith("watchparty:") && watchparty != null) {
             watchparty.ereignis(name, nutzlastJson);
             return;

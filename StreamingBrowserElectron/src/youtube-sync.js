@@ -307,6 +307,7 @@ function beobachterScript() {
     horchen("play", (media) => melden("play", media));
     horchen("pause", (media) => melden("pause", media));
     horchen("seeked", (media) => melden("seek", media));
+    horchen("ended", (media) => melden("ended", media));
     return "installiert";
   })()`;
 }

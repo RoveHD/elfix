@@ -53,6 +53,9 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   /** Die naechste Folge wird nachgereicht: sie steht erst nach einem Abruf fest. */
   // Der Folgentitel reist mit: er kommt aus derselben Liste wie die naechste
   // Folge, und beides trifft zusammen ein.
+  queueWeiter: (id) => ipcRenderer.invoke("spieler:queue-weiter", id),
+  aufQueue: (callback) => ipcRenderer.on("spieler:queue", (_event, an) => callback(an)),
+  aufSpoiler: (rueckruf) => ipcRenderer.on("spieler:spoiler", (_event, wert) => rueckruf(wert)),
   aufNaechste: (rueckruf) =>
     ipcRenderer.on("spieler:naechste", (_ereignis, naechste, folgentitel) => rueckruf(naechste, folgentitel)),
   /**

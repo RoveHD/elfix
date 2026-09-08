@@ -5721,6 +5721,11 @@ input[type="color"] {
   will-change: transform;
 }
 
+#calendarGrid .calendar-seen {
+  color: var(--success);
+  font-weight: 700;
+}
+
 /* Die Fundstelle im Suchtreffer. Nur Farbe, kein eigener Kasten und kein
    Abstand - sonst risse die Hervorhebung das Wort optisch auseinander, und
    genau das war der gemeldete Fehler. */
@@ -6332,6 +6337,59 @@ input[type="color"] {
   color: var(--text-secondary);
   font-size: 12px;
   margin: 0;
+}
+
+/* Die Warteschlange bleibt eigenständig neben dem aktuellen Raumtitel: sie ist
+   kein zweites Fortschrittsraster, sondern eine gemeinsame Entscheidung für
+   danach. */
+.raumqueue {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--panel) 92%, black);
+}
+
+.raumqueue-head,
+.raumqueue-controls,
+.raumqueue-tabs,
+.raumqueue-composer,
+.raumqueue-item,
+.raumqueue-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.raumqueue-head { justify-content: space-between; align-items: start; }
+.raumqueue-head h2 { margin: 2px 0 4px; }
+.raumqueue-copy, .raumqueue-status { margin: 0; color: var(--muted); }
+.raumqueue-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+.raumqueue-controls select, .raumqueue-composer select, .raumqueue-composer input { min-height: 40px; }
+.raumqueue-tabs { margin: 16px 0 12px; }
+.raumqueue-tabs button { min-height: 38px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: 999px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.raumqueue-tabs button.is-active { color: white; background: var(--accent); border-color: var(--accent); }
+.raumqueue-composer select, .raumqueue-composer input { flex: 1 1 240px; }
+.raumqueue-status { min-height: 20px; margin-top: 10px; font-size: 13px; }
+.raumqueue-status.is-problem { color: var(--warning); }
+.raumqueue-list { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.raumqueue-item { justify-content: space-between; padding: 12px; border-radius: 12px; background: var(--panel-2); }
+.raumqueue-item-info { display: grid; gap: 3px; min-width: 0; }
+.raumqueue-item-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.raumqueue-item-info small { color: var(--muted); }
+.raumqueue-actions { flex-wrap: wrap; justify-content: end; }
+
+@media (max-width: 720px) {
+  .raumqueue-head, .raumqueue-composer, .raumqueue-item { align-items: stretch; flex-direction: column; }
+  .raumqueue-controls { width: 100%; }
+  .raumqueue-controls label, .raumqueue-controls select { width: 100%; }
+  .raumqueue-actions { justify-content: stretch; }
+  .raumqueue-actions button { flex: 1 1 160px; }
+}
+
+@media (min-width: 1600px) {
+  .raumqueue { padding: 22px; }
+  .raumqueue-tabs button, .raumqueue-composer select, .raumqueue-composer input { min-height: 46px; font-size: 16px; }
 }
 
 /* --- Rueckblick ---------------------------------------------------------- */

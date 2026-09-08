@@ -53,12 +53,25 @@ const voeQualitaet = require("./voe-qualitaet");
 // Weiterleitungen (direktlauf) und das Lesen des Quelltexts (direktquelle).
 const direktlinks = require("./direktlinks");
 const direktfolgen = require("./direktfolgen");
+const spoilerschutz = require("./spoilerschutz");
+const spoilerRaumStaende = new Map();
+const spoilerGesendet = new Map();
+const queueBestaetigt = new Set();
+const queueStarts = new Map();
+const queueManuell = new Map();
+const queueLetzterStart = new Map();
+const queueVorbereitungen = new Map();
+let queueYoutubeMitgliedschaft = "";
 const direktlauf = require("./direktlauf");
 const direktbeobachtung = require("./direktbeobachtung");
 // Die YouTube-Watchparty. Eigener Modus, eigene Sync-Logik - sie teilt sich mit
 // der Watchparty fuer Serien nur die Leitung.
 const { YoutubeWatchparty } = require("./youtube-watchparty");
 const youtubeSync = require("./youtube-sync");
+const youtubeTeilnehmer = require("./youtube-teilnehmer");
+const youtubeQueue = require("./youtube-queue");
+let youtubeQueueVorbereitung = null;
+const youtubeTeilnehmerStand = new WeakMap();
 const sponsorblock = require("./sponsorblock");
 const youtubeDislikes = require("./youtube-dislikes");
 const skipsegmente = require("./skipsegmente");
@@ -2212,6 +2225,280 @@ ipcMain.handle("fassungen:vergessen", () => {
 
 ipcMain.handle("watchparty:status", () => watchparty.status());
 
+ipcMain.handle("spieler:queue-weiter", async (ereignis, id) => {
+  if (!vomSpieler(ereignis) || spielerLauf?.id !== id || stopNachFolge.get(spielerLauf.providerId) === spielerLauf.url) return { ok: false };
+  const runde = spielerRunde();
+  if (!runde) return { ok: false };
+  const state = raumQueueStatus(runde.raum, "normal");
+  if (!state.connected || !state.supported || !state.selectedId) return { ok: Boolean(state.pending) };
+  if (!watchparty.queueAdvance?.(state.selectedId, runde.key, runde.raum)) return { ok: false };
+  await raumQueueQuittung(runde.raum);
+  const danach = raumQueueStatus(runde.raum, "normal");
+  return { ok: Boolean(danach.pending) || queueLetzterStart.get(runde.raum + "|normal")?.itemId === state.selectedId };
+});
+
+ipcMain.handle("watchparty:queue", (_event, room, mode) => raumQueueStatus(room, mode));
+ipcMain.handle("watchparty:queue-command", (_event, room, mode, command, payload) => raumQueueBefehl(room, mode, command, payload));
+
+function raumQueueStatus(room, mode) {
+  const code = String(room || "");
+  const art = mode === "youtube" ? "youtube" : "normal";
+  if (!watchparty.codes.includes(code)) return { room: code, mode: art, connected: false, supported: false, items: [] };
+  const connected = Boolean(watchparty.status().rooms.find(r => r.room === code)?.connected);
+  const state = art === "normal" ? watchparty.queueStatus?.(code)
+    : youtubeParty.raum === code ? youtubeParty.queueStatus?.() : null;
+  return { ...state, room: code, mode: art, connected, supported: queueBestaetigt.has(code + "|" + art) && (art !== "youtube" || (youtubeParty.raum === code && youtubeParty.beigetreten)) };
+}
+
+function raumQueueFehler(reason) {
+  return ({
+    "selection-changed": "Die Abstimmung hat sich geändert. Bitte den gewählten Vorschlag erneut starten.",
+    "not-owner": "Du kannst nur deine eigenen Vorschläge entfernen.",
+    "not-joined-source": "Tritt zuerst der laufenden Runde bei.",
+    "not-found": "Dieser Vorschlag wurde bereits entfernt.",
+    "queue-full": "Die Warteschlange ist voll.",
+    "invalid-item": "Dieser Titel kann nicht vorgeschlagen werden.",
+    "identity-required": "Dein Gerät ist noch nicht mit dem Raum verbunden.",
+    "already-starting": "Ein gemeinsamer Start wird bereits vorbereitet.",
+    "already-pending": "Dieser Vorschlag wird bereits vorbereitet.",
+    "start-failed": "Ein Gerät konnte den Titel nicht laden. Die Runde bleibt pausiert und der Vorschlag bleibt erhalten.",
+    "all-failed": "Der Titel konnte nicht auf allen Geräten geladen werden. Er bleibt in der Warteschlange.",
+    "lease-expired": "Die Vorbereitung hat zu lange gedauert. Der Vorschlag bleibt erhalten."
+  })[reason] || "";
+}
+function raumQueueNachricht(nachricht, mode) {
+  const room = String(nachricht.room || "");
+  if (nachricht.type?.endsWith(":state")) {
+    queueBestaetigt.add(room + "|" + mode);
+    if (nachricht.reason === "started") {
+      for (const [key, pending] of queueVorbereitungen) if (pending.room === room && pending.mode === mode) queueVorbereitungen.delete(key);
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("watchparty:queue-state", raumQueueStatus(room, mode));
+    spielerQueueAktualisieren();
+    const error = raumQueueFehler(nachricht.reason);
+    if (error && ["all-failed", "lease-expired"].includes(nachricht.reason)) sendToast(error);
+  } else if (nachricht.type?.endsWith(":cancel")) {
+    raumQueueAbbrechen(nachricht, mode).catch(() => {});
+  } else if (nachricht.type?.endsWith(":start")) {
+    raumQueueStarten(nachricht, mode).catch(() => sendToast("Der Vorschlag konnte nicht gestartet werden."));
+  }
+}
+function spielerQueueAktiv() {
+  const runde = spielerRunde();
+  if (!runde) return false;
+  const state = raumQueueStatus(runde.raum, "normal");
+  return Boolean(state.connected && state.supported && (state.selectedId || state.pending));
+}
+function spielerQueueAktualisieren() {
+  if (spielerView && !spielerView.webContents.isDestroyed()) spielerView.webContents.send("spieler:queue", spielerQueueAktiv());
+}
+function queueStartBestaetigen(room, mode, id, ok) {
+  if (mode === "youtube") return youtubeParty.queueStarted?.(id, ok);
+  return watchparty.queueStarted?.(id, ok, room);
+}
+async function raumQueueStarten(nachricht, mode) {
+  const room = String(nachricht.room || "");
+  const id = String(nachricht.startId || "");
+  const token = room + "|" + mode + "|" + id;
+  if (!id || !watchparty.codes.includes(room)) return;
+  if (queueStarts.has(token)) {
+    const ok = await queueStarts.get(token);
+    queueStartBestaetigen(room, mode, id, ok); return;
+  }
+  const runde = spielerRunde();
+  const wunsch = queueManuell.get(room + "|" + mode);
+  const manuell = Boolean(wunsch && wunsch.bis > Date.now() && wunsch.itemId === nachricht.item?.id
+    && wunsch.fromKey === String(nachricht.fromKey || ""));
+  const passt = mode === "youtube" ? youtubeParty.raum === room && youtubeParty.beigetreten
+    && (!nachricht.fromVideoId || youtubeParty.stand?.videoId === nachricht.fromVideoId)
+    : runde?.raum === room && runde.key === nachricht.fromKey;
+  if (!passt && !manuell) { queueStartBestaetigen(room, mode, id, false); return; }
+  queueManuell.delete(room + "|" + mode);
+  queueLetzterStart.set(room + "|" + mode, { startId: id, itemId: nachricht.item?.id });
+  const vorbereitung = { token, room, mode, startId: id, itemId: nachricht.item?.id, cancelled: false,
+    previousLauf: spielerLauf ? { ...spielerLauf } : null, previousFavoriteId: activeFavoriteId,
+    previousPosition: spielerTakt.stelle, targetFavoriteId: activeFavoriteId };
+  queueVorbereitungen.set(token, vorbereitung);
+  const laden = (async () => {
+    const item = nachricht.item;
+    if (mode === "youtube") {
+      if (!youtube.istYoutubeUrl(item?.url) || !youtubeVideoIdAus(item?.url)) return false;
+      return youtubeQueueVorbereiten(nachricht, vorbereitung);
+    }
+    const provider = providerForWatchpartyUrl(item?.url, item?.providerName);
+    if (!provider || youtube.istYoutubeUrl(item?.url)) return false;
+    const key = nachricht.targetKey || item.key;
+    const queueTarget = () => watchparty.eintraege().find(e => e.key === key && e.room === room);
+    const target = queueTarget();
+    if (!target?.joined) return false;
+    if (spielerLauf) spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, wartenAufFolge: true });
+    uebernehmeWatchpartyRaum(key, room, target);
+    setWatchpartyLive(key, true, room);
+    const favoritId = activeFavoriteId;
+    vorbereitung.targetFavoriteId = favoritId;
+    const istAktuell = () => !vorbereitung.cancelled && activeFavoriteId === favoritId && Boolean(queueTarget()?.joined)
+      && watchparty.status().rooms.some(r => r.room === room && r.connected)
+      && (!nachricht.expiresAt || (watchparty.serverJetzt(room) || Date.now()) < nachricht.expiresAt);
+    const result = await ohneWatchpartyFolgenwechselEcho(provider, item.url,
+      () => direktFolgeSpielen(provider, item.url, { startzeit: 0, rundeWarten: true, istAktuell }));
+    return Boolean(result?.ok);
+  })().catch(() => false);
+  queueStarts.set(token, laden);
+  while (queueStarts.size > 64) queueStarts.delete(queueStarts.keys().next().value);
+  const ok = await laden;
+  if (!vorbereitung.cancelled) queueStartBestaetigen(room, mode, id, ok);
+  if (!ok && !vorbereitung.cancelled) sendToast("Dieser Vorschlag konnte hier nicht geladen werden. Die Runde erhält eine Rückmeldung.");
+}
+
+async function raumQueueAbbrechen(nachricht, mode) {
+  const token = nachricht.room + "|" + mode + "|" + nachricht.startId;
+  const lauf = queueVorbereitungen.get(token);
+  if (!lauf || lauf.cancelled) return;
+  lauf.cancelled = true;
+  queueVorbereitungen.delete(token);
+  queueLetzterStart.delete(nachricht.room + "|" + mode);
+  if (mode === "youtube") {
+    await youtubeQueueAbbrechen(lauf);
+    sendToast(raumQueueFehler(nachricht.reason) || "Der gemeinsame Videostart wurde abgebrochen.");
+    return;
+  }
+  if (activeFavoriteId !== lauf.targetFavoriteId) return;
+  direktLaden.abort();
+  activeFavoriteId = lauf.previousFavoriteId;
+  const vorher = lauf.previousLauf;
+  if (!vorher && spielerLauf) direktSpielerSchliessen("warteschlange-abgebrochen");
+  if (vorher && spielerLauf?.url !== vorher.url) {
+    const provider = enabledProviders().find(p => p.id === vorher.providerId);
+    if (provider) await direktSpielerOeffnen(provider, vorher.url, vorher, { startzeit: lauf.previousPosition, rundeWarten: true });
+  }
+  spielerBefehl({ tun: "stelle", stelle: lauf.previousPosition, laufen: false, springen: false });
+  sendActiveState();
+  sendToast(raumQueueFehler(nachricht.reason) || "Der gemeinsame Start wurde abgebrochen. Die Runde bleibt pausiert.");
+}
+
+async function youtubeQueueVorbereiten(nachricht, lauf) {
+  const vorgaenger = youtubeQueueVorbereitung;
+  if (vorgaenger?.transition) await vorgaenger.transition.catch(() => {});
+  if (lauf.cancelled) return false;
+  const ziel = youtubeAnsicht();
+  if (!ziel || !youtubeParty.beigetreten || youtubeParty.raum !== nachricht.room) return false;
+  const videoId = youtubeVideoIdAus(nachricht.item.url);
+  const vorher = { ...youtubeParty.stand, playing: false };
+  const previousMuted = ziel.view.webContents.isAudioMuted();
+  youtubeQueueVorbereitung = {
+    startId: nachricht.startId, videoId, previous: vorher, previousMuted,
+    view: ziel.view, lauf, transition: null
+  };
+  const vorbereiten = youtubeQueueVorbereitung;
+  const aktuell = () => youtubeQueueVorbereitung === vorbereiten && !lauf.cancelled
+    && youtubeParty.raum === nachricht.room && youtubeParty.beigetreten;
+  stopAutoplayRequest(ziel.provider.id);
+  ziel.view.webContents.setAudioMuted(true);
+  youtubeErwartet = { videoId, bis: Date.now() + 60000 };
+  await navigateProvider(ziel.provider, nachricht.item.url);
+  const frist = Date.now() + 45000;
+  while (aktuell() && Date.now() < frist && isLiveView(ziel.view)) {
+    const bereit = await ziel.view.webContents.executeJavaScript(youtubeQueue.vorbereitenScript(videoId, nachricht.startId), true).catch(() => "loading");
+    if (bereit === "ready") return true;
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  return false;
+}
+async function youtubeQueueAbbrechen(lauf) {
+  const vorbereiten = youtubeQueueVorbereitung;
+  if (!vorbereiten || vorbereiten.startId !== lauf.startId) return;
+  let transitionBeenden;
+  vorbereiten.transition = new Promise(resolve => { transitionBeenden = resolve; });
+  try {
+    const ziel = youtubeAnsicht();
+    const view = vorbereiten.view || ziel?.view;
+    if (isLiveView(view)) {
+      await view.webContents.executeJavaScript(youtubeQueue.freigebenScript(lauf.startId), true).catch(() => {});
+    }
+    if (youtubeQueueVorbereitung !== vorbereiten) return;
+    const vorher = vorbereiten.previous;
+    if (ziel && vorher?.videoId && youtubeParty.raum === lauf.room
+      && youtubeParty.beigetreten && youtubeParty.verbunden) {
+      youtubeErwartet = { videoId: vorher.videoId, bis: Date.now() + 20000 };
+      await navigateProvider(ziel.provider, vorher.url || ('https://www.youtube.com/watch?v=' + vorher.videoId));
+      if (youtubeQueueVorbereitung !== vorbereiten) return;
+      await executeJavaScriptInMediaFrames(ziel.view,
+        youtubeSync.anwendenScript(vorher, { aktion: "pause", versatz: vorher.versatz })).catch(() => []);
+    } else youtubeErwartet = null;
+  } finally {
+    if (youtubeQueueVorbereitung === vorbereiten) {
+      if (isLiveView(vorbereiten.view)) vorbereiten.view.webContents.setAudioMuted(vorbereiten.previousMuted);
+      youtubeQueueVorbereitung = null;
+    }
+    transitionBeenden();
+  }
+}
+
+function raumQueueQuittung(room) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(false), 5000);
+    timer.unref?.();
+    if (!watchparty.barriere(room, () => { clearTimeout(timer); resolve(true); })) {
+      clearTimeout(timer); resolve(false);
+    }
+  });
+}
+async function raumQueueBefehl(room, mode, command, payload = {}) {
+  const code = String(room || "");
+  if (!["normal", "youtube"].includes(mode) || !watchparty.codes.includes(code)) return { ok: false, error: "Raum nicht eingerichtet." };
+  if (!["propose", "vote", "remove", "advance"].includes(command)) return { ok: false, error: "Unbekannte Aktion." };
+  const state = raumQueueStatus(code, mode);
+  if (!state.connected || !state.supported) return { ok: false, error: "Keine bestätigte Warteschlange. Verbindung und Relay-Version prüfen." };
+  let daten = { ...payload };
+  if (command === "propose") {
+    if (mode === "normal") {
+      const item = favorites.find(f => f.id === String(payload.favoriteId || ""));
+      const provider = item && providerForWatchpartyUrl(item.url, item.providerName);
+      if (!item || youtube.istYoutubeUrl(item.url) || !provider) return { ok: false, error: "Titel ist nicht verfügbar." };
+      let url = item.url;
+      let episode = episodeIdentity(url);
+      if (!episode && normalizeMediaType(item.type || inferMediaType(url)) !== "film") {
+        const liste = await folgenlisteLesen(provider, url).catch(() => null);
+        url = liste?.folgen?.length ? ersteFolgeAus(liste, url) : "";
+        episode = episodeIdentity(url);
+        if (!episode || !providerForWatchpartyUrl(url, item.providerName)) return { ok: false, error: "Die erste spielbare Folge konnte nicht ermittelt werden. Öffne eine Folge und schlage sie erneut vor." };
+      }
+      daten = { item: { key: watchpartyKey(item), url,
+        title: cleanBaseMediaTitle(item.title, item.url) || item.title,
+        thumbnail: item.thumbnail || "", providerName: item.providerName, type: item.type,
+        season: episode?.season ?? item.season, episode: episode?.episode ?? item.episode } };
+    } else {
+      const url = String(payload.url || "");
+      const videoId = youtube.istYoutubeUrl(url) && youtubeVideoIdAus(url);
+      if (!videoId) return { ok: false, error: "Bitte einen Link zu einem YouTube-Video eingeben." };
+      daten = { item: { videoId, key: videoId, url: "https://www.youtube.com/watch?v=" + videoId,
+        title: String(payload.title || "YouTube · " + videoId).slice(0, 240) } };
+    }
+  }
+  if (command === "advance") {
+    const runde = spielerRunde();
+    daten = { expectedId: String(payload.expectedId || ""), expectedRev: Number(payload.expectedRev),
+      fromKey: runde?.raum === code ? runde.key : "",
+      fromVideoId: mode === "youtube" && youtubeParty.raum === code ? youtubeParty.stand?.videoId || "" : "" };
+  }
+  const client = mode === "normal" ? watchparty : youtubeParty;
+  if (mode === "youtube" && (youtubeParty.raum !== code || !youtubeParty.beigetreten)) return { ok: false, error: "Tritt zuerst der YouTube-Watchparty dieses Raums bei." };
+  if (command === "advance") queueManuell.set(code + "|" + mode, { bis: Date.now() + 10000, itemId: daten.expectedId, fromKey: daten.fromKey || "" });
+  const args = command === "propose" ? [daten.item]
+    : command === "vote" ? [daten.id, daten.value === true]
+      : command === "remove" ? [daten.id] : [daten.expectedId, mode === "normal" ? daten.fromKey : daten.fromVideoId];
+  if (mode === "normal") args.push(code);
+  const method = { propose: "queuePropose", vote: "queueVote", remove: "queueRemove", advance: "queueAdvance" }[command];
+  const ok = client[method]?.(...args);
+  if (!ok) { queueManuell.delete(code + "|" + mode); return { ok: false, error: "Der Raum ist nicht erreichbar." }; }
+  if (!await raumQueueQuittung(code)) { queueManuell.delete(code + "|" + mode); return { ok: false, error: "Der Raum hat die Aktion nicht bestätigt." }; }
+  const danach = raumQueueStatus(code, mode);
+  const error = raumQueueFehler(danach.reason);
+  if (error) queueManuell.delete(code + "|" + mode);
+  return error ? { ok: false, error, state: danach } : { ok: true, state: danach };
+}
+
+
 ipcMain.handle("watchparty:items", () => watchpartyItems());
 
 ipcMain.handle("watchparty:open", async (_event, key, room) => openWatchpartyItem(key, room));
@@ -2505,6 +2792,7 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
     spielerView.webContents.send("spieler:skip-einstellung", settings.playback?.skipSegments !== false);
   }
   syncWatchparty();
+  spielerSpoilerAktualisieren();
   syncGeraete();
   syncFern();
   return publicSettings(settings);
@@ -2945,7 +3233,9 @@ async function enterHomeMode() {
     }
     activeView = null;
     activeProviderId = null;
-    activeFavoriteId = null;
+    // Der aktive Raumeintrag ist zugleich die Rundenzuordnung des eigenen
+    // Players. Ihn im PiP zu leeren beendet dessen Takt/Presence, obwohl der
+    // Player und seine Watchparty-Sitzung unveraendert weiterlaufen.
     overlayReasons.add("shell");
     spielerLageSetzen();
     sendActiveState();
@@ -3134,7 +3424,7 @@ function getProviderView(provider) {
       console.log(`[youtube-party] ${String(nachricht).slice(16)}`);
       return;
     }
-    const ytTat = String(nachricht || "").match(/^__elfix:yt:(play|pause|seek):(\d+(?:\.\d+)?):([01])$/);
+    const ytTat = String(nachricht || "").match(/^__elfix:yt:(play|pause|seek|ended):(\d+(?:\.\d+)?):([01])$/);
     if (ytTat) {
       meldeYoutubeAktion(view, ytTat[1], Number(ytTat[2]), ytTat[3] === "1");
       return;
@@ -6154,7 +6444,10 @@ const kalenderLauf = kalender.erstellen({
 });
 
 async function ladeKalender(refresh) {
-  return kalenderLauf.laden(Boolean(refresh));
+  const daten = await kalenderLauf.laden(Boolean(refresh));
+  return { ...daten, entries: (daten?.entries || []).map(entry => ({ ...entry,
+    seen: spoilerschutz.folgeIstGesehen(entry, spoilerAbgeschlosseneFolgen(entry.url))
+  })) };
 }
 
 
@@ -6517,6 +6810,11 @@ const watchparty = new WatchpartyRaeume({
     sendWatchpartyItems();
     sendSpielerChatStatus();
   },
+  onQueue: (nachricht) => raumQueueNachricht(nachricht, "normal"),
+  onSpoiler: (nachricht, raum) => {
+    spoilerRaumStaende.set(`${raum || nachricht.room}|${nachricht.key}`, nachricht);
+    spielerSpoilerAktualisieren();
+  },
   onProgress: (key, fortschritt, raum) => applyWatchpartyProgress(key, fortschritt, raum),
   onControl: (nachricht) => applyWatchpartyControl(nachricht).catch(() => {}),
   onWatchstate: (nachricht) => sendWatchpartyWatchstate(nachricht),
@@ -6532,6 +6830,13 @@ const watchparty = new WatchpartyRaeume({
     // nachgetragen, was fehlt - je Raum getrennt.
     for (const eintrag of status.rooms || []) {
       if (!eintrag.connected) {
+        for (const lauf of queueVorbereitungen.values()) {
+          if (lauf.room === eintrag.room) raumQueueAbbrechen({ room: lauf.room, startId: lauf.startId, reason: "lease-expired" }, lauf.mode).catch(() => {});
+        }
+        queueBestaetigt.delete(eintrag.room + "|normal");
+        queueBestaetigt.delete(eintrag.room + "|youtube");
+        for (const key of spoilerRaumStaende.keys()) if (key.startsWith(`${eintrag.room}|`)) spoilerRaumStaende.delete(key);
+        for (const key of spoilerGesendet.keys()) if (key.startsWith(`${eintrag.room}|`)) spoilerGesendet.delete(key);
         watchpartyWiederhergestellt.delete(eintrag.room);
         watchpartyZustandBestaetigt.delete(eintrag.room);
         watchpartyWiederherstellungsBarrieren.delete(eintrag.room);
@@ -7835,8 +8140,8 @@ function setWatchpartyLive(key, an, room) {
 // Tritt man hier live bei, gehoert das Geschaute ab jetzt zu dieser Runde:
 // der Eintrag dieses Raums wird der aktive. Gibt es ihn noch nicht, entsteht
 // er - der eigene, private Stand bleibt davon unberuehrt.
-function uebernehmeWatchpartyRaum(key, raum) {
-  const eintrag = watchpartyEintrag(key, raum);
+function uebernehmeWatchpartyRaum(key, raum, vorlaeufigerEintrag = null) {
+  const eintrag = vorlaeufigerEintrag || watchpartyEintrag(key, raum);
   if (!eintrag) return;
   let favorite = lokalerWatchpartyEintrag(key, raum);
   if (!favorite) {
@@ -8008,7 +8313,12 @@ function watchpartyChatLiveKeyForUrl(url) {
 // aufgerufen - Takt, Umschalten, Seitenwechsel, Raumaenderung, Verbindung -,
 // damit die Anzeige nie hinterherhinkt.
 function pushWatchpartyLiveState(url = "") {
-  const adresse = url || activeView?.webContents?.getURL() || "";
+  spoilerAbschluesseMelden();
+  // PiP, Vollbild und der normale eigene Player sind nur Darstellungen
+  // desselben Laufs. Im Miniplayer liegt die Startseite vorn und activeView ist
+  // absichtlich leer; die Anwesenheit gehoert dann weiterhin zum Player.
+  const spielerOffen = Boolean(spielerLauf && isLiveView(spielerView));
+  const adresse = spielerOffen ? spielerLauf.url : (url || activeView?.webContents?.getURL() || "");
   const serieKey = watchparty.aktiv ? watchpartySerieForUrl(adresse) : "";
   const key = watchparty.aktiv ? watchpartyLiveKeyForUrl(adresse) : "";
   // Welche Runden kommen fuer diese Seite in Frage, und welche gilt gerade?
@@ -8023,7 +8333,7 @@ function pushWatchpartyLiveState(url = "") {
 
   // Anwesend heisst: diese Folge ist hier wirklich zu sehen und laeuft live in
   // dieser Runde mit. Faellt eine der beiden Bedingungen weg, sofort abmelden.
-  const anwesend = seiteOffen && key && raum ? { key, raum } : null;
+  const anwesend = (seiteOffen || spielerOffen) && key && raum ? { key, raum } : null;
   if (watchpartyAnwesend && (!anwesend
     || watchpartyAnwesend.key !== anwesend.key
     || watchpartyAnwesend.raum !== anwesend.raum)) {
@@ -9245,6 +9555,69 @@ function spielerMarke() {
  * und der Player soll nicht auf sie warten, bevor das erste Bild steht. Er
  * fragt sie nach, wenn jemand die Folgenliste aufklappt.
  */
+
+// Geteilte Wiedereinstiege sind kein persoenlicher Gesehen-Nachweis.
+function spoilerAbgeschlosseneFolgen(url) {
+  const folgen = new Map();
+  for (const item of favorites) {
+    if (!istGleicheSerie(item.url, url)) continue;
+    for (const episode of item.completedEpisodes || []) {
+      const key = spoilerschutz.episodenSchluessel(episode);
+      if (key) folgen.set(key, episode);
+    }
+  }
+  return [...folgen.values()];
+}
+function spoilerOptionen(provider, url) {
+  const key = watchpartyLiveKeyForUrl(url);
+  const room = watchpartyRaumForUrl(url);
+  const raum = spoilerRaumStaende.get(room + "|" + key);
+  return { ...settings.playback?.spoilerProtection,
+    completedEpisodes: spoilerAbgeschlosseneFolgen(url), roomActive: Boolean(key && room),
+    roomMemberCompletions: raum?.known
+      ? [{ completedEpisodes: (raum.completed || []).map(pair => ({ season: pair[0], episode: pair[1] })) }] : [null]
+  };
+}
+function spoilerAbschluesseMelden() {
+  const url = spielerLauf?.url || activeView?.webContents?.getURL() || "";
+  const activeKey = watchpartyLiveKeyForUrl(url);
+  const activeRoom = watchpartyRaumForUrl(url);
+  for (const item of watchpartyShared || []) {
+    if (!item.joined || !watchparty.spoilerMelden) continue;
+    const key = item.room + "|" + item.key;
+    const teilen = settings.playback?.spoilerProtection?.shareWatchedWithRoom === true
+      && activeKey === item.key && activeRoom === item.room;
+    if (!teilen && !spoilerGesendet.has(key)) continue;
+    const completed = teilen ? spoilerAbgeschlosseneFolgen(item.url).map(e => [e.season, e.episode]) : null;
+    const json = JSON.stringify(completed);
+    if (spoilerGesendet.get(key) === json) continue;
+    if (watchparty.spoilerMelden(item.key, completed, item.room)) {
+      if (teilen) spoilerGesendet.set(key, json); else spoilerGesendet.delete(key);
+    }
+  }
+}
+function spielerSpoilerTitel() {
+  if (!spielerLauf) return "";
+  return spoilerschutz.folgeVerbergen({ ...spoilerOptionen(spielerAnbieter(), spielerLauf.url), episode: episodeIdentity(spielerLauf.url) })
+    ? "" : spielerLauf.folgentitel || "";
+}
+function spielerSpoilerNaechste() {
+  const next = spielerLauf?.naechste;
+  if (!next) return null;
+  const episode = episodeIdentity(next.url);
+  return spoilerschutz.folgeVerbergen({ ...spoilerOptionen(spielerAnbieter(), spielerLauf.url), episode })
+    ? { ...next, beschriftung: episode ? ('Staffel ' + episode.season + ' · Folge ' + episode.episode) : "Nächste Folge" } : next;
+}
+function spielerSpoilerAktualisieren() {
+  if (!spielerLauf || !spielerView || spielerView.webContents.isDestroyed()) return;
+  const daten = { naechste: spielerSpoilerNaechste(), folgentitel: spielerSpoilerTitel(),
+    regel: spoilerOptionen(spielerAnbieter(), spielerLauf.url) };
+  const key = JSON.stringify(daten);
+  if (spielerLauf.spoilerStand === key) return;
+  spielerLauf.spoilerStand = key;
+  spielerView.webContents.send("spieler:spoiler", daten);
+}
+
 function spielerAuftrag() {
   if (!spielerLauf) return null;
   return {
@@ -9252,7 +9625,7 @@ function spielerAuftrag() {
     adresse: spielerLauf.quelle.adresse,
     typ: spielerLauf.quelle.typ,
     titel: spielerLauf.titel,
-    folgentitel: spielerLauf.folgentitel || "",
+    folgentitel: spielerSpoilerTitel(),
     hoster: spielerLauf.hoster,
     link: spielerLauf.link,
     stufe: spielerLauf.quelle.hoehe ? `${spielerLauf.quelle.hoehe}p` : "",
@@ -9269,7 +9642,7 @@ function spielerAuftrag() {
         || String(eintrag.spracheRoh || eintrag.sprache || ""),
       sichtbar: eintrag.sichtbar
     })),
-    naechste: spielerLauf.naechste || null,
+    naechste: spielerSpoilerNaechste(),
     /*
      * Wie lange bis zur naechsten Folge - und ob ueberhaupt.
      *
@@ -9291,6 +9664,7 @@ function spielerAuftrag() {
     weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT,
     marke: spielerMarke(),
     skipSegments: settings.playback?.skipSegments !== false,
+    queueAktiv: spielerQueueAktiv(),
     untertitel: untertitelwahl.normalisieren(settings.playback?.untertitel),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
@@ -9347,7 +9721,7 @@ async function spielerNaechsteNachtragen(provider, url) {
   spielerLauf.folgentitel = String(laufend?.titel || "");
 
   if (spielerView && !spielerView.webContents.isDestroyed()) {
-    spielerView.webContents.send("spieler:naechste", spielerLauf.naechste, spielerLauf.folgentitel);
+    spielerView.webContents.send("spieler:naechste", spielerSpoilerNaechste(), spielerSpoilerTitel());
   }
 }
 
@@ -9971,7 +10345,9 @@ async function direktZurueckZurOberflaeche(hinweis) {
 ipcMain.handle("direkt:starten", async () => {
   const provider = activeProvider();
   if (!provider || !isLiveView(activeView)) return { ok: false, grund: "Kein Titel geöffnet" };
-  return direktFolgeSpielen(provider, activeView.webContents.getURL());
+  const url = activeView.webContents.getURL();
+  if (youtube.istYoutubeUrl(url)) return { ok: false, grund: "YouTube spielt im eingebetteten Player" };
+  return direktFolgeSpielen(provider, url);
 });
 
 /* -------------------------------------------------- Was der Player nachfragt */
@@ -10022,7 +10398,8 @@ ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "
   }
 
   const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch) });
-  return direktfolgen.fuerPlayer(stand, episodeIdentity(url));
+  const liste = direktfolgen.fuerPlayer(stand, episodeIdentity(url));
+  return liste ? { ...liste, folgen: spoilerschutz.protectEpisodes(liste.folgen, spoilerOptionen(provider, url)) } : liste;
 });
 
 /*
@@ -11155,6 +11532,7 @@ const youtubeParty = new YoutubeWatchparty({
   // Differenz zweier Systemuhren daneben.
   serverJetzt: (raum) => watchparty.serverJetzt(raum),
   onState: (zustand, hinweis) => { applyYoutubeParty(zustand, hinweis).catch(() => {}); },
+  onQueue: (nachricht) => raumQueueNachricht(nachricht, "youtube"),
   onStatus: (status) => {
     sendYoutubePartyState(status);
     youtubeSponsorblockRolleAktualisieren(status);
@@ -11302,6 +11680,16 @@ function youtubeVideotitel(view) {
 // Seite (siehe youtube-sync.js): was gerade auf Anweisung von aussen geschehen
 // ist, kommt hier gar nicht erst an.
 function meldeYoutubeAktion(view, aktion, position, pausiert) {
+  if (youtubeQueueVorbereitung) return;
+  if (aktion === "ended") {
+    const ziel = youtubeAnsicht();
+    if (!ziel || ziel.view !== view || !youtubeParty.beigetreten || youtubeStoebertGerade()) return;
+    const videoId = youtubeVideoIdAus(view.webContents.getURL());
+    if (!videoId || videoId !== youtubeParty.stand?.videoId) return;
+    const queue = raumQueueStatus(youtubeParty.raum, "youtube");
+    if (queue.connected && queue.supported && queue.selectedId) youtubeParty.queueAdvance?.(queue.selectedId, videoId);
+    return;
+  }
   if (!youtubeParty.aktiv) return;
   // Wer stoebert, bewegt die Runde nicht. Das Pausieren beim Verlassen des
   // Videos ist genau so eine Meldung - sie haette alle anderen angehalten.
@@ -11331,6 +11719,7 @@ function meldeYoutubeAktion(view, aktion, position, pausiert) {
 // automatisch folgende naechste Video. YouTube wechselt dabei meist ohne
 // Neuladen, deshalb haengt das hier an beiden Navigationsereignissen.
 async function meldeYoutubeVideowechsel(view, url) {
+  if (youtubeQueueVorbereitung) return;
   if (!youtubeParty.aktiv) return;
   const ziel = youtubeAnsicht();
   if (!ziel || ziel.view !== view) return;
@@ -11371,28 +11760,56 @@ async function meldeYoutubeVideowechsel(view, url) {
 // dieses Geraet seine Nummer erfaehrt, und derselbe Stand ein zweites Mal ist
 // kein Anlass, im Bild herumzuspringen.
 async function applyYoutubeParty(zustand, hinweis) {
-  if (!youtubeParty.aktiv || !zustand?.videoId || !hinweis?.anwenden) return;
-
-  const ziel = youtubeAnsicht();
-  // YouTube war in dieser Sitzung nie offen. Dann wird nichts erzwungen - beim
-  // Oeffnen haengt sich die Runde von selbst an (installYoutubePartyControls).
-  if (!ziel) return;
-  // Und wer gerade stoebert, wird nicht zurueckgeholt. Die Runde laeuft ohne
-  // ihn weiter; zurueck kommt er ueber "Zum Video der Runde".
-  if (youtubeStoebertGerade()) return;
-
-  const offen = ziel.view.webContents.getURL();
-  if (youtubeVideoIdAus(offen) !== zustand.videoId) {
-    await oeffneYoutubeVideo(ziel, zustand, hinweis.action || "video");
-    return;
+  const vorbereitung = youtubeQueueVorbereitung;
+  let transitionBeenden = null;
+  if (vorbereitung) {
+    if (zustand?.videoId !== vorbereitung.videoId || hinweis?.reason !== "queue-change") return;
+    vorbereitung.transition = new Promise(resolve => { transitionBeenden = resolve; });
   }
+  try {
+    if (vorbereitung) {
+      hinweis = { ...hinweis, anwenden: true };
+      const view = vorbereitung.view || youtubeAnsicht()?.view;
+      if (isLiveView(view)) {
+        await view.webContents.executeJavaScript(
+          youtubeQueue.freigebenScript(vorbereitung.startId), true).catch(() => {});
+      }
+      if (youtubeQueueVorbereitung !== vorbereitung) return;
+      if (isLiveView(vorbereitung.view)) {
+        vorbereitung.view.webContents.setAudioMuted(vorbereitung.previousMuted);
+      }
+    }
+    if (!youtubeParty.aktiv || !zustand?.videoId || !hinweis?.anwenden) return;
 
-  await executeJavaScriptInMediaFrames(
-    ziel.view,
-    youtubeSync.anwendenScript(zustand, { aktion: hinweis.action || "state", versatz: zustand.versatz })
-  ).catch(() => []);
-  logMediaDiagnostic(ziel.provider, offen, "youtube-party",
-    `${zustand.byName || "Jemand"}: ${hinweis.action || "Stand"}`, {});
+    const ziel = youtubeAnsicht();
+    // YouTube war in dieser Sitzung nie offen. Dann wird nichts erzwungen - beim
+    // Oeffnen haengt sich die Runde von selbst an (installYoutubePartyControls).
+    if (!ziel) return;
+    // Und wer gerade stoebert, wird nicht zurueckgeholt. Die Runde laeuft ohne
+    // ihn weiter; zurueck kommt er ueber "Zum Video der Runde".
+    if (youtubeStoebertGerade()) return;
+
+    const offen = ziel.view.webContents.getURL();
+    if (youtubeVideoIdAus(offen) !== zustand.videoId) {
+      await oeffneYoutubeVideo(ziel, zustand, hinweis.action || "video");
+      return;
+    }
+
+    await executeJavaScriptInMediaFrames(
+      ziel.view,
+      youtubeSync.anwendenScript(zustand, { aktion: hinweis.action || "state", versatz: zustand.versatz })
+    ).catch(() => []);
+    logMediaDiagnostic(ziel.provider, offen, "youtube-party",
+      `${zustand.byName || "Jemand"}: ${hinweis.action || "Stand"}`, {});
+  } finally {
+    if (vorbereitung && youtubeQueueVorbereitung === vorbereitung) {
+      if (isLiveView(vorbereitung.view)) {
+        vorbereitung.view.webContents.setAudioMuted(vorbereitung.previousMuted);
+      }
+      youtubeQueueVorbereitung = null;
+    }
+    transitionBeenden?.();
+  }
 }
 
 // Das Video der Runde oeffnen.
@@ -11441,6 +11858,7 @@ function youtubeNachziehenPlanen() {
 // richtiger Laufzustand. Genau das braucht ein spaeter Beitretender, und genau
 // das braucht auch, wer gerade wieder Verbindung bekommen hat.
 async function youtubeAnschluss(grund) {
+  if (youtubeQueueVorbereitung) return;
   const zustand = youtubeParty.stand;
   if (!youtubeParty.aktiv || !zustand?.videoId) return;
   const ziel = youtubeAnsicht();
@@ -11469,6 +11887,7 @@ async function youtubeAnschluss(grund) {
 // niemand; jede Korrektur dagegen laesst YouTube neu puffern, und das Puffern
 // erzeugt genau den Versatz, den man beheben wollte.
 async function youtubeAbgleichen() {
+  if (youtubeQueueVorbereitung) return;
   const zustand = youtubeParty.stand;
   if (!youtubeParty.aktiv || !youtubeParty.verbunden || !zustand?.videoId) return;
   const ziel = youtubeAnsicht();
@@ -11487,6 +11906,7 @@ async function youtubeAbgleichen() {
 // Laeuft bei jedem "dom-ready" - der Horcher setzt sich nur einmal, das
 // Anschliessen prueft selbst, ob es noch etwas zu tun gibt.
 async function installYoutubePartyControls(provider, view, url) {
+  await youtubeTeilnehmerAktualisieren(youtubeParty.status(), view, true);
   if (!youtubeParty.aktiv || !youtube.istYoutubeUrl(url)) return;
   const ziel = youtubeAnsicht();
   if (!ziel || ziel.view !== view) return;
@@ -11509,8 +11929,37 @@ async function installYoutubeWiedergabe(view, url) {
 // --- Was die Oberflaeche davon sieht -----------------------------------------
 
 function sendYoutubePartyState(status) {
+  const member = status || youtubeParty.status();
+  const membership = [member.room, member.joined, member.connected].join("|");
+  if (membership !== queueYoutubeMitgliedschaft) {
+    queueYoutubeMitgliedschaft = membership;
+    for (const room of watchparty.codes) {
+      if (room !== member.room || !member.joined || !member.connected) queueBestaetigt.delete(room + "|youtube");
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("watchparty:queue-state", raumQueueStatus(room, "youtube"));
+    }
+  }
+  youtubeTeilnehmerAktualisieren(status || youtubeParty.status()).catch(() => {});
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("youtubeparty:state", youtubePartyStatus(status));
+}
+
+// Nur Anwesenheitsaenderungen in die Seite senden, keine Positions-Takte.
+async function youtubeTeilnehmerAktualisieren(status, view = youtubeAnsicht()?.view, frisch = false) {
+  if (!isLiveView(view) || !youtube.istYoutubeUrl(view.webContents.getURL())) return;
+  const daten = {
+    enabled: Boolean(status?.enabled), connected: Boolean(status?.connected), joined: Boolean(status?.joined),
+    room: String(status?.room || ""), me: String(status?.me || ""),
+    members: Array.isArray(status?.members) ? status.members.filter(Boolean)
+      .map((person) => ({ id: String(person.id || ""), name: String(person.name || "") })) : []
+  };
+  const schluessel = JSON.stringify(daten);
+  if (!frisch && youtubeTeilnehmerStand.get(view) === schluessel) return;
+  youtubeTeilnehmerStand.set(view, schluessel);
+  try {
+    await view.webContents.executeJavaScript(youtubeTeilnehmer.anzeigeScript(daten), true);
+  } catch {
+    if (youtubeTeilnehmerStand.get(view) === schluessel) youtubeTeilnehmerStand.delete(view);
+  }
 }
 
 function youtubePartyStatus(status) {
@@ -13497,6 +13946,8 @@ function widersprucheGeraderichten(liste = favorites) {
 }
 
 function saveFavorites() {
+  spoilerAbschluesseMelden();
+  spielerSpoilerAktualisieren();
   ensureDataDir();
   widersprucheGeraderichten();
   fs.writeFileSync(FAVORITES_FILE, JSON.stringify(favorites, null, 2));
@@ -14183,6 +14634,7 @@ function normalizeSettings(raw) {
       // zweimal selbst gezeigt hat - und er springt nie von allein.
       introSkip: raw?.playback?.introSkip !== false,
       skipSegments: raw?.playback?.skipSegments !== false,
+      spoilerProtection: { enabled: raw?.playback?.spoilerProtection?.enabled === true, roomMinimum: raw?.playback?.spoilerProtection?.roomMinimum === true, shareWatchedWithRoom: raw?.playback?.spoilerProtection?.shareWatchedWithRoom === true },
       untertitel: untertitelwahl.normalisieren(raw?.playback?.untertitel),
       // Ebenfalls von Haus aus an. Vorgewaehlt wird nur, was jemand fuer
       // dieselbe Serie schon einmal selbst angeklickt hat - eine eigene
@@ -14371,6 +14823,7 @@ function defaultSettings() {
     playback: {
       introSkip: true,
       skipSegments: true,
+      spoilerProtection: { enabled: false, roomMinimum: false, shareWatchedWithRoom: false },
       untertitel: untertitelwahl.normalisieren(null),
       rememberLanguage: true,
       direktModus: true,

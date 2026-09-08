@@ -207,6 +207,7 @@ const watchpartyEmpty = document.querySelector("#watchpartyEmpty");
 const watchpartyEmptyTitle = document.querySelector("#watchpartyEmptyTitle");
 const watchpartyEmptyCopy = document.querySelector("#watchpartyEmptyCopy");
 const watchpartyViewStatus = document.querySelector("#watchpartyViewStatus");
+const roomQueue = document.querySelector("#roomQueue");
 const historyView = document.querySelector("#historyView");
 const noProvidersState = document.querySelector("#noProvidersState");
 const homeHero = document.querySelector("#homeHero");
@@ -389,6 +390,9 @@ const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
 const skipSegments = document.querySelector("#skipSegments");
+const spoilerProtectionEnabled = document.querySelector("#spoilerProtectionEnabled");
+const spoilerProtectionRoomMinimum = document.querySelector("#spoilerProtectionRoomMinimum");
+const spoilerProtectionShareWatchedWithRoom = document.querySelector("#spoilerProtectionShareWatchedWithRoom");
 const direktModus = document.querySelector("#direktModus");
 const youtubeDislikesEnabled = document.querySelector("#youtubeDislikesEnabled");
 // SponsorBlock: Aktivierung und Hinweise sind Schalter; die acht Kategorien
@@ -736,6 +740,17 @@ function bindEvents() {
     watchpartyRaumHinzufuegen();
   });
   api.onWatchpartyState?.(renderWatchpartyStatus);
+  // Warteschlangen sind pro Raum und Modus getrennt. Das Modul bekommt die
+  // aktuellen lokalen Daten nur als Picker-Quelle; der Relay-Stand bleibt
+  // allein massgeblich.
+  if (roomQueue && globalThis.ElfixRaumqueue && !window.elfixRaumQueue) {
+    window.elfixRaumQueue = globalThis.ElfixRaumqueue.erstellen({
+      root: roomQueue,
+      api,
+      favorites: () => favorites,
+      rooms: () => watchpartyState?.rooms || []
+    });
+  }
   geraeteKeyNew?.addEventListener("click", geraeteSchluesselErzeugen);
   geraeteName?.addEventListener("change", () => {
     if (watchpartyName) watchpartyName.value = geraeteName.value.trim();
@@ -1272,6 +1287,9 @@ function bindEvents() {
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
   skipSegments?.addEventListener("change", saveSettings);
+  spoilerProtectionEnabled?.addEventListener("change", saveSettings);
+  spoilerProtectionRoomMinimum?.addEventListener("change", saveSettings);
+  spoilerProtectionShareWatchedWithRoom?.addEventListener("change", saveSettings);
   direktModus?.addEventListener("change", saveSettings);
   youtubeDislikesEnabled?.addEventListener("change", saveSettings);
   for (const feld of Object.values(sponsorblockFelder)) {
@@ -1712,6 +1730,7 @@ async function loadPersonalPicks(refresh = false) {
 // etwas aendert - Verbinden, Abbrechen, neue Teilnehmer.
 function renderWatchpartyStatus(state) {
   watchpartyState = state;
+  window.elfixRaumQueue?.refresh?.();
   renderWatchpartyViewStatus(state);
   // Die Punkte an den Raumchips haengen am Verbindungszustand.
   renderWatchpartyRaeume();
@@ -3063,6 +3082,7 @@ function kalenderKarte(eintrag) {
     <strong>${escapeHtml(eintrag.title)}</strong>
     <span>${escapeHtml(herkunft)}</span>
     ${wann ? `<small class="media-progress-detail">${escapeHtml(wann)}</small>` : ""}
+    ${eintrag.seen ? `<small class="calendar-seen" aria-label="Gesehen">✓ Gesehen</small>` : ""}
     ${kalenderFassungen(eintrag)}
   `;
   bildEbeneSetzen(karte, eintrag.image, null);
@@ -3311,6 +3331,7 @@ async function showWatchparty() {
   renderWatchpartyItems();
   loadWatchpartyItems();
   api.getYoutubePartyStatus?.().then(renderYoutubeParty).catch(() => {});
+  window.elfixRaumQueue?.refresh?.();
   window.setTimeout(syncBrowserBounds, 0);
 }
 
@@ -7772,10 +7793,13 @@ function isValidAniWorldThumbnail(value) {
  */
 async function direktAbspielen() {
   const knopf = document.querySelector("#direktButton");
-  if (!knopf || knopf.disabled) return;
-  const beschriftung = knopf.textContent;
+  if (!knopf || knopf.disabled || aufYoutubeSeite()
+    || !String(currentRoute || "").startsWith("provider:")) return;
+  const beschriftung = knopf.title;
   knopf.disabled = true;
-  knopf.textContent = "sucht …";
+  knopf.classList.add("is-busy");
+  knopf.setAttribute("aria-busy", "true");
+  knopf.title = "Videoquelle wird gesucht …";
   try {
     const ergebnis = await api.startDirekt();
     if (ergebnis?.ok) {
@@ -7788,7 +7812,9 @@ async function direktAbspielen() {
     showToast(`Direktes Abspielen ging nicht: ${fehler?.message || fehler}`);
   } finally {
     knopf.disabled = false;
-    knopf.textContent = beschriftung;
+    knopf.classList.remove("is-busy");
+    knopf.removeAttribute("aria-busy");
+    knopf.title = beschriftung;
   }
 }
 
@@ -7888,7 +7914,7 @@ function renderChromeButtons() {
   // und die Seite bleibt sichtbar. Der Direktbetrieb gilt fuer die Anbieter mit
   // Hostern dahinter.
   const direkt = settings.playback?.direktModus !== false && !aufYoutubeSeite();
-  document.querySelector("#direktButton")?.classList.toggle("is-hidden", !aufSeite || direkt);
+  document.querySelector("#direktButton")?.classList.toggle("is-hidden", !aufSeite || direkt || aufYoutubeSeite());
   // Zurueck, Vor, Neu laden und Stop bedienen die Anbieterseite. Im
   // Direktbetrieb gibt es keine zu bedienen - ein Knopf, der auf eine
   // unsichtbare Seite wirkt, ist ein Versprechen ohne Deckung.
@@ -8106,6 +8132,9 @@ function renderSettings() {
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
   if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
+  if (spoilerProtectionEnabled) spoilerProtectionEnabled.checked = settings.playback?.spoilerProtection?.enabled === true;
+  if (spoilerProtectionRoomMinimum) spoilerProtectionRoomMinimum.checked = settings.playback?.spoilerProtection?.roomMinimum === true;
+  if (spoilerProtectionShareWatchedWithRoom) spoilerProtectionShareWatchedWithRoom.checked = settings.playback?.spoilerProtection?.shareWatchedWithRoom === true;
   if (direktModus) direktModus.checked = settings.playback?.direktModus !== false;
   if (youtubeDislikesEnabled) youtubeDislikesEnabled.checked = settings.youtubeDislikes?.enabled !== false;
   for (const [name, feld] of Object.entries(sponsorblockFelder)) {
@@ -8379,6 +8408,11 @@ async function saveSettings(options = {}) {
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
     skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
+    spoilerProtection: {
+      enabled: Boolean(spoilerProtectionEnabled?.checked),
+      roomMinimum: Boolean(spoilerProtectionRoomMinimum?.checked),
+      shareWatchedWithRoom: Boolean(spoilerProtectionShareWatchedWithRoom?.checked)
+    },
     direktModus: direktModus ? direktModus.checked : settings.playback?.direktModus !== false,
     rememberLanguage: rememberLanguage ? rememberLanguage.checked : settings.playback?.rememberLanguage !== false,
     favoriteProgressMode: favoriteProgressMode.value,

@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Ist das ein YouTube-Eintrag?
@@ -40,6 +41,7 @@ public final class Youtube {
      */
     private static final List<String> RUECKFALL =
         Arrays.asList("youtube.com", "youtu.be", "youtube-nocookie.com");
+    private static final Pattern VIDEO_ID = Pattern.compile("^[A-Za-z0-9_-]{6,24}$");
 
     private final Kern kern;
     private List<String> hosts = new ArrayList<>(RUECKFALL);
@@ -81,6 +83,45 @@ public final class Youtube {
 
     public boolean istYoutube(Favorite eintrag) {
         return eintrag != null && istYoutube(eintrag.url());
+    }
+
+    /** Canonical video identity used by the relay and queue source guard. */
+    static String videoId(String url) {
+        String text = url == null ? "" : url.trim();
+        if (text.isEmpty()) return "";
+        try {
+            java.net.URI uri = new java.net.URI(text);
+            String host = uri.getHost();
+            if (host == null) return "";
+            host = host.toLowerCase(Locale.ROOT).replaceFirst("^(?:www\\.|m\\.|music\\.)", "");
+            String id = "";
+            if ("youtu.be".equals(host)) {
+                String path = uri.getPath();
+                id = path == null ? "" : path.replaceFirst("^/+", "").split("/", 2)[0];
+            } else if (host.equals("youtube.com") || host.endsWith(".youtube.com")
+                || host.equals("youtube-nocookie.com") || host.endsWith(".youtube-nocookie.com")) {
+                String path = uri.getPath() == null ? "" : uri.getPath();
+                if (path.startsWith("/shorts/") || path.startsWith("/embed/")
+                    || path.startsWith("/live/")) {
+                    String[] teile = path.split("/");
+                    if (teile.length > 2) id = teile[2];
+                } else {
+                    String query = uri.getRawQuery();
+                    if (query != null) for (String teil : query.split("&")) {
+                        int gleich = teil.indexOf('=');
+                        if (gleich > 0 && "v".equals(teil.substring(0, gleich))) {
+                            id = java.net.URLDecoder.decode(teil.substring(gleich + 1), "UTF-8");
+                            break;
+                        }
+                    }
+                }
+            }
+            return VIDEO_ID.matcher(id).matches() ? id : "";
+        } catch (Exception ignored) { return ""; }
+    }
+
+    static boolean gueltigeVideoId(String id) {
+        return id != null && VIDEO_ID.matcher(id).matches();
     }
 
     /**

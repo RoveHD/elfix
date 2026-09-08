@@ -32,6 +32,8 @@ class WatchpartyRaeume {
     // Durchreiche fuer die YouTube-Watchparty: sie faehrt auf denselben
     // Verbindungen, fuehrt aber ihren Zustand selbst.
     this.aufYoutube = optionen.onYoutube || (() => {});
+    this.aufQueue = optionen.onQueue || (() => {});
+    this.aufSpoiler = optionen.onSpoiler || (() => {});
     this.aufVerbindung = optionen.onConnection || (() => {});
     this.WebSocketKlasse = optionen.WebSocketKlasse;
 
@@ -103,13 +105,13 @@ class WatchpartyRaeume {
     }
 
     this.melde();
-    this.aufZustand(this.eintraege(), "");
+    this.aufZustand(this.serverEintraege(), "");
   }
 
   raumAnlegen(code) {
     const optionen = {
       onState: () => {
-        this.aufZustand(this.eintraege(), code);
+        this.aufZustand(this.serverEintraege(), code);
       },
       onProgress: (key, fortschritt) => this.aufFortschritt(key, fortschritt, code),
       onControl: (nachricht) => this.aufSteuerung({ ...nachricht, room: code }),
@@ -118,6 +120,8 @@ class WatchpartyRaeume {
       // Der Raumcode gehoert an die Nachricht: die YouTube-Watchparty laeuft in
       // genau einem Raum und muss fremde Raeume erkennen und liegenlassen.
       onYoutube: (nachricht) => this.aufYoutube({ ...nachricht, room: nachricht.room || code }),
+      onQueue: (nachricht) => this.aufQueue({ ...nachricht, room: nachricht.room || code }),
+      onSpoiler: (nachricht) => this.aufSpoiler({ ...nachricht, room: nachricht.room || code }),
       onConnection: (offen) => this.aufVerbindung(code, offen),
       onStatus: () => this.melde(code),
       onDeviceIdentity: (identitaet) => this.identitaetUebernehmen(identitaet, code)
@@ -178,6 +182,17 @@ class WatchpartyRaeume {
     const alle = [];
     for (const [code, raum] of this.raeume) {
       for (const eintrag of raum.eintraege()) alle.push({ ...eintrag, room: code });
+    }
+    return alle;
+  }
+
+  // Nur bestaetigte Relayeintraege duerfen in die globale Ablage- und
+  // Mitgliedschaftssynchronisierung gelangen. eintraege() bleibt die
+  // Leseflaeche fuer einen gerade ladenden Queue-Titel.
+  serverEintraege() {
+    const alle = [];
+    for (const [code, raum] of this.raeume) {
+      for (const eintrag of raum.serverEintraege()) alle.push({ ...eintrag, room: code });
     }
     return alle;
   }
@@ -306,7 +321,36 @@ class WatchpartyRaeume {
   // nicht, geht nichts hinaus - lieber keine Nachricht als eine in den falschen
   // Raum.
   youtubeSenden(room, nachricht) {
-    this.raeume.get(String(room || "").trim())?.youtubeSenden(nachricht);
+    return Boolean(this.raeume.get(String(room || "").trim())?.youtubeSenden(nachricht));
+  }
+
+  queueStatus(room) {
+    return this.raumFuer("", room)?.queueStatus()
+      || { room: String(room || ""), rev: 0, items: [], selectedId: "", pending: null, reason: "" };
+  }
+
+  queuePropose(item, room) {
+    return Boolean(this.raumFuer("", room)?.queuePropose(item));
+  }
+
+  queueVote(id, value, room) {
+    return Boolean(this.raumFuer("", room)?.queueVote(id, value));
+  }
+
+  queueRemove(id, room) {
+    return Boolean(this.raumFuer("", room)?.queueRemove(id));
+  }
+
+  queueAdvance(expectedId, fromKey, room) {
+    return Boolean(this.raumFuer("", room)?.queueAdvance(expectedId, fromKey));
+  }
+
+  queueStarted(startId, ok, room) {
+    return Boolean(this.raumFuer("", room)?.queueStarted(startId, ok));
+  }
+
+  spoilerMelden(key, completed, room) {
+    return Boolean(this.raumFuer(key, room)?.spoilerMelden(key, completed));
   }
 
   // Die Serverzeit des Raums, aus dem eine Nachricht kam. Jeder Raum ist eine

@@ -578,6 +578,7 @@ let puffert = false;
 let ausRundeBis = 0;
 /** Die gelesene Staffel- und Folgenliste. */
 let folgenStand = null;
+let queueAktiv = false;
 /** Welche Staffel im Panel gerade aufgeschlagen ist. */
 let offeneStaffel = 0;
 /** Solange ein Wechsel laeuft, darf kein zweiter angestossen werden. */
@@ -867,7 +868,11 @@ async function springen(sekunden) {
  * neunzig Sekunden Handlung, die man erst wiederfinden muss.
  */
 async function markeNutzen() {
-  if (!lokalesSpulenErlaubt()) return;
+  // Das Intro ueberspringen darf jeder, auch als Gast - wie den Folgenwechsel.
+  // Es ist der eine Sprung, bei dem alle dasselbe wollen. Gemeldet wird er
+  // deshalb nicht als "seek" (das bleibt beim Host), sondern als eigene
+  // Aktion: das Relay macht daraus die gemeinsame Startverabredung, und die
+  // Runde faehrt hinter dem Intro zusammen wieder an.
   const segment = aktuellesSkipsegment();
   const gelernt = marke && bild.currentTime >= marke.ab && bild.currentTime <= marke.bis
     && !skipSegmente.some((s) => s.type === "intro");
@@ -876,7 +881,7 @@ async function markeNutzen() {
   const ziel = segment ? segment.end : Math.max(von + 1, marke.ziel);
   if (!await stelleSetzen(ziel)) return;
   bruecke.sprung(von, ziel, true);
-  tatMelden("seek");
+  tatMelden(lokalesSpulenErlaubt() ? "seek" : "skip");
   const hatteFokus = document.activeElement === knopfMarke;
   knopfMarke.hidden = true;
   if (hatteFokus) knopfSpielen.focus();
@@ -1407,8 +1412,9 @@ function spulenRechteSetzen() {
   knopfZurueck.title = gesperrt ? "Spulen steuert der Host" : "10 Sekunden zurück";
   knopfVor.disabled = gesperrt;
   knopfVor.title = gesperrt ? "Spulen steuert der Host" : "10 Sekunden vor";
-  knopfMarke.disabled = gesperrt;
-  knopfMarke.title = gesperrt ? "Spulen steuert der Host" : "Intro überspringen";
+  // Der Intro-Knopf gehoert nicht dazu: ihn darf jeder druecken.
+  knopfMarke.disabled = false;
+  knopfMarke.title = "Intro überspringen";
 }
 
 /* ------------------------------------------------------- Die Folgenliste */
@@ -1536,6 +1542,12 @@ function folgenZeichnen() {
     const titel = document.createElement("span");
     titel.textContent = eintrag.titel || (eintrag.gesperrt ? "in einer anderen Folge enthalten" : "");
     knopf.append(nummer, titel);
+    if (eintrag.seen) {
+      const gesehen = document.createElement("span");
+      gesehen.className = "folge-gesehen";
+      gesehen.textContent = "✓ Gesehen";
+      knopf.appendChild(gesehen);
+    }
     knopf.addEventListener("click", () => folgeWechseln(eintrag.url));
     folgenListe.appendChild(knopf);
   }
@@ -1858,6 +1870,7 @@ function naechsteSetzen(wert) {
  * nichts: das Ende einer Serie ist kein Fehler.
  */
 function weiterAnbieten() {
+  if (queueAktiv) return;
   if (weiterVerworfen) return;
   // Kurz vor dem Ende ist das Video noch nicht als beendet markiert. Ab dann
   // gilt ein Pause- oder Pufferereignis dem Zuschauer, nicht dem Autoplay.
@@ -2146,13 +2159,20 @@ bild.addEventListener("playing", () => { puffert = false; pufferZeigen(false); }
 // Der Puffer waechst auch, wenn die Stelle stillsteht - etwa in der Pause.
 bild.addEventListener("progress", () => reglerFaerben(bild.currentTime));
 bild.addEventListener("seeked", () => { vorigeStelle = bild.currentTime; standMelden(true); });
-bild.addEventListener("ended", () => {
+bild.addEventListener("ended", async () => {
   // Ein Pufferereignis kurz vor dem letzten Sample darf das reguläre Ende
   // nicht vom Autoplay ausschliessen. Mit dem Ende ist diese Quelle fertig.
   puffert = false;
   pufferZeigen(false);
   standMelden(true);
   schichtenZeigen();
+  if (queueAktiv && !weiterVerworfen) {
+    weiterAbbrechen();
+    const generation = startAuftrag;
+    const result = await bruecke.queueWeiter?.(auftrag?.id).catch(() => ({ ok: false }));
+    if (generation !== startAuftrag || result?.ok) return;
+    queueAktiv = false;
+  }
   // Der Uebergang kann schon laufen (siehe timeupdate). Steht er noch nicht,
   // ist jetzt der Augenblick dafuer.
   weiterAnbieten();
@@ -2472,6 +2492,7 @@ function starten(neuerAuftrag) {
   skipSegmente = [];
   skipAnfrage = "";
   skipAn = auftrag.skipSegments === true;
+  queueAktiv = Boolean(auftrag.queueAktiv);
   skipLeisteZeichnen();
   knopfMarke.hidden = true;
   startGesetzt = false;
@@ -2571,7 +2592,14 @@ bruecke.aufAuftrag(starten);
 bruecke.aufNaechste((wert, folgentitel) => {
   naechsteSetzen(wert);
   // Der Name der Folge kommt mit derselben Nachricht - die Liste kennt beides.
-  if (folgentitel) kopfTitelSetzen("", folgentitel);
+  kopfTitelSetzen("", folgentitel);
+});
+bruecke.aufQueue?.((an) => { queueAktiv = Boolean(an); if (queueAktiv) weiterAbbrechen(); });
+bruecke.aufSpoiler?.((wert) => {
+  kopfTitelSetzen("", wert?.folgentitel);
+  naechsteSetzen(wert?.naechste);
+  folgenStand = null;
+  if (!folgenPanel.hidden) folgenZeigen();
 });
 bruecke.aufMarke((neue) => { marke = neue || null; });
 bruecke.aufSkipEinstellung?.((an) => {

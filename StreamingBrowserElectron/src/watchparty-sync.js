@@ -786,7 +786,9 @@ const UI_RUHE_MS = 3200;
 
 // Eine Aktionsmeldung zerlegen: "__elfix:wp:play:123.45".
 function aktionLesen(zeile) {
-  const treffer = String(zeile || "").match(/^__elfix:wp:(play|pause|seek):(\d+(?:\.\d+)?)$/);
+  // "skip" ist das Ueberspringen des Intros: dieselbe Meldung wie ein Sprung,
+  // aber die eine Stellenaenderung, die jeder ausloesen darf.
+  const treffer = String(zeile || "").match(/^__elfix:wp:(play|pause|seek|skip):(\d+(?:\.\d+)?)$/);
   return treffer ? { aktion: treffer[1], position: Number(treffer[2]) } : null;
 }
 

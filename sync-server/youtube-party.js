@@ -1,5 +1,7 @@
 "use strict";
 
+const { AbstimmungsWarteschlange } = require("./warteschlange");
+
 // Die YouTube-Watchparty im Relay - der zweite, bewusst eigene Modus.
 //
 // Die normale Watchparty dreht sich um einen Titel: jemand stellt eine Serie
@@ -58,10 +60,42 @@ function raumHolen(code) {
     byId: "",
     byName: "",
     members: new Map(),
+    queue: youtubeWarteschlange(code),
+    hooks: null,
     at: Date.now()
   };
   raeume.set(code, neu);
   return neu;
+}
+
+function akteur({ geraetId, name, konto }) {
+  return {
+    principal: konto ? `konto:${konto}` : `geraet:${geraetId}`,
+    id: geraetId,
+    name
+  };
+}
+
+function queueVideoSaeubern(roh) {
+  const videoId = text(roh?.videoId, 24);
+  if (!VIDEO_ID.test(videoId)) return null;
+  return {
+    videoId,
+    url: videoAdresse(roh?.url, videoId),
+    title: text(roh?.title, 200)
+  };
+}
+
+function youtubeWarteschlange(code) {
+  return new AbstimmungsWarteschlange({
+    art: "youtube",
+    saeubern: queueVideoSaeubern,
+    schluessel: (eintrag) => eintrag.videoId,
+    onChange: () => queueStandSenden(code),
+    onStart: (pending) => queueStartSenden(code, pending),
+    onReady: (pending) => queueStartAnwenden(code, pending),
+    onCancel: (pending, reason) => queueStartAbbrechen(code, pending, reason)
+  });
 }
 
 function text(wert, laenge) {
@@ -134,6 +168,88 @@ function mitgliedIds(zustand) {
   return new Set(zustand.members.keys());
 }
 
+function queueStandSenden(code, reason = "") {
+  const zustand = raeume.get(code);
+  if (!zustand?.hooks?.sendenAn) return;
+  for (const id of zustand.members.keys()) {
+    const mitglied = zustand.members.get(id);
+    zustand.hooks.sendenAn(id, {
+      type: "ytqueue:state", room: code,
+      ...zustand.queue.zustand(akteur({ geraetId: id, name: mitglied.name, konto: mitglied.konto }),
+        reason ? { reason } : {})
+    });
+  }
+  zustand.hooks.speichern?.();
+}
+
+function queueStandAn(code, id, reason = "") {
+  const zustand = raeume.get(code);
+  const mitglied = zustand?.members.get(id);
+  if (!mitglied || !zustand.hooks?.sendenAn) return;
+  const actor = akteur({ geraetId: id, name: mitglied.name, konto: mitglied.konto });
+  zustand.hooks.sendenAn(id, { type: "ytqueue:state", room: code,
+    ...zustand.queue.zustand(actor, reason ? { reason } : {}) });
+  if (zustand.queue.istStartZiel(id)) {
+    zustand.hooks.sendenAn(id, zustand.queue.startNachricht(actor, {
+      type: "ytqueue:start", room: code, replay: true
+    }));
+  }
+}
+
+function queueStartSenden(code, pending) {
+  const zustand = raeume.get(code);
+  if (!zustand?.hooks?.sendenAn) return;
+  // Waehrend die Zielvideos laden, darf das alte Video auf keinem Zielgeraet
+  // weiterlaufen. Sein letzter Stand bleibt bei einem Abbruch absichtlich
+  // pausiert und wird erst nach vollstaendiger Bereitschaft ersetzt.
+  if (zustand.videoId) {
+    zustand.position = positionJetzt(zustand);
+    zustand.playing = false;
+    zustand.updatedAt = Date.now();
+    zustand.rev += 1;
+    zustand.hooks.verteilen?.(nachAussen(code, zustand, {
+      type: "ytevent", action: "pause", reason: "queue-prepare", startId: pending.startId
+    }), pending.targets);
+  }
+  for (const id of pending.targets) {
+    const mitglied = zustand.members.get(id);
+    if (!mitglied) continue;
+    zustand.hooks.sendenAn(id, zustand.queue.startNachricht(
+      akteur({ geraetId: id, name: mitglied.name, konto: mitglied.konto }),
+      { type: "ytqueue:start", room: code }
+    ));
+  }
+}
+
+function queueStartAbbrechen(code, pending, reason) {
+  const zustand = raeume.get(code);
+  if (!zustand?.hooks?.sendenAn || !pending) return;
+  for (const id of pending.targets) {
+    zustand.hooks.sendenAn(id, {
+      type: "ytqueue:cancel", room: code, startId: pending.startId,
+      reason: text(reason, 80), fromVideoId: text(pending.context?.fromVideoId, 24)
+    });
+  }
+}
+
+function queueStartAnwenden(code, pending) {
+  const zustand = raeume.get(code);
+  const daten = pending?.entry?.data;
+  if (!zustand || !daten) return;
+  zustand.videoId = daten.videoId;
+  zustand.url = daten.url;
+  zustand.title = daten.title;
+  zustand.position = 0;
+  zustand.playing = true;
+  zustand.updatedAt = Date.now();
+  zustand.rev += 1;
+  zustand.byId = pending.entry.proposedById;
+  zustand.byName = pending.entry.proposedByName;
+  zustand.hooks?.verteilen?.(nachAussen(code, zustand, {
+    type: "ytevent", action: "video", reason: "queue-change", startId: pending.startId
+  }), pending.targets);
+}
+
 // Eine Nachricht aus dem Netz wird zum neuen Zustand des Raums - oder nicht.
 //
 // Abgewiesen wird alles, was nicht zur laufenden Runde gehoert. Der wichtigste
@@ -187,22 +303,26 @@ function ereignisAnwenden(zustand, nachricht, geraetId, name) {
 //
 // `senden` geht an den Absender, `verteilen(nachricht, ids)` an alle
 // Verbindungen des Raums, deren Geraetekennung in `ids` steht.
-function behandeln({ nachricht, raumcode, geraetId, name, senden, verteilen }) {
+function behandeln({ nachricht, raumcode, geraetId, name, konto, senden, sendenAn, verteilen, speichern }) {
   const art = String((nachricht && nachricht.type) || "");
   if (!art.startsWith("yt")) return false;
   if (!raumcode || !geraetId) return true;
 
   const zustand = raumHolen(raumcode);
+  zustand.hooks = { senden, sendenAn, verteilen, speichern };
+  const actor = akteur({ geraetId, name: text(name, 40) || "Gerät", konto });
 
   if (art === "ytjoin") {
     if (!zustand.members.has(geraetId) && zustand.members.size >= MAX_MITGLIEDER) {
       senden({ type: "yterror", room: raumcode, message: "Diese YouTube-Runde ist voll" });
       return true;
     }
-    zustand.members.set(geraetId, { name: text(name, 40) || "Gerät", at: Date.now() });
+    zustand.members.set(geraetId, { name: text(name, 40) || "Gerät", konto: text(konto, 64), at: Date.now() });
     // Alle bekommen den Stand: die Mitgliederliste hat sich fuer jeden
     // geaendert, und der Neue braucht ohnehin das ganze Bild.
     verteilen(nachAussen(raumcode, zustand, { reason: "join" }), mitgliedIds(zustand));
+    queueStandSenden(raumcode, "join");
+    queueStandAn(raumcode, geraetId);
     return true;
   }
 
@@ -220,8 +340,49 @@ function behandeln({ nachricht, raumcode, geraetId, name, senden, verteilen }) {
   // fragt. Nichts wird dabei nachgereicht, was dieses Geraet in der Zwischen-
   // zeit getan hat - alte Ereignisse sind vorbei.
   if (art === "ytsync") {
-    zustand.members.set(geraetId, { name: text(name, 40) || "Gerät", at: Date.now() });
+    zustand.members.set(geraetId, { name: text(name, 40) || "Gerät", konto: text(konto, 64), at: Date.now() });
     senden(nachAussen(raumcode, zustand, { reason: "resync" }));
+    queueStandAn(raumcode, geraetId, "resync");
+    return true;
+  }
+
+  if (art === "ytqueue:propose") {
+    if (!zustand.members.has(geraetId)) return true;
+    const ergebnis = zustand.queue.vorschlagen(nachricht.item, actor);
+    if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
+    else if (ergebnis.unchanged) queueStandAn(raumcode, geraetId);
+    return true;
+  }
+  if (art === "ytqueue:vote") {
+    if (!zustand.members.has(geraetId)) return true;
+    const ergebnis = zustand.queue.abstimmen(nachricht.id, nachricht.value !== false, actor);
+    if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
+    else if (ergebnis.unchanged) queueStandAn(raumcode, geraetId);
+    return true;
+  }
+  if (art === "ytqueue:remove") {
+    if (!zustand.members.has(geraetId)) return true;
+    const ergebnis = zustand.queue.entfernen(nachricht.id, actor);
+    if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
+    return true;
+  }
+  if (art === "ytqueue:advance") {
+    const fromVideoId = text(nachricht.fromVideoId, 24);
+    if (!zustand.members.has(geraetId)
+      || (fromVideoId && fromVideoId !== zustand.videoId)) {
+      queueStandAn(raumcode, geraetId, "source-changed");
+      return true;
+    }
+    const ziele = fromVideoId ? mitgliedIds(zustand) : new Set([geraetId]);
+    const ergebnis = zustand.queue.starten(nachricht.expectedId,
+      { fromVideoId }, ziele, actor);
+    if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
+    return true;
+  }
+  if (art === "ytqueue:started") {
+    if (!zustand.members.has(geraetId)) return true;
+    const ergebnis = zustand.queue.gestartet(nachricht.startId, nachricht.ok !== false, geraetId);
+    if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
     return true;
   }
 
@@ -251,7 +412,25 @@ function abmelden({ raumcode, geraetId, verteilen }) {
 
 function aufraeumen(jetzt = Date.now()) {
   for (const [code, zustand] of raeume) {
-    if (zustand.members.size === 0 && jetzt - zustand.at > RAUM_LEBENSDAUER_MS) raeume.delete(code);
+    if (zustand.members.size === 0 && !zustand.queue?.hatInhalt()
+      && jetzt - zustand.at > RAUM_LEBENSDAUER_MS) raeume.delete(code);
+  }
+}
+
+function warteschlangenLesen() {
+  const roh = {};
+  for (const [code, zustand] of raeume) {
+    if (zustand.queue?.hatInhalt()) roh[code] = zustand.queue.serialisieren();
+  }
+  return roh;
+}
+
+function warteschlangenLaden(roh) {
+  for (const [code, queue] of Object.entries(roh && typeof roh === "object" ? roh : {})) {
+    const sauber = text(code, 64);
+    if (!sauber) continue;
+    const raum = raumHolen(sauber);
+    raum.queue.laden(queue);
   }
 }
 
@@ -266,6 +445,7 @@ function anzahl() {
 }
 
 function zuruecksetzen() {
+  for (const zustand of raeume.values()) zustand.queue?.timerLoeschen?.();
   raeume.clear();
 }
 
@@ -280,5 +460,7 @@ module.exports = {
   aufraeumen,
   zustandLesen,
   anzahl,
+  warteschlangenLesen,
+  warteschlangenLaden,
   zuruecksetzen
 };

@@ -22,6 +22,13 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getPersonalRecommendations: (options = {}) => ipcRenderer.invoke("discover:personal", options),
   onPersonalUpdated: (callback) => ipcRenderer.on("discover:personal-updated", () => callback()),
   getPersonalPage: (options = {}) => ipcRenderer.invoke("discover:personal-page", options),
+  getRoomQueue: (room, mode) => ipcRenderer.invoke("watchparty:queue", room, mode),
+  roomQueueCommand: (room, mode, command, payload) => ipcRenderer.invoke("watchparty:queue-command", room, mode, command, payload),
+  onRoomQueue: (callback) => {
+    const handler = (_event, state) => callback(state);
+    ipcRenderer.on("watchparty:queue-state", handler);
+    return () => ipcRenderer.removeListener("watchparty:queue-state", handler);
+  },
   getWatchpartyStatus: () => ipcRenderer.invoke("watchparty:status"),
   getWatchpartyItems: () => ipcRenderer.invoke("watchparty:items"),
   openWatchpartyItem: (key, room) => ipcRenderer.invoke("watchparty:open", key, room),

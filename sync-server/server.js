@@ -23,6 +23,7 @@ const metadaten = require("./metadaten");
 // Die YouTube-Watchparty. Ein eigenes Modul mit eigenem Zustand - es teilt sich
 // mit der Titelverwaltung nur die Verbindung und den Raumcode.
 const youtubeParty = require("./youtube-party");
+const { AbstimmungsWarteschlange } = require("./warteschlange");
 // Der Abgleich zwischen den Geraeten einer Person. Er faehrt auf denselben
 // Verbindungen, kennt aber weder Raeume noch Titel - nur Kennungen und
 // verschlossene Klumpen. Was er sieht und was nicht, steht in geraete.js.
@@ -82,6 +83,7 @@ const GRAB_LEBENSDAUER_MS = 30 * 24 * 60 * 60 * 1000;
 // Mehr Grabsteine als Titel braucht kein Raum. Der aelteste faellt heraus.
 const MAX_GRAEBER_JE_RAUM = 200;
 const MAX_NACHRICHT = 256 * 1024;
+const MAX_SPOILER_FOLGEN = 3000;
 
 // Die Fassung dieses Relays.
 //
@@ -168,7 +170,7 @@ function raumHolen(code) {
     vorhanden.at = Date.now();
     return vorhanden;
   }
-  const neu = { titel: new Map(), graeber: new Map(), at: Date.now() };
+  const neu = { titel: new Map(), graeber: new Map(), warteschlange: warteschlangeAnlegen(code), at: Date.now() };
   raeume.set(code, neu);
   return neu;
 }
@@ -191,7 +193,9 @@ function zustandLaden() {
         members: new Map(Array.isArray(eintrag.members) ? eintrag.members : []),
         // Nie aus der Datei uebernehmen: als einfaches Objekt waere es keine
         // Map und der erste Eintrag wuerde den Dienst abraeumen.
-        stand: new Map()
+        stand: new Map(),
+        spoiler: new Map(),
+        spoilerWartet: new Set()
       });
     }
     const graeber = new Map();
@@ -199,7 +203,9 @@ function zustandLaden() {
       if (!grab?.key) continue;
       graeber.set(String(grab.key), Number(grab.at) || Date.now());
     }
-    raeume.set(code, { titel, graeber, at: Number(raum?.at) || Date.now() });
+    const warteschlange = warteschlangeAnlegen(code);
+    warteschlange.laden(raum?.queue);
+    raeume.set(code, { titel, graeber, warteschlange, at: Number(raum?.at) || Date.now() });
   }
   for (const eintrag of Array.isArray(roh?.identitaeten) ? roh.identitaeten : []) {
     const fingerabdruck = text(eintrag?.fingerabdruck, 64);
@@ -213,6 +219,7 @@ function zustandLaden() {
         ? eintrag.konto : ""
     });
   }
+  youtubeParty.warteschlangenLaden?.(roh?.youtubeQueues);
   geraete.zustandSetzen(roh?.geraete);
   console.log(`Zustand geladen: ${raeume.size} Raum/Raeume, ${geraete.anzahl()} Geraeteschluessel`);
 }
@@ -224,6 +231,7 @@ function zustandSpeichernSpaeter() {
     const roh = {
       raeume: {},
       geraete: geraete.zustandLesen(),
+      youtubeQueues: youtubeParty.warteschlangenLesen?.() || {},
       identitaeten: [...identitaeten].map(([fingerabdruck, eintrag]) => ({
         fingerabdruck,
         geraetId: eintrag.geraetId,
@@ -236,6 +244,7 @@ function zustandSpeichernSpaeter() {
         // Grabsteine gehoeren auf die Platte: ihr ganzer Zweck ist, einen
         // Neustart und ein Geraet zu ueberleben, das eine Woche aus war.
         graeber: [...(raum.graeber || new Map()).entries()].map(([key, at]) => ({ key, at })),
+        queue: raum.warteschlange?.serialisieren(),
         titel: [...raum.titel.values()].map((eintrag) => ({
           ...eintrag,
           // Laufender Abgleich, sein Zeitgeber und der Stand je Geraet sind
@@ -244,7 +253,9 @@ function zustandSpeichernSpaeter() {
           syncTimer: undefined,
           stand: undefined,
           standTimer: undefined,
-          standGesendet: undefined,
+            standGesendet: undefined,
+            spoiler: undefined,
+            spoilerWartet: undefined,
           pauseAusgerichtet: undefined,
           // Host und letzte Aktion ergeben sich aus den lebenden Meldungen -
           // gespeichert waeren sie beim naechsten Start sofort falsch.
@@ -315,7 +326,10 @@ function text(value, laenge) {
 
 function nachrichtIstObjekt(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-    && typeof value.type === "string" && /^[a-z][a-z0-9-]{0,31}$/.test(value.type);
+    // Namespaces trennen die beiden Queue-Protokolle vom alten flachen
+    // Nachrichtensatz. Nur der Doppelpunkt kommt neu hinzu; Leerraum,
+    // Schraegstriche und Steuerzeichen bleiben weiterhin ausgeschlossen.
+    && typeof value.type === "string" && /^[a-z][a-z0-9:-]{0,31}$/.test(value.type);
 }
 
 function nachweisFingerabdruck(value) {
@@ -428,6 +442,48 @@ function titelSaeubern(roh) {
     season: zahl(roh?.season, 999),
     episode: zahl(roh?.episode, 9999)
   };
+}
+
+function akteurFuer(socket) {
+  if (!socket?.geraetId) return null;
+  return {
+    principal: socket.konto ? `konto:${socket.konto}` : `geraet:${socket.geraetId}`,
+    id: socket.geraetId,
+    name: socket.name || "Gerät"
+  };
+}
+
+function warteschlangeAnlegen(code) {
+  return new AbstimmungsWarteschlange({
+    art: "title",
+    saeubern: titelSaeubern,
+    schluessel: (eintrag) => eintrag.key,
+    onChange: () => {
+      warteschlangeSenden(code);
+      zustandSpeichernSpaeter();
+    },
+    onStart: (pending) => warteschlangenStartSenden(code, pending),
+    onReady: (pending, bereit) => warteschlangenStartVorbereiten(code, pending, bereit),
+    onCancel: (pending, reason) => warteschlangenStartAbbrechen(code, pending, reason)
+  });
+}
+
+function spoilerFolgenSaeubern(roh) {
+  if (!Array.isArray(roh)) return [];
+  const gesehen = new Set();
+  const folgen = [];
+  for (const wert of roh) {
+    if (!Array.isArray(wert) || wert.length < 2) continue;
+    const season = zahl(wert[0], 999);
+    const episode = zahl(wert[1], 9999);
+    if (!episode) continue;
+    const key = `${season}:${episode}`;
+    if (gesehen.has(key)) continue;
+    gesehen.add(key);
+    folgen.push([season, episode]);
+    if (folgen.length >= MAX_SPOILER_FOLGEN) break;
+  }
+  return folgen.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 }
 
 function fortschrittSaeubern(roh) {
@@ -629,7 +685,7 @@ const server = http.createServer((req, res) => {
       // "geraete" heisst: dieses Relay kennt den Abgleich zwischen den
       // Geraeten einer Person. Ohne den Eintrag laeuft dort drueben eine
       // aeltere Fassung, und die App wartet auf einen Zustand, der nie kommt.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "chat", "geraete",
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "queue", "ytqueue", "spoilerstate", "chat", "geraete",
         // "tempo" heisst: der Host stellt Geschwindigkeit und Fassung fuer die
         // ganze Runde. Fehlt der Eintrag, laeuft drueben ein aelteres Relay -
         // es wirft beide Befehle weg, und jeder bleibt bei seiner Einstellung.
@@ -722,6 +778,155 @@ function anMitgliederSenden(raumcode, nachricht, ids) {
     if (!ids.has(client.geraetId)) continue;
     client.send(daten);
   }
+}
+
+function warteschlangeSenden(raumcode, reason = "") {
+  const queue = raeume.get(raumcode)?.warteschlange;
+  if (!queue) return;
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    client.send(JSON.stringify({ type: "queue:state", room: raumcode,
+      ...queue.zustand(akteurFuer(client), reason ? { reason } : {}) }));
+  }
+}
+
+function warteschlangeAnSocket(socket, reason = "") {
+  const queue = raeume.get(socket.raum)?.warteschlange;
+  if (!queue || socket.readyState !== socket.OPEN) return;
+  socket.send(JSON.stringify({ type: "queue:state", room: socket.raum,
+    ...queue.zustand(akteurFuer(socket), reason ? { reason } : {}) }));
+  if (queue.istStartZiel(socket.geraetId)) {
+    socket.send(JSON.stringify(queue.startNachricht(akteurFuer(socket), {
+      type: "queue:start", room: socket.raum, replay: true
+    })));
+  }
+}
+
+function warteschlangenStartSenden(raumcode, pending) {
+  const raum = raeume.get(raumcode);
+  if (!raum || !pending?.entry?.data) return;
+  const daten = pending.entry.data;
+  // Der Titel bleibt bis zu allen Lade-ACKs vollstaendig unangetastet. Die
+  // Clients haben den validierten Eintrag in queue:start; die serverseitige
+  // Mitgliedschaft wird unmittelbar vor syncprepare materialisiert.
+  pending.context.targetKey = daten.key;
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN
+      || !pending.targets.has(client.geraetId)) continue;
+    client.send(JSON.stringify(raum.warteschlange.startNachricht(akteurFuer(client), {
+      type: "queue:start", room: raumcode
+    })));
+  }
+}
+
+function warteschlangenStartAbbrechen(raumcode, pending, reason) {
+  const raum = raeume.get(raumcode);
+  if (!raum || !pending) return;
+  const targetKey = pending.context?.targetKey || pending.entry?.data?.key || "";
+  const nachricht = {
+    type: "queue:cancel", room: raumcode, startId: pending.startId,
+    reason: text(reason, 80), fromKey: text(pending.context?.fromKey, 300),
+    targetKey: text(targetKey, 300)
+  };
+  anMitgliederSenden(raumcode, nachricht, pending.targets);
+  zustandSenden(raumcode);
+}
+
+function warteschlangenStartVorbereiten(raumcode, pending, bereit) {
+  const raum = raeume.get(raumcode);
+  if (!raum || !bereit?.size || !pending?.entry?.data) return;
+  const daten = pending.entry.data;
+  let eintrag = raum.titel.get(pending.context?.targetKey || daten.key);
+  if (!eintrag) {
+    eintrag = {
+      ...daten,
+      addedBy: pending.entry.proposedByName,
+      addedById: pending.entry.proposedById,
+      addedByKonto: pending.entry.proposedBy.startsWith("konto:")
+        ? pending.entry.proposedBy.slice("konto:".length) : "",
+      addedAt: new Date(pending.entry.proposedAt).toISOString(),
+      members: new Map(), spoiler: new Map(), spoilerWartet: new Set(),
+      archived: false, progress: null
+    };
+    raum.titel.set(daten.key, eintrag);
+  }
+  if (!(eintrag.members instanceof Map)) eintrag.members = new Map();
+  if (!(eintrag.spoiler instanceof Map)) eintrag.spoiler = new Map();
+  if (!(eintrag.spoilerWartet instanceof Set)) eintrag.spoilerWartet = new Set();
+  const quelle = raum.titel.get(pending.context?.fromKey);
+  for (const id of pending.targets) {
+    if (eintrag.members.has(id)) continue;
+    const verbunden = [...wss.clients].find((client) => client.raum === raumcode && client.geraetId === id);
+    eintrag.members.set(id, quelle?.members?.get(id) || verbunden?.name || "Gerät");
+  }
+  // Erst nachdem wirklich alle Zielgeraete den pausierten Inhalt bestaetigt
+  // haben, wird er zum gemeinsamen Raumstand. Ein NACK oder Timeout kann
+  // dadurch weder alten Fortschritt noch eine andere aktive Gruppe zerstoeren.
+  clearTimeout(eintrag.syncTimer);
+  eintrag.url = daten.url;
+  eintrag.title = daten.title || eintrag.title;
+  eintrag.providerName = daten.providerName || eintrag.providerName;
+  eintrag.thumbnail = daten.thumbnail || eintrag.thumbnail;
+  eintrag.type = daten.type || eintrag.type;
+  eintrag.season = daten.season || 0;
+  eintrag.episode = daten.episode || 0;
+  eintrag.archived = false;
+  fortschrittAufFolge(eintrag, 0, "Warteschlange");
+  eintrag.live = { action: "navigate", position: 0, url: daten.url, at: Date.now() };
+  eintrag.sync = null;
+  eintrag.syncTimer = null;
+  eintrag.startAt = 0;
+  eintrag.letzteAktion = null;
+  eintrag.hostId = [...bereit][0] || "";
+  eintrag.hostGesehen = Date.now();
+  eintrag.nachgezogen = new Map();
+  for (const id of bereit) {
+    standSetzen(eintrag, id, eintrag.members.get(id), {
+      position: 0, paused: true, season: eintrag.season, episode: eintrag.episode
+    });
+  }
+  syncVorbereiten(raumcode, eintrag, 0, "Warteschlange", [...bereit][0], {
+    aktion: "play", grund: "queue-change", mitgliedIds: bereit
+  });
+}
+
+function spoilerStand(eintrag) {
+  if (!eintrag) return { ids: new Set(), known: false, completed: [], unknownCount: 0 };
+  if (!(eintrag.spoiler instanceof Map)) eintrag.spoiler = new Map();
+  const aktiv = new Set();
+  for (const [id, wert] of eintrag.stand || new Map()) {
+    if (wert && Date.now() - (wert.at || 0) <= STAND_FRISCH_MS) aktiv.add(id);
+  }
+  for (const id of eintrag.spoilerWartet || new Set()) {
+    if (eintrag.members?.has(id)) aktiv.add(id);
+  }
+  let schnitt = null;
+  let unbekannt = 0;
+  for (const id of aktiv) {
+    const menge = eintrag.spoiler.get(id);
+    if (!(menge instanceof Set)) {
+      unbekannt += 1;
+      continue;
+    }
+    if (schnitt === null) schnitt = new Set(menge);
+    else for (const folge of schnitt) if (!menge.has(folge)) schnitt.delete(folge);
+  }
+  const completed = unbekannt || schnitt === null ? [] : [...schnitt]
+    .map((wert) => wert.split(":").map(Number))
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return { ids: aktiv, known: aktiv.size > 0 && unbekannt === 0, completed, unknownCount: unbekannt };
+}
+
+function spoilerStandSenden(raumcode, eintrag) {
+  const stand = spoilerStand(eintrag);
+  const daten = {
+    type: "spoilerstate", room: raumcode, key: eintrag.key,
+    known: stand.known, completed: stand.completed, unknownCount: stand.unknownCount
+  };
+  const merkmal = JSON.stringify(daten);
+  if (eintrag.spoilerGesendet === merkmal) return;
+  eintrag.spoilerGesendet = merkmal;
+  anMitgliederSenden(raumcode, daten, stand.ids);
 }
 
 // An die uebrigen Geraete desselben Schluessels. Sie haengen an keinem
@@ -1279,12 +1484,14 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   // selbst zaehlt immer mit: sein Play ist der frische Beleg dafuer, dass sein
   // Player diese Folge hat, auch wenn sein naechster Herzschlag noch unterwegs
   // ist.
-  const aktiveIds = optionen.alleVerbunden
-    ? new Set(eintrag.members.keys())
-    : new Set(
-      aktiveTeilnehmer(raumcode, eintrag, eintrag.season, eintrag.episode)
-        .map((teilnehmer) => teilnehmer.geraetId)
-    );
+  const aktiveIds = optionen.mitgliedIds instanceof Set
+    ? new Set(optionen.mitgliedIds)
+    : optionen.alleVerbunden
+      ? new Set(eintrag.members.keys())
+      : new Set(
+        aktiveTeilnehmer(raumcode, eintrag, eintrag.season, eintrag.episode)
+          .map((teilnehmer) => teilnehmer.geraetId)
+      );
   aktiveIds.add(userId);
   const mitglieder = offeneSyncTeilnehmer(raumcode, eintrag)
     .filter((client) => aktiveIds.has(client.geraetId));
@@ -1295,7 +1502,14 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   eintrag.letzteAktion = {
     type: optionen.aktion || "play", userId, name: von, timestamp: Date.now()
   };
-  standFuerAlle(eintrag, ziel, true);
+  if (optionen.mitgliedIds instanceof Set) {
+    for (const geraetId of aktiveIds) {
+      if (!eintrag.members.has(geraetId)) continue;
+      standSetzen(eintrag, geraetId, eintrag.members.get(geraetId), { position: ziel, paused: true });
+    }
+  } else {
+    standFuerAlle(eintrag, ziel, true);
+  }
 
   const jetzt = Date.now();
   const daten = JSON.stringify({
@@ -1321,7 +1535,8 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
     ziel,
     frameTime,
     vorbereitung: daten,
-    wartetAuf: new Set(mitglieder.map((client) => client.geraetId))
+    wartetAuf: new Set(mitglieder.map((client) => client.geraetId)),
+    mitgliedIds: optionen.mitgliedIds instanceof Set ? new Set(aktiveIds) : null
   };
   for (const client of mitglieder) client.send(daten);
   standSenden(raumcode, eintrag);
@@ -1342,6 +1557,7 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
       episodeId: folgenKennung(eintrag.season, eintrag.episode),
       hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-timeout" });
     for (const client of offeneSyncTeilnehmer(raumcode, eintrag)) {
+      if (optionen.mitgliedIds instanceof Set && !aktiveIds.has(client.geraetId)) continue;
       // Clear pending start controls too, including clients that reconnected
       // while this generation was seeking or loading.
       client.send(pause);
@@ -1358,6 +1574,7 @@ function syncStarten(raumcode, eintrag) {
   const syncId = eintrag.sync.id;
   const ziel = eintrag.sync.ziel;
   const frameTime = eintrag.sync.frameTime;
+  const mitgliedIds = eintrag.sync.mitgliedIds;
   clearTimeout(eintrag.syncTimer);
   eintrag.sync = null;
   // Nach dem letzten "bereit" braucht jeder noch denselben kurzen Vorlauf,
@@ -1394,9 +1611,17 @@ function syncStarten(raumcode, eintrag) {
   for (const client of wss.clients) {
     if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
     if (!eintrag.members.has(client.geraetId)) continue;
+    if (mitgliedIds instanceof Set && !mitgliedIds.has(client.geraetId)) continue;
     client.send(daten);
   }
-  standFuerAlle(eintrag, ziel, false);
+  if (mitgliedIds instanceof Set) {
+    for (const geraetId of mitgliedIds) {
+      if (!eintrag.members.has(geraetId)) continue;
+      standSetzen(eintrag, geraetId, eintrag.members.get(geraetId), { position: ziel, paused: false });
+    }
+  } else {
+    standFuerAlle(eintrag, ziel, false);
+  }
   standSenden(raumcode, eintrag);
 }
 
@@ -1523,7 +1748,16 @@ wss.on("connection", (socket) => {
       socket.konto = identitaet.konto || "";
       const raum = raumHolen(socket.raum);
       namenNachziehen(raum, socket.geraetId, socket.name);
+      for (const eintrag of raum.titel.values()) {
+        if (!eintrag.members.has(socket.geraetId)) continue;
+        if (!(eintrag.spoilerWartet instanceof Set)) eintrag.spoilerWartet = new Set();
+        eintrag.spoilerWartet.add(socket.geraetId);
+      }
       zustandSenden(socket.raum);
+      warteschlangeAnSocket(socket, "join");
+      for (const eintrag of raum.titel.values()) {
+        if (eintrag.members.has(socket.geraetId)) spoilerStandSenden(socket.raum, eintrag);
+      }
       // War dieses Geraet schon eingetreten, setzt ein Wiederanschluss genau
       // die laufende Vorbereitung fort. Die Mitgliedschaft stammt aus dem
       // Relayzustand, nicht aus einer Behauptung des neuen Sockets.
@@ -1545,13 +1779,80 @@ wss.on("connection", (socket) => {
         raumcode: socket.raum,
         geraetId: socket.geraetId,
         name: socket.name,
+        konto: socket.konto,
         senden,
+        sendenAn: (id, antwort) => anMitgliederSenden(socket.raum, antwort, new Set([id])),
+        speichern: zustandSpeichernSpaeter,
         verteilen: (antwort, ids) => anMitgliederSenden(socket.raum, antwort, ids)
       });
       return;
     }
 
     const raum = raumHolen(socket.raum);
+
+    if (nachricht.type === "queue:propose") {
+      const ergebnis = raum.warteschlange.vorschlagen(nachricht.item, akteurFuer(socket));
+      if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
+      else if (ergebnis.unchanged) warteschlangeAnSocket(socket);
+      return;
+    }
+
+    if (nachricht.type === "queue:vote") {
+      const ergebnis = raum.warteschlange.abstimmen(nachricht.id, nachricht.value !== false, akteurFuer(socket));
+      if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
+      else if (ergebnis.unchanged) warteschlangeAnSocket(socket);
+      return;
+    }
+
+    if (nachricht.type === "queue:remove") {
+      const ergebnis = raum.warteschlange.entfernen(nachricht.id, akteurFuer(socket));
+      if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
+      return;
+    }
+
+    if (nachricht.type === "queue:advance") {
+      const fromKey = text(nachricht.fromKey, 300);
+      const quelle = fromKey ? raum.titel.get(fromKey) : null;
+      if (fromKey && (!quelle || !quelle.members.has(socket.geraetId))) {
+        warteschlangeAnSocket(socket, "not-joined-source");
+        return;
+      }
+      const ziele = new Set();
+      if (quelle) {
+        const jetzt = Date.now();
+        for (const client of wss.clients) {
+          const stand = quelle.stand?.get(client.geraetId);
+          if (client.raum === socket.raum && client.readyState === client.OPEN
+            && quelle.members.has(client.geraetId) && stand
+            && jetzt - (stand.at || 0) <= STAND_FRISCH_MS) ziele.add(client.geraetId);
+        }
+      }
+      // Ein ausdruecklicher Start aus einer ruhenden Runde ist erlaubt. Er
+      // betrifft nur den Ausloeser und zieht keinen bloss verbundenen Browser mit.
+      ziele.add(socket.geraetId);
+      const ergebnis = raum.warteschlange.starten(nachricht.expectedId, { fromKey }, ziele, akteurFuer(socket));
+      if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
+      return;
+    }
+
+    if (nachricht.type === "queue:started") {
+      const ergebnis = raum.warteschlange.gestartet(nachricht.startId, nachricht.ok !== false, socket.geraetId);
+      if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
+      return;
+    }
+
+    if (nachricht.type === "spoilerstate") {
+      const eintrag = raum.titel.get(text(nachricht.key, 300));
+      if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      if (!(eintrag.spoiler instanceof Map)) eintrag.spoiler = new Map();
+      if (nachricht.completed === null) eintrag.spoiler.delete(socket.geraetId);
+      else {
+        const folgen = spoilerFolgenSaeubern(nachricht.completed);
+        eintrag.spoiler.set(socket.geraetId, new Set(folgen.map(([s, e]) => `${s}:${e}`)));
+      }
+      spoilerStandSenden(socket.raum, eintrag);
+      return;
+    }
 
     // Eine Serie in den Raum stellen. Wer sie einstellt, ist automatisch dabei.
     if (nachricht.type === "share") {
@@ -1581,6 +1882,8 @@ wss.on("connection", (socket) => {
         addedByKonto: socket.konto || "",
         addedAt: new Date().toISOString(),
         members: new Map(),
+        spoiler: new Map(),
+        spoilerWartet: new Set(),
         archived: false,
         progress: null
       };
@@ -1597,6 +1900,8 @@ wss.on("connection", (socket) => {
         gespeichert.addedByKonto = socket.konto;
       }
       gespeichert.members.set(socket.geraetId, socket.name);
+      if (!(gespeichert.spoilerWartet instanceof Set)) gespeichert.spoilerWartet = new Set();
+      gespeichert.spoilerWartet.add(socket.geraetId);
       raum.titel.set(eintrag.key, gespeichert);
       zustandSenden(socket.raum);
       return;
@@ -1628,9 +1933,13 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (nachricht.type === "enter") {
         eintrag.members.set(socket.geraetId, socket.name);
+        if (!(eintrag.spoilerWartet instanceof Set)) eintrag.spoilerWartet = new Set();
+        eintrag.spoilerWartet.add(socket.geraetId);
         syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
       } else {
         eintrag.members.delete(socket.geraetId);
+        eintrag.spoiler?.delete(socket.geraetId);
+        eintrag.spoilerWartet?.delete(socket.geraetId);
         syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId);
         // Der Stand geht mit: wer draussen ist, zaehlt nicht mehr als aktiv
         // und kann damit auch nicht mehr Host sein.
@@ -1639,6 +1948,7 @@ wss.on("connection", (socket) => {
       }
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
+      spoilerStandSenden(socket.raum, eintrag);
       return;
     }
 
@@ -1649,11 +1959,14 @@ wss.on("connection", (socket) => {
       if (!eintrag || eintrag.addedById !== socket.geraetId || !wen) return;
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
+      eintrag.spoiler?.delete(wen);
+      eintrag.spoilerWartet?.delete(wen);
       syncTeilnehmerEntfernen(socket.raum, eintrag, wen);
       eintrag.stand?.delete(wen);
       hostFreigeben(eintrag, wen);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
+      spoilerStandSenden(socket.raum, eintrag);
       return;
     }
 
@@ -1664,7 +1977,7 @@ wss.on("connection", (socket) => {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const aktion = text(nachricht.action, 10);
-      if (!["play", "pause", "seek", "navigate", "tempo", "fassung"].includes(aktion)) return;
+      if (!["play", "pause", "seek", "skip", "navigate", "tempo", "fassung"].includes(aktion)) return;
 
       const ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
@@ -1864,7 +2177,10 @@ wss.on("connection", (socket) => {
       // Der Folgenwechsel ist ausgenommen: eine neue Folge faengt bei null an,
       // und die Stelle des Hosts aus der alten Folge waere dort falsch.
       const hostStand = hostStandJetzt(socket.raum, eintrag);
-      const stelleVomHost = aktion !== "navigate" && !istHost && hostStand != null;
+      // Beim Ueberspringen zaehlt die Stelle dessen, der drueckt: er steht am
+      // Ende des Intros. Die des Hosts waere genau die, von der alle weg wollen.
+      const stelleVomHost = aktion !== "navigate" && aktion !== "skip"
+        && !istHost && hostStand != null;
       const quelle = stelleVomHost ? hostStand : eigen;
       const gemeinsam = aktion === "pause" ? Math.round(quelle * 1000) / 1000 : quelle;
 
@@ -1873,8 +2189,14 @@ wss.on("connection", (socket) => {
       // dann gibt es ein einziges syncstart mit einem zukuenftigen Zeitpunkt.
       // Das gilt auch fuer den Ausloeser. Sein lokaler Vorschlag ist nur eine
       // Bitte und darf keinen Vorsprung vor Android oder dem Desktop bekommen.
-      if (aktion === "play" && amRaumstand) {
-        syncVorbereiten(socket.raum, eintrag, gemeinsam, socket.name, socket.geraetId);
+      // Das Intro ueberspringen darf jeder - wie den Folgenwechsel. Es laeuft
+      // ueber genau dieselbe Startverabredung: alle halten am Ende des Intros,
+      // bestaetigen und fahren gemeinsam los. Damit bewegt auch der Sprung
+      // eines Gastes den Rundenstand, statt ihn beim naechsten Abgleich wieder
+      // einzusammeln - der Grund, aus dem `seek` beim Host bleibt.
+      if ((aktion === "play" || aktion === "skip") && amRaumstand) {
+        syncVorbereiten(socket.raum, eintrag, gemeinsam, socket.name, socket.geraetId,
+          aktion === "skip" ? { aktion: "skip" } : {});
         return;
       }
 
@@ -2119,6 +2441,23 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "here") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
+      // Ein Geraet hat genau einen aktuell offenen Player. Sobald es Titel B
+      // meldet, darf weder ein frischer Stand noch eine Freigabe/Unbekannt-
+      // Markierung aus Titel A weiter in dessen Spoilerschutz eingehen.
+      let vorherigerTitelWeg = false;
+      for (const anderer of raum.titel.values()) {
+        if (anderer === eintrag) continue;
+        const wartenWeg = Boolean(anderer.spoilerWartet?.delete(socket.geraetId));
+        const spoilerWeg = Boolean(anderer.spoiler?.delete(socket.geraetId));
+        const standWeg = Boolean(anderer.stand?.delete(socket.geraetId));
+        if (!wartenWeg && !spoilerWeg && !standWeg) continue;
+        hostFreigeben(anderer, socket.geraetId);
+        if (standWeg) standSenden(socket.raum, anderer);
+        spoilerStandSenden(socket.raum, anderer);
+        vorherigerTitelWeg = true;
+      }
+      if (vorherigerTitelWeg) zustandSenden(socket.raum);
+      eintrag.spoilerWartet?.delete(socket.geraetId);
       const vorher = eintrag.stand?.get(socket.geraetId);
       const pausiert = Boolean(nachricht.paused);
       const folge = zahl(nachricht.episode, 9999);
@@ -2500,6 +2839,9 @@ wss.on("connection", (socket) => {
 
       if (geaendert) standSenden(socket.raum, eintrag);
       else standSendenGedrosselt(socket.raum, eintrag);
+      // Der Inhalt der Meldung bleibt lokal; hinaus geht nur die Schnittmenge.
+      // Der Vergleich in spoilerStandSenden verhindert Netzverkehr je Positionstick.
+      spoilerStandSenden(socket.raum, eintrag);
       return;
     }
 
@@ -2535,12 +2877,26 @@ wss.on("connection", (socket) => {
 
     if (nachricht.type === "bye") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
-      if (!eintrag?.stand?.delete(socket.geraetId)) return;
+      if (!eintrag) return;
+      const standWeg = Boolean(eintrag.stand?.delete(socket.geraetId));
+      const spoilerWeg = Boolean(eintrag.spoiler?.delete(socket.geraetId));
+      const wartenWeg = Boolean(eintrag.spoilerWartet?.delete(socket.geraetId));
+      if (!standWeg && !spoilerWeg && !wartenWeg) return;
       // Wer die Folge verlaesst, gibt die Rolle ab - hier ist nichts unklar,
       // also auch keine Gnadenfrist.
       hostFreigeben(eintrag, socket.geraetId);
+      // Und er ist kein erwarteter Player einer laufenden Startverabredung
+      // mehr. Ohne diese Zeile blieb seine Geraete-ID in `wartetAuf` stehen,
+      // obwohl sein Player zu ist: die Runde wartete dann auf eine
+      // Bereitmeldung, die niemand mehr abgeben kann, und der gemeinsame
+      // Start blieb aus, obwohl alle anderen laengst in der neuen Folge
+      // standen. `leave` und `kick` raeumen dort seit jeher auf; `bye` war
+      // der einzige Weg aus einer Folge, der es nicht tat. Der eigene Socket
+      // zaehlt dabei nicht mehr mit: er ist noch im Raum, aber ohne Player.
+      syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId, socket);
       zustandSenden(socket.raum);
       standSenden(socket.raum, eintrag);
+      spoilerStandSenden(socket.raum, eintrag);
       return;
     }
 
@@ -2731,9 +3087,14 @@ wss.on("connection", (socket) => {
     let gewechselt = false;
     for (const eintrag of raum?.titel.values() || []) {
       syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId, socket);
+      const spoilerWeg = Boolean(eintrag.spoiler?.delete(socket.geraetId));
+      const wartenWeg = Boolean(eintrag.spoilerWartet?.delete(socket.geraetId));
       // Wer weg ist, steht auch nirgends mehr - sonst zeigt die Leiste eine
       // Sekunde von jemandem, der gar nicht mehr zuschaut.
-      if (eintrag.stand?.delete(socket.geraetId)) standSenden(socket.raum, eintrag);
+      if (eintrag.stand?.delete(socket.geraetId)) {
+        standSenden(socket.raum, eintrag);
+        spoilerStandSenden(socket.raum, eintrag);
+      } else if (spoilerWeg || wartenWeg) spoilerStandSenden(socket.raum, eintrag);
       // Wer die Verbindung verliert, ist nicht mehr aktiv - damit faellt er
       // aus der Host-Wahl und der naechste in dieser Folge rueckt nach.
       gewechselt = true;

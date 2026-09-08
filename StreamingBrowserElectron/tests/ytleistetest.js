@@ -63,7 +63,7 @@ function element() {
   };
 }
 
-const KNOEPFE = ["#favoriteButton", "#watchpartyShareButton", "#stopButton", "#fullscreenButton"];
+const KNOEPFE = ["#direktButton", "#favoriteButton", "#watchpartyShareButton", "#stopButton", "#fullscreenButton"];
 
 // Die Anbieter, wie die Oberflaeche sie kennt: zwei mit YouTube als
 // Startadresse, einer ohne.
@@ -73,12 +73,13 @@ const ANBIETER = [
   { id: "musik", name: "YouTube Music", startUrl: "https://music.youtube.com/" }
 ];
 
-function leiste(route, ytStatus) {
+function leiste(route, ytStatus, direktModus = true) {
   const knoten = new Map(KNOEPFE.map((auswahl) => [auswahl, element()]));
   const banner = element();
   const bannerText = element();
   const kontext = {
     currentRoute: route,
+    settings: { playback: { direktModus } },
     providers: ANBIETER,
     youtubePartyState: ytStatus,
     youtubePartyBanner: banner,
@@ -271,6 +272,17 @@ pruefe("Das Band oben sagt es ebenfalls",
 pruefe("Ohne Stoebern bleibt alles wie vorher",
   /Läuft bei/.test(statusText(LAEUFT))
   && leiste("provider:yt", LAEUFT).bannerText.textContent === "YouTube-Runde: läuft · Elias");
+
+for (const modus of [true, false]) {
+  for (const route of ["provider:yt", "provider:musik", "start", "search", "history"]) {
+    pruefe("Kein Direktknopf auf " + route + " (Direktmodus " + modus + ")",
+      leiste(route, LAEUFT, modus).versteckt("#direktButton"));
+  }
+}
+pruefe("Manueller ELFIX-Player bleibt auf Hoster-Seiten erreichbar",
+  !leiste("provider:aniworld", PRIVAT, false).versteckt("#direktButton"));
+pruefe("Automatischer Direktmodus braucht keinen zweiten Startknopf",
+  leiste("provider:aniworld", PRIVAT, true).versteckt("#direktButton"));
 
 const fehler = pruefungen.filter((ok) => !ok).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);

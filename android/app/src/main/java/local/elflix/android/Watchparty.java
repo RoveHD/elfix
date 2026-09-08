@@ -1512,6 +1512,21 @@ public final class Watchparty {
     }
 
     /**
+     * Materialisiert den vom Relay bereits in den Raum aufgenommenen Titel in
+     * der lokalen Ablage. Der Queue-Start wartet darauf, damit der neue Player
+     * sofort denselben Raumkontext und nicht versehentlich den privaten Eintrag
+     * derselben Serie verwendet.
+     */
+    public void raumEintragSichern(String key, String raum,
+                                   java.util.function.Consumer<String> nimm) {
+        if (bestand == null || key == null || key.isEmpty() || raum == null || raum.isEmpty()) {
+            nimm.accept("");
+            return;
+        }
+        bestand.raumEintragSichern(key, raum, anbieter, null, nimm);
+    }
+
+    /**
      * Den Host an ein anderes Geraet weitergeben.
      *
      * <p>Das Relay prueft noch einmal nach, ob der Empfaenger bei derselben

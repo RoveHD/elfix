@@ -330,8 +330,8 @@ const SKRIPT = seitendaten.uebersichtSkript();
     /public String unterschrift\(\)[\s\S]{0,400}?return staffelName\(staffel\) \+ "  ·  Folge " \+ nummer;/
       .test(UEBERSICHT));
   pruefe("Und die Liste zeichnet beides",
-    /name\.setText\(folge\.ueberschrift\(\)\)/.test(HAUPT2)
-      && /unter\.setText\(folge\.unterschrift\(\)\)/.test(HAUPT2));
+    /name\.setText\(sichtbar \? folge\.ueberschrift\(\) : "Folge " \+ folge\.nummer\)/.test(HAUPT2)
+      && /unter\.setText\(sichtbar \? spoilerFolgeUntertitel\(folge\) : "Details geschützt"\)/.test(HAUPT2));
 }
 
 /* ------------------------------- Und was keine Uebersicht bekommt ---------- */

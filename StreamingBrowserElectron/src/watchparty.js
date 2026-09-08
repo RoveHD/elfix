@@ -80,6 +80,50 @@ function peerListe(roh) {
   return Array.isArray(roh) ? roh.filter((wert) => typeof wert === "string").slice(0, 1000) : [];
 }
 
+function queueEintrag(roh) {
+  const sauber = geteilterEintrag(roh);
+  if (!sauber) return null;
+  sauber.id = nachrichtenText(roh.id, 64);
+  sauber.kind = nachrichtenText(roh.kind, 20) || "title";
+  sauber.proposedBy = nachrichtenText(roh.proposedBy, 40);
+  sauber.proposedById = nachrichtenText(roh.proposedById, 64);
+  sauber.proposedAt = nachrichtenZahl(roh.proposedAt, 0);
+  sauber.votes = Math.max(0, nachrichtenZahl(roh.votes, 0));
+  sauber.voted = roh.voted === true;
+  sauber.mine = roh.mine === true;
+  return sauber.id ? sauber : null;
+}
+
+function queueStand(roh, room) {
+  if (!datenObjekt(roh)) return null;
+  const pendingItem = queueEintrag(roh.pending?.item);
+  return {
+    room: nachrichtenText(roh.room, 64) || room,
+    rev: Math.max(0, nachrichtenZahl(roh.rev, 0)),
+    items: Array.isArray(roh.items) ? roh.items.map(queueEintrag).filter(Boolean).slice(0, 100) : [],
+    selectedId: nachrichtenText(roh.selectedId, 64),
+    reason: nachrichtenText(roh.reason, 80),
+    pending: pendingItem ? {
+      startId: nachrichtenText(roh.pending.startId, 64), item: pendingItem,
+      fromKey: nachrichtenText(roh.pending.fromKey, 300),
+      targetKey: nachrichtenText(roh.pending.targetKey, 300),
+      at: nachrichtenZahl(roh.pending.at, 0), expiresAt: nachrichtenZahl(roh.pending.expiresAt, 0)
+    } : null
+  };
+}
+
+function spoilerNachricht(roh, room) {
+  if (!datenObjekt(roh) || typeof roh.key !== "string") return null;
+  return {
+    type: "spoilerstate", room: nachrichtenText(roh.room, 64) || room,
+    key: nachrichtenText(roh.key, 300), known: roh.known === true,
+    completed: Array.isArray(roh.completed) ? roh.completed
+      .filter((wert) => Array.isArray(wert) && wert.length >= 2)
+      .slice(0, 3000).map((wert) => [nachrichtenZahl(wert[0], 0), nachrichtenZahl(wert[1], 0)]) : [],
+    unknownCount: Math.max(0, nachrichtenZahl(roh.unknownCount, 0))
+  };
+}
+
 class Watchparty {
   constructor(optionen = {}) {
     this.aufZustand = optionen.onState || (() => {});
@@ -95,6 +139,8 @@ class Watchparty {
     // Modul weiss nichts davon, was drueben damit geschieht, und drueben nichts
     // von Serien, Folgen und Host.
     this.aufYoutube = optionen.onYoutube || (() => {});
+    this.aufQueue = optionen.onQueue || (() => {});
+    this.aufSpoiler = optionen.onSpoiler || (() => {});
     this.aufChat = optionen.onChat || (() => {});
     // Leitung auf oder zu. Der YouTube-Modus meldet sich danach selbst wieder
     // an und holt den Raumzustand.
@@ -113,6 +159,8 @@ class Watchparty {
     this.verbunden = false;
     this.teilnehmer = [];
     this.geteilt = [];
+    this.queueZiele = new Map();
+    this.abstimmung = { room: "", rev: 0, items: [], selectedId: "", pending: null, reason: "" };
     this.letzterFehler = "";
     this.versuche = 0;
     this.reconnectTimer = 0;
@@ -137,12 +185,13 @@ class Watchparty {
       connected: this.verbunden,
       room: this.raum,
       peers: this.teilnehmer,
+      queue: this.queueStatus(),
       error: this.letzterFehler
     };
   }
 
   // Alle geteilten Serien, jeweils mit der Angabe, ob dieses Geraet dabei ist.
-  eintraege() {
+  serverEintraege() {
     return this.geteilt.map((eintrag) => ({
       ...eintrag,
       // Der Raum gehoert an den Eintrag: laufen mehrere nebeneinander, muss
@@ -157,6 +206,17 @@ class Watchparty {
       // Geraetenachweise duerfen dafuer niemals im Raumzustand auftauchen.
       mine: eintrag.mine === true
     }));
+  }
+
+  // Ein Queue-Ziel ist zwischen queue:start und allen Lade-ACKs noch kein
+  // Relayzustand. Der Ladepfad muss es trotzdem synchron finden koennen. Das
+  // Overlay bleibt deshalb ausschliesslich auf dieser Leseflaeche; onState
+  // erhaelt weiterhin nur bestaetigte Servereintraege.
+  eintraege() {
+    const basis = this.serverEintraege();
+    if (!this.queueZiele.size) return basis;
+    const ziele = [...this.queueZiele.values()];
+    return basis.filter((eintrag) => !ziele.some((ziel) => ziel.key === eintrag.key)).concat(ziele);
   }
 
   istBeigetreten(key) {
@@ -177,6 +237,7 @@ class Watchparty {
     const gleich = this.serverUrl === neuerServer && this.raum === neuerRaum
       && this.name === neuerName && this.deviceSecret === neuerNachweis
       && this.konto === neuesKonto;
+    const andererRaum = this.serverUrl !== neuerServer || this.raum !== neuerRaum;
 
     this.serverUrl = neuerServer;
     this.raum = neuerRaum;
@@ -185,13 +246,17 @@ class Watchparty {
     this.deviceSecret = neuerNachweis;
     this.konto = neuesKonto;
     this.aktiv = Boolean(enabled) && Boolean(neuerServer) && Boolean(neuerRaum);
+    if (andererRaum) {
+      this.abstimmung = { room: neuerRaum, rev: 0, items: [], selectedId: "", pending: null, reason: "" };
+      this.queueZiele.clear();
+    }
     if (!gleich) this.unvereinbar = false;
 
     if (!this.aktiv) {
       this.trennen();
       this.geteilt = [];
       this.melde();
-      this.aufZustand(this.eintraege());
+      this.aufZustand(this.serverEintraege());
       return;
     }
     if (gleich && this.verbunden) {
@@ -258,6 +323,7 @@ class Watchparty {
       this.identitaetBestaetigt = false;
       this.socket = null;
       this.teilnehmer = [];
+      this.queueZiele.clear();
       if (warBestaetigt) this.aufVerbindung(false);
       this.uhrAnhalten();
       this.uhr = null;
@@ -365,6 +431,7 @@ class Watchparty {
     const warBestaetigt = this.identitaetBestaetigt;
     this.identitaetBestaetigt = false;
     this.teilnehmer = [];
+    this.queueZiele.clear();
     if (!socket) return;
     if (warBestaetigt) this.aufVerbindung(false);
     socket.onopen = null;
@@ -424,6 +491,59 @@ class Watchparty {
       return;
     }
 
+    if (nachricht?.type === "queue:state") {
+      const stand = queueStand(nachricht, this.raum);
+      if (!stand || stand.rev < this.abstimmung.rev) return;
+      this.abstimmung = stand;
+      this.aufQueue({ type: "queue:state", ...stand });
+      this.melde();
+      return;
+    }
+    if (nachricht?.type === "queue:start") {
+      const item = queueEintrag(nachricht.item);
+      if (!item) return;
+      const start = {
+        type: "queue:start", room: nachrichtenText(nachricht.room, 64) || this.raum,
+        startId: nachrichtenText(nachricht.startId, 64), item,
+        fromKey: nachrichtenText(nachricht.fromKey, 300),
+        targetKey: nachrichtenText(nachricht.targetKey, 300),
+        at: nachrichtenZahl(nachricht.at, 0), expiresAt: nachrichtenZahl(nachricht.expiresAt, 0),
+        replay: nachricht.replay === true
+      };
+      if (start.startId) {
+        const key = start.targetKey || item.key;
+        this.queueZiele.set(start.startId, {
+          ...item, key, room: start.room,
+          memberIds: [this.geraetId], members: [this.name],
+          progress: {
+            url: item.url, season: item.season || 0, episode: item.episode || 0,
+            position: 0, duration: 0, progress: 0
+          },
+          joined: true, myId: this.geraetId, myName: this.name,
+          mine: item.mine === true, queueProvisional: true
+        });
+      }
+      this.aufQueue(start);
+      return;
+    }
+    if (nachricht?.type === "queue:cancel") {
+      const abbruch = {
+        type: "queue:cancel", room: nachrichtenText(nachricht.room, 64) || this.raum,
+        startId: nachrichtenText(nachricht.startId, 64),
+        reason: nachrichtenText(nachricht.reason, 80),
+        fromKey: nachrichtenText(nachricht.fromKey, 300),
+        targetKey: nachrichtenText(nachricht.targetKey, 300)
+      };
+      this.queueZiele.delete(abbruch.startId);
+      this.aufQueue(abbruch);
+      return;
+    }
+    if (nachricht?.type === "spoilerstate") {
+      const stand = spoilerNachricht(nachricht, this.raum);
+      if (stand) this.aufSpoiler(stand);
+      return;
+    }
+
     if (nachricht?.type === "error") {
       this.letzterFehler = nachrichtenText(nachricht.message);
       this.melde();
@@ -463,9 +583,15 @@ class Watchparty {
         this.aufIdentitaet({ deviceId: this.geraetId, deviceSecret: this.deviceSecret });
         this.geteilt = Array.isArray(nachricht.shared)
           ? nachricht.shared.map(geteilterEintrag).filter(Boolean).slice(0, 1000) : [];
+        for (const [startId, ziel] of this.queueZiele) {
+          const bestaetigt = this.geteilt.find((eintrag) => eintrag.key === ziel.key
+            && Array.isArray(eintrag.memberIds) && eintrag.memberIds.includes(this.geraetId)
+            && String(eintrag.progress?.url || eintrag.url || "") === String(ziel.progress?.url || ziel.url || ""));
+          if (bestaetigt) this.queueZiele.delete(startId);
+        }
         if (Array.isArray(nachricht.peers)) this.teilnehmer = peerListe(nachricht.peers);
         this.melde();
-        this.aufZustand(this.eintraege());
+        this.aufZustand(this.serverEintraege());
         if (!warBestaetigt) {
           this.warteschlangeSenden();
           this.aufVerbindung(true);
@@ -515,7 +641,7 @@ class Watchparty {
           eintrag.progress = fortschritt;
           if (fortschritt.season) eintrag.season = fortschritt.season;
           if (fortschritt.episode) eintrag.episode = fortschritt.episode;
-          this.aufZustand(this.eintraege());
+          this.aufZustand(this.serverEintraege());
         }
         this.aufFortschritt(key, fortschritt);
       }
@@ -529,8 +655,38 @@ class Watchparty {
   // Der Ausgang der YouTube-Watchparty. Sie baut ihre Nachrichten selbst; hier
   // wird nur die Leitung geteilt.
   youtubeSenden(nachricht) {
-    if (!this.aktiv) return;
-    this.senden(nachricht);
+    if (!this.aktiv) return false;
+    return this.senden(nachricht);
+  }
+
+  queueStatus() {
+    return { ...this.abstimmung, items: this.abstimmung.items.slice(),
+      pending: this.abstimmung.pending ? { ...this.abstimmung.pending } : null };
+  }
+
+  queuePropose(item) {
+    return this.senden({ type: "queue:propose", item });
+  }
+
+  queueVote(id, value) {
+    return this.senden({ type: "queue:vote", id: String(id || ""), value: value !== false });
+  }
+
+  queueRemove(id) {
+    return this.senden({ type: "queue:remove", id: String(id || "") });
+  }
+
+  queueAdvance(expectedId, fromKey) {
+    return this.senden({ type: "queue:advance", expectedId: String(expectedId || ""), fromKey: String(fromKey || "") });
+  }
+
+  queueStarted(startId, ok) {
+    return this.senden({ type: "queue:started", startId: String(startId || ""), ok: ok !== false });
+  }
+
+  spoilerMelden(key, completed) {
+    return this.senden({ type: "spoilerstate", key: String(key || ""),
+      completed: completed === null ? null : completed });
   }
 
   chatSenden(zeile) {
@@ -668,12 +824,14 @@ class Watchparty {
   }
 
   senden(nachricht) {
-    if (!this.socket || this.socket.readyState !== 1) return;
-    if (!this.identitaetBestaetigt && !["join", "time"].includes(nachricht?.type)) return;
+    if (!this.socket || this.socket.readyState !== 1) return false;
+    if (!this.identitaetBestaetigt && !["join", "time"].includes(nachricht?.type)) return false;
     try {
       this.socket.send(JSON.stringify(nachricht));
+      return true;
     } catch {
       // Bricht die Leitung weg, uebernimmt onclose.
+      return false;
     }
   }
 
