@@ -2,11 +2,13 @@ package local.elflix.android;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.PictureInPictureParams;
 import android.app.UiModeManager;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.content.res.Configuration;
 import android.os.Bundle;
@@ -15,6 +17,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
+import android.util.Rational;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -73,6 +76,8 @@ public class MainActivity extends Activity {
     /** Die gemeinsame Geschaeftslogik, dieselbe wie am Desktop. Siehe Kern.java. */
     private Kern kern;
     private DirektWiedergabe direktWiedergabe;
+    /** PiP ist ein sichtbarer Wiedergabezustand, kein Verlassen der Sitzung. */
+    private boolean direktImPip;
     /** Ueberlebt den Austausch des nativen Players waehrend eines Relay-Folgenwechsels. */
     private String nativeFolgenBarriereSyncId = "";
     /** Eine Timeout-Generation sperrt noch ihren bereits laufenden Resolver-Callback. */
@@ -1397,15 +1402,14 @@ public class MainActivity extends Activity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        // Never touch the view tree while a video overlay is up: removing it would destroy the
-        // surface the video renders into. Entering fullscreen deliberately triggers a rotation, so
-        // this callback runs in the middle of that.
-        if (fullscreenView != null) {
-            return;
-        }
         lastConfigOrientation = newConfig.orientation;
         lastConfigWidthDp = newConfig.screenWidthDp;
         lastConfigHeightDp = newConfig.screenHeightDp;
+        // Never touch the view tree while a video overlay is up: removing it would destroy the
+        // surface the video renders into. Entering fullscreen and PiP deliberately trigger a
+        // configuration change in the middle of playback. Keep the new metrics, but leave both
+        // video surfaces attached instead of rebuilding currentScreen (which would close Direkt).
+        if (fullscreenView != null || direktWiedergabe != null) return;
         // Only the chrome depends on the width bucket, and only it gets rebuilt. `content` and the
         // provider WebViews inside it are never detached, so rotating cannot reload a page, drop a
         // session or interrupt playback.
@@ -3331,6 +3335,27 @@ public class MainActivity extends Activity {
         introStandHolen();
     }
 
+    /** Externe, normalisierte Segmente neben den weiterhin gelernten Marken. */
+    private void skipSegmenteKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        lebendeKarte(koerper, fernseher, luecke, "Vorspann und Abspann überspringen",
+            () -> skipSegmenteEingeschaltet()
+                ? "Erkannte Intros, Rückblicke, Abspänne und Vorschauen werden als Knopf angeboten."
+                : "Aus. Es werden keine externen Segmente abgefragt.",
+            () -> skipSegmenteEingeschaltet() ? "Ausschalten" : "Einschalten",
+            () -> {
+                setSkipSegmenteEingeschaltet(!skipSegmenteEingeschaltet());
+                einstellungenAuffrischen();
+            });
+    }
+
+    private boolean skipSegmenteEingeschaltet() {
+        return getSharedPreferences("elflix_settings", MODE_PRIVATE).getBoolean("skip_segments", true);
+    }
+
+    private void setSkipSegmenteEingeschaltet(boolean an) {
+        getSharedPreferences("elflix_settings", MODE_PRIVATE).edit().putBoolean("skip_segments", an).apply();
+    }
+
     /**
      * SponsorBlock - eine Karte fuer das Ganze, dann die Kategorien.
      *
@@ -3646,7 +3671,7 @@ public class MainActivity extends Activity {
                     - 2 * TvViews.SCREEN_PADDING + TvViews.ITEM_GAP) / (width + TvViews.ITEM_GAP));
                 LinearLayout row = null;
                 int shown = 0;
-                for (SearchResult result : found) {
+                for (SucheGruppen.Gruppe<SearchResult> gruppe : suchTrefferGruppen(found)) {
                     if (shown >= 24) break;
                     if (shown % perRow == 0) {
                         row = tvRow();
@@ -3655,25 +3680,72 @@ public class MainActivity extends Activity {
                         rowParams.topMargin = dp(TvViews.ITEM_GAP);
                         holder.addView(row, rowParams);
                     }
-                    String meta = result.genre == null || result.genre.isEmpty()
-                        ? result.provider.name : result.genre;
-                    // Ein Suchtreffer hat noch keinen Fortschritt und kein Menue -
-                    // aber ein Titelbild, wenn die Trefferseite eines hergab.
-                    addTvRowItem(row, TvViews.favoriteCard(this, result.provider, result.title, meta,
-                        result.provider.name, result.bild, width, 0,
-                    // Ueber serieOeffnen und nicht geradewegs auf die
-                    // Anbieterseite: ein Suchtreffer ist der haeufigste Weg,
-                    // eine *neue* Serie anzufangen - und genau dort fehlte die
-                    // Uebersicht mit Staffeln und Folgen. Sie stand bisher nur
-                    // hinter den Vorschlaegen und dem Kalender, also hinter den
-                    // zwei Wegen, die man selten nimmt. Gemeldet vom
-                    // Fernseher, wo die Suche fast der einzige Weg ist.
-                        () -> serieOeffnen(result.provider, result.url, result.title), null),
+                    addTvRowItem(row, tvSuchGruppenKarte(gruppe, width),
                         shown % perRow == 0);
                     shown += 1;
                 }
             });
         }).start();
+    }
+
+    private List<SucheGruppen.Gruppe<SearchResult>> suchTrefferGruppen(List<SearchResult> found) {
+        return SucheGruppen.gruppieren(found, new SucheGruppen.Adapter<SearchResult>() {
+            public String titel(SearchResult r) { return r.title; }
+            public String url(SearchResult r) { return r.url; }
+            public String anbieter(SearchResult r) { return r.provider == null ? "" : r.provider.name; }
+            public String jahr(SearchResult r) { return ""; }
+            public String art(SearchResult r) { return ""; }
+            public String staffel(SearchResult r) { return ""; }
+            public String folge(SearchResult r) { return ""; }
+            public String konfidenz(SearchResult r) { return ""; }
+            public Map<String, String> externeIds(SearchResult r) { return java.util.Collections.emptyMap(); }
+        });
+    }
+
+    private View anbieterAuswahl(List<SearchResult> quellen, boolean fernseher) {
+        if (quellen.size() < 2) return null;
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout leiste = new LinearLayout(this);
+        leiste.setOrientation(LinearLayout.HORIZONTAL);
+        for (SearchResult quelle : quellen) {
+            Button button = new Button(this);
+            button.setAllCaps(false);
+            button.setText(quelle.provider.name);
+            button.setTextSize(fernseher ? 14 : 12);
+            button.setContentDescription(quelle.provider.name + " für " + quelle.title + " öffnen");
+            button.setOnClickListener(view -> serieOeffnen(quelle.provider, quelle.url, quelle.title));
+            if (fernseher) applyTvFocus(button, Theme.SURFACE_PRESSED, Theme.PRIMARY, 12);
+            else button.setBackground(MobileViews.shape(this, Theme.SURFACE_ELEVATED, 14, Theme.BORDER, 1));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(fernseher ? 42 : 38));
+            params.rightMargin = dp(6);
+            leiste.addView(button, params);
+        }
+        scroll.addView(leiste);
+        return scroll;
+    }
+
+    private View mobileSuchGruppenKarte(SucheGruppen.Gruppe<SearchResult> gruppe) {
+        SearchResult erste = gruppe.treffer.get(0);
+        String meta = erste.genre == null || erste.genre.isEmpty() ? erste.provider.name : erste.genre + " · " + erste.provider.name;
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.addView(MobileViews.favoriteCard(this, erste.provider, erste.title, meta, null, erste.bild, 0, "Ansehen", () -> serieOeffnen(erste.provider, erste.url, erste.title), null));
+        View wahl = anbieterAuswahl(gruppe.treffer, false);
+        if (wahl != null) block.addView(wahl, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+        return block;
+    }
+
+    private View tvSuchGruppenKarte(SucheGruppen.Gruppe<SearchResult> gruppe, int width) {
+        SearchResult erste = gruppe.treffer.get(0);
+        String meta = erste.genre == null || erste.genre.isEmpty() ? erste.provider.name : erste.genre;
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.addView(TvViews.favoriteCard(this, erste.provider, erste.title, meta, erste.provider.name, erste.bild, width, 0, () -> serieOeffnen(erste.provider, erste.url, erste.title), null));
+        View wahl = anbieterAuswahl(gruppe.treffer, true);
+        if (wahl != null) block.addView(wahl, new LinearLayout.LayoutParams(dp(width), dp(46)));
+        block.setLayoutParams(new LinearLayout.LayoutParams(dp(width), ViewGroup.LayoutParams.WRAP_CONTENT));
+        return block;
     }
 
     /** Scrollable page shell with the shared mobile spacing already applied. */
@@ -5971,20 +6043,9 @@ public class MainActivity extends Activity {
                     return;
                 }
                 int shown = 0;
-                for (SearchResult result : found) {
+                for (SucheGruppen.Gruppe<SearchResult> gruppe : suchTrefferGruppen(found)) {
                     if (shown >= 30) break;
-                    String meta = result.genre == null || result.genre.isEmpty()
-                        ? result.provider.name
-                        : result.genre + " · " + result.provider.name;
-                    // Ein Suchtreffer hat noch keinen Fortschritt und kein
-                    // Menue - er ist noch gar kein Eintrag. Ein Titelbild hat
-                    // er sehr wohl, sofern die Trefferseite eines hergab.
-                    View card = MobileViews.favoriteCard(this, result.provider, result.title, meta, null,
-                        result.bild, 0, "Ansehen",
-                        // Siehe die Suche am Fernseher: ein Treffer ist der
-                        // uebliche Weg zu einer neuen Serie, und dort gehoert
-                        // die Uebersicht hin.
-                        () -> serieOeffnen(result.provider, result.url, result.title), null);
+                    View card = mobileSuchGruppenKarte(gruppe);
                     LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                     params.topMargin = dp(MobileViews.ITEM_GAP);
@@ -6148,6 +6209,7 @@ public class MainActivity extends Activity {
                     einstellungenAuffrischen();
                 });
             introKarte(koerper, fernseher, luecke);
+            skipSegmenteKarte(koerper, fernseher, luecke);
             sponsorblockKarten(koerper, fernseher, luecke);
             youtubeDislikeKarte(koerper, fernseher, luecke);
             fassungsKarte(koerper, fernseher, luecke);
@@ -6992,13 +7054,14 @@ public class MainActivity extends Activity {
                 int insertIndex = Math.min(2, results.getChildCount());
                 results.addView(sectionTitle("Gefundene Treffer"), insertIndex);
                 int count = 0;
-                for (SearchResult result : found) {
+                for (SucheGruppen.Gruppe<SearchResult> gruppe : suchTrefferGruppen(found)) {
                     if (count >= 40) break;
+                    SearchResult result = gruppe.treffer.get(0);
                     Button button = new Button(this);
                     String meta = (result.genre == null || result.genre.isEmpty())
                         ? result.provider.name
                         : result.genre + " · " + result.provider.name;
-                    button.setText(result.title + "\n" + meta);
+                    button.setText(result.title + "\n" + meta + (gruppe.treffer.size() > 1 ? "\n" + gruppenAnbieterText(gruppe.treffer) : ""));
                     button.setAllCaps(false);
                     button.setGravity(Gravity.CENTER_VERTICAL);
                     button.setTextColor(Color.WHITE);
@@ -7007,13 +7070,24 @@ public class MainActivity extends Activity {
                     applyTvFocus(button, Color.rgb(28, 36, 50), Color.rgb(58, 72, 96), 18);
                     button.setOnClickListener(view ->
                         serieOeffnen(result.provider, result.url, result.title));
-                    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78));
+                    LinearLayout block = new LinearLayout(this);
+                    block.setOrientation(LinearLayout.VERTICAL);
+                    block.addView(button, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(78)));
+                    View wahl = anbieterAuswahl(gruppe.treffer, false);
+                    if (wahl != null) block.addView(wahl, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+                    LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                     params.setMargins(0, 0, 0, dp(10));
-                    results.addView(button, Math.min(results.getChildCount(), insertIndex + 1 + count), params);
+                    results.addView(block, Math.min(results.getChildCount(), insertIndex + 1 + count), params);
                     count += 1;
                 }
             });
         }).start();
+    }
+
+    private String gruppenAnbieterText(List<SearchResult> quellen) {
+        ArrayList<String> namen = new ArrayList<>();
+        for (SearchResult quelle : quellen) if (!namen.contains(quelle.provider.name)) namen.add(quelle.provider.name);
+        return TextUtils.join(" · ", namen);
     }
 
     private List<String> searchQueryVariants(String query) {
@@ -9827,6 +9901,21 @@ public class MainActivity extends Activity {
                     if (marken == null || bestand == null) fertig.accept(null);
                     else marken.nativeMarke(provider, url, bestand.roh(), fertig);
                 }
+                public void skipKontext(java.util.function.Consumer<JSONObject> fertig) {
+                    if (kern == null || !kern.istBereit()) { fertig.accept(null); return; }
+                    // Der Lauf nimmt vorhandene Metadaten zuerst und loest nur
+                    // fehlende Kennungen ueber seinen eigenen Resolver. Der
+                    // Player reicht spaeter nur die echte Media3-Laufzeit
+                    // nach, damit keine Abfrage im Sekundentakt entsteht.
+                    kern.rufe("empfehlung-bruecke.skipKontext", Kern.args(name, url), (wert, fehler) -> {
+                        if (fehler != null || wert == null || "null".equals(wert)) {
+                            fertig.accept(null);
+                            return;
+                        }
+                        try { fertig.accept(new JSONObject(wert)); }
+                        catch (Exception ignoriert) { fertig.accept(null); }
+                    });
+                }
                 public void sprung(double von, double nach) {
                     if (marken != null && bestand != null && (mitschauen == null || !mitschauen.laeuftMit())) {
                         marken.nativerSprung(provider, url, bestand.roh(), von, nach);
@@ -9878,6 +9967,7 @@ public class MainActivity extends Activity {
                     }
                     watchparty.chatSenden(key, text, raum, antwort);
                 }
+                public void pip() { direktInPip(); }
             });
         // Eine abgesagte Generation ist jetzt im konkreten Player gebunden.
         // MainActivity muss sie nicht an spaetere, unabhaengige Player tragen.
@@ -9918,6 +10008,7 @@ public class MainActivity extends Activity {
     private void direktSchliessen() {
         if (direktWiedergabe == null) return;
         DirektWiedergabe alt = direktWiedergabe;
+        direktImPip = false;
         // Beim relaygesteuerten Austausch muss die Generation den alten Player
         // ueberleben. Ein bewusstes Schliessen beendet sie dagegen, damit kein
         // spaeter geoeffneter privater Player eine fremde alte Sperre erbt.
@@ -9949,6 +10040,25 @@ public class MainActivity extends Activity {
             WindowInsetsController controller = getWindow().getInsetsController();
             if (controller != null) controller.show(WindowInsets.Type.systemBars());
         } else getWindow().getDecorView().setSystemUiVisibility(0);
+    }
+
+    /** Phone-only PiP; it is offered only while the native player is really playing. */
+    private void direktInPip() {
+        if (android.os.Build.VERSION.SDK_INT < 26 || isTelevision() || direktWiedergabe == null
+            || !direktWiedergabe.laeuftFuerPip()
+            || !getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return;
+        PictureInPictureParams.Builder params = new PictureInPictureParams.Builder()
+            .setAspectRatio(new Rational(16, 9));
+        Rect sichtbar = new Rect();
+        View decor = getWindow().getDecorView();
+        if (decor.getGlobalVisibleRect(sichtbar) && !sichtbar.isEmpty()) params.setSourceRectHint(sichtbar);
+        try {
+            direktImPip = enterPictureInPictureMode(params.build());
+        } catch (IllegalArgumentException | IllegalStateException abgelehnt) {
+            // Some OEMs reject PiP while a lifecycle/AppOps transition is in flight.
+            // Keep the primary player untouched and leave the normal surface active.
+            direktImPip = false;
+        }
     }
 
     /** Der Chat folgt ausschließlich dem aktuell geöffneten Titelraum. */
@@ -10558,7 +10668,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (direktWiedergabe != null) direktWiedergabe.pause();
+        // Some devices deliver onPause before the PiP mode callback updates
+        // isInPictureInPictureMode(). enterPictureInPictureMode already
+        // recorded its successful transition in direktImPip.
+        boolean pip = direktImPip || (android.os.Build.VERSION.SDK_INT >= 26
+            && isInPictureInPictureMode());
+        direktImPip = pip;
+        if (direktWiedergabe != null && !pip) direktWiedergabe.pause();
         // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
         // Takt wieder auf. Dasselbe gilt fuer die Kacheln einer Runde: was
@@ -10574,7 +10690,7 @@ public class MainActivity extends Activity {
         // Aus der Runde abmelden, aber nichts an sie senden: Android haelt
         // gleich den WebView an, und die Pause, die der Player daraufhin
         // meldet, ist keine Entscheidung des Zuschauers.
-        if (mitschauen != null) mitschauen.vordergrund(false);
+        if (mitschauen != null && !pip) mitschauen.vordergrund(false);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
         if (webView != null) webView.onPause();
     }
@@ -10604,6 +10720,33 @@ public class MainActivity extends Activity {
         if (fullscreenView != null) {
             applyFullscreenSystemUi();
         }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        // Vor Android 12 ist dies der offizielle Hintergrund-Hook. Der Check
+        // verhindert PiP beim Öffnen anderer App-Bereiche oder bei Pause.
+        direktInPip();
+        super.onUserLeaveHint();
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean inPip, Configuration neueKonfiguration) {
+        super.onPictureInPictureModeChanged(inPip, neueKonfiguration);
+        direktImPip = inPip;
+        if (direktWiedergabe != null) direktWiedergabe.pipModus(inPip);
+        if (!inPip && direktWiedergabe != null) applyFullscreenSystemUi();
+    }
+
+    @Override
+    protected void onStop() {
+        // onPause is the visible-PiP lifecycle boundary. Once onStop arrives,
+        // the activity has no visible video surface even if the PiP mode flag
+        // still lingers while its dismissal transition completes.
+        direktImPip = false;
+        if (direktWiedergabe != null) direktWiedergabe.pause();
+        if (mitschauen != null) mitschauen.vordergrund(false);
+        super.onStop();
     }
 
     /**

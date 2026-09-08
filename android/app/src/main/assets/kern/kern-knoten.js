@@ -170,7 +170,14 @@
         var brief = java();
         if (!brief || typeof brief.hmac !== "function") throw new Error("Krypto-Bruecke fehlt");
         var hex = brief.hmac(hexAus(ElfixBuffer.from(schluessel)), text);
-        return kodierung === "hex" ? hex : ElfixBuffer(hexNach(hex));
+        if (kodierung === "hex") return hex;
+        var puffer = ElfixBuffer(hexNach(hex));
+        // Node gibt mit angeforderter Base64-Kodierung einen Text zurueck.
+        // watchparty.js ersetzt darin anschliessend die nicht URL-sicheren
+        // Zeichen. Ein Buffer an dieser Stelle liess den WebSocket-open-Handler
+        // auf `.replace()` abbrechen, bevor Android "verbunden" melden konnte.
+        if (kodierung === "base64") return puffer.toString("base64");
+        return puffer;
       }
     };
   }
@@ -189,7 +196,10 @@
         var brief = java();
         if (!brief || typeof brief.hash !== "function") throw new Error("Krypto-Bruecke fehlt");
         var hex = brief.hash(text);
-        return kodierung === "hex" ? hex : ElfixBuffer(hexNach(hex));
+        if (kodierung === "hex") return hex;
+        var puffer = ElfixBuffer(hexNach(hex));
+        if (kodierung === "base64") return puffer.toString("base64");
+        return puffer;
       }
     };
   }

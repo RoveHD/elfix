@@ -60,6 +60,8 @@ const { YoutubeWatchparty } = require("./youtube-watchparty");
 const youtubeSync = require("./youtube-sync");
 const sponsorblock = require("./sponsorblock");
 const youtubeDislikes = require("./youtube-dislikes");
+const skipsegmente = require("./skipsegmente");
+const untertitelwahl = require("./untertitelwahl");
 const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
@@ -237,6 +239,7 @@ const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 // nicht mitgehen - die Zuordnung von 800 Titeln noch einmal zu holen, waere
 // der teuerste Teil des Ganzen.
 const METADATEN_FILE = path.join(DATA_DIR, "metadaten-cache.json");
+const SKIPSEGMENTE_FILE = path.join(DATA_DIR, "skipsegmente-cache.json");
 const WATCHPARTY_FILE = path.join(DATA_DIR, "watchparty.json");
 // Der Spiegel des Geraeteabgleichs: was zuletzt hinausging oder hereinkam.
 // Ohne ihn faengt jeder Start von vorn an und meldet den ganzen Bestand noch
@@ -651,12 +654,12 @@ function createMainWindow() {
   });
   mainWindow.on("resize", () => applyBrowserBounds());
   mainWindow.on("minimize", () => {
-    if (settings.playback.pauseOnMinimize) {
+    if (settings.playback.pauseOnMinimize && !spielerMiniAktiv) {
       pauseActivePlayback(true);
     }
   });
   mainWindow.on("blur", () => {
-    if (settings.playback.pauseOnBlur) {
+    if (settings.playback.pauseOnBlur && !spielerMiniAktiv) {
       pauseActivePlayback(true);
     }
   });
@@ -2452,6 +2455,9 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   if (activeView) {
     installSponsorblock(activeView, activeView.webContents.getURL()).catch(() => {});
     installYoutubeDislikes(activeView, activeView.webContents.getURL()).catch(() => {});
+  }
+  if (spielerView && !spielerView.webContents.isDestroyed()) {
+    spielerView.webContents.send("spieler:skip-einstellung", settings.playback?.skipSegments !== false);
   }
   syncWatchparty();
   syncGeraete();
@@ -9011,6 +9017,7 @@ let spielerLauf = null;
 let spielerAuftragId = 0;
 /** Die Kopfzeilen, unter denen die laufende Quelle geholt werden darf. */
 let spielerKopfzeilen = null;
+let spielerMiniAktiv = false;
 
 function spielerSessionHolen() {
   if (spielerSession) return spielerSession;
@@ -9177,6 +9184,8 @@ function spielerAuftrag() {
     // einer Stelle, damit beide Wege nicht auseinanderlaufen.
     weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT,
     marke: spielerMarke(),
+    skipSegments: settings.playback?.skipSegments !== false,
+    untertitel: untertitelwahl.normalisieren(settings.playback?.untertitel),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
     runde: Boolean(spielerRunde()),
@@ -9322,6 +9331,7 @@ function direktSpielerSchliessen(grund = "") {
   if (!spielerView) return;
   const view = spielerView;
   spielerView = null;
+  spielerMiniAktiv = false;
   spielerLauf = null;
   spielerLetzterStand = null;
   // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
@@ -9346,6 +9356,40 @@ ipcMain.on("spieler:bereit", (ereignis) => {
 
 ipcMain.handle("spieler:chat-status", (ereignis) => vomSpieler(ereignis)
   ? spielerChatStatus() : { active: false, connected: false, room: "", messages: [] });
+
+// Der Player schickt nur seine Auftragsnummer und die gemessene Laufzeit.
+// URLs/IDs werden ausschliesslich aus dem eigenen aktuellen Auftrag ermittelt.
+let skipsegmenteClient = null;
+function skipClient() {
+  if (!skipsegmenteClient) skipsegmenteClient = skipsegmente.erstellen({
+    holen: (url, optionen) => net.fetch(url, optionen),
+    laden: () => JSON.parse(fs.readFileSync(SKIPSEGMENTE_FILE, "utf8")),
+    speichern: (daten) => {
+      ensureDataDir();
+      fs.writeFileSync(SKIPSEGMENTE_FILE, JSON.stringify(daten));
+    }
+  });
+  return skipsegmenteClient;
+}
+async function spielerSkipLesen(ereignis, id, dauer) {
+  if (!vomSpieler(ereignis) || id !== spielerLauf.id || settings.playback?.skipSegments === false
+    || typeof dauer !== "number" || !Number.isFinite(dauer) || dauer <= 0 || dauer > 86400) return [];
+  const aktuell = spielerLauf;
+  const gueltig = () => spielerLauf === aktuell && vomSpieler(ereignis)
+    && settings.playback?.skipSegments !== false;
+  try {
+    const kontext = await lauf.skipKontext(cleanBaseMediaTitle(aktuell.titel, aktuell.url), aktuell.url);
+    if (!gueltig() || !kontext) return [];
+    const segmente = await skipClient().lesen({ ...kontext, duration: dauer });
+    return gueltig() ? segmente : [];
+  } catch { return []; }
+}
+ipcMain.handle("spieler:skip-segmente", spielerSkipLesen);
+ipcMain.on("spieler:untertitel", (ereignis, id, vorgabe) => {
+  if (!vomSpieler(ereignis) || id !== spielerLauf.id) return;
+  settings.playback.untertitel = untertitelwahl.normalisieren(vorgabe);
+  saveSettings();
+});
 ipcMain.handle("spieler:chat-senden", (ereignis, text) => {
   if (!vomSpieler(ereignis)) return { ok: false, error: "Kein aktiver Player." };
   const runde = spielerRunde();
@@ -9464,6 +9508,10 @@ ipcMain.on("spieler:vollbild", (ereignis) => {
   if (isContentFullscreen) leaveContentFullscreen();
   else enterContentFullscreen();
   spielerLageSetzen();
+});
+ipcMain.on("spieler:mini-status", (ereignis, aktiv) => {
+  if (!vomSpieler(ereignis)) return;
+  spielerMiniAktiv = aktiv === true;
 });
 
 /**
@@ -13965,6 +14013,8 @@ function normalizeSettings(raw) {
       // Von Haus aus an. Der Knopf kann nichts tun, bevor man ihm das Intro
       // zweimal selbst gezeigt hat - und er springt nie von allein.
       introSkip: raw?.playback?.introSkip !== false,
+      skipSegments: raw?.playback?.skipSegments !== false,
+      untertitel: untertitelwahl.normalisieren(raw?.playback?.untertitel),
       // Ebenfalls von Haus aus an. Vorgewaehlt wird nur, was jemand fuer
       // dieselbe Serie schon einmal selbst angeklickt hat - eine eigene
       // Meinung zur richtigen Fassung hat ELFIX nicht.
@@ -14151,6 +14201,8 @@ function defaultSettings() {
     },
     playback: {
       introSkip: true,
+      skipSegments: true,
+      untertitel: untertitelwahl.normalisieren(null),
       rememberLanguage: true,
       direktModus: true,
       pauseOnProviderSwitch: true,

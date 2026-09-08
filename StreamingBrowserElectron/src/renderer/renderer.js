@@ -6,6 +6,9 @@ const bildausschnittModul = globalThis.ELFIX_BILDAUSSCHNITT;
 // Die Regeln des persoenlichen Verlaufs. Sie stehen im gemeinsamen Modul,
 // damit der Kasten hier und jede Pruefung dieselbe Rechnung anstellen.
 const verlaufModul = globalThis.ELFIX_VERLAUF;
+// Das Gruppieren ist rein lokal und verwendet nur die Treffer, die die Suche
+// schon geliefert hat. Es darf hier keine Metadatenanfrage ausloesen.
+const searchGroupingModul = globalThis.ELFIX_SEARCH_GROUPING;
 
 let providers = [];
 let uiSoundsController = null;
@@ -384,6 +387,7 @@ const pauseOnProviderSwitch = document.querySelector("#pauseOnProviderSwitch");
 const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
+const skipSegments = document.querySelector("#skipSegments");
 const direktModus = document.querySelector("#direktModus");
 const youtubeDislikesEnabled = document.querySelector("#youtubeDislikesEnabled");
 // SponsorBlock: Aktivierung und Hinweise sind Schalter; die acht Kategorien
@@ -1251,6 +1255,7 @@ function bindEvents() {
   youtubeInMediathek?.addEventListener("change", saveSettings);
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
+  skipSegments?.addEventListener("change", saveSettings);
   direktModus?.addEventListener("change", saveSettings);
   youtubeDislikesEnabled?.addEventListener("change", saveSettings);
   for (const feld of Object.values(sponsorblockFelder)) {
@@ -5033,7 +5038,7 @@ function titelMitFundstelle(titel, suche) {
   return ziel;
 }
 
-function searchResultCard(result, provider, suche = "") {
+function searchResultCard(result, provider, suche = "", quellen = []) {
   const card = document.createElement("div");
   card.className = "search-result-card provider-result";
   card.tabIndex = 0;
@@ -5042,20 +5047,77 @@ function searchResultCard(result, provider, suche = "") {
   // ueber sie - nie ueber den angezeigten Titel, die Fundstelle oder die
   // Position in der Liste.
   card.dataset.resultUrl = String(result.url || "");
-  const meta = [result.genre, provider.providerName].filter(Boolean).join(" · ");
   const untertitel = document.createElement("span");
-  untertitel.textContent = meta;
-  card.append(titelMitFundstelle(result.title, suche), untertitel);
+  const titel = titelMitFundstelle(result.title, suche);
+  card.append(titel, untertitel);
   // Das Bild des Treffers - es kam mit der Trefferliste und kostete keinen
   // eigenen Abruf. Ein Treffer hat keinen selbst gewaehlten Ausschnitt: das
   // Bild gehoert dem Anbieter, nicht der Watchlist.
+  // Die erste Gruppenquelle ist normalerweise genau dieser Treffer. Die
+  // Referenz muss aber aus `quellen` kommen, sonst ist kein Auswahlknopf beim
+  // ersten Zeichnen aktiv.
+  let ausgewaehlt = quellen.find((quelle) => quelle.result === result && quelle.provider === provider)
+    || quellen[0]
+    || { result, provider };
+  const setzeAuswahl = (auswahl) => {
+    ausgewaehlt = auswahl;
+    const treffer = ausgewaehlt.result;
+    const anbieter = ausgewaehlt.provider;
+    card.dataset.resultUrl = String(treffer.url || "");
+    titel.replaceChildren(...titelMitFundstelle(treffer.title, suche).childNodes);
+    untertitel.textContent = [treffer.genre, anbieter.providerName].filter(Boolean).join(" · ");
+    bildEbeneSetzen(card, treffer.image || treffer.thumbnail || "", null);
+    for (const button of quellenLeiste?.querySelectorAll("button") || []) {
+      const istAktiv = button.quelle === auswahl;
+      button.classList.toggle("is-active", istAktiv);
+      button.setAttribute("aria-pressed", String(istAktiv));
+    }
+    card.querySelector(".favorite-menu")?.remove();
+    vorschlagMenueAnhaengen(card, {
+      providerId: anbieter.providerId,
+      providerName: anbieter.providerName,
+      url: treffer.url,
+      title: treffer.title,
+      image: treffer.image || treffer.thumbnail || ""
+    });
+    herzAuffrischen?.();
+  };
+  untertitel.textContent = [result.genre, provider.providerName].filter(Boolean).join(" · ");
   bildEbeneSetzen(card, result.image || result.thumbnail || "", null);
+
+  let quellenLeiste = null;
+  if (quellen.length > 1) {
+    quellenLeiste = document.createElement("div");
+    quellenLeiste.className = "result-provider-choices";
+    quellenLeiste.setAttribute("aria-label", "Anbieter für diesen Titel auswählen");
+    for (const quelle of quellen) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "result-provider-choice";
+      button.textContent = quelle.provider.providerName;
+      button.quelle = quelle;
+      const istAktiv = quelle === ausgewaehlt;
+      button.classList.toggle("is-active", istAktiv);
+      button.setAttribute("aria-pressed", String(istAktiv));
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setzeAuswahl(quelle);
+      });
+      button.addEventListener("keydown", (event) => {
+        // Enter/Leertaste waehlt den Chip. Es darf nicht anschliessend zur
+        // Karten-Tastaturbehandlung hochsteigen und sofort die Quelle oeffnen.
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      quellenLeiste.append(button);
+    }
+    card.append(quellenLeiste);
+  }
 
   const oeffnen = async () => {
     hideContentViews();
     await api.setShellOpen(false);
-    const state = await api.openProviderUrl(provider.providerId, result.url);
-    activeProviderId = state?.activeProviderId || provider.providerId;
+    const state = await api.openProviderUrl(ausgewaehlt.provider.providerId, ausgewaehlt.result.url);
+    activeProviderId = state?.activeProviderId || ausgewaehlt.provider.providerId;
     setCurrentRoute(`provider:${activeProviderId}`);
     renderProviders();
   };
@@ -5069,36 +5131,42 @@ function searchResultCard(result, provider, suche = "") {
   const herz = document.createElement("button");
   herz.type = "button";
   herz.className = "result-fav";
-  const schonDrin = stehtInWatchlist(result.url);
-  herz.textContent = schonDrin ? "♥" : "♡";
-  herz.classList.toggle("is-active", schonDrin);
-  herz.title = schonDrin ? "Steht schon auf der Watchlist" : "Zur Watchlist hinzufügen";
+  const herzAuffrischen = () => {
+    const schonDrin = stehtInWatchlist(ausgewaehlt.result.url);
+    herz.textContent = schonDrin ? "♥" : "♡";
+    herz.classList.toggle("is-active", schonDrin);
+    herz.title = schonDrin ? "Steht schon auf der Watchlist" : "Zur Watchlist hinzufügen";
+  };
+  herzAuffrischen();
   herz.addEventListener("click", async (event) => {
     event.stopPropagation();
     if (herz.disabled) return;
+    // Die Quelle gehoert zum Klick, nicht zu einem eventuellen Wechsel, der
+    // waehrend des asynchronen Speicherns passiert.
+    const fuerWatchlist = ausgewaehlt;
     herz.disabled = true;
     try {
       const ergebnis = await api.addSearchResultToWatchlist?.({
-        providerId: provider.providerId,
-        providerName: provider.providerName,
-        url: result.url,
-        title: result.title,
-        thumbnail: result.image || result.thumbnail || ""
+        providerId: fuerWatchlist.provider.providerId,
+        providerName: fuerWatchlist.provider.providerName,
+        url: fuerWatchlist.result.url,
+        title: fuerWatchlist.result.title,
+        thumbnail: fuerWatchlist.result.image || fuerWatchlist.result.thumbnail || ""
       }).catch(() => null);
       if (!ergebnis?.added) {
         showToast(ergebnis?.reason || "Konnte nicht hinzugefügt werden");
         return;
       }
       favorites = ergebnis.favorites || favorites;
-      herz.textContent = "♥";
-      herz.classList.add("is-active");
-      herz.title = "Steht auf der Watchlist";
+      // Nach dem Speichern zeigt das Herz immer die *aktuelle* Auswahl an.
+      // Wurde inzwischen gewechselt, darf der alte Erfolg sie nicht markieren.
+      herzAuffrischen();
       if (!ergebnis.already) posterHinzufuegenEffekt(card);
       renderFavorites();
       renderHome();
       showToast(ergebnis.already
-        ? `„${ergebnis.title || result.title}“ steht schon auf der Watchlist`
-        : `„${ergebnis.title || result.title}“ zur Watchlist hinzugefügt`);
+        ? `„${ergebnis.title || fuerWatchlist.result.title}“ steht schon auf der Watchlist`
+        : `„${ergebnis.title || fuerWatchlist.result.title}“ zur Watchlist hinzugefügt`);
     } finally {
       herz.disabled = false;
     }
@@ -5280,22 +5348,23 @@ async function renderProviderResults(query, searchToken) {
   const resultNodes = [];
   const ohneBild = [];
   let total = 0;
-  for (const provider of response) {
-    if (provider.results?.length) {
-      const heading = document.createElement("div");
-      heading.className = "search-section-label";
-      heading.textContent = `${provider.providerName} Treffer`;
-      resultNodes.push(heading);
-      for (const result of provider.results) {
-        total += 1;
-        const karte = searchResultCard(result, provider, query);
-        resultNodes.push(karte);
-        if (!result.image && !result.thumbnail && result.url) {
-          ohneBild.push({
-            karte,
-            treffer: { providerId: provider.providerId, url: result.url, title: result.title }
-          });
-        }
+  const gruppen = searchGroupingModul?.groupProviderResults?.(response) || [];
+  for (const gruppe of gruppen) {
+    const erste = gruppe.entries[0];
+    if (!erste) continue;
+    total += gruppe.entries.length;
+    const karte = searchResultCard(erste.result, erste.provider, query, gruppe.entries);
+    resultNodes.push(karte);
+    // Alle Quellen duerfen ihr vorhandenes Bild verwenden. Fehlt es, bleibt
+    // die bisherige, token-geschuetzte Nachreichung pro Anbieteradresse aktiv.
+    for (const eintrag of gruppe.entries) {
+      const result = eintrag.result;
+      if (!result.image && !result.thumbnail && result.url) {
+        ohneBild.push({
+          karte,
+          result,
+          treffer: { providerId: eintrag.provider.providerId, url: result.url, title: result.title }
+        });
       }
     }
   }
@@ -5336,7 +5405,12 @@ async function trefferbilderNachreichen(offen, searchToken) {
       naechster += 1;
       const bild = await api.searchArtwork(eintrag.treffer).catch(() => "");
       if (!bild || searchToken !== activeSearchToken || !eintrag.karte.isConnected) continue;
-      bildEbeneSetzen(eintrag.karte, bild, null);
+      // Das Bild bleibt an seiner Quelle. Ist inzwischen ein anderer Anbieter
+      // gewaehlt, dessen Karte nicht mit einem nachgereichten Poster ueberschreiben.
+      eintrag.result.image = bild;
+      if (eintrag.karte.dataset.resultUrl === String(eintrag.treffer.url || "")) {
+        bildEbeneSetzen(eintrag.karte, bild, null);
+      }
     }
   };
   const faeden = Array.from({ length: Math.min(TREFFERBILD_GLEICHZEITIG, liste.length) }, arbeiten);
@@ -7992,6 +8066,7 @@ function renderSettings() {
   if (youtubeInMediathek) youtubeInMediathek.checked = settings.playback?.youtubeInMediathek === true;
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
+  if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
   if (direktModus) direktModus.checked = settings.playback?.direktModus !== false;
   if (youtubeDislikesEnabled) youtubeDislikesEnabled.checked = settings.youtubeDislikes?.enabled !== false;
   for (const [name, feld] of Object.entries(sponsorblockFelder)) {
@@ -8264,6 +8339,7 @@ async function saveSettings(options = {}) {
     // Fehlt das Kaestchen, gilt weiter, was gespeichert ist - nicht "aus".
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
+    skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
     direktModus: direktModus ? direktModus.checked : settings.playback?.direktModus !== false,
     rememberLanguage: rememberLanguage ? rememberLanguage.checked : settings.playback?.rememberLanguage !== false,
     favoriteProgressMode: favoriteProgressMode.value,

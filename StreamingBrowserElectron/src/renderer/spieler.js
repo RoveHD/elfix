@@ -27,7 +27,8 @@
 
 const bruecke = window.elfixSpieler || {
   aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
-  fehler() {}, schliessen() {}, vollbild() {}, folgen() {}, wechseln() {}, hoster() {},
+  skipSegmente() {}, aufSkipEinstellung() {}, untertitelMerken() {},
+  fehler() {}, schliessen() {}, vollbild() {}, miniStatus() {}, folgen() {}, wechseln() {}, hoster() {},
   sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {},
   chatStatus() { return Promise.resolve({ active: false, messages: [] }); }, chatSenden() { return Promise.resolve({ ok: false }); }, aufChat() {}
 };
@@ -300,6 +301,64 @@ function pausiertesBild() {
     && Math.abs(dargestelltesBild - bild.currentTime) < .25 ? dargestelltesBild : undefined;
 }
 const regler = document.getElementById("regler");
+const vorschauKasten = document.getElementById("spulVorschau");
+const vorschauBild = document.getElementById("spulVorschauBild");
+const vorschauText = document.getElementById("spulVorschauText");
+let reglerGefasst = false;
+let vorschauQuelle = "";
+let vorschauTimer = 0;
+let vorschauZiel = 0;
+const spulVorschau = window.ElfixSpielerVorschau.erstellen({ canvas: vorschauBild,
+  beiZustand: (zustand) => {
+    if (zustand.art === "verborgen") return;
+    if (zustand.art === "bild" && Math.abs(zustand.ziel - vorschauZiel) > 0.01) return;
+    vorschauBild.hidden = zustand.art !== "bild";
+    vorschauLageSetzen();
+  }
+});
+
+function vorschauLageSetzen() {
+  if (vorschauKasten.hidden) return;
+  const spur = regler.getBoundingClientRect();
+  const kasten = vorschauKasten.getBoundingClientRect();
+  const x = reglerMausX ?? (spur.left + spur.width * Number(regler.value) / 1000);
+  vorschauKasten.style.left = `${Math.max(12, Math.min(innerWidth - kasten.width - 12, x - kasten.width / 2))}px`;
+  vorschauKasten.style.top = `${Math.max(12, spur.top - kasten.height - 12)}px`;
+}
+
+function spulVorschauZeigen(stelle) {
+  const dauer = Number(bild.duration);
+  if (!Number.isFinite(dauer) || dauer <= 0 || !auftrag?.adresse || auftrag.laden || auftrag.auswahl) return;
+  const key = `${auftrag.id}:${auftrag.adresse}:${dauer}`;
+  if (key !== vorschauQuelle) {
+    spulVorschau.quelle({ adresse: auftrag.adresse, typ: auftrag.typ, dauer, id: auftrag.id });
+    vorschauQuelle = key;
+  }
+  vorschauZiel = Math.max(0, Math.min(dauer, stelle));
+  vorschauKasten.hidden = false;
+  vorschauBild.hidden = true;
+  vorschauHinweisZeigen();
+  vorschauLageSetzen();
+  clearTimeout(vorschauTimer);
+  vorschauTimer = setTimeout(() => { spulVorschau.zeigen(vorschauZiel).catch(() => {}); }, 150);
+}
+
+function vorschauHinweisZeigen() {
+  const segment = aktuellesSkipsegment(vorschauZiel);
+  const name = segment ? skipRegeln.beschriftung(segment.type).replace(/ überspringen$/, "") : "";
+  vorschauText.textContent = (name ? `${name} · ${zeit(vorschauZiel)}` : zeit(vorschauZiel))
+    + (lokalesSpulenErlaubt() ? "" : " · Spulen steuert der Host");
+  regler.removeAttribute("title");
+  regler.setAttribute("aria-describedby", "spulVorschauText");
+}
+
+function spulVorschauVerbergen() {
+  clearTimeout(vorschauTimer);
+  spulVorschau.verbergen();
+  vorschauKasten.hidden = true;
+  vorschauBild.hidden = true;
+  regler.removeAttribute("aria-describedby");
+}
 const lautstaerke = document.getElementById("lautstaerke");
 const stufenWahl = new Wahl("stufen", "Bildqualit\u00e4t");
 const hosterWahl = new Wahl("hosterWahl", "Hoster");
@@ -313,6 +372,7 @@ const tempoWahl = new Wahl("tempo", "Tempo");
 const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
 const knopfAuto = document.getElementById("autoKnopf");
+const knopfMini = document.getElementById("miniKnopf");
 const knopfMarke = document.getElementById("marke");
 const anzeigeStelle = document.getElementById("stelle");
 const anzeigeDauer = document.getElementById("dauer");
@@ -383,6 +443,76 @@ let gerettet = { netz: false, medium: false };
 let naechste = null;
 /** Die gelernte Intro-Marke dieser Staffel, falls es eine gibt. */
 let marke = null;
+let skipSegmente = [];
+let skipAnfrage = "";
+let skipAn = false;
+let skipGeneration = 0;
+const skipRegeln = window.ElfixSkipsegmente;
+let reglerMausX = null;
+
+function reglerHinweisZeigen() {
+  if (!vorschauKasten.hidden) { vorschauHinweisZeigen(); return; }
+  const rechte = lokalesSpulenErlaubt() ? "" : " · Spulen steuert der Host";
+  const rahmen = regler.getBoundingClientRect();
+  const dauer = Number(bild.duration);
+  if (reglerMausX === null || rahmen.width <= 0 || !Number.isFinite(dauer) || dauer <= 0) {
+    regler.title = `Zeitleiste${rechte}`;
+    return;
+  }
+  // Die Farbschichten fuellen die ganze Spur, daher dieselbe Breite verwenden.
+  const stelle = Math.max(0, Math.min(1, (reglerMausX - rahmen.left) / rahmen.width)) * dauer;
+  const segment = aktuellesSkipsegment(stelle);
+  const name = segment ? skipRegeln.beschriftung(segment.type).replace(/ überspringen$/, "") : "";
+  regler.title = name
+    ? `${name} · ${zeit(segment.start)}–${zeit(segment.end)}${rechte}`
+    : `${zeit(stelle)}${rechte}`;
+}
+
+// Eigene Hintergrundschichten lassen den nativen Regler samt Fokus und Knauf bestehen.
+// Nur bei neuen Daten neu zeichnen, nicht bei jedem Wiedergabe-Tick.
+function skipLeisteZeichnen() {
+  const farben = { intro: "#2dd4bf", recap: "#fb923c", outro: "#a78bfa", preview: "#f472b6" };
+  const dauer = Number(bild.duration);
+  const schichten = [];
+  if (skipAn && Number.isFinite(dauer) && dauer > 0) {
+    for (const segment of skipSegmente) {
+      if (!segment || segment.absent || !Object.hasOwn(farben, segment.type)
+        || !Number.isFinite(segment.start) || !Number.isFinite(segment.end)
+        || segment.start < 0 || segment.end <= segment.start || segment.end > dauer) continue;
+      const start = `${segment.start / dauer * 100}%`;
+      const end = `${segment.end / dauer * 100}%`;
+      schichten.push(`linear-gradient(to right, transparent 0 ${start}, ${farben[segment.type]} ${start} ${end}, transparent ${end} 100%)`);
+    }
+  }
+  if (schichten.length) regler.style.setProperty("--skip-abschnitte", schichten.join(", "));
+  else regler.style.removeProperty("--skip-abschnitte");
+  reglerHinweisZeigen();
+}
+
+function skipNachladen() {
+  const dauer = Number(bild.duration);
+  if (!skipAn || !skipRegeln || !bruecke.skipSegmente || !auftrag?.id
+    || !Number.isFinite(dauer) || dauer <= 0 || auftrag.laden || auftrag.auswahl) return;
+  const key = `${auftrag.id}:${Math.round(dauer)}`;
+  if (key === skipAnfrage) return;
+  skipAnfrage = key;
+  const generation = ++skipGeneration;
+  const id = auftrag.id;
+  skipSegmente = [];
+  skipLeisteZeichnen();
+  weiterKnopfZeigen();
+  Promise.resolve(bruecke.skipSegmente(id, dauer)).then((segmente) => {
+    if (generation !== skipGeneration || !skipAn || auftrag?.id !== id) return;
+    skipSegmente = Array.isArray(segmente) ? segmente : [];
+    skipLeisteZeichnen();
+    markeZeigen(bild.currentTime);
+    weiterKnopfZeigen();
+  }).catch(() => {});
+}
+
+function aktuellesSkipsegment(stelle = bild.currentTime) {
+  return skipAn ? skipRegeln?.aktiv(skipSegmente, stelle, bild.duration) || null : null;
+}
 /** Laeuft zu dieser Folge eine Watchparty? Dann geht der Takt hinaus. */
 let inRunde = false;
 /** Bin ich in dieser Runde der Host? Nur er stellt das Tempo fuer alle. */
@@ -470,6 +600,7 @@ function rundeWartenZeigen() {
  * als eines.
  */
 function spielenZeichnen() {
+  if (navigator.mediaSession) navigator.mediaSession.playbackState = bild.paused ? "paused" : "playing";
   const pausiert = bild.paused && !startAusstehend;
   const zustand = pausiert ? "play" : "pause";
   const beschreibung = rundeWarten ? "Warten auf alle …"
@@ -551,6 +682,32 @@ const HARMLOSE_ABLEHNUNG = ["AbortError", "NotAllowedError"];
  * lief der Ausloeser sofort los und die anderen holten auf - der Rueckstand war
  * die Laufzeit der Nachricht plus Springen und Puffern, und er blieb stehen.
  */
+function miniZeigen() {
+  const aktiv = document.pictureInPictureElement === bild;
+  knopfMini.hidden = !document.pictureInPictureEnabled || typeof bild.requestPictureInPicture !== "function";
+  knopfMini.disabled = !aktiv && (bild.readyState === 0 || !bild.videoWidth);
+  knopfMini.textContent = aktiv ? "Zurück zum Player" : "Mini-Player";
+  knopfMini.title = aktiv ? "Mini-Player schließen" : "Mini-Player öffnen";
+  knopfMini.setAttribute("aria-pressed", String(aktiv));
+}
+
+async function miniUmschalten() {
+  if (document.pictureInPictureElement === bild) {
+    await document.exitPictureInPicture().catch(() => {});
+    return;
+  }
+  if (knopfMini.disabled || knopfMini.hidden) return;
+  // Vor dem nativen Fenster: ein Blur darf den ausdruecklichen Mini-Wunsch
+  // nicht durch die optionale Hintergrund-Pause vereiteln.
+  bruecke.miniStatus?.(true);
+  try {
+    await bild.requestPictureInPicture();
+  } catch {
+    bruecke.miniStatus?.(false);
+    knopfMini.title = "Mini-Player für diese Wiedergabe nicht verfügbar";
+  }
+}
+
 function spielenUmschalten() {
   // Nach dem gemeinsamen Folgenwechsel ist die Quelle nur vorbereitet. Ein
   // eigener Tastendruck darf nicht einen Teilnehmer vor allen anderen starten.
@@ -634,17 +791,32 @@ async function springen(sekunden) {
  */
 async function markeNutzen() {
   if (!lokalesSpulenErlaubt()) return;
-  if (!marke) return;
+  const segment = aktuellesSkipsegment();
+  const gelernt = marke && bild.currentTime >= marke.ab && bild.currentTime <= marke.bis
+    && !skipSegmente.some((s) => s.type === "intro");
+  if (!segment && !gelernt) return;
   const von = bild.currentTime;
-  const ziel = Math.max(von + 1, marke.ziel);
+  const ziel = segment ? segment.end : Math.max(von + 1, marke.ziel);
   if (!await stelleSetzen(ziel)) return;
   bruecke.sprung(von, ziel, true);
+  tatMelden("seek");
+  const hatteFokus = document.activeElement === knopfMarke;
   knopfMarke.hidden = true;
+  if (hatteFokus) knopfSpielen.focus();
 }
 
 /** Der Knopf steht nur in seinem Fenster - davor und danach waere er im Weg. */
 function markeZeigen(stelle) {
-  knopfMarke.hidden = !(marke && stelle >= marke.ab && stelle <= marke.bis);
+  const segment = aktuellesSkipsegment(stelle);
+  const gelernt = marke && stelle >= marke.ab && stelle <= marke.bis
+    && !skipSegmente.some((s) => s.type === "intro");
+  const sichtbar = Boolean(segment || gelernt);
+  const text = segment ? skipRegeln.beschriftung(segment.type) : "Intro überspringen";
+  if (knopfMarke.textContent !== text) knopfMarke.textContent = text;
+  knopfMarke.title = text;
+  const hatteFokus = document.activeElement === knopfMarke;
+  knopfMarke.hidden = !sichtbar;
+  if (!sichtbar && hatteFokus) knopfSpielen.focus();
 }
 
 /** Kam die letzte Aenderung aus der Runde? */
@@ -1153,7 +1325,7 @@ function lokalesSpulenErlaubt() {
 function spulenRechteSetzen() {
   const gesperrt = !lokalesSpulenErlaubt();
   regler.disabled = gesperrt;
-  regler.title = gesperrt ? "Spulen steuert der Host" : "Stelle";
+  reglerHinweisZeigen();
   knopfZurueck.disabled = gesperrt;
   knopfZurueck.title = gesperrt ? "Spulen steuert der Host" : "10 Sekunden zurück";
   knopfVor.disabled = gesperrt;
@@ -1467,7 +1639,22 @@ async function hosterWechseln(link) {
  * einzelnen Datei gibt es sie nicht. "Aus" steht immer oben - eine Spur, die
  * sich nicht abschalten laesst, waere schlimmer als keine.
  */
+let untertitelSpuren = [];
+let untertitelVorgabe = window.ElfixUntertitelwahl.normalisieren(null);
+
+function untertitelAnwenden(nummer) {
+  if (hls) {
+    hls.subtitleTrack = nummer;
+    hls.subtitleDisplay = nummer >= 0;
+  } else {
+    for (let i = 0; i < bild.textTracks.length; i += 1) {
+      bild.textTracks[i].mode = i === nummer ? "showing" : "disabled";
+    }
+  }
+}
+
 function untertitelSetzen(spuren) {
+  untertitelSpuren = Array.from(spuren || []);
   untertitelWahl.textContent = "";
   const aus = document.createElement("option");
   aus.value = "-1";
@@ -1476,7 +1663,7 @@ function untertitelSetzen(spuren) {
   (spuren || []).forEach((spur, nummer) => {
     const zeile = document.createElement("option");
     zeile.value = String(nummer);
-    zeile.textContent = spur.name || spur.lang || `Spur ${nummer + 1}`;
+    zeile.textContent = spur.name || spur.label || spur.lang || spur.language || `Spur ${nummer + 1}`;
     untertitelWahl.appendChild(zeile);
   });
   /*
@@ -1490,7 +1677,9 @@ function untertitelSetzen(spuren) {
   const hatSpuren = Boolean((spuren || []).length);
   untertitelWahl.hidden = !hatSpuren;
   untertitelWahl.disabled = !hatSpuren;
-  untertitelWahl.value = "-1";
+  const nummer = window.ElfixUntertitelwahl.waehlen(untertitelSpuren, untertitelVorgabe);
+  untertitelWahl.value = String(nummer);
+  untertitelAnwenden(nummer);
 }
 
 /* -------------------------------------------------------------- Der Stand */
@@ -1523,10 +1712,8 @@ function standMelden(sofort = false) {
 /*
  * Ab wann der Knopf zur naechsten Folge dasteht.
  *
- * Nicht von Sekunde eins an: am alten Knopf in der Anbieterseite erschien er
- * ab neunzig Prozent (NEXT_EPISODE_PROMPT_PERCENT) und blieb bis zum Ende
- * stehen. Der Player zeigte ihn die ganze Folge lang - eine Einladung, in der
- * dritten Minute versehentlich weiterzuspringen.
+ * Ab Beginn eines belegten Abspanns, sonst ab der bisherigen Prozentschwelle.
+ * Das Angebot startet keinen Countdown; Autoplay bleibt am Medienende.
  *
  * Die Zahl kommt aus dem Auftrag, damit sie nicht an zwei Stellen steht.
  */
@@ -1543,7 +1730,12 @@ function weiterKnopfZeigen() {
     : 0;
   // Ohne obere Grenze: sonst verschwindet er in den letzten Sekunden wieder,
   // bevor der Uebergang greift. Dieselbe Ueberlegung wie drueben.
-  const dran = prozent >= weiterAbProzent;
+  const abspann = skipAn ? skipSegmente.filter(segment => segment && segment.type === "outro"
+    && !segment.absent && Number.isFinite(segment.start) && Number.isFinite(segment.end)
+    && segment.start >= 0 && segment.end > segment.start && segment.end <= dauer) : [];
+  const dran = abspann.length
+    ? bild.currentTime >= Math.min(...abspann.map(segment => segment.start))
+    : prozent >= weiterAbProzent;
   if (dran && knopfWeiter.hidden) {
     // Einmal, beim Erreichen der Schwelle: die Karte soll auffallen, auch wenn
     // die Leiste gerade weg ist. Danach richtet sie sich nach den Schichten.
@@ -1697,13 +1889,57 @@ bild.addEventListener("click", () => {
   if (wahlOffen()) { wahlAlleZu(); return; }
   spielenUmschalten();
 });
+knopfMini.addEventListener("click", miniUmschalten);
+bild.addEventListener("enterpictureinpicture", () => { spulVorschauVerbergen(); bruecke.miniStatus?.(true); miniZeigen(); });
+window.addEventListener("pagehide", () => { clearTimeout(vorschauTimer); spulVorschau.zerstoeren(); });
+bild.addEventListener("leavepictureinpicture", () => { bruecke.miniStatus?.(false); miniZeigen(); });
+bild.addEventListener("loadeddata", miniZeigen);
+bild.addEventListener("emptied", miniZeigen);
+miniZeigen();
 
-regler.addEventListener("input", async () => {
+// Die Systemknöpfe des Mini-Players benutzen dieselben Watchparty-Wege.
+if (navigator.mediaSession) {
+  const aktionen = {
+    play: () => { if (bild.paused && !startAusstehend) spielenUmschalten(); },
+    pause: () => { if (inRunde) pauseAnfordern(); else bild.pause(); }
+  };
+  for (const [aktion, tun] of Object.entries(aktionen)) {
+    try { navigator.mediaSession.setActionHandler(aktion, tun); } catch { /* Plattform ohne diesen Systemknopf. */ }
+  }
+}
+
+regler.addEventListener("pointermove", (ereignis) => {
+  reglerMausX = ereignis.clientX;
+  reglerHinweisZeigen();
+  const rahmen = regler.getBoundingClientRect();
+  if (rahmen.width > 0) spulVorschauZeigen((ereignis.clientX - rahmen.left) / rahmen.width * bild.duration);
+});
+regler.addEventListener("pointerleave", () => {
+  reglerMausX = null;
+  if (!reglerGefasst) spulVorschauVerbergen();
+  reglerHinweisZeigen();
+});
+regler.addEventListener("pointerdown", () => { reglerGefasst = !regler.disabled; });
+regler.addEventListener("pointercancel", () => { reglerGefasst = false; spulVorschauVerbergen(); });
+regler.addEventListener("blur", () => { reglerGefasst = false; spulVorschauVerbergen(); });
+regler.addEventListener("pointerup", () => { reglerGefasst = false; });
+
+regler.addEventListener("input", () => {
+  if (!lokalesSpulenErlaubt()) return;
+  const ziel = Number(regler.value) / 1000 * bild.duration;
+  if (!Number.isFinite(ziel)) return;
+  anzeigeStelle.textContent = zeit(ziel);
+  spulVorschauZeigen(ziel);
+});
+regler.addEventListener("change", async () => {
+  reglerGefasst = false;
+  spulVorschauVerbergen();
   if (!lokalesSpulenErlaubt()) return;
   if (!Number.isFinite(bild.duration) || bild.duration <= 0) return;
   const von = bild.currentTime;
   const ziel = (Number(regler.value) / 1000) * bild.duration;
-  if (!await stelleSetzen(ziel)) return;
+  const quelle = quellenGeneration;
+  if (!await stelleSetzen(ziel, startAuftrag) || quelle !== quellenGeneration) return;
   // Die Zaehlung darf einen Sprung nicht mitzaehlen - sonst waere der Regler
   // eine Abkuerzung zum "geschaut" der ganzen Serie.
   bruecke.sprung(von, ziel, false);
@@ -1723,17 +1959,16 @@ hosterWahl.addEventListener("change", () => hosterWechseln(hosterWahl.value));
 fassungWahl.addEventListener("change", () => fassungWechseln(fassungWahl.value));
 untertitelWahl.addEventListener("change", () => {
   const nummer = Number(untertitelWahl.value);
-  if (hls) {
-    hls.subtitleTrack = nummer;
-    hls.subtitleDisplay = nummer >= 0;
-    return;
-  }
-  // Ohne hls.js sind es die Spuren des Videos selbst.
-  const spuren = bild.textTracks || [];
-  for (let i = 0; i < spuren.length; i += 1) {
-    spuren[i].mode = i === nummer ? "showing" : "disabled";
-  }
+  untertitelVorgabe = window.ElfixUntertitelwahl.merken(untertitelSpuren[nummer]);
+  bruecke.untertitelMerken?.(auftrag?.id, untertitelVorgabe);
+  untertitelAnwenden(nummer);
 });
+function nativeUntertitelNachladen() {
+  if (!hls) untertitelSetzen(Array.from(bild.textTracks));
+}
+bild.textTracks.addEventListener("addtrack", nativeUntertitelNachladen);
+bild.textTracks.addEventListener("removetrack", nativeUntertitelNachladen);
+bild.addEventListener("loadedmetadata", nativeUntertitelNachladen);
 
 document.addEventListener("mousemove", schichtenZeigen);
 // Ein Klick daneben macht das offene Menue zu - das erwartet jeder, und ohne
@@ -1786,10 +2021,10 @@ bild.addEventListener("timeupdate", () => {
   if (abstand > 0 && abstand < 2 && !bild.paused) gelaufen += abstand;
   vorigeStelle = stelle;
 
-  anzeigeStelle.textContent = zeit(stelle);
+  if (!reglerGefasst) anzeigeStelle.textContent = zeit(stelle);
   markeZeigen(stelle);
   if (Number.isFinite(bild.duration) && bild.duration > 0) {
-    regler.value = String(Math.round((stelle / bild.duration) * 1000));
+    if (!reglerGefasst) regler.value = String(Math.round((stelle / bild.duration) * 1000));
     reglerFaerben(stelle);
     weiterKnopfZeigen();
     // Der Uebergang faengt vor dem letzten Bild an - der Abspann laeuft weiter,
@@ -1801,6 +2036,7 @@ bild.addEventListener("timeupdate", () => {
 
 bild.addEventListener("durationchange", () => {
   anzeigeDauer.textContent = zeit(bild.duration);
+  skipNachladen();
 });
 bild.addEventListener("play", () => {
   pufferZeigen(false);
@@ -1855,6 +2091,7 @@ bild.addEventListener("error", () => {
  * einem Wechsel der Quelle) den Film wieder zurueck.
  */
 bild.addEventListener("loadedmetadata", async () => {
+  skipNachladen();
   const meineQuellenGeneration = quellenGeneration;
   anzeigeDauer.textContent = zeit(bild.duration);
   // Eine neue Quelle faengt bei einfachem Tempo an - auch mitten in einer
@@ -2143,7 +2380,18 @@ function hlsAnkerErzeugen(instanz) {
  */
 function starten(neuerAuftrag) {
   ++quellenGeneration;
+  reglerGefasst = false;
+  spulVorschauVerbergen();
+  spulVorschau.quelle({});
+  vorschauQuelle = "";
   auftrag = neuerAuftrag || {};
+  untertitelVorgabe = window.ElfixUntertitelwahl.normalisieren(auftrag.untertitel);
+  skipGeneration++;
+  skipSegmente = [];
+  skipAnfrage = "";
+  skipAn = auftrag.skipSegments === true;
+  skipLeisteZeichnen();
+  knopfMarke.hidden = true;
   startGesetzt = false;
   vorgeladen = Boolean(auftrag.vorladen);
   rundeWarten = Boolean(auftrag.rundeWarten);
@@ -2244,6 +2492,16 @@ bruecke.aufNaechste((wert, folgentitel) => {
   if (folgentitel) kopfTitelSetzen("", folgentitel);
 });
 bruecke.aufMarke((neue) => { marke = neue || null; });
+bruecke.aufSkipEinstellung?.((an) => {
+  skipAn = Boolean(an);
+  skipGeneration++;
+  skipSegmente = [];
+  skipAnfrage = "";
+  markeZeigen(bild.currentTime);
+  skipLeisteZeichnen();
+  weiterKnopfZeigen();
+  if (skipAn) skipNachladen();
+});
 bruecke.aufSteuern(steuernAusRunde);
 // Das Tempo der Runde: gesetzt wird es hier, gemeldet wird nichts zurueck.
 bruecke.aufTempo((wert, host) => {

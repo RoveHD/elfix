@@ -3,6 +3,22 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.19 — 8. September 2026
+
+- Öffentliche Skip-Daten für Intro, Rückblick, Abspann und Vorschau werden
+  zusammengeführt, zwischengespeichert und im Player farbig markiert.
+- „Nächste Folge“ erscheint ab erkanntem Abspann; ohne Daten bleiben 90 Prozent
+  der Videolänge der Rückfall. Die Zeitleiste nennt den jeweiligen Abschnitt.
+- Android-Watchparty: Der Verbindungsnachweis verwendet das erwartete
+  Base64-Format und verhindert hängenbleibende Raumverbindungen.
+- Mini-Player auf Windows und Android-Handy; Größenwechsel erhalten den Player.
+- Echte Videovorschau beim Spulen, gespeicherte Untertitelwahl und gemeinsame
+  Suchtreffer mit Anbieterauswahl. YouTube bleibt getrennt.
+- Handy: Doppel-Tap für zehn Sekunden vor/zurück und horizontales Wischen mit
+  Vorschau. Abbruch, Watchparty-Rechte und TV-D-Pad-Spulen werden berücksichtigt.
+- Geprüft mit 136 Node-/Relay-Suiten, zwölf Electron-Suiten, 289 Android-Unit-Tests
+  und echten Handytests für Gesten, Bildvorschau und den Mini-Player.
+
 ## 2.0.18 — 8. September 2026
 
 - Gemeinsam weiterschauen behält gespeicherte Beitritte bei Verbindungsaufbau,

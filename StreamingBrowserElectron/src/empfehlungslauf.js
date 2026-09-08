@@ -35,7 +35,7 @@
 const empfehlung = require("./empfehlung");
 const titelModul = require("./titel");
 const taste = require("./taste");
-const { cleanBaseMediaTitle } = require("./fortschritt");
+const { cleanBaseMediaTitle, episodeIdentity, isExplicitFilmUrl } = require("./fortschritt");
 const providerModel = require("../shared/provider-model");
 const {
   extractGenres,
@@ -255,6 +255,55 @@ function erstellen(umgebung) {
     } catch {
       return null;
     }
+  }
+
+  // Skip-Daten brauchen IDs, keine neue Titelsuche beim Streamstart. Vorhandene
+  // Anbieter- und Metadatencaches haben Vorrang; nur fehlende IDs werden ueber
+  // den bestehenden, deduplizierten Metadatenclient aufgeloest.
+  async function skipKontext(name, url) {
+    const kind = candidateMediaType(url);
+    if (!kind) return null;
+    const film = isExplicitFilmUrl(url);
+    const episode = episodeIdentity(url);
+    if (!film && !episode) return null;
+    const art = film ? "film" : kind;
+    // Ein Anime-Film unter /filme/film-N ist kein Episoden-Eintrag seines
+    // Muttertitels. Dessen MAL-/IMDb-ID darf nicht zum Film werden.
+    const animeFilm = kind === "anime" && film;
+    const meta = animeFilm
+      ? umgebung.cacheLesen().pages?.[String(url).replace(/\/$/, "")]?.meta
+      : seitenMeta(url);
+    const ids = {};
+    if (/^tt\d{6,10}$/.test(String(meta?.imdb || ""))) ids.imdb = meta.imdb;
+    let extern = animeFilm ? null : metadatenAusCache(name, url);
+    if (!extern && !ids.imdb && !animeFilm) {
+      try {
+        const client = umgebung.metadaten();
+        const roh = metadatenWunsch(name, url, meta);
+        const wunsch = client?.wunschBauen?.(roh);
+        if (wunsch && client.bereit() && !client.gesperrt()) {
+          extern = (await client.nachschlagen([wunsch]))?.get(wunsch.schluessel) || null;
+        }
+      } catch { /* Fehlende IDs lassen den Player ohne Segmente weiterlaufen. */ }
+    }
+    if (extern && ["EXACT", "HIGH"].includes(extern.konfidenz)) {
+      for (const key of ["mal", "anilist", "tmdb", "tvdb"]) {
+        const wert = extern.externeIds?.[key];
+        if (Number.isSafeInteger(wert) && wert > 0) ids[key] = wert;
+      }
+      if (!ids.imdb && /^tt\d{6,10}$/.test(String(extern.externeIds?.imdb || ""))) {
+        ids.imdb = extern.externeIds.imdb;
+      }
+    }
+    const kontext = { art, ids, season: episode?.season || 0, episode: episode?.episode || 0 };
+    // AniList-Metadaten identifizieren hier den Haupttitel, nicht jede weitere
+    // Anbieter-Staffel. Ohne explizite Cour-Zuordnung nur Staffel 1 benutzen;
+    // IMDb/TMDB-Quellen koennen weitere Staffeln weiterhin direkt adressieren.
+    if (art === "anime" && episode?.season === 1 && ids.mal
+      && (!extern?.folgenGesamt || episode.episode <= extern.folgenGesamt)) {
+      kontext.malEpisode = episode.episode;
+    }
+    return kontext;
   }
 
   // Anzeigen duerfen sofort aus beiden vorhandenen Caches lesen. Kein Abruf,
@@ -1431,6 +1480,7 @@ function erstellen(umgebung) {
     // Verlaufs-Kasten der Mediathek.
     titelMetadaten,
     titelAnzeige,
+    skipKontext,
     // Der Pool ist veraltet - etwa weil der Wirt seinen Cache verworfen hat.
     poolVerwerfen() {
       personalCache = { at: 0, items: [], signatur: "", vollstaendig: false };

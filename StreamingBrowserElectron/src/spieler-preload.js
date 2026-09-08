@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   schliessen: (grund) => ipcRenderer.send("spieler:schliessen", String(grund || "")),
   /** Vollbild an oder aus - das Fenster gehoert dem Hauptprozess. */
   vollbild: (an) => ipcRenderer.send("spieler:vollbild", Boolean(an)),
+  miniStatus: (an) => ipcRenderer.send("spieler:mini-status", Boolean(an)),
   /**
    * Die Staffel- und Folgenliste. Sie kostet einen Seitenaufruf, deshalb wird
    * sie erst geholt, wenn jemand sie aufklappt - und danach gemerkt.
@@ -61,6 +62,9 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
     ipcRenderer.send("spieler:sprung", Number(von) || 0, Number(nach) || 0, Boolean(genutzt)),
   /** Eine frisch gelernte Marke wird nachgereicht. */
   aufMarke: (rueckruf) => ipcRenderer.on("spieler:marke", (_ereignis, marke) => rueckruf(marke)),
+  skipSegmente: (id, dauer) => ipcRenderer.invoke("spieler:skip-segmente", id, dauer),
+  untertitelMerken: (id, vorgabe) => ipcRenderer.send("spieler:untertitel", id, vorgabe),
+  aufSkipEinstellung: (rueckruf) => ipcRenderer.on("spieler:skip-einstellung", (_ereignis, an) => rueckruf(an)),
   /**
    * Die Watchparty. Drei Dinge, mehr braucht sie nicht:
    * der Takt (wo stehe ich), die eigene Tat (was habe ich getan) und der

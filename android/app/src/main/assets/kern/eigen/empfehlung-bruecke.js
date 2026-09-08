@@ -229,6 +229,23 @@
     return null;
   }
 
+  /**
+   * Die Kennung der gerade laufenden Folge fuer die Segmentquelle.
+   *
+   * <p>Der Empfehlungslauf besitzt bereits den cache-first Metadatenstand.
+   * Die Playerseite darf ihn deshalb nicht noch einmal bei einem Anbieter
+   * zusammensuchen. Der Aufrufer reicht die Laufzeit erst beim Abfragen der
+   * Segmente nach, weil sie nur der native Player verlaesslich kennt.
+   */
+  async function skipKontext(name, url) {
+    if (!lauf || typeof lauf.skipKontext !== "function") return null;
+    try {
+      return await lauf.skipKontext(String(name || ""), String(url || ""));
+    } catch (fehler) {
+      return null;
+    }
+  }
+
   module.exports = {
     starten,
     standSetzen,
@@ -237,6 +254,7 @@
     persoenlich,
     entdeckungsSeite,
     vergissMuedigkeit,
-    poolVerwerfen
+    poolVerwerfen,
+    skipKontext
   };
 })();

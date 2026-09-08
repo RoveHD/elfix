@@ -137,6 +137,12 @@ pruefe("Der Titel wird nicht mehr als HTML zusammengebaut",
   !/innerHTML\s*=\s*`<strong>/.test(karte), "kein innerHTML fuer den Titel");
 pruefe("Die Hervorhebung bekommt den Originaltitel, nicht ein Bruchstueck",
   /titelMitFundstelle\(result\.title, suche\)/.test(karte));
+pruefe("Der erste Anbieter ist auch als Auswahl aktiv",
+  /quellen\.find\(\(quelle\) => quelle\.result === result && quelle\.provider === provider\)[\s\S]{0,1300}button\.classList\.toggle\("is-active", istAktiv\)/.test(rendererQuelle));
+pruefe("Die Watchlist-Aktion haelt die beim Klick gewählte Quelle fest",
+  /const fuerWatchlist = ausgewaehlt;[\s\S]{0,600}providerId: fuerWatchlist\.provider\.providerId/.test(karte));
+pruefe("Ein späterer Quellenwechsel wird nach der Watchlist-Antwort berücksichtigt",
+  /favorites = ergebnis\.favorites \|\| favorites;[\s\S]{0,320}herzAuffrischen\(\)/.test(rendererQuelle));
 
 // Die Luecke in der Watchlist: das Poster wird beim Hinzufuegen geholt.
 const hauptQuelle = lies("src/main.js");

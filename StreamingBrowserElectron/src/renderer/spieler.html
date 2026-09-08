@@ -80,11 +80,20 @@
   #regler {
     flex: 1;
     background:
+      var(--skip-abschnitte, linear-gradient(transparent, transparent)),
       linear-gradient(to right, #3D92FF 0 var(--gespielt, 0%), transparent var(--gespielt, 0%)),
       linear-gradient(to right, rgba(255, 255, 255, 0.42) 0 var(--geladen, 0%), transparent var(--geladen, 0%)),
       rgba(255, 255, 255, 0.22);
   }
   #lautstaerke { width: 96px; }
+  #spulVorschau {
+    position: fixed; z-index: 20; pointer-events: none; max-width: calc(100vw - 24px);
+    padding: 5px; border-radius: 10px; background: rgba(12, 16, 24, .96);
+    border: 1px solid rgba(255, 255, 255, .2); box-shadow: 0 6px 24px #0008;
+    text-align: center; font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  #spulVorschau canvas { display: block; width: 240px; max-width: 100%; height: auto; border-radius: 6px; }
+  #spulVorschauText { display: block; padding: 5px 8px; }
 
   /*
    * Das aufgeklappte Menue kommt vom Betriebssystem, nicht von dieser Seite.
@@ -378,6 +387,10 @@
 
   <!-- Wer sonst noch bei dieser Folge sitzt. Leer, solange man allein ist. -->
   <div id="runde" hidden></div>
+  <div id="spulVorschau" role="tooltip" hidden>
+    <canvas id="spulVorschauBild" width="240" height="135" hidden></canvas>
+    <span id="spulVorschauText"></span>
+  </div>
 
   <div id="kopf" class="schicht">
     <div>
@@ -390,7 +403,7 @@
   <div id="leiste" class="schicht">
     <div class="reihe">
       <span id="stelle" class="zeit">0:00</span>
-      <input id="regler" type="range" min="0" max="1000" value="0" step="1" aria-label="Stelle">
+      <input id="regler" type="range" min="0" max="1000" value="0" step="1" aria-label="Wiedergabeposition">
       <span id="dauer" class="zeit">0:00</span>
     </div>
     <div class="reihe">
@@ -424,6 +437,7 @@
            Uebergangskasten: der steht nur da, wenn Autoplay an ist - man
            koennte es dort ausschalten und nie wieder ein. -->
       <button id="autoKnopf" type="button" title="Nächste Folge von selbst starten">Autoplay an</button>
+      <button id="miniKnopf" type="button" title="Mini-Player öffnen" aria-pressed="false" hidden>Mini-Player</button>
       <button id="gross" type="button" title="Vollbild (F)">⛶</button>
     </div>
   </div>
@@ -481,6 +495,9 @@
 
   <script src="../../node_modules/hls.js/dist/hls.min.js"></script>
   <script src="spieler-chat.js"></script>
+  <script src="../skipsegmente.js"></script>
+  <script src="../untertitelwahl.js"></script>
+  <script src="spieler-vorschau.js"></script>
   <script src="spieler.js"></script>
 </body>
 </html>

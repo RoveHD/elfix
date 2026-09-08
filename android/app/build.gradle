@@ -37,6 +37,7 @@ def kernModule = [
     "src/begruendung.js",
     "src/empfehlung.js",
     "src/empfehlungslauf.js",
+    "src/skipsegmente.js",
     "src/metadaten.js",
     "src/statistik.js",
     "src/sitzungslauf.js",

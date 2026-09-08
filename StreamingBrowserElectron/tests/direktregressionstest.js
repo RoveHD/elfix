@@ -235,10 +235,13 @@ function playerKontext() {
   function element(id) {
     if (elemente.has(id)) return elemente.get(id);
     const horcher = {};
+    const textTracks = [];
+    textTracks.addEventListener = () => {};
     const el = { hidden: true, value: "", children: [], paused: true, ended: false, currentTime: 0, duration: NaN, volume: 1, muted: false,
-      buffered: { length: 0 }, style: { setProperty() {} }, classList: { add() {}, remove() {}, toggle() {} },
+      buffered: { length: 0 }, textTracks, style: { setProperty() {}, removeProperty() {} }, classList: { add() {}, remove() {}, toggle() {} },
       addEventListener(name, fn) { (horcher[name] ||= []).push(fn); },
       dispatchEvent(event) { for (const fn of horcher[event.type] || []) fn(event); },
+      getBoundingClientRect() { return { left: 0, width: 0 }; },
       appendChild(child) { this.children.push(child); }, append(...children) { this.children.push(...children); },
       setAttribute() {}, getAttribute() { return this.src || ""; }, removeAttribute() { this.src = ""; },
       play() { this.paused = false; this.dispatchEvent({ type: "play" }); return Promise.resolve(); },
@@ -250,7 +253,8 @@ function playerKontext() {
   }
   const bruecke = new Proxy({ stand: (wert) => meldungen.push(wert), folgen: async () => null,
     wechseln: async () => ({ ok: true }) }, { get: (objekt, key) => objekt[key] || (() => {}) });
-  const c = vm.createContext({ window: { elfixSpieler: bruecke }, console: still, Date, Event,
+  const vorschau = { erstellen: () => ({ quelle() {}, zeigen: async () => ({}), verbergen() {}, zerstoeren() {} }) };
+  const c = vm.createContext({ window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event,
     document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout: () => ++timerId, clearTimeout() {},
     setInterval: (fn) => { const id = ++timerId; intervalle.set(id, fn); return id; }, clearInterval: (id) => intervalle.delete(id)

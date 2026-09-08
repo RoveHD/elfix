@@ -123,8 +123,10 @@ pruefe("Jeder von ihnen prueft, dass die Meldung wirklich vom Player kommt",
 pruefe("Und der gemeinsame Pruefer vergleicht wirklich den Absender",
   /function vomSpieler\(ereignis\) \{[\s\S]*?ereignis\.sender === spielerView\.webContents/.test(haupt));
 const nachgefragt = haupt.split('ipcMain.handle("spieler:').slice(1);
+const skipHandler = haupt.match(/async function spielerSkipLesen\([\s\S]*?\n\}/)?.[0] || "";
 pruefe("Auch jede Nachfrage wird auf ihren Absender geprueft",
-  nachgefragt.length > 0 && nachgefragt.every((teil) => teil.includes("vomSpieler(ereignis)")),
+  nachgefragt.length > 0 && nachgefragt.every((teil) => teil.includes("vomSpieler(ereignis)")
+    || (teil.startsWith('skip-segmente", spielerSkipLesen)') && skipHandler.includes("!vomSpieler(ereignis)"))),
   `${nachgefragt.length} Nachfragen`);
 
 // Die Watchparty laeuft jetzt gegen den eigenen Player: er meldet seinen Takt,
@@ -214,10 +216,10 @@ pruefe("Der Uebergang faengt so frueh an, wie der Zaehler lang ist",
   /bild\.duration - stelle <= weiterZaehler \+ 1/.test(skript),
   "sonst zaehlt er fuenf und beginnt nach acht");
 pruefe("Der Knopf zur naechsten Folge haengt nicht am Zaehler",
-  /function weiterKnopfZeigen\(\)[\s\S]{0,700}?const dran = prozent >= weiterAbProzent;/.test(skript)
+  /function weiterKnopfZeigen\(\)[\s\S]{0,1500}?: prozent >= weiterAbProzent;/.test(skript)
   && !/knopfWeiter\.hidden = weiterZaehler/.test(skript),
   "er steht auch dann da, wenn Autoplay aus ist - er haengt an der Stelle, nicht am Zaehler");
-pruefe("Und er erscheint erst gegen Ende, wie der alte",
+pruefe("Ohne Abspann bleibt die bisherige Schwelle erhalten",
   /weiterAbProzent = Number\.isFinite\(Number\(auftrag\.weiterAbProzent\)\)/.test(skript)
   && /weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT/.test(haupt),
   "dieselbe Schwelle wie am Knopf in der Anbieterseite, und sie steht nur einmal");

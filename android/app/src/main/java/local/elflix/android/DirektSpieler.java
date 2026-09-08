@@ -4,7 +4,11 @@ import android.app.Activity;
 import android.content.pm.ApplicationInfo;
 import android.content.res.Configuration;
 import android.content.res.ColorStateList;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
@@ -17,6 +21,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -50,6 +55,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -90,6 +96,8 @@ final class DirektSpieler {
         void bereit();
         boolean darfAutoplay();
         void marke(Consumer<JSONObject> fertig);
+        /** Cache-first Kennung fuer externe Vorspann- und Abspannsegmente. */
+        default void skipKontext(Consumer<JSONObject> fertig) { fertig.accept(null); }
         void sprung(double von, double nach);
         /**
          * Die Bedienung ist gekommen oder gegangen.
@@ -135,6 +143,9 @@ final class DirektSpieler {
         default void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
             if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
         }
+
+        /** Das Telefon kann die laufende native Wiedergabe in Android-PiP legen. */
+        default void pip() { }
     }
 
     /* --------------------------------------------------- Die Farben des Players */
@@ -157,6 +168,11 @@ final class DirektSpieler {
     private static final int SPUR = 0x38FFFFFF;
     private static final int SPUR_GELADEN = 0x6BFFFFFF;
     private static final int RAHMEN = 0x47FFFFFF;
+    /** Farben der extern belegten Abschnitte auf der Zeitachse. */
+    private static final int SKIP_INTRO = Color.parseColor("#2DD4BF");
+    private static final int SKIP_RECAP = Color.parseColor("#FB923C");
+    private static final int SKIP_OUTRO = Color.parseColor("#A78BFA");
+    private static final int SKIP_PREVIEW = Color.parseColor("#F472B6");
 
     /** Wie lange die Schichten stehenbleiben, wenn nichts geschieht. */
     private static final long RUHE_MS = 5000;
@@ -199,6 +215,8 @@ final class DirektSpieler {
     private final TextView stelleText;
     private final TextView dauerText;
     private final SeekBar regler;
+    /** Liegt nur ueber der Zeitachse, niemals ueber dem Lautstaerkeregler. */
+    private final SkipMarkenDrawable skipMarken = new SkipMarkenDrawable();
     private final TextView spielen;
     private final TextView zehnZurueck;
     private final TextView zehnVor;
@@ -241,6 +259,18 @@ final class DirektSpieler {
      * soll nicht stehenbleiben, bis man es wegdrueckt.
      */
     private final TextView ansage;
+    private final SpielerVorschau vorschau;
+    /** Nur die Videoebene bekommt Wisch- und Doppel-Tipp-Gesten. */
+    private final GestureDetector videoGesten;
+    private boolean wischSpulen;
+    private float wischStartX;
+    private double wischStartPosition;
+    private double wischZiel;
+    private boolean wischGastGesperrt;
+    private boolean imPip;
+    private String vorschauUrl = "";
+    private String vorschauTyp = "";
+    private Map<String, String> vorschauKopfzeilen = java.util.Collections.emptyMap();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
@@ -270,6 +300,17 @@ final class DirektSpieler {
     private boolean quelleLaedt = true;
     private JSONObject introMarke;
     private double introZiel;
+    /** Das gerade sichtbare Ziel kam aus der externen Segmentquelle. */
+    private boolean introExtern;
+    /** Der naechste seek ist ein externer Knopf und wird nie gelernt. */
+    private boolean externerSprungOffen;
+    /** Bei einer Quelle genau einmal geladen; die Laufzeit gehoert zum Cache-Schluessel. */
+    private boolean skipKontextAngefordert;
+    private double skipLaufzeit = -1;
+    private long skipQuellenFolge;
+    private final ArrayList<JSONObject> skipSegmente = new ArrayList<>();
+    /** Auch ein noIntro-Beleg unterdrueckt die gelernte Intro-Marke. */
+    private boolean skipHatIntroBeleg;
     private double sprungVon = -1;
     private double sprungNach;
     private long letzteMarkenFrage;
@@ -288,6 +329,8 @@ final class DirektSpieler {
     /** Schichten sichtbar? Steht hier und nicht an der Sichtbarkeit der Ansicht:
      *  waehrend des Ausblendens ist sie noch sichtbar und schon nicht mehr gemeint. */
     private boolean schichtenAn = true;
+    /** Weckt die Leiste beim Erreichen der Folgen-Schwelle genau einmal. */
+    private boolean weiterSchwelleGemeldet;
     private boolean reglerGefasst;
     private boolean warSichtbar;
     private boolean tvMitteGedrueckt;
@@ -569,10 +612,12 @@ final class DirektSpieler {
         };
         ansicht.setBackgroundColor(GRUND);
         ansicht.setFocusable(true);
+        vorschau = new SpielerVorschau(activity, ansicht);
 
         bild = new PlayerView(activity);
         // Kein mitgelieferter Bedienteil mehr: alles unten in dieser Datei.
         bild.setUseController(false);
+        bild.setTag("video");
         bild.setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER);
         bild.setBackgroundColor(GRUND);
         ansicht.addView(bild, new FrameLayout.LayoutParams(-1, -1));
@@ -580,6 +625,66 @@ final class DirektSpieler {
         // das ist die Geste, die jeder Player auf einem Telefon hat.
         bild.setOnClickListener(v -> {
             if (warSichtbar) schichtenSetzen(false);
+        });
+        videoGesten = new GestureDetector(activity, new GestureDetector.SimpleOnGestureListener() {
+            @Override public boolean onDown(MotionEvent event) {
+                wischSpulen = false;
+                wischGastGesperrt = false;
+                wischStartX = event.getX();
+                wischStartPosition = position();
+                wischZiel = wischStartPosition;
+                return true;
+            }
+
+            @Override public boolean onSingleTapConfirmed(MotionEvent event) {
+                if (!imPip && warSichtbar) schichtenSetzen(false);
+                return true;
+            }
+
+            @Override public boolean onDoubleTap(MotionEvent event) {
+                if (imPip) return true;
+                boolean zurueck = event.getX() < bild.getWidth() / 2f;
+                if (springen(zurueck ? -10 : 10)) {
+                    kurzeAnsage(zurueck ? "10 Sekunden zurück" : "10 Sekunden vor");
+                }
+                return true;
+            }
+
+            @Override public boolean onScroll(MotionEvent start, MotionEvent aktuell,
+                                               float distanzX, float distanzY) {
+                if (imPip || bild.getWidth() <= 0
+                    || Math.abs(aktuell.getX() - wischStartX) < dp(28)
+                    || Math.abs(aktuell.getX() - wischStartX) <= Math.abs(aktuell.getY() - start.getY())) return false;
+                wischSpulen = true;
+                if (!darfNutzerSpulen()) {
+                    wischGastGesperrt = true;
+                    return true;
+                }
+                double sekunden = (aktuell.getX() - wischStartX) / bild.getWidth() * 120.0;
+                wischZiel = Math.max(0, wischStartPosition + sekunden);
+                if (dauer() > 0) wischZiel = Math.min(wischZiel, Math.max(0, dauer() - 0.5));
+                long gerundet = Math.round(wischZiel - wischStartPosition);
+                kurzeAnsage((gerundet >= 0 ? "+" : "") + gerundet + " Sekunden");
+                vorschauZeigen(wischZiel);
+                return true;
+            }
+        });
+        bild.setOnTouchListener((v, event) -> {
+            if (imPip) return false;
+            boolean erkannt = videoGesten.onTouchEvent(event);
+            if (event.getActionMasked() == MotionEvent.ACTION_UP && wischSpulen) {
+                wischSpulen = false;
+                stelleVomNutzerSetzen(wischZiel);
+                vorschau.verbergen();
+                return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                wischSpulen = false;
+                wischGastGesperrt = false;
+                vorschau.verbergen();
+                return true;
+            }
+            return erkannt;
         });
 
         // Oben stehen zwei Dinge untereinander: der Streifen der Runde (er
@@ -855,6 +960,7 @@ final class DirektSpieler {
         TextView hoster = knopf("Hoster", umgebung::hoster);
         hoster.setTag("hoster");
         knoepfe.addView(hoster);
+        if (!fernseher) knoepfe.addView(knopf("Mini-Player", umgebung::pip));
         knoepfe.addView(knopf("Untertitel", () -> spuren(C.TRACK_TYPE_TEXT, "Untertitel")));
         knoepfe.addView(knopf("Qualität", () -> spuren(C.TRACK_TYPE_VIDEO, "Bildqualität")));
         TextView tempoKnopf = knopf("1×", this::tempoWaehlen);
@@ -868,19 +974,25 @@ final class DirektSpieler {
     }
 
     /**
-     * Der Fortschrittsbalken in drei Zonen.
+     * Der Fortschrittsbalken in drei Zonen und bei der Zeitachse zusaetzlich
+     * die belegten Skip-Abschnitte.
      *
      * <p>Genau wie am Rechner: der Weg hinter dem Knauf in der Akzentfarbe, der
      * geladene Puffer heller als die Spur, der Rest die Spur. Ein Balken, der
      * durchgehend gleich hell ist, sagt weder, wie weit man ist, noch wieviel
      * schon da ist.
      */
-    private LayerDrawable balkenSchichten() {
-        LayerDrawable schichten = new LayerDrawable(new Drawable[] {
-            balkenStueck(SPUR),
-            new ClipDrawable(balkenStueck(SPUR_GELADEN), Gravity.START, ClipDrawable.HORIZONTAL),
-            new ClipDrawable(balkenStueck(Theme.PRIMARY), Gravity.START, ClipDrawable.HORIZONTAL)
-        });
+    private LayerDrawable balkenSchichten(boolean mitSkipMarken) {
+        ArrayList<Drawable> teile = new ArrayList<>();
+        teile.add(balkenStueck(SPUR));
+        teile.add(new ClipDrawable(balkenStueck(SPUR_GELADEN), Gravity.START, ClipDrawable.HORIZONTAL));
+        teile.add(new ClipDrawable(balkenStueck(Theme.PRIMARY), Gravity.START, ClipDrawable.HORIZONTAL));
+        // Der transparente Abschnitt liegt ueber Fortschritt und Puffer. So
+        // bleiben die farbigen Stellen auch hinter der aktuellen Position als
+        // Orientierung erhalten; der native Knauf wird weiterhin darueber
+        // gezeichnet.
+        if (mitSkipMarken) teile.add(skipMarken);
+        LayerDrawable schichten = new LayerDrawable(teile.toArray(new Drawable[0]));
         schichten.setId(0, android.R.id.background);
         schichten.setId(1, android.R.id.secondaryProgress);
         schichten.setId(2, android.R.id.progress);
@@ -898,7 +1010,7 @@ final class DirektSpieler {
     private SeekBar reglerBauen() {
         SeekBar bar = new SeekBar(activity);
         bar.setMax(1000);
-        bar.setProgressDrawable(balkenSchichten());
+        bar.setProgressDrawable(balkenSchichten(true));
         bar.setThumb(knaufBauen());
         bar.setSplitTrack(false);
         bar.setPadding(dp(7), dp(14), dp(7), dp(14));
@@ -906,7 +1018,12 @@ final class DirektSpieler {
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar wo, int wert, boolean vonHand) {
                 if (!vonHand || player == null) return;
-                stelleText.setText(uhr(wert / 1000.0 * dauer()));
+                double ziel = wert / 1000.0 * dauer();
+                stelleText.setText(uhr(ziel));
+                // DPAD changes arrive as fromUser too, but never produce the
+                // touch-only stop callback. Commit those discrete positions now.
+                if (!reglerGefasst) stelleVomNutzerSetzen(ziel);
+                else vorschauZeigen(ziel);
             }
             @Override public void onStartTrackingTouch(SeekBar wo) {
                 reglerGefasst = true;
@@ -917,6 +1034,7 @@ final class DirektSpieler {
                 if (player == null || dauer() <= 0) return;
                 double ziel = wo.getProgress() / 1000.0 * dauer();
                 stelleVomNutzerSetzen(ziel);
+                vorschau.verbergen();
                 regung();
             }
         });
@@ -934,7 +1052,7 @@ final class DirektSpieler {
         SeekBar bar = new SeekBar(activity);
         bar.setMax(100);
         bar.setProgress(100);
-        bar.setProgressDrawable(balkenSchichten());
+        bar.setProgressDrawable(balkenSchichten(false));
         bar.setThumb(knaufBauen());
         bar.setSplitTrack(false);
         bar.setPadding(dp(7), dp(14), dp(7), dp(14));
@@ -1040,6 +1158,64 @@ final class DirektSpieler {
         form.setColor(farbe);
         form.setCornerRadius(dp(3));
         return form;
+    }
+
+    /** Farbe fuer einen Abschnitt auf der Zeitachse, 0 fuer unbekannte Typen. */
+    static int skipFarbe(String typ) {
+        if ("intro".equals(typ)) return SKIP_INTRO;
+        if ("recap".equals(typ)) return SKIP_RECAP;
+        if ("outro".equals(typ)) return SKIP_OUTRO;
+        if ("preview".equals(typ)) return SKIP_PREVIEW;
+        return Color.TRANSPARENT;
+    }
+
+    /**
+     * Eine reine Zeichenebene fuer die belegten Zeitbereiche. Sie kennt weder
+     * Eingaben noch Fortschritt; der native SeekBar behaelt damit Thumb, Fokus,
+     * D-Pad und Touch-Verhalten unveraendert.
+     */
+    private final class SkipMarkenDrawable extends Drawable {
+        private final Paint farbe = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final ArrayList<JSONObject> abschnitte = new ArrayList<>();
+        private double laufzeit;
+        private int alpha = 255;
+
+        void setzen(List<JSONObject> neu, double neueLaufzeit) {
+            abschnitte.clear();
+            if (neu != null) abschnitte.addAll(neu);
+            laufzeit = Double.isFinite(neueLaufzeit) && neueLaufzeit > 0 ? neueLaufzeit : 0;
+            invalidateSelf();
+        }
+
+        @Override public void draw(Canvas canvas) {
+            if (!(laufzeit > 0) || abschnitte.isEmpty()) return;
+            android.graphics.Rect grenzen = getBounds();
+            if (grenzen.width() <= 0 || grenzen.height() <= 0) return;
+            int hoehe = Math.min(grenzen.height(), dp(5));
+            float oben = grenzen.centerY() - hoehe / 2f;
+            float unten = oben + hoehe;
+            for (JSONObject abschnitt : abschnitte) {
+                if (abschnitt == null || abschnitt.optBoolean("absent", false)) continue;
+                int markenFarbe = skipFarbe(abschnitt.optString("type"));
+                double start = abschnitt.optDouble("start", Double.NaN);
+                double ende = abschnitt.optDouble("end", Double.NaN);
+                if (markenFarbe == Color.TRANSPARENT || !Double.isFinite(start) || !Double.isFinite(ende)
+                    || start < 0 || ende <= start || ende > laufzeit) continue;
+                float links = (float) (grenzen.left + grenzen.width() * start / laufzeit);
+                float rechts = (float) (grenzen.left + grenzen.width() * ende / laufzeit);
+                farbe.setColor(markenFarbe);
+                farbe.setAlpha(alpha);
+                canvas.drawRect(links, oben, rechts, unten, farbe);
+            }
+        }
+
+        @Override public void setAlpha(int wert) {
+            alpha = wert;
+            invalidateSelf();
+        }
+
+        @Override public void setColorFilter(ColorFilter filter) { farbe.setColorFilter(filter); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 
     private TextView zeit(String text) {
@@ -1344,26 +1520,82 @@ final class DirektSpieler {
 
     void naechsteVorhanden(boolean ja) {
         hatNaechste = ja;
+        weiterSchwellePruefen();
         weiterkarteZeigen();
     }
+
+    /** The preview owns a second decoder and never touches the primary seek position. */
+    private void vorschauZeigen(double ziel) {
+        if (imPip || vorschauUrl.isEmpty() || !Double.isFinite(ziel)) return;
+        vorschau.zeigen(vorschauUrl, vorschauTyp, vorschauKopfzeilen, ziel, uhr(ziel));
+    }
+
+    boolean vorschauSichtbar() { return vorschau.sichtbar(); }
+    boolean vorschauHatFrame() { return vorschau.hatFrame(); }
 
     /**
      * Steht die Karte zur naechsten Folge gerade an?
      *
      * <p>Vier Bedingungen, alle noetig: es gibt eine naechste Folge, die
      * Bedienung ist zu sehen, es laeuft kein Zaehler (der hat seinen eigenen
-     * Kasten) - und die Folge ist zu {@link #WEITER_AB_PROZENT} Prozent
-     * vorbei.
+     * Kasten) - und die Folge im erkannten Abspann oder ohne einen solchen
+     * Beleg zu {@link #WEITER_AB_PROZENT} Prozent vorbei.
      */
     private void weiterkarteZeigen() {
         boolean sichtbar = hatNaechste && schichtenAn && zaehlerEnde == 0 && amEnde();
         weiterKarte.setVisibility(sichtbar ? View.VISIBLE : View.GONE);
     }
 
+    /**
+     * Die Karte darf die ausgeblendete Bedienung beim ersten Erreichen ihrer
+     * Schwelle einmal wecken. Danach bleibt der normale Ruhe-Timer zuständig;
+     * beim Zurückspulen unter die Schwelle wird die Freigabe wieder gesetzt.
+     */
+    private void weiterSchwellePruefen() {
+        boolean bereit = hatNaechste && zaehlerEnde == 0 && amEnde();
+        if (!bereit) {
+            weiterSchwelleGemeldet = false;
+            return;
+        }
+        if (!sollWeiterSchwelleMelden(weiterSchwelleGemeldet, hatNaechste, zaehlerEnde, amEnde())) return;
+        weiterSchwelleGemeldet = true;
+        if (!schichtenAn) regung();
+    }
+
+    static boolean sollWeiterSchwelleMelden(boolean schonGemeldet, boolean hatFolge,
+        long zaehler, boolean schwelleErreicht) {
+        return !schonGemeldet && hatFolge && zaehler == 0 && schwelleErreicht;
+    }
+
     /** Ist die Folge weit genug, dass die naechste zur Sprache kommt? */
     private boolean amEnde() {
         double dauer = dauer();
-        return dauer > 0 && position() >= dauer * WEITER_AB_PROZENT / 100.0;
+        return dauer > 0 && position() >= naechsteFolgeAb(skipSegmente, dauer, skipLaufzeit,
+            skipSegmenteEingeschaltet());
+    }
+
+    /**
+     * Der Abspann ist der erste sinnvolle Zeitpunkt fuer die Karte. Liegt kein
+     * verifizierter Abspann fuer genau diese Laufzeit vor, bleibt die bisherige
+     * 90-Prozent-Regel erhalten. Das aendert nur die Sichtbarkeit der Karte,
+     * nie das Medienende oder den Autoplay-Zaehler.
+     */
+    static double naechsteFolgeAb(List<JSONObject> segmente, double laufzeit,
+        double geladeneLaufzeit, boolean skipAn) {
+        if (!Double.isFinite(laufzeit) || laufzeit <= 0) return Double.POSITIVE_INFINITY;
+        double fallback = laufzeit * WEITER_AB_PROZENT / 100.0;
+        if (!skipAn || segmente == null || !Double.isFinite(geladeneLaufzeit)
+            || Math.round(geladeneLaufzeit) != Math.round(laufzeit)) return fallback;
+        double abspannStart = Double.POSITIVE_INFINITY;
+        for (JSONObject segment : segmente) {
+            if (segment == null || segment.optBoolean("absent", false)
+                || !"outro".equals(segment.optString("type"))) continue;
+            double start = segment.optDouble("start", Double.NaN);
+            double ende = segment.optDouble("end", Double.NaN);
+            if (Double.isFinite(start) && Double.isFinite(ende) && start >= 0 && ende > start
+                && ende <= laufzeit) abspannStart = Math.min(abspannStart, start);
+        }
+        return Double.isFinite(abspannStart) ? abspannStart : fallback;
     }
 
     /** Der Titel der naechsten Folge - er steht auf der Karte und im Zaehler. */
@@ -1540,11 +1772,11 @@ final class DirektSpieler {
         if (frei) Bewegung.einblenden(mitteSpielen);
     }
 
-    private void springen(int sekunden) {
-        if (player == null) return;
+    private boolean springen(int sekunden) {
+        if (player == null) return false;
         double ziel = Math.max(0, position() + sekunden);
         if (dauer() > 0) ziel = Math.min(ziel, dauer() - 0.5);
-        stelleVomNutzerSetzen(ziel);
+        return stelleVomNutzerSetzen(ziel);
     }
 
     /** Eine lokale Spulhandlung; Befehle der Runde laufen bewusst nicht hier hindurch. */
@@ -1583,7 +1815,7 @@ final class DirektSpieler {
         regler.setContentDescription(frei ? "Wiedergabestelle" : gesperrt);
         spulknopfZeichnen(zehnZurueck, frei, "10 Sekunden zurück", gesperrt);
         spulknopfZeichnen(zehnVor, frei, "10 Sekunden vor", gesperrt);
-        spulknopfZeichnen(intro, frei, "Intro überspringen", gesperrt);
+        spulknopfZeichnen(intro, frei, String.valueOf(intro.getText()), gesperrt);
     }
 
     private static void spulknopfZeichnen(TextView knopf, boolean frei,
@@ -1624,7 +1856,18 @@ final class DirektSpieler {
 
     private void introSpringen() {
         if (player == null || introZiel <= position()) return;
-        stelleVomNutzerSetzen(introZiel);
+        if (introExtern) {
+            JSONObject segment = skipSegmentAktiv(skipSegmente, position(), dauer());
+            // Das Segment kann zwischen zwei Takten geendet haben. Es darf
+            // dann weder ein altes Ziel anspringen noch zur Marke werden.
+            if (segment == null) return;
+            introZiel = segment.optDouble("end", 0);
+            if (!(introZiel > position())) return;
+            sprungVon = -1;
+            handler.removeCallbacks(sprungMelden);
+            externerSprungOffen = true;
+        }
+        if (!stelleVomNutzerSetzen(introZiel)) externerSprungOffen = false;
     }
 
     private void autoplayText() {
@@ -1865,9 +2108,22 @@ final class DirektSpieler {
     }
 
     void quelle(String url, String typ, Map<String, String> kopfzeilen, double start) {
+        vorschau.verbergen();
         freigeben();
         if (geschlossen) return;
+        skipQuellenFolge++;
+        weiterSchwelleGemeldet = false;
+        skipKontextAngefordert = false;
+        skipLaufzeit = -1;
+        skipSegmente.clear();
+        skipMarken.setzen(null, 0);
+        skipHatIntroBeleg = false;
+        introExtern = false;
+        externerSprungOffen = false;
         quelleLaedt = true;
+        vorschauUrl = url;
+        vorschauTyp = typ == null ? "" : typ;
+        vorschauKopfzeilen = kopfzeilen == null ? java.util.Collections.emptyMap() : kopfzeilen;
         OkHttpDataSource.Factory netz = new OkHttpDataSource.Factory(CookieNetz.erstellen())
             .setDefaultRequestProperties(kopfzeilen);
         KanonischesHls hls = "hls".equals(typ)
@@ -1932,6 +2188,9 @@ final class DirektSpieler {
                 }
                 if (state == Player.STATE_ENDED) speichern();
             }
+            @Override public void onTracksChanged(Tracks tracks) {
+                if (player == lauf) subtitlePraeferenzAnwenden(lauf);
+            }
             @Override public void onPlayerError(PlaybackException fehler) {
                 if (player != lauf) return;
                 puffer.setVisibility(View.GONE);
@@ -1962,14 +2221,21 @@ final class DirektSpieler {
             @Override public void onPositionDiscontinuity(Player.PositionInfo alt, Player.PositionInfo neu, int reason) {
                 if (SystemClock.uptimeMillis() < erwartetBis && Math.abs(neu.positionMs / 1000.0 - erwartetSeek) < 2) {
                     erwartetSeek = -1;
+                    // Ein externer Button benutzt denselben watchparty-faehigen
+                    // Seek-Pfad, darf aber nie als gelernter Sprung nachlaufen.
+                    if (externerSprungOffen) externerSprungOffen = false;
                     return;
                 }
                 if (aktiv && bereitGemeldet && reason == Player.DISCONTINUITY_REASON_SEEK) {
                     liveMelden("seek");
-                    if (sprungVon < 0) sprungVon = alt.positionMs / 1000.0;
-                    sprungNach = neu.positionMs / 1000.0;
-                    handler.removeCallbacks(sprungMelden);
-                    handler.postDelayed(sprungMelden, 800);
+                    if (externerSprungOffen) {
+                        externerSprungOffen = false;
+                    } else {
+                        if (sprungVon < 0) sprungVon = alt.positionMs / 1000.0;
+                        sprungNach = neu.positionMs / 1000.0;
+                        handler.removeCallbacks(sprungMelden);
+                        handler.postDelayed(sprungMelden, 800);
+                    }
                 }
             }
         });
@@ -2014,6 +2280,7 @@ final class DirektSpieler {
     }
 
     void pause() {
+        vorschau.verbergen();
         aktiv = false;
         tvMitteGedrueckt = false;
         zaehlerEnde = 0;
@@ -2029,6 +2296,27 @@ final class DirektSpieler {
     }
 
     void vordergrund() { aktiv = true; befehlPruefen(); }
+
+    boolean laeuftFuerPip() {
+        return !geschlossen && player != null && player.getPlayWhenReady()
+            && player.getPlaybackState() != Player.STATE_ENDED;
+    }
+
+    /** PiP zeigt ausschliesslich das Bild; beim Zurueckkehren lebt die Bedienung weiter. */
+    void pipModus(boolean aktiv) {
+        imPip = aktiv;
+        if (aktiv) {
+            vorschau.verbergen();
+            handler.removeCallbacks(verbergen);
+            schichtenSetzen(false);
+            chat.ansicht().setVisibility(View.GONE);
+            weiterKarte.setVisibility(View.GONE);
+            blendeZu();
+        } else {
+            chat.ansicht().setVisibility(View.VISIBLE);
+            regung();
+        }
+    }
 
     /** Sperrt Quellenstart und Play-Bedienung fuer einen gemeinsamen Folgenwechsel. */
     void folgenBarriereVorbereiten(String syncId) {
@@ -2082,6 +2370,11 @@ final class DirektSpieler {
     private final Runnable balken = new Runnable() {
         @Override public void run() {
             if (geschlossen) return;
+            if (player != null) {
+                // Anders als Fortschritt und Zeiten muss die Folgenkarte auch
+                // reagieren, wenn die Leiste gerade automatisch verborgen ist.
+                weiterSchwellePruefen();
+            }
             if (schichtenAn && player != null) {
                 double dauer = dauer();
                 double stelle = position();
@@ -2506,31 +2799,233 @@ final class DirektSpieler {
 
     private void introPruefen() {
         if (player == null || geschlossen) return;
+        skipSegmenteLaden();
+        JSONObject extern = skipSegmenteEingeschaltet()
+            ? skipSegmentAktiv(skipSegmente, position(), dauer()) : null;
+        if (extern != null) {
+            introExtern = true;
+            introZiel = extern.optDouble("end", 0);
+            intro.setText(skipBeschriftung(extern.optString("type")));
+            intro.setVisibility(View.VISIBLE);
+            return;
+        }
+        introExtern = false;
+        if (skipSegmenteEingeschaltet() && skipHatIntroBeleg) {
+            introVerbergen();
+            return;
+        }
         if (SystemClock.uptimeMillis() - letzteMarkenFrage >= 5000) {
             letzteMarkenFrage = SystemClock.uptimeMillis();
-            umgebung.marke(marke -> { if (!geschlossen) introMarke = marke; });
+            final long quelle = skipQuellenFolge;
+            umgebung.marke(marke -> {
+                if (!geschlossen && quelle == skipQuellenFolge && !introExtern
+                    && !(skipSegmenteEingeschaltet() && skipHatIntroBeleg)) introMarke = marke;
+            });
         }
-        if (introMarke == null) { intro.setVisibility(View.GONE); return; }
+        if (introMarke == null) { introVerbergen(); return; }
         ExoPlayer lauf = player;
-        kern.rufe("direkt-android.intro", Kern.args(introMarke, position()), (wert, fehler) -> {
-            if (geschlossen || player != lauf) return;
+        final long quelle = skipQuellenFolge;
+        final double markenStelle = position();
+        kern.rufe("direkt-android.intro", Kern.args(introMarke, markenStelle), (wert, fehler) -> {
+            if (geschlossen || player != lauf || quelle != skipQuellenFolge || introExtern
+                || (skipSegmenteEingeschaltet() && skipHatIntroBeleg)
+                || Math.abs(position() - markenStelle) > 1) return;
             try {
                 JSONObject stand = new JSONObject(wert);
                 introZiel = stand.optDouble("ziel");
-                intro.setVisibility(stand.optBoolean("sichtbar") ? View.VISIBLE : View.GONE);
+                intro.setText("Intro überspringen");
+                if (stand.optBoolean("sichtbar")) intro.setVisibility(View.VISIBLE);
+                else introVerbergen();
             } catch (Exception ignoriert) { }
         });
     }
 
+    /**
+     * Fragt die externe Quelle hoechstens einmal je nativer Medienquelle und
+     * Laufzeit. Die Positionsanzeige liest danach nur die bereits normalisierte
+     * Antwort; aus dem Viertelsekunden-Takt entsteht kein Netzverkehr.
+     */
+    private void skipSegmenteLaden() {
+        if (!skipSegmenteEingeschaltet()) {
+            // Eine waehrend des Abrufs geaenderte Einstellung verwirft dessen
+            // Antwort. Beim erneuten Einschalten muss dieselbe Quelle deshalb
+            // wieder einen frischen, einzigen Abruf anstossen duerfen.
+            if (skipKontextAngefordert || skipLaufzeit >= 0 || !skipSegmente.isEmpty()) {
+                skipKontextAngefordert = false;
+                skipLaufzeit = -1;
+                skipSegmente.clear();
+                skipMarken.setzen(null, 0);
+                skipHatIntroBeleg = false;
+            }
+            return;
+        }
+        double laufzeit = dauer();
+        if (!(laufzeit > 0)) return;
+        if (skipKontextAngefordert && Math.round(skipLaufzeit) == Math.round(laufzeit)) return;
+        // Eine neue Medienlaufzeit (z.B. nach einem HLS-Manifestwechsel) darf
+        // keine farbigen Abschnitte der vorherigen Ausgabe weiterzeigen.
+        if (skipLaufzeit >= 0 && Math.round(skipLaufzeit) != Math.round(laufzeit)) {
+            skipSegmente.clear();
+            skipMarken.setzen(null, 0);
+            skipHatIntroBeleg = false;
+        }
+        skipKontextAngefordert = true;
+        skipLaufzeit = laufzeit;
+        final long quelle = skipQuellenFolge;
+        final ExoPlayer lauf = player;
+        umgebung.skipKontext(kontext -> {
+            if (geschlossen || player != lauf || quelle != skipQuellenFolge || kontext == null
+                || Math.round(skipLaufzeit) != Math.round(laufzeit)
+                || !skipSegmenteEingeschaltet()) return;
+            try {
+                JSONObject mitDauer = new JSONObject(kontext.toString());
+                mitDauer.put("duration", laufzeit);
+                kern.rufe("skipsegmente-bruecke.lesen", Kern.args(mitDauer), (wert, fehler) -> {
+                    if (geschlossen || player != lauf || quelle != skipQuellenFolge
+                        || Math.round(skipLaufzeit) != Math.round(laufzeit)
+                        || Math.round(dauer()) != Math.round(laufzeit)
+                        || !skipSegmenteEingeschaltet()) return;
+                    skipSegmente.clear();
+                    skipHatIntroBeleg = false;
+                    try {
+                        JSONArray antwort = new JSONArray(wert);
+                        for (int i = 0; i < antwort.length(); i++) {
+                            JSONObject segment = antwort.optJSONObject(i);
+                            if (segment == null) continue;
+                            skipSegmente.add(segment);
+                            if ("intro".equals(segment.optString("type"))) skipHatIntroBeleg = true;
+                        }
+                    } catch (Exception ignoriert) { }
+                    skipMarken.setzen(skipSegmente, laufzeit);
+                });
+            } catch (Exception ignoriert) { }
+        });
+    }
+
+    private boolean skipSegmenteEingeschaltet() {
+        return activity.getSharedPreferences("elflix_settings", Activity.MODE_PRIVATE)
+            .getBoolean("skip_segments", true);
+    }
+
+    /** Der gemeinsame Kern normalisiert die Werte; diese Abfrage ist nur der lokale Takt. */
+    static JSONObject skipSegmentAktiv(List<JSONObject> segmente, double stelle, double laufzeit) {
+        if (segmente == null || !Double.isFinite(stelle) || !Double.isFinite(laufzeit)
+            || !(stelle >= 0) || !(laufzeit > 0)) return null;
+        for (JSONObject segment : segmente) {
+            if (segment == null || segment.optBoolean("absent")) continue;
+            String typ = segment.optString("type");
+            if (!("intro".equals(typ) || "recap".equals(typ) || "outro".equals(typ)
+                || "preview".equals(typ))) continue;
+            double start = segment.optDouble("start", Double.NaN);
+            double ende = segment.optDouble("end", Double.NaN);
+            if (Double.isFinite(start) && Double.isFinite(ende) && start >= 0 && ende <= laufzeit
+                && ende > start && stelle >= start && stelle < ende) return segment;
+        }
+        return null;
+    }
+
+    static String skipBeschriftung(String typ) {
+        if ("recap".equals(typ)) return "Rückblick überspringen";
+        if ("outro".equals(typ)) return "Abspann überspringen";
+        if ("preview".equals(typ)) return "Vorschau überspringen";
+        return "Intro überspringen";
+    }
+
+    private void introVerbergen() {
+        if (intro.hasFocus()) spielen.requestFocus();
+        intro.setVisibility(View.GONE);
+    }
+
     /* ------------------------------------------------------------------- Spuren */
+
+    private static final String EINSTELLUNGEN = "elflix_settings";
+    private static final String UNTERTITEL_MODUS = "subtitle_preference_mode";
+    private static final String UNTERTITEL_SPRACHE = "subtitle_preference_language";
+    private static final String UNTERTITEL_LABEL = "subtitle_preference_label";
+
+    private void untertitelSpeichern(String sprache, String label, boolean aus) {
+        activity.getSharedPreferences(EINSTELLUNGEN, Activity.MODE_PRIVATE).edit()
+            .putString(UNTERTITEL_MODUS, aus ? "off" : "track")
+            .putString(UNTERTITEL_SPRACHE, sprache == null ? "" : sprache)
+            .putString(UNTERTITEL_LABEL, label == null ? "" : label)
+            .apply();
+    }
+
+    /**
+     * Eine Untertitelspur wechselt mit jeder HLS-Quelle ihre Nummer. Gespeichert
+     * werden daher ihre Sprache und ihr sichtbarer Name. Fehlt diese Spur, bleibt
+     * Text aus; eine fremdsprachige Ersatzspur waere keine Wiederherstellung.
+     */
+    private void subtitlePraeferenzAnwenden(ExoPlayer lauf) {
+        android.content.SharedPreferences prefs = activity.getSharedPreferences(EINSTELLUNGEN, Activity.MODE_PRIVATE);
+        String modus = prefs.getString(UNTERTITEL_MODUS, "");
+        if (modus.isEmpty()) return;
+        androidx.media3.common.TrackSelectionParameters.Builder params = lauf.getTrackSelectionParameters()
+            .buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT);
+        if ("off".equals(modus)) {
+            lauf.setTrackSelectionParameters(params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build());
+            return;
+        }
+        String sprache = prefs.getString(UNTERTITEL_SPRACHE, "");
+        String label = prefs.getString(UNTERTITEL_LABEL, "");
+        TrackSelectionOverride treffer = null;
+        TrackSelectionOverride sprachTreffer = null;
+        for (Tracks.Group gruppe : lauf.getCurrentTracks().getGroups()) {
+            if (gruppe.getType() != C.TRACK_TYPE_TEXT) continue;
+            for (int i = 0; i < gruppe.length; i++) {
+                if (!gruppe.isTrackSupported(i)) continue;
+                Format format = gruppe.getTrackFormat(i);
+                String spurSprache = format.language == null ? "" : format.language;
+                String spurLabel = format.label == null ? "" : format.label;
+                if (!gleicheUntertitelSprache(sprache, spurSprache)) continue;
+                if (label.equalsIgnoreCase(spurLabel)) {
+                    treffer = new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i);
+                    break;
+                }
+                if (sprachTreffer == null) sprachTreffer = new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i);
+            }
+            if (treffer != null) break;
+        }
+        // Ein gespeicherter Wunsch ohne passendes Gegenstueck darf nicht die
+        // automatische, moeglicherweise fremdsprachige Textspur aktivieren.
+        if (treffer == null) treffer = sprachTreffer;
+        if (treffer == null) params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true);
+        else params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setOverrideForType(treffer);
+        lauf.setTrackSelectionParameters(params.build());
+    }
+
+    /** ISO-639-1 and the common ISO-639-2 spellings must describe one choice. */
+    static boolean gleicheUntertitelSprache(String links, String rechts) {
+        String a = untertitelSpracheNormalisieren(links);
+        String b = untertitelSpracheNormalisieren(rechts);
+        return !a.isEmpty() && a.equals(b);
+    }
+
+    private static String untertitelSpracheNormalisieren(String wert) {
+        String sprache = wert == null ? "" : wert.trim().toLowerCase(Locale.ROOT);
+        int unterteilung = Math.max(sprache.indexOf('-'), sprache.indexOf('_'));
+        if (unterteilung > 0) sprache = sprache.substring(0, unterteilung);
+        if ("deu".equals(sprache) || "ger".equals(sprache)) return "de";
+        if ("eng".equals(sprache)) return "en";
+        if ("jpn".equals(sprache)) return "ja";
+        if ("spa".equals(sprache)) return "es";
+        if ("fra".equals(sprache) || "fre".equals(sprache)) return "fr";
+        if ("ita".equals(sprache)) return "it";
+        if ("por".equals(sprache)) return "pt";
+        return sprache;
+    }
 
     private void spuren(int typ, String name) {
         if (player == null) return;
         ArrayList<String> namen = new ArrayList<>();
         ArrayList<Runnable> aktionen = new ArrayList<>();
         ArrayList<TrackSelectionOverride> auswahl = new ArrayList<>();
+        ArrayList<String> sprachen = new ArrayList<>();
+        ArrayList<String> labels = new ArrayList<>();
         namen.add(typ == C.TRACK_TYPE_TEXT ? "Aus" : "Automatisch");
         auswahl.add(null);
+        sprachen.add("");
+        labels.add("");
         int laufend = 0;
         /*
          * Eine Zeile je Stufe - nicht je Variante.
@@ -2561,6 +3056,8 @@ final class DirektSpieler {
                     if (gewaehlt) laufend = namen.size();
                     namen.add(text);
                     auswahl.add(new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i));
+                    sprachen.add(format.language == null ? "" : format.language);
+                    labels.add(format.label == null ? "" : format.label);
                     continue;
                 }
                 int hoehe = format.height;
@@ -2575,6 +3072,8 @@ final class DirektSpieler {
                     if (gewaehlt) laufend = namen.size();
                     namen.add(stufe);
                     auswahl.add(new TrackSelectionOverride(gruppe.getMediaTrackGroup(), i));
+                    sprachen.add("");
+                    labels.add("");
                     continue;
                 }
                 // Dieselbe Hoehe schon da: die hoehere Bitrate gewinnt, und die
@@ -2610,6 +3109,8 @@ final class DirektSpieler {
         }
         final ExoPlayer lauf = player;
         final List<TrackSelectionOverride> gewaehlt = auswahl;
+        final List<String> gewaehltSprachen = sprachen;
+        final List<String> gewaehltLabels = labels;
         for (int i = 0; i < namen.size(); i++) {
             final int index = i;
             aktionen.add(() -> {
@@ -2618,6 +3119,9 @@ final class DirektSpieler {
                     .buildUpon().clearOverridesOfType(typ).setTrackTypeDisabled(typ, typ == C.TRACK_TYPE_TEXT && index == 0);
                 if (gewaehlt.get(index) != null) params.setOverrideForType(gewaehlt.get(index));
                 lauf.setTrackSelectionParameters(params.build());
+                if (typ == C.TRACK_TYPE_TEXT) {
+                    untertitelSpeichern(gewaehltSprachen.get(index), gewaehltLabels.get(index), index == 0);
+                }
             });
         }
         blende(name, namen, aktionen, laufend);
@@ -2757,6 +3261,7 @@ final class DirektSpieler {
     }
 
     void schliessen() {
+        vorschau.schliessen();
         sprungMelden.run();
         wartenderBefehl = null;
         geschlossen = true;

@@ -10,6 +10,7 @@ const vm = require("vm");
 const crypto = require("crypto");
 const sponsorblock = require("../src/sponsorblock");
 const geraeteSchluessel = require("../src/geraete-schluessel");
+const untertitelwahl = require("../src/untertitelwahl");
 const { raumcodesAufraeumen } = require("../src/watchparty-raeume");
 
 const WURZEL = path.join(__dirname, "..");
@@ -35,7 +36,7 @@ const aufrufe = { gespeichert: 0, watchparty: 0, geraete: 0, fern: 0 };
 const kontext = {
   SETTINGS_SCHEMA_VERSION: Number(MAIN.match(/^const SETTINGS_SCHEMA_VERSION = (\d+);$/m)[1]),
   WATCHPARTY_MAX_RAEUME: Number(MAIN.match(/^const WATCHPARTY_MAX_RAEUME = (\d+);$/m)[1]),
-  crypto, sponsorblock, youtubeDislikes: require("../src/youtube-dislikes"), geraeteSchluessel, raumcodesAufraeumen,
+  crypto, sponsorblock, youtubeDislikes: require("../src/youtube-dislikes"), untertitelwahl, geraeteSchluessel, raumcodesAufraeumen,
   settings: {},
   Boolean, String, Number, Array, Object, JSON, Math, Date,
   ipcMain: { handle: (kanal, handler) => { registriert[kanal] = handler; } },

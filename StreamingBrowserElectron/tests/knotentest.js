@@ -1,4 +1,5 @@
 "use strict";
+require("../../android/kryptoprobe/KnotenProbe");
 // Die Node-Bausteine im Kern - Buffer und crypto auf Android.
 //
 // Der Geraeteabgleich steht und faellt damit, dass beide Seiten dieselben

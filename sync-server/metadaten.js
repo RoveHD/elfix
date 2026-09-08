@@ -380,7 +380,9 @@ function tmdbNormalform(roh, art, konfidenz) {
   const istFilm = art === "film";
   form.quelle = "tmdb";
   form.externeIds = { tmdb: roh.id, ...(roh.imdb_id ? { imdb: roh.imdb_id } : {}),
-    ...(roh.external_ids?.imdb_id ? { imdb: roh.external_ids.imdb_id } : {}) };
+    ...(roh.external_ids?.imdb_id ? { imdb: roh.external_ids.imdb_id } : {}),
+    ...(Number.isSafeInteger(roh.external_ids?.tvdb_id) && roh.external_ids.tvdb_id > 0
+      ? { tvdb: roh.external_ids.tvdb_id } : {}) };
   form.titel = istFilm ? (roh.title || "") : (roh.name || "");
   form.beschreibung = String(roh.overview || "").slice(0, 20000);
   form.originalTitel = istFilm ? (roh.original_title || "") : (roh.original_name || "");

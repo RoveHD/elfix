@@ -149,7 +149,8 @@ const roheUmgebung = {
   // normalizeSettings fragt das Modul nach dem Standard fuer SponsorBlock -
   // eine zweite Antwort hier waere genau die Sorte Unterschied, die auffaellt,
   // wenn ein Schalter irgendwann anders steht als er soll.
-  sponsorblock: require("../src/sponsorblock"), youtubeDislikes: require("../src/youtube-dislikes")
+  sponsorblock: require("../src/sponsorblock"), youtubeDislikes: require("../src/youtube-dislikes"),
+  untertitelwahl: require("../src/untertitelwahl")
 };
 const umgebung = new Proxy(roheUmgebung, {
   has: () => true,

@@ -68,13 +68,15 @@ async function warteBis(bedingung, hoechstens = 6000) {
  */
 function videoBauen(raster = 0) {
   const horcher = {};
+  const textTracks = [];
+  textTracks.addEventListener = () => {};
   let stelle = 0;
   let laeuft = false;
   let uhr = null;
   const bild = {
     paused: true, ended: false, seeking: false, readyState: 4,
     duration: 1371, volume: 1, muted: false, playbackRate: 1, defaultPlaybackRate: 1,
-    buffered: { length: 0 }, textTracks: [],
+    buffered: { length: 0 }, textTracks,
     style: { setProperty() {} },
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener(name, fn) { (horcher[name] ||= []).push(fn); },
@@ -136,7 +138,7 @@ function spielerLaden(bild, bruecke) {
     const horcher = {};
     const el = {
       hidden: true, value: "", children: [], disabled: false,
-      style: { setProperty() {} },
+      style: { setProperty() {}, removeProperty() {} },
       classList: { add() {}, remove() {}, toggle() {} },
       addEventListener(name, fn) { (horcher[name] ||= []).push(fn); },
       removeEventListener() {},
@@ -146,7 +148,7 @@ function spielerLaden(bild, bruecke) {
       replaceChildren(...k) { this.children = k; },
       querySelector() { return null; }, querySelectorAll() { return []; },
       setAttribute() {}, getAttribute() { return ""; }, removeAttribute() {},
-      focus() {}, requestLayout() {}
+      focus() {}, requestLayout() {}, getBoundingClientRect() { return { left: 0, width: 0 }; }
     };
     Object.defineProperty(el, "textContent", {
       get() { return this.text || ""; },
@@ -156,8 +158,9 @@ function spielerLaden(bild, bruecke) {
     return el;
   }
   const still = { log() {}, warn() {}, error() {}, info() {} };
+  const vorschau = { erstellen: () => ({ quelle() {}, zeigen: async () => ({}), verbergen() {}, zerstoeren() {} }) };
   const c = vm.createContext({
-    window: { elfixSpieler: bruecke }, console: still, Date, Event, Promise,
+    window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event, Promise,
     document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout, clearTimeout, setInterval, clearInterval
   });

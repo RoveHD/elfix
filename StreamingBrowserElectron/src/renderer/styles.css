@@ -2728,6 +2728,40 @@ h1 {
   opacity: 0.72;
 }
 
+/* Eine Werk-Karte kann mehrere gleichwertige Quellen haben. Die Auswahl ist
+   ein echter Knopf: mit Tab/Enter und auf dem Fernseher klar erreich- und
+   pruefbar, ohne dass ein Klick sofort die Karte oeffnet. */
+.result-provider-choices {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.result-provider-choice {
+  min-height: 34px;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--text), transparent 64%);
+  border-radius: 999px;
+  padding: 6px 11px;
+  background: rgba(0, 0, 0, 0.44);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.result-provider-choice:hover,
+.result-provider-choice:focus-visible,
+.result-provider-choice.is-active {
+  outline: 0;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent), rgba(0, 0, 0, 0.45) 44%);
+}
+
 .search-result-card strong {
   display: block;
   margin-bottom: 6px;

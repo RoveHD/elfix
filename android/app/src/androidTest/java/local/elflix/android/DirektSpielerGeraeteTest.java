@@ -6,6 +6,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+import androidx.media3.ui.PlayerView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.net.ServerSocket;
@@ -59,6 +60,41 @@ public class DirektSpielerGeraeteTest {
             if (found != null) return found;
         }
         return null;
+    }
+    private static PlayerView video(View view) {
+        if (view instanceof PlayerView && "video".equals(view.getTag())) return (PlayerView) view;
+        if (view instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) view).getChildCount(); i++) {
+            PlayerView found = video(((ViewGroup) view).getChildAt(i));
+            if (found != null) return found;
+        }
+        return null;
+    }
+    private static void doppelTippen(PlayerView view, float x) {
+        long zeit = android.os.SystemClock.uptimeMillis();
+        float y = Math.max(1, view.getHeight() / 2f);
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit, MotionEvent.ACTION_DOWN, x, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit + 25, MotionEvent.ACTION_UP, x, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit + 90, zeit + 90, MotionEvent.ACTION_DOWN, x, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit + 90, zeit + 115, MotionEvent.ACTION_UP, x, y, 0));
+    }
+    private static void wischen(PlayerView view, float von, float nach, boolean abbrechen) {
+        long zeit = android.os.SystemClock.uptimeMillis();
+        float y = Math.max(1, view.getHeight() / 2f);
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit, MotionEvent.ACTION_DOWN, von, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit + 80, MotionEvent.ACTION_MOVE, nach, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit + 100,
+            abbrechen ? MotionEvent.ACTION_CANCEL : MotionEvent.ACTION_UP, nach, y, 0));
+    }
+    private static long wischBeginnen(PlayerView view, float von, float nach) {
+        long zeit = android.os.SystemClock.uptimeMillis();
+        float y = Math.max(1, view.getHeight() / 2f);
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit, MotionEvent.ACTION_DOWN, von, y, 0));
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit + 80, MotionEvent.ACTION_MOVE, nach, y, 0));
+        return zeit;
+    }
+    private static void wischBeenden(PlayerView view, long zeit, float x) {
+        float y = Math.max(1, view.getHeight() / 2f);
+        view.dispatchTouchEvent(MotionEvent.obtain(zeit, zeit + 250, MotionEvent.ACTION_UP, x, y, 0));
     }
     private static String fokusZustand(DirektProbeActivity activity) {
         View fokus = activity.spieler.ansicht.findFocus();
@@ -195,6 +231,11 @@ public class DirektSpielerGeraeteTest {
                 AtomicBoolean playing = new AtomicBoolean();
                 warten(() -> { scenario.onActivity(a -> playing.set(a.spieler.position() > 37)); return playing.get(); });
                 scenario.onActivity(a -> {
+                    PlayerView bild = video(a.spieler.ansicht);
+                    assertNotNull(bild);
+                    wischen(bild, bild.getWidth() * .25f, bild.getWidth() * .75f, false);
+                });
+                scenario.onActivity(a -> {
                     try { assertTrue(a.spieler.liveStand().optDouble("duration") >= 120); }
                     catch (Exception e) { throw new AssertionError(e); }
                     a.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU));
@@ -204,6 +245,63 @@ public class DirektSpielerGeraeteTest {
                 assertTrue(androidx.test.uiautomator.UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry
                     .getInstrumentation()).takeScreenshot(shot));
             }
+        }
+    }
+    @Test public void mp4VorschauRendertEinenEchtenFrame() throws Exception {
+        String base = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("mediaBase");
+        org.junit.Assume.assumeTrue("Lokaler MP4-Fixture-Server erforderlich", base != null);
+        try (ActivityScenario<DirektProbeActivity> scenario = ActivityScenario.launch(DirektProbeActivity.class)) {
+            scenario.onActivity(a -> a.spieler.quelle(base + "/watchparty-fixture.mp4", "datei",
+                Collections.emptyMap(), 0));
+            AtomicBoolean angelegt = new AtomicBoolean();
+            warten(() -> { scenario.onActivity(a -> {
+                PlayerView bild = video(a.spieler.ansicht);
+                angelegt.set(bild != null && bild.getWidth() > 0);
+            }); return angelegt.get(); });
+            AtomicBoolean bereit = new AtomicBoolean();
+            warten(() -> { scenario.onActivity(a -> {
+                try { bereit.set(a.spieler.liveStand().optDouble("duration") > 0); }
+                catch (Exception e) { throw new AssertionError(e); }
+            }); return bereit.get(); });
+            AtomicReference<Long> wischZeit = new AtomicReference<>();
+            scenario.onActivity(a -> {
+                PlayerView bild = video(a.spieler.ansicht);
+                assertNotNull(bild);
+                wischZeit.set(wischBeginnen(bild, bild.getWidth() * .25f, bild.getWidth() * .7f));
+            });
+            AtomicBoolean frame = new AtomicBoolean();
+            warten(() -> { scenario.onActivity(a -> frame.set(a.spieler.vorschauHatFrame())); return frame.get(); });
+            java.io.File vorschauBild = new java.io.File(androidx.test.platform.app.InstrumentationRegistry
+                .getInstrumentation().getTargetContext().getExternalFilesDir(null), "android-preview-frame.png");
+            assertTrue("Sichtbares Vorschau-Bild wird festgehalten", androidx.test.uiautomator.UiDevice
+                .getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
+                .takeScreenshot(vorschauBild));
+            AtomicReference<android.graphics.Bitmap> erstesBild = new AtomicReference<>();
+            scenario.onActivity(a -> {
+                android.view.TextureView mini = (android.view.TextureView) mitTag(a.spieler.ansicht, "vorschau-video");
+                erstesBild.set(mini.getBitmap());
+                assertNotNull(erstesBild.get());
+                PlayerView bild = video(a.spieler.ansicht);
+                MotionEvent move = MotionEvent.obtain(wischZeit.get(), android.os.SystemClock.uptimeMillis(),
+                    MotionEvent.ACTION_MOVE, bild.getWidth() * .45f, bild.getHeight() / 2f, 0);
+                bild.dispatchTouchEvent(move);
+                move.recycle();
+                assertEquals("Neue Zeit zeigt kein altes Vorschau-Bild", 0f, mini.getAlpha(), .001f);
+                assertFalse(a.spieler.vorschauHatFrame());
+            });
+            warten(() -> { scenario.onActivity(a -> frame.set(a.spieler.vorschauHatFrame())); return frame.get(); });
+            scenario.onActivity(a -> {
+                android.view.TextureView mini = (android.view.TextureView) mitTag(a.spieler.ansicht, "vorschau-video");
+                android.graphics.Bitmap zweitesBild = mini.getBitmap();
+                assertNotNull(zweitesBild);
+                assertEquals(1f, mini.getAlpha(), .001f);
+                assertFalse("Andere Videoposition liefert ein anderes echtes Bild", erstesBild.get().sameAs(zweitesBild));
+                erstesBild.get().recycle();
+                zweitesBild.recycle();
+                PlayerView bild = video(a.spieler.ansicht);
+                wischBeenden(bild, wischZeit.get(), bild.getWidth() * .45f);
+                assertFalse("Loslassen räumt die Vorschau wieder ab", a.spieler.vorschauSichtbar());
+            });
         }
     }
     @Test public void ladenPositionierenTouchDpadUndHintergrund() throws Exception {
@@ -252,6 +350,31 @@ public class DirektSpielerGeraeteTest {
                 });
                 AtomicBoolean progressed = new AtomicBoolean();
                 warten(() -> { scenario.onActivity(a -> progressed.set(a.spieler.position() > 18)); return progressed.get(); });
+                scenario.onActivity(a -> {
+                    PlayerView bild = video(a.spieler.ansicht);
+                    assertNotNull("Die Geste erreicht die echte Videoebene", bild);
+                    double vor = a.spieler.position();
+                    doppelTippen(bild, bild.getWidth() * .75f);
+                    assertTrue("Doppeltipp rechts springt vor", a.spieler.position() >= vor + 8);
+                    double nachRechts = a.spieler.position();
+                    doppelTippen(bild, bild.getWidth() * .25f);
+                    assertTrue("Doppeltipp links springt zurück", a.spieler.position() <= nachRechts - 8);
+                    double vorWisch = a.spieler.position();
+                    wischen(bild, bild.getWidth() * .25f, bild.getWidth() * .75f, false);
+                    assertTrue("Horizontaler Wisch übernimmt erst beim Loslassen", a.spieler.position() > vorWisch + 20);
+                    double nachWisch = a.spieler.position();
+                    wischen(bild, bild.getWidth() * .75f, bild.getWidth() * .25f, true);
+                    assertEquals("Abgebrochener Wisch verändert die Hauptposition nicht", nachWisch,
+                        a.spieler.position(), 1.0);
+                    a.runde = true;
+                    a.host = false;
+                    double gastVorher = a.spieler.position();
+                    doppelTippen(bild, bild.getWidth() * .75f);
+                    assertEquals("Gast-Doppeltipp bleibt ohne Seek", gastVorher, a.spieler.position(), 1.0);
+                    wischen(bild, bild.getWidth() * .25f, bild.getWidth() * .75f, false);
+                    assertEquals("Gast-Wisch bleibt ohne Seek", gastVorher, a.spieler.position(), 1.0);
+                    a.runde = false;
+                });
                 androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP);
                 scenario.onActivity(a -> {
                     a.spieler.pause();

@@ -35,6 +35,8 @@ final class DirektWiedergabe {
         void bereit(String adresse);
         boolean darfAutoplay();
         void marke(Consumer<JSONObject> fertig);
+        /** Cache-first Kennung fuer externe Vorspann- und Abspannsegmente. */
+        default void skipKontext(Consumer<JSONObject> fertig) { fertig.accept(null); }
         void sprung(double von, double nach);
         /** Die Bedienung des Players ist gekommen oder gegangen. */
         default void bedienung(boolean sichtbar) { }
@@ -64,6 +66,7 @@ final class DirektWiedergabe {
         default void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
             if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
         }
+        default void pip() { }
     }
 
     private final Activity activity;
@@ -184,6 +187,7 @@ final class DirektWiedergabe {
             public void bereit() { umgebung.bereit(adresse); }
             public boolean darfAutoplay() { return umgebung.darfAutoplay(); }
             public void marke(Consumer<JSONObject> fertig) { umgebung.marke(fertig); }
+            public void skipKontext(Consumer<JSONObject> fertig) { umgebung.skipKontext(fertig); }
             public void sprung(double von, double nach) { umgebung.sprung(von, nach); }
             public void bedienung(boolean sichtbar) { umgebung.bedienung(sichtbar); }
             public void fassungWaehlen(String fassung, String hoster) { fassungAusRunde(fassung, hoster); }
@@ -197,6 +201,7 @@ final class DirektWiedergabe {
             public void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
                 umgebung.chatSenden(key, text, raum, antwort);
             }
+            public void pip() { umgebung.pip(); }
         });
         // Die Schranke gehoert zur Relay-Generation und ueberlebt deshalb den
         // Austausch des DirektWiedergabe-Objekts. Vor laden() muss sie bereits
@@ -1014,6 +1019,8 @@ final class DirektWiedergabe {
     }
     void pause() { spieler.pause(); }
     void vordergrund() { spieler.vordergrund(); }
+    boolean laeuftFuerPip() { return spieler.laeuftFuerPip(); }
+    void pipModus(boolean aktiv) { spieler.pipModus(aktiv); }
     boolean taste(KeyEvent event) { return spieler.taste(event); }
     boolean zurueck() { return spieler.zurueck(); }
     void chatKontext(String key, String raum, boolean verbunden) { spieler.chatKontext(key, raum, verbunden); }

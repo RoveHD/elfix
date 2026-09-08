@@ -49,12 +49,14 @@ const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 function videoBauen(danebenS = 0, immer = false, frameRaster = null) {
   const horcher = {};
   const spuren = { ziele: [], spruenge: 0 };
+  const textTracks = [];
+  textTracks.addEventListener = () => {};
   let stelle = 0;
   let frameHorcher = null;
   const bild = {
     paused: true, ended: false, seeking: false, readyState: 4,
     duration: 1371, volume: 1, muted: false, playbackRate: 1, defaultPlaybackRate: 1,
-    buffered: { length: 0 }, textTracks: [],
+    buffered: { length: 0 }, textTracks,
     style: { setProperty() {} },
     classList: { add() {}, remove() {}, toggle() {} },
     addEventListener(name, fn) { (horcher[name] ||= []).push(fn); },
@@ -122,6 +124,7 @@ function spielerKontext(bild) {
       append(...kinder) { this.children.push(...kinder); },
       replaceChildren(...kinder) { this.children = kinder; },
       querySelector() { return null; }, querySelectorAll() { return []; },
+      getBoundingClientRect() { return { left: 0, width: 0 }; },
       setAttribute(name, value) { attribute.set(name, String(value)); },
       getAttribute(name) { return attribute.get(name) ?? null; },
       removeAttribute(name) { attribute.delete(name); },
@@ -141,8 +144,9 @@ function spielerKontext(bild) {
     { get: (objekt, key) => objekt[key] || (() => {}) }
   );
   const still = { log() {}, warn() {}, error() {}, info() {} };
+  const vorschau = { erstellen: () => ({ quelle() {}, zeigen: async () => ({}), verbergen() {}, zerstoeren() {} }) };
   const c = vm.createContext({
-    window: { elfixSpieler: bruecke }, console: still, Date, Event, Promise,
+    window: { elfixSpieler: bruecke, ElfixSpielerVorschau: vorschau, ElfixUntertitelwahl: require("../src/untertitelwahl"), addEventListener() {} }, navigator: {}, console: still, Date, Event, Promise,
     document: { getElementById: element, createElement: () => element(Symbol()), addEventListener() {} },
     setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}
   });
@@ -313,7 +317,8 @@ function spielerKontext(bild) {
     c.zeichneRunde([{ me: true, host: false, name: "Gast" }]);
 
     pruefe("Auch eine unsichtbare Ein-Personen-Leiste aktualisiert die Gastrolle",
-      [element("regler"), element("zurueck"), element("vor"), element("marke")]
+      element("regler").disabled && element("regler").title === "Zeitleiste · Spulen steuert der Host"
+      && [element("zurueck"), element("vor"), element("marke")]
         .every((steuerung) => steuerung.disabled && steuerung.title === "Spulen steuert der Host"));
     await c.springen(10);
     await c.markeNutzen();
