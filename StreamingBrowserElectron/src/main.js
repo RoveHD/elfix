@@ -59,6 +59,7 @@ const direktbeobachtung = require("./direktbeobachtung");
 const { YoutubeWatchparty } = require("./youtube-watchparty");
 const youtubeSync = require("./youtube-sync");
 const sponsorblock = require("./sponsorblock");
+const youtubeDislikes = require("./youtube-dislikes");
 const sicherung = require("./sicherung");
 const titelModul = require("./titel");
 const empfehlung = require("./empfehlung");
@@ -320,6 +321,13 @@ const seasonInfoCache = new Map();
 let watchpartyShared = [];
 let watchpartyLokal = { shared: [], joined: [] };
 const watchpartyWiederhergestellt = new Set();
+// Ein Raum darf die lokale Wiederherstellungsvorlage erst ersetzen, wenn sein
+// Relay-Zustand wirklich angekommen ist. "Wiederhergestellt" bedeutet nur,
+// dass der erste Zustand bearbeitet und gegebenenfalls Share/Enter verschickt
+// wurde; bestaetigt ist er erst ohne Nachtrag oder mit der Antwort darauf.
+const watchpartyZustandBestaetigt = new Set();
+const watchpartyWiederherstellungsBarrieren = new Map();
+let watchpartyBarriereNummer = 0;
 const watchpartySprung = new Map();
 const watchpartyBildNachgereicht = new Set();
 // Serien, fuer die dieses Geraet die Live-Steuerung abgeschaltet hat, und
@@ -1355,8 +1363,12 @@ ipcMain.handle("browser:command", async (_event, command) => {
   const view = activeView;
   if (!view) return activeState();
 
-  if (command === "back" && view.webContents.canGoBack()) view.webContents.goBack();
-  if (command === "forward" && view.webContents.canGoForward()) view.webContents.goForward();
+  if (command === "back" && view.webContents.navigationHistory.canGoBack()) {
+    view.webContents.navigationHistory.goBack();
+  }
+  if (command === "forward" && view.webContents.navigationHistory.canGoForward()) {
+    view.webContents.navigationHistory.goForward();
+  }
   if (command === "reload") view.webContents.reload();
   if (command === "stop") view.webContents.stop();
   if (command === "home") {
@@ -2241,12 +2253,26 @@ ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
 });
 
 ipcMain.handle("watchparty:enter", (_event, key, room) => {
-  watchparty.beitreten(String(key || ""), String(room || ""));
+  const schluessel = String(key || "");
+  const raum = String(room || "");
+  if (watchpartyMitgliedschaftLokalSetzen(schluessel, raum, true)) {
+    saveWatchpartyLocal();
+    geraeteAbgleichSpaeter(0);
+  }
+  watchparty.beitreten(schluessel, raum);
+  watchpartyRaumBarriereStarten(raum, true);
   return true;
 });
 
 ipcMain.handle("watchparty:leave", (_event, key, room) => {
-  watchparty.verlassen(String(key || ""), String(room || ""));
+  const schluessel = String(key || "");
+  const raum = String(room || "");
+  if (watchpartyMitgliedschaftLokalSetzen(schluessel, raum, false)) {
+    saveWatchpartyLocal();
+    geraeteAbgleichSpaeter(0);
+  }
+  watchparty.verlassen(schluessel, raum);
+  watchpartyRaumBarriereStarten(raum, true);
   return true;
 });
 
@@ -2260,8 +2286,10 @@ ipcMain.handle("watchparty:remove", (_event, key, room) => {
   // warten reicht nicht - kommt sie nicht an, steht der Wunsch nirgends.
   const passt = (eintrag) => eintrag.key === schluessel && String(eintrag.room || "") === raum;
   watchpartyLokal.shared = watchpartyLokal.shared.filter((eintrag) => !passt(eintrag));
-  watchpartyLokal.joined = watchpartyLokal.joined.filter((eintrag) => !passt(eintrag));
+  watchpartyMitgliedschaftLokalSetzen(schluessel, raum, false);
   saveWatchpartyLocal();
+  geraeteAbgleichSpaeter(0);
+  watchpartyRaumBarriereStarten(raum, true);
   return true;
 });
 
@@ -2410,16 +2438,20 @@ ipcMain.handle("youtubeparty:open", async () => {
 });
 
 ipcMain.handle("settings:save", (_event, nextSettings) => {
+  const alteRaeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
   settings = normalizeSettings({ ...nextSettings, watchparty: {
     ...nextSettings?.watchparty,
     deviceId: settings.watchparty?.deviceId,
     deviceSecret: settings.watchparty?.deviceSecret
   } });
+  const neueRaeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  if (watchpartyRaeumeLokalSetzen(alteRaeume, neueRaeume)) saveWatchpartyLocal();
   saveSettings();
   // Wer den Schalter mitten im Video umlegt, soll nicht bis zum naechsten
   // warten muessen - weder auf das Ende noch auf den Anfang des Ueberspringens.
   if (activeView) {
     installSponsorblock(activeView, activeView.webContents.getURL()).catch(() => {});
+    installYoutubeDislikes(activeView, activeView.webContents.getURL()).catch(() => {});
   }
   syncWatchparty();
   syncGeraete();
@@ -2735,6 +2767,7 @@ ipcMain.handle("data:backup-import", async () => {
     sitzungenSchmutzig = false;
     loadSitzungen();
     watchpartyWiederhergestellt.clear();
+    watchpartyZustandBestaetigt.clear();
     // Der Spiegel des Geraeteabgleichs gehoert nicht in die Sicherung: er
     // beschreibt, was zuletzt hinausging - und das passt nach dem Einlesen zu
     // nichts mehr. Ohne ihn gilt beim naechsten Verbinden der Stand des Raums,
@@ -3154,6 +3187,7 @@ function getProviderView(provider) {
     meldeYoutubeVideowechsel(view, url).catch(() => {});
     installYoutubeWiedergabe(view, url).catch(() => {});
     installSponsorblock(view, url).catch(() => {});
+    installYoutubeDislikes(view, url).catch(() => {});
     // Ohne Neuladen gibt es kein dom-ready. Der Schalter muss trotzdem
     // mitkommen - beim Video dazu, auf der Startseite weg.
     installAutoplaySchalter(view).catch(() => {});
@@ -3186,6 +3220,7 @@ function getProviderView(provider) {
     installYoutubePartyControls(provider, view, view.webContents.getURL()).catch(() => {});
     installYoutubeWiedergabe(view, view.webContents.getURL()).catch(() => {});
     installSponsorblock(view, view.webContents.getURL()).catch(() => {});
+    installYoutubeDislikes(view, view.webContents.getURL()).catch(() => {});
     installWatchpartyChat(provider, view, view.webContents.getURL()).catch(() => {});
     installHosterQualitaet(view).catch(() => {});
     installAutoplaySchalter(view).catch(() => {});
@@ -3738,8 +3773,8 @@ function tastenkuerzel(input) {
 
   // Zurueck. Dieselbe Taste, die jeder Browser dafuer hat.
   if (nurAlt && input.key === "ArrowLeft") {
-    if (!isLiveView(activeView) || !activeView.webContents.canGoBack()) return false;
-    activeView.webContents.goBack();
+    if (!isLiveView(activeView) || !activeView.webContents.navigationHistory.canGoBack()) return false;
+    activeView.webContents.navigationHistory.goBack();
     return true;
   }
 
@@ -5863,8 +5898,8 @@ function activeState() {
     title: view?.webContents.getTitle() || "",
     // Fuer die Rueckmeldung am Neu-laden-Knopf: laeuft gerade ein Ladevorgang?
     loading: Boolean(view?.webContents?.isLoading?.()),
-    canGoBack: Boolean(view?.webContents.canGoBack()),
-    canGoForward: Boolean(view?.webContents.canGoForward()),
+    canGoBack: Boolean(view?.webContents.navigationHistory.canGoBack()),
+    canGoForward: Boolean(view?.webContents.navigationHistory.canGoForward()),
     favorites
   };
 }
@@ -6066,12 +6101,39 @@ function loadWatchpartyLocal() {
       joined: (Array.isArray(roh?.joined) ? roh.joined : []).map((eintrag) => (
         typeof eintrag === "string"
           ? { key: eintrag, room: alterRaum }
-          : { key: String(eintrag?.key || ""), room: String(eintrag?.room || alterRaum) }
-      )).filter((eintrag) => eintrag.key)
+          : {
+            key: String(eintrag?.key || ""), room: String(eintrag?.room || alterRaum),
+            ...(watchpartyOperationsZeit(eintrag?.at) ? { at: Number(eintrag.at) } : {})
+          }
+      )).filter((eintrag) => eintrag.key),
+      left: watchpartyOperationenLesen(roh?.left, "left"),
+      roomOps: watchpartyOperationenLesen(roh?.roomOps, "room")
     };
   } catch {
-    return { shared: [], joined: [] };
+    return { shared: [], joined: [], left: [], roomOps: [] };
   }
+}
+
+function watchpartyOperationsZeit(wert) {
+  const at = Number(wert);
+  return Number.isFinite(at) && at > 0 && at <= Date.now() + 10 * 60 * 1000 ? at : 0;
+}
+
+function watchpartyOperationenLesen(liste, art) {
+  const aus = new Map();
+  for (const roh of Array.isArray(liste) ? liste : []) {
+    const room = String(roh?.room || "").trim();
+    const at = watchpartyOperationsZeit(roh?.at);
+    if (!room || !at) continue;
+    if (art === "room" && typeof roh?.present !== "boolean") continue;
+    const key = art === "left" ? String(roh?.key || "") : "";
+    if (art === "left" && !key) continue;
+    const id = art === "left" ? `${room}|${key}` : room;
+    const op = art === "left" ? { room, key, at }
+      : { room, present: Boolean(roh?.present), at };
+    if (!aus.has(id) || aus.get(id).at < at) aus.set(id, op);
+  }
+  return [...aus.values()];
 }
 
 function saveWatchpartyLocal() {
@@ -6083,8 +6145,8 @@ function saveWatchpartyLocal() {
   }
 }
 
-function rememberWatchpartyState(eintraege) {
-  watchpartyLokal = {
+function watchpartyZustandAusEintraegen(eintraege) {
+  return {
     shared: eintraege.filter((eintrag) => eintrag.mine).map((eintrag) => ({
       key: eintrag.key,
       room: eintrag.room || "",
@@ -6100,14 +6162,160 @@ function rememberWatchpartyState(eintraege) {
       .filter((eintrag) => eintrag.joined)
       .map((eintrag) => ({ key: eintrag.key, room: eintrag.room || "" }))
   };
+}
+
+// Jeder Raum ist eine eigene Verbindung. Ein Zustand aus Bangus sagt nichts
+// ueber einen noch nicht verbundenen Raum aus und darf dessen lokale Vorlage
+// deshalb nicht aus der Datei loeschen. Entfernte Raumcodes verschwinden
+// dagegen sofort: sie wurden bewusst aus den Einstellungen genommen.
+function watchpartyZustandFuerSpeicher(eintraege, bisher, eingerichtet, bestaetigt) {
+  const aktuell = watchpartyZustandAusEintraegen(Array.isArray(eintraege) ? eintraege : []);
+  const raeume = eingerichtet instanceof Set ? eingerichtet : new Set(eingerichtet || []);
+  const fertig = bestaetigt instanceof Set ? bestaetigt : new Set(bestaetigt || []);
+  const zusammen = (art) => [
+    ...(Array.isArray(bisher?.[art]) ? bisher[art] : []).filter((eintrag) => {
+      const room = String(eintrag?.room || "");
+      return raeume.has(room) && !fertig.has(room);
+    }),
+    ...aktuell[art].filter((eintrag) => fertig.has(String(eintrag?.room || "")))
+  ];
+  const alteZeit = new Map((bisher?.joined || []).map((eintrag) => [
+    `${eintrag.room || ""}|${eintrag.key || ""}`, watchpartyOperationsZeit(eintrag.at)
+  ]));
+  const joined = zusammen("joined").map((eintrag) => {
+    const at = alteZeit.get(`${eintrag.room || ""}|${eintrag.key || ""}`) || 0;
+    return at ? { ...eintrag, at } : eintrag;
+  });
+  return {
+    shared: zusammen("shared"),
+    joined,
+    left: watchpartyOperationenLesen(bisher?.left, "left"),
+    roomOps: watchpartyOperationenLesen(bisher?.roomOps, "room")
+  };
+}
+
+function rememberWatchpartyState(eintraege) {
+  const vorher = watchpartyLokal;
+  watchpartyLokal = watchpartyZustandFuerSpeicher(
+    eintraege,
+    vorher,
+    new Set(watchparty.codes),
+    watchpartyZustandBestaetigt
+  );
+  // Erst ein bestaetigter Relay-Zustand darf aus einer Mitgliedschaft eine
+  // Operation machen. Damit werden auch Rauswurf, geloeschter Titel und
+  // bestaetigter Grabstein als dauerhaftes Verlassen an andere eigene Geraete
+  // weitergegeben; ein Verbindungsloch erzeugt dagegen keinen Tombstone.
+  const alt = new Set((vorher.joined || []).map((e) => `${e.room}|${e.key}`));
+  const neu = new Set((watchpartyLokal.joined || []).map((e) => `${e.room}|${e.key}`));
+  for (const id of new Set([...alt, ...neu])) {
+    const trenner = id.indexOf("|");
+    const room = id.slice(0, trenner);
+    const key = id.slice(trenner + 1);
+    if (!watchpartyZustandBestaetigt.has(room) || alt.has(id) === neu.has(id)) continue;
+    const bekannteZeit = Math.max(0,
+      ...(vorher.joined || []).filter((e) => `${e.room}|${e.key}` === id)
+        .map((e) => watchpartyOperationsZeit(e.at)),
+      ...(vorher.left || []).filter((e) => `${e.room}|${e.key}` === id)
+        .map((e) => watchpartyOperationsZeit(e.at))
+    );
+    watchpartyMitgliedschaftLokalSetzen(
+      key, room, neu.has(id), Math.max(watchpartyAenderungsZeit(), bekannteZeit + 1)
+    );
+  }
   saveWatchpartyLocal();
+  geraeteAbgleichSpaeter();
+}
+
+function watchpartyAenderungsZeit() {
+  try {
+    const at = Number(geraete?.jetzt?.());
+    if (watchpartyOperationsZeit(at)) return at;
+  } catch {}
+  return Date.now();
+}
+
+function watchpartyMitgliedschaftLokalSetzen(key, room, dabei, at = watchpartyAenderungsZeit()) {
+  const schluessel = String(key || "");
+  const raum = String(room || "").trim();
+  const passt = (eintrag) => eintrag.key === schluessel && String(eintrag.room || "") === raum;
+  const bekannt = Math.max(0,
+    ...(watchpartyLokal.joined || []).filter((eintrag) => passt(eintrag))
+      .map((eintrag) => watchpartyOperationsZeit(eintrag.at)),
+    ...(watchpartyLokal.left || []).filter((eintrag) => passt(eintrag))
+      .map((eintrag) => watchpartyOperationsZeit(eintrag.at))
+  );
+  const zeit = watchpartyOperationsZeit(Math.max(Number(at) || 0, bekannt + 1));
+  if (!schluessel || !raum || !zeit) return false;
+  watchpartyLokal.joined = (watchpartyLokal.joined || []).filter((eintrag) => !passt(eintrag));
+  watchpartyLokal.left = (watchpartyLokal.left || []).filter((eintrag) => !passt(eintrag));
+  if (dabei) watchpartyLokal.joined.push({ key: schluessel, room: raum, at: zeit });
+  else watchpartyLokal.left.push({ key: schluessel, room: raum, at: zeit });
+  return true;
+}
+
+function watchpartyRaeumeLokalSetzen(vorher, nachher, at = watchpartyAenderungsZeit()) {
+  const alt = new Set((vorher || []).map((room) => String(room || "").trim()).filter(Boolean));
+  const neu = new Set((nachher || []).map((room) => String(room || "").trim()).filter(Boolean));
+  let geaendert = false;
+  const ops = new Map((watchpartyLokal.roomOps || []).map((op) => [op.room, op]));
+  for (const room of new Set([...alt, ...neu])) {
+    if (alt.has(room) === neu.has(room)) continue;
+    const zeit = watchpartyOperationsZeit(Math.max(
+      Number(at) || 0, watchpartyOperationsZeit(ops.get(room)?.at) + 1
+    ));
+    if (!zeit) continue;
+    ops.set(room, { room, present: neu.has(room), at: zeit });
+    // Ein entfernter Raum soll beim spaeteren Wiederhinzufuegen nicht seine
+    // alten Mitgliedschaften aus einem Legacy-Snapshot zurueckbekommen.
+    if (!neu.has(room)) {
+      for (const eintrag of [...(watchpartyLokal.joined || [])]) {
+        if (String(eintrag.room || "") === room) {
+          watchpartyMitgliedschaftLokalSetzen(eintrag.key, room, false, zeit);
+        }
+      }
+      watchpartyLokal.shared = (watchpartyLokal.shared || [])
+        .filter((eintrag) => String(eintrag.room || "") !== room);
+    }
+    geaendert = true;
+  }
+  if (geaendert) watchpartyLokal.roomOps = [...ops.values()];
+  return geaendert;
+}
+
+function offeneWatchpartyWiederherstellung(eintraege, raum) {
+  const imRaum = eintraege.filter((eintrag) => eintrag.room === raum);
+  let offen = 0;
+  for (const eigen of watchpartyLokal.shared) {
+    if (eigen.room === raum && !imRaum.some((eintrag) => eintrag.key === eigen.key)) offen += 1;
+  }
+  for (const dabei of watchpartyLokal.joined) {
+    if (dabei.room !== raum) continue;
+    const eintrag = imRaum.find((item) => item.key === dabei.key);
+    if (!eintrag?.joined) offen += 1;
+  }
+  for (const weg of watchpartyLokal.left || []) {
+    if (weg.room !== raum) continue;
+    const eintrag = imRaum.find((item) => item.key === weg.key);
+    if (eintrag?.joined) offen += 1;
+  }
+  return offen;
 }
 
 // Einmal je Verbindung: fehlende eigene Titel neu einstellen und
 // Mitgliedschaften wieder eintragen. Bewusst Verlassenes bleibt draussen, weil
 // es beim Verlassen aus der lokalen Liste fliegt.
 function restoreWatchparty(eintraege, raum) {
-  if (!raum || watchpartyWiederhergestellt.has(raum)) return;
+  if (!raum) return { empfangen: false, neu: false, nachgetragen: 0, offen: 0 };
+  const verbunden = watchparty.status().rooms
+    .some((eintrag) => eintrag.room === raum && eintrag.connected);
+  if (!verbunden) return { empfangen: false, neu: false, nachgetragen: 0, offen: 0 };
+  if (watchpartyWiederhergestellt.has(raum)) {
+    return {
+      empfangen: true, neu: false, nachgetragen: 0,
+      offen: offeneWatchpartyWiederherstellung(eintraege, raum)
+    };
+  }
   watchpartyWiederhergestellt.add(raum);
   const imRaum = eintraege.filter((eintrag) => eintrag.room === raum);
 
@@ -6122,6 +6330,17 @@ function restoreWatchparty(eintraege, raum) {
     watchparty.teilen(eigen, raum, true);
     nachgetragen += 1;
   }
+  // Ein ausdrueckliches Leave wird ebenfalls nach einem Offline-Zeitraum
+  // nachgetragen. Das ist besonders beim entfernten und spaeter erneut
+  // hinzugefuegten Raum wichtig: das Relay kann die alte Mitgliedschaft noch
+  // kennen, der lokale Tombstone ist aber der neuere Benutzerwunsch.
+  for (const weg of watchpartyLokal.left || []) {
+    if (weg.room !== raum) continue;
+    const eintrag = imRaum.find((item) => item.key === weg.key);
+    if (!eintrag?.joined) continue;
+    watchparty.verlassen(weg.key, raum);
+    nachgetragen += 1;
+  }
   for (const dabei of watchpartyLokal.joined) {
     if (dabei.room !== raum) continue;
     const eintrag = imRaum.find((item) => item.key === dabei.key);
@@ -6132,6 +6351,65 @@ function restoreWatchparty(eintraege, raum) {
   if (nachgetragen) {
     console.log(`[ELFIX WATCHPARTY] ${nachgetragen} Eintrag/Eintraege in „${raum}“ wiederhergestellt`);
   }
+  return {
+    empfangen: true, neu: true, nachgetragen,
+    offen: offeneWatchpartyWiederherstellung(eintraege, raum)
+  };
+}
+
+function bestaetigeWatchpartyZustand(raum, wiederherstellung) {
+  if (!raum || !wiederherstellung?.empfangen) return;
+  // Solange eine ausdrueckliche Verwaltungsaktion oder ein Restore-Buendel
+  // seine geordnete Quittung noch nicht hat, darf auch ein dazwischen
+  // eintreffender alter Snapshot den lokalen Wunsch nicht umdrehen.
+  if (watchpartyWiederherstellungsBarrieren.has(raum)) return;
+  // Erst wenn jeder erwartete Titel und jeder erwartete Beitritt im Snapshot
+  // steht, ist der Raum speicherbar. Bei acht Enter-Nachrichten bestaetigt die
+  // erste Antwort nur eine davon; ein Abbruch danach darf die anderen sieben
+  // Vorlagen nicht loeschen. Ein vom Relay abgelehnter Nachtrag bleibt ebenso
+  // offen und kann dadurch keinen lokalen Bestand als erfolgreich ueberschreiben.
+  if (wiederherstellung.offen === 0) {
+    watchpartyZustandBestaetigt.add(raum);
+    return;
+  }
+
+  // Fehlende Eintraege koennen absichtlich nicht wiederherstellbar sein: ein
+  // Share-Nachtrag trifft auf einen Grabstein, oder ein Join nennt einen Titel,
+  // der nicht mehr im Raum steht. Das Relay antwortet darauf bewusst nicht mit
+  // einem neuen Zustand. Eine geordnete timeack-Barriere sagt trotzdem exakt,
+  // wann alle davor verschickten Nachtraege abgearbeitet sind. Erst dann gilt
+  // der zuletzt empfangene Raumzustand samt solcher Tombstones als verbindlich.
+  if (!wiederherstellung.neu || !wiederherstellung.nachgetragen
+  ) return;
+  watchpartyRaumBarriereStarten(raum);
+}
+
+function watchpartyRaumBarriereStarten(raum, ersetzen = false) {
+  const code = String(raum || "").trim();
+  if (!code || (!ersetzen && watchpartyWiederherstellungsBarrieren.has(code))) return false;
+  const generation = ++watchpartyBarriereNummer;
+  watchpartyZustandBestaetigt.delete(code);
+  watchpartyWiederherstellungsBarrieren.set(code, generation);
+  const begonnen = watchparty.barriere(code, () => {
+    // Zwei schnelle Taten im selben Raum haben zwei geordnete Quittungen.
+    // Die erste darf nur sich selbst abschliessen; inzwischen ist aber die
+    // zweite Generation massgeblich und wartet auf ihre eigene Antwort.
+    if (watchpartyWiederherstellungsBarrieren.get(code) !== generation) return;
+    watchpartyWiederherstellungsBarrieren.delete(code);
+    const verbunden = watchparty.status().rooms
+      .some((eintrag) => eintrag.room === code && eintrag.connected);
+    // Eine alte Quittung darf nach Raumwechsel oder Verbindungsabbruch keinen
+    // neuen Lauf bestaetigen. Die einzelne Watchparty verwirft ihre offenen
+    // Barrieren beim Trennen ebenfalls.
+    if (!verbunden) return;
+    watchpartyZustandBestaetigt.add(code);
+    rememberWatchpartyState(watchpartyShared);
+    raeumeWatchpartyEintraegeAuf();
+  });
+  if (!begonnen && watchpartyWiederherstellungsBarrieren.get(code) === generation) {
+    watchpartyWiederherstellungsBarrieren.delete(code);
+  }
+  return begonnen;
 }
 
 // Nur im Arbeitsspeicher: der Player behaelt den Chat beim Folgenwechsel.
@@ -6149,7 +6427,8 @@ const watchparty = new WatchpartyRaeume({
   onState: (eintraege, raum) => {
     watchpartyShared = eintraege;
     pushWatchpartyLiveState();
-    restoreWatchparty(eintraege, raum);
+    const wiederherstellung = restoreWatchparty(eintraege, raum);
+    bestaetigeWatchpartyZustand(raum, wiederherstellung);
     raumEintraegeSichern(eintraege);
     // Aufraeumen und Merken erst, wenn der Zustand steht: die eben
     // verschickten Beitritte kommen erst mit dem naechsten Zustand zurueck.
@@ -6171,10 +6450,16 @@ const watchparty = new WatchpartyRaeume({
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt - je Raum getrennt.
     for (const eintrag of status.rooms || []) {
-      if (!eintrag.connected) watchpartyWiederhergestellt.delete(eintrag.room);
+      if (!eintrag.connected) {
+        watchpartyWiederhergestellt.delete(eintrag.room);
+        watchpartyZustandBestaetigt.delete(eintrag.room);
+        watchpartyWiederherstellungsBarrieren.delete(eintrag.room);
+      }
     }
     if (raum && !status.rooms?.some((eintrag) => eintrag.room === raum)) {
       watchpartyWiederhergestellt.delete(raum);
+      watchpartyZustandBestaetigt.delete(raum);
+      watchpartyWiederherstellungsBarrieren.delete(raum);
     }
     pushWatchpartyLiveState();
     // Der YouTube-Modus haengt am selben Raum: faellt der weg oder kommt er
@@ -6294,7 +6579,10 @@ function syncGeraete() {
     schluessel: konfiguration.key || "",
     // Dasselbe Geraet wie in der Watchparty. Es gibt keinen Grund, hier eine
     // zweite Kennung zu fuehren.
-    geraetId: settings.watchparty?.deviceId || ""
+    geraetId: settings.watchparty?.deviceId || "",
+    geraetName: settings.watchparty?.deviceName || "",
+    geraetTyp: "pc",
+    geraetGeheimnis: settings.watchparty?.deviceSecret || ""
   });
   // Nach dem Einrichten einmal nachsehen, ob etwas hinaus muss - beim Start
   // ist das der ganze Bestand, wenn dieses Geraet neu dazugekommen ist.
@@ -6375,12 +6663,97 @@ function geraeteSitzungen() {
 // Konto, sonst gelten zwei Geraete im Raum als eines.
 function geraeteWatchparty() {
   const raeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  const nachRaumKey = (a, b) => String(a.room || "").localeCompare(String(b.room || ""))
+    || String(a.key || "").localeCompare(String(b.key || ""));
   return {
-    rooms: raeume.map((code) => String(code || "").trim()).filter(Boolean),
+    version: 2,
+    rooms: raeume.map((code) => String(code || "").trim()).filter(Boolean).sort(),
     joined: (watchpartyLokal.joined || []).map((eintrag) => ({
       key: String(eintrag?.key || ""),
-      room: String(eintrag?.room || "")
-    })).filter((eintrag) => eintrag.key)
+      room: String(eintrag?.room || ""),
+      ...(watchpartyOperationsZeit(eintrag?.at) ? { at: Number(eintrag.at) } : {})
+    })).filter((eintrag) => eintrag.key && eintrag.room).sort(nachRaumKey),
+    left: watchpartyOperationenLesen(watchpartyLokal.left, "left").sort(nachRaumKey),
+    roomOps: watchpartyOperationenLesen(watchpartyLokal.roomOps, "room")
+      .sort((a, b) => a.room.localeCompare(b.room))
+  };
+}
+
+// Alte Clients kennen nur Gesamtschnappschuesse. Deren vorhandene Eintraege
+// sind sichere Additionen; ihr Fehlen ist aber kein ausdrueckliches Verlassen
+// und darf deshalb nichts loeschen. Neue Clients tragen je Raum/Titel eine
+// monotone Operation. Damit gewinnt ein Leave gegen spaetere alte Snapshots,
+// und ein noch neuerer ausdruecklicher Rejoin kann es wieder aufheben.
+function watchpartyKontostaendeVereinen(lokal, fremd) {
+  const listen = [lokal || {}, fremd || {}];
+  const mitglied = new Map();
+  const legacy = new Map();
+  const operationSetzen = (id, op) => {
+    const alt = mitglied.get(id);
+    if (!alt || op.at > alt.at || (op.at === alt.at && !op.dabei && alt.dabei)) {
+      mitglied.set(id, op);
+    }
+  };
+  for (const satz of listen) {
+    for (const roh of Array.isArray(satz.joined) ? satz.joined : []) {
+      const key = String(roh?.key || "");
+      const room = String(roh?.room || "").trim();
+      if (!key || !room) continue;
+      const id = `${room}|${key}`;
+      const at = watchpartyOperationsZeit(roh?.at);
+      if (at) operationSetzen(id, { key, room, at, dabei: true });
+      else if (!Object.prototype.hasOwnProperty.call(roh || {}, "at") && !legacy.has(id)) {
+        legacy.set(id, { key, room });
+      }
+    }
+    for (const roh of watchpartyOperationenLesen(satz.left, "left")) {
+      operationSetzen(`${roh.room}|${roh.key}`, { ...roh, dabei: false });
+    }
+  }
+  const raumLegacy = new Set();
+  const raumOp = new Map();
+  for (const satz of listen) {
+    for (const roh of Array.isArray(satz.rooms) ? satz.rooms : []) {
+      const room = String(roh || "").trim();
+      if (room) raumLegacy.add(room);
+    }
+    for (const op of watchpartyOperationenLesen(satz.roomOps, "room")) {
+      const alt = raumOp.get(op.room);
+      if (!alt || op.at > alt.at || (op.at === alt.at && !op.present && alt.present)) {
+        raumOp.set(op.room, op);
+      }
+    }
+  }
+  for (const [room, op] of raumOp) {
+    if (op.present) raumLegacy.add(room);
+    else {
+      raumLegacy.delete(room);
+      // Ein Raum-Remove umfasst auch seine bis dahin bekannten Beitritte.
+      // Sonst koennte ein alter Client sie nach einem spaeteren Room-Readd aus
+      // seinem Legacy-Snapshot wiederbeleben.
+      for (const [id, eintrag] of [...legacy, ...mitglied]) {
+        if (eintrag.room === room) {
+          operationSetzen(id, { key: eintrag.key, room, at: op.at, dabei: false });
+        }
+      }
+    }
+  }
+  // Ohne Raum gibt es keine wirksame Mitgliedschaft. Die Operation bleibt als
+  // Tombstone erhalten und verhindert bei einem spaeteren Readd alte Joins.
+  const rooms = [...raumLegacy].sort();
+  const roomSet = new Set(rooms);
+  const dabei = new Map(legacy);
+  for (const [id, op] of mitglied) {
+    if (op.dabei) dabei.set(id, { key: op.key, room: op.room, at: op.at });
+    else dabei.delete(id);
+  }
+  const sortieren = (a, b) => a.room.localeCompare(b.room) || a.key.localeCompare(b.key);
+  return {
+    rooms,
+    roomOps: [...raumOp.values()].sort((a, b) => a.room.localeCompare(b.room)),
+    joined: [...dabei.values()].filter((eintrag) => roomSet.has(eintrag.room)).sort(sortieren),
+    left: [...mitglied.values()].filter((op) => !op.dabei)
+      .map(({ key, room, at }) => ({ key, room, at })).sort(sortieren)
   };
 }
 
@@ -6393,42 +6766,67 @@ function geraeteWatchparty() {
 function uebernimmGeraeteWatchparty(satz, at) {
   if (!satz || typeof satz !== "object") return false;
   let geaendert = false;
+  const bisherRaeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  const bisherBeitritte = watchpartyLokal.joined || [];
+  const vereinigt = watchpartyKontostaendeVereinen({
+    rooms: bisherRaeume,
+    roomOps: watchpartyLokal.roomOps,
+    joined: bisherBeitritte,
+    left: watchpartyLokal.left
+  }, satz);
+  const zeile = (liste) => liste.map((e) => `${e.room}|${e.key}`).sort().join(";");
+  const raumZeile = (liste) => [...liste].sort().join(";");
+  const alteIds = new Set(bisherBeitritte.map((e) => `${e.room}|${e.key}`));
+  const neueIds = new Set(vereinigt.joined.map((e) => `${e.room}|${e.key}`));
 
-  const raeume = Array.isArray(satz.rooms)
-    ? satz.rooms.map((code) => String(code || "").trim()).filter(Boolean)
-    : null;
-  if (raeume) {
-    const bisher = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
-    if (bisher.join(";") !== raeume.join(";")) {
-      settings.watchparty = { ...(settings.watchparty || {}), rooms: raeume };
-      saveSettings();
-      syncWatchparty();
-      geaendert = true;
-      console.log(`[ELFIX GERAETE] Raeume vom anderen Geraet uebernommen: ${raeume.join(", ") || "(keine)"}`);
-    }
+  if (raumZeile(bisherRaeume) !== raumZeile(vereinigt.rooms)) {
+    settings.watchparty = { ...(settings.watchparty || {}), rooms: vereinigt.rooms };
+    saveSettings();
+    geaendert = true;
+    console.log(`[ELFIX GERAETE] Raeume vom anderen Geraet uebernommen: ${vereinigt.rooms.join(", ") || "(keine)"}`);
   }
 
-  const beitritte = Array.isArray(satz.joined)
-    ? satz.joined.map((eintrag) => ({
-      key: String(eintrag?.key || ""),
-      room: String(eintrag?.room || "")
-    })).filter((eintrag) => eintrag.key)
-    : null;
-  if (beitritte) {
-    const zeile = (liste) => liste.map((e) => `${e.room}|${e.key}`).sort().join(";");
-    if (zeile(watchpartyLokal.joined || []) !== zeile(beitritte)) {
-      watchpartyLokal = { ...watchpartyLokal, joined: beitritte };
-      saveWatchpartyLocal();
-      // Damit restoreWatchparty die Beitritte wirklich nachtraegt: es laeuft
-      // sonst nur einmal je Verbindung, und diese Verbindung steht laengst.
-      for (const raum of new Set(beitritte.map((e) => e.room))) {
-        watchpartyWiederhergestellt.delete(raum);
+  const operationenVorher = JSON.stringify({
+    left: watchpartyOperationenLesen(watchpartyLokal.left, "left"),
+    roomOps: watchpartyOperationenLesen(watchpartyLokal.roomOps, "room")
+  });
+  const operationenNeu = JSON.stringify({ left: vereinigt.left, roomOps: vereinigt.roomOps });
+  if (zeile(bisherBeitritte) !== zeile(vereinigt.joined) || operationenVorher !== operationenNeu) {
+    watchpartyLokal = {
+      ...watchpartyLokal,
+      joined: vereinigt.joined,
+      left: vereinigt.left,
+      roomOps: vereinigt.roomOps
+    };
+    saveWatchpartyLocal();
+    geaendert = true;
+  }
+
+  if (geaendert) {
+    syncWatchparty();
+    const betroffeneRaeume = new Set([
+      ...bisherBeitritte.map((e) => e.room), ...vereinigt.joined.map((e) => e.room)
+    ]);
+    for (const room of betroffeneRaeume) {
+      watchpartyWiederhergestellt.delete(room);
+      watchpartyZustandBestaetigt.delete(room);
+    }
+    // Ausdrueckliche entfernte Mitgliedschaften gelten auch auf diesem Geraet
+    // und werden vor der Barriere ans Relay geschickt.
+    for (const eintrag of bisherBeitritte) {
+      if (!neueIds.has(`${eintrag.room}|${eintrag.key}`)) {
+        watchparty.verlassen(eintrag.key, eintrag.room);
       }
-      restoreWatchpartyJetzt();
-      geaendert = true;
-      console.log(`[ELFIX GERAETE] ${beitritte.length} Beitritt(e) vom anderen Geraet uebernommen`);
     }
+    restoreWatchpartyJetzt();
+    for (const room of betroffeneRaeume) watchpartyRaumBarriereStarten(room, true);
+    console.log(`[ELFIX GERAETE] ${vereinigt.joined.length} Beitritt(e) vom anderen Geraet vereinigt`);
   }
+  // Auch wenn ein alter Leersnapshot lokal nichts mehr loeschen durfte, hat
+  // der Geraete-Spiegel gerade dessen Hash uebernommen. Im naechsten Takt muss
+  // deshalb unser vereinigter Satz angeboten werden; sonst bliebe der alte
+  // Absender bei seiner leeren Auffassung und schickte sie immer wieder.
+  geraeteAbgleichSpaeter(0);
   return geaendert;
 }
 
@@ -6436,7 +6834,9 @@ function uebernimmGeraeteWatchparty(satz, at) {
 function restoreWatchpartyJetzt() {
   const eintraege = watchpartyShared || [];
   for (const raum of new Set(eintraege.map((eintrag) => String(eintrag.room || "")))) {
-    if (raum) restoreWatchparty(eintraege, raum);
+    if (!raum) continue;
+    const wiederherstellung = restoreWatchparty(eintraege, raum);
+    bestaetigeWatchpartyZustand(raum, wiederherstellung);
   }
 }
 
@@ -6952,7 +7352,7 @@ function raeumeWatchpartyEintraegeAuf() {
     // und seine Mitgliedschaften nachgetragen wurden. Fuer entfernte Raeume
     // gilt das nicht - deren Bindung soll weg.
     if (!raum
-      || (eingerichtet.has(raum) && (!verbunden.has(raum) || !watchpartyWiederhergestellt.has(raum)))
+      || (eingerichtet.has(raum) && (!verbunden.has(raum) || !watchpartyZustandBestaetigt.has(raum)))
       || dabei.has(`${raum}|${watchpartyKey(favorite)}`)) {
       continue;
     }
@@ -8855,6 +9255,12 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     spielerLaufSetzen(provider, url, ergebnis, optionen);
     spielerView.webContents.send("spieler:auftrag", spielerAuftrag());
+    // Derselbe Player bleibt ueber Folgen-, Titel- und Hosterwechsel hinweg
+    // offen. Seine erste Chatabfrage lief aber nur beim Laden der Seite. Nach
+    // einem neuen Auftrag muss deshalb auch der aktuelle Raumzustand folgen;
+    // sonst bleibt dort der Chat der vorherigen Runde stehen oder ein neuer
+    // Raum erscheint bis zur naechsten zufaelligen Relaymeldung als inaktiv.
+    sendSpielerChatStatus();
     direktVollbildAnwenden(optionen);
     if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
     return true;
@@ -10543,8 +10949,25 @@ const youtubeParty = new YoutubeWatchparty({
   // Differenz zweier Systemuhren daneben.
   serverJetzt: (raum) => watchparty.serverJetzt(raum),
   onState: (zustand, hinweis) => { applyYoutubeParty(zustand, hinweis).catch(() => {}); },
-  onStatus: (status) => sendYoutubePartyState(status)
+  onStatus: (status) => {
+    sendYoutubePartyState(status);
+    youtubeSponsorblockRolleAktualisieren(status);
+  }
 });
+
+let youtubeSponsorblockRolle = "";
+function youtubeSponsorblockRolleAktualisieren(status = youtubeParty.status()) {
+  const rolle = [
+    Boolean(status.enabled), Boolean(status.connected), Boolean(status.joined),
+    Boolean(status.sponsorblockAutomatic)
+  ].join(":");
+  if (rolle === youtubeSponsorblockRolle) return;
+  youtubeSponsorblockRolle = rolle;
+  const ziel = youtubeAnsicht();
+  if (!ziel) return;
+  const url = ziel.view.webContents.getURL();
+  if (youtube.istYoutubeUrl(url)) installSponsorblock(ziel.view, url).catch(() => {});
+}
 
 // Welcher Raum fuehrt die YouTube-Runde? Genau einer, und nur solange die
 // Watchparty ueberhaupt laeuft und diesen Raum kennt.
@@ -11920,6 +12343,69 @@ const sponsorblockCache = new Map();
 const SPONSORBLOCK_FRIST_MS = 4000;
 const SPONSORBLOCK_ALTER_MS = 30 * 60 * 1000;
 
+// Return YouTube Dislike gestattet die Lese-API fuer Drittanbieter, begrenzt
+// aber die Aufrufe pro Client. Darum gelten hier dieselben Schutzregeln wie bei
+// SponsorBlock: ein kurzes Zeitlimit und ein Gedaechtnis, auch fuer 404, 429
+// und Netzfehler. Ein YouTube-Video wartet niemals auf diese Zusatzanzeige.
+const youtubeDislikeCache = new Map();
+const YOUTUBE_DISLIKE_FRIST_MS = 4000;
+const YOUTUBE_DISLIKE_ALTER_MS = 30 * 60 * 1000;
+
+async function youtubeDislikeDaten(videoId) {
+  const kennung = String(videoId || "");
+  if (!youtubeDislikes.videoIdGueltig(kennung)) return null;
+  const gemerkt = youtubeDislikeCache.get(kennung);
+  if (gemerkt && Date.now() - gemerkt.zeit < YOUTUBE_DISLIKE_ALTER_MS) return gemerkt.daten;
+
+  let daten = null;
+  try {
+    const adresse = youtubeDislikes.anfrageUrl(kennung);
+    if (adresse) {
+      const antwort = await net.fetch(adresse, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(YOUTUBE_DISLIKE_FRIST_MS)
+      });
+      if (antwort.ok) daten = youtubeDislikes.datenAus(await antwort.json(), kennung);
+    }
+  } catch {
+    // Fehler, Zeitlimit oder Rate-Limit bleiben unsichtbar. Auch dies wird
+    // gemerkt, damit ein kaputter Dienst nicht bei jeder Navigation neu laeuft.
+  }
+  if (!youtubeDislikeCache.has(kennung) && youtubeDislikeCache.size >= 256) {
+    youtubeDislikeCache.delete(youtubeDislikeCache.keys().next().value);
+  }
+  youtubeDislikeCache.set(kennung, { daten, zeit: Date.now() });
+  return daten;
+}
+
+// Der Wert steht direkt neben YouTubes eigenem Dislike-Knopf. Es ist bewusst
+// nur eine Lesefunktion: ELFIX schickt weder Klicks noch Stimmen an den Dienst.
+async function installYoutubeDislikes(view, url) {
+  if (!isLiveView(view) || !youtube.istYoutubeUrl(url)) return;
+  const einstellungen = youtubeDislikes.einstellungenLesen(settings.youtubeDislikes);
+  const kennung = youtube.videoKennung(url);
+  if (!einstellungen.enabled || !kennung?.id) {
+    await view.webContents.executeJavaScript(youtubeDislikes.abstellenScript(), true).catch(() => {});
+    return;
+  }
+
+  const daten = await youtubeDislikeDaten(kennung.id);
+  // Keine Antwort ist kein Zaehlwert. Die Seite bleibt dann exakt bei ihrem
+  // eigenen Knopf, und eine inzwischen andere SPA-Adresse bekommt nichts.
+  if (!isLiveView(view) || youtube.videoKennung(view.webContents.getURL())?.id !== kennung.id) return;
+  // Der Netzabruf kann laenger dauern als ein Klick auf "Ausschalten". Die
+  // Einstellung danach ist massgeblich, nicht die Momentaufnahme davor.
+  if (!youtubeDislikes.einstellungenLesen(settings.youtubeDislikes).enabled) {
+    await view.webContents.executeJavaScript(youtubeDislikes.abstellenScript(), true).catch(() => {});
+    return;
+  }
+  if (!daten) {
+    await view.webContents.executeJavaScript(youtubeDislikes.abstellenScript(), true).catch(() => {});
+    return;
+  }
+  await view.webContents.executeJavaScript(youtubeDislikes.anzeigeScript(daten), true).catch(() => {});
+}
+
 async function sponsorblockSegmente(videoId) {
   const kennung = String(videoId || "");
   if (!kennung) return [];
@@ -11943,6 +12429,9 @@ async function sponsorblockSegmente(videoId) {
     // dasselbe Ergebnis. Gespeichert wird es trotzdem - sonst faellt bei
     // jedem Takt eine neue Anfrage an, die genauso ausgeht.
   }
+  if (!sponsorblockCache.has(kennung) && sponsorblockCache.size >= 256) {
+    sponsorblockCache.delete(sponsorblockCache.keys().next().value);
+  }
   sponsorblockCache.set(kennung, { segmente, zeit: Date.now() });
   return segmente;
 }
@@ -11965,11 +12454,21 @@ async function installSponsorblock(view, url) {
   // Video, das hier nicht mehr laeuft.
   if (!isLiveView(view)) return;
   if (youtube.videoKennung(view.webContents.getURL())?.id !== kennung.id) return;
+  const aktuell = sponsorblock.einstellungenLesen(settings.sponsorblock);
+  if (!sponsorblock.kategorienAus(aktuell).length) {
+    await view.webContents.executeJavaScript(sponsorblock.abschaltenScript(), true).catch(() => {});
+    return;
+  }
 
   await view.webContents.executeJavaScript(
-    sponsorblock.skipScript(sponsorblock.gefiltert(alle, einstellungen), {
-      hinweis: einstellungen.hinweis,
-      videoId: kennung.id
+    sponsorblock.skipScript(sponsorblock.gefiltert(alle, aktuell), {
+      hinweis: aktuell.hinweis,
+      videoId: kennung.id,
+      // Privat springt dieses Geraet selbst. In der separaten YouTube-Runde
+      // tut das nur ihr erstes Relay-Mitglied; dessen normaler YouTube-Seek
+      // laeuft ueber ytevent zu allen anderen. Die Serien-Watchparty ist an
+      // diesem Weg nicht beteiligt.
+      automatisch: !youtubeParty.aktiv || youtubeParty.darfSponsorblockAutomatisch()
     }), true).catch(() => {});
 }
 
@@ -13424,6 +13923,11 @@ function normalizeSettings(raw) {
     // sponsorblock.js - hier waere sie ein zweites Mal, und die beiden liefen
     // beim naechsten Schalter auseinander.
     sponsorblock: sponsorblock.einstellungenLesen(raw?.sponsorblock),
+    // Der Dislike-Wert ist eine reine YouTube-Zusatzanzeige. Fehlende Werte
+    // bleiben aus Kompatibilitaet mit bestehenden Einstellungen eingeschaltet;
+    // der Schalter selbst liefert nur `enabled` und kann nichts anderes in die
+    // gespeicherte Konfiguration ziehen.
+    youtubeDislikes: youtubeDislikes.einstellungenLesen(raw?.youtubeDislikes),
     // Was einmalig schon geschehen ist. Diese Merker muessen hier stehen und
     // nicht bloss in der Datei: die Oberflaeche schickt beim Speichern den
     // ganzen Einstellungsblock, und was normalizeSettings nicht kennt, faellt
@@ -13636,6 +14140,7 @@ function defaultSettings() {
     // Nachtragen von vornherein erledigt.
     wrapped: { musik: true, gesehenJahr: 0 },
     sponsorblock: { ...sponsorblock.STANDARD },
+    youtubeDislikes: { ...youtubeDislikes.STANDARD },
     migrations: {
       youtubeProvider: true,
       // Eine frische Ablage hat keinen Verlauf, aus dem etwas zu uebernehmen

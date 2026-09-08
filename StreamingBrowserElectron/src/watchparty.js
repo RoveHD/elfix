@@ -124,6 +124,11 @@ class Watchparty {
     this.uhrProben = [];
     this.uhrTimer = 0;
     this.uhrAuffrischen = 0;
+    // Eine negative Zeitmarke dient als geordnete Rundlauf-Barriere. Das
+    // bestehende Relay reicht t0 unveraendert zurueck; damit ist sicher, dass
+    // es alle davor gesendeten Verwaltungsbefehle bereits bearbeitet hat.
+    this.barriereNummer = 0;
+    this.barrieren = new Map();
   }
 
   status() {
@@ -257,6 +262,7 @@ class Watchparty {
       this.uhrAnhalten();
       this.uhr = null;
       this.uhrProben = [];
+      this.barrieren.clear();
       this.melde();
       this.spaeterNeuVerbinden();
     };
@@ -308,6 +314,16 @@ class Watchparty {
     const t0 = nachrichtenZahl(nachricht.t0, NaN);
     const t1 = nachrichtenZahl(nachricht.t1, NaN);
     if (!Number.isFinite(t0) || !Number.isFinite(t1)) return;
+    const fertig = this.barrieren.get(t0);
+    if (fertig) {
+      this.barrieren.delete(t0);
+      try { fertig(); } catch {}
+      return;
+    }
+    // Negative Marken gehoeren ausschliesslich zu Barrieren. Eine verspaetete
+    // Antwort aus einer abgebrochenen Verbindung oder eine fremde Marke darf
+    // weder einen Rueckruf ausloesen noch die Uhrmessung verfaelschen.
+    if (t0 < 0) return;
     this.uhrProben.push({ t0, t1, t2: Date.now() });
     if (this.uhrProben.length > UHR_PROBEN) this.uhrProben.shift();
     const beste = versatzAusProben(this.uhrProben);
@@ -342,6 +358,7 @@ class Watchparty {
     // anderes Relay sein - oder dieselbe Maschine mit gestellter Uhr.
     this.uhr = null;
     this.uhrProben = [];
+    this.barrieren.clear();
     const socket = this.socket;
     this.socket = null;
     this.verbunden = false;
@@ -537,6 +554,27 @@ class Watchparty {
 
   beitreten(key) {
     this.senden({ type: "enter", key });
+  }
+
+  // Quittiert nicht einen einzelnen Befehl, sondern die Reihenfolge dieser
+  // WebSocket-Verbindung: Trifft die passende timeack-Antwort ein, hat das
+  // Relay jeden davor gesendeten Share/Enter verarbeitet und jeden daraus
+  // entstandenen Zustand bereits auf denselben Socket geschrieben. So lassen
+  // sich auch absichtlich verworfene Nachtraege (Grabstein, geloeschter Titel)
+  // eindeutig von einem Verbindungsabbruch unterscheiden, ohne einen Timeout.
+  barriere(fertig) {
+    if (!this.verbunden || !this.identitaetBestaetigt || !this.socket
+      || this.socket.readyState !== 1 || typeof fertig !== "function") return false;
+    this.barriereNummer = (this.barriereNummer % 1000000) + 1;
+    const marke = -this.barriereNummer;
+    this.barrieren.set(marke, fertig);
+    try {
+      this.socket.send(JSON.stringify({ type: "time", t0: marke }));
+      return true;
+    } catch {
+      this.barrieren.delete(marke);
+      return false;
+    }
   }
 
   verlassen(key) {

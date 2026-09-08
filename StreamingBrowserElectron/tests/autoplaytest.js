@@ -294,7 +294,7 @@ const umgebung = new Proxy({
   // normalizeSettings fragt das Modul nach dem Standard fuer SponsorBlock -
   // eine zweite Antwort hier waere genau die Sorte Unterschied, die auffaellt,
   // wenn ein Schalter irgendwann anders steht als er soll.
-  sponsorblock: require("../src/sponsorblock")
+  sponsorblock: require("../src/sponsorblock"), youtubeDislikes: require("../src/youtube-dislikes")
 }, {
   has: () => true,
   get: (ziel, name) => (name in ziel ? ziel[name] : (typeof name === "symbol" ? undefined : () => [])),

@@ -47,7 +47,7 @@
       statusText.textContent = fehler;
       return;
     }
-    if (!aktiv) statusText.textContent = "Kein aktiver Livechat.";
+    if (!aktiv) statusText.textContent = "Für diesen Player ist keine Watchparty verbunden. Öffne den Titel über „Gemeinsam weiterschauen“.";
     else if (!verbunden) statusText.textContent = "Verbindung wird hergestellt …";
     else statusText.textContent = "Mit der Runde verbunden";
   }
@@ -106,12 +106,12 @@
   }
 
   function oeffnen() {
-    if (!aktiv) return;
     panel.hidden = false;
+    if (typeof schichtenZeigen === "function") schichtenZeigen();
     knopf.setAttribute("aria-expanded", "true");
     ungelesen = 0;
     ungelesenZeigen();
-    eingabe.focus();
+    (aktiv ? eingabe : zu).focus();
   }
 
   function schliessen() {
@@ -133,11 +133,11 @@
     raum = naechsterRaum;
     aktiv = Boolean(status?.active);
     verbunden = Boolean(status?.connected);
-    knopf.hidden = !aktiv;
-    knopf.disabled = !aktiv;
+    knopf.hidden = false;
+    knopf.disabled = false;
+    eingabe.disabled = !aktiv;
+    senden.disabled = !aktiv || sendet;
     if (!aktiv) {
-      panel.hidden = true;
-      knopf.setAttribute("aria-expanded", "false");
       ungelesen = 0;
       ungelesenZeigen();
     }
@@ -178,7 +178,7 @@
       if (generation === raumGeneration) statusZeigen("Nachricht konnte nicht gesendet werden.");
     } finally {
       sendet = false;
-      senden.disabled = false;
+      senden.disabled = !aktiv;
       if (generation === raumGeneration && !panel.hidden) eingabe.focus();
     }
   });

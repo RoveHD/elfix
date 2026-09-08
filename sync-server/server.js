@@ -1467,6 +1467,22 @@ wss.on("connection", (socket) => {
           senden({ type: "grerror", message: "Ungueltiger Schluessel" });
           return;
         }
+        const geraetId = String(nachricht?.device?.id || "");
+        if (geraetId) {
+          // Dieselbe servergebundene HMAC-Identitaet wie die Watchparty. Der
+          // geheime Wurzelwert erscheint weder in der Nachricht noch im
+          // Roster; der gespeicherte Fingerabdruck bindet genau diese ID.
+          const identitaet = identitaetFuer({ ...nachricht, deviceId: geraetId });
+          if (!identitaet || identitaet.geraetId !== geraetId) {
+            senden({ type: "grerror", message: "Sicherer Gerätenachweis fehlt oder gehört zu einer anderen Kennung" });
+            return;
+          }
+        }
+        if (socket.syncGeraetId && geraetId && socket.syncGeraetId !== geraetId) {
+          senden({ type: "grerror", message: "Geraetkennung kann in einer Verbindung nicht wechseln" });
+          return;
+        }
+        if (geraetId) socket.syncGeraetId = geraetId;
         socket.geraeteRaum = nachricht.room;
       }
       if (!socket.geraeteRaum) return;

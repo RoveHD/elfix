@@ -65,6 +65,12 @@ app.whenReady().then(async () => {
     await lesen("[navigator.language, Intl.DateTimeFormat().resolvedOptions().locale.startsWith('en')]"),
     ["en-US", true]);
   pruefe("Aktiver Livechat zeigt den Schalter", await lesen("[chatKnopf.hidden, chatKnopf.getAttribute('aria-expanded')]"), [false, "false"]);
+  pruefe("Kleiner Chatpfeil sitzt am linken Player-Rand", await lesen("[chatKnopf.textContent.trim(), chatKnopf.getBoundingClientRect().left, chatKnopf.getBoundingClientRect().width <= 32, chatKnopf.closest('#leiste') === null]"), ["›", 0, true, true]);
+  fenster.showInactive();
+  await pause(160);
+  fs.writeFileSync(path.join(profil, "chat-pfeil.png"), await fenster.webContents.capturePage().then((bild) => bild.toPNG()));
+  fenster.hide();
+  console.log("SNAP  " + path.join(profil, "chat-pfeil.png"));
   pruefe("Chatnachrichten werden als Text statt HTML gerendert", await lesen("[chatListe.querySelector('.chatText').textContent, chatListe.querySelectorAll('b,script').length]"), ["<b>Nur Text</b>", 0]);
   const nachrichtenZeit = new Date(1735732800000);
   const erwarteteZeit = [nachrichtenZeit.getHours(), nachrichtenZeit.getMinutes()]
@@ -123,6 +129,13 @@ app.whenReady().then(async () => {
   fenster.webContents.send("spieler:chat", { type: "status", active: true, connected: true, room: "raum-b", messages: verlauf });
   await pause(80);
   pruefe("Statusmeldungen erhalten DOM und Leseposition", await lesen("[chatListe.firstElementChild === window.__ersteChatzeile, chatListe.scrollTop]"), [true, scroll]);
+
+  await lesen("schichtenZeigen()");
+  await pause(3000);
+  pruefe("Offener Chat behaelt Mauszeiger und Bedienung", await lesen("[leiste.classList.contains('weg'), getComputedStyle(chatEingabe).cursor === 'none']"), [false, false]);
+  fenster.webContents.send("spieler:chat", { type: "status", active: false, connected: false, room: "", messages: [] });
+  await warten(() => lesen("chatEingabe.disabled"));
+  pruefe("Ohne aktive Runde bleibt der Pfeil erreichbar und erklaert den Chatstatus", await lesen("[chatKnopf.hidden, chatSenden.disabled, chatStatus.textContent.includes('keine Watchparty')]"), [false, true, true]);
 
   console.log(`${anzahl}/${anzahl} bestanden`);
 }).then(() => beenden(0), (fehler) => beenden(1, fehler));

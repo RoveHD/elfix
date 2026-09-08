@@ -50,17 +50,25 @@ pruefe("Ein fremder Anbieter hat keine Kennung",
 
 // --- Die Kategorien ---------------------------------------------------------
 
-pruefe("Genau die fuenf angebotenen Kategorien",
-  sponsorblock.KATEGORIEN.join(",") === "sponsor,selfpromo,interaction,intro,outro");
-pruefe("Standard: Werbung weg, Intro und Outro bleiben",
-  sponsorblock.kategorienAus({}).join(",") === "sponsor,selfpromo,interaction",
-  "ein Intro ist keine Werbung");
+pruefe("Genau die acht Zeitbereich-Kategorien",
+  sponsorblock.KATEGORIEN.join(",")
+    === "sponsor,selfpromo,interaction,intro,outro,preview,music_offtopic,filler");
+pruefe("Standard: Werbung und Nicht-Musik automatisch, Programmteile aus",
+  sponsorblock.kategorienAus({}).join(",")
+    === "sponsor,selfpromo,interaction,music_offtopic",
+  "Intro, Outro, Vorschau und Fuellmaterial gehoeren zum Video");
+pruefe("Alte Schalter werden punktgenau migriert",
+  sponsorblock.einstellungenLesen({ intro: true, sponsor: false }).intro === "skip"
+  && sponsorblock.einstellungenLesen({ intro: true, sponsor: false }).sponsor === "off");
+pruefe("Jeder angebotene Modus bleibt erhalten",
+  ["skip", "manual", "show", "off"].every((modus) =>
+    sponsorblock.einstellungenLesen({ preview: modus }).preview === modus));
 pruefe("Intro eingeschaltet zaehlt mit",
-  sponsorblock.kategorienAus({ intro: true }).includes("intro"));
+  sponsorblock.kategorienAus({ intro: "manual" }).includes("intro"));
 pruefe("Ausgeschaltet gilt keine einzige",
   sponsorblock.kategorienAus({ enabled: false }).length === 0,
   "und ohne Kategorie wird nicht gefragt");
-pruefe("Die Anfrage nennt alle fuenf und nur Sprungsegmente",
+pruefe("Die Anfrage nennt alle acht und nur Sprungsegmente",
   sponsorblock.anfrageUrl("5f6b").includes(encodeURIComponent(JSON.stringify(sponsorblock.KATEGORIEN)))
   && sponsorblock.anfrageUrl("5f6b").includes(encodeURIComponent(JSON.stringify(["skip"]))),
   "geholt wird unabhaengig von den Schaltern - der Dienst erfaehrt sie nicht");
@@ -186,7 +194,11 @@ pruefe("Sponsor und Eigenwerbung stehen nebeneinander",
     === "sponsor,selfpromo",
   "das Outro faellt heraus, solange es aus ist");
 pruefe("Mit eingeschaltetem Outro sind es drei",
-  sponsorblock.gefiltert(drei, { outro: true }).length === 3);
+  sponsorblock.gefiltert(drei, { outro: "show" }).length === 3);
+pruefe("Das Verhalten reist mit jedem gefilterten Segment",
+  sponsorblock.gefiltert(drei, { sponsor: "manual", selfpromo: "show" })
+    .map((eintrag) => `${eintrag.kategorie}:${eintrag.modus}`).join(",")
+    === "sponsor:manual,selfpromo:show");
 pruefe("Ausgeschaltet bleibt nichts uebrig",
   sponsorblock.gefiltert(drei, { enabled: false }).length === 0,
   "und ohne Segmente springt das Skript nie");
@@ -204,6 +216,20 @@ pruefe("Wer zurueckspult, landet in einem bekannten Segment",
 pruefe("Ausserhalb wird nichts ausgenommen",
   sponsorblock.rueckkehrFuer(drei, 100) === -1
   && sponsorblock.rueckkehrFuer(drei, 71.8) === -1);
+const modiSegmente = [
+  { von: 10, bis: 20, kategorie: "sponsor", modus: "manual" },
+  { von: 30, bis: 40, kategorie: "preview", modus: "show" },
+  { von: 50, bis: 60, kategorie: "music_offtopic", modus: "skip" }
+];
+pruefe("Manuell und nur markieren springen nie von selbst",
+  sponsorblock.sprungFuer(modiSegmente, 12, []) === null
+  && sponsorblock.sprungFuer(modiSegmente, 32, []) === null);
+pruefe("Manuell findet genau den Abschnitt fuer den Knopf",
+  sponsorblock.manuellFuer(modiSegmente, 12, [])?.bis === 20
+  && sponsorblock.manuellFuer(modiSegmente, 12, [0]) === null);
+pruefe("Nicht-Musik wird standardmaessig automatisch uebersprungen",
+  sponsorblock.sprungFuer(modiSegmente, 52, [])?.kategorie === "music_offtopic"
+  && sponsorblock.FARBEN.music_offtopic === "#ff9900");
 
 // --- Das Skript -------------------------------------------------------------
 
@@ -212,24 +238,51 @@ pruefe("Es horcht auf timeupdate statt auf einen eigenen Zeitgeber",
   && !/setInterval/.test(skript),
   "der Player schickt es ohnehin viermal je Sekunde");
 pruefe("Waehrend der YouTube-Werbung wird nicht gesprungen",
-  /ad-showing/.test(skript) && /if \(!zustand\.segmente\.length \|\| werbung\(\)\) return;/.test(skript),
+  /ad-showing/.test(skript)
+  && skript.indexOf("if (werbung()) {") < skript.indexOf("const treffer = zustand.automatisch"),
   "dort gehoert die Zeitachse dem Spot");
+pruefe("Waehrend der YouTube-Werbung verschwinden auch die Videomarker",
+  /if \(werbung\(\)\) \{\s*markenEntfernen\(\);[\s\S]{0,120}?return;/.test(skript),
+  "eine Werbe-Zeitachse darf keine Marken des eigentlichen Videos zeigen");
 pruefe("Es haengt sich nur einmal ein",
   /if \(window\.__elfixSponsorblock\) return window\.__elfixSponsorblock\.aktualisieren/.test(skript),
   "sonst loeste jeder Videowechsel den Sprung doppelt aus");
 pruefe("Beim Videowechsel gelten die Ausnahmen des vorigen nicht mehr",
-  /if \(naechste\.videoId !== zustand\.videoId\)/.test(skript));
+  /if \(naechste\.videoId !== zustand\.videoId \|\| andereSegmente\)/.test(skript));
+pruefe("Alte Segmente gelten nie fuer den neuen YouTube-Player",
+  /aktuelleKennung\(\) !== zustand\.videoId/.test(skript),
+  "Adresse und Player-ID duerfen beim SPA-Wechsel kurz auseinanderlaufen");
+pruefe("Die Markierungen liegen in YouTubes Fortschrittsleiste",
+  /\.ytp-progress-bar-container/.test(skript)
+  && /elfix-sponsorblock-marke/.test(skript)
+  && /pointerEvents: "none"/.test(skript));
+pruefe("Unveraenderte Markierungen werden nicht immer wieder aufgebaut",
+  /zustand\.markenSignatur === signatur\) return;/.test(skript)
+  && /aenderungen\.every\(nurEigeneAenderung\)/.test(skript),
+  "sonst loeste der Marker selbst den DOM-Beobachter endlos aus");
+pruefe("Aus schlaeft wirklich",
+  /beobachter\.disconnect\(\)/.test(skript)
+  && /if \(!zustand\.aktiv\) return;/.test(skript)
+  && /removeEventListener\("timeupdate", pruefen\)/.test(skript)
+  && /removeEventListener\("yt-navigate-finish", planen, true\)/.test(skript));
 pruefe("Die Meldung nimmt keine Klicks an ausser auf dem Knopf",
   /pointerEvents: "none"/.test(skript) && /pointerEvents: "auto"/.test(skript));
 pruefe("Und sie holt sich nie den Fokus",
   !/\.focus\(\)/.test(skript),
   "auf dem Fernseher wuerde sie sonst die Steuerung an sich reissen");
 pruefe("Sie verschwindet von selbst",
-  /setTimeout\(verstecken, 6000\)/.test(skript));
+  /"Rückgängig", "undo", 6000/.test(skript));
 pruefe("Rueckgaengig nimmt genau dieses Segment aus",
   /if \(zustand\.aus\.indexOf\(letzter\.index\) < 0\) zustand\.aus\.push\(letzter\.index\);/.test(skript));
 pruefe("Ohne Hinweis wird nichts eingeblendet",
-  /if \(!zustand\.hinweis\) return;/.test(sponsorblock.skipScript(gelesen, { hinweis: false })));
+  /if \(!zustand\.hinweis\) return verstecken\(\);/.test(
+    sponsorblock.skipScript(gelesen, { hinweis: false })));
+pruefe("Ein Watchparty-Folger fuehrt keinen eigenen automatischen Sprung aus",
+  /"automatisch":false/.test(sponsorblock.skipScript(gelesen, { automatisch: false }))
+  && /const treffer = zustand\.automatisch/.test(skript));
+pruefe("Die manuelle Kategorie zeigt Restzeit und einen Sprungknopf",
+  /"Überspringen", "manual"/.test(skript)
+  && /Math\.ceil\(treffer\.bis - stelle\)/.test(skript));
 pruefe("Abschalten raeumt die Segmente weg",
   /__elfixSponsorblock\.abschalten\(\)/.test(sponsorblock.abschaltenScript()));
 
@@ -265,20 +318,24 @@ pruefe("Gelesen wird die Antwort in einem Modul ohne Netz",
 
 // --- Und die Einstellungen --------------------------------------------------
 
-pruefe("Sieben Schalter, wie besprochen",
+pruefe("Acht Kategorien und die beiden Hauptschalter sind sichtbar",
   ["sponsorblockEnabled", "sponsorblockSponsor", "sponsorblockSelfpromo",
     "sponsorblockInteraction", "sponsorblockIntro", "sponsorblockOutro",
-    "sponsorblockHinweis"].every((name) => HTML.includes(`id="${name}"`)));
+    "sponsorblockPreview", "sponsorblockMusic", "sponsorblockFiller",
+    "sponsorblockHinweis"].every((name) => HTML.includes(`id="${name}"`))
+  && (HTML.match(/<option value="(?:skip|manual|show|off)">/g) || []).length >= 32);
 pruefe("Sie werden gespeichert",
   /settings\.sponsorblock = Object\.fromEntries/.test(RENDERER)
   && /sponsorblock: sponsorblock\.einstellungenLesen\(raw\?\.sponsorblock\)/.test(MAIN),
   "und ueberstehen damit den Neustart");
 pruefe("Und beim Start wieder angezeigt",
-  /feld\.checked = settings\.sponsorblock\?\.\[name\] \?\? SPONSORBLOCK_STANDARD\[name\]/.test(RENDERER));
+  /feld\.tagName === "SELECT"/.test(RENDERER)
+  && /typeof wert === "boolean" \? \(wert \? "skip" : "off"\) : wert/.test(RENDERER));
 pruefe("Der Standard steht in der Ablage einer frischen Installation",
   /sponsorblock: \{ \.\.\.sponsorblock\.STANDARD \}/.test(MAIN));
 pruefe("Und die Einstellungssuche findet sie",
-  /"SponsorBlock", "Sponsor Werbung überspringen YouTube/.test(RENDERER));
+  /"SponsorBlock", "Sponsor Werbung überspringen YouTube/.test(RENDERER)
+  && /music_offtopic: "skip"/.test(RENDERER));
 
 // --- Und die YouTube-Watchparty ---------------------------------------------
 //
@@ -356,8 +413,12 @@ pruefe("Die Schalter liegen in den Einstellungen des Geraets",
   /getSharedPreferences\(PREFS, Context\.MODE_PRIVATE\)/.test(JAVA)
   && /"sponsorblock_" \+ name/.test(JAVA),
   "damit ueberstehen sie den Neustart");
-pruefe("Intro und Outro sind auch dort aus",
-  /!"intro"\.equals\(name\) && !"outro"\.equals\(name\)/.test(JAVA));
+pruefe("Android migriert alte Schalter in dieselben vier Modi",
+  /roh instanceof Boolean/.test(JAVA)
+  && /\(Boolean\) roh \? UEBERSPRINGEN : AUS/.test(JAVA)
+  && /UEBERSPRINGEN\.equals\(wert\).*NACHFRAGEN\.equals\(wert\)[\s\S]*ANZEIGEN\.equals\(wert\).*AUS\.equals\(wert\)/.test(JAVA));
+pruefe("Nicht-Musik ist auch auf Android standardmaessig automatisch",
+  /"interaction"\.equals\(name\) \|\| "music_offtopic"\.equals\(name\)/.test(JAVA));
 pruefe("Und das Skript kommt aus dem Kern, nicht aus Java",
   /kern\.rufe\("sponsorblock-bruecke\.skript"/.test(JAVA)
   && !/currentTime|timeupdate/.test(JAVA),
@@ -377,9 +438,9 @@ pruefe("Die Meldung kommt nur aus dem bestaetigten Videorahmen",
   && /if \(!hatVideo\) return;[\s\S]*sponsorblock\.istMeldung\(nachricht\)[\s\S]*sponsorblock\.meldung\(nachricht\)/.test(RAHMEN_MELDUNG)
   && !/sponsorblock\.istMeldung|sponsorblock\.meldung/.test(KONSOLE),
   "die Seitenkonsole ist kein Steuerkanal");
-pruefe("Die sieben Schalter stehen auch auf dem Fernseher",
+pruefe("Die acht Kategorien stehen auch auf dem Fernseher",
   /private void sponsorblockKarten\(LinearLayout koerper, boolean fernseher, int luecke\)/.test(ACTIVITY)
-  && (ACTIVITY.match(/sponsorblockKategorie\(koerper/g) || []).length === 5,
+  && (ACTIVITY.match(/sponsorblockKategorie\(koerper/g) || []).length === 8,
   "dieselbe Karte fuer Telefon und Fernseher - lebendeKarte kennt beides");
 pruefe("Und der Schalter wirkt dort ebenfalls sofort",
   /private void sponsorblockNachziehen\(\)/.test(ACTIVITY));

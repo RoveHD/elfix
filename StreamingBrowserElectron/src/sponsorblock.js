@@ -27,18 +27,17 @@
 //
 // **Was die API kennt.** Kategorien sind heute: sponsor, selfpromo,
 // interaction, intro, outro, preview, music_offtopic, filler,
-// exclusive_access, poi_highlight und chapter. ELFIX bietet die ersten fuenf
-// an - die uebrigen sind entweder keine Werbung (preview, filler), gar keine
-// Sprungmarke (chapter, poi_highlight) oder eine Warnung ohne Zeitbereich
-// (exclusive_access). Geholt werden nur die fuenf; was der Dienst sonst
-// zurueckgibt, faellt bei der Pruefung heraus.
+// exclusive_access, poi_highlight und chapter. ELFIX bietet die acht normalen
+// Zeitbereiche an. Die drei Sonderfaelle chapter, poi_highlight und
+// exclusive_access sind keine gewoehnlichen Zeitbereiche und werden deshalb
+// nicht vorgespiegelt.
 //
-// **Und die YouTube-Watchparty?** Sie laeuft weiter, und zwar ohne eine einzige
-// Sonderregel. Der Sprung hier ist ein gewoehnlicher Sprung im Player: der
-// Horcher der Runde (youtube-sync.js) meldet ihn wie jeden anderen, das Relay
-// nimmt ihn auf, und alle springen mit. Das ist auch die richtige Antwort -
-// wer in einer Runde einen Sponsorenblock ueberspringt, ueberspringt ihn fuer
-// die Runde, genau wie beim Vorspulen von Hand.
+// **Und die YouTube-Watchparty?** Der Sprung ist ein gewoehnlicher Sprung im
+// Player: der Horcher der Runde (youtube-sync.js) meldet ihn wie jeden anderen,
+// das Relay nimmt ihn auf, und alle springen mit. Damit nicht mehrere Player
+// denselben Abschnitt fast gleichzeitig melden, darf die Einspielung den
+// automatischen Teil auf Folgern abschalten. Marker und manuelle Knopfdrucke
+// bleiben dort erhalten.
 //
 // Umgekehrt gilt dasselbe: zieht die Runde den Player in ein Segment hinein -
 // weil jemand dorthin zurueckgespult hat -, behandelt das Skript das wie ein
@@ -55,27 +54,32 @@ const crypto = require("crypto");
 
 const WIRT = "https://sponsor.ajay.app";
 
-// Die Kategorien, die ELFIX anbietet - in genau der Schreibweise der API.
-const KATEGORIEN = ["sponsor", "selfpromo", "interaction", "intro", "outro"];
+// Die Zeitbereich-Kategorien, die ELFIX anbietet - in der Schreibweise der API.
+const KATEGORIEN = [
+  "sponsor", "selfpromo", "interaction", "intro", "outro", "preview",
+  "music_offtopic", "filler"
+];
+const MODI = ["skip", "manual", "show", "off"];
 
 // Was die API sonst noch kennt. Steht hier, damit der naechste Leser nicht
 // suchen muss, warum die Liste oben kuerzer ist - nicht als Vorrat zum
 // Anschalten.
-const WEITERE_KATEGORIEN = [
-  "preview", "music_offtopic", "filler", "exclusive_access", "poi_highlight", "chapter"
-];
+const WEITERE_KATEGORIEN = ["exclusive_access", "poi_highlight", "chapter"];
 
 // Standard: was Werbung ist, faellt weg; was zum Video gehoert, bleibt.
 //
-// Intro und Outro sind ausdruecklich aus. Ein Intro ist keine Werbung, sondern
-// die Serie - wer es wegspringen will, schaltet es ein.
+// Intro, Outro, Vorschau und Fuellmaterial sind ausdruecklich aus. Sie gehoeren
+// zum Video; wer sie markieren oder wegspringen will, schaltet das gezielt ein.
 const STANDARD = {
   enabled: true,
-  sponsor: true,
-  selfpromo: true,
-  interaction: true,
-  intro: false,
-  outro: false,
+  sponsor: "skip",
+  selfpromo: "skip",
+  interaction: "skip",
+  intro: "off",
+  outro: "off",
+  preview: "off",
+  music_offtopic: "skip",
+  filler: "off",
   hinweis: true
 };
 
@@ -98,23 +102,26 @@ const MELDE = "__elfix:sponsorblock:";
  * Abteilung fehlt. Eine Ablage aus einer aelteren Fassung kennt sie nicht.
  */
 function einstellungenLesen(roh) {
-  const wert = (name) => (typeof roh?.[name] === "boolean" ? roh[name] : STANDARD[name]);
-  return {
-    enabled: wert("enabled"),
-    sponsor: wert("sponsor"),
-    selfpromo: wert("selfpromo"),
-    interaction: wert("interaction"),
-    intro: wert("intro"),
-    outro: wert("outro"),
-    hinweis: wert("hinweis")
+  const schalter = (name) => (typeof roh?.[name] === "boolean" ? roh[name] : STANDARD[name]);
+  const modus = (name) => {
+    const wert = roh?.[name];
+    if (MODI.includes(wert)) return wert;
+    // Bis einschliesslich 1.39.3 waren Kategorien einfache Schalter.
+    if (typeof wert === "boolean") return wert ? "skip" : "off";
+    return STANDARD[name];
   };
+  return Object.fromEntries([
+    ["enabled", schalter("enabled")],
+    ...KATEGORIEN.map((name) => [name, modus(name)]),
+    ["hinweis", schalter("hinweis")]
+  ]);
 }
 
-/** Welche Kategorien dieser Benutzer wirklich uebersprungen haben will. */
+/** Welche Kategorien sichtbar oder aktiv sein sollen. */
 function kategorienAus(einstellungen) {
   const gelesen = einstellungenLesen(einstellungen);
   if (!gelesen.enabled) return [];
-  return KATEGORIEN.filter((name) => gelesen[name] === true);
+  return KATEGORIEN.filter((name) => gelesen[name] !== "off");
 }
 
 /**
@@ -132,7 +139,7 @@ function hashPraefix(videoId) {
 /**
  * Die Adresse der Anfrage.
  *
- * <p>Geholt werden immer alle fuenf Kategorien und nicht nur die eingeschalteten.
+ * <p>Geholt werden immer alle acht Kategorien und nicht nur die eingeschalteten.
  * Zwei Gruende: die Antwort liegt dann fuer jede Einstellung schon da - wer
  * "Intros ueberspringen" einschaltet, braucht keine neue Anfrage -, und der
  * Dienst erfaehrt nichts darueber, was hier eingeschaltet ist.
@@ -206,12 +213,14 @@ function segmenteAus(antwort, videoId) {
     .slice(0, MAX_SEGMENTE);
 }
 
-/** Nur die Kategorien, die eingeschaltet sind. */
+/** Nur eingeschaltete Kategorien, mit ihrem Verhalten fuer den Player. */
 function gefiltert(segmente, einstellungen) {
-  const erlaubt = kategorienAus(einstellungen);
-  if (!erlaubt.length) return [];
-  return (Array.isArray(segmente) ? segmente : []).filter(
-    (eintrag) => erlaubt.includes(eintrag?.kategorie));
+  const gelesen = einstellungenLesen(einstellungen);
+  if (!gelesen.enabled) return [];
+  return (Array.isArray(segmente) ? segmente : []).flatMap((eintrag) => {
+    const modus = gelesen[eintrag?.kategorie];
+    return modus && modus !== "off" ? [{ ...eintrag, modus }] : [];
+  });
 }
 
 /**
@@ -237,8 +246,12 @@ function sprungFuer(segmente, stelle, aus) {
   for (let i = 0; i < segmente.length; i += 1) {
     const eintrag = segmente[i];
     if (!eintrag || ausnahmen.indexOf(i) >= 0) continue;
+    // Fehlender Modus ist die alte Form und bleibt abwaertskompatibel ein
+    // automatischer Sprung.
+    if (eintrag.modus && eintrag.modus !== "skip") continue;
     if (jetzt >= eintrag.von - 0.15 && jetzt < eintrag.bis - 0.5) {
-      return { index: i, von: eintrag.von, bis: eintrag.bis, kategorie: eintrag.kategorie };
+      return { index: i, von: eintrag.von, bis: eintrag.bis,
+        kategorie: eintrag.kategorie, modus: "skip" };
     }
   }
   return null;
@@ -256,9 +269,26 @@ function rueckkehrFuer(segmente, stelle) {
   if (!Array.isArray(segmente) || !Number.isFinite(jetzt)) return -1;
   for (let i = 0; i < segmente.length; i += 1) {
     const eintrag = segmente[i];
-    if (eintrag && jetzt >= eintrag.von && jetzt < eintrag.bis) return i;
+    if (eintrag && (!eintrag.modus || eintrag.modus === "skip")
+        && jetzt >= eintrag.von && jetzt < eintrag.bis) return i;
   }
   return -1;
+}
+
+/** Ein Abschnitt, den der Benutzer auf Wunsch selbst ueberspringen kann. */
+function manuellFuer(segmente, stelle, aus) {
+  const jetzt = Number(stelle);
+  if (!Array.isArray(segmente) || !Number.isFinite(jetzt)) return null;
+  const ausnahmen = Array.isArray(aus) ? aus : [];
+  for (let i = 0; i < segmente.length; i += 1) {
+    const eintrag = segmente[i];
+    if (!eintrag || eintrag.modus !== "manual" || ausnahmen.indexOf(i) >= 0) continue;
+    if (jetzt >= eintrag.von && jetzt < eintrag.bis - 0.15) {
+      return { index: i, von: eintrag.von, bis: eintrag.bis,
+        kategorie: eintrag.kategorie, modus: "manual" };
+    }
+  }
+  return null;
 }
 
 // Die Beschriftung der Einblendung. Feste Woerter zu festen Kategorien - aus
@@ -268,7 +298,23 @@ const NAMEN = {
   selfpromo: "Eigenwerbung",
   interaction: "Interaktion",
   intro: "Intro",
-  outro: "Outro"
+  outro: "Outro",
+  preview: "Vorschau",
+  music_offtopic: "Nicht-Musik",
+  filler: "Füllmaterial"
+};
+
+// Dieselben Farben wie SponsorBlock. Sie bleiben im Kern, damit Desktop,
+// Android und Fernseher fuer dieselbe Kategorie dieselbe Zeitlinie zeichnen.
+const FARBEN = {
+  sponsor: "#00d400",
+  selfpromo: "#ffff00",
+  interaction: "#cc00ff",
+  intro: "#00ffff",
+  outro: "#0202ff",
+  preview: "#008fd6",
+  music_offtopic: "#ff9900",
+  filler: "#7300ff"
 };
 
 function alsQuelltext(...funktionen) {
@@ -292,39 +338,48 @@ function alsQuelltext(...funktionen) {
  * Sekunde 71 waere ein Sprung im Werbespot.
  */
 function skipScript(segmente, optionen = {}) {
-  const sauber = (Array.isArray(segmente) ? segmente : []).map((eintrag) => ({
-    von: Number(eintrag.von) || 0,
-    bis: Number(eintrag.bis) || 0,
-    kategorie: KATEGORIEN.includes(eintrag.kategorie) ? eintrag.kategorie : "sponsor"
-  }));
+  const sauber = (Array.isArray(segmente) ? segmente : []).flatMap((eintrag) => {
+    const modus = MODI.includes(eintrag?.modus) ? eintrag.modus : "skip";
+    if (modus === "off") return [];
+    return [{
+      von: Number(eintrag?.von) || 0,
+      bis: Number(eintrag?.bis) || 0,
+      kategorie: KATEGORIEN.includes(eintrag?.kategorie) ? eintrag.kategorie : "sponsor",
+      modus
+    }];
+  });
   const daten = JSON.stringify({
     segmente: sauber,
     hinweis: optionen.hinweis !== false,
+    automatisch: optionen.automatisch !== false,
     videoId: String(optionen.videoId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 20)
   });
   return `(() => {
-    ${alsQuelltext(sprungFuer, rueckkehrFuer)}
+    ${alsQuelltext(sprungFuer, rueckkehrFuer, manuellFuer)}
     const NAMEN = ${JSON.stringify(NAMEN)};
+    const FARBEN = ${JSON.stringify(FARBEN)};
     const MELDE = ${JSON.stringify(MELDE)};
     const neu = ${daten};
 
     if (window.__elfixSponsorblock) return window.__elfixSponsorblock.aktualisieren(neu);
 
-    const videos = Array.from(document.querySelectorAll("video"))
-      .filter((media) => Number(media.duration) > 0);
-    const media = document.querySelector("video.html5-main-video")
-      || videos.sort((links, rechts) => rechts.duration - links.duration)[0];
-    if (!media) return "kein-video";
-
     const zustand = {
       segmente: neu.segmente,
       hinweis: neu.hinweis,
+      automatisch: neu.automatisch,
       videoId: neu.videoId,
       aus: [],
       eigen: 0,
       kasten: null,
       uhr: 0,
-      letzter: null
+      letzter: null,
+      manuell: null,
+      kastenArt: "",
+      media: null,
+      marken: null,
+      markenSignatur: "",
+      zeichnung: 0,
+      aktiv: false
     };
 
     // Waehrend YouTube Werbung zeigt, gehoert die Zeitachse dem Spot.
@@ -375,37 +430,159 @@ function skipScript(segmente, optionen = {}) {
       knopf.addEventListener("click", (ereignis) => {
         ereignis.preventDefault();
         ereignis.stopPropagation();
-        zurueck();
+        if (zustand.kastenArt === "manual") manuellSpringen();
+        else zurueck();
       }, true);
       kasten.append(text, knopf);
       kasten.__text = text;
+      kasten.__knopf = knopf;
       (document.fullscreenElement || document.body).appendChild(kasten);
       return kasten;
     };
 
     const verstecken = () => {
+      clearTimeout(zustand.uhr);
+      zustand.uhr = 0;
       if (zustand.kasten) zustand.kasten.style.display = "none";
+      zustand.kastenArt = "";
+      zustand.manuell = null;
     };
 
-    const zeigen = (kategorie, dauer) => {
-      if (!zustand.hinweis) return;
+    const einblenden = (text, knopf, art, zeit = 0) => {
       if (!zustand.kasten) zustand.kasten = kastenBauen();
       // Im Vollbild ist nicht das Dokument der Rahmen, sondern das
       // Vollbild-Element - sonst haengt die Meldung hinter dem Video.
       const buehne = document.fullscreenElement || document.body;
       if (zustand.kasten.parentElement !== buehne) buehne.appendChild(zustand.kasten);
-      zustand.kasten.__text.textContent =
-        (NAMEN[kategorie] || "Abschnitt") + " übersprungen · " + Math.round(dauer) + " Sek.";
+      zustand.kasten.__text.textContent = text;
+      zustand.kasten.__knopf.textContent = knopf;
+      zustand.kastenArt = art;
       zustand.kasten.style.display = "flex";
       clearTimeout(zustand.uhr);
-      zustand.uhr = setTimeout(verstecken, 6000);
+      zustand.uhr = zeit > 0 ? setTimeout(verstecken, zeit) : 0;
+    };
+
+    const zeigen = (kategorie, dauer) => {
+      if (!zustand.hinweis) return verstecken();
+      einblenden((NAMEN[kategorie] || "Abschnitt") + " übersprungen · "
+        + Math.max(1, Math.round(dauer)) + " Sek.", "Rückgängig", "undo", 6000);
+    };
+
+    const manuellZeigen = (treffer, stelle) => {
+      zustand.manuell = treffer;
+      const rest = Math.max(1, Math.ceil(treffer.bis - stelle));
+      einblenden((NAMEN[treffer.kategorie] || "Abschnitt") + " · noch "
+        + rest + " Sek.", "Überspringen", "manual");
+    };
+
+    const markenEntfernen = () => {
+      if (zustand.marken && zustand.marken.parentElement) zustand.marken.remove();
+      zustand.marken = null;
+      zustand.markenSignatur = "";
+    };
+
+    // Auf einer SPA-Seite koennen Adresse und Player fuer einen kurzen Moment
+    // verschiedene Videos nennen. In dieser Luecke gelten weder die alten
+    // Segmente fuer den neuen Player noch umgekehrt.
+    const aktuelleKennung = () => {
+      let ausPlayer = "";
+      let ausAdresse = "";
+      try {
+        const spieler = document.querySelector("#movie_player");
+        const daten = spieler && typeof spieler.getVideoData === "function"
+          ? spieler.getVideoData()
+          : null;
+        ausPlayer = String(daten && daten.video_id || "");
+      } catch (_) {}
+      try {
+        const adresse = new URL(location.href);
+        const pfad = adresse.pathname.replace(/\\/+$/, "");
+        ausAdresse = String(adresse.searchParams.get("v") || "");
+        if (!ausAdresse) {
+          const treffer = pfad.match(/^\\/(?:shorts|embed|live|v)\\/([^/]+)/);
+          if (treffer) ausAdresse = treffer[1];
+          else if (adresse.hostname === "youtu.be") ausAdresse = pfad.split("/").filter(Boolean)[0] || "";
+        }
+      } catch (_) {}
+      if (ausPlayer && ausAdresse && ausPlayer !== ausAdresse) return "";
+      return ausPlayer || ausAdresse;
+    };
+
+    // YouTubes rote Fortschrittsleiste liegt in diesem Rahmen. Die farbigen
+    // Bereiche sind reine Anzeige: sie nehmen weder Maus noch Fernbedienung an
+    // sich und veraendern YouTubes eigene Leiste nicht.
+    const markenZeichnen = () => {
+      const media = zustand.media;
+      const dauer = Number(media && media.duration);
+      const leiste = document.querySelector(".ytp-progress-bar-container")
+        || document.querySelector(".ytp-progress-bar");
+      if (werbung() || aktuelleKennung() !== zustand.videoId || !leiste
+          || !Number.isFinite(dauer) || dauer <= 0 || !zustand.segmente.length) {
+        markenEntfernen();
+        return;
+      }
+
+      const signatur = zustand.videoId + "|" + dauer + "|" + zustand.segmente
+        .map((eintrag) => eintrag.kategorie + ":" + eintrag.modus + ":"
+          + eintrag.von + ":" + eintrag.bis)
+        .join(",");
+      if (zustand.marken && zustand.marken.parentElement === leiste
+          && zustand.markenSignatur === signatur) return;
+
+      if (!zustand.marken || zustand.marken.parentElement !== leiste) {
+        markenEntfernen();
+        const ebene = document.createElement("div");
+        ebene.className = "elfix-sponsorblock-marken";
+        ebene.setAttribute("aria-hidden", "true");
+        Object.assign(ebene.style, {
+          position: "absolute",
+          inset: "0",
+          // YouTubes eigene Kapitel-, Puffer- und Abspielbalken liegen in
+          // dieser Fortschrittsleiste uebereinander. 32 ist deren obere
+          // Ebene; die Markierungen muessen darueber sichtbar bleiben.
+          zIndex: "33",
+          overflow: "hidden",
+          pointerEvents: "none"
+        });
+        leiste.appendChild(ebene);
+        zustand.marken = ebene;
+      }
+
+      if (typeof zustand.marken.replaceChildren === "function") zustand.marken.replaceChildren();
+      else while (zustand.marken.firstChild) zustand.marken.removeChild(zustand.marken.firstChild);
+      for (const eintrag of zustand.segmente) {
+        const von = Math.max(0, Math.min(dauer, Number(eintrag.von) || 0));
+        const bis = Math.max(von, Math.min(dauer, Number(eintrag.bis) || 0));
+        if (bis <= von) continue;
+        const marke = document.createElement("span");
+        marke.className = "elfix-sponsorblock-marke";
+        marke.dataset.kategorie = eintrag.kategorie;
+        marke.dataset.modus = eintrag.modus;
+        marke.title = (NAMEN[eintrag.kategorie] || "Abschnitt") + " · "
+          + (eintrag.modus === "skip" ? "automatisch"
+            : eintrag.modus === "manual" ? "manuell" : "markiert");
+        Object.assign(marke.style, {
+          position: "absolute",
+          top: "0",
+          bottom: "0",
+          left: (von / dauer * 100) + "%",
+          width: ((bis - von) / dauer * 100) + "%",
+          minWidth: "2px",
+          background: FARBEN[eintrag.kategorie] || FARBEN.sponsor,
+          opacity: "0.9",
+          boxShadow: "0 0 0 1px rgba(0,0,0,0.18) inset"
+        });
+        zustand.marken.appendChild(marke);
+      }
+      zustand.markenSignatur = signatur;
     };
 
     // Rueckgaengig: zurueck an den Anfang des Segments - und dieses Segment
     // gilt fuer diesen Durchlauf nicht mehr.
     const zurueck = () => {
       const letzter = zustand.letzter;
-      if (!letzter) return;
+      const media = zustand.media;
+      if (!letzter || !media) return;
       if (zustand.aus.indexOf(letzter.index) < 0) zustand.aus.push(letzter.index);
       zustand.letzter = null;
       try {
@@ -416,40 +593,167 @@ function skipScript(segmente, optionen = {}) {
       verstecken();
     };
 
-    const pruefen = () => {
-      if (!zustand.segmente.length || werbung()) return;
-      const stelle = Number(media.currentTime) || 0;
-      const treffer = sprungFuer(zustand.segmente, stelle, zustand.aus);
-      if (!treffer) return;
-      const dauer = treffer.bis - stelle;
+    const manuellSpringen = () => {
+      const treffer = zustand.manuell;
+      const media = zustand.media;
+      if (!treffer || !media || aktuelleKennung() !== zustand.videoId) return verstecken();
+      const dauer = Math.max(0, treffer.bis - (Number(media.currentTime) || treffer.von));
       try {
         zustand.eigen = Date.now();
         media.currentTime = treffer.bis;
       } catch (_) {
         return;
       }
+      zustand.manuell = null;
       zustand.letzter = treffer;
       zeigen(treffer.kategorie, dauer);
       console.log(MELDE + "sprung:" + treffer.kategorie + ":" + Math.round(dauer));
     };
 
-    media.addEventListener("timeupdate", pruefen);
+    const pruefen = () => {
+      const media = zustand.media;
+      if (!media || !zustand.segmente.length) return;
+      if (werbung()) {
+        markenEntfernen();
+        if (zustand.kastenArt === "manual") verstecken();
+        return;
+      }
+      if (aktuelleKennung() !== zustand.videoId) {
+        if (zustand.kastenArt === "manual") verstecken();
+        return;
+      }
+      if (!zustand.marken) markenZeichnen();
+      const stelle = Number(media.currentTime) || 0;
+      const treffer = zustand.automatisch
+        ? sprungFuer(zustand.segmente, stelle, zustand.aus)
+        : null;
+      if (treffer) {
+        const dauer = treffer.bis - stelle;
+        try {
+          zustand.eigen = Date.now();
+          media.currentTime = treffer.bis;
+        } catch (_) {
+          return;
+        }
+        zustand.letzter = treffer;
+        zeigen(treffer.kategorie, dauer);
+        console.log(MELDE + "sprung:" + treffer.kategorie + ":" + Math.round(dauer));
+        return;
+      }
+      const manuellerTreffer = manuellFuer(zustand.segmente, stelle, zustand.aus);
+      if (manuellerTreffer) manuellZeigen(manuellerTreffer, stelle);
+      else if (zustand.kastenArt === "manual") verstecken();
+    };
 
     // Wer von Hand in ein Segment zurueckspult, meint das. Es gilt dann fuer
     // diesen Durchlauf nicht mehr - ohne das kaeme er dort nie an.
-    media.addEventListener("seeked", () => {
+    const nachSprung = () => {
+      const media = zustand.media;
+      if (!media || aktuelleKennung() !== zustand.videoId) return;
       const eigen = zustand.eigen && Date.now() - zustand.eigen < 1500;
       zustand.eigen = 0;
       if (eigen) return;
       const index = rueckkehrFuer(zustand.segmente, Number(media.currentTime) || 0);
       if (index >= 0 && zustand.aus.indexOf(index) < 0) zustand.aus.push(index);
-    });
+    };
+
+    const videoSuchen = () => {
+      const haupt = document.querySelector("video.html5-main-video");
+      if (haupt) return haupt;
+      return Array.from(document.querySelectorAll("video"))
+        .sort((links, rechts) => (Number(rechts.duration) || 0) - (Number(links.duration) || 0))[0]
+        || null;
+    };
+
+    // Beim ersten dom-ready steht YouTubes <video> nicht zwingend schon da.
+    // Und beim Wechsel ohne Neuladen darf YouTube das Element ersetzen. Darum
+    // wird nicht nur einmal gesucht, sondern bei DOM-Aenderungen neu gebunden.
+    const verbinden = () => {
+      if (!zustand.aktiv) return false;
+      const media = videoSuchen();
+      if (media === zustand.media) {
+        markenZeichnen();
+        return Boolean(media);
+      }
+      if (zustand.media) {
+        zustand.media.removeEventListener("timeupdate", pruefen);
+        zustand.media.removeEventListener("seeked", nachSprung);
+        zustand.media.removeEventListener("loadedmetadata", markenZeichnen);
+        zustand.media.removeEventListener("durationchange", markenZeichnen);
+      }
+      zustand.media = media;
+      if (!media) {
+        markenEntfernen();
+        return false;
+      }
+      media.addEventListener("timeupdate", pruefen);
+      media.addEventListener("seeked", nachSprung);
+      media.addEventListener("loadedmetadata", markenZeichnen);
+      media.addEventListener("durationchange", markenZeichnen);
+      markenZeichnen();
+      pruefen();
+      return true;
+    };
+
+    const planen = () => {
+      if (!zustand.aktiv || zustand.zeichnung) return;
+      const spaeter = typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (taak) => setTimeout(taak, 0);
+      zustand.zeichnung = spaeter(() => {
+        zustand.zeichnung = 0;
+        if (!zustand.aktiv) return;
+        verbinden();
+      });
+    };
+
+    let beobachter = null;
+    let navigationAktiv = false;
+    const istMarkenKnoten = (knoten) => Boolean(knoten && knoten.nodeType === 1
+      && knoten.classList && (knoten.classList.contains("elfix-sponsorblock-marken")
+        || knoten.classList.contains("elfix-sponsorblock-marke")));
+    const nurEigeneAenderung = (aenderung) => {
+      if (istMarkenKnoten(aenderung.target)) return true;
+      const knoten = [...aenderung.addedNodes, ...aenderung.removedNodes];
+      return knoten.length > 0 && knoten.every(istMarkenKnoten);
+    };
+    const beobachten = () => {
+      zustand.aktiv = true;
+      if (!beobachter && typeof MutationObserver === "function") {
+        beobachter = new MutationObserver((aenderungen) => {
+          if (aenderungen.length && aenderungen.every(nurEigeneAenderung)) return;
+          planen();
+        });
+        beobachter.observe(document.documentElement, { childList: true, subtree: true });
+      }
+      if (!navigationAktiv) {
+        window.addEventListener("yt-navigate-finish", planen, true);
+        navigationAktiv = true;
+      }
+    };
+    const ruhen = () => {
+      zustand.aktiv = false;
+      if (beobachter) beobachter.disconnect();
+      beobachter = null;
+      if (navigationAktiv) window.removeEventListener("yt-navigate-finish", planen, true);
+      navigationAktiv = false;
+      if (zustand.media) {
+        zustand.media.removeEventListener("timeupdate", pruefen);
+        zustand.media.removeEventListener("seeked", nachSprung);
+        zustand.media.removeEventListener("loadedmetadata", markenZeichnen);
+        zustand.media.removeEventListener("durationchange", markenZeichnen);
+      }
+      zustand.media = null;
+      markenEntfernen();
+    };
 
     window.__elfixSponsorblock = {
       zustand,
       aktualisieren: (naechste) => {
-        // Anderes Video: die Ausnahmen des vorigen gelten dort nicht.
-        if (naechste.videoId !== zustand.videoId) {
+        // Anderes Video oder andere Segmentauswahl: Index-Ausnahmen des
+        // vorigen Satzes gelten fuer den neuen nicht.
+        const andereSegmente = JSON.stringify(naechste.segmente) !== JSON.stringify(zustand.segmente);
+        if (naechste.videoId !== zustand.videoId || andereSegmente) {
           zustand.aus = [];
           zustand.letzter = null;
           zustand.videoId = naechste.videoId;
@@ -457,16 +761,33 @@ function skipScript(segmente, optionen = {}) {
         }
         zustand.segmente = naechste.segmente;
         zustand.hinweis = naechste.hinweis;
+        zustand.automatisch = naechste.automatisch;
+        if (!zustand.segmente.length) {
+          verstecken();
+          ruhen();
+          return "aktualisiert";
+        }
+        beobachten();
+        verbinden();
+        pruefen();
         return "aktualisiert";
       },
       abschalten: () => {
         zustand.segmente = [];
         zustand.letzter = null;
+        zustand.manuell = null;
         verstecken();
+        ruhen();
         return "aus";
       }
     };
-    return "eingerichtet";
+    if (zustand.segmente.length) {
+      beobachten();
+      verbinden();
+    }
+    return !zustand.segmente.length
+      ? "ohne-segmente"
+      : zustand.media ? "eingerichtet" : "wartet-auf-video";
   })()`;
 }
 
@@ -487,12 +808,14 @@ function abschaltenScript() {
 module.exports = {
   WIRT,
   KATEGORIEN,
+  MODI,
   WEITERE_KATEGORIEN,
   STANDARD,
   MIN_DAUER_S,
   MAX_SEGMENTE,
   MELDE,
   NAMEN,
+  FARBEN,
   einstellungenLesen,
   kategorienAus,
   hashPraefix,
@@ -501,6 +824,7 @@ module.exports = {
   gefiltert,
   sprungFuer,
   rueckkehrFuer,
+  manuellFuer,
   skipScript,
   abschaltenScript
 };

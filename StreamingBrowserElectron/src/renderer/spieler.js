@@ -511,10 +511,11 @@ function aufgeben(text, grund) {
 function schichtenZeigen() {
   for (const schicht of schichten) schicht.classList.remove("weg");
   clearTimeout(ruheUhr);
-  // Waehrend Pause, offener Liste, offenem Menue oder Fehler bleibt die Leiste
-  // stehen: wer pausiert oder gerade waehlt, will etwas tun.
+  // Waehrend Pause, offener Liste, offenem Menue, offenem Chat oder Fehler
+  // bleibt die Leiste stehen: wer gerade etwas tut, will die Bedienung sehen.
   ruheUhr = setTimeout(() => {
-    if (!bild.paused && fehlerKasten.hidden && folgenPanel.hidden && !wahlOffen()) {
+    if (!bild.paused && fehlerKasten.hidden && folgenPanel.hidden && !wahlOffen()
+      && !window.ElfixSpielerChat?.istOffen()) {
       for (const schicht of schichten) schicht.classList.add("weg");
     }
   }, 2800);
@@ -1933,8 +1934,54 @@ function beenden(grund) {
 
 /* ------------------------------------------------------------- Das Starten */
 
+/** Text fuer eine echte, von hls.js gemeldete Stufe - nie eine erfundene Zahl. */
+function stufenBeschriftung(stufe) {
+  const hoehe = Number(stufe?.height);
+  if (Number.isFinite(hoehe) && hoehe > 0) return `${Math.round(hoehe)}p`;
+  const bitrate = Number(stufe?.bitrate);
+  if (Number.isFinite(bitrate) && bitrate > 0) return `${Math.round(bitrate / 1000)} kbit/s`;
+  return "Unbekannte Qualität";
+}
+
+/**
+ * Es gibt gerade keine Auswahl.
+ *
+ * Ein eigener Menueknopf ist anfangs sonst aktiv, obwohl noch keine Liste
+ * vorliegt. Das ergibt beim Oeffnen genau einen Kopf ohne Zeilen. Stattdessen
+ * zeigt der Knopf ehrlich, ob das Manifest noch kommt, nur eine Stufe liefert
+ * oder die Quelle gar keine umschaltbaren Stufen hat.
+ */
+function stufenStatus(text) {
+  stufenWahl.textContent = "";
+  const eintrag = document.createElement("option");
+  eintrag.value = "";
+  eintrag.textContent = text;
+  eintrag.disabled = true;
+  stufenWahl.appendChild(eintrag);
+  stufenWahl.value = "";
+  stufenWahl.disabled = true;
+}
+
+function stufenLaden() {
+  stufenStatus("Bildqualität wird geladen …");
+}
+
+function stufenOhneAuswahl(stufe) {
+  const bekannt = String(stufe || "").trim();
+  stufenStatus(bekannt ? `${bekannt} (eine Qualität)` : "Keine Qualitätsauswahl");
+}
+
 /** Die Stufenliste von hls.js in das Auswahlfeld. */
 function stufenSetzen(stufen) {
+  // Die Nummer ist zugleich der Index fuer hls.currentLevel. Darum darf eine
+  // lueckige Liste nicht durch filter() neu nummeriert werden.
+  const liste = (Array.isArray(stufen) ? stufen : [])
+    .map((stufe, nummer) => ({ stufe, nummer }))
+    .filter((eintrag) => Boolean(eintrag.stufe));
+  if (liste.length < 2) {
+    stufenOhneAuswahl(liste[0] ? stufenBeschriftung(liste[0].stufe) : "");
+    return;
+  }
   stufenWahl.textContent = "";
   const auto = document.createElement("option");
   auto.value = "-1";
@@ -1942,41 +1989,47 @@ function stufenSetzen(stufen) {
   // zweimal "Auto" nebeneinander erklaert keines von beiden.
   auto.textContent = "Automatisch";
   stufenWahl.appendChild(auto);
-  stufen.forEach((stufe, nummer) => {
+  liste.forEach(({ stufe, nummer }) => {
     const eintrag = document.createElement("option");
     eintrag.value = String(nummer);
-    eintrag.textContent = stufe.height ? `${stufe.height}p` : `${Math.round((stufe.bitrate || 0) / 1000)} kbit/s`;
+    eintrag.textContent = stufenBeschriftung(stufe);
     stufenWahl.appendChild(eintrag);
   });
-  stufenWahl.disabled = stufen.length < 2;
+  stufenWahl.disabled = false;
   // Die hoechste Stufe von Anfang an - derselbe Grund wie bei voe-qualitaet.js:
   // "Auto" regelt einmal nach unten und kommt von selbst oft nicht wieder hoch.
-  if (stufen.length > 1) {
-    const beste = stufen.reduce((bester, stufe, nummer) => (
-      (stufe.height || 0) > (stufen[bester].height || 0) ? nummer : bester
-    ), 0);
-    if (hls) hls.currentLevel = beste;
-    stufenWahl.value = String(beste);
+  if (liste.length > 1) {
+    const beste = liste.reduce((bester, eintrag) => (
+      (eintrag.stufe.height || 0) > (bester.stufe.height || 0) ? eintrag : bester
+    ));
+    if (hls) hls.currentLevel = beste.nummer;
+    stufenWahl.value = String(beste.nummer);
   }
 }
 
 /**
  * Eine HLS-Playlist.
  *
- * Chromium spielt HLS nicht von sich aus - anders als Safari, das es nativ
- * kann. Deshalb hls.js: es liest die Playlist, laedt die Stuecke und legt sie
- * ueber die Media Source Extensions in das ganz gewoehnliche <video>. Kann der
- * Browser es doch selbst (dann steht es in canPlayType), bleibt es dabei - eine
- * Bibliothek, die nichts hinzufuegt, ist eine Fehlerquelle mehr.
+ * hls.js liest die Playlist, laedt die Stuecke und legt sie ueber die Media
+ * Source Extensions in das ganz gewoehnliche <video>. Es hat auch dann Vorrang,
+ * wenn ein Browser HLS nativ annimmt: nur hls.js gibt die Varianten an die
+ * Auswahl weiter. Der native Weg ist der Rückfall ohne Media Source Extensions.
  */
 function hlsStarten(adresse) {
-  const nativ = bild.canPlayType("application/vnd.apple.mpegurl");
-  if (nativ) {
-    bild.src = adresse;
-    return;
-  }
+  // hls.js hat Vorrang. Selbst wenn eine Electron-Version HLS nativ annimmt,
+  // legt sie ihre Varianten nicht offen; hls.js meldet sie dagegen im Manifest
+  // und macht die Qualitätswahl erst möglich. Der native Pfad bleibt allein
+  // als Rückfall für Umgebungen ohne Media Source Extensions.
   if (typeof Hls === "undefined" || !Hls.isSupported()) {
-    aufgeben("Für diese Playlist fehlt der Abspieler.", "hls-fehlt");
+    if (!bild.canPlayType("application/vnd.apple.mpegurl")) {
+      stufenStatus("Bildqualität nicht verfügbar");
+      aufgeben("Für diese Playlist fehlt der Abspieler.", "hls-fehlt");
+      return;
+    }
+    // Der Browser kann die Stufen in diesem Pfad selbst lesen, gibt sie aber
+    // nicht an JavaScript heraus. Daher keine leere oder erfundene Auswahl.
+    stufenStatus("Bildqualität wird automatisch gewählt");
+    bild.src = adresse;
     return;
   }
   const instanz = new Hls({
@@ -2034,6 +2087,7 @@ function hlsStarten(adresse) {
     startAusstehend = false;
     clearTimeout(startNotbremse);
     spielenZeichnen();
+    stufenStatus("Bildqualität nicht verfügbar");
     aufgeben("Die Playlist des Hosters bricht ab.", `hls-${daten.details || daten.type}`);
   });
   instanz.loadSource(adresse);
@@ -2121,6 +2175,8 @@ function starten(neuerAuftrag) {
   pufferZeigen(true);
   hosterSetzen(auftrag.hosterliste, auftrag.link);
   untertitelSetzen([]);
+  if (auftrag.laden || auftrag.typ === "hls") stufenLaden();
+  else stufenOhneAuswahl(auftrag.stufe);
   naechsteSetzen(auftrag.naechste);
   weiterAbProzent = Number.isFinite(Number(auftrag.weiterAbProzent))
     ? Number(auftrag.weiterAbProzent)

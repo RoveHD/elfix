@@ -8,12 +8,15 @@ const assert = require("assert/strict");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const http = require("http");
 const { pathToFileURL } = require("url");
 
 const profil = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-spieler-bedienung-"));
 app.setPath("userData", profil);
 app.disableHardwareAcceleration();
 let fenster;
+let hlsServer;
+let masterAntwort;
 let anzahl = 0;
 const frist = setTimeout(() => beenden(1, Error("Player-Bedienungspruefung blieb stehen")), 30000);
 const pause = (ms) => new Promise((fertig) => setTimeout(fertig, ms));
@@ -60,6 +63,51 @@ app.whenReady().then(async () => {
   await fenster.loadFile(path.join(__dirname, "../src/renderer/spieler.html"));
   const lesen = (code) => fenster.webContents.executeJavaScript(code);
   await warten(() => lesen("bild.readyState >= 2"));
+  pruefe("Eine Datei ohne Varianten zeigt keine leere Qualitätsliste", await lesen(`
+    [stufenWahl.disabled, stufenWahl.text.textContent, stufenWahl.eintraege.map(e => e.text)]
+  `), [true, "Keine Qualitätsauswahl", ["Keine Qualitätsauswahl"]]);
+  await lesen("stufenWahl.auf()");
+  pruefe("Ohne Varianten lässt sich das Qualitätsmenü nicht öffnen", await lesen("stufenWahl.offen()"), false);
+  hlsServer = http.createServer((anfrage, antwort) => {
+    antwort.setHeader("access-control-allow-origin", "*");
+    if (anfrage.url === "/master.m3u8") {
+      // Der Test gibt das Manifest erst nach dem sichtbaren Lade-Zustand
+      // frei. Das ist ein Ablauf, keine Wettrennen gegen localhost.
+      masterAntwort = antwort;
+    } else if (/^\/(360|720|1080)\.m3u8$/.test(anfrage.url)) {
+      // Nach dem Manifest bleibt die Medienliste offen. Das verhindert einen
+      // künstlichen HLS-Fehler, bevor die Auswahl geprüft ist.
+    } else {
+      antwort.statusCode = 404;
+      antwort.end();
+    }
+  });
+  await new Promise((fertig) => hlsServer.listen(0, "127.0.0.1", fertig));
+  const hlsAdresse = `http://127.0.0.1:${hlsServer.address().port}/master.m3u8`;
+  await lesen(`(() => {
+    const echt = bild.canPlayType.bind(bild);
+    bild.canPlayType = (typ) => typ === 'application/vnd.apple.mpegurl' ? 'probably' : echt(typ);
+  })()`);
+  fenster.webContents.send("spieler:auftrag", { ...auftrag, id: 2, adresse: hlsAdresse, typ: "hls" });
+  await warten(() => lesen("auftrag.id === 2 && stufenWahl.text.textContent === 'Bildqualität wird geladen …'"));
+  pruefe("Während des HLS-Manifests bleibt die Qualitätsliste ehrlich geschlossen", await lesen(`
+    [Boolean(hls), stufenWahl.disabled, stufenWahl.text.textContent, stufenWahl.eintraege.map(e => e.text)]
+  `), [true, true, "Bildqualität wird geladen …", ["Bildqualität wird geladen …"]]);
+  await warten(() => Boolean(masterAntwort));
+  masterAntwort.end("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360\n360.m3u8\n"
+    + "#EXT-X-STREAM-INF:BANDWIDTH=1600000,RESOLUTION=1280x720\n720.m3u8\n"
+    + "#EXT-X-STREAM-INF:BANDWIDTH=3200000,RESOLUTION=1920x1080\n1080.m3u8\n");
+  await warten(() => lesen("stufenWahl.disabled === false && stufenWahl.eintraege.length === 4"));
+  pruefe("Ein echtes HLS-Manifest liefert auswählbare Qualitätsstufen", await lesen(`(() => {
+    stufenWahl.auf();
+    const vorWahl = [stufenWahl.text.textContent,
+      [...stufenWahl.menue.querySelectorAll('button')].map(zeile => zeile.textContent)];
+    stufenWahl.waehlen('1');
+    return [vorWahl, hls.autoLevelEnabled, stufenWahl.text.textContent];
+  })()`), [["1080p", ["Automatisch", "360p", "720p", "✓1080p"]], false, "720p"]);
+  fenster.webContents.send("spieler:auftrag", auftrag);
+  await warten(() => lesen("auftrag.id === 1 && bild.readyState >= 2"));
+  await lesen("delete bild.canPlayType");
 
   await lesen(`(() => {
     window.__wechsel = [];
@@ -97,6 +145,7 @@ app.whenReady().then(async () => {
     regler.addEventListener("keydown", (ereignis) => window.__reglerTasten.push([ereignis.key, ereignis.code]));
     regler.value = "500";
     lautstaerke.value = "40";
+    bild.pause();
     bild.currentTime = 10;
     regler.focus();
   })()`);
@@ -149,5 +198,6 @@ function beenden(code, fehler) {
   if (fehler) console.error("FAIL  " + (fehler.stack || fehler.message));
   clearTimeout(frist);
   fenster?.destroy();
+  hlsServer?.close();
   app.exit(code);
 }

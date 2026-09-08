@@ -110,7 +110,7 @@ function umgebung() {
     SEEK_TOLERANZ_S: 0.001,
     gerettet: { netz: false, medium: false },
     stufenWahl: { value: "-1" },
-    stufenSetzen() {}, untertitelSetzen() {}, standMelden() {},
+    stufenSetzen() {}, stufenStatus() {}, untertitelSetzen() {}, standMelden() {},
     spielenZeichnen: () => zeichnungen.push("zeichnen"),
     seekAbwarten: () => Promise.resolve(true),
     bereitFuerStart: () => Promise.resolve(true), pauseAnfordern() {},

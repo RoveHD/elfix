@@ -315,6 +315,7 @@ const watchpartyRoomAdd = document.querySelector("#watchpartyRoomAdd");
 const watchpartyStatusseite = document.querySelector("#watchpartyStatusseite");
 const watchpartyRoomList = document.querySelector("#watchpartyRoomList");
 const watchpartyName = document.querySelector("#watchpartyName");
+const geraeteName = document.querySelector("#geraeteName");
 const watchpartyStatus = document.querySelector("#watchpartyStatus");
 // Meine Geraete. Der Schluessel steht bewusst nicht im Einstellungsformular:
 // er wird ueber eigene Aufrufe gesetzt und geloescht, damit ihn kein
@@ -384,8 +385,9 @@ const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
 const direktModus = document.querySelector("#direktModus");
-// SponsorBlock. Ein Schalter fuer das Ganze, fuenf fuer die Kategorien, einer
-// fuer die Meldung - in derselben Reihenfolge wie in der Einstellungsseite.
+const youtubeDislikesEnabled = document.querySelector("#youtubeDislikesEnabled");
+// SponsorBlock: Aktivierung und Hinweise sind Schalter; die acht Kategorien
+// speichern jeweils automatisch, manuell, markieren oder aus.
 const sponsorblockFelder = {
   enabled: document.querySelector("#sponsorblockEnabled"),
   sponsor: document.querySelector("#sponsorblockSponsor"),
@@ -393,14 +395,17 @@ const sponsorblockFelder = {
   interaction: document.querySelector("#sponsorblockInteraction"),
   intro: document.querySelector("#sponsorblockIntro"),
   outro: document.querySelector("#sponsorblockOutro"),
+  preview: document.querySelector("#sponsorblockPreview"),
+  music_offtopic: document.querySelector("#sponsorblockMusic"),
+  filler: document.querySelector("#sponsorblockFiller"),
   hinweis: document.querySelector("#sponsorblockHinweis")
 };
 // Was gilt, wenn nichts gespeichert ist. Dieselben Werte wie in
 // src/sponsorblock.js - die Oberflaeche kann das Modul nicht laden, also steht
-// hier nur, was ein frisches Kaestchen zeigen soll.
+// hier nur, was ein frisches Einstellungsfeld zeigen soll.
 const SPONSORBLOCK_STANDARD = {
-  enabled: true, sponsor: true, selfpromo: true, interaction: true,
-  intro: false, outro: false, hinweis: true
+  enabled: true, sponsor: "skip", selfpromo: "skip", interaction: "skip",
+  intro: "off", outro: "off", preview: "off", music_offtopic: "skip", filler: "off", hinweis: true
 };
 const markenStand = document.querySelector("#markenStand");
 const markenVergessen = document.querySelector("#markenVergessen");
@@ -727,6 +732,13 @@ function bindEvents() {
   });
   api.onWatchpartyState?.(renderWatchpartyStatus);
   geraeteKeyNew?.addEventListener("click", geraeteSchluesselErzeugen);
+  geraeteName?.addEventListener("change", () => {
+    if (watchpartyName) watchpartyName.value = geraeteName.value.trim();
+    saveSettings();
+  });
+  watchpartyName?.addEventListener("change", () => {
+    if (geraeteName) geraeteName.value = watchpartyName.value.trim();
+  });
   geraeteKeyUse?.addEventListener("click", geraeteSchluesselUebernehmen);
   geraeteKeyCopy?.addEventListener("click", geraeteSchluesselKopieren);
   geraeteDisconnect?.addEventListener("click", geraeteTrennen);
@@ -1240,6 +1252,7 @@ function bindEvents() {
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
   direktModus?.addEventListener("change", saveSettings);
+  youtubeDislikesEnabled?.addEventListener("change", saveSettings);
   for (const feld of Object.values(sponsorblockFelder)) {
     feld?.addEventListener("change", saveSettings);
   }
@@ -1861,6 +1874,7 @@ async function fernCodeKopieren() {
 // noch irgendwo anders speichert.
 
 function renderGeraeteStatus(status) {
+  renderGeraeteListe(status?.devices);
   if (geraeteKey && document.activeElement !== geraeteKey) geraeteKey.value = status?.key || geraeteKey.value || "";
   if (geraeteDisconnect) geraeteDisconnect.disabled = !status?.hasKey;
   if (geraeteKeyCopy) geraeteKeyCopy.disabled = !geraeteKey?.value;
@@ -1884,6 +1898,33 @@ function renderGeraeteStatus(status) {
   const anzahl = Number.isFinite(Number(status.titel)) ? Number(status.titel) : status.entries;
   const titel = anzahl === 1 ? "1 Titel" : `${anzahl} Titel`;
   geraeteStatus.textContent = `Verbunden, ${titel}, ${stand}.`;
+}
+
+function renderGeraeteListe(geraete) {
+  const liste = document.getElementById("geraeteListe");
+  if (!liste) return;
+  liste.replaceChildren();
+  const alle = Array.isArray(geraete) ? geraete : [];
+  if (!alle.length) {
+    const leer = document.createElement("small");
+    leer.textContent = "Noch keine Geräteliste verfügbar. Dafür müssen das Relay und deine Geräte auf dem aktuellen Stand sein und denselben Abgleich-Schlüssel verwenden.";
+    liste.append(leer);
+    return;
+  }
+  const typen = { pc: "PC", handy: "Handy", tv: "TV" };
+  for (const geraet of alle) {
+    const zeile = document.createElement("div");
+    zeile.className = "room-item";
+    const name = document.createElement("span");
+    const typ = typen[geraet?.typ] || "Gerät";
+    name.textContent = geraet?.name || typ;
+    const info = document.createElement("small");
+    const zeit = Number(geraet?.lastSeen);
+    const zuletzt = zeit ? new Date(zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "unbekannt";
+    info.textContent = `${typ}${geraet?.current ? " · Dieses Gerät" : ""} · ${geraet?.online ? "online" : `zuletzt ${zuletzt}`}`;
+    zeile.append(name, info);
+    liste.append(zeile);
+  }
 }
 
 async function geraeteSchluesselErzeugen() {
@@ -7952,8 +7993,12 @@ function renderSettings() {
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
   if (direktModus) direktModus.checked = settings.playback?.direktModus !== false;
+  if (youtubeDislikesEnabled) youtubeDislikesEnabled.checked = settings.youtubeDislikes?.enabled !== false;
   for (const [name, feld] of Object.entries(sponsorblockFelder)) {
-    if (feld) feld.checked = settings.sponsorblock?.[name] ?? SPONSORBLOCK_STANDARD[name];
+    if (!feld) continue;
+    const wert = settings.sponsorblock?.[name] ?? SPONSORBLOCK_STANDARD[name];
+    if (feld.tagName === "SELECT") feld.value = typeof wert === "boolean" ? (wert ? "skip" : "off") : wert;
+    else feld.checked = wert;
   }
   renderMarkenStand();
   if (rememberLanguage) rememberLanguage.checked = settings.playback?.rememberLanguage !== false;
@@ -8006,6 +8051,7 @@ function renderSettings() {
   if (watchpartyRoom) watchpartyRoom.value = "";
   renderWatchpartyRaeume();
   if (watchpartyName) watchpartyName.value = party.deviceName || "";
+  if (geraeteName) geraeteName.value = party.deviceName || "";
   providerCardMeta.value = home.providerCardMeta || "logoName";
   showFavoriteMeta.checked = appearance.showFavoriteMeta !== false;
   animationsEnabled.checked = appearance.animations !== false && animationMode.value !== "off";
@@ -8246,8 +8292,9 @@ async function saveSettings(options = {}) {
   };
   settings.sponsorblock = Object.fromEntries(Object.entries(sponsorblockFelder).map(
     ([name, feld]) => [name, feld
-      ? feld.checked
+      ? (feld.tagName === "SELECT" ? feld.value : feld.checked)
       : settings.sponsorblock?.[name] ?? SPONSORBLOCK_STANDARD[name]]));
+  settings.youtubeDislikes = { enabled: youtubeDislikesEnabled ? youtubeDislikesEnabled.checked : settings.youtubeDislikes?.enabled !== false };
   settings.watchparty = {
     enabled: watchpartyEnabled ? watchpartyEnabled.checked : false,
     serverUrl: watchpartyServer ? watchpartyServer.value.trim() : "",

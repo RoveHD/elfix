@@ -20,7 +20,7 @@ const RELAY_TEST_IDENTITAET = path.join(HIER, "relay-test-identitaet.js");
 const PORT = Number(process.env.TESTPORT) || 0;
 
 // Ohne Relay: reine Rechenpruefungen.
-const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "watchparty-praezisiontest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "empfehlungslauftest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "wiederansehentest", "watchlisttest", "verlauftest", "suchetest", "trefferbildtest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "naechstefolgetest", "rueckblicktest", "wrappedtest", "openingtest", "sponsorblocktest", "trailertest", "qualitaettest", "direktquelletest", "direktlauftest", "direktlinkstest", "direktfolgentest", "spielertest", "direktmodustest", "manifesttest", "streamspurtest", "direktprobetest", "direktregressionstest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest", "titelbildtest", "werbefiltertest", "folgenlinktest", "folgentiteltest", "uebersichttest", "relaytest", "bildnachreichungtest", "bildfallbacktest", "startknopftest", "hosterplayertest", "autostarttest", "startphasentest", "startfreigabetest", "bestandschutztest", "raumarchivtest", "nachschubtest"];
+const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest", "brueckentest", "knotentest", "knopftest", "synclogiktest", "watchparty-praezisiontest", "playertest", "sicherungtest", "titeltest", "empfehlungtest", "empfehlungslauftest", "begruendungtest", "katalogtest", "metadatentest", "gatewaytest", "externtest", "profiltest", "kacheltest", "leistetest", "mediathektest", "wiederansehentest", "watchlisttest", "verlauftest", "suchetest", "trefferbildtest", "ausschnitttest", "hinweistest", "adblocktest", "verifizierungtest", "youtubetest", "youtubesynctest", "ytleistetest", "wiedergabetest", "anbietermenuetest", "mediathektabtest", "anbieternachtragtest", "autoplaytest", "naechstefolgetest", "rueckblicktest", "wrappedtest", "openingtest", "sponsorblocktest", "youtubedisliketest", "trailertest", "qualitaettest", "direktquelletest", "direktlauftest", "direktlinkstest", "direktfolgentest", "spielertest", "direktmodustest", "manifesttest", "streamspurtest", "direktprobetest", "direktregressionstest", "schaltertest", "tastentest", "umzugtest", "markentest", "fassungtest", "qrtest", "titelbildtest", "werbefiltertest", "folgenlinktest", "folgentiteltest", "uebersichttest", "relaytest", "bildnachreichungtest", "bildfallbacktest", "startknopftest", "hosterplayertest", "autostarttest", "startphasentest", "startfreigabetest", "bestandschutztest", "raumarchivtest", "nachschubtest"];
 // Mit Relay: das Zusammenspiel.
 OHNE_RELAY.push("watchpartyvorbereitungtest");
 OHNE_RELAY.push("watchpartyquellentest");
@@ -39,6 +39,11 @@ OHNE_RELAY.push("hostgnadetest");
 OHNE_RELAY.push("startnachladetest");
 OHNE_RELAY.push("adblockworkertest");
 OHNE_RELAY.push("securitytest");
+OHNE_RELAY.push("spielerchatzustandtest");
+OHNE_RELAY.push("watchpartypersistenztest");
+OHNE_RELAY.push("youtubestarttest");
+OHNE_RELAY.push("sponsorblockpartytest");
+OHNE_RELAY.push("youtubezusatzracentest");
 OHNE_RELAY.push("folgenbarrieretest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");

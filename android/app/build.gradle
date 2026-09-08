@@ -50,6 +50,7 @@ def kernModule = [
     "src/startphasen.js",
     "src/watchparty-raeume.js",
     "src/youtube.js",
+    "src/youtube-dislikes.js",
     "src/youtube-sync.js",
     "src/sponsorblock.js",
     "src/voe-qualitaet.js",

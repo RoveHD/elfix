@@ -143,12 +143,16 @@
 
   function konfigurieren(einstellungen) {
     const abg = sicherstellen();
+    const typ = (einstellungen && einstellungen.geraetTyp) || "handy";
     abg.konfigurieren({
       enabled: einstellungen && einstellungen.enabled === true,
       // Dieselbe Adresse wie die Watchparty: es ist dasselbe Relay.
       serverUrl: (einstellungen && einstellungen.serverUrl) || "",
       schluessel: (einstellungen && einstellungen.schluessel) || "",
-      geraetId: (einstellungen && einstellungen.geraetId) || ""
+      geraetId: (einstellungen && einstellungen.geraetId) || "",
+      geraetName: (einstellungen && einstellungen.geraetName) || (typ === "tv" ? "TV" : "Handy"),
+      geraetTyp: typ,
+      geraetGeheimnis: (einstellungen && einstellungen.geraetGeheimnis) || ""
     });
     return abg.status();
   }

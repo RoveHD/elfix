@@ -3,6 +3,24 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.18 — 8. September 2026
+
+- Gemeinsam weiterschauen behält gespeicherte Beitritte bei Verbindungsaufbau,
+  Neustart und Geräteabgleich. Explizite Austritte werden mit Zeitstempel
+  abgeglichen; leere Zustände älterer Geräte löschen keine Mitgliedschaften.
+- Die Geräteübersicht zeigt Namen, Gerätetyp und Verbindungsstatus. Dafür
+  müssen auch das Relay und die beteiligten Geräte aktualisiert werden.
+- Der Player-Chat lässt sich über einen kleinen Pfeil am linken Rand öffnen.
+  Die Qualitätsauswahl zeigt verfügbare Stufen oder einen verständlichen Status.
+- Die separate YouTube-Watchparty verhindert verspätete Start-/Pause-Echos
+  und überträgt SponsorBlock-Sprünge vom zuständigen Teilnehmer an die Runde.
+- SponsorBlock unterstützt acht Kategorien einschließlich Nicht-Musik sowie
+  automatisches Überspringen, manuelles Überspringen und farbige Markierungen.
+- Return YouTube Dislike ergänzt geschätzte Dislike-Zahlen direkt bei YouTube;
+  die Funktion lässt sich auf Desktop und Android ausschalten.
+- Veraltete Electron-Navigationsaufrufe wurden ersetzt. Zusätzliche Tests
+  prüfen Zustandswechsel, Geräteabgleich, Player und YouTube-Erweiterungen.
+
 ## 2.0.17 — 7. September 2026
 
 Enthält alle Änderungen der zuvor durch Release-Prüfungen gestoppten Fassungen

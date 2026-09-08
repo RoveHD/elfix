@@ -427,7 +427,7 @@
           <button class="tab" data-tab="providers"><span>☰</span>Anbieter<small>Seiten verwalten</small></button>
           <button class="tab" data-tab="playback"><span>▷</span>Wiedergabe<small>Player & Fortschritt</small></button>
           <button class="tab" data-tab="watchparty"><span>⇄</span>Watchparty<small>Fortschritt teilen</small></button>
-          <button class="tab" data-tab="geraete"><span>⇉</span>Meine Geräte<small>Laptop & Rechner</small></button>
+          <button class="tab" data-tab="geraete"><span>⇉</span>Meine Geräte<small>PC, Handy & TV</small></button>
           <button class="tab" data-tab="fern"><span>⌾</span>Fernbedienung<small>Steuern per Handy</small></button>
           <div class="settings-nav-section">System</div>
           <button class="tab" data-tab="browser"><span>◉</span>Browser & Schutz<small>Werbung, Cache</small></button>
@@ -555,7 +555,7 @@
           <div class="settings-head">
             <div>
               <h3>Meine Geräte</h3>
-              <p>Hält deine eigenen Geräte auf demselben Stand: Was du am Rechner schaust, steht auf dem Laptop in „Weiterschauen“ an derselben Stelle. Kein Konto und kein Raum — ein Schlüssel, den nur deine Geräte kennen.</p>
+              <p>Dein Fortschritt auf PC, Handy und TV: Geräte mit demselben Abgleich-Schlüssel teilen „Weiterschauen“ und deine Sammlung. Die Liste zeigt auch Geräte, die gerade offline sind.</p>
             </div>
           </div>
           <div class="settings-section-grid">
@@ -575,6 +575,14 @@
             <div class="setting-row">
               <span><strong>Status</strong><small id="geraeteStatus">Ausgeschaltet.</small></span>
               <button type="button" class="soft-action" id="geraeteSyncNow">Jetzt abgleichen</button>
+            </div>
+            <div class="setting-block">
+              <label for="geraeteName">Name dieses Geräts</label>
+              <input id="geraeteName" maxlength="48" placeholder="Windows-PC" autocomplete="off">
+              <small>Zum Beispiel „Elias · PC“. Derselbe Name erscheint auch in der Watchparty; die Geräte bleiben auch bei gleichen Namen getrennt.</small>
+              <strong>Geräte in diesem Abgleich</strong>
+              <div class="room-list" id="geraeteListe"></div>
+              <small>Die Liste folgt festen Gerätekennungen, nie gleichen Namen. Auch Geräte, die gerade aus sind, bleiben sichtbar und kommen beim nächsten Abgleich wieder dazu.</small>
             </div>
             <div class="setting-row">
               <span><strong>Server</strong><small>Es ist dasselbe Relay wie bei der Watchparty — die Adresse steht dort. Die Watchparty selbst muss dafür nicht eingeschaltet sein.</small></span>
@@ -763,16 +771,20 @@
           <section class="settings-group">
             <div class="settings-group-head">
               <h4>SponsorBlock</h4>
-              <p>Bezahlte Einschübe in YouTube-Videos überspringen. Was ein Sponsorenblock ist, sagt der offene Katalog von sponsor.ajay.app — ELFIX rät nichts. Gefragt wird nur bei YouTube und nur mit einem Kürzel, aus dem sich das Video nicht ablesen lässt.</p>
+              <p>Bestimme für jede Kategorie, ob ELFIX sie überspringt oder in der YouTube-Zeitleiste markiert. Die Abschnitte stammen aus dem gemeinschaftlich gepflegten SponsorBlock-Katalog. Gilt auch für die YouTube-Watchparty.</p>
             </div>
             <div class="settings-section-grid">
               <label class="check setting-row"><input id="sponsorblockEnabled" type="checkbox"><span><strong>SponsorBlock aktivieren</strong><small>Aus: es wird nicht einmal gefragt. Andere Anbieter sind davon nie betroffen — nur YouTube.</small></span></label>
-              <label class="check setting-row"><input id="sponsorblockSponsor" type="checkbox"><span><strong>Sponsoren überspringen</strong><small>Bezahlte Werbung im Video.</small></span></label>
-              <label class="check setting-row"><input id="sponsorblockSelfpromo" type="checkbox"><span><strong>Eigenwerbung überspringen</strong><small>Hinweise auf eigene Kanäle, Ware oder Mitgliedschaften.</small></span></label>
-              <label class="check setting-row"><input id="sponsorblockInteraction" type="checkbox"><span><strong>Interaktionen überspringen</strong><small>„Abonniert und lasst ein Like da.“</small></span></label>
-              <label class="check setting-row"><input id="sponsorblockIntro" type="checkbox"><span><strong>Intros überspringen</strong><small>Vorspann ohne Inhalt. Standardmäßig aus — ein Intro ist keine Werbung.</small></span></label>
-              <label class="check setting-row"><input id="sponsorblockOutro" type="checkbox"><span><strong>Outros überspringen</strong><small>Abspann mit Kacheln und Endkarten. Standardmäßig aus.</small></span></label>
-              <label class="check setting-row"><input id="sponsorblockHinweis" type="checkbox"><span><strong>Meldung beim Überspringen anzeigen</strong><small>Kurze Einblendung „Sponsor übersprungen · 27 Sek.“ mit „Rückgängig“. Sie verschwindet von selbst und nimmt der Fernbedienung nie den Fokus weg.</small></span></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#00d400"></i>Gesponserte Abschnitte</strong><small>Bezahlte Werbung und Produktempfehlungen.</small></span><select id="sponsorblockSponsor" aria-label="Gesponserte Abschnitte"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#ffff00"></i>Eigenwerbung</strong><small>Eigene Kanäle, Produkte und Mitgliedschaften.</small></span><select id="sponsorblockSelfpromo" aria-label="Eigenwerbung"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#cc00ff"></i>Interaktions-Erinnerungen</strong><small>Bitten um Likes, Abos und Kommentare.</small></span><select id="sponsorblockInteraction" aria-label="Interaktions-Erinnerungen"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#00ffff"></i>Intro und Unterbrechungen</strong><small>Vorspann, Pausen und wiederholte Animationen.</small></span><select id="sponsorblockIntro" aria-label="Intro und Unterbrechungen"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#0202ff"></i>Abspann und Endkarten</strong><small>Ausklang nach dem eigentlichen Inhalt.</small></span><select id="sponsorblockOutro" aria-label="Abspann und Endkarten"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#008fd6"></i>Vorschau und Rückblick</strong><small>Bereits gezeigte oder später wiederholte Ausschnitte.</small></span><select id="sponsorblockPreview" aria-label="Vorschau und Rückblick"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#ff9900"></i>Nicht-Musik</strong><small>Gesprochene Passagen und andere Abschnitte ohne Musik in Musikvideos.</small></span><select id="sponsorblockMusic" aria-label="Nicht-Musik"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="sponsorblock-kategorie"><span><strong><i aria-hidden="true" style="background:#7300ff"></i>Nebensachen und Witze</strong><small>Optionale Szenen außerhalb des Hauptinhalts.</small></span><select id="sponsorblockFiller" aria-label="Nebensachen und Witze"><option value="skip">Automatisch überspringen</option><option value="manual">Knopf zum Überspringen</option><option value="show">Nur farbig markieren</option><option value="off">Ausgeschaltet</option></select></label>
+              <label class="check setting-row"><input id="sponsorblockHinweis" type="checkbox"><span><strong>Meldung beim Überspringen anzeigen</strong><small>Zeigt den übersprungenen Abschnitt und eine Möglichkeit zum Rückgängigmachen.</small></span></label>
+              <label class="check setting-row"><input id="youtubeDislikesEnabled" type="checkbox"><span><strong>YouTube-Dislikes anzeigen</strong><small>Ergänzt die geschätzte Anzahl am Dislike-Knopf. Datenquelle: Return YouTube Dislike.</small></span></label>
             </div>
           </section>
 

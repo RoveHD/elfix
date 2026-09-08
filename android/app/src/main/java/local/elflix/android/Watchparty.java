@@ -8,7 +8,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.UUID;
 
 /**
@@ -27,6 +32,8 @@ import java.util.UUID;
 public final class Watchparty {
     private static final String TAG = CrashReporter.TAG;
     private static final String PREFS = "elflix_watchparty";
+    /** Monotone Konto-Operationen; getrennt von den alten Raum-Einstellungen. */
+    private static final String PREF_KONTOSTAND = "accountStateV2";
 
     /** Wenn sich Zustand oder eingestellte Titel geaendert haben. */
     public interface Beobachter {
@@ -72,6 +79,8 @@ public final class Watchparty {
     private final List<String> raumcodes = new ArrayList<>();
     /** Beitritte, die von einem anderen Geraet kamen und noch nachzutragen sind. */
     private final List<String[]> offeneBeitritte = new ArrayList<>();
+    /** Dauerhafter Kontostand mit Join-/Leave- und Raum-Tombstones. */
+    private JSONObject kontoStand = new JSONObject();
     /** Wird gerufen, wenn sich Raeume oder Beitritte geaendert haben. */
     private Runnable kontoMelder;
 
@@ -188,6 +197,15 @@ public final class Watchparty {
         } catch (Exception fehler) {
             Log.e(TAG, "Raumcodes unlesbar", fehler);
         }
+        // Die alte Raumliste bleibt beim Umstieg eine additive Beobachtung.
+        // Ein bereits gespeicherter Remove-Tombstone kann sie deshalb trotzdem
+        // fernhalten; ohne diese Vereinigung wuerde ein Neustart den alten
+        // rooms-Schluessel wieder zur Wahrheit machen.
+        kontoStand = kontoStaendeVereinen(
+            kontoStandAusSpeicher(prefs.getString(PREF_KONTOSTAND, "{}")),
+            raumSchnappschuss(raumcodes));
+        raumcodesAusKontoStandUebernehmen();
+        beitritteAusKontoStandVormerken();
     }
 
     private void speichern() {
@@ -200,6 +218,7 @@ public final class Watchparty {
             .putString("deviceId", geraetId)
             .putString("deviceSecret", geraetGeheimnis)
             .putString("rooms", codes.toString())
+            .putString(PREF_KONTOSTAND, kontoStandFuerSpeicher(kontoStand))
             .apply();
     }
 
@@ -224,6 +243,11 @@ public final class Watchparty {
 
     public String geraetName() {
         return geraetName;
+    }
+
+    /** Nur fuer den lokalen Geräteabgleich; nie an Anzeige oder Export geben. */
+    String geraetGeheimnisFuerAbgleich() {
+        return geraetGeheimnis;
     }
 
     public List<String> raumcodes() {
@@ -312,16 +336,23 @@ public final class Watchparty {
                 antwort.fertig(null, beanstandung);
                 return;
             }
-            if (!raumcodes.contains(sauber)) raumcodes.add(sauber);
-            speichern();
-            anwenden();
-            if (kontoMelder != null) kontoMelder.run();
+            if (!raumcodes.contains(sauber)) {
+                kontoStand = raumLokalSetzen(kontoStand, sauber, true, aenderungsZeit());
+                raumcodesAusKontoStandUebernehmen();
+                speichern();
+                anwenden();
+                if (kontoMelder != null) kontoMelder.run();
+            }
             antwort.fertig(sauber, null);
         });
     }
 
     public void raumEntfernen(String code) {
-        raumcodes.remove(code);
+        String sauber = code == null ? "" : code.trim();
+        if (!raumcodes.contains(sauber)) return;
+        kontoStand = raumLokalSetzen(kontoStand, sauber, false, aenderungsZeit());
+        raumcodesAusKontoStandUebernehmen();
+        offeneBeitritte.removeIf(eintrag -> sauber.equals(eintrag[1]));
         speichern();
         anwenden();
         if (kontoMelder != null) kontoMelder.run();
@@ -348,71 +379,60 @@ public final class Watchparty {
     }
 
     public JSONObject kontoSatz() {
-        JSONObject satz = new JSONObject();
-        try {
-            JSONArray codes = new JSONArray();
-            for (String code : raumcodes) codes.put(code);
-            satz.put("rooms", codes);
-            JSONArray beitritte = new JSONArray();
-            JSONArray eintraege = eintraege();
-            for (int i = 0; i < eintraege.length(); i += 1) {
-                JSONObject eintrag = eintraege.optJSONObject(i);
-                if (eintrag == null || !eintrag.optBoolean("joined", false)) continue;
-                JSONObject dabei = new JSONObject();
-                dabei.put("key", eintrag.optString("key", ""));
-                dabei.put("room", eintrag.optString("room", ""));
-                if (!dabei.optString("key", "").isEmpty()) beitritte.put(dabei);
-            }
-            satz.put("joined", beitritte);
-        } catch (Exception fehler) {
-            Log.e(TAG, "Kontosatz liess sich nicht bauen", fehler);
+        // Der Relay-Zustand darf nur vorhandene Mitgliedschaften beisteuern.
+        // Ein leerer oder voruebergehend unvollstaendiger Zustand ist kein
+        // Benutzerbefehl und erzeugt deshalb niemals Leave-Tombstones.
+        JSONObject vereinigt = kontoStaendeVereinen(kontoStand, aktuellerLegacySchnappschuss());
+        if (!vereinigt.toString().equals(kontoStand.toString())) {
+            kontoStand = vereinigt;
+            speichern();
         }
-        return satz;
+        return kontoStandAusSpeicher(kontoStand.toString());
     }
 
     /**
      * Und was von einem anderen Geraet desselben Kontos hereinkommt.
      *
-     * <p>Ersetzt und nicht vereinigt: wer einen Raum entfernt oder eine Runde
-     * verlaesst, schickt eine kuerzere Liste, und die soll gelten. Eine
-     * Vereinigung holte beides ewig zurueck. Dass dieser Satz der neuere ist,
-     * hat der Abgleich schon entschieden.
+     * <p>Alte Clients schicken nur Listen. Vorhandenes daraus darf ergaenzen,
+     * ihr Fehlen darf aber nichts loeschen. Neue Clients schicken monotone
+     * Operationen. Je Raum/Titel gewinnt die neueste; bei Gleichstand gewinnt
+     * Leave beziehungsweise Remove.
      */
     public void kontoSatzUebernehmen(JSONObject satz) {
         if (satz == null) return;
+        JSONObject vorher = kontoSatz();
+        JSONObject vereinigt = kontoStaendeVereinen(vorher, satz);
+        if (vereinigt.toString().equals(vorher.toString())) return;
 
-        JSONArray codes = satz.optJSONArray("rooms");
-        if (codes != null) {
-            List<String> neu = new ArrayList<>();
-            for (int i = 0; i < codes.length(); i += 1) {
-                String code = codes.optString(i, "").trim();
-                if (!code.isEmpty() && !neu.contains(code)) neu.add(code);
-            }
-            if (!neu.equals(raumcodes)) {
-                raumcodes.clear();
-                raumcodes.addAll(neu);
-                speichern();
-                anwenden();
-                Log.i(TAG, "Raeume vom anderen Geraet uebernommen: "
-                    + (neu.isEmpty() ? "(keine)" : String.join(", ", neu)));
+        Set<String> vorherDabei = mitgliedIds(vorher.optJSONArray("joined"));
+        Set<String> nachherDabei = mitgliedIds(vereinigt.optJSONArray("joined"));
+
+        // Eine importierte Leave-Operation muss auch die laufende Verbindung
+        // dieses Geraets verlassen. Das geschieht vor dem neuen Raumfilter,
+        // solange der Kern mit dem betroffenen Raum noch verbunden ist.
+        for (String id : vorherDabei) {
+            if (nachherDabei.contains(id)) continue;
+            String[] teile = mitgliedIdTeilen(id);
+            if (istAktuellBeigetreten(teile[1], teile[0])) {
+                verlassenIntern(teile[1], teile[0], null, false);
             }
         }
 
-        JSONArray beitritte = satz.optJSONArray("joined");
-        if (beitritte == null) return;
-        // Beitreten kann nur, wer den Raum schon kennt und verbunden ist. Der
-        // Aufruf ist deshalb bewusst nachsichtig: was jetzt nicht geht, geht
-        // beim naechsten Raumzustand - dann steht der Titel da und dieselbe
-        // Liste wird noch einmal durchgegangen.
-        offeneBeitritte.clear();
-        for (int i = 0; i < beitritte.length(); i += 1) {
-            JSONObject dabei = beitritte.optJSONObject(i);
-            if (dabei == null) continue;
-            String key = dabei.optString("key", "");
-            if (key.isEmpty()) continue;
-            offeneBeitritte.add(new String[]{key, dabei.optString("room", "")});
+        List<String> alteRaeume = new ArrayList<>(raumcodes);
+        kontoStand = vereinigt;
+        raumcodesAusKontoStandUebernehmen();
+        speichern();
+        if (!alteRaeume.equals(raumcodes)) {
+            anwenden();
+            Log.i(TAG, "Raeume vom anderen Geraet vereinigt: "
+                + (raumcodes.isEmpty() ? "(keine)" : String.join(", ", raumcodes)));
         }
+
+        // Jede neue Fassung ersetzt die Warteliste. So kann ein spaeteres
+        // Leave keinen aelteren, noch nicht ausfuehrbaren Beitritt hinterlassen.
+        beitritteAusKontoStandVormerken();
         beitritteNachholen();
+        if (kontoMelder != null) kontoMelder.run();
     }
 
     /**
@@ -428,6 +448,10 @@ public final class Watchparty {
         java.util.Iterator<String[]> lauf = offeneBeitritte.iterator();
         while (lauf.hasNext()) {
             String[] offen = lauf.next();
+            if (!istImKontoStandDabei(offen[0], offen[1])) {
+                lauf.remove();
+                continue;
+            }
             for (int i = 0; i < eintraege.length(); i += 1) {
                 JSONObject eintrag = eintraege.optJSONObject(i);
                 if (eintrag == null) continue;
@@ -437,10 +461,374 @@ public final class Watchparty {
                 if (eintrag.optBoolean("joined", false)) break;
                 Log.i(TAG, "Beitritt vom anderen Geraet uebernommen: " + offen[0]
                     + " (Raum " + offen[1] + ")");
-                beitreten(offen[0], offen[1], null);
+                beitretenIntern(offen[0], offen[1], null, false);
                 break;
             }
         }
+    }
+
+    /* ---------------------------------- Dauerhafte Watchparty-Kontooperationen */
+
+    private static final class MitgliedOperation {
+        final String key;
+        final String room;
+        final long at;
+        final boolean dabei;
+
+        MitgliedOperation(String key, String room, long at, boolean dabei) {
+            this.key = key;
+            this.room = room;
+            this.at = at;
+            this.dabei = dabei;
+        }
+    }
+
+    private static final class RaumOperation {
+        final String room;
+        final long at;
+        final boolean present;
+
+        RaumOperation(String room, long at, boolean present) {
+            this.room = room;
+            this.at = at;
+            this.present = present;
+        }
+    }
+
+    /**
+     * Vereinigt den alten additiven Schnappschuss und die v2-Operationen.
+     * Paket-sichtbar, damit die JVM-Probe exakt dieselbe Regel prueft, die die
+     * App beim Empfang und vor dem Senden benutzt.
+     */
+    static JSONObject kontoStaendeVereinen(JSONObject lokal, JSONObject fremd) {
+        JSONObject[] saetze = new JSONObject[]{
+            lokal == null ? new JSONObject() : lokal,
+            fremd == null ? new JSONObject() : fremd
+        };
+        Map<String, MitgliedOperation> operationen = new TreeMap<>();
+        Map<String, String[]> legacy = new TreeMap<>();
+
+        for (JSONObject satz : saetze) {
+            JSONArray joined = satz.optJSONArray("joined");
+            for (int i = 0; joined != null && i < joined.length(); i += 1) {
+                JSONObject roh = joined.optJSONObject(i);
+                if (roh == null) continue;
+                String key = roh.optString("key", "");
+                String room = roh.optString("room", "").trim();
+                if (key.isEmpty() || room.isEmpty()) continue;
+                String id = mitgliedId(key, room);
+                long at = operationsZeit(roh.opt("at"));
+                if (at > 0) operationSetzen(operationen,
+                    new MitgliedOperation(key, room, at, true));
+                // Ein ausdruecklich vorhandenes, aber ungueltiges at ist keine
+                // Legacy-Nachricht. Sonst koennte sie Tombstones umgehen.
+                else if (!roh.has("at") && !legacy.containsKey(id)) {
+                    legacy.put(id, new String[]{key, room});
+                }
+            }
+            JSONArray left = satz.optJSONArray("left");
+            for (int i = 0; left != null && i < left.length(); i += 1) {
+                JSONObject roh = left.optJSONObject(i);
+                if (roh == null) continue;
+                String key = roh.optString("key", "");
+                String room = roh.optString("room", "").trim();
+                long at = operationsZeit(roh.opt("at"));
+                if (!key.isEmpty() && !room.isEmpty() && at > 0) {
+                    operationSetzen(operationen,
+                        new MitgliedOperation(key, room, at, false));
+                }
+            }
+        }
+
+        Set<String> rooms = new TreeSet<>();
+        Map<String, RaumOperation> raumOperationen = new TreeMap<>();
+        for (JSONObject satz : saetze) {
+            JSONArray raeume = satz.optJSONArray("rooms");
+            for (int i = 0; raeume != null && i < raeume.length(); i += 1) {
+                String room = raeume.optString(i, "").trim();
+                if (!room.isEmpty()) rooms.add(room);
+            }
+            JSONArray roomOps = satz.optJSONArray("roomOps");
+            for (int i = 0; roomOps != null && i < roomOps.length(); i += 1) {
+                JSONObject roh = roomOps.optJSONObject(i);
+                if (roh == null || !roh.has("present")
+                    || !(roh.opt("present") instanceof Boolean)) continue;
+                String room = roh.optString("room", "").trim();
+                long at = operationsZeit(roh.opt("at"));
+                if (room.isEmpty() || at <= 0) continue;
+                RaumOperation neu = new RaumOperation(room, at, roh.optBoolean("present"));
+                RaumOperation alt = raumOperationen.get(room);
+                if (alt == null || neu.at > alt.at
+                    || (neu.at == alt.at && !neu.present && alt.present)) {
+                    raumOperationen.put(room, neu);
+                }
+            }
+        }
+
+        for (RaumOperation op : raumOperationen.values()) {
+            if (op.present) {
+                rooms.add(op.room);
+                continue;
+            }
+            rooms.remove(op.room);
+            // Ein Raum-Remove umfasst alle bis dahin bekannten Beitritte. Der
+            // Tombstone bleibt nach einem spaeteren Readd erhalten und sperrt
+            // dadurch alte Legacy-Snapshots.
+            Set<String> ids = new HashSet<>();
+            ids.addAll(legacy.keySet());
+            ids.addAll(operationen.keySet());
+            for (String id : ids) {
+                String[] teile = legacy.containsKey(id) ? legacy.get(id)
+                    : new String[]{operationen.get(id).key, operationen.get(id).room};
+                if (op.room.equals(teile[1])) {
+                    operationSetzen(operationen,
+                        new MitgliedOperation(teile[0], teile[1], op.at, false));
+                }
+            }
+        }
+
+        Map<String, JSONObject> dabei = new TreeMap<>();
+        for (Map.Entry<String, String[]> eintrag : legacy.entrySet()) {
+            dabei.put(eintrag.getKey(), mitgliedJson(eintrag.getValue()[0],
+                eintrag.getValue()[1], 0));
+        }
+        for (Map.Entry<String, MitgliedOperation> eintrag : operationen.entrySet()) {
+            MitgliedOperation op = eintrag.getValue();
+            if (op.dabei) dabei.put(eintrag.getKey(), mitgliedJson(op.key, op.room, op.at));
+            else dabei.remove(eintrag.getKey());
+        }
+
+        JSONObject aus = new JSONObject();
+        JSONArray roomListe = new JSONArray();
+        JSONArray roomOpsListe = new JSONArray();
+        JSONArray joinedListe = new JSONArray();
+        JSONArray leftListe = new JSONArray();
+        for (String room : rooms) roomListe.put(room);
+        for (RaumOperation op : raumOperationen.values()) {
+            try {
+                roomOpsListe.put(new JSONObject().put("room", op.room)
+                    .put("present", op.present).put("at", op.at));
+            } catch (Exception ignoriert) { }
+        }
+        for (JSONObject eintrag : dabei.values()) {
+            if (rooms.contains(eintrag.optString("room", ""))) joinedListe.put(eintrag);
+        }
+        for (MitgliedOperation op : operationen.values()) {
+            if (!op.dabei) leftListe.put(mitgliedJson(op.key, op.room, op.at));
+        }
+        try {
+            aus.put("version", 2);
+            aus.put("rooms", roomListe);
+            aus.put("roomOps", roomOpsListe);
+            aus.put("joined", joinedListe);
+            aus.put("left", leftListe);
+        } catch (Exception fehler) {
+            throw new IllegalStateException("Watchparty-Kontostand unbaubar", fehler);
+        }
+        return aus;
+    }
+
+    private static void operationSetzen(Map<String, MitgliedOperation> operationen,
+                                        MitgliedOperation neu) {
+        String id = mitgliedId(neu.key, neu.room);
+        MitgliedOperation alt = operationen.get(id);
+        if (alt == null || neu.at > alt.at
+            || (neu.at == alt.at && !neu.dabei && alt.dabei)) {
+            operationen.put(id, neu);
+        }
+    }
+
+    private static JSONObject mitgliedJson(String key, String room, long at) {
+        JSONObject aus = new JSONObject();
+        try {
+            aus.put("key", key);
+            aus.put("room", room);
+            if (at > 0) aus.put("at", at);
+        } catch (Exception fehler) {
+            throw new IllegalStateException("Watchparty-Mitglied unbaubar", fehler);
+        }
+        return aus;
+    }
+
+    private static long operationsZeit(Object wert) {
+        if (wert == null || wert == JSONObject.NULL || wert instanceof Boolean) return 0;
+        final double zahl;
+        try {
+            zahl = wert instanceof Number ? ((Number) wert).doubleValue()
+                : Double.parseDouble(String.valueOf(wert));
+        } catch (Exception fehler) {
+            return 0;
+        }
+        if (!Double.isFinite(zahl) || zahl <= 0
+            || zahl > System.currentTimeMillis() + 10 * 60 * 1000L) return 0;
+        return (long) zahl;
+    }
+
+    static JSONObject mitgliedschaftLokalSetzen(JSONObject stand, String key, String room,
+                                                  boolean dabei, long at) {
+        String sauberKey = key == null ? "" : key;
+        String sauberRoom = room == null ? "" : room.trim();
+        JSONObject bisher = kontoStaendeVereinen(stand, null);
+        long bekannt = bekannteMitgliedZeit(bisher, sauberKey, sauberRoom);
+        long zeit = operationsZeit(Math.max(at, bekannt + 1));
+        if (sauberKey.isEmpty() || sauberRoom.isEmpty() || zeit <= 0) return bisher;
+        JSONObject op = new JSONObject();
+        try {
+            op.put(dabei ? "joined" : "left",
+                new JSONArray().put(mitgliedJson(sauberKey, sauberRoom, zeit)));
+        } catch (Exception fehler) {
+            throw new IllegalStateException("Watchparty-Mitgliedschaft unbaubar", fehler);
+        }
+        return kontoStaendeVereinen(bisher, op);
+    }
+
+    static JSONObject raumLokalSetzen(JSONObject stand, String room, boolean present, long at) {
+        String sauber = room == null ? "" : room.trim();
+        JSONObject bisher = kontoStaendeVereinen(stand, null);
+        long bekannt = bekannteRaumZeit(bisher, sauber);
+        long zeit = operationsZeit(Math.max(at, bekannt + 1));
+        if (sauber.isEmpty() || zeit <= 0) return bisher;
+        JSONObject op = new JSONObject();
+        try {
+            op.put("rooms", present ? new JSONArray().put(sauber) : new JSONArray());
+            op.put("roomOps", new JSONArray().put(new JSONObject()
+                .put("room", sauber).put("present", present).put("at", zeit)));
+        } catch (Exception fehler) {
+            throw new IllegalStateException("Watchparty-Raumoperation unbaubar", fehler);
+        }
+        return kontoStaendeVereinen(bisher, op);
+    }
+
+    private static long bekannteMitgliedZeit(JSONObject stand, String key, String room) {
+        long bekannt = 0;
+        for (String feld : new String[]{"joined", "left"}) {
+            JSONArray liste = stand.optJSONArray(feld);
+            for (int i = 0; liste != null && i < liste.length(); i += 1) {
+                JSONObject eintrag = liste.optJSONObject(i);
+                if (eintrag != null && key.equals(eintrag.optString("key", ""))
+                    && room.equals(eintrag.optString("room", ""))) {
+                    bekannt = Math.max(bekannt, operationsZeit(eintrag.opt("at")));
+                }
+            }
+        }
+        return bekannt;
+    }
+
+    private static long bekannteRaumZeit(JSONObject stand, String room) {
+        long bekannt = 0;
+        JSONArray liste = stand.optJSONArray("roomOps");
+        for (int i = 0; liste != null && i < liste.length(); i += 1) {
+            JSONObject eintrag = liste.optJSONObject(i);
+            if (eintrag != null && room.equals(eintrag.optString("room", ""))) {
+                bekannt = Math.max(bekannt, operationsZeit(eintrag.opt("at")));
+            }
+        }
+        return bekannt;
+    }
+
+    static JSONObject kontoStandAusSpeicher(String json) {
+        try {
+            return kontoStaendeVereinen(new JSONObject(json == null ? "{}" : json), null);
+        } catch (Exception fehler) {
+            return kontoStaendeVereinen(null, null);
+        }
+    }
+
+    static String kontoStandFuerSpeicher(JSONObject stand) {
+        return kontoStaendeVereinen(stand, null).toString();
+    }
+
+    private static JSONObject raumSchnappschuss(List<String> raeume) {
+        JSONObject aus = new JSONObject();
+        JSONArray liste = new JSONArray();
+        if (raeume != null) for (String room : raeume) liste.put(room);
+        try {
+            aus.put("rooms", liste);
+        } catch (Exception fehler) {
+            throw new IllegalStateException("Watchparty-Raeume unbaubar", fehler);
+        }
+        return aus;
+    }
+
+    private JSONObject aktuellerLegacySchnappschuss() {
+        JSONObject aus = raumSchnappschuss(raumcodes);
+        JSONArray beitritte = new JSONArray();
+        JSONArray eintraege = eintraege();
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag == null || !eintrag.optBoolean("joined", false)) continue;
+            String key = eintrag.optString("key", "");
+            String room = eintrag.optString("room", "").trim();
+            if (!key.isEmpty() && !room.isEmpty()) beitritte.put(mitgliedJson(key, room, 0));
+        }
+        try {
+            aus.put("joined", beitritte);
+        } catch (Exception fehler) {
+            throw new IllegalStateException("Watchparty-Schnappschuss unbaubar", fehler);
+        }
+        return aus;
+    }
+
+    private void raumcodesAusKontoStandUebernehmen() {
+        raumcodes.clear();
+        JSONArray codes = kontoStand.optJSONArray("rooms");
+        for (int i = 0; codes != null && i < codes.length(); i += 1) {
+            String room = codes.optString(i, "").trim();
+            if (!room.isEmpty() && !raumcodes.contains(room)) raumcodes.add(room);
+        }
+    }
+
+    private void beitritteAusKontoStandVormerken() {
+        offeneBeitritte.clear();
+        JSONArray beitritte = kontoStand.optJSONArray("joined");
+        for (int i = 0; beitritte != null && i < beitritte.length(); i += 1) {
+            JSONObject dabei = beitritte.optJSONObject(i);
+            if (dabei == null) continue;
+            String key = dabei.optString("key", "");
+            String room = dabei.optString("room", "").trim();
+            if (key.isEmpty() || room.isEmpty()) continue;
+            offeneBeitritte.add(new String[]{key, room});
+        }
+    }
+
+    private static Set<String> mitgliedIds(JSONArray liste) {
+        Set<String> aus = new HashSet<>();
+        for (int i = 0; liste != null && i < liste.length(); i += 1) {
+            JSONObject eintrag = liste.optJSONObject(i);
+            if (eintrag == null) continue;
+            String key = eintrag.optString("key", "");
+            String room = eintrag.optString("room", "").trim();
+            if (!key.isEmpty() && !room.isEmpty()) aus.add(mitgliedId(key, room));
+        }
+        return aus;
+    }
+
+    private static String mitgliedId(String key, String room) {
+        return room + "|" + key;
+    }
+
+    private static String[] mitgliedIdTeilen(String id) {
+        int trenner = id.indexOf('|');
+        return new String[]{id.substring(0, trenner), id.substring(trenner + 1)};
+    }
+
+    private boolean istImKontoStandDabei(String key, String room) {
+        return mitgliedIds(kontoStand.optJSONArray("joined")).contains(mitgliedId(key, room));
+    }
+
+    private boolean istAktuellBeigetreten(String key, String room) {
+        JSONArray eintraege = eintraege();
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag != null && eintrag.optBoolean("joined", false)
+                && key.equals(eintrag.optString("key", ""))
+                && room.equals(eintrag.optString("room", "").trim())) return true;
+        }
+        return false;
+    }
+
+    private static long aenderungsZeit() {
+        return System.currentTimeMillis();
     }
 
     /* --------------------------------------------------------------- Betrieb */
@@ -527,6 +915,7 @@ public final class Watchparty {
                 // Die Leitung ist wieder offen. Der Raumzustand kommt vom
                 // Relay von selbst; was hier fehlt, ist der Stand der
                 // laufenden Folge - den holt der Abgleich.
+                beitritteAusKontoStandVormerken();
                 if (mitschauen != null) mitschauen.nachWiederanschluss(nutzlastJson);
                 if (beobachter != null) beobachter.watchpartyGeaendert();
                 break;
@@ -990,16 +1379,46 @@ public final class Watchparty {
      * meldet er nichts, und dann liefe der Abgleich nur in eine Richtung.
      */
     public void beitreten(String key, String raum, Kern.Antwort antwort) {
+        beitretenIntern(key, raum, antwort, true);
+    }
+
+    private void beitretenIntern(String key, String raum, Kern.Antwort antwort,
+                                 boolean lokaleAenderung) {
         kern.rufe("watchparty-bruecke.beitreten", Kern.args(key, raum), (wert, fehler) -> {
-            if (fehler == null && bestand != null) raumAmEintrag(key, raum, raum);
+            if (fehler == null) {
+                if (bestand != null) raumAmEintrag(key, raum, raum);
+                if (lokaleAenderung) {
+                    kontoStand = mitgliedschaftLokalSetzen(
+                        kontoStand, key, raum, true, aenderungsZeit());
+                    offeneBeitritte.removeIf(eintrag -> key.equals(eintrag[0])
+                        && raum.equals(eintrag[1]));
+                    speichern();
+                    if (kontoMelder != null) kontoMelder.run();
+                }
+            }
             melde(antwort, wert, fehler);
         });
     }
 
     /** Die Runde verlassen - der Eintrag wird wieder privat. */
     public void verlassen(String key, String raum, Kern.Antwort antwort) {
+        verlassenIntern(key, raum, antwort, true);
+    }
+
+    private void verlassenIntern(String key, String raum, Kern.Antwort antwort,
+                                 boolean lokaleAenderung) {
         kern.rufe("watchparty-bruecke.verlassen", Kern.args(key, raum), (wert, fehler) -> {
-            if (fehler == null && bestand != null) raumAmEintrag(key, raum, "");
+            if (fehler == null) {
+                if (bestand != null) raumAmEintrag(key, raum, "");
+                if (lokaleAenderung) {
+                    kontoStand = mitgliedschaftLokalSetzen(
+                        kontoStand, key, raum, false, aenderungsZeit());
+                    offeneBeitritte.removeIf(eintrag -> key.equals(eintrag[0])
+                        && raum.equals(eintrag[1]));
+                    speichern();
+                    if (kontoMelder != null) kontoMelder.run();
+                }
+            }
             melde(antwort, wert, fehler);
         });
     }

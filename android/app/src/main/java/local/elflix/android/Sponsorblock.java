@@ -1,10 +1,12 @@
 package local.elflix.android;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.util.Log;
 import android.webkit.WebView;
 
 import org.json.JSONObject;
+import java.util.WeakHashMap;
 
 /**
  * SponsorBlock - bezahlte Einschuebe in YouTube-Videos ueberspringen.
@@ -33,11 +35,19 @@ public final class Sponsorblock {
     private static final String PREFS = "elflix_settings";
 
     /** Die Kategorien in der Reihenfolge der Einstellungen. */
-    static final String[] KATEGORIEN = { "sponsor", "selfpromo", "interaction", "intro", "outro" };
+    static final String[] KATEGORIEN = {
+        "sponsor", "selfpromo", "interaction", "intro", "outro", "preview", "music_offtopic", "filler"
+    };
+
+    static final String UEBERSPRINGEN = "skip";
+    static final String NACHFRAGEN = "manual";
+    static final String ANZEIGEN = "show";
+    static final String AUS = "off";
 
     private final Context context;
     private final Kern kern;
     private final Rahmen rahmen;
+    private final WeakHashMap<WebView, Long> auftraege = new WeakHashMap<>();
 
     private String melde = "__elfix:sponsorblock:";
 
@@ -66,19 +76,23 @@ public final class Sponsorblock {
     public void einspielen(WebView ansicht, String url) {
         if (ansicht == null || url == null || !url.startsWith("http")) return;
         if (kern == null || !kern.istBereit() || rahmen == null) return;
+        final long auftrag = auftraege.getOrDefault(ansicht, 0L) + 1L;
+        auftraege.put(ansicht, auftrag);
 
         if (!eingeschaltet()) {
             // Aus heisst aus, und zwar sofort: wer den Schalter mitten im Video
             // umlegt, soll nicht bis zum naechsten warten muessen.
             kern.rufe("sponsorblock-bruecke.abschalten", (wert, fehler) -> {
-                if (fehler == null) rahmen.anSpieler(ansicht, Kern.text(wert));
+                if (fehler == null && !eingeschaltet() && Long.valueOf(auftrag).equals(auftraege.get(ansicht))) rahmen.anSpieler(ansicht, Kern.text(wert));
             });
             return;
         }
 
-        kern.rufe("sponsorblock-bruecke.skript", Kern.args(url, einstellungen()),
+        final JSONObject auswahl = einstellungen();
+        kern.rufe("sponsorblock-bruecke.skript", Kern.args(url, auswahl),
             (wert, fehler) -> {
-                if (fehler != null) return;
+                if (fehler != null || !Long.valueOf(auftrag).equals(auftraege.get(ansicht))
+                    || !auswahl.toString().equals(einstellungen().toString())) return;
                 String skript = Kern.text(wert);
                 // Leer heisst: hier laeuft kein YouTube. Dann geht nichts in die
                 // Seite - andere Anbieter bleiben unberuehrt.
@@ -113,13 +127,32 @@ public final class Sponsorblock {
         setzen("enabled", an);
     }
 
-    /** Ob diese Kategorie uebersprungen wird. Intro und Outro sind aus. */
-    public boolean kategorie(String name) {
-        return flagge(name, !"intro".equals(name) && !"outro".equals(name));
+    /**
+     * Die gewuenschte Behandlung einer Kategorie.
+     *
+     * <p>Fruehere APKs speicherten an derselben Stelle einen Boolean. Der wird
+     * beim ersten Lesen punktgenau in den neuen Wert ueberfuehrt; andere
+     * Einstellungen derselben Preferences bleiben dabei unangetastet.
+     */
+    public String kategorie(String name) {
+        SharedPreferences ablage = ablage();
+        Object roh = ablage.getAll().get("sponsorblock_" + name);
+        if (roh instanceof Boolean) {
+            String migriert = (Boolean) roh ? UEBERSPRINGEN : AUS;
+            ablage.edit().putString("sponsorblock_" + name, migriert).apply();
+            return migriert;
+        }
+        if (roh instanceof String && istModus((String) roh)) return (String) roh;
+        return standardModus(name);
     }
 
-    public void kategorieUmschalten(String name) {
-        setzen(name, !kategorie(name));
+    /** Den naechsten eindeutigen Modus fuer Karte, Touch und Fernbedienung waehlen. */
+    public void kategorieWeiter(String name) {
+        String jetzt = kategorie(name);
+        String danach = UEBERSPRINGEN.equals(jetzt) ? NACHFRAGEN
+            : NACHFRAGEN.equals(jetzt) ? ANZEIGEN
+            : ANZEIGEN.equals(jetzt) ? AUS : UEBERSPRINGEN;
+        ablage().edit().putString("sponsorblock_" + name, danach).apply();
     }
 
     public boolean hinweis() {
@@ -134,19 +167,33 @@ public final class Sponsorblock {
     public int gewaehlt() {
         int anzahl = 0;
         for (String name : KATEGORIEN) {
-            if (kategorie(name)) anzahl += 1;
+            if (UEBERSPRINGEN.equals(kategorie(name))) anzahl += 1;
         }
         return anzahl;
     }
 
     private boolean flagge(String name, boolean standard) {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean("sponsorblock_" + name, standard);
+        return ablage().getBoolean("sponsorblock_" + name, standard);
     }
 
     private void setzen(String name, boolean wert) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        ablage()
             .edit().putBoolean("sponsorblock_" + name, wert).apply();
+    }
+
+    private SharedPreferences ablage() {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    private static boolean istModus(String wert) {
+        return UEBERSPRINGEN.equals(wert) || NACHFRAGEN.equals(wert)
+            || ANZEIGEN.equals(wert) || AUS.equals(wert);
+    }
+
+    private static String standardModus(String name) {
+        return ("sponsor".equals(name) || "selfpromo".equals(name)
+            || "interaction".equals(name) || "music_offtopic".equals(name))
+            ? UEBERSPRINGEN : AUS;
     }
 
     /** Die Schalter in der Form, die das geteilte Modul liest. */

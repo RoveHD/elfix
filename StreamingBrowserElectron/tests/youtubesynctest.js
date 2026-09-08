@@ -243,10 +243,18 @@ pruefe("5i. Nur echte YouTube-Adressen kommen durch",
   partei.nachricht(zustandVomRelay());
   pruefe("6b. Der erste Stand wird angewendet und die Mitglieder stehen",
     angewendet.length === 1 && angewendet[0].hinweis.anwenden === true && partei.beigetreten === true);
+  pruefe("6b2. Genau das erste Relay-Mitglied steuert SponsorBlock automatisch",
+    partei.darfSponsorblockAutomatisch() === true
+    && partei.status().sponsorblockAutomatic === true);
   pruefe("6c. Mit gemessener Uhr wird die Serverzeit benutzt",
     partei.stand.zeitbasis === "server" && partei.stand.position === 50, partei.stand.zeitbasis);
 
   // Ein Nachzuegler mit kleinerer Nummer darf den Stand nicht zuruecksetzen.
+  partei.mitglieder = [{ id: "fremd", name: "Ben" }, { id: "ich", name: "Ich" }];
+  pruefe("6c2. Alle anderen Mitglieder lassen den gemeinsamen SponsorBlock-Sprung anwenden",
+    partei.darfSponsorblockAutomatisch() === false);
+  partei.mitglieder = [{ id: "ich", name: "Ich" }, { id: "fremd", name: "Ben" }];
+
   partei.nachricht(zustandVomRelay({ type: "ytevent", action: "pause", rev: 0, playing: false, updatedAt: 1 }));
   pruefe("6d. Ein Nachzuegler bewegt nichts",
     partei.stand.playing === true && angewendet.length === 1);
@@ -341,9 +349,10 @@ pruefe("7b. Jedes Skript ist fuer sich ein gueltiger Ausdruck", (() => {
   );
   pruefe("7c. Nichts aus einer Nachricht landet als Text im Skript",
     !boese.includes("alert(1)"));
-  // Von der Nachricht kommen nur die drei Zahlen an, mit denen gerechnet wird.
-  pruefe("7d. Uebernommen werden nur Stelle, Zeitstempel und Laufzustand",
-    boese.includes('{"position":1,"updatedAt":2,"playing":true}'));
+  // Von der Nachricht kommen nur Zahlen und der Laufzustand an, mit denen die
+  // Ausrichtung und ihre Reihenfolge abgesichert werden.
+  pruefe("7d. Uebernommen werden nur Stelle, Zeitstempel, Laufzustand und Revision",
+    boese.includes('{"position":1,"updatedAt":2,"playing":true,"rev":0}'));
 }
 
 const durchgefallen = pruefungen.filter((ok) => !ok).length;

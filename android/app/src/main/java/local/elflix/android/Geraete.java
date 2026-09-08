@@ -2,6 +2,8 @@ package local.elflix.android;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.app.UiModeManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -143,6 +145,11 @@ public final class Geraete {
             einstellungen.put("serverUrl", watchpartyServer());
             einstellungen.put("schluessel", schluessel());
             einstellungen.put("geraetId", geraetId());
+            // Die Kennung bleibt die einzige Identitaet. Name und Typ sind nur
+            // die sichtbare Beschreibung, die dieses Geraet fuer sich meldet.
+            einstellungen.put("geraetName", watchparty == null ? "" : watchparty.geraetName());
+            einstellungen.put("geraetTyp", geraetTyp());
+            einstellungen.put("geraetGeheimnis", watchparty == null ? "" : watchparty.geraetGeheimnisFuerAbgleich());
         } catch (Exception fehler) {
             Log.e(TAG, "Geraete-Einstellungen liessen sich nicht bauen", fehler);
             return;
@@ -555,6 +562,17 @@ public final class Geraete {
 
     private String geraetId() {
         return watchparty == null ? "" : watchparty.geraetId();
+    }
+
+    private String geraetTyp() {
+        try {
+            UiModeManager modus = (UiModeManager) context.getSystemService(Context.UI_MODE_SERVICE);
+            if (modus != null && modus.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION) return "tv";
+        } catch (Exception ignored) {
+            // Ohne Systemauskunft bleibt es ein Handy; die Kennung entscheidet
+            // weiterhin allein, welches Geraet es ist.
+        }
+        return "handy";
     }
 
     // --- Der Spiegel auf der Platte ------------------------------------------

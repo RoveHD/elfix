@@ -27,6 +27,7 @@
 // Start Rueckrufe und ist dadurch ohne laufende App pruefbar.
 
 const schluesselModul = require("./geraete-schluessel");
+const crypto = require("crypto");
 const { websocketAdresse } = require("./watchparty");
 const { versatzAusProben } = require("./watchparty-sync");
 
@@ -62,6 +63,7 @@ const UHR_PROBEN = 5;
 const UHR_ABSTAND_MS = 120;
 const UHR_AUFFRISCHEN_MS = 60000;
 const UHR_HALTBAR_MS = 300000;
+const GERAETE_PULS_MS = 30000;
 // Bis hierher ist eine leere Liste ein Aufraeumen, darueber ein Verlust.
 // Bewusst klein: drei Titel loescht jemand von Hand, zweihundert nicht.
 const VERLUST_GRENZE = 3;
@@ -107,6 +109,10 @@ class Geraeteabgleich {
     this.schluessel = "";
     this.abgeleitet = null;
     this.geraetId = "";
+    this.geraetName = "";
+    this.geraetTyp = "";
+    this.geraetGeheimnis = "";
+    this.geraete = [];
     this.aktiv = false;
     this.verbunden = false;
     this.letzterFehler = "";
@@ -141,6 +147,7 @@ class Geraeteabgleich {
     this.uhrProben = [];
     this.uhrTimer = 0;
     this.uhrAuffrischen = 0;
+    this.geraetePuls = 0;
     this.eigeneStaende = null;
     // Wie oft von aussen etwas hereingekommen ist. Nicht die Zahl der
     // Eintraege, sondern die Zahl der Aenderungen - sie sagt nur, ob sich seit
@@ -176,7 +183,8 @@ class Geraeteabgleich {
       // Stelle.
       titel: this.lebendeStaende(),
       lastSync: this.letzterAbgleich,
-      error: this.letzterFehler
+      error: this.letzterFehler,
+      devices: this.geraete.map((geraet) => ({ ...geraet, current: geraet.id === this.geraetId }))
     };
   }
 
@@ -186,10 +194,14 @@ class Geraeteabgleich {
 
   // --- Einrichten -----------------------------------------------------------
 
-  konfigurieren({ enabled, serverUrl, schluessel, geraetId }) {
+  konfigurieren({ enabled, serverUrl, schluessel, geraetId, geraetName, geraetTyp, geraetGeheimnis }) {
     const neuerServer = String(serverUrl || "").trim();
     const neuerSchluessel = schluesselModul.normalisieren(schluessel);
-    const gleich = this.serverUrl === neuerServer && this.schluessel === neuerSchluessel;
+    const gleich = this.serverUrl === neuerServer && this.schluessel === neuerSchluessel
+      && this.geraetId === String(geraetId || "").slice(0, 64)
+      && this.geraetGeheimnis === (/^[A-Za-z0-9_-]{43}$/.test(String(geraetGeheimnis || "")) ? String(geraetGeheimnis) : "");
+    const vorherName = this.geraetName;
+    const vorherTyp = this.geraetTyp;
 
     // Ein anderer Schluessel ist ein anderer Raum. Was vom alten im Spiegel
     // steht, gilt dort nicht - und die Nummern des einen Raums sagen ueber den
@@ -207,14 +219,20 @@ class Geraeteabgleich {
     this.schluessel = neuerSchluessel;
     this.abgeleitet = neuerSchluessel ? schluesselModul.ableiten(neuerSchluessel) : null;
     this.geraetId = String(geraetId || "").slice(0, 64);
+    this.geraetTyp = ["pc", "handy", "tv"].includes(geraetTyp) ? geraetTyp : "pc";
+    const name = String(geraetName || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, 60);
+    this.geraetName = name || (this.geraetTyp === "pc" ? "Windows-PC" : this.geraetTyp === "tv" ? "TV" : "Handy");
+    this.geraetGeheimnis = /^[A-Za-z0-9_-]{43}$/.test(String(geraetGeheimnis || "")) ? String(geraetGeheimnis) : "";
     this.aktiv = Boolean(enabled) && Boolean(neuerServer) && Boolean(neuerSchluessel);
 
     if (!this.aktiv) {
+      this.geraete = [];
       this.trennen();
       this.melde();
       return;
     }
     if (gleich && this.verbunden) {
+      if (vorherName !== this.geraetName || vorherTyp !== this.geraetTyp) this.hello();
       this.melde();
       return;
     }
@@ -317,7 +335,8 @@ class Geraeteabgleich {
       // Zuerst die Uhr, dann anmelden: die Zeitstempel der eigenen Meldungen
       // sollen von Anfang an in Relayzeit stehen.
       this.uhrMessen();
-      this.senden({ type: "grhello", room: this.abgeleitet?.raum || "", seit: this.nr });
+      this.hello();
+      this.geraetePulsStarten();
       this.melde();
     };
     socket.onmessage = (ereignis) => this.nachrichtVerarbeiten(ereignis?.data);
@@ -335,6 +354,7 @@ class Geraeteabgleich {
       this.uhrAnhalten();
       this.uhr = null;
       this.uhrProben = [];
+      this.geraetePulsAnhalten();
       this.melde();
       this.spaeterNeuVerbinden();
     };
@@ -350,12 +370,14 @@ class Geraeteabgleich {
       this.nachschubTimer = 0;
     }
     this.uhrAnhalten();
+    this.geraetePulsAnhalten();
     this.uhr = null;
     this.uhrProben = [];
     const socket = this.socket;
     this.socket = null;
     this.verbunden = false;
     this.offen = false;
+    if (!this.aktiv) this.geraete = [];
     if (!socket) return;
     socket.onopen = null;
     socket.onmessage = null;
@@ -365,6 +387,38 @@ class Geraeteabgleich {
       socket.close();
     } catch {
       // Eine bereits geschlossene Verbindung braucht nichts weiter.
+    }
+  }
+
+  geraetePulsStarten() {
+    this.geraetePulsAnhalten();
+    this.geraetePuls = setInterval(() => this.hello(), GERAETE_PULS_MS);
+    this.geraetePuls.unref?.();
+  }
+
+  geraetePulsAnhalten() {
+    if (this.geraetePuls) clearInterval(this.geraetePuls);
+    this.geraetePuls = 0;
+  }
+
+  hello(seit = this.nr) {
+    // Der Wurzelnachweis bleibt lokal. Das Relay sieht nur seinen HMAC, der
+    // an diese Relay-Adresse gebunden ist und die Kennung dauerhaft besitzt.
+    const proof = this.geraetNachweis();
+    return this.senden({ type: "grhello", room: this.abgeleitet?.raum || "", seit,
+      device: proof ? { id: this.geraetId, name: this.geraetName, typ: this.geraetTyp } : undefined,
+      deviceProof: proof });
+  }
+
+  geraetNachweis() {
+    if (!this.geraetGeheimnis || !this.serverUrl) return "";
+    try {
+      const adresse = new URL(websocketAdresse(this.serverUrl)).href;
+      return crypto.createHmac("sha256", this.geraetGeheimnis)
+        .update(`elfix-watchparty-device-v2\0${adresse}`, "utf8").digest("base64")
+        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    } catch {
+      return "";
     }
   }
 
@@ -703,7 +757,7 @@ class Geraeteabgleich {
       this.aufSpeichern(this.ablage());
       return false;
     }
-    this.senden({ type: "grhello", room: this.abgeleitet?.raum || "", seit: 0 });
+    this.hello(0);
     return true;
   }
 
@@ -735,6 +789,7 @@ class Geraeteabgleich {
     }
 
     if (nachricht?.type === "grstate") {
+      if (Array.isArray(nachricht.geraete)) this.geraeteSetzen(nachricht.geraete);
       this.uebernehmen(nachricht.eintraege);
       // Der Wasserstand erst mit dem letzten Teil. Ein grosser Nachschub kommt
       // in mehreren Nachrichten; reisst die Leitung dazwischen ab und die
@@ -751,6 +806,12 @@ class Geraeteabgleich {
         this.nachholen = false;
         this.hinausschicken();
       }
+      this.melde();
+      return;
+    }
+
+    if (nachricht?.type === "grdevices") {
+      this.geraeteSetzen(nachricht.geraete);
       this.melde();
       return;
     }
@@ -780,6 +841,21 @@ class Geraeteabgleich {
       this.aufSpeichern(this.ablage());
       this.melde();
     }
+  }
+
+  geraeteSetzen(roh) {
+    const gesehen = new Set();
+    this.geraete = (Array.isArray(roh) ? roh : []).slice(0, 100).flatMap((eintrag) => {
+      const id = String(eintrag?.id || "");
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || gesehen.has(id)) return [];
+      gesehen.add(id);
+      const typ = ["pc", "handy", "tv"].includes(eintrag?.typ) ? eintrag.typ : "";
+      const lastSeen = Number(eintrag?.lastSeen);
+      if (!Number.isFinite(lastSeen) || lastSeen < 0 || lastSeen > Date.now() + 10 * 60 * 1000) return [];
+      return [{ id, name: String(eintrag?.name || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, 60), typ,
+        // Der Relay kennt seine eigene Uhr; die lokale Uhr kann falsch gehen.
+        lastSeen, online: Boolean(eintrag?.online) }];
+    });
   }
 
   uebernehmen(eintraege) {

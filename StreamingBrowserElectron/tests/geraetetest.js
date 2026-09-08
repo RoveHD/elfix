@@ -17,6 +17,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const WS = require("../../sync-server/node_modules/ws");
 const schluessel = require("../src/geraete-schluessel");
 const { Geraeteabgleich } = require("../src/geraete");
@@ -31,6 +32,12 @@ function pruefe(name, bedingung, detail) {
   console.log(`${bedingung ? "OK  " : "FAIL"}  ${name}${detail ? "   -> " + detail : ""}`);
 }
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
+const geraeteGeheimnisse = new Map();
+function geraeteGeheimnis(name) {
+  if (!geraeteGeheimnisse.has(name)) geraeteGeheimnisse.set(name,
+    crypto.createHash("sha256").update(`geraetetest:${name}`).digest("base64url"));
+  return geraeteGeheimnisse.get(name);
+}
 
 // Ein Geraet: es haelt seine eigenen Staende und benimmt sich wie main.js -
 // uebernehmen, den eigenen Stand daraus bilden, hinausmelden.
@@ -78,7 +85,9 @@ function geraet(name, key, staende = []) {
       .filter((eintrag) => !abgleich.kennt(eintrag.key))),
     sitzungSetzen: (sitzung) => { sitzungen.set(sitzung.id, sitzung); },
     sitzungenHerein: () => ereignisse.filter((e) => e.art === "sitzung").length,
-    an: () => abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: name }),
+    an: () => abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: name,
+      geraetName: name === "laptop" ? "Arbeits-Laptop" : name, geraetTyp: name === "tablet" ? "handy" : "pc",
+      geraetGeheimnis: geraeteGeheimnis(name) }),
     melden: () => abgleich.abgleichen([...eigen.values()]),
     setzen: (stand) => {
       eigen.set(stand.key, schluessel.stand(stand));
@@ -180,6 +189,38 @@ function stand(key, extra = {}) {
   laptop.an();
   rechner.an();
   await schlaf(500);
+
+  pruefe("Alle angemeldeten Geräte desselben Schlüssels stehen in der Liste",
+    laptop.abgleich.status().devices.length === 2
+    && laptop.abgleich.status().devices.some((g) => g.id === "laptop" && g.name === "Arbeits-Laptop" && g.typ === "pc")
+    && laptop.abgleich.status().devices.some((g) => g.id === "rechner"),
+    JSON.stringify(laptop.abgleich.status().devices));
+  pruefe("Offline-Angaben behalten die beobachtete Zeit",
+    laptop.abgleich.status().devices.every((g) => Number.isFinite(g.lastSeen) && g.lastSeen > 0),
+    JSON.stringify(laptop.abgleich.status().devices));
+  pruefe("Ein Name ist nur Anzeige und verschmilzt keine Kennungen",
+    laptop.abgleich.status().devices.filter((g) => g.name === "Arbeits-Laptop").length === 1,
+    JSON.stringify(laptop.abgleich.status().devices));
+  laptop.abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: "laptop",
+    geraetName: "Schreibtisch", geraetTyp: "pc", geraetGeheimnis: geraeteGeheimnis("laptop") });
+  await schlaf(300);
+  pruefe("Nur das eigene Gerät kann seinen Namen erneuern",
+    rechner.abgleich.status().devices.find((g) => g.id === "laptop")?.name === "Schreibtisch"
+    && rechner.abgleich.status().devices.find((g) => g.id === "rechner")?.name === "rechner",
+    JSON.stringify(rechner.abgleich.status().devices));
+  const betruer = new WS(ADRESSE);
+  const betruerAntwort = [];
+  betruer.on("message", (roh) => betruerAntwort.push(JSON.parse(String(roh))));
+  await new Promise((fertig) => betruer.on("open", fertig));
+  betruer.send(JSON.stringify({ type: "grhello", room: abgeleitet.raum, seit: 0,
+    device: { id: "laptop", name: "Übernommen", typ: "tv" },
+    deviceProof: geraeteGeheimnis("rechner") }));
+  await schlaf(250);
+  pruefe("Ein fremder Nachweis darf keine bestehende Kennung umbenennen",
+    betruerAntwort.some((m) => m.type === "grerror")
+    && rechner.abgleich.status().devices.find((g) => g.id === "laptop")?.name === "Schreibtisch",
+    JSON.stringify(betruerAntwort));
+  betruer.close();
 
   laptop.melden();
   await schlaf(500);
@@ -287,6 +328,9 @@ function stand(key, extra = {}) {
   pruefe("Ein anderer Schluessel bekommt nichts davon",
     fremdesGeraet.eigen.size === 0,
     [...fremdesGeraet.eigen.keys()].join(","));
+  pruefe("Ein anderer Schlüssel sieht keine Gerätekennungen oder Namen",
+    fremdesGeraet.abgleich.status().devices.every((g) => !["laptop", "rechner"].includes(g.id)),
+    JSON.stringify(fremdesGeraet.abgleich.status().devices));
 
   // --- Wiedergabesitzungen --------------------------------------------------
   //
@@ -380,6 +424,20 @@ function stand(key, extra = {}) {
     drittes.sitzungen.size === 4,
     `${drittes.sitzungen.size} Saetze - ohne sie zeigte jedes Geraet seinen halben Rueckblick`);
 
+  // Nach einer Identitaetswiederherstellung darf die bestehende Leitung nicht
+  // mit der alten Kennung weiterlaufen. Sie wird neu aufgebaut und meldet die
+  // neue, mit ihrem eigenen Geheimnis gebundene Kennung an.
+  const wechsel = geraet("wechsel-alt", key);
+  wechsel.an();
+  await schlaf(300);
+  wechsel.abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key,
+    geraetId: "wechsel-neu", geraetName: "Wiederhergestellt", geraetTyp: "pc",
+    geraetGeheimnis: geraeteGeheimnis("wechsel-neu") });
+  await schlaf(450);
+  pruefe("Eine geänderte Geräteidentität verbindet sich neu",
+    wechsel.abgleich.status().devices.some((g) => g.id === "wechsel-neu" && g.name === "Wiederhergestellt"),
+    JSON.stringify(wechsel.abgleich.status().devices));
+
   // --- Der Weg zurueck ------------------------------------------------------
   //
   // Ein Geraet kann einen Eintrag ablehnen - in ELFIX dann, wenn ihm der
@@ -430,12 +488,13 @@ function stand(key, extra = {}) {
   pruefe("und zaehlt die Schluessel",
     health.geraeteRaeume >= 1,
     String(health.geraeteRaeume));
-  // Das fremde Geraet von eben hat sich angemeldet und nie etwas gemeldet.
-  // Sein Raum darf deshalb gar nicht erst entstanden sein - sonst sammelte das
-  // Relay einen Raum je Vertipper.
-  pruefe("Ein blosses Anmelden legt keinen Raum an",
-    !gespeichert.includes(schluessel.ableiten(fremderSchluessel).raum),
-    "ein vertippter Schluessel darf nichts hinterlassen");
+  // Ein Gerät ohne Titel bleibt bewusst erhalten: es soll nach einer Offline-
+  // Phase in der Liste stehen. Ein altes/ungültiges Hello ohne feste Kennung
+  // erzeugt dagegen weiterhin keinen Raum.
+  pruefe("Ein angemeldetes Gerät ohne Titel bleibt im eigenen Verbund sichtbar",
+    gespeichert.includes(schluessel.ableiten(fremderSchluessel).raum)
+    && gespeichert.includes("fremd") && !gespeichert.includes("Nur fuer mich"),
+    "die Kennung ist Roster-Metadatum, kein entschlüsselter Inhalt");
 
   pruefe("Der Abgleich haengt an keinem Raumcode",
     /if \(nachricht\.type\.startsWith\("gr"\)\) \{/.test(SERVER)
@@ -446,6 +505,7 @@ function stand(key, extra = {}) {
   rechner.abgleich.trennen();
   drittes.abgleich.trennen();
   waehlerisch.abgleich.trennen();
+  wechsel.abgleich.trennen();
   fremdesGeraet.abgleich.trennen();
   roh.close();
 

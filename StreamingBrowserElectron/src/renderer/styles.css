@@ -7737,3 +7737,10 @@ button:focus-visible,
     justify-content: flex-start;
   }
 }
+.sponsorblock-kategorie { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:14px 16px; border:1px solid var(--border-color); border-radius:14px; }
+.sponsorblock-kategorie > span { flex:1; min-width:0; }
+.sponsorblock-kategorie strong { display:flex; align-items:center; gap:10px; }
+.sponsorblock-kategorie i { display:inline-block; width:20px; height:5px; border-radius:3px; flex:none; }
+.sponsorblock-kategorie small { display:block; margin-top:6px; opacity:.75; line-height:1.4; }
+.sponsorblock-kategorie select { width:230px; max-width:100%; flex:none; }
+@media (max-width: 700px) { .sponsorblock-kategorie { align-items:stretch; flex-direction:column; gap:10px; } .sponsorblock-kategorie select { width:100%; } }

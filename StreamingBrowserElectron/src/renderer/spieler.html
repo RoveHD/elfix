@@ -190,7 +190,14 @@
   /* Der Chat ist eine linke Schublade wie bei einem Livestream. Er liegt ueber
      dem Bild und verkleinert es nicht; auf schmalen Fenstern bleibt genug Bild
      uebrig, weil die Schublade nur fast die ganze Breite einnimmt. */
-  #chatKnopf { position: relative; }
+  #chatKnopf {
+    position: fixed; left: 0; top: 50%; transform: translateY(-50%); z-index: 45;
+    width: 30px; min-height: 48px; padding: 8px 0; border-radius: 0 12px 12px 0;
+    font-size: 25px; line-height: 1;
+    border: 1px solid rgba(255,255,255,.2); border-left: 0;
+    background: rgba(8,11,18,.92); transition: opacity 220ms ease;
+  }
+  body:has(#leiste.weg) #chatKnopf { opacity: 0; pointer-events: none; }
   #chatKnopf[data-ungelesen]::after {
     content: attr(data-ungelesen); position: absolute; top: -5px; right: -5px;
     min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
@@ -417,11 +424,11 @@
            Uebergangskasten: der steht nur da, wenn Autoplay an ist - man
            koennte es dort ausschalten und nie wieder ein. -->
       <button id="autoKnopf" type="button" title="Nächste Folge von selbst starten">Autoplay an</button>
-      <button id="chatKnopf" type="button" hidden aria-expanded="false" title="Livechat öffnen">Chat</button>
       <button id="gross" type="button" title="Vollbild (F)">⛶</button>
     </div>
   </div>
 
+  <button id="chatKnopf" type="button" aria-label="Watchparty-Chat öffnen" aria-expanded="false" aria-controls="chatPanel" title="Watchparty-Chat öffnen">›</button>
   <aside id="chatPanel" hidden aria-label="Livechat">
     <div class="chatKopf">
       <strong>Livechat</strong>

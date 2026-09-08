@@ -58,6 +58,7 @@ class YoutubeWatchparty {
       error: this.fehler,
       members: this.mitglieder,
       me: this.geraetId,
+      sponsorblockAutomatic: this.darfSponsorblockAutomatisch(),
       video: this.stand
         ? {
           videoId: this.stand.videoId,
@@ -69,6 +70,17 @@ class YoutubeWatchparty {
         }
         : null
     };
+  }
+
+  // SponsorBlock darf in einer YouTube-Runde nur auf einem Geraet selbst
+  // springen. Sonst erkennen mehrere Player denselben Abschnitt mit leicht
+  // verschiedenen Zeitpunkten und schicken konkurrierende Seeks. Die erste
+  // Person der vom Relay geordneten Mitgliederliste ist auf allen Geraeten
+  // dieselbe; faellt sie weg, uebernimmt automatisch die naechste.
+  darfSponsorblockAutomatisch() {
+    const erstes = this.mitglieder.find((person) => person && person.id);
+    return Boolean(this.verbunden && this.beigetreten && this.geraetId
+      && erstes?.id === this.geraetId);
   }
 
   // Wo die Runde in diesem Augenblick steht. Fuer die Oberflaeche - der Player

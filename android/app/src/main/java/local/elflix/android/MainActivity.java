@@ -121,6 +121,7 @@ public class MainActivity extends Activity {
     private Rahmen rahmen;
     private Marken marken;
     private Sponsorblock sponsorblock;
+    private YoutubeDislikes youtubeDislikes;
     private Qualitaet qualitaet;
     private Geraete geraete;
     private Aktualisierung aktualisierung;
@@ -1128,6 +1129,7 @@ public class MainActivity extends Activity {
         fassungen = new Fassungen(this, kern);
         marken = new Marken(this, kern, rahmen);
         sponsorblock = new Sponsorblock(this, kern, rahmen);
+        youtubeDislikes = new YoutubeDislikes(this, kern, rahmen);
         mitschauen = new Mitschauen(kern, rahmen, watchparty, new Mitschauen.Umgebung() {
             @Override public boolean nativerSpieler() { return direktWiedergabe != null; }
             @Override public boolean nativWartet() { return direktWiedergabe != null && direktWiedergabe.wartetAufBefehl(); }
@@ -2998,6 +3000,7 @@ public class MainActivity extends Activity {
 
         schluesselKarte(koerper, fernseher, luecke);
         geraeteStatusKarte(koerper, fernseher, luecke);
+        lebendeKarte(koerper, fernseher, luecke, "Geräte in diesem Abgleich", this::geraeteListeText);
 
         lebendeKarte(koerper, fernseher, luecke, "Server",
             () -> watchparty.serverUrl().isEmpty()
@@ -3199,6 +3202,30 @@ public class MainActivity extends Activity {
         return bauen.toString();
     }
 
+    /** Alle bekannten Kennungen des eigenen Verbunds, auch wenn sie gerade offline sind. */
+    private String geraeteListeText() {
+        JSONObject zustand = geraete == null ? null : geraete.zustand();
+        JSONArray liste = zustand == null ? null : zustand.optJSONArray("devices");
+        if (liste == null || liste.length() == 0) return "Noch kein Gerät hat sich mit diesem Schlüssel gemeldet.";
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < liste.length(); i++) {
+            JSONObject geraet = liste.optJSONObject(i);
+            if (geraet == null) continue;
+            String typ = "pc".equals(geraet.optString("typ")) ? "PC"
+                : "tv".equals(geraet.optString("typ")) ? "TV" : "Handy";
+            String name = geraet.optString("name", "").trim();
+            if (name.isEmpty()) name = typ;
+            if (text.length() > 0) text.append("\n\n");
+            text.append(name).append(" · ").append(typ);
+            if (geraet.optBoolean("current", false)) text.append(" · Dieses Gerät");
+            if (geraet.optBoolean("online", false)) text.append(" · online");
+            else text.append(" · zuletzt ").append(geraet.optLong("lastSeen", 0) > 0
+                ? java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                    .format(new java.util.Date(geraet.optLong("lastSeen", 0))) : "unbekannt");
+        }
+        return text.length() == 0 ? "Noch kein Gerät hat sich mit diesem Schlüssel gemeldet." : text.toString();
+    }
+
     private String geraeteSchluesselAnzeige() {
         JSONObject zustand = geraete == null ? null : geraete.zustand();
         String ausZustand = zustand == null ? "" : zustand.optString("key", "");
@@ -3307,7 +3334,7 @@ public class MainActivity extends Activity {
     /**
      * SponsorBlock - eine Karte fuer das Ganze, dann die Kategorien.
      *
-     * <p>Dieselben sieben Schalter wie am Rechner und in derselben Folge. Sie
+     * <p>Dieselben acht Kategorien wie am Rechner und in derselben Folge. Sie
      * stehen auch dann da, wenn SponsorBlock aus ist: ein Schalter, der
      * verschwindet, sobald man ihn braucht, ist schwerer zu finden als einer,
      * der ohne Wirkung dasteht - und der Text sagt, dass gerade nichts
@@ -3328,7 +3355,8 @@ public class MainActivity extends Activity {
         lebendeKarte(koerper, fernseher, luecke, "SponsorBlock",
             () -> sponsorblock.eingeschaltet()
                 ? "Bezahlte Einschübe in YouTube-Videos werden übersprungen — "
-                    + sponsorblock.gewaehlt() + " von 5 Arten. Die Segmente kommen aus dem "
+                    + sponsorblock.gewaehlt() + " von 8 Arten werden automatisch übersprungen. "
+                    + "Die Segmente kommen aus dem "
                     + "offenen Katalog von sponsor.ajay.app; gefragt wird nur bei YouTube und "
                     + "nur mit einem Kürzel, aus dem sich das Video nicht ablesen lässt."
                 : "Aus. Es wird nicht einmal gefragt.",
@@ -3349,6 +3377,12 @@ public class MainActivity extends Activity {
             "Intros überspringen", "Vorspann ohne Inhalt. Ein Intro ist keine Werbung.");
         sponsorblockKategorie(koerper, fernseher, luecke, "outro",
             "Outros überspringen", "Abspann mit Kacheln und Endkarten.");
+        sponsorblockKategorie(koerper, fernseher, luecke, "preview",
+            "Vorschauen", "Hinweise auf ein anderes Video oder einen kommenden Teil.");
+        sponsorblockKategorie(koerper, fernseher, luecke, "music_offtopic",
+            "Musik ohne Bezug", "Musikpassagen, die nicht zum eigentlichen Video gehören.");
+        sponsorblockKategorie(koerper, fernseher, luecke, "filler",
+            "Füllmaterial", "Inhalt, der nur die Laufzeit verlängert.");
 
         lebendeKarte(koerper, fernseher, luecke, "Meldung beim Überspringen",
             () -> sponsorblock.hinweis()
@@ -3366,15 +3400,27 @@ public class MainActivity extends Activity {
     private void sponsorblockKategorie(LinearLayout koerper, boolean fernseher, int luecke,
                                        String name, String titel, String erklaerung) {
         lebendeKarte(koerper, fernseher, luecke, titel,
-            () -> erklaerung + (sponsorblock.kategorie(name)
-                ? " Wird übersprungen."
-                : " Bleibt stehen."),
-            () -> sponsorblock.kategorie(name) ? "Stehen lassen" : "Überspringen",
+            () -> erklaerung + " " + sponsorblockModusText(sponsorblock.kategorie(name)),
+            () -> "Zu " + sponsorblockNaechsterModusText(sponsorblock.kategorie(name)),
             () -> {
-                sponsorblock.kategorieUmschalten(name);
+                sponsorblock.kategorieWeiter(name);
                 sponsorblockNachziehen();
                 einstellungenAuffrischen();
             });
+    }
+
+    private static String sponsorblockModusText(String modus) {
+        if ("skip".equals(modus)) return "Wird automatisch übersprungen.";
+        if ("manual".equals(modus)) return "Fragt vor dem Überspringen nach.";
+        if ("show".equals(modus)) return "Wird nur im Fortschrittsbalken markiert.";
+        return "Ist ausgeschaltet.";
+    }
+
+    private static String sponsorblockNaechsterModusText(String modus) {
+        if ("skip".equals(modus)) return "Rückfrage";
+        if ("manual".equals(modus)) return "Markierung";
+        if ("show".equals(modus)) return "Aus";
+        return "automatisch überspringen";
     }
 
     /**
@@ -3390,6 +3436,36 @@ public class MainActivity extends Activity {
         String seite = ansicht.getUrl();
         if (youtube == null || !youtube.istYoutube(seite)) return;
         sponsorblock.einspielen(ansicht, seite);
+    }
+
+    private void youtubeDislikeKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        boolean moeglich = Rahmen.verfuegbar();
+        if (!moeglich || youtubeDislikes == null) {
+            festeKarte(koerper, fernseher, luecke, "YouTube-Ablehnungen",
+                "Auf diesem Gerät nicht möglich: die System-WebView ist zu alt, um in den "
+                    + "YouTube-Player einzublenden.");
+            return;
+        }
+        lebendeKarte(koerper, fernseher, luecke, "YouTube-Ablehnungen",
+            () -> youtubeDislikes.eingeschaltet()
+                ? "Zeigt am YouTube-Ablehnen-Knopf eine geschätzte Zahl von Return YouTube "
+                    + "Dislike. Es werden keine Stimmen gesendet."
+                : "Aus. Return YouTube Dislike wird nicht gefragt.",
+            () -> youtubeDislikes.eingeschaltet() ? "Ausschalten" : "Einschalten",
+            () -> {
+                youtubeDislikes.einschalten(!youtubeDislikes.eingeschaltet());
+                youtubeDislikesNachziehen();
+                einstellungenAuffrischen();
+            });
+    }
+
+    private void youtubeDislikesNachziehen() {
+        if (youtubeDislikes == null || activeProvider == null) return;
+        WebView ansicht = webViews.get(activeProvider.id);
+        if (ansicht == null) return;
+        String seite = ansicht.getUrl();
+        if (youtube == null || !youtube.istYoutube(seite)) return;
+        youtubeDislikes.einspielen(ansicht, seite);
     }
 
     /**
@@ -6073,6 +6149,7 @@ public class MainActivity extends Activity {
                 });
             introKarte(koerper, fernseher, luecke);
             sponsorblockKarten(koerper, fernseher, luecke);
+            youtubeDislikeKarte(koerper, fernseher, luecke);
             fassungsKarte(koerper, fernseher, luecke);
         });
 
@@ -11103,6 +11180,9 @@ public class MainActivity extends Activity {
         if (sponsorblock != null && youtube != null && youtube.istYoutube(seite)) {
             sponsorblock.einspielen(ansicht, seite);
         }
+        if (youtubeDislikes != null && youtube != null && youtube.istYoutube(seite)) {
+            youtubeDislikes.einspielen(ansicht, seite);
+        }
         if (qualitaet != null) qualitaet.einspielen(ansicht);
     }
 
@@ -13962,9 +14042,10 @@ public class MainActivity extends Activity {
             // Es gibt dann kein onPageFinished und keinen neuen Rahmen - nur
             // diesen Ruf. Ohne ihn spraenge das Skript im neuen Video an den
             // Sekunden des vorigen.
-            if (sponsorblock == null || provider != activeProvider) return;
+            if (provider != activeProvider) return;
             if (youtube == null || !youtube.istYoutube(url)) return;
-            sponsorblock.einspielen(view, url);
+            if (sponsorblock != null) sponsorblock.einspielen(view, url);
+            if (youtubeDislikes != null) youtubeDislikes.einspielen(view, url);
         }
 
         @Override

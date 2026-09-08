@@ -195,7 +195,8 @@ function zustandSaeubern(zustand) {
   return {
     position: Number(zustand && zustand.position) || 0,
     updatedAt: Number(zustand && zustand.updatedAt) || 0,
-    playing: Boolean(zustand && zustand.playing)
+    playing: Boolean(zustand && zustand.playing),
+    rev: Number(zustand && zustand.rev) || 0
   };
 }
 
@@ -236,11 +237,41 @@ function beobachterScript() {
     window.__elfixYtInstalled = true;
     window.__elfixYtErwartet = null;
     window.__elfixYtTat = 0;
+    window.__elfixYtLokalPlayBis = 0;
+
+    // Ein von aussen angewendeter Zustand erzeugt selbst play/pause/seeked.
+    // Diese Ereignisse sind keine neue Tat. Ein echter Griff in YouTubes
+    // Bedienung beendet die Sperre dagegen sofort.
+    const bedienung = (ereignis) => {
+      const spieler = document.querySelector("#movie_player");
+      if (ereignis.type === "keydown") {
+        const ziel = ereignis.target;
+        if (ziel && (ziel.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ziel.tagName || ""))) return;
+        if (![" ", "k", "K", "MediaPlayPause", "ArrowLeft", "ArrowRight", "j", "J", "l", "L"].includes(ereignis.key)) return;
+      } else if (!spieler || !spieler.contains || !spieler.contains(ereignis.target)) return;
+      if (window.__elfixYtAnwendung) {
+        window.__elfixYtAnwendung.abgebrochen = true;
+        window.__elfixYtAnwendung.bis = 0;
+      }
+      window.__elfixYtLokalPlayBis = 0;
+      window.__elfixYtErwartet = null;
+    };
+    document.addEventListener("pointerdown", bedienung, true);
+    document.addEventListener("keydown", bedienung, true);
 
     const melden = (aktion, media) => {
       const spieler = document.querySelector("#movie_player");
       if (spieler && spieler.classList
         && (spieler.classList.contains("ad-showing") || spieler.classList.contains("ad-interrupting"))) return;
+
+      const anwendung = window.__elfixYtAnwendung;
+      if (anwendung && Date.now() < Number(anwendung.bis || 0)) return;
+
+      // YouTube kann beim Anlaufen kurz play und gleich darauf pause melden,
+      // solange der Player noch laedt. Das zweite Ereignis ist kein neuer
+      // Benutzerwunsch und darf die gerade gestartete Runde nicht anhalten.
+      if (aktion === "pause" && Date.now() < Number(window.__elfixYtLokalPlayBis || 0)
+          && (media.seeking || media.readyState < 3)) return;
 
       const erwartet = window.__elfixYtErwartet;
       if (erwartet && Date.now() < erwartet.bis) {
@@ -257,6 +288,8 @@ function beobachterScript() {
       // Merker fuer den Abgleich: kurz nach einer eigenen Tat wird nicht
       // korrigiert, sonst nimmt die Korrektur sie wieder zurueck.
       window.__elfixYtTat = Date.now();
+      if (aktion === "play") window.__elfixYtLokalPlayBis = Date.now() + 1500;
+      else if (aktion === "pause") window.__elfixYtLokalPlayBis = 0;
       console.log("__elfix:yt:" + aktion
         + ":" + (Number(media.currentTime) || 0).toFixed(2)
         + ":" + (media.paused ? 1 : 0));
@@ -302,6 +335,10 @@ function anwendenScript(zustand, optionen = {}) {
     const versatz = ${versatz};
     const genau = ${genau};
     const zielJetzt = () => zielPosition(Z, Date.now() + versatz);
+    const anwendung = { rev: Z.rev, bis: Date.now() + 5000, abgebrochen: false };
+    window.__elfixYtAnwendung = anwendung;
+    const gilt = () => window.__elfixYtAnwendung === anwendung
+      && Date.now() < anwendung.bis;
 
     // Tempo gehoert nicht zu dieser Architektur. Steht noch eines von der Seite
     // oder aus einer aelteren Fassung, kommt es hier weg.
@@ -332,13 +369,16 @@ function anwendenScript(zustand, optionen = {}) {
         if (springbar && Math.abs(Number(media.currentTime) - ziel) > toleranz) {
           media.currentTime = ziel;
           await abwarten(ziel, 2500);
+          if (!gilt()) return "ueberholt";
           // Neu rechnen: waehrend des Pufferns sind die anderen weitergelaufen.
           const nachgerechnet = zielJetzt();
           if (Math.abs(Number(media.currentTime) - nachgerechnet) > 0.35) {
             media.currentTime = nachgerechnet;
             await abwarten(nachgerechnet, 900);
+            if (!gilt()) return "ueberholt";
           }
         }
+        if (!gilt()) return "ueberholt";
         window.__elfixYtErwartet.ziel = zielJetzt();
         const p = media.play();
         if (p && typeof p.then === "function") p.catch(() => {});
@@ -359,6 +399,13 @@ function anwendenScript(zustand, optionen = {}) {
       return "pausiert";
     } catch (_) {
       return "fehlgeschlagen";
+    } finally {
+      // Native Medienereignisse koennen eine Runde nach play()/pause() kommen.
+      // Eine kurze Nachfrist haelt auch dieses Echo lokal; ein echter Klick
+      // hebt sie ueber die Bedienungs-Erkennung sofort auf.
+      if (window.__elfixYtAnwendung === anwendung && !anwendung.abgebrochen) {
+        anwendung.bis = Date.now() + 1200;
+      }
     }
   })()`;
 }
@@ -377,6 +424,9 @@ function abgleichScript(zustand, optionen = {}) {
     const Z = ${JSON.stringify(zustandSaeubern(zustand))};
     const versatz = ${versatz};
     const zielJetzt = () => zielPosition(Z, Date.now() + versatz);
+
+    const anwendung = window.__elfixYtAnwendung;
+    if (anwendung && Date.now() < Number(anwendung.bis || 0)) return "anwenden";
 
     if (typeof media.playbackRate === "number" && media.playbackRate !== 1) {
       try { media.playbackRate = 1; } catch (_) {}
@@ -441,7 +491,9 @@ function zuruecksetzenScript() {
   return `(() => {
     window.__elfixYtSync = { bestaetigt: 0, zustandTreffer: 0, seitSprung: 0, letzteMessung: 0, gemeldet: 0 };
     window.__elfixYtErwartet = null;
+    window.__elfixYtAnwendung = null;
     window.__elfixYtTat = 0;
+    window.__elfixYtLokalPlayBis = 0;
     for (const media of document.querySelectorAll("video")) {
       try { if (typeof media.playbackRate === "number") media.playbackRate = 1; } catch (_) {}
     }

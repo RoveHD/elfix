@@ -56,8 +56,14 @@ const RAUM_LEBENSDAUER_MS = 180 * 24 * 60 * 60 * 1000;
 // allem etwas in der Zukunft, wird es hier gekappt - sonst gewaenne ein Geraet
 // mit falsch gestellter Uhr jeden Vergleich, fuer immer.
 const ZUKUNFT_TOLERANZ_MS = 5 * 60 * 1000;
+const MAX_GERAETE_JE_RAUM = 100;
+const GERAET_ONLINE_MS = 75 * 1000;
+const GERAET_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const GERAET_NAME_MAX = 60;
+const GERAET_TYPEN = new Set(["pc", "handy", "tv"]);
 
-// raumId -> { eintraege: Map<id, {at, nr, blob, weg}>, nr, at }
+// raumId -> { eintraege, geraete, nr, at }. Die Geraeteliste ist nur Metadaten
+// des verschlossenen Raums: eine Kennung wird nie aus einem Namen abgeleitet.
 const raeume = new Map();
 
 function raumHolen(raumId) {
@@ -66,7 +72,7 @@ function raumHolen(raumId) {
     vorhanden.at = Date.now();
     return vorhanden;
   }
-  const neu = { eintraege: new Map(), nr: 0, at: Date.now() };
+  const neu = { eintraege: new Map(), geraete: new Map(), nr: 0, at: Date.now() };
   raeume.set(raumId, neu);
   return neu;
 }
@@ -78,6 +84,32 @@ function istKennung(wert) {
 function zahl(wert) {
   const n = Number(wert);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function geraetAufnehmen(raum, roh) {
+  const id = String(roh?.id || "");
+  if (!GERAET_ID.test(id)) return { gespeichert: false, sichtbar: false };
+  const bekannt = raum.geraete.get(id);
+  if (!bekannt && raum.geraete.size >= MAX_GERAETE_JE_RAUM) return { gespeichert: false, sichtbar: false };
+  const name = String(roh?.name || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, GERAET_NAME_MAX);
+  const typ = GERAET_TYPEN.has(roh?.typ) ? roh.typ : "";
+  // Nur die gerade angemeldete Kennung kann ihren Satz schreiben. Es gibt
+  // bewusst keine Nachricht mit einer Zielkennung zum Umbenennen anderer.
+  const jetzt = Date.now();
+  const sichtbar = !bekannt || bekannt.name !== name || bekannt.typ !== typ;
+  // Der Puls soll Anwesenheit auffrischen, aber nicht alle 30 Sekunden die
+  // Platte schreiben und die ganze Gruppe mit derselben Liste wecken.
+  const gespeichert = sichtbar || !bekannt || bekannt.zuletzt < jetzt - 30000;
+  raum.geraete.set(id, { name, typ, zuletzt: jetzt });
+  return { gespeichert, sichtbar };
+}
+
+function geraeteListe(raum) {
+  const jetzt = Date.now();
+  return [...raum.geraete.entries()]
+    .map(([id, eintrag]) => ({ id, name: eintrag.name, typ: eintrag.typ,
+      lastSeen: eintrag.zuletzt, online: eintrag.zuletzt >= jetzt - GERAET_ONLINE_MS }))
+    .sort((a, b) => b.lastSeen - a.lastSeen || a.id.localeCompare(b.id));
 }
 
 // Alles, was dieses Geraet noch nicht kennt - der Reihe nach, wie es angenommen
@@ -129,6 +161,13 @@ function behandeln({ nachricht, raumId, senden, verteilen }) {
   if (!istKennung(raumId)) return false;
 
   if (nachricht.type === "grhello") {
+    // Ein altes Programm kennt das Feld `device` noch nicht. Es darf seinen
+    // Bestand weiter lesen, aber ein bloss abgetippter/alter Hello legt keinen
+    // neuen Raum an. Erst eine gueltige feste Kennung darf die Roster-Ablage
+    // erzeugen.
+    const hatGeraet = GERAET_ID.test(String(nachricht?.device?.id || ""));
+    const raum = raeume.get(raumId) || (hatGeraet ? raumHolen(raumId) : null);
+    const geraetAenderung = raum ? geraetAufnehmen(raum, nachricht.device) : { gespeichert: false, sichtbar: false };
     const { eintraege, nr } = nachschub(raumId, nachricht.seit);
     // In Haeppchen: ein einzelner Eintrag darf gross sein, und die Verbindung
     // nimmt nur 256 KiB je Nachricht. Der letzte Teil traegt "fertig" - daran
@@ -145,11 +184,13 @@ function behandeln({ nachricht, raumId, senden, verteilen }) {
       teil.push(eintrag);
       umfang += gross;
     }
-    senden({ type: "grstate", eintraege: teil, nr, fertig: true });
+    senden({ type: "grstate", eintraege: teil, nr, fertig: true, geraete: raum ? geraeteListe(raum) : [] });
+    // Andere Teilnehmer sehen die neue Anwesenheit ebenfalls; der Relay sendet
+    // die Liste ausschliesslich innerhalb derselben abgeleiteten Raumkennung.
+    if (geraetAenderung.sichtbar) verteilen({ type: "grdevices", geraete: geraeteListe(raum) });
     // Ein Raum, den ein Geraet gerade benutzt, ist nicht verwaist - auch dann
     // nicht, wenn es nichts zu melden gibt.
-    if (raeume.has(raumId)) raumHolen(raumId);
-    return false;
+    return geraetAenderung.gespeichert;
   }
 
   if (nachricht.type === "grput") {
@@ -186,6 +227,11 @@ function aufraeumen() {
       raum.eintraege.delete(id);
       geaendert = true;
     }
+    for (const [id, geraet] of raum.geraete) {
+      if (zahl(geraet.zuletzt) >= jetzt - RAUM_LEBENSDAUER_MS) continue;
+      raum.geraete.delete(id);
+      geaendert = true;
+    }
   }
   return geaendert;
 }
@@ -199,6 +245,7 @@ function zustandLesen() {
     roh[raumId] = {
       at: raum.at,
       nr: raum.nr,
+      geraete: [...raum.geraete.entries()].map(([id, geraet]) => ({ id, name: geraet.name, typ: geraet.typ, zuletzt: geraet.zuletzt })),
       eintraege: [...raum.eintraege.entries()].map(([id, eintrag]) => ({
         id, at: eintrag.at, nr: eintrag.nr, blob: eintrag.blob || "", weg: Boolean(eintrag.weg)
       }))
@@ -227,7 +274,14 @@ function zustandSetzen(roh) {
     // Die Nummer nie kleiner als die groesste gespeicherte: sonst vergaebe der
     // Server nach einem Neustart Nummern doppelt, und ein Geraet mit hohem
     // Stand bekaeme nie wieder etwas zu sehen.
-    raeume.set(raumId, { eintraege, nr: Math.max(zahl(raum?.nr), hoechste), at: zahl(raum?.at) || Date.now() });
+    const geraete = new Map();
+    for (const geraet of raum?.geraete || []) {
+      const id = String(geraet?.id || "");
+      if (!GERAET_ID.test(id) || geraete.size >= MAX_GERAETE_JE_RAUM) continue;
+      geraete.set(id, { name: String(geraet.name || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, GERAET_NAME_MAX),
+        typ: GERAET_TYPEN.has(geraet.typ) ? geraet.typ : "", zuletzt: zahl(geraet.zuletzt) });
+    }
+    raeume.set(raumId, { eintraege, geraete, nr: Math.max(zahl(raum?.nr), hoechste), at: zahl(raum?.at) || Date.now() });
   }
 }
 

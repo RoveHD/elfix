@@ -229,6 +229,14 @@ class WatchpartyRaeume {
     this.raumFuer(key, room)?.beitreten(key);
   }
 
+  // Geordnete Quittung fuer genau eine Raumverbindung. Sie liegt in der
+  // einzelnen Watchparty, weil nur dort die Reihenfolge des Sockets bekannt
+  // ist; die Fassade reicht bloss Raum und Rueckruf weiter.
+  barriere(room, fertig) {
+    const raum = this.raumFuer("", room);
+    return Boolean(raum && raum.barriere(fertig));
+  }
+
   verlassen(key, room) {
     this.raumFuer(key, room)?.verlassen(key);
   }

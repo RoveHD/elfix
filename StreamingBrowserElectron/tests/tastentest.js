@@ -44,8 +44,10 @@ function buehne(zustand = {}) {
   const seite = {
     webContents: {
       getURL: () => zustand.url || "https://aniworld.to/anime/stream/one-piece/staffel-1/episode-3",
-      canGoBack: () => zustand.zurueckMoeglich !== false,
-      goBack: () => getan.push("zurueck"),
+      navigationHistory: {
+        canGoBack: () => zustand.zurueckMoeglich !== false,
+        goBack: () => getan.push("zurueck")
+      },
       focus: () => getan.push("fokus"),
       send: (kanal, wert) => getan.push(`senden:${kanal}:${wert}`)
     }
