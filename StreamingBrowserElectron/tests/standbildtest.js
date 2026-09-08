@@ -56,6 +56,12 @@ async function warteBis(bedingung, hoechstens = 6000) {
   return false;
 }
 
+async function erwarte(name, bedingung) {
+  if (!await warteBis(bedingung, 15000)) {
+    throw new Error(`Testaufbau nicht bereit: ${name}`);
+  }
+}
+
 /* -------------------------------------------------------------- Das Video */
 
 /**
@@ -214,7 +220,7 @@ function geraet(name, raster) {
   bruecke.syncBereit = (syncId) => raeume.bereitZumStart(KEY, RAUM, syncId);
 
   const geraetObjekt = {
-    name, bild, zustand: [], protokoll: [],
+    name, bild, verbunden: false, zustand: [], protokoll: [],
     eintrag: () => geraetObjekt.zustand.find((w) => w.key === KEY) || null,
     binHost: () => {
       const e = geraetObjekt.eintrag();
@@ -224,6 +230,7 @@ function geraet(name, raster) {
 
   raeume = new WatchpartyRaeume({
     WebSocketKlasse: WS,
+    onConnection: (_raum, offen) => { geraetObjekt.verbunden = offen; },
     onControl: (nachricht) => empfangen(nachricht),
     onState: (eintraege) => { geraetObjekt.zustand = eintraege; },
     onWatchstate: () => {}
@@ -303,21 +310,26 @@ function geraet(name, raster) {
   const gastB = geraet("GastB", raster);
   const alle = [host, gastA, gastB];
 
-  await warteBis(() => alle.every((g) => g.raeume.status().rooms?.[0]?.connected));
+  try {
+  // Ein offener Socket ist noch keine bestaetigte Identitaet. Vor diesem
+  // Rueckruf verwirft der Client Share/Enter; die einmalige Freigabe ginge verloren.
+  await erwarte("Alle Geraete sind im Raum bestaetigt", () => alle.every((g) => g.verbunden));
 
   host.raeume.teilen({
     key: KEY, url: FOLGE, title: "Bleach", providerName: "AniWorld",
     type: "serie", season: 1, episode: 4
   }, RAUM);
-  await warteBis(() => alle.every((g) => g.eintrag()));
+  await erwarte("Geteilte Folge ist bei allen sichtbar", () => alle.every((g) => g.eintrag()));
 
   // Nacheinander beitreten: Host der Runde wird, wer zuerst da ist.
   host.raeume.beitreten(KEY, RAUM);
-  await warteBis(() => host.eintrag()?.joined);
+  await erwarte("Host ist beigetreten", () => host.eintrag()?.joined);
   gastA.raeume.beitreten(KEY, RAUM);
-  await warteBis(() => gastA.eintrag()?.joined);
+  await erwarte("Gast A ist beigetreten", () => gastA.eintrag()?.joined);
   gastB.raeume.beitreten(KEY, RAUM);
-  await warteBis(() => gastB.eintrag()?.joined);
+  await erwarte("Gast B ist beigetreten", () => gastB.eintrag()?.joined);
+  await erwarte("Alle bestaetigen denselben Host", () => host.binHost()
+    && alle.every((g) => g.eintrag()?.joined && g.eintrag().hostId === host.eintrag().myId));
 
   // Jeder Player bekommt seinen Auftrag - erst damit weiss er, dass eine Runde
   // laeuft, und erst dann meldet er eine eigene Pause ueberhaupt hinaus.
@@ -434,8 +446,10 @@ function geraet(name, raster) {
     alle.map((g) => `${g.name}=${g.bild.currentTime.toFixed(6)}`).join("  "));
   pruefe("Und alle stehen", alle.every((g) => g.bild.paused));
 
-  for (const g of alle) { clearInterval(g.takt); g.bild.aufraeumen(); g.raeume.trennen(); }
-  await schlaf(200);
+  } finally {
+    for (const g of alle) { clearInterval(g.takt); g.bild.aufraeumen(); g.raeume.trennen(); }
+    await schlaf(200);
+  }
 
   const gut = pruefungen.filter(Boolean).length;
   console.log(`${gut}/${pruefungen.length} bestanden`);
