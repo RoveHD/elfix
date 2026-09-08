@@ -29,7 +29,13 @@ const code = src.match(/^async function youtubeTeilnehmerAktualisieren\([^]*?^\}
   await update(state,view,true);assert.equal(sent.length,count+1,"dom-ready stellt denselben Zustand wieder her");
   fail=true;await update({...state,room:"Neu"});fail=false;await update({...state,room:"Neu"});assert.equal(sent.at(-1).room,"Neu");
   const before=sent.length;url="https://aniworld.to/";await update(state,view,true);await update(state,null,true);assert.equal(sent.length,before);
-  assert.match(src,/function sendYoutubePartyState\(status\) \{\s*youtubeTeilnehmerAktualisieren/);
+  // Jeder Status-Push frischt die Anzeige in der Seite auf. Wo im Rumpf der
+  // Aufruf steht, ist dabei gleich - vor ihm liegt inzwischen die
+  // Warteschlangen-Mitgliedschaft der Raum-Warteschlange, und das ist kein
+  // Fehler. Geprueft wird deshalb der Rumpf und nicht die erste Zeile.
+  const push = src.match(/^function sendYoutubePartyState\(status\) \{[^]*?^\}/m);
+  assert.ok(push, "sendYoutubePartyState fehlt");
+  assert.match(push[0], /youtubeTeilnehmerAktualisieren\(/);
   assert.match(src,/async function installYoutubePartyControls\(provider, view, url\) \{\s*await youtubeTeilnehmerAktualisieren/);
   console.log("OK YouTube-Teilnehmer: Status-Push, Neuaufbau, Deduplizierung, Trennung und Fehlerwiederholung");
 })().catch((error)=>{console.error(error);process.exitCode=1;});

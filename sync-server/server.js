@@ -2442,17 +2442,21 @@ wss.on("connection", (socket) => {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       // Ein Geraet hat genau einen aktuell offenen Player. Sobald es Titel B
-      // meldet, darf weder ein frischer Stand noch eine Freigabe/Unbekannt-
-      // Markierung aus Titel A weiter in dessen Spoilerschutz eingehen.
+      // meldet, darf keine Freigabe- oder Unbekannt-Markierung aus Titel A
+      // weiter in dessen Spoilerschutz eingehen.
+      //
+      // Nur die Spoilermarkierungen. Der Playerstand eines anderen Titels
+      // wird hier ausdruecklich nicht geloescht: er hat seine eigene Frist
+      // (STAND_FRISCH_MS) und mit ihr die Gnadenfrist der Hostrolle. Wurde
+      // er sofort weggeraeumt, verlor ein Geraet, das zwei Titel derselben
+      // Runde meldet, in beiden abwechselnd seinen Stand - und mit ihm die
+      // Stelle, an der sich "Abgleichen" ausrichtet.
       let vorherigerTitelWeg = false;
       for (const anderer of raum.titel.values()) {
         if (anderer === eintrag) continue;
         const wartenWeg = Boolean(anderer.spoilerWartet?.delete(socket.geraetId));
         const spoilerWeg = Boolean(anderer.spoiler?.delete(socket.geraetId));
-        const standWeg = Boolean(anderer.stand?.delete(socket.geraetId));
-        if (!wartenWeg && !spoilerWeg && !standWeg) continue;
-        hostFreigeben(anderer, socket.geraetId);
-        if (standWeg) standSenden(socket.raum, anderer);
+        if (!wartenWeg && !spoilerWeg) continue;
         spoilerStandSenden(socket.raum, anderer);
         vorherigerTitelWeg = true;
       }

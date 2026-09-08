@@ -329,9 +329,14 @@ const SKRIPT = seitendaten.uebersichtSkript();
   pruefe("Mit Titel rueckt die Folgennummer in die zweite Zeile",
     /public String unterschrift\(\)[\s\S]{0,400}?return staffelName\(staffel\) \+ "  ·  Folge " \+ nummer;/
       .test(UEBERSICHT));
+  // Die zweite Zeile geht inzwischen ganz durch spoilerFolgeUntertitel: dort
+  // kommt zum geschuetzten Text auch die Gesehen-Marke dazu. Geprueft wird
+  // deshalb, was dabei herauskommt, und nicht mehr die Form des Aufrufs.
   pruefe("Und die Liste zeichnet beides",
     /name\.setText\(sichtbar \? folge\.ueberschrift\(\) : "Folge " \+ folge\.nummer\)/.test(HAUPT2)
-      && /unter\.setText\(sichtbar \? spoilerFolgeUntertitel\(folge\) : "Details geschützt"\)/.test(HAUPT2));
+      && /unter\.setText\(spoilerFolgeUntertitel\(folge\)\)/.test(HAUPT2)
+      && /String basis = spoilerFolgeSichtbar\(folge\) \? folge\.unterschrift\(\) : "Details geschützt";/
+        .test(HAUPT2));
 }
 
 /* ------------------------------- Und was keine Uebersicht bekommt ---------- */

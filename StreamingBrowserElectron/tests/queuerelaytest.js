@@ -216,7 +216,12 @@ async function propose(who, item) {
     const cancelA = await a.wait(message => message.type === "queue:cancel" && message.startId === startA?.startId, "NACK cancel", 1600, preNackA);
     const cancelB = await b.wait(message => message.type === "queue:cancel" && message.startId === startA?.startId, "NACK cancel peer", 1600, preNackB);
     const rolledBack = await a.wait(message => queueState(message) && message.items.some(item => item.id === selectedId), "requeued item");
-    const afterRollbackTarget = a.inbox.slice(preNackA).filter(message => message.type === "state").at(-1)?.shared?.find(item => item.key === TARGET);
+    // The room card is its own message and can trail the queue state.  Waiting
+    // for the card that carries the restored URL keeps this deterministic; the
+    // last card in the inbox was sometimes still the pre-rollback one.
+    const afterRollbackTarget = (await a.wait(message => message.type === "state"
+      && message.shared?.find(item => item.key === TARGET)?.url === OLD_TARGET_URL,
+      "rolled back target card", 1600, preNackA))?.shared?.find(item => item.key === TARGET);
     check("load NACK cancels both targets and requeues without playback", cancelA?.reason === "start-failed" && cancelB?.reason === "start-failed"
       && Boolean(rolledBack) && await a.absent(message => message.type === "syncprepare" && message.url === SELECTED_URL, 260, preNackA)
       && afterRollbackTarget?.archived === true && afterRollbackTarget?.url === OLD_TARGET_URL

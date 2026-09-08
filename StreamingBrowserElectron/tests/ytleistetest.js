@@ -235,9 +235,15 @@ pruefe("Wer stoebert, wird nicht zurueckgeholt",
   && /if \(grund !== "handbetrieb" && youtubeStoebertGerade\(\)\) return;/.test(MAIN),
   "weder beim Raumzustand noch beim Nachziehen nach dem Seitenaufbau");
 pruefe("Und zieht dabei auch niemanden mit",
-  /function meldeYoutubeAktion\(view, aktion, position, pausiert\) \{[^]{0,260}?if \(youtubeStoebertGerade\(\)\) return;/
+  /function meldeYoutubeAktion\(view, aktion, position, pausiert\) \{[^]{0,900}?if \(youtubeStoebertGerade\(\)\) return;/
     .test(MAIN),
   "das Pausieren beim Verlassen des Videos haette alle anderen angehalten");
+// Das Ende eines Videos schiebt inzwischen die Raum-Warteschlange weiter. Es
+// liegt damit vor der Stoeber-Sperre und braucht seine eigene: wer gerade auf
+// der Startseite sucht, waehlt der Runde nicht das naechste Video aus.
+pruefe("Auch das Weiterschalten der Warteschlange nicht",
+  /if \(aktion === "ended"\) \{[^]{0,200}?youtubeStoebertGerade\(\)\) return;/.test(MAIN),
+  "sonst ruecke ein stoeberndes Geraet die Warteschlange fuer alle vor");
 pruefe("Der Weg zurueck beendet es ausdruecklich",
   /ipcMain\.handle\("youtubeparty:open", async \(\) => \{\s*\n\s*youtubeStoebernBeenden\(\);/.test(MAIN)
   && /youtubeParty\.anfordern\(\);\s*\n\s*youtubeStoebernBeenden\(\);/.test(MAIN),
