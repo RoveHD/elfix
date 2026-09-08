@@ -10950,6 +10950,37 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     }
   }
 
+  /*
+   * Das Nachfassen.
+   *
+   * Erwartet werden bei einem Folgenwechsel die Geraete, die den Titel
+   * wirklich im Player haben. Wer in genau dem Augenblick keinen frischen
+   * Stand hatte - eine Sekunde nach einem Wiederanschluss etwa -, bekommt die
+   * Vorbereitung nicht und bliebe sonst auf der alten Folge sitzen: der
+   * gemeinsame Start allein wechselt sie nicht, er springt und spielt nur.
+   *
+   * Deshalb gilt: ein Start fuer eine andere Folge derselben Serie holt diesen
+   * Player nach. Er kommt dabei zu spaet und nicht auf die Millisekunde
+   * genau - aber auf der richtigen Folge, und der naechste Abgleich richtet
+   * ihn aus. Das ist der Unterschied zwischen "spaet" und "haengengeblieben".
+   */
+  // Nur eine Adresse, die wirklich eine Folge nennt. Der Rundenstand traegt
+  // manchmal die blosse Staffelseite - die ist keine andere Folge, sondern
+  // gar keine, und dafuer gibt es die Heilung in spielerRundenNachrichtPasst.
+  if (urteil.tun === "syncstart" && nachricht.url
+    && episodeIdentity(nachricht.url) && episodeIdentity(adresse)
+    && !istGleicheFolge(nachricht.url, adresse)
+    && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse)) {
+    const provider = spielerAnbieter();
+    if (!provider) return false;
+    const geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
+      () => direktFolgeSpielen(provider, nachricht.url,
+        { startzeit: Math.max(0, Number(nachricht.position) || 0), istAktuell }));
+    if (!istAktuell()) return true;
+    if (!geladen?.ok) sendToast(geladen?.grund || "Die neue Folge konnte nicht geöffnet werden.");
+    return true;
+  }
+
   // Der Folgenwechsel richtet sich gerade an die, bei denen die alte Folge
   // steht - er wird deshalb vor der Folgenpruefung beantwortet.
   if (urteil.tun === "navigate") {
@@ -11288,6 +11319,11 @@ async function applyWatchpartyControl(nachricht) {
   }
   if (urteil.tun === "syncstart") {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
+    // Und dasselbe Nachfassen wie beim eigenen Player: wer die Vorbereitung
+    // nicht bekommen hat, steht sonst weiter bei der alten Folge.
+    // followWatchpartyEpisode laesst Ansichten in Ruhe, die schon dort sind.
+    await followWatchpartyEpisode(eintrag, { ...nachricht, action: "navigate" });
+    if (!istAktuell()) return;
   }
 
   const ereignis = watchpartyEreignis(nachricht, watchpartyLaeuftDanach(nachricht));

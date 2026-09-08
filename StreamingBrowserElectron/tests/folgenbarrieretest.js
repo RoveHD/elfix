@@ -77,6 +77,46 @@ async function pruefen() {
   ladenBeenden();
   await ablauf;
   assert.equal(context.spielerSyncBereit, null, "Nach Ladefrist keine verspaetete Bereitschaft");
-  console.log("OK Folgenbarriere: neue Folge pausiert laden, erst Player bereit melden, veraltete Vorbereitung verwerfen");
+  /*
+   * Das Nachfassen.
+   *
+   * Erwartet werden beim Folgenwechsel die Geraete, die den Titel wirklich im
+   * Player haben. Wer in genau dem Augenblick keinen frischen Stand hatte -
+   * eine Sekunde nach einem Wiederanschluss etwa - bekommt die Vorbereitung
+   * nicht. Der gemeinsame Start allein wechselt die Folge nicht: er springt
+   * und spielt. Ohne diesen Weg bliebe so jemand auf der alten Folge sitzen.
+   */
+  aktuell = true;
+  befehle.length = 0;
+  context.spielerLauf = { id: 5, url: folge(1) };
+  context.spielerSyncBereit = null;
+  const start = { type: "syncstart", key: eintrag.key, room: eintrag.room, syncId: "folge-zwei",
+    url: folge(2), position: 0, videoTime: 0, playing: true, episodeId: "s1e2" };
+  const nachfassen = context.spielerSteuernAusRunde(eintrag, start, { tun: "syncstart" }, false, () => aktuell);
+  assert.equal(ladeOptionen.rundeWarten, undefined,
+    "Das Nachfassen ist keine Vorbereitung mehr - die Runde laeuft schon");
+  ladenBeenden();
+  assert.equal(await nachfassen, true, "Ein Start fuer eine andere Folge blieb unbeantwortet");
+  assert.equal(context.spielerLauf.url, folge(2), "Der Player blieb auf der alten Folge stehen");
+
+  // Und wer schon dort steht, wird davon nicht noch einmal geladen.
+  aktuell = true;
+  context.spielerLauf = { id: 6, url: folge(2) };
+  let nochmalGeladen = false;
+  const vorher = context.direktFolgeSpielen;
+  context.direktFolgeSpielen = (...args) => { nochmalGeladen = true; return vorher(...args); };
+  assert.equal(await context.spielerSteuernAusRunde(eintrag, start, { tun: "syncstart" }, false, () => aktuell), true);
+  assert.equal(nochmalGeladen, false, "Derselbe Start lud die schon offene Folge erneut");
+  context.direktFolgeSpielen = vorher;
+
+  // Eine andere Serie bleibt tabu - niemand landet ungefragt woanders.
+  context.spielerLauf = { id: 7, url: "https://aniworld.to/anime/stream/andere/staffel-1/episode-1" };
+  nochmalGeladen = false;
+  context.direktFolgeSpielen = (...args) => { nochmalGeladen = true; return vorher(...args); };
+  await context.spielerSteuernAusRunde(eintrag, start, { tun: "syncstart" }, false, () => aktuell);
+  assert.equal(nochmalGeladen, false, "Ein fremder Titel wurde mitgezogen");
+  context.direktFolgeSpielen = vorher;
+
+  console.log("OK Folgenbarriere: neue Folge pausiert laden, erst Player bereit melden, veraltete Vorbereitung verwerfen, verpasste Vorbereitung nachholen");
 }
 pruefen().catch(error => { console.error(error); process.exitCode = 1; });
