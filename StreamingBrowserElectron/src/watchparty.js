@@ -788,8 +788,9 @@ class Watchparty {
     this.senden({ type: "syncall", key, position });
   }
 
-  bereitZumStart(key, syncId) {
-    this.senden({ type: "syncready", key, syncId: String(syncId || "") });
+  // `ok = false` sagt der Runde ab: dieses Geraet bekommt die Folge nicht auf.
+  bereitZumStart(key, syncId, ok = true) {
+    this.senden({ type: "syncready", key, syncId: String(syncId || ""), ok: ok !== false });
   }
 
   // Den Host an ein anderes Geraet weitergeben.

@@ -97,10 +97,16 @@ async function rundeAufbauen(raum, key, geraete) {
       (m) => m.shared?.find((eintrag) => eintrag.key === key)?.memberIds?.length >= erwartet,
       `Beitritt von ${gaeste[i].name}`);
   }
+  // Auf die Playerstaende warten und sie nicht bloss abschicken: erwartet wird
+  // bei einem Folgenwechsel, wer diesen Titel wirklich im Player hat. Ein
+  // `here`, das noch unterwegs ist, waere kein Beleg dafuer.
+  const vorStaenden = host.marke();
   for (const geraet of geraete) {
     geraet.senden({ type: "here", key, position: 0, paused: true,
       season: 1, episode: 1, playerSessionId: `${geraet.name}-player` });
   }
+  await host.warten(vorStaenden, (m) => m.type === "watchstate" && m.key === key
+    && m.members?.length === geraete.length, "alle Playerstaende");
 }
 
 /** Folgenwechsel ausloesen und die gemeinsame Barrier-Generation einsammeln. */
@@ -277,13 +283,92 @@ async function abbruchWaehrendBarriere() {
   }
 }
 
+// 5) Ein Mitglied ohne Player fuer diesen Titel haelt den Folgenwechsel nicht
+//    auf. Gemeldet als "Warten auf alle, obwohl ich alleine bin": ein zweites
+//    eigenes Geraet war der Runde beigetreten und stand im Menue.
+async function mitgliedOhnePlayer() {
+  const raum = "barrier-start-menue";
+  const key = "serie:barrier-start-menue";
+  const host = client("Menue Host");
+  const handy = client("Menue Handy");
+  try {
+    await host.verbinden(raum);
+    await handy.verbinden(raum);
+    // Aufbau von Hand: das Handy tritt bei, meldet aber nie einen Playerstand.
+    await zustandNach(host, () => host.senden({
+      type: "share",
+      item: { key, url: URL1, title: "Starter", type: "serie", season: 1, episode: 1 }
+    }), (m) => m.shared?.some((eintrag) => eintrag.key === key), "geteilten Titel");
+    await zustandNach(host, () => handy.senden({ type: "enter", key }),
+      (m) => m.shared?.find((eintrag) => eintrag.key === key)?.memberIds?.length === 2,
+      "zwei Mitglieder");
+    const vorStand = host.marke();
+    host.senden({ type: "here", key, position: 0, paused: true,
+      season: 1, episode: 1, playerSessionId: "host-player" });
+    await host.warten(vorStand, (m) => m.type === "watchstate" && m.key === key
+      && m.members?.length === 1, "den einen Playerstand");
+
+    const hostAb = host.marke();
+    const handyAb = handy.marke();
+    host.senden({ type: "control", key, action: "navigate", position: 0, url: URL2 });
+    const vorbereitung = await host.warten(hostAb,
+      (m) => m.type === "syncprepare" && m.reason === "episode-change", "Folgenvorbereitung");
+
+    host.senden({ type: "syncready", key, syncId: vorbereitung.syncId });
+    const start = await host.warten(hostAb,
+      (m) => m.type === "syncstart" && m.syncId === vorbereitung.syncId,
+      "Start ohne das Geraet im Menue");
+    pruefen(start.episodeId === "s1e2", "Falsche Folge nach dem Wechsel");
+    pruefen(!handy.eingang.slice(handyAb).some((m) => m.type === "syncprepare"),
+      "Ein Geraet ohne Player fuer diesen Titel wurde vorbereitet");
+    // Erfahren soll es den Wechsel trotzdem - es ist Mitglied der Runde.
+    await handy.warten(handyAb, (m) => m.type === "syncstart" && m.syncId === vorbereitung.syncId,
+      "den gemeinsamen Start beim Geraet im Menue");
+  } finally {
+    host.schliessen();
+    handy.schliessen();
+  }
+}
+
+// 6) Und wer absagt, weil er die Folge nicht aufbekommt, haelt die uebrigen
+//    nicht die volle Frist fest.
+async function absageWaehrendBarriere() {
+  const raum = "barrier-start-absage";
+  const key = "serie:barrier-start-absage";
+  const host = client("Absage Host");
+  const gast = client("Absage Gast");
+  try {
+    await host.verbinden(raum);
+    await gast.verbinden(raum);
+    await rundeAufbauen(raum, key, [host, gast]);
+    const { syncId, marken } = await folgeWechseln(key, [host, gast]);
+
+    host.senden({ type: "syncready", key, syncId });
+    await abwarten(host, marken[0]);
+    pruefen(starts(host, marken[0], syncId).length === 0,
+      "Die Runde startete, bevor der Gast geantwortet hat");
+
+    gast.senden({ type: "syncready", key, syncId, ok: false });
+    const start = await host.warten(marken[0],
+      (m) => m.type === "syncstart" && m.syncId === syncId, "Start nach der Absage");
+    pruefen(start.episodeId === "s1e2", "Falsche Folge nach der Absage");
+    pruefen(starts(host, marken[0], syncId).length === 1, "Die Absage erzeugte einen zweiten Start");
+  } finally {
+    host.schliessen();
+    gast.schliessen();
+  }
+}
+
 (async () => {
   await zweiTeilnehmer();
   await letzterReadyStartet();
   await reconnectWaehrendBarriere();
   await abbruchWaehrendBarriere();
+  await mitgliedOhnePlayer();
+  await absageWaehrendBarriere();
   console.log(`${bestanden}/${bestanden} bestanden `
-    + "(Ready-Barriere: letzter Ready startet, genau einmal, Reconnect haengt nicht)");
+    + "(Ready-Barriere: letzter Ready startet, genau einmal, Reconnect, "
+    + "Mitglied ohne Player und Absage haengen nicht)");
 })().catch((fehler) => {
   console.error(`FAIL ${fehler.stack || fehler}`);
   process.exitCode = 1;

@@ -91,10 +91,15 @@ async function zustandNach(geraet, senden, passt, was) {
       (m) => m.shared?.find((eintrag) => eintrag.key === KEY)?.memberIds?.length === 2,
       "zwei Mitglieder");
 
+    // Auf die Playerstaende warten und sie nicht bloss abschicken: erwartet
+    // wird beim Folgenwechsel, wer den Titel wirklich im Player hat.
+    const vorStaenden = host.marke();
     host.senden({ type: "here", key: KEY, position: 0, paused: true,
       season: 1, episode: 1, playerSessionId: "host-player" });
     gast.senden({ type: "here", key: KEY, position: 0, paused: true,
       season: 1, episode: 1, playerSessionId: "gast-player" });
+    await host.warten(vorStaenden, (m) => m.type === "watchstate" && m.key === KEY
+      && m.members?.length === 2, "beide Playerstaende");
 
     const hostAb = host.marke();
     const gastAb = gast.marke();

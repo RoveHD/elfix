@@ -10941,6 +10941,11 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     if (!geladen?.ok) {
       spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
       sendToast(geladen?.grund || "Die nächste Folge konnte nicht vorbereitet werden.");
+      // Und die Runde erfaehrt es. Ohne diese Absage warteten alle anderen die
+      // volle Frist auf eine Bereitmeldung, die nicht mehr kommen kann - das
+      // gemeldete "Warten auf alle", bei dem einer haengenblieb und der Rest
+      // laengst in der neuen Folge stand.
+      watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId, false);
       return true;
     }
   }

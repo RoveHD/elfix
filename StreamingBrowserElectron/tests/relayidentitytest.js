@@ -293,6 +293,21 @@ async function legacyAblagePruefen() {
   dritter.senden({ type: "enter", key: KEY });
   await dritter.erwarte((m) => m.type === "state"
     && m.shared?.find((x) => x.key === KEY)?.memberIds?.includes(dritter.deviceId), "dritter Beitritt");
+  // Und alle drei haben den Titel wirklich im Player. Erwartet wird beim
+  // Folgenwechsel, wer ihn offen hat: ein Geraet, das nur im Raum sitzt, hat
+  // nichts vorzubereiten und hielt die uebrigen sonst die volle Frist fest.
+  // Der wiederverbundene Host gehoert dazu - sein alter Stand ging mit dem
+  // alten Socket.
+  dritter.senden({
+    type: "here", key: KEY, position: 0, paused: true, season: 1, episode: 2,
+    playerSessionId: "dritter-player"
+  });
+  wieder.senden({
+    type: "here", key: KEY, position: 0, paused: true, season: 1, episode: 2,
+    playerSessionId: "host-wieder"
+  });
+  await dritter.erwarte((m) => m.type === "watchstate" && m.key === KEY
+    && m.members?.length >= 3, "Playerstaende aller drei");
   gast.senden({ type: "control", key: KEY, action: "navigate", position: 0, url: URL1 });
   const [vorHost, vorGast, vorDritter] = await Promise.all([
     wieder.erwarte((m) => m.type === "syncprepare" && m.reason === "episode-change" && m.url === URL1,
@@ -360,6 +375,16 @@ async function legacyAblagePruefen() {
   const reconnectStarts = await Promise.all([wieder, gast, dritterNeu].map((geraet) =>
     geraet.erwarte((m) => m.type === "syncstart" && m.syncId === reconnectSyncId,
       "gemeinsamer Start nach Reconnect")));
+  // Der neue Socket meldet seinen Playerstand nach - der alte ging mit der
+  // getrennten Verbindung. Ohne ihn gehoert er zur naechsten Schranke nicht
+  // mehr dazu; im Betrieb erledigt das der Herzschlag im Sekundentakt.
+  dritterNeu.senden({
+    type: "here", key: KEY, position: 0, paused: true, season: 1, episode: 3,
+    playerSessionId: "dritter-neu-player"
+  });
+  await dritterNeu.erwarte((m) => m.type === "watchstate" && m.key === KEY
+    && m.members?.some((mitglied) => mitglied.id === dritterNeu.deviceId),
+  "Playerstand des wiederverbundenen Dritten");
   pruefe("Nach der neuen Bereitschaft startet dieselbe Generation gemeinsam",
     reconnectStarts.every((start) => start?.url === URL3 && start?.episodeId === "s1e3"),
     JSON.stringify(reconnectStarts));
@@ -547,6 +572,16 @@ async function legacyAblagePruefen() {
   gast.senden({ type: "enter", key: LEER_KEY });
   await gast.erwarte((m) => m.type === "state"
     && m.shared?.find((x) => x.key === LEER_KEY)?.memberIds?.includes(gast.deviceId), "zweiter Beitritt");
+  // Beide haben den Titel im Player - nur so gehoeren beide zur Schranke, und
+  // nur dann ist der leere Raum danach wirklich leer.
+  for (const geraet of [wieder, gast]) {
+    geraet.senden({
+      type: "here", key: LEER_KEY, position: 0, paused: true, season: 1, episode: 1,
+      playerSessionId: `${geraet.deviceId}-leer`
+    });
+  }
+  await gast.erwarte((m) => m.type === "watchstate" && m.key === LEER_KEY
+    && m.members?.length === 2, "beide Playerstaende im zweiten Titel");
   gast.senden({ type: "control", key: LEER_KEY, action: "navigate", position: 0, url: URL2 });
   const [leerVorHost, leerVorGast] = await Promise.all([
     wieder.erwarte((m) => m.type === "syncprepare" && m.key === LEER_KEY, "leere Host-Vorbereitung"),

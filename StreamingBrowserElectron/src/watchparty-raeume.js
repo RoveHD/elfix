@@ -298,8 +298,8 @@ class WatchpartyRaeume {
     for (const raum of this.raeumeMitTitel(key, room)) raum.gleichziehen(key, position);
   }
 
-  bereitZumStart(key, room, syncId) {
-    for (const raum of this.raeumeMitTitel(key, room)) raum.bereitZumStart(key, syncId);
+  bereitZumStart(key, room, syncId, ok = true) {
+    for (const raum of this.raeumeMitTitel(key, room)) raum.bereitZumStart(key, syncId, ok);
   }
 
   fortschrittMelden(key, fortschritt, room) {

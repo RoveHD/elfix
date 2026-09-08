@@ -375,6 +375,16 @@ function ereignisAusSkript(skript) {
   // Der Host wechselt auf Folge 5. Alle verbundenen Teilnehmer laden und
   // puffern erst; niemand startet, bevor auch der langsamste bereit ist.
 
+  // Der Rechner schaut dieselbe Folge mit. Das gehoert dazu und ist nicht
+  // Beiwerk: erwartet wird beim Folgenwechsel, wer den Titel wirklich im
+  // Player hat. Ein Geraet, das nur dem Raum beigetreten ist, hat nichts
+  // vorzubereiten - es hielt die uebrigen sonst die volle Frist fest.
+  pc.staende.length = 0;
+  pc.oeffnen(folge(4));
+  pc.puls(0, true);
+  await warteBis(() => pc.staende.some((stand) => (stand.members || []).length >= 3),
+    "W6: alle drei stehen mit ihrem Player bei Folge 4");
+
   handy.ereignisse.length = 0;
   tv.oeffnen(folge(5));
   tv.bruecke.folgenwechselMelden(KEY, folge(5), RAUM);

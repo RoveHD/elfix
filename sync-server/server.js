@@ -1132,6 +1132,23 @@ function istAktiv(raumcode, eintrag, geraetId, wert) {
 }
 
 // Alle, die genau diese Folge offen haben - der frueheste zuerst.
+/**
+ * Die Geraete, die fuer diesen Titel wirklich einen Player offen haben - ohne
+ * Ruecksicht auf die Folge.
+ *
+ * Fuer einen Folgenwechsel ist das die richtige Menge: die anderen stehen noch
+ * bei der alten Folge und sollen mitkommen, aber wer gar keinen Player fuer
+ * diesen Titel hat, hat auch nichts vorzubereiten. `aktiveTeilnehmer` waere zu
+ * eng (es fragt nach genau einer Folge), "alle Mitglieder" zu weit.
+ */
+function spielerImTitel(raumcode, eintrag) {
+  const ids = new Set();
+  for (const [geraetId, wert] of eintrag.stand || new Map()) {
+    if (istAktiv(raumcode, eintrag, geraetId, wert)) ids.add(geraetId);
+  }
+  return ids;
+}
+
 function aktiveTeilnehmer(raumcode, eintrag, season, episode) {
   const treffer = [];
   for (const [geraetId, wert] of eintrag.stand || new Map()) {
@@ -1448,6 +1465,11 @@ function syncTeilnehmerNachtragen(raumcode, eintrag, socket) {
   if (!eintrag?.sync || !eintrag.sync.vorbereitung
     || socket.raum !== raumcode || socket.readyState !== socket.OPEN
     || !socket.geraetId || !eintrag.members.has(socket.geraetId)) return false;
+  // Nur wer zu dieser Schranke gehoert. Sonst tritt ein Geraet, das waehrend
+  // des Wechsels zufaellig verbindet, in eine Wartemenge ein, in der es nie
+  // war - und haelt alle uebrigen fest.
+  if (eintrag.sync.erwartet instanceof Set
+    && !eintrag.sync.erwartet.has(socket.geraetId)) return false;
   eintrag.sync.wartetAuf.add(socket.geraetId);
   socket.send(eintrag.sync.vorbereitung);
   return true;
@@ -1486,7 +1508,9 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   // ist.
   const aktiveIds = optionen.mitgliedIds instanceof Set
     ? new Set(optionen.mitgliedIds)
-    : optionen.alleVerbunden
+    : optionen.erwarteteIds instanceof Set
+      ? new Set(optionen.erwarteteIds)
+      : optionen.alleVerbunden
       ? new Set(eintrag.members.keys())
       : new Set(
         aktiveTeilnehmer(raumcode, eintrag, eintrag.season, eintrag.episode)
@@ -1536,6 +1560,10 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
     frameTime,
     vorbereitung: daten,
     wartetAuf: new Set(mitglieder.map((client) => client.geraetId)),
+    // Wer zu dieser Schranke gehoert, steht mit ihrer Entstehung fest. Ein
+    // Wiederanschluss setzt sie fort; ein Geraet, das erst jetzt hereinkommt,
+    // laesst sie nicht von vorn warten.
+    erwartet: new Set(mitglieder.map((client) => client.geraetId)),
     mitgliedIds: optionen.mitgliedIds instanceof Set ? new Set(aktiveIds) : null
   };
   for (const client of mitglieder) client.send(daten);
@@ -2149,8 +2177,13 @@ wss.on("connection", (socket) => {
           // geht er als Vorbereitung hinaus; der gemeinsame Start folgt erst
           // nach den bestaetigten Bereitschaften. Abgemeldete/offline
           // Mitglieder kommen nicht in die Wartemenge.
+          // Erwartet werden die Geraete, die diesen Titel wirklich im Player
+          // haben - nicht jedes verbundene Mitglied. Ein Handy, das der Runde
+          // beigetreten ist und im Menue steht, hat nichts vorzubereiten und
+          // hielt die uebrigen bisher volle neunzig Sekunden in "Warten auf
+          // alle" fest. Der Ausloeser zaehlt in syncVorbereiten ohnehin mit.
           syncVorbereiten(socket.raum, eintrag, 0, socket.name, socket.geraetId, {
-            alleVerbunden: true,
+            erwarteteIds: spielerImTitel(socket.raum, eintrag),
             aktion: "navigate",
             grund: "episode-change",
             fristMs: FOLGENWECHSEL_BEREIT_FRIST_MS
@@ -2911,6 +2944,12 @@ wss.on("connection", (socket) => {
       // keinen neuen Start ausloesen. Die Kennung wird mit syncprepare
       // ausgegeben und mit syncstart wiederholt.
       if (text(nachricht.syncId, 80) !== eintrag.sync.id) return;
+      // `ok: false` ist eine Absage: dieses Geraet bekommt die neue Folge nicht
+      // auf (kein Hoster, keine Quelle, Player zu). Ohne sie hing die ganze
+      // Runde die volle Frist in "Warten auf alle", obwohl feststand, dass die
+      // Bereitmeldung nie kommt. Fuer die Wartemenge zaehlt beides gleich; wer
+      // absagt, gehoert danach auch nicht mehr zu dieser Schranke.
+      if (nachricht.ok === false) eintrag.sync.erwartet?.delete(socket.geraetId);
       eintrag.sync.wartetAuf.delete(socket.geraetId);
       if (!eintrag.sync.wartetAuf.size) syncStarten(socket.raum, eintrag);
       return;
