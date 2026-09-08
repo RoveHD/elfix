@@ -59,6 +59,7 @@ app.whenReady().then(async () => {
   } });
   fenster.webContents.setAudioMuted(true);
   await fenster.loadFile(path.join(__dirname, "../src/renderer/spieler.html"));
+  fenster.show();
   const js = code => fenster.webContents.executeJavaScript(code);
   await warten(() => js("bild.readyState >= 2 && skipSegmente.length === 4"));
   const farbspur = await js("getComputedStyle(regler).backgroundImage");
@@ -69,6 +70,7 @@ app.whenReady().then(async () => {
   for (const [stelle, hinweis] of [[5, "Intro · 0:05"], [13, "Rückblick · 0:13"],
     [32, "Vorschau · 0:32"], [42, "Abspann · 0:42"], [20, "0:20"]]) {
     await js(`regler.dispatchEvent(new PointerEvent('pointermove', { clientX: regler.getBoundingClientRect().left + regler.getBoundingClientRect().width * ${stelle + 0.1} / 50 }))`);
+    await warten(() => js(`vorschauText.textContent === ${JSON.stringify(hinweis)}`));
     assert.equal(await js("vorschauText.textContent"), hinweis, "Vorschau beschreibt den Abschnitt unter der Maus");
     assert.equal(await js("regler.hasAttribute('title')"), false, "Kein doppelter nativer Tooltip");
   }

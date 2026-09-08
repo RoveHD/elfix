@@ -50,6 +50,7 @@ OHNE_RELAY.push("skipintegrationtest");
 OHNE_RELAY.push("untertitelwahltest");
 OHNE_RELAY.push("searchgroupingtest");
 OHNE_RELAY.push("spielervorschautest");
+OHNE_RELAY.push("cache-schreibaufschubtest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");
 MIT_RELAY.push("relayidentitytest");

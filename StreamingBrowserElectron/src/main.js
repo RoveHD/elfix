@@ -73,6 +73,7 @@ const kosmetik = require("./adblock-kosmetik");
 const verifizierungstor = require("./verifizierungstor");
 const youtube = require("./youtube");
 const openings = require("./openings");
+const cacheSchreibaufschub = require("./cache-schreibaufschub");
 
 // Mit ELFIX_EMPFEHLUNG_DEBUG=1 gestartet, schreibt das Empfehlungssystem in
 // die Konsole, woher die Punkte jedes Vorschlags kommen. Nicht in der
@@ -401,7 +402,8 @@ const NEUE_FOLGEN_INTERVALL_MS = 6 * 60 * 60 * 1000;
 // sondern falsch, und muss weg.
 const TASTE_CACHE_VERSION = 3;
 let tasteCache = null;
-let tasteSaveTimer = 0;
+let tasteCacheAblage = null;
+let metadatenCacheAblage = null;
 const autoplayConsoleLogState = new Map();
 const AUTOPLAY_POLL_MS = 700;
 const NEXT_EPISODE_PROMPT_PERCENT = 90;
@@ -587,6 +589,11 @@ function startlastBeginnen() {
 }
 
 app.on("before-quit", () => {
+  // Beim Beenden darf die optionale Ablage einmal blockieren: andernfalls
+  // ginge alles verloren, was waehrend eines langen Mini-Player-Laufs neu in
+  // die beiden Caches kam. Ein noch gestellter Timer wird dabei mit erledigt.
+  tasteCacheAblage?.sofort();
+  metadatenCacheAblage?.sofort();
   // Was in der Watchparty offen ist, gehoert vor dem Schliessen in die Ablage:
   // sonst geht eine Aenderung der letzten Sekunden verloren und nach dem
   // naechsten Start fehlen die gemeinsamen Staende.
@@ -9332,6 +9339,7 @@ function direktSpielerSchliessen(grund = "") {
   const view = spielerView;
   spielerView = null;
   spielerMiniAktiv = false;
+  optionaleCachesNachMiniPlanen();
   spielerLauf = null;
   spielerLetzterStand = null;
   // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
@@ -9512,6 +9520,7 @@ ipcMain.on("spieler:vollbild", (ereignis) => {
 ipcMain.on("spieler:mini-status", (ereignis, aktiv) => {
   if (!vomSpieler(ereignis)) return;
   spielerMiniAktiv = aktiv === true;
+  if (!spielerMiniAktiv) optionaleCachesNachMiniPlanen();
 });
 
 /**
@@ -12570,19 +12579,25 @@ function loadTasteCache() {
 }
 
 // Der Cache wird nur verzoegert geschrieben, damit ein Durchlauf mit vielen
-// Seiten nicht dutzende Male dieselbe Datei anfasst.
-function saveTasteCacheSoon() {
-  if (tasteSaveTimer) return;
-  tasteSaveTimer = setTimeout(() => {
-    tasteSaveTimer = 0;
+// Seiten nicht dutzende Male dieselbe Datei anfasst. Im nativen Mini-Player
+// hat die Fensterbewegung Vorrang: JSON.stringify und writeFileSync blockieren
+// den Electron-Hauptthread, an dem unter Windows auch sein nativer Ziehpfad
+// haengt. Nach dem Mini-Player wird der juengste Speicherstand nachgeholt.
+tasteCacheAblage = cacheSchreibaufschub.erstellen({
+  wartenMs: 1500,
+  gesperrt: () => spielerMiniAktiv,
+  schreiben: () => {
     try {
       ensureDataDir();
       fs.writeFileSync(TASTE_FILE, JSON.stringify(loadTasteCache()));
     } catch {
       // Ein fehlender Cache kostet nur Zeit, keine Funktion.
     }
-  }, 1500);
-  tasteSaveTimer.unref?.();
+  }
+});
+
+function saveTasteCacheSoon() {
+  tasteCacheAblage.planen();
 }
 
 // --- Externe Metadaten --------------------------------------------------------
@@ -12598,7 +12613,6 @@ function saveTasteCacheSoon() {
 // Hintergrund geholt und wirkt sich beim naechsten Durchlauf aus.
 
 let metadatenSpeicher = null;
-let metadatenSaveTimer = 0;
 
 function metadatenAdresse() {
   const eigen = String(process.env.ELFIX_METADATEN_SERVER || "").trim();
@@ -12630,18 +12644,26 @@ function metadatenClient() {
 
 let metadatenStand = null;
 
-function metadatenSpeichernSoon() {
-  if (metadatenSaveTimer) return;
-  metadatenSaveTimer = setTimeout(() => {
-    metadatenSaveTimer = 0;
+metadatenCacheAblage = cacheSchreibaufschub.erstellen({
+  wartenMs: 2000,
+  gesperrt: () => spielerMiniAktiv,
+  schreiben: () => {
     try {
       ensureDataDir();
       if (metadatenStand) fs.writeFileSync(METADATEN_FILE, JSON.stringify(metadatenStand));
     } catch {
       // Ohne Ablage kostet der naechste Start ein paar Abrufe mehr.
     }
-  }, 2000);
-  metadatenSaveTimer.unref?.();
+  }
+});
+
+function metadatenSpeichernSoon() {
+  metadatenCacheAblage.planen();
+}
+
+function optionaleCachesNachMiniPlanen() {
+  tasteCacheAblage?.freigeben();
+  metadatenCacheAblage?.freigeben();
 }
 
 // Nodes eingebautes fetch erreicht im Hauptprozess nicht jede Anbieterseite -

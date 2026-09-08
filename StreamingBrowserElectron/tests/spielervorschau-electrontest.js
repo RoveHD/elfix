@@ -33,6 +33,9 @@ app.whenReady().then(async()=>{
   ipcMain.handle("spieler:chat-status",()=>({active:false,messages:[]}));
   ipcMain.on("spieler:sprung",()=>spruenge++);
   await fenster.loadFile(path.join(__dirname,"../src/renderer/spieler.html"));
+  // requestAnimationFrame steuert die Pointer-Koaleszierung und läuft nur für
+  // ein sichtbares Renderer-Fenster; genau das ist auch der reale Nutzerpfad.
+  fenster.show();
   const js=c=>fenster.webContents.executeJavaScript(c);
   await warten(()=>js("bild.readyState>=2 && Number.isFinite(bild.duration)"));
   await js("bild.pause(); bild.currentTime=.3; schichtenZeigen()");
@@ -45,6 +48,37 @@ app.whenReady().then(async()=>{
   assert.equal(await js("bild.paused"),true);
   assert.equal(spruenge,0,"Vorschau sendet keinen Watchparty-Sprung");
   assert.equal(proben,1,"Nur ein begrenzter Probeabruf je Preview-Medium");
+  // Die Maus bleibt fast eine Sekunde in Bewegung. Der Stand nach dem letzten
+  // Pointer-Event wäre für den alten, stets zurückgesetzten 150-ms-Debouncer
+  // kein Beleg: Deshalb werden nur Canvasbilder gezählt, die *während* der
+  // fortlaufenden Pointer-Events sichtbar waren.
+  await js("spulVorschauVerbergen()");
+  const bewegung=await js(`new Promise(resolve=>{
+    const rahmen=regler.getBoundingClientRect(), farben=new Set(); let zaehler=0;
+    regler.dispatchEvent(new PointerEvent('pointerdown',{clientX:rahmen.left+4}));
+    const bewegen=setInterval(()=>{
+      const anteil=.04+(.92*Math.min(1,zaehler/24));
+      regler.dispatchEvent(new PointerEvent('pointermove',{clientX:rahmen.left+rahmen.width*anteil}));
+      zaehler++;
+    },35);
+    const bilder=setInterval(()=>{
+      if(vorschauBild.hidden)return;
+      const p=vorschauBild.getContext('2d').getImageData(120,67,1,1).data;
+      if(p[0]>180)farben.add('rot'); else if(p[1]>180)farben.add('gruen'); else if(p[2]>180)farben.add('blau');
+    },20);
+    setTimeout(()=>{clearInterval(bewegen);clearInterval(bilder);regler.dispatchEvent(new PointerEvent('pointerup'));resolve({zaehler,farben:[...farben],text:vorschauText.textContent})},980);
+  })`);
+  assert.ok(bewegung.zaehler>=20,"Test sendet fortlaufende Pointer-Events");
+  assert.ok(bewegung.farben.length>=2,`Mindestens zwei echte Vorschauframes erscheinen während der Bewegung: ${bewegung.farben}`);
+  assert.ok(Math.abs(await js("bild.currentTime")-.3)<.05,"Dauerndes Vorschauen spult nicht den Hauptfilm");
+  assert.equal(await js("bild.paused"),true);
+  assert.equal(spruenge,0,"Dauerndes Vorschauen sendet keinen Watchparty-Sprung");
+  assert.equal(proben,2,"Auch eine neue Vorschau-Session bleibt bei einem Bereichs-Probeabruf");
+  await js("spulVorschauVerbergen()");
+  await js("regler.dispatchEvent(new PointerEvent('pointermove',{clientX:regler.getBoundingClientRect().left+8})); regler.dispatchEvent(new PointerEvent('pointerleave'))");
+  await pause(150);
+  assert.equal(await js("vorschauKasten.hidden"),true,"Ein ausstehender Maus-Frame oeffnet die Vorschau nach Verlassen nicht erneut");
+  assert.equal(await js("document.querySelectorAll('video').length"),1,"Verlassen startet keinen verspaeteten Vorschau-Decoder");
   await js("regler.dispatchEvent(new PointerEvent('pointerdown')); regler.value='800'; regler.dispatchEvent(new Event('input'))");
   assert.ok(Math.abs(await js("bild.currentTime")-.3)<.05,"Ziehen bleibt bis zum Loslassen eine Vorschau");
   await js("regler.dispatchEvent(new Event('change'))");

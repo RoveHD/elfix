@@ -308,11 +308,22 @@ let reglerGefasst = false;
 let vorschauQuelle = "";
 let vorschauTimer = 0;
 let vorschauZiel = 0;
+let vorschauBildZeit = null;
+let vorschauGeneration = 0;
+let vorschauAktiveAnfrage = 0;
+let vorschauAnfrageFolge = 0;
+let vorschauMausRahmen = 0;
 const spulVorschau = window.ElfixSpielerVorschau.erstellen({ canvas: vorschauBild,
   beiZustand: (zustand) => {
-    if (zustand.art === "verborgen") return;
-    if (zustand.art === "bild" && Math.abs(zustand.ziel - vorschauZiel) > 0.01) return;
-    vorschauBild.hidden = zustand.art !== "bild";
+    if (zustand.art === "verborgen" || vorschauKasten.hidden) return;
+    if (zustand.art === "bild") {
+      // Das Decoderbild kann beim Ziehen noch zum vorherigen Cursorziel
+      // gehören. Es bleibt trotzdem sichtbar; der Hinweis nennt dann beide
+      // Zeiten, damit das Bild nicht fälschlich als das aktuelle Ziel gilt.
+      vorschauBildZeit = zustand.stelle;
+      vorschauBild.hidden = false;
+      vorschauHinweisZeigen();
+    }
     vorschauLageSetzen();
   }
 });
@@ -326,37 +337,72 @@ function vorschauLageSetzen() {
   vorschauKasten.style.top = `${Math.max(12, spur.top - kasten.height - 12)}px`;
 }
 
+function vorschauAnfragePlanen() {
+  if (vorschauTimer || vorschauAktiveAnfrage || vorschauKasten.hidden) return;
+  const meineGeneration = vorschauGeneration;
+  vorschauTimer = setTimeout(async () => {
+    vorschauTimer = 0;
+    if (meineGeneration !== vorschauGeneration || vorschauAktiveAnfrage || vorschauKasten.hidden) return;
+    const anfrage = ++vorschauAnfrageFolge;
+    vorschauAktiveAnfrage = anfrage;
+    const anfrageGeneration = vorschauGeneration;
+    const ziel = vorschauZiel;
+    try {
+      await spulVorschau.zeigen(ziel);
+    } catch (_) {
+      // Das Vorschau-Modul meldet Abbruch und Quellenwechsel als Ergebnis.
+    } finally {
+      // Ein alter finally-Block darf eine inzwischen begonnene Anfrage nicht
+      // freigeben. Quellenwechsel warten dagegen sauber auf ihren Abbruch.
+      if (vorschauAktiveAnfrage !== anfrage) return;
+      vorschauAktiveAnfrage = 0;
+      if (!vorschauKasten.hidden && (anfrageGeneration !== vorschauGeneration
+        || Math.abs(vorschauZiel - ziel) > .01)) vorschauAnfragePlanen();
+    }
+  }, 90);
+}
+
 function spulVorschauZeigen(stelle) {
   const dauer = Number(bild.duration);
   if (!Number.isFinite(dauer) || dauer <= 0 || !auftrag?.adresse || auftrag.laden || auftrag.auswahl) return;
   const key = `${auftrag.id}:${auftrag.adresse}:${dauer}`;
   if (key !== vorschauQuelle) {
+    vorschauGeneration += 1;
+    clearTimeout(vorschauTimer);
+    vorschauTimer = 0;
+    vorschauBildZeit = null;
+    vorschauBild.hidden = true;
     spulVorschau.quelle({ adresse: auftrag.adresse, typ: auftrag.typ, dauer, id: auftrag.id });
     vorschauQuelle = key;
   }
   vorschauZiel = Math.max(0, Math.min(dauer, stelle));
   vorschauKasten.hidden = false;
-  vorschauBild.hidden = true;
   vorschauHinweisZeigen();
   vorschauLageSetzen();
-  clearTimeout(vorschauTimer);
-  vorschauTimer = setTimeout(() => { spulVorschau.zeigen(vorschauZiel).catch(() => {}); }, 150);
+  vorschauAnfragePlanen();
 }
 
 function vorschauHinweisZeigen() {
   const segment = aktuellesSkipsegment(vorschauZiel);
   const name = segment ? skipRegeln.beschriftung(segment.type).replace(/ überspringen$/, "") : "";
   vorschauText.textContent = (name ? `${name} · ${zeit(vorschauZiel)}` : zeit(vorschauZiel))
+    + (Number.isFinite(vorschauBildZeit) && Math.abs(vorschauBildZeit - vorschauZiel) > .01
+      ? ` · Bild: ${zeit(vorschauBildZeit)}` : "")
     + (lokalesSpulenErlaubt() ? "" : " · Spulen steuert der Host");
   regler.removeAttribute("title");
   regler.setAttribute("aria-describedby", "spulVorschauText");
 }
 
 function spulVorschauVerbergen() {
+  vorschauGeneration += 1;
   clearTimeout(vorschauTimer);
+  vorschauTimer = 0;
+  if (vorschauMausRahmen) cancelAnimationFrame(vorschauMausRahmen);
+  vorschauMausRahmen = 0;
   spulVorschau.verbergen();
   vorschauKasten.hidden = true;
   vorschauBild.hidden = true;
+  vorschauBildZeit = null;
   regler.removeAttribute("aria-describedby");
 }
 const lautstaerke = document.getElementById("lautstaerke");
@@ -1891,7 +1937,7 @@ bild.addEventListener("click", () => {
 });
 knopfMini.addEventListener("click", miniUmschalten);
 bild.addEventListener("enterpictureinpicture", () => { spulVorschauVerbergen(); bruecke.miniStatus?.(true); miniZeigen(); });
-window.addEventListener("pagehide", () => { clearTimeout(vorschauTimer); spulVorschau.zerstoeren(); });
+window.addEventListener("pagehide", () => { spulVorschauVerbergen(); spulVorschau.zerstoeren(); });
 bild.addEventListener("leavepictureinpicture", () => { bruecke.miniStatus?.(false); miniZeigen(); });
 bild.addEventListener("loadeddata", miniZeigen);
 bild.addEventListener("emptied", miniZeigen);
@@ -1910,9 +1956,14 @@ if (navigator.mediaSession) {
 
 regler.addEventListener("pointermove", (ereignis) => {
   reglerMausX = ereignis.clientX;
-  reglerHinweisZeigen();
-  const rahmen = regler.getBoundingClientRect();
-  if (rahmen.width > 0) spulVorschauZeigen((ereignis.clientX - rahmen.left) / rahmen.width * bild.duration);
+  if (vorschauMausRahmen) return;
+  vorschauMausRahmen = requestAnimationFrame(() => {
+    vorschauMausRahmen = 0;
+    if (reglerMausX === null) return;
+    reglerHinweisZeigen();
+    const rahmen = regler.getBoundingClientRect();
+    if (rahmen.width > 0) spulVorschauZeigen((reglerMausX - rahmen.left) / rahmen.width * bild.duration);
+  });
 });
 regler.addEventListener("pointerleave", () => {
   reglerMausX = null;
