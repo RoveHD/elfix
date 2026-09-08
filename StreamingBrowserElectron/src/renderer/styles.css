@@ -6373,6 +6373,27 @@ input[type="color"] {
 .raumqueue-status { min-height: 20px; margin-top: 10px; font-size: 13px; }
 .raumqueue-status.is-problem { color: var(--warning); }
 .raumqueue-list { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+
+/* Die drei Stimmen. Sie stehen als Gruppe zusammen, damit auf einen Blick
+   sichtbar ist, was noch zu vergeben ist: die eigene Stimme dieser Zeile ist
+   gefuellt, ein anderswo liegendes Gewicht bleibt blass. */
+.raumqueue-stimmen { display: flex; gap: 4px; }
+.stimme-knopf {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.stimme-knopf:hover:not(:disabled) { color: white; border-color: var(--accent); }
+.stimme-knopf.is-active { background: var(--accent); border-color: var(--accent); color: white; font-weight: 700; }
+.stimme-knopf.is-vergeben:not(.is-active) { opacity: 0.42; }
+.stimme-knopf:disabled { cursor: default; opacity: 0.38; }
 .raumqueue-item { justify-content: space-between; padding: 12px; border-radius: 12px; background: var(--panel-2); }
 .raumqueue-item-info { display: grid; gap: 3px; min-width: 0; }
 .raumqueue-item-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

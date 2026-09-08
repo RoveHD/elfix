@@ -1075,7 +1075,10 @@
     ytqueuePropose: (item, room) => sicherstellen().youtubeSenden(String(room || (item && item.room) || ytQueueRoom || ""),
       { type: "ytqueue:propose", item: youtubeQueueItem(item) }),
     ytqueueVote: (id, value, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
-      { type: "ytqueue:vote", id: String(id || ""), value: value !== false }),
+      // `value` ist ein Gewicht (3, 2 oder 1), `true` fuer die leichteste freie
+      // Stimme oder `false` zum Zuruecknehmen.
+      { type: "ytqueue:vote", id: String(id || ""),
+        value: value === false ? false : (Number(value) || true) }),
     ytqueueRemove: (id, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),
       { type: "ytqueue:remove", id: String(id || "") }),
     ytqueueAdvance: (expectedId, fromVideoId, room) => sicherstellen().youtubeSenden(String(room || ytQueueRoom || ""),

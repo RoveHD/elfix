@@ -88,7 +88,10 @@ function queueEintrag(roh) {
   sauber.proposedBy = nachrichtenText(roh.proposedBy, 40);
   sauber.proposedById = nachrichtenText(roh.proposedById, 64);
   sauber.proposedAt = nachrichtenZahl(roh.proposedAt, 0);
+  // `votes` ist die Summe der Gewichte, `voters` die Zahl der Personen.
   sauber.votes = Math.max(0, nachrichtenZahl(roh.votes, 0));
+  sauber.voters = Math.max(0, nachrichtenZahl(roh.voters, 0));
+  sauber.myVote = Math.max(0, Math.min(3, nachrichtenZahl(roh.myVote, 0)));
   sauber.voted = roh.voted === true;
   sauber.mine = roh.mine === true;
   return sauber.id ? sauber : null;
@@ -102,6 +105,10 @@ function queueStand(roh, room) {
     rev: Math.max(0, nachrichtenZahl(roh.rev, 0)),
     items: Array.isArray(roh.items) ? roh.items.map(queueEintrag).filter(Boolean).slice(0, 100) : [],
     selectedId: nachrichtenText(roh.selectedId, 64),
+    weights: Array.isArray(roh.weights)
+      ? roh.weights.map((wert) => nachrichtenZahl(wert, 0)).filter((wert) => wert > 0).slice(0, 5) : [],
+    freeWeights: Array.isArray(roh.freeWeights)
+      ? roh.freeWeights.map((wert) => nachrichtenZahl(wert, 0)).filter((wert) => wert > 0).slice(0, 5) : [],
     reason: nachrichtenText(roh.reason, 80),
     pending: pendingItem ? {
       startId: nachrichtenText(roh.pending.startId, 64), item: pendingItem,
@@ -668,8 +675,11 @@ class Watchparty {
     return this.senden({ type: "queue:propose", item });
   }
 
+  // `value` ist ein Gewicht (3, 2 oder 1), `true` fuer die leichteste freie
+  // Stimme oder `false` zum Zuruecknehmen.
   queueVote(id, value) {
-    return this.senden({ type: "queue:vote", id: String(id || ""), value: value !== false });
+    return this.senden({ type: "queue:vote", id: String(id || ""),
+      value: value === false ? false : (Number(value) || true) });
   }
 
   queueRemove(id) {

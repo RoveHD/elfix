@@ -355,7 +355,8 @@ function behandeln({ nachricht, raumcode, geraetId, name, konto, senden, sendenA
   }
   if (art === "ytqueue:vote") {
     if (!zustand.members.has(geraetId)) return true;
-    const ergebnis = zustand.queue.abstimmen(nachricht.id, nachricht.value !== false, actor);
+    const stimme = nachricht.value === false ? false : (Number(nachricht.value) || true);
+    const ergebnis = zustand.queue.abstimmen(nachricht.id, stimme, actor);
     if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
     else if (ergebnis.unchanged) queueStandAn(raumcode, geraetId);
     return true;

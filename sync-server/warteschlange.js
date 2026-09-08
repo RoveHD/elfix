@@ -3,11 +3,28 @@
 const crypto = require("crypto");
 
 const MAX_EINTRAEGE = 100;
+/*
+ * Jeder hat drei Stimmen, und sie wiegen verschieden: eine zaehlt drei, eine
+ * zwei, eine eins. Damit sagt eine Runde nicht nur, was sie sehen will,
+ * sondern auch, was ihr am wichtigsten ist - bei einer Stimme je Person
+ * standen drei Vorschlaege gleichauf, und die Reihenfolge entschied dann der
+ * Zufall des Zeitpunkts.
+ *
+ * Jedes Gewicht gibt es je Person genau einmal, und je Vorschlag hoechstens
+ * eine Stimme: wer sein Dreier woanders hinlegt, nimmt es dort weg.
+ */
+const GEWICHTE = [3, 2, 1];
 const MAX_STIMMEN = 200;
 const START_FRIST_MS = 60000;
 
 function text(wert, laenge) {
   return String(wert == null ? "" : wert).slice(0, laenge).trim();
+}
+
+/** Nur die drei erlaubten Gewichte; alles andere ist keine Stimme. */
+function gewichtLesen(wert) {
+  const zahl = Number(wert);
+  return GEWICHTE.includes(zahl) ? zahl : 0;
 }
 
 function akteurSaeubern(akteur) {
@@ -51,7 +68,11 @@ class AbstimmungsWarteschlange {
         const key = text(principal, 80);
         const sid = text(stimme?.id, 64);
         if (!key || !sid || stimmen.size >= MAX_STIMMEN) continue;
-        stimmen.set(key, { id: sid, name: text(stimme?.name, 40) || "Gerät", at: Number(stimme?.at) || 0 });
+        stimmen.set(key, { id: sid, name: text(stimme?.name, 40) || "Gerät",
+          at: Number(stimme?.at) || 0,
+          // Aeltere Ablagen kennen kein Gewicht. Ihre Stimmen zaehlen eins -
+          // genau das bedeuteten sie bisher.
+          gewicht: gewichtLesen(stimme?.gewicht) || 1 });
       }
       this.eintraege.push({
         id,
@@ -86,9 +107,17 @@ class AbstimmungsWarteschlange {
     };
   }
 
+  /** Was ein Vorschlag zusammengerechnet wiegt. */
+  punkte(eintrag) {
+    let summe = 0;
+    for (const stimme of eintrag.votes.values()) summe += gewichtLesen(stimme?.gewicht) || 1;
+    return summe;
+  }
+
   sortiert() {
     return this.eintraege.slice().sort((a, b) => (
-      b.votes.size - a.votes.size
+      this.punkte(b) - this.punkte(a)
+      || b.votes.size - a.votes.size
       || a.proposedAt - b.proposedAt
       || a.id.localeCompare(b.id)
     ));
@@ -106,7 +135,10 @@ class AbstimmungsWarteschlange {
       proposedBy: eintrag.proposedByName,
       proposedById: eintrag.proposedById,
       proposedAt: eintrag.proposedAt,
-      votes: eintrag.votes.size,
+      votes: this.punkte(eintrag),
+      voters: eintrag.votes.size,
+      // Was dieses Geraet hier liegen hat - 0 heisst: nichts.
+      myVote: akteur ? gewichtLesen(eintrag.votes.get(akteur.principal)?.gewicht) || 0 : 0,
       voted: Boolean(akteur && eintrag.votes.has(akteur.principal)),
       mine: Boolean(akteur && eintrag.proposedBy === akteur.principal)
     };
@@ -119,6 +151,12 @@ class AbstimmungsWarteschlange {
       rev: this.rev,
       items: sortiert.map((eintrag) => this.nachAussen(eintrag, actor)),
       selectedId: sortiert[0]?.id || "",
+      // Welche Gewichte dieses Geraet noch frei hat. Die Oberflaeche muss die
+      // Regel damit nicht selbst kennen.
+      weights: GEWICHTE.slice(),
+      freeWeights: actor ? GEWICHTE.filter((gewicht) => !this.eintraege
+        .some((eintrag) => gewichtLesen(eintrag.votes.get(actor.principal)?.gewicht) === gewicht))
+        : GEWICHTE.slice(),
       pending: this.pending ? {
         startId: this.pending.startId,
         item: this.nachAussen(this.pending.entry, actor),
@@ -137,31 +175,64 @@ class AbstimmungsWarteschlange {
     if (!actor || !daten || !dedupe) return { ok: false, reason: "invalid-item" };
     let eintrag = this.eintraege.find((item) => item.dedupe === dedupe);
     if (!eintrag && this.pending?.entry?.dedupe === dedupe) return { ok: false, reason: "already-starting" };
-    if (!eintrag) {
-      if (this.eintraege.length >= MAX_EINTRAEGE) return { ok: false, reason: "queue-full" };
-      eintrag = {
-        id: crypto.randomUUID(), dedupe, data: daten,
-        proposedBy: actor.principal, proposedById: actor.id, proposedByName: actor.name,
-        proposedAt: Date.now(), votes: new Map()
-      };
-      this.eintraege.push(eintrag);
-    }
-    if (eintrag.votes.has(actor.principal)) return { ok: true, id: eintrag.id, unchanged: true };
-    eintrag.votes.set(actor.principal, { id: actor.id, name: actor.name, at: Date.now() });
+    if (eintrag) return { ok: true, id: eintrag.id, unchanged: true };
+    if (this.eintraege.length >= MAX_EINTRAEGE) return { ok: false, reason: "queue-full" };
+    eintrag = {
+      id: crypto.randomUUID(), dedupe, data: daten,
+      proposedBy: actor.principal, proposedById: actor.id, proposedByName: actor.name,
+      proposedAt: Date.now(), votes: new Map()
+    };
+    this.eintraege.push(eintrag);
+    // Ein Vorschlag ist noch keine Stimme. Wer drei gewichtete Stimmen hat,
+    // soll selbst entscheiden, ob und wie schwer er den eigenen Vorschlag
+    // waehlt - vorher war die erste Stimme immer schon vergeben.
     this.geaendert("propose");
     return { ok: true, id: eintrag.id };
   }
 
+  /** Welche Gewichte dieses Geraet gerade nirgends liegen hat. */
+  freieGewichte(principal) {
+    return GEWICHTE.filter((gewicht) => !this.eintraege
+      .some((item) => gewichtLesen(item.votes.get(principal)?.gewicht) === gewicht));
+  }
+
+  /**
+   * Eine der drei Stimmen setzen oder zuruecknehmen.
+   *
+   * `wert` ist ein Gewicht (3, 2 oder 1) oder `false`. Jedes Gewicht liegt
+   * hoechstens einmal, und je Vorschlag zaehlt hoechstens eine Stimme je
+   * Person: ein Gewicht, das woanders lag, wandert mit.
+   */
   abstimmen(id, wert, akteur) {
     const actor = akteurSaeubern(akteur);
     const eintrag = this.eintraege.find((item) => item.id === text(id, 64));
     if (!actor || !eintrag) return { ok: false, reason: "not-found" };
-    const hat = eintrag.votes.has(actor.principal);
-    if ((wert === false && !hat) || (wert !== false && hat)) return { ok: true, unchanged: true };
-    if (wert === false) eintrag.votes.delete(actor.principal);
-    else eintrag.votes.set(actor.principal, { id: actor.id, name: actor.name, at: Date.now() });
+    const vorher = gewichtLesen(eintrag.votes.get(actor.principal)?.gewicht);
+    if (wert === false) {
+      if (!eintrag.votes.has(actor.principal)) return { ok: true, unchanged: true };
+      eintrag.votes.delete(actor.principal);
+      this.geaendert("vote");
+      return { ok: true };
+    }
+    // Ohne ausdrueckliches Gewicht gilt die leichteste freie Stimme. Damit
+    // bleibt ein schlichtes "dafuer" moeglich, ohne dass jemand rechnet.
+    const gewicht = gewichtLesen(wert) || this.freieGewichte(actor.principal).pop();
+    if (!gewicht) return { ok: false, reason: "no-votes-left" };
+    if (vorher === gewicht) return { ok: true, unchanged: true };
+    if (!eintrag.votes.has(actor.principal) && eintrag.votes.size >= MAX_STIMMEN) {
+      return { ok: false, reason: "too-many-votes" };
+    }
+    // Dasselbe Gewicht kann nicht zweimal liegen.
+    for (const anderer of this.eintraege) {
+      if (anderer !== eintrag
+        && gewichtLesen(anderer.votes.get(actor.principal)?.gewicht) === gewicht) {
+        anderer.votes.delete(actor.principal);
+      }
+    }
+    eintrag.votes.set(actor.principal,
+      { id: actor.id, name: actor.name, at: Date.now(), gewicht });
     this.geaendert("vote");
-    return { ok: true };
+    return { ok: true, gewicht };
   }
 
   entfernen(id, akteur) {
@@ -178,11 +249,15 @@ class AbstimmungsWarteschlange {
     const actor = akteurSaeubern(akteur);
     if (!actor) return { ok: false, reason: "identity-required" };
     if (this.pending) return { ok: false, reason: "already-pending" };
-    const gewaehlt = this.sortiert()[0];
-    if (!gewaehlt) return { ok: false, reason: "empty" };
-    if (!expectedId || gewaehlt.id !== text(expectedId, 64)) {
-      return { ok: false, reason: "selection-changed" };
-    }
+    // Gestartet wird der Vorschlag, den der Knopf nennt - nicht zwingend der
+    // oben stehende. Die Abstimmung ordnet die Liste; sie soll aber nicht
+    // verbieten, bewusst etwas anderes zu waehlen.
+    if (!this.eintraege.length) return { ok: false, reason: "empty" };
+    const gesucht = text(expectedId, 64);
+    const gewaehlt = gesucht
+      ? this.eintraege.find((item) => item.id === gesucht)
+      : this.sortiert()[0];
+    if (!gewaehlt) return { ok: false, reason: "selection-changed" };
     this.eintraege = this.eintraege.filter((item) => item !== gewaehlt);
     const at = Date.now();
     const targets = new Set(Array.from(zielIds || []).map((wert) => text(wert, 64)).filter(Boolean));

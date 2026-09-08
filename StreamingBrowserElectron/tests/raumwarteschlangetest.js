@@ -35,15 +35,53 @@ function queue(optionen = {}) {
     "dasselbe Konto durfte nicht doppelt vorschlagen/abstimmen");
   assert.equal(q.rev, revNachVorschlag, "idempotenter Vorschlag erhoehte die Revision");
   const id = q.zustand(a).selectedId;
+  // Ein Vorschlag ist noch keine Stimme: wer drei gewichtete Stimmen hat, soll
+  // selbst entscheiden, ob und wie schwer er den eigenen Vorschlag waehlt.
+  assert.equal(q.zustand(a).items[0].votes, 0, "der Vorschlag vergab schon eine Stimme");
+  assert.equal(q.zustand(a).items[0].myVote, 0);
+  assert.equal(q.zustand(a).items[0].voted, false);
+
   assert.equal(q.abstimmen(id, true, b).ok, true);
-  assert.equal(q.zustand(a).items[0].votes, 2);
-  assert.equal(q.zustand(a).items[0].voted, true);
+  // Ohne ausdrueckliches Gewicht gilt die leichteste freie Stimme.
+  assert.equal(q.zustand(b).items[0].myVote, 1);
+  assert.equal(q.zustand(a).items[0].votes, 1);
+  assert.equal(q.zustand(a).items[0].voters, 1);
+  assert.equal(q.zustand(a).items[0].voted, false, "die Stimme des anderen war nicht die eigene");
   assert.equal(q.zustand(b).items[0].mine, false);
   assert.equal(JSON.stringify(q.zustand(a)).includes("konto-a"), false,
     "Kontofingerabdruck wurde nach aussen getragen");
   const revNachStimme = q.rev;
-  assert.equal(q.abstimmen(id, true, b).unchanged, true);
+  assert.equal(q.abstimmen(id, 1, b).unchanged, true);
   assert.equal(q.rev, revNachStimme, "idempotente Stimme erhoehte die Revision");
+
+  // Drei Gewichte je Person, jedes genau einmal, je Vorschlag hoechstens eines.
+  assert.deepEqual(q.zustand(b).freeWeights, [3, 2], "die vergebene Eins galt noch als frei");
+  assert.equal(q.abstimmen(id, 3, b).gewicht, 3, "das Gewicht liess sich nicht anheben");
+  assert.equal(q.zustand(a).items[0].votes, 3, "das alte Gewicht blieb zusaetzlich liegen");
+  assert.deepEqual(q.zustand(b).freeWeights, [2, 1]);
+
+  assert.equal(q.vorschlagen(item("zwei"), a).ok, true);
+  const zweiterId = q.zustand(a).items.find((eintrag) => eintrag.id !== id).id;
+  assert.equal(q.abstimmen(zweiterId, 3, b).gewicht, 3);
+  const nachUmzug = q.zustand(b);
+  assert.equal(nachUmzug.items.find((eintrag) => eintrag.id === id).votes, 0,
+    "das Dreier lag danach doppelt");
+  assert.equal(nachUmzug.items.find((eintrag) => eintrag.id === zweiterId).votes, 3);
+  assert.equal(nachUmzug.items[0].id, zweiterId, "die Liste ordnete nicht nach Punkten");
+
+  // Alle drei vergeben, dann ist Schluss.
+  assert.equal(q.abstimmen(id, 2, b).gewicht, 2);
+  assert.equal(q.abstimmen(id, 1, b).gewicht, 1, "je Vorschlag zaehlt eine Stimme, das Gewicht wandert");
+  assert.equal(q.zustand(b).items.find((eintrag) => eintrag.id === id).votes, 1);
+  assert.deepEqual(q.zustand(b).freeWeights, [2]);
+  assert.equal(q.abstimmen(id, false, b).ok, true);
+  assert.deepEqual(q.zustand(b).freeWeights, [2, 1]);
+
+  // Und zurueck auf einen Vorschlag mit einer Stimme, damit die Faelle darunter
+  // von derselben Ausgangslage ausgehen wie bisher.
+  assert.equal(q.entfernen(zweiterId, a).ok, true);
+  assert.equal(q.abstimmen(id, 1, b).gewicht, 1);
+  assert.equal(q.zustand(a).selectedId, id);
 
   assert.equal(q.starten("falsch", { fromKey: "alt" }, new Set(["a", "b"]), a).reason,
     "selection-changed");

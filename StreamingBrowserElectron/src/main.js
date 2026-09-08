@@ -2485,7 +2485,7 @@ async function raumQueueBefehl(room, mode, command, payload = {}) {
   if (mode === "youtube" && (youtubeParty.raum !== code || !youtubeParty.beigetreten)) return { ok: false, error: "Tritt zuerst der YouTube-Watchparty dieses Raums bei." };
   if (command === "advance") queueManuell.set(code + "|" + mode, { bis: Date.now() + 10000, itemId: daten.expectedId, fromKey: daten.fromKey || "" });
   const args = command === "propose" ? [daten.item]
-    : command === "vote" ? [daten.id, daten.value === true]
+    : command === "vote" ? [daten.id, daten.value === false ? false : (Number(daten.value) || true)]
       : command === "remove" ? [daten.id] : [daten.expectedId, mode === "normal" ? daten.fromKey : daten.fromVideoId];
   if (mode === "normal") args.push(code);
   const method = { propose: "queuePropose", vote: "queueVote", remove: "queueRemove", advance: "queueAdvance" }[command];

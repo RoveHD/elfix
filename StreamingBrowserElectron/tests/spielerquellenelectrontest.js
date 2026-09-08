@@ -97,7 +97,10 @@ app.whenReady().then(async () => {
   pruefe("Filme haben einen eigenen Reiter", await lesen("[...staffelReiter.children].map(x=>x.textContent)"), ["Filme", "Staffel 1"]);
   pruefe("Episodentitel erscheinen im Player", await lesen("folgenListe.textContent.includes('Die erste Folge')"), true);
   await lesen("staffelOeffnen(0)");
-  pruefe("Film-Reiter laedt seine Eintraege mit Filmnummer und Titel", await lesen("folgenListe.textContent"), "Film 1Der Film");
+  // Der Folgenknopf und nicht die ganze Zeile: daneben steht der Haken, mit
+  // dem sich ein Eintrag von Hand als gesehen markieren laesst.
+  pruefe("Film-Reiter laedt seine Eintraege mit Filmnummer und Titel",
+    await lesen("folgenListe.querySelector('button.folge').textContent"), "Film 1Der Film");
   await lesen("folgenPanel.hidden=true");
   await lesen("bild.play().then(()=>schichtenZeigen())");
   await warten(() => lesen("leiste.classList.contains('weg')"));

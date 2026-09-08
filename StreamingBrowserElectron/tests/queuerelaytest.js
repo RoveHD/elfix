@@ -125,19 +125,44 @@ async function propose(who, item) {
     let at = a2.mark();
     a2.send({ type: "queue:propose", item: first });
     const duplicateProposal = await a2.wait(queueState, "idempotent proposal", 1600, at);
-    check("same account cannot propose an item twice", duplicateProposal?.items.length === 1 && duplicateProposal.items[0].votes === 1);
+    // A proposal is not a vote: everyone spends their three weighted votes
+    // deliberately, including on their own suggestion.
+    check("same account cannot propose an item twice", duplicateProposal?.items.length === 1 && duplicateProposal.items[0].votes === 0);
+    // Wait for the state that actually carries the change, not for the next
+    // one to come along: an idempotent proposal answers with a state of its
+    // own, and it can arrive after the mark for the vote below.
+    const queueTally = (points, mine) => message => queueState(message)
+      && message.items?.[0]?.votes === points && message.items?.[0]?.myVote === mine;
     at = a2.mark();
     a2.send({ type: "queue:vote", id, value: true });
-    const sameAccountVote = await a2.wait(queueState, "same-account vote", 1600, at);
-    check("one account has only one vote", sameAccountVote?.items[0]?.votes === 1 && sameAccountVote?.items[0]?.voted === true);
+    const sameAccountVote = await a2.wait(queueTally(1, 1), "same-account vote", 1600, at);
+    check("one account has only one vote",
+      sameAccountVote?.items[0]?.votes === 1 && sameAccountVote?.items[0]?.voted === true,
+      JSON.stringify(sameAccountVote?.items?.[0] || a2.inbox.slice(at).map(m => m.type)));
+    check("a plain vote takes the lightest free weight", sameAccountVote?.items[0]?.myVote === 1
+      && JSON.stringify(sameAccountVote?.freeWeights) === JSON.stringify([3, 2]),
+    JSON.stringify(sameAccountVote?.freeWeights));
     at = b.mark();
     b.send({ type: "queue:vote", id, value: true });
-    const secondVote = await b.wait(queueState, "second voter", 1600, at);
+    const secondVote = await b.wait(queueTally(2, 1), "second voter", 1600, at);
     check("independent account adds exactly one vote", secondVote?.items[0]?.votes === 2);
     at = b.mark();
     b.send({ type: "queue:vote", id, value: true });
-    const repeatedVote = await b.wait(queueState, "idempotent vote", 1600, at);
-    check("repeated vote is idempotent", repeatedVote?.items[0]?.votes === 2);
+    b.send({ type: "chat", text: "queue-vote-marker" });
+    await b.wait(message => message.type === "chat" && message.text === "queue-vote-marker",
+      "order marker after the repeated vote", 1600, at);
+    check("repeated vote is idempotent",
+      !b.inbox.slice(at).some(message => queueState(message) && message.items?.[0]?.votes !== 2));
+    // The weight travels over the wire, and moving it does not leave the old
+    // one behind: three weights per person, each of them exactly once.
+    at = b.mark();
+    b.send({ type: "queue:vote", id, value: 3 });
+    const heavyVote = await b.wait(queueTally(4, 3), "weighted vote", 1600, at);
+    check("a weighted vote counts three and replaces the light one",
+      heavyVote?.items[0]?.votes === 4 && heavyVote?.items[0]?.myVote === 3
+      && heavyVote?.items[0]?.voters === 2
+      && JSON.stringify(heavyVote?.freeWeights) === JSON.stringify([2, 1]),
+    JSON.stringify(heavyVote?.items?.[0]));
 
     at = a.mark();
     a.send({ type: "queue:remove", id });

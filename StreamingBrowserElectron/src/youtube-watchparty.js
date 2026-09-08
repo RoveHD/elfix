@@ -334,7 +334,8 @@ class YoutubeWatchparty {
 
   queueVote(id, value) {
     return Boolean(this.raum && this.verbunden && this.beigetreten
-      && this.hinaus(this.raum, { type: "ytqueue:vote", id: String(id || ""), value: value !== false }));
+      && this.hinaus(this.raum, { type: "ytqueue:vote", id: String(id || ""),
+        value: value === false ? false : (Number(value) || true) }));
   }
 
   queueRemove(id) {

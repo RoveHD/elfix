@@ -1826,7 +1826,12 @@ wss.on("connection", (socket) => {
     }
 
     if (nachricht.type === "queue:vote") {
-      const ergebnis = raum.warteschlange.abstimmen(nachricht.id, nachricht.value !== false, akteurFuer(socket));
+      // `value` traegt jetzt das Gewicht (3, 2 oder 1) oder `false`. Ein
+      // schlichtes `true` bleibt gueltig und bedeutet die leichteste freie
+      // Stimme - so sprechen aeltere Clients weiter mit.
+      const stimme = nachricht.value === false ? false
+        : (Number(nachricht.value) || true);
+      const ergebnis = raum.warteschlange.abstimmen(nachricht.id, stimme, akteurFuer(socket));
       if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
       else if (ergebnis.unchanged) warteschlangeAnSocket(socket);
       return;

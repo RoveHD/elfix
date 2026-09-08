@@ -112,18 +112,62 @@
       list.replaceChildren(...(Array.isArray(state?.items) ? state.items.map(queueItem) : []));
     }
 
+    /*
+     * Eine Zeile der Warteschlange.
+     *
+     * Jeder hat drei Stimmen mit verschiedenem Gewicht - 3, 2 und 1. Sie
+     * stehen als drei Knoepfe nebeneinander, damit ohne Erklaerung sichtbar
+     * ist, was man noch zu vergeben hat: der eigene Punktestand dieser Zeile
+     * ist gedrueckt, ein anderswo vergebenes Gewicht ist ausgegraut.
+     */
     function queueItem(item) {
+      const gesperrt = Boolean(state?.pending) || state?.connected === false || state?.supported === false;
       const row = document.createElement("li"); row.className = "raumqueue-item";
       const info = document.createElement("div"); info.className = "raumqueue-item-info";
       const name = document.createElement("strong"); name.textContent = text(item?.title || item?.url || "Unbenannter Vorschlag");
-      const votes = document.createElement("small"); votes.textContent = `${Number(item?.votes) || 0} Stimme${Number(item?.votes) === 1 ? "" : "n"}`;
+      const punkte = Number(item?.votes) || 0;
+      const leute = Number(item?.voters) || 0;
+      const votes = document.createElement("small");
+      votes.textContent = punkte === 0 ? "Noch keine Stimme"
+        : `${punkte} Punkt${punkte === 1 ? "" : "e"} von ${leute} Person${leute === 1 ? "" : "en"}`;
       info.append(name, votes);
+
       const actions = document.createElement("div"); actions.className = "raumqueue-actions";
-      const vote = document.createElement("button"); vote.type = "button"; vote.className = "soft-action"; vote.textContent = item?.voted ? "Stimme zurücknehmen" : "Dafür stimmen";
-      vote.disabled = !item?.id || Boolean(state?.pending) || state?.connected === false || state?.supported === false; vote.addEventListener("click", () => command("vote", { id: item.id, value: !item.voted }));
-      actions.append(vote);
-      if (item?.mine) { const remove = document.createElement("button"); remove.type = "button"; remove.className = "text-action"; remove.textContent = "Meinen Vorschlag entfernen"; remove.disabled = Boolean(state?.pending) || state?.connected === false || state?.supported === false; remove.addEventListener("click", () => command("remove", { id: item.id })); actions.append(remove); }
-      if (item?.id && item.id === state?.selectedId) { const start = document.createElement("button"); start.type = "button"; start.className = "primary-action"; start.textContent = "Jetzt starten"; start.disabled = Boolean(state?.pending) || state?.connected === false || state?.supported === false; start.addEventListener("click", () => command("advance", { expectedId: item.id, expectedRev: state.rev })); actions.append(start); }
+      const meine = Number(item?.myVote) || 0;
+      const frei = Array.isArray(state?.freeWeights) ? state.freeWeights : [];
+      const gewichte = Array.isArray(state?.weights) && state.weights.length ? state.weights : [3, 2, 1];
+      const stimmen = document.createElement("div"); stimmen.className = "raumqueue-stimmen";
+      stimmen.setAttribute("role", "group");
+      stimmen.setAttribute("aria-label", "Stimme vergeben");
+      for (const gewicht of gewichte) {
+        const knopf = document.createElement("button");
+        knopf.type = "button";
+        knopf.className = meine === gewicht ? "stimme-knopf is-active" : "stimme-knopf";
+        knopf.textContent = String(gewicht);
+        const vergeben = meine !== gewicht && !frei.includes(gewicht);
+        knopf.title = meine === gewicht ? `Stimme mit ${gewicht} zurücknehmen`
+          : vergeben ? `Deine ${gewicht}er-Stimme liegt auf einem anderen Vorschlag - hierher verschieben`
+            : `Mit ${gewicht} stimmen`;
+        knopf.setAttribute("aria-label", knopf.title);
+        knopf.setAttribute("aria-pressed", meine === gewicht ? "true" : "false");
+        knopf.classList.toggle("is-vergeben", vergeben);
+        knopf.disabled = !item?.id || gesperrt;
+        knopf.addEventListener("click", () => command("vote",
+          { id: item.id, value: meine === gewicht ? false : gewicht }));
+        stimmen.append(knopf);
+      }
+      actions.append(stimmen);
+
+      if (item?.mine) { const remove = document.createElement("button"); remove.type = "button"; remove.className = "text-action"; remove.textContent = "Meinen Vorschlag entfernen"; remove.disabled = gesperrt; remove.addEventListener("click", () => command("remove", { id: item.id })); actions.append(remove); }
+      // Starten darf man jeden Vorschlag. Die Abstimmung ordnet die Liste; sie
+      // soll nicht verbieten, bewusst etwas anderes zu waehlen.
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = item?.id && item.id === state?.selectedId ? "primary-action" : "soft-action";
+      start.textContent = "Jetzt starten";
+      start.disabled = !item?.id || gesperrt;
+      start.addEventListener("click", () => command("advance", { expectedId: item.id, expectedRev: state.rev }));
+      actions.append(start);
       row.append(info, actions); return row;
     }
 
