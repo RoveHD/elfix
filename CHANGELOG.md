@@ -3,6 +3,25 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.28 — 9. September 2026
+
+- Der Play-Knopf geht nach einem Folgenwechsel wieder. Er stand auf Play,
+  obwohl pausiert war, und liess sich nicht druecken. Wer bei der
+  Startverabredung absagt, gehoert nicht mehr dazu - bekam danach aber gar
+  nichts mehr, weder den gemeinsamen Start noch eine Freigabe. Sein Player
+  wartete weiter, und solange er wartet, ist die Bedienung gesperrt.
+- Ein Absagender bekommt jetzt dieselbe Freigabe wie beim Fristablauf. Und sie
+  kommt auch an: sie traegt die Folge der Runde, und wer noch bei der alten
+  steht - genau der Absagende - fiel bisher durch die Folgenpruefung.
+- Am Gluecksrad sitzt der Zeiger wieder auf dem Rand. Er war in festen Pixeln
+  gebaut, die Scheibe waechst beim Drehen aber - die Spitze schwebte darueber.
+  Er misst jetzt in Anteilen der Buehne und passt in jeder Groesse.
+- Und es tickt zur Linie. Der Ton wurde angesetzt, wenn die Kante schon da war,
+  und kam um die Puffer der Tonausgabe zu spaet. Vorgehalten wird jetzt um
+  genau die gemessene Verzoegerung; der Anschlag des Zeigers laeuft nicht mit
+  vor, der gehoert zum Bild.
+- Geprueft mit der vollstaendigen Suite einschliesslich Relay.
+
 ## 2.0.27 — 9. September 2026
 
 - Niemand haelt die Runde mehr neunzig Sekunden fest. Wechselte ein Gast die
