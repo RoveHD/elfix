@@ -2692,17 +2692,25 @@ wss.on("connection", (socket) => {
           vorher.episode === eintrag.episode
           && (!eintrag.season || !vorher.season || vorher.season === eintrag.season)
         ));
-      //   - Und niemand, solange eine Startverabredung offen ist. Dann hat
-      //     die Runde schon entschieden, wohin es geht, und wer noch laedt,
-      //     traegt im Herzschlag weiter die alte Folge. Der Fuehrende
-      //     ueberschrieb damit im Sekundentakt das Ziel der Schranke: die
-      //     Karte sprang auf die neue Folge und zweihundert Millisekunden
-      //     spaeter zurueck, der Gast stand allein bei der neuen, und der
-      //     gemeinsame Start galt der alten. Waehrend die Schranke offen ist,
-      //     entscheidet die Schranke - genau wie der Nachziehtakt dort schon
-      //     die Finger stillhaelt.
-      if (folge && !eintrag.sync && (staffelGeaendert || folge !== eintrag.episode)
-        && (socket.geraetId === hostVorher || eigenerWechsel)) {
+      //   - Und wer gar nicht gewechselt hat, zieht auch niemanden. Das galt
+      //     bisher nur fuer die anderen: dem Host genuegte es, dass die Runde
+      //     woanders stand als er - ob er selbst etwas getan hatte, wurde nie
+      //     gefragt. Damit machte sein Herzschlag jeden fremden Wechsel wieder
+      //     rueckgaengig, solange er noch auf der alten Seite sass. Waehrend
+      //     einer Startverabredung sitzt er genau dort: er laedt die neue
+      //     Folge, er ist Teil der Schranke, und sein Herzschlag traegt im
+      //     Sekundentakt weiter die alte. Gemessen an der echten Runde sprang
+      //     die Karte auf die neue Folge und zweihundert Millisekunden spaeter
+      //     zurueck; der Gast stand allein bei der neuen, und der gemeinsame
+      //     Start galt der alten.
+      //
+      //     Beobachtet wird also ein Wechsel, nicht ein Unterschied. Fuer alle
+      //     gleich - der Host fuehrt die Runde, er korrigiert sie nicht.
+      const hostWechsel = socket.geraetId === hostVorher
+        && Boolean(vorher && vorher.episode)
+        && (staffelGeaendert || folgeGeaendert);
+      if (folge && (staffelGeaendert || folge !== eintrag.episode)
+        && (hostWechsel || eigenerWechsel)) {
         eintrag.episode = folge;
         eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
         const adresse = httpAdresse(nachricht.url);

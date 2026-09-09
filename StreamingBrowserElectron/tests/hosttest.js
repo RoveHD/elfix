@@ -203,14 +203,18 @@ const hostVon = (c) => c.zustand?.hostName || "";
     G.zustand?.episode === 12, `Runde steht auf Folge ${G.zustand?.episode}`);
   G.zu();
   await schlaf(200);
-  // Danach meldet A wieder die Raum-Folge, damit der Ablauftest sauber startet.
-  schlagen(A, 9, { sitzung: "geraet-a-e9" });
+  // Danach geht A auf die Folge der Runde, damit der Ablauftest sauber
+  // startet. Hier stand einmal Folge 9 - die Runde steht aber bei 12, und A
+  // zog sie mit seinem Herzschlag stillschweigend zurueck. Das tut ein Host
+  // nicht mehr: er fuehrt die Runde, er korrigiert sie nicht. Wer zur Runde
+  // aufschliessen will, geht selbst dorthin.
+  schlagen(A, 12, { sitzung: "geraet-a-e12" });
   await schlaf(200);
 
   // --- Host weitergeben ---------------------------------------------------
   const E = client("E", "geraet-e");
   await beitreten(E);
-  schlagen(E, 9, { sitzung: "geraet-e-e9" });
+  schlagen(E, 12, { sitzung: "geraet-e-e12" });
   await schlaf(400);
   pruefe("Vor der Uebergabe fuehrt A", hostVon(E) === "A", `Host=${hostVon(E) || "(keiner)"}`);
 
@@ -232,7 +236,7 @@ const hostVon = (c) => c.zustand?.hostName || "";
     `Host=${hostVon(E) || "(keiner)"}`);
   E.zu();
   await schlaf(200);
-  schlagen(A, 9, { sitzung: "geraet-a-e9" });
+  schlagen(A, 12, { sitzung: "geraet-a-e12" });
   await schlaf(300);
 
   // --- Niemand mehr am Player: kein Host, aber der Stand bleibt ----------
