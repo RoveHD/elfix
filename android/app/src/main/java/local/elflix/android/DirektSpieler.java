@@ -794,6 +794,8 @@ final class DirektSpieler {
         mitte.addView(kasten, kastenLage);
 
         weiterKarte = new LinearLayout(activity);
+        // Damit die Geraetepruefung sie findet und ihre Lage messen kann.
+        weiterKarte.setTag("weiterKarte");
         weiterKarte.setOrientation(LinearLayout.VERTICAL);
         weiterKarte.setPadding(dp(16), dp(12), dp(18), dp(13));
         weiterKarte.setBackground(flaeche(KARTE, 12, RAHMEN, 1));
@@ -991,7 +993,11 @@ final class DirektSpieler {
         skip.setTag("intro");
         skip.setVisibility(View.GONE);
         LinearLayout.LayoutParams skipLage = new LinearLayout.LayoutParams(-2, -2);
-        skipLage.gravity = Gravity.END;
+        // Links, nicht rechts. Die Karte "Naechste Folge" sitzt unten rechts
+        // ueber der Leiste; stand der Knopf ebenfalls dort, lagen im Abspann
+        // beide uebereinander und der obere verdeckte den unteren. Das
+        // betrifft gerade den Abspann-Knopf, denn er erscheint genau dann.
+        skipLage.gravity = Gravity.START;
         skipLage.bottomMargin = dp(4);
         spalte.addView(skip, 0, skipLage);
 

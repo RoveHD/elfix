@@ -300,6 +300,22 @@ function steuerungEntscheiden(nachricht, lage = {}) {
     return { tun: "navigate", merken, genau: false, warten: false, nichtSpringen: false, grund: "folgenwechsel" };
   }
 
+  /*
+   * Und die Vorbereitung eines Folgenwechsels genauso.
+   *
+   * Sie traegt die Kennung der *neuen* Folge. Stand sie hinter der
+   * Folgenpruefung, fiel sie bei genau dem durch, den sie holen soll: wer noch
+   * bei der alten Folge sitzt, hat eine andere Kennung und bekam "andere
+   * folge". Auf dem Rechner blieb das verborgen, weil er seine offene Folge
+   * hier gar nicht mitgibt und die Pruefung dann durchlaesst - auf Android mit
+   * echter Folgenangabe wurde jeder Gast beim Folgenwechsel stehengelassen.
+   */
+  if (aktion === "syncprepare" && String(nachricht.reason || "") === "episode-change"
+    && nachricht.url) {
+    return { tun: "syncprepare", merken, genau: true, warten: true,
+      nichtSpringen: false, grund: "folgenwechsel" };
+  }
+
   // Ab hier zaehlt nur, wer dieselbe Folge offen hat - ueber die Adresse und
   // zusaetzlich ueber die Folgenangabe der Nachricht. Die Adresse allein
   // reicht nicht: ein Ereignis der vorigen Folge kann dieselbe Serienadresse

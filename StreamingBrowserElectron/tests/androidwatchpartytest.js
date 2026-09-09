@@ -580,6 +580,24 @@ async function startSchranke(pc, tv, key, offen) {
   await schlaf(200);
 
   const fehler = pruefungen.filter((ok) => !ok).length;
+  /*
+   * Das Intro ueberspringen, vom Gast aus - ueber den Android-Weg.
+   *
+   * Der Player meldet die Tat als Zeile an die Bruecke, genau wie einen Sprung
+   * oder eine Pause. Sie muss dort als eigene Aktion ankommen und nicht als
+   * "seek": ein Sprung eines Gastes verwirft das Relay, ein Ueberspringen
+   * nimmt es an und macht daraus die gemeinsame Startverabredung. Fiel `skip`
+   * durch die Zeilenerkennung, passierte beim Gast schlicht nichts.
+   */
+  {
+    const gelesen = wpSync.aktionLesen(`${wpSync.MELDE_AKTION}skip:92.00`);
+    pruefe("Die Bruecke erkennt das Ueberspringen als eigene Aktion",
+      Boolean(gelesen) && gelesen.aktion === "skip" && Math.abs(gelesen.position - 92) < 0.01,
+      gelesen ? `${gelesen.aktion}@${gelesen.position}` : "nicht erkannt");
+    pruefe("Und laesst weiterhin nur die bekannten Aktionen durch",
+      wpSync.aktionLesen(`${wpSync.MELDE_AKTION}unsinn:1.00`) === null);
+  }
+
   console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
   process.exit(fehler ? 1 : 0);
 })().catch((fehler) => {

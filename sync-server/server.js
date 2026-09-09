@@ -1266,6 +1266,20 @@ function aktuelleHostId(raumcode, eintrag) {
     // veraltetem Stand gilt weiterhin die normale Aktivitaetsfrist.
     if ((!wert || !istVerbunden(raumcode, gehalten))
       && Date.now() - (eintrag.hostGesehen || 0) <= HOST_GNADE_MS) return gehalten;
+    /*
+     * Waehrend eines Folgenwechsels schweigt jeder.
+     *
+     * Der Player ist zu, die neue Quelle wird aufgeloest und gepuffert - das
+     * dauert auf einem Telefon leicht laenger als die Frist, nach der ein
+     * Stand als alt gilt. Wer gerade laedt, ist aber nicht weg, und die Rolle
+     * darf dabei nicht weiterwandern: sonst fuehrt nach jedem Wechsel ein
+     * anderer, blass weil sein Hoster schneller war. Solange die Schranke
+     * offen ist und der Bisherige verbunden bleibt, bleibt er Host.
+     */
+    if (eintrag.sync && istVerbunden(raumcode, gehalten)) {
+      eintrag.hostGesehen = Date.now();
+      return gehalten;
+    }
   }
   const gewaehlt = hostFuerFolge(raumcode, eintrag, eintrag.season, eintrag.episode);
   if (!gewaehlt) return "";

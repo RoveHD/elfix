@@ -359,6 +359,66 @@ async function absageWaehrendBarriere() {
   }
 }
 
+// 7) Derselbe Kreis, neue Folge: der Host bleibt, wer er war.
+//
+//    Gemeldet aus einer laufenden Runde. Der Aufenthalt in einer Folge faengt
+//    beim Wechsel neu an - danach richtet sich, wer fuehrt. Solange dieselben
+//    Leute dabei sind, darf das die Rolle aber nicht weiterreichen: sonst
+//    fuehrt nach jedem Wechsel ein anderer, ohne dass jemand etwas getan hat.
+async function hostBleibtUeberDenWechsel() {
+  const raum = "barrier-start-host";
+  const key = "serie:barrier-start-host";
+  const host = client("Host Bleibt");
+  const gast = client("Gast Bleibt");
+  try {
+    const hostBeitritt = await host.verbinden(raum);
+    const gastBeitritt = await gast.verbinden(raum);
+    await rundeAufbauen(raum, key, [host, gast]);
+
+    // Wer die Rolle bekommt, haengt daran, wessen erster Stand zuerst
+    // ankommt - und das ist zwischen zwei Verbindungen ein Rennen. Geprueft
+    // wird deshalb nicht, wer fuehrt, sondern dass es derselbe bleibt.
+    const vorher = await host.warten(0, (m) => m.type === "state"
+      && m.shared?.find((eintrag) => eintrag.key === key)?.hostId, "die erste Hostrolle");
+    const hostId = vorher.shared.find((eintrag) => eintrag.key === key).hostId;
+    pruefen([hostBeitritt.you, gastBeitritt.you].includes(hostId),
+      `Die Rolle liegt bei niemandem aus der Runde: ${hostId}`);
+
+    for (let runde = 0; runde < 2; runde += 1) {
+      const { syncId, marken } = await folgeWechseln(key, [host, gast]);
+      host.senden({ type: "syncready", key, syncId });
+      gast.senden({ type: "syncready", key, syncId });
+      await host.warten(marken[0], (m) => m.type === "syncstart" && m.syncId === syncId,
+        `Start nach Wechsel ${runde + 1}`);
+      // Beide melden sich in der neuen Folge - der Gast zuerst. Genau das ist
+      // der Fall, in dem die Rolle frueher weiterwanderte.
+      const vorStand = host.marke();
+      gast.senden({ type: "here", key, position: 0, paused: true,
+        season: 1, episode: 2, playerSessionId: "Gast Bleibt-player" });
+      host.senden({ type: "here", key, position: 0, paused: true,
+        season: 1, episode: 2, playerSessionId: "Host Bleibt-player" });
+      const danach = await host.warten(vorStand, (m) => m.type === "state"
+        && m.shared?.find((eintrag) => eintrag.key === key)?.hostId, "die Hostrolle danach");
+      pruefen(danach.shared.find((eintrag) => eintrag.key === key).hostId === hostId,
+        `Nach Wechsel ${runde + 1} fuehrt jemand anderes`);
+      // Zurueck auf Folge 1, damit der zweite Durchgang wieder wechseln kann.
+      host.senden({ type: "control", key, action: "navigate", position: 0, url: URL1 });
+      const zurueck = await host.warten(host.marke() - 1,
+        (m) => m.type === "syncprepare" && m.reason === "episode-change", "Rueckweg");
+      host.senden({ type: "syncready", key, syncId: zurueck.syncId });
+      gast.senden({ type: "syncready", key, syncId: zurueck.syncId });
+      await host.warten(0, (m) => m.type === "syncstart" && m.syncId === zurueck.syncId, "Rueckstart");
+      for (const geraet of [host, gast]) {
+        geraet.senden({ type: "here", key, position: 0, paused: true,
+          season: 1, episode: 1, playerSessionId: `${geraet.name}-player` });
+      }
+    }
+  } finally {
+    host.schliessen();
+    gast.schliessen();
+  }
+}
+
 (async () => {
   await zweiTeilnehmer();
   await letzterReadyStartet();
@@ -366,6 +426,7 @@ async function absageWaehrendBarriere() {
   await abbruchWaehrendBarriere();
   await mitgliedOhnePlayer();
   await absageWaehrendBarriere();
+  await hostBleibtUeberDenWechsel();
   console.log(`${bestanden}/${bestanden} bestanden `
     + "(Ready-Barriere: letzter Ready startet, genau einmal, Reconnect, "
     + "Mitglied ohne Player und Absage haengen nicht)");

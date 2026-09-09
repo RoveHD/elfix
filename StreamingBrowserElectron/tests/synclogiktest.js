@@ -10,6 +10,7 @@ const {
   driftEntscheiden,
   istVeraltet,
   versatzAusProben,
+  steuerungEntscheiden,
   alsQuelltext
 } = require("../src/watchparty-sync");
 
@@ -248,6 +249,45 @@ pruefe("6c. Ohne Proben gibt es keinen Versatz",
     "im Player laeuft dieselbe Logik");
   pruefe("7b. Und bringt keine Abhaengigkeit von draussen mit",
     !/require\(|module\./.test(quelle), "kein require, kein module");
+}
+
+/*
+ * Der Folgenwechsel erreicht den, der noch bei der alten Folge sitzt.
+ *
+ * Gemeldet vom Telefon in einer laufenden Runde, im Protokoll als
+ * "Watchparty-Befehl verworfen: andere folge". Die Vorbereitung eines
+ * Folgenwechsels traegt die Kennung der *neuen* Folge; stand sie hinter der
+ * Folgenpruefung, fiel sie bei genau dem durch, den sie holen soll.
+ *
+ * Auf dem Rechner blieb das verborgen: er gibt seine offene Folge hier gar
+ * nicht mit, und ohne sie laesst die Pruefung alles durch. Deshalb steht in
+ * dieser Pruefung eine echte Folgenangabe - so, wie Android sie mitgibt.
+ */
+{
+  const alteFolge = { season: 1, episode: 6 };
+  const wechsel = {
+    action: "syncprepare", reason: "episode-change", episodeId: "s1e7",
+    url: "https://aniworld.to/anime/stream/x/staffel-1/episode-7",
+    position: 0, timestamp: 1000, sequenceId: 10
+  };
+  const urteil = steuerungEntscheiden(wechsel, { offen: alteFolge, binHost: false });
+  pruefe("Ein Folgenwechsel erreicht auch den, der noch bei der alten Folge steht",
+    urteil.tun === "syncprepare", `${urteil.tun} (${urteil.grund})`);
+
+  // Ohne Folgenwechsel bleibt die Regel, wie sie war: wer eine Folge
+  // zurueckliegt, wird nicht mitpausiert.
+  const fremdePause = {
+    action: "pause", episodeId: "s1e7", position: 30, timestamp: 2000, sequenceId: 11
+  };
+  pruefe("Eine Pause aus einer anderen Folge bleibt weiterhin draussen",
+    steuerungEntscheiden(fremdePause, { offen: alteFolge, binHost: false }).tun === "nichts");
+
+  // Und die gewoehnliche Startverabredung derselben Folge geht durch.
+  const gleichziehen = {
+    action: "syncprepare", episodeId: "s1e6", position: 12, timestamp: 3000, sequenceId: 12
+  };
+  pruefe("Die Startverabredung der eigenen Folge geht weiterhin durch",
+    steuerungEntscheiden(gleichziehen, { offen: alteFolge, binHost: false }).tun === "syncprepare");
 }
 
 const fehler = pruefungen.filter((p) => !p).length;

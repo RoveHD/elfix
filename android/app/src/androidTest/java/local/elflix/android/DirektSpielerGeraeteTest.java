@@ -152,6 +152,67 @@ public class DirektSpielerGeraeteTest {
         }
     }
 
+    /*
+     * Der Skip-Knopf liegt links, die Karte "Naechste Folge" rechts.
+     *
+     * Gemeldet vom Telefon: im Abspann standen beide uebereinander, und der
+     * obere verdeckte den unteren - gerade dann also, wenn man den
+     * Abspann-Knopf braucht. Geprueft wird auf dem Geraet und an den echten
+     * Bildschirmkoordinaten, denn genau darum geht es.
+     */
+    @Test public void skipKnopfUndNaechsteFolgeUeberlappenNicht() throws Exception {
+        try (ActivityScenario<DirektProbeActivity> scenario = ActivityScenario.launch(DirektProbeActivity.class)) {
+            scenario.onActivity(a -> {
+                Assume.assumeFalse(DirektSpieler.istFernseher(a.getResources().getConfiguration()));
+                a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+            });
+            AtomicBoolean bereit = new AtomicBoolean();
+            warten(() -> { scenario.onActivity(a -> bereit.set(a.spieler != null
+                && a.spieler.ansicht.getWidth() > a.spieler.ansicht.getHeight())); return bereit.get(); });
+
+            // Beide sichtbar machen: sonst haben sie keine Koordinaten.
+            scenario.onActivity(a -> {
+                View skip = knopf(a.spieler.ansicht, "Intro überspringen");
+                skip.setVisibility(View.VISIBLE);
+                View karte = a.spieler.ansicht.findViewWithTag("weiterKarte");
+                if (karte != null) karte.setVisibility(View.VISIBLE);
+            });
+            AtomicBoolean gemessen = new AtomicBoolean();
+            int[] skipKasten = new int[4];
+            int[] karteKasten = new int[4];
+            AtomicBoolean karteDa = new AtomicBoolean();
+            warten(() -> {
+                scenario.onActivity(a -> {
+                    View skip = knopf(a.spieler.ansicht, "Intro überspringen");
+                    View karte = a.spieler.ansicht.findViewWithTag("weiterKarte");
+                    if (skip.getWidth() <= 0) return;
+                    int[] s1 = new int[2];
+                    skip.getLocationOnScreen(s1);
+                    skipKasten[0] = s1[0]; skipKasten[1] = s1[1];
+                    skipKasten[2] = s1[0] + skip.getWidth(); skipKasten[3] = s1[1] + skip.getHeight();
+                    if (karte != null && karte.getWidth() > 0) {
+                        int[] k1 = new int[2];
+                        karte.getLocationOnScreen(k1);
+                        karteKasten[0] = k1[0]; karteKasten[1] = k1[1];
+                        karteKasten[2] = k1[0] + karte.getWidth(); karteKasten[3] = k1[1] + karte.getHeight();
+                        karteDa.set(true);
+                    }
+                    gemessen.set(true);
+                });
+                return gemessen.get();
+            });
+            scenario.onActivity(a -> {
+                int mitte = a.spieler.ansicht.getWidth() / 2;
+                assertTrue("Der Skip-Knopf steht nicht in der linken Haelfte: " + skipKasten[0],
+                    skipKasten[0] < mitte);
+                if (!karteDa.get()) return;
+                boolean ueberlappt = skipKasten[0] < karteKasten[2] && karteKasten[0] < skipKasten[2]
+                    && skipKasten[1] < karteKasten[3] && karteKasten[1] < skipKasten[3];
+                assertFalse("Skip-Knopf und \"Naechste Folge\" ueberlappen sich", ueberlappt);
+            });
+        }
+    }
+
     @Test public void handyQuerformatZeigtEineReiheUndLesbareEinstellungen() throws Exception {
         String base = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("mediaBase");
         Assume.assumeNotNull(base);
