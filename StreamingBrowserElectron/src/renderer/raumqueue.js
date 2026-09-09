@@ -271,8 +271,21 @@
     wheelStage.append(wheelSvg, wheelPointer);
     const wheelActions = document.createElement("div"); wheelActions.className = "rad-aktionen";
     const wheelSpin = document.createElement("button"); wheelSpin.type = "button"; wheelSpin.className = "primary-action"; wheelSpin.textContent = "Drehen";
+    /*
+     * Die kurze Runde.
+     *
+     * Wer sie waehlt, entscheidet fuer die ganze Auslosung - die Laenge steht
+     * in ihr drin, damit alle zugleich anhalten. Der Haken merkt sich nur, was
+     * beim naechsten Druck mitgeschickt wird; die Runde erfaehrt es erst mit
+     * dem Drehen.
+     */
+    const wheelFast = document.createElement("label"); wheelFast.className = "rad-schnell";
+    const wheelFastBox = document.createElement("input"); wheelFastBox.type = "checkbox";
+    const wheelFastText = document.createElement("span"); wheelFastText.textContent = "Schnell (4,2 s)";
+    wheelFast.append(wheelFastBox, wheelFastText);
+    wheelFast.title = "Statt einundzwanzig Sekunden nur gut vier - für alle in der Runde.";
     const wheelStart = document.createElement("button"); wheelStart.type = "button"; wheelStart.className = "soft-action"; wheelStart.textContent = "Gewinner starten"; wheelStart.hidden = true;
-    wheelActions.append(wheelSpin, wheelStart);
+    wheelActions.append(wheelSpin, wheelStart, wheelFast);
     const wheelResult = document.createElement("p"); wheelResult.className = "rad-ergebnis"; wheelResult.setAttribute("role", "status");
     wheelBox.append(wheelSummary, wheelCopy, wheelStage, wheelActions, wheelResult);
 
@@ -572,6 +585,7 @@
       const items = Array.isArray(state?.items) ? state.items.filter((item) => item?.id) : [];
       const bedienbar = supported() && state?.connected === true && state?.supported === true && !state?.pending;
       wheelSpin.disabled = radDreht || !bedienbar || items.length < 2;
+      wheelFastBox.disabled = radDreht || !bedienbar;
       wheelStart.hidden = !radGewinner;
       wheelStart.disabled = radDreht || !bedienbar || !radGewinner;
       if (radDreht) return;
@@ -675,7 +689,7 @@
       radTicken(lauf, segmente, vorher, naechster, DAUER_MS);
     }
 
-    wheelSpin.addEventListener("click", () => command("spin", {}));
+    wheelSpin.addEventListener("click", () => command("spin", { fast: wheelFastBox.checked }));
     wheelStart.addEventListener("click", () => {
       if (!radGewinner?.id) return;
       command("advance", { expectedId: radGewinner.id, expectedRev: state?.rev });

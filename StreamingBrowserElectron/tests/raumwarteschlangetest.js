@@ -83,6 +83,32 @@ function queue(optionen = {}) {
   assert.equal(q.abstimmen(id, 1, b).gewicht, 1);
   assert.equal(q.zustand(a).selectedId, id);
 
+  // --- Das Los -------------------------------------------------------------
+  //
+  // Es faellt im Raum und nicht in einer Oberflaeche: Gewinner, Landestelle,
+  // Zeitpunkt und Laenge stehen darin, damit alle dieselbe Scheibe gleich lang
+  // drehen sehen. Auch die kurze Runde ist deshalb eine Entscheidung des
+  // Raums und keine oertliche Einstellung.
+  assert.equal(q.vorschlagen(item("los"), b).ok, true, "zweiter Vorschlag fuer das Los");
+  const langsam = q.auslosen(a);
+  assert.equal(langsam.ok, true);
+  const losLang = q.zustand(a).spin;
+  assert.equal(losLang.duration, 21000, "die lange Runde dauert nicht einundzwanzig Sekunden");
+  assert.equal(losLang.fields.length, 2, "die Felder reisen nicht mit");
+  assert.ok(losLang.fields.some((feld) => feld.id === losLang.winnerId),
+    "der Gewinner steht nicht unter den Feldern");
+  assert.equal(q.auslosen(b).reason, "already-spinning",
+    "eine zweite Auslosung lief neben der ersten");
+
+  // Kurz drehen, nachdem die erste durch ist.
+  q.los.endsAt = Date.now() - 1;
+  const schnell = q.auslosen(b, { schnell: true });
+  assert.equal(schnell.ok, true);
+  assert.equal(q.zustand(b).spin.duration, 4200, "die kurze Runde dauert nicht gut vier Sekunden");
+  assert.notEqual(q.zustand(b).spin.spinId, losLang.spinId, "dieselbe Auslosung zweimal");
+  q.los = null;
+  assert.equal(q.entfernen(q.zustand(b).items.find((e) => e.key === "los").id, b).ok, true);
+
   assert.equal(q.starten("falsch", { fromKey: "alt" }, new Set(["a", "b"]), a).reason,
     "selection-changed");
   assert.equal(q.zustand(a).items.length, 1, "CAS-Fehler verbrauchte den Eintrag");

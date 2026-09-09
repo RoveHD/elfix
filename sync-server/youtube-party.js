@@ -355,7 +355,7 @@ function behandeln({ nachricht, raumcode, geraetId, name, konto, senden, sendenA
   }
   if (art === "ytqueue:spin") {
     if (!zustand.members.has(geraetId)) return true;
-    const ergebnis = zustand.queue.auslosen(actor);
+    const ergebnis = zustand.queue.auslosen(actor, { schnell: nachricht.fast === true });
     if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
     return true;
   }

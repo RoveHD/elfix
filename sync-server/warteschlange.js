@@ -34,6 +34,10 @@ const LOS_VORLAUF_MS = 600;
 // Geraet: alle drehen gleich lange, sonst haelt einer frueher an als der
 // andere und beide sehen ein anderes Ergebnis kommen.
 const LOS_DAUER_MS = 21000;
+// Wem das zu lang ist, dreht kurz - die urspruenglichen gut vier Sekunden.
+// Auch das entscheidet der Raum und nicht das einzelne Geraet: die Laenge
+// steht in der Auslosung, damit alle zugleich anhalten.
+const LOS_SCHNELL_MS = 4200;
 
 function text(wert, laenge) {
   return String(wert == null ? "" : wert).slice(0, laenge).trim();
@@ -77,7 +81,7 @@ class AbstimmungsWarteschlange {
    * zeichnen hiesse, dass zwei Geraete verschiedene Segmente drehen und der
    * Zeiger am Ende auf verschiedene Namen zeigt.
    */
-  auslosen(akteur) {
+  auslosen(akteur, optionen = {}) {
     const actor = akteurSaeubern(akteur);
     if (!actor) return { ok: false, reason: "identity-required" };
     if (this.pending) return { ok: false, reason: "already-pending" };
@@ -100,6 +104,7 @@ class AbstimmungsWarteschlange {
       rest -= feld.weight;
       if (rest <= 0) { gewinner = feld; break; }
     }
+    const dauer = optionen.schnell === true ? LOS_SCHNELL_MS : LOS_DAUER_MS;
     this.los = {
       spinId: crypto.randomUUID(),
       by: actor.name,
@@ -110,8 +115,8 @@ class AbstimmungsWarteschlange {
       // allen gemeinsam, sonst haelt jede Scheibe woanders.
       landing: Math.random(),
       startAt: jetzt + LOS_VORLAUF_MS,
-      duration: LOS_DAUER_MS,
-      endsAt: jetzt + LOS_VORLAUF_MS + LOS_DAUER_MS
+      duration: dauer,
+      endsAt: jetzt + LOS_VORLAUF_MS + dauer
     };
     this.geaendert("spin");
     return { ok: true, spinId: this.los.spinId };

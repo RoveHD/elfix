@@ -113,7 +113,11 @@ function queueStand(roh, room) {
       winnerId: nachrichtenText(roh.spin.winnerId, 64),
       landing: Math.min(1, Math.max(0, nachrichtenZahl(roh.spin.landing, 0))),
       startAt: nachrichtenZahl(roh.spin.startAt, 0),
-      duration: Math.min(20000, Math.max(0, nachrichtenZahl(roh.spin.duration, 0))),
+      // Die Obergrenze schuetzt nur vor einer unsinnigen Zahl aus dem Netz -
+      // sie darf die Dauer des Raums nicht beschneiden. Bei 20 Sekunden tat
+      // sie genau das: das Relay einigte sich auf 21, dieses Geraet hielt
+      // eine Sekunde frueher an als alle anderen.
+      duration: Math.min(120000, Math.max(0, nachrichtenZahl(roh.spin.duration, 0))),
       endsAt: nachrichtenZahl(roh.spin.endsAt, 0),
       fields: (Array.isArray(roh.spin.fields) ? roh.spin.fields : []).slice(0, 100)
         .map((feld) => ({
@@ -697,8 +701,8 @@ class Watchparty {
   // Das Los faellt im Relay: alle sollen dieselbe Scheibe zur selben Zeit
   // drehen sehen, und das kann nur die eine Stelle entscheiden, die alle
   // kennen.
-  queueSpin() {
-    return this.senden({ type: "queue:spin" });
+  queueSpin(schnell) {
+    return this.senden({ type: "queue:spin", fast: schnell === true });
   }
 
   queueVote(id, value) {

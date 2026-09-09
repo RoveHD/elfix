@@ -332,9 +332,9 @@ class YoutubeWatchparty {
       && this.hinaus(this.raum, { type: "ytqueue:propose", item }));
   }
 
-  queueSpin() {
+  queueSpin(schnell) {
     return Boolean(this.raum && this.verbunden && this.beigetreten
-      && this.hinaus(this.raum, { type: "ytqueue:spin" }));
+      && this.hinaus(this.raum, { type: "ytqueue:spin", fast: schnell === true }));
   }
 
   queueVote(id, value) {

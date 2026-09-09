@@ -194,6 +194,31 @@ async function propose(who, item) {
       JSON.stringify(spinA.spin.fields));
     check("the winner is one of the queued proposals",
       spinA.items.some(item => item.id === spinA.spin.winnerId));
+    /*
+     * The client sanitiser capped the duration at 20 seconds while the relay
+     * agreed on 21: that device would have stopped a second before everyone
+     * else, and nothing would have said so.  The cap exists to reject nonsense
+     * from the wire, so it has to sit above every length the relay can pick.
+     */
+    const quelle = (datei) => require("node:fs")
+      .readFileSync(require("node:path").join(__dirname, datei), "utf8");
+    const grenze = Number(quelle("../src/watchparty.js")
+      .match(/duration: Math\.min\((\d+),/)?.[1]);
+    const laengen = [...quelle("../../sync-server/warteschlange.js")
+      .matchAll(/^const LOS_(?:DAUER|SCHNELL)_MS = (\d+);/gm)].map(treffer => Number(treffer[1]));
+    check("every length the relay can pick fits under the client cap",
+      Number.isFinite(grenze) && laengen.length === 2 && laengen.every(wert => wert < grenze),
+      JSON.stringify({ grenze, laengen }));
+    check("the relay sent the long draw", spinA.spin.duration === Math.max(...laengen),
+      String(spinA.spin.duration));
+
+    // And the short one is a decision of the whole room, not of one device.
+    at = a.mark();
+    a.send({ type: "queue:spin", fast: true });
+    const kurz = await a.wait(message => queueState(message) && message.spin
+      && message.spin.spinId !== spinA.spin.spinId, "fast draw", 1600, at);
+    check("a fast draw is refused while the first still turns", !kurz,
+      kurz ? String(kurz.spin.duration) : "abgelehnt");
 
     // A second draw while the first one still turns would tear the disc apart.
     at = a.mark();

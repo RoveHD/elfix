@@ -324,8 +324,8 @@ class WatchpartyRaeume {
     return Boolean(this.raeume.get(String(room || "").trim())?.youtubeSenden(nachricht));
   }
 
-  queueSpin(room) {
-    return this.raumFuer("", room)?.queueSpin() === true;
+  queueSpin(schnell, room) {
+    return this.raumFuer("", room)?.queueSpin(schnell) === true;
   }
 
   queueStatus(room) {

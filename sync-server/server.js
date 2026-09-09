@@ -1895,7 +1895,8 @@ wss.on("connection", (socket) => {
     }
 
     if (nachricht.type === "queue:spin") {
-      const ergebnis = raum.warteschlange.auslosen(akteurFuer(socket));
+      const ergebnis = raum.warteschlange.auslosen(akteurFuer(socket),
+        { schnell: nachricht.fast === true });
       if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
       return;
     }
