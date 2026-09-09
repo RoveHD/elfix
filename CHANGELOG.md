@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.29 — 9. September 2026
+
+- Die Warteschlange hat eine Suche. Im Reiter „Serien & Filme" laesst sich jetzt
+  jeder Titel finden und vorschlagen - vorher ging nur, was ohnehin schon in der
+  Watchlist stand. Gefragt wird dieselbe Abfrage wie in der grossen Suche, ueber
+  alle Anbieter; darunter stehen bis zu acht Treffer mit Titel und Quelle.
+- Gesucht wird erst, wenn es beim Tippen kurz ruhig ist, und eine ueberholte
+  Antwort ueberschreibt die neuere nicht. YouTube-Treffer bleiben draussen -
+  dafuer gibt es den zweiten Reiter.
+- Geprueft mit der vollstaendigen Suite einschliesslich Relay.
+
 ## 2.0.28 — 9. September 2026
 
 - Der Play-Knopf geht nach einem Folgenwechsel wieder. Er stand auf Play,
