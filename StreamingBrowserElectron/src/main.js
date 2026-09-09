@@ -2247,7 +2247,22 @@ function raumQueueStatus(room, mode) {
   const connected = Boolean(watchparty.status().rooms.find(r => r.room === code)?.connected);
   const state = art === "normal" ? watchparty.queueStatus?.(code)
     : youtubeParty.raum === code ? youtubeParty.queueStatus?.() : null;
-  return { ...state, room: code, mode: art, connected, supported: queueBestaetigt.has(code + "|" + art) && (art !== "youtube" || (youtubeParty.raum === code && youtubeParty.beigetreten)) };
+  const spin = state?.spin ? { ...state.spin, startLokal: raumQueueOertlich(code, state.spin.startAt) } : null;
+  return { ...state, spin, room: code, mode: art, connected, supported: queueBestaetigt.has(code + "|" + art) && (art !== "youtube" || (youtubeParty.raum === code && youtubeParty.beigetreten)) };
+}
+
+/**
+ * Einen Zeitpunkt der Serveruhr in die eigene umrechnen.
+ *
+ * Dieselbe Rechnung wie beim gemeinsamen Start einer Folge: der Versatz ist
+ * aus Ping und Pong bekannt. Ohne ihn faengt jedes Geraet dann an, wenn seine
+ * eigene Uhr zufaellig steht - und die Scheiben liefen auseinander.
+ */
+function raumQueueOertlich(room, serverZeit) {
+  const zeit = Number(serverZeit) || 0;
+  if (!zeit) return 0;
+  const jetzt = watchparty.serverJetzt(room);
+  return jetzt == null ? Date.now() : Date.now() + (zeit - jetzt);
 }
 
 function raumQueueFehler(reason) {
@@ -2446,7 +2461,7 @@ function raumQueueQuittung(room) {
 async function raumQueueBefehl(room, mode, command, payload = {}) {
   const code = String(room || "");
   if (!["normal", "youtube"].includes(mode) || !watchparty.codes.includes(code)) return { ok: false, error: "Raum nicht eingerichtet." };
-  if (!["propose", "vote", "remove", "advance"].includes(command)) return { ok: false, error: "Unbekannte Aktion." };
+  if (!["propose", "vote", "remove", "advance", "spin"].includes(command)) return { ok: false, error: "Unbekannte Aktion." };
   const state = raumQueueStatus(code, mode);
   if (!state.connected || !state.supported) return { ok: false, error: "Keine bestätigte Warteschlange. Verbindung und Relay-Version prüfen." };
   let daten = { ...payload };
@@ -2486,9 +2501,12 @@ async function raumQueueBefehl(room, mode, command, payload = {}) {
   if (command === "advance") queueManuell.set(code + "|" + mode, { bis: Date.now() + 10000, itemId: daten.expectedId, fromKey: daten.fromKey || "" });
   const args = command === "propose" ? [daten.item]
     : command === "vote" ? [daten.id, daten.value === false ? false : (Number(daten.value) || true)]
-      : command === "remove" ? [daten.id] : [daten.expectedId, mode === "normal" ? daten.fromKey : daten.fromVideoId];
+      : command === "remove" ? [daten.id]
+        : command === "spin" ? []
+          : [daten.expectedId, mode === "normal" ? daten.fromKey : daten.fromVideoId];
   if (mode === "normal") args.push(code);
-  const method = { propose: "queuePropose", vote: "queueVote", remove: "queueRemove", advance: "queueAdvance" }[command];
+  const method = { propose: "queuePropose", vote: "queueVote", remove: "queueRemove",
+    advance: "queueAdvance", spin: "queueSpin" }[command];
   const ok = client[method]?.(...args);
   if (!ok) { queueManuell.delete(code + "|" + mode); return { ok: false, error: "Der Raum ist nicht erreichbar." }; }
   if (!await raumQueueQuittung(code)) { queueManuell.delete(code + "|" + mode); return { ok: false, error: "Der Raum hat die Aktion nicht bestätigt." }; }

@@ -152,6 +152,10 @@
       // Zeiger verschieben.
       if (!radDreht) radZeichnen();
       radStandSetzen();
+      // Eine Auslosung im Raumzustand zeigt sich hier - beim Ausloeser wie bei
+      // allen anderen, und bei einem Nachzuegler ab der Stelle, an der die
+      // Scheibe gerade steht.
+      if (state?.spin) radLosZeigen({ ...state.spin });
     }
 
     /*
@@ -213,17 +217,34 @@
       row.append(info, actions); return row;
     }
 
-    // Ein Vorschlag ohne Stimme darf nicht aus dem Rad fallen - sonst koennte
-    // das Los nur bestaetigen, was die Rangliste ohnehin sagt.
-    function radGewicht(item) { return Math.max(0, Number(item?.votes) || 0) + 1; }
+    /*
+     * Die Felder des Rades.
+     *
+     * Waehrend einer Auslosung stammen sie aus ihr und nicht aus der eigenen
+     * Liste: die Auslosung traegt ihre Felder mit, damit alle dieselbe Scheibe
+     * drehen. Wer eine Umdrehung hinterherhinkt oder mitten im Lauf dazukommt,
+     * saehe sonst andere Segmente - und der Zeiger zeigte am Ende bei jedem auf
+     * einen anderen Namen.
+     */
+    function radFelder() {
+      const los = state?.spin;
+      if (los?.fields?.length) {
+        return los.fields.map((feld) => ({ id: feld.id, title: feld.title, gewicht: Math.max(1, Number(feld.weight) || 1) }));
+      }
+      // Ohne laufende Auslosung zeigt das Rad die Liste, wie sie steht. Ein
+      // Vorschlag ohne Stimme behaelt dabei ein Stueck - sonst koennte das Los
+      // nur bestaetigen, was die Rangliste ohnehin sagt.
+      const items = Array.isArray(state?.items) ? state.items.filter((item) => item?.id) : [];
+      return items.map((item) => ({ id: item.id, title: text(item.title || item.url), gewicht: Math.max(0, Number(item.votes) || 0) + 1 }));
+    }
 
     function radSegmente() {
-      const items = Array.isArray(state?.items) ? state.items.filter((item) => item?.id) : [];
-      const gesamt = items.reduce((summe, item) => summe + radGewicht(item), 0);
+      const felder = radFelder();
+      const gesamt = felder.reduce((summe, feld) => summe + feld.gewicht, 0);
       let start = 0;
-      return items.map((item, index) => {
-        const anteil = gesamt > 0 ? radGewicht(item) / gesamt : 1 / Math.max(1, items.length);
-        const segment = { item, index, von: start, bis: start + anteil * 360 };
+      return felder.map((feld, index) => {
+        const anteil = gesamt > 0 ? feld.gewicht / gesamt : 1 / Math.max(1, felder.length);
+        const segment = { feld, index, von: start, bis: start + anteil * 360 };
         start = segment.bis;
         return segment;
       });
@@ -263,7 +284,7 @@
         const gewendet = mitte > 90 && mitte < 270;
         schrift.setAttribute("transform", `rotate(${mitte.toFixed(2)} 100 100)`
           + (gewendet ? " rotate(180 100 34)" : ""));
-        const name = text(segment.item?.title || segment.item?.url || "Vorschlag");
+        const name = text(segment.feld?.title || "Vorschlag");
         schrift.textContent = name.length > 22 ? `${name.slice(0, 21)}…` : name;
         teile.push(schrift);
       }
@@ -274,6 +295,7 @@
     let radDreht = false;
     let radWinkel = 0;
     let radGewinner = null;
+    let radLaufendeKennung = "";
 
     function radStandSetzen() {
       const items = Array.isArray(state?.items) ? state.items.filter((item) => item?.id) : [];
@@ -293,42 +315,52 @@
       }
     }
 
-    function radDrehen() {
+    /*
+     * Eine Auslosung des Raums anzeigen.
+     *
+     * Das Los faellt im Relay - dort, wo alle dieselbe Antwort bekommen. Hier
+     * wird es nur noch gedreht: dieselben Felder, derselbe Gewinner, dieselbe
+     * Landestelle und derselbe Augenblick, in die eigene Uhr umgerechnet.
+     */
+    function radLosZeigen(los) {
+      if (!los?.spinId || los.spinId === radLaufendeKennung) return;
       const segmente = radZeichnen();
-      if (radDreht || segmente.length < 2) return;
-      // Erst das Los, dann die Bewegung: die Anzeige folgt dem Ergebnis und
-      // nicht umgekehrt. Sonst koennte die Animation etwas anderes zeigen als
-      // das, was gleich gestartet wird.
-      const gesamt = segmente.reduce((summe, segment) => summe + radGewicht(segment.item), 0);
-      let los = Math.random() * gesamt;
-      let ziel = segmente[segmente.length - 1];
-      for (const segment of segmente) {
-        los -= radGewicht(segment.item);
-        if (los <= 0) { ziel = segment; break; }
-      }
+      const ziel = segmente.find((segment) => segment.feld.id === los.winnerId);
+      if (!ziel) return;
+      radLaufendeKennung = los.spinId;
+
       // Irgendwo im gewonnenen Feld stehenbleiben, nicht immer mittig - und mit
-      // Abstand zur Kante, damit der Zeiger eindeutig darin steht.
+      // Abstand zur Kante, damit der Zeiger eindeutig darin steht. Die Stelle
+      // kommt aus der Auslosung, damit jede Scheibe gleich haelt.
       const rand = (ziel.bis - ziel.von) * 0.2;
-      const stelle = ziel.von + rand + Math.random() * ((ziel.bis - ziel.von) - 2 * rand);
+      const stelle = ziel.von + rand + Math.min(1, Math.max(0, Number(los.landing) || 0)) * ((ziel.bis - ziel.von) - 2 * rand);
       // Der Zeiger steht oben bei 0 Grad. Ein um R gedrehtes Feld bei `stelle`
       // liegt bei `stelle + R`; unter dem Zeiger steht es, wenn das 0 ergibt.
-      const runden = 4 + Math.floor(Math.random() * 3);
-      const naechster = radWinkel + (360 - ((radWinkel + stelle) % 360 + 360) % 360) + runden * 360;
+      const naechster = radWinkel + (360 - ((radWinkel + stelle) % 360 + 360) % 360) + 5 * 360;
 
       radDreht = true;
+      // Der Gewinner steht erst am Ende in der Anzeige. Ihn jetzt zu setzen
+      // liesse den Startknopf waehrend der Drehung erscheinen - und damit
+      // waere das Ergebnis verraten, bevor die Scheibe steht.
       radGewinner = null;
-      wheelResult.textContent = "Das Rad dreht sich …";
+      const wer = text(los.by);
+      wheelResult.textContent = wer ? `${wer} dreht das Rad …` : "Das Rad dreht sich …";
       radStandSetzen();
       const ruhig = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
-      const DAUER_MS = ruhig ? 0 : 4200;
+      // Alle fangen im selben Augenblick an. Wer die Nachricht spaeter bekommt,
+      // steigt entsprechend spaeter ein und haelt trotzdem mit allen zusammen.
+      const beginn = Number(los.startLokal) || Date.now();
+      const gesamtDauer = Math.max(0, Number(los.duration) || 0);
+      const verspaetung = Math.max(0, Date.now() - beginn);
+      const DAUER_MS = ruhig ? 0 : Math.max(0, gesamtDauer - verspaetung);
       let erledigt = false;
       const fertig = () => {
         if (erledigt) return;
         erledigt = true;
         radWinkel = naechster;
         radDreht = false;
-        radGewinner = ziel.item;
-        wheelResult.textContent = `Das Los fällt auf: ${text(ziel.item?.title || ziel.item?.url || "Vorschlag")}`;
+        radGewinner = { id: ziel.feld.id, title: ziel.feld.title };
+        wheelResult.textContent = `Das Los fällt auf: ${text(ziel.feld.title || "Vorschlag")}`;
         radStandSetzen();
       };
       const vorher = radWinkel;
@@ -352,7 +384,7 @@
       window.setTimeout(fertig, DAUER_MS + 400);
     }
 
-    wheelSpin.addEventListener("click", radDrehen);
+    wheelSpin.addEventListener("click", () => command("spin", {}));
     wheelStart.addEventListener("click", () => {
       if (!radGewinner?.id) return;
       command("advance", { expectedId: radGewinner.id, expectedRev: state?.rev });

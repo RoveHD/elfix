@@ -29,10 +29,18 @@ app.on("browser-window-created",(_event,window)=>{
         document.body.append(pane);
         globalThis.ElfixRaumqueue.erstellen({root:pane,rooms:()=>['Testkino'],favorites:()=>[{id:'one',title:'Beispielserie · Staffel 1 Folge 2'}],api:{
           getRoomQueue:async(room,mode)=>({room,mode,connected:true,supported:true,rev:2,selectedId:'a',
-            weights:[3,2,1],freeWeights:[2,1],items:[
+            weights:[3,2,1],freeWeights:[2,1],spin:globalThis.__elfixLos||null,items:[
               {id:'a',title:'Beispielserie · Staffel 1 Folge 2',votes:5,voters:2,myVote:3,voted:true,mine:false},
               {id:'b',title:'Ein Film für den nächsten gemeinsamen Abend',votes:1,voters:1,myVote:0,voted:false,mine:true}]}),
-          roomQueueCommand:async()=>({ok:true})}});
+          // Das Los faellt im Relay und steht danach im Raumzustand. Der
+          // Ersatzraum tut dasselbe, damit die Anzeige denselben Weg geht.
+          roomQueueCommand:async(room,mode,befehl)=>{
+            if(befehl==='spin') globalThis.__elfixLos={spinId:'los-1',by:'Ben',winnerId:'b',landing:0.5,
+              startLokal:Date.now(),duration:900,fields:[
+                {id:'a',title:'Beispielserie · Staffel 1 Folge 2',weight:6},
+                {id:'b',title:'Ein Film für den nächsten gemeinsamen Abend',weight:2}]};
+            return {ok:true};
+          }}});
       })()`);
       await new Promise(resolve=>setTimeout(resolve,200));
       const layout=await window.webContents.executeJavaScript(`(() => {
@@ -87,11 +95,15 @@ app.on("browser-window-created",(_event,window)=>{
         box.querySelector('button.primary-action').click();
         setTimeout(()=>{
           const erste=lesen();
-          setTimeout(()=>fertig({erste,zweite:lesen()}),500);
-        },250);
+          setTimeout(()=>fertig({erste,zweite:lesen(),
+            text:box.querySelector('.rad-ergebnis').textContent,
+            startVersteckt:box.querySelectorAll('button')[1].hidden}),300);
+        },200);
       })`);
       assert.notEqual(bewegung.erste,"none","Die Scheibe stand still");
       assert.notEqual(bewegung.erste,bewegung.zweite,"Die Scheibe sprang statt zu drehen");
+      assert.match(bewegung.text,/dreht das Rad/,"Waehrend der Drehung fehlt, wer sie ausgeloest hat");
+      assert.equal(bewegung.startVersteckt,true,"Der Gewinner stand schon vor dem Halten fest");
       const ausgang=await window.webContents.executeJavaScript(`new Promise(fertig => {
         const box=document.querySelector('#queue-fixture .raumqueue-rad');
         const nachsehen=()=>{
@@ -115,6 +127,7 @@ app.on("browser-window-created",(_event,window)=>{
         const uhr=setInterval(()=>{ if(nachsehen()) clearInterval(uhr); },120);
       })`);
       assert.ok(ausgang.name,"Das Ergebnis nannte keinen Vorschlag: "+ausgang.text);
+      assert.equal(ausgang.gewinnerIndex,1,"Nicht der vom Raum ausgeloste Vorschlag gewann");
       assert.equal(ausgang.startSichtbar,true,"Nach der Auslosung fehlt der Startknopf");
       assert.ok(ausgang.gewinnerIndex>=0,"Der ausgeloste Name steht nicht in der Liste");
       assert.equal(ausgang.feldIndex,ausgang.gewinnerIndex,

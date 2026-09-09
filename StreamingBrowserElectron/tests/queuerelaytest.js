@@ -164,6 +164,48 @@ async function propose(who, item) {
       && JSON.stringify(heavyVote?.freeWeights) === JSON.stringify([2, 1]),
     JSON.stringify(heavyVote?.items?.[0]));
 
+    // --- The wheel is drawn once, for the whole room ------------------------
+    //
+    // Everyone must see the same disc turn to the same result at the same
+    // moment, so the draw belongs to the relay.  It carries its own fields, so
+    // a client one revision behind still spins the identical wheel.
+    const second = title("serie:spin", "https://aniworld.to/anime/stream/queue-spin/staffel-1/episode-1", 1, 1);
+    await propose(b, second);
+    const spinAtA = a.mark(), spinAtB = b.mark(), spinAtC = c.mark();
+    a.send({ type: "queue:spin" });
+    const spinA = await a.wait(message => queueState(message) && message.spin, "spin state A", 1600, spinAtA);
+    const spinB = await b.wait(message => queueState(message) && message.spin, "spin state B", 1600, spinAtB);
+    const spinC = await c.wait(message => queueState(message) && message.spin, "spin state C", 1600, spinAtC);
+    check("the draw reaches every member of the room",
+      Boolean(spinA?.spin?.spinId) && spinB?.spin?.spinId === spinA.spin.spinId
+      && spinC?.spin?.spinId === spinA.spin.spinId,
+      JSON.stringify([spinA?.spin?.spinId, spinB?.spin?.spinId, spinC?.spin?.spinId]));
+    check("winner, landing spot and start time are identical everywhere",
+      spinB.spin.winnerId === spinA.spin.winnerId
+      && spinC.spin.winnerId === spinA.spin.winnerId
+      && spinB.spin.landing === spinA.spin.landing
+      && spinB.spin.startAt === spinA.spin.startAt
+      && spinB.spin.duration === spinA.spin.duration,
+      JSON.stringify(spinA.spin));
+    check("the draw carries its own fields so late clients spin the same disc",
+      Array.isArray(spinA.spin.fields) && spinA.spin.fields.length === 2
+      && spinA.spin.fields.every(field => field.id && field.weight >= 1)
+      && spinA.spin.fields.some(field => field.id === spinA.spin.winnerId),
+      JSON.stringify(spinA.spin.fields));
+    check("the winner is one of the queued proposals",
+      spinA.items.some(item => item.id === spinA.spin.winnerId));
+
+    // A second draw while the first one still turns would tear the disc apart.
+    at = a.mark();
+    b.send({ type: "queue:spin" });
+    const zweite = await b.wait(message => queueState(message) && message.reason === "already-spinning",
+      "refused second draw", 1600, at);
+    check("a second draw is refused while the first still turns", Boolean(zweite));
+
+    at = b.mark();
+    b.send({ type: "queue:remove", id: second.id || spinA.items.find(item => item.key === "serie:spin")?.id });
+    await b.wait(message => queueState(message) && message.items.length === 1, "remove spin fixture", 1600, at);
+
     at = a.mark();
     a.send({ type: "queue:remove", id });
     await a.wait(message => queueState(message) && message.items.length === 0, "remove vote fixture", 1600, at);

@@ -16,6 +16,20 @@ const MAX_EINTRAEGE = 100;
 const GEWICHTE = [3, 2, 1];
 const MAX_STIMMEN = 200;
 const START_FRIST_MS = 60000;
+/*
+ * Das Glücksrad dreht sich bei allen zugleich.
+ *
+ * Deshalb faellt das Los hier und nicht in einer der Oberflaechen: der Raum
+ * bekommt eine Auslosung mit Kennung, Feldern, Gewinner und einem Zeitpunkt
+ * auf der Serveruhr. Jeder rechnet ihn ueber seinen bekannten Uhrversatz in
+ * seine eigene Zeit um und faengt im selben Augenblick an - dieselbe Rechnung
+ * wie beim gemeinsamen Start einer Folge.
+ *
+ * Der Vorlauf gibt der Nachricht Zeit, ueberall anzukommen, bevor sich etwas
+ * bewegt.
+ */
+const LOS_VORLAUF_MS = 600;
+const LOS_DAUER_MS = 4200;
 
 function text(wert, laenge) {
   return String(wert == null ? "" : wert).slice(0, laenge).trim();
@@ -48,6 +62,55 @@ class AbstimmungsWarteschlange {
     this.eintraege = [];
     this.pending = null;
     this.timer = null;
+    this.los = null;
+  }
+
+  /**
+   * Ein Los fuer den ganzen Raum.
+   *
+   * Die Felder reisen mit: wer eine Umdrehung hinterherhinkt, soll trotzdem
+   * dieselbe Scheibe sehen wie alle anderen. Aus seiner eigenen Liste zu
+   * zeichnen hiesse, dass zwei Geraete verschiedene Segmente drehen und der
+   * Zeiger am Ende auf verschiedene Namen zeigt.
+   */
+  auslosen(akteur) {
+    const actor = akteurSaeubern(akteur);
+    if (!actor) return { ok: false, reason: "identity-required" };
+    if (this.pending) return { ok: false, reason: "already-pending" };
+    const sortiert = this.sortiert();
+    if (sortiert.length < 2) return { ok: false, reason: "not-enough-items" };
+    const jetzt = Date.now();
+    if (this.los && jetzt < this.los.endsAt) return { ok: false, reason: "already-spinning" };
+
+    // Ein Vorschlag ohne Stimme darf nicht aus dem Rad fallen - sonst koennte
+    // das Los nur bestaetigen, was die Rangliste ohnehin sagt.
+    const felder = sortiert.map((eintrag) => ({
+      id: eintrag.id,
+      title: text(eintrag.data?.title, 240) || text(eintrag.data?.url, 300),
+      weight: this.punkte(eintrag) + 1
+    }));
+    const gesamt = felder.reduce((summe, feld) => summe + feld.weight, 0);
+    let rest = Math.random() * gesamt;
+    let gewinner = felder[felder.length - 1];
+    for (const feld of felder) {
+      rest -= feld.weight;
+      if (rest <= 0) { gewinner = feld; break; }
+    }
+    this.los = {
+      spinId: crypto.randomUUID(),
+      by: actor.name,
+      byId: actor.id,
+      fields: felder,
+      winnerId: gewinner.id,
+      // Wo genau im gewonnenen Feld der Zeiger stehenbleibt. Auch das gehoert
+      // allen gemeinsam, sonst haelt jede Scheibe woanders.
+      landing: Math.random(),
+      startAt: jetzt + LOS_VORLAUF_MS,
+      duration: LOS_DAUER_MS,
+      endsAt: jetzt + LOS_VORLAUF_MS + LOS_DAUER_MS
+    };
+    this.geaendert("spin");
+    return { ok: true, spinId: this.los.spinId };
   }
 
   laden(roh) {
@@ -153,6 +216,9 @@ class AbstimmungsWarteschlange {
       selectedId: sortiert[0]?.id || "",
       // Welche Gewichte dieses Geraet noch frei hat. Die Oberflaeche muss die
       // Regel damit nicht selbst kennen.
+      // Eine laufende Auslosung gehoert in den Zustand: sie erreicht damit auch
+      // den, der mitten in der Drehung dazukommt oder neu verbindet.
+      spin: this.los && Date.now() < this.los.endsAt ? { ...this.los } : null,
       weights: GEWICHTE.slice(),
       freeWeights: actor ? GEWICHTE.filter((gewicht) => !this.eintraege
         .some((eintrag) => gewichtLesen(eintrag.votes.get(actor.principal)?.gewicht) === gewicht))
@@ -259,6 +325,8 @@ class AbstimmungsWarteschlange {
       : this.sortiert()[0];
     if (!gewaehlt) return { ok: false, reason: "selection-changed" };
     this.eintraege = this.eintraege.filter((item) => item !== gewaehlt);
+    // Was gestartet wird, muss nicht mehr ausgelost werden.
+    this.los = null;
     const at = Date.now();
     const targets = new Set(Array.from(zielIds || []).map((wert) => text(wert, 64)).filter(Boolean));
     targets.add(actor.id);

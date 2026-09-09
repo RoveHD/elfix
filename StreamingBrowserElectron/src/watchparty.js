@@ -105,6 +105,23 @@ function queueStand(roh, room) {
     rev: Math.max(0, nachrichtenZahl(roh.rev, 0)),
     items: Array.isArray(roh.items) ? roh.items.map(queueEintrag).filter(Boolean).slice(0, 100) : [],
     selectedId: nachrichtenText(roh.selectedId, 64),
+    // Die laufende Auslosung. Sie traegt ihre Felder selbst mit sich, damit
+    // alle dieselbe Scheibe drehen - auch wer eine Umdrehung hinterherhinkt.
+    spin: datenObjekt(roh.spin) && typeof roh.spin.spinId === "string" ? {
+      spinId: nachrichtenText(roh.spin.spinId, 64),
+      by: nachrichtenText(roh.spin.by, 40),
+      winnerId: nachrichtenText(roh.spin.winnerId, 64),
+      landing: Math.min(1, Math.max(0, nachrichtenZahl(roh.spin.landing, 0))),
+      startAt: nachrichtenZahl(roh.spin.startAt, 0),
+      duration: Math.min(20000, Math.max(0, nachrichtenZahl(roh.spin.duration, 0))),
+      endsAt: nachrichtenZahl(roh.spin.endsAt, 0),
+      fields: (Array.isArray(roh.spin.fields) ? roh.spin.fields : []).slice(0, 100)
+        .map((feld) => ({
+          id: nachrichtenText(feld?.id, 64),
+          title: nachrichtenText(feld?.title, 300),
+          weight: Math.max(1, nachrichtenZahl(feld?.weight, 1))
+        })).filter((feld) => feld.id)
+    } : null,
     weights: Array.isArray(roh.weights)
       ? roh.weights.map((wert) => nachrichtenZahl(wert, 0)).filter((wert) => wert > 0).slice(0, 5) : [],
     freeWeights: Array.isArray(roh.freeWeights)
@@ -677,6 +694,13 @@ class Watchparty {
 
   // `value` ist ein Gewicht (3, 2 oder 1), `true` fuer die leichteste freie
   // Stimme oder `false` zum Zuruecknehmen.
+  // Das Los faellt im Relay: alle sollen dieselbe Scheibe zur selben Zeit
+  // drehen sehen, und das kann nur die eine Stelle entscheiden, die alle
+  // kennen.
+  queueSpin() {
+    return this.senden({ type: "queue:spin" });
+  }
+
   queueVote(id, value) {
     return this.senden({ type: "queue:vote", id: String(id || ""),
       value: value === false ? false : (Number(value) || true) });

@@ -353,6 +353,13 @@ function behandeln({ nachricht, raumcode, geraetId, name, konto, senden, sendenA
     else if (ergebnis.unchanged) queueStandAn(raumcode, geraetId);
     return true;
   }
+  if (art === "ytqueue:spin") {
+    if (!zustand.members.has(geraetId)) return true;
+    const ergebnis = zustand.queue.auslosen(actor);
+    if (!ergebnis.ok) queueStandAn(raumcode, geraetId, ergebnis.reason);
+    return true;
+  }
+
   if (art === "ytqueue:vote") {
     if (!zustand.members.has(geraetId)) return true;
     const stimme = nachricht.value === false ? false : (Number(nachricht.value) || true);

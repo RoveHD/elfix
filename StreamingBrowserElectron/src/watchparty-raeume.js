@@ -324,6 +324,10 @@ class WatchpartyRaeume {
     return Boolean(this.raeume.get(String(room || "").trim())?.youtubeSenden(nachricht));
   }
 
+  queueSpin(room) {
+    return this.raumFuer("", room)?.queueSpin() === true;
+  }
+
   queueStatus(room) {
     return this.raumFuer("", room)?.queueStatus()
       || { room: String(room || ""), rev: 0, items: [], selectedId: "", pending: null, reason: "" };

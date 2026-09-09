@@ -1837,6 +1837,12 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    if (nachricht.type === "queue:spin") {
+      const ergebnis = raum.warteschlange.auslosen(akteurFuer(socket));
+      if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
+      return;
+    }
+
     if (nachricht.type === "queue:remove") {
       const ergebnis = raum.warteschlange.entfernen(nachricht.id, akteurFuer(socket));
       if (!ergebnis.ok) warteschlangeAnSocket(socket, ergebnis.reason);
