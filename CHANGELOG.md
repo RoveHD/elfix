@@ -3,6 +3,26 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.25 — 9. September 2026
+
+- Das Relay bleibt stehen. Es stuerzte alle fuenf Sekunden ab und kam neu
+  hoch — sichtbar als „Verbindung weg" am Telefon, wechselnder Host,
+  „Warten auf alle" und zwei Geraeten in verschiedenen Folgen. Nicht die
+  Watchparty war kaputt, sondern der Boden darunter: jede Startverabredung
+  wurde mittendrin weggerissen.
+- Der Grund lag in der Ablage. Der Takt, der Nachzuegler holt, merkt sich, wen
+  er wohin geschickt hat. Dieser Merker wurde mitgespeichert, kam als leeres
+  Objekt statt als Map zurueck, und der naechste Takt fiel darueber. Der Dienst
+  startete neu, las dieselbe Datei und fiel wieder — stundenlang.
+- Er wird jetzt behandelt wie der Playerstand: beim Speichern faellt er weg,
+  beim Laden entsteht er frisch. Das Zweite raeumt auch eine Ablage wieder auf,
+  die schon beschrieben ist.
+- Neue Pruefung dafuer, dass ein Neustart ueberhaupt vorkommt: sie bringt ihr
+  eigenes Relay mit, haelt es an, beschreibt die Datei von Hand und sieht nach,
+  ob es wieder hochkommt. Ohne den Fix stirbt es dort mit demselben Fehler wie
+  auf dem Server.
+- Geprueft mit der vollstaendigen Suite einschliesslich Relay.
+
 ## 2.0.24 — 9. September 2026
 
 - Als Gast lässt sich das Intro wieder überspringen. Auf dem Telefon fiel die
