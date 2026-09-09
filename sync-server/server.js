@@ -193,7 +193,11 @@ function zustandLaden() {
         members: new Map(Array.isArray(eintrag.members) ? eintrag.members : []),
         // Nie aus der Datei uebernehmen: als einfaches Objekt waere es keine
         // Map und der erste Eintrag wuerde den Dienst abraeumen.
+        // Genau so ist der Nachzieh-Merker einmal auf die Platte geraten:
+        // als Map serialisiert zu einem leeren Objekt, und das ueberlebt
+        // den Spread darueber.
         stand: new Map(),
+        nachgezogen: new Map(),
         spoiler: new Map(),
         spoilerWartet: new Set()
       });
@@ -252,6 +256,9 @@ function zustandSpeichernSpaeter() {
           sync: undefined,
           syncTimer: undefined,
           stand: undefined,
+          // Wer schon einmal geholt wurde, ist nach einem Neustart ohnehin
+          // wieder offen - und als Map stuende hier sonst ein leeres Objekt.
+          nachgezogen: undefined,
           standTimer: undefined,
             standGesendet: undefined,
             spoiler: undefined,

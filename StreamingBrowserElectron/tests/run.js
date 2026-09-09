@@ -68,6 +68,9 @@ OHNE_RELAY.push("cache-schreibarbeitertest");
 OHNE_RELAY.push("autominispielertest");
 OHNE_RELAY.push("miniplayerpresencetest");
 OHNE_RELAY.push("gesehenmarkierungtest");
+// Bringt sein eigenes Relay mit, weil es das zwischendurch anhalten muss:
+// geprueft wird, was ein Neustart aus der Ablage wieder hochholt.
+OHNE_RELAY.push("nachziehneustarttest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");
 MIT_RELAY.push("relayidentitytest");
