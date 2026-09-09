@@ -3,6 +3,24 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.26 — 9. September 2026
+
+- Ein Folgenwechsel vom Gast bleibt jetzt stehen. Er kam an - die Raumkarte
+  sprang auf die neue Folge und zweihundert Millisekunden spaeter zurueck auf
+  die alte. Danach stand das Telefon allein bei der neuen Folge, der Rechner
+  unbeirrt bei der alten, und der gemeinsame Start galt der Folge, die
+  niemand gewaehlt hatte. Am Rechner stand „Warten auf alle".
+- Der Grund war der Herzschlag. Er traegt die Folge der offenen Seite, und wer
+  fuehrt, zieht die Runde damit nach - genau deshalb kommt ein Wechsel am
+  Telefon ueberhaupt an. Waehrend einer Startverabredung ist das falsch: der
+  Host laedt die neue Folge erst, sein Herzschlag traegt weiter die alte, und
+  als Fuehrender ueberschrieb er im Sekundentakt das gerade verabredete Ziel.
+- Solange die Schranke offen ist, entscheidet die Schranke.
+- Neue Pruefung dafuer: der Gast blaettert weiter, der Host pulst zweieinhalb
+  Sekunden lang mit der alten Folge. Ohne den Fix faellt sie mit demselben
+  Bild wie auf dem Server.
+- Geprueft mit der vollstaendigen Suite einschliesslich Relay.
+
 ## 2.0.25 — 9. September 2026
 
 - Das Relay bleibt stehen. Es stuerzte alle fuenf Sekunden ab und kam neu
