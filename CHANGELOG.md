@@ -3,6 +3,29 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.23 — 9. September 2026
+
+- Beim Folgenwechsel wird jetzt wirklich jeder mitgezogen. Die Vorbereitung
+  trägt die Kennung der neuen Folge und fiel dadurch bei genau dem durch, den
+  sie holen soll — auf Android blieb deshalb jeder Gast stehen, während der
+  Rest weiterschaute.
+- Die Hostrolle bleibt über den Wechsel hinweg beim selben Gerät. Während der
+  Startverabredung lädt jeder; wer lädt, ist nicht weg.
+- Auf dem Telefon sitzt „Intro überspringen" und „Abspann überspringen" links.
+  Rechts liegt die Karte „Nächste Folge" — im Abspann verdeckten sie sich.
+- Das Glücksrad ist ein Rad geworden: Messingrand mit Nieten, gewölbte
+  Scheibe, Nabe mit Glanz. Beim Drehen wird es groß, es tickt bei jeder
+  Feldkante, der Zeiger schlägt an, und eine Begleitung zieht an, während das
+  Rad ausläuft. Alle Klänge sind selbst erzeugt und folgen den Einstellungen
+  für Bedienklänge.
+- Es dreht fünfmal so lang (21 Sekunden); ein Haken „Schnell" macht daraus
+  wieder gut vier. Die Länge gilt für den ganzen Raum, damit alle zugleich
+  anhalten — ein Deckel im Client hätte ein Gerät eine Sekunde früher
+  anhalten lassen.
+- Geprüft mit der vollständigen Suite (158 Prüfungen inklusive Relay), 17
+  Electron-Suiten, 305 Android-Unit-Tests und einem Gerätetest auf einem
+  Galaxy S24 Ultra.
+
 ## 2.0.22 — 9. September 2026
 
 - „Warten auf alle" bleibt nicht mehr stehen, wenn ein Gerät nur im Raum sitzt,
