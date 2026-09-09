@@ -3252,17 +3252,29 @@ wss.on("connection", (socket) => {
       fern.abmelden(socket.fernCode);
     }
     if (!socket.raum) return;
+    // Eine neu aufgebaute Verbindung desselben Geraets kann schon bestaetigt
+    // sein, bevor der alte WebSocket sein close-Ereignis liefert. In diesem
+    // Fall gehoert der Geraetezustand weiterhin der offenen Verbindung. Den
+    // alten Socket jetzt nach Geraete-ID abzumelden, wuerde die neue
+    // YouTube-Mitgliedschaft sowie ihren Player- und Spoilerstand mit
+    // entfernen; danach waere die neue Leitung offen, duerfte aber nichts mehr
+    // steuern. Raum und Kennung muessen beide passen: ein echtes Verlassen aus
+    // einem anderen Raum oder von einem anderen Geraet bleibt davon unberuehrt.
+    const weiterVerbunden = istVerbunden(socket.raum, socket.geraetId);
     // Aus der YouTube-Runde austragen. Wer nur kurz herausfaellt, meldet sich
     // beim naechsten Verbindungsaufbau selbst wieder an.
-    youtubeParty.abmelden({
-      raumcode: socket.raum,
-      geraetId: socket.geraetId,
-      verteilen: (antwort, ids) => anMitgliederSenden(socket.raum, antwort, ids)
-    });
+    if (!weiterVerbunden) {
+      youtubeParty.abmelden({
+        raumcode: socket.raum,
+        geraetId: socket.geraetId,
+        verteilen: (antwort, ids) => anMitgliederSenden(socket.raum, antwort, ids)
+      });
+    }
     const raum = raeume.get(socket.raum);
     let gewechselt = false;
     for (const eintrag of raum?.titel.values() || []) {
       syncTeilnehmerEntfernen(socket.raum, eintrag, socket.geraetId, socket);
+      if (weiterVerbunden) continue;
       const spoilerWeg = Boolean(eintrag.spoiler?.delete(socket.geraetId));
       const wartenWeg = Boolean(eintrag.spoilerWartet?.delete(socket.geraetId));
       // Wer weg ist, steht auch nirgends mehr - sonst zeigt die Leiste eine

@@ -237,7 +237,7 @@ pruefe("Ohne Zustimmung geschieht nichts",
   /if \(antwort\.response !== 1\) return \{ moved: false \};/.test(block)
   && block.indexOf("if (antwort.response !== 1)") < block.indexOf("saveProviders()"));
 pruefe("Die offene Seite wird vorher uebersetzt",
-  block.indexOf("const offeneAdresse") < block.indexOf("providers = providerModel.normalizeProviders"),
+  block.indexOf("const offeneAdresse") < block.indexOf("providers = reuseProviderRecords"),
   "danach ist die alte Adresse nirgends mehr zu finden");
 pruefe("und danach dorthin nachgezogen",
   /await navigateProvider\(ziel, offeneAdresse\)/.test(block),

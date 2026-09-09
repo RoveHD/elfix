@@ -136,6 +136,12 @@ pruefe("Wer YouTube danach loescht, behaelt es geloescht",
 
 // --- Der Merker muss das Speichern ueberleben --------------------------------
 
+const leer = buehne([], ALT);
+pruefe("Eine bewusst leere Liste bleibt trotz offener Migration leer",
+  leer.laufen() === false && leer.kontext.providers.length === 0
+  && leer.gerufen.anbieterGespeichert === 0
+  && leer.kontext.settings.migrations.youtubeProvider === true);
+
 // normalizeSettings zieht den ganzen Einstellungsblock durch und braucht dabei
 // Helfer, die mit dieser Frage nichts zu tun haben. Unbekannte Namen werden
 // deshalb zu harmlosen Platzhaltern - geprueft wird hier allein, was mit dem

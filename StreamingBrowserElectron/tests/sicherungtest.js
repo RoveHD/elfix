@@ -236,7 +236,30 @@ pruefe("7. Der Dateiname traegt das Datum",
     altePutzen([...sieben, "meine-eigene-sicherung.json", "ELFIX-Sicherung-2026-08-01.elfix.json"], 0)
       .every((name) => /^ELFIX-[a-z-]+-\d{8}-\d{6}/.test(name)),
     "eine von Hand gespeicherte Sicherung raeumt niemand weg");
+  pruefe("Unvollstaendige automatische Namen bleiben ebenfalls liegen",
+    altePutzen([...sieben, "ELFIX-vor-update-2026088-120000.elfix.json"], 0).length === sieben.length,
+    "ohne vollstaendigen Zeitstempel ist es keine eigene Sicherung");
   pruefe("Weniger als die Grenze raeumt gar nichts weg", altePutzen(sieben.slice(0, 3), 5).length === 0);
+
+  const gemischt = [
+    "ELFIX-vor-update-20260901-120000.elfix.json",
+    "ELFIX-vor-update-20260902-120000.elfix.json",
+    "ELFIX-vor-update-20260903-120000.elfix.json",
+    "ELFIX-vor-update-20260904-120000.elfix.json",
+    "ELFIX-vor-update-20260905-120000.elfix.json",
+    "ELFIX-vor-dem-einlesen-20260909-120000.elfix.json"
+  ];
+  const ausGemischt = altePutzen(gemischt, 5);
+  pruefe("Der Anlass verschiebt die zeitliche Rotation nicht",
+    ausGemischt.length === 1 && ausGemischt[0] === gemischt[0], ausGemischt.join(", "));
+
+  const gleicherZeitpunkt = altePutzen([
+    "ELFIX-vor-update-20260910-120000.elfix.json",
+    "ELFIX-vor-dem-einlesen-20260910-120000.elfix.json"
+  ], 1);
+  pruefe("Gleiche Zeitstempel werden nach dem ganzen Namen eindeutig behandelt",
+    gleicherZeitpunkt.join(",") === "ELFIX-vor-dem-einlesen-20260910-120000.elfix.json",
+    gleicherZeitpunkt.join(", "));
 }
 
 const fehler = pruefungen.filter((p) => !p).length;

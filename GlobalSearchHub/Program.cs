@@ -608,7 +608,7 @@ public sealed class HubForm : Form
             if (File.Exists(ProviderFile))
             {
                 var saved = JsonSerializer.Deserialize<List<SearchProvider>>(File.ReadAllText(ProviderFile));
-                if (saved is { Count: > 0 })
+                if (saved is not null)
                 {
                     foreach (var provider in saved)
                     {

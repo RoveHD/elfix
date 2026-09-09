@@ -8,7 +8,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -91,9 +91,7 @@ public final class Sicherung {
         try {
             quellen.put("settings", einstellungen());
             quellen.put("favorites", bestand == null ? new JSONArray() : bestand.roh());
-            JSONArray anbieterListe = new JSONArray();
-            for (Provider eintrag : ProviderStore.ladeAlle(context)) anbieterListe.put(eintrag.alsJson());
-            quellen.put("providers", anbieterListe);
+            quellen.put("providers", anbieterSichern(ProviderStore.ladeAlle(context)));
             quellen.put("watchparty", watchparty == null ? null : watchparty.kontoSatz());
             // Die Sitzungen sind gemessene Zeit und kommen nie wieder.
             quellen.put("sitzungen", statistik == null ? new JSONArray() : statistik.alle());
@@ -158,6 +156,22 @@ public final class Sicherung {
         return alles;
     }
 
+    /**
+     * Anbieter in derselben Form sichern, in der sie auch abgelegt werden.
+     *
+     * <p>{@link Provider#alsJson()} reicht hier nicht: sie ist die reduzierte
+     * Form fuer den gemeinsamen Kern und enthaelt weder den Schalter noch den
+     * Werbefilter-Stand. Eine Sicherung muss beide beim Einlesen erhalten.
+     */
+    static JSONArray anbieterSichern(List<Provider> anbieter) {
+        JSONArray liste = new JSONArray();
+        if (anbieter == null) return liste;
+        for (Provider eintrag : anbieter) {
+            if (eintrag != null) liste.put(eintrag.alsAblage());
+        }
+        return liste;
+    }
+
     /** Die fertige Sicherung ablegen und alte wegraeumen. */
     private String schreiben(String anlass, String inhalt) {
         try {
@@ -211,8 +225,8 @@ public final class Sicherung {
      * <p>Sie sammeln sich sonst: vor jedem Update eine, und ELFIX bekommt
      * mehrere Fassungen in der Woche. Behalten wird die juengste Handvoll -
      * genug fuer ein misslungenes Update, wenig genug, dass der Datenordner
-     * nicht zulaeuft. Sortiert wird nach dem Namen; der Zeitstempel darin ist
-     * so gebaut, dass alphabetisch und chronologisch dasselbe ist.
+     * nicht zulaeuft. Sortiert wird nach dem Zeitstempel, weil der Anlass vor
+     * ihm im Namen steht.
      */
     private static void aufraeumen(File ordner) {
         String[] namen = ordner.list();
@@ -224,12 +238,36 @@ public final class Sicherung {
             }
         }
         if (eigene.size() <= BEHALTEN) return;
-        String[] sortiert = eigene.toArray(new String[0]);
-        Arrays.sort(sortiert);
-        for (int i = 0; i < sortiert.length - BEHALTEN; i += 1) {
-            File weg = new File(ordner, sortiert[i]);
-            if (!weg.delete()) Log.d(TAG, "Alte Sicherung blieb liegen: " + sortiert[i]);
+        for (String name : alteSicherungen(eigene, BEHALTEN)) {
+            File weg = new File(ordner, name);
+            if (!weg.delete()) Log.d(TAG, "Alte Sicherung blieb liegen: " + name);
         }
+    }
+
+    /**
+     * Die Namen tragen vor dem Zeitstempel einen Anlass. Deshalb ist die volle
+     * alphabetische Reihenfolge nicht chronologisch, sobald Sicherungen aus
+     * verschiedenen Anlaessen zusammenkommen.
+     */
+    static List<String> alteSicherungen(List<String> namen, int behalten) {
+        List<String> sortiert = new ArrayList<>(namen == null ? java.util.Collections.emptyList() : namen);
+        sortiert.sort(nachZeitstempel());
+        int anzahl = Math.max(0, behalten);
+        return new ArrayList<>(sortiert.subList(0, Math.max(0, sortiert.size() - anzahl)));
+    }
+
+    private static String zeitstempel(String name) {
+        java.util.regex.Matcher treffer = java.util.regex.Pattern
+            .compile("-([0-9]{8}-[0-9]{6})\\.elfix\\.json$")
+            .matcher(name == null ? "" : name);
+        return treffer.find() ? treffer.group(1) : "";
+    }
+
+    private static Comparator<String> nachZeitstempel() {
+        return (links, rechts) -> {
+            int vergleich = zeitstempel(links).compareTo(zeitstempel(rechts));
+            return vergleich != 0 ? vergleich : links.compareTo(rechts);
+        };
     }
 
     /** Wie viele selbst angelegte Sicherungen stehenbleiben. */
@@ -241,7 +279,8 @@ public final class Sicherung {
         File ordner = new File(context.getFilesDir(), ORDNER);
         File[] dateien = ordner.listFiles();
         if (dateien == null) return liste;
-        Arrays.sort(dateien, (links, rechts) -> rechts.getName().compareTo(links.getName()));
+        java.util.Arrays.sort(dateien, (links, rechts) ->
+            nachZeitstempel().compare(rechts.getName(), links.getName()));
         for (File datei : dateien) {
             if (datei.isFile() && datei.getName().endsWith(".elfix.json")) liste.add(datei);
         }

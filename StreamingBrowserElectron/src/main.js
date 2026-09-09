@@ -331,6 +331,7 @@ let activeView = null;
 let browserBounds = { x: 0, y: 130, width: 1200, height: 700 };
 let isContentFullscreen = false;
 const providerViews = new Map();
+const providerViewRecords = new WeakMap();
 const webContentsProvider = new Map();
 const attachedProviderViews = new Set();
 const providerResumeState = new Map();
@@ -2004,7 +2005,7 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
 });
 
 ipcMain.handle("provider:save-all", (_event, nextProviders) => {
-  providers = providerModel.normalizeProviders(nextProviders);
+  providers = reuseProviderRecords(providerModel.normalizeProviders(nextProviders));
   if (!enabledProviders().some((item) => item.id === activeProviderId)) {
     activeProviderId = null;
     activeView = null;
@@ -2067,7 +2068,7 @@ ipcMain.handle("provider:relocate", async (_event, providerId, neueAdresse) => {
     ? umzug.adresse(activeView?.webContents?.getURL() || "", vorschau.vonHost, vorschau.nachWurzel)
     : "";
 
-  providers = providerModel.normalizeProviders(vorschau.providers);
+  providers = reuseProviderRecords(providerModel.normalizeProviders(vorschau.providers));
   favorites = vorschau.favorites;
   saveProviders();
   // Zieht die neuen Adressen an die anderen Geraete nach. Uebernehmen werden
@@ -3106,7 +3107,7 @@ ipcMain.handle("data:backup-import", async () => {
     if (Array.isArray(daten.favorites)) {
       fs.writeFileSync(FAVORITES_FILE, JSON.stringify(daten.favorites, null, 2));
     }
-    if (Array.isArray(daten.providers) && daten.providers.length) {
+    if (Array.isArray(daten.providers)) {
       fs.writeFileSync(PROVIDER_FILE, JSON.stringify(daten.providers, null, 2));
     }
     if (daten.watchparty) {
@@ -3127,9 +3128,17 @@ ipcMain.handle("data:backup-import", async () => {
     }
     if (daten.fassungen && typeof daten.fassungen === "object") {
       fs.writeFileSync(FASSUNGEN_FILE, JSON.stringify(daten.fassungen, null, 2));
+      fassungSpeicher = null;
+      fassungSchmutzig = false;
+      fassungWartet.clear();
+      fassungGemeldet.clear();
+      loadFassungen();
     }
     if (daten.marken && typeof daten.marken === "object") {
       fs.writeFileSync(MARKEN_FILE, JSON.stringify(daten.marken, null, 2));
+      markenSpeicher = null;
+      markenSchmutzig = false;
+      loadMarken();
     }
 
     // Und jetzt einlesen wie beim Start. Damit laeuft alles durch dieselbe
@@ -3138,7 +3147,11 @@ ipcMain.handle("data:backup-import", async () => {
     // Die Reihenfolge zaehlt: die Watchparty-Ablage braucht die Raeume aus den
     // Einstellungen.
     settings = loadSettings();
-    providers = loadProviders();
+    providers = reuseProviderRecords(loadProviders());
+    if (!enabledProviders().some((item) => item.id === activeProviderId)) {
+      activeProviderId = null;
+      activeView = null;
+    }
     favorites = loadFavorites();
     watchpartyLokal = loadWatchpartyLocal();
     // Der Zwischenspeicher der Sitzungen muss weg, sonst schreibt der naechste
@@ -3319,6 +3332,18 @@ async function enterHomeMode() {
   clearBrowserDataPreservingLogin().catch(() => {});
 }
 
+// Ansichten und Fortschritts-Timer halten die Anbieterobjekte fest. Beim
+// Speichern, Umziehen und Importieren muessen dieselben Objekte die neue
+// Konfiguration bekommen, damit auch ihre bestehenden Handler sie verwenden.
+function reuseProviderRecords(nextProviders) {
+  const previous = new Map(providers.map(provider => [provider.id, provider]));
+  return nextProviders.map(provider => {
+    const view = providerViews.get(provider.id);
+    const record = (view && providerViewRecords.get(view)) || previous.get(provider.id);
+    return Object.assign(record || {}, provider);
+  });
+}
+
 function getProviderView(provider) {
   if (providerViews.has(provider.id)) {
     return providerViews.get(provider.id);
@@ -3335,6 +3360,7 @@ function getProviderView(provider) {
     }
   });
   // Sonst blitzt beim Seitenwechsel das weisse Standard-Backing durch.
+  providerViewRecords.set(view, provider);
   view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
 
   webContentsProvider.set(view.webContents.id, provider.id);
@@ -13901,7 +13927,7 @@ function loadProviders() {
   try {
     const raw = JSON.parse(fs.readFileSync(PROVIDER_FILE, "utf8"));
     const loaded = providerModel.normalizeProviders(raw);
-    if (loaded.length) return loaded;
+    if (loaded.length || (Array.isArray(raw) && raw.length === 0)) return loaded;
   } catch {
     // Fall through to defaults.
   }
@@ -13934,6 +13960,9 @@ function youtubeAnbieterNachtragen() {
   settings.migrations = { ...(settings.migrations || {}), youtubeProvider: true };
   saveSettings();
 
+  // Eine bewusst geleerte Anbieterliste bleibt auch bei einem noch offenen
+  // Migrationsschritt leer.
+  if (!providers.length) return false;
   if (providers.some((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl))) return false;
   const vorlage = providerModel.defaultProviders()
     .find((eintrag) => youtube.istYoutubeUrl(eintrag.startUrl));

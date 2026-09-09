@@ -170,12 +170,25 @@ function selbstName(anlass, jetzt = new Date()) {
 // misslungenes Update zu ueberstehen, und wenig genug, dass der Datenordner
 // nicht zulaeuft.
 //
-// Sortiert wird nach dem Namen, und das genuegt: der Zeitstempel darin ist so
-// gebaut, dass alphabetisch und chronologisch dasselbe ist.
+// Entscheidend ist der Zeitstempel, nicht der Anlass im Namen: sonst wuerde
+// etwa "vor-dem-einlesen" vor "vor-update" einsortiert und eine neue
+// Rueckfahrkarte vor aelteren Update-Sicherungen geloescht. Bei gleichem
+// Zeitstempel entscheidet der ganze Name, damit auch dieser seltene Fall
+// reproduzierbar bleibt.
 function altePutzen(namen, behalten = 5) {
   const eigene = (Array.isArray(namen) ? namen : [])
-    .filter((name) => /^ELFIX-[a-z0-9-]+-\d{8}-\d{6}\.elfix\.json$/i.test(String(name)))
-    .sort();
+    .map((name) => {
+      const text = String(name);
+      const treffer = /^ELFIX-[a-z0-9-]+-(\d{8}-\d{6})\.elfix\.json$/i.exec(text);
+      return treffer ? { name, text, stempel: treffer[1] } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.stempel !== b.stempel) return a.stempel < b.stempel ? -1 : 1;
+      if (a.text === b.text) return 0;
+      return a.text < b.text ? -1 : 1;
+    })
+    .map(({ name }) => name);
   const wieViele = Math.max(0, Number(behalten) || 0);
   return eigene.slice(0, Math.max(0, eigene.length - wieViele));
 }
