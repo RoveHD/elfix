@@ -2692,7 +2692,16 @@ wss.on("connection", (socket) => {
           vorher.episode === eintrag.episode
           && (!eintrag.season || !vorher.season || vorher.season === eintrag.season)
         ));
-      if (folge && (staffelGeaendert || folge !== eintrag.episode)
+      //   - Und niemand, solange eine Startverabredung offen ist. Dann hat
+      //     die Runde schon entschieden, wohin es geht, und wer noch laedt,
+      //     traegt im Herzschlag weiter die alte Folge. Der Fuehrende
+      //     ueberschrieb damit im Sekundentakt das Ziel der Schranke: die
+      //     Karte sprang auf die neue Folge und zweihundert Millisekunden
+      //     spaeter zurueck, der Gast stand allein bei der neuen, und der
+      //     gemeinsame Start galt der alten. Waehrend die Schranke offen ist,
+      //     entscheidet die Schranke - genau wie der Nachziehtakt dort schon
+      //     die Finger stillhaelt.
+      if (folge && !eintrag.sync && (staffelGeaendert || folge !== eintrag.episode)
         && (socket.geraetId === hostVorher || eigenerWechsel)) {
         eintrag.episode = folge;
         eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
