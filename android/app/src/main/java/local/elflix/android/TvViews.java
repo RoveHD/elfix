@@ -2,7 +2,9 @@ package local.elflix.android;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -25,21 +27,19 @@ import java.util.List;
  */
 final class TvViews {
     /** Overscan-safe screen margin: roughly 5% of the panel, the standard TV safe area. */
-    static final int SCREEN_PADDING = 48;
-    static final int SECTION_GAP = 36;
-    static final int ITEM_GAP = 20;
-    static final int CARD_RADIUS = 20;
-    static final int FOCUS_MS = 170;
+    static final int SCREEN_PADDING = 56;
+    static final int SECTION_GAP = 40;
+    static final int ITEM_GAP = 18;
+    static final int CARD_RADIUS = 24;
 
     /**
      * Wie gross eine Karte im Fokus wird.
      *
-     * <p>Frueher fuenf Prozent. Fuenf Prozent sind aus drei Metern Entfernung
-     * kein Unterschied, sondern ein Verdacht - gefordert waren acht bis zwoelf,
-     * und neun liegt in der Mitte und passt noch in den Rand, den eine Reihe
-     * fuer ihren Ueberstand freihaelt.
+     * <p>Der Rahmen und die Hoehe sagen bereits klar, wo der Fokus steht. Eine
+     * zusaetzliche Vergroesserung von dreieinhalb Prozent gibt Tiefe, ohne dass
+     * bei schnellem D-pad-Wechsel mehrere Karten gegeneinander zu schwimmen scheinen.
      */
-    static final float FOKUS_GROSS = 1.09f;
+    static final float FOKUS_GROSS = 1.035f;
 
     private TvViews() {
     }
@@ -58,38 +58,28 @@ final class TvViews {
     static int kopfIconDp(int breiteDp) { return breiteDp < 1280 ? 20 : 22; }
 
     /**
-     * The single focus treatment used across every TV surface: a small lift, an accent outline and
-     * elevation. Deliberately restrained -- readable from the couch without being jumpy.
+     * The single focus treatment used across every TV surface. It is deliberately a calm outline
+     * and lift instead of the bouncy, oversized "tile jumps at me" effect common in TV apps.
      */
-    static void applyFocus(View view, GradientDrawable idle, GradientDrawable focused) {
+    static void applyFocus(View view, Drawable idle, Drawable focused) {
         applyFocus(view, idle, focused, FOKUS_GROSS);
     }
 
     /**
      * Dieselbe Behandlung, aber mit eigenem Mass.
      *
-     * <p>Karten duerfen weit wachsen, Knoepfe in der Kopfzeile nicht: eine
-     * Kopfzeile, in der ein Knopf um neun Prozent waechst, schiebt ihre
-     * Nachbarn optisch beiseite, und das ist bei fuenf Knoepfen nebeneinander
-     * kein Effekt mehr, sondern ein Wackeln.
-     *
-     * <p>Drei Dinge zusammen ergeben das "kommt nach vorn": die Groesse ueber
-     * eine Feder (siehe {@link Bewegung#fokus}), die Hoehe ueber der Flaeche,
-     * die den Schatten wirft, und der hellere Rahmen. Dazu kommt der
-     * Tastendruck: ohne ihn ist ein Druck auf OK voellig unquittiert, bis die
-     * naechste Seite steht.
+     * <p>Kopfziele wachsen weniger als Poster. Groesse und Schatten laufen
+     * gemeinsam ohne Ueberschwingen; OK bekommt eine kurze Druckreaktion.
      */
-    static void applyFocus(View view, final GradientDrawable idle, final GradientDrawable focused,
+    static void applyFocus(View view, final Drawable idle, final Drawable focused,
                            final float gross) {
         view.setBackground(idle);
         view.setFocusable(true);
         view.setFocusableInTouchMode(true);
+        view.setClipToOutline(false);
         view.setOnFocusChangeListener((v, hasFocus) -> {
-            // Ueber Bewegung und nicht mit fester Zahl: wer die Animationen
-            // des Geraets abgeschaltet hat, bekommt den Fokusrahmen sofort
-            // statt in Zeitlupe.
-            Bewegung.fokus(v, hasFocus, gross, hasFocus ? 14f : 0f);
             v.setBackground(hasFocus ? focused : idle);
+            Bewegung.fokus(v, hasFocus, gross, 12f);
         });
         view.setOnKeyListener((v, code, ereignis) -> {
             if (ereignis.getAction() == android.view.KeyEvent.ACTION_DOWN
@@ -109,8 +99,8 @@ final class TvViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.PRIMARY);
-        view.setTextSize(15);
-        view.setLetterSpacing(0.16f);
+        view.setTextSize(13);
+        view.setLetterSpacing(0.18f);
         view.setAllCaps(true);
         view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         return view;
@@ -120,7 +110,7 @@ final class TvViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.TEXT_PRIMARY);
-        view.setTextSize(38);
+        view.setTextSize(42);
         view.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
         view.setPadding(0, dp(context, 6), 0, 0);
         return view;
@@ -130,7 +120,7 @@ final class TvViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.TEXT_PRIMARY);
-        view.setTextSize(24);
+        view.setTextSize(26);
         view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         return view;
     }
@@ -139,7 +129,8 @@ final class TvViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.TEXT_SECONDARY);
-        view.setTextSize(17);
+        view.setTextSize(18);
+        view.setLineSpacing(dp(context, 2), 1.12f);
         // Zwei Zeilen statt einer: Fliesstext.
         view.setMaxLines(2);
         view.setEllipsize(TextUtils.TruncateAt.END);
@@ -156,11 +147,11 @@ final class TvViews {
         int quer = kopfRandHorizontalDp(breite);
         pill.setPadding(dp(context, quer), dp(context, kopfRandVertikalDp(breite)),
             dp(context, quer + 2), dp(context, kopfRandVertikalDp(breite)));
-        pill.setMinimumHeight(dp(context, 48));
+        pill.setMinimumHeight(dp(context, 52));
         applyFocus(pill,
-            shape(context, Theme.SURFACE_ELEVATED, 26, Theme.BORDER, 1),
-            shape(context, Theme.PRIMARY_MUTED, 26, Theme.PRIMARY, 2),
-            1.05f);
+            headerIdle(context),
+            surfaceGradient(context, Theme.PRIMARY_MUTED, CARD_RADIUS, Theme.PRIMARY, 2),
+            1.02f);
 
         ImageView icon = new ImageView(context);
         icon.setImageResource(iconRes);
@@ -174,6 +165,7 @@ final class TvViews {
         text.setText(label);
         text.setTextColor(Theme.TEXT_PRIMARY);
         text.setTextSize(kopfTextGroesseSp(breite));
+        text.setLetterSpacing(0.01f);
         text.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         text.setMaxLines(1);
         pill.addView(text);
@@ -200,6 +192,30 @@ final class TvViews {
         return MobileViews.shape(context, fill, radiusDp, strokeColor, strokeDp);
     }
 
+    /** A very restrained surface sheen separates dense TV cards without a costly blur or shadow. */
+    static GradientDrawable surfaceGradient(Context context, int fill, int radiusDp,
+                                            int strokeColor, int strokeDp) {
+        GradientDrawable drawable = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[] { MobileViews.blend(fill, Color.WHITE, 0.035f), fill });
+        drawable.setCornerRadius(dp(context, radiusDp));
+        if (strokeDp > 0) drawable.setStroke(dp(context, strokeDp), strokeColor);
+        return drawable;
+    }
+
+    /**
+     * Header navigation keeps its active destination visible after D-pad focus moves away.
+     * Focus still wins while a button is being operated; on exit this stateful idle background
+     * restores the quieter blue selection instead of making the current section disappear.
+     */
+    private static StateListDrawable headerIdle(Context context) {
+        StateListDrawable states = new StateListDrawable();
+        states.addState(new int[] { android.R.attr.state_activated },
+            surfaceGradient(context, Theme.PRIMARY_MUTED, CARD_RADIUS, Theme.PRIMARY, 1));
+        states.addState(new int[] {},
+            surfaceGradient(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1));
+        return states;
+    }
+
     /**
      * Large provider card, legible from a distance: a tinted identity block with the provider's
      * short code, the name, and what it offers.
@@ -208,10 +224,12 @@ final class TvViews {
                              Runnable onOpen, Runnable onOpenStart) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(context, 20), dp(context, 20), dp(context, 20), dp(context, 20));
+        card.setClipChildren(false);
+        card.setClipToPadding(false);
+        card.setPadding(dp(context, 22), dp(context, 22), dp(context, 22), dp(context, 20));
         applyFocus(card,
-            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
-            shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 3));
+            surfaceGradient(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
+            surfaceGradient(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 2));
 
         int tint = Theme.providerTint(provider.id);
         TextView badge = new TextView(context);
@@ -232,7 +250,7 @@ final class TvViews {
         TextView name = new TextView(context);
         name.setText(provider.name);
         name.setTextColor(Theme.TEXT_PRIMARY);
-        name.setTextSize(20);
+        name.setTextSize(21);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         // Zwei Zeilen statt einer: Name des Anbieters.
         name.setMaxLines(2);
@@ -243,7 +261,8 @@ final class TvViews {
         TextView desc = new TextView(context);
         desc.setText(tagline);
         desc.setTextColor(Theme.TEXT_SECONDARY);
-        desc.setTextSize(15);
+        desc.setTextSize(16);
+        desc.setLineSpacing(dp(context, 1), 1.08f);
         // Zwei Zeilen statt einer: Was der Anbieter anbietet.
         desc.setMaxLines(2);
         desc.setEllipsize(TextUtils.TruncateAt.END);
@@ -277,13 +296,15 @@ final class TvViews {
                              Runnable onOpen, View.OnClickListener onMenu) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(context, 14), dp(context, 14), dp(context, 14), dp(context, 16));
+        card.setClipChildren(false);
+        card.setClipToPadding(false);
+        card.setPadding(dp(context, 14), dp(context, 14), dp(context, 14), dp(context, 18));
         // Damit das Kachelmenue seine eigene Zeile wiederfindet - beim
         // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
         card.setTag(R.id.elfix_karte, Boolean.TRUE);
         applyFocus(card,
-            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
-            shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 3));
+            surfaceGradient(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
+            surfaceGradient(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 2));
 
         // Derselbe Bildkasten wie auf dem Telefon - nur groesser, mit
         // groesseren Buchstaben und einem Balken, der aus zwei Metern
@@ -297,7 +318,7 @@ final class TvViews {
         TextView titleView = new TextView(context);
         titleView.setText(title);
         titleView.setTextColor(Theme.TEXT_PRIMARY);
-        titleView.setTextSize(17);
+        titleView.setTextSize(18);
         titleView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         titleView.setMaxLines(2);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
@@ -308,7 +329,7 @@ final class TvViews {
             TextView episode = new TextView(context);
             episode.setText(episodeLine);
             episode.setTextColor(Theme.TEXT_SECONDARY);
-            episode.setTextSize(14);
+            episode.setTextSize(15);
             // Zwei Zeilen statt einer: Die Folgenzeile einer Karte.
             episode.setMaxLines(2);
             episode.setEllipsize(TextUtils.TruncateAt.END);
@@ -343,20 +364,20 @@ final class TvViews {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(context, 22), dp(context, 20), dp(context, 22), dp(context, 20));
-        card.setBackground(shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1));
+        card.setBackground(surfaceGradient(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1));
 
         TextView head = new TextView(context);
         head.setText(title);
         head.setTextColor(Theme.TEXT_PRIMARY);
-        head.setTextSize(20);
+        head.setTextSize(21);
         head.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         card.addView(head);
 
         TextView text = new TextView(context);
         text.setText(body);
         text.setTextColor(Theme.TEXT_SECONDARY);
-        text.setTextSize(16);
-        text.setLineSpacing(0, 1.2f);
+        text.setTextSize(17);
+        text.setLineSpacing(dp(context, 2), 1.18f);
         text.setPadding(0, dp(context, 8), 0, 0);
         // Damit ein Nachtrag den Text spaeter wiederfindet, ohne dass die
         // ganze Seite neu gebaut werden muss.
@@ -372,8 +393,8 @@ final class TvViews {
             action.setGravity(Gravity.CENTER);
             action.setPadding(dp(context, 22), dp(context, 12), dp(context, 22), dp(context, 12));
             applyFocus(action,
-                shape(context, Theme.SURFACE_PRESSED, 12, Theme.BORDER, 1),
-                shape(context, Theme.PRIMARY_DEEP, 12, Theme.PRIMARY, 2));
+                surfaceGradient(context, Theme.SURFACE_PRESSED, 14, Theme.BORDER, 1),
+                surfaceGradient(context, Theme.PRIMARY_DEEP, 14, Theme.PRIMARY, 2));
             action.setOnClickListener(v -> onAction.run());
             // Damit die Beschriftung spaeter fortgeschrieben werden kann, ohne
             // dass die Karte neu entsteht - siehe MainActivity.kartenKnopf().
@@ -401,11 +422,11 @@ final class TvViews {
      * Fortschrittsbalken kommen aus MobileViews.
      * ==================================================================== */
 
-    /** Wie breit eine Kachel in einer Reihe ist - gut fuenf davon nebeneinander. */
+    /** Vier Poster samt Innenraendern und Abstaenden passen auf uebliche TV-Breiten. */
     static int kachelBreiteDp(Context context) {
         int breite = context.getResources().getConfiguration().screenWidthDp;
-        return Math.max(150, Math.min(240,
-            Math.round((breite - 2f * SCREEN_PADDING) / 5.4f)));
+        return Math.max(168, Math.min(264,
+            (int) Math.floor((breite - 2f * SCREEN_PADDING - 3f * ITEM_GAP) / 4f - 20f)));
     }
 
     /**
@@ -418,7 +439,7 @@ final class TvViews {
      */
     static int heroHoeheDp(Context context) {
         int hoehe = context.getResources().getConfiguration().screenHeightDp;
-        return Math.max(210, Math.min(330, Math.round(hoehe * 0.42f)));
+        return Math.max(238, Math.min(372, Math.round(hoehe * 0.46f)));
     }
 
     /**
@@ -459,8 +480,8 @@ final class TvViews {
         TextView knopf = pillButton(context, label, beiKlick);
         knopf.setTextColor(Color.WHITE);
         applyFocus(knopf,
-            shape(context, Theme.PRIMARY_DEEP, 24, Theme.PRIMARY, 2),
-            shape(context, Theme.PRIMARY, 24, Color.WHITE, 3));
+            surfaceGradient(context, Theme.PRIMARY_DEEP, 24, Theme.PRIMARY, 2),
+            surfaceGradient(context, Theme.PRIMARY, 24, Color.WHITE, 2));
         return knopf;
     }
 
@@ -473,11 +494,12 @@ final class TvViews {
         knopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         knopf.setGravity(Gravity.CENTER);
         knopf.setMaxLines(1);
-        knopf.setPadding(dp(context, 20), dp(context, 10), dp(context, 20), dp(context, 10));
+        knopf.setPadding(dp(context, 22), dp(context, 11), dp(context, 22), dp(context, 11));
         applyFocus(knopf,
-            shape(context, Theme.SURFACE_ELEVATED, 24, Theme.BORDER, 1),
-            shape(context, Theme.PRIMARY_MUTED, 24, Theme.PRIMARY, 2));
-        knopf.setOnClickListener(v -> beiKlick.run());
+            surfaceGradient(context, Theme.SURFACE_ELEVATED, 24, Theme.BORDER, 1),
+            surfaceGradient(context, Theme.PRIMARY_MUTED, 24, Theme.PRIMARY, 2));
+        if (beiKlick != null) knopf.setOnClickListener(v -> beiKlick.run());
+        else knopf.setEnabled(false);
         return knopf;
     }
 
@@ -498,7 +520,7 @@ final class TvViews {
         scroll.setClipChildren(false);
         // Der eigene Rand ist der Ueberstand des Fokusrahmens, nicht der
         // Seitenrand: der steht schon an der Seite.
-        int luft = dp(context, 14);
+        int luft = dp(context, 16);
         scroll.setPadding(0, luft, dp(context, SCREEN_PADDING), luft);
         LinearLayout leiste = new LinearLayout(context);
         leiste.setOrientation(LinearLayout.HORIZONTAL);
@@ -578,8 +600,8 @@ final class TvViews {
         int rand = dp(context, 10);
         karte.setPadding(rand, rand, rand, dp(context, 12));
         applyFocus(karte,
-            shape(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
-            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 3));
+            surfaceGradient(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
+            surfaceGradient(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 2));
 
         int posterHoehe = Math.round(breiteDp * 1.42f);
         FrameLayout poster = MobileViews.poster(context, provider, titel, bildUrl, prozent,
@@ -605,7 +627,7 @@ final class TvViews {
         TextView name = new TextView(context);
         name.setText(titel);
         name.setTextColor(Theme.TEXT_PRIMARY);
-        name.setTextSize(18);
+        name.setTextSize(19);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         // Drei Zeilen fuer den Titel.
         //
@@ -623,7 +645,7 @@ final class TvViews {
             TextView zeile = new TextView(context);
             zeile.setText(unterzeile);
             zeile.setTextColor(Theme.TEXT_SECONDARY);
-            zeile.setTextSize(15);
+            zeile.setTextSize(16);
             // Zwei Zeilen statt einer: Die Unterzeile einer Kachel.
             zeile.setMaxLines(2);
             zeile.setEllipsize(TextUtils.TruncateAt.END);
@@ -673,7 +695,7 @@ final class TvViews {
             });
         }
         karte.setLayoutParams(new LinearLayout.LayoutParams(
-            dp(context, breiteDp + 16), ViewGroup.LayoutParams.WRAP_CONTENT));
+            dp(context, breiteDp + 20), ViewGroup.LayoutParams.WRAP_CONTENT));
         return karte;
     }
 
@@ -696,8 +718,8 @@ final class TvViews {
         karte.setContentDescription(titel + (grund == null || grund.isEmpty() ? "" : ", " + grund));
         karte.setPadding(rand, rand, rand, dp(context, 12));
         applyFocus(karte,
-            shape(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
-            shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 3));
+            surfaceGradient(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
+            surfaceGradient(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.PRIMARY, 2));
 
         int posterHoehe = Math.round(breiteDp * 1.42f);
         karte.addView(MobileViews.poster(context, provider, titel, bildUrl, 0,
@@ -707,7 +729,7 @@ final class TvViews {
         TextView name = new TextView(context);
         name.setText(titel);
         name.setTextColor(Theme.TEXT_PRIMARY);
-        name.setTextSize(18);
+        name.setTextSize(19);
         name.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         // Drei Zeilen fuer den Titel.
         //
@@ -753,7 +775,7 @@ final class TvViews {
             });
         }
         karte.setLayoutParams(new LinearLayout.LayoutParams(
-            dp(context, breiteDp + 16), ViewGroup.LayoutParams.WRAP_CONTENT));
+            dp(context, breiteDp + 20), ViewGroup.LayoutParams.WRAP_CONTENT));
         return karte;
     }
 
@@ -771,13 +793,13 @@ final class TvViews {
         int rand = dp(context, 8);
         karte.setPadding(rand, rand, rand, dp(context, 12));
         applyFocus(karte,
-            shape(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
-            shape(context, Theme.PRIMARY_MUTED, CARD_RADIUS, Theme.PRIMARY, 3));
+            surfaceGradient(context, Theme.SURFACE, CARD_RADIUS, Theme.BORDER, 1),
+            surfaceGradient(context, Theme.PRIMARY_MUTED, CARD_RADIUS, Theme.PRIMARY, 2));
 
         TextView pfeil = new TextView(context);
         pfeil.setText("›");
         pfeil.setTextColor(Theme.PRIMARY);
-        pfeil.setTextSize(40);
+        pfeil.setTextSize(44);
         pfeil.setGravity(Gravity.CENTER);
         karte.addView(pfeil);
 
@@ -812,13 +834,13 @@ final class TvViews {
         kasten.setClipChildren(false);
         kasten.setClipToPadding(false);
         kasten.setPadding(dp(context, 20), dp(context, 16), dp(context, 20), dp(context, 16));
-        kasten.setBackground(shape(context, Theme.SURFACE, 14, Theme.BORDER, 1));
+        kasten.setBackground(surfaceGradient(context, Theme.SURFACE, 18, Theme.BORDER, 1));
 
         TextView satz = new TextView(context);
         satz.setText(text);
         satz.setTextColor(Theme.TEXT_SECONDARY);
-        satz.setTextSize(16);
-        satz.setLineSpacing(0, 1.2f);
+        satz.setTextSize(17);
+        satz.setLineSpacing(dp(context, 2), 1.15f);
         kasten.addView(satz, new LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
@@ -844,7 +866,7 @@ final class TvViews {
         int hoehe = Math.round(breiteDp * 1.42f);
         for (int i = 0; i < anzahl; i += 1) {
             View kasten = new View(context);
-            kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 12, Theme.BORDER, 1));
+            kasten.setBackground(surfaceGradient(context, Theme.SURFACE_ELEVATED, 16, Theme.BORDER, 1));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 dp(context, breiteDp), dp(context, hoehe));
             if (i > 0) params.leftMargin = dp(context, ITEM_GAP);
@@ -858,8 +880,8 @@ final class TvViews {
         LinearLayout kasten = new LinearLayout(context);
         kasten.setOrientation(LinearLayout.VERTICAL);
         kasten.setGravity(Gravity.CENTER_HORIZONTAL);
-        kasten.setPadding(dp(context, 28), dp(context, 34), dp(context, 28), dp(context, 34));
-        kasten.setBackground(shape(context, Theme.SURFACE, 16, Theme.BORDER, 1));
+        kasten.setPadding(dp(context, 32), dp(context, 38), dp(context, 32), dp(context, 38));
+        kasten.setBackground(surfaceGradient(context, Theme.SURFACE, 20, Theme.BORDER, 1));
 
         ImageView zeichen = new ImageView(context);
         zeichen.setImageResource(iconRes);
@@ -869,7 +891,7 @@ final class TvViews {
         TextView kopf = new TextView(context);
         kopf.setText(ueberschrift);
         kopf.setTextColor(Theme.TEXT_PRIMARY);
-        kopf.setTextSize(20);
+        kopf.setTextSize(22);
         kopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         kopf.setGravity(Gravity.CENTER);
         kopf.setPadding(0, dp(context, 14), 0, 0);
@@ -878,9 +900,9 @@ final class TvViews {
         TextView satz = new TextView(context);
         satz.setText(text);
         satz.setTextColor(Theme.TEXT_SECONDARY);
-        satz.setTextSize(16);
+        satz.setTextSize(17);
         satz.setGravity(Gravity.CENTER);
-        satz.setLineSpacing(0, 1.2f);
+        satz.setLineSpacing(dp(context, 2), 1.15f);
         satz.setPadding(0, dp(context, 8), 0, 0);
         kasten.addView(satz);
         return kasten;
@@ -909,11 +931,11 @@ final class TvViews {
         kasten.setOutlineProvider(new android.view.ViewOutlineProvider() {
             @Override
             public void getOutline(View ansicht, android.graphics.Outline umriss) {
-                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 20));
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 28));
             }
         });
         kasten.setClipToOutline(true);
-        kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 20, Theme.BORDER, 1));
+        kasten.setBackground(surfaceGradient(context, Theme.SURFACE_ELEVATED, 28, Theme.BORDER, 1));
 
         ImageView bild = new ImageView(context);
         bild.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -928,7 +950,8 @@ final class TvViews {
         // Zwei Verlaeufe uebereinander: einer von links, damit der Text auf
         // jedem Bild steht, und einer von unten, damit die Knoepfe es tun.
         GradientDrawable quer = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-            new int[]{Color.argb(238, 7, 10, 18), Color.argb(170, 7, 10, 18), Color.argb(40, 7, 10, 18)});
+            new int[]{Color.argb(248, 7, 10, 18), Color.argb(205, 7, 10, 18),
+                Color.argb(62, 7, 10, 18), Color.argb(8, 7, 10, 18)});
         schleier.setBackground(quer);
         kasten.addView(schleier, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -940,12 +963,14 @@ final class TvViews {
         kasten.addView(untenSchleier, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        boolean kompakt = context.getResources().getConfiguration().screenHeightDp <= 600;
         LinearLayout text = new LinearLayout(context);
         text.setTag(MobileViews.HERO_TEXTE);
         text.setOrientation(LinearLayout.VERTICAL);
         text.setClipChildren(false);
         text.setClipToPadding(false);
-        text.setPadding(dp(context, 32), dp(context, 28), dp(context, 32), dp(context, 26));
+        text.setPadding(dp(context, kompakt ? 28 : 40), dp(context, kompakt ? 20 : 34),
+            dp(context, kompakt ? 28 : 40), dp(context, kompakt ? 20 : 30));
         TextView augenbrauenZeile = eyebrow(context, augenbraue);
         augenbrauenZeile.setTag(MobileViews.HERO_AUGENBRAUE);
         text.addView(augenbrauenZeile);
@@ -954,7 +979,7 @@ final class TvViews {
         ueberschrift.setTag(MobileViews.HERO_TITEL);
         ueberschrift.setText(titel);
         ueberschrift.setTextColor(Theme.TEXT_PRIMARY);
-        ueberschrift.setTextSize(38);
+        ueberschrift.setTextSize(kompakt ? 34 : 44);
         ueberschrift.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
         ueberschrift.setMaxLines(2);
         ueberschrift.setEllipsize(TextUtils.TruncateAt.END);
@@ -968,7 +993,8 @@ final class TvViews {
         TextView zeile = new TextView(context);
         zeile.setTag(MobileViews.HERO_UNTERZEILE);
         zeile.setTextColor(Theme.TEXT_SECONDARY);
-        zeile.setTextSize(17);
+        zeile.setTextSize(kompakt ? 16 : 18);
+        zeile.setLineSpacing(dp(context, 2), 1.1f);
         // Zwei Zeilen statt einer: Die Unterzeile des Titelhintergrunds.
         zeile.setMaxLines(2);
         zeile.setEllipsize(TextUtils.TruncateAt.END);
@@ -976,8 +1002,8 @@ final class TvViews {
         text.addView(zeile);
 
         LinearLayout.LayoutParams balkenRand = new LinearLayout.LayoutParams(
-            dp(context, 340), ViewGroup.LayoutParams.WRAP_CONTENT);
-        balkenRand.topMargin = dp(context, 14);
+            dp(context, 380), ViewGroup.LayoutParams.WRAP_CONTENT);
+        balkenRand.topMargin = dp(context, kompakt ? 10 : 16);
         View balken = MobileViews.fortschrittsBalken(context, prozent, true);
         balken.setTag(MobileViews.HERO_BALKEN);
         text.addView(balken, balkenRand);
@@ -988,20 +1014,24 @@ final class TvViews {
         knoepfe.setClipToPadding(false);
         LinearLayout.LayoutParams knopfRand = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        knopfRand.topMargin = dp(context, 18);
+        knopfRand.topMargin = dp(context, kompakt ? 14 : 22);
 
         View haupt = heroKnopf(context, aufruf, true, beiAufruf, beiFokus);
+        haupt.setTag("tv:hero:0");
         knoepfe.addView(haupt);
         View zweit = heroKnopf(context, zweitText == null ? "" : zweitText, false, beiZweit,
             beiFokus);
+        zweit.setTag("tv:hero:1");
         LinearLayout.LayoutParams zweitParams = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         zweitParams.leftMargin = dp(context, 14);
         knoepfe.addView(zweit, zweitParams);
         text.addView(knoepfe, knopfRand);
 
+        int textWidth = Math.min(dp(context, kompakt ? 700 : 760),
+            Math.round(context.getResources().getDisplayMetrics().widthPixels * (kompakt ? 0.78f : 0.72f)));
         FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            textWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
         textParams.gravity = Gravity.BOTTOM;
         kasten.addView(text, textParams);
         heroTeileSetzen(kasten, haupt, zweit, augenbraue, titel, unterzeile, prozent,
@@ -1033,7 +1063,7 @@ final class TvViews {
         // Derselbe Wechsel wie auf dem Telefon - er steht dort, weil beide
         // Kasten denselben Aufbau und dieselben Marken haben.
         MobileViews.heroWechsel(kasten, bild, MobileViews.heroAnderer(kasten, titel),
-            () -> Bilder.laden(bild, bildUrl, 640, 360, null),
+            bildUrl, 640, 360,
             () -> heroTeileSetzen(kasten, haupt, zweit, augenbraue, titel, unterzeile, prozent,
                 aufruf, beiAufruf, zweitText, beiZweit, knoepfeAus));
         return true;
@@ -1045,14 +1075,17 @@ final class TvViews {
                                         String zweitText, Runnable beiZweit, View[] knoepfeAus) {
         MobileViews.heroSchriftSetzen(kasten, augenbraue, titel, unterzeile, prozent);
         if (haupt instanceof TextView) {
+            boolean hauptDa = aufruf != null && !aufruf.isEmpty() && beiAufruf != null;
             ((TextView) haupt).setText(aufruf == null ? "" : aufruf);
-            haupt.setOnClickListener(beiAufruf == null ? null : v -> beiAufruf.run());
-            haupt.setVisibility(aufruf == null || aufruf.isEmpty() ? View.GONE : View.VISIBLE);
+            haupt.setOnClickListener(hauptDa ? v -> beiAufruf.run() : null);
+            haupt.setEnabled(hauptDa);
+            haupt.setVisibility(hauptDa ? View.VISIBLE : View.GONE);
         }
         boolean zweiterDa = zweitText != null && !zweitText.isEmpty() && beiZweit != null;
         if (zweit instanceof TextView) {
             ((TextView) zweit).setText(zweiterDa ? zweitText : "");
             zweit.setOnClickListener(zweiterDa ? v -> beiZweit.run() : null);
+            zweit.setEnabled(zweiterDa);
             zweit.setVisibility(zweiterDa ? View.VISIBLE : View.GONE);
         }
         if (knoepfeAus != null && knoepfeAus.length > 0) knoepfeAus[0] = haupt;
@@ -1069,15 +1102,18 @@ final class TvViews {
         knopf.setText(label);
         knopf.setTextColor(Color.WHITE);
         knopf.setTextSize(18);
+        knopf.setLetterSpacing(0.01f);
         knopf.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         knopf.setGravity(Gravity.CENTER);
         knopf.setMaxLines(1);
-        knopf.setPadding(dp(context, 30), dp(context, 14), dp(context, 30), dp(context, 14));
+        knopf.setMinimumHeight(dp(context, 56));
+        knopf.setPadding(dp(context, 30), dp(context, 15), dp(context, 30), dp(context, 15));
         applyFocus(knopf,
-            shape(context, haupt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 14,
+            surfaceGradient(context, haupt ? Theme.PRIMARY_DEEP : Theme.SURFACE_ELEVATED, 16,
                 haupt ? Theme.PRIMARY : Theme.BORDER, haupt ? 2 : 1),
-            shape(context, Theme.PRIMARY, 14, Color.WHITE, 3));
-        knopf.setOnClickListener(v -> beiKlick.run());
+            surfaceGradient(context, Theme.PRIMARY, 16, Color.WHITE, 2));
+        if (beiKlick != null) knopf.setOnClickListener(v -> beiKlick.run());
+        else knopf.setEnabled(false);
         if (beiFokus != null) {
             // Nicht ueberschreiben, was applyFocus gesetzt hat - beides wird
             // gebraucht: der Fokusrahmen und die angehaltene Uhr.

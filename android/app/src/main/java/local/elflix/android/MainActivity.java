@@ -374,6 +374,7 @@ public class MainActivity extends Activity {
     private View providerRailDivider;
     private LinearLayout bottomNavHolder;
     private final Map<String, LinearLayout> bottomNavTabs = new java.util.LinkedHashMap<>();
+    private final Map<String, View> tvNavTabs = new java.util.LinkedHashMap<>();
     private TextView browserTitle;
     private ImageView browserFavoriteIcon;
     private FrameLayout content;
@@ -828,10 +829,6 @@ public class MainActivity extends Activity {
     private final Map<String, TvReihe> tvReihen = new java.util.LinkedHashMap<>();
     /** Wieviele Kacheln eine TV-Reihe zuerst zeigt. */
     private static final int TV_REIHE_ERST = 8;
-    /** Und wieviele bei jedem Nachlegen dazukommen. */
-    private static final int TV_REIHE_SCHRITT = 6;
-    /** Wie nah der Fokus ans Ende kommen darf, bevor nachgelegt wird. */
-    private static final int TV_REIHE_VORLAUF = 3;
 
     /** Was eine Kachel an ihrer Stelle baut. */
     private interface TvKartenBauer {
@@ -844,6 +841,7 @@ public class MainActivity extends Activity {
         int vorrat;
         int gezeigt;
         TvKartenBauer bauer;
+        TvNachladung nachladung;
     }
     /**
      * Der Taktgeber der gebauten Seiten.
@@ -1777,6 +1775,7 @@ public class MainActivity extends Activity {
 
     private void buildChrome() {
         chromeHolder.removeAllViews();
+        tvNavTabs.clear();
         chromeBuiltCompact = isCompactWidth();
         if (isTelevision()) {
             buildTvChrome();
@@ -1793,7 +1792,7 @@ public class MainActivity extends Activity {
      * which one is showing.
      */
     private void buildMobileChrome() {
-        int barHeight = 58;
+        int barHeight = 62;
 
         appChrome = new LinearLayout(this);
         appChrome.setOrientation(LinearLayout.HORIZONTAL);
@@ -1933,12 +1932,11 @@ public class MainActivity extends Activity {
         appChrome.setOrientation(LinearLayout.HORIZONTAL);
         appChrome.setGravity(Gravity.CENTER_VERTICAL);
         appChrome.setBackgroundColor(Theme.BACKGROUND);
-        appChrome.setPadding(pad, dp(22), pad, dp(8));
+        appChrome.setPadding(pad, dp(20), pad, dp(14));
         chromeHolder.addView(appChrome, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         appChrome.addView(brandLogoView(), new LinearLayout.LayoutParams(dp(132), dp(42)));
-        appChrome.addView(new android.widget.Space(this), new LinearLayout.LayoutParams(0, 1, 1));
 
         // Die Knoepfe stehen in einer eigenen Leiste, und die Leiste in einem
         // Schieber.
@@ -1956,33 +1954,35 @@ public class MainActivity extends Activity {
         // auf dem der Fokus steht, von selbst in den sichtbaren Teil.
         HorizontalScrollView kopfSchieber = new HorizontalScrollView(this);
         kopfSchieber.setHorizontalScrollBarEnabled(false);
+        kopfSchieber.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        kopfSchieber.setFillViewport(true);
         LinearLayout kopfLeiste = new LinearLayout(this);
         kopfLeiste.setOrientation(LinearLayout.HORIZONTAL);
-        kopfLeiste.setGravity(Gravity.CENTER_VERTICAL);
+        kopfLeiste.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         kopfSchieber.addView(kopfLeiste, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         appChrome.addView(kopfSchieber, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         // Der Weg nach Hause. Er fehlte: die Kopfzeile trug Suche, Favoriten,
         // Watchparty und Einstellungen - und aus keiner dieser Seiten fuehrte
         // ein Knopf zurueck. Wer in den Einstellungen stand, kam nur ueber die
         // Zurueck-Taste heraus, und die ist auf einer Fernbedienung nicht dort,
         // wo man sie sucht. Auf dem Telefon steht "Home" seit jeher in der
         // unteren Leiste; die wird am Fernseher ausgeblendet.
-        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_home, "Start",
+        kopfLeiste.addView(tvNavTab("home", R.drawable.ic_nav_home, "Start",
             this::showHome), headerSlot());
-        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_search, "Suche",
+        kopfLeiste.addView(tvNavTab("search", R.drawable.ic_nav_search, "Suche",
             () -> showGlobalSearch("")), headerSlot());
-        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_favorite, "Favoriten",
+        kopfLeiste.addView(tvNavTab("favorites", R.drawable.ic_nav_favorite, "Favoriten",
             this::showFavorites), headerSlot());
         // Die Watchparty gehoert in die Kopfzeile, weil sie sonst am Fernseher
         // gar nicht erreichbar ist: die untere Leiste, in der sie auf dem
         // Telefon steht, wird hier ausgeblendet (siehe buildBottomNav). Es gab
         // die Seite also, aber keinen Weg zu ihr - und damit auf dem groessten
         // Bildschirm im Haus kein gemeinsames Schauen.
-        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_play, "Watchparty",
+        kopfLeiste.addView(tvNavTab("watchparty", R.drawable.ic_play, "Watchparty",
             this::zeigeWatchparty), headerSlot());
-        kopfLeiste.addView(TvViews.headerButton(this, R.drawable.ic_nav_settings, "Einstellungen",
+        kopfLeiste.addView(tvNavTab("settings", R.drawable.ic_nav_settings, "Einstellungen",
             this::showSettings), headerSlot());
 
         collapsedChrome = new LinearLayout(this);
@@ -2024,8 +2024,14 @@ public class MainActivity extends Activity {
     private LinearLayout.LayoutParams headerSlot() {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = dp(14);
+        params.leftMargin = dp(10);
         return params;
+    }
+
+    private View tvNavTab(String screen, int iconRes, String label, Runnable onClick) {
+        View tab = TvViews.headerButton(this, iconRes, label, onClick);
+        tvNavTabs.put(screen, tab);
+        return tab;
     }
 
     /** Phone bottom navigation: the primary way around the app. Absent on TV. */
@@ -2034,6 +2040,7 @@ public class MainActivity extends Activity {
         bottomNavTabs.clear();
         if (isTelevision()) {
             bottomNavHolder.setVisibility(View.GONE);
+            updateBottomNav();
             return;
         }
         bottomNavHolder.setVisibility(View.VISIBLE);
@@ -2045,7 +2052,8 @@ public class MainActivity extends Activity {
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomNavHolder.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)));
+        bar.setPadding(dp(4), dp(5), dp(4), dp(5));
+        bottomNavHolder.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(70)));
 
         bar.addView(bottomNavTab("home", R.drawable.ic_nav_home, "Home", this::showHome));
         bar.addView(bottomNavTab("search", R.drawable.ic_nav_search, "Suche", () -> showGlobalSearch("")));
@@ -2063,7 +2071,8 @@ public class MainActivity extends Activity {
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        icon.setPadding(dp(16), dp(5), dp(16), dp(5));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(56), dp(34));
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
         tab.addView(icon, iconParams);
 
@@ -2080,15 +2089,8 @@ public class MainActivity extends Activity {
         tab.addView(text, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        tab.setOnTouchListener((v, ereignis) -> {
-            int was = ereignis.getActionMasked();
-            if (was == android.view.MotionEvent.ACTION_DOWN) Bewegung.druck(v, true, 0.9f);
-            else if (was == android.view.MotionEvent.ACTION_UP
-                || was == android.view.MotionEvent.ACTION_CANCEL) {
-                Bewegung.druck(v, false, 0.9f);
-            }
-            return false;
-        });
+        tab.setContentDescription(label);
+        MobileViews.addTapFeedback(tab);
         tab.setOnClickListener(view -> onClick.run());
         bottomNavTabs.put(screen, tab);
         return tab;
@@ -2103,21 +2105,23 @@ public class MainActivity extends Activity {
      * keinen Reiter leuchten zu lassen, saehe aus wie ein Fehler.
      */
     private void updateBottomNav() {
-        if (bottomNavTabs.isEmpty()) return;
-        String active = "provider".equals(currentScreen) || "entdeckung".equals(currentScreen)
-            ? "home" : currentScreen;
+        String active = bottomNavTabs.containsKey(currentScreen) || tvNavTabs.containsKey(currentScreen)
+            ? currentScreen : "home";
+        for (Map.Entry<String, View> entry : tvNavTabs.entrySet()) {
+            entry.getValue().setActivated(entry.getKey().equals(active));
+        }
         for (Map.Entry<String, LinearLayout> entry : bottomNavTabs.entrySet()) {
             boolean selected = entry.getKey().equals(active);
             LinearLayout tab = entry.getValue();
-            int tint = selected ? Theme.PRIMARY : Theme.TEXT_DISABLED;
+            int tint = selected ? Theme.TEXT_PRIMARY : Theme.TEXT_SECONDARY;
             ImageView icon = (ImageView) tab.getChildAt(0);
-            // Nur beim Wechsel, nicht bei jedem Aufruf: diese Zeile laeuft bei
-            // jedem Seitenwechsel im Browser mit, und ein Zeichen, das dabei
-            // jedes Mal aufpoppt, waere ein Zucken.
-            boolean warSchon = Boolean.TRUE.equals(icon.getTag(R.id.elfix_auftritt));
-            icon.setTag(R.id.elfix_auftritt, Boolean.valueOf(selected));
+            // Der aktive Bereich bleibt als ruhige Kapsel sichtbar, ohne Pop-Animation.
+            if (icon.getBackground() == null || tab.isSelected() != selected) {
+                icon.setBackground(MobileViews.shape(this,
+                    selected ? Theme.PRIMARY_MUTED : Color.TRANSPARENT, 17, 0, 0));
+            }
+            tab.setSelected(selected);
             icon.setColorFilter(tint);
-            if (selected && !warSchon) Bewegung.gelungen(icon);
             TextView label = (TextView) tab.getChildAt(1);
             label.setTextColor(tint);
             label.setTypeface(selected ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
@@ -2753,6 +2757,11 @@ public class MainActivity extends Activity {
         for (int i = 0; i < reihe.gezeigt; i += 1) karten.add(bauer.baue(i));
         reihe.ansicht = TvViews.reihe(this, karten);
         tvReihen.put(schluessel, reihe);
+        reihe.nachladung = new TvNachladung(vorrat, reihe.gezeigt,
+            () -> tvReihen.get(schluessel) == reihe && reihe.ansicht.isAttachedToWindow(),
+            // Erst den Fokus zeichnen, dann maximal zwei Karten aufbauen.
+            weiter -> reihe.ansicht.postOnAnimation(() -> reihe.ansicht.post(weiter)),
+            i -> TvViews.kachelAnhaengen(reihe.ansicht, reihe.bauer.baue(i)));
         reiheAnhaengenTv(page, reihe.ansicht, TvViews.ITEM_GAP);
     }
 
@@ -2762,17 +2771,11 @@ public class MainActivity extends Activity {
      * <p>"Bevor" ist der ganze Punkt. Wer erst nachlegt, wenn die letzte
      * Kachel den Fokus hat, laesst die Fernbedienung einmal ins Leere laufen -
      * und ein Steuerkreuz, das einmal nicht reagiert, wird ein zweites Mal
-     * gedrueckt. {@link #TV_REIHE_VORLAUF} Kacheln Vorlauf reichen dafuer aus.
+     * gedrueckt. Drei Kacheln Vorlauf geben dem Nachladen Zeit.
      */
     private void tvNachlegen(String schluessel, int stelle) {
         TvReihe reihe = tvReihen.get(schluessel);
-        if (reihe == null || reihe.ansicht == null || reihe.gezeigt >= reihe.vorrat) return;
-        if (stelle < reihe.gezeigt - TV_REIHE_VORLAUF) return;
-        int bis = Math.min(reihe.vorrat, reihe.gezeigt + TV_REIHE_SCHRITT);
-        for (int i = reihe.gezeigt; i < bis; i += 1) {
-            TvViews.kachelAnhaengen(reihe.ansicht, reihe.bauer.baue(i));
-        }
-        reihe.gezeigt = bis;
+        if (reihe != null && reihe.nachladung != null) reihe.nachladung.anfordern(stelle);
     }
 
     /* --------------------------------------------------- Der Fokus des Fernsehers */
@@ -2831,7 +2834,7 @@ public class MainActivity extends Activity {
         seite.post(() -> {
             if (gemerkt != null && !gemerkt.isEmpty()) {
                 View ziel = seite.findViewWithTag(gemerkt);
-                if (ziel != null && ziel.isFocusable()) {
+                if (ziel != null && ziel.isFocusable() && ziel.isShown() && ziel.isEnabled()) {
                     ziel.requestFocus();
                     return;
                 }
@@ -2841,7 +2844,7 @@ public class MainActivity extends Activity {
                 "tv:einstellung:startseite",
                 "tv:wp:0:oeffnen", "tv:wp:einstellungen"}) {
                 View ziel = seite.findViewWithTag(erst);
-                if (ziel != null) {
+                if (ziel != null && ziel.isShown() && ziel.isEnabled()) {
                     ziel.requestFocus();
                     return;
                 }
@@ -3004,7 +3007,7 @@ public class MainActivity extends Activity {
 
         int breite = TvViews.kachelBreiteDp(this);
         int proZeile = Math.max(1, (getResources().getConfiguration().screenWidthDp
-            - 2 * TvViews.SCREEN_PADDING + TvViews.ITEM_GAP) / (breite + 16 + TvViews.ITEM_GAP));
+            - 2 * TvViews.SCREEN_PADDING + TvViews.ITEM_GAP) / (breite + 20 + TvViews.ITEM_GAP));
         LinearLayout zeile = null;
         for (int i = 0; i < eintraege.size(); i += 1) {
             if (i % proZeile == 0) {
@@ -5023,7 +5026,7 @@ public class MainActivity extends Activity {
     /**
      * Wie hoch der Titelhintergrund sein darf.
      *
-     * <p>Im Hochformat ein gutes Drittel des Bildschirms - genug fuer ein Bild,
+     * <p>Im Hochformat knapp die Haelfte des Bildschirms - genug fuer ein Bild,
      * das als Bild wirkt, und wenig genug, dass die erste Reihe darunter noch
      * anfaengt. Im Querformat waere dasselbe Mass die ganze Hoehe, deshalb dort
      * deutlich flacher.
@@ -5034,7 +5037,7 @@ public class MainActivity extends Activity {
         if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             return Math.max(170, Math.min(230, Math.round(hoehe * 0.55f)));
         }
-        return Math.max(230, Math.min(360, Math.round(hoehe * 0.38f)));
+        return Math.max(260, Math.min(390, Math.round(hoehe * 0.44f)));
     }
 
     /**

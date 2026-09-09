@@ -28,7 +28,7 @@ final class MobileViews {
     static final int SCREEN_PADDING = 18;
     static final int SECTION_GAP = 28;
     static final int ITEM_GAP = 14;
-    static final int CARD_RADIUS = 16;
+    static final int CARD_RADIUS = 18;
     /** Minimum hit area for controls that are meant for a thumb. */
     static final int TOUCH_TARGET = 48;
 
@@ -62,12 +62,10 @@ final class MobileViews {
             // Bewegung.druck. Der Ueberschwinger ist der ganze Unterschied
             // zwischen "die Flaeche wird kleiner" und "die Flaeche gibt nach".
             //
-            // 0.97 statt der frueheren 0.985: gefordert war spuerbares
-            // Feedback, und fuenfzehn Tausendstel sind auf einem Telefonarm
-            // Abstand nicht zu sehen. Tiefer geht es nicht: eine ganze Karte,
-            // die um mehr als drei Prozent einsinkt, zieht ihre Nachbarn
-            // optisch mit.
-            Bewegung.druck(v, gedrueckt, 0.97f);
+            // Die Flaeche soll den Tipp bestaetigen, aber beim schnellen
+            // Scrollen nicht wie ein springender Inhalt wirken. Zwei Prozent
+            // sind auf einer Karte sichtbar und halten die Bewegung ruhig.
+            Bewegung.druck(v, gedrueckt, 0.98f);
             return false;
         });
     }
@@ -103,7 +101,7 @@ final class MobileViews {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(Theme.TEXT_PRIMARY);
-        view.setTextSize(28);
+        view.setTextSize(30);
         view.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
         view.setLineSpacing(0, 1.05f);
         view.setPadding(0, dp(context, 4), 0, 0);
@@ -134,7 +132,7 @@ final class MobileViews {
         TextView label = new TextView(context);
         label.setText(title);
         label.setTextColor(Theme.TEXT_PRIMARY);
-        label.setTextSize(19);
+        label.setTextSize(20);
         label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         // Zwei Zeilen statt einer: Ueberschrift eines Abschnitts.
         label.setMaxLines(2);
@@ -238,6 +236,7 @@ final class MobileViews {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12));
+        card.setMinimumHeight(dp(context, 68));
         addPressFeedback(card,
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
@@ -371,7 +370,7 @@ final class MobileViews {
         FrameLayout poster = new FrameLayout(context);
         int tint = provider == null ? Theme.PRIMARY_DEEP : Theme.providerTint(provider.id);
         GradientDrawable posterBg = new GradientDrawable();
-        posterBg.setCornerRadius(dp(context, 10));
+        posterBg.setCornerRadius(dp(context, 12));
         posterBg.setColors(new int[]{blend(tint, Color.WHITE, 0.10f), blend(tint, Color.BLACK, 0.55f)});
         posterBg.setOrientation(GradientDrawable.Orientation.TL_BR);
         poster.setBackground(posterBg);
@@ -381,7 +380,7 @@ final class MobileViews {
         poster.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View ansicht, Outline umriss) {
-                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 10));
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 12));
             }
         });
         poster.setClipToOutline(true);
@@ -518,7 +517,7 @@ final class MobileViews {
                              Runnable onOpen, View.OnClickListener onMenu) {
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setPadding(dp(context, 10), dp(context, 10), dp(context, 12), dp(context, 10));
+        card.setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12));
         // Damit das Kachelmenue seine eigene Zeile wiederfindet - beim
         // Loeschen wird sie ausgeblendet, bevor der Bestand sich aendert.
         card.setTag(R.id.elfix_karte, Boolean.TRUE);
@@ -526,9 +525,9 @@ final class MobileViews {
             shape(context, Theme.SURFACE_ELEVATED, CARD_RADIUS, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, CARD_RADIUS, Theme.PRIMARY, 1));
 
-        FrameLayout poster = poster(context, provider, title, bildUrl, prozent, 66, 88, 22, 4);
+        FrameLayout poster = poster(context, provider, title, bildUrl, prozent, 68, 92, 22, 4);
 
-        LinearLayout.LayoutParams posterParams = new LinearLayout.LayoutParams(dp(context, 66), dp(context, 88));
+        LinearLayout.LayoutParams posterParams = new LinearLayout.LayoutParams(dp(context, 68), dp(context, 92));
         posterParams.rightMargin = dp(context, 12);
         card.addView(poster, posterParams);
 
@@ -631,10 +630,10 @@ final class MobileViews {
                 // Ein Symbol ohne Beschriftung hat nichts ausser sich selbst,
                 // woran man den Druck sieht - deshalb hier tiefer als bei
                 // einer Karte.
-                Bewegung.druck(v, true, 0.86f);
+                Bewegung.druck(v, true, 0.92f);
             } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 v.setBackground(shape(context, Color.TRANSPARENT, 12, Color.TRANSPARENT, 0));
-                Bewegung.druck(v, false, 0.86f);
+                Bewegung.druck(v, false, 0.92f);
             }
             return false;
         });
@@ -648,7 +647,7 @@ final class MobileViews {
         addPressFeedback(button,
             shape(context, Theme.PRIMARY_DEEP, 14, Color.TRANSPARENT, 0),
             shape(context, Theme.PRIMARY, 14, Color.TRANSPARENT, 0));
-        button.setOnClickListener(v -> onClick.run());
+        button.setOnClickListener(onClick == null ? null : v -> onClick.run());
         return button;
     }
 
@@ -658,7 +657,7 @@ final class MobileViews {
         addPressFeedback(button,
             shape(context, Theme.SURFACE_ELEVATED, 14, Theme.BORDER, 1),
             shape(context, Theme.SURFACE_PRESSED, 14, Theme.PRIMARY, 1));
-        button.setOnClickListener(v -> onClick.run());
+        button.setOnClickListener(onClick == null ? null : v -> onClick.run());
         return button;
     }
 
@@ -719,6 +718,10 @@ final class MobileViews {
     static final String HERO_BALKEN = "hero:balken";
     static final String HERO_HAUPTKNOPF = "hero:haupt";
     static final String HERO_ZWEITKNOPF = "hero:zweit";
+    /** Die letzte angeforderte Fassung je stehendem Titelhintergrund. */
+    private static final java.util.WeakHashMap<View, Long> HERO_ANFRAGEN =
+        new java.util.WeakHashMap<>();
+    private static long heroAnfrageFolge;
 
     static View hero(Context context, String augenbraue, String titel, String unterzeile,
                      String bildUrl, int prozent, String aufruf, Runnable beiAufruf,
@@ -727,11 +730,11 @@ final class MobileViews {
         kasten.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View ansicht, Outline umriss) {
-                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 18));
+                umriss.setRoundRect(0, 0, ansicht.getWidth(), ansicht.getHeight(), dp(context, 22));
             }
         });
         kasten.setClipToOutline(true);
-        kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 18, Theme.BORDER, 1));
+        kasten.setBackground(shape(context, Theme.SURFACE_ELEVATED, 22, Theme.BORDER, 1));
 
         // Das erste Kind ist immer das Bild - {@link #heroBild} verlaesst sich
         // darauf. Eine Marke geht hier nicht: {@link Bilder} benutzt den Tag
@@ -745,7 +748,7 @@ final class MobileViews {
 
         View schleier = new View(context);
         GradientDrawable verlauf = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-            new int[]{Color.argb(40, 7, 10, 18), Color.argb(190, 7, 10, 18), Color.argb(245, 7, 10, 18)});
+            new int[]{Color.argb(18, 7, 10, 18), Color.argb(155, 7, 10, 18), Color.argb(250, 7, 10, 18)});
         schleier.setBackground(verlauf);
         kasten.addView(schleier, new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -753,7 +756,7 @@ final class MobileViews {
         LinearLayout text = new LinearLayout(context);
         text.setTag(HERO_TEXTE);
         text.setOrientation(LinearLayout.VERTICAL);
-        text.setPadding(dp(context, 16), dp(context, 18), dp(context, 16), dp(context, 16));
+        text.setPadding(dp(context, 18), dp(context, 22), dp(context, 18), dp(context, 18));
         TextView augenbrauenZeile = eyebrow(context, augenbraue);
         augenbrauenZeile.setTag(HERO_AUGENBRAUE);
         text.addView(augenbrauenZeile);
@@ -762,7 +765,7 @@ final class MobileViews {
         ueberschrift.setTag(HERO_TITEL);
         ueberschrift.setText(titel);
         ueberschrift.setTextColor(Theme.TEXT_PRIMARY);
-        ueberschrift.setTextSize(24);
+        ueberschrift.setTextSize(26);
         ueberschrift.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
         ueberschrift.setMaxLines(2);
         ueberschrift.setEllipsize(TextUtils.TruncateAt.END);
@@ -844,7 +847,7 @@ final class MobileViews {
         ImageView bild = heroBild(kasten);
         if (bild == null || kasten.findViewWithTag(HERO_TITEL) == null) return false;
         heroWechsel(kasten, bild, heroAnderer(kasten, titel),
-            () -> Bilder.laden(bild, bildUrl, 360, 260, null),
+            bildUrl, 360, 260,
             () -> heroTeileSetzen(kasten, augenbraue, titel, unterzeile, prozent,
                 aufruf, beiAufruf, zweitText, beiZweit));
         return true;
@@ -866,61 +869,138 @@ final class MobileViews {
     }
 
     /**
-     * Der cineastische Wechsel des Titelhintergrunds.
+     * Den Titelhintergrund erst wechseln, wenn sein Bild vorbereitet ist.
      *
-     * <p>Gefordert war ausdruecklich: nicht einfach den Hintergrund
-     * austauschen. Also vier Dinge nacheinander und nebeneinander - das alte
-     * Bild dunkelt ab und zoomt weg, das neue faengt groesser an und geht auf
-     * seine Groesse zurueck, der Textblock geht nach oben hinaus und kommt von
-     * unten nach, und der langsame Zoom faengt danach wieder von vorn an.
-     *
-     * <p>Ohne Wechsel passiert nichts davon: dann wird nur ueberschrieben, und
-     * zwar sofort. Das ist der haeufige Fall - der Fortschritt zieht im Takt
-     * nach, und ein Titelhintergrund, der dabei jedes Mal wegzoomt, waere die
-     * Unruhe, gegen die dieser ganze Kasten gebaut wurde.
+     * <p>Bis dahin bleiben altes Bild, alter Text und alte Aktionen als ein
+     * stimmiger Stand sichtbar. Die neueste erfolgreiche oder fehlgeschlagene
+     * Anfrage wird in einer kurzen gemeinsamen Alphablende uebernommen; ein
+     * Fehler zeigt den bewussten Platzhalter zusammen mit dem neuen Text.
+     * Ohne Titel- oder Bildwechsel wird nur der veraenderte Text sofort
+     * fortgeschrieben und die Ansicht bleibt vollkommen ruhig.
      *
      * <p>Paketweit sichtbar, weil {@link TvViews} denselben Wechsel fuehrt.
      */
-    static void heroWechsel(View kasten, final ImageView bild, boolean anders,
-                            final Runnable bildSetzen, final Runnable schriftSetzen) {
-        if (!anders || !Bewegung.weiteWege(kasten.getContext())) {
-            bildSetzen.run();
+    static void heroWechsel(View kasten, final ImageView bild, boolean andererTitel,
+                            String bildUrl, int breiteDp, int hoeheDp,
+                            final Runnable schriftSetzen) {
+        heroWechsel(kasten, bild, andererTitel, bildUrl, breiteDp, hoeheDp,
+            schriftSetzen, Bilder::vorbereiten);
+    }
+
+    /** Kleiner Einspeisepunkt fuer einen deterministischen Geraetetest. */
+    interface HeroBildLader {
+        void vorbereiten(Context context, String adresse, int breiteDp, int hoeheDp,
+                         Bilder.BildAntwort antwort);
+    }
+
+    static void heroWechsel(View kasten, final ImageView bild, boolean andererTitel,
+                            String bildUrl, int breiteDp, int hoeheDp,
+                            final Runnable schriftSetzen, HeroBildLader lader) {
+        if (kasten == null || bild == null || schriftSetzen == null || lader == null) return;
+        final String adresse = bildUrl == null ? "" : bildUrl.trim();
+        final boolean bildPasst = Bilder.stehtIn(bild, adresse, breiteDp, hoeheDp);
+        final boolean platzhalterPasst = adresse.isEmpty() && bild.getDrawable() == null;
+        final long anfrage = neueHeroAnfrage(kasten);
+
+        // Eine noch laufende alte Blende gehoert zum alten Wunsch. Der zuletzt
+        // angeforderte, bereits stimmige Zustand wird sofort fortgeschrieben.
+        kasten.animate().cancel();
+        kasten.setAlpha(1f);
+        if (!andererTitel && (bildPasst || platzhalterPasst)) {
             schriftSetzen.run();
             return;
         }
-        heroBildAnhalten(bild);
-        Bewegung.inhaltTausch(kasten.findViewWithTag(HERO_TEXTE), schriftSetzen);
-        Bewegung.bildTausch(bild, bildSetzen, () -> heroBildBeleben(bild));
+
+        // Ohne Bildadresse gibt es nichts vorzubereiten. Der neue Titel wird
+        // gemeinsam mit seinem bewussten Platzhalter uebernommen.
+        if (adresse.isEmpty()) {
+            heroUebernehmen(kasten, bild, anfrage, "", null, schriftSetzen);
+            return;
+        }
+
+        // Bis zu dieser Antwort bleiben altes Bild, alter Text und alte
+        // Aktionen zusammen stehen. Bilder.vorbereiten teilt Speicher, Platte,
+        // Netz und Deduplizierung mit dem normalen Bildlader, fasst die Ansicht
+        // selbst aber nicht an.
+        lader.vorbereiten(bild.getContext(), adresse, breiteDp, hoeheDp,
+            new Bilder.BildAntwort() {
+                @Override
+                public void bereit(String schluessel, android.graphics.Bitmap neu) {
+                    if (!istHeroAnfrage(kasten, anfrage)) return;
+                    heroUebernehmen(kasten, bild, anfrage, schluessel, neu, schriftSetzen);
+                }
+
+                @Override
+                public void fehlgeschlagen(String schluessel) {
+                    if (!istHeroAnfrage(kasten, anfrage)) return;
+                    heroUebernehmen(kasten, bild, anfrage, schluessel, null, schriftSetzen);
+                }
+            });
+    }
+
+    private static synchronized long neueHeroAnfrage(View kasten) {
+        long nummer = ++heroAnfrageFolge;
+        HERO_ANFRAGEN.put(kasten, nummer);
+        return nummer;
+    }
+
+    private static synchronized boolean istHeroAnfrage(View kasten, long nummer) {
+        Long aktuell = HERO_ANFRAGEN.get(kasten);
+        return aktuell != null && aktuell == nummer;
+    }
+
+    /** Bild, Schrift und Aktionen als einen konsistenten sichtbaren Stand uebernehmen. */
+    private static void heroUebernehmen(View kasten, ImageView bild, long anfrage,
+                                        String schluessel, android.graphics.Bitmap neu,
+                                        Runnable schriftSetzen) {
+        if (!istHeroAnfrage(kasten, anfrage)) return;
+        final Runnable setzen = () -> {
+            if (!istHeroAnfrage(kasten, anfrage)) return;
+            if (neu != null) Bilder.vorbereitetZeigen(bild, schluessel, neu);
+            else Bilder.vorbereitetLeeren(bild, schluessel);
+            schriftSetzen.run();
+        };
+        long dauer = Bewegung.dauer(kasten.getContext(), Bewegung.MITTEL);
+        if (dauer <= 0 || !Bewegung.weiteWege(kasten.getContext())) {
+            setzen.run();
+            kasten.setAlpha(1f);
+            return;
+        }
+
+        // Eine kurze Blende des ganzen Kastens haelt Bild, Schrift und Aktionen
+        // auch waehrend des Wechsels zusammen. Kein Zoom, keine leere Flaeche.
+        kasten.animate().alpha(0.72f)
+            .setStartDelay(0L).setDuration(Math.max(60L, dauer / 2L))
+            .setInterpolator(Bewegung.hinaus())
+            .withEndAction(() -> {
+                if (!istHeroAnfrage(kasten, anfrage)) {
+                    kasten.setAlpha(1f);
+                    return;
+                }
+                setzen.run();
+                kasten.animate().alpha(1f).setStartDelay(0L).setDuration(dauer)
+                    .setInterpolator(Bewegung.hinein()).start();
+            })
+            .start();
     }
 
     /**
-     * Der langsame Zoom auf dem Titelbild - Ken Burns.
+     * Bereitet ein Titelbild fuer die Anzeige vor.
      *
-     * <p>Ein stehendes Bild hinter einer Schrift sieht aus wie ein Bildschirm-
-     * foto; dasselbe Bild, das ueber zwoelf Sekunden um sechs Prozent waechst
-     * und wieder zurueckgeht, sieht aus wie eine Kamera. Der Weg ist zu klein,
-     * um als Bewegung gelesen zu werden - das ist genau der Punkt.
-     *
-     * <p>Der Lauf haengt am Bild und wird angehalten, sobald es aus dem Fenster
-     * genommen wird. Ohne das liefe er weiter und hielte die alte Seite fest -
-     * ein endloser Lauf auf einer weggeworfenen Ansicht ist ein Leck.
+     * <p>Der Hero bleibt absichtlich stehen. Ein dauernder Ken-Burns-Lauf
+     * konkurriert auf kleinen Bildschirmen mit Scrollen, Bildladen und dem
+     * Fortschritts-Update; er erzeugt keinen Informationsgewinn, kostet aber
+     * fortlaufend Frames. Der eigentliche Titelwechsel bleibt in
+     * {@link #heroWechsel} erhalten und ist die einzige bewusste Bewegung.
      */
     static void heroBildBeleben(final ImageView bild) {
         if (bild == null) return;
         heroBildAnhalten(bild);
-        android.animation.ValueAnimator lauf = Bewegung.kenBurns(bild);
-        if (lauf == null) return;
-        bild.setTag(R.id.elfix_kenburns, lauf);
-        bild.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
-            @Override
-            public void onViewAttachedToWindow(View wer) {
-            }
-
-            @Override
-            public void onViewDetachedFromWindow(View wer) {
-                heroBildAnhalten(bild);
-            }
-        });
+        bild.setScaleX(1f);
+        bild.setScaleY(1f);
+        bild.setTranslationX(0f);
+        bild.setTranslationY(0f);
+        bild.setAlpha(1f);
     }
 
     /** Den langsamen Zoom anhalten - vor einem Wechsel und beim Aufraeumen. */
@@ -1050,6 +1130,7 @@ final class MobileViews {
             flaeche.addView(punkt, punktParams);
             flaeche.setOnClickListener(v -> beiWahl.nimm(stelle));
             flaeche.setContentDescription("Titel " + (i + 1) + " von " + anzahl);
+            addTapFeedback(flaeche);
             reihe.addView(flaeche, new LinearLayout.LayoutParams(
                 dp(context, 30), dp(context, 26)));
         }
@@ -1107,6 +1188,10 @@ final class MobileViews {
     static HorizontalScrollView reihe(Context context, java.util.List<View> karten, int kartenBreiteDp) {
         HorizontalScrollView scroll = new HorizontalScrollView(context);
         scroll.setHorizontalScrollBarEnabled(false);
+        // Der Gluhrand der Plattform lenkt in einer dunklen Oberflaeche mehr
+        // ab als er hilft. Die angeschnittene naechste Karte zeigt ohnehin,
+        // dass die Reihe weitergeht.
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         scroll.setClipToPadding(false);
         scroll.setPadding(dp(context, SCREEN_PADDING), 0, dp(context, SCREEN_PADDING), 0);
         // Ohne das schneidet die Reihe jede Kachel ab, die beim Druck oder im
@@ -1376,6 +1461,7 @@ final class MobileViews {
     static View reihenSkelett(Context context, int breiteDp, int anzahl) {
         HorizontalScrollView scroll = new HorizontalScrollView(context);
         scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         scroll.setClipToPadding(false);
         scroll.setPadding(dp(context, SCREEN_PADDING), 0, dp(context, SCREEN_PADDING), 0);
         LinearLayout leiste = new LinearLayout(context);
@@ -1942,7 +2028,9 @@ final class MobileViews {
      * wie sein Name.
      */
     static HorizontalScrollView reiterLeiste(Context context, java.util.List<View> reiter) {
-        return reihe(context, reiter, 0);
+        HorizontalScrollView leiste = reihe(context, reiter, 0);
+        leiste.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        return leiste;
     }
 
     /** Empty-state block used instead of a bare screen when a list has nothing in it. */

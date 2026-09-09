@@ -105,12 +105,27 @@ public final class Bilder {
         final ImageView ziel;
         final String schluessel;
         final Runnable beiBild;
+        final BildAntwort antwort;
 
         Wartender(ImageView ziel, String schluessel, Runnable beiBild) {
             this.ziel = ziel;
             this.schluessel = schluessel;
             this.beiBild = beiBild;
+            this.antwort = null;
         }
+
+        Wartender(String schluessel, BildAntwort antwort) {
+            this.ziel = null;
+            this.schluessel = schluessel;
+            this.beiBild = null;
+            this.antwort = antwort;
+        }
+    }
+
+    /** Ergebnis eines vorbereiteten Bildes; beide Wege laufen im Hauptthread. */
+    interface BildAntwort {
+        void bereit(String schluessel, Bitmap bild);
+        void fehlgeschlagen(String schluessel);
     }
 
     private Bilder() {
@@ -179,6 +194,83 @@ public final class Bilder {
     }
 
     /**
+     * Ein Bild holen, ohne das derzeit sichtbare Bild anzufassen.
+     *
+     * <p>Der Titelhintergrund braucht diese zweite Form: Beim Wechsel bleibt
+     * das bisherige Bild samt passendem Text stehen, bis der Nachfolger
+     * tatsaechlich dekodiert ist. Erst der Aufrufer entscheidet dann in einem
+     * Schritt ueber Bild und Text. Dadurch gibt es weder einen leeren
+     * Zwischenstand noch altes Bild unter einem neuen Titel.
+     *
+     * <p>Speicher, Platte, Netz und laufende gleiche Auftraege werden mit
+     * {@link #laden} geteilt. Nur das Ziel wird nicht vorzeitig veraendert.
+     */
+    static void vorbereiten(Context context, String adresse, int breiteDp, int hoeheDp,
+                             BildAntwort antwort) {
+        if (antwort == null) return;
+        String sauber = adresse == null ? "" : adresse.trim();
+        if (context == null || sauber.isEmpty()) {
+            imHauptthread(() -> antwort.fehlgeschlagen(""));
+            return;
+        }
+        Context anwendung = context.getApplicationContext();
+        float dichte = anwendung.getResources().getDisplayMetrics().density;
+        int breite = Math.max(1, Math.round(breiteDp * dichte));
+        int hoehe = Math.max(1, Math.round(hoeheDp * dichte));
+        String schluessel = sauber + "@" + breite + "x" + hoehe;
+        Bitmap bekannt = speicher(anwendung).get(schluessel);
+        if (bekannt != null) {
+            imHauptthread(() -> antwort.bereit(schluessel, bekannt));
+            return;
+        }
+        anstellen(anwendung, sauber, schluessel, breite, hoehe,
+            new Wartender(schluessel, antwort));
+    }
+
+    /** Ob genau dieses fertig geladene Bild bereits im Ziel steht. */
+    static boolean stehtIn(ImageView ziel, String adresse, int breiteDp, int hoeheDp) {
+        if (ziel == null || ziel.getDrawable() == null || ziel.getVisibility() != View.VISIBLE) {
+            return false;
+        }
+        String sauber = adresse == null ? "" : adresse.trim();
+        if (sauber.isEmpty()) return false;
+        Context context = ziel.getContext().getApplicationContext();
+        float dichte = context.getResources().getDisplayMetrics().density;
+        int breite = Math.max(1, Math.round(breiteDp * dichte));
+        int hoehe = Math.max(1, Math.round(hoeheDp * dichte));
+        return (sauber + "@" + breite + "x" + hoehe).equals(ziel.getTag());
+    }
+
+    /** Ein fertig vorbereitetes Bild ohne eine zweite Ladeanimation uebernehmen. */
+    static void vorbereitetZeigen(ImageView ziel, String schluessel, Bitmap bild) {
+        if (ziel == null || bild == null) return;
+        ziel.animate().cancel();
+        ziel.setTag(schluessel);
+        ziel.setImageBitmap(bild);
+        ziel.setVisibility(View.VISIBLE);
+        ziel.setAlpha(1f);
+        ziel.setScaleX(1f);
+        ziel.setScaleY(1f);
+    }
+
+    /** Das Bild fuer einen fehlenden Nachfolger bewusst zum Platzhalter machen. */
+    static void vorbereitetLeeren(ImageView ziel, String schluessel) {
+        if (ziel == null) return;
+        ziel.animate().cancel();
+        ziel.setTag(schluessel == null ? "" : schluessel);
+        ziel.setImageDrawable(null);
+        ziel.setVisibility(View.GONE);
+        ziel.setAlpha(1f);
+        ziel.setScaleX(1f);
+        ziel.setScaleY(1f);
+    }
+
+    private static void imHauptthread(Runnable was) {
+        if (Looper.myLooper() == Looper.getMainLooper()) was.run();
+        else haupt.post(was);
+    }
+
+    /**
      * Einen Wartenden an den Auftrag zu diesem Schluessel haengen - und den
      * Auftrag anlegen, falls er noch nicht laeuft.
      */
@@ -201,10 +293,15 @@ public final class Bilder {
             synchronized (laufend) {
                 fertig = laufend.remove(schluessel);
             }
-            if (fertig == null || bild == null) return;
+            if (fertig == null) return;
             haupt.post(() -> {
                 for (Wartender einer : fertig) {
-                    zeigen(einer.ziel, einer.schluessel, bild, einer.beiBild, true);
+                    if (einer.antwort != null) {
+                        if (bild != null) einer.antwort.bereit(einer.schluessel, bild);
+                        else einer.antwort.fehlgeschlagen(einer.schluessel);
+                    } else if (bild != null) {
+                        zeigen(einer.ziel, einer.schluessel, bild, einer.beiBild, true);
+                    }
                 }
             });
         });

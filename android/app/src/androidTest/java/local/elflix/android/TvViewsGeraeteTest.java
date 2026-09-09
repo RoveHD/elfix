@@ -2,6 +2,7 @@ package local.elflix.android;
 
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import android.view.View;
 import android.graphics.Rect;
@@ -59,7 +60,7 @@ public class TvViewsGeraeteTest {
         for (int i = 0; i < namen.length; i++) {
             View knopf = TvViews.headerButton(context, symbole[i], namen[i], () -> { });
             LinearLayout.LayoutParams platz = new LinearLayout.LayoutParams(-2, -2);
-            platz.leftMargin = TvViews.dp(context, 14); // MainActivity.headerSlot()
+            platz.leftMargin = TvViews.dp(context, 10); // MainActivity.headerSlot()
             leiste.addView(knopf, platz);
             knoepfe.add(knopf);
         }
@@ -153,6 +154,45 @@ public class TvViewsGeraeteTest {
             szene.onActivity(a -> {
                 kopfLeistePruefen(a, 960);
                 kopfLeistePruefen(a, 1280);
+            });
+        }
+    }
+
+    @Test public void schnellerFokuswechselBeendetAuftrittUndAltenSchatten() throws Exception {
+        try (ActivityScenario<DirektProbeActivity> szene = ActivityScenario.launch(DirektProbeActivity.class)) {
+            CountDownLatch fertig = new CountDownLatch(1);
+            View[] karten = new View[2];
+            szene.onActivity(a -> {
+                LinearLayout reihe = new LinearLayout(a);
+                for (int i = 0; i < karten.length; i++) {
+                    karten[i] = TvViews.headerButton(a, R.drawable.ic_nav_home, "Ziel " + i, () -> {});
+                    reihe.addView(karten[i]);
+                }
+                a.setContentView(reihe);
+                reihe.post(() -> {
+                    karten[1].requestFocus();
+                    Bewegung.auftritt(karten[0], 500L);
+                    karten[0].requestFocus();
+                    assertEquals("Fokus darf keinen halb unsichtbaren Auftritt hinterlassen",
+                        1f, karten[0].getAlpha(), 0.001f);
+                    assertEquals(0f, karten[0].getTranslationY(), 0.001f);
+                    karten[1].requestFocus();
+                    karten[0].requestFocus();
+                    if (!Bewegung.an(a)) fertig.countDown();
+                    else karten[0].animate().setListener(new android.animation.AnimatorListenerAdapter() {
+                        @Override public void onAnimationEnd(android.animation.Animator animation) {
+                            fertig.countDown();
+                        }
+                    });
+                });
+            });
+            assertTrue("Die letzte Fokusanimation muss enden", fertig.await(5, TimeUnit.SECONDS));
+            szene.onActivity(a -> {
+                assertTrue(karten[0].hasFocus());
+                assertEquals(1.02f, karten[0].getScaleX(), 0.001f);
+                assertEquals(TvViews.dp(a, 12), karten[0].getZ(), 0.1f);
+                assertEquals(1f, karten[1].getScaleX(), 0.001f);
+                assertEquals(0f, karten[1].getZ(), 0.1f);
             });
         }
     }

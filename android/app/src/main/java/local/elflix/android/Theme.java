@@ -12,15 +12,15 @@ import android.graphics.Color;
  */
 public final class Theme {
     /** App background -- the darkest layer. */
-    public static final int BACKGROUND = Color.parseColor("#070A12");
+    public static final int BACKGROUND = Color.parseColor("#080C14");
     /** Bars and sheets that sit on the background. */
-    public static final int SURFACE = Color.parseColor("#0E1320");
+    public static final int SURFACE = Color.parseColor("#101724");
     /** Cards and inputs that sit on a surface. */
-    public static final int SURFACE_ELEVATED = Color.parseColor("#161D2C");
+    public static final int SURFACE_ELEVATED = Color.parseColor("#182233");
     /** Pressed state for anything on SURFACE_ELEVATED. */
-    public static final int SURFACE_PRESSED = Color.parseColor("#1F2839");
+    public static final int SURFACE_PRESSED = Color.parseColor("#223149");
     /** Hairline separators and card outlines. */
-    public static final int BORDER = Color.parseColor("#232C3D");
+    public static final int BORDER = Color.parseColor("#29364B");
 
     /** ELFIX blue, from the logo. */
     public static final int PRIMARY = Color.parseColor("#3D92FF");
@@ -29,7 +29,7 @@ public final class Theme {
     public static final int PRIMARY_MUTED = Color.parseColor("#1B2E4D");
 
     public static final int TEXT_PRIMARY = Color.parseColor("#F2F5FA");
-    public static final int TEXT_SECONDARY = Color.parseColor("#98A3B8");
+    public static final int TEXT_SECONDARY = Color.parseColor("#A7B3C6");
     public static final int TEXT_DISABLED = Color.parseColor("#5D6779");
 
     private Theme() {

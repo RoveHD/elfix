@@ -3,6 +3,27 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.30 — 10. September 2026
+
+- Die Android- und TV-Oberflaechen sind ueberarbeitet: groessere Titelbilder,
+  klarere Karten und Schrift, abgestimmte dunkle Flaechen und eine dauerhaft
+  erkennbare Auswahl in der Navigation. Am TV passen vier Poster nebeneinander;
+  Kopfzeile und Titelbereich beruecksichtigen kleinere Bildschirme.
+- Fokus und Touch reagieren ohne Nachwippen. Der dauernde Zoom der Titelbilder
+  entfaellt. TV-Reihen bauen beim Nachladen hoechstens zwei Karten pro Schritt,
+  statt den direkten Fokuswechsel mit sechs neuen Karten zu belasten.
+- Beim Titelwechsel bleiben Bild, Text und Aktionen zusammen stehen, bis das
+  neue Bild bereit ist. Verspaetete Antworten koennen eine neuere Auswahl nicht
+  mehr ueberschreiben; fehlende Bilder bekommen einen passenden Platzhalter.
+- Sicherungen behalten Kopien nach ihrem Zeitstempel. Nach einem Import werden
+  Caches und laufende Anbieter aktualisiert; leere Anbieterlisten und die
+  Android-Anbieterschalter bleiben erhalten.
+- Beim YouTube-Reconnect kann das Schliessen der alten Verbindung die neue
+  Sitzung nicht mehr abmelden.
+- Android-Unit-Tests, Lint und Debug-Build geprueft. Neue Geraeteregressionen
+  fuer Fokus- und Titelwechsel sind enthalten; eine Sicht- und Leistungskontrolle
+  auf echten Handys und Fernsehern steht noch aus.
+
 ## 2.0.29 — 9. September 2026
 
 - Die Warteschlange hat eine Suche. Im Reiter „Serien & Filme" laesst sich jetzt

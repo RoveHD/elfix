@@ -36,7 +36,10 @@ app's external files directory.
 
 - Same APK declares both launcher and Leanback launcher entries.
 - Provider cards and search results are focusable buttons.
-- D-pad focus scales cards and changes contrast.
+- D-pad focus uses a clear blue outline and a short, restrained lift without spring overshoot.
+- The current navigation section stays highlighted when focus moves into the content.
+- Long TV rows append at most two cards per scheduled step, with three cards of focus
+  headroom; leaving or replacing a row cancels its pending work.
 - Back exits fullscreen first, then navigates WebView history, then exits the app.
 - Provider switching pauses the previous WebView via JavaScript and `onPause()`.
 
@@ -74,6 +77,12 @@ shared module has to be added to that list or it is missing at runtime.
 - Android-only wiring lives in `assets/kern/eigen/*.js`. Rules do not.
 
 ## Start page
+
+Phone and TV share a dark blue surface palette, with separate spacing and type sizes
+for touch and remote control. Phone navigation uses a persistent active pill; TV
+navigation has a bounded horizontal viewport for larger text. Hero artwork rests
+between title changes instead of continuously zooming. Android's disabled-animation
+setting is respected by the shared motion helpers.
 
 The phone start page mirrors the desktop one and is built from the same data:
 

@@ -54,7 +54,7 @@ public final class Bewegung {
     /** Ein Seitenwechsel. Innerhalb des geforderten Fensters von 200-350 ms. */
     public static final long SEITE = 280L;
     /** Der Fokuswechsel am Fernseher - innerhalb der geforderten 150-220 ms. */
-    public static final long FOKUS = 190L;
+    public static final long FOKUS = 160L;
 
     /** Der Abstand zweier Auftritte in einer Staffel. */
     public static final long STAFFEL = 38L;
@@ -490,12 +490,7 @@ public final class Bewegung {
     /* ---------------------------------------------------- Druck und Fokus */
 
     /**
-     * Der Daumen drueckt: die Flaeche gibt nach und federt zurueck.
-     *
-     * <p>Hinunter kurz und beschleunigend - der Druck soll sofort quittiert
-     * sein; herauf mit Feder, weil erst der Ueberschwinger aus dem Nachgeben
-     * ein Zurueckschnellen macht. Ohne ihn fuehlt sich ein Knopf an wie ein
-     * Bild von einem Knopf.
+     * Der Daumen drueckt: eine kurze Reaktion ohne Nachwippen beim Loslassen.
      *
      * @param tiefe wie weit nachgegeben wird; 0.95 fuer grosse Knoepfe, 0.985
      *              fuer ganze Karten, die sonst wackeln
@@ -503,30 +498,28 @@ public final class Bewegung {
     public static void druck(View ansicht, boolean gedrueckt, float tiefe) {
         if (ansicht == null) return;
         float ziel = gedrueckt ? tiefe : 1f;
-        long dauer = dauer(ansicht.getContext(), gedrueckt ? 80L : LANG);
+        long dauer = dauer(ansicht.getContext(), gedrueckt ? 80L : KURZ);
+        ansicht.animate().cancel();
+        ansicht.setAlpha(1f);
+        ansicht.setTranslationY(0f);
         if (dauer <= 0) {
-            ansicht.animate().cancel();
-            ansicht.setScaleX(ziel);
-            ansicht.setScaleY(ziel);
+            ansicht.setScaleX(1f);
+            ansicht.setScaleY(1f);
             return;
         }
         ansicht.animate().scaleX(ziel).scaleY(ziel)
-            .setDuration(dauer)
-            .setInterpolator(gedrueckt ? hinaus() : feder(0.5f))
+            .setStartDelay(0L).setDuration(dauer)
+            .setInterpolator(kurve())
             .start();
     }
 
     /**
      * Der Fokus am Fernseher: die Karte kommt nach vorn.
      *
-     * <p>Drei Dinge gleichzeitig, und das ist Absicht. Die Groesse sagt "hier
-     * bist du", die Hoehe ueber der Flaeche wirft den Schatten, der die Karte
-     * aus der Reihe hebt, und die Feder nimmt dem Ganzen das Mechanische. Der
-     * Wechsel selbst braucht nichts weiter: die alte Karte laeuft mit
-     * derselben Dauer zurueck, waehrend die neue waechst - beide Wege laufen
-     * gleichzeitig, es gibt keinen Sprung dazwischen.
+     * <p>Groesse und Schatten bewegen sich gemeinsam ohne Ueberschwingen.
+     * Ein neuer Fokuswechsel beendet den vorherigen Lauf sofort.
      *
-     * @param gross Zielgroesse im Fokus, ueblich 1.10
+     * @param gross Zielgroesse im Fokus, fuer Poster 1.035
      * @param hoehe Schattenhoehe in dp im Fokus
      */
     public static void fokus(View ansicht, boolean hat, float gross, float hoehe) {
@@ -536,11 +529,9 @@ public final class Bewegung {
         // in einem einzigen Lauf; wuerde der Fokus nur die Groesse anfassen,
         // risse er den ganzen Lauf ab und die Karte bliebe unsichtbar stehen.
         // Also: erst den Auftritt auf sein Ende setzen, dann den Fokus.
-        if (ansicht.getAlpha() < 1f || ansicht.getTranslationY() != 0f) {
-            ansicht.animate().cancel();
-            ansicht.setAlpha(1f);
-            ansicht.setTranslationY(0f);
-        }
+        ansicht.animate().cancel();
+        ansicht.setAlpha(1f);
+        ansicht.setTranslationY(0f);
         float ziel = hat ? gross : 1f;
         float schatten = hat ? dp(ansicht, hoehe) : 0f;
         long dauer = dauer(ansicht.getContext(), FOKUS);
@@ -548,22 +539,16 @@ public final class Bewegung {
             ansicht.animate().cancel();
             ansicht.setScaleX(ziel);
             ansicht.setScaleY(ziel);
-            ansicht.setElevation(schatten);
+            ansicht.setZ(schatten);
             return;
         }
-        ansicht.animate().scaleX(ziel).scaleY(ziel)
-            .setDuration(dauer)
-            // Nur der Weg hinein federt. Zurueck darf nichts ueberschwingen:
-            // die Karte, die den Fokus abgibt, wippte sonst hinter der neuen
-            // her, und im Blickfeld waeren zwei Bewegungen statt einer.
-            .setInterpolator(hat ? feder(0.45f) : kurve())
+        // Ein abbrechbarer Lauf verhindert konkurrierende Schatten-Animationen
+        // beim schnellen Wechsel mit dem Steuerkreuz.
+        ansicht.animate().scaleX(ziel).scaleY(ziel).z(schatten)
+            .setStartDelay(0L).setDuration(dauer)
+            .setInterpolator(kurve())
             .withLayer()
             .start();
-        ValueAnimator hebung = ValueAnimator.ofFloat(ansicht.getElevation(), schatten);
-        hebung.setDuration(dauer);
-        hebung.setInterpolator(kurve());
-        hebung.addUpdateListener(s -> ansicht.setElevation((float) s.getAnimatedValue()));
-        hebung.start();
     }
 
     /**
@@ -578,11 +563,12 @@ public final class Bewegung {
         final long dauer = dauer(ansicht.getContext(), KURZ);
         if (dauer <= 0) return;
         ansicht.animate().cancel();
-        ansicht.animate().scaleX(fokusGross * 0.94f).scaleY(fokusGross * 0.94f)
-            .setDuration(dauer / 2).setInterpolator(hinaus())
+        ansicht.animate().scaleX(fokusGross * 0.98f).scaleY(fokusGross * 0.98f)
+            .setStartDelay(0L).setDuration(dauer / 2).setInterpolator(kurve())
             .withEndAction(() -> ansicht.animate()
-                .scaleX(fokusGross).scaleY(fokusGross)
-                .setDuration(dauer).setInterpolator(feder(0.6f)).start())
+                .scaleX(ansicht.hasFocus() ? fokusGross : 1f)
+                .scaleY(ansicht.hasFocus() ? fokusGross : 1f)
+                .setStartDelay(0L).setDuration(dauer).setInterpolator(kurve()).start())
             .start();
     }
 
