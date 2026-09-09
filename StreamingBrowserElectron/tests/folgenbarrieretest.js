@@ -18,6 +18,7 @@ const prepare = { type: "syncprepare", key: eintrag.key, room: eintrag.room,
   syncId: "folge-zwei", url: folge(2), position: 0, videoTime: 0, playing: false, reason: "episode-change" };
 async function pruefen() {
   const befehle = [];
+  const meldungen = [];
   let ladenBeenden;
   let ladeOptionen;
   let aktuell = true;
@@ -39,7 +40,10 @@ async function pruefen() {
     },
     watchpartyEreignis: () => ({ videoTime: 0, playing: false }),
     watchpartyLaeuftDanach: () => false,
-    watchparty: { serverJetzt: () => Date.now() }, sendToast: () => {}
+    watchparty: {
+      serverJetzt: () => Date.now(),
+      bereitZumStart: (key, room, syncId, ok = true) => meldungen.push({ syncId, ok })
+    }, sendToast: () => {}
   });
   vm.runInContext(funktion("spielerRundenNachrichtPasst") + "\n" + funktion("spielerSteuernAusRunde"), context);
   assert.equal(context.spielerRundenNachrichtPasst(eintrag, prepare, { tun: "syncprepare" }), true,
@@ -65,6 +69,12 @@ async function pruefen() {
   await veraltet;
   assert.equal(befehle.length, 1, "Ueberholte Vorbereitung darf keine Bereitschaft mehr ausloesen");
   assert.equal(context.spielerSyncBereit, null);
+  // Schweigen darf sie aber auch nicht: sonst wartet die Runde die volle
+  // Frist auf eine Bereitmeldung, die niemand mehr schickt - das gemeldete
+  // "Warten auf alle", bei dem neunzig Sekunden lang nichts ging.
+  assert.deepEqual(meldungen, [{ syncId: prepare.syncId, ok: false }],
+    "Die aufgegebene Vorbereitung liess die Runde im Ungewissen");
+  meldungen.length = 0;
   aktuell = true;
   context.spielerLauf = { id: 4, url: folge(1) };
   const ablauf = context.spielerSteuernAusRunde(eintrag, prepare, { tun: "syncprepare" }, false, () => aktuell);

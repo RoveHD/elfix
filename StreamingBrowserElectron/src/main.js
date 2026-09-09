@@ -8043,6 +8043,17 @@ async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true
   if (vorbereitet) watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId);
   if (!vorbereitet) {
     sendWatchpartyLive({ active: true, live: true, key: eintrag.key, title: eintrag.title, syncing: false });
+    // Und die Runde erfaehrt es.
+    //
+    // Ohne diese Absage warten alle anderen die volle Frist des Relays auf
+    // eine Bereitmeldung, die nicht mehr kommt. An der echten Runde
+    // gemessen waren das neunzig Sekunden, in denen niemand weiterkam -
+    // das gemeldete "Warten auf alle". Der eigene Player sagt hier laengst
+    // ab; dieser Weg tat es nicht.
+    //
+    // Absagen ist kein Aufgeben: die Runde startet ohne diesen einen, und
+    // der Nachziehtakt holt ihn wenige Sekunden spaeter auf die neue Folge.
+    watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId, false);
   }
 }
 
@@ -10955,7 +10966,22 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     } finally {
       if (spielerFolgenVorbereitung === vorbereitung) spielerFolgenVorbereitung = null;
     }
-    if (!istAktuell()) return true;
+    if (!istAktuell()) {
+      // Aufgegeben, aber nicht stillschweigend.
+      //
+      // Wird diese Vorbereitung von einer neueren Nachricht ueberholt, war
+      // das Laden umsonst - die Runde erfuhr davon aber nichts und wartete
+      // die volle Frist auf eine Bereitmeldung, die niemand mehr schickt.
+      // An der echten Runde gemessen waren das neunzig Sekunden, in denen
+      // der Player angehalten stand und nichts mehr ging: das gemeldete
+      // "Warten auf alle".
+      //
+      // Eine Absage kostet nichts. Uebernimmt wirklich eine neuere
+      // Vorbereitung, meldet die sich selbst; und wo keine kommt, startet
+      // die Runde ohne dieses Geraet und der Nachziehtakt holt es.
+      watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId, false);
+      return true;
+    }
     if (!geladen?.ok) {
       spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
       sendToast(geladen?.grund || "Die nächste Folge konnte nicht vorbereitet werden.");

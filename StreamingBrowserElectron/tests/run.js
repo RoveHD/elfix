@@ -68,6 +68,7 @@ OHNE_RELAY.push("cache-schreibarbeitertest");
 OHNE_RELAY.push("autominispielertest");
 OHNE_RELAY.push("miniplayerpresencetest");
 OHNE_RELAY.push("gesehenmarkierungtest");
+OHNE_RELAY.push("vorbereitungabsagetest");
 // Bringt sein eigenes Relay mit, weil es das zwischendurch anhalten muss:
 // geprueft wird, was ein Neustart aus der Ablage wieder hochholt.
 OHNE_RELAY.push("nachziehneustarttest");
