@@ -3,6 +3,32 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.22 — 9. September 2026
+
+- „Warten auf alle" bleibt nicht mehr stehen, wenn ein Gerät nur im Raum sitzt,
+  ohne den Titel im Player zu haben. Erwartet wird beim Folgenwechsel, wer
+  wirklich zuschaut; wer die neue Folge nicht aufbekommt, sagt jetzt ab, statt
+  die Runde neunzig Sekunden festzuhalten.
+- Wer eine Folgenvorbereitung verpasst — etwa direkt nach einem
+  Wiederanschluss — wird vom gemeinsamen Start nachgeholt, statt auf der alten
+  Folge sitzen zu bleiben.
+- Der Spoilerschutz zählt jetzt auch den Verlauf: was die Mediathek als
+  geschaut führt, gilt als gesehen. Was ELFIX nie mitbekommen hat, lässt sich
+  in der Folgenliste selbst abhaken — je Folge oder ganze Staffel, mit
+  Rücknahme. Die drei Schalter des Spoilerschutzes stehen dort ebenfalls;
+  Mindeststand und Teilen gelten von Haus aus.
+- Ein Gerät verliert beim Wechsel zwischen zwei Titeln derselben Runde nicht
+  mehr seinen Playerstand; „Abgleichen" richtet sich wieder am Host aus.
+- Jeder hat in der Warteschlange drei gewichtete Stimmen (3, 2 und 1), jedes
+  Gewicht genau einmal. Sortiert wird nach der Summe. Ein Vorschlag vergibt
+  keine Stimme mehr von selbst, und starten lässt sich jeder Eintrag.
+- Optionales Glücksrad für die gemeinsame Entscheidung: die Punkte bestimmen
+  die Segmentgrößen, jeder Vorschlag behält ein Stück. Das Los fällt im Relay,
+  und alle sehen dieselbe Scheibe zur selben Zeit — auch wer mitten im Lauf
+  dazukommt.
+- Geprüft mit der vollständigen Suite (157 Prüfungen inklusive Relay), 17
+  Electron-Suiten und 305 Android-Unit-Tests.
+
 ## 2.0.21 — 8. September 2026
 
 - Gemeinsame Warteschlange je Raum: jeder schlägt Titel vor, die Runde stimmt
