@@ -6412,12 +6412,19 @@ input[type="color"] {
   filter: brightness(1.28) drop-shadow(0 0 8px rgba(255, 255, 255, 0.65));
 }
 
+/* Der Zeiger misst in Anteilen der Buehne, nicht in Pixeln.
+
+   Beim Drehen waechst die Scheibe von 360 auf 560 Pixel. Ein Dreieck aus festen
+   Rand-Breiten wuchs nicht mit: seine Spitze reichte bei der kleinen Scheibe
+   gerade noch auf den Kranz und schwebte bei der grossen deutlich darueber -
+   gemeldet als "das Dreieck ist oben". Der Kranz endet bei 4 % der Hoehe, der
+   Zeiger reicht bis 9 % und steht damit in jeder Groesse auf dem Rand. */
 .rad-zeiger {
-  position: absolute; top: -10px; left: 50%; width: 0; height: 0;
+  position: absolute; top: 0; left: 50%;
+  width: 7.5%; height: 9%;
   transform: translateX(-50%);
-  border-left: 13px solid transparent;
-  border-right: 13px solid transparent;
-  border-top: 26px solid #f8fafc;
+  background: #f8fafc;
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
   filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.65));
   transform-origin: 50% 12%;
   z-index: 2;

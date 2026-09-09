@@ -125,7 +125,23 @@
         ton({ art: "sawtooth", von: 180, bis: 620, dauer: 0.22, staerke: 0.06 });
         musikStart(dauer);
       },
-      still: musikStop
+      still: musikStop,
+      /*
+       * Wie lange ein jetzt angesetzter Ton braucht, bis er zu hoeren ist.
+       *
+       * Zwischen dem Ansetzen und dem Lautsprecher liegen Puffer - unter
+       * Windows gern zwanzig bis fuenfzig Millisekunden. Wer erst tickt,
+       * wenn die Kante am Zeiger vorbei ist, hoert es also erst danach:
+       * gemeldet als "der Sound ist verzoegert und passt nicht zu den
+       * Linien". Der Wert wird nicht geraten, sondern erfragt.
+       */
+      latenzMs() {
+        const ctx = kontext;
+        if (!ctx) return 0;
+        const wert = Number(ctx.outputLatency) || Number(ctx.baseLatency) || 0;
+        // Ein unplausibler Wert waere schlimmer als keiner.
+        return Number.isFinite(wert) && wert > 0 ? Math.min(200, wert * 1000) : 0;
+      }
     };
   }
 
@@ -538,7 +554,11 @@
         for (const kante of kanten) summe += Math.floor((drehung - kante) / 360) + 1;
         return summe;
       };
-      let letzte = gezaehlt(vonWinkel);
+      const winkelBei = (zeitpunkt) =>
+        vonWinkel + (bisWinkel - vonWinkel) * radKurve(zeitpunkt / dauer);
+      // Zwei Zaehler, weil Ton und Bild nicht im selben Augenblick faellig sind.
+      let letzterTon = gezaehlt(vonWinkel);
+      let letzteSicht = gezaehlt(vonWinkel);
       let laeuft = true;
       const ende = () => { laeuft = false; };
       lauf.finished.then(ende, ende);
@@ -546,13 +566,31 @@
         if (!laeuft) return;
         const zeit = Math.min(dauer, Math.max(0, Number(lauf.currentTime) || 0));
         const anteil = zeit / dauer;
-        // Der aktuelle Winkel kommt aus derselben Kurve wie die Bewegung.
-        const stand = vonWinkel + (bisWinkel - vonWinkel) * radKurve(anteil);
-        const jetzt = gezaehlt(stand);
-        if (jetzt !== letzte) {
-          letzte = jetzt;
+
+        /*
+         * Der Ton wird vorgehalten.
+         *
+         * Zwischen dem Ansetzen und dem Lautsprecher liegen Puffer - unter
+         * Windows gern zwanzig bis fuenfzig Millisekunden. Wer erst tickt,
+         * wenn die Kante den Zeiger erreicht hat, hoert es also erst danach,
+         * und je langsamer das Rad wird, desto deutlicher faellt das auf:
+         * gemeldet als "der Sound ist verzoegert und passt nicht zu den
+         * Linien". Gefragt wird deshalb, welche Kante in genau dieser Zeit
+         * vorne sein wird - dann faellt der Klick mit der Linie zusammen.
+         */
+        const vorlauf = Math.min(dauer - zeit, klang.latenzMs?.() || 0);
+        const fuersOhr = gezaehlt(winkelBei(zeit + vorlauf));
+        if (fuersOhr !== letzterTon) {
+          letzterTon = fuersOhr;
           klang.tick(anteil);
-          // Der Zeiger schlaegt sichtbar an, wie die Zunge an einem echten Rad.
+        }
+
+        // Das Bild dagegen laeuft nichts voraus: der Zeiger schlaegt an, wenn
+        // die Kante wirklich unter ihm steht - wie die Zunge an einem echten
+        // Rad.
+        const fuersAuge = gezaehlt(winkelBei(zeit));
+        if (fuersAuge !== letzteSicht) {
+          letzteSicht = fuersAuge;
           wheelPointer.classList.remove("schlaegt");
           void wheelPointer.offsetWidth;
           wheelPointer.classList.add("schlaegt");
