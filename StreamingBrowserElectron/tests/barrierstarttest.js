@@ -419,6 +419,52 @@ async function hostBleibtUeberDenWechsel() {
   }
 }
 
+// 8) Der Gast wechselt die Folge - und der Host kommt mit.
+//
+//    Gemeldet: wechselte der Gast, blieb der Host in der alten Folge stehen
+//    und zeigte "Warten auf alle". Bisher loeste in jeder Pruefung der Host
+//    den Wechsel aus; genau der umgekehrte Weg war nie belegt.
+async function gastWechseltDieFolge() {
+  const raum = "barrier-start-gastwechsel";
+  const key = "serie:barrier-start-gastwechsel";
+  const host = client("Wechsel Host");
+  const gast = client("Wechsel Gast");
+  try {
+    await host.verbinden(raum);
+    await gast.verbinden(raum);
+    await rundeAufbauen(raum, key, [host, gast]);
+
+    // Der Host fuehrt - und der Gast loest aus.
+    const rollen = await host.warten(0, (m) => m.type === "state"
+      && m.shared?.find((eintrag) => eintrag.key === key)?.hostId, "die Hostrolle");
+    const hostId = rollen.shared.find((eintrag) => eintrag.key === key).hostId;
+
+    const { syncId, marken } = await folgeWechseln(key, [host, gast], gast);
+    pruefen(Boolean(syncId), "Der Wechsel des Gastes kam nicht als Vorbereitung an");
+
+    const beimHost = host.eingang.slice(marken[0])
+      .find((m) => m.type === "syncprepare" && m.syncId === syncId);
+    pruefen(beimHost?.url === URL2,
+      `Der Host bekam nicht die neue Folge: ${beimHost?.url}`);
+    pruefen(beimHost?.episodeId === "s1e2", `Falsche Folgenkennung: ${beimHost?.episodeId}`);
+
+    host.senden({ type: "syncready", key, syncId });
+    gast.senden({ type: "syncready", key, syncId });
+    const start = await host.warten(marken[0],
+      (m) => m.type === "syncstart" && m.syncId === syncId, "gemeinsamen Start");
+    pruefen(start.url === URL2, "Der gemeinsame Start zeigt nicht auf die neue Folge");
+
+    // Und die Rolle bleibt beim Host, obwohl der Gast ausgeloest hat.
+    const danach = await host.warten(marken[0], (m) => m.type === "state"
+      && m.shared?.find((eintrag) => eintrag.key === key)?.hostId, "die Rolle danach");
+    pruefen(danach.shared.find((eintrag) => eintrag.key === key).hostId === hostId,
+      "Der Wechsel des Gastes hat die Hostrolle verschoben");
+  } finally {
+    host.schliessen();
+    gast.schliessen();
+  }
+}
+
 (async () => {
   await zweiTeilnehmer();
   await letzterReadyStartet();
@@ -427,6 +473,7 @@ async function hostBleibtUeberDenWechsel() {
   await mitgliedOhnePlayer();
   await absageWaehrendBarriere();
   await hostBleibtUeberDenWechsel();
+  await gastWechseltDieFolge();
   console.log(`${bestanden}/${bestanden} bestanden `
     + "(Ready-Barriere: letzter Ready startet, genau einmal, Reconnect, "
     + "Mitglied ohne Player und Absage haengen nicht)");

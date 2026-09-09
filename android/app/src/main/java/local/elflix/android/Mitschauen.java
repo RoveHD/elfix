@@ -518,6 +518,22 @@ public final class Mitschauen {
 
     /* ------------------------------------------------- Aus dem Player heraus */
 
+    /**
+     * Die Taten, die ein Player melden darf.
+     *
+     * <p>"skip" gehoert dazu: das Ueberspringen des Intros darf jeder, und es
+     * geht als eigene Aktion hinaus, damit das Relay daraus die gemeinsame
+     * Startverabredung macht - ein "seek" eines Gastes verwirft es. Fehlte
+     * "skip" hier, verliess die Meldung das Geraet gar nicht erst: der Gast
+     * sprang oertlich und wurde vom naechsten Abgleich zurueckgeholt.
+     *
+     * <p>Als eigene Liste, damit sich genau das pruefen laesst - der Fehler
+     * sass in einer Bedingung, die niemand von aussen sehen konnte.
+     */
+    static final java.util.Set<String> TATEN =
+        java.util.Collections.unmodifiableSet(new java.util.HashSet<>(
+            java.util.Arrays.asList("play", "pause", "seek", "skip")));
+
     /** Ob ein gebundenes Player-Signal unserem begrenzten Schema entspricht. */
     public boolean istMeldung(String zeile) {
         return gueltigeSpielerMeldung(zeile);
@@ -564,8 +580,7 @@ public final class Mitschauen {
         String rest = zeile.startsWith(meldeAktion)
             ? zeile.substring(meldeAktion.length()) : "";
         String[] teile = rest.split(":", -1);
-        return teile.length == 2
-            && ("play".equals(teile[0]) || "pause".equals(teile[0]) || "seek".equals(teile[0]))
+        return teile.length == 2 && TATEN.contains(teile[0])
             && zeit(teile[1], 0, 24 * 60 * 60 + 300);
     }
 
@@ -582,8 +597,9 @@ public final class Mitschauen {
      * Eine Meldung des Horchers.
      *
      * <p>Drei Arten, und nur zwei davon gehen hinaus: eine Tat (Play, Pause,
-     * Sprung) und ein Stand (wo dieses Geraet steht). Die dritte ist der
-     * Bericht der Driftmessung und gehoert ins Protokoll, nicht ins Netz.
+     * Sprung, Ueberspringen) und ein Stand (wo dieses Geraet steht). Die dritte
+     * ist der Bericht der Driftmessung und gehoert ins Protokoll, nicht ins
+     * Netz.
      */
     public void meldung(String zeile) {
         if (!gueltigeSpielerMeldung(zeile) || kern == null || !kern.istBereit()) return;

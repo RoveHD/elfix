@@ -49,6 +49,25 @@ public class MitschauenTest {
         }
     }
 
+    /*
+     * Gemeldet aus einer laufenden Runde: als Gast liess sich das Intro nicht
+     * ueberspringen, "ich werd einfach zurueckgesetzt". Der Player sprang
+     * oertlich, die Meldung verliess das Geraet aber nie - dieses Schema
+     * kannte "skip" nicht und verwarf sie. Danach holte der naechste Abgleich
+     * den Gast an die Stelle der Runde zurueck.
+     */
+    @Test
+    public void laesstDasUeberspringenHinaus() {
+        assertTrue("Ohne \"skip\" verlaesst das Ueberspringen das Geraet nie",
+            Mitschauen.TATEN.contains("skip"));
+        for (String tat : new String[]{"play", "pause", "seek"}) {
+            assertTrue("Eine bekannte Tat fiel heraus: " + tat, Mitschauen.TATEN.contains(tat));
+        }
+        assertEquals("Es sind mehr Taten erlaubt als gedacht", 4, Mitschauen.TATEN.size());
+        assertFalse("Beliebiger Text darf nicht als Tat durchgehen",
+            Mitschauen.TATEN.contains("navigate"));
+    }
+
     @Test
     public void erkenntStaffelUndFolge() {
         assertArrayEquals(new int[]{3, 8},
