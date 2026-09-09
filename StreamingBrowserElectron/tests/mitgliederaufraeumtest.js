@@ -141,10 +141,28 @@ function pruefen(bedingung, text) {
     pruefen(mitglieder.members.filter((name) => name === "Elias TV").length === 1,
       `Der Name steht weiterhin doppelt: ${JSON.stringify(mitglieder.members)}`);
 
-    // Und der Ersteller ist derselbe geblieben - ueber das Konto, nicht ueber
-    // die Kennung, die es nicht mehr gibt.
     pruefen(mitglieder.mine === true, "Die Neuinstallation gilt nicht mehr als Ersteller");
 
+    /*
+     * Erst die Gegenprobe, solange es den fremden Gast noch gibt: wer den Titel
+     * nicht eingestellt hat, entfernt niemanden. `zweites` taugt dafuer nicht -
+     * es gehoert demselben Konto und ist damit selbst Ersteller.
+     *
+     * Die Ordnungsmarkierung reist ueber denselben Weg wie ein Rauswurf und
+     * wird bei `neu` abgewartet. Damit steht fest, dass ein Zustand, der aus
+     * dem Rauswurf entstanden waere, vorher angekommen sein muesste.
+     */
+    const vorFremd = neu.marke();
+    fremd.senden({ type: "kick", key: KEY, memberId: neu.deviceId });
+    fremd.senden({ type: "chat", text: "kick-marke" });
+    await neu.warten(vorFremd, (m) => m.type === "chat" && m.text === "kick-marke",
+      "Ordnungsmarkierung nach dem fremden Rauswurf");
+    pruefen(!neu.eingang.slice(vorFremd).some((m) => m.type === "state"
+      && eintragVon(m) && !eintragVon(m).memberIds.includes(neu.deviceId)),
+    "Ein Mitglied ohne Besitz konnte den Ersteller entfernen");
+
+    // Und der Ersteller selbst darf es - ueber das Konto, nicht ueber die
+    // Kennung, die es nicht mehr gibt.
     const vorKick = neu.marke();
     neu.senden({ type: "kick", key: KEY, memberId: fremd.deviceId });
     const nachKick = await neu.warten(vorKick, (m) => m.type === "state"
@@ -152,15 +170,6 @@ function pruefen(bedingung, text) {
     "Entfernen durch den Ersteller");
     pruefen(eintragVon(nachKick).memberIds.length === 2,
       "Nach dem Entfernen stimmt die Zahl nicht");
-
-    // Wer den Titel nicht eingestellt hat, darf weiterhin niemanden entfernen.
-    const vorFremd = neu.marke();
-    zweites.senden({ type: "kick", key: KEY, memberId: neu.deviceId });
-    zweites.senden({ type: "chat", text: "kick-marke" });
-    await zweites.warten(0, (m) => m.type === "chat" && m.text === "kick-marke", "Ordnungsmarkierung");
-    pruefen(!neu.eingang.slice(vorFremd).some((m) => m.type === "state"
-      && eintragVon(m) && !eintragVon(m).memberIds.includes(neu.deviceId)),
-    "Ein Mitglied ohne Besitz konnte den Ersteller entfernen");
 
     console.log(`${bestanden}/${bestanden} bestanden `
       + "(Mitglieder: Vorgaengergeraet weg, echte Geraete bleiben, Ersteller ueber das Konto)");
