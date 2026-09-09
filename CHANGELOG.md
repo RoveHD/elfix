@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.24 — 9. September 2026
+
+- Als Gast lässt sich das Intro wieder überspringen. Auf dem Telefon fiel die
+  Meldung durch ein Schema, das nur „play", „pause" und „seek" kannte — sie
+  verließ das Gerät nie. Der Player sprang örtlich, die Runde erfuhr nichts,
+  und der nächste Abgleich holte den Gast zurück.
+- Neue Prüfung für den Weg, den es bisher nirgends gab: der Gast wechselt die
+  Folge. Der Host bekommt die Vorbereitung, beide werden bereit, der Start
+  kommt gemeinsam, und die Hostrolle bleibt.
+- Geprüft mit der vollständigen Suite (158 Prüfungen inklusive Relay), 17
+  Electron-Suiten und 306 Android-Unit-Tests.
+
 ## 2.0.23 — 9. September 2026
 
 - Beim Folgenwechsel wird jetzt wirklich jeder mitgezogen. Die Vorbereitung
