@@ -6378,6 +6378,29 @@ input[type="color"] {
    sichtbar ist, was noch zu vergeben ist: die eigene Stimme dieser Zeile ist
    gefuellt, ein anderswo liegendes Gewicht bleibt blass. */
 .raumqueue-stimmen { display: flex; gap: 4px; }
+
+/* Das Glücksrad. Eingeklappt kostet es eine Zeile; aufgeklappt steht die
+   Scheibe mittig, mit dem Zeiger oben bei zwölf Uhr. */
+.raumqueue-rad { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.raumqueue-rad > summary { cursor: pointer; color: var(--text-secondary); padding: 2px 0; }
+.raumqueue-rad .raumqueue-copy { margin: 8px 0 0; font-size: 13px; }
+.rad-buehne { position: relative; width: min(320px, 78vw); margin: 12px auto 0; }
+.rad-scheibe { display: block; width: 100%; height: auto; }
+/* Die Drehung sitzt auf der Gruppe im SVG, deshalb der eigene Ursprung. Die
+   Bewegung selbst macht die Animations-Schnittstelle im Skript - ein
+   CSS-Uebergang lief an dieser Gruppe nicht an. */
+.rad-scheibe > g { transform-origin: 100px 100px; }
+.rad-schrift { fill: rgba(255, 255, 255, 0.94); font-size: 8px; font-weight: 700; paint-order: stroke; stroke: rgba(0, 0, 0, 0.45); stroke-width: 1.6px; }
+.rad-zeiger {
+  position: absolute; top: -4px; left: 50%; width: 0; height: 0;
+  transform: translateX(-50%);
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+  border-top: 20px solid var(--accent);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+.rad-aktionen { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
+.rad-ergebnis { margin: 10px 0 0; min-height: 20px; text-align: center; font-size: 13px; color: var(--text-secondary); }
 .stimme-knopf {
   min-width: 34px;
   min-height: 34px;

@@ -55,6 +55,71 @@ app.on("browser-window-created",(_event,window)=>{
         vergeben:[[],['3']],
         starts:2,
         punkte:['5 Punkte von 2 Personen','1 Punkt von 1 Person']});
+      /*
+       * Das Gluecksrad.
+       *
+       * Geprueft wird die Rechnung dahinter, nicht die Bewegung: jeder
+       * Vorschlag bekommt ein Feld (auch ohne Stimme), und am Ende steht der
+       * Zeiger wirklich in dem Feld, das ausgelost wurde.
+       */
+      const rad=await window.webContents.executeJavaScript(`(() => {
+        const box=document.querySelector('#queue-fixture .raumqueue-rad');
+        box.open=true;
+        return {felder:box.querySelectorAll('path').length,
+          schriften:[...box.querySelectorAll('text')].map(t=>t.textContent),
+          drehbar:!box.querySelector('button.primary-action').disabled,
+          startVersteckt:box.querySelectorAll('button')[1].hidden};
+      })()`);
+      assert.equal(rad.felder,2,"Das Rad zeigt nicht jeden Vorschlag");
+      assert.equal(rad.schriften.length,2,"Ein Feld blieb ohne Beschriftung");
+      assert.equal(rad.drehbar,true,"Ab zwei Vorschlaegen muss sich drehen lassen");
+      assert.equal(rad.startVersteckt,true,"Vor der Auslosung gibt es nichts zu starten");
+
+      // Die Drehung wird auf eine Millisekunde gekuerzt: der Ausgang steht
+      // ohnehin vor der Bewegung fest, und die Pruefung soll nicht vier
+      // Sekunden lang einer Animation zusehen.
+      // Und die Scheibe bewegt sich wirklich: zwei Proben waehrend des Laufs
+      // muessen verschieden stehen. Ein Sprung auf den Endwert waere kein Rad.
+      const bewegung=await window.webContents.executeJavaScript(`new Promise(fertig => {
+        const box=document.querySelector('#queue-fixture .raumqueue-rad');
+        const scheibe=box.querySelector('.rad-scheibe > g');
+        const lesen=()=>getComputedStyle(scheibe).transform;
+        box.querySelector('button.primary-action').click();
+        setTimeout(()=>{
+          const erste=lesen();
+          setTimeout(()=>fertig({erste,zweite:lesen()}),500);
+        },250);
+      })`);
+      assert.notEqual(bewegung.erste,"none","Die Scheibe stand still");
+      assert.notEqual(bewegung.erste,bewegung.zweite,"Die Scheibe sprang statt zu drehen");
+      const ausgang=await window.webContents.executeJavaScript(`new Promise(fertig => {
+        const box=document.querySelector('#queue-fixture .raumqueue-rad');
+        const nachsehen=()=>{
+          const text=box.querySelector('.rad-ergebnis').textContent;
+          if(!text.startsWith('Das Los')||text.endsWith('…')) return false;
+          const zeiger=box.querySelector('.rad-zeiger').getBoundingClientRect();
+          const felder=[...box.querySelectorAll('path')];
+          // Der oberste Knoten unter dem Zeiger kann die Beschriftung oder der
+          // Zeiger selbst sein - gesucht ist das Feld darunter.
+          const punkt=document.elementsFromPoint(zeiger.left+zeiger.width/2,zeiger.bottom+14)
+            .find(el=>felder.includes(el));
+          const name=text.split(': ').slice(1).join(': ');
+          const zeilen=[...document.querySelectorAll('#queue-fixture .raumqueue-item')];
+          fertig({text,name,
+            startSichtbar:!box.querySelectorAll('button')[1].hidden,
+            feldIndex:felder.indexOf(punkt),
+            gewinnerIndex:zeilen.findIndex(z=>z.querySelector('strong').textContent===name)});
+          return true;
+        };
+        if(nachsehen()) return;
+        const uhr=setInterval(()=>{ if(nachsehen()) clearInterval(uhr); },120);
+      })`);
+      assert.ok(ausgang.name,"Das Ergebnis nannte keinen Vorschlag: "+ausgang.text);
+      assert.equal(ausgang.startSichtbar,true,"Nach der Auslosung fehlt der Startknopf");
+      assert.ok(ausgang.gewinnerIndex>=0,"Der ausgeloste Name steht nicht in der Liste");
+      assert.equal(ausgang.feldIndex,ausgang.gewinnerIndex,
+        "Der Zeiger stand nicht in dem Feld, das ausgelost wurde");
+
       const picture=path.resolve(__dirname,'../../build/history-perf/raumqueue-desktop.png');
       fs.mkdirSync(path.dirname(picture),{recursive:true});fs.writeFileSync(picture,(await window.webContents.capturePage()).toPNG());
       console.log("OK Real application startup: settings, renderer module, secured queue IPC, queue layout and keyboard focus with isolated profile");

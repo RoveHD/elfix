@@ -56,7 +56,44 @@
     composer.append(favoritePicker, youtubeUrl, add);
     const status = document.createElement("p"); status.className = "raumqueue-status"; status.setAttribute("role", "status");
     const list = document.createElement("ol"); list.className = "raumqueue-list";
-    root.replaceChildren(heading, tabs, composer, status, list);
+
+    /*
+     * Das Glücksrad.
+     *
+     * Es ist ein Angebot und keine zweite Regel: eingeklappt, und wer es nicht
+     * aufmacht, merkt nichts davon. Die Punkte der Abstimmung bestimmen die
+     * Segmentgrößen - wer mehr Stimmen hat, hat mehr Rad -, aber jeder
+     * Vorschlag behält ein Stück. Sonst wäre es kein Los, sondern nur die
+     * Rangliste mit Umweg.
+     *
+     * Gedreht wird örtlich; geteilt wird das Ergebnis über denselben Weg wie
+     * jeder andere Start. Die anderen sehen also nicht das Rad, sondern was
+     * dabei herauskam.
+     */
+    const wheelBox = document.createElement("details"); wheelBox.className = "raumqueue-rad";
+    const wheelSummary = document.createElement("summary"); wheelSummary.textContent = "Glücksrad";
+    const wheelCopy = document.createElement("p"); wheelCopy.className = "raumqueue-copy";
+    wheelCopy.textContent = "Lass das Los entscheiden. Mehr Stimmen heißt mehr Rad - aber jeder Vorschlag behält ein Stück.";
+    const wheelStage = document.createElement("div"); wheelStage.className = "rad-buehne";
+    const wheelSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    wheelSvg.setAttribute("viewBox", "0 0 200 200"); wheelSvg.setAttribute("class", "rad-scheibe");
+    wheelSvg.setAttribute("aria-hidden", "true");
+    const wheelTurn = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    // Ein ausdruecklicher Ausgangswinkel. Von `transform: none` aus laeuft am
+    // SVG kein Uebergang an - die Scheibe sprang dann auf den Endwert, und
+    // weil dabei auch kein transitionend kommt, blieb sie formal "im Lauf".
+    wheelTurn.style.transform = "rotate(0deg)";
+    wheelSvg.append(wheelTurn);
+    const wheelPointer = document.createElement("div"); wheelPointer.className = "rad-zeiger"; wheelPointer.setAttribute("aria-hidden", "true");
+    wheelStage.append(wheelSvg, wheelPointer);
+    const wheelActions = document.createElement("div"); wheelActions.className = "rad-aktionen";
+    const wheelSpin = document.createElement("button"); wheelSpin.type = "button"; wheelSpin.className = "primary-action"; wheelSpin.textContent = "Drehen";
+    const wheelStart = document.createElement("button"); wheelStart.type = "button"; wheelStart.className = "soft-action"; wheelStart.textContent = "Gewinner starten"; wheelStart.hidden = true;
+    wheelActions.append(wheelSpin, wheelStart);
+    const wheelResult = document.createElement("p"); wheelResult.className = "rad-ergebnis"; wheelResult.setAttribute("role", "status");
+    wheelBox.append(wheelSummary, wheelCopy, wheelStage, wheelActions, wheelResult);
+
+    root.replaceChildren(heading, tabs, composer, status, wheelBox, list);
 
     function rooms() {
       const values = typeof options.rooms === "function" ? options.rooms() : [];
@@ -110,6 +147,11 @@
       status.textContent = display.message;
       status.classList.toggle("is-problem", display.problem);
       list.replaceChildren(...(Array.isArray(state?.items) ? state.items.map(queueItem) : []));
+      // Waehrend der Drehung bleibt die Scheibe stehen, wie sie ist: eine
+      // Stimme, die mitten im Lauf eintrifft, darf die Felder nicht unter dem
+      // Zeiger verschieben.
+      if (!radDreht) radZeichnen();
+      radStandSetzen();
     }
 
     /*
@@ -170,6 +212,151 @@
       actions.append(start);
       row.append(info, actions); return row;
     }
+
+    // Ein Vorschlag ohne Stimme darf nicht aus dem Rad fallen - sonst koennte
+    // das Los nur bestaetigen, was die Rangliste ohnehin sagt.
+    function radGewicht(item) { return Math.max(0, Number(item?.votes) || 0) + 1; }
+
+    function radSegmente() {
+      const items = Array.isArray(state?.items) ? state.items.filter((item) => item?.id) : [];
+      const gesamt = items.reduce((summe, item) => summe + radGewicht(item), 0);
+      let start = 0;
+      return items.map((item, index) => {
+        const anteil = gesamt > 0 ? radGewicht(item) / gesamt : 1 / Math.max(1, items.length);
+        const segment = { item, index, von: start, bis: start + anteil * 360 };
+        start = segment.bis;
+        return segment;
+      });
+    }
+
+    /** Punkt auf dem Kreis - Winkel im Uhrzeigersinn, 0 Grad ist oben. */
+    function radPunkt(grad, radius) {
+      const bogen = (grad - 90) * Math.PI / 180;
+      return `${(100 + radius * Math.cos(bogen)).toFixed(2)} ${(100 + radius * Math.sin(bogen)).toFixed(2)}`;
+    }
+
+    function radZeichnen() {
+      const segmente = radSegmente();
+      const teile = [];
+      for (const segment of segmente) {
+        const breite = segment.bis - segment.von;
+        const flaeche = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        // Ein einzelner Vorschlag ist ein voller Kreis; ein Bogen ueber 360
+        // Grad laesst sich nicht als ein Pfad zeichnen.
+        flaeche.setAttribute("d", breite >= 359.99
+          ? "M 100 8 A 92 92 0 1 1 99.99 8 Z"
+          : `M 100 100 L ${radPunkt(segment.von, 92)} A 92 92 0 ${breite > 180 ? 1 : 0} 1 ${radPunkt(segment.bis, 92)} Z`);
+        flaeche.setAttribute("fill", `hsl(${(segment.index * 47) % 360} 62% ${segment.index % 2 ? 42 : 52}%)`);
+        flaeche.setAttribute("stroke", "rgba(0,0,0,0.35)");
+        flaeche.setAttribute("stroke-width", "0.6");
+        teile.push(flaeche);
+
+        if (breite < 12) continue;
+        const mitte = segment.von + breite / 2;
+        const schrift = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        schrift.setAttribute("class", "rad-schrift");
+        schrift.setAttribute("x", "100"); schrift.setAttribute("y", "34");
+        schrift.setAttribute("text-anchor", "middle");
+        schrift.setAttribute("dominant-baseline", "middle");
+        // In der unteren Haelfte stuende die Beschriftung sonst auf dem Kopf.
+        // Sie wird dort um ihren eigenen Punkt gewendet und bleibt lesbar.
+        const gewendet = mitte > 90 && mitte < 270;
+        schrift.setAttribute("transform", `rotate(${mitte.toFixed(2)} 100 100)`
+          + (gewendet ? " rotate(180 100 34)" : ""));
+        const name = text(segment.item?.title || segment.item?.url || "Vorschlag");
+        schrift.textContent = name.length > 22 ? `${name.slice(0, 21)}…` : name;
+        teile.push(schrift);
+      }
+      wheelTurn.replaceChildren(...teile);
+      return segmente;
+    }
+
+    let radDreht = false;
+    let radWinkel = 0;
+    let radGewinner = null;
+
+    function radStandSetzen() {
+      const items = Array.isArray(state?.items) ? state.items.filter((item) => item?.id) : [];
+      const bedienbar = supported() && state?.connected === true && state?.supported === true && !state?.pending;
+      wheelSpin.disabled = radDreht || !bedienbar || items.length < 2;
+      wheelStart.hidden = !radGewinner;
+      wheelStart.disabled = radDreht || !bedienbar || !radGewinner;
+      if (radDreht) return;
+      if (!items.length) wheelResult.textContent = "Noch keine Vorschläge zum Auslosen.";
+      else if (items.length < 2) wheelResult.textContent = "Ab zwei Vorschlägen gibt es etwas zu losen.";
+      else if (!radGewinner) wheelResult.textContent = "";
+      // Der Gewinner kann inzwischen gestartet oder entfernt worden sein.
+      if (radGewinner && !items.some((item) => item.id === radGewinner.id)) {
+        radGewinner = null;
+        wheelStart.hidden = true;
+        wheelResult.textContent = "Der ausgeloste Vorschlag steht nicht mehr in der Liste.";
+      }
+    }
+
+    function radDrehen() {
+      const segmente = radZeichnen();
+      if (radDreht || segmente.length < 2) return;
+      // Erst das Los, dann die Bewegung: die Anzeige folgt dem Ergebnis und
+      // nicht umgekehrt. Sonst koennte die Animation etwas anderes zeigen als
+      // das, was gleich gestartet wird.
+      const gesamt = segmente.reduce((summe, segment) => summe + radGewicht(segment.item), 0);
+      let los = Math.random() * gesamt;
+      let ziel = segmente[segmente.length - 1];
+      for (const segment of segmente) {
+        los -= radGewicht(segment.item);
+        if (los <= 0) { ziel = segment; break; }
+      }
+      // Irgendwo im gewonnenen Feld stehenbleiben, nicht immer mittig - und mit
+      // Abstand zur Kante, damit der Zeiger eindeutig darin steht.
+      const rand = (ziel.bis - ziel.von) * 0.2;
+      const stelle = ziel.von + rand + Math.random() * ((ziel.bis - ziel.von) - 2 * rand);
+      // Der Zeiger steht oben bei 0 Grad. Ein um R gedrehtes Feld bei `stelle`
+      // liegt bei `stelle + R`; unter dem Zeiger steht es, wenn das 0 ergibt.
+      const runden = 4 + Math.floor(Math.random() * 3);
+      const naechster = radWinkel + (360 - ((radWinkel + stelle) % 360 + 360) % 360) + runden * 360;
+
+      radDreht = true;
+      radGewinner = null;
+      wheelResult.textContent = "Das Rad dreht sich …";
+      radStandSetzen();
+      const ruhig = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      const DAUER_MS = ruhig ? 0 : 4200;
+      let erledigt = false;
+      const fertig = () => {
+        if (erledigt) return;
+        erledigt = true;
+        radWinkel = naechster;
+        radDreht = false;
+        radGewinner = ziel.item;
+        wheelResult.textContent = `Das Los fällt auf: ${text(ziel.item?.title || ziel.item?.url || "Vorschlag")}`;
+        radStandSetzen();
+      };
+      const vorher = radWinkel;
+      // Der Endstand steht sofort im Stil - danach haelt ihn nichts als eine
+      // laufende Animation, und die kann jederzeit abbrechen.
+      wheelTurn.style.transform = `rotate(${naechster}deg)`;
+      /*
+       * Bewegt wird ueber die Animations-Schnittstelle und nicht ueber einen
+       * CSS-Uebergang. Am SVG lief der naemlich gar nicht an: die Scheibe sprang
+       * auf den Endwert, und weil dabei auch kein `transitionend` kommt, blieb
+       * sie formal fuer immer "im Lauf" - samt gesperrtem Knopf.
+       */
+      const lauf = wheelTurn.animate?.(
+        [{ transform: `rotate(${vorher}deg)` }, { transform: `rotate(${naechster}deg)` }],
+        { duration: DAUER_MS, easing: "cubic-bezier(0.12, 0.62, 0.06, 1)" }
+      );
+      if (!lauf) { fertig(); return; }
+      lauf.finished.then(fertig, fertig);
+      // Und falls die Bewegung abgebrochen wird - zugeklappt, Fenster weg -,
+      // zieht die Anzeige trotzdem nach. Das Los ist ohnehin schon gefallen.
+      window.setTimeout(fertig, DAUER_MS + 400);
+    }
+
+    wheelSpin.addEventListener("click", radDrehen);
+    wheelStart.addEventListener("click", () => {
+      if (!radGewinner?.id) return;
+      command("advance", { expectedId: radGewinner.id, expectedRev: state?.rev });
+    });
 
     async function command(commandName, payload) {
       if (!room || !supported() || state?.connected !== true || state?.supported !== true) return;

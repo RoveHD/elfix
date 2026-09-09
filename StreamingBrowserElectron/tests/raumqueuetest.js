@@ -13,6 +13,8 @@ class Node {
   constructor(tag) {
     this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {}; this.listeners = new Map();
     this.classList = { toggle: () => {} }; this.value = ""; this.textContent = "";
+    // Das Gluecksrad zeichnet in SVG und setzt dort einen Ausgangswinkel.
+    this.style = {}; this.hidden = false;
   }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) {
@@ -34,7 +36,8 @@ function find(node, predicate) {
 
 const commands = [];
 const context = {
-  URL, console, document: { createElement: (tag) => new Node(tag) }, globalThis: {},
+  URL, console, globalThis: {},
+  document: { createElement: (tag) => new Node(tag), createElementNS: (_ns, tag) => new Node(tag) },
   setTimeout, clearTimeout
 };
 context.globalThis = context;
