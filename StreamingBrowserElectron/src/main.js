@@ -2467,7 +2467,30 @@ async function raumQueueBefehl(room, mode, command, payload = {}) {
   let daten = { ...payload };
   if (command === "propose") {
     if (mode === "normal") {
-      const item = favorites.find(f => f.id === String(payload.favoriteId || ""));
+      /*
+       * Ein Vorschlag kommt aus der Watchlist - oder aus der Suche.
+       *
+       * Bisher ging nur das Erste: die Runde konnte ausschliesslich
+       * vorschlagen, was ohnehin schon in den Favoriten stand. Gewuenscht war
+       * "ne Suche von allen Serien und Filmen", und ein Treffer bringt alles
+       * mit, was hier gebraucht wird - Adresse, Titel, Anbieter. Der Rest ist
+       * fuer beide derselbe Weg: Anbieter bestimmen, erste spielbare Folge
+       * ermitteln, Eintrag bauen.
+       *
+       * Der Schluessel entsteht aus Titel und Adresse und nicht aus einer
+       * Favoriten-Kennung - ein Treffer hat keine, und braucht auch keine.
+       */
+      const ausListe = favorites.find(f => f.id === String(payload.favoriteId || ""));
+      const gesucht = !ausListe && providerModel.isHttpUrl(String(payload.url || ""))
+        ? {
+          url: String(payload.url),
+          title: String(payload.title || ""),
+          providerName: String(payload.providerName || ""),
+          thumbnail: String(payload.thumbnail || ""),
+          type: String(payload.type || "")
+        }
+        : null;
+      const item = ausListe || gesucht;
       const provider = item && providerForWatchpartyUrl(item.url, item.providerName);
       if (!item || youtube.istYoutubeUrl(item.url) || !provider) return { ok: false, error: "Titel ist nicht verfügbar." };
       let url = item.url;

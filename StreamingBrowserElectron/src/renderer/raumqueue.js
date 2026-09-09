@@ -183,7 +183,24 @@
     const favoritePicker = document.createElement("select"); favoritePicker.setAttribute("aria-label", "Titel aus deiner Watchlist");
     const youtubeUrl = document.createElement("input"); youtubeUrl.type = "url"; youtubeUrl.placeholder = "YouTube-URL einfügen"; youtubeUrl.setAttribute("aria-label", "YouTube-URL");
     const add = document.createElement("button"); add.type = "submit"; add.className = "primary-action"; add.textContent = "Zur Warteschlange hinzufügen";
-    composer.append(favoritePicker, youtubeUrl, add);
+
+    /*
+     * Die Suche.
+     *
+     * Vorgeschlagen werden konnte bisher nur, was ohnehin schon in der
+     * Watchlist stand - "ich will hier ne Suche haben von allen Serien und
+     * Filmen". Gesucht wird mit derselben Abfrage wie in der grossen Suche;
+     * hier steht nur eine kurze Trefferliste, aus der ein Vorschlag wird.
+     *
+     * Getippt wird nicht bei jedem Anschlag gesucht: die Abfrage geht an alle
+     * Anbieter und dauert. Erst wenn es kurz ruhig ist, geht sie hinaus.
+     */
+    const suchfeld = document.createElement("input");
+    suchfeld.type = "search"; suchfeld.className = "raumqueue-suche";
+    suchfeld.placeholder = "Serie oder Film suchen …";
+    suchfeld.setAttribute("aria-label", "Serie oder Film suchen");
+    const treffer = document.createElement("div"); treffer.className = "raumqueue-treffer"; treffer.hidden = true;
+    composer.append(suchfeld, treffer, favoritePicker, youtubeUrl, add);
     const status = document.createElement("p"); status.className = "raumqueue-status"; status.setAttribute("role", "status");
     const list = document.createElement("ol"); list.className = "raumqueue-list";
 
@@ -318,6 +335,93 @@
     function favorites() { return Array.isArray(options.favorites?.()) ? options.favorites() : []; }
     function queueFavorites() { return favorites().filter((item) => !isYoutubeFavorite(item)); }
     function selectedFavorite() { return queueFavorites().find((item) => String(item?.id) === favoritePicker.value); }
+
+    /*
+     * Was gerade vorgeschlagen wuerde.
+     *
+     * Ein Treffer aus der Suche sticht die Watchlist - er ist die juengere
+     * Absicht. Er bleibt stehen, bis er abgeschickt oder das Suchfeld geleert
+     * wird; sonst waere er nach dem naechsten Zustandsversand wieder weg.
+     */
+    let gewaehlterTreffer = null;
+    let suchLauf = 0;
+    let suchZeitgeber = 0;
+
+    function trefferZeigen(liste, hinweis) {
+      treffer.replaceChildren();
+      if (hinweis) {
+        const zeile = document.createElement("p"); zeile.className = "raumqueue-treffer-hinweis";
+        zeile.textContent = hinweis; treffer.append(zeile);
+      }
+      for (const eintrag of liste) {
+        const knopf = document.createElement("button");
+        knopf.type = "button";
+        knopf.className = "raumqueue-treffer-zeile";
+        knopf.classList.toggle("ist-gewaehlt", gewaehlterTreffer?.url === eintrag.url);
+        const name = document.createElement("span"); name.className = "raumqueue-treffer-titel";
+        name.textContent = eintrag.title;
+        const quelle = document.createElement("span"); quelle.className = "raumqueue-treffer-quelle";
+        quelle.textContent = eintrag.providerName;
+        knopf.append(name, quelle);
+        knopf.addEventListener("click", () => {
+          gewaehlterTreffer = eintrag;
+          setStatus(`Vorgeschlagen wird: ${eintrag.title}`, false);
+          render();
+        });
+        treffer.append(knopf);
+      }
+      treffer.hidden = !liste.length && !hinweis;
+    }
+
+    /** Die Antwort der Suche auf eine flache Liste bringen. */
+    function trefferAus(antwort) {
+      const gruppen = globalThis.ELFIX_SEARCH_GROUPING?.groupProviderResults?.(antwort);
+      const roh = Array.isArray(gruppen) && gruppen.length
+        ? gruppen.map((gruppe) => gruppe.entries[0]).filter(Boolean)
+        : (Array.isArray(antwort) ? antwort : []).flatMap((anbieter) =>
+          (Array.isArray(anbieter?.results) ? anbieter.results : []).map((result) => ({ provider: anbieter, result })));
+      const gesehen = new Set();
+      const liste = [];
+      for (const { provider, result } of roh) {
+        const url = text(result?.url);
+        // YouTube hat einen eigenen Reiter - hier waere es nur Verwirrung.
+        if (!url || gesehen.has(url) || /youtube\.com|youtu\.be/i.test(url)) continue;
+        gesehen.add(url);
+        liste.push({
+          url,
+          title: text(result?.title) || url,
+          providerName: text(provider?.providerName || provider?.name || result?.providerName),
+          thumbnail: text(result?.image || result?.thumbnail),
+          type: text(result?.type)
+        });
+        if (liste.length >= 8) break;
+      }
+      return liste;
+    }
+
+    async function suchen(frage) {
+      const meiner = ++suchLauf;
+      if (!frage) { trefferZeigen([], ""); return; }
+      if (typeof api?.searchAll !== "function") {
+        trefferZeigen([], "Diese Fassung kann hier noch nicht suchen.");
+        return;
+      }
+      trefferZeigen([], "Wird gesucht …");
+      let antwort = null;
+      try { antwort = await api.searchAll(frage); }
+      catch { antwort = null; }
+      // Eine ueberholte Antwort darf die neuere nicht ueberschreiben.
+      if (meiner !== suchLauf) return;
+      const liste = trefferAus(antwort);
+      trefferZeigen(liste, liste.length ? "" : "Nichts gefunden.");
+    }
+
+    suchfeld.addEventListener("input", () => {
+      const frage = suchfeld.value.trim();
+      if (!frage) { gewaehlterTreffer = null; render(); }
+      window.clearTimeout(suchZeitgeber);
+      suchZeitgeber = window.setTimeout(() => suchen(frage), 350);
+    });
     function setStatus(message, problem) { feedback = { message: text(message), problem: Boolean(problem) }; }
     function supported() { return typeof api?.getRoomQueue === "function" && typeof api?.roomQueueCommand === "function"; }
 
@@ -341,6 +445,11 @@
       const normal = mode === "normal";
       const reachable = supported() && state?.connected === true && state?.supported === true;
       favoritePicker.hidden = !normal; youtubeUrl.hidden = normal;
+      suchfeld.hidden = !normal;
+      suchfeld.disabled = !hasRoom || !reachable;
+      if (!normal) { treffer.hidden = true; }
+      // Wer aus der Suche gewaehlt hat, waehlt nicht mehr aus der Watchlist.
+      favoritePicker.hidden = !normal || Boolean(gewaehlterTreffer);
       favoritePicker.disabled = !hasRoom || !reachable || !normalFavorites.length;
       youtubeUrl.disabled = !hasRoom || !reachable; add.disabled = !hasRoom || !reachable;
       const display = feedback || (state?.connected === false
@@ -767,7 +876,24 @@
     roomSelect.addEventListener("change", () => { room = roomSelect.value; state = null; feedback = null; render(); refresh(); });
     composer.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (mode === "normal") { const item = selectedFavorite(); if (!item?.id) { setStatus("Wähle zuerst einen Titel aus deiner Watchlist.", true); render(); return; } command("propose", { favoriteId: item.id }); return; }
+      if (mode === "normal") {
+        // Der Treffer aus der Suche zuerst: er ist die juengere Absicht.
+        if (gewaehlterTreffer?.url) {
+          const gewaehlt = gewaehlterTreffer;
+          gewaehlterTreffer = null;
+          suchfeld.value = "";
+          trefferZeigen([], "");
+          command("propose", {
+            url: gewaehlt.url, title: gewaehlt.title,
+            providerName: gewaehlt.providerName, thumbnail: gewaehlt.thumbnail, type: gewaehlt.type
+          });
+          return;
+        }
+        const item = selectedFavorite();
+        if (!item?.id) { setStatus("Suche einen Titel oder wähle einen aus deiner Watchlist.", true); render(); return; }
+        command("propose", { favoriteId: item.id });
+        return;
+      }
       const url = youtubeUrl.value.trim(); if (!httpUrl(url)) { setStatus("Bitte füge eine gültige http(s)-YouTube-URL ein.", true); return; }
       command("propose", { url }); youtubeUrl.value = "";
     });
