@@ -5,8 +5,9 @@ deine Anbieter in einer App: eine Suche über alle, ein eigener Player statt des
 Hoster-Players, ein Fortschritt, der über alle Geräte hinweg stimmt — und ein
 gemeinsames Schauen, das sich nicht wie ein Bastelprojekt anfühlt.
 
-> Aktuelle Fassung: **2.0.22** · Alle Änderungen je Version stehen im
-> [CHANGELOG](CHANGELOG.md).
+> Die jeweils neueste Fassung steht unter
+> [Releases](https://github.com/RoveHD/elfix/releases); was sich je Version
+> geändert hat, im [CHANGELOG](CHANGELOG.md).
 
 ## Inhalt
 
@@ -117,9 +118,11 @@ andere. Siehe [Das Relay](#das-relay).
 
 - **Watchparty.** Mehrere Räume gleichzeitig, jeder mit eigenem Fortschritt und
   eigener Live-Steuerung. Der Folgenwechsel wartet auf die Runde.
-- **Gemeinsame Warteschlange.** Jeder schlägt vor, die Runde stimmt mit drei
-  gewichteten Stimmen ab — oder ein Glücksrad entscheidet, für alle sichtbar
-  zur selben Zeit.
+- **Gemeinsame Warteschlange.** Jeder schlägt vor, die Runde entscheidet.
+  Vorschlagen und abstimmen geht auf beiden Plattformen; die drei gewichteten
+  Stimmen (3 · 2 · 1) und das Glücksrad, das alle zur selben Zeit drehen sehen,
+  gibt es bislang nur auf dem Desktop. Vorgeschlagen wird aus einer Suche über
+  alle Anbieter — nicht nur aus der eigenen Watchlist.
 - **Livechat im Player** auf PC, Handy und TV, je Raum getrennt.
 - **YouTube-Watchparty** als eigenes System, mit eigener Videoliste,
   SponsorBlock-Sprüngen für die Runde und Return-YouTube-Dislike-Zahlen.
@@ -142,7 +145,8 @@ Damit nichts durch kurzes Hineinspringen verloren geht, gelten feste Regeln:
 | 90 % | ab hier gilt eine Folge als durchgeschaut |
 | 2:30 min | nötig für einen neuen Eintrag, für Sprünge nach vorn und zusätzlich zu den 90 % |
 | 60 s | nötig, um auf eine **ältere** Folge zurückzugehen |
-| sofort | Film, Staffel 1 Folge 1, oder wenn die Watchparty genau diese Folge führt |
+| 0:30 | statt der 2:30, solange der Eintrag zu einer Watchparty gehört — dort führt die Gruppe |
+| sofort | Film, Staffel 1 Folge 1, oder wenn die Runde gerade genau diese Folge führt |
 
 Ist eine Folge durch, rückt der Eintrag auf die nächste und bleibt als „Nächste
 Folge" in *Weiterschauen*. Zusammengefasste Folgen („[In E18 enthalten]") werden
@@ -229,8 +233,17 @@ npm start          # hört auf PORT, Standard 8787
 ```
 
 Ob es läuft, sagt die Statusseite unter `/` beziehungsweise `/status`; `/health`
-ist dieselbe Auskunft als JSON. Installation als Dienst, Cloudflare Tunnel,
-Aktualisieren und die `features`-Tabelle stehen in
+ist dieselbe Auskunft als JSON.
+
+**Aktualisieren.** Ein Relay, das als Paket installiert ist, hält sich
+ausdrücklich *nicht* selbst aktuell: seine Datei liegt unter `/usr/bin` und
+gehört damit der Paketverwaltung. Es sieht täglich nach und schreibt ins
+Journal, dass es eine neuere Fassung gibt — eingespielt wird sie von Hand, mit
+demselben `apt install` wie oben. Selbst tauschen tut es sich nur, wenn die
+Datei irgendwo liegt, wo der Dienstbenutzer schreiben darf (etwa
+`/opt/elfix-watchparty/`).
+
+Installation als Dienst, Cloudflare Tunnel und die `features`-Tabelle stehen in
 [docs/WATCHPARTY.md](docs/WATCHPARTY.md) und
 [sync-server/README.md](sync-server/README.md).
 

@@ -163,7 +163,32 @@ wird dann `wss://watchparty.deine-domain.tld` eingetragen.
 
 Nicht jede App-Version braucht das — aber wenn sich in `sync-server/` etwas
 geändert hat, muss der Dienst nachgezogen werden, sonst fehlen dort die neuen
-Fähigkeiten:
+Fähigkeiten.
+
+### Aus dem Paket
+
+Wer das `.deb` installiert hat, spielt einfach das neue ein:
+
+```bash
+sudo apt install ./ELFIX-Relay-<fassung>-amd64.deb
+```
+
+Von allein passiert das **nicht**, und zwar mit Absicht: die Binärdatei liegt
+unter `/usr/bin/elfix-relay` und gehört damit der Paketverwaltung. Das Relay
+sieht täglich nach, ob es eine neuere Fassung gibt, und schreibt das Ergebnis
+ins Journal:
+
+```
+[RELAY UPDATE] v2.0.29 liegt vor - unter /usr/bin/elfix-relay taeuscht sich
+das Relay nicht selbst aus, das gehoert der Paketverwaltung
+```
+
+Selbst tauschen tut es sich nur, wenn seine Datei irgendwo liegt, wo der
+Dienstbenutzer schreiben darf — bei der Einrichtung unten also unter
+`/opt/elfix-watchparty/`. Dienst, Benutzer und die Ablage unter
+`/var/lib/elfix-watchparty` bleiben beim Aktualisieren unangetastet.
+
+### Aus dem Quelltext
 
 ```bash
 git -C /pfad/zum/repo pull
