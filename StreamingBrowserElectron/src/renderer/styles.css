@@ -6384,23 +6384,74 @@ input[type="color"] {
 .raumqueue-rad { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid var(--border-color); }
 .raumqueue-rad > summary { cursor: pointer; color: var(--text-secondary); padding: 2px 0; }
 .raumqueue-rad .raumqueue-copy { margin: 8px 0 0; font-size: 13px; }
-.rad-buehne { position: relative; width: min(320px, 78vw); margin: 12px auto 0; }
-.rad-scheibe { display: block; width: 100%; height: auto; }
+
+.rad-buehne {
+  position: relative;
+  width: min(360px, 76vw);
+  margin: 14px auto 0;
+  /* Beim Drehen wird die Scheibe groß. Der Übergang liegt hier, weil er nur
+     die Größe betrifft - die Drehung selbst macht das Skript. */
+  transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.rad-scheibe { display: block; width: 100%; height: auto; overflow: visible; }
 /* Die Drehung sitzt auf der Gruppe im SVG, deshalb der eigene Ursprung. Die
    Bewegung selbst macht die Animations-Schnittstelle im Skript - ein
    CSS-Uebergang lief an dieser Gruppe nicht an. */
 .rad-scheibe > g { transform-origin: 100px 100px; }
-.rad-schrift { fill: rgba(255, 255, 255, 0.94); font-size: 8px; font-weight: 700; paint-order: stroke; stroke: rgba(0, 0, 0, 0.45); stroke-width: 1.6px; }
-.rad-zeiger {
-  position: absolute; top: -4px; left: 50%; width: 0; height: 0;
-  transform: translateX(-50%);
-  border-left: 11px solid transparent;
-  border-right: 11px solid transparent;
-  border-top: 20px solid var(--accent);
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+.rad-schrift {
+  fill: #fff; font-size: 7.6px; font-weight: 800; letter-spacing: 0.2px;
+  paint-order: stroke; stroke: rgba(0, 0, 0, 0.55); stroke-width: 1.9px;
 }
-.rad-aktionen { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
-.rad-ergebnis { margin: 10px 0 0; min-height: 20px; text-align: center; font-size: 13px; color: var(--text-secondary); }
+.rad-speiche { stroke: rgba(255, 255, 255, 0.16); stroke-width: 0.7; }
+.rad-rand { filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.6)); }
+.rad-nabe { filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.6)); }
+/* Das gewonnene Feld leuchtet auf, wenn die Scheibe steht. */
+.rad-scheibe path.ist-gewinner {
+  stroke: #fff;
+  stroke-width: 2.2;
+  filter: brightness(1.28) drop-shadow(0 0 8px rgba(255, 255, 255, 0.65));
+}
+
+.rad-zeiger {
+  position: absolute; top: -10px; left: 50%; width: 0; height: 0;
+  transform: translateX(-50%);
+  border-left: 13px solid transparent;
+  border-right: 13px solid transparent;
+  border-top: 26px solid #f8fafc;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.65));
+  transform-origin: 50% 12%;
+  z-index: 2;
+}
+/* Der Anschlag: bei jeder Feldkante kippt der Zeiger kurz zur Seite, wie die
+   Zunge an einem echten Rad. */
+.rad-zeiger.schlaegt { animation: radAnschlag 110ms ease-out; }
+@keyframes radAnschlag {
+  0% { transform: translateX(-50%) rotate(0deg); }
+  35% { transform: translateX(-50%) rotate(15deg); }
+  100% { transform: translateX(-50%) rotate(0deg); }
+}
+
+.rad-aktionen { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+.rad-ergebnis {
+  margin: 12px 0 0; min-height: 22px; text-align: center;
+  font-size: 14px; font-weight: 600; color: var(--text-secondary);
+}
+
+/* Solange es läuft, gehört ihm die Fläche: die Scheibe wächst, der Rest der
+   Warteschlange tritt zurück, und der Ergebnistext bleibt ruhig stehen. */
+.raumqueue.rad-laeuft .rad-buehne { width: min(560px, 82vw); }
+.raumqueue.rad-laeuft .raumqueue-list,
+.raumqueue.rad-laeuft .raumqueue-composer { opacity: 0.35; transition: opacity 320ms ease; }
+.raumqueue.rad-laeuft .rad-ergebnis { color: var(--text-primary); }
+.raumqueue.rad-laeuft .rad-rand {
+  filter: drop-shadow(0 0 26px color-mix(in srgb, var(--accent) 75%, transparent))
+    drop-shadow(0 8px 22px rgba(0, 0, 0, 0.6));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rad-buehne { transition: none; }
+  .rad-zeiger.schlaegt { animation: none; }
+}
 .stimme-knopf {
   min-width: 34px;
   min-height: 34px;

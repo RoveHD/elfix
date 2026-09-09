@@ -29,7 +29,11 @@ const START_FRIST_MS = 60000;
  * bewegt.
  */
 const LOS_VORLAUF_MS = 600;
-const LOS_DAUER_MS = 4200;
+// Lang genug, dass es spannend wird - das Fuenffache der urspruenglichen
+// gut vier Sekunden. Der Wert gehoert dem Raum und nicht dem einzelnen
+// Geraet: alle drehen gleich lange, sonst haelt einer frueher an als der
+// andere und beide sehen ein anderes Ergebnis kommen.
+const LOS_DAUER_MS = 21000;
 
 function text(wert, laenge) {
   return String(wert == null ? "" : wert).slice(0, laenge).trim();

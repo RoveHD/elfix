@@ -73,7 +73,7 @@ app.on("browser-window-created",(_event,window)=>{
       const rad=await window.webContents.executeJavaScript(`(() => {
         const box=document.querySelector('#queue-fixture .raumqueue-rad');
         box.open=true;
-        return {felder:box.querySelectorAll('path').length,
+        return {felder:box.querySelectorAll('path[data-feld]').length,
           schriften:[...box.querySelectorAll('text')].map(t=>t.textContent),
           drehbar:!box.querySelector('button.primary-action').disabled,
           startVersteckt:box.querySelectorAll('button')[1].hidden};
@@ -112,9 +112,16 @@ app.on("browser-window-created",(_event,window)=>{
             dauer:Number(lauf.effect.getTiming().duration)||0}));
           fertig({laeufe,
             text:box.querySelector('.rad-ergebnis').textContent,
+            gross:document.getElementById('queue-fixture').classList.contains('rad-laeuft'),
             startVersteckt:box.querySelectorAll('button')[1].hidden});
         },200);
       })`);
+      // Ein Bild mitten im Lauf: dort ist die Scheibe gross, und dort sieht
+      // man, ob das Rad etwas taugt.
+      assert.equal(bewegung.gross,true,"Die Scheibe wird beim Drehen nicht gross");
+      fs.mkdirSync(path.resolve(__dirname,'../../build/history-perf'),{recursive:true});
+      fs.writeFileSync(path.resolve(__dirname,'../../build/history-perf/raumqueue-rad.png'),
+        (await window.webContents.capturePage()).toPNG());
       assert.ok(bewegung.laeufe.some(lauf=>lauf.art==="Animation"&&lauf.dauer>0),
         "Die Scheibe dreht sich nicht - erwartet wird eine Animation mit Dauer, gefunden: "
         +JSON.stringify(bewegung.laeufe));
@@ -126,7 +133,7 @@ app.on("browser-window-created",(_event,window)=>{
           const text=box.querySelector('.rad-ergebnis').textContent;
           if(!text.startsWith('Das Los')||text.endsWith('…')) return false;
           const zeiger=box.querySelector('.rad-zeiger').getBoundingClientRect();
-          const felder=[...box.querySelectorAll('path')];
+          const felder=[...box.querySelectorAll('path[data-feld]')];
           // Der oberste Knoten unter dem Zeiger kann die Beschriftung oder der
           // Zeiger selbst sein - gesucht ist das Feld darunter.
           const punkt=document.elementsFromPoint(zeiger.left+zeiger.width/2,zeiger.bottom+14)

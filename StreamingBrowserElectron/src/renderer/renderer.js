@@ -748,7 +748,9 @@ function bindEvents() {
       root: roomQueue,
       api,
       favorites: () => favorites,
-      rooms: () => watchpartyState?.rooms || []
+      rooms: () => watchpartyState?.rooms || [],
+      // Die Klaenge des Gluecksrads folgen den Bedienklang-Einstellungen.
+      settings: () => settings.appearance || DEFAULT_APPEARANCE_SETTINGS
     });
   }
   geraeteKeyNew?.addEventListener("click", geraeteSchluesselErzeugen);
