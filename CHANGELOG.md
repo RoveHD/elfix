@@ -3,6 +3,21 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.27 — 9. September 2026
+
+- Niemand haelt die Runde mehr neunzig Sekunden fest. Wechselte ein Gast die
+  Folge, zog das Telefon in Sekunden nach - und der Rechner stand still, bis
+  die Startverabredung von selbst aufgab. Solange ging gar nichts: der Player
+  angehalten, „Warten auf alle", jeder Druck ins Leere.
+- Der Grund war Schweigen. An zwei Stellen endete eine Vorbereitung, ohne der
+  Runde etwas zu sagen: wenn eine neuere Nachricht sie ueberholt, und wenn die
+  Ladefrist ablaeuft. Beide kehrten einfach zurueck, und alle anderen warteten
+  auf eine Bereitmeldung, die nicht mehr kam.
+- Wer nicht bereit werden kann, sagt jetzt ab. Das ist kein Aufgeben: die Runde
+  startet ohne diesen einen, und der Nachziehtakt holt ihn wenige Sekunden
+  spaeter auf die neue Folge. Aus neunzig Sekunden Stillstand werden ein paar.
+- Geprueft mit der vollstaendigen Suite einschliesslich Relay.
+
 ## 2.0.26 — 9. September 2026
 
 - Ein Folgenwechsel vom Gast bleibt jetzt stehen. Er kam an - die Raumkarte
