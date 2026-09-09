@@ -148,6 +148,25 @@ function client(name) {
   };
 }
 
+/**
+ * Auf eine Raumkarte warten, die passt.
+ *
+ * Die Karte ist der einzige Ort, an dem steht, wo die Runde wirklich steht -
+ * und nur wer davon abweicht, wird nachgezogen.
+ *
+ * Gesucht wird ab dem Anfang des Eingangs und nicht ab einer Marke. Die Karte
+ * geht hinaus, sobald die Runde umzieht, und das kann vor der Marke gewesen
+ * sein: unter Last kam der gemeinsame Start spaeter als die Karte, danach
+ * wartete der Test auf eine zweite, die niemand mehr schickte. Eine Karte mit
+ * Folge 2 gibt es vorher ohnehin nicht.
+ */
+const karteWie = (geraet, passt, was) => geraet.warten(0,
+  (m) => m.type === "state" && passt(m.shared?.find((e) => e.key === KEY)),
+  was, 8000);
+
+const karteBeiFolge = (geraet, folge) =>
+  karteWie(geraet, (e) => e?.episode === folge, `Raumkarte bei Folge ${folge}`);
+
 const pulse = [];
 function puls(c) {
   const schlag = () => c.senden({
@@ -161,6 +180,22 @@ function puls(c) {
 }
 
 const pulseAus = () => { for (const t of pulse) clearInterval(t); pulse.length = 0; };
+
+/**
+ * Eine Marke ueber denselben Socket hinterherschicken.
+ *
+ * Kommt sie zurueck, hat das Relay das davor Gesendete verarbeitet. Ohne das
+ * steht hier nur die Sendereihenfolge - und ueber zwei Sockets sagt die
+ * nichts: unter Last kam die Bereitmeldung des Gasts zuerst an, damit fiel
+ * ihm die Fuehrung zu, und als Fuehrender zog er die Karte auf seine alte
+ * Folge zurueck. Danach gab es keinen Nachzuegler mehr und nichts zu holen.
+ */
+async function abwarten(geraet) {
+  const ab = geraet.marke();
+  const marke = `ordnung-${crypto.randomUUID()}`;
+  geraet.senden({ type: "chat", text: marke });
+  await geraet.warten(ab, (m) => m.type === "chat" && m.text === marke, "Ordnungsmarkierung");
+}
 
 async function zustandNach(geraet, senden, passt, was) {
   const ab = geraet.marke();
@@ -176,8 +211,16 @@ async function rundeAufbauen(host, gast) {
   }), (m) => m.shared?.some((e) => e.key === KEY), "geteilten Titel");
   await zustandNach(host, () => gast.senden({ type: "enter", key: KEY }),
     (m) => m.shared?.find((e) => e.key === KEY)?.memberIds?.length >= 2, "Beitritt des Gasts");
+  // Der Host meldet seinen Stand zuerst und bekommt damit die Fuehrung.
+  //
+  // Nicht bloss Reihenfolge beim Senden: gewartet wird, bis die Karte ihn als
+  // Fuehrenden zeigt. Unter Last kam sonst der Stand des Gasts zuerst an, ihm
+  // fiel die Fuehrung zu, und als Fuehrender zog er spaeter die ganze Runde
+  // auf seine alte Folge zurueck - dann gab es gar keinen Nachzuegler mehr.
   const ab = host.marke();
-  puls(host); puls(gast);
+  puls(host);
+  await karteWie(host, (e) => e?.hostName === host.name, "Fuehrung beim Host");
+  puls(gast);
   await host.warten(ab, (m) => m.type === "watchstate" && m.key === KEY
     && m.members?.length === 2, "beide Playerstaende");
 }
@@ -201,22 +244,17 @@ async function aufFolgeZweiBringen(host, gast) {
   host.folge = 2; host.url = URL2;
   const abH = host.marke();
   host.senden({ type: "syncready", key: KEY, syncId });
+  // Erst wenn die Bereitmeldung des Hosts wirklich verarbeitet ist, meldet der
+  // Gast sich bereit: die Fuehrung faellt dem Ersten zu, und sie soll bei dem
+  // liegen, der auch bei der neuen Folge steht.
+  await abwarten(host);
   gast.senden({ type: "syncready", key: KEY, syncId });
   await host.warten(abH, (m) => m.type === "syncstart" && m.syncId === syncId, "gemeinsamen Start");
   // Der Gast meldet weiter Folge 1 - erst damit stehen sie auseinander.
   gast.folge = 1; gast.url = URL1;
-  await karteBeiFolge(host, abH, 2);
+  await karteWie(host, (e) => e?.episode === 2 && e?.hostName === host.name,
+    "Fuehrung beim Geraet bei Folge 2");
 }
-
-/**
- * Auf die Folge der Raumkarte warten.
- *
- * Die Karte ist der einzige Ort, an dem steht, wo die Runde wirklich steht -
- * und nur wer davon abweicht, wird nachgezogen.
- */
-const karteBeiFolge = (geraet, ab, folge) => geraet.warten(ab,
-  (m) => m.type === "state" && m.shared?.find((e) => e.key === KEY)?.episode === folge,
-  `Raumkarte bei Folge ${folge}`, 5000);
 
 const navigateAufZwei = (m) => m.type === "control" && m.action === "navigate"
   && String(m.url || "").includes("episode-2");
@@ -289,10 +327,11 @@ const halter = setInterval(() => {}, 1000);
   host.folge = 2; host.url = URL2;
   gast.folge = 1; gast.url = URL1;
   // Der Host meldet sich zuerst: nach einem Neustart ist die Fuehrung offen,
-  // und sie soll bei dem liegen, der bei Folge 2 steht.
-  const abKarte = host.marke();
+  // und sie soll bei dem liegen, der bei Folge 2 steht. Die Folge steht schon
+  // in der geladenen Karte - gewartet wird deshalb auf die Fuehrung.
   puls(host);
-  await karteBeiFolge(host, abKarte, 2);
+  await karteWie(host, (e) => e?.episode === 2 && e?.hostName === host.name,
+    "Fuehrung beim Geraet bei Folge 2");
   puls(gast);
 
   const abNeu = gast.marke();
