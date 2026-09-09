@@ -88,20 +88,36 @@ app.on("browser-window-created",(_event,window)=>{
       // Sekunden lang einer Animation zusehen.
       // Und die Scheibe bewegt sich wirklich: zwei Proben waehrend des Laufs
       // muessen verschieden stehen. Ein Sprung auf den Endwert waere kein Rad.
+      /*
+       * Geprueft wird die Art der Animation und nicht ihr Aussehen.
+       * Gezeichnete Zwischenbilder gibt es in einem verborgenen Fenster ohne
+       * Grafikbeschleunigung nicht verlaesslich - auf dem Bauserver fiel genau
+       * daran eine Pruefung um, die oertlich lief.
+       *
+       * Die Art traegt denselben Beleg und haengt an nichts, was der Bildschirm
+       * tut: ein CSS-Uebergang laeuft an dieser SVG-Gruppe gar nicht an, die
+       * Scheibe sprang damit auf den Endwert. Steht hier ein `CSSTransition`
+       * statt einer `Animation`, ist genau dieser Fehler zurueck.
+       *
+       * `matchMedia` wird dafuer festgelegt: mit "reduzierte Bewegung" waere
+       * die Dauer null, und das ist eine andere, ebenso richtige Antwort.
+       */
       const bewegung=await window.webContents.executeJavaScript(`new Promise(fertig => {
         const box=document.querySelector('#queue-fixture .raumqueue-rad');
         const scheibe=box.querySelector('.rad-scheibe > g');
-        const lesen=()=>getComputedStyle(scheibe).transform;
+        window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
         box.querySelector('button.primary-action').click();
         setTimeout(()=>{
-          const erste=lesen();
-          setTimeout(()=>fertig({erste,zweite:lesen(),
+          const laeufe=scheibe.getAnimations().map(lauf=>({art:lauf.constructor.name,
+            dauer:Number(lauf.effect.getTiming().duration)||0}));
+          fertig({laeufe,
             text:box.querySelector('.rad-ergebnis').textContent,
-            startVersteckt:box.querySelectorAll('button')[1].hidden}),300);
+            startVersteckt:box.querySelectorAll('button')[1].hidden});
         },200);
       })`);
-      assert.notEqual(bewegung.erste,"none","Die Scheibe stand still");
-      assert.notEqual(bewegung.erste,bewegung.zweite,"Die Scheibe sprang statt zu drehen");
+      assert.ok(bewegung.laeufe.some(lauf=>lauf.art==="Animation"&&lauf.dauer>0),
+        "Die Scheibe dreht sich nicht - erwartet wird eine Animation mit Dauer, gefunden: "
+        +JSON.stringify(bewegung.laeufe));
       assert.match(bewegung.text,/dreht das Rad/,"Waehrend der Drehung fehlt, wer sie ausgeloest hat");
       assert.equal(bewegung.startVersteckt,true,"Der Gewinner stand schon vor dem Halten fest");
       const ausgang=await window.webContents.executeJavaScript(`new Promise(fertig => {

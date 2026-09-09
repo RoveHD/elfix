@@ -74,6 +74,7 @@ MIT_RELAY.push("relayidentitytest");
 MIT_RELAY.push("barrierleavetest");
 MIT_RELAY.push("barrierstarttest");
 MIT_RELAY.push("introskiptest");
+MIT_RELAY.push("mitgliederaufraeumtest");
 MIT_RELAY.push("queuerelaytest");
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -213,7 +214,7 @@ async function warteAufStille(port, frist) {
     const testUmgebung = { TESTPORT: String(port), STATE_DIRECTORY: ablage };
     const echteIdentitaetsUndBarriereTests = new Set([
       "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest",
-      "barrierleavetest", "barrierstarttest"
+      "barrierleavetest", "barrierstarttest", "mitgliederaufraeumtest"
     ]);
     if (!echteIdentitaetsUndBarriereTests.has(datei)) {
       const bootstrap = `./${path.relative(process.cwd(), RELAY_TEST_IDENTITAET).replace(/\\/g, "/")}`;

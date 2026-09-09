@@ -444,6 +444,63 @@ function titelSaeubern(roh) {
   };
 }
 
+/**
+ * Wer diesen Titel eingestellt hat - ueber Geraet *und* Konto.
+ *
+ * Ein zweites nachgewiesenes Geraet desselben Kontos ist derselbe Besitzer.
+ * Die Karte (`mine`) und das Herausnehmen (`unshare`) rechnen laengst so; nur
+ * das Entfernen einzelner Mitglieder fragte allein nach der Geraete-ID. Wer
+ * sein Geraet gewechselt hatte, zaehlte dort ploetzlich nicht mehr als
+ * Ersteller und bekam niemanden mehr aus seinem eigenen Titel heraus.
+ */
+function istEinsteller(eintrag, socket) {
+  if (!eintrag || !socket?.geraetId) return false;
+  if (eintrag.addedById === socket.geraetId) return true;
+  return Boolean(socket.konto) && eintrag.addedByKonto === socket.konto;
+}
+
+/** Das Konto hinter einer Geraetekennung, soweit eines nachgewiesen ist. */
+function kontoVonGeraet(geraetId) {
+  if (!geraetId) return "";
+  for (const eintrag of identitaeten.values()) {
+    if (eintrag.geraetId === geraetId) return eintrag.konto || "";
+  }
+  return "";
+}
+
+/**
+ * Das Vorgaengergeraet aus der Mitgliederliste nehmen.
+ *
+ * Gemeldet mit einem Bildschirmfoto: "11 dabei", und die Haelfte davon
+ * doppelt - jeder Name zweimal. Eine Mitgliedschaft haengt an der
+ * Geraetekennung und bleibt ueber Verbindungsabbrueche hinweg bestehen; das
+ * ist richtig. Nach einer Neuinstallation bekommt dasselbe Geraet aber eine
+ * neue Kennung, und die alte blieb fuer immer in der Liste stehen.
+ *
+ * Weggeraeumt wird nur, was eindeutig dasselbe Geraet ist: gleiches
+ * nachgewiesenes Konto, gleicher Name, andere Kennung - und gerade nicht
+ * verbunden. Zwei echte Geraete einer Person (Rechner, Fernseher, Telefon)
+ * heissen verschieden und bleiben deshalb beide stehen.
+ */
+function vorgaengerAufraeumen(raumcode, eintrag, socket) {
+  if (!socket?.konto || !socket.geraetId) return false;
+  const name = socket.name || "";
+  if (!name) return false;
+  let geaendert = false;
+  for (const [geraetId, mitgliedName] of [...eintrag.members]) {
+    if (geraetId === socket.geraetId || mitgliedName !== name) continue;
+    if (kontoVonGeraet(geraetId) !== socket.konto) continue;
+    if (istVerbunden(raumcode, geraetId)) continue;
+    eintrag.members.delete(geraetId);
+    eintrag.stand?.delete(geraetId);
+    eintrag.spoiler?.delete(geraetId);
+    eintrag.spoilerWartet?.delete(geraetId);
+    hostFreigeben(eintrag, geraetId);
+    geaendert = true;
+  }
+  return geaendert;
+}
+
 function akteurFuer(socket) {
   if (!socket?.geraetId) return null;
   return {
@@ -1939,6 +1996,7 @@ wss.on("connection", (socket) => {
         gespeichert.addedByKonto = socket.konto;
       }
       gespeichert.members.set(socket.geraetId, socket.name);
+      vorgaengerAufraeumen(socket.raum, gespeichert, socket);
       if (!(gespeichert.spoilerWartet instanceof Set)) gespeichert.spoilerWartet = new Set();
       gespeichert.spoilerWartet.add(socket.geraetId);
       raum.titel.set(eintrag.key, gespeichert);
@@ -1972,6 +2030,7 @@ wss.on("connection", (socket) => {
       if (!eintrag) return;
       if (nachricht.type === "enter") {
         eintrag.members.set(socket.geraetId, socket.name);
+        vorgaengerAufraeumen(socket.raum, eintrag, socket);
         if (!(eintrag.spoilerWartet instanceof Set)) eintrag.spoilerWartet = new Set();
         eintrag.spoilerWartet.add(socket.geraetId);
         syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
@@ -1995,7 +2054,7 @@ wss.on("connection", (socket) => {
     if (nachricht.type === "kick") {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       const wen = text(nachricht.memberId, 64);
-      if (!eintrag || eintrag.addedById !== socket.geraetId || !wen) return;
+      if (!eintrag || !istEinsteller(eintrag, socket) || !wen) return;
       if (wen === socket.geraetId) return;
       if (!eintrag.members.delete(wen)) return;
       eintrag.spoiler?.delete(wen);
@@ -3013,9 +3072,7 @@ wss.on("connection", (socket) => {
       const key = text(nachricht.key, 300);
       const eintrag = raum.titel.get(key);
       if (!eintrag) return;
-      const eigenesGeraet = eintrag.addedById === socket.geraetId;
-      const eigenesKonto = Boolean(socket.konto) && eintrag.addedByKonto === socket.konto;
-      if (!eigenesGeraet && !eigenesKonto) return;
+      if (!istEinsteller(eintrag, socket)) return;
 
       raum.titel.delete(key);
       // Der Grabstein haelt ihn draussen, bis ihn jemand bewusst wieder

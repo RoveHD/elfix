@@ -26,7 +26,13 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   die Segmentgrößen, jeder Vorschlag behält ein Stück. Das Los fällt im Relay,
   und alle sehen dieselbe Scheibe zur selben Zeit — auch wer mitten im Lauf
   dazukommt.
-- Geprüft mit der vollständigen Suite (157 Prüfungen inklusive Relay), 17
+- Ein Gerät steht nach einer Neuinstallation nicht mehr zweimal in der
+  Teilnehmerliste. Weggeräumt wird nur der eindeutige Vorgänger — gleiches
+  Konto, gleicher Name, nicht verbunden; zwei echte Geräte einer Person
+  bleiben beide stehen.
+- Wer einen Titel eingestellt hat, bleibt auch nach einem Gerätewechsel
+  dessen Ersteller und kann wieder Mitglieder entfernen.
+- Geprüft mit der vollständigen Suite (158 Prüfungen inklusive Relay), 17
   Electron-Suiten und 305 Android-Unit-Tests.
 
 ## 2.0.21 — 8. September 2026
