@@ -10749,9 +10749,19 @@ function watchpartyPasstZurFolge(episodeId, url) {
  */
 function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
   if (!spielerLauf) return false;
-  if (nachricht.reason === "sync-timeout" && spielerFolgenVorbereitung
-    && nachricht.syncId === spielerFolgenVorbereitung.syncId
-    && eintrag.room === spielerFolgenVorbereitung.room && eintrag.key === spielerFolgenVorbereitung.key) return true;
+  // Eine Freigabe kommt immer durch.
+  //
+  // Sie beendet das Warten auf eine Schranke - beim Fristablauf fuer alle,
+  // nach einer Absage fuer den, der abgesagt hat. Sie traegt die Folge der
+  // Runde, und wer noch bei der alten steht, faellt durch die uebliche
+  // Folgenpruefung. Genau der aber wartet: seine Bedienung bleibt gesperrt,
+  // der Play-Knopf tut nichts, entpausieren geht nicht.
+  //
+  // Bisher half die Ausnahme nur, solange noch eine Vorbereitung lief. Ist
+  // die schon abgeraeumt - und nach einer Absage ist sie das -, kam die
+  // Freigabe nirgends an. Sie kann auch nichts kaputtmachen: sie haelt an
+  // und gibt frei, mehr nicht.
+  if (nachricht.reason === "sync-timeout") return true;
   const adresse = spielerLauf.url;
   if (urteil.tun === "navigate" || (urteil.tun === "syncprepare" && nachricht.reason === "episode-change")) {
     return Boolean(nachricht.url)

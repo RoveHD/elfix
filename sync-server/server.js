@@ -3058,7 +3058,33 @@ wss.on("connection", (socket) => {
       // Runde die volle Frist in "Warten auf alle", obwohl feststand, dass die
       // Bereitmeldung nie kommt. Fuer die Wartemenge zaehlt beides gleich; wer
       // absagt, gehoert danach auch nicht mehr zu dieser Schranke.
-      if (nachricht.ok === false) eintrag.sync.erwartet?.delete(socket.geraetId);
+      if (nachricht.ok === false) {
+        eintrag.sync.erwartet?.delete(socket.geraetId);
+        // Und er wird freigegeben.
+        //
+        // Er bekommt keinen gemeinsamen Start mehr - er gehoert nicht mehr zu
+        // dieser Schranke. Erfaehrt er aber gar nichts, wartet sein Player
+        // weiter auf einen Start, den es fuer ihn nie gibt: die Bedienung
+        // bleibt gesperrt, der Play-Knopf tut nichts, entpausieren geht nicht.
+        // Gemeldet als "nach dem Folgenwechsel buggt der Play-Knopf rum".
+        //
+        // Geschickt wird genau das, was auch der Fristablauf schickt: eine
+        // Pause ohne Bereitschaftsanforderung und das Ende der Schranke. Beides
+        // kennt jeder Client schon.
+        const frei = Date.now();
+        socket.send(JSON.stringify({
+          type: "control", key: eintrag.key, action: "pause",
+          position: eintrag.sync.ziel, videoTime: eintrag.sync.ziel, playing: false,
+          frameTime: eintrag.sync.frameTime,
+          url: eintrag.live?.url || eintrag.url, at: frei, timestamp: frei,
+          sequenceId: naechsteNummer(eintrag), syncId: eintrag.sync.id,
+          episodeId: folgenKennung(eintrag.season, eintrag.episode),
+          hostId: aktuelleHostId(socket.raum, eintrag), reason: "sync-timeout"
+        }));
+        socket.send(JSON.stringify({
+          type: "syncfailed", key: eintrag.key, syncId: eintrag.sync.id
+        }));
+      }
       eintrag.sync.wartetAuf.delete(socket.geraetId);
       if (!eintrag.sync.wartetAuf.size) syncStarten(socket.raum, eintrag);
       return;

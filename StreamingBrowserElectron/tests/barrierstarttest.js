@@ -353,6 +353,22 @@ async function absageWaehrendBarriere() {
       (m) => m.type === "syncstart" && m.syncId === syncId, "Start nach der Absage");
     pruefen(start.episodeId === "s1e2", "Falsche Folge nach der Absage");
     pruefen(starts(host, marken[0], syncId).length === 1, "Die Absage erzeugte einen zweiten Start");
+
+    // Und der Absagende wird freigegeben.
+    //
+    // Er bekommt keinen gemeinsamen Start mehr - er gehoert nicht mehr zu
+    // dieser Schranke. Erfaehrt er aber gar nichts, wartet sein Player
+    // weiter auf einen Start, den es fuer ihn nie gibt: die Bedienung
+    // bleibt gesperrt, der Play-Knopf tut nichts, und entpausieren laesst
+    // sich auch nichts mehr. Gemeldet als "nach dem Folgenwechsel buggt der
+    // Play-Knopf rum". Beim Fristablauf gibt das Relay laengst so frei.
+    const frei = await gast.warten(marken[1],
+      (m) => m.type === "control" && m.action === "pause" && m.syncId === syncId,
+      "Freigabe fuer den Absagenden");
+    pruefen(!frei.bereitId, "Die Freigabe darf keine neue Bereitschaft verlangen");
+    await gast.warten(marken[1],
+      (m) => m.type === "syncfailed" && m.syncId === syncId,
+      "Ende der Schranke fuer den Absagenden");
   } finally {
     host.schliessen();
     gast.schliessen();
