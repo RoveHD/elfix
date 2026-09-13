@@ -2758,10 +2758,13 @@ function zeichneRunde(leute) {
 bruecke.aufLeiste(zeichneRunde);
 
 setInterval(() => {
-  if (!inRunde) return;
+  // Der Live-Puls schreibt keinen Verlauf; auch private Pausen bleiben sichtbar.
+  if (!inRunde && (!auftrag || !(Number.isFinite(bild.duration) && bild.duration > 0))) return;
   bruecke.takt({
     auftragId: auftrag?.id,
     stelle: Number(bild.currentTime) || 0,
+    dauer: Number.isFinite(bild.duration) ? bild.duration : 0,
+    beendet: Boolean(bild.ended),
     frameTime: pausiertesBild(),
     laeuft: !bild.paused && !bild.ended,
     puffert

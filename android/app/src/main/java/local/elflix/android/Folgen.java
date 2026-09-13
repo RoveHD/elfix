@@ -214,7 +214,7 @@ final class Folgen {
     }
 
     /** Staffel und Folge einer Adresse; fehlende Teile bleiben 0. */
-    private static int[] folgenKennung(String url) {
+    static int[] folgenKennung(String url) {
         String text = folgenText(url);
         if (text.isEmpty()) return new int[] { 0, 0 };
         java.util.regex.Matcher staffel = java.util.regex.Pattern

@@ -39,6 +39,10 @@ const MAX_EINTRAEGE_JE_RAUM = 20000;
 // Ein Eintrag mit fuenfhundert abgehakten Folgen ist gross. Doppelt so viel
 // waere kein Eintrag mehr, sondern ein Versehen.
 const MAX_BLOB = 128 * 1024;
+// Laufende Wiedergabe bleibt nur im Speicher. Der Inhalt ist ebenso
+// verschluesselt wie ein Bestandseintrag, aber viel kleiner und kurzlebig.
+const MAX_LIVE_BLOB = 8 * 1024;
+const LIVE_LEBENSDAUER_MS = 45 * 1000;
 const MAX_JE_NACHRICHT = 200;
 // So viel geht hoechstens in einer Nachricht hinaus. Die Verbindung nimmt 256
 // KiB - ein einzelner grosser Eintrag darf den Rahmen sprengen, zwei nicht.
@@ -62,7 +66,7 @@ const GERAET_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const GERAET_NAME_MAX = 60;
 const GERAET_TYPEN = new Set(["pc", "handy", "tv"]);
 
-// raumId -> { eintraege, geraete, nr, at }. Die Geraeteliste ist nur Metadaten
+// raumId -> { eintraege, geraete, live, nr, at }. Die Geraeteliste ist nur Metadaten
 // des verschlossenen Raums: eine Kennung wird nie aus einem Namen abgeleitet.
 const raeume = new Map();
 
@@ -72,7 +76,7 @@ function raumHolen(raumId) {
     vorhanden.at = Date.now();
     return vorhanden;
   }
-  const neu = { eintraege: new Map(), geraete: new Map(), nr: 0, at: Date.now() };
+  const neu = { eintraege: new Map(), geraete: new Map(), live: new Map(), nr: 0, at: Date.now() };
   raeume.set(raumId, neu);
   return neu;
 }
@@ -110,6 +114,31 @@ function geraeteListe(raum) {
     .map(([id, eintrag]) => ({ id, name: eintrag.name, typ: eintrag.typ,
       lastSeen: eintrag.zuletzt, online: eintrag.zuletzt >= jetzt - GERAET_ONLINE_MS }))
     .sort((a, b) => b.lastSeen - a.lastSeen || a.id.localeCompare(b.id));
+}
+
+function liveAufraeumen(raum, jetzt = Date.now()) {
+  if (!(raum?.live instanceof Map)) raum.live = new Map();
+  for (const [id, eintrag] of raum.live) {
+    if (zahl(eintrag?.at) >= jetzt - LIVE_LEBENSDAUER_MS) continue;
+    raum.live.delete(id);
+  }
+}
+
+function liveListe(raum) {
+  const jetzt = Date.now();
+  liveAufraeumen(raum, jetzt);
+  return [...raum.live.entries()].map(([id, eintrag]) => ({ id, blob: eintrag.blob,
+    // Eine Restdauer braucht keinen Vergleich zwischen zwei Geraeteuhren.
+    ttl: Math.max(1, LIVE_LEBENSDAUER_MS - (jetzt - eintrag.at)) }));
+}
+
+// Wird vom Verbindungsabbruch aus aufgerufen. Die Rueckgabe ist direkt die
+// Nachricht fuer die uebrigen Geraete; gespeichert wird dabei nichts.
+function liveEntfernen(raumId, geraetId) {
+  const raum = raeume.get(raumId);
+  const id = String(geraetId || "");
+  if (!raum || !GERAET_ID.test(id) || !(raum.live instanceof Map) || !raum.live.delete(id)) return null;
+  return { type: "grlive", id, at: Date.now(), weg: true };
 }
 
 // Alles, was dieses Geraet noch nicht kennt - der Reihe nach, wie es angenommen
@@ -157,7 +186,7 @@ function annehmen(raum, roh) {
 //
 // Rueckgabe sagt nur, ob sich am gespeicherten Zustand etwas geaendert hat: der
 // Server haengt daran sein Sichern.
-function behandeln({ nachricht, raumId, senden, verteilen }) {
+function behandeln({ nachricht, raumId, geraetId, senden, verteilen }) {
   if (!istKennung(raumId)) return false;
 
   if (nachricht.type === "grhello") {
@@ -184,7 +213,8 @@ function behandeln({ nachricht, raumId, senden, verteilen }) {
       teil.push(eintrag);
       umfang += gross;
     }
-    senden({ type: "grstate", eintraege: teil, nr, fertig: true, geraete: raum ? geraeteListe(raum) : [] });
+    senden({ type: "grstate", eintraege: teil, nr, fertig: true,
+      geraete: raum ? geraeteListe(raum) : [], live: raum ? liveListe(raum) : [] });
     // Andere Teilnehmer sehen die neue Anwesenheit ebenfalls; der Relay sendet
     // die Liste ausschliesslich innerhalb derselben abgeleiteten Raumkennung.
     if (geraetAenderung.sichtbar) verteilen({ type: "grdevices", geraete: geraeteListe(raum) });
@@ -210,6 +240,30 @@ function behandeln({ nachricht, raumId, senden, verteilen }) {
     return true;
   }
 
+  if (nachricht.type === "grlive") {
+    // Die Kennung stammt ausschliesslich aus dem am Socket geprueften Hello.
+    // Ein `id` in der Nachricht selbst wird nie ausgewertet.
+    const id = String(geraetId || "");
+    if (!GERAET_ID.test(id)) return false;
+    const raum = raeume.get(raumId);
+    if (!raum) return false;
+    // Nur ein im Hello wirklich aufgenommenes Geraet darf Live-Speicher
+    // belegen. Ist die Roster-Grenze erreicht, erzeugt eine weitere Kennung
+    // auf diesem Nebenweg keine unbegrenzte zweite Map.
+    if (!raum.geraete.has(id)) return false;
+    if (!(raum.live instanceof Map)) raum.live = new Map();
+    const blob = String(nachricht.blob || "");
+    if (!blob) {
+      if (raum.live.delete(id)) verteilen({ type: "grlive", id, at: Date.now(), weg: true });
+      return false;
+    }
+    if (blob.length > MAX_LIVE_BLOB) return false;
+    const eintrag = { blob, at: Date.now() };
+    raum.live.set(id, eintrag);
+    verteilen({ type: "grlive", id, blob, ttl: LIVE_LEBENSDAUER_MS });
+    return false;
+  }
+
   return false;
 }
 
@@ -232,6 +286,7 @@ function aufraeumen() {
       raum.geraete.delete(id);
       geaendert = true;
     }
+    liveAufraeumen(raum, jetzt);
   }
   return geaendert;
 }
@@ -281,7 +336,10 @@ function zustandSetzen(roh) {
       geraete.set(id, { name: String(geraet.name || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, GERAET_NAME_MAX),
         typ: GERAET_TYPEN.has(geraet.typ) ? geraet.typ : "", zuletzt: zahl(geraet.zuletzt) });
     }
-    raeume.set(raumId, { eintraege, geraete, nr: Math.max(zahl(raum?.nr), hoechste), at: zahl(raum?.at) || Date.now() });
+    // Laufende Wiedergabe ist bewusst nicht Teil der Serverablage. Nach einem
+    // Neustart meldet ein aktiver Player sie erneut, alles andere bleibt weg.
+    raeume.set(raumId, { eintraege, geraete, live: new Map(),
+      nr: Math.max(zahl(raum?.nr), hoechste), at: zahl(raum?.at) || Date.now() });
   }
 }
 
@@ -295,10 +353,13 @@ function zuruecksetzen() {
 
 module.exports = {
   MAX_BLOB,
+  MAX_LIVE_BLOB,
+  LIVE_LEBENSDAUER_MS,
   MAX_EINTRAEGE_JE_RAUM,
   istKennung,
   nachschub,
   behandeln,
+  liveEntfernen,
   aufraeumen,
   zustandLesen,
   zustandSetzen,

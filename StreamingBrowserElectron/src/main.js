@@ -3725,6 +3725,10 @@ async function syncViewMediaProgress(provider, view, reason = "poll") {
   // hier heraus statt in den Eintrag.
   const pageMeta = gepruefteSeitendaten(await readPageMetadata(view).catch(() => ({})), url);
   applySeasonPlaybackInfo(pageMeta, url);
+  if (!spielerLauf && view === activeView && isLiveView(view) && view.webContents.getURL() === url) {
+    geraeteWiedergabeMelden(url, pageMeta.title || view.webContents.getTitle(),
+      reason === "pause" || reason === "close" ? null : progress);
+  }
   const entry = recordMediaActivity(provider, url, {
     currentTime: progress.currentTime,
     position: progress.currentTime,
@@ -7033,6 +7037,23 @@ let geraeteAbgleichTimer = 0;
 let geraeteSpiegel = null;
 // Ob nach diesem Schub die Folgestaende nachgezogen werden muessen.
 let geraeteFolgestaende = false;
+let geraeteLiveAdresse = "";
+
+function geraeteWiedergabeMelden(url, titel, messwert) {
+  if (!messwert || messwert.ended || !(Number(messwert.duration) > 0)) {
+    geraeteLiveAdresse = "";
+    geraete.liveSetzen(null);
+    return;
+  }
+  const folge = episodeIdentity(url);
+  geraeteLiveAdresse = url;
+  geraete.liveSetzen({
+    url, title: cleanBaseMediaTitle(titel, url) || titelAusSlug(mediaSlugFromUrl(url)) || "Wiedergabe",
+    season: folge?.season || 0, episode: folge?.episode || 0,
+    position: sanitizePositiveNumber(messwert.currentTime),
+    duration: sanitizePositiveNumber(messwert.duration), paused: Boolean(messwert.paused)
+  });
+}
 
 const geraete = new Geraeteabgleich({
   onEintrag: (stand, at) => uebernimmGeraeteStand(stand, at),
@@ -8481,6 +8502,9 @@ function pushWatchpartyLiveState(url = "") {
   // Seite offen und es gibt nichts zu steuern. Der Rueckgabewert bleibt davon
   // unberuehrt: die Live-Steuerung wird trotzdem eingehaengt.
   const seiteOffen = Boolean(activeView) && overlayReasons.size === 0;
+  if (!spielerOffen && geraeteLiveAdresse && (!seiteOffen || adresse !== geraeteLiveAdresse)) {
+    geraeteWiedergabeMelden("", "", null);
+  }
 
   // Anwesend heisst: diese Folge ist hier wirklich zu sehen und laeuft live in
   // dieser Runde mit. Faellt eine der beiden Bedingungen weg, sofort abmelden.
@@ -9733,6 +9757,7 @@ function direktVollbildAnwenden(optionen = {}) {
  * und nur hier.
  */
 function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
+  geraeteWiedergabeMelden("", "", null);
   const passend = favorites.filter((favorite) => favorite.providerId === provider?.id
     && normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(url));
   const eintrag = passend.find((favorite) => favorite.id === activeFavoriteId)
@@ -10124,6 +10149,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
 function direktSpielerSchliessen(grund = "") {
   direktLaden.abort();
   if (!spielerView) return;
+  geraeteWiedergabeMelden("", "", null);
   const view = spielerView;
   spielerView = null;
   spielerMiniAktiv = false;
@@ -10233,6 +10259,10 @@ ipcMain.on("spieler:stand", (ereignis, stand) => {
     stumm: Boolean(stand?.stumm),
     at: Date.now()
   };
+  geraeteWiedergabeMelden(spielerLauf.url, spielerLauf.titel, {
+    currentTime: stand?.stelle, duration: stand?.dauer,
+    paused: !stand?.laeuft, ended: Boolean(stand?.beendet)
+  });
   fernStandMelden().catch(() => {});
   const provider = enabledProviders().find((item) => item.id === spielerLauf.providerId);
   if (!provider) return;
@@ -11390,7 +11420,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
   return false;
 }
 
-/** Der Takt des eigenen Players - einmal je Sekunde, solange eine Runde laeuft. */
+/** Der Live-Takt des eigenen Players, auch ausserhalb einer Watchparty. */
 ipcMain.on("spieler:takt", (ereignis, takt) => {
   if (!vomSpieler(ereignis)) return;
   if (takt?.auftragId !== spielerLauf.id) return;
@@ -11403,6 +11433,10 @@ ipcMain.on("spieler:takt", (ereignis, takt) => {
     puffert: Boolean(takt?.puffert),
     at: Date.now()
   };
+  geraeteWiedergabeMelden(spielerLauf.url, spielerLauf.titel, {
+    currentTime: takt?.stelle, duration: takt?.dauer,
+    paused: !takt?.laeuft, ended: Boolean(takt?.beendet)
+  });
   meldeWatchpartyStandAusSpieler(spielerTakt.stelle, !spielerTakt.laeuft, takt?.frameTime);
 });
 

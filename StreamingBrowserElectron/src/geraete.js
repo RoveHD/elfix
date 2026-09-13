@@ -64,9 +64,54 @@ const UHR_ABSTAND_MS = 120;
 const UHR_AUFFRISCHEN_MS = 60000;
 const UHR_HALTBAR_MS = 300000;
 const GERAETE_PULS_MS = 30000;
+// Laufende Wiedergabe ist Anwesenheit, kein Verlauf. Der Player erneuert sie
+// laufend. Bleibt diese Erneuerung aus, darf auch eine noch offene Verbindung
+// keinen alten Titel fuer immer als "wird geschaut" ausweisen.
+const LIVE_PRODUZENT_MS = 25000;
+const LIVE_PULS_MS = 10000;
+const LIVE_EMPFANG_MS = 45000;
 // Bis hierher ist eine leere Liste ein Aufraeumen, darueber ein Verlust.
 // Bewusst klein: drei Titel loescht jemand von Hand, zweihundert nicht.
 const VERLUST_GRENZE = 3;
+
+function liveZahl(wert, hoechstens) {
+  const zahl = Number(wert);
+  if (!Number.isFinite(zahl) || zahl < 0) return 0;
+  return Math.min(zahl, hoechstens);
+}
+
+function liveText(wert, laenge) {
+  return String(wert == null ? "" : wert).replace(/[\u0000-\u001f]/g, "").trim().slice(0, laenge);
+}
+
+// Das entschluesselte Format bleibt absichtlich klein und streng. Der Relay
+// kann es nicht lesen; deshalb muessen alle empfangenden Clients dieselben
+// Grenzen anwenden.
+function liveReinigen(roh) {
+  if (!roh || typeof roh !== "object" || Array.isArray(roh)) return null;
+  const title = liveText(roh.title, 300);
+  const urlRoh = liveText(roh.url, 2000);
+  const url = /^https?:\/\//i.test(urlRoh) ? urlRoh : "";
+  if (!title && !url) return null;
+  return {
+    title,
+    url,
+    season: Math.round(liveZahl(roh.season, 999)),
+    episode: Math.round(liveZahl(roh.episode, 9999)),
+    position: liveZahl(roh.position, 100000),
+    duration: liveZahl(roh.duration, 100000),
+    paused: Boolean(roh.paused)
+  };
+}
+
+function liveAnzeigeGleich(links, rechts) {
+  return Boolean(links && rechts)
+    && links.title === rechts.title
+    && links.url === rechts.url
+    && links.season === rechts.season
+    && links.episode === rechts.episode
+    && links.paused === rechts.paused;
+}
 
 class Geraeteabgleich {
   constructor(optionen = {}) {
@@ -148,6 +193,18 @@ class Geraeteabgleich {
     this.uhrTimer = 0;
     this.uhrAuffrischen = 0;
     this.geraetePuls = 0;
+    this.liveEigen = null;
+    this.liveEigenAm = 0;
+    // Kleine Werte sind nur fuer die ausgefuehrten Relay-Tests gedacht; die
+    // App verwendet stets die Konstanten oben.
+    this.liveProduzentMs = Number(optionen.liveProduzentMs) > 0 ? Number(optionen.liveProduzentMs) : LIVE_PRODUZENT_MS;
+    this.livePulsMs = Number(optionen.livePulsMs) > 0 ? Number(optionen.livePulsMs) : LIVE_PULS_MS;
+    this.liveEmpfangMs = Number(optionen.liveEmpfangMs) > 0 ? Number(optionen.liveEmpfangMs) : LIVE_EMPFANG_MS;
+    // Geraetekennung -> { playback, bis }. `bis` ist Empfangszeit statt der
+    // fremden Uhr; der Relay hat alte Saetze schon vor dem Senden entfernt.
+    this.liveAndere = new Map();
+    this.livePuls = 0;
+    this.liveAblauf = 0;
     this.eigeneStaende = null;
     // Wie oft von aussen etwas hereingekommen ist. Nicht die Zahl der
     // Eintraege, sondern die Zahl der Aenderungen - sie sagt nur, ob sich seit
@@ -184,7 +241,14 @@ class Geraeteabgleich {
       titel: this.lebendeStaende(),
       lastSync: this.letzterAbgleich,
       error: this.letzterFehler,
-      devices: this.geraete.map((geraet) => ({ ...geraet, current: geraet.id === this.geraetId }))
+      devices: this.geraete.map((geraet) => {
+        const current = geraet.id === this.geraetId;
+        const fremd = this.liveAndere.get(geraet.id);
+        const playback = current && this.liveEigen && Date.now() - this.liveEigenAm < this.liveProduzentMs
+          ? this.liveEigen
+          : (!current && fremd && fremd.bis > Date.now() ? fremd.playback : null);
+        return { ...geraet, current, ...(playback ? { playback: { ...playback } } : {}) };
+      })
     };
   }
 
@@ -211,6 +275,8 @@ class Geraeteabgleich {
     // gehoert genau zu diesem neuen - er darf hier nicht wegfallen.
     if (this.schluessel && neuerSchluessel !== this.schluessel) {
       this.spiegel.clear();
+      this.liveAndere.clear();
+      this.liveAblaufPlanen();
       this.nr = 0;
       this.aufSpeichern(this.ablage());
     }
@@ -337,6 +403,7 @@ class Geraeteabgleich {
       this.uhrMessen();
       this.hello();
       this.geraetePulsStarten();
+      this.liveSenden();
       this.melde();
     };
     socket.onmessage = (ereignis) => this.nachrichtVerarbeiten(ereignis?.data);
@@ -355,6 +422,8 @@ class Geraeteabgleich {
       this.uhr = null;
       this.uhrProben = [];
       this.geraetePulsAnhalten();
+      this.liveAndere.clear();
+      this.liveAblaufPlanen();
       this.melde();
       this.spaeterNeuVerbinden();
     };
@@ -369,6 +438,12 @@ class Geraeteabgleich {
       clearTimeout(this.nachschubTimer);
       this.nachschubTimer = 0;
     }
+    // Wenn die Leitung noch offen ist, verschwindet die Anzeige auf den
+    // anderen Geraeten sofort. Beim harten Abbruch erledigt das der Relay.
+    if (this.liveEigen) this.senden({ type: "grlive", blob: "" });
+    this.liveEigen = null;
+    this.liveEigenAm = 0;
+    this.livePulsAnhalten();
     this.uhrAnhalten();
     this.geraetePulsAnhalten();
     this.uhr = null;
@@ -377,6 +452,8 @@ class Geraeteabgleich {
     this.socket = null;
     this.verbunden = false;
     this.offen = false;
+    this.liveAndere.clear();
+    this.liveAblaufPlanen();
     if (!this.aktiv) this.geraete = [];
     if (!socket) return;
     socket.onopen = null;
@@ -399,6 +476,107 @@ class Geraeteabgleich {
   geraetePulsAnhalten() {
     if (this.geraetePuls) clearInterval(this.geraetePuls);
     this.geraetePuls = 0;
+  }
+
+  /**
+   * Laufende Wiedergabe dieses Geraets melden. Sie wird verschluesselt und
+   * weder im lokalen Spiegel noch beim Relay dauerhaft abgelegt.
+   */
+  liveSetzen(roh) {
+    if (roh == null) {
+      const warDa = Boolean(this.liveEigen);
+      this.liveEigen = null;
+      this.liveEigenAm = 0;
+      this.livePulsAnhalten();
+      if (warDa) {
+        this.senden({ type: "grlive", blob: "" });
+        this.melde();
+      }
+      return false;
+    }
+    if (!this.aktiv || !this.abgeleitet) return false;
+    const playback = liveReinigen(roh);
+    if (!playback) return false;
+    const sofort = !liveAnzeigeGleich(this.liveEigen, playback);
+    this.liveEigen = playback;
+    this.liveEigenAm = Date.now();
+    this.livePulsStarten();
+    // Folge und Pause muessen sofort sichtbar sein. Reine Stellenmessungen
+    // erneuern die Produzentenfrist, gehen aber gebuendelt mit dem Live-Puls
+    // hinaus; Android misst haeufiger, als eine Geraeteliste neu rendern muss.
+    if (sofort) {
+      this.liveSenden();
+      this.melde();
+    }
+    return true;
+  }
+
+  liveSenden() {
+    if (!this.liveEigen || !this.abgeleitet) return false;
+    if (Date.now() - this.liveEigenAm >= this.liveProduzentMs) {
+      this.liveEigen = null;
+      this.liveEigenAm = 0;
+      this.livePulsAnhalten();
+      this.senden({ type: "grlive", blob: "" });
+      this.melde();
+      return false;
+    }
+    const blob = schluesselModul.verschluesseln(this.abgeleitet, { playback: this.liveEigen });
+    return Boolean(blob) && this.senden({ type: "grlive", blob });
+  }
+
+  livePulsStarten() {
+    if (this.livePuls) return;
+    this.livePuls = setInterval(() => this.liveSenden(), this.livePulsMs);
+    this.livePuls.unref?.();
+  }
+
+  livePulsAnhalten() {
+    if (this.livePuls) clearInterval(this.livePuls);
+    this.livePuls = 0;
+  }
+
+  liveAblaufPlanen() {
+    if (this.liveAblauf) clearTimeout(this.liveAblauf);
+    this.liveAblauf = 0;
+    let naechstes = Infinity;
+    const jetzt = Date.now();
+    let geaendert = false;
+    for (const [id, eintrag] of this.liveAndere) {
+      if (eintrag.bis <= jetzt) {
+        this.liveAndere.delete(id);
+        geaendert = true;
+      } else naechstes = Math.min(naechstes, eintrag.bis);
+    }
+    if (Number.isFinite(naechstes)) {
+      this.liveAblauf = setTimeout(() => {
+        this.liveAblauf = 0;
+        this.liveAblaufPlanen();
+        this.melde();
+      }, Math.max(1, naechstes - Date.now()));
+      this.liveAblauf.unref?.();
+    }
+    return geaendert;
+  }
+
+  liveUebernehmen(roh) {
+    const id = String(roh?.id || "");
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || id === this.geraetId) return false;
+    if (roh?.weg || !roh?.blob) {
+      const weg = this.liveAndere.delete(id);
+      this.liveAblaufPlanen();
+      return weg;
+    }
+    const inhalt = schluesselModul.entschluesseln(this.abgeleitet, String(roh.blob));
+    const playback = liveReinigen(inhalt?.playback);
+    if (!playback) return false;
+    const rest = Number(roh.ttl);
+    const dauer = Number.isFinite(rest) && rest > 0
+      ? Math.min(rest, this.liveEmpfangMs)
+      : this.liveEmpfangMs;
+    this.liveAndere.set(id, { playback, bis: Date.now() + dauer });
+    this.liveAblaufPlanen();
+    return true;
   }
 
   hello(seit = this.nr) {
@@ -790,6 +968,9 @@ class Geraeteabgleich {
 
     if (nachricht?.type === "grstate") {
       if (Array.isArray(nachricht.geraete)) this.geraeteSetzen(nachricht.geraete);
+      if (Array.isArray(nachricht.live)) {
+        for (const eintrag of nachricht.live) this.liveUebernehmen(eintrag);
+      }
       this.uebernehmen(nachricht.eintraege);
       // Der Wasserstand erst mit dem letzten Teil. Ein grosser Nachschub kommt
       // in mehreren Nachrichten; reisst die Leitung dazwischen ab und die
@@ -812,6 +993,12 @@ class Geraeteabgleich {
 
     if (nachricht?.type === "grdevices") {
       this.geraeteSetzen(nachricht.geraete);
+      this.melde();
+      return;
+    }
+
+    if (nachricht?.type === "grlive") {
+      this.liveUebernehmen(nachricht);
       this.melde();
       return;
     }

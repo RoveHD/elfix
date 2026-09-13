@@ -1916,6 +1916,7 @@ async function fernCodeKopieren() {
 // noch irgendwo anders speichert.
 
 function renderGeraeteStatus(status) {
+  renderGeraeteLive(status);
   renderGeraeteListe(status?.devices);
   if (geraeteKey && document.activeElement !== geraeteKey) geraeteKey.value = status?.key || geraeteKey.value || "";
   if (geraeteDisconnect) geraeteDisconnect.disabled = !status?.hasKey;
@@ -1942,6 +1943,39 @@ function renderGeraeteStatus(status) {
   geraeteStatus.textContent = `Verbunden, ${titel}, ${stand}.`;
 }
 
+function geraeteWiedergabeText(stand) {
+  if (!stand?.title) return "";
+  const folge = Number(stand.episode) > 0
+    ? ` · Staffel ${Number(stand.season) || 1}, Folge ${Number(stand.episode)}` : "";
+  return `${stand.title}${folge}${stand.paused ? " · pausiert" : ""}`;
+}
+
+function renderGeraeteLive(status) {
+  const bereich = document.getElementById("homeGeraeteLive");
+  const liste = document.getElementById("homeGeraeteLiveListe");
+  if (!bereich || !liste) return;
+  const aktive = status?.connected && Array.isArray(status.devices)
+    ? status.devices.filter((geraet) => !geraet.current && geraet.playback?.title) : [];
+  bereich.classList.toggle("is-hidden", aktive.length === 0);
+  const vorhanden = new Map([...liste.children].map((karte) => [karte.dataset.deviceId, karte]));
+  for (const geraet of aktive) {
+    let karte = vorhanden.get(geraet.id);
+    if (!karte) {
+      karte = document.createElement("article");
+      karte.className = "geraete-live-card";
+      karte.dataset.deviceId = geraet.id;
+      karte.setAttribute("role", "listitem");
+      karte.append(document.createElement("small"), document.createElement("strong"));
+      liste.append(karte);
+    }
+    vorhanden.delete(geraet.id);
+    karte.classList.toggle("is-paused", Boolean(geraet.playback.paused));
+    karte.children[0].textContent = `${geraet.name || "Gerät"}${geraet.playback.paused ? " hat pausiert" : " schaut gerade"}`;
+    karte.children[1].textContent = geraeteWiedergabeText(geraet.playback);
+  }
+  for (const karte of vorhanden.values()) karte.remove();
+}
+
 function renderGeraeteListe(geraete) {
   const liste = document.getElementById("geraeteListe");
   if (!liste) return;
@@ -1964,6 +1998,8 @@ function renderGeraeteListe(geraete) {
     const zeit = Number(geraet?.lastSeen);
     const zuletzt = zeit ? new Date(zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "unbekannt";
     info.textContent = `${typ}${geraet?.current ? " · Dieses Gerät" : ""} · ${geraet?.online ? "online" : `zuletzt ${zuletzt}`}`;
+    const wiedergabe = geraeteWiedergabeText(geraet?.playback);
+    if (wiedergabe) info.textContent += ` · ${wiedergabe}`;
     zeile.append(name, info);
     liste.append(zeile);
   }

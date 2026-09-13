@@ -2,6 +2,7 @@ package local.elflix.android;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.json.JSONArray;
@@ -47,6 +48,34 @@ public class WeiterschauenFolgeTest {
             .put("currentTime", 412));
         assertTrue(Folgen.istGespeicherteFolge(stand,
             "https://aniworld.to/anime/stream/x/staffel-2/episode-7"));
+    }
+
+    @Test
+    public void nativerStandTraegtDieBekannteNaechsteFolge() throws Exception {
+        JSONObject stand = new JSONObject()
+            .put("currentTime", 1320)
+            .put("duration", 1400)
+            .put("playedSeconds", 900)
+            .put("ended", true);
+        JSONObject naechste = new JSONObject()
+            .put("url", "https://aniworld.to/anime/stream/x/staffel-1/episode-8");
+
+        JSONObject ergaenzt = DirektWiedergabe.fortschrittMitNaechster(stand, naechste);
+
+        assertSame(stand, ergaenzt);
+        assertEquals("https://aniworld.to/anime/stream/x/staffel-1/episode-8",
+            ergaenzt.getString("nextUrl"));
+        assertEquals(1320, ergaenzt.getInt("currentTime"));
+    }
+
+    @Test
+    public void nativerStandErfindetOhneBekanntesZielKeineFolge() throws Exception {
+        JSONObject stand = new JSONObject().put("ended", true);
+
+        JSONObject ergaenzt = DirektWiedergabe.fortschrittMitNaechster(stand, null);
+
+        assertSame(stand, ergaenzt);
+        assertFalse(ergaenzt.has("nextUrl"));
     }
 
     @Test

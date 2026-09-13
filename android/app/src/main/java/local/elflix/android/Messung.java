@@ -50,7 +50,7 @@ public final class Messung {
          * @param naechste der Folgenlink, den die Seite anbietet - oder leer
          */
         void gemessen(Provider anbieter, String adresse, double position, double laufzeit,
-                      boolean beendet, String naechste);
+                      boolean pausiert, boolean beendet, String naechste);
     }
 
     /** Woher die laufende Seite kommt - Anbieter und Adresse, im Augenblick des Takts. */
@@ -338,7 +338,8 @@ public final class Messung {
         // Erst verbucht, dann gemeldet: der Autoplay haengt an dieser
         // Reihenfolge - siehe {@link Spielstand}.
         if (spielstand != null) {
-            spielstand.gemessen(anbieter, adresse, position, laufzeit, beendet,
+            spielstand.gemessen(anbieter, adresse, position, laufzeit,
+                gemessen.optBoolean("paused", false), beendet,
                 gemessen.optString("nextUrl", ""));
         }
     }

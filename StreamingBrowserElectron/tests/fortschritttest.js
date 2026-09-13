@@ -89,6 +89,46 @@ function bestehenderStand(zusatz = {}) {
     "sonst kommt man in einer Sekunde ans Serienende");
 }
 
+/* --- Titelbild eines bereits synchronisierten Eintrags ------------------- */
+
+{
+  const stand = bestehenderStand({
+    thumbnail: "",
+    customThumbnail: "data:image/png;base64,bleibt-lokal"
+  });
+  const nachgetragen = verbuche({ favoriten: [stand] }, folge(3, 7), {
+    ...lief(320, 1400, 180),
+    thumbnail: "/public/img/cover/naruto.jpg",
+    seiteUrl: folge(3, 7)
+  });
+  pruefe("Ein leeres Sync-Poster wird aus passenden Seitendaten nachgetragen",
+    nachgetragen.eintrag?.thumbnail === "https://aniworld.to/public/img/cover/naruto.jpg",
+    nachgetragen.eintrag?.thumbnail);
+  pruefe("Das Nachtragen behaelt die lokale Bildwahl und Eintragskennung",
+    nachgetragen.eintrag?.customThumbnail === stand.customThumbnail
+      && nachgetragen.eintrag?.id === stand.id,
+    `${nachgetragen.eintrag?.id} / ${nachgetragen.eintrag?.customThumbnail}`);
+
+  const vorhandenesPoster = bestehenderStand({ thumbnail: "https://cdn.example/vorhanden.jpg" });
+  const nichtErsetzen = verbuche({ favoriten: [vorhandenesPoster] }, folge(3, 7), {
+    ...lief(320, 1400, 180),
+    thumbnail: "https://cdn.example/neu.jpg",
+    seiteUrl: folge(3, 7)
+  });
+  pruefe("Ein vorhandenes Poster wird nicht ersetzt",
+    nichtErsetzen.eintrag?.thumbnail === vorhandenesPoster.thumbnail,
+    nichtErsetzen.eintrag?.thumbnail);
+
+  const fremdeSeitendaten = bestehenderStand({ thumbnail: "" });
+  const nichtFremd = verbuche({ favoriten: [fremdeSeitendaten] }, folge(3, 7), {
+    ...lief(320, 1400, 180),
+    thumbnail: "https://aniworld.to/public/img/cover/fremde-serie.jpg",
+    seiteUrl: "https://aniworld.to/anime/stream/andere-serie/staffel-1/episode-1"
+  });
+  pruefe("Ein fremdes Seitenbild wird nicht uebernommen",
+    nichtFremd.eintrag?.thumbnail === "", nichtFremd.eintrag?.thumbnail);
+}
+
 {
   const stand = bestehenderStand();
   const durch = verbuche({ favoriten: [stand] }, folge(3, 7), lief(1330, 1400, 900));
@@ -109,6 +149,56 @@ function bestehenderStand(zusatz = {}) {
   pruefe("Am Staffelende geht es mit Staffel 4 Folge 1 weiter",
     durch.eintrag?.season === 4 && durch.eintrag?.episode === 1,
     `steht auf S${durch.eintrag?.season}E${durch.eintrag?.episode}`);
+}
+
+{
+  // Der native Android-Player kennt das exakte Ziel aus seiner Folgenliste.
+  // Diese Adresse muss genuegen, auch wenn die Seite keine verlaesslichen
+  // Grenzen fuer die Serie geliefert hat. Der Abschluss wird vor dem
+  // anschliessenden Autoplay-Wechsel verbucht.
+  const stand = bestehenderStand({
+    url: folge(3, 7), season: 3, episode: 7,
+    finalSeason: 0, finalEpisode: 0
+  });
+  const durch = verbuche({ favoriten: [stand], aktiverFavoritId: stand.id }, folge(3, 7), {
+    ...lief(1330, 1400, 900), completed: true, nextUrl: folge(3, 8),
+    finalSeason: 0, finalEpisode: 0
+  });
+  pruefe("Ein bekanntes Folgenziel rueckt ohne Seriengrenzen sofort weiter",
+    durch.eintrag?.season === 3 && durch.eintrag?.episode === 8
+      && durch.eintrag?.continuePending === true,
+    `steht auf S${durch.eintrag?.season}E${durch.eintrag?.episode}`);
+}
+
+{
+  const stand = bestehenderStand({
+    url: folge(3, 7), season: 3, episode: 7,
+    finalSeason: 0, finalEpisode: 0
+  });
+  const durch = verbuche({ favoriten: [stand], aktiverFavoritId: stand.id }, folge(3, 7), {
+    ...lief(1330, 1400, 900), completed: true,
+    finalSeason: 0, finalEpisode: 0
+  });
+  pruefe("Ohne bekanntes Ziel und ohne Seriengrenzen wird keine Folge erfunden",
+    durch.eintrag?.season === 3 && durch.eintrag?.episode === 7
+      && durch.eintrag?.episodeCompleted === true
+      && durch.eintrag?.continuePending === false);
+}
+
+{
+  const stand = bestehenderStand({
+    url: folge(3, 7), season: 3, episode: 7,
+    finalSeason: 0, finalEpisode: 0
+  });
+  const fremd = "https://aniworld.to/anime/stream/andere-serie/staffel-3/episode-8";
+  const durch = verbuche({ favoriten: [stand], aktiverFavoritId: stand.id }, folge(3, 7), {
+    ...lief(1330, 1400, 900), completed: true, nextUrl: fremd,
+    finalSeason: 0, finalEpisode: 0
+  });
+  pruefe("Ein Folgenziel aus einer anderen Serie wird abgelehnt",
+    fortschritt.darfNaechsteFolgeSein(fremd, folge(3, 7), stand) === false
+      && durch.eintrag?.season === 3 && durch.eintrag?.episode === 7
+      && durch.eintrag?.continuePending === false);
 }
 
 {

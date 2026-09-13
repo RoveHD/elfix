@@ -255,6 +255,11 @@
     return abgleich ? abgleich.status() : letzterStatus;
   }
 
+  /** Laufende Wiedergabe setzen oder mit null sofort abmelden. */
+  function liveSetzen(stand) {
+    return sicherstellen().liveSetzen(stand == null ? null : stand);
+  }
+
   // --- Der Schluessel ------------------------------------------------------
 
   function erzeugen() {
@@ -287,6 +292,7 @@
     anbieterSetzen,
     abgleichen,
     vollAbgleichen,
+    liveSetzen,
     status,
     erzeugen,
     pruefen,

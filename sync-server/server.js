@@ -1005,6 +1005,14 @@ function anGeraeteSenden(raumId, nachricht, ausser) {
   }
 }
 
+function geraetAbgleichVerbunden(raumId, geraetId, ausser) {
+  for (const client of wss.clients) {
+    if (client === ausser || client.readyState !== client.OPEN) continue;
+    if (client.geraeteRaum === raumId && client.syncGeraetId === geraetId) return true;
+  }
+  return false;
+}
+
 // Die beiden Seiten einer Fernbedienung. Sie haengen an keinem Raum, sondern
 // nur am Kopplungscode am Socket.
 function anFernSeite(code, nachricht, seite) {
@@ -1737,6 +1745,7 @@ wss.on("connection", (socket) => {
   // Der Geraeteabgleich haengt an einer eigenen Kennung und an keinem Raumcode.
   // Ein Geraet kann ihn benutzen, ohne je eine Watchparty zu betreten.
   socket.geraeteRaum = "";
+  socket.syncGeraetId = "";
   // Die Fernbedienung: welcher Code und welche Seite - Rechner oder Handy.
   socket.fernCode = "";
   socket.fernSeite = "";
@@ -1813,6 +1822,10 @@ wss.on("connection", (socket) => {
           senden({ type: "grerror", message: "Geraetkennung kann in einer Verbindung nicht wechseln" });
           return;
         }
+        if (socket.geraeteRaum && socket.geraeteRaum !== nachricht.room && socket.syncGeraetId) {
+          const liveWeg = geraete.liveEntfernen(socket.geraeteRaum, socket.syncGeraetId);
+          if (liveWeg) anGeraeteSenden(socket.geraeteRaum, liveWeg, socket);
+        }
         if (geraetId) socket.syncGeraetId = geraetId;
         socket.geraeteRaum = nachricht.room;
       }
@@ -1820,6 +1833,7 @@ wss.on("connection", (socket) => {
       const geaendert = geraete.behandeln({
         nachricht,
         raumId: socket.geraeteRaum,
+        geraetId: socket.syncGeraetId,
         senden,
         verteilen: (antwort) => anGeraeteSenden(socket.geraeteRaum, antwort, socket)
       });
@@ -3314,6 +3328,14 @@ wss.on("connection", (socket) => {
     if (socket.fernSeite === "rechner" && socket.fernCode) {
       anFernSeite(socket.fernCode, { type: "fnweg" }, "handy");
       fern.abmelden(socket.fernCode);
+    }
+    // Laufende Wiedergabe gehoert zur offenen, sicher angemeldeten Leitung.
+    // Ein Ersatzsocket mit derselben Identitaet kann schon bereit sein, wenn
+    // das close des alten eintrifft; dann bleibt dessen frischer Stand stehen.
+    if (socket.geraeteRaum && socket.syncGeraetId
+        && !geraetAbgleichVerbunden(socket.geraeteRaum, socket.syncGeraetId, socket)) {
+      const liveWeg = geraete.liveEntfernen(socket.geraeteRaum, socket.syncGeraetId);
+      if (liveWeg) anGeraeteSenden(socket.geraeteRaum, liveWeg, socket);
     }
     if (!socket.raum) return;
     // Eine neu aufgebaute Verbindung desselben Geraets kann schon bestaetigt

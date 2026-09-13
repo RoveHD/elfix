@@ -24,6 +24,7 @@ const OHNE_RELAY = ["kalendertest", "datumtest", "standtest", "fortschritttest",
 // Mit Relay: das Zusammenspiel.
 OHNE_RELAY.push("watchpartyvorbereitungtest");
 OHNE_RELAY.push("nachschubwatchpartytest");
+OHNE_RELAY.push("geraetenachschubtest");
 OHNE_RELAY.push("watchpartyquellentest");
 OHNE_RELAY.push("androiddirekttest");
 OHNE_RELAY.push("ansichtsleistungtest");
@@ -86,6 +87,7 @@ MIT_RELAY.push("relayepisodecatchuptest");
 MIT_RELAY.push("introskiptest");
 MIT_RELAY.push("mitgliederaufraeumtest");
 MIT_RELAY.push("queuerelaytest");
+MIT_RELAY.push("geraetelivetest");
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 

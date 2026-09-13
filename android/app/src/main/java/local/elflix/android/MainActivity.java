@@ -350,6 +350,10 @@ public class MainActivity extends Activity {
     private Provider activeProvider;
     private String currentScreen = "home";
     private String activeFavoriteId;
+    /** Ein verspäteter WebView-Messwert darf nach dem Hintergrund nicht erneut live melden. */
+    private boolean webLiveImVordergrund = true;
+    /** Die stehende Karte fuer die gerade auf anderen eigenen Geraeten laufenden Titel. */
+    private View eigeneGeraeteLiveKarte;
     private String favoriteProgressMode;
     /** Presentation-only preference; episode metadata itself remains untouched. */
     private SpoilerSchutz.Einstellung spoilerProtection;
@@ -1138,8 +1142,10 @@ public class MainActivity extends Activity {
                 }
             });
         geraete = new Geraete(this, kern, bestand, watchparty, zustand -> {
-            // Steht die Seite gerade offen, zeigt sie den neuen Stand sofort.
+            // Einstellungen und die kleine Startseitenkarte schreiben sich
+            // fort; kein Statuspuls baut die Seite neu.
             settingsGeaendert();
+            eigeneGeraeteLiveAuffrischen();
         });
         bestand.setzeStandMelder(watchparty::standMelden);
         watchparty.setzeBestand(bestand);
@@ -1421,6 +1427,7 @@ public class MainActivity extends Activity {
             marken.vorbereiten();
             mitschauen.vorbereiten();
             qualitaet.vorbereiten();
+            bestand.nachschubHinweiseBereinigen();
             geraete.vorbereiten();
             geraete.netzBeobachten();
             // Die erste Anbieterseite ist oft schon fertig, bevor der Kern
@@ -2272,6 +2279,8 @@ public class MainActivity extends Activity {
      */
     void showHome() {
         direktSchliessen();
+        eigeneGeraeteLiveLoeschen();
+        eigeneGeraeteLiveKarte = null;
         currentScreen = "home";
         abschnitteFuer("home");
         if (activeProvider != null) {
@@ -2440,6 +2449,7 @@ public class MainActivity extends Activity {
         // nicht *vor* dem, was gerade laeuft: mit der Fernbedienung ist jede
         // Reihe darueber ein Druck mehr, bevor man weiterschauen kann.
         boolean etwasGezeigt = tvNeueFolgenReihe(page);
+        eigeneGeraeteLiveKarteAnhaengen(page, true, TvViews.SECTION_GAP);
 
         List<Favorite> privat = new ArrayList<>();
         List<Favorite> gemeinsam = new ArrayList<>();
@@ -3338,8 +3348,122 @@ public class MainActivity extends Activity {
             else text.append(" · zuletzt ").append(geraet.optLong("lastSeen", 0) > 0
                 ? java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
                     .format(new java.util.Date(geraet.optLong("lastSeen", 0))) : "unbekannt");
+            // Die eigene Wiedergabe steht bereits auf diesem Bildschirm. Die
+            // der anderen Geraete ist die hilfreiche Auskunft - und bleibt
+            // fluechtig im Status, statt einen Verlaufseintrag zu erfinden.
+            if (!geraet.optBoolean("current", false)) {
+                String wiedergabe = geraeteWiedergabeText(geraet.optJSONObject("playback"));
+                if (!wiedergabe.isEmpty()) text.append("\n").append(wiedergabe);
+            }
         }
         return text.length() == 0 ? "Noch kein Gerät hat sich mit diesem Schlüssel gemeldet." : text.toString();
+    }
+
+    /** Die kurze, sichtbare Zeile fuer eine Wiedergabe eines anderen eigenen Geraets. */
+    private static String geraeteWiedergabeText(JSONObject playback) {
+        if (playback == null) return "";
+        String titel = playback.optString("title", "").trim();
+        String url = playback.optString("url", "").trim();
+        if (titel.isEmpty() || url.isEmpty()) return "";
+        int staffel = playback.optInt("season", 0);
+        int folge = playback.optInt("episode", 0);
+        StringBuilder text = new StringBuilder("Schaut ").append(titel);
+        if (staffel > 0 && folge > 0) text.append(" · S").append(staffel).append(" E").append(folge);
+        if (playback.optBoolean("paused", false)) text.append(" · pausiert");
+        return text.toString();
+    }
+
+    /** Baut den festen Platz auf der Startseite; sein Inhalt wird danach nur fortgeschrieben. */
+    private void eigeneGeraeteLiveKarteAnhaengen(LinearLayout seite, boolean fernseher, int abstand) {
+        View karte = karte(fernseher, "Läuft auf deinen Geräten", eigeneGeraeteLiveText(), null, null);
+        eigeneGeraeteLiveKarte = karte;
+        addSpacing(seite, karte, abstand);
+        eigeneGeraeteLiveAuffrischen();
+    }
+
+    /** Die laufenden Titel anderer eigener Geraete, ohne den hiesigen Player zu spiegeln. */
+    private String eigeneGeraeteLiveText() {
+        JSONObject zustand = geraete == null ? null : geraete.zustand();
+        JSONArray geraeteListe = zustand == null ? null : zustand.optJSONArray("devices");
+        if (geraeteListe == null) return "";
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < geraeteListe.length(); i++) {
+            JSONObject geraet = geraeteListe.optJSONObject(i);
+            if (geraet == null || geraet.optBoolean("current", false)) continue;
+            String wiedergabe = geraeteWiedergabeText(geraet.optJSONObject("playback"));
+            if (wiedergabe.isEmpty()) continue;
+            String name = geraet.optString("name", "").trim();
+            if (name.isEmpty()) name = "Dieses Gerät";
+            if (text.length() > 0) text.append("\n\n");
+            text.append(name).append("\n").append(wiedergabe);
+        }
+        return text.toString();
+    }
+
+    /** Eine Statusmeldung ersetzt nur den Inhalt dieser Karte, nie die Startseite. */
+    private void eigeneGeraeteLiveAuffrischen() {
+        if (eigeneGeraeteLiveKarte == null) return;
+        String text = eigeneGeraeteLiveText();
+        eigeneGeraeteLiveKarte.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
+        if (!text.isEmpty()) kartenText(eigeneGeraeteLiveKarte, text);
+    }
+
+    private void eigeneGeraeteLiveLoeschen() {
+        if (geraete != null) geraete.liveSetzen(null);
+    }
+
+    /**
+     * Echte Playerwerte in den fluechtigen Eigen-Geraete-Kanal legen.
+     * Der gespeicherte Favorit liefert nur die Bezeichnung und Folgenzahl;
+     * Stelle, Laufzeit und Pause kommen ausschliesslich vom laufenden Player.
+     */
+    private void eigeneGeraeteLiveMelden(String ersatzTitel, String adresse, double position,
+                                         double laufzeit, boolean pausiert) {
+        if (geraete == null || adresse == null || !adresse.startsWith("http")
+            || !Double.isFinite(position) || !Double.isFinite(laufzeit) || laufzeit <= 0) return;
+        // Der native Takt laeuft nach STATE_ENDED weiter. Seine Live-Nachricht
+        // hat keinen ended-Marker, deshalb darf sie den vorher geloeschten
+        // Zustand nicht als stehendes Bild wieder einstellen.
+        if (Folgen.amEnde(position, laufzeit, false)) {
+            eigeneGeraeteLiveLoeschen();
+            return;
+        }
+        Favorite eintrag = bestand == null ? null : bestand.zuAdresse(adresse);
+        if (eintrag == null && bestand != null && activeFavoriteId != null) {
+            eintrag = bestand.mitId(activeFavoriteId);
+        }
+        String titel = eintrag == null ? (ersatzTitel == null ? "" : ersatzTitel.trim()) : eintrag.title();
+        if (titel == null || titel.trim().isEmpty()) return;
+        // Der gespeicherte Fortschritt kann schon auf die naechste Folge
+        // zeigen, waehrend deren Vorgänger noch bis zum Ende spielt. Fuer die
+        // Live-Anzeige zaehlt deshalb die echte Player-Adresse. Ein gespeicherter
+        // Wert ist nur ein Rueckfall, wenn sie wirklich dieselbe Adresse ist.
+        int[] folgenKennung = Folgen.folgenKennung(adresse);
+        int staffel = folgenKennung[0];
+        int folge = folgenKennung[1];
+        if (staffel == 0 && folge == 0 && eintrag != null
+            && adresse.equalsIgnoreCase(eintrag.url())) {
+            staffel = eintrag.season();
+            folge = eintrag.episode();
+        }
+        try {
+            JSONObject stand = new JSONObject()
+                .put("title", titel.trim())
+                .put("url", adresse)
+                .put("season", staffel)
+                .put("episode", folge)
+                .put("position", Math.max(0, position))
+                .put("duration", laufzeit)
+                .put("paused", pausiert);
+            geraete.liveSetzen(stand);
+        } catch (org.json.JSONException ignoriert) { }
+    }
+
+    /** Die sichtbare Seite ist der einzige sichere Titel-Rueckfall vor dem ersten Fortschritts-Eintrag. */
+    private String webLiveTitel() {
+        WebView seite = currentWebView();
+        String titel = seite == null ? "" : seite.getTitle();
+        return titel == null ? "" : titel.trim();
     }
 
     private String geraeteSchluesselAnzeige() {
@@ -4016,6 +4140,7 @@ public class MainActivity extends Activity {
         // vorbeiblaettern muessen. Leere Reihen fallen ohnehin weg statt als
         // leerer Kasten dazustehen.
         boolean etwasGezeigt = neueFolgenReihe(page);
+        eigeneGeraeteLiveKarteAnhaengen(page, false, MobileViews.SECTION_GAP);
         List<Favorite> privat = new ArrayList<>();
         List<Favorite> gemeinsam = new ArrayList<>();
         List<Favorite> videos = new ArrayList<>();
@@ -10318,6 +10443,10 @@ public class MainActivity extends Activity {
             return;
         }
         direktSchliessen();
+        // Eine neue Anbieterseite ist noch keine laufende Folge. Bis der
+        // echte Messwert der neuen Seite da ist, darf kein alter Titel weiter
+        // auf den anderen eigenen Geraeten stehen.
+        eigeneGeraeteLiveLoeschen();
         if (messung != null) messung.starten();
         currentScreen = "provider";
         abschnitteFuer("provider");
@@ -10401,6 +10530,7 @@ public class MainActivity extends Activity {
 
     private void direktOeffnen(Provider provider, String url, boolean fortsetzen) {
         direktSchliessen();
+        eigeneGeraeteLiveLoeschen();
         hideFullscreen();
         disarmAutoStart("Eigener Player");
         if (startvorhang != null) startvorhang.auf("Eigener Player");
@@ -10476,8 +10606,12 @@ public class MainActivity extends Activity {
                 }
                 public void stand(Provider anbieter, String adresse, JSONObject wert, JSONObject meta) {
                     if (messung != null) messung.verbuchen(anbieter, adresse, wert, meta);
+                    if (wert != null && wert.optBoolean("ended", false)) eigeneGeraeteLiveLoeschen();
                 }
                 public void live(JSONObject wert, String aktion) {
+                    if (wert != null) eigeneGeraeteLiveMelden(name, url,
+                        wert.optDouble("position", 0), wert.optDouble("duration", 0),
+                        wert.optBoolean("paused", false));
                     if (mitschauen != null) mitschauen.nativMelden(wert, aktion);
                 }
                 public void bereit(String adresse) {
@@ -10625,6 +10759,7 @@ public class MainActivity extends Activity {
 
     private void direktSchliessen() {
         if (direktWiedergabe == null) return;
+        eigeneGeraeteLiveLoeschen();
         direktPipAutomatikSetzen(false);
         DirektWiedergabe alt = direktWiedergabe;
         direktImPip = false;
@@ -10840,6 +10975,7 @@ public class MainActivity extends Activity {
         }
         letzterStartEintrag = favorite.id();
         letzterStartAt = jetzt;
+        if (bestand != null) bestand.neueFolgeGesehen(favorite.id());
 
         if (bestand != null && favorite.istAbgeschlossen() && !favorite.istWiederansehen()) {
             Log.i(TAG, "Mediathek: " + Folgen.kurz(favorite.url()) + " faengt von vorn an");
@@ -11354,6 +11490,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        webLiveImVordergrund = true;
         if (direktWiedergabe != null) {
             direktWiedergabe.vordergrund();
             direktPipAutomatikSetzen(direktWiedergabe.laeuftFuerPip());
@@ -11366,7 +11503,10 @@ public class MainActivity extends Activity {
         // Pause und Weiter wieder als Entscheidung.
         if (mitschauen != null) mitschauen.vordergrund(true);
         WebView webView = activeProvider == null ? null : webViews.get(activeProvider.id);
-        if (webView != null && direktWiedergabe == null) webView.onResume();
+        if (webView != null && direktWiedergabe == null) {
+            webView.onResume();
+            if ("provider".equals(currentScreen) && messung != null) messung.starten();
+        }
         // Der Takt des Titelhintergrunds haengt an onPause. Steht die
         // Startseite, laeuft er wieder los - und mit ihm der der Kacheln.
         if ("home".equals(currentScreen)) {
@@ -11404,6 +11544,11 @@ public class MainActivity extends Activity {
             && isInPictureInPictureMode());
         direktImPip = pip;
         if (direktWiedergabe != null && !pip) direktWiedergabe.pause();
+        if (!pip) {
+            webLiveImVordergrund = false;
+            if (messung != null) messung.anhalten();
+            eigeneGeraeteLiveLoeschen();
+        }
         if (mitschauen != null && !pip) mitschauen.vordergrund(false);
         super.onStop();
     }
@@ -11450,6 +11595,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        eigeneGeraeteLiveLoeschen();
         direktSchliessen();
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
         takt.removeCallbacksAndMessages(null);
@@ -11582,6 +11728,8 @@ public class MainActivity extends Activity {
                 bild.append(eintrag.id())
                     .append('#').append(eintrag.season()).append('/').append(eintrag.episode())
                     .append('#').append(eintrag.title())
+                    .append('#').append(eintrag.neueFolgeAm())
+                    .append('#').append(eintrag.neueFolgeText())
                     .append(eintrag.wartetAufNaechsteFolge() ? '!' : '.')
                     .append(eintrag.watchpartyRaum())
                     .append('|');
@@ -13528,9 +13676,19 @@ public class MainActivity extends Activity {
      * geworfen.
      */
     private void spielstandGemessen(Provider anbieter, String adresse, double position,
-                                    double laufzeit, boolean beendet, String seitenLink) {
+                                    double laufzeit, boolean pausiert, boolean beendet, String seitenLink) {
         if (direktWiedergabe != null) return;
         if (anbieter != activeProvider) return;
+        // Das Verbuchen bleibt bewusst davor unberuehrt: ein Wert, der beim
+        // Seitenwechsel gerade noch ankommt, kann die letzte Stelle retten.
+        // Nur die fluechtige Praesenz braucht die strengere Frage, ob diese
+        // WebView-Antwort noch zur sichtbaren, vordergruendigen Seite gehoert.
+        if (webLiveIstAktuell(webLiveImVordergrund, direktWiedergabe != null,
+                anbieter == activeProvider, currentScreen, adresse,
+                laufendeFolgenAdresse(currentWebView()))) {
+            if (beendet) eigeneGeraeteLiveLoeschen();
+            else eigeneGeraeteLiveMelden(webLiveTitel(), adresse, position, laufzeit, pausiert);
+        }
         // Erst merken, dann fragen: die Bremse in naechsteFolgeBestimmen darf
         // einen frisch gelesenen Folgenlink nicht verschlucken.
         if (seitenLink != null && !seitenLink.isEmpty() && adresse != null) {
@@ -13555,6 +13713,14 @@ public class MainActivity extends Activity {
         naechsteFolgeBestimmen();
         if (spielerleiste == null) return;
         spielerleiste.setzeFortschritt(nah, ende);
+    }
+
+    /** Reine, testbare Schranke gegen verspätete WebView-Antworten. */
+    static boolean webLiveIstAktuell(boolean vordergrund, boolean nativerPlayer,
+                                     boolean gleicherAnbieter, String bildschirm,
+                                     String gemesseneAdresse, String aktuelleAdresse) {
+        return vordergrund && !nativerPlayer && gleicherAnbieter && "provider".equals(bildschirm)
+            && gemesseneAdresse != null && gemesseneAdresse.equals(aktuelleAdresse);
     }
 
     /**

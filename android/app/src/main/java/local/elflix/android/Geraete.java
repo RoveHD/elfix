@@ -270,6 +270,21 @@ public final class Geraete {
         abgleichenSpaeter();
     }
 
+    /**
+     * Die fluechtige Wiedergabe dieses Geraets melden.
+     *
+     * <p>Sie ist bewusst kein Teil des Bestandsabgleichs: Stelle und Titel
+     * gehen weiterhin nur ueber dessen gespeicherte Staende. Dieser kurze
+     * Zustand sagt den anderen eigenen Geraeten lediglich, was hier gerade
+     * sichtbar ist, und der gemeinsame Kern laesst ihn von selbst ablaufen.
+     */
+    public void liveSetzen(JSONObject stand) {
+        if (kern == null || !kern.istBereit() || !eingeschaltet()) return;
+        // Der Kern sendet seinen frischen Status selbst als geraete:zustand.
+        // Der Rueckgabewert ist nur ein Wahrheitswert und kein Statusobjekt.
+        kern.rufe("geraete-bruecke.liveSetzen", Kern.args(stand), null);
+    }
+
     // --- Abgleichen ---------------------------------------------------------
 
     /**

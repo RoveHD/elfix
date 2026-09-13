@@ -102,6 +102,9 @@ public final class Bestand {
      * lauter Wiederholung die Aenderung nicht.
      */
     private String letzteDiagnose = "";
+    /** Eine laufende Pruefung reicht; Aenderungen waehrenddessen bekommen einen Nachlauf. */
+    private boolean nachschubBereinigungLaeuft;
+    private boolean nachschubBereinigungErneut;
 
     public Bestand(Context context, Kern kern, Beobachter beobachter, Melder melder) {
         this.context = context.getApplicationContext();
@@ -175,6 +178,73 @@ public final class Bestand {
         // Kostet einen Zeichenvergleich; der Aufruf in den Kern geht nur
         // hinaus, wenn wirklich Eintraege dazugekommen oder verschwunden sind.
         werkeAuffrischen();
+        nachschubHinweiseBereinigen();
+    }
+
+    /**
+     * Entfernt Nachschubhinweise, deren Folge schon auf diesem Konto gesehen
+     * wurde. Die Entscheidung liegt im gemeinsamen Modul: nur es kann eigene
+     * und gleichgeschaltete Fortschritte zusammen betrachten.
+     *
+     * <p>Die Antwort ist absichtlich kein Ersatz fuer die ganze Liste. Ein
+     * Fortschritt oder Geraeteabgleich kann waehrend der Anfrage einen Eintrag
+     * veraendern; geloescht wird deshalb nur, wenn Kennung, Adresse und der
+     * noch sichtbare Hinweisstempel unveraendert zusammenpassen.
+     */
+    public void nachschubHinweiseBereinigen() {
+        if (kern == null || !kern.istBereit()) return;
+        if (nachschubBereinigungLaeuft) {
+            nachschubBereinigungErneut = true;
+            return;
+        }
+        boolean hatHinweis = false;
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag != null && !eintrag.optString("newEpisodeAt", "").isEmpty()) {
+                hatHinweis = true;
+                break;
+            }
+        }
+        if (!hatHinweis) return;
+
+        nachschubBereinigungLaeuft = true;
+        nachschubBereinigungErneut = false;
+        kern.rufe("geraete-stand.geseheneNachschubHinweise", Kern.args(eintraege), (wert, fehler) -> {
+            boolean geaendert = false;
+            try {
+                if (fehler == null && wert != null) {
+                    JSONArray gesehen = new JSONArray(wert);
+                    for (int i = 0; i < gesehen.length(); i += 1) {
+                        JSONObject hinweis = gesehen.optJSONObject(i);
+                        if (hinweis == null) continue;
+                        JSONObject aktuell = rohMitId(hinweis.optString("id", ""));
+                        if (aktuell == null) continue;
+                        String url = hinweis.optString("url", "");
+                        String stempel = hinweis.optString("newEpisodeAt", "");
+                        if (url.isEmpty() || stempel.isEmpty()
+                            || !url.equals(aktuell.optString("url", ""))
+                            || !stempel.equals(aktuell.optString("newEpisodeAt", ""))) continue;
+                        aktuell.put("newEpisodeAt", "");
+                        aktuell.put("newEpisodeLabel", "");
+                        geaendert = true;
+                    }
+                } else if (fehler != null) {
+                    Log.d(TAG, "Nachschubhinweise nicht bereinigt: " + fehler);
+                }
+            } catch (Exception ausnahme) {
+                Log.e(TAG, "Nachschubhinweise unlesbar", ausnahme);
+            } finally {
+                nachschubBereinigungLaeuft = false;
+                boolean nachlauf = nachschubBereinigungErneut;
+                nachschubBereinigungErneut = false;
+                if (geaendert) {
+                    FavoriteStore.speichereRoh(context, eintraege);
+                    werkeAuffrischen();
+                    if (beobachter != null) beobachter.bestandGeaendert();
+                }
+                if (nachlauf) nachschubHinweiseBereinigen();
+            }
+        });
     }
 
     /** Die Kennungen aneinandergereiht - der Abdruck der Zusammensetzung. */
@@ -982,6 +1052,21 @@ public final class Bestand {
                 if (fertig != null) fertig.accept(null);
             }
         });
+    }
+
+    /** Wie am Rechner: beim Oeffnen ist der Hinweis auf die neue Folge gesehen. */
+    public void neueFolgeGesehen(String id) {
+        JSONObject eintrag = rohMitId(id);
+        if (eintrag == null || eintrag.optString("newEpisodeAt", "").isEmpty()) return;
+        try {
+            eintrag.put("newEpisodeAt", "");
+            eintrag.put("newEpisodeLabel", "");
+        } catch (Exception fehler) {
+            Log.e(TAG, "Folgenhinweis liess sich nicht bestaetigen", fehler);
+            return;
+        }
+        speichern();
+        if (beobachter != null) beobachter.bestandGeaendert();
     }
 
     /** Von Hand abhaken: der Titel wandert in die Mediathek. */

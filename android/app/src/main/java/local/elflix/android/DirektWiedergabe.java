@@ -224,7 +224,9 @@ final class DirektWiedergabe {
             public void hoster() { hosterZeigen(); }
             public void folgen() { folgenZeigen(folgen); }
             public void naechste() { if (naechste != null) wechseln(naechste.optString("url")); }
-            public void stand(JSONObject wert) { umgebung.stand(anbieter, adresse, wert, meta); }
+            public void stand(JSONObject wert) {
+                umgebung.stand(anbieter, adresse, fortschrittMitNaechster(wert, naechste), meta);
+            }
             public void live(JSONObject wert, String aktion) { umgebung.live(wert, aktion); }
             public void bereit() { umgebung.bereit(adresse); }
             public boolean darfAutoplay() { return umgebung.darfAutoplay(); }
@@ -1209,6 +1211,29 @@ final class DirektWiedergabe {
             if (!url.isEmpty()) return url;
         }
         return "";
+    }
+
+    /**
+     * Gibt der Fortschrittsregel das bereits aus der Folgenliste ermittelte
+     * Ziel mit.
+     *
+     * <p>Der native Player kennt die naechste Folge schon fuer seinen Knopf und
+     * den Autoplay-Zaehler. Bislang ging diese Adresse beim Speichern verloren:
+     * {@link Messung} bekam nur Zeiten aus Media3. Wenn die Seite zugleich
+     * keine vollstaendigen Seriengrenzen melden konnte, war die Folge danach
+     * zwar gesehen, der Eintrag blieb aber auf ihr stehen. Das Ziel gehoert
+     * deshalb in denselben Messwert wie beim Webplayer. Die gemeinsame Regel
+     * prueft anschliessend weiterhin, ob es wirklich eine spaetere Folge
+     * derselben Serie ist.
+     */
+    static JSONObject fortschrittMitNaechster(JSONObject messung, JSONObject naechste) {
+        JSONObject stand = messung == null ? new JSONObject() : messung;
+        String url = naechste == null ? "" : naechste.optString("url", "").trim();
+        if (!url.isEmpty()) {
+            try { stand.put("nextUrl", url); }
+            catch (org.json.JSONException ignoriert) { }
+        }
+        return stand;
     }
 
     private boolean staffelDa(int staffel) {

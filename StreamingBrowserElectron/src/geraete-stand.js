@@ -213,6 +213,13 @@ function uebernehmen(stand, umgebung = {}) {
     };
   }
 
+  // Vor dem Adresswechsel pruefen: der Hinweis gehoert zur bisherigen Folge.
+  // Die Hinweise selbst sind lokal und werden nicht ueber den Abgleich verteilt.
+  if (fortschritt.nachschubHinweisGesehen(lokal, stand)) {
+    lokal.newEpisodeAt = "";
+    lokal.newEpisodeLabel = "";
+  }
+
   // Die Adresse ist auf jedem Geraet eine andere, sobald der Anbieter unter
   // zwei Namen erreichbar ist. Beim selben Wirt passt sie direkt, sonst wird
   // nur die Folge auf die eigene Adresse umgeschrieben - genauso wie in der
@@ -317,7 +324,25 @@ function anbieterFinden(anbieter, url, providerName) {
 // zweites Modul kennen muessen.
 const werkSchluessel = watchlist.werkSchluessel;
 
+/** Bereits gespeicherte Wiedergabe bestaetigt Hinweise, auch ohne neuen Abgleich. */
+function geseheneNachschubHinweise(favoriten) {
+  const liste = Array.isArray(favoriten) ? favoriten : [];
+  const werke = new Map();
+  for (const eintrag of liste) {
+    const key = watchlist.schluesselVon(eintrag);
+    if (!key) continue;
+    if (!werke.has(key)) werke.set(key, []);
+    werke.get(key).push(eintrag);
+  }
+  return liste.filter((eintrag) => {
+    if (!eintrag?.newEpisodeAt || !eintrag.id) return false;
+    const gruppe = werke.get(watchlist.schluesselVon(eintrag)) || [eintrag];
+    return gruppe.some((stand) => fortschritt.nachschubHinweisGesehen(eintrag, stand));
+  }).map((eintrag) => ({ id: eintrag.id, url: eintrag.url, newEpisodeAt: eintrag.newEpisodeAt }));
+}
+
 module.exports = {
+  geseheneNachschubHinweise,
   werkSchluessel,
   titelSchluessel,
   zurueckgehalten,

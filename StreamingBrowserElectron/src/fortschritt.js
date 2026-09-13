@@ -1389,6 +1389,17 @@ function medienStandVerbuchen(zustand, provider, url, meta = {}, options = {}) {
   if (meta.title && (!existing || entry.type === "film")) {
     entry.title = cleanTitle(meta.title);
   }
+  // Ein Eintrag kann vom anderen Geraet schon kommen, bevor dieses dort ein
+  // Anbieterbild kannte. Der native Android/TV-Player liest das Poster dann
+  // beim Abspielen selbst. Bis hierher ging es verloren, weil `thumbnail` nur
+  // beim Anlegen eines Eintrags gesetzt wurde. Nur ein zur Folgenseite
+  // passender HTTP(S)-Wert darf die Luecke fuellen: eigene Data-URLs bleiben
+  // lokal, und Seitendaten einer inzwischen anderen Serie nicht am Eintrag.
+  if (!entry.thumbnail) {
+    const seitendaten = gepruefteSeitendaten(meta, url);
+    const bild = seitendaten.thumbnail ? absoluteHttpUrl(seitendaten.thumbnail, url) : "";
+    if (bild) entry.thumbnail = bild;
+  }
   entry.watched = true;
 
   // --- Wiederansehen, erster Teil: der Merker ---------------------------------
@@ -1831,6 +1842,20 @@ function standOhneStelle(stand) {
   return !(Number(stand?.position) > 0) && !(Number(stand?.duration) > 0);
 }
 
+/** Ein lokaler Nachschubhinweis endet, wenn diese Folge bereits geschaut wurde. */
+function nachschubHinweisGesehen(lokal, stand) {
+  if (!lokal?.newEpisodeAt) return false;
+  const ziel = episodeIdentity(lokal.url);
+  if (!ziel) return false;
+  const gesehen = (Array.isArray(stand?.completedEpisodes) ? stand.completedEpisodes : [])
+    .some((folge) => compareEpisodeIdentity(folge, ziel) >= 0);
+  if (gesehen) return true;
+  const aktuell = episodeIdentity(stand?.url);
+  const abgespielt = Number(stand?.position) > 0 || Number(stand?.progress) > 0
+    || stand?.episodeCompleted || stand?.completed;
+  return Boolean(aktuell && abgespielt && compareEpisodeIdentity(aktuell, ziel) >= 0);
+}
+
 /**
  * Uebernimmt einen Stand aus der Runde in den eigenen Eintrag.
  *
@@ -1881,6 +1906,11 @@ function watchpartyStandUebernehmen(lokal, stand) {
     watchpartyArchived: Boolean(stand.archived)
   };
 
+  if (nachschubHinweisGesehen(lokal, stand)) {
+    aenderung.newEpisodeAt = "";
+    aenderung.newEpisodeLabel = "";
+  }
+
   if (ziel && ziel !== lokal.url) {
     const identity = episodeIdentity(ziel);
     aenderung.url = ziel;
@@ -1930,6 +1960,7 @@ function watchpartyEintragAbgleichen(lokal, stand) {
 }
 
 module.exports = {
+  nachschubHinweisGesehen,
   standOhneStelle,
   watchpartyStandUebernehmen,
   watchpartyEintragAbgleichen,

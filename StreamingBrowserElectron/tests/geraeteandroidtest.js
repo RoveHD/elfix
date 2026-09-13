@@ -23,6 +23,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const crypto = require("crypto");
 const WS = require("../../sync-server/node_modules/ws");
 const schluesselModul = require("../src/geraete-schluessel");
 const geraeteStand = require("../src/geraete-stand");
@@ -40,6 +41,7 @@ const PORT = Number(process.env.TESTPORT) || 8799;
 const ADRESSE = `ws://127.0.0.1:${PORT}`;
 const WURZEL = path.join(__dirname, "..");
 const BRUECKEN = path.join(WURZEL, "..", "android/app/src/main/assets/kern/eigen");
+const geraetGeheimnis = (id) => crypto.createHash("sha256").update(`android-bridge:${id}`).digest("base64url");
 
 const pruefungen = [];
 function pruefe(name, bedingung, detail) {
@@ -160,7 +162,8 @@ function rechner(name, key, staende = []) {
     abgleich,
     eigen,
     herein,
-    an: () => abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: name }),
+    an: () => abgleich.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: key,
+      geraetId: name, geraetGeheimnis: geraetGeheimnis(name) }),
     melden: () => abgleich.abgleichen([...eigen.values()]),
     setzen: (stand) => {
       eigen.set(stand.key, schluesselModul.stand(stand));
@@ -230,7 +233,8 @@ const ANBIETER = [{
   handy.bruecke.favoritenSetzen([]);
   handy.bruecke.sitzungenSetzen([]);
   handy.bruecke.konfigurieren({
-    enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: "handy"
+    enabled: true, serverUrl: ADRESSE, schluessel: key, geraetId: "handy",
+    geraetGeheimnis: geraetGeheimnis("handy")
   });
   await warteBis(() => (handy.gespeichert.favoriten || []).length === 1,
     "Telefon uebernimmt den Bestand");
@@ -253,6 +257,35 @@ const ANBIETER = [{
     pc.eigen.size === 1 && standVorher && standVorher.position === 300,
     "Fall 15: der erste Abgleich eines leeren Telefons darf nichts ueberschreiben");
 
+  // Live geht durch dieselbe echte Android-Bruecke, ohne den Bestand zu
+  // veraendern oder eine Watchparty vorauszusetzen.
+  await warteBis(() => handy.gespeichert.zustand?.devices?.length === 2
+    && pc.abgleich.status().devices.length === 2, "beide sicheren Geraetekennungen sind angemeldet");
+  const liveBestand = JSON.stringify(handy.gespeichert.favoriten);
+  const liveSpeicherungen = handy.ereignisse.filter((e) =>
+    ["geraete:favoriten", "geraete:sitzungen", "geraete:spiegel"].includes(e.art)).length;
+  const liveStand = { title: "Wise Man's Grandchild",
+    url: "https://aniworld.to/anime/stream/wise-mans-grandchild/staffel-1/episode-4",
+    season: 1, episode: 4, position: 25, duration: 1400, paused: false };
+  const handyLive = () => handy.gespeichert.zustand?.devices?.find((g) => g.id === "rechner")?.playback;
+  const pcLive = () => pc.abgleich.status().devices.find((g) => g.id === "handy")?.playback;
+  pc.abgleich.liveSetzen(liveStand);
+  pruefe("Android erhaelt die laufende PC-Folge ueber seinen Status-Rueckkanal",
+    await warteBis(() => handyLive()?.episode === 4 && handyLive()?.title === liveStand.title,
+      "PC-Wiedergabe erscheint im Android-Status"));
+  handy.bruecke.liveSetzen({ ...liveStand, url: liveStand.url.replace("episode-4", "episode-5"), episode: 5, paused: true });
+  pruefe("Die Android-Bruecke meldet ihre pausierte Wiedergabe an den PC",
+    await warteBis(() => pcLive()?.episode === 5 && pcLive()?.paused,
+      "Android-Pause erscheint am PC"));
+  handy.bruecke.liveSetzen(null);
+  pc.abgleich.liveSetzen(null);
+  pruefe("Beide Playerenden verschwinden durch die Android-Bruecke",
+    await warteBis(() => !handyLive() && !pcLive(), "beide Live-Anzeigen verschwinden"));
+  pruefe("Live-Pulse schreiben weder Fortschritt noch Sitzungen oder Spiegel",
+    JSON.stringify(handy.gespeichert.favoriten) === liveBestand
+      && handy.ereignisse.filter((e) =>
+        ["geraete:favoriten", "geraete:sitzungen", "geraete:spiegel"].includes(e.art)).length === liveSpeicherungen);
+
   // --- Kein Kreis ------------------------------------------------------------
 
   const spiegelStand = handy.ereignisse.filter((e) => e.art === "geraete:favoriten").length;
@@ -265,6 +298,24 @@ const ANBIETER = [{
     handy.ereignisse.filter((e) => e.art === "geraete:favoriten").length === spiegelStand
     && pc.herein.length <= 1,
     "sonst schoeben sich beide denselben Eintrag ewig hin und her");
+
+  // Ein lokaler Nachschubhinweis darf nach dem Schauen am PC nicht stehenbleiben.
+  const mitHinweis = JSON.parse(JSON.stringify(handy.gespeichert.favoriten || []));
+  if (mitHinweis[0]) {
+    mitHinweis[0].newEpisodeAt = "2026-09-13T08:00:00.000Z";
+    mitHinweis[0].newEpisodeLabel = "Folge 3";
+    mitHinweis[0].position = 0;
+    mitHinweis[0].progress = 0;
+    handy.bruecke.favoritenSetzen(mitHinweis);
+    pc.setzen({ ...standVorher, position: 500, progress: 36 });
+    await warteBis(() => (handy.gespeichert.favoriten || [])[0]?.position === 500,
+      "Telefon bekommt Wiedergabe der neuen Folge vom Rechner");
+    const bestaetigt = (handy.gespeichert.favoriten || [])[0];
+    pruefe("PC-Wiedergabe entfernt den lokalen Neue-Folge-Hinweis auf Android",
+      bestaetigt && !bestaetigt.newEpisodeAt && !bestaetigt.newEpisodeLabel);
+  } else {
+    pruefe("PC-Wiedergabe entfernt den lokalen Neue-Folge-Hinweis auf Android", false);
+  }
 
   // --- Das Telefon schaut weiter, der Rechner bekommt es --------------------
 
@@ -430,6 +481,28 @@ const ANBIETER = [{
   pcFrueh.abgleich.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "frueh-pc" });
   frueh.bruecke.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "frueh" });
   verloren.bruecke.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "verloren" });
+
+  // Der TV sendet zuerst und ist aus, bevor der PC ueberhaupt gestartet wird.
+  const zeitversetztKey = schluesselModul.erzeugen();
+  const tv = telefon("zeitversetzt-tv");
+  const tvFavorit = favorit({ episode: 5, position: 720, progress: 51,
+    url: "https://aniworld.to/anime/stream/one-piece/staffel-1/episode-5" });
+  const tvKey = geraeteStand.titelSchluessel(tvFavorit);
+  tv.bruecke.anbieterSetzen(ANBIETER);
+  tv.bruecke.favoritenSetzen([tvFavorit]);
+  tv.bruecke.konfigurieren({ enabled: true, serverUrl: ADRESSE, schluessel: zeitversetztKey,
+    geraetId: "zeitversetzt-tv", geraetTyp: "tv" });
+  await warteBis(() => tv.gespeichert.zustand?.connected, "TV verbindet sich");
+  tv.bruecke.abgleichen();
+  await warteBis(() => Number(tv.gespeichert.spiegel?.nr) > 0, "Relay bestaetigt TV-Fortschritt");
+  tv.bruecke.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "zeitversetzt-tv" });
+  const spaeterPc = rechner("zeitversetzt-pc", zeitversetztKey);
+  spaeterPc.an();
+  await warteBis(() => spaeterPc.eigen.get(tvKey)?.position === 720, "PC holt gespeicherten Stand bei ausgeschaltetem TV");
+  pruefe("TV und PC muessen nicht gleichzeitig eingeschaltet sein",
+    !tv.bruecke.status()?.connected && spaeterPc.eigen.get(tvKey)?.episode === 5
+      && spaeterPc.eigen.get(tvKey)?.position === 720);
+  spaeterPc.abgleich.konfigurieren({ enabled: false, serverUrl: ADRESSE, schluessel: "", geraetId: "zeitversetzt-pc" });
 
   // --- Der Spiegel wandert auf die Platte ------------------------------------
 

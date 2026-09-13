@@ -1064,6 +1064,22 @@
   }
 }
 
+/* Aktuelle Wiedergabe auf den anderen eigenen Geraeten. */
+.geraete-live.is-hidden { display: none; }
+.geraete-live-list { display: flex; flex-wrap: wrap; gap: 12px; }
+.geraete-live-card {
+  display: grid; gap: 6px; min-width: 220px; max-width: 100%; flex: 1 1 280px;
+  padding: 16px 20px; border: 1px solid rgba(80, 174, 255, .25); border-radius: 16px;
+  background: linear-gradient(110deg, rgba(50, 142, 231, .14), rgba(50, 142, 231, .03));
+}
+.geraete-live-card small { color: #8ecbff; }
+.geraete-live-card small::before {
+  content: ""; display: inline-block; width: 7px; height: 7px;
+  margin-right: 8px; border-radius: 50%; background: #70dfad;
+}
+.geraete-live-card.is-paused small::before { background: #d5b373; }
+.geraete-live-card strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+
 /* Die Reihe "Neue Folgen" auf der Startseite. */
 .new-episode-row.is-hidden {
   display: none;
