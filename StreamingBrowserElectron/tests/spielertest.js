@@ -373,9 +373,9 @@ pruefe("Ein geschuetzter leerer Name entfernt den vorherigen Folgentitel",
 // dieser Weg in der Auswahl, sobald die gespeicherte Adresse eine Serien- oder
 // Staffelseite war - und dann musste man die Folge heraussuchen, bei der man
 // ohnehin stehengeblieben war.
-pruefe("Ohne Hoster wird zuerst der eigene Stand gesucht",
-  /const schluessel = taste\.urlSchluessel\(url\);[\s\S]{0,420}?direktFolgeSpielen\(provider, weiter\.url/.test(haupt),
-  "derselbe Schluessel, nach dem auch die Watchparty zwei Adressen vergleicht");
+pruefe("Ohne Hoster wird zuerst der aktive offene Stand gesucht",
+  /const schluessel = taste\.urlSchluessel\(url\);[\s\S]{0,700}?favorite\.id === activeFavoriteId[\s\S]{0,700}?direktFolgeSpielen\(provider, weiter\.url/.test(haupt),
+  "abgeschlossene alte Staende duerfen eine neue Folge nicht verdraengen");
 pruefe("Und zwar nur, wenn dort wirklich eine Folge steht",
   /&& episodeIdentity\(favorite\.url\)/.test(haupt),
   "eine Serienseite als Ziel waere dieselbe Sackgasse noch einmal");
@@ -400,7 +400,7 @@ pruefe("Gelesene Kacheln werden weitergereicht",
   /direktFolgeSpielen\(provider, url, \{\s*links, signal, fullscreen: Boolean\(optionen\.fullscreen\)/.test(haupt),
   "sonst liest die zweite Runde eine Seite, die niemand mehr sieht");
 pruefe("Und drueben auch benutzt",
-  /const alle = Array\.isArray\(optionen\.links\)[\s\S]{0,120}?: await direktLinksLesen\(provider, view\);/.test(haupt));
+  /const alle = Array\.isArray\(optionen\.links\)[\s\S]{0,160}?: await direktLinksLesen\(provider, view, optionen\.seite \|\| ""\);/.test(haupt));
 pruefe("Ein misslungener Lesevorgang wird nicht als 'keine Hoster' getarnt",
   /Kacheln nicht lesbar/.test(haupt),
   "von aussen sah beides gleich aus");

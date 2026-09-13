@@ -10579,7 +10579,7 @@ public class MainActivity extends Activity {
     }
 
     private void direktOeffnen(Provider provider, String url, boolean fortsetzen) {
-        direktSchliessen();
+        direktSchliessen(true);
         eigeneGeraeteLiveLoeschen();
         hideFullscreen();
         disarmAutoStart("Eigener Player");
@@ -10808,17 +10808,28 @@ public class MainActivity extends Activity {
     }
 
     private void direktSchliessen() {
+        direktSchliessen(false);
+    }
+
+    /**
+     * Ein relaygesteuerter Folgenwechsel ersetzt nur den Player derselben
+     * Teilnahme. Ein bye wuerde das Geraet aus der bereits laufenden
+     * syncprepare-Schranke entfernen, bevor die neue Quelle READY meldet.
+     */
+    private void direktSchliessen(boolean wirdErsetzt) {
         if (direktWiedergabe == null) return;
         eigeneGeraeteLiveLoeschen();
         direktPipAutomatikSetzen(false);
         DirektWiedergabe alt = direktWiedergabe;
         direktImPip = false;
+        boolean relayAustausch = mitschauen != null
+            && Mitschauen.relayPlayerAustausch(wirdErsetzt, mitschauen.folgtDerRunde());
         // Beim relaygesteuerten Austausch muss die Generation den alten Player
         // ueberleben. Ein bewusstes Schliessen beendet sie dagegen, damit kein
         // spaeter geoeffneter privater Player eine fremde alte Sperre erbt.
         if ((!nativeFolgenBarriereSyncId.isEmpty()
             || !nativeAbgelaufeneFolgenQuelleSyncId.isEmpty())
-            && (mitschauen == null || !mitschauen.folgtDerRunde())) {
+            && !relayAustausch) {
             if (!nativeFolgenBarriereSyncId.isEmpty()) {
                 alt.folgenBarriereAbbrechen(nativeFolgenBarriereSyncId);
             }
@@ -10829,7 +10840,10 @@ public class MainActivity extends Activity {
         // Erst den Streifen herausholen, dann die Ansicht abraeumen - sonst
         // faellt er mit ihr weg und findet nie wieder nach Hause.
         if (liveStreifen != null) liveStreifen.inVollbild(null);
-        if (mitschauen != null) mitschauen.abmelden();
+        if (mitschauen != null) {
+            Mitschauen.beimNativenPlayerSchliessen(
+                wirdErsetzt, mitschauen.folgtDerRunde(), mitschauen::abmelden);
+        }
         // Keep the flag until the final progress report has been booked.
         alt.schliessen();
         direktWiedergabe = null;

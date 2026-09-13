@@ -153,6 +153,106 @@ pruefe("Navigation und DOM-Lesen bleiben trotz paralleler Folgenliste zusammen",
   assert.deepEqual(protokoll, ["laden:folge", "lesen:folge", "laden:staffel", "lesen:staffel"]);
 });
 
+pruefe("Eine ausdrueckliche Folge faellt nie auf einen alten abgeschlossenen Stand zurueck", async () => {
+  const gespielt = [];
+  const auswahl = [];
+  let vorgeladen = 0;
+  let linksFuer = "";
+  const c = kontext({
+    direktModus: () => true,
+    providerModel: { isHttpUrl: () => true },
+    werkbankLesen: async (_provider, _url, lesen) => lesen({}),
+    direktLinksLesen: async (_provider, _view, erwartet) => { linksFuer = erwartet; return []; },
+    folgenlisteLesen: async () => ({ folgen: [{ staffel: 1, folge: 2, url: folge(2) }] }),
+    favorites: [{ id: "alt", providerId: provider.id, url: folge(1), completed: true,
+      episodeCompleted: true, currentTime: 0 }],
+    activeFavoriteId: "alt",
+    taste: { urlSchluessel: () => "serie:test" },
+    episodeIdentity: fortschritt.episodeIdentity,
+    normalizeFavoriteUrl: (url) => url,
+    sanitizePositiveNumber: (wert) => Number(wert) || 0,
+    direktFolgeSpielen: async (_provider, url) => { gespielt.push(url); return { ok: true }; },
+    direktAuswahlOeffnen: async (_provider, url) => { auswahl.push(url); return { ok: true }; },
+    ersteFolgeVorladen: async () => { vorgeladen += 1; },
+    direktZurueckZurOberflaeche: async () => {},
+    sendToast() {},
+    kurzeUrl: (url) => url
+  }, ["direktUebernehmen"]);
+  await c.direktUebernehmen(provider, folge(2), new AbortController().signal);
+  assert.deepEqual(gespielt, [], "Die alte Folge wurde als Ersatzquelle gestartet");
+  assert.deepEqual(auswahl, [folge(2)], "Der Fehlerweg blieb nicht beim angeforderten Ziel");
+  assert.equal(vorgeladen, 0, "Die erste Folge wurde hinter der Zielauswahl vorgeladen");
+  assert.equal(linksFuer, folge(2), "Die Hosterkacheln waren nicht an das Ziel gebunden");
+});
+
+pruefe("Weiterschauen nimmt auf einer Staffelseite den aktiven offenen Stand", async () => {
+  const gespielt = [];
+  const staffel = "https://aniworld.to/anime/stream/test/staffel-1";
+  const c = kontext({
+    direktModus: () => true,
+    providerModel: { isHttpUrl: () => true },
+    werkbankLesen: async () => [],
+    folgenlisteLesen: async () => ({ folgen: [{ staffel: 1, folge: 3, url: folge(3) }] }),
+    favorites: [
+      { id: "fertig", providerId: provider.id, url: folge(1), completed: true, episodeCompleted: true },
+      { id: "offen", providerId: provider.id, url: folge(3), currentTime: 42 }
+    ],
+    activeFavoriteId: "offen",
+    taste: { urlSchluessel: () => "serie:test" },
+    episodeIdentity: fortschritt.episodeIdentity,
+    normalizeFavoriteUrl: (url) => url,
+    sanitizePositiveNumber: (wert) => Number(wert) || 0,
+    direktFolgeSpielen: async (_provider, url, optionen) => {
+      gespielt.push({ url, startzeit: optionen.startzeit }); return { ok: true };
+    },
+    direktAuswahlOeffnen: async () => ({ ok: true }),
+    ersteFolgeVorladen() {},
+    direktZurueckZurOberflaeche: async () => {},
+    sendToast() {},
+    kurzeUrl: (url) => url
+  }, ["direktUebernehmen"]);
+  await c.direktUebernehmen(provider, staffel, new AbortController().signal);
+  assert.deepEqual(gespielt, [{ url: folge(3), startzeit: 42 }]);
+});
+
+pruefe("Hosterkacheln werden verworfen, wenn die Werkbank vom Ziel weg navigiert", async () => {
+  let offen = folge(2);
+  const view = { webContents: {
+    getURL: () => offen,
+    executeJavaScript: async () => {
+      offen = folge(1);
+      return JSON.stringify([{ adresse: "https://hoster.example/alte-folge" }]);
+    }
+  } };
+  const c = kontext({
+    providerModel: { isHttpUrl: () => true },
+    direktLaden: new AbortController(),
+    menschentorErkennen: async () => false,
+    direktlinks: { hosterlinkScript: () => "links" },
+    isExpectedEpisodePage: (aktuell, erwartet) => aktuell === erwartet,
+    fassungSchluesselFuer: () => "",
+    fassung: { lesen: () => null },
+    loadFassungen: () => ({}),
+    console: still
+  }, ["direktLinksLesen"]);
+  assert.equal((await c.direktLinksLesen(provider, view, folge(2))).length, 0);
+});
+
+pruefe("Die Seitenbindung trennt echte S.to-Serien und normalisiert die www-Domain", () => {
+  const c = kontext({
+    normalizeFavoriteUrl: fortschritt.normalizeFavoriteUrl,
+    episodeIdentity: fortschritt.episodeIdentity,
+    serienKennungAusUrl: fortschritt.serienKennungAusUrl
+  }, ["isExpectedEpisodePage"]);
+  const foo = "https://s.to/serie/stream/foo/staffel-1/episode-2";
+  const bar = "https://s.to/serie/stream/bar/staffel-1/episode-2";
+  const fooAlias = "https://www.s.to/serie/stream/foo/staffel-1/episode-2";
+  assert.equal(c.isExpectedEpisodePage(foo, bar), false,
+    "gleiche Episodennummern verschiedener Serien wurden verwechselt");
+  assert.equal(c.isExpectedEpisodePage(fooAlias, foo), true,
+    "die bekannte www-Domainvariante wurde nicht normalisiert");
+});
+
 pruefe("Filmo waehlt die neue Marke desselben Hosters und derselben Fassung", async () => {
   const anfragen = [];
   const alt = { adresse: "https://filmo.example/openMint/alt", hoster: "VOE", sprache: "Deutsch", spracheRoh: "Deutsch" };

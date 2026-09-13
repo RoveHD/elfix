@@ -1891,7 +1891,10 @@ function standMelden(sofort = false) {
 let weiterAbProzent = 90;
 
 function weiterKnopfZeigen() {
-  if (!naechste) {
+  // Der Countdown bringt bereits Titel, "Jetzt" und "Abbrechen" mit. Die
+  // gleich positionierte Hinweis-Karte waere in diesem Zustand nur doppelt
+  // und liegt ueber seinen Aktionen.
+  if (!naechste || weiterUhr) {
     knopfWeiter.hidden = true;
     return;
   }
@@ -1980,6 +1983,7 @@ function weiterAnbieten() {
       folgeWechseln(ziel);
     }
   }, 1000);
+  weiterKnopfZeigen();
 }
 
 /*
@@ -2021,6 +2025,9 @@ function weiterAbbrechen() {
   if (weiterUhr) clearInterval(weiterUhr);
   weiterUhr = 0;
   weiterKasten.hidden = true;
+  // Nach einem bewussten Abbruch bleibt die naechste Folge erreichbar. Der
+  // normale Schwellencheck entscheidet dabei weiterhin, ob die Karte gehoert.
+  weiterKnopfZeigen();
 }
 
 /* ------------------------------------------------------------- Die Horcher */

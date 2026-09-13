@@ -116,7 +116,7 @@ pruefe("Eine Folge wird gespielt",
 // Ein Film hat keine Folgennummer, nur eine Seite mit Hostern darauf. Ginge
 // die Entscheidung ueber die Adresse, landete er bei "keine Folge gefunden".
 pruefe("Ein Film auch - entschieden wird an den Hosterkacheln",
-  uebernahmeBereich.includes("const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view)")
+  uebernahmeBereich.includes("const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view, url)")
   && uebernahmeBereich.indexOf("direktLinksLesen") < uebernahmeBereich.indexOf("folgenlisteLesen"),
   "nicht an der Adresse");
 pruefe("Eine Serie wird zur Auswahl",

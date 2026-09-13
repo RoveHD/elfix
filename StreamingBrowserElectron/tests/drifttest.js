@@ -46,10 +46,15 @@ function puls(c) {
   c.zuletzt = Date.now();
   const schlag = () => {
     const jetzt = Date.now();
+    if (c.spielerFolge !== c.folge) {
+      c.spielerFolge = c.folge;
+      c.spielerGeneration = (c.spielerGeneration || 0) + 1;
+    }
     if (!c.pausiert) c.stelle += (jetzt - c.zuletzt) / 1000;
     c.zuletzt = jetzt;
     c.send({ type: "here", key: KEY, position: c.stelle, paused: c.pausiert,
-      season: 1, episode: c.folge, url: URL1, playerSessionId: `${c.deviceId}-e${c.folge}` });
+      season: 1, episode: c.folge, url: URL1,
+      playerSessionId: `${c.deviceId}-e${c.folge}-${c.spielerGeneration}` });
   };
   schlag();
   const t = setInterval(schlag, 600); t.unref?.(); pulse.push(t);

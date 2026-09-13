@@ -5362,7 +5362,9 @@ function isExpectedEpisodePage(aktuell, erwartet) {
   if (normalizeFavoriteUrl(aktuell) === normalizeFavoriteUrl(erwartet)) return true;
   const a = episodeIdentity(aktuell);
   const b = episodeIdentity(erwartet);
-  return Boolean(a && b && a.key === b.key && a.season === b.season && a.episode === b.episode);
+  const serieA = serienKennungAusUrl(aktuell);
+  const serieB = serienKennungAusUrl(erwartet);
+  return Boolean(a && b && serieA && serieA === serieB && a.season === b.season && a.episode === b.episode);
 }
 
 function logAutoplayAttempt(provider, request, values) {
@@ -9215,20 +9217,27 @@ function direktAufloeserHolen() {
 }
 
 /** Die Hosterkacheln der Folgenseite, geordnet nach dem, was uns nuetzt. */
-async function direktLinksLesen(provider, view) {
+async function direktLinksLesen(provider, view, erwartet = "") {
   const seite = view?.webContents?.getURL() || "";
   if (!providerModel.isHttpUrl(seite)) return [];
+  // Die Hosterkacheln gehoeren zu genau einer Folge. Eine Ansicht kann
+  // waehrend der asynchronen Freigabe oder durch Seitenskripte schon wieder
+  // weiter navigieren; dann duerfen ihre alten Kacheln nie als Quelle fuer das
+  // neu angeforderte Ziel gelten.
+  const seitePasst = () => !erwartet
+    || isExpectedEpisodePage(view?.webContents?.getURL() || "", erwartet);
+  if (!seitePasst()) return [];
   const signal = direktLaden.signal;
   // Die Abfrage kann nach dom-ready erscheinen oder auf derselben URL liegen.
   const freigeben = async () => !(await menschentorErkennen(view))
     || await menschentorLoesenLassen(provider, view, { signal });
-  if (!(await freigeben()) || signal.aborted) return [];
+  if (!(await freigeben()) || signal.aborted || !seitePasst()) return [];
   let roh = "[]";
   try {
     roh = await view.webContents.executeJavaScript(direktlinks.hosterlinkScript(), true);
     if (String(roh || "[]") === "[]") {
       await new Promise((fertig) => setTimeout(fertig, 500));
-      if (!(await freigeben()) || signal.aborted) return [];
+      if (!(await freigeben()) || signal.aborted || !seitePasst()) return [];
       roh = await view.webContents.executeJavaScript(direktlinks.hosterlinkScript(), true);
     }
   } catch (fehler) {
@@ -9238,6 +9247,7 @@ async function direktLinksLesen(provider, view) {
     console.log(`[ELFIX DIREKT] Kacheln nicht lesbar: ${fehler?.message || fehler}`);
     return [];
   }
+  if (!seitePasst()) return [];
   let liste = [];
   try {
     liste = JSON.parse(String(roh || "[]"));
@@ -9274,7 +9284,7 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   const seite = optionen.seite || view.webContents.getURL();
   const alle = Array.isArray(optionen.links)
     ? optionen.links
-    : await direktLinksLesen(provider, view);
+    : await direktLinksLesen(provider, view, optionen.seite || "");
   // Filmo stellt bei jedem Lesen neue Marken aus. Die Auswahl bleibt deshalb
   // ueber Hoster und Fassung erhalten, auch wenn die Adresse sich aendert.
   const wahl = optionen.hosterWahl;
@@ -10484,7 +10494,7 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   const gelesen = optionen.links?.length
     ? { view: getProviderView(provider), links: optionen.links }
     : await werkbankLesen(provider, url, async (view) => ({
-      view, links: await direktLinksLesen(provider, view)
+      view, links: await direktLinksLesen(provider, view, url)
     }), () => !abgebrochen());
   if (abgebrochen()) return { ok: false, abgebrochen: true };
   const view = gelesen?.view;
@@ -10645,7 +10655,7 @@ async function ersteFolgeVorladen(provider, url, stand, signal = direktLaden.sig
 
   const gueltig = () => !signal.aborted && auswahlNochOffen(url);
   const gelesen = await werkbankLesen(provider, ziel, async (view) => ({
-    view, links: await direktLinksLesen(provider, view)
+    view, links: await direktLinksLesen(provider, view, ziel)
   }), gueltig);
   if (!gelesen || !gueltig()) return;
   const ergebnis = await direktQuelleFuerAnsicht(provider, gelesen.view, { links: gelesen.links, seite: ziel, signal });
@@ -10667,7 +10677,7 @@ async function ersteFolgeVorladen(provider, url, stand, signal = direktLaden.sig
  */
 async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen(), optionen = {}) {
   if (!direktModus(url) || !providerModel.isHttpUrl(url)) return;
-  const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view),
+  const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view, url),
     () => !signal.aborted);
   if (signal.aborted) return;
   if (!links) {
@@ -10735,9 +10745,19 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
      * wenn sich dahinter keine Quelle findet.
      */
     const schluessel = taste.urlSchluessel(url);
-    const weiter = favorites.find((favorite) => favorite.providerId === provider.id
+    // Eine ausdruecklich angeforderte Folge bleibt das Ziel. Liefert ihr DOM
+    // voruebergehend keine Hosterkacheln, ist ein alter gespeicherter Stand
+    // keine Ersatzquelle - sonst steht im Auftrag Folge 2, waehrend das Video
+    // von Folge 1 am Anfang laeuft.
+    const fortsetzbar = (favorite) => favorite.providerId === provider.id
       && taste.urlSchluessel(favorite.url) === schluessel
-      && episodeIdentity(favorite.url));
+      && episodeIdentity(favorite.url)
+      && (!favorite.completed || favorite.rewatching)
+      && !favorite.episodeCompleted
+      && !favorite.watchpartyArchived;
+    const weiter = episodeIdentity(url) ? null
+      : favorites.find((favorite) => favorite.id === activeFavoriteId && fortsetzbar(favorite))
+        || favorites.find(fortsetzbar);
     if (weiter && normalizeFavoriteUrl(weiter.url) !== normalizeFavoriteUrl(url)) {
       const ergebnis = await direktFolgeSpielen(provider, weiter.url, {
         startzeit: sanitizePositiveNumber(weiter.currentTime || weiter.position),
@@ -10753,7 +10773,9 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
     // Neu angefangen: dann liegt die erste Folge gleich bereit. Nur ohne
     // eigenen Stand - wer schon irgendwo steht, ist oben weitergelaufen, und
     // ihm Folge 1 unterzuschieben waere ein Rueckschritt.
-    if (!weiter) ersteFolgeVorladen(provider, url, stand, signal).catch(() => {});
+    if (!weiter && !episodeIdentity(url)) {
+      ersteFolgeVorladen(provider, url, stand, signal).catch(() => {});
+    }
     return;
   }
 

@@ -116,12 +116,18 @@ app.whenReady().then(async () => {
     weiterZaehler = 1;
     weiterVerworfen = false;
     puffert = false;
+    bild.currentTime = Math.max(0, bild.duration - 1);
+    weiterKnopfZeigen();
     return bild.play().then(() => weiterAnbieten());
   })()`);
   await warten(() => lesen("Boolean(weiterUhr)"));
+  pruefe("Countdown ersetzt die ueberlappende Hinweis-Karte", await lesen(
+    "[weiterKasten.hidden, knopfWeiter.hidden]"), [false, true]);
   await lesen("bild.pause()");
   await pause(1200);
   pruefe("Pause bricht den laufenden Folgen-Countdown ab", await lesen("window.__wechsel.length"), 0);
+  pruefe("Nach dem Abbruch bleibt die naechste Folge manuell erreichbar", await lesen(
+    "knopfWeiter.hidden"), false);
 
   await lesen(`(() => {
     weiterVerworfen = false; puffert = false;

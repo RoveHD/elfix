@@ -28,6 +28,49 @@ public class MitschauenTest {
 
     private static final String BASIS = "https://aniworld.to/anime/stream/naruto";
 
+    @Test
+    public void relayFolgenwechselBleibtBisZurNeuenBereitschaftInDerStartschranke() {
+        int[] abmeldungen = { 0 };
+        Mitschauen.beimNativenPlayerSchliessen(true, true, () -> abmeldungen[0] += 1);
+        assertEquals("Der Austausch darf kein bye in die laufende Schranke senden",
+            0, abmeldungen[0]);
+
+        Mitschauen.beimNativenPlayerSchliessen(false, true, () -> abmeldungen[0] += 1);
+        assertEquals("Ein Abbruch waehrend des Ladens muss sich trotzdem abmelden",
+            1, abmeldungen[0]);
+
+        Mitschauen.beimNativenPlayerSchliessen(true, false, () -> abmeldungen[0] += 1);
+        assertEquals("Ein unabhaengiger Playerwechsel beendet den alten Stand",
+            2, abmeldungen[0]);
+    }
+
+    @Test
+    public void nativeBereitschaftGiltNurFuerDenNochOffenenPlayer() {
+        String folge4 = BASIS + "/staffel-1/episode-4";
+        String folge5 = BASIS + "/staffel-1/episode-5";
+        Mitschauen.NativeBereitschaft lebenszyklus = new Mitschauen.NativeBereitschaft();
+        int alt = lebenszyklus.beginnen(folge4, folge4, true);
+        assertTrue(alt > 0);
+        lebenszyklus.verwerfen();
+        int neu = lebenszyklus.beginnen(folge5, folge5, true);
+        assertTrue(neu > alt);
+
+        int[] anmeldungen = { 0 };
+        assertFalse("Ein spaeter Lage-Callback einer ersetzten READY-Generation ist veraltet",
+            lebenszyklus.anwendenWennGueltig(alt, folge4, folge5, true,
+                () -> anmeldungen[0] += 1));
+        assertEquals("Der alte Callback darf den neuen Player nicht anmelden", 0, anmeldungen[0]);
+        assertTrue("Nur der READY-Callback des neuen Players darf anmelden",
+            lebenszyklus.anwendenWennGueltig(neu, folge5, folge5, true,
+                () -> anmeldungen[0] += 1));
+        assertEquals(1, anmeldungen[0]);
+        assertFalse("READY der alten Folge darf die neue Sitzung nicht zuruecksetzen",
+            lebenszyklus.beginnen(folge4, folge5, true) >= 0);
+        assertFalse("Nach dem Wechsel in den Web-Player ist natives READY veraltet",
+            lebenszyklus.gilt(neu, folge5, folge5, false));
+        assertEquals(-1, lebenszyklus.beginnen(null, folge5, true));
+    }
+
     /**
      * Ein wieder angeschlossenes Android-Geraet kann die Vorbereitung der
      * neuen Folge verpassen und erst den gemeinsamen Start sehen. Dann muss

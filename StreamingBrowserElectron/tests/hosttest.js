@@ -55,13 +55,19 @@ function client(name, deviceId) {
 
 // Ein Herzschlag, wie ihn der Player schickt.
 function schlagen(c, n, opt = {}) {
+  if (opt.sitzung) c.spielerSitzung = opt.sitzung;
+  else if (!c.spielerSitzung || c.spielerFolge !== n) {
+    c.spielerGeneration = (c.spielerGeneration || 0) + 1;
+    c.spielerSitzung = `${c.deviceId}-e${n}-${c.spielerGeneration}`;
+  }
+  c.spielerFolge = n;
   c.send({
     type: "here", key: KEY,
     position: opt.position ?? 10,
     paused: Boolean(opt.paused),
     season: 1, episode: n,
     url: folge(n),
-    playerSessionId: opt.sitzung || `${c.deviceId}-e${n}`
+    playerSessionId: c.spielerSitzung
   });
 }
 
@@ -141,7 +147,13 @@ const hostVon = (c) => c.zustand?.hostName || "";
 
   // --- 15. Weiterspielen loest den Ausloeser ab --------------------------
   A.send({ type: "control", key: KEY, action: "play", position: 20, url: folge(1) });
-  await schlaf(250);
+  const [bereitA, bereitB] = await Promise.all([
+    A.erwarte(m => m.type === "syncprepare"), B.erwarte(m => m.type === "syncprepare")
+  ]);
+  if (!bereitA?.syncId || bereitA.syncId !== bereitB?.syncId) throw new Error("Gemeinsame Play-Vorbereitung fehlt");
+  A.send({ type: "syncready", key: KEY, syncId: bereitA.syncId });
+  B.send({ type: "syncready", key: KEY, syncId: bereitB.syncId });
+  await A.erwarte(m => m.type === "syncstart" && m.syncId === bereitA.syncId);
   schlagen(A, 1, { paused: false, position: 21, sitzung: "geraet-a-e1-neu" });
   await schlaf(250);
   pruefe("15. Nach dem Weiterspielen steht keine Pause mehr an",

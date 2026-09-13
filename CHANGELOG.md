@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.36 — 13. September 2026
+
+- Watchparty-Folgenwechsel behalten das gewählte Ziel: verspäteter Fortschritt
+  und Herzschläge ersetzter Player setzen die Runde nicht auf die alte Folge zurück.
+- Der Desktop öffnet bei fehlenden Hosterkacheln keine andere gespeicherte Folge
+  als Ersatz und prüft beim Lesen, ob die Quelle zur gewählten Folgenseite gehört.
+- Android und TV bleiben beim gemeinsamen Folgenwechsel in der Startabstimmung;
+  veraltete Bereitschaftsmeldungen können den neuen Player nicht übernehmen.
+- Der Autoplay-Countdown ersetzt die manuelle Nächste-Folge-Karte, damit die
+  beiden Hinweise nicht übereinanderliegen.
+
 ## 2.0.35 — 13. September 2026
 
 - Folgen gelten in der Auswahl erst nach dem normalen Abschluss ab 90 %

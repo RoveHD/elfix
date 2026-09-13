@@ -285,6 +285,8 @@ public final class Mitschauen {
     private int folgenOeffnenGeneration;
     /** Spaete Lage-/Dispatchantworten eines ueberholten eigenen Wechsels sind wirkungslos. */
     private int folgenwechselMeldenGeneration;
+    /** Nur die Bereitschaft des weiterhin offenen nativen Players darf den neuen Stand anmelden. */
+    private final NativeBereitschaft nativeBereitschaft = new NativeBereitschaft();
 
     /**
      * Wo das Live-Schauen abgeschaltet ist - je Raum und Titel.
@@ -733,9 +735,16 @@ public final class Mitschauen {
     }
 
     public void nativBereit(String url) {
+        // Media3 meldet READY asynchron. Beim Folgenwechsel kann der alte
+        // Player inzwischen bereits durch einen neuen ersetzt sein. Sein
+        // Callback darf weder dessen Sitzung loeschen noch dessen Einstieg
+        // zuruecksetzen.
+        final int generation = nativeBereitschaft.beginnen(
+            url, umgebung.adresse(), umgebung.nativerSpieler());
+        if (generation < 0) return;
         zuruecksetzen(null);
-        lageFuer(url, (key, raum) -> {
-            if (!url.equals(umgebung.adresse()) || !umgebung.nativerSpieler()) return;
+        lageFuer(url, (key, raum) -> nativeBereitschaft.anwendenWennGueltig(generation,
+            url, umgebung.adresse(), umgebung.nativerSpieler(), () -> {
             seiteFertig(null, url);
             anwesendMelden();
             if (nativeFolgeNachricht != null
@@ -747,7 +756,48 @@ public final class Mitschauen {
                     "syncprepare".equals(urteil.optString("tun", ""))
                         ? () -> bereitMelden(nachricht) : null);
             } else if (!umgebung.nativWartet()) abgleichen();
-        });
+        }));
+    }
+
+    static final class NativeBereitschaft {
+        private int generation;
+
+        int beginnen(String bereitUrl, String offeneUrl, boolean nativerSpieler) {
+            if (!adresseGilt(bereitUrl, offeneUrl, nativerSpieler)) return -1;
+            return ++generation;
+        }
+
+        void verwerfen() {
+            generation += 1;
+        }
+
+        boolean gilt(int erwartet, String bereitUrl, String offeneUrl, boolean nativerSpieler) {
+            return erwartet == generation && adresseGilt(bereitUrl, offeneUrl, nativerSpieler);
+        }
+
+        boolean anwendenWennGueltig(int erwartet, String bereitUrl, String offeneUrl,
+                                    boolean nativerSpieler, Runnable anwenden) {
+            if (anwenden == null || !gilt(erwartet, bereitUrl, offeneUrl, nativerSpieler)) {
+                return false;
+            }
+            anwenden.run();
+            return true;
+        }
+
+        private static boolean adresseGilt(String bereitUrl, String offeneUrl,
+                                            boolean nativerSpieler) {
+            return nativerSpieler && bereitUrl != null && !bereitUrl.isEmpty()
+                && bereitUrl.equals(offeneUrl);
+        }
+    }
+
+    static void beimNativenPlayerSchliessen(boolean wirdErsetzt, boolean folgtDerRunde,
+                                             Runnable abmelden) {
+        if (abmelden != null && !relayPlayerAustausch(wirdErsetzt, folgtDerRunde)) abmelden.run();
+    }
+
+    static boolean relayPlayerAustausch(boolean wirdErsetzt, boolean folgtDerRunde) {
+        return wirdErsetzt && folgtDerRunde;
     }
 
     /**
@@ -799,6 +849,9 @@ public final class Mitschauen {
      * Zustand, den niemand sehen will.
      */
     public void abmelden() {
+        // Auch ohne offene Verbindung ist ein eventuell noch ausstehender
+        // READY/Lage-Callback ab jetzt veraltet.
+        nativeBereitschaft.verwerfen();
         if (kern == null || !kern.istBereit()) return;
         String key = schluessel();
         String raum = raum();
@@ -1475,6 +1528,7 @@ public final class Mitschauen {
         // Nachzuegler die Seite ein zweites Mal neu.
         if (gleicheFolge(ziel, umgebung.adresse())) return false;
         Log.i(TAG, "Watchparty folgt der Runde auf eine andere Folge");
+        nativeBereitschaft.verwerfen();
         // Ein bereits angefragter eigener Wechsel darf nach diesem neueren
         // Relay-Ziel nicht mit einer spaeten lageFuer-Antwort zurueckschlagen.
         folgenwechselMeldenGeneration += 1;

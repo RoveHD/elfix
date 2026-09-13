@@ -256,6 +256,7 @@ function zustandSpeichernSpaeter() {
           sync: undefined,
           syncTimer: undefined,
           stand: undefined,
+          abgeloesteFolgen: undefined,
           // Wer schon einmal geholt wurde, ist nach einem Neustart ohnehin
           // wieder offen - und als Map stuende hier sonst ein leeres Objekt.
           nachgezogen: undefined,
@@ -1384,6 +1385,8 @@ function standSetzen(eintrag, geraetId, name, werte) {
   // wer zuerst da war, fuehrt. Ein alter Player kann so nicht weiter als
   // aktiv gelten, nur weil dasselbe Geraet frueher einmal hier war.
   const sitzung = werte.sitzung || vorher.sitzung || "";
+  const alteSitzungen = vorher.alteSitzungen || [];
+  const wechselndeSitzung = sitzung && vorher.sitzung && sitzung !== vorher.sitzung;
   const folge = werte.episode == null ? (vorher.episode || 0) : werte.episode;
   const staffel = werte.season == null ? (vorher.season || 0) : werte.season;
   const neueSitzung = sitzung !== vorher.sitzung
@@ -1395,6 +1398,11 @@ function standSetzen(eintrag, geraetId, name, werte) {
 
   eintrag.stand.set(geraetId, {
     sitzung,
+    // Spaete Herzschlaege eines ersetzten Players sind keine neue Navigation.
+    // Die Kennungen bleiben intern und begrenzt; Reconnect mit der aktuellen
+    // Sitzung bleibt davon unberuehrt.
+    alteSitzungen: wechselndeSitzung
+      ? [...alteSitzungen, vorher.sitzung].slice(-8) : alteSitzungen,
     seitFolge: neueSitzung ? Date.now() : (vorher.seitFolge || Date.now()),
     // Wann diesem Geraet zuletzt etwas nachgereicht oder es zurueckgeholt
     // wurde, muss den Wechsel ueberleben - sonst greift die Bremse nie und es
@@ -1535,6 +1543,19 @@ function folgeAusAdresse(url) {
 
 const SYNC_BEREIT_FRIST_MS = 5000;
 const FOLGENWECHSEL_BEREIT_FRIST_MS = 90000;
+
+// Eine ausdrueckliche Wahl kann auch rueckwaerts gehen. Dann ist die alte,
+// hoehere Folgennummer trotzdem veraltet. Ihre spaeten Fortschrittsmeldungen
+// gelten erst wieder, wenn genau diese Folge bewusst erneut gewaehlt wurde.
+function folgenwahlMerken(eintrag, ziel) {
+  if (!ziel.episode) return;
+  if (!eintrag.abgeloesteFolgen) eintrag.abgeloesteFolgen = new Set();
+  const live = folgeAusAdresse(eintrag.live?.url);
+  for (const vorher of [eintrag, live]) {
+    if (vorher.episode) eintrag.abgeloesteFolgen.add(folgenKennung(vorher.season, vorher.episode));
+  }
+  eintrag.abgeloesteFolgen.delete(folgenKennung(ziel.season, ziel.episode));
+}
 
 // Eine Startschranke gehoert den aktuell offenen, eingetretenen Geraeten und
 // nicht den Socket-Objekten, die beim Anlegen zufaellig offen waren. Ein
@@ -2113,7 +2134,7 @@ wss.on("connection", (socket) => {
       const aktion = text(nachricht.action, 10);
       if (!["play", "pause", "seek", "skip", "navigate", "tempo", "fassung"].includes(aktion)) return;
 
-      const ziel = httpAdresse(nachricht.url);
+      let ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
       const offeneStartverabredungAbbrechen = (pauseSenden = false) => {
@@ -2246,8 +2267,18 @@ wss.on("connection", (socket) => {
         // Runde laengst stand - und setzte sie dabei auf null. Genau der
         // gemeldete Rueckwurf. Massgeblich ist die Folge, nicht die Schreibung
         // der Adresse.
-        const zielFolge = folgeAusAdresse(ziel);
         const liveFolge = folgeAusAdresse(eintrag.live?.url);
+        const amLiveStand = liveFolge.episode && absenderFolge === liveFolge.episode
+          && absenderStaffel === liveFolge.season;
+        // Wer den letzten Wechsel noch nicht mitbekommen hat, drueckt mit
+        // seiner alten Folgenliste auf Weiter. Das ist ein Nachholwunsch,
+        // kein Auftrag, die schon weiterlaufende Runde rueckwaerts zu starten.
+        // Am aktuellen Raum-/Livestand bleiben auch bewusste Rueckwaerts-
+        // und Staffelwechsel unveraendert moeglich.
+        if (!amRaumstand && !amLiveStand) {
+          ziel = httpAdresse(eintrag.live?.url || eintrag.url) || ziel;
+        }
+        const zielFolge = folgeAusAdresse(ziel);
         // Der gebuchte Fortschritt kann der laufenden Quelle voraus sein. Dann
         // stimmt zwar `eintrag.episode` schon mit dem Ziel ueberein, die Live-
         // Adresse zeigt aber noch die vorige Folge. Das ist kein Nachziehen,
@@ -2260,7 +2291,9 @@ wss.on("connection", (socket) => {
             && (!liveFolge.episode || (liveFolge.episode === zielFolge.episode
               && (liveFolge.season || 0) === (zielFolge.season || 0))))
         );
+        if (ziel && !schonDort) folgenwahlMerken(eintrag, zielFolge);
         if (ziel) {
+          eintrag.abgeloesteFolgen?.delete(folgenKennung(zielFolge.season, zielFolge.episode));
           eintrag.url = ziel;
           // Auch die Folgenangabe: sie steckt in der Adresse, wurde hier aber
           // nie ausgelesen - nur der Fortschritt hat sie je nachgezogen.
@@ -2666,6 +2699,8 @@ wss.on("connection", (socket) => {
       if (vorherigerTitelWeg) zustandSenden(socket.raum);
       eintrag.spoilerWartet?.delete(socket.geraetId);
       const vorher = eintrag.stand?.get(socket.geraetId);
+      const sitzung = text(nachricht.playerSessionId, 64);
+      if (sitzung && vorher?.alteSitzungen?.includes(sitzung)) return;
       const pausiert = Boolean(nachricht.paused);
       const folge = zahl(nachricht.episode, 9999);
       const staffel = zahl(nachricht.season, 999);
@@ -2711,7 +2746,7 @@ wss.on("connection", (socket) => {
         // Die Kennung des Players. Sie wechselt bei jeder neuen Folge und
         // jedem neu geladenen Player - daran erkennt das Relay, dass hier ein
         // Aufenthalt neu beginnt und nicht der alte weiterlaeuft.
-        sitzung: text(nachricht.playerSessionId, 64)
+        sitzung
       });
 
       // Anhalten, Weiterlaufen und ein Folgenwechsel muessen die anderen sofort
@@ -2787,8 +2822,11 @@ wss.on("connection", (socket) => {
       const hostWechsel = socket.geraetId === hostVorher
         && Boolean(vorher && vorher.episode)
         && (staffelGeaendert || folgeGeaendert);
-      if (folge && (staffelGeaendert || folge !== eintrag.episode)
+      // Solange alle die gewaehlte Folge laden, bleibt dieses Ziel verbindlich.
+      // Auch ein unbekannter alter Player darf es nicht per Herzschlag ersetzen.
+      if (!eintrag.sync && folge && (staffelGeaendert || folge !== eintrag.episode)
         && (hostWechsel || eigenerWechsel)) {
+        folgenwahlMerken(eintrag, { season: staffel, episode: folge });
         eintrag.episode = folge;
         eintrag.season = zahl(nachricht.season, 999) || eintrag.season;
         const adresse = httpAdresse(nachricht.url);
@@ -3238,6 +3276,20 @@ wss.on("connection", (socket) => {
       if (!eintrag || !eintrag.members.has(socket.geraetId)) return;
       const fortschritt = fortschrittSaeubern(nachricht.progress);
       if (!fortschritt) return;
+
+      // Fortschritt beschreibt einen Player, keinen neuen Wechselauftrag.
+      // Beim Schliessen bucht gerade der bisherige Host noch die alte Folge.
+      // Diese Meldung darf weder die offene Startschranke noch den bereits
+      // neueren Raumstand zuruecksetzen. Rueckwaerts waehlt man weiterhin
+      // ausdruecklich per navigate; das setzt vorher den gueltigen Raumstand.
+      const andereFolge = fortschritt.episode && eintrag.episode
+        && (fortschritt.episode !== eintrag.episode
+          || fortschritt.season !== (eintrag.season || 0));
+      if (andereFolge && (eintrag.sync
+        || eintrag.abgeloesteFolgen?.has(folgenKennung(fortschritt.season, fortschritt.episode))
+        || folgeIstNeuer(fortschritt, {
+        season: eintrag.season, episode: eintrag.episode
+      }))) return;
 
       // Der Lebenslauf eines Titels in der Runde.
       //
