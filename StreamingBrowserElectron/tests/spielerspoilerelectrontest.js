@@ -175,6 +175,8 @@ app.whenReady().then(async () => {
   await warten(() => lesen("!folgenPanel.hidden && folgenListe.children.length > 0"));
   await lesen("spoilerSchutzBox.open = true");
   await lesen("new Promise(f => requestAnimationFrame(() => requestAnimationFrame(f)))");
+  pruefe("Das Folgenpanel liegt ueber dem Hinweis zur naechsten Folge", await lesen(
+    "Number(getComputedStyle(folgenPanel).zIndex) > Number(getComputedStyle(weiterKnopf).zIndex)"), true);
   fs.writeFileSync(screenshot, (await fenster.webContents.capturePage()).toPNG());
   pruefe("Kein Playerfehler", fehler, []);
   console.log(anzahl + "/" + anzahl + " bestanden");

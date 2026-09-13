@@ -18,6 +18,7 @@
  */
 
 const seitendaten = require("../src/seitendaten.js");
+const animeFiller = require("../src/anime-filler.js");
 
 const pruefungen = [];
 const pruefe = (name, bedingung, detail) => {
@@ -238,6 +239,8 @@ const SKRIPT = seitendaten.uebersichtSkript();
   const kinder = [new Knoten("h1", {}, "BLACK TORCH"), staffelReiter(1), staffelReiter(2)];
   kinder.push(folgenZeile(1, 1, { titel: "Der Junge und der Wolf", englisch: "The Boy and the Wolf" }));
   kinder.push(folgenZeile(1, 2, { titel: "Die Nacht der Klingen", englisch: "Night of Blades" }));
+  kinder.push(folgenZeile(1, 6, { titel: "Ein neues Schuljahr",
+    englisch: "New School Term, Renji Has Come to the Material World?! [Episode 064]" }));
   // Ohne Titelzelle - der Normalfall bei vielen Anbietern.
   kinder.push(folgenZeile(1, 3));
   // Eine Zelle, in der nur noch einmal die Nummer steht.
@@ -261,6 +264,9 @@ const SKRIPT = seitendaten.uebersichtSkript();
   pruefe("Englische Titel bleiben fuer den Filler-Abgleich separat erhalten",
     zu(1, 2)?.titelAlternativen?.includes("Night of Blades")
       && zu(1, 2).titelAlternativen.includes("Die Nacht der Klingen"));
+  pruefe("AniWorld-Folgennummern werden vom englischen Titel entfernt",
+    zu(1, 6)?.titelAlternativen?.includes("New School Term, Renji Has Come to the Material World?!")
+      && !zu(1, 6).titelAlternativen.some((titel) => titel.includes("[Episode 064]")));
   pruefe("Ohne Titelzelle bleibt der Titel leer",
     zu(1, 3) && zu(1, 3).titel === "",
     zu(1, 3) ? `"${zu(1, 3).titel}"` : "-");
@@ -274,6 +280,29 @@ const SKRIPT = seitendaten.uebersichtSkript();
     zu(2, 1) && zu(2, 1).titel === "Zweite Staffel, erste Folge"
       && zu(1, 1).titel === "Der Junge und der Wolf",
     zu(2, 1) ? zu(2, 1).titel : "-");
+}
+
+// Bleach nummeriert beim Anbieter je Staffel neu, AnimeFillerList dagegen
+// fortlaufend. Die beiden bereinigten englischen Titel muessen deshalb den
+// Versatz 63 belegen, bevor die restlichen Folgen sicher etikettiert werden.
+{
+  const kinder = [new Knoten("h1", {}, "Bleach"), staffelReiter(4),
+    folgenZeile(4, 1, { titel: "Ein neues Schuljahr",
+      englisch: "New School Term, Renji Has Come to the Material World?! [Episode 064]" }),
+    folgenZeile(4, 2, { titel: "Schleichender Terror",
+      englisch: "Creeping Terror, the Second Victim [Episode 065]" }),
+    folgenZeile(4, 3, { titel: "Durchbruch" })];
+  const stand = fahre(SKRIPT, new Knoten("body", {}, "", kinder),
+    `/anime/stream/${SLUG}/staffel-4/episode-1`);
+  const daten = [
+    { episode: 64, type: "filler", titel: "New School Term, Renji Has Come to the Material World?!" },
+    { episode: 65, type: "filler", titel: "Creeping Terror, the Second Victim" },
+    { episode: 66, type: "filler", titel: "Breakthrough! The Trap Hidden in the Labyrinth" }
+  ];
+  const ergebnis = animeFiller.zuordnen(stand, daten,
+    "https://www.animefillerlist.com/shows/bleach");
+  pruefe("Bleach Staffel 4 wird vom Anbietertext bis zum Filler-Versatz zugeordnet",
+    ergebnis.folgen.map((folge) => folge.filler?.episode).join(",") === "64,65,66");
 }
 
 // S.to nutzt je nach Vorlage keine Tabellenzeile und hebt nur die Nummer

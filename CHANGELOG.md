@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.33 — 13. September 2026
+
+- Filler- und Canon-Kennzeichnungen erscheinen jetzt auch bei Bleach und
+  anderen Serien, deren Anbieter an englische Folgentitel noch eine absolute
+  Nummer wie `[Episode 064]` anhaengt. Diese Anbieterangabe wird vor dem
+  sicheren Staffelabgleich entfernt.
+- Die Folgenauswahl am Desktop ist breiter und hat eine schlanke, zum dunklen
+  Design passende Scrollleiste. Der Spoiler-Schutz steht in einer eigenen
+  übersichtlichen Einstellungskarte.
+- Geprueft mit der vollstaendigen Desktop-Suite, echten Electron-Tests fuer
+  Folgenauswahl, Spoiler-Schutz und Filler-Labels sowie Android-Regressionen.
+
 ## 2.0.32 — 13. September 2026
 
 - Fortschritt wird auch dann zwischen TV, Android und Desktop abgeglichen,

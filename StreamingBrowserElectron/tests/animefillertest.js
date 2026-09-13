@@ -71,6 +71,22 @@ const sourceUrl = "https://www.animefillerlist.com/shows/test-anime";
     assert.equal(result.folgen[2].filler.type, "filler");
     assert.equal(result.folgen[0].titel, "Ein neuer Anfang");
   });
+  await pruefe("Bleach Staffel 4 nutzt zwei Titelanker fuer den absoluten Versatz", () => {
+    const bleachDaten = [
+      { episode: 64, type: "filler", titel: "New School Term, Renji Has Come to the Material World?!" },
+      { episode: 65, type: "filler", titel: "Creeping Terror, the Second Victim" },
+      { episode: 66, type: "filler", titel: "Breakthrough! The Trap Hidden in the Labyrinth" }
+    ];
+    const bleachStand = { folgen: [
+      { ...folge(1, 4, "Ein neues Schuljahr"), titelAlternativen: [bleachDaten[0].titel] },
+      { ...folge(2, 4, "Schleichender Terror"), titelAlternativen: [bleachDaten[1].titel] },
+      folge(3, 4, "Durchbruch")
+    ] };
+    const result = filler.zuordnen(bleachStand, bleachDaten,
+      "https://www.animefillerlist.com/shows/bleach");
+    assert.deepEqual(result.folgen.map(e => e.filler?.episode), [64, 65, 66]);
+    assert(result.folgen.every(e => e.filler?.label === "Filler"));
+  });
   await pruefe("Einzelne, doppelte und widerspruechliche Titel beweisen keinen Staffel-Offset", () => {
     const a = folge(1, 2, "The second beginning");
     const b = folge(2, 2, "Unexpected visitors");

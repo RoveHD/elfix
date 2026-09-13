@@ -70,6 +70,16 @@ app.whenReady().then(async () => {
     });
   })()`);
   assert(bounds, "badges fit inside the episode list");
+  const panelDesign = await lesen(`(() => ({
+    width: folgenPanel.getBoundingClientRect().width,
+    scrollbar: getComputedStyle(folgenListe).scrollbarWidth,
+    spoilerRadius: getComputedStyle(spoilerSchutzBox).borderRadius,
+    spoilerBorder: getComputedStyle(spoilerSchutzBox).borderTopWidth
+  }))()`);
+  assert(panelDesign.width >= 490, "episode panel uses the wider desktop layout");
+  assert.equal(panelDesign.scrollbar, "thin", "episode list uses the compact scrollbar");
+  assert.equal(panelDesign.spoilerRadius, "14px", "spoiler controls use the panel card design");
+  assert.equal(panelDesign.spoilerBorder, "1px", "spoiler card remains visually separated");
   if (process.env.ELFIX_FILLER_SCREENSHOT) {
     // A hidden Electron window can present the previous compositor frame.
     await new Promise(resolve => setTimeout(resolve, 150));

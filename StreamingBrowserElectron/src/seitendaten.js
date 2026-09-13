@@ -848,6 +848,11 @@ function uebersichtSkript() {
       // eigentlichen Namen daneben. Ist die Nummer nur ein Vorspann mit
       // Trennzeichen, bleibt der Name trotzdem erhalten.
       text = text.replace(/^(?:folge|episode|ep|e) *[0-9]+ *(?:[-:·]|\\u2013|\\u2014) */i, "");
+      // AniWorld haengt bei manchen Serien an den englischen Titel noch die
+      // absolute Nummer, etwa "New School Term ... [Episode 064]". Diese
+      // Anbieterangabe gehoert nicht zum Titel und verhindert sonst den
+      // exakten Abgleich mit AnimeFillerList bei spaeteren Staffeln.
+      text = text.replace(/ *\[(?:episode|folge) *[0-9]+\] *$/i, "");
       // Leer, nur die Nummer noch einmal, der Vermerk einer Sammelfolge, oder
       // so lang, dass es kein Titel mehr ist, sondern die halbe Zeile.
       if (!text || text.length > 120) return "";
