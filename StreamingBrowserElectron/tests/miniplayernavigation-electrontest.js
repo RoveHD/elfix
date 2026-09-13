@@ -17,7 +17,7 @@ app.whenReady().then(async()=>{
  const c=vm.createContext({mainWindow:win,spielerView:view,spielerLauf:{id:1,session:"same"},spielerMiniAktiv:false,spielerMiniVorbereitung:false,spielerAutoMiniAusstehend:null,
  settings:{playback:{pauseOnMinimize:true,pauseOnBlur:true}},isContentFullscreen:false,browserBounds:{x:0,y:0,width:1100,height:720},
  isLiveView:v=>Boolean(v&&!v.webContents.isDestroyed()),clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),providerViews:new Map(),attachedProviderViews:new Set(),overlayReasons:new Set(),
- activeView:null,activeProviderId:null,activeFavoriteId:null,providers:[],webContentsProvider:new Map(),providerResumeState:new Map(),sendActiveState:()=>{},
+ activeView:null,activeProviderId:null,activeFavoriteId:null,providers:[],webContentsProvider:new Map(),providerResumeState:new Map(),sendActiveState:()=>{},folgenWerkbaenkeSchliessen:()=>{},
  direktSpielerSchliessen:()=>{closes++;},clearBrowserDataPreservingLogin:async()=>{},setOverlayOpen:(k,on)=>on?c.overlayReasons.add(k):c.overlayReasons.delete(k),optionaleCachesNachMiniPlanen:()=>{},
  vomSpieler:e=>e.sender===view.webContents,sendFullscreenState:()=>{},applyBrowserBounds:()=>c.spielerLageSetzen(),pauseActivePlayback:()=>{pauses++;view.webContents.executeJavaScript("bild.pause()").catch(()=>{});},ipcMain,setTimeout});
  for(const name of ["spielerMiniBehalten","spielerBeimMinimieren","spielerLageSetzen","enterHomeMode","leaveContentFullscreen"])vm.runInContext(source(name),c);

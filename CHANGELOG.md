@@ -3,7 +3,7 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
-## 2.0.34 — 13. September 2026
+## 2.0.35 — 13. September 2026
 
 - Folgen gelten in der Auswahl erst nach dem normalen Abschluss ab 90 %
   inklusive Sehzeitprüfung als gesehen. Das bloße Starten gibt auf Desktop,
