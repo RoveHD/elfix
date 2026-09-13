@@ -66,6 +66,7 @@
   async function lauf1(zustand, hoechstens) {
     const favoriten = (zustand && zustand.favoriten) || [];
     const ergebnis = await lauf.lauf(favoriten, Number(hoechstens) || nachschub.PRO_LAUF);
+    require("watchparty-bruecke").nachschubMelden(favoriten);
     return {
       favoriten,
       geaendert: Boolean(ergebnis.geaendert),

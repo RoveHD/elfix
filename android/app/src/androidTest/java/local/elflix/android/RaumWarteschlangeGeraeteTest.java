@@ -1,11 +1,15 @@
 package local.elflix.android;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.RadioButton;
 import android.widget.TextView;
 
 import androidx.test.core.app.ActivityScenario;
@@ -43,6 +47,12 @@ public class RaumWarteschlangeGeraeteTest {
         return (View) methode.invoke(activity, tv, room);
     }
 
+    private static String bildStand(MainActivity activity) throws Exception {
+        Method methode = MainActivity.class.getDeclaredMethod("watchpartyBild");
+        methode.setAccessible(true);
+        return (String) methode.invoke(activity);
+    }
+
     private static TextView text(View view, String gesucht) {
         if (view instanceof TextView && gesucht.equals(((TextView) view).getText().toString())) {
             return (TextView) view;
@@ -63,7 +73,7 @@ public class RaumWarteschlangeGeraeteTest {
         assertTrue("Bedingung nach 20 Sekunden nicht erfüllt", test.getAsBoolean());
     }
 
-    @Test public void echteMainActivityZeigtBeideQueuesUndSperrtOfflineAktionen() throws Exception {
+    @Test public void echteMainActivityZeigtNurGewaehlteQueueUndSperrtOfflineAktionen() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> {
                 try {
@@ -81,16 +91,77 @@ public class RaumWarteschlangeGeraeteTest {
                     for (boolean tv : new boolean[] { false, true }) {
                         View karte = queueKarte(activity, tv, "TEST");
                         assertNotNull(text(karte, "Warteschlange"));
-                        assertNotNull(text(karte, "Serien und Filme"));
-                        assertNotNull(text(karte, "YouTube"));
+                        RadioButton serien = (RadioButton) text(karte, "Serien & Filme");
+                        RadioButton youtube = (RadioButton) text(karte, "YouTube");
+                        assertNotNull(serien);
+                        assertNotNull(youtube);
+                        serien.performClick();
+                        assertTrue(serien.isChecked());
                         assertNotNull(text(karte, "Stimmen · Konkrete Folge"));
-                        assertNotNull(text(karte, "Stimmen · Queue-Video"));
+                        assertNull(text(karte, "Stimmen · Queue-Video"));
                         assertNotNull(text(karte, "Titel aus Merkliste vorschlagen"));
-                        assertNotNull(text(karte, "YouTube-Runde beitreten"));
-                        assertNotNull(text(karte, "YouTube-Video vorschlagen"));
+                        assertNull(text(karte, "YouTube-Runde beitreten"));
                         TextView starten = text(karte, "Ausgewählten Titel starten");
                         assertNotNull(starten);
                         assertFalse("Offline-Raum darf keinen Start auslösen", starten.isEnabled());
+                        youtube.performClick();
+                        assertTrue(youtube.isChecked());
+                        assertFalse(serien.isChecked());
+                        assertNull(text(karte, "Stimmen · Konkrete Folge"));
+                        assertNull(text(karte, "Titel aus Merkliste vorschlagen"));
+                        assertNull(text(karte, "Ausgewählten Titel starten"));
+                        assertNotNull(text(karte, "Stimmen · Queue-Video"));
+                        assertFalse(text(karte, "YouTube-Runde beitreten").isEnabled());
+                        assertFalse(text(karte, "YouTube-Video vorschlagen").isEnabled());
+                        assertFalse("Reiterwechsel tritt keiner YouTube-Runde bei",
+                            queue.youtubeRaumAktiv("TEST"));
+
+                        View erneuert = queueKarte(activity, tv, "TEST");
+                        assertTrue("Auswahl bleibt beim Neuaufbau erhalten",
+                            ((RadioButton) text(erneuert, "YouTube")).isChecked());
+                        assertNotNull(text(erneuert, "Stimmen · Queue-Video"));
+                        assertNull(text(erneuert, "Stimmen · Konkrete Folge"));
+                        View andererRaum = queueKarte(activity, tv, "ANDERER RAUM");
+                        assertTrue("Jeder Raum hat eine eigene Auswahl",
+                            ((RadioButton) text(andererRaum, "Serien & Filme")).isChecked());
+                        assertNull(text(andererRaum, "Stimmen · Queue-Video"));
+                        serien.performClick();
+                        assertNotNull(text(karte, "Stimmen · Konkrete Folge"));
+                        assertNull(text(karte, "Stimmen · Queue-Video"));
+                    }
+                } catch (Exception fehler) { throw new AssertionError(fehler); }
+            });
+        }
+    }
+
+    @Test public void queueAenderungenAktualisierenDenBildstandOhneRaumAenderung() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                try {
+                    Watchparty watchparty = (Watchparty) lesen(activity, "watchparty");
+                    Field status = Watchparty.class.getDeclaredField("letzterStatus");
+                    status.setAccessible(true);
+                    status.set(watchparty, new JSONObject().put("rooms", new JSONArray()
+                        .put(new JSONObject().put("room", "QUEUE-TEST"))));
+                    RaumWarteschlange queue = (RaumWarteschlange) lesen(activity, "raumWarteschlange");
+                    for (String event : new String[] { "queue:state", "ytqueue:state" }) {
+                        String vorher = bildStand(activity);
+                        JSONObject item = new JSONObject().put("id", "q1").put("title", "Vorschlag");
+                        JSONObject stand = new JSONObject().put("room", "QUEUE-TEST")
+                            .put("rev", 1).put("items", new JSONArray().put(item));
+                        queue.ereignis(event, stand.toString());
+                        String vorschlag = bildStand(activity);
+                        assertNotEquals("Neuer Vorschlag muss sichtbar werden", vorher, vorschlag);
+                        queue.ereignis(event, stand.put("rev", 2).toString());
+                        assertEquals("Gleicher Inhalt darf keinen Neuaufbau auslösen",
+                            vorschlag, bildStand(activity));
+                        item.put("voted", true);
+                        queue.ereignis(event, stand.toString());
+                        String stimme = bildStand(activity);
+                        assertNotEquals("Die eigene Stimme muss sichtbar werden", vorschlag, stimme);
+                        queue.ereignis(event, stand.put("items", new JSONArray()).toString());
+                        assertNotEquals("Entfernte Vorschläge müssen verschwinden",
+                            stimme, bildStand(activity));
                     }
                 } catch (Exception fehler) { throw new AssertionError(fehler); }
             });

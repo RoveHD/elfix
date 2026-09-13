@@ -275,6 +275,40 @@ function nachschubUrteil(favorit, umfang) {
   return { art: "neu", grund: neueStaffel ? "neue-staffel" : "neue-folge", aenderung, label };
 }
 
+// Ein frisch verbundenes Geraet hat zu archivierten Raumtiteln oft keinen
+// lokalen Eintrag. Ein bereits gespeicherter Nachschubfund muss trotzdem die
+// Runde erreichen, auch wenn sie erst nach dem Fund wieder verbunden wird.
+// Nur die bestaetigte Verfuegbarkeit wird geteilt; Ausgangspunkt und naechste
+// Folge kommen aus dem Raum, niemals aus dem privaten Wiedergabefortschritt.
+function watchpartyNachschub(favoriten, eintraege) {
+  const funde = (Array.isArray(favoriten) ? favoriten : []).filter((favorit) => (
+    favorit?.newEpisodeAt && !favorit.rewatching
+  ));
+  const meldungen = [];
+  for (const raum of Array.isArray(eintraege) ? eintraege : []) {
+    if (!raum?.joined || !raum.archived || !raum.key || !raum.room) continue;
+    const url = raum.progress?.url || raum.url;
+    const identity = fortschritt.episodeIdentity(url);
+    if (!identity || raum.type === "film") continue;
+    const basis = {
+      title: raum.title, url, type: "serie",
+      season: identity.season, episode: identity.episode,
+      finalSeason: identity.season, finalEpisode: identity.episode,
+      completed: true, watchpartyRoom: raum.room, watchpartyArchived: true
+    };
+    for (const fund of funde) {
+      if (fortschritt.episodeIdentity(fund.url)?.key !== identity.key) continue;
+      const urteil = nachschubUrteil(basis, {
+        seasons: fund.finalSeason, episodes: fund.finalEpisode
+      });
+      if (urteil.art !== "neu") continue;
+      meldungen.push({ key: raum.key, room: raum.room, eintrag: { ...basis, ...urteil.aenderung } });
+      break;
+    }
+  }
+  return meldungen;
+}
+
 /**
  * Ein Durchgang - die Verkabelung um die Entscheidung herum.
  *
@@ -352,6 +386,7 @@ function erstellen({ holen, protokoll = null, jetzt = () => new Date() } = {}) {
 }
 
 module.exports = {
+  watchpartyNachschub,
   erstellen,
   kandidaten,
   nachschubUrteil,

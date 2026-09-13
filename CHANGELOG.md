@@ -3,6 +3,25 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.31 — 13. September 2026
+
+- „Naechste Folge“ und die direkte Folgenauswahl funktionieren in der
+  Watchparty wieder zuverlaessig. Hat ein Geraet die Vorbereitung verpasst,
+  reicht das Relay ihm die aktuelle Folge gezielt nach, ohne die uebrigen
+  Teilnehmer erneut anzuhalten.
+- Desktop und Android laden eine nachgeholte Folge zuerst pausiert und fragen
+  danach den aktuellen Raumstand ab. Verspaetete Start-, Pause- oder
+  Ladeantworten koennen eine neuere Folgenwahl nicht mehr ueberschreiben.
+- Fehlgeschlagene Folgenwechsel bleiben nicht mehr unsichtbar: Die Apps melden
+  eine unterbrochene Watchparty-Verbindung und lassen den Wechsel erneut zu.
+- Die Android-Watchparty zeigt ihre Warteschlange nur noch einmal und trennt
+  Serien/Filme und YouTube innerhalb derselben Karte.
+- Neue verfuegbare Folgen werden in laufende Watchparty-Raeume nachgetragen.
+  Das Bestätigungsfenster fuer geschuetzte Anbieter ist auf Desktop und Android
+  klarer abgegrenzt und blockiert die Wiedergabe nicht mehr dauerhaft.
+- Geprueft mit Desktop- und Relay-Regressionen, der Watchparty-Matrix (53/53),
+  318 Android-Unit-Tests, Android-Lint sowie App- und Test-APK-Builds.
+
 ## 2.0.30 — 10. September 2026
 
 - Die Android- und TV-Oberflaechen sind ueberarbeitet: groessere Titelbilder,

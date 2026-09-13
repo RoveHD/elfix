@@ -719,9 +719,17 @@ async function androidAlleinStart(tv, offen) {
       key: BLEACH.toLowerCase(), url: folgeVon(BLEACH, 5, 1), title: "Bleach",
       providerName: "AniWorld", type: "serie", season: 5, episode: 1
     }, ZWEITER);
-    await warteBis(
-      () => tv.bruecke.eintraege().filter((e) => e.key === BLEACH.toLowerCase()).length === 2,
-      "Bleach steht in zwei Raeumen");
+    await warteBis(() => {
+      if (tv.bruecke.eintraege().filter((e) => e.key === BLEACH.toLowerCase()).length !== 2) return false;
+      // `eintraege()` und `oeffnungsZiel()` lesen denselben asynchronen
+      // Mehrraumzustand. Unter hoher paralleler Testlast kann zwischen beiden
+      // noch der zweite Raumbeitritt eintreffen; bereit ist der Zustand erst,
+      // wenn beide konkreten Ziele aufloesbar sind.
+      return Boolean(
+        tv.bruecke.oeffnungsZiel(BLEACH.toLowerCase(), RAUM, ANBIETER)
+        && tv.bruecke.oeffnungsZiel(BLEACH.toLowerCase(), ZWEITER, ANBIETER)
+      );
+    }, "Bleach steht in zwei Raeumen und beide Ziele sind aufloesbar");
 
     const ausEins = tv.bruecke.oeffnungsZiel(BLEACH.toLowerCase(), RAUM, ANBIETER);
     const ausZwei = tv.bruecke.oeffnungsZiel(BLEACH.toLowerCase(), ZWEITER, ANBIETER);

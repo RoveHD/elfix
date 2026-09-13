@@ -220,11 +220,15 @@ vm.runInContext(main.slice(hosterStart, hosterEnd), kontext);
   // In einer Runde schickt auch der Gast nur den Wunsch an das Relay. Die
   // Quelle oeffnet sich erst nach dessen gemeinsamer Vorbereitung.
   const wuensche = [];
+  let dispatchMoeglich = true;
   kontext.spielerRunde = () => ({ key: "serie:bleach", raum: "probe" });
   kontext.taste = require("../src/taste");
   kontext.watchparty = {
     status: () => ({ rooms: [{ room: "probe", connected: true }] }),
-    steuernMitAdresse: (...args) => wuensche.push(args)
+    steuernMitAdresse: (...args) => {
+      wuensche.push(args);
+      return dispatchMoeglich;
+    }
   };
   const gemeinsam = await folgenHandler({ sender }, "https://aniworld.to/anime/stream/bleach/staffel-1/episode-5");
   assert.equal(gemeinsam.ok, true);
@@ -233,6 +237,14 @@ vm.runInContext(main.slice(hosterStart, hosterEnd), kontext);
   assert.equal(wuensche.length, 1);
   assert.equal(wuensche[0][1], "navigate");
   assert.equal(wuensche[0][4], "probe");
+
+  // `connected` ist nur der zuletzt bekannte Status. Bricht der Socket genau
+  // zwischen dieser Abfrage und send() weg, darf der Player keinen Erfolg
+  // melden und auf eine Relay-Antwort warten, die nie kommen kann.
+  dispatchMoeglich = false;
+  const verloren = await folgenHandler({ sender }, "https://aniworld.to/anime/stream/bleach/staffel-1/episode-6");
+  assert.equal(verloren.ok, false, "Ein verlorener WebSocket-Dispatch wurde als Erfolg gemeldet");
+  assert.match(verloren.grund, /Verbindung/);
 
   console.log("OK Watchparty-Quellenwahl: Host frei, Gast gesperrt, Folgenwechsel frei");
 })().catch((fehler) => {

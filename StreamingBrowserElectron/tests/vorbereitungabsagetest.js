@@ -65,6 +65,8 @@ function lauf({ bereitWerden, reason }) {
     sendWatchpartyLive: () => {},
     followWatchpartyEpisode: async () => {},
     providerViews: new Map([["aniworld", { webContents: { getURL: () => EINTRAG.url } }]]),
+    providers: [{ id: "aniworld" }],
+    scheduleProviderAutoplay: () => {}, stopAutoplayRequest: () => {},
     isLiveView: () => true,
     istGleicheFolge: () => true,
     executeJavaScriptInMediaFrames: async () => (bereitWerden ? ["bereit"] : []),

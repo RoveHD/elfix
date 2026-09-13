@@ -17,6 +17,8 @@ async function pruefen(phase) {
     sendWatchpartyLive() {},
     followWatchpartyEpisode: () => phase === "navigation" ? pause : Promise.resolve(),
     providerViews: new Map([[1, { webContents: { getURL: () => "episode" } }]]),
+    providers: [{ id: 1 }],
+    scheduleProviderAutoplay: () => {}, stopAutoplayRequest: () => {},
     isLiveView: () => true, istGleicheFolge: () => true,
     executeJavaScriptInMediaFrames: () => { ausfuehrungen++; return pause.then(() => ["bereit"]); },
     watchpartyApplyScript: () => "prepare", watchpartyEreignis: x => x,

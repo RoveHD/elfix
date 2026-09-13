@@ -26,6 +26,7 @@
   // haette der Fernseher gehabt.
   const { serverNormalisieren, serverBeanstandung } = require("watchparty");
   const fortschritt = require("fortschritt");
+  const nachschub = require("nachschub");
   // Dieselbe Sync-Strategie wie am Rechner: Zielzeit, Drift, Veraltung, der
   // Horcher am Player und die Entscheidung, was mit einem eingehenden Befehl
   // zu geschehen hat. Kein Stueck davon steht hier noch einmal.
@@ -354,6 +355,13 @@
       && fortschritt.serienKennungAusUrl(favorit.url) === serie) || null;
   }
 
+  function nachschubMelden(favoriten) {
+    if (!raeume || !raeume.aktiv) return;
+    for (const fund of nachschub.watchpartyNachschub(favoriten, raeume.eintraege())) {
+      raeume.fortschrittMelden(fund.key, fortschritt.watchpartyStand(fund.eintrag), fund.room);
+    }
+  }
+
   /**
    * Dasselbe fuer *alle* betretenen Titel - in einem einzigen Aufruf.
    *
@@ -395,6 +403,7 @@
    */
   function raumEintraegeSichern(zustand, anbieter) {
     let favoriten = (zustand && zustand.favoriten) || [];
+    nachschubMelden(favoriten);
     const gesichert = [];
     let angelegt = 0;
     let geaendert = false;
@@ -645,7 +654,13 @@
     // syncprepare und syncstart gehen denselben Weg wie ein gewoehnlicher
     // Befehl - nur mit anderen Flaggen. Beim Vorbereiten wartet das Skript,
     // bis der Sprung wirklich sitzt; erst dann meldet Java "bereit".
-    const aktion = urteil.tun === "syncprepare" ? "syncprepare" : String(nachricht.action);
+    // Ein syncstart beschreibt die gemeinsame Startgeneration, sein
+    // Laufzustand bleibt trotzdem autoritativ. Bei playing:false muss der
+    // Web-Player auf der vereinbarten Stelle stehen bleiben; der nackte
+    // Nachrichtentyp wuerde applyScript sonst immer play() waehlen.
+    const aktion = urteil.tun === "syncprepare" ? "syncprepare"
+      : urteil.tun === "syncstart" && !ereignis.playing ? "pause"
+        : String(nachricht.action);
     const anwenden = sync.applyScript(aktion, ereignis, {
       genau: urteil.genau,
       warten: urteil.warten,
@@ -748,8 +763,7 @@
   /** Ein Folgenwechsel dieses Geraets. */
   function folgenwechselMelden(key, url, room) {
     if (!raeume || !key) return false;
-    raeume.steuernMitAdresse(key, "navigate", 0, String(url || ""), room);
-    return true;
+    return raeume.steuernMitAdresse(key, "navigate", 0, String(url || ""), room);
   }
 
   /**
@@ -1095,6 +1109,7 @@
     status,
     eintraege,
     standMelden,
+    nachschubMelden,
     // Titel und Adresse in der Runde.
     titelSchluessel,
     lageFuer,

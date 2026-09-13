@@ -363,6 +363,7 @@ async function durchgang(eintrag, holen) {
   const modul = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(BRUECKEN, "nachschub-bruecke.js"), "utf8"), {
     require: (gesucht) => {
+      if (gesucht === "watchparty-bruecke") return { nachschubMelden: () => {} };
       if (!KERN_MODULE.has(gesucht)) {
         throw new Error(`"${gesucht}" steht nicht in kernModule und faehrt nicht mit`);
       }

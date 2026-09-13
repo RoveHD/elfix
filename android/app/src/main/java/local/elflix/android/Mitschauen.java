@@ -85,6 +85,10 @@ public final class Mitschauen {
         default void nativeFolgenBarriereAbbrechen(String syncId) { }
         /** Ein passendes syncstart wird jetzt an den nativen Player weitergereicht. */
         default void nativeFolgenBarriereStartet(String syncId) { }
+        /** Eine verpasste Vorbereitung laedt die nachgeholte native Quelle zuerst pausiert. */
+        default void nativeFolgenstartNachholen(String syncId, String url) { }
+        /** Ein neuerer Nutzerwunsch nimmt nur diesen vorsorglichen Pausezustand zurueck. */
+        default void nativeFolgenstartNachholenAbbrechen(String syncId, String url) { }
         /** Der WebView, in dem gerade geschaut wird - oder {@code null}. */
         WebView spieler();
 
@@ -268,10 +272,19 @@ public final class Mitschauen {
     private final java.util.Map<String, JSONObject> startNachrichten = new java.util.HashMap<>();
     /** Verhindert eine zweite Ready-Meldung derselben Relay-Generation. */
     private final java.util.Set<String> bereitGemeldeteStarts = new java.util.HashSet<>();
+    /** Bereits als verpasster Folgenstart angenommene Generationen leben nie ein zweites Mal auf. */
+    private final java.util.LinkedHashSet<String> bekannteNachholStarts = new java.util.LinkedHashSet<>();
+    /** Nachgeholte Generationen, deren Zielplayer noch nicht bereit ist. */
+    private final java.util.Set<String> offeneNachholStarts = new java.util.HashSet<>();
+    private static final int NACHHOL_STARTS_BEHALTEN = 64;
     /** Sync-Generation, fuer die ein Web-Hoster gerade nur bis zum Pausebild geladen wird. */
     private String vorbereitungsLaderSyncId = "";
     /** Ein lokaler Folgenklick wartet auf sein autoritatives syncprepare-Echo. */
     private boolean wartetAufFolgenBarriere;
+    /** Nur der neueste angeforderte Seitenwechsel darf noch wirklich oeffnen. */
+    private int folgenOeffnenGeneration;
+    /** Spaete Lage-/Dispatchantworten eines ueberholten eigenen Wechsels sind wirkungslos. */
+    private int folgenwechselMeldenGeneration;
 
     /**
      * Wo das Live-Schauen abgeschaltet ist - je Raum und Titel.
@@ -385,7 +398,6 @@ public final class Mitschauen {
         int erreicht = rahmen.anSpieler(ansicht, beobachterSkript);
         if (erreicht <= 0) return;
         Log.d(TAG, "Watchparty-Horcher in " + erreicht + " Rahmen");
-        einklinken();
         // Kam syncprepare waehrend des Folgenwechsels oder noch vor dem ersten
         // Player-Rahmen an, wird es erst jetzt ausgefuehrt. Eine Bereitschaft
         // ohne geladenen Player wuerde den Rest der Runde zu frueh freigeben.
@@ -393,8 +405,14 @@ public final class Mitschauen {
             webFolgeNachricht.optString("url", ""), umgebung.adresse())) {
             JSONObject nachricht = webFolgeNachricht;
             JSONObject urteil = webFolgeUrteil;
+            // Erst die verpasste Startgeneration abschliessen, dann den
+            // neuen Player als anwesend melden und frisch abgleichen.
+            if (nachholStartBereit(nachricht, this::einklinken)) return;
+            einklinken();
             ausfuehren(ansicht, nachricht, urteil);
+            return;
         }
+        einklinken();
     }
 
     /**
@@ -724,7 +742,10 @@ public final class Mitschauen {
                 && gleicheNachrichtFolge(nativeFolgeNachricht, url)) {
                 JSONObject nachricht = nativeFolgeNachricht;
                 JSONObject urteil = nativeFolgeUrteil;
-                umgebung.nativSteuern(urteil, () -> bereitMelden(nachricht));
+                if (nachholStartBereit(nachricht, this::abgleichen)) return;
+                umgebung.nativSteuern(urteil,
+                    "syncprepare".equals(urteil.optString("tun", ""))
+                        ? () -> bereitMelden(nachricht) : null);
             } else if (!umgebung.nativWartet()) abgleichen();
         });
     }
@@ -827,32 +848,62 @@ public final class Mitschauen {
      * Folgenliste. Die anderen ziehen nach.
      */
     public boolean folgenwechselMelden(String url) {
-        if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) return false;
+        return folgenwechselMelden(url,
+            () -> umgebung.hinweisZeigen("Keine Verbindung zur Watchparty. Bitte erneut versuchen."));
+    }
+
+    /**
+     * @param fehlgeschlagen sichtbarer Rueckkanal fuer den Player; bei einem
+     *                        Dispatchfehler darf er weder lokal starten noch
+     *                        still in einem Wartestand bleiben
+     */
+    public boolean folgenwechselMelden(String url, Runnable fehlgeschlagen) {
+        if (url == null || url.isEmpty()) return false;
+        if (folgtDerRunde) {
+            // Ein Klick waehrend eines eingehenden Wechsels ist der neuere
+            // ausdrueckliche Wunsch. Er darf weder vom Echo-Schutz verschluckt
+            // noch spaeter vom bereits vorgemerkten Ziel ueberschrieben werden.
+            folgtDerRunde = false;
+            folgenOeffnenGeneration += 1;
+            offenenFolgenwechselVerwerfen();
+        }
+        if (kern == null || !kern.istBereit()) return false;
         if (watchparty == null || !watchparty.istEingeschaltet()) return false;
-        if (folgtDerRunde) return false;
         if (raum().isEmpty()) return false;
-        wartetAufFolgenBarriere = true;
-        // Der native Direkt-Spieler meldet den Wechsel schon vor dem erneuten
-        // Oeffnen der Folgenseite. Wenn deren Beobachter danach fertig wird,
-        // muss er dieselbe Folge wiedererkennen statt ein zweites navigate zu
-        // schicken.
-        int[] folge = folgeAus(url);
-        if (folge[1] > 0) gemeldeteFolge = serienTeil(url) + "#s" + folge[0] + "e" + folge[1];
-        // Wer selbst weiterblaettert, meint den Auftrag von vorhin nicht mehr -
-        // es sei denn, er zeigt genau auf diese Folge. Aus der Watchparty-Seite
-        // geoeffnet ist beides dasselbe Ereignis.
-        // Der Wechsel ist ab jetzt ein Zwei-Phasen-Start. Ein bereits durch
-        // den lokalen Klick angelegter Autostart darf die neue Folge nicht
-        // vor dem syncprepare-Echo des Relays loslaufen lassen.
-        autostartAbbrechen("Folgenwechsel wartet auf gemeinsame Bereitschaft");
+        final int generation = ++folgenwechselMeldenGeneration;
+        // Ein neuer ausdruecklicher Wunsch ersetzt den noch nicht bestaetigten
+        // von davor. Dessen spaeter Callback ist ueber die Generation stumm.
+        wartetAufFolgenBarriere = false;
         // Zu welchem Titel und welcher Runde die neue Seite gehoert, weiss der
         // Kern - hier gilt sie noch gar nicht als offen.
         lageFuer(url, (key, raum) -> {
-            if (key.isEmpty() || raum.isEmpty()) return;
-            if (liveAus.contains(liveMarke(key, raum))) return;
+            if (generation != folgenwechselMeldenGeneration) return;
+            if (key.isEmpty() || raum.isEmpty()
+                || liveAus.contains(liveMarke(key, raum))) {
+                fehlgeschlagen.run();
+                return;
+            }
+            wartetAufFolgenBarriere = true;
+            // Der native Direkt-Spieler meldet den Wechsel schon vor dem
+            // erneuten Oeffnen. Der Merker muss vor dem Senden stehen, damit
+            // selbst ein schnelles Relay-Echo keinen zweiten Wechsel erzeugt.
+            int[] folge = folgeAus(url);
+            if (folge[1] > 0) {
+                gemeldeteFolge = serienTeil(url) + "#s" + folge[0] + "e" + folge[1];
+            }
+            // Ab hier besitzt die gemeinsame Barriere den Start. Bis der
+            // Dispatch wirklich angenommen wurde, wird keine neue Quelle
+            // lokal geoeffnet.
+            autostartAbbrechen("Folgenwechsel wartet auf gemeinsame Bereitschaft");
             kern.rufe("watchparty-bruecke.folgenwechselMelden", Kern.args(key, url, raum),
                 (wert, fehler) -> {
-                    if (fehler != null) Log.d(TAG, "Folgenwechsel nicht gemeldet: " + fehler);
+                    if (generation != folgenwechselMeldenGeneration) return;
+                    boolean gesendet = fehler == null && "true".equals(textAus(wert));
+                    if (gesendet) return;
+                    wartetAufFolgenBarriere = false;
+                    Log.d(TAG, "Folgenwechsel nicht gemeldet: "
+                        + (fehler == null ? "keine offene Watchparty-Verbindung" : fehler));
+                    fehlgeschlagen.run();
                 });
         });
         return true;
@@ -1038,7 +1089,14 @@ public final class Mitschauen {
         // {@code gleicheAdresse: true, offen: null} fragt und die Folge erst je
         // Ansicht prueft. Was hier wirklich offen steht, entscheidet danach
         // {@link #folgen}.
-        boolean gleichziehen = "syncprepare".equals(nachricht.optString("action", ""));
+        String aktiverKey = schluessel();
+        String aktiverRaum = raum();
+        String syncId = nachricht.optString("syncId", "");
+        String nachholMarke = nachholMarke(nachricht);
+        boolean startNachholen = !bekannteNachholStarts.contains(nachholMarke)
+            && verpassterFolgenstart(nachricht, adresse, aktiverKey, aktiverRaum);
+        boolean gleichziehen = "syncprepare".equals(nachricht.optString("action", ""))
+            || startNachholen;
         try {
             lage.put("binHost", binHost(key));
             lage.put("nativ", umgebung.nativerSpieler());
@@ -1106,6 +1164,12 @@ public final class Mitschauen {
             if (!syncId.isEmpty()) {
                 String alt = startVorbereitungen.put(startMarke, syncId);
                 if (alt != null && !alt.equals(syncId)) {
+                    JSONObject alteNachricht = startNachrichten.get(alt);
+                    if (alteNachricht != null
+                        && offeneNachholStarts.contains(nachholMarke(alteNachricht))) {
+                        folgenOeffnenGeneration += 1;
+                        nachholStartVerwerfen(alteNachricht);
+                    }
                     startNachrichten.remove(alt);
                     bereitGemeldeteStarts.remove(alt);
                 }
@@ -1114,6 +1178,32 @@ public final class Mitschauen {
         } else if ("syncstart".equals(tun) || "pause".equals(aktion)
             || "seek".equals(aktion) || "play".equals(aktion) || "navigate".equals(aktion)) {
             String offen = startVorbereitungen.get(startMarke);
+            String nachholMarke = nachholMarke(nachricht);
+            boolean startNachholen = "syncstart".equals(tun) && offen == null
+                && !bekannteNachholStarts.contains(nachholMarke)
+                && verpassterFolgenstart(nachricht, umgebung.adresse(),
+                    schluessel(), raum());
+            if (startNachholen) {
+                String ziel = nachricht.optString("url", "");
+                nachholStartMerken(nachholMarke);
+                offeneNachholStarts.add(nachholMarke);
+                startVorbereitungen.put(startMarke, syncId);
+                startNachrichten.put(syncId, nachricht);
+                if (umgebung.nativerSpieler()) {
+                    nativeFolgeNachricht = nachricht;
+                    nativeFolgeUrteil = urteil;
+                    umgebung.nativeFolgenstartNachholen(syncId, ziel);
+                } else {
+                    webFolgeNachricht = nachricht;
+                    webFolgeUrteil = urteil;
+                    vorbereitungsLaderAnfordern(nachricht, ziel);
+                }
+                if (!folgen(ansicht, ziel)) {
+                    nachholStartVerwerfen(nachricht);
+                    umgebung.hinweisZeigen("Die neue Folge der Watchparty konnte nicht geöffnet werden.");
+                }
+                return;
+            }
             if ("syncstart".equals(tun)) {
                 // Ready behaelt die Generation offen. Nur deren eigener Start
                 // darf sie verbrauchen; ein spaeter Start nach Timeout hat
@@ -1136,6 +1226,7 @@ public final class Mitschauen {
                 if (offen != null) {
                     startNachrichten.remove(offen);
                     bereitGemeldeteStarts.remove(offen);
+                    offeneNachholStarts.remove(startMarke + "|" + offen);
                 }
             }
             if (passendePause) vorbereitungsLaderStoppen(offen);
@@ -1231,6 +1322,112 @@ public final class Mitschauen {
         return nachricht.optString("room", "") + "|" + nachricht.optString("key", "");
     }
 
+    private static String nachholMarke(JSONObject nachricht) {
+        return startMarke(nachricht) + "|" + nachricht.optString("syncId", "");
+    }
+
+    private void nachholStartMerken(String marke) {
+        bekannteNachholStarts.add(marke);
+        while (bekannteNachholStarts.size() > NACHHOL_STARTS_BEHALTEN) {
+            java.util.Iterator<String> alt = bekannteNachholStarts.iterator();
+            if (!alt.hasNext()) break;
+            String entfernen = alt.next();
+            alt.remove();
+            offeneNachholStarts.remove(entfernen);
+        }
+    }
+
+    /**
+     * Eine verpasste Vorbereitung ist eingeholt, sobald der neue Player
+     * wirklich existiert. Der alte syncstart wird dann nicht blind nach einer
+     * womöglich langen Ladezeit angewendet; ein frischer Abgleich liefert den
+     * inzwischen autoritativen Pause-/Play-Stand der Runde.
+     */
+    private boolean nachholStartBereit(JSONObject nachricht, Runnable frischAbgleichen) {
+        if (nachricht == null) return false;
+        String syncId = nachricht.optString("syncId", "");
+        if (syncId.isEmpty()) return false;
+        return nachholStartAbschliessen(offeneNachholStarts, nachricht, () -> {
+            String marke = startMarke(nachricht);
+            if (syncId.equals(startVorbereitungen.get(marke))) startVorbereitungen.remove(marke);
+            startNachrichten.remove(syncId);
+            bereitGemeldeteStarts.remove(syncId);
+            if (nativeFolgeNachricht != null
+                && syncId.equals(nativeFolgeNachricht.optString("syncId", ""))) {
+                nativeFolgeNachricht = null;
+                nativeFolgeUrteil = null;
+            }
+            if (webFolgeNachricht != null
+                && syncId.equals(webFolgeNachricht.optString("syncId", ""))) {
+                webFolgeNachricht = null;
+                webFolgeUrteil = null;
+            }
+            vorbereitungsLaderStoppen(syncId);
+            frischAbgleichen.run();
+        });
+    }
+
+    /** Atomarer, im JVM-Test pruefbarer Uebergang von Laden zu frischem Abgleich. */
+    static boolean nachholStartAbschliessen(java.util.Set<String> offene,
+                                             JSONObject nachricht, Runnable danach) {
+        if (offene == null || nachricht == null || danach == null
+            || !offene.remove(nachholMarke(nachricht))) return false;
+        danach.run();
+        return true;
+    }
+
+    /** Ein neuerer Nutzerwunsch ersetzt auch die noch offene alte Startgeneration. */
+    private void offenenFolgenwechselVerwerfen() {
+        String marke = raum() + "|" + schluessel();
+        String syncId = startVorbereitungen.get(marke);
+        if (syncId == null || syncId.isEmpty()) return;
+        JSONObject nachricht = startNachrichten.get(syncId);
+        if (nachricht != null && offeneNachholStarts.contains(nachholMarke(nachricht))) {
+            nachholStartVerwerfen(nachricht);
+            return;
+        }
+        startVorbereitungen.remove(marke);
+        startNachrichten.remove(syncId);
+        bereitGemeldeteStarts.remove(syncId);
+        if (nativeFolgeNachricht != null
+            && syncId.equals(nativeFolgeNachricht.optString("syncId", ""))) {
+            nativeFolgeNachricht = null;
+            nativeFolgeUrteil = null;
+        }
+        if (webFolgeNachricht != null
+            && syncId.equals(webFolgeNachricht.optString("syncId", ""))) {
+            webFolgeNachricht = null;
+            webFolgeUrteil = null;
+        }
+        vorbereitungsLaderStoppen(syncId);
+        umgebung.nativeFolgenBarriereAbbrechen(syncId);
+        wartetAufFolgenBarriere = false;
+    }
+
+    /** Ein Ziel, das gar nicht geoeffnet werden konnte, darf keinen Wartestand hinterlassen. */
+    private void nachholStartVerwerfen(JSONObject nachricht) {
+        if (nachricht == null) return;
+        String syncId = nachricht.optString("syncId", "");
+        offeneNachholStarts.remove(nachholMarke(nachricht));
+        String marke = startMarke(nachricht);
+        if (syncId.equals(startVorbereitungen.get(marke))) startVorbereitungen.remove(marke);
+        startNachrichten.remove(syncId);
+        bereitGemeldeteStarts.remove(syncId);
+        if (nativeFolgeNachricht != null
+            && syncId.equals(nativeFolgeNachricht.optString("syncId", ""))) {
+            nativeFolgeNachricht = null;
+            nativeFolgeUrteil = null;
+        }
+        if (webFolgeNachricht != null
+            && syncId.equals(webFolgeNachricht.optString("syncId", ""))) {
+            webFolgeNachricht = null;
+            webFolgeUrteil = null;
+        }
+        vorbereitungsLaderStoppen(syncId);
+        umgebung.nativeFolgenstartNachholenAbbrechen(syncId,
+            nachricht.optString("url", ""));
+    }
+
     private void bereitMelden(JSONObject nachricht) {
         String key = nachricht.optString("key", "");
         if (key.isEmpty() || kern == null || !kern.istBereit()) return;
@@ -1278,12 +1475,20 @@ public final class Mitschauen {
         // Nachzuegler die Seite ein zweites Mal neu.
         if (gleicheFolge(ziel, umgebung.adresse())) return false;
         Log.i(TAG, "Watchparty folgt der Runde auf eine andere Folge");
+        // Ein bereits angefragter eigener Wechsel darf nach diesem neueren
+        // Relay-Ziel nicht mit einer spaeten lageFuer-Antwort zurueckschlagen.
+        folgenwechselMeldenGeneration += 1;
+        wartetAufFolgenBarriere = false;
         // Der Zustand der alten Folge gehoert weg, bevor die neue steht.
         zuruecksetzen(ansicht);
         folgtDerRunde = true;
         int[] neueFolge = folgeAus(ziel);
         gemeldeteFolge = serienTeil(ziel) + "#s" + neueFolge[0] + "e" + neueFolge[1];
-        haupt.post(() -> umgebung.folgeOeffnen(umgebung.anbieter(), ziel));
+        int generation = ++folgenOeffnenGeneration;
+        haupt.post(() -> {
+            if (generation != folgenOeffnenGeneration) return;
+            umgebung.folgeOeffnen(umgebung.anbieter(), ziel);
+        });
         return true;
     }
 
@@ -1668,6 +1873,11 @@ public final class Mitschauen {
                 if (!vorbereitungsLaderSyncId.isEmpty() && webFolgeNachricht != null
                     && vorbereitungsLaderSyncId.equals(
                         webFolgeNachricht.optString("syncId", ""))) {
+                    if (nachholStartBereit(webFolgeNachricht, this::abgleichen)) {
+                        vollbildEinloesen(true);
+                        umgebung.anzeigeAuffrischen();
+                        return;
+                    }
                     ausfuehren(umgebung.spieler(), webFolgeNachricht, webFolgeUrteil);
                 }
                 // Jetzt, und keinen Augenblick frueher: das Vollbild kommt erst,
@@ -2119,6 +2329,35 @@ public final class Mitschauen {
         int[] b = folgeAus(rechts);
         if (a[1] != b[1] || a[0] != b[0]) return false;
         return serienTeil(links).equals(serienTeil(rechts));
+    }
+
+    /**
+     * Darf ein gemeinsamer Start eine verpasste Folgenvorbereitung nachholen?
+     *
+     * <p>Nur eine benannte Relay-Generation fuer den exakt aktiven Titel und
+     * Raum, deren URL und episodeId dieselbe konkrete neue Folge derselben
+     * Serie meinen. Damit kann ein Wiederanschluss aufholen, ohne dass ein
+     * alter Start, ein fremder Raum oder bloss dieselbe Episodenzahl eines
+     * anderen Titels eine Navigation ausloest.
+     */
+    static boolean verpassterFolgenstart(JSONObject nachricht, String offen,
+                                         String aktiverKey, String aktiverRaum) {
+        if (nachricht == null || !"syncstart".equals(nachricht.optString("action", ""))) {
+            return false;
+        }
+        if (nachricht.optString("syncId", "").isEmpty()
+            || aktiverKey == null || aktiverKey.isEmpty()
+            || aktiverRaum == null || aktiverRaum.isEmpty()
+            || !aktiverKey.equals(nachricht.optString("key", ""))
+            || !aktiverRaum.equals(nachricht.optString("room", ""))) return false;
+        String ziel = nachricht.optString("url", "");
+        int[] von = folgeAus(offen);
+        int[] nach = folgeAus(ziel);
+        if (von[1] <= 0 || nach[1] <= 0 || gleicheFolge(offen, ziel)) return false;
+        String serie = serienTeil(offen);
+        if (serie.isEmpty() || !serie.equals(serienTeil(ziel))) return false;
+        return ("s" + nach[0] + "e" + nach[1])
+            .equalsIgnoreCase(nachricht.optString("episodeId", ""));
     }
 
     /**

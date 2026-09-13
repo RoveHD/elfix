@@ -114,6 +114,16 @@ async function main() {
     assert.equal(wp.nativeZielBerechnen(ereignis, 10_000), 42);
     assert.equal(wp.nativeZielBerechnen(ereignis, 10_500), 43);
   });
+  await test("Web syncstart preserves an authoritative paused state", () => {
+    const wp = context.ElfixKern.require("watchparty-bruecke");
+    const result = wp.steuerungPruefen({
+      key: "serie:web-pause", room: "pause-room", action: "syncstart",
+      syncId: "pause-start-1", position: 35, videoTime: 35, playing: false,
+      sequenceId: 1, timestamp: 1000, episodeId: "s1e1"
+    }, { nativ: false, binHost: false, gleicheAdresse: true, season: 1, episode: 1 });
+    assert.equal(result.tun, "syncstart");
+    assert.ok(result.skript.includes('const aktion = "pause"'));
+  });
   await test("Intro learning and button timing use the shared rules", () => {
     const marken = context.ElfixKern.require("marken-bruecke");
     marken.laden({});

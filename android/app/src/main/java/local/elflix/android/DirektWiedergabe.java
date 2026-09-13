@@ -6,7 +6,10 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.graphics.Color;
+import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -64,7 +67,7 @@ final class DirektWiedergabe {
          * @return {@code true}, wenn das Relay den Wechsel uebernommen hat und
          *         dieses Geraet auf dessen {@code syncprepare} warten muss
          */
-        default boolean folgenwechsel(String url) { return false; }
+        default boolean folgenwechsel(String url, Runnable fehlgeschlagen) { return false; }
         default void chatSenden(String key, String text, String raum, Kern.Antwort antwort) {
             if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
         }
@@ -115,6 +118,31 @@ final class DirektWiedergabe {
     private boolean versucht;
     private String letzteSprache = "";
     private Consumer<String> nachSeite;
+    /** Der einzige sichtbare Teil der sonst unsichtbaren Werkbank. */
+    private VerifizierungsLauf verifizierung;
+
+    private final class VerifizierungsLauf {
+        final WebView view;
+        final int id;
+        final Runnable danach;
+        final Runnable gescheitert;
+        final long ende = SystemClock.uptimeMillis() + Verifizierung.MENSCH_FRIST_MS;
+        boolean token;
+        boolean navigation;
+        boolean weiter;
+        boolean sichtbar;
+        boolean maskePrueft;
+        boolean dokumentBereit = true;
+        int dokument;
+        int frei;
+
+        VerifizierungsLauf(WebView view, int id, Runnable danach, Runnable gescheitert) {
+            this.view = view;
+            this.id = id;
+            this.danach = danach;
+            this.gescheitert = gescheitert;
+        }
+    }
 
     /**
      * Was der Player annimmt.
@@ -269,6 +297,19 @@ final class DirektWiedergabe {
         }
         view.setWebViewClient(new WebViewClient() {
             private boolean gelesen;
+            @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) {
+                VerifizierungsLauf lauf = verifizierung;
+                if (lauf != null && lauf.view == v && lauf.id == id) {
+                    lauf.navigation = true;
+                    lauf.dokumentBereit = false;
+                    lauf.dokument++;
+                    lauf.maskePrueft = false;
+                    lauf.token = false;
+                    lauf.weiter = false;
+                    lauf.frei = 0;
+                    verifizierungVerbergen(lauf);
+                }
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 String scheme = r.getUrl().getScheme();
                 return !"https".equals(scheme) && !"http".equals(scheme);
@@ -284,19 +325,26 @@ final class DirektWiedergabe {
                 return null;
             }
             @Override public void onPageFinished(WebView v, String u) {
+                VerifizierungsLauf lauf = verifizierung;
+                if (lauf != null && lauf.view == v && lauf.id == id) {
+                    lauf.dokumentBereit = true;
+                    lauf.frei = 0;
+                }
                 if (gelesen || seite != view || !aktuell(id) || "about:blank".equals(u)) return;
                 gelesen = true;
                 fertig.run();
             }
         });
-        // Attached for JavaScript rendering, behind the opaque playback surface.
-        wurzel.addView(view, 0, new FrameLayout.LayoutParams(1, 1));
+        // A real viewport lets responsive challenge widgets render. It stays
+        // invisible and behind the native player until its gate is masked.
+        view.setVisibility(View.INVISIBLE);
+        wurzel.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
         view.loadUrl(url);
         handler.postDelayed(() -> {
             // Auf einer Serienseite gibt es keine Quellen, und das ist kein
             // Fehler - dort wird gewaehlt.
             if (auswahl) return;
-            if (seite == view && aktuell(id) && hoster.length() == 0 && !spielt) {
+            if (seite == view && aktuell(id) && hoster.length() == 0 && !spielt && verifizierung == null) {
                 spieler.status("Die Seite liefert noch keine Quellen. Unter Quellen erneut versuchen oder die Anbieterseite öffnen.");
             }
         }, 25000);
@@ -316,6 +364,16 @@ final class DirektWiedergabe {
 
     private void lesen(int id, long frist) {
         WebView view = seite;
+        long rest = Math.max(0L, frist - SystemClock.uptimeMillis());
+        verifizierungPruefen(view, id, rest, pausiert -> {
+            long weiterBis = pausiert ? SystemClock.uptimeMillis() + 20000L : frist;
+            lesenOhneTor(id, weiterBis);
+        }, () -> spieler.status("Die Bestätigung wurde nicht abgeschlossen. Unter Quellen erneut versuchen."));
+    }
+
+    private void lesenOhneTor(int id, long frist) {
+        WebView view = seite;
+        if (!aktuell(id) || view == null) return;
         skript("seitendaten.uebersichtSkript", id, script -> {
             if (seite != view) return;
             view.evaluateJavascript(script, wert -> {
@@ -361,8 +419,19 @@ final class DirektWiedergabe {
         view.evaluateJavascript("window." + key, wert -> {
             if (!aktuell(id) || seite != view) return;
             if (wert == null || "null".equals(wert)) {
-                if (SystemClock.uptimeMillis() < frist) handler.postDelayed(() -> linksAbholen(view, key, id, frist), 250);
-                else spieler.status("Quellen konnten nicht gelesen werden. Unter Quellen erneut versuchen.");
+                long rest = Math.max(0L, frist - SystemClock.uptimeMillis());
+                verifizierungPruefen(view, id, rest, pausiert -> {
+                    long weiterBis = pausiert ? SystemClock.uptimeMillis() + 20000L : frist;
+                    if (pausiert) {
+                        // Navigation through the verified gate replaces the
+                        // document, therefore rebuild its source promise.
+                        lesenOhneTor(id, weiterBis);
+                    } else if (SystemClock.uptimeMillis() < weiterBis) {
+                        handler.postDelayed(() -> linksAbholen(view, key, id, weiterBis), 250);
+                    } else {
+                        spieler.status("Quellen konnten nicht gelesen werden. Unter Quellen erneut versuchen.");
+                    }
+                }, () -> spieler.status("Die Bestätigung wurde nicht abgeschlossen. Unter Quellen erneut versuchen."));
                 return;
             }
             try {
@@ -391,6 +460,199 @@ final class DirektWiedergabe {
                 });
             } catch (Exception e) { spieler.status("Die Quellenliste ist nicht lesbar. Unter Quellen erneut versuchen."); }
         });
+    }
+
+    /**
+     * Gives a gate its human-only time without consuming the source/hoster
+     * budget. The already loaded WebView is reused, so cookies, redirect token,
+     * episode and selected language/hoster stay unchanged.
+     */
+    private void verifizierungPruefen(WebView view, int id, long rest,
+                                      Consumer<Boolean> fertig, Runnable gescheitert) {
+        if (view == null || !aktuell(id) || seite != view) return;
+        view.evaluateJavascript(Verifizierung.zustandScript(), wert -> {
+            if (!aktuell(id) || seite != view || verifizierung != null) return;
+            JSONObject stand = javascriptObjekt(wert);
+            if (stand == null || !stand.optBoolean("offen")) {
+                fertig.accept(false);
+                return;
+            }
+            VerifizierungsLauf lauf = new VerifizierungsLauf(view, id,
+                () -> fertig.accept(true), gescheitert);
+            verifizierung = lauf;
+            spieler.status("Bestätigung erforderlich · bitte das Häkchen setzen");
+            verifizierungTakt(lauf);
+        });
+    }
+
+    private void verifizierungTakt(VerifizierungsLauf lauf) {
+        if (verifizierung != lauf || !aktuell(lauf.id) || seite != lauf.view) return;
+        if (SystemClock.uptimeMillis() >= lauf.ende) {
+            verifizierungBeenden(lauf, false, true);
+            return;
+        }
+        lauf.view.evaluateJavascript(Verifizierung.zustandScript(), wert -> {
+            if (verifizierung != lauf || !aktuell(lauf.id) || seite != lauf.view) return;
+            JSONObject stand = javascriptObjekt(wert);
+            if (stand == null) {
+                lauf.frei = 0;
+                handler.postDelayed(() -> verifizierungTakt(lauf), Verifizierung.PRUEF_TAKT_MS);
+                return;
+            }
+            boolean offen = stand.optBoolean("offen");
+            if (offen && !stand.optBoolean("token")) {
+                lauf.token = false;
+                lauf.weiter = false;
+                lauf.navigation = false;
+            }
+            if (stand.optBoolean("token")) lauf.token = true;
+            if (stand.optBoolean("tor")) verifizierungZeigen(lauf);
+
+            if (lauf.token && !lauf.weiter && offen) {
+                int dokument = lauf.dokument;
+                lauf.view.evaluateJavascript(Verifizierung.weiterScript(), klick -> {
+                    if (verifizierung != lauf || lauf.dokument != dokument) return;
+                    String ergebnis = javascriptText(klick);
+                    if (ergebnis.startsWith("geklickt") || "token".equals(ergebnis)) lauf.weiter = true;
+                    if (ergebnis.startsWith("geklickt|") && ergebnis.length() > 9) {
+                        try {
+                            JSONArray ziele = new JSONArray(Uri.decode(ergebnis.substring(9)));
+                            for (int i = 0; i < ziele.length(); i++) {
+                                String ziel = ziele.optString(i);
+                                if (verifizierungsZielErlaubt(lauf.view, ziel)) {
+                                    lauf.view.loadUrl(ziel);
+                                    break;
+                                }
+                            }
+                        } catch (Exception ignoriert) { }
+                    }
+                });
+            }
+            lauf.frei = offen || !lauf.dokumentBereit ? 0 : lauf.frei + 1;
+            if (Verifizierung.darfFortsetzen(lauf.token, lauf.navigation, offen, lauf.frei)) {
+                verifizierungBeenden(lauf, true, false);
+                return;
+            }
+            handler.postDelayed(() -> verifizierungTakt(lauf), Verifizierung.PRUEF_TAKT_MS);
+        });
+    }
+
+    private void verifizierungZeigen(VerifizierungsLauf lauf) {
+        if (verifizierung != lauf || lauf.view.getParent() != wurzel || lauf.maskePrueft) return;
+        if (!lauf.sichtbar) {
+            int rand = dp(18);
+            int breite = Math.max(dp(240), Math.min(dp(560), Math.max(dp(240), wurzel.getWidth() - 2 * rand)));
+            int hoehe = Math.max(dp(140), Math.min(dp(430), Math.max(dp(140), wurzel.getHeight() - 2 * rand)));
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(breite, hoehe, Gravity.CENTER);
+            lauf.view.setLayoutParams(params);
+            lauf.view.setBackgroundColor(Color.TRANSPARENT);
+            lauf.view.setFocusable(true);
+            lauf.view.setFocusableInTouchMode(true);
+        }
+        lauf.maskePrueft = true;
+        int dokument = lauf.dokument;
+        lauf.view.evaluateJavascript(Verifizierung.maskierenScript(), wert -> {
+            if (verifizierung != lauf || lauf.view.getParent() != wurzel) return;
+            lauf.maskePrueft = false;
+            if (lauf.dokument != dokument || !lauf.dokumentBereit) return;
+            JSONObject masse = javascriptObjekt(wert);
+            if (masse == null || !masse.optBoolean("ok")) {
+                verifizierungVerbergen(lauf);
+                return;
+            }
+            int inhalt = masse.optInt("height");
+            FrameLayout.LayoutParams aktuell = (FrameLayout.LayoutParams) lauf.view.getLayoutParams();
+            if (inhalt > 0) aktuell.height = Math.max(dp(100), Math.min(dp(430), dp(inhalt)));
+            aktuell.gravity = Gravity.CENTER;
+            lauf.view.setLayoutParams(aktuell);
+            if (!lauf.sichtbar) {
+                lauf.view.bringToFront();
+                lauf.view.setVisibility(View.VISIBLE);
+                lauf.view.requestFocus();
+                lauf.sichtbar = true;
+            }
+        });
+    }
+
+    private boolean verifizierungsZielErlaubt(WebView view, String ziel) {
+        try {
+            java.net.URI target = new java.net.URI(ziel);
+            String schema = target.getScheme();
+            String host = target.getHost();
+            if (!("http".equalsIgnoreCase(schema) || "https".equalsIgnoreCase(schema)) || host == null) return false;
+            if (filter.shouldBlock(ziel, anbieter)) return false;
+            if (Adblocker.isChallengeOrVerificationUrl(ziel, anbieter)
+                || Adblocker.isLikelyPlayerNavigation(ziel)) return true;
+            String aktuell = view == null ? null : view.getUrl();
+            String basis = anbieter == null ? null : anbieter.startUrl;
+            return gleicheWebHerkunft(host, aktuell) || gleicheWebHerkunft(host, basis);
+        } catch (Exception ungueltig) {
+            return false;
+        }
+    }
+
+    private static boolean gleicheWebHerkunft(String host, String url) {
+        try {
+            String basis = new java.net.URI(url).getHost();
+            return basis != null && (host.equalsIgnoreCase(basis)
+                || host.toLowerCase(java.util.Locale.ROOT).endsWith("." + basis.toLowerCase(java.util.Locale.ROOT))
+                || basis.toLowerCase(java.util.Locale.ROOT).endsWith("." + host.toLowerCase(java.util.Locale.ROOT)));
+        } catch (Exception ungueltig) {
+            return false;
+        }
+    }
+
+    private void verifizierungVerbergen(VerifizierungsLauf lauf) {
+        if (lauf == null || lauf.view.getParent() != wurzel) return;
+        lauf.sichtbar = false;
+        lauf.maskePrueft = false;
+        lauf.view.clearFocus();
+        lauf.view.setVisibility(View.INVISIBLE);
+        lauf.view.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private void verifizierungBeenden(VerifizierungsLauf lauf, boolean erfolg, boolean melden) {
+        if (verifizierung != lauf) return;
+        verifizierung = null;
+        if (lauf.view.getParent() == wurzel) {
+            lauf.view.evaluateJavascript(Verifizierung.maskeEntfernenScript(), null);
+            verifizierungVerbergen(lauf);
+            // Die unsichtbare Werkbank wieder unter die native Playerflaeche.
+            wurzel.removeView(lauf.view);
+            wurzel.addView(lauf.view, 0, new FrameLayout.LayoutParams(-1, -1));
+        }
+        if (erfolg) {
+            spieler.status("Bestätigung angenommen · Quelle wird fortgesetzt …");
+            lauf.danach.run();
+        } else if (melden) {
+            spieler.status("Die Bestätigung wurde abgebrochen oder lief ab.");
+            lauf.gescheitert.run();
+        }
+    }
+
+    private void verifizierungAbbrechen(boolean melden) {
+        VerifizierungsLauf lauf = verifizierung;
+        if (lauf != null) verifizierungBeenden(lauf, false, melden);
+    }
+
+    private int dp(int wert) {
+        return Math.round(wert * activity.getResources().getDisplayMetrics().density);
+    }
+
+    private static JSONObject javascriptObjekt(String wert) {
+        try {
+            Object erste = new JSONTokener(wert == null ? "null" : wert).nextValue();
+            if (erste instanceof JSONObject) return (JSONObject) erste;
+            if (erste instanceof String) return new JSONObject((String) erste);
+        } catch (Exception ignoriert) { }
+        return null;
+    }
+
+    private static String javascriptText(String wert) {
+        try {
+            Object text = new JSONTokener(wert == null ? "null" : wert).nextValue();
+            return text == null ? "" : String.valueOf(text);
+        } catch (Exception ignoriert) { return ""; }
     }
 
     private void aufloesen(int index, double stelle, int id, boolean automatisch) {
@@ -458,6 +720,8 @@ final class DirektWiedergabe {
         java.util.ArrayDeque<String> wartend = new java.util.ArrayDeque<>();
         boolean[] fertig = { false };
         boolean[] prueft = { false };
+        boolean[] torPrueft = { false };
+        long[] frist = { SystemClock.uptimeMillis() + 20000L };
         Runnable[] pruefen = new Runnable[1];
         pruefen[0] = () -> {
             if (fertig[0] || prueft[0] || wartend.isEmpty() || !aktuell(id)) return;
@@ -478,22 +742,58 @@ final class DirektWiedergabe {
                 pruefen[0].run();
             });
         };
-        seiteLaden(url, id, () -> {
-            if (seite != null) seite.evaluateJavascript(
+        Runnable spielenLassen = () -> {
+            if (seite != null && aktuell(id)) seite.evaluateJavascript(
                 "(()=>{for(const v of document.querySelectorAll('video')){v.muted=true;v.volume=0;v.play().catch(()=>{})}"
                 + "const b=document.querySelector('.vjs-big-play-button,.jw-icon-display,[aria-label=Play]');if(b)b.click()})()", null);
-        }, kandidat -> {
+        };
+        seiteLaden(url, id, spielenLassen, kandidat -> {
             if (fertig[0] || gesehen.size() >= 8 || !gesehen.add(kandidat)) return;
             wartend.add(kandidat);
             pruefen[0].run();
         });
-        handler.postDelayed(() -> {
+        Runnable[] torWache = new Runnable[1];
+        torWache[0] = () -> {
+            if (fertig[0] || !aktuell(id) || seite == null) return;
+            if (!torPrueft[0] && verifizierung == null) {
+                torPrueft[0] = true;
+                WebView view = seite;
+                long rest = Math.max(0L, frist[0] - SystemClock.uptimeMillis());
+                verifizierungPruefen(view, id, rest, pausiert -> {
+                    torPrueft[0] = false;
+                    if (pausiert) frist[0] = SystemClock.uptimeMillis() + 20000L;
+                    spielenLassen.run();
+                }, () -> {
+                    torPrueft[0] = false;
+                    if (!fertig[0] && aktuell(id)) {
+                        fertig[0] = true;
+                        kern.rufe("direkt-android.abbrechen", (w, f) -> { });
+                        seiteFreigeben();
+                        spieler.status("Die Bestätigung wurde nicht abgeschlossen. Unter Quellen erneut versuchen.");
+                    }
+                });
+            }
+            handler.postDelayed(torWache[0], 400L);
+        };
+        handler.post(torWache[0]);
+        Runnable[] zeitwaechter = new Runnable[1];
+        zeitwaechter[0] = () -> {
             if (fertig[0] || !aktuell(id)) return;
+            if (torPrueft[0] || (verifizierung != null && verifizierung.view == seite && verifizierung.id == id)) {
+                handler.postDelayed(zeitwaechter[0], 500L);
+                return;
+            }
+            long rest = frist[0] - SystemClock.uptimeMillis();
+            if (rest > 0L) {
+                handler.postDelayed(zeitwaechter[0], Math.min(rest, 500L));
+                return;
+            }
             fertig[0] = true;
             kern.rufe("direkt-android.abbrechen", (w, f) -> { });
             seiteFreigeben();
             weiter.run();
-        }, 20000);
+        };
+        handler.postDelayed(zeitwaechter[0], 500L);
     }
 
     private void quellenZeigen() {
@@ -1019,7 +1319,11 @@ final class DirektWiedergabe {
         // In einer Runde ist auch der Ausloeser Empfaenger des autoritativen
         // syncprepare. Ein lokaler Vorab-Wechsel wuerde die neue Media3-Quelle
         // schon starten und koennte ausserdem als navigate-Echo zurueckgehen.
-        if (umgebung.folgenwechsel(url)) return;
+        if (umgebung.folgenwechsel(url, () -> {
+            if (!geschlossen) {
+                spieler.status("Keine Verbindung zur Watchparty. Bitte erneut versuchen.");
+            }
+        })) return;
         spieler.speichern();
         if (nachSeite != null) nachSeite.accept(url);
     }
@@ -1041,13 +1345,27 @@ final class DirektWiedergabe {
     void vordergrund() { spieler.vordergrund(); }
     boolean laeuftFuerPip() { return spieler.laeuftFuerPip(); }
     void pipModus(boolean aktiv) { spieler.pipModus(aktiv); }
-    boolean taste(KeyEvent event) { return spieler.taste(event); }
-    boolean zurueck() { return spieler.zurueck(); }
+    boolean taste(KeyEvent event) {
+        if (verifizierung != null) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+                verifizierungAbbrechen(true);
+                return true;
+            }
+            // DPAD und OK erreichen das fokussierte Checkbox-Iframe als echte Tasten.
+            return false;
+        }
+        return spieler.taste(event);
+    }
+    boolean zurueck() {
+        if (verifizierung != null) { verifizierungAbbrechen(true); return true; }
+        return spieler.zurueck();
+    }
     void chatKontext(String key, String raum, boolean verbunden) { spieler.chatKontext(key, raum, verbunden); }
     void chatEmpfangen(JSONObject zeile) { spieler.chatEmpfangen(zeile); }
 
     private void seiteFreigeben() {
         if (seite == null) return;
+        verifizierungAbbrechen(false);
         WebView alt = seite;
         seite = null;
         alt.stopLoading();
@@ -1059,6 +1377,7 @@ final class DirektWiedergabe {
         if (geschlossen) return;
         geschlossen = true;
         auftrag++;
+        verifizierungAbbrechen(false);
         kern.rufe("direkt-android.abbrechen", (w, f) -> { });
         handler.removeCallbacksAndMessages(null);
         spieler.schliessen();

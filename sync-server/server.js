@@ -2233,11 +2233,18 @@ wss.on("connection", (socket) => {
         // gemeldete Rueckwurf. Massgeblich ist die Folge, nicht die Schreibung
         // der Adresse.
         const zielFolge = folgeAusAdresse(ziel);
+        const liveFolge = folgeAusAdresse(eintrag.live?.url);
+        // Der gebuchte Fortschritt kann der laufenden Quelle voraus sein. Dann
+        // stimmt zwar `eintrag.episode` schon mit dem Ziel ueberein, die Live-
+        // Adresse zeigt aber noch die vorige Folge. Das ist kein Nachziehen,
+        // sondern ein echter Wechsel mit neuer Startschranke.
         const schonDort = Boolean(ziel) && (
           eintrag.live?.url === ziel
           || (zielFolge.episode
             && zielFolge.episode === eintrag.episode
-            && (zielFolge.season || 0) === (eintrag.season || 0))
+            && (zielFolge.season || 0) === (eintrag.season || 0)
+            && (!liveFolge.episode || (liveFolge.episode === zielFolge.episode
+              && (liveFolge.season || 0) === (zielFolge.season || 0))))
         );
         if (ziel) {
           eintrag.url = ziel;
@@ -2256,6 +2263,63 @@ wss.on("connection", (socket) => {
           }
         }
         nurNachgezogen = schonDort;
+        // Ein Geraet kann genau den Wechsel verpasst haben, der den Raum schon
+        // auf diese Adresse stellte: nach Reconnect oder einem abgebrochenen
+        // Laden schickt es beim eigenen Weiter dieselbe Zieladresse. Ihm gar
+        // nichts zu antworten liess seinen Aufrufer auf der alten Folge stehen.
+        // Die bereits laufende Runde wird nicht neu angehalten. Der einzelne
+        // Nachzuegler bekommt ihren aktuellen Zustand als verpassten Start und
+        // laedt/puffert ihn lokal, bevor der normale Abgleich nachfasst.
+        const eigenerStand = eintrag.stand?.get(socket.geraetId);
+        const eigenerStandIstZiel = Boolean(eigenerStand?.episode) && (
+          Number(eigenerStand.episode) === Number(eintrag.episode)
+          && (!eigenerStand.season || !eintrag.season
+            || Number(eigenerStand.season) === Number(eintrag.season))
+        );
+        if (schonDort && !eigenerStandIstZiel) {
+          // Gehoert er zur vorhandenen Generation, bekommt er nur deren
+          // Vorbereitung erneut - auch wenn seine Bereitmeldung schon beim
+          // Relay ankam, sein eigener alter Herzschlag aber noch unterwegs
+          // ist. Die Menge der Bereiten bleibt dabei unveraendert; ein neues
+          // sender-only syncstart duerfte diese echte Schranke nicht vorzeitig
+          // ueberholen.
+          if (eintrag.sync?.vorbereitung && eintrag.sync.erwartet?.has(socket.geraetId)) {
+            socket.send(eintrag.sync.vorbereitung);
+            return;
+          }
+          const host = aktuellerHost(socket.raum, eintrag);
+          const hostIstZiel = host && Number(host.episode) === Number(eintrag.episode)
+            && (!host.season || !eintrag.season || Number(host.season) === Number(eintrag.season));
+          const stand = hostIstZiel ? hostZustandJetzt(socket.raum, eintrag) : null;
+          const jetzt = Date.now();
+          const playing = Boolean(stand?.laeuft);
+          // Das ist kein neuer gemeinsamer Start, sondern ein Nachreichen an
+          // einen einzelnen spaeten Player. Mit `startAt` wuerde `videoTime`
+          // erst an dieser Linie gelten und der aktuelle Laufzustand um den
+          // Vorlauf hinterherhinken; Zeitstempel plus playing rechnen ihn beim
+          // Empfaenger korrekt bis zum tatsaechlichen Laden weiter.
+          const startAt = 0;
+          socket.send(JSON.stringify({
+            type: "syncstart",
+            key: eintrag.key,
+            syncId: `catchup-${naechsteNummer(eintrag)}`,
+            position: stand?.position ?? 0,
+            videoTime: stand?.position ?? 0,
+            frameTime: !playing && Number.isFinite(host?.frameTime) ? host.frameTime : undefined,
+            url: eintrag.live?.url || eintrag.url,
+            from: "Runde",
+            at: jetzt,
+            timestamp: jetzt,
+            playing,
+            startAt,
+            tempo: eintrag.tempo || 1,
+            sequenceId: naechsteNummer(eintrag),
+            episodeId: folgenKennung(eintrag.season, eintrag.episode),
+            hostId: eintrag.hostId || "",
+            reason: "episode-catchup"
+          }));
+          return;
+        }
         if (!schonDort) {
           offeneStartverabredungAbbrechen();
           // Nicht "pause": eine neue Folge ist noch gar nichts: weder angehalten

@@ -582,6 +582,107 @@ async function teilDrei() {
     handy.bruecke.eintraege().length === 2 && handy.bruecke.status().connected,
     "archiviert heisst nicht geloescht");
 
+  // Die Runde hat ihre zehnte Folge abgeschlossen. Der private Fund kennt
+  // bereits Folge 11; genau diese Grenze darf den Raum wecken.
+  pc.send({ type: "share", item: titel(SERIEN_KEY, folge(1, 10), "serie", 1, 10, "Black Torch") });
+  pc.send({ type: "enter", key: SERIEN_KEY });
+  await schlaf(150);
+  pc.send({
+    type: "progress",
+    key: SERIEN_KEY,
+    progress: stand(folge(1, 10), 1, 10, { episodeCompleted: true, completed: true, archived: true })
+  });
+  await warteBis(() => (
+    pc.eintrag(SERIEN_KEY)?.archived === true
+    && Number(pc.eintrag(SERIEN_KEY)?.progress?.episode) === 10
+    && handy.bruecke.eintraege().some((eintrag) => eintrag.key === SERIEN_KEY
+      && eintrag.archived && Number(eintrag.progress?.episode) === 10)
+  ), "Black Torch Folge 10 archiviert");
+  const archivierterRaum = pc.eintrag(SERIEN_KEY);
+
+  // Ein Nachschubfund kann schon in der privaten Ablage stehen, bevor das
+  // Telefon wieder Verbindung zu seiner archivierten Runde hat. Beim Sichern
+  // muss die echte Android-Bruecke ihn deshalb ueber das Relay melden: nicht
+  // als neuen lokalen Raumtitel, sondern als Weckruf fuer den vorhandenen.
+  // Der private Eintrag ist absichtlich der einzige, den wir ihr geben.
+  const privatNachschub = {
+    id: "bt-privat-nachschub",
+    title: "Black Torch",
+    url: folge(1, 11),
+    normalizedUrl: folge(1, 11),
+    type: "serie",
+    season: 1,
+    episode: 11,
+    finalSeason: 1,
+    finalEpisode: 11,
+    favorite: true,
+    completed: false,
+    position: 421,
+    duration: 1400,
+    progress: 30,
+    newEpisodeAt: "2026-09-12T10:00:00.000Z",
+    newEpisodeLabel: "Folge 11 ist da"
+  };
+  const nurPrivat = { favoriten: [privatNachschub] };
+  const gemeldet = handy.bruecke.raumEintraegeSichern(nurPrivat, ANBIETER);
+  pruefe("17a. Der Nachschub bleibt beim ersten Sichern privat",
+    gemeldet.favoriten.length === 1
+    && gemeldet.favoriten[0] === privatNachschub
+    && !gemeldet.favoriten[0].watchpartyRoom,
+    "der archivierte Raumtitel wird nicht lokal dupliziert");
+
+  await warteBis(() => {
+    const eintrag = pc.eintrag(SERIEN_KEY);
+    return eintrag?.archived === false
+      && Number(eintrag?.progress?.season) === 1
+      && Number(eintrag?.progress?.episode) === 11
+      && handy.bruecke.eintraege().some((titel) => titel.key === SERIEN_KEY
+        && !titel.archived && Number(titel.progress?.episode) === 11);
+  }, "Nachschub weckt Black Torch im selben Raum");
+
+  const gewecktImRaum = pc.eintrag(SERIEN_KEY);
+  pruefe("17b. Das Relay reaktiviert denselben Black-Torch-Raum auf Folge 11",
+    gewecktImRaum?.archived === false
+    && gewecktImRaum?.key === SERIEN_KEY
+    && Number(gewecktImRaum?.episode) === 11
+    && gewecktImRaum?.addedById === archivierterRaum?.addedById
+    && JSON.stringify([...(gewecktImRaum?.memberIds || [])].sort())
+      === JSON.stringify([...(archivierterRaum?.memberIds || [])].sort()),
+    `S${gewecktImRaum?.season}E${gewecktImRaum?.episode}, ${(gewecktImRaum?.memberIds || []).length} Mitglieder`);
+
+  // Erst der Zustand vom Relay legt den Raum-Eintrag an. Dadurch werden die
+  // private Merkliste und die Runde getrennt gespeichert, obwohl beides
+  // dasselbe Werk ist.
+  const getrennt = handy.bruecke.raumEintraegeSichern({ favoriten: gemeldet.favoriten }, ANBIETER);
+  const privateKopie = getrennt.favoriten.find((eintrag) => eintrag.id === "bt-privat-nachschub");
+  const raumKopie = getrennt.favoriten.find((eintrag) => (
+    eintrag.watchpartyRoom === RAUM && eintrag.type === "serie"
+  ));
+  pruefe("17c. Der naechste Sicherungslauf legt genau einen getrennten Raum-Eintrag an",
+    getrennt.angelegt === 1
+    && getrennt.favoriten.length === 2
+    && Boolean(raumKopie)
+    && raumKopie.favorite === false
+    && raumKopie.position === 0 && raumKopie.progress === 0,
+    `${getrennt.angelegt} neu, ${getrennt.favoriten.length} insgesamt`);
+  pruefe("17d. Private Nachschubdaten, Raumzuordnung und Mitgliedschaft bleiben erhalten",
+    privateKopie?.favorite === true
+    && !privateKopie?.watchpartyRoom
+    && privateKopie?.newEpisodeAt === privatNachschub.newEpisodeAt
+    && privateKopie?.finalSeason === 1
+    && privateKopie?.finalEpisode === 11
+    && privateKopie?.position === 421 && privateKopie?.progress === 30
+    && raumKopie?.watchpartyRoom === RAUM
+    && handy.bruecke.eintraege().find((eintrag) => eintrag.key === SERIEN_KEY)?.joined === true,
+    JSON.stringify({ privat: privateKopie?.newEpisodeAt, raum: raumKopie?.watchpartyRoom }));
+
+  const ohneDuplikat = handy.bruecke.raumEintraegeSichern({ favoriten: getrennt.favoriten }, ANBIETER);
+  pruefe("17e. Ein weiterer Sicherungslauf verdoppelt weder Raum noch privaten Nachschub",
+    ohneDuplikat.angelegt === 0
+    && ohneDuplikat.favoriten.length === 2
+    && pc.eintrag(FILM_KEY)?.archived === true,
+    `${ohneDuplikat.favoriten.length} Eintraege; Film archiviert=${pc.eintrag(FILM_KEY)?.archived}`);
+
   handy.bruecke.trennen();
   pc.zu();
   await schlaf(150);

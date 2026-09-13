@@ -269,11 +269,19 @@ class WatchpartyRaeume {
   }
 
   steuern(key, action, position, room) {
-    for (const raum of this.raeumeMitTitel(key, room)) raum.steuern(key, action, position);
+    let gesendet = false;
+    for (const raum of this.raeumeMitTitel(key, room)) {
+      if (raum.steuern(key, action, position)) gesendet = true;
+    }
+    return gesendet;
   }
 
   steuernMitAdresse(key, action, position, url, room) {
-    for (const raum of this.raeumeMitTitel(key, room)) raum.steuernMitAdresse(key, action, position, url);
+    let gesendet = false;
+    for (const raum of this.raeumeMitTitel(key, room)) {
+      if (raum.steuernMitAdresse(key, action, position, url)) gesendet = true;
+    }
+    return gesendet;
   }
 
   steuernMitEinstellung(key, action, position, url, room, einstellung) {

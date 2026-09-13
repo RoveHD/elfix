@@ -4513,6 +4513,10 @@ function applyBrowserBounds() {
   // Der eigene Player liegt ueber der Anbieteransicht und teilt ihren Platz -
   // auch dann, wenn es gerade gar keine Anbieteransicht gibt.
   spielerLageSetzen();
+  if (menschentorFenster && isLiveView(menschentorFenster.view)) {
+    menschentorFensterPositionieren(menschentorFenster.view);
+    return;
+  }
   if (!isLiveView(activeView) || !mainWindow) return;
   if (pendingAutostart) {
     // Waehrend des Autostarts laeuft die View ganz normal sichtbar - nur der
@@ -4926,12 +4930,12 @@ function installContentFullscreenExitOverlay(view) {
 }
 
 function scheduleProviderAutoplay(provider, view, options = {}) {
-  if (!provider || !isLiveView(view)) return;
+  if (!provider || !isLiveView(view)) return null;
   // Im Direktbetrieb faengt die Wiedergabe im eigenen Player an. Diese Runde
   // sucht dagegen in der Anbieterseite nach einem Video, klickt
   // Ueberlagerungen weg und wartet auf Bild - alles an einer Seite, die
   // niemand sieht und in der nichts laufen soll.
-  if (direktModus(provider.startUrl || "")) return;
+  if (direktModus(provider.startUrl || "")) return null;
   stopAutoplayRequest(provider.id);
   const request = {
     ...options,
@@ -4957,6 +4961,7 @@ function scheduleProviderAutoplay(provider, view, options = {}) {
   setTimeout(() => {
     if (isLiveView(view) && activeView === view) resumePendingProviderAutoplay(provider, view);
   }, 250);
+  return request;
 }
 
 // Wann zuletzt ein Vorbereitungsfenster bestaetigt wurde. Der Zeitpunkt zaehlt
@@ -4974,6 +4979,7 @@ const TOR_NACHLAUF_MS = 8000;
 // documentElement, ist der Beobachter beim naechsten Mal wieder da.
 function torBeobachterEinhaengen(provider, view) {
   if (!provider || !isLiveView(view)) return Promise.resolve("");
+  if (direktModus(provider.startUrl || "")) return Promise.resolve("");
   return view.webContents.executeJavaScript(verifizierungstor.torScript(), true)
     .catch(() => "")
     .then((ergebnis) => {
@@ -4993,8 +4999,18 @@ function pruefeVerifizierungsTor(provider, request, view) {
 // Eine Meldung des Beobachters - egal ob als Rueckgabe oder ueber die Konsole.
 function torMeldungVerarbeiten(provider, meldung) {
   if (!provider || !meldung) return;
-
+  const request = providerAutoplayRequests.get(provider.id);
+  if (meldung === "tor-frei" && request?.torWartet) {
+    request.torWartet = false;
+    request.until = Date.now() + 25000;
+    request.startedAt = Date.now();
+  }
   if (meldung.startsWith("tor-gewartet:") || meldung.startsWith("tor-fehler:")) {
+    if (request && !request.torWartet) {
+      request.torWartet = true;
+      request.until = Date.now() + MENSCHENTOR_FRIST_MS;
+      finishAutostart("bestaetigung");
+    }
     logNextEpisode(provider, `Vorbereitungsfenster: ${meldung.slice(meldung.indexOf(":") + 1)}`);
     return;
   }
@@ -5006,7 +5022,6 @@ function torMeldungVerarbeiten(provider, meldung) {
   // Hinter dem Knopf faengt das Laden erst an. Laeuft gerade ein Autostart,
   // waere sein Zeitfenster sonst meist schon fast aufgebraucht und der Player
   // kaeme zu spaet.
-  const request = providerAutoplayRequests.get(provider.id);
   if (request && !request.torVerlaengert) {
     request.torVerlaengert = true;
     request.until = Math.max(request.until, Date.now() + 25000);
@@ -5022,10 +5037,12 @@ function istTorNachlauf(provider) {
   return Boolean(zeit) && Date.now() - zeit < TOR_NACHLAUF_MS;
 }
 
-function stopAutoplayRequest(providerId) {
+function stopAutoplayRequest(providerId, erwartet = null) {
   const request = providerAutoplayRequests.get(providerId);
+  if (erwartet && request !== erwartet) return false;
   if (request?.timer) clearInterval(request.timer);
   providerAutoplayRequests.delete(providerId);
+  return Boolean(request);
 }
 
 function resumePendingProviderAutoplay(provider, view) {
@@ -5068,6 +5085,7 @@ function resumePendingProviderAutoplay(provider, view) {
   // ohne diesen Schritt sucht der Autostart die ganze Zeit einen Player, den es
   // noch gar nicht gibt, und laeuft in sein Zeitfenster.
   pruefeVerifizierungsTor(provider, request, view);
+  if (request.torWartet) return;
 
   // Zeitgebunden statt nur boolesch: bleibt ein Durchlauf haengen, war der
   // Autoplay danach dauerhaft blockiert.
@@ -5077,10 +5095,21 @@ function resumePendingProviderAutoplay(provider, view) {
   // Ohne expectUrl gibt es die Meldung oben nicht - dann faengt der Player hier
   // an, und der Balken gehoert an dieselbe Stelle.
   autostartPhase("hoster");
-  startPlaybackInView(view, { mode: "play" }).then((results) => {
+  const nurVorbereiten = request.preparePaused === true;
+  startPlaybackInView(view, { mode: nurVorbereiten ? "prepare" : "play" }).then((results) => {
+    // Ein spaeter Ruecklauf gehoert nur zu genau diesem Auftrag. Sonst koennte
+    // er einen inzwischen neu gestarteten Autostart desselben Providers
+    // stoppen oder dessen Status ueberschreiben.
+    if (providerAutoplayRequests.get(provider.id) !== request) return;
     request.busy = false;
     const values = Array.isArray(results) ? results : [];
     logAutoplayAttempt(provider, request, values);
+    const isPrepared = values.some((value) => /video-prepared/i.test(String(value || "")));
+    if (nurVorbereiten && isPrepared) {
+      request.sawPlayback = true;
+      stopAutoplayRequest(provider.id);
+      return;
+    }
     const isPlaying = values.some((value) => /(?:video-counting|video-playing|video-started)/i.test(String(value || "")));
     if (!isPlaying) {
       const warming = values.some((value) => /video-warming/i.test(String(value || "")));
@@ -5089,7 +5118,10 @@ function resumePendingProviderAutoplay(provider, view) {
       // Seite laedt" und weniger als "es laeuft".
       if (warming || clickedOverlay) autostartPhase("spieler");
       if (clickedOverlay) request.lastClickAt = Date.now();
-      if (!warming && !clickedOverlay) clickPlayerCenterIfStalled(provider, request, view);
+      // Die Notfall-Koordinate kann einen vorhandenen Player umschalten. Beim
+      // Vorbereiten bleiben wir bei den gezielten Knopf-/Overlay-Klicks des
+      // Skripts, damit daraus kein spaetes play() wird.
+      if (!nurVorbereiten && !warming && !clickedOverlay) clickPlayerCenterIfStalled(provider, request, view);
       return;
     }
 
@@ -5114,7 +5146,7 @@ function resumePendingProviderAutoplay(provider, view) {
       stopAutoplayRequest(provider.id);
     }
   }).catch(() => {
-    request.busy = false;
+    if (providerAutoplayRequests.get(provider.id) === request) request.busy = false;
   });
 }
 
@@ -5283,9 +5315,11 @@ function logAutoplayAttempt(provider, request, values) {
 async function startPlaybackInView(view, options = {}) {
   const forcePass = options.mode === "fullscreen-force";
   const fullscreenPass = forcePass || options.mode === "fullscreen";
+  const preparePass = options.mode === "prepare";
   const script = `(() => {
     const wantFullscreen = ${fullscreenPass ? "true" : "false"};
     const forceFullscreen = ${forcePass ? "true" : "false"};
+    const preparePaused = ${preparePass ? "true" : "false"};
     const waitForPlayingMs = 900;
     const badText = /close|schliessen|schließen|abbrechen|login|registr|teilen|share|trailer|info|beschreibung|kommentar|melden|verbesserung/i;
     const visible = (node) => {
@@ -5454,6 +5488,13 @@ async function startPlaybackInView(view, options = {}) {
     };
     const media = biggest("video");
     if (media) {
+      // Watchparty-Vorbereitung muss dieselben Knopf- und Overlay-Wege kennen,
+      // darf eine gefundene Quelle aber niemals selbst starten. Ein Overlay-
+      // Klick kann kurz anlaufen; sobald Daten da sind, wird sofort angehalten.
+      if (preparePaused && (Number(media.duration) > 0 || media.readyState >= 2)) {
+        try { media.autoplay = false; media.pause(); } catch (_) {}
+        return "video-prepared" + where();
+      }
       if (isMediaCounting(media)) {
         requestPlayerFullscreen(media);
         return "video-counting" + where();
@@ -5465,7 +5506,7 @@ async function startPlaybackInView(view, options = {}) {
       // Laeuft und hat Daten, zaehlt aber noch nicht: puffert gerade, nicht erneut
       // anstossen - ein zweiter Klick wuerde den Player wieder pausieren.
       if (!media.paused && !media.ended && media.readyState >= 2) return "video-warming" + where();
-      const result = playMedia(media);
+      const result = preparePaused ? "" : playMedia(media);
       // paused=false ohne Daten heisst: play() lief ins Leere, die Quelle haengt noch
       // am Play-Overlay des Players. Im selben Dokument erreichen synthetische
       // Klicks den Player - anders als von aussen auf das <iframe>.
@@ -5913,6 +5954,7 @@ async function pruefeNeueFolgen() {
   saveFavorites();
   sendActiveState();
   meldeNeueFolgen(ergebnis.gefunden);
+  meldeWatchpartyNachschub(watchpartyShared);
 }
 
 // Eine Windows-Benachrichtigung je neu gefundener Folge.
@@ -7609,6 +7651,14 @@ function createWatchpartyFavorite(key, eintrag, stand, provider) {
   return normalizeLoadedFavorite(neu);
 }
 
+function meldeWatchpartyNachschub(eintraege) {
+  if (!watchparty.aktiv) return;
+  for (const fund of nachschub.watchpartyNachschub(favorites, eintraege)) {
+    watchparty.fortschrittMelden(fund.key,
+      fortschritt.watchpartyStand(fund.eintrag, watchpartySettings().deviceName), fund.room);
+  }
+}
+
 // Zu jedem betretenen Titel einer Runde einen eigenen Eintrag sicherstellen.
 //
 // Der gemeldete Fehler: in "Gemeinsam weiterschauen" standen nicht alle
@@ -7623,6 +7673,7 @@ function createWatchpartyFavorite(key, eintrag, stand, provider) {
 // keine zweite Art von Raum-Eintrag, nur einen dritten Anlass.
 function raumEintraegeSichern(eintraege) {
   if (!Array.isArray(eintraege)) return;
+  meldeWatchpartyNachschub(eintraege);
   let geaendert = false;
   let folgestaende = false;
   for (const eintrag of eintraege) {
@@ -8065,9 +8116,30 @@ async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true
 
   let vorbereitet = false;
   const ladeFrist = Date.now() + (nachricht.reason === "episode-change" ? 60000 : 4500);
+  const quellenAuftraege = [];
+  const quellenVorbereitungStoppen = () => {
+    for (const [providerId, auftrag] of quellenAuftraege) stopAutoplayRequest(providerId, auftrag);
+  };
+  // Ein Hoster-Frame oder seine Quelle entsteht bei manchen Anbietern erst
+  // nach dem Play-/Overlay-Knopf. Derselbe Autostart-Sucher darf diese Wege
+  // ausloesen, bleibt im Vorbereitungsmodus aber garantiert pausiert.
+  for (const [providerId, view] of providerViews) {
+    if (!isLiveView(view)
+      || !istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
+    const provider = providers.find((item) => item.id === providerId);
+    if (provider) {
+      const auftrag = scheduleProviderAutoplay(provider, view, {
+        fullscreen: false,
+        expectUrl: nachricht.url || eintrag.url,
+        durationMs: nachricht.reason === "episode-change" ? 60000 : 4500,
+        preparePaused: true
+      });
+      if (auftrag) quellenAuftraege.push([providerId, auftrag]);
+    }
+  }
   do {
    for (const [, view] of providerViews) {
-    if (!istAktuell()) return;
+    if (!istAktuell()) { quellenVorbereitungStoppen(); return; }
     if (!isLiveView(view)) continue;
     if (!istGleicheFolge(nachricht.url || eintrag.url, view.webContents.getURL())) continue;
     // Anhalten, exakt auf die Stelle des Hosts, und erst zurueckmelden, wenn
@@ -8080,13 +8152,14 @@ async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true
         nichtSpringen: false
       })
     ).catch(() => []);
-    if (!istAktuell()) return;
+    if (!istAktuell()) { quellenVorbereitungStoppen(); return; }
     if (ergebnisse.some((ergebnis) => ergebnis === "bereit" || ergebnis?.value === "bereit" || ergebnis?.result === "bereit")) vorbereitet = true;
    }
    if (!vorbereitet && istAktuell() && Date.now() < ladeFrist) {
      await new Promise(resolve => setTimeout(resolve, 350));
    }
   } while (!vorbereitet && istAktuell() && Date.now() < ladeFrist);
+  quellenVorbereitungStoppen();
   if (!istAktuell()) return;
   // Eine Bereitschaft bestaetigt einen vorbereiteten Player, keinen Empfang.
   if (vorbereitet) watchparty.bereitZumStart(eintrag.key, eintrag.room, nachricht.syncId);
@@ -9062,9 +9135,19 @@ function direktAufloeserHolen() {
 async function direktLinksLesen(provider, view) {
   const seite = view?.webContents?.getURL() || "";
   if (!providerModel.isHttpUrl(seite)) return [];
+  const signal = direktLaden.signal;
+  // Die Abfrage kann nach dom-ready erscheinen oder auf derselben URL liegen.
+  const freigeben = async () => !(await menschentorErkennen(view))
+    || await menschentorLoesenLassen(provider, view, { signal });
+  if (!(await freigeben()) || signal.aborted) return [];
   let roh = "[]";
   try {
     roh = await view.webContents.executeJavaScript(direktlinks.hosterlinkScript(), true);
+    if (String(roh || "[]") === "[]") {
+      await new Promise((fertig) => setTimeout(fertig, 500));
+      if (!(await freigeben()) || signal.aborted) return [];
+      roh = await view.webContents.executeJavaScript(direktlinks.hosterlinkScript(), true);
+    }
   } catch (fehler) {
     // Nicht stillschweigend leer zurueckgeben: von aussen sieht das aus wie
     // "diese Seite hat keine Hoster", und das ist etwas voellig anderes als
@@ -9132,6 +9215,7 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
         + `${ergebnis.quelle.hoehe || "?"}p ueber ${ergebnis.stationen.length} Station(en)`);
       return { ...ergebnis, hoster: eintrag.hoster, link: eintrag.adresse, hosterliste: alle };
     }
+    if (/^Bestätigung/.test(ergebnis.grund || "")) return { ...ergebnis, hosterliste: alle };
     gescheitert.push(`${eintrag.hoster || "?"}: ${ergebnis.grund}`);
   }
   console.log(`[ELFIX DIREKT] nichts gefunden - ${gescheitert.join(" | ")}`);
@@ -9152,7 +9236,10 @@ async function direktQuelleBeobachten(provider, adresse, referer, signal) {
       direktBeobachter.set(id, aufnehmen);
       webContentsProvider.set(id, provider.id);
       inhalt.setAudioMuted(true);
-      inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
+      inhalt.setWindowOpenHandler(({ url }) => {
+        direktVerifiziertesPopup(provider, view, url);
+        return { action: "deny" };
+      });
       inhalt.on("will-navigate", (event, ziel) => {
         if (!providerModel.isHttpUrl(ziel)) event.preventDefault();
       });
@@ -9213,6 +9300,15 @@ async function direktQuelleBeobachten(provider, adresse, referer, signal) {
 /** Wie lange eine gelesene Folgenliste gilt, bevor sie neu geholt wird. */
 const FOLGEN_FRISCHE_MS = 10 * 60 * 1000;
 
+// Manche Vorbereitungsfenster liefern den Hoster per window.open. Nach der
+// bestaetigten Abfrage wird nur ein erlaubtes Ziel in derselben Ansicht geladen.
+function direktVerifiziertesPopup(provider, view, url) {
+  if (menschentorFenster?.view !== view || !menschentorFenster.bestaetigt || !isLiveView(view)) return false;
+  if (!providerModel.isHttpUrl(url) || !isAllowedNewWindowTarget(url, provider)) return false;
+  view.webContents.loadURL(url, { httpReferrer: view.webContents.getURL() }).catch(() => {});
+  return true;
+}
+
 /** Gelesene Folgenlisten je Staffelseite. */
 const folgenSpeicher = new Map();
 const werkbankAuftraege = new Map();
@@ -9227,7 +9323,7 @@ async function werkbankLesen(provider, adresse, lesen, gueltig = () => true) {
     // Anbieter geleert wird. Nach dem Start ist das ein erfuellter Ausdruck.
     await browserdatenFrei;
     if (!gueltig()) return null;
-    const view = await werkbankAn(provider, adresse);
+    const view = await werkbankAn(provider, adresse, gueltig);
     if (!view || !gueltig()) return null;
     return lesen(view);
   });
@@ -9310,15 +9406,7 @@ function seiteLaden(view, adresse, frist = 25000) {
  * unter derselben Adresse zurueck, die man angefragt hat.
  */
 function menschentorSkript() {
-  return `(() => {
-    const knoten = document.querySelector(
-      "#challenge-form, #challenge-running, .cf-turnstile, #cf-please-wait,"
-      + " iframe[src*='challenges.cloudflare.com'], iframe[src*='hcaptcha.com'],"
-      + " iframe[src*='recaptcha']");
-    if (knoten) return true;
-    const titel = String(document.title || "").toLowerCase();
-    return /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/.test(titel);
-  })()`;
+  return `(${verifizierungstor.zustandScript()}).offen`;
 }
 
 function menschentorErkennen(view) {
@@ -9328,6 +9416,15 @@ function menschentorErkennen(view) {
 
 /** So lange darf eine Bestaetigung dauern, bevor ELFIX aufgibt. */
 const MENSCHENTOR_FRIST_MS = 120000;
+let menschentorFenster = null;
+
+function menschentorFensterPositionieren(view, masse = menschentorFenster?.masse) {
+  if (!mainWindow || mainWindow.isDestroyed() || !isLiveView(view)) return;
+  const [breite, hoehe] = mainWindow.getContentSize();
+  const width = Math.min(560, breite);
+  const height = Math.min(Math.max(100, Number(masse?.height) || 430), 430, hoehe);
+  view.setBounds({ x: Math.round((breite - width) / 2), y: Math.round((hoehe - height) / 2), width, height });
+}
 
 /**
  * Die Abfrage zeigen, bis sie beantwortet ist.
@@ -9341,52 +9438,121 @@ const MENSCHENTOR_FRIST_MS = 120000;
  */
 async function menschentorLoesenLassen(provider, view, optionen = {}) {
   if (!mainWindow || mainWindow.isDestroyed() || !isLiveView(view)) return false;
+  if (optionen.signal?.aborted || (optionen.gueltig && !optionen.gueltig())) return false;
   const wer = String(optionen.wer || "Der Anbieter");
-  sendToast(`${wer} fragt nach einer Bestätigung — bitte einmal bestätigen`);
-  console.log(`[ELFIX DIREKT] Menschentor sichtbar gemacht (${wer})`);
-
-  mainWindow.contentView.addChildView(view);
-  if (!optionen.voruebergehend) attachedProviderViews.add(provider.id);
-  if (optionen.voruebergehend) {
-    const size = mainWindow.getContentSize();
-    view.setBounds(isContentFullscreen
-      ? { x: 0, y: 0, width: size[0], height: size[1] }
-      : {
-          x: clamp(browserBounds.x, 0, size[0]),
-          y: clamp(browserBounds.y, 0, size[1]),
-          width: clamp(browserBounds.width, 1, size[0]),
-          height: clamp(browserBounds.height, 1, size[1])
-        });
-  } else {
-    applyBrowserBounds();
+  const inhalt = view.webContents;
+  const bounds = view.getBounds();
+  let abgebrochen = false;
+  let angehaengt = false;
+  let erfolg = false;
+  let bestaetigt = false;
+  let dokumentGewechselt = false;
+  let dokumentBereit = true;
+  let dokumentGeneration = 0;
+  let freieProben = 0;
+  let weiterGeklickt = false;
+  const gueltig = () => !abgebrochen && !optionen.signal?.aborted
+    && (!optionen.gueltig || optionen.gueltig()) && isLiveView(view)
+    && mainWindow && !mainWindow.isDestroyed();
+  const abhaengen = () => {
+    if (angehaengt && mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
+    angehaengt = false;
+  };
+  const abbrechen = () => { abgebrochen = true; abhaengen(); };
+  const taste = (event, input) => {
+    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); abbrechen(); }
+  };
+  // Vor einer Navigation ausblenden: die Zielseite darf nicht kurz im
+  // Verifizierungsfenster aufblitzen. Ein neues Tor wird erst maskiert gezeigt.
+  const navigation = (_event, _url, inPlace, hauptrahmen) => {
+    if (hauptrahmen && !inPlace) { dokumentGeneration++; dokumentBereit = false; abhaengen(); }
+  };
+  const domBereit = () => { dokumentBereit = true; };
+  const angekommen = () => { dokumentGewechselt = true; freieProben = 0; weiterGeklickt = false; };
+  menschentorFenster?.abbrechen();
+  const fenster = { view, abbrechen };
+  menschentorFenster = fenster;
+  optionen.signal?.addEventListener("abort", abbrechen, { once: true });
+  inhalt.on("before-input-event", taste);
+  inhalt.on("did-start-navigation", navigation);
+  inhalt.on("did-navigate", angekommen);
+  inhalt.on("dom-ready", domBereit);
+  try {
+    const bis = Date.now() + MENSCHENTOR_FRIST_MS;
+    while (gueltig() && Date.now() < bis) {
+      if (dokumentBereit) {
+        const generation = dokumentGeneration;
+        const lage = await inhalt.executeJavaScript(verifizierungstor.zustandScript()).catch(() => null);
+        if (!gueltig()) break;
+        if (generation !== dokumentGeneration || !dokumentBereit) continue;
+        if (lage?.offen && !lage.geloest) { bestaetigt = false; weiterGeklickt = false; fenster.bestaetigt = false; }
+        if (lage?.geloest) { bestaetigt = true; fenster.bestaetigt = true; }
+        // DOM-Umbau oder ein geschlossenes Fenster allein beweisen keine
+        // Freigabe. Tokenlose Challenge-Seiten geben das Hauptdokument durch
+        // eine neue Navigation frei; auch dort zwei stabile Proben abwarten.
+        if (lage && !lage.offen && (bestaetigt || dokumentGewechselt)) {
+          if (++freieProben >= 2) { erfolg = true; break; }
+        } else freieProben = 0;
+        if (lage?.offen) {
+          // Erst maskieren, dann einhaengen: nur das Cloudflare-Fenster liegt
+          // ueber dem Player, niemals die gesamte Anbieterseite.
+          const maskiert = await inhalt.executeJavaScript(verifizierungstor.fensterScript()).catch(() => false);
+          if (!gueltig()) break;
+          if (generation !== dokumentGeneration || !dokumentBereit) continue;
+          if (maskiert) {
+            fenster.masse = maskiert;
+            view.setBackgroundColor("#00000000");
+            menschentorFensterPositionieren(view, maskiert);
+            if (!angehaengt) {
+              mainWindow.contentView.addChildView(view);
+              angehaengt = true;
+              inhalt.focus();
+              sendToast(wer + " fragt nach einer Bestätigung — bitte einmal bestätigen");
+            }
+          }
+          if (lage.geloest && !weiterGeklickt) {
+            torKlickZeit.set(provider.id, Date.now());
+            const klick = await inhalt.executeJavaScript(verifizierungstor.torScript(1, false)).catch(() => "");
+            weiterGeklickt = String(klick).startsWith("tor-geklickt:");
+          }
+        }
+      }
+      await new Promise((fertig) => setTimeout(fertig, 300));
+    }
+    if (!erfolg && gueltig()) sendToast("Die Bestätigung wurde nicht abgeschlossen");
+    return erfolg && gueltig();
+  } finally {
+    optionen.signal?.removeEventListener("abort", abbrechen);
+    if (!inhalt.isDestroyed()) {
+      inhalt.off("before-input-event", taste);
+      inhalt.off("did-start-navigation", navigation);
+      inhalt.off("did-navigate", angekommen);
+      inhalt.off("dom-ready", domBereit);
+    }
+    abhaengen();
+    if (menschentorFenster === fenster || menschentorFenster?.view !== view) {
+      if (isLiveView(view)) {
+        await inhalt.executeJavaScript(verifizierungstor.fensterScript(false)).catch(() => {});
+        if (isLiveView(view)) {
+          view.setBackgroundColor(optionen.voruebergehend ? "#ffffff" : VIEW_BACKGROUND_COLOR);
+          view.setBounds(bounds);
+        }
+      }
+    }
+    if (menschentorFenster === fenster) {
+      menschentorFenster = null;
+      if (gueltig() && isLiveView(spielerView)) {
+        mainWindow.contentView.addChildView(spielerView);
+        spielerLageSetzen();
+        spielerView.webContents.focus();
+      }
+    }
   }
-  view.webContents.focus();
-
-  const bis = Date.now() + MENSCHENTOR_FRIST_MS;
-  let offen = true;
-  while (offen && Date.now() < bis && !optionen.signal?.aborted) {
-    // Gewartet wird auf die naechste Seite. Kommt keine, wird noch einmal
-    // nachgesehen: manche Abfragen tauschen nur ihren Inhalt aus, ohne dass
-    // eine Navigation stattfindet.
-    await warteAufSeite(view, 5000);
-    offen = await menschentorErkennen(view);
-  }
-
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
-  if (!optionen.voruebergehend) attachedProviderViews.delete(provider.id);
-  // Der Player lag darunter - ein zweites addChildView schiebt ihn zurueck
-  // nach oben.
-  if (spielerView && !spielerView.webContents.isDestroyed()) {
-    mainWindow.contentView.addChildView(spielerView);
-    spielerLageSetzen();
-  }
-  if (offen && !optionen.signal?.aborted) sendToast("Die Bestätigung kam nicht durch");
-  return !offen && !optionen.signal?.aborted;
 }
 
 /** Die Werkbank auf eine Seite stellen - und sie dort auch wirklich vorfinden. */
-async function werkbankAn(provider, adresse) {
-  if (!providerModel.isHttpUrl(adresse)) return null;
+async function werkbankAn(provider, adresse, gueltig = () => true) {
+  if (!gueltig() || !providerModel.isHttpUrl(adresse)) return null;
   const view = getProviderView(provider);
   if (!isLiveView(view)) return null;
   // Schon dort - aber vielleicht noch mitten im Laden. Die Adresse steht ab
@@ -9394,15 +9560,15 @@ async function werkbankAn(provider, adresse) {
   // erst danach. Wer hier nicht wartet, liest eine leere Seite und meldet
   // "kein Hoster gefunden".
   if (seiteGleich(view.webContents.getURL(), adresse)) {
-    if (!view.webContents.isLoading()) return view;
-    return (await warteAufSeite(view)) ? view : null;
+    if (view.webContents.isLoading() && !(await warteAufSeite(view))) return null;
+  } else {
+    if (!(await seiteLaden(view, adresse))) return null;
   }
-  const geladen = await seiteLaden(view, adresse);
-  if (!geladen) return null;
   // Steht davor eine Abfrage des Wachdienstes, muss sie beantwortet werden -
   // und dafuer muss man sie sehen.
+  if (!gueltig()) return null;
   if (direktModus(adresse) && await menschentorErkennen(view)) {
-    const geloest = await menschentorLoesenLassen(provider, view);
+    const geloest = await menschentorLoesenLassen(provider, view, { gueltig });
     if (!geloest) return null;
   }
   return view;
@@ -10658,7 +10824,8 @@ ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
     }
     // Auch der Ausloeser folgt erst der Vorbereitung des Relays. Ein eigener
     // paralleler Ladevorgang wuerde die gemeinsame Startschranke umgehen.
-    watchparty.steuernMitAdresse(runde.key, "navigate", 0, ziel, runde.raum);
+    const gesendet = watchparty.steuernMitAdresse(runde.key, "navigate", 0, ziel, runde.raum);
+    if (!gesendet) return { ok: false, grund: "Keine Verbindung zur Watchparty." };
     return { ok: true, wartetAufRunde: true };
   }
   // Der Stand der alten Folge ist gemeldet, bevor gewechselt wird - der Player
@@ -10815,6 +10982,17 @@ function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
   if (urteil.tun === "navigate" || (urteil.tun === "syncprepare" && nachricht.reason === "episode-change")) {
     return Boolean(nachricht.url)
       && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse);
+  }
+
+  // Wer eine Folgenvorbereitung verpasst hat, bekommt mit dem gemeinsamen
+  // Start die autoritative Folge nachgereicht. Diese Ausnahme muss schon in
+  // der Zielpruefung stehen: weiter unten liegt der eigentliche Nachholpfad,
+  // aber ohne dieses Ja erreicht ihn die Nachricht nie.
+  if (urteil.tun === "syncstart" && nachricht.url
+    && episodeIdentity(nachricht.url) && episodeIdentity(adresse)
+    && !istGleicheFolge(nachricht.url, adresse)
+    && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse)) {
+    return true;
   }
 
   const gemeint = nachricht.url || eintrag.live?.url || eintrag.url;
@@ -11078,9 +11256,17 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
     if (!provider) return false;
     const geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
       () => direktFolgeSpielen(provider, nachricht.url,
-        { startzeit: Math.max(0, Number(nachricht.position) || 0), istAktuell }));
+        { startzeit: Math.max(0, Number(nachricht.position) || 0), rundeWarten: true, istAktuell }));
     if (!istAktuell()) return true;
-    if (!geladen?.ok) sendToast(geladen?.grund || "Die neue Folge konnte nicht geöffnet werden.");
+    if (!geladen?.ok) {
+      sendToast(geladen?.grund || "Die neue Folge konnte nicht geöffnet werden.");
+      return true;
+    }
+    // Der Auftrag wartet absichtlich. Der syncstart ist waehrend des Ladens
+    // bereits nur noch eine Momentaufnahme: inzwischen kann die Runde pausiert,
+    // weitergelaufen oder gesprungen sein. Deshalb bleibt der neue Player hier
+    // angehalten und fordert erst jetzt den frischen Hoststand an.
+    watchparty.abgleichen(eintrag.key, eintrag.room);
     return true;
   }
 
@@ -11343,6 +11529,13 @@ function watchpartySteuerungHatZiel(eintrag, nachricht, urteil) {
     // navigieren. Alle uebrigen Befehle brauchen die bereits offene Folge.
     if (urteil.tun === "syncprepare" && nachricht.url
       && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
+    // Derselbe Nachholfall wie beim eigenen Player: ein gemeinsamer Start ist
+    // zugleich die sichere zweite Chance fuer ein Geraet, das die
+    // Vorbereitung der neuen Folge verpasst hat.
+    if (urteil.tun === "syncstart" && nachricht.url
+      && episodeIdentity(nachricht.url) && episodeIdentity(offen)
+      && !istGleicheFolge(nachricht.url, offen)
+      && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
     if (istGleicheFolge(gemeint, offen)
       && watchpartyPasstZurFolge(nachricht.episodeId, offen)) return true;
   }
@@ -11408,6 +11601,16 @@ async function applyWatchpartyControl(nachricht) {
   if (spielerLauf && await spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAktuell)) return;
   if (!istAktuell()) return;
 
+  const ansichtFolgeNachholen = urteil.tun === "syncstart" && nachricht.url
+    && [...providerViews.values()].some((view) => {
+      if (!isLiveView(view)) return false;
+      const offen = view.webContents.getURL();
+      return Boolean(episodeIdentity(nachricht.url) && episodeIdentity(offen)
+        && !istGleicheFolge(nachricht.url, offen)
+        && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen));
+    });
+  const nachholAutostarts = new Map();
+
   // Wechselt der Host die Folge, ziehen die anderen nach - aber nur innerhalb
   // derselben Serie, damit niemand ungefragt woanders landet.
   if (urteil.tun === "navigate") {
@@ -11425,8 +11628,29 @@ async function applyWatchpartyControl(nachricht) {
     // Und dasselbe Nachfassen wie beim eigenen Player: wer die Vorbereitung
     // nicht bekommen hat, steht sonst weiter bei der alten Folge.
     // followWatchpartyEpisode laesst Ansichten in Ruhe, die schon dort sind.
-    await followWatchpartyEpisode(eintrag, { ...nachricht, action: "navigate" });
-    if (!istAktuell()) return;
+    await followWatchpartyEpisode(eintrag, {
+      ...nachricht,
+      action: "navigate",
+      // Beim Nachholen kennt diese Nachricht bereits den autoritativen
+      // Laufzustand. Der gewoehnliche Seiten-Autostart darf ihm nicht
+      // zuvorkommen, besonders wenn die Runde am Ziel pausiert ist.
+      vorbereiten: ansichtFolgeNachholen
+    });
+    // Ein neuerer Befehl fuer dieselbe Zielfolge darf das notwendige Laden
+    // nicht abbrechen. Der alte Nachholauftrag bringt die Quelle nur bis zu
+    // einem angehaltenen Video; danach fragt er ohnehin den frischen Stand ab.
+    if (!istAktuell() && !ansichtFolgeNachholen) return;
+    if (ansichtFolgeNachholen) {
+      for (const [providerId, view] of providerViews) {
+        if (!isLiveView(view) || !istGleicheFolge(nachricht.url, view.webContents.getURL())) continue;
+        const provider = providers.find((item) => item.id === providerId);
+        if (provider) {
+          const auftrag = scheduleProviderAutoplay(provider, view,
+            { fullscreen: false, expectUrl: nachricht.url, durationMs: 60000, preparePaused: true });
+          if (auftrag) nachholAutostarts.set(provider.id, auftrag);
+        }
+      }
+    }
   }
 
   const ereignis = watchpartyEreignis(nachricht, watchpartyLaeuftDanach(nachricht));
@@ -11450,32 +11674,64 @@ async function applyWatchpartyControl(nachricht) {
 
   // Nur anwenden, wo genau dieselbe Folge offen ist - nicht bloss dieselbe
   // Serie. Wer eine Folge zurueckliegt, soll nicht mitpausiert werden.
-  for (const [providerId, view] of providerViews) {
-    if (!isLiveView(view)) continue;
-    const offen = view.webContents.getURL();
-    // Die Adresse des Absenders zaehlt. Danach kommt der laufende Stand der
-    // Runde - beides folgt der aktuellen Folge. Der gebuchte Fortschritt stand
-    // frueher an zweiter Stelle und war die aelteste Angabe von allen: nach
-    // einem Folgenwechsel zeigte er noch minutenlang auf die Folge davor, und
-    // damit fiel jede Pause durch diese Pruefung.
-    if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, offen)) continue;
-    // Und derselbe Riegel noch einmal ueber die Folgenangabe der Nachricht.
-    // Die Adresse allein reicht nicht: ein Ereignis der vorigen Folge kann
-    // dieselbe Serien-Adresse tragen, wenn der Absender inzwischen gewechselt
-    // hat und das Relay die alte Runden-Adresse mitschickt.
-    if (!watchpartyPasstZurFolge(nachricht.episodeId, offen)) continue;
-    const provider = providers.find((item) => item.id === providerId);
-    // Das Ereignis geht als Ganzes in den Player: dort wird die Zielzeit
-    // ausgerechnet, und zwar noch einmal unmittelbar vor dem Start. Nur so
-    // zaehlt auch die Zeit mit, die das Puffern gekostet hat.
-    await executeJavaScriptInMediaFrames(
-      view,
-      watchpartyApplyScript(nachricht.action, ereignis, { genau, nichtSpringen: urteil.nichtSpringen })
-    ).catch(() => []);
-    if (provider) {
-      logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
+  // Beim Nachholen kann das Video erst nach der Navigation entstehen. Dann
+  // wird begrenzt weiterprobiert, ohne einen eigenen Autostart daneben zu
+  // stellen.
+  const anwendenBis = ansichtFolgeNachholen ? Date.now() + 60000 : 0;
+  let angewendet = false;
+  do {
+    for (const [providerId, view] of providerViews) {
+      if (!isLiveView(view)) continue;
+      const offen = view.webContents.getURL();
+      // Die Adresse des Absenders zaehlt. Danach kommt der laufende Stand der
+      // Runde - beides folgt der aktuellen Folge. Der gebuchte Fortschritt stand
+      // frueher an zweiter Stelle und war die aelteste Angabe von allen: nach
+      // einem Folgenwechsel zeigte er noch minutenlang auf die Folge davor, und
+      // damit fiel jede Pause durch diese Pruefung.
+      if (!istGleicheFolge(nachricht.url || eintrag.live?.url || eintrag.url, offen)) continue;
+      // Und derselbe Riegel noch einmal ueber die Folgenangabe der Nachricht.
+      // Die Adresse allein reicht nicht: ein Ereignis der vorigen Folge kann
+      // dieselbe Serien-Adresse tragen, wenn der Absender inzwischen gewechselt
+      // hat und das Relay die alte Runden-Adresse mitschickt.
+      if (!watchpartyPasstZurFolge(nachricht.episodeId, offen)) continue;
+      const provider = providers.find((item) => item.id === providerId);
+      // Der syncstart ist nach der Navigation bereits nur noch eine
+      // Momentaufnahme. Den neuen Player deshalb zuerst sicher angehalten
+      // finden; sobald er existiert, wird der frische Hoststand angefordert.
+      const playerAktion = ansichtFolgeNachholen ? "pause"
+        : (urteil.tun === "syncstart" && !watchpartyLaeuftDanach(nachricht) ? "pause" : nachricht.action);
+      // Das Ereignis geht als Ganzes in den Player: dort wird die Zielzeit
+      // ausgerechnet, und zwar noch einmal unmittelbar vor dem Start. Nur so
+      // zaehlt auch die Zeit mit, die das Puffern gekostet hat.
+      const antworten = await executeJavaScriptInMediaFrames(
+        view,
+        watchpartyApplyScript(playerAktion, ereignis, { genau, nichtSpringen: urteil.nichtSpringen })
+      ).catch(() => []);
+      const werte = (antworten || []).map((antwort) => antwort?.value ?? antwort?.result ?? antwort);
+      // Nur eine bestaetigte Pause beweist, dass die Quelle wirklich da ist.
+      // `fehlgeschlagen`, `abgebrochen` oder `ungenau` sind keine Bereitschaft.
+      if (werte.some((wert) => wert === "pausiert")) angewendet = true;
+      if (provider && (!ansichtFolgeNachholen || angewendet)) {
+        logMediaDiagnostic(provider, offen, "watchparty", `${nachricht.from || "Jemand"}: ${nachricht.action}`, {});
+      }
+      if (ansichtFolgeNachholen && angewendet && provider) {
+        stopAutoplayRequest(provider.id, nachholAutostarts.get(provider.id));
+      }
     }
-    sendWatchpartyLive({
+    if (ansichtFolgeNachholen && !angewendet && Date.now() < anwendenBis) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+  } while (ansichtFolgeNachholen && !angewendet && Date.now() < anwendenBis
+    && aktiverWatchpartyRaum() === (nachricht.room || aktiv)
+    && [...providerViews.values()].some((view) => isLiveView(view)
+      && istGleicheFolge(nachricht.url, view.webContents.getURL())));
+  for (const [providerId, auftrag] of nachholAutostarts) stopAutoplayRequest(providerId, auftrag);
+  if (ansichtFolgeNachholen && angewendet) {
+    watchparty.abgleichen(eintrag.key, eintrag.room);
+    return;
+  }
+  if (!istAktuell()) return;
+  sendWatchpartyLive({
       active: true,
       live: true,
       connected: watchparty.verbunden,
@@ -11486,7 +11742,6 @@ async function applyWatchpartyControl(nachricht) {
       from: nachricht.from,
       action: nachricht.action
     });
-  }
 }
 
 // Die Oberflaeche zeigt an, wer gerade steuert.

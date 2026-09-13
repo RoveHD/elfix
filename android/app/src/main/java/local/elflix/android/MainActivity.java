@@ -10,6 +10,8 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.Handler;
@@ -41,6 +43,8 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.ByteArrayInputStream;
@@ -99,10 +103,14 @@ public class MainActivity extends Activity {
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
     private RaumWarteschlange raumWarteschlange;
+    /** Nur die Ansicht wechseln; der Beitritt zu einer Runde bleibt davon unberuehrt. */
+    private final Map<String, Boolean> warteschlangenReiterJeRaum = new HashMap<>();
     private final Handler raumQueueTakt = new Handler(Looper.getMainLooper());
     private int raumQueueGeneration;
     /** One-shot pause for restoring a source after a cancelled queue start. */
     private boolean naechsterDirektStartPausiert;
+    /** Falls die Einmal-Pause einem verpassten Watchparty-Start gehoert: dessen exaktes Ziel. */
+    private String nachholDirektStartPausiertUrl = "";
 
     private static final class RaumQueueVorbereitung {
         final int generation;
@@ -1242,6 +1250,27 @@ public class MainActivity extends Activity {
                     nativeFolgenBarriereSyncId = "";
                     nativeAbgelaufeneFolgenQuelleSyncId = "";
                     nativeFolgenBarriereUrl = "";
+                }
+            }
+            @Override public void nativeFolgenstartNachholen(String syncId, String url) {
+                // Das syncstart ist bereits vorbei. Die nachgeladene Media3-
+                // Quelle bleibt deshalb zunaechst stehen; sobald sie bereit
+                // ist, holt Mitschauen den dann aktuellen Stand der Runde.
+                // So spielt weder ein alter Startzeitpunkt noch ein lokaler
+                // Autostart einige Sekunden auf eigene Faust los.
+                if (DirektWiedergabe.passt(url)) {
+                    if (!naechsterDirektStartPausiert
+                        || !nachholDirektStartPausiertUrl.isEmpty()) {
+                        naechsterDirektStartPausiert = true;
+                        nachholDirektStartPausiertUrl = url == null ? "" : url;
+                    }
+                }
+            }
+            @Override public void nativeFolgenstartNachholenAbbrechen(String syncId, String url) {
+                if (!nachholDirektStartPausiertUrl.isEmpty()
+                    && Mitschauen.gleicheFolge(nachholDirektStartPausiertUrl, url)) {
+                    naechsterDirektStartPausiert = false;
+                    nachholDirektStartPausiertUrl = "";
                 }
             }
             @Override
@@ -8353,19 +8382,75 @@ public class MainActivity extends Activity {
             fernseher ? TvViews.CARD_RADIUS : MobileViews.CARD_RADIUS, Theme.BORDER, 1));
         View title = fernseher ? TvViews.sectionTitle(this, "Warteschlange") : MobileViews.sectionHeader(this, "Warteschlange", null, null);
         box.addView(title);
-        warteschlangenModus(box, fernseher, raum, false);
-        warteschlangenModus(box, fernseher, raum, true);
+        RadioGroup reiter = new RadioGroup(this);
+        reiter.setOrientation(LinearLayout.HORIZONTAL);
+        RadioButton normal = warteschlangenReiter("Serien & Filme", raum, false, fernseher);
+        RadioButton youtube = warteschlangenReiter("YouTube", raum, true, fernseher);
+        reiter.addView(normal, new RadioGroup.LayoutParams(0, -2, 1));
+        RadioGroup.LayoutParams youtubeLage = new RadioGroup.LayoutParams(0, -2, 1);
+        youtubeLage.leftMargin = dp(8);
+        reiter.addView(youtube, youtubeLage);
+        LinearLayout.LayoutParams reiterLage = new LinearLayout.LayoutParams(-1, -2);
+        reiterLage.topMargin = dp(12);
+        box.addView(reiter, reiterLage);
+
+        LinearLayout inhalt = new LinearLayout(this);
+        inhalt.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams inhaltLage = new LinearLayout.LayoutParams(-1, -2);
+        inhaltLage.topMargin = dp(14);
+        box.addView(inhalt, inhaltLage);
+        boolean yt = Boolean.TRUE.equals(warteschlangenReiterJeRaum.get(raum));
+        reiter.check(yt ? youtube.getId() : normal.getId());
+        warteschlangenModus(inhalt, fernseher, raum, yt);
+        reiter.setOnCheckedChangeListener((gruppe, id) -> {
+            boolean gewaehlt = id == youtube.getId();
+            warteschlangenReiterJeRaum.put(raum, gewaehlt);
+            inhalt.removeAllViews();
+            warteschlangenModus(inhalt, fernseher, raum, gewaehlt);
+        });
         return box;
+    }
+
+    private RadioButton warteschlangenReiter(String titel, String raum, boolean yt,
+                                             boolean fernseher) {
+        RadioButton reiter = new RadioButton(this);
+        reiter.setId(View.generateViewId());
+        reiter.setTag("tv:wp:queue:" + raum + (yt ? ":youtube" : ":normal"));
+        reiter.setText(titel);
+        reiter.setTextSize(fernseher ? 16 : 14);
+        reiter.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        reiter.setButtonDrawable((android.graphics.drawable.Drawable) null);
+        reiter.setBackgroundTintList(null);
+        reiter.setGravity(Gravity.CENTER);
+        reiter.setMaxLines(2);
+        reiter.setPadding(dp(8), dp(8), dp(8), dp(8));
+        reiter.setMinHeight(dp(MobileViews.TOUCH_TARGET));
+        int[][] zustaende = {
+            { android.R.attr.state_focused },
+            { android.R.attr.state_pressed },
+            { android.R.attr.state_checked },
+            {}
+        };
+        StateListDrawable hintergrund = new StateListDrawable();
+        hintergrund.addState(zustaende[0], MobileViews.shape(this, Theme.PRIMARY_MUTED,
+            12, Theme.TEXT_PRIMARY, 2));
+        hintergrund.addState(zustaende[1], MobileViews.shape(this, Theme.SURFACE_PRESSED,
+            12, Theme.PRIMARY, 1));
+        hintergrund.addState(zustaende[2], MobileViews.shape(this, Theme.PRIMARY_MUTED,
+            12, Theme.PRIMARY, 1));
+        hintergrund.addState(zustaende[3], MobileViews.shape(this, Theme.SURFACE,
+            12, Theme.BORDER, 1));
+        reiter.setBackground(hintergrund);
+        reiter.setTextColor(new ColorStateList(zustaende, new int[] {
+            Theme.TEXT_PRIMARY, Theme.TEXT_PRIMARY, Theme.TEXT_PRIMARY, Theme.TEXT_SECONDARY
+        }));
+        return reiter;
     }
 
     private void warteschlangenModus(LinearLayout box, boolean fernseher, String raum,
                                      boolean yt) {
         boolean erreichbar = raumVerbunden(raum);
-        TextView modus = fernseher ? TvViews.body(this, yt ? "YouTube" : "Serien und Filme")
-            : MobileViews.subtitle(this, yt ? "YouTube" : "Serien und Filme");
-        LinearLayout.LayoutParams modusLage = new LinearLayout.LayoutParams(-1, -2);
-        modusLage.topMargin = dp(yt ? 18 : 10);
-        box.addView(modus, modusLage);
+        String marke = "tv:wp:queue:" + raum + (yt ? ":youtube:" : ":normal:");
         JSONObject queueStand = raumWarteschlange == null
             ? new JSONObject() : raumWarteschlange.stand(yt, raum);
         JSONArray items = raumWarteschlange == null
@@ -8381,6 +8466,7 @@ public class MainActivity extends Activity {
             TextView vote = MobileViews.secondaryButton(this,
                 (mine ? "✓ Stimme" : "Stimmen") + " · " + name,
                 () -> raumWarteschlange.stimmen(yt, raum, id, !mine));
+            vote.setTag(marke + id + ":stimme");
             warteschlangenErreichbar(vote, erreichbar);
             vote.setSingleLine(true);
             vote.setEllipsize(TextUtils.TruncateAt.END);
@@ -8388,6 +8474,7 @@ public class MainActivity extends Activity {
             if (item.optBoolean("mine", false)) {
                 TextView entfernen = MobileViews.secondaryButton(this, "Vorschlag entfernen",
                     () -> raumWarteschlange.entfernen(yt, raum, id));
+                entfernen.setTag(marke + id + ":entfernen");
                 warteschlangenErreichbar(entfernen, erreichbar);
                 box.addView(entfernen,
                     new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
@@ -8405,6 +8492,7 @@ public class MainActivity extends Activity {
                     else raumWarteschlange.youtubeBeitreten(raum);
                     watchpartyGeaendert();
                 });
+            beitreten.setTag(marke + "beitritt");
             warteschlangenErreichbar(beitreten, erreichbar);
             box.addView(beitreten, new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
             TextView ytVorschlag = MobileViews.secondaryButton(this, "YouTube-Video vorschlagen", () ->
@@ -8417,11 +8505,13 @@ public class MainActivity extends Activity {
                             .put("url", url.trim()).put("title", url.trim()));
                     } catch (Exception ignored) { }
                 }));
+            ytVorschlag.setTag(marke + "vorschlag");
             warteschlangenErreichbar(ytVorschlag, erreichbar && aktiv);
             box.addView(ytVorschlag, new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
         } else {
             TextView merkliste = MobileViews.secondaryButton(this, "Titel aus Merkliste vorschlagen",
                 () -> warteschlangenTitelWaehlen(raum));
+            merkliste.setTag(marke + "merkliste");
             warteschlangenErreichbar(merkliste, erreichbar);
             box.addView(merkliste,
                 new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
@@ -8429,6 +8519,7 @@ public class MainActivity extends Activity {
             if (aktiv != null && DirektWiedergabe.istFolge(aktiv.url())) {
                 TextView aktuell = MobileViews.secondaryButton(this, "Aktuelle Folge vorschlagen",
                     () -> warteschlangenTitelVorschlagen(raum, aktiv));
+                aktuell.setTag(marke + "aktuell");
                 warteschlangenErreichbar(aktuell, erreichbar);
                 box.addView(aktuell,
                     new LinearLayout.LayoutParams(-1, dp(MobileViews.TOUCH_TARGET)));
@@ -8439,6 +8530,7 @@ public class MainActivity extends Activity {
         if (!selected.isEmpty() && (pending == null || pending.length() == 0)) {
             TextView starten = MobileViews.secondaryButton(this, "Ausgewählten Titel starten",
                 () -> warteschlangeManuellStarten(yt, raum, selected));
+            starten.setTag(marke + "starten");
             warteschlangenErreichbar(starten, erreichbar && (!yt ||
                 raumWarteschlange.youtubeRaumAktiv(raum)));
             box.addView(starten,
@@ -10367,8 +10459,10 @@ public class MainActivity extends Activity {
         String aktiveFolgenBarriere = barrierenZiel ? nativeFolgenBarriereSyncId : "";
         String abgelaufeneFolgenQuelle = barrierenZiel
             ? nativeAbgelaufeneFolgenQuelleSyncId : "";
-        boolean pausiertStarten = naechsterDirektStartPausiert;
+        boolean pausiertStarten = direktPausiertStarten(naechsterDirektStartPausiert,
+            nachholDirektStartPausiertUrl, url);
         naechsterDirektStartPausiert = false;
+        nachholDirektStartPausiertUrl = "";
         direktWiedergabe = new DirektWiedergabe(this, kern, provider, url, name, stelle,
             fortsetzStaffel, fortsetzFolge, aktiveFolgenBarriere, abgelaufeneFolgenQuelle,
             pausiertStarten,
@@ -10459,8 +10553,9 @@ public class MainActivity extends Activity {
                         spoilerAbgeschlosseneFolgen(aktuell), staffel, folge);
                     return gesehen ? (anzeige.isEmpty() ? "✓ Gesehen" : "✓ Gesehen · " + anzeige) : anzeige;
                 }
-                @Override public boolean folgenwechsel(String url) {
-                    return mitschauen != null && mitschauen.folgenwechselMelden(url);
+                @Override public boolean folgenwechsel(String url, Runnable fehlgeschlagen) {
+                    return mitschauen != null
+                        && mitschauen.folgenwechselMelden(url, fehlgeschlagen);
                 }
                 public void fassungGewaehlt(String fassungName, String hosterName) {
                     if (mitschauen == null) return;
@@ -10506,6 +10601,16 @@ public class MainActivity extends Activity {
             direktOeffnen(provider, ziel, true);
         });
         applyFullscreenSystemUi();
+    }
+
+    /**
+     * Ein Nachholstart gilt nur fuer seine exakte Folge. Ein leerer Zielmerker
+     * ist der vorhandene Queue-Rueckweg und bleibt ein einmaliger Pausenstart.
+     */
+    static boolean direktPausiertStarten(boolean vorgemerkt, String nachholZiel, String url) {
+        if (!vorgemerkt) return false;
+        return nachholZiel == null || nachholZiel.isEmpty()
+            || Mitschauen.gleicheFolge(nachholZiel, url);
     }
 
     /** Nur die private Weiterschauen-Reihe waehlt ihre gespeicherte Folge selbst. */
@@ -12175,17 +12280,20 @@ public class MainActivity extends Activity {
             .append(watchparty.serverUrl()).append('\n')
             .append(watchpartyKopfzeile()).append('\n')
             .append(watchpartyStatustext()).append('\n');
+        Set<String> queueRaeume = new LinkedHashSet<>();
         JSONArray raeume = watchparty.raeume();
         for (int i = 0; i < raeume.length(); i += 1) {
             JSONObject raum = raeume.optJSONObject(i);
             if (raum == null) continue;
             String code = raum.optString("room", "");
+            queueRaeume.add(code);
             bild.append(code).append('#').append(raumStatus(code)).append('\n');
         }
         JSONArray eintraege = watchparty.eintraege();
         for (int i = 0; i < eintraege.length(); i += 1) {
             JSONObject eintrag = eintraege.optJSONObject(i);
             if (eintrag == null) continue;
+            queueRaeume.add(eintrag.optString("room", ""));
             bild.append(eintrag.optString("key", "")).append('#')
                 .append(eintrag.optString("room", "")).append('#')
                 .append(eintrag.optString("title", "")).append('#')
@@ -12196,6 +12304,19 @@ public class MainActivity extends Activity {
                 .append(eintrag.optBoolean("joined", false) ? '1' : '0')
                 .append(eintrag.optBoolean("mine", false) ? '1' : '0')
                 .append(eintrag.optBoolean("openable", false) ? '1' : '0').append('\n');
+        }
+        // Vorschlaege und Stimmen koennen sich ohne eine neue Raum- oder
+        // Titelmeldung aendern. Reine Relay-Revisionen bauen die Seite nicht neu.
+        if (raumWarteschlange != null) for (String raum : queueRaeume) {
+            bild.append(raum).append('#').append(raumWarteschlange.youtubeRaumAktiv(raum));
+            for (boolean yt : new boolean[] { false, true }) {
+                JSONObject queue = raumWarteschlange.stand(yt, raum);
+                JSONObject pending = queue.optJSONObject("pending");
+                bild.append('#').append(raumWarteschlange.eintraege(yt, raum))
+                    .append('#').append(queue.optString("selectedId", ""))
+                    .append('#').append(pending != null && pending.length() > 0);
+            }
+            bild.append('\n');
         }
         return bild.toString();
     }

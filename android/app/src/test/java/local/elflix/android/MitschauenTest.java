@@ -5,7 +5,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import org.json.JSONObject;
 import org.junit.Test;
+
+import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Woran Android erkennt, ob ein Befehl der Runde die offene Folge meint.
@@ -22,6 +27,100 @@ import org.junit.Test;
 public class MitschauenTest {
 
     private static final String BASIS = "https://aniworld.to/anime/stream/naruto";
+
+    /**
+     * Ein wieder angeschlossenes Android-Geraet kann die Vorbereitung der
+     * neuen Folge verpassen und erst den gemeinsamen Start sehen. Dann muss
+     * genau dieser Start die neue Folge nachholen. Er darf weder eine fremde
+     * Serie oeffnen noch eine andere Runde oder eine Nachricht ohne
+     * Relay-Generation wiederbeleben.
+     */
+    @Test
+    public void verpassterGemeinsamerStartHoltNurDasExakteFolgenzielNach() throws Exception {
+        Method pruefen = Mitschauen.class.getDeclaredMethod("verpassterFolgenstart",
+            JSONObject.class, String.class, String.class, String.class);
+        pruefen.setAccessible(true);
+
+        String offen = BASIS + "/staffel-1/episode-4";
+        JSONObject start = new JSONObject()
+            .put("action", "syncstart")
+            .put("syncId", "wechsel-5")
+            .put("key", "serie:naruto")
+            .put("room", "salon")
+            .put("url", BASIS + "/staffel-1/episode-5")
+            .put("episodeId", "s1e5");
+
+        assertTrue((Boolean) pruefen.invoke(null, start, offen, "serie:naruto", "salon"));
+        assertTrue((Boolean) pruefen.invoke(null,
+            new JSONObject(start.toString()).put("playing", false),
+            offen, "serie:naruto", "salon"));
+        assertFalse((Boolean) pruefen.invoke(null, start, start.getString("url"),
+            "serie:naruto", "salon"));
+        assertFalse((Boolean) pruefen.invoke(null, start, offen, "serie:naruto", "kueche"));
+        assertFalse((Boolean) pruefen.invoke(null,
+            new JSONObject(start.toString()).put("url",
+                "https://aniworld.to/anime/stream/bleach/staffel-1/episode-5"),
+            offen, "serie:naruto", "salon"));
+        JSONObject ohneGeneration = new JSONObject(start.toString());
+        ohneGeneration.remove("syncId");
+        assertFalse((Boolean) pruefen.invoke(null, ohneGeneration,
+            offen, "serie:naruto", "salon"));
+        assertFalse((Boolean) pruefen.invoke(null,
+            new JSONObject(start.toString()).put("action", "play"),
+            offen, "serie:naruto", "salon"));
+
+        Method markieren = Mitschauen.class.getDeclaredMethod("nachholMarke", JSONObject.class);
+        markieren.setAccessible(true);
+        String salon = (String) markieren.invoke(null, start);
+        String kueche = (String) markieren.invoke(null,
+            new JSONObject(start.toString()).put("room", "kueche"));
+        String andererTitel = (String) markieren.invoke(null,
+            new JSONObject(start.toString()).put("key", "serie:bleach"));
+        assertFalse("Dieselbe Relay-Nummer in anderem Raum kollidiert", salon.equals(kueche));
+        assertFalse("Dieselbe Relay-Nummer an anderem Titel kollidiert",
+            salon.equals(andererTitel));
+    }
+
+    @Test
+    public void bereiterNachholstartRaeumtErstDieGenerationAufUndGleichtDannFrischAb()
+        throws Exception {
+        JSONObject start = new JSONObject()
+            .put("action", "syncstart")
+            .put("syncId", "catchup-7")
+            .put("key", "serie:naruto")
+            .put("room", "salon")
+            .put("url", BASIS + "/staffel-1/episode-5")
+            .put("episodeId", "s1e5")
+            .put("playing", false);
+        Method markieren = Mitschauen.class.getDeclaredMethod("nachholMarke", JSONObject.class);
+        markieren.setAccessible(true);
+        String marke = (String) markieren.invoke(null, start);
+        Set<String> offen = new HashSet<>();
+        offen.add(marke);
+        int[] abgleiche = { 0 };
+
+        assertTrue(Mitschauen.nachholStartAbschliessen(offen, start, () -> {
+            assertFalse("Der alte Marker lebt beim frischen Abgleich noch", offen.contains(marke));
+            abgleiche[0] += 1;
+        }));
+        assertEquals(1, abgleiche[0]);
+        assertFalse("Die gleiche Ready-Meldung loest einen zweiten Abgleich aus",
+            Mitschauen.nachholStartAbschliessen(offen, start, () -> abgleiche[0] += 1));
+        assertEquals(1, abgleiche[0]);
+    }
+
+    @Test
+    public void nachholpauseGiltNurFuerIhrExaktesZiel() {
+        String folge5 = BASIS + "/staffel-1/episode-5";
+        assertTrue(MainActivity.direktPausiertStarten(true, folge5, folge5 + "?quelle=voe"));
+        assertFalse("Eine neuere Folge erbt die Pause des verworfenen Nachholers",
+            MainActivity.direktPausiertStarten(true, folge5,
+                BASIS + "/staffel-1/episode-6"));
+        assertTrue("Der vorhandene Queue-Rueckweg bleibt ein einmaliger Pausenstart",
+            MainActivity.direktPausiertStarten(true, "",
+                BASIS + "/staffel-1/episode-4"));
+        assertFalse(MainActivity.direktPausiertStarten(false, folge5, folge5));
+    }
 
     /**
      * Android bildet den Titelschluessel nicht mehr selbst.
