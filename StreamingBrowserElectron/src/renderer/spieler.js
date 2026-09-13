@@ -28,7 +28,7 @@
 const bruecke = window.elfixSpieler || {
   aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
   skipSegmente() {}, aufSkipEinstellung() {}, untertitelMerken() {},
-  fehler() {}, schliessen() {}, vollbild() {}, miniStatus() {}, folgen() {}, wechseln() {}, hoster() {},
+  fehler() {}, schliessen() {}, vollbild() {}, miniStatus() {}, folgen() {}, wechseln() {}, hoster() {}, filler() { return Promise.resolve(null); },
   sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {},
   chatStatus() { return Promise.resolve({ active: false, messages: [] }); }, chatSenden() { return Promise.resolve({ ok: false }); }, aufChat() {}
 };
@@ -583,6 +583,7 @@ let puffert = false;
 let ausRundeBis = 0;
 /** Die gelesene Staffel- und Folgenliste. */
 let folgenStand = null;
+let folgenFassung = 0;
 let queueAktiv = false;
 /** Welche Staffel im Panel gerade aufgeschlagen ist. */
 let offeneStaffel = 0;
@@ -1444,10 +1445,12 @@ async function folgenZeigen() {
     return;
   }
   folgenStand = stand;
+  const fassung = ++folgenFassung;
   spoilerSchalterZeichnen(stand.spoilerRegel);
   const laufend = stand.folgen.find((eintrag) => eintrag.laeuft);
   offeneStaffel = laufend ? laufend.staffel : (stand.folgen[0]?.staffel || 0);
   folgenZeichnen();
+  fillerNachtragen(stand.fillerQuelle, fassung);
 }
 
 /*
@@ -1490,7 +1493,11 @@ async function staffelOeffnen(staffel) {
       ...stand.folgen.filter((eintrag) => !vorhanden.has(eintrag.url))
     ].sort((links, rechts) => (links.staffel - rechts.staffel) || (links.folge - rechts.folge))
   };
+  // Eine weitere Staffel gehoert noch zum selben Titel. Laufende Nachtraege
+  // der anderen Staffeln duerfen deshalb nicht als veraltet gelten.
+  const fassung = folgenFassung;
   folgenZeichnen();
+  fillerNachtragen(stand.fillerQuelle, fassung);
 }
 
 function folgenZeichnen() {
@@ -1537,6 +1544,7 @@ function folgenZeichnen() {
   for (const eintrag of sichtbare) {
     const zeile = document.createElement("div");
     zeile.className = "zeile";
+    zeile.dataset.folgeUrl = eintrag.url || "";
     const knopf = document.createElement("button");
     knopf.type = "button";
     knopf.className = eintrag.laeuft ? "folge laeuft" : "folge";
@@ -1548,10 +1556,12 @@ function folgenZeichnen() {
     nummer.className = "nummer";
     nummer.textContent = eintrag.staffel === 0 ? `Film ${eintrag.folge}` : `Folge ${eintrag.folge}`;
     const titel = document.createElement("span");
+    titel.className = "folgenText";
     titel.textContent = eintrag.titel || (eintrag.gesperrt ? "in einer anderen Folge enthalten" : "");
     knopf.append(nummer, titel);
     knopf.addEventListener("click", () => folgeWechseln(eintrag.url));
     zeile.appendChild(knopf);
+    fillerBadgeSetzen(zeile, eintrag.filler);
 
     // Der Haken von Hand. Was ELFIX nicht selbst mitbekommen hat - alles vor
     // der ersten eigenen Wiedergabe, alles von woanders -, steht sonst
@@ -1568,6 +1578,38 @@ function folgenZeichnen() {
     haken.addEventListener("click", () => gesehenSetzen([eintrag], !eintrag.seen));
     zeile.appendChild(haken);
     folgenListe.appendChild(zeile);
+  }
+}
+
+function fillerBadgeSetzen(zeile, filler) {
+  if (!zeile) return;
+  zeile.querySelector(".fillerBadge")?.remove();
+  if (!filler?.label || !filler?.sourceUrl) return;
+  const badge = document.createElement("span");
+  badge.className = `fillerBadge filler-${String(filler.type || "").replace(/[^a-z]+/gi, "-")}`;
+  badge.textContent = filler.label;
+  badge.title = `Quelle: ${filler.source || "AnimeFillerList"}\n${filler.sourceUrl}`;
+  (zeile.querySelector("button.folge") || zeile).appendChild(badge);
+}
+
+async function fillerNachtragen(staffelUrl, fassung) {
+  if (!staffelUrl || !folgenStand) return;
+  const nachtrag = await bruecke.filler?.(staffelUrl).catch(() => null);
+  if (fassung !== folgenFassung || !folgenStand || !Array.isArray(nachtrag?.folgen)) return;
+  const nachFiller = new Map(nachtrag.folgen.filter((eintrag) => eintrag?.url)
+    .map((eintrag) => [eintrag.url, eintrag.filler]));
+  folgenStand = { ...folgenStand, folgen: folgenStand.folgen.map((eintrag) => {
+    if (!nachFiller.has(eintrag.url)) return eintrag;
+    const filler = nachFiller.get(eintrag.url);
+    return JSON.stringify(eintrag.filler || null) === JSON.stringify(filler || null)
+      ? eintrag : { ...eintrag, filler };
+  }) };
+  if (!folgenPanel.hidden) {
+    const scrollTop = folgenListe.scrollTop;
+    const zeilen = new Map([...folgenListe.querySelectorAll(".zeile")]
+      .map((zeile) => [zeile.dataset.folgeUrl, zeile]));
+    for (const [url, filler] of nachFiller) fillerBadgeSetzen(zeilen.get(url), filler);
+    folgenListe.scrollTop = scrollTop;
   }
 }
 
@@ -2593,6 +2635,7 @@ function starten(neuerAuftrag) {
   // Stand und nicht im Auftrag - also wird sie beim naechsten Aufklappen neu
   // geholt.
   folgenStand = null;
+  ++folgenFassung;
 
   // Der Player vor dem Video: die Quelle wird noch gesucht. Er steht schon da,
   // damit die Flaeche nicht leer bleibt, waehrend im Hintergrund die Seite

@@ -25,4 +25,18 @@ public class SerienuebersichtTest {
         assertFalse(bestand.folgen.get(0).unterschrift().contains("Staffel 0"));
         assertTrue(bestand.taugt());
     }
+
+    @Test
+    public void behaeltAnimeFillerBadgeUndRoheTitelAlternativenFuerDieAnreicherung() {
+        Serienuebersicht.Bestand bestand = Serienuebersicht.auswerten("{"
+            + "\"titel\":\"One Piece\",\"folgen\":[{\"staffel\":2,\"folge\":4,"
+            + "\"url\":\"https://aniworld.test/anime/stream/one-piece/staffel-2/episode-4\","
+            + "\"titel\":\"Der Titel\",\"titelAlternativen\":[\"The English Title\"],"
+            + "\"filler\":{\"type\":\"filler\",\"label\":\"Filler\","
+            + "\"source\":\"AnimeFillerList\"}}]}" );
+
+        assertEquals("Filler", bestand.folgen.get(0).filler);
+        assertEquals("The English Title", Serienuebersicht.alsJson(bestand)
+            .optJSONArray("folgen").optJSONObject(0).optJSONArray("titelAlternativen").optString(0));
+    }
 }

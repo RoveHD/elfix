@@ -137,6 +137,16 @@ function rundenFolge(c) {
   await beitreten(Handy, false);
 
   H.stelle = 400; puls(H);
+  // Der Host muss wirklich schon fuehren, bevor die beiden anderen Player
+  // gleichzeitig zu melden beginnen. `socket.send()` ordnet nur Nachrichten
+  // desselben Sockets; ueber drei Verbindungen darf der Relay den ersten
+  // Herzschlag in anderer Reihenfolge empfangen. Dann wurde sporadisch der TV
+  // Host und die eigentliche Nachhaltepruefung hatte eine falsche Ausgangslage.
+  await H.erwarte((m) => {
+    if (m.type !== "state") return false;
+    const eintrag = m.shared?.find((x) => x.key === KEY);
+    return eintrag?.hostId === H.deviceId;
+  }, 4000);
   TV.stelle = 400; puls(TV);
   Handy.stelle = 400; puls(Handy);
   await schlaf(1200);

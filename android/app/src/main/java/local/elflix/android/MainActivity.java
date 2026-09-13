@@ -300,6 +300,7 @@ public class MainActivity extends Activity {
     private static final int TITELSEITE_BYTES = 24_000;
     /** Der Leser fuer die Seite vor der ersten Folge. */
     private Serienuebersicht serienuebersicht;
+    private AnimeFiller animeFiller;
     /** Legt vor einem Update eine Sicherung an - siehe {@link Sicherung}. */
     private Sicherung sicherung;
     /** Ob die gerade ladende Seite fuer die Uebersicht gelesen werden soll. */
@@ -1080,6 +1081,7 @@ public class MainActivity extends Activity {
         messung.setzeRahmen(rahmen);
         titelbild = new Titelbild(kern, bestand);
         serienuebersicht = new Serienuebersicht(kern);
+        animeFiller = new AnimeFiller(kern);
         messung.setzeTitelbild(titelbild);
         // Der Weg zur naechsten Folge - dieselbe Regel wie am Rechner.
         folgen = new Folgen(kern);
@@ -9755,7 +9757,39 @@ public class MainActivity extends Activity {
             // hereinzuschieben.
             naechsterAuftritt = Auftritt.ZOOM;
             zeigeSerienuebersicht();
+            uebersichtMitFillerNachreichen(gelesen);
         });
+    }
+
+    /**
+     * AnimeFillerList ist Zusatzwissen. Die Liste ist vorher voll benutzbar;
+     * erst die spaete Antwort zeichnet ihre kleinen Kennzeichnungen nach.
+     */
+    private void uebersichtMitFillerNachreichen(Serienuebersicht.Bestand gelesen) {
+        if (animeFiller == null || gelesen == null) return;
+        final String serienUrl = uebersichtSerienUrl;
+        animeFiller.anreichern(Serienuebersicht.alsJson(gelesen), serienUrl, wert -> {
+            // Staffel- oder Titelwechsel macht jede aeltere Netzantwort wertlos.
+            if (uebersichtBestand != gelesen || !"uebersicht".equals(currentScreen)) return;
+            Serienuebersicht.Bestand angereichert = Serienuebersicht.auswerten(wert.toString());
+            if (!angereichert.taugt()) return;
+            uebersichtBestand = angereichert;
+            uebersichtFillerAktualisieren(angereichert);
+        });
+    }
+
+    /** Setzt nur die nachgeladenen Labels; Scrollposition und TV-Fokus bleiben stehen. */
+    private void uebersichtFillerAktualisieren(Serienuebersicht.Bestand bestand) {
+        if (content == null || bestand == null) return;
+        for (Serienuebersicht.Folge folge : bestand.folgen) {
+            View badge = content.findViewWithTag("anime-filler:" + folge.url);
+            if (!(badge instanceof TextView)) continue;
+            TextView text = (TextView) badge;
+            boolean sichtbar = !folge.filler.isEmpty();
+            text.setText(sichtbar ? folge.filler : "");
+            text.setVisibility(sichtbar ? View.VISIBLE : View.GONE);
+            text.setContentDescription(sichtbar ? folge.filler + " · AnimeFillerList" : "");
+        }
     }
 
     /**
@@ -9933,6 +9967,22 @@ public class MainActivity extends Activity {
         name.setMaxLines(2);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         texte.addView(name);
+        {
+            TextView filler = new TextView(this);
+            filler.setTag("anime-filler:" + folge.url);
+            // Die Kategorie verrät keinen Titel oder Inhalt. Gerade vor dem
+            // Anschauen muss sie deshalb sichtbar sein; nur der Folgentitel
+            // selbst folgt dem Spoilerschutz.
+            boolean fillerSichtbar = !folge.filler.isEmpty();
+            filler.setText(fillerSichtbar ? folge.filler : "");
+            filler.setTextColor(Theme.PRIMARY);
+            filler.setTextSize(fernseher ? 13 : 11);
+            filler.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            filler.setPadding(0, dp(2), 0, 0);
+            filler.setVisibility(fillerSichtbar ? View.VISIBLE : View.GONE);
+            filler.setContentDescription(fillerSichtbar ? folge.filler + " · AnimeFillerList" : "");
+            texte.addView(filler);
+        }
         TextView unter = new TextView(this);
         unter.setText(spoilerFolgeUntertitel(folge));
         unter.setTextColor(Theme.TEXT_SECONDARY);

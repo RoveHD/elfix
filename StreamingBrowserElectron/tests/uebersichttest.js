@@ -61,7 +61,7 @@ class Knoten {
       if (teil === "tr, li" || teil === "tr" || teil === "li") return this.tag === "tr" || this.tag === "li";
       if (teil === "h1") return this.tag === "h1";
       if (teil === "img" || teil === "svg" || teil === "a" || teil === "button"
-        || teil === "strong") return this.tag === teil;
+        || teil === "strong" || teil === "span") return this.tag === teil;
       const klasse = teil.match(/^\[class\*='([^']+)'\]$/);
       if (klasse) return String(this.attribute.class || "").includes(klasse[1]);
       return false;
@@ -258,6 +258,9 @@ const SKRIPT = seitendaten.uebersichtSkript();
   pruefe("Der englische Titel klebt nicht daran",
     zu(1, 2) && zu(1, 2).titel === "Die Nacht der Klingen",
     zu(1, 2) ? zu(1, 2).titel : "-");
+  pruefe("Englische Titel bleiben fuer den Filler-Abgleich separat erhalten",
+    zu(1, 2)?.titelAlternativen?.includes("Night of Blades")
+      && zu(1, 2).titelAlternativen.includes("Die Nacht der Klingen"));
   pruefe("Ohne Titelzelle bleibt der Titel leer",
     zu(1, 3) && zu(1, 3).titel === "",
     zu(1, 3) ? `"${zu(1, 3).titel}"` : "-");

@@ -107,6 +107,8 @@ public final class Kern {
     private final Horcher horcher;
     private final Handler haupt = new Handler(Looper.getMainLooper());
     private final ExecutorService netz = Executors.newFixedThreadPool(4);
+    /** Cache replacements share one writer, so index and detail saves cannot race. */
+    private final ZwischenspeicherSchreiber zwischenSchreiber = new ZwischenspeicherSchreiber();
     private final Map<String, Antwort> offeneAufrufe = new ConcurrentHashMap<>();
     private final AtomicLong zaehler = new AtomicLong();
     private final okhttp3.OkHttpClient http = CookieNetz.erstellen();
@@ -355,7 +357,7 @@ public final class Kern {
             StringBuilder puffer = offen.remove(art);
             if (puffer == null) return;
             String inhalt = puffer.toString();
-            netz.execute(() -> zwischenSchreiben(art, inhalt));
+            zwischenSchreiber.ausfuehren(() -> zwischenSchreiben(art, inhalt));
         }
     }
 
@@ -410,6 +412,7 @@ public final class Kern {
         for (okhttp3.Call verbindung : verbindungen.values()) verbindung.cancel();
         verbindungen.clear();
         netz.shutdownNow();
+        zwischenSchreiber.beenden();
         if (webView == null) return;
         webView.removeJavascriptInterface("AndroidKern");
         webView.destroy();

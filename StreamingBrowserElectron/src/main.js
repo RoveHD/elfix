@@ -53,6 +53,7 @@ const voeQualitaet = require("./voe-qualitaet");
 // Weiterleitungen (direktlauf) und das Lesen des Quelltexts (direktquelle).
 const direktlinks = require("./direktlinks");
 const direktfolgen = require("./direktfolgen");
+const animeFiller = require("./anime-filler");
 const spoilerschutz = require("./spoilerschutz");
 const spoilerRaumStaende = new Map();
 const spoilerGesendet = new Map();
@@ -259,6 +260,7 @@ const TASTE_FILE = path.join(DATA_DIR, "taste-cache.json");
 // der teuerste Teil des Ganzen.
 const METADATEN_FILE = path.join(DATA_DIR, "metadaten-cache.json");
 const SKIPSEGMENTE_FILE = path.join(DATA_DIR, "skipsegmente-cache.json");
+const ANIME_FILLER_FILE = path.join(DATA_DIR, "anime-filler-cache.json");
 const WATCHPARTY_FILE = path.join(DATA_DIR, "watchparty.json");
 // Der Spiegel des Geraeteabgleichs: was zuletzt hinausging oder hereinkam.
 // Ohne ihn faengt jeder Start von vorn an und meldet den ganzen Bestand noch
@@ -10194,6 +10196,30 @@ function skipClient() {
   });
   return skipsegmenteClient;
 }
+
+/* AnimeFillerList ist Zusatzwissen, niemals eine Voraussetzung zum Abspielen. */
+let animeFillerClient = null;
+function animeFillerClientHolen() {
+  if (!animeFillerClient) animeFillerClient = animeFiller.erstellen({
+    holen: (url, optionen) => net.fetch(url, optionen),
+    laden: () => JSON.parse(fs.readFileSync(ANIME_FILLER_FILE, "utf8")),
+    speichern: (daten) => {
+      ensureDataDir();
+      fs.writeFileSync(ANIME_FILLER_FILE, JSON.stringify(daten));
+    }
+  });
+  return animeFillerClient;
+}
+
+function spielerFolgenSicht(stand, provider, url) {
+  const liste = direktfolgen.fuerPlayer(stand, episodeIdentity(url));
+  return liste ? {
+    ...liste,
+    spoilerRegel: { ...settings.playback?.spoilerProtection },
+    folgen: spoilerschutz.protectEpisodes(liste.folgen, spoilerOptionen(provider, url))
+  } : null;
+}
+
 async function spielerSkipLesen(ereignis, id, dauer) {
   if (!vomSpieler(ereignis) || id !== spielerLauf.id || settings.playback?.skipSegments === false
     || typeof dauer !== "number" || !Number.isFinite(dauer) || dauer <= 0 || dauer > 86400) return [];
@@ -10727,9 +10753,10 @@ function vomSpieler(ereignis) {
  */
 ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "") => {
   if (!vomSpieler(ereignis)) return null;
+  const lauf = spielerLauf;
   const provider = spielerAnbieter();
   if (!provider) return null;
-  const url = spielerLauf.url;
+  const url = lauf.url;
 
   let ziel = url;
   const gewuenscht = String(staffelUrl || "").trim();
@@ -10741,11 +10768,32 @@ ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "
   }
 
   const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch) });
-  const liste = direktfolgen.fuerPlayer(stand, episodeIdentity(url));
+  if (spielerLauf !== lauf || !vomSpieler(ereignis)) return null;
   // Die Regel reist mit: die Schalter unter der Liste sollen beim Aufklappen
   // schon stimmen und nicht erst, wenn sich zufaellig etwas am Stand aendert.
-  return liste ? { ...liste, spoilerRegel: { ...settings.playback?.spoilerProtection },
-    folgen: spoilerschutz.protectEpisodes(liste.folgen, spoilerOptionen(provider, url)) } : liste;
+  const sicht = spielerFolgenSicht(stand, provider, url);
+  // Der Renderer fragt die Zusatzdaten erst nach seinem ersten Zeichnen an.
+  return sicht ? { ...sicht, fillerQuelle: ziel } : null;
+});
+
+ipcMain.handle("spieler:folgen-filler", async (ereignis, staffelUrl = "") => {
+  if (!vomSpieler(ereignis)) return null;
+  const lauf = spielerLauf;
+  const provider = spielerAnbieter();
+  if (!lauf || !provider) return null;
+  const url = lauf.url;
+  const gewuenscht = String(staffelUrl || "").trim();
+  const ziel = absoluteHttpUrl(gewuenscht, url);
+  if (!providerModel.isHttpUrl(ziel) || new URL(ziel).host !== new URL(url).host) return null;
+
+  const stand = await folgenlisteLesen(provider, ziel);
+  if (spielerLauf !== lauf || !vomSpieler(ereignis) || !stand) return null;
+  // Kein erzwungenes `art: anime`: die gemeinsame Regel erkennt nur eine
+  // Anime-Adresse oder eine ausdruecklich bestaetigte Metadaten-Gattung.
+  const angereichert = await animeFillerClientHolen().anreichern(stand, { url: ziel });
+  if (spielerLauf !== lauf || !vomSpieler(ereignis)) return null;
+  const sicht = spielerFolgenSicht(angereichert, provider, url);
+  return sicht ? { folgen: sicht.folgen } : null;
 });
 
 /*

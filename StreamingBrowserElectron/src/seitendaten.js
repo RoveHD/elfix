@@ -855,6 +855,9 @@ function uebersichtSkript() {
       return text;
     };
 
+    // Keep the English title separately for exact external episode matching.
+    // It must not replace the visible German title or be joined into it.
+    const titelAlternativen = new Map();
     const titel = (() => {
       const karte = new Map();
       const eintragen = (zelle, gehoert) => {
@@ -866,6 +869,11 @@ function uebersichtSkript() {
         if (!sauber) return;
         const schluessel = gehoert.staffel + "x" + gehoert.folge;
         if (!karte.has(schluessel)) karte.set(schluessel, sauber);
+        const alternativen = Array.from(zelle.querySelectorAll("strong, span"))
+          .map(knoten => titelSauber(knoten.textContent)).filter(Boolean);
+        titelAlternativen.set(schluessel, [...new Set([
+          ...(titelAlternativen.get(schluessel) || []), sauber, ...alternativen
+        ])].slice(0, 4));
       };
       // Die normale Tabellen- bzw. Listenzeile bindet einen Titel sicher an
       // ihre Folge, auch wenn derselbe Titelbaustein anderswo auf der Seite
@@ -927,6 +935,7 @@ function uebersichtSkript() {
         folge: gefunden.folge,
         url: gefunden.url,
         titel: titel.get(schluessel) || "",
+        titelAlternativen: titelAlternativen.get(schluessel) || [],
         gesperrt: gesperrte.has(gefunden.folge)
       });
     }

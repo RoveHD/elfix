@@ -73,13 +73,16 @@ public final class Serienuebersicht {
          * jemand auf eine Folge, die nie startet.
          */
         public final boolean gesperrt;
+        /** Einordnung von AnimeFillerList; leer, wenn die freie Quelle nichts weiss. */
+        public final String filler;
 
-        Folge(int staffel, int nummer, String url, String titel, boolean gesperrt) {
+        Folge(int staffel, int nummer, String url, String titel, boolean gesperrt, String filler) {
             this.staffel = staffel;
             this.nummer = nummer;
             this.url = url;
             this.titel = titel == null ? "" : titel.trim();
             this.gesperrt = gesperrt;
+            this.filler = filler == null ? "" : filler.trim();
         }
 
         /** Die Zeile, die in der Liste oben steht. */
@@ -107,12 +110,15 @@ public final class Serienuebersicht {
         public final int offeneStaffel;
         public final List<Staffel> staffeln;
         public final List<Folge> folgen;
+        /** Unveraenderter Provider-Datensatz, einschliesslich Titelalternativen. */
+        final JSONObject roh;
 
-        Bestand(String titel, int offeneStaffel, List<Staffel> staffeln, List<Folge> folgen) {
+        Bestand(String titel, int offeneStaffel, List<Staffel> staffeln, List<Folge> folgen, JSONObject roh) {
             this.titel = titel;
             this.offeneStaffel = offeneStaffel;
             this.staffeln = staffeln;
             this.folgen = folgen;
+            this.roh = roh == null ? new JSONObject() : roh;
         }
 
         /** Ob sich damit ueberhaupt eine Seite bauen laesst. */
@@ -157,7 +163,7 @@ public final class Serienuebersicht {
 
     /** Eine leere Auskunft - der Aufrufer macht dann weiter wie bisher. */
     public static final Bestand LEER =
-        new Bestand("", 0, new ArrayList<>(), new ArrayList<>());
+        new Bestand("", 0, new ArrayList<>(), new ArrayList<>(), new JSONObject());
 
     /** Staffel 0 ist bei AniWorld die eigene Filme-Registerkarte. */
     static String staffelName(int nummer) {
@@ -262,10 +268,36 @@ public final class Serienuebersicht {
                 if (nummer <= 0 || url.isEmpty()) continue;
                 folgen.add(new Folge(eintrag.optInt("staffel", 1), nummer, url,
                     eintrag.optString("titel", ""),
-                    eintrag.optBoolean("gesperrt", false)));
+                    eintrag.optBoolean("gesperrt", false),
+                    eintrag.optJSONObject("filler") == null ? ""
+                        : eintrag.optJSONObject("filler").optString("label", "")));
             }
         }
         return new Bestand(roh.optString("titel", ""), roh.optInt("offeneStaffel", 0),
-            staffeln, folgen);
+            staffeln, folgen, roh);
+    }
+
+    /** Der gleiche, kleine Datensatz fuer die asynchrone externe Einordnung. */
+    static JSONObject alsJson(Bestand bestand) {
+        if (bestand == null) return new JSONObject();
+        try { return new JSONObject(bestand.roh.toString()); }
+        catch (Exception ignoriert) { }
+        JSONObject aus = new JSONObject();
+        try {
+            aus.put("titel", bestand.titel).put("offeneStaffel", bestand.offeneStaffel);
+            JSONArray staffeln = new JSONArray();
+            for (Staffel staffel : bestand.staffeln) {
+                staffeln.put(new JSONObject().put("staffel", staffel.nummer).put("url", staffel.url));
+            }
+            JSONArray folgen = new JSONArray();
+            for (Folge folge : bestand.folgen) {
+                JSONObject zeile = new JSONObject().put("staffel", folge.staffel).put("folge", folge.nummer)
+                    .put("url", folge.url).put("titel", folge.titel).put("gesperrt", folge.gesperrt);
+                if (!folge.filler.isEmpty()) zeile.put("filler", new JSONObject().put("label", folge.filler));
+                folgen.put(zeile);
+            }
+            aus.put("staffeln", staffeln).put("folgen", folgen);
+        } catch (Exception ignoriert) { }
+        return aus;
     }
 }

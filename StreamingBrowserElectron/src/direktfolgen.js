@@ -121,6 +121,10 @@ function fuerPlayer(stand, jetzt) {
       folge: Number(eintrag.folge) || 0,
       url: String(eintrag.url || ""),
       titel: String(eintrag.titel || ""),
+      // Die Einordnung kommt spaeter von AnimeFillerList. Sie ist reine
+      // Zusatzinformation und darf weder die Adresse noch den Spoiler-Schutz
+      // der Folge veraendern.
+      filler: eintrag.filler && typeof eintrag.filler === "object" ? { ...eintrag.filler } : undefined,
       gesperrt: !spielbar(eintrag),
       laeuft: istLaufende(eintrag, jetzt)
     }))

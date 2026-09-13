@@ -19,6 +19,10 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   automatisch ab.
 - Der Live-Status ist Ende-zu-Ende verschluesselt und wird vom Relay nur
   weitergereicht, nicht dauerhaft gespeichert.
+- Anime-Folgen zeigen jetzt „Manga-Canon“, „Filler“, „Canon / Filler“ oder
+  „Anime-Canon“ in der Folgenauswahl auf Desktop, Android und TV. Die Angaben
+  werden ohne Anmeldung von AnimeFillerList geladen und zwischengespeichert;
+  unklare Zuordnungen bleiben bewusst leer.
 - Geprueft mit Desktop-, Relay- und Android-Regressionen sowie Desktop- und
   Android-Debug-Builds.
 

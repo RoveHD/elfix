@@ -2044,12 +2044,20 @@ final class DirektSpieler {
     static final class Zeile {
         final String nummer;
         final String text;
+        final String fillerKennung;
+        final String filler;
         final Runnable tun;
         final boolean aus;
 
         Zeile(String nummer, String text, Runnable tun, boolean aus) {
+            this(nummer, text, "", "", tun, aus);
+        }
+
+        Zeile(String nummer, String text, String fillerKennung, String filler, Runnable tun, boolean aus) {
             this.nummer = nummer == null ? "" : nummer;
             this.text = text == null ? "" : text;
+            this.fillerKennung = fillerKennung == null ? "" : fillerKennung;
+            this.filler = filler == null ? "" : filler;
             this.tun = tun;
             this.aus = aus;
         }
@@ -2179,6 +2187,16 @@ final class DirektSpieler {
         if (laeuft) name.setTypeface(Typeface.DEFAULT_BOLD);
         reihe.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
 
+        TextView filler = new TextView(activity);
+        filler.setTag("anime-filler:" + eintrag.fillerKennung);
+        filler.setText(eintrag.filler);
+        filler.setTextColor(Theme.PRIMARY);
+        filler.setTextSize(11);
+        filler.setTypeface(Typeface.DEFAULT_BOLD);
+        filler.setVisibility(eintrag.filler.isEmpty() ? View.GONE : View.VISIBLE);
+        filler.setContentDescription(eintrag.filler.isEmpty() ? "" : eintrag.filler + " · AnimeFillerList");
+        reihe.addView(filler);
+
         reihe.setBackground(flaeche(laeuft ? Theme.PRIMARY_MUTED : ZEILE, 10, 0, 0));
         if (eintrag.aus) {
             // Gesperrt heisst: die Nummer steht in der Liste, aber dahinter
@@ -2192,6 +2210,20 @@ final class DirektSpieler {
             if (eintrag.tun != null) eintrag.tun.run();
         });
         return reihe;
+    }
+
+    /** Aktualisiert nur Zusatzlabels in der offenen Folgenblende. */
+    void fillerSetzen(java.util.Map<String, String> labels) {
+        if (labels == null || blendeListe == null) return;
+        for (java.util.Map.Entry<String, String> eintrag : labels.entrySet()) {
+            View ansicht = blendeListe.findViewWithTag("anime-filler:" + eintrag.getKey());
+            if (!(ansicht instanceof TextView)) continue;
+            TextView badge = (TextView) ansicht;
+            String label = eintrag.getValue() == null ? "" : eintrag.getValue();
+            badge.setText(label);
+            badge.setVisibility(label.isEmpty() ? View.GONE : View.VISIBLE);
+            badge.setContentDescription(label.isEmpty() ? "" : label + " · AnimeFillerList");
+        }
     }
 
     private void blendeZu() {

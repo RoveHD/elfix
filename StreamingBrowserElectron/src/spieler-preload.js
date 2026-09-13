@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   // `staffelUrl` waehlt eine andere Staffel; ohne sie gilt die laufende.
   folgen: (frisch = false, staffelUrl = "") =>
     ipcRenderer.invoke("spieler:folgen", Boolean(frisch), String(staffelUrl || "")),
+  /** Die Einordnung wird erst nach dem ersten Zeichnen der Liste angefragt. */
+  filler: (staffelUrl = "") => ipcRenderer.invoke("spieler:folgen-filler", String(staffelUrl || "")),
   /**
    * Den Haken "Gesehen" setzen oder zuruecknehmen - fuer eine Folge oder
    * gleich fuer alle, die die Liste gerade zeigt.

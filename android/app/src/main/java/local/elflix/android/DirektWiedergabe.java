@@ -96,6 +96,8 @@ final class DirektWiedergabe {
     private int auftrag;
     private JSONArray hoster = new JSONArray();
     private JSONObject folgen = new JSONObject();
+    /** Jede neue Providerliste macht eine fruehere externe Antwort ungueltig. */
+    private int fillerFassung;
     /** Welche Staffel in der Blende gerade aufgeschlagen ist. -1: noch keine. */
     private int offeneStaffel = -1;
     private JSONObject naechste;
@@ -1110,7 +1112,11 @@ final class DirektWiedergabe {
      */
     private void folgenMerken(JSONObject stand) {
         if (stand == null) return;
-        if (folgen == null || folgen.optJSONArray("folgen") == null) { folgen = stand; return; }
+        if (folgen == null || folgen.optJSONArray("folgen") == null) {
+            folgen = stand;
+            fillerNachreichen();
+            return;
+        }
         JSONArray hatte = folgen.optJSONArray("folgen");
         JSONArray neue = stand.optJSONArray("folgen");
         JSONArray zusammen = new JSONArray();
@@ -1138,7 +1144,63 @@ final class DirektWiedergabe {
             String name = stand.optString("titel", "");
             if (name.isEmpty()) gemischt.put("titel", folgen.optString("titel", ""));
             folgen = gemischt;
+            fillerNachreichen();
         } catch (Exception ignoriert) { }
+    }
+
+    /** Der Player zeigt seine Providerliste sofort; AnimeFillerList kommt spaeter dazu. */
+    private void fillerNachreichen() {
+        if (kern == null || folgen == null) return;
+        final int fassung = ++fillerFassung;
+        final int id = auftrag;
+        final JSONObject stand;
+        final JSONObject kontext = new JSONObject();
+        try {
+            stand = new JSONObject(folgen.toString());
+            kontext.put("url", adresse);
+        }
+        catch (Exception kaputt) { return; }
+        kern.wennBereit(() -> kern.rufe("anime-filler-bruecke.anreichern",
+            Kern.args(stand, kontext), (wert, fehler) -> {
+                if (fehler != null || wert == null || geschlossen || !aktuell(id) || fassung != fillerFassung) return;
+                try { fillerUebernehmen(new JSONObject(wert)); }
+                catch (Exception ignoriert) { }
+            }));
+    }
+
+    /** Setzt nur Badges vorhandener Zeilen; die offene Blende verliert keinen Fokus. */
+    private void fillerUebernehmen(JSONObject angereichert) {
+        JSONArray neu = angereichert.optJSONArray("folgen");
+        JSONArray alt = folgen.optJSONArray("folgen");
+        if (neu == null || alt == null) return;
+        java.util.HashMap<String, String> labels = new java.util.HashMap<>();
+        java.util.HashMap<String, JSONObject> filler = new java.util.HashMap<>();
+        for (int i = 0; i < neu.length(); i++) {
+            JSONObject quelle = neu.optJSONObject(i);
+            if (quelle == null) continue;
+            JSONObject einordnung = quelle.optJSONObject("filler");
+            String url = kurz(quelle.optString("url"));
+            if (url.isEmpty()) continue;
+            // Auch eine fehlende Einordnung ist ein Ergebnis: sie loescht
+            // einen vielleicht von einer aelteren Staffelantwort verbliebenen Badge.
+            labels.put(url, einordnung == null ? "" : einordnung.optString("label", ""));
+            if (einordnung != null) {
+                try { filler.put(url, new JSONObject(einordnung.toString())); }
+                catch (Exception ignoriert) { }
+            }
+        }
+        for (int i = 0; i < alt.length(); i++) {
+            JSONObject ziel = alt.optJSONObject(i);
+            if (ziel == null) continue;
+            String url = kurz(ziel.optString("url"));
+            if (!labels.containsKey(url)) continue;
+            JSONObject einordnung = filler.get(url);
+            try {
+                if (einordnung == null) ziel.remove("filler");
+                else ziel.put("filler", einordnung);
+            } catch (Exception ignoriert) { }
+        }
+        spieler.fillerSetzen(labels);
     }
 
     /**
@@ -1302,8 +1364,10 @@ final class DirektWiedergabe {
             if (!gesperrt) name = umgebung.folgenAnzeige(folge.optInt("staffel"),
                 folge.optInt("folge"), name);
             if (!gesperrt && gleicheSeite(url, adresse)) laufend = zeilen.size();
+            JSONObject filler = folge.optJSONObject("filler");
+            String label = filler == null ? "" : filler.optString("label", "");
             zeilen.add(new DirektSpieler.Zeile("Folge " + folge.optInt("folge"), name,
-                gesperrt ? null : () -> wechseln(url), gesperrt));
+                kurz(url), label, gesperrt ? null : () -> wechseln(url), gesperrt));
         }
 
         String titelZeile = folgen.optString("titel", "");
