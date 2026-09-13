@@ -104,10 +104,10 @@ andere. Siehe [Das Relay](#das-relay).
   Ziehen, Hinweis bei neuen Folgen einer abgeschlossenen Serie.
 - **Verlauf** mit Suche, Filtern nach Zeitraum, Art und Anbieter sowie
   Tagesüberschriften.
-- **Spoilerschutz.** Folgentitel und Vorschaubilder bleiben verdeckt, bis du so
-  weit bist; was die Mediathek als geschaut führt, zählt als gesehen, und was
-  ELFIX nie mitbekommen hat, lässt sich in der Folgenliste abhaken — je Folge
-  oder ganze Staffel, mit Rücknahme.
+- **Spoilerschutz.** Folgentitel und Vorschaubilder bleiben bis zum normalen
+  Folgenabschluss ab 90 % verdeckt. Das bloße Starten einer Folge zählt noch
+  nicht als gesehen. Bereits anderswo gesehene Folgen lassen sich in der
+  Folgenliste abhaken — je Folge oder ganze Staffel, mit Rücknahme.
 - **Eigene Titelbilder** je Eintrag, wenn das Bild des Anbieters nichts taugt.
 - **Rückblick und Wrapped.** Gemessene Wiedergabezeit, nichts hochgerechnet: was
   nicht gemessen wurde, bleibt als unbekannt ausgewiesen.

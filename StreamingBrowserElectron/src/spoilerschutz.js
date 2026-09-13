@@ -6,10 +6,8 @@
 // `episode`) ist kein Beleg, dass eine Folge gesehen wurde: Er kann aus einem
 // Sprung, aus "naechste Folge" oder aus einer Watchparty stammen. Als
 // persoenlicher Nachweis zaehlen daher nur ausdrueckliche Belege: die
-// abgeschlossenen Folgen und der Verlauf, der festhaelt, welche Folge wann
-// wirklich lief (`ausVerlauf`).
-
-const verlauf = require("../shared/verlauf");
+// nach der normalen 90-%-Regel abgeschlossenen Folgen und manuelle Haken.
+// Verlaufslabels (auch "Abgeschlossen") enthalten keine gepruefte Sehzeit.
 
 function positiveInteger(value) {
   if (!["number", "string"].includes(typeof value)) return 0;
@@ -29,32 +27,6 @@ function episodenSchluessel(value) {
   const season = seasonNumber(value?.season ?? value?.staffel);
   if (season < 0) return "";
   return `${season}|${episode}`;
-}
-
-/**
- * Gesehene Folgen aus dem Verlauf eines Titels.
- *
- * `completedEpisodes` entsteht nur, wenn ELFIX eine Folge selbst zu Ende
- * gespielt hat. Der Verlauf weiss mehr: er haelt fest, welche Folge wann
- * wirklich lief, und die Mediathek zeigt das laengst an. Diese Zeilen nicht zu
- * zaehlen hiess, dass eine Folge, die man nachweislich geschaut hat, im Player
- * weiter "Noch nicht gesehen" heisst.
- *
- * Die Grenze bleibt dieselbe wie in der Mediathek und steht in verlauf.js: eine
- * bloss geoeffnete Seite ist keine Wiedergabe, und ohne eindeutige Folge wird
- * nicht geraten.
- */
-function ausVerlauf(activity) {
-  const folgen = new Map();
-  for (const eintrag of Array.isArray(activity) ? activity : []) {
-    if (verlauf.NUR_GEOEFFNET.test(String(eintrag?.label || ""))) continue;
-    const stelle = verlauf.folgeDesEreignisses(eintrag);
-    if (!stelle) continue;
-    const folge = { season: stelle.staffel, episode: stelle.folge };
-    const key = episodenSchluessel(folge);
-    if (key) folgen.set(key, folge);
-  }
-  return [...folgen.values()];
 }
 
 function abgeschlosseneFolgenSet(completedEpisodes) {
@@ -144,7 +116,6 @@ function protectEpisodes(episodes, options = {}) {
 }
 module.exports = {
   protectEpisodes,
-  ausVerlauf,
   episodenSchluessel,
   abgeschlosseneFolgenSet,
   folgeIstGesehen,

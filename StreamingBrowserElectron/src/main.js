@@ -334,6 +334,8 @@ let browserBounds = { x: 0, y: 130, width: 1200, height: 700 };
 let isContentFullscreen = false;
 const providerViews = new Map();
 const providerViewRecords = new WeakMap();
+// Folgenlisten im Player laden getrennt von der aktiven Anbieteransicht.
+const folgenWerkbaenke = new Map();
 const webContentsProvider = new Map();
 const attachedProviderViews = new Set();
 const providerResumeState = new Map();
@@ -3317,6 +3319,7 @@ async function enterHomeMode() {
       }
     }
   }
+  folgenWerkbaenkeSchliessen();
   providerViews.clear();
   webContentsProvider.clear();
   attachedProviderViews.clear();
@@ -3664,6 +3667,59 @@ function getProviderView(provider) {
   providerViews.set(provider.id, view);
   startMediaProgressPolling(provider, view);
   return view;
+}
+
+function folgenWerkbankHolen(provider) {
+  const vorhanden = folgenWerkbaenke.get(provider.id);
+  if (isLiveView(vorhanden)) return vorhanden;
+
+  const view = new WebContentsView({
+    webPreferences: {
+      session: browserSession,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false
+    }
+  });
+  view.setBackgroundColor(VIEW_BACKGROUND_COLOR);
+  const inhalt = view.webContents;
+  const id = inhalt.id;
+  webContentsProvider.set(id, provider.id);
+  inhalt.setAudioMuted(true);
+  // Die Ansicht ist nicht bedienbar. Popups und aus der Seite angestossene
+  // Werbe-Navigationen haben hier daher niemals einen sichtbaren Zweck.
+  inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
+  inhalt.on("will-navigate", (event, url) => {
+    if (shouldCancelNavigation(url, provider, true)) event.preventDefault();
+  });
+  inhalt.on("will-redirect", (event, url) => {
+    if (shouldCancelNavigation(url, provider, false)) event.preventDefault();
+  });
+  try {
+    inhalt.on("will-frame-navigate", (event) => {
+      if (event.isMainFrame) return;
+      let quelle = "";
+      try { quelle = event.frame?.url || ""; } catch { quelle = ""; }
+      if (shouldCancelFrameNavigation(event.url, provider, quelle)) event.preventDefault();
+    });
+  } catch {
+    // Aelteres Electron: der Sitzungsfilter bleibt trotzdem aktiv.
+  }
+  inhalt.once("destroyed", () => {
+    webContentsProvider.delete(id);
+    if (folgenWerkbaenke.get(provider.id) === view) folgenWerkbaenke.delete(provider.id);
+  });
+  folgenWerkbaenke.set(provider.id, view);
+  return view;
+}
+
+function folgenWerkbaenkeSchliessen() {
+  for (const view of folgenWerkbaenke.values()) {
+    if (isLiveView(view)) view.webContents.close();
+  }
+  folgenWerkbaenke.clear();
 }
 
 function startMediaProgressPolling(provider, view) {
@@ -4861,6 +4917,7 @@ async function reloadAllProviderViews() {
       view.webContents.close();
     }
   }
+  folgenWerkbaenkeSchliessen();
   providerViews.clear();
   webContentsProvider.clear();
   attachedProviderViews.clear();
@@ -9341,17 +9398,23 @@ const werkbankAuftraege = new Map();
 
 // Navigation und DOM-Lesen gehoeren zusammen. Die Folgenliste darf die Seite
 // nicht unter einem gleichzeitig laufenden Hoster-Lesevorgang austauschen.
-async function werkbankLesen(provider, adresse, lesen, gueltig = () => true) {
+async function werkbankLesen(provider, adresse, lesen, gueltig = () => true, eigeneView = null) {
   const vorher = werkbankAuftraege.get(provider.id) || Promise.resolve();
   const auftrag = vorher.catch(() => {}).then(async () => {
-    if (!gueltig()) return null;
-    // Wie in navigateProvider: nichts laden, solange der Zwischenspeicher der
-    // Anbieter geleert wird. Nach dem Start ist das ein erfuellter Ausdruck.
-    await browserdatenFrei;
-    if (!gueltig()) return null;
-    const view = await werkbankAn(provider, adresse, gueltig);
-    if (!view || !gueltig()) return null;
-    return lesen(view);
+    try {
+      if (!gueltig()) return null;
+      // Wie in navigateProvider: nichts laden, solange der Zwischenspeicher der
+      // Anbieter geleert wird. Nach dem Start ist das ein erfuellter Ausdruck.
+      await browserdatenFrei;
+      if (!gueltig()) return null;
+      const view = await werkbankAn(provider, adresse, gueltig, eigeneView);
+      if (!view || !gueltig()) return null;
+      return await lesen(view);
+    } finally {
+      // Innerhalb des serialisierten Auftrags: wenn er hier stoppt, kann der
+      // naechste Auftrag dieselbe View noch nicht uebernommen haben.
+      if (eigeneView && isLiveView(eigeneView)) eigeneView.webContents.stop();
+    }
   });
   werkbankAuftraege.set(provider.id, auftrag);
   try {
@@ -9577,9 +9640,9 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
 }
 
 /** Die Werkbank auf eine Seite stellen - und sie dort auch wirklich vorfinden. */
-async function werkbankAn(provider, adresse, gueltig = () => true) {
+async function werkbankAn(provider, adresse, gueltig = () => true, eigeneView = null) {
   if (!gueltig() || !providerModel.isHttpUrl(adresse)) return null;
-  const view = getProviderView(provider);
+  const view = eigeneView || getProviderView(provider);
   if (!isLiveView(view)) return null;
   // Schon dort - aber vielleicht noch mitten im Laden. Die Adresse steht ab
   // dem Augenblick, in dem die Navigation angenommen wird; der Inhalt steht
@@ -9624,9 +9687,15 @@ async function folgenlisteLesen(provider, adresse, optionen = {}) {
 
   let stand = null;
   try {
+    // Solange der eigene Player laeuft, liest eine eigene leichte Ansicht die
+    // Staffel. So bleibt die aktive Provider-View bei der laufenden Folge und
+    // ihre Navigations-, Watchparty- und Metadaten-Horcher springen nicht an.
+    const eigeneView = spielerLauf && isLiveView(spielerView)
+      ? folgenWerkbankHolen(provider)
+      : null;
     stand = await werkbankLesen(provider, staffelUrl,
       (view) => view.webContents.executeJavaScript(seitendaten.uebersichtSkript(), true),
-      optionen.gueltig);
+      optionen.gueltig, eigeneView);
   } catch {
     return gemerkt?.stand || null;
   }
@@ -9837,16 +9906,8 @@ function spoilerAbgeschlosseneFolgen(url) {
       const key = spoilerschutz.episodenSchluessel(episode);
       if (key) folgen.set(key, episode);
     }
-    // Und was der Verlauf ohnehin schon weiss. Die Mediathek zeigt diese
-    // Folgen laengst als geschaut an; sie hier nicht zu zaehlen hiess, dass
-    // eine nachweislich gesehene Folge im Player "Noch nicht gesehen" hiess.
-    for (const episode of spoilerschutz.ausVerlauf(item.activity)) {
-      const key = spoilerschutz.episodenSchluessel(episode);
-      if (key && !folgen.has(key)) folgen.set(key, episode);
-    }
-    // Ein Haken, den jemand ausdruecklich wieder entfernt hat, wiegt schwerer
-    // als jeder abgeleitete Beleg - sonst liesse sich die Markierung einer aus
-    // dem Verlauf stammenden Folge nicht zuruecknehmen.
+    // Ein ausdruecklich entfernter Haken ueberstimmt die Belege anderer
+    // lokaler Eintraege derselben Serie.
     for (const episode of item.unwatchedEpisodes || []) {
       const key = spoilerschutz.episodenSchluessel(episode);
       if (key) zurueckgenommen.add(key);
@@ -10150,7 +10211,10 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
 /** Zu. Ohne laufenden Player kostet das nichts. */
 function direktSpielerSchliessen(grund = "") {
   direktLaden.abort();
-  if (!spielerView) return;
+  if (!spielerView) {
+    folgenWerkbaenkeSchliessen();
+    return;
+  }
   geraeteWiedergabeMelden("", "", null);
   const view = spielerView;
   spielerView = null;
@@ -10159,6 +10223,7 @@ function direktSpielerSchliessen(grund = "") {
   optionaleCachesNachMiniPlanen();
   spielerLauf = null;
   spielerLetzterStand = null;
+  folgenWerkbaenkeSchliessen();
   // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
   // Folge, bis der erste neue Takt kommt.
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
@@ -10767,7 +10832,8 @@ ipcMain.handle("spieler:folgen", async (ereignis, frisch = false, staffelUrl = "
     }
   }
 
-  const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch) });
+  const gueltig = () => spielerLauf === lauf && vomSpieler(ereignis);
+  const stand = await folgenlisteLesen(provider, ziel, { frisch: Boolean(frisch), gueltig });
   if (spielerLauf !== lauf || !vomSpieler(ereignis)) return null;
   // Die Regel reist mit: die Schalter unter der Liste sollen beim Aufklappen
   // schon stimmen und nicht erst, wenn sich zufaellig etwas am Stand aendert.
@@ -10786,7 +10852,8 @@ ipcMain.handle("spieler:folgen-filler", async (ereignis, staffelUrl = "") => {
   const ziel = absoluteHttpUrl(gewuenscht, url);
   if (!providerModel.isHttpUrl(ziel) || new URL(ziel).host !== new URL(url).host) return null;
 
-  const stand = await folgenlisteLesen(provider, ziel);
+  const gueltig = () => spielerLauf === lauf && vomSpieler(ereignis);
+  const stand = await folgenlisteLesen(provider, ziel, { gueltig });
   if (spielerLauf !== lauf || !vomSpieler(ereignis) || !stand) return null;
   // Kein erzwungenes `art: anime`: die gemeinsame Regel erkennt nur eine
   // Anime-Adresse oder eine ausdruecklich bestaetigte Metadaten-Gattung.

@@ -67,17 +67,16 @@ public class SpoilerSchutzTest {
     }
 
     /*
-     * Gemeldet mit einem Bildschirmfoto: einundzwanzig Zeilen "Noch nicht
-     * gesehen", obwohl die Mediathek fuer die Haelfte davon Zeilen fuehrt.
-     * `completedEpisodes` entsteht nur beim eigenen Durchlaufen; der Verlauf
-     * ist der zweite Beleg und zaehlt jetzt mit.
+     * Verlaufslabels belegen weder die 90-%-Regel noch die Mindestsehzeit.
      */
-    @Test public void historyCountsAsWatched() throws Exception {
+    @Test public void historyLabelsNeverReplaceVerifiedCompletion() throws Exception {
         JSONArray verlauf = new JSONArray()
             .put(new JSONObject().put("url", "https://x/serie/stream/test/staffel-3/episode-17")
-                .put("label", "Staffel 3 Folge 17"))
+                .put("label", "Abgeschlossen"))
             .put(new JSONObject().put("url", "https://x/serie/stream/test/staffel-3/episode-18")
                 .put("label", "Geöffnet"))
+            .put(new JSONObject().put("url", "https://x/serie/stream/test/staffel-3/episode-19")
+                .put("label", "Staffel 3 Folge 19"))
             .put(new JSONObject().put("label", "ohne Folge"));
         Favorite eintrag = new Favorite(new JSONObject()
             .put("url", "https://x/serie/stream/test/staffel-3/episode-22")
@@ -86,28 +85,44 @@ public class SpoilerSchutzTest {
         JSONArray komplett = SpoilerSchutz.abgeschlosseneFolgen(
             java.util.Collections.singletonList(eintrag), eintrag);
         assertTrue("der Abschluss zaehlt", SpoilerSchutz.enthaelt(komplett, 3, 20));
-        assertTrue("und der Verlauf ebenso", SpoilerSchutz.enthaelt(komplett, 3, 17));
+        assertFalse("ein rohes ended-Ereignis ist kein bestaetigter Abschluss", SpoilerSchutz.enthaelt(komplett, 3, 17));
         assertFalse("eine bloss geoeffnete Seite ist keine Wiedergabe",
             SpoilerSchutz.enthaelt(komplett, 3, 18));
-        assertEquals("ohne eindeutige Folge wird nicht geraten", 2, komplett.length());
+        assertFalse("eine Startmeldung ist kein 90-%-Abschluss", SpoilerSchutz.enthaelt(komplett, 3, 19));
+        assertEquals("nur der bestaetigte Abschluss zaehlt", 1, komplett.length());
     }
 
     /*
-     * Und ein Haken, den jemand ausdruecklich entfernt hat, haelt - sonst
-     * liesse sich genau die aus dem Verlauf abgeleitete Folge nicht abwaehlen.
+     * Ein ausdruecklich entfernter Haken ueberstimmt gespeicherte Abschluesse.
      */
-    @Test public void manualUnmarkOutweighsDerivedEvidence() throws Exception {
+    @Test public void manualUnmarkOutweighsStoredCompletion() throws Exception {
         Favorite eintrag = new Favorite(new JSONObject()
             .put("url", "https://x/serie/stream/test/staffel-3/episode-22")
             .put("completedEpisodes", new JSONArray().put(new JSONArray().put(3).put(20)))
             .put("activity", new JSONArray().put(new JSONObject()
                 .put("url", "https://x/serie/stream/test/staffel-3/episode-17")
-                .put("label", "Staffel 3 Folge 17")))
+                .put("label", "Abgeschlossen")))
             .put("unwatchedEpisodes", new JSONArray()
                 .put(new JSONArray().put(3).put(17))
                 .put(new JSONArray().put(3).put(20))));
         JSONArray komplett = SpoilerSchutz.abgeschlosseneFolgen(
             java.util.Collections.singletonList(eintrag), eintrag);
         assertEquals(0, komplett.length());
+    }
+
+    @Test public void startingEpisodeKeepsSeenFalseAndTitleProtected() throws Exception {
+        for (int progress : new int[] { 0, 1, 30, 89, 99 }) {
+            Favorite eintrag = new Favorite(new JSONObject()
+                .put("url", "https://x/serie/stream/test/staffel-3/episode-3")
+                .put("progress", progress).put("season", 3).put("episode", 3)
+                .put("activity", new JSONArray().put(new JSONObject()
+                    .put("url", "https://x/serie/stream/test/staffel-3/episode-3")
+                    .put("label", "Staffel 3 Folge 3"))));
+            JSONArray abgeschlossen = SpoilerSchutz.abgeschlosseneFolgen(
+                java.util.Collections.singletonList(eintrag), eintrag);
+            assertFalse("Start/Wiedereinstieg reicht nicht; shared fortschritt muss 90 % bestaetigen",
+                SpoilerSchutz.sichtbar(new SpoilerSchutz.Einstellung(true, false, false),
+                    eintrag, abgeschlossen, 3, 3, null));
+        }
     }
 }

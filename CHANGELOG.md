@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.34 — 13. September 2026
+
+- Folgen gelten in der Auswahl erst nach dem normalen Abschluss ab 90 %
+  inklusive Sehzeitprüfung als gesehen. Das bloße Starten gibt auf Desktop,
+  Android und TV noch keine geschützten Folgentitel frei. Manuelle Haken
+  und ihre Rücknahme bleiben erhalten.
+- Beim Durchblättern der Staffeln im Desktop-Player läuft die aktuelle
+  Folge weiter. Die Folgenliste lädt getrennt im Hintergrund; auch die
+  Leertaste auf einem Staffel-Reiter löst keine zusätzliche Pause aus.
+- Veraltete Staffelabrufe werden beim Verlassen des Players verworfen und
+  ihre Hintergrundansichten zuverlässig geschlossen.
+
 ## 2.0.33 — 13. September 2026
 
 - Filler- und Canon-Kennzeichnungen erscheinen jetzt auch bei Bleach und

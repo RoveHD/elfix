@@ -2161,6 +2161,9 @@ document.addEventListener("keydown", (ereignis) => {
   // Player-Shortcuts bleiben hier vollstaendig draussen.
   if (ereignis.target instanceof HTMLInputElement || ereignis.target instanceof HTMLTextAreaElement
     || ereignis.target.isContentEditable) return;
+  // Auf einem Knopf ist die Leertaste seine native Aktivierung. Insbesondere
+  // ein Staffelreiter darf dabei nicht zugleich den Film anhalten.
+  if (ereignis.key === " " && ereignis.target instanceof HTMLButtonElement) return;
   schichtenZeigen();
   // Steht ein Menue offen, gehoeren die Tasten ihm. Pfeile, OK und Escape hat
   // es schon abgefangen (Wahl.taste); alles Uebrige - Leertaste, f, e - taete

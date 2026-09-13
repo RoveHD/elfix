@@ -19,6 +19,7 @@ let anzahl = 0;
 const hosterAufrufe = [];
 const folgenAufrufe = [];
 const fehler = [];
+let staffelAbrufLaeuft = false;
 const frist = setTimeout(() => beenden(1, new Error("Playerpruefung blieb stehen")), 45000);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const pruefe = (name, wert, soll) => { assert.deepEqual(wert, soll, name); anzahl++; console.log("OK    " + name); };
@@ -49,12 +50,19 @@ app.whenReady().then(async () => {
   ipcMain.on("spieler:bereit", event => event.sender.send("spieler:auftrag", auftrag));
   ipcMain.on("spieler:fehler", (_event, text) => fehler.push(text));
   const staffeln = [{ staffel: 0, url: "https://fixture.test/filme" }, { staffel: 1, url: "https://fixture.test/staffel-1" }];
-  ipcMain.handle("spieler:folgen", async (_event, _frisch, url) => ({
-    titel: "Folgen und Filme", staffeln,
-    folgen: url === staffeln[0].url
-      ? [{ staffel: 0, folge: 1, titel: "Der Film", url: "https://fixture.test/film-1" }]
-      : [{ staffel: 1, folge: 1, titel: "Die erste Folge", url: "https://fixture.test/episode-1", laeuft: true }]
-  }));
+  ipcMain.handle("spieler:folgen", async (_event, _frisch, url) => {
+    if (url === staffeln[0].url) {
+      staffelAbrufLaeuft = true;
+      await pause(600);
+      staffelAbrufLaeuft = false;
+    }
+    return {
+      titel: "Folgen und Filme", staffeln,
+      folgen: url === staffeln[0].url
+        ? [{ staffel: 0, folge: 1, titel: "Der Film", url: "https://fixture.test/film-1" }]
+        : [{ staffel: 1, folge: 1, titel: "Die erste Folge", url: "https://fixture.test/episode-1", laeuft: true }]
+    };
+  });
   ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:hoster", async (_event, link) => { hosterAufrufe.push(link); return { ok: true }; });
   ipcMain.handle("spieler:wechseln", async (_event, link) => { folgenAufrufe.push(link); return { ok: true }; });
@@ -96,13 +104,27 @@ app.whenReady().then(async () => {
   await lesen("folgenZeigen()");
   pruefe("Filme haben einen eigenen Reiter", await lesen("[...staffelReiter.children].map(x=>x.textContent)"), ["Filme", "Staffel 1"]);
   pruefe("Episodentitel erscheinen im Player", await lesen("folgenListe.textContent.includes('Die erste Folge')"), true);
-  await lesen("staffelOeffnen(0)");
+  await lesen("bild.play()");
+  await warten(() => lesen("!bild.paused && bild.currentTime > .12"));
+  const vorStaffelwechsel = await lesen("bild.currentTime");
+  await lesen("staffelReiter.children[0].click()");
+  await warten(() => Promise.resolve(staffelAbrufLaeuft));
+  await pause(250);
+  const waehrendStaffelwechsel = await lesen("({pausiert:bild.paused,stelle:bild.currentTime})");
+  pruefe("Laufendes Video spielt waehrend eines langsamen Staffelabrufs weiter",
+    waehrendStaffelwechsel.pausiert, false);
+  pruefe("Die Medienzeit laeuft waehrend des Staffelabrufs weiter",
+    waehrendStaffelwechsel.stelle > vorStaffelwechsel + .1, true);
+  await warten(() => lesen("offeneStaffel===0 && folgenListe.textContent.includes('Der Film')"));
   // Der Folgenknopf und nicht die ganze Zeile: daneben steht der Haken, mit
   // dem sich ein Eintrag von Hand als gesehen markieren laesst.
   pruefe("Film-Reiter laedt seine Eintraege mit Filmnummer und Titel",
     await lesen("folgenListe.querySelector('button.folge').textContent"), "Film 1Der Film");
+  await lesen("staffelReiter.children[1].dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));staffelReiter.children[1].click()");
+  pruefe("Leertaste auf einem Staffelreiter pausiert den Film nicht",
+    await lesen("[offeneStaffel,bild.paused]"), [1, false]);
   await lesen("folgenPanel.hidden=true");
-  await lesen("bild.play().then(()=>schichtenZeigen())");
+  await lesen("schichtenZeigen()");
   await warten(() => lesen("leiste.classList.contains('weg')"));
   pruefe("Mauszeiger verschwindet mit den Bedienelementen", await lesen("getComputedStyle(bild).cursor"), "none");
   fenster.webContents.sendInputEvent({ type: "mouseMove", x: 640, y: 300 });
