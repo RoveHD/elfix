@@ -306,8 +306,12 @@ async function legacyAblagePruefen() {
     type: "here", key: KEY, position: 0, paused: true, season: 1, episode: 2,
     playerSessionId: "host-wieder"
   });
+  gast.senden({
+    type: "here", key: KEY, position: 0, paused: true, season: 1, episode: 2,
+    playerSessionId: "gast-e2"
+  });
   await dritter.erwarte((m) => m.type === "watchstate" && m.key === KEY
-    && m.members?.length >= 3, "Playerstaende aller drei");
+    && m.members?.length >= 3 && m.members.every(x => x.episode === 2), "Playerstaende aller drei");
   gast.senden({ type: "control", key: KEY, action: "navigate", position: 0, url: URL1 });
   const [vorHost, vorGast, vorDritter] = await Promise.all([
     wieder.erwarte((m) => m.type === "syncprepare" && m.reason === "episode-change" && m.url === URL1,

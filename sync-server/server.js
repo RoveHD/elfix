@@ -2270,12 +2270,24 @@ wss.on("connection", (socket) => {
         const liveFolge = folgeAusAdresse(eintrag.live?.url);
         const amLiveStand = liveFolge.episode && absenderFolge === liveFolge.episode
           && absenderStaffel === liveFolge.season;
+        const ausgangsFolge = text(nachricht.fromEpisodeId, 32);
+        const ausgangBekannt = /^s\d+e\d+$/.test(ausgangsFolge);
+        const ausgangAktuell = ausgangsFolge === folgenKennung(eintrag.season, eintrag.episode)
+          || (liveFolge.episode && ausgangsFolge === folgenKennung(liveFolge.season, liveFolge.episode));
+        const angefordert = folgeAusAdresse(ziel);
         // Wer den letzten Wechsel noch nicht mitbekommen hat, drueckt mit
         // seiner alten Folgenliste auf Weiter. Das ist ein Nachholwunsch,
         // kein Auftrag, die schon weiterlaufende Runde rueckwaerts zu starten.
         // Am aktuellen Raum-/Livestand bleiben auch bewusste Rueckwaerts-
         // und Staffelwechsel unveraendert moeglich.
-        if (!amRaumstand && !amLiveStand) {
+        // Neue Clients nennen die wirklich offene Ausgangsfolge. Ihre neue
+        // Quelle kann schon bereit sein, bevor der naechste Herzschlag kommt.
+        // Aeltere Clients duerfen deshalb trotz spaetem Stand weiter vorwaerts;
+        // nur ein Ruecksprung aus einem hinterherhaengenden Player wird nachgeholt.
+        const veralteterWechsel = ausgangBekannt ? !ausgangAktuell
+          : !amRaumstand && !amLiveStand && angefordert.episode
+            && folgeIstNeuer(angefordert, { season: eintrag.season, episode: eintrag.episode });
+        if (veralteterWechsel) {
           ziel = httpAdresse(eintrag.live?.url || eintrag.url) || ziel;
         }
         const zielFolge = folgeAusAdresse(ziel);

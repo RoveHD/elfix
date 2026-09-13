@@ -487,12 +487,33 @@ async function startSchranke(pc, tv, key, offen) {
   pc.steuerung.length = 0;
   tv.stillstehen();
   tv.neuerPlayer();
-  tv.bruecke.folgenwechselMelden(pcKey, folge(5), RAUM);
+  const androidPakete = [];
+  // Die Android-Bruecke laedt WatchpartyRaeume als Node-Modul. Dessen
+  // Watchparty nimmt deshalb die WebSocket-Klasse aus dem Host-Global und
+  // nicht die nur fuer den VM-Kontext gesetzte WS-Klasse.
+  const AndroidWebSocket = globalThis.WebSocket;
+  const normalSenden = AndroidWebSocket.prototype.send;
+  AndroidWebSocket.prototype.send = function mitAndroidHerkunft(daten, ...rest) {
+    try {
+      const paket = JSON.parse(String(daten || ""));
+      if (paket.type === "control" && paket.action === "navigate") androidPakete.push(paket);
+    } catch { }
+    return normalSenden.call(this, daten, ...rest);
+  };
+  try {
+    tv.bruecke.folgenwechselMelden(pcKey, folge(5), RAUM, "s1e4");
+  } finally {
+    AndroidWebSocket.prototype.send = normalSenden;
+  }
   await warteBis(() => pc.steuerung.some((m) => m.action === "navigate"),
     "der Rechner erfaehrt vom Folgenwechsel");
   pruefe("5a. Ein Folgenwechsel von Android erreicht den Rechner",
     pc.steuerung.some((m) => m.action === "navigate" && String(m.url).includes("episode-5")),
     JSON.stringify(pc.steuerung.map((m) => m.action)));
+  pruefe("5a. Android bindet den Wechsel an die beim Klick offene Folge",
+    androidPakete.some((m) => m.fromEpisodeId === "s1e4"
+      && String(m.url).includes("episode-5")),
+    JSON.stringify(androidPakete));
 
   tv.puls(0, false, folge(5));
   await schlaf(400);

@@ -213,6 +213,12 @@ async function run() {
       "die laufende Folge wird beim Nachholen nicht auf null gesetzt");
     assert.equal(host.messages.slice(lateNextHost).some((m) => m.type === "syncprepare"), false,
       "veraltetes Weiter startet keine rueckwaertige Schranke");
+    const explicitStaleMark = guest.mark();
+    guest.send({ type: "control", key: KEY, action: "navigate", position: 0,
+      url: URL2, fromEpisodeId: "s1e1" });
+    const explicitStale = await guest.waitFor(explicitStaleMark, (m) => m.type === "syncstart"
+      && m.reason === "episode-catchup", "ausdruecklich veraltete Ausgangsfolge");
+    assert.equal(explicitStale.url, URL3);
     guest.send({ type: "bye", key: KEY });
     await host.waitFor(host.mark(), (m) => m.type === "watchstate" && m.members?.length === 1,
       "Gast vor eigenstaendigen Staffeltests abgemeldet");
@@ -225,7 +231,8 @@ async function run() {
       { url: URL1, season: 1, episode: 1 }
     ]) {
       const targetMark = host.mark();
-      host.send({ type: "control", key: KEY, action: "navigate", position: 0, url: target.url });
+      host.send({ type: "control", key: KEY, action: "navigate", position: 0, url: target.url,
+        fromEpisodeId: target.season === 2 ? "s1e3" : "s2e1" });
       const prepare = await host.waitFor(targetMark, (m) => m.type === "syncprepare"
         && m.url === target.url, "Staffel-/Rueckwaerts-Wechsel");
       const lateMark = guest.mark();
@@ -239,12 +246,8 @@ async function run() {
         && m.syncId === prepare.syncId, "Start der ausgewaehlten Folge");
       assert.equal(targetStart.url, target.url);
       assert.equal(targetStart.episodeId, `s${target.season}e${target.episode}`);
-      const arrival = host.mark();
-      host.send({ type: "here", key: KEY, ...target, position: 12, paused: false,
-        playerSessionId: `host-manual-${target.season}-${target.episode}` });
-      await host.waitFor(arrival, (m) => m.type === "watchstate" && m.members?.some(
-        (member) => member.name === "Host" && member.season === target.season
-          && member.episode === target.episode), "manuell gewaehlter Player angekommen");
+      // Absichtlich noch kein here: ein bereits bereiter Player darf sofort
+      // erneut wechseln, auch rueckwaerts, bevor der naechste Status-Takt kommt.
       const lateAfterStart = guest.mark();
       host.send({ type: "progress", key: KEY, progress: { url: URL3, season: 1, episode: 3,
         position: 99, duration: 100, progress: 99 } });
@@ -257,7 +260,8 @@ async function run() {
         "regulaerer Fortschritt der bewusst gewaehlten Folge");
     }
     const returnMark = host.mark();
-    host.send({ type: "control", key: KEY, action: "navigate", position: 0, url: URL3 });
+    host.send({ type: "control", key: KEY, action: "navigate", position: 0, url: URL3,
+      fromEpisodeId: "s1e1" });
     const returnPrepare = await host.waitFor(returnMark, (m) => m.type === "syncprepare"
       && m.url === URL3, "fruehere Folge bewusst erneut waehlen");
     host.send({ type: "syncready", key: KEY, syncId: returnPrepare.syncId });

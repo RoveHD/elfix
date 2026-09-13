@@ -9,6 +9,9 @@ const assert = require("assert/strict");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { Watchparty } = require("../src/watchparty");
+const { WatchpartyRaeume } = require("../src/watchparty-raeume");
+const fortschritt = require("../src/fortschritt");
 
 const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
 
@@ -178,6 +181,7 @@ const kontext = vm.createContext({
   },
   sanitizePositiveNumber: (wert) => Math.max(0, Number(wert) || 0),
   absoluteHttpUrl: (url) => url,
+  episodeIdentity: fortschritt.episodeIdentity,
   spielerRunde: () => null,
   providerModel: { isHttpUrl: () => true }
 });
@@ -237,6 +241,8 @@ vm.runInContext(main.slice(hosterStart, hosterEnd), kontext);
   assert.equal(wuensche.length, 1);
   assert.equal(wuensche[0][1], "navigate");
   assert.equal(wuensche[0][4], "probe");
+  assert.equal(wuensche[0][5], "s1e4",
+    "Der Wechsel nennt nicht die im Player tatsaechlich laufende Herkunftsfolge");
 
   // `connected` ist nur der zuletzt bekannte Status. Bricht der Socket genau
   // zwischen dieser Abfrage und send() weg, darf der Player keinen Erfolg
@@ -245,6 +251,26 @@ vm.runInContext(main.slice(hosterStart, hosterEnd), kontext);
   const verloren = await folgenHandler({ sender }, "https://aniworld.to/anime/stream/bleach/staffel-1/episode-6");
   assert.equal(verloren.ok, false, "Ein verlorener WebSocket-Dispatch wurde als Erfolg gemeldet");
   assert.match(verloren.grund, /Verbindung/);
+
+  // Die Herkunft reist durch die echte Raumfassade bis in das serialisierte
+  // Relay-Payload. Alte Aufrufer ohne Herkunft behalten ihr bisheriges Format.
+  const ausgang = [];
+  const client = new Watchparty();
+  client.aktiv = true;
+  client.identitaetBestaetigt = true;
+  client.raum = "probe";
+  client.geraetId = "desktop";
+  client.geteilt = [{ key: "serie:bleach", memberIds: ["desktop"] }];
+  client.socket = { readyState: 1, send: (daten) => ausgang.push(JSON.parse(daten)) };
+  const raeume = new WatchpartyRaeume();
+  raeume.raeume.set("probe", client);
+  assert.equal(raeume.steuernMitAdresse("serie:bleach", "navigate", 0,
+    "https://aniworld.to/anime/stream/bleach/staffel-1/episode-5", "probe", "s1e4"), true);
+  assert.equal(ausgang[0].fromEpisodeId, "s1e4");
+  assert.equal(raeume.steuernMitAdresse("serie:bleach", "pause", 12,
+    "https://aniworld.to/anime/stream/bleach/staffel-1/episode-5", "probe"), true);
+  assert.equal(Object.hasOwn(ausgang[1], "fromEpisodeId"), false,
+    "Ein leerer optionaler Ursprung veraenderte alte Control-Nachrichten");
 
   console.log("OK Watchparty-Quellenwahl: Host frei, Gast gesperrt, Folgenwechsel frei");
 })().catch((fehler) => {

@@ -785,9 +785,12 @@ class Watchparty {
   }
 
   // Beim Folgenwechsel gehoert die neue Adresse dazu.
-  steuernMitAdresse(key, action, position, url) {
+  steuernMitAdresse(key, action, position, url, fromEpisodeId = "") {
     if (!this.aktiv || !key || !this.istBeigetreten(key)) return false;
-    return this.senden({ type: "control", key, action, position, url });
+    const nachricht = { type: "control", key, action, position, url };
+    const herkunft = String(fromEpisodeId || "").trim();
+    if (herkunft) nachricht.fromEpisodeId = herkunft;
+    return this.senden(nachricht);
   }
 
   // Tempo und Fassung tragen keinen Ort, sondern eine Einstellung. Sie reisen

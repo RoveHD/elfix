@@ -761,9 +761,10 @@
   }
 
   /** Ein Folgenwechsel dieses Geraets. */
-  function folgenwechselMelden(key, url, room) {
+  function folgenwechselMelden(key, url, room, fromEpisodeId) {
     if (!raeume || !key) return false;
-    return raeume.steuernMitAdresse(key, "navigate", 0, String(url || ""), room);
+    return raeume.steuernMitAdresse(key, "navigate", 0, String(url || ""), room,
+      String(fromEpisodeId || ""));
   }
 
   /**

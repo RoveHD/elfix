@@ -29,6 +29,30 @@ public class MitschauenTest {
     private static final String BASIS = "https://aniworld.to/anime/stream/naruto";
 
     @Test
+    public void folgenwechselFriertDieAusgangsfolgeVorDerAsynchronenLageabfrageEin() {
+        Mitschauen.FolgenwechselAuftrag auftrag = Mitschauen.FolgenwechselAuftrag.erfassen(
+            BASIS + "/staffel-1/episode-5", BASIS + "/staffel-1/episode-4");
+
+        // Selbst wenn inzwischen Folge 5 offen steht, bleibt im bereits
+        // gebauten Auftrag die beim Klick offene Folge 4 erhalten.
+        Mitschauen.FolgenwechselAuftrag spaeter = Mitschauen.FolgenwechselAuftrag.erfassen(
+            BASIS + "/staffel-1/episode-6", BASIS + "/staffel-1/episode-5");
+        assertEquals("s1e4", auftrag.fromEpisodeId);
+        assertEquals("s1e5", spaeter.fromEpisodeId);
+
+        org.json.JSONArray argumente = auftrag.kernArgumente("serie:naruto", "salon");
+        assertEquals(4, argumente.length());
+        assertEquals(BASIS + "/staffel-1/episode-5", argumente.optString(1));
+        assertEquals("salon", argumente.optString(2));
+        assertEquals("s1e4", argumente.optString(3));
+
+        assertEquals("", Mitschauen.FolgenwechselAuftrag.erfassen(
+            BASIS + "/staffel-1/episode-1", "https://filmo.to/film/test").fromEpisodeId);
+        assertEquals("", Mitschauen.FolgenwechselAuftrag.erfassen(
+            BASIS + "/staffel-1/episode-1", BASIS + "/staffel-1").fromEpisodeId);
+    }
+
+    @Test
     public void relayFolgenwechselBleibtBisZurNeuenBereitschaftInDerStartschranke() {
         int[] abmeldungen = { 0 };
         Mitschauen.beimNativenPlayerSchliessen(true, true, () -> abmeldungen[0] += 1);

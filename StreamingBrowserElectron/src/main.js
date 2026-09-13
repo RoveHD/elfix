@@ -10991,7 +10991,9 @@ ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
     }
     // Auch der Ausloeser folgt erst der Vorbereitung des Relays. Ein eigener
     // paralleler Ladevorgang wuerde die gemeinsame Startschranke umgehen.
-    const gesendet = watchparty.steuernMitAdresse(runde.key, "navigate", 0, ziel, runde.raum);
+    const herkunft = episodeIdentity(spielerLauf.url);
+    const fromEpisodeId = herkunft ? `s${herkunft.season}e${herkunft.episode}` : "";
+    const gesendet = watchparty.steuernMitAdresse(runde.key, "navigate", 0, ziel, runde.raum, fromEpisodeId);
     if (!gesendet) return { ok: false, grund: "Keine Verbindung zur Watchparty." };
     return { ok: true, wartetAufRunde: true };
   }

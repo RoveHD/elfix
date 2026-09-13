@@ -912,6 +912,12 @@ public final class Mitschauen {
      */
     public boolean folgenwechselMelden(String url, Runnable fehlgeschlagen) {
         if (url == null || url.isEmpty()) return false;
+        // Die Herkunft gehoert zum Klick, nicht zur spaeteren Kernantwort.
+        // Bis lageFuer zurueckkommt, kann ein Relay-Echo bereits eine andere
+        // Adresse geoeffnet haben; dann muss trotzdem die tatsaechliche
+        // Ausgangsfolge dieses Wunsches am control-Paket stehen.
+        final FolgenwechselAuftrag auftrag = FolgenwechselAuftrag.erfassen(
+            url, umgebung.adresse());
         if (folgtDerRunde) {
             // Ein Klick waehrend eines eingehenden Wechsels ist der neuere
             // ausdrueckliche Wunsch. Er darf weder vom Echo-Schutz verschluckt
@@ -929,7 +935,7 @@ public final class Mitschauen {
         wartetAufFolgenBarriere = false;
         // Zu welchem Titel und welcher Runde die neue Seite gehoert, weiss der
         // Kern - hier gilt sie noch gar nicht als offen.
-        lageFuer(url, (key, raum) -> {
+        lageFuer(auftrag.ziel, (key, raum) -> {
             if (generation != folgenwechselMeldenGeneration) return;
             if (key.isEmpty() || raum.isEmpty()
                 || liveAus.contains(liveMarke(key, raum))) {
@@ -940,15 +946,15 @@ public final class Mitschauen {
             // Der native Direkt-Spieler meldet den Wechsel schon vor dem
             // erneuten Oeffnen. Der Merker muss vor dem Senden stehen, damit
             // selbst ein schnelles Relay-Echo keinen zweiten Wechsel erzeugt.
-            int[] folge = folgeAus(url);
+            int[] folge = folgeAus(auftrag.ziel);
             if (folge[1] > 0) {
-                gemeldeteFolge = serienTeil(url) + "#s" + folge[0] + "e" + folge[1];
+                gemeldeteFolge = serienTeil(auftrag.ziel) + "#s" + folge[0] + "e" + folge[1];
             }
             // Ab hier besitzt die gemeinsame Barriere den Start. Bis der
             // Dispatch wirklich angenommen wurde, wird keine neue Quelle
             // lokal geoeffnet.
             autostartAbbrechen("Folgenwechsel wartet auf gemeinsame Bereitschaft");
-            kern.rufe("watchparty-bruecke.folgenwechselMelden", Kern.args(key, url, raum),
+            kern.rufe("watchparty-bruecke.folgenwechselMelden", auftrag.kernArgumente(key, raum),
                 (wert, fehler) -> {
                     if (generation != folgenwechselMeldenGeneration) return;
                     boolean gesendet = fehler == null && "true".equals(textAus(wert));
@@ -1427,6 +1433,26 @@ public final class Mitschauen {
             || !offene.remove(nachholMarke(nachricht))) return false;
         danach.run();
         return true;
+    }
+
+    static final class FolgenwechselAuftrag {
+        final String ziel;
+        final String fromEpisodeId;
+
+        private FolgenwechselAuftrag(String ziel, String fromEpisodeId) {
+            this.ziel = ziel;
+            this.fromEpisodeId = fromEpisodeId;
+        }
+
+        static FolgenwechselAuftrag erfassen(String ziel, String offeneAdresse) {
+            int[] folge = folgeAus(offeneAdresse);
+            String herkunft = folge[1] <= 0 ? "" : "s" + folge[0] + "e" + folge[1];
+            return new FolgenwechselAuftrag(ziel, herkunft);
+        }
+
+        JSONArray kernArgumente(String key, String raum) {
+            return Kern.args(key, ziel, raum, fromEpisodeId);
+        }
     }
 
     /** Ein neuerer Nutzerwunsch ersetzt auch die noch offene alte Startgeneration. */
