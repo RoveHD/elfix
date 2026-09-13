@@ -21,7 +21,11 @@ function funktion(text, name) {
   return text.slice(start, text.indexOf("\n}", start) + 2);
 }
 function kontext(werte, namen, text = haupt) {
-  const stand = vm.createContext({ console: still, AbortController, AbortSignal, spielerMiniAktiv: false, spielerLauf: null, ...werte });
+  // Ausgezogene Main-Funktionen werden isoliert ausgefuehrt. Seit der
+  // Geraete-Abgleich auch den lokalen Playerstand erhaelt, ist dies eine
+  // weitere Seitengrenze des Harnesses, keine Aufgabe der getesteten Logik.
+  const stand = vm.createContext({ console: still, AbortController, AbortSignal,
+    spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, ...werte });
   vm.runInContext(namen.map((name) => funktion(text, name)).join("\n"), stand);
   return stand;
 }
@@ -185,6 +189,7 @@ pruefe("Spaete Fortschrittsmeldungen einer alten Quelle werden nicht der neuen F
   const c = vm.createContext({ ipcMain: { on: (_kanal, fn) => { empfangen = fn; } },
     spielerLauf: { id: 2, providerId: "p", url: folge(2) }, spielerView: { webContents: sender },
     spielerLetzterStand: null, sanitizePositiveNumber: (wert) => Number(wert) || 0,
+    geraeteWiedergabeMelden() {},
     fernStandMelden: async () => {}, enabledProviders: () => [provider],
     mediaProgressPercent: (stelle, dauer) => stelle / dauer * 100, COMPLETED_PROGRESS_PERCENT: 90,
     recordMediaActivity: () => { verbucht++; return null; }

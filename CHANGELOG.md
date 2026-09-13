@@ -3,6 +3,25 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.32 — 13. September 2026
+
+- Fortschritt wird auch dann zwischen TV, Android und Desktop abgeglichen,
+  wenn die Geraete nicht gleichzeitig eingeschaltet sind. Eine am Fernseher
+  gesehene Folge erscheint beim spaeter gestarteten Rechner oder Handy als
+  gesehen.
+- Titelbilder und Folgenangaben werden zusammen mit dem Geraetebestand
+  nachgereicht. Dadurch verschwinden leere Android-Bilder und ein bereits auf
+  einem anderen Geraet gesehener Titel bleibt nicht faelschlich als „Neue
+  Folge“ markiert.
+- Unter „Meine Geraete“ steht live, welches andere Geraet gerade welchen Titel,
+  welche Staffel und Folge schaut. Pause, Pufferung, Wiedergabeende und
+  Verbindungsabbruch werden zeitnah aktualisiert; alte Anzeigen laufen
+  automatisch ab.
+- Der Live-Status ist Ende-zu-Ende verschluesselt und wird vom Relay nur
+  weitergereicht, nicht dauerhaft gespeichert.
+- Geprueft mit Desktop-, Relay- und Android-Regressionen sowie Desktop- und
+  Android-Debug-Builds.
+
 ## 2.0.31 — 13. September 2026
 
 - „Naechste Folge“ und die direkte Folgenauswahl funktionieren in der

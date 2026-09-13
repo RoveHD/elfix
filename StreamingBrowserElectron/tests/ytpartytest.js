@@ -111,9 +111,10 @@ const istEvent = (aktion) => (m) => m.type === "ytevent" && m.action === aktion;
     Boolean(wechsel) && wechsel.videoId === VIDEO_X && wechsel.playing === true,
     wechsel ? `${wechsel.videoId}, rev ${wechsel.rev}` : "keine Antwort");
 
+  const echoBeiA = await a.erwarte(istEvent("video"));
   pruefe("2b. Der Absender bekommt seinen Zug samt Nummer zurueck",
-    Boolean(a.yt) && a.yt.byId === "geraet-a" && a.yt.rev === wechsel.rev,
-    a.yt ? `byId ${a.yt.byId}` : "nichts");
+    Boolean(echoBeiA) && echoBeiA.byId === "geraet-a" && echoBeiA.rev === wechsel?.rev,
+    echoBeiA ? `byId ${echoBeiA.byId}` : "nichts");
 
   a.leeren(); c.leeren();
   b.send({ type: "ytevent", action: "pause", videoId: VIDEO_X, position: 120 });
