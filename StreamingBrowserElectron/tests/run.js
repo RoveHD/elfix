@@ -87,6 +87,7 @@ MIT_RELAY.push("barrierleavetest");
 MIT_RELAY.push("barrierstarttest");
 MIT_RELAY.push("folgenrueckfalltest");
 MIT_RELAY.push("relayepisodecatchuptest");
+MIT_RELAY.push("folgenendetest");
 MIT_RELAY.push("introskiptest");
 MIT_RELAY.push("mitgliederaufraeumtest");
 MIT_RELAY.push("queuerelaytest");
@@ -230,7 +231,7 @@ async function warteAufStille(port, frist) {
     const echteIdentitaetsUndBarriereTests = new Set([
       "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest",
       "barrierleavetest", "barrierstarttest", "mitgliederaufraeumtest",
-      "folgenrueckfalltest", "relayepisodecatchuptest"
+      "folgenrueckfalltest", "relayepisodecatchuptest", "folgenendetest"
     ]);
     if (!echteIdentitaetsUndBarriereTests.has(datei)) {
       const bootstrap = `./${path.relative(process.cwd(), RELAY_TEST_IDENTITAET).replace(/\\/g, "/")}`;

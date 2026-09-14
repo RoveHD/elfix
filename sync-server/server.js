@@ -2284,9 +2284,15 @@ wss.on("connection", (socket) => {
         // Quelle kann schon bereit sein, bevor der naechste Herzschlag kommt.
         // Aeltere Clients duerfen deshalb trotz spaetem Stand weiter vorwaerts;
         // nur ein Ruecksprung aus einem hinterherhaengenden Player wird nachgeholt.
-        const veralteterWechsel = ausgangBekannt ? !ausgangAktuell
-          : !amRaumstand && !amLiveStand && angefordert.episode
-            && folgeIstNeuer(angefordert, { season: eintrag.season, episode: eintrag.episode });
+        //
+        // Nachgeholt wird dabei nur, was hinter der Runde liegt. Wer von einer
+        // Folge aus weiterdrueckt, die das Relay nicht als Rundenstand kennt,
+        // und dabei *vor* der Runde landet, wechselt wirklich - und die Runde
+        // kommt mit. Ihn auf die aeltere Rundenfolge zurueckzuziehen, war der
+        // andere Weg, auf dem "Naechste Folge" bei allen anderen nichts tat.
+        const ausgangVeraltet = ausgangBekannt ? !ausgangAktuell : (!amRaumstand && !amLiveStand);
+        const veralteterWechsel = ausgangVeraltet && Boolean(angefordert.episode)
+          && folgeIstNeuer(angefordert, { season: eintrag.season, episode: eintrag.episode });
         if (veralteterWechsel) {
           ziel = httpAdresse(eintrag.live?.url || eintrag.url) || ziel;
         }
@@ -3297,7 +3303,26 @@ wss.on("connection", (socket) => {
       const andereFolge = fortschritt.episode && eintrag.episode
         && (fortschritt.episode !== eintrag.episode
           || fortschritt.season !== (eintrag.season || 0));
+      // Und solange jemand die Folge der Runde wirklich im Player hat, rueckt
+      // auch eine *neuere* Folge die Runde nicht vor.
+      //
+      // Gemessen am 14.9.2026: bei 90 % einer Folge rueckt die App den eigenen
+      // Eintrag auf die naechste Folge vor und meldet "Folge 2 bei 0 s" - und
+      // zwar, waehrend alle noch die letzten Minuten von Folge 1 schauen. Das
+      // Relay nahm das als Stand der Runde. Ab da glaubte die Runde, sie sei
+      // bei Folge 2: der Nachziehtakt riss jedes Geraet einzeln dorthin, ohne
+      // gemeinsamen Start, und jedes spaetere "Naechste Folge" galt als "schon
+      // dort" - der Druecker bekam nur ein Nachreichen bei 0 s pausiert (die
+      // Folge fing scheinbar neu an), die anderen bekamen gar nichts (der Host
+      // kam nicht mit).
+      //
+      // Die Folge der Runde wechselt nur durch einen Knopfdruck (navigate)
+      // oder einen beobachteten Playerwechsel (here). Der Fortschritt darf sie
+      // weiterhin vorruecken, wenn niemand die aktuelle Folge schaut - so kommt
+      // ein archivierter Titel zurueck, wenn der Anbieter nachlegt.
+      const rundenfolgeLaeuft = aktiveTeilnehmer(socket.raum, eintrag, eintrag.season, eintrag.episode).length > 0;
       if (andereFolge && (eintrag.sync
+        || rundenfolgeLaeuft
         || eintrag.abgeloesteFolgen?.has(folgenKennung(fortschritt.season, fortschritt.episode))
         || folgeIstNeuer(fortschritt, {
         season: eintrag.season, episode: eintrag.episode

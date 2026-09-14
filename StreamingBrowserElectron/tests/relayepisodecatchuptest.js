@@ -171,14 +171,21 @@ async function run() {
       (m) => m.type === "syncstart" && m.reason === "episode-catchup", "Nachholen ohne frischen Playerstand");
     assert.equal(missingHere.playing, false, "ohne here bleibt der pausierte Raum pausiert");
 
-    // Fortschritt kann der noch geladenen Live-Adresse voraus sein. Folge 3
-    // in progress bei weiterhin laufender Folge 2 darf ein echtes navigate zu
-    // Folge 3 nicht als bereits erledigt verschlucken.
+    // Fortschritt kann der laufenden Folge voraus sein: bei 90 % rueckt die App
+    // ihren Eintrag auf Folge 3 vor und meldet "Folge 3 bei 0", waehrend der
+    // Player noch Folge 2 spielt. Solange jemand Folge 2 wirklich schaut, ist
+    // das kein Stand der Runde - er wird weder uebernommen noch weitergesagt.
+    // Sonst galt die Runde als "schon bei Folge 3", der Nachziehtakt riss jedes
+    // Geraet einzeln dorthin, und das echte "Weiter" fand keine Runde mehr vor.
     const progressMark = guest.mark();
     host.send({ type: "progress", key: KEY, progress: { url: URL3, season: 1, episode: 3,
       position: 0, duration: 100, progress: 0, completed: false, episodeCompleted: false } });
-    await guest.waitFor(progressMark, (m) => m.type === "progress" && m.key === KEY
-      && m.progress?.episode === 3, "Fortschritt vorausgebucht");
+    await wait(80);
+    assert.equal(guest.messages.slice(progressMark).some((m) => m.type === "progress"
+      && m.progress?.episode === 3), false, "vorausgebuchter Fortschritt rueckt die laufende Runde nicht vor");
+    const stateNachProgress = [...host.messages].reverse().find((m) => m.type === "state");
+    assert.equal(stateNachProgress?.shared?.find((item) => item.key === KEY)?.episode, 2,
+      "die Runde bleibt bei der Folge, die gerade laeuft");
     const aheadMark = host.mark();
     host.send({ type: "control", key: KEY, action: "navigate", position: 0, url: URL3 });
     const aheadPrepare = await host.waitFor(aheadMark,
