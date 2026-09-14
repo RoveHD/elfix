@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.38 — 15. September 2026
+
+- Die Warteschlange des Raums springt erst an, wenn die Serie zu Ende ist –
+  nicht mehr nach jeder Folge. Black Clover geht von Folge 7 auf 8 weiter,
+  Game of Thrones aus der Warteschlange kommt erst nach der letzten Folge.
+  Gilt am Rechner und auf Android/TV.
+- Ein Start aus der Warteschlange legt keine doppelten privaten Einträge in
+  „Weiterschauen" mehr an; der Eintrag bleibt an die Runde gebunden.
+- Die Marke „Folge 23 ist da" auf den Karten ist wieder eine kleine Marke
+  statt eines roten Balkens über die ganze Breite.
+
 ## 2.0.37 — 14. September 2026
 
 - Watchparty: „Nächste Folge" nimmt jetzt verlässlich alle mit – egal, wer
