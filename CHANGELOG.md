@@ -3,6 +3,20 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.37 — 14. September 2026
+
+- Watchparty: „Nächste Folge" nimmt jetzt verlässlich alle mit – egal, wer
+  drückt. Der Fortschritt eines Geräts (bei 90 % rückt der eigene Eintrag auf
+  die nächste Folge vor) verschiebt die Folge der Runde nicht mehr, solange
+  jemand die laufende Folge schaut. Vorher galt die Runde dadurch schon als
+  „bei Folge 2", der Nachziehtakt riss jedes Gerät einzeln dorthin, und ein
+  echtes „Weiter" brachte nur den Drücker bei 0 s pausiert nach – die Folge
+  schien neu zu starten, der Host kam nicht mit.
+- Wer aus einer dem Relay unbekannten Ausgangsfolge nach vorn wechselt, nimmt
+  die Runde mit; nachgeholt wird nur noch, wer hinter der Runde hängt.
+- Die Änderung liegt im Relay (sync-server) und gilt damit für PC, Android und
+  TV gleichermaßen; neue Prüfung folgenendetest.
+
 ## 2.0.36 — 13. September 2026
 
 - Watchparty-Folgenwechsel behalten das gewählte Ziel: verspäteter Fortschritt
