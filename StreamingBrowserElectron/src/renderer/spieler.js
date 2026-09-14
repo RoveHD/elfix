@@ -585,6 +585,19 @@ let ausRundeBis = 0;
 let folgenStand = null;
 let folgenFassung = 0;
 let queueAktiv = false;
+/**
+ * Uebernimmt die Warteschlange des Raums das Ende dieser Folge?
+ *
+ * Nur, wenn es keine naechste Folge mehr gibt. Die Warteschlange ist das,
+ * was *nach* einem Titel kommt - nicht nach jeder Folge. Solange die Serie
+ * weitergeht, geht sie weiter; erst nach der letzten Folge der letzten
+ * Staffel ist der naechste Vorschlag dran. Gemessen am 15.9.2026: Black
+ * Clover sollte von Folge 7 auf 8, stattdessen startete Game of Thrones aus
+ * der Warteschlange.
+ */
+function queueUebernimmt() {
+  return queueAktiv && !naechste;
+}
 /** Welche Staffel im Panel gerade aufgeschlagen ist. */
 let offeneStaffel = 0;
 /** Solange ein Wechsel laeuft, darf kein zweiter angestossen werden. */
@@ -1955,7 +1968,7 @@ function naechsteSetzen(wert) {
  * nichts: das Ende einer Serie ist kein Fehler.
  */
 function weiterAnbieten() {
-  if (queueAktiv) return;
+  if (queueUebernimmt()) return;
   if (weiterVerworfen) return;
   // Kurz vor dem Ende ist das Video noch nicht als beendet markiert. Ab dann
   // gilt ein Pause- oder Pufferereignis dem Zuschauer, nicht dem Autoplay.
@@ -2258,7 +2271,7 @@ bild.addEventListener("ended", async () => {
   pufferZeigen(false);
   standMelden(true);
   schichtenZeigen();
-  if (queueAktiv && !weiterVerworfen) {
+  if (queueUebernimmt() && !weiterVerworfen) {
     weiterAbbrechen();
     const generation = startAuftrag;
     const result = await bruecke.queueWeiter?.(auftrag?.id).catch(() => ({ ok: false }));
@@ -2687,7 +2700,7 @@ bruecke.aufNaechste((wert, folgentitel) => {
   // Der Name der Folge kommt mit derselben Nachricht - die Liste kennt beides.
   kopfTitelSetzen("", folgentitel);
 });
-bruecke.aufQueue?.((an) => { queueAktiv = Boolean(an); if (queueAktiv) weiterAbbrechen(); });
+bruecke.aufQueue?.((an) => { queueAktiv = Boolean(an); if (queueUebernimmt()) weiterAbbrechen(); });
 bruecke.aufSpoiler?.((wert) => {
   kopfTitelSetzen("", wert?.folgentitel);
   naechsteSetzen(wert?.naechste);

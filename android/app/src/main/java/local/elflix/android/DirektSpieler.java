@@ -2358,8 +2358,11 @@ final class DirektSpieler {
                 }
                 if (state == Player.STATE_ENDED) {
                     // The room queue is its own continuation flow. It is asked
-                    // only at Media3's real end, never at the outro threshold.
-                    if (!queueEndeAbgesagt && !queueEndeGemeldet && umgebung.queueWeiter()) {
+                    // only at Media3's real end, never at the outro threshold -
+                    // and only once the series itself has nothing left: while a
+                    // next episode exists, the episode flow wins. Otherwise the
+                    // queue started a different title between episode 7 and 8.
+                    if (!hatNaechste && !queueEndeAbgesagt && !queueEndeGemeldet && umgebung.queueWeiter()) {
                         queueEndeGemeldet = true;
                         endeAbgesagt = true;
                         zaehlerEnde = 0;

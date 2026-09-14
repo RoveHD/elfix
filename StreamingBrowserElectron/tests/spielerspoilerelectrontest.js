@@ -117,10 +117,22 @@ app.whenReady().then(async () => {
   await lesen("ausRundeBis=Date.now()+60000; folgenPanel.hidden=true; weiterZaehler=0; weiterVerworfen=false; bild.pause(); bild.currentTime=89.5");
   await warten(() => lesen("!bild.seeking && bild.currentTime >= 89.4")).catch(async error => { console.error(await lesen("({time:bild.currentTime,seeking:bild.seeking,ready:bild.readyState,duration:bild.duration,seekable:[...Array(bild.seekable.length)].map((_,i)=>[bild.seekable.start(i),bild.seekable.end(i)])})")); throw error; });
   await lesen("bild.play()");
-  await warten(() => queueAufrufe === 1).catch(async error => { console.error(await lesen("({time:bild.currentTime,duration:bild.duration,paused:bild.paused,ended:bild.ended,queueAktiv,weiterVerworfen,weiterZaehler})")); throw error; });
+  // Die Serie geht weiter (naechste Folge bekannt): die Warteschlange des Raums
+  // ist erst nach dem Titel dran, nicht nach jeder Folge. Autoplay ist aus,
+  // also passiert am Ende von selbst gar nichts.
+  await warten(() => lesen("bild.ended"));
   await pause(1200);
-  pruefe("Medienende startet Queue trotz ausgeschaltetem Folgen-Autoplay genau einmal", queueAufrufe, 1);
+  pruefe("Mit naechster Folge startet das Medienende keine Queue", queueAufrufe, 0);
+  pruefe("und ohne Autoplay auch keinen Folgenwechsel", folgenAufrufe.length, 0);
+  // Ohne naechste Folge uebernimmt die Warteschlange - genau einmal.
+  await lesen("naechsteSetzen(null); ausRundeBis=Date.now()+60000; weiterZaehler=0; weiterVerworfen=false; bild.pause(); bild.currentTime=89.5");
+  await warten(() => lesen("!bild.seeking && bild.currentTime >= 89.4"));
+  await lesen("bild.play()");
+  await warten(() => queueAufrufe === 1).catch(async error => { console.error(await lesen("({time:bild.currentTime,duration:bild.duration,paused:bild.paused,ended:bild.ended,queueAktiv,weiterVerworfen,weiterZaehler,naechste})")); throw error; });
+  await pause(1200);
+  pruefe("Nach der letzten Folge startet das Medienende die Queue genau einmal", queueAufrufe, 1);
   pruefe("Queue-Ende loest keinen zusaetzlichen Folgenwechsel aus", folgenAufrufe.length, 0);
+  await lesen("naechsteSetzen(" + JSON.stringify(auftrag.naechste) + ")");
   // --- Der Haken von Hand ----------------------------------------------------
   //
   // Der Anlass: eine Staffel, die man laengst gesehen hat, stand vollstaendig

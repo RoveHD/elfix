@@ -7908,7 +7908,15 @@ function raeumeWatchpartyEintraegeAuf() {
   const raeume = watchparty.status().rooms || [];
   const verbunden = new Set(raeume.filter((raum) => raum.connected).map((raum) => raum.room));
   const eingerichtet = new Set(watchparty.codes);
-  const dabei = new Set(watchpartyShared
+  // Auch, was gerade erst aus der Warteschlange kommt. Zwischen queue:start
+  // und den Lade-Quittungen aller Geraete kennt der bestaetigte Raumzustand
+  // den Titel noch nicht - das Relay traegt die Mitglieder erst danach ein.
+  // Der Eintrag, den raumQueueStarten fuer die Runde anlegt, verlor in diesem
+  // Fenster seine Bindung und stand als privater Stand in "Weiterschauen";
+  // jeder weitere Startversuch legte einen neuen daneben (Game of Thrones,
+  // viermal am 14.9.2026). Die Warteschlangen-Ziele stehen nur in
+  // watchparty.eintraege(), nicht im Raumzustand.
+  const dabei = new Set([...watchpartyShared, ...watchparty.eintraege()]
     .filter((eintrag) => eintrag.joined)
     .map((eintrag) => `${eintrag.room}|${eintrag.key}`));
 
