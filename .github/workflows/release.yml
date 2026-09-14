@@ -105,6 +105,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # Die Action holt sonst auch das alte Paket "tools". Das gibt es im
+          # SDK-Repository seit dem 14.9.2026 nicht mehr, und sdkmanager bricht
+          # daran ab. Alles Noetige zieht der naechste Schritt selbst.
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
