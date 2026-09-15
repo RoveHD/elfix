@@ -73,12 +73,15 @@ const ANBIETER = [
   { id: "musik", name: "YouTube Music", startUrl: "https://music.youtube.com/" }
 ];
 
-function leiste(route, ytStatus, direktModus = true) {
+function leiste(route, ytStatus, direktModus = true, spieler = null) {
   const knoten = new Map(KNOEPFE.map((auswahl) => [auswahl, element()]));
   const banner = element();
   const bannerText = element();
   const kontext = {
     currentRoute: route,
+    // Was im eigenen Player offen ist. Ausdruecklich gesetzt und nicht dem
+    // Auffangnetz des Sandkastens ueberlassen: davon haengt der ⇄ Knopf ab.
+    spielerLage: spieler,
     settings: { playback: { direktModus } },
     providers: ANBIETER,
     youtubePartyState: ytStatus,
@@ -135,6 +138,16 @@ pruefe("Auf YouTube gibt es den Teilen-Knopf nicht",
   aufYoutube.versteckt("#watchpartyShareButton"));
 pruefe("Auf jedem anderen Anbieter steht er weiter da",
   !aufAniworld.versteckt("#watchpartyShareButton"));
+
+// Und im Direktbetrieb gehoert er zu der Folge, die laeuft: die Route zeigt
+// dann weiter dorthin, von wo sie geoeffnet wurde - auf die Startseite etwa.
+const FOLGE_IM_SPIELER = {
+  url: "https://aniworld.to/anime/stream/wise-mans-grandchild/staffel-1/episode-3",
+  providerId: "aniworld"
+};
+pruefe("In einer laufenden Folge steht er auch ausserhalb der Anbieterseite",
+  !leiste("start", LAEUFT, true, FOLGE_IM_SPIELER).versteckt("#watchpartyShareButton"),
+  "der eigene Player ist der offene Titel");
 pruefe("Die uebrigen Knoepfe bleiben auf YouTube unberuehrt",
   !aufYoutube.versteckt("#favoriteButton")
   && !aufYoutube.versteckt("#stopButton")

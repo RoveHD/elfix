@@ -2604,9 +2604,31 @@ async function watchpartyKontextWechseln(punkt) {
   return { switched: true, room: wahl };
 }
 
-ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
-  const provider = activeProvider();
-  const url = activeView?.webContents?.getURL() || "";
+ipcMain.handle("watchparty:share-current",
+  (_event, room, punkt) => watchpartyAktuellesTeilen(room, punkt));
+
+/**
+ * Was hier gerade offen ist, in eine Watchparty stellen.
+ *
+ * Eine eigene Funktion und kein Rumpf im IPC-Horcher: was "offen" heisst, ist
+ * die ganze Entscheidung - und die laesst sich nur pruefen, wenn sie einen
+ * Namen hat.
+ */
+async function watchpartyAktuellesTeilen(room, punkt) {
+  /*
+   * Was gerade offen ist - und das ist im Direktbetrieb der eigene Player.
+   *
+   * Gefragt wurde hier immer die Anbieteransicht. Waehrend eine Folge im
+   * eigenen Player laeuft, steht die aber im Hintergrund auf der zuletzt
+   * gelesenen Staffelseite, beim Hoster oder ueberhaupt nicht mehr da. Wer
+   * mitten in der Folge auf ⇄ drueckte, teilte damit irgendetwas anderes oder
+   * bekam "Kein Titel geöffnet". Dieselbe Ueberlegung wie in
+   * sendWatchpartyWatchstate und meldeWatchpartyStandAusSpieler: laeuft der
+   * eigene Player, gilt seine Folge.
+   */
+  const ausSpieler = Boolean(spielerLauf && providerModel.isHttpUrl(spielerLauf.url || ""));
+  const provider = ausSpieler ? spielerAnbieter() : activeProvider();
+  const url = ausSpieler ? spielerLauf.url : (activeView?.webContents?.getURL() || "");
   if (!provider || !providerModel.isHttpUrl(url)) {
     return { shared: false, reason: "Kein Titel geöffnet" };
   }
@@ -2614,15 +2636,27 @@ ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
   // Steht der Titel schon in der eigenen Liste, hat er Bild und Fortschritt -
   // sonst wird beides aus der Seite gelesen.
   const normalized = normalizeFavoriteUrl(url);
-  let favorite = favorites.find((item) => item.id === activeFavoriteId)
-    || favorites.find((item) => item.normalizedUrl === normalized);
+  // Der zuletzt geoeffnete Eintrag zaehlt nur, wenn er auch zu dieser Adresse
+  // gehoert: aus dem Player heraus ist die Folge massgeblich, die laeuft.
+  const offener = favorites.find((item) => item.id === activeFavoriteId);
+  let favorite = (offener && (!ausSpieler || normalizeFavoriteUrl(offener.url) === normalized)
+    ? offener : null) || favorites.find((item) => item.normalizedUrl === normalized);
 
   if (!favorite) {
-    const meta = await readPageMetadata(activeView).catch(() => ({}));
+    // Die Ansicht liefert Titel und Bild nur, wenn sie ueberhaupt bei diesem
+    // Werk steht. Tut sie es nicht, reicht die Adresse: `serienTitel` liest
+    // den Serientitel notfalls aus ihr heraus.
+    const passendeAnsicht = isLiveView(activeView)
+      && taste.urlSchluessel(activeView.webContents.getURL()) === taste.urlSchluessel(url)
+      ? activeView : null;
+    const meta = passendeAnsicht
+      ? await readPageMetadata(passendeAnsicht).catch(() => ({}))
+      : {};
     const identity = episodeIdentity(url);
     favorite = {
       providerName: provider.name,
-      title: serienTitel(meta.title || activeView.webContents.getTitle(), url, provider.name),
+      title: serienTitel(meta.title || passendeAnsicht?.webContents.getTitle() || "",
+        url, provider.name),
       url,
       thumbnail: meta.thumbnail || "",
       type: normalizeMediaType(meta.type || inferMediaType(url)),
@@ -2631,7 +2665,7 @@ ipcMain.handle("watchparty:share-current", async (_event, room, punkt) => {
     };
   }
   return shareWatchpartyFavorite(favorite, room, punkt);
-});
+}
 
 ipcMain.handle("watchparty:enter", (_event, key, room) => {
   const schluessel = String(key || "");
@@ -6435,6 +6469,23 @@ function activeState() {
     loading: Boolean(view?.webContents?.isLoading?.()),
     canGoBack: Boolean(view?.webContents.navigationHistory.canGoBack()),
     canGoForward: Boolean(view?.webContents.navigationHistory.canGoForward()),
+    // Was im eigenen Player offen ist.
+    //
+    // Die Oberflaeche liest ihren Zustand sonst allein aus der Anbieteransicht,
+    // und die steht im Direktbetrieb irgendwo im Hintergrund - auf der
+    // Staffelseite, beim Hoster, oder gar nicht mehr. Wer in einer Folge sitzt,
+    // galt hier deshalb als "nichts offen": der ⇄ Knopf zum Hinzufuegen in eine
+    // Watchparty war ausgerechnet dann weg, wenn es etwas hinzuzufuegen gab.
+    spieler: spielerLauf && providerModel.isHttpUrl(spielerLauf.url || "")
+      ? {
+        url: spielerLauf.url,
+        providerId: spielerLauf.providerId || "",
+        titel: spielerLauf.titel || "",
+        // Der Player ohne Video: er zeigt die Folgenliste. Der Titel ist
+        // trotzdem offen und laesst sich teilen.
+        auswahl: Boolean(spielerLauf.auswahl)
+      }
+      : null,
     favorites
   };
 }
@@ -10170,6 +10221,9 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
     // Raum erscheint bis zur naechsten zufaelligen Relaymeldung als inaktiv.
     sendSpielerChatStatus();
     direktVollbildAnwenden(optionen);
+    // Die Kopfzeile der Oberflaeche richtet sich nach dem, was offen ist. Der
+    // Folgenwechsel im laufenden Player ist fuer sie sonst unsichtbar.
+    sendActiveState();
     if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
     return true;
   }
@@ -10221,6 +10275,10 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   mainWindow.contentView.addChildView(view);
   spielerLageSetzen();
   direktVollbildAnwenden(optionen);
+  // Jetzt steht der Player wirklich - erst ab hier darf die Oberflaeche ihre
+  // Kopfzeile danach ausrichten (und nicht schon beim Setzen des Auftrags,
+  // wo es diese Ansicht noch gar nicht gibt).
+  sendActiveState();
   view.webContents.focus();
   if (!optionen.laden && !optionen.auswahl) spielerNaechsteNachtragen(provider, url).catch(() => {});
   return true;
@@ -10253,6 +10311,8 @@ function direktSpielerSchliessen(grund = "") {
     // Schon zu.
   }
   if (isLiveView(activeView)) activeView.webContents.setAudioMuted(false);
+  // Und die Kopfzeile wieder ohne ihn.
+  sendActiveState();
   if (grund && grund !== "neustart") console.log(`[ELFIX DIREKT] Player zu (${grund})`);
 }
 

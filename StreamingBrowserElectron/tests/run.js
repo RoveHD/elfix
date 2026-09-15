@@ -35,6 +35,7 @@ OHNE_RELAY.push("uisoundtest");
 OHNE_RELAY.push("genautest");
 OHNE_RELAY.push("hlsankertest");
 OHNE_RELAY.push("rundenechotest");
+OHNE_RELAY.push("watchpartyknopftest");
 OHNE_RELAY.push("herodetailtest");
 OHNE_RELAY.push("herometadatentest");
 OHNE_RELAY.push("relaystarttest");

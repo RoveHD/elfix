@@ -92,6 +92,16 @@ let mediaDiagnostics = [];
 let filterLists = [];
 let searchHistory = JSON.parse(localStorage.getItem("elflix-search-history") || "[]");
 let currentUrl = "";
+/*
+ * Was im eigenen Player offen ist - oder null.
+ *
+ * Die Kopfzeile richtet sich sonst allein nach der Route, und die zeigt beim
+ * Direktbetrieb weiter auf das, wovon aus die Folge geoeffnet wurde: die
+ * Startseite, die Mediathek, die Suche. Wer mitten in einer Folge sass, hatte
+ * deshalb keinen ⇄ Knopf - ausgerechnet dann, wenn es etwas in eine Watchparty
+ * zu stellen gibt.
+ */
+let spielerLage = null;
 let activeSearchToken = 0;
 let activeSearchQuery = "";
 let autostartPending = false;
@@ -1341,8 +1351,12 @@ function bindEvents() {
         }
       }
     }
+    spielerLage = state.spieler || null;
     renderProviders();
     renderFavoriteToggle();
+    // Der eigene Player geht auf und zu, ohne dass sich die Route aendert -
+    // die Kopfzeile erfaehrt es nur hierueber.
+    renderChromeButtons();
   });
 
   // Im Direktbetrieb gibt es hinter dem Player nichts zu sehen - der
@@ -7960,11 +7974,19 @@ function renderChromeButtons() {
     document.querySelector(auswahl)?.classList.toggle("is-hidden", direkt);
   }
   document.querySelector("#stopButton")?.classList.toggle("is-hidden", !aufSeite || direkt);
-  // Auf YouTube faellt der ⇄ Knopf weg: er stellt einen Titel in einen Raum,
-  // und ein YouTube-Video ist keiner. Dort fuehrt der einzige Weg in die Runde
-  // ueber deren eigene Anzeige, die im selben Zug mitgezogen wird.
+  /*
+   * Der ⇄ Knopf gehoert zu dem, was offen ist - und das ist im Direktbetrieb
+   * die Folge im eigenen Player. Er steht deshalb auch dann da, wenn die Route
+   * noch auf der Startseite oder der Mediathek liegt, von der aus die Folge
+   * geoeffnet wurde.
+   *
+   * Auf YouTube faellt er weg: er stellt einen Titel in einen Raum, und ein
+   * YouTube-Video ist keiner. Dort fuehrt der einzige Weg in die Runde ueber
+   * deren eigene Anzeige, die im selben Zug mitgezogen wird.
+   */
+  const imSpieler = Boolean(spielerLage?.url);
   document.querySelector("#watchpartyShareButton")?.classList
-    .toggle("is-hidden", !aufSeite || aufYoutubeSeite());
+    .toggle("is-hidden", imSpieler ? false : (!aufSeite || aufYoutubeSeite()));
   renderYoutubePartyBanner();
 }
 

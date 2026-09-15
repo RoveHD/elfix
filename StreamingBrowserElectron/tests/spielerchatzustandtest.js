@@ -104,6 +104,8 @@ const wiederverwendung = vm.createContext({
   spielerAuftrag: () => ({ id: 2 }),
   sendSpielerChatStatus: () => taten.push("chat-status"),
   direktVollbildAnwenden: () => {},
+  // Mit dem neuen Auftrag erfaehrt auch die Oberflaeche, was offen ist.
+  sendActiveState: () => taten.push("zustand"),
   spielerNaechsteNachtragen: () => Promise.resolve()
 });
 vm.runInContext(funktion("direktSpielerOeffnen"), wiederverwendung);
@@ -116,7 +118,8 @@ vm.runInContext(funktion("direktSpielerOeffnen"), wiederverwendung);
     { id: "aniworld" }, folge(2), { quelle: {} }, { laden: true }
   );
   assert.equal(offen, true);
-  assert.deepEqual(taten, ["lauf-setzen", "spieler:auftrag", "chat-status"]);
+  // Und zum Schluss die Kopfzeile: der neue Auftrag aendert, was offen ist.
+  assert.deepEqual(taten, ["lauf-setzen", "spieler:auftrag", "chat-status", "zustand"]);
   console.log("OK Player-Chat: Solo-Raum, aktiver Favorit und Status bei Quellenwechsel");
 })().catch((fehler) => {
   console.error(fehler);
