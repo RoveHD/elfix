@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.42 — 15. September 2026
+
+- Der ⇄ Knopf zum Hinzufügen in eine Watchparty steht jetzt auch da, während
+  eine Folge im eigenen Player läuft. Bisher richtete sich die Kopfzeile allein
+  danach, welche Ansicht offen ist — im Direktbetrieb zeigt die weiter auf die
+  Startseite oder die Mediathek, von der aus die Folge geöffnet wurde, und der
+  Knopf fehlte ausgerechnet dann, wenn es etwas hinzuzufügen gibt.
+- Und er teilt auch wirklich die laufende Folge. Gefragt wurde bisher die
+  Anbieterseite im Hintergrund; die steht während der Wiedergabe auf der
+  zuletzt gelesenen Staffelseite, beim Hoster oder gar nicht mehr da.
+
 ## 2.0.41 — 15. September 2026
 
 - Watchparty: Nach dem Autoplay-Wechsel auf die nächste Folge fährt die Runde
