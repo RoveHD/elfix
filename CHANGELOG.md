@@ -3,6 +3,26 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.41 — 15. September 2026
+
+- Watchparty: Nach dem Autoplay-Wechsel auf die nächste Folge fährt die Runde
+  wieder von selbst an. Was ein Player beim Laden ungefragt meldet – die Pause
+  des Quellenwechsels, das kurze Anspielen der frischen Quelle, ein spätes
+  playWhenReady vom Fernseher –, gilt nicht mehr als Tastendruck und reißt die
+  gemeinsame Startverabredung nicht mehr ein. Vorher standen danach alle
+  vorbereitet auf derselben Stelle, „pausiert und synchronisiert", und niemand
+  fuhr los.
+- Das Intro oder den Rückblick überspringt jetzt auch der Host über dieselbe
+  gemeinsame Startverabredung wie ein Gast: alle halten am Ende des Segments,
+  bestätigen und fahren zusammen wieder an. Freies Spulen bleibt daneben seine
+  Sache.
+- Läuft der Autoplay-Zähler auf mehreren Geräten gleichzeitig ab, lädt die
+  wiederholte Vorbereitung die Folge kein zweites Mal und wirft die laufende
+  Bereitschaft nicht weg.
+- Die Relay-Änderung wirkt nach dem Relay-Update, die Player-Änderungen nach
+  dem Update von Rechner und Android/TV. Neue Prüfung rundenechotest, dazu
+  zwei Fälle in barrierstarttest.
+
 ## 2.0.40 — 15. September 2026
 
 - Relay: Doppelte Mitglieder aus der Zeit vor dem Gerätenachweis verschwinden,
