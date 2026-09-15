@@ -1690,6 +1690,11 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
     id: syncId,
     ziel,
     frameTime,
+    // Wofuer diese Schranke da ist. Nur der Folgenwechsel laesst jeden Player
+    // eine neue Quelle laden - und nur dort ist alles, was er in der Zeit von
+    // sich meldet, der Nachhall dieses Ladens (siehe die Echo-Sperre in der
+    // Steuerung).
+    grund: String(optionen.grund || ""),
     vorbereitung: daten,
     wartetAuf: new Set(mitglieder.map((client) => client.geraetId)),
     // Wer zu dieser Schranke gehoert, steht mit ihrer Entstehung fest. Ein
@@ -2276,6 +2281,51 @@ wss.on("connection", (socket) => {
         absenderFolge === eintrag.episode
         && (!absenderStaffel || !eintrag.season || absenderStaffel === eintrag.season)
       );
+
+      /*
+       * Das Echo des Folgenwechsels reisst seine Schranke nicht mehr ein.
+       *
+       * Wer die neue Folge auf Ansage laedt, besitzt seinen Laufzustand
+       * gerade nicht: die alte Quelle wird abgeraeumt und meldet dabei ihr
+       * `pause`, die neue spielt beim Laden kurz an und meldet ihr `play`, ein
+       * Fernseher schiebt sein spaetes playWhenReady hinterher. Gedrueckt hat
+       * das niemand - waehrend "Warten auf alle" ist die Bedienung auf allen
+       * Geraeten gesperrt (`spielenUmschalten` am Rechner,
+       * `abspielenAnfordern` auf Android).
+       *
+       * Genau dieses Echo hat die Schranke bisher erledigt: ein `pause`
+       * loeschte sie lautlos - die Bereitmeldungen der uebrigen liefen danach
+       * ins Leere, und das `syncstart` kam nie; ein `play` ersetzte sie durch
+       * eine zweite Verabredung, zu der die noch ladenden Geraete nicht mehr
+       * gehoerten. Beides endet gleich und ist genau das Gemeldete: alle
+       * stehen vorbereitet in der neuen Folge, "pausiert und synchronisiert",
+       * und niemand faehrt los.
+       *
+       * Eng gefasst, und zwar dreifach:
+       *
+       *   - nur die Schranke des Folgenwechsels. Nur dort laedt wirklich jeder
+       *     eine neue Quelle, und nur dort wartet sie bis zu neunzig Sekunden
+       *     darauf. Ein gewoehnlicher gemeinsamer Start dauert Sekunden.
+       *   - nur, solange dieses Geraet noch in `wartetAuf` steht: es hat nicht
+       *     einmal bestaetigt, dass es die Stelle erreicht hat.
+       *   - und nur an der Stelle der Vorbereitung. Ein Player, der noch laedt,
+       *     steht am Anfang der neuen Folge; wer bei Minute zwei anhaelt, hat
+       *     etwas anderes vor und wird gehoert.
+       *
+       * Ueberall sonst bleibt ein Druck auf die Pause, was er war: eine
+       * Absicht, die die Verabredung beendet - auch der Abbruch waehrend eines
+       * gemeinsamen Starts. Sprung, Folgenwechsel und Intro-Skip laufen
+       * ohnehin unveraendert weiter.
+       */
+      if (eintrag.sync?.grund === "episode-change"
+        && eintrag.sync.wartetAuf instanceof Set
+        && eintrag.sync.wartetAuf.has(socket.geraetId)
+        && Math.abs(eigen - eintrag.sync.ziel) < 5
+        // Der Sprung gehoert dazu: die Vorbereitung hat ihn selbst angeordnet,
+        // und auf Android meldet er sich als Positionswechsel zurueck.
+        && ["play", "pause", "seek"].includes(aktion)) {
+        return;
+      }
 
       // Nur ein Befehl fuer die laufende Folge ersetzt deren offene
       // Startverabredung. Ein Geraet, das bewusst eine andere Folge schaut,

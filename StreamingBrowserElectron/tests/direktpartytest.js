@@ -292,7 +292,12 @@ function rechner(name) {
       return { stelle: player.position, laeuft: player.laeuft, puffert: player.puffert, at: Date.now() };
     },
     spielerDrift: driftStand,
-    spielerSyncBereit: null
+    spielerSyncBereit: null,
+    // Die laufende Vorbereitung eines Folgenwechsels. Sie gehoert zum Zustand,
+    // den `spielerSteuernAusRunde` liest - ohne sie faellt schon die Frage,
+    // ob dieselbe Vorbereitung gerade zum zweiten Mal hereinkommt, auf die
+    // Nase (wie in folgenbarrieretest steht sie hier auf "keine").
+    spielerFolgenVorbereitung: null
   });
   vm.runInContext([
     funktion("watchpartyEreignis"),

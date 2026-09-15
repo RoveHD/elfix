@@ -900,7 +900,17 @@ async function markeNutzen() {
   const ziel = segment ? segment.end : Math.max(von + 1, marke.ziel);
   if (!await stelleSetzen(ziel)) return;
   bruecke.sprung(von, ziel, true);
-  tatMelden(lokalesSpulenErlaubt() ? "seek" : "skip");
+  // Und zwar fuer jeden dasselbe - auch fuer den Host.
+  //
+  // Als "seek" trug der Sprung des Hosts die Runde zwar mit, aber ohne
+  // Verabredung: die anderen sprangen hinter den Rueckblick und richteten
+  // sich danach, was der Rundenstand ueber seinen Laufzustand wusste. Stand
+  // dort "angehalten" - ein Herzschlag zu alt, ein Player, der beim Sprung
+  // gerade pufferte -, blieben sie hinter dem Intro stehen und warteten auf
+  // einen Start, den niemand mehr gab. Als "skip" macht das Relay daraus
+  // dieselbe Startverabredung wie beim Gast: alle halten am Ende des
+  // Rueckblicks, bestaetigen und fahren zusammen wieder an.
+  tatMelden("skip");
   const hatteFokus = document.activeElement === knopfMarke;
   knopfMarke.hidden = true;
   if (hatteFokus) knopfSpielen.focus();
@@ -1337,6 +1347,28 @@ function fernSteuern(auftragFern) {
  */
 function tatMelden(aktion) {
   if (!inRunde || ausRunde()) return;
+  /*
+   * Wer auf die Runde wartet, meldet nichts.
+   *
+   * Zwischen Vorbereitung und gemeinsamem Start gehoert dieser Player nicht
+   * sich selbst: er haelt an, springt, laedt die naechste Folge und puffert -
+   * alles auf Ansage. Sein `pause` beim Quellenwechsel und sein `play`, wenn
+   * eine frisch geladene Quelle kurz losspielt, sind deshalb keine Taten,
+   * sondern Nachhall. Die Echo-Sperre `ausRunde()` reicht dagegen nicht: sie
+   * laeuft nach knapp einer Sekunde ab, ein Folgenwechsel dauert laenger, und
+   * `starten()` setzt sie fuer den neuen Auftrag ohnehin zurueck.
+   *
+   * Beim Relay kostete genau das den gemeinsamen Start: ein solches Echo
+   * loeschte dort die offene Startverabredung, und die Runde blieb
+   * vorbereitet stehen, statt loszufahren.
+   *
+   * Eine Absicht geht hier nicht verloren: solange "Warten auf alle" steht,
+   * faengt `spielenUmschalten` jeden Tastendruck ab - es gibt in diesem
+   * Zustand gar keine eigene Tat zu melden. Und sobald die Runde den Player
+   * wieder freigibt (gemeinsamer Start, abgelaufene Frist, gewoehnliche
+   * Pause), faellt `rundeWarten` - ab da meldet er wie immer.
+   */
+  if (rundeWarten) return;
   const stelle = Number(bild.currentTime) || 0;
   bruecke.aktion(aktion, stelle);
   if (aktion === "pause") genauSetzen(stelle, true, ++startAuftrag, false);

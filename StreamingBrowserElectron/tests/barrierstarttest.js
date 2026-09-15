@@ -481,6 +481,99 @@ async function gastWechseltDieFolge() {
   }
 }
 
+// 9) Der Nachhall der Barriere reisst sie nicht ein.
+//
+//    Beim Autoplay laedt jeder Player die neue Folge auf Ansage. Dabei meldet
+//    er von selbst: der Quellenwechsel schickt ein `pause`, eine frisch
+//    geladene Quelle ein kurzes `play`. Gedrueckt hat das niemand - die
+//    Bedienung ist waehrend "Warten auf alle" ueberall gesperrt. Bisher
+//    loeschte genau dieses Echo die Startverabredung (`pause`) oder ersetzte
+//    sie durch eine zweite, zu der die noch ladenden Geraete nicht gehoerten
+//    (`play`). Beides endete gleich: alle standen vorbereitet auf derselben
+//    Stelle, und niemand fuhr los.
+async function echoWaehrendBarriere() {
+  const raum = "barrier-start-echo";
+  const key = "serie:barrier-start-echo";
+  const host = client("Echo Host");
+  const gast = client("Echo Gast");
+  try {
+    await host.verbinden(raum);
+    await gast.verbinden(raum);
+    await rundeAufbauen(raum, key, [host, gast]);
+    const { syncId, marken } = await folgeWechseln(key, [host, gast]);
+
+    // Beide haben die neue Folge geladen - ihr Herzschlag steht schon dort,
+    // die Bereitmeldung fehlt noch. Genau in diesem Fenster faellt das Echo an.
+    for (const geraet of [host, gast]) {
+      geraet.senden({ type: "here", key, position: 0, paused: true,
+        season: 1, episode: 2, playerSessionId: `${geraet.name}-player2` });
+    }
+    gast.senden({ type: "control", key, action: "pause", position: 0 });
+    host.senden({ type: "control", key, action: "play", position: 0 });
+    await abwarten(gast, marken[1]);
+    await abwarten(host, marken[0]);
+
+    const zweite = host.eingang.slice(marken[0])
+      .find((m) => m.type === "syncprepare" && m.syncId !== syncId);
+    pruefen(!zweite, `Das Echo erzeugte eine zweite Startverabredung: ${zweite?.syncId}`);
+    const bewegt = host.eingang.slice(marken[0]).find((m) => m.type === "control");
+    pruefen(!bewegt, `Das Echo bewegte die Runde: ${JSON.stringify(bewegt)}`);
+    pruefen(starts(host, marken[0], syncId).length === 0,
+      "Die Runde startete vor den Bereitmeldungen");
+
+    host.senden({ type: "syncready", key, syncId });
+    gast.senden({ type: "syncready", key, syncId });
+    const start = await host.warten(marken[0],
+      (m) => m.type === "syncstart" && m.syncId === syncId,
+      "gemeinsamen Start nach dem Echo");
+    await gast.warten(marken[1], (m) => m.type === "syncstart" && m.syncId === syncId,
+      "gemeinsamen Start beim Gast");
+    pruefen(start.url === URL2 && start.playing === true,
+      `Der Start nach dem Echo laeuft nicht: ${JSON.stringify(start)}`);
+  } finally {
+    host.schliessen();
+    gast.schliessen();
+  }
+}
+
+// 10) Nach der eigenen Bereitmeldung steht das Bild still - was von dort kommt,
+//     ist wieder eine Absicht. Ein Druck auf Pause beendet die Verabredung, und
+//     zwar hoerbar: der noch wartende Player bekommt die Pause und haengt nicht
+//     in "Warten auf alle" fest.
+async function absichtNachBereitmeldung() {
+  const raum = "barrier-start-absicht";
+  const key = "serie:barrier-start-absicht";
+  const host = client("Absicht Host");
+  const gast = client("Absicht Gast");
+  try {
+    await host.verbinden(raum);
+    await gast.verbinden(raum);
+    await rundeAufbauen(raum, key, [host, gast]);
+    const { syncId, marken } = await folgeWechseln(key, [host, gast]);
+
+    // Beide stehen in der neuen Folge; nur der Host hat auch schon bestaetigt.
+    for (const geraet of [host, gast]) {
+      geraet.senden({ type: "here", key, position: 0, paused: true,
+        season: 1, episode: 2, playerSessionId: `${geraet.name}-player2` });
+    }
+    host.senden({ type: "syncready", key, syncId });
+    await abwarten(host, marken[0]);
+
+    host.senden({ type: "control", key, action: "pause", position: 0 });
+    const pause = await gast.warten(marken[1],
+      (m) => m.type === "control" && m.action === "pause", "die abgesagte Verabredung");
+    pruefen(pause.playing === false, "Die Absage kam als laufender Befehl");
+
+    gast.senden({ type: "syncready", key, syncId });
+    await abwarten(gast, marken[1]);
+    pruefen(starts(gast, marken[1], syncId).length === 0,
+      "Die abgesagte Verabredung startete trotzdem");
+  } finally {
+    host.schliessen();
+    gast.schliessen();
+  }
+}
+
 (async () => {
   await zweiTeilnehmer();
   await letzterReadyStartet();
@@ -490,9 +583,12 @@ async function gastWechseltDieFolge() {
   await absageWaehrendBarriere();
   await hostBleibtUeberDenWechsel();
   await gastWechseltDieFolge();
+  await echoWaehrendBarriere();
+  await absichtNachBereitmeldung();
   console.log(`${bestanden}/${bestanden} bestanden `
     + "(Ready-Barriere: letzter Ready startet, genau einmal, Reconnect, "
-    + "Mitglied ohne Player und Absage haengen nicht)");
+    + "Mitglied ohne Player und Absage haengen nicht, das Echo der "
+    + "Vorbereitung reisst sie nicht ein)");
 })().catch((fehler) => {
   console.error(`FAIL ${fehler.stack || fehler}`);
   process.exitCode = 1;

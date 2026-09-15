@@ -1910,7 +1910,11 @@ final class DirektSpieler {
      */
     private boolean introStelleSetzen(double ziel) {
         if (player == null) return false;
-        if (darfNutzerSpulen()) return stelleVomNutzerSetzen(ziel);
+        // Auch beim Host. Als "seek" trug sein Sprung die Runde zwar mit, den
+        // Start danach ueberliess er aber dem, was der Rundenstand ueber
+        // seinen Laufzustand wusste; stand dort ein Herzschlag zu alt
+        // "angehalten", blieben alle hinter dem Rueckblick stehen. Als "skip"
+        // entsteht dieselbe Startverabredung wie beim Gast.
         erwartetSeek = ziel;
         erwartetBis = SystemClock.uptimeMillis() + 2000;
         player.seekTo(Math.round(ziel * 1000));
@@ -2397,7 +2401,17 @@ final class DirektSpieler {
                     erwartetPlay = null;
                     return;
                 }
-                if (aktiv && bereitGemeldet && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+                // Nichts melden, solange die Runde diesen Player fuehrt.
+                //
+                // Zwischen Vorbereitung und gemeinsamem Start haelt er auf
+                // Ansage an, springt und puffert; Media3 meldet jeden dieser
+                // Wechsel als USER_REQUEST, und das kurze Erwartungsfenster
+                // deckt einen Folgenwechsel nicht ab. Beim Relay loeschte
+                // solch ein Nachhall bisher die offene Startverabredung - die
+                // Runde stand danach vorbereitet da und fuhr nie los.
+                if (aktiv && bereitGemeldet && wartenderBefehl == null
+                    && folgenBarriereSyncId.isEmpty()
+                    && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
                     liveMelden(playing ? "play" : "pause");
                 }
             }

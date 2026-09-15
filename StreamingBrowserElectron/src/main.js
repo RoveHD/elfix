@@ -11366,6 +11366,18 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
   if (urteil.tun === "syncprepare" && nachricht.reason === "episode-change"
     && nachricht.url && !istGleicheFolge(nachricht.url, adresse)) {
     if (taste.urlSchluessel(nachricht.url) !== taste.urlSchluessel(adresse)) return false;
+    /*
+     * Dieselbe Vorbereitung zweimal ist keine zweite.
+     *
+     * Beim Autoplay laeuft der Zaehler auf jedem Geraet ab, nicht nur beim
+     * Ausloeser: jeder schickt sein "naechste Folge", und das Relay antwortet
+     * jedem, der noch bei der alten steht, mit der Wiederholung derselben
+     * Schranke. Wuerde die hier ein zweites Mal laden, saetze der neue Lauf
+     * den gerade vorbereiteten Player mitten in seiner Vorbereitung zurueck -
+     * und die Bereitmeldung, auf die die ganze Runde wartet, ginge verloren.
+     */
+    if (spielerFolgenVorbereitung && nachricht.syncId
+      && spielerFolgenVorbereitung.syncId === nachricht.syncId) return true;
     const provider = spielerAnbieter();
     if (!provider) return false;
     // Die alte Folge sofort anhalten; die neue darf vor syncready/syncstart

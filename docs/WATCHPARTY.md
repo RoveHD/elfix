@@ -37,7 +37,16 @@ ab, statt die Runde festzuhalten. Wer eine Vorbereitung verpasst hat, wird vom
 gemeinsamen Start nachgeholt.
 
 **Das Intro darf jeder überspringen**, nicht nur der Host — über dieselbe
-gemeinsame Startverabredung. Freies Spulen bleibt beim Host.
+gemeinsame Startverabredung: alle halten am Ende des Intros oder des
+Rückblicks, bestätigen, und die Runde fährt von selbst wieder an. Das gilt auch
+für den Knopf des Hosts; freies Spulen bleibt daneben seine Sache.
+
+**Der Nachhall eines Folgenwechsels hält die Runde nicht mehr an.** Wer die
+neue Folge lädt, meldet dabei ungefragt eine Pause (der Quellenwechsel) oder
+ein kurzes Weiter (die frisch geladene Quelle). Während „Warten auf alle" ist
+die Bedienung ohnehin gesperrt — solche Meldungen gelten deshalb nicht mehr als
+Tastendruck und beenden die Startverabredung nicht. Vorher stand danach jeder
+vorbereitet auf derselben Stelle, und niemand fuhr los.
 
 **Miniplayer und Bild-in-Bild werfen niemanden heraus.** PiP, Vollbild und der
 normale Player sind nur Darstellungen desselben Laufs: Raum, Geräte-ID,
