@@ -11745,6 +11745,7 @@ async function applyWatchpartyControl(nachricht) {
     // kommen zu mir. Pause und Weiter mache ich mit, damit ich nicht davonlaufe.
     binHost: Boolean(eintrag.hostId) && eintrag.hostId === eintrag.myId,
     hostId: eintrag.hostId,
+    meineId: eintrag.myId,
     // Die Folgenpruefung je Ansicht steht weiter unten - hier ist nur die
     // Frage, ob es ueberhaupt eine gibt.
     gleicheAdresse: true,

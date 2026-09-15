@@ -1120,8 +1120,13 @@ async function genauSetzen(ziel, genau, meiner, vonRunde = true, frameZiel = nul
     await seekAbwarten();
     if (meiner !== startAuftrag) return false;
   }
+  // Zeigt Chromium den Frame nicht binnen der Frist, ist das kein Grund, den
+  // Befehl fallenzulassen. Vorher hiess ein Fehlschlag hier: Abbruch, und der
+  // Player blieb angehalten stehen - bei einer Vorbereitung ohne Bereitmeldung,
+  // beim verabredeten Start ohne Start. Stabilitaet geht vor Millisekunden:
+  // ein Bild neben der Stelle sieht niemand, eine haengende Runde jeder.
   if (hatFrame && !await dargestelltesBildAbwarten(frameZiel)) {
-    return genauAbbrechen(meiner);
+    console.log("[spieler] genauer Frame nicht bestaetigt - weiter mit der erreichten Stelle");
   }
   if (meiner !== startAuftrag) return false;
   vorigeStelle = Number(bild.currentTime) || 0;

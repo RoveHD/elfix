@@ -383,9 +383,13 @@ function spielerKontext(bild) {
     c.steuernAusRunde({ stelle: FRAME, frameTime: FRAME, laufen: false,
       springen: true, genau: true, bereitId: "frame-1" });
     await schlaf(900);
-    pruefe("Der vorige dargestellte Frame wird nicht als bereit bestaetigt",
-      bereite.length === 0 && bild.spuren.bild === 299.549244
-      && vm.runInContext("startAusstehend", c) === false);
+    // Zeigt Chromium den Frame nicht binnen der Frist, meldet der Player
+    // trotzdem bereit - mit dem Bild, das er erreicht hat. Vorher blieb er
+    // hier ohne Bereitmeldung angehalten stehen, und die Runde wartete die
+    // volle Frist auf ihn (Stabilitaet vor Millisekunden, 15.9.2026).
+    pruefe("Ein nicht bestaetigter Frame haelt die Bereitmeldung nicht zurueck",
+      bereite.length === 1 && bild.spuren.bild === 299.549244
+      && vm.runInContext("startAusstehend", c) === false, JSON.stringify(bereite));
   }
 
   {

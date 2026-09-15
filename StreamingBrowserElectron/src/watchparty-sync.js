@@ -291,7 +291,12 @@ function steuerungEntscheiden(nachricht, lage = {}) {
     timestamp: Number(nachricht.timestamp ?? nachricht.at) || 0,
     episodeId: String(nachricht.episodeId || "")
   };
-  const binHost = Boolean(lage.binHost);
+  // Host ist auch, wen die Nachricht selbst als Host nennt. Der Raumzustand,
+  // aus dem `lage.binHost` kommt, hinkt nach einem Wiederanschluss einen
+  // Takt hinterher: die erste Meldung nennt keinen Host, weil der eigene
+  // Stand noch fehlt - die Antwort auf den Abgleich traegt ihn aber schon.
+  const binHost = Boolean(lage.binHost)
+    || (Boolean(nachricht.hostId) && Boolean(lage.meineId) && nachricht.hostId === lage.meineId);
   const aktion = String(nachricht.action);
 
   // Der Folgenwechsel geht vor allem anderen durch: er richtet sich gerade an
@@ -357,6 +362,17 @@ function steuerungEntscheiden(nachricht, lage = {}) {
       return { ...nichts("alter host"), merken };
     }
     return { tun: "drift", merken, genau: false, warten: false, nichtSpringen: false, grund: "messung" };
+  }
+
+  // Ein Abgleich, der den Host selbst erreicht, beschreibt seinen eigenen
+  // Stand: das Relay hat ihn eine Sekunde zuvor von ihm bekommen. Ihn
+  // anzuwenden hiesse anhalten, auf die eigene Stelle springen und wieder
+  // anfahren - und auf dem Fire TV landet der exakte Sprung im HLS nicht
+  // auf der Millisekunde, worauf der Player pausiert stehenblieb.
+  // Gemessen am 15.9.2026: WLAN-Aussetzer, Wiederanschluss, Abgleich,
+  // Ruecksprung um vier Sekunden, dann zwanzig Minuten Pause bei 1000 s.
+  if (binHost && nachricht.resync && (aktion === "play" || aktion === "pause")) {
+    return { ...nichts("selbst host"), merken };
   }
 
   // Pause, gezielter Sprung, Abgleich und gemeinsamer Start muessen sitzen.

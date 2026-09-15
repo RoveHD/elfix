@@ -2930,13 +2930,25 @@ final class DirektSpieler {
                 frameDiagnose("inaccurate-retry", befehl, abstand);
                 player.seekTo(zielMs);
                 handler.postDelayed(this::befehlPruefen, 100);
-            } else if (!befehl.ungenauGemeldet) {
+                return;
+            }
+            // Ausgereizt. Stabilitaet geht vor Millisekunden: der Befehl wird
+            // mit dem Bild ausgefuehrt, das der Player erreicht hat. Vorher
+            // endete er hier - mit `player.pause()` bereits gerufen und ohne
+            // jeden weiteren Aufruf: der Player blieb pausiert stehen, bis
+            // jemand von Hand drueckte (Fire TV, HLS, Abgleich nach einem
+            // WLAN-Aussetzer, 15.9.2026). Ein Bruchteil neben der Stelle sieht
+            // niemand; die Notbremse der Runde greift ohnehin erst bei fuenf
+            // Sekunden.
+            if (!befehl.ungenauGemeldet) {
                 befehl.ungenauGemeldet = true;
                 frameDiagnose("inaccurate-timeout", befehl, abstand);
             }
-            return;
         }
-        if (!befehl.urteil.optBoolean("nichtSpringen") && abstand > 1.5) return;
+        // Nach einem aufgegebenen exakten Sprung gilt dasselbe: lieber hier
+        // weiterlaufen als auf ein READY warten, das nie wieder kommt.
+        if (!befehl.urteil.optBoolean("nichtSpringen") && abstand > 1.5
+            && !befehl.ungenauGemeldet) return;
 
         JSONObject ereignis = befehl.urteil.optJSONObject("ereignis");
         boolean play = !befehl.urteil.optBoolean("warten") && ereignis != null && ereignis.optBoolean("playing");

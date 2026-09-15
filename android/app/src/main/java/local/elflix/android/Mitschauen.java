@@ -1161,6 +1161,7 @@ public final class Mitschauen {
             lage.put("nativ", umgebung.nativerSpieler());
             if (umgebung.nativerSpieler()) lage.put("spielstand", umgebung.nativerStand());
             lage.put("hostId", hostId(key));
+            lage.put("meineId", meineId(key));
             // Ob ueberhaupt dieselbe Folge offen steht. Die Adresse des
             // Absenders zaehlt; steht keine dabei, die der Runde.
             lage.put("gleicheAdresse", gleichziehen || gleicheFolge(
@@ -2354,6 +2355,12 @@ public final class Mitschauen {
     public String hostId(String key) {
         JSONObject eintrag = eintragZu(key);
         return eintrag == null ? "" : eintrag.optString("hostId", "");
+    }
+
+    /** Die eigene Kennung in dieser Runde - fuer die Hostfrage aus der Nachricht selbst. */
+    public String meineId(String key) {
+        JSONObject eintrag = eintragZu(key);
+        return eintrag == null ? "" : eintrag.optString("myId", "");
     }
 
     /** Wer die Runde gerade fuehrt - fuer die Anzeige. */

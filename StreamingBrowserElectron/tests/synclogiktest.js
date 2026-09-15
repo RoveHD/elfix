@@ -290,6 +290,31 @@ pruefe("6c. Ohne Proben gibt es keinen Versatz",
     steuerungEntscheiden(gleichziehen, { offen: alteFolge, binHost: false }).tun === "syncprepare");
 }
 
+// --- Der Abgleich, der den Host selbst erreicht -----------------------------
+//
+// Nach einem Wiederanschluss fragt jedes Geraet den Stand der Runde ab. Ist
+// es selbst der Host, beschreibt die Antwort seinen eigenen Stand von vor einer
+// Sekunde. Ihn anzuwenden hiesse anhalten, exakt springen, wieder anfahren -
+// und auf dem Fire TV blieb der Player dabei pausiert stehen (15.9.2026).
+{
+  const offen = { season: 1, episode: 9 };
+  const abgleich = {
+    action: "play", resync: true, hostId: "tv", episodeId: "s1e9",
+    position: 1000, timestamp: 5000, sequenceId: 20, playing: true
+  };
+  pruefe("Der Host wendet den Abgleich seines eigenen Stands nicht an",
+    steuerungEntscheiden(abgleich, { offen, binHost: true, hostId: "tv" }).grund === "selbst host");
+  // Der Raumzustand hinkt nach dem Wiederanschluss einen Takt hinterher und
+  // nennt noch keinen Host - die Nachricht selbst nennt ihn aber schon.
+  pruefe("Auch wenn nur die Nachricht ihn als Host nennt",
+    steuerungEntscheiden(abgleich, { offen, binHost: false, hostId: "", meineId: "tv" }).grund === "selbst host");
+  pruefe("Ein Gast wendet denselben Abgleich an",
+    steuerungEntscheiden(abgleich, { offen, binHost: false, hostId: "tv", meineId: "handy" }).tun === "anwenden");
+  const echtePause = { action: "pause", hostId: "tv", episodeId: "s1e9", position: 1000, timestamp: 6000, sequenceId: 21 };
+  pruefe("Eine echte Pause aus der Runde macht der Host weiterhin mit",
+    steuerungEntscheiden(echtePause, { offen, binHost: true, hostId: "tv", meineId: "tv" }).tun === "anwenden");
+}
+
 const fehler = pruefungen.filter((p) => !p).length;
 console.log(`\n${pruefungen.length - fehler}/${pruefungen.length} bestanden`);
 process.exit(fehler ? 1 : 0);

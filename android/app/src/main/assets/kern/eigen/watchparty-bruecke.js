@@ -586,6 +586,7 @@
       letzter: letzteEreignisse.get(merker),
       binHost: Boolean(lage && lage.binHost),
       hostId: (lage && lage.hostId) || "",
+      meineId: (lage && lage.meineId) || "",
       gleicheAdresse: !lage || lage.gleicheAdresse !== false,
       offen: { season: (lage && lage.season) || 0, episode: (lage && lage.episode) || 0 }
     });
