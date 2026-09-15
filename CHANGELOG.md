@@ -3,6 +3,14 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.40 — 15. September 2026
+
+- Relay: Doppelte Mitglieder aus der Zeit vor dem Gerätenachweis verschwinden,
+  sobald das Gerät sich unter seinem Namen wieder meldet; die Ersteller-Rolle
+  eines Titels geht dabei auf die neue Kennung über – und über das Konto auf
+  alle Geräte derselben Person. Rauswerfen und Herausnehmen funktionieren
+  wieder. Wirkt nach dem Relay-Update.
+
 ## 2.0.39 — 15. September 2026
 
 - Watchparty: Nach einem kurzen Verbindungsaussetzer pausiert der Player nicht
