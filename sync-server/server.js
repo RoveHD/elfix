@@ -490,20 +490,45 @@ function kontoVonGeraet(geraetId) {
  * verbunden. Zwei echte Geraete einer Person (Rechner, Fernseher, Telefon)
  * heissen verschieden und bleiben deshalb beide stehen.
  */
+/**
+ * Eine Kennung aus der Zeit vor dem Geraetenachweis.
+ *
+ * Seit identityVersion 2 vergibt das Relay die Kennung selbst, je Nachweis.
+ * Die alten, vom Client gewaehlten Kennungen kennt kein Nachweis mehr - kein
+ * Geraet kann sich je wieder unter ihnen melden. In der Mitgliederliste
+ * standen sie trotzdem weiter, neben der neuen Kennung desselben Geraets:
+ * jeder Name doppelt, und der Ersteller eines Titels war unter seiner alten
+ * Kennung fuer immer weg - niemand konnte mehr rauswerfen oder herausnehmen
+ * (Raum "Bangus", 15.9.2026: fuenf Personen, elf Mitglieder).
+ */
+function istRelikt(geraetId) {
+  if (!geraetId) return false;
+  return ![...identitaeten.values()].some((eintrag) => eintrag.geraetId === geraetId);
+}
+
 function vorgaengerAufraeumen(raumcode, eintrag, socket) {
-  if (!socket?.konto || !socket.geraetId) return false;
+  if (!socket?.geraetId) return false;
   const name = socket.name || "";
   if (!name) return false;
   let geaendert = false;
   for (const [geraetId, mitgliedName] of [...eintrag.members]) {
     if (geraetId === socket.geraetId || mitgliedName !== name) continue;
-    if (kontoVonGeraet(geraetId) !== socket.konto) continue;
     if (istVerbunden(raumcode, geraetId)) continue;
+    // Dasselbe Geraet: gleiches nachgewiesenes Konto - oder eine Kennung, die
+    // kein Nachweis mehr erreichen kann und die denselben Namen traegt.
+    const gleichesKonto = Boolean(socket.konto) && kontoVonGeraet(geraetId) === socket.konto;
+    if (!gleichesKonto && !istRelikt(geraetId)) continue;
     eintrag.members.delete(geraetId);
     eintrag.stand?.delete(geraetId);
     eintrag.spoiler?.delete(geraetId);
     eintrag.spoilerWartet?.delete(geraetId);
     hostFreigeben(eintrag, geraetId);
+    // Was der Vorgaenger eingestellt hat, gehoert dem Nachfolger - und ueber
+    // das Konto allen seinen Geraeten.
+    if (eintrag.addedById === geraetId) {
+      eintrag.addedById = socket.geraetId;
+      if (socket.konto) eintrag.addedByKonto = socket.konto;
+    }
     geaendert = true;
   }
   return geaendert;
@@ -1889,11 +1914,16 @@ wss.on("connection", (socket) => {
       socket.konto = identitaet.konto || "";
       const raum = raumHolen(socket.raum);
       namenNachziehen(raum, socket.geraetId, socket.name);
+      let aufgeraeumt = false;
       for (const eintrag of raum.titel.values()) {
         if (!eintrag.members.has(socket.geraetId)) continue;
+        // Auch beim blossen Verbinden: wer laengst Mitglied ist, tritt nie
+        // wieder ein - sein Vorgaenger bliebe sonst fuer immer stehen.
+        if (vorgaengerAufraeumen(socket.raum, eintrag, socket)) aufgeraeumt = true;
         if (!(eintrag.spoilerWartet instanceof Set)) eintrag.spoilerWartet = new Set();
         eintrag.spoilerWartet.add(socket.geraetId);
       }
+      if (aufgeraeumt) zustandSpeichernSpaeter();
       zustandSenden(socket.raum);
       warteschlangeAnSocket(socket, "join");
       for (const eintrag of raum.titel.values()) {

@@ -43,6 +43,7 @@ OHNE_RELAY.push("adblockworkertest");
 OHNE_RELAY.push("securitytest");
 OHNE_RELAY.push("spielerchatzustandtest");
 OHNE_RELAY.push("watchpartypersistenztest");
+OHNE_RELAY.push("relikttest");
 OHNE_RELAY.push("youtubestarttest");
 OHNE_RELAY.push("youtubeteilnehmeranbindungtest");
 OHNE_RELAY.push("sponsorblockpartytest");
