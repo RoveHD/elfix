@@ -3,6 +3,14 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.39 — 15. September 2026
+
+- Watchparty: Nach einem kurzen Verbindungsaussetzer pausiert der Player nicht
+  mehr von selbst. Der Host wendet den Abgleich seines eigenen Stands nicht
+  mehr an, und ein exakter Sprung, der nicht auf die Millisekunde sitzt,
+  lässt den Player (Android/TV wie Rechner) nicht mehr angehalten stehen –
+  Vorbereitung und gemeinsamer Start gehen mit dem erreichten Bild weiter.
+
 ## 2.0.38 — 15. September 2026
 
 - Die Warteschlange des Raums springt erst an, wenn die Serie zu Ende ist –
