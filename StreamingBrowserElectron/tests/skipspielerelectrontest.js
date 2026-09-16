@@ -97,8 +97,15 @@ app.whenReady().then(async () => {
   await js("bild.currentTime = 3; markeZeigen(3)");
   assert.deepEqual(await js("[knopfMarke.hidden,knopfMarke.textContent]"), [false, "Intro überspringen"]);
   assert.equal(abrufe, 1, "loadedmetadata und durationchange teilen einen Abruf");
+  // Der Knopf meldet "skip" und nicht "seek" - auch beim Host.
+  //
+  // Das Ueberspringen gehoert allen: das Relay macht daraus dieselbe gemeinsame
+  // Startverabredung wie beim Gast, damit die Runde hinter dem Rueckblick
+  // zusammen wieder anfaehrt. Als "seek" ueberliess der Host den Start dem,
+  // was der Rundenstand ueber seinen Laufzustand wusste - war der einen
+  // Herzschlag zu alt, blieben alle stehen (siehe rundenechotest).
   await js("inRunde = true; binHost = true; markeNutzen()");
-  await warten(() => Promise.resolve(spruenge.length > 0 && aktionen.includes("seek")));
+  await warten(() => Promise.resolve(spruenge.length > 0 && aktionen.includes("skip")));
   assert.equal(spruenge[0].nach, 9);
   assert.equal(spruenge[0].genutzt, true, "Daten-Sprung wird nicht als eigenes Intro gelernt");
   await js("inRunde = false; markeZeigen(9)");
