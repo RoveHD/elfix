@@ -9929,7 +9929,15 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
     // Die Folge liegt bereit, laeuft aber nicht: die Liste bleibt offen, und
     // gestartet wird erst auf Knopfdruck. Siehe ersteFolgeVorladen().
     vorladen: Boolean(optionen.vorladen),
-    rundeWarten: Boolean(optionen.rundeWarten)
+    /*
+     * Der Player geht in eine Folge auf, die in einer Runde live laeuft - und
+     * nicht, weil die Runde ihn geschickt hat. Dann kuendigt er nichts an,
+     * sondern fragt, was gilt (watchpartyZustandUebernehmen). Bis die Antwort
+     * da ist, wartet er wie bei einer Schranke: sein Losspielen waere sonst
+     * ein Play an die Runde, und die haelt daraufhin alle an.
+     */
+    rundeUebernehmen: Boolean(optionen.rundeUebernehmen),
+    rundeWarten: Boolean(optionen.rundeWarten || optionen.rundeUebernehmen)
   };
   return spielerLauf;
 }
@@ -10257,6 +10265,18 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
   // geht Escape weiter an den Player und schliesst ihn wie bisher.
   view.webContents.on("before-input-event", (event, input) => {
     if (tastenkuerzel(input)) event.preventDefault();
+  });
+
+  // Was der Player ueber Play, Pause und ihre Herkunft sagt, gehoert ins
+  // Protokoll des Hauptprozesses: dort steht die andere Haelfte derselben
+  // Kette, und erst zusammen beantworten sie die Frage, wer angehalten hat.
+  // Nur diese Zeilen - der Rest bleibt in der Konsole des Players.
+  view.webContents.on("console-message", (...args) => {
+    const nachricht = typeof args[0] === "object" && args[0] !== null && "message" in args[0]
+      ? args[0].message
+      : args[1];
+    const text = String(nachricht || "");
+    if (text.startsWith("[WATCHPARTY]")) console.log(`${text} (player)`);
   });
 
   // Waehrend der eigene Player laeuft, hat die Seite dahinter zu schweigen.
@@ -10619,14 +10639,68 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   }
   if (!ergebnis.ok) return { ...ergebnis, hosterliste: ergebnis.hosterliste || gelesen.links };
 
-  const offen = await direktSpielerOeffnen(provider, url, ergebnis, { ...optionen, signal });
+  // Ein Aufgehen auf Ansage der Runde (Schranke, Warteschlange) bringt seinen
+  // Zustand schon mit; nur der eigene Einstieg muss fragen.
+  const uebernehmen = !optionen.rundeWarten && !optionen.auswahl && !optionen.laden
+    && Boolean(watchpartyLiveKeyForUrl(url) && watchpartyRaumForUrl(url));
+  const offen = await direktSpielerOeffnen(provider, url, ergebnis,
+    { ...optionen, signal, rundeUebernehmen: uebernehmen });
   if (!offen) return { ok: false, grund: "Player ließ sich nicht öffnen" };
+  watchpartyZustandUebernehmen(url);
   return {
     ok: true,
     hoster: ergebnis.hoster,
     typ: ergebnis.quelle.typ,
     hoehe: ergebnis.quelle.hoehe
   };
+}
+
+/**
+ * Wie lange ein frisch geoeffneter Player auf die Antwort der Runde wartet.
+ *
+ * Danach gehoert er wieder sich selbst. Das ist kein Startversuch auf Verdacht
+ * - er bleibt stehen -, sondern das Ende des Wartens: ohne diese Frist saesse
+ * jemand, dessen Runde gerade keinen Stand kennt, vor einem gesperrten
+ * Play-Knopf.
+ */
+const RUNDE_UEBERNAHME_FRIST_MS = 6000;
+
+/**
+ * Was die Runde gerade tut, gilt auch fuer diesen frisch geoeffneten Player.
+ *
+ * Der gemeldete Fall: ein Geraet tritt einer laufenden Runde bei, sein Player
+ * geht auf, spielt von selbst los - und meldet das als Play an die Runde. Fuer
+ * das Relay ist ein Play eine Absicht: es haelt daraufhin alle an, verabredet
+ * einen gemeinsamen Start und wartet auf die Bereitmeldungen. Ausgerechnet der
+ * Beitretende kann die aber noch nicht geben, denn seine Quelle laedt gerade
+ * erst. Nach fuenf Sekunden lief die Frist ab, und die ganze Runde stand.
+ *
+ * Ein Player, der in eine laufende Runde hineingeht, hat dort nichts
+ * anzukuendigen. Er fragt: `abgleichen` holt den autoritativen Stand des Hosts
+ * - Stelle *und* Laufzustand -, und der wird angewendet. Laeuft die Runde,
+ * laeuft er mit; steht sie, bleibt er stehen.
+ */
+let spielerRundenUebernahme = null;
+function watchpartyZustandUebernehmen(url) {
+  const key = watchpartyLiveKeyForUrl(url);
+  const raum = watchpartyRaumForUrl(url);
+  if (!key || !raum || !spielerLauf?.rundeUebernehmen) return false;
+  const lauf = spielerLauf;
+  wpLog(`beitritt: frage den Zustand der Runde ab (raum=${raum})`);
+  spielerRundenUebernahme = { lauf, key, raum };
+  watchparty.abgleichen(key, raum);
+  const frist = setTimeout(() => {
+    if (spielerRundenUebernahme?.lauf !== lauf || spielerLauf !== lauf) return;
+    spielerRundenUebernahme = null;
+    // Keine Antwort: das Warten endet, der Player bleibt stehen und gehoert
+    // wieder seinem Zuschauer. Ein Start auf Verdacht waere hier falsch - er
+    // liefe womoeglich allein.
+    wpLog("beitritt: keine Antwort der Runde - der Player wird freigegeben");
+    spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false,
+      springen: false, genau: false });
+  }, RUNDE_UEBERNAHME_FRIST_MS);
+  frist.unref?.();
+  return true;
 }
 
 /* ------------------------------------------------------- Der Direktbetrieb
@@ -11376,6 +11450,9 @@ function linkFuerFassung(liste, fassungName, hosterName) {
 /** Ein Befehl an den Player. Ohne Player kostet er nichts. */
 function spielerBefehl(befehl) {
   if (!spielerView || spielerView.webContents.isDestroyed()) return false;
+  // Ein Befehl ist eine Antwort: ab hier weiss der Player, woran er ist, und
+  // die Frist der Uebernahme hat ihre Aufgabe erledigt.
+  spielerRundenUebernahme = null;
   spielerView.webContents.send("spieler:steuern", befehl);
   return true;
 }
@@ -11414,12 +11491,17 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
   if (!spielerLauf) return false;
   const adresse = spielerLauf.url;
 
-  if (nachricht.reason === "sync-timeout" && spielerFolgenVorbereitung
-    && nachricht.syncId === spielerFolgenVorbereitung.syncId) {
+  if ((nachricht.reason === "sync-timeout" || nachricht.reason === "sync-pausiert")
+    && spielerFolgenVorbereitung && nachricht.syncId === spielerFolgenVorbereitung.syncId) {
+    const abgelaufen = nachricht.reason === "sync-timeout";
+    wpLog(`restoring playback state state=paused grund=${nachricht.reason}`);
     spielerFolgenVorbereitung = null;
     spielerSyncBereit = null;
     spielerBefehl({ tun: "stelle", stelle: spielerTakt.stelle, laufen: false, springen: false, genau: false });
-    sendToast("Nicht alle Geräte wurden bereit. Die Runde bleibt pausiert.");
+    // Die angehaltene Runde ist kein Fehlschlag: sie stand vorher und steht
+    // jetzt auf der neuen Folge. Nur der abgelaufene Fristfall ist eine Meldung
+    // wert.
+    if (abgelaufen) sendToast("Nicht alle Geräte wurden bereit. Die Runde bleibt pausiert.");
     return true;
   }
 
@@ -11437,7 +11519,12 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
      * und die Bereitmeldung, auf die die ganze Runde wartet, ginge verloren.
      */
     if (spielerFolgenVorbereitung && nachricht.syncId
-      && spielerFolgenVorbereitung.syncId === nachricht.syncId) return true;
+      && spielerFolgenVorbereitung.syncId === nachricht.syncId) {
+      wpLog(`ignoriere doppelte Vorbereitung syncId=${nachricht.syncId}`);
+      return true;
+    }
+    wpLog(`episode transition start folge=${nachricht.episodeId || nachricht.url} `
+      + `syncId=${nachricht.syncId} auftrag=${spielerLauf.id}`);
     const provider = spielerAnbieter();
     if (!provider) return false;
     // Die alte Folge sofort anhalten; die neue darf vor syncready/syncstart
@@ -11618,6 +11705,9 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
       watchparty.serverJetzt(eintrag.room),
       laufen ? watchpartySync.START_VORLAUF_MS : 0
     );
+    wpLog(`${laufen ? "PLAY" : "PAUSE"} event source=remote `
+      + `grund=${urteil.grund || nachricht.action} stelle=${plan.stelle.toFixed(2)}`
+      + `${nachricht.resync ? " (abgleich)" : ""}`);
     spielerBefehl({
       tun: "stelle",
       // Steht der Absender, ist seine Stelle die Antwort: zielZeitBerechnen
@@ -11681,6 +11771,7 @@ ipcMain.on("spieler:aktion", (ereignis, aktion, stelle) => {
    * zu diesem Augenblick los. Vorher lief der Ausloeser sofort und die anderen
    * holten auf; der Rueckstand war die Laufzeit der Nachricht plus Puffern.
    */
+  wpLog(`${name.toUpperCase()} event source=user stelle=${wo.toFixed(2)}`);
   if (name === "play") {
     const jetzt = watchparty.serverJetzt(runde.raum);
     const startAt = jetzt == null ? 0 : jetzt + watchpartySync.START_VORLAUF_MS;
@@ -11826,6 +11917,7 @@ async function applyWatchpartyControl(nachricht) {
   if (urteil.tun === "nichts") {
     if (urteil.grund === "veraltet") {
       console.log(`[watchparty-sync] {"action":"stale","ignored":"${nachricht.action}"}`);
+      wpLog(`ignored stale event aktion=${nachricht.action} folge=${nachricht.episodeId || "?"}`);
     }
     return;
   }
@@ -11999,6 +12091,24 @@ async function applyWatchpartyControl(nachricht) {
 }
 
 // Die Oberflaeche zeigt an, wer gerade steuert.
+/*
+ * Die Spur der Runde.
+ *
+ * Play und Pause kommen aus drei Richtungen, und die Unterscheidung ist der
+ * ganze Unterschied zwischen "der Zuschauer will das" und "der Player ist
+ * gerade beschaeftigt":
+ *
+ *   user      - jemand hat hier gedrueckt
+ *   runde     - ein Befehl der Runde wird hier angewendet
+ *   technisch - Quellenwechsel, Laden, Startvorbereitung, Beitritt
+ *
+ * Genau diese Zuordnung stand bisher nirgends im Protokoll, und genau daran
+ * ist der gemeldete Fehler zu erkennen: wer den letzten Halt ausgeloest hat.
+ */
+function wpLog(text) {
+  console.log(`[WATCHPARTY] ${text}`);
+}
+
 function sendWatchpartyLive(info) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("watchparty:live", info);

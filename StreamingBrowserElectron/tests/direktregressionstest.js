@@ -82,6 +82,11 @@ function ladekontext(aufloesen) {
     rundenFassungFuer: () => null,
     linkFuerFassung: () => null,
     fassungsname: () => "",
+    // Ohne laufende Runde gibt es auch nichts zu uebernehmen: hier geht es um
+    // den Ladeweg selbst.
+    watchpartyLiveKeyForUrl: () => "",
+    watchpartyRaumForUrl: () => "",
+    watchpartyZustandUebernehmen: () => false,
     direktSpielerOeffnen: async (_provider, url) => { geoeffnet.push(url); return true; }
   }, ["direktAuftragBeginnen", "direktFolgeSpielen", "direktSpielerSchliessen"]);
   return { c, geoeffnet };

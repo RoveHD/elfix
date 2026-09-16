@@ -333,12 +333,24 @@ async function legacyAblagePruefen() {
     ![wieder, gast, dritter].some((geraet) => geraet.eingang
       .some((m) => m.type === "syncstart" && m.syncId === syncId)));
   dritter.senden({ type: "syncready", key: KEY, syncId });
+  /*
+   * Die Schranke endet gemeinsam - hier als Pause.
+   *
+   * Die Runde wurde weiter oben ausdruecklich angehalten und seitdem von
+   * niemandem gestartet. Der Folgenwechsel sagt, *wo* weitergeschaut wird,
+   * nicht *ob*: alle kommen auf der neuen Folge gemeinsam zum Stehen. Dass
+   * dieselbe Schranke eine laufende Runde ebenso gemeinsam startet, steht in
+   * rundenzustandtest; hier geht es um die Generation und darum, dass sie
+   * genau einmal endet.
+   */
+  const abschluss = (syncId) => (m) => m.syncId === syncId && (m.type === "syncstart"
+    || (m.type === "control" && m.action === "pause" && m.reason === "sync-pausiert"));
   const starts = await Promise.all([wieder, gast, dritter].map((geraet) =>
-    geraet.erwarte((m) => m.type === "syncstart" && m.syncId === syncId, "gemeinsamer Folgenstart")));
-  pruefe("Nach allen Bereitschaften folgt genau ein gemeinsamer Start",
+    geraet.erwarte(abschluss(syncId), "gemeinsamer Folgenabschluss")));
+  pruefe("Nach allen Bereitschaften folgt genau ein gemeinsamer Abschluss",
     starts.every((start) => start?.url === URL1 && start?.episodeId === "s1e1")
-      && [wieder, gast, dritter].every((geraet) => geraet.eingang
-        .filter((m) => m.type === "syncstart" && m.syncId === syncId).length === 1),
+      && [wieder, gast, dritter].every((geraet) =>
+        geraet.eingang.filter(abschluss(syncId)).length === 1),
     JSON.stringify(starts));
 
   // Die Schranke gehoert zur authentifizierten Geraete-ID, nicht zum alten
@@ -373,12 +385,10 @@ async function legacyAblagePruefen() {
   gast.senden({ type: "syncready", key: KEY, syncId: reconnectSyncId });
   await schlafen(150);
   pruefe("Der neue Socket muss seine eigene Vorbereitung bestaetigen",
-    ![wieder, gast, dritterNeu].some((geraet) => geraet.eingang
-      .some((m) => m.type === "syncstart" && m.syncId === reconnectSyncId)));
+    ![wieder, gast, dritterNeu].some((geraet) => geraet.eingang.some(abschluss(reconnectSyncId))));
   dritterNeu.senden({ type: "syncready", key: KEY, syncId: reconnectSyncId });
   const reconnectStarts = await Promise.all([wieder, gast, dritterNeu].map((geraet) =>
-    geraet.erwarte((m) => m.type === "syncstart" && m.syncId === reconnectSyncId,
-      "gemeinsamer Start nach Reconnect")));
+    geraet.erwarte(abschluss(reconnectSyncId), "gemeinsamer Abschluss nach Reconnect")));
   // Der neue Socket meldet seinen Playerstand nach - der alte ging mit der
   // getrennten Verbindung. Ohne ihn gehoert er zur naechsten Schranke nicht
   // mehr dazu; im Betrieb erledigt das der Herzschlag im Sekundentakt.
@@ -389,7 +399,7 @@ async function legacyAblagePruefen() {
   await dritterNeu.erwarte((m) => m.type === "watchstate" && m.key === KEY
     && m.members?.some((mitglied) => mitglied.id === dritterNeu.deviceId),
   "Playerstand des wiederverbundenen Dritten");
-  pruefe("Nach der neuen Bereitschaft startet dieselbe Generation gemeinsam",
+  pruefe("Nach der neuen Bereitschaft endet dieselbe Generation gemeinsam",
     reconnectStarts.every((start) => start?.url === URL3 && start?.episodeId === "s1e3"),
     JSON.stringify(reconnectStarts));
 
@@ -409,12 +419,11 @@ async function legacyAblagePruefen() {
   gast.senden({ type: "syncready", key: KEY, syncId: abbruchSyncId });
   await schlafen(100);
   pruefe("Solange der dritte Socket offen ist, bleibt die Schranke geschlossen",
-    !wieder.eingang.some((m) => m.type === "syncstart" && m.syncId === abbruchSyncId)
+    !wieder.eingang.some(abschluss(abbruchSyncId))
       && gastVorAbbruch?.syncId === abbruchSyncId && dritterVorAbbruch?.syncId === abbruchSyncId);
   dritterNeu.schliessen();
   const startsNachAbbruch = await Promise.all([wieder, gast].map((geraet) =>
-    geraet.erwarte((m) => m.type === "syncstart" && m.syncId === abbruchSyncId,
-      "Start nach Trennung", 1500)));
+    geraet.erwarte(abschluss(abbruchSyncId), "Abschluss nach Trennung", 1500)));
   pruefe("Ein getrennter letzter Warter blockiert die verbundenen Teilnehmer nicht",
     startsNachAbbruch.every((start) => start?.url === URL4 && start?.episodeId === "s1e4"));
 

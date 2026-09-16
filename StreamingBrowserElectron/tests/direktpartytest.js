@@ -297,7 +297,9 @@ function rechner(name) {
     // den `spielerSteuernAusRunde` liest - ohne sie faellt schon die Frage,
     // ob dieselbe Vorbereitung gerade zum zweiten Mal hereinkommt, auf die
     // Nase (wie in folgenbarrieretest steht sie hier auf "keine").
-    spielerFolgenVorbereitung: null
+    spielerFolgenVorbereitung: null,
+    // Die Spur der Runde: hier nur ein Ziel, das nichts tut.
+    wpLog: () => {}
   });
   vm.runInContext([
     funktion("watchpartyEreignis"),

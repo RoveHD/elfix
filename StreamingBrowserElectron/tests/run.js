@@ -36,6 +36,7 @@ OHNE_RELAY.push("genautest");
 OHNE_RELAY.push("hlsankertest");
 OHNE_RELAY.push("rundenechotest");
 OHNE_RELAY.push("watchpartyknopftest");
+OHNE_RELAY.push("beitrittuebernahmetest");
 OHNE_RELAY.push("herodetailtest");
 OHNE_RELAY.push("herometadatentest");
 OHNE_RELAY.push("relaystarttest");
@@ -92,6 +93,7 @@ MIT_RELAY.push("folgenrueckfalltest");
 MIT_RELAY.push("relayepisodecatchuptest");
 MIT_RELAY.push("folgenendetest");
 MIT_RELAY.push("introskiptest");
+MIT_RELAY.push("rundenzustandtest");
 MIT_RELAY.push("mitgliederaufraeumtest");
 MIT_RELAY.push("queuerelaytest");
 MIT_RELAY.push("geraetelivetest");
@@ -234,7 +236,8 @@ async function warteAufStille(port, frist) {
     const echteIdentitaetsUndBarriereTests = new Set([
       "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest",
       "barrierleavetest", "barrierstarttest", "mitgliederaufraeumtest",
-      "folgenrueckfalltest", "relayepisodecatchuptest", "folgenendetest"
+      "folgenrueckfalltest", "relayepisodecatchuptest", "folgenendetest",
+      "rundenzustandtest"
     ]);
     if (!echteIdentitaetsUndBarriereTests.has(datei)) {
       const bootstrap = `./${path.relative(process.cwd(), RELAY_TEST_IDENTITAET).replace(/\\/g, "/")}`;

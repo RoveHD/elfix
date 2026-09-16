@@ -45,7 +45,9 @@ async function pruefen() {
       serverJetzt: () => Date.now(),
       bereitZumStart: (key, room, syncId, ok = true) => meldungen.push({ syncId, ok }),
       abgleichen: (key, room) => abgleiche.push({ key, room })
-    }, sendToast: () => {}
+    }, sendToast: () => {},
+    // Die Spur der Runde schreibt hier nichts - geprueft wird der Ablauf.
+    wpLog: () => {}
   });
   vm.runInContext(funktion("spielerRundenNachrichtPasst") + "\n" + funktion("spielerSteuernAusRunde"), context);
   assert.equal(context.spielerRundenNachrichtPasst(eintrag, prepare, { tun: "syncprepare" }), true,
@@ -214,7 +216,7 @@ async function pruefen() {
       bereitZumStart: () => {},
       abgleichen: (key, room) => raceAbgleiche.push({ key, room })
     },
-    sendToast: () => {}, sendWatchpartyLive: () => {},
+    sendToast: () => {}, sendWatchpartyLive: () => {}, wpLog: () => {},
     tempoAusRundeSetzen: () => {}, fassungAusRundeSetzen: async () => {},
     followWatchpartyEpisode: async () => {}, prepareWatchpartySync: async () => {},
     watchpartyEreignis: (nachricht) => ({ videoTime: nachricht.position, playing: nachricht.playing }),

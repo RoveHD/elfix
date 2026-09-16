@@ -171,6 +171,24 @@ async function run() {
       (m) => m.type === "syncstart" && m.reason === "episode-catchup", "Nachholen ohne frischen Playerstand");
     assert.equal(missingHere.playing, false, "ohne here bleibt der pausierte Raum pausiert");
 
+    /*
+     * Und ab hier laeuft die Runde wieder.
+     *
+     * Der Wunsch der Runde ueberlebt seit dem Folgenwechsel den Wechsel selbst:
+     * was oben angehalten wurde, bliebe auch auf jeder weiteren Folge stehen.
+     * Die naechsten Abschnitte pruefen aber die Folgenwahl und nicht den
+     * Pausenzustand - also wird hier einmal wirklich weitergeschaut. Der Gast
+     * ist abgemeldet; die Schranke wartet nur auf den Host.
+     */
+    const weiterMark = host.mark();
+    host.send({ type: "control", key: KEY, action: "play", position: 23, url: URL2 });
+    const weiterPrepare = await host.waitFor(weiterMark,
+      (m) => m.type === "syncprepare", "Vorbereitung zum Weiterlaufen");
+    host.send({ type: "syncready", key: KEY, syncId: weiterPrepare.syncId });
+    const weiterStart = await host.waitFor(weiterMark, (m) => m.type === "syncstart"
+      && m.syncId === weiterPrepare.syncId, "die Runde laeuft wieder");
+    await wait(Math.max(0, weiterStart.startAt - Date.now()) + 30);
+
     // Fortschritt kann der laufenden Folge voraus sein: bei 90 % rueckt die App
     // ihren Eintrag auf Folge 3 vor und meldet "Folge 3 bei 0", waehrend der
     // Player noch Folge 2 spielt. Solange jemand Folge 2 wirklich schaut, ist

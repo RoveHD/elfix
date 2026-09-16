@@ -1046,9 +1046,29 @@ function steuernAusRunde(befehl) {
     ? genauSetzen(stelle, false, meiner, true, frameZiel)
     : hlsAnkerAbwarten(meiner);
   gesetzt.then((bereit) => {
-    if (!bereit || meiner !== startAuftrag) return;
-    bild.play().catch(() => {});
+    if (!bereit || meiner !== startAuftrag) {
+      if (meiner !== startAuftrag) {
+        console.log(`[WATCHPARTY] ignored stale player event generation=${meiner} aktuell=${startAuftrag}`);
+      }
+      return;
+    }
+    rundenStart("sofortiger Start aus der Runde");
   });
+}
+
+/**
+ * Der automatische Start der Runde - und was daraus wurde.
+ *
+ * `play()` ist ein Versprechen, kein Befehl: der Browser darf es ablehnen, und
+ * bisher verschwand diese Ablehnung in einem leeren `catch`. Dann stand das
+ * Bild, und niemand konnte sagen, ob der Start nie kam oder abgelehnt wurde.
+ */
+function rundenStart(was) {
+  return bild.play().then(
+    () => console.log(`[WATCHPARTY] video.play resolved (${was})`),
+    (fehler) => console.log(`[WATCHPARTY] video.play rejected (${was}) `
+      + `error=${fehler?.name || "?"}: ${fehler?.message || fehler}`)
+  );
 }
 
 /** Wartet bei einer neuen Folge auf Metadaten, HLS-Anker und echten Puffer. */
@@ -1290,7 +1310,7 @@ async function startVerabredet(stelle, wartenMs, springen = true,
   }
   startAusstehend = false;
   ausRundeBis = Date.now() + 900;
-  bild.play().catch(() => {});
+  rundenStart("verabredeter Start");
 }
 
 /** Sitzt der Sprung, und ist genug geladen? Hoechstens so lange wird gewartet. */
@@ -1368,7 +1388,11 @@ function tatMelden(aktion) {
    * wieder freigibt (gemeinsamer Start, abgelaufene Frist, gewoehnliche
    * Pause), faellt `rundeWarten` - ab da meldet er wie immer.
    */
-  if (rundeWarten) return;
+  if (rundeWarten) {
+    console.log(`[WATCHPARTY] ${String(aktion).toUpperCase()} event source=technisch `
+      + "- nicht gemeldet, die Runde fuehrt den Player");
+    return;
+  }
   const stelle = Number(bild.currentTime) || 0;
   bruecke.aktion(aktion, stelle);
   if (aktion === "pause") genauSetzen(stelle, true, ++startAuftrag, false);

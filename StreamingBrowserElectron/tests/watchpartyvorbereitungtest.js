@@ -37,14 +37,30 @@ async function pruefen(phase) {
   await pruefen("player");
   const relay = fs.readFileSync(path.join(__dirname, "../../sync-server/server.js"), "utf8").replace(/\r\n/g, "\n");
   const von = relay.indexOf("function hostZustandJetzt(");
+  const offenVon = relay.indexOf("function startNochOffen(");
   let host = { at: 1010, position: 100, paused: true };
   const r = vm.createContext({ aktuellerHost: () => host, Date: { now: () => 1800 } });
+  vm.runInContext(relay.slice(offenVon, relay.indexOf("\n}\n", offenVon) + 2), r);
   vm.runInContext(relay.slice(von, relay.indexOf("\n}\n", von) + 2), r);
   const eintrag = { startAt: 1000, live: { at: 1000, position: 100, action: "play" } };
   assert.equal(r.hostZustandJetzt("room", eintrag).position, 100.8,
     "delayed preparation heartbeat rewound the next pause to the start frame");
+  /*
+   * A paused heartbeat after the agreed start is still preparation.
+   *
+   * The window used to end 250 ms after the start, which is far too early for
+   * an episode change: the host loads a whole new source and keeps reporting
+   * "paused" for seconds. Everyone asking the room then heard "we are paused"
+   * and stopped the players that had just started. The window now closes on a
+   * fact instead of a clock - the host reporting that it really runs - and a
+   * deliberate pause still wins through `live.action` (checked below).
+   */
   host = { at: 1400, position: 100.4, paused: true };
-  assert.equal(r.hostZustandJetzt("room", eintrag).laeuft, false, "actual later pause was ignored");
+  assert.equal(r.hostZustandJetzt("room", eintrag).laeuft, true,
+    "a loading host ended its own unconfirmed start");
+  eintrag.startBestaetigt = true;
+  assert.equal(r.hostZustandJetzt("room", eintrag).laeuft, false,
+    "after the confirmed start a real pause was swallowed");
   eintrag.live = { at: 1500, position: 100.5, action: "pause" };
   assert.equal(r.hostZustandJetzt("room", eintrag).position, 100.5, "explicit pause did not win");
 

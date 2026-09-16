@@ -1090,17 +1090,64 @@ function zustandSenden(raumcode) {
 // und damit war der Anfang einer Folge nicht von "keine Ahnung" zu
 // unterscheiden: direkt nach einem Folgenwechsel steht der Host bei 0, und der
 // Abgleich lieferte deshalb gar keine Antwort mehr.
+/*
+ * Laeuft die Runde noch in ihren verabredeten Start hinein?
+ *
+ * Zwischen dem Augenblick, in dem das Relay den gemeinsamen Start ausspricht,
+ * und dem Augenblick, in dem der Host wirklich faehrt, liegt Arbeit: springen,
+ * puffern, bei einem Folgenwechsel die ganze neue Quelle. In dieser Zeit meldet
+ * sein Player im Sekundentakt brav "pausiert" - er beschreibt damit seine
+ * Vorbereitung und keine Pause.
+ *
+ * Wer das verwechselt, haelt die Runde genau dann an, wenn sie gerade
+ * losgefahren ist: das gemeldete "die neue Folge startet kurz und geht sofort
+ * wieder aus". Die Frist dafuer ist keine Zeit, sondern eine Tatsache - das
+ * Fenster schliesst sich, sobald der Host sich einmal als laufend gemeldet hat
+ * (`startBestaetigt`), und ebenso mit jeder echten Pause, die `live.action`
+ * umstellt.
+ */
+function startNochOffen(eintrag) {
+  return Number(eintrag?.startAt) > 0
+    && eintrag?.live?.action === "play"
+    && !eintrag?.startBestaetigt;
+}
+
+/*
+ * Was die Runde *will* - nicht, was ein einzelner Player gerade tut.
+ *
+ * Das ist der Unterschied zwischen einer Absicht und einem Zustand. Am Ende
+ * einer Folge steht jeder Player still, und beim Laden der naechsten erst
+ * recht; gedrueckt hat deswegen niemand etwas. Massgeblich ist deshalb der
+ * zuletzt ausgesprochene Befehl der Runde und nicht der Herzschlag eines
+ * Geraets: nach einem Play will die Runde laufen, bis jemand Pause drueckt.
+ *
+ * Gebraucht wird das ueberall dort, wo die Runde durch einen technischen
+ * Zwischenzustand hindurchmuss - Folgenwechsel, Intro-Skip, Beitritt - und
+ * danach wieder dorthin soll, wo sie vorher war.
+ */
+function rundeSollLaufen(eintrag) {
+  // Eine offene Schranke traegt den Wunsch bereits mit sich.
+  if (eintrag?.sync) return eintrag.sync.zielLaufend !== false;
+  const live = eintrag?.live;
+  if (!live) return true;
+  if (live.action === "play") return true;
+  if (live.action === "pause") return false;
+  return live.playing !== false;
+}
+
 function hostZustandJetzt(raumcode, eintrag) {
   const kandidaten = [];
   // Am genauesten ist, was der Host selbst zuletzt aus seinem Player gemeldet
   // hat: hoechstens eine Sekunde alt, mit echtem Pausenzustand. Weil der Host
   // nie springt, muessen sich die anderen genau darauf ausrichten.
   const eigen = aktuellerHost(raumcode, eintrag);
-  // A paused heartbeat captured during the scheduled start can arrive just
-  // after its deadline. It describes preparation, not a later user pause;
-  // otherwise the next guest pause rewinds everyone to the starting frame.
-  const vorbereitungsStand = eigen?.paused && eintrag.live?.action === "play"
-    && Number(eintrag.startAt) > 0 && eigen.at <= Number(eintrag.startAt) + 250;
+  // Ein "pausiert" aus der Startvorbereitung beschreibt nicht den Willen der
+  // Runde, sondern einen Player, der noch nicht fertig ist. Frueher galt dafuer
+  // ein Fenster von 250 Millisekunden nach dem verabredeten Augenblick - viel
+  // zu knapp: nach einem Folgenwechsel laedt der Host eine ganze neue Quelle
+  // und meldet sekundenlang "pausiert". Wer ihn dann fragt, bekam "die Runde
+  // steht" zurueck und hielt alle an, die gerade angelaufen waren.
+  const vorbereitungsStand = eigen?.paused && startNochOffen(eintrag);
   if (eigen && !vorbereitungsStand) {
     kandidaten.push({ at: eigen.at, position: eigen.position, laeuft: !eigen.paused });
   }
@@ -1695,6 +1742,18 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
     // sich meldet, der Nachhall dieses Ladens (siehe die Echo-Sperre in der
     // Steuerung).
     grund: String(optionen.grund || ""),
+    /*
+     * Und wohin sie fuehrt.
+     *
+     * Eine Schranke ist ein Durchgangszustand: alle halten auf derselben
+     * Stelle, bestaetigen und fahren zusammen los. "Los" war dabei bisher die
+     * einzige Moeglichkeit - wer eine angehaltene Runde auf die naechste Folge
+     * schickte, bekam sie laufend zurueck. Der Wunsch der Runde steht deshalb
+     * schon hier fest, bevor die Vorbereitung ihn mit ihrer eigenen Pause
+     * ueberschreibt (`rundeSollLaufen` liest den zuletzt ausgesprochenen
+     * Befehl, nicht den Herzschlag eines Players).
+     */
+    zielLaufend: optionen.zielLaufend !== false,
     vorbereitung: daten,
     wartetAuf: new Set(mitglieder.map((client) => client.geraetId)),
     // Wer zu dieser Schranke gehoert, steht mit ihrer Entstehung fest. Ein
@@ -1732,6 +1791,48 @@ function syncVorbereiten(raumcode, eintrag, ziel, von, userId, optionen = {}) {
   eintrag.syncTimer.unref?.();
 }
 
+/**
+ * Das Ende einer Schranke, die nicht starten soll.
+ *
+ * Denselben Weg nimmt der Fristablauf: eine Pause auf der Zielstelle und das
+ * Ende der Schranke. Der Unterschied steht im Grund - hier ist nichts
+ * schiefgegangen, die Runde war schlicht angehalten und bleibt es.
+ */
+function syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitgliedIds }) {
+  const jetzt = Date.now();
+  eintrag.startAt = 0;
+  eintrag.startBestaetigt = true;
+  eintrag.live = { action: "pause", position: ziel, frameTime,
+    url: eintrag.live?.url || eintrag.url, at: jetzt };
+  eintrag.pauseAusgerichtet = true;
+  if (eintrag.letzteAktion) eintrag.letzteAktion = { ...eintrag.letzteAktion, type: "pause", timestamp: jetzt };
+  const pause = JSON.stringify({
+    type: "control", key: eintrag.key, action: "pause",
+    position: ziel, videoTime: ziel, playing: false, frameTime,
+    url: eintrag.live.url, at: jetzt, timestamp: jetzt,
+    sequenceId: naechsteNummer(eintrag), syncId,
+    episodeId: folgenKennung(eintrag.season, eintrag.episode),
+    hostId: aktuelleHostId(raumcode, eintrag), reason: "sync-pausiert"
+  });
+  const ende = JSON.stringify({ type: "syncfailed", key: eintrag.key, syncId });
+  for (const client of wss.clients) {
+    if (client.raum !== raumcode || client.readyState !== client.OPEN) continue;
+    if (!eintrag.members.has(client.geraetId)) continue;
+    if (mitgliedIds instanceof Set && !mitgliedIds.has(client.geraetId)) continue;
+    client.send(pause);
+    client.send(ende);
+  }
+  if (mitgliedIds instanceof Set) {
+    for (const geraetId of mitgliedIds) {
+      if (!eintrag.members.has(geraetId)) continue;
+      standSetzen(eintrag, geraetId, eintrag.members.get(geraetId), { position: ziel, paused: true });
+    }
+  } else {
+    standFuerAlle(eintrag, ziel, true);
+  }
+  standSenden(raumcode, eintrag);
+}
+
 // Alle zusammen anlaufen lassen, nachdem jedes Geraet seine Bereitmeldung
 // abgegeben hat.
 function syncStarten(raumcode, eintrag) {
@@ -1740,8 +1841,18 @@ function syncStarten(raumcode, eintrag) {
   const ziel = eintrag.sync.ziel;
   const frameTime = eintrag.sync.frameTime;
   const mitgliedIds = eintrag.sync.mitgliedIds;
+  const zielLaufend = eintrag.sync.zielLaufend !== false;
   clearTimeout(eintrag.syncTimer);
   eintrag.sync = null;
+  // Eine angehaltene Runde bleibt angehalten. Alle stehen jetzt auf derselben
+  // Stelle - genau das war die Aufgabe -, und der Wunsch der Runde war nie ein
+  // Start. Geschickt wird deshalb kein `syncstart`, sondern die gewoehnliche
+  // Pause auf der Zielstelle: sie beendet das Warten auf allen Geraeten und
+  // laesst die Bedienung wieder frei.
+  if (!zielLaufend) {
+    syncEndePausiert(raumcode, eintrag, { syncId, ziel, frameTime, mitgliedIds });
+    return;
+  }
   // Nach dem letzten "bereit" braucht jeder noch denselben kurzen Vorlauf,
   // damit der letzte Empfaenger nicht erst beim Eintreffen von syncstart
   // losfaehrt. Der Zeitpunkt ist Serverzeit und wird vom Player ueber den
@@ -1751,6 +1862,18 @@ function syncStarten(raumcode, eintrag) {
   eintrag.startAt = startAt;
   eintrag.live = { action: "play", position: ziel, url: eintrag.live?.url || eintrag.url, at: startAt };
   eintrag.pauseAusgerichtet = false;
+  // Ausgesprochen ist er - angekommen noch nicht. Bis der Host sich einmal
+  // laufend meldet, ist jedes "pausiert" aus der Runde Vorbereitung.
+  eintrag.startBestaetigt = false;
+  // Und die Runde hat gerade Play bekommen. Ohne diesen Vermerk stand hier
+  // weiter "navigate" oder "skip" - der Ausloeser der Schranke -, und jede
+  // Regel, die nach einem frischen Play fragt, sah keines.
+  eintrag.letzteAktion = {
+    type: "play",
+    userId: eintrag.letzteAktion?.userId || "",
+    name: eintrag.letzteAktion?.name || "",
+    timestamp: jetzt
+  };
 
   // Auch hier gilt die eine Regel: die Nachricht ist unterschiedlich lange
   // unterwegs, und wer spaeter einsteigt, muss weiter vorn einsteigen. Sonst
@@ -2172,6 +2295,11 @@ wss.on("connection", (socket) => {
       let ziel = httpAdresse(nachricht.url);
       const istHost = socket.geraetId === aktuelleHostId(socket.raum, eintrag);
       const eigen = zahl(nachricht.position, 100000);
+      // Was die Runde will - abgelesen, bevor dieser Befehl irgendetwas daran
+      // aendert. Ein Folgenwechsel ueberschreibt `live` gleich mit "navigate",
+      // und die Vorbereitung danach mit ihrer eigenen Pause; danach waere der
+      // Wunsch nicht mehr zu erkennen.
+      const zielLaufendVorher = rundeSollLaufen(eintrag);
       const offeneStartverabredungAbbrechen = (pauseSenden = false) => {
         if (!eintrag.sync) return;
         const offene = eintrag.sync;
@@ -2487,6 +2615,9 @@ wss.on("connection", (socket) => {
             erwarteteIds: spielerImTitel(socket.raum, eintrag),
             aktion: "navigate",
             grund: "episode-change",
+            // Lief die Runde, laeuft auch die neue Folge. Stand sie, bleibt sie
+            // stehen - der Wechsel ist keine Entscheidung ueber das Abspielen.
+            zielLaufend: zielLaufendVorher,
             fristMs: FOLGENWECHSEL_BEREIT_FRIST_MS
           });
           return;
@@ -2530,7 +2661,11 @@ wss.on("connection", (socket) => {
       // einzusammeln - der Grund, aus dem `seek` beim Host bleibt.
       if ((aktion === "play" || aktion === "skip") && amRaumstand) {
         syncVorbereiten(socket.raum, eintrag, gemeinsam, socket.name, socket.geraetId,
-          aktion === "skip" ? { aktion: "skip" } : {});
+          aktion === "skip"
+            // Der Sprung hinter das Intro ist wie der Folgenwechsel: er sagt,
+            // wo weitergeschaut wird, nicht ob. Ein Play dagegen sagt beides.
+            ? { aktion: "skip", zielLaufend: zielLaufendVorher }
+            : {});
         return;
       }
 
@@ -2606,7 +2741,12 @@ wss.on("connection", (socket) => {
       // Er wird gemerkt: die Ausrichtung weiter unten muss wissen, dass ein
       // Start laeuft und das "pausiert" des Hosts nur das Warten darauf ist.
       // Ein Anhalten macht jede Startverabredung gegenstandslos.
-      if (aktion === "navigate" || amRaumstand) eintrag.startAt = startAt || 0;
+      if (aktion === "navigate" || amRaumstand) {
+        eintrag.startAt = startAt || 0;
+        // Solange der Host den neuen Start nicht durch einen laufenden
+        // Herzschlag bestaetigt hat, ist sein "pausiert" Vorbereitung.
+        eintrag.startBestaetigt = !startAt;
+      }
       const daten = JSON.stringify({
         type: "control",
         key: eintrag.key,
@@ -3036,6 +3176,11 @@ wss.on("connection", (socket) => {
       const zustand = eintrag.stand.get(socket.geraetId);
       const gleicheFolge = !folge || !eintrag.episode || folge === eintrag.episode;
       const hostJetzt = aktuellerHost(socket.raum, eintrag);
+      // Der verabredete Start ist angekommen, sobald der Host wirklich faehrt.
+      // Ab da beschreibt jedes spaetere "pausiert" wieder eine Pause.
+      if (!pausiert && gleicheFolge && hostJetzt?.geraetId === socket.geraetId) {
+        eintrag.startBestaetigt = true;
+      }
 
       // Die Folgenkennung fuer die drei Nachrichten, die gleich *nur an dieses
       // eine Geraet* gehen: Messung, nachgereichtes Play, nachgehaltene Pause.
@@ -3163,7 +3308,19 @@ wss.on("connection", (socket) => {
       const frischesPlay = eintrag.letzteAktion?.type === "play"
         && Date.now() - (eintrag.letzteAktion.timestamp || 0) < NACHREICHEN_MS;
       const stoppFaellig = !zustand.gestoppt || Date.now() - zustand.gestoppt > NACHREICHEN_MS;
+      /*
+       * Und genau hier fehlte die Startverabredung.
+       *
+       * Die beiden Regeln darueber lassen einen laufenden Start in Ruhe; diese
+       * nicht. Nach einem Folgenwechsel steht der Host aber genau so da: seine
+       * neue Quelle laedt, sein Herzschlag meldet "pausiert", und wer schon
+       * angelaufen war, bekam darauf ein `control pause` - das gemeldete "die
+       * neue Folge startet kurz und geht sofort wieder aus". `frischesPlay`
+       * half dagegen nicht: nach einer Schranke stand als letzte Aktion
+       * "navigate" oder "skip" und nicht "play".
+       */
       if (!pausiert && gleicheFolge && stoppFaellig && !eintrag.sync && !frischesPlay
+        && !startNochOffen(eintrag)
         && hostJetzt && hostJetzt.geraetId !== socket.geraetId && hostJetzt.paused) {
         zustand.gestoppt = Date.now();
         const jetzt = Date.now();

@@ -421,19 +421,27 @@ function ereignisAusSkript(skript) {
   handy.bruecke.bereitZumStart(KEY, RAUM, vorHandy.syncId);
   tv.bruecke.bereitZumStart(KEY, RAUM, vorHandy.syncId);
   await schlaf(200);
-  pruefe("W8. Auch zwei von drei Bereitschaften starten noch niemanden",
-    !handy.steuerung().some((m) => m.action === "syncstart" && m.syncId === vorHandy.syncId));
+  const ende = (liste) => liste.filter((m) => m.syncId === vorHandy.syncId
+    && (m.action === "syncstart" || (m.action === "pause" && m.reason === "sync-pausiert")));
+  pruefe("W8. Auch zwei von drei Bereitschaften beenden die Schranke noch nicht",
+    !ende(handy.steuerung()).length);
   pc.raeume.bereitZumStart(KEY, RAUM, vorHandy.syncId);
-  await warteBis(() => handy.steuerung().some((m) =>
-    m.action === "syncstart" && m.syncId === vorHandy.syncId), "W8: gemeinsamer Start");
-  const gemeinsam = handy.steuerung().find((m) => m.action === "syncstart" && m.syncId === vorHandy.syncId);
-  pruefe("W8. Erst alle Bereitschaften ergeben einen gemeinsamen Folgenstart",
-    Boolean(gemeinsam) && gemeinsam.url === folge(5) && gemeinsam.episodeId === "s2e5"
-      && gemeinsam.playing === true && Number(gemeinsam.startAt) > Number(gemeinsam.timestamp),
-    gemeinsam ? `${gemeinsam.episodeId} @ ${gemeinsam.startAt}` : "kein Start");
-  pruefe("W8. Jedes Geraet bekommt genau denselben einen Start",
-    [pc.steuerung, tv.steuerung(), handy.steuerung()].every((liste) =>
-      liste.filter((m) => m.action === "syncstart" && m.syncId === vorHandy.syncId).length === 1));
+  await warteBis(() => ende(handy.steuerung()).length > 0, "W8: gemeinsamer Abschluss");
+  const gemeinsam = ende(handy.steuerung())[0];
+  /*
+   * Und der Abschluss ist hier eine Pause.
+   *
+   * Der Fernseher hat die Runde weiter oben (W3) ausdruecklich angehalten und
+   * seitdem niemand wieder gestartet. Der Folgenwechsel sagt, *wo*
+   * weitergeschaut wird, nicht *ob*: alle kommen gemeinsam auf der neuen Folge
+   * zum Stehen. Dass ein Start dieselbe Schranke ebenso gemeinsam beendet,
+   * steht in rundenzustandtest - hier geht es um die Schranke selbst.
+   */
+  pruefe("W8. Erst alle Bereitschaften beenden die Schranke gemeinsam",
+    Boolean(gemeinsam) && gemeinsam.episodeId === "s2e5" && gemeinsam.playing === false,
+    gemeinsam ? `${gemeinsam.episodeId} ${gemeinsam.action}` : "kein Abschluss");
+  pruefe("W8. Jedes Geraet bekommt genau denselben einen Abschluss",
+    [pc.steuerung, tv.steuerung(), handy.steuerung()].every((liste) => ende(liste).length === 1));
   pruefe("W8. Die Ladezeit war wirklich eine Wartezeit",
     Date.now() - geladenAb > 1000, `${Date.now() - geladenAb} ms`);
 
