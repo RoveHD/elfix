@@ -3,6 +3,30 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.43 — 16. September 2026
+
+- Watchparty: Der Folgenwechsel läuft weiter. Bisher startete die neue Folge
+  kurz und ging sofort wieder aus — ein Player, der eine neue Quelle lädt oder
+  auf den gemeinsamen Start wartet, meldet im Sekundentakt „pausiert", und das
+  Relay hielt daraufhin alle an, die gerade losgefahren waren. Solch ein
+  Ladezustand gilt jetzt als das, was er ist: Vorbereitung, bis der Host sich
+  wirklich laufend meldet.
+- Und der Wunsch der Runde überlebt den Wechsel: Lief sie vorher, läuft die
+  neue Folge weiter. War sie ausdrücklich angehalten, kommt sie auf der neuen
+  Folge gemeinsam zum Stehen, statt ungefragt zu starten. Dasselbe gilt für das
+  Überspringen von Intro und Rückblick.
+- Beitritt in eine laufende Runde: Wer dazukommt, hält sie nicht mehr an. Sein
+  frisch geöffneter Player kündigt nichts mehr an, sondern fragt nach dem Stand
+  der Runde — Stelle und Play/Pause — und übernimmt ihn. Vorher ging sein
+  eigenes Losspielen als „Play" hinaus, die Runde hielt für die Abstimmung an
+  und blieb nach Ablauf der Frist stehen.
+- Im Protokoll steht jetzt bei jedem Play und jeder Pause, woher sie kam
+  (Zuschauer, Runde oder Technik), dazu Beginn und Ziel eines Folgenwechsels
+  und das Ergebnis jedes automatischen Starts.
+- Die Änderungen am Relay wirken nach dem Relay-Update, die am Player nach dem
+  Update des Rechners; Android und TV profitieren über das Relay mit. Neue
+  Prüfungen rundenzustandtest und beitrittuebernahmetest.
+
 ## 2.0.42 — 15. September 2026
 
 - Der ⇄ Knopf zum Hinzufügen in eine Watchparty steht jetzt auch da, während
