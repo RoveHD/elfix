@@ -6507,16 +6507,21 @@ async function searchAllProviders(query, signal, selectedProviders = enabledProv
   const value = String(query || "").trim();
   if (!value) return [];
 
-  const targets = selectedProviders.map((provider) => searchProvider(provider, value, signal));
+  // Ein Uebersetzer fuer die ganze Suche: alle Anbieter teilen ihn sich, und er
+  // fragt erst, wenn ihn der erste braucht.
+  const fremdtitel = fremdtitelLauf(value);
+  const targets = selectedProviders.map((provider) => searchProvider(provider, value, signal, fremdtitel));
 
   return Promise.all(targets);
 }
 
-async function searchProvider(provider, query, signal) {
+async function searchProvider(provider, query, signal, fremdtitel = null) {
   const variants = searchQueryVariants(query);
+  const versucht = new Set();
   let fallback = null;
   for (const variant of variants) {
     signal?.throwIfAborted();
+    versucht.add(variant);
     const result = await searchProviderVariant(provider, variant, signal);
     if (result.results.length) {
       return {
@@ -6527,7 +6532,93 @@ async function searchProvider(provider, query, signal) {
     }
     if (!fallback) fallback = result;
   }
+
+  // Der Begriff selbst hat hier nichts gefunden. Vielleicht ist er der Titel in
+  // einer anderen Sprache - "Frozen" steht bei den Anbietern als "Die
+  // Eiskoenigin - Voellig unverfroren". Siehe fremdtitelSuchen().
+  for (const titel of await fremdtitelListe(fremdtitel, signal)) {
+    signal?.throwIfAborted();
+    for (const variant of searchQueryVariants(titel).slice(0, FREMDTITEL_VARIANTEN)) {
+      if (versucht.has(variant)) continue;
+      versucht.add(variant);
+      signal?.throwIfAborted();
+      const result = await searchProviderVariant(provider, variant, signal);
+      if (result.results.length) {
+        return {
+          ...result,
+          queryVariant: variant,
+          queryVariants: variants,
+          // Damit die Oberflaeche sagen kann, unter welchem Namen der Titel
+          // hier laeuft. Ohne das stuenden fremde Treffer ohne Erklaerung da.
+          fremdtitel: titel
+        };
+      }
+    }
+  }
+
   return fallback ? { ...fallback, queryVariants: variants } : providerSearchFailure(provider, providerModel.buildSearchUrl(provider, query), "Keine Suche");
+}
+
+// Hoechstens so viele Schreibweisen je fremdem Titel. Die erste ist der Titel
+// selbst, und der ist der aus der Datenbank - genau so schreibt ihn der
+// Anbieter meistens auch. Was danach kommt, sind Umschreibungen fuer den
+// Zweifelsfall; eine lange Reihe davon waere eine zweite vollstaendige Suche,
+// und die Suche hat ein Zeitlimit.
+const FREMDTITEL_VARIANTEN = 3;
+// So lange wartet eine Suche auf die Uebersetzung. Das Nachschlagen selbst darf
+// laenger dauern (es ist fuers Anreichern im Hintergrund gebaut) - hier sitzt
+// aber jemand davor.
+const FREMDTITEL_ZEITLIMIT_MS = 5000;
+
+/**
+ * Der gemeinsame, faule Uebersetzer einer Suche.
+ *
+ * <p>Faul, weil die meisten Suchen ihn nicht brauchen: wer den deutschen Titel
+ * eingibt, findet ihn beim Anbieter, und dann wird nie gefragt. Gemeinsam,
+ * weil sonst jeder Anbieter dieselbe Frage einzeln stellte.
+ */
+function fremdtitelLauf(query) {
+  let lauf = null;
+  return {
+    async hole(signal) {
+      if (!lauf) lauf = fremdtitelSuchen(query).catch(() => []);
+      const frist = fremdtitelFrist(signal);
+      try {
+        return await Promise.race([lauf, frist.warten]);
+      } finally {
+        frist.fertig();
+      }
+    }
+  };
+}
+
+/**
+ * Die Frist, nach der die Suche ohne Uebersetzung weitermacht.
+ *
+ * <p>Was danach noch eintrifft, ist nicht verloren: der Lauf schreibt sein
+ * Ergebnis in den Metadaten-Cache, und dieselbe Suche findet es beim naechsten
+ * Mal dort - ohne Netz und ohne Warten.
+ */
+function fremdtitelFrist(signal) {
+  let loesen = () => {};
+  const warten = new Promise((fertig) => { loesen = fertig; });
+  const zeit = setTimeout(() => loesen([]), FREMDTITEL_ZEITLIMIT_MS);
+  zeit.unref?.();
+  const abbruch = () => loesen([]);
+  signal?.addEventListener?.("abort", abbruch, { once: true });
+  return {
+    warten,
+    fertig() {
+      clearTimeout(zeit);
+      signal?.removeEventListener?.("abort", abbruch);
+    }
+  };
+}
+
+async function fremdtitelListe(fremdtitel, signal) {
+  if (!fremdtitel) return [];
+  const namen = await fremdtitel.hole(signal).catch(() => []);
+  return Array.isArray(namen) ? namen : [];
 }
 
 async function searchProviderVariant(provider, query, signal) {
@@ -14147,6 +14238,121 @@ function metadatenClient() {
   });
   metadatenSpeicher = { adresse, client };
   return client;
+}
+
+// --- Der Titel in einer anderen Sprache --------------------------------------
+//
+// Die Anbieter fuehren deutsche Titel. Wer "Frozen" sucht, findet bei Filmo
+// nichts: dort heisst der Film "Die Eiskoenigin - Voellig unverfroren". Dasselbe
+// in der Gegenrichtung - "Die Eiskoenigin" gegen einen Anbieter, der den
+// englischen Titel fuehrt.
+//
+// Die Uebersetzung liegt schon bereit und braucht keine neue Quelle: das
+// Metadaten-Tor des Relays fragt TMDB auf Deutsch (language=de-DE), und TMDB
+// durchsucht dabei alle Sprachen. Aus "Frozen" kommt deshalb genau der Titel
+// zurueck, unter dem der Anbieter das Werk fuehrt. Anime laeuft ueber AniList
+// und braucht dafuer nicht einmal einen TMDB-Schluessel.
+//
+// Drei Regeln halten das eng:
+//
+//   1. Gefragt wird erst, wenn ein Anbieter mit dem Begriff selbst nichts
+//      findet - und hoechstens einmal je Suche (fremdtitelLauf).
+//   2. Ein falscher Titel ist schlimmer als keiner. Unter MEDIUM wird nichts
+//      uebernommen; die Nachpruefung in metadaten.js misst dafuer den
+//      Suchbegriff an allen Namen des Fundes.
+//   3. Nur, was ein Anbieter ueberhaupt fuehren kann. Der japanische
+//      Originaltitel eines Anime ist bei AniWorld kein Suchbegriff, sondern
+//      ein Fehlschlag mit Zeitverlust - lateinische Schrift oder gar nicht.
+const FREMDTITEL_ARTEN = ["film", "serie", "anime"];
+const FREMDTITEL_HOECHSTENS = 2;
+
+/** Taugt der Name als Suchbegriff bei einem deutschen Anbieter? */
+function fremdtitelTauglich(wert) {
+  const name = String(wert || "").trim();
+  if (name.length < 2 || name.length > 90) return false;
+  // Buchstaben ja, aber nur lateinische. Ziffern, Satzzeichen, Zwischenraum
+  // und diakritische Zeichen duerfen mit.
+  return !/\p{L}/u.test(name.replace(/\p{Script=Latin}/gu, ""));
+}
+
+async function fremdtitelSuchen(query) {
+  const value = String(query || "").trim();
+  if (!value) return [];
+  let client = null;
+  try {
+    client = metadatenClient();
+  } catch {
+    return [];
+  }
+  if (!client?.bereit?.() || client.gesperrt()) return [];
+
+  const wuensche = FREMDTITEL_ARTEN
+    .map((art) => metadatenModul.wunschBauen({ titel: value, art }))
+    .filter(Boolean);
+  if (!wuensche.length) return [];
+
+  // Anime und Werke getrennt und nebeneinander: in einem Lauf liegt zwischen
+  // beiden Stapeln die Pause, die fuers Anreichern im Hintergrund gedacht ist.
+  // Eine Suche, vor der jemand sitzt, kann sie nicht gebrauchen.
+  const anime = wuensche.filter((wunsch) => wunsch.art === "anime");
+  const werke = wuensche.filter((wunsch) => wunsch.art !== "anime");
+  const [werkTreffer, animeTreffer] = await Promise.all([
+    werke.length ? client.nachschlagen(werke) : new Map(),
+    anime.length ? client.nachschlagen(anime) : new Map()
+  ]);
+
+  const gesucht = normalizeSearchText(value);
+  const mindestens = metadatenModul.rang("MEDIUM");
+  // Der eigene Titel des Werks zuerst - das ist der, den der Anbieter fuehrt.
+  // Danach Original- und Nebentitel: bei Anime stehen dort Romaji und die
+  // Synonyme, und genau unter denen laufen sie bei AniWorld.
+  const namen = [];
+  const nimm = (wert) => {
+    const name = String(wert || "").trim();
+    if (!fremdtitelTauglich(name)) return;
+    // Wonach schon gesucht wurde, muss nicht noch einmal gesucht werden.
+    const schluessel = normalizeSearchText(name);
+    if (!schluessel || schluessel === gesucht) return;
+    if (namen.some((vorhanden) => normalizeSearchText(vorhanden) === schluessel)) return;
+    namen.push(name);
+  };
+
+  for (const feld of ["titel", "originalTitel", "altTitel"]) {
+    for (const wunsch of wuensche) {
+      const form = (wunsch.art === "anime" ? animeTreffer : werkTreffer).get(wunsch.schluessel);
+      if (!form || metadatenModul.rang(form.konfidenz) < mindestens) continue;
+      const werte = feld === "altTitel" ? (form.altTitel || []) : [form[feld]];
+      for (const wert of werte) {
+        nimm(wert);
+        if (namen.length >= FREMDTITEL_HOECHSTENS) return mitKurzformen(namen, gesucht);
+      }
+    }
+  }
+  return mitKurzformen(namen, gesucht);
+}
+
+/**
+ * Hinter jeden Titel seine Kurzform - "Die Eiskoenigin - Voellig unverfroren"
+ * fuehren die Anbieter oft nur als "Die Eiskoenigin".
+ *
+ * <p>Gleich hinter den vollen Titel und nicht ans Ende: erst wird das Genaue
+ * versucht, dann das Kuerzere desselben Werks, und erst danach das naechste
+ * Werk. Ein Fund unter der Kurzform kann die Fortsetzung sein - er steht mit
+ * seinem Namen auf der Karte, und gesucht wird sie ohnehin nur dort, wo der
+ * volle Titel nichts ergab.
+ */
+function mitKurzformen(namen, gesucht) {
+  const liste = [];
+  for (const name of namen) {
+    liste.push(name);
+    const kurz = String(metadatenModul.kurzform(name) || "").trim();
+    if (!kurz || !fremdtitelTauglich(kurz)) continue;
+    const schluessel = normalizeSearchText(kurz);
+    if (!schluessel || schluessel === gesucht) continue;
+    if (liste.some((vorhanden) => normalizeSearchText(vorhanden) === schluessel)) continue;
+    liste.push(kurz);
+  }
+  return liste;
 }
 
 let metadatenStand = null;

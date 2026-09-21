@@ -72,6 +72,7 @@ OHNE_RELAY.push("queuecancellationtest");
 OHNE_RELAY.push("youtubequeueracetest");
 OHNE_RELAY.push("search-coordinatortest");
 OHNE_RELAY.push("searchintegrationtest");
+OHNE_RELAY.push("fremdtiteltest");
 OHNE_RELAY.push("search-renderer-racetest");
 OHNE_RELAY.push("cache-schreibarbeitertest");
 OHNE_RELAY.push("autominispielertest");

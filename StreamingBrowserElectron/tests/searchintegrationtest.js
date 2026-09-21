@@ -42,6 +42,10 @@ async function startServer() {
   try {
     const context = {
       fetch, URL, URLSearchParams, Set, Array, String, Object, Promise,
+      setTimeout, clearTimeout,
+      // Die Uebersetzung fremdsprachiger Titel haengt am Metadaten-Tor des
+      // Relays; hier geht es um den Weg durch Ajax, HTML und Varianten.
+      fremdtitelSuchen: async () => [],
       providerModel: { buildSearchUrl: (provider, query) => `${provider.startUrl}/search?q=${encodeURIComponent(query)}` },
       enabledProviders: () => [],
       searchQueryVariants: query => [query, `${query}-alias`],
