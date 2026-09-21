@@ -3,6 +3,21 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.45 — 21. September 2026
+
+- Der Vollbild-Knopf im Player greift auch nach dem Mini-Player wieder. Wer den
+  Mini-Player aufmachte und danach zurück in den Player ging, konnte das
+  Vollbild nicht mehr einschalten — der Knopf tat nichts. Dasselbe traf F11,
+  Alt+Links und das Stummschalten der Seite hinter dem Player.
+- Die Suche findet einen Titel jetzt auch unter seinem fremdsprachigen Namen.
+  „Frozen" führte zu nichts, weil der Film bei den Anbietern „Die Eiskönigin —
+  Völlig unverfroren" heißt; gesucht wird nun beides, und ebenso umgekehrt. Die
+  Übersetzung kommt aus dem Metadaten-Tor des Relays (TMDB für Filme und
+  Serien, AniList für Anime) und nur dann, wenn der eingegebene Begriff selbst
+  nichts gefunden hat. Die Trefferliste sagt dazu, unter welchem Namen gefunden
+  wurde.
+- Neue Prüfungen minivollbildtest und fremdtiteltest.
+
 ## 2.0.44 — 21. September 2026
 
 - Android und TV speichern Wiedergabefortschritt in der richtigen Reihenfolge.
