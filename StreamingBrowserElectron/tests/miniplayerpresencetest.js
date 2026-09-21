@@ -67,7 +67,12 @@ const context = vm.createContext({
   pauseActivePlayback() {},
   providerViews: new Map([["provider-a", providerView]]),
   sendWatchpartyLive: (state) => liveStates.push(state),
-  setOverlayOpen() {},
+  // Echt und nicht als Attrappe: an diesem Vorhang haengt, ob die Oberflaeche
+  // eine offene Seite sieht - und damit die Live-Bedienung der Runde.
+  setOverlayOpen: (grund, an) => (an
+    ? context.overlayReasons.add(grund)
+    : context.overlayReasons.delete(grund)),
+  activeState: () => ({}),
   settings: { playback: { pauseOnMinimize: true } },
   spielerAutoMiniAusstehend: null,
   spielerLauf: { id: 17, providerId: "provider-a", url },
@@ -95,7 +100,8 @@ for (const name of [
   "watchpartyEintrag", "liveMerker", "watchpartyLiveAktiv", "aktiverWatchpartyRaum",
   "watchpartyRaeumeForUrl", "watchpartyRaumForUrl", "watchpartySerieForUrl",
   "watchpartyLiveKeyForUrl", "pushWatchpartyLiveState", "sendActiveState",
-  "spielerMiniBehalten", "spielerLageSetzen", "enterHomeMode", "vomSpieler",
+  "spielerMiniBehalten", "werkbankNachMiniZurueck", "spielerLageSetzen",
+  "enterHomeMode", "vomSpieler",
   "spielerRunde", "spielerRundenEinstellung", "watchpartySitzungFuer",
   "meldeWatchpartyStandAusSpieler"
 ]) vm.runInContext(source(name), context);
@@ -113,6 +119,7 @@ context.meldeWatchpartyStandAusSpieler(23, false, 1000);
 handlers.get("spieler:mini-status")(sender, true, false);
 
 assert.equal(context.spielerMiniAktiv, true, "PiP ist aktiv");
+assert.equal(liveStates.at(-1).active, false, "Startseiten-Bedienung bleibt im PiP ausgeblendet");
 assert.equal(context.spielerLauf, playerRun, "derselbe Player-Lauf bleibt erhalten");
 assert.equal(context.spielerView, playerView, "dieselbe Player-View bleibt erhalten");
 assert.equal(context.activeFavoriteId, favorite.id, "dieselbe Watchparty-Rundenzuordnung bleibt erhalten");
@@ -133,6 +140,8 @@ assert.equal(context.spielerMiniAktiv, false, "PiP ist wieder aus");
 assert.equal(context.spielerLauf, playerRun, "Rückkehr baut den Player nicht neu");
 assert.equal(context.activeFavoriteId, favorite.id, "Rückkehr behält dieselbe Runde");
 assert.deepEqual(leaves, [], "auch die Rückkehr meldet keinen Leave");
-assert.equal(liveStates.at(-1).active, false, "Startseiten-Bedienung bleibt im PiP ausgeblendet");
+assert.equal(context.activeView, providerView, "die Rückkehr führt die Werkbank wieder");
+assert.equal(context.activeProviderId, "provider-a", "und zwar die des laufenden Films");
+assert.equal(liveStates.at(-1).active, true, "und mit ihr ist die Runde wieder zu bedienen");
 
 console.log("OK Miniplayer-Presence: gleiche Runde, deviceId, Session und Host; kein Leave/Reconnect/Ghost");
