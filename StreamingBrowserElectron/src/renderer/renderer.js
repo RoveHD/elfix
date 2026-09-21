@@ -5476,9 +5476,27 @@ async function renderProviderResults(query, searchToken) {
     globalSearchGrid.prepend(empty);
   }
   document.querySelector("#searchCopy").textContent = total
-    ? `${total} Treffer aus deinen Anbietern.`
+    ? `${total} Treffer aus deinen Anbietern.${fremdtitelHinweis(response, query)}`
     : "Keine direkten Treffer erkannt. Du kannst weiterhin jede Direktsuche öffnen.";
   trefferbilderNachreichen(ohneBild, searchToken);
+}
+
+/**
+ * Unter welchem Namen der gesuchte Titel hier läuft.
+ *
+ * <p>Wer „Frozen" sucht und „Die Eiskönigin – Völlig unverfroren" bekommt, soll
+ * nicht raten müssen, warum. Der Hauptprozess legt den Namen an den Treffer,
+ * unter dem er ihn gefunden hat (siehe fremdtitelSuchen in main.js); hier wird
+ * daraus ein Satz. Ohne fremden Titel bleibt die Zeile, wie sie war.
+ */
+function fremdtitelHinweis(response, query) {
+  const namen = [];
+  for (const anbieter of Array.isArray(response) ? response : []) {
+    const name = String(anbieter?.fremdtitel || "").trim();
+    if (name && !namen.includes(name)) namen.push(name);
+  }
+  if (!namen.length) return "";
+  return ` „${String(query || "").trim()}" läuft hier als „${namen[0]}".`;
 }
 
 // Wo die Trefferliste des Anbieters kein Bild hergab, wird es einzeln
