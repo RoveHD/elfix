@@ -4972,7 +4972,13 @@ async function reloadAllProviderViews() {
 }
 
 function enterContentFullscreen() {
-  if (!mainWindow || !activeView) return;
+  if (!mainWindow) return;
+  // Ohne Anbieteransicht bleibt trotzdem etwas gross zu machen, solange der
+  // eigene Player laeuft: er ist selbst das Bild. Genau so steht es nach einem
+  // Mini-Player-Lauf da - enterHomeMode() hat die Anbieteransicht fuers
+  // Stoebern abgegeben. Ein Abbruch hier liess den Vollbildknopf des Players
+  // danach ins Leere laufen.
+  if (!isLiveView(activeView) && !spielerImVordergrund()) return;
   isContentFullscreen = true;
   installContentFullscreenExitOverlay(activeView);
   mainWindow.setFullScreen(true);
@@ -9840,6 +9846,32 @@ function spielerMiniBehalten() {
   return Boolean(spielerMiniAktiv && spielerLauf && isLiveView(spielerView));
 }
 
+/** Der eigene Player ist das, was gerade zu sehen ist - nicht der Mini-Player. */
+function spielerImVordergrund() {
+  return Boolean(spielerLauf && isLiveView(spielerView) && !spielerMiniAktiv);
+}
+
+/**
+ * Zurueck aus dem Mini-Player: die Werkbank wieder als aktive Ansicht fuehren.
+ *
+ * Fuers Stoebern waehrend des Mini-Players gibt enterHomeMode() activeView und
+ * activeProviderId bewusst ab - vorne liegt die Oberflaeche, der Player laeuft
+ * im kleinen Fenster weiter. Wer zurueckkommt, sieht wieder den Player, und
+ * daran haengt mehr als die Anzeige: Vollbild, F11, Zurueck und das Pausieren
+ * fragen alle nach der aktiven Ansicht. Ohne diese Rueckgabe blieb nach dem
+ * ersten Mini-Player-Lauf der Vollbildknopf des Players still.
+ *
+ * Nur, solange niemand sonst eine Ansicht gewaehlt hat: wer waehrend des
+ * Mini-Players etwas anderes aufgemacht hat, behaelt das.
+ */
+function werkbankNachMiniZurueck() {
+  if (activeView || !spielerLauf) return;
+  const view = providerViews.get(spielerLauf.providerId);
+  if (!isLiveView(view)) return;
+  activeProviderId = spielerLauf.providerId;
+  activeView = view;
+}
+
 async function spielerBeimMinimieren() {
   if (spielerMiniAktiv || spielerMiniVorbereitung || spielerAutoMiniAusstehend) return;
   const fenster = mainWindow;
@@ -10551,8 +10583,14 @@ ipcMain.on("spieler:mini-status", (ereignis, aktiv, vorbereitung = false) => {
   } else if (!spielerMiniAktiv) {
     optionaleCachesNachMiniPlanen();
     if (warMini) {
+      // Erst die Ansicht zurueckholen, dann den Vorhang wegnehmen: der Vorhang
+      // richtet die Ansicht wieder ein, die er verdeckt hat.
+      werkbankNachMiniZurueck();
       setOverlayOpen("shell", false);
       if (mainWindow?.isMinimized() && settings.playback.pauseOnMinimize) pauseActivePlayback(true);
+      // Und die Oberflaeche erfaehrt, dass wieder eine Seite offen ist - sonst
+      // bliebe ihr Stand der des Stoeberns.
+      sendActiveState();
     }
   }
   spielerLageSetzen();

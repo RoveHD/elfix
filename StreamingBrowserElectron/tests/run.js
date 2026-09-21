@@ -76,6 +76,7 @@ OHNE_RELAY.push("search-renderer-racetest");
 OHNE_RELAY.push("cache-schreibarbeitertest");
 OHNE_RELAY.push("autominispielertest");
 OHNE_RELAY.push("miniplayerpresencetest");
+OHNE_RELAY.push("minivollbildtest");
 OHNE_RELAY.push("gesehenmarkierungtest");
 OHNE_RELAY.push("vorbereitungabsagetest");
 OHNE_RELAY.push("sicherungsimporttest");

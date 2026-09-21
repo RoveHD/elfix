@@ -20,7 +20,7 @@ app.whenReady().then(async()=>{
  activeView:null,activeProviderId:null,activeFavoriteId:null,providers:[],webContentsProvider:new Map(),providerResumeState:new Map(),sendActiveState:()=>{},folgenWerkbaenkeSchliessen:()=>{},
  direktSpielerSchliessen:()=>{closes++;},clearBrowserDataPreservingLogin:async()=>{},setOverlayOpen:(k,on)=>on?c.overlayReasons.add(k):c.overlayReasons.delete(k),optionaleCachesNachMiniPlanen:()=>{},
  vomSpieler:e=>e.sender===view.webContents,sendFullscreenState:()=>{},applyBrowserBounds:()=>c.spielerLageSetzen(),pauseActivePlayback:()=>{pauses++;view.webContents.executeJavaScript("bild.pause()").catch(()=>{});},ipcMain,setTimeout});
- for(const name of ["spielerMiniBehalten","spielerBeimMinimieren","spielerLageSetzen","enterHomeMode","leaveContentFullscreen"])vm.runInContext(source(name),c);
+ for(const name of ["spielerMiniBehalten","werkbankNachMiniZurueck","spielerBeimMinimieren","spielerLageSetzen","enterHomeMode","leaveContentFullscreen"])vm.runInContext(source(name),c);
  const a=main.indexOf('ipcMain.on("spieler:mini-status",');vm.runInContext(main.slice(a,main.indexOf('\n});',a)+4),c);
  const b=main.indexOf('  mainWindow.on("minimize",');vm.runInContext(main.slice(b,main.indexOf('  mainWindow.on("focus",',b)),c);
  ipcMain.handle("spieler:chat-status",()=>({active:false,messages:[]}));await view.webContents.loadFile(path.join(__dirname,"../src/renderer/spieler.html"));
