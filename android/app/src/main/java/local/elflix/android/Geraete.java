@@ -83,6 +83,7 @@ public final class Geraete {
 
     private JSONObject letzterZustand;
     private boolean geplant = false;
+    private boolean vollAbgleichAusstehend = false;
     /** Woran erkannt wird, dass die Sitzungsliste sich seit dem letzten Mal geaendert hat. */
     private String sitzungsAbdruck = "";
     /** Woran erkannt wird, dass sich Raeume oder Beitritte wirklich geaendert haben. */
@@ -95,6 +96,7 @@ public final class Geraete {
         this.bestand = bestand;
         this.watchparty = watchparty;
         this.horcher = horcher;
+        if (bestand != null) bestand.setzeGeraeteFortsetzung(this::abgleichenSpaeter);
         // Die Runde muss wissen, zu welchem Konto dieses Geraet gehoert - sonst
         // gilt derselbe Mensch dort als zwei Fremde, und was das Telefon in die
         // Runde gestellt hat, laesst sich am Fernseher nicht herausnehmen.
@@ -177,15 +179,19 @@ public final class Geraete {
      * dafuer, was der Abgleich fuer "hier geloescht" haelt - eine Liste von
      * vorhin waere dort keine Ungenauigkeit, sondern ein Loeschbefehl.
      */
-    private void bestandReichen() {
-        if (kern == null || !kern.istBereit()) return;
-        kern.rufe("geraete-bruecke.favoritenSetzen",
-            Kern.args(bestand == null ? FavoriteStore.ladeRoh(context) : bestand.roh()), null);
+    private boolean bestandReichen() {
+        if (kern == null || !kern.istBereit()) return false;
         JSONArray anbieter = new JSONArray();
         for (Provider eintrag : ProviderStore.load(context)) {
             if (eintrag != null && eintrag.enabled) anbieter.put(eintrag.alsJson());
         }
         kern.rufe("geraete-bruecke.anbieterSetzen", Kern.args(anbieter), null);
+        // Empfangene Aenderungen zuerst sichern. Sonst wuerde der alte lokale
+        // Stand waehrend des Wiederanlaufs als neue Aenderung zurueckgesendet.
+        if (bestand != null && !bestand.geraeteAenderungenFortsetzen()) return false;
+        kern.rufe("geraete-bruecke.favoritenSetzen",
+            Kern.args(bestand == null ? FavoriteStore.ladeRoh(context) : bestand.roh()), null);
+        return true;
     }
 
     /**
@@ -310,7 +316,13 @@ public final class Geraete {
         geplant = false;
         haupt.removeCallbacks(abgleichAufgabe);
         if (kern == null || !kern.istBereit() || !eingeschaltet()) return;
-        bestandReichen();
+        if (vollAbgleichAusstehend) {
+            vollAbgleichen();
+            return;
+        }
+        if (!bestandReichen()) {
+            return;
+        }
         sitzungenReichen();
         kern.rufe("geraete-bruecke.abgleichen", (wert, fehler) -> {
             if (fehler != null) Log.e(TAG, "Abgleich fehlgeschlagen: " + fehler);
@@ -328,7 +340,11 @@ public final class Geraete {
      */
     public void vollAbgleichen() {
         if (kern == null || !kern.istBereit()) return;
-        bestandReichen();
+        if (!bestandReichen()) {
+            vollAbgleichAusstehend = true;
+            return;
+        }
+        vollAbgleichAusstehend = false;
         sitzungenReichen();
         kern.rufe("geraete-bruecke.vollAbgleichen", (wert, fehler) -> {
             if (fehler != null) Log.e(TAG, "Vollabgleich fehlgeschlagen: " + fehler);
@@ -357,15 +373,14 @@ public final class Geraete {
                 case "geraete:zustand":
                     zustandUebernehmen(nutzlastJson);
                     return true;
-                case "geraete:favoriten":
+                case "geraete:aenderungen":
                     // Ueber den Bestand, nicht an ihm vorbei. Er haelt die
                     // Liste, aus der Weiterschauen, Merkliste, Mediathek und
                     // Verlauf gezeichnet werden; wer nur die Datei schreibt,
                     // hat abgeglichen, ohne dass es jemand sieht - und beim
                     // naechsten oertlichen Handgriff schreibt der Bestand
                     // seinen alten Stand darueber.
-                    if (bestand != null) bestand.setzeRoh(new JSONArray(nutzlastJson));
-                    else FavoriteStore.speichereRoh(context, new JSONArray(nutzlastJson));
+                    if (bestand != null) bestand.geraeteAenderungenUebernehmen(new JSONObject(nutzlastJson));
                     return true;
                 case "geraete:sitzungen":
                     // Ueber die Statistik, nicht an ihr vorbei. Sie haelt die

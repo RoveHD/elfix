@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.44 — 21. September 2026
+
+- Android und TV speichern Wiedergabefortschritt in der richtigen Reihenfolge.
+  Veraltete Antworten aus Wiedergabe, Watchparty und Geräteabgleich ersetzen
+  keinen inzwischen neueren Bestand mehr.
+- Entfernte Watchparty-Titel werden nach dem Wiederverbinden auch auf Handy
+  und TV aus „Gemeinsam weiterschauen“ gelöst. Position, Verlauf und
+  Gesehen-Markierungen bleiben erhalten; Verbindungsabbrüche löschen nichts.
+- Archivierte Raumtitel werden beim App-Start ebenfalls abgeglichen, auch
+  wenn die Watchparty-Liste selbst bereits leer ist.
+
 ## 2.0.43 — 16. September 2026
 
 - Watchparty: Der Folgenwechsel läuft weiter. Bisher startete die neue Folge

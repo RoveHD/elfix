@@ -87,13 +87,16 @@ public final class Watchparty {
     /** Der zuletzt gemeldete Zustand - fuer die Anzeige, ohne den Kern zu fragen. */
     private JSONObject letzterStatus = new JSONObject();
     private JSONArray letzteEintraege = new JSONArray();
+    /** Vollstaendiger Relayzustand, einschliesslich archivierter Titel. */
+    private JSONArray letzteRaumEintraege = new JSONArray();
+    private long raumAbgleichVersion;
     /**
      * Der Raumzustand, fuer den die Eintraege zuletzt sichergestellt wurden.
      *
      * <p>Titel, Raum und der Zeitpunkt jedes Stands. Siehe
      * {@link #raumzustandKennzeichen} und {@link #raumEintraegeSichern}.
      */
-    private String letztesRaumkennzeichen = "";
+    private String letztesRaumkennzeichen = null;
     /** Ob gerade ein Lauf im Kern unterwegs ist - siehe {@link #raumEintraegeSichern}. */
     private boolean raumEintraegeLaeuft;
     /** Ob waehrenddessen ein neuer Raumzustand kam, der noch einen Lauf braucht. */
@@ -444,7 +447,9 @@ public final class Watchparty {
      */
     void beitritteNachholen() {
         if (offeneBeitritte.isEmpty() || kern == null || !kern.istBereit()) return;
-        JSONArray eintraege = eintraege();
+        // Archivierte Titel sind in der Anzeige ausgeblendet, ihre gespeicherte
+        // Mitgliedschaft muss vor dem Bestandsabgleich trotzdem wieder gelten.
+        JSONArray eintraege = letzteRaumEintraege;
         java.util.Iterator<String[]> lauf = offeneBeitritte.iterator();
         while (lauf.hasNext()) {
             String[] offen = lauf.next();
@@ -875,6 +880,19 @@ public final class Watchparty {
                 statusUebernehmen(nutzlastJson);
                 break;
             case "watchparty:zustand":
+                try {
+                    JSONObject zustand = new JSONObject(nutzlastJson);
+                    JSONArray eintraege = zustand.optJSONArray("eintraege");
+                    if (eintraege != null) letzteRaumEintraege = eintraege;
+                    raumAbgleichVersion = zustand.optLong("abgleichVersion", 0);
+                } catch (Exception fehler) {
+                    Log.e(TAG, "Watchparty-Raumzustand unlesbar", fehler);
+                    break;
+                }
+                // Der Bestandsabgleich haengt am Relayzustand, nicht daran,
+                // ob die separate Aufbereitung der sichtbaren Karten gelingt.
+                beitritteNachholen();
+                raumEintraegeSichern();
                 eintraegeHolen();
                 // Unter derselben Adresse kann ploetzlich eine Runde gelten -
                 // jemand hat den Titel eingestellt, jemand ist beigetreten.
@@ -1103,9 +1121,9 @@ public final class Watchparty {
             raumEintraegeNachholen = true;
             return;
         }
-        letztesRaumkennzeichen = jetzt;
         raumEintraegeLaeuft = true;
-        bestand.raumEintraegeSichern(anbieter, () -> {
+        bestand.raumEintraegeSichern(anbieter, erfolgreich -> {
+            if (erfolgreich) letztesRaumkennzeichen = jetzt;
             raumEintraegeLaeuft = false;
             if (!raumEintraegeNachholen) return;
             raumEintraegeNachholen = false;
@@ -1127,15 +1145,21 @@ public final class Watchparty {
      * bliebe er auf dem Telefon aus "Gemeinsam weiterschauen" verschwunden.
      */
     private String raumzustandKennzeichen() {
-        StringBuilder bau = new StringBuilder();
-        for (int i = 0; i < letzteEintraege.length(); i += 1) {
-            JSONObject eintrag = letzteEintraege.optJSONObject(i);
-            if (eintrag == null || !eintrag.optBoolean("joined", false)) continue;
+        return raumzustandKennzeichen(letzteRaumEintraege, raumcodes, raumAbgleichVersion);
+    }
+
+    static String raumzustandKennzeichen(JSONArray eintraege, List<String> raeume, long abgleichVersion) {
+        StringBuilder bau = new StringBuilder().append(abgleichVersion).append('|')
+            .append(raeume).append('\n');
+        for (int i = 0; i < eintraege.length(); i += 1) {
+            JSONObject eintrag = eintraege.optJSONObject(i);
+            if (eintrag == null) continue;
             String key = eintrag.optString("key", "");
             String raum = eintrag.optString("room", "");
             if (key.isEmpty() || raum.isEmpty()) continue;
             JSONObject stand = eintrag.optJSONObject("progress");
             bau.append(raum).append('|').append(key).append('|')
+                .append(eintrag.optBoolean("joined", false) ? "j" : "-").append('|')
                 .append(stand == null ? "" : stand.optString("updatedAt", "")).append('|')
                 .append(eintrag.optBoolean("archived", false) ? "a" : "-").append('\n');
         }
@@ -1364,7 +1388,7 @@ public final class Watchparty {
         // Ein Titel ohne passenden Anbieter bekommt keinen Eintrag. Wird einer
         // eingerichtet, kann derselbe Raumzustand ploetzlich mehr hergeben -
         // also gilt er wieder als ungesehen.
-        letztesRaumkennzeichen = "";
+        letztesRaumkennzeichen = null;
     }
 
     /** Wer die Steuerbefehle der Runde am Player ausfuehrt. */

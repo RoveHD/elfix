@@ -101,7 +101,11 @@ function telefon(name) {
     ElfixKern: {
       ereignis: (art, nutzlast) => {
         ereignisse.push({ art, nutzlast });
-        if (art === "geraete:favoriten") gespeichert.favoriten = nutzlast;
+        if (art === "geraete:aenderungen") {
+          const ergebnis = modul.exports.aenderungenUebernehmen(gespeichert.favoriten || [], nutzlast);
+          gespeichert.favoriten = ergebnis.favoriten;
+          modul.exports.favoritenSetzen(ergebnis.favoriten);
+        }
         if (art === "geraete:sitzungen") gespeichert.sitzungen = nutzlast;
         if (art === "geraete:spiegel") gespeichert.spiegel = nutzlast;
         if (art === "geraete:zustand") gespeichert.zustand = nutzlast;
@@ -137,6 +141,11 @@ function telefon(name) {
     TextDecoder,
     Buffer
   });
+  const setzen = modul.exports.favoritenSetzen;
+  modul.exports.favoritenSetzen = (liste) => {
+    gespeichert.favoriten = JSON.parse(JSON.stringify(liste));
+    return setzen(JSON.parse(JSON.stringify(liste)));
+  };
   return { bruecke: modul.exports, ereignisse, gespeichert };
 }
 
@@ -263,7 +272,7 @@ const ANBIETER = [{
     && pc.abgleich.status().devices.length === 2, "beide sicheren Geraetekennungen sind angemeldet");
   const liveBestand = JSON.stringify(handy.gespeichert.favoriten);
   const liveSpeicherungen = handy.ereignisse.filter((e) =>
-    ["geraete:favoriten", "geraete:sitzungen", "geraete:spiegel"].includes(e.art)).length;
+    ["geraete:aenderungen", "geraete:sitzungen", "geraete:spiegel"].includes(e.art)).length;
   const liveStand = { title: "Wise Man's Grandchild",
     url: "https://aniworld.to/anime/stream/wise-mans-grandchild/staffel-1/episode-4",
     season: 1, episode: 4, position: 25, duration: 1400, paused: false };
@@ -284,18 +293,18 @@ const ANBIETER = [{
   pruefe("Live-Pulse schreiben weder Fortschritt noch Sitzungen oder Spiegel",
     JSON.stringify(handy.gespeichert.favoriten) === liveBestand
       && handy.ereignisse.filter((e) =>
-        ["geraete:favoriten", "geraete:sitzungen", "geraete:spiegel"].includes(e.art)).length === liveSpeicherungen);
+        ["geraete:aenderungen", "geraete:sitzungen", "geraete:spiegel"].includes(e.art)).length === liveSpeicherungen);
 
   // --- Kein Kreis ------------------------------------------------------------
 
-  const spiegelStand = handy.ereignisse.filter((e) => e.art === "geraete:favoriten").length;
+  const spiegelStand = handy.ereignisse.filter((e) => e.art === "geraete:aenderungen").length;
   handy.bruecke.abgleichen();
   pc.melden();
   // Hier steht die feste Zeit zu Recht: geprueft wird, dass in einer Spanne
   // *nichts* geschieht, und darauf laesst sich nicht warten.
   await schlaf(1500);
   pruefe("Danach ist Ruhe",
-    handy.ereignisse.filter((e) => e.art === "geraete:favoriten").length === spiegelStand
+    handy.ereignisse.filter((e) => e.art === "geraete:aenderungen").length === spiegelStand
     && pc.herein.length <= 1,
     "sonst schoeben sich beide denselben Eintrag ewig hin und her");
 

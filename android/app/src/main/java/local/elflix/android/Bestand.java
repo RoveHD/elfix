@@ -55,8 +55,20 @@ public final class Bestand {
         void melde(Provider provider, String url, JSONObject eintrag, JSONObject fortschritt);
     }
 
-    private final Context context;
-    private final Kern kern;
+    interface KernZugang {
+        boolean istBereit();
+        void wennBereit(Runnable aufgabe);
+        void rufe(String pfad, JSONArray argumente, Kern.Antwort antwort);
+        void rufe(String pfad, Kern.Antwort antwort);
+    }
+
+    interface Ablage {
+        JSONArray laden();
+        void speichern(JSONArray eintraege);
+    }
+
+    private final KernZugang kern;
+    private final Ablage ablage;
     private final Beobachter beobachter;
     private final Melder melder;
 
@@ -105,12 +117,74 @@ public final class Bestand {
     /** Eine laufende Pruefung reicht; Aenderungen waehrenddessen bekommen einen Nachlauf. */
     private boolean nachschubBereinigungLaeuft;
     private boolean nachschubBereinigungErneut;
+    /** Fortschrittsaufrufe ersetzen ganze Listen und muessen deshalb nacheinander laufen. */
+    private final FortschrittReihe<FortschrittsMeldung> fortschrittReihe =
+        new FortschrittReihe<>();
+    /** Geraete-Deltas derselben Kennung muessen in Serverreihenfolge ankommen. */
+    private final FortschrittReihe<JSONObject> geraeteAenderungenReihe =
+        new FortschrittReihe<>();
+    private boolean geraeteAenderungenWartenAufKern;
+    private int geraeteAenderungenFehlversuche;
+    private Runnable geraeteFortsetzung;
+    /** Aendert sich bei jeder dauerhaften Mutation, auch bei einem Geraeteabgleich. */
+    private long bestandRevision;
+
+    private static final class FortschrittsMeldung {
+        final Provider provider;
+        final String url;
+        final JSONObject meta;
+        final boolean watchpartyFuehrt;
+        final String aktiverEintragId;
+        final String zielUrlBeimMessen;
+
+        FortschrittsMeldung(Provider provider, String url, JSONObject meta,
+                            boolean watchpartyFuehrt, String aktiverEintragId,
+                            String zielUrlBeimMessen) {
+            this.provider = provider;
+            this.url = url;
+            this.meta = meta;
+            this.watchpartyFuehrt = watchpartyFuehrt;
+            // Der Ziel-Eintrag gehoert zum Messzeitpunkt. Ein spaeterer
+            // Folgenwechsel darf eine wartende Messung nicht in den dann
+            // offenen privaten oder Raum-Eintrag umlenken.
+            this.aktiverEintragId = aktiverEintragId;
+            this.zielUrlBeimMessen = zielUrlBeimMessen;
+        }
+    }
 
     public Bestand(Context context, Kern kern, Beobachter beobachter, Melder melder) {
-        this.context = context.getApplicationContext();
+        this(kernZugang(kern), dateiAblage(context.getApplicationContext()), beobachter, melder);
+    }
+
+    Bestand(KernZugang kern, Ablage ablage, Beobachter beobachter, Melder melder) {
         this.kern = kern;
+        this.ablage = ablage;
         this.beobachter = beobachter;
         this.melder = melder;
+    }
+
+    private static KernZugang kernZugang(Kern kern) {
+        return new KernZugang() {
+            @Override public boolean istBereit() { return kern != null && kern.istBereit(); }
+            @Override public void wennBereit(Runnable aufgabe) {
+                if (kern != null) kern.wennBereit(aufgabe);
+            }
+            @Override public void rufe(String pfad, JSONArray argumente, Kern.Antwort antwort) {
+                if (kern != null) kern.rufe(pfad, argumente, antwort);
+            }
+            @Override public void rufe(String pfad, Kern.Antwort antwort) {
+                if (kern != null) kern.rufe(pfad, antwort);
+            }
+        };
+    }
+
+    private static Ablage dateiAblage(Context context) {
+        return new Ablage() {
+            @Override public JSONArray laden() { return FavoriteStore.ladeRoh(context); }
+            @Override public void speichern(JSONArray eintraege) {
+                FavoriteStore.speichereRoh(context, eintraege);
+            }
+        };
     }
 
     /**
@@ -131,7 +205,7 @@ public final class Bestand {
     }
 
     public void laden() {
-        eintraege = FavoriteStore.ladeRoh(context);
+        eintraege = ablage.laden();
         Log.i(TAG, "Bestand geladen: " + eintraege.length() + " Eintraege");
         werkeAuffrischen();
     }
@@ -152,10 +226,15 @@ public final class Bestand {
      */
     public void doppelteZusammenfuehren() {
         if (kern == null || !kern.istBereit()) return;
+        final long ausgangsRevision = bestandRevision;
         JSONArray argumente = new JSONArray();
         argumente.put(eintraege);
         kern.rufe("watchlist.doppelteZusammenfuehren", argumente, (wert, fehler) -> {
             if (fehler != null || wert == null) return;
+            if (bestandRevision != ausgangsRevision) {
+                doppelteZusammenfuehren();
+                return;
+            }
             try {
                 JSONObject urteil = new JSONObject(wert);
                 if (urteil.optInt("zusammengefuehrt", 0) <= 0) return;
@@ -174,7 +253,8 @@ public final class Bestand {
     }
 
     public void speichern() {
-        FavoriteStore.speichereRoh(context, eintraege);
+        bestandRevision += 1;
+        ablage.speichern(eintraege);
         // Kostet einen Zeichenvergleich; der Aufruf in den Kern geht nur
         // hinaus, wenn wirklich Eintraege dazugekommen oder verschwunden sind.
         werkeAuffrischen();
@@ -238,7 +318,11 @@ public final class Bestand {
                 boolean nachlauf = nachschubBereinigungErneut;
                 nachschubBereinigungErneut = false;
                 if (geaendert) {
-                    FavoriteStore.speichereRoh(context, eintraege);
+                    // Absichtlich ohne speichern(): das wuerde dieselbe
+                    // Bereinigung sofort wieder anwerfen. Fuer laufende
+                    // Snapshot-Aufrufe ist es trotzdem eine echte Mutation.
+                    bestandRevision += 1;
+                    ablage.speichern(eintraege);
                     werkeAuffrischen();
                     if (beobachter != null) beobachter.bestandGeaendert();
                 }
@@ -422,33 +506,118 @@ public final class Bestand {
      */
     public void verbuchen(Provider provider, String url, JSONObject meta, boolean watchpartyFuehrt) {
         if (kern == null || !kern.istBereit() || provider == null || url == null) return;
+        JSONObject kopie;
+        try {
+            kopie = meta == null ? new JSONObject() : new JSONObject(meta.toString());
+        } catch (Exception fehler) {
+            Log.e(TAG, "Fortschrittsmeldung unlesbar", fehler);
+            return;
+        }
+        JSONObject ziel = rohMitId(aktiverEintragId);
+        FortschrittsMeldung meldung = new FortschrittsMeldung(
+            provider, url, kopie, watchpartyFuehrt, aktiverEintragId,
+            ziel == null ? "" : ziel.optString("url", ""));
+        fortschrittReihe.hinzufuegen(meldung, Bestand::gleicheFortschrittsFolge);
+        fortschrittStarten();
+    }
+
+    private static boolean gleicheFortschrittsFolge(FortschrittsMeldung links,
+                                                     FortschrittsMeldung rechts) {
+        return links.watchpartyFuehrt == rechts.watchpartyFuehrt
+            && links.provider.id.equals(rechts.provider.id)
+            && links.url.equals(rechts.url)
+            && links.aktiverEintragId.equals(rechts.aktiverEintragId);
+    }
+
+    private void fortschrittStarten() {
+        FortschrittsMeldung meldung = fortschrittReihe.beginnen();
+        if (meldung == null) return;
+        // Die Meldung kann einige Millisekunden hinter einer bereits laufenden
+        // gewartet haben. Ein zwischenzeitlicher Folgenwechsel ist dann schon
+        // vor ihrem ersten Kernaufruf sichtbar und muss ebenso gelten wie ein
+        // Wechsel waehrend des Aufrufs.
+        if (fortschrittsZielWeitergezogen(meldung)) {
+            Log.i(TAG, "Wartende Fortschrittsmeldung nach Folgenwechsel verworfen");
+            fortschrittAbschliessen();
+            return;
+        }
+        fortschrittAusfuehren(meldung);
+    }
+
+    private void fortschrittAusfuehren(FortschrittsMeldung meldung) {
+        final long ausgangsRevision = bestandRevision;
         JSONObject zustand = new JSONObject();
         try {
             zustand.put("favoriten", eintraege);
-            zustand.put("aktiverFavoritId", aktiverEintragId);
-            zustand.put("watchpartyFuehrt", watchpartyFuehrt);
+            zustand.put("aktiverFavoritId", meldung.aktiverEintragId);
+            zustand.put("watchpartyFuehrt", meldung.watchpartyFuehrt);
         } catch (Exception fehler) {
             Log.e(TAG, "Zustand liess sich nicht bauen", fehler);
+            fortschrittAbschliessen();
             return;
         }
         JSONArray argumente = new JSONArray();
         argumente.put(zustand);
-        argumente.put(provider.alsJson());
-        argumente.put(url);
-        argumente.put(meta == null ? new JSONObject() : meta);
+        argumente.put(meldung.provider.alsJson());
+        argumente.put(meldung.url);
+        argumente.put(meldung.meta);
         argumente.put(new JSONObject());
 
-        JSONObject gemeldet = meta == null ? new JSONObject() : meta;
         kern.rufe("fortschritt.medienStandVerbuchen", argumente, (wert, fehler) -> {
             if (fehler != null) {
                 Log.e(TAG, "Fortschritt nicht verbucht: " + fehler);
+                fortschrittAbschliessen();
                 return;
             }
-            uebernehmen(wert, provider, url, gemeldet);
+            // Waehrend der Kern rechnete, kann der Geraeteabgleich oder eine
+            // Bedienung den Bestand geaendert haben. Die Antwort beruht dann
+            // auf einer alten Gesamtliste. Dieselbe Messung noch einmal auf
+            // den aktuellen Stand anwenden, statt die neue Liste zu verlieren.
+            if (bestandRevision != ausgangsRevision) {
+                if (fortschrittsZielWeitergezogen(meldung)) {
+                    Log.i(TAG, "Alte Fortschrittsmeldung nach Folgenwechsel verworfen");
+                    fortschrittAbschliessen();
+                    return;
+                }
+                Log.i(TAG, "Fortschritt wird nach Bestandsaenderung neu angewandt");
+                fortschrittAusfuehren(meldung);
+                return;
+            }
+            uebernehmen(wert, meldung.provider, meldung.url, meldung.meta,
+                meldung.aktiverEintragId);
+            fortschrittAbschliessen();
         });
     }
 
-    private void uebernehmen(String ergebnisJson, Provider provider, String url, JSONObject gemeldet) {
+    private void fortschrittAbschliessen() {
+        fortschrittReihe.abschliessen();
+        fortschrittStarten();
+    }
+
+    /**
+     * Ein anderer abgeschlossener Vorgang hat denselben Eintrag bereits auf
+     * eine andere Folge gezogen. Eine davor gemessene Folge darf dann nicht
+     * noch einmal gegen den neuen Stand gerechnet werden. Passt der aktuelle
+     * Stand dagegen genau zur gemessenen Adresse, ist dies die neuere Folge
+     * selbst und die Messung wird normal wiederholt.
+     */
+    private boolean fortschrittsZielWeitergezogen(FortschrittsMeldung meldung) {
+        if (meldung.aktiverEintragId.isEmpty() || meldung.zielUrlBeimMessen.isEmpty()) return false;
+        JSONObject aktuell = rohMitId(meldung.aktiverEintragId);
+        if (aktuell == null) return true;
+        String aktuelleUrl = aktuell.optString("url", "");
+        return !gleicheAdresse(aktuelleUrl, meldung.zielUrlBeimMessen)
+            && !gleicheAdresse(aktuelleUrl, meldung.url);
+    }
+
+    private static boolean gleicheAdresse(String links, String rechts) {
+        String a = links == null ? "" : links.replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
+        String b = rechts == null ? "" : rechts.replaceFirst("(?i)^https?://", "").replaceAll("/+$", "");
+        return !a.isEmpty() && a.equalsIgnoreCase(b);
+    }
+
+    private void uebernehmen(String ergebnisJson, Provider provider, String url, JSONObject gemeldet,
+                             String erwarteterAktiverEintrag) {
         try {
             JSONObject ergebnis = new JSONObject(ergebnisJson);
             JSONArray neueListe = ergebnis.optJSONArray("favoriten");
@@ -491,7 +660,13 @@ public final class Bestand {
             }
 
             if (neueListe != null) eintraege = neueListe;
-            aktiverEintragId = eintrag.optString("id", aktiverEintragId);
+            // Eine Antwort gehoert weiterhin in ihren eingefrorenen Eintrag,
+            // aber sie darf den inzwischen geoeffneten Titel nicht wieder zum
+            // aktiven machen. Sonst wuerden erst die folgenden Messungen auf
+            // das falsche private/Room-Ziel gelenkt.
+            if (aktiverEintragId.equals(erwarteterAktiverEintrag)) {
+                aktiverEintragId = eintrag.optString("id", aktiverEintragId);
+            }
             speichern();
             if (standMelder != null) standMelder.melde(eintrag);
             if (beobachter != null) beobachter.bestandGeaendert();
@@ -524,6 +699,7 @@ public final class Bestand {
      */
     public void anlegenUndMerken(Provider provider, String url, JSONObject meta, Runnable danach) {
         if (kern == null || !kern.istBereit() || provider == null || url == null) return;
+        final long ausgangsRevision = bestandRevision;
         JSONObject zustand = new JSONObject();
         try {
             zustand.put("favoriten", eintraege);
@@ -538,6 +714,10 @@ public final class Bestand {
                 if (fehler != null) {
                     Log.e(TAG, "Eintrag nicht angelegt: " + fehler);
                     if (melder != null) melder.melde("Konnte nicht gemerkt werden");
+                    return;
+                }
+                if (bestandRevision != ausgangsRevision) {
+                    anlegenUndMerken(provider, url, meta, danach);
                     return;
                 }
                 try {
@@ -612,6 +792,8 @@ public final class Bestand {
         if (kern == null || !kern.istBereit() || provider == null || url == null) return;
         JSONObject eintrag = rohMitId(aktiverEintragId);
         if (eintrag == null) return;
+        final String eintragId = aktiverEintragId;
+        final long ausgangsRevision = bestandRevision;
 
         JSONArray argumente = new JSONArray();
         argumente.put(eintrag);
@@ -621,6 +803,10 @@ public final class Bestand {
 
         kern.rufe("fortschritt.favoritNachziehen", argumente, (wert, fehler) -> {
             if (fehler != null || wert == null) return;
+            if (bestandRevision != ausgangsRevision) {
+                if (eintragId.equals(aktiverEintragId)) nachziehen(provider, url, folgemodus);
+                return;
+            }
             try {
                 JSONObject urteil = new JSONObject(wert);
                 String art = urteil.optString("art", "nichts");
@@ -742,6 +928,7 @@ public final class Bestand {
             return;
         }
         JSONObject zustand = new JSONObject();
+        final long ausgangsRevision = bestandRevision;
         try {
             zustand.put("favoriten", eintraege);
         } catch (Exception fehler) {
@@ -757,6 +944,10 @@ public final class Bestand {
                 if (fehler != null || wert == null) {
                     Log.d(TAG, "Raum-Eintrag nicht sichergestellt: " + fehler);
                     nimm.accept("");
+                    return;
+                }
+                if (bestandRevision != ausgangsRevision) {
+                    raumEintragSichern(key, raum, anbieter, stand, nimm);
                     return;
                 }
                 try {
@@ -801,23 +992,39 @@ public final class Bestand {
      *               neue Liste, und erst dann darf der naechste beginnen
      */
     public void raumEintraegeSichern(JSONArray anbieter, Runnable danach) {
+        raumEintraegeSichern(anbieter, erfolgreich -> danach.run());
+    }
+
+    /**
+     * Wie {@link #raumEintraegeSichern(JSONArray, Runnable)}, mit belastbarem
+     * Ergebnis fuer den Zustandsabdruck der Watchparty. Nur eine gelesene und
+     * auf den aktuellen Bestand angewandte Kernantwort ist erfolgreich.
+     */
+    public void raumEintraegeSichern(JSONArray anbieter,
+                                     java.util.function.Consumer<Boolean> danach) {
         if (kern == null || !kern.istBereit()) {
-            danach.run();
+            danach.accept(false);
             return;
         }
         JSONObject zustand = new JSONObject();
+        final long ausgangsRevision = bestandRevision;
         try {
             zustand.put("favoriten", eintraege);
         } catch (Exception fehler) {
             Log.e(TAG, "Raum-Eintraege liessen sich nicht vorbereiten", fehler);
-            danach.run();
+            danach.accept(false);
             return;
         }
         kern.rufe("watchparty-bruecke.raumEintraegeSichern",
             Kern.args(zustand, anbieter == null ? new JSONArray() : anbieter),
             (wert, fehler) -> {
+                if (fehler == null && wert != null && bestandRevision != ausgangsRevision) {
+                    raumEintraegeSichern(anbieter, danach);
+                    return;
+                }
                 // Erst die Antwort einarbeiten, dann melden: wer auf diesen
                 // Lauf gewartet hat, faenge sonst mit der alten Liste an.
+                boolean erfolgreich = false;
                 try {
                     if (fehler != null || wert == null) {
                         Log.d(TAG, "Raum-Eintraege nicht sichergestellt: " + fehler);
@@ -826,6 +1033,7 @@ public final class Bestand {
                     JSONObject urteil = new JSONObject(wert);
                     JSONArray neueListe = urteil.optJSONArray("favoriten");
                     if (neueListe != null) eintraege = neueListe;
+                    erfolgreich = neueListe != null;
                     if (!urteil.optBoolean("geaendert", false)) return;
                     JSONArray gesichert = urteil.optJSONArray("gesichert");
                     Log.i(TAG, "Aus der Watchparty uebernommen: "
@@ -836,7 +1044,7 @@ public final class Bestand {
                 } catch (Exception ausnahme) {
                     Log.e(TAG, "Antwort zu den Raum-Eintraegen unlesbar", ausnahme);
                 } finally {
-                    danach.run();
+                    danach.accept(erfolgreich);
                 }
             });
     }
@@ -867,10 +1075,15 @@ public final class Bestand {
         if (kern == null || !kern.istBereit() || stand == null) return;
         Favorite lokal = mitId(eintragId);
         if (lokal == null) return;
+        final long ausgangsRevision = bestandRevision;
 
         kern.rufe("fortschritt.watchpartyStandUebernehmen",
             Kern.args(lokal.roh, stand), (wert, fehler) -> {
                 if (fehler != null || wert == null) return;
+                if (bestandRevision != ausgangsRevision) {
+                    watchpartyStandUebernehmen(eintragId, stand);
+                    return;
+                }
                 try {
                     JSONObject urteil = new JSONObject(wert);
                     if (!"aendern".equals(urteil.optString("art"))) return;
@@ -923,6 +1136,7 @@ public final class Bestand {
             return;
         }
         JSONObject zustand = new JSONObject();
+        final long ausgangsRevision = bestandRevision;
         try {
             zustand.put("favoriten", eintraege);
         } catch (Exception fehler) {
@@ -931,6 +1145,10 @@ public final class Bestand {
             return;
         }
         kern.rufe("nachschub-bruecke.lauf", Kern.args(zustand, hoechstens), (wert, fehler) -> {
+            if (fehler == null && wert != null && bestandRevision != ausgangsRevision) {
+                nachschubPruefen(hoechstens, danach);
+                return;
+            }
             int gefunden = 0;
             try {
                 if (fehler != null || wert == null) {
@@ -1031,9 +1249,14 @@ public final class Bestand {
             if (fertig != null) fertig.accept(null);
             return;
         }
+        final long ausgangsRevision = bestandRevision;
         kern.rufe("watchlist.umschalten", Kern.args(eintraege, werk), (wert, fehler) -> {
             if (fehler != null || wert == null) {
                 if (fertig != null) fertig.accept(null);
+                return;
+            }
+            if (bestandRevision != ausgangsRevision) {
+                watchlistUmschalten(url, titel, art, fertig);
                 return;
             }
             try {
@@ -1113,9 +1336,14 @@ public final class Bestand {
             if (fertig != null) fertig.accept(eintrag == null ? "" : eintrag.optString("url", ""));
             return;
         }
+        final long ausgangsRevision = bestandRevision;
         JSONArray argumente = new JSONArray();
         argumente.put(eintrag);
         kern.rufe("fortschritt.wiederansehenBeginnen", argumente, (wert, fehler) -> {
+            if (fehler == null && wert != null && bestandRevision != ausgangsRevision) {
+                wiederansehenStarten(id, fertig);
+                return;
+            }
             if (fehler == null && wert != null) {
                 try {
                     JSONObject aenderung = new JSONObject(wert);
@@ -1196,6 +1424,118 @@ public final class Bestand {
         eintraege = neu;
         speichern();
         if (beobachter != null) beobachter.bestandGeaendert();
+    }
+
+    /**
+     * Wendet nur die vom Geräteabgleich bestätigten Änderungen auf den gerade
+     * aktuellen Bestand an.
+     *
+     * <p>Der frühere Rückweg ersetzte die ganze Liste durch den Snapshot, den
+     * die Brücke einige Sekunden zuvor bekommen hatte. Kam in dieser Zeit ein
+     * lokaler Playerstand hinzu, setzte ein völlig anderer Remote-Eintrag die
+     * laufende Serie wieder zurück. Das Delta wird deshalb im gemeinsamen Kern
+     * auf die <em>jetzige</em> Liste gerechnet. Ändert sie sich währenddessen,
+     * wird dasselbe Delta erneut auf deren neuen Stand angewandt.
+     */
+    public void geraeteAenderungenUebernehmen(JSONObject aenderungen) {
+        if (kern == null || aenderungen == null) return;
+        JSONObject kopie;
+        try {
+            kopie = new JSONObject(aenderungen.toString());
+        } catch (Exception fehler) {
+            Log.e(TAG, "Geraeteaenderungen unlesbar", fehler);
+            return;
+        }
+        geraeteAenderungenReihe.hinzufuegen(kopie, (links, rechts) -> false);
+        geraeteAenderungenStarten();
+    }
+
+    private void geraeteAenderungenStarten() {
+        JSONObject aenderungen = geraeteAenderungenReihe.beginnen();
+        if (aenderungen == null) return;
+        if (!kern.istBereit()) {
+            geraeteAenderungenReihe.anhalten();
+            if (!geraeteAenderungenWartenAufKern) {
+                geraeteAenderungenWartenAufKern = true;
+                kern.wennBereit(() -> {
+                    geraeteAenderungenWartenAufKern = false;
+                    geraeteAenderungenFortsetzen();
+                });
+            }
+            return;
+        }
+        geraeteAenderungenAusfuehren(aenderungen);
+    }
+
+    private void geraeteAenderungenAusfuehren(JSONObject aenderungen) {
+        final long ausgangsRevision = bestandRevision;
+        kern.rufe("geraete-bruecke.aenderungenUebernehmen",
+            Kern.args(eintraege, aenderungen), (wert, fehler) -> {
+                if (fehler != null || wert == null) {
+                    if (fehler != null) Log.e(TAG, "Geraeteaenderungen nicht uebernommen: " + fehler);
+                    geraeteAenderungenPausieren();
+                    return;
+                }
+                if (bestandRevision != ausgangsRevision) {
+                    geraeteAenderungenAusfuehren(aenderungen);
+                    return;
+                }
+                boolean gueltig = false;
+                try {
+                    JSONObject urteil = new JSONObject(wert);
+                    JSONArray neu = urteil.optJSONArray("favoriten");
+                    if (neu == null) throw new IllegalArgumentException("Favoriten fehlen");
+                    gueltig = true;
+                    if (urteil.optBoolean("geaendert", false)) {
+                        eintraege = neu;
+                        speichern();
+                        if (beobachter != null) beobachter.bestandGeaendert();
+                    }
+                    // Der Pure-Helper veraendert absichtlich nicht den Cache
+                    // der Geraetebruecke. Sofort das aktuelle Bild nachreichen,
+                    // auch wenn das Delta wegen `vorher` ein No-op war; sonst
+                    // koennte die Bruecke bis zum naechsten Poll denselben
+                    // veralteten Vollstand noch einmal als Delta ausgeben.
+                    kern.rufe("geraete-bruecke.favoritenSetzen", Kern.args(eintraege), null);
+                } catch (Exception ausnahme) {
+                    Log.e(TAG, "Geraeteaenderungen unlesbar", ausnahme);
+                } finally {
+                    if (gueltig) geraeteAenderungenAbschliessen();
+                    else geraeteAenderungenPausieren();
+                }
+            });
+    }
+
+    /** Wird vom naechsten regulaeren Geraeteabgleich nach einem Fehler aufgerufen. */
+    public boolean geraeteAenderungenFortsetzen() {
+        geraeteAenderungenStarten();
+        return geraeteAenderungenReihe.groesse() == 0;
+    }
+
+    public void setzeGeraeteFortsetzung(Runnable fortsetzen) {
+        geraeteFortsetzung = fortsetzen;
+    }
+
+    private void geraeteAenderungenPausieren() {
+        geraeteAenderungenReihe.anhalten();
+        geraeteAenderungenFehlversuche += 1;
+        if (!kern.istBereit()) {
+            // Bei einem Kern-Neustart erst nach dessen Bereitschaft weiter.
+            geraeteAenderungenStarten();
+        } else if (geraeteAenderungenFehlversuche == 1 && geraeteFortsetzung != null) {
+            // Einmal automatisch nachholen, auch wenn das Geraet danach idle
+            // bleibt. Eine dauerhaft unlesbare Antwort erzeugt keinen Takt.
+            geraeteFortsetzung.run();
+        }
+    }
+
+    private void geraeteAenderungenAbschliessen() {
+        geraeteAenderungenFehlversuche = 0;
+        geraeteAenderungenReihe.abschliessen();
+        geraeteAenderungenStarten();
+        if (geraeteAenderungenReihe.groesse() == 0 && geraeteFortsetzung != null) {
+            geraeteFortsetzung.run();
+        }
     }
 
     /**

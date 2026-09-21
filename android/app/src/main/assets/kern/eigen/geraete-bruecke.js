@@ -46,7 +46,7 @@
   // Was sich seit der letzten Meldung an Java geaendert hat. Gesammelt, weil
   // beim ersten Abgleich leicht zweihundert Eintraege auf einmal hereinkommen
   // und jede einzelne Datei zu schreiben zweihundertmal dieselbe Datei waere.
-  let favoritenSchmutzig = false;
+  let favoritenAenderungen = [];
   // Was in diesem Schub wirklich neu hereinkam - nicht die ganze Liste.
   //
   // Vorher ging die vollstaendige Liste nach Java, und Java schrieb sie ueber
@@ -66,15 +66,17 @@
     if (abgleich) return abgleich;
     abgleich = new Geraeteabgleich({
       onEintrag: (stand) => {
+        const lokal = geraeteStand.eintragFinden(favoriten, stand.key, stand);
+        const vorher = standVonEintrag(lokal, stand.key);
         const ergebnis = geraeteStand.uebernehmen(stand, umgebung());
         if (!ergebnis) return null;
-        favoritenSchmutzig = true;
+        favoritenAenderungen.push({ key: stand.key, vorher, stand: ergebnis.stand });
         return ergebnis.stand;
       },
       onWeg: (key) => {
         const weg = geraeteStand.entfernen(favoriten, key);
         if (!weg) return false;
-        favoritenSchmutzig = true;
+        favoritenAenderungen.push({ key, vorher: standVonEintrag(weg, key), weg: true });
         return true;
       },
       // Eine Sitzung kommt dazu oder sie ist schon da - ueberschrieben wird
@@ -98,9 +100,10 @@
       },
       // Geschrieben wird einmal je Schub, nicht einmal je Eintrag.
       onFertig: (anzahl) => {
-        if (favoritenSchmutzig) {
-          favoritenSchmutzig = false;
-          ereignis("geraete:favoriten", favoriten);
+        if (favoritenAenderungen.length) {
+          const aenderungen = favoritenAenderungen;
+          favoritenAenderungen = [];
+          ereignis("geraete:aenderungen", { aenderungen });
         }
         if (sitzungenDazu.length) {
           const neue = sitzungenDazu;
@@ -126,9 +129,9 @@
    * auch keine, die zu einem uebernommenen Titel passen wuerden. Das ist kein
    * Unterschied im Abgleich - eigene Bilder gehen ohnehin nie hinaus.
    */
-  function umgebung() {
+  function umgebung(liste = favoriten) {
     return {
-      favoriten,
+      favoriten: liste,
       anbieterFuer: (url, providerName) => geraeteStand.anbieterFinden(anbieter, url, providerName),
       normalisieren: (favorit) => favorit,
       eigenesBild: () => "",
@@ -255,6 +258,33 @@
     return abgleich ? abgleich.status() : letzterStatus;
   }
 
+  function standVonEintrag(eintrag, key) {
+    return eintrag ? schluesselModul.stand({ ...eintrag, key }) : null;
+  }
+
+  // Der Brueckencache kann mehrere Sekunden hinter Java liegen. Daher geht
+  // nur der empfangene Zuwachs zurueck, niemals seine komplette alte Liste.
+  // Pro Titel gilt die gemeinsame Vorversion als Voraussetzung: inzwischen
+  // lokal geaenderter Fortschritt gewinnt, ohne fremde Titel zu ueberschreiben.
+  function aenderungenUebernehmen(liste, schub) {
+    const aktuell = JSON.parse(JSON.stringify(Array.isArray(liste) ? liste : []));
+    let geaendert = false;
+    for (const aenderung of (schub && schub.aenderungen) || []) {
+      if (!aenderung || !aenderung.key) continue;
+      const lokal = geraeteStand.eintragFinden(aktuell, aenderung.key, aenderung.stand);
+      const vorher = aenderung.vorher || null;
+      const jetzt = standVonEintrag(lokal, aenderung.key);
+      if (JSON.stringify(jetzt ? schluesselModul.stand(jetzt) : null)
+        !== JSON.stringify(vorher ? schluesselModul.stand(vorher) : null)) continue;
+      if (aenderung.weg) {
+        if (geraeteStand.entfernen(aktuell, aenderung.key)) geaendert = true;
+      } else if (aenderung.stand && aenderung.stand.key === aenderung.key) {
+        if (geraeteStand.uebernehmen(aenderung.stand, umgebung(aktuell))) geaendert = true;
+      }
+    }
+    return { favoriten: aktuell, geaendert };
+  }
+
   /** Laufende Wiedergabe setzen oder mit null sofort abmelden. */
   function liveSetzen(stand) {
     return sicherstellen().liveSetzen(stand == null ? null : stand);
@@ -287,6 +317,7 @@
     konfigurieren,
     spiegelSetzen,
     favoritenSetzen,
+    aenderungenUebernehmen,
     sitzungenSetzen,
     watchpartySetzen,
     anbieterSetzen,

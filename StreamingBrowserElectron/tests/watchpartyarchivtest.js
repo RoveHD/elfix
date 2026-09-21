@@ -683,6 +683,25 @@ async function teilDrei() {
     && pc.eintrag(FILM_KEY)?.archived === true,
     `${ohneDuplikat.favoriten.length} Eintraege; Film archiviert=${pc.eintrag(FILM_KEY)?.archived}`);
 
+  // Der PC entfernt den Titel ganz, waehrend das Telefon nicht verbunden ist.
+  // Beim naechsten Start darf sein alter Raum-Eintrag nicht weiter gemeinsam sein.
+  handy.bruecke.trennen();
+  pc.send({ type: "unshare", key: SERIEN_KEY });
+  await warteBis(() => !pc.eintrag(SERIEN_KEY), "Titel am PC entfernt");
+  handy.bruecke.konfigurieren({
+    enabled: true, serverUrl: adresse, rooms: [RAUM], deviceName: "Handy", deviceId: "tel-handy"
+  });
+  await warteBis(() => handy.bruecke.status().connected
+    && !handy.bruecke.eintraege().some((e) => e.key === SERIEN_KEY), "Telefon wieder verbunden");
+  await warteBis(() => {
+    handy.bruecke.raumEintraegeSichern({ favoriten: getrennt.favoriten }, ANBIETER);
+    return !raumKopie.watchpartyRoom;
+  }, "alte Raumbindung nach bestaetigtem Zustand geloest");
+  pruefe("18a. Ein offline am PC entfernter Titel ist am Telefon nicht mehr gemeinsam",
+    raumKopie.watchpartyRoom === "" && raumKopie.watchpartyArchived === false);
+  pruefe("18b. Der gespeicherte Stand und der private Eintrag bleiben erhalten",
+    raumKopie.episode === 11 && privateKopie.position === 421
+    && getrennt.favoriten.length === 2 && !privateKopie.watchpartyRoom);
   handy.bruecke.trennen();
   pc.zu();
   await schlaf(150);

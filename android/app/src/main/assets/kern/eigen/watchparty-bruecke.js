@@ -69,7 +69,15 @@
   function sicherstellen() {
     if (raeume) return raeume;
     raeume = new WatchpartyRaeume({
-      onState: (eintraege, raum) => ereignis("watchparty:zustand", { eintraege, raum }),
+      onState: (eintraege, raum) => {
+        if (raum && raeume && raeume.status().rooms.some((r) => r.room === raum && r.connected)) {
+          // Auch [] ist nach dem ersten echten Snapshot etwas anderes als die
+          // vorlaeufig leere Liste beim Konfigurieren oder Wiederverbinden.
+          if (!empfangeneRaeume.has(raum)) abgleichVersion += 1;
+          empfangeneRaeume.add(raum);
+        }
+        raumzustandMelden(eintraege, raum);
+      },
       // Drei Argumente, kein Objekt: Schluessel, Stand, Raum. Sie werden hier
       // zusammengefasst, weil die Bruecke nach Java nur eine Nutzlast kennt.
       onProgress: (schluessel, stand, raum) =>
@@ -101,7 +109,14 @@
           ereignis("youtubeparty:error", nachricht);
         }
       },
-      onConnection: (info) => ereignis("watchparty:verbindung", info)
+      onConnection: (raum, offen) => {
+        if (!offen) {
+          empfangeneRaeume.delete(raum);
+          bestaetigteRaeume.delete(raum);
+          raumBarrieren.delete(raum);
+        }
+        ereignis("watchparty:verbindung", raum);
+      }
     });
     return raeume;
   }
@@ -168,6 +183,69 @@
 
   function eintraege() {
     return raeume ? raeume.eintraege() : [];
+  }
+
+  // Ein leerer Relayzustand ist erst nach der Quittung aller vorherigen
+  // Beitritte verbindlich. Ein Verbindungsabbruch ist keine geloeschte Runde.
+  const empfangeneRaeume = new Set();
+  const bestaetigteRaeume = new Set();
+  const raumBarrieren = new Map();
+  let raumGeneration = 0;
+  let abgleichVersion = 0;
+
+  function raumzustandMelden(eintraege, raum) {
+    ereignis("watchparty:zustand", { eintraege, raum, abgleichVersion });
+  }
+
+  function raumAbgleichAnfordern(raum, ersetzen = false) {
+    if (!raeume || !raum || !empfangeneRaeume.has(raum)
+      || (!ersetzen && (bestaetigteRaeume.has(raum) || raumBarrieren.has(raum)))) return;
+    const generation = ++raumGeneration;
+    bestaetigteRaeume.delete(raum);
+    raumBarrieren.set(raum, generation);
+    const begonnen = raeume.barriere(raum, () => {
+      if (raumBarrieren.get(raum) !== generation) return;
+      raumBarrieren.delete(raum);
+      if (!raeume.status().rooms.some((r) => r.room === raum && r.connected)) return;
+      bestaetigteRaeume.add(raum);
+      abgleichVersion += 1;
+      raumzustandMelden(raeume.serverEintraege(), raum);
+    });
+    if (!begonnen) raumBarrieren.delete(raum);
+  }
+
+  function mitRaumAbgleich(art, key, room) {
+    const wp = sicherstellen();
+    const raum = wp.raumFuer(key, room);
+    if (!raum) return;
+    bestaetigteRaeume.delete(raum.raum);
+    const ergebnis = wp[art](key, room);
+    raumAbgleichAnfordern(raum.raum, true);
+    return ergebnis;
+  }
+
+  function raumbindungenAbgleichen(favoriten) {
+    if (!raeume || !raeume.eingeschaltet) return false;
+    const eingerichtet = new Set(raeume.codes);
+    const verbunden = new Set(raeume.status().rooms.filter((r) => r.connected).map((r) => r.room));
+    const eintraege = raeume.serverEintraege();
+    for (const room of eingerichtet) raumAbgleichAnfordern(room);
+    let geaendert = false;
+    for (const favorit of favoriten) {
+      const room = String(favorit && favorit.watchpartyRoom || "");
+      if (!room) continue;
+      if (eingerichtet.has(room) && (!verbunden.has(room) || !bestaetigteRaeume.has(room))) continue;
+      const serie = fortschritt.serienKennungAusUrl(favorit.url);
+      if (eingerichtet.has(room) && eintraege.some((e) => e.room === room && e.joined
+        && serie && fortschritt.serienKennungAusUrl(e.url) === serie)) continue;
+      // Wie am PC: Verlauf, Gesehen-Markierungen und Position erhalten.
+      // Ausschliesslich die nicht mehr bestehende Raumbindung loesen.
+      Object.assign(favorit, {
+        watchpartyRoom: "", watchpartyFrom: "", watchpartyAt: "", watchpartyArchived: false
+      });
+      geaendert = true;
+    }
+    return geaendert;
   }
 
   /**
@@ -406,7 +484,7 @@
     nachschubMelden(favoriten);
     const gesichert = [];
     let angelegt = 0;
-    let geaendert = false;
+    let geaendert = raumbindungenAbgleichen(favoriten);
     if (!raeume) return { favoriten, gesichert, angelegt, geaendert };
     for (const eintrag of raeume.eintraege()) {
       if (!eintrag || !eintrag.joined) continue;
@@ -1049,9 +1127,9 @@
     // ihn nicht selbst bilden - der Rechner tut es auch nicht.
     teilen: (item, room) => sicherstellen().teilen(
       Object.assign({}, item, { key: (item && item.key) || titelSchluessel(item) }), room),
-    beitreten: (key, room) => sicherstellen().beitreten(key, room),
-    verlassen: (key, room) => sicherstellen().verlassen(key, room),
-    entfernen: (key, room) => sicherstellen().entfernen(key, room),
+    beitreten: (key, room) => mitRaumAbgleich("beitreten", key, room),
+    verlassen: (key, room) => mitRaumAbgleich("verlassen", key, room),
+    entfernen: (key, room) => mitRaumAbgleich("entfernen", key, room),
     rauswerfen: (key, memberId, room) => sicherstellen().rauswerfen(key, memberId, room),
     hostUebergeben: (key, memberId, room) => sicherstellen().hostUebergeben(key, memberId, room),
     steuern: (key, action, position, room) => sicherstellen().steuern(key, action, position, room),
