@@ -3,6 +3,26 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.46 — 22. September 2026
+
+- Die Suche schlägt beim Tippen vor, was gemeint sein könnte — Filme, Serien
+  und Anime. Vier Quellen, die eine kurze Antwort geben: die Watchlist, die
+  Schnellsuche des Anbieters, der eigene Metadaten-Cache (der kennt deutsche
+  und Originaltitel, „froz" bringt also die Eiskönigin) und das Metadaten-Tor
+  des Relays für alles, was ELFIX noch nie gesehen hat. Was eine Adresse hat,
+  öffnet sich sofort; der Rest führt in die Suche. Ab zwei Zeichen, mit
+  Pfeiltasten und Enter. Die Vorschläge des Relays brauchen ein Relay-Update.
+- „Gemeinsam weiterschauen" zeigt denselben Titel nicht mehr zweimal. Wurde der
+  eigene Eintrag an eine Runde gebunden, konnte er den Raum aufgestempelt
+  bekommen, obwohl es den Eintrag der Runde schon gab — der lief dann mit den
+  neuen Folgen weiter, der andere blieb stehen. Gebunden wird jetzt nur noch,
+  wo es den Eintrag der Runde nicht schon gibt, und Ablagen, in denen zwei
+  stehen, ziehen sich beim nächsten Raumzustand selbst gerade: einer bleibt der
+  Eintrag der Runde, der andere zählt wieder privat weiter.
+- Aktualisierte Abhängigkeiten: Electron 44.4.3 (Chromium-Sicherheitsfixes,
+  schnellere Dateizugriffe im Paket) und hls.js 1.7.3.
+- Neue Prüfungen vorschlagtest und raumdublettentest.
+
 ## 2.0.45 — 21. September 2026
 
 - Der Vollbild-Knopf im Player greift auch nach dem Mini-Player wieder. Wer den
