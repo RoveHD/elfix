@@ -463,6 +463,99 @@ const suchen = (titel) => ({ method: "POST", headers: { "content-type": "applica
       film.laufStatus === "" && film.naechsteFolge === null && film.staffeln.length === 0);
   }
 
+  // ====================================================== Vorschlaege beim Tippen
+  //
+  // Eine eigene Route mit eigenen Regeln: sie loest nichts auf, sie bewertet
+  // nichts, und sie gibt vier Felder je Zeile heraus. Geprueft wird vor allem,
+  // was sie NICHT tut - keine Normalform herausgeben, nicht bei jedem
+  // Tastendruck nach draussen gehen, und ohne TMDB-Schluessel trotzdem
+  // antworten.
+  const vorschlagFragen = (frage) => ({
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ frage })
+  });
+  const TMDB_SUCHE_FILM = {
+    results: [
+      { id: 109445, title: "Die Eiskönigin – Völlig unverfroren", original_title: "Frozen", release_date: "2013-11-20" },
+      { id: 330457, title: "Die Eiskönigin II", original_title: "Frozen II", release_date: "2019-11-20" }
+    ]
+  };
+  const TMDB_SUCHE_SERIE = {
+    results: [{ id: 4321, name: "Frozen Planet", original_name: "Frozen Planet", first_air_date: "2011-10-26" }]
+  };
+  const ANILIST_VORSCHLAG = {
+    data: { Page: { media: [
+      { title: { romaji: "Kimetsu no Yaiba", english: "Demon Slayer" }, seasonYear: 2019 }
+    ] } }
+  };
+
+  {
+    const netz = netzBauen([
+      { wenn: "search/movie", daten: () => TMDB_SUCHE_FILM },
+      { wenn: "search/tv", daten: () => TMDB_SUCHE_SERIE },
+      { wenn: "anilist", daten: () => ANILIST_VORSCHLAG }
+    ]);
+    await mitDienst({ tmdbSchluessel: GEHEIM, fetch: netz.holen }, async ({ rufen }) => {
+      const antwort = await rufen("/metadata/vorschlag", vorschlagFragen("frozen"));
+      const liste = antwort.daten?.vorschlaege || [];
+      pruefe("Vorschlag: alle drei Quellen kommen vor",
+        liste.some((e) => e.art === "film") && liste.some((e) => e.art === "serie")
+        && liste.some((e) => e.art === "anime"), JSON.stringify(liste.map((e) => e.art)));
+      pruefe("Vorschlag: abwechselnd, damit nicht eine Quelle die Liste fuellt",
+        liste[0]?.art === "anime" && liste[1]?.art === "film" && liste[2]?.art === "serie",
+        JSON.stringify(liste.map((e) => `${e.art}:${e.titel}`)));
+      pruefe("Vorschlag: der deutsche Titel steht da, nicht der englische",
+        liste.some((e) => e.titel === "Die Eiskönigin – Völlig unverfroren"),
+        JSON.stringify(liste.map((e) => e.titel)));
+      pruefe("Vorschlag: nur vier Felder verlassen das Tor",
+        liste.every((e) => Object.keys(e).sort().join(",") === "art,jahr,quelle,titel"),
+        JSON.stringify(Object.keys(liste[0] || {})));
+      pruefe("Vorschlag: das Jahr kommt aus dem Datum",
+        liste.find((e) => e.art === "film")?.jahr === 2013,
+        JSON.stringify(liste.find((e) => e.art === "film")));
+
+      const abrufe = netz.rufe.length;
+      const zweit = await rufen("/metadata/vorschlag", vorschlagFragen("Frozen"));
+      pruefe("Vorschlag: derselbe Anfang geht kein zweites Mal hinaus",
+        netz.rufe.length === abrufe && (zweit.daten?.vorschlaege || []).length === liste.length,
+        `${netz.rufe.length - abrufe} zusaetzliche Aufrufe`);
+    });
+  }
+
+  {
+    const netz = netzBauen([{ wenn: "anilist", daten: () => ANILIST_VORSCHLAG }]);
+    await mitDienst({ tmdbSchluessel: "", fetch: netz.holen }, async ({ rufen }) => {
+      const antwort = await rufen("/metadata/vorschlag", vorschlagFragen("demon"));
+      pruefe("Vorschlag ohne TMDB-Schluessel: Anime kommt trotzdem",
+        antwort.status === 200 && antwort.daten.vorschlaege.length === 1
+        && antwort.daten.vorschlaege[0].art === "anime", JSON.stringify(antwort.daten));
+      pruefe("Vorschlag ohne TMDB-Schluessel: TMDB wird gar nicht erst gefragt",
+        netz.rufe.every((ruf) => !ruf.url.includes("themoviedb")),
+        JSON.stringify(netz.rufe.map((r) => r.url.slice(0, 40))));
+    });
+  }
+
+  {
+    const netz = netzBauen([
+      { wenn: "search/movie", daten: () => TMDB_SUCHE_FILM },
+      { wenn: "search/tv", daten: () => TMDB_SUCHE_SERIE },
+      { wenn: "anilist", daten: () => ANILIST_VORSCHLAG }
+    ]);
+    await mitDienst({ tmdbSchluessel: GEHEIM, fetch: netz.holen }, async ({ rufen }) => {
+      const kurz = await rufen("/metadata/vorschlag", vorschlagFragen("f"));
+      pruefe("Vorschlag: ein einzelner Buchstabe geht nicht nach draussen",
+        kurz.status === 200 && kurz.daten.vorschlaege.length === 0 && netz.rufe.length === 0,
+        `${netz.rufe.length} Aufrufe`);
+      const leer = await rufen("/metadata/vorschlag", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      pruefe("Vorschlag: eine Anfrage ohne Frage ist kein Fehler, nur leer",
+        leer.status === 200 && leer.daten.vorschlaege.length === 0);
+      const falsch = await rufen("/metadata/vorschlag");
+      pruefe("Vorschlag: nur POST - ein GET findet die Route nicht",
+        falsch.status === 404, "HTTP " + falsch.status);
+    });
+  }
+
   const gut = pruefungen.filter(Boolean).length;
   console.log(`${gut}/${pruefungen.length} bestanden`);
   process.exit(gut === pruefungen.length ? 0 : 1);

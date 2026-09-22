@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   openProviderUrl: (id, url) => ipcRenderer.invoke("provider:navigate", id, url),
   searchAll: (query) => ipcRenderer.invoke("search:all", query),
   cancelSearch: () => ipcRenderer.invoke("search:cancel"),
+  /** Vorschlaege beim Tippen - Titel, Art, Jahr und wo es zu sehen ist. */
+  searchSuggestions: (frage) => ipcRenderer.invoke("search:vorschlaege", String(frage || "")),
   searchArtwork: (treffer) => ipcRenderer.invoke("search:artwork", treffer),
   loadCalendar: (refresh = false) => ipcRenderer.invoke("calendar:load", refresh),
   getRecommendations: (options = {}) => ipcRenderer.invoke("discover:recommendations", options),
