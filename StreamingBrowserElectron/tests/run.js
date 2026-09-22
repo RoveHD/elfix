@@ -74,6 +74,7 @@ OHNE_RELAY.push("search-coordinatortest");
 OHNE_RELAY.push("searchintegrationtest");
 OHNE_RELAY.push("fremdtiteltest");
 OHNE_RELAY.push("vorschlagtest");
+OHNE_RELAY.push("raumdublettentest");
 OHNE_RELAY.push("search-renderer-racetest");
 OHNE_RELAY.push("cache-schreibarbeitertest");
 OHNE_RELAY.push("autominispielertest");

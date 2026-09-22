@@ -893,7 +893,14 @@ public final class Bestand {
             .toLowerCase(java.util.Locale.ROOT);
     }
 
-    /** Der Eintrag zu einer Serienadresse, egal auf welcher Folge er gerade steht. */
+    /**
+     * Der Eintrag zu einer Serienadresse, egal auf welcher Folge er gerade steht.
+     *
+     * <p><b>Achtung.</b> Das findet <em>irgendeinen</em> Eintrag der Serie -
+     * auch den privaten und auch den einer fremden Runde. Fuer alles, was mit
+     * Raeumen zu tun hat, ist das die falsche Frage: dafuer gibt es
+     * {@link #zuSerieImRaum} und {@link #raumBindungSetzen}.
+     */
     public Favorite zuSerie(String serienUrl) {
         if (serienUrl == null || serienUrl.isEmpty()) return null;
         String gesucht = serienUrl.toLowerCase();
@@ -902,6 +909,86 @@ public final class Bestand {
             if (url.startsWith(gesucht)) return eintrag;
         }
         return null;
+    }
+
+    /**
+     * Der Eintrag dieser Serie in genau dieser Runde.
+     *
+     * <p>Der Java-Zwilling von {@code fortschritt.watchpartyEintragFinden}:
+     * Serie <em>und</em> Raum. Derselbe Titel darf privat laufen und in zwei
+     * Runden stehen - das sind drei Staende, die nichts miteinander zu tun
+     * haben.
+     */
+    public Favorite zuSerieImRaum(String serienUrl, String raum) {
+        if (serienUrl == null || serienUrl.isEmpty() || raum == null || raum.isEmpty()) return null;
+        String gesucht = serienUrl.toLowerCase();
+        for (Favorite eintrag : alle()) {
+            if (!raum.equals(eintrag.watchpartyRaum())) continue;
+            if (eintrag.url().toLowerCase().startsWith(gesucht)) return eintrag;
+        }
+        return null;
+    }
+
+    /** Und der eigene Eintrag derselben Serie - der ohne Raum. */
+    public Favorite privatZuSerie(String serienUrl) {
+        if (serienUrl == null || serienUrl.isEmpty()) return null;
+        String gesucht = serienUrl.toLowerCase();
+        for (Favorite eintrag : alle()) {
+            if (!eintrag.watchpartyRaum().isEmpty()) continue;
+            if (eintrag.url().toLowerCase().startsWith(gesucht)) return eintrag;
+        }
+        return null;
+    }
+
+    /**
+     * Den eigenen Eintrag an eine Runde binden - oder eben nicht.
+     *
+     * <p><b>Der gemeldete Fehler.</b> In "Gemeinsam weiterschauen" stand
+     * "Black Torch" zweimal, einmal auf Folge 12 und einmal auf Folge 11,
+     * beide im Raum "Bangus". Gebunden wurde bis hierher ueber
+     * {@link #zuSerie} - also ueber <em>irgendeinen</em> Eintrag der Serie, und
+     * das war oft der private. Er bekam den Raum aufgestempelt und stand von
+     * da an neben dem echten Raum-Eintrag: der lief mit der Runde weiter, der
+     * andere blieb stehen, wo er gebunden wurde. Jede neue Folge trieb die
+     * beiden weiter auseinander.
+     *
+     * <p>Die Regel steht im geteilten Modul ({@code raumBindungWaehlen}); hier
+     * steht ihr Zwilling, weil das Binden eine Schreiboperation dieser Ablage
+     * ist und nicht durch den Kern laufen muss:
+     *
+     * <ul>
+     *   <li>Gibt es den Eintrag dieser Runde schon, ist nichts zu tun.
+     *   <li>Sonst wird der eigene, private Eintrag zu ihm - einen zweiten
+     *       braucht es nicht.
+     *   <li>Gibt es hier noch gar keinen, geschieht nichts. Er entsteht beim
+     *       naechsten Raumzustand ueber die geteilte Regel.
+     * </ul>
+     *
+     * <p>Ein Eintrag, der einer <em>anderen</em> Runde gehoert, wird nie
+     * gebunden: er ist deren Stand.
+     *
+     * @return true, wenn es jetzt einen Eintrag dieser Runde gibt
+     */
+    public boolean raumBindungSetzen(String serienUrl, String raum) {
+        if (serienUrl == null || serienUrl.isEmpty() || raum == null || raum.isEmpty()) return false;
+        if (zuSerieImRaum(serienUrl, raum) != null) return true;
+        Favorite privat = privatZuSerie(serienUrl);
+        if (privat == null) return false;
+        raumSetzen(privat.id(), raum);
+        return true;
+    }
+
+    /**
+     * Und zurueck: der Eintrag <em>dieser</em> Runde zaehlt wieder nur hier.
+     *
+     * <p>Genau dieser - nicht der erstbeste der Serie. Sonst liesse ein Austritt
+     * den Raum-Eintrag stehen und machte stattdessen am privaten nichts.
+     */
+    public boolean raumBindungLoesen(String serienUrl, String raum) {
+        Favorite imRaum = zuSerieImRaum(serienUrl, raum);
+        if (imRaum == null) return false;
+        raumSetzen(imRaum.id(), "");
+        return true;
     }
 
     /**

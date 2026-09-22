@@ -64,7 +64,10 @@ const kontext = vm.createContext({
   nachschubLauf: { lauf: async () => ({ geaendert: true, gefunden: [privat] }) },
   reportWatchpartyProgress: () => {}, saveFavorites: () => {}, sendActiveState: () => {}, meldeNeueFolgen: () => {}
 });
-vm.runInContext(["meldeWatchpartyNachschub", "raumEintraegeSichern", "pruefeNeueFolgen"].map(funktion).join("\n"), kontext);
+// raumDublettenHeilen gehoert dazu: raumEintraegeSichern zieht die Ablage
+// zuerst gerade (doppelte Raum-Eintraege) und ruft es als Erstes.
+vm.runInContext(["meldeWatchpartyNachschub", "raumDublettenHeilen", "raumEintraegeSichern",
+  "pruefeNeueFolgen"].map(funktion).join("\n"), kontext);
 (async () => {
   await kontext.pruefeNeueFolgen();
   assert.equal(gesendet.length, 0);

@@ -1476,8 +1476,13 @@ public final class Watchparty {
     private void raumAmEintrag(String key, String raum, String neuerRaum) {
         adresseZuSchluessel(key, raum, adresse -> {
             if (adresse.isEmpty() || bestand == null) return;
-            Favorite lokal = bestand.zuSerie(adresse);
-            if (lokal != null) bestand.raumSetzen(lokal.id(), neuerRaum);
+            // Binden und Loesen gehen ueber die raumbewusste Regel. Vorher
+            // stand hier "irgendein Eintrag der Serie": beim Beitritt bekam so
+            // oft der private den Raum aufgestempelt und stand danach doppelt
+            // in "Gemeinsam weiterschauen", beim Austritt blieb der echte
+            // Raum-Eintrag unberuehrt stehen.
+            if (neuerRaum.isEmpty()) bestand.raumBindungLoesen(adresse, raum);
+            else bestand.raumBindungSetzen(adresse, neuerRaum);
         });
     }
 
@@ -1498,10 +1503,13 @@ public final class Watchparty {
      */
     public void privatSetzen(String key) {
         if (bestand == null || key == null || key.isEmpty()) return;
+        // Ohne Raum in der Hand: geloest wird der Eintrag, der ueberhaupt einen
+        // traegt - nie der private, der ohnehin schon privat ist.
         adresseZuSchluessel(key, "", adresse -> {
             if (adresse.isEmpty()) return;
             Favorite lokal = bestand.zuSerie(adresse);
-            if (lokal != null && !lokal.watchpartyRaum().isEmpty()) bestand.raumSetzen(lokal.id(), "");
+            if (lokal == null || lokal.watchpartyRaum().isEmpty()) return;
+            bestand.raumBindungLoesen(adresse, lokal.watchpartyRaum());
         });
     }
 
@@ -1510,8 +1518,7 @@ public final class Watchparty {
         if (bestand == null || key == null || key.isEmpty() || raum == null || raum.isEmpty()) return;
         adresseZuSchluessel(key, raum, adresse -> {
             if (adresse.isEmpty()) return;
-            Favorite lokal = bestand.zuSerie(adresse);
-            if (lokal != null && !raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+            bestand.raumBindungSetzen(adresse, raum);
         });
     }
 
