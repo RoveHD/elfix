@@ -8068,14 +8068,14 @@ function meldeWatchpartyNachschub(eintraege) {
 function raumEintraegeSichern(eintraege) {
   if (!Array.isArray(eintraege)) return;
   meldeWatchpartyNachschub(eintraege);
-  let geaendert = false;
+  let geaendert = raumDublettenHeilen();
   let folgestaende = false;
   for (const eintrag of eintraege) {
     if (!eintrag?.joined) continue;
     const key = String(eintrag.key || "");
     const room = String(eintrag.room || "");
     if (!key || !room) continue;
-    const lokal = lokalerWatchpartyEintrag(key, room);
+    const lokal = lokalerWatchpartyEintrag(key, room, eintrag.progress?.url || eintrag.url);
     if (lokal) {
       // Ob die Runde mit dem Titel durch ist, steht im Raumzustand und nicht
       // im Stand: ein Titel kann archiviert werden, ohne dass sich der
@@ -8124,6 +8124,28 @@ function raumEintraegeSichern(eintraege) {
   saveFavorites();
   sendActiveState();
   if (folgestaende) repariereFolgestaendeSpaeter();
+}
+
+/**
+ * Was schon doppelt in der Ablage steht, wieder geradeziehen.
+ *
+ * <p>Neue Dubletten entstehen nicht mehr - aber eine Ablage, die sie schon
+ * hat, wird davon nicht von selbst wieder heil. Der Raumzustand kommt
+ * regelmaessig, und das ist der richtige Zeitpunkt: dort steht, welche Runde
+ * es wirklich gibt. Die Regel selbst liegt im geteilten Modul, damit das
+ * Telefon dieselbe Reparatur macht.
+ */
+function raumDublettenHeilen() {
+  const urteil = fortschritt.raumDublettenZusammenlegen(favorites);
+  if (!urteil.geaendert) return false;
+  favorites = urteil.favoriten;
+  for (const eintrag of urteil.geloest) {
+    console.log(`[ELFIX WATCHPARTY] Doppelter Raum-Eintrag geloest: ${eintrag.title} zaehlt wieder privat`);
+  }
+  for (const eintrag of urteil.entfernt) {
+    console.log(`[ELFIX WATCHPARTY] Doppelter Raum-Eintrag entfernt: ${eintrag.title}`);
+  }
+  return true;
 }
 
 // Fuer die Anzeige: geteilte Serien mit Mitgliedern und eigenem Beitritt.
@@ -8281,11 +8303,35 @@ function raeumeWatchpartyEintraegeAuf() {
 // Jeder Raum fuehrt seinen eigenen Weiterschauen-Eintrag. Wer denselben Anime
 // in zwei Raeumen mitschaut, hat ihn zweimal in der Liste - jeweils mit dem
 // Stand dieser Runde. Der Eintrag ohne Raum ist der eigene, private.
-function lokalerWatchpartyEintrag(key, room) {
+/**
+ * Der eigene Eintrag zu einem Titel des Raums.
+ *
+ * <p>Zwei Stufen, und die zweite ist die wichtige. Die erste sucht ueber den
+ * Titelschluessel des Relays - das ist der Schluessel, unter dem der Raum den
+ * Titel fuehrt, und solange beide Seiten denselben Titel schreiben, trifft sie.
+ *
+ * <p>Titel werden aber abgeschrieben. `titelSchluessel` faltet ä, ö, ü und ß
+ * und streicht jeden anderen Akzent ersatzlos; "Pokémon" und "Pokemon" ergeben
+ * damit zwei Schluessel fuer ein Werk. Genau daran sind am 31.08.2026 drei
+ * private Eintraege desselben Titels entstanden (siehe geraete-stand.js), und
+ * genau dieselbe Luecke stand hier: fand die Suche nichts, legten alle drei
+ * Aufrufer einen <em>zweiten</em> Raum-Eintrag an. In "Gemeinsam
+ * weiterschauen" stand der Titel dann doppelt - einmal auf der Folge der
+ * Runde, einmal auf der, bei der der andere Eintrag stehengeblieben war.
+ *
+ * <p>Die zweite Stufe fragt deshalb ueber die Adresse, mit der geteilten Regel
+ * aus fortschritt.js: Raum und Serienkennung. Die Adresse gibt es nur einmal.
+ */
+function lokalerWatchpartyEintrag(key, room, adresse = "") {
   const raum = String(room || "");
-  return favorites.find((favorite) => (
+  const ueberTitel = favorites.find((favorite) => (
     watchpartyKey(favorite) === key && String(favorite.watchpartyRoom || "") === raum
-  )) || null;
+  ));
+  if (ueberTitel) return ueberTitel;
+  if (!adresse) return null;
+  return raum
+    ? fortschritt.watchpartyEintragFinden(favorites, raum, adresse)
+    : fortschritt.privaterEintragFinden(favorites, adresse);
 }
 
 // Denselben Titel kann es in mehreren Raeumen geben. Ist keiner genannt, zaehlt
@@ -8339,13 +8385,13 @@ async function openWatchpartyItem(key, room) {
   // dieses Raums. Gibt es ihn noch nicht, entsteht er hier - der eigene und
   // die anderen Runden bleiben davon unberuehrt. Ohne Beitritt gibt es keinen
   // gemeinsamen Stand: dann bleibt es beim eigenen Eintrag.
-  let favorite = eintrag.joined ? lokalerWatchpartyEintrag(key, eintrag.room) : null;
+  let favorite = eintrag.joined ? lokalerWatchpartyEintrag(key, eintrag.room, url) : null;
   if (!favorite && eintrag.joined) {
     favorite = createWatchpartyFavorite(key, eintrag, eintrag.progress || {}, provider);
     if (favorite) favorites.unshift(favorite);
   }
   if (!eintrag.joined) {
-    favorite = lokalerWatchpartyEintrag(key, "");
+    favorite = lokalerWatchpartyEintrag(key, "", url);
   }
   if (favorite) {
     activeFavoriteId = favorite.id;
@@ -8696,7 +8742,7 @@ function setWatchpartyLive(key, an, room) {
 function uebernehmeWatchpartyRaum(key, raum, vorlaeufigerEintrag = null) {
   const eintrag = vorlaeufigerEintrag || watchpartyEintrag(key, raum);
   if (!eintrag) return;
-  let favorite = lokalerWatchpartyEintrag(key, raum);
+  let favorite = lokalerWatchpartyEintrag(key, raum, eintrag.progress?.url || eintrag.url);
   if (!favorite) {
     const provider = providerForWatchpartyUrl(eintrag.url, eintrag.providerName);
     if (!provider) return;
@@ -8727,7 +8773,7 @@ function istGleicheSerie(links, rechts) {
 // es ihn noch nicht, wird keiner erfunden - beim Weiterschauen entsteht er
 // von selbst, und zwar ohne Raum, also privat.
 function setzePrivatenKontext(key, adresse) {
-  const privat = lokalerWatchpartyEintrag(key, "");
+  const privat = lokalerWatchpartyEintrag(key, "", adresse);
   if (privat) {
     activeFavoriteId = privat.id;
   } else {

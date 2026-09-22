@@ -9324,9 +9324,10 @@ public class MainActivity extends Activity {
             offeneRaumbindung = null;
             return;
         }
-        Favorite lokal = bestand.zuSerie(serienUrl);
-        if (lokal != null) {
-            if (!raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
+        // Ueber die raumbewusste Regel und nicht ueber "irgendein Eintrag der
+        // Serie": der private gehoert nicht in die Runde, und der einer
+        // anderen Runde erst recht nicht. Siehe Bestand.raumBindungSetzen.
+        if (bestand.raumBindungSetzen(serienUrl, raum)) {
             offeneRaumbindung = null;
             return;
         }
@@ -9342,11 +9343,8 @@ public class MainActivity extends Activity {
      */
     private void raumbindungNachholen() {
         if (offeneRaumbindung == null || bestand == null) return;
-        Favorite lokal = bestand.zuSerie(offeneRaumbindung[0]);
-        if (lokal == null) return;
-        String raum = offeneRaumbindung[1];
+        if (!bestand.raumBindungSetzen(offeneRaumbindung[0], offeneRaumbindung[1])) return;
         offeneRaumbindung = null;
-        if (!raum.equals(lokal.watchpartyRaum())) bestand.raumSetzen(lokal.id(), raum);
     }
 
     /** Beitreten oder verlassen - genau dieser Titel in genau diesem Raum. */

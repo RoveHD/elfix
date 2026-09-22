@@ -1142,6 +1142,158 @@ function vonHandAnlegen(zustand, provider, url, angaben = {}) {
 }
 
 /**
+ * Der Eintrag, der zu diesem Titel in dieser Runde gehoert - oder nichts.
+ *
+ * <p>Die eine Regel dafuer, und zwar fuer beide Geraete und jeden Anlass:
+ * gesucht wird ueber Raum <em>und</em> Serienkennung, nie ueber die volle
+ * Adresse und nie ueber den Titel.
+ *
+ * <p>Warum nicht ueber die Adresse: der Raum steht bei Folge 12, der Eintrag
+ * hier vielleicht noch bei Folge 11 - es ist derselbe Titel.
+ *
+ * <p>Warum nicht ueber den Titel: Titel werden abgeschrieben. Der
+ * Titelschluessel faltet ä, ö, ü und ß, streicht aber jeden anderen Akzent
+ * ersatzlos, und "Pokémon" ergibt damit einen anderen Schluessel als
+ * "Pokemon". Genau daran sind am 31.08.2026 drei private Eintraege desselben
+ * Werks entstanden (siehe geraete-stand.js). Die Adresse dagegen gibt es nur
+ * einmal.
+ *
+ * <p>Und warum der Raum dazugehoert: derselbe Titel darf privat laufen und in
+ * zwei Runden stehen. Die drei Staende haben nichts miteinander zu tun, und
+ * der private Eintrag (ohne Raum) gehoert keiner Runde.
+ */
+function watchpartyEintragFinden(favoriten, raum, adresse) {
+  const code = String(raum || "").trim();
+  const serie = serienKennungAusUrl(adresse);
+  if (!code || !serie) return null;
+  return (Array.isArray(favoriten) ? favoriten : []).find((favorit) => (
+    String(favorit?.watchpartyRoom || "") === code
+    && serienKennungAusUrl(favorit?.url) === serie
+  )) || null;
+}
+
+/** Der eigene Eintrag desselben Werks - der ohne Raum. */
+function privaterEintragFinden(favoriten, adresse) {
+  const serie = serienKennungAusUrl(adresse);
+  if (!serie) return null;
+  return (Array.isArray(favoriten) ? favoriten : []).find((favorit) => (
+    !String(favorit?.watchpartyRoom || "")
+    && serienKennungAusUrl(favorit?.url) === serie
+  )) || null;
+}
+
+/**
+ * Darf dieser Eintrag an die Runde gebunden werden - und welcher?
+ *
+ * <p>Der gemeldete Fehler, der das noetig macht: in "Gemeinsam weiterschauen"
+ * stand "Black Torch" zweimal, einmal auf Folge 12 und einmal auf Folge 11,
+ * beide mit demselben Raum. Gebunden wurde bis dahin ueber "irgendein Eintrag
+ * dieser Serie" - und das war oft der <em>private</em>. Er bekam den Raum
+ * aufgestempelt und stand von da an neben dem echten Raum-Eintrag, der
+ * weiterlief, waehrend er stehenblieb.
+ *
+ * <p>Drei Antworten sind moeglich:
+ *
+ * <ul>
+ *   <li><b>nichts</b> - es gibt den Eintrag dieser Runde schon. Dann ist
+ *       nichts zu tun, und vor allem nichts zu stempeln.
+ *   <li><b>binden</b> - es gibt nur den eigenen, privaten. Er wird der
+ *       Eintrag dieser Runde; einen zweiten braucht es nicht.
+ *   <li><b>nichts</b> ohne Kandidat - es gibt hier noch gar keinen Eintrag.
+ *       Er entsteht beim naechsten Raumzustand ueber die geteilte Regel.
+ * </ul>
+ *
+ * <p>Ein Eintrag, der einer <em>anderen</em> Runde gehoert, wird nie gebunden.
+ * Er ist der Stand jener Runde und hat mit dieser nichts zu tun.
+ */
+function raumBindungWaehlen(favoriten, adresse, raum) {
+  const code = String(raum || "").trim();
+  if (!code || !serienKennungAusUrl(adresse)) return { art: "nichts", eintrag: null };
+  const imRaum = watchpartyEintragFinden(favoriten, code, adresse);
+  if (imRaum) return { art: "nichts", eintrag: imRaum };
+  const privat = privaterEintragFinden(favoriten, adresse);
+  return privat ? { art: "binden", eintrag: privat } : { art: "nichts", eintrag: null };
+}
+
+/**
+ * Zwei Eintraege, ein Titel, eine Runde - und einer davon ist eine Karteileiche.
+ *
+ * <p>So etwas entsteht nicht mehr (siehe {@link raumBindungWaehlen}), aber es
+ * steht in Ablagen, die es schon erlebt haben: auf dem Telefon standen "Black
+ * Torch, Folge 12" und "Black Torch, Folge 11" nebeneinander, beide im Raum
+ * "Bangus". Der eine lief mit der Runde weiter, der andere blieb stehen, wo er
+ * gebunden wurde.
+ *
+ * <p>Wer bleibt: der Eintrag, der am weitesten ist. Das ist der der Runde -
+ * sie ist der Grund, warum es den Eintrag gibt. Gleichstand entscheidet der
+ * juengere Stand.
+ *
+ * <p>Und was mit dem anderen geschieht, haengt daran, ob sein Inhalt sonst
+ * verloren waere:
+ *
+ * <ul>
+ *   <li>Gibt es zu diesem Werk keinen privaten Eintrag, wird er einer: der
+ *       Raum faellt weg, der Stand bleibt. Das ist die Gegenbuchung zum
+ *       falschen Stempel - meistens war er vorher genau das.
+ *   <li>Gibt es schon einen privaten, ist er nichts weiter als eine zweite
+ *       Kopie derselben Runde und faellt weg.
+ * </ul>
+ */
+function raumDublettenZusammenlegen(favoriten) {
+  const liste = Array.isArray(favoriten) ? favoriten.slice() : [];
+  const gruppen = new Map();
+  for (const favorit of liste) {
+    const raum = String(favorit?.watchpartyRoom || "");
+    const serie = serienKennungAusUrl(favorit?.url);
+    if (!raum || !serie) continue;
+    const schluessel = `${raum}|${serie}`;
+    if (!gruppen.has(schluessel)) gruppen.set(schluessel, []);
+    gruppen.get(schluessel).push(favorit);
+  }
+
+  const geloest = [];
+  const entfernt = [];
+  for (const gruppe of gruppen.values()) {
+    if (gruppe.length < 2) continue;
+    // Absteigend: vorn steht, wer am weitesten ist. Er bleibt der Eintrag der
+    // Runde, alle dahinter sind die Karteileichen.
+    const sortiert = gruppe.slice().sort((links, rechts) => vergleicheRaumStand(rechts, links));
+    for (const verlierer of sortiert.slice(1)) {
+      const privat = privaterEintragFinden(liste, verlierer.url);
+      if (privat && privat !== verlierer) {
+        entfernt.push(verlierer);
+        continue;
+      }
+      verlierer.watchpartyRoom = "";
+      verlierer.watchpartyArchived = false;
+      geloest.push(verlierer);
+    }
+  }
+
+  if (!geloest.length && !entfernt.length) {
+    return { favoriten: liste, geloest, entfernt, geaendert: false };
+  }
+  return {
+    favoriten: liste.filter((favorit) => !entfernt.includes(favorit)),
+    geloest,
+    entfernt,
+    geaendert: true
+  };
+}
+
+/** Wer ist weiter? Erst die Folge, dann der juengere Stand. */
+function vergleicheRaumStand(links, rechts) {
+  const linksFolge = episodeIdentity(links?.url) || { season: 0, episode: 0 };
+  const rechtsFolge = episodeIdentity(rechts?.url) || { season: 0, episode: 0 };
+  const staffel = (linksFolge.season || 0) - (rechtsFolge.season || 0);
+  if (staffel !== 0) return staffel;
+  const folge = (linksFolge.episode || 0) - (rechtsFolge.episode || 0);
+  if (folge !== 0) return folge;
+  const zeit = (wert) => Date.parse(String(wert?.watchpartyAt || wert?.lastWatchedAt || "")) || 0;
+  return zeit(links) - zeit(rechts);
+}
+
+/**
  * Den Eintrag zu einer Runde finden - und anlegen, wenn es ihn nicht gibt.
  *
  * <h2>Warum das hier steht und nicht im Hauptprozess</h2>
@@ -1181,13 +1333,7 @@ function watchpartyEintragAnlegen(zustand, provider, raum, eintrag = {}, stand =
   const url = absoluteHttpUrl(stand?.url || eintrag?.url || "", provider.startUrl || "");
   if (!url) return leer;
 
-  // Gesucht wird ueber die Serienkennung, nicht ueber die volle Adresse: der
-  // Raum steht bei Folge 4, der eigene Eintrag vielleicht noch bei Folge 2.
-  const serie = serienKennungAusUrl(url);
-  const vorhanden = favoriten.find((favorit) => (
-    String(favorit?.watchpartyRoom || "") === code
-    && serie && serienKennungAusUrl(favorit?.url) === serie
-  ));
+  const vorhanden = watchpartyEintragFinden(favoriten, code, url);
   if (vorhanden) return { eintrag: vorhanden, favoriten, neu: false };
 
   const identity = episodeIdentity(url);
@@ -1987,6 +2133,10 @@ module.exports = {
   medienStandVerbuchen,
   vonHandAnlegen,
   watchpartyEintragAnlegen,
+  watchpartyEintragFinden,
+  privaterEintragFinden,
+  raumBindungWaehlen,
+  raumDublettenZusammenlegen,
   COMPLETED_PROGRESS_PERCENT,
   MIN_WATCH_TIME_SECONDS,
   BACKWARD_WATCH_TIME_SECONDS,

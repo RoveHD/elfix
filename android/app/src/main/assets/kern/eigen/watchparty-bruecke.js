@@ -426,11 +426,7 @@
    */
   function lokalerRaumEintrag(favoriten, room, eintrag) {
     const adresse = (eintrag && ((eintrag.progress && eintrag.progress.url) || eintrag.url)) || "";
-    const serie = fortschritt.serienKennungAusUrl(adresse);
-    if (!serie) return null;
-    return (favoriten || []).find((favorit) => favorit
-      && String(favorit.watchpartyRoom || "") === room
-      && fortschritt.serienKennungAusUrl(favorit.url) === serie) || null;
+    return fortschritt.watchpartyEintragFinden(favoriten, room, adresse);
   }
 
   function nachschubMelden(favoriten) {
@@ -484,7 +480,13 @@
     nachschubMelden(favoriten);
     const gesichert = [];
     let angelegt = 0;
-    let geaendert = raumbindungenAbgleichen(favoriten);
+    // Erst geradeziehen, was schon doppelt dasteht. Dubletten entstehen nicht
+    // mehr, aber eine Ablage, die sie hat, wird davon nicht von selbst heil -
+    // und der Raumzustand ist der Moment, in dem feststeht, welche Runde es
+    // wirklich gibt. Dieselbe Regel wie am Rechner.
+    const geheilt = fortschritt.raumDublettenZusammenlegen(favoriten);
+    if (geheilt.geaendert) favoriten = geheilt.favoriten;
+    let geaendert = raumbindungenAbgleichen(favoriten) || geheilt.geaendert;
     if (!raeume) return { favoriten, gesichert, angelegt, geaendert };
     for (const eintrag of raeume.eintraege()) {
       if (!eintrag || !eintrag.joined) continue;
