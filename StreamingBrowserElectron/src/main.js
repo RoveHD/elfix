@@ -1257,6 +1257,33 @@ ipcMain.handle("search:cancel", event => {
   return true;
 });
 
+// Vorschlaege beim Tippen. Eigener Koordinator und eigener Besitzer: eine neue
+// Eingabe soll den vorigen Vorschlag verwerfen, aber niemals die grosse Suche
+// abbrechen, die vielleicht gerade laeuft.
+ipcMain.handle("search:vorschlaege", async (event, frage) => {
+  const owner = `vorschlag:${event.sender.id}`;
+  const value = String(frage || "").trim();
+  if (value.length < VORSCHLAG_MIN_LAENGE) {
+    vorschlagCoordinator.cancel(owner);
+    return [];
+  }
+  try {
+    return await vorschlagCoordinator.request({
+      key: JSON.stringify(["vorschlag", value.toLowerCase(), enabledProviders().map((provider) => provider.id)]),
+      owner,
+      execute: (signal) => suchvorschlaege(value,
+        AbortSignal.any([signal, AbortSignal.timeout(VORSCHLAG_TIMEOUT_MS)])),
+      isCacheable: (liste) => Array.isArray(liste) && liste.length > 0
+    });
+  } catch (fehler) {
+    // Ein abgebrochener oder zu langsamer Vorschlag ist kein Fehler, den
+    // jemand sehen muesste - er ist nur nicht mehr gemeint.
+    if (fehler?.name === "AbortError" || fehler?.name === "TimeoutError") return [];
+    console.log(`[ELFIX] Vorschlaege fehlgeschlagen: ${String(fehler?.message || fehler).slice(0, 120)}`);
+    return [];
+  }
+});
+
 // Nur fuer Treffer, deren Anbieter kein Bild mitgeschickt hat - siehe
 // sucheTrefferbild. Die Suche selbst wartet darauf nicht.
 ipcMain.handle("search:artwork", async (_event, treffer = {}) => (
@@ -6749,6 +6776,143 @@ async function sucheTrefferbild(providerId, url, title) {
   })().finally(() => suchbilderLaufen.delete(adresse));
   suchbilderLaufen.set(adresse, lauf);
   return lauf;
+}
+
+// --- Vorschlaege beim Tippen -------------------------------------------------
+//
+// Was hier NICHT passiert: die Suche aller Anbieter. Deren Trefferliste kommt
+// aus HTML-Seiten, eine je Schreibweise und Anbieter - bei jedem Tastendruck
+// waeren das dutzende Abrufe fremder Seiten. Die Vorschlaege nehmen deshalb nur
+// Quellen, die eine einzelne, kurze Antwort geben:
+//
+//   1. Die Watchlist. Sie liegt im Speicher, kostet nichts und ist der
+//      wahrscheinlichste Treffer - wer etwas vorgemerkt hat, sucht es wieder.
+//      Diese Vorschlaege tragen ihre Adresse und lassen sich sofort oeffnen.
+//   2. Die Schnellsuche der Anbieter, soweit einer eine hat: bei AniWorld
+//      beantwortet /ajax/search eine Anfrage mit Titel und Adresse. Auch diese
+//      Vorschlaege sind sofort oeffenbar.
+//   3. Der eigene Metadaten-Cache. Deutsche und Originaltitel von allem, was
+//      die Anreicherung schon aufgeloest hat - ohne Netz, auch ohne Relay.
+//   4. Das Metadaten-Tor des Relays (TMDB und AniList). Das ist die Quelle fuer
+//      Titel, die ELFIX noch nie gesehen hat. Sie tragen keine Adresse: ein
+//      Klick darauf sucht danach, und weil der Vorschlag den deutschen Titel
+//      nennt, findet die Suche ihn dann auch beim Anbieter.
+//
+// Die Reihenfolge ist genau diese: was sich oeffnen laesst, steht vor dem, was
+// erst noch gesucht werden muss.
+const VORSCHLAG_MAX = 8;
+const VORSCHLAG_MIN_LAENGE = 2;
+const VORSCHLAG_TIMEOUT_MS = 4000;
+const VORSCHLAG_JE_QUELLE = 6;
+const vorschlagCoordinator = createSearchCoordinator({ ttlMs: 30000, maxEntries: 40 });
+
+/** Derselbe Schluessel fuer dieselbe Sache - Titel ohne Zierrat. */
+function vorschlagSchluessel(titel) {
+  return normalizeSearchText(titel);
+}
+
+function vorschlagAufnehmen(ziel, gesehen, eintrag) {
+  const titel = String(eintrag?.titel || "").trim();
+  const schluessel = vorschlagSchluessel(titel);
+  if (!titel || !schluessel || gesehen.has(schluessel)) return;
+  gesehen.add(schluessel);
+  ziel.push({
+    titel,
+    jahr: sanitizePositiveNumber(eintrag.jahr) || 0,
+    art: String(eintrag.art || ""),
+    quelle: String(eintrag.quelle || ""),
+    // Nur mit Adresse: dann oeffnet der Vorschlag den Titel direkt.
+    url: providerModel.isHttpUrl(eintrag.url || "") ? String(eintrag.url) : "",
+    providerId: String(eintrag.providerId || ""),
+    providerName: String(eintrag.providerName || ""),
+    bild: String(eintrag.bild || "")
+  });
+}
+
+/** Die Watchlist - im Speicher, ohne Netz, mit Adresse. */
+function vorschlaegeAusWatchlist(frage) {
+  const gesucht = normalizeSearchText(frage);
+  if (!gesucht) return [];
+  const treffer = [];
+  for (const favorite of favorites) {
+    if (favorite?.favorite === false) continue;
+    const titel = String(favorite?.title || "");
+    const name = normalizeSearchText(titel);
+    if (!name || !name.includes(gesucht)) continue;
+    treffer.push({
+      titel,
+      art: String(favorite.type || ""),
+      quelle: "watchlist",
+      url: favorite.url,
+      providerId: favorite.providerId,
+      providerName: favorite.providerName,
+      bild: favorite.thumbnail || "",
+      // Der Anfang wiegt schwerer als die Mitte.
+      gewicht: name.startsWith(gesucht) ? 2 : 1
+    });
+  }
+  return treffer
+    .sort((links, rechts) => rechts.gewicht - links.gewicht || links.titel.localeCompare(rechts.titel))
+    .slice(0, VORSCHLAG_JE_QUELLE);
+}
+
+/** Die Schnellsuche der Anbieter, die eine haben. Eine Anfrage je Anbieter. */
+async function vorschlaegeVonAnbietern(frage, signal) {
+  const anbieter = enabledProviders().filter((provider) => usesAniWorldAjaxSearch(provider));
+  if (!anbieter.length) return [];
+  const laeufe = await Promise.all(anbieter.map(async (provider) => {
+    const searchUrl = providerModel.buildSearchUrl(provider, frage);
+    const treffer = await searchProviderAjax(provider, frage, searchUrl, signal).catch(() => []);
+    return treffer.slice(0, VORSCHLAG_JE_QUELLE).map((eintrag) => ({
+      titel: eintrag.title,
+      quelle: "anbieter",
+      url: eintrag.url,
+      providerId: provider.id,
+      providerName: provider.name,
+      bild: eintrag.image || ""
+    }));
+  }));
+  return laeufe.flat();
+}
+
+/** Der eigene Cache und das Relay - beides ueber denselben Client. */
+function vorschlaegeAusMetadaten(frage) {
+  try {
+    return metadatenClient().vorschlaegeAusCache(frage, VORSCHLAG_JE_QUELLE)
+      .map((eintrag) => ({ ...eintrag, quelle: "cache" }));
+  } catch {
+    return [];
+  }
+}
+
+async function vorschlaegeVomRelay(frage) {
+  try {
+    const liste = await metadatenClient().vorschlagen(frage);
+    return liste.map((eintrag) => ({ ...eintrag, quelle: eintrag.quelle || "relay" }));
+  } catch {
+    return [];
+  }
+}
+
+async function suchvorschlaege(frage, signal) {
+  const wert = String(frage || "").trim();
+  if (wert.length < VORSCHLAG_MIN_LAENGE) return [];
+  // Nebeneinander: die langsamste Quelle bestimmt die Wartezeit, und eine, die
+  // ausfaellt, nimmt die anderen nicht mit.
+  const [anbieter, relay] = await Promise.all([
+    vorschlaegeVonAnbietern(wert, signal).catch(() => []),
+    vorschlaegeVomRelay(wert)
+  ]);
+  signal?.throwIfAborted();
+  const fertig = [];
+  const gesehen = new Set();
+  for (const liste of [vorschlaegeAusWatchlist(wert), anbieter, vorschlaegeAusMetadaten(wert), relay]) {
+    for (const eintrag of liste) {
+      vorschlagAufnehmen(fertig, gesehen, eintrag);
+      if (fertig.length >= VORSCHLAG_MAX) return fertig;
+    }
+  }
+  return fertig;
 }
 
 // Empfehlungen: von jeder aktiven Anbieterseite ein paar Titel von der

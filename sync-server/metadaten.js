@@ -38,6 +38,16 @@ const MAX_STAPEL = 25;
 const MAX_TITEL_LAENGE = 200;
 const MAX_KOERPER = 64 * 1024;
 
+// Vorschlaege beim Tippen. Kuerzer gehalten als alles andere hier: es sind
+// Zwischenstaende einer Eingabe, keine Auskunft ueber ein Werk.
+const VORSCHLAG_MAX = 8;
+const VORSCHLAG_JE_QUELLE = 6;
+const VORSCHLAG_MIN_LAENGE = 2;
+const VORSCHLAG_FRAGE_LAENGE = 80;
+// Sechs Stunden. Wer tippt, tippt dieselben Anfaenge immer wieder - und was
+// unter "harr" steht, aendert sich nicht im Minutentakt.
+const VORSCHLAG_CACHE_MS = 6 * 60 * 60 * 1000;
+
 // Wie lange gelten Antworten? TMDB erlaubt laut Nutzungsbedingungen hoechstens
 // sechs Monate; so lange braucht es hier ohnehin nicht. Beziehungen und
 // Sammlungen aendern sich selten, Bekanntheit staendig - deshalb zwei Werte.
@@ -243,6 +253,19 @@ function anilistAbfrage(titel) {
   return "query {\n" + titel.map((wert, i) => (
     `  t${i}: Page(perPage: 6) { media(search: ${JSON.stringify(wert)}, type: ANIME, sort: POPULARITY_DESC) { ${ANILIST_FELDER} } }`
   )).join("\n") + "\n}";
+}
+
+// Die leichte Abfrage: fuer eine Zeile in einer Vorschlagsliste braucht es
+// weder Tags noch Beziehungen noch Studios. Sie kostet dieselbe eine Anfrage,
+// aber einen Bruchteil der Antwort.
+function anilistVorschlagAbfrage() {
+  return `query ($q: String) {
+    Page(perPage: ${VORSCHLAG_JE_QUELLE}) {
+      media(search: $q, type: ANIME, sort: POPULARITY_DESC) {
+        title { romaji english } seasonYear
+      }
+    }
+  }`;
 }
 
 function anilistNormalform(m, konfidenz) {
@@ -826,6 +849,131 @@ function erstellen(optionen = {}) {
     };
   }
 
+  // --- Vorschlaege beim Tippen ----------------------------------------------
+  //
+  // Warum eine eigene Route und nicht /metadata/lookup? Weil die Frage eine
+  // andere ist. Dort wird ein Titel aufgeloest, den ELFIX schon kennt - mit
+  // Jahr, IMDB-Kennung und einer Nachpruefung, die einen Fehltreffer verwirft.
+  // Beim Tippen gibt es nichts davon: es gibt drei Buchstaben und die Frage,
+  // was damit gemeint sein koennte.
+  //
+  // Deshalb gelten hier eigene Regeln:
+  //
+  //   - Es geht keine Normalform hinaus, sondern vier Felder je Vorschlag:
+  //     Titel, Jahr, Art und Quelle. Mehr braucht eine Zeile in einer Liste
+  //     nicht, und was nicht hinausgeht, kann auch nichts mitnehmen.
+  //   - Es wird nichts bewertet. Eine Konfidenz waere hier eine erfundene
+  //     Zahl: bei drei Buchstaben deckt sich kein Name, und das ist kein
+  //     Mangel, sondern der Sinn der Sache.
+  //   - Die Reihenfolge ist abwechselnd, nicht nach Beliebtheit sortiert. Die
+  //     Zahlen der Quellen sind nicht vergleichbar - TMDB nennt 88, AniList
+  //     718718 fuer dasselbe Mass. Wer sie in einen Topf wirft, bekommt eine
+  //     Liste, in der nie ein Film steht.
+  const vorschlagCache = cacheBauen(jetztFn);
+
+  function vorschlagFrage(roh) {
+    const frage = text(roh, VORSCHLAG_FRAGE_LAENGE);
+    return normalisieren(frage).length >= VORSCHLAG_MIN_LAENGE ? frage : "";
+  }
+
+  function vorschlagEintrag(titel, jahrWert, art, quelle) {
+    const name = text(titel, MAX_TITEL_LAENGE);
+    if (!name) return null;
+    return { titel: name, jahr: jahr(jahrWert), art, quelle };
+  }
+
+  async function tmdbVorschlaege(frage, art) {
+    const istFilm = art === "film";
+    const antwort = await tmdbHolen(istFilm ? "/search/movie" : "/search/tv", {
+      query: frage,
+      // Deutsch, aus demselben Grund wie bei der Suche: die Anbieter fuehren
+      // deutsche Titel, und unter dem soll der Vorschlag dastehen. Gefunden
+      // wird trotzdem sprachuebergreifend - "Frozen" findet die Eiskoenigin.
+      language: "de-DE",
+      include_adult: "false"
+    });
+    if (antwort.fehler) {
+      zaehler.fehler += 1;
+      return [];
+    }
+    return (antwort.daten?.results || [])
+      .slice(0, VORSCHLAG_JE_QUELLE)
+      .map((eintrag) => vorschlagEintrag(
+        istFilm ? eintrag?.title : eintrag?.name,
+        istFilm ? eintrag?.release_date : eintrag?.first_air_date,
+        art,
+        "tmdb"
+      ))
+      .filter(Boolean);
+  }
+
+  async function anilistVorschlaege(frage) {
+    zaehler.anilist += 1;
+    const antwort = await abrufen(ANILIST_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ query: anilistVorschlagAbfrage(), variables: { q: frage } })
+    });
+    if (antwort.fehler || antwort.daten?.errors) {
+      zaehler.fehler += 1;
+      return [];
+    }
+    return (antwort.daten?.data?.Page?.media || [])
+      .slice(0, VORSCHLAG_JE_QUELLE)
+      .map((eintrag) => vorschlagEintrag(
+        eintrag?.title?.english || eintrag?.title?.romaji,
+        eintrag?.seasonYear,
+        "anime",
+        "anilist"
+      ))
+      .filter(Boolean);
+  }
+
+  /** Abwechselnd aus jeder Quelle, ohne denselben Titel zweimal. */
+  function vorschlaegeMischen(quellen) {
+    const fertig = [];
+    const gesehen = new Set();
+    const laengste = Math.max(0, ...quellen.map((liste) => liste.length));
+    for (let stelle = 0; stelle < laengste; stelle += 1) {
+      for (const liste of quellen) {
+        const eintrag = liste[stelle];
+        if (!eintrag) continue;
+        const schluessel = normalisieren(eintrag.titel) + "|" + eintrag.art;
+        if (!schluessel || gesehen.has(schluessel)) continue;
+        gesehen.add(schluessel);
+        fertig.push(eintrag);
+        if (fertig.length >= VORSCHLAG_MAX) return fertig;
+      }
+    }
+    return fertig;
+  }
+
+  async function vorschlaegeHolen(frage) {
+    const schluessel = "vorschlag|" + normalisieren(frage);
+    const bekannt = vorschlagCache.lesen(schluessel);
+    if (bekannt) {
+      zaehler.treffer += 1;
+      return bekannt;
+    }
+    zaehler.fehlgriffe += 1;
+    return einmal(schluessel, async () => {
+      // Alle Quellen nebeneinander: die langsamste bestimmt die Wartezeit, und
+      // eine, die ausfaellt, nimmt die anderen nicht mit. Ohne TMDB-Schluessel
+      // bleibt es bei Anime - das ist ein Betriebszustand und kein Fehler.
+      const [anime, filme, serien] = await Promise.all([
+        anilistVorschlaege(frage).catch(() => []),
+        tmdbBereit() ? tmdbVorschlaege(frage, "film").catch(() => []) : Promise.resolve([]),
+        tmdbBereit() ? tmdbVorschlaege(frage, "serie").catch(() => []) : Promise.resolve([])
+      ]);
+      const liste = vorschlaegeMischen([anime, filme, serien]);
+      // Auch die leere Antwort wird gemerkt: "zu dieser Buchstabenfolge gibt es
+      // nichts" ist ein Ergebnis, und der naechste Tastendruck darf es nicht
+      // noch einmal von draussen holen muessen.
+      vorschlagCache.schreiben(schluessel, liste, VORSCHLAG_CACHE_MS);
+      return liste;
+    });
+  }
+
   function zustand() {
     return {
       metadata: true,
@@ -878,6 +1026,20 @@ function erstellen(optionen = {}) {
         treffer: wuensche.map((wunsch) => ({ id: wunsch.id, ...(ergebnisse.get(wunsch.id) || leereNormalform(wunsch.art)) })),
         quellen: zustand()
       });
+      return true;
+    }
+
+    // Vorschlaege beim Tippen. Eine Anfrage, hoechstens drei Abrufe nach
+    // draussen, und beim zweiten Mal keiner mehr.
+    if (pfad === "/metadata/vorschlag" && req.method === "POST") {
+      const koerper = await koerperLesen(req);
+      if (koerper.fehler) return antworten(res, 400, { fehler: koerper.fehler }), true;
+      const frage = vorschlagFrage(koerper.daten?.frage);
+      // Ein einzelner Buchstabe ist keine Frage, sondern ein Anfang. Dafuer
+      // nach draussen zu gehen, kostet nur - geantwortet wird trotzdem mit 200
+      // und einer leeren Liste: die App hat nichts falsch gemacht.
+      if (!frage) return antworten(res, 200, { vorschlaege: [], quellen: zustand() }), true;
+      antworten(res, 200, { vorschlaege: await vorschlaegeHolen(frage), quellen: zustand() });
       return true;
     }
 

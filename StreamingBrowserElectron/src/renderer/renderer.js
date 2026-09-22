@@ -944,6 +944,20 @@ function bindEvents() {
       navigateFromOmnibox();
     }
   });
+  // Die Vorschlaege beim Tippen - an beiden Suchfeldern, mit demselben
+  // Kaestchen. Angebunden nach dem Enter oben, aber sie greifen davor: ihr
+  // Griff haengt in der Abfangphase (siehe vorschlagTaste).
+  vorschlagFeldAnbinden(omnibox);
+  vorschlagFeldAnbinden(homeQuickSearch);
+  // Verrutscht das Suchfeld, ist das Kaestchen an der falschen Stelle. Beim
+  // Rollen und beim Fensterwechsel wird es deshalb einfach zugemacht.
+  window.addEventListener("resize", vorschlagSchliessen);
+  window.addEventListener("scroll", vorschlagSchliessen, true);
+  document.addEventListener("pointerdown", (event) => {
+    if (!vorschlagFeld) return;
+    if (event.target.closest?.("#suchVorschlag") || event.target === vorschlagFeld) return;
+    vorschlagSchliessen();
+  }, true);
   // Eine neue Eingabe macht die sichtbare alte Ergebnisliste sofort ungueltig,
   // auch wenn der Nutzer noch tippt und Enter erst danach drueckt. So wartet
   // weder der Renderer noch der Hauptprozess auf eine veraltete Providerseite.
@@ -5532,6 +5546,202 @@ async function trefferbilderNachreichen(offen, searchToken) {
   };
   const faeden = Array.from({ length: Math.min(TREFFERBILD_GLEICHZEITIG, liste.length) }, arbeiten);
   await Promise.allSettled(faeden);
+}
+
+// --- Vorschlaege beim Tippen -------------------------------------------------
+//
+// Zwei Suchfelder, ein Kaestchen: das in der Kopfzeile und das auf der
+// Startseite. Was drinsteht, kommt aus dem Hauptprozess (siehe
+// suchvorschlaege in main.js) - hier liegt nur, wann gefragt wird und was ein
+// Klick bedeutet.
+//
+// Wann nicht gefragt wird, ist genauso wichtig:
+//
+//   - unter zwei Zeichen. Ein Buchstabe ist kein Suchbegriff.
+//   - waehrend eine Anbieterseite vorn liegt. Sie ist eine eigene Ansicht des
+//     Systems und liegt ueber dieser Seite; ein Kaestchen aus HTML waere
+//     dahinter unsichtbar. Dort bleibt es beim bisherigen Weg: tippen, Enter.
+//   - solange die vorige Antwort noch unterwegs ist. Jede Eingabe zaehlt einen
+//     Lauf hoch, und nur der jueweils letzte darf zeichnen.
+const VORSCHLAG_WARTEN_MS = 180;
+const VORSCHLAG_MIN_ZEICHEN = 2;
+const suchVorschlagNode = document.querySelector("#suchVorschlag");
+const vorschlagArtNamen = { film: "Film", serie: "Serie", anime: "Anime" };
+let vorschlagFeld = null;
+let vorschlagListe = [];
+let vorschlagStelle = -1;
+let vorschlagLauf = 0;
+let vorschlagTimer = null;
+
+function vorschlagMoeglich() {
+  return Boolean(suchVorschlagNode) && !String(currentRoute || "").startsWith("provider:");
+}
+
+function vorschlagSchliessen() {
+  window.clearTimeout(vorschlagTimer);
+  vorschlagTimer = null;
+  vorschlagLauf += 1;
+  vorschlagListe = [];
+  vorschlagStelle = -1;
+  vorschlagFeld?.removeAttribute("aria-expanded");
+  vorschlagFeld = null;
+  if (!suchVorschlagNode) return;
+  suchVorschlagNode.classList.add("is-hidden");
+  suchVorschlagNode.replaceChildren();
+}
+
+function vorschlagAnfordern(feld) {
+  window.clearTimeout(vorschlagTimer);
+  if (!vorschlagMoeglich() || typeof api.searchSuggestions !== "function") return;
+  const wert = feld.value.trim();
+  if (wert.length < VORSCHLAG_MIN_ZEICHEN) {
+    vorschlagSchliessen();
+    return;
+  }
+  vorschlagTimer = window.setTimeout(async () => {
+    const meiner = ++vorschlagLauf;
+    const liste = await api.searchSuggestions(wert).catch(() => []);
+    // Zwischen Frage und Antwort kann alles passiert sein: weitergetippt,
+    // abgeschickt, eine Anbieterseite geoeffnet. Dann gehoert diese Antwort
+    // nicht mehr auf den Schirm.
+    if (meiner !== vorschlagLauf || !vorschlagMoeglich()) return;
+    if (document.activeElement !== feld || feld.value.trim() !== wert) return;
+    vorschlagZeichnen(feld, Array.isArray(liste) ? liste : []);
+  }, VORSCHLAG_WARTEN_MS);
+}
+
+function vorschlagZeichnen(feld, liste) {
+  if (!suchVorschlagNode) return;
+  if (!liste.length) {
+    vorschlagSchliessen();
+    return;
+  }
+  vorschlagFeld = feld;
+  vorschlagListe = liste;
+  vorschlagStelle = -1;
+  const zeilen = liste.map((eintrag, stelle) => {
+    const zeile = document.createElement("button");
+    zeile.type = "button";
+    zeile.className = "vorschlag-zeile";
+    zeile.role = "option";
+    zeile.setAttribute("aria-selected", "false");
+    const titel = document.createElement("span");
+    titel.className = "vorschlag-titel";
+    titel.textContent = eintrag.jahr ? `${eintrag.titel} (${eintrag.jahr})` : eintrag.titel;
+    zeile.append(titel);
+    const art = vorschlagArtNamen[String(eintrag.art || "").toLowerCase()];
+    if (art) {
+      const kennung = document.createElement("span");
+      kennung.className = "vorschlag-art";
+      kennung.textContent = art;
+      zeile.append(kennung);
+    }
+    // Wo es zu sehen ist - aber nur, wenn der Vorschlag es wirklich weiss.
+    if (eintrag.providerName) {
+      const wo = document.createElement("span");
+      wo.className = "vorschlag-wo";
+      wo.textContent = eintrag.providerName;
+      zeile.append(wo);
+    }
+    // mousedown statt click: ein Klick nimmt dem Suchfeld zuerst den Fokus,
+    // und das Schliessen bei Fokusverlust waere schneller als der Klick.
+    zeile.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      vorschlagWaehlen(eintrag);
+    });
+    zeile.addEventListener("mouseenter", () => vorschlagHervorheben(stelle));
+    return zeile;
+  });
+  suchVorschlagNode.replaceChildren(...zeilen);
+  suchVorschlagNode.classList.remove("is-hidden");
+  feld.setAttribute("aria-expanded", "true");
+  vorschlagStellen(feld);
+}
+
+/** Unter das Suchfeld, und nie ueber den Fensterrand hinaus. */
+function vorschlagStellen(feld) {
+  const kasten = feld.getBoundingClientRect();
+  const breite = Math.min(Math.max(kasten.width, 280), window.innerWidth - 24);
+  const links = Math.max(12, Math.min(kasten.left, window.innerWidth - breite - 12));
+  suchVorschlagNode.style.width = `${Math.round(breite)}px`;
+  suchVorschlagNode.style.left = `${Math.round(links)}px`;
+  suchVorschlagNode.style.top = `${Math.round(kasten.bottom + 6)}px`;
+}
+
+function vorschlagHervorheben(stelle) {
+  vorschlagStelle = stelle;
+  const zeilen = [...suchVorschlagNode.querySelectorAll(".vorschlag-zeile")];
+  zeilen.forEach((zeile, index) => {
+    const aktiv = index === stelle;
+    zeile.classList.toggle("is-active", aktiv);
+    zeile.setAttribute("aria-selected", String(aktiv));
+    if (aktiv) zeile.scrollIntoView({ block: "nearest" });
+  });
+}
+
+async function vorschlagWaehlen(eintrag) {
+  const feld = vorschlagFeld;
+  vorschlagSchliessen();
+  if (!eintrag) return;
+  // Mit Adresse: der Titel ist da, und wir gehen hin. Ohne: wir suchen danach -
+  // und weil der Vorschlag den Namen des Anbieters traegt, findet die Suche ihn.
+  if (eintrag.url && eintrag.providerId) {
+    omnibox.value = eintrag.titel;
+    hideContentViews();
+    await api.setShellOpen(false);
+    const state = await api.openProviderUrl(eintrag.providerId, eintrag.url);
+    activeProviderId = state?.activeProviderId || eintrag.providerId;
+    setCurrentRoute(`provider:${activeProviderId}`);
+    renderProviders();
+    return;
+  }
+  if (feld && feld !== omnibox) feld.value = eintrag.titel;
+  omnibox.value = eintrag.titel;
+  showGlobalSearch(eintrag.titel);
+}
+
+/**
+ * Die Tasten im Vorschlagskaestchen.
+ *
+ * <p>Sie haengen in der Abfangphase (`capture`), und das muss so sein: das
+ * Suchfeld hat sein eigenes Enter, das die Suche abschickt. Ist eine Zeile
+ * gewaehlt, gilt sie - und dafuer muss dieser Griff vor dem anderen kommen.
+ */
+function vorschlagTaste(event, feld) {
+  if (event.key === "Escape" && vorschlagListe.length) {
+    event.stopPropagation();
+    vorschlagSchliessen();
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (!vorschlagListe.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const schritt = event.key === "ArrowDown" ? 1 : -1;
+    const anzahl = vorschlagListe.length;
+    vorschlagHervorheben(((vorschlagStelle + schritt) % anzahl + anzahl) % anzahl);
+    return;
+  }
+  if (event.key === "Enter" && vorschlagStelle >= 0 && vorschlagListe[vorschlagStelle]) {
+    event.preventDefault();
+    event.stopPropagation();
+    vorschlagWaehlen(vorschlagListe[vorschlagStelle]);
+    return;
+  }
+  // Enter ohne gewaehlte Zeile bleibt die Suche, wie sie immer war.
+  if (event.key === "Enter") vorschlagSchliessen();
+}
+
+function vorschlagFeldAnbinden(feld) {
+  if (!feld || !suchVorschlagNode) return;
+  feld.setAttribute("autocomplete", "off");
+  feld.addEventListener("keydown", (event) => vorschlagTaste(event, feld), true);
+  feld.addEventListener("input", () => vorschlagAnfordern(feld));
+  feld.addEventListener("focus", () => vorschlagAnfordern(feld));
+  // Kurz warten, damit ein Klick auf eine Zeile noch durchkommt.
+  feld.addEventListener("blur", () => window.setTimeout(() => {
+    if (vorschlagFeld === feld) vorschlagSchliessen();
+  }, 120));
 }
 
 function rememberSearch(query) {

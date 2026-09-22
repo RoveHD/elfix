@@ -62,6 +62,10 @@ const STAPEL_ANIME = 25;
 const STAPEL_WERK = 10;
 const TIMEOUT_MS = 45 * 1000;
 const STATUS_TIMEOUT_MS = 6 * 1000;
+// Vorschlaege beim Tippen. Kurz, weil jemand davor sitzt und weitertippt: was
+// nicht in dieser Zeit da ist, ist fuer diesen Tastendruck wertlos.
+const VORSCHLAG_TIMEOUT_MS = 3500;
+const VORSCHLAG_MAX = 8;
 // Zwischen zwei Stapeln wird gewartet. Der Server laesst je Adresse 60
 // Anfragen und 300 Titel in der Minute zu - das hier bleibt deutlich darunter,
 // auch wenn zwei Geraete desselben Anschlusses gleichzeitig anreichern.
@@ -451,6 +455,9 @@ function erstellen(optionen = {}) {
   let geaendert = false;
   let ausfaelle = 0;
   let ausfallBis = 0;
+  // Einmal 404 auf /metadata/vorschlag heisst: dieses Relay ist aelter als die
+  // Route. Danach bleibt die Vorschlagssuche lokal.
+  let vorschlagRouteFehlt = false;
   // Was das Relay ueber seine eigenen Quellen sagt - zuletzt gesehen.
   //
   // Es steht in jeder Antwort auf /metadata/lookup und in /metadata/status,
@@ -585,8 +592,14 @@ function erstellen(optionen = {}) {
 
   // Eine Anfrage an das Relay. Ein Fehler kommt als Ergebnis zurueck, nicht als
   // Ausnahme - die Anreicherung soll nirgends abbrechen.
-  async function anfragen(pfad, aufbau, timeout) {
+  // `optionen.ohneAusfall` zaehlt einen Fehlschlag nicht gegen das Relay. Das
+  // gibt es fuer genau einen Fall: eine Route, die ein aelteres Relay noch
+  // nicht kennt. Sie fehlt dauerhaft und antwortet mit 404 - wuerde das als
+  // Ausfall zaehlen, legte die Vorschlagssuche nach drei Tastendruecken die
+  // ganze Anreicherung fuer fuenf Minuten schlafen.
+  async function anfragen(pfad, aufbau, timeout, optionen = {}) {
     const beginn = jetztFn();
+    const merken = (art) => { if (!optionen.ohneAusfall) ausfallMerken(art); };
     try {
       const antwort = await holen(basis + pfad, {
         ...aufbau,
@@ -600,20 +613,20 @@ function erstellen(optionen = {}) {
         return { fehler: "gebremst" };
       }
       if (!antwort.ok) {
-        ausfallMerken("status");
-        return { fehler: "status-" + antwort.status };
+        merken("status");
+        return { fehler: "status-" + antwort.status, status: antwort.status };
       }
       const daten = await antwort.json();
       if (!daten || typeof daten !== "object") {
-        ausfallMerken("kein-json");
+        merken("kein-json");
         return { fehler: "kein-json" };
       }
-      ausfaelle = 0;
+      if (!optionen.ohneAusfall) ausfaelle = 0;
       return { daten };
     } catch (fehler) {
       zaehler.dauerMs += jetztFn() - beginn;
       const art = fehler?.name === "TimeoutError" || fehler?.name === "AbortError" ? "timeout" : "netz";
-      ausfallMerken(art);
+      merken(art);
       return { fehler: art };
     }
   }
@@ -830,6 +843,91 @@ function erstellen(optionen = {}) {
     return ergebnisse;
   }
 
+  // --- Vorschlaege beim Tippen -----------------------------------------------
+
+  /**
+   * Was der eigene Cache zu einer angefangenen Eingabe hergibt - ohne Netz.
+   *
+   * <p>Das ist die schnellste Quelle, die es gibt: hier liegen die Titel, die
+   * die Anreicherung schon einmal aufgeloest hat, jeder mit seinem deutschen
+   * und seinem Originalnamen. Wer "froz" tippt, bekommt daraus "Die
+   * Eiskoenigin - Voellig unverfroren" - und zwar sofort und auch dann, wenn
+   * gerade kein Relay erreichbar ist.
+   *
+   * <p>Der Anfang wiegt schwerer als die Mitte: "harr" soll "Harry Potter"
+   * bringen und nicht einen Titel, in dem das Wort hinten vorkommt.
+   */
+  function vorschlaegeAusCache(frage, grenze = VORSCHLAG_MAX) {
+    laden();
+    const gesucht = normalisieren(frage);
+    if (gesucht.length < 2) return [];
+    const jetzt = jetztFn();
+    const gefunden = [];
+    for (const eintrag of eintraege.values()) {
+      if (!eintrag?.form || jetzt > eintrag.bis) continue;
+      const form = eintrag.form;
+      // Nur, was wirklich zugeordnet ist. Ein UNMATCHED traegt keinen Titel,
+      // den man vorschlagen koennte.
+      if (rang(form.konfidenz) < rang("MEDIUM")) continue;
+      const namen = namenVon(form);
+      if (!namen.length) continue;
+      const anfang = namen.some((name) => normalisieren(name).startsWith(gesucht));
+      const irgendwo = anfang || namen.some((name) => normalisieren(name).includes(gesucht));
+      if (!irgendwo) continue;
+      gefunden.push({
+        titel: form.titel || namen[0],
+        jahr: Number(form.jahr) || 0,
+        art: String(form.art || ""),
+        quelle: "cache",
+        gewicht: (anfang ? 2 : 1),
+        beliebtheit: Number(form.beliebtheit) || 0
+      });
+    }
+    gefunden.sort((links, rechts) => rechts.gewicht - links.gewicht
+      || rechts.beliebtheit - links.beliebtheit
+      || links.titel.localeCompare(rechts.titel));
+    const fertig = [];
+    const gesehen = new Set();
+    for (const eintrag of gefunden) {
+      const schluessel = normalisieren(eintrag.titel);
+      if (!schluessel || gesehen.has(schluessel)) continue;
+      gesehen.add(schluessel);
+      fertig.push({ titel: eintrag.titel, jahr: eintrag.jahr, art: eintrag.art, quelle: "cache" });
+      if (fertig.length >= grenze) break;
+    }
+    return fertig;
+  }
+
+  /**
+   * Und was das Relay dazu sagt - TMDB fuer Filme und Serien, AniList fuer
+   * Anime. Das ist die Quelle fuer alles, was ELFIX noch nie gesehen hat.
+   *
+   * <p>Eine fehlende Route wird einmal gemerkt und danach nicht mehr gefragt:
+   * ein aelteres Relay kennt `/metadata/vorschlag` nicht, und ein 404 je
+   * Tastendruck waere ein Fehlschlag im Sekundentakt.
+   */
+  async function vorschlagen(frage) {
+    const wert = String(frage || "").trim();
+    if (wert.length < 2 || !bereit() || gesperrt() || vorschlagRouteFehlt) return [];
+    const antwort = await anfragen("/metadata/vorschlag", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ frage: wert })
+    }, VORSCHLAG_TIMEOUT_MS, { ohneAusfall: true });
+    if (antwort.fehler) {
+      if (antwort.status === 404) vorschlagRouteFehlt = true;
+      return [];
+    }
+    quellenMerken(antwort.daten?.quellen);
+    const liste = Array.isArray(antwort.daten?.vorschlaege) ? antwort.daten.vorschlaege : [];
+    return liste.slice(0, VORSCHLAG_MAX).map((eintrag) => ({
+      titel: String(eintrag?.titel || "").slice(0, 200).trim(),
+      jahr: jahrVon(eintrag?.jahr),
+      art: artVon(eintrag?.art),
+      quelle: String(eintrag?.quelle || "relay")
+    })).filter((eintrag) => eintrag.titel);
+  }
+
   function statistik() {
     const gesamt = zaehler.cacheTreffer + zaehler.cacheFehlgriffe;
     const zugeordnet = zaehler.EXACT + zaehler.HIGH + zaehler.MEDIUM + zaehler.LOW;
@@ -852,6 +950,8 @@ function erstellen(optionen = {}) {
     ausCache,
     fehltImCache,
     nachschlagen,
+    vorschlagen,
+    vorschlaegeAusCache,
     laufStatusFehlt,
     trailerFehlt,
     tmdbFehlt,

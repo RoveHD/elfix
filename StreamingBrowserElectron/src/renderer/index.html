@@ -1437,6 +1437,13 @@
        gemeinsames Kaestchen kann ausserdem gar nicht zweimal offen sein. -->
   <div class="karten-menue is-hidden" id="kartenMenue" role="menu"></div>
 
+  <!-- Die Vorschlaege beim Tippen. Sie stehen hier und nicht im Suchfeld:
+       .omnibox-wrap schneidet mit overflow:hidden alles ab, was ueber die
+       Kopfzeile hinausragt. Ein gemeinsames Kaestchen dient beiden Suchfeldern
+       - dem in der Kopfzeile und dem auf der Startseite - und kann so gar
+       nicht zweimal offen sein. -->
+  <div class="such-vorschlag is-hidden" id="suchVorschlag" role="listbox" aria-label="Vorschläge"></div>
+
   <script src="../../shared/bildausschnitt.js"></script>
   <script src="../../shared/search-grouping.js"></script>
   <!-- Die Regeln des persoenlichen Verlaufs. Dasselbe Modul laesst sich
