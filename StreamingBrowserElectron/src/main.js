@@ -10681,9 +10681,9 @@ function direktSpielerSchliessen(grund = "") {
   optionaleCachesNachMiniPlanen();
   spielerLauf = null;
   spielerLetzterStand = null;
+  folgenWerkbaenkeSchliessen();
   spielerUpscalingStatus = null;
   videoUpscalingStandSenden();
-  folgenWerkbaenkeSchliessen();
   // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
   // Folge, bis der erste neue Takt kommt.
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
