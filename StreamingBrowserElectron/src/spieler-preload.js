@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   skipSegmente: (id, dauer) => ipcRenderer.invoke("spieler:skip-segmente", id, dauer),
   untertitelMerken: (id, vorgabe) => ipcRenderer.send("spieler:untertitel", id, vorgabe),
   aufSkipEinstellung: (rueckruf) => ipcRenderer.on("spieler:skip-einstellung", (_ereignis, an) => rueckruf(an)),
+  aufUpscaling: (rueckruf) => ipcRenderer.on("spieler:upscaling", (_ereignis, an) => rueckruf(an)),
+  upscalingStatus: (id, status) => ipcRenderer.send("spieler:upscaling-status", id, status),
   /**
    * Die Watchparty. Drei Dinge, mehr braucht sie nicht:
    * der Takt (wo stehe ich), die eigene Tat (was habe ich getan) und der

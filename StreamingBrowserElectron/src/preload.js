@@ -122,6 +122,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   onFernState: (callback) => ipcRenderer.on("fern:state", (_event, state) => callback(state)),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  getVideoUpscalingStatus: () => ipcRenderer.invoke("settings:video-upscaling-status"),
+  onVideoUpscalingStatus: (callback) => ipcRenderer.on("settings:video-upscaling-status", (_event, status) => callback(status)),
   saveAppearance: (appearance) => ipcRenderer.invoke("settings:appearance-save", appearance),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   updateFilters: () => ipcRenderer.invoke("adblock:update-filters"),

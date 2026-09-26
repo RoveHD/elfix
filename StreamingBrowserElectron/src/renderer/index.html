@@ -740,6 +740,18 @@
 
           <section class="settings-group">
             <div class="settings-group-head">
+              <h4>Videoqualität</h4>
+              <p>Verbessert das Bild, wenn ein Video größer als seine ursprüngliche Auflösung angezeigt wird.</p>
+            </div>
+            <div class="settings-section-grid">
+              <label class="check setting-row"><input id="videoUpscaling" type="checkbox" aria-describedby="videoUpscalingStatus"><span><strong>Video-Upscaling mit AMD FSR 1</strong><small>Für AMD, Intel und NVIDIA mit unterstützter Grafikbeschleunigung. Benötigt zusätzliche Grafikleistung. Standardmäßig aus.</small></span></label>
+              <p id="videoUpscalingStatus" role="status" aria-live="polite">Ausgeschaltet</p>
+              <p>Für Videos im ELFIX-Player bis 4K. Bei eingeblendeten Untertiteln und im Mini-Player bleibt das Originalbild erhalten. NVIDIA RTX Video wird separat in der NVIDIA-App eingestellt.</p>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
               <h4>Automatisch pausieren</h4>
               <p>Verhindert, dass im Hintergrund weitergespielt wird. Was vorher lief, läuft beim Zurückkommen automatisch weiter.</p>
             </div>

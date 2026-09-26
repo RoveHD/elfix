@@ -19,7 +19,9 @@
     user-select: none; cursor: default;
   }
   #buehne { position: fixed; inset: 0; }
-  video { width: 100%; height: 100%; background: #05070c; outline: none; }
+  video { position: relative; width: 100%; height: 100%; object-fit: contain; background: #05070c; outline: none; }
+  #fsrBild { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #upscalingHinweis { color: #aac9ed; font-size: 12px; }
 
   /* Kopf und Leiste blenden sich zusammen aus - sie gehoeren zur Bedienung,
      nicht zum Film. */
@@ -432,7 +434,8 @@
 </head>
 <body>
   <div id="buehne">
-    <video id="bild" playsinline preload="metadata"></video>
+    <canvas id="fsrBild" hidden aria-hidden="true"></canvas>
+    <video id="bild" playsinline preload="metadata" crossorigin="anonymous"></video>
   </div>
 
   <div id="mitte">
@@ -459,6 +462,7 @@
     <div>
       <div id="titel">Wiedergabe</div>
       <div id="hoster"></div>
+      <div id="upscalingHinweis" hidden></div>
     </div>
     <button id="zu" type="button" title="Schließen (Esc)">Schließen</button>
   </div>
@@ -588,6 +592,8 @@
   <script src="../skipsegmente.js"></script>
   <script src="../untertitelwahl.js"></script>
   <script src="spieler-vorschau.js"></script>
+  <script src="spieler-fsr.js"></script>
+  <script src="../video-upscaling-status.js"></script>
   <script src="spieler.js"></script>
 </body>
 </html>

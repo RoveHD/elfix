@@ -471,6 +471,22 @@ const WEITER_SEKUNDEN = 8;
 
 /** Der laufende Auftrag - Adresse, Titel, Startzeit, Hosterliste. */
 let auftrag = null;
+const upscalingHinweis = document.getElementById("upscalingHinweis");
+const videoUpscaler = window.ElfixSpielerFsr?.erstellen({
+  video: bild,
+  canvas: document.getElementById("fsrBild"),
+  beiStatus(stand) {
+    if (upscalingHinweis) {
+      upscalingHinweis.hidden = stand.zustand === "aus";
+      upscalingHinweis.textContent = stand.zustand === "aktiv" ? "AMD FSR 1 aktiv"
+        : stand.zustand === "nicht-noetig" ? "Originalgröße · FSR bereit"
+        : stand.zustand === "nicht-verfuegbar" ? "Originalbild · FSR nicht aktiv" : "FSR bereit";
+      upscalingHinweis.title = window.ElfixVideoUpscalingStatus.text(stand);
+    }
+    bruecke.upscalingStatus?.(auftrag?.id, stand);
+  }
+});
+window.addEventListener("pagehide", () => videoUpscaler?.zerstoeren(), { once: true });
 /** Die Bibliothek fuer HLS, falls eine gebraucht wird. */
 let hls = null;
 /**
@@ -2648,6 +2664,7 @@ function hlsAnkerErzeugen(instanz) {
  */
 function starten(neuerAuftrag) {
   ++quellenGeneration;
+  videoUpscaler?.setzeAktiv(false);
   reglerGefasst = false;
   spulVorschauVerbergen();
   spulVorschau.quelle({});
@@ -2685,6 +2702,7 @@ function starten(neuerAuftrag) {
   bild.pause();
   bild.removeAttribute("src");
   bild.load();
+  videoUpscaler?.setzeAktiv(auftrag.videoUpscaling === true);
 
   kopfTitelSetzen(auftrag.titel || "Wiedergabe", auftrag.folgentitel || "");
   document.getElementById("hoster").textContent = [auftrag.hoster, auftrag.stufe].filter(Boolean).join(" · ");
@@ -2756,6 +2774,10 @@ function starten(neuerAuftrag) {
 }
 
 bruecke.aufAuftrag(starten);
+bruecke.aufUpscaling?.((an) => {
+  if (auftrag) auftrag.videoUpscaling = an === true;
+  videoUpscaler?.setzeAktiv(an === true);
+});
 bruecke.aufNaechste((wert, folgentitel) => {
   naechsteSetzen(wert);
   // Der Name der Folge kommt mit derselben Nachricht - die Liste kennt beides.

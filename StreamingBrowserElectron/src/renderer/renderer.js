@@ -400,6 +400,18 @@ const youtubeInMediathek = document.querySelector("#youtubeInMediathek");
 const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
 const skipSegments = document.querySelector("#skipSegments");
+const videoUpscaling = document.querySelector("#videoUpscaling");
+const videoUpscalingStatus = document.querySelector("#videoUpscalingStatus");
+
+function videoUpscalingStandZeigen(stand) {
+  if (videoUpscalingStatus) videoUpscalingStatus.textContent = String(stand?.text || "Status derzeit nicht verfügbar.");
+}
+
+function videoUpscalingStandLaden() {
+  api.getVideoUpscalingStatus?.().then(videoUpscalingStandZeigen).catch(() => {
+    videoUpscalingStandZeigen({ text: "Status derzeit nicht verfügbar." });
+  });
+}
 const spoilerProtectionEnabled = document.querySelector("#spoilerProtectionEnabled");
 const spoilerProtectionRoomMinimum = document.querySelector("#spoilerProtectionRoomMinimum");
 const spoilerProtectionShareWatchedWithRoom = document.querySelector("#spoilerProtectionShareWatchedWithRoom");
@@ -606,6 +618,7 @@ const SETTINGS_INDEX = [
   ["providers", "Anbieter verwalten", "Website hinzufügen löschen sortieren Suche URL Kürzel"],
   ["providers", "Adblock pro Anbieter", "Werbung einzelne Seite ausnehmen"],
   ["playback", "Automatisch pausieren", "Anbieterwechsel Minimieren Fokus verlassen"],
+  ["playback", "Video-Upscaling", "FSR AMD Intel NVIDIA Videoqualität schärfer hochskalieren"],
   ["playback", "Weiterschauen-Fortschritt", "nächste Folge weiterrücken stehen bleiben"],
   ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
   ["home", "Statistik in der Seitenleiste", "Rückblick Statistik Wrapped Jahresrückblick einblenden ausblenden"],
@@ -1313,6 +1326,10 @@ function bindEvents() {
   autoplayNextEpisode?.addEventListener("change", saveSettings);
   introSkip?.addEventListener("change", saveSettings);
   skipSegments?.addEventListener("change", saveSettings);
+  videoUpscaling?.addEventListener("change", async () => {
+    await saveSettings();
+    videoUpscalingStandLaden();
+  });
   spoilerProtectionEnabled?.addEventListener("change", saveSettings);
   spoilerProtectionRoomMinimum?.addEventListener("change", saveSettings);
   spoilerProtectionShareWatchedWithRoom?.addEventListener("change", saveSettings);
@@ -1422,7 +1439,9 @@ function bindEvents() {
     if (autoplayNextEpisode) {
       autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
     }
+    if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
   });
+  api.onVideoUpscalingStatus?.(videoUpscalingStandZeigen);
 
   api.onToast((message) => {
     showToast(message);
@@ -8420,6 +8439,8 @@ function renderSettings() {
   if (autoplayNextEpisode) autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
   if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
+  if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
+  videoUpscalingStandLaden();
   if (spoilerProtectionEnabled) spoilerProtectionEnabled.checked = settings.playback?.spoilerProtection?.enabled === true;
   if (spoilerProtectionRoomMinimum) spoilerProtectionRoomMinimum.checked = settings.playback?.spoilerProtection?.roomMinimum === true;
   if (spoilerProtectionShareWatchedWithRoom) spoilerProtectionShareWatchedWithRoom.checked = settings.playback?.spoilerProtection?.shareWatchedWithRoom === true;
@@ -8696,6 +8717,7 @@ async function saveSettings(options = {}) {
     autoplayNextEpisode: autoplayNextEpisode ? autoplayNextEpisode.checked : settings.playback?.autoplayNextEpisode !== false,
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
     skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
+    videoUpscaling: videoUpscaling ? videoUpscaling.checked : settings.playback?.videoUpscaling === true,
     spoilerProtection: {
       enabled: Boolean(spoilerProtectionEnabled?.checked),
       roomMinimum: Boolean(spoilerProtectionRoomMinimum?.checked),

@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const ipcSchutz = require("./ipc-schutz");
 const spielerNetz = require("./spieler-netz");
+const videoUpscalingStatus = require("./video-upscaling-status");
 const ipcMain = ipcSchutz.absichern(nativeIpcMain, kanal => kanal.startsWith("spieler:")
   ? { inhalt: spielerView?.webContents, datei: path.join(__dirname, "renderer", "spieler.html") }
   : { inhalt: mainWindow?.webContents, datei: path.join(__dirname, "renderer", "index.html") });
@@ -2897,7 +2898,9 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   }
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     spielerView.webContents.send("spieler:skip-einstellung", settings.playback?.skipSegments !== false);
+    spielerView.webContents.send("spieler:upscaling", settings.playback?.videoUpscaling === true);
   }
+  videoUpscalingStandSenden();
   syncWatchparty();
   spielerSpoilerAktualisieren();
   syncGeraete();
@@ -10114,6 +10117,30 @@ let spielerSession = null;
 let spielerView = null;
 /** Was gerade laeuft: Anbieter, Folgenadresse, Quelle, Titel. */
 let spielerLauf = null;
+let spielerUpscalingStatus = null;
+
+function videoUpscalingStand() {
+  if (settings.playback?.videoUpscaling !== true) return { text: "Ausgeschaltet", zustand: "aus" };
+  if (!spielerLauf || !spielerUpscalingStatus) {
+    return { text: "Eingeschaltet – bereit für ein Video im ELFIX-Player.", zustand: "bereit" };
+  }
+  const stand = spielerUpscalingStatus;
+  return { text: videoUpscalingStatus.text(stand), zustand: stand.zustand };
+}
+
+function videoUpscalingStandSenden() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("settings:video-upscaling-status", videoUpscalingStand());
+  }
+}
+
+ipcMain.handle("settings:video-upscaling-status", () => videoUpscalingStand());
+ipcMain.on("spieler:upscaling-status", (_event, id, stand) => {
+  if (!spielerLauf || id !== spielerLauf.id || !stand || typeof stand !== "object") return;
+  if (!["aus", "aktiv", "bereit", "nicht-noetig", "nicht-verfuegbar"].includes(stand.zustand)) return;
+  spielerUpscalingStatus = { zustand: stand.zustand, grund: String(stand.grund || "").slice(0, 220) };
+  videoUpscalingStandSenden();
+});
 let spielerAuftragId = 0;
 /** Die Kopfzeilen, unter denen die laufende Quelle geholt werden darf. */
 let spielerKopfzeilen = null;
@@ -10239,6 +10266,7 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
   spielerKopfzeilen = ergebnis.kopfzeilen;
   spielerLetzterStand = null;
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+  spielerUpscalingStatus = null;
   spielerLauf = {
     id: ++spielerAuftragId,
     providerId: provider.id,
@@ -10475,6 +10503,7 @@ function spielerAuftrag() {
     weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT,
     marke: spielerMarke(),
     skipSegments: settings.playback?.skipSegments !== false,
+    videoUpscaling: settings.playback?.videoUpscaling === true,
     queueAktiv: spielerQueueAktiv(),
     untertitel: untertitelwahl.normalisieren(settings.playback?.untertitel),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
@@ -10652,6 +10681,8 @@ function direktSpielerSchliessen(grund = "") {
   optionaleCachesNachMiniPlanen();
   spielerLauf = null;
   spielerLetzterStand = null;
+  spielerUpscalingStatus = null;
+  videoUpscalingStandSenden();
   folgenWerkbaenkeSchliessen();
   // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
   // Folge, bis der erste neue Takt kommt.
@@ -15963,6 +15994,7 @@ function normalizeSettings(raw) {
       // zweimal selbst gezeigt hat - und er springt nie von allein.
       introSkip: raw?.playback?.introSkip !== false,
       skipSegments: raw?.playback?.skipSegments !== false,
+      videoUpscaling: raw?.playback?.videoUpscaling === true,
       // Der Schutz selbst bleibt eine bewusste Entscheidung. Seine beiden
       // Rundenregeln dagegen gelten, sobald er an ist: ein Schutz, der die
       // Folge aufdeckt, sobald einer in der Runde weiter ist, waere keiner,
@@ -16156,6 +16188,7 @@ function defaultSettings() {
     playback: {
       introSkip: true,
       skipSegments: true,
+      videoUpscaling: false,
       spoilerProtection: { enabled: false, roomMinimum: true, shareWatchedWithRoom: true },
       untertitel: untertitelwahl.normalisieren(null),
       rememberLanguage: true,
