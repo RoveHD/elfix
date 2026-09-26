@@ -29,7 +29,8 @@ async function until(check) {
     if (await check()) return;
     await new Promise(resolve => setTimeout(resolve, 30));
   }
-  throw Error(`Player state missing: ${JSON.stringify(statuses.at(-1))}; ${errors.join(", ")}`);
+  const mediaError = await window.webContents.executeJavaScript("bild.error?.message || ''");
+  throw Error(`Player state missing: ${JSON.stringify(statuses.at(-1))}; ${errors.join(", ")}; ${mediaError}; requests=${JSON.stringify(requests)}; cors=${JSON.stringify(bridgeResponses)}`);
 }
 app.whenReady().then(async () => {
   recorder = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } });

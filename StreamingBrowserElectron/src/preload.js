@@ -123,6 +123,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   getVideoUpscalingStatus: () => ipcRenderer.invoke("settings:video-upscaling-status"),
+  openRtxVideoLicense: () => ipcRenderer.invoke("settings:rtx-license-open"),
   onVideoUpscalingStatus: (callback) => ipcRenderer.on("settings:video-upscaling-status", (_event, status) => callback(status)),
   saveAppearance: (appearance) => ipcRenderer.invoke("settings:appearance-save", appearance),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),

@@ -35,6 +35,8 @@ app.on("browser-window-created", (_event, window) => {
       await until(() => js("Boolean(settings && window.streamingBrowser)"));
       const initial = await js("window.streamingBrowser.init()");
       assert.equal(initial.settings.playback.videoUpscaling, false, "Fresh and migrated settings default to off");
+      assert.equal(initial.settings.playback.videoUpscalingMethod, "fsr1");
+      assert.equal(initial.settings.playback.rtxVideoLicense, "");
       assert.equal((await js("window.streamingBrowser.getVideoUpscalingStatus()")).zustand, "aus");
       await js("openSettings()");
       await js("document.querySelector('[data-tab=playback]').click()");
@@ -46,6 +48,14 @@ app.on("browser-window-created", (_event, window) => {
       await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('bereit')"));
       assert.equal((await js("window.streamingBrowser.getVideoUpscalingStatus()")).zustand, "bereit",
         "Enabling does not falsely report an active renderer");
+      await js("document.querySelector('#videoUpscalingMethod').value='rtx'; document.querySelector('#videoUpscalingMethod').dispatchEvent(new Event('change'))");
+      await until(async () => (await js("window.streamingBrowser.init()")).settings.playback.videoUpscalingMethod === "rtx");
+      assert.equal(stored().playback.videoUpscalingMethod, "rtx", "RTX selection is persisted without claiming an active GPU");
+      await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('Lizenzbedingungen')"));
+      assert.equal(await js("document.querySelector('#rtxVideoLicenseRow').hidden"), false);
+      await js("document.querySelector('#rtxVideoLicense').click()");
+      await until(() => stored().playback.rtxVideoLicense === "2024-02-23");
+      await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('bereit')"));
 
       const bounds = await js(`(() => {
         const toggle=document.querySelector('#videoUpscaling'), status=document.querySelector('#videoUpscalingStatus');
@@ -67,6 +77,8 @@ app.on("browser-window-created", (_event, window) => {
       await js("document.querySelector('#videoUpscaling').click()");
       await until(async () => (await js("window.streamingBrowser.init()")).settings.playback.videoUpscaling === false);
       assert.equal(stored().playback.videoUpscaling, false);
+      await js("document.querySelector('#rtxVideoLicense').click()");
+      await until(() => stored().playback.rtxVideoLicense === "");
       // Only a literal true opts in, including after importing older settings.
       await js(`(async()=>{const s=(await window.streamingBrowser.init()).settings;
         s.playback.videoUpscaling='true'; await window.streamingBrowser.saveSettings(s);})()`);

@@ -11,7 +11,20 @@
  * weniger kann eine kaputte Playlist anrichten.
  */
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, sharedTexture } = require("electron");
+
+// VideoFrame is transferable across isolated worlds; native texture handles
+// never enter the page. Chromium retains the GPU resource until frame.close().
+sharedTexture?.setSharedTextureReceiver(async ({ importedSharedTexture }, metadata) => {
+  let frame;
+  try {
+    frame = importedSharedTexture.getVideoFrame();
+    window.postMessage({ type: "elfix-rtx-frame", metadata, frame }, "*", [frame]);
+  } finally {
+    frame?.close();
+    importedSharedTexture.release();
+  }
+});
 
 contextBridge.exposeInMainWorld("elfixSpieler", {
   /** Der Auftrag: Quelle, Titel, Startzeit. Kommt einmal, kurz nach dem Laden. */
@@ -85,8 +98,10 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   skipSegmente: (id, dauer) => ipcRenderer.invoke("spieler:skip-segmente", id, dauer),
   untertitelMerken: (id, vorgabe) => ipcRenderer.send("spieler:untertitel", id, vorgabe),
   aufSkipEinstellung: (rueckruf) => ipcRenderer.on("spieler:skip-einstellung", (_ereignis, an) => rueckruf(an)),
-  aufUpscaling: (rueckruf) => ipcRenderer.on("spieler:upscaling", (_ereignis, an) => rueckruf(an)),
+  aufUpscaling: (rueckruf) => ipcRenderer.on("spieler:upscaling", (_ereignis, an, methode) => rueckruf(an, methode)),
   upscalingStatus: (id, status) => ipcRenderer.send("spieler:upscaling-status", id, status),
+  rtxBild: (id, bild) => ipcRenderer.invoke("spieler:rtx-bild", id, bild),
+  rtxStop: id => ipcRenderer.send("spieler:rtx-stop", id),
   /**
    * Die Watchparty. Drei Dinge, mehr braucht sie nicht:
    * der Takt (wo stehe ich), die eigene Tat (was habe ich getan) und der

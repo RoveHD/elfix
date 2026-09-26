@@ -401,6 +401,12 @@ const autoplayNextEpisode = document.querySelector("#autoplayNextEpisode");
 const introSkip = document.querySelector("#introSkip");
 const skipSegments = document.querySelector("#skipSegments");
 const videoUpscaling = document.querySelector("#videoUpscaling");
+const videoUpscalingMethod = document.querySelector("#videoUpscalingMethod");
+const rtxVideoLicense = document.querySelector("#rtxVideoLicense");
+function videoUpscalingAuswahlZeigen() {
+  const row = document.querySelector("#rtxVideoLicenseRow");
+  if (row) row.hidden = videoUpscalingMethod?.value !== "rtx";
+}
 const videoUpscalingStatus = document.querySelector("#videoUpscalingStatus");
 
 function videoUpscalingStandZeigen(stand) {
@@ -618,7 +624,7 @@ const SETTINGS_INDEX = [
   ["providers", "Anbieter verwalten", "Website hinzufügen löschen sortieren Suche URL Kürzel"],
   ["providers", "Adblock pro Anbieter", "Werbung einzelne Seite ausnehmen"],
   ["playback", "Automatisch pausieren", "Anbieterwechsel Minimieren Fokus verlassen"],
-  ["playback", "Video-Upscaling", "FSR AMD Intel NVIDIA Videoqualität schärfer hochskalieren"],
+  ["playback", "Video-Upscaling", "FSR AMD Intel NVIDIA RTX Videoqualität schärfer hochskalieren"],
   ["playback", "Weiterschauen-Fortschritt", "nächste Folge weiterrücken stehen bleiben"],
   ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
   ["home", "Statistik in der Seitenleiste", "Rückblick Statistik Wrapped Jahresrückblick einblenden ausblenden"],
@@ -1330,6 +1336,19 @@ function bindEvents() {
     await saveSettings();
     videoUpscalingStandLaden();
   });
+  videoUpscalingMethod?.addEventListener("change", async () => {
+    videoUpscalingAuswahlZeigen();
+    await saveSettings();
+    videoUpscalingStandLaden();
+  });
+  rtxVideoLicense?.addEventListener("change", async () => {
+    await saveSettings();
+    videoUpscalingStandLaden();
+  });
+  document.querySelector("#rtxVideoLicenseOpen")?.addEventListener("click", async () => {
+    const result = await api.openRtxVideoLicense();
+    if (!result?.ok) showToast("Die NVIDIA-Lizenzdatei konnte nicht geöffnet werden.");
+  });
   spoilerProtectionEnabled?.addEventListener("change", saveSettings);
   spoilerProtectionRoomMinimum?.addEventListener("change", saveSettings);
   spoilerProtectionShareWatchedWithRoom?.addEventListener("change", saveSettings);
@@ -1440,6 +1459,9 @@ function bindEvents() {
       autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
     }
     if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
+    if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "fsr1";
+    if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
+    videoUpscalingAuswahlZeigen();
   });
   api.onVideoUpscalingStatus?.(videoUpscalingStandZeigen);
 
@@ -8440,6 +8462,9 @@ function renderSettings() {
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
   if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
   if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
+  if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "fsr1";
+  if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
+  videoUpscalingAuswahlZeigen();
   videoUpscalingStandLaden();
   if (spoilerProtectionEnabled) spoilerProtectionEnabled.checked = settings.playback?.spoilerProtection?.enabled === true;
   if (spoilerProtectionRoomMinimum) spoilerProtectionRoomMinimum.checked = settings.playback?.spoilerProtection?.roomMinimum === true;
@@ -8718,6 +8743,8 @@ async function saveSettings(options = {}) {
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
     skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
     videoUpscaling: videoUpscaling ? videoUpscaling.checked : settings.playback?.videoUpscaling === true,
+    videoUpscalingMethod: videoUpscalingMethod ? videoUpscalingMethod.value : settings.playback?.videoUpscalingMethod || "fsr1",
+    rtxVideoLicense: rtxVideoLicense ? (rtxVideoLicense.checked ? "2024-02-23" : "") : settings.playback?.rtxVideoLicense || "",
     spoilerProtection: {
       enabled: Boolean(spoilerProtectionEnabled?.checked),
       roomMinimum: Boolean(spoilerProtectionRoomMinimum?.checked),

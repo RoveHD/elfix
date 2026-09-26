@@ -3,6 +3,22 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.47 — 27. September 2026
+
+- Optionales Video-Upscaling im ELFIX-Desktop-Player unter Einstellungen →
+  Wiedergabe → Videoqualität. Standardmäßig ausgeschaltet, während der Wiedergabe
+  umschaltbar, ohne das Video neu zu laden oder anzuhalten.
+- AMD FSR 1 mit EASU und RCAS für unterstützte AMD-, Intel- und NVIDIA-Grafik.
+  Skaliert und schärft das Bild ohne KI oder Zwischenbildberechnung.
+- NVIDIA RTX Video Super Resolution mit dem echten RTX Video SDK auf
+  unterstützten RTX-Grafikkarten. Die optionale NVIDIA-Komponente wird nach
+  Zustimmung zu ihren mitgelieferten Lizenzbedingungen aktiviert.
+- Verarbeitung beim Vergrößern bis 4K. Bei Untertiteln, Mini-Player oder fehlender
+  Unterstützung bleibt das Originalbild sichtbar; der Status erklärt den Grund.
+  Ton, Fortschritt und Watchparty-Takt bleiben beim bestehenden Videoplayer.
+- Neue Tests für Einstellungen, Grafikverarbeitung, Quellenwechsel, Spulen,
+  Größenänderungen bei Pause und sicheren Rückfall auf das Originalvideo.
+
 ## 2.0.46 — 22. September 2026
 
 - Die Suche schlägt beim Tippen vor, was gemeint sein könnte — Filme, Serien

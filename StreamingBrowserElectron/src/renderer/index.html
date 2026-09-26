@@ -744,9 +744,14 @@
               <p>Verbessert das Bild, wenn ein Video größer als seine ursprüngliche Auflösung angezeigt wird.</p>
             </div>
             <div class="settings-section-grid">
-              <label class="check setting-row"><input id="videoUpscaling" type="checkbox" aria-describedby="videoUpscalingStatus"><span><strong>Video-Upscaling mit AMD FSR 1</strong><small>Für AMD, Intel und NVIDIA mit unterstützter Grafikbeschleunigung. Benötigt zusätzliche Grafikleistung. Standardmäßig aus.</small></span></label>
+              <label class="check setting-row"><input id="videoUpscaling" type="checkbox" aria-describedby="videoUpscalingStatus"><span><strong>Video-Upscaling einschalten</strong><small>Benötigt zusätzliche Grafikleistung. Standardmäßig aus.</small></span></label>
+              <label class="setting-row"><span><strong>Verfahren</strong><small>FSR 1 funktioniert mit AMD, Intel und NVIDIA. RTX Video benötigt eine unterstützte NVIDIA-RTX-Grafikkarte.</small></span><select id="videoUpscalingMethod"><option value="fsr1">AMD FSR 1</option><option value="rtx">NVIDIA RTX Video Super Resolution</option></select></label>
+              <div id="rtxVideoLicenseRow" hidden>
+                <button id="rtxVideoLicenseOpen" class="soft-action" type="button">NVIDIA-Lizenzbedingungen lesen (PDF)</button>
+                <label class="check setting-row"><input id="rtxVideoLicense" type="checkbox"><span><strong>Ich akzeptiere die NVIDIA-Lizenzbedingungen für RTX Video.</strong><small>Diese Bedingungen gelten für die optionale NVIDIA-Komponente. FSR 1 kann ohne diese Zustimmung verwendet werden.</small></span></label>
+              </div>
               <p id="videoUpscalingStatus" role="status" aria-live="polite">Ausgeschaltet</p>
-              <p>Für Videos im ELFIX-Player bis 4K. Bei eingeblendeten Untertiteln und im Mini-Player bleibt das Originalbild erhalten. NVIDIA RTX Video wird separat in der NVIDIA-App eingestellt.</p>
+              <p>Für Videos im ELFIX-Player bis 4K. Bei eingeblendeten Untertiteln und im Mini-Player bleibt das Originalbild erhalten. RTX Video verwendet KI zur Bildverbesserung; FSR 1 skaliert und schärft ohne KI.</p>
             </div>
           </section>
 

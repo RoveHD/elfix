@@ -42,6 +42,9 @@ jobs:
       - name: Audit dependencies
         run: npm audit
 
+      - name: Build native RTX Video component
+        run: npm run build:rtx
+
       - name: Install relay dependencies
         # Vier Pruefungen starten ein echtes Relay - ohne dessen Abhaengigkeit
         # werden sie uebersprungen und die Abdeckung faellt still weg.

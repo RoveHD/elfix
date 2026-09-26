@@ -2882,6 +2882,7 @@ ipcMain.handle("youtubeparty:open", async () => {
 
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   const alteRaeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  const altesUpscaling = `${settings.playback?.videoUpscaling}:${settings.playback?.videoUpscalingMethod}:${settings.playback?.rtxVideoLicense}`;
   settings = normalizeSettings({ ...nextSettings, watchparty: {
     ...nextSettings?.watchparty,
     deviceId: settings.watchparty?.deviceId,
@@ -2898,7 +2899,10 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
   }
   if (spielerView && !spielerView.webContents.isDestroyed()) {
     spielerView.webContents.send("spieler:skip-einstellung", settings.playback?.skipSegments !== false);
-    spielerView.webContents.send("spieler:upscaling", settings.playback?.videoUpscaling === true);
+    if (altesUpscaling !== `${settings.playback?.videoUpscaling}:${settings.playback?.videoUpscalingMethod}:${settings.playback?.rtxVideoLicense}`) {
+      spielerRtxStop();
+    }
+    spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), settings.playback?.videoUpscalingMethod);
   }
   videoUpscalingStandSenden();
   syncWatchparty();
@@ -10118,9 +10122,40 @@ let spielerView = null;
 /** Was gerade laeuft: Anbieter, Folgenadresse, Quelle, Titel. */
 let spielerLauf = null;
 let spielerUpscalingStatus = null;
+let spielerRtx = null;
+function spielerUpscalingAktiv() {
+  return settings.playback?.videoUpscaling === true && (settings.playback?.videoUpscalingMethod !== "rtx"
+    || settings.playback?.rtxVideoLicense === "2024-02-23");
+}
+function spielerRtxStop() {
+  const vorher = spielerRtx;
+  spielerRtx = null;
+  vorher?.stop();
+}
+app.once("will-quit", spielerRtxStop);
+
+ipcMain.on("spieler:rtx-stop", (ereignis, id) => {
+  if (vomSpieler(ereignis) && spielerLauf && id === spielerLauf.id) spielerRtxStop();
+});
+ipcMain.handle("spieler:rtx-bild", async (ereignis, id, bild) => {
+  if (!vomSpieler(ereignis) || !spielerLauf || id !== spielerLauf.id || !spielerUpscalingAktiv()
+    || settings.playback?.videoUpscalingMethod !== "rtx" || !spielerView) return { ok: false, grund: "rtx-inaktiv" };
+  if (!bild || !(bild.pixel instanceof ArrayBuffer) || bild.pixel.byteLength > 33554432) return { ok: false, grund: "rtx-ungueltiges-bild" };
+  if (!spielerRtx) {
+    const { sharedTexture } = require("electron");
+    spielerRtx = require("./rtx-video").erstellen({
+      verzeichnis: app.isPackaged ? path.join(process.resourcesPath, "rtx-video") : path.join(__dirname, "../build/rtx-video"),
+      datenVerzeichnis: path.join(app.getPath("userData"), "rtx-video"), sharedTexture
+    });
+  }
+  return spielerRtx.bild({ pixel: Buffer.from(bild.pixel), width: bild.width, height: bild.height,
+    outputWidth: bild.outputWidth, outputHeight: bild.outputHeight,
+    generation: bild.generation, frameId: bild.frameId, webContents: spielerView.webContents });
+});
 
 function videoUpscalingStand() {
   if (settings.playback?.videoUpscaling !== true) return { text: "Ausgeschaltet", zustand: "aus" };
+  if (!spielerUpscalingAktiv()) return { text: "Für RTX Video bitte zunächst die NVIDIA-Lizenzbedingungen akzeptieren.", zustand: "bereit" };
   if (!spielerLauf || !spielerUpscalingStatus) {
     return { text: "Eingeschaltet – bereit für ein Video im ELFIX-Player.", zustand: "bereit" };
   }
@@ -10135,10 +10170,17 @@ function videoUpscalingStandSenden() {
 }
 
 ipcMain.handle("settings:video-upscaling-status", () => videoUpscalingStand());
+ipcMain.handle("settings:rtx-license-open", async () => {
+  const verzeichnis = app.isPackaged ? path.join(process.resourcesPath, "rtx-video") : path.join(__dirname, "../build/rtx-video");
+  const datei = path.join(verzeichnis, "NVIDIA_RTX_Video_SDK_License.pdf");
+  if (!fs.existsSync(datei)) return { ok: false };
+  return { ok: !(await shell.openPath(datei)) };
+});
 ipcMain.on("spieler:upscaling-status", (_event, id, stand) => {
   if (!spielerLauf || id !== spielerLauf.id || !stand || typeof stand !== "object") return;
   if (!["aus", "aktiv", "bereit", "nicht-noetig", "nicht-verfuegbar"].includes(stand.zustand)) return;
-  spielerUpscalingStatus = { zustand: stand.zustand, grund: String(stand.grund || "").slice(0, 220) };
+  spielerUpscalingStatus = { zustand: stand.zustand, grund: String(stand.grund || "").slice(0, 220),
+    verfahren: stand.verfahren === "rtx" ? "rtx" : "fsr1" };
   videoUpscalingStandSenden();
 });
 let spielerAuftragId = 0;
@@ -10267,6 +10309,7 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
   spielerLetzterStand = null;
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
   spielerUpscalingStatus = null;
+  spielerRtxStop();
   spielerLauf = {
     id: ++spielerAuftragId,
     providerId: provider.id,
@@ -10503,7 +10546,8 @@ function spielerAuftrag() {
     weiterAbProzent: NEXT_EPISODE_PROMPT_PERCENT,
     marke: spielerMarke(),
     skipSegments: settings.playback?.skipSegments !== false,
-    videoUpscaling: settings.playback?.videoUpscaling === true,
+    videoUpscaling: spielerUpscalingAktiv(),
+    videoUpscalingMethod: settings.playback?.videoUpscalingMethod,
     queueAktiv: spielerQueueAktiv(),
     untertitel: untertitelwahl.normalisieren(settings.playback?.untertitel),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
@@ -10684,6 +10728,7 @@ function direktSpielerSchliessen(grund = "") {
   folgenWerkbaenkeSchliessen();
   spielerUpscalingStatus = null;
   videoUpscalingStandSenden();
+  spielerRtxStop();
   // Auch der Takt: sonst traegt die naechste Runde noch die Stelle der letzten
   // Folge, bis der erste neue Takt kommt.
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
@@ -15995,6 +16040,8 @@ function normalizeSettings(raw) {
       introSkip: raw?.playback?.introSkip !== false,
       skipSegments: raw?.playback?.skipSegments !== false,
       videoUpscaling: raw?.playback?.videoUpscaling === true,
+      videoUpscalingMethod: raw?.playback?.videoUpscalingMethod === "rtx" ? "rtx" : "fsr1",
+      rtxVideoLicense: raw?.playback?.rtxVideoLicense === "2024-02-23" ? "2024-02-23" : "",
       // Der Schutz selbst bleibt eine bewusste Entscheidung. Seine beiden
       // Rundenregeln dagegen gelten, sobald er an ist: ein Schutz, der die
       // Folge aufdeckt, sobald einer in der Runde weiter ist, waere keiner,
@@ -16189,6 +16236,8 @@ function defaultSettings() {
       introSkip: true,
       skipSegments: true,
       videoUpscaling: false,
+      videoUpscalingMethod: "fsr1",
+      rtxVideoLicense: "",
       spoilerProtection: { enabled: false, roomMinimum: true, shareWatchedWithRoom: true },
       untertitel: untertitelwahl.normalisieren(null),
       rememberLanguage: true,

@@ -472,20 +472,36 @@ const WEITER_SEKUNDEN = 8;
 /** Der laufende Auftrag - Adresse, Titel, Startzeit, Hosterliste. */
 let auftrag = null;
 const upscalingHinweis = document.getElementById("upscalingHinweis");
-const videoUpscaler = window.ElfixSpielerFsr?.erstellen({
-  video: bild,
-  canvas: document.getElementById("fsrBild"),
-  beiStatus(stand) {
+let upscalingMethode = "fsr1";
+let upscalingEingeschaltet = false;
+function upscalingMelden(stand, methode) {
+  if (methode !== upscalingMethode) return;
     if (upscalingHinweis) {
       upscalingHinweis.hidden = stand.zustand === "aus";
-      upscalingHinweis.textContent = stand.zustand === "aktiv" ? "AMD FSR 1 aktiv"
-        : stand.zustand === "nicht-noetig" ? "Originalgröße · FSR bereit"
-        : stand.zustand === "nicht-verfuegbar" ? "Originalbild · FSR nicht aktiv" : "FSR bereit";
+      const name = methode === "rtx" ? "NVIDIA RTX Video" : "AMD FSR 1";
+      upscalingHinweis.textContent = stand.zustand === "aktiv" ? `${name} aktiv`
+        : stand.zustand === "nicht-noetig" ? `Originalgröße · ${name} bereit`
+        : stand.zustand === "nicht-verfuegbar" ? `Originalbild · ${name} nicht aktiv` : `${name} bereit`;
       upscalingHinweis.title = window.ElfixVideoUpscalingStatus.text(stand);
     }
     bruecke.upscalingStatus?.(auftrag?.id, stand);
-  }
-});
+}
+const fsrUpscaler = window.ElfixSpielerFsr?.erstellen({ video: bild,
+  canvas: document.getElementById("fsrBild"), beiStatus: stand => upscalingMelden(stand, "fsr1") });
+const rtxUpscaler = window.ElfixSpielerRtx?.erstellen({ video: bild,
+  canvas: document.getElementById("rtxBild"), bruecke, auftragId: () => auftrag?.id,
+  beiStatus: stand => upscalingMelden(stand, "rtx") });
+const videoUpscaler = {
+  setzeAktiv(an, methode = upscalingMethode) {
+    const next = methode === "rtx" ? "rtx" : "fsr1";
+    if (upscalingEingeschaltet === an && upscalingMethode === next) return;
+    upscalingMethode = next; upscalingEingeschaltet = an;
+    fsrUpscaler?.setzeAktiv(false); rtxUpscaler?.setzeAktiv(false);
+    if (an) (next === "rtx" ? rtxUpscaler : fsrUpscaler)?.setzeAktiv(true);
+    else upscalingMelden({ zustand: "aus", grund: "deaktiviert", verfahren: next }, next);
+  },
+  zerstoeren() { fsrUpscaler?.zerstoeren(); rtxUpscaler?.zerstoeren(); }
+};
 window.addEventListener("pagehide", () => videoUpscaler?.zerstoeren(), { once: true });
 /** Die Bibliothek fuer HLS, falls eine gebraucht wird. */
 let hls = null;
@@ -2702,7 +2718,7 @@ function starten(neuerAuftrag) {
   bild.pause();
   bild.removeAttribute("src");
   bild.load();
-  videoUpscaler?.setzeAktiv(auftrag.videoUpscaling === true);
+  videoUpscaler?.setzeAktiv(auftrag.videoUpscaling === true, auftrag.videoUpscalingMethod);
 
   kopfTitelSetzen(auftrag.titel || "Wiedergabe", auftrag.folgentitel || "");
   document.getElementById("hoster").textContent = [auftrag.hoster, auftrag.stufe].filter(Boolean).join(" · ");
@@ -2774,9 +2790,12 @@ function starten(neuerAuftrag) {
 }
 
 bruecke.aufAuftrag(starten);
-bruecke.aufUpscaling?.((an) => {
-  if (auftrag) auftrag.videoUpscaling = an === true;
-  videoUpscaler?.setzeAktiv(an === true);
+bruecke.aufUpscaling?.((an, methode) => {
+  if (auftrag) {
+    auftrag.videoUpscaling = an === true;
+    auftrag.videoUpscalingMethod = methode === "rtx" ? "rtx" : "fsr1";
+  }
+  videoUpscaler?.setzeAktiv(an === true, methode);
 });
 bruecke.aufNaechste((wert, folgentitel) => {
   naechsteSetzen(wert);
