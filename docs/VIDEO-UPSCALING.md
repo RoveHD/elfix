@@ -58,8 +58,8 @@ SDK-Header und Bibliothek bleiben im temporären Build-Verzeichnis. Ausgeliefert
 werden nur der eigene Helper, die unveränderte `nvngx_vsr.dll` und die Lizenz-PDF.
 Die DLL wurde lokal als gültig von NVIDIA signiert geprüft.
 
-Für lokale Windows-Pakete braucht `npm run build:rtx` Visual Studio C++ Build Tools
-mit Windows SDK. Die Release- und Testbuild-Workflows bauen die Komponente automatisch.
+Für lokale Windows-Pakete braucht `npm run build:rtx` PowerShell 7 und Visual Studio
+C++ Build Tools mit Windows SDK. Die Release- und Testbuild-Workflows bauen die Komponente automatisch.
 Die drei Dateien unter `build/rtx-video` werden durch `extraResources` gepackt.
 
 ## Prüfung

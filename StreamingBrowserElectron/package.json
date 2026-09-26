@@ -24,7 +24,7 @@
     "publish:github": "npm run build:rtx && npm run make-icon && electron-builder --win nsis portable --publish always",
     "suite": "node tests/run.js",
     "test:android-verifizierung": "electron tests/android-verifizierung-electrontest.js",
-    "build:rtx": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/rtx-video-build.ps1"
+    "build:rtx": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/rtx-video-build.ps1"
   },
   "build": {
     "appId": "com.rovehd.elfix",
