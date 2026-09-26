@@ -36,6 +36,7 @@ app.on("browser-window-created", (_event, window) => {
       const initial = await js("window.streamingBrowser.init()");
       assert.equal(initial.settings.playback.videoUpscaling, false, "Fresh and migrated settings default to off");
       assert.equal(initial.settings.playback.videoUpscalingMethod, "fsr1");
+      assert.equal(initial.settings.playback.videoUpscalingResolution, 1440);
       assert.equal(initial.settings.playback.rtxVideoLicense, "");
       assert.equal((await js("window.streamingBrowser.getVideoUpscalingStatus()")).zustand, "aus");
       await js("openSettings()");
@@ -45,12 +46,16 @@ app.on("browser-window-created", (_event, window) => {
       await until(async () => (await js("window.streamingBrowser.init()")).settings.playback.videoUpscaling === true);
       const stored = () => JSON.parse(fs.readFileSync(path.join(profile, "ELFIX", "settings.json"), "utf8"));
       assert.equal(stored().playback.videoUpscaling, true, "Real UI toggle persists through production IPC");
+      assert.equal(await js("document.querySelector('#videoUpscalingResolution').value"), "1440");
+      await js("document.querySelector('#videoUpscalingResolution').value='2160'; document.querySelector('#videoUpscalingResolution').dispatchEvent(new Event('change'))");
+      await until(() => stored().playback.videoUpscalingResolution === 2160);
       await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('bereit')"));
       assert.equal((await js("window.streamingBrowser.getVideoUpscalingStatus()")).zustand, "bereit",
         "Enabling does not falsely report an active renderer");
       await js("document.querySelector('#videoUpscalingMethod').value='rtx'; document.querySelector('#videoUpscalingMethod').dispatchEvent(new Event('change'))");
       await until(async () => (await js("window.streamingBrowser.init()")).settings.playback.videoUpscalingMethod === "rtx");
       assert.equal(stored().playback.videoUpscalingMethod, "rtx", "RTX selection is persisted without claiming an active GPU");
+      assert.equal(stored().playback.videoUpscalingResolution, 2160, "Other settings preserve the chosen 4K target");
       await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('Lizenzbedingungen')"));
       assert.equal(await js("document.querySelector('#rtxVideoLicenseRow').hidden"), false);
       await js("document.querySelector('#rtxVideoLicense').click()");
@@ -77,12 +82,15 @@ app.on("browser-window-created", (_event, window) => {
       await js("document.querySelector('#videoUpscaling').click()");
       await until(async () => (await js("window.streamingBrowser.init()")).settings.playback.videoUpscaling === false);
       assert.equal(stored().playback.videoUpscaling, false);
+      assert.equal(stored().playback.videoUpscalingResolution, 2160);
       await js("document.querySelector('#rtxVideoLicense').click()");
       await until(() => stored().playback.rtxVideoLicense === "");
       // Only a literal true opts in, including after importing older settings.
       await js(`(async()=>{const s=(await window.streamingBrowser.init()).settings;
-        s.playback.videoUpscaling='true'; await window.streamingBrowser.saveSettings(s);})()`);
+        s.playback.videoUpscaling='true'; s.playback.videoUpscalingResolution=4320;
+        await window.streamingBrowser.saveSettings(s);})()`);
       assert.equal(stored().playback.videoUpscaling, false);
+      assert.equal(stored().playback.videoUpscalingResolution, 1440, "Invalid targets normalize to 1440p");
       console.log("OK Upscaling settings: default off, real toggle, persistence, status and strict normalization");
       finish(0);
     } catch (error) { finish(1, error); }

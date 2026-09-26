@@ -52,25 +52,25 @@ app.whenReady().then(async () => {
     const canvas = document.getElementById('out');
     let source;
     let stream;
-    const makeSource = color => {
-      const c = document.createElement('canvas'); c.width=32; c.height=18;
+    const makeSource = (color,width=32,height=18) => {
+      const c = document.createElement('canvas'); c.width=width; c.height=height;
       const ctx=c.getContext('2d');
-      ctx.fillStyle=color; ctx.fillRect(0,0,32,18);
-      ctx.fillStyle='#fff'; ctx.fillRect(12,0,9,18);
-      ctx.fillStyle='#000'; ctx.fillRect(24,0,8,18);
-      ctx.beginPath(); ctx.moveTo(12,0); ctx.lineTo(20,18); ctx.lineWidth=1;
+      ctx.fillStyle=color; ctx.fillRect(0,0,width,height);
+      ctx.fillStyle='#fff'; ctx.fillRect(width*.375,0,width*.28,height);
+      ctx.fillStyle='#000'; ctx.fillRect(width*.75,0,width*.25,height);
+      ctx.beginPath(); ctx.moveTo(width*.375,0); ctx.lineTo(width*.625,height); ctx.lineWidth=1;
       ctx.strokeStyle='#000'; ctx.stroke();
       return c;
     };
-    const attach = async color => {
+    const attach = async (color,width=32,height=18) => {
       stream?.getTracks().forEach(track => track.stop());
-      source=makeSource(color);
+      source=makeSource(color,width,height);
       stream=source.captureStream(30);
       const geladen=new Promise(resolve => video.addEventListener('loadeddata',resolve,{once:true}));
       video.srcObject=stream;
       await video.play();
       await geladen;
-      await wait(() => video.readyState>=2 && video.videoWidth===32);
+      await wait(() => video.readyState>=2 && video.videoWidth===width && video.videoHeight===height);
     };
     const draws=[];
     const pixels=[];
@@ -82,10 +82,11 @@ app.whenReady().then(async () => {
       if (pass==='rcas') {
         const near=new Uint8Array(4), top=new Uint8Array(4);
         const white=new Uint8Array(4), black=new Uint8Array(4);
-        this.readPixels(10,90,1,1,this.RGBA,this.UNSIGNED_BYTE,near);
-        this.readPixels(10,170,1,1,this.RGBA,this.UNSIGNED_BYTE,top);
-        this.readPixels(130,90,1,1,this.RGBA,this.UNSIGNED_BYTE,white);
-        this.readPixels(290,90,1,1,this.RGBA,this.UNSIGNED_BYTE,black);
+        const w=this.drawingBufferWidth, h=this.drawingBufferHeight;
+        this.readPixels(Math.floor(w*.03),Math.floor(h*.5),1,1,this.RGBA,this.UNSIGNED_BYTE,near);
+        this.readPixels(Math.floor(w*.03),h-5,1,1,this.RGBA,this.UNSIGNED_BYTE,top);
+        this.readPixels(Math.floor(w*.4),Math.floor(h*.5),1,1,this.RGBA,this.UNSIGNED_BYTE,white);
+        this.readPixels(Math.floor(w*.91),Math.floor(h*.5),1,1,this.RGBA,this.UNSIGNED_BYTE,black);
         pixels.push({near:Array.from(near),top:Array.from(top),white:Array.from(white),black:Array.from(black)});
       }
       return result;
@@ -95,7 +96,7 @@ app.whenReady().then(async () => {
     const fsr=window.ElfixSpielerFsr.erstellen({video,canvas,beiStatus:s=>{window.last=s;states.push(s)}});
     fsr.setzeAktiv(true);
     await wait(() => window.last?.zustand==='aktiv');
-    const initial={status:window.last,draws:draws.slice(-2),pixel:pixels.at(-1),visible:!canvas.hidden,opacity:video.style.opacity};
+    const initial={status:window.last,draws:draws.slice(-2),pixel:pixels.at(-1),backing:[canvas.width,canvas.height],visible:!canvas.hidden,opacity:video.style.opacity};
     const laufendeFrames=[];
     for (const farbe of ['#00f','#ff0']) {
       const drawCount=draws.length;
@@ -127,23 +128,35 @@ app.whenReady().then(async () => {
     const beforePausedResize=draws.length;
     document.getElementById('stage').style.width='160px';
     document.getElementById('stage').style.height='180px';
-    await wait(() => window.last?.ausgang?.breite===160 && window.last?.ausgang?.hoehe===90);
-    const aspect={status:window.last,canvas:[canvas.width,canvas.height],pixel:pixels.at(-1),draws:draws.length-beforePausedResize,paused:video.paused};
-    const pausedDrawCount=draws.length;
+    await wait(() => canvas.getBoundingClientRect().width===160 && canvas.getBoundingClientRect().height===180);
     await pause(150);
-    aspect.noLoop=draws.length===pausedDrawCount;
-    document.getElementById('stage').style.width='16px';
-    document.getElementById('stage').style.height='9px';
+    const aspect={status:window.last,canvas:[canvas.width,canvas.height],pixel:pixels.at(-1),
+      draws:draws.length-beforePausedResize,paused:video.paused,
+      display:[canvas.getBoundingClientRect().width,canvas.getBoundingClientRect().height],
+      objectFit:getComputedStyle(canvas).objectFit};
+    const vor4k=draws.length;
+    fsr.setzeAktiv(true,2160);
+    await wait(() => window.last?.ausgang?.breite===3840 && window.last?.ausgang?.hoehe===2160);
+    const fourK={status:window.last,backing:[canvas.width,canvas.height],draws:draws.length-vor4k,paused:video.paused,pixel:pixels.at(-1)};
+    const vorRueckwechsel=draws.length;
+    fsr.setzeAktiv(true,1440);
+    await wait(() => window.last?.ausgang?.breite===2560 && window.last?.ausgang?.hoehe===1440);
+    const backTo1440={status:window.last,backing:[canvas.width,canvas.height],draws:draws.length-vorRueckwechsel,paused:video.paused};
+    fsr.setzeAktiv(false);
+    await attach('#0f0',32,24);
+    fsr.setzeAktiv(true);
+    await wait(() => window.last?.zustand==='aktiv' && window.last?.ausgang?.breite===1920
+      && pixels.at(-1)?.near[1]>pixels.at(-1)?.near[0]+100);
+    const switched={status:window.last,draws:draws.slice(-2),pixel:pixels.at(-1),backing:[canvas.width,canvas.height]};
+    fsr.setzeAktiv(false);
+    await attach('#f0f',2560,1440);
+    fsr.setzeAktiv(true);
     await wait(() => window.last?.zustand==='nicht-noetig');
     const unneeded={status:window.last,hidden:canvas.hidden,opacity:video.style.opacity};
-    document.getElementById('stage').style.width='160px';
-    document.getElementById('stage').style.height='180px';
-    await wait(() => window.last?.zustand==='aktiv');
     fsr.setzeAktiv(false);
     await attach('#0f0');
     fsr.setzeAktiv(true);
-    await wait(() => window.last?.zustand==='aktiv' && pixels.at(-1)?.near[1]>pixels.at(-1)?.near[0]+100);
-    const switched={status:window.last,draws:draws.slice(-2),pixel:pixels.at(-1)};
+    await wait(() => window.last?.zustand==='aktiv');
     const gl=canvas.getContext('webgl2');
     const debug=gl.getExtension('WEBGL_debug_renderer_info');
     const gpuName=debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
@@ -153,12 +166,13 @@ app.whenReady().then(async () => {
     const lost={status:window.last,hidden:canvas.hidden,opacity:video.style.opacity};
     fsr.zerstoeren();
     stream.getTracks().forEach(track=>track.stop());
-    return { initial,laufendeFrames,off,subtitles,aspect,unneeded,switched,lost,hasLoseContext:!!extension,gpuName };
+    return { initial,laufendeFrames,off,subtitles,aspect,fourK,backTo1440,unneeded,switched,lost,hasLoseContext:!!extension,gpuName };
   })()`);
   assert.equal(ergebnis.initial.status.zustand, "aktiv");
   assert.deepEqual(ergebnis.initial.draws, ["easu", "rcas"]);
   assert.deepEqual(ergebnis.initial.status.eingang, { breite: 32, hoehe: 18 });
-  assert.deepEqual(ergebnis.initial.status.ausgang, { breite: 320, hoehe: 180 });
+  assert.deepEqual(ergebnis.initial.status.ausgang, { breite: 2560, hoehe: 1440 });
+  assert.deepEqual(ergebnis.initial.backing, [2560,1440]);
   assert.equal(ergebnis.initial.visible, true);
   assert.equal(ergebnis.initial.opacity, "0");
   assert.ok(ergebnis.initial.pixel.near[0] > ergebnis.initial.pixel.near[1] + 100, "rotes Videobild wurde gerendert");
@@ -173,22 +187,31 @@ app.whenReady().then(async () => {
   assert.equal(ergebnis.subtitles.status.grund, "native-untertitel");
   assert.equal(ergebnis.subtitles.hidden, true);
   assert.equal(ergebnis.subtitles.opacity, "");
-  assert.deepEqual(ergebnis.aspect.status.ausgang, { breite: 160, hoehe: 90 });
-  assert.deepEqual(ergebnis.aspect.canvas, [160, 180]);
-  assert.deepEqual(ergebnis.aspect.pixel.top.slice(0,3), [0,0,0]);
+  assert.deepEqual(ergebnis.aspect.status.ausgang, { breite: 2560, hoehe: 1440 });
+  assert.deepEqual(ergebnis.aspect.canvas, [2560,1440]);
+  assert.deepEqual(ergebnis.aspect.display,[160,180]);
+  assert.equal(ergebnis.aspect.objectFit,"contain");
   assert.equal(ergebnis.aspect.paused, true);
-  assert.ok(ergebnis.aspect.draws >= 2, "pausiertes Bild wird nach Resize einmal neu gefiltert");
-  assert.equal(ergebnis.aspect.noLoop, true, "pausiertes Bild startet keinen Renderloop");
+  assert.equal(ergebnis.aspect.draws,0,"Fensterresize startet keinen 4K-Renderjob");
   assert.ok(ergebnis.aspect.pixel.near[0]>150 && ergebnis.aspect.pixel.near[1]>150, "pausiertes Farbbild bleibt bei Resize korrekt");
+  assert.deepEqual(ergebnis.fourK.status.ausgang,{breite:3840,hoehe:2160});
+  assert.deepEqual(ergebnis.fourK.backing,[3840,2160]);
+  assert.equal(ergebnis.fourK.paused,true);
+  assert.ok(ergebnis.fourK.draws>=2,"Zielwechsel rendert das pausierte Bild in 4K");
+  assert.ok(ergebnis.fourK.pixel.near[0]>150 && ergebnis.fourK.pixel.near[1]>150);
+  assert.deepEqual(ergebnis.backTo1440.backing,[2560,1440]);
+  assert.ok(ergebnis.backTo1440.draws>=2,"Rueckwechsel rendert das pausierte Bild");
   assert.equal(ergebnis.unneeded.status.zustand, "nicht-noetig");
   assert.equal(ergebnis.unneeded.hidden, true);
   assert.deepEqual(ergebnis.switched.draws, ["easu", "rcas"]);
+  assert.deepEqual(ergebnis.switched.status.ausgang,{breite:1920,hoehe:1440});
+  assert.deepEqual(ergebnis.switched.backing,[1920,1440]);
   assert.ok(ergebnis.switched.pixel.near[1] > ergebnis.switched.pixel.near[0] + 100, "neues gruenses Videobild wurde gerendert");
   if (ergebnis.hasLoseContext) {
     assert.equal(ergebnis.lost.status.zustand, "nicht-verfuegbar");
     assert.equal(ergebnis.lost.hidden, true);
     assert.equal(ergebnis.lost.opacity, "");
   }
-  console.log(`OK FSR1 (${hardware ? "Hardware" : "SwiftShader"}, ${ergebnis.gpuName}): WebGL2 EASU+RCAS, laufende Frames, pausierter Resize, Umschalten, Untertitel, Seitenverhaeltnis, Quellenwechsel, Kontextverlust`);
+  console.log(`OK FSR1 (${hardware ? "Hardware" : "SwiftShader"}, ${ergebnis.gpuName}): echtes 1440p/4K EASU+RCAS, laufende Frames, CSS-Resize ohne Renderjob, pausierter Zielwechsel, Untertitel, Seitenverhaeltnis, Quellenwechsel, Kontextverlust`);
   beenden(0);
 }).catch(fehler => beenden(1, fehler));

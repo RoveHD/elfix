@@ -91,6 +91,7 @@ OHNE_RELAY.push("nachziehneustarttest");
 OHNE_RELAY.push("androidraumbestandtest");
 OHNE_RELAY.push("androidgeraetebestandtest");
 OHNE_RELAY.push("rtxvideotest");
+OHNE_RELAY.push("upscalingbedienungtest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");
 MIT_RELAY.push("relayidentitytest");

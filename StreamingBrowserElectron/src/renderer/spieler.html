@@ -20,8 +20,23 @@
   }
   #buehne { position: fixed; inset: 0; }
   video { position: relative; width: 100%; height: 100%; object-fit: contain; background: #05070c; outline: none; }
-  #fsrBild, #rtxBild { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  #upscalingHinweis { color: #aac9ed; font-size: 12px; }
+  #fsrBild, #rtxBild { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  #upscalingHinweis { color: #aac9ed; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  #kopfTitel { flex: 1; min-width: 0; }
+  #kopfTitel > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #kopfAktionen { display: flex; align-items: flex-start; gap: 8px; margin-left: auto; max-width: 100%; }
+  #upscalingBedienung { display: grid; justify-items: end; gap: 3px; min-width: 0; max-width: 320px; text-align: right; }
+  #upscalingKnopf { background: #1e242e; white-space: nowrap; }
+  #upscalingKnopf[aria-pressed="true"] { background: rgba(61, 146, 255, .3); }
+  #upscalingKnopf[aria-disabled="true"] { opacity: .65; cursor: wait; }
+  #upscalingSchalter { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  #upscalingZiel .wahlKnopf { min-width: 90px; max-width: none; }
+  #upscalingZiel .wahlMenue { top: calc(100% + 8px); bottom: auto; right: 0; left: auto; min-width: 205px; text-align: left; }
+  #upscalingZiel .wahlKnopf[aria-disabled="true"] { opacity: .65; cursor: wait; }
+  @media (max-width: 600px) {
+    #kopf { flex-wrap: wrap; }
+    #kopfTitel { flex-basis: 100%; }
+  }
 
   /* Kopf und Leiste blenden sich zusammen aus - sie gehoeren zur Bedienung,
      nicht zum Film. */
@@ -51,7 +66,7 @@
   }
   button:hover { background: rgba(255, 255, 255, 0.14); }
   button:focus-visible { outline: 2px solid #3D92FF; }
-  #zu { margin-left: auto; }
+  #zu { flex-shrink: 0; }
 
   .zeit { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.8); font-size: 13px; }
 
@@ -460,12 +475,20 @@
   </div>
 
   <div id="kopf" class="schicht">
-    <div>
+    <div id="kopfTitel">
       <div id="titel">Wiedergabe</div>
       <div id="hoster"></div>
-      <div id="upscalingHinweis" hidden></div>
     </div>
-    <button id="zu" type="button" title="Schließen (Esc)">Schließen</button>
+    <div id="kopfAktionen">
+      <div id="upscalingBedienung">
+        <div id="upscalingSchalter">
+          <button id="upscalingKnopf" type="button" aria-pressed="false" aria-describedby="upscalingHinweis">Upscaling aus</button>
+          <div id="upscalingZiel" class="wahl"></div>
+        </div>
+        <div id="upscalingHinweis" role="status" aria-live="polite" hidden></div>
+      </div>
+      <button id="zu" type="button" title="Schließen (Esc)">Schließen</button>
+    </div>
   </div>
 
   <div id="leiste" class="schicht">

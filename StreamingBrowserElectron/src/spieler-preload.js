@@ -98,8 +98,9 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   skipSegmente: (id, dauer) => ipcRenderer.invoke("spieler:skip-segmente", id, dauer),
   untertitelMerken: (id, vorgabe) => ipcRenderer.send("spieler:untertitel", id, vorgabe),
   aufSkipEinstellung: (rueckruf) => ipcRenderer.on("spieler:skip-einstellung", (_ereignis, an) => rueckruf(an)),
-  aufUpscaling: (rueckruf) => ipcRenderer.on("spieler:upscaling", (_ereignis, an, methode) => rueckruf(an, methode)),
+  aufUpscaling: (rueckruf) => ipcRenderer.on("spieler:upscaling", (_ereignis, an, methode, aufloesung) => rueckruf(an, methode, aufloesung)),
   upscalingStatus: (id, status) => ipcRenderer.send("spieler:upscaling-status", id, status),
+  upscalingSetzen: (id, an, aufloesung) => ipcRenderer.invoke("spieler:upscaling-setzen", id, an, aufloesung),
   rtxBild: (id, bild) => ipcRenderer.invoke("spieler:rtx-bild", id, bild),
   rtxStop: id => ipcRenderer.send("spieler:rtx-stop", id),
   /**

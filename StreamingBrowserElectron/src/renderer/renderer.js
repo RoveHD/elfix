@@ -402,6 +402,7 @@ const introSkip = document.querySelector("#introSkip");
 const skipSegments = document.querySelector("#skipSegments");
 const videoUpscaling = document.querySelector("#videoUpscaling");
 const videoUpscalingMethod = document.querySelector("#videoUpscalingMethod");
+const videoUpscalingResolution = document.querySelector("#videoUpscalingResolution");
 const rtxVideoLicense = document.querySelector("#rtxVideoLicense");
 function videoUpscalingAuswahlZeigen() {
   const row = document.querySelector("#rtxVideoLicenseRow");
@@ -1341,6 +1342,10 @@ function bindEvents() {
     await saveSettings();
     videoUpscalingStandLaden();
   });
+  videoUpscalingResolution?.addEventListener("change", async () => {
+    await saveSettings();
+    videoUpscalingStandLaden();
+  });
   rtxVideoLicense?.addEventListener("change", async () => {
     await saveSettings();
     videoUpscalingStandLaden();
@@ -1460,6 +1465,7 @@ function bindEvents() {
     }
     if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
     if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "fsr1";
+    if (videoUpscalingResolution) videoUpscalingResolution.value = String(settings.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440);
     if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
     videoUpscalingAuswahlZeigen();
   });
@@ -8463,6 +8469,7 @@ function renderSettings() {
   if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
   if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
   if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "fsr1";
+  if (videoUpscalingResolution) videoUpscalingResolution.value = String(settings.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440);
   if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
   videoUpscalingAuswahlZeigen();
   videoUpscalingStandLaden();
@@ -8744,6 +8751,7 @@ async function saveSettings(options = {}) {
     skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
     videoUpscaling: videoUpscaling ? videoUpscaling.checked : settings.playback?.videoUpscaling === true,
     videoUpscalingMethod: videoUpscalingMethod ? videoUpscalingMethod.value : settings.playback?.videoUpscalingMethod || "fsr1",
+    videoUpscalingResolution: videoUpscalingResolution ? Number(videoUpscalingResolution.value) : settings.playback?.videoUpscalingResolution || 1440,
     rtxVideoLicense: rtxVideoLicense ? (rtxVideoLicense.checked ? "2024-02-23" : "") : settings.playback?.rtxVideoLicense || "",
     spoilerProtection: {
       enabled: Boolean(spoilerProtectionEnabled?.checked),

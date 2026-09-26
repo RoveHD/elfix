@@ -9,6 +9,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-rtx-player-"));
 const nativeErrors = [];
 const nativeCounts = {};
 app.setPath("userData", path.join(root, "profile"));
+app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app.on("window-all-closed", () => {});
 const hardware = process.env.ELFIX_RTX_HARDWARE === "1";
 if (!hardware) {
@@ -45,6 +46,11 @@ app.whenReady().then(async () => {
   ipcMain.on("spieler:upscaling-status", (_event, id, stand) => statuses.push({ id, ...stand }));
   ipcMain.on("spieler:fehler", (_event, message) => errors.push(message));
   ipcMain.handle("spieler:chat-status", () => ({ active: false, messages: [] }));
+  ipcMain.handle("spieler:upscaling-setzen", (event, id, an, aufloesung) => {
+    assert.equal(id, 71); assert.ok([1440,2160].includes(aufloesung));
+    event.sender.send("spieler:upscaling", an, "rtx", aufloesung);
+    return { ok: true, an, verfahren: "rtx", aufloesung };
+  });
   ipcMain.on("spieler:rtx-stop", stop);
   ipcMain.handle("spieler:rtx-bild", (_event, id, frame) => {
     assert.equal(id, 71);
@@ -95,12 +101,23 @@ app.whenReady().then(async () => {
   if (!hardware) {
     assert.equal(requests.length, 1, "Unsupported hardware does not cause a request loop");
     assert.match(await js("document.querySelector('#upscalingHinweis').title"), /Grafikkarte|Treiber/);
+    assert.doesNotMatch(await js("document.querySelector('#upscalingHinweis').textContent"), /→/,
+      "Unavailable RTX must not claim an upscaled output resolution");
   } else {
+    assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "RTX Video · 640 × 360 → 2560 × 1440");
     await until(() => js("window.rtxFrames.some(p=>p[2]>180&&p[1]<70)&&window.rtxFrames.some(p=>p[1]>180&&p[2]<70)"), "Continuous native frames change color");
-    await js("bild.pause()");
-    const before = await js("window.rtxFrames.length");
+    await js("bild.pause();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    const before = requests.length;
     win.setContentSize(1100, 700);
-    await until(async () => await js("window.rtxFrames.length") > before, "Paused resize receives a fresh native frame");
+    await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    assert.equal(requests.length, before, "CSS resize does not restart native processing");
+    assert.equal(await js("document.querySelector('#rtxBild').hidden"), false);
+    assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "RTX Video · 640 × 360 → 2560 × 1440");
+    assert.equal(await js("bild.paused"), true);
+    await js("document.querySelector('#upscalingZiel .wahlKnopf').click(); document.querySelector('#upscalingZiel .wahlMenue button:last-child').click()");
+    await until(() => statuses.at(-1)?.ausgang?.breite === 3840, "Native 4K target frame arrives");
+    assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "RTX Video · 640 × 360 → 3840 × 2160");
+    assert.deepEqual(await js("[document.querySelector('#rtxBild').width,document.querySelector('#rtxBild').height]"), [3840,2160]);
     assert.equal(await js("bild.paused"), true);
     await js("bild.currentTime=0.2");
     await until(() => js("!bild.seeking && window.rtxFrames.at(-1)?.[0]>180 && window.rtxFrames.at(-1)?.[2]<70 && !document.querySelector('#rtxBild').hidden"), "Seek shows the correct red frame");
@@ -122,7 +139,7 @@ app.whenReady().then(async () => {
     return new Promise(resolve=>setTimeout(resolve,50)); })()`);
   assert.equal(await js("document.querySelector('#rtxBild').hidden"), true, "A late frame cannot reappear after switching away from RTX");
   assert.deepEqual(errors, []);
-  console.log(hardware ? "OK RTX hardware player: real NGX/shared textures, colors, paused resize, seek and switch to FSR without reload/pause"
+  console.log(hardware ? "OK RTX hardware player: real NGX/shared textures, 1440p/4K, colors, paused resize, seek and switch to FSR without reload/pause"
     : "OK RTX player fallback: unsupported GPU, original video, no request loop and live switch to FSR");
   finish(0);
 }).catch(error => finish(1, error));

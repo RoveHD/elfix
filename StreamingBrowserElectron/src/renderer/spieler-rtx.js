@@ -5,11 +5,14 @@
 (() => {
   function erstellen({ video, canvas, bruecke, auftragId, beiStatus }) {
     let aktiv = false, zerstoert = false, fehler = "", generation = 1, frameId = 0;
+    let zielHoehe = 1440;
     let callback = null, pending = null, letzterStatus = "";
     const opacity = video.style.opacity;
     let context = null;
-    function status(zustand, grund) {
+    function status(zustand, grund, eingang, ausgang) {
       const stand = { zustand, grund, verfahren: "rtx" };
+      if (eingang) stand.eingang = eingang;
+      if (ausgang) stand.ausgang = ausgang;
       const key = JSON.stringify(stand);
       if (key !== letzterStatus) { letzterStatus = key; beiStatus(stand); }
     }
@@ -30,13 +33,17 @@
         (t.kind === "subtitles" || t.kind === "captions") && t.mode === "showing");
     }
     function groesse() {
-      const rect = video.getBoundingClientRect(), dpr = Math.max(1, devicePixelRatio || 1);
-      const w = Math.round(rect.width * dpr), h = Math.round(rect.height * dpr);
       const width = video.videoWidth, height = video.videoHeight;
-      const scale = Math.min(w / width, h / height);
-      const outputWidth = Math.round(width * scale), outputHeight = Math.round(height * scale);
-      return { w, h, width, height, outputWidth, outputHeight,
-        x: Math.floor((w - outputWidth) / 2), y: Math.floor((h - outputHeight) / 2) };
+      if (!(width > 0 && height > 0))
+        return { w: 0, h: 0, width, height, outputWidth: 0, outputHeight: 0, x: 0, y: 0 };
+      const zielBreite = zielHoehe * 16 / 9;
+      const scale = Math.min(zielBreite / width, zielHoehe / height);
+      const outputWidth = Math.min(zielBreite, Math.round(width * scale));
+      const outputHeight = Math.min(zielHoehe, Math.round(height * scale));
+      // Canvas backing contains exactly the processed frame. CSS fits it into
+      // the player window without changing the native RTX output resolution.
+      return { w: outputWidth, h: outputHeight, width, height,
+        outputWidth, outputHeight, x: 0, y: 0 };
     }
     function hindernis(g) {
       if (!aktiv || zerstoert) return ["aus", "deaktiviert"];
@@ -119,7 +126,8 @@
         context.fillStyle = "#000"; context.fillRect(0, 0, g.w, g.h);
         context.drawImage(frame, g.x, g.y, g.outputWidth, g.outputHeight);
         canvas.hidden = false; video.style.opacity = "0";
-        status("aktiv", "rtx-vsr");
+        status("aktiv", "rtx-vsr", { breite: g.width, hoehe: g.height },
+          { breite: g.outputWidth, hoehe: g.outputHeight });
       } catch {
         fehler = "rtx-ausgabe"; original(); abbrechen(); status("nicht-verfuegbar", fehler);
       } finally { frame.close(); }
@@ -138,18 +146,20 @@
     video.textTracks.addEventListener("change", aenderung);
     document.addEventListener("visibilitychange", aenderung);
     window.addEventListener("message", empfangen);
-    const resize = new ResizeObserver(aenderung); resize.observe(video);
+    // CSS resizes the existing processed canvas; no native frame is required.
     original();
     return {
-      setzeAktiv(value) {
+      setzeAktiv(value, neueZielHoehe = 1440) {
         const next = value === true;
-        if (zerstoert || aktiv === next) return;
+        const naechstesZiel = Number(neueZielHoehe) === 2160 ? 2160 : 1440;
+        if (zerstoert || (aktiv === next && zielHoehe === naechstesZiel)) return;
+        zielHoehe = naechstesZiel;
         aktiv = next; fehler = ""; invalidieren();
         if (aktiv) aktualisieren(); else status("aus", "deaktiviert");
       },
       zerstoeren() {
         if (zerstoert) return;
-        zerstoert = true; aktiv = false; invalidieren(); resize.disconnect();
+        zerstoert = true; aktiv = false; invalidieren();
         for (const [event, handler] of events) video.removeEventListener(event, handler);
         video.textTracks.removeEventListener("change", aenderung);
         document.removeEventListener("visibilitychange", aenderung);

@@ -140,10 +140,10 @@
     let gl = null;
     let gpu = null;
     let frameId = null;
-    let resizeObserver = null;
     let quellfehler = false;
     let quelle = "";
     let gemeldet = "";
+    let zielHoehe = 1440;
     const ursprungsOpacity = video.style.opacity;
 
     function status(zustand, grund, eingang, ausgang) {
@@ -236,21 +236,16 @@
       return false;
     }
     function groessen() {
-      const rect = video.getBoundingClientRect();
-      const cssW = rect.width;
-      const cssH = rect.height;
       const inW = video.videoWidth;
       const inH = video.videoHeight;
-      if (!(cssW > 0 && cssH > 0 && inW > 0 && inH > 0)) return null;
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const w = Math.round(cssW * dpr);
-      const h = Math.round(cssH * dpr);
-      const faktor = Math.min(w / inW, h / inH);
-      const outW = Math.round(inW * faktor);
-      const outH = Math.round(inH * faktor);
-      const x = Math.floor((w - outW) / 2);
-      const y = Math.floor((h - outH) / 2);
-      return { w, h, inW, inH, outW, outH, x, y };
+      if (!(inW > 0 && inH > 0)) return null;
+      const zielBreite = zielHoehe * 16 / 9;
+      const faktor = Math.min(zielBreite / inW, zielHoehe / inH);
+      const outW = Math.min(zielBreite, Math.round(inW * faktor));
+      const outH = Math.min(zielHoehe, Math.round(inH * faktor));
+      // CSS object-fit: contain handles the window letterbox. The GPU canvas
+      // contains only the actual output image, independently of window/DPR.
+      return { w: outW, h: outH, inW, inH, outW, outH, x: 0, y: 0 };
     }
     function bereitPruefen() {
       if (!aktiv || zerstoert) return { zustand: "aus", grund: "deaktiviert" };
@@ -266,8 +261,8 @@
       const eingang = { breite: g.inW, hoehe: g.inH };
       const ausgang = { breite: g.outW, hoehe: g.outH };
       if (g.outW <= g.inW || g.outH <= g.inH) return { zustand: "nicht-noetig", grund: "ausgabe-nicht-groesser", eingang, ausgang };
-      // Keep allocations bounded even on unusually large displays/videos.
-      if (g.w > 3840 || g.h > 2160 || g.w * g.h > 8294400)
+      // Both fixed targets fit the 4K allocation cap.
+      if (g.inW > 3840 || g.inH > 2160 || g.w > 3840 || g.h > 2160)
         return { zustand: "nicht-verfuegbar", grund: "ausgabe-ueber-4k-grenze", eingang, ausgang };
       return { zustand: "rendern", grund: "", eingang, ausgang, groesse: g };
     }
@@ -400,16 +395,17 @@
     document.addEventListener("visibilitychange", spurGeaendert);
     canvas.addEventListener("webglcontextlost", verloren);
     canvas.addEventListener("webglcontextrestored", wiederhergestellt);
-    if (typeof ResizeObserver === "function") {
-      resizeObserver = new ResizeObserver(() => aktualisieren(true));
-      resizeObserver.observe(video);
-    } else window.addEventListener("resize", spurGeaendert);
+    // CSS fits the fixed-size canvas when the player window changes size.
     original();
     status("aus", "deaktiviert");
     return {
-      setzeAktiv(wert) {
+      setzeAktiv(wert, neueZielHoehe = 1440) {
         if (zerstoert) return;
+        const naechstesZiel = Number(neueZielHoehe) === 2160 ? 2160 : 1440;
+        const zielGeaendert = zielHoehe !== naechstesZiel;
+        zielHoehe = naechstesZiel;
         aktiv = Boolean(wert);
+        if (zielGeaendert) frameAbbrechen();
         if (!aktiv) {
           frameAbbrechen();
           original();
@@ -438,8 +434,6 @@
         document.removeEventListener("visibilitychange", spurGeaendert);
         canvas.removeEventListener("webglcontextlost", verloren);
         canvas.removeEventListener("webglcontextrestored", wiederhergestellt);
-        resizeObserver?.disconnect();
-        window.removeEventListener("resize", spurGeaendert);
         status("aus", "deaktiviert");
       }
     };

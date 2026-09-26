@@ -3,6 +3,20 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.48 — 27. September 2026
+
+- Video-Upscaling lässt sich direkt oben rechts im ELFIX-Player ein- und
+  ausschalten. Der Schalter speichert dieselbe Einstellung wie das Einstellungsmenü,
+  ohne die Wiedergabe anzuhalten oder neu zu laden.
+- Darunter stehen Verfahren, Quellauflösung und tatsächlich gerenderte
+  Ausgabeauflösung, zum Beispiel „FSR 1 · 1280 × 720 → 3840 × 2160“.
+  Schwarze Balken zählen nicht zur Bildauflösung; ohne aktives Upscaling zeigt
+  die Anzeige das Originalbild.
+- Zielauflösung direkt im Player und in den Einstellungen wählbar: 1440p
+  (2560 × 1440) oder 4K (3840 × 2160). FSR 1 und RTX Video erzeugen das Bild
+  unabhängig von der Fenstergröße. Das Seitenverhältnis bleibt erhalten;
+  größere Quellen werden nicht verkleinert. Standardziel ist 1440p.
+
 ## 2.0.47 — 27. September 2026
 
 - Optionales Video-Upscaling im ELFIX-Desktop-Player unter Einstellungen →

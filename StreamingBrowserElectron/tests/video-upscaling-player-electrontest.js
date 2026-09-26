@@ -8,6 +8,7 @@ const http = require("node:http");
 const media = require("../src/spieler-netz");
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-upscaling-player-"));
 app.setPath("userData", profile);
+app.commandLine.appendSwitch("force-device-scale-factor", "1");
 // Closing the recording helper must not end the test before the real player exists.
 app.on("window-all-closed", () => {});
 if (process.env.ELFIX_FSR_HARDWARE !== "1") {
@@ -17,6 +18,7 @@ if (process.env.ELFIX_FSR_HARDWARE !== "1") {
 }
 let window, recorder, server;
 const statuses = [], errors = [], requests = [], bridgeResponses = [];
+const toggles = [];
 const timeout = setTimeout(() => finish(1, new Error("Upscaling player timeout")), 40000);
 function finish(code, error) {
   clearTimeout(timeout);
@@ -35,7 +37,7 @@ async function until(check) {
 app.whenReady().then(async () => {
   recorder = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } });
   await recorder.loadURL("about:blank");
-  const bytes = await require("./komfort-video")(recorder, path.join(profile, "fixture.webm"));
+  const bytes = await require("./komfort-video")(recorder, path.join(profile, "fixture.webm"), { durationMs: 8000 });
   recorder.destroy(); recorder = null;
   server = http.createServer((req, res) => {
     requests.push({ cookie: req.headers.cookie, range: req.headers.range, origin: req.headers.origin });
@@ -58,11 +60,17 @@ app.whenReady().then(async () => {
     return response;
   });
   ipcMain.on("spieler:bereit", event => event.sender.send("spieler:auftrag", {
-    id: 41, adresse: url, typ: "datei", titel: "Upscaling-Probe", videoUpscaling: true, weiterZaehler: 0
+    id: 41, adresse: url, typ: "datei", titel: "Upscaling-Probe", videoUpscaling: false, weiterZaehler: 0
   }));
   ipcMain.on("spieler:upscaling-status", (_event, id, status) => statuses.push({ id, ...status }));
   ipcMain.on("spieler:fehler", (_event, message) => errors.push(message));
   ipcMain.handle("spieler:chat-status", () => ({ active: false, messages: [] }));
+  ipcMain.handle("spieler:upscaling-setzen", (event, id, an, aufloesung) => {
+    assert.equal(id, 41); assert.equal(typeof an, "boolean");
+    assert.ok([1440, 2160].includes(aufloesung)); toggles.push([an, aufloesung]);
+    event.sender.send("spieler:upscaling", an, "fsr1", aufloesung);
+    return { ok: true, an, verfahren: "fsr1", aufloesung };
+  });
   window = new BrowserWindow({ show: false, width: 640, height: 360, useContentSize: true, webPreferences: {
     session: player, preload: path.join(__dirname, "../src/spieler-preload.js"),
     nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false,
@@ -70,7 +78,13 @@ app.whenReady().then(async () => {
   } });
   await window.loadFile(path.join(__dirname, "../src/renderer/spieler.html"));
   const js = code => window.webContents.executeJavaScript(code);
+  await until(() => js("bild.videoWidth===160 && !bild.paused"));
+  await js("bild.loop=true");
+  assert.equal(await js("document.querySelector('#upscalingKnopf').getAttribute('aria-pressed')"), "false");
+  assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "160 × 90 · Originalbild");
+  await js("document.querySelector('#upscalingKnopf').click()");
   await until(() => statuses.at(-1)?.zustand === "aktiv");
+  assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "FSR 1 · 160 × 90 → 2560 × 1440");
   assert.equal(statuses.at(-1).id, 41);
   assert.ok(requests.some(r => r.cookie?.includes("fsr-auth=fixture")), "Provider session cookies survive anonymous video CORS");
   assert.ok(bridgeResponses.includes("null"), "The media bridge permits CORS only for the local player origin");
@@ -84,14 +98,57 @@ app.whenReady().then(async () => {
   assert.equal(before.cors, "anonymous");
   assert.equal(before.sizes[0], before.sizes[2]);
   assert.equal(before.sizes[1], before.sizes[3]);
-  window.webContents.send("spieler:upscaling", false);
+  await js("document.querySelector('#upscalingKnopf').focus()");
+  window.webContents.sendInputEvent({ type: "keyDown", keyCode: "Space" });
+  window.webContents.sendInputEvent({ type: "keyUp", keyCode: "Space" });
   await until(() => statuses.at(-1)?.zustand === "aus");
   assert.equal(await js("document.querySelector('#fsrBild').hidden"), true);
-  window.webContents.send("spieler:upscaling", true);
+  assert.doesNotMatch(await js("document.querySelector('#upscalingHinweis').textContent"), /→/);
+  await until(() => js("document.querySelector('#upscalingKnopf').getAttribute('aria-disabled')==='false'"));
+  assert.equal(await js("document.activeElement===document.querySelector('#upscalingKnopf')"), true,
+    "Keyboard focus stays on the toggle after saving");
+  await js("document.querySelector('#upscalingKnopf').click()");
   await until(() => statuses.at(-1)?.zustand === "aktiv");
+  await js("document.querySelector('#upscalingZiel .wahlKnopf').click()");
+  await js("document.querySelector('#upscalingZiel .wahlMenue button:last-child').click()");
+  await until(() => statuses.at(-1)?.ausgang?.breite === 3840);
+  assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "FSR 1 · 160 × 90 → 3840 × 2160");
+  assert.deepEqual(await js("[document.querySelector('#fsrBild').width,document.querySelector('#fsrBild').height]"), [3840, 2160]);
+  assert.deepEqual(toggles, [[true,1440], [false,1440], [true,1440], [true,2160]]);
   assert.deepEqual(await js("({source:bild.currentSrc,paused:bild.paused,events:window.unwanted})"),
     { source: before.source, paused: false, events: [] }, "Toggling preserves decoder, source, position and playback");
   assert.deepEqual(errors, []);
-  console.log("OK FSR player integration: production HTML/preload, CORS, provider cookies, layout and live toggle without reload/pause");
+  await js("bild.pause()");
+  window.setContentSize(960, 600);
+  await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+  assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "FSR 1 · 160 × 90 → 3840 × 2160");
+  assert.equal(await js("getComputedStyle(document.querySelector('#fsrBild')).objectFit"), "contain");
+  assert.equal(await js("bild.paused"), true);
+  if (process.env.ELFIX_TEST_SCREENSHOT) {
+    window.setOpacity(0); window.showInactive();
+    await js("schichtenZeigen();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    fs.writeFileSync(process.env.ELFIX_TEST_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
+  }
+  for (const width of [960, 360]) {
+    window.setContentSize(width, 600);
+    await js("schichtenZeigen();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    assert.equal(await js(`(() => {
+      const u=document.querySelector('#upscalingBedienung').getBoundingClientRect(),
+        close=document.querySelector('#zu').getBoundingClientRect();
+      return u.right<=close.left && close.right<=innerWidth && u.left>=0 && u.top<150;
+    })()`), true, "Top-right control and resolution stay visible without overlapping Close");
+    await js("document.querySelector('#upscalingZiel .wahlKnopf').click()");
+    assert.equal(await js(`(() => {
+      const menu=document.querySelector('#upscalingZiel .wahlMenue').getBoundingClientRect();
+      return menu.left>=0 && menu.right<=innerWidth && menu.top>0 && menu.bottom<innerHeight;
+    })()`), true, "The top menu opens downwards and fits narrow windows");
+    await js("document.querySelector('#upscalingZiel .wahlKnopf').click()");
+  }
+  await js("document.querySelector('#upscalingZiel .wahlKnopf').click(); document.querySelector('#upscalingZiel .wahlMenue button').click()");
+  await until(() => statuses.at(-1)?.ausgang?.breite === 2560);
+  assert.equal(await js("bild.paused"), true, "Changing the target preserves pause");
+  assert.doesNotMatch(await js("document.querySelector('#upscalingHinweis').textContent"), /960 × 600/,
+    "The resolution excludes letterbox bars");
+  console.log("OK FSR player: real button/keyboard and 1440p/4K selection, CORS/cookies, no pause/reload, fixed actual resolution, paused resize and narrow layout");
   finish(0);
 }).catch(error => finish(1, error));

@@ -4,6 +4,17 @@ Unter **Einstellungen → Wiedergabe → Videoqualität** lassen sich **AMD FSR 
 oder **NVIDIA RTX Video Super Resolution** auswählen und einschalten.
 Die Einstellung ist standardmäßig aus und wird lokal gespeichert.
 Ein laufendes Video wird beim Umschalten weder neu geladen noch angehalten.
+Der Schalter **Upscaling an/aus** steht auch direkt oben rechts im Player und
+speichert dieselbe Einstellung. Daneben lässt sich das Ziel **1440p** oder
+**4K (2160p)** wählen, ebenso im Einstellungsmenü. Standardziel ist 1440p.
+Die Verarbeitung erzeugt bis zu **2560 × 1440** bzw. **3840 × 2160** Bildpunkte,
+unabhängig von Fenstergröße und Bildschirm-Skalierung. Das Bild wird anschließend
+passend im Player dargestellt; ein kleineres Display zeigt dadurch keine zusätzlichen
+physischen Pixel. Das Quellseitenverhältnis bleibt erhalten.
+Darunter erscheint bei aktiver Verarbeitung zum Beispiel
+**FSR 1 · 1280 × 720 → 3840 × 2160**. Die Zahlen stammen aus dem tatsächlich
+gerenderten Bild und schließen schwarze Balken aus. Ohne aktives Upscaling steht
+dort die Originalauflösung. Eine Quelle ab der Zielauflösung wird nicht verkleinert.
 
 Die Umsetzung verwendet AMDs räumlichen EASU-Upscaler mit anschließender
 RCAS-Schärfung. Sie benötigt WebGL2 und geeignete Grafikbeschleunigung, ist
@@ -29,8 +40,9 @@ proprietär; ihre Bedingungen gelten zusätzlich für diese optionale Komponente
 
 - Nur Videos im eigenen ELFIX-Desktop-Player; keine Änderung am eingebetteten
   Player einer Anbieterwebseite oder an Android/TV.
-- Verarbeitung nur beim Vergrößern. Ausgabe maximal 3840 × 2160 Bildpunkte,
-  einschließlich der Bildschirm-Skalierung. Das Seitenverhältnis bleibt erhalten.
+- Verarbeitung nur beim Vergrößern auf das gewählte Ziel. Ausgabe maximal
+  3840 × 2160 Bildpunkte. Bei 4:3 entstehen beispielsweise 1920 × 1440 bzw.
+  2880 × 2160 Bildpunkte; das Bild wird weder beschnitten noch verzerrt.
 - Bei nativen Untertiteln, im Mini-Player oder bei einer nicht verarbeitbaren
   Quelle wird das Originalbild angezeigt. Ein ausgeblendeter Player setzt die
   Bildverarbeitung aus. Der Status nennt den jeweiligen Grund.
@@ -71,13 +83,14 @@ nicht in der Anwendung gesetzt. Mit `ELFIX_FSR_HARDWARE=1` laufen die beiden
 Renderer-/Playerprüfungen auf der tatsächlichen GPU.
 
 Geprüft wurden fortlaufende Videoframes, schwarze/weiße Bildbereiche,
-Seitenverhältnis, Größenänderung bei Pause, Untertitel, Quellenwechsel,
+tatsächliche 1440p-/4K-Ausgabe, Seitenverhältnis, Zielwechsel bei Pause, Untertitel, Quellenwechsel,
 Kontextverlust und Umschalten ohne Quellenwechsel oder Pause. Der Integrationstest
 prüft außerdem den Medienzugriff mit CORS und den Cookies der Anbietersitzung.
 Die Einstellungsoberfläche wurde in Electron gerendert und visuell kontrolliert.
 Der echte RTX-Durchlauf (`ELFIX_RTX_HARDWARE=1`, `tests/rtx-player-electrontest.js`)
-prüft NGX, Shared-Texture-Übertragung, fortlaufende Farben, pausierte Größenänderung,
-Spulen auf das richtige Bild und Wechsel zu FSR ohne zusätzliche Pause/Neuladen.
+prüft NGX, Shared-Texture-Übertragung, fortlaufende Farben, 1440p-/4K-Zielwechsel,
+unveränderte Verarbeitung bei Fenstergrößenänderung, Spulen auf das richtige Bild
+und Wechsel zu FSR ohne zusätzliche Pause/Neuladen.
 Ohne diese Umgebungsvariable testet er den sicheren Rückfall bei fehlender RTX-GPU.
 Der Node-Test `rtxvideotest` prüft Größen- und Protokollgrenzen, eine begrenzte
 Warteschlange, Freigaben, veraltete Generationen sowie Crash ohne Neustartschleife.

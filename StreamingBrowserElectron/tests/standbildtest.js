@@ -324,6 +324,11 @@ function geraet(name, raster) {
   // Nacheinander beitreten: Host der Runde wird, wer zuerst da ist.
   host.raeume.beitreten(KEY, RAUM);
   await erwarte("Host ist beigetreten", () => host.eintrag()?.joined);
+  // Die Hostwahl folgt dem ersten aktiven Playerstand, nicht dem Beitritt.
+  // Vor den Gaesten bestaetigen, statt die Rolle von der Ankunftsreihenfolge
+  // der drei unabhaengigen Sekundentimer und WebSocket-Verbindungen abhaengen zu lassen.
+  host.player.standMelden(true);
+  await erwarte("Hostrolle ist vom Relay bestaetigt", () => host.binHost());
   gastA.raeume.beitreten(KEY, RAUM);
   await erwarte("Gast A ist beigetreten", () => gastA.eintrag()?.joined);
   gastB.raeume.beitreten(KEY, RAUM);

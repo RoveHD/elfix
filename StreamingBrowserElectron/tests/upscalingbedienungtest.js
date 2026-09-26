@@ -1,0 +1,53 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+const source = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
+const start = source.indexOf('ipcMain.handle("spieler:upscaling-setzen",');
+assert.ok(start > 0);
+const end = source.indexOf('\nipcMain.handle(', start + 1);
+const helperStart = source.indexOf("function spielerUpscalingAktiv()");
+const helperEnd = source.indexOf("\n}", helperStart) + 2;
+const sender = {};
+let handler, saved = 0, changes = 0, stops = 0;
+const sent = [];
+const settings = { playback: { videoUpscaling: false, videoUpscalingMethod: "fsr1",
+  videoUpscalingResolution: 1440, rtxVideoLicense: "", autoplayNextEpisode: false } };
+const context = vm.createContext({
+  ipcMain: { handle(_channel, callback) { handler = callback; } },
+  settings, spielerLauf: { id: 41 }, spielerUpscalingStatus: null,
+  spielerView: { webContents: { send: (...args) => sent.push(args) } },
+  vomSpieler: event => event === sender,
+  saveSettings: () => { saved++; }, meldeEinstellungen: () => { changes++; },
+  spielerRtxStop: () => { stops++; }, videoUpscalingStandSenden() {}
+});
+vm.runInContext(source.slice(helperStart, helperEnd) + "\n" + source.slice(start, end), context);
+for (const [event, id, value] of [[{}, 41, true], [sender, 40, true], [sender, 41, "true"]]) {
+  assert.equal(handler(event, id, value, 1440).ok, false);
+}
+for (const value of [undefined, null, "2160", 1080, 4320, {}, NaN]) assert.equal(handler(sender, 41, true, value).ok, false);
+assert.equal(saved, 0, "Foreign senders, old episodes and malformed input cannot change settings");
+assert.equal(handler(sender, 41, true, 1440).an, true);
+assert.equal(settings.playback.videoUpscaling, true);
+assert.equal(settings.playback.autoplayNextEpisode, false);
+assert.equal(saved, 1);
+assert.equal(changes, 1, "The settings window receives the player's persisted change");
+assert.deepEqual(sent.at(-1), ["spieler:upscaling", true, "fsr1", 1440]);
+assert.equal(handler(sender, 41, false, 1440).an, false);
+assert.equal(settings.playback.videoUpscaling, false);
+assert.equal(stops, 1);
+settings.playback.videoUpscalingMethod = "rtx";
+assert.equal(handler(sender, 41, true, 2160).grund, "rtx-lizenz");
+assert.equal(saved, 2, "The player cannot bypass RTX license acceptance");
+assert.equal(settings.playback.videoUpscaling, false);
+settings.playback.rtxVideoLicense = "2024-02-23";
+assert.equal(handler(sender, 41, true, 2160).an, true);
+assert.equal(settings.playback.videoUpscalingResolution, 2160);
+assert.deepEqual(sent.at(-1), ["spieler:upscaling", true, "rtx", 2160]);
+assert.equal(stops, 2, "Changing the output target stops the old native generation");
+assert.equal(handler(sender, 41, true, 1440).aufloesung, 1440);
+assert.equal(settings.playback.videoUpscalingResolution, 1440);
+assert.equal(stops, 3);
+assert.equal(changes, 4);
+console.log("OK Player-Upscaling: persisted on/off and 1440p/4K, settings synchronization, current episode, sender and RTX license guard");
