@@ -11,6 +11,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#ifdef ELFIX_RTX_NATIVE_DIAGNOSTIC
+#include <fstream>
+#endif
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -68,6 +71,9 @@ struct Session {
   HANDLE remoteHandle = nullptr;
   uint32_t generation = 0;
   uint32_t frameId = 0;
+#ifdef ELFIX_RTX_NATIVE_DIAGNOSTIC
+  std::filesystem::path diagnosticDirectory;
+#endif
 
   bool CloseRemoteHandle() {
     if (!remoteHandle) return true;
@@ -101,6 +107,9 @@ struct Session {
 };
 
 bool Init(Session& s, DWORD parentPid, const wchar_t* dataDirectory) {
+#ifdef ELFIX_RTX_NATIVE_DIAGNOSTIC
+  s.diagnosticDirectory = dataDirectory;
+#endif
   s.parent = OpenProcess(PROCESS_DUP_HANDLE, FALSE, parentPid);
   if (!s.parent) { Error("parent_process"); return false; }
   ComPtr<IDXGIFactory1> factory;
@@ -165,6 +174,34 @@ bool WaitForGpu(Session& s) {
   return false;
 }
 
+#ifdef ELFIX_RTX_NATIVE_DIAGNOSTIC
+bool DumpTexture(Session& s, ID3D11Texture2D* texture,
+                 const char* stage, uint32_t frameId) {
+  D3D11_TEXTURE2D_DESC description = {};
+  texture->GetDesc(&description);
+  D3D11_TEXTURE2D_DESC stagingDescription = description;
+  stagingDescription.Usage = D3D11_USAGE_STAGING;
+  stagingDescription.BindFlags = 0;
+  stagingDescription.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  stagingDescription.MiscFlags = 0;
+  ComPtr<ID3D11Texture2D> staging;
+  if (FAILED(s.device->CreateTexture2D(&stagingDescription, nullptr, &staging))) return false;
+  s.context->CopyResource(staging.Get(), texture);
+  D3D11_MAPPED_SUBRESOURCE mapped = {};
+  if (FAILED(s.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
+  const auto file = s.diagnosticDirectory /
+      (std::string("native-") + stage + "-" + std::to_string(frameId) + ".rgba");
+  std::ofstream stream(file, std::ios::binary);
+  const auto rowBytes = static_cast<std::streamsize>(description.Width) * 4;
+  for (UINT row = 0; row < description.Height && stream; ++row) {
+    const auto* source = static_cast<const char*>(mapped.pData) + row * mapped.RowPitch;
+    stream.write(source, rowBytes);
+  }
+  s.context->Unmap(staging.Get(), 0);
+  return stream.good();
+}
+#endif
+
 bool ProcessFrame(Session& s, const Header& h) {
   if (!GoodDimensions(h) || s.frameId != 0) { Error("invalid_frame"); return false; }
   std::vector<uint8_t> pixels(h.byteLength);
@@ -213,6 +250,12 @@ bool ProcessFrame(Session& s, const Header& h) {
   }
   s.context->CopyResource(s.shared.Get(), s.output.Get());
   if (!WaitForGpu(s)) { Error("gpu_timeout"); return false; }
+#ifdef ELFIX_RTX_NATIVE_DIAGNOSTIC
+  if (!DumpTexture(s, s.output.Get(), "ngx", h.frameId) ||
+      !DumpTexture(s, s.shared.Get(), "shared", h.frameId)) {
+    Error("native_diagnostic_readback"); return false;
+  }
+#endif
   ComPtr<IDXGIResource1> dxgiResource;
   HRESULT handleResult = s.shared.As(&dxgiResource);
   if (SUCCEEDED(handleResult)) {

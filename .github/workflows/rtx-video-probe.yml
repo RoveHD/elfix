@@ -23,6 +23,8 @@ jobs:
         run: ./StreamingBrowserElectron/native/rtx-spike/build.ps1
       - name: Build native player module
         shell: pwsh
+        env:
+          CL: /DELFIX_RTX_NATIVE_DIAGNOSTIC
         run: ./StreamingBrowserElectron/scripts/rtx-video-build.ps1
       - name: Upload probe executable only
         uses: actions/upload-artifact@v7
