@@ -72,7 +72,7 @@ $libDirectory = Join-Path $sdk 'lib/Windows/x64'
 @echo off
 call "$vsDevCmd" -no_logo -arch=amd64
 if errorlevel 1 exit /b 1
-cl.exe /nologo /std:c++17 /EHsc /W4 /MT /I"$include" /Fo"$obj" /Fe"$exe" "$source" /link /LIBPATH:"$libDirectory" nvsdk_ngx_s.lib d3d11.lib dxgi.lib
+cl.exe /nologo /std:c++17 /EHsc /W4 /MT /I"$include" /Fo"$obj" /Fe"$exe" "$source" /link /LIBPATH:"$libDirectory" nvsdk_ngx_s.lib d3d11.lib dxgi.lib advapi32.lib user32.lib
 exit /b %errorlevel%
 "@ | Set-Content -LiteralPath $batch -Encoding Ascii
 
