@@ -58,17 +58,21 @@ pruefe("Weiterschauen schaltet den spielbaren eigenen Player automatisch ins Vol
 });
 
 pruefe("Filme und Folgen erhalten nur ihren eigenen gespeicherten Stand", () => {
+  let gestoppt = 0;
   const c = kontext({ favorites: [
     { id: "a", providerId: "p", url: filmA, currentTime: 1200 },
     { id: "b", providerId: "p", url: filmB, currentTime: 300 },
     { id: "serie", providerId: "p", url: folge(5), currentTime: 900 }
   ], activeFavoriteId: "b", normalizeFavoriteUrl: (url) => url,
   naechsteFolgeLabel: () => "Titel", sanitizePositiveNumber: (wert) => Number(wert) || 0,
-  spielerKopfzeilen: null, spielerLauf: null, spielerAuftragId: 0, spielerLetzterStand: null, spielerTakt: null }, ["spielerLaufSetzen"]);
+  spielerRtx: { stop() { gestoppt++; } },
+  spielerKopfzeilen: null, spielerLauf: null, spielerAuftragId: 0, spielerLetzterStand: null, spielerTakt: null }, ["spielerRtxStop", "spielerLaufSetzen"]);
   assert.equal(c.spielerLaufSetzen(provider, filmB, quelle).startzeit, 300);
   assert.equal(c.spielerLaufSetzen(provider, folge(1), quelle).startzeit, 0);
   assert.equal(c.spielerLaufSetzen(provider, folge(5), quelle).startzeit, 900);
   assert.equal(c.spielerLaufSetzen(provider, folge(5), quelle, { startzeit: 45 }).startzeit, 45);
+  assert.equal(gestoppt, 1, "Der alte RTX-Prozess endet genau einmal beim Quellenwechsel");
+  assert.equal(c.spielerRtx, null);
 });
 
 function ladekontext(aufloesen) {
