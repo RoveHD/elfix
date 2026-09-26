@@ -1,6 +1,7 @@
 node_modules/
 StreamingBrowserElectron/build/adblock-runtime.cjs
 StreamingBrowserElectron/build/preload.cjs
+StreamingBrowserElectron/build/rtx-video/
 npm-debug.log*
 
 # Electron build outputs

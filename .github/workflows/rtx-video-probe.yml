@@ -5,6 +5,8 @@ on:
     branches: [codex/video-upscaling]
     paths:
       - StreamingBrowserElectron/native/rtx-spike/**
+      - StreamingBrowserElectron/native/rtx-video/**
+      - StreamingBrowserElectron/scripts/rtx-video-build.ps1
       - .github/workflows/rtx-video-probe.yml
   workflow_dispatch:
 
@@ -19,10 +21,15 @@ jobs:
       - name: Build isolated RTX probe
         shell: pwsh
         run: ./StreamingBrowserElectron/native/rtx-spike/build.ps1
+      - name: Build native player module
+        shell: pwsh
+        run: ./StreamingBrowserElectron/scripts/rtx-video-build.ps1
       - name: Upload probe executable only
         uses: actions/upload-artifact@v7
         with:
           name: rtx-video-probe
-          path: StreamingBrowserElectron/native/rtx-spike/out/rtx-video-probe.exe
+          path: |
+            StreamingBrowserElectron/native/rtx-spike/out/rtx-video-probe.exe
+            StreamingBrowserElectron/build/rtx-video/rtx-video-helper.exe
           if-no-files-found: error
           retention-days: 3
