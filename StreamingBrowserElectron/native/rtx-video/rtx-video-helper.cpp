@@ -39,6 +39,12 @@ void Error(const char* code) {
   std::cout << "{\"type\":\"error\",\"code\":\"" << code << "\"}" << std::endl;
 }
 
+void ErrorHr(const char* code, HRESULT result) {
+  std::cout << "{\"type\":\"error\",\"code\":\"" << code
+            << "\",\"hresult\":\"0x" << std::hex
+            << static_cast<uint32_t>(result) << std::dec << "\"}" << std::endl;
+}
+
 bool GoodDimensions(const Header& h) {
   const uint64_t bytes = uint64_t(h.width) * h.height * 4;
   return h.generation > 0 && h.frameId > 0 && h.width >= 640 && h.height >= 360 &&
@@ -197,20 +203,24 @@ bool ProcessFrame(Session& s, const Header& h) {
     Error("vsr_evaluate"); return false;
   }
   D3D11_TEXTURE2D_DESC sharedDesc = outputDesc;
-  sharedDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  sharedDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-  if (FAILED(s.device->CreateTexture2D(&sharedDesc, nullptr, &s.shared))) {
-    Error("shared_texture"); return false;
+  // D3D11.1 guarantees this shareable SRV/RTV shape. RGBA NT handles in
+  // Chromium do not use a keyed mutex; the GPU query below serializes writes.
+  sharedDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+  sharedDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  const HRESULT sharedResult = s.device->CreateTexture2D(&sharedDesc, nullptr, &s.shared);
+  if (FAILED(sharedResult)) {
+    ErrorHr("shared_texture", sharedResult); return false;
   }
   s.context->CopyResource(s.shared.Get(), s.output.Get());
   if (!WaitForGpu(s)) { Error("gpu_timeout"); return false; }
   ComPtr<IDXGIResource1> dxgiResource;
-  if (FAILED(s.shared.As(&dxgiResource)) ||
-      FAILED(dxgiResource->CreateSharedHandle(nullptr,
-          DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
-          nullptr, &s.localHandle))) {
-    Error("shared_handle"); return false;
+  HRESULT handleResult = s.shared.As(&dxgiResource);
+  if (SUCCEEDED(handleResult)) {
+    handleResult = dxgiResource->CreateSharedHandle(nullptr,
+        DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+        nullptr, &s.localHandle);
   }
+  if (FAILED(handleResult)) { ErrorHr("shared_handle", handleResult); return false; }
   if (!DuplicateHandle(GetCurrentProcess(), s.localHandle, s.parent,
                        &s.remoteHandle, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
     Error("handle_duplicate"); return false;
