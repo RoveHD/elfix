@@ -3,6 +3,22 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.51 — 27. September 2026
+
+- Neues Upscaling-Verfahren **Anime4K** (v4.0, CNN-Shader „Mode A“:
+  Restore M, Upscale x2 M/S) für Zeichentrick. Läuft über WebGL2 auf AMD-,
+  Intel- und NVIDIA-Grafik und braucht mehr Grafikleistung als FSR 1.
+- Neues Verfahren **Automatisch** (Standard für neue Einstellungen):
+  Anime4K für Anime, NVIDIA RTX Video für Serien und Filme. Ohne akzeptierte
+  NVIDIA-Lizenz laufen Serien und Filme mit FSR 1. Eine bereits gespeicherte
+  Auswahl bleibt erhalten.
+- Die **RTX-Qualitätsstufe** ist einstellbar: 1 (niedrig) bis 4 (ultra),
+  Standard 2 wie bisher. Änderungen gelten ab dem nächsten Bild.
+- Zielauflösung **Auto (Monitor)** (Standard für neue Einstellungen): 4K nur
+  auf einem 4K-Bildschirm, sonst 1440p – auch bei Ultrawide-Monitoren. Beim
+  Verschieben auf einen anderen Monitor passt sich das Ziel ohne Pause an.
+  1440p und 4K bleiben fest wählbar.
+
 ## 2.0.49 — 27. September 2026
 
 - Video-Upscaling lässt sich direkt oben rechts im ELFIX-Player ein- und
