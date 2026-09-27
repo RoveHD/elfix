@@ -88,6 +88,21 @@ public class Anime4kTest {
         assertEquals(Anime4kShader.Stufe.AUS, DirektSpieler.anime4kStufe(einstellungen, false));
     }
 
+    @Test public void schalterImPlayerRechnetMitEinerEchtenStufe() {
+        Map<String, String> werte = new HashMap<>();
+        SharedPreferences einstellungen = einstellungen(werte);
+        assertEquals(Anime4kShader.Stufe.HOCH, DirektSpieler.anime4kStufeAn(einstellungen, false));
+        assertEquals(Anime4kShader.Stufe.LEICHT, DirektSpieler.anime4kStufeAn(einstellungen, true));
+        werte.put("anime4k", "aus");
+        assertEquals("Ausgeschaltet bleibt die Stufe fuer das Wiedereinschalten bekannt",
+            Anime4kShader.Stufe.HOCH, DirektSpieler.anime4kStufeAn(einstellungen, false));
+        werte.put("anime4k_auto", "aus");
+        assertEquals("Nach einer Rueckstufung auf aus versucht Einschalten die leichte Stufe",
+            Anime4kShader.Stufe.LEICHT, DirektSpieler.anime4kStufeAn(einstellungen, false));
+        werte.put("anime4k", "hoch");
+        assertEquals(Anime4kShader.Stufe.HOCH, DirektSpieler.anime4kStufeAn(einstellungen, true));
+    }
+
     private static SharedPreferences einstellungen(Map<String, String> werte) {
         return (SharedPreferences) Proxy.newProxyInstance(Anime4kTest.class.getClassLoader(),
             new Class<?>[] {SharedPreferences.class}, (proxy, methode, argumente) -> {

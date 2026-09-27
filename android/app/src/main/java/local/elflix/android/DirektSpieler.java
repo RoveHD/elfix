@@ -216,6 +216,9 @@ final class DirektSpieler {
     private FrameLayout streifenPlatz;
     private final TextView titel;
     private final TextView quellenname;
+    /** Wie am Rechner: Verfahren und Aufloesung, darunter der Anime4K-Schalter. */
+    private final TextView upscalingInfo;
+    private final TextView upscalingKnopf;
     private final View leiste;
     private final TextView stelleText;
     private final TextView dauerText;
@@ -725,6 +728,8 @@ final class DirektSpieler {
         ansicht.addView(oben, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
         titel = kopf.findViewWithTag("titel");
         quellenname = kopf.findViewWithTag("quelle");
+        upscalingInfo = kopf.findViewWithTag("upscaling");
+        upscalingKnopf = kopf.findViewWithTag("anime4k");
 
 
         LinearLayout unten = leisteBauen();
@@ -887,6 +892,14 @@ final class DirektSpieler {
         unten.setEllipsize(android.text.TextUtils.TruncateAt.END);
         unten.setVisibility(View.GONE);
         namen.addView(unten);
+        TextView upscaling = new TextView(activity);
+        upscaling.setTag("upscaling");
+        upscaling.setTextColor(0xFFAAC9ED);
+        upscaling.setTextSize(12);
+        upscaling.setSingleLine(true);
+        upscaling.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        upscaling.setVisibility(View.GONE);
+        namen.addView(upscaling);
         LinearLayout.LayoutParams namenLage = new LinearLayout.LayoutParams(0, -2, 1f);
         reihe.addView(namen, namenLage);
 
@@ -896,6 +909,10 @@ final class DirektSpieler {
             anfassbar(chatKnopf, 10, chat::oeffnen);
             reihe.addView(chatKnopf);
         }
+        TextView anime4kSchalter = knopf("Anime4K", this::anime4kUmschalten);
+        anime4kSchalter.setTag("anime4k");
+        anime4kSchalter.setVisibility(View.GONE);
+        reihe.addView(anime4kSchalter);
         reihe.addView(knopf("Schließen", umgebung::schliessen));
         return reihe;
     }
@@ -2389,6 +2406,9 @@ final class DirektSpieler {
             @Override public void onTracksChanged(Tracks tracks) {
                 if (player == lauf) subtitlePraeferenzAnwenden(lauf);
             }
+            @Override public void onVideoSizeChanged(androidx.media3.common.VideoSize groesse) {
+                if (player == lauf) upscalingZeigen();
+            }
             @Override public void onPlayerError(PlaybackException fehler) {
                 if (player != lauf) return;
                 puffer.setVisibility(View.GONE);
@@ -3472,6 +3492,7 @@ final class DirektSpieler {
     private void freigeben() {
         handler.removeCallbacks(anime4kPruefen);
         anime4k = null;
+        upscalingZeigen();
         letzteBildZeit = Double.NaN;
         letzteBildRate = Double.NaN;
         letzteBildFreigabeNs = Long.MIN_VALUE;
@@ -3514,34 +3535,124 @@ final class DirektSpieler {
     }
 
     /**
+     * Die Stufe, mit der eingeschaltetes Anime4K rechnet - auch wenn es gerade
+     * aus ist. Hat die Messung das Geraet auf "aus" gesetzt, versucht ein
+     * erneutes Einschalten die leichte Stufe.
+     */
+    static Anime4kShader.Stufe anime4kStufeAn(android.content.SharedPreferences einstellungen, boolean fernseher) {
+        String wahl = einstellungen.getString("anime4k", "auto");
+        if (!"hoch".equals(wahl) && !"leicht".equals(wahl)) {
+            wahl = einstellungen.getString("anime4k_auto", fernseher ? "leicht" : "hoch");
+        }
+        return "hoch".equals(wahl) ? Anime4kShader.Stufe.HOCH : Anime4kShader.Stufe.LEICHT;
+    }
+
+    /**
      * Setzt den Effekt vor prepare() - Media3 baut die Effektkette nur dann
-     * auf. Serien, Filme und ausgeschaltetes Anime4K laufen ohne Effekt und
-     * damit auf dem bisherigen, direkten Weg.
+     * auf. Bei Anime steht er immer, damit der Schalter im Player waehrend der
+     * Wiedergabe wirkt; ausgeschaltet rechnet er nur bilinear. Serien und
+     * Filme laufen ohne Effekt auf dem bisherigen, direkten Weg.
      */
     private void anime4kEinrichten(ExoPlayer lauf) {
         anime4k = null;
         anime4kVerstoesse = 0;
         anime4kVerworfen = -1;
         anime4kGezeigt = -1;
-        if (!animeInhalt) return;
-        Anime4kShader.Stufe stufe = anime4kStufe(einstellungen(), fernseher);
-        if (stufe == Anime4kShader.Stufe.AUS) return;
+        if (!animeInhalt) { upscalingZeigen(); return; }
+        boolean an = anime4kStufe(einstellungen(), fernseher) != Anime4kShader.Stufe.AUS;
+        Anime4kShader.Stufe stufe = anime4kStufeAn(einstellungen(), fernseher);
         // Ziel ist die Flaeche des Players in echten Pixeln. Am Fernseher ist
         // das die Aufloesung der Oberflaeche; das Hochskalieren auf das Panel
         // uebernimmt dort ohnehin die Anzeige.
         android.util.DisplayMetrics masse = activity.getResources().getDisplayMetrics();
         int breite = Math.max(masse.widthPixels, masse.heightPixels);
         int hoehe = Math.min(masse.widthPixels, masse.heightPixels);
-        anime4k = new Anime4k.Effekt(stufe, breite, hoehe);
+        anime4k = new Anime4k.Effekt(stufe, an, breite, hoehe, () -> handler.post(this::upscalingZeigen));
         try {
             lauf.setVideoEffects(java.util.Collections.<androidx.media3.common.Effect>singletonList(anime4k));
         } catch (RuntimeException ohneEffekte) {
             Log.w("ElfixAnime4k", "Videoeffekte nicht verfuegbar", ohneEffekte);
             anime4k = null;
+            upscalingZeigen();
             return;
         }
+        upscalingZeigen();
         handler.removeCallbacks(anime4kPruefen);
         handler.postDelayed(anime4kPruefen, 10000);
+    }
+
+    /**
+     * Der Schalter im Player. Er wirkt ab dem naechsten Bild und speichert die
+     * Wahl wie die Einstellungsseite: aus merkt sich die vorige Wahl, an stellt
+     * sie wieder her und vergisst eine Rueckstufung auf "aus".
+     */
+    private void anime4kUmschalten() {
+        Anime4k.Effekt effekt = anime4k;
+        if (effekt == null || effekt.unmoeglich()) return;
+        boolean neu = !effekt.an();
+        android.content.SharedPreferences werte = einstellungen();
+        android.content.SharedPreferences.Editor aenderung = werte.edit();
+        String wahl = werte.getString("anime4k", "auto");
+        if (!neu) {
+            if (!"aus".equals(wahl)) aenderung.putString("anime4k_vorher", wahl);
+            aenderung.putString("anime4k", "aus");
+        } else {
+            aenderung.putString("anime4k", werte.getString("anime4k_vorher", "auto"));
+            if ("aus".equals(werte.getString("anime4k_auto", ""))) aenderung.remove("anime4k_auto");
+        }
+        aenderung.apply();
+        effekt.an(neu);
+        anime4kVerstoesse = 0;
+        anime4kVerworfen = -1;
+        handler.removeCallbacks(anime4kPruefen);
+        if (neu) handler.postDelayed(anime4kPruefen, 10000);
+        upscalingZeigen();
+        kurzeAnsage(neu ? "Anime4K an" : "Anime4K aus");
+    }
+
+    private static String aufloesung(int breite, int hoehe) {
+        return breite > 0 && hoehe > 0 ? breite + " × " + hoehe : "";
+    }
+
+    /**
+     * Die Zeile unter dem Titel: "Anime4K Qualität · 1280 × 720 → 2560 × 1440",
+     * sonst die Originalaufloesung. Der Knopf steht nur bei Anime.
+     */
+    private void upscalingZeigen() {
+        if (upscalingInfo == null || upscalingKnopf == null) return;
+        Anime4k.Effekt effekt = anime4k;
+        String text;
+        if (effekt == null) {
+            upscalingKnopf.setVisibility(View.GONE);
+            androidx.media3.common.VideoSize groesse = player == null ? null : player.getVideoSize();
+            String original = groesse == null ? "" : aufloesung(groesse.width, groesse.height);
+            text = original.isEmpty() ? "" : original + " · Originalbild";
+        } else {
+            boolean moeglich = !effekt.unmoeglich();
+            upscalingKnopf.setVisibility(moeglich ? View.VISIBLE : View.GONE);
+            upscalingKnopf.setText(effekt.an() ? "Anime4K an" : "Anime4K aus");
+            upscalingKnopf.setContentDescription(effekt.an() ? "Anime4K ausschalten" : "Anime4K einschalten");
+            String eingang = aufloesung(effekt.eingangBreite(), effekt.eingangHoehe());
+            String ausgang = aufloesung(effekt.ausgangBreite(), effekt.ausgangHoehe());
+            Anime4kShader.Stufe stufe = effekt.stufe();
+            boolean groesser = effekt.ausgangBreite() > effekt.eingangBreite();
+            if (eingang.isEmpty()) {
+                text = effekt.an() && moeglich ? "Anime4K · wartet auf das erste Bild" : "";
+            } else if (!moeglich) {
+                text = eingang + " · Originalbild – Anime4K ist hier nicht möglich";
+            } else if (stufe == Anime4kShader.Stufe.AUS) {
+                text = eingang + " · Originalbild";
+            } else if (groesser) {
+                text = "Anime4K " + (stufe == Anime4kShader.Stufe.HOCH ? "Qualität" : "Schnell")
+                    + " · " + eingang + " → " + ausgang;
+            } else if (stufe == Anime4kShader.Stufe.HOCH) {
+                text = "Anime4K Qualität · " + eingang + " (bereinigt, schon groß genug)";
+            } else {
+                text = eingang + " · Originalgröße";
+            }
+        }
+        upscalingInfo.setText(text);
+        upscalingInfo.setVisibility(text.isEmpty() ? View.GONE : View.VISIBLE);
     }
 
     /**
@@ -3573,7 +3684,11 @@ final class DirektSpieler {
         anime4kVerstoesse = 0;
         Anime4kShader.Stufe weiter = effekt.stufe() == Anime4kShader.Stufe.HOCH
             ? Anime4kShader.Stufe.LEICHT : Anime4kShader.Stufe.AUS;
-        effekt.stufe(weiter);
+        if (weiter == Anime4kShader.Stufe.AUS) effekt.an(false);
+        else effekt.stufe(weiter);
+        upscalingZeigen();
+        kurzeAnsage(weiter == Anime4kShader.Stufe.AUS
+            ? "Anime4K aus – das Gerät kam nicht hinterher" : "Anime4K auf Schnell – es ruckelte");
         Log.i("ElfixAnime4k", "Ruckeln: " + neuVerworfen + " von " + (neuVerworfen + neuGezeigt)
             + " Bildern verworfen, weiter mit " + weiter);
         if ("auto".equals(einstellungen().getString("anime4k", "auto"))) {
