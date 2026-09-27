@@ -208,8 +208,8 @@ bool ProcessFrame(Session& s, const Header& h) {
   }
   if (!s.featureEvaluated) {
     // The initial VSR evaluation can leave rectangular artifacts even with
-    // NVIDIA's required RTV/UAV destination. Complete it before evaluating
-    // the same input once more; only the second output may be published.
+    // the RTV/UAV destination used by NVIDIA's sample. Complete it, then
+    // evaluate the same input once more; only the second output is published.
     if (!WaitForGpu(s)) { Error("gpu_timeout"); return false; }
     if (NVSDK_NGX_FAILED(NGX_D3D11_EVALUATE_VSR_EXT(s.context.Get(), s.feature,
                                                      s.parameters, &evaluation))) {

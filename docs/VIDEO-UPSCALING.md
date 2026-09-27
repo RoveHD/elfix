@@ -92,6 +92,10 @@ prüft NGX, Shared-Texture-Übertragung, fortlaufende Farben, 1440p-/4K-Zielwech
 unveränderte Verarbeitung bei Fenstergrößenänderung, Spulen auf das richtige Bild
 und Wechsel zu FSR ohne zusätzliche Pause/Neuladen.
 Ohne diese Umgebungsvariable testet er den sicheren Rückfall bei fehlender RTX-GPU.
+Der separate Hardwaretest `tests/rtx-first-frame-electrontest.js` vergleicht mit
+`ELFIX_RTX_HARDWARE=1` das vollständige erste RTX-Bild mit Folgeausgaben desselben
+detailreichen Eingangsbilds bei 1440p und 4K. Er sichert die Korrektur der
+DX11-Ausgabetextur gegen die beobachteten Erstbild-Artefakte ab.
 Der Node-Test `rtxvideotest` prüft Größen- und Protokollgrenzen, eine begrenzte
 Warteschlange, Freigaben, veraltete Generationen sowie Crash ohne Neustartschleife.
 Die Hardwaredurchläufe erfolgten auf einer RTX 4070. Physische AMD-/Intel-Geräte

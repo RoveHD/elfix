@@ -3,7 +3,7 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
-## 2.0.48 — 27. September 2026
+## 2.0.49 — 27. September 2026
 
 - Video-Upscaling lässt sich direkt oben rechts im ELFIX-Player ein- und
   ausschalten. Der Schalter speichert dieselbe Einstellung wie das Einstellungsmenü,
@@ -16,6 +16,10 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   (2560 × 1440) oder 4K (3840 × 2160). FSR 1 und RTX Video erzeugen das Bild
   unabhängig von der Fenstergröße. Das Seitenverhältnis bleibt erhalten;
   größere Quellen werden nicht verkleinert. Standardziel ist 1440p.
+- Die RTX-Ausgabetextur verwendet die von NVIDIAs DX11-Beispiel vorgesehenen
+  Eigenschaften. Zusätzlich wird die Verarbeitung vor der ersten sichtbaren
+  Ausgabe initialisiert, um die beobachteten Erstbild-Artefakte zu vermeiden.
+  Der Release-Bau von 2.0.48 wurde vor der Veröffentlichung angehalten.
 
 ## 2.0.47 — 27. September 2026
 
