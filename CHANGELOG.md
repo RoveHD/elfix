@@ -3,6 +3,19 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.52 — 27. September 2026
+
+- **Anime4K auf Android-Telefonen und Fernsehern:** Der eigene Player rechnet
+  Anime (AniWorld) mit denselben Anime4K-Netzen wie am Rechner hoch. Serien und
+  Filme bleiben unverändert.
+- Neue Einstellung unter Wiedergabe → **Anime4K für Anime**: Automatisch
+  (Standard), Qualität, Schnell, Aus. Automatisch beginnt am Telefon mit
+  Qualität und am Fernseher mit Schnell.
+- Ruckelt die Wiedergabe, schaltet Anime4K ohne Unterbrechung eine Stufe
+  zurück; bei Automatisch bleibt das für das Gerät gemerkt.
+- Ohne OpenGL ES 3 mit Float-Rendertargets oder bei HDR-Videos läuft das
+  Originalbild weiter.
+
 ## 2.0.51 — 27. September 2026
 
 - Neues Upscaling-Verfahren **Anime4K** (v4.0, CNN-Shader „Mode A“:
