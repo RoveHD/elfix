@@ -133,8 +133,9 @@
       color = vec4(clamp((lobe*(b+d+f+h)+e)/(4.0*lobe+1.0),0.0,1.0),1.0);
     }`;
 
-  function erstellen({ video, canvas, beiStatus = () => {} }) {
+  function erstellen({ video, canvas, beiStatus = () => {}, verfahren = "fsr1" }) {
     if (!video || !canvas) throw new TypeError("FSR benoetigt Video und Canvas");
+    const anime4k = verfahren === "anime4k";
     let aktiv = false;
     let zerstoert = false;
     let gl = null;
@@ -147,7 +148,7 @@
     const ursprungsOpacity = video.style.opacity;
 
     function status(zustand, grund, eingang, ausgang) {
-      const wert = { zustand, grund };
+      const wert = { zustand, grund, verfahren: anime4k ? "anime4k" : "fsr1" };
       if (eingang) wert.eingang = eingang;
       if (ausgang) wert.ausgang = ausgang;
       const text = JSON.stringify(wert);
@@ -206,26 +207,31 @@
         preserveDrawingBuffer: false, failIfMajorPerformanceCaveat: true
       });
       if (!gl) throw new Error("WebGL2 ist nicht verfuegbar");
-      if (gpu) return gpu;
+      if (!gpu) gpu = anime4k ? window.ElfixSpielerAnime4k.gpu(gl) : fsrGpu();
+      return gpu;
+    }
+    function fsrGpu() {
       const easu = programm(EASU);
       const rcas = programm(RCAS);
-      gpu = {
+      return {
         easu, rcas,
         quelle: textur(), zwischen: textur(), fbo: gl.createFramebuffer(),
         vao: gl.createVertexArray(),
         max: gl.getParameter(gl.MAX_TEXTURE_SIZE),
-        ausgabeBreite: 0, ausgabeHoehe: 0
+        ausgabeBreite: 0, ausgabeHoehe: 0,
+        zeichnen: fsrZeichnen,
+        freigeben() {
+          gl.deleteProgram(easu);
+          gl.deleteProgram(rcas);
+          gl.deleteTexture(this.quelle);
+          gl.deleteTexture(this.zwischen);
+          gl.deleteFramebuffer(this.fbo);
+          gl.deleteVertexArray(this.vao);
+        }
       };
-      return gpu;
     }
     function gpuFreigeben() {
-      if (!gpu || !gl || gl.isContextLost()) { gpu = null; return; }
-      gl.deleteProgram(gpu.easu);
-      gl.deleteProgram(gpu.rcas);
-      gl.deleteTexture(gpu.quelle);
-      gl.deleteTexture(gpu.zwischen);
-      gl.deleteFramebuffer(gpu.fbo);
-      gl.deleteVertexArray(gpu.vao);
+      if (gpu && gl && !gl.isContextLost()) gpu.freigeben();
       gpu = null;
     }
     function untertitelSichtbar() {
@@ -274,12 +280,15 @@
       });
     }
     function zeichnen(g) {
-      const res = gpuVorbereiten();
-      if ([g.w,g.h,g.inW,g.inH,g.outW,g.outH].some(n => n > res.max)) throw new Error("WebGL Texturgroesse ueberschritten");
       if (canvas.width !== g.w || canvas.height !== g.h) {
         canvas.width = g.w;
         canvas.height = g.h;
       }
+      gpuVorbereiten().zeichnen(g, video);
+    }
+    function fsrZeichnen(g) {
+      const res = gpu;
+      if ([g.w,g.h,g.inW,g.inH,g.outW,g.outH].some(n => n > res.max)) throw new Error("WebGL Texturgroesse ueberschritten");
       gl.bindVertexArray(res.vao);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
       gl.bindTexture(gl.TEXTURE_2D, res.quelle);
@@ -337,13 +346,13 @@
         if (neuesBild || canvas.hidden) zeichnen(pruefung.groesse);
         canvas.hidden = false;
         video.style.opacity = "0";
-        status("aktiv", "easu-rcas", pruefung.eingang, pruefung.ausgang);
+        status("aktiv", anime4k ? "anime4k-cnn" : "easu-rcas", pruefung.eingang, pruefung.ausgang);
         frameAnfordern();
       } catch (fehler) {
         quellfehler = true;
         original();
         frameAbbrechen();
-        status("nicht-verfuegbar", fehler && /WebGL|Shader|Framebuffer|GPU|Textur/.test(String(fehler))
+        status("nicht-verfuegbar", fehler && /WebGL|Shader|Framebuffer|GPU|Textur|Anime4K/.test(String(fehler))
           ? "gpu-fehler" : "video-kann-nicht-auf-gpu-kopiert-werden", pruefung.eingang, pruefung.ausgang);
       }
     }

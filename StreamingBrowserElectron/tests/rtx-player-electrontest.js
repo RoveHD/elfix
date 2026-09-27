@@ -138,8 +138,15 @@ app.whenReady().then(async () => {
     window.postMessage({type:'elfix-rtx-frame',metadata:${JSON.stringify({ ...old, width: 1280, height: 720 })},frame},'*',[frame]);
     return new Promise(resolve=>setTimeout(resolve,50)); })()`);
   assert.equal(await js("document.querySelector('#rtxBild').hidden"), true, "A late frame cannot reappear after switching away from RTX");
+  // Automatisch wechselt bei Anime auf Anime4K: gleiche Quelle, ohne Pause.
+  win.webContents.send("spieler:upscaling", true, "anime4k");
+  await until(() => statuses.at(-1)?.zustand === "aktiv" && statuses.at(-1)?.verfahren === "anime4k", "Switch to Anime4K");
+  assert.deepEqual(await js(`({fsr:document.querySelector('#fsrBild').hidden,anime4k:document.querySelector('#anime4kBild').hidden,
+    source:bild.currentSrc,paused:bild.paused,events:window.unwanted})`),
+    { fsr: true, anime4k: false, source: initial.source, paused: false, events: [] });
+  assert.match(await js("document.querySelector('#upscalingHinweis').textContent"), /^Anime4K · /);
   assert.deepEqual(errors, []);
   console.log(hardware ? "OK RTX hardware player: real NGX/shared textures, 1440p/4K, colors, paused resize, seek and switch to FSR without reload/pause"
-    : "OK RTX player fallback: unsupported GPU, original video, no request loop and live switch to FSR");
+    : "OK RTX player fallback: unsupported GPU, original video, no request loop and live switch to FSR and Anime4K");
   finish(0);
 }).catch(error => finish(1, error));

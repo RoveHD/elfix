@@ -479,6 +479,8 @@ for (const [wert, text] of [[1440, "1440p"], [2160, "4K (2160p)"]]) {
   option.value = String(wert); option.textContent = text;
   upscalingZiel.appendChild(option);
 }
+const UPSCALING_NAMEN = { fsr1: "FSR 1", anime4k: "Anime4K", rtx: "RTX Video" };
+const upscalingVerfahren = methode => (methode === "rtx" || methode === "anime4k" ? methode : "fsr1");
 let upscalingMethode = "fsr1";
 let upscalingAufloesung = 1440;
 let upscalingEingeschaltet = false;
@@ -486,7 +488,7 @@ let upscalingStand = { zustand: "aus", grund: "deaktiviert" };
 let upscalingSchaltet = false;
 function upscalingZeigen() {
   upscalingZiel.value = String(upscalingAufloesung);
-  const name = upscalingMethode === "rtx" ? "RTX Video" : "FSR 1";
+  const name = UPSCALING_NAMEN[upscalingMethode];
   if (upscalingKnopf) {
     upscalingKnopf.textContent = upscalingEingeschaltet ? "Upscaling an" : "Upscaling aus";
     upscalingKnopf.setAttribute("aria-pressed", String(upscalingEingeschaltet));
@@ -513,22 +515,26 @@ function upscalingMelden(stand, methode) {
 }
 const fsrUpscaler = window.ElfixSpielerFsr?.erstellen({ video: bild,
   canvas: document.getElementById("fsrBild"), beiStatus: stand => upscalingMelden(stand, "fsr1") });
+const anime4kUpscaler = window.ElfixSpielerAnime4k && window.ElfixSpielerFsr?.erstellen({ video: bild,
+  canvas: document.getElementById("anime4kBild"), verfahren: "anime4k",
+  beiStatus: stand => upscalingMelden(stand, "anime4k") });
 const rtxUpscaler = window.ElfixSpielerRtx?.erstellen({ video: bild,
   canvas: document.getElementById("rtxBild"), bruecke, auftragId: () => auftrag?.id,
   beiStatus: stand => upscalingMelden(stand, "rtx") });
 const videoUpscaler = {
   setzeAktiv(an, methode = upscalingMethode, aufloesung = upscalingAufloesung) {
-    const next = methode === "rtx" ? "rtx" : "fsr1";
+    const next = upscalingVerfahren(methode);
     const ziel = aufloesung === 2160 ? 2160 : 1440;
     if (upscalingEingeschaltet === an && upscalingMethode === next && upscalingAufloesung === ziel) { upscalingZeigen(); return; }
     upscalingMethode = next; upscalingEingeschaltet = an; upscalingAufloesung = ziel;
     upscalingStand = { zustand: an ? "bereit" : "aus", grund: an ? "warte-auf-videobild" : "deaktiviert" };
     upscalingZeigen();
-    fsrUpscaler?.setzeAktiv(false); rtxUpscaler?.setzeAktiv(false);
-    if (an) (next === "rtx" ? rtxUpscaler : fsrUpscaler)?.setzeAktiv(true, ziel);
+    const upscaler = { fsr1: fsrUpscaler, anime4k: anime4kUpscaler, rtx: rtxUpscaler };
+    for (const eintrag of Object.values(upscaler)) eintrag?.setzeAktiv(false);
+    if (an) upscaler[next]?.setzeAktiv(true, ziel);
     else upscalingMelden({ zustand: "aus", grund: "deaktiviert", verfahren: next }, next);
   },
-  zerstoeren() { fsrUpscaler?.zerstoeren(); rtxUpscaler?.zerstoeren(); }
+  zerstoeren() { fsrUpscaler?.zerstoeren(); anime4kUpscaler?.zerstoeren(); rtxUpscaler?.zerstoeren(); }
 };
 async function upscalingSpeichern(an, aufloesung) {
   if (upscalingSchaltet || !auftrag || !bruecke.upscalingSetzen) { upscalingZeigen(); return; }
@@ -2854,7 +2860,7 @@ bruecke.aufAuftrag(starten);
 bruecke.aufUpscaling?.((an, methode, aufloesung) => {
   if (auftrag) {
     auftrag.videoUpscaling = an === true;
-    auftrag.videoUpscalingMethod = methode === "rtx" ? "rtx" : "fsr1";
+    auftrag.videoUpscalingMethod = upscalingVerfahren(methode);
     auftrag.videoUpscalingResolution = aufloesung === 2160 ? 2160 : 1440;
   }
   videoUpscaler?.setzeAktiv(an === true, methode, aufloesung);

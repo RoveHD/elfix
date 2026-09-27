@@ -7,8 +7,8 @@ const source = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").r
 const start = source.indexOf('ipcMain.handle("spieler:upscaling-setzen",');
 assert.ok(start > 0);
 const end = source.indexOf('\nipcMain.handle(', start + 1);
-const helperStart = source.indexOf("function spielerUpscalingAktiv()");
-const helperEnd = source.indexOf("\n}", helperStart) + 2;
+const helperStart = source.indexOf("function spielerUpscalingVerfahren()");
+const helperEnd = source.indexOf("\n}", source.indexOf("function spielerUpscalingAktiv()")) + 2;
 const sender = {};
 let handler, saved = 0, changes = 0, stops = 0;
 const sent = [];
@@ -16,7 +16,7 @@ const settings = { playback: { videoUpscaling: false, videoUpscalingMethod: "fsr
   videoUpscalingResolution: 1440, rtxVideoLicense: "", autoplayNextEpisode: false } };
 const context = vm.createContext({
   ipcMain: { handle(_channel, callback) { handler = callback; } },
-  settings, spielerLauf: { id: 41 }, spielerUpscalingStatus: null,
+  settings, URL, spielerLauf: { id: 41 }, spielerUpscalingStatus: null,
   spielerView: { webContents: { send: (...args) => sent.push(args) } },
   vomSpieler: event => event === sender,
   saveSettings: () => { saved++; }, meldeEinstellungen: () => { changes++; },
@@ -50,4 +50,17 @@ assert.equal(handler(sender, 41, true, 1440).aufloesung, 1440);
 assert.equal(settings.playback.videoUpscalingResolution, 1440);
 assert.equal(stops, 3);
 assert.equal(changes, 4);
-console.log("OK Player-Upscaling: persisted on/off and 1440p/4K, settings synchronization, current episode, sender and RTX license guard");
+// Automatisch: Anime4K fuer Anime-Adressen, RTX Video fuer Serien und Filme.
+settings.playback.videoUpscalingMethod = "auto";
+context.spielerLauf.url = "https://aniworld.to/anime/stream/frieren/staffel-1/episode-3";
+assert.equal(handler(sender, 41, true, 1440).verfahren, "anime4k");
+assert.deepEqual(sent.at(-1), ["spieler:upscaling", true, "anime4k", 1440]);
+context.spielerLauf.url = "https://s.to/serie/stream/dark/staffel-1/episode-1";
+assert.equal(handler(sender, 41, true, 1440).verfahren, "rtx");
+context.spielerLauf.url = "https://example.org/filme/inception";
+assert.equal(handler(sender, 41, true, 1440).verfahren, "rtx");
+settings.playback.rtxVideoLicense = "";
+const ohneLizenz = handler(sender, 41, true, 1440);
+assert.equal(ohneLizenz.verfahren, "fsr1", "Ohne NVIDIA-Lizenz laufen Serien und Filme mit FSR 1");
+assert.equal(ohneLizenz.an, true, "Automatisch verlangt fuer Anime und FSR keine Lizenz");
+console.log("OK Player-Upscaling: persisted on/off and 1440p/4K, settings synchronization, current episode, sender, RTX license guard and automatic Anime4K/RTX choice");

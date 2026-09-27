@@ -2902,7 +2902,7 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
     if (altesUpscaling !== `${settings.playback?.videoUpscaling}:${settings.playback?.videoUpscalingMethod}:${settings.playback?.videoUpscalingResolution}:${settings.playback?.rtxVideoLicense}`) {
       spielerRtxStop();
     }
-    spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), settings.playback?.videoUpscalingMethod, settings.playback?.videoUpscalingResolution);
+    spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), spielerUpscalingVerfahren(), settings.playback?.videoUpscalingResolution);
   }
   videoUpscalingStandSenden();
   syncWatchparty();
@@ -10123,8 +10123,19 @@ let spielerView = null;
 let spielerLauf = null;
 let spielerUpscalingStatus = null;
 let spielerRtx = null;
+// "auto": Anime4K fuer Anime, RTX Video fuer Serien und Filme. Anime erkennt
+// dieselbe Adressregel wie die Filler-Liste (/anime/stream/...). Ohne
+// akzeptierte NVIDIA-Lizenz laufen Serien und Filme dann mit FSR 1.
+function spielerUpscalingVerfahren() {
+  const methode = settings.playback?.videoUpscalingMethod;
+  if (methode !== "auto") return methode === "rtx" || methode === "anime4k" ? methode : "fsr1";
+  let anime = false;
+  try { anime = /^\/anime\/stream\//i.test(new URL(spielerLauf?.url || "").pathname); } catch { /* keine Folge */ }
+  if (anime) return "anime4k";
+  return settings.playback?.rtxVideoLicense === "2024-02-23" ? "rtx" : "fsr1";
+}
 function spielerUpscalingAktiv() {
-  return settings.playback?.videoUpscaling === true && (settings.playback?.videoUpscalingMethod !== "rtx"
+  return settings.playback?.videoUpscaling === true && (spielerUpscalingVerfahren() !== "rtx"
     || settings.playback?.rtxVideoLicense === "2024-02-23");
 }
 function spielerRtxStop() {
@@ -10139,7 +10150,7 @@ ipcMain.on("spieler:rtx-stop", (ereignis, id) => {
 });
 ipcMain.handle("spieler:rtx-bild", async (ereignis, id, bild) => {
   if (!vomSpieler(ereignis) || !spielerLauf || id !== spielerLauf.id || !spielerUpscalingAktiv()
-    || settings.playback?.videoUpscalingMethod !== "rtx" || !spielerView) return { ok: false, grund: "rtx-inaktiv" };
+    || spielerUpscalingVerfahren() !== "rtx" || !spielerView) return { ok: false, grund: "rtx-inaktiv" };
   if (!bild || !(bild.pixel instanceof ArrayBuffer) || bild.pixel.byteLength > 33554432) return { ok: false, grund: "rtx-ungueltiges-bild" };
   if (!spielerRtx) {
     const { sharedTexture } = require("electron");
@@ -10150,7 +10161,8 @@ ipcMain.handle("spieler:rtx-bild", async (ereignis, id, bild) => {
   }
   return spielerRtx.bild({ pixel: Buffer.from(bild.pixel), width: bild.width, height: bild.height,
     outputWidth: bild.outputWidth, outputHeight: bild.outputHeight,
-    generation: bild.generation, frameId: bild.frameId, webContents: spielerView.webContents });
+    generation: bild.generation, frameId: bild.frameId, quality: settings.playback?.rtxVideoQuality,
+    webContents: spielerView.webContents });
 });
 
 function videoUpscalingStand() {
@@ -10173,7 +10185,7 @@ ipcMain.handle("settings:video-upscaling-status", () => videoUpscalingStand());
 ipcMain.handle("spieler:upscaling-setzen", (ereignis, id, an, aufloesung) => {
   if (!vomSpieler(ereignis) || !spielerLauf || id !== spielerLauf.id || typeof an !== "boolean") return { ok: false };
   if (aufloesung !== 1440 && aufloesung !== 2160) return { ok: false };
-  if (an && settings.playback?.videoUpscalingMethod === "rtx"
+  if (an && spielerUpscalingVerfahren() === "rtx"
     && settings.playback?.rtxVideoLicense !== "2024-02-23") return { ok: false, grund: "rtx-lizenz" };
   const zielGeaendert = settings.playback?.videoUpscalingResolution !== aufloesung;
   settings.playback = { ...(settings.playback || {}), videoUpscaling: an, videoUpscalingResolution: aufloesung };
@@ -10181,9 +10193,9 @@ ipcMain.handle("spieler:upscaling-setzen", (ereignis, id, an, aufloesung) => {
   if (!an || zielGeaendert) spielerRtxStop();
   spielerUpscalingStatus = null;
   meldeEinstellungen();
-  spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), settings.playback.videoUpscalingMethod, aufloesung);
+  spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), spielerUpscalingVerfahren(), aufloesung);
   videoUpscalingStandSenden();
-  return { ok: true, an: spielerUpscalingAktiv(), verfahren: settings.playback.videoUpscalingMethod, aufloesung };
+  return { ok: true, an: spielerUpscalingAktiv(), verfahren: spielerUpscalingVerfahren(), aufloesung };
 });
 ipcMain.handle("settings:rtx-license-open", async () => {
   const verzeichnis = app.isPackaged ? path.join(process.resourcesPath, "rtx-video") : path.join(__dirname, "../build/rtx-video");
@@ -10195,7 +10207,7 @@ ipcMain.on("spieler:upscaling-status", (_event, id, stand) => {
   if (!spielerLauf || id !== spielerLauf.id || !stand || typeof stand !== "object") return;
   if (!["aus", "aktiv", "bereit", "nicht-noetig", "nicht-verfuegbar"].includes(stand.zustand)) return;
   spielerUpscalingStatus = { zustand: stand.zustand, grund: String(stand.grund || "").slice(0, 220),
-    verfahren: stand.verfahren === "rtx" ? "rtx" : "fsr1" };
+    verfahren: ["rtx", "anime4k"].includes(stand.verfahren) ? stand.verfahren : "fsr1" };
   videoUpscalingStandSenden();
 });
 let spielerAuftragId = 0;
@@ -10562,7 +10574,7 @@ function spielerAuftrag() {
     marke: spielerMarke(),
     skipSegments: settings.playback?.skipSegments !== false,
     videoUpscaling: spielerUpscalingAktiv(),
-    videoUpscalingMethod: settings.playback?.videoUpscalingMethod,
+    videoUpscalingMethod: spielerUpscalingVerfahren(),
     videoUpscalingResolution: settings.playback?.videoUpscalingResolution,
     queueAktiv: spielerQueueAktiv(),
     untertitel: untertitelwahl.normalisieren(settings.playback?.untertitel),
@@ -16056,8 +16068,10 @@ function normalizeSettings(raw) {
       introSkip: raw?.playback?.introSkip !== false,
       skipSegments: raw?.playback?.skipSegments !== false,
       videoUpscaling: raw?.playback?.videoUpscaling === true,
-      videoUpscalingMethod: raw?.playback?.videoUpscalingMethod === "rtx" ? "rtx" : "fsr1",
+      videoUpscalingMethod: ["auto", "rtx", "anime4k", "fsr1"].includes(raw?.playback?.videoUpscalingMethod) ? raw.playback.videoUpscalingMethod : "auto",
       videoUpscalingResolution: raw?.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440,
+      // NGX-VSR-Stufen 1 (niedrig) bis 4 (ultra); 2 war bisher fest eingestellt.
+      rtxVideoQuality: [1, 2, 3, 4].includes(raw?.playback?.rtxVideoQuality) ? raw.playback.rtxVideoQuality : 2,
       rtxVideoLicense: raw?.playback?.rtxVideoLicense === "2024-02-23" ? "2024-02-23" : "",
       // Der Schutz selbst bleibt eine bewusste Entscheidung. Seine beiden
       // Rundenregeln dagegen gelten, sobald er an ist: ein Schutz, der die
@@ -16253,8 +16267,9 @@ function defaultSettings() {
       introSkip: true,
       skipSegments: true,
       videoUpscaling: false,
-      videoUpscalingMethod: "fsr1",
+      videoUpscalingMethod: "auto",
       videoUpscalingResolution: 1440,
+      rtxVideoQuality: 2,
       rtxVideoLicense: "",
       spoilerProtection: { enabled: false, roomMinimum: true, shareWatchedWithRoom: true },
       untertitel: untertitelwahl.normalisieren(null),
