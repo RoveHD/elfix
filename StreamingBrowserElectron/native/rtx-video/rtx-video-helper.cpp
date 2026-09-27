@@ -61,6 +61,7 @@ struct Session {
   NVSDK_NGX_Parameter* parameters = nullptr;
   NVSDK_NGX_Handle* feature = nullptr;
   bool initialized = false;
+  bool featureEvaluated = false;
   HANDLE parent = nullptr;
   ComPtr<ID3D11Texture2D> output;
   ComPtr<ID3D11Texture2D> shared;
@@ -204,6 +205,17 @@ bool ProcessFrame(Session& s, const Header& h) {
   if (NVSDK_NGX_FAILED(NGX_D3D11_EVALUATE_VSR_EXT(s.context.Get(), s.feature,
                                                    s.parameters, &evaluation))) {
     Error("vsr_evaluate"); return false;
+  }
+  if (!s.featureEvaluated) {
+    // The initial VSR evaluation can leave rectangular artifacts even with
+    // NVIDIA's required RTV/UAV destination. Complete it before evaluating
+    // the same input once more; only the second output may be published.
+    if (!WaitForGpu(s)) { Error("gpu_timeout"); return false; }
+    if (NVSDK_NGX_FAILED(NGX_D3D11_EVALUATE_VSR_EXT(s.context.Get(), s.feature,
+                                                     s.parameters, &evaluation))) {
+      Error("vsr_evaluate"); return false;
+    }
+    s.featureEvaluated = true;
   }
   D3D11_TEXTURE2D_DESC sharedDesc = outputDesc;
   // D3D11.1 guarantees this shareable SRV/RTV shape. RGBA NT handles in
