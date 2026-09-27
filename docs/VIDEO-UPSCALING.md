@@ -9,8 +9,14 @@ dabei mit FSR 1. Eine ausdrücklich gewählte Methode gilt für alle Videos.
 Die Einstellung ist standardmäßig aus und wird lokal gespeichert.
 Ein laufendes Video wird beim Umschalten weder neu geladen noch angehalten.
 Der Schalter **Upscaling an/aus** steht auch direkt oben rechts im Player und
-speichert dieselbe Einstellung. Daneben lässt sich das Ziel **1440p** oder
-**4K (2160p)** wählen, ebenso im Einstellungsmenü. Standardziel ist 1440p.
+speichert dieselbe Einstellung. Daneben lässt sich das Ziel **Auto (Monitor)**,
+**1440p** oder **4K (2160p)** wählen, ebenso im Einstellungsmenü. Standard ist
+**Auto**: 4K nur, wenn der Bildschirm mit dem Player mindestens rund 2160 Zeilen
+für ein 16:9-Bild bietet (physische Pixel, Windows-Skalierung eingerechnet), sonst
+1440p. Ein Ultrawide mit 5120 × 1440 bleibt also bei 1440p. Wird das Fenster auf
+einen anderen Monitor gezogen, passt sich das Ziel ohne Pause an. Auf einem
+1440p-Monitor würde ein 4K-Ziel nur zusätzliche Grafiklast erzeugen, weil der
+Browser das Bild danach wieder verkleinert.
 Die Verarbeitung erzeugt bis zu **2560 × 1440** bzw. **3840 × 2160** Bildpunkte,
 unabhängig von Fenstergröße und Bildschirm-Skalierung. Das Bild wird anschließend
 passend im Player dargestellt; ein kleineres Display zeigt dadurch keine zusätzlichen

@@ -47,7 +47,7 @@ app.whenReady().then(async () => {
   ipcMain.on("spieler:fehler", (_event, message) => errors.push(message));
   ipcMain.handle("spieler:chat-status", () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:upscaling-setzen", (event, id, an, aufloesung) => {
-    assert.equal(id, 71); assert.ok([1440,2160].includes(aufloesung));
+    assert.equal(id, 71); assert.ok([1440,2160,"auto"].includes(aufloesung));
     event.sender.send("spieler:upscaling", an, "rtx", aufloesung);
     return { ok: true, an, verfahren: "rtx", aufloesung };
   });

@@ -474,15 +474,36 @@ let auftrag = null;
 const upscalingHinweis = document.getElementById("upscalingHinweis");
 const upscalingKnopf = document.getElementById("upscalingKnopf");
 const upscalingZiel = new Wahl("upscalingZiel", "Upscaling-Ziel");
-for (const [wert, text] of [[1440, "1440p"], [2160, "4K (2160p)"]]) {
-  const option = document.createElement("option");
-  option.value = String(wert); option.textContent = text;
-  upscalingZiel.appendChild(option);
-}
 const UPSCALING_NAMEN = { fsr1: "FSR 1", anime4k: "Anime4K", rtx: "RTX Video" };
 const upscalingVerfahren = methode => (methode === "rtx" || methode === "anime4k" ? methode : "fsr1");
+// "auto" oder eine feste Zielhoehe. Alles Unbekannte ist "auto".
+const upscalingWahl = wert => (Number(wert) === 2160 ? 2160 : Number(wert) === 1440 ? 1440 : "auto");
+/*
+ * "auto" richtet das Ziel nach dem Bildschirm, auf dem der Player liegt:
+ * physische Pixel (Windows-Skalierung eingerechnet) und davon die Hoehe, die
+ * ein 16:9-Bild dort tatsaechlich einnehmen kann. Ein Ultrawide 5120 x 1440
+ * bleibt so bei 1440p, erst ab rund 2160 sichtbaren Zeilen lohnt 4K.
+ */
+function monitorZiel() {
+  const faktor = window.devicePixelRatio || 1;
+  const bildschirm = window.screen;
+  if (!bildschirm) return 1440;
+  const hoehe = Math.min(bildschirm.width * faktor * 9 / 16, bildschirm.height * faktor);
+  return hoehe >= 2000 ? 2160 : 1440;
+}
 let upscalingMethode = "fsr1";
-let upscalingAufloesung = 1440;
+let upscalingAufloesung = "auto";
+let upscalingZielHoehe = monitorZiel();
+function upscalingZielFuellen() {
+  upscalingZiel.textContent = "";
+  for (const [wert, text] of [["auto", `Auto · Monitor (${upscalingZielHoehe === 2160 ? "4K" : "1440p"})`],
+    [1440, "1440p"], [2160, "4K (2160p)"]]) {
+    const option = document.createElement("option");
+    option.value = String(wert); option.textContent = text;
+    upscalingZiel.appendChild(option);
+  }
+}
+upscalingZielFuellen();
 let upscalingEingeschaltet = false;
 let upscalingStand = { zustand: "aus", grund: "deaktiviert" };
 let upscalingSchaltet = false;
@@ -521,12 +542,16 @@ const anime4kUpscaler = window.ElfixSpielerAnime4k && window.ElfixSpielerFsr?.er
 const rtxUpscaler = window.ElfixSpielerRtx?.erstellen({ video: bild,
   canvas: document.getElementById("rtxBild"), bruecke, auftragId: () => auftrag?.id,
   beiStatus: stand => upscalingMelden(stand, "rtx") });
+let upscalingZielGesetzt = 0;
 const videoUpscaler = {
   setzeAktiv(an, methode = upscalingMethode, aufloesung = upscalingAufloesung) {
     const next = upscalingVerfahren(methode);
-    const ziel = aufloesung === 2160 ? 2160 : 1440;
-    if (upscalingEingeschaltet === an && upscalingMethode === next && upscalingAufloesung === ziel) { upscalingZeigen(); return; }
-    upscalingMethode = next; upscalingEingeschaltet = an; upscalingAufloesung = ziel;
+    const wahl = upscalingWahl(aufloesung);
+    const ziel = wahl === "auto" ? monitorZiel() : wahl;
+    if (ziel !== upscalingZielHoehe) { upscalingZielHoehe = ziel; upscalingZielFuellen(); }
+    if (upscalingEingeschaltet === an && upscalingMethode === next && upscalingAufloesung === wahl
+      && upscalingZielGesetzt === ziel) { upscalingZeigen(); return; }
+    upscalingMethode = next; upscalingEingeschaltet = an; upscalingAufloesung = wahl; upscalingZielGesetzt = ziel;
     upscalingStand = { zustand: an ? "bereit" : "aus", grund: an ? "warte-auf-videobild" : "deaktiviert" };
     upscalingZeigen();
     const upscaler = { fsr1: fsrUpscaler, anime4k: anime4kUpscaler, rtx: rtxUpscaler };
@@ -566,8 +591,15 @@ async function upscalingSpeichern(an, aufloesung) {
   }
 }
 upscalingKnopf?.addEventListener("click", () => upscalingSpeichern(!upscalingEingeschaltet, upscalingAufloesung));
-upscalingZiel.addEventListener("change", () => upscalingSpeichern(upscalingEingeschaltet, Number(upscalingZiel.value)));
+upscalingZiel.addEventListener("change", () => upscalingSpeichern(upscalingEingeschaltet, upscalingWahl(upscalingZiel.value)));
 upscalingZeigen();
+// Fenster auf einen anderen Monitor gezogen oder Skalierung geaendert: bei
+// "auto" das Ziel neu bestimmen. Unveraendert kehrt setzeAktiv sofort zurueck.
+function monitorGeaendert() {
+  if (upscalingAufloesung === "auto") videoUpscaler.setzeAktiv(upscalingEingeschaltet);
+}
+window.addEventListener("resize", monitorGeaendert);
+window.screen?.addEventListener?.("change", monitorGeaendert);
 for (const ereignis of ["loadedmetadata", "resize", "emptied"]) bild.addEventListener(ereignis, upscalingZeigen);
 window.addEventListener("pagehide", () => videoUpscaler?.zerstoeren(), { once: true });
 /** Die Bibliothek fuer HLS, falls eine gebraucht wird. */
@@ -2861,7 +2893,7 @@ bruecke.aufUpscaling?.((an, methode, aufloesung) => {
   if (auftrag) {
     auftrag.videoUpscaling = an === true;
     auftrag.videoUpscalingMethod = upscalingVerfahren(methode);
-    auftrag.videoUpscalingResolution = aufloesung === 2160 ? 2160 : 1440;
+    auftrag.videoUpscalingResolution = upscalingWahl(aufloesung);
   }
   videoUpscaler?.setzeAktiv(an === true, methode, aufloesung);
 });

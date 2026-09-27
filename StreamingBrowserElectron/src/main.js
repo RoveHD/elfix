@@ -10184,7 +10184,7 @@ function videoUpscalingStandSenden() {
 ipcMain.handle("settings:video-upscaling-status", () => videoUpscalingStand());
 ipcMain.handle("spieler:upscaling-setzen", (ereignis, id, an, aufloesung) => {
   if (!vomSpieler(ereignis) || !spielerLauf || id !== spielerLauf.id || typeof an !== "boolean") return { ok: false };
-  if (aufloesung !== 1440 && aufloesung !== 2160) return { ok: false };
+  if (aufloesung !== 1440 && aufloesung !== 2160 && aufloesung !== "auto") return { ok: false };
   if (an && spielerUpscalingVerfahren() === "rtx"
     && settings.playback?.rtxVideoLicense !== "2024-02-23") return { ok: false, grund: "rtx-lizenz" };
   const zielGeaendert = settings.playback?.videoUpscalingResolution !== aufloesung;
@@ -16069,7 +16069,8 @@ function normalizeSettings(raw) {
       skipSegments: raw?.playback?.skipSegments !== false,
       videoUpscaling: raw?.playback?.videoUpscaling === true,
       videoUpscalingMethod: ["auto", "rtx", "anime4k", "fsr1"].includes(raw?.playback?.videoUpscalingMethod) ? raw.playback.videoUpscalingMethod : "auto",
-      videoUpscalingResolution: raw?.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440,
+      // "auto" richtet sich im Player nach dem Monitor (1440p oder 4K).
+      videoUpscalingResolution: [1440, 2160].includes(raw?.playback?.videoUpscalingResolution) ? raw.playback.videoUpscalingResolution : "auto",
       // NGX-VSR-Stufen 1 (niedrig) bis 4 (ultra); 2 war bisher fest eingestellt.
       rtxVideoQuality: [1, 2, 3, 4].includes(raw?.playback?.rtxVideoQuality) ? raw.playback.rtxVideoQuality : 2,
       rtxVideoLicense: raw?.playback?.rtxVideoLicense === "2024-02-23" ? "2024-02-23" : "",
@@ -16268,7 +16269,7 @@ function defaultSettings() {
       skipSegments: true,
       videoUpscaling: false,
       videoUpscalingMethod: "auto",
-      videoUpscalingResolution: 1440,
+      videoUpscalingResolution: "auto",
       rtxVideoQuality: 2,
       rtxVideoLicense: "",
       spoilerProtection: { enabled: false, roomMinimum: true, shareWatchedWithRoom: true },

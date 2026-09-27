@@ -26,7 +26,7 @@ vm.runInContext(source.slice(helperStart, helperEnd) + "\n" + source.slice(start
 for (const [event, id, value] of [[{}, 41, true], [sender, 40, true], [sender, 41, "true"]]) {
   assert.equal(handler(event, id, value, 1440).ok, false);
 }
-for (const value of [undefined, null, "2160", 1080, 4320, {}, NaN]) assert.equal(handler(sender, 41, true, value).ok, false);
+for (const value of [undefined, null, "2160", "Auto", 1080, 4320, {}, NaN]) assert.equal(handler(sender, 41, true, value).ok, false);
 assert.equal(saved, 0, "Foreign senders, old episodes and malformed input cannot change settings");
 assert.equal(handler(sender, 41, true, 1440).an, true);
 assert.equal(settings.playback.videoUpscaling, true);
@@ -50,6 +50,9 @@ assert.equal(handler(sender, 41, true, 1440).aufloesung, 1440);
 assert.equal(settings.playback.videoUpscalingResolution, 1440);
 assert.equal(stops, 3);
 assert.equal(changes, 4);
+assert.equal(handler(sender, 41, true, "auto").aufloesung, "auto", "Auto-Ziel nach Monitor wird gespeichert");
+assert.equal(settings.playback.videoUpscalingResolution, "auto");
+assert.deepEqual(sent.at(-1), ["spieler:upscaling", true, "rtx", "auto"]);
 // Automatisch: Anime4K fuer Anime-Adressen, RTX Video fuer Serien und Filme.
 settings.playback.videoUpscalingMethod = "auto";
 context.spielerLauf.url = "https://aniworld.to/anime/stream/frieren/staffel-1/episode-3";

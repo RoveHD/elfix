@@ -1469,7 +1469,7 @@ function bindEvents() {
     }
     if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
     if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "auto";
-    if (videoUpscalingResolution) videoUpscalingResolution.value = String(settings.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440);
+    if (videoUpscalingResolution) videoUpscalingResolution.value = String([1440, 2160].includes(settings.playback?.videoUpscalingResolution) ? settings.playback.videoUpscalingResolution : "auto");
     if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
     if (rtxVideoQuality) rtxVideoQuality.value = String(settings.playback?.rtxVideoQuality || 2);
     videoUpscalingAuswahlZeigen();
@@ -8474,7 +8474,7 @@ function renderSettings() {
   if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
   if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
   if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "auto";
-  if (videoUpscalingResolution) videoUpscalingResolution.value = String(settings.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440);
+  if (videoUpscalingResolution) videoUpscalingResolution.value = String([1440, 2160].includes(settings.playback?.videoUpscalingResolution) ? settings.playback.videoUpscalingResolution : "auto");
   if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
   if (rtxVideoQuality) rtxVideoQuality.value = String(settings.playback?.rtxVideoQuality || 2);
   videoUpscalingAuswahlZeigen();
@@ -8757,7 +8757,9 @@ async function saveSettings(options = {}) {
     skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
     videoUpscaling: videoUpscaling ? videoUpscaling.checked : settings.playback?.videoUpscaling === true,
     videoUpscalingMethod: videoUpscalingMethod ? videoUpscalingMethod.value : settings.playback?.videoUpscalingMethod || "auto",
-    videoUpscalingResolution: videoUpscalingResolution ? Number(videoUpscalingResolution.value) : settings.playback?.videoUpscalingResolution || 1440,
+    videoUpscalingResolution: videoUpscalingResolution
+      ? (videoUpscalingResolution.value === "auto" ? "auto" : Number(videoUpscalingResolution.value))
+      : settings.playback?.videoUpscalingResolution || "auto",
     rtxVideoQuality: rtxVideoQuality ? Number(rtxVideoQuality.value) : settings.playback?.rtxVideoQuality || 2,
     rtxVideoLicense: rtxVideoLicense ? (rtxVideoLicense.checked ? "2024-02-23" : "") : settings.playback?.rtxVideoLicense || "",
     spoilerProtection: {
