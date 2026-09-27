@@ -225,7 +225,10 @@ bool ProcessFrame(Session& s, const Header& h) {
   D3D11_TEXTURE2D_DESC outputDesc = sourceDesc;
   outputDesc.Width = h.outputWidth;
   outputDesc.Height = h.outputHeight;
-  outputDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+  // Match NVIDIA's DX11 VSR wrapper destination texture: NGX may use both
+  // render-target and unordered-access passes during its first evaluation.
+  outputDesc.BindFlags = D3D11_BIND_RENDER_TARGET |
+                         D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
   if (FAILED(s.device->CreateTexture2D(&outputDesc, nullptr, &s.output))) {
     Error("output_texture"); return false;
   }
