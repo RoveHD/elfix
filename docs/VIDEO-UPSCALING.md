@@ -58,8 +58,8 @@ proprietär; ihre Bedingungen gelten zusätzlich für diese optionale Komponente
 
 ## Verhalten und Grenzen
 
-- Nur Videos im eigenen ELFIX-Desktop-Player; keine Änderung am eingebetteten
-  Player einer Anbieterwebseite oder an Android/TV.
+- Nur Videos im eigenen ELFIX-Player; keine Änderung am eingebetteten Player
+  einer Anbieterwebseite. Auf Android/TV gibt es nur Anime4K (siehe unten).
 - Verarbeitung nur beim Vergrößern auf das gewählte Ziel. Ausgabe maximal
   3840 × 2160 Bildpunkte. Bei 4:3 entstehen beispielsweise 1920 × 1440 bzw.
   2880 × 2160 Bildpunkte; das Bild wird weder beschnitten noch verzerrt.
@@ -74,6 +74,33 @@ proprietär; ihre Bedingungen gelten zusätzlich für diese optionale Komponente
   Originalvideo läuft weiter. HDR-Konvertierung ist nicht enthalten.
 - Zusätzliche GPU-Leistung wird benötigt. Die Option verändert weder die
   gewählte Streamqualität noch Ton, Fortschritt oder Watchparty-Takt.
+
+## Android und Fernseher
+
+Der native Player (Media3) rechnet Anime mit denselben Anime4K-Netzen als
+Videoeffekt vor der Anzeige (`Anime4k.java`). Einstellung unter **Einstellungen →
+Wiedergabe → Anime4K für Anime**: Automatisch (Standard), Qualität, Schnell, Aus.
+
+- Als Anime gilt wie am Rechner eine Folgenadresse unter `/anime/stream/`. Serien,
+  Filme und ausgeschaltetes Anime4K laufen ohne Effekt auf dem bisherigen Weg.
+- **Qualität** entspricht dem Rechner (Restore M, Upscale M, bei Bedarf S),
+  **Schnell** nur ein x2 mit Upscale S. Automatisch beginnt am Telefon mit Qualität,
+  am Fernseher mit Schnell.
+- Ziel ist die Fläche des Players in echten Pixeln; vergrößert wird nur, solange
+  mehr als Faktor 1,2 fehlt. Den Rest skaliert Media3 auf die Anzeige.
+- Verwirft der Player zweimal hintereinander mehr als 5 % der Bilder, geht Anime4K
+  eine Stufe zurück (Qualität → Schnell → Aus), ohne die Wiedergabe neu aufzubauen.
+  Bei Automatisch bleibt die Rückstufung für das Gerät gemerkt, bis Automatisch neu
+  gewählt wird.
+- Benötigt OpenGL ES 3 mit Float-Rendertargets. Fehlen sie, oder ist das Video HDR,
+  läuft das Originalbild weiter.
+- Media3 legt Bilder mit Zeile 0 unten ab, Anime4K rechnet mit y nach unten. Die
+  Shader-Bindungen rechnen deshalb jede Koordinate um; die Hook-Körper bleiben
+  unverändert. `Anime4kNetze.java` erzeugt dasselbe Skript wie die Desktop-Shader.
+- Geprüft: JVM-Tests für Stufen, Anime-Erkennung und Bindungen. Die erzeugten
+  Android-Shaderquellen wurden lokal in WebGL2 mit Media3-Ablage gegen die
+  CPU-Referenz gerechnet (Abweichung höchstens 1/255). Auf echten Telefonen oder
+  Fernsehern ist Anime4K nicht geprüft.
 
 ## Herkunft
 
