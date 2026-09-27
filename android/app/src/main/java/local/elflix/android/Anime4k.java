@@ -43,26 +43,61 @@ final class Anime4k {
         }
     }
 
+    /**
+     * Der Effekt einer Wiedergabe. {@code stufe} ist die Stufe, mit der er
+     * rechnet, solange er an ist; ausgeschaltet rechnet er nur bilinear auf
+     * dieselbe Ausgabegroesse. Beides wirkt ab dem naechsten Bild.
+     */
     static final class Effekt implements GlEffect {
         private final int zielBreite;
         private final int zielHoehe;
         private final Anime4kShader.Stufe start;
         private volatile Anime4kShader.Stufe stufe;
+        private volatile boolean an;
         /** Faellt ein Netz aus (kein ES 3, keine Float-Ziele), bleibt es aus. */
         private volatile boolean unmoeglich;
+        private volatile int eingangBreite;
+        private volatile int eingangHoehe;
+        private volatile int ausgangBreite;
+        private volatile int ausgangHoehe;
+        /** Vom GL-Faden gerufen, wenn sich Groessen oder Moeglichkeit aendern. */
+        private final Runnable beiAenderung;
 
-        Effekt(Anime4kShader.Stufe stufe, int zielBreite, int zielHoehe) {
+        Effekt(Anime4kShader.Stufe stufe, boolean an, int zielBreite, int zielHoehe, Runnable beiAenderung) {
             this.start = stufe;
             this.stufe = stufe;
+            this.an = an;
             this.zielBreite = zielBreite;
             this.zielHoehe = zielHoehe;
+            this.beiAenderung = beiAenderung;
         }
 
-        Anime4kShader.Stufe stufe() { return unmoeglich ? Anime4kShader.Stufe.AUS : stufe; }
+        /** Was tatsaechlich gerechnet wird. */
+        Anime4kShader.Stufe stufe() { return unmoeglich || !an ? Anime4kShader.Stufe.AUS : stufe; }
+
+        /** Die Stufe fuer eingeschaltetes Anime4K, auch wenn es gerade aus ist. */
+        Anime4kShader.Stufe gewaehlt() { return stufe; }
 
         void stufe(Anime4kShader.Stufe neu) { stufe = neu; }
 
+        boolean an() { return an; }
+
+        void an(boolean wert) { an = wert; }
+
         boolean unmoeglich() { return unmoeglich; }
+
+        int eingangBreite() { return eingangBreite; }
+
+        int eingangHoehe() { return eingangHoehe; }
+
+        int ausgangBreite() { return ausgangBreite; }
+
+        int ausgangHoehe() { return ausgangHoehe; }
+
+        private void unmoeglich(boolean wert) {
+            unmoeglich = wert;
+            if (beiAenderung != null) beiAenderung.run();
+        }
 
         @Override
         public GlShaderProgram toGlShaderProgram(Context context, boolean useHdr) {
@@ -110,6 +145,11 @@ final class Anime4k {
                 : effekt.start == Anime4kShader.Stufe.LEICHT ? 1 : 0;
             schritte = Anime4kShader.schritte(effekt.zielBreite, effekt.zielHoehe,
                 inputWidth, inputHeight, hoechstens);
+            effekt.eingangBreite = inputWidth;
+            effekt.eingangHoehe = inputHeight;
+            effekt.ausgangBreite = inputWidth << schritte;
+            effekt.ausgangHoehe = inputHeight << schritte;
+            if (effekt.beiAenderung != null) effekt.beiAenderung.run();
             return new Size(inputWidth << schritte, inputHeight << schritte);
         }
 
@@ -123,7 +163,7 @@ final class Anime4k {
                 || fassung.contains("OpenGL ES 3.2");
             if (hdr || GlUtil.getContextMajorVersion() < 3 || !floatZiel) {
                 Log.i(TAG, "Anime4K nicht moeglich: " + fassung + ", hdr=" + hdr);
-                effekt.unmoeglich = true;
+                effekt.unmoeglich(true);
             }
         }
 
@@ -193,7 +233,7 @@ final class Anime4k {
                         // Ein Treiber, der ein Netz nicht uebersetzt oder nicht
                         // in Float-Texturen zeichnet, bekommt das Originalbild.
                         Log.w(TAG, "Anime4K abgeschaltet", fehler);
-                        effekt.unmoeglich = true;
+                        effekt.unmoeglich(true);
                         main = new Ziel(inputTexId, 0, breite, hoehe);
                     }
                 }

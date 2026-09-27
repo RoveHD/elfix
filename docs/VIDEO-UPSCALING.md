@@ -81,8 +81,13 @@ Der native Player (Media3) rechnet Anime mit denselben Anime4K-Netzen als
 Videoeffekt vor der Anzeige (`Anime4k.java`). Einstellung unter **Einstellungen →
 Wiedergabe → Anime4K für Anime**: Automatisch (Standard), Qualität, Schnell, Aus.
 
-- Als Anime gilt wie am Rechner eine Folgenadresse unter `/anime/stream/`. Serien,
-  Filme und ausgeschaltetes Anime4K laufen ohne Effekt auf dem bisherigen Weg.
+- Als Anime gilt wie am Rechner eine Folgenadresse unter `/anime/stream/`. Serien
+  und Filme laufen ohne Effekt auf dem bisherigen Weg.
+- Oben im Player steht wie am Rechner, was passiert, zum Beispiel
+  **Anime4K Qualität · 1280 × 720 → 2560 × 1440** oder **1920 × 1080 · Originalbild**.
+  Bei Anime schaltet der Knopf **Anime4K an/aus** daneben sofort um, ohne Neuladen,
+  und speichert die Wahl wie die Einstellungsseite. Damit das während der Wiedergabe
+  geht, steht der Effekt bei Anime immer; ausgeschaltet rechnet er nur bilinear.
 - **Qualität** entspricht dem Rechner (Restore M, Upscale M, bei Bedarf S),
   **Schnell** nur ein x2 mit Upscale S. Automatisch beginnt am Telefon mit Qualität,
   am Fernseher mit Schnell.
