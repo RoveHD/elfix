@@ -279,6 +279,17 @@ final class DirektSpieler {
     private Map<String, String> vorschauKopfzeilen = java.util.Collections.emptyMap();
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+
+    /*
+     * Anime4K fuer Anime (siehe Anime4k). Ob die Folge Anime ist, sagt die
+     * Wiedergabe vor jeder Quelle; der Effekt gilt fuer genau einen Player.
+     */
+    private boolean animeInhalt;
+    private Anime4k.Effekt anime4k;
+    private long anime4kVerworfen = -1;
+    private long anime4kGezeigt = -1;
+    private int anime4kVerstoesse;
+    private final Runnable anime4kPruefen = this::anime4kPruefen;
     private ExoPlayer player;
     /** Feste MPEG-TS-Zeitnull der laufenden HLS-Quelle; null bei MP4. */
     private KanonischesHls hlsZeit;
@@ -2316,6 +2327,7 @@ final class DirektSpieler {
         // Runde schauen alle auf dasselbe Bild - "ungefaehr dort" waere bei den
         // 15-Sekunden-Stuecken der Hoster bis zu fuenfzehn Sekunden daneben.
         player.setSeekParameters(SeekParameters.EXACT);
+        anime4kEinrichten(player);
         bild.setPlayer(player);
         ExoPlayer lauf = player;
         lauf.setVideoFrameMetadataListener(new VideoFrameMetadataListener() {
@@ -3458,6 +3470,8 @@ final class DirektSpieler {
     void chatEmpfangen(JSONObject zeile) { chat.empfangen(zeile); }
 
     private void freigeben() {
+        handler.removeCallbacks(anime4kPruefen);
+        anime4k = null;
         letzteBildZeit = Double.NaN;
         letzteBildRate = Double.NaN;
         letzteBildFreigabeNs = Long.MIN_VALUE;
@@ -3476,6 +3490,96 @@ final class DirektSpieler {
         alt.release();
         bereitGemeldet = false;
         ansicht.setKeepScreenOn(false);
+    }
+
+    /** Vor {@link #quelle}: die Seitenadresse der Folge, nicht die des Hosters. */
+    void inhaltArt(String seitenAdresse) {
+        animeInhalt = Anime4k.istAnime(seitenAdresse);
+    }
+
+    /**
+     * Die Stufe fuer dieses Geraet. "auto" beginnt am Telefon mit HOCH und am
+     * Fernseher mit LEICHT; eine Rueckstufung wegen Rucklern bleibt gemerkt.
+     */
+    static Anime4kShader.Stufe anime4kStufe(android.content.SharedPreferences einstellungen, boolean fernseher) {
+        String wahl = einstellungen.getString("anime4k", "auto");
+        if ("auto".equals(wahl)) wahl = einstellungen.getString("anime4k_auto", fernseher ? "leicht" : "hoch");
+        if ("hoch".equals(wahl)) return Anime4kShader.Stufe.HOCH;
+        if ("leicht".equals(wahl)) return Anime4kShader.Stufe.LEICHT;
+        return Anime4kShader.Stufe.AUS;
+    }
+
+    private android.content.SharedPreferences einstellungen() {
+        return activity.getSharedPreferences("elflix_settings", android.content.Context.MODE_PRIVATE);
+    }
+
+    /**
+     * Setzt den Effekt vor prepare() - Media3 baut die Effektkette nur dann
+     * auf. Serien, Filme und ausgeschaltetes Anime4K laufen ohne Effekt und
+     * damit auf dem bisherigen, direkten Weg.
+     */
+    private void anime4kEinrichten(ExoPlayer lauf) {
+        anime4k = null;
+        anime4kVerstoesse = 0;
+        anime4kVerworfen = -1;
+        anime4kGezeigt = -1;
+        if (!animeInhalt) return;
+        Anime4kShader.Stufe stufe = anime4kStufe(einstellungen(), fernseher);
+        if (stufe == Anime4kShader.Stufe.AUS) return;
+        // Ziel ist die Flaeche des Players in echten Pixeln. Am Fernseher ist
+        // das die Aufloesung der Oberflaeche; das Hochskalieren auf das Panel
+        // uebernimmt dort ohnehin die Anzeige.
+        android.util.DisplayMetrics masse = activity.getResources().getDisplayMetrics();
+        int breite = Math.max(masse.widthPixels, masse.heightPixels);
+        int hoehe = Math.min(masse.widthPixels, masse.heightPixels);
+        anime4k = new Anime4k.Effekt(stufe, breite, hoehe);
+        try {
+            lauf.setVideoEffects(java.util.Collections.<androidx.media3.common.Effect>singletonList(anime4k));
+        } catch (RuntimeException ohneEffekte) {
+            Log.w("ElfixAnime4k", "Videoeffekte nicht verfuegbar", ohneEffekte);
+            anime4k = null;
+            return;
+        }
+        handler.removeCallbacks(anime4kPruefen);
+        handler.postDelayed(anime4kPruefen, 10000);
+    }
+
+    /**
+     * Alle fuenf Sekunden: verwirft der Player mehr als 5 % der Bilder, zweimal
+     * hintereinander, geht Anime4K eine Stufe zurueck (HOCH, LEICHT, AUS).
+     * Gemessen wird nur bei laufender Wiedergabe; Puffern und Spulen zaehlen nicht.
+     */
+    private void anime4kPruefen() {
+        Anime4k.Effekt effekt = anime4k;
+        ExoPlayer lauf = player;
+        if (geschlossen || effekt == null || lauf == null || effekt.unmoeglich()
+            || effekt.stufe() == Anime4kShader.Stufe.AUS) return;
+        handler.postDelayed(anime4kPruefen, 5000);
+        androidx.media3.exoplayer.DecoderCounters zaehler = lauf.getVideoDecoderCounters();
+        if (zaehler == null) return;
+        zaehler.ensureUpdated();
+        long verworfen = zaehler.droppedBufferCount;
+        long gezeigt = zaehler.renderedOutputBufferCount;
+        boolean messbar = lauf.isPlaying() && anime4kVerworfen >= 0
+            && lauf.getPlaybackState() == Player.STATE_READY;
+        long neuVerworfen = verworfen - anime4kVerworfen;
+        long neuGezeigt = gezeigt - anime4kGezeigt;
+        anime4kVerworfen = verworfen;
+        anime4kGezeigt = gezeigt;
+        if (!messbar || neuVerworfen + neuGezeigt <= 0) return;
+        boolean ruckelt = neuVerworfen >= 5 && neuVerworfen * 20 > neuVerworfen + neuGezeigt;
+        anime4kVerstoesse = ruckelt ? anime4kVerstoesse + 1 : 0;
+        if (anime4kVerstoesse < 2) return;
+        anime4kVerstoesse = 0;
+        Anime4kShader.Stufe weiter = effekt.stufe() == Anime4kShader.Stufe.HOCH
+            ? Anime4kShader.Stufe.LEICHT : Anime4kShader.Stufe.AUS;
+        effekt.stufe(weiter);
+        Log.i("ElfixAnime4k", "Ruckeln: " + neuVerworfen + " von " + (neuVerworfen + neuGezeigt)
+            + " Bildern verworfen, weiter mit " + weiter);
+        if ("auto".equals(einstellungen().getString("anime4k", "auto"))) {
+            einstellungen().edit().putString("anime4k_auto",
+                weiter == Anime4kShader.Stufe.LEICHT ? "leicht" : "aus").apply();
+        }
     }
 
     void schliessen() {

@@ -708,6 +708,7 @@ final class DirektWiedergabe {
         // Woher das Bild kommt, steht im Kopf des Players - wie am Rechner.
         spieler.quelleBenannt(link.optString("hoster", ""),
             link.optString("spracheRoh", link.optString("sprache", "")));
+        spieler.inhaltArt(adresse);
         spieler.quelle(url, quelle.optString("typ"), kopf, stelle);
         spielt = true;
         naechsteSuchen(id);

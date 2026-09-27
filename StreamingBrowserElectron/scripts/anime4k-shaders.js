@@ -71,4 +71,43 @@ fs.writeFileSync(ziel, `"use strict";
   window.ElfixAnime4kShader = Object.freeze(STUFEN);
 })();
 `);
+// Dieselben Durchgaenge fuer den Android-Player (Media3-Effekt).
+const java = s => JSON.stringify(s).replace(/\u2028|\u2029/g, z => `\\u${z.charCodeAt(0).toString(16)}`);
+const javaFeld = { restoreM: "RESTORE_M", upscaleM: "UPSCALE_M", upscaleS: "UPSCALE_S" };
+const androidZiel = path.join(__dirname, "../../android/app/src/main/java/local/elflix/android/Anime4kNetze.java");
+fs.writeFileSync(androidZiel, `package local.elflix.android;
+
+// Generiert von StreamingBrowserElectron/scripts/anime4k-shaders.js - nicht von
+// Hand aendern. Anime4K v4.0 CNN-Shader, bloc97/Anime4K@${COMMIT}.
+// MIT-Lizenz: app/src/main/assets/anime4k-LICENSE.txt
+final class Anime4kNetze {
+    private Anime4kNetze() {}
+
+    /** Ein mpv-Hook: gebundene Texturen, Ziel, Groesse (Bezug x Faktor), Koerper. */
+    static final class Pass {
+        final String name;
+        final String[] binds;
+        final String save;
+        final String bezug;
+        final int faktor;
+        final String code;
+
+        Pass(String name, String[] binds, String save, String bezug, int faktor, String code) {
+            this.name = name;
+            this.binds = binds;
+            this.save = save;
+            this.bezug = bezug;
+            this.faktor = faktor;
+            this.code = code;
+        }
+    }
+${Object.entries(daten).map(([name, passes]) => `
+    static final Pass[] ${javaFeld[name]} = {
+${passes.map(p => `        new Pass(${java(p.name)}, new String[] {${p.binds.map(java).join(", ")}}, ${java(p.save)},
+            ${java(p.groesse[0])}, ${p.groesse[1]},
+            ${java(p.code)})`).join(",\n")}
+    };`).join("\n")}
+}
+`);
 console.log(`${path.relative(process.cwd(), ziel)}: ${Object.entries(daten).map(([n, d]) => `${n} ${d.length}`).join(", ")}`);
+console.log(path.relative(process.cwd(), androidZiel));

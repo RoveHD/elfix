@@ -3573,6 +3573,56 @@ public class MainActivity extends Activity {
         introStandHolen();
     }
 
+    /**
+     * Anime4K fuer Anime im eigenen Player. Der Knopf geht reihum durch
+     * Automatisch, Qualitaet, Schnell und Aus; wer Automatisch neu waehlt,
+     * vergisst eine fruehere Rueckstufung und das Geraet wird neu gemessen.
+     */
+    private void anime4kKarte(LinearLayout koerper, boolean fernseher, int luecke) {
+        String[] folge = {"auto", "hoch", "leicht", "aus"};
+        String[] namen = {"Automatisch", "Qualität", "Schnell", "Aus"};
+        lebendeKarte(koerper, fernseher, luecke, "Anime4K für Anime",
+            () -> anime4kText(fernseher),
+            () -> {
+                String wahl = anime4kWahl();
+                for (int i = 0; i < folge.length; i++) {
+                    if (folge[i].equals(wahl)) return "Weiter: " + namen[(i + 1) % folge.length];
+                }
+                return "Weiter: " + namen[0];
+            },
+            () -> {
+                String wahl = anime4kWahl();
+                int naechste = 0;
+                for (int i = 0; i < folge.length; i++) if (folge[i].equals(wahl)) naechste = (i + 1) % folge.length;
+                android.content.SharedPreferences.Editor aenderung =
+                    getSharedPreferences("elflix_settings", MODE_PRIVATE).edit().putString("anime4k", folge[naechste]);
+                if ("auto".equals(folge[naechste])) aenderung.remove("anime4k_auto");
+                aenderung.apply();
+                einstellungenAuffrischen();
+            });
+    }
+
+    private String anime4kWahl() {
+        return getSharedPreferences("elflix_settings", MODE_PRIVATE).getString("anime4k", "auto");
+    }
+
+    private String anime4kText(boolean fernseher) {
+        String wahl = anime4kWahl();
+        if ("hoch".equals(wahl)) {
+            return "Qualität: Anime wird wie am Rechner bereinigt und hochgerechnet. Braucht ein starkes Gerät.";
+        }
+        if ("leicht".equals(wahl)) {
+            return "Schnell: ein kleines Netz vergrößert Anime einmal auf das Doppelte.";
+        }
+        if ("aus".equals(wahl)) return "Aus. Anime läuft im Originalbild.";
+        Anime4kShader.Stufe stufe = DirektSpieler.anime4kStufe(
+            getSharedPreferences("elflix_settings", MODE_PRIVATE), fernseher);
+        String geraet = stufe == Anime4kShader.Stufe.HOCH ? "Qualität"
+            : stufe == Anime4kShader.Stufe.LEICHT ? "Schnell" : "aus – das Gerät kam nicht hinterher";
+        return "Automatisch: Anime wird mit Anime4K hochgerechnet, Serien und Filme bleiben unverändert. "
+            + "Dieses Gerät: " + geraet + ". Ruckelt es, schaltet ELFIX eine Stufe zurück.";
+    }
+
     /** Externe, normalisierte Segmente neben den weiterhin gelernten Marken. */
     private void skipSegmenteKarte(LinearLayout koerper, boolean fernseher, int luecke) {
         lebendeKarte(koerper, fernseher, luecke, "Vorspann und Abspann überspringen",
@@ -6647,6 +6697,7 @@ public class MainActivity extends Activity {
                     einstellungenAuffrischen();
                 });
             introKarte(koerper, fernseher, luecke);
+            anime4kKarte(koerper, fernseher, luecke);
             skipSegmenteKarte(koerper, fernseher, luecke);
             sponsorblockKarten(koerper, fernseher, luecke);
             youtubeDislikeKarte(koerper, fernseher, luecke);
