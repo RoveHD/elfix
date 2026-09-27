@@ -46,7 +46,10 @@ async function run() {
   assert.equal(_gueltig({ ...frame(), width: 3841 }), false);
   assert.equal(_gueltig({ ...frame(), outputHeight: 2161 }), false);
   assert.equal(_gueltig({ ...frame(), generation: 0 }), false);
+  assert.equal(_gueltig({ ...frame(), quality: 4 }), true);
+  for (const quality of [0, 5, 2.5, '3', null]) assert.equal(_gueltig({ ...frame(), quality }), false);
   assert.equal(_header(1, frame()).length, 40);
+  assert.equal(_header(1, { ...frame(), quality: 3 }).readUInt32LE(32), 3, 'VSR-Stufe steht im Protokollkopf');
   assert.equal(_handleBuffer('1234').readBigUInt64LE(), 0x1234n);
   assert.equal(_handleBuffer('zz'), null);
 

@@ -20,6 +20,7 @@ function gueltig(params) {
   if (width < 640 || height < 360 || width > MAX_WIDTH || height > MAX_HEIGHT) return false;
   if (outputWidth < width || outputHeight < height ||
       outputWidth > MAX_WIDTH || outputHeight > MAX_HEIGHT) return false;
+  if (params.quality !== undefined && ![1, 2, 3, 4].includes(params.quality)) return false;
   const bytes = width * height * 4;
   return bytes <= MAX_BYTES && params.pixel.length === bytes;
 }
@@ -239,7 +240,7 @@ function erstellen({ verzeichnis, datenVerzeichnis, sharedTexture, spawnHelper =
     let waitingForRelease = false;
     try {
       if (!await start() || stopped) return { ok: false, grund: lastFailure };
-      if (!send(1, { ...params, quality: 2, byteLength: params.pixel.length }, params.pixel)) {
+      if (!send(1, { ...params, quality: params.quality || 2, byteLength: params.pixel.length }, params.pixel)) {
         dispose('helper_write');
         return { ok: false, grund: 'rtx-fehler' };
       }

@@ -404,9 +404,12 @@ const videoUpscaling = document.querySelector("#videoUpscaling");
 const videoUpscalingMethod = document.querySelector("#videoUpscalingMethod");
 const videoUpscalingResolution = document.querySelector("#videoUpscalingResolution");
 const rtxVideoLicense = document.querySelector("#rtxVideoLicense");
+const rtxVideoQuality = document.querySelector("#rtxVideoQuality");
 function videoUpscalingAuswahlZeigen() {
-  const row = document.querySelector("#rtxVideoLicenseRow");
-  if (row) row.hidden = videoUpscalingMethod?.value !== "rtx";
+  for (const id of ["#rtxVideoLicenseRow", "#rtxVideoQualityRow"]) {
+    const row = document.querySelector(id);
+    if (row) row.hidden = !["rtx", "auto"].includes(videoUpscalingMethod?.value);
+  }
 }
 const videoUpscalingStatus = document.querySelector("#videoUpscalingStatus");
 
@@ -625,7 +628,7 @@ const SETTINGS_INDEX = [
   ["providers", "Anbieter verwalten", "Website hinzufügen löschen sortieren Suche URL Kürzel"],
   ["providers", "Adblock pro Anbieter", "Werbung einzelne Seite ausnehmen"],
   ["playback", "Automatisch pausieren", "Anbieterwechsel Minimieren Fokus verlassen"],
-  ["playback", "Video-Upscaling", "FSR AMD Intel NVIDIA RTX Videoqualität schärfer hochskalieren"],
+  ["playback", "Video-Upscaling", "FSR AMD Intel NVIDIA RTX Anime4K Anime Videoqualität VSR Qualitätsstufe schärfer hochskalieren"],
   ["playback", "Weiterschauen-Fortschritt", "nächste Folge weiterrücken stehen bleiben"],
   ["playback", "Nächste Folge von selbst starten", "Autoplay automatisch weiter Countdown Zähler 5 Sekunden abschalten"],
   ["home", "Statistik in der Seitenleiste", "Rückblick Statistik Wrapped Jahresrückblick einblenden ausblenden"],
@@ -1346,6 +1349,7 @@ function bindEvents() {
     await saveSettings();
     videoUpscalingStandLaden();
   });
+  rtxVideoQuality?.addEventListener("change", saveSettings);
   rtxVideoLicense?.addEventListener("change", async () => {
     await saveSettings();
     videoUpscalingStandLaden();
@@ -1464,9 +1468,10 @@ function bindEvents() {
       autoplayNextEpisode.checked = settings.playback?.autoplayNextEpisode !== false;
     }
     if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
-    if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "fsr1";
-    if (videoUpscalingResolution) videoUpscalingResolution.value = String(settings.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440);
+    if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "auto";
+    if (videoUpscalingResolution) videoUpscalingResolution.value = String([1440, 2160].includes(settings.playback?.videoUpscalingResolution) ? settings.playback.videoUpscalingResolution : "auto");
     if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
+    if (rtxVideoQuality) rtxVideoQuality.value = String(settings.playback?.rtxVideoQuality || 2);
     videoUpscalingAuswahlZeigen();
   });
   api.onVideoUpscalingStatus?.(videoUpscalingStandZeigen);
@@ -8468,9 +8473,10 @@ function renderSettings() {
   if (introSkip) introSkip.checked = settings.playback?.introSkip !== false;
   if (skipSegments) skipSegments.checked = settings.playback?.skipSegments !== false;
   if (videoUpscaling) videoUpscaling.checked = settings.playback?.videoUpscaling === true;
-  if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "fsr1";
-  if (videoUpscalingResolution) videoUpscalingResolution.value = String(settings.playback?.videoUpscalingResolution === 2160 ? 2160 : 1440);
+  if (videoUpscalingMethod) videoUpscalingMethod.value = settings.playback?.videoUpscalingMethod || "auto";
+  if (videoUpscalingResolution) videoUpscalingResolution.value = String([1440, 2160].includes(settings.playback?.videoUpscalingResolution) ? settings.playback.videoUpscalingResolution : "auto");
   if (rtxVideoLicense) rtxVideoLicense.checked = settings.playback?.rtxVideoLicense === "2024-02-23";
+  if (rtxVideoQuality) rtxVideoQuality.value = String(settings.playback?.rtxVideoQuality || 2);
   videoUpscalingAuswahlZeigen();
   videoUpscalingStandLaden();
   if (spoilerProtectionEnabled) spoilerProtectionEnabled.checked = settings.playback?.spoilerProtection?.enabled === true;
@@ -8750,8 +8756,11 @@ async function saveSettings(options = {}) {
     introSkip: introSkip ? introSkip.checked : settings.playback?.introSkip !== false,
     skipSegments: skipSegments ? skipSegments.checked : settings.playback?.skipSegments !== false,
     videoUpscaling: videoUpscaling ? videoUpscaling.checked : settings.playback?.videoUpscaling === true,
-    videoUpscalingMethod: videoUpscalingMethod ? videoUpscalingMethod.value : settings.playback?.videoUpscalingMethod || "fsr1",
-    videoUpscalingResolution: videoUpscalingResolution ? Number(videoUpscalingResolution.value) : settings.playback?.videoUpscalingResolution || 1440,
+    videoUpscalingMethod: videoUpscalingMethod ? videoUpscalingMethod.value : settings.playback?.videoUpscalingMethod || "auto",
+    videoUpscalingResolution: videoUpscalingResolution
+      ? (videoUpscalingResolution.value === "auto" ? "auto" : Number(videoUpscalingResolution.value))
+      : settings.playback?.videoUpscalingResolution || "auto",
+    rtxVideoQuality: rtxVideoQuality ? Number(rtxVideoQuality.value) : settings.playback?.rtxVideoQuality || 2,
     rtxVideoLicense: rtxVideoLicense ? (rtxVideoLicense.checked ? "2024-02-23" : "") : settings.playback?.rtxVideoLicense || "",
     spoilerProtection: {
       enabled: Boolean(spoilerProtectionEnabled?.checked),

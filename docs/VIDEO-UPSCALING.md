@@ -1,12 +1,22 @@
 # Video-Upscaling im Desktop-Player
 
-Unter **Einstellungen → Wiedergabe → Videoqualität** lassen sich **AMD FSR 1**
-oder **NVIDIA RTX Video Super Resolution** auswählen und einschalten.
+Unter **Einstellungen → Wiedergabe → Videoqualität** lassen sich **Automatisch**,
+**AMD FSR 1**, **Anime4K** oder **NVIDIA RTX Video Super Resolution** auswählen
+und einschalten. **Automatisch** (Standard) verwendet Anime4K für Anime und RTX
+Video für Serien und Filme. Als Anime gilt wie bei der Filler-Liste eine Folgenadresse
+unter `/anime/stream/`. Ohne akzeptierte NVIDIA-Lizenz laufen Serien und Filme
+dabei mit FSR 1. Eine ausdrücklich gewählte Methode gilt für alle Videos.
 Die Einstellung ist standardmäßig aus und wird lokal gespeichert.
 Ein laufendes Video wird beim Umschalten weder neu geladen noch angehalten.
 Der Schalter **Upscaling an/aus** steht auch direkt oben rechts im Player und
-speichert dieselbe Einstellung. Daneben lässt sich das Ziel **1440p** oder
-**4K (2160p)** wählen, ebenso im Einstellungsmenü. Standardziel ist 1440p.
+speichert dieselbe Einstellung. Daneben lässt sich das Ziel **Auto (Monitor)**,
+**1440p** oder **4K (2160p)** wählen, ebenso im Einstellungsmenü. Standard ist
+**Auto**: 4K nur, wenn der Bildschirm mit dem Player mindestens rund 2160 Zeilen
+für ein 16:9-Bild bietet (physische Pixel, Windows-Skalierung eingerechnet), sonst
+1440p. Ein Ultrawide mit 5120 × 1440 bleibt also bei 1440p. Wird das Fenster auf
+einen anderen Monitor gezogen, passt sich das Ziel ohne Pause an. Auf einem
+1440p-Monitor würde ein 4K-Ziel nur zusätzliche Grafiklast erzeugen, weil der
+Browser das Bild danach wieder verkleinert.
 Die Verarbeitung erzeugt bis zu **2560 × 1440** bzw. **3840 × 2160** Bildpunkte,
 unabhängig von Fenstergröße und Bildschirm-Skalierung. Das Bild wird anschließend
 passend im Player dargestellt; ein kleineres Display zeigt dadurch keine zusätzlichen
@@ -21,7 +31,17 @@ RCAS-Schärfung. Sie benötigt WebGL2 und geeignete Grafikbeschleunigung, ist
 nicht auf AMD beschränkt und unterstützt auch Intel- und NVIDIA-Grafik.
 Es handelt sich um FSR 1, ohne KI oder Zwischenbildberechnung.
 
-RTX Video verwendet das echte NVIDIA RTX Video SDK 1.1.0 mit VSR-Qualitätsstufe 2.
+Anime4K verwendet die CNN-Shader von [Anime4K v4.0](https://github.com/bloc97/Anime4K)
+im selben WebGL2-Pfad wie FSR 1, entsprechend dem Anime4K-„Mode A“: **Restore CNN M**
+auf dem Quellbild, danach **Upscale CNN x2 M** und bei Bedarf ein zweites x2 mit
+**Upscale CNN x2 S**. Eine Vergrößerungsstufe läuft wie bei mpv nur, solange noch mehr
+als Faktor 1,2 bis zum Ziel fehlt. Das Ergebnis wird bilinear auf die Zielgröße gebracht.
+Zwischenbilder liegen als 16-Bit-Gleitkommatexturen vor (`EXT_color_buffer_float`).
+Anime4K ist für Zeichentrick trainiert und braucht deutlich mehr Grafikleistung als FSR 1.
+
+RTX Video verwendet das echte NVIDIA RTX Video SDK 1.1.0. Die VSR-Qualitätsstufe
+ist unter **RTX-Qualitätsstufe** wählbar: 1 (niedrig) bis 4 (ultra), Standard 2.
+Eine geänderte Stufe gilt ab dem nächsten Bild, ohne den nativen Prozess neu zu starten.
 Ein separater nativer D3D11-Prozess verarbeitet die Bilder auf einer unterstützten
 NVIDIA-RTX-GPU. GPU-Texturen gelangen direkt über Electrons `sharedTexture`
 zum Player; die sichere Renderer-Sandbox bleibt eingeschaltet. Die Videodekodierung,
@@ -56,6 +76,13 @@ proprietär; ihre Bedingungen gelten zusätzlich für diese optionale Komponente
   gewählte Streamqualität noch Ton, Fortschritt oder Watchparty-Takt.
 
 ## Herkunft
+
+Die Anime4K-Shader stammen unverändert aus
+[bloc97/Anime4K](https://github.com/bloc97/Anime4K/tree/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl),
+Commit `7684e9586f8dcc738af08a1cdceb024cc184f426`. `node scripts/anime4k-shaders.js <Checkout>`
+erzeugt daraus `src/renderer/spieler-anime4k-shaders.js`. Dabei werden nur die
+mpv-Kopfzeilen in Daten übersetzt. Die MIT-Lizenz liegt in
+`StreamingBrowserElectron/src/renderer/spieler-anime4k-LICENSE.txt`.
 
 Port der 32-Bit-EASU- und RCAS-Pfade aus
 [AMD FidelityFX FSR 1.0.2](https://github.com/GPUOpen-Effects/FidelityFX-FSR/blob/a21ffb8f6c13233ba336352bdff293894c706575/ffx-fsr/ffx_fsr1.h),
@@ -96,6 +123,11 @@ Der separate Hardwaretest `tests/rtx-first-frame-electrontest.js` vergleicht mit
 `ELFIX_RTX_HARDWARE=1` das vollständige erste RTX-Bild mit Folgeausgaben desselben
 detailreichen Eingangsbilds bei 1440p und 4K. Er sichert die Korrektur der
 DX11-Ausgabetextur gegen die beobachteten Erstbild-Artefakte ab.
+`tests/anime4k-electrontest.js` rechnet das WebGL2-Ergebnis von Restore/M/S auf einem
+40 × 24-Bild gegen eine unabhängige CPU-Referenz derselben Shader nach (Abweichung
+höchstens 4/255). Außerdem prüft er Ausrichtung, Kantenschärfe und 1440p/4K.
+Der RTX-Playertest wechselt zusätzlich live auf Anime4K. Physische Grafikkarten
+wurden mit Anime4K nicht geprüft, nur SwiftShader.
 Der Node-Test `rtxvideotest` prüft Größen- und Protokollgrenzen, eine begrenzte
 Warteschlange, Freigaben, veraltete Generationen sowie Crash ohne Neustartschleife.
 Die Hardwaredurchläufe erfolgten auf einer RTX 4070. Physische AMD-/Intel-Geräte

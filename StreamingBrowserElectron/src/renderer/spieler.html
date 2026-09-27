@@ -20,7 +20,7 @@
   }
   #buehne { position: fixed; inset: 0; }
   video { position: relative; width: 100%; height: 100%; object-fit: contain; background: #05070c; outline: none; }
-  #fsrBild, #rtxBild { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  #fsrBild, #anime4kBild, #rtxBild { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
   #upscalingHinweis { color: #aac9ed; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   #kopfTitel { flex: 1; min-width: 0; }
   #kopfTitel > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -450,6 +450,7 @@
 <body>
   <div id="buehne">
     <canvas id="fsrBild" hidden aria-hidden="true"></canvas>
+    <canvas id="anime4kBild" hidden aria-hidden="true"></canvas>
     <canvas id="rtxBild" hidden aria-hidden="true"></canvas>
     <video id="bild" playsinline preload="metadata" crossorigin="anonymous"></video>
   </div>
@@ -617,6 +618,8 @@
   <script src="../untertitelwahl.js"></script>
   <script src="spieler-vorschau.js"></script>
   <script src="spieler-fsr.js"></script>
+  <script src="spieler-anime4k-shaders.js"></script>
+  <script src="spieler-anime4k.js"></script>
   <script src="spieler-rtx.js"></script>
   <script src="../video-upscaling-status.js"></script>
   <script src="spieler.js"></script>

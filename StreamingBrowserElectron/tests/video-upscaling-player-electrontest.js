@@ -67,7 +67,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("spieler:chat-status", () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:upscaling-setzen", (event, id, an, aufloesung) => {
     assert.equal(id, 41); assert.equal(typeof an, "boolean");
-    assert.ok([1440, 2160].includes(aufloesung)); toggles.push([an, aufloesung]);
+    assert.ok([1440, 2160, "auto"].includes(aufloesung)); toggles.push([an, aufloesung]);
     event.sender.send("spieler:upscaling", an, "fsr1", aufloesung);
     return { ok: true, an, verfahren: "fsr1", aufloesung };
   });
@@ -114,7 +114,7 @@ app.whenReady().then(async () => {
   await until(() => statuses.at(-1)?.ausgang?.breite === 3840);
   assert.equal(await js("document.querySelector('#upscalingHinweis').textContent"), "FSR 1 · 160 × 90 → 3840 × 2160");
   assert.deepEqual(await js("[document.querySelector('#fsrBild').width,document.querySelector('#fsrBild').height]"), [3840, 2160]);
-  assert.deepEqual(toggles, [[true,1440], [false,1440], [true,1440], [true,2160]]);
+  assert.deepEqual(toggles, [[true,"auto"], [false,"auto"], [true,"auto"], [true,2160]]);
   assert.deepEqual(await js("({source:bild.currentSrc,paused:bild.paused,events:window.unwanted})"),
     { source: before.source, paused: false, events: [] }, "Toggling preserves decoder, source, position and playback");
   assert.deepEqual(errors, []);
@@ -144,11 +144,30 @@ app.whenReady().then(async () => {
     })()`), true, "The top menu opens downwards and fits narrow windows");
     await js("document.querySelector('#upscalingZiel .wahlKnopf').click()");
   }
+  // Erster Eintrag: Auto nach Monitor. Der Testbildschirm ist kleiner als 4K.
   await js("document.querySelector('#upscalingZiel .wahlKnopf').click(); document.querySelector('#upscalingZiel .wahlMenue button').click()");
   await until(() => statuses.at(-1)?.ausgang?.breite === 2560);
+  assert.deepEqual(toggles.at(-1), [true, "auto"]);
+  assert.equal(await js("document.querySelector('#upscalingZiel .wahlText').textContent"), "Auto · Monitor (1440p)");
   assert.equal(await js("bild.paused"), true, "Changing the target preserves pause");
+  // Auf einen 4K-Monitor gezogen: Auto wechselt ohne neue Einstellung auf 4K.
+  const vorMonitor = toggles.length;
+  window.webContents.enableDeviceEmulation({ screenPosition: "desktop", screenSize: { width: 3840, height: 2160 },
+    viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0, viewSize: { width: 0, height: 0 }, scale: 1 });
+  await until(() => js("screen.height===2160"));
+  await js("window.dispatchEvent(new Event('resize'))");
+  await until(() => statuses.at(-1)?.ausgang?.breite === 3840);
+  assert.equal(await js("document.querySelector('#upscalingZiel .wahlText').textContent"), "Auto · Monitor (4K)");
+  assert.equal(toggles.length, vorMonitor, "Monitorwechsel speichert keine neue Einstellung");
+  // Ultrawide 5120 x 1440 bleibt bei 1440p.
+  window.webContents.enableDeviceEmulation({ screenPosition: "desktop", screenSize: { width: 5120, height: 1440 },
+    viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0, viewSize: { width: 0, height: 0 }, scale: 1 });
+  await until(() => js("screen.width===5120"));
+  await js("window.dispatchEvent(new Event('resize'))");
+  await until(() => statuses.at(-1)?.ausgang?.breite === 2560);
+  window.webContents.disableDeviceEmulation();
   assert.doesNotMatch(await js("document.querySelector('#upscalingHinweis').textContent"), /960 × 600/,
     "The resolution excludes letterbox bars");
-  console.log("OK FSR player: real button/keyboard and 1440p/4K selection, CORS/cookies, no pause/reload, fixed actual resolution, paused resize and narrow layout");
+  console.log("OK FSR player: real button/keyboard, auto/1440p/4K selection incl. monitor change, CORS/cookies, no pause/reload, fixed actual resolution, paused resize and narrow layout");
   finish(0);
 }).catch(error => finish(1, error));

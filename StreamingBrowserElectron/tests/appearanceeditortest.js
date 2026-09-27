@@ -69,7 +69,7 @@ const ids = [
   "showHomeCategories", "showReviewLink", "watchpartyEnabled", "watchpartyServer", "watchpartyRoom",
   "watchpartyName", "providerCardMeta", "showFavoriteMeta", "showFavoriteMetaMirror",
   "animationsEnabled", "uiSounds", "youtubeInMediathek", "autoplayNextEpisode",
-  "introSkip", "skipSegments", "videoUpscaling", "videoUpscalingMethod", "videoUpscalingResolution", "rtxVideoLicense", "spoilerProtectionEnabled", "spoilerProtectionRoomMinimum", "spoilerProtectionShareWatchedWithRoom", "direktModus", "youtubeDislikesEnabled", "rememberLanguage", "favoriteProgressMode",
+  "introSkip", "skipSegments", "videoUpscaling", "videoUpscalingMethod", "videoUpscalingResolution", "rtxVideoQuality", "rtxVideoLicense", "spoilerProtectionEnabled", "spoilerProtectionRoomMinimum", "spoilerProtectionShareWatchedWithRoom", "direktModus", "youtubeDislikesEnabled", "rememberLanguage", "favoriteProgressMode",
   "pauseOnProviderSwitch", "pauseOnMinimize", "pauseOnBlur", "notifyNewEpisodes", "wrappedMusik",
   "whitelistInput", "adblockEnabled", "trackingEnabled", "popupBlockingEnabled",
   "redirectBlockingEnabled"

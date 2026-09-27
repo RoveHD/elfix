@@ -35,18 +35,21 @@ app.on("browser-window-created", (_event, window) => {
       await until(() => js("Boolean(settings && window.streamingBrowser)"));
       const initial = await js("window.streamingBrowser.init()");
       assert.equal(initial.settings.playback.videoUpscaling, false, "Fresh and migrated settings default to off");
-      assert.equal(initial.settings.playback.videoUpscalingMethod, "fsr1");
-      assert.equal(initial.settings.playback.videoUpscalingResolution, 1440);
+      assert.equal(initial.settings.playback.videoUpscalingMethod, "auto");
+      assert.equal(initial.settings.playback.videoUpscalingResolution, "auto", "Ziel richtet sich standardmaessig nach dem Monitor");
       assert.equal(initial.settings.playback.rtxVideoLicense, "");
+      assert.equal(initial.settings.playback.rtxVideoQuality, 2, "Bisherige feste VSR-Stufe bleibt Standard");
       assert.equal((await js("window.streamingBrowser.getVideoUpscalingStatus()")).zustand, "aus");
       await js("openSettings()");
       await js("document.querySelector('[data-tab=playback]').click()");
       assert.equal(await js("document.querySelector('#videoUpscaling').checked"), false);
+      assert.equal(await js("document.querySelector('#videoUpscalingMethod').value"), "auto");
+      assert.equal(await js("document.querySelector('#rtxVideoQualityRow').hidden"), false, "Automatisch nutzt RTX fuer Serien und Filme");
       await js("document.querySelector('#videoUpscaling').click()");
       await until(async () => (await js("window.streamingBrowser.init()")).settings.playback.videoUpscaling === true);
       const stored = () => JSON.parse(fs.readFileSync(path.join(profile, "ELFIX", "settings.json"), "utf8"));
       assert.equal(stored().playback.videoUpscaling, true, "Real UI toggle persists through production IPC");
-      assert.equal(await js("document.querySelector('#videoUpscalingResolution').value"), "1440");
+      assert.equal(await js("document.querySelector('#videoUpscalingResolution').value"), "auto");
       await js("document.querySelector('#videoUpscalingResolution').value='2160'; document.querySelector('#videoUpscalingResolution').dispatchEvent(new Event('change'))");
       await until(() => stored().playback.videoUpscalingResolution === 2160);
       await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('bereit')"));
@@ -60,6 +63,16 @@ app.on("browser-window-created", (_event, window) => {
       assert.equal(await js("document.querySelector('#rtxVideoLicenseRow').hidden"), false);
       await js("document.querySelector('#rtxVideoLicense').click()");
       await until(() => stored().playback.rtxVideoLicense === "2024-02-23");
+      await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('bereit')"));
+      assert.equal(await js("document.querySelector('#rtxVideoQualityRow').hidden"), false);
+      assert.equal(await js("document.querySelector('#rtxVideoQuality').value"), "2");
+      await js("document.querySelector('#rtxVideoQuality').value='4'; document.querySelector('#rtxVideoQuality').dispatchEvent(new Event('change'))");
+      await until(() => stored().playback.rtxVideoQuality === 4);
+      await js("document.querySelector('#videoUpscalingMethod').value='anime4k'; document.querySelector('#videoUpscalingMethod').dispatchEvent(new Event('change'))");
+      await until(() => stored().playback.videoUpscalingMethod === "anime4k");
+      assert.equal(await js("document.querySelector('#rtxVideoQualityRow').hidden"), true);
+      assert.equal(await js("document.querySelector('#rtxVideoLicenseRow').hidden"), true);
+      assert.equal(stored().playback.rtxVideoQuality, 4, "RTX-Stufe bleibt beim Verfahrenswechsel erhalten");
       await until(() => js("document.querySelector('#videoUpscalingStatus').textContent.includes('bereit')"));
 
       const bounds = await js(`(() => {
@@ -88,9 +101,12 @@ app.on("browser-window-created", (_event, window) => {
       // Only a literal true opts in, including after importing older settings.
       await js(`(async()=>{const s=(await window.streamingBrowser.init()).settings;
         s.playback.videoUpscaling='true'; s.playback.videoUpscalingResolution=4320;
+        s.playback.rtxVideoQuality=5; s.playback.videoUpscalingMethod='anime4k-x';
         await window.streamingBrowser.saveSettings(s);})()`);
       assert.equal(stored().playback.videoUpscaling, false);
-      assert.equal(stored().playback.videoUpscalingResolution, 1440, "Invalid targets normalize to 1440p");
+      assert.equal(stored().playback.videoUpscalingResolution, "auto", "Invalid targets normalize to automatic");
+      assert.equal(stored().playback.rtxVideoQuality, 2, "Invalid VSR levels normalize to 2");
+      assert.equal(stored().playback.videoUpscalingMethod, "auto", "Unknown methods normalize to automatic");
       console.log("OK Upscaling settings: default off, real toggle, persistence, status and strict normalization");
       finish(0);
     } catch (error) { finish(1, error); }
