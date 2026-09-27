@@ -3,6 +3,14 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.53 — 27. September 2026
+
+- Android/TV-Player zeigt oben wie am Rechner, was passiert, zum Beispiel
+  „Anime4K Qualität · 1280 × 720 → 2560 × 1440“ oder „1920 × 1080 · Originalbild“.
+- Bei Anime schaltet der Knopf **Anime4K an/aus** neben „Schließen“ sofort um,
+  ohne Neuladen, und speichert die Wahl wie die Einstellungsseite.
+- Eine Rückstufung wegen Ruckelns wird im Player kurz angesagt.
+
 ## 2.0.52 — 27. September 2026
 
 - **Anime4K auf Android-Telefonen und Fernsehern:** Der eigene Player rechnet
