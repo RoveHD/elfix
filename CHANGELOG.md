@@ -3,6 +3,13 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.54 — 30. September 2026
+
+- Android-Player auf dem Handy: Wischen über das Bild spult nicht mehr. Beim
+  Scrollen oder Hochziehen der Systemleiste sprang die Wiedergabe sonst
+  ungewollt. Gespult wird per Doppel-Tipp (10 Sekunden zurück/vor) oder über
+  die Zeitleiste.
+
 ## 2.0.53 — 27. September 2026
 
 - Android/TV-Player zeigt oben wie am Rechner, was passiert, zum Beispiel
