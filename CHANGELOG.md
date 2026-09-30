@@ -9,6 +9,9 @@ Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
   Scrollen oder Hochziehen der Systemleiste sprang die Wiedergabe sonst
   ungewollt. Gespult wird per Doppel-Tipp (10 Sekunden zurück/vor) oder über
   die Zeitleiste.
+- Build-Abhängigkeiten mit neuen Sicherheitsmeldungen aktualisiert
+  (`fast-uri` 3.1.8, `undici` 6.29.0, `brace-expansion`); betrifft nur den
+  Bau, nicht die ausgelieferte App.
 
 ## 2.0.53 — 27. September 2026
 
