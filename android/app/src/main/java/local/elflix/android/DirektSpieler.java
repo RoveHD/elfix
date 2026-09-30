@@ -269,13 +269,12 @@ final class DirektSpieler {
      */
     private final TextView ansage;
     private final SpielerVorschau vorschau;
-    /** Nur die Videoebene bekommt Wisch- und Doppel-Tipp-Gesten. */
+    /**
+     * Nur die Videoebene bekommt Gesten: Tippen und Doppel-Tippen. Gespult wird
+     * nur per Doppel-Tipp - ein Wischen blieb beim Scrollen, Lautstaerke-Ziehen
+     * oder Hochschieben der Systemleiste haengen und sprang ungewollt.
+     */
     private final GestureDetector videoGesten;
-    private boolean wischSpulen;
-    private float wischStartX;
-    private double wischStartPosition;
-    private double wischZiel;
-    private boolean wischGastGesperrt;
     private boolean imPip;
     private String vorschauUrl = "";
     private String vorschauTyp = "";
@@ -654,11 +653,6 @@ final class DirektSpieler {
         });
         videoGesten = new GestureDetector(activity, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onDown(MotionEvent event) {
-                wischSpulen = false;
-                wischGastGesperrt = false;
-                wischStartX = event.getX();
-                wischStartPosition = position();
-                wischZiel = wischStartPosition;
                 return true;
             }
 
@@ -675,42 +669,10 @@ final class DirektSpieler {
                 }
                 return true;
             }
-
-            @Override public boolean onScroll(MotionEvent start, MotionEvent aktuell,
-                                               float distanzX, float distanzY) {
-                if (imPip || bild.getWidth() <= 0
-                    || Math.abs(aktuell.getX() - wischStartX) < dp(28)
-                    || Math.abs(aktuell.getX() - wischStartX) <= Math.abs(aktuell.getY() - start.getY())) return false;
-                wischSpulen = true;
-                if (!darfNutzerSpulen()) {
-                    wischGastGesperrt = true;
-                    return true;
-                }
-                double sekunden = (aktuell.getX() - wischStartX) / bild.getWidth() * 120.0;
-                wischZiel = Math.max(0, wischStartPosition + sekunden);
-                if (dauer() > 0) wischZiel = Math.min(wischZiel, Math.max(0, dauer() - 0.5));
-                long gerundet = Math.round(wischZiel - wischStartPosition);
-                kurzeAnsage((gerundet >= 0 ? "+" : "") + gerundet + " Sekunden");
-                vorschauZeigen(wischZiel);
-                return true;
-            }
         });
         bild.setOnTouchListener((v, event) -> {
             if (imPip) return false;
-            boolean erkannt = videoGesten.onTouchEvent(event);
-            if (event.getActionMasked() == MotionEvent.ACTION_UP && wischSpulen) {
-                wischSpulen = false;
-                stelleVomNutzerSetzen(wischZiel);
-                vorschau.verbergen();
-                return true;
-            }
-            if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                wischSpulen = false;
-                wischGastGesperrt = false;
-                vorschau.verbergen();
-                return true;
-            }
-            return erkannt;
+            return videoGesten.onTouchEvent(event);
         });
 
         // Oben stehen zwei Dinge untereinander: der Streifen der Runde (er

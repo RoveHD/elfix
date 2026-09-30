@@ -79,8 +79,9 @@ andere. Siehe [Das Relay](#das-relay).
   der App automatisch in PiP.
 - **Vorschau beim Spulen.** Die Zeitleiste zeigt eine echte Videominiatur samt
   Position und Abschnitt; die Wiedergabe bleibt bis zum Loslassen stehen.
-- **Handy-Gesten.** Doppel-Tap für zehn Sekunden vor und zurück, horizontales
-  Wischen mit Vorschau und Abbruchmöglichkeit.
+- **Handy-Gesten.** Doppel-Tap für zehn Sekunden vor und zurück. Wischen übers
+  Bild spult nicht — so springt beim Scrollen oder Hochziehen der Systemleiste
+  nichts ungewollt.
 - **Handy als Fernbedienung.** Pause, Spulen, Folge vor und zurück, Vollbild und
   Ton — und die angefangenen Serien zum Aussuchen, wenn gerade nichts läuft.
 
