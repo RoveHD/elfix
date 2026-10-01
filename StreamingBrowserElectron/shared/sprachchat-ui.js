@@ -206,10 +206,10 @@
     else if (action === "background") release();
   });
   Promise.resolve(host.context()).then(setContext).catch(() => { uiError = "Raum konnte nicht geladen werden."; render(current); });
-  Promise.resolve(host.preferences?.() || {}).then((value) => {
+  Promise.resolve(host.preferences?.() || {}).then(async (value) => {
     inputDeviceId = typeof value?.inputDeviceId === "string" ? value.inputDeviceId : "";
     engine.setInputDevice(inputDeviceId);
-    listDevices();
+    await listDevices();
   }).catch(() => { $("geraeteHinweis").textContent = "Gespeicherte Mikrofon-Auswahl konnte nicht geladen werden."; })
-    .finally(() => { preferencesReady = true; render(current); });
+    .finally(() => { preferencesReady = true; $("mikrofonGeraet").disabled = false; $("geraeteLaden").disabled = false; render(current); });
 })();

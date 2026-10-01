@@ -18,12 +18,12 @@
     <details id="einstellungen">
       <summary>Einstellungen</summary>
       <label class="input-label" for="mikrofonGeraet">Mikrofon</label>
-      <select id="mikrofonGeraet"><option value="">Systemstandard</option></select>
-      <button id="geraeteLaden" class="quiet" type="button">Mikrofone anzeigen</button>
+      <select id="mikrofonGeraet" disabled><option value="">Systemstandard</option></select>
+      <button id="geraeteLaden" class="quiet" type="button" disabled>Mikrofone anzeigen</button>
       <p id="geraeteHinweis" class="muted" role="status">Die Auswahl gilt auf diesem Gerät. Zum Anzeigen der Gerätenamen ist eventuell eine Mikrofonfreigabe nötig. Dabei wird nichts übertragen.</p>
     </details>
     <div class="actions">
-      <button id="beitreten" class="primary">Zum Zuhören beitreten</button>
+      <button id="beitreten" class="primary" disabled>Zum Zuhören beitreten</button>
       <button id="mikrofon" hidden aria-pressed="false">Mikrofon einschalten</button>
       <button id="verlassen" hidden class="quiet">Verlassen</button>
     </div>

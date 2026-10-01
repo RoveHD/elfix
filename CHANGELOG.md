@@ -3,7 +3,7 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
-## 2.0.55 — 1. Oktober 2026
+## 2.0.56 — 1. Oktober 2026
 
 - Sprachchat in Watchparty-Räumen auf Desktop und Android/TV: bewusstes
   Beitreten zum Zuhören, Mikrofon einschalten, Push-to-talk und eigene
