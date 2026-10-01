@@ -3,6 +3,23 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.55 — 1. Oktober 2026
+
+- Sprachchat in Watchparty-Räumen auf Desktop und Android/TV: bewusstes
+  Beitreten zum Zuhören, Mikrofon einschalten, Push-to-talk und eigene
+  Lautstärke pro Teilnehmer. Das Handy kann den Sprachchat übernehmen,
+  während das Video auf dem Fernseher läuft.
+- Mikrofon-Auswahl unter Einstellungen → Watchparty → Mikrofon einstellen.
+  Die Auswahl bleibt auf dem jeweiligen Gerät gespeichert; ein Gerätewechsel
+  beendet die laufende Aufnahme und verlangt erneutes Einschalten.
+- Optional wird der Filmton während anderer Stimmen abgesenkt. Minimieren
+  und Folgenwechsel erhalten den Sprachchat; Verlassen beendet die Aufnahme.
+- Das mitgelieferte Relay unterstützt die neue Sprachverhandlung. Apps und
+  Relay gemeinsam aktualisieren; für restriktive Netze einen TURN-Server
+  konfigurieren (siehe docs/SPRACHCHAT.md).
+- Cloudflare-Verifizierung mit manueller Bestätigung, automatischer Fortsetzung
+  und geteilter Provider-/Player-Session; keine automatische CAPTCHA-Lösung.
+
 ## 2.0.54 — 30. September 2026
 
 - Android-Player auf dem Handy: Wischen über das Bild spult nicht mehr. Beim

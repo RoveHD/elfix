@@ -64,6 +64,23 @@ const sicherung = require("../src/sicherung");
   assert.equal(segment.headers.get("content-range"), "bytes 0-6/7");
   assert.equal(await segment.text(), "segment");
   assert.equal(await (await media(request("HEAD"))).text(), "");
+  let challenges = 0;
+  const challenged = medienHandler(async () => new Response(
+    '<!doctype html><title>Just a moment...</title><form id="challenge-form"><script src="/cdn-cgi/challenge-platform/x"></script></form>',
+    { status: 403, headers: { "content-type": "text/html", "cf-mitigated": "challenge" } }),
+  { onChallenge: () => { challenges++; } });
+  const challengeAntwort = await challenged(request("GET"));
+  await Promise.resolve();
+  assert.equal(challenges, 1);
+  assert.match(await challengeAntwort.text(), /challenge-form/,
+    "die Klassifikation darf den Response-Body nicht verbrauchen");
+  let normaleAntworten = 0;
+  const hls = medienHandler(async () => new Response("#EXTM3U\n#EXT-X-VERSION:3\n", {
+    headers: { "content-type": "application/vnd.apple.mpegurl" }
+  }), { onResponse: (details) => { if (details.zustand.type === "HLS") normaleAntworten++; } });
+  assert.match(await (await hls(new Request("https://cdn.example/master.m3u8"))).text(), /EXTM3U/);
+  await Promise.resolve();
+  assert.equal(normaleAntworten, 1);
   const badRedirect = medienHandler(async () => new Response(null, { status: 302, headers: { Location: "file:///private" } }));
   assert.equal((await badRedirect(request("GET"))).status, 403);
   const settings = { watchparty: { deviceId: "me", deviceSecret: "private-device-credential" } };

@@ -76,6 +76,15 @@ Ein links ausklappbarer Chat steht im eigenen Player auf PC, Handy und TV
 bereit. Nachrichten und Entwürfe bleiben dem jeweiligen Raum zugeordnet; Lesen
 und Schreiben stören die Tastatursteuerung des Players nicht.
 
+## Sprachchat
+
+Über **Sprachchat** im Raum oder im Player-Chat lässt sich die Runde auch hören.
+Das Mikrofon bleibt beim Beitreten aus. Stummschalten, Push-to-talk und die
+Lautstärke je Teilnehmer stehen in einer eigenen kleinen Ansicht bereit. Auch
+das Handy kann nur dem Sprachchat beitreten, während das Video am TV läuft.
+Bedienung, Android-Hintergrundbetrieb und TURN-Konfiguration stehen unter
+[Sprachchat](SPRACHCHAT.md). Dafür ist ein aktualisiertes Relay erforderlich.
+
 ## Raumcodes
 
 Raumcodes dürfen Buchstaben aller Sprachen, Ziffern, Bindestrich und

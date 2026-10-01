@@ -102,6 +102,9 @@ public class MainActivity extends Activity {
     private boolean aniworldBildNachreichungLaedt;
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
+    private Sprachchat sprachchat;
+    private boolean sprachchatDuckAktiv;
+    private boolean sprachchatAudioAktiv;
     private RaumWarteschlange raumWarteschlange;
     /** Nur die Ansicht wechseln; der Beitritt zu einer Runde bleibt davon unberuehrt. */
     private final Map<String, Boolean> warteschlangenReiterJeRaum = new HashMap<>();
@@ -1124,6 +1127,19 @@ public class MainActivity extends Activity {
             @Override
             public void watchpartyChat(JSONObject zeile) {
                 if (direktWiedergabe != null) direktWiedergabe.chatEmpfangen(zeile);
+            }
+            @Override public void watchpartyVoice(JSONObject nachricht) {
+                if (sprachchat != null) sprachchat.empfangen(nachricht);
+            }
+        });
+        sprachchat = new Sprachchat(this, watchparty, new Sprachchat.Umgebung() {
+            @Override public void duck(boolean aktiv) {
+                sprachchatDuckAktiv = aktiv;
+                if (direktWiedergabe != null) direktWiedergabe.sprachchatDucking(aktiv);
+            }
+            @Override public void sitzung(boolean aktiv) {
+                sprachchatAudioAktiv = aktiv;
+                if (direktWiedergabe != null) direktWiedergabe.sprachchatAktiv(aktiv);
             }
         });
         // Must exist before watchparty.anwenden() opens the relay connection;
@@ -6810,6 +6826,10 @@ public class MainActivity extends Activity {
 
         serverKarte(koerper, fernseher, luecke);
 
+        lebendeKarte(koerper, fernseher, luecke, "Mikrofon für Sprachchat",
+            () -> "Eingabegerät auswählen. Aufnahme und Geräteauflistung erst nach deiner Freigabe.",
+            () -> "Mikrofon einstellen", () -> sprachchat.einstellungenOeffnen());
+
         lebendeKarte(koerper, fernseher, luecke, "Raumcodes",
             () -> {
                 List<String> codes = watchparty.raumcodes();
@@ -8480,6 +8500,13 @@ public class MainActivity extends Activity {
 
         addSpacing(page, hinweisKarte(fernseher, watchpartyKopfzeile(), watchpartyStatustext(),
             null, null, null), MobileViews.SECTION_GAP);
+
+        for (String sprachraum : watchparty.raumcodes()) {
+            addSpacing(page, hinweisKarte(fernseher, "Sprachchat · Raum " + sprachraum,
+                "Manuell beitreten, Mikrofon zunächst aus. Am TV schauen? Öffne diesen Raum am Handy; "
+                    + "dort startet kein Video.", "Sprachchat öffnen",
+                () -> sprachchat.oeffnen(sprachraum), "tv:wp:voice:" + sprachraum), MobileViews.ITEM_GAP);
+        }
 
         // Ein Platz statt der Karte selbst: er bleibt stehen, waehrend sein
         // Inhalt im Sekundentakt wechselt (siehe mitschauStandGeaendert).
@@ -10493,7 +10520,7 @@ public class MainActivity extends Activity {
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
         }
         CookieManager.getInstance().setAcceptCookie(true);
-        settings.setUserAgentString(settings.getUserAgentString() + " ElflixAndroid/0.1");
+        settings.setUserAgentString(CookieNetz.kennung(this));
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         // Vor dem ersten Laden: das Startskript gilt erst ab dem naechsten
@@ -10809,8 +10836,14 @@ public class MainActivity extends Activity {
                     watchparty.chatSenden(key, text, raum, antwort);
                 }
                 public void pip() { direktInPip(); }
+                public void sprachchat() {
+                    String raum = mitschauen == null ? "" : mitschauen.aktiverRaum();
+                    if (sprachchat != null && !raum.isEmpty()) sprachchat.oeffnen(raum);
+                }
             });
         // Eine abgesagte Generation ist jetzt im konkreten Player gebunden.
+        direktWiedergabe.sprachchatAktiv(sprachchatAudioAktiv);
+        direktWiedergabe.sprachchatDucking(sprachchatDuckAktiv);
         // MainActivity muss sie nicht an spaetere, unabhaengige Player tragen.
         if (!abgelaufeneFolgenQuelle.isEmpty()) {
             nativeAbgelaufeneFolgenQuelleSyncId = "";
@@ -11575,12 +11608,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (sprachchat != null) sprachchat.pttLoslassen();
         // Some devices deliver onPause before the PiP mode callback updates
         // isInPictureInPictureMode(). enterPictureInPictureMode already
         // recorded its successful transition in direktImPip.
         boolean pip = direktImPip || (android.os.Build.VERSION.SDK_INT >= 26
             && isInPictureInPictureMode());
         direktImPip = pip;
+        if (sprachchat != null) sprachchat.pipModus(pip);
         // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
         // Takt wieder auf. Dasselbe gilt fuer die Kacheln einer Runde: was
@@ -11593,6 +11628,7 @@ public class MainActivity extends Activity {
         // nicht die offene Sitzung beenden: wer kurz auf eine Nachricht schaut
         // und zurueckkommt, hat nicht zweimal geschaut.
         if (statistik != null) statistik.speichern();
+        if (direktWiedergabe != null) direktWiedergabe.hintergrund();
         // Aus der Runde abmelden, aber nichts an sie senden: Android haelt
         // gleich den WebView an, und die Pause, die der Player daraufhin
         // meldet, ist keine Entscheidung des Zuschauers.
@@ -11603,6 +11639,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (sprachchat != null) sprachchat.vordergrund();
         webLiveImVordergrund = true;
         if (direktWiedergabe != null) {
             direktWiedergabe.vordergrund();
@@ -11644,12 +11681,14 @@ public class MainActivity extends Activity {
     public void onPictureInPictureModeChanged(boolean inPip, Configuration neueKonfiguration) {
         super.onPictureInPictureModeChanged(inPip, neueKonfiguration);
         direktImPip = inPip;
+        if (sprachchat != null) sprachchat.pipModus(inPip);
         if (direktWiedergabe != null) direktWiedergabe.pipModus(inPip);
         if (!inPip && direktWiedergabe != null) applyFullscreenSystemUi();
     }
 
     @Override
     protected void onStop() {
+        if (sprachchat != null) sprachchat.hintergrund();
         // Bei Auto-PiP kann onPause vor dem Modus-Callback kommen. Erst hier
         // entscheiden wir mit dem echten Systemzustand, ob der Player und der
         // Raum wirklich in den Hintergrund gehen.
@@ -11708,6 +11747,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (sprachchat != null) sprachchat.schliessen();
         eigeneGeraeteLiveLoeschen();
         direktSchliessen();
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
@@ -11729,8 +11769,18 @@ public class MainActivity extends Activity {
     @Override
     protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent != null && "local.elflix.android.VOICE_OPEN".equals(intent.getAction())) {
+            if (sprachchat != null) sprachchat.wiederOeffnen();
+            return;
+        }
         setIntent(intent);
         deepLinkOeffnen(intent);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (sprachchat != null && sprachchat.berechtigungsAntwort(requestCode)) return;
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
     /**
@@ -12491,6 +12541,7 @@ public class MainActivity extends Activity {
 
     /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
     private void watchpartyGeaendert() {
+        if (sprachchat != null) sprachchat.kontextAktualisieren();
         spielerChatAktualisieren();
         if ("watchparty".equals(currentScreen)) {
             // Nicht bei jeder Meldung. Das Relay schickt eine, sobald irgendwer
@@ -12826,6 +12877,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (sprachchat != null && sprachchat.zurueck()) return;
         if (direktWiedergabe != null) {
             if (!direktWiedergabe.zurueck()) { direktSchliessen(); showHome(); }
             return;
@@ -12895,6 +12947,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (sprachchat != null && sprachchat.istSichtbar()) return super.dispatchKeyEvent(event);
         if (direktWiedergabe != null) return direktWiedergabe.taste(event) || super.dispatchKeyEvent(event);
         logRemoteKey(event);
         // Solange der Startvorhang liegt, gehoert ihm die Fernbedienung.

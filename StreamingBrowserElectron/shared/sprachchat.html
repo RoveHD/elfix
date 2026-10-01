@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; media-src 'self' blob:; connect-src 'none'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <title>ELFIX Sprachchat</title>
+  <link rel="stylesheet" href="sprachchat.css">
+  <script src="sprachchat-host.js" defer></script>
+  <script src="sprachchat.js" defer></script>
+  <script src="sprachchat-ui.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">WATCHPARTY</p><h1>Sprachchat</h1></div><button id="schliessen" class="quiet" aria-label="Sprachchat beenden und schließen">✕</button></header>
+    <p id="raum" class="room"></p>
+    <p id="status" role="status" aria-live="polite">Raum wird geladen …</p>
+    <details id="einstellungen">
+      <summary>Einstellungen</summary>
+      <label class="input-label" for="mikrofonGeraet">Mikrofon</label>
+      <select id="mikrofonGeraet"><option value="">Systemstandard</option></select>
+      <button id="geraeteLaden" class="quiet" type="button">Mikrofone anzeigen</button>
+      <p id="geraeteHinweis" class="muted" role="status">Die Auswahl gilt auf diesem Gerät. Zum Anzeigen der Gerätenamen ist eventuell eine Mikrofonfreigabe nötig. Dabei wird nichts übertragen.</p>
+    </details>
+    <div class="actions">
+      <button id="beitreten" class="primary">Zum Zuhören beitreten</button>
+      <button id="mikrofon" hidden aria-pressed="false">Mikrofon einschalten</button>
+      <button id="verlassen" hidden class="quiet">Verlassen</button>
+    </div>
+    <div id="optionen" hidden>
+      <label class="option"><input id="ptt" type="checkbox"> Nur beim Gedrückthalten sprechen</label>
+      <button id="sprechen" class="hold" hidden>Zum Sprechen gedrückt halten</button>
+      <label class="option" id="duckOption"><input id="duck" type="checkbox"> Film beim Sprechen leiser machen</label>
+    </div>
+    <section aria-labelledby="teilnehmerTitel"><h2 id="teilnehmerTitel">Im Sprachchat</h2><p id="leer" class="muted">Noch nicht beigetreten.</p><div id="teilnehmer"></div></section>
+    <button id="audioStart" hidden>Tonwiedergabe erneut starten</button>
+    <p class="hint">Am TV schauen? Tritt diesem Raum am Handy nur zum Sprachchat bei. Auf dem Handy startet dabei kein Video.</p>
+    <footer><span id="mikrofonHinweis">Dein Mikrofon bleibt zunächst aus.</span><button id="minimieren" class="quiet" hidden>Im Hintergrund weiter</button></footer>
+  </main>
+</body>
+</html>

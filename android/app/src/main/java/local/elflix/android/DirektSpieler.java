@@ -148,9 +148,14 @@ final class DirektSpieler {
 
         /** Das Telefon kann die laufende native Wiedergabe in Android-PiP legen. */
         default void pip() { }
+        default void sprachchat() { }
 
         /** Der echte Playback-Zustand steuert Android-12-Auto-PiP. */
         default void wiedergabe(boolean laeuft) { }
+        /** HTTP-Antworten des echten Media3-Stacks, ohne Cookie-Werte. */
+        default void netzAntwort(CookieNetz.Antwort antwort) { }
+        /** Media3 hat statt Medium eine manuell zu bestaetigende Schutzseite erhalten. */
+        default void herausforderung(CookieNetz.Antwort antwort) { }
     }
 
     /* --------------------------------------------------- Die Farben des Players */
@@ -237,6 +242,11 @@ final class DirektSpieler {
     private TextView tempoText;
     private final TextView intro;
     private final SpielerChat chat;
+    private View sprachchatKnopf;
+    private boolean sprachchatVerfuegbar;
+    private float benutzerLautstaerke = 1f;
+    private boolean sprachchatDucking;
+    private boolean sprachchatAktiv;
 
     private final LinearLayout mitte;
     /** Abspielen und Pause in der Mitte - siehe {@link #mitteZeichnen()}. */
@@ -323,6 +333,9 @@ final class DirektSpieler {
     private double erwartetSeek = -1;
     private long erwartetBis;
     private boolean quelleLaedt = true;
+    private int netzGeneration;
+    private boolean challengeWartet;
+    private boolean challengeSollSpielen;
     private JSONObject introMarke;
     private double introZiel;
     /** Das gerade sichtbare Ziel kam aus der externen Segmentquelle. */
@@ -875,6 +888,9 @@ final class DirektSpieler {
         anime4kSchalter.setTag("anime4k");
         anime4kSchalter.setVisibility(View.GONE);
         reihe.addView(anime4kSchalter);
+        sprachchatKnopf = knopf("Sprachchat", umgebung::sprachchat);
+        sprachchatKnopf.setVisibility(sprachchatVerfuegbar ? View.VISIBLE : View.GONE);
+        reihe.addView(sprachchatKnopf);
         reihe.addView(knopf("Schließen", umgebung::schliessen));
         return reihe;
     }
@@ -1078,7 +1094,7 @@ final class DirektSpieler {
             blendeListe.addView(view);
         }
         SeekBar laut = blendeListe.findViewWithTag("lautstaerke");
-        if (laut != null && player != null) laut.setProgress(Math.round(player.getVolume() * 100));
+        if (laut != null && player != null) laut.setProgress(Math.round(benutzerLautstaerke * 100));
         quellenZeichnen();
         autoplayText();
     }
@@ -1171,7 +1187,7 @@ final class DirektSpieler {
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar wo, int wert, boolean vonHand) {
                 if (!vonHand || player == null) return;
-                player.setVolume(wert / 100f);
+                lautstaerkeSetzen(wert / 100f);
                 tonZeichnen(wert > 0);
             }
             @Override public void onStartTrackingTouch(SeekBar wo) { regung(); }
@@ -1975,9 +1991,29 @@ final class DirektSpieler {
 
     private void tonUmschalten() {
         if (player == null) return;
-        boolean stumm = player.getVolume() <= 0.01f;
-        player.setVolume(stumm ? 1f : 0f);
+        boolean stumm = benutzerLautstaerke <= 0.01f;
+        lautstaerkeSetzen(stumm ? 1f : 0f);
         tonZeichnen(stumm);
+    }
+
+    private void lautstaerkeSetzen(float wert) {
+        benutzerLautstaerke = Math.max(0f, Math.min(1f, wert));
+        if (player != null) player.setVolume(sprachchatLautstaerke(benutzerLautstaerke, sprachchatDucking));
+    }
+
+    static float sprachchatLautstaerke(float benutzerWert, boolean aktiv) {
+        return benutzerWert * (aktiv ? 0.35f : 1f);
+    }
+
+    void sprachchatDucking(boolean aktiv) {
+        sprachchatDucking = aktiv;
+        lautstaerkeSetzen(benutzerLautstaerke);
+    }
+
+    void sprachchatAktiv(boolean aktiv) {
+        sprachchatAktiv = aktiv;
+        if (player != null) player.setAudioAttributes(new AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), !aktiv);
     }
 
     private void tonZeichnen(boolean an) {
@@ -2285,11 +2321,23 @@ final class DirektSpieler {
         introExtern = false;
         externerSprungOffen = false;
         quelleLaedt = true;
+        challengeWartet = false;
+        final int generation = ++netzGeneration;
         vorschauUrl = url;
         vorschauTyp = typ == null ? "" : typ;
         vorschauKopfzeilen = kopfzeilen == null ? java.util.Collections.emptyMap() : kopfzeilen;
-        OkHttpDataSource.Factory netz = new OkHttpDataSource.Factory(CookieNetz.erstellen())
-            .setDefaultRequestProperties(kopfzeilen);
+        OkHttpDataSource.Factory netz = new OkHttpDataSource.Factory(CookieNetz.erstellen(antwort ->
+            handler.post(() -> {
+                if (geschlossen || generation != netzGeneration) return;
+                umgebung.netzAntwort(antwort);
+                if (!antwort.challenge || challengeWartet) return;
+                challengeWartet = true;
+                challengeSollSpielen = player != null && player.getPlayWhenReady();
+                wechselPause();
+                umgebung.herausforderung(antwort);
+            })))
+            .setDefaultRequestProperties(kopfzeilen)
+            .setUserAgent(CookieNetz.kennung(activity));
         KanonischesHls hls = "hls".equals(typ)
             ? new KanonischesHls(netz, meldung -> {
                 if (frameDiagnoseAktiv()) Log.d(FRAME_LOG, "hls-anchor " + meldung);
@@ -2300,7 +2348,8 @@ final class DirektSpieler {
             .setLoadControl(puffern())
             .setSeekBackIncrementMs(10000).setSeekForwardIncrementMs(30000).build();
         player.setAudioAttributes(new AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
+            .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), !sprachchatAktiv);
+        lautstaerkeSetzen(benutzerLautstaerke);
         player.setHandleAudioBecomingNoisy(true);
         // Genau springen, nicht auf das naechste Schluesselbild davor. In einer
         // Runde schauen alle auf dasselbe Bild - "ungefaehr dort" waere bei den
@@ -2374,6 +2423,7 @@ final class DirektSpieler {
             @Override public void onPlayerError(PlaybackException fehler) {
                 if (player != lauf) return;
                 puffer.setVisibility(View.GONE);
+                if (challengeWartet) return;
                 status("Diese Quelle spielt nicht.\n" + fehler.getErrorCodeName());
                 kastenKnopf("Anderen Hoster wählen", umgebung::hoster);
                 kastenKnopf("Schließen", umgebung::schliessen);
@@ -2456,6 +2506,8 @@ final class DirektSpieler {
     }
 
     double position() { return player == null ? letztePosition : player.getCurrentPosition() / 1000.0; }
+
+    boolean challengeSollSpielen() { return challengeSollSpielen; }
 
     void naechsteQuellePausiert() { naechsteQuellePausiert = true; }
 
@@ -3448,7 +3500,11 @@ final class DirektSpieler {
         return false;
     }
 
-    void chatKontext(String key, String raum, boolean verbunden) { chat.kontext(key, raum, verbunden); }
+    void chatKontext(String key, String raum, boolean verbunden) {
+        chat.kontext(key, raum, verbunden);
+        sprachchatVerfuegbar = raum != null && !raum.isEmpty();
+        if (sprachchatKnopf != null) sprachchatKnopf.setVisibility(sprachchatVerfuegbar ? View.VISIBLE : View.GONE);
+    }
     void chatEmpfangen(JSONObject zeile) { chat.empfangen(zeile); }
 
     private void freigeben() {

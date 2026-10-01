@@ -1470,9 +1470,9 @@ function fernSteuern(auftragFern) {
     springen(befehl === "vor" ? Number(auftragFern.vor) || 30
       : -(Number(auftragFern.zurueck) || 10));
   } else if (befehl === "lauter" || befehl === "leiser") {
-    bild.volume = Math.max(0, Math.min(1, bild.volume + (befehl === "lauter" ? 0.1 : -0.1)));
+    lautstaerke.value = String(Math.max(0, Math.min(100, Number(lautstaerke.value) + (befehl === "lauter" ? 10 : -10))));
+    sprachchatLautstaerkeAnwenden();
     if (befehl === "lauter") bild.muted = false;
-    lautstaerke.value = String(Math.round(bild.volume * 100));
     knopfTon.textContent = bild.muted || bild.volume === 0 ? "🔇" : "🔊";
   }
   standMelden(true);
@@ -2334,8 +2334,16 @@ regler.addEventListener("change", async () => {
   bruecke.sprung(von, ziel, false);
   tatMelden("seek");
 });
+let sprachchatLeiser = false;
+function sprachchatLautstaerkeAnwenden() {
+  bild.volume = (Number(lautstaerke.value) / 100) * (sprachchatLeiser ? 0.3 : 1);
+}
+bruecke.aufSprachchatDucking?.((active) => {
+  sprachchatLeiser = active;
+  sprachchatLautstaerkeAnwenden();
+});
 lautstaerke.addEventListener("input", () => {
-  bild.volume = Number(lautstaerke.value) / 100;
+  sprachchatLautstaerkeAnwenden();
   bild.muted = bild.volume === 0;
   knopfTon.textContent = bild.muted ? "🔇" : "🔊";
 });
@@ -2527,6 +2535,13 @@ bild.addEventListener("loadedmetadata", async () => {
   // Eine vorgeladene Folge steht und wartet. Das Bild ist da, die Leiste zeigt
   // die Laenge - es fehlt nur der Druck auf Start.
   if (vorgeladen) {
+    pufferZeigen(false);
+    schichtenZeigen();
+    return;
+  }
+  // Eine erneuerte Cloudflare-Sitzung laedt dieselbe Quelle neu. War das Video
+  // davor pausiert, darf dieser technische Retry es nicht von selbst starten.
+  if (auftrag?.sitzungsRetry && auftrag.sitzungsRetry.weiterlaufen === false) {
     pufferZeigen(false);
     schichtenZeigen();
     return;
@@ -3035,7 +3050,8 @@ setInterval(() => {
     beendet: Boolean(bild.ended),
     frameTime: pausiertesBild(),
     laeuft: !bild.paused && !bild.ended,
-    puffert
+    puffert,
+    rundeWarten
   });
 }, 1000);
 bruecke.bereit();

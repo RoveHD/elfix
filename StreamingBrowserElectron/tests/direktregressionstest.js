@@ -26,7 +26,8 @@ function kontext(werte, namen, text = haupt) {
   // weitere Seitengrenze des Harnesses, keine Aufgabe der getesteten Logik.
   const stand = vm.createContext({ console: still, AbortController, AbortSignal,
     folgenWerkbaenkeSchliessen() {},
-    spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, ...werte });
+    spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, spielerCfAbbrechen() {},
+    spielerCfVersuche: new Map(), spielerCfErfolgGemeldet: new Set(), spielerCfWeiterhinGemeldet: new Set(), ...werte });
   vm.runInContext(namen.map((name) => funktion(text, name)).join("\n"), stand);
   return stand;
 }
@@ -293,6 +294,78 @@ pruefe("Ein noch gueltiger Hoster-Link hat Vorrang vor gleichnamigen Eintraegen"
     { nurDieser: "zwei", hosterWahl: hoster })).ok, true);
 });
 
+pruefe("Eine Resolver-Challenge wiederholt exakt den Originalabruf und startet danach automatisch", async () => {
+  const abrufe = []; let ansichten = 0;
+  const link = { adresse: "https://hoster.example/open", hoster: "VOE" };
+  const antworten = [
+    { ok: false, challenge: true, seite: "https://hoster.example/cdn-cgi/challenge", status: 403 },
+    quelle
+  ];
+  const c = kontext({ isLiveView: () => true, DIREKT_HOECHSTVERSUCHE: 3,
+    browserSession: {},
+    direktAufloeserHolen: () => ({ aufloesen: async (url, referer) => {
+      abrufe.push([url, referer]); return antworten.shift();
+    } }),
+    direktLinksLesen: async () => [link],
+    cfAdresseVerifizieren: async (_provider, details) => { ansichten++; return details.serverPruefung(); },
+    cfLog() {}, cfCookieNamen: async () => []
+  }, ["direktQuelleFuerAnsicht"]);
+  const ergebnis = await c.direktQuelleFuerAnsicht(provider, { webContents: { getURL: () => filmB } });
+  assert.equal(ergebnis.ok, true);
+  assert.equal(ansichten, 1);
+  assert.deepEqual(abrufe, [[link.adresse, filmB], [link.adresse, filmB]]);
+});
+
+pruefe("Ein normaler HTTP-Fehler nach der Challenge gilt nicht als Freigabe", async () => {
+  let abrufe = 0;
+  const link = { adresse: "https://hoster.example/open", hoster: "VOE" };
+  const c = kontext({ isLiveView: () => true, DIREKT_HOECHSTVERSUCHE: 3,
+    browserSession: {},
+    direktAufloeserHolen: () => ({ aufloesen: async () => ++abrufe === 1
+      ? { ok: false, challenge: true, seite: link.adresse, status: 403 }
+      : { ok: false, challenge: false, seite: "", status: 500, grund: "HTTP 500" } }),
+    direktLinksLesen: async () => [link],
+    cfAdresseVerifizieren: async (_provider, details) => details.serverPruefung(),
+    cfLog() {}, cfCookieNamen: async () => []
+  }, ["direktQuelleFuerAnsicht"]);
+  const ergebnis = await c.direktQuelleFuerAnsicht(provider, { webContents: { getURL: () => filmB } });
+  assert.equal(ergebnis.ok, false);
+  assert.equal(ergebnis.grund, "Bestätigung nicht abgeschlossen");
+  assert.equal(abrufe, 2);
+});
+
+pruefe("Medien-Retry behaelt Position, Pause und die echte Watchparty-Schranke", async () => {
+  const gesendet = [];
+  const lauf = { id: 7, providerId: "p", startzeit: 12, vorladen: false, rundeWarten: true };
+  const c = kontext({ SPIELER_CF_MAX_RETRIES: 1, spielerLauf: lauf,
+    browserSession: {}, spielerKopfzeilen: {},
+    spielerTakt: { at: Date.now(), stelle: 321, laeuft: false, rundeWarten: true },
+    spielerCfPruefung: null,
+    spielerAnbieter: () => provider,
+    providerModel: { isHttpUrl: () => true },
+    cfSession: { header: () => "" },
+    cfAdresseVerifizieren: async () => true,
+    isLiveView: () => true,
+    spielerView: { webContents: { send: (_kanal, auftrag) => gesendet.push(auftrag) } },
+    spielerAuftrag: () => ({ id: lauf.id, rundeWarten: true }),
+    cfLog() {}, cfCookieNamen: async () => [], sendToast() {}
+  }, ["spielerStreamChallenge"]);
+  c.spielerStreamChallenge({ url: "https://cdn.example/folge.m3u8", requestHeaders: new Headers() });
+  await new Promise((fertig) => setTimeout(fertig, 0));
+  assert.equal(gesendet.length, 1);
+  assert.equal(gesendet[0].startzeit, 321);
+  assert.equal(gesendet[0].sitzungsRetry.weiterlaufen, false);
+  assert.equal(gesendet[0].rundeWarten, true);
+
+  c.spielerLauf = { ...lauf, id: 8 };
+  c.spielerTakt = { at: Date.now(), stelle: 654, laeuft: true, rundeWarten: false };
+  c.spielerStreamChallenge({ url: "https://cdn.example/folge.m3u8", requestHeaders: new Headers() });
+  await new Promise((fertig) => setTimeout(fertig, 0));
+  assert.equal(gesendet[1].startzeit, 654);
+  assert.equal(gesendet[1].sitzungsRetry.weiterlaufen, true);
+  assert.equal(gesendet[1].rundeWarten, false);
+});
+
 pruefe("Spaete Fortschrittsmeldungen einer alten Quelle werden nicht der neuen Folge zugeschrieben", () => {
   let empfangen; let verbucht = 0;
   const sender = {};
@@ -458,6 +531,44 @@ pruefe("Eine Cloudflare-Pruefung des Hosters wird sichtbar bestaetigt und danach
   assert.equal(bestaetigungen, 1);
   assert.equal(ergebnis.ok, true);
   assert.equal(ergebnis.quelle.adresse, "https://cdn.example/folge.mp4");
+});
+
+pruefe("Wiederkehrende Challenge erzeugt keine Ansichtsschleife", async () => {
+  let bestaetigungen = 0; let geschlossen = 0;
+  const ergebnis = await beobachtung.beobachten({ kennung: "Test",
+    oeffnen: async () => ({ lesen: async () => ({ menschentor: true }),
+      bestaetigen: async () => { bestaetigungen++; return true; },
+      schliessen: () => { geschlossen++; } })
+  }, "https://hoster.example/embed", "https://anbieter.example");
+  assert.equal(ergebnis.ok, false);
+  assert.equal(ergebnis.grund, "Bestätigung weiterhin erforderlich");
+  assert.equal(bestaetigungen, 1);
+  assert.equal(geschlossen, 1);
+});
+
+pruefe("Playlist-Challenge vor der Quellenwahl wird einmal bestaetigt und erneut geprueft", async () => {
+  for (const akzeptiert of [true, false]) {
+    let bestaetigungen = 0; let abrufe = 0; let geschlossen = 0;
+    const playlist = "https://cdn.example/folge.m3u8";
+    const ergebnis = await beobachtung.beobachten({ kennung: "Test",
+      oeffnen: async (_url, _referer, aufnehmen) => {
+        aufnehmen({ adresse: playlist });
+        return { lesen: async () => ({ seite: "https://hoster.example/embed" }),
+          bestaetigen: async (_signal, ziel) => { assert.equal(ziel, playlist); bestaetigungen++; return true; },
+          schliessen: () => { geschlossen++; } };
+      },
+      holen: async () => {
+        abrufe++;
+        return bestaetigungen && akzeptiert
+          ? new Response("#EXTM3U\n#EXTINF:1400,\nfolge.ts\n#EXT-X-ENDLIST\n")
+          : new Response("<html>Challenge</html>", { status: 403, headers: { "cf-mitigated": "challenge", "content-type": "text/html" } });
+      }
+    }, "https://hoster.example/embed", "https://anbieter.example");
+    assert.equal(ergebnis.ok, akzeptiert);
+    assert.equal(bestaetigungen, 1);
+    assert.equal(abrufe, 2);
+    assert.equal(geschlossen, 1);
+  }
 });
 
 pruefe("Abgebrochene Beobachtung schliesst ihre Ansicht ohne Quelle", async () => {

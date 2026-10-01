@@ -120,6 +120,8 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   aufLeiste: (rueckruf) => ipcRenderer.on("spieler:leiste", (_ereignis, leute) => rueckruf(leute)),
   /** Der Chat bleibt im Hauptprozess; die Playerseite bekommt nur Textzeilen. */
   chatStatus: () => ipcRenderer.invoke("spieler:chat-status"),
+  sprachchat: () => ipcRenderer.invoke("spieler:voice-open"),
+  aufSprachchatDucking: (callback) => ipcRenderer.on("spieler:voice-duck", (_event, active) => callback(active === true)),
   chatSenden: (text) => ipcRenderer.invoke("spieler:chat-senden", String(text || "")),
   aufChat: (rueckruf) => ipcRenderer.on("spieler:chat", (_ereignis, nachricht) => rueckruf(nachricht))
 });

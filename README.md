@@ -125,6 +125,10 @@ andere. Siehe [Das Relay](#das-relay).
   gibt es bislang nur auf dem Desktop. Vorgeschlagen wird aus einer Suche über
   alle Anbieter — nicht nur aus der eigenen Watchlist.
 - **Livechat im Player** auf PC, Handy und TV, je Raum getrennt.
+- **Sprachchat im Raum** mit bewusstem Mikrofonstart, Push-to-talk,
+  Sprecheranzeige und Lautstärke je Teilnehmer. Das Handy kann nur zum Sprechen
+  beitreten, während das Video auf dem TV läuft. Benötigt ein aktualisiertes
+  Relay; siehe [Sprachchat und TURN](docs/SPRACHCHAT.md).
 - **YouTube-Watchparty** als eigenes System, mit eigener Videoliste,
   SponsorBlock-Sprüngen für die Runde und Return-YouTube-Dislike-Zahlen.
 

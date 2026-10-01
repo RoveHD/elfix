@@ -1,6 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!--
         ELFIX kommt nicht aus einem Laden, also holt es seine Updates selbst.
         Ohne dieses Recht darf es dem Paketinstaller keine APK reichen.
@@ -90,6 +96,9 @@
             Der Provider gibt stattdessen einen content://-Verweis heraus, und
             zwar nur auf den einen Ordner in res/xml/dateiwege.xml.
         -->
+        <service android:name=".SprachchatDienst" android:exported="false"
+            android:foregroundServiceType="mediaPlayback|microphone" android:stopWithTask="true" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.dateien"

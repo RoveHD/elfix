@@ -159,8 +159,8 @@ pruefe("Die Ansicht dahinter schweigt, solange der eigene Player laeuft",
 pruefe("Der Player behaelt die Webpruefung und richtet seinen Medienzugang gezielt ein",
   (haupt.match(/webSecurity:\s*false/g) || []).length === 0
   && /webSecurity:\s*true/.test(haupt)
-  && haupt.includes("spielerNetz.einrichten(spielerSession)"),
-  "CORS-Ausnahmen laufen nur ueber die eigene Player-Sitzung");
+  && /spielerNetz\.einrichten\(spielerSession, browserSession \|\| spielerSession/.test(haupt),
+  "die lokale Seite bleibt isoliert, Medien nutzen die persistente Provider-Sitzung");
 pruefe("Und diese Ansicht bleibt bei ihrer eigenen Seite",
   haupt.includes('ipcSchutz.lokaleNavigation(view.webContents, path.join(__dirname, "renderer", "spieler.html"));'),
   "die gemeinsame Navigationserlaubnis prueft die exakte lokale Player-Datei");

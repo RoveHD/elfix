@@ -311,6 +311,7 @@
               <h1>Watchparty</h1>
               <p id="watchpartyViewStatus">Serien, die jemand im Raum eingestellt hat. Wenn du beitrittst, läuft euer Fortschritt zusammen.</p>
             </div>
+            <button class="text-action" id="watchpartyVoiceButton">Sprachchat</button>
             <button class="text-action" id="watchpartySettingsLink">Einstellungen</button>
           </div>
           <!-- Die YouTube-Watchparty ist ein eigener Modus und bekommt deshalb
@@ -527,6 +528,7 @@
           </div>
           <div class="settings-section-grid">
             <label class="check setting-row"><input id="watchpartyEnabled" type="checkbox"><span><strong>Watchparty aktivieren</strong><small>Verbindet sich mit dem Relay und gleicht den Fortschritt ab.</small></span></label>
+            <div class="setting-row"><span><strong>Sprachchat-Mikrofon</strong><small>Systemstandard oder ein bestimmtes Mikrofon auf diesem Gerät verwenden.</small></span><button type="button" class="soft-action" id="watchpartyVoiceSettings">Mikrofon einstellen</button></div>
             <label>Server-Adresse<input id="watchpartyServer" placeholder="wss://mein-relay.example.com">
               <small>Adresse deines Relays aus <code>sync-server/</code>. <code>https://</code> wird automatisch zu <code>wss://</code>.</small>
             </label>

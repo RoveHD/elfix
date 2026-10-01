@@ -764,6 +764,16 @@ function bindEvents() {
   document.querySelector("#settingsButton").addEventListener("click", openSettings);
   startDiscoverRefresh();
   document.querySelector("#watchpartyShareButton")?.addEventListener("click", shareCurrentToWatchparty);
+  document.querySelector("#watchpartyVoiceButton")?.addEventListener("click", async () => {
+    try {
+      const answer = await api.openVoiceChat?.();
+      if (answer?.error) showToast(answer.error);
+    } catch (_) { showToast("Sprachchat konnte nicht geöffnet werden."); }
+  });
+  document.querySelector("#watchpartyVoiceSettings")?.addEventListener("click", async () => {
+    try { await api.openVoiceSettings?.(); }
+    catch (_) { showToast("Mikrofon-Einstellungen konnten nicht geöffnet werden."); }
+  });
   watchpartyRoomAdd?.addEventListener("click", watchpartyRaumHinzufuegen);
   watchpartyStatusseite?.addEventListener("click", relayStatusseiteOeffnen);
   watchpartyRoom?.addEventListener("keydown", (event) => {

@@ -90,6 +90,7 @@
       onControl: (steuerung) => ereignis("watchparty:steuerung", steuerung),
       onWatchstate: (stand) => ereignis("watchparty:stand", stand),
       onChat: (zeile) => ereignis("watchparty:chat", zeile),
+      onVoice: (nachricht) => ereignis("watchparty:voice", nachricht),
       onQueue: (nachricht) => {
         queueRoom = String((nachricht && nachricht.room) || queueRoom || "");
         ereignis(String((nachricht && nachricht.type) || "queue:state"), nachricht);
@@ -1147,6 +1148,7 @@
     meldeStand: (key, stand, room) => sicherstellen().meldeStand(key, stand, room),
     verlasseStand: (key, room) => sicherstellen().verlasseStand(key, room),
     chatSenden: (key, zeile, room) => sicherstellen().chatSenden(key, zeile, room),
+    voiceSenden: (room, nachricht) => sicherstellen().voiceSenden(room, nachricht),
     queueStatus: (room) => sicherstellen().queueStatus(room || queueRoom),
     queuePropose: (item, room) => sicherstellen().queuePropose(
       Object.assign({}, item, { key: (item && item.key) || titelSchluessel(item) }),

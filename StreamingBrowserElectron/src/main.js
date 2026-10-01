@@ -5,6 +5,9 @@ const path = require("path");
 const ipcSchutz = require("./ipc-schutz");
 const spielerNetz = require("./spieler-netz");
 const videoUpscalingStatus = require("./video-upscaling-status");
+const cfSession = require("./cf-session");
+let sprachchatFenster = null;
+let sprachchatDuckAktiv = false;
 const ipcMain = ipcSchutz.absichern(nativeIpcMain, kanal => kanal.startsWith("spieler:")
   ? { inhalt: spielerView?.webContents, datei: path.join(__dirname, "renderer", "spieler.html") }
   : { inhalt: mainWindow?.webContents, datei: path.join(__dirname, "renderer", "index.html") });
@@ -335,7 +338,9 @@ let browserBounds = { x: 0, y: 130, width: 1200, height: 700 };
 let isContentFullscreen = false;
 const providerViews = new Map();
 const providerViewRecords = new WeakMap();
-// Folgenlisten im Player laden getrennt von der aktiven Anbieteransicht.
+// Folgenlisten, die der eigene Player nachlaedt, duerfen die aktive
+// Anbieteransicht nicht umstellen. Deren Navigation loest den gesamten
+// Seiten-Lebenszyklus aus und konkurriert mit der laufenden Medienquelle.
 const folgenWerkbaenke = new Map();
 const webContentsProvider = new Map();
 const attachedProviderViews = new Set();
@@ -613,6 +618,7 @@ function startlastBeginnen() {
 }
 
 app.on("before-quit", () => {
+  sprachchatFenster?.schliessen();
   // Beim Beenden darf die optionale Ablage einmal blockieren: andernfalls
   // ginge alles verloren, was waehrend eines langen Mini-Player-Laufs neu in
   // die beiden Caches kam. Ein noch gestellter Timer wird dabei mit erledigt.
@@ -694,6 +700,7 @@ function createMainWindow() {
     // entscheiden, damit Pause-bei-Fokusverlust Auto-PiP nicht verhindert.
     setTimeout(() => {
       if (mainWindow !== fenster || fenster.isDestroyed() || fenster.isFocused()) return;
+      if (sprachchatFenster?.fenster?.isFocused()) return;
       if (settings.playback.pauseOnBlur && !spielerMiniAktiv && !spielerMiniVorbereitung
         && !spielerAutoMiniAusstehend && !fenster.isMinimized()) pauseActivePlayback(true);
     }, 100);
@@ -707,6 +714,7 @@ function createMainWindow() {
     if (tastenkuerzel(input)) event.preventDefault();
   });
   mainWindow.on("closed", () => {
+    sprachchatFenster?.schliessen();
     mainWindow = null;
   });
 }
@@ -2578,6 +2586,13 @@ ipcMain.handle("watchparty:items", () => watchpartyItems());
 ipcMain.handle("watchparty:open", async (_event, key, room) => openWatchpartyItem(key, room));
 
 ipcMain.handle("watchparty:rooms", () => watchpartyRaumUebersicht());
+ipcMain.handle("watchparty:voice-settings", () => sprachchatOeffnen("", true));
+ipcMain.handle("watchparty:voice-open", async (_event, room) => {
+  const rooms = watchparty.codes;
+  const chosen = typeof room === "string" && rooms.includes(room) ? room
+    : rooms.length === 1 ? rooms[0] : rooms.length ? await frageWatchpartyRaum(null, rooms) : "";
+  return chosen ? sprachchatOeffnen(chosen) : { ok: false, error: rooms.length ? "" : "Richte zuerst einen Watchparty-Raum ein." };
+});
 
 // Auswahl aus einer Liste von Raeumen - fuer das Live-Beitreten, wenn derselbe
 // Titel in mehreren Runden steht.
@@ -3737,6 +3752,7 @@ function getProviderView(provider) {
   return view;
 }
 
+/** Eine stille Browseransicht nur fuer Folgenlisten hinter dem eigenen Player. */
 function folgenWerkbankHolen(provider) {
   const vorhanden = folgenWerkbaenke.get(provider.id);
   if (isLiveView(vorhanden)) return vorhanden;
@@ -5101,9 +5117,10 @@ function scheduleProviderAutoplay(provider, view, options = {}) {
   return request;
 }
 
-// Wann zuletzt ein Vorbereitungsfenster bestaetigt wurde. Der Zeitpunkt zaehlt
+// Wann zuletzt eine manuelle Bestaetigung erkannt wurde. Der Zeitpunkt zaehlt
 // gleich zweimal: er verlaengert das Autostart-Fenster und er entscheidet, ob
-// ein gleich danach aufspringendes Fenster zur Wiedergabe gehoert.
+// ein gleich danach aufspringendes Fenster zur Wiedergabe gehoert. ELFIX klickt
+// oder sendet dabei nichts; die serverseitige Freigabe bleibt Sache der Seite.
 const torKlickZeit = new Map();
 const TOR_NACHLAUF_MS = 8000;
 
@@ -5151,14 +5168,13 @@ function torMeldungVerarbeiten(provider, meldung) {
     logNextEpisode(provider, `Vorbereitungsfenster: ${meldung.slice(meldung.indexOf(":") + 1)}`);
     return;
   }
-  if (!meldung.startsWith("tor-geklickt:")) return;
+  if (!meldung.startsWith("tor-bestaetigt:")) return;
 
   torKlickZeit.set(provider.id, Date.now());
-  logNextEpisode(provider, `Vorbereitungsfenster bestaetigt (${meldung.slice(13)})`);
+  logNextEpisode(provider, `Vorbereitungsfenster manuell bestaetigt (${meldung.slice(16)})`);
 
-  // Hinter dem Knopf faengt das Laden erst an. Laeuft gerade ein Autostart,
-  // waere sein Zeitfenster sonst meist schon fast aufgebraucht und der Player
-  // kaeme zu spaet.
+  // Cloudflare verarbeitet die manuelle Bestaetigung jetzt selbst. Laeuft
+  // gerade ein Autostart, darf dessen Zeitfenster dabei nicht auslaufen.
   if (request && !request.torVerlaengert) {
     request.torVerlaengert = true;
     request.until = Math.max(request.until, Date.now() + 25000);
@@ -7316,8 +7332,13 @@ const watchparty = new WatchpartyRaeume({
   onYoutube: (nachricht) => { youtubeParty.nachricht(nachricht); },
   // Der Chat aendert nichts am Raumzustand - er wird nur weitergereicht.
   onChat: (nachricht) => watchpartyChatZeigen(nachricht),
-  onConnection: (raum, offen) => youtubeParty.verbindung(raum, offen),
+  onVoice: (nachricht) => sprachchatFenster?.nachricht(nachricht),
+  onConnection: (raum, offen) => {
+    youtubeParty.verbindung(raum, offen);
+    sprachchatFenster?.aktualisieren();
+  },
   onStatus: (status, raum) => {
+    sprachchatFenster?.aktualisieren();
     sendSpielerChatStatus();
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt - je Raum getrennt.
@@ -7348,6 +7369,25 @@ const watchparty = new WatchpartyRaeume({
     mainWindow.webContents.send("watchparty:state", status);
   }
 });
+
+function sprachchatOeffnen(raum, settingsOnly = false) {
+  if (!sprachchatFenster) sprachchatFenster = require("./sprachchat-fenster").erstellen({
+    BrowserWindow, session, ipcMain: nativeIpcMain, watchparty, parent: () => mainWindow,
+    preferences: () => ({ inputDeviceId: settings.watchparty?.microphoneId || "" }),
+    savePreferences: ({ inputDeviceId }) => {
+      const previous = settings.watchparty;
+      settings.watchparty = { ...settings.watchparty, microphoneId: inputDeviceId };
+      try { saveSettings(); }
+      catch (error) { settings.watchparty = previous; throw error; }
+      return true;
+    },
+    duck: (active) => {
+      sprachchatDuckAktiv = active;
+      if (spielerView && !spielerView.webContents.isDestroyed()) spielerView.webContents.send("spieler:voice-duck", active);
+    }
+  });
+  return sprachchatFenster.oeffnen(raum, settingsOnly);
+}
 
 // Die Einstellungen haben sich geaendert, ohne dass die Oberflaeche es
 // veranlasst hat. Ohne diese Meldung stuende in der Seitenleiste weiter der
@@ -9672,6 +9712,42 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   for (const eintrag of links.slice(0, optionen.nurDieser || wahl ? 1 : DIREKT_HOECHSTVERSUCHE)) {
     if (optionen.signal?.aborted) return { ok: false, abgebrochen: true };
     let ergebnis = await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+    if (ergebnis.challenge && !optionen.signal?.aborted) {
+      let retryErgebnis = null;
+      let retryGestartet = false;
+      const challengeUrl = ergebnis.seite || eintrag.adresse;
+      const bestaetigt = await cfAdresseVerifizieren(provider, {
+        url: challengeUrl,
+        finalUrl: challengeUrl,
+        status: ergebnis.status,
+        expected: "html",
+        referer: seite,
+        serverPruefung: async () => {
+          const istBrauchbar = (wert) => !wert?.challenge && !optionen.signal?.aborted
+            && Boolean(wert?.ok || wert?.seite);
+          if (retryErgebnis) return istBrauchbar(retryErgebnis);
+          if (!retryGestartet) {
+            retryGestartet = true;
+            cfLog("retrying original request", { url: eintrag.adresse, finalUrl: challengeUrl,
+              status: ergebnis.status, expected: "html", referer: seite,
+              cookieNames: await cfCookieNamen(browserSession, challengeUrl) });
+          }
+          retryErgebnis = await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+          return istBrauchbar(retryErgebnis);
+        }
+      }, optionen.signal);
+      if (!bestaetigt || optionen.signal?.aborted) {
+        return { ...ergebnis, grund: optionen.signal?.aborted
+          ? "Bestätigung abgebrochen" : "Bestätigung nicht abgeschlossen" };
+      }
+      ergebnis = retryErgebnis || await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+      if (ergebnis.challenge) {
+        cfLog("stream request still challenged", { url: eintrag.adresse,
+          finalUrl: ergebnis.seite || challengeUrl, status: ergebnis.status, expected: "html", referer: seite,
+          cookieNames: await cfCookieNamen(browserSession, ergebnis.seite || challengeUrl) });
+        return { ...ergebnis, grund: "Bestätigung weiterhin erforderlich" };
+      }
+    }
     if (!ergebnis.ok && ergebnis.seite && !optionen.signal?.aborted) {
       ergebnis = await direktQuelleBeobachten(provider, ergebnis.seite || eintrag.adresse, seite, optionen.signal)
         .catch(() => ergebnis);
@@ -9735,9 +9811,11 @@ async function direktQuelleBeobachten(provider, adresse, referer, signal) {
         // Eine interaktive Cloudflare-Abfrage kann in einer unsichtbaren
         // Beobachteransicht niemand loesen. Kurz nach vorn holen, danach mit
         // derselben Ansicht und denselben Sitzungscookies weiterbeobachten.
-        bestaetigen: (abbruch) => menschentorLoesenLassen(provider, view, {
-          voruebergehend: true, signal: abbruch, wer: "Der Hoster"
-        }),
+        bestaetigen: (abbruch, challengeUrl = "") => challengeUrl
+          ? cfAdresseVerifizieren(provider, { url: challengeUrl, referer: inhalt.getURL() }, abbruch)
+          : menschentorLoesenLassen(provider, view, {
+            voruebergehend: true, signal: abbruch, wer: "Der Hoster"
+          }),
         schliessen: () => {
           direktBeobachter.delete(id);
           webContentsProvider.delete(id);
@@ -9886,6 +9964,70 @@ function menschentorErkennen(view) {
   return view.webContents.executeJavaScript(menschentorSkript(), true).catch(() => false);
 }
 
+async function cfCookieNamen(sitzung, url) {
+  if (!sitzung?.cookies || !providerModel.isHttpUrl(url)) return [];
+  try {
+    return cfSession.cookieNames(await sitzung.cookies.get({ url }));
+  } catch {
+    return [];
+  }
+}
+
+function cfLog(ereignis, details = {}) {
+  console.log(cfSession.diagnose(ereignis, details));
+}
+
+async function cfSitzungPersistieren(sitzung, details = {}) {
+  try {
+    if (typeof sitzung?.cookies?.flushStore === "function") await sitzung.cookies.flushStore();
+    if (typeof sitzung?.flushStorageData === "function") await sitzung.flushStorageData();
+    cfLog("session persisted", { ...details,
+      cookieNames: await cfCookieNamen(sitzung, details.finalUrl || details.url) });
+    return true;
+  } catch {
+    cfLog("session persistence failed", details);
+    return false;
+  }
+}
+
+async function cfGeschuetzteAnfragePruefen(details = {}, signal = null) {
+  const url = String(details.url || "");
+  if (!browserSession || !providerModel.isHttpUrl(url) || signal?.aborted) return { ok: false };
+  const headers = new Headers();
+  headers.set("accept", details.expected === "hls" || details.expected === "dash"
+    ? "application/vnd.apple.mpegurl,application/dash+xml,*/*" : "*/*");
+  headers.set("user-agent", browserSession.getUserAgent());
+  if (providerModel.isHttpUrl(details.referer)) headers.set("referer", details.referer);
+  try {
+    const origin = new URL(String(details.origin || "")).origin;
+    if (/^https?:/.test(origin)) headers.set("origin", origin);
+  } catch { /* Origin ist optional. */ }
+  try {
+    const response = await browserSession.fetch(url, { headers, redirect: "follow", credentials: "include",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000) });
+    const body = await spielerNetz.antwortProbe(response);
+    const expected = details.expected || spielerNetz.erwarteterTyp(url);
+    const zustand = cfSession.klassifizieren({ status: response.status, headers: response.headers, body, expected });
+    const contentType = cfSession.header(response.headers, "content-type").toLowerCase();
+    const contentLength = Number(cfSession.header(response.headers, "content-length") || 0);
+    const octetMitInhalt = /octet-stream/.test(contentType) && contentLength > 0;
+    const typPasst = expected === "hls" ? zustand.type === "HLS" && body.trim().length > 0
+      : expected === "dash" ? zustand.type === "DASH" && body.trim().length > 0
+        : expected === "mp4" ? zustand.type === "MP4" || (zustand.type === "Other" && octetMitInhalt)
+          : !["Challenge", "HTML", "JSON"].includes(zustand.type)
+            && response.status !== 204 && (body.length > 0 || contentLength > 0
+              || /^(?:video|audio)\//.test(contentType) || /(?:octet-stream|mp2t|webvtt)/.test(contentType));
+    response.body?.cancel().catch(() => {});
+    const pruefung = { ...details, url, finalUrl: response.url || url, status: response.status,
+      headers: response.headers, requestHeaders: headers, body, expected };
+    return { ok: response.ok && ![204, 205].includes(response.status)
+      && !zustand.challenge && !zustand.unexpectedHtml && typPasst,
+      zustand, details: pruefung };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /** So lange darf eine Bestaetigung dauern, bevor ELFIX aufgibt. */
 const MENSCHENTOR_FRIST_MS = 120000;
 let menschentorFenster = null;
@@ -9913,16 +10055,24 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
   if (optionen.signal?.aborted || (optionen.gueltig && !optionen.gueltig())) return false;
   const wer = String(optionen.wer || "Der Anbieter");
   const inhalt = view.webContents;
+  const startUrl = inhalt.getURL();
   const bounds = view.getBounds();
+  const fensterWarMinimiert = mainWindow.isMinimized();
   let abgebrochen = false;
+  let abbruchGrund = "";
   let angehaengt = false;
   let erfolg = false;
   let bestaetigt = false;
+  // Jeder Aufrufer hat die Challenge unmittelbar davor bereits erkannt.
+  // Verschwindet sie zwischen dieser Erkennung und der ersten 300-ms-Probe,
+  // muss der geschuetzte Originalabruf trotzdem als Erfolgsbeleg laufen.
+  let torWurdeGesehen = optionen.bereitsErkannt !== false;
   let dokumentGewechselt = false;
   let dokumentBereit = true;
   let dokumentGeneration = 0;
   let freieProben = 0;
-  let weiterGeklickt = false;
+  let letzteServerProbe = 0;
+  let serverFreigabeBelegt = false;
   const gueltig = () => !abgebrochen && !optionen.signal?.aborted
     && (!optionen.gueltig || optionen.gueltig()) && isLiveView(view)
     && mainWindow && !mainWindow.isDestroyed();
@@ -9930,25 +10080,39 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
     if (angehaengt && mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
     angehaengt = false;
   };
-  const abbrechen = () => { abgebrochen = true; abhaengen(); };
+  const abbrechen = (grund = "abgebrochen") => { abbruchGrund = String(grund); abgebrochen = true; abhaengen(); };
+  const signalAbbrechen = () => abbrechen("signal");
   const taste = (event, input) => {
-    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); abbrechen(); }
+    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); abbrechen("nutzer"); }
   };
   // Vor einer Navigation ausblenden: die Zielseite darf nicht kurz im
   // Verifizierungsfenster aufblitzen. Ein neues Tor wird erst maskiert gezeigt.
   const navigation = (_event, _url, inPlace, hauptrahmen) => {
-    if (hauptrahmen && !inPlace) { dokumentGeneration++; dokumentBereit = false; abhaengen(); }
+    if (hauptrahmen && !inPlace) {
+      dokumentGeneration++;
+      dokumentBereit = false;
+      serverFreigabeBelegt = false;
+      freieProben = 0;
+      abhaengen();
+    }
   };
   const domBereit = () => { dokumentBereit = true; };
-  const angekommen = () => { dokumentGewechselt = true; freieProben = 0; weiterGeklickt = false; };
-  menschentorFenster?.abbrechen();
+  const angekommen = () => { dokumentGewechselt = true; freieProben = 0; };
+  menschentorFenster?.abbrechen("ersetzt");
   const fenster = { view, abbrechen };
   menschentorFenster = fenster;
-  optionen.signal?.addEventListener("abort", abbrechen, { once: true });
+  optionen.signal?.addEventListener("abort", signalAbbrechen, { once: true });
   inhalt.on("before-input-event", taste);
   inhalt.on("did-start-navigation", navigation);
   inhalt.on("did-navigate", angekommen);
   inhalt.on("dom-ready", domBereit);
+  const diagnose = () => ({ url: startUrl, finalUrl: inhalt.getURL(),
+    userAgent: inhalt.session?.getUserAgent?.() || "", referer: optionen.referer || "",
+    origin: optionen.origin || "" });
+  if (!optionen.bereitsGemeldet) {
+    cfLog("challenge detected", diagnose());
+    cfLog("opening verification view", diagnose());
+  }
   try {
     const bis = Date.now() + MENSCHENTOR_FRIST_MS;
     while (gueltig() && Date.now() < bis) {
@@ -9957,12 +10121,43 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
         const lage = await inhalt.executeJavaScript(verifizierungstor.zustandScript()).catch(() => null);
         if (!gueltig()) break;
         if (generation !== dokumentGeneration || !dokumentBereit) continue;
-        if (lage?.offen && !lage.geloest) { bestaetigt = false; weiterGeklickt = false; fenster.bestaetigt = false; }
+        if (lage?.offen) {
+          torWurdeGesehen = true;
+          serverFreigabeBelegt = false;
+          freieProben = 0;
+        }
+        if (lage?.offen && !lage.geloest) { bestaetigt = false; fenster.bestaetigt = false; }
         if (lage?.geloest) { bestaetigt = true; fenster.bestaetigt = true; }
         // DOM-Umbau oder ein geschlossenes Fenster allein beweisen keine
         // Freigabe. Tokenlose Challenge-Seiten geben das Hauptdokument durch
         // eine neue Navigation frei; auch dort zwei stabile Proben abwarten.
-        if (lage && !lage.offen && (bestaetigt || dokumentGewechselt)) {
+        let clearance = false;
+        if (lage && !lage.offen && (torWurdeGesehen || bestaetigt || dokumentGewechselt)) {
+          const namen = await cfCookieNamen(inhalt.session, inhalt.getURL());
+          clearance = namen.some((name) => name.toLowerCase() === "cf_clearance");
+        }
+        // Ein Token im DOM allein ist kein Erfolg. Erst eine Navigation der
+        // Seite oder das von Cloudflare gesetzte Sitzungscookie belegt, dass
+        // der Server die manuelle Bestaetigung angenommen hat.
+        let serverFreigegeben = Boolean(lage && !lage.offen && serverFreigabeBelegt);
+        if (lage && !lage.offen) {
+          if (typeof optionen.serverPruefung === "function" && torWurdeGesehen) {
+            // Bei Medien- und Resolver-Anfragen ist der erneute geschuetzte
+            // Originalabruf selbst der Beleg. Cloudflare kann die Sitzung
+            // auch mit einem anderen Cookie oder ohne Hauptnavigation
+            // freigeben; beides darf diese belastbare Probe nicht sperren.
+            if (Date.now() - letzteServerProbe >= 800) {
+              letzteServerProbe = Date.now();
+              serverFreigabeBelegt = await optionen.serverPruefung().catch(() => false);
+              serverFreigegeben = serverFreigabeBelegt;
+            }
+          } else if (typeof optionen.serverPruefung !== "function") {
+            // Ohne konkrete Probe muessen Navigation und Clearance gemeinsam
+            // vorliegen. Eine beliebige Login- oder Fehlerseite reicht nicht.
+            serverFreigegeben = dokumentGewechselt && clearance;
+          }
+        }
+        if (serverFreigegeben) {
           if (++freieProben >= 2) { erfolg = true; break; }
         } else freieProben = 0;
         if (lage?.offen) {
@@ -9976,25 +10171,36 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
             view.setBackgroundColor("#00000000");
             menschentorFensterPositionieren(view, maskiert);
             if (!angehaengt) {
+              // Eine manuelle Abfrage darf nicht unsichtbar im minimierten
+              // Hauptfenster auslaufen. Auch im Miniplayer wird nur fuer diese
+              // eine notwendige Interaktion ELFIX nach vorn geholt.
+              if (mainWindow.isMinimized()) mainWindow.restore();
+              if (!mainWindow.isVisible()) mainWindow.show();
               mainWindow.contentView.addChildView(view);
               angehaengt = true;
+              mainWindow.focus();
               inhalt.focus();
               sendToast(wer + " fragt nach einer Bestätigung — bitte einmal bestätigen");
             }
-          }
-          if (lage.geloest && !weiterGeklickt) {
-            torKlickZeit.set(provider.id, Date.now());
-            const klick = await inhalt.executeJavaScript(verifizierungstor.torScript(1, false)).catch(() => "");
-            weiterGeklickt = String(klick).startsWith("tor-geklickt:");
           }
         }
       }
       await new Promise((fertig) => setTimeout(fertig, 300));
     }
-    if (!erfolg && gueltig()) sendToast("Die Bestätigung wurde nicht abgeschlossen");
+    if (erfolg && gueltig()) {
+      torKlickZeit.set(provider.id, Date.now());
+      cfLog("verification passed", diagnose());
+      await cfSitzungPersistieren(inhalt.session, diagnose());
+    } else if (abbruchGrund === "nutzer") {
+      cfLog("verification cancelled", diagnose());
+      sendToast("Bestätigung abgebrochen");
+    } else if (gueltig()) {
+      cfLog("verification timeout", diagnose());
+      sendToast("Die Bestätigung hat zu lange gedauert");
+    }
     return erfolg && gueltig();
   } finally {
-    optionen.signal?.removeEventListener("abort", abbrechen);
+    optionen.signal?.removeEventListener("abort", signalAbbrechen);
     if (!inhalt.isDestroyed()) {
       inhalt.off("before-input-event", taste);
       inhalt.off("did-start-navigation", navigation);
@@ -10013,12 +10219,81 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
     }
     if (menschentorFenster === fenster) {
       menschentorFenster = null;
-      if (gueltig() && isLiveView(spielerView)) {
+      if (gueltig() && isLiveView(spielerView) && !spielerMiniAktiv) {
         mainWindow.contentView.addChildView(spielerView);
         spielerLageSetzen();
         spielerView.webContents.focus();
       }
+      if (fensterWarMinimiert && spielerMiniAktiv && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.minimize();
+      }
     }
+  }
+}
+
+/** Eine bereits erkannte Netz-Challenge in der Provider-Sitzung anzeigen. */
+async function cfAdresseVerifizieren(provider, details = {}, signal = null) {
+  const url = String(details.url || "");
+  if (!browserSession || !provider || !providerModel.isHttpUrl(url) || signal?.aborted) return false;
+  const diagnose = { ...details, url, finalUrl: details.finalUrl || url,
+    userAgent: browserSession.getUserAgent(), referer: details.referer || "", origin: details.origin || "" };
+  cfLog("challenge detected", diagnose);
+  cfLog("opening verification view", diagnose);
+
+  const view = new WebContentsView({ webPreferences: {
+    session: browserSession, contextIsolation: true, sandbox: true,
+    nodeIntegration: false, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required"
+  } });
+  const inhalt = view.webContents;
+  const id = inhalt.id;
+  webContentsProvider.set(id, provider.id);
+  inhalt.setAudioMuted(true);
+  inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
+  inhalt.on("will-navigate", (event, ziel) => {
+    if (!providerModel.isHttpUrl(ziel)) event.preventDefault();
+  });
+  const abbrechen = () => { if (!inhalt.isDestroyed()) inhalt.close(); };
+  signal?.addEventListener("abort", abbrechen, { once: true });
+  try {
+    const referer = providerModel.isHttpUrl(details.referer) ? details.referer : "";
+    let extraHeaders = "";
+    try {
+      const origin = new URL(String(details.origin || "")).origin;
+      if (/^https?:/.test(origin)) extraHeaders = `Origin: ${origin}`;
+    } catch { /* Origin ist optional. */ }
+    const geladen = await warteAufSeite(view, 25000, (schluss) => {
+      inhalt.loadURL(url, { ...(referer ? { httpReferrer: referer } : {}),
+        ...(extraHeaders ? { extraHeaders } : {}) }).catch(() => schluss(false));
+    });
+    if (!geladen || signal?.aborted || !isLiveView(view)) return false;
+
+    const serverPruefung = async () => {
+      if (typeof details.serverPruefung === "function") return Boolean(await details.serverPruefung());
+      const pruefung = await cfGeschuetzteAnfragePruefen({ ...details, url, referer,
+        origin: details.origin || "" }, signal);
+      return pruefung.ok;
+    };
+    if (await menschentorErkennen(view)) {
+      return await menschentorLoesenLassen(provider, view, { voruebergehend: true, signal,
+        wer: "Der Stream-Anbieter", referer, origin: details.origin || "", bereitsGemeldet: true,
+        serverPruefung });
+    }
+
+    // Ein fehlendes Widget ist noch kein Erfolg: Login-, Fehler- und
+    // Blockseiten koennen ebenfalls ohne Challenge-DOM laden. Erst der erneute
+    // Originalabruf muss den erwarteten geschuetzten Inhalt liefern.
+    const pruefung = typeof details.serverPruefung === "function"
+      ? { ok: Boolean(await details.serverPruefung()), details: diagnose }
+      : await cfGeschuetzteAnfragePruefen({ ...details, url, referer,
+        origin: details.origin || "" }, signal);
+    if (!pruefung.ok) return false;
+    cfLog("verification passed", pruefung.details || diagnose);
+    await cfSitzungPersistieren(browserSession, pruefung.details || diagnose);
+    return true;
+  } finally {
+    signal?.removeEventListener("abort", abbrechen);
+    webContentsProvider.delete(id);
+    if (!inhalt.isDestroyed()) inhalt.close();
   }
 }
 
@@ -10216,11 +10491,101 @@ let spielerKopfzeilen = null;
 let spielerMiniAktiv = false;
 let spielerMiniVorbereitung = false;
 let spielerAutoMiniAusstehend = null;
+const SPIELER_CF_MAX_RETRIES = 1;
+const spielerCfVersuche = new Map();
+const spielerCfErfolgGemeldet = new Set();
+const spielerCfWeiterhinGemeldet = new Set();
+let spielerCfPruefung = null;
+
+function spielerCfAbbrechen() {
+  spielerCfPruefung?.controller.abort();
+  spielerCfPruefung = null;
+}
+
+function spielerStreamAntwort(details) {
+  const lauf = spielerLauf;
+  if (!lauf || !spielerCfVersuche.has(lauf.id) || spielerCfErfolgGemeldet.has(lauf.id)) return;
+  const status = Number(details.status);
+  const typ = details.zustand?.type || details.responseType || "Other";
+  const expected = details.expected || "stream";
+  const body = String(details.body || "");
+  const contentType = cfSession.header(details.headers, "content-type").toLowerCase();
+  const contentLength = Number(cfSession.header(details.headers, "content-length") || 0);
+  const typPasst = expected === "hls" ? typ === "HLS" && body.trim().length > 0
+    : expected === "dash" ? typ === "DASH" && body.trim().length > 0
+      : expected === "mp4" ? typ === "MP4"
+        || (typ === "Other" && /octet-stream/.test(contentType) && contentLength > 0)
+        : !["Challenge", "HTML", "JSON"].includes(typ)
+          && status !== 204 && status !== 205
+          && (body.length > 0 || contentLength > 0 || /^(?:video|audio)\//.test(contentType));
+  if (!(status >= 200 && status < 300) || details.zustand?.unexpectedHtml || !typPasst) return;
+  spielerCfErfolgGemeldet.add(lauf.id);
+  cfCookieNamen(browserSession, details.finalUrl || details.url).then((cookieNames) => {
+    if (spielerLauf?.id !== lauf.id) return;
+    cfLog("stream request succeeded", { ...details, cookieNames });
+  });
+}
+
+function spielerStreamChallenge(details) {
+  const lauf = spielerLauf;
+  const provider = spielerAnbieter();
+  if (!lauf || !provider || !browserSession || !providerModel.isHttpUrl(details?.url)) return;
+  if (spielerCfPruefung?.id === lauf.id) return;
+  const versuche = spielerCfVersuche.get(lauf.id) || 0;
+  if (versuche >= SPIELER_CF_MAX_RETRIES) {
+    if (!spielerCfWeiterhinGemeldet.has(lauf.id)) {
+      spielerCfWeiterhinGemeldet.add(lauf.id);
+      cfCookieNamen(browserSession, details.finalUrl || details.url).then((cookieNames) => {
+        cfLog("stream request still challenged", { ...details, cookieNames });
+      });
+      sendToast("Die Stream-Bestätigung ist weiterhin ungültig");
+    }
+    return;
+  }
+
+  spielerCfVersuche.set(lauf.id, versuche + 1);
+  const controller = new AbortController();
+  const taktGueltig = Number(spielerTakt?.at) > 0;
+  const stelleBeimFehler = Number(spielerTakt?.stelle);
+  const rundeWartetNoch = typeof spielerTakt?.rundeWarten === "boolean"
+    ? spielerTakt.rundeWarten : Boolean(lauf.rundeWarten);
+  const pruefung = { id: lauf.id, controller,
+    stelle: Number.isFinite(stelleBeimFehler) && stelleBeimFehler >= 0 ? stelleBeimFehler : lauf.startzeit,
+    weiterlaufen: taktGueltig ? Boolean(spielerTakt?.laeuft) : !lauf.vorladen && !rundeWartetNoch,
+    // Der Renderer kennt als einzige Stelle exakt, ob syncstart die Schranke
+    // bereits aufgehoben hat. Ein Takt allein ist in der Runde kein Beleg.
+    rundeWarten: rundeWartetNoch };
+  spielerCfPruefung = pruefung;
+  const referer = cfSession.header(details.requestHeaders, "referer") || spielerKopfzeilen?.referer || "";
+  const origin = cfSession.header(details.requestHeaders, "origin") || spielerKopfzeilen?.origin || "";
+  Promise.resolve().then(async () => {
+    const ok = await cfAdresseVerifizieren(provider, { ...details, referer, origin }, controller.signal);
+    if (!ok || controller.signal.aborted || spielerLauf?.id !== lauf.id || !isLiveView(spielerView)) return;
+    cfLog("retrying original request", { ...details,
+      cookieNames: await cfCookieNamen(browserSession, details.finalUrl || details.url), referer, origin });
+    // Derselbe Auftrag startet HLS/MP4 neu. Raum, Position, Player-View und
+    // Miniplayer-Zustand bleiben dabei unveraendert.
+    const wiederholung = spielerAuftrag();
+    wiederholung.startzeit = pruefung.stelle;
+    wiederholung.sitzungsRetry = { weiterlaufen: pruefung.weiterlaufen };
+    wiederholung.rundeWarten = pruefung.rundeWarten;
+    spielerView.webContents.send("spieler:auftrag", wiederholung);
+  }).catch(() => {}).finally(() => {
+    if (spielerCfPruefung === pruefung) spielerCfPruefung = null;
+  });
+}
 
 function spielerSessionHolen() {
   if (spielerSession) return spielerSession;
   spielerSession = session.fromPartition(SPIELER_PARTITION, { cache: true });
-  spielerNetz.einrichten(spielerSession);
+  // Die lokale Playerseite bleibt in ihrer isolierten Partition. Ihre
+  // HTTP-Anfragen werden jedoch ueber dieselbe persistente Netzsitzung wie
+  // Provideransicht und Aufloeser geschickt, damit deren Cookies gelten.
+  spielerNetz.einrichten(spielerSession, browserSession || spielerSession, {
+    onChallenge: spielerStreamChallenge,
+    onResponse: spielerStreamAntwort,
+    requestHeaders: () => spielerKopfzeilen || {}
+  });
   spielerSession.webRequest.onBeforeSendHeaders((details, callback) => {
     // Die eigene Seite kommt von der Platte und braucht nichts davon.
     if (!spielerKopfzeilen || !/^https?:/i.test(details.url || "")) {
@@ -10326,6 +10691,13 @@ function direktVollbildAnwenden(optionen = {}) {
  * und nur hier.
  */
 function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
+  const vorherigeId = spielerLauf?.id;
+  spielerCfAbbrechen();
+  if (vorherigeId) {
+    spielerCfVersuche.delete(vorherigeId);
+    spielerCfErfolgGemeldet.delete(vorherigeId);
+    spielerCfWeiterhinGemeldet.delete(vorherigeId);
+  }
   geraeteWiedergabeMelden("", "", null);
   const passend = favorites.filter((favorite) => favorite.providerId === provider?.id
     && normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(url));
@@ -10334,7 +10706,7 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
 
   spielerKopfzeilen = ergebnis.kopfzeilen;
   spielerLetzterStand = null;
-  spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+  spielerTakt = { stelle: 0, laeuft: false, puffert: false, rundeWarten: null, at: 0 };
   spielerUpscalingStatus = null;
   spielerRtxStop();
   spielerLauf = {
@@ -10741,6 +11113,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
 /** Zu. Ohne laufenden Player kostet das nichts. */
 function direktSpielerSchliessen(grund = "") {
   direktLaden.abort();
+  spielerCfAbbrechen();
   if (!spielerView) {
     folgenWerkbaenkeSchliessen();
     return;
@@ -10761,6 +11134,9 @@ function direktSpielerSchliessen(grund = "") {
   // Folge, bis der erste neue Takt kommt.
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
   spielerKopfzeilen = null;
+  spielerCfVersuche.clear();
+  spielerCfErfolgGemeldet.clear();
+  spielerCfWeiterhinGemeldet.clear();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
   try {
     view.webContents.close();
@@ -10777,6 +11153,12 @@ ipcMain.on("spieler:bereit", (ereignis) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
   ereignis.sender.send("spieler:auftrag", spielerAuftrag());
   sendSpielerChatStatus();
+  ereignis.sender.send("spieler:voice-duck", sprachchatDuckAktiv);
+});
+
+ipcMain.handle("spieler:voice-open", (ereignis) => {
+  const runde = vomSpieler(ereignis) && spielerRunde();
+  return runde ? sprachchatOeffnen(runde.raum) : { ok: false, error: "Du bist gerade in keiner Watchparty." };
 });
 
 ipcMain.handle("spieler:chat-status", (ereignis) => vomSpieler(ereignis)
@@ -11786,7 +12168,7 @@ function watchpartyLaeuftDanach(nachricht) {
 let spielerDrift = { bestaetigt: 0, letzteMessung: 0, seitSprung: 0 };
 
 /** Der zuletzt gemeldete Stand des eigenen Players. */
-let spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+let spielerTakt = { stelle: 0, laeuft: false, puffert: false, rundeWarten: null, at: 0 };
 let spielerSyncBereit = null;
 let spielerFolgenVorbereitung = null;
 
@@ -12183,6 +12565,7 @@ ipcMain.on("spieler:takt", (ereignis, takt) => {
     dauer: sanitizePositiveNumber(takt?.dauer),
     laeuft: Boolean(takt?.laeuft),
     puffert: Boolean(takt?.puffert),
+    rundeWarten: Boolean(takt?.rundeWarten),
     at: Date.now()
   };
   geraeteWiedergabeMelden(spielerLauf.url, spielerLauf.titel, {
@@ -16104,6 +16487,7 @@ function normalizeSettings(raw) {
         ...defaults.watchparty.rooms
       ]).slice(0, WATCHPARTY_MAX_RAEUME),
       deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
+      microphoneId: String(raw?.watchparty?.microphoneId ?? settings?.watchparty?.microphoneId ?? "").slice(0, 512),
       // In welchem Raum die YouTube-Watchparty laeuft. Leer heisst: aus. Es ist
       // bewusst genau einer - es gibt einen YouTube-Player, und zwei Runden
       // gleichzeitig hiessen zwei Videos gleichzeitig.

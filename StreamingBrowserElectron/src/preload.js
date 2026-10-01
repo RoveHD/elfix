@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getWatchpartyItems: () => ipcRenderer.invoke("watchparty:items"),
   openWatchpartyItem: (key, room) => ipcRenderer.invoke("watchparty:open", key, room),
   getWatchpartyRooms: () => ipcRenderer.invoke("watchparty:rooms"),
+  openVoiceChat: (room = "") => ipcRenderer.invoke("watchparty:voice-open", String(room)),
+  openVoiceSettings: () => ipcRenderer.invoke("watchparty:voice-settings"),
   // Die Statusseite des Relays im richtigen Browser. Ohne Adresse von hier -
   // sie steht in den Einstellungen und wird drueben gebildet.
   openRelayStatus: () => ipcRenderer.invoke("watchparty:statusseite"),

@@ -2,11 +2,11 @@ package local.elflix.android;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.graphics.Color;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -72,6 +72,7 @@ final class DirektWiedergabe {
             if (antwort != null) antwort.fertig(null, "Chat ist nicht verfügbar");
         }
         default void pip() { }
+        default void sprachchat() { }
         /** Tatsächliches Native-Playback; steuert Android-12-Auto-PiP. */
         default void wiedergabe(boolean laeuft) { }
         /** Text bound next to a native player's episode number. */
@@ -89,6 +90,7 @@ final class DirektWiedergabe {
     private final DirektSpieler spieler;
     private final FrameLayout wurzel;
     private final String kennung;
+    private final Map<String, Integer> challengeVersuche = new HashMap<>();
     private WebView seite;
     /** Welche Zeile der Quellenliste gerade spielt - die Blende hebt sie hervor. */
     private int laufenderHoster = -1;
@@ -120,6 +122,12 @@ final class DirektWiedergabe {
     private boolean versucht;
     private String letzteSprache = "";
     private Consumer<String> nachSeite;
+    private String letzteQuelleUrl = "";
+    private String letzteQuelleTyp = "";
+    private Map<String, String> letzteQuelleKopf = java.util.Collections.emptyMap();
+    private boolean streamErfolgGelogg;
+    /** Letztes Hauptframe-Ergebnis je Werkbank, auch bevor ein CF-Lauf angelegt wird. */
+    private final Map<WebView, Boolean> seitenHttpOk = new java.util.IdentityHashMap<>();
     /** Der einzige sichtbare Teil der sonst unsichtbaren Werkbank. */
     private VerifizierungsLauf verifizierung;
 
@@ -128,19 +136,23 @@ final class DirektWiedergabe {
         final int id;
         final Runnable danach;
         final Runnable gescheitert;
-        final long ende = SystemClock.uptimeMillis() + Verifizierung.MENSCH_FRIST_MS;
-        boolean token;
+        final boolean bekannteChallenge;
+        long ende = SystemClock.uptimeMillis() + Verifizierung.MENSCH_FRIST_MS;
+        long hintergrundSeit;
         boolean navigation;
-        boolean weiter;
         boolean sichtbar;
         boolean maskePrueft;
         boolean dokumentBereit = true;
+        boolean serverAntwort;
+        boolean hauptFehler;
         int dokument;
         int frei;
 
-        VerifizierungsLauf(WebView view, int id, Runnable danach, Runnable gescheitert) {
+        VerifizierungsLauf(WebView view, int id, boolean bekannteChallenge,
+                           Runnable danach, Runnable gescheitert) {
             this.view = view;
             this.id = id;
+            this.bekannteChallenge = bekannteChallenge;
             this.danach = danach;
             this.gescheitert = gescheitert;
         }
@@ -219,7 +231,7 @@ final class DirektWiedergabe {
         this.fortsetzStaffel = Math.max(0, fortsetzStaffel);
         this.fortsetzFolge = Math.max(0, fortsetzFolge);
         this.umgebung = umgebung;
-        kennung = WebSettings.getDefaultUserAgent(activity);
+        kennung = CookieNetz.kennung(activity);
         spieler = new DirektSpieler(activity, kern, new DirektSpieler.Umgebung() {
             public void schliessen() { umgebung.geschlossen(); }
             public void fassungen() { fassungenZeigen(); }
@@ -249,7 +261,10 @@ final class DirektWiedergabe {
                 umgebung.chatSenden(key, text, raum, antwort);
             }
             public void pip() { umgebung.pip(); }
+            public void sprachchat() { umgebung.sprachchat(); }
             public void wiedergabe(boolean laeuft) { umgebung.wiedergabe(laeuft); }
+            public void netzAntwort(CookieNetz.Antwort antwort) { streamAntwort(antwort); }
+            public void herausforderung(CookieNetz.Antwort antwort) { streamHerausforderung(antwort); }
         });
         if (pausiertStarten) spieler.naechsteQuellePausiert();
         // Die Schranke gehoert zur Relay-Generation und ueberlebt deshalb den
@@ -273,11 +288,17 @@ final class DirektWiedergabe {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void seiteLaden(String url, int id, Runnable fertig) {
-        seiteLaden(url, id, fertig, null);
+        seiteLaden(url, id, fertig, null, java.util.Collections.emptyMap());
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     private void seiteLaden(String url, int id, Runnable fertig, Consumer<String> beobachter) {
+        seiteLaden(url, id, fertig, beobachter, java.util.Collections.emptyMap());
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void seiteLaden(String url, int id, Runnable fertig, Consumer<String> beobachter,
+                            Map<String, String> anfrageKopf) {
         seiteFreigeben();
         if (!aktuell(id)) return;
         WebView view = new WebView(activity);
@@ -290,6 +311,7 @@ final class DirektWiedergabe {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setSupportMultipleWindows(true);
+        CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
         view.setWebChromeClient(new WebChromeClient());
         view.setDownloadListener((u, agent, disposition, mime, size) -> { });
@@ -302,14 +324,15 @@ final class DirektWiedergabe {
         view.setWebViewClient(new WebViewClient() {
             private boolean gelesen;
             @Override public void onPageStarted(WebView v, String u, android.graphics.Bitmap icon) {
+                seitenHttpOk.put(v, true);
                 VerifizierungsLauf lauf = verifizierung;
                 if (lauf != null && lauf.view == v && lauf.id == id) {
                     lauf.navigation = true;
                     lauf.dokumentBereit = false;
+                    lauf.serverAntwort = false;
+                    lauf.hauptFehler = false;
                     lauf.dokument++;
                     lauf.maskePrueft = false;
-                    lauf.token = false;
-                    lauf.weiter = false;
                     lauf.frei = 0;
                     verifizierungVerbergen(lauf);
                 }
@@ -328,10 +351,25 @@ final class DirektWiedergabe {
                 }
                 return null;
             }
+            @Override public void onReceivedHttpError(WebView v, WebResourceRequest r,
+                                                       WebResourceResponse antwort) {
+                if (r == null || !r.isForMainFrame()) return;
+                seitenHttpOk.put(v, false);
+                VerifizierungsLauf lauf = verifizierung;
+                if (lauf != null && lauf.view == v && lauf.id == id) {
+                    lauf.hauptFehler = true;
+                    lauf.serverAntwort = false;
+                }
+                Log.w(CrashReporter.TAG, "[CF] verification main response url="
+                    + CookieNetz.sichereUrl(r.getUrl().toString()) + " status="
+                    + (antwort == null ? 0 : antwort.getStatusCode()) + " contentType="
+                    + (antwort == null ? "<none>" : antwort.getMimeType()));
+            }
             @Override public void onPageFinished(WebView v, String u) {
                 VerifizierungsLauf lauf = verifizierung;
                 if (lauf != null && lauf.view == v && lauf.id == id) {
                     lauf.dokumentBereit = true;
+                    lauf.serverAntwort = Boolean.TRUE.equals(seitenHttpOk.get(v)) && !lauf.hauptFehler;
                     lauf.frei = 0;
                 }
                 if (gelesen || seite != view || !aktuell(id) || "about:blank".equals(u)) return;
@@ -343,7 +381,9 @@ final class DirektWiedergabe {
         // invisible and behind the native player until its gate is masked.
         view.setVisibility(View.INVISIBLE);
         wurzel.addView(view, 0, new FrameLayout.LayoutParams(-1, -1));
-        view.loadUrl(url);
+        Map<String, String> webKopf = CookieNetz.webViewKopfzeilen(anfrageKopf);
+        if (webKopf.isEmpty()) view.loadUrl(url);
+        else view.loadUrl(url, webKopf);
         handler.postDelayed(() -> {
             // Auf einer Serienseite gibt es keine Quellen, und das ist kein
             // Fehler - dort wird gewaehlt.
@@ -369,9 +409,11 @@ final class DirektWiedergabe {
     private void lesen(int id, long frist) {
         WebView view = seite;
         long rest = Math.max(0L, frist - SystemClock.uptimeMillis());
-        verifizierungPruefen(view, id, rest, pausiert -> {
-            long weiterBis = pausiert ? SystemClock.uptimeMillis() + 20000L : frist;
-            lesenOhneTor(id, weiterBis);
+        verifizierungPruefen(view, id, rest, "provider:" + adresse, false, pausiert -> {
+            if (pausiert) {
+                Log.i(CrashReporter.TAG, "[CF] retrying original request url=" + CookieNetz.sichereUrl(adresse));
+                seiteLaden(adresse, id, () -> lesen(id, SystemClock.uptimeMillis() + 20000L));
+            } else lesenOhneTor(id, frist);
         }, () -> spieler.status("Die Bestätigung wurde nicht abgeschlossen. Unter Quellen erneut versuchen."));
     }
 
@@ -424,12 +466,11 @@ final class DirektWiedergabe {
             if (!aktuell(id) || seite != view) return;
             if (wert == null || "null".equals(wert)) {
                 long rest = Math.max(0L, frist - SystemClock.uptimeMillis());
-                verifizierungPruefen(view, id, rest, pausiert -> {
+                verifizierungPruefen(view, id, rest, "provider:" + adresse, false, pausiert -> {
                     long weiterBis = pausiert ? SystemClock.uptimeMillis() + 20000L : frist;
                     if (pausiert) {
-                        // Navigation through the verified gate replaces the
-                        // document, therefore rebuild its source promise.
-                        lesenOhneTor(id, weiterBis);
+                        Log.i(CrashReporter.TAG, "[CF] retrying original request url=" + CookieNetz.sichereUrl(adresse));
+                        seiteLaden(adresse, id, () -> lesen(id, weiterBis));
                     } else if (SystemClock.uptimeMillis() < weiterBis) {
                         handler.postDelayed(() -> linksAbholen(view, key, id, weiterBis), 250);
                     } else {
@@ -471,18 +512,40 @@ final class DirektWiedergabe {
      * budget. The already loaded WebView is reused, so cookies, redirect token,
      * episode and selected language/hoster stay unchanged.
      */
-    private void verifizierungPruefen(WebView view, int id, long rest,
+    private void verifizierungPruefen(WebView view, int id, long rest, String kontext,
+                                      boolean bekannteChallenge,
                                       Consumer<Boolean> fertig, Runnable gescheitert) {
         if (view == null || !aktuell(id) || seite != view) return;
         view.evaluateJavascript(Verifizierung.zustandScript(), wert -> {
             if (!aktuell(id) || seite != view || verifizierung != null) return;
             JSONObject stand = javascriptObjekt(wert);
-            if (stand == null || !stand.optBoolean("offen")) {
+            if (stand == null) {
+                gescheitert.run();
+                return;
+            }
+            if (!stand.optBoolean("offen") && !bekannteChallenge) {
                 fertig.accept(false);
                 return;
             }
-            VerifizierungsLauf lauf = new VerifizierungsLauf(view, id,
+            String schluessel = id + "|" + String.valueOf(kontext) + "|" + hostSchluessel(view.getUrl());
+            int versuche = challengeVersuche.getOrDefault(schluessel, 0);
+            if (!bekannteChallenge && versuche >= 1) {
+                Log.w(CrashReporter.TAG, "[CF] stream request still challenged url="
+                    + CookieNetz.sichereUrl(view.getUrl()));
+                gescheitert.run();
+                return;
+            }
+            if (!bekannteChallenge) challengeVersuche.put(schluessel, versuche + 1);
+            Log.i(CrashReporter.TAG, "[CF] challenge detected url="
+                + CookieNetz.sichereUrl(view.getUrl()) + " responseType=Challenge");
+            VerifizierungsLauf lauf = new VerifizierungsLauf(view, id, bekannteChallenge,
                 () -> fertig.accept(true), gescheitert);
+            lauf.serverAntwort = Boolean.TRUE.equals(seitenHttpOk.get(view));
+            lauf.hauptFehler = !lauf.serverAntwort;
+            if (bekannteChallenge && lauf.serverAntwort
+                    && !stand.optBoolean("offen") && stand.optBoolean("erwartet")) {
+                lauf.navigation = true;
+            }
             verifizierung = lauf;
             spieler.status("Bestätigung erforderlich · bitte das Häkchen setzen");
             verifizierungTakt(lauf);
@@ -491,7 +554,13 @@ final class DirektWiedergabe {
 
     private void verifizierungTakt(VerifizierungsLauf lauf) {
         if (verifizierung != lauf || !aktuell(lauf.id) || seite != lauf.view) return;
+        if (lauf.hintergrundSeit > 0L) {
+            handler.postDelayed(() -> verifizierungTakt(lauf), Verifizierung.PRUEF_TAKT_MS);
+            return;
+        }
         if (SystemClock.uptimeMillis() >= lauf.ende) {
+            Log.w(CrashReporter.TAG, "[CF] verification timeout url="
+                + CookieNetz.sichereUrl(lauf.view.getUrl()));
             verifizierungBeenden(lauf, false, true);
             return;
         }
@@ -504,36 +573,12 @@ final class DirektWiedergabe {
                 return;
             }
             boolean offen = stand.optBoolean("offen");
-            if (offen && !stand.optBoolean("token")) {
-                lauf.token = false;
-                lauf.weiter = false;
-                lauf.navigation = false;
-            }
-            if (stand.optBoolean("token")) lauf.token = true;
-            if (stand.optBoolean("tor")) verifizierungZeigen(lauf);
-
-            if (lauf.token && !lauf.weiter && offen) {
-                int dokument = lauf.dokument;
-                lauf.view.evaluateJavascript(Verifizierung.weiterScript(), klick -> {
-                    if (verifizierung != lauf || lauf.dokument != dokument) return;
-                    String ergebnis = javascriptText(klick);
-                    if (ergebnis.startsWith("geklickt") || "token".equals(ergebnis)) lauf.weiter = true;
-                    if (ergebnis.startsWith("geklickt|") && ergebnis.length() > 9) {
-                        try {
-                            JSONArray ziele = new JSONArray(Uri.decode(ergebnis.substring(9)));
-                            for (int i = 0; i < ziele.length(); i++) {
-                                String ziel = ziele.optString(i);
-                                if (verifizierungsZielErlaubt(lauf.view, ziel)) {
-                                    lauf.view.loadUrl(ziel);
-                                    break;
-                                }
-                            }
-                        } catch (Exception ignoriert) { }
-                    }
-                });
-            }
+            if (offen) lauf.navigation = false;
+            if (stand.optBoolean("tor") || lauf.bekannteChallenge) verifizierungZeigen(lauf);
             lauf.frei = offen || !lauf.dokumentBereit ? 0 : lauf.frei + 1;
-            if (Verifizierung.darfFortsetzen(lauf.token, lauf.navigation, offen, lauf.frei)) {
+            boolean serverSitzung = CookieNetz.hatCloudflareSitzung(lauf.view.getUrl());
+            if (Verifizierung.darfFortsetzen(serverSitzung, lauf.navigation,
+                    stand.optBoolean("erwartet"), lauf.serverAntwort, offen, lauf.frei)) {
                 verifizierungBeenden(lauf, true, false);
                 return;
             }
@@ -561,7 +606,8 @@ final class DirektWiedergabe {
             if (lauf.dokument != dokument || !lauf.dokumentBereit) return;
             JSONObject masse = javascriptObjekt(wert);
             if (masse == null || !masse.optBoolean("ok")) {
-                verifizierungVerbergen(lauf);
+                if (lauf.bekannteChallenge) verifizierungGanzZeigen(lauf);
+                else verifizierungVerbergen(lauf);
                 return;
             }
             int inhalt = masse.optInt("height");
@@ -574,35 +620,23 @@ final class DirektWiedergabe {
                 lauf.view.setVisibility(View.VISIBLE);
                 lauf.view.requestFocus();
                 lauf.sichtbar = true;
+                Log.i(CrashReporter.TAG, "[CF] opening verification view url="
+                    + CookieNetz.sichereUrl(lauf.view.getUrl()));
             }
         });
     }
 
-    private boolean verifizierungsZielErlaubt(WebView view, String ziel) {
-        try {
-            java.net.URI target = new java.net.URI(ziel);
-            String schema = target.getScheme();
-            String host = target.getHost();
-            if (!("http".equalsIgnoreCase(schema) || "https".equalsIgnoreCase(schema)) || host == null) return false;
-            if (filter.shouldBlock(ziel, anbieter)) return false;
-            if (Adblocker.isChallengeOrVerificationUrl(ziel, anbieter)
-                || Adblocker.isLikelyPlayerNavigation(ziel)) return true;
-            String aktuell = view == null ? null : view.getUrl();
-            String basis = anbieter == null ? null : anbieter.startUrl;
-            return gleicheWebHerkunft(host, aktuell) || gleicheWebHerkunft(host, basis);
-        } catch (Exception ungueltig) {
-            return false;
-        }
-    }
-
-    private static boolean gleicheWebHerkunft(String host, String url) {
-        try {
-            String basis = new java.net.URI(url).getHost();
-            return basis != null && (host.equalsIgnoreCase(basis)
-                || host.toLowerCase(java.util.Locale.ROOT).endsWith("." + basis.toLowerCase(java.util.Locale.ROOT))
-                || basis.toLowerCase(java.util.Locale.ROOT).endsWith("." + host.toLowerCase(java.util.Locale.ROOT)));
-        } catch (Exception ungueltig) {
-            return false;
+    private void verifizierungGanzZeigen(VerifizierungsLauf lauf) {
+        if (verifizierung != lauf || lauf.view.getParent() != wurzel) return;
+        lauf.view.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        lauf.view.setBackgroundColor(Color.WHITE);
+        if (!lauf.sichtbar) {
+            lauf.view.bringToFront();
+            lauf.view.setVisibility(View.VISIBLE);
+            lauf.view.requestFocus();
+            lauf.sichtbar = true;
+            Log.i(CrashReporter.TAG, "[CF] opening verification view url="
+                + CookieNetz.sichereUrl(lauf.view.getUrl()));
         }
     }
 
@@ -626,6 +660,11 @@ final class DirektWiedergabe {
             wurzel.addView(lauf.view, 0, new FrameLayout.LayoutParams(-1, -1));
         }
         if (erfolg) {
+            CookieManager.getInstance().flush();
+            Log.i(CrashReporter.TAG, "[CF] verification passed url="
+                + CookieNetz.sichereUrl(lauf.view.getUrl()));
+            Log.i(CrashReporter.TAG, "[CF] session persisted cookieNames="
+                + CookieNetz.cookieNamen(lauf.view.getUrl()));
             spieler.status("Bestätigung angenommen · Quelle wird fortgesetzt …");
             lauf.danach.run();
         } else if (melden) {
@@ -636,7 +675,11 @@ final class DirektWiedergabe {
 
     private void verifizierungAbbrechen(boolean melden) {
         VerifizierungsLauf lauf = verifizierung;
-        if (lauf != null) verifizierungBeenden(lauf, false, melden);
+        if (lauf != null) {
+            if (melden) Log.i(CrashReporter.TAG, "[CF] verification cancelled url="
+                + CookieNetz.sichereUrl(lauf.view.getUrl()));
+            verifizierungBeenden(lauf, false, melden);
+        }
     }
 
     private int dp(int wert) {
@@ -652,11 +695,11 @@ final class DirektWiedergabe {
         return null;
     }
 
-    private static String javascriptText(String wert) {
+    private static String hostSchluessel(String url) {
         try {
-            Object text = new JSONTokener(wert == null ? "null" : wert).nextValue();
-            return text == null ? "" : String.valueOf(text);
-        } catch (Exception ignoriert) { return ""; }
+            String host = new java.net.URI(url).getHost();
+            return host == null ? "<unbekannt>" : host.toLowerCase(java.util.Locale.ROOT);
+        } catch (Exception ungueltig) { return "<unbekannt>"; }
     }
 
     private void aufloesen(int index, double stelle, int id, boolean automatisch) {
@@ -672,6 +715,19 @@ final class DirektWiedergabe {
             if (!aktuell(id)) return;
             try {
                 JSONObject ergebnis = new JSONObject(wert);
+                if (ergebnis.optBoolean("challenge")) {
+                    String ziel = ergebnis.optString("seite", link.optString("adresse"));
+                    Log.i(CrashReporter.TAG, "[CF] challenge detected url="
+                        + CookieNetz.sichereUrl(ziel) + " status=" + ergebnis.optInt("status", 0)
+                        + " responseType=Challenge");
+                    herausforderungLaden(ziel, id, "resolver:" + link.optString("adresse"),
+                        quellKopf(adresse), () -> {
+                        Log.i(CrashReporter.TAG, "[CF] retrying original request url="
+                            + CookieNetz.sichereUrl(link.optString("adresse")));
+                        aufloesen(index, stelle, id, automatisch);
+                    }, () -> weitererHoster(index, stelle, id, automatisch));
+                    return;
+                }
                 if (uebernehmen(ergebnis, link, stelle, id)) return;
                 String ziel = ergebnis.optString("seite", "");
                 if (!ziel.isEmpty()) {
@@ -709,6 +765,10 @@ final class DirektWiedergabe {
         spieler.quelleBenannt(link.optString("hoster", ""),
             link.optString("spracheRoh", link.optString("sprache", "")));
         spieler.inhaltArt(adresse);
+        letzteQuelleUrl = url;
+        letzteQuelleTyp = quelle.optString("typ");
+        letzteQuelleKopf = new HashMap<>(kopf);
+        streamErfolgGelogg = false;
         spieler.quelle(url, quelle.optString("typ"), kopf, stelle);
         spielt = true;
         naechsteSuchen(id);
@@ -749,14 +809,13 @@ final class DirektWiedergabe {
         };
         Runnable spielenLassen = () -> {
             if (seite != null && aktuell(id)) seite.evaluateJavascript(
-                "(()=>{for(const v of document.querySelectorAll('video')){v.muted=true;v.volume=0;v.play().catch(()=>{})}"
-                + "const b=document.querySelector('.vjs-big-play-button,.jw-icon-display,[aria-label=Play]');if(b)b.click()})()", null);
+                "(()=>{for(const v of document.querySelectorAll('video')){v.muted=true;v.volume=0;v.play().catch(()=>{})}})()", null);
         };
         seiteLaden(url, id, spielenLassen, kandidat -> {
             if (fertig[0] || gesehen.size() >= 8 || !gesehen.add(kandidat)) return;
             wartend.add(kandidat);
             pruefen[0].run();
-        });
+        }, quellKopf(adresse));
         Runnable[] torWache = new Runnable[1];
         torWache[0] = () -> {
             if (fertig[0] || !aktuell(id) || seite == null) return;
@@ -764,10 +823,14 @@ final class DirektWiedergabe {
                 torPrueft[0] = true;
                 WebView view = seite;
                 long rest = Math.max(0L, frist[0] - SystemClock.uptimeMillis());
-                verifizierungPruefen(view, id, rest, pausiert -> {
+                verifizierungPruefen(view, id, rest, "hoster-web:" + url, false, pausiert -> {
                     torPrueft[0] = false;
-                    if (pausiert) frist[0] = SystemClock.uptimeMillis() + 20000L;
-                    spielenLassen.run();
+                    if (pausiert) {
+                        fertig[0] = true;
+                        Log.i(CrashReporter.TAG, "[CF] retrying original request url="
+                            + CookieNetz.sichereUrl(url));
+                        beobachten(url, link, stelle, id, weiter);
+                    } else spielenLassen.run();
                 }, () -> {
                     torPrueft[0] = false;
                     if (!fertig[0] && aktuell(id)) {
@@ -799,6 +862,87 @@ final class DirektWiedergabe {
             weiter.run();
         };
         handler.postDelayed(zeitwaechter[0], 500L);
+    }
+
+    private void herausforderungLaden(String url, int id, String kontext,
+                                      Map<String, String> anfrageKopf,
+                                      Runnable danach, Runnable gescheitert) {
+        if (!aktuell(id) || url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            gescheitert.run();
+            return;
+        }
+        String versuch = id + "|" + String.valueOf(kontext) + "|" + hostSchluessel(url);
+        if (challengeVersuche.getOrDefault(versuch, 0) >= 1) {
+            Log.w(CrashReporter.TAG, "[CF] stream request still challenged url="
+                + CookieNetz.sichereUrl(url));
+            gescheitert.run();
+            return;
+        }
+        challengeVersuche.put(versuch, 1);
+        spieler.status("Bestätigung erforderlich · bitte die Prüfung abschließen");
+        seiteLaden(url, id, () -> {
+            WebView view = seite;
+            verifizierungPruefen(view, id, 0L, kontext, true, pausiert -> danach.run(), gescheitert);
+        }, null, anfrageKopf);
+    }
+
+    private void streamAntwort(CookieNetz.Antwort antwort) {
+        if (antwort == null || geschlossen) return;
+        if (antwort.challenge) {
+            Log.w(CrashReporter.TAG, "[CF] stream request still challenged " + CookieNetz.diagnose(antwort));
+            return;
+        }
+        if (!streamErfolgGelogg && antwort.status >= 200 && antwort.status < 300
+            && ("HLS".equals(antwort.typ) || "DASH".equals(antwort.typ) || "MP4".equals(antwort.typ))) {
+            streamErfolgGelogg = true;
+            Log.i(CrashReporter.TAG, "[CF] stream request succeeded " + CookieNetz.diagnose(antwort)
+                + " userAgent=" + kopfWert(letzteQuelleKopf, "user-agent")
+                + " referer=" + kopfWert(letzteQuelleKopf, "referer")
+                + " origin=" + kopfWert(letzteQuelleKopf, "origin"));
+        }
+    }
+
+    private void streamHerausforderung(CookieNetz.Antwort antwort) {
+        if (geschlossen || antwort == null || letzteQuelleUrl.isEmpty()) return;
+        final int id = auftrag;
+        final double stelle = spieler.position();
+        final boolean fortsetzen = spieler.challengeSollSpielen();
+        String ziel = antwort.endUrl == null || antwort.endUrl.isEmpty() ? letzteQuelleUrl : antwort.endUrl;
+        Log.i(CrashReporter.TAG, "[CF] challenge detected " + CookieNetz.diagnose(antwort));
+        herausforderungLaden(ziel, id, "media:" + letzteQuelleUrl, letzteQuelleKopf, () -> {
+            if (!aktuell(id)) return;
+            Log.i(CrashReporter.TAG, "[CF] retrying original request url="
+                + CookieNetz.sichereUrl(letzteQuelleUrl));
+            seiteFreigeben();
+            streamErfolgGelogg = false;
+            if (!fortsetzen) spieler.naechsteQuellePausiert();
+            spieler.quelle(letzteQuelleUrl, letzteQuelleTyp, letzteQuelleKopf, stelle);
+        }, () -> spieler.status("Die Bestätigung wurde nicht abgeschlossen. Unter Quellen erneut versuchen."));
+    }
+
+    private static String kopfWert(Map<String, String> kopf, String gesucht) {
+        if (kopf == null) return "<none>";
+        for (Map.Entry<String, String> eintrag : kopf.entrySet()) {
+            if (gesucht.equalsIgnoreCase(eintrag.getKey())) {
+                String wert = eintrag.getValue();
+                return "referer".equalsIgnoreCase(gesucht) || "origin".equalsIgnoreCase(gesucht)
+                    ? CookieNetz.sichereUrl(wert) : String.valueOf(wert).replaceAll("[\\r\\n]", "");
+            }
+        }
+        return "<none>";
+    }
+
+    private static Map<String, String> quellKopf(String referer) {
+        HashMap<String, String> kopf = new HashMap<>();
+        if (referer != null && !referer.isEmpty()) kopf.put("Referer", referer);
+        try {
+            java.net.URI uri = new java.net.URI(referer);
+            if (uri.getScheme() != null && uri.getHost() != null) {
+                kopf.put("Origin", uri.getScheme() + "://" + uri.getHost()
+                    + (uri.getPort() >= 0 ? ":" + uri.getPort() : ""));
+            }
+        } catch (Exception ignoriert) { }
+        return kopf;
     }
 
     private void quellenZeigen() {
@@ -1432,7 +1576,22 @@ final class DirektWiedergabe {
         try { return spieler.liveStand(); } catch (org.json.JSONException e) { return new JSONObject(); }
     }
     void pause() { spieler.pause(); }
-    void vordergrund() { spieler.vordergrund(); }
+    void hintergrund() {
+        WebView view = seite;
+        if (view != null) view.onPause();
+        VerifizierungsLauf lauf = verifizierung;
+        if (lauf != null && lauf.hintergrundSeit == 0L) lauf.hintergrundSeit = SystemClock.uptimeMillis();
+    }
+    void vordergrund() {
+        spieler.vordergrund();
+        WebView view = seite;
+        if (view != null) view.onResume();
+        VerifizierungsLauf lauf = verifizierung;
+        if (lauf != null && lauf.hintergrundSeit > 0L) {
+            lauf.ende += Math.max(0L, SystemClock.uptimeMillis() - lauf.hintergrundSeit);
+            lauf.hintergrundSeit = 0L;
+        }
+    }
     boolean laeuftFuerPip() { return spieler.laeuftFuerPip(); }
     void pipModus(boolean aktiv) { spieler.pipModus(aktiv); }
     boolean taste(KeyEvent event) {
@@ -1452,12 +1611,15 @@ final class DirektWiedergabe {
     }
     void chatKontext(String key, String raum, boolean verbunden) { spieler.chatKontext(key, raum, verbunden); }
     void chatEmpfangen(JSONObject zeile) { spieler.chatEmpfangen(zeile); }
+    void sprachchatDucking(boolean aktiv) { spieler.sprachchatDucking(aktiv); }
+    void sprachchatAktiv(boolean aktiv) { spieler.sprachchatAktiv(aktiv); }
 
     private void seiteFreigeben() {
         if (seite == null) return;
         verifizierungAbbrechen(false);
         WebView alt = seite;
         seite = null;
+        seitenHttpOk.remove(alt);
         alt.stopLoading();
         if (alt.getParent() instanceof ViewGroup) ((ViewGroup) alt.getParent()).removeView(alt);
         alt.destroy();

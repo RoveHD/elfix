@@ -20,6 +20,7 @@ def kernQuelle = file("$rootDir/../StreamingBrowserElectron")
 def kernModule = [
     "src/direktquelle.js",
     "src/direktlauf.js",
+    "src/cf-session.js",
     "src/direktlinks.js",
     "src/direktfolgen.js",
     "src/direktbeobachtung.js",
@@ -63,6 +64,7 @@ def kernModule = [
     "src/geraete-stand.js",
     "src/sicherung.js",
     "shared/provider-model.js",
+    "shared/sprachchat.js",
     "shared/bildausschnitt.js"
 ]
 
@@ -375,6 +377,15 @@ androidComponents {
             quellen.from(new File(kernQuelle, "tests/fortschritt-proben.json"))
         }
         variante.sources.assets.addGeneratedSourceDirectory(proben) { it.ziel }
+
+        def sprachchat = tasks.register("sprachchatKopieren${variantenName}", AssetsSammeln) {
+            description = "Kopiert die gemeinsame Sprachchat-Oberflaeche und WebRTC-Logik."
+            group = "build"
+            unterordner.set("sprachchat")
+            quellen.from(["sprachchat.html", "sprachchat.css", "sprachchat-ui.js", "sprachchat.js"]
+                .collect { new File(kernQuelle, "shared/${it}") })
+        }
+        variante.sources.assets.addGeneratedSourceDirectory(sprachchat) { it.ziel }
     }
 }
 

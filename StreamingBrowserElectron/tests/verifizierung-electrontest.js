@@ -28,13 +28,18 @@ body{margin:0;background:#d00;color:white;font:16px Arial} #werbung{height:900px
 </style></head><body><div class="alt"><div class="cf-turnstile">Alte Abfrage</div></div>
 <div id="werbung">ANBIETERSEITE DARF NICHT SICHTBAR SEIN</div>
 <section id="dialog" role="dialog"><h2>Video wird vorbereitet...</h2><p>Bestätige die lokale Testabfrage.</p>
-<div class="cf-turnstile"><button id="bestaetigen" onclick="document.getElementById('token').value='lokaler-test'; this.textContent='Bestätigt'">Test: Mensch bestätigen</button></div>
+<div class="cf-turnstile"><button id="bestaetigen" onclick="document.getElementById('token').value='lokaler-test';document.cookie='cf_clearance=lokaler-test; SameSite=Lax';location.reload()">Test: Mensch bestätigen</button></div>
 <input id="token" name="cf-turnstile-response" type="hidden"><button id="weiter">Weiter</button></section>
-<script>window.klicks=0;document.getElementById('weiter').onclick=()=>{window.klicks++;if(document.getElementById('token').value){document.cookie='freigabe=ja; SameSite=Lax';document.getElementById('dialog').style.display='none';window.videoBereit=true;}};</script></body></html>`;
+<script>window.klicks=0;document.getElementById('weiter').onclick=()=>{window.klicks++};</script></body></html>`;
+const freigegeben = `<!doctype html><html><head><title>Folge</title></head><body><script>window.videoBereit=true</script></body></html>`;
 
 app.whenReady().then(async () => {
   let abrufe = 0;
-  server = http.createServer((_req, res) => { abrufe++; res.setHeader("content-type", "text/html"); res.end(html); });
+  server = http.createServer((req, res) => {
+    abrufe++;
+    res.setHeader("content-type", "text/html");
+    res.end(String(req.headers.cookie || "").includes("cf_clearance=") ? freigegeben : html);
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${server.address().port}/episode`;
   fenster = new BrowserWindow({ show: false, width: 1040, height: 730 });
@@ -45,8 +50,14 @@ app.whenReady().then(async () => {
   await player.webContents.loadURL("data:text/html," + encodeURIComponent('<body style="background:#0d1627;color:#92b5e7;font:24px Arial;padding:45px">ELFIX · Bestehender Player</body>'));
   view = new WebContentsView({ webPreferences: { sandbox: true, backgroundThrottling: false } });
   view.setBounds({ x: 0, y: 0, width: 1040, height: 730 });
+  await view.webContents.session.cookies.remove(url, "cf_clearance");
   await view.webContents.loadURL(url);
   const js = (code) => view.webContents.executeJavaScript(code);
+  assert.equal((await js(verifizierungstor.zustandScript())).offen, true);
+  await js("document.getElementById('dialog').style.display='none';document.title='Folge';const klein=document.createElement('div');klein.id='kleinesWidget';klein.className='cf-turnstile';document.body.append(klein)");
+  assert.equal((await js(verifizierungstor.zustandScript())).offen, false,
+    "ein kleines eingebettetes Turnstile-Widget macht eine normale Seite nicht zur blockierenden Challenge");
+  await js("document.getElementById('kleinesWidget').remove();document.getElementById('dialog').style.display='block'");
   assert.equal((await js(verifizierungstor.zustandScript())).offen, true);
   await js(verifizierungstor.torScript(1, false));
   await pause(650);
@@ -60,7 +71,10 @@ app.whenReady().then(async () => {
   };
   const c = vm.createContext({ mainWindow: fenster, spielerView: player, verifizierungstor,
     menschentorFenster: null, MENSCHENTOR_FRIST_MS: 4000, VIEW_BACKGROUND_COLOR: "#070a10", setTimeout,
-    sendToast: () => {}, spielerLageSetzen: () => {}, torKlickZeit: new Map(), console });
+    sendToast: () => {}, spielerLageSetzen: () => {}, torKlickZeit: new Map(), console,
+    spielerMiniAktiv: false, cfLog: () => {},
+    cfCookieNamen: async (sitzung, ziel) => (await sitzung.cookies.get({ url: ziel })).map(cookie => cookie.name),
+    cfSitzungPersistieren: async (sitzung) => { await sitzung.cookies.flushStore(); return true; } });
   vm.runInContext(["isLiveView", "menschentorFensterPositionieren", "menschentorLoesenLassen"].map(funktion).join("\n"), c);
   const abbruch = new AbortController();
   const fertig = c.menschentorLoesenLassen({ id: "sto" }, view, { signal: abbruch.signal, voruebergehend: true });
@@ -81,16 +95,16 @@ app.whenReady().then(async () => {
   }
   await js("document.getElementById('bestaetigen').click()");
   assert.equal(await fertig, true);
-  assert.equal(await js("window.klicks"), 1, "genau ein Weiter-Klick nach .value-Aenderung");
   assert.equal(await js("window.videoBereit"), true);
   assert.equal((await js(verifizierungstor.zustandScript())).offen, false, "verstecktes Rest-Widget ist kein offenes Tor");
   assert.equal(await js("document.getElementById('__elfixVerifizierungStil') === null"), true);
   assert.equal(fenster.contentView.children.includes(view), false);
-  assert.equal(abrufe, 1, "keine neue Seite oder Sitzung zur Bestätigung");
-  assert.ok((await view.webContents.session.cookies.get({ url })).some((cookie) => cookie.name === "freigabe"));
-  console.log("OK Nur Verifizierungsfenster ueber Player, Token ohne DOM-Mutation, automatische Fortsetzung in derselben Sitzung");
+  assert.equal(abrufe, 2, "nur die von der echten Bestätigung ausgelöste Servernavigation");
+  assert.ok((await view.webContents.session.cookies.get({ url })).some((cookie) => cookie.name === "cf_clearance"));
+  console.log("OK Nur Verifizierungsfenster ueber Player, kein Fake-Klick, serverbestaetigte Fortsetzung in derselben Sitzung");
 
-  await js("document.getElementById('token').value='';document.getElementById('dialog').style.display='block'");
+  await view.webContents.session.cookies.remove(url, "cf_clearance");
+  await view.webContents.loadURL(url);
   const stop = new AbortController();
   const abgebrochen = c.menschentorLoesenLassen({ id: "sto" }, view, { signal: stop.signal });
   await warte(() => fenster.contentView.children.includes(view));
@@ -103,7 +117,7 @@ app.whenReady().then(async () => {
   assert.equal(await abgebrochen, false);
   assert.equal(fenster.contentView.children.includes(view), false);
   assert.equal(await js("document.getElementById('__elfixVerifizierungStil') === null"), true);
-  assert.equal(await js("window.klicks"), 1);
+  assert.equal(await js("window.klicks"), 0);
   console.log("OK Abbruch entfernt Fenster und CSS ohne neuen Weiter-Klick");
 
   // Eine andere Folge darf die bisherige Abfrage ersetzen, ohne eine alte
@@ -126,6 +140,7 @@ app.whenReady().then(async () => {
   assert.equal(await b, false);
   console.log("OK Wechsel der Abfrage stellt alte Ansicht wieder her und behaelt neue Auswahl");
 
+  await view.webContents.session.cookies.remove(url, "cf_clearance");
   await view.webContents.loadURL(url);
   await js("document.title='Just a moment...';document.getElementById('dialog').style.display='none';setTimeout(()=>{document.getElementById('dialog').style.display='block'},1100)");
   assert.equal((await js(verifizierungstor.zustandScript())).offen, true);
@@ -137,6 +152,7 @@ app.whenReady().then(async () => {
   assert.equal(await spaet, true);
   console.log("OK Spaet geladenes Widget wird trotz fertigem Hauptdokument abgewartet");
 
+  await view.webContents.session.cookies.remove(url, "cf_clearance");
   await view.webContents.loadURL(url);
   await js("const s=document.createElement('div');s.id='cf-please-wait';s.textContent='Bitte warten';document.body.prepend(s)");
   await js(verifizierungstor.fensterScript());

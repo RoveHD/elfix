@@ -1,6 +1,61 @@
 "use strict";
 
 const { Readable } = require("node:stream");
+const cfSession = require("./cf-session");
+
+const ANTWORT_PROBE_MAX = 64 * 1024;
+
+function erwarteterTyp(url) {
+  const adresse = String(url || "");
+  if (/\.m3u8(?:[?#]|$)/i.test(adresse)) return "hls";
+  if (/\.mpd(?:[?#]|$)/i.test(adresse)) return "dash";
+  if (/\.mp4(?:[?#]|$)/i.test(adresse)) return "mp4";
+  return "stream";
+}
+
+async function antwortProbe(response) {
+  if (!response?.body) return "";
+  const contentType = cfSession.header(response.headers, "content-type").toLowerCase();
+  const status = Number(response.status) || 0;
+  const expected = erwarteterTyp(response.url);
+  const textartig = !contentType || /(?:html|text|json|xml|mpegurl|dash)/.test(contentType)
+    || (contentType.includes("octet-stream") && ["hls", "dash"].includes(expected));
+  if (!textartig && status !== 403 && status !== 503
+    && cfSession.header(response.headers, "cf-mitigated").toLowerCase() !== "challenge") return "";
+  const laenge = Number(cfSession.header(response.headers, "content-length") || 0);
+  if (Number.isFinite(laenge) && laenge > 1024 * 1024) return "";
+
+  const reader = response.clone().body?.getReader?.();
+  if (!reader) return "";
+  const teile = [];
+  let gelesen = 0;
+  const bis = Date.now() + 1500;
+  try {
+    while (gelesen < ANTWORT_PROBE_MAX && Date.now() < bis) {
+      let uhr;
+      const restzeit = Math.max(1, bis - Date.now());
+      const ergebnis = await Promise.race([
+        reader.read(),
+        new Promise((resolve) => { uhr = setTimeout(() => resolve({ timeout: true }), restzeit); })
+      ]);
+      clearTimeout(uhr);
+      if (ergebnis?.timeout || ergebnis?.done) break;
+      const teil = ergebnis.value instanceof Uint8Array ? ergebnis.value : new Uint8Array(ergebnis.value || []);
+      if (!teil.length) continue;
+      const rest = ANTWORT_PROBE_MAX - gelesen;
+      teile.push(teil.subarray(0, rest));
+      gelesen += Math.min(rest, teil.length);
+    }
+  } catch {
+    return "";
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  const zusammen = new Uint8Array(gelesen);
+  let stelle = 0;
+  for (const teil of teile) { zusammen.set(teil, stelle); stelle += teil.length; }
+  return new TextDecoder("utf-8", { fatal: false }).decode(zusammen);
+}
 
 function httpAdresse(wert) {
   try {
@@ -10,7 +65,7 @@ function httpAdresse(wert) {
 }
 
 /** CORS nur fuer die lokale Playerseite, ohne die Browser-Sicherheitsgrenzen abzuschalten. */
-function medienHandler(laden) {
+function medienHandler(laden, optionen = {}) {
   return async request => {
     const origin = request.headers.get("origin");
     if (!httpAdresse(request.url) || (origin && origin !== "null")
@@ -27,6 +82,16 @@ function medienHandler(laden) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     try {
       const response = await laden(request);
+      const probeBody = await antwortProbe(response);
+      const expected = erwarteterTyp(request.url);
+      const zustand = cfSession.klassifizieren({ status: response.status, headers: response.headers, body: probeBody, expected });
+      const details = { url: request.url, finalUrl: response.url || request.url, status: response.status,
+        headers: response.headers, requestHeaders: request.headers, body: probeBody, expected, responseType: zustand.type };
+      if (zustand.challenge) {
+        Promise.resolve(optionen.onChallenge?.(details)).catch(() => {});
+      } else {
+        Promise.resolve(optionen.onResponse?.({ ...details, zustand })).catch(() => {});
+      }
       const headers = new Headers(response.headers);
       const location = headers.get("location");
       if (location && !httpAdresse(new URL(location, request.url).href)) return new Response(null, { status: 403 });
@@ -42,16 +107,26 @@ function medienHandler(laden) {
       }
       const body = request.method === "HEAD" || [204, 205, 304].includes(response.status) ? null : response.body;
       return new Response(body, { status: response.status, statusText: response.statusText, headers });
-    } catch {
+    } catch (error) {
+      Promise.resolve(optionen.onError?.(error)).catch(() => {});
       return new Response(null, { status: 502, headers: cors });
     }
   };
 }
 
-function medienAbruf(request, sitzung) {
+function medienAbruf(request, sitzung, zusaetzlicheKopfzeilen = {}) {
   const { net } = require("electron");
   return new Promise((resolve, reject) => {
     const headers = Object.fromEntries(request.headers);
+    // Die lokale Player-Partition darf ihre eigenen Cookies nicht in die
+    // Provider-Sitzung einschleusen. Electron setzt die gueltigen, zur
+    // Zieldomain passenden Cookies ausschliesslich aus transportSitzung.
+    delete headers.cookie;
+    delete headers.cookie2;
+    for (const name of ["user-agent", "referer", "origin"]) {
+      const wert = cfSession.header(zusaetzlicheKopfzeilen, name);
+      if (wert) headers[name] = wert;
+    }
     if (request.headers.has("range")) headers["accept-encoding"] = "identity";
     const abruf = net.request({ url: request.url, method: request.method, headers,
       session: sitzung, useSessionCookies: true, bypassCustomProtocolHandlers: true, redirect: "manual" });
@@ -97,12 +172,13 @@ function medienAbruf(request, sitzung) {
   });
 }
 
-function einrichten(sitzung) {
-  const handler = medienHandler(request => medienAbruf(request, sitzung));
+function einrichten(sitzung, transportSitzung = sitzung, optionen = {}) {
+  const handler = medienHandler(request => medienAbruf(request, transportSitzung,
+    typeof optionen.requestHeaders === "function" ? optionen.requestHeaders(request) : optionen.requestHeaders), optionen);
   sitzung.protocol.handle("https", handler);
   sitzung.protocol.handle("http", handler);
   sitzung.setPermissionRequestHandler((_inhalt, _recht, antwort) => antwort(false));
   sitzung.setPermissionCheckHandler(() => false);
 }
 
-module.exports = { medienHandler, medienAbruf, einrichten };
+module.exports = { medienHandler, medienAbruf, einrichten, antwortProbe, erwarteterTyp };
