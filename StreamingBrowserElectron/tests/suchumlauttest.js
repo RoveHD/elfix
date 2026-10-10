@@ -71,5 +71,49 @@ const varianteQuelle = abschnitt("async function searchProviderVariant(");
 pruefe("HTML-Suche geht ueber anbieterAbruf, nicht Nodes fetch",
   /anbieterAbruf\(searchUrl/.test(varianteQuelle) && !/await fetch\(/.test(varianteQuelle));
 
+// --- Der Titel aus dem Treffer, nicht aus der Adresse ----------------------
+//
+// S.to setzt je Treffer erst einen Verweis um das Bild und dann einen um den
+// Namen. Der erste brachte "Avatar Die Sieben Hafen" aus der Adresse.
+const fortschritt = require("../src/fortschritt");
+Object.assign(umgebung, {
+  Map, Object, JSON, decodeURIComponent,
+  absoluteHttpUrl: fortschritt.absoluteHttpUrl,
+  isAllowedResultHost: fortschritt.isAllowedResultHost,
+  titleFromPath: fortschritt.titleFromPath,
+  trefferbild: { bilderZuAdressen: () => new Map(), ausMarkup: () => "" },
+  isFilmoProvider: () => false
+});
+vm.runInContext(quelle.match(/const INLINE_TAGS = [^;]+;/)[0].replace("const ", "var "), umgebung);
+for (const name of ["extractSearchLinks", "bildTitel", "normalizeSearchResultTitle", "usableResultTitle",
+  "isNoiseTitle", "isNoiseUrl", "isProviderResultUrl", "readHtmlAttribute", "cleanAnchorText",
+  "decodeHtmlEntities", "appendRawContentLinks", "kernwoerter", "escapeRegExp", "titleCaseGenre"]) {
+  vm.runInContext(abschnitt(`function ${name}(`), umgebung);
+}
+const STO = `<div class="treffer">
+  <a href="/serie/avatar-die-sieben-hafen"><img src="/bild.jpg" alt=""></a>
+  <a href="/serie/avatar-die-sieben-hafen"><h3>Avatar - Die sieben Häfen</h3></a>
+  <a href="/serie/avatar-der-herr-der-elemente"><img src="/b2.jpg"></a>
+  <a href="/serie/avatar-der-herr-der-elemente"><h3>Avatar - Der Herr der Elemente</h3></a>
+</div>`;
+umgebung.STO = STO;
+const sto = r("extractSearchLinks(STO, 'http://186.2.175.5/suche?term=Avatar', 'Avatar', { name: 'S.to' })");
+pruefe("Der echte Name ersetzt den Namen aus der Adresse",
+  sto.length === 2 && sto[0].title === "Avatar - Die sieben Häfen" && sto[1].title === "Avatar - Der Herr der Elemente",
+  JSON.stringify(sto.map((t) => t.title)));
+const gefiltert = r("extractSearchLinks(STO, 'http://186.2.175.5/suche?term=Avatar', anfrage, { name: 'S.to' })");
+pruefe("Kernwortsuche: die Antwort auf 'Avatar' wird nach dem vollen Titel gefiltert",
+  gefiltert.length === 1 && gefiltert[0].title === "Avatar - Die sieben Häfen", JSON.stringify(gefiltert.map((t) => t.title)));
+const nurBild = r("extractSearchLinks('<a href=\"/serie/x-y\"><img alt=\"X & Y\"></a>', 'http://186.2.175.5/suche?term=x', 'x y', { name: 'S.to' })");
+pruefe("Ein Verweis nur mit Bild nimmt den Namen aus alt", nurBild[0]?.title === "X & Y", JSON.stringify(nurBild));
+pruefe("Kernwoerter: erstes und laengstes tragendes Wort",
+  JSON.stringify(r("kernwoerter(anfrage)")) === JSON.stringify(["Avatar", "sieben"]),
+  JSON.stringify(r("kernwoerter(anfrage)")));
+pruefe("Ein einzelnes Wort braucht keine Kernwortsuche", r("kernwoerter('Avatar')").length === 0);
+const sucheQuelle = abschnitt("async function searchProvider(");
+pruefe("Die Kernwortsuche kommt vor den uebrigen Schreibweisen (Zeitlimit)",
+  sucheQuelle.indexOf("kernwoerter(query)") < sucheQuelle.indexOf("variants.slice(3)")
+  && sucheQuelle.indexOf("kernwoerter(query)") < sucheQuelle.indexOf("fremdtitelListe("));
+
 console.log(`${pruefungen.filter(Boolean).length}/${pruefungen.length} bestanden`);
 process.exit(pruefungen.every(Boolean) ? 0 : 1);
