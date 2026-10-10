@@ -6569,18 +6569,36 @@ async function searchProvider(provider, query, signal, fremdtitel = null) {
   const variants = searchQueryVariants(query);
   const versucht = new Set();
   let fallback = null;
-  for (const variant of variants) {
-    signal?.throwIfAborted();
+  const frage = async (variant, filter = variant) => {
     versucht.add(variant);
-    const result = await searchProviderVariant(provider, variant, signal);
-    if (result.results.length) {
-      return {
-        ...result,
-        queryVariant: variant,
-        queryVariants: variants
-      };
-    }
+    signal?.throwIfAborted();
+    const result = await searchProviderVariant(provider, variant, signal, filter);
     if (!fallback) fallback = result;
+    return result.results.length ? result : null;
+  };
+
+  // Erst die naheliegenden Schreibweisen: der Begriff, ohne Akzente, ohne e.
+  const zuerst = variants.slice(0, 3);
+  for (const variant of zuerst) {
+    const result = await frage(variant);
+    if (result) return { ...result, queryVariant: variant, queryVariants: variants };
+  }
+
+  // Dann ein Kernwort. Die Suche des Anbieters scheitert an langen Titeln:
+  // S.to findet "Avatar - Die sieben Häfen" nicht, wohl aber "Avatar". Die
+  // Antwort wird hier nach dem vollen Titel gefiltert - nur die Frage an den
+  // Anbieter ist kuerzer. Das kommt vor den uebrigen Schreibweisen, denn die
+  // Suche hat ein Zeitlimit, und zwei Dutzend Abrufe davor fressen es auf.
+  for (const kern of kernwoerter(query)) {
+    if (versucht.has(kern)) continue;
+    const result = await frage(kern, query);
+    if (result) return { ...result, queryVariant: kern, queryVariants: variants };
+  }
+
+  for (const variant of variants.slice(3)) {
+    if (versucht.has(variant)) continue;
+    const result = await frage(variant);
+    if (result) return { ...result, queryVariant: variant, queryVariants: variants };
   }
 
   // Der Begriff selbst hat hier nichts gefunden. Vielleicht ist er der Titel in
@@ -6590,10 +6608,8 @@ async function searchProvider(provider, query, signal, fremdtitel = null) {
     signal?.throwIfAborted();
     for (const variant of searchQueryVariants(titel).slice(0, FREMDTITEL_VARIANTEN)) {
       if (versucht.has(variant)) continue;
-      versucht.add(variant);
-      signal?.throwIfAborted();
-      const result = await searchProviderVariant(provider, variant, signal);
-      if (result.results.length) {
+      const result = await frage(variant);
+      if (result) {
         return {
           ...result,
           queryVariant: variant,
@@ -6607,6 +6623,18 @@ async function searchProvider(provider, query, signal, fremdtitel = null) {
   }
 
   return fallback ? { ...fallback, queryVariants: variants } : providerSearchFailure(provider, providerModel.buildSearchUrl(provider, query), "Keine Suche");
+}
+
+// Hoechstens zwei kurze Anfragen: das erste und das laengste tragende Wort.
+// Artikel und Zahlen allein taugen nicht, sie liefern beliebige Listen.
+function kernwoerter(query) {
+  const fuell = new Set(["the", "a", "an", "der", "die", "das", "den", "dem", "ein", "eine", "and", "und", "of", "von"]);
+  const woerter = String(query || "").split(/[^\p{L}\p{N}]+/u)
+    .filter((wort) => wort.length >= 3 && !fuell.has(wort.toLowerCase()) && !/^\d+$/.test(wort));
+  if (woerter.length < 2) return [];
+  // Das zweite Wort ist das laengste der uebrigen - nie noch einmal das erste.
+  const laengstes = woerter.slice(1).sort((a, b) => b.length - a.length)[0];
+  return [woerter[0], laengstes];
 }
 
 // Hoechstens so viele Schreibweisen je fremdem Titel. Die erste ist der Titel
@@ -6671,11 +6699,13 @@ async function fremdtitelListe(fremdtitel, signal) {
   return Array.isArray(namen) ? namen : [];
 }
 
-async function searchProviderVariant(provider, query, signal) {
+// `filter`: wonach die Treffer geprueft werden. Ohne Angabe ist es die Frage
+// selbst; bei der Kernwortsuche der volle Titel.
+async function searchProviderVariant(provider, query, signal, filter = query) {
   const searchUrl = providerModel.buildSearchUrl(provider, query);
   try {
     signal?.throwIfAborted();
-    const ajaxResults = await searchProviderAjax(provider, query, searchUrl, signal).catch(error => {
+    const ajaxResults = await searchProviderAjax(provider, query, searchUrl, signal, filter).catch(error => {
       if (signal?.aborted || error?.name === "AbortError") throw error;
       return [];
     });
@@ -6705,7 +6735,7 @@ async function searchProviderVariant(provider, query, signal) {
       providerId: provider.id,
       providerName: provider.name,
       searchUrl,
-      results: extractSearchLinks(html, searchUrl, query, provider)
+      results: extractSearchLinks(html, searchUrl, filter, provider)
     };
   } catch (error) {
     if (signal?.aborted || error?.name === "AbortError") throw error;
@@ -6737,7 +6767,7 @@ function istCloudflareAbfrage(response, text) {
   return /challenge-platform|cf-turnstile|cf_chl_|just a moment|einen moment/i.test(String(text || "").slice(0, 20000));
 }
 
-async function searchProviderAjax(provider, query, searchUrl, signal) {
+async function searchProviderAjax(provider, query, searchUrl, signal, filter = query) {
   if (!usesAniWorldAjaxSearch(provider)) return [];
   const endpoint = new URL("/ajax/search", provider.startUrl).href;
   const response = await anbieterAbruf(endpoint, {
@@ -6757,7 +6787,7 @@ async function searchProviderAjax(provider, query, searchUrl, signal) {
   signal?.throwIfAborted();
   if (!Array.isArray(payload)) return [];
 
-  const tokens = queryTokens(query);
+  const tokens = queryTokens(filter);
   const seen = new Set();
   const results = [];
   for (const item of payload) {
@@ -15161,14 +15191,33 @@ function extractSearchLinks(html, baseUrl, query, provider) {
   // nimmt den mit dem Titel. Ohne diese Karte bliebe das Bild dort liegen.
   const bilder = trefferbild.bilderZuAdressen(html, baseUrl);
   const anchorPattern = /<a\b([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
+  // Treffer, deren Titel nur aus der Adresse stammt. S.to setzt je Treffer
+  // zwei Verweise: erst das Bild, dann den Namen. Der erste hat keinen Text,
+  // und aus "avatar-die-sieben-hafen" wurde "Avatar Die Sieben Hafen" - der
+  // zweite Verweis mit "Avatar - Die sieben Häfen" galt dann als schon
+  // gesehen. Er ersetzt jetzt den Notbehelf.
+  const ausAdresse = new Map();
   let match;
   while ((match = anchorPattern.exec(html)) && results.length < 16) {
     const href = absoluteHttpUrl(match[2], baseUrl);
-    if (!href || seen.has(href) || isNoiseUrl(href) || !isProviderResultUrl(href, baseUrl, provider)) continue;
+    if (!href || isNoiseUrl(href) || !isProviderResultUrl(href, baseUrl, provider)) continue;
+    if (seen.has(href) && !ausAdresse.has(href)) continue;
 
-    const rawTitle = cleanAnchorText(match[4]) || cleanAnchorText(`${readHtmlAttribute(match[1], "title")} ${readHtmlAttribute(match[3], "title")} ${readHtmlAttribute(match[1], "aria-label")} ${readHtmlAttribute(match[3], "aria-label")}`);
+    const rawTitle = cleanAnchorText(match[4]) || cleanAnchorText(`${readHtmlAttribute(match[1], "title")} ${readHtmlAttribute(match[3], "title")} ${readHtmlAttribute(match[1], "aria-label")} ${readHtmlAttribute(match[3], "aria-label")}`)
+      || bildTitel(match[4]);
     const cleaned = normalizeSearchResultTitle(rawTitle, provider, query) || { title: rawTitle, genre: "" };
-    const title = usableResultTitle(cleaned.title) || titleFromPath(href);
+    const echterTitel = usableResultTitle(cleaned.title);
+    if (ausAdresse.has(href)) {
+      // Nur ein echter Name darf den Notbehelf ersetzen, und nur ein passender.
+      if (echterTitel && !isNoiseTitle(echterTitel) && matchesQuery(echterTitel, href, tokens)) {
+        const treffer = ausAdresse.get(href);
+        treffer.title = echterTitel;
+        if (cleaned.genre) treffer.genre = cleaned.genre;
+        ausAdresse.delete(href);
+      }
+      continue;
+    }
+    const title = echterTitel || titleFromPath(href);
     if (!title || title.length < 2 || isNoiseTitle(title)) continue;
     if (!matchesQuery(title, href, tokens)) continue;
 
@@ -15176,10 +15225,19 @@ function extractSearchLinks(html, baseUrl, query, provider) {
     // Das Bild steht im Verweis selbst; nur wenn dort keines ist, zaehlt das
     // der Seite. Nachgeschlagen wird nichts - siehe src/trefferbild.js.
     const image = trefferbild.ausMarkup(match[0], baseUrl) || bilder.get(href) || "";
-    results.push({ title, genre: cleaned.genre || "", url: href, image });
+    const treffer = { title, genre: cleaned.genre || "", url: href, image };
+    results.push(treffer);
+    if (!echterTitel) ausAdresse.set(href, treffer);
   }
   appendRawContentLinks(results, seen, html, baseUrl, tokens, provider, bilder);
   return results;
+}
+
+/** Der Name aus dem Bild eines Verweises - alt oder title des ersten img. */
+function bildTitel(inhalt) {
+  const bild = String(inhalt || "").match(/<img\b[^>]*>/i);
+  if (!bild) return "";
+  return cleanAnchorText(readHtmlAttribute(bild[0], "alt") || readHtmlAttribute(bild[0], "title"));
 }
 
 function normalizeSearchResultTitle(title, provider, query) {

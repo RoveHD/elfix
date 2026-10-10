@@ -3,6 +3,15 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.58 — 10. Oktober 2026
+
+- Suche mit vollem Titel: Findet ein Anbieter den langen Titel nicht (S.to
+  bei „Avatar - Die sieben Häfen"), fragt ELFIX mit einem Kernwort wie
+  „Avatar" nach und filtert die Antwort selbst nach dem vollen Titel. Damit
+  findet auch ein Klick auf den Vorschlag den Titel.
+- Suchkarten zeigen den echten Namen („Avatar - Die sieben Häfen") statt des
+  Namens aus der Adresse („Avatar Die Sieben Hafen").
+
 ## 2.0.57 — 10. Oktober 2026
 
 - Suche findet Titel mit Umlauten: „Avatar - Die sieben Häfen" passt jetzt zur
