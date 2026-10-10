@@ -5551,10 +5551,24 @@ async function renderProviderResults(query, searchToken) {
     const empty = emptyText("Keine Direktsuche-Treffer erkannt. Direktsuchen unten öffnen.");
     globalSearchGrid.prepend(empty);
   }
-  document.querySelector("#searchCopy").textContent = total
+  document.querySelector("#searchCopy").textContent = (total
     ? `${total} Treffer aus deinen Anbietern.${fremdtitelHinweis(response, query)}`
-    : "Keine direkten Treffer erkannt. Du kannst weiterhin jede Direktsuche öffnen.";
+    : "Keine direkten Treffer erkannt. Du kannst weiterhin jede Direktsuche öffnen.")
+    + cloudflareHinweis(response);
   trefferbilderNachreichen(ohneBild, searchToken);
+}
+
+/**
+ * Anbieter, deren Suche an der Cloudflare-Abfrage hing. Ohne den Satz sah das
+ * aus wie "gibt es dort nicht" - dabei fehlt nur die Bestätigung.
+ */
+function cloudflareHinweis(response) {
+  const namen = (Array.isArray(response) ? response : [])
+    .filter((anbieter) => anbieter?.error === "cloudflare")
+    .map((anbieter) => String(anbieter.providerName || "").trim())
+    .filter(Boolean);
+  if (!namen.length) return "";
+  return ` ${namen.join(", ")} verlangt eine Cloudflare-Bestätigung: Anbieter einmal öffnen, „Bist du ein Mensch?" bestätigen und erneut suchen.`;
 }
 
 /**
