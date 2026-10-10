@@ -1248,8 +1248,9 @@ ipcMain.handle("search:all", async (event, query) => {
   try {
     return await searchCoordinator.request({
       key: JSON.stringify([value, selected]), owner,
-      execute: signal => searchAllProviders(value,
-        AbortSignal.any([signal, AbortSignal.timeout(12000)]), selected),
+      // Das Zeitlimit gilt je Anbieter (searchAllProviders); ein langsamer
+      // Anbieter verwirft so nicht mehr die Treffer der anderen.
+      execute: signal => searchAllProviders(value, signal, selected),
       isCacheable: results => Array.isArray(results) && results.every(result => !result?.error)
     });
   } catch (error) {
@@ -6553,17 +6554,36 @@ function buildNavigationUrl(input, provider) {
   return providerModel.buildSearchUrl(provider, value);
 }
 
-async function searchAllProviders(query, signal, selectedProviders = enabledProviders()) {
+async function searchAllProviders(query, signal, selectedProviders = enabledProviders(), zeitlimit = SUCHE_JE_ANBIETER_MS) {
   const value = String(query || "").trim();
   if (!value) return [];
 
   // Ein Uebersetzer fuer die ganze Suche: alle Anbieter teilen ihn sich, und er
   // fragt erst, wenn ihn der erste braucht.
   const fremdtitel = fremdtitelLauf(value);
-  const targets = selectedProviders.map((provider) => searchProvider(provider, value, signal, fremdtitel));
+  const targets = selectedProviders.map(async (provider) => {
+    const frist = AbortSignal.timeout(zeitlimit);
+    const eigen = signal ? AbortSignal.any([signal, frist]) : frist;
+    try {
+      return await searchProvider(provider, value, eigen, fremdtitel);
+    } catch (error) {
+      // Abgebrochen von aussen (neue Suche, Fenster zu): die ganze Suche endet.
+      if (signal?.aborted) throw error;
+      // Nur dieser Anbieter war zu langsam oder kaputt - die anderen zaehlen.
+      return providerSearchFailure(provider, providerModel.buildSearchUrl(provider, value),
+        frist.aborted ? "Zeitüberschreitung bei der Suche" : (error?.message || "Nicht erreichbar"));
+    }
+  });
 
   return Promise.all(targets);
 }
+
+// Jeder Anbieter hat sein eigenes Zeitlimit. Vorher galt eines fuer alle
+// zusammen: Google, YouTube und Filmo probierten bei einem langen Titel ihre
+// zwei Dutzend Schreibweisen durch, das Limit lief ab - und mit ihm ging der
+// laengst gefundene S.to-Treffer verloren. "Avatar" fand etwas, "Avatar - Die
+// sieben Häfen" nie.
+const SUCHE_JE_ANBIETER_MS = 12000;
 
 async function searchProvider(provider, query, signal, fremdtitel = null) {
   const variants = searchQueryVariants(query);
@@ -15321,13 +15341,17 @@ function searchQueryVariants(query) {
     if (normalized) variants.add(normalized);
   };
 
+  // "Titel (2026)" - so stehen Vorschlaege da. Der Anbieter kennt das Jahr
+  // im Suchfeld nicht; zuerst ohne fragen.
+  const ohneJahr = original.replace(/\s*[([]\s*(?:19|20)\d\d\s*[)\]]\s*$/, "").trim();
+  if (ohneJahr && ohneJahr !== original) add(ohneJahr);
   add(original);
-  const ascii = stripSearchAccents(original).toLowerCase();
+  const ascii = stripSearchAccents(ohneJahr || original).toLowerCase();
   add(ascii);
   // Die Adressen der Anbieter schreiben Umlaute ohne e: S.to fuehrt "Avatar -
   // Die sieben Häfen" als /serie/avatar-die-sieben-hafen. Ohne diese
   // Schreibweise fand die Suche den Titel nur, wenn die Seite selbst "ä" kannte.
-  const ohneUmlautE = String(original).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ß/g, "ss").toLowerCase();
+  const ohneUmlautE = String(ohneJahr || original).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ß/g, "ss").toLowerCase();
   add(ohneUmlautE);
   add(ohneUmlautE.replace(/[-_:]+/g, " "));
   add(ascii.replace(/[._:]+/g, " "));
@@ -15446,6 +15470,10 @@ function matchesQuery(title, href, tokens) {
   // "ae" und "a" gelten gleich: die Anfrage wird zu "haefen", die Adresse
   // des Anbieters heisst "hafen". Beide Seiten werden gleich gefaltet.
   tokens = tokens.map(umlautFalten);
+  // Ein Jahr ("Avatar - Die sieben Häfen (2026)") steht selten in Adresse
+  // oder Titel des Anbieters. Es zaehlt nur, wenn sonst nichts uebrig bleibt.
+  const ohneJahr = tokens.filter((token) => !/^(?:19|20)\d\d$/.test(token));
+  if (ohneJahr.length) tokens = ohneJahr;
   const pathText = umlautFalten(searchablePathText(href));
   if (tokens.every((token) => pathText.includes(token))) return true;
   const compactPath = pathText.replace(/\s+/g, "");

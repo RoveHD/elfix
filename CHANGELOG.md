@@ -3,6 +3,19 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.59 — 10. Oktober 2026
+
+- Suche: Jeder Anbieter hat jetzt sein eigenes Zeitlimit. Bisher galt eines
+  fuer alle zusammen - probierten Google, YouTube oder Filmo bei einem langen
+  Titel ihre Schreibweisen durch, lief es ab und der fertige S.to-Treffer
+  („Avatar - Die sieben Häfen") ging mit unter: „Keine Treffer".
+- Ein Jahr am Ende („… (2026)", wie beim Vorschlag) wird fuer die Anfrage und
+  den Abgleich weggelassen.
+- Die Suchzeile nennt Anbieter, die nicht rechtzeitig geantwortet haben.
+- Neue Pruefung gegen nachgebaute Anbieter mit zwoelf Schreibweisen des
+  Titels (Umlaute, ae, Gross/Klein, Doppelpunkt, Gedankenstrich, Jahr,
+  Teiltitel) plus langsamem, kaputtem und Cloudflare-Anbieter.
+
 ## 2.0.58 — 10. Oktober 2026
 
 - Suche mit vollem Titel: Findet ein Anbieter den langen Titel nicht (S.to
