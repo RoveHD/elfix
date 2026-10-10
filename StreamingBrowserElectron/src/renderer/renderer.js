@@ -5567,8 +5567,16 @@ function cloudflareHinweis(response) {
     .filter((anbieter) => anbieter?.error === "cloudflare")
     .map((anbieter) => String(anbieter.providerName || "").trim())
     .filter(Boolean);
-  if (!namen.length) return "";
-  return ` ${namen.join(", ")} verlangt eine Cloudflare-Bestätigung: Anbieter einmal öffnen, „Bist du ein Mensch?" bestätigen und erneut suchen.`;
+  const langsam = (Array.isArray(response) ? response : [])
+    .filter((anbieter) => /Zeitüberschreitung/.test(String(anbieter?.error || "")))
+    .map((anbieter) => String(anbieter.providerName || "").trim())
+    .filter(Boolean);
+  let text = "";
+  if (namen.length) {
+    text += ` ${namen.join(", ")} verlangt eine Cloudflare-Bestätigung: Anbieter einmal öffnen, „Bist du ein Mensch?" bestätigen und erneut suchen.`;
+  }
+  if (langsam.length) text += ` Keine Antwort in der Zeit: ${langsam.join(", ")}.`;
+  return text;
 }
 
 /**

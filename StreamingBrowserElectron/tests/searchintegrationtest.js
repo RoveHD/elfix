@@ -41,7 +41,7 @@ async function startServer() {
   const server = await startServer();
   try {
     const context = {
-      fetch, Headers, URL, URLSearchParams, Set, Array, String, Object, Promise, Number,
+      fetch, Headers, AbortSignal, URL, URLSearchParams, Set, Array, String, Object, Promise, Number,
       setTimeout, clearTimeout,
       // Die Uebersetzung fremdsprachiger Titel haengt am Metadaten-Tor des
       // Relays; hier geht es um den Weg durch Ajax, HTML und Varianten.
