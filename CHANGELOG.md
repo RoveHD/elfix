@@ -3,6 +3,16 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.57 — 10. Oktober 2026
+
+- Suche findet Titel mit Umlauten: „Avatar - Die sieben Häfen" passt jetzt zur
+  S.to-Adresse `avatar-die-sieben-hafen`. Die Suche fragt zusätzlich ohne „e"
+  nach und gleicht „ä/ae" mit „a" ab.
+- Die Anbietersuche läuft über die Sitzung der Anbieteransichten. Nach einer
+  bestätigten Cloudflare-Abfrage gilt deren Freigabe damit auch für die Suche.
+- Hängt eine Suche an der Cloudflare-Abfrage, sagt ELFIX das, statt „keine
+  Treffer" zu melden.
+
 ## 2.0.56 — 1. Oktober 2026
 
 - Sprachchat in Watchparty-Räumen auf Desktop und Android/TV: bewusstes

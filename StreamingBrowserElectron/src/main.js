@@ -6689,18 +6689,18 @@ async function searchProviderVariant(provider, query, signal) {
       };
     }
 
-    const response = await fetch(searchUrl, {
-      headers: {
-        "accept": "text/html,application/xhtml+xml",
-        "user-agent": "Mozilla/5.0 ELFIX/0.2"
-      },
+    const response = await anbieterAbruf(searchUrl, {
+      headers: { "accept": "text/html,application/xhtml+xml" },
       signal,
       redirect: "follow"
     });
+    const html = await response.text();
+    if (istCloudflareAbfrage(response, html)) {
+      return providerSearchFailure(provider, searchUrl, "cloudflare");
+    }
     if (!response.ok) {
       return providerSearchFailure(provider, searchUrl, `HTTP ${response.status}`);
     }
-    const html = await response.text();
     return {
       providerId: provider.id,
       providerName: provider.name,
@@ -6713,15 +6713,38 @@ async function searchProviderVariant(provider, query, signal) {
   }
 }
 
+/*
+ * Die Suche laeuft ueber die Sitzung der Anbieteransichten. Nur dort liegen
+ * die Cookies einer bestaetigten Cloudflare-Abfrage (cf_clearance), und sie
+ * gelten nur zusammen mit derselben Browserkennung. Nodes fetch hatte weder
+ * das eine noch das andere: S.to beantwortete die Suche dann mit der Abfrage
+ * statt mit Treffern, und die Oberflaeche zeigte "keine Treffer".
+ */
+function anbieterAbruf(url, aufbau = {}) {
+  const sitzung = typeof browserSession !== "undefined" ? browserSession : null;
+  const headers = new Headers(aufbau.headers || {});
+  if (sitzung) headers.set("user-agent", sitzung.getUserAgent());
+  else if (!headers.has("user-agent")) headers.set("user-agent", "Mozilla/5.0 ELFIX/0.2");
+  const optionen = { ...aufbau, headers };
+  return sitzung ? sitzung.fetch(url, { ...optionen, credentials: "include" }) : fetch(url, optionen);
+}
+
+/** Cloudflare antwortet mit einer Abfrageseite statt mit dem Inhalt. */
+function istCloudflareAbfrage(response, text) {
+  const mitigiert = String(response?.headers?.get?.("cf-mitigated") || "").toLowerCase() === "challenge";
+  if (mitigiert) return true;
+  if (![403, 429, 503].includes(Number(response?.status))) return false;
+  return /challenge-platform|cf-turnstile|cf_chl_|just a moment|einen moment/i.test(String(text || "").slice(0, 20000));
+}
+
 async function searchProviderAjax(provider, query, searchUrl, signal) {
   if (!usesAniWorldAjaxSearch(provider)) return [];
   const endpoint = new URL("/ajax/search", provider.startUrl).href;
-  const response = await fetch(endpoint, {
+  const response = await anbieterAbruf(endpoint, {
     method: "POST",
     headers: {
       "accept": "application/json,text/javascript,*/*",
       "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "user-agent": "Mozilla/5.0 ELFIX/0.2",
       "x-requested-with": "XMLHttpRequest",
       "referer": searchUrl
     },
@@ -15243,6 +15266,12 @@ function searchQueryVariants(query) {
   add(original);
   const ascii = stripSearchAccents(original).toLowerCase();
   add(ascii);
+  // Die Adressen der Anbieter schreiben Umlaute ohne e: S.to fuehrt "Avatar -
+  // Die sieben Häfen" als /serie/avatar-die-sieben-hafen. Ohne diese
+  // Schreibweise fand die Suche den Titel nur, wenn die Seite selbst "ä" kannte.
+  const ohneUmlautE = String(original).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ß/g, "ss").toLowerCase();
+  add(ohneUmlautE);
+  add(ohneUmlautE.replace(/[-_:]+/g, " "));
   add(ascii.replace(/[._:]+/g, " "));
   add(ascii.replace(/[-_]+/g, " "));
   add(ascii.replace(/\s+/g, "-"));
@@ -15356,15 +15385,22 @@ function queryTokens(query) {
 
 function matchesQuery(title, href, tokens) {
   if (!tokens.length) return true;
-  const pathText = searchablePathText(href);
+  // "ae" und "a" gelten gleich: die Anfrage wird zu "haefen", die Adresse
+  // des Anbieters heisst "hafen". Beide Seiten werden gleich gefaltet.
+  tokens = tokens.map(umlautFalten);
+  const pathText = umlautFalten(searchablePathText(href));
   if (tokens.every((token) => pathText.includes(token))) return true;
   const compactPath = pathText.replace(/\s+/g, "");
   const compactQuery = tokens.join("");
   if (compactQuery && compactPath.includes(compactQuery)) return true;
 
-  const titleText = normalizeSearchText(title);
+  const titleText = umlautFalten(normalizeSearchText(title));
   const queryPhrase = tokens.join(" ");
   return (titleText === queryPhrase || titleText.replace(/\s+/g, "").includes(compactQuery)) && contentPathLooksPlayable(href);
+}
+
+function umlautFalten(text) {
+  return String(text || "").replace(/ae/g, "a").replace(/oe/g, "o").replace(/ue/g, "u").replace(/ss/g, "s");
 }
 
 function decodeURIComponentSafe(value) {
