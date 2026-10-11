@@ -170,6 +170,27 @@
     controls.append(roomLabel);
     heading.append(title, controls);
 
+    // Ganz einklappbar: eingeklappt bleibt nur die Kopfzeile. Wer sie
+    // aufklappt, findet sie beim naechsten Start wieder offen.
+    const EINGEKLAPPT = "elfix-raumqueue-eingeklappt";
+    const body = document.createElement("div"); body.className = "raumqueue-body";
+    const klappe = document.createElement("button"); klappe.type = "button"; klappe.className = "raumqueue-klappe";
+    // Standardmaessig eingeklappt; offen nur, wenn man sie aufgeklappt hat.
+    let eingeklappt = true;
+    try { eingeklappt = window.localStorage?.getItem(EINGEKLAPPT) !== "false"; } catch { /* ohne Speicher eingeklappt */ }
+    const klappen = (wert) => {
+      eingeklappt = wert;
+      body.hidden = wert;
+      root.classList.toggle("ist-eingeklappt", wert);
+      klappe.textContent = wert ? "Ausklappen ▾" : "Einklappen ▴";
+      klappe.setAttribute("aria-expanded", wert ? "false" : "true");
+      try { window.localStorage?.setItem(EINGEKLAPPT, String(wert)); } catch { /* nur fuer diese Sitzung */ }
+    };
+    klappe.addEventListener("click", () => klappen(!eingeklappt));
+    title.className = "raumqueue-titel";
+    title.addEventListener("click", () => klappen(!eingeklappt));
+    controls.append(klappe);
+
     const tabs = document.createElement("div"); tabs.className = "raumqueue-tabs"; tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Warteschlangenmodus");
     const tabButtons = {};
     for (const [key, label] of Object.entries(MODES)) {
@@ -322,7 +343,9 @@
     const wheelResult = document.createElement("p"); wheelResult.className = "rad-ergebnis"; wheelResult.setAttribute("role", "status");
     wheelBox.append(wheelSummary, wheelCopy, wheelStage, wheelActions, wheelResult);
 
-    root.replaceChildren(heading, tabs, composer, status, wheelBox, list);
+    body.replaceChildren(tabs, composer, status, wheelBox, list);
+    root.replaceChildren(heading, body);
+    klappen(eingeklappt);
 
     function rooms() {
       const values = typeof options.rooms === "function" ? options.rooms() : [];
