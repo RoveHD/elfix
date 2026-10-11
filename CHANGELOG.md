@@ -3,6 +3,12 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.60 — 11. Oktober 2026
+
+- Warteschlange im Raum ist ganz einklappbar (Knopf „Einklappen/Ausklappen"
+  oder Klick auf den Titel) und startet standardmaessig eingeklappt. Wer sie
+  aufklappt, findet sie beim naechsten Start wieder offen.
+
 ## 2.0.59 — 10. Oktober 2026
 
 - Suche: Jeder Anbieter hat jetzt sein eigenes Zeitlimit. Bisher galt eines

@@ -6465,6 +6465,12 @@ input[type="color"] {
 
 .raumqueue-head { justify-content: space-between; align-items: start; }
 .raumqueue-head h2 { margin: 2px 0 4px; }
+.raumqueue-titel { cursor: pointer; }
+.raumqueue-controls { align-items: end; }
+.raumqueue-klappe { min-height: 40px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: 999px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.raumqueue-klappe:hover { color: white; border-color: var(--accent); }
+.raumqueue.ist-eingeklappt .raumqueue-copy { display: none; }
+.raumqueue-body[hidden] { display: none; }
 .raumqueue-copy, .raumqueue-status { margin: 0; color: var(--muted); }
 .raumqueue-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
 .raumqueue-controls select, .raumqueue-composer select, .raumqueue-composer input { min-height: 40px; }
