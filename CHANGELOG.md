@@ -3,6 +3,15 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.61 — 11. Oktober 2026
+
+- Rechtsklick auf einen Anbieter → „Cloudflare bestätigen": ELFIX laedt dessen
+  Suchseite in der Anbietersitzung. Fragt Cloudflare nach, erscheint kurz nur
+  das Bestaetigungsfenster und verschwindet wieder, sobald der Anbieter die
+  Bestaetigung angenommen hat. Eine offene Suche laeuft danach von selbst
+  noch einmal. Braucht der Anbieter gerade keine Bestaetigung, zeigt sich nichts.
+- Der Suchhinweis bei Cloudflare nennt diesen Weg.
+
 ## 2.0.60 — 11. Oktober 2026
 
 - Warteschlange im Raum ist ganz einklappbar (Knopf „Einklappen/Ausklappen"

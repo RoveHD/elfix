@@ -123,6 +123,7 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   newFernCode: () => ipcRenderer.invoke("fern:neuer-code"),
   onFernState: (callback) => ipcRenderer.on("fern:state", (_event, state) => callback(state)),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
+  providerCloudflare: (providerId) => ipcRenderer.invoke("provider:cloudflare", providerId),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   getVideoUpscalingStatus: () => ipcRenderer.invoke("settings:video-upscaling-status"),
   openRtxVideoLicense: () => ipcRenderer.invoke("settings:rtx-license-open"),

@@ -2035,6 +2035,8 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
     const menue = Menu.buildFromTemplate([
       { label: titel || "Anbieter", enabled: false },
       { type: "separator" },
+      { label: "Cloudflare bestätigen", click: () => { gewaehlt = "cloudflare"; } },
+      { type: "separator" },
       { label: "Bearbeiten", click: () => { gewaehlt = "edit"; } },
       { label: "Neuer Anbieter", click: () => { gewaehlt = "new"; } }
     ]);
@@ -2043,6 +2045,38 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
       : {};
     menue.popup({ window: mainWindow, ...stelle, callback: () => fertig(gewaehlt) });
   });
+});
+
+// Die Cloudflare-Abfrage eines Anbieters von Hand beantworten.
+//
+// Die Suche laeuft ohne sichtbare Seite und kann ein "Bist du ein Mensch?"
+// nicht beantworten - S.to meldet dann nur "cloudflare". Hier wird die
+// Suchseite des Anbieters in seiner eigenen Sitzung geladen. Fragt sie nach,
+// erscheint kurz nur das Bestaetigungsfenster und verschwindet wieder, sobald
+// der Anbieter die Bestaetigung angenommen hat; das Cookie gilt danach auch
+// fuer die Suche. Antwortet der Anbieter schon frei, zeigt sich nichts.
+//
+// Ergebnis: "frei" (nichts zu tun), "bestaetigt" oder "fehlgeschlagen".
+ipcMain.handle("provider:cloudflare", async (_event, providerId) => {
+  const provider = enabledProviders().find((eintrag) => eintrag.id === String(providerId || ""));
+  if (!provider) return "fehlgeschlagen";
+  const adresse = providerModel.buildSearchUrl(provider, "avatar");
+  const url = providerModel.isHttpUrl(adresse) ? adresse : provider.startUrl;
+  if (!providerModel.isHttpUrl(url)) return "fehlgeschlagen";
+  const frei = async () => {
+    try {
+      const antwort = await anbieterAbruf(url, { headers: { accept: "text/html,application/xhtml+xml" },
+        redirect: "follow", signal: AbortSignal.timeout(12000) });
+      const text = await antwort.text();
+      return antwort.ok && !istCloudflareAbfrage(antwort, text);
+    } catch {
+      return false;
+    }
+  };
+  if (await frei()) return "frei";
+  const ok = await cfAdresseVerifizieren(provider, { url, referer: provider.startUrl, serverPruefung: frei })
+    .catch(() => false);
+  return ok ? "bestaetigt" : "fehlgeschlagen";
 });
 
 ipcMain.handle("provider:save-all", (_event, nextProviders) => {

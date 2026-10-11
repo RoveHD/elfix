@@ -2948,8 +2948,24 @@ async function anbieterMenue(provider, karte) {
   const anker = karte?.getBoundingClientRect();
   const punkt = anker ? { x: anker.left, y: anker.bottom + 4 } : null;
   const wahl = await api.providerContextMenu?.(provider.name, punkt).catch(() => "");
-  if (wahl === "edit") await anbieterBearbeiten(provider);
+  if (wahl === "cloudflare") await anbieterCloudflare(provider);
+  else if (wahl === "edit") await anbieterBearbeiten(provider);
   else if (wahl === "new") await anbieterHinzufuegen();
+}
+
+// Die Cloudflare-Abfrage von Hand beantworten. Das Fenster zeigt der
+// Hauptprozess - nur solange gefragt wird. Danach laeuft eine offene Suche
+// gleich noch einmal, damit der Anbieter dort auch auftaucht.
+async function anbieterCloudflare(provider) {
+  showToast(`${provider.name} wird geprüft …`);
+  const ergebnis = await api.providerCloudflare?.(provider.id).catch(() => "fehlgeschlagen");
+  if (ergebnis === "frei") showToast(`${provider.name} braucht gerade keine Bestätigung`);
+  else if (ergebnis === "bestaetigt") showToast(`${provider.name} bestätigt`);
+  else {
+    showToast(`${provider.name} konnte nicht bestätigt werden`);
+    return;
+  }
+  if (currentRoute === "search" && activeSearchQuery) showGlobalSearch(activeSearchQuery).catch(() => {});
 }
 
 // Direkt in die Einstellungen dieses einen Anbieters: Seite "Anbieter", er
@@ -5573,7 +5589,7 @@ function cloudflareHinweis(response) {
     .filter(Boolean);
   let text = "";
   if (namen.length) {
-    text += ` ${namen.join(", ")} verlangt eine Cloudflare-Bestätigung: Anbieter einmal öffnen, „Bist du ein Mensch?" bestätigen und erneut suchen.`;
+    text += ` ${namen.join(", ")} verlangt eine Cloudflare-Bestätigung: Rechtsklick auf den Anbieter → „Cloudflare bestätigen".`;
   }
   if (langsam.length) text += ` Keine Antwort in der Zeit: ${langsam.join(", ")}.`;
   return text;
