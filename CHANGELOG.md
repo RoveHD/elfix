@@ -3,6 +3,13 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.65 — 12. Oktober 2026
+
+- Android: Anime4K laeuft jetzt auch bei Animation ausserhalb von AniWorld,
+  etwa „Avatar - Die sieben Häfen" auf S.to. Der Player liest dafuer die
+  Genre-Links der Folgenseite (Anime, Animation, Zeichentrick) - dieselben
+  Genres wie am Rechner.
+
 ## 2.0.64 — 12. Oktober 2026
 
 - Android: Ein privater Eintrag aus „Weiterschauen" oeffnet jetzt privat, auch

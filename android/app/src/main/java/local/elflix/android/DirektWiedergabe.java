@@ -104,6 +104,8 @@ final class DirektWiedergabe {
     private int offeneStaffel = -1;
     private JSONObject naechste;
     private JSONObject meta = new JSONObject();
+    /** Nennt die Folgenseite Animation als Genre? Dann laeuft Anime4K wie bei AniWorld. */
+    private boolean animationSeite;
     private final double start;
     /**
      * Diese Adresse ist eine Serienseite - es wird gewaehlt, nicht gespielt.
@@ -449,6 +451,11 @@ final class DirektWiedergabe {
                 for (String feld : new String[] { "currentTime", "duration", "playedSeconds", "ended", "position", "progress" }) meta.remove(feld);
             });
         });
+        // Vor der Hosterkette gelesen: evaluateJavascript laeuft der Reihe
+        // nach, die Antwort steht also, bevor eine Quelle uebernommen wird.
+        view.evaluateJavascript(Anime4k.ANIMATION_SKRIPT, wert -> {
+            if (aktuell(id) && seite == view) animationSeite = "true".equals(wert);
+        });
         // Die Hosterkette bleibt auf einer Serienseite aus: dort gibt es keine.
         if (auswahl) return;
         skript("direktlinks.hosterlinkScript", id, script -> {
@@ -764,7 +771,7 @@ final class DirektWiedergabe {
         // Woher das Bild kommt, steht im Kopf des Players - wie am Rechner.
         spieler.quelleBenannt(link.optString("hoster", ""),
             link.optString("spracheRoh", link.optString("sprache", "")));
-        spieler.inhaltArt(adresse);
+        spieler.inhaltArt(adresse, animationSeite);
         letzteQuelleUrl = url;
         letzteQuelleTyp = quelle.optString("typ");
         letzteQuelleKopf = new HashMap<>(kopf);
