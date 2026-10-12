@@ -288,4 +288,23 @@ public class MitschauenTest {
         assertEquals("aniworld.to/anime/stream/naruto", Mitschauen.serienTeil(BASIS + "/"));
         assertEquals("", Mitschauen.serienTeil(null));
     }
+
+    /**
+     * Gemeldet vom Handy: der private Weiterschauen-Eintrag oeffnete immer die
+     * Watchparty, wenn derselbe Titel in einer Runde lief. Privat geoeffnet
+     * gilt fuer die ganze Serie - jede Folge, egal wie die Adresse geschrieben
+     * ist -, und fuer nichts sonst.
+     */
+    @Test
+    public void privatGeoeffneteSerieLaeuftNichtLiveMit() {
+        String privat = Mitschauen.serienTeil(BASIS + "/staffel-2/episode-7");
+        assertTrue(Mitschauen.privatGilt(privat, BASIS + "/staffel-2/episode-7"));
+        assertTrue("auch die naechste Folge", Mitschauen.privatGilt(privat, BASIS + "/staffel-2/episode-8"));
+        assertTrue("und andere Schreibweisen", Mitschauen.privatGilt(privat,
+            "http://www.aniworld.to/anime/stream/Naruto/staffel-3/episode-1?x=1"));
+        assertFalse("eine andere Serie bleibt gemeinsam",
+            Mitschauen.privatGilt(privat, "https://aniworld.to/anime/stream/naruto-shippuden/staffel-1/episode-1"));
+        assertFalse("ohne privaten Start gilt nichts", Mitschauen.privatGilt("", BASIS + "/staffel-1/episode-1"));
+        assertFalse(Mitschauen.privatGilt(privat, null));
+    }
 }

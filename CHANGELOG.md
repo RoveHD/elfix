@@ -3,6 +3,13 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.64 — 12. Oktober 2026
+
+- Android: Ein privater Eintrag aus „Weiterschauen" oeffnet jetzt privat, auch
+  wenn derselbe Titel gerade in einer Watchparty laeuft. Bisher landete man
+  immer in der Runde. „Gemeinsam weiterschauen" und „Live beitreten" im Player
+  fuehren weiter in die Watchparty.
+
 ## 2.0.63 — 12. Oktober 2026
 
 - Sprachsuche: Mikrofon neben dem Suchfeld am Desktop, auf dem Handy und auf
