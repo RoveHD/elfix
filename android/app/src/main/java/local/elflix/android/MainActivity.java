@@ -9753,6 +9753,13 @@ public class MainActivity extends Activity {
         double stelle = eintrag == null ? 0 : eintrag.currentTime();
         // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
         if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+        // Privat oder gemeinsam entscheidet der Eintrag, nicht der Titel: ein
+        // privater Eintrag oeffnet privat, auch wenn dieselbe Serie in einer
+        // Runde laeuft.
+        if (mitschauen != null) {
+            if (eintrag == null || eintrag.watchpartyRaum().isEmpty()) mitschauen.privatOeffnen(url);
+            else mitschauen.gemeinsamOeffnen(url);
+        }
         if (eintrag != null) activeFavoriteId = eintrag.id();
         startBegleiten(provider, url, startTitelFuer(titel, url), stelle);
         armAutoStart(url, stelle);
@@ -11178,6 +11185,13 @@ public class MainActivity extends Activity {
         activeFavoriteId = favorite.id();
         // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
         if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+        // Privat oder gemeinsam entscheidet der Eintrag, nicht der Titel: ein
+        // privater Eintrag oeffnet privat, auch wenn dieselbe Serie in einer
+        // Runde laeuft.
+        if (mitschauen != null) {
+            if (favorite.watchpartyRaum().isEmpty()) mitschauen.privatOeffnen(favorite.url());
+            else mitschauen.gemeinsamOeffnen(favorite.url());
+        }
 
         // Eine Serie, die hier nur *steht* - auf der Watchlist, in der
         // Mediathek -, wird von hier aus zum ersten Mal angefangen. Genau
