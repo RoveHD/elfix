@@ -64,7 +64,8 @@
       this.iceServers = [];
       this.data = { joined: false, connecting: false, muted: true, pushToTalk: false,
         speaking: false, selfId: "", error: "", available: Boolean(this.RTC),
-        inputDeviceId: inputDevice(options.inputDeviceId) ? options.inputDeviceId : "" };
+        inputDeviceId: inputDevice(options.inputDeviceId) ? options.inputDeviceId : "",
+        noiseSuppression: options.noiseSuppression !== false };
     }
 
     get state() {
@@ -301,7 +302,7 @@
       pending = (async () => {
         let stream;
         try {
-          const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+          const audio = { echoCancellation: true, noiseSuppression: this.data.noiseSuppression, autoGainControl: true };
           if (this.data.inputDeviceId) audio.deviceId = { exact: this.data.inputDeviceId };
           stream = await this.media.getUserMedia({ audio, video: false });
           if (!this.data.joined || generation !== this.generation || request !== this.micGeneration || !this.desiredMic) {
@@ -371,6 +372,17 @@
       this.data.muted = true;
       if (wasCapturing) this.data.error = "Mikrofon wurde gewechselt. Zum Sprechen erneut einschalten";
       if (this.data.joined && !this.transmit({ type: "voicestate", muted: true })) this.transportFailed();
+      this.emit();
+      return true;
+    }
+
+    setNoiseSuppression(enabled) {
+      if (this.closed || typeof enabled !== "boolean") return false;
+      if (this.data.noiseSuppression === enabled) return true;
+      this.data.noiseSuppression = enabled;
+      // Chromium kann diesen Audiofilter nicht zuverlaessig per
+      // applyConstraints aendern. Der Host startet aktive Aufnahme neu.
+      if (this.capture || this.desiredMic) this.setMuted(true);
       this.emit();
       return true;
     }

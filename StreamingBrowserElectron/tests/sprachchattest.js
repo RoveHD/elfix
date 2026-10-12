@@ -86,6 +86,43 @@ function welcome(engine, selfId = A, peers = [{ id: A, name: "Ich", muted: true 
 
 async function main() {
   {
+    const requests = [];
+    const f = setup({ mediaDevices: { getUserMedia: async (value) => { requests.push(value); return new Stream(); } } });
+    check("Geräuschunterdrückung ist standardmäßig aktiv ohne Aufnahme", f.engine.state.noiseSuppression && requests.length === 0);
+    await f.engine.setNoiseSuppression(false);
+    f.engine.join(); welcome(f.engine); await tick(); await f.engine.setMuted(false);
+    const track = f.engine.capture.getAudioTracks()[0];
+    check("Gespeichertes Aus wird beim Mikrofonstart übernommen", requests[0].audio.noiseSuppression === false);
+    await f.engine.setNoiseSuppression(true);
+    check("Filterwechsel gibt alten Track frei und behält die Verbindung", track.stopped && f.engine.state.muted && f.engine.state.joined && !f.engine.members.get(B).pc.closed);
+    await f.engine.setMuted(false);
+    check("Neue Aufnahme verwendet Filter samt Echo-Unterdrückung", requests.length === 2 && requests[1].audio.noiseSuppression && requests[1].audio.echoCancellation && requests[1].audio.autoGainControl);
+    check("Ungültige Geräusch-Einstellung wird abgewiesen", !await f.engine.setNoiseSuppression("false"));
+    f.engine.close();
+    check("Geschlossener Kern akzeptiert keine Geräusch-Änderung", !await f.engine.setNoiseSuppression(false));
+  }
+  {
+    const permission = deferred();
+    const f = setup({ mediaDevices: { getUserMedia: () => permission.promise } });
+    f.engine.join(); welcome(f.engine);
+    const start = f.engine.setMuted(false);
+    await f.engine.setNoiseSuppression(false);
+    const stream = new Stream(); permission.resolve(stream); await start;
+    check("Änderung während Mikrofonfreigabe verwirft alten Track", stream.getAudioTracks()[0].stopped && f.engine.state.muted && !f.mic.includes(true));
+    f.engine.close();
+  }
+  {
+    const permission = deferred();
+    const f = setup({ mediaDevices: { getUserMedia: () => permission.promise } });
+    f.engine.join(); welcome(f.engine);
+    const start = f.engine.setMuted(false);
+    await f.engine.setNoiseSuppression(false);
+    const stream = new Stream();
+    f.engine.leave(); permission.resolve(stream); await start;
+    check("Verlassen während Audio-Einstellung startet keine späte Aufnahme", stream.getAudioTracks()[0].stopped && !f.mic.includes(true));
+    f.engine.close();
+  }
+  {
     const requested = [];
     const f = setup({ inputDeviceId: "usb-microphone", mediaDevices: { getUserMedia: async (constraints) => {
       requested.push(constraints); return new Stream();

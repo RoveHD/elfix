@@ -7480,10 +7480,10 @@ const watchparty = new WatchpartyRaeume({
 function sprachchatOeffnen(raum, settingsOnly = false) {
   if (!sprachchatFenster) sprachchatFenster = require("./sprachchat-fenster").erstellen({
     BrowserWindow, session, ipcMain: nativeIpcMain, watchparty, parent: () => mainWindow,
-    preferences: () => ({ inputDeviceId: settings.watchparty?.microphoneId || "" }),
-    savePreferences: ({ inputDeviceId }) => {
+    preferences: () => ({ inputDeviceId: settings.watchparty?.microphoneId || "", noiseSuppression: settings.watchparty?.noiseSuppression !== false }),
+    savePreferences: ({ inputDeviceId, noiseSuppression }) => {
       const previous = settings.watchparty;
-      settings.watchparty = { ...settings.watchparty, microphoneId: inputDeviceId };
+      settings.watchparty = { ...settings.watchparty, microphoneId: inputDeviceId, noiseSuppression };
       try { saveSettings(); }
       catch (error) { settings.watchparty = previous; throw error; }
       return true;
@@ -10505,20 +10505,61 @@ let spielerView = null;
 let spielerLauf = null;
 let spielerUpscalingStatus = null;
 let spielerRtx = null;
-// "auto": Anime4K fuer Anime, RTX Video fuer Serien und Filme. Anime erkennt
-// dieselbe Adressregel wie die Filler-Liste (/anime/stream/...). Ohne
-// akzeptierte NVIDIA-Lizenz laufen Serien und Filme dann mit FSR 1.
+// Anime4K auch fuer Animation auf Serien-/Film-Anbietern. Dieselben lokal
+// zugeordneten Genres wie auf der Titelkarte; kein Netzabruf beim Start.
+function spielerUpscalingAnimation() {
+  if (!spielerLauf) return false;
+  if (typeof spielerLauf.upscalingAnimation === "boolean") return spielerLauf.upscalingAnimation;
+  let animation = false;
+  try { animation = /^\/anime\/stream\//i.test(new URL(spielerLauf.url || "").pathname); } catch { /* keine Folge */ }
+  if (!animation) {
+    try {
+      const titel = cleanBaseMediaTitle(spielerLauf.titel || "", spielerLauf.url);
+      const genres = lauf.titelAnzeige(titel, spielerLauf.url).genres;
+      animation = genres.some(genre => /^(?:anime|animation|animationsfilm|animationsserie|zeichentrick|zeichentrickfilm|zeichentrickserie)$/i.test(String(genre).trim()));
+    } catch { /* optionale Metadaten duerfen den Playerstart nicht verhindern */ }
+  }
+  // Der RTX-Framepfad fragt die Methode ebenfalls ab. Dort nicht fuer jedes
+  // Bild erneut Titel und Metadaten aufloesen.
+  spielerLauf.upscalingAnimation = animation;
+  return animation;
+}
 function spielerUpscalingVerfahren() {
   const methode = settings.playback?.videoUpscalingMethod;
   if (methode !== "auto") return methode === "rtx" || methode === "anime4k" ? methode : "fsr1";
-  let anime = false;
-  try { anime = /^\/anime\/stream\//i.test(new URL(spielerLauf?.url || "").pathname); } catch { /* keine Folge */ }
-  if (anime) return "anime4k";
+  if (spielerUpscalingAnimation()) return "anime4k";
   return settings.playback?.rtxVideoLicense === "2024-02-23" ? "rtx" : "fsr1";
 }
 function spielerUpscalingAktiv() {
   return settings.playback?.videoUpscaling === true && (spielerUpscalingVerfahren() !== "rtx"
     || settings.playback?.rtxVideoLicense === "2024-02-23");
+}
+function spielerUpscalingMetadatenAktualisieren() {
+  const aktuell = spielerLauf;
+  if (!aktuell) return;
+  if (settings.playback?.videoUpscalingMethod !== "auto") {
+    delete aktuell.upscalingAnimation;
+    return;
+  }
+  if (aktuell.upscalingPruefung) return;
+  aktuell.upscalingPruefung = true;
+  // Cache-Ladevorgaenge koennen selbst speichern. Erst nach ihrer Rueckkehr
+  // nachsehen und mehrere Aktualisierungen in derselben Runde zusammenfassen.
+  queueMicrotask(() => {
+    delete aktuell.upscalingPruefung;
+    if (spielerLauf !== aktuell) return;
+    const vorher = aktuell.upscalingAnimation;
+    delete aktuell.upscalingAnimation;
+    if (settings.playback?.videoUpscalingMethod !== "auto" || vorher === undefined || !settings.playback?.videoUpscaling
+      || !spielerView || spielerView.webContents.isDestroyed()) return;
+    if (vorher === spielerUpscalingAnimation()) return;
+    spielerRtxStop();
+    spielerUpscalingStatus = null;
+    // Nur das Bildverfahren wechseln, ohne Quelle, Position oder Pause anzufassen.
+    spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(),
+      spielerUpscalingVerfahren(), settings.playback.videoUpscalingResolution);
+    videoUpscalingStandSenden();
+  });
 }
 function spielerRtxStop() {
   const vorher = spielerRtx;
@@ -15000,6 +15041,7 @@ tasteCacheAblage = cacheSchreibaufschub.erstellen({
 
 function saveTasteCacheSoon() {
   tasteCacheAblage.planen();
+  spielerUpscalingMetadatenAktualisieren();
 }
 
 // --- Externe Metadaten --------------------------------------------------------
@@ -15175,6 +15217,7 @@ metadatenCacheAblage = cacheSchreibaufschub.erstellen({
 
 function metadatenSpeichernSoon() {
   metadatenCacheAblage.planen();
+  spielerUpscalingMetadatenAktualisieren();
 }
 
 function optionaleCachesNachMiniPlanen() {
@@ -16644,6 +16687,7 @@ function normalizeSettings(raw) {
       ]).slice(0, WATCHPARTY_MAX_RAEUME),
       deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
       microphoneId: String(raw?.watchparty?.microphoneId ?? settings?.watchparty?.microphoneId ?? "").slice(0, 512),
+      noiseSuppression: (raw?.watchparty?.noiseSuppression ?? settings?.watchparty?.noiseSuppression) !== false,
       // In welchem Raum die YouTube-Watchparty laeuft. Leer heisst: aus. Es ist
       // bewusst genau einer - es gibt einen YouTube-Player, und zwei Runden
       // gleichzeitig hiessen zwei Videos gleichzeitig.

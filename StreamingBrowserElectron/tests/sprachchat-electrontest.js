@@ -21,10 +21,12 @@ let relay;
 let ui;
 let second;
 let outsider;
+let parentWindow;
 const parties = [];
 let count = 0;
 let duck = false;
 let preferences = { inputDeviceId: "" };
+let failSave = false;
 const deadline = setTimeout(() => finish(1, Error("Sprachchat-Test Timeout")), 70000);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const check = (name, actual, expected) => { assert.deepEqual(actual, expected, name); count++; console.log("OK  " + name); };
@@ -74,8 +76,9 @@ app.whenReady().then(async () => {
   const firstParty = party("Anna", (message) => ui?.nachricht(message));
   const secondParty = party("<b>Ben</b>", (message) => { if (second && !second.isDestroyed()) second.webContents.send("voice-test:message", message); });
   await until(() => parties.every((value) => value.status().rooms[0]?.connected), "Raumverbindungen");
-  ui = erstellen({ BrowserWindow, session, ipcMain, watchparty: firstParty, parent: () => undefined, duck: (active) => { duck = active; }, preferences: () => preferences,
-    savePreferences: (value) => { preferences = value; return true; } });
+  parentWindow = new BrowserWindow({ show: true, width: 800, height: 600 });
+  ui = erstellen({ BrowserWindow, session, ipcMain, watchparty: firstParty, parent: () => parentWindow, duck: (active) => { duck = active; }, preferences: () => preferences,
+    savePreferences: (value) => { if (failSave) return false; preferences = value; return true; } });
   check("Nicht konfigurierter Raum wird abgewiesen", ui.oeffnen("fremderraum").ok, false);
   check("Sprachfenster öffnet konfigurierten Raum", ui.oeffnen("sprachtest").ok, true);
   const first = ui.fenster;
@@ -105,6 +108,34 @@ app.whenReady().then(async () => {
   await until(() => read(second, "window.__pcs.some(pc=>pc.connectionState==='connected')"), "Echte RTC Verbindung", 15000);
   await until(() => read(second, "Promise.all(window.__pcs.map(pc=>pc.getStats())).then(stats=>stats.some(report=>[...report.values()].some(s=>s.type==='inbound-rtp' && s.bytesReceived>1000)))"), "Audio-RTP empfangen", 15000);
   check("Echtes WebRTC-Audio erreicht zweiten Client", true, true);
+  check("Geräuschunterdrückung ist im echten Audiotrack aktiv", await read(first, "window.__tracks.find(t=>t.readyState==='live').getSettings().noiseSuppression"), true);
+  for (const enabled of [false, true]) {
+    const calls = await read(first, "window.__calls");
+    await read(first, "document.querySelector('#noiseSuppression').click()");
+    await until(() => preferences.noiseSuppression === enabled, "Geräuschunterdrückung gespeichert");
+    await until(() => read(first, "document.querySelector('#mikrofon').getAttribute('aria-pressed') === 'true'"), "Mikrofon automatisch mit neuem Filter aktiv");
+    check("Geräuschunterdrückung live " + enabled + " bei bestehender Verbindung", await read(first, "[window.__tracks.find(t=>t.readyState==='live').getSettings().noiseSuppression,window.__calls,window.__pcs.some(pc=>pc.connectionState==='connected')]"), [enabled, calls + 1, true]);
+  }
+  failSave = true;
+  await read(first, "document.querySelector('#noiseSuppression').click()");
+  await until(() => read(first, "document.querySelector('#noiseHinweis').textContent.includes('bisherige Einstellung')"), "Fehler beim Speichern sichtbar");
+  await until(() => read(first, "document.querySelector('#mikrofon').getAttribute('aria-pressed') === 'true'"), "Mikrofon nach Speicherfehler wieder aktiv");
+  check("Speicherfehler stellt auch echten Audiofilter wieder her", await read(first, "[document.querySelector('#noiseSuppression').checked,window.__tracks.find(t=>t.readyState==='live').getSettings().noiseSuppression]"), [true, true]);
+  failSave = false;
+  const receivedBytes = () => read(second, "Promise.all(window.__pcs.map(pc=>pc.getStats())).then(stats=>stats.reduce((total,report)=>total+[...report.values()].filter(s=>s.type==='inbound-rtp').reduce((sum,s)=>sum+(s.bytesReceived||0),0),0))");
+  const firstContents = first.webContents.id;
+  for (const action of ["Hintergrundknopf", "Fenster-X", "Sprachchat-X"]) {
+    const before = await receivedBytes();
+    if (action === "Fenster-X") first.close();
+    else await read(first, `document.querySelector('${action === "Hintergrundknopf" ? "#minimieren" : "#schliessen"}').click()`);
+    await until(() => !first.isVisible(), action + " blendet Fenster aus");
+    check(action + " erhält Fenster ohne minimierte Leiste", !first.isDestroyed() && !first.isMinimized(), true);
+    await until(async () => await receivedBytes() > before + 1000, action + " überträgt weiterhin Audio");
+    check(action + " erhält laufendes Mikrofon und Peer", await read(first, "window.__tracks.some(t=>t.readyState==='live') && window.__pcs.some(pc=>pc.connectionState==='connected')"), true);
+    ui.oeffnen("sprachtest");
+    await until(() => first.isVisible() && first.isFocused(), action + " wieder geöffnet");
+    check(action + " öffnet dieselbe Sitzung ohne erneuten Beitritt", ui.fenster.webContents.id === firstContents && await read(first, "document.querySelector('#beitreten').hidden"), true);
+  }
   ui.nachricht({ room: "sprachtest", type: "voiceerror", code: "peer-missing", message: "Ein Teilnehmer hat den Raum verlassen." });
   check("Abgegangener Signalempfänger entzieht nicht der ganzen Runde das Mikrofon", await read(first, "ElfixVoiceHost.microphone()"), true);
   check("Kamerazugriff bleibt auch bei freigegebenem Mikrofon verboten", await read(first, "navigator.mediaDevices.getUserMedia({video:true}).then(s=>{s.getTracks().forEach(t=>t.stop());return false},()=>true)"), true);
@@ -125,7 +156,8 @@ app.whenReady().then(async () => {
   await until(() => read(first, "document.querySelector('#status').textContent.includes('Mikrofon ist aus')"), "PTT zeigt gemuteten Zustand");
   check("PTT endet beim Fokusverlust", true, true);
   check("Minimieren erhält Sprachchat", await read(first, "document.querySelector('#beitreten').hidden"), true);
-  first.restore(); first.focus();
+  check("Natives Minimieren versteckt das Kindfenster vollständig", first.isVisible(), false);
+  ui.oeffnen("sprachtest");
   await until(() => first.isFocused(), "Sprachfenster wieder fokussiert");
   const imagePath = path.join(profile, "sprachchat-desktop.png");
   fs.writeFileSync(imagePath, (await first.webContents.capturePage()).toPNG());
@@ -151,6 +183,9 @@ app.whenReady().then(async () => {
   await until(() => read(settingsWindow, "document.querySelector('#einstellungen')?.open === true && document.querySelector('#geraeteLaden')?.disabled === false"), "Raumlose Einstellungen");
   await read(settingsWindow, instrumentation);
   check("Mikrofoneinstellungen ohne Raum und ohne Aufnahme", await read(settingsWindow, "[document.querySelector('#beitreten').disabled, window.__calls]"), [true, 0]);
+  await read(settingsWindow, "document.querySelector('#noiseSuppression').click()");
+  await until(() => preferences.noiseSuppression === false, "Geräuschfilter ohne Raum gespeichert");
+  check("Filterwahl ohne Beitritt fordert kein Mikrofon", await read(settingsWindow, "window.__calls"), 0);
   await read(settingsWindow, "document.querySelector('#geraeteLaden').click()");
   await until(() => read(settingsWindow, "document.querySelector('#geraeteHinweis').textContent.startsWith('Mikrofone geladen')"), "Geraeteliste mit Freigabe");
   check("Geräteliste überträgt kein Audio und beendet Probeaufnahme", await read(settingsWindow, "window.__tracks.length > 0 && window.__tracks.every(t=>t.readyState==='ended') && window.__pcs.length === 0"), true);
@@ -163,15 +198,32 @@ app.whenReady().then(async () => {
   settingsWindow = ui.fenster;
   await until(() => read(settingsWindow, "document.querySelector('#beitreten')?.disabled === false"), "Neue Sprachansicht");
   check("Gespeicherte Auswahl überlebt Schließen und erneutes Öffnen", await read(settingsWindow, "document.querySelector('#mikrofonGeraet').value"), deviceId);
+  check("Filterwahl überlebt Gerätewechsel und erneutes Öffnen", await read(settingsWindow, "document.querySelector('#noiseSuppression').checked"), false);
   await read(settingsWindow, instrumentation);
   await read(settingsWindow, "document.querySelector('#beitreten').click()");
   await until(() => read(settingsWindow, "!document.querySelector('#mikrofon').hidden"), "Join nach Mikrofonwahl");
   await read(settingsWindow, "document.querySelector('#mikrofon').click()");
   await until(() => read(settingsWindow, "document.querySelector('#mikrofon').getAttribute('aria-pressed') === 'true'"), "Gewaehlt Mikrofon startet");
   check("Sprachaufnahme verwendet exakt ausgewähltes Mikrofon", await read(settingsWindow, "window.__lastConstraints.audio.deviceId.exact"), deviceId);
+  check("Neue Aufnahme verwendet gespeicherten ausgeschalteten Filter", await read(settingsWindow, "window.__tracks.find(t=>t.readyState==='live').getSettings().noiseSuppression"), false);
+  await read(settingsWindow, "document.querySelector('#einstellungen').open=true");
+  settingsWindow.setSize(440, 800);
+  const noiseImage = path.join(profile, "sprachchat-noise.png");
+  fs.writeFileSync(noiseImage, (await settingsWindow.webContents.capturePage()).toPNG());
+  console.log("SNAP  " + noiseImage);
+  settingsWindow.setSize(360, 740);
+  check("Mikrofoneinstellungen passen auch in schmale Ansicht", await read(settingsWindow, "document.documentElement.scrollWidth <= window.innerWidth && document.querySelector('#noiseSuppression').getBoundingClientRect().right <= window.innerWidth"), true);
+  const narrowImage = path.join(profile, "sprachchat-noise-schmal.png");
+  fs.writeFileSync(narrowImage, (await settingsWindow.webContents.capturePage()).toPNG());
+  console.log("SNAP  " + narrowImage);
   await read(settingsWindow, "const select=document.querySelector('#mikrofonGeraet'); select.value=''; select.dispatchEvent(new Event('change'))");
   await until(() => read(settingsWindow, "window.__tracks.every(t=>t.readyState==='ended')"), "Geraetewechsel stoppt Aufnahme");
   check("Auswahlwechsel schaltet zunächst stumm", await read(settingsWindow, "document.querySelector('#mikrofon').getAttribute('aria-pressed')"), "false");
+  settingsWindow.close();
+  await until(() => !settingsWindow.isVisible(), "Fenster vor App-Ende ausgeblendet");
+  ui.schliessen();
+  await until(() => read(second, "document.querySelectorAll('.peer').length === 0"), "App-Ende entfernt Hintergrund-Teilnehmer");
+  check("App-Ende zerstört auch ausgeblendetes Sprachfenster", settingsWindow.isDestroyed() && ui.fenster === null, true);
   console.log(`${count}/${count} bestanden`);
 }).then(() => finish(0), (error) => finish(1, error));
 
@@ -179,6 +231,7 @@ function finish(code, error) {
   if (error) console.error("FAIL  " + (error.stack || error.message));
   clearTimeout(deadline);
   ui?.schliessen(); second?.destroy(); outsider?.destroy();
+  parentWindow?.destroy();
   for (const party of parties) party.trennen();
   relay?.kill();
   app.exit(code);

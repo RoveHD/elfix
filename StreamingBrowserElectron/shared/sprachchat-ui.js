@@ -19,6 +19,8 @@
   let deviceGeneration = 0;
   let probeStream = null;
   let preferencesReady = false;
+  let preferencesSaving = false;
+  const noiseSupported = navigator.mediaDevices?.getSupportedConstraints?.().noiseSuppression === true;
   let probing = false;
   const rows = new Map();
   const engine = new window.ElfixSprachchat({
@@ -39,8 +41,11 @@
     const active = value.joined || value.connecting;
     $("beitreten").hidden = active;
     $("beitreten").disabled = !context.connected || !preferencesReady || probing || value.available === false;
-    $("mikrofon").disabled = !preferencesReady || probing;
-    $("sprechen").disabled = probing;
+    $("mikrofon").disabled = !preferencesReady || probing || preferencesSaving;
+    $("mikrofonGeraet").disabled = !preferencesReady || preferencesSaving;
+    $("noiseSuppression").disabled = !preferencesReady || preferencesSaving || !noiseSupported;
+    $("noiseSuppression").checked = value.noiseSuppression !== false;
+    $("sprechen").disabled = probing || preferencesSaving;
     $("verlassen").hidden = !active;
     $("mikrofon").hidden = !value.joined || value.pushToTalk;
     $("mikrofon").textContent = value.muted ? "Mikrofon einschalten" : "Mikrofon stummschalten";
@@ -152,18 +157,43 @@
     }
   });
   $("mikrofonGeraet").addEventListener("change", async () => {
+    if (preferencesSaving) return;
+    preferencesSaving = true;
     const previous = inputDeviceId;
     inputDeviceId = $("mikrofonGeraet").value;
     captureGeneration++; release();
     engine.setInputDevice(inputDeviceId);
     $("mikrofonGeraet").disabled = true;
     try {
-      if (host.savePreferences && await host.savePreferences({ inputDeviceId }) === false) throw new Error("save");
+      if (host.savePreferences && await host.savePreferences({ inputDeviceId, noiseSuppression: current.noiseSuppression !== false }) === false) throw new Error("save");
       $("geraeteHinweis").textContent = "Mikrofon gespeichert. Zum Sprechen das Mikrofon wieder einschalten.";
     } catch (_) {
       inputDeviceId = previous; engine.setInputDevice(previous); $("mikrofonGeraet").value = previous;
       $("geraeteHinweis").textContent = "Die Mikrofon-Auswahl konnte nicht gespeichert werden.";
-    } finally { $("mikrofonGeraet").disabled = false; }
+    } finally { preferencesSaving = false; render(current); }
+  });
+  if (!noiseSupported) $("noiseHinweis").textContent = "Geräuschunterdrückung wird auf diesem Gerät nicht unterstützt.";
+  $("noiseSuppression").addEventListener("change", async () => {
+    if (!noiseSupported || preferencesSaving) return;
+    const enabled = $("noiseSuppression").checked;
+    const previous = current.noiseSuppression !== false;
+    const resume = !current.muted && !current.pushToTalk;
+    release();
+    const generation = ++captureGeneration;
+    preferencesSaving = true;
+    render(current);
+    try {
+      if (!await engine.setNoiseSuppression(enabled)) throw new Error("apply");
+      if (host.savePreferences && await host.savePreferences({ inputDeviceId, noiseSuppression: enabled }) === false) throw new Error("save");
+      $("noiseHinweis").textContent = enabled ? "Geräuschunterdrückung ist an. Deine Stimme bleibt im Vordergrund." : "Geräuschunterdrückung ist aus. Hintergrundgeräusche werden mit übertragen.";
+    } catch (_) {
+      const restored = await engine.setNoiseSuppression(previous);
+      $("noiseHinweis").textContent = restored ? "Änderung konnte nicht übernommen werden. Die bisherige Einstellung bleibt erhalten." : "Einstellung konnte nicht gespeichert werden. Bitte erneut versuchen.";
+    } finally {
+      preferencesSaving = false;
+      render(current);
+      if (resume && current.joined && generation === captureGeneration) await microphone(false);
+    }
   });
   navigator.mediaDevices?.addEventListener?.("devicechange", listDevices);
   async function microphone(ptt) {
@@ -196,19 +226,24 @@
   $("duckOption").hidden = !host.duck;
   $("duck").addEventListener("change", () => host.duck?.($("duck").checked && ducking));
   $("audioStart").addEventListener("click", () => engine.retryAudio());
-  $("schliessen").addEventListener("click", () => { leave(); host.close(); });
+  if (host.closeKeepsSession) {
+    $("schliessen").setAttribute("aria-label", "Sprachchat im Hintergrund weiterlaufen lassen");
+    $("schliessen").title = "Im Hintergrund weiter – erneut öffnen über Sprachchat. Beenden mit Verlassen.";
+  }
+  $("schliessen").addEventListener("click", () => { if (!host.closeKeepsSession) leave(); host.close(); });
   $("minimieren").addEventListener("click", () => host.hide?.());
   window.addEventListener("pagehide", () => { captureGeneration++; cancelDeviceProbe(); engine.close(); host.duck?.(false); });
   host.onMessage((message) => { if (!message.room || message.room === context.room) engine.receive(message); });
   host.onContext(setContext);
   host.onAction?.((action) => {
     if (action === "mute") { captureGeneration++; holding = false; engine.setMuted(true); }
-    else if (action === "background") release();
+    else if (action === "background") { release(); cancelDeviceProbe(); }
   });
   Promise.resolve(host.context()).then(setContext).catch(() => { uiError = "Raum konnte nicht geladen werden."; render(current); });
   Promise.resolve(host.preferences?.() || {}).then(async (value) => {
     inputDeviceId = typeof value?.inputDeviceId === "string" ? value.inputDeviceId : "";
     engine.setInputDevice(inputDeviceId);
+    await engine.setNoiseSuppression(value?.noiseSuppression !== false);
     await listDevices();
   }).catch(() => { $("geraeteHinweis").textContent = "Gespeicherte Mikrofon-Auswahl konnte nicht geladen werden."; })
     .finally(() => { preferencesReady = true; $("mikrofonGeraet").disabled = false; $("geraeteLaden").disabled = false; render(current); });

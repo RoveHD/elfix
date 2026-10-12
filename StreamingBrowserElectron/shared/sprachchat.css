@@ -41,4 +41,11 @@ summary { cursor: pointer; font-weight: 650; }
 select { width: 100%; padding: 11px; margin: 6px 0 10px; font: inherit; color: inherit; background: #1b2639; border: 1px solid #334057; border-radius: 8px; }
 select:focus-visible, summary:focus-visible { outline: 3px solid #72afff; outline-offset: 3px; }
 [hidden] { display: none !important; }
+.noise-setting { margin-top: 16px; padding-top: 14px; border-top: 1px solid #283246; }
+.noise-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 650; cursor: pointer; }
+.noise-toggle input { appearance: none; flex: 0 0 44px; width: 44px; height: 25px; margin: 0; padding: 3px; border: 1px solid #536079; border-radius: 20px; background: #283246; cursor: pointer; }
+.noise-toggle input::before { content: ""; display: block; width: 17px; height: 17px; border-radius: 50%; background: #fff; }
+.noise-toggle input:checked { background: #5865f2; border-color: #5865f2; }
+.noise-toggle input:checked::before { transform: translateX(19px); }
+.noise-toggle input:disabled { opacity: .45; cursor: default; }
 @media (max-width: 380px) { main { padding: 16px; } .actions button { flex: 1 1 auto; } }

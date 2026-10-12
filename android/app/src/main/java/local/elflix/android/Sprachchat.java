@@ -145,15 +145,24 @@ final class Sprachchat {
         switch (befehl.optString("method")) {
             case "context": antwort(id, kontext(), null); break;
             case "preferences":
-                antwort(id, new JSONObject().put("inputDeviceId", activity.getSharedPreferences("elfix_sprachchat", Activity.MODE_PRIVATE)
-                    .getString("inputDeviceId", "")), null);
+                android.content.SharedPreferences gespeichert = activity.getSharedPreferences("elfix_sprachchat", Activity.MODE_PRIVATE);
+                antwort(id, new JSONObject().put("inputDeviceId", gespeichert.getString("inputDeviceId", ""))
+                    .put("noiseSuppression", gespeichert.getBoolean("noiseSuppression", true)), null);
                 break;
             case "savePreferences":
                 JSONObject prefs = befehl.optJSONObject("value");
                 String device = prefs == null ? "" : prefs.optString("inputDeviceId", "");
                 if (device.length() > 512) { antwort(id, false, "Ungültiges Mikrofon"); break; }
-                activity.getSharedPreferences("elfix_sprachchat", Activity.MODE_PRIVATE).edit()
-                    .putString("inputDeviceId", device).apply();
+                boolean hatNoiseSuppression = prefs != null && prefs.has("noiseSuppression");
+                Object noiseSuppressionWert = hatNoiseSuppression ? prefs.opt("noiseSuppression") : null;
+                if (hatNoiseSuppression && !(noiseSuppressionWert instanceof Boolean)) {
+                    antwort(id, false, "Ungültige Rauschunterdrückung"); break;
+                }
+                android.content.SharedPreferences.Editor speicher = activity
+                    .getSharedPreferences("elfix_sprachchat", Activity.MODE_PRIVATE).edit()
+                    .putString("inputDeviceId", device);
+                if (hatNoiseSuppression) speicher.putBoolean("noiseSuppression", (Boolean) noiseSuppressionWert);
+                speicher.apply();
                 antwort(id, true, null);
                 break;
             case "microphone":

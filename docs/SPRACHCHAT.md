@@ -17,6 +17,15 @@ Ein Wechsel des gewählten Mikrofons schaltet eine laufende Aufnahme stumm.
 Zum Sprechen muss sie bewusst wieder eingeschaltet werden. Nicht mehr vorhandene
 Geräte führen zu einem Hinweis statt zum stillen Wechsel auf ein anderes Mikrofon.
 
+Unter der Mikrofonwahl steht **Geräuschunterdrückung** als Schalter. Sie ist
+standardmäßig an und wird pro Gerät gespeichert. Umschalten wirkt auch auf eine
+laufende Aufnahme: Das Mikrofon startet kurz neu, die Sprachverbindung bleibt
+bestehen. Ein stummes Mikrofon bleibt stumm. Verwendet wird
+die integrierte WebRTC-Geräuschunterdrückung, kein Krisp-Dienst; die tatsächliche
+Filterwirkung hängt vom Gerät und den Geräuschen ab. Echo-Unterdrückung und
+automatische Pegelregelung bleiben aktiv. Ohne Unterstützung ist der Schalter
+deaktiviert und mit einem Hinweis versehen.
+
 - **Zum Zuhören beitreten** verbindet ohne Mikrofonaufnahme.
 - **Mikrofon einschalten** fordert bei Bedarf die Mikrofonberechtigung an.
   Stummschalten beendet die Aufnahme und gibt die Mikrofontracks frei.
@@ -26,8 +35,13 @@ Geräte führen zu einem Hinweis statt zum stillen Wechsel auf ein anderes Mikro
   Eine grüne Markierung zeigt erkannte Sprache an.
 - **Film beim Sprechen leiser machen** senkt optional den Ton des eigenen
   Elfix-Players. Die vom Nutzer gewählte Lautstärke bleibt erhalten.
-- Minimieren hält die Verbindung; **Verlassen** oder Schließen beendet sie.
-  Folgenwechsel und PiP ändern die Sprachverbindung nicht.
+- Am Desktop blenden **Im Hintergrund weiter**, Minimieren und beide **X**-Knöpfe
+  das Sprachfenster vollständig aus. Verbindung und ein normal eingeschaltetes
+  Mikrofon laufen weiter; es bleibt keine minimierte Fensterleiste über dem Player.
+  Über **Sprachchat** im Player oder unter Watchparty öffnest du dieselbe Sitzung
+  wieder. **Verlassen** oder das Beenden von Elfix beendet die Verbindung.
+  Android behält sein bisheriges Verhalten: Hintergrund hält die Verbindung,
+  Schließen beendet sie. Folgenwechsel und PiP ändern die Sprachverbindung nicht.
 - Nach einem Verbindungsabbruch muss dem Sprachchat erneut beigetreten werden.
   Das Mikrofon wird dabei nicht automatisch eingeschaltet.
 
@@ -100,6 +114,8 @@ npm run test:voice
 Die Prüfungen verwenden isolierte Relay-Daten und synthetische Medien. Der
 Electron-Test verbindet zwei echte Chromium-WebRTC-Endpunkte, prüft empfangene
 Audio-RTP-Pakete, Mikrofonfreigabe, Stummschalten, Push-to-talk, Lautstärke,
-Minimieren, Verlassen und den Ausschluss fremder IPC-Absender. Diese Prüfung
+Ausblenden per Hintergrundknopf und beiden X-Knöpfen mit weiterlaufendem Audio,
+erneutes Öffnen derselben Sitzung, Minimieren, Verlassen, App-Ende und den
+Ausschluss fremder IPC-Absender. Diese Prüfung
 ersetzt keinen Hörtest mit echten Mikrofonen und keinen Test über zwei fremde
 Netzwerke mit TURN.

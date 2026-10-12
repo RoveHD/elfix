@@ -28,6 +28,11 @@ function erstellen({ BrowserWindow, session, ipcMain, watchparty, parent, duck =
   function senden(channel, value) {
     if (fenster && !fenster.isDestroyed() && !fenster.webContents.isDestroyed()) fenster.webContents.send(channel, value);
   }
+  function ausblenden() {
+    if (!fenster || fenster.isDestroyed()) return;
+    senden("voice:action", "background");
+    fenster.hide();
+  }
   function erlaubt(inhalt, permission, details, request) {
     if (!mikrofonErlaubt || (!(joined && context().connected) && !settingsMode && !mikrofonProbe) || !fenster || fenster.isDestroyed()
       || inhalt !== fenster.webContents || !istLokaleSeite(inhalt.getURL(), datei)) return false;
@@ -43,7 +48,8 @@ function erstellen({ BrowserWindow, session, ipcMain, watchparty, parent, duck =
   ipc.handle("voice:preferences", () => preferences());
   ipc.handle("voice:preferences-save", (_event, value) => {
     if (!value || typeof value.inputDeviceId !== "string" || value.inputDeviceId.length > 512) return false;
-    return savePreferences({ inputDeviceId: value.inputDeviceId });
+    if (value.noiseSuppression !== undefined && typeof value.noiseSuppression !== "boolean") return false;
+    return savePreferences({ inputDeviceId: value.inputDeviceId, noiseSuppression: value.noiseSuppression ?? (preferences().noiseSuppression !== false) });
   });
   ipc.handle("voice:send", (_event, message) => {
     if (!message || typeof message !== "object" || !["voicejoin", "voiceleave", "voicestate", "voicesignal"].includes(message.type)) return false;
@@ -58,7 +64,7 @@ function erstellen({ BrowserWindow, session, ipcMain, watchparty, parent, duck =
   });
   ipc.on("voice:capture", (_event, active) => { if (!active) { mikrofonErlaubt = false; mikrofonProbe = false; } });
   ipc.on("voice:duck", (_event, active) => duck(joined && active === true));
-  ipc.on("voice:hide", () => fenster?.minimize());
+  ipc.on("voice:hide", ausblenden);
   ipc.on("voice:close", () => fenster?.close());
   return {
     oeffnen(room, settingsOnly = false) {
@@ -79,7 +85,7 @@ function erstellen({ BrowserWindow, session, ipcMain, watchparty, parent, duck =
       fenster = new BrowserWindow({
         width: 440, height: 650, minWidth: 360, minHeight: 470,
         title: "ELFIX · Sprachchat", backgroundColor: "#0b0e16", autoHideMenuBar: true,
-        parent: parent(), show: false,
+        parent: parent(), show: false, skipTaskbar: true,
         webPreferences: { preload: path.join(__dirname, "sprachchat-preload.js"), session: sitzung,
           nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false }
       });
@@ -87,8 +93,12 @@ function erstellen({ BrowserWindow, session, ipcMain, watchparty, parent, duck =
       fenster.webContents.on("will-attach-webview", (event) => event.preventDefault());
       fenster.webContents.on("render-process-gone", beenden);
       fenster.once("ready-to-show", () => { fenster?.show(); });
+      // Windows stellt minimierte Kindfenster als kleine Leiste ueber dem
+      // Player dar. Ausblenden erhaelt denselben WebRTC-Peer ohne diese Leiste.
+      fenster.on("minimize", ausblenden);
+      fenster.on("close", (event) => { event.preventDefault(); ausblenden(); });
       fenster.on("closed", () => { beenden(); fenster = null; raum = ""; });
-      fenster.loadFile(datei).catch(() => fenster?.close());
+      fenster.loadFile(datei).catch(() => fenster?.destroy());
       return { ok: true };
     },
     nachricht(message) {

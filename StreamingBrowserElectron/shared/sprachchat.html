@@ -21,6 +21,10 @@
       <select id="mikrofonGeraet" disabled><option value="">Systemstandard</option></select>
       <button id="geraeteLaden" class="quiet" type="button" disabled>Mikrofone anzeigen</button>
       <p id="geraeteHinweis" class="muted" role="status">Die Auswahl gilt auf diesem Gerät. Zum Anzeigen der Gerätenamen ist eventuell eine Mikrofonfreigabe nötig. Dabei wird nichts übertragen.</p>
+      <div class="noise-setting">
+        <label class="noise-toggle" for="noiseSuppression"><span>Geräuschunterdrückung</span><input id="noiseSuppression" type="checkbox" role="switch" aria-describedby="noiseHinweis" checked disabled></label>
+        <p id="noiseHinweis" class="muted" role="status">Reduziert Hintergrundgeräusche deines Mikrofons. Die Wirkung hängt von Gerät und Umgebung ab.</p>
+      </div>
     </details>
     <div class="actions">
       <button id="beitreten" class="primary" disabled>Zum Zuhören beitreten</button>
