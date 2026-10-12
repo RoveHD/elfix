@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.62 — 12. Oktober 2026
+
+- Automatisch-Upscaling: Anime4K jetzt auch fuer Animation und Zeichentrick
+  (Genres der Titelkarte, auch auf S.to und bei Animationsfilmen). Spaet
+  nachgereichte Genres wechseln das Verfahren ohne Neuladen.
+- RTX Video: Der Helper verwendet seine Texturen wieder, statt fuer jedes Bild
+  neue anzulegen - kein wachsender Speicher mehr.
+- Sprachchat: Schalter fuer Geraeuschunterdrueckung. Am Desktop blenden
+  Hintergrund, Minimieren und X das Sprachfenster ganz aus, die Verbindung
+  laeuft weiter.
+
 ## 2.0.61 — 11. Oktober 2026
 
 - Rechtsklick auf einen Anbieter → „Cloudflare bestätigen": ELFIX laedt dessen
