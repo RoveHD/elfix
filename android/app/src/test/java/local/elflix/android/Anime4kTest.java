@@ -72,6 +72,20 @@ public class Anime4kTest {
         assertFalse(Anime4k.istAnime("kein url ::"));
     }
 
+    @Test public void animationAusDenGenreLinksDerSeite() {
+        // Gemeldet: "Avatar - Die sieben Häfen" (S.to) lief ohne Anime4K.
+        assertTrue(Anime4k.istAnimationsGenre("/genre/animation"));
+        assertTrue(Anime4k.istAnimationsGenre("https://s.to/genre/Animation/"));
+        assertTrue(Anime4k.istAnimationsGenre("/genres/anime?seite=2"));
+        assertTrue(Anime4k.istAnimationsGenre("/genre/zeichentrick"));
+        assertFalse(Anime4k.istAnimationsGenre("/genre/action"));
+        assertFalse("Nur ganze Genres", Anime4k.istAnimationsGenre("/genre/animationx"));
+        assertFalse("Ein Titel mit dem Wort ist kein Genre", Anime4k.istAnimationsGenre("/serie/animation-domination"));
+        assertFalse(Anime4k.istAnimationsGenre(null));
+        assertTrue("Das Seitenskript prueft dieselben Genres",
+            Anime4k.ANIMATION_SKRIPT.contains(Anime4k.ANIMATIONS_GENRE));
+    }
+
     @Test public void automatischBeginntJeGeraetUndMerktRueckstufung() {
         Map<String, String> werte = new HashMap<>();
         SharedPreferences einstellungen = einstellungen(werte);

@@ -3533,7 +3533,12 @@ final class DirektSpieler {
 
     /** Vor {@link #quelle}: die Seitenadresse der Folge, nicht die des Hosters. */
     void inhaltArt(String seitenAdresse) {
-        animeInhalt = Anime4k.istAnime(seitenAdresse);
+        inhaltArt(seitenAdresse, false);
+    }
+
+    /** @param animation die Folgenseite nennt Animation/Anime als Genre */
+    void inhaltArt(String seitenAdresse, boolean animation) {
+        animeInhalt = animation || Anime4k.istAnime(seitenAdresse);
     }
 
     /**

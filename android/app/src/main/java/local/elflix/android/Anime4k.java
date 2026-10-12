@@ -32,6 +32,29 @@ final class Anime4k {
 
     private Anime4k() {}
 
+    /**
+     * Genres, bei denen Anime4K auch ausserhalb von AniWorld laeuft - dieselben
+     * wie am Rechner (Titelkarte: Anime, Animation, Zeichentrick).
+     */
+    static final String ANIMATIONS_GENRE =
+        "(?:anime|animation|animationsfilm|animationsserie|zeichentrick|zeichentrickfilm|zeichentrickserie)";
+    private static final Pattern GENRE_LINK = Pattern.compile(
+        "(?i)/genres?/" + ANIMATIONS_GENRE + "(?:[/?#]|$)");
+
+    /** Ist dieser Link der Genre-Link einer Animation ("/genre/animation")? */
+    static boolean istAnimationsGenre(String href) {
+        return href != null && GENRE_LINK.matcher(href).find();
+    }
+
+    /**
+     * Liest auf der Folgenseite, ob unter den Genre-Links Animation steht.
+     * Gemeldet: "Avatar - Die sieben Häfen" auf S.to lief ohne Anime4K - die
+     * Adressregel kennt nur AniWorld, die Seite selbst nennt das Genre.
+     */
+    static final String ANIMATION_SKRIPT = "(function(){try{var r=/\\/genres?\\/" + ANIMATIONS_GENRE
+        + "(?:[\\/?#]|$)/i;return Array.prototype.some.call(document.querySelectorAll('a[href*=\"/genre\"]'),"
+        + "function(a){return r.test(a.getAttribute('href')||'')})}catch(e){return false}})()";
+
     /** Dieselbe Regel wie am Rechner und bei der Filler-Liste. */
     static boolean istAnime(String adresse) {
         if (adresse == null) return false;
