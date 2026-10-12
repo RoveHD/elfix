@@ -615,10 +615,15 @@ function startlastBeginnen() {
   // Erst danach: fuer die Reparatur wird je Staffel eine Seite geladen. Sie
   // hat es nicht eilig und soll dem Aufbau nicht ins Gehege kommen.
   setTimeout(() => { repairStalledSeriesFavorites().catch(() => {}); }, 6000).unref?.();
+  // "Hey Elfix" hoert erst zu, wenn der Aufbau durch ist - und nur, wenn es
+  // eingeschaltet ist. Das Modell ist dann schon da; geladen wurde es beim
+  // Einschalten.
+  if (settings.sprachsuche?.weckwort === true) sprachsucheHolen().starten("weckwort").catch(() => {});
 }
 
 app.on("before-quit", () => {
   sprachchatFenster?.schliessen();
+  sprachsuche?.schliessen();
   // Beim Beenden darf die optionale Ablage einmal blockieren: andernfalls
   // ginge alles verloren, was waehrend eines langen Mini-Player-Laufs neu in
   // die beiden Caches kam. Ein noch gestellter Timer wird dabei mit erledigt.
@@ -2932,6 +2937,7 @@ ipcMain.handle("youtubeparty:open", async () => {
 
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   const alteRaeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  const altesWeckwort = settings.sprachsuche?.weckwort === true;
   const altesUpscaling = `${settings.playback?.videoUpscaling}:${settings.playback?.videoUpscalingMethod}:${settings.playback?.videoUpscalingResolution}:${settings.playback?.rtxVideoLicense}`;
   settings = normalizeSettings({ ...nextSettings, watchparty: {
     ...nextSettings?.watchparty,
@@ -2955,6 +2961,7 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
     spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), spielerUpscalingVerfahren(), settings.playback?.videoUpscalingResolution);
   }
   videoUpscalingStandSenden();
+  sprachsucheWeckwortAnwenden(altesWeckwort);
   syncWatchparty();
   spielerSpoilerAktualisieren();
   syncGeraete();
@@ -7476,6 +7483,51 @@ const watchparty = new WatchpartyRaeume({
     mainWindow.webContents.send("watchparty:state", status);
   }
 });
+
+// Die Sprachsuche (siehe sprachsuche-fenster.js). Was erkannt wurde, geht
+// als Ereignis an die Oberflaeche; die sucht dann wie nach getipptem Text.
+let sprachsuche = null;
+function sprachsucheHolen() {
+  if (!sprachsuche) {
+    sprachsuche = require("./sprachsuche-fenster").erstellen({
+      BrowserWindow, session, ipcMain: nativeIpcMain,
+      modell: require("./sprachmodell").erstellen({
+        verzeichnis: path.join(app.getPath("userData"), "sprachsuche"),
+        abrufen: (url) => net.fetch(url)
+      }),
+      melden: sprachsucheMelden
+    });
+  }
+  return sprachsuche;
+}
+
+function sprachsucheMelden(ereignis) {
+  // Wer "Hey Elfix" sagt, schaut vielleicht gerade nicht hin: das Fenster
+  // kommt nach vorn, damit man sieht, dass zugehoert wird.
+  if (ereignis.typ === "weckwort" || (ereignis.typ === "anfrage" && ereignis.quelle === "weckwort")) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    }
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("sprachsuche:ereignis", ereignis);
+}
+
+ipcMain.handle("sprachsuche:knopf", () => sprachsucheHolen().starten("einmal"));
+ipcMain.handle("sprachsuche:abbrechen", () => {
+  if (!sprachsuche) return false;
+  if (settings.sprachsuche?.weckwort === true) sprachsuche.starten("weckwort").catch(() => {});
+  else sprachsuche.stoppen();
+  return true;
+});
+
+function sprachsucheWeckwortAnwenden(vorher) {
+  const jetzt = settings.sprachsuche?.weckwort === true;
+  if (jetzt === vorher) return;
+  if (jetzt) sprachsucheHolen().starten("weckwort").catch(() => {});
+  else sprachsuche?.stoppen();
+}
 
 function sprachchatOeffnen(raum, settingsOnly = false) {
   if (!sprachchatFenster) sprachchatFenster = require("./sprachchat-fenster").erstellen({
@@ -16602,6 +16654,10 @@ function normalizeSettings(raw) {
     notifications: {
       newEpisodes: raw?.notifications?.newEpisodes === true
     },
+    // "Hey Elfix" hoert dauernd zu - deshalb nur, wer es einschaltet.
+    sprachsuche: {
+      weckwort: raw?.sprachsuche?.weckwort === true
+    },
     // SponsorBlock. Die Regel, was fehlende Werte bedeuten, steht in
     // sponsorblock.js - hier waere sie ein zweites Mal, und die beiden liefen
     // beim naechsten Schalter auseinander.
@@ -16835,6 +16891,7 @@ function defaultSettings() {
     notifications: {
       newEpisodes: false
     },
+    sprachsuche: { weckwort: false },
     // Eine frische Ablage bringt YouTube schon mit - fuer sie ist das
     // Nachtragen von vornherein erledigt.
     wrapped: { musik: true, gesehenJahr: 0 },

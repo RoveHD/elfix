@@ -3929,10 +3929,20 @@ public class MainActivity extends Activity {
             return true;
         });
         searchInput = input;
+        LinearLayout zeile = new LinearLayout(this);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        zeile.addView(input, new LinearLayout.LayoutParams(0, dp(60), 1f));
+        ImageView mikrofon = TvViews.iconButton(this, R.drawable.ic_mic, this::sprachSucheStarten);
+        mikrofon.setContentDescription("Sprachsuche");
+        mikrofon.setFocusable(true);
+        LinearLayout.LayoutParams mikrofonParams = new LinearLayout.LayoutParams(dp(60), dp(60));
+        mikrofonParams.leftMargin = dp(12);
+        zeile.addView(mikrofon, mikrofonParams);
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(60));
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         inputParams.topMargin = dp(TvViews.SECTION_GAP);
-        page.addView(input, inputParams);
+        page.addView(zeile, inputParams);
         input.post(input::requestFocus);
 
         if (query.isEmpty()) {
@@ -6497,10 +6507,19 @@ public class MainActivity extends Activity {
             return true;
         });
         searchInput = input;
+        LinearLayout zeile = new LinearLayout(this);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        zeile.addView(input, new LinearLayout.LayoutParams(0, dp(50), 1f));
+        ImageView mikrofon = MobileViews.iconButton(this, R.drawable.ic_mic, this::sprachSucheStarten);
+        mikrofon.setContentDescription("Sprachsuche");
+        LinearLayout.LayoutParams mikrofonParams = new LinearLayout.LayoutParams(dp(50), dp(50));
+        mikrofonParams.leftMargin = dp(8);
+        zeile.addView(mikrofon, mikrofonParams);
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         inputParams.topMargin = dp(18);
-        page.addView(input, inputParams);
+        page.addView(zeile, inputParams);
 
         if (query.isEmpty()) {
             addSpacing(page, MobileViews.emptyState(this, R.drawable.ic_nav_search,
@@ -11775,6 +11794,28 @@ public class MainActivity extends Activity {
         }
         setIntent(intent);
         deepLinkOeffnen(intent);
+    }
+
+    /** Mikrofon neben dem Suchfeld: die Spracheingabe des Systems oeffnen. */
+    private void sprachSucheStarten() {
+        if (!SprachSuche.starten(this)) {
+            android.widget.Toast.makeText(this, "Dieses Gerät hat keine Spracheingabe", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        if (requestCode == SprachSuche.ANFRAGE) {
+            if (resultCode != RESULT_OK) return;
+            String suche = SprachSuche.ergebnis(data);
+            if (suche.isEmpty()) {
+                android.widget.Toast.makeText(this, "Nichts verstanden", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            showGlobalSearch(suche);
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
