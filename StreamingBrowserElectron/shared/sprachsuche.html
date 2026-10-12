@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <!-- Nur diese Seite darf WebAssembly uebersetzen und einen Worker starten:
+       vosk-browser bringt beides als blob mit, und dessen Embind-Bindungen
+       bauen Funktionen mit new Function ('unsafe-eval'). Das ist hier
+       vertretbar: die Seite laedt nichts Fremdes, hat kein Node und Netz nur
+       zum Modell, das der Hauptprozess unter einer festen Adresse ausliefert. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:; worker-src blob:; connect-src https://sprachmodell.elfix.invalid blob: data:; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+  <title>ELFIX Sprachsuche</title>
+</head>
+<body>
+  <script src="../node_modules/vosk-browser/dist/vosk.js"></script>
+  <script src="./sprachsuche-text.js"></script>
+  <script src="./sprachsuche-seite.js"></script>
+</body>
+</html>

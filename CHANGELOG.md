@@ -3,6 +3,17 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.63 — 12. Oktober 2026
+
+- Sprachsuche: Mikrofon neben dem Suchfeld am Desktop, auf dem Handy und auf
+  dem Fernseher. „Such nach …", „zeig mir …" und Aehnliches werden entfernt.
+- Desktop: „Hey Elfix" (Einstellungen → Sprachsuche, standardmaessig aus).
+  ELFIX hoert dann auf das Weckwort und sucht, was danach kommt - „Hey Elfix,
+  Breaking Bad". Erkannt wird offline; beim ersten Gebrauch laedt ELFIX ein
+  deutsches Sprachmodell (rund 45 MB). Das Mikrofon bekommt nur ein eigenes,
+  unsichtbares Fenster, nie das Hauptfenster.
+- Android: nutzt die Spracheingabe des Systems.
+
 ## 2.0.62 — 12. Oktober 2026
 
 - Automatisch-Upscaling: Anime4K jetzt auch fuer Animation und Zeichentrick

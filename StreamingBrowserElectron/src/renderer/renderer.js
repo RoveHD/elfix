@@ -456,6 +456,8 @@ const fassungenVergessen = document.querySelector("#fassungenVergessen");
 const showReviewLink = document.querySelector("#showReviewLink");
 const wrappedMusik = document.querySelector("#wrappedMusik");
 const notifyNewEpisodes = document.querySelector("#notifyNewEpisodes");
+const sprachsucheWeckwort = document.querySelector("#sprachsucheWeckwort");
+const sprachsucheButton = document.querySelector("#sprachsucheButton");
 const pauseOnMinimize = document.querySelector("#pauseOnMinimize");
 const pauseOnBlur = document.querySelector("#pauseOnBlur");
 const blockedList = document.querySelector("#blockedList");
@@ -1382,6 +1384,9 @@ function bindEvents() {
   showReviewLink?.addEventListener("change", saveSettings);
   wrappedMusik?.addEventListener("change", saveSettings);
   notifyNewEpisodes?.addEventListener("change", saveSettings);
+  sprachsucheWeckwort?.addEventListener("change", saveSettings);
+  sprachsucheButton?.addEventListener("click", sprachsucheKnopf);
+  api.onSprachsuche?.(sprachsucheEreignis);
   favoriteProgressMode.addEventListener("change", saveSettings);
   pauseOnMinimize.addEventListener("change", saveSettings);
   pauseOnBlur.addEventListener("change", saveSettings);
@@ -2951,6 +2956,82 @@ async function anbieterMenue(provider, karte) {
   if (wahl === "cloudflare") await anbieterCloudflare(provider);
   else if (wahl === "edit") await anbieterBearbeiten(provider);
   else if (wahl === "new") await anbieterHinzufuegen();
+}
+
+// Die Sprachsuche. Erkannt wird im Hauptprozess (sprachsuche-fenster.js);
+// hier kommt nur an, was zu zeigen ist, und am Ende der Text, nach dem
+// gesucht wird - derselbe Weg wie beim Tippen.
+const SPRACH_PLATZHALTER = "Film, Serie oder Anime suchen";
+let sprachZustand = "aus";
+let sprachVorher = null;
+
+function sprachsucheKnopf() {
+  if (["hoert", "laedt", "download"].includes(sprachZustand)) {
+    api.sprachsucheAbbrechen?.().catch(() => {});
+    return;
+  }
+  api.sprachsucheKnopf?.().catch(() => showToast("Sprachsuche nicht verfügbar"));
+}
+
+function sprachKnopfZeigen(zustand) {
+  sprachZustand = zustand;
+  if (!sprachsucheButton) return;
+  sprachsucheButton.classList.toggle("is-hoert", zustand === "hoert");
+  sprachsucheButton.classList.toggle("is-laedt", zustand === "laedt" || zustand === "download");
+  sprachsucheButton.classList.toggle("is-wartet", zustand === "wartet");
+  sprachsucheButton.setAttribute("aria-pressed", zustand === "hoert" ? "true" : "false");
+  sprachsucheButton.title = zustand === "hoert" ? "Ich höre … (Klick bricht ab)"
+    : zustand === "wartet" ? "Sprachsuche – „Hey Elfix“ hört zu"
+      : zustand === "download" ? "Sprachmodell wird geladen …" : "Sprachsuche";
+  if (zustand === "hoert") {
+    if (sprachVorher === null) sprachVorher = omnibox.value;
+    omnibox.placeholder = "Ich höre …";
+  } else if (zustand !== "download" && zustand !== "laedt") {
+    omnibox.placeholder = SPRACH_PLATZHALTER;
+  }
+}
+
+function sprachsucheEreignis(ereignis) {
+  switch (ereignis?.typ) {
+    case "zustand":
+      sprachKnopfZeigen(ereignis.zustand);
+      if (ereignis.zustand !== "hoert" && sprachVorher !== null && omnibox.dataset.sprache === "teil") {
+        omnibox.value = sprachVorher;
+        delete omnibox.dataset.sprache;
+      }
+      if (ereignis.zustand !== "hoert") sprachVorher = null;
+      break;
+    case "download":
+      sprachKnopfZeigen("download");
+      omnibox.placeholder = `Sprachmodell wird geladen … ${Number(ereignis.anteil) || 0} %`;
+      break;
+    case "weckwort":
+      sprachKnopfZeigen("hoert");
+      uiSoundsController?.notice();
+      break;
+    case "teil":
+      if (sprachVorher === null) sprachVorher = omnibox.value;
+      omnibox.value = String(ereignis.text || "");
+      omnibox.dataset.sprache = "teil";
+      break;
+    case "anfrage": {
+      const frage = String(ereignis.text || "").trim();
+      delete omnibox.dataset.sprache;
+      sprachVorher = null;
+      if (!frage) break;
+      omnibox.value = frage;
+      showGlobalSearch(frage);
+      break;
+    }
+    case "nichts":
+      showToast("Nichts verstanden");
+      break;
+    case "fehler":
+      showToast(`Sprachsuche: ${ereignis.text || "nicht verfügbar"}`);
+      break;
+    default:
+      break;
+  }
 }
 
 // Die Cloudflare-Abfrage von Hand beantworten. Das Fenster zeigt der
@@ -8544,6 +8625,7 @@ function renderSettings() {
   // Aus, solange nichts anderes dasteht - eine Meldung, die man nicht bestellt
   // hat, ist eine Stoerung.
   if (notifyNewEpisodes) notifyNewEpisodes.checked = settings.notifications?.newEpisodes === true;
+  if (sprachsucheWeckwort) sprachsucheWeckwort.checked = settings.sprachsuche?.weckwort === true;
   favoriteProgressMode.value = settings.playback?.favoriteProgressMode || "sequential";
   pauseOnMinimize.checked = Boolean(settings.playback?.pauseOnMinimize);
   pauseOnBlur.checked = Boolean(settings.playback?.pauseOnBlur);
@@ -8796,6 +8878,7 @@ async function saveSettings(options = {}) {
     cacheMode: cacheMode.value
   };
   settings.notifications = { newEpisodes: Boolean(notifyNewEpisodes?.checked) };
+  settings.sprachsuche = { weckwort: sprachsucheWeckwort ? sprachsucheWeckwort.checked : settings.sprachsuche?.weckwort === true };
   settings.playback = {
     pauseOnProviderSwitch: pauseOnProviderSwitch.checked,
     youtubeInMediathek: Boolean(youtubeInMediathek?.checked),

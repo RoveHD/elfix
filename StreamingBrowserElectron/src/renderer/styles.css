@@ -8074,3 +8074,15 @@ button:focus-visible,
 .sponsorblock-kategorie small { display:block; margin-top:6px; opacity:.75; line-height:1.4; }
 .sponsorblock-kategorie select { width:230px; max-width:100%; flex:none; }
 @media (max-width: 700px) { .sponsorblock-kategorie { align-items:stretch; flex-direction:column; gap:10px; } .sponsorblock-kategorie select { width:100%; } }
+
+/* Sprachsuche: Mikrofon neben dem Suchfeld. Rot, solange zugehoert wird;
+   ein kleiner Punkt, solange "Hey Elfix" auf das Weckwort wartet. */
+.sprach-knopf { position: relative; display: inline-grid; place-items: center; }
+.sprach-knopf.is-hoert { color: white; background: var(--red); animation: sprach-puls 1.2s ease-in-out infinite; }
+.sprach-knopf.is-laedt { opacity: 0.7; cursor: progress; }
+.sprach-knopf.is-wartet::after {
+  content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--accent);
+}
+@keyframes sprach-puls { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+@media (prefers-reduced-motion: reduce) { .sprach-knopf.is-hoert { animation: none; } }
