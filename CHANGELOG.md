@@ -3,6 +3,18 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.66 — 12. Oktober 2026
+
+- Suche auf Handy und Fernseher hat jetzt dieselben Regeln wie am Rechner:
+  „häfen", „haefen" und „hafen" gelten gleich, ein Jahr am Ende zaehlt nicht,
+  und findet ein Anbieter den langen Titel nicht (S.to), fragt ELFIX mit
+  Kernwoertern nach und filtert selbst. „Sieben hafen avatar" findet damit
+  „Avatar - Die sieben Häfen".
+- Alle Anbieter suchen gleichzeitig, jeder mit eigener Frist.
+- Suchanfragen gehen mit Kennung und Keksen des Anbieter-WebViews hinaus -
+  eine dort bestaetigte Cloudflare-Abfrage gilt auch fuer die Suche.
+- Treffer zeigen den echten Namen statt des Namens aus der Adresse.
+
 ## 2.0.65 — 12. Oktober 2026
 
 - Android: Anime4K laeuft jetzt auch bei Animation ausserhalb von AniWorld,
