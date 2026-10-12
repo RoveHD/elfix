@@ -3963,17 +3963,7 @@ public class MainActivity extends Activity {
 
     private void searchAllProvidersTv(String query, LinearLayout holder, View loading) {
         new Thread(() -> {
-            ArrayList<SearchResult> found = new ArrayList<>();
-            for (Provider provider : providers) {
-                for (String variant : searchQueryVariants(query)) {
-                    ArrayList<SearchResult> results =
-                        fetchSearchResults(provider, provider.buildSearchUrl(variant), variant);
-                    if (!results.isEmpty()) {
-                        found.addAll(results);
-                        break;
-                    }
-                }
-            }
+            ArrayList<SearchResult> found = sucheBeiAllen(query);
             runOnUiThread(() -> {
                 holder.removeView(loading);
                 if (found.isEmpty()) {
@@ -6547,17 +6537,7 @@ public class MainActivity extends Activity {
     /** Same crawl as the TV search, rendered as mobile result cards. */
     private void searchAllProvidersMobile(String query, LinearLayout holder, View loading) {
         new Thread(() -> {
-            ArrayList<SearchResult> found = new ArrayList<>();
-            for (Provider provider : providers) {
-                for (String variant : searchQueryVariants(query)) {
-                    ArrayList<SearchResult> providerResults =
-                        fetchSearchResults(provider, provider.buildSearchUrl(variant), variant);
-                    if (!providerResults.isEmpty()) {
-                        found.addAll(providerResults);
-                        break;
-                    }
-                }
-            }
+            ArrayList<SearchResult> found = sucheBeiAllen(query);
             runOnUiThread(() -> {
                 holder.removeView(loading);
                 if (found.isEmpty()) {
@@ -7560,17 +7540,7 @@ public class MainActivity extends Activity {
 
     private void searchAllProviders(String query, LinearLayout results, TextView loading) {
         new Thread(() -> {
-            ArrayList<SearchResult> found = new ArrayList<>();
-            for (Provider provider : providers) {
-                for (String variant : searchQueryVariants(query)) {
-                    String searchUrl = provider.buildSearchUrl(variant);
-                    ArrayList<SearchResult> providerResults = fetchSearchResults(provider, searchUrl, variant);
-                    if (!providerResults.isEmpty()) {
-                        found.addAll(providerResults);
-                        break;
-                    }
-                }
-            }
+            ArrayList<SearchResult> found = sucheBeiAllen(query);
 
             runOnUiThread(() -> {
                 results.removeView(loading);
@@ -7617,12 +7587,63 @@ public class MainActivity extends Activity {
         return TextUtils.join(" · ", namen);
     }
 
+    /** So lange darf ein einzelner Anbieter suchen; die anderen warten nicht auf ihn. */
+    private static final long SUCHE_JE_ANBIETER_MS = 15000;
+
+    /**
+     * Alle Anbieter gleichzeitig, jeder mit eigener Frist - wie am Rechner.
+     * Ein langsamer Anbieter kostet so nicht die Treffer der anderen.
+     */
+    private ArrayList<SearchResult> sucheBeiAllen(String query) {
+        ArrayList<Provider> liste = new ArrayList<>(providers);
+        ArrayList<SearchResult> found = new ArrayList<>();
+        if (liste.isEmpty()) return found;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(liste.size());
+        ArrayList<java.util.concurrent.Future<ArrayList<SearchResult>>> laeufe = new ArrayList<>();
+        for (Provider provider : liste) laeufe.add(pool.submit(() -> sucheBeiAnbieter(provider, query)));
+        long ende = SystemClock.uptimeMillis() + SUCHE_JE_ANBIETER_MS;
+        for (java.util.concurrent.Future<ArrayList<SearchResult>> lauf : laeufe) {
+            try {
+                found.addAll(lauf.get(Math.max(1, ende - SystemClock.uptimeMillis()),
+                    java.util.concurrent.TimeUnit.MILLISECONDS));
+            } catch (Exception keineAntwort) {
+                lauf.cancel(true);
+            }
+        }
+        pool.shutdownNow();
+        return found;
+    }
+
+    /**
+     * Ein Anbieter: erst die ersten Schreibweisen, dann die Kernwoerter
+     * ("Sieben hafen avatar" -> "Sieben", "avatar") mit der ganzen Anfrage als
+     * Filter, dann die uebrigen Schreibweisen. S.to findet lange Titel selbst
+     * nicht, ein einzelnes Wort aber schon.
+     */
+    private ArrayList<SearchResult> sucheBeiAnbieter(Provider provider, String query) {
+        List<String> varianten = searchQueryVariants(query);
+        ArrayList<String[]> versuche = new ArrayList<>();
+        for (int i = 0; i < Math.min(3, varianten.size()); i += 1) versuche.add(new String[]{varianten.get(i), varianten.get(i)});
+        for (String wort : SuchAbgleich.kernwoerter(SuchAbgleich.ohneJahr(query))) versuche.add(new String[]{wort, query});
+        for (int i = 3; i < varianten.size(); i += 1) versuche.add(new String[]{varianten.get(i), varianten.get(i)});
+        for (String[] versuch : versuche) {
+            if (Thread.currentThread().isInterrupted()) break;
+            ArrayList<SearchResult> treffer = fetchSearchResults(provider, provider.buildSearchUrl(versuch[0]), versuch[0], versuch[1]);
+            if (!treffer.isEmpty()) return treffer;
+        }
+        return new ArrayList<>();
+    }
+
     private List<String> searchQueryVariants(String query) {
         LinkedHashSet<String> variants = new LinkedHashSet<>();
         String original = (query == null ? "" : query).trim().replaceAll("\\s+", " ");
         if (original.isEmpty()) return new ArrayList<>();
 
+        String ohneJahr = SuchAbgleich.ohneJahr(original);
+        if (!ohneJahr.isEmpty() && !ohneJahr.equals(original)) addSearchVariant(variants, ohneJahr);
         addSearchVariant(variants, original);
+        if (!ohneJahr.isEmpty()) original = ohneJahr;
+        addSearchVariant(variants, SuchAbgleich.ohneUmlautE(original));
         String ascii = stripSearchAccents(original).toLowerCase().trim();
         addSearchVariant(variants, ascii);
         addSearchVariant(variants, ascii.replaceAll("[._:]+", " "));
@@ -7766,14 +7787,28 @@ public class MainActivity extends Activity {
     }
 
     private ArrayList<SearchResult> fetchSearchResults(Provider provider, String searchUrl, String query) {
-        ArrayList<SearchResult> ajaxResults = fetchAjaxSearchResults(provider, searchUrl, query);
+        return fetchSearchResults(provider, searchUrl, query, query);
+    }
+
+    /** @param filter wonach die Treffer geprueft werden - bei Kernwoertern die ganze Anfrage */
+    private ArrayList<SearchResult> fetchSearchResults(Provider provider, String searchUrl, String query, String filter) {
+        ArrayList<SearchResult> ajaxResults = fetchAjaxSearchResults(provider, searchUrl, query, filter);
         if (!ajaxResults.isEmpty()) {
             bilderNachtragen(ajaxResults, searchUrl);
             return ajaxResults;
         }
         String html = holeTrefferseite(searchUrl);
         if (html.isEmpty()) return new ArrayList<>();
-        return extractLinks(provider, searchUrl, html, query);
+        return extractLinks(provider, searchUrl, html, filter);
+    }
+
+    /** Kennung und Kekse des Anbieter-WebViews fuer eine Suchanfrage. */
+    private void anbieterSitzung(HttpURLConnection connection, String url) {
+        connection.setRequestProperty("User-Agent", CookieNetz.kennung(this));
+        try {
+            String kekse = android.webkit.CookieManager.getInstance().getCookie(url);
+            if (kekse != null && !kekse.isEmpty()) connection.setRequestProperty("Cookie", kekse);
+        } catch (RuntimeException ohneKekse) { /* ohne WebView-Kekse wie bisher */ }
     }
 
     /** Die Trefferseite eines Anbieters holen - oder leer, wenn sie nicht kommt. */
@@ -7785,7 +7820,9 @@ public class MainActivity extends Activity {
             connection.setReadTimeout(8000);
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 ElflixAndroid/0.2");
+            // Mit der Kennung und den Keksen des Anbieter-WebViews: eine dort
+            // bestaetigte Cloudflare-Abfrage gilt dann auch fuer die Suche.
+            anbieterSitzung(connection, searchUrl);
             int status = connection.getResponseCode();
             if (status < 200 || status >= 400) return "";
 
@@ -7960,6 +7997,10 @@ public class MainActivity extends Activity {
     }
 
     private ArrayList<SearchResult> fetchAjaxSearchResults(Provider provider, String searchUrl, String query) {
+        return fetchAjaxSearchResults(provider, searchUrl, query, query);
+    }
+
+    private ArrayList<SearchResult> fetchAjaxSearchResults(Provider provider, String searchUrl, String query, String filter) {
         ArrayList<SearchResult> results = new ArrayList<>();
         if (!usesAniWorldAjaxSearch(provider)) return results;
 
@@ -7975,7 +8016,7 @@ public class MainActivity extends Activity {
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("Accept", "application/json,text/javascript,*/*");
             connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 ElflixAndroid/0.2");
+            anbieterSitzung(connection, endpoint);
             connection.setRequestProperty("X-Requested-With", "XMLHttpRequest");
             connection.setRequestProperty("Referer", searchUrl);
             connection.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
@@ -7993,7 +8034,7 @@ public class MainActivity extends Activity {
 
             JSONArray payload = new JSONArray(json.toString());
             Set<String> seen = new HashSet<>();
-            List<String> tokens = queryTokens(query);
+            List<String> tokens = queryTokens(filter);
             for (int i = 0; i < payload.length() && results.size() < 16; i += 1) {
                 JSONObject item = payload.optJSONObject(i);
                 if (item == null) continue;
@@ -8036,9 +8077,20 @@ public class MainActivity extends Activity {
         Pattern pattern = Pattern.compile("<a\\b([^>]*)href\\s*=\\s*[\"']([^\"']+)[\"']([^>]*)>([\\s\\S]*?)</a>", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(html);
         List<String> tokens = queryTokens(query);
-        while (matcher.find() && results.size() < 16) {
+        // S.to verlinkt jeden Treffer zweimal: erst das Bild ohne Text, dann
+        // den Namen. Der Name ersetzt dann den aus der Adresse geratenen
+        // ("Avatar Die Sieben Hafen" -> "Avatar - Die sieben Häfen").
+        java.util.Map<String, SearchResult> ausAdresse = new java.util.HashMap<>();
+        while (matcher.find() && (results.size() < 16 || !ausAdresse.isEmpty())) {
             String href = absoluteUrl(baseUrl, matcher.group(2));
-            if (href.isEmpty() || seen.contains(href) || isNoiseUrl(href) || !isProviderResultUrl(provider, href, baseUrl)) continue;
+            if (href.isEmpty() || isNoiseUrl(href)) continue;
+            if (seen.contains(href)) {
+                SearchResult geraten = ausAdresse.remove(href);
+                String name = usableResultTitle(normalizeSearchResultTitle(cleanHtmlText(matcher.group(4)), provider, query).title);
+                if (geraten != null && name.length() >= 2 && !isNoiseTitle(name)) geraten.title = name;
+                continue;
+            }
+            if (results.size() >= 16 || !isProviderResultUrl(provider, href, baseUrl)) continue;
             String rawTitle = cleanHtmlText(matcher.group(4));
             if (rawTitle.isEmpty()) {
                 rawTitle = cleanHtmlText(readHtmlAttribute(matcher.group(1), "title") + " " + readHtmlAttribute(matcher.group(3), "title")
@@ -8046,7 +8098,8 @@ public class MainActivity extends Activity {
             }
             SearchTitleParts titleParts = normalizeSearchResultTitle(rawTitle, provider, query);
             String title = usableResultTitle(titleParts.title);
-            if (title.isEmpty()) title = titleFromPath(href);
+            boolean geratenAusAdresse = title.isEmpty();
+            if (geratenAusAdresse) title = titleFromPath(href);
             if (title.length() < 2 || isNoiseTitle(title)) continue;
             if (!matchesQuery(title, href, tokens)) continue;
             seen.add(href);
@@ -8059,6 +8112,7 @@ public class MainActivity extends Activity {
             // Hintergrund. Gesucht wird nichts nach; siehe Trefferbild.
             result.bild = Trefferbild.ausMarkup(matcher.group(0), baseUrl);
             results.add(result);
+            if (geratenAusAdresse) ausAdresse.put(href, result);
         }
         appendRawContentLinks(results, seen, provider, baseUrl, html, tokens);
         return results;
@@ -8136,23 +8190,9 @@ public class MainActivity extends Activity {
     }
 
     private boolean matchesQuery(String title, String href, List<String> tokens) {
-        if (tokens.isEmpty()) return true;
-        String pathText = searchablePathText(href);
-        boolean pathMatches = true;
-        for (String token : tokens) {
-            if (!pathText.contains(token)) {
-                pathMatches = false;
-                break;
-            }
-        }
-        if (pathMatches) return true;
-        String compactPath = pathText.replaceAll("\\s+", "");
-        String compactQuery = TextUtils.join("", tokens);
-        if (!compactQuery.isEmpty() && compactPath.contains(compactQuery)) return true;
-
-        String titleText = normalizeSearchText(title);
-        String queryPhrase = TextUtils.join(" ", tokens);
-        return (titleText.equals(queryPhrase) || titleText.replaceAll("\\s+", "").contains(compactQuery)) && contentPathLooksPlayable(href);
+        // Regeln in SuchAbgleich - dieselben wie am Rechner (Umlaute, Jahr).
+        return SuchAbgleich.passt(searchablePathText(href), normalizeSearchText(title), tokens,
+            contentPathLooksPlayable(href));
     }
 
     private String decodeUriSafe(String value) {

@@ -141,6 +141,8 @@ function umgebungBauen() {
       "  Avatar   -  Die  sieben Häfen  ",
       "Die sieben Häfen",
       "sieben häfen",
+      "Sieben hafen avatar",
+      "Häfen Avatar",
       "Avatar"
     ];
     const beginn = Date.now();
