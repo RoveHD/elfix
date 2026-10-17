@@ -105,6 +105,14 @@ function zeitpunkt(wert) {
 function folgenkennung(wert) {
   try {
     const adresse = new URL(String(wert || ""));
+    let host = adresse.hostname.replace(/^www\./i, "").toLowerCase();
+    const sto = /^\/serie\//i.test(adresse.pathname)
+      && (["s.to", "serienstream.to", "serienstream.cx"].some((alias) => host === alias || host.endsWith(`.${alias}`))
+        || host === "186.2.175.5");
+    if (sto) {
+      host = "s.to";
+      adresse.pathname = adresse.pathname.replace(/^\/serie\/stream\//i, "/serie/");
+    }
     const teile = adresse.pathname.split("/").filter(Boolean);
     if (!teile.length) return null;
 
@@ -127,7 +135,7 @@ function folgenkennung(wert) {
       if (f) folge = Number(f[1]);
     }
     if (!Number.isFinite(folge) || folge <= 0) return null;
-    return { schluessel: `${adresse.hostname.replace(/^www\./i, "")}:${werk}`, staffel, folge };
+    return { schluessel: `${host}:${werk}`, staffel, folge };
   } catch {
     return null;
   }

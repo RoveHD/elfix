@@ -439,7 +439,7 @@ function ereignisseVereinen(gruppe) {
 function folgenVereinen(gruppe) {
   const nachSchluessel = new Map();
   for (const eintrag of gruppe) {
-    for (const folge of Array.isArray(eintrag.completedEpisodes) ? eintrag.completedEpisodes : []) {
+    for (const folge of fortschritt.normalizeCompletedEpisodes(eintrag.completedEpisodes)) {
       const marke = String(folge?.key || "");
       if (!marke || nachSchluessel.has(marke)) continue;
       nachSchluessel.set(marke, folge);

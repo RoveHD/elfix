@@ -19,6 +19,15 @@ write("settings.json", { migrations: { youtubeProvider: true },
   watchparty: { enabled: true, rooms: [config.room], serverUrl: config.relay, deviceName: config.name },
   playback: { direktModus: true, pauseOnBlur: false, pauseOnMinimize: false },
   browser: { cacheMode: "normal" }, home: { showHero: false, showPersonal: false, showYoutube: false } });
+// Existing membership and a saved room card, as after an ordinary app restart.
+// The fixture deliberately uses an older address than the local provider.
+const storedUrl = "http://s.to/serie/stream/avatar-die-sieben-hafen/staffel-1/episode-1";
+const storedItem = { key: "serie:avatardiesiebenhafen", room: config.room, title: "Avatar Die Sieben Hafen",
+  url: storedUrl, providerName: "S.to", type: "serie", season: 1, episode: 1 };
+write("watchparty.json", { shared: [storedItem], joined: [{ key: storedItem.key, room: config.room }], left: [], roomOps: [] });
+write("favorites.json", [{ ...storedItem, title: "Avatar - Die sieben Häfen", id: "avatar-party", providerId: "sto", watchpartyRoom: config.room,
+  newEpisodeAt: new Date().toISOString(), newEpisodeLabel: "Folge 1 ist da",
+  watched: true, continuePending: true, normalizedUrl: storedUrl, activity: [], createdAt: new Date().toISOString() }]);
 
 // A valid, seekable media file, generated locally; no episode is downloaded.
 const pcm = Buffer.alloc(180 * 8000, 128), media = Buffer.alloc(44 + pcm.length);

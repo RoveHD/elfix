@@ -26,6 +26,7 @@ function kontext(werte, namen, text = haupt) {
   // weitere Seitengrenze des Harnesses, keine Aufgabe der getesteten Logik.
   const stand = vm.createContext({ console: still, AbortController, AbortSignal, URL,
     folgenWerkbaenkeSchliessen() {},
+    merkeGeoeffneteFolge() {},
     spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, spielerCfAbbrechen() {},
     spielerCfVersuche: new Map(), spielerCfErfolgGemeldet: new Set(), spielerCfWeiterhinGemeldet: new Set(), ...werte });
   const dependencies = text === haupt ? ["watchpartyAdresseFuerProvider"] : [];

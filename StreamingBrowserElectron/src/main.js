@@ -210,6 +210,7 @@ function shouldPromoteMediaProgress(existing, url, progressState) {
 // die ganze Trennung - dieselbe Rechnung laeuft auf dem Telefon, nur landet sie
 // dort in anderen Haenden.
 function recordMediaActivity(provider, url, meta = {}, options = {}) {
+  if (options.label === "Geöffnet") merkeGeoeffneteFolge(url);
   const ergebnis = fortschritt.medienStandVerbuchen({
     favoriten: favorites,
     aktiverFavoritId: activeFavoriteId,
@@ -227,6 +228,14 @@ function recordMediaActivity(provider, url, meta = {}, options = {}) {
   sendActiveState();
   reportWatchpartyProgress(ergebnis.eintrag);
   return ergebnis.eintrag;
+}
+
+// Bestaetigt nur den Nachschubhinweis: Oeffnen ist kein Gesehen-Markieren.
+// Vor dem Buchen aufrufen, solange die bisherige Hinweis-Zielfolge feststeht.
+function merkeGeoeffneteFolge(url) {
+  if (!fortschritt.nachschubHinweisGeoeffnet(favorites, url)) return;
+  saveFavorites();
+  sendActiveState();
 }
 
 // Dieselbe Trennung fuer die Serien-Eckdaten: die Regel im Modul, die Anzeige
@@ -1978,11 +1987,6 @@ ipcMain.handle("favorites:open", (_event, favoriteId, options = {}) => favoritOe
 // Oberflaeche und die Fernbedienung im Handy.
 async function favoritOeffnen(favoriteId, options = {}) {
   const favorite = favorites.find((item) => item.id === favoriteId);
-  // Wer die Serie oeffnet, hat den Hinweis gesehen.
-  if (favorite?.newEpisodeAt) {
-    favorite.newEpisodeAt = "";
-    favorite.newEpisodeLabel = "";
-  }
   if (!favorite) return null;
 
   const provider = enabledProviders().find((item) => item.id === favorite.providerId)
@@ -1990,6 +1994,10 @@ async function favoritOeffnen(favoriteId, options = {}) {
     || enabledProviders()[0];
   if (!provider) return null;
 
+  if (favorite.watchpartyRoom) {
+    const key = watchpartySchluesselFuerFavorit(favorite, favorite.watchpartyRoom);
+    if (key) setWatchpartyLive(key, true, favorite.watchpartyRoom);
+  }
   activeFavoriteId = favorite.id;
   moveFavoriteToFront(favorite);
   // Kommt der Stand aus der Watchparty, wird nach dem Start genau dorthin
@@ -3337,6 +3345,7 @@ ipcMain.handle("data:confirm-reset", async () => {
 
 async function navigateProvider(provider, url, optionen = {}) {
   url = watchpartyAdresseFuerProvider(provider, url);
+  merkeGeoeffneteFolge(url);
   if (!spielerMiniBehalten()) direktSpielerSchliessen("navigation");
   const signal = direktAuftragBeginnen();
   if (pendingAutostart && pendingAutostart.providerId !== provider.id) {
@@ -3710,6 +3719,7 @@ function getProviderView(provider) {
   view.webContents.on("did-stop-loading", () => sendActiveState());
   view.webContents.on("did-navigate", (_event, url) => {
     watchpartyAbfrage.verwerfen(view.webContents);
+    if (!direktModus(url)) merkeGeoeffneteFolge(url);
     rememberProviderUrl(provider.id, url);
     // Wer einen Titel wirklich oeffnet, hat ihn nicht ignoriert - die
     // Muedigkeitszaehlung dieses Werks faengt von vorn an.
@@ -8194,7 +8204,7 @@ function providerForWatchpartyUrl(url, providerName) {
 // dieses Geraet beigetreten ist - der Server schickt nichts anderes.
 function applyWatchpartyProgress(key, stand, room) {
   const eintrag = watchpartyEintrag(key, room);
-  const lokal = lokalerWatchpartyEintrag(key, eintrag?.room || room);
+  const lokal = lokalerWatchpartyEintrag(key, eintrag?.room || room, stand?.url || eintrag?.progress?.url || eintrag?.url);
 
   if (!lokal) {
     // Dasselbe wie in raumEintraegeSichern: aus einem archivierten Stand
@@ -8343,9 +8353,17 @@ function raumEintraegeSichern(eintraege) {
  * Telefon dieselbe Reparatur macht.
  */
 function raumDublettenHeilen() {
+  const aktiv = favorites.find((favorite) => favorite.id === activeFavoriteId);
+  const aktiverRaum = String(aktiv?.watchpartyRoom || "");
   const urteil = fortschritt.raumDublettenZusammenlegen(favorites);
   if (!urteil.geaendert) return false;
   favorites = urteil.favoriten;
+  // Die Heilung kann den gerade geoeffneten doppelten Eintrag privat machen
+  // oder entfernen. Der laufende Player gehoert weiter zum erhaltenen Raum.
+  if (aktiverRaum) {
+    const erhalten = lokalerWatchpartyEintrag(watchpartyKey(aktiv), aktiverRaum, aktiv.url);
+    if (erhalten) activeFavoriteId = erhalten.id;
+  }
   for (const eintrag of urteil.geloest) {
     console.log(`[ELFIX WATCHPARTY] Doppelter Raum-Eintrag geloest: ${eintrag.title} zaehlt wieder privat`);
   }
@@ -8457,9 +8475,14 @@ function raeumeWatchpartyEintraegeAuf() {
   // jeder weitere Startversuch legte einen neuen daneben (Game of Thrones,
   // viermal am 14.9.2026). Die Warteschlangen-Ziele stehen nur in
   // watchparty.eintraege(), nicht im Raumzustand.
-  const dabei = new Set([...watchpartyShared, ...watchparty.eintraege()]
-    .filter((eintrag) => eintrag.joined)
-    .map((eintrag) => `${eintrag.room}|${eintrag.key}`));
+  const beigetreten = [...watchpartyShared, ...watchparty.eintraege()]
+    .filter((eintrag) => eintrag.joined);
+  const dabei = new Set(beigetreten.map((eintrag) => `${eintrag.room}|${eintrag.key}`));
+  // Der Seitentitel kann nach dem Laden anders geschrieben sein als der
+  // gespeicherte Relay-Key ("Hafen"/"Häfen"). Wie bei der Suche des lokalen
+  // Raumeintrags gilt dann die Serienadresse innerhalb desselben Raums.
+  const dabeiAdressen = new Set(beigetreten.filter((eintrag) => eintrag.url)
+    .map((eintrag) => `${eintrag.room}|${watchpartySerienSchluessel(eintrag.url)}`));
 
   // Geloest wird die Bindung, nicht der Eintrag.
   //
@@ -8488,7 +8511,8 @@ function raeumeWatchpartyEintraegeAuf() {
     // gilt das nicht - deren Bindung soll weg.
     if (!raum
       || (eingerichtet.has(raum) && (!verbunden.has(raum) || !watchpartyZustandBestaetigt.has(raum)))
-      || dabei.has(`${raum}|${watchpartyKey(favorite)}`)) {
+      || dabei.has(`${raum}|${watchpartyKey(favorite)}`)
+      || (favorite.url && dabeiAdressen.has(`${raum}|${watchpartySerienSchluessel(favorite.url)}`))) {
       continue;
     }
     favorite.watchpartyRoom = "";
@@ -8600,8 +8624,9 @@ async function openWatchpartyItem(key, room) {
   if (!eintrag.joined) {
     favorite = lokalerWatchpartyEintrag(key, "", url);
   }
+  if (eintrag.joined) setWatchpartyLive(key, true, eintrag.room);
+  activeFavoriteId = favorite?.id || null;
   if (favorite) {
-    activeFavoriteId = favorite.id;
     moveFavoriteToFront(favorite);
     recordMediaActivity(provider, url, {}, { existing: favorite, label: "Geöffnet" });
     await repairFavoriteThumbnailIfNeeded(favorite, provider).catch(() => false);
@@ -9190,6 +9215,20 @@ function pushWatchpartyLiveState(url = "") {
     watchparty.verlasseStand(watchpartyAnwesend.key, watchpartyAnwesend.raum);
   }
   watchpartyAnwesend = anwesend;
+
+  // Ein Kontextwechsel laedt die Quelle nicht neu. Der bestehende Player muss
+  // seine Rundenzuordnung trotzdem erfahren, sonst steuert er weiter privat
+  // oder behaelt eine inzwischen verlassene lokale Startschranke.
+  if (spielerOffen) {
+    const kontext = anwesend ? `${raum}|${key}` : "";
+    if (spielerLauf.rundenKontext !== undefined && spielerLauf.rundenKontext !== kontext) {
+      spielerRundenUebernahme = null;
+    }
+    spielerLauf.rundenKontext = kontext;
+    spielerView.webContents.send("spieler:steuern", { tun: "runde", auftragId: spielerLauf.id, kontext,
+      aktiv: Boolean(anwesend), host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId,
+      tempo: eintrag?.tempo || 1 });
+  }
 
   sendWatchpartyLive({
     // Sichtbar, sobald dieser Titel ueberhaupt in einer Runde laeuft - dann
@@ -11143,6 +11182,7 @@ function spielerSpoilerAktualisieren() {
 
 function spielerAuftrag() {
   if (!spielerLauf) return null;
+  const runde = spielerRunde();
   return {
     id: spielerLauf.id,
     adresse: spielerLauf.quelle.adresse,
@@ -11194,7 +11234,8 @@ function spielerAuftrag() {
     untertitel: untertitelwahl.normalisieren(settings.playback?.untertitel),
     // Laeuft zu dieser Folge eine Runde, schickt der Player seinen Takt und
     // meldet seine Taten. Ohne Runde waere beides Arbeit ohne Empfaenger.
-    runde: Boolean(spielerRunde()),
+    runde: Boolean(runde),
+    rundeKontext: runde ? `${runde.raum}|${runde.key}` : "",
     // Und was in dieser Runde eingestellt ist: das Tempo gilt fuer alle, und
     // stellen darf es nur der Host.
     rundeTempo: spielerRundenEinstellung().tempo,
@@ -11643,6 +11684,7 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
     return { ok: false, grund: "Kein Titel geöffnet" };
   }
   url = watchpartyAdresseFuerProvider(provider, url);
+  merkeGeoeffneteFolge(url);
 
   const signal = optionen.signal || direktAuftragBeginnen();
   const abgebrochen = () => signal.aborted || (optionen.istAktuell && !optionen.istAktuell());

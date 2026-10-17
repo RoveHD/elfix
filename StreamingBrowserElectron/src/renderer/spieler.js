@@ -697,6 +697,7 @@ function aktuellesSkipsegment(stelle = bild.currentTime) {
 }
 /** Laeuft zu dieser Folge eine Watchparty? Dann geht der Takt hinaus. */
 let inRunde = false;
+let rundenKontext = "";
 /** Bin ich in dieser Runde der Host? Nur er stellt das Tempo fuer alle. */
 let binHost = false;
 /** Das laufende Tempo - in einer Runde das der Runde. */
@@ -1075,6 +1076,27 @@ function ausRunde() {
  */
 function steuernAusRunde(befehl) {
   if (!befehl) return;
+  if (befehl.tun === "runde") {
+    if (befehl.auftragId !== auftrag?.id) return;
+    const kontext = befehl.aktiv ? String(befehl.kontext || "") : "";
+    const geaendert = inRunde !== Boolean(befehl.aktiv) || rundenKontext !== kontext;
+    inRunde = Boolean(befehl.aktiv);
+    rundenKontext = kontext;
+    binHost = inRunde && Boolean(befehl.host);
+    if (geaendert) {
+      ++startAuftrag;
+      startAusstehend = false;
+      clearTimeout(startNotbremse);
+      rundeWarten = false;
+      rundeQuellenWarten = false;
+      rundenVorbereitung = null;
+      rundeWartenZeigen();
+      spielenZeichnen();
+    }
+    if (inRunde) tempoSetzen(befehl.tempo, false);
+    tempoRechteSetzen();
+    return;
+  }
   if (befehl.tun === "fern") {
     fernSteuern(befehl);
     return;
@@ -2853,6 +2875,7 @@ function starten(neuerAuftrag) {
   marke = auftrag.marke || null;
   knopfMarke.hidden = true;
   inRunde = Boolean(auftrag.runde);
+  rundenKontext = inRunde ? String(auftrag.rundeKontext || "") : "";
   ++startAuftrag;
   startAusstehend = false;
   clearTimeout(startNotbremse);

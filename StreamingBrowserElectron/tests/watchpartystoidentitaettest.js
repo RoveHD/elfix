@@ -47,6 +47,78 @@ function kontext(url = folge("http://186.2.175.5")) {
 
 async function pruefen() {
   const c = kontext();
+  // Metadata may spell the display title differently from the relay's stable
+  // key. A connected, confirmed member still belongs to the same room/URL.
+  const cleanup = kontext();
+  cleanup.watchparty = { aktiv: true, codes: [room], eintraege: () => [],
+    status: () => ({ rooms: [{ room, connected: true }] }) };
+  cleanup.watchpartyZustandBestaetigt = new Set([room]);
+  cleanup.watchpartyKey = () => "serie:avatardiesiebenhaefen";
+  cleanup.saveFavorites = () => {};
+  cleanup.sendActiveState = () => {};
+  cleanup.console = { log() {} };
+  vm.runInContext(funktion("raeumeWatchpartyEintraegeAuf"), cleanup);
+  cleanup.raeumeWatchpartyEintraegeAuf();
+  assert.equal(cleanup.favorites[0].watchpartyRoom, room, "Metadaten-Titel darf einen bestaetigten Raum nicht auf privat umstellen");
+  const peer = kontext();
+  peer.favorites[0].providerId = "sto";
+  peer.favorites[0].type = "serie";
+  peer.favorites[0].title = "Avatar - Die sieben Häfen";
+  peer.watchpartyKey = () => "serie:avatardiesiebenhaefen";
+  peer.fortschritt = fortschritt;
+  peer.saveFavorites = () => {};
+  peer.sendActiveState = () => {};
+  peer.console = { log() {} };
+  peer.providerForWatchpartyUrl = () => providers[0];
+  peer.createWatchpartyFavorite = () => { throw Error("Peer-Fortschritt legte trotz bestehendem URL/Raum-Eintrag eine Dublette an"); };
+  for (const name of ["lokalerWatchpartyEintrag", "watchpartyEintrag", "applyWatchpartyProgress"]) vm.runInContext(funktion(name), peer);
+  peer.applyWatchpartyProgress(key, { url: folge("https://serienstream.to"), season: 1, episode: 2,
+    position: 15, duration: 180, updatedAt: new Date().toISOString(), from: "PC2" }, room);
+  assert.equal(peer.favorites.length, 1);
+  assert.equal(peer.favorites[0].id, "party", "Peer-Fortschritt erhaelt die bestehende Favoriten-ID");
+  const heilung = kontext();
+  heilung.favorites = [{ ...peer.favorites[0], id: "party" },
+    { ...peer.favorites[0], id: "erhalten", url: folge("https://serienstream.cx", 3), season: 1, episode: 3 },
+    { ...peer.favorites[0], id: "privat", watchpartyRoom: "" }];
+  heilung.fortschritt = fortschritt;
+  heilung.watchpartyKey = () => "serie:avatardiesiebenhaefen";
+  heilung.console = { log() {} };
+  for (const name of ["lokalerWatchpartyEintrag", "raumDublettenHeilen"]) vm.runInContext(funktion(name), heilung);
+  assert.equal(heilung.raumDublettenHeilen(), true);
+  assert.equal(heilung.activeFavoriteId, "erhalten", "Heilung uebertraegt den aktiven Raumkontext auf den erhaltenen Eintrag");
+  assert.equal(heilung.favorites.find(f => f.id === "privat").watchpartyRoom, "", "Bestehender privater Stand bleibt privat");
+  cleanup.watchpartyShared[0].joined = false;
+  cleanup.raeumeWatchpartyEintraegeAuf();
+  assert.equal(cleanup.favorites[0].watchpartyRoom, "", "Echtes Verlassen wird weiterhin bestaetigt");
+  const spieler = fs.readFileSync(path.join(__dirname, "../src/renderer/spieler.js"), "utf8").replace(/\r\n/g, "\n");
+  const start = spieler.indexOf("function steuernAusRunde(");
+  const native = vm.createContext({
+    auftrag: { id: 7 }, inRunde: true, rundenKontext: "A|avatar", binHost: false, startAuftrag: 10,
+    startAusstehend: true, startNotbremse: 0, rundeWarten: true, rundeQuellenWarten: true,
+    rundenVorbereitung: { id: "pending" }, clearTimeout,
+    rundeWartenZeigen() {}, spielenZeichnen() {}, tempoSetzen() {}, tempoRechteSetzen() {}
+  });
+  vm.runInContext(spieler.slice(start, spieler.indexOf("\n}", start) + 2), native);
+  native.steuernAusRunde({ tun: "runde", auftragId: 7, aktiv: true, kontext: "A|avatar", host: true, tempo: 1 });
+  assert.equal(native.rundeWarten, true, "Wiederholter Live-Takt darf eine echte laufende Startbarriere nicht freigeben");
+  assert.equal(native.startAuftrag, 10);
+  native.steuernAusRunde({ tun: "runde", auftragId: 6, aktiv: true, kontext: "B|avatar" });
+  assert.equal(native.inRunde, true, "Alter Quellenauftrag darf aktuellen Rundenzustand nicht aendern");
+  assert.equal(native.rundenKontext, "A|avatar");
+  native.steuernAusRunde({ tun: "runde", auftragId: 7, aktiv: true, kontext: "B|avatar", host: true, tempo: 1 });
+  assert.equal(native.rundeWarten, false, "Raum A nach B verwirft auch bei aktivem Live die alte Startschranke");
+  assert.equal(native.rundenVorbereitung, null);
+  native.rundeWarten = true;
+  native.rundenVorbereitung = { id: "B-prepare" };
+  native.steuernAusRunde({ tun: "runde", auftragId: 7, aktiv: true, kontext: "B|avatar", host: true, tempo: 1 });
+  assert.equal(native.rundeWarten, true, "Identischer Kontext B behaelt seine echte Startschranke");
+  native.steuernAusRunde({ tun: "runde", auftragId: 7, aktiv: false });
+  assert.equal(native.inRunde, false);
+  assert.equal(native.rundeWarten, false, "Bewusster Kontextwechsel gibt alte lokale Warteschranke frei");
+  assert.equal(native.rundenVorbereitung, null);
+  native.steuernAusRunde({ tun: "runde", auftragId: 7, aktiv: true, kontext: "B|avatar", host: true, tempo: 1 });
+  assert.equal(native.inRunde, true);
+  assert.equal(native.binHost, true);
   assert.equal(c.watchpartyLiveKeyForUrl(c.spielerLauf.url), key,
     "S.to-IP und Domain muessen dieselbe Live-Mitgliedschaft behalten");
   assert.equal(c.spielerRunde().raum, room);

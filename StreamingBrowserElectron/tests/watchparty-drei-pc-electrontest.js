@@ -53,7 +53,7 @@ function client(index, relayUrl) {
 }
 const readPlayer = pc => pc.player(`({time:bild.currentTime,paused:bild.paused,ready:bild.readyState,
   waiting:!document.getElementById('warteAufAlle').hidden,src:bild.currentSrc,error:bild.error?.message,
-  episode:Number(bild.currentSrc.match(/fixture-([0-9]+)/)?.[1]),members:document.getElementById('runde').childElementCount})`);
+  inParty:inRunde,episode:Number(bild.currentSrc.match(/fixture-([0-9]+)/)?.[1]),members:document.getElementById('runde').childElementCount})`);
 async function main() {
   const port = await freePort();
   fs.mkdirSync(path.join(root, "relay"));
@@ -67,18 +67,18 @@ async function main() {
   await until(() => pcs.every(pc => pc.ready), "three app windows");
   await until(async () => (await Promise.all(pcs.map(pc => pc.shell("streamingBrowser.getWatchpartyStatus()")))).every(s => s.connected), "three relay connections");
   const host = pcs[0];
-  await host.shell(`streamingBrowser.openProviderUrl('sto','http://serienstream.to${base}/staffel-1/episode-1')`);
-  await until(async () => (await readPlayer(host))?.ready >= 2, "host media");
-  const shared = await host.shell(`streamingBrowser.shareCurrentToWatchparty('${room}')`);
-  assert.equal(shared.shared, true, JSON.stringify(shared));
-  const key = shared.key;
-  for (const pc of pcs.slice(1)) {
-    await until(async () => (await pc.shell("streamingBrowser.getWatchpartyItems()")).some(item => item.key === key), "shared card");
-    await pc.shell(`streamingBrowser.enterWatchparty(${JSON.stringify(key)},'${room}')`);
-  }
+  const key = "serie:avatardiesiebenhafen";
   await until(async () => (await Promise.all(pcs.map(pc => pc.shell("streamingBrowser.getWatchpartyItems()")))).every(items => items.find(item => item.key === key)?.joined), "joined membership");
-  await Promise.all(pcs.map(pc => pc.shell(`streamingBrowser.openWatchpartyItem(${JSON.stringify(key)},'${room}')`)));
+  // Both real opening routes, without a preparatory enter/toggle operation.
+  await Promise.all(pcs.map((pc, index) => pc.shell(index === 1
+    ? `streamingBrowser.openFavorite('avatar-party',{autoplay:true})`
+    : `streamingBrowser.openWatchpartyItem(${JSON.stringify(key)},'${room}')`)));
   await until(async () => (await Promise.all(pcs.map(readPlayer))).every(p => p?.ready >= 2), "three loaded players");
+  await until(async () => (await Promise.all(pcs.map(pc => pc.shell(`({live:watchpartyLiveOn,room:watchpartyLiveRoom})`))))
+    .every(state => state.live && state.room === room), "direct saved room cards stay live after alias navigation");
+  assert.ok((await Promise.all(pcs.map(readPlayer))).every(p => p.inParty), "Every native player belongs to its saved room");
+  assert.ok((await Promise.all(pcs.map(pc => pc.shell("favorites.filter(f => f.watchpartyRoom).every(f => !f.newEpisodeAt)")))).every(Boolean),
+    "Opening the advertised episode clears its notice through both entry routes");
   await until(async () => (await Promise.all(pcs.map(readPlayer))).every(p => p?.members === 3), "three participants in each real player strip");
   await host.shell(`streamingBrowser.resyncWatchparty(${JSON.stringify(key)},'${room}')`);
   await until(async () => (await Promise.all(pcs.map(readPlayer))).every(p => p && !p.waiting && p.paused), "synchronize pauses and releases all three controls");
@@ -108,7 +108,33 @@ async function main() {
     .every(p => p?.episode === 2 && p.ready >= 3 && !p.paused && !p.waiting), "episode 2 starts on all three after PC3 buffers");
   const next = await Promise.all(pcs.map(readPlayer));
   assert.ok(Math.max(...next.map(p => p.time)) - Math.min(...next.map(p => p.time)) < 1, JSON.stringify(next));
-  console.log("OK Three complete Electron apps: three participant strips; synchronize releases controls; host and guest Play/Pause; episode change waits for delayed PC3, then all start (<1s spread)");
+
+  // A single real player switches from the ordinary private provider route to
+  // its existing room. The other two apps stay in the menu and send bye.
+  await Promise.all(pcs.slice(1).map(pc => pc.shell("streamingBrowser.showHome()")));
+  await host.shell(`streamingBrowser.openProviderUrl('sto','http://serienstream.to${base}/staffel-1/episode-2')`);
+  await until(async () => (await readPlayer(host))?.ready >= 3, "solo private player loaded");
+  assert.equal((await readPlayer(host)).inParty, false, "Ordinary provider opening remains private");
+  await host.shell(`streamingBrowser.toggleWatchpartyLive(${JSON.stringify(key)},true,'${room}')`);
+  await until(async () => (await host.shell("watchpartyStandDaten?.members?.length")) === 1, "only the solo host is actually live");
+  assert.equal((await readPlayer(host)).inParty, true, "Manual live context must also reach the already loaded native player");
+  await until(async () => !(await readPlayer(host)).waiting, "solo context switch releases local waiting state");
+  if (!(await readPlayer(host)).paused) await host.player("spielenUmschalten()");
+  await until(async () => (await readPlayer(host)).paused, "solo pause");
+  await host.player("spielenUmschalten()");
+  await until(async () => { const state = await readPlayer(host); return !state.paused && !state.waiting; }, "solo host starts after its own actual readiness");
+  await host.shell(`streamingBrowser.toggleWatchpartyLive(${JSON.stringify(key)},false,'${room}')`);
+  await until(async () => !(await readPlayer(host)).inParty, "private context reaches the player without reopening its source");
+  await host.shell(`streamingBrowser.openFavorite(favorites.find(f => f.watchpartyRoom === '${room}').id,{autoplay:true})`);
+  await until(async () => { const state = await readPlayer(host); return state?.ready >= 3 && state.inParty; }, "saved shared card reactivates a previously disabled live context");
+  await host.shell(`streamingBrowser.leaveWatchparty(${JSON.stringify(key)},'${room}')`);
+  await until(async () => (await host.shell("streamingBrowser.getWatchpartyItems()"))
+    .some(item => item.key === key && !item.joined), "explicit leave confirmed");
+  await host.shell(`streamingBrowser.openWatchpartyItem(${JSON.stringify(key)},'${room}')`);
+  await until(async () => { const state = await readPlayer(host); return state?.ready >= 3 && !state.inParty; }, "unjoined open remains a private preview");
+  assert.ok((await host.shell("streamingBrowser.getWatchpartyItems()")).some(item => item.key === key && !item.joined),
+    "Opening a preview must never implicitly join the room");
+  console.log("OK Three complete Electron apps: persisted room cards stay live without enter/toggle; notices cleared; three participant strips; guest controls; delayed episode change (<1s spread); solo private-to-live switch and Ready/start");
 }
 main().catch(async error => { console.error(error.stack); console.error("Diagnostics:", root);
   console.error(await Promise.all(clients.map(readPlayer))); process.exitCode = 1; }).finally(async () => {

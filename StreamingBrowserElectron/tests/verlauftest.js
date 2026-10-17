@@ -48,6 +48,10 @@ const folgeVon = (m, nummer, staffel = 1) => m.folgen.find((f) => f.folge === nu
 const ADRESSEN = [
   folge(8), folge(1), folge(12, 3),
   "https://s.to/serie/stream/loki/staffel-2/episode-4",
+  "https://serienstream.to/serie/loki/staffel-2/episode-4",
+  "https://www.serienstream.cx/serie/stream/loki/staffel-2/episode-4",
+  "http://186.2.175.5/serie/loki/staffel-2/episode-4",
+  "https://serienstream.to.example/serie/loki/staffel-2/episode-4",
   "https://s.to/serie/stream/loki/staffel-1",
   "https://aniworld.to/anime/stream/black-torch",
   "https://filmo.to/movies/irgendwas",

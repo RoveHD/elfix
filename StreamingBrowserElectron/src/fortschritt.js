@@ -170,7 +170,7 @@ function appendCompletedEpisode(entry, identity, url, completedAt) {
   if (!entry || !identity) return;
   const completedEpisodes = Array.isArray(entry.completedEpisodes) ? entry.completedEpisodes : [];
   const key = `${identity.key}:s${identity.season}:e${identity.episode}`;
-  if (!completedEpisodes.some((item) => item?.key === key)) {
+  if (!completedEpisodes.some((item) => abgeschlosseneFolgenKennung(item) === key)) {
     completedEpisodes.push({
       key,
       season: sanitizePositiveNumber(identity.season),
@@ -446,6 +446,9 @@ function episodeIdentity(value) {
         break;
       }
     }
+    // S.to fuehrt alte /serie/stream/- und neue /serie/-Adressen parallel.
+    // "stream" ist dabei kein Serientitel.
+    if (serienHost(url) === "s.to") mediaSlug = mediaSlugFromUrl(value);
     if (!mediaSlug) return null;
 
     let season = 0;
@@ -458,7 +461,7 @@ function episodeIdentity(value) {
     }
     if (!Number.isFinite(episode) || episode <= 0) return null;
     return {
-      key: `${stripWww(url.hostname)}:${mediaSlug}`,
+      key: `${serienHost(url)}:${mediaSlug}`,
       season,
       episode
     };
@@ -478,11 +481,18 @@ function episodeIdentity(value) {
 // Wirt und Slug zusammen, nicht der Slug allein: derselbe Slug auf zwei
 // Anbietern sind zwei Eintraege mit zwei Staenden, und "attack-on-titan" auf
 // s.to ist nicht der Eintrag von aniworld.to.
+function serienHost(url) {
+  const host = stripWww(url.hostname);
+  const sto = ["s.to", "serienstream.to", "serienstream.cx"]
+    .some((alias) => host === alias || host.endsWith(`.${alias}`)) || host === "186.2.175.5";
+  return sto && /^\/serie\//i.test(url.pathname) ? "s.to" : host;
+}
+
 function serienKennungAusUrl(value) {
   const slug = mediaSlugFromUrl(value);
   if (!slug) return "";
   try {
-    return `${stripWww(new URL(value).hostname)}:${slug}`;
+    return `${serienHost(new URL(value))}:${slug}`;
   } catch {
     return "";
   }
@@ -609,10 +619,19 @@ function normalizeActivity(value) {
   })).filter((item) => item.at || item.url || item.label);
 }
 
+// Bereits gespeicherte S.to-Kennungen behalten ihren Inhalt, werden aber beim
+// Vergleich ueber die vorhandene Folgenadresse erkannt. Sonst zaehlt ein
+// Domainwechsel dieselbe gesehene Folge ein zweites Mal.
+function abgeschlosseneFolgenKennung(item) {
+  const identity = episodeIdentity(item?.url);
+  if (identity?.key.startsWith("s.to:")) return `${identity.key}:s${identity.season}:e${identity.episode}`;
+  return String(item?.key || "");
+}
+
 function normalizeCompletedEpisodes(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(-500).map((item) => ({
-    key: String(item?.key || ""),
+    key: abgeschlosseneFolgenKennung(item),
     season: sanitizePositiveNumber(item?.season),
     episode: sanitizePositiveNumber(item?.episode),
     url: String(item?.url || ""),
@@ -1762,7 +1781,7 @@ function repairTrimmedSeriesTail(favorite, finalSeason, finalEpisode, meldungen 
 
   const schluessel = `${identity.key}:s${finalSeason}:e${finalEpisode}`;
   const letzteGesehen = Array.isArray(favorite.completedEpisodes)
-    && favorite.completedEpisodes.some((eintrag) => eintrag?.key === schluessel);
+    && favorite.completedEpisodes.some((eintrag) => abgeschlosseneFolgenKennung(eintrag) === schluessel);
   if (!letzteGesehen) return false;
 
   const letzteUrl = replaceEpisodeUrl(favorite.url, finalSeason, finalEpisode);
@@ -1806,6 +1825,9 @@ function favoritNachziehen(eintrag, url, provider, folgemodus = "sequential") {
   const vorher = episodeIdentity(eintrag.url);
   const nachher = episodeIdentity(url);
   if (!vorher || !nachher) return { art: "nichts" };
+  // Eine Umleitung auf einen Alias derselben Folge ist kein Folgenwechsel.
+  // Insbesondere darf sie den aktiven Watchparty-Favoriten nicht loesen.
+  if (vorher.key === nachher.key && compareEpisodeIdentity(vorher, nachher) === 0) return { art: "nichts" };
 
   if (folgemodus !== "sequential" || !isSequentialFavoriteProgress(vorher, nachher)) {
     return { art: "loesen" };
@@ -1989,10 +2011,42 @@ function standOhneStelle(stand) {
   return !(Number(stand?.position) > 0) && !(Number(stand?.duration) > 0);
 }
 
+function nachschubZielFolge(eintrag) {
+  const ziel = episodeIdentity(eintrag?.url);
+  if (!ziel) return null;
+  // Der gespeicherte Hauptstand kann inzwischen weitergerueckt sein. Die
+  // vorhandenen Hinweise nennen die urspruenglich neu hinzugekommene Folge.
+  const folge = String(eintrag.newEpisodeLabel || "").match(/^Folge (\d+) ist da$/);
+  const staffel = String(eintrag.newEpisodeLabel || "").match(/^Staffel (\d+) ist da$/);
+  if (folge && Number(folge[1]) > 0) ziel.episode = Number(folge[1]);
+  if (staffel && Number(staffel[1]) > 0) {
+    ziel.season = Number(staffel[1]);
+    ziel.episode = 1;
+  }
+  return ziel;
+}
+
+// Das Oeffnen bestaetigt den Hinweis, nicht den Gesehen-Status. Auch ein
+// anderer privater oder Raum-Eintrag derselben Serie kann ihn bestaetigen.
+function nachschubHinweisGeoeffnet(favoriten, url) {
+  const offen = episodeIdentity(url);
+  if (!offen) return false;
+  let geaendert = false;
+  for (const eintrag of favoriten || []) {
+    if (!eintrag?.newEpisodeAt) continue;
+    const ziel = nachschubZielFolge(eintrag);
+    if (!ziel || offen.key !== ziel.key || compareEpisodeIdentity(offen, ziel) < 0) continue;
+    eintrag.newEpisodeAt = "";
+    eintrag.newEpisodeLabel = "";
+    geaendert = true;
+  }
+  return geaendert;
+}
+
 /** Ein lokaler Nachschubhinweis endet, wenn diese Folge bereits geschaut wurde. */
 function nachschubHinweisGesehen(lokal, stand) {
   if (!lokal?.newEpisodeAt) return false;
-  const ziel = episodeIdentity(lokal.url);
+  const ziel = nachschubZielFolge(lokal);
   if (!ziel) return false;
   const gesehen = (Array.isArray(stand?.completedEpisodes) ? stand.completedEpisodes : [])
     .some((folge) => compareEpisodeIdentity(folge, ziel) >= 0);
@@ -2107,6 +2161,7 @@ function watchpartyEintragAbgleichen(lokal, stand) {
 }
 
 module.exports = {
+  nachschubHinweisGeoeffnet,
   nachschubHinweisGesehen,
   standOhneStelle,
   watchpartyStandUebernehmen,

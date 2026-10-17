@@ -80,6 +80,7 @@ const einstieg = vm.createContext({
   lokalerWatchpartyEintrag: (key, room) => key === raumEintrag.key && room === raumEintrag.room
     ? raumFavorit : null,
   createWatchpartyFavorite: () => null,
+  setWatchpartyLive: () => {},
   moveFavoriteToFront: () => {},
   recordMediaActivity: () => {},
   repairFavoriteThumbnailIfNeeded: async () => false,
@@ -113,6 +114,11 @@ vm.runInContext(funktion("direktSpielerOeffnen"), wiederverwendung);
   await einstieg.openWatchpartyItem(raumEintrag.key, raumEintrag.room);
   assert.equal(einstieg.activeFavoriteId, raumFavorit.id,
     "Gemeinsamer Einstieg aktivierte seinen Raum-Favoriten nicht");
+  raumEintrag.joined = false;
+  await einstieg.openWatchpartyItem(raumEintrag.key, raumEintrag.room);
+  assert.equal(einstieg.activeFavoriteId, null,
+    "Nicht beigetretenes Oeffnen darf den vorherigen Raumkontext nicht erben");
+  raumEintrag.joined = true;
 
   const offen = await wiederverwendung.direktSpielerOeffnen(
     { id: "aniworld" }, folge(2), { quelle: {} }, { laden: true }

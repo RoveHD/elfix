@@ -56,7 +56,7 @@ function funktion(name) {
 }
 const gesendet = [];
 const kontext = vm.createContext({
-  favorites: [privat], watchpartyShared: [], nachschub, fortschritt,
+  favorites: [privat], activeFavoriteId: null, watchpartyShared: [], nachschub, fortschritt,
   watchparty: { aktiv: true, fortschrittMelden: (...args) => gesendet.push(args) },
   watchpartySettings: () => ({ deviceName: "Test" }),
   lokalerWatchpartyEintrag: () => null,

@@ -26,7 +26,7 @@ const roomItem = {
   key: "serie-key", room: "RUNDE", url, joined: true,
   hostId: "device-a", myId: "device-a", hostName: "Host"
 };
-const playerContents = { isDestroyed: () => false };
+const playerContents = { isDestroyed: () => false, send() {} };
 const providerContents = {
   isDestroyed: () => false,
   getURL: () => url,

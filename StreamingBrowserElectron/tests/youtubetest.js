@@ -351,9 +351,10 @@ pruefe("Der Serienschluessel ist bei allen YouTube-Videos derselbe",
   taste.urlSchluessel("https://www.youtube.com/watch?v=AAA"));
 
 const wpSync = require("../src/watchparty-sync");
-const sandkastenWP = { URL, taste, youtube: yt, console };
+const sandkastenWP = { URL, taste, youtube: yt, console, enabledProviders: () => [],
+  episodeIdentity: require("../src/fortschritt").episodeIdentity };
 vm.createContext(sandkastenWP);
-vm.runInContext(["function watchpartySerienSchluessel", "function istGleicheFolge", "function episodeIdentity", "function stripWww"]
+vm.runInContext(["function watchpartySerienSchluessel", "function istGleicheFolge"]
   .map((n) => abschnitt(main, n)).join("\n\n"), sandkastenWP);
 const gleich = sandkastenWP.istGleicheFolge;
 const VIDEO_A = "https://www.youtube.com/watch?v=AAA";
