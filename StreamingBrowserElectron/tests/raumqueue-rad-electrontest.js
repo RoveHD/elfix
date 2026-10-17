@@ -19,6 +19,14 @@ app.whenReady().then(async () => {
   win = new BrowserWindow({ show: false, width: 1280, height: 1000, useContentSize: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   await win.loadFile(fixture);
+  // Windows runners can disable animations via the accessibility preference.
+  // Test both modes explicitly instead of inheriting the machine's setting.
+  win.webContents.debugger.attach("1.3");
+  const motion = value => win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value }]
+  });
+  await motion("no-preference");
+  assert.equal(await run("matchMedia('(prefers-reduced-motion: reduce)').matches"), false);
   win.setOpacity(0);win.showInactive();
   await run(`(async () => {
     window.names = ['Game of Thrones','My Hero Academia','One Piece','Prison Break','Dragonball Z','Dragonball'];
@@ -103,6 +111,7 @@ app.whenReady().then(async () => {
       queueUpdate({...queueState,spin:{spinId:'test-'+caseId,winnerId:'2',landing:0.4,
         startLokal:Date.now(),duration:21000,fields:names.map((title,i)=>({id:String(i),title,weight:values[i]}))}});
       const group=document.querySelector('.rad-scheibe > g'), animation=group.getAnimations()[0];
+      if(!animation) throw Error('Animated pointer test requires a running wheel animation');
       animation.pause();animation.currentTime=0;
       const frames=animation.effect.getKeyframes();
       const from=Number(/rotate\\(([-.\\d]+)/.exec(frames[0].transform)[1]);
@@ -133,6 +142,18 @@ app.whenReady().then(async () => {
     return reports;
   })()`);
   for (const tick of ticks) assert.equal(tick.actual, tick.expected, JSON.stringify(tick));
-  console.log("OK Weighted wheel: contained labels at 1280/740/390px, full-title tooltips, persistent collapse and pointer contacts with unequal weights over successive spins");
+  await motion("reduce");
+  const reduced = await run(`(async () => {
+    queueUpdate({...queueState,spin:{spinId:'reduced-motion',winnerId:'2',landing:0.4,
+      startLokal:Date.now(),duration:21000,fields:names.map((title,i)=>({id:String(i),title,weight:i+1}))}});
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    return {reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,
+      running:document.querySelector('#queue').classList.contains('rad-laeuft'),
+      animations:document.querySelector('.rad-scheibe > g').getAnimations().length,
+      winner:document.querySelector('.ist-gewinner')?.dataset.feld,
+      result:document.querySelector('.rad-ergebnis').textContent};
+  })()`);
+  assert.deepEqual(reduced, {reduced:true,running:false,animations:0,winner:'2',result:'Das Los fällt auf: One Piece'});
+  console.log("OK Weighted wheel: contained labels at 1280/740/390px, full-title tooltips, persistent collapse, pointer contacts over successive spins and reduced-motion result without animation");
   clearTimeout(timer);win.destroy();app.exit(0);
 }).catch(error => { console.error(error);clearTimeout(timer);win?.destroy();app.exit(1); });
