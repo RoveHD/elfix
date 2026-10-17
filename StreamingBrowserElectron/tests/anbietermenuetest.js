@@ -77,8 +77,8 @@ const ANBIETER = [
   { id: "yt", name: "Youtube", startUrl: "https://www.youtube.com/" }
 ];
 
-function buehne(antwort) {
-  const gerufen = { menue: [], settings: [], tabs: [], gebaut: [], toasts: [] };
+function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
+  const gerufen = { menue: [], settings: [], tabs: [], gebaut: [], toasts: [], cloudflare: [], suchen: [] };
   const providerNameFeld = element("input");
 
   const kontext = {
@@ -92,8 +92,12 @@ function buehne(antwort) {
       providerContextMenu: async (name, punkt) => {
         gerufen.menue.push({ name, punkt });
         return antwort;
-      }
+      },
+      providerCloudflare: async (id) => { gerufen.cloudflare.push(id); return cloudflare; }
     },
+    currentRoute: route,
+    activeSearchQuery: "Avatar - Die sieben Häfen",
+    showGlobalSearch: async (frage) => { gerufen.suchen.push(frage); },
     // Die drei Schritte, auf deren Reihenfolge es ankommt. Jeder haelt fest,
     // welche Auswahl in dem Moment galt.
     openSettings: async (route = "settings") => {
@@ -114,7 +118,8 @@ function buehne(antwort) {
   });
   vm.createContext(sandkasten);
   for (const name of ["function providerCard(", "async function anbieterMenue(",
-    "async function anbieterBearbeiten(", "async function anbieterHinzufuegen("]) {
+    "async function anbieterBearbeiten(", "async function anbieterHinzufuegen(",
+    "async function anbieterCloudflare("]) {
     vm.runInContext(abschnitt(RENDERER, name), sandkasten);
   }
   return {
@@ -176,6 +181,23 @@ function buehne(antwort) {
     g.gerufen.settings.length === 0 && g.gerufen.toasts.length === 1,
     "sonst stuende die Auswahl auf -1 und man legte versehentlich einen neuen an");
 
+  // --- Cloudflare bestaetigen ---
+  const c = buehne("cloudflare");
+  await (await c.karte(1)).ausloesen("contextmenu");
+  pruefe("\"Cloudflare bestätigen\" fragt fuer genau diesen Anbieter",
+    JSON.stringify(c.gerufen.cloudflare) === '["sto"]', JSON.stringify(c.gerufen.cloudflare));
+  pruefe("Nach der Bestaetigung laeuft die offene Suche noch einmal",
+    c.gerufen.suchen[0] === "Avatar - Die sieben Häfen", JSON.stringify(c.gerufen.suchen));
+  pruefe("und es oeffnet nichts anderes", c.gerufen.settings.length === 0);
+  pruefe("Der Ausgang wird gemeldet", c.gerufen.toasts.at(-1) === "S.to bestätigt", c.gerufen.toasts.at(-1));
+  const cf = buehne("cloudflare", "fehlgeschlagen");
+  await (await cf.karte(1)).ausloesen("contextmenu");
+  pruefe("Ohne Bestaetigung wird nicht neu gesucht, aber Bescheid gesagt",
+    cf.gerufen.suchen.length === 0 && /nicht bestätigt/.test(cf.gerufen.toasts.at(-1) || ""));
+  const cr = buehne("cloudflare", "bestaetigt", "start");
+  await (await cr.karte(1)).ausloesen("contextmenu");
+  pruefe("Ausserhalb der Suche springt man nicht in die Suche", cr.gerufen.suchen.length === 0);
+
   // --- Das Plus ---------------------------------------------------------------
 
   pruefe("Das Plus steht in der Leiste, nicht in der Schiene",
@@ -202,6 +224,14 @@ function buehne(antwort) {
   pruefe("Es bietet Bearbeiten und Neu an",
     /label: "Bearbeiten", click: \(\) => \{ gewaehlt = "edit"; \}/.test(handler.slice(0, 1200))
     && /label: "Neuer Anbieter", click: \(\) => \{ gewaehlt = "new"; \}/.test(handler.slice(0, 1200)));
+  pruefe("und Cloudflare bestaetigen",
+    /label: "Cloudflare bestätigen", click: \(\) => \{ gewaehlt = "cloudflare"; \}/.test(handler.slice(0, 1200)));
+  const cfHandler = MAIN.slice(MAIN.indexOf('ipcMain.handle("provider:cloudflare"'), MAIN.indexOf('ipcMain.handle("provider:save-all"'));
+  pruefe("Der Hauptprozess zeigt nur die Abfrage und prueft mit dem echten Suchabruf",
+    /cfAdresseVerifizieren\(provider, \{ url, referer: provider\.startUrl, serverPruefung: frei \}\)/.test(cfHandler)
+    && /istCloudflareAbfrage\(antwort, text\)/.test(cfHandler) && /anbieterAbruf\(url/.test(cfHandler));
+  pruefe("Die Cloudflare-Bruecke steht im preload",
+    /providerCloudflare: \(providerId\) => ipcRenderer\.invoke\("provider:cloudflare", providerId\)/.test(PRELOAD));
   pruefe("Der Name steht als Ueberschrift darueber, unanklickbar",
     /\{ label: titel \|\| "Anbieter", enabled: false \}/.test(handler.slice(0, 1000)));
   pruefe("Die Bruecke steht im preload",

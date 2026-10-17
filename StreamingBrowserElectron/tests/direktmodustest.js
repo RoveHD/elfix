@@ -160,7 +160,7 @@ pruefe("Und jede Werkbankseite geht durch diese Pruefung",
   /async function werkbankAn[\s\S]{0,900}?menschentorErkennen\(view\)/.test(haupt),
   "nicht nur der erste Aufruf");
 pruefe("Auch eine Menschpruefung auf der Hoster-Seite wird sichtbar",
-  /bestaetigen: \(abbruch\) => menschentorLoesenLassen\(provider, view, \{[\s\S]{0,180}?voruebergehend: true/.test(haupt)
+  /bestaetigen: \(abbruch, challengeUrl = ""\) => challengeUrl[\s\S]{0,300}?cfAdresseVerifizieren[\s\S]{0,300}?menschentorLoesenLassen\(provider, view/.test(haupt)
   && /const menschentor = \$\{menschentorSkript\(\)\}/.test(haupt),
   "sonst wartet der unsichtbare Quellen-Beobachter bis zum Zeitlimit");
 

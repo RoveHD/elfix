@@ -3,6 +3,128 @@
 Alle Versionen von ELFIX, neueste zuerst. Die Eintraege stammen aus den
 Release-Commits - was dort steht, ist auch tatsaechlich in der Version drin.
 
+## 2.0.66 — 12. Oktober 2026
+
+- Suche auf Handy und Fernseher hat jetzt dieselben Regeln wie am Rechner:
+  „häfen", „haefen" und „hafen" gelten gleich, ein Jahr am Ende zaehlt nicht,
+  und findet ein Anbieter den langen Titel nicht (S.to), fragt ELFIX mit
+  Kernwoertern nach und filtert selbst. „Sieben hafen avatar" findet damit
+  „Avatar - Die sieben Häfen".
+- Alle Anbieter suchen gleichzeitig, jeder mit eigener Frist.
+- Suchanfragen gehen mit Kennung und Keksen des Anbieter-WebViews hinaus -
+  eine dort bestaetigte Cloudflare-Abfrage gilt auch fuer die Suche.
+- Treffer zeigen den echten Namen statt des Namens aus der Adresse.
+
+## 2.0.65 — 12. Oktober 2026
+
+- Android: Anime4K laeuft jetzt auch bei Animation ausserhalb von AniWorld,
+  etwa „Avatar - Die sieben Häfen" auf S.to. Der Player liest dafuer die
+  Genre-Links der Folgenseite (Anime, Animation, Zeichentrick) - dieselben
+  Genres wie am Rechner.
+
+## 2.0.64 — 12. Oktober 2026
+
+- Android: Ein privater Eintrag aus „Weiterschauen" oeffnet jetzt privat, auch
+  wenn derselbe Titel gerade in einer Watchparty laeuft. Bisher landete man
+  immer in der Runde. „Gemeinsam weiterschauen" und „Live beitreten" im Player
+  fuehren weiter in die Watchparty.
+
+## 2.0.63 — 12. Oktober 2026
+
+- Sprachsuche: Mikrofon neben dem Suchfeld am Desktop, auf dem Handy und auf
+  dem Fernseher. „Such nach …", „zeig mir …" und Aehnliches werden entfernt.
+- Desktop: „Hey Elfix" (Einstellungen → Sprachsuche, standardmaessig aus).
+  ELFIX hoert dann auf das Weckwort und sucht, was danach kommt - „Hey Elfix,
+  Breaking Bad". Erkannt wird offline; beim ersten Gebrauch laedt ELFIX ein
+  deutsches Sprachmodell (rund 45 MB). Das Mikrofon bekommt nur ein eigenes,
+  unsichtbares Fenster, nie das Hauptfenster.
+- Android: nutzt die Spracheingabe des Systems.
+
+## 2.0.62 — 12. Oktober 2026
+
+- Automatisch-Upscaling: Anime4K jetzt auch fuer Animation und Zeichentrick
+  (Genres der Titelkarte, auch auf S.to und bei Animationsfilmen). Spaet
+  nachgereichte Genres wechseln das Verfahren ohne Neuladen.
+- RTX Video: Der Helper verwendet seine Texturen wieder, statt fuer jedes Bild
+  neue anzulegen - kein wachsender Speicher mehr.
+- Sprachchat: Schalter fuer Geraeuschunterdrueckung. Am Desktop blenden
+  Hintergrund, Minimieren und X das Sprachfenster ganz aus, die Verbindung
+  laeuft weiter.
+
+## 2.0.61 — 11. Oktober 2026
+
+- Rechtsklick auf einen Anbieter → „Cloudflare bestätigen": ELFIX laedt dessen
+  Suchseite in der Anbietersitzung. Fragt Cloudflare nach, erscheint kurz nur
+  das Bestaetigungsfenster und verschwindet wieder, sobald der Anbieter die
+  Bestaetigung angenommen hat. Eine offene Suche laeuft danach von selbst
+  noch einmal. Braucht der Anbieter gerade keine Bestaetigung, zeigt sich nichts.
+- Der Suchhinweis bei Cloudflare nennt diesen Weg.
+
+## 2.0.60 — 11. Oktober 2026
+
+- Warteschlange im Raum ist ganz einklappbar (Knopf „Einklappen/Ausklappen"
+  oder Klick auf den Titel) und startet standardmaessig eingeklappt. Wer sie
+  aufklappt, findet sie beim naechsten Start wieder offen.
+
+## 2.0.59 — 10. Oktober 2026
+
+- Suche: Jeder Anbieter hat jetzt sein eigenes Zeitlimit. Bisher galt eines
+  fuer alle zusammen - probierten Google, YouTube oder Filmo bei einem langen
+  Titel ihre Schreibweisen durch, lief es ab und der fertige S.to-Treffer
+  („Avatar - Die sieben Häfen") ging mit unter: „Keine Treffer".
+- Ein Jahr am Ende („… (2026)", wie beim Vorschlag) wird fuer die Anfrage und
+  den Abgleich weggelassen.
+- Die Suchzeile nennt Anbieter, die nicht rechtzeitig geantwortet haben.
+- Neue Pruefung gegen nachgebaute Anbieter mit zwoelf Schreibweisen des
+  Titels (Umlaute, ae, Gross/Klein, Doppelpunkt, Gedankenstrich, Jahr,
+  Teiltitel) plus langsamem, kaputtem und Cloudflare-Anbieter.
+
+## 2.0.58 — 10. Oktober 2026
+
+- Suche mit vollem Titel: Findet ein Anbieter den langen Titel nicht (S.to
+  bei „Avatar - Die sieben Häfen"), fragt ELFIX mit einem Kernwort wie
+  „Avatar" nach und filtert die Antwort selbst nach dem vollen Titel. Damit
+  findet auch ein Klick auf den Vorschlag den Titel.
+- Suchkarten zeigen den echten Namen („Avatar - Die sieben Häfen") statt des
+  Namens aus der Adresse („Avatar Die Sieben Hafen").
+
+## 2.0.57 — 10. Oktober 2026
+
+- Suche findet Titel mit Umlauten: „Avatar - Die sieben Häfen" passt jetzt zur
+  S.to-Adresse `avatar-die-sieben-hafen`. Die Suche fragt zusätzlich ohne „e"
+  nach und gleicht „ä/ae" mit „a" ab.
+- Die Anbietersuche läuft über die Sitzung der Anbieteransichten. Nach einer
+  bestätigten Cloudflare-Abfrage gilt deren Freigabe damit auch für die Suche.
+- Hängt eine Suche an der Cloudflare-Abfrage, sagt ELFIX das, statt „keine
+  Treffer" zu melden.
+
+## 2.0.56 — 1. Oktober 2026
+
+- Sprachchat in Watchparty-Räumen auf Desktop und Android/TV: bewusstes
+  Beitreten zum Zuhören, Mikrofon einschalten, Push-to-talk und eigene
+  Lautstärke pro Teilnehmer. Das Handy kann den Sprachchat übernehmen,
+  während das Video auf dem Fernseher läuft.
+- Mikrofon-Auswahl unter Einstellungen → Watchparty → Mikrofon einstellen.
+  Die Auswahl bleibt auf dem jeweiligen Gerät gespeichert; ein Gerätewechsel
+  beendet die laufende Aufnahme und verlangt erneutes Einschalten.
+- Optional wird der Filmton während anderer Stimmen abgesenkt. Minimieren
+  und Folgenwechsel erhalten den Sprachchat; Verlassen beendet die Aufnahme.
+- Das mitgelieferte Relay unterstützt die neue Sprachverhandlung. Apps und
+  Relay gemeinsam aktualisieren; für restriktive Netze einen TURN-Server
+  konfigurieren (siehe docs/SPRACHCHAT.md).
+- Cloudflare-Verifizierung mit manueller Bestätigung, automatischer Fortsetzung
+  und geteilter Provider-/Player-Session; keine automatische CAPTCHA-Lösung.
+
+## 2.0.54 — 30. September 2026
+
+- Android-Player auf dem Handy: Wischen über das Bild spult nicht mehr. Beim
+  Scrollen oder Hochziehen der Systemleiste sprang die Wiedergabe sonst
+  ungewollt. Gespult wird per Doppel-Tipp (10 Sekunden zurück/vor) oder über
+  die Zeitleiste.
+- Build-Abhängigkeiten mit neuen Sicherheitsmeldungen aktualisiert
+  (`fast-uri` 3.1.8, `undici` 6.29.0, `brace-expansion`); betrifft nur den
+  Bau, nicht die ausgelieferte App.
+
 ## 2.0.53 — 27. September 2026
 
 - Android/TV-Player zeigt oben wie am Rechner, was passiert, zum Beispiel

@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   getWatchpartyItems: () => ipcRenderer.invoke("watchparty:items"),
   openWatchpartyItem: (key, room) => ipcRenderer.invoke("watchparty:open", key, room),
   getWatchpartyRooms: () => ipcRenderer.invoke("watchparty:rooms"),
+  openVoiceChat: (room = "") => ipcRenderer.invoke("watchparty:voice-open", String(room)),
+  openVoiceSettings: () => ipcRenderer.invoke("watchparty:voice-settings"),
   // Die Statusseite des Relays im richtigen Browser. Ohne Adresse von hier -
   // sie steht in den Einstellungen und wird drueben gebildet.
   openRelayStatus: () => ipcRenderer.invoke("watchparty:statusseite"),
@@ -121,6 +123,10 @@ contextBridge.exposeInMainWorld("streamingBrowser", {
   newFernCode: () => ipcRenderer.invoke("fern:neuer-code"),
   onFernState: (callback) => ipcRenderer.on("fern:state", (_event, state) => callback(state)),
   providerContextMenu: (name, punkt) => ipcRenderer.invoke("provider:context-menu", name, punkt),
+  providerCloudflare: (providerId) => ipcRenderer.invoke("provider:cloudflare", providerId),
+  sprachsucheKnopf: () => ipcRenderer.invoke("sprachsuche:knopf"),
+  sprachsucheAbbrechen: () => ipcRenderer.invoke("sprachsuche:abbrechen"),
+  onSprachsuche: (callback) => ipcRenderer.on("sprachsuche:ereignis", (_event, ereignis) => callback(ereignis)),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   getVideoUpscalingStatus: () => ipcRenderer.invoke("settings:video-upscaling-status"),
   openRtxVideoLicense: () => ipcRenderer.invoke("settings:rtx-license-open"),

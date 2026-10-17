@@ -45,8 +45,9 @@
     transition: opacity 220ms ease;
   }
   .schicht.weg { opacity: 0; pointer-events: none; }
-  body:has(#leiste.weg),
-  body:has(#leiste.weg) * { cursor: none !important; }
+  /* Auch das Wurzelelement bestimmt den Cursor der Fensterflaeche. */
+  html:has(#leiste.weg),
+  html:has(#leiste.weg) * { cursor: none !important; }
   #kopf {
     top: 0; display: flex; align-items: center; gap: 12px;
     background: linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
@@ -541,6 +542,7 @@
       <button id="chatZu" type="button" title="Chat schließen">✕</button>
     </div>
     <div id="chatStatus" aria-live="polite"></div>
+    <button id="chatSprachchat" type="button">Sprachchat öffnen</button>
     <div id="chatListe" aria-live="polite" aria-relevant="additions text"></div>
     <form id="chatForm">
       <textarea id="chatEingabe" rows="1" maxlength="500" placeholder="Nachricht schreiben" aria-label="Chatnachricht"></textarea>

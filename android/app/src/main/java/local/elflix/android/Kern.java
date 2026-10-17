@@ -90,8 +90,7 @@ public final class Kern {
     static final String ZWISCHEN_ORDNER = "kern-zwischen";
     /** Ein Abruf ueber Java, damit die Anbieter-Kekse mitgehen und CORS nicht im Weg steht. */
     private static final int NETZ_TIMEOUT_MS = 20_000;
-    private static final String NETZ_AGENT =
-        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36";
+    private final String netzAgent;
 
     /** Ergebnis eines Kern-Aufrufs. Genau eine der beiden Seiten ist gesetzt. */
     public interface Antwort {
@@ -123,6 +122,7 @@ public final class Kern {
     public Kern(Context context, Horcher horcher) {
         this.context = context.getApplicationContext();
         this.horcher = horcher;
+        this.netzAgent = CookieNetz.kennung(context);
     }
 
     /** Ob der Kern Aufrufe schon selbst beantwortet. Vorher werden sie gepuffert. */
@@ -161,7 +161,7 @@ public final class Kern {
         WebSettings einstellungen = webView.getSettings();
         einstellungen.setJavaScriptEnabled(true);
         einstellungen.setDomStorageEnabled(true);
-        einstellungen.setUserAgentString(NETZ_AGENT);
+        einstellungen.setUserAgentString(netzAgent);
         einstellungen.setAllowContentAccess(false);
         einstellungen.setAllowFileAccessFromFileURLs(false);
         einstellungen.setAllowUniversalAccessFromFileURLs(false);
@@ -681,7 +681,7 @@ public final class Kern {
         try {
             JSONObject optionen = new JSONObject(optionenJson == null ? "{}" : optionenJson);
             okhttp3.Request.Builder request = new okhttp3.Request.Builder().url(adresse)
-                .header("User-Agent", NETZ_AGENT).header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8");
+                .header("User-Agent", netzAgent).header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8");
 
             JSONObject kopf = optionen.optJSONObject("kopf");
             if (kopf != null) {

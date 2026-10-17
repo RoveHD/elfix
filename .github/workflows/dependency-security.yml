@@ -41,7 +41,8 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
       - name: Audit dependencies
-        run: npm audit
+        # Wie npm audit, mit den begruendeten Ausnahmen aus scripts/audit.js.
+        run: node scripts/audit.js
       - name: Install and audit relay dependencies
         working-directory: sync-server
         run: npm ci --ignore-scripts && npm audit

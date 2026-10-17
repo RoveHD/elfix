@@ -22,6 +22,13 @@
   const form = document.getElementById("chatForm");
   const eingabe = document.getElementById("chatEingabe");
   const senden = document.getElementById("chatSenden");
+  const sprachchat = document.getElementById("chatSprachchat");
+  sprachchat?.addEventListener("click", async () => {
+    try {
+      const antwort = await bruecke.sprachchat?.();
+      if (antwort?.error) statusZeigen(antwort.error);
+    } catch (_) { statusZeigen("Sprachchat konnte nicht geöffnet werden."); }
+  });
 
   let aktiv = false;
   let verbunden = false;
@@ -133,6 +140,7 @@
     raum = naechsterRaum;
     aktiv = Boolean(status?.active);
     verbunden = Boolean(status?.connected);
+    if (sprachchat) sprachchat.disabled = !aktiv;
     knopf.hidden = false;
     knopf.disabled = false;
     eingabe.disabled = !aktiv;

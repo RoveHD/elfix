@@ -11,6 +11,7 @@
 
 const crypto = require("crypto");
 const { versatzAusProben } = require("./watchparty-sync");
+const { voiceClientMessage } = require("../shared/sprachchat");
 
 const RECONNECT_MIN_MS = 2000;
 const RECONNECT_MAX_MS = 60000;
@@ -170,6 +171,7 @@ class Watchparty {
     this.aufQueue = optionen.onQueue || (() => {});
     this.aufSpoiler = optionen.onSpoiler || (() => {});
     this.aufChat = optionen.onChat || (() => {});
+    this.aufVoice = optionen.onVoice || (() => {});
     // Leitung auf oder zu. Der YouTube-Modus meldet sich danach selbst wieder
     // an und holt den Raumzustand.
     this.aufVerbindung = optionen.onConnection || (() => {});
@@ -353,6 +355,7 @@ class Watchparty {
       this.teilnehmer = [];
       this.queueZiele.clear();
       if (warBestaetigt) this.aufVerbindung(false);
+      this.aufVoice({ type: "voiceleft", reason: "disconnected" });
       this.uhrAnhalten();
       this.uhr = null;
       this.uhrProben = [];
@@ -462,6 +465,7 @@ class Watchparty {
     this.queueZiele.clear();
     if (!socket) return;
     if (warBestaetigt) this.aufVerbindung(false);
+    this.aufVoice({ type: "voiceleft", reason: "disconnected" });
     socket.onopen = null;
     socket.onmessage = null;
     socket.onerror = null;
@@ -514,6 +518,10 @@ class Watchparty {
     // Die YouTube-Watchparty. Sie kommt vor allem anderen und wird nur
     // weitergereicht: ihr Zustand, ihre Ordnung und ihre Entscheidungen liegen
     // vollstaendig woanders. Nichts unterhalb dieser Zeile sieht sie je.
+    if (this.identitaetBestaetigt && ["voicewelcome", "voicepeers", "voicesignal", "voiceerror", "voiceleft"].includes(nachricht.type)) {
+      this.aufVoice(nachricht);
+      return;
+    }
     if (this.identitaetBestaetigt && typeof nachricht.type === "string" && nachricht.type.startsWith("yt")) {
       this.aufYoutube(nachricht);
       return;
@@ -606,6 +614,7 @@ class Watchparty {
         if (!kennung || !this.deviceSecret) return;
         const warBestaetigt = this.identitaetBestaetigt;
         this.identitaetBestaetigt = true;
+        this.voiceAvailable = Array.isArray(nachricht.features) && nachricht.features.includes("voice");
         if (kennung !== this.geraetId) this.geraetId = kennung;
         this.aufKennung(this.geraetId);
         this.aufIdentitaet({ deviceId: this.geraetId, deviceSecret: this.deviceSecret });
@@ -685,6 +694,11 @@ class Watchparty {
   youtubeSenden(nachricht) {
     if (!this.aktiv) return false;
     return this.senden(nachricht);
+  }
+
+  voiceSenden(nachricht) {
+    const sauber = voiceClientMessage(nachricht);
+    return Boolean(sauber && this.senden(sauber));
   }
 
   queueStatus() {

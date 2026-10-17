@@ -19,6 +19,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
+const { SprachchatRelay } = require("./sprachchat");
+const sprachchat = new SprachchatRelay();
 const metadaten = require("./metadaten");
 // Die YouTube-Watchparty. Ein eigenes Modul mit eigenem Zustand - es teilt sich
 // mit der Titelverwaltung nur die Verbindung und den Raumcode.
@@ -775,7 +777,7 @@ const server = http.createServer((req, res) => {
       // "geraete" heisst: dieses Relay kennt den Abgleich zwischen den
       // Geraeten einer Person. Ohne den Eintrag laeuft dort drueben eine
       // aeltere Fassung, und die App wartet auf einen Zustand, der nie kommt.
-      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "queue", "ytqueue", "spoilerstate", "chat", "geraete",
+      features: ["share", "enter", "kick", "persist", "syncall", "hostpause", "watchstate", "here", "bye", "handover", "episodehost", "hostzeit", "clock", "seq", "metadata", "youtube", "queue", "ytqueue", "spoilerstate", "chat", "geraete", "voice",
         // "tempo" heisst: der Host stellt Geschwindigkeit und Fassung fuer die
         // ganze Runde. Fehlt der Eintrag, laeuft drueben ein aelteres Relay -
         // es wirft beide Befehle weg, und jeder bleibt bei seiner Einstellung.
@@ -1073,6 +1075,7 @@ function zustandSenden(raumcode) {
     client.send(JSON.stringify({
       type: "state",
       identityVersion: 2,
+      features: ["voice"],
       shared,
       peers,
       you: client.geraetId
@@ -1947,6 +1950,8 @@ wss.on("connection", (socket) => {
     // Fehler in einem angebundenen Protokollmodul den Relay-Prozess beendet.
     try {
 
+    if (sprachchat.handle(socket, nachricht, rohdaten.length)) return;
+
     // Uhrabgleich. Bewusst ganz vorn und ohne Raumbindung: die Antwort haengt
     // an nichts, darf nichts blockieren und soll so schnell wie moeglich
     // zurueckgehen - jede Millisekunde Bearbeitung hier landet als Fehler im
@@ -2029,6 +2034,7 @@ wss.on("connection", (socket) => {
         });
         return;
       }
+      sprachchat.leave(socket, "room-changed");
       socket.raum = codeNormalisieren(nachricht.room);
       socket.name = text(nachricht.name, 40) || "Gerät";
       socket.geraetId = identitaet.geraetId;
@@ -3649,6 +3655,7 @@ wss.on("connection", (socket) => {
   });
 
   socket.on("close", () => {
+    sprachchat.leave(socket, "disconnected", false);
     // Geht der Rechner, ist nichts mehr zu steuern. Die Handys erfahren es und
     // die Kopplung faellt weg - beim naechsten Start meldet er sich neu an.
     if (socket.fernSeite === "rechner" && socket.fernCode) {

@@ -210,3 +210,28 @@ console.log("OK  raumqueue UI: Favorit und YouTube-URL erzeugen getrennte Vorsch
 
   console.log("OK  raumqueue UI: Suche findet Titel und macht daraus einen Vorschlag");
 })().catch((fehler) => { console.error(fehler); process.exitCode = 1; });
+
+(async () => {
+  // Ganz einklappbar: nur die Kopfzeile bleibt, der Zustand wird gemerkt.
+  const speicher = new Map();
+  context.localStorage = { getItem: (k) => speicher.get(k) ?? null, setItem: (k, v) => speicher.set(k, String(v)) };
+  const api = { getRoomQueue: async (room, mode) => ({ room, mode, connected: true, supported: true, rev: 1, items: [], selectedId: "" }), roomQueueCommand: async () => {} };
+  const root = new Node("section");
+  context.ElfixRaumqueue.erstellen({ root, api });
+  const body = root.children[1];
+  const klappe = find(root, (n) => n.className === "raumqueue-klappe");
+  assert.strictEqual(body.className, "raumqueue-body");
+  assert.strictEqual(body.hidden, true, "Standardmaessig eingeklappt");
+  assert(root.classList.contains("ist-eingeklappt"));
+  assert(find(body, (n) => n.className === "raumqueue-list"), "Liste liegt im einklappbaren Teil");
+  klappe.trigger("click");
+  assert.strictEqual(body.hidden, false);
+  assert.strictEqual(speicher.get("elfix-raumqueue-eingeklappt"), "false");
+  const wieder = new Node("section");
+  context.ElfixRaumqueue.erstellen({ root: wieder, api });
+  assert.strictEqual(wieder.children[1].hidden, false, "Aufgeklappt bleibt sie nach Neustart offen");
+  find(wieder, (n) => n.className === "raumqueue-titel").trigger("click");
+  assert.strictEqual(wieder.children[1].hidden, true, "Klick auf den Titel klappt wieder ein");
+  delete context.localStorage;
+  console.log("OK  raumqueue UI: standardmaessig eingeklappt, Zustand bleibt erhalten");
+})().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -5,6 +5,9 @@ const path = require("path");
 const ipcSchutz = require("./ipc-schutz");
 const spielerNetz = require("./spieler-netz");
 const videoUpscalingStatus = require("./video-upscaling-status");
+const cfSession = require("./cf-session");
+let sprachchatFenster = null;
+let sprachchatDuckAktiv = false;
 const ipcMain = ipcSchutz.absichern(nativeIpcMain, kanal => kanal.startsWith("spieler:")
   ? { inhalt: spielerView?.webContents, datei: path.join(__dirname, "renderer", "spieler.html") }
   : { inhalt: mainWindow?.webContents, datei: path.join(__dirname, "renderer", "index.html") });
@@ -335,7 +338,9 @@ let browserBounds = { x: 0, y: 130, width: 1200, height: 700 };
 let isContentFullscreen = false;
 const providerViews = new Map();
 const providerViewRecords = new WeakMap();
-// Folgenlisten im Player laden getrennt von der aktiven Anbieteransicht.
+// Folgenlisten, die der eigene Player nachlaedt, duerfen die aktive
+// Anbieteransicht nicht umstellen. Deren Navigation loest den gesamten
+// Seiten-Lebenszyklus aus und konkurriert mit der laufenden Medienquelle.
 const folgenWerkbaenke = new Map();
 const webContentsProvider = new Map();
 const attachedProviderViews = new Set();
@@ -610,9 +615,15 @@ function startlastBeginnen() {
   // Erst danach: fuer die Reparatur wird je Staffel eine Seite geladen. Sie
   // hat es nicht eilig und soll dem Aufbau nicht ins Gehege kommen.
   setTimeout(() => { repairStalledSeriesFavorites().catch(() => {}); }, 6000).unref?.();
+  // "Hey Elfix" hoert erst zu, wenn der Aufbau durch ist - und nur, wenn es
+  // eingeschaltet ist. Das Modell ist dann schon da; geladen wurde es beim
+  // Einschalten.
+  if (settings.sprachsuche?.weckwort === true) sprachsucheHolen().starten("weckwort").catch(() => {});
 }
 
 app.on("before-quit", () => {
+  sprachchatFenster?.schliessen();
+  sprachsuche?.schliessen();
   // Beim Beenden darf die optionale Ablage einmal blockieren: andernfalls
   // ginge alles verloren, was waehrend eines langen Mini-Player-Laufs neu in
   // die beiden Caches kam. Ein noch gestellter Timer wird dabei mit erledigt.
@@ -694,6 +705,7 @@ function createMainWindow() {
     // entscheiden, damit Pause-bei-Fokusverlust Auto-PiP nicht verhindert.
     setTimeout(() => {
       if (mainWindow !== fenster || fenster.isDestroyed() || fenster.isFocused()) return;
+      if (sprachchatFenster?.fenster?.isFocused()) return;
       if (settings.playback.pauseOnBlur && !spielerMiniAktiv && !spielerMiniVorbereitung
         && !spielerAutoMiniAusstehend && !fenster.isMinimized()) pauseActivePlayback(true);
     }, 100);
@@ -707,6 +719,7 @@ function createMainWindow() {
     if (tastenkuerzel(input)) event.preventDefault();
   });
   mainWindow.on("closed", () => {
+    sprachchatFenster?.schliessen();
     mainWindow = null;
   });
 }
@@ -1240,8 +1253,9 @@ ipcMain.handle("search:all", async (event, query) => {
   try {
     return await searchCoordinator.request({
       key: JSON.stringify([value, selected]), owner,
-      execute: signal => searchAllProviders(value,
-        AbortSignal.any([signal, AbortSignal.timeout(12000)]), selected),
+      // Das Zeitlimit gilt je Anbieter (searchAllProviders); ein langsamer
+      // Anbieter verwirft so nicht mehr die Treffer der anderen.
+      execute: signal => searchAllProviders(value, signal, selected),
       isCacheable: results => Array.isArray(results) && results.every(result => !result?.error)
     });
   } catch (error) {
@@ -2026,6 +2040,8 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
     const menue = Menu.buildFromTemplate([
       { label: titel || "Anbieter", enabled: false },
       { type: "separator" },
+      { label: "Cloudflare bestätigen", click: () => { gewaehlt = "cloudflare"; } },
+      { type: "separator" },
       { label: "Bearbeiten", click: () => { gewaehlt = "edit"; } },
       { label: "Neuer Anbieter", click: () => { gewaehlt = "new"; } }
     ]);
@@ -2034,6 +2050,38 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
       : {};
     menue.popup({ window: mainWindow, ...stelle, callback: () => fertig(gewaehlt) });
   });
+});
+
+// Die Cloudflare-Abfrage eines Anbieters von Hand beantworten.
+//
+// Die Suche laeuft ohne sichtbare Seite und kann ein "Bist du ein Mensch?"
+// nicht beantworten - S.to meldet dann nur "cloudflare". Hier wird die
+// Suchseite des Anbieters in seiner eigenen Sitzung geladen. Fragt sie nach,
+// erscheint kurz nur das Bestaetigungsfenster und verschwindet wieder, sobald
+// der Anbieter die Bestaetigung angenommen hat; das Cookie gilt danach auch
+// fuer die Suche. Antwortet der Anbieter schon frei, zeigt sich nichts.
+//
+// Ergebnis: "frei" (nichts zu tun), "bestaetigt" oder "fehlgeschlagen".
+ipcMain.handle("provider:cloudflare", async (_event, providerId) => {
+  const provider = enabledProviders().find((eintrag) => eintrag.id === String(providerId || ""));
+  if (!provider) return "fehlgeschlagen";
+  const adresse = providerModel.buildSearchUrl(provider, "avatar");
+  const url = providerModel.isHttpUrl(adresse) ? adresse : provider.startUrl;
+  if (!providerModel.isHttpUrl(url)) return "fehlgeschlagen";
+  const frei = async () => {
+    try {
+      const antwort = await anbieterAbruf(url, { headers: { accept: "text/html,application/xhtml+xml" },
+        redirect: "follow", signal: AbortSignal.timeout(12000) });
+      const text = await antwort.text();
+      return antwort.ok && !istCloudflareAbfrage(antwort, text);
+    } catch {
+      return false;
+    }
+  };
+  if (await frei()) return "frei";
+  const ok = await cfAdresseVerifizieren(provider, { url, referer: provider.startUrl, serverPruefung: frei })
+    .catch(() => false);
+  return ok ? "bestaetigt" : "fehlgeschlagen";
 });
 
 ipcMain.handle("provider:save-all", (_event, nextProviders) => {
@@ -2578,6 +2626,13 @@ ipcMain.handle("watchparty:items", () => watchpartyItems());
 ipcMain.handle("watchparty:open", async (_event, key, room) => openWatchpartyItem(key, room));
 
 ipcMain.handle("watchparty:rooms", () => watchpartyRaumUebersicht());
+ipcMain.handle("watchparty:voice-settings", () => sprachchatOeffnen("", true));
+ipcMain.handle("watchparty:voice-open", async (_event, room) => {
+  const rooms = watchparty.codes;
+  const chosen = typeof room === "string" && rooms.includes(room) ? room
+    : rooms.length === 1 ? rooms[0] : rooms.length ? await frageWatchpartyRaum(null, rooms) : "";
+  return chosen ? sprachchatOeffnen(chosen) : { ok: false, error: rooms.length ? "" : "Richte zuerst einen Watchparty-Raum ein." };
+});
 
 // Auswahl aus einer Liste von Raeumen - fuer das Live-Beitreten, wenn derselbe
 // Titel in mehreren Runden steht.
@@ -2882,6 +2937,7 @@ ipcMain.handle("youtubeparty:open", async () => {
 
 ipcMain.handle("settings:save", (_event, nextSettings) => {
   const alteRaeume = Array.isArray(settings.watchparty?.rooms) ? settings.watchparty.rooms : [];
+  const altesWeckwort = settings.sprachsuche?.weckwort === true;
   const altesUpscaling = `${settings.playback?.videoUpscaling}:${settings.playback?.videoUpscalingMethod}:${settings.playback?.videoUpscalingResolution}:${settings.playback?.rtxVideoLicense}`;
   settings = normalizeSettings({ ...nextSettings, watchparty: {
     ...nextSettings?.watchparty,
@@ -2905,6 +2961,7 @@ ipcMain.handle("settings:save", (_event, nextSettings) => {
     spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(), spielerUpscalingVerfahren(), settings.playback?.videoUpscalingResolution);
   }
   videoUpscalingStandSenden();
+  sprachsucheWeckwortAnwenden(altesWeckwort);
   syncWatchparty();
   spielerSpoilerAktualisieren();
   syncGeraete();
@@ -3737,6 +3794,7 @@ function getProviderView(provider) {
   return view;
 }
 
+/** Eine stille Browseransicht nur fuer Folgenlisten hinter dem eigenen Player. */
 function folgenWerkbankHolen(provider) {
   const vorhanden = folgenWerkbaenke.get(provider.id);
   if (isLiveView(vorhanden)) return vorhanden;
@@ -5101,9 +5159,10 @@ function scheduleProviderAutoplay(provider, view, options = {}) {
   return request;
 }
 
-// Wann zuletzt ein Vorbereitungsfenster bestaetigt wurde. Der Zeitpunkt zaehlt
+// Wann zuletzt eine manuelle Bestaetigung erkannt wurde. Der Zeitpunkt zaehlt
 // gleich zweimal: er verlaengert das Autostart-Fenster und er entscheidet, ob
-// ein gleich danach aufspringendes Fenster zur Wiedergabe gehoert.
+// ein gleich danach aufspringendes Fenster zur Wiedergabe gehoert. ELFIX klickt
+// oder sendet dabei nichts; die serverseitige Freigabe bleibt Sache der Seite.
 const torKlickZeit = new Map();
 const TOR_NACHLAUF_MS = 8000;
 
@@ -5151,14 +5210,13 @@ function torMeldungVerarbeiten(provider, meldung) {
     logNextEpisode(provider, `Vorbereitungsfenster: ${meldung.slice(meldung.indexOf(":") + 1)}`);
     return;
   }
-  if (!meldung.startsWith("tor-geklickt:")) return;
+  if (!meldung.startsWith("tor-bestaetigt:")) return;
 
   torKlickZeit.set(provider.id, Date.now());
-  logNextEpisode(provider, `Vorbereitungsfenster bestaetigt (${meldung.slice(13)})`);
+  logNextEpisode(provider, `Vorbereitungsfenster manuell bestaetigt (${meldung.slice(16)})`);
 
-  // Hinter dem Knopf faengt das Laden erst an. Laeuft gerade ein Autostart,
-  // waere sein Zeitfenster sonst meist schon fast aufgebraucht und der Player
-  // kaeme zu spaet.
+  // Cloudflare verarbeitet die manuelle Bestaetigung jetzt selbst. Laeuft
+  // gerade ein Autostart, darf dessen Zeitfenster dabei nicht auslaufen.
   if (request && !request.torVerlaengert) {
     request.torVerlaengert = true;
     request.until = Math.max(request.until, Date.now() + 25000);
@@ -6537,34 +6595,71 @@ function buildNavigationUrl(input, provider) {
   return providerModel.buildSearchUrl(provider, value);
 }
 
-async function searchAllProviders(query, signal, selectedProviders = enabledProviders()) {
+async function searchAllProviders(query, signal, selectedProviders = enabledProviders(), zeitlimit = SUCHE_JE_ANBIETER_MS) {
   const value = String(query || "").trim();
   if (!value) return [];
 
   // Ein Uebersetzer fuer die ganze Suche: alle Anbieter teilen ihn sich, und er
   // fragt erst, wenn ihn der erste braucht.
   const fremdtitel = fremdtitelLauf(value);
-  const targets = selectedProviders.map((provider) => searchProvider(provider, value, signal, fremdtitel));
+  const targets = selectedProviders.map(async (provider) => {
+    const frist = AbortSignal.timeout(zeitlimit);
+    const eigen = signal ? AbortSignal.any([signal, frist]) : frist;
+    try {
+      return await searchProvider(provider, value, eigen, fremdtitel);
+    } catch (error) {
+      // Abgebrochen von aussen (neue Suche, Fenster zu): die ganze Suche endet.
+      if (signal?.aborted) throw error;
+      // Nur dieser Anbieter war zu langsam oder kaputt - die anderen zaehlen.
+      return providerSearchFailure(provider, providerModel.buildSearchUrl(provider, value),
+        frist.aborted ? "Zeitüberschreitung bei der Suche" : (error?.message || "Nicht erreichbar"));
+    }
+  });
 
   return Promise.all(targets);
 }
+
+// Jeder Anbieter hat sein eigenes Zeitlimit. Vorher galt eines fuer alle
+// zusammen: Google, YouTube und Filmo probierten bei einem langen Titel ihre
+// zwei Dutzend Schreibweisen durch, das Limit lief ab - und mit ihm ging der
+// laengst gefundene S.to-Treffer verloren. "Avatar" fand etwas, "Avatar - Die
+// sieben Häfen" nie.
+const SUCHE_JE_ANBIETER_MS = 12000;
 
 async function searchProvider(provider, query, signal, fremdtitel = null) {
   const variants = searchQueryVariants(query);
   const versucht = new Set();
   let fallback = null;
-  for (const variant of variants) {
-    signal?.throwIfAborted();
+  const frage = async (variant, filter = variant) => {
     versucht.add(variant);
-    const result = await searchProviderVariant(provider, variant, signal);
-    if (result.results.length) {
-      return {
-        ...result,
-        queryVariant: variant,
-        queryVariants: variants
-      };
-    }
+    signal?.throwIfAborted();
+    const result = await searchProviderVariant(provider, variant, signal, filter);
     if (!fallback) fallback = result;
+    return result.results.length ? result : null;
+  };
+
+  // Erst die naheliegenden Schreibweisen: der Begriff, ohne Akzente, ohne e.
+  const zuerst = variants.slice(0, 3);
+  for (const variant of zuerst) {
+    const result = await frage(variant);
+    if (result) return { ...result, queryVariant: variant, queryVariants: variants };
+  }
+
+  // Dann ein Kernwort. Die Suche des Anbieters scheitert an langen Titeln:
+  // S.to findet "Avatar - Die sieben Häfen" nicht, wohl aber "Avatar". Die
+  // Antwort wird hier nach dem vollen Titel gefiltert - nur die Frage an den
+  // Anbieter ist kuerzer. Das kommt vor den uebrigen Schreibweisen, denn die
+  // Suche hat ein Zeitlimit, und zwei Dutzend Abrufe davor fressen es auf.
+  for (const kern of kernwoerter(query)) {
+    if (versucht.has(kern)) continue;
+    const result = await frage(kern, query);
+    if (result) return { ...result, queryVariant: kern, queryVariants: variants };
+  }
+
+  for (const variant of variants.slice(3)) {
+    if (versucht.has(variant)) continue;
+    const result = await frage(variant);
+    if (result) return { ...result, queryVariant: variant, queryVariants: variants };
   }
 
   // Der Begriff selbst hat hier nichts gefunden. Vielleicht ist er der Titel in
@@ -6574,10 +6669,8 @@ async function searchProvider(provider, query, signal, fremdtitel = null) {
     signal?.throwIfAborted();
     for (const variant of searchQueryVariants(titel).slice(0, FREMDTITEL_VARIANTEN)) {
       if (versucht.has(variant)) continue;
-      versucht.add(variant);
-      signal?.throwIfAborted();
-      const result = await searchProviderVariant(provider, variant, signal);
-      if (result.results.length) {
+      const result = await frage(variant);
+      if (result) {
         return {
           ...result,
           queryVariant: variant,
@@ -6591,6 +6684,18 @@ async function searchProvider(provider, query, signal, fremdtitel = null) {
   }
 
   return fallback ? { ...fallback, queryVariants: variants } : providerSearchFailure(provider, providerModel.buildSearchUrl(provider, query), "Keine Suche");
+}
+
+// Hoechstens zwei kurze Anfragen: das erste und das laengste tragende Wort.
+// Artikel und Zahlen allein taugen nicht, sie liefern beliebige Listen.
+function kernwoerter(query) {
+  const fuell = new Set(["the", "a", "an", "der", "die", "das", "den", "dem", "ein", "eine", "and", "und", "of", "von"]);
+  const woerter = String(query || "").split(/[^\p{L}\p{N}]+/u)
+    .filter((wort) => wort.length >= 3 && !fuell.has(wort.toLowerCase()) && !/^\d+$/.test(wort));
+  if (woerter.length < 2) return [];
+  // Das zweite Wort ist das laengste der uebrigen - nie noch einmal das erste.
+  const laengstes = woerter.slice(1).sort((a, b) => b.length - a.length)[0];
+  return [woerter[0], laengstes];
 }
 
 // Hoechstens so viele Schreibweisen je fremdem Titel. Die erste ist der Titel
@@ -6655,11 +6760,13 @@ async function fremdtitelListe(fremdtitel, signal) {
   return Array.isArray(namen) ? namen : [];
 }
 
-async function searchProviderVariant(provider, query, signal) {
+// `filter`: wonach die Treffer geprueft werden. Ohne Angabe ist es die Frage
+// selbst; bei der Kernwortsuche der volle Titel.
+async function searchProviderVariant(provider, query, signal, filter = query) {
   const searchUrl = providerModel.buildSearchUrl(provider, query);
   try {
     signal?.throwIfAborted();
-    const ajaxResults = await searchProviderAjax(provider, query, searchUrl, signal).catch(error => {
+    const ajaxResults = await searchProviderAjax(provider, query, searchUrl, signal, filter).catch(error => {
       if (signal?.aborted || error?.name === "AbortError") throw error;
       return [];
     });
@@ -6673,23 +6780,23 @@ async function searchProviderVariant(provider, query, signal) {
       };
     }
 
-    const response = await fetch(searchUrl, {
-      headers: {
-        "accept": "text/html,application/xhtml+xml",
-        "user-agent": "Mozilla/5.0 ELFIX/0.2"
-      },
+    const response = await anbieterAbruf(searchUrl, {
+      headers: { "accept": "text/html,application/xhtml+xml" },
       signal,
       redirect: "follow"
     });
+    const html = await response.text();
+    if (istCloudflareAbfrage(response, html)) {
+      return providerSearchFailure(provider, searchUrl, "cloudflare");
+    }
     if (!response.ok) {
       return providerSearchFailure(provider, searchUrl, `HTTP ${response.status}`);
     }
-    const html = await response.text();
     return {
       providerId: provider.id,
       providerName: provider.name,
       searchUrl,
-      results: extractSearchLinks(html, searchUrl, query, provider)
+      results: extractSearchLinks(html, searchUrl, filter, provider)
     };
   } catch (error) {
     if (signal?.aborted || error?.name === "AbortError") throw error;
@@ -6697,15 +6804,38 @@ async function searchProviderVariant(provider, query, signal) {
   }
 }
 
-async function searchProviderAjax(provider, query, searchUrl, signal) {
+/*
+ * Die Suche laeuft ueber die Sitzung der Anbieteransichten. Nur dort liegen
+ * die Cookies einer bestaetigten Cloudflare-Abfrage (cf_clearance), und sie
+ * gelten nur zusammen mit derselben Browserkennung. Nodes fetch hatte weder
+ * das eine noch das andere: S.to beantwortete die Suche dann mit der Abfrage
+ * statt mit Treffern, und die Oberflaeche zeigte "keine Treffer".
+ */
+function anbieterAbruf(url, aufbau = {}) {
+  const sitzung = typeof browserSession !== "undefined" ? browserSession : null;
+  const headers = new Headers(aufbau.headers || {});
+  if (sitzung) headers.set("user-agent", sitzung.getUserAgent());
+  else if (!headers.has("user-agent")) headers.set("user-agent", "Mozilla/5.0 ELFIX/0.2");
+  const optionen = { ...aufbau, headers };
+  return sitzung ? sitzung.fetch(url, { ...optionen, credentials: "include" }) : fetch(url, optionen);
+}
+
+/** Cloudflare antwortet mit einer Abfrageseite statt mit dem Inhalt. */
+function istCloudflareAbfrage(response, text) {
+  const mitigiert = String(response?.headers?.get?.("cf-mitigated") || "").toLowerCase() === "challenge";
+  if (mitigiert) return true;
+  if (![403, 429, 503].includes(Number(response?.status))) return false;
+  return /challenge-platform|cf-turnstile|cf_chl_|just a moment|einen moment/i.test(String(text || "").slice(0, 20000));
+}
+
+async function searchProviderAjax(provider, query, searchUrl, signal, filter = query) {
   if (!usesAniWorldAjaxSearch(provider)) return [];
   const endpoint = new URL("/ajax/search", provider.startUrl).href;
-  const response = await fetch(endpoint, {
+  const response = await anbieterAbruf(endpoint, {
     method: "POST",
     headers: {
       "accept": "application/json,text/javascript,*/*",
       "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "user-agent": "Mozilla/5.0 ELFIX/0.2",
       "x-requested-with": "XMLHttpRequest",
       "referer": searchUrl
     },
@@ -6718,7 +6848,7 @@ async function searchProviderAjax(provider, query, searchUrl, signal) {
   signal?.throwIfAborted();
   if (!Array.isArray(payload)) return [];
 
-  const tokens = queryTokens(query);
+  const tokens = queryTokens(filter);
   const seen = new Set();
   const results = [];
   for (const item of payload) {
@@ -7316,8 +7446,13 @@ const watchparty = new WatchpartyRaeume({
   onYoutube: (nachricht) => { youtubeParty.nachricht(nachricht); },
   // Der Chat aendert nichts am Raumzustand - er wird nur weitergereicht.
   onChat: (nachricht) => watchpartyChatZeigen(nachricht),
-  onConnection: (raum, offen) => youtubeParty.verbindung(raum, offen),
+  onVoice: (nachricht) => sprachchatFenster?.nachricht(nachricht),
+  onConnection: (raum, offen) => {
+    youtubeParty.verbindung(raum, offen);
+    sprachchatFenster?.aktualisieren();
+  },
   onStatus: (status, raum) => {
+    sprachchatFenster?.aktualisieren();
     sendSpielerChatStatus();
     // Nach einem Verbindungsabbruch wird beim naechsten Zustand erneut
     // nachgetragen, was fehlt - je Raum getrennt.
@@ -7348,6 +7483,70 @@ const watchparty = new WatchpartyRaeume({
     mainWindow.webContents.send("watchparty:state", status);
   }
 });
+
+// Die Sprachsuche (siehe sprachsuche-fenster.js). Was erkannt wurde, geht
+// als Ereignis an die Oberflaeche; die sucht dann wie nach getipptem Text.
+let sprachsuche = null;
+function sprachsucheHolen() {
+  if (!sprachsuche) {
+    sprachsuche = require("./sprachsuche-fenster").erstellen({
+      BrowserWindow, session, ipcMain: nativeIpcMain,
+      modell: require("./sprachmodell").erstellen({
+        verzeichnis: path.join(app.getPath("userData"), "sprachsuche"),
+        abrufen: (url) => net.fetch(url)
+      }),
+      melden: sprachsucheMelden
+    });
+  }
+  return sprachsuche;
+}
+
+function sprachsucheMelden(ereignis) {
+  // Wer "Hey Elfix" sagt, schaut vielleicht gerade nicht hin: das Fenster
+  // kommt nach vorn, damit man sieht, dass zugehoert wird.
+  if (ereignis.typ === "weckwort" || (ereignis.typ === "anfrage" && ereignis.quelle === "weckwort")) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    }
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("sprachsuche:ereignis", ereignis);
+}
+
+ipcMain.handle("sprachsuche:knopf", () => sprachsucheHolen().starten("einmal"));
+ipcMain.handle("sprachsuche:abbrechen", () => {
+  if (!sprachsuche) return false;
+  if (settings.sprachsuche?.weckwort === true) sprachsuche.starten("weckwort").catch(() => {});
+  else sprachsuche.stoppen();
+  return true;
+});
+
+function sprachsucheWeckwortAnwenden(vorher) {
+  const jetzt = settings.sprachsuche?.weckwort === true;
+  if (jetzt === vorher) return;
+  if (jetzt) sprachsucheHolen().starten("weckwort").catch(() => {});
+  else sprachsuche?.stoppen();
+}
+
+function sprachchatOeffnen(raum, settingsOnly = false) {
+  if (!sprachchatFenster) sprachchatFenster = require("./sprachchat-fenster").erstellen({
+    BrowserWindow, session, ipcMain: nativeIpcMain, watchparty, parent: () => mainWindow,
+    preferences: () => ({ inputDeviceId: settings.watchparty?.microphoneId || "", noiseSuppression: settings.watchparty?.noiseSuppression !== false }),
+    savePreferences: ({ inputDeviceId, noiseSuppression }) => {
+      const previous = settings.watchparty;
+      settings.watchparty = { ...settings.watchparty, microphoneId: inputDeviceId, noiseSuppression };
+      try { saveSettings(); }
+      catch (error) { settings.watchparty = previous; throw error; }
+      return true;
+    },
+    duck: (active) => {
+      sprachchatDuckAktiv = active;
+      if (spielerView && !spielerView.webContents.isDestroyed()) spielerView.webContents.send("spieler:voice-duck", active);
+    }
+  });
+  return sprachchatFenster.oeffnen(raum, settingsOnly);
+}
 
 // Die Einstellungen haben sich geaendert, ohne dass die Oberflaeche es
 // veranlasst hat. Ohne diese Meldung stuende in der Seitenleiste weiter der
@@ -9672,6 +9871,42 @@ async function direktQuelleFuerAnsicht(provider, view, optionen = {}) {
   for (const eintrag of links.slice(0, optionen.nurDieser || wahl ? 1 : DIREKT_HOECHSTVERSUCHE)) {
     if (optionen.signal?.aborted) return { ok: false, abgebrochen: true };
     let ergebnis = await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+    if (ergebnis.challenge && !optionen.signal?.aborted) {
+      let retryErgebnis = null;
+      let retryGestartet = false;
+      const challengeUrl = ergebnis.seite || eintrag.adresse;
+      const bestaetigt = await cfAdresseVerifizieren(provider, {
+        url: challengeUrl,
+        finalUrl: challengeUrl,
+        status: ergebnis.status,
+        expected: "html",
+        referer: seite,
+        serverPruefung: async () => {
+          const istBrauchbar = (wert) => !wert?.challenge && !optionen.signal?.aborted
+            && Boolean(wert?.ok || wert?.seite);
+          if (retryErgebnis) return istBrauchbar(retryErgebnis);
+          if (!retryGestartet) {
+            retryGestartet = true;
+            cfLog("retrying original request", { url: eintrag.adresse, finalUrl: challengeUrl,
+              status: ergebnis.status, expected: "html", referer: seite,
+              cookieNames: await cfCookieNamen(browserSession, challengeUrl) });
+          }
+          retryErgebnis = await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+          return istBrauchbar(retryErgebnis);
+        }
+      }, optionen.signal);
+      if (!bestaetigt || optionen.signal?.aborted) {
+        return { ...ergebnis, grund: optionen.signal?.aborted
+          ? "Bestätigung abgebrochen" : "Bestätigung nicht abgeschlossen" };
+      }
+      ergebnis = retryErgebnis || await aufloeser.aufloesen(eintrag.adresse, seite, { signal: optionen.signal });
+      if (ergebnis.challenge) {
+        cfLog("stream request still challenged", { url: eintrag.adresse,
+          finalUrl: ergebnis.seite || challengeUrl, status: ergebnis.status, expected: "html", referer: seite,
+          cookieNames: await cfCookieNamen(browserSession, ergebnis.seite || challengeUrl) });
+        return { ...ergebnis, grund: "Bestätigung weiterhin erforderlich" };
+      }
+    }
     if (!ergebnis.ok && ergebnis.seite && !optionen.signal?.aborted) {
       ergebnis = await direktQuelleBeobachten(provider, ergebnis.seite || eintrag.adresse, seite, optionen.signal)
         .catch(() => ergebnis);
@@ -9735,9 +9970,11 @@ async function direktQuelleBeobachten(provider, adresse, referer, signal) {
         // Eine interaktive Cloudflare-Abfrage kann in einer unsichtbaren
         // Beobachteransicht niemand loesen. Kurz nach vorn holen, danach mit
         // derselben Ansicht und denselben Sitzungscookies weiterbeobachten.
-        bestaetigen: (abbruch) => menschentorLoesenLassen(provider, view, {
-          voruebergehend: true, signal: abbruch, wer: "Der Hoster"
-        }),
+        bestaetigen: (abbruch, challengeUrl = "") => challengeUrl
+          ? cfAdresseVerifizieren(provider, { url: challengeUrl, referer: inhalt.getURL() }, abbruch)
+          : menschentorLoesenLassen(provider, view, {
+            voruebergehend: true, signal: abbruch, wer: "Der Hoster"
+          }),
         schliessen: () => {
           direktBeobachter.delete(id);
           webContentsProvider.delete(id);
@@ -9886,6 +10123,70 @@ function menschentorErkennen(view) {
   return view.webContents.executeJavaScript(menschentorSkript(), true).catch(() => false);
 }
 
+async function cfCookieNamen(sitzung, url) {
+  if (!sitzung?.cookies || !providerModel.isHttpUrl(url)) return [];
+  try {
+    return cfSession.cookieNames(await sitzung.cookies.get({ url }));
+  } catch {
+    return [];
+  }
+}
+
+function cfLog(ereignis, details = {}) {
+  console.log(cfSession.diagnose(ereignis, details));
+}
+
+async function cfSitzungPersistieren(sitzung, details = {}) {
+  try {
+    if (typeof sitzung?.cookies?.flushStore === "function") await sitzung.cookies.flushStore();
+    if (typeof sitzung?.flushStorageData === "function") await sitzung.flushStorageData();
+    cfLog("session persisted", { ...details,
+      cookieNames: await cfCookieNamen(sitzung, details.finalUrl || details.url) });
+    return true;
+  } catch {
+    cfLog("session persistence failed", details);
+    return false;
+  }
+}
+
+async function cfGeschuetzteAnfragePruefen(details = {}, signal = null) {
+  const url = String(details.url || "");
+  if (!browserSession || !providerModel.isHttpUrl(url) || signal?.aborted) return { ok: false };
+  const headers = new Headers();
+  headers.set("accept", details.expected === "hls" || details.expected === "dash"
+    ? "application/vnd.apple.mpegurl,application/dash+xml,*/*" : "*/*");
+  headers.set("user-agent", browserSession.getUserAgent());
+  if (providerModel.isHttpUrl(details.referer)) headers.set("referer", details.referer);
+  try {
+    const origin = new URL(String(details.origin || "")).origin;
+    if (/^https?:/.test(origin)) headers.set("origin", origin);
+  } catch { /* Origin ist optional. */ }
+  try {
+    const response = await browserSession.fetch(url, { headers, redirect: "follow", credentials: "include",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000) });
+    const body = await spielerNetz.antwortProbe(response);
+    const expected = details.expected || spielerNetz.erwarteterTyp(url);
+    const zustand = cfSession.klassifizieren({ status: response.status, headers: response.headers, body, expected });
+    const contentType = cfSession.header(response.headers, "content-type").toLowerCase();
+    const contentLength = Number(cfSession.header(response.headers, "content-length") || 0);
+    const octetMitInhalt = /octet-stream/.test(contentType) && contentLength > 0;
+    const typPasst = expected === "hls" ? zustand.type === "HLS" && body.trim().length > 0
+      : expected === "dash" ? zustand.type === "DASH" && body.trim().length > 0
+        : expected === "mp4" ? zustand.type === "MP4" || (zustand.type === "Other" && octetMitInhalt)
+          : !["Challenge", "HTML", "JSON"].includes(zustand.type)
+            && response.status !== 204 && (body.length > 0 || contentLength > 0
+              || /^(?:video|audio)\//.test(contentType) || /(?:octet-stream|mp2t|webvtt)/.test(contentType));
+    response.body?.cancel().catch(() => {});
+    const pruefung = { ...details, url, finalUrl: response.url || url, status: response.status,
+      headers: response.headers, requestHeaders: headers, body, expected };
+    return { ok: response.ok && ![204, 205].includes(response.status)
+      && !zustand.challenge && !zustand.unexpectedHtml && typPasst,
+      zustand, details: pruefung };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /** So lange darf eine Bestaetigung dauern, bevor ELFIX aufgibt. */
 const MENSCHENTOR_FRIST_MS = 120000;
 let menschentorFenster = null;
@@ -9913,16 +10214,24 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
   if (optionen.signal?.aborted || (optionen.gueltig && !optionen.gueltig())) return false;
   const wer = String(optionen.wer || "Der Anbieter");
   const inhalt = view.webContents;
+  const startUrl = inhalt.getURL();
   const bounds = view.getBounds();
+  const fensterWarMinimiert = mainWindow.isMinimized();
   let abgebrochen = false;
+  let abbruchGrund = "";
   let angehaengt = false;
   let erfolg = false;
   let bestaetigt = false;
+  // Jeder Aufrufer hat die Challenge unmittelbar davor bereits erkannt.
+  // Verschwindet sie zwischen dieser Erkennung und der ersten 300-ms-Probe,
+  // muss der geschuetzte Originalabruf trotzdem als Erfolgsbeleg laufen.
+  let torWurdeGesehen = optionen.bereitsErkannt !== false;
   let dokumentGewechselt = false;
   let dokumentBereit = true;
   let dokumentGeneration = 0;
   let freieProben = 0;
-  let weiterGeklickt = false;
+  let letzteServerProbe = 0;
+  let serverFreigabeBelegt = false;
   const gueltig = () => !abgebrochen && !optionen.signal?.aborted
     && (!optionen.gueltig || optionen.gueltig()) && isLiveView(view)
     && mainWindow && !mainWindow.isDestroyed();
@@ -9930,25 +10239,39 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
     if (angehaengt && mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
     angehaengt = false;
   };
-  const abbrechen = () => { abgebrochen = true; abhaengen(); };
+  const abbrechen = (grund = "abgebrochen") => { abbruchGrund = String(grund); abgebrochen = true; abhaengen(); };
+  const signalAbbrechen = () => abbrechen("signal");
   const taste = (event, input) => {
-    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); abbrechen(); }
+    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); abbrechen("nutzer"); }
   };
   // Vor einer Navigation ausblenden: die Zielseite darf nicht kurz im
   // Verifizierungsfenster aufblitzen. Ein neues Tor wird erst maskiert gezeigt.
   const navigation = (_event, _url, inPlace, hauptrahmen) => {
-    if (hauptrahmen && !inPlace) { dokumentGeneration++; dokumentBereit = false; abhaengen(); }
+    if (hauptrahmen && !inPlace) {
+      dokumentGeneration++;
+      dokumentBereit = false;
+      serverFreigabeBelegt = false;
+      freieProben = 0;
+      abhaengen();
+    }
   };
   const domBereit = () => { dokumentBereit = true; };
-  const angekommen = () => { dokumentGewechselt = true; freieProben = 0; weiterGeklickt = false; };
-  menschentorFenster?.abbrechen();
+  const angekommen = () => { dokumentGewechselt = true; freieProben = 0; };
+  menschentorFenster?.abbrechen("ersetzt");
   const fenster = { view, abbrechen };
   menschentorFenster = fenster;
-  optionen.signal?.addEventListener("abort", abbrechen, { once: true });
+  optionen.signal?.addEventListener("abort", signalAbbrechen, { once: true });
   inhalt.on("before-input-event", taste);
   inhalt.on("did-start-navigation", navigation);
   inhalt.on("did-navigate", angekommen);
   inhalt.on("dom-ready", domBereit);
+  const diagnose = () => ({ url: startUrl, finalUrl: inhalt.getURL(),
+    userAgent: inhalt.session?.getUserAgent?.() || "", referer: optionen.referer || "",
+    origin: optionen.origin || "" });
+  if (!optionen.bereitsGemeldet) {
+    cfLog("challenge detected", diagnose());
+    cfLog("opening verification view", diagnose());
+  }
   try {
     const bis = Date.now() + MENSCHENTOR_FRIST_MS;
     while (gueltig() && Date.now() < bis) {
@@ -9957,12 +10280,43 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
         const lage = await inhalt.executeJavaScript(verifizierungstor.zustandScript()).catch(() => null);
         if (!gueltig()) break;
         if (generation !== dokumentGeneration || !dokumentBereit) continue;
-        if (lage?.offen && !lage.geloest) { bestaetigt = false; weiterGeklickt = false; fenster.bestaetigt = false; }
+        if (lage?.offen) {
+          torWurdeGesehen = true;
+          serverFreigabeBelegt = false;
+          freieProben = 0;
+        }
+        if (lage?.offen && !lage.geloest) { bestaetigt = false; fenster.bestaetigt = false; }
         if (lage?.geloest) { bestaetigt = true; fenster.bestaetigt = true; }
         // DOM-Umbau oder ein geschlossenes Fenster allein beweisen keine
         // Freigabe. Tokenlose Challenge-Seiten geben das Hauptdokument durch
         // eine neue Navigation frei; auch dort zwei stabile Proben abwarten.
-        if (lage && !lage.offen && (bestaetigt || dokumentGewechselt)) {
+        let clearance = false;
+        if (lage && !lage.offen && (torWurdeGesehen || bestaetigt || dokumentGewechselt)) {
+          const namen = await cfCookieNamen(inhalt.session, inhalt.getURL());
+          clearance = namen.some((name) => name.toLowerCase() === "cf_clearance");
+        }
+        // Ein Token im DOM allein ist kein Erfolg. Erst eine Navigation der
+        // Seite oder das von Cloudflare gesetzte Sitzungscookie belegt, dass
+        // der Server die manuelle Bestaetigung angenommen hat.
+        let serverFreigegeben = Boolean(lage && !lage.offen && serverFreigabeBelegt);
+        if (lage && !lage.offen) {
+          if (typeof optionen.serverPruefung === "function" && torWurdeGesehen) {
+            // Bei Medien- und Resolver-Anfragen ist der erneute geschuetzte
+            // Originalabruf selbst der Beleg. Cloudflare kann die Sitzung
+            // auch mit einem anderen Cookie oder ohne Hauptnavigation
+            // freigeben; beides darf diese belastbare Probe nicht sperren.
+            if (Date.now() - letzteServerProbe >= 800) {
+              letzteServerProbe = Date.now();
+              serverFreigabeBelegt = await optionen.serverPruefung().catch(() => false);
+              serverFreigegeben = serverFreigabeBelegt;
+            }
+          } else if (typeof optionen.serverPruefung !== "function") {
+            // Ohne konkrete Probe muessen Navigation und Clearance gemeinsam
+            // vorliegen. Eine beliebige Login- oder Fehlerseite reicht nicht.
+            serverFreigegeben = dokumentGewechselt && clearance;
+          }
+        }
+        if (serverFreigegeben) {
           if (++freieProben >= 2) { erfolg = true; break; }
         } else freieProben = 0;
         if (lage?.offen) {
@@ -9976,25 +10330,36 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
             view.setBackgroundColor("#00000000");
             menschentorFensterPositionieren(view, maskiert);
             if (!angehaengt) {
+              // Eine manuelle Abfrage darf nicht unsichtbar im minimierten
+              // Hauptfenster auslaufen. Auch im Miniplayer wird nur fuer diese
+              // eine notwendige Interaktion ELFIX nach vorn geholt.
+              if (mainWindow.isMinimized()) mainWindow.restore();
+              if (!mainWindow.isVisible()) mainWindow.show();
               mainWindow.contentView.addChildView(view);
               angehaengt = true;
+              mainWindow.focus();
               inhalt.focus();
               sendToast(wer + " fragt nach einer Bestätigung — bitte einmal bestätigen");
             }
-          }
-          if (lage.geloest && !weiterGeklickt) {
-            torKlickZeit.set(provider.id, Date.now());
-            const klick = await inhalt.executeJavaScript(verifizierungstor.torScript(1, false)).catch(() => "");
-            weiterGeklickt = String(klick).startsWith("tor-geklickt:");
           }
         }
       }
       await new Promise((fertig) => setTimeout(fertig, 300));
     }
-    if (!erfolg && gueltig()) sendToast("Die Bestätigung wurde nicht abgeschlossen");
+    if (erfolg && gueltig()) {
+      torKlickZeit.set(provider.id, Date.now());
+      cfLog("verification passed", diagnose());
+      await cfSitzungPersistieren(inhalt.session, diagnose());
+    } else if (abbruchGrund === "nutzer") {
+      cfLog("verification cancelled", diagnose());
+      sendToast("Bestätigung abgebrochen");
+    } else if (gueltig()) {
+      cfLog("verification timeout", diagnose());
+      sendToast("Die Bestätigung hat zu lange gedauert");
+    }
     return erfolg && gueltig();
   } finally {
-    optionen.signal?.removeEventListener("abort", abbrechen);
+    optionen.signal?.removeEventListener("abort", signalAbbrechen);
     if (!inhalt.isDestroyed()) {
       inhalt.off("before-input-event", taste);
       inhalt.off("did-start-navigation", navigation);
@@ -10013,12 +10378,81 @@ async function menschentorLoesenLassen(provider, view, optionen = {}) {
     }
     if (menschentorFenster === fenster) {
       menschentorFenster = null;
-      if (gueltig() && isLiveView(spielerView)) {
+      if (gueltig() && isLiveView(spielerView) && !spielerMiniAktiv) {
         mainWindow.contentView.addChildView(spielerView);
         spielerLageSetzen();
         spielerView.webContents.focus();
       }
+      if (fensterWarMinimiert && spielerMiniAktiv && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.minimize();
+      }
     }
+  }
+}
+
+/** Eine bereits erkannte Netz-Challenge in der Provider-Sitzung anzeigen. */
+async function cfAdresseVerifizieren(provider, details = {}, signal = null) {
+  const url = String(details.url || "");
+  if (!browserSession || !provider || !providerModel.isHttpUrl(url) || signal?.aborted) return false;
+  const diagnose = { ...details, url, finalUrl: details.finalUrl || url,
+    userAgent: browserSession.getUserAgent(), referer: details.referer || "", origin: details.origin || "" };
+  cfLog("challenge detected", diagnose);
+  cfLog("opening verification view", diagnose);
+
+  const view = new WebContentsView({ webPreferences: {
+    session: browserSession, contextIsolation: true, sandbox: true,
+    nodeIntegration: false, backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required"
+  } });
+  const inhalt = view.webContents;
+  const id = inhalt.id;
+  webContentsProvider.set(id, provider.id);
+  inhalt.setAudioMuted(true);
+  inhalt.setWindowOpenHandler(() => ({ action: "deny" }));
+  inhalt.on("will-navigate", (event, ziel) => {
+    if (!providerModel.isHttpUrl(ziel)) event.preventDefault();
+  });
+  const abbrechen = () => { if (!inhalt.isDestroyed()) inhalt.close(); };
+  signal?.addEventListener("abort", abbrechen, { once: true });
+  try {
+    const referer = providerModel.isHttpUrl(details.referer) ? details.referer : "";
+    let extraHeaders = "";
+    try {
+      const origin = new URL(String(details.origin || "")).origin;
+      if (/^https?:/.test(origin)) extraHeaders = `Origin: ${origin}`;
+    } catch { /* Origin ist optional. */ }
+    const geladen = await warteAufSeite(view, 25000, (schluss) => {
+      inhalt.loadURL(url, { ...(referer ? { httpReferrer: referer } : {}),
+        ...(extraHeaders ? { extraHeaders } : {}) }).catch(() => schluss(false));
+    });
+    if (!geladen || signal?.aborted || !isLiveView(view)) return false;
+
+    const serverPruefung = async () => {
+      if (typeof details.serverPruefung === "function") return Boolean(await details.serverPruefung());
+      const pruefung = await cfGeschuetzteAnfragePruefen({ ...details, url, referer,
+        origin: details.origin || "" }, signal);
+      return pruefung.ok;
+    };
+    if (await menschentorErkennen(view)) {
+      return await menschentorLoesenLassen(provider, view, { voruebergehend: true, signal,
+        wer: "Der Stream-Anbieter", referer, origin: details.origin || "", bereitsGemeldet: true,
+        serverPruefung });
+    }
+
+    // Ein fehlendes Widget ist noch kein Erfolg: Login-, Fehler- und
+    // Blockseiten koennen ebenfalls ohne Challenge-DOM laden. Erst der erneute
+    // Originalabruf muss den erwarteten geschuetzten Inhalt liefern.
+    const pruefung = typeof details.serverPruefung === "function"
+      ? { ok: Boolean(await details.serverPruefung()), details: diagnose }
+      : await cfGeschuetzteAnfragePruefen({ ...details, url, referer,
+        origin: details.origin || "" }, signal);
+    if (!pruefung.ok) return false;
+    cfLog("verification passed", pruefung.details || diagnose);
+    await cfSitzungPersistieren(browserSession, pruefung.details || diagnose);
+    return true;
+  } finally {
+    signal?.removeEventListener("abort", abbrechen);
+    webContentsProvider.delete(id);
+    if (!inhalt.isDestroyed()) inhalt.close();
   }
 }
 
@@ -10123,20 +10557,61 @@ let spielerView = null;
 let spielerLauf = null;
 let spielerUpscalingStatus = null;
 let spielerRtx = null;
-// "auto": Anime4K fuer Anime, RTX Video fuer Serien und Filme. Anime erkennt
-// dieselbe Adressregel wie die Filler-Liste (/anime/stream/...). Ohne
-// akzeptierte NVIDIA-Lizenz laufen Serien und Filme dann mit FSR 1.
+// Anime4K auch fuer Animation auf Serien-/Film-Anbietern. Dieselben lokal
+// zugeordneten Genres wie auf der Titelkarte; kein Netzabruf beim Start.
+function spielerUpscalingAnimation() {
+  if (!spielerLauf) return false;
+  if (typeof spielerLauf.upscalingAnimation === "boolean") return spielerLauf.upscalingAnimation;
+  let animation = false;
+  try { animation = /^\/anime\/stream\//i.test(new URL(spielerLauf.url || "").pathname); } catch { /* keine Folge */ }
+  if (!animation) {
+    try {
+      const titel = cleanBaseMediaTitle(spielerLauf.titel || "", spielerLauf.url);
+      const genres = lauf.titelAnzeige(titel, spielerLauf.url).genres;
+      animation = genres.some(genre => /^(?:anime|animation|animationsfilm|animationsserie|zeichentrick|zeichentrickfilm|zeichentrickserie)$/i.test(String(genre).trim()));
+    } catch { /* optionale Metadaten duerfen den Playerstart nicht verhindern */ }
+  }
+  // Der RTX-Framepfad fragt die Methode ebenfalls ab. Dort nicht fuer jedes
+  // Bild erneut Titel und Metadaten aufloesen.
+  spielerLauf.upscalingAnimation = animation;
+  return animation;
+}
 function spielerUpscalingVerfahren() {
   const methode = settings.playback?.videoUpscalingMethod;
   if (methode !== "auto") return methode === "rtx" || methode === "anime4k" ? methode : "fsr1";
-  let anime = false;
-  try { anime = /^\/anime\/stream\//i.test(new URL(spielerLauf?.url || "").pathname); } catch { /* keine Folge */ }
-  if (anime) return "anime4k";
+  if (spielerUpscalingAnimation()) return "anime4k";
   return settings.playback?.rtxVideoLicense === "2024-02-23" ? "rtx" : "fsr1";
 }
 function spielerUpscalingAktiv() {
   return settings.playback?.videoUpscaling === true && (spielerUpscalingVerfahren() !== "rtx"
     || settings.playback?.rtxVideoLicense === "2024-02-23");
+}
+function spielerUpscalingMetadatenAktualisieren() {
+  const aktuell = spielerLauf;
+  if (!aktuell) return;
+  if (settings.playback?.videoUpscalingMethod !== "auto") {
+    delete aktuell.upscalingAnimation;
+    return;
+  }
+  if (aktuell.upscalingPruefung) return;
+  aktuell.upscalingPruefung = true;
+  // Cache-Ladevorgaenge koennen selbst speichern. Erst nach ihrer Rueckkehr
+  // nachsehen und mehrere Aktualisierungen in derselben Runde zusammenfassen.
+  queueMicrotask(() => {
+    delete aktuell.upscalingPruefung;
+    if (spielerLauf !== aktuell) return;
+    const vorher = aktuell.upscalingAnimation;
+    delete aktuell.upscalingAnimation;
+    if (settings.playback?.videoUpscalingMethod !== "auto" || vorher === undefined || !settings.playback?.videoUpscaling
+      || !spielerView || spielerView.webContents.isDestroyed()) return;
+    if (vorher === spielerUpscalingAnimation()) return;
+    spielerRtxStop();
+    spielerUpscalingStatus = null;
+    // Nur das Bildverfahren wechseln, ohne Quelle, Position oder Pause anzufassen.
+    spielerView.webContents.send("spieler:upscaling", spielerUpscalingAktiv(),
+      spielerUpscalingVerfahren(), settings.playback.videoUpscalingResolution);
+    videoUpscalingStandSenden();
+  });
 }
 function spielerRtxStop() {
   const vorher = spielerRtx;
@@ -10216,11 +10691,101 @@ let spielerKopfzeilen = null;
 let spielerMiniAktiv = false;
 let spielerMiniVorbereitung = false;
 let spielerAutoMiniAusstehend = null;
+const SPIELER_CF_MAX_RETRIES = 1;
+const spielerCfVersuche = new Map();
+const spielerCfErfolgGemeldet = new Set();
+const spielerCfWeiterhinGemeldet = new Set();
+let spielerCfPruefung = null;
+
+function spielerCfAbbrechen() {
+  spielerCfPruefung?.controller.abort();
+  spielerCfPruefung = null;
+}
+
+function spielerStreamAntwort(details) {
+  const lauf = spielerLauf;
+  if (!lauf || !spielerCfVersuche.has(lauf.id) || spielerCfErfolgGemeldet.has(lauf.id)) return;
+  const status = Number(details.status);
+  const typ = details.zustand?.type || details.responseType || "Other";
+  const expected = details.expected || "stream";
+  const body = String(details.body || "");
+  const contentType = cfSession.header(details.headers, "content-type").toLowerCase();
+  const contentLength = Number(cfSession.header(details.headers, "content-length") || 0);
+  const typPasst = expected === "hls" ? typ === "HLS" && body.trim().length > 0
+    : expected === "dash" ? typ === "DASH" && body.trim().length > 0
+      : expected === "mp4" ? typ === "MP4"
+        || (typ === "Other" && /octet-stream/.test(contentType) && contentLength > 0)
+        : !["Challenge", "HTML", "JSON"].includes(typ)
+          && status !== 204 && status !== 205
+          && (body.length > 0 || contentLength > 0 || /^(?:video|audio)\//.test(contentType));
+  if (!(status >= 200 && status < 300) || details.zustand?.unexpectedHtml || !typPasst) return;
+  spielerCfErfolgGemeldet.add(lauf.id);
+  cfCookieNamen(browserSession, details.finalUrl || details.url).then((cookieNames) => {
+    if (spielerLauf?.id !== lauf.id) return;
+    cfLog("stream request succeeded", { ...details, cookieNames });
+  });
+}
+
+function spielerStreamChallenge(details) {
+  const lauf = spielerLauf;
+  const provider = spielerAnbieter();
+  if (!lauf || !provider || !browserSession || !providerModel.isHttpUrl(details?.url)) return;
+  if (spielerCfPruefung?.id === lauf.id) return;
+  const versuche = spielerCfVersuche.get(lauf.id) || 0;
+  if (versuche >= SPIELER_CF_MAX_RETRIES) {
+    if (!spielerCfWeiterhinGemeldet.has(lauf.id)) {
+      spielerCfWeiterhinGemeldet.add(lauf.id);
+      cfCookieNamen(browserSession, details.finalUrl || details.url).then((cookieNames) => {
+        cfLog("stream request still challenged", { ...details, cookieNames });
+      });
+      sendToast("Die Stream-Bestätigung ist weiterhin ungültig");
+    }
+    return;
+  }
+
+  spielerCfVersuche.set(lauf.id, versuche + 1);
+  const controller = new AbortController();
+  const taktGueltig = Number(spielerTakt?.at) > 0;
+  const stelleBeimFehler = Number(spielerTakt?.stelle);
+  const rundeWartetNoch = typeof spielerTakt?.rundeWarten === "boolean"
+    ? spielerTakt.rundeWarten : Boolean(lauf.rundeWarten);
+  const pruefung = { id: lauf.id, controller,
+    stelle: Number.isFinite(stelleBeimFehler) && stelleBeimFehler >= 0 ? stelleBeimFehler : lauf.startzeit,
+    weiterlaufen: taktGueltig ? Boolean(spielerTakt?.laeuft) : !lauf.vorladen && !rundeWartetNoch,
+    // Der Renderer kennt als einzige Stelle exakt, ob syncstart die Schranke
+    // bereits aufgehoben hat. Ein Takt allein ist in der Runde kein Beleg.
+    rundeWarten: rundeWartetNoch };
+  spielerCfPruefung = pruefung;
+  const referer = cfSession.header(details.requestHeaders, "referer") || spielerKopfzeilen?.referer || "";
+  const origin = cfSession.header(details.requestHeaders, "origin") || spielerKopfzeilen?.origin || "";
+  Promise.resolve().then(async () => {
+    const ok = await cfAdresseVerifizieren(provider, { ...details, referer, origin }, controller.signal);
+    if (!ok || controller.signal.aborted || spielerLauf?.id !== lauf.id || !isLiveView(spielerView)) return;
+    cfLog("retrying original request", { ...details,
+      cookieNames: await cfCookieNamen(browserSession, details.finalUrl || details.url), referer, origin });
+    // Derselbe Auftrag startet HLS/MP4 neu. Raum, Position, Player-View und
+    // Miniplayer-Zustand bleiben dabei unveraendert.
+    const wiederholung = spielerAuftrag();
+    wiederholung.startzeit = pruefung.stelle;
+    wiederholung.sitzungsRetry = { weiterlaufen: pruefung.weiterlaufen };
+    wiederholung.rundeWarten = pruefung.rundeWarten;
+    spielerView.webContents.send("spieler:auftrag", wiederholung);
+  }).catch(() => {}).finally(() => {
+    if (spielerCfPruefung === pruefung) spielerCfPruefung = null;
+  });
+}
 
 function spielerSessionHolen() {
   if (spielerSession) return spielerSession;
   spielerSession = session.fromPartition(SPIELER_PARTITION, { cache: true });
-  spielerNetz.einrichten(spielerSession);
+  // Die lokale Playerseite bleibt in ihrer isolierten Partition. Ihre
+  // HTTP-Anfragen werden jedoch ueber dieselbe persistente Netzsitzung wie
+  // Provideransicht und Aufloeser geschickt, damit deren Cookies gelten.
+  spielerNetz.einrichten(spielerSession, browserSession || spielerSession, {
+    onChallenge: spielerStreamChallenge,
+    onResponse: spielerStreamAntwort,
+    requestHeaders: () => spielerKopfzeilen || {}
+  });
   spielerSession.webRequest.onBeforeSendHeaders((details, callback) => {
     // Die eigene Seite kommt von der Platte und braucht nichts davon.
     if (!spielerKopfzeilen || !/^https?:/i.test(details.url || "")) {
@@ -10326,6 +10891,13 @@ function direktVollbildAnwenden(optionen = {}) {
  * und nur hier.
  */
 function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
+  const vorherigeId = spielerLauf?.id;
+  spielerCfAbbrechen();
+  if (vorherigeId) {
+    spielerCfVersuche.delete(vorherigeId);
+    spielerCfErfolgGemeldet.delete(vorherigeId);
+    spielerCfWeiterhinGemeldet.delete(vorherigeId);
+  }
   geraeteWiedergabeMelden("", "", null);
   const passend = favorites.filter((favorite) => favorite.providerId === provider?.id
     && normalizeFavoriteUrl(favorite.url) === normalizeFavoriteUrl(url));
@@ -10334,7 +10906,7 @@ function spielerLaufSetzen(provider, url, ergebnis, optionen = {}) {
 
   spielerKopfzeilen = ergebnis.kopfzeilen;
   spielerLetzterStand = null;
-  spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+  spielerTakt = { stelle: 0, laeuft: false, puffert: false, rundeWarten: null, at: 0 };
   spielerUpscalingStatus = null;
   spielerRtxStop();
   spielerLauf = {
@@ -10741,6 +11313,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
 /** Zu. Ohne laufenden Player kostet das nichts. */
 function direktSpielerSchliessen(grund = "") {
   direktLaden.abort();
+  spielerCfAbbrechen();
   if (!spielerView) {
     folgenWerkbaenkeSchliessen();
     return;
@@ -10761,6 +11334,9 @@ function direktSpielerSchliessen(grund = "") {
   // Folge, bis der erste neue Takt kommt.
   spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
   spielerKopfzeilen = null;
+  spielerCfVersuche.clear();
+  spielerCfErfolgGemeldet.clear();
+  spielerCfWeiterhinGemeldet.clear();
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
   try {
     view.webContents.close();
@@ -10777,6 +11353,12 @@ ipcMain.on("spieler:bereit", (ereignis) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
   ereignis.sender.send("spieler:auftrag", spielerAuftrag());
   sendSpielerChatStatus();
+  ereignis.sender.send("spieler:voice-duck", sprachchatDuckAktiv);
+});
+
+ipcMain.handle("spieler:voice-open", (ereignis) => {
+  const runde = vomSpieler(ereignis) && spielerRunde();
+  return runde ? sprachchatOeffnen(runde.raum) : { ok: false, error: "Du bist gerade in keiner Watchparty." };
 });
 
 ipcMain.handle("spieler:chat-status", (ereignis) => vomSpieler(ereignis)
@@ -11786,7 +12368,7 @@ function watchpartyLaeuftDanach(nachricht) {
 let spielerDrift = { bestaetigt: 0, letzteMessung: 0, seitSprung: 0 };
 
 /** Der zuletzt gemeldete Stand des eigenen Players. */
-let spielerTakt = { stelle: 0, laeuft: false, puffert: false, at: 0 };
+let spielerTakt = { stelle: 0, laeuft: false, puffert: false, rundeWarten: null, at: 0 };
 let spielerSyncBereit = null;
 let spielerFolgenVorbereitung = null;
 
@@ -12183,6 +12765,7 @@ ipcMain.on("spieler:takt", (ereignis, takt) => {
     dauer: sanitizePositiveNumber(takt?.dauer),
     laeuft: Boolean(takt?.laeuft),
     puffert: Boolean(takt?.puffert),
+    rundeWarten: Boolean(takt?.rundeWarten),
     at: Date.now()
   };
   geraeteWiedergabeMelden(spielerLauf.url, spielerLauf.titel, {
@@ -14510,6 +15093,7 @@ tasteCacheAblage = cacheSchreibaufschub.erstellen({
 
 function saveTasteCacheSoon() {
   tasteCacheAblage.planen();
+  spielerUpscalingMetadatenAktualisieren();
 }
 
 // --- Externe Metadaten --------------------------------------------------------
@@ -14685,6 +15269,7 @@ metadatenCacheAblage = cacheSchreibaufschub.erstellen({
 
 function metadatenSpeichernSoon() {
   metadatenCacheAblage.planen();
+  spielerUpscalingMetadatenAktualisieren();
 }
 
 function optionaleCachesNachMiniPlanen() {
@@ -14755,14 +15340,33 @@ function extractSearchLinks(html, baseUrl, query, provider) {
   // nimmt den mit dem Titel. Ohne diese Karte bliebe das Bild dort liegen.
   const bilder = trefferbild.bilderZuAdressen(html, baseUrl);
   const anchorPattern = /<a\b([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
+  // Treffer, deren Titel nur aus der Adresse stammt. S.to setzt je Treffer
+  // zwei Verweise: erst das Bild, dann den Namen. Der erste hat keinen Text,
+  // und aus "avatar-die-sieben-hafen" wurde "Avatar Die Sieben Hafen" - der
+  // zweite Verweis mit "Avatar - Die sieben Häfen" galt dann als schon
+  // gesehen. Er ersetzt jetzt den Notbehelf.
+  const ausAdresse = new Map();
   let match;
   while ((match = anchorPattern.exec(html)) && results.length < 16) {
     const href = absoluteHttpUrl(match[2], baseUrl);
-    if (!href || seen.has(href) || isNoiseUrl(href) || !isProviderResultUrl(href, baseUrl, provider)) continue;
+    if (!href || isNoiseUrl(href) || !isProviderResultUrl(href, baseUrl, provider)) continue;
+    if (seen.has(href) && !ausAdresse.has(href)) continue;
 
-    const rawTitle = cleanAnchorText(match[4]) || cleanAnchorText(`${readHtmlAttribute(match[1], "title")} ${readHtmlAttribute(match[3], "title")} ${readHtmlAttribute(match[1], "aria-label")} ${readHtmlAttribute(match[3], "aria-label")}`);
+    const rawTitle = cleanAnchorText(match[4]) || cleanAnchorText(`${readHtmlAttribute(match[1], "title")} ${readHtmlAttribute(match[3], "title")} ${readHtmlAttribute(match[1], "aria-label")} ${readHtmlAttribute(match[3], "aria-label")}`)
+      || bildTitel(match[4]);
     const cleaned = normalizeSearchResultTitle(rawTitle, provider, query) || { title: rawTitle, genre: "" };
-    const title = usableResultTitle(cleaned.title) || titleFromPath(href);
+    const echterTitel = usableResultTitle(cleaned.title);
+    if (ausAdresse.has(href)) {
+      // Nur ein echter Name darf den Notbehelf ersetzen, und nur ein passender.
+      if (echterTitel && !isNoiseTitle(echterTitel) && matchesQuery(echterTitel, href, tokens)) {
+        const treffer = ausAdresse.get(href);
+        treffer.title = echterTitel;
+        if (cleaned.genre) treffer.genre = cleaned.genre;
+        ausAdresse.delete(href);
+      }
+      continue;
+    }
+    const title = echterTitel || titleFromPath(href);
     if (!title || title.length < 2 || isNoiseTitle(title)) continue;
     if (!matchesQuery(title, href, tokens)) continue;
 
@@ -14770,10 +15374,19 @@ function extractSearchLinks(html, baseUrl, query, provider) {
     // Das Bild steht im Verweis selbst; nur wenn dort keines ist, zaehlt das
     // der Seite. Nachgeschlagen wird nichts - siehe src/trefferbild.js.
     const image = trefferbild.ausMarkup(match[0], baseUrl) || bilder.get(href) || "";
-    results.push({ title, genre: cleaned.genre || "", url: href, image });
+    const treffer = { title, genre: cleaned.genre || "", url: href, image };
+    results.push(treffer);
+    if (!echterTitel) ausAdresse.set(href, treffer);
   }
   appendRawContentLinks(results, seen, html, baseUrl, tokens, provider, bilder);
   return results;
+}
+
+/** Der Name aus dem Bild eines Verweises - alt oder title des ersten img. */
+function bildTitel(inhalt) {
+  const bild = String(inhalt || "").match(/<img\b[^>]*>/i);
+  if (!bild) return "";
+  return cleanAnchorText(readHtmlAttribute(bild[0], "alt") || readHtmlAttribute(bild[0], "title"));
 }
 
 function normalizeSearchResultTitle(title, provider, query) {
@@ -14857,9 +15470,19 @@ function searchQueryVariants(query) {
     if (normalized) variants.add(normalized);
   };
 
+  // "Titel (2026)" - so stehen Vorschlaege da. Der Anbieter kennt das Jahr
+  // im Suchfeld nicht; zuerst ohne fragen.
+  const ohneJahr = original.replace(/\s*[([]\s*(?:19|20)\d\d\s*[)\]]\s*$/, "").trim();
+  if (ohneJahr && ohneJahr !== original) add(ohneJahr);
   add(original);
-  const ascii = stripSearchAccents(original).toLowerCase();
+  const ascii = stripSearchAccents(ohneJahr || original).toLowerCase();
   add(ascii);
+  // Die Adressen der Anbieter schreiben Umlaute ohne e: S.to fuehrt "Avatar -
+  // Die sieben Häfen" als /serie/avatar-die-sieben-hafen. Ohne diese
+  // Schreibweise fand die Suche den Titel nur, wenn die Seite selbst "ä" kannte.
+  const ohneUmlautE = String(ohneJahr || original).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ß/g, "ss").toLowerCase();
+  add(ohneUmlautE);
+  add(ohneUmlautE.replace(/[-_:]+/g, " "));
   add(ascii.replace(/[._:]+/g, " "));
   add(ascii.replace(/[-_]+/g, " "));
   add(ascii.replace(/\s+/g, "-"));
@@ -14973,15 +15596,26 @@ function queryTokens(query) {
 
 function matchesQuery(title, href, tokens) {
   if (!tokens.length) return true;
-  const pathText = searchablePathText(href);
+  // "ae" und "a" gelten gleich: die Anfrage wird zu "haefen", die Adresse
+  // des Anbieters heisst "hafen". Beide Seiten werden gleich gefaltet.
+  tokens = tokens.map(umlautFalten);
+  // Ein Jahr ("Avatar - Die sieben Häfen (2026)") steht selten in Adresse
+  // oder Titel des Anbieters. Es zaehlt nur, wenn sonst nichts uebrig bleibt.
+  const ohneJahr = tokens.filter((token) => !/^(?:19|20)\d\d$/.test(token));
+  if (ohneJahr.length) tokens = ohneJahr;
+  const pathText = umlautFalten(searchablePathText(href));
   if (tokens.every((token) => pathText.includes(token))) return true;
   const compactPath = pathText.replace(/\s+/g, "");
   const compactQuery = tokens.join("");
   if (compactQuery && compactPath.includes(compactQuery)) return true;
 
-  const titleText = normalizeSearchText(title);
+  const titleText = umlautFalten(normalizeSearchText(title));
   const queryPhrase = tokens.join(" ");
   return (titleText === queryPhrase || titleText.replace(/\s+/g, "").includes(compactQuery)) && contentPathLooksPlayable(href);
+}
+
+function umlautFalten(text) {
+  return String(text || "").replace(/ae/g, "a").replace(/oe/g, "o").replace(/ue/g, "u").replace(/ss/g, "s");
 }
 
 function decodeURIComponentSafe(value) {
@@ -16020,6 +16654,10 @@ function normalizeSettings(raw) {
     notifications: {
       newEpisodes: raw?.notifications?.newEpisodes === true
     },
+    // "Hey Elfix" hoert dauernd zu - deshalb nur, wer es einschaltet.
+    sprachsuche: {
+      weckwort: raw?.sprachsuche?.weckwort === true
+    },
     // SponsorBlock. Die Regel, was fehlende Werte bedeuten, steht in
     // sponsorblock.js - hier waere sie ein zweites Mal, und die beiden liefen
     // beim naechsten Schalter auseinander.
@@ -16104,6 +16742,8 @@ function normalizeSettings(raw) {
         ...defaults.watchparty.rooms
       ]).slice(0, WATCHPARTY_MAX_RAEUME),
       deviceName: String(raw?.watchparty?.deviceName || defaults.watchparty.deviceName).slice(0, 40).trim(),
+      microphoneId: String(raw?.watchparty?.microphoneId ?? settings?.watchparty?.microphoneId ?? "").slice(0, 512),
+      noiseSuppression: (raw?.watchparty?.noiseSuppression ?? settings?.watchparty?.noiseSuppression) !== false,
       // In welchem Raum die YouTube-Watchparty laeuft. Leer heisst: aus. Es ist
       // bewusst genau einer - es gibt einen YouTube-Player, und zwei Runden
       // gleichzeitig hiessen zwei Videos gleichzeitig.
@@ -16251,6 +16891,7 @@ function defaultSettings() {
     notifications: {
       newEpisodes: false
     },
+    sprachsuche: { weckwort: false },
     // Eine frische Ablage bringt YouTube schon mit - fuer sie ist das
     // Nachtragen von vornherein erledigt.
     wrapped: { musik: true, gesehenJahr: 0 },

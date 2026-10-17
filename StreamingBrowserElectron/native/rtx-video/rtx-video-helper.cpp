@@ -63,6 +63,7 @@ struct Session {
   bool initialized = false;
   bool featureEvaluated = false;
   HANDLE parent = nullptr;
+  ComPtr<ID3D11Texture2D> input;
   ComPtr<ID3D11Texture2D> output;
   ComPtr<ID3D11Texture2D> shared;
   HANDLE localHandle = nullptr;
@@ -88,7 +89,6 @@ struct Session {
     if (localHandle) CloseHandle(localHandle);
     localHandle = nullptr;
     shared.Reset();
-    output.Reset();
     frameId = generation = 0;
   }
 
@@ -179,13 +179,18 @@ bool ProcessFrame(Session& s, const Header& h) {
   sourceDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
   sourceDesc.Usage = D3D11_USAGE_DEFAULT;
   sourceDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-  D3D11_SUBRESOURCE_DATA sourceData = {};
-  sourceData.pSysMem = pixels.data();
-  sourceData.SysMemPitch = h.width * 4;
-  ComPtr<ID3D11Texture2D> input;
-  if (FAILED(s.device->CreateTexture2D(&sourceDesc, &sourceData, &input))) {
-    Error("input_texture"); return false;
+  D3D11_TEXTURE2D_DESC currentDesc = {};
+  if (s.input) s.input->GetDesc(&currentDesc);
+  // Avoid passing a new set of resources to the long-lived NGX feature on
+  // every frame. NVIDIA's DX11 sample also reuses its VSR surfaces until their
+  // size changes.
+  if (!s.input || currentDesc.Width != h.width || currentDesc.Height != h.height) {
+    s.input.Reset();
+    if (FAILED(s.device->CreateTexture2D(&sourceDesc, nullptr, &s.input))) {
+      Error("input_texture"); return false;
+    }
   }
+  s.context->UpdateSubresource(s.input.Get(), 0, nullptr, pixels.data(), h.width * 4, 0);
   D3D11_TEXTURE2D_DESC outputDesc = sourceDesc;
   outputDesc.Width = h.outputWidth;
   outputDesc.Height = h.outputHeight;
@@ -193,11 +198,16 @@ bool ProcessFrame(Session& s, const Header& h) {
   // render-target and unordered-access passes during its first evaluation.
   outputDesc.BindFlags = D3D11_BIND_RENDER_TARGET |
                          D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-  if (FAILED(s.device->CreateTexture2D(&outputDesc, nullptr, &s.output))) {
-    Error("output_texture"); return false;
+  currentDesc = {};
+  if (s.output) s.output->GetDesc(&currentDesc);
+  if (!s.output || currentDesc.Width != h.outputWidth || currentDesc.Height != h.outputHeight) {
+    s.output.Reset();
+    if (FAILED(s.device->CreateTexture2D(&outputDesc, nullptr, &s.output))) {
+      Error("output_texture"); return false;
+    }
   }
   NVSDK_NGX_D3D11_VSR_Eval_Params evaluation = {};
-  evaluation.pInput = input.Get();
+  evaluation.pInput = s.input.Get();
   evaluation.pOutput = s.output.Get();
   evaluation.InputSubrectSize = {h.width, h.height};
   evaluation.OutputSubrectSize = {h.outputWidth, h.outputHeight};

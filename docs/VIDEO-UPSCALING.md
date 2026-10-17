@@ -2,10 +2,18 @@
 
 Unter **Einstellungen → Wiedergabe → Videoqualität** lassen sich **Automatisch**,
 **AMD FSR 1**, **Anime4K** oder **NVIDIA RTX Video Super Resolution** auswählen
-und einschalten. **Automatisch** (Standard) verwendet Anime4K für Anime und RTX
-Video für Serien und Filme. Als Anime gilt wie bei der Filler-Liste eine Folgenadresse
-unter `/anime/stream/`. Ohne akzeptierte NVIDIA-Lizenz laufen Serien und Filme
-dabei mit FSR 1. Eine ausdrücklich gewählte Methode gilt für alle Videos.
+und einschalten. **Automatisch** (Standard) verwendet Anime4K für Anime und
+Animation, RTX Video für übrige Serien und Filme. Neben Folgenadressen unter
+`/anime/stream/` zählen die vorhandenen Genres der Titelkarte, etwa „Animation“,
+„Anime“ oder „Zeichentrick“ – auch auf s.to und bei Animationsfilmen. Diese
+stammen aus der passenden Anbieterseite oder sicher zugeordneten lokalen
+Metadaten. Titelwörter und japanische Herkunft allein sind kein Signal.
+Der Start wartet auf keine zusätzliche Netzabfrage. Werden Genres später vom
+bestehenden Hintergrundlauf ergänzt, wechselt die Automatik das Bildverfahren
+ohne Neuladen oder Pause und beendet dabei den bisherigen RTX-Helper.
+Ohne passende Angaben bleibt die bisherige Serien-/Filmauswahl erhalten;
+ohne akzeptierte NVIDIA-Lizenz nutzt sie FSR 1. Eine ausdrücklich gewählte
+Methode gilt weiterhin für alle Videos.
 Die Einstellung ist standardmäßig aus und wird lokal gespeichert.
 Ein laufendes Video wird beim Umschalten weder neu geladen noch angehalten.
 Der Schalter **Upscaling an/aus** steht auch direkt oben rechts im Player und
@@ -133,6 +141,13 @@ Für lokale Windows-Pakete braucht `npm run build:rtx` PowerShell 7 und Visual S
 C++ Build Tools mit Windows SDK. Die Release- und Testbuild-Workflows bauen die Komponente automatisch.
 Die drei Dateien unter `build/rtx-video` werden durch `extraResources` gepackt.
 
+Der native Helper verwendet die Eingabe- und Ausgabetexturen der laufenden
+NVIDIA-Verarbeitung erneut, solange ihre Abmessungen gleich bleiben. Neue Pixel
+werden in die bestehende Eingabetextur geschrieben. Dadurch erhält die
+langlebige NGX-Instanz nicht für jedes Bild neue Ressourcen. Die an Electron
+übergebene Shared-Textur bleibt pro Bild getrennt und wird erst nach Freigabe
+aller GPU-Referenzen verworfen.
+
 ## Prüfung
 
 `npm run test:electron` umfasst den echten WebGL-Renderer, die gespeicherte
@@ -155,6 +170,14 @@ Der separate Hardwaretest `tests/rtx-first-frame-electrontest.js` vergleicht mit
 `ELFIX_RTX_HARDWARE=1` das vollständige erste RTX-Bild mit Folgeausgaben desselben
 detailreichen Eingangsbilds bei 1440p und 4K. Er sichert die Korrektur der
 DX11-Ausgabetextur gegen die beobachteten Erstbild-Artefakte ab.
+Der Hardware-Dauertest `tests/rtx-memory-electrontest.js` verarbeitet mit
+`ELFIX_RTX_HARDWARE=1` 480 wechselnde 720p-Bilder zu 4K über den echten
+Shared-Texture-/Canvas-Pfad. Er misst den privaten Speicher desselben Helpers
+nach 60 Aufwärmbildern, begrenzt weiteres Wachstum auf 256 MiB und prüft das
+saubere Prozessende. `ELFIX_RTX_RUNTIME_DIR` erlaubt den Vergleich mit einem
+anderen Helper-Verzeichnis, ohne das Benutzerprofil oder die Installation zu
+ändern. Der Test benötigt Windows und eine unterstützte NVIDIA-GPU; er gehört
+nicht zu den GPU-unabhängigen CI-Tests.
 `tests/anime4k-electrontest.js` rechnet das WebGL2-Ergebnis von Restore/M/S auf einem
 40 × 24-Bild gegen eine unabhängige CPU-Referenz derselben Shader nach (Abweichung
 höchstens 4/255). Außerdem prüft er Ausrichtung, Kantenschärfe und 1440p/4K.

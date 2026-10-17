@@ -19,6 +19,9 @@
         <button class="chrome-btn" id="reloadAllButton" title="Alles neu laden">⟳</button>
         <button class="chrome-btn" id="homeButton" title="Startseite">⌂</button>
         <input id="omnibox" class="omnibox" type="text" placeholder="Film, Serie oder Anime suchen">
+        <button class="chrome-btn sprach-knopf" id="sprachsucheButton" type="button" title="Sprachsuche" aria-label="Sprachsuche" aria-pressed="false">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        </button>
         <button class="chrome-btn favorite-toggle" id="favoriteButton" title="Favorit">♡</button>
         <button class="chrome-btn watchparty-toggle" id="watchpartyShareButton" title="Zur Watchparty hinzufügen">⇄</button>
         <button type="button" class="watchparty-live-banner is-hidden" id="watchpartyLiveBanner" title="Umschalten: privat oder Watchparty">
@@ -311,6 +314,7 @@
               <h1>Watchparty</h1>
               <p id="watchpartyViewStatus">Serien, die jemand im Raum eingestellt hat. Wenn du beitrittst, läuft euer Fortschritt zusammen.</p>
             </div>
+            <button class="text-action" id="watchpartyVoiceButton">Sprachchat</button>
             <button class="text-action" id="watchpartySettingsLink">Einstellungen</button>
           </div>
           <!-- Die YouTube-Watchparty ist ein eigener Modus und bekommt deshalb
@@ -527,6 +531,7 @@
           </div>
           <div class="settings-section-grid">
             <label class="check setting-row"><input id="watchpartyEnabled" type="checkbox"><span><strong>Watchparty aktivieren</strong><small>Verbindet sich mit dem Relay und gleicht den Fortschritt ab.</small></span></label>
+            <div class="setting-row"><span><strong>Sprachchat-Mikrofon</strong><small>Systemstandard oder ein bestimmtes Mikrofon auf diesem Gerät verwenden.</small></span><button type="button" class="soft-action" id="watchpartyVoiceSettings">Mikrofon einstellen</button></div>
             <label>Server-Adresse<input id="watchpartyServer" placeholder="wss://mein-relay.example.com">
               <small>Adresse deines Relays aus <code>sync-server/</code>. <code>https://</code> wird automatisch zu <code>wss://</code>.</small>
             </label>
@@ -745,7 +750,7 @@
             </div>
             <div class="settings-section-grid">
               <label class="check setting-row"><input id="videoUpscaling" type="checkbox" aria-describedby="videoUpscalingStatus"><span><strong>Video-Upscaling einschalten</strong><small>Benötigt zusätzliche Grafikleistung. Standardmäßig aus.</small></span></label>
-              <label class="setting-row"><span><strong>Verfahren</strong><small>Automatisch nutzt Anime4K für Anime und RTX Video für Serien und Filme (ohne akzeptierte NVIDIA-Lizenz FSR 1). FSR 1 und Anime4K funktionieren mit AMD, Intel und NVIDIA; Anime4K braucht deutlich mehr Grafikleistung. RTX Video benötigt eine unterstützte NVIDIA-RTX-Grafikkarte.</small></span><select id="videoUpscalingMethod"><option value="auto">Automatisch (Anime4K für Anime, RTX Video sonst)</option><option value="fsr1">AMD FSR 1</option><option value="anime4k">Anime4K (für Anime)</option><option value="rtx">NVIDIA RTX Video Super Resolution</option></select></label>
+              <label class="setting-row"><span><strong>Verfahren</strong><small>Automatisch nutzt Anime4K für Anime und Animation – auch auf s.to – und RTX Video für andere Serien und Filme (ohne akzeptierte NVIDIA-Lizenz FSR 1). FSR 1 und Anime4K funktionieren mit AMD, Intel und NVIDIA; Anime4K braucht deutlich mehr Grafikleistung. RTX Video benötigt eine unterstützte NVIDIA-RTX-Grafikkarte.</small></span><select id="videoUpscalingMethod"><option value="auto">Automatisch (Anime4K für Animation, RTX Video sonst)</option><option value="fsr1">AMD FSR 1</option><option value="anime4k">Anime4K (für Anime und Animation)</option><option value="rtx">NVIDIA RTX Video Super Resolution</option></select></label>
               <label class="setting-row"><span><strong>Zielauflösung</strong><small>Automatisch wählt 4K nur auf einem 4K-Bildschirm, sonst 1440p – passend zum Monitor, auf dem der Player liegt. Das Seitenverhältnis bleibt erhalten. Auch direkt im Player wählbar.</small></span><select id="videoUpscalingResolution"><option value="auto">Automatisch nach Monitor</option><option value="1440">1440p (2560 × 1440)</option><option value="2160">4K (3840 × 2160)</option></select></label>
               <label id="rtxVideoQualityRow" class="setting-row" hidden><span><strong>RTX-Qualitätsstufe</strong><small>Höhere Stufen liefern ein schärferes Bild und belasten die Grafikkarte stärker.</small></span><select id="rtxVideoQuality"><option value="1">1 – Niedrig</option><option value="2">2 – Mittel</option><option value="3">3 – Hoch</option><option value="4">4 – Ultra</option></select></label>
               <div id="rtxVideoLicenseRow" hidden>
@@ -792,6 +797,16 @@
             </div>
             <div class="settings-section-grid">
               <label class="check setting-row"><input id="notifyNewEpisodes" type="checkbox"><span><strong>Bei neuen Folgen benachrichtigen</strong><small>Windows meldet sich, sobald eine neue Folge oder Staffel gefunden wurde. Ein Klick auf die Meldung öffnet den Titel. Standardmäßig aus.</small></span></label>
+            </div>
+          </section>
+
+          <section class="settings-group">
+            <div class="settings-group-head">
+              <h4>Sprachsuche</h4>
+              <p>Das Mikrofon neben dem Suchfeld sucht nach dem, was du sagst. Erkannt wird offline auf diesem Rechner; beim ersten Mal lädt ELFIX dafür ein deutsches Sprachmodell (rund 45 MB).</p>
+            </div>
+            <div class="settings-section-grid">
+              <label class="check setting-row"><input id="sprachsucheWeckwort" type="checkbox"><span><strong>„Hey Elfix“</strong><small>ELFIX hört dauerhaft auf „Hey Elfix“ und sucht dann, was du danach sagst – zum Beispiel „Hey Elfix, Breaking Bad“. Das Mikrofon bleibt dafür offen. Standardmäßig aus.</small></span></label>
             </div>
           </section>
 

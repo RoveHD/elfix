@@ -41,6 +41,7 @@ public final class Watchparty {
 
         /** Eine neue, bereits vom Relay dem Raum zugeordnete Chatzeile. */
         default void watchpartyChat(JSONObject zeile) { }
+        default void watchpartyVoice(JSONObject nachricht) { }
 
         /**
          * Nur der Stand der Runde hat sich geaendert - wer wo steht.
@@ -929,6 +930,14 @@ public final class Watchparty {
             case "watchparty:chat":
                 chatUebernehmen(nutzlastJson);
                 break;
+            case "watchparty:voice":
+                try {
+                    JSONObject nachricht = new JSONObject(nutzlastJson);
+                    if (beobachter != null) beobachter.watchpartyVoice(nachricht);
+                } catch (Exception fehler) {
+                    Log.e(TAG, "Sprachchat-Signalling unlesbar", fehler);
+                }
+                break;
             case "watchparty:verbindung":
                 // Die Leitung ist wieder offen. Der Raumzustand kommt vom
                 // Relay von selbst; was hier fehlt, ist der Stand der
@@ -1618,6 +1627,27 @@ public final class Watchparty {
         if (sichereZeile.length() > 4000) { melde(antwort, null, "Die Nachricht ist zu lang"); return; }
         kern.rufe("watchparty-bruecke.chatSenden", Kern.args(sichererKey, sichereZeile, sichererRaum),
             (wert, fehler) -> melde(antwort, wert, fehler));
+    }
+
+    /** Audio-only Signalling benutzt die bestehende authentifizierte Raumverbindung. */
+    public void voiceSenden(String raum, JSONObject nachricht, Kern.Antwort antwort) {
+        if (kern == null || !kern.istBereit() || raum == null || !raumcodes.contains(raum)) {
+            melde(antwort, null, "Dieser Sprachraum ist nicht eingerichtet");
+            return;
+        }
+        kern.rufe("watchparty-bruecke.voiceSenden", Kern.args(raum, nachricht), antwort);
+    }
+
+    boolean raumVerbunden(String code) {
+        if (!istEingeschaltet() || !raumcodes.contains(code)) return false;
+        JSONArray raeume = raeume();
+        for (int i = 0; i < raeume.length(); i++) {
+            JSONObject raum = raeume.optJSONObject(i);
+            if (raum != null && code.equals(raum.optString("room"))) {
+                return raum.optBoolean("connected", false);
+            }
+        }
+        return false;
     }
 
     private static String textAus(String jsonWert) {

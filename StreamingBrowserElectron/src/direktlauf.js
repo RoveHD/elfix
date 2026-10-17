@@ -31,6 +31,7 @@
  */
 
 const direktquelle = require("./direktquelle");
+const cfSession = require("./cf-session");
 
 /** So viele Stationen darf ein Weg haben. */
 const HOECHSTSTATIONEN = 4;
@@ -117,6 +118,7 @@ function erstellen(umgebung = {}) {
   const kennung = String(umgebung.kennung || KENNUNG);
   const frist = Number(umgebung.frist) > 0 ? Number(umgebung.frist) : FRIST_MS;
   const stationen = Number(umgebung.stationen) > 0 ? Number(umgebung.stationen) : HOECHSTSTATIONEN;
+  const diagnose = typeof umgebung.diagnose === "function" ? umgebung.diagnose : console.log;
 
   /**
    * Eine Station holen - und dabei nichts verschlucken.
@@ -172,7 +174,16 @@ function erstellen(umgebung = {}) {
       return { fehler: String(fehler?.message || fehler || "nicht erreichbar") };
     }
     if (!antwort) return { fehler: "keine Antwort" };
-    if (!antwort.ok) return { fehler: `HTTP ${antwort.status || "?"}` };
+    const finalUrl = brauchbareAdresse(antwort.url) || adresse;
+    const details = { url: adresse, finalUrl, status: antwort.status, headers: antwort.headers,
+      userAgent: kennung, referer };
+    const gemeldet = cfSession.klassifizieren(details);
+    if (gemeldet.challenge) {
+      diagnose(cfSession.diagnose("challenge detected", details));
+      try { await antwort.body?.cancel?.(); } catch { /* Response already closed. */ }
+      return { fehler: "Cloudflare-Bestaetigung erforderlich", challenge: true,
+        adresse: finalUrl, status: antwort.status, typ: "Challenge" };
+    }
 
     // Erst die Groesse, dann der Text: eine Datei, die als Seite ausgeliefert
     // wird, soll gar nicht erst in den Speicher.
@@ -186,7 +197,12 @@ function erstellen(umgebung = {}) {
       return { fehler: String(fehler?.message || fehler || "nicht lesbar") };
     }
     if (text.length > HOECHSTGROESSE) return { fehler: "Antwort zu gross" };
-    return { text, adresse: brauchbareAdresse(antwort.url) || adresse };
+    const zustand = cfSession.klassifizieren({ ...details, body: text });
+    diagnose(cfSession.diagnose(zustand.challenge ? "challenge detected" : "response", { ...details, body: text }));
+    if (zustand.challenge) return { fehler: "Cloudflare-Bestaetigung erforderlich", challenge: true,
+      adresse: finalUrl, status: antwort.status, typ: zustand.type };
+    if (!antwort.ok) return { fehler: `HTTP ${antwort.status || "?"}` };
+    return { text, adresse: finalUrl };
   }
 
   /**
@@ -214,7 +230,8 @@ function erstellen(umgebung = {}) {
       weg.push(adresse);
 
       const geholt = await seiteHolen(adresse, woher, optionen.signal);
-      if (geholt.fehler) return ergebnis({ stationen: weg, grund: geholt.fehler });
+      if (geholt.fehler) return ergebnis({ stationen: weg, grund: geholt.fehler,
+        ...(geholt.challenge ? { challenge: true, seite: geholt.adresse, status: geholt.status, typ: geholt.typ } : {}) });
 
       const gelesen = direktquelle.aufloesen(geholt.text, geholt.adresse);
       if (gelesen.quelle) {

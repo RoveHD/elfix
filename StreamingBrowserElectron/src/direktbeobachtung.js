@@ -2,6 +2,7 @@
 
 const manifest = require("./manifest");
 const spur = require("./streamspur");
+const cfSession = require("./cf-session");
 
 // Der Hoster kann die Quelle erst per JavaScript erzeugen. Beobachtet wird
 // begrenzt und stumm; eine kurze Werbung gilt auch dann nicht als Folge,
@@ -14,6 +15,7 @@ async function beobachten(umgebung, adresse, referer, signal) {
   let ansicht = null;
   let beobachtungen = [];
   const geprueft = new Map();
+  let bestaetigungen = 0;
   let ende = Date.now() + frist;
   const fehlschlag = { ok: false, grund: "Keine spielbare Quelle beobachtet" };
   try {
@@ -27,13 +29,15 @@ async function beobachten(umgebung, adresse, referer, signal) {
     // der Zuschauer bewusst mehr Zeit, danach beginnt die Beobachtung neu.
     externesSignal?.addEventListener("abort", schliessen, { once: true });
     try {
-      while (!arbeitsSignal.aborted && Date.now() < ende) {
+      beobachten: while (!arbeitsSignal.aborted && Date.now() < ende) {
         const lage = await ansicht.lesen().catch(() => ({}));
         if (externesSignal?.aborted) break;
         if (lage.menschentor) {
+          if (bestaetigungen >= 1) return { ...fehlschlag, grund: "Bestätigung weiterhin erforderlich" };
           if (typeof ansicht.bestaetigen !== "function") {
             return { ...fehlschlag, grund: "Bestätigung erforderlich" };
           }
+          bestaetigungen += 1;
           const bestaetigt = await ansicht.bestaetigen(externesSignal).catch(() => false);
           if (!bestaetigt) {
             return { ...fehlschlag, grund: "Bestätigung nicht abgeschlossen" };
@@ -44,6 +48,7 @@ async function beobachten(umgebung, adresse, referer, signal) {
           fristSignal = AbortSignal.timeout(frist);
           arbeitsSignal = externesSignal ? AbortSignal.any([externesSignal, fristSignal]) : fristSignal;
           ende = Date.now() + frist;
+          geprueft.clear();
           continue;
         }
         const seite = lage.seite || adresse;
@@ -54,8 +59,22 @@ async function beobachten(umgebung, adresse, referer, signal) {
         for (const kandidat of kandidaten.slice(0, 12)) {
           if (arbeitsSignal.aborted) break;
           if (!geprueft.has(kandidat.adresse)) {
-            geprueft.set(kandidat.adresse,
-              await playlistPruefen(umgebung.holen, kandidat.adresse, kopfzeilen, arbeitsSignal).catch(() => 0));
+            try {
+              geprueft.set(kandidat.adresse,
+                await playlistPruefen(umgebung.holen, kandidat.adresse, kopfzeilen, arbeitsSignal));
+            } catch (fehler) {
+              if (!fehler?.challenge) { geprueft.set(kandidat.adresse, 0); continue; }
+              if (bestaetigungen >= 1) return { ...fehlschlag, grund: "Bestätigung weiterhin erforderlich" };
+              if (typeof ansicht.bestaetigen !== "function") return { ...fehlschlag, grund: "Bestätigung erforderlich" };
+              bestaetigungen += 1;
+              const bestaetigt = await ansicht.bestaetigen(externesSignal, fehler.seite).catch(() => false);
+              if (!bestaetigt || externesSignal?.aborted) return { ...fehlschlag, grund: "Bestätigung nicht abgeschlossen" };
+              geprueft.clear();
+              fristSignal = AbortSignal.timeout(frist);
+              arbeitsSignal = externesSignal ? AbortSignal.any([externesSignal, fristSignal]) : fristSignal;
+              ende = Date.now() + frist;
+              continue beobachten;
+            }
           }
         }
         const laufzeiten = Object.fromEntries(geprueft);
@@ -94,9 +113,25 @@ async function playlistPruefen(holen, adresse, kopfzeilen, signal) {
   const lesen = async (url) => {
     const antwort = await holen(url, { headers: koepfe,
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000) });
-    if (!antwort.ok || Number(antwort.headers?.get("content-length")) > manifest.HOECHSTZEICHEN) return null;
+    const details = { url, finalUrl: antwort.url || url, status: antwort.status,
+      headers: antwort.headers, requestHeaders: koepfe, expected: "hls" };
+    const challengeMelden = () => {
+      console.log(cfSession.diagnose("challenge detected", details));
+      const fehler = new Error("Bestätigung erforderlich");
+      fehler.challenge = true;
+      fehler.seite = details.finalUrl;
+      throw fehler;
+    };
+    if (cfSession.klassifizieren(details).challenge) {
+      try { await antwort.body?.cancel?.(); } catch { /* Already closed. */ }
+      challengeMelden();
+    }
+    if (Number(antwort.headers?.get("content-length")) > manifest.HOECHSTZEICHEN) return null;
     const text = await antwort.text();
     if (text.length > manifest.HOECHSTZEICHEN) return null;
+    details.body = text;
+    if (cfSession.klassifizieren(details).challenge) challengeMelden();
+    if (!antwort.ok) return null;
     return manifest.lesen(text, antwort.url || url);
   };
   let gelesen = await lesen(adresse);

@@ -79,8 +79,9 @@ andere. Siehe [Das Relay](#das-relay).
   der App automatisch in PiP.
 - **Vorschau beim Spulen.** Die Zeitleiste zeigt eine echte Videominiatur samt
   Position und Abschnitt; die Wiedergabe bleibt bis zum Loslassen stehen.
-- **Handy-Gesten.** Doppel-Tap für zehn Sekunden vor und zurück, horizontales
-  Wischen mit Vorschau und Abbruchmöglichkeit.
+- **Handy-Gesten.** Doppel-Tap für zehn Sekunden vor und zurück. Wischen übers
+  Bild spult nicht — so springt beim Scrollen oder Hochziehen der Systemleiste
+  nichts ungewollt.
 - **Handy als Fernbedienung.** Pause, Spulen, Folge vor und zurück, Vollbild und
   Ton — und die angefangenen Serien zum Aussuchen, wenn gerade nichts läuft.
 
@@ -124,6 +125,10 @@ andere. Siehe [Das Relay](#das-relay).
   gibt es bislang nur auf dem Desktop. Vorgeschlagen wird aus einer Suche über
   alle Anbieter — nicht nur aus der eigenen Watchlist.
 - **Livechat im Player** auf PC, Handy und TV, je Raum getrennt.
+- **Sprachchat im Raum** mit bewusstem Mikrofonstart, Push-to-talk,
+  Sprecheranzeige und Lautstärke je Teilnehmer. Das Handy kann nur zum Sprechen
+  beitreten, während das Video auf dem TV läuft. Benötigt ein aktualisiertes
+  Relay; siehe [Sprachchat und TURN](docs/SPRACHCHAT.md).
 - **YouTube-Watchparty** als eigenes System, mit eigener Videoliste,
   SponsorBlock-Sprüngen für die Runde und Return-YouTube-Dislike-Zahlen.
 

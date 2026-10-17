@@ -7,29 +7,37 @@ final class Verifizierung {
 
     private Verifizierung() { }
 
-    /** One scanner shared by detection, masking and Continue. */
+    /** One passive scanner shared by detection and masking. */
     private static String scanner() {
         return "()=>{const maskiert=!!document.querySelector('[data-elfix-verifizierung]');const sichtbar=e=>{if(!e||!e.isConnected)return false;"
             + "for(let p=e;p;p=p.parentElement){const x=getComputedStyle(p);if(x.display==='none'||Number(x.opacity)===0)return false;"
             + "if((x.visibility==='hidden'||x.visibility==='collapse')&&(!maskiert||p===e))return false}"
             + "const r=e.getBoundingClientRect();return r.width>0&&r.height>0};"
             + "const wort=e=>String(e&&(e.innerText||e.textContent||e.value)||'').trim();"
-            + "const weiter=/^(weiter(?!e)|continue|fortfahren|proceed|zum stream|jetzt ansehen|jetzt starten|watch now|play now)\\b/i;"
             + "const status=e=>e.matches('#challenge-form,#challenge-running,#cf-please-wait');"
-            + "const kandidaten=[...document.querySelectorAll('.cf-turnstile,.h-captcha,.g-recaptcha,iframe[src*=\"challenges.cloudflare.com\"],iframe[src*=\"hcaptcha.com\"],iframe[src*=\"recaptcha\"],#challenge-form,#challenge-running,#cf-please-wait')]"
+            + "const kandidaten=[...document.querySelectorAll('.cf-turnstile,.h-captcha,.g-recaptcha,iframe[src*=\"challenges.cloudflare.com\"],iframe[src*=\"hcaptcha.com\"],iframe[src*=\"recaptcha\"],#challenge-form,#challenge-running,#cf-please-wait,[class*=\"cf-chl-\"],[id*=\"cf-chl-\"]')]"
             + ".sort((a,b)=>Number(status(a))-Number(status(b)));const gesehen=new Set(),tore=[];"
-            + "for(const abfrage of kandidaten){let box=abfrage,knopf=null;"
-            + "for(let e=abfrage.parentElement,n=0;e&&e!==document.body&&n<6;e=e.parentElement,n++){const b=[...e.querySelectorAll('button,[role=button],input[type=submit],input[type=button],a[href=\"#\"],a:not([href])')].find(x=>sichtbar(x)&&weiter.test(wort(x)));"
-            + "if(b&&sichtbar(e)&&(e.matches('dialog,[role=dialog],.modal-content')||/video wird vorbereitet|stream wird vorbereitet|preparing (?:your )?video/i.test(wort(e)))){box=e;knopf=b;break}}"
+            + "for(const abfrage of kandidaten){let box=abfrage;"
+            + "for(let e=abfrage.parentElement,n=0;e&&e!==document.body&&n<6;e=e.parentElement,n++){"
+            + "if(sichtbar(e)&&(e.matches('dialog,[role=dialog],.modal-content')||/verify|challenge|captcha|sicherheitsabfrage|best.tigung/i.test(wort(e)))){box=e;break}}"
             + "if(!sichtbar(box)||gesehen.has(box))continue;gesehen.add(box);"
             + "const feld=box.querySelector('input[name=\"cf-turnstile-response\"],textarea[name=\"g-recaptcha-response\"],input[name=\"g-recaptcha-response\"],textarea[name=\"h-captcha-response\"],input[name=\"h-captcha-response\"]');"
-            + "tore.push({box,knopf,token:!!(feld&&String(feld.value||'').trim()),status:status(abfrage)})}return tore}";
+            + "const r=box.getBoundingClientRect(),flaeche=Math.max(1,innerWidth*innerHeight);"
+            + "tore.push({box,token:!!(feld&&String(feld.value||'').trim()),status:status(abfrage),blockiert:(r.width*r.height/flaeche)>=.2})}"
+            + "const titel=/just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title||'');"
+            + "const formular=!!document.querySelector('input[name*=\"cf_chl\"],input[name*=\"cf-chl\"]');"
+            + "if(!tore.length&&(titel||formular)&&document.body)tore.push({box:document.body,token:false,status:true,blockiert:true});return tore}";
     }
 
     static String zustandScript() {
         return "(()=>{const tore=(" + scanner() + ")();const tor=tore[0];"
             + "const titel=/just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title||'');"
-            + "const token=!!(tor&&tor.token);return JSON.stringify({offen:!!(tor&&(!token||tor.knopf))||(!token&&titel),token,tor:!!tor})})()";
+            + "const plattform=!!document.querySelector('script[src*=\"challenge-platform\"],script[src*=\"challenges.cloudflare.com\"]');"
+            + "const token=!!(tor&&tor.token);const offen=titel||!!(tor&&(tor.status||tor.blockiert||(plattform&&tor.blockiert)));"
+            + "const roh=String(document.body&&document.body.innerText||'').trim();"
+            + "const inhalt=!!document.querySelector('video,source,iframe[src],[class*=\"player\"],[class*=\"hoster\"],[data-stream],[data-link-target],a[href*=\"/redirect/\"],a[href*=\"/episode-\"],a[href*=\"/folge-\"]')||/^#EXTM3U|^<\\?xml[^>]*>\\s*<MPD|^<MPD/i.test(roh);"
+            + "const erwartet=!offen&&document.readyState==='complete'&&inhalt;"
+            + "return JSON.stringify({offen,token,tor:!!tor,erwartet})})()";
     }
 
     static String maskierenScript() {
@@ -42,19 +50,15 @@ final class Verifizierung {
             + "return JSON.stringify({ok:true,height:Math.ceil(tor.box.getBoundingClientRect().height)})})()";
     }
 
-    static String weiterScript() {
-        return "(()=>{const tor=(" + scanner() + ")()[0];if(!tor||!tor.token)return 'wartet';const b=tor.knopf;"
-            + "if(!b)return 'token';if(b.disabled||b.getAttribute('aria-disabled')==='true'||b.classList.contains('disabled'))return 'gesperrt';"
-            + "const ziele=[];const oeffnen=window.open;window.open=u=>{try{const z=new URL(String(u||''),location.href);if(/^https?:$/.test(z.protocol))ziele.push(z.href)}catch(e){}return {focus(){},close(){},closed:false}};"
-            + "try{b.click()}finally{window.open=oeffnen}return ziele.length?'geklickt|'+encodeURIComponent(JSON.stringify(ziele)):'geklickt'})()";
-    }
-
     static String maskeEntfernenScript() {
         return "(()=>{document.getElementById('__elfixVerifizierungStil')?.remove();document.querySelectorAll('[data-elfix-verifizierung]').forEach(e=>e.removeAttribute('data-elfix-verifizierung'))})()";
     }
 
-    static boolean darfFortsetzen(boolean tokenGesehen, boolean dokumentGewechselt,
+    static boolean darfFortsetzen(boolean serverSitzung, boolean dokumentGewechselt,
+                                   boolean erwarteterInhalt, boolean serverAntwort,
                                    boolean offen, int freieProben) {
-        return !offen && (tokenGesehen || dokumentGewechselt) && freieProben >= 2;
+        return !offen && serverAntwort && (erwarteterInhalt || serverSitzung)
+            && (serverSitzung || dokumentGewechselt)
+            && freieProben >= 2;
     }
 }

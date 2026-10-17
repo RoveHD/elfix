@@ -302,6 +302,21 @@ public final class Mitschauen {
      */
     private final java.util.Set<String> liveAus = new java.util.HashSet<>();
 
+    /**
+     * Die Serie, die gerade ausdruecklich privat geoeffnet wurde - "" heisst:
+     * keine.
+     *
+     * <p>Gemeldet vom Handy: "Weiterschauen" (der private Eintrag) oeffnete
+     * immer die Watchparty, sobald derselbe Titel auch in einer Runde lief.
+     * Die Seite gehoert zum selben Titel, und die Lage nannte dessen Raum -
+     * also lief sie live mit. Wer den privaten Eintrag waehlt, will aber
+     * allein schauen. Gilt fuer diese Serie, bis man wieder ausdruecklich
+     * gemeinsam oeffnet ({@link #gemeinsamOeffnen}, {@link #autostartAnfordern},
+     * {@link #liveBeitreten}). Dasselbe Ergebnis wie "Live verlassen", nur
+     * ohne den Umweg ueber die Runde.
+     */
+    private String privatSerie = "";
+
     /* ------------------------------------------------- Der Folgen-Autostart */
 
     /**
@@ -937,7 +952,7 @@ public final class Mitschauen {
         // Kern - hier gilt sie noch gar nicht als offen.
         lageFuer(auftrag.ziel, (key, raum) -> {
             if (generation != folgenwechselMeldenGeneration) return;
-            if (key.isEmpty() || raum.isEmpty()
+            if (key.isEmpty() || raum.isEmpty() || privatFuer(key, raum, auftrag.ziel)
                 || liveAus.contains(liveMarke(key, raum))) {
                 fehlgeschlagen.run();
                 return;
@@ -1603,6 +1618,9 @@ public final class Mitschauen {
      * die falsche Folge.
      */
     public void autostartAnfordern(String key, String raum, String ziel) {
+        // Aus der Runde heraus geoeffnet: ausdruecklich gemeinsam.
+        privatSerie = "";
+        if (key != null && raum != null) liveAus.remove(liveMarke(key, raum));
         if (wartetAufFolgenBarriere) {
             Log.i(TAG, "Lokaler Autostart wartet auf die Folgenbarriere");
             return;
@@ -2126,6 +2144,7 @@ public final class Mitschauen {
             antwort.fertig(null, "Diese Folge läuft in keiner Runde mit");
             return;
         }
+        privatSerie = "";
         liveAus.remove(liveMarke(key, raum));
         watchparty.raumBinden(key, raum);
         // Neu einklinken: sonst bliebe der Merker der letzten Teilnahme stehen
@@ -2298,7 +2317,42 @@ public final class Mitschauen {
     private String raum() {
         String roh = raumRoh();
         if (roh.isEmpty()) return "";
+        if (privatFuer(lageKey, roh, umgebung.adresse())) return "";
         return liveAus.contains(liveMarke(lageKey, roh)) ? "" : roh;
+    }
+
+    /** Ein privater Eintrag wird geoeffnet: diese Serie laeuft nicht live mit. */
+    public void privatOeffnen(String url) {
+        privatSerie = serienTeil(url);
+        autostartAbbrechen("privat geoeffnet");
+    }
+
+    /**
+     * Ein Eintrag einer Runde wird geoeffnet: der private Merker faellt, und
+     * ein frueheres "privat" fuer diesen Titel in diesem Raum auch.
+     */
+    public void gemeinsamOeffnen(String url) {
+        privatSerie = "";
+        if (kern == null || !kern.istBereit() || url == null || url.isEmpty()) return;
+        lageFuer(url, (key, raum) -> {
+            if (!key.isEmpty() && !raum.isEmpty()) liveAus.remove(liveMarke(key, raum));
+        });
+    }
+
+    /**
+     * Gehoert die Adresse zur privat geoeffneten Serie? Dann gilt fuer diesen
+     * Titel in diesem Raum "Live aus" - fuer jede weitere Folge mit.
+     */
+    private boolean privatFuer(String key, String raum, String adresse) {
+        if (key.isEmpty() || raum.isEmpty() || !privatGilt(privatSerie, adresse)) return false;
+        liveAus.add(liveMarke(key, raum));
+        return true;
+    }
+
+    /** Gehoert die Adresse zur privat geoeffneten Serie? Jede Folge zaehlt mit. */
+    static boolean privatGilt(String privatSerie, String adresse) {
+        return privatSerie != null && !privatSerie.isEmpty() && adresse != null
+            && privatSerie.equals(serienTeil(adresse));
     }
 
     /** In welchem Raum diese Seite steht - auch wenn das Live-Schauen aus ist. */

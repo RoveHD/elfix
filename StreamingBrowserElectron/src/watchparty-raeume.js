@@ -29,6 +29,7 @@ class WatchpartyRaeume {
     // main.js reichte ein onChat herein, die Fassade las es nie - damit kam
     // keine einzige empfangene Zeile jemals in der Seite an.
     this.aufChat = optionen.onChat || (() => {});
+    this.aufVoice = optionen.onVoice || (() => {});
     // Durchreiche fuer die YouTube-Watchparty: sie faehrt auf denselben
     // Verbindungen, fuehrt aber ihren Zustand selbst.
     this.aufYoutube = optionen.onYoutube || (() => {});
@@ -117,6 +118,7 @@ class WatchpartyRaeume {
       onControl: (nachricht) => this.aufSteuerung({ ...nachricht, room: code }),
       onWatchstate: (nachricht) => this.aufStand({ ...nachricht, room: code }),
       onChat: (nachricht) => this.aufChat({ ...nachricht, room: code }),
+      onVoice: (nachricht) => this.aufVoice({ ...nachricht, room: code }),
       // Der Raumcode gehoert an die Nachricht: die YouTube-Watchparty laeuft in
       // genau einem Raum und muss fremde Raeume erkennen und liegenlassen.
       onYoutube: (nachricht) => this.aufYoutube({ ...nachricht, room: nachricht.room || code }),
@@ -330,6 +332,10 @@ class WatchpartyRaeume {
   // Raum.
   youtubeSenden(room, nachricht) {
     return Boolean(this.raeume.get(String(room || "").trim())?.youtubeSenden(nachricht));
+  }
+
+  voiceSenden(room, nachricht) {
+    return Boolean(this.raeume.get(String(room || "").trim())?.voiceSenden(nachricht));
   }
 
   queueSpin(schnell, room) {

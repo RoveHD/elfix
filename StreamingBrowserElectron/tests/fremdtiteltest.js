@@ -70,7 +70,7 @@ function buehne(zustand = {}) {
   const protokoll = { nachgeschlagen: 0, gesucht: [] };
   const kontext = vm.createContext({
     Array, Boolean, Map, Number, Object, Promise, Set, String, RegExp,
-    setTimeout, clearTimeout, encodeURIComponent,
+    setTimeout, clearTimeout, encodeURIComponent, AbortSignal,
     metadatenModul,
     protokoll,
     trifft: zustand.trifft || (() => false),

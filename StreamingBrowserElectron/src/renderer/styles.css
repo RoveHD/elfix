@@ -6465,12 +6465,18 @@ input[type="color"] {
 
 .raumqueue-head { justify-content: space-between; align-items: start; }
 .raumqueue-controls { flex-wrap: wrap; justify-content: flex-end; }
-.raumqueue-klappen { flex: none; align-self: center; }
-.raumqueue-inhalt { margin-top: 8px; }
-.raumqueue-inhalt[hidden], .raumqueue-treffer[hidden], .raumqueue.ist-eingeklappt .raumqueue-controls label { display: none; }
+.raumqueue-klappe { flex: none; align-self: center; }
+.raumqueue-body { margin-top: 8px; }
+.raumqueue-treffer[hidden], .raumqueue.ist-eingeklappt .raumqueue-controls label { display: none; }
 .raumqueue.ist-eingeklappt .raumqueue-head { flex-direction: row; align-items: center; }
 .raumqueue.ist-eingeklappt .raumqueue-controls { width: auto; }
 .raumqueue-head h2 { margin: 2px 0 4px; }
+.raumqueue-titel { cursor: pointer; }
+.raumqueue-controls { align-items: end; }
+.raumqueue-klappe { min-height: 40px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: 999px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.raumqueue-klappe:hover { color: white; border-color: var(--accent); }
+.raumqueue.ist-eingeklappt .raumqueue-copy { display: none; }
+.raumqueue-body[hidden] { display: none; }
 .raumqueue-copy, .raumqueue-status { margin: 0; color: var(--muted); }
 .raumqueue-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
 .raumqueue-controls select, .raumqueue-composer select, .raumqueue-composer input { min-height: 40px; }
@@ -8081,3 +8087,15 @@ button:focus-visible,
 .sponsorblock-kategorie small { display:block; margin-top:6px; opacity:.75; line-height:1.4; }
 .sponsorblock-kategorie select { width:230px; max-width:100%; flex:none; }
 @media (max-width: 700px) { .sponsorblock-kategorie { align-items:stretch; flex-direction:column; gap:10px; } .sponsorblock-kategorie select { width:100%; } }
+
+/* Sprachsuche: Mikrofon neben dem Suchfeld. Rot, solange zugehoert wird;
+   ein kleiner Punkt, solange "Hey Elfix" auf das Weckwort wartet. */
+.sprach-knopf { position: relative; display: inline-grid; place-items: center; }
+.sprach-knopf.is-hoert { color: white; background: var(--red); animation: sprach-puls 1.2s ease-in-out infinite; }
+.sprach-knopf.is-laedt { opacity: 0.7; cursor: progress; }
+.sprach-knopf.is-wartet::after {
+  content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--accent);
+}
+@keyframes sprach-puls { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+@media (prefers-reduced-motion: reduce) { .sprach-knopf.is-hoert { animation: none; } }

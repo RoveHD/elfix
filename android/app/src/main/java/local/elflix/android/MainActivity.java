@@ -102,6 +102,9 @@ public class MainActivity extends Activity {
     private boolean aniworldBildNachreichungLaedt;
     /** Die Runden, in denen der Stand mit anderen Geräten zusammenläuft. */
     private Watchparty watchparty;
+    private Sprachchat sprachchat;
+    private boolean sprachchatDuckAktiv;
+    private boolean sprachchatAudioAktiv;
     private RaumWarteschlange raumWarteschlange;
     /** Nur die Ansicht wechseln; der Beitritt zu einer Runde bleibt davon unberuehrt. */
     private final Map<String, Boolean> warteschlangenReiterJeRaum = new HashMap<>();
@@ -1124,6 +1127,19 @@ public class MainActivity extends Activity {
             @Override
             public void watchpartyChat(JSONObject zeile) {
                 if (direktWiedergabe != null) direktWiedergabe.chatEmpfangen(zeile);
+            }
+            @Override public void watchpartyVoice(JSONObject nachricht) {
+                if (sprachchat != null) sprachchat.empfangen(nachricht);
+            }
+        });
+        sprachchat = new Sprachchat(this, watchparty, new Sprachchat.Umgebung() {
+            @Override public void duck(boolean aktiv) {
+                sprachchatDuckAktiv = aktiv;
+                if (direktWiedergabe != null) direktWiedergabe.sprachchatDucking(aktiv);
+            }
+            @Override public void sitzung(boolean aktiv) {
+                sprachchatAudioAktiv = aktiv;
+                if (direktWiedergabe != null) direktWiedergabe.sprachchatAktiv(aktiv);
             }
         });
         // Must exist before watchparty.anwenden() opens the relay connection;
@@ -3913,10 +3929,20 @@ public class MainActivity extends Activity {
             return true;
         });
         searchInput = input;
+        LinearLayout zeile = new LinearLayout(this);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        zeile.addView(input, new LinearLayout.LayoutParams(0, dp(60), 1f));
+        ImageView mikrofon = TvViews.iconButton(this, R.drawable.ic_mic, this::sprachSucheStarten);
+        mikrofon.setContentDescription("Sprachsuche");
+        mikrofon.setFocusable(true);
+        LinearLayout.LayoutParams mikrofonParams = new LinearLayout.LayoutParams(dp(60), dp(60));
+        mikrofonParams.leftMargin = dp(12);
+        zeile.addView(mikrofon, mikrofonParams);
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(60));
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         inputParams.topMargin = dp(TvViews.SECTION_GAP);
-        page.addView(input, inputParams);
+        page.addView(zeile, inputParams);
         input.post(input::requestFocus);
 
         if (query.isEmpty()) {
@@ -3937,17 +3963,7 @@ public class MainActivity extends Activity {
 
     private void searchAllProvidersTv(String query, LinearLayout holder, View loading) {
         new Thread(() -> {
-            ArrayList<SearchResult> found = new ArrayList<>();
-            for (Provider provider : providers) {
-                for (String variant : searchQueryVariants(query)) {
-                    ArrayList<SearchResult> results =
-                        fetchSearchResults(provider, provider.buildSearchUrl(variant), variant);
-                    if (!results.isEmpty()) {
-                        found.addAll(results);
-                        break;
-                    }
-                }
-            }
+            ArrayList<SearchResult> found = sucheBeiAllen(query);
             runOnUiThread(() -> {
                 holder.removeView(loading);
                 if (found.isEmpty()) {
@@ -6481,10 +6497,19 @@ public class MainActivity extends Activity {
             return true;
         });
         searchInput = input;
+        LinearLayout zeile = new LinearLayout(this);
+        zeile.setOrientation(LinearLayout.HORIZONTAL);
+        zeile.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        zeile.addView(input, new LinearLayout.LayoutParams(0, dp(50), 1f));
+        ImageView mikrofon = MobileViews.iconButton(this, R.drawable.ic_mic, this::sprachSucheStarten);
+        mikrofon.setContentDescription("Sprachsuche");
+        LinearLayout.LayoutParams mikrofonParams = new LinearLayout.LayoutParams(dp(50), dp(50));
+        mikrofonParams.leftMargin = dp(8);
+        zeile.addView(mikrofon, mikrofonParams);
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         inputParams.topMargin = dp(18);
-        page.addView(input, inputParams);
+        page.addView(zeile, inputParams);
 
         if (query.isEmpty()) {
             addSpacing(page, MobileViews.emptyState(this, R.drawable.ic_nav_search,
@@ -6512,17 +6537,7 @@ public class MainActivity extends Activity {
     /** Same crawl as the TV search, rendered as mobile result cards. */
     private void searchAllProvidersMobile(String query, LinearLayout holder, View loading) {
         new Thread(() -> {
-            ArrayList<SearchResult> found = new ArrayList<>();
-            for (Provider provider : providers) {
-                for (String variant : searchQueryVariants(query)) {
-                    ArrayList<SearchResult> providerResults =
-                        fetchSearchResults(provider, provider.buildSearchUrl(variant), variant);
-                    if (!providerResults.isEmpty()) {
-                        found.addAll(providerResults);
-                        break;
-                    }
-                }
-            }
+            ArrayList<SearchResult> found = sucheBeiAllen(query);
             runOnUiThread(() -> {
                 holder.removeView(loading);
                 if (found.isEmpty()) {
@@ -6809,6 +6824,10 @@ public class MainActivity extends Activity {
             });
 
         serverKarte(koerper, fernseher, luecke);
+
+        lebendeKarte(koerper, fernseher, luecke, "Mikrofon für Sprachchat",
+            () -> "Eingabegerät auswählen. Aufnahme und Geräteauflistung erst nach deiner Freigabe.",
+            () -> "Mikrofon einstellen", () -> sprachchat.einstellungenOeffnen());
 
         lebendeKarte(koerper, fernseher, luecke, "Raumcodes",
             () -> {
@@ -7521,17 +7540,7 @@ public class MainActivity extends Activity {
 
     private void searchAllProviders(String query, LinearLayout results, TextView loading) {
         new Thread(() -> {
-            ArrayList<SearchResult> found = new ArrayList<>();
-            for (Provider provider : providers) {
-                for (String variant : searchQueryVariants(query)) {
-                    String searchUrl = provider.buildSearchUrl(variant);
-                    ArrayList<SearchResult> providerResults = fetchSearchResults(provider, searchUrl, variant);
-                    if (!providerResults.isEmpty()) {
-                        found.addAll(providerResults);
-                        break;
-                    }
-                }
-            }
+            ArrayList<SearchResult> found = sucheBeiAllen(query);
 
             runOnUiThread(() -> {
                 results.removeView(loading);
@@ -7578,12 +7587,63 @@ public class MainActivity extends Activity {
         return TextUtils.join(" · ", namen);
     }
 
+    /** So lange darf ein einzelner Anbieter suchen; die anderen warten nicht auf ihn. */
+    private static final long SUCHE_JE_ANBIETER_MS = 15000;
+
+    /**
+     * Alle Anbieter gleichzeitig, jeder mit eigener Frist - wie am Rechner.
+     * Ein langsamer Anbieter kostet so nicht die Treffer der anderen.
+     */
+    private ArrayList<SearchResult> sucheBeiAllen(String query) {
+        ArrayList<Provider> liste = new ArrayList<>(providers);
+        ArrayList<SearchResult> found = new ArrayList<>();
+        if (liste.isEmpty()) return found;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(liste.size());
+        ArrayList<java.util.concurrent.Future<ArrayList<SearchResult>>> laeufe = new ArrayList<>();
+        for (Provider provider : liste) laeufe.add(pool.submit(() -> sucheBeiAnbieter(provider, query)));
+        long ende = SystemClock.uptimeMillis() + SUCHE_JE_ANBIETER_MS;
+        for (java.util.concurrent.Future<ArrayList<SearchResult>> lauf : laeufe) {
+            try {
+                found.addAll(lauf.get(Math.max(1, ende - SystemClock.uptimeMillis()),
+                    java.util.concurrent.TimeUnit.MILLISECONDS));
+            } catch (Exception keineAntwort) {
+                lauf.cancel(true);
+            }
+        }
+        pool.shutdownNow();
+        return found;
+    }
+
+    /**
+     * Ein Anbieter: erst die ersten Schreibweisen, dann die Kernwoerter
+     * ("Sieben hafen avatar" -> "Sieben", "avatar") mit der ganzen Anfrage als
+     * Filter, dann die uebrigen Schreibweisen. S.to findet lange Titel selbst
+     * nicht, ein einzelnes Wort aber schon.
+     */
+    private ArrayList<SearchResult> sucheBeiAnbieter(Provider provider, String query) {
+        List<String> varianten = searchQueryVariants(query);
+        ArrayList<String[]> versuche = new ArrayList<>();
+        for (int i = 0; i < Math.min(3, varianten.size()); i += 1) versuche.add(new String[]{varianten.get(i), varianten.get(i)});
+        for (String wort : SuchAbgleich.kernwoerter(SuchAbgleich.ohneJahr(query))) versuche.add(new String[]{wort, query});
+        for (int i = 3; i < varianten.size(); i += 1) versuche.add(new String[]{varianten.get(i), varianten.get(i)});
+        for (String[] versuch : versuche) {
+            if (Thread.currentThread().isInterrupted()) break;
+            ArrayList<SearchResult> treffer = fetchSearchResults(provider, provider.buildSearchUrl(versuch[0]), versuch[0], versuch[1]);
+            if (!treffer.isEmpty()) return treffer;
+        }
+        return new ArrayList<>();
+    }
+
     private List<String> searchQueryVariants(String query) {
         LinkedHashSet<String> variants = new LinkedHashSet<>();
         String original = (query == null ? "" : query).trim().replaceAll("\\s+", " ");
         if (original.isEmpty()) return new ArrayList<>();
 
+        String ohneJahr = SuchAbgleich.ohneJahr(original);
+        if (!ohneJahr.isEmpty() && !ohneJahr.equals(original)) addSearchVariant(variants, ohneJahr);
         addSearchVariant(variants, original);
+        if (!ohneJahr.isEmpty()) original = ohneJahr;
+        addSearchVariant(variants, SuchAbgleich.ohneUmlautE(original));
         String ascii = stripSearchAccents(original).toLowerCase().trim();
         addSearchVariant(variants, ascii);
         addSearchVariant(variants, ascii.replaceAll("[._:]+", " "));
@@ -7727,14 +7787,28 @@ public class MainActivity extends Activity {
     }
 
     private ArrayList<SearchResult> fetchSearchResults(Provider provider, String searchUrl, String query) {
-        ArrayList<SearchResult> ajaxResults = fetchAjaxSearchResults(provider, searchUrl, query);
+        return fetchSearchResults(provider, searchUrl, query, query);
+    }
+
+    /** @param filter wonach die Treffer geprueft werden - bei Kernwoertern die ganze Anfrage */
+    private ArrayList<SearchResult> fetchSearchResults(Provider provider, String searchUrl, String query, String filter) {
+        ArrayList<SearchResult> ajaxResults = fetchAjaxSearchResults(provider, searchUrl, query, filter);
         if (!ajaxResults.isEmpty()) {
             bilderNachtragen(ajaxResults, searchUrl);
             return ajaxResults;
         }
         String html = holeTrefferseite(searchUrl);
         if (html.isEmpty()) return new ArrayList<>();
-        return extractLinks(provider, searchUrl, html, query);
+        return extractLinks(provider, searchUrl, html, filter);
+    }
+
+    /** Kennung und Kekse des Anbieter-WebViews fuer eine Suchanfrage. */
+    private void anbieterSitzung(HttpURLConnection connection, String url) {
+        connection.setRequestProperty("User-Agent", CookieNetz.kennung(this));
+        try {
+            String kekse = android.webkit.CookieManager.getInstance().getCookie(url);
+            if (kekse != null && !kekse.isEmpty()) connection.setRequestProperty("Cookie", kekse);
+        } catch (RuntimeException ohneKekse) { /* ohne WebView-Kekse wie bisher */ }
     }
 
     /** Die Trefferseite eines Anbieters holen - oder leer, wenn sie nicht kommt. */
@@ -7746,7 +7820,9 @@ public class MainActivity extends Activity {
             connection.setReadTimeout(8000);
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 ElflixAndroid/0.2");
+            // Mit der Kennung und den Keksen des Anbieter-WebViews: eine dort
+            // bestaetigte Cloudflare-Abfrage gilt dann auch fuer die Suche.
+            anbieterSitzung(connection, searchUrl);
             int status = connection.getResponseCode();
             if (status < 200 || status >= 400) return "";
 
@@ -7921,6 +7997,10 @@ public class MainActivity extends Activity {
     }
 
     private ArrayList<SearchResult> fetchAjaxSearchResults(Provider provider, String searchUrl, String query) {
+        return fetchAjaxSearchResults(provider, searchUrl, query, query);
+    }
+
+    private ArrayList<SearchResult> fetchAjaxSearchResults(Provider provider, String searchUrl, String query, String filter) {
         ArrayList<SearchResult> results = new ArrayList<>();
         if (!usesAniWorldAjaxSearch(provider)) return results;
 
@@ -7936,7 +8016,7 @@ public class MainActivity extends Activity {
             connection.setInstanceFollowRedirects(true);
             connection.setRequestProperty("Accept", "application/json,text/javascript,*/*");
             connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 ElflixAndroid/0.2");
+            anbieterSitzung(connection, endpoint);
             connection.setRequestProperty("X-Requested-With", "XMLHttpRequest");
             connection.setRequestProperty("Referer", searchUrl);
             connection.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
@@ -7954,7 +8034,7 @@ public class MainActivity extends Activity {
 
             JSONArray payload = new JSONArray(json.toString());
             Set<String> seen = new HashSet<>();
-            List<String> tokens = queryTokens(query);
+            List<String> tokens = queryTokens(filter);
             for (int i = 0; i < payload.length() && results.size() < 16; i += 1) {
                 JSONObject item = payload.optJSONObject(i);
                 if (item == null) continue;
@@ -7997,9 +8077,20 @@ public class MainActivity extends Activity {
         Pattern pattern = Pattern.compile("<a\\b([^>]*)href\\s*=\\s*[\"']([^\"']+)[\"']([^>]*)>([\\s\\S]*?)</a>", Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(html);
         List<String> tokens = queryTokens(query);
-        while (matcher.find() && results.size() < 16) {
+        // S.to verlinkt jeden Treffer zweimal: erst das Bild ohne Text, dann
+        // den Namen. Der Name ersetzt dann den aus der Adresse geratenen
+        // ("Avatar Die Sieben Hafen" -> "Avatar - Die sieben Häfen").
+        java.util.Map<String, SearchResult> ausAdresse = new java.util.HashMap<>();
+        while (matcher.find() && (results.size() < 16 || !ausAdresse.isEmpty())) {
             String href = absoluteUrl(baseUrl, matcher.group(2));
-            if (href.isEmpty() || seen.contains(href) || isNoiseUrl(href) || !isProviderResultUrl(provider, href, baseUrl)) continue;
+            if (href.isEmpty() || isNoiseUrl(href)) continue;
+            if (seen.contains(href)) {
+                SearchResult geraten = ausAdresse.remove(href);
+                String name = usableResultTitle(normalizeSearchResultTitle(cleanHtmlText(matcher.group(4)), provider, query).title);
+                if (geraten != null && name.length() >= 2 && !isNoiseTitle(name)) geraten.title = name;
+                continue;
+            }
+            if (results.size() >= 16 || !isProviderResultUrl(provider, href, baseUrl)) continue;
             String rawTitle = cleanHtmlText(matcher.group(4));
             if (rawTitle.isEmpty()) {
                 rawTitle = cleanHtmlText(readHtmlAttribute(matcher.group(1), "title") + " " + readHtmlAttribute(matcher.group(3), "title")
@@ -8007,7 +8098,8 @@ public class MainActivity extends Activity {
             }
             SearchTitleParts titleParts = normalizeSearchResultTitle(rawTitle, provider, query);
             String title = usableResultTitle(titleParts.title);
-            if (title.isEmpty()) title = titleFromPath(href);
+            boolean geratenAusAdresse = title.isEmpty();
+            if (geratenAusAdresse) title = titleFromPath(href);
             if (title.length() < 2 || isNoiseTitle(title)) continue;
             if (!matchesQuery(title, href, tokens)) continue;
             seen.add(href);
@@ -8020,6 +8112,7 @@ public class MainActivity extends Activity {
             // Hintergrund. Gesucht wird nichts nach; siehe Trefferbild.
             result.bild = Trefferbild.ausMarkup(matcher.group(0), baseUrl);
             results.add(result);
+            if (geratenAusAdresse) ausAdresse.put(href, result);
         }
         appendRawContentLinks(results, seen, provider, baseUrl, html, tokens);
         return results;
@@ -8097,23 +8190,9 @@ public class MainActivity extends Activity {
     }
 
     private boolean matchesQuery(String title, String href, List<String> tokens) {
-        if (tokens.isEmpty()) return true;
-        String pathText = searchablePathText(href);
-        boolean pathMatches = true;
-        for (String token : tokens) {
-            if (!pathText.contains(token)) {
-                pathMatches = false;
-                break;
-            }
-        }
-        if (pathMatches) return true;
-        String compactPath = pathText.replaceAll("\\s+", "");
-        String compactQuery = TextUtils.join("", tokens);
-        if (!compactQuery.isEmpty() && compactPath.contains(compactQuery)) return true;
-
-        String titleText = normalizeSearchText(title);
-        String queryPhrase = TextUtils.join(" ", tokens);
-        return (titleText.equals(queryPhrase) || titleText.replaceAll("\\s+", "").contains(compactQuery)) && contentPathLooksPlayable(href);
+        // Regeln in SuchAbgleich - dieselben wie am Rechner (Umlaute, Jahr).
+        return SuchAbgleich.passt(searchablePathText(href), normalizeSearchText(title), tokens,
+            contentPathLooksPlayable(href));
     }
 
     private String decodeUriSafe(String value) {
@@ -8480,6 +8559,13 @@ public class MainActivity extends Activity {
 
         addSpacing(page, hinweisKarte(fernseher, watchpartyKopfzeile(), watchpartyStatustext(),
             null, null, null), MobileViews.SECTION_GAP);
+
+        for (String sprachraum : watchparty.raumcodes()) {
+            addSpacing(page, hinweisKarte(fernseher, "Sprachchat · Raum " + sprachraum,
+                "Manuell beitreten, Mikrofon zunächst aus. Am TV schauen? Öffne diesen Raum am Handy; "
+                    + "dort startet kein Video.", "Sprachchat öffnen",
+                () -> sprachchat.oeffnen(sprachraum), "tv:wp:voice:" + sprachraum), MobileViews.ITEM_GAP);
+        }
 
         // Ein Platz statt der Karte selbst: er bleibt stehen, waehrend sein
         // Inhalt im Sekundentakt wechselt (siehe mitschauStandGeaendert).
@@ -9707,6 +9793,13 @@ public class MainActivity extends Activity {
         double stelle = eintrag == null ? 0 : eintrag.currentTime();
         // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
         if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+        // Privat oder gemeinsam entscheidet der Eintrag, nicht der Titel: ein
+        // privater Eintrag oeffnet privat, auch wenn dieselbe Serie in einer
+        // Runde laeuft.
+        if (mitschauen != null) {
+            if (eintrag == null || eintrag.watchpartyRaum().isEmpty()) mitschauen.privatOeffnen(url);
+            else mitschauen.gemeinsamOeffnen(url);
+        }
         if (eintrag != null) activeFavoriteId = eintrag.id();
         startBegleiten(provider, url, startTitelFuer(titel, url), stelle);
         armAutoStart(url, stelle);
@@ -10493,7 +10586,7 @@ public class MainActivity extends Activity {
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
         }
         CookieManager.getInstance().setAcceptCookie(true);
-        settings.setUserAgentString(settings.getUserAgentString() + " ElflixAndroid/0.1");
+        settings.setUserAgentString(CookieNetz.kennung(this));
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         // Vor dem ersten Laden: das Startskript gilt erst ab dem naechsten
@@ -10809,8 +10902,14 @@ public class MainActivity extends Activity {
                     watchparty.chatSenden(key, text, raum, antwort);
                 }
                 public void pip() { direktInPip(); }
+                public void sprachchat() {
+                    String raum = mitschauen == null ? "" : mitschauen.aktiverRaum();
+                    if (sprachchat != null && !raum.isEmpty()) sprachchat.oeffnen(raum);
+                }
             });
         // Eine abgesagte Generation ist jetzt im konkreten Player gebunden.
+        direktWiedergabe.sprachchatAktiv(sprachchatAudioAktiv);
+        direktWiedergabe.sprachchatDucking(sprachchatDuckAktiv);
         // MainActivity muss sie nicht an spaetere, unabhaengige Player tragen.
         if (!abgelaufeneFolgenQuelle.isEmpty()) {
             nativeAbgelaufeneFolgenQuelleSyncId = "";
@@ -11126,6 +11225,13 @@ public class MainActivity extends Activity {
         activeFavoriteId = favorite.id();
         // Ein neuer Titel bedeutet: der Anlauf von vorhin ist gegenstandslos.
         if (mitschauen != null) mitschauen.oertlichenStartAbbrechen("anderer Titel gewaehlt");
+        // Privat oder gemeinsam entscheidet der Eintrag, nicht der Titel: ein
+        // privater Eintrag oeffnet privat, auch wenn dieselbe Serie in einer
+        // Runde laeuft.
+        if (mitschauen != null) {
+            if (favorite.watchpartyRaum().isEmpty()) mitschauen.privatOeffnen(favorite.url());
+            else mitschauen.gemeinsamOeffnen(favorite.url());
+        }
 
         // Eine Serie, die hier nur *steht* - auf der Watchlist, in der
         // Mediathek -, wird von hier aus zum ersten Mal angefangen. Genau
@@ -11575,12 +11681,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (sprachchat != null) sprachchat.pttLoslassen();
         // Some devices deliver onPause before the PiP mode callback updates
         // isInPictureInPictureMode(). enterPictureInPictureMode already
         // recorded its successful transition in direktImPip.
         boolean pip = direktImPip || (android.os.Build.VERSION.SDK_INT >= 26
             && isInPictureInPictureMode());
         direktImPip = pip;
+        if (sprachchat != null) sprachchat.pipModus(pip);
         // Der Titelhintergrund wechselt nicht weiter, solange niemand hinsieht.
         // Beim Zurueckkommen zeichnet die Startseite ohnehin neu und setzt den
         // Takt wieder auf. Dasselbe gilt fuer die Kacheln einer Runde: was
@@ -11593,6 +11701,7 @@ public class MainActivity extends Activity {
         // nicht die offene Sitzung beenden: wer kurz auf eine Nachricht schaut
         // und zurueckkommt, hat nicht zweimal geschaut.
         if (statistik != null) statistik.speichern();
+        if (direktWiedergabe != null) direktWiedergabe.hintergrund();
         // Aus der Runde abmelden, aber nichts an sie senden: Android haelt
         // gleich den WebView an, und die Pause, die der Player daraufhin
         // meldet, ist keine Entscheidung des Zuschauers.
@@ -11603,6 +11712,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (sprachchat != null) sprachchat.vordergrund();
         webLiveImVordergrund = true;
         if (direktWiedergabe != null) {
             direktWiedergabe.vordergrund();
@@ -11644,12 +11754,14 @@ public class MainActivity extends Activity {
     public void onPictureInPictureModeChanged(boolean inPip, Configuration neueKonfiguration) {
         super.onPictureInPictureModeChanged(inPip, neueKonfiguration);
         direktImPip = inPip;
+        if (sprachchat != null) sprachchat.pipModus(inPip);
         if (direktWiedergabe != null) direktWiedergabe.pipModus(inPip);
         if (!inPip && direktWiedergabe != null) applyFullscreenSystemUi();
     }
 
     @Override
     protected void onStop() {
+        if (sprachchat != null) sprachchat.hintergrund();
         // Bei Auto-PiP kann onPause vor dem Modus-Callback kommen. Erst hier
         // entscheiden wir mit dem echten Systemzustand, ob der Player und der
         // Raum wirklich in den Hintergrund gehen.
@@ -11708,6 +11820,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (sprachchat != null) sprachchat.schliessen();
         eigeneGeraeteLiveLoeschen();
         direktSchliessen();
         cacheCleanupHandler.removeCallbacks(cacheCleanupTask);
@@ -11729,8 +11842,40 @@ public class MainActivity extends Activity {
     @Override
     protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        if (intent != null && "local.elflix.android.VOICE_OPEN".equals(intent.getAction())) {
+            if (sprachchat != null) sprachchat.wiederOeffnen();
+            return;
+        }
         setIntent(intent);
         deepLinkOeffnen(intent);
+    }
+
+    /** Mikrofon neben dem Suchfeld: die Spracheingabe des Systems oeffnen. */
+    private void sprachSucheStarten() {
+        if (!SprachSuche.starten(this)) {
+            android.widget.Toast.makeText(this, "Dieses Gerät hat keine Spracheingabe", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        if (requestCode == SprachSuche.ANFRAGE) {
+            if (resultCode != RESULT_OK) return;
+            String suche = SprachSuche.ergebnis(data);
+            if (suche.isEmpty()) {
+                android.widget.Toast.makeText(this, "Nichts verstanden", android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            showGlobalSearch(suche);
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (sprachchat != null && sprachchat.berechtigungsAntwort(requestCode)) return;
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
     /**
@@ -12491,6 +12636,7 @@ public class MainActivity extends Activity {
 
     /** Die Runde hat sich gemeldet - der Watchparty-Bildschirm zeichnet neu. */
     private void watchpartyGeaendert() {
+        if (sprachchat != null) sprachchat.kontextAktualisieren();
         spielerChatAktualisieren();
         if ("watchparty".equals(currentScreen)) {
             // Nicht bei jeder Meldung. Das Relay schickt eine, sobald irgendwer
@@ -12826,6 +12972,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (sprachchat != null && sprachchat.zurueck()) return;
         if (direktWiedergabe != null) {
             if (!direktWiedergabe.zurueck()) { direktSchliessen(); showHome(); }
             return;
@@ -12895,6 +13042,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (sprachchat != null && sprachchat.istSichtbar()) return super.dispatchKeyEvent(event);
         if (direktWiedergabe != null) return direktWiedergabe.taste(event) || super.dispatchKeyEvent(event);
         logRemoteKey(event);
         // Solange der Startvorhang liegt, gehoert ihm die Fernbedienung.

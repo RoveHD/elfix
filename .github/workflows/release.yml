@@ -40,7 +40,8 @@ jobs:
         run: npm ci
 
       - name: Audit dependencies
-        run: npm audit
+        # Wie npm audit, mit den begruendeten Ausnahmen aus scripts/audit.js.
+        run: node scripts/audit.js
 
       - name: Build native RTX Video component
         run: npm run build:rtx

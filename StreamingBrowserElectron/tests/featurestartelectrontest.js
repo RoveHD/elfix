@@ -41,6 +41,9 @@ app.on("browser-window-created",(_event,window)=>{
                 {id:'b',title:'Ein Film für den nächsten gemeinsamen Abend',weight:2}]};
             return {ok:true};
           }}});
+        // Standardmaessig eingeklappt; der Test arbeitet wie ein Nutzer im aufgeklappten Zustand.
+        if(!pane.querySelector('.raumqueue-body').hidden) throw new Error('Warteschlange startet nicht eingeklappt');
+        pane.querySelector('.raumqueue-klappe').click();
       })()`);
       await new Promise(resolve=>setTimeout(resolve,200));
       const layout=await window.webContents.executeJavaScript(`(() => {

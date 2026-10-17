@@ -30,6 +30,7 @@ app.whenReady().then(async () => {
         roomQueueCommand:async()=>({ok:true}),onRoomQueue:callback=>{window.queueUpdate=callback;return ()=>{};}}};
     window.queueHandle = ElfixRaumqueue.erstellen(queueOptions);
     await queueHandle.refresh();
+    if (document.querySelector(".raumqueue-body").hidden) document.querySelector(".raumqueue-klappe").click();
     document.querySelector('.raumqueue-rad').open = true;
   })()`);
 
@@ -73,15 +74,15 @@ app.whenReady().then(async () => {
   }
 
   const collapsed = await run(`(async () => {
-    const button=document.querySelector('.raumqueue-klappen');button.focus();button.click();
+    const button=document.querySelector('.raumqueue-klappe');button.focus();button.click();
     queueState={...queueState,rev:2};queueUpdate(queueState);
     const content=document.getElementById(button.getAttribute('aria-controls'));
     const result={hidden:content.hidden,height:content.getBoundingClientRect().height,
       expanded:button.getAttribute('aria-expanded'),focus:document.activeElement===button};
     queueHandle.destroy();queueHandle=ElfixRaumqueue.erstellen(queueOptions);await queueHandle.refresh();
-    result.remembered=document.querySelector('.raumqueue-inhalt').hidden;
-    document.querySelector('.raumqueue-klappen').click();
-    result.restored=!document.querySelector('.raumqueue-inhalt').hidden;
+    result.remembered=document.querySelector('.raumqueue-body').hidden;
+    document.querySelector('.raumqueue-klappe').click();
+    result.restored=!document.querySelector('.raumqueue-body').hidden;
     document.querySelector('.raumqueue-rad').open=true;
     return result;
   })()`);

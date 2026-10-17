@@ -1,20 +1,6 @@
 "use strict";
 
-const WEITER_MUSTER = /^(weiter(?!e)|continue|fortfahren|proceed|zum stream|jetzt ansehen|jetzt starten|watch now|play now)\b/i;
-const SCHLIESSEN_MUSTER = /(schliess|schließ|close|abbrech|cancel|zurueck|zurück|nein danke|ablehnen|x)$/i;
 const TOR_MELDUNG = "__elfix:tor:";
-
-function istFreigegebenesTor(kandidat) {
-  const k = kandidat || {};
-  if (!k.sichtbar) return { klicken: false, grund: "Fenster nicht sichtbar" };
-  if (!k.hatVerifizierung) return { klicken: false, grund: "keine Verifizierung im Fenster" };
-  if (!k.knopfText || SCHLIESSEN_MUSTER.test(k.knopfText) || !WEITER_MUSTER.test(k.knopfText)) {
-    return { klicken: false, grund: "kein Weiter-Knopf" };
-  }
-  if (k.geloest !== true) return { klicken: false, grund: "Bestätigung erforderlich" };
-  if (k.knopfDeaktiviert) return { klicken: false, grund: "Knopf ist noch gesperrt" };
-  return { klicken: true, grund: "Verifizierung bestanden" };
-}
 
 // Laeuft unveraendert im Dokument. Keine Abfrage des fremden Challenge-Iframes:
 // nur das von der Seite bereitgestellte Ergebnisfeld wird gelesen.
@@ -31,7 +17,6 @@ function toreLesen() {
     return true;
   };
   const wort = (el) => String(el.innerText || el.textContent || el.value || "").trim();
-  const weiter = /^(weiter(?!e)|continue|fortfahren|proceed|zum stream|jetzt ansehen|jetzt starten|watch now|play now)\b/i;
   const kandidaten = Array.from(document.querySelectorAll(
     '.cf-turnstile, .h-captcha, .g-recaptcha, iframe[src*="challenges.cloudflare.com"],'
     + ' iframe[src*="hcaptcha.com"], iframe[src*="recaptcha"], #challenge-form, #challenge-running, #cf-please-wait'));
@@ -43,14 +28,12 @@ function toreLesen() {
     - Number(b.matches('#challenge-form,#challenge-running,#cf-please-wait')));
   for (const abfrage of kandidaten) {
     let kasten = abfrage;
-    let knopf = null;
+    let dialogKontext = false;
     for (let el = abfrage.parentElement, tiefe = 0; el && el !== document.body && tiefe < 6; el = el.parentElement, tiefe++) {
-      const kandidat = Array.from(el.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],a[href="#"],a:not([href])'))
-        .find((b) => sichtbar(b) && weiter.test(wort(b)));
-      if (sichtbar(el) && kandidat && (/video wird vorbereitet|stream wird vorbereitet|preparing (?:your )?video/i.test(wort(el))
-        || el.matches('dialog,[role="dialog"],.modal-content'))) {
+      if (sichtbar(el) && (/video wird vorbereitet|stream wird vorbereitet|preparing (?:your )?video/i.test(wort(el))
+        || el.matches('dialog,[role="dialog"],.modal-content,#challenge-form'))) {
         kasten = el;
-        knopf = kandidat;
+        dialogKontext = true;
         break;
       }
     }
@@ -60,18 +43,20 @@ function toreLesen() {
     const feldBereich = kasten === abfrage ? abfrage.parentElement : kasten;
     const feld = feldBereich?.querySelector('input[name="cf-turnstile-response"],input[name="g-recaptcha-response"],textarea[name="g-recaptcha-response"],textarea[name="h-captcha-response"],input[name="h-captcha-response"]');
     const geloest = Boolean(feld && String(feld.value || "").trim());
-    // Ein geloestes Widget kann im DOM bleiben. Ein Weiter-Fenster bleibt
-    // offen, bis die Seite den bestaetigten Klick verarbeitet.
-    tore.push({ kasten, knopf, geloest });
+    const r = kasten.getBoundingClientRect();
+    const grosseFlaeche = r.width >= Math.min(520, innerWidth * 0.65) && r.height >= Math.min(220, innerHeight * 0.35);
+    const festerMarker = abfrage.matches('#challenge-form,#challenge-running,#cf-please-wait');
+    tore.push({ kasten, geloest, blockierend: festerMarker || dialogKontext || grosseFlaeche });
   }
   return tore;
 }
 
 function zustandScript() {
   return "(() => { const tore = (" + toreLesen.toString() + ")();"
-    + "const geloest = tore.length > 0 && tore.every(t => t.geloest);"
     + "const wartet = /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title || '');"
-    + "return { offen: tore.some(t => !t.geloest || t.knopf) || (!geloest && wartet), geloest }; })()";
+    + "const aktive = tore.filter(t => t.blockierend || wartet);"
+    + "const geloest = aktive.length > 0 && aktive.every(t => t.geloest);"
+    + "return { offen: aktive.length > 0 || (!geloest && wartet), geloest }; })()";
 }
 
 // Nur der originale Verifizierungskasten wird sichtbar. DOM, Iframe und
@@ -82,7 +67,9 @@ function fensterScript(anzeigen = true) {
     + "document.getElementById('__elfixVerifizierungStil')?.remove();"
     + "document.querySelectorAll('[' + kenn + ']').forEach(el => el.removeAttribute(kenn));"
     + (anzeigen ? "" : "return false;")
-    + "const tor = (" + toreLesen.toString() + ")().find(t => !t.geloest || t.knopf); if (!tor) return false;"
+    + "const tore = (" + toreLesen.toString() + ")();"
+    + "const wartet = /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title || '');"
+    + "const tor = tore.find(t => t.blockierend) || (wartet ? tore[0] : null); if (!tor) return false;"
     + "tor.kasten.setAttribute(kenn, '');"
     + "const stil = document.createElement('style'); stil.id = '__elfixVerifizierungStil';"
     + "stil.textContent = " + JSON.stringify(
@@ -93,24 +80,18 @@ function fensterScript(anzeigen = true) {
     + "; (document.head || document.documentElement).appendChild(stil); return { height: Math.ceil(tor.kasten.getBoundingClientRect().height) }; })()";
 }
 
-function torScript(maxKlicks = 4, beobachten = true) {
+function torScript(_maxKlicks = 4, beobachten = true) {
   return "(() => {"
     + "const KENN = '__elfixTorV2';" + (beobachten ? "if (window[KENN]) return window[KENN].pruefen();" : "")
     + "const toreLesen = " + toreLesen.toString() + ";"
-    + "const istFreigegebenesTor = " + istFreigegebenesTor.toString() + ";"
-    + "const WEITER_MUSTER = " + WEITER_MUSTER.toString() + ";"
-    + "const SCHLIESSEN_MUSTER = " + SCHLIESSEN_MUSTER.toString() + ";"
     + "const MELDUNG = " + JSON.stringify(TOR_MELDUNG) + ";"
-    + "const MAX = " + Math.max(1, Math.min(10, Number(maxKlicks) || 4)) + ";"
-    + "let klicks = 0; let letzteMeldung = ''; let geklickt = new WeakSet();"
+    + "let letzteMeldung = '';"
     + "const melde = (nachricht) => { if (nachricht !== letzteMeldung) { letzteMeldung = nachricht; console.log(MELDUNG + nachricht); } return nachricht; };"
-    + "const pruefen = () => { const tore = toreLesen().filter(t => !t.geloest || t.knopf);"
-    + "if (!tore.length) { geklickt = new WeakSet(); return melde('tor-frei'); }"
-    + "for (const tor of tore) { const b = tor.knopf;"
-    + "const urteil = istFreigegebenesTor({ sichtbar: true, hatVerifizierung: true, geloest: tor.geloest,"
-    + "knopfText: b && (b.innerText || b.textContent || b.value || '').trim(),"
-    + "knopfDeaktiviert: !b || b.disabled || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('disabled') });"
-    + "if (urteil.klicken && klicks < MAX && !geklickt.has(b)) { geklickt.add(b); klicks++; b.click(); return melde('tor-geklickt:Weiter:Verifizierung bestanden'); } }"
+    + "const pruefen = () => { const tore = toreLesen();"
+    + "const wartet = /just a moment|attention required|checking your browser|verify you are human|einen augenblick|sicherheitsabfrage/i.test(document.title || '');"
+    + "const aktive = tore.filter(t => t.blockierend || wartet);"
+    + "if (!aktive.length && !wartet) return melde('tor-frei');"
+    + "if (aktive.length && aktive.every(t => t.geloest)) return melde('tor-bestaetigt:Serverfreigabe wird abgewartet');"
     + "return melde('tor-gewartet:Bestätigung erforderlich'); };"
     + (beobachten ? "" : "return pruefen(); })()")
     + (beobachten ? ""
@@ -123,5 +104,4 @@ function torScript(maxKlicks = 4, beobachten = true) {
     + "return pruefen(); })()" : "");
 }
 
-module.exports = { TOR_MELDUNG, WEITER_MUSTER, SCHLIESSEN_MUSTER, istFreigegebenesTor,
-  toreLesen, zustandScript, fensterScript, torScript };
+module.exports = { TOR_MELDUNG, toreLesen, zustandScript, fensterScript, torScript };

@@ -70,7 +70,7 @@ const ids = [
   "watchpartyName", "providerCardMeta", "showFavoriteMeta", "showFavoriteMetaMirror",
   "animationsEnabled", "uiSounds", "youtubeInMediathek", "autoplayNextEpisode",
   "introSkip", "skipSegments", "videoUpscaling", "videoUpscalingMethod", "videoUpscalingResolution", "rtxVideoQuality", "rtxVideoLicense", "spoilerProtectionEnabled", "spoilerProtectionRoomMinimum", "spoilerProtectionShareWatchedWithRoom", "direktModus", "youtubeDislikesEnabled", "rememberLanguage", "favoriteProgressMode",
-  "pauseOnProviderSwitch", "pauseOnMinimize", "pauseOnBlur", "notifyNewEpisodes", "wrappedMusik",
+  "pauseOnProviderSwitch", "pauseOnMinimize", "pauseOnBlur", "notifyNewEpisodes", "sprachsucheWeckwort", "wrappedMusik",
   "whitelistInput", "adblockEnabled", "trackingEnabled", "popupBlockingEnabled",
   "redirectBlockingEnabled"
 ];

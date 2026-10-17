@@ -5,16 +5,11 @@ const path = require("path");
 const vm = require("vm");
 const tor = require("../src/verifizierungstor");
 
-const kandidat = { sichtbar: true, hatVerifizierung: true, knopfText: "Weiter", knopfDeaktiviert: false, geloest: true };
-assert.equal(tor.istFreigegebenesTor(kandidat).klicken, true);
-for (const extra of [
-  { geloest: false }, { geloest: null }, { geloest: undefined }, { sichtbar: false },
-  { hatVerifizierung: false }, { knopfDeaktiviert: true }, { knopfText: "Schließen" },
-  { knopfText: "Weitere Informationen" }, { knopfText: "Jetzt gewinnen" }
-]) assert.equal(tor.istFreigegebenesTor({ ...kandidat, ...extra }).klicken, false, JSON.stringify(extra));
 for (const script of [tor.torScript(), tor.zustandScript(), tor.fensterScript(), tor.fensterScript(false)]) {
   assert.doesNotThrow(() => new Function(script));
 }
+assert.doesNotMatch(tor.torScript(), /\.click\s*\(|requestSubmit\s*\(|\.submit\s*\(/,
+  "Verifizierung darf weder klicken noch Formulare absenden");
 
 const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").replace(/\r\n/g, "\n");
 function funktion(name) {
@@ -51,6 +46,8 @@ function funktion(name) {
   assert.equal(request.torWartet, true);
   p.torMeldungVerarbeiten({ id: "sto" }, "tor-gewartet:Bestätigung erforderlich");
   assert.equal(request.until, frist, "wiederholte Meldung verlaengert die Frist nicht endlos");
+  p.torMeldungVerarbeiten({ id: "sto" }, "tor-bestaetigt:Serverfreigabe wird abgewartet");
+  assert.equal(request.torWartet, true, "Token allein gibt den Autostart noch nicht frei");
   p.torMeldungVerarbeiten({ id: "sto" }, "tor-frei");
   assert.equal(request.torWartet, false);
   assert.ok(request.until > Date.now() + 24000);

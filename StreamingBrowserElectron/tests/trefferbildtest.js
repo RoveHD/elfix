@@ -123,7 +123,7 @@ const hauptQuelle = lies("src/main.js");
 pruefe("Die Suche kennt das Modul",
   /const trefferbild = require\("\.\/trefferbild"\);/.test(hauptQuelle));
 pruefe("Der Treffer traegt sein Bild",
-  /results\.push\(\{ title, genre: cleaned\.genre \|\| "", url: href, image \}\)/.test(hauptQuelle));
+  /const treffer = \{ title, genre: cleaned\.genre \|\| "", url: href, image \};\s*results\.push\(treffer\)/.test(hauptQuelle));
 pruefe("Erst der Verweis selbst, dann die Karte der Seite",
   /trefferbild\.ausMarkup\(match\[0\], baseUrl\) \|\| bilder\.get\(href\)/.test(hauptQuelle));
 pruefe("Kein zweiter Abruf fuer das Bild eines Treffers in der Trefferliste",
