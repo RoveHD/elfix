@@ -102,6 +102,10 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("did-start-navigation", (_e, url, _inPlace, mainFrame) => {
     if (mainFrame) note(contentsEvents, { id: contents.id, navigation: url });
   });
+  for (const event of ["dom-ready", "did-frame-finish-load", "did-finish-load", "did-stop-loading", "unresponsive", "responsive"]) {
+    contents.on(event, () => note(contentsEvents, { id: contents.id, event,
+      pid: contents.getOSProcessId(), url: contents.getURL() }));
+  }
   contents.on("destroyed", () => note(contentsEvents, { id: contents.id, destroyed: true }));
   contents.on("did-fail-load", (_e, code, description, url) => note(contentsEvents, { id: contents.id, code, description, url }));
   contents.on("console-message", details => note(contentsEvents, { id: contents.id, message: details.message }));
@@ -117,7 +121,7 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 app.on("browser-window-created", (_event, window) => {
-  window.setOpacity(0);
+  window.setOpacity(process.env.CI ? 1 : 0);
   // Keep the real visible-window lifecycle without foregrounding or painting
   // test windows. Permanently hidden windows can defer Chromium media loads.
   window.show = () => window.showInactive();
@@ -142,12 +146,12 @@ process.on("message", async message => {
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
     else if (message.action === "diagnostics") result = {
       at: Date.now(), locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
-      mediaRequests, mediaAddress: mediaServer.address(),
+      mediaRequests, mediaAddress: mediaServer.address(), metrics: app.getAppMetrics(),
       windows: BrowserWindow.getAllWindows().map(window => ({ visible: window.isVisible(),
         minimized: window.isMinimized(), opacity: window.getOpacity(), bounds: window.getBounds() })),
       heldEpisode, pendingResponses: heldResponses.size,
       contents: webContents.getAllWebContents().map(wc => ({ id: wc.id,
-        url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))
+        pid: wc.getOSProcessId(), url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))
     };
     else if (message.action === "diagnostic-pages") {
       const bounded = work => Promise.race([work.catch(error => ({ error: error.stack })),
