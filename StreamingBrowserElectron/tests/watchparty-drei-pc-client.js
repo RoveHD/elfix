@@ -59,10 +59,14 @@ const mediaServer = http.createServer(async (request, response) => {
   response.end(media.subarray(from, to + 1));
 });
 const mediaReady = new Promise(resolve => mediaServer.listen(0, "127.0.0.1", resolve));
+const fixtureRequests = [], fixtureSessions = [], contentsEvents = [];
+const note = (list, value) => { list.push(value); if (list.length > 100) list.shift(); };
 app.on("session-created", ses => {
+  fixtureSessions.push(ses.getStoragePath());
   // The player's own production transport forwards to this provider session.
   if (!String(ses.getStoragePath()).endsWith("streaming-browser")) return;
   const respond = async request => {
+    note(fixtureRequests, { method: request.method, url: request.url });
     const url = new URL(request.url);
     if (url.hostname === "localhost" && Number(url.port) === mediaServer.address().port) {
       return net.fetch(request, { bypassCustomProtocolHandlers: true });
@@ -85,6 +89,11 @@ app.on("session-created", ses => {
 });
 
 let shell;
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("did-fail-load", (_e, code, description, url) => note(contentsEvents, { id: contents.id, code, description, url }));
+  contents.on("console-message", (_e, details) => note(contentsEvents, { id: contents.id, message: details.message }));
+  contents.on("render-process-gone", (_e, details) => note(contentsEvents, { id: contents.id, gone: details }));
+});
 app.on("browser-window-created", (_event, window) => {
   window.setOpacity(0);
   window.show = () => {};
@@ -108,6 +117,17 @@ process.on("message", async message => {
       heldResponses.clear(); result = true;
     }
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
+    else if (message.action === "diagnostics") result = {
+      locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
+      heldEpisode, pendingResponses: heldResponses.size,
+      contents: await Promise.all(webContents.getAllWebContents().map(async wc => ({ id: wc.id,
+        url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading(),
+        page: await wc.executeJavaScript("({url:location.href,title:document.title,body:document.body?.innerText.slice(0,2000)})").catch(error => ({ error: error.message })) }))),
+      state: shell && await shell.webContents.executeJavaScript(`(async () => ({
+        init: await streamingBrowser.init(), live:watchpartyLiveOn,room:watchpartyLiveRoom,
+        items:await streamingBrowser.getWatchpartyItems(),status:await streamingBrowser.getWatchpartyStatus()
+      }))()`, true)
+    };
     else if (message.action === "player") result = player() ? await player().executeJavaScript(message.code, true) : null;
     else result = await shell.webContents.executeJavaScript(message.code, true);
     process.send?.({ id: message.id, result });

@@ -8,9 +8,10 @@ const { spawn } = require("node:child_process");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-three-pc-"));
 const clients = [];
 const room = "avatar-three-pc", base = "/serie/avatar-die-sieben-hafen";
-let relay, requestId = 0;
+let relay, requestId = 0, stage = "startup", openingResults;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label, timeout = 25000) {
+  stage = label;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { if (await check()) return; await pause(80); }
   throw Error("Timeout: " + label);
@@ -70,7 +71,8 @@ async function main() {
   const key = "serie:avatardiesiebenhafen";
   await until(async () => (await Promise.all(pcs.map(pc => pc.shell("streamingBrowser.getWatchpartyItems()")))).every(items => items.find(item => item.key === key)?.joined), "joined membership");
   // Both real opening routes, without a preparatory enter/toggle operation.
-  await Promise.all(pcs.map((pc, index) => pc.shell(index === 1
+  stage = "opening persisted room cards";
+  openingResults = await Promise.all(pcs.map((pc, index) => pc.shell(index === 1
     ? `streamingBrowser.openFavorite('avatar-party',{autoplay:true})`
     : `streamingBrowser.openWatchpartyItem(${JSON.stringify(key)},'${room}')`)));
   await until(async () => (await Promise.all(pcs.map(readPlayer))).every(p => p?.ready >= 2), "three loaded players");
@@ -136,8 +138,19 @@ async function main() {
     "Opening a preview must never implicitly join the room");
   console.log("OK Three complete Electron apps: persisted room cards stay live without enter/toggle; notices cleared; three participant strips; guest controls; delayed episode change (<1s spread); solo private-to-live switch and Ready/start");
 }
-main().catch(async error => { console.error(error.stack); console.error("Diagnostics:", root);
-  console.error(await Promise.all(clients.map(readPlayer))); process.exitCode = 1; }).finally(async () => {
+main().catch(async error => {
+  console.error(error.stack); console.error("Diagnostics:", root);
+  const diagnostics = { stage, openingResults,
+    players: await Promise.allSettled(clients.map(readPlayer)),
+    clients: await Promise.allSettled(clients.map(pc => pc.call("diagnostics"))) };
+  fs.writeFileSync(path.join(root, "diagnostics.json"), JSON.stringify(diagnostics, null, 2));
+  console.error(JSON.stringify(diagnostics, null, 2));
+  for (const filename of ["relay.log", ...clients.map((_pc, i) => `pc${i + 1}.log`)]) {
+    const file = path.join(root, filename);
+    console.error(`--- ${filename} (last 24000 characters) ---\n${fs.existsSync(file) ? fs.readFileSync(file, "utf8").slice(-24000) : "missing"}`);
+  }
+  process.exitCode = 1;
+}).finally(async () => {
   for (const pc of clients) { if (pc.child.connected) pc.child.send({ action: "quit" }); }
   await Promise.all(clients.map(pc => pc.child.exitCode !== null ? Promise.resolve() : new Promise(resolve => {
     const timer = setTimeout(() => { pc.child.kill(); resolve(); }, 3000);

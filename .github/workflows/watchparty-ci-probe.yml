@@ -1,0 +1,32 @@
+name: Watchparty CI probe
+on:
+  push:
+    branches: [codex/watchparty-ci-probe]
+permissions:
+  contents: read
+jobs:
+  watchparty:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: StreamingBrowserElectron/package-lock.json
+      - run: npm ci
+        working-directory: StreamingBrowserElectron
+      - run: npm ci --omit=dev
+        working-directory: sync-server
+      - name: Three complete app instances
+        run: npm run test:watchparty-three-pc
+        working-directory: StreamingBrowserElectron
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+      - name: Keep isolated fixture logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: watchparty-fixture-logs
+          path: ${{ runner.temp }}/elfix-three-pc-*/*.log

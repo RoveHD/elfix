@@ -3402,7 +3402,9 @@ async function navigateProvider(provider, url, optionen = {}) {
   // alte Adresse, und die Werkbank haette dieselbe Seite noch einmal geholt.
   // Das kostet nichts an Richtigkeit und alles an Zeit bis zum ersten Bild.
   if (direktModus(target)) {
-    direktUebernehmen(provider, target, signal, optionen).catch(() => {});
+    direktUebernehmen(provider, target, signal, optionen).catch(error => {
+      console.error(`[ELFIX DIREKT] ${kurzeUrl(target)}: ${error?.stack || error}`);
+    });
     return;
   }
 
