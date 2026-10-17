@@ -9227,9 +9227,13 @@ function pushWatchpartyLiveState(url = "") {
       spielerRundenUebernahme = null;
     }
     spielerLauf.rundenKontext = kontext;
-    spielerView.webContents.send("spieler:steuern", { tun: "runde", auftragId: spielerLauf.id, kontext,
-      aktiv: Boolean(anwesend), host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId,
-      tempo: eintrag?.tempo || 1 });
+    // Die erste Zuordnung kommt mit spieler:auftrag nach spieler:bereit.
+    // Vorher hat die neue View noch kein lokales Dokument als IPC-Empfaenger.
+    if (spielerBereit) {
+      spielerView.webContents.send("spieler:steuern", { tun: "runde", auftragId: spielerLauf.id, kontext,
+        aktiv: Boolean(anwesend), host: Boolean(eintrag?.hostId) && eintrag.hostId === eintrag.myId,
+        tempo: eintrag?.tempo || 1 });
+    }
   }
 
   sendWatchpartyLive({
@@ -10636,6 +10640,7 @@ const SPIELER_PARTITION = "persist:elfix-spieler";
 
 let spielerSession = null;
 let spielerView = null;
+let spielerBereit = false;
 /** Was gerade laeuft: Anbieter, Folgenadresse, Quelle, Titel. */
 let spielerLauf = null;
 let spielerUpscalingStatus = null;
@@ -11329,6 +11334,7 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
 
   spielerLaufSetzen(provider, url, ergebnis, optionen);
 
+  spielerBereit = false;
   const view = new WebContentsView({
     webPreferences: {
       session: spielerSessionHolen(),
@@ -11408,6 +11414,7 @@ function direktSpielerSchliessen(grund = "") {
   geraeteWiedergabeMelden("", "", null);
   const view = spielerView;
   spielerView = null;
+  spielerBereit = false;
   spielerMiniAktiv = false;
   spielerMiniVorbereitung = false;
   optionaleCachesNachMiniPlanen();
@@ -11438,6 +11445,7 @@ function direktSpielerSchliessen(grund = "") {
 
 ipcMain.on("spieler:bereit", (ereignis) => {
   if (!spielerLauf || !spielerView || ereignis.sender !== spielerView.webContents) return;
+  spielerBereit = true;
   ereignis.sender.send("spieler:auftrag", spielerAuftrag());
   sendSpielerChatStatus();
   ereignis.sender.send("spieler:voice-duck", sprachchatDuckAktiv);
