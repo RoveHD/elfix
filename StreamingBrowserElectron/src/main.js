@@ -2021,7 +2021,7 @@ async function favoritOeffnen(favoriteId, options = {}) {
     fullscreen: Boolean(options?.autoplay && options?.fullscreen)
   });
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
-  return activeState();
+  return { ...activeState(), autostartPending: Boolean(pendingAutostart) };
 }
 
 ipcMain.handle("favorites:repair-thumbnail", async (_event, favoriteId, force = false) => {

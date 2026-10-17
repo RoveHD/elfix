@@ -68,7 +68,7 @@ const mediaServer = http.createServer(async (request, response) => {
 });
 const mediaReady = new Promise(resolve => mediaServer.listen(0, "127.0.0.1", resolve));
 const fixtureRequests = [], fixtureSessions = [], contentsEvents = [];
-const note = (list, value) => { list.push(value); if (list.length > 100) list.shift(); };
+const note = (list, value) => { list.push({ at: Date.now(), ...value }); if (list.length > 100) list.shift(); };
 app.on("session-created", ses => {
   fixtureSessions.push(ses.getStoragePath());
   // The player's own production transport forwards to this provider session.
@@ -141,7 +141,7 @@ process.on("message", async message => {
     }
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
     else if (message.action === "diagnostics") result = {
-      locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
+      at: Date.now(), locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
       mediaRequests, mediaAddress: mediaServer.address(),
       windows: BrowserWindow.getAllWindows().map(window => ({ visible: window.isVisible(),
         minimized: window.isMinimized(), opacity: window.getOpacity(), bounds: window.getBounds() })),

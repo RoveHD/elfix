@@ -52,7 +52,7 @@ function client(index, relayUrl) {
   });
   clients.push(api); return api;
 }
-const readPlayer = pc => pc.player(`({time:bild.currentTime,paused:bild.paused,ready:bild.readyState,
+const readPlayer = pc => pc.player(`({at:Date.now(),time:bild.currentTime,paused:bild.paused,ready:bild.readyState,
   waiting:!document.getElementById('warteAufAlle').hidden,src:bild.currentSrc,error:bild.error?.message,
   playButton:{title:knopfSpielen.title,disabled:knopfSpielen.disabled,text:knopfSpielen.textContent},
   inParty:inRunde,episode:Number(bild.currentSrc.match(/fixture-([0-9]+)/)?.[1]),members:document.getElementById('runde').childElementCount})`);
@@ -74,9 +74,17 @@ async function main() {
   // Both real opening routes, without a preparatory enter/toggle operation.
   stage = "opening persisted room cards";
   openingResults = await Promise.all(pcs.map((pc, index) => pc.shell(index === 1
-    ? `streamingBrowser.openFavorite('avatar-party',{autoplay:true})`
-    : `streamingBrowser.openWatchpartyItem(${JSON.stringify(key)},'${room}')`)));
+    ? `(async () => { await openFavoriteEntry(favorites.find(f => f.id === 'avatar-party'),{autoplay:true,fullscreen:true});
+        return {route:currentRoute,activeProviderId}; })()`
+    : `(async () => { await showWatchparty(); await loadWatchpartyItems();
+        const card = [...document.querySelectorAll('#watchpartyGrid .watchparty-card')]
+          .find(element => element.textContent.includes('Avatar'));
+        const button = card && [...card.querySelectorAll('button')].find(element => element.textContent === 'Öffnen');
+        if (!button || button.disabled) throw Error('Persisted Avatar room has no enabled Open button');
+        button.click(); return {route:currentRoute,activeProviderId}; })()`)));
   await until(async () => (await Promise.all(pcs.map(readPlayer))).every(p => p?.ready >= 2), "three loaded players");
+  await until(async () => (await Promise.all(pcs.map(pc => pc.shell("currentRoute"))))
+    .every(route => route === "provider:sto"), "real opening handlers switch all three shells to the player route");
   await until(async () => (await Promise.all(pcs.map(pc => pc.shell(`({live:watchpartyLiveOn,room:watchpartyLiveRoom})`))))
     .every(state => state.live && state.room === room), "direct saved room cards stay live after alias navigation");
   assert.ok((await Promise.all(pcs.map(readPlayer))).every(p => p.inParty), "Every native player belongs to its saved room");
@@ -121,7 +129,10 @@ async function main() {
   await host.shell(`streamingBrowser.toggleWatchpartyLive(${JSON.stringify(key)},true,'${room}')`);
   await until(async () => (await host.shell("watchpartyStandDaten?.members?.length")) === 1, "only the solo host is actually live");
   assert.equal((await readPlayer(host)).inParty, true, "Manual live context must also reach the already loaded native player");
-  await until(async () => !(await readPlayer(host)).waiting, "solo context switch releases local waiting state");
+  await until(async () => {
+    const state = await readPlayer(host);
+    return !state.waiting && /^(Abspielen|Pause) /.test(state.playButton.title);
+  }, "solo context switch offers an actual Play/Pause action after its pending shared start");
   if (!(await readPlayer(host)).paused) await host.player("spielenUmschalten()");
   await until(async () => {
     const state = await readPlayer(host);

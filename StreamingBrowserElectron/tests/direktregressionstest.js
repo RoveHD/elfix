@@ -44,6 +44,32 @@ const filmB = "https://filmo.example/film/b";
 const folge = (nummer, staffel = 1) => `https://aniworld.to/anime/stream/test/staffel-${staffel}/episode-${nummer}`;
 const quelle = { ok: true, quelle: { adresse: "https://cdn.example/v.mp4", typ: "datei" }, stationen: [] };
 
+pruefe("Gemeinsam-Karte zeigt den Direktplayer ohne Vorhang und bewahrt echten Anbieter-Autostart", async () => {
+  for (const wartet of [false, true]) {
+    const favorite = { id: "party", providerId: provider.id, title: "Avatar", url: folge(1) };
+    const mainContext = kontext({
+      favorites: [favorite], enabledProviders: () => [provider], activeFavoriteId: null, activeView: {},
+      pendingAutostart: null, moveFavoriteToFront() {}, recordMediaActivity() {},
+      repairFavoriteThumbnailIfNeeded: async () => false, cleanTitle: value => value,
+      beginAutostart: async () => { mainContext.pendingAutostart = wartet ? {} : null; },
+      navigateProvider: async () => {}, oeffnenAdresse: () => favorite.url,
+      scheduleProviderAutoplay() {}, activeState: () => ({ activeProviderId: provider.id, favorites: [favorite] })
+    }, ["favoritOeffnen"]);
+    const routes = [];
+    const ui = kontext({
+      api: { openFavorite: (id, options) => mainContext.favoritOeffnen(id, options) },
+      activeProviderId: null, favorites: [], autostartPending: false,
+      displayFavoriteTitle: item => item.title, showToast() {},
+      hideContentViews() {}, setCurrentRoute: route => routes.push(route),
+      renderProviders() {}, renderFavorites() {}, renderLibraryViews() {}
+    }, ["openFavoriteEntry"], oberflaeche);
+    await ui.openFavoriteEntry(favorite, { autoplay: true });
+    assert.equal(ui.autostartPending, wartet, "Nur Main darf einen noch ausstehenden Vorhang bestaetigen");
+    assert.deepEqual(routes, wartet ? [] : ["provider:p"],
+      "Direktmodus muss sofort zum Player routen; Embedded/YouTube wartet weiterhin auf autostart-done");
+  }
+});
+
 pruefe("Weiterschauen schaltet den spielbaren eigenen Player automatisch ins Vollbild", () => {
   const getan = [];
   const c = kontext({
