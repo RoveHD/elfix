@@ -6,6 +6,7 @@
     normal: "Serien & Filme",
     youtube: "YouTube"
   };
+  let naechsteInhaltId = 0;
 
   function text(value) { return String(value || ""); }
   function httpUrl(value) {
@@ -162,12 +163,31 @@
     const eyebrow = document.createElement("p"); eyebrow.className = "eyebrow"; eyebrow.textContent = "Gemeinsam entscheiden";
     const h2 = document.createElement("h2"); h2.textContent = "Warteschlange";
     const copy = document.createElement("p"); copy.className = "raumqueue-copy"; copy.textContent = "Vorschläge werden nach der aktuellen Folge oder dem aktuellen Film gestartet.";
-    title.append(eyebrow, h2, copy);
+    title.append(eyebrow, h2);
     const controls = document.createElement("div"); controls.className = "raumqueue-controls";
     const roomLabel = document.createElement("label"); roomLabel.textContent = "Raum";
     const roomSelect = document.createElement("select"); roomSelect.setAttribute("aria-label", "Raum für die Warteschlange");
     roomLabel.append(roomSelect);
-    controls.append(roomLabel);
+    const content = document.createElement("div"); content.className = "raumqueue-inhalt";
+    content.id = `raumqueue-inhalt-${++naechsteInhaltId}`;
+    const collapse = document.createElement("button"); collapse.type = "button";
+    collapse.className = "soft-action raumqueue-klappen";
+    collapse.setAttribute("aria-controls", content.id);
+    function einklappen(an) {
+      content.hidden = an;
+      root.classList.toggle("ist-eingeklappt", an);
+      collapse.textContent = an ? "Ausklappen" : "Einklappen";
+      collapse.setAttribute("aria-expanded", String(!an));
+      collapse.setAttribute("aria-label", `Warteschlange ${an ? "ausklappen" : "einklappen"}`);
+    }
+    let eingeklappt = false;
+    try { eingeklappt = window.localStorage?.getItem("elfix-roomqueue-collapsed") === "true"; } catch { /* Storage can be unavailable. */ }
+    einklappen(eingeklappt);
+    collapse.addEventListener("click", () => {
+      einklappen(!content.hidden);
+      try { window.localStorage?.setItem("elfix-roomqueue-collapsed", String(content.hidden)); } catch { /* The current view still collapses. */ }
+    });
+    controls.append(roomLabel, collapse);
     heading.append(title, controls);
 
     const tabs = document.createElement("div"); tabs.className = "raumqueue-tabs"; tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", "Warteschlangenmodus");
@@ -226,6 +246,7 @@
     const klang = radKlang(options?.settings);
 
     const svgNS = "http://www.w3.org/2000/svg";
+    const schriftMass = document.createElement("canvas").getContext?.("2d");
     const svgEl = (name, attribute = {}) => {
       const knoten = document.createElementNS(svgNS, name);
       for (const [feld, wert] of Object.entries(attribute)) knoten.setAttribute(feld, wert);
@@ -322,7 +343,8 @@
     const wheelResult = document.createElement("p"); wheelResult.className = "rad-ergebnis"; wheelResult.setAttribute("role", "status");
     wheelBox.append(wheelSummary, wheelCopy, wheelStage, wheelActions, wheelResult);
 
-    root.replaceChildren(heading, tabs, composer, status, wheelBox, list);
+    content.append(copy, tabs, composer, status, wheelBox, list);
+    root.replaceChildren(heading, content);
 
     function rooms() {
       const values = typeof options.rooms === "function" ? options.rooms() : [];
@@ -594,6 +616,9 @@
     function radZeichnen() {
       const segmente = radSegmente();
       const teile = [];
+      if (schriftMass) schriftMass.font = `800 7.6px ${window.getComputedStyle(root).fontFamily}`;
+      const textBreite = (name) => (schriftMass?.measureText(name).width ?? Array.from(name).length * 5)
+        + Array.from(name).length * 0.2;
       for (const segment of segmente) {
         const breite = segment.bis - segment.von;
         const [hell, dunkel] = RAD_FARBEN[segment.index % RAD_FARBEN.length];
@@ -609,20 +634,31 @@
           "stroke-linejoin": "round"
         });
         flaeche.dataset.feld = segment.feld.id;
+        const name = text(segment.feld?.title || "Vorschlag");
+        const tooltip = svgEl("title"); tooltip.textContent = name;
+        flaeche.append(tooltip);
         teile.push(flaeche);
 
-        if (breite < 11) continue;
+        // Große Felder bieten quer Platz; schmale tragen die Schrift radial.
+        // Beide Textkästen bleiben mit Abstand innerhalb des eigenen Segments.
+        const quer = breite >= 60;
+        const innen = breite >= 180 ? 25 : Math.max(25, 8 / Math.tan(breite * Math.PI / 360));
+        const platz = quer ? Math.min(88, breite >= 180 ? 88 : 122 * Math.tan(breite * Math.PI / 360)) : 87 - innen;
+        if (platz < textBreite("…")) continue;
+        let kurz = name;
+        const zeichen = Array.from(name);
+        while (textBreite(kurz) > platz && zeichen.length) {
+          zeichen.pop(); kurz = `${zeichen.join("").trimEnd()}…`;
+        }
         const mitte = segment.von + breite / 2;
-        // In der unteren Haelfte stuende die Beschriftung sonst auf dem Kopf.
-        // Sie wird dort um ihren eigenen Punkt gewendet und bleibt lesbar.
-        const gewendet = mitte > 90 && mitte < 270;
+        const y = quer ? 32 : 100 - (innen + 87) / 2;
+        const richtung = quer ? (mitte > 90 && mitte < 270 ? 180 : 0) : (mitte > 180 ? 90 : -90);
         const schrift = svgEl("text", {
-          class: "rad-schrift", x: "100", y: "32",
+          class: "rad-schrift", x: "100", y: y.toFixed(2),
           "text-anchor": "middle", "dominant-baseline": "middle",
-          transform: `rotate(${mitte.toFixed(2)} 100 100)` + (gewendet ? " rotate(180 100 32)" : "")
+          transform: `rotate(${mitte.toFixed(2)} 100 100) rotate(${richtung} 100 ${y.toFixed(2)})`
         });
-        const name = text(segment.feld?.title || "Vorschlag");
-        schrift.textContent = name.length > 20 ? `${name.slice(0, 19)}…` : name;
+        schrift.textContent = kurz;
         teile.push(schrift);
       }
       // Die Speichen sitzen ueber den Feldern: sie trennen sie sichtbar, auch
@@ -660,7 +696,7 @@
       // oben; ein um R gedrehtes Rad zeigt dort seinen Winkel -R.
       const gezaehlt = (drehung) => {
         let summe = 0;
-        for (const kante of kanten) summe += Math.floor((drehung - kante) / 360) + 1;
+        for (const kante of kanten) summe += Math.floor((drehung + kante) / 360);
         return summe;
       };
       const winkelBei = (zeitpunkt) =>

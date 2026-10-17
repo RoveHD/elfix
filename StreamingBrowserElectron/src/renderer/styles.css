@@ -6464,6 +6464,12 @@ input[type="color"] {
 }
 
 .raumqueue-head { justify-content: space-between; align-items: start; }
+.raumqueue-controls { flex-wrap: wrap; justify-content: flex-end; }
+.raumqueue-klappen { flex: none; align-self: center; }
+.raumqueue-inhalt { margin-top: 8px; }
+.raumqueue-inhalt[hidden], .raumqueue-treffer[hidden], .raumqueue.ist-eingeklappt .raumqueue-controls label { display: none; }
+.raumqueue.ist-eingeklappt .raumqueue-head { flex-direction: row; align-items: center; }
+.raumqueue.ist-eingeklappt .raumqueue-controls { width: auto; }
 .raumqueue-head h2 { margin: 2px 0 4px; }
 .raumqueue-copy, .raumqueue-status { margin: 0; color: var(--muted); }
 .raumqueue-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
@@ -6515,6 +6521,7 @@ input[type="color"] {
 .rad-buehne {
   position: relative;
   width: min(360px, 76vw);
+  max-width: 100%;
   margin: 14px auto 0;
   /* Beim Drehen wird die Scheibe groß. Der Übergang liegt hier, weil er nur
      die Größe betrifft - die Drehung selbst macht das Skript. */
@@ -6528,6 +6535,7 @@ input[type="color"] {
 .rad-schrift {
   fill: #fff; font-size: 7.6px; font-weight: 800; letter-spacing: 0.2px;
   paint-order: stroke; stroke: rgba(0, 0, 0, 0.55); stroke-width: 1.9px;
+  pointer-events: none;
 }
 .rad-speiche { stroke: rgba(255, 255, 255, 0.16); stroke-width: 0.7; }
 .rad-rand { filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.6)); }
@@ -6611,8 +6619,13 @@ input[type="color"] {
 .raumqueue-item-info small { color: var(--muted); }
 .raumqueue-actions { flex-wrap: wrap; justify-content: end; }
 
+@media (min-width: 721px) {
+  .raumqueue-composer .raumqueue-suche { flex: 1 0 100%; }
+}
+
 @media (max-width: 720px) {
   .raumqueue-head, .raumqueue-composer, .raumqueue-item { align-items: stretch; flex-direction: column; }
+  .raumqueue-composer select, .raumqueue-composer input { flex: 0 0 auto; width: 100%; min-width: 0; }
   .raumqueue-controls { width: 100%; }
   .raumqueue-controls label, .raumqueue-controls select { width: 100%; }
   .raumqueue-actions { justify-content: stretch; }
