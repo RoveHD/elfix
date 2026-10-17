@@ -11381,14 +11381,11 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
     });
   }
 
-  // Chromium braucht auch beim unsichtbaren Start einen Fensterbesitzer.
-  // Die leere Ansicht bleibt verborgen, bis ihr lokales Dokument geladen ist.
-  view.setVisible(false);
-  mainWindow.contentView.addChildView(view);
   await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(error => {
     console.error(`[ELFIX DIREKT] Playerseite laden: ${error?.stack || error}`);
   });
   if (spielerView !== view || optionen.signal?.aborted) return false;
+  mainWindow.contentView.addChildView(view);
   spielerLageSetzen();
   direktVollbildAnwenden(optionen);
   // Jetzt steht der Player wirklich - erst ab hier darf die Oberflaeche ihre

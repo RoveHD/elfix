@@ -2,7 +2,7 @@
 
 // One complete desktop app per child process. Only provider/hoster responses
 // are fixtures; Main, renderer, preload, player and relay traffic are real.
-const { app, webContents, net } = require("electron");
+const { app, BrowserWindow, webContents, net } = require("electron");
 const fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const config = JSON.parse(process.env.ELFIX_THREE_PC_CONFIG);
 app.setPath("appData", config.profile);
@@ -118,8 +118,9 @@ app.on("web-contents-created", (_event, contents) => {
 });
 app.on("browser-window-created", (_event, window) => {
   window.setOpacity(0);
-  window.show = () => {};
-  window.showInactive = () => {};
+  // Keep the real visible-window lifecycle without foregrounding or painting
+  // test windows. Permanently hidden windows can defer Chromium media loads.
+  window.show = () => window.showInactive();
   window.webContents.setAudioMuted(true);
   window.webContents.on("did-finish-load", () => {
     if (!window.webContents.getURL().endsWith("/index.html")) return;
@@ -142,6 +143,8 @@ process.on("message", async message => {
     else if (message.action === "diagnostics") result = {
       locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
       mediaRequests, mediaAddress: mediaServer.address(),
+      windows: BrowserWindow.getAllWindows().map(window => ({ visible: window.isVisible(),
+        minimized: window.isMinimized(), opacity: window.getOpacity(), bounds: window.getBounds() })),
       heldEpisode, pendingResponses: heldResponses.size,
       contents: webContents.getAllWebContents().map(wc => ({ id: wc.id,
         url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))
@@ -151,7 +154,7 @@ process.on("message", async message => {
         new Promise(resolve => setTimeout(() => resolve({ error: "Diagnostic page query exceeded 1500ms" }), 1500))]);
       result = {
         contents: await Promise.all(webContents.getAllWebContents().map(async wc => ({ id: wc.id,
-          page: await bounded(wc.executeJavaScript("({url:location.href,title:document.title,body:document.body?.innerText.slice(0,2000)})")) }))),
+          page: await bounded(wc.executeJavaScript("({url:location.href,title:document.title,visibility:document.visibilityState,body:document.body?.innerText.slice(0,2000)})")) }))),
         state: shell && await bounded(shell.webContents.executeJavaScript(`(async () => ({
         init: await streamingBrowser.init(), live:watchpartyLiveOn,room:watchpartyLiveRoom,
         route:currentRoute,startRuhe,
