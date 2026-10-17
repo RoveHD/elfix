@@ -18,12 +18,26 @@ jobs:
         working-directory: StreamingBrowserElectron
       - run: npm ci --omit=dev
         working-directory: sync-server
+      - name: Preceding Electron regression tests
+        working-directory: StreamingBrowserElectron
+        run: |
+          npm run pretest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($test in @('verifizierung-electrontest.js','direktelectrontest.js','spielerquellenelectrontest.js','spielerbedienung-electrontest.js','securityelectrontest.js','spielerchatelectrontest.js','spielerbarriereelectrontest.js')) {
+            & .\node_modules\.bin\electron.cmd "tests/$test"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Get-CimInstance Win32_Process | Where-Object Name -eq 'electron.exe' | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | ConvertTo-Json -Depth 4
       - name: Three complete app instances
-        run: npm run test:watchparty-three-pc
+        run: node tests/watchparty-drei-pc-electrontest.js
         working-directory: StreamingBrowserElectron
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
+          ELFIX_THREE_PC_TRACE: '1'
+      - name: Remaining Electron processes
+        if: always()
+        run: Get-CimInstance Win32_Process | Where-Object Name -eq 'electron.exe' | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | ConvertTo-Json -Depth 4
       - name: Keep isolated fixture logs
         if: always()
         uses: actions/upload-artifact@v7
@@ -32,3 +46,5 @@ jobs:
           path: |
             ${{ runner.temp }}/elfix-three-pc-*/*.log
             ${{ runner.temp }}/elfix-three-pc-*/diagnostics.json
+            ${{ runner.temp }}/elfix-three-pc-*/*-processes.json
+            ${{ runner.temp }}/elfix-three-pc-*/pc*/chromium-trace.json

@@ -2,13 +2,18 @@
 
 // One complete desktop app per child process. Only provider/hoster responses
 // are fixtures; Main, renderer, preload, player and relay traffic are real.
-const { app, BrowserWindow, webContents, net } = require("electron");
+const { app, BrowserWindow, webContents, net, contentTracing } = require("electron");
 const fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const config = JSON.parse(process.env.ELFIX_THREE_PC_CONFIG);
 app.setPath("appData", config.profile);
 app.setPath("userData", path.join(config.profile, "browser"));
 app.setAppPath(path.resolve(__dirname, ".."));
 app.disableHardwareAcceleration();
+const traceReady = process.env.ELFIX_THREE_PC_TRACE === "1"
+  ? app.whenReady().then(() => contentTracing.startRecording({
+    recording_mode: "record-continuously", trace_buffer_size_in_kb: 16384,
+    included_categories: ["toplevel", "startup", "renderer_host", "ipc", "loading", "devtools.timeline", "v8"]
+  })) : null;
 const data = path.join(config.profile, "ELFIX");
 fs.mkdirSync(data, { recursive: true });
 const write = (name, value) => fs.writeFileSync(path.join(data, name), JSON.stringify(value));
@@ -144,6 +149,12 @@ process.on("message", async message => {
       heldResponses.clear(); result = true;
     }
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
+    else if (message.action === "diagnostic-trace") {
+      if (traceReady) {
+        await traceReady;
+        result = await contentTracing.stopRecording(path.join(config.profile, "chromium-trace.json"));
+      } else result = null;
+    }
     else if (message.action === "diagnostics") result = {
       at: Date.now(), locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
       mediaRequests, mediaAddress: mediaServer.address(), metrics: app.getAppMetrics(),
