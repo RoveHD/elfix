@@ -2,7 +2,7 @@
 
 // Eine echte, isolierte Browserseite. Sie besitzt weder den Player noch dessen
 // Navigation; nur die Cookie-Sitzung wird mit der Anbieter-Werkbank geteilt.
-function erstellen({ BrowserWindow, WebContentsView, View = require("electron").View, eltern, sitzung, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
+function erstellen({ BrowserWindow, WebContentsView, eltern, sitzung, zustandScript, maskeScript, persistieren, verbinden = () => {} }) {
   let offen = null;
   const istHttp = url => /^https?:$/.test((() => { try { return new URL(url).protocol; } catch { return ""; } })());
   function oeffnen(provider, url, { signal, pruefen, erlaubt = istHttp, quelleVorbereiten, quelleUebernehmen } = {}) {
@@ -22,8 +22,7 @@ function erstellen({ BrowserWindow, WebContentsView, View = require("electron").
     try {
       fenster = new BrowserWindow({ parent, modal: true, show: false,
         backgroundColor: "#0b111a",
-        width: maskeScript ? Math.min(560, breite) : Math.max(640, breite),
-        height: maskeScript ? Math.min(440, hoehe) : Math.max(480, hoehe), useContentSize: Boolean(maskeScript),
+        width: Math.max(640, breite), height: Math.max(480, hoehe), useContentSize: true,
         title: `${provider.name || "Anbieter"} · Cloudflare bestätigen`, autoHideMenuBar: true,
         webPreferences: { sandbox: true, contextIsolation: true,
           nodeIntegration: false, webviewTag: false, webSecurity: true, backgroundThrottling: false }
@@ -35,13 +34,9 @@ function erstellen({ BrowserWindow, WebContentsView, View = require("electron").
       sandbox: true, contextIsolation: true, nodeIntegration: false,
       webviewTag: false, webSecurity: true, backgroundThrottling: false } });
     const inhalt = view.webContents;
-    const bereich = maskeScript ? new View() : null;
-    if (bereich) {
-      bereich.setBackgroundColor("#0b111a");
-      bereich.addChildView(view);
-    } else fenster.contentView.addChildView(view);
+    if (!maskeScript) fenster.contentView.addChildView(view);
     let ausschnitt = null;
-    let dialogAngehaengt = !bereich;
+    let dialogAngehaengt = !maskeScript;
     let phase = maskeScript ? "warten" : "dialog";
     let lokaleSeiteBereit = false;
     let letzterLokalerStand = "";
@@ -57,20 +52,16 @@ function erstellen({ BrowserWindow, WebContentsView, View = require("electron").
     };
     const anzeigen = neuePhase => {
       phase = neuePhase;
-      if (bereich) {
-        if (phase === "dialog" && !dialogAngehaengt) { fenster.contentView.addChildView(bereich); dialogAngehaengt = true; }
-        else if (phase !== "dialog" && dialogAngehaengt) { fenster.contentView.removeChildView(bereich); dialogAngehaengt = false; }
+      if (maskeScript) {
+        const seiteSichtbar = phase === "dialog" || phase === "seite";
+        if (seiteSichtbar && !dialogAngehaengt) { fenster.contentView.addChildView(view); dialogAngehaengt = true; }
+        else if (!seiteSichtbar && dialogAngehaengt) { fenster.contentView.removeChildView(view); dialogAngehaengt = false; }
       }
       lokalerStand();
     };
     const anordnen = () => {
       const [width, height] = fenster.getContentSize();
-      if (bereich) {
-        bereich.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
-        const links = ausschnitt ? Math.max(0, Math.floor(ausschnitt.left) - 12) : 0;
-        const oben = ausschnitt ? Math.max(0, Math.floor(ausschnitt.top) - 12) : 0;
-        view.setBounds({ x: -links, y: -oben, width: breite, height: Math.max(1, hoehe - 52) });
-      } else view.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
+      view.setBounds({ x: 0, y: 52, width, height: Math.max(1, height - 52) });
     };
     anordnen();
     fenster.on("resize", anordnen);
@@ -110,25 +101,16 @@ function erstellen({ BrowserWindow, WebContentsView, View = require("electron").
       const masse = await inhalt.executeJavaScriptInIsolatedWorld(987, [{ code: maskeScript(klickKennung) }]).catch(() => false);
       if (!gueltig() || stand !== generation || !bereit) return;
       if (masse && [masse.left, masse.top, masse.width, masse.height].every(Number.isFinite) && masse.width > 0 && masse.height > 0) {
-        const vorher = ausschnitt;
         ausschnitt = masse;
         const erneutePruefung = weiterStand && masse.pruefung && masse.pruefung !== weiterStand.pruefung;
         if (weiterAm && (masse.fehler || erneutePruefung)) { weiterAm = 0; weiterStand = null; }
         if (!weiterAm || masse.fehler || erneutePruefung || manuellZeigen) {
-          const neuBreite = Math.ceil(masse.width) + 24;
-          const neuHoehe = Math.ceil(masse.height) + 24 + 52;
-          if (!vorher || Math.abs(vorher.width - masse.width) > 1 || Math.abs(vorher.height - masse.height) > 1) {
-            fenster.setMinimumSize(0, 0);
-            fenster.setContentSize(neuBreite, neuHoehe);
-            const [gesamtBreite, gesamtHoehe] = fenster.getSize();
-            fenster.setMinimumSize(neuBreite + gesamtBreite - fenster.getContentSize()[0], neuHoehe + gesamtHoehe - fenster.getContentSize()[1]);
-          }
           anzeigen("dialog");
         } else anzeigen("laden");
         anordnen();
       } else {
         ausschnitt = null;
-        anzeigen(weiterAm ? "laden" : "warten");
+        anzeigen(weiterAm ? "laden" : "seite");
       }
     };
     fenster.on("resize", () => { void maskieren(); });

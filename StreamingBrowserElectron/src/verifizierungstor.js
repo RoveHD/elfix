@@ -111,6 +111,7 @@ function dialogMaskeScript(klickKennung = "") {
   return `(() => {
     const kenn = 'data-elfix-anbieterdialog';
     document.getElementById('__elfixAnbieterMaske')?.remove();
+    document.getElementById('__elfixAnbieterAbdeckung')?.remove();
     document.querySelectorAll('[' + kenn + ']').forEach(el => el.removeAttribute(kenn));
     const sichtbar = el => {
       if (!el?.isConnected) return false;
@@ -177,13 +178,33 @@ function dialogMaskeScript(klickKennung = "") {
     }
     kasten.setAttribute(kenn, '');
     const stil = document.createElement('style'); stil.id = '__elfixAnbieterMaske';
-    stil.textContent = 'html,body{background:#0b111a!important;overflow:hidden!important}'
-      + 'body *{visibility:hidden!important}'
-      + 'body::before,body::after{visibility:hidden!important}'
-      + '[' + kenn + '],[' + kenn + '] *{visibility:visible!important}'
-      + '[' + kenn + ']{max-width:calc(100vw - 24px)!important;max-height:calc(100vh - 24px)!important;overflow:auto!important}';
+    // Vier undurchsichtige Flaechen liegen auf der echten Seite. Das Loch
+    // folgt dem Originaldialog; dessen DOM, Position und Stil bleiben erhalten.
+    stil.textContent = '#__elfixAnbieterAbdeckung{position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}'
+      + '#__elfixAnbieterAbdeckung>div{position:absolute!important;background:#0b111a!important;opacity:1!important;pointer-events:auto!important;margin:0!important;padding:0!important;border:0!important}';
     (document.head || document.documentElement).appendChild(stil);
     const neu = kasten.getBoundingClientRect();
+    const links = Math.max(0, Math.min(innerWidth, neu.left));
+    const rechts = Math.max(links, Math.min(innerWidth, neu.right));
+    const oben = Math.max(0, Math.min(innerHeight, neu.top));
+    const unten = Math.max(oben, Math.min(innerHeight, neu.bottom));
+    const abdeckung = document.createElement('div'); abdeckung.id = '__elfixAnbieterAbdeckung';
+    abdeckung.setAttribute('aria-hidden', 'true');
+    for (const [x,y,w,h] of [[0,0,innerWidth,oben],[0,unten,innerWidth,innerHeight-unten],
+      [0,oben,links,unten-oben],[rechts,oben,innerWidth-rechts,unten-oben]]) {
+      const flaeche = document.createElement('div');
+      flaeche.style.cssText = 'left:'+x+'px!important;top:'+y+'px!important;width:'+w+'px!important;height:'+h+'px!important';
+      abdeckung.appendChild(flaeche);
+    }
+    // Auch die Ecken ausserhalb der originalen Rundung abdecken, ohne
+    // den Dialog oder seine interaktiven Inhalte zu veraendern.
+    const rundung = document.createElement('span');
+    rundung.style.cssText = 'position:absolute!important;pointer-events:none!important;background:transparent!important;'
+      + 'left:'+neu.left+'px!important;top:'+neu.top+'px!important;width:'+neu.width+'px!important;height:'+neu.height+'px!important;'
+      + 'border-radius:'+getComputedStyle(kasten).borderRadius+'!important;'
+      + 'box-shadow:0 0 0 '+Math.max(innerWidth,innerHeight)+'px #0b111a!important;';
+    abdeckung.appendChild(rundung);
+    document.documentElement.appendChild(abdeckung);
     const fehler = kasten.querySelector('#player-prepare-error,[role="alert"],.alert-danger');
     const pruefung = Array.from(kasten.querySelectorAll('#player-prepare-turnstile,#player-prepare-altcha,.cf-turnstile,.h-captcha,.g-recaptcha'))
       .filter(el => { const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'; }).map(el => el.id || el.className).join('|');

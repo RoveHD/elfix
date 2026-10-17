@@ -150,7 +150,7 @@ app.whenReady().then(async () => {
       hosterliste: [{ adresse: basis + "/redirect/123", hoster: "VOE", sprache: "de" }] };
     const fertig = c.anbieterSeiteOeffnen(provider, url, c.direktLaden.signal);
     const win = fenster.at(-1);
-    if (mode === "unbekannt") await warte(async () => (await phase(win)) === "warten");
+    if (mode === "unbekannt") await warte(async () => (await phase(win)) === "seite");
     else await bereit(win);
     return { fertig, win, seite: inhalt(win), url };
   }
@@ -173,27 +173,43 @@ app.whenReady().then(async () => {
   }
   let offen = await oeffnen("xhr");
   const geometry = await offen.seite.executeJavaScript("(()=>{const k=document.querySelector('.modal-content'),r=k.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,button:getComputedStyle(document.getElementById('weiter')).visibility,aussen:getComputedStyle(document.getElementById('aussen')).visibility}})()");
-  assert.equal(geometry.button, "visible"); assert.equal(geometry.aussen, "hidden");
+  assert.equal(geometry.button, "visible"); assert.equal(geometry.aussen, "visible", "Anbieterseite bleibt unveraendert unter dem Overlay");
   assert.equal(await offen.seite.executeJavaScript(tor.zustandScript()).then(lage => lage.offen), false,
     "Echte S.to-Struktur ohne cf-turnstile-Klasse/mit geschlossenem ShadowDOM wird semantisch erkannt");
-  const kompakt = offen.win.getContentSize();
-  assert.ok(Math.abs(kompakt[0] - geometry.w - 24) <= 1 && Math.abs(kompakt[1] - geometry.h - 76) <= 1,
-    "Natives Fenster passt nur zum Originaldialog plus Rueckkehrleiste");
-  assert.ok(kompakt[0] < parent.getContentSize()[0] - 200);
-  const viewport = await offen.seite.executeJavaScript("({width:innerWidth,height:innerHeight})");
-  assert.equal(await offen.seite.executeJavaScript("(()=>{const s=document.getElementById('__elfixAnbieterMaske');s.remove();const r=document.querySelector('.modal-content').getBoundingClientRect();return Math.abs(r.x-" + geometry.x + ")+Math.abs(r.y-" + geometry.y + ")})()"), 0, "Originalgeometrie unter transformierten Vorfahren bleibt erhalten");
+  assert.deepEqual(offen.win.getContentSize(), parent.getContentSize(), "Anbieterfenster bleibt in normaler Groesse, kein Zuschnitt");
+  async function overlayPruefen(seite) {
+    const pruefung = await seite.executeJavaScript(`(() => {
+      const r=document.querySelector('.modal-content').getBoundingClientRect();
+      const punkte=[[innerWidth/2,r.top/2],[innerWidth/2,(r.bottom+innerHeight)/2],
+        [r.left/2,(r.top+r.bottom)/2],[(r.right+innerWidth)/2,(r.top+r.bottom)/2]];
+      return {abgedeckt:punkte.every(([x,y])=>{const el=document.elementFromPoint(x,y),s=el&&getComputedStyle(el);
+        return el?.parentElement?.id==='__elfixAnbieterAbdeckung'&&s.backgroundColor==='rgb(11, 17, 26)'&&s.opacity==='1';}),
+        ecken:[[Math.ceil(r.left),Math.ceil(r.top)],[Math.floor(r.right)-1,Math.ceil(r.top)],
+          [Math.ceil(r.left),Math.floor(r.bottom)-1],[Math.floor(r.right)-1,Math.floor(r.bottom)-1]]};
+    })()`);
+    assert.equal(pruefung.abgedeckt, true, "Vier undurchsichtige Overlayflaechen verdecken und blockieren die Umgebung");
+    await seite.executeJavaScript("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true))))");
+    const bild = await seite.capturePage(), breite = bild.getSize().width, pixel = bild.toBitmap({ scaleFactor: 1 });
+    for (const [x,y] of pruefung.ecken) {
+      const offset = (y * breite + x) * 4;
+      assert.deepEqual(Array.from(pixel.subarray(offset, offset + 3)), [26, 17, 11],
+        "Kein roter Seitenhintergrund scheint an den abgerundeten Dialogecken durch");
+    }
+  }
+  await overlayPruefen(offen.seite);
+  assert.equal(await offen.seite.executeJavaScript("(()=>{document.getElementById('__elfixAnbieterMaske').remove();document.getElementById('__elfixAnbieterAbdeckung').remove();const r=document.querySelector('.modal-content').getBoundingClientRect();return Math.abs(r.x-" + geometry.x + ")+Math.abs(r.y-" + geometry.y + ")})()"), 0, "Originalgeometrie unter transformierten Vorfahren bleibt erhalten");
   // Kein Vorababruf, kein automatisch ausgeloester Weiter-/Captcha-Klick.
   assert.equal(weiterAbrufe, 0); assert.equal(uebernahmen.length, 0);
   offen.win.setSize(800, 650);
   await warte(() => offen.seite.executeJavaScript("Boolean(document.getElementById('__elfixAnbieterMaske'))"));
   const resize = await offen.seite.executeJavaScript("(()=>{const r=document.getElementById('weiter').getBoundingClientRect();return r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight})()");
   assert.equal(resize, true, "Weiter nach Resize vollstaendig erreichbar");
-  assert.deepEqual(await offen.seite.executeJavaScript("({width:innerWidth,height:innerHeight})"), viewport,
-    "Native Ausschnittgroesse aendert weder Providerlayout noch Widget-Viewport");
-  offen.win.setContentSize(kompakt[0], kompakt[1]);
+  assert.deepEqual(await offen.seite.executeJavaScript("[innerWidth,innerHeight]"),
+    [offen.win.getContentSize()[0], offen.win.getContentSize()[1]-52], "Provider nimmt weiterhin die volle Fensterflaeche ein");
+  await overlayPruefen(offen.seite);
   if (process.env.ELFIX_ANBIETER_BILD === "1") {
     const ordner = path.join(__dirname, "../build/history-perf/provider-weiter"); fs.mkdirSync(ordner, { recursive: true });
-    await nativeBild(offen.win, path.join(ordner, "dialog-kompakt-nativ.png"));
+    await nativeBild(offen.win, path.join(ordner, "anbieter-overlay-nativ.png"));
     fs.writeFileSync(path.join(ordner, "rueckkehrleiste.png"), (await offen.win.webContents.capturePage({ x: 0, y: 0, width: offen.win.getContentSize()[0], height: 52 })).toPNG());
   }
   commitFreigeben = true;
@@ -255,8 +271,9 @@ app.whenReady().then(async () => {
     offen.win.close(); assert.equal(await offen.fertig, "geschlossen");
   }
   offen = await oeffnen("unbekannt");
-  assert.equal(offen.win.contentView.children.length, 0, "Erkennungsfehlschlag zeigt lokale Warteansicht statt komplette Seite");
-  assert.equal(await offen.win.webContents.executeJavaScript("document.getElementById('anbieterStatus').hidden"), false);
+  assert.equal(offen.win.contentView.children.length, 1, "Ohne Dialog bleibt die echte Anbieterseite bedienbar");
+  assert.equal(await offen.win.webContents.executeJavaScript("document.getElementById('anbieterStatus').hidden"), true);
+  assert.equal(await offen.seite.executeJavaScript("document.getElementById('__elfixAnbieterAbdeckung') === null"), true);
   await lokalKlicken(offen.win, "zurueckZumPlayer");
   assert.equal(await offen.fertig, "geschlossen", "Lokale Rueckkehr auch ohne erkannten Dialog erreichbar");
   offen = await oeffnen("delay"); await klicken(offen.seite); await warte(() => Promise.resolve(Boolean(gehalten)));
@@ -265,6 +282,6 @@ app.whenReady().then(async () => {
   assert.equal(uebernahmen.length, 2); assert.equal(c.spielerLauf.id, 99);
   assert.equal(player.webContents.getURL(), playerUrl); assert.equal(await player.webContents.executeJavaScript("window.position"), 37);
   assert.equal(await player.webContents.executeJavaScript("window.watchparty"), "gleiche-runde");
-  console.log("OK Echter Electron: kompakter nativer S.to-Originaldialog ohne Captcha-Klasse/mit ShadowDOM, nativer FormPOST nach Resize, lokaler Video-Loader/Retry/Rueckkehr, Providerfehler/erneutePruefung, servergepruefte Quellenuebergabe und Abort sicher");
+  console.log("OK Echter Electron: volle Anbieterseite mit vier undurchsichtigen Overlayflaechen um den Originaldialog, Resize/ShadowDOM/FormPOST, lokaler Video-Loader/Retry/Rueckkehr, Providerfehler/erneutePruefung, servergepruefte Quellenuebergabe und Abort sicher");
 }).then(() => ende(0), error => ende(1, error));
 function ende(code, error) { if (error) console.error(error); clearTimeout(frist); gehalten?.end(); controller?.schliessen(); if (player?.webContents && !player.webContents.isDestroyed()) player.webContents.close(); if (parent && !parent.isDestroyed()) parent.destroy(); server?.close(); app.exit(code); }

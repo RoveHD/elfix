@@ -37,7 +37,7 @@
   <script>
     globalThis.anbieterStatusSetzen = (phase, dialogVorhanden) => {
       document.body.dataset.phase = phase;
-      document.getElementById('anbieterStatus').hidden = phase === 'dialog';
+      document.getElementById('anbieterStatus').hidden = phase === 'dialog' || phase === 'seite';
       document.getElementById('anbieterStatusTitel').textContent = phase === 'laden' ? 'Video wird geladen …' : 'Bestätigung wird vorbereitet …';
       document.getElementById('anbieterDialogAnzeigen').hidden = phase !== 'laden' || !dialogVorhanden;
     };
