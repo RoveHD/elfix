@@ -44,7 +44,14 @@ const page = episode => `<!doctype html><meta charset="utf-8"><title>${title} S0
   <button class="link-box" data-play-url="/r?t=${episode}" data-provider-name="VOE" data-language-label="Deutsch">VOE</button>`;
 let heldEpisode = 0;
 const heldResponses = new Set();
+const mediaRequests = [];
 const mediaServer = http.createServer(async (request, response) => {
+  const trace = { at: Date.now(), url: request.url, method: request.method, range: request.headers.range,
+    origin: request.headers.origin, referer: request.headers.referer };
+  mediaRequests.push(trace);
+  if (mediaRequests.length > 100) mediaRequests.shift();
+  response.on("finish", () => { trace.finished = true; });
+  response.on("close", () => { trace.closed = true; });
   const episode = Number(request.url.match(/(\d+)\.mp4/)?.[1]);
   if (heldEpisode === episode) await new Promise(resolve => {
     heldResponses.add(resolve);
@@ -54,6 +61,7 @@ const mediaServer = http.createServer(async (request, response) => {
   const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range || "");
   const from = match ? Number(match[1]) : 0;
   const to = match?.[2] ? Math.min(Number(match[2]), media.length - 1) : media.length - 1;
+  trace.status = match ? 206 : 200;
   response.writeHead(match ? 206 : 200, { "content-type": "audio/wav", "accept-ranges": "bytes",
     "content-length": String(to - from + 1), ...(match ? { "content-range": `bytes ${from}-${to}/${media.length}` } : {}) });
   response.end(media.subarray(from, to + 1));
@@ -98,6 +106,15 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("did-fail-load", (_e, code, description, url) => note(contentsEvents, { id: contents.id, code, description, url }));
   contents.on("console-message", details => note(contentsEvents, { id: contents.id, message: details.message }));
   contents.on("render-process-gone", (_e, details) => note(contentsEvents, { id: contents.id, gone: details }));
+  contents.on("did-finish-load", () => {
+    if (!contents.getURL().endsWith("/spieler.html")) return;
+    contents.executeJavaScript(`for (const type of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','suspend','error']) {
+      document.querySelector('video').addEventListener(type, event => console.log('fixture-media:' + JSON.stringify({
+        type:event.type,ready:event.target.readyState,network:event.target.networkState,src:event.target.currentSrc,
+        error:event.target.error?.message
+      })));
+    }`).catch(error => note(contentsEvents, { id: contents.id, observationError: error.message }));
+  });
 });
 app.on("browser-window-created", (_event, window) => {
   window.setOpacity(0);
@@ -124,6 +141,7 @@ process.on("message", async message => {
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
     else if (message.action === "diagnostics") result = {
       locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
+      mediaRequests, mediaAddress: mediaServer.address(),
       heldEpisode, pendingResponses: heldResponses.size,
       contents: webContents.getAllWebContents().map(wc => ({ id: wc.id,
         url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))

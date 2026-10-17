@@ -54,6 +54,7 @@ function client(index, relayUrl) {
 }
 const readPlayer = pc => pc.player(`({time:bild.currentTime,paused:bild.paused,ready:bild.readyState,
   waiting:!document.getElementById('warteAufAlle').hidden,src:bild.currentSrc,error:bild.error?.message,
+  playButton:{title:knopfSpielen.title,disabled:knopfSpielen.disabled,text:knopfSpielen.textContent},
   inParty:inRunde,episode:Number(bild.currentSrc.match(/fixture-([0-9]+)/)?.[1]),members:document.getElementById('runde').childElementCount})`);
 async function main() {
   const port = await freePort();
@@ -122,7 +123,10 @@ async function main() {
   assert.equal((await readPlayer(host)).inParty, true, "Manual live context must also reach the already loaded native player");
   await until(async () => !(await readPlayer(host)).waiting, "solo context switch releases local waiting state");
   if (!(await readPlayer(host)).paused) await host.player("spielenUmschalten()");
-  await until(async () => (await readPlayer(host)).paused, "solo pause");
+  await until(async () => {
+    const state = await readPlayer(host);
+    return state.paused && !state.waiting && state.playButton.title.startsWith("Abspielen");
+  }, "solo pause offers Play rather than cancelling a pending shared start");
   await host.player("spielenUmschalten()");
   await until(async () => { const state = await readPlayer(host); return !state.paused && !state.waiting; }, "solo host starts after its own actual readiness");
   await host.shell(`streamingBrowser.toggleWatchpartyLive(${JSON.stringify(key)},false,'${room}')`);
