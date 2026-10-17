@@ -6,6 +6,10 @@ permissions:
   contents: read
 jobs:
   watchparty:
+    strategy:
+      fail-fast: false
+      matrix:
+        tracing: ['0', '1']
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -24,27 +28,21 @@ jobs:
           Write-Output "TMP=$env:TMP"
           Write-Output "USERPROFILE=$env:USERPROFILE"
           Write-Output "GITHUB_WORKSPACE=$env:GITHUB_WORKSPACE"
-      - name: Build native RTX Video component
+      - name: Bundle fixture dependencies
         working-directory: StreamingBrowserElectron
-        run: npm run build:rtx
-      - name: Complete Node regression suite
-        working-directory: StreamingBrowserElectron
-        run: npm test
-      - name: Preceding Electron regression tests
-        working-directory: StreamingBrowserElectron
+        run: npm run pretest
+      - name: Three independent starts, fail on the first failure
         run: |
-          foreach ($test in @('verifizierung-electrontest.js','direktelectrontest.js','spielerquellenelectrontest.js','spielerbedienung-electrontest.js','securityelectrontest.js','spielerchatelectrontest.js','spielerbarriereelectrontest.js')) {
-            & .\node_modules\.bin\electron.cmd "tests/$test"
+          foreach ($attempt in 1..3) {
+            Write-Output "Independent three-app start $attempt"
+            node tests/watchparty-drei-pc-electrontest.js
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          Get-CimInstance Win32_Process | Where-Object Name -eq 'electron.exe' | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | ConvertTo-Json -Depth 4
-      - name: Three complete app instances
-        run: node tests/watchparty-drei-pc-electrontest.js
         working-directory: StreamingBrowserElectron
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-          ELFIX_THREE_PC_TRACE: '1'
+          ELFIX_THREE_PC_TRACE: ${{ matrix.tracing }}
       - name: Remaining Electron processes
         if: always()
         run: Get-CimInstance Win32_Process | Where-Object Name -eq 'electron.exe' | Select-Object ProcessId,ParentProcessId,CreationDate,CommandLine | ConvertTo-Json -Depth 4
@@ -52,7 +50,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: watchparty-fixture-logs
+          name: watchparty-fixture-logs-trace-${{ matrix.tracing }}
+          retention-days: 1
           path: |
             ${{ runner.temp }}/elfix-three-pc-*/*.log
             ${{ runner.temp }}/elfix-three-pc-*/diagnostics.json
