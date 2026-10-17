@@ -142,7 +142,11 @@ main().catch(async error => {
   console.error(error.stack); console.error("Diagnostics:", root);
   const diagnostics = { stage, openingResults,
     players: await Promise.allSettled(clients.map(readPlayer)),
-    clients: await Promise.allSettled(clients.map(pc => pc.call("diagnostics"))) };
+    clients: await Promise.allSettled(clients.map(pc => pc.call("diagnostics"))),
+    pages: await Promise.allSettled(clients.map(pc => pc.call("diagnostic-pages"))) };
+  for (const results of [diagnostics.players, diagnostics.clients, diagnostics.pages]) {
+    for (const result of results) if (result.status === "rejected") result.reason = String(result.reason?.stack || result.reason);
+  }
   fs.writeFileSync(path.join(root, "diagnostics.json"), JSON.stringify(diagnostics, null, 2));
   console.error(JSON.stringify(diagnostics, null, 2));
   for (const filename of ["relay.log", ...clients.map((_pc, i) => `pc${i + 1}.log`)]) {

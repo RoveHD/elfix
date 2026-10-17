@@ -90,8 +90,13 @@ app.on("session-created", ses => {
 
 let shell;
 app.on("web-contents-created", (_event, contents) => {
+  note(contentsEvents, { id: contents.id, created: true });
+  contents.on("did-start-navigation", (_e, url, _inPlace, mainFrame) => {
+    if (mainFrame) note(contentsEvents, { id: contents.id, navigation: url });
+  });
+  contents.on("destroyed", () => note(contentsEvents, { id: contents.id, destroyed: true }));
   contents.on("did-fail-load", (_e, code, description, url) => note(contentsEvents, { id: contents.id, code, description, url }));
-  contents.on("console-message", (_e, details) => note(contentsEvents, { id: contents.id, message: details.message }));
+  contents.on("console-message", details => note(contentsEvents, { id: contents.id, message: details.message }));
   contents.on("render-process-gone", (_e, details) => note(contentsEvents, { id: contents.id, gone: details }));
 });
 app.on("browser-window-created", (_event, window) => {
@@ -120,14 +125,21 @@ process.on("message", async message => {
     else if (message.action === "diagnostics") result = {
       locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
       heldEpisode, pendingResponses: heldResponses.size,
-      contents: await Promise.all(webContents.getAllWebContents().map(async wc => ({ id: wc.id,
-        url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading(),
-        page: await wc.executeJavaScript("({url:location.href,title:document.title,body:document.body?.innerText.slice(0,2000)})").catch(error => ({ error: error.message })) }))),
-      state: shell && await shell.webContents.executeJavaScript(`(async () => ({
-        init: await streamingBrowser.init(), live:watchpartyLiveOn,room:watchpartyLiveRoom,
-        items:await streamingBrowser.getWatchpartyItems(),status:await streamingBrowser.getWatchpartyStatus()
-      }))()`, true)
+      contents: webContents.getAllWebContents().map(wc => ({ id: wc.id,
+        url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))
     };
+    else if (message.action === "diagnostic-pages") {
+      const bounded = work => Promise.race([work.catch(error => ({ error: error.stack })),
+        new Promise(resolve => setTimeout(() => resolve({ error: "Diagnostic page query exceeded 1500ms" }), 1500))]);
+      result = {
+        contents: await Promise.all(webContents.getAllWebContents().map(async wc => ({ id: wc.id,
+          page: await bounded(wc.executeJavaScript("({url:location.href,title:document.title,body:document.body?.innerText.slice(0,2000)})")) }))),
+        state: shell && await bounded(shell.webContents.executeJavaScript(`(async () => ({
+        init: await streamingBrowser.init(), live:watchpartyLiveOn,room:watchpartyLiveRoom,
+        route:currentRoute,startRuhe,
+        items:await streamingBrowser.getWatchpartyItems(),status:await streamingBrowser.getWatchpartyStatus()
+      }))()`, true)) };
+    }
     else if (message.action === "player") result = player() ? await player().executeJavaScript(message.code, true) : null;
     else result = await shell.webContents.executeJavaScript(message.code, true);
     process.send?.({ id: message.id, result });

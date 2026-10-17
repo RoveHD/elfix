@@ -11381,7 +11381,9 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
     });
   }
 
-  await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(() => {});
+  await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(error => {
+    console.error(`[ELFIX DIREKT] Playerseite laden: ${error?.stack || error}`);
+  });
   if (spielerView !== view || optionen.signal?.aborted) return false;
   mainWindow.contentView.addChildView(view);
   spielerLageSetzen();
