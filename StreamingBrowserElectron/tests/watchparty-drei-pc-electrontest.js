@@ -4,11 +4,28 @@
 // an actual local relay; production UI/IPC/player and S.to-shaped fixtures.
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), net = require("node:net");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "elfix-three-pc-"));
 const clients = [];
 const room = "avatar-three-pc", base = "/serie/avatar-die-sieben-hafen";
 let relay, requestId = 0, stage = "startup", openingResults;
+function processSnapshot(name) {
+  // A failed run must retain native thread states even when tracing is off;
+  // successful normal runs do not launch any diagnostic PowerShell processes.
+  if (process.platform !== "win32" || (process.env.ELFIX_THREE_PC_TRACE !== "1"
+    && name !== "failure")) return;
+  const script = `$rows = @(Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='node.exe'" | ForEach-Object {
+    $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue;
+    [pscustomobject]@{ pid=$_.ProcessId; parent=$_.ParentProcessId; created=$_.CreationDate;
+      command=$_.CommandLine; cpu=$p.CPU; memory=$p.WorkingSet64;
+      threads=@($p.Threads | ForEach-Object { [pscustomobject]@{ id=$_.Id; state=[string]$_.ThreadState;
+        wait=if ($_.ThreadState -eq 'Wait') { [string]$_.WaitReason } else { '' }; cpu=$_.TotalProcessorTime.TotalSeconds } }) }
+  }); ConvertTo-Json -InputObject $rows -Depth 5`;
+  try {
+    fs.writeFileSync(path.join(root, name + "-processes.json"), execFileSync("powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, timeout: 15000, encoding: "utf8" }));
+  } catch (error) { console.error("Process snapshot:", error.message); }
+}
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label, timeout = 25000) {
   stage = label;
@@ -57,6 +74,7 @@ const readPlayer = pc => pc.player(`({at:Date.now(),time:bild.currentTime,paused
   playButton:{title:knopfSpielen.title,disabled:knopfSpielen.disabled,text:knopfSpielen.textContent},
   inParty:inRunde,episode:Number(bild.currentSrc.match(/fixture-([0-9]+)/)?.[1]),members:document.getElementById('runde').childElementCount})`);
 async function main() {
+  processSnapshot("before");
   const port = await freePort();
   fs.mkdirSync(path.join(root, "relay"));
   relay = spawn(process.execPath, [path.resolve(__dirname, "../../sync-server/server.js")], {
@@ -155,6 +173,7 @@ async function main() {
 }
 main().catch(async error => {
   console.error(error.stack); console.error("Diagnostics:", root);
+  processSnapshot("failure");
   const diagnostics = { stage, openingResults,
     players: await Promise.allSettled(clients.map(readPlayer)),
     clients: await Promise.allSettled(clients.map(pc => pc.call("diagnostics"))),
@@ -170,6 +189,9 @@ main().catch(async error => {
   }
   process.exitCode = 1;
 }).finally(async () => {
+  if (process.env.ELFIX_THREE_PC_TRACE === "1") {
+    console.log("Chromium traces:", await Promise.allSettled(clients.map(pc => pc.call("diagnostic-trace"))));
+  }
   for (const pc of clients) { if (pc.child.connected) pc.child.send({ action: "quit" }); }
   await Promise.all(clients.map(pc => pc.child.exitCode !== null ? Promise.resolve() : new Promise(resolve => {
     const timer = setTimeout(() => { pc.child.kill(); resolve(); }, 3000);

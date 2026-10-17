@@ -58,6 +58,18 @@ jobs:
       - name: Electron security and player regression tests
         run: npm run test:electron
 
+      - name: Keep failed Watchparty fixture diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: watchparty-failure-diagnostics
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/elfix-three-pc-*/*.log
+            ${{ runner.temp }}/elfix-three-pc-*/diagnostics.json
+            ${{ runner.temp }}/elfix-three-pc-*/*-processes.json
+
       - name: Build Windows artifacts
         run: npm run make-icon && npx electron-builder --win nsis portable --publish never
         env:
@@ -403,6 +415,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: release-assets
+          pattern: '*-assets'
           merge-multiple: true
 
       - name: Publish release

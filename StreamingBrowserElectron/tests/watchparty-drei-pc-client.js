@@ -2,13 +2,20 @@
 
 // One complete desktop app per child process. Only provider/hoster responses
 // are fixtures; Main, renderer, preload, player and relay traffic are real.
-const { app, BrowserWindow, webContents, net } = require("electron");
+const { app, BrowserWindow, webContents, net, contentTracing } = require("electron");
 const fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const config = JSON.parse(process.env.ELFIX_THREE_PC_CONFIG);
 app.setPath("appData", config.profile);
 app.setPath("userData", path.join(config.profile, "browser"));
 app.setAppPath(path.resolve(__dirname, ".."));
 app.disableHardwareAcceleration();
+// Opt-in only: recording changes scheduling, so failures without it also keep
+// their native process/thread snapshot in the coordinator.
+const traceReady = process.env.ELFIX_THREE_PC_TRACE === "1"
+  ? app.whenReady().then(() => contentTracing.startRecording({
+    recording_mode: "record-continuously", trace_buffer_size_in_kb: 16384,
+    included_categories: ["toplevel", "startup", "renderer_host", "ipc", "loading", "devtools.timeline", "v8"]
+  })) : null;
 const data = path.join(config.profile, "ELFIX");
 fs.mkdirSync(data, { recursive: true });
 const write = (name, value) => fs.writeFileSync(path.join(data, name), JSON.stringify(value));
@@ -122,8 +129,8 @@ app.on("web-contents-created", (_event, contents) => {
 });
 app.on("browser-window-created", (_event, window) => {
   window.setOpacity(process.env.CI ? 1 : 0);
-  // Keep the real visible-window lifecycle without foregrounding or painting
-  // test windows. Permanently hidden windows can defer Chromium media loads.
+  // Keep the visible-window lifecycle without foregrounding test windows.
+  // CI paints normally; local runs remain transparent on the user's desktop.
   window.show = () => window.showInactive();
   window.webContents.setAudioMuted(true);
   window.webContents.on("did-finish-load", () => {
@@ -144,6 +151,12 @@ process.on("message", async message => {
       heldResponses.clear(); result = true;
     }
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
+    else if (message.action === "diagnostic-trace") {
+      if (traceReady) {
+        await traceReady;
+        result = await contentTracing.stopRecording(path.join(config.profile, "chromium-trace.json"));
+      } else result = null;
+    }
     else if (message.action === "diagnostics") result = {
       at: Date.now(), locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
       mediaRequests, mediaAddress: mediaServer.address(), metrics: app.getAppMetrics(),
