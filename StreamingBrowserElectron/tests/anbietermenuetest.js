@@ -192,8 +192,13 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
   pruefe("Der Ausgang wird gemeldet", c.gerufen.toasts.at(-1) === "S.to bestätigt", c.gerufen.toasts.at(-1));
   const cf = buehne("cloudflare", "fehlgeschlagen");
   await (await cf.karte(1)).ausloesen("contextmenu");
-  pruefe("Ohne Bestaetigung wird nicht neu gesucht, aber Bescheid gesagt",
-    cf.gerufen.suchen.length === 0 && /nicht bestätigt/.test(cf.gerufen.toasts.at(-1) || ""));
+  pruefe("Bei einem Oeffnungsfehler wird nicht neu gesucht, aber Bescheid gesagt",
+    cf.gerufen.suchen.length === 0 && /nicht geöffnet/.test(cf.gerufen.toasts.at(-1) || ""));
+  const geschlossen = buehne("cloudflare", "geschlossen");
+  await (await geschlossen.karte(1)).ausloesen("contextmenu");
+  pruefe("Schliessen ist weder eine Bestaetigung noch ein Fehler",
+    geschlossen.gerufen.suchen.length === 0
+    && JSON.stringify(geschlossen.gerufen.toasts) === '["S.to wird geöffnet …"]');
   const cr = buehne("cloudflare", "bestaetigt", "start");
   await (await cr.karte(1)).ausloesen("contextmenu");
   pruefe("Ausserhalb der Suche springt man nicht in die Suche", cr.gerufen.suchen.length === 0);
@@ -227,9 +232,10 @@ function buehne(antwort, cloudflare = "bestaetigt", route = "search") {
   pruefe("und Cloudflare bestaetigen",
     /label: "Cloudflare bestätigen", click: \(\) => \{ gewaehlt = "cloudflare"; \}/.test(handler.slice(0, 1200)));
   const cfHandler = MAIN.slice(MAIN.indexOf('ipcMain.handle("provider:cloudflare"'), MAIN.indexOf('ipcMain.handle("provider:save-all"'));
-  pruefe("Der Hauptprozess zeigt nur die Abfrage und prueft mit dem echten Suchabruf",
-    /cfAdresseVerifizieren\(provider, \{ url, referer: provider\.startUrl, serverPruefung: frei \}\)/.test(cfHandler)
-    && /istCloudflareAbfrage\(antwort, text\)/.test(cfHandler) && /anbieterAbruf\(url/.test(cfHandler));
+  pruefe("Der manuelle Aufruf oeffnet die Anbieterseite ohne unsichtbare Vorab-Suche",
+    /anbieterSeitenAdresse\(provider\)/.test(cfHandler)
+    && /anbieterSeiteOeffnen\(provider, url/.test(cfHandler)
+    && !/buildSearchUrl|if \(await frei\(\)\)/.test(cfHandler));
   pruefe("Die Cloudflare-Bruecke steht im preload",
     /providerCloudflare: \(providerId\) => ipcRenderer\.invoke\("provider:cloudflare", providerId\)/.test(PRELOAD));
   pruefe("Der Name steht als Ueberschrift darueber, unanklickbar",

@@ -53,6 +53,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("spieler:folgen", async () => null);
   ipcMain.handle("spieler:chat-status", async () => ({ active: false, messages: [] }));
   ipcMain.handle("spieler:wechseln", async () => ({ ok: true }));
+  const seitenAufrufe = [];
+  let seiteSchliessen;
+  ipcMain.handle("spieler:anbieter-seite", (_ereignis, id) => {
+    seitenAufrufe.push(id);
+    return new Promise(resolve => { seiteSchliessen = resolve; });
+  });
 
   fenster = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: {
     preload: path.join(__dirname, "../src/spieler-preload.js"), contextIsolation: true,
@@ -63,6 +69,13 @@ app.whenReady().then(async () => {
   await fenster.loadFile(path.join(__dirname, "../src/renderer/spieler.html"));
   const lesen = (code) => fenster.webContents.executeJavaScript(code);
   await warten(() => lesen("bild.readyState >= 2"));
+  await lesen("bild.pause(); bild.currentTime = 12.5");
+  await warten(() => lesen("!bild.seeking && bild.currentTime === 12.5"));
+  const quelleVorSeite = await lesen("bild.currentSrc");
+  pruefe("Mit gefundener Quelle ist der Hoster-Seiten-Knopf ausgeblendet", await lesen("[hosterSeiteBedienung.hidden,getComputedStyle(hosterSeiteBedienung).display]"), [true, "none"]);
+  await lesen("document.getElementById('hosterSeiteKnopf').click()");
+  pruefe("Eine vorhandene Quelle verhindert auch versteckte Knopfaufrufe", seitenAufrufe, []);
+  pruefe("Der verborgene Knopf veraendert den Player nicht", await lesen("[bild.currentTime,bild.paused,bild.currentSrc]"), [12.5, true, quelleVorSeite]);
   pruefe("Eine Datei ohne Varianten zeigt keine leere Qualitätsliste", await lesen(`
     [stufenWahl.disabled, stufenWahl.text.textContent, stufenWahl.eintraege.map(e => e.text)]
   `), [true, "Keine Qualitätsauswahl", ["Keine Qualitätsauswahl"]]);
@@ -197,6 +210,26 @@ app.whenReady().then(async () => {
   pruefe("Solo-Host kann bedienen, obwohl die Teilnehmerleiste verborgen ist", await lesen("[regler.disabled, tempoWahl.disabled, rundeLeiste.hidden]"), [false, false, true]);
   await lesen("zeichneRunde([{ me: true, host: false, name: 'Du', zeit: '0:00' }, { me: false, host: true, name: 'Host', zeit: '0:00' }])");
   pruefe("Ein echter Hostwechsel sperrt die Gast-Quelleneinstellungen wieder", await lesen("[regler.disabled, tempoWahl.disabled]"), [true, true]);
+  await lesen("starten({id:99,laden:true})");
+  pruefe("Ohne gefundene Quelle ist der Hoster-Seiten-Knopf sichtbar", await lesen("[hosterSeiteBedienung.hidden,getComputedStyle(hosterSeiteBedienung).display]"), [false, "grid"]);
+  await lesen("knopfHosterSeite.click(); knopfHosterSeite.click()");
+  await warten(() => Promise.resolve(seitenAufrufe.length === 1));
+  pruefe("Hoster-Seite sendet genau den aktuellen Auftrag ohne fremde URL", seitenAufrufe, [99]);
+  pruefe("Der Oeffnen-Knopf verhindert doppelte Aufrufe", await lesen("knopfHosterSeite.disabled"), true);
+  seiteSchliessen("geschlossen");
+  await warten(() => lesen("!knopfHosterSeite.disabled"));
+  pruefe("Zurueck vom Anbieter zeigt keinen Fehler", await lesen("hosterSeiteHinweis.hidden"), true);
+  await lesen("knopfHosterSeite.click()");
+  await warten(() => Promise.resolve(seitenAufrufe.length === 2));
+  seiteSchliessen("fehlgeschlagen");
+  await warten(() => lesen("!knopfHosterSeite.disabled"));
+  pruefe("Ein Oeffnungsfehler wird am Knopf angezeigt", await lesen("hosterSeiteHinweis.hidden"), false);
+  await lesen("knopfHosterSeite.click()");
+  await warten(() => Promise.resolve(seitenAufrufe.length === 3));
+  await lesen(`starten(${JSON.stringify({ ...auftrag, id: 100, rundeWarten: true })})`);
+  seiteSchliessen("fehlgeschlagen");
+  await lesen("Promise.resolve()");
+  pruefe("Eine gefundene Quelle blendet den Knopf auch beim Watchparty-Warten aus", await lesen("[hosterSeiteBedienung.hidden,hosterSeiteHinweis.hidden]"), [true, true]);
   console.log(`${anzahl}/${anzahl} bestanden`);
 }).then(() => beenden(0), (fehler) => beenden(1, fehler));
 

@@ -16,7 +16,7 @@ app.whenReady().then(async()=>{
  view=new WebContentsView({webPreferences:{preload:path.join(__dirname,"../src/spieler-preload.js"),sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,autoplayPolicy:"no-user-gesture-required"}});
  win.contentView.addChildView(view);view.setBounds({x:0,y:0,width:1100,height:720});view.webContents.setAudioMuted(true);
  let closes=0,pauses=0,blurRuns=0;
- const c=vm.createContext({mainWindow:win,sprachchatFenster:null,spielerView:view,spielerLauf:{id:1,session:"same"},spielerMiniAktiv:false,spielerMiniVorbereitung:false,spielerAutoMiniAusstehend:null,
+ const c=vm.createContext({mainWindow:win,sprachchatFenster:null,anbieterSeitenAnsicht:{fokussiert:false},spielerView:view,spielerLauf:{id:1,session:"same"},spielerMiniAktiv:false,spielerMiniVorbereitung:false,spielerAutoMiniAusstehend:null,
  settings:{playback:{pauseOnMinimize:true,pauseOnBlur:true}},isContentFullscreen:false,browserBounds:{x:0,y:0,width:1100,height:720},
  isLiveView:v=>Boolean(v&&!v.webContents.isDestroyed()),clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),providerViews:new Map(),attachedProviderViews:new Set(),overlayReasons:new Set(),
  activeView:null,activeProviderId:null,activeFavoriteId:null,providers:[],webContentsProvider:new Map(),providerResumeState:new Map(),sendActiveState:()=>{},folgenWerkbaenkeSchliessen:()=>{},
@@ -57,6 +57,12 @@ app.whenReady().then(async()=>{
  assert.equal(pauses,voicePauses,"Fokus im Sprachchat darf das Video nicht pausieren");
  win.focus();await until(()=>Promise.resolve(win.isFocused()));
  c.sprachchatFenster=null;
+ const providerBlur=blurRuns;
+ c.anbieterSeitenAnsicht={get fokussiert(){return voiceWin.isFocused();}};
+ voiceWin.focus();await until(()=>Promise.resolve(voiceWin.isFocused()&&blurRuns>providerBlur));
+ assert.equal(pauses,voicePauses,"Eigene Anbieteransicht darf das Video nicht pausieren");
+ win.focus();await until(()=>Promise.resolve(win.isFocused()));
+ c.anbieterSeitenAnsicht={fokussiert:false};
  const outsideBlur=blurRuns;
  voiceWin.focus();await until(()=>Promise.resolve(voiceWin.isFocused()&&blurRuns>outsideBlur));
  assert.equal(pauses,voicePauses+1,"Fremdes Fenster pausiert weiterhin bei eingeschaltetem pauseOnBlur");

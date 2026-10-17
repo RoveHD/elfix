@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ELFIX · Anbieterseite</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #0b111a; color: #c2cfdf; font: 13px 'Segoe UI', sans-serif; }
+    header { height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px 0 18px; border-bottom: 1px solid #2d3b4d; }
+    .marke { color: #f2f6fc; font-size: 13px; font-weight: 700; letter-spacing: 2px; }
+    .seite { margin-left: 16px; color: #9aabc1; }
+    button { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 0 14px; border: 1px solid #5a7493; border-radius: 6px; background: #203348; color: #f3f8ff; font: 600 13px 'Segoe UI', sans-serif; cursor: pointer; }
+    button:hover { background: #2d4661; border-color: #85a5cd; }
+    button:focus-visible { outline: 2px solid #b9d8ff; outline-offset: 2px; }
+    button span { font-size: 20px; line-height: 1; }
+    @media (max-width: 700px) { .seite { display: none; } }
+  </style>
+</head>
+<body>
+  <header><div><span class="marke">ELFIX</span><span class="seite">Anbieterseite</span></div><button id="zurueckZumPlayer" type="button"><span aria-hidden="true">←</span>Zurück zum Player</button></header>
+  <script>document.getElementById('zurueckZumPlayer').addEventListener('click', () => window.close());</script>
+</body>
+</html>

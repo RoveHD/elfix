@@ -3034,16 +3034,15 @@ function sprachsucheEreignis(ereignis) {
   }
 }
 
-// Die Cloudflare-Abfrage von Hand beantworten. Das Fenster zeigt der
-// Hauptprozess - nur solange gefragt wird. Danach laeuft eine offene Suche
-// gleich noch einmal, damit der Anbieter dort auch auftaucht.
+// Die vollstaendige Anbieterseite von Hand oeffnen. Erst eine belegte
+// Bestaetigung startet die offene Suche erneut; Schliessen allein genuegt nicht.
 async function anbieterCloudflare(provider) {
-  showToast(`${provider.name} wird geprüft …`);
+  showToast(`${provider.name} wird geöffnet …`);
   const ergebnis = await api.providerCloudflare?.(provider.id).catch(() => "fehlgeschlagen");
-  if (ergebnis === "frei") showToast(`${provider.name} braucht gerade keine Bestätigung`);
-  else if (ergebnis === "bestaetigt") showToast(`${provider.name} bestätigt`);
+  if (ergebnis === "geschlossen") return;
+  if (ergebnis === "bestaetigt") showToast(`${provider.name} bestätigt`);
   else {
-    showToast(`${provider.name} konnte nicht bestätigt werden`);
+    showToast(`${provider.name} konnte nicht geöffnet werden`);
     return;
   }
   if (currentRoute === "search" && activeSearchQuery) showGlobalSearch(activeSearchQuery).catch(() => {});

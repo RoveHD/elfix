@@ -14,6 +14,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const WURZEL = path.join(__dirname, "..");
 const lies = (datei) => fs.readFileSync(path.join(WURZEL, datei), "utf8");
@@ -67,8 +68,11 @@ const unbekannt = genutzt.filter((name) => !angeboten.includes(name));
 pruefe("Die Bruecke kann alles, was das Skript von ihr verlangt",
   unbekannt.length === 0,
   unbekannt.join(", ") || genutzt.join(", "));
+const ersatzStart = skript.indexOf("const bruecke =");
+const ersatz = vm.runInNewContext(skript.slice(ersatzStart, skript.indexOf("\n};", ersatzStart) + 3)
+  + "\nbruecke", { window: {} });
 pruefe("Der Ersatz kennt dieselben Namen",
-  genutzt.every((name) => new RegExp(`${name}\\(\\)\\s*\\{\\}`).test(skript)),
+  genutzt.every((name) => typeof ersatz[name] === "function"),
   "ohne window.elfixSpieler darf das Skript nicht schon beim Laden umfallen");
 
 /* --------------------------------------------------------- Die Kanaele */

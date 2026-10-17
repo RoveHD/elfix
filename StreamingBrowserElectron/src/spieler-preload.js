@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld("elfixSpieler", {
   wechseln: (url) => ipcRenderer.invoke("spieler:wechseln", String(url || "")),
   /** Ein anderer Hoster fuer dieselbe Folge - an derselben Stelle weiter. */
   hoster: (link, stelle) => ipcRenderer.invoke("spieler:hoster", String(link || ""), Number(stelle) || 0),
+  /** Die Anbieterseite ueber dem bestehenden Player oeffnen. Main waehlt die URL. */
+  anbieterSeite: (id) => ipcRenderer.invoke("spieler:anbieter-seite", id),
   /** Die naechste Folge wird nachgereicht: sie steht erst nach einem Abruf fest. */
   // Der Folgentitel reist mit: er kommt aus derselben Liste wie die naechste
   // Folge, und beides trifft zusammen ein.

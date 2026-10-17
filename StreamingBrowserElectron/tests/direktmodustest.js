@@ -1,10 +1,6 @@
 "use strict";
-// Der Direktbetrieb: die Anbieterseite bleibt unsichtbar.
-//
-// Das ist eine Zusage, die man nicht "meistens" einhalten kann. Es genuegt ein
-// Weg, auf dem die Seite doch eingehaengt wird oder auf dem der Player
-// zurueck auf sie verweist, und der Zuschauer sitzt wieder vor der
-// Werbeschicht, der er entkommen wollte.
+// Der Direktbetrieb: die Anbieterseite bleibt beim Abspielen unsichtbar.
+// Ohne gefundene Quelle ist eine eigene, schliessbare Anbieteransicht erlaubt.
 //
 // Geprueft wird deshalb der Quelltext selbst: wo eine Ansicht eingehaengt
 // wird, was nach einer Navigation geschieht, was der Player im Fehlerfall
@@ -89,11 +85,12 @@ pruefe("Auch nach einem Overlay kommt sie nicht zurueck",
   rueckkehr.slice(0, 500).includes("direktModus(activeView.webContents.getURL())"),
   "Einstellungen zumachen darf die Seite nicht hervorholen");
 
-/* ------------------------------------------------- Der Weg fuehrt nicht zurueck */
+/* ------------------------------------------------- Anbieter nur ohne Quelle */
 
-pruefe("Der Player bietet keinen Weg auf die Anbieterseite mehr an",
-  !/Beim Hoster öffnen/.test(spielerSeite) && !/anbieterseite/i.test(spielerSeite),
-  "der Ausweg aus einer kaputten Quelle ist ein anderer Hoster, nicht die Seite");
+pruefe("Der Weg zur Anbieterseite ist nur ohne gefundene Quelle sichtbar",
+  /Hoster-Seite öffnen/.test(spielerSeite)
+    && /hosterSeiteBedienung\.hidden = Boolean\(auftrag\.adresse\)/.test(spielerSkript),
+  "bei vorhandener Quelle bleibt der Player im Direktbetrieb");
 pruefe("Im Fehlerfall fuehrt der Knopf in die Folgenliste",
   /zurueckZumHoster.*\n?.*addEventListener[\s\S]{0,120}folgenZeigen\(\)/.test(spielerSkript),
   "dort steht auch die Hosterwahl");

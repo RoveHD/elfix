@@ -90,6 +90,7 @@ const statistik = require("./statistik");
 const { AdblockEngine } = require("./adblock-engine");
 const kosmetik = require("./adblock-kosmetik");
 const verifizierungstor = require("./verifizierungstor");
+const anbieteransicht = require("./anbieteransicht");
 const youtube = require("./youtube");
 const openings = require("./openings");
 const cacheSchreibaufschub = require("./cache-schreibaufschub");
@@ -337,6 +338,13 @@ const ADGUARD_FILTER_LISTS = [
 
 let mainWindow;
 let browserSession;
+const anbieterSeitenAnsicht = anbieteransicht.erstellen({ BrowserWindow, WebContentsView,
+  eltern: () => mainWindow, sitzung: () => browserSession,
+  zustandScript: () => verifizierungstor.zustandScript(), persistieren: cfSitzungPersistieren,
+  verbinden: (inhalt, provider) => {
+    webContentsProvider.set(inhalt.id, provider.id);
+    inhalt.once("destroyed", () => webContentsProvider.delete(inhalt.id));
+  } });
 let providers = [];
 let favorites = [];
 let settings = defaultSettings();
@@ -715,6 +723,7 @@ function createMainWindow() {
     setTimeout(() => {
       if (mainWindow !== fenster || fenster.isDestroyed() || fenster.isFocused()) return;
       if (sprachchatFenster?.fenster?.isFocused()) return;
+      if (anbieterSeitenAnsicht.fokussiert) return;
       if (settings.playback.pauseOnBlur && !spielerMiniAktiv && !spielerMiniVorbereitung
         && !spielerAutoMiniAusstehend && !fenster.isMinimized()) pauseActivePlayback(true);
     }, 100);
@@ -2062,35 +2071,38 @@ ipcMain.handle("provider:context-menu", async (_event, name, punkt) => {
 
 // Die Cloudflare-Abfrage eines Anbieters von Hand beantworten.
 //
-// Die Suche laeuft ohne sichtbare Seite und kann ein "Bist du ein Mensch?"
-// nicht beantworten - S.to meldet dann nur "cloudflare". Hier wird die
-// Suchseite des Anbieters in seiner eigenen Sitzung geladen. Fragt sie nach,
-// erscheint kurz nur das Bestaetigungsfenster und verschwindet wieder, sobald
-// der Anbieter die Bestaetigung angenommen hat; das Cookie gilt danach auch
-// fuer die Suche. Antwortet der Anbieter schon frei, zeigt sich nichts.
-//
-// Ergebnis: "frei" (nichts zu tun), "bestaetigt" oder "fehlgeschlagen".
+// Die vollstaendige aktuelle Folge beziehungsweise Anbieterstartseite liegt
+// in einem eigenen modalen Fenster ueber dem Player, in derselben Sitzung.
+// Schliessen ist keine Serverbestaetigung.
 ipcMain.handle("provider:cloudflare", async (_event, providerId) => {
   const provider = enabledProviders().find((eintrag) => eintrag.id === String(providerId || ""));
   if (!provider) return "fehlgeschlagen";
-  const adresse = providerModel.buildSearchUrl(provider, "avatar");
-  const url = providerModel.isHttpUrl(adresse) ? adresse : provider.startUrl;
-  if (!providerModel.isHttpUrl(url)) return "fehlgeschlagen";
-  const frei = async () => {
-    try {
-      const antwort = await anbieterAbruf(url, { headers: { accept: "text/html,application/xhtml+xml" },
-        redirect: "follow", signal: AbortSignal.timeout(12000) });
-      const text = await antwort.text();
-      return antwort.ok && !istCloudflareAbfrage(antwort, text);
-    } catch {
-      return false;
-    }
-  };
-  if (await frei()) return "frei";
-  const ok = await cfAdresseVerifizieren(provider, { url, referer: provider.startUrl, serverPruefung: frei })
-    .catch(() => false);
-  return ok ? "bestaetigt" : "fehlgeschlagen";
+  return anbieterSeiteManuellOeffnen(provider);
 });
+
+ipcMain.handle("spieler:anbieter-seite", async (ereignis, id) => {
+  if (!vomSpieler(ereignis) || id !== spielerLauf.id || spielerLauf.quelle?.adresse) return "fehlgeschlagen";
+  const provider = spielerAnbieter();
+  return provider ? anbieterSeiteManuellOeffnen(provider) : "fehlgeschlagen";
+});
+
+async function anbieterSeiteManuellOeffnen(provider) {
+  const url = anbieterSeitenAdresse(provider);
+  const versuch = direktAnbieterFallback.aktuell;
+  direktAnbieterFallback.manuell();
+  const ergebnis = await anbieterSeiteOeffnen(provider, url,
+    direktLaden.signal.aborted ? undefined : direktLaden.signal);
+  if (ergebnis === "bestaetigt" && direktAnbieterFallback.aktuell === versuch
+    && versuch?.provider.id === provider.id && seiteGleich(versuch.url, url)
+    && !versuch.signal.aborted && versuch.gueltig()) {
+    direktAnbieterFallback.erfolg(versuch);
+    await versuch.fortsetzen().catch(error => {
+      console.error(`[ELFIX ANBIETER] Fortsetzung fehlgeschlagen: ${error?.message || error}`);
+      sendToast("Die Folge konnte nach der Bestätigung nicht geladen werden");
+    });
+  }
+  return ergebnis;
+}
 
 ipcMain.handle("provider:save-all", (_event, nextProviders) => {
   providers = reuseProviderRecords(providerModel.normalizeProviders(nextProviders));
@@ -9845,6 +9857,61 @@ const DIREKT_HOECHSTVERSUCHE = 3;
 
 let direktLaden = new AbortController();
 const direktBeobachter = new Map();
+const direktAnbieterFallback = anbieteransicht.fallbackErstellen({
+  oeffnen: async (versuch) => {
+    // Ein bereits sichtbares Verifizierungstor bleibt bedienbar. Die Frist
+    // ist trotzdem verbraucht: nach dessen Schliessen kein zweites Fenster.
+    if ((menschentorFenster && mainWindow?.contentView.children.includes(menschentorFenster.view))
+      || anbieterSeitenAnsicht.offen) return "geschlossen";
+    return anbieterSeiteOeffnen(versuch.provider, versuch.url,
+      AbortSignal.any([versuch.signal, versuch.fensterAbbruch.signal]));
+  }
+});
+
+function anbieterSeitenAdresse(provider) {
+  const adresse = spielerLauf?.providerId === provider.id ? spielerLauf.url
+    : activeProvider()?.id === provider.id && isLiveView(activeView) ? activeView.webContents.getURL() : "";
+  return providerModel.isHttpUrl(adresse) && !shouldBlockProviderNavigation(adresse, provider)
+    ? adresse : provider.startUrl;
+}
+
+async function anbieterSeiteOeffnen(provider, url, signal) {
+  // Der manuelle Knopf hat Vorrang vor dem schmalen automatischen Tor.
+  menschentorFenster?.abbrechen("anbieterseite");
+  return anbieterSeitenAnsicht.oeffnen(provider, url, { signal,
+    erlaubt: ziel => !shouldBlockProviderNavigation(ziel, provider),
+    pruefen: async (adresse, abbruch) => {
+      try {
+        const antwort = await anbieterAbruf(adresse, { headers: { accept: "text/html,application/xhtml+xml" },
+          redirect: "follow", signal: AbortSignal.any([abbruch, AbortSignal.timeout(12000)]) });
+        const text = await antwort.text();
+        return antwort.ok && ![204, 205].includes(antwort.status) && Boolean(text.trim())
+          && !istCloudflareAbfrage(antwort, text);
+      } catch { return false; }
+    }
+  });
+}
+
+function direktFallbackStarten(provider, url, signal, optionen = {}) {
+  if (!isStoProviderLike(provider) || !episodeIdentity(url) || optionen.vorladen) return null;
+  return direktAnbieterFallback.starten({ provider, url, signal,
+    unterdrueckt: Boolean(optionen.anbieterFortsetzung),
+    gueltig: () => !signal.aborted && (!optionen.istAktuell || optionen.istAktuell()),
+    fortsetzen: async () => {
+      // Neuer Leseauftrag nur nach belegter Bestaetigung derselben Folge.
+      // Alte Resolver verlieren vorher ihr Signal; kein spaeter Rueckschrieb.
+      const startzeit = spielerLauf?.providerId === provider.id && seiteGleich(spielerLauf.url, url)
+        ? sanitizePositiveNumber(spielerTakt.stelle) : optionen.startzeit;
+      const ergebnis = await direktFolgeSpielen(provider, url, { ...optionen,
+        links: undefined, signal: direktAuftragBeginnen(), startzeit, anbieterFortsetzung: true });
+      if (!ergebnis.ok && !ergebnis.abgebrochen) sendToast("Die Folge hat weiterhin keine spielbare Quelle");
+    }
+  });
+}
+
+function direktFallbackErfolg(versuch) {
+  direktAnbieterFallback.erfolg(versuch);
+}
 
 function direktAuftragBeginnen() {
   direktLaden.abort();
@@ -10293,6 +10360,7 @@ function menschentorFensterPositionieren(view, masse = menschentorFenster?.masse
  * Danach verschwindet sie wieder, und der Player kommt zurueck nach oben.
  */
 async function menschentorLoesenLassen(provider, view, optionen = {}) {
+  if (anbieterSeitenAnsicht.offen) return false;
   if (!mainWindow || mainWindow.isDestroyed() || !isLiveView(view)) return false;
   if (optionen.signal?.aborted || (optionen.gueltig && !optionen.gueltig())) return false;
   const wer = String(optionen.wer || "Der Anbieter");
@@ -11693,6 +11761,7 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   const signal = optionen.signal || direktAuftragBeginnen();
   const abgebrochen = () => signal.aborted || (optionen.istAktuell && !optionen.istAktuell());
   if (abgebrochen()) return { ok: false, abgebrochen: true };
+  const anbieterVersuch = direktFallbackStarten(provider, url, signal, optionen);
   const gelesen = optionen.links?.length
     ? { view: getProviderView(provider), links: optionen.links }
     : await werkbankLesen(provider, url, async (view) => ({
@@ -11752,6 +11821,7 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
     if (abgebrochen()) return { ok: false, abgebrochen: true };
   }
   if (!ergebnis.ok) return { ...ergebnis, hosterliste: ergebnis.hosterliste || gelesen.links };
+  direktFallbackErfolg(anbieterVersuch);
 
   // Ein Aufgehen auf Ansage der Runde (Schranke, Warteschlange) bringt seinen
   // Zustand schon mit; nur der eigene Einstieg muss fragen.
@@ -11933,10 +12003,15 @@ async function ersteFolgeVorladen(provider, url, stand, signal = direktLaden.sig
  */
 async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen(), optionen = {}) {
   if (!direktModus(url) || !providerModel.isHttpUrl(url)) return;
+  const anbieterVersuch = direktFallbackStarten(provider, url, signal, optionen);
   const links = await werkbankLesen(provider, url, (view) => direktLinksLesen(provider, view, url),
     () => !signal.aborted);
   if (signal.aborted) return;
   if (!links) {
+    if (anbieterVersuch) {
+      await direktAuswahlOeffnen(provider, url, { signal });
+      return;
+    }
     await direktZurueckZurOberflaeche("Die Seite des Anbieters lädt nicht");
     return;
   }
@@ -12037,6 +12112,10 @@ async function direktUebernehmen(provider, url, signal = direktAuftragBeginnen()
 
   // Startseite, Katalog, Suche des Anbieters - dafuer gibt es die eigene
   // Oberflaeche, und die ist besser.
+  if (anbieterVersuch) {
+    await direktAuswahlOeffnen(provider, url, { signal });
+    return;
+  }
   await direktZurueckZurOberflaeche("Die Anbieterseite bleibt im Hintergrund — hier geht es weiter");
 }
 

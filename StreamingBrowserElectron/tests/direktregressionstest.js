@@ -27,6 +27,7 @@ function kontext(werte, namen, text = haupt) {
   const stand = vm.createContext({ console: still, AbortController, AbortSignal, URL,
     folgenWerkbaenkeSchliessen() {},
     merkeGeoeffneteFolge() {},
+    direktFallbackStarten() { return null; }, direktFallbackErfolg() {},
     spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, spielerCfAbbrechen() {},
     spielerCfVersuche: new Map(), spielerCfErfolgGemeldet: new Set(), spielerCfWeiterhinGemeldet: new Set(), ...werte });
   const dependencies = text === haupt ? ["watchpartyAdresseFuerProvider"] : [];

@@ -70,6 +70,7 @@ app.whenReady().then(async () => {
     return main.slice(start, main.indexOf("\n}", start) + 2);
   };
   const c = vm.createContext({ mainWindow: fenster, spielerView: player, verifizierungstor,
+    anbieterSeitenAnsicht: { offen: false },
     menschentorFenster: null, MENSCHENTOR_FRIST_MS: 4000, VIEW_BACKGROUND_COLOR: "#070a10", setTimeout,
     sendToast: () => {}, spielerLageSetzen: () => {}, torKlickZeit: new Map(), console,
     spielerMiniAktiv: false, cfLog: () => {},

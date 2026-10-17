@@ -29,6 +29,7 @@ const bruecke = window.elfixSpieler || {
   aufAuftrag() {}, aufNaechste() {}, aufMarke() {}, aufSteuern() {}, bereit() {}, autoplay() {}, schlussNachFolge() {}, stand() {},
   skipSegmente() {}, aufSkipEinstellung() {}, untertitelMerken() {}, upscalingSetzen() {},
   fehler() {}, schliessen() {}, vollbild() {}, miniStatus() {}, folgen() {}, wechseln() {}, hoster() {}, filler() { return Promise.resolve(null); },
+  anbieterSeite() { return Promise.resolve("fehlgeschlagen"); },
   sprung() {}, takt() {}, aktion() {}, aufLeiste() {}, tempo() {}, aufTempo() {},
   chatStatus() { return Promise.resolve({ active: false, messages: [] }); }, chatSenden() { return Promise.resolve({ ok: false }); }, aufChat() {}
 };
@@ -419,6 +420,9 @@ const knopfTon = document.getElementById("ton");
 const knopfWeiter = document.getElementById("weiterKnopf");
 const knopfAuto = document.getElementById("autoKnopf");
 const knopfMini = document.getElementById("miniKnopf");
+const hosterSeiteBedienung = document.getElementById("hosterSeiteBedienung");
+const knopfHosterSeite = document.getElementById("hosterSeiteKnopf");
+const hosterSeiteHinweis = document.getElementById("hosterSeiteHinweis");
 const knopfMarke = document.getElementById("marke");
 const anzeigeStelle = document.getElementById("stelle");
 const anzeigeDauer = document.getElementById("dauer");
@@ -2266,6 +2270,18 @@ knopfVor.addEventListener("click", () => springen(10));
 document.getElementById("ton").addEventListener("click", tonUmschalten);
 document.getElementById("gross").addEventListener("click", () => bruecke.vollbild(true));
 document.getElementById("zu").addEventListener("click", () => beenden("knopf"));
+knopfHosterSeite.addEventListener("click", async () => {
+  const aktuell = auftrag;
+  if (!aktuell || aktuell.adresse || knopfHosterSeite.disabled) return;
+  knopfHosterSeite.disabled = true;
+  hosterSeiteHinweis.hidden = true;
+  const ergebnis = await Promise.resolve().then(() => bruecke.anbieterSeite(aktuell.id))
+    .catch(() => "fehlgeschlagen");
+  if (auftrag !== aktuell) return;
+  knopfHosterSeite.disabled = false;
+  hosterSeiteHinweis.textContent = "Die Hoster-Seite konnte nicht geöffnet werden.";
+  hosterSeiteHinweis.hidden = ergebnis !== "fehlgeschlagen";
+});
 document.getElementById("zurueckZumHoster").addEventListener("click", () => {
   fehlerKasten.hidden = true;
   spielenZeichnen();
@@ -2822,6 +2838,9 @@ function starten(neuerAuftrag) {
   spulVorschau.quelle({});
   vorschauQuelle = "";
   auftrag = neuerAuftrag || {};
+  hosterSeiteBedienung.hidden = Boolean(auftrag.adresse);
+  knopfHosterSeite.disabled = false;
+  hosterSeiteHinweis.hidden = true;
   untertitelVorgabe = window.ElfixUntertitelwahl.normalisieren(auftrag.untertitel);
   skipGeneration++;
   skipSegmente = [];
