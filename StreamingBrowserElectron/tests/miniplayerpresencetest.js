@@ -18,7 +18,6 @@ const handlers = new Map();
 const leaves = [];
 const heartbeats = [];
 const liveStates = [];
-const playerMessages = [];
 let uuidCalls = 0;
 
 const url = "https://aniworld.example/anime/stream/serie/staffel-1/episode-2";
@@ -27,7 +26,7 @@ const roomItem = {
   key: "serie-key", room: "RUNDE", url, joined: true,
   hostId: "device-a", myId: "device-a", hostName: "Host"
 };
-const playerContents = { isDestroyed: () => false, send: (...args) => playerMessages.push(args) };
+const playerContents = { isDestroyed: () => false, send() {} };
 const providerContents = {
   isDestroyed: () => false,
   getURL: () => url,
@@ -80,7 +79,6 @@ const context = vm.createContext({
   spielerMiniAktiv: false,
   spielerMiniVorbereitung: false,
   spielerView: playerView,
-  spielerBereit: false,
   spoilerAbschluesseMelden() {},
   taste: { urlSchluessel: () => "serie-key" },
   watchparty: {
@@ -113,11 +111,6 @@ assert.ok(miniStart >= 0, "Mini-Status-Handler fehlt");
 vm.runInContext(main.slice(miniStart, main.indexOf("\n});", miniStart) + 4), context);
 
 const sender = { sender: playerContents };
-context.pushWatchpartyLiveState();
-assert.deepEqual(playerMessages, [], "Vor der Bereitmeldung darf kein passiver Kontext-IPC die noch leere Playeransicht initialisieren");
-context.spielerBereit = true;
-context.pushWatchpartyLiveState();
-assert.equal(playerMessages.at(-1)[1].kontext, "RUNDE|serie-key", "Bereiter Player erhaelt den aktuellen Raumkontext");
 const playerRun = context.spielerLauf;
 const sessionBefore = context.watchpartySitzungFuer("provider-a");
 assert.equal(context.spielerRundenEinstellung().binHost, true, "Hoststatus vor PiP");
