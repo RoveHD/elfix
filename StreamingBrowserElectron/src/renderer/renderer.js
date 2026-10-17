@@ -7248,6 +7248,9 @@ async function openFavoriteEntry(favorite, options = {}) {
   }
 
   const state = await api.openFavorite(favorite.oeffnenId || favorite.id, options);
+  // Der eigene Player hat keinen Anbieter-Vorhang und sendet deshalb auch
+  // kein autostart-done. Main weiss, ob ueberhaupt noch ein Vorhang wartet.
+  if (waitForAutostart && state?.autostartPending === false) autostartPending = false;
   activeProviderId = state?.activeProviderId || activeProviderId;
   favorites = state?.favorites || favorites;
   renderProviders();

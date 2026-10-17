@@ -2021,7 +2021,7 @@ async function favoritOeffnen(favoriteId, options = {}) {
     fullscreen: Boolean(options?.autoplay && options?.fullscreen)
   });
   if (options?.autoplay) scheduleProviderAutoplay(provider, activeView, { fullscreen: Boolean(options?.fullscreen) });
-  return activeState();
+  return { ...activeState(), autostartPending: Boolean(pendingAutostart) };
 }
 
 ipcMain.handle("favorites:repair-thumbnail", async (_event, favoriteId, force = false) => {
@@ -3402,7 +3402,9 @@ async function navigateProvider(provider, url, optionen = {}) {
   // alte Adresse, und die Werkbank haette dieselbe Seite noch einmal geholt.
   // Das kostet nichts an Richtigkeit und alles an Zeit bis zum ersten Bild.
   if (direktModus(target)) {
-    direktUebernehmen(provider, target, signal, optionen).catch(() => {});
+    direktUebernehmen(provider, target, signal, optionen).catch(error => {
+      console.error(`[ELFIX DIREKT] ${kurzeUrl(target)}: ${error?.stack || error}`);
+    });
     return;
   }
 
@@ -11379,7 +11381,9 @@ async function direktSpielerOeffnen(provider, url, ergebnis, optionen = {}) {
     });
   }
 
-  await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(() => {});
+  await view.webContents.loadFile(path.join(__dirname, "renderer", "spieler.html")).catch(error => {
+    console.error(`[ELFIX DIREKT] Playerseite laden: ${error?.stack || error}`);
+  });
   if (spielerView !== view || optionen.signal?.aborted) return false;
   mainWindow.contentView.addChildView(view);
   spielerLageSetzen();

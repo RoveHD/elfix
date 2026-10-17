@@ -2,7 +2,7 @@
 
 // One complete desktop app per child process. Only provider/hoster responses
 // are fixtures; Main, renderer, preload, player and relay traffic are real.
-const { app, webContents, net } = require("electron");
+const { app, BrowserWindow, webContents, net } = require("electron");
 const fs = require("node:fs"), path = require("node:path"), http = require("node:http");
 const config = JSON.parse(process.env.ELFIX_THREE_PC_CONFIG);
 app.setPath("appData", config.profile);
@@ -44,7 +44,14 @@ const page = episode => `<!doctype html><meta charset="utf-8"><title>${title} S0
   <button class="link-box" data-play-url="/r?t=${episode}" data-provider-name="VOE" data-language-label="Deutsch">VOE</button>`;
 let heldEpisode = 0;
 const heldResponses = new Set();
+const mediaRequests = [];
 const mediaServer = http.createServer(async (request, response) => {
+  const trace = { at: Date.now(), url: request.url, method: request.method, range: request.headers.range,
+    origin: request.headers.origin, referer: request.headers.referer };
+  mediaRequests.push(trace);
+  if (mediaRequests.length > 100) mediaRequests.shift();
+  response.on("finish", () => { trace.finished = true; });
+  response.on("close", () => { trace.closed = true; });
   const episode = Number(request.url.match(/(\d+)\.mp4/)?.[1]);
   if (heldEpisode === episode) await new Promise(resolve => {
     heldResponses.add(resolve);
@@ -54,15 +61,20 @@ const mediaServer = http.createServer(async (request, response) => {
   const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range || "");
   const from = match ? Number(match[1]) : 0;
   const to = match?.[2] ? Math.min(Number(match[2]), media.length - 1) : media.length - 1;
+  trace.status = match ? 206 : 200;
   response.writeHead(match ? 206 : 200, { "content-type": "audio/wav", "accept-ranges": "bytes",
     "content-length": String(to - from + 1), ...(match ? { "content-range": `bytes ${from}-${to}/${media.length}` } : {}) });
   response.end(media.subarray(from, to + 1));
 });
 const mediaReady = new Promise(resolve => mediaServer.listen(0, "127.0.0.1", resolve));
+const fixtureRequests = [], fixtureSessions = [], contentsEvents = [];
+const note = (list, value) => { list.push({ at: Date.now(), ...value }); if (list.length > 100) list.shift(); };
 app.on("session-created", ses => {
+  fixtureSessions.push(ses.getStoragePath());
   // The player's own production transport forwards to this provider session.
   if (!String(ses.getStoragePath()).endsWith("streaming-browser")) return;
   const respond = async request => {
+    note(fixtureRequests, { method: request.method, url: request.url });
     const url = new URL(request.url);
     if (url.hostname === "localhost" && Number(url.port) === mediaServer.address().port) {
       return net.fetch(request, { bypassCustomProtocolHandlers: true });
@@ -85,10 +97,34 @@ app.on("session-created", ses => {
 });
 
 let shell;
+app.on("web-contents-created", (_event, contents) => {
+  note(contentsEvents, { id: contents.id, created: true });
+  contents.on("did-start-navigation", (_e, url, _inPlace, mainFrame) => {
+    if (mainFrame) note(contentsEvents, { id: contents.id, navigation: url });
+  });
+  for (const event of ["dom-ready", "did-frame-finish-load", "did-finish-load", "did-stop-loading", "unresponsive", "responsive"]) {
+    contents.on(event, () => note(contentsEvents, { id: contents.id, event,
+      pid: contents.getOSProcessId(), url: contents.getURL() }));
+  }
+  contents.on("destroyed", () => note(contentsEvents, { id: contents.id, destroyed: true }));
+  contents.on("did-fail-load", (_e, code, description, url) => note(contentsEvents, { id: contents.id, code, description, url }));
+  contents.on("console-message", details => note(contentsEvents, { id: contents.id, message: details.message }));
+  contents.on("render-process-gone", (_e, details) => note(contentsEvents, { id: contents.id, gone: details }));
+  contents.on("did-finish-load", () => {
+    if (!contents.getURL().endsWith("/spieler.html")) return;
+    contents.executeJavaScript(`for (const type of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','suspend','error']) {
+      document.querySelector('video').addEventListener(type, event => console.log('fixture-media:' + JSON.stringify({
+        type:event.type,ready:event.target.readyState,network:event.target.networkState,src:event.target.currentSrc,
+        error:event.target.error?.message
+      })));
+    }`).catch(error => note(contentsEvents, { id: contents.id, observationError: error.message }));
+  });
+});
 app.on("browser-window-created", (_event, window) => {
-  window.setOpacity(0);
-  window.show = () => {};
-  window.showInactive = () => {};
+  window.setOpacity(process.env.CI ? 1 : 0);
+  // Keep the real visible-window lifecycle without foregrounding or painting
+  // test windows. Permanently hidden windows can defer Chromium media loads.
+  window.show = () => window.showInactive();
   window.webContents.setAudioMuted(true);
   window.webContents.on("did-finish-load", () => {
     if (!window.webContents.getURL().endsWith("/index.html")) return;
@@ -108,6 +144,27 @@ process.on("message", async message => {
       heldResponses.clear(); result = true;
     }
     else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
+    else if (message.action === "diagnostics") result = {
+      at: Date.now(), locale: app.getLocale(), versions: process.versions, config, fixtureSessions, fixtureRequests, contentsEvents,
+      mediaRequests, mediaAddress: mediaServer.address(), metrics: app.getAppMetrics(),
+      windows: BrowserWindow.getAllWindows().map(window => ({ visible: window.isVisible(),
+        minimized: window.isMinimized(), opacity: window.getOpacity(), bounds: window.getBounds() })),
+      heldEpisode, pendingResponses: heldResponses.size,
+      contents: webContents.getAllWebContents().map(wc => ({ id: wc.id,
+        pid: wc.getOSProcessId(), url: wc.getURL(), title: wc.getTitle(), loading: wc.isLoading() }))
+    };
+    else if (message.action === "diagnostic-pages") {
+      const bounded = work => Promise.race([work.catch(error => ({ error: error.stack })),
+        new Promise(resolve => setTimeout(() => resolve({ error: "Diagnostic page query exceeded 1500ms" }), 1500))]);
+      result = {
+        contents: await Promise.all(webContents.getAllWebContents().map(async wc => ({ id: wc.id,
+          page: await bounded(wc.executeJavaScript("({url:location.href,title:document.title,visibility:document.visibilityState,body:document.body?.innerText.slice(0,2000)})")) }))),
+        state: shell && await bounded(shell.webContents.executeJavaScript(`(async () => ({
+        init: await streamingBrowser.init(), live:watchpartyLiveOn,room:watchpartyLiveRoom,
+        route:currentRoute,startRuhe,
+        items:await streamingBrowser.getWatchpartyItems(),status:await streamingBrowser.getWatchpartyStatus()
+      }))()`, true)) };
+    }
     else if (message.action === "player") result = player() ? await player().executeJavaScript(message.code, true) : null;
     else result = await shell.webContents.executeJavaScript(message.code, true);
     process.send?.({ id: message.id, result });
