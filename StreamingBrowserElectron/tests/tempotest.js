@@ -137,10 +137,12 @@ function geraet(name) {
   const nachrichten = [];
   const eingang = [];
   let zustand = [];
+  let angemeldet = false;
   const raeume = new WatchpartyRaeume({
     WebSocketKlasse: WS,
     onControl: (nachricht) => steuerung.push(nachricht),
     onState: (eintraege) => { zustand = eintraege; },
+    onConnection: (_raum, verbunden) => { angemeldet = verbunden; },
     onWatchstate: () => {}
   });
   raeume.konfigurieren({
@@ -161,6 +163,7 @@ function geraet(name) {
   }
   return {
     name, raeume, steuerung, gesendet, nachrichten, eingang,
+    angemeldet: () => angemeldet,
     eintrag: () => zustand.find((wert) => wert.key === KEY) || null,
     letzte: (aktion) => [...steuerung].reverse().find((wert) => wert.action === aktion) || null
   };
@@ -199,7 +202,11 @@ async function gemeinsamStarten(host, gast) {
 (async () => {
   const host = geraet("Host");
   const gast = geraet("Gast");
-  await warteBis(() => host.raeume.status().rooms?.[0]?.connected && gast.raeume.status().rooms?.[0]?.connected);
+  // Ein offener Socket ist noch keine bestaetigte Anmeldung. Erst das erste
+  // state bestaetigt die Identitaet; vorher verwirft senden() ein share.
+  if (!await warteBis(() => host.angemeldet() && gast.angemeldet())) {
+    throw new Error("Das Relay hat nicht beide Geraeteidentitaeten bestaetigt");
+  }
 
   host.raeume.teilen({
     key: KEY, url: FOLGE, title: "Bleach", providerName: "AniWorld", type: "serie", season: 1, episode: 4
@@ -222,11 +229,11 @@ async function gemeinsamStarten(host, gast) {
   // Beitrittsreihenfolge. Erst dessen Meldung verarbeiten lassen, dann den
   // zweiten Player melden; zwei gleichzeitige WebSocket-Pakete waeren kein
   // belastbarer Test dafuer, wer die Runde fuehrt.
-  await warteBis(() => host.eintrag()?.hostId === host.eintrag()?.myId);
+  await warteBis(() => Boolean(host.eintrag()?.myId) && host.eintrag()?.hostId === host.eintrag()?.myId);
   gast.raeume.meldeStand(KEY, { position: 300, paused: false, url: FOLGE, season: 1, episode: 4, playerSessionId: "gast-sitzung" }, RAUM);
   await schlaf(300);
 
-  const wirklichHost = host.eintrag()?.hostId === host.eintrag()?.myId;
+  const wirklichHost = Boolean(host.eintrag()?.myId) && host.eintrag()?.hostId === host.eintrag()?.myId;
   pruefe("Der Einsteller ist Host der Runde", wirklichHost, host.eintrag()?.hostName || "");
 
   // --- Das Tempo des Hosts gilt fuer alle ---

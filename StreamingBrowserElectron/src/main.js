@@ -3336,6 +3336,7 @@ ipcMain.handle("data:confirm-reset", async () => {
 });
 
 async function navigateProvider(provider, url, optionen = {}) {
+  url = watchpartyAdresseFuerProvider(provider, url);
   if (!spielerMiniBehalten()) direktSpielerSchliessen("navigation");
   const signal = direktAuftragBeginnen();
   if (pendingAutostart && pendingAutostart.providerId !== provider.id) {
@@ -8838,13 +8839,13 @@ async function prepareWatchpartySync(eintrag, nachricht, istAktuell = () => true
 async function followWatchpartyEpisode(eintrag, nachricht) {
   const ziel = nachricht.url;
   if (!ziel || !watchpartyLiveAktiv(eintrag.key, eintrag.room)) return;
-  if (taste.urlSchluessel(ziel) !== taste.urlSchluessel(eintrag.url)) return;
+  if (watchpartySerienSchluessel(ziel) !== watchpartySerienSchluessel(eintrag.url)) return;
 
   for (const [providerId, view] of providerViews) {
     if (!isLiveView(view)) continue;
     const offen = view.webContents.getURL();
     // Nur Geraete mitnehmen, die bei derselben Serie stehen.
-    if (taste.urlSchluessel(offen) !== taste.urlSchluessel(ziel)) continue;
+    if (watchpartySerienSchluessel(offen) !== watchpartySerienSchluessel(ziel)) continue;
     if (istGleicheFolge(offen, ziel)) continue;
 
     const provider = providers.find((item) => item.id === providerId);
@@ -8886,7 +8887,7 @@ function meldeWatchpartyFolgenwechsel(url) {
   // Eine wirkliche neue Folgenadresse bleibt erlaubt. Darueber meldet der
   // Direktspieler seinen Folgenwechsel, waehrend die Quelle aufgeloest wird.
   if (spielerLauf && episodeIdentity(spielerLauf.url) && !episodeIdentity(url)
-    && taste.urlSchluessel(spielerLauf.url) === taste.urlSchluessel(url)) return;
+    && watchpartySerienSchluessel(spielerLauf.url) === watchpartySerienSchluessel(url)) return;
   const key = watchpartySerieForUrl(url);
   const raum = watchpartyRaumForUrl(url);
   if (!key || !raum || !watchpartyLiveAktiv(key, raum)) return;
@@ -8913,7 +8914,9 @@ async function ohneWatchpartyFolgenwechselEcho(provider, url, arbeit) {
     stille = new Map();
     watchpartyFolgenwechselStumm.set(provider.id, stille);
   }
-  stille.set(token, url);
+  // Die Werkbank laedt am lokalen Anbieter-Alias. Die empfangene Adresse
+  // kann dagegen noch die Domain eines anderen PCs tragen.
+  stille.set(token, watchpartyAdresseFuerProvider(provider, url));
   try {
     return await arbeit();
   } finally {
@@ -8971,8 +8974,47 @@ function uebernehmeWatchpartyRaum(key, raum, vorlaeufigerEintrag = null) {
   sendActiveState();
 }
 
+// Die Raumkennung ist titelbasiert, die Live-Zuordnung muss aber auch die
+// Anbieter-Aliasse erkennen: S.to wird je PC ueber Domain oder konfigurierte
+// IP geoeffnet. Fremde Hosts bleiben getrennt, selbst bei gleichem Serienpfad.
+function watchpartySerienSchluessel(adresse) {
+  try {
+    const url = new URL(adresse);
+    const host = url.hostname.toLowerCase();
+    const sto = host === "s.to" || host.endsWith(".s.to")
+      || host === "serienstream.to" || host.endsWith(".serienstream.to")
+      || host === "serienstream.cx" || host.endsWith(".serienstream.cx")
+      || host === "186.2.175.5" // bisherige ELFIX-Standardadresse, auch in gespeicherten Raeumen
+      || enabledProviders().some((provider) => {
+        if (!String(provider.name || "").toLowerCase().includes("s.to")) return false;
+        try { return new URL(provider.startUrl).hostname.toLowerCase() === host; }
+        catch { return false; }
+      });
+    if (sto && /^\/serie\//i.test(url.pathname)) {
+      url.hostname = "s.to";
+      url.port = "";
+      url.pathname = url.pathname.replace(/^\/serie\/stream\//i, "/serie/");
+      return taste.urlSchluessel(url.href);
+    }
+  } catch { /* Ohne gueltige Anbieteradresse gilt der bisherige Vergleich. */ }
+  return taste.urlSchluessel(adresse);
+}
+
+// Ein gespeicherter Raum darf weiter die alte S.to-Domain nennen. Laden wird
+// lokal beim eingestellten Anbieter versucht, ohne die gemeinsame Identitaet
+// oder die Adresse im Raum umzuschreiben.
+function watchpartyAdresseFuerProvider(provider, adresse) {
+  try {
+    if (!String(provider?.name || "").toLowerCase().includes("s.to")
+      || !watchpartySerienSchluessel(adresse).startsWith("s.to/serie/")) return adresse;
+    const url = new URL(adresse);
+    url.pathname = url.pathname.replace(/^\/serie\/stream\//i, "/serie/");
+    return new URL(url.pathname + url.search + url.hash, provider.startUrl).href;
+  } catch { return adresse; }
+}
+
 function istGleicheSerie(links, rechts) {
-  return Boolean(links) && Boolean(rechts) && taste.urlSchluessel(links) === taste.urlSchluessel(rechts);
+  return Boolean(links) && Boolean(rechts) && watchpartySerienSchluessel(links) === watchpartySerienSchluessel(rechts);
 }
 
 // Zurueck auf den eigenen Stand: der Eintrag ohne Raum wird der aktive. Gibt
@@ -9003,7 +9045,7 @@ function aktiverWatchpartyRaum() {
 // "Live beitreten", wenn derselbe Anime in mehreren Raeumen steht.
 function watchpartyRaeumeForUrl(url) {
   return watchpartyShared
-    .filter((eintrag) => eintrag.joined && taste.urlSchluessel(eintrag.url) === taste.urlSchluessel(url))
+    .filter((eintrag) => eintrag.joined && watchpartySerienSchluessel(eintrag.url) === watchpartySerienSchluessel(url))
     .map((eintrag) => ({ room: eintrag.room || "", key: eintrag.key, title: eintrag.title || "" }));
 }
 
@@ -9031,7 +9073,7 @@ function watchpartyGibtFolgeVor(url) {
 // und wer in Folge 2 war, wurde von Folge 3 mitpausiert.
 function istGleicheFolge(links, rechts) {
   if (!links || !rechts) return false;
-  if (taste.urlSchluessel(links) !== taste.urlSchluessel(rechts)) return false;
+  if (watchpartySerienSchluessel(links) !== watchpartySerienSchluessel(rechts)) return false;
 
   // YouTube kennt weder Staffel noch Folge, und der Serienschluessel ist fuer
   // jedes Video derselbe: "www.youtube.com/watch" - die Kennung steckt in der
@@ -9067,7 +9109,7 @@ function watchpartySerieForUrl(url) {
   // ueber die jede Live-Entscheidung der Serien-Watchparty geht.
   if (youtubeModusGiltFuer(url)) return "";
   const treffer = watchpartyShared.find((eintrag) => (
-    eintrag.joined && taste.urlSchluessel(eintrag.url) === taste.urlSchluessel(url)
+    eintrag.joined && watchpartySerienSchluessel(eintrag.url) === watchpartySerienSchluessel(url)
   ));
   return treffer?.key || "";
 }
@@ -11600,6 +11642,7 @@ async function direktFolgeSpielen(provider, url, optionen = {}) {
   if (!provider || !providerModel.isHttpUrl(url)) {
     return { ok: false, grund: "Kein Titel geöffnet" };
   }
+  url = watchpartyAdresseFuerProvider(provider, url);
 
   const signal = optionen.signal || direktAuftragBeginnen();
   const abgebrochen = () => signal.aborted || (optionen.istAktuell && !optionen.istAktuell());
@@ -12150,7 +12193,7 @@ ipcMain.handle("spieler:wechseln", async (ereignis, zielUrl) => {
   if (!providerModel.isHttpUrl(ziel)) return { ok: false, grund: "Adresse nicht erkannt" };
   const runde = spielerRunde();
   if (runde) {
-    if (taste.urlSchluessel(ziel) !== taste.urlSchluessel(spielerLauf.url)) {
+    if (watchpartySerienSchluessel(ziel) !== watchpartySerienSchluessel(spielerLauf.url)) {
       return { ok: false, grund: "Der gemeinsame Wechsel muss in derselben Serie bleiben." };
     }
     if (!watchparty.status().rooms.some(raum => raum.room === runde.raum && raum.connected)) {
@@ -12230,6 +12273,10 @@ ipcMain.handle("direkt:beenden", () => {
 });
 
 async function installWatchpartyControls(provider, view, url) {
+  // Die unsichtbare Werkbank ist kein zweiter Player. Ihr dom-ready wuerde
+  // sonst waehrend der Folgenvorbereitung einen Resync anfordern: dessen
+  // neuere Pause entwertet den noch ladenden gemeinsamen Startauftrag.
+  if (spielerLauf && isLiveView(spielerView)) return;
   const key = pushWatchpartyLiveState(url);
   if (!key) return;
   const raum = watchpartyRaumForUrl(url);
@@ -12317,7 +12364,7 @@ function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
   const adresse = spielerLauf.url;
   if (urteil.tun === "navigate" || (urteil.tun === "syncprepare" && nachricht.reason === "episode-change")) {
     return Boolean(nachricht.url)
-      && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse);
+      && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(adresse);
   }
 
   // Wer eine Folgenvorbereitung verpasst hat, bekommt mit dem gemeinsamen
@@ -12327,7 +12374,7 @@ function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
   if (urteil.tun === "syncstart" && nachricht.url
     && episodeIdentity(nachricht.url) && episodeIdentity(adresse)
     && !istGleicheFolge(nachricht.url, adresse)
-    && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse)) {
+    && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(adresse)) {
     return true;
   }
 
@@ -12335,7 +12382,7 @@ function spielerRundenNachrichtPasst(eintrag, nachricht, urteil) {
   const folgePasst = watchpartyPasstZurFolge(nachricht.episodeId, adresse);
   const staleRundenAdresse = Boolean(nachricht.episodeId)
     && !episodeIdentity(gemeint)
-    && taste.urlSchluessel(gemeint) === taste.urlSchluessel(adresse)
+    && watchpartySerienSchluessel(gemeint) === watchpartySerienSchluessel(adresse)
     && folgePasst;
   return folgePasst && (istGleicheFolge(gemeint, adresse) || staleRundenAdresse);
 }
@@ -12532,7 +12579,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
 
   if (urteil.tun === "syncprepare" && nachricht.reason === "episode-change"
     && nachricht.url && !istGleicheFolge(nachricht.url, adresse)) {
-    if (taste.urlSchluessel(nachricht.url) !== taste.urlSchluessel(adresse)) return false;
+    if (watchpartySerienSchluessel(nachricht.url) !== watchpartySerienSchluessel(adresse)) return false;
     /*
      * Dieselbe Vorbereitung zweimal ist keine zweite.
      *
@@ -12612,7 +12659,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
   if (urteil.tun === "syncstart" && nachricht.url
     && episodeIdentity(nachricht.url) && episodeIdentity(adresse)
     && !istGleicheFolge(nachricht.url, adresse)
-    && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(adresse)) {
+    && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(adresse)) {
     const provider = spielerAnbieter();
     if (!provider) return false;
     const geladen = await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
@@ -12636,7 +12683,7 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
   if (urteil.tun === "navigate") {
     if (!nachricht.url || istGleicheFolge(nachricht.url, adresse)) return true;
     // Nur innerhalb derselben Serie: niemand soll ungefragt woanders landen.
-    if (taste.urlSchluessel(nachricht.url) !== taste.urlSchluessel(adresse)) return false;
+    if (watchpartySerienSchluessel(nachricht.url) !== watchpartySerienSchluessel(adresse)) return false;
     const provider = spielerAnbieter();
     if (!provider) return false;
     await ohneWatchpartyFolgenwechselEcho(provider, nachricht.url,
@@ -12656,9 +12703,12 @@ async function spielerSteuernAusRunde(eintrag, nachricht, urteil, binHost, istAk
   // Gleichziehen: anhalten, genau auf die Stelle des Hosts. Der Host haelt nur
   // an, wo er ohnehin steht - seine Stelle ist ja das Ziel.
   if (urteil.tun === "syncprepare") {
-    const bereitId = `${eintrag.room}:${nachricht.key}:${nachricht.syncId || nachricht.sequenceId}`;
-    spielerSyncBereit = { id: bereitId, key: eintrag.key, raum: eintrag.room,
-      syncId: nachricht.syncId, auftragId: spielerLauf.id };
+    // Gleichziehen ohne syncId ist eine abschliessende Pause. Nur eine echte
+    // Startschranke fordert Ready an und hebt die Sperre spaeter per syncstart
+    // auf; auf eine sequenceId kann das Relay keine Bereitmeldung zuordnen.
+    const bereitId = nachricht.syncId ? `${eintrag.room}:${nachricht.key}:${nachricht.syncId}` : "";
+    spielerSyncBereit = bereitId ? { id: bereitId, key: eintrag.key, raum: eintrag.room,
+      syncId: nachricht.syncId, auftragId: spielerLauf.id } : null;
     spielerBefehl({
       tun: "stelle",
       stelle: watchpartySync.zielZeitBerechnen(ereignis, watchparty.serverJetzt(eintrag.room)),
@@ -12892,20 +12942,20 @@ function watchpartySteuerungHatZiel(eintrag, nachricht, urteil) {
     const offen = view.webContents.getURL();
     if (urteil.tun === "navigate") {
       if (nachricht.url
-        && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
+        && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(offen)) return true;
       continue;
     }
     // Eine Vorbereitung darf innerhalb derselben Serie erst zur Ziel-Folge
     // navigieren. Alle uebrigen Befehle brauchen die bereits offene Folge.
     if (urteil.tun === "syncprepare" && nachricht.url
-      && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
+      && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(offen)) return true;
     // Derselbe Nachholfall wie beim eigenen Player: ein gemeinsamer Start ist
     // zugleich die sichere zweite Chance fuer ein Geraet, das die
     // Vorbereitung der neuen Folge verpasst hat.
     if (urteil.tun === "syncstart" && nachricht.url
       && episodeIdentity(nachricht.url) && episodeIdentity(offen)
       && !istGleicheFolge(nachricht.url, offen)
-      && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen)) return true;
+      && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(offen)) return true;
     if (istGleicheFolge(gemeint, offen)
       && watchpartyPasstZurFolge(nachricht.episodeId, offen)) return true;
   }
@@ -12979,7 +13029,7 @@ async function applyWatchpartyControl(nachricht) {
       const offen = view.webContents.getURL();
       return Boolean(episodeIdentity(nachricht.url) && episodeIdentity(offen)
         && !istGleicheFolge(nachricht.url, offen)
-        && taste.urlSchluessel(nachricht.url) === taste.urlSchluessel(offen));
+        && watchpartySerienSchluessel(nachricht.url) === watchpartySerienSchluessel(offen));
     });
   const nachholAutostarts = new Map();
 
@@ -16390,7 +16440,10 @@ function isAniWorldHost(host) {
 }
 
 function isStoHost(host) {
-  return host === "s.to" || host.endsWith(".s.to") || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+  return host === "s.to" || host.endsWith(".s.to")
+    || host === "serienstream.to" || host.endsWith(".serienstream.to")
+    || host === "serienstream.cx" || host.endsWith(".serienstream.cx")
+    || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
 }
 
 function isAniWorldArtworkUrl(value) {

@@ -10,7 +10,8 @@ const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").rep
 function funktion(name) {
   const start = main.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, name);
-  return main.slice(start, main.indexOf("\n}", start) + 2);
+  const helper = name === "watchpartySerienSchluessel" ? "" : funktion("watchpartySerienSchluessel") + "\n";
+  return helper + main.slice(start, main.indexOf("\n}", start) + 2);
 }
 const folge = n => `https://aniworld.to/anime/stream/bleach/staffel-1/episode-${n}`;
 const eintrag = { key: "serie:bleach", room: "probe", url: folge(2) };
@@ -384,6 +385,17 @@ async function pruefen() {
   assert.equal(await context.spielerSteuernAusRunde(eintrag, start, { tun: "syncstart" }, false, () => aktuell), true);
   assert.equal(nochmalGeladen, false, "Derselbe Start lud die schon offene Folge erneut");
   context.direktFolgeSpielen = vorher;
+
+  // Der Synchronisieren-Knopf beendet sich als Pause, ohne Startbarriere.
+  // Seine syncprepare-Nachricht hat absichtlich keine syncId: eine lokale
+  // bereitId aus sequenceId wuerde den Player deshalb dauerhaft sperren.
+  const nurAnhalten = { ...prepare, url: folge(2), reason: undefined, syncId: undefined, sequenceId: 120 };
+  await context.spielerSteuernAusRunde(eintrag, nurAnhalten, { tun: "syncprepare" }, false);
+  assert.equal(befehle.at(-1).bereitId, "", "Gleichziehen ohne Startschranke sperrt keinen Player");
+  assert.equal(context.spielerSyncBereit, null);
+  await context.spielerSteuernAusRunde(eintrag, { ...nurAnhalten, syncId: "echter-start" }, { tun: "syncprepare" }, false);
+  assert.ok(befehle.at(-1).bereitId, "Eine echte Startschranke fordert weiterhin Player-Bereitschaft");
+  assert.equal(context.spielerSyncBereit.syncId, "echter-start");
 
   // Eine andere Serie bleibt tabu - niemand landet ungefragt woanders.
   context.spielerLauf = { id: 7, url: "https://aniworld.to/anime/stream/andere/staffel-1/episode-1" };

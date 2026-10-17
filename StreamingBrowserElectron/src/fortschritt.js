@@ -565,7 +565,8 @@ function isAllowedResultHost(targetHost, baseHost, provider) {
   if (target.endsWith(`.${base}`) || base.endsWith(`.${target}`)) return true;
   if (providerHost && (target.endsWith(`.${providerHost}`) || providerHost.endsWith(`.${target}`))) return true;
   if (name.includes("aniworld")) return target.includes("aniworld");
-  if (name === "s.to" || name.includes("s.to")) return target === "s.to" || target.endsWith(".s.to") || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(target);
+  if (name.includes("s.to")) return ["s.to", "serienstream.to", "serienstream.cx"]
+    .some(host => target === host || target.endsWith(`.${host}`)) || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(target);
   if (name.includes("filmo")) return target.includes("filmo");
   return false;
 }

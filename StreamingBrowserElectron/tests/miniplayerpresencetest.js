@@ -97,7 +97,7 @@ const context = vm.createContext({
 });
 
 for (const name of [
-  "watchpartyEintrag", "liveMerker", "watchpartyLiveAktiv", "aktiverWatchpartyRaum",
+  "watchpartySerienSchluessel", "watchpartyEintrag", "liveMerker", "watchpartyLiveAktiv", "aktiverWatchpartyRaum",
   "watchpartyRaeumeForUrl", "watchpartyRaumForUrl", "watchpartySerieForUrl",
   "watchpartyLiveKeyForUrl", "pushWatchpartyLiveState", "sendActiveState",
   "spielerMiniBehalten", "werkbankNachMiniZurueck", "spielerLageSetzen",

@@ -18,7 +18,8 @@ const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8").rep
 function funktion(name) {
   const start = main.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} fehlt`);
-  return main.slice(start, main.indexOf("\n}", start) + 2);
+  const helper = name === "watchpartySerienSchluessel" ? "" : funktion("watchpartySerienSchluessel") + "\n";
+  return helper + main.slice(start, main.indexOf("\n}", start) + 2);
 }
 
 // Zuerst die eine Autoritaetsregel selbst. Ein privater Player bleibt frei;
@@ -81,6 +82,7 @@ async function pruefeFolgenwechselEcho() {
     meldeWatchpartyFolgenwechsel: (url) => { meldungen.push(url); }
   });
   vm.runInContext([
+    funktion("watchpartyAdresseFuerProvider"),
     funktion("meldeWatchpartyFolgenwechselAusNavigation"),
     funktion("ohneWatchpartyFolgenwechselEcho")
   ].join("\n"), kontext);
@@ -188,7 +190,7 @@ const kontext = vm.createContext({
 
 const hosterStart = main.indexOf('ipcMain.handle("spieler:hoster"');
 const hosterEnd = main.indexOf('ipcMain.handle("direkt:beenden"', hosterStart);
-vm.runInContext(main.slice(hosterStart, hosterEnd), kontext);
+vm.runInContext(funktion("watchpartySerienSchluessel") + "\n" + main.slice(hosterStart, hosterEnd), kontext);
 
 // Ein Gast wird abgewiesen, bevor Sprache, Rundenzustand oder Quelle veraendert
 // werden. Damit kann auch ein von Hand ausgeloester IPC-Aufruf die UI-Sperre

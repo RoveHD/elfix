@@ -2250,11 +2250,16 @@ wss.on("connection", (socket) => {
       const eintrag = raum.titel.get(text(nachricht.key, 300));
       if (!eintrag) return;
       if (nachricht.type === "enter") {
+        const warMitglied = eintrag.members.has(socket.geraetId);
         eintrag.members.set(socket.geraetId, socket.name);
         vorgaengerAufraeumen(socket.raum, eintrag, socket);
         if (!(eintrag.spoilerWartet instanceof Set)) eintrag.spoilerWartet = new Set();
         eintrag.spoilerWartet.add(socket.geraetId);
-        syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
+        // Erneutes Enter auf derselben Verbindung ist kein neuer Player.
+        // Sonst wuerde ein schon quittiertes Ready erneut erwartet, waehrend
+        // der Client die identische Vorbereitung als veraltet verwirft.
+        // Echte Wiederanschluesse bekommen sie weiterhin im Join-Pfad.
+        if (!warMitglied) syncTeilnehmerNachtragen(socket.raum, eintrag, socket);
       } else {
         eintrag.members.delete(socket.geraetId);
         eintrag.spoiler?.delete(socket.geraetId);

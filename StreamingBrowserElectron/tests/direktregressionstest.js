@@ -24,11 +24,12 @@ function kontext(werte, namen, text = haupt) {
   // Ausgezogene Main-Funktionen werden isoliert ausgefuehrt. Seit der
   // Geraete-Abgleich auch den lokalen Playerstand erhaelt, ist dies eine
   // weitere Seitengrenze des Harnesses, keine Aufgabe der getesteten Logik.
-  const stand = vm.createContext({ console: still, AbortController, AbortSignal,
+  const stand = vm.createContext({ console: still, AbortController, AbortSignal, URL,
     folgenWerkbaenkeSchliessen() {},
     spielerMiniAktiv: false, spielerLauf: null, geraeteWiedergabeMelden() {}, spielerCfAbbrechen() {},
     spielerCfVersuche: new Map(), spielerCfErfolgGemeldet: new Set(), spielerCfWeiterhinGemeldet: new Set(), ...werte });
-  vm.runInContext(namen.map((name) => funktion(text, name)).join("\n"), stand);
+  const dependencies = text === haupt ? ["watchpartyAdresseFuerProvider"] : [];
+  vm.runInContext([...dependencies, ...namen].map((name) => funktion(text, name)).join("\n"), stand);
   return stand;
 }
 function offen() {

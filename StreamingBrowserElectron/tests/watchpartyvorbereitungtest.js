@@ -10,6 +10,8 @@ const zielStart = main.indexOf("function spielerRundenNachrichtPasst(");
 const zielSource = main.slice(zielStart, main.indexOf("\n}\n", zielStart) + 2);
 const zielListeStart = main.indexOf("function watchpartySteuerungHatZiel(");
 const zielListeSource = main.slice(zielListeStart, main.indexOf("\n}\n", zielListeStart) + 2);
+const serienStart = main.indexOf("function watchpartySerienSchluessel(");
+const serienSource = main.slice(serienStart, main.indexOf("\n}\n", serienStart) + 2);
 async function pruefen(phase) {
   let aktuell = true, ausfuehrungen = 0, bereit = 0, fortsetzen;
   const pause = new Promise(resolve => { fortsetzen = resolve; });
@@ -81,7 +83,7 @@ async function pruefen(phase) {
     watchpartyLiveAktiv: () => true,
     watchpartyAngeklinkt: new Set()
   });
-  vm.runInContext(navigationSource, navigation);
+  vm.runInContext(`${serienSource}\n${navigationSource}`, navigation);
   navigation.meldeWatchpartyFolgenwechsel(`${serie}/staffel-1`);
   assert.equal(gesendet.length, 0, "hidden season-page read was reported as the playing episode");
   navigation.meldeWatchpartyFolgenwechsel(`${serie}/staffel-1/episode-7`);
@@ -106,7 +108,7 @@ async function pruefen(phase) {
     providerViews: new Map([[1, { webContents: { getURL: () => `${serie}/staffel-1/episode-6` } }]]),
     isLiveView: () => true
   });
-  vm.runInContext(`${zielSource}\n${zielListeSource}`, ziel);
+  vm.runInContext(`${serienSource}\n${zielSource}\n${zielListeSource}`, ziel);
   const zielEintrag = { url: `${serie}/staffel-1/episode-6`, live: null };
   assert.equal(ziel.watchpartySteuerungHatZiel(zielEintrag, {
     action: "pause", url: `${serie}/staffel-1/episode-5`, episodeId: "s1e5"

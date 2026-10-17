@@ -47,7 +47,7 @@ const kontext = vm.createContext({
 });
 vm.runInContext([
   "liveMerker", "watchpartyLiveAktiv", "aktiverWatchpartyRaum",
-  "watchpartyRaeumeForUrl", "watchpartyRaumForUrl", "watchpartySerieForUrl",
+  "watchpartySerienSchluessel", "watchpartyRaeumeForUrl", "watchpartyRaumForUrl", "watchpartySerieForUrl",
   "watchpartyLiveKeyForUrl", "watchpartyEintrag", "spielerRunde", "spielerChatStatus"
 ].map(funktion).join("\n"), kontext);
 

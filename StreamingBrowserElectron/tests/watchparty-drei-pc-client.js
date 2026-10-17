@@ -1,0 +1,107 @@
+"use strict";
+
+// One complete desktop app per child process. Only provider/hoster responses
+// are fixtures; Main, renderer, preload, player and relay traffic are real.
+const { app, webContents, net } = require("electron");
+const fs = require("node:fs"), path = require("node:path"), http = require("node:http");
+const config = JSON.parse(process.env.ELFIX_THREE_PC_CONFIG);
+app.setPath("appData", config.profile);
+app.setPath("userData", path.join(config.profile, "browser"));
+app.setAppPath(path.resolve(__dirname, ".."));
+app.disableHardwareAcceleration();
+const data = path.join(config.profile, "ELFIX");
+fs.mkdirSync(data, { recursive: true });
+const write = (name, value) => fs.writeFileSync(path.join(data, name), JSON.stringify(value));
+write("providers.json", [{ id: "sto", name: "S.to", startUrl: config.origin + "/",
+  searchUrl: config.origin + "/suche?term={query}", enabled: true, adblockEnabled: false }]);
+write("settings.json", { migrations: { youtubeProvider: true },
+  adblock: { enabled: false, blockRedirects: false },
+  watchparty: { enabled: true, rooms: [config.room], serverUrl: config.relay, deviceName: config.name },
+  playback: { direktModus: true, pauseOnBlur: false, pauseOnMinimize: false },
+  browser: { cacheMode: "normal" }, home: { showHero: false, showPersonal: false, showYoutube: false } });
+
+// A valid, seekable media file, generated locally; no episode is downloaded.
+const pcm = Buffer.alloc(180 * 8000, 128), media = Buffer.alloc(44 + pcm.length);
+media.write("RIFF"); media.writeUInt32LE(media.length - 8, 4); media.write("WAVEfmt ", 8);
+media.writeUInt32LE(16, 16); media.writeUInt16LE(1, 20); media.writeUInt16LE(1, 22);
+media.writeUInt32LE(8000, 24); media.writeUInt32LE(8000, 28);
+media.writeUInt16LE(1, 32); media.writeUInt16LE(8, 34); media.write("data", 36);
+media.writeUInt32LE(pcm.length, 40); pcm.copy(media, 44);
+const title = "Avatar - Die sieben Häfen", base = "/serie/avatar-die-sieben-hafen";
+const page = episode => `<!doctype html><meta charset="utf-8"><title>${title} S01E0${episode} | SerienStream (S.to)</title>
+  <meta property="og:title" content="${title}"><h1>${title}</h1>
+  <a href="${base}/staffel-1">Staffel 1</a>
+  ${[1, 2, 3].map(n => `<a href="${base}/staffel-1/episode-${n}">Episode ${n}</a>`).join("")}
+  <button class="link-box" data-play-url="/r?t=${episode}" data-provider-name="VOE" data-language-label="Deutsch">VOE</button>`;
+let heldEpisode = 0;
+const heldResponses = new Set();
+const mediaServer = http.createServer(async (request, response) => {
+  const episode = Number(request.url.match(/(\d+)\.mp4/)?.[1]);
+  if (heldEpisode === episode) await new Promise(resolve => {
+    heldResponses.add(resolve);
+    response.once("close", () => { heldResponses.delete(resolve); resolve(); });
+  });
+  if (response.destroyed) return;
+  const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range || "");
+  const from = match ? Number(match[1]) : 0;
+  const to = match?.[2] ? Math.min(Number(match[2]), media.length - 1) : media.length - 1;
+  response.writeHead(match ? 206 : 200, { "content-type": "audio/wav", "accept-ranges": "bytes",
+    "content-length": String(to - from + 1), ...(match ? { "content-range": `bytes ${from}-${to}/${media.length}` } : {}) });
+  response.end(media.subarray(from, to + 1));
+});
+const mediaReady = new Promise(resolve => mediaServer.listen(0, "127.0.0.1", resolve));
+app.on("session-created", ses => {
+  // The player's own production transport forwards to this provider session.
+  if (!String(ses.getStoragePath()).endsWith("streaming-browser")) return;
+  const respond = async request => {
+    const url = new URL(request.url);
+    if (url.hostname === "localhost" && Number(url.port) === mediaServer.address().port) {
+      return net.fetch(request, { bypassCustomProtocolHandlers: true });
+    }
+    if (!["s.to", "serienstream.to", "serienstream.cx", "186.2.175.5"].includes(url.hostname)) return new Response("Fixture: unavailable", { status: 404 });
+    if (url.pathname === "/r") {
+      await mediaReady;
+      return new Response(`<video src="http://localhost:${mediaServer.address().port}/fixture-${url.searchParams.get("t")}.mp4"></video>`,
+        { headers: { "content-type": "text/html" } });
+    }
+    // Model the same title opening under each PC's configured provider address.
+    if (url.origin !== config.origin || url.pathname.startsWith("/serie/stream/")) {
+      return Response.redirect(config.origin + url.pathname.replace("/serie/stream/", "/serie/") + url.search, 302);
+    }
+    await mediaReady;
+    return new Response(page(Number(url.pathname.match(/episode-(\d+)/)?.[1]) || 1), { headers: { "content-type": "text/html" } });
+  };
+  ses.protocol.handle("http", respond);
+  ses.protocol.handle("https", respond);
+});
+
+let shell;
+app.on("browser-window-created", (_event, window) => {
+  window.setOpacity(0);
+  window.show = () => {};
+  window.showInactive = () => {};
+  window.webContents.setAudioMuted(true);
+  window.webContents.on("did-finish-load", () => {
+    if (!window.webContents.getURL().endsWith("/index.html")) return;
+    shell = window;
+    process.send?.({ ready: true });
+  });
+});
+const player = () => webContents.getAllWebContents().find(wc => wc.getURL().endsWith("/spieler.html"));
+process.on("message", async message => {
+  try {
+    let result;
+    if (message.action === "quit") { app.exit(0); return; }
+    if (message.action === "hold") { heldEpisode = message.episode; result = true; }
+    else if (message.action === "release") {
+      heldEpisode = 0;
+      for (const release of heldResponses) release();
+      heldResponses.clear(); result = true;
+    }
+    else if (message.action === "fixture-status") result = { heldEpisode, pendingResponses: heldResponses.size };
+    else if (message.action === "player") result = player() ? await player().executeJavaScript(message.code, true) : null;
+    else result = await shell.webContents.executeJavaScript(message.code, true);
+    process.send?.({ id: message.id, result });
+  } catch (error) { process.send?.({ id: message.id, error: error.stack }); }
+});
+require("../src/main.js");

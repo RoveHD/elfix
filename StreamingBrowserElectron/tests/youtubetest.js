@@ -330,11 +330,10 @@ pruefe("Er uebersteht die Normalisierung unveraendert",
   })());
 pruefe("Jeder Anbieter hat eine eigene Kennung",
   new Set(standard.map((p) => p.id)).size === standard.length);
-// Die drei bisherigen duerfen sich dabei nicht veraendert haben - sie sind das,
-// womit ELFIX seit jeher ausgeliefert wird.
-pruefe("Aniworld, S.to und Filmo sind unveraendert geblieben",
+// YouTube behaelt die anderen Anbieter; S.to nutzt die aktuelle Adresse.
+pruefe("Aniworld, S.to und Filmo bleiben mit ihren aktuellen Adressen erhalten",
   standard.slice(0, 3).map((p) => `${p.name}|${p.startUrl}|${p.sortOrder}`).join(" ")
-  === "Aniworld|https://aniworld.to/|0 S.to|http://186.2.175.5/|1 Filmo|https://filmo.to/|2",
+  === "Aniworld|https://aniworld.to/|0 S.to|https://serienstream.to/|1 Filmo|https://filmo.to/|2",
   standard.slice(0, 3).map((p) => p.name).join(", "));
 // Die neue Adresse muss von allem verstanden werden, was diese Datei kann -
 // sonst stuende YouTube zwar in der Liste, waere aber fuer den Rest fremd.
@@ -354,7 +353,7 @@ pruefe("Der Serienschluessel ist bei allen YouTube-Videos derselbe",
 const wpSync = require("../src/watchparty-sync");
 const sandkastenWP = { URL, taste, youtube: yt, console };
 vm.createContext(sandkastenWP);
-vm.runInContext(["function istGleicheFolge", "function episodeIdentity", "function stripWww"]
+vm.runInContext(["function watchpartySerienSchluessel", "function istGleicheFolge", "function episodeIdentity", "function stripWww"]
   .map((n) => abschnitt(main, n)).join("\n\n"), sandkastenWP);
 const gleich = sandkastenWP.istGleicheFolge;
 const VIDEO_A = "https://www.youtube.com/watch?v=AAA";

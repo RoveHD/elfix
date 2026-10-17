@@ -20,8 +20,8 @@ function defaultProviders() {
     {
       id: createId(),
       name: "S.to",
-      startUrl: "http://186.2.175.5/",
-      searchUrl: "http://186.2.175.5/suche?term={query}",
+      startUrl: "https://serienstream.to/",
+      searchUrl: "https://serienstream.to/suche?term={query}",
       logo: "S.",
       enabled: true,
       adblockEnabled: true,
@@ -184,7 +184,8 @@ function promoteLiteralQueryPlaceholder(value) {
 }
 
 function usesTermSearch(hostname) {
-  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) || hostname === "s.to" || hostname.endsWith(".s.to");
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)
+    || ["s.to", "serienstream.to", "serienstream.cx"].some(host => hostname === host || hostname.endsWith(`.${host}`));
 }
 
 module.exports = {

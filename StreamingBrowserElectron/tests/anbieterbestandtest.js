@@ -64,6 +64,18 @@ function gesperrt(view, url) {
 }
 
 (async () => {
+  assert.equal(providerModel.defaultProviders().find(provider => provider.name === "S.to").startUrl,
+    "https://serienstream.to/");
+  for (const host of ["s.to", "serienstream.to", "serienstream.cx", "www.serienstream.cx"]) {
+    assert.equal(providerModel.buildProviderSearchTemplate(`https://${host}/`), `https://${host}/suche?term={query}`);
+  }
+  assert.equal(providerModel.buildProviderSearchTemplate("https://serienstream.to.example/"),
+    "https://serienstream.to.example/search?q={query}");
+  const sto = { name: "S.to", startUrl: "https://serienstream.to/" };
+  for (const host of ["s.to", "serienstream.to", "serienstream.cx", "186.2.175.5"]) {
+    assert.equal(fortschritt.isAllowedResultHost(host, "serienstream.to", sto), true, host);
+  }
+  assert.equal(fortschritt.isAllowedResultHost("serienstream.to.example", "serienstream.to", sto), false);
   for (const weg of ["speichern", "umziehen"]) {
     const { c, handlers } = buehne();
     const record = c.providers[0], other = c.providers[1], view = c.activeView;

@@ -28,6 +28,18 @@ für alle Beigetretenen derselben Runde. Es gibt immer einen Host — wer zuerst
 dabei war —, an dem sich `⟲ Sync` orientiert. Fällt er weg, übernimmt der
 nächste. Live lässt sich je Raum trennen, ohne die Watchparty zu verlassen.
 
+**S.to-Adressen gehören zur selben Runde.** `s.to`, `serienstream.to`,
+`serienstream.cx` und die bisherige Standard-IP werden für dieselbe Serie und
+Folge gemeinsam erkannt, auch bei alten `/serie/stream/`-Links. Geöffnet wird
+beim lokal eingestellten S.to-Anbieter; neue Installationen verwenden
+`https://serienstream.to/`. Andere Anbieter bleiben getrennt.
+
+**Synchronisieren hält alle an derselben Stelle an.** Danach bleiben die
+Bedienelemente frei, damit die Runde gemeinsam weiterstarten kann. Ein
+wiederholter Beitritt desselben PCs setzt eine bereits bestätigte
+Startbereitschaft nicht zurück. Für diese Korrekturen müssen Desktop-App und
+Relay aktualisiert werden.
+
 **Der Folgenwechsel wartet auf die Runde.** Auch Gäste dürfen die nächste Folge
 wählen. Die verbundenen Teilnehmer laden pausiert und starten erst nach ihren
 Bereitschaftsmeldungen; ein Abbruch, eine verspätete Quelle oder ein
@@ -69,6 +81,10 @@ Runde stimmt ab, und der gewählte Titel läuft danach für alle.
   dazukommt.
 
 YouTube-Runden führen ihre eigene Videoliste mit eigenem Zustand.
+
+Die Warteschlange lässt sich über die Kopfzeile einklappen; ELFIX merkt sich
+die Auswahl. Lange Titel im Glücksrad werden passend zum Segment gekürzt,
+der vollständige Titel bleibt am Segment als Tooltip verfügbar.
 
 ## Chat
 

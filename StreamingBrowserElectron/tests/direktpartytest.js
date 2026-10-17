@@ -216,7 +216,8 @@ function handy(name) {
 function funktion(name) {
   const start = MAIN.search(new RegExp(`(?:async )?function ${name}\\(`));
   assert.ok(start >= 0, `${name} steht nicht in main.js`);
-  return MAIN.slice(start, MAIN.indexOf("\n}", start) + 2);
+  const helper = name === "watchpartySerienSchluessel" ? "" : funktion("watchpartySerienSchluessel") + "\n";
+  return helper + MAIN.slice(start, MAIN.indexOf("\n}", start) + 2);
 }
 
 /**

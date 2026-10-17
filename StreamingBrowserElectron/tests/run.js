@@ -100,6 +100,7 @@ OHNE_RELAY.push("androidraumbestandtest");
 OHNE_RELAY.push("androidgeraetebestandtest");
 OHNE_RELAY.push("rtxvideotest");
 OHNE_RELAY.push("upscalingbedienungtest");
+OHNE_RELAY.push("watchpartystoidentitaettest");
 const MIT_RELAY = ["hosttest", "partytest", "raumkontotest", "synctest", "drifttest", "ytpartytest", "chattest", "geraetetest", "geraeteandroidtest", "sitzungentest", "mitschauentest", "androidwatchpartytest", "direktpartytest", "tempotest", "watchpartymatrixtest", "watchpartyarchivtest", "hostautoritaettest", "hostbleibttest", "ferntest", "joinruecksturztest", "nichthoststelletest", "nachziehentest", "nachhaltentest", "statusseitetest", "statusleistetest", "standbildtest"];
 MIT_RELAY.push("seekframealignmenttest");
 MIT_RELAY.push("relayidentitytest");
@@ -113,6 +114,7 @@ MIT_RELAY.push("rundenzustandtest");
 MIT_RELAY.push("mitgliederaufraeumtest");
 MIT_RELAY.push("queuerelaytest");
 MIT_RELAY.push("geraetelivetest");
+MIT_RELAY.push("watchpartystodreipctest");
 
 const schlaf = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -253,7 +255,7 @@ async function warteAufStille(port, frist) {
       "relayidentitytest", "mitschauentest", "direktpartytest", "watchpartymatrixtest",
       "barrierleavetest", "barrierstarttest", "mitgliederaufraeumtest",
       "folgenrueckfalltest", "relayepisodecatchuptest", "folgenendetest",
-      "rundenzustandtest"
+      "rundenzustandtest", "watchpartystodreipctest"
     ]);
     if (!echteIdentitaetsUndBarriereTests.has(datei)) {
       const bootstrap = `./${path.relative(process.cwd(), RELAY_TEST_IDENTITAET).replace(/\\/g, "/")}`;

@@ -1,5 +1,22 @@
 # Watchparty auf PC und USB-Handy pruefen
 
+## Drei lokale Desktop-Instanzen
+
+`npm run test:watchparty-three-pc` startet drei vollstaendige Electron-Prozesse
+mit getrennten Profilen und einem isolierten lokalen Relay. Die produktiven
+Main-, Preload-, Renderer- und Playerpfade bleiben aktiv. S.to-Seiten fuer
+„Avatar - Die sieben Häfen“ und seekbare Medien werden lokal nachgebildet;
+es wird keine Folge heruntergeladen. Die drei Anbieter verwenden
+`serienstream.to`, `serienstream.cx` und die bisherige Standard-IP.
+
+Geprueft werden die gemeinsame Mitgliedschaft und Teilnehmerleisten,
+Synchronisieren, Play/Pause durch Host und Gast sowie der gemeinsame
+Folgenwechsel mit absichtlich zurueckgehaltenen Mediendaten des dritten PCs.
+Das ersetzt keinen Netzwerktest mit drei physischen PCs oder einen Live-Test
+der externen Hoster. Bei Fehlern nennt der Test den temporaeren Diagnoseordner.
+
+## PC und echtes Android-Geraet
+
 Der Test verwendet den echten Electron-Renderer samt Preload und den nativen
 Media3-Player der Debug-APK. Beide verbinden sich ueber die Produktionsmodule
 mit einem lokalen, isolierten Relay. Die bestehende Release-App und ihre
